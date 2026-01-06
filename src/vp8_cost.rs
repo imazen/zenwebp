@@ -1360,6 +1360,330 @@ pub fn record_coeffs(
 }
 
 //------------------------------------------------------------------------------
+// Level cost tables for accurate coefficient cost estimation
+//
+// Ported from libwebp src/enc/cost_enc.c
+//
+// The key insight is that coefficient costs depend on the probability context.
+// VP8CalculateLevelCosts precomputes cost tables indexed by [type][band][ctx][level].
+// Then remapped_costs provides direct access by coefficient position: [type][n][ctx].
+
+use crate::vp8_common::TokenProbTables;
+
+/// Type alias for level cost array: cost for each level 0..=MAX_VARIABLE_LEVEL
+pub type LevelCostArray = [u16; MAX_VARIABLE_LEVEL + 1];
+
+/// Level costs indexed by [type][band][context]
+/// Each entry is an array of costs for levels 0..=MAX_VARIABLE_LEVEL
+pub type LevelCostTables = [[[LevelCostArray; NUM_CTX]; NUM_BANDS]; NUM_TYPES];
+
+/// Remapped costs indexed by [type][position][context]
+/// Maps coefficient position (0..16) directly to its band's level_cost.
+/// This avoids the indirection through VP8_ENC_BANDS during cost calculation.
+pub type RemappedCosts = [[usize; NUM_CTX]; 16];
+
+/// Calculate the variable-length cost for encoding a level >= 1.
+/// Uses the VP8_LEVEL_CODES table to determine which probability nodes to use.
+/// Ported from libwebp's VariableLevelCost.
+fn variable_level_cost(level: usize, probas: &[u8; NUM_PROBAS]) -> u16 {
+    if level == 0 {
+        return 0;
+    }
+    let idx = level.min(MAX_VARIABLE_LEVEL) - 1;
+    let pattern = VP8_LEVEL_CODES[idx][0];
+    let bits = VP8_LEVEL_CODES[idx][1];
+
+    let mut cost = 0u16;
+    let mut p = pattern;
+    let mut b = bits;
+    let mut i = 2; // Start at proba index 2
+
+    while p != 0 {
+        if (p & 1) != 0 {
+            cost += vp8_bit_cost((b & 1) != 0, probas[i]);
+        }
+        b >>= 1;
+        p >>= 1;
+        i += 1;
+    }
+    cost
+}
+
+/// Level cost tables holder with precomputed costs and remapping.
+/// Ported from libwebp's VP8EncProba (level_cost and remapped_costs fields).
+#[derive(Clone)]
+pub struct LevelCosts {
+    /// Level costs indexed by [type][band][ctx][level]
+    pub level_cost: LevelCostTables,
+    /// Remapped indices: [type][position] -> band index for each type
+    /// Usage: level_cost[type][remapped[type][n]][ctx][level]
+    remapped: [RemappedCosts; NUM_TYPES],
+    /// Whether the tables are dirty and need recalculation
+    dirty: bool,
+}
+
+impl Default for LevelCosts {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LevelCosts {
+    /// Create new level cost tables
+    pub fn new() -> Self {
+        Self {
+            level_cost: [[[[0u16; MAX_VARIABLE_LEVEL + 1]; NUM_CTX]; NUM_BANDS]; NUM_TYPES],
+            remapped: [[[0usize; NUM_CTX]; 16]; NUM_TYPES],
+            dirty: true,
+        }
+    }
+
+    /// Mark tables as dirty (need recalculation)
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    /// Check if tables need recalculation
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Calculate level costs from probability tables.
+    /// Ported from libwebp's VP8CalculateLevelCosts.
+    pub fn calculate(&mut self, probs: &TokenProbTables) {
+        if !self.dirty {
+            return;
+        }
+
+        for ctype in 0..NUM_TYPES {
+            for band in 0..NUM_BANDS {
+                for ctx in 0..NUM_CTX {
+                    let p = &probs[ctype][band][ctx];
+
+                    // cost0 is the cost of signaling "no more coefficients" at context > 0
+                    // For ctx == 0, this cost is handled separately
+                    let cost0 = if ctx > 0 {
+                        vp8_bit_cost(true, p[0])
+                    } else {
+                        0
+                    };
+
+                    // cost_base is cost of signaling "coefficient present" + cost0
+                    let cost_base = vp8_bit_cost(true, p[1]) + cost0;
+
+                    // Level 0: just signal "no coefficient"
+                    self.level_cost[ctype][band][ctx][0] = vp8_bit_cost(false, p[1]) + cost0;
+
+                    // Levels 1..=MAX_VARIABLE_LEVEL
+                    for v in 1..=MAX_VARIABLE_LEVEL {
+                        self.level_cost[ctype][band][ctx][v] =
+                            cost_base + variable_level_cost(v, p);
+                    }
+                }
+            }
+
+            // Build remapped indices for direct position-based lookup
+            for n in 0..16 {
+                let band = VP8_ENC_BANDS[n] as usize;
+                for ctx in 0..NUM_CTX {
+                    self.remapped[ctype][n][ctx] = band;
+                }
+            }
+        }
+
+        self.dirty = false;
+    }
+
+    /// Get level cost for a specific coefficient position.
+    /// Combines fixed cost from VP8_LEVEL_FIXED_COSTS and variable cost from tables.
+    #[inline]
+    pub fn get_level_cost(&self, ctype: usize, position: usize, ctx: usize, level: usize) -> u32 {
+        let fixed = VP8_LEVEL_FIXED_COSTS[level.min(MAX_LEVEL)] as u32;
+        let band = self.remapped[ctype][position][ctx];
+        let variable = self.level_cost[ctype][band][ctx][level.min(MAX_VARIABLE_LEVEL)] as u32;
+        fixed + variable
+    }
+
+    /// Get the cost table for a specific type, position, and context.
+    #[inline]
+    pub fn get_cost_table(&self, ctype: usize, position: usize, ctx: usize) -> &LevelCostArray {
+        let band = self.remapped[ctype][position][ctx];
+        &self.level_cost[ctype][band][ctx]
+    }
+}
+
+/// Residual coefficients for cost calculation.
+/// Ported from libwebp's VP8Residual.
+pub struct Residual<'a> {
+    /// First coefficient to consider (0 or 1)
+    pub first: usize,
+    /// Last non-zero coefficient index (-1 if all zero)
+    pub last: i32,
+    /// Coefficient array
+    pub coeffs: &'a [i32; 16],
+    /// Coefficient type (0=I16DC, 1=I16AC, 2=Chroma, 3=I4)
+    pub coeff_type: usize,
+}
+
+impl<'a> Residual<'a> {
+    /// Create a new residual from coefficients.
+    /// Automatically finds the last non-zero coefficient.
+    pub fn new(coeffs: &'a [i32; 16], coeff_type: usize, first: usize) -> Self {
+        let last = coeffs
+            .iter()
+            .rposition(|&c| c != 0)
+            .map(|i| i as i32)
+            .unwrap_or(-1);
+
+        Self {
+            first,
+            last,
+            coeffs,
+            coeff_type,
+        }
+    }
+}
+
+/// Calculate the cost of encoding a residual block using probability-based costs.
+/// Ported from libwebp's GetResidualCost_C.
+///
+/// # Arguments
+/// * `ctx0` - Initial context (0, 1, or 2)
+/// * `res` - Residual coefficients
+/// * `costs` - Precomputed level cost tables
+/// * `probs` - Probability tables (for last coefficient EOB cost)
+///
+/// # Returns
+/// Cost in 1/256 bit units
+pub fn get_residual_cost(
+    ctx0: usize,
+    res: &Residual,
+    costs: &LevelCosts,
+    probs: &TokenProbTables,
+) -> u32 {
+    let ctype = res.coeff_type;
+    let mut n = res.first;
+
+    // Get probability p0 for the first coefficient
+    // Note: for n=0 or n=1, band = n (VP8_ENC_BANDS[0]=0, VP8_ENC_BANDS[1]=1)
+    let band = VP8_ENC_BANDS[n] as usize;
+    let p0 = probs[ctype][band][ctx0][0];
+
+    // Current context - starts at ctx0, updated after each coefficient
+    let mut ctx = ctx0;
+
+    // bit_cost(1, p0) is already incorporated in the cost tables, but only if ctx != 0.
+    // For ctx0 == 0, we need to add it explicitly.
+    let mut cost = if ctx0 == 0 {
+        vp8_bit_cost(true, p0) as u32
+    } else {
+        0
+    };
+
+    // If no non-zero coefficients, just return EOB cost
+    if res.last < 0 {
+        return vp8_bit_cost(false, p0) as u32;
+    }
+
+    // Process coefficients from first to last-1
+    // Context updates: ctx for position n+1 depends on coefficient value at position n
+    while (n as i32) < res.last {
+        let v = res.coeffs[n].abs() as usize;
+
+        // Add cost using current context
+        cost += costs.get_level_cost(ctype, n, ctx, v);
+
+        // Update context for next position based on current value
+        ctx = if v >= 2 { 2 } else { v };
+
+        n += 1;
+    }
+
+    // Last coefficient is always non-zero
+    {
+        let v = res.coeffs[n].abs() as usize;
+        debug_assert!(v != 0, "Last coefficient should be non-zero");
+
+        // Add cost using current context
+        cost += costs.get_level_cost(ctype, n, ctx, v);
+
+        // Add EOB cost for the position after the last coefficient
+        if n < 15 {
+            let next_band = VP8_ENC_BANDS[n + 1] as usize;
+            let next_ctx = if v == 1 { 1 } else { 2 };
+            let last_p0 = probs[ctype][next_band][next_ctx][0];
+            cost += vp8_bit_cost(false, last_p0) as u32;
+        }
+    }
+
+    cost
+}
+
+/// Calculate the cost of encoding a 4x4 luma block (I4 mode).
+/// Ported from libwebp's VP8GetCostLuma4.
+///
+/// # Arguments
+/// * `levels` - Quantized coefficients in zigzag order
+/// * `top_nz` - Whether the above block had non-zero coefficients
+/// * `left_nz` - Whether the left block had non-zero coefficients
+/// * `costs` - Precomputed level cost tables
+/// * `probs` - Probability tables
+///
+/// # Returns
+/// (cost, has_nonzero) - Cost in 1/256 bits and whether this block has non-zero coeffs
+pub fn get_cost_luma4(
+    levels: &[i32; 16],
+    top_nz: bool,
+    left_nz: bool,
+    costs: &LevelCosts,
+    probs: &TokenProbTables,
+) -> (u32, bool) {
+    // Initial context is sum of top and left non-zero flags (0, 1, or 2)
+    let ctx = (top_nz as usize) + (left_nz as usize);
+
+    // Create residual for I4 type (type 3), starting at position 0
+    let res = Residual::new(levels, 3, 0);
+    let has_nz = res.last >= 0;
+
+    let cost = get_residual_cost(ctx, &res, costs, probs);
+
+    (cost, has_nz)
+}
+
+/// Calculate the cost of encoding all 16 luma blocks in I16 mode.
+/// Includes DC block (Y2) and 16 AC blocks (Y1).
+///
+/// # Arguments
+/// * `dc_levels` - DC coefficients from WHT (16 values)
+/// * `ac_levels` - AC coefficients for each 4x4 block (16 blocks × 16 coeffs)
+/// * `costs` - Precomputed level cost tables
+/// * `probs` - Probability tables
+///
+/// # Returns
+/// Total cost in 1/256 bits
+pub fn get_cost_luma16(
+    dc_levels: &[i32; 16],
+    ac_levels: &[[i32; 16]; 16],
+    costs: &LevelCosts,
+    probs: &TokenProbTables,
+) -> u32 {
+    let mut total_cost = 0u32;
+
+    // DC block (type 1 = I16DC, also known as Y2)
+    // Context is typically from neighboring DC blocks, but for simplicity use 0
+    let dc_res = Residual::new(dc_levels, 1, 0);
+    total_cost += get_residual_cost(0, &dc_res, costs, probs);
+
+    // AC blocks (type 0 = I16AC, skipping DC coefficient which is in Y2)
+    for ac in ac_levels.iter() {
+        let ac_res = Residual::new(ac, 0, 1); // Start at position 1 (skip DC)
+        total_cost += get_residual_cost(0, &ac_res, costs, probs);
+    }
+
+    total_cost
+}
+
+//------------------------------------------------------------------------------
 // Segment-based quantization
 //
 // Ported from libwebp src/enc/analysis_enc.c

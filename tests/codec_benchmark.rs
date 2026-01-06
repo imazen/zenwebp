@@ -144,13 +144,11 @@ fn benchmark_image(path: &Path) -> Option<ImageResults> {
 
 /// Find quality setting that produces closest BPP to target
 fn find_quality_for_bpp(results: &[EncodeResult], target_bpp: f64) -> Option<&EncodeResult> {
-    results
-        .iter()
-        .min_by(|a, b| {
-            let diff_a = (a.bpp - target_bpp).abs();
-            let diff_b = (b.bpp - target_bpp).abs();
-            diff_a.partial_cmp(&diff_b).unwrap()
-        })
+    results.iter().min_by(|a, b| {
+        let diff_a = (a.bpp - target_bpp).abs();
+        let diff_b = (b.bpp - target_bpp).abs();
+        diff_a.partial_cmp(&diff_b).unwrap()
+    })
 }
 
 /// Interpolate PSNR at exact BPP using linear interpolation

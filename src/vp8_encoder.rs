@@ -8,12 +8,11 @@ use crate::vp8_arithmetic_encoder::ArithmeticEncoder;
 use crate::vp8_common::*;
 use crate::vp8_cost::{
     self, analyze_image, assign_segments_kmeans, compute_segment_quant, estimate_dc16_cost,
-    estimate_residual_cost, record_coeffs, ProbaStats, TokenType, FIXED_COSTS_I16, FIXED_COSTS_UV,
-    LAMBDA_I16, LAMBDA_UV,
+    estimate_residual_cost, get_cost_luma4, record_coeffs, LevelCosts, ProbaStats, TokenType,
+    FIXED_COSTS_I16, FIXED_COSTS_UV, LAMBDA_I16, LAMBDA_UV,
 };
 // Intra4 imports for coefficient-level cost estimation (used in pick_best_intra4)
-#[allow(unused_imports)]
-use crate::vp8_cost::{calc_i4_penalty, get_i4_mode_cost, rd_score_with_coeffs, LAMBDA_I4};
+use crate::vp8_cost::{calc_i4_penalty, get_i4_mode_cost, LAMBDA_I4};
 use crate::vp8_prediction::*;
 use crate::yuv::convert_image_y;
 use crate::yuv::convert_image_yuv;
@@ -179,6 +178,8 @@ struct Vp8Encoder<W> {
     proba_stats: ProbaStats,
     /// Updated probabilities computed from statistics
     updated_probs: Option<TokenProbTables>,
+    /// Precomputed level costs for coefficient cost estimation
+    level_costs: LevelCosts,
 
     top_complexity: Vec<Complexity>,
     left_complexity: Complexity,
@@ -222,6 +223,7 @@ impl<W: Write> Vp8Encoder<W> {
             token_probs: Default::default(),
             proba_stats: ProbaStats::new(),
             updated_probs: None,
+            level_costs: LevelCosts::new(),
 
             top_complexity: Vec::new(),
             left_complexity: Complexity::default(),
@@ -1176,8 +1178,18 @@ impl<W: Write> Vp8Encoder<W> {
             // Compute optimal probabilities from statistics
             self.compute_updated_probabilities();
 
+            // Calculate level costs based on final probabilities
+            // This enables accurate I4 coefficient cost estimation
+            let probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
+            self.level_costs.calculate(probs);
+
             // Reset state for actual encoding pass
             self.reset_for_second_pass();
+        }
+
+        // Calculate level costs for initial probabilities if no two-pass
+        if self.level_costs.is_dirty() {
+            self.level_costs.calculate(&self.token_probs);
         }
 
         self.encode_compressed_frame_header();
@@ -1404,10 +1416,7 @@ impl<W: Write> Vp8Encoder<W> {
         sse
     }
 
-    /// Select the best intra4x4 modes for all 16 subblocks using distortion-based optimization.
-    ///
-    /// This uses libwebp's "RefineUsingDistortion" approach: compare I4 vs I16
-    /// based on distortion + mode costs only (no coefficient costs).
+    /// Select the best Intra4 modes for all 16 subblocks using accurate coefficient cost estimation.
     ///
     /// Returns `Some((modes, rd_score))` if Intra4 is better than `i16_score`,
     /// or `None` if Intra16 should be used (early-exit optimization).
@@ -1415,9 +1424,8 @@ impl<W: Write> Vp8Encoder<W> {
     /// The comparison includes an i4_penalty (1000 * q²) to account for the
     /// typically higher bit cost of Intra4 mode signaling.
     ///
-    /// Note: Currently disabled in choose_macroblock_info() because our cost
-    /// estimation isn't accurate enough to make good I4 vs I16 decisions.
-    #[allow(dead_code)]
+    /// Uses proper probability-based coefficient cost estimation ported from
+    /// libwebp's VP8GetCostLuma4 with remapped_costs tables.
     fn pick_best_intra4(
         &self,
         mbx: usize,
@@ -1459,8 +1467,17 @@ impl<W: Write> Vp8Encoder<W> {
 
         // Track total mode cost for header bit limiting
         let mut total_mode_cost = 0u32;
-        // Maximum header bits for I4 modes (from libwebp: ~16 bits per block max)
-        let max_header_bits: u32 = 256 * 16 * 16 / 4; // Scaled down for reasonable limit
+        // Maximum header bits for I4 modes (from libwebp)
+        let max_header_bits: u32 = 256 * 16 * 16 / 4;
+
+        // Track non-zero context for accurate coefficient cost estimation
+        // top_nz[x] = whether block above has non-zero coefficients
+        // left_nz[y] = whether block to left has non-zero coefficients
+        let mut top_nz = [false; 4];
+        let mut left_nz = [false; 4];
+
+        // Get probability tables for coefficient cost estimation
+        let probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
 
         // Process each subblock in raster order
         for sby in 0usize..4 {
@@ -1469,7 +1486,7 @@ impl<W: Write> Vp8Encoder<W> {
                 let y0 = sby * 4 + 1;
                 let x0 = sbx * 4 + 1;
 
-                // Get context from neighboring blocks (DC=0 if at edge)
+                // Get mode context from neighboring blocks (DC=0 if at edge)
                 let top_ctx = if sby == 0 {
                     0 // DC mode
                 } else {
@@ -1481,35 +1498,90 @@ impl<W: Write> Vp8Encoder<W> {
                     best_mode_indices[sby * 4 + (sbx - 1)]
                 };
 
+                // Get non-zero context from neighboring blocks
+                let nz_top = if sby == 0 { false } else { top_nz[sbx] };
+                let nz_left = if sbx == 0 { false } else { left_nz[sby] };
+
                 let mut best_mode = IntraMode::DC;
                 let mut best_mode_idx = 0usize;
                 let mut best_block_score = u64::MAX;
+                let mut best_has_nz = false;
+                let mut best_quantized = [0i32; 16];
 
-                // Try each mode and pick the best using distortion + mode cost only
-                // (This matches libwebp's RefineUsingDistortion fast path)
+                // Try each mode and pick the best
                 for (mode_idx, &mode) in MODES.iter().enumerate() {
                     // Make a copy to test this mode
                     let mut test_buf = y_with_border;
                     Self::apply_intra4_prediction(&mut test_buf, mode, x0, y0);
 
-                    // Compute SSE for this subblock
-                    let sse = self.sse_4x4_subblock(&test_buf, mbx, mby, sbx, sby);
+                    // Compute residual
+                    let mut residual = [0i32; 16];
+                    let src_base = (mby * 16 + sby * 4) * src_width + mbx * 16 + sbx * 4;
+                    for y in 0..4 {
+                        let pred_row = (y0 + y) * LUMA_STRIDE + x0;
+                        let src_row = src_base + y * src_width;
+                        for x in 0..4 {
+                            residual[y * 4 + x] = i32::from(self.frame.ybuf[src_row + x])
+                                - i32::from(test_buf[pred_row + x]);
+                        }
+                    }
 
-                    // Compute RD cost with context-dependent mode cost
-                    // Note: Using distortion-only scoring (no coefficient cost)
-                    // libwebp uses lambda_d_i4 = 11 for this
+                    // Transform
+                    transform::dct4x4(&mut residual);
+
+                    // Quantize
+                    let y1_matrix = segment.y1_matrix.as_ref().unwrap();
+                    let mut quantized = [0i32; 16];
+                    for (idx, &val) in residual.iter().enumerate() {
+                        quantized[idx] = y1_matrix.quantize_coeff(val, idx);
+                    }
+
+                    // Get accurate coefficient cost using probability tables
+                    let (coeff_cost, has_nz) =
+                        get_cost_luma4(&quantized, nz_top, nz_left, &self.level_costs, probs);
+
+                    // Compute distortion (SSE of quantized vs original)
+                    let mut dequantized = quantized;
+                    for (idx, val) in dequantized.iter_mut().enumerate() {
+                        *val = y1_matrix.dequantize(*val, idx);
+                    }
+                    transform::idct4x4(&mut dequantized);
+
+                    let mut sse = 0u32;
+                    for y in 0..4 {
+                        let pred_row = (y0 + y) * LUMA_STRIDE + x0;
+                        let src_row = src_base + y * src_width;
+                        for x in 0..4 {
+                            let reconstructed = (i32::from(test_buf[pred_row + x])
+                                + dequantized[y * 4 + x])
+                            .clamp(0, 255) as u8;
+                            let diff =
+                                i32::from(self.frame.ybuf[src_row + x]) - i32::from(reconstructed);
+                            sse += (diff * diff) as u32;
+                        }
+                    }
+
+                    // Compute RD score: distortion + lambda * (mode_cost + coeff_cost)
                     let mode_cost = get_i4_mode_cost(top_ctx, left_ctx, mode_idx);
-                    let rd_score = vp8_cost::rd_score(sse, mode_cost, LAMBDA_I4);
+                    let total_rate = u32::from(mode_cost) + coeff_cost;
+                    let rd_score = vp8_cost::rd_score(sse, total_rate as u16, LAMBDA_I4);
 
                     if rd_score < best_block_score {
                         best_block_score = rd_score;
                         best_mode = mode;
                         best_mode_idx = mode_idx;
+                        best_has_nz = has_nz;
+                        best_quantized = quantized;
                     }
                 }
 
                 best_modes[i] = best_mode;
                 best_mode_indices[i] = best_mode_idx;
+
+                // Update non-zero context for subsequent blocks
+                top_nz[sbx] = best_has_nz;
+                left_nz[sby] = best_has_nz;
+
                 let mode_cost = get_i4_mode_cost(top_ctx, left_ctx, best_mode_idx);
                 total_mode_cost += u32::from(mode_cost);
 
@@ -1529,30 +1601,14 @@ impl<W: Write> Vp8Encoder<W> {
                 // Apply the selected mode and reconstruct for next blocks
                 Self::apply_intra4_prediction(&mut y_with_border, best_mode, x0, y0);
 
-                // Reconstruct: compute residual, transform, quantize, dequantize, add back
-                let mut residual = [0i32; 16];
-                let src_base = (mby * 16 + sby * 4) * src_width + mbx * 16 + sbx * 4;
-                for y in 0..4 {
-                    let pred_row = (y0 + y) * LUMA_STRIDE + x0;
-                    let src_row = src_base + y * src_width;
-                    for x in 0..4 {
-                        residual[y * 4 + x] = i32::from(self.frame.ybuf[src_row + x])
-                            - i32::from(y_with_border[pred_row + x]);
-                    }
-                }
-
-                transform::dct4x4(&mut residual);
-
+                // Dequantize and add back for reconstruction
                 let y1_matrix = segment.y1_matrix.as_ref().unwrap();
-
-                // Dequantize for reconstruction
-                for (idx, val) in residual.iter_mut().enumerate() {
-                    let level = y1_matrix.quantize_coeff(*val, idx);
-                    *val = y1_matrix.dequantize(level, idx);
+                let mut dequantized = best_quantized;
+                for (idx, val) in dequantized.iter_mut().enumerate() {
+                    *val = y1_matrix.dequantize(*val, idx);
                 }
-
-                transform::idct4x4(&mut residual);
-                add_residue(&mut y_with_border, &residual, y0, x0, LUMA_STRIDE);
+                transform::idct4x4(&mut dequantized);
+                add_residue(&mut y_with_border, &dequantized, y0, x0, LUMA_STRIDE);
             }
         }
 
@@ -1622,22 +1678,13 @@ impl<W: Write> Vp8Encoder<W> {
 
     fn choose_macroblock_info(&self, mbx: usize, mby: usize) -> MacroblockInfo {
         // Pick the best 16x16 luma mode using RD cost selection
-        let (luma_mode, _i16_score) = self.pick_best_intra16(mbx, mby);
+        let (luma_mode, i16_score) = self.pick_best_intra16(mbx, mby);
 
-        // Note: Intra4 mode is disabled for now because our cost estimation
-        // isn't accurate enough to make good I4 vs I16 decisions. The mode
-        // signaling overhead for I4 (16 mode values) often exceeds the
-        // distortion savings, leading to larger files.
-        //
-        // TODO: Enable Intra4 when we have better coefficient cost estimation
-        // (e.g., ported VP8GetCostLuma4 with remapped_costs tables).
-        //
-        // To enable: uncomment the following:
-        // let (luma_mode, luma_bpred) = match self.pick_best_intra4(mbx, mby, _i16_score) {
-        //     Some((modes, _)) => (LumaMode::B, Some(modes)),
-        //     None => (luma_mode, None),
-        // };
-        let luma_bpred = None;
+        // Try Intra4 mode and compare with Intra16 using accurate coefficient costs
+        let (luma_mode, luma_bpred) = match self.pick_best_intra4(mbx, mby, i16_score) {
+            Some((modes, _)) => (LumaMode::B, Some(modes)),
+            None => (luma_mode, None),
+        };
 
         // Pick the best chroma mode using RD-based selection
         let chroma_mode = self.pick_best_uv(mbx, mby);
