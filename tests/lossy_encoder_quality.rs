@@ -2,12 +2,11 @@
 //!
 //! These tests compare the image-webp lossy encoder against libwebp:
 //! - Bitstream compatibility: libwebp can decode our output
-//! - Quality metrics: PSNR and DSSIM of decoded output
+//! - Quality metrics: PSNR, DSSIM, and SSIMULACRA2 of decoded output
 //! - Size comparison: our output vs libwebp's output at same quality
 //!
-//! Note: The current lossy encoder uses DC-only mode selection, so quality
-//! and size will be significantly worse than libwebp. These tests establish
-//! baselines and will improve as mode selection is implemented.
+//! The encoder now implements SSE-based mode selection (DC, V, H, TM modes)
+//! for both luma and chroma, improving quality over the DC-only baseline.
 
 use dssim_core::Dssim;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
@@ -108,11 +107,23 @@ fn calculate_ssimulacra2(original: &[u8], decoded: &[u8], width: u32, height: u3
     // Convert to linear RGB f32 format for fast-ssim2
     let orig_rgb: Vec<[f32; 3]> = original
         .chunks_exact(3)
-        .map(|p| [srgb_to_linear(p[0]), srgb_to_linear(p[1]), srgb_to_linear(p[2])])
+        .map(|p| {
+            [
+                srgb_to_linear(p[0]),
+                srgb_to_linear(p[1]),
+                srgb_to_linear(p[2]),
+            ]
+        })
         .collect();
     let dec_rgb: Vec<[f32; 3]> = decoded
         .chunks_exact(3)
-        .map(|p| [srgb_to_linear(p[0]), srgb_to_linear(p[1]), srgb_to_linear(p[2])])
+        .map(|p| {
+            [
+                srgb_to_linear(p[0]),
+                srgb_to_linear(p[1]),
+                srgb_to_linear(p[2]),
+            ]
+        })
         .collect();
 
     let orig_img = Rgb::new(
@@ -176,7 +187,6 @@ fn libwebp_can_decode_our_lossy_output() {
     assert_eq!(decoded.height(), height);
 
     // For lossy, we can't expect exact match, but PSNR should be reasonable
-    // Note: with DC-only mode, quality will be poor
     let psnr = calculate_psnr(&img, &decoded);
     println!("PSNR: {:.2} dB (target: > 20 dB for basic lossy)", psnr);
     assert!(psnr > 15.0, "PSNR too low: {:.2} dB", psnr);

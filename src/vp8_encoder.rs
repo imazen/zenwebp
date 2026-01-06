@@ -12,6 +12,77 @@ use crate::yuv::convert_image_yuv;
 use crate::ColorType;
 use crate::EncodingError;
 
+//------------------------------------------------------------------------------
+// SSE (Sum of Squared Errors) distortion functions
+//
+// These measure the distortion between source and predicted blocks.
+// Lower SSE = better prediction = less data to encode.
+
+/// Compute SSE for a 4x4 block within bordered prediction buffers
+/// src and pred are bordered buffers with given stride, block starts at (x0, y0)
+///
+/// Note: Currently unused - reserved for future Intra4x4 mode selection
+#[allow(dead_code)]
+#[inline]
+fn sse_4x4_at(src: &[u8], pred: &[u8], x0: usize, y0: usize, stride: usize) -> u32 {
+    let mut sse = 0u32;
+    for y in 0..4 {
+        let row_offset = (y0 + y) * stride + x0;
+        for x in 0..4 {
+            let diff = i32::from(src[row_offset + x]) - i32::from(pred[row_offset + x]);
+            sse += (diff * diff) as u32;
+        }
+    }
+    sse
+}
+
+/// Compute SSE for a 16x16 luma block within bordered prediction buffer
+/// Compares source YUV data against predicted block with border
+fn sse_16x16_luma(
+    src_y: &[u8],
+    src_width: usize,
+    mbx: usize,
+    mby: usize,
+    pred: &[u8; LUMA_BLOCK_SIZE],
+) -> u32 {
+    let mut sse = 0u32;
+    let src_base = mby * 16 * src_width + mbx * 16;
+
+    for y in 0..16 {
+        let src_row = src_base + y * src_width;
+        let pred_row = (y + 1) * LUMA_STRIDE + 1; // +1 for border offset
+
+        for x in 0..16 {
+            let diff = i32::from(src_y[src_row + x]) - i32::from(pred[pred_row + x]);
+            sse += (diff * diff) as u32;
+        }
+    }
+    sse
+}
+
+/// Compute SSE for an 8x8 chroma block within bordered prediction buffer
+fn sse_8x8_chroma(
+    src_uv: &[u8],
+    src_width: usize,
+    mbx: usize,
+    mby: usize,
+    pred: &[u8; CHROMA_BLOCK_SIZE],
+) -> u32 {
+    let mut sse = 0u32;
+    let src_base = mby * 8 * src_width + mbx * 8;
+
+    for y in 0..8 {
+        let src_row = src_base + y * src_width;
+        let pred_row = (y + 1) * CHROMA_STRIDE + 1; // +1 for border offset
+
+        for x in 0..8 {
+            let diff = i32::from(src_uv[src_row + x]) - i32::from(pred[pred_row + x]);
+            sse += (diff * diff) as u32;
+        }
+    }
+    sse
+}
+
 // currently in decoder it actually stores this information on the macroblock but that's confusing
 // because it doesn't update the macroblock, just the complexity values as we decode
 // this is used as the complexity per 13.3 in the decoder
@@ -698,9 +769,111 @@ impl<W: Write> Vp8Encoder<W> {
         Ok(())
     }
 
-    fn choose_macroblock_info(&self, _mbx: usize, _mby: usize) -> MacroblockInfo {
-        let (luma_mode, luma_bpred) = (LumaMode::DC, None);
-        let chroma_mode = ChromaMode::DC;
+    /// Select the best 16x16 luma prediction mode by trying all modes and picking
+    /// the one with lowest SSE (sum of squared errors).
+    ///
+    /// This is based on libwebp's PickBestIntra16 but simplified to use only SSE
+    /// without full RD (rate-distortion) optimization.
+    fn pick_best_intra16(&self, mbx: usize, mby: usize) -> LumaMode {
+        let mbw = usize::from(self.macroblock_width);
+        let src_width = mbw * 16;
+
+        // The 4 modes to try for 16x16 luma prediction
+        const MODES: [LumaMode; 4] = [LumaMode::DC, LumaMode::V, LumaMode::H, LumaMode::TM];
+
+        let mut best_mode = LumaMode::DC;
+        let mut best_sse = u32::MAX;
+
+        for &mode in &MODES {
+            // Skip V mode if no top row available (first row of macroblocks)
+            if mode == LumaMode::V && mby == 0 {
+                continue;
+            }
+            // Skip H mode if no left column available (first column of macroblocks)
+            if mode == LumaMode::H && mbx == 0 {
+                continue;
+            }
+            // Skip TM mode if at top-left corner (needs both top and left)
+            if mode == LumaMode::TM && (mbx == 0 || mby == 0) {
+                continue;
+            }
+
+            // Generate prediction for this mode
+            let pred = self.get_predicted_luma_block_16x16(mode, mbx, mby);
+
+            // Compute SSE between source and prediction
+            let sse = sse_16x16_luma(&self.frame.ybuf, src_width, mbx, mby, &pred);
+
+            if sse < best_sse {
+                best_sse = sse;
+                best_mode = mode;
+            }
+        }
+
+        best_mode
+    }
+
+    /// Select the best chroma prediction mode by trying all modes and picking
+    /// the one with lowest combined SSE for U and V planes.
+    fn pick_best_uv(&self, mbx: usize, mby: usize) -> ChromaMode {
+        let mbw = usize::from(self.macroblock_width);
+        let chroma_width = mbw * 8;
+
+        const MODES: [ChromaMode; 4] =
+            [ChromaMode::DC, ChromaMode::V, ChromaMode::H, ChromaMode::TM];
+
+        let mut best_mode = ChromaMode::DC;
+        let mut best_sse = u32::MAX;
+
+        for &mode in &MODES {
+            // Skip modes that need unavailable reference pixels
+            if mode == ChromaMode::V && mby == 0 {
+                continue;
+            }
+            if mode == ChromaMode::H && mbx == 0 {
+                continue;
+            }
+            if mode == ChromaMode::TM && (mbx == 0 || mby == 0) {
+                continue;
+            }
+
+            // Generate predictions for U and V
+            let pred_u = self.get_predicted_chroma_block(
+                mode,
+                mbx,
+                mby,
+                &self.top_border_u,
+                &self.left_border_u,
+            );
+            let pred_v = self.get_predicted_chroma_block(
+                mode,
+                mbx,
+                mby,
+                &self.top_border_v,
+                &self.left_border_v,
+            );
+
+            // Compute combined SSE for U and V
+            let sse_u = sse_8x8_chroma(&self.frame.ubuf, chroma_width, mbx, mby, &pred_u);
+            let sse_v = sse_8x8_chroma(&self.frame.vbuf, chroma_width, mbx, mby, &pred_v);
+            let sse = sse_u + sse_v;
+
+            if sse < best_sse {
+                best_sse = sse;
+                best_mode = mode;
+            }
+        }
+
+        best_mode
+    }
+
+    fn choose_macroblock_info(&self, mbx: usize, mby: usize) -> MacroblockInfo {
+        // Pick the best 16x16 luma mode using SSE-based selection
+        let luma_mode = self.pick_best_intra16(mbx, mby);
+        let luma_bpred = None; // Not using intra4x4 mode (LumaMode::B) for now
+
+        // Pick the best chroma mode using SSE-based selection
+        let chroma_mode = self.pick_best_uv(mbx, mby);
 
         MacroblockInfo {
             luma_mode,
