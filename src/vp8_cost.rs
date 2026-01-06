@@ -245,6 +245,110 @@ pub const VP8_LEVEL_FIXED_COSTS: [u16; MAX_LEVEL + 1] = [
 pub const VP8_ENC_BANDS: [u8; 17] = [0, 1, 2, 3, 6, 4, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 0];
 
 //------------------------------------------------------------------------------
+// Level codes for variable-length coefficient encoding
+
+/// VP8LevelCodes table for encoding coefficient levels > 4
+/// Format: [pattern, bits] where pattern encodes which probas to use
+/// and bits encodes the actual bit values.
+#[rustfmt::skip]
+pub const VP8_LEVEL_CODES: [[u16; 2]; 67] = [
+    [0x001, 0x000], [0x007, 0x001], [0x00f, 0x005], [0x00f, 0x00d],
+    [0x033, 0x003], [0x033, 0x003], [0x033, 0x023], [0x033, 0x023],
+    [0x033, 0x023], [0x033, 0x023], [0x0d3, 0x013], [0x0d3, 0x013],
+    [0x0d3, 0x013], [0x0d3, 0x013], [0x0d3, 0x013], [0x0d3, 0x013],
+    [0x0d3, 0x013], [0x0d3, 0x013], [0x0d3, 0x093], [0x0d3, 0x093],
+    [0x0d3, 0x093], [0x0d3, 0x093], [0x0d3, 0x093], [0x0d3, 0x093],
+    [0x0d3, 0x093], [0x0d3, 0x093], [0x0d3, 0x093], [0x0d3, 0x093],
+    [0x0d3, 0x093], [0x0d3, 0x093], [0x0d3, 0x093], [0x0d3, 0x093],
+    [0x0d3, 0x093], [0x0d3, 0x093], [0x153, 0x053], [0x153, 0x053],
+    [0x153, 0x053], [0x153, 0x053], [0x153, 0x053], [0x153, 0x053],
+    [0x153, 0x053], [0x153, 0x053], [0x153, 0x053], [0x153, 0x053],
+    [0x153, 0x053], [0x153, 0x053], [0x153, 0x053], [0x153, 0x053],
+    [0x153, 0x053], [0x153, 0x053], [0x153, 0x053], [0x153, 0x053],
+    [0x153, 0x053], [0x153, 0x053], [0x153, 0x053], [0x153, 0x053],
+    [0x153, 0x053], [0x153, 0x053], [0x153, 0x053], [0x153, 0x053],
+    [0x153, 0x053], [0x153, 0x053], [0x153, 0x053], [0x153, 0x053],
+    [0x153, 0x053], [0x153, 0x053], [0x153, 0x153],
+];
+
+//------------------------------------------------------------------------------
+// Quantizer lookup tables
+
+/// DC quantizer lookup table (index 0-127 -> quantizer step)
+#[rustfmt::skip]
+pub const VP8_DC_TABLE: [u16; 128] = [
+    4, 5, 6, 7, 8, 9, 10, 10, 11, 12, 13, 14, 15, 16, 17, 17,
+    18, 19, 20, 20, 21, 21, 22, 22, 23, 23, 24, 25, 25, 26, 27, 28,
+    29, 30, 31, 32, 33, 34, 35, 36, 37, 37, 38, 39, 40, 41, 42, 43,
+    44, 45, 46, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
+    59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74,
+    75, 76, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89,
+    91, 93, 95, 96, 98, 100, 101, 102, 104, 106, 108, 110, 112, 114, 116, 118,
+    122, 124, 126, 128, 130, 132, 134, 136, 138, 140, 143, 145, 148, 151, 154, 157,
+];
+
+/// AC quantizer lookup table (index 0-127 -> quantizer step)
+#[rustfmt::skip]
+pub const VP8_AC_TABLE: [u16; 128] = [
+    4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+    20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+    36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
+    52, 53, 54, 55, 56, 57, 58, 60, 62, 64, 66, 68, 70, 72, 74, 76,
+    78, 80, 82, 84, 86, 88, 90, 92, 94, 96, 98, 100, 102, 104, 106, 108,
+    110, 112, 114, 116, 119, 122, 125, 128, 131, 134, 137, 140, 143, 146, 149, 152,
+    155, 158, 161, 164, 167, 170, 173, 177, 181, 185, 189, 193, 197, 201, 205, 209,
+    213, 217, 221, 225, 229, 234, 239, 245, 249, 254, 259, 264, 269, 274, 279, 284,
+];
+
+/// AC2 quantizer lookup table for Y2 block (index 0-127 -> quantizer step)
+#[rustfmt::skip]
+pub const VP8_AC_TABLE2: [u16; 128] = [
+    8, 8, 9, 10, 12, 13, 15, 17, 18, 20, 21, 23, 24, 26, 27, 29,
+    31, 32, 34, 35, 37, 38, 40, 41, 43, 44, 46, 48, 49, 51, 52, 54,
+    55, 57, 58, 60, 62, 63, 65, 66, 68, 69, 71, 72, 74, 75, 77, 79,
+    80, 82, 83, 85, 86, 88, 89, 93, 96, 99, 102, 105, 108, 111, 114, 117,
+    120, 124, 127, 130, 133, 136, 139, 142, 145, 148, 151, 155, 158, 161, 164, 167,
+    170, 173, 176, 179, 184, 189, 193, 198, 203, 207, 212, 217, 221, 226, 230, 235,
+    240, 244, 249, 254, 258, 263, 268, 274, 280, 286, 292, 299, 305, 311, 317, 323,
+    330, 336, 342, 348, 354, 362, 370, 379, 385, 393, 401, 409, 416, 424, 432, 440,
+];
+
+/// Zig-zag scan order for 4x4 block
+pub const VP8_ZIGZAG: [usize; 16] = [0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15];
+
+/// Frequency-based sharpening weights
+#[rustfmt::skip]
+pub const VP8_FREQ_SHARPENING: [u8; 16] = [
+    0, 30, 60, 90, 30, 60, 90, 90,
+    60, 90, 90, 90, 90, 90, 90, 90,
+];
+
+/// Trellis distortion weights (for USE_TDISTO=1)
+#[rustfmt::skip]
+pub const VP8_WEIGHT_TRELLIS: [u16; 16] = [
+    30, 27, 19, 11, 27, 24, 17, 10,
+    19, 17, 12, 8, 11, 10, 8, 6,
+];
+
+//------------------------------------------------------------------------------
+// Quantization constants
+
+/// Fixed-point precision for quantization
+pub const QFIX: u32 = 17;
+
+/// Bias calculation macro equivalent
+#[inline]
+pub const fn quantization_bias(b: u32) -> u32 {
+    (((b) << (QFIX)) + 128) >> 8
+}
+
+/// Quantization division: (coeff * iq + bias) >> QFIX
+#[inline]
+pub fn quantdiv(coeff: u32, iq: u32, bias: u32) -> i32 {
+    ((coeff as u64 * iq as u64 + bias as u64) >> QFIX) as i32
+}
+
+//------------------------------------------------------------------------------
 // Mode costs
 
 /// Fixed mode costs for Intra16 modes (DC, V, H, TM)
@@ -411,6 +515,401 @@ pub fn calc_lambda_mode(q: u32) -> u32 {
 #[inline]
 pub fn calc_i4_penalty(q: u32) -> u64 {
     (1000 * q as u64 * q as u64).max(1)
+}
+
+/// Calculate trellis lambda for I16 mode: (q²) >> 2
+#[inline]
+pub fn calc_lambda_trellis_i16(q: u32) -> u32 {
+    ((q * q) >> 2).max(1)
+}
+
+/// Calculate trellis lambda for I4 mode: (7 * q²) >> 3
+#[inline]
+pub fn calc_lambda_trellis_i4(q: u32) -> u32 {
+    ((7 * q * q) >> 3).max(1)
+}
+
+/// Calculate trellis lambda for UV: (q²) << 1
+#[inline]
+pub fn calc_lambda_trellis_uv(q: u32) -> u32 {
+    ((q * q) << 1).max(1)
+}
+
+//------------------------------------------------------------------------------
+// Quantization matrix
+
+/// Quantization matrix for a coefficient type (Y1, Y2, UV)
+#[derive(Clone, Debug)]
+pub struct VP8Matrix {
+    /// Quantizer steps for each coefficient position
+    pub q: [u16; 16],
+    /// Reciprocals (1 << QFIX) / q, for fast division
+    pub iq: [u32; 16],
+    /// Rounding bias for quantization
+    pub bias: [u32; 16],
+    /// Zero threshold: coefficients below this are quantized to 0
+    pub zthresh: [u32; 16],
+    /// Sharpening boost for high-frequency coefficients
+    pub sharpen: [u16; 16],
+}
+
+impl VP8Matrix {
+    /// Create a new quantization matrix from DC and AC quantizer values
+    pub fn new(q_dc: u16, q_ac: u16, matrix_type: MatrixType) -> Self {
+        let bias_values = match matrix_type {
+            MatrixType::Y1 => (96, 110), // luma-ac
+            MatrixType::Y2 => (96, 108), // luma-dc
+            MatrixType::UV => (110, 115), // chroma
+        };
+
+        let mut m = Self {
+            q: [0; 16],
+            iq: [0; 16],
+            bias: [0; 16],
+            zthresh: [0; 16],
+            sharpen: [0; 16],
+        };
+
+        // Set DC (index 0) and AC (index 1+) values
+        m.q[0] = q_dc;
+        m.q[1] = q_ac;
+
+        // Calculate reciprocals, bias, and zero thresholds for DC and AC
+        for i in 0..2 {
+            let is_ac = i > 0;
+            let bias = if is_ac { bias_values.1 } else { bias_values.0 };
+            m.iq[i] = ((1u64 << QFIX) / m.q[i] as u64) as u32;
+            m.bias[i] = quantization_bias(bias);
+            // zthresh: value such that quantdiv(coeff, iq, bias) is 0 if coeff <= zthresh
+            m.zthresh[i] = ((1 << QFIX) - 1 - m.bias[i]) / m.iq[i];
+        }
+
+        // Replicate AC values for positions 2-15
+        for i in 2..16 {
+            m.q[i] = m.q[1];
+            m.iq[i] = m.iq[1];
+            m.bias[i] = m.bias[1];
+            m.zthresh[i] = m.zthresh[1];
+        }
+
+        // Apply sharpening for Y1 matrix (luma AC)
+        if matches!(matrix_type, MatrixType::Y1) {
+            const SHARPEN_BITS: u32 = 11;
+            for (i, &freq_sharpen) in VP8_FREQ_SHARPENING.iter().enumerate() {
+                m.sharpen[i] = ((freq_sharpen as u32 * m.q[i] as u32) >> SHARPEN_BITS) as u16;
+            }
+        }
+
+        m
+    }
+
+    /// Get the average quantizer value (for lambda calculations)
+    pub fn average_q(&self) -> u32 {
+        let sum: u32 = self.q.iter().map(|&x| x as u32).sum();
+        (sum + 8) >> 4
+    }
+
+    /// Quantize a single coefficient
+    #[inline]
+    pub fn quantize_coeff(&self, coeff: i32, pos: usize) -> i32 {
+        let sign = coeff < 0;
+        let abs_coeff = if sign { -coeff } else { coeff } as u32;
+        let level = quantdiv(abs_coeff, self.iq[pos], self.bias[pos]);
+        if sign { -level } else { level }
+    }
+
+    /// Quantize a single coefficient with neutral bias (for trellis)
+    #[inline]
+    pub fn quantize_neutral(&self, coeff: i32, pos: usize) -> i32 {
+        let sign = coeff < 0;
+        let abs_coeff = if sign { -coeff } else { coeff } as u32;
+        let neutral_bias = quantization_bias(0x00); // neutral
+        let level = quantdiv(abs_coeff, self.iq[pos], neutral_bias);
+        if sign { -level } else { level }
+    }
+
+    /// Dequantize a coefficient
+    #[inline]
+    pub fn dequantize(&self, level: i32, pos: usize) -> i32 {
+        level * self.q[pos] as i32
+    }
+
+    /// Quantize an entire 4x4 block of coefficients in place
+    pub fn quantize(&self, coeffs: &mut [i32; 16]) {
+        for (pos, coeff) in coeffs.iter_mut().enumerate() {
+            let sign = *coeff < 0;
+            let abs_coeff = if sign { -*coeff } else { *coeff } as u32;
+            let level = quantdiv(abs_coeff, self.iq[pos], self.bias[pos]);
+            *coeff = if sign { -level } else { level };
+        }
+    }
+
+    /// Quantize only AC coefficients (positions 1-15) in place, leaving DC unchanged
+    /// This is used for Y1 blocks where the DC goes to the Y2 block
+    pub fn quantize_ac_only(&self, coeffs: &mut [i32; 16]) {
+        for pos in 1..16 {
+            let sign = coeffs[pos] < 0;
+            let abs_coeff = if sign { -coeffs[pos] } else { coeffs[pos] } as u32;
+            let level = quantdiv(abs_coeff, self.iq[pos], self.bias[pos]);
+            coeffs[pos] = if sign { -level } else { level };
+        }
+    }
+
+    /// Dequantize an entire 4x4 block of coefficients in place
+    pub fn dequantize_block(&self, coeffs: &mut [i32; 16]) {
+        for (pos, coeff) in coeffs.iter_mut().enumerate() {
+            *coeff *= self.q[pos] as i32;
+        }
+    }
+
+    /// Dequantize only AC coefficients (positions 1-15) in place
+    pub fn dequantize_ac_only(&self, coeffs: &mut [i32; 16]) {
+        for pos in 1..16 {
+            coeffs[pos] *= self.q[pos] as i32;
+        }
+    }
+}
+
+/// Matrix type for bias selection
+#[derive(Clone, Copy, Debug)]
+pub enum MatrixType {
+    Y1, // Luma AC
+    Y2, // Luma DC (WHT)
+    UV, // Chroma
+}
+
+//------------------------------------------------------------------------------
+// Trellis quantization
+
+/// Maximum cost value for RD optimization
+const MAX_COST: i64 = i64::MAX / 2;
+
+/// Trellis node for dynamic programming
+#[derive(Clone, Copy, Default)]
+struct TrellisNode {
+    prev: i8,   // best previous node (-1, 0, or 1 for delta)
+    sign: bool, // sign of coefficient
+    level: i16, // quantized level
+}
+
+/// Score state for trellis traversal
+#[derive(Clone, Copy)]
+struct TrellisScoreState {
+    score: i64,         // partial RD score
+    level_cost_base: u32, // base cost for this context
+}
+
+impl Default for TrellisScoreState {
+    fn default() -> Self {
+        Self {
+            score: MAX_COST,
+            level_cost_base: 0,
+        }
+    }
+}
+
+/// RD score calculation for trellis
+#[inline]
+fn rd_score_trellis(lambda: u32, rate: i64, distortion: i64) -> i64 {
+    rate * lambda as i64 + (RD_DISTO_MULT as i64) * distortion
+}
+
+/// Simplified level cost for trellis (using fixed costs only)
+#[inline]
+fn level_cost(level: i32) -> u32 {
+    let abs_level = level.unsigned_abs() as usize;
+    if abs_level == 0 {
+        return 0;
+    }
+    let level_clamped = abs_level.min(MAX_LEVEL);
+    // Fixed cost + sign bit (256 = 1 bit)
+    u32::from(VP8_LEVEL_FIXED_COSTS[level_clamped]) + 256
+}
+
+/// Trellis-optimized quantization for a 4x4 block.
+///
+/// Uses dynamic programming to find optimal coefficient levels that minimize
+/// the RD cost: distortion + lambda * rate.
+///
+/// # Arguments
+/// * `coeffs` - Input DCT coefficients (will be modified with reconstructed values)
+/// * `out` - Output quantized levels
+/// * `mtx` - Quantization matrix
+/// * `lambda` - Rate-distortion trade-off parameter
+/// * `first` - First coefficient to process (1 for I16_AC mode, 0 otherwise)
+///
+/// # Returns
+/// True if any non-zero coefficient was produced
+pub fn trellis_quantize_block(
+    coeffs: &mut [i32; 16],
+    out: &mut [i32; 16],
+    mtx: &VP8Matrix,
+    lambda: u32,
+    first: usize,
+) -> bool {
+    // Number of alternate levels to try: level-0 (MIN_DELTA=0) and level+1 (MAX_DELTA=1)
+    const NUM_NODES: usize = 2; // [level, level+1]
+
+    let mut nodes = [[TrellisNode::default(); NUM_NODES]; 16];
+    let mut score_states = [[TrellisScoreState::default(); NUM_NODES]; 2];
+    let mut ss_cur_idx = 0usize;
+    let mut ss_prev_idx = 1usize;
+
+    // Find last significant coefficient based on threshold
+    let thresh = (mtx.q[1] as i64 * mtx.q[1] as i64 / 4) as i32;
+    let mut last = first as i32 - 1;
+    for n in (first..16).rev() {
+        let j = VP8_ZIGZAG[n];
+        let err = coeffs[j] * coeffs[j];
+        if err > thresh {
+            last = n as i32;
+            break;
+        }
+    }
+    // Extend by one to not lose too much
+    if last < 15 {
+        last += 1;
+    }
+
+    // Best path tracking: [last_pos, level_delta, prev_delta]
+    let mut best_path = [-1i32; 3];
+
+    // Initialize: compute skip score (all zeros)
+    // Skip cost is approximately 1 bit
+    let skip_cost = 256i64;
+    let mut best_score = rd_score_trellis(lambda, skip_cost, 0);
+
+    // Initialize source nodes
+    for delta in 0..NUM_NODES {
+        score_states[ss_cur_idx][delta] = TrellisScoreState {
+            score: rd_score_trellis(lambda, 0, 0),
+            level_cost_base: 0,
+        };
+    }
+
+    // Traverse trellis
+    for n in first..=last as usize {
+        let j = VP8_ZIGZAG[n];
+        let q = mtx.q[j] as i32;
+        let iq = mtx.iq[j];
+        let neutral_bias = quantization_bias(0x00);
+
+        // Get sign from original coefficient
+        let sign = coeffs[j] < 0;
+        let abs_coeff = if sign { -coeffs[j] } else { coeffs[j] };
+        let coeff_with_sharpen = abs_coeff + mtx.sharpen[j] as i32;
+
+        // Base quantized level with neutral bias
+        let level0 = quantdiv(coeff_with_sharpen as u32, iq, neutral_bias).min(MAX_LEVEL as i32);
+
+        // Threshold level for pruning
+        let thresh_bias = quantization_bias(0x80);
+        let thresh_level = quantdiv(coeff_with_sharpen as u32, iq, thresh_bias).min(MAX_LEVEL as i32);
+
+        // Swap score state indices
+        std::mem::swap(&mut ss_cur_idx, &mut ss_prev_idx);
+
+        // Test all alternate level values: level0 and level0+1
+        for delta in 0..NUM_NODES {
+            let node = &mut nodes[n][delta];
+            let level = level0 + delta as i32;
+
+            // Reset current score state
+            score_states[ss_cur_idx][delta] = TrellisScoreState::default();
+
+            // Skip invalid levels
+            if level < 0 || level > thresh_level {
+                continue;
+            }
+
+            // Compute distortion delta
+            let new_error = coeff_with_sharpen - level * q;
+            let orig_error_sq = (coeff_with_sharpen * coeff_with_sharpen) as i64;
+            let new_error_sq = (new_error * new_error) as i64;
+            let weight = VP8_WEIGHT_TRELLIS[j] as i64;
+            let delta_distortion = weight * (new_error_sq - orig_error_sq);
+
+            let base_score = rd_score_trellis(lambda, 0, delta_distortion);
+
+            // Find best predecessor
+            let cost0 = level_cost(level) as i64;
+            let mut best_cur_score = score_states[ss_prev_idx][0].score + rd_score_trellis(lambda, cost0, 0);
+            let mut best_prev = 0i8;
+
+            for p in 1..NUM_NODES {
+                let cost = level_cost(level) as i64;
+                let score = score_states[ss_prev_idx][p].score + rd_score_trellis(lambda, cost, 0);
+                if score < best_cur_score {
+                    best_cur_score = score;
+                    best_prev = p as i8;
+                }
+            }
+
+            best_cur_score += base_score;
+
+            // Store in node
+            node.sign = sign;
+            node.level = level as i16;
+            node.prev = best_prev;
+            score_states[ss_cur_idx][delta].score = best_cur_score;
+
+            // Check if this is the best terminal node
+            if level != 0 && best_cur_score < best_score {
+                // Add end-of-block cost (approximately 0.5 bits if not at end)
+                let eob_cost = if n < 15 { 128i64 } else { 0 };
+                let terminal_score = best_cur_score + rd_score_trellis(lambda, eob_cost, 0);
+                if terminal_score < best_score {
+                    best_score = terminal_score;
+                    best_path[0] = n as i32;
+                    best_path[1] = delta as i32;
+                    best_path[2] = best_prev as i32;
+                }
+            }
+        }
+    }
+
+    // Clear output
+    if first == 1 {
+        // Preserve DC for I16_AC mode
+        out[1..].fill(0);
+        coeffs[1..].fill(0);
+    } else {
+        out.fill(0);
+        coeffs.fill(0);
+    }
+
+    // No non-zero coefficients - skip block
+    if best_path[0] == -1 {
+        return false;
+    }
+
+    // Unwind best path
+    let mut has_nz = false;
+    let mut best_node_delta = best_path[1] as usize;
+    let mut n = best_path[0] as usize;
+
+    // Patch the prev for the terminal node
+    nodes[n][best_node_delta].prev = best_path[2] as i8;
+
+    loop {
+        let node = &nodes[n][best_node_delta];
+        let j = VP8_ZIGZAG[n];
+        let level = if node.sign { -node.level as i32 } else { node.level as i32 };
+
+        out[n] = level;
+        has_nz |= level != 0;
+
+        // Reconstruct coefficient for subsequent prediction
+        coeffs[j] = level * mtx.q[j] as i32;
+
+        if n == first {
+            break;
+        }
+        best_node_delta = node.prev as usize;
+        n -= 1;
+    }
+
+    has_nz
 }
 
 //------------------------------------------------------------------------------

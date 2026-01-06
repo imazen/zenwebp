@@ -715,7 +715,9 @@ pub(crate) const AC_QUANT: [i16; 128] = [
 
 pub(crate) const ZIGZAG: [u8; 16] = [0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15];
 
-#[derive(Clone, Copy, Default)]
+use crate::vp8_cost::{MatrixType, VP8Matrix};
+
+#[derive(Clone, Default)]
 pub(crate) struct Segment {
     pub(crate) ydc: i16,
     pub(crate) yac: i16,
@@ -730,4 +732,30 @@ pub(crate) struct Segment {
 
     pub(crate) quantizer_level: i8,
     pub(crate) loopfilter_level: i8,
+
+    // Quantization matrices for trellis optimization
+    pub(crate) y1_matrix: Option<VP8Matrix>,
+    pub(crate) y2_matrix: Option<VP8Matrix>,
+    pub(crate) uv_matrix: Option<VP8Matrix>,
+}
+
+impl Segment {
+    /// Initialize quantization matrices from the quantizer values
+    pub(crate) fn init_matrices(&mut self) {
+        self.y1_matrix = Some(VP8Matrix::new(
+            self.ydc as u16,
+            self.yac as u16,
+            MatrixType::Y1,
+        ));
+        self.y2_matrix = Some(VP8Matrix::new(
+            self.y2dc as u16,
+            self.y2ac as u16,
+            MatrixType::Y2,
+        ));
+        self.uv_matrix = Some(VP8Matrix::new(
+            self.uvdc as u16,
+            self.uvac as u16,
+            MatrixType::UV,
+        ));
+    }
 }

@@ -298,7 +298,6 @@ impl<R: Read> Vp8Decoder<R> {
     /// The reader must present a raw vp8 bitstream to the decoder
     fn new(r: R) -> Self {
         let f = Frame::default();
-        let s = Segment::default();
 
         Self {
             r,
@@ -311,7 +310,7 @@ impl<R: Read> Vp8Decoder<R> {
             frame: f,
             segments_enabled: false,
             segments_update_map: false,
-            segment: [s; MAX_SEGMENTS],
+            segment: std::array::from_fn(|_| Segment::default()),
 
             loop_filter_adjustments_enabled: false,
             ref_delta: [0; 4],
@@ -1189,7 +1188,7 @@ impl<R: Read> Vp8Decoder<R> {
 
     //return values are the filter level, interior limit and hev threshold
     fn calculate_filter_parameters(&self, macroblock: &MacroBlock) -> (u8, u8, u8) {
-        let segment = self.segment[macroblock.segmentid as usize];
+        let segment = &self.segment[macroblock.segmentid as usize];
         let mut filter_level = i32::from(self.frame.filter_level);
 
         // if frame level filter level is 0, we must skip loop filter

@@ -168,13 +168,11 @@ struct Vp8Encoder<W> {
 
 impl<W: Write> Vp8Encoder<W> {
     fn new(writer: W) -> Self {
-        let segment = Segment::default();
-
         Self {
             writer,
             frame: Frame::default(),
             encoder: ArithmeticEncoder::new(),
-            segments: [segment; MAX_SEGMENTS],
+            segments: std::array::from_fn(|_| Segment::default()),
             segments_enabled: false,
 
             loop_filter_adjustments: false,
@@ -410,7 +408,11 @@ impl<W: Write> Vp8Encoder<W> {
         };
 
         // TODO: change to get index from macroblock
-        let segment = self.segments[macroblock_info.segment_id.unwrap_or(0)];
+        // Extract segment values upfront to avoid borrow conflicts
+        let segment = &self.segments[macroblock_info.segment_id.unwrap_or(0)];
+        let (y2dc, y2ac) = (segment.y2dc, segment.y2ac);
+        let (ydc, yac) = (segment.ydc, segment.yac);
+        let (uvdc, uvac) = (segment.uvdc, segment.uvac);
 
         // Y2
         if plane == Plane::Y2 {
@@ -427,8 +429,8 @@ impl<W: Write> Vp8Encoder<W> {
                 partition_index,
                 plane,
                 complexity.into(),
-                segment.y2dc,
-                segment.y2ac,
+                y2dc,
+                y2ac,
             );
 
             self.left_complexity.y2 = if has_coeffs { 1 } else { 0 };
@@ -454,8 +456,8 @@ impl<W: Write> Vp8Encoder<W> {
                     partition_index,
                     plane,
                     complexity.into(),
-                    segment.ydc,
-                    segment.yac,
+                    ydc,
+                    yac,
                 );
 
                 left = if has_coeffs { 1 } else { 0 };
@@ -483,8 +485,8 @@ impl<W: Write> Vp8Encoder<W> {
                     partition_index,
                     plane,
                     complexity.into(),
-                    segment.uvdc,
-                    segment.uvac,
+                    uvdc,
+                    uvac,
                 );
 
                 left = if has_coeffs { 1 } else { 0 };
@@ -509,8 +511,8 @@ impl<W: Write> Vp8Encoder<W> {
                     partition_index,
                     plane,
                     complexity.into(),
-                    segment.uvdc,
-                    segment.uvac,
+                    uvdc,
+                    uvac,
                 );
 
                 left = if has_coeffs { 1 } else { 0 };
@@ -547,6 +549,7 @@ impl<W: Write> Vp8Encoder<W> {
         let mut zigzag_block = [0i32; 16];
         for i in first_coeff..16 {
             let zigzag_index = usize::from(ZIGZAG[i]);
+            // Simple division quantization (consistent with reconstruction)
             let quant = if zigzag_index > 0 { ac_quant } else { dc_quant };
             zigzag_block[i] = block[zigzag_index] / i32::from(quant);
         }
@@ -769,7 +772,7 @@ impl<W: Write> Vp8Encoder<W> {
     fn pick_best_intra16(&self, mbx: usize, mby: usize) -> (LumaMode, u64) {
         let mbw = usize::from(self.macroblock_width);
         let src_width = mbw * 16;
-        let segment = self.segments[0];
+        let segment = &self.segments[0];
 
         // The 4 modes to try for 16x16 luma prediction (order matches FIXED_COSTS_I16)
         const MODES: [LumaMode; 4] = [LumaMode::DC, LumaMode::V, LumaMode::H, LumaMode::TM];
@@ -951,7 +954,7 @@ impl<W: Write> Vp8Encoder<W> {
         let mut y_with_border =
             create_border_luma(mbx, mby, mbw, &self.top_border_y, &self.left_border_y);
 
-        let segment = self.segments[0];
+        let segment = &self.segments[0];
 
         // Process each subblock in raster order
         for sby in 0usize..4 {
@@ -1185,7 +1188,7 @@ impl<W: Write> Vp8Encoder<W> {
         };
         self.quantization_indices = quantization_indices;
 
-        let segment = Segment {
+        let mut segment = Segment {
             ydc: DC_QUANT[quant_index_usize],
             yac: AC_QUANT[quant_index_usize],
             y2dc: DC_QUANT[quant_index_usize] * 2,
@@ -1194,6 +1197,8 @@ impl<W: Write> Vp8Encoder<W> {
             uvac: AC_QUANT[quant_index_usize],
             ..Default::default()
         };
+        // Initialize quantization matrices for trellis optimization
+        segment.init_matrices();
         self.segments[0] = segment;
 
         self.left_border_y = [129u8; 16 + 1];
@@ -1276,6 +1281,7 @@ impl<W: Write> Vp8Encoder<W> {
     }
 
     // converts the predicted y block to the coeffs
+    // Note: Quantization here must match encode_coefficients for correct reconstruction
     fn get_luma_block_coeffs_16x16(
         &self,
         mut luma_blocks: [i32; 16 * 16],
@@ -1284,6 +1290,8 @@ impl<W: Write> Vp8Encoder<W> {
         let mut coeffs0 = get_coeffs0_from_block(&luma_blocks);
         // wht transform the y2 block and quantize it
         transform::wht4x4(&mut coeffs0);
+
+        // Simple quantization (must match encode_coefficients)
         for (index, value) in coeffs0.iter_mut().enumerate() {
             let quant = if index > 0 {
                 segment.y2ac
@@ -1293,7 +1301,7 @@ impl<W: Write> Vp8Encoder<W> {
             *value /= i32::from(quant);
         }
 
-        // quantize the y blocks
+        // quantize the y blocks - DC goes to Y2, only quantize AC
         for y_block in luma_blocks.chunks_exact_mut(16) {
             for (index, y_value) in y_block.iter_mut().enumerate() {
                 if index == 0 {
@@ -1315,8 +1323,9 @@ impl<W: Write> Vp8Encoder<W> {
         coeffs: &mut Luma16x16Coeffs,
     ) -> [i32; 16 * 16] {
         let mut dequantized_luma_residue = [0i32; 16 * 16];
-        let segment = self.segments[0];
+        let segment = &self.segments[0];
 
+        // Dequantize Y2 block
         for (k, y2_coeff) in coeffs.y2_coeffs.iter_mut().enumerate() {
             let quant = if k > 0 { segment.y2ac } else { segment.y2dc };
             *y2_coeff *= i32::from(quant);
@@ -1364,7 +1373,7 @@ impl<W: Write> Vp8Encoder<W> {
             self.get_predicted_luma_block_16x16(macroblock_info.luma_mode, mbx, mby);
         let luma_blocks = self.get_luma_blocks_from_predicted_16x16(&y_with_border, mbx, mby);
 
-        let segment = self.segments[macroblock_info.segment_id.unwrap_or(0)];
+        let segment = &self.segments[macroblock_info.segment_id.unwrap_or(0)];
 
         // get coeffs
         let mut coeffs = self.get_luma_block_coeffs_16x16(luma_blocks, &segment);
@@ -1420,7 +1429,7 @@ impl<W: Write> Vp8Encoder<W> {
             &self.left_border_y,
         );
 
-        let segment = self.segments[0];
+        let segment = &self.segments[0];
 
         for sby in 0usize..4 {
             for sbx in 0usize..4 {
@@ -1561,7 +1570,7 @@ impl<W: Write> Vp8Encoder<W> {
 
     fn get_chroma_block_coeffs(&self, chroma_blocks: [i32; 16 * 4]) -> ChromaCoeffs {
         let mut chroma_coeffs: ChromaCoeffs = [0i32; 16 * 4];
-        let segment = self.segments[0];
+        let segment = &self.segments[0];
 
         for (block, coeff_block) in chroma_blocks
             .chunks_exact(16)
@@ -1585,7 +1594,7 @@ impl<W: Write> Vp8Encoder<W> {
         chroma_coeffs: &ChromaCoeffs,
     ) -> [i32; 16 * 4] {
         let mut dequantized_blocks = [0i32; 16 * 4];
-        let segment = self.segments[0];
+        let segment = &self.segments[0];
 
         for (coeffs_block, dequant_block) in chroma_coeffs
             .chunks_exact(16)
