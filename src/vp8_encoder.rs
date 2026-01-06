@@ -235,11 +235,13 @@ impl<W: Write> Vp8Encoder<W> {
             proba_stats: ProbaStats::new(),
             updated_probs: None,
             level_costs: LevelCosts::new(),
-            // Trellis quantization disabled: our simplified cost model (level_cost)
-            // doesn't use probability-dependent costs, which causes it to favor
-            // non-zero coefficients inappropriately. To fix, we would need to pass
-            // probability tables and use VP8LevelCost-like calculation with context.
-            // See tests in vp8_cost.rs for analysis (test_trellis_debug_block).
+            // Trellis quantization uses probability-dependent costs with context tracking.
+            // Currently disabled because the cost model needs more calibration:
+            // - Skip cost initialization uses approximate probability
+            // - EOB cost uses fixed approximation
+            // - May need to verify Plane vs TokenType indexing matches LevelCosts
+            // With trellis: smaller files but lower quality metrics
+            // Without trellis: larger files but better SSIMULACRA2
             do_trellis: false,
             // Error diffusion improves quality in smooth gradients
             do_error_diffusion: true,
@@ -817,7 +819,17 @@ impl<W: Write> Vp8Encoder<W> {
         if let Some(lambda) = trellis_lambda {
             // Trellis quantization for better RD optimization
             let mut coeffs = *block;
-            trellis_quantize_block(&mut coeffs, &mut zigzag_block, matrix, lambda, first_coeff);
+            let ctype = plane as usize;
+            trellis_quantize_block(
+                &mut coeffs,
+                &mut zigzag_block,
+                matrix,
+                lambda,
+                first_coeff,
+                &self.level_costs,
+                ctype,
+                complexity,
+            );
         } else {
             // Simple quantization
             for i in first_coeff..16 {
@@ -1076,10 +1088,24 @@ impl<W: Write> Vp8Encoder<W> {
                 // Quantize to zigzag order
                 let mut zigzag = [0i32; 16];
 
+                let top = self.top_complexity[mbx].y[x];
+                let ctx0 = (left + top).min(2) as usize;
+
                 if self.do_trellis {
                     // Trellis quantization: optimizes coefficient levels for RD
                     let mut coeffs = *block;
-                    trellis_quantize_block(&mut coeffs, &mut zigzag, &y1_matrix, trellis_lambda, first_coeff);
+                    // Use same ctype as record_coeffs: TokenType I4=3 or I16AC=1
+                    let ctype = token_type as usize;
+                    trellis_quantize_block(
+                        &mut coeffs,
+                        &mut zigzag,
+                        &y1_matrix,
+                        trellis_lambda,
+                        first_coeff,
+                        &self.level_costs,
+                        ctype,
+                        ctx0,
+                    );
                 } else {
                     // Simple quantization
                     for i in first_coeff..16 {
@@ -1088,14 +1114,11 @@ impl<W: Write> Vp8Encoder<W> {
                     }
                 }
 
-                let top = self.top_complexity[mbx].y[x];
-                let complexity = (left + top).min(2);
-
                 record_coeffs(
                     &zigzag,
                     token_type,
                     first_coeff,
-                    complexity as usize,
+                    ctx0,
                     &mut self.proba_stats,
                 );
 
