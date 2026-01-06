@@ -233,6 +233,82 @@ pub(crate) fn predict_dcpred(a: &mut [u8], size: usize, stride: usize, above: bo
     }
 }
 
+/// DC prediction for 16x16 luma block
+/// Takes a bordered block buffer and fills the 16x16 prediction area
+/// `x0` and `y0` specify the top-left corner in the buffer (typically 1,1 for bordered blocks)
+#[inline]
+pub(crate) fn predict_dc_16x16(a: &mut [u8], stride: usize, x0: usize, y0: usize) {
+    let above = y0 > 0;
+    let left = x0 > 0;
+
+    let mut sum = 0u32;
+    let mut shf = 3; // log2(16) - 1 = 3
+
+    if left {
+        for y in 0..16 {
+            sum += u32::from(a[(y0 + y) * stride + (x0 - 1)]);
+        }
+        shf += 1;
+    }
+
+    if above {
+        for x in 0..16 {
+            sum += u32::from(a[(y0 - 1) * stride + x0 + x]);
+        }
+        shf += 1;
+    }
+
+    let dcval = if !left && !above {
+        128u8
+    } else {
+        ((sum + (1 << (shf - 1))) >> shf) as u8
+    };
+
+    for y in 0..16 {
+        for x in 0..16 {
+            a[(y0 + y) * stride + x0 + x] = dcval;
+        }
+    }
+}
+
+/// DC prediction for 8x8 chroma block
+/// Takes a bordered block buffer and fills the 8x8 prediction area
+/// `x0` and `y0` specify the top-left corner in the buffer (typically 1,1 for bordered blocks)
+#[inline]
+pub(crate) fn predict_dc_8x8(a: &mut [u8], stride: usize, x0: usize, y0: usize) {
+    let above = y0 > 0;
+    let left = x0 > 0;
+
+    let mut sum = 0u32;
+    let mut shf = 2; // log2(8) - 1 = 2
+
+    if left {
+        for y in 0..8 {
+            sum += u32::from(a[(y0 + y) * stride + (x0 - 1)]);
+        }
+        shf += 1;
+    }
+
+    if above {
+        for x in 0..8 {
+            sum += u32::from(a[(y0 - 1) * stride + x0 + x]);
+        }
+        shf += 1;
+    }
+
+    let dcval = if !left && !above {
+        128u8
+    } else {
+        ((sum + (1 << (shf - 1))) >> shf) as u8
+    };
+
+    for y in 0..8 {
+        for x in 0..8 {
+            a[(y0 + y) * stride + x0 + x] = dcval;
+        }
+    }
+}
+
 // Clippy suggests the clamp method, but it seems to optimize worse as of rustc 1.82.0 nightly.
 #[allow(clippy::manual_clamp)]
 pub(crate) fn predict_tmpred(a: &mut [u8], size: usize, x0: usize, y0: usize, stride: usize) {
