@@ -109,7 +109,107 @@ Premature benchmarking wastes time because:
 - [x] LevelCosts struct with probability-dependent cost tables
 - [x] Proper context tracking (top_nz/left_nz) for accurate coefficient costs
 
-### Not Implemented (Optional/Minor)
+---
+
+## Feature Inventory: Ours vs libwebp
+
+### ✅ Fully Implemented and Used
+
+| Feature | Our Implementation | libwebp Equivalent | Status |
+|---------|-------------------|-------------------|--------|
+| Boolean arithmetic encoder | `vp8_arithmetic_encoder.rs` | `vp8l_enc.c` | ✅ Working |
+| DCT/IDCT transforms | `transform.rs` | `dsp/enc.c` | ✅ Working |
+| Biased quantization | `VP8Matrix::quantdiv()` | `VP8Quantize*()` | ✅ Working |
+| Two-pass token probability updates | `encode_with_updates()` | `VP8EncTokenLoop()` | ✅ Working |
+| DCT-based segment analysis | `setup_segment_quantization()` | `VP8MBAnalyze()` | ✅ Full port |
+| K-means segment assignment | `assign_segments_kmeans()` | `AssignSegments()` | ✅ Full port |
+| SNS segment quantization | `compute_segment_quant()` | `SetSegmentAlphas()` | ✅ Full port |
+| Loop filter level computation | `compute_filter_level()` | `VP8FilterStrengthFromDelta()` | ✅ Full port |
+| Quality-to-quant mapping | Non-linear curve | Same | ✅ Ported |
+| RD-based I16 mode selection | `pick_best_luma_mode()` | `VP8MakeIntra16Preds()` | ✅ Working |
+| RD-based chroma mode selection | `pick_best_chroma_mode()` | `VP8MakeChroma8Preds()` | ✅ Working |
+| Intra4 mode selection | `pick_best_intra4()` | `VP8MakeLuma4Preds()` | ✅ Working |
+| VP8GetCostLuma4 coefficient costs | `get_cost_luma4()` | `VP8GetCostLuma4()` | ✅ Full port |
+| LevelCosts with remapped tables | `LevelCosts` struct | `VP8CalculateLevelCosts()` | ✅ Full port |
+| Skip detection | `check_all_coeffs_zero()` | `VP8SetSkip()` | ✅ Working |
+
+### ⚠️ Exists But NOT Used
+
+| Feature | Our Code | Problem | Impact |
+|---------|----------|---------|--------|
+| Trellis quantization | `trellis_quantize_block()` in `vp8_cost.rs` | Function exists but never called from encoder | HIGH - ~5-10% size savings |
+
+### ❌ Hardcoded / Suboptimal
+
+| Feature | Our Implementation | libwebp Implementation | Gap |
+|---------|-------------------|----------------------|-----|
+| Skip probability | Hardcoded `200` | Computed from actual skip count: `CalcSkipProba(nb_skip, nb_mbs)` | LOW - minor bitstream overhead |
+
+### ❌ Not Implemented
+
+| Feature | libwebp Implementation | Impact | Priority |
+|---------|----------------------|--------|----------|
+| **Chroma error diffusion** | `CorrectDCValues()` for quality ≤ 98 | MEDIUM - reduces banding in gradients | Medium |
+| **Autofilter** | `lf_stats` + `VP8AdjustFilterStrength()` | LOW - auto-tunes filter strength | Low |
+| **Multi-pass rate control** | `config->pass > 1` | LOW - for target size encoding | Low |
+| **Target size encoding** | `config->target_size` | LOW - specific use case | Low |
+| SmoothSegmentMap | Optional when `preprocessing & 1` | LOW - smooths segment boundaries | Very Low |
+| FastMBAnalyze | Method <= 1 fast path | N/A - speed optimization only | Very Low |
+
+---
+
+## Priority Action Items
+
+### HIGH Priority: Enable Trellis Quantization
+**Status**: Code exists in `vp8_cost.rs` but is never called!
+
+The `trellis_quantize_block()` function is fully implemented but not integrated into the encoding loop. This is likely the single biggest missing optimization.
+
+**To enable:**
+1. Call trellis quantization after initial quantization in `encode_block()`
+2. Use for both I16 and I4 modes
+3. Estimated impact: 5-10% size reduction at equal quality
+
+### MEDIUM Priority: Compute Skip Probability from Data
+**Status**: Hardcoded to 200
+
+libwebp computes optimal skip probability:
+```c
+proba->skip_proba = CalcSkipProba(nb_events, nb_mbs);
+proba->use_skip_proba = (skip_proba < SKIP_PROBA_THRESHOLD);  // threshold = 250
+```
+
+**To fix:**
+1. Count actual skipped macroblocks during first pass
+2. Compute probability: `255 * (total - skipped) / total`
+3. Only enable if probability < 250
+
+### MEDIUM Priority: Chroma Error Diffusion
+**Status**: Not implemented
+
+libwebp uses Floyd-Steinberg-style error diffusion for **chroma DC coefficients only** at quality ≤ 98:
+
+```
+        | top[0] | top[1]
+--------+--------+---------
+left[0] | c[0]   | c[1]   ->  err0 err1
+left[1] | c[2]   | c[3]       err2 err3
+```
+
+- Spreads quantization error from each chroma block's DC to neighbors
+- Reduces visible banding in smooth color gradients
+- **Affects perceptual quality more than PSNR** (error redistributed, not eliminated)
+- Important for images with smooth gradients (sky, skin tones)
+
+**Implementation notes:**
+- Track `top_derr[mb_w][2][2]` (per-column, per-channel, top/left)
+- Track `left_derr[2][2]` (per-channel, top/left)
+- Apply correction to UV DC coefficients before quantization
+- Store resulting errors for next macroblock
+
+---
+
+### Not Implemented (Optional/Minor - Very Low Priority)
 - [ ] SmoothSegmentMap - Optional post-processing when `preprocessing & 1` is set
 - [ ] FastMBAnalyze - Fast path for low-quality encoding (method <= 1)
 - [ ] Mode pre-selection storage - libwebp stores best modes during analysis for reuse in encoding
