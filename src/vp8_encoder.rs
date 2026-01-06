@@ -148,13 +148,6 @@ struct MacroblockInfo {
     coeffs_skipped: bool,
 }
 
-struct Luma16x16Coeffs {
-    y2_coeffs: [i32; 16],
-    y_coeffs: LumaYCoeffs,
-}
-
-type LumaYCoeffs = [i32; 16 * 16];
-
 type ChromaCoeffs = [i32; 16 * 4];
 
 struct Vp8Encoder<W> {
@@ -236,13 +229,8 @@ impl<W: Write> Vp8Encoder<W> {
             updated_probs: None,
             level_costs: LevelCosts::new(),
             // Trellis quantization for RD-optimized coefficient selection.
-            // Currently disabled because it significantly degrades quality:
-            // - At Q75: 8930 bytes with trellis vs 9200 bytes without
-            // - SSIMULACRA2: 10.29 with trellis vs 21.02 without
-            // The trellis implementation follows libwebp's approach with proper
-            // probability-dependent EOB and skip costs, but still over-quantizes.
-            // Root cause unclear - possibly lambda tuning or cost model mismatch.
-            do_trellis: false,
+            // Uses proper probability-dependent init/EOB/skip costs from LevelCosts.
+            do_trellis: true,
             // Error diffusion improves quality in smooth gradients
             do_error_diffusion: true,
 
@@ -2209,72 +2197,6 @@ impl<W: Write> Vp8Encoder<W> {
         luma_blocks
     }
 
-    // converts the predicted y block to the coeffs
-    // Note: Quantization here must match encode_coefficients for correct reconstruction
-    fn get_luma_block_coeffs_16x16(
-        &self,
-        mut luma_blocks: [i32; 16 * 16],
-        segment: &Segment,
-    ) -> Luma16x16Coeffs {
-        let mut coeffs0 = get_coeffs0_from_block(&luma_blocks);
-        // wht transform the y2 block and quantize it
-        transform::wht4x4(&mut coeffs0);
-
-        // Use VP8Matrix biased quantization (must match encode_coefficients)
-        let y2_matrix = segment.y2_matrix.as_ref().unwrap();
-        for (index, value) in coeffs0.iter_mut().enumerate() {
-            *value = y2_matrix.quantize_coeff(*value, index);
-        }
-
-        // quantize the y blocks - DC goes to Y2, only quantize AC
-        let y1_matrix = segment.y1_matrix.as_ref().unwrap();
-        for y_block in luma_blocks.chunks_exact_mut(16) {
-            for (index, y_value) in y_block.iter_mut().enumerate() {
-                if index == 0 {
-                    *y_value = 0;
-                } else {
-                    *y_value = y1_matrix.quantize_coeff(*y_value, index);
-                }
-            }
-        }
-
-        Luma16x16Coeffs {
-            y2_coeffs: coeffs0,
-            y_coeffs: luma_blocks,
-        }
-    }
-
-    fn get_dequantized_blocks_from_coeffs_luma_16x16(
-        &self,
-        coeffs: &mut Luma16x16Coeffs,
-        segment: &Segment,
-    ) -> [i32; 16 * 16] {
-        let mut dequantized_luma_residue = [0i32; 16 * 16];
-        let y2_matrix = segment.y2_matrix.as_ref().unwrap();
-        let y1_matrix = segment.y1_matrix.as_ref().unwrap();
-
-        // Dequantize Y2 block using VP8Matrix
-        for (k, y2_coeff) in coeffs.y2_coeffs.iter_mut().enumerate() {
-            *y2_coeff = y2_matrix.dequantize(*y2_coeff, k);
-        }
-        transform::iwht4x4(&mut coeffs.y2_coeffs);
-
-        // de-quantize the y blocks as well as do the inverse transform
-        for (k, luma_block) in coeffs.y_coeffs.chunks_exact_mut(16).enumerate() {
-            for (idx, y_value) in luma_block[1..].iter_mut().enumerate() {
-                *y_value = y1_matrix.dequantize(*y_value, idx + 1);
-            }
-
-            luma_block[0] = coeffs.y2_coeffs[k];
-
-            transform::idct4x4(luma_block);
-
-            dequantized_luma_residue[k * 16..][..16].copy_from_slice(luma_block);
-        }
-
-        dequantized_luma_residue
-    }
-
     // Transforms the luma macroblock in the following ways
     // 1. Does the luma prediction and subtracts from the block
     // 2. Converts the block so each 4x4 subblock is contiguous within the block
@@ -2301,21 +2223,102 @@ impl<W: Write> Vp8Encoder<W> {
         let luma_blocks = self.get_luma_blocks_from_predicted_16x16(&y_with_border, mbx, mby);
 
         let segment = &self.segments[macroblock_info.segment_id.unwrap_or(0)];
+        let y1_matrix = segment.y1_matrix.as_ref().unwrap();
+        let y2_matrix = segment.y2_matrix.as_ref().unwrap();
 
-        // get coeffs
-        let mut coeffs = self.get_luma_block_coeffs_16x16(luma_blocks, &segment);
+        // Y2 (DC) block: no trellis, simple quantization
+        let mut coeffs0 = get_coeffs0_from_block(&luma_blocks);
+        transform::wht4x4(&mut coeffs0);
+        for (index, value) in coeffs0.iter_mut().enumerate() {
+            *value = y2_matrix.quantize_coeff(*value, index);
+        }
 
-        // now we're essentially applying the same functions as the decoder in order to ensure
-        // that the border is the same as the one used for the decoder in the same macroblock
-        let dequantized_blocks =
-            self.get_dequantized_blocks_from_coeffs_luma_16x16(&mut coeffs, segment);
+        // Y1 blocks (AC only): use trellis if enabled
+        let trellis_lambda = if self.do_trellis {
+            Some(segment.lambda_trellis_i16)
+        } else {
+            None
+        };
 
-        // re-use the y_with_border from earlier since the prediction is still valid
-        // applies the same thing as the decoder so that the border will line up
+        // Track non-zero context for trellis (I16_AC uses ctype=0)
+        // IMPORTANT: Initialize from global state to match encode_residual
+        let mut top_nz = [
+            self.top_complexity[mbx].y[0] != 0,
+            self.top_complexity[mbx].y[1] != 0,
+            self.top_complexity[mbx].y[2] != 0,
+            self.top_complexity[mbx].y[3] != 0,
+        ];
+        let mut left_nz = [
+            self.left_complexity.y[0] != 0,
+            self.left_complexity.y[1] != 0,
+            self.left_complexity.y[2] != 0,
+            self.left_complexity.y[3] != 0,
+        ];
+
+        // Dequantize Y2 for reconstruction
+        let mut y2_dequant = coeffs0;
+        for (k, y2_coeff) in y2_dequant.iter_mut().enumerate() {
+            *y2_coeff = y2_matrix.dequantize(*y2_coeff, k);
+        }
+        transform::iwht4x4(&mut y2_dequant);
+
+        // Process each Y1 block
+        let mut dequantized_blocks = [0i32; 16 * 16];
+        for y in 0usize..4 {
+            for x in 0usize..4 {
+                let i = y * 4 + x;
+                let mut block = luma_blocks[i * 16..][..16].try_into().unwrap();
+
+                // Apply DCT was already done, now quantize
+                let dequant_block = if let Some(lambda) = trellis_lambda {
+                    // Trellis quantization for better RD trade-off
+                    let ctx0 = (u8::from(left_nz[y]) + u8::from(top_nz[x])).min(2) as usize;
+                    let mut zigzag_out = [0i32; 16];
+                    let has_nz = trellis_quantize_block(
+                        &mut block,
+                        &mut zigzag_out,
+                        y1_matrix,
+                        lambda,
+                        1, // first=1 for I16_AC (AC only)
+                        &self.level_costs,
+                        0, // ctype=0 for I16_AC
+                        ctx0,
+                    );
+                    top_nz[x] = has_nz;
+                    left_nz[y] = has_nz;
+                    // block now contains dequantized values at natural indices
+                    block
+                } else {
+                    // Simple quantization
+                    let mut has_nz = false;
+                    for (idx, y_value) in block.iter_mut().enumerate() {
+                        if idx == 0 {
+                            *y_value = 0; // DC goes to Y2
+                        } else {
+                            let level = y1_matrix.quantize_coeff(*y_value, idx);
+                            has_nz |= level != 0;
+                            *y_value = y1_matrix.dequantize(level, idx);
+                        }
+                    }
+                    top_nz[x] = has_nz;
+                    left_nz[y] = has_nz;
+                    block
+                };
+
+                // Add Y2 DC component
+                let mut full_block = dequant_block;
+                full_block[0] = y2_dequant[i];
+
+                // IDCT
+                transform::idct4x4(&mut full_block);
+                dequantized_blocks[i * 16..][..16].copy_from_slice(&full_block);
+            }
+        }
+
+        // Apply residue to each block
         for y in 0usize..4 {
             for x in 0usize..4 {
                 let i = x + y * 4;
-                // Create a reference to a [i32; 16] array for add_residue (slices of size 16 do not work).
                 let rb: &[i32; 16] = dequantized_blocks[i * 16..][..16].try_into().unwrap();
                 let y0 = 1 + y * 4;
                 let x0 = 1 + x * 4;
@@ -2358,6 +2361,26 @@ impl<W: Write> Vp8Encoder<W> {
         );
 
         let segment = self.get_segment_for_mb(mbx, mby);
+        let trellis_lambda = if self.do_trellis {
+            Some(segment.lambda_trellis_i4)
+        } else {
+            None
+        };
+
+        // Track non-zero context for trellis (I4 uses ctype=3)
+        // IMPORTANT: Initialize from global state to match encode_residual
+        let mut top_nz = [
+            self.top_complexity[mbx].y[0] != 0,
+            self.top_complexity[mbx].y[1] != 0,
+            self.top_complexity[mbx].y[2] != 0,
+            self.top_complexity[mbx].y[3] != 0,
+        ];
+        let mut left_nz = [
+            self.left_complexity.y[0] != 0,
+            self.left_complexity.y[1] != 0,
+            self.left_complexity.y[2] != 0,
+            self.left_complexity.y[3] != 0,
+        ];
 
         for sby in 0usize..4 {
             for sbx in 0usize..4 {
@@ -2399,12 +2422,42 @@ impl<W: Write> Vp8Encoder<W> {
 
                 luma_blocks[block_index..][..16].copy_from_slice(&current_subblock);
 
-                // quantize and de-quantize the subblock using VP8Matrix
+                // quantize and de-quantize the subblock
+                // IMPORTANT: Must use same quantization method as encode_coefficients
+                // to avoid prediction mismatch between encoder and decoder
                 let y1_matrix = segment.y1_matrix.as_ref().unwrap();
-                for (index, y_value) in current_subblock.iter_mut().enumerate() {
-                    let level = y1_matrix.quantize_coeff(*y_value, index);
-                    *y_value = y1_matrix.dequantize(level, index);
-                }
+                let has_nz = if let Some(lambda) = trellis_lambda {
+                    // Trellis quantization for better RD trade-off
+                    let ctx0 = (u8::from(left_nz[sby]) + u8::from(top_nz[sbx])).min(2) as usize;
+                    let mut zigzag_out = [0i32; 16];
+                    let has_nz = trellis_quantize_block(
+                        &mut current_subblock,
+                        &mut zigzag_out,
+                        y1_matrix,
+                        lambda,
+                        0, // first=0 for I4 (DC+AC)
+                        &self.level_costs,
+                        3, // ctype=3 for I4
+                        ctx0,
+                    );
+                    // trellis_quantize_block already modifies current_subblock
+                    // to contain the dequantized values (level * q)
+                    has_nz
+                } else {
+                    // Simple quantization
+                    let mut has_nz = false;
+                    for (index, y_value) in current_subblock.iter_mut().enumerate() {
+                        let level = y1_matrix.quantize_coeff(*y_value, index);
+                        has_nz |= level != 0;
+                        *y_value = y1_matrix.dequantize(level, index);
+                    }
+                    has_nz
+                };
+
+                // Update context for next block
+                top_nz[sbx] = has_nz;
+                left_nz[sby] = has_nz;
+
                 transform::idct4x4(&mut current_subblock);
                 add_residue(&mut y_with_border, &current_subblock, y0, x0, stride);
             }

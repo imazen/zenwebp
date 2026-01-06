@@ -866,6 +866,7 @@ pub fn trellis_quantize_block(
     ctype: usize,
     ctx0: usize,
 ) -> bool {
+
     // Number of alternate levels to try: level-0 (MIN_DELTA=0) and level+1 (MAX_DELTA=1)
     const NUM_NODES: usize = 2; // [level, level+1]
 
@@ -900,16 +901,16 @@ pub fn trellis_quantize_block(
 
     // Initialize source nodes with cost table for first position based on ctx0
     let initial_costs = level_costs.get_cost_table(ctype, first, ctx0);
+    let init_rate = if ctx0 == 0 {
+        level_costs.get_init_cost(ctype, first, ctx0) as i64
+    } else {
+        0
+    };
+    let init_score = rd_score_trellis(lambda, init_rate, 0);
+
     for delta in 0..NUM_NODES {
-        // Rate for starting (signaling "coefficient present") depends on ctx0
-        let rate = if ctx0 == 0 {
-            // At ctx0=0, we pay for signaling "has coefficients"
-            vp8_bit_cost(true, 128) as i64 // approximate
-        } else {
-            0
-        };
         score_states[ss_cur_idx][delta] = TrellisScoreState {
-            score: rd_score_trellis(lambda, rate, 0),
+            score: init_score,
             costs: Some(initial_costs),
         };
     }
@@ -1460,6 +1461,10 @@ pub struct LevelCosts {
     /// EOB (end-of-block) costs indexed by [type][band][ctx]
     /// This is the cost of signaling "no more coefficients"
     eob_cost: [[[u16; NUM_CTX]; NUM_BANDS]; NUM_TYPES],
+    /// Init (has-coefficients) costs indexed by [type][band][ctx]
+    /// This is the cost of signaling "block has coefficients"
+    /// Used for initializing trellis at ctx0=0
+    init_cost: [[[u16; NUM_CTX]; NUM_BANDS]; NUM_TYPES],
     /// Whether the tables are dirty and need recalculation
     dirty: bool,
 }
@@ -1477,6 +1482,7 @@ impl LevelCosts {
             level_cost: [[[[0u16; MAX_VARIABLE_LEVEL + 1]; NUM_CTX]; NUM_BANDS]; NUM_TYPES],
             remapped: [[[0usize; NUM_CTX]; 16]; NUM_TYPES],
             eob_cost: [[[0u16; NUM_CTX]; NUM_BANDS]; NUM_TYPES],
+            init_cost: [[[0u16; NUM_CTX]; NUM_BANDS]; NUM_TYPES],
             dirty: true,
         }
     }
@@ -1526,6 +1532,10 @@ impl LevelCosts {
                     // EOB cost: signaling "no more coefficients" after this position
                     // This is the cost of taking the EOB branch in the coefficient tree
                     self.eob_cost[ctype][band][ctx] = vp8_bit_cost(false, p[0]);
+
+                    // Init cost: signaling "block has coefficients" at this position
+                    // Used for initializing trellis at ctx0=0
+                    self.init_cost[ctype][band][ctx] = vp8_bit_cost(true, p[0]);
                 }
             }
 
@@ -1575,6 +1585,14 @@ impl LevelCosts {
     pub fn get_skip_eob_cost(&self, ctype: usize, first: usize, ctx: usize) -> u16 {
         let band = VP8_ENC_BANDS[first] as usize;
         self.eob_cost[ctype][band][ctx]
+    }
+
+    /// Get the init cost for signaling "block has coefficients" at position first.
+    /// Used for initializing trellis at ctx0=0.
+    #[inline]
+    pub fn get_init_cost(&self, ctype: usize, first: usize, ctx: usize) -> u16 {
+        let band = VP8_ENC_BANDS[first] as usize;
+        self.init_cost[ctype][band][ctx]
     }
 }
 
@@ -3516,5 +3534,83 @@ mod tests {
                 eprintln!("  pos {}: simple={}, trellis={}", n, simple_out[n], trellis_out[n]);
             }
         }
+    }
+
+    /// Compare our trellis with libwebp's output using matching input.
+    /// Uses values from libwebp debug log.
+    /// Run with: cargo test --release test_trellis_vs_libwebp -- --nocapture
+    #[test]
+    fn test_trellis_vs_libwebp() {
+        use crate::vp8_common::COEFF_PROBS;
+
+        // From libwebp debug log:
+        // === BLOCK 0: type=3 ctx0=0 lambda=840 first=0 ===
+        // input: -282 6 3 -4 -3 -11 -4 -2 5 3 4 -1 2 -2 -3 -1
+        // q: 25 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31
+        // iq: 5242 4228 4228 4228 4228 4228 4228 4228 4228 4228 4228 4228 4228 4228 4228 4228
+        // last=1 thresh=240 last_proba=202 skip_cost=89 skip_score=74760
+        // init: ctx0=0 init_rate=576 init_score=483840
+        // RESULT: out: -11 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+
+        let mut level_costs = LevelCosts::new();
+        level_costs.calculate(&COEFF_PROBS);
+
+        // Match libwebp's matrix values exactly
+        let mut matrix = VP8Matrix::new(25, 31, MatrixType::Y1);
+        // Override iq values to match libwebp
+        matrix.iq[0] = 5242;
+        for i in 1..16 {
+            matrix.iq[i] = 4228;
+        }
+
+        // Input coefficients (NOTE: these are already in natural/raster order in libwebp)
+        // libwebp's "input" is coefficients[j] where j = kZigzag[n], so already in natural order
+        let input = [-282i32, 6, 3, -4, -3, -11, -4, -2, 5, 3, 4, -1, 2, -2, -3, -1];
+
+        let lambda = 840u32;
+        let ctype = 3usize; // TYPE_I4_AC
+        let ctx0 = 0usize;
+        let first = 0usize;
+
+        eprintln!("\n=== TRELLIS VS LIBWEBP ===");
+        eprintln!("lambda={}, ctype={} (I4), ctx0={}, first={}", lambda, ctype, ctx0, first);
+
+        // Check skip and init costs
+        let skip_cost = level_costs.get_skip_eob_cost(ctype, first, ctx0);
+        let init_cost = level_costs.get_init_cost(ctype, first, ctx0);
+        let skip_score = rd_score_trellis(lambda, skip_cost as i64, 0);
+        let init_score = rd_score_trellis(lambda, init_cost as i64, 0);
+
+        eprintln!("\nCost comparison:");
+        eprintln!("  skip_cost: rust={} libwebp=89", skip_cost);
+        eprintln!("  skip_score: rust={} libwebp=74760", skip_score);
+        eprintln!("  init_cost: rust={} libwebp=576", init_cost);
+        eprintln!("  init_score: rust={} libwebp=483840", init_score);
+
+        // Calculate thresh like libwebp
+        let thresh = (matrix.q[1] as i64 * matrix.q[1] as i64 / 4) as i32;
+        eprintln!("\nthresh: rust={} libwebp=240", thresh);
+
+        // Run trellis
+        let mut coeffs = input;
+        let mut trellis_out = [0i32; 16];
+        let _has_nz = trellis_quantize_block(
+            &mut coeffs,
+            &mut trellis_out,
+            &matrix,
+            lambda,
+            first,
+            &level_costs,
+            ctype,
+            ctx0,
+        );
+
+        eprintln!("\nOutput comparison:");
+        eprintln!("  rust:    {:?}", trellis_out);
+        eprintln!("  libwebp: [-11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]");
+
+        // Assert match
+        let expected = [-11i32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        assert_eq!(trellis_out, expected, "Trellis output should match libwebp");
     }
 }
