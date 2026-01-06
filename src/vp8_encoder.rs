@@ -246,6 +246,32 @@ impl<W: Write> Vp8Encoder<W> {
         }
     }
 
+    /// Get the segment for a macroblock at (mbx, mby).
+    ///
+    /// When segments are enabled, looks up the segment ID from the segment map.
+    /// Otherwise, returns segment 0.
+    #[inline]
+    fn get_segment_for_mb(&self, mbx: usize, mby: usize) -> &Segment {
+        let segment_id = if self.segments_enabled && !self.segment_map.is_empty() {
+            let mb_idx = mby * usize::from(self.macroblock_width) + mbx;
+            self.segment_map[mb_idx] as usize
+        } else {
+            0
+        };
+        &self.segments[segment_id]
+    }
+
+    /// Get segment ID for a macroblock at (mbx, mby).
+    #[inline]
+    fn get_segment_id_for_mb(&self, mbx: usize, mby: usize) -> Option<usize> {
+        if self.segments_enabled && !self.segment_map.is_empty() {
+            let mb_idx = mby * usize::from(self.macroblock_width) + mbx;
+            Some(self.segment_map[mb_idx] as usize)
+        } else {
+            None
+        }
+    }
+
     /// Writes the uncompressed part of the frame header (9.1)
     fn write_uncompressed_frame_header(
         &mut self,
@@ -1223,7 +1249,7 @@ impl<W: Write> Vp8Encoder<W> {
     fn pick_best_intra16(&self, mbx: usize, mby: usize) -> (LumaMode, u64) {
         let mbw = usize::from(self.macroblock_width);
         let src_width = mbw * 16;
-        let segment = &self.segments[0];
+        let segment = self.get_segment_for_mb(mbx, mby);
 
         // The 4 modes to try for 16x16 luma prediction (order matches FIXED_COSTS_I16)
         const MODES: [LumaMode; 4] = [LumaMode::DC, LumaMode::V, LumaMode::H, LumaMode::TM];
@@ -1405,7 +1431,7 @@ impl<W: Write> Vp8Encoder<W> {
         let mut y_with_border =
             create_border_luma(mbx, mby, mbw, &self.top_border_y, &self.left_border_y);
 
-        let segment = &self.segments[0];
+        let segment = self.get_segment_for_mb(mbx, mby);
 
         // Process each subblock in raster order
         for sby in 0usize..4 {
@@ -1577,12 +1603,7 @@ impl<W: Write> Vp8Encoder<W> {
         let chroma_mode = self.pick_best_uv(mbx, mby);
 
         // Get segment ID from segment map if enabled
-        let segment_id = if self.segments_enabled && !self.segment_map.is_empty() {
-            let mb_idx = mby * usize::from(self.macroblock_width) + mbx;
-            Some(self.segment_map[mb_idx] as usize)
-        } else {
-            None
-        };
+        let segment_id = self.get_segment_id_for_mb(mbx, mby);
 
         MacroblockInfo {
             luma_mode,
@@ -1821,13 +1842,13 @@ impl<W: Write> Vp8Encoder<W> {
             self.segments[seg_idx] = segment;
         }
 
-        // Segment-based quantization is currently DISABLED due to a bug:
-        // Many RD functions (pick_best_intra16, pick_best_intra4, etc.) use
-        // segments[0] hardcoded, but the encoding uses macroblock.segment_id.
-        // This mismatch causes terrible quality when segments have different quant.
-        // TODO: Fix by passing segment to all RD functions.
+        // Segment-based quantization: currently disabled as it hurts compression.
+        // Our simplified variance-based segment analysis adds overhead without
+        // providing enough benefit. libwebp uses DCT histogram analysis which
+        // is more effective at identifying compressibility.
+        // TODO: Implement DCT-based alpha calculation (compute_mb_alpha) for better results.
         let total_mbs = usize::from(mb_width) * usize::from(mb_height);
-        let use_segments = false; // DISABLED - see comment above
+        let use_segments = false; // Disabled: adds ~10% to file size
         let _ = total_mbs; // suppress unused warning
 
         if use_segments {
@@ -1957,9 +1978,9 @@ impl<W: Write> Vp8Encoder<W> {
     fn get_dequantized_blocks_from_coeffs_luma_16x16(
         &self,
         coeffs: &mut Luma16x16Coeffs,
+        segment: &Segment,
     ) -> [i32; 16 * 16] {
         let mut dequantized_luma_residue = [0i32; 16 * 16];
-        let segment = &self.segments[0];
         let y2_matrix = segment.y2_matrix.as_ref().unwrap();
         let y1_matrix = segment.y1_matrix.as_ref().unwrap();
 
@@ -2017,7 +2038,8 @@ impl<W: Write> Vp8Encoder<W> {
 
         // now we're essentially applying the same functions as the decoder in order to ensure
         // that the border is the same as the one used for the decoder in the same macroblock
-        let dequantized_blocks = self.get_dequantized_blocks_from_coeffs_luma_16x16(&mut coeffs);
+        let dequantized_blocks =
+            self.get_dequantized_blocks_from_coeffs_luma_16x16(&mut coeffs, segment);
 
         // re-use the y_with_border from earlier since the prediction is still valid
         // applies the same thing as the decoder so that the border will line up
@@ -2066,7 +2088,7 @@ impl<W: Write> Vp8Encoder<W> {
             &self.left_border_y,
         );
 
-        let segment = &self.segments[0];
+        let segment = self.get_segment_for_mb(mbx, mby);
 
         for sby in 0usize..4 {
             for sbx in 0usize..4 {
@@ -2206,9 +2228,12 @@ impl<W: Write> Vp8Encoder<W> {
         chroma_blocks
     }
 
-    fn get_chroma_block_coeffs(&self, chroma_blocks: [i32; 16 * 4]) -> ChromaCoeffs {
+    fn get_chroma_block_coeffs(
+        &self,
+        chroma_blocks: [i32; 16 * 4],
+        segment: &Segment,
+    ) -> ChromaCoeffs {
         let mut chroma_coeffs: ChromaCoeffs = [0i32; 16 * 4];
-        let segment = &self.segments[0];
         let uv_matrix = segment.uv_matrix.as_ref().unwrap();
 
         for (block, coeff_block) in chroma_blocks
@@ -2226,9 +2251,9 @@ impl<W: Write> Vp8Encoder<W> {
     fn get_dequantized_blocks_from_coeffs_chroma(
         &self,
         chroma_coeffs: &ChromaCoeffs,
+        segment: &Segment,
     ) -> [i32; 16 * 4] {
         let mut dequantized_blocks = [0i32; 16 * 4];
-        let segment = &self.segments[0];
         let uv_matrix = segment.uv_matrix.as_ref().unwrap();
 
         for (coeffs_block, dequant_block) in chroma_coeffs
@@ -2277,11 +2302,12 @@ impl<W: Write> Vp8Encoder<W> {
         let v_blocks =
             self.get_chroma_blocks_from_predicted(&predicted_v, &self.frame.vbuf, mbx, mby);
 
-        let u_coeffs = self.get_chroma_block_coeffs(u_blocks);
-        let v_coeffs = self.get_chroma_block_coeffs(v_blocks);
+        let segment = self.get_segment_for_mb(mbx, mby);
+        let u_coeffs = self.get_chroma_block_coeffs(u_blocks, segment);
+        let v_coeffs = self.get_chroma_block_coeffs(v_blocks, segment);
 
-        let quantized_u_residue = self.get_dequantized_blocks_from_coeffs_chroma(&u_coeffs);
-        let quantized_v_residue = self.get_dequantized_blocks_from_coeffs_chroma(&v_coeffs);
+        let quantized_u_residue = self.get_dequantized_blocks_from_coeffs_chroma(&u_coeffs, segment);
+        let quantized_v_residue = self.get_dequantized_blocks_from_coeffs_chroma(&v_coeffs, segment);
 
         for y in 0usize..2 {
             for x in 0usize..2 {
