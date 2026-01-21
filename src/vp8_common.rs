@@ -779,13 +779,16 @@ impl Segment {
         ));
 
         // Compute trellis lambda values based on quantizer
-        // These formulas match libwebp's SetSegmentProbas:
+        // These formulas match libwebp's SetupMatrices:
         // lambda_trellis_i4 = (7 * q^2) >> 3
         // lambda_trellis_i16 = q^2 >> 2
         // lambda_trellis_uv = q^2 << 1
-        let q_i4 = self.yac as u32;
-        let q_i16 = self.y2ac as u32;
-        let q_uv = self.uvac as u32;
+        //
+        // q values come from ExpandMatrix which returns the average of the
+        // 16-element quantization matrix: (q_dc + 15*q_ac + 8) >> 4
+        let q_i4 = ((self.ydc as u32 + 15 * self.yac as u32 + 8) >> 4) as u32;
+        let q_i16 = ((self.y2dc as u32 + 15 * self.y2ac as u32 + 8) >> 4) as u32;
+        let q_uv = ((self.uvdc as u32 + 15 * self.uvac as u32 + 8) >> 4) as u32;
 
         self.lambda_trellis_i4 = ((7 * q_i4 * q_i4) >> 3).max(1);
         self.lambda_trellis_i16 = ((q_i16 * q_i16) >> 2).max(1);

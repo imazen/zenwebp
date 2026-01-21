@@ -1488,6 +1488,9 @@ impl<W: Write> Vp8Encoder<W> {
         let lambda = segment.lambda_i16;
         let tlambda = segment.tlambda;
 
+        // Use updated probabilities if available (for consistent mode selection)
+        let probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
+
         // Check if source block is flat (for flat source penalty)
         let src_base = mby * 16 * src_width + mbx * 16;
         let is_flat = is_flat_source_16(&self.frame.ybuf[src_base..], src_width);
@@ -1542,8 +1545,7 @@ impl<W: Write> Vp8Encoder<W> {
 
             // 5. Compute coefficient cost using probability-dependent tables
             // This matches libwebp's VP8GetCostLuma16 which uses proper token probabilities
-            let coeff_cost =
-                get_cost_luma16(&y2_quant, &y1_quant, &self.level_costs, &self.token_probs);
+            let coeff_cost = get_cost_luma16(&y2_quant, &y1_quant, &self.level_costs, probs);
 
             // 6. Dequantize Y2 and do inverse WHT
             let mut y2_dequant = [0i32; 16];
@@ -1954,6 +1956,9 @@ impl<W: Write> Vp8Encoder<W> {
         let uv_matrix = segment.uv_matrix.as_ref().unwrap();
         let lambda = segment.lambda_uv;
 
+        // Use updated probabilities if available (for consistent mode selection)
+        let probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
+
         let mut best_mode = ChromaMode::DC;
         let mut best_rd_score = i64::MAX;
 
@@ -2008,7 +2013,7 @@ impl<W: Write> Vp8Encoder<W> {
             }
 
             // 3. Compute coefficient cost using probability-dependent tables
-            let coeff_cost = get_cost_uv(&uv_quant, &self.level_costs, &self.token_probs);
+            let coeff_cost = get_cost_uv(&uv_quant, &self.level_costs, probs);
 
             // 4. Dequantize and inverse DCT for reconstruction
             let mut reconstructed_u = pred_u;
