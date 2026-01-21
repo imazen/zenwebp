@@ -1290,11 +1290,13 @@ impl<W: Write> Vp8Encoder<W> {
 
         self.setup_encoding(lossy_quality, width, height, y_bytes, u_bytes, v_bytes);
 
-        // Two-pass encoding for adaptive probabilities is only beneficial at
-        // lower quality settings where there are fewer coefficients and the
-        // probability updates can provide meaningful savings.
-        // At high quality (Q >= 85), the overhead of signaling updates exceeds savings.
-        let use_two_pass = lossy_quality < 85;
+        // Two-pass encoding with adaptive probabilities.
+        // Pass 1: Collect token statistics (without trellis) to estimate probabilities.
+        // Pass 2: Encode with updated probabilities (with trellis) for better compression.
+        // This is essential for good compression, especially at high quality where
+        // coefficients have more varied magnitudes and accurate probability estimates
+        // are crucial for efficient entropy coding.
+        let use_two_pass = true;
 
         if use_two_pass {
             // ===== PASS 1: Collect token statistics for adaptive probabilities =====
