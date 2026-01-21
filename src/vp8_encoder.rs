@@ -15,8 +15,8 @@ use crate::vp8_cost::{
 use crate::vp8_cost::{calc_i4_penalty, get_i4_mode_cost, LAMBDA_I4};
 // Full RD imports for spectral distortion and flat source detection
 use crate::vp8_cost::{
-    is_flat_coeffs, is_flat_source_16, tdisto_16x16, FLATNESS_LIMIT_I16, FLATNESS_LIMIT_UV,
-    FLATNESS_PENALTY, RD_DISTO_MULT, VP8_WEIGHT_Y,
+    get_cost_luma16, get_cost_uv, is_flat_coeffs, is_flat_source_16, tdisto_16x16,
+    FLATNESS_LIMIT_I16, FLATNESS_LIMIT_UV, FLATNESS_PENALTY, RD_DISTO_MULT, VP8_WEIGHT_Y,
 };
 use crate::vp8_prediction::*;
 use crate::yuv::convert_image_y;
@@ -1540,13 +1540,10 @@ impl<W: Write> Vp8Encoder<W> {
                 }
             }
 
-            // 5. Estimate coefficient cost
-            let y2_cost = estimate_dc16_cost(&y2_quant);
-            let y1_cost: u32 = y1_quant
-                .iter()
-                .map(|block| estimate_residual_cost(block, 1))
-                .sum();
-            let coeff_cost = y2_cost + y1_cost;
+            // 5. Compute coefficient cost using probability-dependent tables
+            // This matches libwebp's VP8GetCostLuma16 which uses proper token probabilities
+            let coeff_cost =
+                get_cost_luma16(&y2_quant, &y1_quant, &self.level_costs, &self.token_probs);
 
             // 6. Dequantize Y2 and do inverse WHT
             let mut y2_dequant = [0i32; 16];
@@ -1993,16 +1990,14 @@ impl<W: Write> Vp8Encoder<W> {
             let u_blocks = self.get_chroma_blocks_from_predicted(&pred_u, &self.frame.ubuf, mbx, mby);
             let v_blocks = self.get_chroma_blocks_from_predicted(&pred_v, &self.frame.vbuf, mbx, mby);
 
-            // 2. Quantize coefficients and estimate cost
+            // 2. Quantize coefficients
             let mut uv_quant = [[0i32; 16]; 8]; // 4 U blocks + 4 V blocks
-            let mut coeff_cost = 0u32;
 
             // Process U blocks (indices 0-3)
             for block_idx in 0..4 {
                 for i in 0..16 {
                     uv_quant[block_idx][i] = uv_matrix.quantize_coeff(u_blocks[block_idx * 16 + i], i);
                 }
-                coeff_cost += estimate_residual_cost(&uv_quant[block_idx], 0);
             }
 
             // Process V blocks (indices 4-7)
@@ -2010,10 +2005,12 @@ impl<W: Write> Vp8Encoder<W> {
                 for i in 0..16 {
                     uv_quant[4 + block_idx][i] = uv_matrix.quantize_coeff(v_blocks[block_idx * 16 + i], i);
                 }
-                coeff_cost += estimate_residual_cost(&uv_quant[4 + block_idx], 0);
             }
 
-            // 3. Dequantize and inverse DCT for reconstruction
+            // 3. Compute coefficient cost using probability-dependent tables
+            let coeff_cost = get_cost_uv(&uv_quant, &self.level_costs, &self.token_probs);
+
+            // 4. Dequantize and inverse DCT for reconstruction
             let mut reconstructed_u = pred_u;
             let mut reconstructed_v = pred_v;
 

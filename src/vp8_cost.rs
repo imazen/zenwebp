@@ -2006,6 +2006,34 @@ pub fn get_cost_luma16(
     total_cost
 }
 
+/// Compute accurate coefficient cost for UV blocks using probability-dependent tables.
+///
+/// Port of libwebp's VP8GetCostUV.
+///
+/// # Arguments
+/// * `uv_levels` - 8 blocks of quantized coefficients (4 U blocks + 4 V blocks)
+/// * `costs` - Precomputed level cost tables
+/// * `probs` - Probability tables
+///
+/// # Returns
+/// Total cost in 1/256 bits
+pub fn get_cost_uv(
+    uv_levels: &[[i32; 16]; 8],
+    costs: &LevelCosts,
+    probs: &TokenProbTables,
+) -> u32 {
+    let mut total_cost = 0u32;
+
+    // UV blocks use coeff_type=2 (TYPE_CHROMA_A)
+    // All coefficients including DC (first=0)
+    for block in uv_levels.iter() {
+        let res = Residual::new(block, 2, 0); // ctype=2 for UV, first=0 (include DC)
+        total_cost += get_residual_cost(0, &res, costs, probs);
+    }
+
+    total_cost
+}
+
 //------------------------------------------------------------------------------
 // Segment-based quantization
 //
