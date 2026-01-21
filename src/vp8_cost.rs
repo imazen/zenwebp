@@ -1032,7 +1032,8 @@ fn rd_score_trellis(lambda: u32, rate: i64, distortion: i64) -> i64 {
 }
 
 /// Compute level cost using stored cost table (like libwebp's VP8LevelCost).
-/// cost = VP8LevelFixedCosts[level] + table[min(level, MAX_VARIABLE_LEVEL)]
+/// cost = VP8LevelFixedCosts[level] + table[min(level, MAX_VARIABLE_LEVEL)] + sign_bit
+/// VP8LevelFixedCosts contains only magnitude encoding costs, sign bit is separate.
 #[inline]
 fn level_cost_with_table(costs: Option<&LevelCostArray>, level: i32) -> u32 {
     let abs_level = level.unsigned_abs() as usize;
@@ -1041,7 +1042,7 @@ fn level_cost_with_table(costs: Option<&LevelCostArray>, level: i32) -> u32 {
         Some(table) => table[abs_level.min(MAX_VARIABLE_LEVEL)] as u32,
         None => 0,
     };
-    fixed + variable + if abs_level > 0 { 256 } else { 0 } // +256 for sign bit if non-zero
+    fixed + variable + if abs_level > 0 { 256 } else { 0 } // Sign bit for non-zero levels
 }
 
 /// Trellis-optimized quantization for a 4x4 block.
@@ -1545,7 +1546,11 @@ pub enum TokenType {
 }
 
 /// Record coefficient tokens for probability statistics.
-/// Ported from libwebp's VP8RecordCoeffs.
+/// Structure matches the encoder's skip_eob pattern exactly:
+/// - For each coefficient, check node 0 (EOB) if skip_eob=false
+/// - Check node 1 (zero/non-zero) for all coefficients
+/// - Set skip_eob=true after zeros (can skip EOB check after a zero)
+/// - At end, record EOB at node 0 if there are trailing positions
 ///
 /// # Arguments
 /// * `coeffs` - Quantized coefficients in zigzag order (16 values)
@@ -1564,43 +1569,56 @@ pub fn record_coeffs(
     let mut n = first;
     let mut context = ctx;
 
-    // Find last non-zero coefficient
+    // Find last non-zero coefficient (end_of_block_index - 1)
     let last = coeffs
         .iter()
         .rposition(|&c| c != 0)
         .map(|i| i as i32)
         .unwrap_or(-1);
 
-    // Record EOB token if no coefficients
-    let band = VP8_ENC_BANDS[n] as usize;
-    stats.record(t, band, context, 0, last >= n as i32);
-    if last < n as i32 {
+    let end_of_block = if last >= 0 { (last + 1) as usize } else { 0 };
+
+    // If no non-zero coefficients, record EOB immediately
+    if end_of_block <= first {
+        let band = VP8_ENC_BANDS[first] as usize;
+        stats.record(t, band, context, 0, false); // EOB at node 0
         return;
     }
 
-    while n < 16 {
-        let c = coeffs[n];
+    // Track skip_eob like the encoder does
+    let mut skip_eob = false;
+
+    // Process coefficients up to end_of_block (last non-zero + 1)
+    while n < end_of_block {
         let band = VP8_ENC_BANDS[n] as usize;
+        let v = coeffs[n].unsigned_abs();
         n += 1;
 
-        let sign = c < 0;
-        let v = if sign { -c } else { c } as u32;
+        // Record at node 0 (EOB check) if not skipping
+        if !skip_eob {
+            stats.record(t, band, context, 0, true); // not EOB
+        }
 
         if v == 0 {
-            // Zero coefficient
+            // Zero coefficient: record 0 at node 1, set skip_eob for next
             stats.record(t, band, context, 1, false);
+            skip_eob = true;
             context = 0;
             continue;
         }
 
-        // Non-zero coefficient
+        // Non-zero coefficient: record 1 at node 1
         stats.record(t, band, context, 1, true);
 
+        // Record value magnitude bits
         if v == 1 {
             stats.record(t, band, context, 2, false);
             context = 1;
         } else {
             stats.record(t, band, context, 2, true);
+
+            // Clamp v to MAX_VARIABLE_LEVEL for statistics
+            let v = v.min(MAX_VARIABLE_LEVEL as u32);
 
             if v <= 4 {
                 stats.record(t, band, context, 3, false);
@@ -1618,23 +1636,27 @@ pub fn record_coeffs(
                 stats.record(t, band, context, 3, true);
                 stats.record(t, band, context, 6, true);
 
-                if v <= 2 + (8 << 2) {
+                if v < 3 + (8 << 2) {
                     stats.record(t, band, context, 8, false);
-                    stats.record(t, band, context, 9, v > 2 + (8 << 1));
+                    stats.record(t, band, context, 9, v >= 3 + (8 << 1));
                 } else {
                     stats.record(t, band, context, 8, true);
-                    stats.record(t, band, context, 10, v > 2 + (8 << 3));
+                    stats.record(t, band, context, 10, v >= 3 + (8 << 3));
                 }
             }
 
             context = 2;
         }
+
+        // After non-zero, the encoder does NOT reset skip_eob to false.
+        // It leaves it unchanged. So if skip_eob was true (from a previous zero),
+        // it stays true even after this non-zero. Do NOT reset it here!
     }
 
-    // Record trailing EOB if we didn't process all 16 coefficients
+    // Record trailing EOB if we didn't reach position 16
     if n < 16 {
         let band = VP8_ENC_BANDS[n] as usize;
-        stats.record(t, band, context, 0, false);
+        stats.record(t, band, context, 0, false); // EOB
     }
 }
 
