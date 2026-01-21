@@ -404,35 +404,133 @@ pub(crate) fn convert_image_yuv<const BPP: usize>(
     let mut u_bytes = vec![0u8; chroma_size];
     let mut v_bytes = vec![0u8; chroma_size];
 
-    // loop through two rows at a time so that we can calculate the average of the 2x2 pixels
-    // for averaging for the chroma pixels when downscaling
-    for (((image_rows, y_rows), u_row), v_row) in image_data
-        .chunks_exact(BPP * width * 2)
-        .zip(y_bytes.chunks_exact_mut(luma_width * 2))
-        .zip(u_bytes.chunks_exact_mut(chroma_width))
-        .zip(v_bytes.chunks_exact_mut(chroma_width))
-    {
-        let (image_row_1, image_row_2) = image_rows.split_at(BPP * width);
-        let (y_row_1, y_row_2) = y_rows.split_at_mut(luma_width);
+    // Process pairs of rows for chroma downsampling (2x2 averaging)
+    let row_pairs = height / 2;
+    let odd_height = height & 1 != 0;
+    let col_pairs = width / 2;
+    let odd_width = width & 1 != 0;
 
-        for (((((row_1, row_2), y_pixels_1), y_pixels_2), u_pixel), v_pixel) in image_row_1
-            .chunks_exact(BPP * 2)
-            .zip(image_row_2.chunks_exact(BPP * 2))
-            .zip(y_row_1.chunks_exact_mut(2))
-            .zip(y_row_2.chunks_exact_mut(2))
-            .zip(u_row.iter_mut())
-            .zip(v_row.iter_mut())
-        {
-            let (rgb1, rgb2) = row_1.split_at(BPP);
-            let (rgb3, rgb4) = row_2.split_at(BPP);
+    for row_pair in 0..row_pairs {
+        let src_row1 = row_pair * 2;
+        let src_row2 = src_row1 + 1;
+        let chroma_row = row_pair;
 
-            y_pixels_1[0] = rgb_to_y(rgb1);
-            y_pixels_1[1] = rgb_to_y(rgb2);
-            y_pixels_2[0] = rgb_to_y(rgb3);
-            y_pixels_2[1] = rgb_to_y(rgb4);
+        // Process pairs of columns
+        for col_pair in 0..col_pairs {
+            let src_col1 = col_pair * 2;
+            let src_col2 = src_col1 + 1;
+            let chroma_col = col_pair;
 
-            *u_pixel = rgb_to_u_avg(rgb1, rgb2, rgb3, rgb4);
-            *v_pixel = rgb_to_v_avg(rgb1, rgb2, rgb3, rgb4);
+            // Get 4 RGB pixels for 2x2 block
+            let rgb1 = &image_data[(src_row1 * width + src_col1) * BPP..][..BPP];
+            let rgb2 = &image_data[(src_row1 * width + src_col2) * BPP..][..BPP];
+            let rgb3 = &image_data[(src_row2 * width + src_col1) * BPP..][..BPP];
+            let rgb4 = &image_data[(src_row2 * width + src_col2) * BPP..][..BPP];
+
+            // Convert to Y
+            y_bytes[src_row1 * luma_width + src_col1] = rgb_to_y(rgb1);
+            y_bytes[src_row1 * luma_width + src_col2] = rgb_to_y(rgb2);
+            y_bytes[src_row2 * luma_width + src_col1] = rgb_to_y(rgb3);
+            y_bytes[src_row2 * luma_width + src_col2] = rgb_to_y(rgb4);
+
+            // Convert to U/V (averaged)
+            u_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_u_avg(rgb1, rgb2, rgb3, rgb4);
+            v_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_v_avg(rgb1, rgb2, rgb3, rgb4);
+        }
+
+        // Handle last column if width is odd
+        if odd_width {
+            let src_col = width - 1;
+            let chroma_col = col_pairs;
+
+            // Get 2 RGB pixels (duplicate horizontally for chroma)
+            let rgb1 = &image_data[(src_row1 * width + src_col) * BPP..][..BPP];
+            let rgb3 = &image_data[(src_row2 * width + src_col) * BPP..][..BPP];
+
+            // Convert to Y
+            y_bytes[src_row1 * luma_width + src_col] = rgb_to_y(rgb1);
+            y_bytes[src_row2 * luma_width + src_col] = rgb_to_y(rgb3);
+
+            // Convert to U/V (use same pixel twice horizontally)
+            u_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_u_avg(rgb1, rgb1, rgb3, rgb3);
+            v_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_v_avg(rgb1, rgb1, rgb3, rgb3);
+        }
+    }
+
+    // Handle last row if height is odd
+    if odd_height {
+        let src_row = height - 1;
+        let chroma_row = row_pairs;
+
+        // Process pairs of columns
+        for col_pair in 0..col_pairs {
+            let src_col1 = col_pair * 2;
+            let src_col2 = src_col1 + 1;
+            let chroma_col = col_pair;
+
+            // Get 2 RGB pixels (duplicate vertically for chroma)
+            let rgb1 = &image_data[(src_row * width + src_col1) * BPP..][..BPP];
+            let rgb2 = &image_data[(src_row * width + src_col2) * BPP..][..BPP];
+
+            // Convert to Y
+            y_bytes[src_row * luma_width + src_col1] = rgb_to_y(rgb1);
+            y_bytes[src_row * luma_width + src_col2] = rgb_to_y(rgb2);
+
+            // Convert to U/V (use same row twice vertically)
+            u_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_u_avg(rgb1, rgb2, rgb1, rgb2);
+            v_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_v_avg(rgb1, rgb2, rgb1, rgb2);
+        }
+
+        // Handle corner case: both width and height are odd
+        if odd_width {
+            let src_col = width - 1;
+            let chroma_col = col_pairs;
+
+            // Get single RGB pixel (duplicate in all directions for chroma)
+            let rgb = &image_data[(src_row * width + src_col) * BPP..][..BPP];
+
+            // Convert to Y
+            y_bytes[src_row * luma_width + src_col] = rgb_to_y(rgb);
+
+            // Convert to U/V (use same pixel 4 times)
+            u_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_u_avg(rgb, rgb, rgb, rgb);
+            v_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_v_avg(rgb, rgb, rgb, rgb);
+        }
+    }
+
+    // Replicate edge pixels to fill macroblock padding
+    // Horizontal padding for Y
+    for y in 0..height {
+        let last_y = y_bytes[y * luma_width + width - 1];
+        for x in width..luma_width {
+            y_bytes[y * luma_width + x] = last_y;
+        }
+    }
+
+    // Vertical padding for Y (including horizontal padding area)
+    for y in height..(mb_height * 16) {
+        for x in 0..luma_width {
+            y_bytes[y * luma_width + x] = y_bytes[(height - 1) * luma_width + x];
+        }
+    }
+
+    // Horizontal padding for U/V
+    let chroma_height = (height + 1) / 2;
+    let actual_chroma_width = (width + 1) / 2;
+    for y in 0..chroma_height {
+        let last_u = u_bytes[y * chroma_width + actual_chroma_width - 1];
+        let last_v = v_bytes[y * chroma_width + actual_chroma_width - 1];
+        for x in actual_chroma_width..chroma_width {
+            u_bytes[y * chroma_width + x] = last_u;
+            v_bytes[y * chroma_width + x] = last_v;
+        }
+    }
+
+    // Vertical padding for U/V
+    for y in chroma_height..(mb_height * 8) {
+        for x in 0..chroma_width {
+            u_bytes[y * chroma_width + x] = u_bytes[(chroma_height - 1) * chroma_width + x];
+            v_bytes[y * chroma_width + x] = v_bytes[(chroma_height - 1) * chroma_width + x];
         }
     }
 
