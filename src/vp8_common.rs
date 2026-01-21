@@ -746,6 +746,17 @@ pub(crate) struct Segment {
     pub(crate) lambda_trellis_i4: u32,
     pub(crate) lambda_trellis_i16: u32,
     pub(crate) lambda_trellis_uv: u32,
+
+    // Lambda values for RD mode selection
+    // These control rate-distortion trade-off in mode decisions
+    pub(crate) lambda_i16: u32,
+    pub(crate) lambda_i4: u32,
+    pub(crate) lambda_uv: u32,
+    pub(crate) lambda_mode: u32,
+
+    // Spectral distortion weight (tlambda)
+    // Controls how much TDisto affects mode selection
+    pub(crate) tlambda: u32,
 }
 
 impl Segment {
@@ -779,5 +790,21 @@ impl Segment {
         self.lambda_trellis_i4 = ((7 * q_i4 * q_i4) >> 3).max(1);
         self.lambda_trellis_i16 = ((q_i16 * q_i16) >> 2).max(1);
         self.lambda_trellis_uv = ((q_uv * q_uv) << 1).max(1);
+
+        // Compute RD mode selection lambda values (from libwebp SetSegmentProbas)
+        // lambda_i4 = (3 * q^2) >> 7
+        // lambda_i16 = 3 * q^2
+        // lambda_uv = (3 * q^2) >> 6
+        // lambda_mode = (1 * q^2) >> 7
+        self.lambda_i4 = ((3 * q_i4 * q_i4) >> 7).max(1);
+        self.lambda_i16 = (3 * q_i16 * q_i16).max(1);
+        self.lambda_uv = ((3 * q_uv * q_uv) >> 6).max(1);
+        self.lambda_mode = ((q_i4 * q_i4) >> 7).max(1);
+
+        // Compute tlambda for spectral distortion weight
+        // tlambda = (sns_strength * q) >> 5, with default sns_strength=50
+        // This enables TDisto in mode selection
+        let sns_strength = 50u32;
+        self.tlambda = (sns_strength * q_i4) >> 5;
     }
 }

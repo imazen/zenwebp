@@ -9,10 +9,15 @@ use crate::vp8_common::*;
 use crate::vp8_cost::{
     self, analyze_image, assign_segments_kmeans, compute_segment_quant, estimate_dc16_cost,
     estimate_residual_cost, get_cost_luma4, record_coeffs, trellis_quantize_block, LevelCosts,
-    ProbaStats, TokenType, FIXED_COSTS_I16, FIXED_COSTS_UV, LAMBDA_I16, LAMBDA_UV,
+    ProbaStats, TokenType, FIXED_COSTS_I16, FIXED_COSTS_UV,
 };
 // Intra4 imports for coefficient-level cost estimation (used in pick_best_intra4)
 use crate::vp8_cost::{calc_i4_penalty, get_i4_mode_cost, LAMBDA_I4};
+// Full RD imports for spectral distortion and flat source detection
+use crate::vp8_cost::{
+    is_flat_coeffs, is_flat_source_16, tdisto_16x16, FLATNESS_LIMIT_I16, FLATNESS_LIMIT_UV,
+    FLATNESS_PENALTY, RD_DISTO_MULT, VP8_WEIGHT_Y,
+};
 use crate::vp8_prediction::*;
 use crate::yuv::convert_image_y;
 use crate::yuv::convert_image_yuv;
@@ -1458,13 +1463,16 @@ impl<W: Write> Vp8Encoder<W> {
 
     /// Select the best 16x16 luma prediction mode using full RD (rate-distortion) cost.
     ///
-    /// Tries all 4 modes (DC, V, H, TM) and picks the one with lowest RD cost:
-    ///   RD_cost = SSE * 256 + (mode_cost + coeff_cost) * lambda
+    /// This implements libwebp's full RD path for PickBestIntra16:
+    /// 1. For each mode: generate prediction, forward transform, quantize
+    /// 2. Dequantize and inverse transform to get reconstructed block
+    /// 3. Compute SSE between reconstructed and source (NOT prediction vs source!)
+    /// 4. Compute spectral distortion (TDisto) if tlambda > 0
+    /// 5. Include coefficient cost in rate term
+    /// 6. Apply flat source penalty if applicable
     ///
-    /// This balances distortion against mode cost for comparison with Intra4.
-    ///
-    /// Uses libwebp's "RefineUsingDistortion" approach for fair I16 vs I4 comparison:
-    /// score = SSE * RD_DISTO_MULT + mode_cost * LAMBDA_I16 (106)
+    /// RD formula: score = (R + H) * lambda + RD_DISTO_MULT * (D + SD)
+    /// Where: R = coeff cost, H = mode cost, D = SSE, SD = spectral distortion
     ///
     /// Returns (best_mode, distortion_score) for comparison against Intra4x4.
     fn pick_best_intra16(&self, mbx: usize, mby: usize) -> (LumaMode, u64) {
@@ -1474,8 +1482,18 @@ impl<W: Write> Vp8Encoder<W> {
         // The 4 modes to try for 16x16 luma prediction (order matches FIXED_COSTS_I16)
         const MODES: [LumaMode; 4] = [LumaMode::DC, LumaMode::V, LumaMode::H, LumaMode::TM];
 
+        let segment = self.get_segment_for_mb(mbx, mby);
+        let y1_matrix = segment.y1_matrix.as_ref().unwrap();
+        let y2_matrix = segment.y2_matrix.as_ref().unwrap();
+        let lambda = segment.lambda_i16;
+        let tlambda = segment.tlambda;
+
+        // Check if source block is flat (for flat source penalty)
+        let src_base = mby * 16 * src_width + mbx * 16;
+        let is_flat = is_flat_source_16(&self.frame.ybuf[src_base..], src_width);
+
         let mut best_mode = LumaMode::DC;
-        let mut best_rd_score = u64::MAX;
+        let mut best_rd_score = i64::MAX;
 
         for (mode_idx, &mode) in MODES.iter().enumerate() {
             // Skip V mode if no top row available (first row of macroblocks)
@@ -1494,13 +1512,120 @@ impl<W: Write> Vp8Encoder<W> {
             // Generate prediction for this mode
             let pred = self.get_predicted_luma_block_16x16(mode, mbx, mby);
 
-            // Compute SSE between source and prediction
-            let sse = sse_16x16_luma(&self.frame.ybuf, src_width, mbx, mby, &pred);
+            // === Full reconstruction for RD evaluation ===
+            // 1. Compute residuals and forward DCT
+            let luma_blocks = self.get_luma_blocks_from_predicted_16x16(&pred, mbx, mby);
 
-            // Compute distortion-only RD score (matching libwebp's RefineUsingDistortion)
-            // LAMBDA_I16 = 106 for I16 mode costs
+            // 2. Extract DC coefficients and do WHT
+            let mut dc_coeffs = [0i32; 16];
+            for (i, dc) in dc_coeffs.iter_mut().enumerate() {
+                *dc = luma_blocks[i * 16];
+            }
+            let mut y2_coeffs = dc_coeffs;
+            transform::wht4x4(&mut y2_coeffs);
+
+            // 3. Quantize Y2 (DC) coefficients
+            let mut y2_quant = [0i32; 16];
+            for (idx, &coeff) in y2_coeffs.iter().enumerate() {
+                y2_quant[idx] = y2_matrix.quantize_coeff(coeff, idx);
+            }
+
+            // 4. Quantize Y1 (AC) coefficients and collect for cost estimation
+            let mut y1_quant = [[0i32; 16]; 16];
+            for block_idx in 0..16 {
+                for i in 1..16 {
+                    // AC coefficients only (DC=0 is handled by Y2)
+                    y1_quant[block_idx][i] =
+                        y1_matrix.quantize_coeff(luma_blocks[block_idx * 16 + i], i);
+                }
+            }
+
+            // 5. Estimate coefficient cost
+            let y2_cost = estimate_dc16_cost(&y2_quant);
+            let y1_cost: u32 = y1_quant
+                .iter()
+                .map(|block| estimate_residual_cost(block, 1))
+                .sum();
+            let coeff_cost = y2_cost + y1_cost;
+
+            // 6. Dequantize Y2 and do inverse WHT
+            let mut y2_dequant = [0i32; 16];
+            for (idx, &level) in y2_quant.iter().enumerate() {
+                y2_dequant[idx] = y2_matrix.dequantize(level, idx);
+            }
+            transform::iwht4x4(&mut y2_dequant);
+
+            // 7. Dequantize Y1, add DC from Y2, and do inverse DCT
+            let mut reconstructed = pred;
+            for block_idx in 0..16 {
+                let bx = block_idx % 4;
+                let by = block_idx / 4;
+
+                let mut block = [0i32; 16];
+                // AC from Y1
+                for i in 1..16 {
+                    block[i] = y1_matrix.dequantize(y1_quant[block_idx][i], i);
+                }
+                // DC from Y2
+                block[0] = y2_dequant[block_idx];
+
+                // Inverse DCT
+                transform::idct4x4(&mut block);
+
+                // Add residue to prediction
+                let x0 = 1 + bx * 4;
+                let y0 = 1 + by * 4;
+                add_residue(&mut reconstructed, &block, y0, x0, LUMA_STRIDE);
+            }
+
+            // 8. Compute SSE between source and reconstructed (NOT prediction!)
+            let sse = sse_16x16_luma(&self.frame.ybuf, src_width, mbx, mby, &reconstructed);
+
+            // 9. Compute spectral distortion (TDisto) if enabled
+            let spectral_disto = if tlambda > 0 {
+                // Need to extract 16x16 source and reconstructed blocks for TDisto
+                let mut src_block = [0u8; 256];
+                let mut rec_block = [0u8; 256];
+                for y in 0..16 {
+                    for x in 0..16 {
+                        let src_idx = (mby * 16 + y) * src_width + mbx * 16 + x;
+                        src_block[y * 16 + x] = self.frame.ybuf[src_idx];
+                        rec_block[y * 16 + x] = reconstructed[(y + 1) * LUMA_STRIDE + x + 1];
+                    }
+                }
+                let td = tdisto_16x16(&src_block, &rec_block, 16, &VP8_WEIGHT_Y);
+                // Scale by tlambda and round: (tlambda * td + 128) >> 8
+                ((tlambda as i32 * td + 128) >> 8) as i32
+            } else {
+                0
+            };
+
+            // 10. Apply flat source penalty if applicable
+            let (d_final, sd_final) = if is_flat {
+                // Check if coefficients are also flat
+                let mut all_levels = [0i16; 256];
+                for block_idx in 0..16 {
+                    for i in 1..16 {
+                        all_levels[block_idx * 16 + i] = y1_quant[block_idx][i] as i16;
+                    }
+                }
+                if is_flat_coeffs(&all_levels, 16, FLATNESS_LIMIT_I16) {
+                    // Double distortion to penalize I16 for flat sources
+                    (sse * 2, spectral_disto * 2)
+                } else {
+                    (sse, spectral_disto)
+                }
+            } else {
+                (sse, spectral_disto)
+            };
+
+            // 11. Compute full RD score
+            // score = (R + H) * lambda + RD_DISTO_MULT * (D + SD)
             let mode_cost = FIXED_COSTS_I16[mode_idx];
-            let rd_score = vp8_cost::rd_score(sse, mode_cost, LAMBDA_I16);
+            let rate = (i64::from(mode_cost) + i64::from(coeff_cost)) * i64::from(lambda);
+            let distortion =
+                i64::from(RD_DISTO_MULT) * (i64::from(d_final) + i64::from(sd_final));
+            let rd_score = rate + distortion;
 
             if rd_score < best_rd_score {
                 best_rd_score = rd_score;
@@ -1508,7 +1633,8 @@ impl<W: Write> Vp8Encoder<W> {
             }
         }
 
-        (best_mode, best_rd_score)
+        // Convert to u64 for interface compatibility (score should be positive)
+        (best_mode, best_rd_score.max(0) as u64)
     }
 
     /// Estimate coefficient cost for a 16x16 luma macroblock (I16 mode).
@@ -1808,9 +1934,17 @@ impl<W: Write> Vp8Encoder<W> {
         Some((best_modes, running_score))
     }
 
-    /// Select the best chroma prediction mode using RD (rate-distortion) cost.
+    /// Select the best chroma (UV) prediction mode using full RD scoring.
     ///
-    /// Tries all 4 modes and picks the one with lowest RD cost for U+V combined.
+    /// This implements libwebp's full RD path for PickBestUV:
+    /// 1. For each mode: generate prediction, forward DCT, quantize
+    /// 2. Dequantize and inverse DCT to get reconstructed block
+    /// 3. Compute SSE between reconstructed and source (NOT prediction vs source!)
+    /// 4. Include coefficient cost in rate term
+    /// 5. Apply flatness penalty for non-DC modes with flat coefficients
+    ///
+    /// RD formula: score = (R + H) * lambda + RD_DISTO_MULT * D
+    /// Note: UV does not use spectral distortion (TDisto).
     fn pick_best_uv(&self, mbx: usize, mby: usize) -> ChromaMode {
         let mbw = usize::from(self.macroblock_width);
         let chroma_width = mbw * 8;
@@ -1819,8 +1953,12 @@ impl<W: Write> Vp8Encoder<W> {
         const MODES: [ChromaMode; 4] =
             [ChromaMode::DC, ChromaMode::V, ChromaMode::H, ChromaMode::TM];
 
+        let segment = self.get_segment_for_mb(mbx, mby);
+        let uv_matrix = segment.uv_matrix.as_ref().unwrap();
+        let lambda = segment.lambda_uv;
+
         let mut best_mode = ChromaMode::DC;
-        let mut best_rd_score = u64::MAX;
+        let mut best_rd_score = i64::MAX;
 
         for (mode_idx, &mode) in MODES.iter().enumerate() {
             // Skip modes that need unavailable reference pixels
@@ -1850,14 +1988,98 @@ impl<W: Write> Vp8Encoder<W> {
                 &self.left_border_v,
             );
 
-            // Compute combined SSE for U and V
-            let sse_u = sse_8x8_chroma(&self.frame.ubuf, chroma_width, mbx, mby, &pred_u);
-            let sse_v = sse_8x8_chroma(&self.frame.vbuf, chroma_width, mbx, mby, &pred_v);
+            // === Full reconstruction for RD evaluation ===
+            // 1. Compute residuals and forward DCT
+            let u_blocks = self.get_chroma_blocks_from_predicted(&pred_u, &self.frame.ubuf, mbx, mby);
+            let v_blocks = self.get_chroma_blocks_from_predicted(&pred_v, &self.frame.vbuf, mbx, mby);
+
+            // 2. Quantize coefficients and estimate cost
+            let mut uv_quant = [[0i32; 16]; 8]; // 4 U blocks + 4 V blocks
+            let mut coeff_cost = 0u32;
+
+            // Process U blocks (indices 0-3)
+            for block_idx in 0..4 {
+                for i in 0..16 {
+                    uv_quant[block_idx][i] = uv_matrix.quantize_coeff(u_blocks[block_idx * 16 + i], i);
+                }
+                coeff_cost += estimate_residual_cost(&uv_quant[block_idx], 0);
+            }
+
+            // Process V blocks (indices 4-7)
+            for block_idx in 0..4 {
+                for i in 0..16 {
+                    uv_quant[4 + block_idx][i] = uv_matrix.quantize_coeff(v_blocks[block_idx * 16 + i], i);
+                }
+                coeff_cost += estimate_residual_cost(&uv_quant[4 + block_idx], 0);
+            }
+
+            // 3. Dequantize and inverse DCT for reconstruction
+            let mut reconstructed_u = pred_u;
+            let mut reconstructed_v = pred_v;
+
+            // Reconstruct U blocks
+            for block_idx in 0..4 {
+                let bx = block_idx % 2;
+                let by = block_idx / 2;
+
+                let mut block = [0i32; 16];
+                for i in 0..16 {
+                    block[i] = uv_matrix.dequantize(uv_quant[block_idx][i], i);
+                }
+                transform::idct4x4(&mut block);
+
+                let x0 = 1 + bx * 4;
+                let y0 = 1 + by * 4;
+                add_residue(&mut reconstructed_u, &block, y0, x0, CHROMA_STRIDE);
+            }
+
+            // Reconstruct V blocks
+            for block_idx in 0..4 {
+                let bx = block_idx % 2;
+                let by = block_idx / 2;
+
+                let mut block = [0i32; 16];
+                for i in 0..16 {
+                    block[i] = uv_matrix.dequantize(uv_quant[4 + block_idx][i], i);
+                }
+                transform::idct4x4(&mut block);
+
+                let x0 = 1 + bx * 4;
+                let y0 = 1 + by * 4;
+                add_residue(&mut reconstructed_v, &block, y0, x0, CHROMA_STRIDE);
+            }
+
+            // 4. Compute SSE between source and reconstructed (NOT prediction!)
+            let sse_u = sse_8x8_chroma(&self.frame.ubuf, chroma_width, mbx, mby, &reconstructed_u);
+            let sse_v = sse_8x8_chroma(&self.frame.vbuf, chroma_width, mbx, mby, &reconstructed_v);
             let sse = sse_u + sse_v;
 
-            // Compute RD cost
+            // 5. Apply flatness penalty for non-DC modes
+            let rate_penalty = if mode_idx > 0 {
+                // Check if coefficients are flat
+                let mut all_levels = [0i16; 128]; // 8 blocks * 16 coeffs
+                for block_idx in 0..8 {
+                    for i in 0..16 {
+                        all_levels[block_idx * 16 + i] = uv_quant[block_idx][i] as i16;
+                    }
+                }
+                if is_flat_coeffs(&all_levels, 8, FLATNESS_LIMIT_UV) {
+                    // Add flatness penalty: FLATNESS_PENALTY * num_blocks
+                    FLATNESS_PENALTY * 8
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
+            // 6. Compute full RD score
+            // score = (R + H) * lambda + RD_DISTO_MULT * D
             let mode_cost = FIXED_COSTS_UV[mode_idx];
-            let rd_score = vp8_cost::rd_score(sse, mode_cost, LAMBDA_UV);
+            let rate = (i64::from(mode_cost) + i64::from(coeff_cost) + i64::from(rate_penalty))
+                * i64::from(lambda);
+            let distortion = i64::from(RD_DISTO_MULT) * i64::from(sse);
+            let rd_score = rate + distortion;
 
             if rd_score < best_rd_score {
                 best_rd_score = rd_score;

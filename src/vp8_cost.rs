@@ -331,6 +331,198 @@ pub const VP8_WEIGHT_TRELLIS: [u16; 16] = [
 ];
 
 //------------------------------------------------------------------------------
+// Spectral distortion (TDisto) weights and functions
+//
+// These compute perceptual distortion using a Hadamard transform weighted
+// by frequency importance. Used in full RD mode selection for better quality.
+// Ported from libwebp src/dsp/enc.c
+
+/// Spectral distortion weights for luma (kWeightY in libwebp)
+/// Higher weights for low-frequency components (visually more important)
+#[rustfmt::skip]
+pub const VP8_WEIGHT_Y: [u16; 16] = [
+    38, 32, 20,  9,
+    32, 28, 17,  7,
+    20, 17, 10,  4,
+     9,  7,  4,  2,
+];
+
+/// Spectral distortion weights for chroma (kWeightUV in libwebp)
+#[rustfmt::skip]
+pub const VP8_WEIGHT_UV: [u16; 16] = [
+    38, 32, 20,  9,
+    32, 28, 17,  7,
+    20, 17, 10,  4,
+     9,  7,  4,  2,
+];
+
+/// Hadamard transform for a 4x4 block, weighted by w[].
+/// Returns the sum of |transformed_coeff| * weight.
+///
+/// This is a 4x4 Hadamard (Walsh-Hadamard) transform that measures
+/// frequency-weighted energy in the block.
+///
+/// # Arguments
+/// * `input` - 4x4 block of pixels (accessed with given stride)
+/// * `stride` - Row stride of input buffer
+/// * `w` - 16 weights for frequency weighting
+#[inline]
+fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
+    let mut tmp = [0i32; 16];
+
+    // Horizontal pass
+    for i in 0..4 {
+        let row = i * stride;
+        let a0 = i32::from(input[row]) + i32::from(input[row + 2]);
+        let a1 = i32::from(input[row + 1]) + i32::from(input[row + 3]);
+        let a2 = i32::from(input[row + 1]) - i32::from(input[row + 3]);
+        let a3 = i32::from(input[row]) - i32::from(input[row + 2]);
+        tmp[i * 4] = a0 + a1;
+        tmp[i * 4 + 1] = a3 + a2;
+        tmp[i * 4 + 2] = a3 - a2;
+        tmp[i * 4 + 3] = a0 - a1;
+    }
+
+    // Vertical pass with weighting
+    let mut sum = 0i32;
+    for i in 0..4 {
+        let a0 = tmp[i] + tmp[8 + i];
+        let a1 = tmp[4 + i] + tmp[12 + i];
+        let a2 = tmp[4 + i] - tmp[12 + i];
+        let a3 = tmp[i] - tmp[8 + i];
+        let b0 = a0 + a1;
+        let b1 = a3 + a2;
+        let b2 = a3 - a2;
+        let b3 = a0 - a1;
+
+        sum += i32::from(w[i]) * b0.abs();
+        sum += i32::from(w[4 + i]) * b1.abs();
+        sum += i32::from(w[8 + i]) * b2.abs();
+        sum += i32::from(w[12 + i]) * b3.abs();
+    }
+    sum
+}
+
+/// Compute spectral distortion between two 4x4 blocks.
+///
+/// Returns |TTransform(a) - TTransform(b)| >> 5
+///
+/// This measures the perceptual difference between blocks using
+/// a frequency-weighted Hadamard transform.
+///
+/// # Arguments
+/// * `a` - First 4x4 block (source)
+/// * `b` - Second 4x4 block (prediction/reconstruction)
+/// * `stride` - Row stride of both buffers
+/// * `w` - 16 weights for frequency weighting
+#[inline]
+pub fn tdisto_4x4(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
+    let sum1 = t_transform(a, stride, w);
+    let sum2 = t_transform(b, stride, w);
+    (sum2 - sum1).abs() >> 5
+}
+
+/// Compute spectral distortion between two 16x16 blocks.
+///
+/// Calls tdisto_4x4 16 times for each 4x4 sub-block.
+///
+/// # Arguments
+/// * `a` - First 16x16 block (source)
+/// * `b` - Second 16x16 block (prediction/reconstruction)
+/// * `stride` - Row stride of both buffers
+/// * `w` - 16 weights for frequency weighting
+pub fn tdisto_16x16(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
+    let mut d = 0i32;
+    for y in 0..4 {
+        for x in 0..4 {
+            let offset = y * 4 * stride + x * 4;
+            d += tdisto_4x4(&a[offset..], &b[offset..], stride, w);
+        }
+    }
+    d
+}
+
+/// Compute spectral distortion between two 8x8 blocks (for chroma).
+///
+/// Calls tdisto_4x4 4 times for each 4x4 sub-block.
+pub fn tdisto_8x8(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
+    let mut d = 0i32;
+    for y in 0..2 {
+        for x in 0..2 {
+            let offset = y * 4 * stride + x * 4;
+            d += tdisto_4x4(&a[offset..], &b[offset..], stride, w);
+        }
+    }
+    d
+}
+
+//------------------------------------------------------------------------------
+// Flat source detection
+//
+// Detects if a 16x16 source block is "flat" (uniform color).
+// Used to force DC mode at image edges to avoid prediction artifacts.
+
+/// Check if a 16x16 source block is flat (all pixels same value).
+///
+/// Returns true if the first pixel value repeats throughout the block.
+/// This is used for edge macroblocks where prediction from unavailable
+/// neighbors would create artifacts.
+///
+/// # Arguments
+/// * `src` - Source pixels (16x16 block accessed with given stride)
+/// * `stride` - Row stride of source buffer
+pub fn is_flat_source_16(src: &[u8], stride: usize) -> bool {
+    let v = src[0];
+    for y in 0..16 {
+        let row = y * stride;
+        for x in 0..16 {
+            if src[row + x] != v {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Check if quantized AC coefficients indicate a flat block.
+///
+/// Returns true if the number of non-zero AC coefficients is below threshold.
+/// Used to detect flat content that should prefer DC mode.
+///
+/// # Arguments
+/// * `levels` - Quantized coefficient levels (16 coeffs per block)
+/// * `num_blocks` - Number of 4x4 blocks to check
+/// * `thresh` - Maximum allowed non-zero AC coefficients
+pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
+    let mut score = 0i32;
+    for block in 0..num_blocks {
+        // Skip DC (index 0), check AC coefficients (indices 1-15)
+        for i in 1..16 {
+            if levels[block * 16 + i] != 0 {
+                score += 1;
+                if score > thresh {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// Flatness threshold for I16 mode (FLATNESS_LIMIT_I16 in libwebp)
+pub const FLATNESS_LIMIT_I16: i32 = 10;
+
+/// Flatness threshold for I4 mode (FLATNESS_LIMIT_I4 in libwebp)
+pub const FLATNESS_LIMIT_I4: i32 = 2;
+
+/// Flatness threshold for UV mode (FLATNESS_LIMIT_UV in libwebp)
+pub const FLATNESS_LIMIT_UV: i32 = 2;
+
+/// Flatness penalty added to rate when UV coefficients are flat (libwebp)
+/// This discourages selection of non-DC modes when content is flat.
+pub const FLATNESS_PENALTY: u32 = 140;
+
+//------------------------------------------------------------------------------
 // Quantization constants
 
 /// Fixed-point precision for quantization
@@ -631,6 +823,24 @@ pub fn calc_lambda_trellis_i4(q: u32) -> u32 {
 pub fn calc_lambda_trellis_uv(q: u32) -> u32 {
     ((q * q) << 1).max(1)
 }
+
+/// Calculate tlambda (spectral distortion weight) based on SNS strength and quant.
+///
+/// tlambda = (sns_strength * q) >> 5
+///
+/// This controls how much weight spectral distortion (TDisto) has in mode selection.
+/// Only enabled when method >= 4 and sns_strength > 0.
+///
+/// # Arguments
+/// * `sns_strength` - Spatial noise shaping strength (0-100)
+/// * `q` - Expanded quantization value (from VP8Matrix)
+#[inline]
+pub fn calc_tlambda(sns_strength: u32, q: u32) -> u32 {
+    (sns_strength * q) >> 5
+}
+
+/// Default SNS strength value (matches libwebp default)
+pub const DEFAULT_SNS_STRENGTH: u32 = 50;
 
 //------------------------------------------------------------------------------
 // Quantization matrix
@@ -1167,6 +1377,35 @@ pub fn rd_score_with_coeffs(sse: u32, mode_cost: u16, coeff_cost: u32, lambda: u
     let distortion = u64::from(sse) * u64::from(RD_DISTO_MULT);
     let rate = (u64::from(mode_cost) + u64::from(coeff_cost)) * u64::from(lambda);
     distortion + rate
+}
+
+/// Calculate full RD score as used by libwebp's PickBestIntra16.
+///
+/// Formula: score = (R + H) * lambda + RD_DISTO_MULT * (D + SD)
+///
+/// Where:
+/// - R = coefficient encoding cost (rate)
+/// - H = mode header cost
+/// - D = SSE distortion on reconstructed block
+/// - SD = spectral distortion (TDisto)
+///
+/// # Arguments
+/// * `sse` - Sum of squared errors (D)
+/// * `spectral_disto` - Spectral distortion from TDisto (SD), already scaled by tlambda
+/// * `mode_cost` - Mode signaling cost (H)
+/// * `coeff_cost` - Coefficient encoding cost (R)
+/// * `lambda` - Rate-distortion trade-off parameter
+#[inline]
+pub fn rd_score_full(
+    sse: u32,
+    spectral_disto: i32,
+    mode_cost: u16,
+    coeff_cost: u32,
+    lambda: u32,
+) -> i64 {
+    let rate = (i64::from(mode_cost) + i64::from(coeff_cost)) * i64::from(lambda);
+    let distortion = i64::from(RD_DISTO_MULT) * (i64::from(sse) + i64::from(spectral_disto));
+    rate + distortion
 }
 
 /// Get context-dependent Intra4 mode cost.
