@@ -1775,15 +1775,16 @@ impl<W: Write> Vp8Encoder<W> {
 
         let segment = self.get_segment_for_mb(mbx, mby);
 
-        // Get quant index for i4_penalty calculation
-        let quant_index = segment.quant_index as u32;
-
         // Get quantizer-dependent lambda for I4 mode RD scoring
         let lambda_i4 = segment.lambda_i4;
 
+        // Compute i4_penalty using averaged quantizer step value (matching libwebp)
+        // libwebp uses q_i4 from ExpandMatrix which returns avg of y1 matrix values
+        let q_i4 = segment.y1_matrix.as_ref().unwrap().average_q();
+
         // Start with i4_penalty to account for typically higher I4 mode signaling cost.
         // This matches libwebp: i4_penalty = 1000 * q * q
-        let mut running_score = calc_i4_penalty(quant_index);
+        let mut running_score = calc_i4_penalty(q_i4);
 
         // Track total mode cost for header bit limiting
         let mut total_mode_cost = 0u32;
