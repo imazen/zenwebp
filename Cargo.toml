@@ -52,3 +52,8 @@ required-features = ["_profiling"]
 name = "profile_libwebp"
 path = "benches/profile_libwebp.rs"
 required-features = ["_profiling"]
+
+[[bin]]
+name = "profile_decode"
+path = "benches/profile_decode.rs"
+required-features = ["_profiling"]
