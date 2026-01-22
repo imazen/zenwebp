@@ -21,14 +21,21 @@ impl ArithmeticEncoder {
         }
     }
 
-    // we need to go back and add one to existing values
+    // Handle carry propagation: add one to output, handling 0xFF overflow chains.
+    // When a byte is 0xFF and we add 1, it becomes 0x00 with carry to the previous byte.
     fn add_one_to_output(&mut self) {
-        while let Some(value) = self.writer.pop() {
-            if value < 255 {
-                self.writer.push(value + 1);
-                break;
+        let mut i = self.writer.len();
+        while i > 0 {
+            i -= 1;
+            if self.writer[i] < 255 {
+                self.writer[i] += 1;
+                return;
             }
+            // 0xFF + 1 = 0x00 with carry to previous byte
+            self.writer[i] = 0;
         }
+        // All bytes were 0xFF - prepend a 0x01
+        self.writer.insert(0, 1);
     }
 
     // writes a flag
