@@ -830,8 +830,6 @@ impl<R: Read> Vp8Decoder<R> {
         }
     }
 
-    /// Reference implementation using tree-walking (kept for comparison/debugging)
-    #[allow(dead_code)]
     fn read_coefficients(
         &mut self,
         block: &mut [i32; 16],
@@ -922,234 +920,6 @@ impl<R: Read> Vp8Decoder<R> {
         Ok(has_coefficients)
     }
 
-    /// Optimized coefficient reading with shadowed bit reader state.
-    /// Uses hardcoded tree walking.
-    fn read_coefficients_fast(
-        &mut self,
-        block: &mut [i32; 16],
-        p: usize,
-        plane: Plane,
-        complexity: usize,
-        dcq: i16,
-        acq: i16,
-    ) -> Result<bool, DecodingError> {
-        use super::vp8_bit_reader::fast_coeffs::*;
-
-        debug_assert!(complexity <= 2);
-
-        let first_coeff = if plane == Plane::YCoeff1 { 1 } else { 0 };
-        let probs = &self.token_probs[plane as usize];
-
-        // Get reader and shadow state
-        let mut reader = self.partitions.reader(p);
-        let (mut value, mut range, mut bits, data, mut pos, len, mut eof) = reader.get_state_for_coeffs();
-
-        let mut complexity = complexity;
-        let mut has_coefficients = false;
-        let mut skip = false;
-
-        // SAFETY: We use unsafe to avoid bounds checks in the hot loop.
-        // All array accesses are validated by the loop bounds.
-        unsafe {
-            for i in first_coeff..16 {
-                let band = *COEFF_BANDS.get_unchecked(i) as usize;
-                let tree = probs.get_unchecked(band).get_unchecked(complexity);
-
-                // Get starting node (0 for fresh, 1 for skip)
-                let start_idx = skip as usize;
-
-                // Decode token using hardcoded tree structure
-                // prob[0]: EOB check, prob[1]: zero check
-                let (bit, nv, nr, nb) = get_bit_fast(
-                    tree.get_unchecked(start_idx).prob,
-                    value, range, bits, data, &mut pos, len, &mut eof
-                );
-                value = nv; range = nr; bits = nb;
-
-                if start_idx == 0 {
-                    // Started at prob[0]: EOB check
-                    if bit == 0 {
-                        // EOB
-                        break;
-                    }
-                    // Not EOB, check for zero at prob[1]
-                    let (bit, nv, nr, nb) = get_bit_fast(
-                        tree.get_unchecked(1).prob,
-                        value, range, bits, data, &mut pos, len, &mut eof
-                    );
-                    value = nv; range = nr; bits = nb;
-
-                    if bit == 0 {
-                        // Zero coefficient
-                        skip = true;
-                        has_coefficients = true;
-                        complexity = 0;
-                        continue;
-                    }
-                } else {
-                    // Started at prob[1]: skip mode, checking for zero
-                    if bit == 0 {
-                        // Zero coefficient
-                        skip = true;
-                        has_coefficients = true;
-                        complexity = 0;
-                        continue;
-                    }
-                }
-
-                // Non-zero coefficient - decode value using prob[2..10]
-                // prob[2]: 1 vs larger
-                let (bit2, nv, nr, nb) = get_bit_fast(
-                    tree.get_unchecked(2).prob,
-                    value, range, bits, data, &mut pos, len, &mut eof
-                );
-                value = nv; range = nr; bits = nb;
-
-                let abs_value: i32 = if bit2 == 0 {
-                    // Value is 1
-                    1
-                } else {
-                    // prob[3]: small (2-4) vs large (CAT1-6)
-                    let (bit3, nv, nr, nb) = get_bit_fast(
-                        tree.get_unchecked(3).prob,
-                        value, range, bits, data, &mut pos, len, &mut eof
-                    );
-                    value = nv; range = nr; bits = nb;
-
-                    if bit3 == 0 {
-                        // Small value: 2, 3, or 4
-                        // prob[4]: 2 vs (3,4)
-                        let (bit4, nv, nr, nb) = get_bit_fast(
-                            tree.get_unchecked(4).prob,
-                            value, range, bits, data, &mut pos, len, &mut eof
-                        );
-                        value = nv; range = nr; bits = nb;
-
-                        if bit4 == 0 {
-                            2
-                        } else {
-                            // prob[5]: 3 vs 4
-                            let (bit5, nv, nr, nb) = get_bit_fast(
-                                tree.get_unchecked(5).prob,
-                                value, range, bits, data, &mut pos, len, &mut eof
-                            );
-                            value = nv; range = nr; bits = nb;
-                            if bit5 == 0 { 3 } else { 4 }
-                        }
-                    } else {
-                        // Large value: CAT1-6
-                        // prob[6]: CAT1-2 vs CAT3-6
-                        let (bit6, nv, nr, nb) = get_bit_fast(
-                            tree.get_unchecked(6).prob,
-                            value, range, bits, data, &mut pos, len, &mut eof
-                        );
-                        value = nv; range = nr; bits = nb;
-
-                        if bit6 == 0 {
-                            // CAT1 or CAT2
-                            // prob[7]: CAT1 vs CAT2
-                            let (bit7, nv, nr, nb) = get_bit_fast(
-                                tree.get_unchecked(7).prob,
-                                value, range, bits, data, &mut pos, len, &mut eof
-                            );
-                            value = nv; range = nr; bits = nb;
-
-                            let (cat_idx, base) = if bit7 == 0 { (0, 5) } else { (1, 7) };
-                            let cat_probs = PROB_DCT_CAT.get_unchecked(cat_idx);
-                            let mut extra = 0i32;
-                            for &t in cat_probs.iter() {
-                                if t == 0 { break; }
-                                let (b, nv, nr, nb) = get_bit_fast(
-                                    t, value, range, bits, data, &mut pos, len, &mut eof
-                                );
-                                value = nv; range = nr; bits = nb;
-                                extra = extra + extra + b;
-                            }
-                            base + extra
-                        } else {
-                            // CAT3-6
-                            // prob[8]: CAT3-4 vs CAT5-6
-                            let (bit8, nv, nr, nb) = get_bit_fast(
-                                tree.get_unchecked(8).prob,
-                                value, range, bits, data, &mut pos, len, &mut eof
-                            );
-                            value = nv; range = nr; bits = nb;
-
-                            if bit8 == 0 {
-                                // CAT3 or CAT4
-                                // prob[9]: CAT3 vs CAT4
-                                let (bit9, nv, nr, nb) = get_bit_fast(
-                                    tree.get_unchecked(9).prob,
-                                    value, range, bits, data, &mut pos, len, &mut eof
-                                );
-                                value = nv; range = nr; bits = nb;
-
-                                let (cat_idx, base) = if bit9 == 0 { (2, 11) } else { (3, 19) };
-                                let cat_probs = PROB_DCT_CAT.get_unchecked(cat_idx);
-                                let mut extra = 0i32;
-                                for &t in cat_probs.iter() {
-                                    if t == 0 { break; }
-                                    let (b, nv, nr, nb) = get_bit_fast(
-                                        t, value, range, bits, data, &mut pos, len, &mut eof
-                                    );
-                                    value = nv; range = nr; bits = nb;
-                                    extra = extra + extra + b;
-                                }
-                                base + extra
-                            } else {
-                                // CAT5 or CAT6
-                                // prob[10]: CAT5 vs CAT6
-                                let (bit10, nv, nr, nb) = get_bit_fast(
-                                    tree.get_unchecked(10).prob,
-                                    value, range, bits, data, &mut pos, len, &mut eof
-                                );
-                                value = nv; range = nr; bits = nb;
-
-                                let (cat_idx, base) = if bit10 == 0 { (4, 35) } else { (5, 67) };
-                                let cat_probs = PROB_DCT_CAT.get_unchecked(cat_idx);
-                                let mut extra = 0i32;
-                                for &t in cat_probs.iter() {
-                                    if t == 0 { break; }
-                                    let (b, nv, nr, nb) = get_bit_fast(
-                                        t, value, range, bits, data, &mut pos, len, &mut eof
-                                    );
-                                    value = nv; range = nr; bits = nb;
-                                    extra = extra + extra + b;
-                                }
-                                base + extra
-                            }
-                        }
-                    }
-                };
-
-                skip = false;
-                complexity = if abs_value == 1 { 1 } else { 2 };
-
-                // Read sign and apply
-                let signed_value = get_signed_fast(
-                    abs_value, &mut value, &mut range, &mut bits,
-                    data, &mut pos, len, &mut eof
-                );
-
-                let zigzag = *ZIGZAG.get_unchecked(i) as usize;
-                let q = if zigzag > 0 { acq } else { dcq };
-                *block.get_unchecked_mut(zigzag) = signed_value * i32::from(q);
-
-                has_coefficients = true;
-            }
-        }
-
-        // Commit state back
-        reader.commit_state(value, range, bits, pos, eof);
-
-        if eof {
-            eprintln!("EOF hit: pos={}, len={}, bits={}, value={:016x}, range={}",
-                pos, len, bits, value, range);
-            return Err(DecodingError::BitStreamError);
-        }
-        Ok(has_coefficients)
-    }
-
     fn read_residual_data(
         &mut self,
         mb: &mut MacroBlock,
@@ -1169,7 +939,7 @@ impl<R: Read> Vp8Decoder<R> {
             let mut block = [0i32; 16];
             let dcq = self.segment[sindex].y2dc;
             let acq = self.segment[sindex].y2ac;
-            let n = self.read_coefficients_fast(&mut block, p, plane, complexity as usize, dcq, acq)?;
+            let n = self.read_coefficients(&mut block, p, plane, complexity as usize, dcq, acq)?;
 
             self.left.complexity[0] = if n { 1 } else { 0 };
             self.top[mbx].complexity[0] = if n { 1 } else { 0 };
@@ -1194,7 +964,7 @@ impl<R: Read> Vp8Decoder<R> {
                 let dcq = self.segment[sindex].ydc;
                 let acq = self.segment[sindex].yac;
 
-                let n = self.read_coefficients_fast(block, p, plane, complexity as usize, dcq, acq)?;
+                let n = self.read_coefficients(block, p, plane, complexity as usize, dcq, acq)?;
 
                 if block[0] != 0 || n {
                     mb.non_zero_dct = true;
@@ -1224,7 +994,7 @@ impl<R: Read> Vp8Decoder<R> {
                     let acq = self.segment[sindex].uvac;
 
                     let n =
-                        self.read_coefficients_fast(block, p, plane, complexity as usize, dcq, acq)?;
+                        self.read_coefficients(block, p, plane, complexity as usize, dcq, acq)?;
                     if block[0] != 0 || n {
                         mb.non_zero_dct = true;
                         transform::idct4x4(block);
