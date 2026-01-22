@@ -734,6 +734,7 @@ pub(crate) struct Segment {
     pub(crate) loopfilter_level: i8,
 
     /// The quantization index (0-127) for this segment
+    #[allow(dead_code)] // Stored for debugging/info purposes
     pub(crate) quant_index: u8,
 
     // Quantization matrices for trellis optimization
@@ -786,9 +787,9 @@ impl Segment {
         //
         // q values come from ExpandMatrix which returns the average of the
         // 16-element quantization matrix: (q_dc + 15*q_ac + 8) >> 4
-        let q_i4 = ((self.ydc as u32 + 15 * self.yac as u32 + 8) >> 4) as u32;
-        let q_i16 = ((self.y2dc as u32 + 15 * self.y2ac as u32 + 8) >> 4) as u32;
-        let q_uv = ((self.uvdc as u32 + 15 * self.uvac as u32 + 8) >> 4) as u32;
+        let q_i4 = (self.ydc as u32 + 15 * self.yac as u32 + 8) >> 4;
+        let q_i16 = (self.y2dc as u32 + 15 * self.y2ac as u32 + 8) >> 4;
+        let q_uv = (self.uvdc as u32 + 15 * self.uvac as u32 + 8) >> 4;
 
         self.lambda_trellis_i4 = ((7 * q_i4 * q_i4) >> 3).max(1);
         self.lambda_trellis_i16 = ((q_i16 * q_i16) >> 2).max(1);

@@ -237,6 +237,7 @@ pub(crate) fn predict_dcpred(a: &mut [u8], size: usize, stride: usize, above: bo
 /// Takes a bordered block buffer and fills the 16x16 prediction area
 /// `x0` and `y0` specify the top-left corner in the buffer (typically 1,1 for bordered blocks)
 #[inline]
+#[allow(dead_code)] // Available for potential future use
 pub(crate) fn predict_dc_16x16(a: &mut [u8], stride: usize, x0: usize, y0: usize) {
     let above = y0 > 0;
     let left = x0 > 0;
@@ -275,6 +276,7 @@ pub(crate) fn predict_dc_16x16(a: &mut [u8], stride: usize, x0: usize, y0: usize
 /// Takes a bordered block buffer and fills the 8x8 prediction area
 /// `x0` and `y0` specify the top-left corner in the buffer (typically 1,1 for bordered blocks)
 #[inline]
+#[allow(dead_code)] // Available for potential future use
 pub(crate) fn predict_dc_8x8(a: &mut [u8], stride: usize, x0: usize, y0: usize) {
     let above = y0 > 0;
     let left = x0 > 0;

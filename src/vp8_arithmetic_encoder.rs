@@ -30,6 +30,7 @@ impl ArithmeticEncoder {
         }
     }
 
+    #[allow(dead_code)] // Available for potential buffer reuse optimization
     pub fn reset(&mut self) {
         self.writer.clear();
         self.bottom = 0;

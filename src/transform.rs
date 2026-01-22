@@ -5,6 +5,18 @@ const CONST2: i64 = 35468;
 
 // inverse discrete cosine transform, used in decoding
 pub(crate) fn idct4x4(block: &mut [i32]) {
+    #[cfg(feature = "simd")]
+    {
+        crate::transform_simd::idct4x4_simd(block);
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+        idct4x4_scalar(block);
+    }
+}
+
+#[cfg_attr(feature = "simd", allow(dead_code))]
+pub(crate) fn idct4x4_scalar(block: &mut [i32]) {
     // The intermediate results may overflow the types, so we stretch the type.
     fn fetch(block: &[i32], idx: usize) -> i64 {
         i64::from(block[idx])
@@ -129,6 +141,19 @@ pub(crate) fn wht4x4(block: &mut [i32; 16]) {
 }
 
 pub(crate) fn dct4x4(block: &mut [i32; 16]) {
+    #[cfg(feature = "simd")]
+    {
+        crate::transform_simd::dct4x4_simd(block);
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+        dct4x4_scalar(block);
+    }
+}
+
+/// Scalar DCT implementation for reference and non-SIMD builds
+#[cfg_attr(feature = "simd", allow(dead_code))]
+pub(crate) fn dct4x4_scalar(block: &mut [i32; 16]) {
     // The intermediate results may overflow the types, so we stretch the type.
     fn fetch(block: &[i32], idx: usize) -> i64 {
         i64::from(block[idx])

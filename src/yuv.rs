@@ -392,6 +392,7 @@ const YUV_HALF: i32 = 1 << (YUV_FIX - 1);
 ///
 /// Returns (y_bytes, u_bytes, v_bytes) with macroblock-aligned dimensions.
 #[cfg(feature = "fast-yuv")]
+#[allow(dead_code)] // Alternative YUV conversion implementation
 pub(crate) fn convert_image_yuv_simd<const BPP: usize>(
     image_data: &[u8],
     width: u16,
