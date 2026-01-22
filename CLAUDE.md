@@ -79,10 +79,9 @@ arithmetic decoder (~24% of time). Recent optimizations:
   - ~15% speedup in arithmetic decoding
 
 ### TODO
-- [ ] Integrate SIMD normal/macroblock filter (DoFilter4/DoFilter6)
+- [ ] Integrate SIMD normal/macroblock filter (DoFilter4/DoFilter6) - ~11% opportunity
 - [ ] Consider SIMD for choose_macroblock_info inner loops (encoder)
 - [ ] Profile get_residual_cost for optimization opportunities
-- [ ] Explore batch coefficient reading to reduce FastDecoder overhead
 
 ## Known Bugs
 
@@ -90,7 +89,44 @@ arithmetic decoder (~24% of time). Recent optimizations:
 
 ## Investigation Notes
 
-(none currently)
+### VP8BitReader Investigation (2026-01-22)
+
+Attempted to implement libwebp-style VP8BitReader to replace ArithmeticDecoder
+for coefficient reading. **Result: New implementation was ~10% SLOWER**.
+
+Key findings:
+1. The existing `FastDecoder` in `vp8_arithmetic_decoder.rs` is already well-optimized:
+   - Pre-chunked `[[u8; 4]]` storage enables fast 4-byte loads via `u32::from_be_bytes`
+   - Speculative reading (reads past end with defaults, validates at commit)
+   - State committed only once at the end of each tree read
+   - Lookup table normalization already in place
+
+2. The new VP8BitReader added overhead from:
+   - Contiguous byte storage requiring slice operations for 7-byte loads
+   - `try_into().unwrap()` pattern for array conversion
+   - Reader creation/state save pattern on every coefficient read
+
+3. Profile comparison:
+   - Before: `read_with_tree_with_first_node` at 24% (both mode parsing + coefficients)
+   - After: `read_coefficients` at 28.5%, `read_with_tree_with_first_node` at 3.5%
+   - Total arithmetic decoding time INCREASED despite splitting the paths
+
+**Conclusion**: Don't replace ArithmeticDecoder. Focus on other bottlenecks:
+- Loop filter (~11%): SIMD normal filter could help significantly
+- YUV conversion (~4%): Already has SIMD, may be near optimal
+
+### Loop Filter Optimization Opportunity
+
+The normal filter path (when `filter_type == false`) processes rows individually:
+```rust
+for y in 0..16 {
+    loop_filter::subblock_filter_horizontal(...);
+}
+```
+
+SIMD opportunity: Process 16 rows at once like the simple filter does.
+Current SIMD exists in `loop_filter_avx2.rs` but only for simple filter.
+Adding SIMD normal filter (DoFilter4/DoFilter6) could save ~5-8% of total time.
 
 ## User Feedback Log
 
