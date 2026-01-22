@@ -1891,8 +1891,26 @@ impl<W: Write> Vp8Encoder<W> {
 
                 let y1_matrix = segment.y1_matrix.as_ref().unwrap();
 
-                // Try each mode and pick the best
-                for (mode_idx, &mode) in MODES.iter().enumerate() {
+                // Fast mode filtering: compute prediction SSE for all modes
+                // and only try the top candidates with lowest SSE
+                // This reduces DCT/IDCT calls while maintaining quality
+                const MAX_MODES_TO_TRY: usize = 4;
+                let mut mode_sse: [(u32, usize); 10] = [(0, 0); 10];
+                for (mode_idx, _) in MODES.iter().enumerate() {
+                    let pred = preds.get(mode_idx);
+                    let mut sse = 0u32;
+                    for k in 0..16 {
+                        let diff = i32::from(src_block[k]) - i32::from(pred[k]);
+                        sse += (diff * diff) as u32;
+                    }
+                    mode_sse[mode_idx] = (sse, mode_idx);
+                }
+                // Sort by SSE (ascending) - try modes with best predictions first
+                mode_sse.sort_unstable_by_key(|&(sse, _)| sse);
+
+                // Try only the best candidate modes (ordered by prediction SSE)
+                for &(_, mode_idx) in mode_sse[..MAX_MODES_TO_TRY].iter() {
+                    let mode = MODES[mode_idx];
                     // Get pre-computed prediction for this mode
                     let pred = preds.get(mode_idx);
 
@@ -2167,10 +2185,24 @@ impl<W: Write> Vp8Encoder<W> {
         // Pick the best 16x16 luma mode using RD cost selection
         let (luma_mode, i16_score) = self.pick_best_intra16(mbx, mby);
 
-        // Try Intra4 mode and compare with Intra16 using accurate coefficient costs
-        let (luma_mode, luma_bpred) = match self.pick_best_intra4(mbx, mby, i16_score) {
-            Some((modes, _)) => (LumaMode::B, Some(modes)),
-            None => (luma_mode, None),
+        // Skip I4 evaluation for very flat blocks (DC mode with low score)
+        // The threshold is based on I4's fixed overhead cost (211 * lambda_mode)
+        // plus the minimum possible per-block cost
+        let segment = self.get_segment_for_mb(mbx, mby);
+        let skip_i4_threshold = 211 * u64::from(segment.lambda_mode);
+
+        // Try Intra4 mode only if:
+        // 1. I16 score is high enough that I4 might beat it
+        // 2. Or I16 didn't pick DC mode (non-flat content)
+        let (luma_mode, luma_bpred) = if i16_score > skip_i4_threshold || luma_mode != LumaMode::DC
+        {
+            match self.pick_best_intra4(mbx, mby, i16_score) {
+                Some((modes, _)) => (LumaMode::B, Some(modes)),
+                None => (luma_mode, None),
+            }
+        } else {
+            // Skip I4 for very flat DC blocks
+            (luma_mode, None)
         };
 
         // Pick the best chroma mode using RD-based selection
