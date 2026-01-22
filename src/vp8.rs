@@ -23,6 +23,7 @@ use super::vp8_arithmetic_decoder::ArithmeticDecoder;
 use super::{loop_filter, transform};
 
 /// Helper to apply simple horizontal filter to 16 rows with SIMD when available.
+/// Filters the vertical edge at column x0, processing all 16 rows at once.
 #[inline]
 fn simple_filter_horizontal_16_rows(
     buf: &mut [u8],
@@ -33,16 +34,9 @@ fn simple_filter_horizontal_16_rows(
 ) {
     #[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
     if is_x86_feature_detected!("sse4.1") {
-        for y_base in (0usize..16).step_by(4) {
-            let offsets = [
-                (y_start + y_base) * stride + x0,
-                (y_start + y_base + 1) * stride + x0,
-                (y_start + y_base + 2) * stride + x0,
-                (y_start + y_base + 3) * stride + x0,
-            ];
-            unsafe {
-                crate::loop_filter_simd::simple_filter_horizontal_4x(buf, offsets, edge_limit);
-            }
+        // Use the new 16-pixel-at-once approach with transpose
+        unsafe {
+            crate::loop_filter_avx2::simple_h_filter16(buf, x0, y_start, stride, i32::from(edge_limit));
         }
         return;
     }
@@ -55,6 +49,7 @@ fn simple_filter_horizontal_16_rows(
 }
 
 /// Helper to apply simple vertical filter to 16 columns with SIMD when available.
+/// Filters the horizontal edge at row y0, processing all 16 columns at once.
 #[inline]
 fn simple_filter_vertical_16_cols(
     buf: &mut [u8],
@@ -65,11 +60,10 @@ fn simple_filter_vertical_16_cols(
 ) {
     #[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
     if is_x86_feature_detected!("sse4.1") {
-        for x_base in (0usize..16).step_by(4) {
-            let point = y0 * stride + x_start + x_base;
-            unsafe {
-                crate::loop_filter_simd::simple_filter_vertical_4x(buf, point, stride, edge_limit);
-            }
+        // Use the new 16-pixel-at-once approach
+        let point = y0 * stride + x_start;
+        unsafe {
+            crate::loop_filter_avx2::simple_v_filter16(buf, point, stride, i32::from(edge_limit));
         }
         return;
     }

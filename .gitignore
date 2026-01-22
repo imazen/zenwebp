@@ -1,4 +1,4 @@
 /target
 /Cargo.lock
 tests/out/
-compare_output/
+compare_output/perf.data*

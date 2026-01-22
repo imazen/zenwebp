@@ -21,6 +21,8 @@ mod extended;
 mod huffman;
 mod loop_filter;
 #[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
+mod loop_filter_avx2;
+#[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
 mod loop_filter_simd;
 mod lossless;
 mod lossless_transform;
