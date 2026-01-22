@@ -273,11 +273,11 @@ pub unsafe fn simple_h_filter16(pixels: &mut [u8], x: usize, y_start: usize, str
     // Transpose back: convert 4 columns of 16 to 16 rows of 4
     let packed = transpose_4x16_to_16x4(p1, p0, q0, q1);
 
-    // Store 4 bytes per row (p1, p0, q0, q1)
+    // Store 4 bytes per row (p1, p0, q0, q1) using unaligned write
     for (i, &val) in packed.iter().enumerate() {
         let row_start = (y_start + i) * stride + x - 2;
         let ptr = pixels.as_mut_ptr().add(row_start) as *mut i32;
-        *ptr = val;
+        std::ptr::write_unaligned(ptr, val);
     }
 }
 

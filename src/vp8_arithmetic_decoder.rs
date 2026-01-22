@@ -2,6 +2,31 @@ use crate::decoder::DecodingError;
 
 use super::vp8::TreeNode;
 
+/// Lookup table for shift amount needed to normalize range to [128, 254].
+/// Index is range value (1-127). Returns shift count in [1, 7].
+/// For range r, shift = 7 - floor(log2(r)).
+#[rustfmt::skip]
+const VP8_SHIFT_TABLE: [u8; 128] = [
+    // r=0 (invalid), r=1: shift=7
+    7, 7,
+    // r=2-3: shift=6
+    6, 6,
+    // r=4-7: shift=5
+    5, 5, 5, 5,
+    // r=8-15: shift=4
+    4, 4, 4, 4, 4, 4, 4, 4,
+    // r=16-31: shift=3
+    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    // r=32-63: shift=2
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    // r=64-127: shift=1
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+];
+
 #[must_use]
 #[repr(transparent)]
 pub(crate) struct BitResult<T> {
@@ -306,14 +331,12 @@ impl ArithmeticDecoder {
         };
         debug_assert!(self.state.range > 0);
 
-        // Compute shift required to satisfy `self.state.range >= 128`.
-        // Apply that shift to `self.state.range` and `self.state.bitcount`.
-        //
-        // Subtract 24 because we only care about leading zeros in the
-        // lowest byte of `self.state.range` which is a `u32`.
-        let shift = self.state.range.leading_zeros().saturating_sub(24);
-        self.state.range <<= shift;
-        self.state.bit_count -= shift as i32;
+        // Normalize range to [128, 254] using lookup table.
+        if self.state.range < 128 {
+            let shift = VP8_SHIFT_TABLE[self.state.range as usize];
+            self.state.range <<= shift;
+            self.state.bit_count -= i32::from(shift);
+        }
         debug_assert!(self.state.range >= 128);
 
         BitResult::ok(retval)
@@ -477,15 +500,15 @@ impl FastDecoder<'_> {
             false
         };
 
-        // Compute shift required to satisfy `range >= 128`.
-        // Apply that shift to `range` and `self.bitcount`.
-        //
-        // Subtract 24 because we only care about leading zeros in the
-        // lowest byte of `range` which is a `u32`.
+        // Normalize range to [128, 254] using lookup table.
+        // This is faster than computing leading_zeros().
         debug_assert!((1..=254).contains(&range));
-        let shift = range.leading_zeros().saturating_sub(24);
-        range <<= shift;
-        bit_count -= shift as i32;
+        if range < 128 {
+            // Use lookup table for shift amount, then shift range
+            let shift = VP8_SHIFT_TABLE[range as usize];
+            range <<= shift;
+            bit_count -= i32::from(shift);
+        }
 
         debug_assert!((128..=254).contains(&range));
         self.uncommitted_state = State {
