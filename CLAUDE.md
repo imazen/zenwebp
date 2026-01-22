@@ -56,9 +56,27 @@ implementation without SIMD. Key areas for optimization:
 - Boolean arithmetic decoding
 - Loop filter application
 
+### Decoder Profiler Hot Spots
+| Function | % Time | Notes |
+|----------|--------|-------|
+| read_with_tree_with_first_node | 23.77% | Arithmetic decoder (hard to SIMD) |
+| should_filter_vertical | 4.98% | Loop filter threshold check |
+| fill_row_fancy_with_2_uv_rows | 4.13% | YUV upsampling + conversion |
+| subblock_filter_horizontal | 4.10% | Loop filter application |
+| idct4x4_simd | 3.73% | Already SIMD |
+| Loop filter total | ~15% | Multiple functions |
+
+### SIMD Decoder Optimizations
+- `src/yuv_simd.rs` - SSE4.1 YUV→RGB (8 pixels at once)
+  - **Integrated** for Simple upsampling mode (non-default)
+  - Uses exact same formula as scalar code (bit-exact)
+  - Feature-gated: `unsafe-simd` feature + x86_64 + SSE4.1 detected
+- `src/loop_filter_simd.rs` - SSE4.1 loop filter (4 edges at once)
+  - **Not integrated** - requires restructuring decoder to batch operations
+
 ### TODO
-- [ ] Profile decoder to identify hot spots
-- [ ] Consider SIMD for decoder IDCT
+- [ ] Integrate SIMD loop filter into decoder (requires batching)
+- [ ] Add SIMD YUV for Bilinear (fancy) upsampling (default mode)
 - [ ] Consider SIMD for choose_macroblock_info inner loops (encoder)
 - [ ] Profile get_residual_cost for optimization opportunities
 
