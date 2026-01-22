@@ -1499,6 +1499,11 @@ impl<W: Write> Vp8Encoder<W> {
 
         let mut best_mode = LumaMode::DC;
         let mut best_rd_score = i64::MAX;
+        // Store best mode's cost components for final score recalculation with lambda_mode
+        let mut best_coeff_cost = 0u32;
+        let mut best_mode_cost = 0u16;
+        let mut best_sse = 0u32;
+        let mut best_spectral_disto = 0i32;
 
         for (mode_idx, &mode) in MODES.iter().enumerate() {
             // Skip V mode if no top row available (first row of macroblocks)
@@ -1631,11 +1636,25 @@ impl<W: Write> Vp8Encoder<W> {
             if rd_score < best_rd_score {
                 best_rd_score = rd_score;
                 best_mode = mode;
+                // Store components for final score recalculation
+                best_coeff_cost = coeff_cost;
+                best_mode_cost = mode_cost;
+                best_sse = d_final;
+                best_spectral_disto = sd_final;
             }
         }
 
+        // Recalculate final score using lambda_mode for I4 vs I16 comparison
+        // This matches libwebp's: SetRDScore(dqm->lambda_mode, rd);
+        let lambda_mode = segment.lambda_mode;
+        let final_rate =
+            (i64::from(best_mode_cost) + i64::from(best_coeff_cost)) * i64::from(lambda_mode);
+        let final_distortion =
+            i64::from(RD_DISTO_MULT) * (i64::from(best_sse) + i64::from(best_spectral_disto));
+        let final_score = final_rate + final_distortion;
+
         // Convert to u64 for interface compatibility (score should be positive)
-        (best_mode, best_rd_score.max(0) as u64)
+        (best_mode, final_score.max(0) as u64)
     }
 
     /// Estimate coefficient cost for a 16x16 luma macroblock (I16 mode).
@@ -1876,6 +1895,7 @@ impl<W: Write> Vp8Encoder<W> {
                     }
                     transform::idct4x4(&mut dequantized);
 
+                    // Compute SSE between source and reconstructed
                     let mut sse = 0u32;
                     for y in 0..4 {
                         let pred_row = (y0 + y) * LUMA_STRIDE + x0;

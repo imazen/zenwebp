@@ -510,10 +510,12 @@ pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
 }
 
 /// Flatness threshold for I16 mode (FLATNESS_LIMIT_I16 in libwebp)
-pub const FLATNESS_LIMIT_I16: i32 = 10;
+/// libwebp uses 0, which means "always check for flatness" in I16 mode
+pub const FLATNESS_LIMIT_I16: i32 = 0;
 
 /// Flatness threshold for I4 mode (FLATNESS_LIMIT_I4 in libwebp)
-pub const FLATNESS_LIMIT_I4: i32 = 2;
+/// libwebp uses 3 (not 2)
+pub const FLATNESS_LIMIT_I4: i32 = 3;
 
 /// Flatness threshold for UV mode (FLATNESS_LIMIT_UV in libwebp)
 pub const FLATNESS_LIMIT_UV: i32 = 2;
