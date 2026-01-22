@@ -142,11 +142,24 @@ unsafe fn dct4x4_sse2(block: &mut [i32; 16]) {
     let mut out16 = [0i16; 16];
     ftransform_pass2_i16(&v01, &v32, &mut out16);
 
-    // Convert back to i32 - output is in standard row-major order
-    // libwebp output layout: [row0: d0 d1 d2 d3, row1: d0 d1 d2 d3, ...]
-    for i in 0..16 {
-        block[i] = out16[i] as i32;
-    }
+    // Convert i16 output back to i32 using SIMD sign extension
+    let zero = _mm_setzero_si128();
+    let out01 = _mm_loadu_si128(out16.as_ptr().add(0) as *const __m128i);
+    let out23 = _mm_loadu_si128(out16.as_ptr().add(8) as *const __m128i);
+
+    // Sign extend i16 to i32
+    let sign01 = _mm_cmpgt_epi16(zero, out01);
+    let sign23 = _mm_cmpgt_epi16(zero, out23);
+
+    let out_0 = _mm_unpacklo_epi16(out01, sign01);
+    let out_1 = _mm_unpackhi_epi16(out01, sign01);
+    let out_2 = _mm_unpacklo_epi16(out23, sign23);
+    let out_3 = _mm_unpackhi_epi16(out23, sign23);
+
+    _mm_storeu_si128(block.as_mut_ptr().add(0) as *mut __m128i, out_0);
+    _mm_storeu_si128(block.as_mut_ptr().add(4) as *mut __m128i, out_1);
+    _mm_storeu_si128(block.as_mut_ptr().add(8) as *mut __m128i, out_2);
+    _mm_storeu_si128(block.as_mut_ptr().add(12) as *mut __m128i, out_3);
 }
 
 /// FTransform Pass 1 - matches libwebp FTransformPass1_SSE2 exactly
@@ -282,14 +295,15 @@ unsafe fn idct4x4_sse2(block: &mut [i32]) {
     let k2k1 = _mm_set_epi16(20091, 20091, 20091, 20091, -30068, -30068, -30068, -30068);
     let zero_four = _mm_set_epi16(0, 0, 0, 0, 4, 4, 4, 4);
 
-    // Convert i32 to i16
-    let mut block16 = [0i16; 16];
-    for i in 0..16 {
-        block16[i] = block[i] as i16;
-    }
+    // Load i32 values and pack to i16 using SIMD
+    let i32_0 = _mm_loadu_si128(block.as_ptr().add(0) as *const __m128i);
+    let i32_1 = _mm_loadu_si128(block.as_ptr().add(4) as *const __m128i);
+    let i32_2 = _mm_loadu_si128(block.as_ptr().add(8) as *const __m128i);
+    let i32_3 = _mm_loadu_si128(block.as_ptr().add(12) as *const __m128i);
 
-    let in01 = _mm_loadu_si128(block16.as_ptr().add(0) as *const __m128i);
-    let in23 = _mm_loadu_si128(block16.as_ptr().add(8) as *const __m128i);
+    // Pack i32 to i16 with saturation (values should be small enough)
+    let in01 = _mm_packs_epi32(i32_0, i32_1);
+    let in23 = _mm_packs_epi32(i32_2, i32_3);
 
     // Vertical pass
     let (t01, t23) = itransform_pass_sse2(in01, in23, k1k2, k2k1);
@@ -297,14 +311,25 @@ unsafe fn idct4x4_sse2(block: &mut [i32]) {
     // Horizontal pass with rounding
     let (out01, out23) = itransform_pass2_sse2(t01, t23, k1k2, k2k1, zero_four);
 
-    // Store and convert back to i32
-    let mut out16 = [0i16; 16];
-    _mm_storeu_si128(out16.as_mut_ptr().add(0) as *mut __m128i, out01);
-    _mm_storeu_si128(out16.as_mut_ptr().add(8) as *mut __m128i, out23);
+    // Unpack i16 back to i32 using sign extension
+    // out01 contains 8 i16 values: [0,1,2,3,4,5,6,7]
+    // out23 contains 8 i16 values: [8,9,10,11,12,13,14,15]
+    let zero = _mm_setzero_si128();
 
-    for i in 0..16 {
-        block[i] = out16[i] as i32;
-    }
+    // Sign extend low 4 i16 values to i32
+    let sign01_lo = _mm_cmpgt_epi16(zero, out01); // all 1s where negative
+    let out_0 = _mm_unpacklo_epi16(out01, sign01_lo);
+    let out_1 = _mm_unpackhi_epi16(out01, sign01_lo);
+
+    let sign23_lo = _mm_cmpgt_epi16(zero, out23);
+    let out_2 = _mm_unpacklo_epi16(out23, sign23_lo);
+    let out_3 = _mm_unpackhi_epi16(out23, sign23_lo);
+
+    // Store results
+    _mm_storeu_si128(block.as_mut_ptr().add(0) as *mut __m128i, out_0);
+    _mm_storeu_si128(block.as_mut_ptr().add(4) as *mut __m128i, out_1);
+    _mm_storeu_si128(block.as_mut_ptr().add(8) as *mut __m128i, out_2);
+    _mm_storeu_si128(block.as_mut_ptr().add(12) as *mut __m128i, out_3);
 }
 
 /// ITransform vertical pass - matches libwebp
