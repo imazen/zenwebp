@@ -128,6 +128,33 @@ SIMD opportunity: Process 16 rows at once like the simple filter does.
 Current SIMD exists in `loop_filter_avx2.rs` but only for simple filter.
 Adding SIMD normal filter (DoFilter4/DoFilter6) could save ~5-8% of total time.
 
+### libwebp-rs Mechanical Translation Comparison (2026-01-22)
+
+Profiled `~/work/webp-porting/libwebp-rs` - a direct Rust port of libwebp:
+
+| Decoder | Arith Decoder | Loop Filter | Overall |
+|---------|--------------|-------------|---------|
+| image-webp (ours) | 24% | ~11% | 2.5x slower |
+| libwebp-rs (mechanical) | 11% | 24% | 2.6x slower |
+| libwebp C | baseline | baseline | 1.0x |
+
+Key finding: **Both Rust decoders have similar ~2.5x slowdown** despite different
+bottleneck distributions. The mechanical translation uses rayon parallelism and
+libwebp's exact bit reader algorithm, yet achieves similar performance to our
+hand-written decoder.
+
+libwebp-rs uses:
+- libwebp's VP8GetBitAlt algorithm with `range - 1` representation
+- `leading_zeros()` for normalization (not lookup table)
+- SIMD for macroblock edge filters but scalar for inner edge (`filter_loop24`)
+- rayon parallelism (adds ~18% overhead)
+
+The inner edge filter `filter_loop24` is 24% of their time - scalar loop over
+16 pixels. Same bottleneck pattern as our decoder.
+
+Conclusion: The ~2.5x gap may be inherent to Rust vs C for this workload, or
+requires deeper investigation into codegen/memory access patterns.
+
 ## User Feedback Log
 
 (none currently)
