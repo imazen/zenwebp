@@ -198,6 +198,8 @@ struct Vp8Encoder<W> {
     do_trellis: bool,
     /// Whether to use chroma error diffusion to reduce banding
     do_error_diffusion: bool,
+    /// Encoding method (0-6): 0=fastest, 6=best quality
+    method: u8,
 
     top_complexity: Vec<Complexity>,
     left_complexity: Complexity,
@@ -254,6 +256,8 @@ impl<W: Write> Vp8Encoder<W> {
             do_trellis: true,
             // Error diffusion improves quality in smooth gradients
             do_error_diffusion: true,
+            // Default to balanced method
+            method: 4,
 
             top_complexity: Vec::new(),
             left_complexity: Complexity::default(),
@@ -1287,7 +1291,12 @@ impl<W: Write> Vp8Encoder<W> {
         width: u16,
         height: u16,
         lossy_quality: u8,
+        method: u8,
     ) -> Result<(), EncodingError> {
+        // Store method and configure features based on it
+        self.method = method.min(6); // Clamp to 0-6
+        // Trellis quantization only for method >= 4 (like libwebp)
+        self.do_trellis = self.method >= 4;
         let (y_bytes, u_bytes, v_bytes) = match color {
             ColorType::Rgb8 => convert_image_yuv::<3>(data, width, height),
             ColorType::Rgba8 => convert_image_yuv::<4>(data, width, height),
@@ -1894,7 +1903,15 @@ impl<W: Write> Vp8Encoder<W> {
                 // Fast mode filtering: compute prediction SSE for all modes
                 // and only try the top candidates with lowest SSE
                 // This reduces DCT/IDCT calls while maintaining quality
-                const MAX_MODES_TO_TRY: usize = 4;
+                // Number of modes to try depends on method:
+                // - method 2-3: 3 modes (fast)
+                // - method 4: 4 modes (balanced)
+                // - method 5-6: 10 modes (full search)
+                let max_modes_to_try = match self.method {
+                    0..=3 => 3,
+                    4 => 4,
+                    _ => 10, // method 5-6: try all modes
+                };
                 let mut mode_sse: [(u32, usize); 10] = [(0, 0); 10];
                 for (mode_idx, _) in MODES.iter().enumerate() {
                     let pred = preds.get(mode_idx);
@@ -1909,7 +1926,7 @@ impl<W: Write> Vp8Encoder<W> {
                 mode_sse.sort_unstable_by_key(|&(sse, _)| sse);
 
                 // Try only the best candidate modes (ordered by prediction SSE)
-                for &(_, mode_idx) in mode_sse[..MAX_MODES_TO_TRY].iter() {
+                for &(_, mode_idx) in mode_sse[..max_modes_to_try].iter() {
                     let mode = MODES[mode_idx];
                     // Get pre-computed prediction for this mode
                     let pred = preds.get(mode_idx);
@@ -2185,24 +2202,32 @@ impl<W: Write> Vp8Encoder<W> {
         // Pick the best 16x16 luma mode using RD cost selection
         let (luma_mode, i16_score) = self.pick_best_intra16(mbx, mby);
 
-        // Skip I4 evaluation for very flat blocks (DC mode with low score)
-        // The threshold is based on I4's fixed overhead cost (211 * lambda_mode)
-        // plus the minimum possible per-block cost
-        let segment = self.get_segment_for_mb(mbx, mby);
-        let skip_i4_threshold = 211 * u64::from(segment.lambda_mode);
-
-        // Try Intra4 mode only if:
-        // 1. I16 score is high enough that I4 might beat it
-        // 2. Or I16 didn't pick DC mode (non-flat content)
-        let (luma_mode, luma_bpred) = if i16_score > skip_i4_threshold || luma_mode != LumaMode::DC
-        {
-            match self.pick_best_intra4(mbx, mby, i16_score) {
-                Some((modes, _)) => (LumaMode::B, Some(modes)),
-                None => (luma_mode, None),
-            }
-        } else {
-            // Skip I4 for very flat DC blocks
+        // Method-based I4 mode selection:
+        // - method 0-1: Skip I4 entirely (fastest)
+        // - method 2-4: Try I4 with fast filtering
+        // - method 5-6: Full I4 search
+        let (luma_mode, luma_bpred) = if self.method <= 1 {
+            // Fastest: I16 only, no I4 evaluation
             (luma_mode, None)
+        } else {
+            // For method >= 2, try I4 with early exit optimizations
+            let segment = self.get_segment_for_mb(mbx, mby);
+            let skip_i4_threshold = 211 * u64::from(segment.lambda_mode);
+
+            // Skip I4 for very flat DC blocks (method 2-4)
+            // For method 5-6, always try I4 for best quality
+            let should_try_i4 = self.method >= 5
+                || i16_score > skip_i4_threshold
+                || luma_mode != LumaMode::DC;
+
+            if should_try_i4 {
+                match self.pick_best_intra4(mbx, mby, i16_score) {
+                    Some((modes, _)) => (LumaMode::B, Some(modes)),
+                    None => (luma_mode, None),
+                }
+            } else {
+                (luma_mode, None)
+            }
         };
 
         // Pick the best chroma mode using RD-based selection
@@ -3049,6 +3074,7 @@ pub(crate) fn encode_frame_lossy<W: Write>(
     height: u32,
     color: ColorType,
     lossy_quality: u8,
+    method: u8,
 ) -> Result<(), EncodingError> {
     let mut vp8_encoder = Vp8Encoder::new(writer);
 
@@ -3059,7 +3085,7 @@ pub(crate) fn encode_frame_lossy<W: Write>(
         .try_into()
         .map_err(|_| EncodingError::InvalidDimensions)?;
 
-    vp8_encoder.encode_image(data, color, width, height, lossy_quality)?;
+    vp8_encoder.encode_image(data, color, width, height, lossy_quality, method)?;
 
     Ok(())
 }

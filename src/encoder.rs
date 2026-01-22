@@ -367,6 +367,12 @@ pub struct EncoderParams {
     pub use_lossy: bool,
     /// A quality value for the lossy encoding that must be between 0 and 100. Defaults to 95.
     pub lossy_quality: u8,
+    /// Encoding method (0-6). Higher values = better quality/compression but slower.
+    /// - 0: Fastest encoding, minimal mode search
+    /// - 1-2: Fast encoding with limited mode search
+    /// - 3-4: Balanced speed/quality (default: 4)
+    /// - 5-6: Best quality, full mode search
+    pub method: u8,
 }
 
 impl Default for EncoderParams {
@@ -375,6 +381,7 @@ impl Default for EncoderParams {
             use_predictor_transform: true,
             use_lossy: false,
             lossy_quality: 95,
+            method: 4, // Balanced speed/quality
         }
     }
 }
@@ -770,6 +777,7 @@ impl<W: Write> WebPEncoder<W> {
                 height,
                 color,
                 self.params.lossy_quality,
+                self.params.method,
             )?;
             b"VP8 "
         } else {

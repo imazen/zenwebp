@@ -33,18 +33,21 @@ fn main() {
         .unwrap_or(concat!(env!("HOME"), "/work/codec-corpus/kodak/1.png"));
     let quality: u8 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(75);
     let iterations: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(10);
+    let method: u8 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(4);
 
     let path = Path::new(image_path);
     println!("Loading: {}", path.display());
     let (rgb_data, width, height) = load_png(path);
     println!("Image: {}x{} ({} pixels)", width, height, width * height);
-    println!("Quality: {}, Iterations: {}", quality, iterations);
+    println!("Quality: {}, Method: {}, Iterations: {}", quality, method, iterations);
 
     // Warmup
     let mut output = Vec::new();
     {
         let mut encoder = WebPEncoder::new(&mut output);
-        encoder.set_params(EncoderParams::lossy(quality));
+        let mut params = EncoderParams::lossy(quality);
+        params.method = method;
+        encoder.set_params(params);
         encoder
             .encode(&rgb_data, width, height, ColorType::Rgb8)
             .unwrap();
@@ -56,7 +59,9 @@ fn main() {
     for _ in 0..iterations {
         output.clear();
         let mut encoder = WebPEncoder::new(&mut output);
-        encoder.set_params(EncoderParams::lossy(quality));
+        let mut params = EncoderParams::lossy(quality);
+        params.method = method;
+        encoder.set_params(params);
         encoder
             .encode(&rgb_data, width, height, ColorType::Rgb8)
             .unwrap();
