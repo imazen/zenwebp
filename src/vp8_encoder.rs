@@ -60,6 +60,7 @@ fn quality_to_quant_index(quality: u8) -> u8 {
 
 /// Compute SSE for a 16x16 luma block within bordered prediction buffer
 /// Compares source YUV data against predicted block with border
+#[inline]
 fn sse_16x16_luma(
     src_y: &[u8],
     src_width: usize,
@@ -67,22 +68,30 @@ fn sse_16x16_luma(
     mby: usize,
     pred: &[u8; LUMA_BLOCK_SIZE],
 ) -> u32 {
-    let mut sse = 0u32;
-    let src_base = mby * 16 * src_width + mbx * 16;
-
-    for y in 0..16 {
-        let src_row = src_base + y * src_width;
-        let pred_row = (y + 1) * LUMA_STRIDE + 1; // +1 for border offset
-
-        for x in 0..16 {
-            let diff = i32::from(src_y[src_row + x]) - i32::from(pred[pred_row + x]);
-            sse += (diff * diff) as u32;
-        }
+    #[cfg(feature = "unsafe-simd")]
+    {
+        crate::simd_sse::sse_16x16_luma(src_y, src_width, mbx, mby, pred)
     }
-    sse
+    #[cfg(not(feature = "unsafe-simd"))]
+    {
+        let mut sse = 0u32;
+        let src_base = mby * 16 * src_width + mbx * 16;
+
+        for y in 0..16 {
+            let src_row = src_base + y * src_width;
+            let pred_row = (y + 1) * LUMA_STRIDE + 1; // +1 for border offset
+
+            for x in 0..16 {
+                let diff = i32::from(src_y[src_row + x]) - i32::from(pred[pred_row + x]);
+                sse += (diff * diff) as u32;
+            }
+        }
+        sse
+    }
 }
 
 /// Compute SSE for an 8x8 chroma block within bordered prediction buffer
+#[inline]
 fn sse_8x8_chroma(
     src_uv: &[u8],
     src_width: usize,
@@ -90,19 +99,26 @@ fn sse_8x8_chroma(
     mby: usize,
     pred: &[u8; CHROMA_BLOCK_SIZE],
 ) -> u32 {
-    let mut sse = 0u32;
-    let src_base = mby * 8 * src_width + mbx * 8;
-
-    for y in 0..8 {
-        let src_row = src_base + y * src_width;
-        let pred_row = (y + 1) * CHROMA_STRIDE + 1; // +1 for border offset
-
-        for x in 0..8 {
-            let diff = i32::from(src_uv[src_row + x]) - i32::from(pred[pred_row + x]);
-            sse += (diff * diff) as u32;
-        }
+    #[cfg(feature = "unsafe-simd")]
+    {
+        crate::simd_sse::sse_8x8_chroma(src_uv, src_width, mbx, mby, pred)
     }
-    sse
+    #[cfg(not(feature = "unsafe-simd"))]
+    {
+        let mut sse = 0u32;
+        let src_base = mby * 8 * src_width + mbx * 8;
+
+        for y in 0..8 {
+            let src_row = src_base + y * src_width;
+            let pred_row = (y + 1) * CHROMA_STRIDE + 1; // +1 for border offset
+
+            for x in 0..8 {
+                let diff = i32::from(src_uv[src_row + x]) - i32::from(pred[pred_row + x]);
+                sse += (diff * diff) as u32;
+            }
+        }
+        sse
+    }
 }
 
 // currently in decoder it actually stores this information on the macroblock but that's confusing
@@ -1253,9 +1269,8 @@ impl<W: Write> Vp8Encoder<W> {
         }
 
         // Estimate output size: ~0.3 bytes per pixel is conservative for most quality levels
-        let num_pixels = usize::from(self.macroblock_width)
-            * usize::from(self.macroblock_height)
-            * 256; // 16x16 per macroblock
+        let num_pixels =
+            usize::from(self.macroblock_width) * usize::from(self.macroblock_height) * 256; // 16x16 per macroblock
         let estimated_partition_size = num_pixels / 4; // ~0.25 bytes per pixel for coefficients
 
         // Reset partitions with pre-allocated capacity
@@ -1607,7 +1622,7 @@ impl<W: Write> Vp8Encoder<W> {
                 }
                 let td = tdisto_16x16(&src_block, &rec_block, 16, &VP8_WEIGHT_Y);
                 // Scale by tlambda and round: (tlambda * td + 128) >> 8
-                ((tlambda as i32 * td + 128) >> 8) as i32
+                (tlambda as i32 * td + 128) >> 8
             } else {
                 0
             };
@@ -1635,8 +1650,7 @@ impl<W: Write> Vp8Encoder<W> {
             // score = (R + H) * lambda + RD_DISTO_MULT * (D + SD)
             let mode_cost = FIXED_COSTS_I16[mode_idx];
             let rate = (i64::from(mode_cost) + i64::from(coeff_cost)) * i64::from(lambda);
-            let distortion =
-                i64::from(RD_DISTO_MULT) * (i64::from(d_final) + i64::from(sd_final));
+            let distortion = i64::from(RD_DISTO_MULT) * (i64::from(d_final) + i64::from(sd_final));
             let rd_score = rate + distortion;
 
             if rd_score < best_rd_score {
@@ -1996,6 +2010,7 @@ impl<W: Write> Vp8Encoder<W> {
     ///
     /// RD formula: score = (R + H) * lambda + RD_DISTO_MULT * D
     /// Note: UV does not use spectral distortion (TDisto).
+    #[allow(clippy::needless_range_loop)] // block_idx used for both indexing and coordinate computation
     fn pick_best_uv(&self, mbx: usize, mby: usize) -> ChromaMode {
         let mbw = usize::from(self.macroblock_width);
         let chroma_width = mbw * 8;
@@ -2044,8 +2059,10 @@ impl<W: Write> Vp8Encoder<W> {
 
             // === Full reconstruction for RD evaluation ===
             // 1. Compute residuals and forward DCT
-            let u_blocks = self.get_chroma_blocks_from_predicted(&pred_u, &self.frame.ubuf, mbx, mby);
-            let v_blocks = self.get_chroma_blocks_from_predicted(&pred_v, &self.frame.vbuf, mbx, mby);
+            let u_blocks =
+                self.get_chroma_blocks_from_predicted(&pred_u, &self.frame.ubuf, mbx, mby);
+            let v_blocks =
+                self.get_chroma_blocks_from_predicted(&pred_v, &self.frame.vbuf, mbx, mby);
 
             // 2. Quantize coefficients
             let mut uv_quant = [[0i32; 16]; 8]; // 4 U blocks + 4 V blocks
@@ -2053,14 +2070,16 @@ impl<W: Write> Vp8Encoder<W> {
             // Process U blocks (indices 0-3)
             for block_idx in 0..4 {
                 for i in 0..16 {
-                    uv_quant[block_idx][i] = uv_matrix.quantize_coeff(u_blocks[block_idx * 16 + i], i);
+                    uv_quant[block_idx][i] =
+                        uv_matrix.quantize_coeff(u_blocks[block_idx * 16 + i], i);
                 }
             }
 
             // Process V blocks (indices 4-7)
             for block_idx in 0..4 {
                 for i in 0..16 {
-                    uv_quant[4 + block_idx][i] = uv_matrix.quantize_coeff(v_blocks[block_idx * 16 + i], i);
+                    uv_quant[4 + block_idx][i] =
+                        uv_matrix.quantize_coeff(v_blocks[block_idx * 16 + i], i);
                 }
             }
 
@@ -2505,6 +2524,7 @@ impl<W: Write> Vp8Encoder<W> {
     // 4. Quantizes the block and dequantizes each subblock
     // 5. Calculates the quantized block - this can be used to calculate how accurate the
     // result is and is used to populate the borders for the next macroblock
+    #[allow(clippy::needless_range_loop)] // x,y indices used for multiple arrays and coordinate computation
     fn transform_luma_block(
         &mut self,
         mbx: usize,
@@ -2642,6 +2662,7 @@ impl<W: Write> Vp8Encoder<W> {
 
     // this is for transforming the luma blocks for each subblock independently
     // meaning the luma mode is B
+    #[allow(clippy::needless_range_loop)] // sbx,sby indices used for multiple arrays and coordinate computation
     fn transform_luma_blocks_4x4(
         &mut self,
         bpred_modes: [IntraMode; 16],
@@ -2729,9 +2750,11 @@ impl<W: Write> Vp8Encoder<W> {
                 let y1_matrix = segment.y1_matrix.as_ref().unwrap();
                 let has_nz = if let Some(lambda) = trellis_lambda {
                     // Trellis quantization for better RD trade-off
+                    // trellis_quantize_block modifies current_subblock to contain
+                    // the dequantized values (level * q)
                     let ctx0 = (u8::from(left_nz[sby]) + u8::from(top_nz[sbx])).min(2) as usize;
                     let mut zigzag_out = [0i32; 16];
-                    let has_nz = trellis_quantize_block(
+                    trellis_quantize_block(
                         &mut current_subblock,
                         &mut zigzag_out,
                         y1_matrix,
@@ -2740,10 +2763,7 @@ impl<W: Write> Vp8Encoder<W> {
                         &self.level_costs,
                         3, // ctype=3 for I4
                         ctx0,
-                    );
-                    // trellis_quantize_block already modifies current_subblock
-                    // to contain the dequantized values (level * q)
-                    has_nz
+                    )
                 } else {
                     // Simple quantization
                     let mut has_nz = false;
