@@ -16,6 +16,8 @@ include = ["/src", "LICENSE-APACHE", "LICENSE-MIT", "README.md"]
 byteorder-lite = "0.1.0"
 quick-error = "2.0.1"
 yuv = { version = "0.8", optional = true }
+png = { version = "0.17.12", optional = true }
+webp = { version = "0.3.0", optional = true }
 
 [dev-dependencies]
 yuv = "0.8"
@@ -32,3 +34,14 @@ webp = "0.3.0"
 default = ["fast-yuv"]
 fast-yuv = ["dep:yuv"]
 _benchmarks = []
+_profiling = ["dep:png", "dep:webp"]
+
+[[bin]]
+name = "profile_encode"
+path = "benches/profile_encode.rs"
+required-features = ["_profiling"]
+
+[[bin]]
+name = "profile_libwebp"
+path = "benches/profile_libwebp.rs"
+required-features = ["_profiling"]
