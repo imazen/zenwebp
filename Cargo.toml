@@ -15,8 +15,10 @@ include = ["/src", "LICENSE-APACHE", "LICENSE-MIT", "README.md"]
 [dependencies]
 byteorder-lite = "0.1.0"
 quick-error = "2.0.1"
+yuv = { version = "0.8", optional = true }
 
 [dev-dependencies]
+yuv = "0.8"
 dssim-core = "3.3"
 fast-ssim2 = "0.6"
 imgref = "1.10"
@@ -27,4 +29,6 @@ rgb = "0.8"
 webp = "0.3.0"
 
 [features]
+default = ["fast-yuv"]
+fast-yuv = ["dep:yuv"]
 _benchmarks = []
