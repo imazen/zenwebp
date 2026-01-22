@@ -1862,29 +1862,36 @@ impl<W: Write> Vp8Encoder<W> {
                 let mut best_sse = 0u32;
                 let mut best_rate = 0u32;
 
+                // Pre-compute all 10 I4 prediction modes at once
+                let preds = I4Predictions::compute(&y_with_border, x0, y0, LUMA_STRIDE);
+
+                // Compute source block once
+                let src_base = (mby * 16 + sby * 4) * src_width + mbx * 16 + sbx * 4;
+                let mut src_block = [0u8; 16];
+                for y in 0..4 {
+                    let src_row = src_base + y * src_width;
+                    for x in 0..4 {
+                        src_block[y * 4 + x] = self.frame.ybuf[src_row + x];
+                    }
+                }
+
+                let y1_matrix = segment.y1_matrix.as_ref().unwrap();
+
                 // Try each mode and pick the best
                 for (mode_idx, &mode) in MODES.iter().enumerate() {
-                    // Make a copy to test this mode
-                    let mut test_buf = y_with_border;
-                    Self::apply_intra4_prediction(&mut test_buf, mode, x0, y0);
+                    // Get pre-computed prediction for this mode
+                    let pred = preds.get(mode_idx);
 
-                    // Compute residual
+                    // Compute residual using pre-computed prediction
                     let mut residual = [0i32; 16];
-                    let src_base = (mby * 16 + sby * 4) * src_width + mbx * 16 + sbx * 4;
-                    for y in 0..4 {
-                        let pred_row = (y0 + y) * LUMA_STRIDE + x0;
-                        let src_row = src_base + y * src_width;
-                        for x in 0..4 {
-                            residual[y * 4 + x] = i32::from(self.frame.ybuf[src_row + x])
-                                - i32::from(test_buf[pred_row + x]);
-                        }
+                    for i in 0..16 {
+                        residual[i] = i32::from(src_block[i]) - i32::from(pred[i]);
                     }
 
                     // Transform
                     transform::dct4x4(&mut residual);
 
                     // Quantize
-                    let y1_matrix = segment.y1_matrix.as_ref().unwrap();
                     let mut quantized = [0i32; 16];
                     for (idx, &val) in residual.iter().enumerate() {
                         quantized[idx] = y1_matrix.quantize_coeff(val, idx);
@@ -1901,20 +1908,20 @@ impl<W: Write> Vp8Encoder<W> {
                     }
                     transform::idct4x4(&mut dequantized);
 
-                    // Compute SSE between source and reconstructed
-                    let mut sse = 0u32;
-                    for y in 0..4 {
-                        let pred_row = (y0 + y) * LUMA_STRIDE + x0;
-                        let src_row = src_base + y * src_width;
-                        for x in 0..4 {
-                            let reconstructed = (i32::from(test_buf[pred_row + x])
-                                + dequantized[y * 4 + x])
-                            .clamp(0, 255) as u8;
-                            let diff =
-                                i32::from(self.frame.ybuf[src_row + x]) - i32::from(reconstructed);
-                            sse += (diff * diff) as u32;
+                    // Compute SSE between source and reconstructed using SIMD
+                    #[cfg(feature = "unsafe-simd")]
+                    let sse = crate::simd_sse::sse4x4_with_residual(&src_block, pred, &dequantized);
+                    #[cfg(not(feature = "unsafe-simd"))]
+                    let sse = {
+                        let mut sum = 0u32;
+                        for i in 0..16 {
+                            let reconstructed =
+                                (i32::from(pred[i]) + dequantized[i]).clamp(0, 255) as u8;
+                            let diff = i32::from(src_block[i]) - i32::from(reconstructed);
+                            sum += (diff * diff) as u32;
                         }
-                    }
+                        sum
+                    };
 
                     // Compute RD score: distortion + lambda * (mode_cost + coeff_cost)
                     let mode_cost = get_i4_mode_cost(top_ctx, left_ctx, mode_idx);
@@ -2642,7 +2649,7 @@ impl<W: Write> Vp8Encoder<W> {
         mby: usize,
     ) -> [i32; 16 * 16] {
         let mut luma_blocks = [0i32; 16 * 16];
-        let stride = 1usize + 16 + 4;
+        let stride = LUMA_STRIDE;
         let mbw = self.macroblock_width;
         let width = usize::from(mbw * 16);
 

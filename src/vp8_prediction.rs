@@ -4,10 +4,11 @@
 
 use crate::vp8_common::IntraMode;
 
-/// Luma prediction block includes the 1 pixel border to the left and on top
-/// as well as 4 pixels to the top right of the block
-pub(crate) const LUMA_BLOCK_SIZE: usize = (1 + 16 + 4) * (1 + 16);
-pub(crate) const LUMA_STRIDE: usize = 1 + 16 + 4;
+/// Luma prediction block stride - 32 bytes for cache alignment (matches libwebp BPS)
+/// Layout: 1 border pixel + 16 luma pixels + 4 top-right + padding to 32
+pub(crate) const LUMA_STRIDE: usize = 32;
+/// Luma prediction block size: 17 rows (1 border + 16) × 32 byte stride
+pub(crate) const LUMA_BLOCK_SIZE: usize = LUMA_STRIDE * (1 + 16);
 
 /// Creates a luma block with border used for luma prediction
 pub(crate) fn create_border_luma(
@@ -44,7 +45,8 @@ pub(crate) fn create_border_luma(
         }
     }
 
-    for i in 17usize..stride {
+    // Copy 4 top-right border pixels to rows 4, 8, 12 (for I4 prediction modes)
+    for i in 17usize..21 {
         ws[4 * stride + i] = ws[i];
         ws[8 * stride + i] = ws[i];
         ws[12 * stride + i] = ws[i];
@@ -73,8 +75,10 @@ pub(crate) fn create_border_luma(
     ws
 }
 
-pub(crate) const CHROMA_BLOCK_SIZE: usize = (8 + 1) * (8 + 1);
-pub(crate) const CHROMA_STRIDE: usize = 8 + 1;
+/// Chroma prediction block stride - 32 bytes for cache alignment (matches libwebp BPS)
+pub(crate) const CHROMA_STRIDE: usize = 32;
+/// Chroma prediction block size: 9 rows (1 border + 8) × 32 byte stride
+pub(crate) const CHROMA_BLOCK_SIZE: usize = CHROMA_STRIDE * (8 + 1);
 
 /// Creates a chroma block with border used for chroma prediction
 pub(crate) fn create_border_chroma(
@@ -185,12 +189,10 @@ pub(crate) fn predict_4x4(ws: &mut [u8], stride: usize, modes: &[IntraMode], res
 pub(crate) fn predict_vpred(a: &mut [u8], size: usize, x0: usize, y0: usize, stride: usize) {
     // This pass copies the top row to the rows below it.
     let (above, curr) = a.split_at_mut(stride * y0);
-    let above_slice = &above[x0..];
+    let above_slice = &above[x0..][..size];
 
     for curr_chunk in curr.chunks_exact_mut(stride).take(size) {
-        for (curr, &above) in curr_chunk[1..].iter_mut().zip(above_slice) {
-            *curr = above;
-        }
+        curr_chunk[x0..][..size].copy_from_slice(above_slice);
     }
 }
 
@@ -198,7 +200,7 @@ pub(crate) fn predict_hpred(a: &mut [u8], size: usize, x0: usize, y0: usize, str
     // This pass copies the first value of a row to the values right of it.
     for chunk in a.chunks_exact_mut(stride).skip(y0).take(size) {
         let left = chunk[x0 - 1];
-        chunk[x0..].iter_mut().for_each(|a| *a = left);
+        chunk[x0..][..size].fill(left);
     }
 }
 
@@ -574,6 +576,232 @@ pub(crate) fn predict_bhupred(a: &mut [u8], x0: usize, y0: usize, stride: usize)
     a[(y0 + 3) * stride + x0 + 1] = l3;
     a[(y0 + 3) * stride + x0 + 2] = l3;
     a[(y0 + 3) * stride + x0 + 3] = l3;
+}
+
+/// Pre-computed I4 predictions for all 10 modes
+/// Each mode is stored as 16 bytes in row-major order
+/// Order: DC, TM, VE, HE, LD, RD, VR, VL, HD, HU (matches IntraMode enum)
+#[derive(Clone, Copy)]
+pub(crate) struct I4Predictions {
+    pub data: [[u8; 16]; 10],
+}
+
+impl I4Predictions {
+    /// Pre-compute all 10 I4 prediction modes from the source block with borders
+    /// `src` is the source block with borders, `x0` and `y0` are the prediction start coordinates
+    #[inline]
+    pub fn compute(src: &[u8], x0: usize, y0: usize, stride: usize) -> Self {
+        let mut data = [[0u8; 16]; 10];
+
+        // Read all edge pixels once
+        let p = src[(y0 - 1) * stride + x0 - 1]; // top-left corner
+
+        // Top row (8 pixels for LD mode)
+        let top_pos = (y0 - 1) * stride + x0;
+        let a0 = src[top_pos];
+        let a1 = src[top_pos + 1];
+        let a2 = src[top_pos + 2];
+        let a3 = src[top_pos + 3];
+        let a4 = src[top_pos + 4];
+        let a5 = src[top_pos + 5];
+        let a6 = src[top_pos + 6];
+        let a7 = src[top_pos + 7];
+
+        // Left column (4 pixels)
+        let l0 = src[y0 * stride + x0 - 1];
+        let l1 = src[(y0 + 1) * stride + x0 - 1];
+        let l2 = src[(y0 + 2) * stride + x0 - 1];
+        let l3 = src[(y0 + 3) * stride + x0 - 1];
+
+        // Edge pixels for RD, VR, HD modes (diagonal)
+        let e0 = src[(y0 + 3) * stride + x0 - 1]; // same as l3
+        let e1 = l2;
+        let e2 = l1;
+        let e3 = l0;
+        let e4 = p;
+        let e5 = a0;
+        let e6 = a1;
+        let e7 = a2;
+        let e8 = a3;
+
+        // Mode 0: DC prediction
+        {
+            let mut v = 4u32;
+            v += u32::from(a0) + u32::from(a1) + u32::from(a2) + u32::from(a3);
+            v += u32::from(l0) + u32::from(l1) + u32::from(l2) + u32::from(l3);
+            let dc = (v >> 3) as u8;
+            data[0] = [dc; 16];
+        }
+
+        // Mode 1: TM prediction
+        {
+            let p_i32 = i32::from(p);
+            for y in 0..4 {
+                let left = match y {
+                    0 => l0,
+                    1 => l1,
+                    2 => l2,
+                    _ => l3,
+                };
+                let left_minus_p = i32::from(left) - p_i32;
+                for x in 0..4 {
+                    let above = match x {
+                        0 => a0,
+                        1 => a1,
+                        2 => a2,
+                        _ => a3,
+                    };
+                    data[1][y * 4 + x] = (left_minus_p + i32::from(above)).clamp(0, 255) as u8;
+                }
+            }
+        }
+
+        // Mode 2: VE prediction (vertical edge)
+        {
+            let avg = [
+                avg3(p, a0, a1),
+                avg3(a0, a1, a2),
+                avg3(a1, a2, a3),
+                avg3(a2, a3, a4),
+            ];
+            for y in 0..4 {
+                data[2][y * 4..y * 4 + 4].copy_from_slice(&avg);
+            }
+        }
+
+        // Mode 3: HE prediction (horizontal edge)
+        {
+            let avgs = [
+                avg3(p, l0, l1),
+                avg3(l0, l1, l2),
+                avg3(l1, l2, l3),
+                avg3(l2, l3, l3),
+            ];
+            for y in 0..4 {
+                data[3][y * 4..y * 4 + 4].fill(avgs[y]);
+            }
+        }
+
+        // Mode 4: LD prediction (left-down diagonal)
+        {
+            let avgs = [
+                avg3(a0, a1, a2),
+                avg3(a1, a2, a3),
+                avg3(a2, a3, a4),
+                avg3(a3, a4, a5),
+                avg3(a4, a5, a6),
+                avg3(a5, a6, a7),
+                avg3(a6, a7, a7),
+            ];
+            for y in 0..4 {
+                data[4][y * 4..y * 4 + 4].copy_from_slice(&avgs[y..y + 4]);
+            }
+        }
+
+        // Mode 5: RD prediction (right-down diagonal)
+        {
+            let avgs = [
+                avg3(e0, e1, e2),
+                avg3(e1, e2, e3),
+                avg3(e2, e3, e4),
+                avg3(e3, e4, e5),
+                avg3(e4, e5, e6),
+                avg3(e5, e6, e7),
+                avg3(e6, e7, e8),
+            ];
+            for y in 0..4 {
+                data[5][y * 4..y * 4 + 4].copy_from_slice(&avgs[3 - y..7 - y]);
+            }
+        }
+
+        // Mode 6: VR prediction (vertical-right)
+        {
+            data[6][12] = avg3(e1, e2, e3);
+            data[6][8] = avg3(e2, e3, e4);
+            data[6][13] = avg3(e3, e4, e5);
+            data[6][4] = avg3(e3, e4, e5);
+            data[6][9] = avg2(e4, e5);
+            data[6][0] = avg2(e4, e5);
+            data[6][14] = avg3(e4, e5, e6);
+            data[6][5] = avg3(e4, e5, e6);
+            data[6][10] = avg2(e5, e6);
+            data[6][1] = avg2(e5, e6);
+            data[6][15] = avg3(e5, e6, e7);
+            data[6][6] = avg3(e5, e6, e7);
+            data[6][11] = avg2(e6, e7);
+            data[6][2] = avg2(e6, e7);
+            data[6][7] = avg3(e6, e7, e8);
+            data[6][3] = avg2(e7, e8);
+        }
+
+        // Mode 7: VL prediction (vertical-left)
+        {
+            data[7][0] = avg2(a0, a1);
+            data[7][4] = avg3(a0, a1, a2);
+            data[7][8] = avg2(a1, a2);
+            data[7][1] = avg2(a1, a2);
+            data[7][5] = avg3(a1, a2, a3);
+            data[7][12] = avg3(a1, a2, a3);
+            data[7][9] = avg2(a2, a3);
+            data[7][2] = avg2(a2, a3);
+            data[7][13] = avg3(a2, a3, a4);
+            data[7][6] = avg3(a2, a3, a4);
+            data[7][10] = avg2(a3, a4);
+            data[7][3] = avg2(a3, a4);
+            data[7][14] = avg3(a3, a4, a5);
+            data[7][7] = avg3(a3, a4, a5);
+            data[7][11] = avg3(a4, a5, a6);
+            data[7][15] = avg3(a5, a6, a7);
+        }
+
+        // Mode 8: HD prediction (horizontal-down)
+        {
+            data[8][12] = avg2(e0, e1);
+            data[8][13] = avg3(e0, e1, e2);
+            data[8][8] = avg2(e1, e2);
+            data[8][14] = avg2(e1, e2);
+            data[8][9] = avg3(e1, e2, e3);
+            data[8][15] = avg3(e1, e2, e3);
+            data[8][10] = avg2(e2, e3);
+            data[8][4] = avg2(e2, e3);
+            data[8][11] = avg3(e2, e3, e4);
+            data[8][5] = avg3(e2, e3, e4);
+            data[8][6] = avg2(e3, e4);
+            data[8][0] = avg2(e3, e4);
+            data[8][7] = avg3(e3, e4, e5);
+            data[8][1] = avg3(e3, e4, e5);
+            data[8][2] = avg3(e4, e5, e6);
+            data[8][3] = avg3(e5, e6, e7);
+        }
+
+        // Mode 9: HU prediction (horizontal-up)
+        {
+            data[9][0] = avg2(l0, l1);
+            data[9][1] = avg3(l0, l1, l2);
+            data[9][2] = avg2(l1, l2);
+            data[9][4] = avg2(l1, l2);
+            data[9][3] = avg3(l1, l2, l3);
+            data[9][5] = avg3(l1, l2, l3);
+            data[9][6] = avg2(l2, l3);
+            data[9][8] = avg2(l2, l3);
+            data[9][7] = avg3(l2, l3, l3);
+            data[9][9] = avg3(l2, l3, l3);
+            data[9][10] = l3;
+            data[9][11] = l3;
+            data[9][12] = l3;
+            data[9][13] = l3;
+            data[9][14] = l3;
+            data[9][15] = l3;
+        }
+
+        I4Predictions { data }
+    }
+
+    /// Get prediction for a specific mode (mode index 0-9)
+    #[inline]
+    pub fn get(&self, mode_idx: usize) -> &[u8; 16] {
+        &self.data[mode_idx]
+    }
 }
 
 #[cfg(all(test, feature = "_benchmarks"))]

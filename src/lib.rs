@@ -27,6 +27,8 @@ mod transform;
 mod transform_simd;
 #[cfg(feature = "unsafe-simd")]
 mod transform_simd_intrinsics;
+#[cfg(feature = "unsafe-simd")]
+mod simd_sse;
 mod vp8_arithmetic_decoder;
 mod vp8_arithmetic_encoder;
 mod vp8_common;

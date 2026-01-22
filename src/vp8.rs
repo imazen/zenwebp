@@ -670,7 +670,7 @@ impl<R: Read> Vp8Decoder<R> {
     }
 
     fn intra_predict_luma(&mut self, mbx: usize, mby: usize, mb: &MacroBlock, resdata: &[i32]) {
-        let stride = 1usize + 16 + 4;
+        let stride = LUMA_STRIDE;
         let mw = self.mbwidth as usize;
         let mut ws = create_border_luma(mbx, mby, mw, &self.top_border_y, &self.left_border_y);
 
@@ -720,7 +720,7 @@ impl<R: Read> Vp8Decoder<R> {
     }
 
     fn intra_predict_chroma(&mut self, mbx: usize, mby: usize, mb: &MacroBlock, resdata: &[i32]) {
-        let stride = 1usize + 8;
+        let stride = CHROMA_STRIDE;
 
         let mw = self.mbwidth as usize;
 
@@ -1303,7 +1303,7 @@ fn set_chroma_border(
     chroma_block: &[u8],
     mbx: usize,
 ) {
-    let stride = 1usize + 8;
+    let stride = CHROMA_STRIDE;
     // top left is top right of previous chroma block
     left_border[0] = chroma_block[8];
 
