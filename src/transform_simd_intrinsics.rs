@@ -10,9 +10,20 @@ use std::arch::x86_64::*;
 use std::arch::x86::*;
 
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::OnceLock;
 
 // CPU feature detection cache
 static CPU_FEATURES: AtomicU8 = AtomicU8::new(0);
+
+// Function pointer types for dispatch
+type IdctFn = unsafe fn(&mut [i32]);
+type DctFn = unsafe fn(&mut [i32; 16]);
+
+// OnceLock for function pointer dispatch (faster than match on every call)
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+static IDCT_FN: OnceLock<IdctFn> = OnceLock::new();
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+static DCT_FN: OnceLock<DctFn> = OnceLock::new();
 
 const FEAT_UNINITIALIZED: u8 = 0;
 const FEAT_SSE2: u8 = 1;
@@ -55,11 +66,14 @@ fn detect_cpu_features() -> u8 {
 pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
-        match detect_cpu_features() {
-            FEAT_AVX512 => unsafe { dct4x4_avx512(block) },
-            FEAT_AVX2_FMA => unsafe { dct4x4_avx2(block) },
-            _ => unsafe { dct4x4_sse2(block) },
-        }
+        let f = DCT_FN.get_or_init(|| {
+            match detect_cpu_features() {
+                FEAT_AVX512 => dct4x4_avx512,
+                FEAT_AVX2_FMA => dct4x4_avx2,
+                _ => dct4x4_sse2,
+            }
+        });
+        unsafe { f(block) }
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
     {
@@ -68,15 +82,19 @@ pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
 }
 
 /// Inverse DCT with dynamic dispatch
+#[inline]
 pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
     debug_assert!(block.len() >= 16);
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
-        match detect_cpu_features() {
-            FEAT_AVX512 => unsafe { idct4x4_avx512(block) },
-            FEAT_AVX2_FMA => unsafe { idct4x4_avx2(block) },
-            _ => unsafe { idct4x4_sse2(block) },
-        }
+        let f = IDCT_FN.get_or_init(|| {
+            match detect_cpu_features() {
+                FEAT_AVX512 => idct4x4_avx512,
+                FEAT_AVX2_FMA => idct4x4_avx2,
+                _ => idct4x4_sse2,
+            }
+        });
+        unsafe { f(block) }
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
     {

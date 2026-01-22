@@ -830,6 +830,8 @@ impl<R: Read> Vp8Decoder<R> {
         }
     }
 
+    /// Reference implementation using tree-walking (kept for comparison/debugging)
+    #[allow(dead_code)]
     fn read_coefficients(
         &mut self,
         block: &mut [i32; 16],
