@@ -1252,11 +1252,17 @@ impl<W: Write> Vp8Encoder<W> {
             *val = 127;
         }
 
-        // Reset partitions
-        self.partitions = vec![ArithmeticEncoder::new()];
+        // Estimate output size: ~0.3 bytes per pixel is conservative for most quality levels
+        let num_pixels = usize::from(self.macroblock_width)
+            * usize::from(self.macroblock_height)
+            * 256; // 16x16 per macroblock
+        let estimated_partition_size = num_pixels / 4; // ~0.25 bytes per pixel for coefficients
 
-        // Reset encoder
-        self.encoder = ArithmeticEncoder::new();
+        // Reset partitions with pre-allocated capacity
+        self.partitions = vec![ArithmeticEncoder::with_capacity(estimated_partition_size)];
+
+        // Reset encoder (header is small, ~1KB is plenty)
+        self.encoder = ArithmeticEncoder::with_capacity(1024);
     }
 
     fn encode_image(

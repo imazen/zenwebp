@@ -21,6 +21,22 @@ impl ArithmeticEncoder {
         }
     }
 
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            writer: Vec::with_capacity(capacity),
+            bottom: 0,
+            range: 255,
+            bit_num: 24,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.writer.clear();
+        self.bottom = 0;
+        self.range = 255;
+        self.bit_num = 24;
+    }
+
     // Handle carry propagation: add one to output, handling 0xFF overflow chains.
     // When a byte is 0xFF and we add 1, it becomes 0x00 with carry to the previous byte.
     fn add_one_to_output(&mut self) {
@@ -107,16 +123,20 @@ impl ArithmeticEncoder {
         // the values are encoded as negative or zero in the tree, positive values are indexes
         let mut current_index = tree.iter().position(|x| *x == -value).unwrap();
 
-        let mut to_encode: Vec<(bool, u8)> = vec![];
+        // Use stack-allocated array instead of Vec - max tree depth is ~11
+        let mut to_encode: [(bool, u8); 16] = [(false, 0); 16];
+        let mut count = 0;
 
         loop {
             if current_index == start_index {
                 // just write the 0 using the prob
-                to_encode.push((false, probabilities[current_index / 2]));
+                to_encode[count] = (false, probabilities[current_index / 2]);
+                count += 1;
                 break;
             }
             if current_index == start_index + 1 {
-                to_encode.push((true, probabilities[current_index / 2]));
+                to_encode[count] = (true, probabilities[current_index / 2]);
+                count += 1;
                 break;
             }
 
@@ -128,7 +148,8 @@ impl ArithmeticEncoder {
                 true
             };
 
-            to_encode.push((encode_val, probabilities[current_index / 2]));
+            to_encode[count] = (encode_val, probabilities[current_index / 2]);
+            count += 1;
 
             let previous_index = tree
                 .iter()
@@ -140,8 +161,9 @@ impl ArithmeticEncoder {
         }
 
         // write bools backwards
-        for (encode_bool, prob) in to_encode.iter().rev() {
-            self.write_bool(*encode_bool, *prob);
+        for i in (0..count).rev() {
+            let (encode_bool, prob) = to_encode[i];
+            self.write_bool(encode_bool, prob);
         }
     }
 
