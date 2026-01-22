@@ -1,6 +1,6 @@
 //! Decoding and Encoding of WebP Images
 
-#![forbid(unsafe_code)]
+#![cfg_attr(not(feature = "unsafe-simd"), forbid(unsafe_code))]
 #![deny(missing_docs)]
 // Increase recursion limit for the `quick_error!` macro.
 #![recursion_limit = "256"]
@@ -25,6 +25,8 @@ mod lossless_transform;
 mod transform;
 #[cfg(feature = "simd")]
 mod transform_simd;
+#[cfg(feature = "unsafe-simd")]
+mod transform_simd_intrinsics;
 mod vp8_arithmetic_decoder;
 mod vp8_arithmetic_encoder;
 mod vp8_common;

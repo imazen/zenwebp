@@ -1,0 +1,611 @@
+//! Raw SIMD intrinsics for DCT/IDCT transforms matching libwebp.
+//!
+//! Uses i16 arithmetic like libwebp for maximum throughput (8 values per __m128i).
+//! Runtime detection selects best available: SSE2 / AVX2+FMA / AVX-512
+
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::*;
+
+#[cfg(target_arch = "x86")]
+use std::arch::x86::*;
+
+use std::sync::atomic::{AtomicU8, Ordering};
+
+// CPU feature detection cache
+static CPU_FEATURES: AtomicU8 = AtomicU8::new(0);
+
+const FEAT_UNINITIALIZED: u8 = 0;
+const FEAT_SSE2: u8 = 1;
+const FEAT_AVX2_FMA: u8 = 2;
+const FEAT_AVX512: u8 = 3;
+
+/// Detect CPU features and cache the result
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+fn detect_cpu_features() -> u8 {
+    let cached = CPU_FEATURES.load(Ordering::Relaxed);
+    if cached != FEAT_UNINITIALIZED {
+        return cached;
+    }
+
+    let features = if is_x86_feature_detected!("avx512f")
+        && is_x86_feature_detected!("avx512bw")
+        && is_x86_feature_detected!("avx512vl")
+    {
+        FEAT_AVX512
+    } else if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+        FEAT_AVX2_FMA
+    } else {
+        FEAT_SSE2
+    };
+
+    CPU_FEATURES.store(features, Ordering::Relaxed);
+    features
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
+fn detect_cpu_features() -> u8 {
+    FEAT_SSE2
+}
+
+// =============================================================================
+// Public dispatch functions
+// =============================================================================
+
+/// Forward DCT with dynamic dispatch to best available implementation
+pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    {
+        match detect_cpu_features() {
+            FEAT_AVX512 => unsafe { dct4x4_avx512(block) },
+            FEAT_AVX2_FMA => unsafe { dct4x4_avx2(block) },
+            _ => unsafe { dct4x4_sse2(block) },
+        }
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
+    {
+        crate::transform::dct4x4_scalar(block);
+    }
+}
+
+/// Inverse DCT with dynamic dispatch
+pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
+    debug_assert!(block.len() >= 16);
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    {
+        match detect_cpu_features() {
+            FEAT_AVX512 => unsafe { idct4x4_avx512(block) },
+            FEAT_AVX2_FMA => unsafe { idct4x4_avx2(block) },
+            _ => unsafe { idct4x4_sse2(block) },
+        }
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
+    {
+        crate::transform::idct4x4_scalar(block);
+    }
+}
+
+/// Process two blocks at once
+#[allow(dead_code)]
+pub(crate) fn dct4x4_two_intrinsics(block1: &mut [i32; 16], block2: &mut [i32; 16]) {
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    {
+        match detect_cpu_features() {
+            FEAT_AVX512 => unsafe { dct4x4_two_avx512(block1, block2) },
+            FEAT_AVX2_FMA => unsafe { dct4x4_two_avx2(block1, block2) },
+            _ => unsafe { dct4x4_two_sse2(block1, block2) },
+        }
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
+    {
+        crate::transform::dct4x4_scalar(block1);
+        crate::transform::dct4x4_scalar(block2);
+    }
+}
+
+// =============================================================================
+// SSE2 Implementation - matches libwebp's FTransform/ITransform
+// =============================================================================
+
+/// Forward DCT using SSE2 with i16 layout matching libwebp's FTransform
+/// Uses _mm_madd_epi16 for efficient multiply-accumulate
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[target_feature(enable = "sse2")]
+unsafe fn dct4x4_sse2(block: &mut [i32; 16]) {
+    // Convert i32 block to i16 and reorganize into libwebp's interleaved layout:
+    // row01 = [r0c0, r0c1, r1c0, r1c1, r0c2, r0c3, r1c2, r1c3]
+    // row23 = [r2c0, r2c1, r3c0, r3c1, r2c2, r2c3, r3c2, r3c3]
+    let row01 = _mm_set_epi16(
+        block[7] as i16,  // r1c3
+        block[6] as i16,  // r1c2
+        block[3] as i16,  // r0c3
+        block[2] as i16,  // r0c2
+        block[5] as i16,  // r1c1
+        block[4] as i16,  // r1c0
+        block[1] as i16,  // r0c1
+        block[0] as i16,  // r0c0
+    );
+    let row23 = _mm_set_epi16(
+        block[15] as i16, // r3c3
+        block[14] as i16, // r3c2
+        block[11] as i16, // r2c3
+        block[10] as i16, // r2c2
+        block[13] as i16, // r3c1
+        block[12] as i16, // r3c0
+        block[9] as i16,  // r2c1
+        block[8] as i16,  // r2c0
+    );
+
+    // Forward transform pass 1 (rows)
+    let (v01, v32) = ftransform_pass1_i16(row01, row23);
+
+    // Forward transform pass 2 (columns)
+    let mut out16 = [0i16; 16];
+    ftransform_pass2_i16(&v01, &v32, &mut out16);
+
+    // Convert back to i32 - output is in standard row-major order
+    // libwebp output layout: [row0: d0 d1 d2 d3, row1: d0 d1 d2 d3, ...]
+    for i in 0..16 {
+        block[i] = out16[i] as i32;
+    }
+}
+
+/// FTransform Pass 1 - matches libwebp FTransformPass1_SSE2 exactly
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[target_feature(enable = "sse2")]
+#[inline]
+unsafe fn ftransform_pass1_i16(in01: __m128i, in23: __m128i) -> (__m128i, __m128i) {
+    // Constants matching libwebp exactly
+    let k937 = _mm_set1_epi32(937);
+    let k1812 = _mm_set1_epi32(1812);
+    let k88p = _mm_set_epi16(8, 8, 8, 8, 8, 8, 8, 8);
+    let k88m = _mm_set_epi16(-8, 8, -8, 8, -8, 8, -8, 8);
+    let k5352_2217p = _mm_set_epi16(2217, 5352, 2217, 5352, 2217, 5352, 2217, 5352);
+    let k5352_2217m = _mm_set_epi16(-5352, 2217, -5352, 2217, -5352, 2217, -5352, 2217);
+
+    // in01 = 00 01 10 11 02 03 12 13
+    // in23 = 20 21 30 31 22 23 32 33
+    // Shuffle high words: swap pairs in high 64-bits
+    let shuf01_p = _mm_shufflehi_epi16(in01, 0b10_11_00_01); // _MM_SHUFFLE(2,3,0,1)
+    let shuf23_p = _mm_shufflehi_epi16(in23, 0b10_11_00_01);
+    // 00 01 10 11 03 02 13 12
+    // 20 21 30 31 23 22 33 32
+
+    // Interleave to separate low/high parts
+    let s01 = _mm_unpacklo_epi64(shuf01_p, shuf23_p);
+    let s32 = _mm_unpackhi_epi64(shuf01_p, shuf23_p);
+    // s01 = 00 01 10 11 20 21 30 31  (columns 0,1 for all rows)
+    // s32 = 03 02 13 12 23 22 33 32  (columns 3,2 reversed for all rows)
+
+    // a01 = [d0+d3, d1+d2] for each row pair
+    // a32 = [d0-d3, d1-d2] for each row pair
+    let a01 = _mm_add_epi16(s01, s32);
+    let a32 = _mm_sub_epi16(s01, s32);
+
+    // tmp0 = (a0 + a1) << 3 via madd with [8,8] - produces i32
+    // tmp2 = (a0 - a1) << 3 via madd with [-8,8]
+    let tmp0 = _mm_madd_epi16(a01, k88p);
+    let tmp2 = _mm_madd_epi16(a01, k88m);
+
+    // tmp1 = (a3*5352 + a2*2217 + 1812) >> 9
+    // tmp3 = (a3*2217 - a2*5352 + 937) >> 9
+    // Note: a32 has [d0-d3, d1-d2] = [a3, a2] for the formulas
+    let tmp1_1 = _mm_madd_epi16(a32, k5352_2217p);
+    let tmp3_1 = _mm_madd_epi16(a32, k5352_2217m);
+    let tmp1_2 = _mm_add_epi32(tmp1_1, k1812);
+    let tmp3_2 = _mm_add_epi32(tmp3_1, k937);
+    let tmp1 = _mm_srai_epi32(tmp1_2, 9);
+    let tmp3 = _mm_srai_epi32(tmp3_2, 9);
+
+    // Pack back to i16
+    let s03 = _mm_packs_epi32(tmp0, tmp2); // [out0_r0, out0_r1, out0_r2, out0_r3, out2_r0, ...]
+    let s12 = _mm_packs_epi32(tmp1, tmp3); // [out1_r0, out1_r1, out1_r2, out1_r3, out3_r0, ...]
+
+    // Interleave to get proper output order
+    let s_lo = _mm_unpacklo_epi16(s03, s12); // 0 1 0 1 0 1 0 1
+    let s_hi = _mm_unpackhi_epi16(s03, s12); // 2 3 2 3 2 3 2 3
+    let v23 = _mm_unpackhi_epi32(s_lo, s_hi);
+    let out01 = _mm_unpacklo_epi32(s_lo, s_hi);
+    let out32 = _mm_shuffle_epi32(v23, 0b01_00_11_10); // _MM_SHUFFLE(1,0,3,2)
+
+    (out01, out32)
+}
+
+/// FTransform Pass 2 - matches libwebp FTransformPass2_SSE2 exactly
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[target_feature(enable = "sse2")]
+#[inline]
+unsafe fn ftransform_pass2_i16(v01: &__m128i, v32: &__m128i, out: &mut [i16; 16]) {
+    let zero = _mm_setzero_si128();
+    let seven = _mm_set1_epi16(7);
+    let k5352_2217 = _mm_set_epi16(5352, 2217, 5352, 2217, 5352, 2217, 5352, 2217);
+    let k2217_5352 = _mm_set_epi16(2217, -5352, 2217, -5352, 2217, -5352, 2217, -5352);
+    let k12000_plus_one = _mm_set1_epi32(12000 + (1 << 16));
+    let k51000 = _mm_set1_epi32(51000);
+
+    // a3 = v0 - v3, a2 = v1 - v2
+    let a32 = _mm_sub_epi16(*v01, *v32);
+    let a22 = _mm_unpackhi_epi64(a32, a32);
+
+    let b23 = _mm_unpacklo_epi16(a22, a32);
+    let c1 = _mm_madd_epi16(b23, k5352_2217);
+    let c3 = _mm_madd_epi16(b23, k2217_5352);
+    let d1 = _mm_add_epi32(c1, k12000_plus_one);
+    let d3 = _mm_add_epi32(c3, k51000);
+    let e1 = _mm_srai_epi32(d1, 16);
+    let e3 = _mm_srai_epi32(d3, 16);
+
+    let f1 = _mm_packs_epi32(e1, e1);
+    let f3 = _mm_packs_epi32(e3, e3);
+
+    // g1 = f1 + (a3 != 0) - the +1 is already in k12000_plus_one
+    // cmpeq returns 0xFFFF for equal, 0 for not equal
+    // Adding 0xFFFF (-1) when equal subtracts 1, which cancels the +1 we added
+    let g1 = _mm_add_epi16(f1, _mm_cmpeq_epi16(a32, zero));
+
+    // a0 = v0 + v3, a1 = v1 + v2
+    let a01 = _mm_add_epi16(*v01, *v32);
+    let a01_plus_7 = _mm_add_epi16(a01, seven);
+    let a11 = _mm_unpackhi_epi64(a01, a01);
+    let c0 = _mm_add_epi16(a01_plus_7, a11);
+    let c2 = _mm_sub_epi16(a01_plus_7, a11);
+
+    let d0 = _mm_srai_epi16(c0, 4);
+    let d2 = _mm_srai_epi16(c2, 4);
+
+    // Combine outputs: row 0 and 1 in first register, row 2 and 3 in second
+    let d0_g1 = _mm_unpacklo_epi64(d0, g1);
+    let d2_f3 = _mm_unpacklo_epi64(d2, f3);
+
+    _mm_storeu_si128(out.as_mut_ptr().add(0) as *mut __m128i, d0_g1);
+    _mm_storeu_si128(out.as_mut_ptr().add(8) as *mut __m128i, d2_f3);
+}
+
+
+/// Process two blocks at once
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[target_feature(enable = "sse2")]
+#[allow(dead_code)]
+unsafe fn dct4x4_two_sse2(block1: &mut [i32; 16], block2: &mut [i32; 16]) {
+    // Process both blocks using the single-block implementation
+    // AVX2 can potentially do this more efficiently with 256-bit registers
+    dct4x4_sse2(block1);
+    dct4x4_sse2(block2);
+}
+
+/// Inverse DCT using SSE2 - matches libwebp ITransform_One_SSE2
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[target_feature(enable = "sse2")]
+unsafe fn idct4x4_sse2(block: &mut [i32]) {
+    // libwebp IDCT constants:
+    // K1 = sqrt(2) * cos(pi/8) * 65536 = 85627 => k1 = 85627 - 65536 = 20091
+    // K2 = sqrt(2) * sin(pi/8) * 65536 = 35468 => k2 = 35468 - 65536 = -30068
+    let k1k2 = _mm_set_epi16(-30068, -30068, -30068, -30068, 20091, 20091, 20091, 20091);
+    let k2k1 = _mm_set_epi16(20091, 20091, 20091, 20091, -30068, -30068, -30068, -30068);
+    let zero_four = _mm_set_epi16(0, 0, 0, 0, 4, 4, 4, 4);
+
+    // Convert i32 to i16
+    let mut block16 = [0i16; 16];
+    for i in 0..16 {
+        block16[i] = block[i] as i16;
+    }
+
+    let in01 = _mm_loadu_si128(block16.as_ptr().add(0) as *const __m128i);
+    let in23 = _mm_loadu_si128(block16.as_ptr().add(8) as *const __m128i);
+
+    // Vertical pass
+    let (t01, t23) = itransform_pass_sse2(in01, in23, k1k2, k2k1);
+
+    // Horizontal pass with rounding
+    let (out01, out23) = itransform_pass2_sse2(t01, t23, k1k2, k2k1, zero_four);
+
+    // Store and convert back to i32
+    let mut out16 = [0i16; 16];
+    _mm_storeu_si128(out16.as_mut_ptr().add(0) as *mut __m128i, out01);
+    _mm_storeu_si128(out16.as_mut_ptr().add(8) as *mut __m128i, out23);
+
+    for i in 0..16 {
+        block[i] = out16[i] as i32;
+    }
+}
+
+/// ITransform vertical pass - matches libwebp
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[target_feature(enable = "sse2")]
+#[inline]
+unsafe fn itransform_pass_sse2(
+    in01: __m128i,
+    in23: __m128i,
+    k1k2: __m128i,
+    k2k1: __m128i,
+) -> (__m128i, __m128i) {
+    // in01 = a00 a10 a20 a30 | a01 a11 a21 a31
+    // in23 = a02 a12 a22 a32 | a03 a13 a23 a33
+
+    let in1 = _mm_unpackhi_epi64(in01, in01);
+    let in3 = _mm_unpackhi_epi64(in23, in23);
+
+    // a = in0 + in2, b = in0 - in2
+    let a_d3 = _mm_add_epi16(in01, in23);
+    let b_c3 = _mm_sub_epi16(in01, in23);
+
+    // c = MUL(in1, K2) - MUL(in3, K1)
+    // d = MUL(in1, K1) + MUL(in3, K2)
+    // Using the trick: MUL(x, K) = x + MUL(x, k) where K = k + 65536
+    let c1d1 = _mm_mulhi_epi16(in1, k2k1);
+    let c2d2 = _mm_mulhi_epi16(in3, k1k2);
+    let c3 = _mm_unpackhi_epi64(b_c3, b_c3);
+    let c4 = _mm_sub_epi16(c1d1, c2d2);
+    let c = _mm_add_epi16(c3, c4);
+    let d4u = _mm_add_epi16(c1d1, c2d2);
+    let du = _mm_add_epi16(a_d3, d4u);
+    let d = _mm_unpackhi_epi64(du, du);
+
+    // Combine and transpose
+    let comb_ab = _mm_unpacklo_epi64(a_d3, b_c3);
+    let comb_dc = _mm_unpacklo_epi64(d, c);
+
+    let tmp01 = _mm_add_epi16(comb_ab, comb_dc);
+    let tmp32 = _mm_sub_epi16(comb_ab, comb_dc);
+    let tmp23 = _mm_shuffle_epi32(tmp32, 0b01_00_11_10);
+
+    let transpose_0 = _mm_unpacklo_epi16(tmp01, tmp23);
+    let transpose_1 = _mm_unpackhi_epi16(tmp01, tmp23);
+
+    let t01 = _mm_unpacklo_epi16(transpose_0, transpose_1);
+    let t23 = _mm_unpackhi_epi16(transpose_0, transpose_1);
+
+    (t01, t23)
+}
+
+/// ITransform horizontal pass with final shift
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[target_feature(enable = "sse2")]
+#[inline]
+unsafe fn itransform_pass2_sse2(
+    t01: __m128i,
+    t23: __m128i,
+    k1k2: __m128i,
+    k2k1: __m128i,
+    zero_four: __m128i,
+) -> (__m128i, __m128i) {
+    let t1 = _mm_unpackhi_epi64(t01, t01);
+    let t3 = _mm_unpackhi_epi64(t23, t23);
+
+    // Add rounding constant to DC
+    let dc = _mm_add_epi16(t01, zero_four);
+
+    let a_d3 = _mm_add_epi16(dc, t23);
+    let b_c3 = _mm_sub_epi16(dc, t23);
+
+    let c1d1 = _mm_mulhi_epi16(t1, k2k1);
+    let c2d2 = _mm_mulhi_epi16(t3, k1k2);
+    let c3 = _mm_unpackhi_epi64(b_c3, b_c3);
+    let c4 = _mm_sub_epi16(c1d1, c2d2);
+    let c = _mm_add_epi16(c3, c4);
+    let d4u = _mm_add_epi16(c1d1, c2d2);
+    let du = _mm_add_epi16(a_d3, d4u);
+    let d = _mm_unpackhi_epi64(du, du);
+
+    let comb_ab = _mm_unpacklo_epi64(a_d3, b_c3);
+    let comb_dc = _mm_unpacklo_epi64(d, c);
+
+    let tmp01 = _mm_add_epi16(comb_ab, comb_dc);
+    let tmp32 = _mm_sub_epi16(comb_ab, comb_dc);
+    let tmp23 = _mm_shuffle_epi32(tmp32, 0b01_00_11_10);
+
+    // Final shift >> 3
+    let shifted01 = _mm_srai_epi16(tmp01, 3);
+    let shifted23 = _mm_srai_epi16(tmp23, 3);
+
+    // Transpose back
+    let transpose_0 = _mm_unpacklo_epi16(shifted01, shifted23);
+    let transpose_1 = _mm_unpackhi_epi16(shifted01, shifted23);
+
+    let out01 = _mm_unpacklo_epi16(transpose_0, transpose_1);
+    let out23 = _mm_unpackhi_epi16(transpose_0, transpose_1);
+
+    (out01, out23)
+}
+
+// =============================================================================
+// AVX2 + FMA Implementation
+// =============================================================================
+
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[target_feature(enable = "avx2", enable = "fma")]
+unsafe fn dct4x4_avx2(block: &mut [i32; 16]) {
+    // AVX2 allows processing 16 x i16 in one __m256i
+    // But the algorithm structure doesn't change much for a single 4x4 block
+    // Use SSE2 path for single block
+    dct4x4_sse2(block);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[target_feature(enable = "avx2", enable = "fma")]
+unsafe fn idct4x4_avx2(block: &mut [i32]) {
+    idct4x4_sse2(block);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[target_feature(enable = "avx2", enable = "fma")]
+#[allow(dead_code)]
+unsafe fn dct4x4_two_avx2(block1: &mut [i32; 16], block2: &mut [i32; 16]) {
+    // For now, fall back to SSE2 x2 which is already fast
+    // AVX2 could be optimized to process both blocks in 256-bit registers
+    dct4x4_two_sse2(block1, block2);
+}
+
+// =============================================================================
+// AVX-512 Implementation
+// =============================================================================
+
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[target_feature(enable = "avx512f", enable = "avx512bw", enable = "avx512vl")]
+unsafe fn dct4x4_avx512(block: &mut [i32; 16]) {
+    // 4x4 block is too small to benefit from AVX-512
+    dct4x4_avx2(block);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[target_feature(enable = "avx512f", enable = "avx512bw", enable = "avx512vl")]
+unsafe fn idct4x4_avx512(block: &mut [i32]) {
+    idct4x4_avx2(block);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[target_feature(enable = "avx512f", enable = "avx512bw", enable = "avx512vl")]
+#[allow(dead_code)]
+unsafe fn dct4x4_two_avx512(block1: &mut [i32; 16], block2: &mut [i32; 16]) {
+    // With AVX-512, we could process 4 blocks at once (32 x i16)
+    // For 2 blocks, AVX2 is sufficient
+    dct4x4_two_avx2(block1, block2);
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cpu_detection() {
+        let features = detect_cpu_features();
+        assert!(features >= FEAT_SSE2);
+        println!(
+            "Detected CPU features: {}",
+            match features {
+                FEAT_SSE2 => "SSE2",
+                FEAT_AVX2_FMA => "AVX2+FMA",
+                FEAT_AVX512 => "AVX-512",
+                _ => "Unknown",
+            }
+        );
+    }
+
+    #[test]
+    fn test_dct_intrinsics_matches_scalar() {
+        let input: [i32; 16] = [
+            38, 6, 210, 107, 42, 125, 185, 151, 241, 224, 125, 233, 227, 8, 57, 96,
+        ];
+
+        let mut scalar_block = input;
+        crate::transform::dct4x4_scalar(&mut scalar_block);
+
+        let mut intrinsics_block = input;
+        dct4x4_intrinsics(&mut intrinsics_block);
+
+        assert_eq!(
+            scalar_block, intrinsics_block,
+            "Intrinsics DCT doesn't match scalar.\nScalar: {:?}\nIntrinsics: {:?}",
+            scalar_block, intrinsics_block
+        );
+    }
+
+    #[test]
+    fn test_idct_intrinsics_matches_scalar() {
+        let mut input: [i32; 16] = [
+            38, 6, 210, 107, 42, 125, 185, 151, 241, 224, 125, 233, 227, 8, 57, 96,
+        ];
+        crate::transform::dct4x4_scalar(&mut input);
+
+        let mut scalar_block = input;
+        crate::transform::idct4x4_scalar(&mut scalar_block);
+
+        let mut intrinsics_block = input;
+        idct4x4_intrinsics(&mut intrinsics_block);
+
+        assert_eq!(
+            scalar_block, intrinsics_block,
+            "Intrinsics IDCT doesn't match scalar.\nScalar: {:?}\nIntrinsics: {:?}",
+            scalar_block, intrinsics_block
+        );
+    }
+
+    #[test]
+    fn test_dct_two_intrinsics() {
+        let input1: [i32; 16] = [
+            38, 6, 210, 107, 42, 125, 185, 151, 241, 224, 125, 233, 227, 8, 57, 96,
+        ];
+        let input2: [i32; 16] = [
+            100, 50, 25, 75, 200, 150, 100, 50, 25, 75, 125, 175, 225, 200, 150, 100,
+        ];
+
+        let mut scalar1 = input1;
+        let mut scalar2 = input2;
+        crate::transform::dct4x4_scalar(&mut scalar1);
+        crate::transform::dct4x4_scalar(&mut scalar2);
+
+        let mut intrinsics1 = input1;
+        let mut intrinsics2 = input2;
+        dct4x4_two_intrinsics(&mut intrinsics1, &mut intrinsics2);
+
+        assert_eq!(scalar1, intrinsics1, "Two-block intrinsics block1 mismatch");
+        assert_eq!(scalar2, intrinsics2, "Two-block intrinsics block2 mismatch");
+    }
+
+    #[test]
+    fn test_roundtrip() {
+        let original: [i32; 16] = [
+            38, 6, 210, 107, 42, 125, 185, 151, 241, 224, 125, 233, 227, 8, 57, 96,
+        ];
+
+        let mut block = original;
+        dct4x4_intrinsics(&mut block);
+        idct4x4_intrinsics(&mut block);
+
+        // Should get back original (or very close due to rounding)
+        assert_eq!(original, block, "Roundtrip failed");
+    }
+}
+
+#[cfg(all(test, feature = "_benchmarks"))]
+mod benchmarks {
+    use super::*;
+    use test::Bencher;
+
+    const TEST_BLOCKS: [[i32; 16]; 4] = [
+        [38, 6, 210, 107, 42, 125, 185, 151, 241, 224, 125, 233, 227, 8, 57, 96],
+        [100, 50, 25, 75, 200, 150, 100, 50, 25, 75, 125, 175, 225, 200, 150, 100],
+        [12, 34, 56, 78, 90, 12, 34, 56, 78, 90, 12, 34, 56, 78, 90, 12],
+        [255, 0, 128, 64, 192, 32, 224, 16, 240, 8, 248, 4, 252, 2, 254, 1],
+    ];
+
+    #[bench]
+    fn bench_dct_intrinsics(b: &mut Bencher) {
+        b.iter(|| {
+            for input in &TEST_BLOCKS {
+                let mut block = *input;
+                test::black_box(dct4x4_intrinsics(&mut block));
+            }
+        });
+    }
+
+    #[bench]
+    fn bench_idct_intrinsics(b: &mut Bencher) {
+        let mut dct_blocks = TEST_BLOCKS;
+        for block in &mut dct_blocks {
+            crate::transform::dct4x4_scalar(block);
+        }
+
+        b.iter(|| {
+            for input in &dct_blocks {
+                let mut block = *input;
+                test::black_box(idct4x4_intrinsics(&mut block));
+            }
+        });
+    }
+
+    #[bench]
+    fn bench_dct_two_intrinsics(b: &mut Bencher) {
+        b.iter(|| {
+            let mut block1 = TEST_BLOCKS[0];
+            let mut block2 = TEST_BLOCKS[1];
+            test::black_box(dct4x4_two_intrinsics(&mut block1, &mut block2));
+            let mut block3 = TEST_BLOCKS[2];
+            let mut block4 = TEST_BLOCKS[3];
+            test::black_box(dct4x4_two_intrinsics(&mut block3, &mut block4));
+        });
+    }
+}

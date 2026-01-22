@@ -5,11 +5,15 @@ const CONST2: i64 = 35468;
 
 // inverse discrete cosine transform, used in decoding
 pub(crate) fn idct4x4(block: &mut [i32]) {
-    #[cfg(feature = "simd")]
+    #[cfg(feature = "unsafe-simd")]
+    {
+        crate::transform_simd_intrinsics::idct4x4_intrinsics(block);
+    }
+    #[cfg(all(feature = "simd", not(feature = "unsafe-simd")))]
     {
         crate::transform_simd::idct4x4_simd(block);
     }
-    #[cfg(not(feature = "simd"))]
+    #[cfg(not(any(feature = "simd", feature = "unsafe-simd")))]
     {
         idct4x4_scalar(block);
     }
@@ -141,11 +145,15 @@ pub(crate) fn wht4x4(block: &mut [i32; 16]) {
 }
 
 pub(crate) fn dct4x4(block: &mut [i32; 16]) {
-    #[cfg(feature = "simd")]
+    #[cfg(feature = "unsafe-simd")]
+    {
+        crate::transform_simd_intrinsics::dct4x4_intrinsics(block);
+    }
+    #[cfg(all(feature = "simd", not(feature = "unsafe-simd")))]
     {
         crate::transform_simd::dct4x4_simd(block);
     }
-    #[cfg(not(feature = "simd"))]
+    #[cfg(not(any(feature = "simd", feature = "unsafe-simd")))]
     {
         dct4x4_scalar(block);
     }

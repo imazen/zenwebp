@@ -35,6 +35,9 @@ webp = "0.3.0"
 default = ["fast-yuv", "simd"]
 fast-yuv = ["dep:yuv"]
 simd = ["dep:wide"]
+# Enable raw SIMD intrinsics (requires unsafe). Provides best performance on x86-64.
+# Uses runtime CPU detection to select optimal implementation (SSE2/AVX2+FMA/AVX-512).
+unsafe-simd = []
 _benchmarks = []
 _profiling = ["dep:png", "dep:webp"]
 

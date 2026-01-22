@@ -77,6 +77,7 @@ pub(crate) fn dct4x4_two(block1: &mut [i32; 16], block2: &mut [i32; 16]) {
 }
 
 /// SIMD forward DCT for a single 4x4 block using i32x4 operations.
+#[cfg_attr(feature = "unsafe-simd", allow(dead_code))]
 pub(crate) fn dct4x4_simd(block: &mut [i32; 16]) {
     // Pass 1: Transform rows
     for i in 0..4 {
@@ -211,6 +212,7 @@ fn dct_col_pass2(v0: i32, v1: i32, v2: i32, v3: i32) -> (i32, i32, i32, i32) {
 }
 
 /// SIMD inverse DCT for a single 4x4 block.
+#[cfg_attr(feature = "unsafe-simd", allow(dead_code))]
 pub(crate) fn idct4x4_simd(block: &mut [i32]) {
     debug_assert!(block.len() >= 16);
 
