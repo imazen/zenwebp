@@ -5,12 +5,14 @@
 //!
 //! Uses archmage for safe SIMD intrinsics with token-based CPU feature verification.
 
+#![allow(clippy::needless_range_loop)]
+
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
-use archmage::{arcane, Has128BitSimd, Sse41Token, SimdToken};
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
-use safe_unaligned_simd::x86_64 as simd_mem;
+use archmage::{arcane, Has128BitSimd, SimdToken, Sse41Token};
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 use core::arch::x86_64::*;
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+use safe_unaligned_simd::x86_64 as simd_mem;
 
 /// Compute Sum of Squared Errors between two 4x4 blocks
 ///
@@ -254,12 +256,10 @@ fn sse_16x16_luma_sse2(
         let pred_row = (y + 1) * LUMA_STRIDE + 1;
 
         // Load 16 bytes from source and prediction
-        let src_bytes = simd_mem::_mm_loadu_si128(
-            <&[u8; 16]>::try_from(&src_y[src_row..][..16]).unwrap(),
-        );
-        let pred_bytes = simd_mem::_mm_loadu_si128(
-            <&[u8; 16]>::try_from(&pred[pred_row..][..16]).unwrap(),
-        );
+        let src_bytes =
+            simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&src_y[src_row..][..16]).unwrap());
+        let pred_bytes =
+            simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&pred[pred_row..][..16]).unwrap());
 
         // Unpack to 16-bit
         let src_lo = _mm_unpacklo_epi8(src_bytes, zero);
@@ -449,7 +449,12 @@ pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
 #[allow(dead_code)]
-fn t_transform_sse2(_token: impl Has128BitSimd + Copy, input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
+fn t_transform_sse2(
+    _token: impl Has128BitSimd + Copy,
+    input: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
     let zero = _mm_setzero_si128();
 
     // Load 4 rows of 4 bytes each, expand to i16
@@ -462,13 +467,11 @@ fn t_transform_sse2(_token: impl Has128BitSimd + Copy, input: &[u8], stride: usi
     let row1_16 = _mm_unpacklo_epi8(row1, zero);
 
     // Row 2
-    let row2 =
-        simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&input[stride * 2..][..4]).unwrap());
+    let row2 = simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&input[stride * 2..][..4]).unwrap());
     let row2_16 = _mm_unpacklo_epi8(row2, zero);
 
     // Row 3
-    let row3 =
-        simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&input[stride * 3..][..4]).unwrap());
+    let row3 = simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&input[stride * 3..][..4]).unwrap());
     let row3_16 = _mm_unpacklo_epi8(row3, zero);
 
     // Use intermediate array
@@ -544,7 +547,7 @@ fn t_transform_sse2(_token: impl Has128BitSimd + Copy, input: &[u8], stride: usi
 const MAX_VARIABLE_LEVEL: u8 = 67;
 
 /// Precomputed coefficient data for fast residual cost calculation
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct PrecomputedCoeffs {
     /// Clamped levels: min(abs(coeff), 67) for each coefficient
     pub levels: [u8; 16],
@@ -552,16 +555,6 @@ pub struct PrecomputedCoeffs {
     pub ctxs: [u8; 16],
     /// Full absolute values (u16 to handle full range)
     pub abs_levels: [u16; 16],
-}
-
-impl Default for PrecomputedCoeffs {
-    fn default() -> Self {
-        Self {
-            levels: [0; 16],
-            ctxs: [0; 16],
-            abs_levels: [0; 16],
-        }
-    }
 }
 
 /// Precompute coefficient data using SIMD (levels, contexts, abs_levels)
@@ -603,7 +596,10 @@ pub fn precompute_coeffs_scalar(coeffs: &[i32; 16]) -> PrecomputedCoeffs {
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
 #[allow(dead_code)]
-fn precompute_coeffs_sse2(_token: impl Has128BitSimd + Copy, coeffs: &[i32; 16]) -> PrecomputedCoeffs {
+fn precompute_coeffs_sse2(
+    _token: impl Has128BitSimd + Copy,
+    coeffs: &[i32; 16],
+) -> PrecomputedCoeffs {
     let zero = _mm_setzero_si128();
     let cst_2 = _mm_set1_epi8(2);
     let cst_67 = _mm_set1_epi8(MAX_VARIABLE_LEVEL as i8);
@@ -690,7 +686,11 @@ pub fn find_last_nonzero_scalar(coeffs: &[i32; 16], first: usize) -> i32 {
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
 #[allow(dead_code)]
-fn find_last_nonzero_sse2(_token: impl Has128BitSimd + Copy, coeffs: &[i32; 16], first: usize) -> i32 {
+fn find_last_nonzero_sse2(
+    _token: impl Has128BitSimd + Copy,
+    coeffs: &[i32; 16],
+    first: usize,
+) -> i32 {
     let zero = _mm_setzero_si128();
 
     // Load and pack coefficients to bytes for comparison
@@ -988,9 +988,7 @@ mod tests {
     #[test]
     #[cfg(feature = "simd")]
     fn test_precompute_coeffs_simd_matches_scalar() {
-        let coeffs: [i32; 16] = [
-            0, -1, 2, -3, 4, -5, 100, -200, 0, 0, 67, 68, 1, 2, -50, 30,
-        ];
+        let coeffs: [i32; 16] = [0, -1, 2, -3, 4, -5, 100, -200, 0, 0, 67, 68, 1, 2, -50, 30];
 
         let scalar = precompute_coeffs_scalar(&coeffs);
         let simd = precompute_coeffs(&coeffs);

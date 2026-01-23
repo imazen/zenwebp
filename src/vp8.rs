@@ -10,6 +10,10 @@
 //! * [rfc-6386](http://tools.ietf.org/html/rfc6386) - The VP8 Data Format and Decoding Guide
 //! * [VP8.pdf](http://static.googleusercontent.com/media/research.google.com/en//pubs/archive/37073.pdf) - An overview of of the VP8 format
 
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::collapsible_else_if)]
+
 use byteorder_lite::{LittleEndian, ReadBytesExt};
 use std::default::Default;
 use std::io::Read;
@@ -38,7 +42,14 @@ fn simple_filter_horizontal_16_rows(
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     if let Some(token) = archmage::Sse41Token::try_new() {
         // Use the new 16-pixel-at-once approach with transpose
-        crate::loop_filter_avx2::simple_h_filter16(token, buf, x0, y_start, stride, i32::from(edge_limit));
+        crate::loop_filter_avx2::simple_h_filter16(
+            token,
+            buf,
+            x0,
+            y_start,
+            stride,
+            i32::from(edge_limit),
+        );
         return;
     }
 
@@ -63,7 +74,13 @@ fn simple_filter_vertical_16_cols(
     if let Some(token) = archmage::Sse41Token::try_new() {
         // Use the new 16-pixel-at-once approach
         let point = y0 * stride + x_start;
-        crate::loop_filter_avx2::simple_v_filter16(token, buf, point, stride, i32::from(edge_limit));
+        crate::loop_filter_avx2::simple_v_filter16(
+            token,
+            buf,
+            point,
+            stride,
+            i32::from(edge_limit),
+        );
         return;
     }
 
@@ -90,7 +107,10 @@ fn normal_filter_vertical_mb_16_cols(
     if let Some(token) = archmage::Sse41Token::try_new() {
         let point = y0 * stride + x_start;
         crate::loop_filter_avx2::normal_v_filter16_edge(
-            token, buf, point, stride,
+            token,
+            buf,
+            point,
+            stride,
             i32::from(hev_threshold),
             i32::from(interior_limit),
             i32::from(edge_limit),
@@ -127,7 +147,10 @@ fn normal_filter_vertical_sub_16_cols(
     if let Some(token) = archmage::Sse41Token::try_new() {
         let point = y0 * stride + x_start;
         crate::loop_filter_avx2::normal_v_filter16_inner(
-            token, buf, point, stride,
+            token,
+            buf,
+            point,
+            stride,
             i32::from(hev_threshold),
             i32::from(interior_limit),
             i32::from(edge_limit),
@@ -164,7 +187,11 @@ fn normal_filter_horizontal_mb_16_rows(
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     if let Some(token) = archmage::Sse41Token::try_new() {
         crate::loop_filter_avx2::normal_h_filter16_edge(
-            token, buf, x0, y_start, stride,
+            token,
+            buf,
+            x0,
+            y_start,
+            stride,
             i32::from(hev_threshold),
             i32::from(interior_limit),
             i32::from(edge_limit),
@@ -198,7 +225,11 @@ fn normal_filter_horizontal_sub_16_rows(
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     if let Some(token) = archmage::Sse41Token::try_new() {
         crate::loop_filter_avx2::normal_h_filter16_inner(
-            token, buf, x0, y_start, stride,
+            token,
+            buf,
+            x0,
+            y_start,
+            stride,
             i32::from(hev_threshold),
             i32::from(interior_limit),
             i32::from(edge_limit),
@@ -234,7 +265,12 @@ fn normal_filter_horizontal_uv_mb(
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     if let Some(token) = archmage::Sse41Token::try_new() {
         crate::loop_filter_avx2::normal_h_filter_uv_edge(
-            token, u_buf, v_buf, x0, y_start, stride,
+            token,
+            u_buf,
+            v_buf,
+            x0,
+            y_start,
+            stride,
             i32::from(hev_threshold),
             i32::from(interior_limit),
             i32::from(edge_limit),
@@ -275,7 +311,12 @@ fn normal_filter_horizontal_uv_sub(
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     if let Some(token) = archmage::Sse41Token::try_new() {
         crate::loop_filter_avx2::normal_h_filter_uv_inner(
-            token, u_buf, v_buf, x0, y_start, stride,
+            token,
+            u_buf,
+            v_buf,
+            x0,
+            y_start,
+            stride,
             i32::from(hev_threshold),
             i32::from(interior_limit),
             i32::from(edge_limit),
@@ -318,7 +359,11 @@ fn normal_filter_vertical_uv_mb(
     if let Some(token) = archmage::Sse41Token::try_new() {
         let point = y0 * stride + x_start;
         crate::loop_filter_avx2::normal_v_filter_uv_edge(
-            token, u_buf, v_buf, point, stride,
+            token,
+            u_buf,
+            v_buf,
+            point,
+            stride,
             i32::from(hev_threshold),
             i32::from(interior_limit),
             i32::from(edge_limit),
@@ -365,7 +410,11 @@ fn normal_filter_vertical_uv_sub(
     if let Some(token) = archmage::Sse41Token::try_new() {
         let point = y0 * stride + x_start;
         crate::loop_filter_avx2::normal_v_filter_uv_inner(
-            token, u_buf, v_buf, point, stride,
+            token,
+            u_buf,
+            v_buf,
+            point,
+            stride,
             i32::from(hev_threshold),
             i32::from(interior_limit),
             i32::from(edge_limit),
@@ -680,9 +729,9 @@ pub struct Vp8Decoder<R> {
     cache_y: Vec<u8>,
     cache_u: Vec<u8>,
     cache_v: Vec<u8>,
-    cache_y_stride: usize,   // mbwidth * 16
-    cache_uv_stride: usize,  // mbwidth * 8
-    extra_y_rows: usize,     // 8 for normal filter, 2 for simple, 0 for none
+    cache_y_stride: usize,  // mbwidth * 16
+    cache_uv_stride: usize, // mbwidth * 8
+    extra_y_rows: usize,    // 8 for normal filter, 2 for simple, 0 for none
 
     // Reusable coefficient buffer for macroblock decoding.
     // Initialized to zeros and maintained as zeros between macroblocks.
@@ -775,8 +824,7 @@ impl<R: Read> Vp8Decoder<R> {
                     7
                 };
                 for ctx in 0..3 {
-                    self.token_probs_by_pos[plane][pos][ctx] =
-                        self.token_probs[plane][band][ctx];
+                    self.token_probs_by_pos[plane][pos][ctx] = self.token_probs[plane][band][ctx];
                 }
             }
         }
@@ -895,13 +943,11 @@ impl<R: Read> Vp8Decoder<R> {
             }
 
             for i in 0usize..MAX_SEGMENTS {
-                self.segment[i].quantizer_level =
-                    self.b.read_optional_signed_value(7) as i8;
+                self.segment[i].quantizer_level = self.b.read_optional_signed_value(7) as i8;
             }
 
             for i in 0usize..MAX_SEGMENTS {
-                self.segment[i].loopfilter_level =
-                    self.b.read_optional_signed_value(6) as i8;
+                self.segment[i].loopfilter_level = self.b.read_optional_signed_value(6) as i8;
             }
         }
 
@@ -909,11 +955,7 @@ impl<R: Read> Vp8Decoder<R> {
             for i in 0usize..3 {
                 let update = self.b.read_flag();
 
-                let prob = if update {
-                    self.b.read_literal(8)
-                } else {
-                    255
-                };
+                let prob = if update { self.b.read_literal(8) } else { 255 };
                 self.segment_tree_nodes[i].prob = prob;
             }
         }
@@ -1471,7 +1513,8 @@ impl<R: Read> Vp8Decoder<R> {
                 let dcq = self.segment[sindex].ydc;
                 let acq = self.segment[sindex].yac;
 
-                let n = self.read_coefficients_to_block(i, p, plane, complexity as usize, dcq, acq)?;
+                let n =
+                    self.read_coefficients_to_block(i, p, plane, complexity as usize, dcq, acq)?;
 
                 // Get block slice for IDCT (after read_coefficients_to_block completes)
                 let block = &mut self.coeff_blocks[i * 16..][..16];
@@ -1505,7 +1548,14 @@ impl<R: Read> Vp8Decoder<R> {
                     let dcq = self.segment[sindex].uvdc;
                     let acq = self.segment[sindex].uvac;
 
-                    let n = self.read_coefficients_to_block(i, p, plane, complexity as usize, dcq, acq)?;
+                    let n = self.read_coefficients_to_block(
+                        i,
+                        p,
+                        plane,
+                        complexity as usize,
+                        dcq,
+                        acq,
+                    )?;
 
                     let block = &mut self.coeff_blocks[i * 16..][..16];
                     let block: &mut [i32; 16] = block.try_into().unwrap();
@@ -1541,7 +1591,8 @@ impl<R: Read> Vp8Decoder<R> {
 
         for mbx in 0..mbwidth {
             let mb = self.macroblocks[mby * mbwidth + mbx];
-            let (filter_level, interior_limit, hev_threshold) = self.calculate_filter_parameters(&mb);
+            let (filter_level, interior_limit, hev_threshold) =
+                self.calculate_filter_parameters(&mb);
 
             if filter_level == 0 {
                 continue;
@@ -1815,14 +1866,17 @@ impl<R: Read> Vp8Decoder<R> {
         let src_start = src_start_row * self.cache_y_stride;
         let copy_size = extra_y_rows * self.cache_y_stride;
         // Copy from src_start to 0
-        self.cache_y.copy_within(src_start..src_start + copy_size, 0);
+        self.cache_y
+            .copy_within(src_start..src_start + copy_size, 0);
 
         // For chroma:
         let src_start_row_uv = 8; // = extra_uv_rows + 8 - extra_uv_rows = 8
         let src_start_uv = src_start_row_uv * self.cache_uv_stride;
         let copy_size_uv = extra_uv_rows * self.cache_uv_stride;
-        self.cache_u.copy_within(src_start_uv..src_start_uv + copy_size_uv, 0);
-        self.cache_v.copy_within(src_start_uv..src_start_uv + copy_size_uv, 0);
+        self.cache_u
+            .copy_within(src_start_uv..src_start_uv + copy_size_uv, 0);
+        self.cache_v
+            .copy_within(src_start_uv..src_start_uv + copy_size_uv, 0);
     }
 
     //return values are the filter level, interior limit and hev threshold

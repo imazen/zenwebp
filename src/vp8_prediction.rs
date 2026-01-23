@@ -2,7 +2,6 @@
 //!
 //! Functions for doing prediction and for setting up buffers for prediction
 
-
 /// Luma prediction block stride - 32 bytes for cache alignment (matches libwebp BPS)
 /// Layout: 1 border pixel + 16 luma pixels + 4 top-right + padding to 32
 pub(crate) const LUMA_STRIDE: usize = 32;
@@ -780,6 +779,7 @@ impl I4Predictions {
 #[cfg(all(test, feature = "_benchmarks"))]
 mod benches {
     use super::*;
+    use crate::vp8_common::IntraMode;
     use test::{black_box, Bencher};
 
     const W: usize = 256;

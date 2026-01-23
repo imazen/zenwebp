@@ -7,13 +7,17 @@
 //! Uses archmage for safe SIMD intrinsics with token-based CPU feature verification.
 
 #![allow(dead_code)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::erasing_op)]
+#![allow(clippy::identity_op)]
 
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 use archmage::{arcane, Sse41Token};
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
-use safe_unaligned_simd::x86_64 as simd_mem;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+use safe_unaligned_simd::x86_64 as simd_mem;
 
 /// Compute the "needs filter" mask for simple filter.
 /// Returns a mask where each byte is 0xFF if the pixel should be filtered, 0x00 otherwise.
@@ -98,12 +102,7 @@ fn signed_shift_right_3(_token: Sse41Token, v: __m128i) -> __m128i {
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[arcane]
 #[inline(always)]
-fn do_simple_filter_16(
-    _token: Sse41Token,
-    p0: &mut __m128i,
-    q0: &mut __m128i,
-    fl: __m128i,
-) {
+fn do_simple_filter_16(_token: Sse41Token, p0: &mut __m128i, q0: &mut __m128i, fl: __m128i) {
     let sign = _mm_set1_epi8(-128i8);
     let k3 = _mm_set1_epi8(3);
     let k4 = _mm_set1_epi8(4);
@@ -149,15 +148,11 @@ pub fn simple_v_filter16(
     let p1 = simd_mem::_mm_loadu_si128(
         <&[u8; 16]>::try_from(&pixels[point - 2 * stride..][..16]).unwrap(),
     );
-    let mut p0 = simd_mem::_mm_loadu_si128(
-        <&[u8; 16]>::try_from(&pixels[point - stride..][..16]).unwrap(),
-    );
-    let mut q0 = simd_mem::_mm_loadu_si128(
-        <&[u8; 16]>::try_from(&pixels[point..][..16]).unwrap(),
-    );
-    let q1 = simd_mem::_mm_loadu_si128(
-        <&[u8; 16]>::try_from(&pixels[point + stride..][..16]).unwrap(),
-    );
+    let mut p0 =
+        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&pixels[point - stride..][..16]).unwrap());
+    let mut q0 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&pixels[point..][..16]).unwrap());
+    let q1 =
+        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&pixels[point + stride..][..16]).unwrap());
 
     // Check which pixels need filtering
     let mask = needs_filter_16(_token, p1, p0, q0, q1, thresh);
@@ -297,9 +292,7 @@ pub fn simple_h_filter16(
     let mut rows = [_mm_setzero_si128(); 16];
     for (i, row) in rows.iter_mut().enumerate() {
         let row_start = (y_start + i) * stride + x - 4;
-        *row = simd_mem::_mm_loadu_si64(
-            <&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap(),
-        );
+        *row = simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
     }
 
     // Transpose 8x16 to 16x8: now we have 8 columns of 16 pixels each
@@ -733,9 +726,8 @@ fn filter6_wide_half(
     let new_q2 = _mm_sub_epi16(q2_16, a2);
 
     // Clamp to [-128, 127]
-    let clamp = |v: __m128i| {
-        _mm_max_epi16(_mm_min_epi16(v, _mm_set1_epi16(127)), _mm_set1_epi16(-128))
-    };
+    let clamp =
+        |v: __m128i| _mm_max_epi16(_mm_min_epi16(v, _mm_set1_epi16(127)), _mm_set1_epi16(-128));
 
     (
         clamp(new_p2),
@@ -770,15 +762,11 @@ pub fn normal_v_filter16_inner(
     let mut p1 = simd_mem::_mm_loadu_si128(
         <&[u8; 16]>::try_from(&pixels[point - 2 * stride..][..16]).unwrap(),
     );
-    let mut p0 = simd_mem::_mm_loadu_si128(
-        <&[u8; 16]>::try_from(&pixels[point - stride..][..16]).unwrap(),
-    );
-    let mut q0 = simd_mem::_mm_loadu_si128(
-        <&[u8; 16]>::try_from(&pixels[point..][..16]).unwrap(),
-    );
-    let mut q1 = simd_mem::_mm_loadu_si128(
-        <&[u8; 16]>::try_from(&pixels[point + stride..][..16]).unwrap(),
-    );
+    let mut p0 =
+        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&pixels[point - stride..][..16]).unwrap());
+    let mut q0 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&pixels[point..][..16]).unwrap());
+    let mut q1 =
+        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&pixels[point + stride..][..16]).unwrap());
     let q2 = simd_mem::_mm_loadu_si128(
         <&[u8; 16]>::try_from(&pixels[point + 2 * stride..][..16]).unwrap(),
     );
@@ -848,15 +836,11 @@ pub fn normal_v_filter16_edge(
     let mut p1 = simd_mem::_mm_loadu_si128(
         <&[u8; 16]>::try_from(&pixels[point - 2 * stride..][..16]).unwrap(),
     );
-    let mut p0 = simd_mem::_mm_loadu_si128(
-        <&[u8; 16]>::try_from(&pixels[point - stride..][..16]).unwrap(),
-    );
-    let mut q0 = simd_mem::_mm_loadu_si128(
-        <&[u8; 16]>::try_from(&pixels[point..][..16]).unwrap(),
-    );
-    let mut q1 = simd_mem::_mm_loadu_si128(
-        <&[u8; 16]>::try_from(&pixels[point + stride..][..16]).unwrap(),
-    );
+    let mut p0 =
+        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&pixels[point - stride..][..16]).unwrap());
+    let mut q0 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&pixels[point..][..16]).unwrap());
+    let mut q1 =
+        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&pixels[point + stride..][..16]).unwrap());
     let mut q2 = simd_mem::_mm_loadu_si128(
         <&[u8; 16]>::try_from(&pixels[point + 2 * stride..][..16]).unwrap(),
     );
@@ -994,6 +978,7 @@ fn transpose_6x16_to_16x6(
 ///
 /// Each row must have at least 4 bytes before and after the edge point.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[allow(clippy::too_many_arguments)]
 #[arcane]
 pub fn normal_h_filter16_inner(
     _token: Sse41Token,
@@ -1010,9 +995,7 @@ pub fn normal_h_filter16_inner(
     let mut rows = [_mm_setzero_si128(); 16];
     for (i, row) in rows.iter_mut().enumerate() {
         let row_start = (y_start + i) * stride + x - 4;
-        *row = simd_mem::_mm_loadu_si64(
-            <&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap(),
-        );
+        *row = simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
     }
 
     // Transpose 8x16 to 16x8: now we have 8 columns of 16 pixels each
@@ -1068,6 +1051,7 @@ pub fn normal_h_filter16_inner(
 ///
 /// Each row must have at least 4 bytes before and after the edge point.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[allow(clippy::too_many_arguments)]
 #[arcane]
 pub fn normal_h_filter16_edge(
     _token: Sse41Token,
@@ -1083,9 +1067,7 @@ pub fn normal_h_filter16_edge(
     let mut rows = [_mm_setzero_si128(); 16];
     for (i, row) in rows.iter_mut().enumerate() {
         let row_start = (y_start + i) * stride + x - 4;
-        *row = simd_mem::_mm_loadu_si64(
-            <&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap(),
-        );
+        *row = simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
     }
 
     // Transpose 8x16 to 16x8
@@ -1167,12 +1149,10 @@ pub fn normal_h_filter_uv_edge(
     let mut rows = [_mm_setzero_si128(); 16];
     for i in 0..8 {
         let row_start = (y_start + i) * stride + x - 4;
-        rows[i] = simd_mem::_mm_loadu_si64(
-            <&[u8; 8]>::try_from(&u_pixels[row_start..][..8]).unwrap(),
-        );
-        rows[i + 8] = simd_mem::_mm_loadu_si64(
-            <&[u8; 8]>::try_from(&v_pixels[row_start..][..8]).unwrap(),
-        );
+        rows[i] =
+            simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&u_pixels[row_start..][..8]).unwrap());
+        rows[i + 8] =
+            simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&v_pixels[row_start..][..8]).unwrap());
     }
 
     // Transpose 8x16 to 16x8
@@ -1258,12 +1238,10 @@ pub fn normal_h_filter_uv_inner(
     let mut rows = [_mm_setzero_si128(); 16];
     for i in 0..8 {
         let row_start = (y_start + i) * stride + x - 4;
-        rows[i] = simd_mem::_mm_loadu_si64(
-            <&[u8; 8]>::try_from(&u_pixels[row_start..][..8]).unwrap(),
-        );
-        rows[i + 8] = simd_mem::_mm_loadu_si64(
-            <&[u8; 8]>::try_from(&v_pixels[row_start..][..8]).unwrap(),
-        );
+        rows[i] =
+            simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&u_pixels[row_start..][..8]).unwrap());
+        rows[i + 8] =
+            simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&v_pixels[row_start..][..8]).unwrap());
     }
 
     // Transpose 8x16 to 16x8
@@ -1382,17 +1360,16 @@ pub fn normal_v_filter_uv_edge(
     );
 
     // Store results back - low 64 bits to U, high 64 bits to V
-    let store_uv_row =
-        |u_pix: &mut [u8], v_pix: &mut [u8], offset: usize, reg: __m128i| {
-            simd_mem::_mm_storel_epi64(
-                <&mut [u8; 16]>::try_from(&mut u_pix[offset..][..16]).unwrap(),
-                reg,
-            );
-            simd_mem::_mm_storel_epi64(
-                <&mut [u8; 16]>::try_from(&mut v_pix[offset..][..16]).unwrap(),
-                _mm_srli_si128(reg, 8),
-            );
-        };
+    let store_uv_row = |u_pix: &mut [u8], v_pix: &mut [u8], offset: usize, reg: __m128i| {
+        simd_mem::_mm_storel_epi64(
+            <&mut [u8; 16]>::try_from(&mut u_pix[offset..][..16]).unwrap(),
+            reg,
+        );
+        simd_mem::_mm_storel_epi64(
+            <&mut [u8; 16]>::try_from(&mut v_pix[offset..][..16]).unwrap(),
+            _mm_srli_si128(reg, 8),
+        );
+    };
 
     store_uv_row(u_pixels, v_pixels, point - 3 * stride, p2);
     store_uv_row(u_pixels, v_pixels, point - 2 * stride, p1);
@@ -1456,17 +1433,16 @@ pub fn normal_v_filter_uv_inner(
     do_filter4_16(_token, &mut p1, &mut p0, &mut q0, &mut q1, mask, hev);
 
     // Store results back - low 64 bits to U, high 64 bits to V
-    let store_uv_row =
-        |u_pix: &mut [u8], v_pix: &mut [u8], offset: usize, reg: __m128i| {
-            simd_mem::_mm_storel_epi64(
-                <&mut [u8; 16]>::try_from(&mut u_pix[offset..][..16]).unwrap(),
-                reg,
-            );
-            simd_mem::_mm_storel_epi64(
-                <&mut [u8; 16]>::try_from(&mut v_pix[offset..][..16]).unwrap(),
-                _mm_srli_si128(reg, 8),
-            );
-        };
+    let store_uv_row = |u_pix: &mut [u8], v_pix: &mut [u8], offset: usize, reg: __m128i| {
+        simd_mem::_mm_storel_epi64(
+            <&mut [u8; 16]>::try_from(&mut u_pix[offset..][..16]).unwrap(),
+            reg,
+        );
+        simd_mem::_mm_storel_epi64(
+            <&mut [u8; 16]>::try_from(&mut v_pix[offset..][..16]).unwrap(),
+            _mm_srli_si128(reg, 8),
+        );
+    };
 
     store_uv_row(u_pixels, v_pixels, point - 2 * stride, p1);
     store_uv_row(u_pixels, v_pixels, point - stride, p0);
@@ -1521,10 +1497,10 @@ mod tests {
         // Set up a gradient that should be filtered
         // Row 0 = p1, Row 1 = p0, Row 2 = q0, Row 3 = q1
         for x in 0..16 {
-            pixels[x] = 100;                    // row 0: p1
-            pixels[stride + x] = 110;           // row 1: p0
-            pixels[2 * stride + x] = 140;       // row 2: q0
-            pixels[3 * stride + x] = 150;       // row 3: q1
+            pixels[x] = 100; // row 0: p1
+            pixels[stride + x] = 110; // row 1: p0
+            pixels[2 * stride + x] = 140; // row 2: q0
+            pixels[3 * stride + x] = 150; // row 3: q1
 
             pixels_scalar[x] = 100;
             pixels_scalar[stride + x] = 110;
@@ -1551,12 +1527,16 @@ mod tests {
         // Compare
         for x in 0..16 {
             assert_eq!(
-                pixels[stride + x], pixels_scalar[stride + x],
-                "p0 mismatch at x={}", x
+                pixels[stride + x],
+                pixels_scalar[stride + x],
+                "p0 mismatch at x={}",
+                x
             );
             assert_eq!(
-                pixels[2 * stride + x], pixels_scalar[2 * stride + x],
-                "q0 mismatch at x={}", x
+                pixels[2 * stride + x],
+                pixels_scalar[2 * stride + x],
+                "q0 mismatch at x={}",
+                x
             );
         }
     }
@@ -1604,12 +1584,16 @@ mod tests {
         // Compare
         for y in 0..16 {
             assert_eq!(
-                pixels[y * stride + 3], pixels_scalar[y * stride + 3],
-                "p0 mismatch at y={}", y
+                pixels[y * stride + 3],
+                pixels_scalar[y * stride + 3],
+                "p0 mismatch at y={}",
+                y
             );
             assert_eq!(
-                pixels[y * stride + 4], pixels_scalar[y * stride + 4],
-                "q0 mismatch at y={}", y
+                pixels[y * stride + 4],
+                pixels_scalar[y * stride + 4],
+                "q0 mismatch at y={}",
+                y
             );
         }
     }
@@ -1627,14 +1611,14 @@ mod tests {
 
         // Set up gradient data for all 8 rows around the edge
         for x in 0..16 {
-            pixels[0 * stride + x] = 100;  // p3
-            pixels[1 * stride + x] = 105;  // p2
-            pixels[2 * stride + x] = 110;  // p1
-            pixels[3 * stride + x] = 115;  // p0
-            pixels[4 * stride + x] = 145;  // q0 (edge here)
-            pixels[5 * stride + x] = 150;  // q1
-            pixels[6 * stride + x] = 155;  // q2
-            pixels[7 * stride + x] = 160;  // q3
+            pixels[0 * stride + x] = 100; // p3
+            pixels[1 * stride + x] = 105; // p2
+            pixels[2 * stride + x] = 110; // p1
+            pixels[3 * stride + x] = 115; // p0
+            pixels[4 * stride + x] = 145; // q0 (edge here)
+            pixels[5 * stride + x] = 150; // q1
+            pixels[6 * stride + x] = 155; // q2
+            pixels[7 * stride + x] = 160; // q3
 
             pixels_scalar[0 * stride + x] = 100;
             pixels_scalar[1 * stride + x] = 105;
@@ -1651,7 +1635,15 @@ mod tests {
         let edge_limit = 25;
 
         // Apply SIMD filter
-        normal_v_filter16_inner(token, &mut pixels, 4 * stride, stride, hev_thresh, interior_limit, edge_limit);
+        normal_v_filter16_inner(
+            token,
+            &mut pixels,
+            4 * stride,
+            stride,
+            hev_thresh,
+            interior_limit,
+            edge_limit,
+        );
 
         // Apply scalar filter
         for x in 0..16 {
@@ -1668,20 +1660,28 @@ mod tests {
         // Compare - we compare p1, p0, q0, q1 which can be modified
         for x in 0..16 {
             assert_eq!(
-                pixels[2 * stride + x], pixels_scalar[2 * stride + x],
-                "p1 mismatch at x={}", x
+                pixels[2 * stride + x],
+                pixels_scalar[2 * stride + x],
+                "p1 mismatch at x={}",
+                x
             );
             assert_eq!(
-                pixels[3 * stride + x], pixels_scalar[3 * stride + x],
-                "p0 mismatch at x={}", x
+                pixels[3 * stride + x],
+                pixels_scalar[3 * stride + x],
+                "p0 mismatch at x={}",
+                x
             );
             assert_eq!(
-                pixels[4 * stride + x], pixels_scalar[4 * stride + x],
-                "q0 mismatch at x={}", x
+                pixels[4 * stride + x],
+                pixels_scalar[4 * stride + x],
+                "q0 mismatch at x={}",
+                x
             );
             assert_eq!(
-                pixels[5 * stride + x], pixels_scalar[5 * stride + x],
-                "q1 mismatch at x={}", x
+                pixels[5 * stride + x],
+                pixels_scalar[5 * stride + x],
+                "q1 mismatch at x={}",
+                x
             );
         }
     }
@@ -1699,14 +1699,14 @@ mod tests {
 
         // Set up gradient data for all 8 rows around the edge
         for x in 0..16 {
-            pixels[0 * stride + x] = 100;  // p3
-            pixels[1 * stride + x] = 105;  // p2
-            pixels[2 * stride + x] = 110;  // p1
-            pixels[3 * stride + x] = 115;  // p0
-            pixels[4 * stride + x] = 145;  // q0 (edge here)
-            pixels[5 * stride + x] = 150;  // q1
-            pixels[6 * stride + x] = 155;  // q2
-            pixels[7 * stride + x] = 160;  // q3
+            pixels[0 * stride + x] = 100; // p3
+            pixels[1 * stride + x] = 105; // p2
+            pixels[2 * stride + x] = 110; // p1
+            pixels[3 * stride + x] = 115; // p0
+            pixels[4 * stride + x] = 145; // q0 (edge here)
+            pixels[5 * stride + x] = 150; // q1
+            pixels[6 * stride + x] = 155; // q2
+            pixels[7 * stride + x] = 160; // q3
 
             pixels_scalar[0 * stride + x] = 100;
             pixels_scalar[1 * stride + x] = 105;
@@ -1723,7 +1723,15 @@ mod tests {
         let edge_limit = 40;
 
         // Apply SIMD filter
-        normal_v_filter16_edge(token, &mut pixels, 4 * stride, stride, hev_thresh, interior_limit, edge_limit);
+        normal_v_filter16_edge(
+            token,
+            &mut pixels,
+            4 * stride,
+            stride,
+            hev_thresh,
+            interior_limit,
+            edge_limit,
+        );
 
         // Apply scalar filter
         for x in 0..16 {
@@ -1740,28 +1748,40 @@ mod tests {
         // Compare - p2, p1, p0, q0, q1, q2 can be modified
         for x in 0..16 {
             assert_eq!(
-                pixels[1 * stride + x], pixels_scalar[1 * stride + x],
-                "p2 mismatch at x={}", x
+                pixels[1 * stride + x],
+                pixels_scalar[1 * stride + x],
+                "p2 mismatch at x={}",
+                x
             );
             assert_eq!(
-                pixels[2 * stride + x], pixels_scalar[2 * stride + x],
-                "p1 mismatch at x={}", x
+                pixels[2 * stride + x],
+                pixels_scalar[2 * stride + x],
+                "p1 mismatch at x={}",
+                x
             );
             assert_eq!(
-                pixels[3 * stride + x], pixels_scalar[3 * stride + x],
-                "p0 mismatch at x={}", x
+                pixels[3 * stride + x],
+                pixels_scalar[3 * stride + x],
+                "p0 mismatch at x={}",
+                x
             );
             assert_eq!(
-                pixels[4 * stride + x], pixels_scalar[4 * stride + x],
-                "q0 mismatch at x={}", x
+                pixels[4 * stride + x],
+                pixels_scalar[4 * stride + x],
+                "q0 mismatch at x={}",
+                x
             );
             assert_eq!(
-                pixels[5 * stride + x], pixels_scalar[5 * stride + x],
-                "q1 mismatch at x={}", x
+                pixels[5 * stride + x],
+                pixels_scalar[5 * stride + x],
+                "q1 mismatch at x={}",
+                x
             );
             assert_eq!(
-                pixels[6 * stride + x], pixels_scalar[6 * stride + x],
-                "q2 mismatch at x={}", x
+                pixels[6 * stride + x],
+                pixels_scalar[6 * stride + x],
+                "q2 mismatch at x={}",
+                x
             );
         }
     }

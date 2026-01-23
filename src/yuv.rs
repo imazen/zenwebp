@@ -404,10 +404,10 @@ pub(crate) fn fill_rgb_buffer_simple<const BPP: usize>(
 ) {
     let u_row_twice_iter = u_buffer
         .chunks_exact(buffer_width / 2)
-        .flat_map(|n| std::iter::repeat(n).take(2));
+        .flat_map(|n| std::iter::repeat_n(n, 2));
     let v_row_twice_iter = v_buffer
         .chunks_exact(buffer_width / 2)
-        .flat_map(|n| std::iter::repeat(n).take(2));
+        .flat_map(|n| std::iter::repeat_n(n, 2));
 
     for (((row, y_row), u_row), v_row) in buffer
         .chunks_exact_mut(width * BPP)
