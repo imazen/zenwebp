@@ -76,55 +76,6 @@ fn simple_filter_vertical_16_cols(
     }
 }
 
-/// Helper to apply normal horizontal macroblock filter to 16 rows with SIMD when available.
-/// Filters the vertical edge at column x0, processing all 16 rows at once.
-#[inline]
-fn normal_filter_horizontal_mb_16_rows(
-    buf: &mut [u8],
-    y_start: usize,
-    x0: usize,
-    stride: usize,
-    hev_threshold: u8,
-    interior_limit: u8,
-    edge_limit: u8,
-) {
-    // TODO: Add SIMD horizontal filter implementation
-    // For now, use scalar
-    for y in 0usize..16 {
-        let y0 = y_start + y;
-        loop_filter::macroblock_filter_horizontal(
-            hev_threshold,
-            interior_limit,
-            edge_limit,
-            &mut buf[y0 * stride + x0 - 4..][..8],
-        );
-    }
-}
-
-/// Helper to apply normal horizontal subblock filter to 16 rows with SIMD when available.
-#[inline]
-fn normal_filter_horizontal_sub_16_rows(
-    buf: &mut [u8],
-    y_start: usize,
-    x0: usize,
-    stride: usize,
-    hev_threshold: u8,
-    interior_limit: u8,
-    edge_limit: u8,
-) {
-    // TODO: Add SIMD horizontal filter implementation
-    // For now, use scalar
-    for y in 0usize..16 {
-        let y0 = y_start + y;
-        loop_filter::subblock_filter_horizontal(
-            hev_threshold,
-            interior_limit,
-            edge_limit,
-            &mut buf[y0 * stride + x0 - 4..][..8],
-        );
-    }
-}
-
 /// Helper to apply normal vertical macroblock filter to 16 columns with SIMD when available.
 /// Filters the horizontal edge at row y0, processing all 16 columns at once.
 #[inline]
@@ -473,6 +424,17 @@ pub struct Vp8Decoder<R> {
 
     top_border_v: Vec<u8>,
     left_border_v: Vec<u8>,
+
+    // Row cache for better cache locality during loop filtering
+    // Layout: [extra_rows for filter context][current row of macroblocks]
+    // The extra_rows area holds the bottom rows from the previous macroblock row,
+    // needed for filtering the top edge of the current row.
+    cache_y: Vec<u8>,
+    cache_u: Vec<u8>,
+    cache_v: Vec<u8>,
+    cache_y_stride: usize,   // mbwidth * 16
+    cache_uv_stride: usize,  // mbwidth * 8
+    extra_y_rows: usize,     // 8 for normal filter, 2 for simple, 0 for none
 }
 
 impl<R: Read> Vp8Decoder<R> {
@@ -519,6 +481,13 @@ impl<R: Read> Vp8Decoder<R> {
 
             top_border_v: Vec::new(),
             left_border_v: Vec::new(),
+
+            cache_y: Vec::new(),
+            cache_u: Vec::new(),
+            cache_v: Vec::new(),
+            cache_y_stride: 0,
+            cache_uv_stride: 0,
+            extra_y_rows: 0,
         }
     }
 
@@ -734,6 +703,13 @@ impl<R: Read> Vp8Decoder<R> {
         self.top_border_v = vec![127u8; 8 * self.mbwidth as usize];
         self.left_border_v = vec![129u8; 1 + 8];
 
+        // Initialize row cache for better cache locality during loop filtering
+        // We allocate with max extra_rows (8 for normal filter) - actual value set after reading filter_type
+        self.cache_y_stride = usize::from(self.mbwidth) * 16;
+        self.cache_uv_stride = usize::from(self.mbwidth) * 8;
+        // extra_y_rows will be set properly after we read filter_type, for now use 0
+        self.extra_y_rows = 0;
+
         let size = first_partition_size as usize;
         let mut buf = vec![[0; 4]; size.div_ceil(4)];
         let bytes: &mut [u8] = buf.as_mut_slice().as_flattened_mut();
@@ -766,6 +742,25 @@ impl<R: Read> Vp8Decoder<R> {
 
         let num_partitions = 1 << self.b.read_literal(2).or_accumulate(&mut res) as usize;
         self.b.check(res, ())?;
+
+        // Now that we know filter_type, allocate the row cache
+        // extra_rows: 8 for normal filter, 2 for simple filter, 0 for no filter
+        self.extra_y_rows = if self.frame.filter_level == 0 {
+            0
+        } else if self.frame.filter_type {
+            2 // simple filter
+        } else {
+            8 // normal filter
+        };
+        let extra_uv_rows = self.extra_y_rows / 2;
+
+        // Cache layout: [extra_rows][16 rows for current macroblock row]
+        // extra_rows holds bottom rows from previous MB row for filter context
+        let cache_y_rows = self.extra_y_rows + 16;
+        let cache_uv_rows = extra_uv_rows + 8;
+        self.cache_y = vec![128u8; cache_y_rows * self.cache_y_stride];
+        self.cache_u = vec![128u8; cache_uv_rows * self.cache_uv_stride];
+        self.cache_v = vec![128u8; cache_uv_rows * self.cache_uv_stride];
 
         self.num_partitions = num_partitions as u8;
         self.init_partitions(num_partitions)?;
@@ -881,17 +876,18 @@ impl<R: Read> Vp8Decoder<R> {
 
         self.top_border_y[mbx * 16..][..16].copy_from_slice(&ws[16 * stride + 1..][..16]);
 
+        // Write to row cache instead of final buffer
+        // Cache layout: [extra_y_rows rows][16 rows for current MB row]
+        let cache_y_offset = self.extra_y_rows * self.cache_y_stride;
         for y in 0usize..16 {
-            let dst_start = (mby * 16 + y) * mw * 16 + mbx * 16;
+            let dst_start = cache_y_offset + y * self.cache_y_stride + mbx * 16;
             let src_start = (1 + y) * stride + 1;
-            self.frame.ybuf[dst_start..][..16].copy_from_slice(&ws[src_start..][..16]);
+            self.cache_y[dst_start..][..16].copy_from_slice(&ws[src_start..][..16]);
         }
     }
 
     fn intra_predict_chroma(&mut self, mbx: usize, mby: usize, mb: &MacroBlock, resdata: &[i32]) {
         let stride = CHROMA_STRIDE;
-
-        let mw = self.mbwidth as usize;
 
         //8x8 with left top border of 1
         let mut uws = create_border_chroma(mbx, mby, &self.top_border_u, &self.left_border_u);
@@ -934,11 +930,14 @@ impl<R: Read> Vp8Decoder<R> {
         set_chroma_border(&mut self.left_border_u, &mut self.top_border_u, &uws, mbx);
         set_chroma_border(&mut self.left_border_v, &mut self.top_border_v, &vws, mbx);
 
+        // Write to row cache instead of final buffer
+        let extra_uv_rows = self.extra_y_rows / 2;
+        let cache_uv_offset = extra_uv_rows * self.cache_uv_stride;
         for y in 0usize..8 {
-            let uv_buf_index = (mby * 8 + y) * mw * 8 + mbx * 8;
+            let dst_start = cache_uv_offset + y * self.cache_uv_stride + mbx * 8;
             let ws_index = (1 + y) * stride + 1;
-            self.frame.ubuf[uv_buf_index..][..8].copy_from_slice(&uws[ws_index..][..8]);
-            self.frame.vbuf[uv_buf_index..][..8].copy_from_slice(&vws[ws_index..][..8]);
+            self.cache_u[dst_start..][..8].copy_from_slice(&uws[ws_index..][..8]);
+            self.cache_v[dst_start..][..8].copy_from_slice(&vws[ws_index..][..8]);
         }
     }
 
@@ -1123,211 +1122,322 @@ impl<R: Read> Vp8Decoder<R> {
         Ok(blocks)
     }
 
-    /// Does loop filtering on the macroblock
-    fn loop_filter(&mut self, mbx: usize, mby: usize, mb: &MacroBlock) {
-        let luma_w = self.mbwidth as usize * 16;
-        let chroma_w = self.mbwidth as usize * 8;
+    /// Filters a row of macroblocks in the cache
+    /// This operates on cache_y/u/v which have stride cache_y_stride/cache_uv_stride
+    fn filter_row_in_cache(&mut self, mby: usize) {
+        let mbwidth = self.mbwidth as usize;
+        let cache_y_stride = self.cache_y_stride;
+        let cache_uv_stride = self.cache_uv_stride;
+        let extra_y_rows = self.extra_y_rows;
+        let extra_uv_rows = extra_y_rows / 2;
 
-        let (filter_level, interior_limit, hev_threshold) = self.calculate_filter_parameters(mb);
+        for mbx in 0..mbwidth {
+            let mb = self.macroblocks[mby * mbwidth + mbx];
+            let (filter_level, interior_limit, hev_threshold) = self.calculate_filter_parameters(&mb);
 
-        if filter_level > 0 {
+            if filter_level == 0 {
+                continue;
+            }
+
             let mbedge_limit = (filter_level + 2) * 2 + interior_limit;
             let sub_bedge_limit = (filter_level * 2) + interior_limit;
-
-            // we skip subblock filtering if the coding mode isn't B_PRED and there's no DCT coefficient coded
             let do_subblock_filtering =
                 mb.luma_mode == LumaMode::B || (!mb.coeffs_skipped && mb.non_zero_dct);
 
-            //filter across left of macroblock
+            // Filter across left of macroblock (horizontal filter on vertical edge)
             if mbx > 0 {
-                //simple loop filtering
                 if self.frame.filter_type {
+                    // Simple filter
                     simple_filter_horizontal_16_rows(
-                        &mut self.frame.ybuf[..],
-                        mby * 16,
+                        &mut self.cache_y[..],
+                        extra_y_rows,
                         mbx * 16,
-                        luma_w,
+                        cache_y_stride,
                         mbedge_limit,
                     );
                 } else {
-                    for y in 0usize..16 {
-                        let y0 = mby * 16 + y;
-                        let x0 = mbx * 16;
-
+                    // Normal filter
+                    for y in 0..16 {
+                        let row = extra_y_rows + y;
                         loop_filter::macroblock_filter_horizontal(
                             hev_threshold,
                             interior_limit,
                             mbedge_limit,
-                            &mut self.frame.ybuf[y0 * luma_w + x0 - 4..][..8],
+                            &mut self.cache_y[row * cache_y_stride + mbx * 16 - 4..][..8],
                         );
                     }
-
-                    for y in 0usize..8 {
-                        let y0 = mby * 8 + y;
-                        let x0 = mbx * 8;
-
+                    for y in 0..8 {
+                        let row = extra_uv_rows + y;
                         loop_filter::macroblock_filter_horizontal(
                             hev_threshold,
                             interior_limit,
                             mbedge_limit,
-                            &mut self.frame.ubuf[y0 * chroma_w + x0 - 4..][..8],
+                            &mut self.cache_u[row * cache_uv_stride + mbx * 8 - 4..][..8],
                         );
                         loop_filter::macroblock_filter_horizontal(
                             hev_threshold,
                             interior_limit,
                             mbedge_limit,
-                            &mut self.frame.vbuf[y0 * chroma_w + x0 - 4..][..8],
+                            &mut self.cache_v[row * cache_uv_stride + mbx * 8 - 4..][..8],
                         );
                     }
                 }
             }
 
-            //filter across vertical subblocks in macroblock
+            // Filter across vertical subblocks
             if do_subblock_filtering {
                 if self.frame.filter_type {
                     for x in (4usize..16 - 1).step_by(4) {
                         simple_filter_horizontal_16_rows(
-                            &mut self.frame.ybuf[..],
-                            mby * 16,
+                            &mut self.cache_y[..],
+                            extra_y_rows,
                             mbx * 16 + x,
-                            luma_w,
+                            cache_y_stride,
                             sub_bedge_limit,
                         );
                     }
                 } else {
                     for x in (4usize..16 - 3).step_by(4) {
                         for y in 0..16 {
-                            let y0 = mby * 16 + y;
-                            let x0 = mbx * 16 + x;
-
+                            let row = extra_y_rows + y;
                             loop_filter::subblock_filter_horizontal(
                                 hev_threshold,
                                 interior_limit,
                                 sub_bedge_limit,
-                                &mut self.frame.ybuf[y0 * luma_w + x0 - 4..][..8],
+                                &mut self.cache_y[row * cache_y_stride + mbx * 16 + x - 4..][..8],
                             );
                         }
                     }
-
-                    for y in 0usize..8 {
-                        let y0 = mby * 8 + y;
-                        let x0 = mbx * 8 + 4;
-
+                    for y in 0..8 {
+                        let row = extra_uv_rows + y;
                         loop_filter::subblock_filter_horizontal(
                             hev_threshold,
                             interior_limit,
                             sub_bedge_limit,
-                            &mut self.frame.ubuf[y0 * chroma_w + x0 - 4..][..8],
+                            &mut self.cache_u[row * cache_uv_stride + mbx * 8 + 4 - 4..][..8],
                         );
-
                         loop_filter::subblock_filter_horizontal(
                             hev_threshold,
                             interior_limit,
                             sub_bedge_limit,
-                            &mut self.frame.vbuf[y0 * chroma_w + x0 - 4..][..8],
+                            &mut self.cache_v[row * cache_uv_stride + mbx * 8 + 4 - 4..][..8],
                         );
                     }
                 }
             }
 
-            //filter across top of macroblock
+            // Filter across top of macroblock (vertical filter on horizontal edge)
+            // For mby > 0, we filter between extra_rows area and current row
             if mby > 0 {
+                // The edge is at row extra_y_rows (start of current MB row)
+                // We need rows (extra_y_rows - 4) to (extra_y_rows + 4) approximately
                 if self.frame.filter_type {
                     simple_filter_vertical_16_cols(
-                        &mut self.frame.ybuf[..],
-                        mby * 16,
+                        &mut self.cache_y[..],
+                        extra_y_rows,
                         mbx * 16,
-                        luma_w,
+                        cache_y_stride,
                         mbedge_limit,
                     );
                 } else {
-                    // Use SIMD helper for luma (16 columns)
+                    // Use SIMD helper for luma
                     normal_filter_vertical_mb_16_cols(
-                        &mut self.frame.ybuf[..],
-                        mby * 16,
+                        &mut self.cache_y[..],
+                        extra_y_rows,
                         mbx * 16,
-                        luma_w,
+                        cache_y_stride,
                         hev_threshold,
                         interior_limit,
                         mbedge_limit,
                     );
-
-                    // Chroma uses 8 columns - keep scalar
-                    for x in 0usize..8 {
-                        let y0 = mby * 8;
-                        let x0 = mbx * 8 + x;
-
+                    // Chroma
+                    for x in 0..8 {
                         loop_filter::macroblock_filter_vertical(
                             hev_threshold,
                             interior_limit,
                             mbedge_limit,
-                            &mut self.frame.ubuf[..],
-                            y0 * chroma_w + x0,
-                            chroma_w,
+                            &mut self.cache_u[..],
+                            extra_uv_rows * cache_uv_stride + mbx * 8 + x,
+                            cache_uv_stride,
                         );
                         loop_filter::macroblock_filter_vertical(
                             hev_threshold,
                             interior_limit,
                             mbedge_limit,
-                            &mut self.frame.vbuf[..],
-                            y0 * chroma_w + x0,
-                            chroma_w,
+                            &mut self.cache_v[..],
+                            extra_uv_rows * cache_uv_stride + mbx * 8 + x,
+                            cache_uv_stride,
                         );
                     }
                 }
             }
 
-            //filter across horizontal subblock edges within the macroblock
+            // Filter across horizontal subblock edges
             if do_subblock_filtering {
                 if self.frame.filter_type {
                     for y in (4usize..16 - 1).step_by(4) {
                         simple_filter_vertical_16_cols(
-                            &mut self.frame.ybuf[..],
-                            mby * 16 + y,
+                            &mut self.cache_y[..],
+                            extra_y_rows + y,
                             mbx * 16,
-                            luma_w,
+                            cache_y_stride,
                             sub_bedge_limit,
                         );
                     }
                 } else {
-                    // Use SIMD helper for luma subblock filter (16 columns at once)
                     for y in (4usize..16 - 3).step_by(4) {
                         normal_filter_vertical_sub_16_cols(
-                            &mut self.frame.ybuf[..],
-                            mby * 16 + y,
+                            &mut self.cache_y[..],
+                            extra_y_rows + y,
                             mbx * 16,
-                            luma_w,
+                            cache_y_stride,
                             hev_threshold,
                             interior_limit,
                             sub_bedge_limit,
                         );
                     }
-
-                    for x in 0..8 {
-                        let y0 = mby * 8 + 4;
-                        let x0 = mbx * 8 + x;
-
-                        loop_filter::subblock_filter_vertical(
-                            hev_threshold,
-                            interior_limit,
-                            sub_bedge_limit,
-                            &mut self.frame.ubuf[..],
-                            y0 * chroma_w + x0,
-                            chroma_w,
-                        );
-
-                        loop_filter::subblock_filter_vertical(
-                            hev_threshold,
-                            interior_limit,
-                            sub_bedge_limit,
-                            &mut self.frame.vbuf[..],
-                            y0 * chroma_w + x0,
-                            chroma_w,
-                        );
+                    for y in 0..1 {
+                        for x in 0..8 {
+                            loop_filter::subblock_filter_vertical(
+                                hev_threshold,
+                                interior_limit,
+                                sub_bedge_limit,
+                                &mut self.cache_u[..],
+                                (extra_uv_rows + 4 + y * 4) * cache_uv_stride + mbx * 8 + x,
+                                cache_uv_stride,
+                            );
+                            loop_filter::subblock_filter_vertical(
+                                hev_threshold,
+                                interior_limit,
+                                sub_bedge_limit,
+                                &mut self.cache_v[..],
+                                (extra_uv_rows + 4 + y * 4) * cache_uv_stride + mbx * 8 + x,
+                                cache_uv_stride,
+                            );
+                        }
                     }
                 }
             }
         }
+    }
+
+    /// Copy the filtered row from cache to final output buffers
+    /// Uses delayed output: filter modifies pixels above and below the edge,
+    /// so we delay outputting the bottom extra_rows until the next row is filtered.
+    fn output_row_from_cache(&mut self, mby: usize) {
+        let mbwidth = self.mbwidth as usize;
+        let mbheight = self.mbheight as usize;
+        let luma_w = mbwidth * 16;
+        let chroma_w = mbwidth * 8;
+        let extra_y_rows = self.extra_y_rows;
+        let extra_uv_rows = extra_y_rows / 2;
+        let is_first_row = mby == 0;
+        let is_last_row = mby == mbheight - 1;
+
+        // Determine which rows to output:
+        // - First row: output rows extra_y_rows to extra_y_rows + (16 - extra_y_rows) = rows up to 16
+        //   but skip the bottom extra_y_rows (they'll be output with next row after filtering)
+        // - Middle rows: output extra area (0 to extra_y_rows) + current row minus bottom extra_y_rows
+        // - Last row: output extra area + full current row
+
+        let (src_start_row, num_y_rows, dst_start_y_row) = if is_first_row {
+            // First row: output rows extra_y_rows to (extra_y_rows + 16 - extra_y_rows) = 16 - extra_y_rows rows
+            // Starting from cache row extra_y_rows, output 16 - extra_y_rows rows to final row 0
+            (extra_y_rows, 16 - extra_y_rows, 0usize)
+        } else if is_last_row {
+            // Last row: output extra area (extra_y_rows rows) + full current row (16 rows)
+            // Starting from cache row 0, output extra_y_rows + 16 rows
+            // Destination starts at mby*16 - extra_y_rows
+            (0, extra_y_rows + 16, mby * 16 - extra_y_rows)
+        } else {
+            // Middle row: output extra area + (16 - extra_y_rows) rows of current
+            // Starting from cache row 0, output extra_y_rows + 16 - extra_y_rows = 16 rows
+            (0, 16, mby * 16 - extra_y_rows)
+        };
+
+        // Copy luma
+        for y in 0..num_y_rows {
+            let src_row = src_start_row + y;
+            let dst_row = dst_start_y_row + y;
+            let src_start = src_row * self.cache_y_stride;
+            let dst_start = dst_row * luma_w;
+            self.frame.ybuf[dst_start..dst_start + luma_w]
+                .copy_from_slice(&self.cache_y[src_start..src_start + luma_w]);
+        }
+
+        // Same logic for chroma but with half the rows
+        let (src_start_row_uv, num_uv_rows, dst_start_uv_row) = if is_first_row {
+            (extra_uv_rows, 8 - extra_uv_rows, 0usize)
+        } else if is_last_row {
+            (0, extra_uv_rows + 8, mby * 8 - extra_uv_rows)
+        } else {
+            (0, 8, mby * 8 - extra_uv_rows)
+        };
+
+        // Copy chroma
+        for y in 0..num_uv_rows {
+            let src_row = src_start_row_uv + y;
+            let dst_row = dst_start_uv_row + y;
+            let src_start = src_row * self.cache_uv_stride;
+            let dst_start = dst_row * chroma_w;
+            self.frame.ubuf[dst_start..dst_start + chroma_w]
+                .copy_from_slice(&self.cache_u[src_start..src_start + chroma_w]);
+            self.frame.vbuf[dst_start..dst_start + chroma_w]
+                .copy_from_slice(&self.cache_v[src_start..src_start + chroma_w]);
+        }
+    }
+
+    /// Copy bottom rows of current cache to extra area for next row's filtering
+    fn rotate_extra_rows(&mut self) {
+        let extra_y_rows = self.extra_y_rows;
+        let extra_uv_rows = extra_y_rows / 2;
+
+        if extra_y_rows == 0 {
+            return;
+        }
+
+        // Copy bottom extra_y_rows of current MB row to the extra area
+        // Source: rows (extra_y_rows + 16 - extra_y_rows)..(extra_y_rows + 16) = rows 16..(extra_y_rows + 16)
+        // Actually: the bottom extra_y_rows of the 16-row area
+        // Which is rows (extra_y_rows + 16 - extra_y_rows)..(extra_y_rows + 16)
+        // = rows 16..(16 + extra_y_rows)... wait that's wrong
+        // The current row is at rows extra_y_rows..(extra_y_rows + 16)
+        // The bottom extra_y_rows are at rows (extra_y_rows + 16 - extra_y_rows)..(extra_y_rows + 16)
+        // = rows 16..(extra_y_rows + 16) -- no that's still wrong
+        // Let me think again:
+        // - Current row occupies rows extra_y_rows to extra_y_rows + 15 (16 rows)
+        // - We want the bottom extra_y_rows of these, which are rows (extra_y_rows + 16 - extra_y_rows) to (extra_y_rows + 15)
+        // - Wait, extra_y_rows + 16 - extra_y_rows = 16, so rows 16..16+extra_y_rows = rows 16..16+extra_y_rows
+        // - Hmm, that's outside the current row area...
+
+        // Let me reconsider. Current row (16 pixels):
+        // - Starts at row index extra_y_rows
+        // - Ends at row index extra_y_rows + 15
+        // - Bottom extra_y_rows rows are at indices (extra_y_rows + 16 - extra_y_rows) to (extra_y_rows + 15)
+        // - = indices 16 to (extra_y_rows + 15)... that's wrong
+
+        // Actually: the 16-row area is at indices extra_y_rows..(extra_y_rows + 16)
+        // The last extra_y_rows rows of this area are at indices:
+        //   (extra_y_rows + 16 - extra_y_rows) .. (extra_y_rows + 16)
+        //   = 16 .. (extra_y_rows + 16)
+        // Wait, that gives 16..24 for extra_y_rows=8, which is 8 rows. That's correct!
+        // But 16 > extra_y_rows when extra_y_rows = 8, so indices 16..24 are valid.
+
+        // Destination: rows 0..extra_y_rows
+
+        // For luma:
+        let src_start_row = 16; // = extra_y_rows + 16 - extra_y_rows = 16
+        let src_start = src_start_row * self.cache_y_stride;
+        let copy_size = extra_y_rows * self.cache_y_stride;
+        // Copy from src_start to 0
+        self.cache_y.copy_within(src_start..src_start + copy_size, 0);
+
+        // For chroma:
+        let src_start_row_uv = 8; // = extra_uv_rows + 8 - extra_uv_rows = 8
+        let src_start_uv = src_start_row_uv * self.cache_uv_stride;
+        let copy_size_uv = extra_uv_rows * self.cache_uv_stride;
+        self.cache_u.copy_within(src_start_uv..src_start_uv + copy_size_uv, 0);
+        self.cache_v.copy_within(src_start_uv..src_start_uv + copy_size_uv, 0);
     }
 
     //return values are the filter level, interior limit and hev threshold
@@ -1399,6 +1509,7 @@ impl<R: Read> Vp8Decoder<R> {
             let p = mby % self.num_partitions as usize;
             self.left = PreviousMacroBlock::default();
 
+            // Decode all macroblocks in this row (writes to cache)
             for mbx in 0..self.mbwidth as usize {
                 let mut mb = self.read_macroblock_header(mbx)?;
                 let blocks = if !mb.coeffs_skipped {
@@ -1423,17 +1534,14 @@ impl<R: Read> Vp8Decoder<R> {
                 self.macroblocks.push(mb);
             }
 
+            // Row complete: filter in cache, output to final buffer, prepare for next row
+            self.filter_row_in_cache(mby);
+            self.output_row_from_cache(mby);
+            self.rotate_extra_rows();
+
             self.left_border_y = vec![129u8; 1 + 16];
             self.left_border_u = vec![129u8; 1 + 8];
             self.left_border_v = vec![129u8; 1 + 8];
-        }
-
-        //do loop filtering
-        for mby in 0..self.mbheight as usize {
-            for mbx in 0..self.mbwidth as usize {
-                let mb = self.macroblocks[mby * self.mbwidth as usize + mbx];
-                self.loop_filter(mbx, mby, &mb);
-            }
         }
 
         Ok(self.frame)
