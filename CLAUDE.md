@@ -51,7 +51,7 @@ See global ~/.claude/CLAUDE.md for general instructions.
 *Benchmark: 768x512 Kodak image, 100 iterations, release mode*
 
 Our decoder is ~1.92x slower than libwebp (improved from 2.5x baseline). Recent optimizations:
-- **copy_from_slice for macroblock output** (~1-2% speedup)
+- **Row cache with extra rows** for loop filter cache locality (commit c16995f)
 - **SIMD normal loop filter for vertical edges** (~10% speedup, commit 3bf30f1)
 - **libwebp-rs style bit reader for coefficients** (16% speedup, commit 5588e44)
 - **Inlined read_tree/is_eof** (~7% additional speedup)
@@ -94,7 +94,7 @@ Per-decode comparison with libwebp:
 
 ### TODO
 - [x] ~~Replace byte-by-byte copy with `copy_from_slice()` (~1-2% gain)~~
-- [ ] **High impact**: Add row cache for better loop filter cache locality
+- [x] ~~Row cache with extra rows for loop filter cache locality~~ (commit c16995f)
 - [ ] Add SIMD horizontal normal filter (transpose technique like simple filter)
 - [ ] Consider using libwebp-rs bit reader for mode parsing too (self.b field)
 - [ ] Consider SIMD for choose_macroblock_info inner loops (encoder)
@@ -224,17 +224,22 @@ for y in 0usize..16 {
 
 3. ~~Byte-by-byte copy~~ Fixed with `copy_from_slice()` (~1-2% gain)
 
-#### Potential Solutions
+#### Solutions Implemented
 
 1. ~~**Quick fix**: `copy_from_slice()`~~ Done, ~1-2% gain
 
-2. **Row cache with extra rows** (HIGH IMPACT):
-   - Allocate: `cache_y` = `mb_w * 16` bytes (one row of macroblocks)
-   - Plus `extra_rows * mb_w` bytes before cache_y for filter context
-   - After each MB row: copy bottom N rows to extra area
-   - Filter reads from extra area (previous row) + current cache (current row)
-   - Both are small, hot in L1 cache
-   - `extra_rows` = 2 for simple filter, 8 for normal filter (from kFilterExtraRows)
+2. **Row cache with extra rows** - IMPLEMENTED (commit c16995f):
+   - Added `cache_y/u/v` buffers: `(extra_rows + 16) * mb_w` bytes
+   - `extra_y_rows` = 8 for normal filter, 2 for simple, 0 for none
+   - Prediction writes to cache, not final buffer
+   - Filter operates on cache (tighter stride, better cache locality)
+   - Delayed output: filter modifies pixels above AND below edge
+   - `rotate_extra_rows()` copies bottom rows for next iteration
+
+   **Outcome**: Performance essentially unchanged (~1.92x). The extra copy
+   overhead may be offsetting cache locality gains. The remaining 2x gap
+   vs libwebp likely comes from instruction count (4.5x more) rather than
+   cache efficiency alone.
 
 ## User Feedback Log
 
