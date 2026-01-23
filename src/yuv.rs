@@ -26,6 +26,9 @@
 //! would be (9*u0 + 3*u1 + 3*u2 + u3 + 8) / 16 and similar for the other pixels
 //! The edges are mirrored, so for the pixel 1 down and 0 from the left it uses (9*u0 + 3*u2 + 3*u0 + u2 + 8) / 16
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 /// `_mm_mulhi_epu16` emulation
 fn mulhi(v: u8, coeff: u16) -> i32 {
     ((u32::from(v) * u32::from(coeff)) >> 8) as i32

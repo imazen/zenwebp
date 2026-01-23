@@ -1,4 +1,8 @@
 // currently just a direct translation of the encoder given in the vp8 specification
+
+use alloc::vec;
+use alloc::vec::Vec;
+
 #[derive(Default)]
 pub(crate) struct ArithmeticEncoder {
     /// the entropy values that have been encoded so far

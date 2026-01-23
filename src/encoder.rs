@@ -17,13 +17,37 @@
 //! # Legacy API
 //!
 //! The [`WebPEncoder`] type provides the original API for streaming output.
-use std::collections::BinaryHeap;
-use std::io::{self, Write};
-use std::slice::ChunksExact;
+use alloc::string::String;
+use thiserror::Error;
 
-use quick_error::quick_error;
+/// Error that can occur during encoding.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum EncodingError {
+    /// An IO error occurred.
+    #[cfg(feature = "std")]
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
 
-use crate::vp8_encoder::encode_frame_lossy;
+    /// The image dimensions are not allowed by the WebP format.
+    #[error("Invalid dimensions")]
+    InvalidDimensions,
+
+    /// The input buffer is too small.
+    #[error("Invalid buffer size: {0}")]
+    InvalidBufferSize(String),
+}
+
+// Everything below requires std for Write trait
+#[cfg(feature = "std")]
+mod std_encoder {
+    use super::*;
+    use alloc::collections::BinaryHeap;
+    use alloc::format;
+    use alloc::vec::Vec;
+    use core::slice::ChunksExact;
+    use std::io::{self, Write};
+    use crate::vp8_encoder::encode_frame_lossy;
 
 /// Content-aware encoding presets.
 ///
@@ -80,30 +104,6 @@ impl ColorType {
             ColorType::La8 => 2,
             ColorType::Rgb8 => 3,
             ColorType::Rgba8 => 4,
-        }
-    }
-}
-
-quick_error! {
-    /// Error that can occur during encoding.
-    #[derive(Debug)]
-    #[non_exhaustive]
-    pub enum EncodingError {
-        /// An IO error occurred.
-        IoError(err: io::Error) {
-            from()
-            display("IO error: {}", err)
-            source(err)
-        }
-
-        /// The image dimensions are not allowed by the WebP format.
-        InvalidDimensions {
-            display("Invalid dimensions")
-        }
-
-        /// The input buffer is too small.
-        InvalidBufferSize(msg: String) {
-            display("Invalid buffer size: {}", msg)
         }
     }
 }
@@ -1426,11 +1426,17 @@ impl<W: Write> WebPEncoder<W> {
     }
 }
 
-#[cfg(test)]
+} // end of std_encoder module
+
+// Re-export public types from std_encoder
+#[cfg(feature = "std")]
+pub use std_encoder::{ColorType, Encoder, EncoderConfig, EncoderParams, Preset, WebPEncoder};
+
+#[cfg(all(test, feature = "std"))]
 mod tests {
     use rand::RngCore;
 
-    use super::*;
+    use super::std_encoder::*;
 
     #[test]
     fn write_webp() {

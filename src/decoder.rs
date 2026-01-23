@@ -1,171 +1,145 @@
-use byteorder_lite::{LittleEndian, ReadBytesExt};
-use quick_error::quick_error;
+use alloc::string::String;
+use thiserror::Error;
 
-use std::collections::HashMap;
-use std::io::{self, BufRead, Cursor, Read, Seek};
-use std::num::NonZeroU16;
-use std::ops::Range;
+/// Errors that can occur when attempting to decode a WebP image
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum DecodingError {
+    /// An IO error occurred while reading the file
+    #[cfg(feature = "std")]
+    #[error("IO Error: {0}")]
+    IoError(#[from] std::io::Error),
 
-use crate::extended::{self, get_alpha_predictor, read_alpha_chunk, WebPExtendedInfo};
+    /// RIFF's "RIFF" signature not found or invalid
+    #[error("Invalid RIFF signature: {0:x?}")]
+    RiffSignatureInvalid([u8; 4]),
 
-use super::lossless::LosslessDecoder;
-use super::vp8::Vp8Decoder;
+    /// WebP's "WEBP" signature not found or invalid
+    #[error("Invalid WebP signature: {0:x?}")]
+    WebpSignatureInvalid([u8; 4]),
 
-quick_error! {
-    /// Errors that can occur when attempting to decode a WebP image
-    #[derive(Debug)]
-    #[non_exhaustive]
-    pub enum DecodingError {
-        /// An IO error occurred while reading the file
-        IoError(err: io::Error) {
-            from()
-            display("IO Error: {}", err)
-            source(err)
-        }
+    /// An expected chunk was missing
+    #[error("An expected chunk was missing")]
+    ChunkMissing,
 
-        /// RIFF's "RIFF" signature not found or invalid
-        RiffSignatureInvalid(err: [u8; 4]) {
-            display("Invalid RIFF signature: {err:x?}")
-        }
+    /// Chunk Header was incorrect or invalid in its usage
+    #[error("Invalid Chunk header: {0:x?}")]
+    ChunkHeaderInvalid([u8; 4]),
 
-        /// WebP's "WEBP" signature not found or invalid
-        WebpSignatureInvalid(err: [u8; 4]) {
-            display("Invalid WebP signature: {err:x?}")
-        }
+    /// Some bits were invalid
+    #[deprecated]
+    #[error("Reserved bits set")]
+    ReservedBitSet,
 
-        /// An expected chunk was missing
-        ChunkMissing {
-            display("An expected chunk was missing")
-        }
+    /// The ALPH chunk preprocessing info flag was invalid
+    #[error("Alpha chunk preprocessing flag invalid")]
+    InvalidAlphaPreprocessing,
 
-        /// Chunk Header was incorrect or invalid in its usage
-        ChunkHeaderInvalid(err: [u8; 4]) {
-            display("Invalid Chunk header: {err:x?}")
-        }
+    /// Invalid compression method
+    #[error("Invalid compression method")]
+    InvalidCompressionMethod,
 
-        #[allow(deprecated)]
-        #[deprecated]
-        /// Some bits were invalid
-        ReservedBitSet {
-            display("Reserved bits set")
-        }
+    /// Alpha chunk doesn't match the frame's size
+    #[error("Alpha chunk size mismatch")]
+    AlphaChunkSizeMismatch,
 
-        /// The ALPH chunk preprocessing info flag was invalid
-        InvalidAlphaPreprocessing {
-            display("Alpha chunk preprocessing flag invalid")
-        }
+    /// Image is too large, either for the platform's pointer size or generally
+    #[error("Image too large")]
+    ImageTooLarge,
 
-        /// Invalid compression method
-        InvalidCompressionMethod {
-            display("Invalid compression method")
-        }
+    /// Frame would go out of the canvas
+    #[error("Frame outside image")]
+    FrameOutsideImage,
 
-        /// Alpha chunk doesn't match the frame's size
-        AlphaChunkSizeMismatch {
-            display("Alpha chunk size mismatch")
-        }
+    /// Signature of 0x2f not found
+    #[error("Invalid lossless signature: {0:x?}")]
+    LosslessSignatureInvalid(u8),
 
-        /// Image is too large, either for the platform's pointer size or generally
-        ImageTooLarge {
-            display("Image too large")
-        }
+    /// Version Number was not zero
+    #[error("Invalid lossless version number: {0}")]
+    VersionNumberInvalid(u8),
 
-        /// Frame would go out of the canvas
-        FrameOutsideImage {
-            display("Frame outside image")
-        }
+    /// Invalid color cache bits
+    #[error("Invalid color cache bits: {0}")]
+    InvalidColorCacheBits(u8),
 
-        /// Signature of 0x2f not found
-        LosslessSignatureInvalid(err: u8) {
-            display("Invalid lossless signature: {err:x?}")
-        }
+    /// An invalid Huffman code was encountered
+    #[error("Invalid Huffman code")]
+    HuffmanError,
 
-        /// Version Number was not zero
-        VersionNumberInvalid(err: u8) {
-            display("Invalid lossless version number: {err}")
-        }
+    /// The bitstream was somehow corrupt
+    #[error("Corrupt bitstream")]
+    BitStreamError,
 
-        /// Invalid color cache bits
-        InvalidColorCacheBits(err: u8) {
-            display("Invalid color cache bits: {err}")
-        }
+    /// The transforms specified were invalid
+    #[error("Invalid transform")]
+    TransformError,
 
-        /// An invalid Huffman code was encountered
-        HuffmanError {
-            display("Invalid Huffman code")
-        }
+    /// VP8's `[0x9D, 0x01, 0x2A]` magic not found or invalid
+    #[error("Invalid VP8 magic: {0:x?}")]
+    Vp8MagicInvalid([u8; 3]),
 
-        /// The bitstream was somehow corrupt
-        BitStreamError {
-            display("Corrupt bitstream")
-        }
+    /// VP8 Decoder initialisation wasn't provided with enough data
+    #[error("Not enough VP8 init data")]
+    NotEnoughInitData,
 
-        /// The transforms specified were invalid
-        TransformError {
-            display("Invalid transform")
-        }
+    /// At time of writing, only the YUV colour-space encoded as `0` is specified
+    #[error("Invalid VP8 color space: {0}")]
+    ColorSpaceInvalid(u8),
 
-        /// VP8's `[0x9D, 0x01, 0x2A]` magic not found or invalid
-        Vp8MagicInvalid(err: [u8; 3]) {
-            display("Invalid VP8 magic: {err:x?}")
-        }
+    /// LUMA prediction mode was not recognised
+    #[error("Invalid VP8 luma prediction mode: {0}")]
+    LumaPredictionModeInvalid(i8),
 
-        /// VP8 Decoder initialisation wasn't provided with enough data
-        NotEnoughInitData {
-            display("Not enough VP8 init data")
-        }
+    /// Intra-prediction mode was not recognised
+    #[error("Invalid VP8 intra prediction mode: {0}")]
+    IntraPredictionModeInvalid(i8),
 
-        /// At time of writing, only the YUV colour-space encoded as `0` is specified
-        ColorSpaceInvalid(err: u8) {
-            display("Invalid VP8 color space: {err}")
-        }
+    /// Chroma prediction mode was not recognised
+    #[error("Invalid VP8 chroma prediction mode: {0}")]
+    ChromaPredictionModeInvalid(i8),
 
-        /// LUMA prediction mode was not recognised
-        LumaPredictionModeInvalid(err: i8) {
-            display("Invalid VP8 luma prediction mode: {err}")
-        }
+    /// Inconsistent image sizes
+    #[error("Inconsistent image sizes")]
+    InconsistentImageSizes,
 
-        /// Intra-prediction mode was not recognised
-        IntraPredictionModeInvalid(err: i8) {
-            display("Invalid VP8 intra prediction mode: {err}")
-        }
+    /// The file may be valid, but this crate doesn't support decoding it.
+    #[error("Unsupported feature: {0}")]
+    UnsupportedFeature(String),
 
-        /// Chroma prediction mode was not recognised
-        ChromaPredictionModeInvalid(err: i8) {
-            display("Invalid VP8 chroma prediction mode: {err}")
-        }
+    /// Invalid function call or parameter
+    #[error("Invalid parameter: {0}")]
+    InvalidParameter(String),
 
-        /// Inconsistent image sizes
-        InconsistentImageSizes {
-            display("Inconsistent image sizes")
-        }
+    /// Memory limit exceeded
+    #[error("Memory limit exceeded")]
+    MemoryLimitExceeded,
 
-        /// The file may be valid, but this crate doesn't support decoding it.
-        UnsupportedFeature(err: String) {
-            display("Unsupported feature: {err}")
-        }
+    /// Invalid chunk size
+    #[error("Invalid chunk size")]
+    InvalidChunkSize,
 
-        /// Invalid function call or parameter
-        InvalidParameter(err: String) {
-            display("Invalid parameter: {err}")
-        }
-
-        /// Memory limit exceeded
-        MemoryLimitExceeded {
-            display("Memory limit exceeded")
-        }
-
-        /// Invalid chunk size
-        InvalidChunkSize {
-            display("Invalid chunk size")
-        }
-
-        /// No more frames in image
-        NoMoreFrames {
-            display("No more frames")
-        }
-    }
+    /// No more frames in image
+    #[error("No more frames")]
+    NoMoreFrames,
 }
+
+// Everything below requires std due to Read/BufRead/Seek traits
+#[cfg(feature = "std")]
+mod std_decoder {
+    use super::*;
+    use alloc::vec::Vec;
+    use core::num::NonZeroU16;
+    use core::ops::Range;
+
+    use byteorder_lite::{LittleEndian, ReadBytesExt};
+    use hashbrown::HashMap;
+
+    use std::io::{self, BufRead, Cursor, Read, Seek};
+
+    use crate::extended::{self, get_alpha_predictor, read_alpha_chunk, WebPExtendedInfo};
+    use crate::lossless::LosslessDecoder;
+    use crate::vp8::Vp8Decoder;
 
 /// All possible RIFF chunks in a WebP image file
 #[allow(clippy::upper_case_acronyms)]
@@ -1188,9 +1162,19 @@ impl ImageInfo {
     }
 }
 
-#[cfg(test)]
+} // end of std_decoder module
+
+// Re-export public types from std_decoder
+#[cfg(feature = "std")]
+pub use std_decoder::{
+    decode_rgb, decode_rgb_into, decode_rgba, decode_rgba_into, ImageInfo, LoopCount,
+    UpsamplingMethod, WebPDecodeOptions, WebPDecoder,
+};
+
+
+#[cfg(all(test, feature = "std"))]
 mod tests {
-    use super::*;
+    use super::std_decoder::*;
     const RGB_BPP: usize = 3;
 
     #[test]

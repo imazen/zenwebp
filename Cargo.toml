@@ -13,8 +13,10 @@ categories = ["multimedia::images", "multimedia::encoding", "encoding"]
 include = ["/src", "LICENSE-APACHE", "LICENSE-MIT", "README.md"]
 
 [dependencies]
-byteorder-lite = "0.1.0"
-quick-error = "2.0.1"
+byteorder-lite = { version = "0.1.0", default-features = false }
+thiserror = { version = "2.0.18", default-features = false }
+whereat = { version = "0.1.3", default-features = false }
+hashbrown = "0.15"
 yuv = { version = "0.8", optional = true }
 png = { version = "0.17.12", optional = true }
 webp = { version = "0.3.0", optional = true }
@@ -35,7 +37,10 @@ rgb = "0.8"
 webp = "0.3.0"
 
 [features]
-default = ["fast-yuv", "simd"]
+default = ["std", "fast-yuv", "simd"]
+# Enable std library. Required for stream-based APIs (WebPDecoder, WebPEncoder).
+# Disable for no_std environments; buffer-based APIs remain available.
+std = ["thiserror/std", "whereat/std", "byteorder-lite/std"]
 fast-yuv = ["dep:yuv"]
 # Enable SIMD intrinsics via archmage (safe API with token-based feature verification).
 # Provides best performance on x86-64 with runtime CPU detection.

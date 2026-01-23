@@ -1690,6 +1690,8 @@ pub fn record_coeffs(
 // VP8CalculateLevelCosts precomputes cost tables indexed by [type][band][ctx][level].
 // Then remapped_costs provides direct access by coefficient position: [type][n][ctx].
 
+use alloc::vec;
+use alloc::vec::Vec;
 use crate::vp8_common::TokenProbTables;
 
 /// Type alias for level cost array: cost for each level 0..=MAX_VARIABLE_LEVEL

@@ -1,9 +1,16 @@
+use alloc::vec;
+use alloc::vec::Vec;
+
+#[cfg(feature = "std")]
 use std::io::Write;
 
-use byteorder_lite::{LittleEndian, WriteBytesExt};
+#[cfg(feature = "std")]
+use byteorder_lite::WriteBytesExt;
+
+use byteorder_lite::LittleEndian;
 
 use crate::transform;
-use crate::vp8::Frame;
+use crate::vp8_common::Frame;
 use crate::vp8_arithmetic_encoder::ArithmeticEncoder;
 use crate::vp8_common::*;
 use crate::vp8_cost::{

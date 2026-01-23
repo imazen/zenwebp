@@ -3,6 +3,43 @@
 //!
 //! Mostly common constants and types
 
+use alloc::vec::Vec;
+
+/// A decoded or encoded VP8 frame containing YUV data.
+#[derive(Clone, Default)]
+pub struct Frame {
+    /// The width of the luma plane
+    pub width: u16,
+
+    /// The height of the luma plane
+    pub height: u16,
+
+    /// The luma plane of the frame
+    pub ybuf: Vec<u8>,
+
+    /// The blue plane of the frame
+    pub ubuf: Vec<u8>,
+
+    /// The red plane of the frame
+    pub vbuf: Vec<u8>,
+
+    pub(crate) version: u8,
+
+    /// Indicates whether this frame is intended for display
+    pub for_display: bool,
+
+    // Section 9.2
+    /// The pixel type of the frame as defined by Section 9.2
+    /// of the VP8 Specification
+    #[allow(dead_code)] // Part of public API, may be read by users
+    pub pixel_type: u8,
+
+    // Section 9.4 and 15
+    pub(crate) filter_type: bool, //if true uses simple filter // if false uses normal filter
+    pub(crate) filter_level: u8,
+    pub(crate) sharpness_level: u8,
+}
+
 /// Different planes to be encoded/decoded in DCT coefficient decoding
 /// in 13.3 of the spec
 #[derive(Clone, Copy, PartialEq)]
