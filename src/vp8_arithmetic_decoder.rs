@@ -202,6 +202,7 @@ impl ArithmeticDecoder {
 
     // Do not inline this because inlining seems to worsen performance.
     #[inline(never)]
+    #[allow(dead_code)]
     pub(crate) fn read_sign(&mut self) -> BitResult<bool> {
         if let Some(b) = self.fast().read_sign() {
             return BitResult::ok(b);
@@ -410,6 +411,7 @@ impl ArithmeticDecoder {
     }
 }
 
+#[allow(dead_code)]
 impl FastDecoder<'_> {
     fn commit_if_valid<T>(self, value_if_not_past_eof: T) -> Option<T> {
         // If `chunk_index > self.chunks.len()`, it means we used zeroes

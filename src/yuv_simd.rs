@@ -267,8 +267,8 @@ fn yuv_to_rgb_scalar(y: u8, u: u8, v: u8) -> (u8, u8, u8) {
 #[target_feature(enable = "sse2")]
 pub unsafe fn yuv420_to_rgb_row(y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
     let len = y.len();
-    debug_assert!(u.len() >= (len + 1) / 2);
-    debug_assert!(v.len() >= (len + 1) / 2);
+    debug_assert!(u.len() >= len.div_ceil(2));
+    debug_assert!(v.len() >= len.div_ceil(2));
     debug_assert!(dst.len() >= len * 3);
 
     let mut n = 0usize;
@@ -318,8 +318,8 @@ pub unsafe fn yuv420_to_rgb_row(y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
 #[allow(dead_code)]
 pub unsafe fn yuv420_to_rgba_row(y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
     let len = y.len();
-    debug_assert!(u.len() >= (len + 1) / 2);
-    debug_assert!(v.len() >= (len + 1) / 2);
+    debug_assert!(u.len() >= len.div_ceil(2));
+    debug_assert!(v.len() >= len.div_ceil(2));
     debug_assert!(dst.len() >= len * 4);
 
     let k_alpha = _mm_set1_epi16(255);

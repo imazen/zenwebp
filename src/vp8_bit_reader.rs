@@ -36,6 +36,7 @@ pub struct VP8BitReader<'a> {
     pub eof: bool,
 }
 
+#[allow(dead_code)]
 impl<'a> VP8BitReader<'a> {
     /// Create a new bit reader from a byte slice
     #[inline]
@@ -214,6 +215,7 @@ impl<'a> VP8BitReader<'a> {
 
     /// Check that reads were valid
     #[inline]
+    #[allow(dead_code)]
     pub fn check(&self) -> Result<(), DecodingError> {
         if self.eof {
             Err(DecodingError::BitStreamError)
@@ -225,6 +227,7 @@ impl<'a> VP8BitReader<'a> {
     /// Read from a probability tree starting at a specific node.
     /// The tree uses bit 0x80 to indicate leaf values.
     #[inline]
+    #[allow(dead_code)]
     pub fn read_tree(&mut self, tree: &[crate::vp8::TreeNode], mut node: crate::vp8::TreeNode) -> i8 {
         loop {
             let prob = node.prob;
@@ -305,6 +308,7 @@ impl VP8Partitions {
     }
 
     /// Check if any partition hit EOF
+    #[allow(dead_code)]
     pub fn check(&self) -> Result<(), DecodingError> {
         for i in 0..self.num_partitions {
             if self.states[i].eof {
@@ -410,6 +414,7 @@ impl<'a> PartitionReader<'a> {
     }
 
     #[inline(always)]
+    #[allow(dead_code)]
     pub fn get_signed(&mut self, v: i32) -> i32 {
         if self.state.bits < 0 {
             self.load_new_bytes();
@@ -431,6 +436,7 @@ impl<'a> PartitionReader<'a> {
     }
 
     #[inline(always)]
+    #[allow(dead_code)]
     pub fn read_tree(&mut self, tree: &[crate::vp8::TreeNode], mut node: crate::vp8::TreeNode) -> i8 {
         loop {
             let prob = node.prob;

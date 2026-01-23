@@ -155,6 +155,79 @@ fn normal_filter_vertical_sub_16_cols(
     }
 }
 
+/// Helper to apply normal horizontal macroblock filter to 16 rows with SIMD when available.
+/// Filters the vertical edge at column x0, processing all 16 rows at once.
+#[inline]
+fn normal_filter_horizontal_mb_16_rows(
+    buf: &mut [u8],
+    y_start: usize,
+    x0: usize,
+    stride: usize,
+    hev_threshold: u8,
+    interior_limit: u8,
+    edge_limit: u8,
+) {
+    #[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
+    if is_x86_feature_detected!("sse4.1") {
+        unsafe {
+            crate::loop_filter_avx2::normal_h_filter16_edge(
+                buf, x0, y_start, stride,
+                i32::from(hev_threshold),
+                i32::from(interior_limit),
+                i32::from(edge_limit),
+            );
+        }
+        return;
+    }
+
+    // Scalar fallback
+    for y in 0usize..16 {
+        let row = y_start + y;
+        loop_filter::macroblock_filter_horizontal(
+            hev_threshold,
+            interior_limit,
+            edge_limit,
+            &mut buf[row * stride + x0 - 4..][..8],
+        );
+    }
+}
+
+/// Helper to apply normal horizontal subblock filter to 16 rows with SIMD when available.
+#[inline]
+fn normal_filter_horizontal_sub_16_rows(
+    buf: &mut [u8],
+    y_start: usize,
+    x0: usize,
+    stride: usize,
+    hev_threshold: u8,
+    interior_limit: u8,
+    edge_limit: u8,
+) {
+    #[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
+    if is_x86_feature_detected!("sse4.1") {
+        unsafe {
+            crate::loop_filter_avx2::normal_h_filter16_inner(
+                buf, x0, y_start, stride,
+                i32::from(hev_threshold),
+                i32::from(interior_limit),
+                i32::from(edge_limit),
+            );
+        }
+        return;
+    }
+
+    // Scalar fallback
+    for y in 0usize..16 {
+        let row = y_start + y;
+        loop_filter::subblock_filter_horizontal(
+            hev_threshold,
+            interior_limit,
+            edge_limit,
+            &mut buf[row * stride + x0 - 4..][..8],
+        );
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct TreeNode {
     pub left: u8,
@@ -987,8 +1060,7 @@ impl<R: Read> Vp8Decoder<R> {
                 prob = &probs[band][0]; // context 0 after zero
             }
 
-            // Non-zero coefficient - get next context probabilities
-            let next_band = if n + 1 < 16 { COEFF_BANDS[n + 1] as usize } else { 0 };
+            // Non-zero coefficient
             let v: i32;
             let next_ctx: usize;
 
@@ -1184,16 +1256,17 @@ impl<R: Read> Vp8Decoder<R> {
                         mbedge_limit,
                     );
                 } else {
-                    // Normal filter
-                    for y in 0..16 {
-                        let row = extra_y_rows + y;
-                        loop_filter::macroblock_filter_horizontal(
-                            hev_threshold,
-                            interior_limit,
-                            mbedge_limit,
-                            &mut self.cache_y[row * cache_y_stride + mbx * 16 - 4..][..8],
-                        );
-                    }
+                    // Normal filter - use SIMD for luma (16 rows)
+                    normal_filter_horizontal_mb_16_rows(
+                        &mut self.cache_y[..],
+                        extra_y_rows,
+                        mbx * 16,
+                        cache_y_stride,
+                        hev_threshold,
+                        interior_limit,
+                        mbedge_limit,
+                    );
+                    // Chroma is 8 rows - keep scalar for now
                     for y in 0..8 {
                         let row = extra_uv_rows + y;
                         loop_filter::macroblock_filter_horizontal(
@@ -1225,17 +1298,19 @@ impl<R: Read> Vp8Decoder<R> {
                         );
                     }
                 } else {
+                    // Use SIMD for luma subblock horizontal filtering
                     for x in (4usize..16 - 3).step_by(4) {
-                        for y in 0..16 {
-                            let row = extra_y_rows + y;
-                            loop_filter::subblock_filter_horizontal(
-                                hev_threshold,
-                                interior_limit,
-                                sub_bedge_limit,
-                                &mut self.cache_y[row * cache_y_stride + mbx * 16 + x - 4..][..8],
-                            );
-                        }
+                        normal_filter_horizontal_sub_16_rows(
+                            &mut self.cache_y[..],
+                            extra_y_rows,
+                            mbx * 16 + x,
+                            cache_y_stride,
+                            hev_threshold,
+                            interior_limit,
+                            sub_bedge_limit,
+                        );
                     }
+                    // Chroma is 8 rows - keep scalar
                     for y in 0..8 {
                         let row = extra_uv_rows + y;
                         loop_filter::subblock_filter_horizontal(

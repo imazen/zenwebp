@@ -353,6 +353,7 @@ pub unsafe fn simple_filter_subblock_edge_h(
 /// Condition: simple_threshold AND all interior differences <= interior_limit
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 unsafe fn needs_filter_normal_16(
     p3: __m128i, p2: __m128i, p1: __m128i, p0: __m128i,
     q0: __m128i, q1: __m128i, q2: __m128i, q3: __m128i,
@@ -418,15 +419,11 @@ unsafe fn high_edge_variance_16(
     );
 
     // Check if either > thresh
+    // subs_epu8 saturates at 0, so d > t means d - t > 0
     let p_exceeds = _mm_subs_epu8(d_p1_p0, t);
     let q_exceeds = _mm_subs_epu8(d_q1_q0, t);
 
-    // hev = true if either exceeds (i.e., exceeds > 0)
-    let p_hev = _mm_cmpgt_epi8(p_exceeds, _mm_setzero_si128());
-    let q_hev = _mm_cmpgt_epi8(q_exceeds, _mm_setzero_si128());
-
-    // Note: subs_epu8 saturates at 0, so we need to check for non-zero differently
-    // If d > t, then d - t > 0, so we can use cmpeq with zero and invert
+    // hev = true if exceeds > 0 (i.e., not equal to zero)
     let p_hev = _mm_xor_si128(_mm_cmpeq_epi8(p_exceeds, _mm_setzero_si128()), _mm_set1_epi8(-1));
     let q_hev = _mm_xor_si128(_mm_cmpeq_epi8(q_exceeds, _mm_setzero_si128()), _mm_set1_epi8(-1));
 
@@ -513,6 +510,7 @@ unsafe fn signed_shift_right_1(v: __m128i) -> __m128i {
 /// When hev=false: modify p2, p1, p0, q0, q1, q2 with weighted filter
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 unsafe fn do_filter6_16(
     p2: &mut __m128i, p1: &mut __m128i, p0: &mut __m128i,
     q0: &mut __m128i, q1: &mut __m128i, q2: &mut __m128i,
@@ -723,6 +721,195 @@ pub unsafe fn normal_v_filter16_edge(
     _mm_storeu_si128(pixels.as_mut_ptr().add(point) as *mut __m128i, q0);
     _mm_storeu_si128(pixels.as_mut_ptr().add(point + stride) as *mut __m128i, q1);
     _mm_storeu_si128(pixels.as_mut_ptr().add(point + 2 * stride) as *mut __m128i, q2);
+}
+
+/// Transpose 6 columns (p2, p1, p0, q0, q1, q2) of 16 bytes each back to 16 rows of 6 bytes.
+/// Returns values suitable for storing back to memory.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn transpose_6x16_to_16x6(
+    p2: __m128i,
+    p1: __m128i,
+    p0: __m128i,
+    q0: __m128i,
+    q1: __m128i,
+    q2: __m128i,
+) -> ([i32; 16], [i16; 16]) {
+    // We need to return 6 bytes per row: p2, p1, p0, q0, q1, q2
+    // We'll return two arrays: one with 4-byte values (p2,p1,p0,q0) and one with 2-byte values (q1,q2)
+
+    // Interleave pairs
+    let p2p1_lo = _mm_unpacklo_epi8(p2, p1); // rows 0-7: p2[i], p1[i]
+    let p2p1_hi = _mm_unpackhi_epi8(p2, p1); // rows 8-15
+    let p0q0_lo = _mm_unpacklo_epi8(p0, q0);
+    let p0q0_hi = _mm_unpackhi_epi8(p0, q0);
+    let q1q2_lo = _mm_unpacklo_epi8(q1, q2);
+    let q1q2_hi = _mm_unpackhi_epi8(q1, q2);
+
+    // Combine p2p1 and p0q0 to 32-bit
+    let r0_lo = _mm_unpacklo_epi16(p2p1_lo, p0q0_lo); // rows 0-3
+    let r1_lo = _mm_unpackhi_epi16(p2p1_lo, p0q0_lo); // rows 4-7
+    let r0_hi = _mm_unpacklo_epi16(p2p1_hi, p0q0_hi); // rows 8-11
+    let r1_hi = _mm_unpackhi_epi16(p2p1_hi, p0q0_hi); // rows 12-15
+
+    // Extract 32-bit values for p2,p1,p0,q0
+    let mut result4 = [0i32; 16];
+    result4[0] = _mm_extract_epi32(r0_lo, 0);
+    result4[1] = _mm_extract_epi32(r0_lo, 1);
+    result4[2] = _mm_extract_epi32(r0_lo, 2);
+    result4[3] = _mm_extract_epi32(r0_lo, 3);
+    result4[4] = _mm_extract_epi32(r1_lo, 0);
+    result4[5] = _mm_extract_epi32(r1_lo, 1);
+    result4[6] = _mm_extract_epi32(r1_lo, 2);
+    result4[7] = _mm_extract_epi32(r1_lo, 3);
+    result4[8] = _mm_extract_epi32(r0_hi, 0);
+    result4[9] = _mm_extract_epi32(r0_hi, 1);
+    result4[10] = _mm_extract_epi32(r0_hi, 2);
+    result4[11] = _mm_extract_epi32(r0_hi, 3);
+    result4[12] = _mm_extract_epi32(r1_hi, 0);
+    result4[13] = _mm_extract_epi32(r1_hi, 1);
+    result4[14] = _mm_extract_epi32(r1_hi, 2);
+    result4[15] = _mm_extract_epi32(r1_hi, 3);
+
+    // Extract 16-bit values for q1,q2
+    let mut result2 = [0i16; 16];
+    result2[0] = _mm_extract_epi16(q1q2_lo, 0) as i16;
+    result2[1] = _mm_extract_epi16(q1q2_lo, 1) as i16;
+    result2[2] = _mm_extract_epi16(q1q2_lo, 2) as i16;
+    result2[3] = _mm_extract_epi16(q1q2_lo, 3) as i16;
+    result2[4] = _mm_extract_epi16(q1q2_lo, 4) as i16;
+    result2[5] = _mm_extract_epi16(q1q2_lo, 5) as i16;
+    result2[6] = _mm_extract_epi16(q1q2_lo, 6) as i16;
+    result2[7] = _mm_extract_epi16(q1q2_lo, 7) as i16;
+    result2[8] = _mm_extract_epi16(q1q2_hi, 0) as i16;
+    result2[9] = _mm_extract_epi16(q1q2_hi, 1) as i16;
+    result2[10] = _mm_extract_epi16(q1q2_hi, 2) as i16;
+    result2[11] = _mm_extract_epi16(q1q2_hi, 3) as i16;
+    result2[12] = _mm_extract_epi16(q1q2_hi, 4) as i16;
+    result2[13] = _mm_extract_epi16(q1q2_hi, 5) as i16;
+    result2[14] = _mm_extract_epi16(q1q2_hi, 6) as i16;
+    result2[15] = _mm_extract_epi16(q1q2_hi, 7) as i16;
+
+    (result4, result2)
+}
+
+/// Apply normal horizontal filter (DoFilter4) to 16 rows at a vertical edge.
+///
+/// This filters the edge between column (x-1) and column (x).
+/// Uses the transpose technique: load 16 rows × 8 columns, transpose,
+/// apply DoFilter4 logic, transpose back, store.
+///
+/// # Safety
+/// Requires SSE4.1. Each row must have at least 4 bytes before and after the edge point.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.1")]
+pub unsafe fn normal_h_filter16_inner(
+    pixels: &mut [u8],
+    x: usize,
+    y_start: usize,
+    stride: usize,
+    hev_thresh: i32,
+    interior_limit: i32,
+    edge_limit: i32,
+) {
+    // Load 16 rows of 8 pixels each (p3,p2,p1,p0,q0,q1,q2,q3)
+    // The edge is between p0 (x-1) and q0 (x), so we load from x-4 to x+3
+    let mut rows = [_mm_setzero_si128(); 16];
+    for (i, row) in rows.iter_mut().enumerate() {
+        let row_start = (y_start + i) * stride + x - 4;
+        *row = _mm_loadl_epi64(pixels.as_ptr().add(row_start) as *const __m128i);
+    }
+
+    // Transpose 8x16 to 16x8: now we have 8 columns of 16 pixels each
+    let cols = transpose_8x16_to_16x8(&rows);
+    let p3 = cols[0];
+    let p2 = cols[1];
+    let mut p1 = cols[2];
+    let mut p0 = cols[3];
+    let mut q0 = cols[4];
+    let mut q1 = cols[5];
+    let q2 = cols[6];
+    let q3 = cols[7];
+
+    // Check if filtering is needed
+    let mask = needs_filter_normal_16(p3, p2, p1, p0, q0, q1, q2, q3, edge_limit, interior_limit);
+
+    // Check high edge variance
+    let hev = high_edge_variance_16(p1, p0, q0, q1, hev_thresh);
+
+    // Apply filter
+    do_filter4_16(&mut p1, &mut p0, &mut q0, &mut q1, mask, hev);
+
+    // Transpose back: convert 4 columns of 16 to 16 rows of 4
+    let packed = transpose_4x16_to_16x4(p1, p0, q0, q1);
+
+    // Store 4 bytes per row (p1, p0, q0, q1)
+    for (i, &val) in packed.iter().enumerate() {
+        let row_start = (y_start + i) * stride + x - 2;
+        let ptr = pixels.as_mut_ptr().add(row_start) as *mut i32;
+        std::ptr::write_unaligned(ptr, val);
+    }
+}
+
+/// Apply normal horizontal filter (DoFilter6) to 16 rows at a vertical macroblock edge.
+///
+/// This filters the edge between column (x-1) and column (x).
+/// Uses the transpose technique: load 16 rows × 8 columns, transpose,
+/// apply DoFilter6 logic, transpose back, store.
+///
+/// # Safety
+/// Requires SSE4.1. Each row must have at least 4 bytes before and after the edge point.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.1")]
+pub unsafe fn normal_h_filter16_edge(
+    pixels: &mut [u8],
+    x: usize,
+    y_start: usize,
+    stride: usize,
+    hev_thresh: i32,
+    interior_limit: i32,
+    edge_limit: i32,
+) {
+    // Load 16 rows of 8 pixels each (p3,p2,p1,p0,q0,q1,q2,q3)
+    let mut rows = [_mm_setzero_si128(); 16];
+    for (i, row) in rows.iter_mut().enumerate() {
+        let row_start = (y_start + i) * stride + x - 4;
+        *row = _mm_loadl_epi64(pixels.as_ptr().add(row_start) as *const __m128i);
+    }
+
+    // Transpose 8x16 to 16x8
+    let cols = transpose_8x16_to_16x8(&rows);
+    let p3 = cols[0];
+    let mut p2 = cols[1];
+    let mut p1 = cols[2];
+    let mut p0 = cols[3];
+    let mut q0 = cols[4];
+    let mut q1 = cols[5];
+    let mut q2 = cols[6];
+    let q3 = cols[7];
+
+    // Check if filtering is needed
+    let mask = needs_filter_normal_16(p3, p2, p1, p0, q0, q1, q2, q3, edge_limit, interior_limit);
+
+    // Check high edge variance
+    let hev = high_edge_variance_16(p1, p0, q0, q1, hev_thresh);
+
+    // Apply filter
+    do_filter6_16(&mut p2, &mut p1, &mut p0, &mut q0, &mut q1, &mut q2, mask, hev);
+
+    // Transpose back: convert 6 columns of 16 to 16 rows of 6
+    let (packed4, packed2) = transpose_6x16_to_16x6(p2, p1, p0, q0, q1, q2);
+
+    // Store 6 bytes per row (p2, p1, p0, q0, q1, q2)
+    for (i, (&val4, &val2)) in packed4.iter().zip(packed2.iter()).enumerate() {
+        let row_start = (y_start + i) * stride + x - 3;
+        // Store first 4 bytes (p2, p1, p0, q0)
+        let ptr4 = pixels.as_mut_ptr().add(row_start) as *mut i32;
+        std::ptr::write_unaligned(ptr4, val4);
+        // Store next 2 bytes (q1, q2)
+        let ptr2 = pixels.as_mut_ptr().add(row_start + 4) as *mut i16;
+        std::ptr::write_unaligned(ptr2, val2);
+    }
 }
 
 #[cfg(test)]
