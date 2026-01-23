@@ -6,7 +6,9 @@
 //! Uses archmage for safe SIMD intrinsics with token-based CPU feature verification.
 
 #[cfg(all(target_arch = "x86_64", feature = "unsafe-simd"))]
-use archmage::{arcane, mem::sse2, HasSse2, SimdToken, Sse2Token};
+use archmage::{arcane, Has128BitSimd, Sse41Token, SimdToken};
+#[cfg(all(target_arch = "x86_64", feature = "unsafe-simd"))]
+use safe_unaligned_simd::x86_64 as simd_mem;
 #[cfg(all(target_arch = "x86_64", feature = "unsafe-simd"))]
 use core::arch::x86_64::*;
 
@@ -24,10 +26,12 @@ pub fn sse4x4(a: &[u8; 16], b: &[u8; 16]) -> u32 {
 
     #[cfg(target_arch = "x86_64")]
     {
-        // SSE2 is baseline on x86_64, so summon always succeeds
-        // SAFETY: SSE2 is baseline on x86_64
-        let token = unsafe { Sse2Token::forge_token_dangerously() };
-        sse4x4_sse2(token, a, b)
+        // SSE4.1 implies SSE2; summon() is now fast (no env var check)
+        if let Some(token) = Sse41Token::summon() {
+            sse4x4_sse2(token, a, b)
+        } else {
+            sse4x4_scalar(a, b)
+        }
     }
 }
 
@@ -47,12 +51,12 @@ pub fn sse4x4_scalar(a: &[u8; 16], b: &[u8; 16]) -> u32 {
 #[cfg(all(target_arch = "x86_64", feature = "unsafe-simd"))]
 #[arcane]
 #[allow(dead_code)]
-fn sse4x4_sse2(token: impl HasSse2 + Copy, a: &[u8; 16], b: &[u8; 16]) -> u32 {
+fn sse4x4_sse2(_token: impl Has128BitSimd + Copy, a: &[u8; 16], b: &[u8; 16]) -> u32 {
     let zero = _mm_setzero_si128();
 
     // Load all 16 bytes at once
-    let a_bytes = sse2::_mm_loadu_si128(token, a);
-    let b_bytes = sse2::_mm_loadu_si128(token, b);
+    let a_bytes = simd_mem::_mm_loadu_si128(a);
+    let b_bytes = simd_mem::_mm_loadu_si128(b);
 
     // Unpack to 16-bit: low 8 bytes
     let a_lo = _mm_unpacklo_epi8(a_bytes, zero);
@@ -93,9 +97,11 @@ pub fn sse4x4_with_residual(src: &[u8; 16], pred: &[u8; 16], residual: &[i32; 16
 
     #[cfg(target_arch = "x86_64")]
     {
-        // SAFETY: SSE2 is baseline on x86_64
-        let token = unsafe { Sse2Token::forge_token_dangerously() };
-        sse4x4_with_residual_sse2(token, src, pred, residual)
+        if let Some(token) = Sse41Token::summon() {
+            sse4x4_with_residual_sse2(token, src, pred, residual)
+        } else {
+            sse4x4_with_residual_scalar(src, pred, residual)
+        }
     }
 }
 
@@ -117,7 +123,7 @@ pub fn sse4x4_with_residual_scalar(src: &[u8; 16], pred: &[u8; 16], residual: &[
 #[arcane]
 #[allow(dead_code)]
 fn sse4x4_with_residual_sse2(
-    token: impl HasSse2 + Copy,
+    _token: impl Has128BitSimd + Copy,
     src: &[u8; 16],
     pred: &[u8; 16],
     residual: &[i32; 16],
@@ -126,8 +132,8 @@ fn sse4x4_with_residual_sse2(
     let max_255 = _mm_set1_epi16(255);
 
     // Load source and prediction
-    let src_bytes = sse2::_mm_loadu_si128(token, src);
-    let pred_bytes = sse2::_mm_loadu_si128(token, pred);
+    let src_bytes = simd_mem::_mm_loadu_si128(src);
+    let pred_bytes = simd_mem::_mm_loadu_si128(pred);
 
     // Unpack to 16-bit
     let src_lo = _mm_unpacklo_epi8(src_bytes, zero);
@@ -136,10 +142,10 @@ fn sse4x4_with_residual_sse2(
     let pred_hi = _mm_unpackhi_epi8(pred_bytes, zero);
 
     // Load residuals (4 i32 values at a time) and pack to i16
-    let res0 = sse2::_mm_loadu_si128(token, <&[i32; 4]>::try_from(&residual[0..4]).unwrap());
-    let res1 = sse2::_mm_loadu_si128(token, <&[i32; 4]>::try_from(&residual[4..8]).unwrap());
-    let res2 = sse2::_mm_loadu_si128(token, <&[i32; 4]>::try_from(&residual[8..12]).unwrap());
-    let res3 = sse2::_mm_loadu_si128(token, <&[i32; 4]>::try_from(&residual[12..16]).unwrap());
+    let res0 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&residual[0..4]).unwrap());
+    let res1 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&residual[4..8]).unwrap());
+    let res2 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&residual[8..12]).unwrap());
+    let res3 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&residual[12..16]).unwrap());
 
     // Pack i32 to i16 (saturating)
     let res_lo = _mm_packs_epi32(res0, res1);
@@ -193,9 +199,11 @@ pub fn sse_16x16_luma(
 
     #[cfg(target_arch = "x86_64")]
     {
-        // SAFETY: SSE2 is baseline on x86_64
-        let token = unsafe { Sse2Token::forge_token_dangerously() };
-        sse_16x16_luma_sse2(token, src_y, src_width, mbx, mby, pred)
+        if let Some(token) = Sse41Token::summon() {
+            sse_16x16_luma_sse2(token, src_y, src_width, mbx, mby, pred)
+        } else {
+            sse_16x16_luma_scalar(src_y, src_width, mbx, mby, pred)
+        }
     }
 }
 
@@ -229,7 +237,7 @@ pub fn sse_16x16_luma_scalar(
 #[arcane]
 #[allow(dead_code)]
 fn sse_16x16_luma_sse2(
-    token: impl HasSse2 + Copy,
+    _token: impl Has128BitSimd + Copy,
     src_y: &[u8],
     src_width: usize,
     mbx: usize,
@@ -246,12 +254,10 @@ fn sse_16x16_luma_sse2(
         let pred_row = (y + 1) * LUMA_STRIDE + 1;
 
         // Load 16 bytes from source and prediction
-        let src_bytes = sse2::_mm_loadu_si128(
-            token,
+        let src_bytes = simd_mem::_mm_loadu_si128(
             <&[u8; 16]>::try_from(&src_y[src_row..][..16]).unwrap(),
         );
-        let pred_bytes = sse2::_mm_loadu_si128(
-            token,
+        let pred_bytes = simd_mem::_mm_loadu_si128(
             <&[u8; 16]>::try_from(&pred[pred_row..][..16]).unwrap(),
         );
 
@@ -296,9 +302,11 @@ pub fn sse_8x8_chroma(
 
     #[cfg(target_arch = "x86_64")]
     {
-        // SAFETY: SSE2 is baseline on x86_64
-        let token = unsafe { Sse2Token::forge_token_dangerously() };
-        sse_8x8_chroma_sse2(token, src_uv, src_width, mbx, mby, pred)
+        if let Some(token) = Sse41Token::summon() {
+            sse_8x8_chroma_sse2(token, src_uv, src_width, mbx, mby, pred)
+        } else {
+            sse_8x8_chroma_scalar(src_uv, src_width, mbx, mby, pred)
+        }
     }
 }
 
@@ -332,7 +340,7 @@ pub fn sse_8x8_chroma_scalar(
 #[arcane]
 #[allow(dead_code)]
 fn sse_8x8_chroma_sse2(
-    token: impl HasSse2 + Copy,
+    _token: impl Has128BitSimd + Copy,
     src_uv: &[u8],
     src_width: usize,
     mbx: usize,
@@ -350,9 +358,9 @@ fn sse_8x8_chroma_sse2(
 
         // Load 8 bytes from source and prediction (lower half of xmm register)
         let src_bytes =
-            sse2::_mm_loadu_si64(token, <&[u8; 8]>::try_from(&src_uv[src_row..][..8]).unwrap());
+            simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&src_uv[src_row..][..8]).unwrap());
         let pred_bytes =
-            sse2::_mm_loadu_si64(token, <&[u8; 8]>::try_from(&pred[pred_row..][..8]).unwrap());
+            simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&pred[pred_row..][..8]).unwrap());
 
         // Unpack to 16-bit (only low 8 bytes are valid)
         let src_16 = _mm_unpacklo_epi8(src_bytes, zero);
@@ -429,9 +437,11 @@ pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 
     #[cfg(target_arch = "x86_64")]
     {
-        // SAFETY: SSE2 is baseline on x86_64
-        let token = unsafe { Sse2Token::forge_token_dangerously() };
-        t_transform_sse2(token, input, stride, w)
+        if let Some(token) = Sse41Token::summon() {
+            t_transform_sse2(token, input, stride, w)
+        } else {
+            t_transform_scalar(input, stride, w)
+        }
     }
 }
 
@@ -439,83 +449,27 @@ pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 #[cfg(all(target_arch = "x86_64", feature = "unsafe-simd"))]
 #[arcane]
 #[allow(dead_code)]
-fn t_transform_sse2(token: impl HasSse2 + Copy, input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
+fn t_transform_sse2(_token: impl Has128BitSimd + Copy, input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     let zero = _mm_setzero_si128();
 
     // Load 4 rows of 4 bytes each, expand to i16
     // Row 0
-    let row0 = sse2::_mm_loadu_si32(token, <&[u8; 4]>::try_from(&input[0..4]).unwrap());
+    let row0 = simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&input[0..4]).unwrap());
     let row0_16 = _mm_unpacklo_epi8(row0, zero);
 
     // Row 1
-    let row1 = sse2::_mm_loadu_si32(token, <&[u8; 4]>::try_from(&input[stride..][..4]).unwrap());
+    let row1 = simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&input[stride..][..4]).unwrap());
     let row1_16 = _mm_unpacklo_epi8(row1, zero);
 
     // Row 2
     let row2 =
-        sse2::_mm_loadu_si32(token, <&[u8; 4]>::try_from(&input[stride * 2..][..4]).unwrap());
+        simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&input[stride * 2..][..4]).unwrap());
     let row2_16 = _mm_unpacklo_epi8(row2, zero);
 
     // Row 3
     let row3 =
-        sse2::_mm_loadu_si32(token, <&[u8; 4]>::try_from(&input[stride * 3..][..4]).unwrap());
+        simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&input[stride * 3..][..4]).unwrap());
     let row3_16 = _mm_unpacklo_epi8(row3, zero);
-
-    // Pack rows into format: [r0_0, r0_1, r0_2, r0_3, r1_0, r1_1, r1_2, r1_3]
-    // and [r2_0, r2_1, r2_2, r2_3, r3_0, r3_1, r3_2, r3_3]
-    let _rows01 = _mm_unpacklo_epi64(row0_16, row1_16); // 8 values from rows 0 and 1
-    let _rows23 = _mm_unpacklo_epi64(row2_16, row3_16); // 8 values from rows 2 and 3
-
-    // Horizontal pass for rows 0 and 1 (and 2, 3)
-    // Extract even (0, 2) and odd (1, 3) positions using shuffles
-    // For each row: a0 = r[0] + r[2], a1 = r[1] + r[3], a2 = r[1] - r[3], a3 = r[0] - r[2]
-
-    // Shuffle pattern for even indices: 0, 2, 4, 6 (offset 0) and odd indices: 1, 3, 5, 7
-    // But we have i16 values, so indices are in i16 slots
-
-    // Extract individual values using shuffle
-    // Row 0: indices 0,1,2,3 in rows01; Row 1: indices 4,5,6,7 in rows01
-    // Row 2: indices 0,1,2,3 in rows23; Row 3: indices 4,5,6,7 in rows23
-
-    // For horizontal pass, process each row
-    // Shuffle to get [r0, r2, r1, r3, r0, r2, r1, r3] then compute adds/subs
-
-    // Create pattern for horizontal Hadamard:
-    // We want: [a[0]+a[2], a[1]+a[3], a[1]-a[3], a[0]-a[2]] for each row
-    // Equivalently: [sum_even, sum_odd, diff_odd, diff_even]
-
-    // Using _mm_shufflelo_epi16 and _mm_shufflehi_epi16 to rearrange
-    // Then do adds and subtracts
-
-    // For simplicity, let's do the horizontal pass using PSHUFB-style or manual extraction
-    // Given the complexity of the shuffle patterns, let's use a simpler approach:
-    // Store to memory and let the compiler handle it, or compute per-row
-
-    // Actually, let's compute the horizontal pass more directly:
-    // For row0: [r0, r1, r2, r3, ?, ?, ?, ?]
-    // We need: tmp[0] = r0+r1+r2+r3, tmp[1] = r0-r1+r2-r3, etc.
-    // Actually no - re-reading the code:
-    // a0 = r[0] + r[2], a1 = r[1] + r[3], a2 = r[1] - r[3], a3 = r[0] - r[2]
-    // tmp[0] = a0 + a1 = r[0]+r[2]+r[1]+r[3]
-    // tmp[1] = a3 + a2 = r[0]-r[2]+r[1]-r[3]
-    // tmp[2] = a3 - a2 = r[0]-r[2]-r[1]+r[3]
-    // tmp[3] = a0 - a1 = r[0]+r[2]-r[1]-r[3]
-
-    // So for each row we need:
-    // [r0+r1+r2+r3, r0+r1-r2-r3, r0-r1+r2-r3, r0-r1-r2+r3] - wait, let me recompute
-    // a0 = r0 + r2, a1 = r1 + r3, a2 = r1 - r3, a3 = r0 - r2
-    // tmp[0] = a0 + a1 = (r0+r2) + (r1+r3) = r0+r1+r2+r3
-    // tmp[1] = a3 + a2 = (r0-r2) + (r1-r3) = r0+r1-r2-r3
-    // tmp[2] = a3 - a2 = (r0-r2) - (r1-r3) = r0-r1-r2+r3
-    // tmp[3] = a0 - a1 = (r0+r2) - (r1+r3) = r0-r1+r2-r3
-
-    // This is a Hadamard transform! [++++, ++−−, +−−+, +−+−]
-
-    // Let's use a different approach: compute using adds/subs directly
-    // Make vectors: [r0, r0, r0, r0, r1, r1, r1, r1] etc and combine
-
-    // Actually, let's use scalar for now and optimize later if needed
-    // The shuffle complexity is high and may not be worth it for a 4x4 block
 
     // Use intermediate array
     let mut tmp = [0i32; 16];
@@ -558,55 +512,7 @@ fn t_transform_sse2(token: impl HasSse2 + Copy, input: &[u8], stride: usize, w: 
         tmp[i * 4 + 3] = a0 - a1;
     }
 
-    // Vertical pass with SIMD weighting
-    // Load weights as i32
-    let w0 = _mm_set_epi32(
-        i32::from(w[3]),
-        i32::from(w[2]),
-        i32::from(w[1]),
-        i32::from(w[0]),
-    );
-    let w1 = _mm_set_epi32(
-        i32::from(w[7]),
-        i32::from(w[6]),
-        i32::from(w[5]),
-        i32::from(w[4]),
-    );
-    let w2 = _mm_set_epi32(
-        i32::from(w[11]),
-        i32::from(w[10]),
-        i32::from(w[9]),
-        i32::from(w[8]),
-    );
-    let w3 = _mm_set_epi32(
-        i32::from(w[15]),
-        i32::from(w[14]),
-        i32::from(w[13]),
-        i32::from(w[12]),
-    );
-
-    // Load tmp values as columns
-    let col0 = _mm_set_epi32(tmp[12], tmp[8], tmp[4], tmp[0]);
-    let col1 = _mm_set_epi32(tmp[13], tmp[9], tmp[5], tmp[1]);
-    let col2 = _mm_set_epi32(tmp[14], tmp[10], tmp[6], tmp[2]);
-    let col3 = _mm_set_epi32(tmp[15], tmp[11], tmp[7], tmp[3]);
-
-    // Vertical transform for each column
-    // a0 = tmp[i] + tmp[8+i], a1 = tmp[4+i] + tmp[12+i]
-    // a2 = tmp[4+i] - tmp[12+i], a3 = tmp[i] - tmp[8+i]
-    // In SIMD: for column i, we have [tmp[i], tmp[4+i], tmp[8+i], tmp[12+i]]
-
-    // Compute vertical pass for all columns at once
-    // col[j] contains [tmp[j], tmp[4+j], tmp[8+j], tmp[12+j]] for j in 0..4
-
-    // For column j: a0 = col[j][0] + col[j][2], a1 = col[j][1] + col[j][3]
-    //               a2 = col[j][1] - col[j][3], a3 = col[j][0] - col[j][2]
-    // b0 = a0 + a1, b1 = a3 + a2, b2 = a3 - a2, b3 = a0 - a1
-
-    // Shuffle columns to get the pairs we need
-    // For col0: we need [elem0+elem2, elem1+elem3, elem0-elem2, elem1-elem3]
-
-    // This requires complex shuffles. Let's just compute vertically per column.
+    // Vertical pass with weighting
     let mut sum = 0i32;
 
     for i in 0..4 {
@@ -624,9 +530,6 @@ fn t_transform_sse2(token: impl HasSse2 + Copy, input: &[u8], stride: usize, w: 
         sum += i32::from(w[8 + i]) * b2.abs();
         sum += i32::from(w[12 + i]) * b3.abs();
     }
-
-    // Suppress unused variable warnings
-    let _ = (w0, w1, w2, w3, col0, col1, col2, col3);
 
     sum
 }

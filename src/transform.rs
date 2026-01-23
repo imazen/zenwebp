@@ -14,15 +14,15 @@ pub(crate) fn idct4x4_dc(block: &mut [i32; 16]) {
 
 // inverse discrete cosine transform, used in decoding
 pub(crate) fn idct4x4(block: &mut [i32]) {
-    #[cfg(feature = "unsafe-simd")]
+    #[cfg(feature = "simd")]
     {
         crate::transform_simd_intrinsics::idct4x4_intrinsics(block);
     }
-    #[cfg(all(feature = "simd", not(feature = "unsafe-simd")))]
+    #[cfg(all(feature = "simd", not(feature = "simd")))]
     {
         crate::transform_simd::idct4x4_simd(block);
     }
-    #[cfg(not(any(feature = "simd", feature = "unsafe-simd")))]
+    #[cfg(not(any(feature = "simd", feature = "simd")))]
     {
         idct4x4_scalar(block);
     }
@@ -154,15 +154,15 @@ pub(crate) fn wht4x4(block: &mut [i32; 16]) {
 }
 
 pub(crate) fn dct4x4(block: &mut [i32; 16]) {
-    #[cfg(feature = "unsafe-simd")]
+    #[cfg(feature = "simd")]
     {
         crate::transform_simd_intrinsics::dct4x4_intrinsics(block);
     }
-    #[cfg(all(feature = "simd", not(feature = "unsafe-simd")))]
+    #[cfg(all(feature = "simd", not(feature = "simd")))]
     {
         crate::transform_simd::dct4x4_simd(block);
     }
-    #[cfg(not(any(feature = "simd", feature = "unsafe-simd")))]
+    #[cfg(not(any(feature = "simd", feature = "simd")))]
     {
         dct4x4_scalar(block);
     }

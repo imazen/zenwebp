@@ -10,7 +10,9 @@ use std::arch::x86_64::*;
 use std::arch::x86::*;
 
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-use archmage::{arcane, mem::sse2, HasSse2, SimdToken, Sse2Token};
+use archmage::{arcane, Has128BitSimd, Sse41Token, SimdToken};
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+use safe_unaligned_simd::x86_64 as simd_mem;
 
 // =============================================================================
 // Public dispatch functions
@@ -20,10 +22,12 @@ use archmage::{arcane, mem::sse2, HasSse2, SimdToken, Sse2Token};
 pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
-        // SSE2 is baseline on x86_64
-        // SAFETY: SSE2 is baseline on x86_64
-        let token = unsafe { Sse2Token::forge_token_dangerously() };
-        dct4x4_sse2(token, block);
+        // SSE4.1 implies SSE2; summon() is now fast (no env var check)
+        if let Some(token) = Sse41Token::summon() {
+            dct4x4_sse2(token, block);
+        } else {
+            crate::transform::dct4x4_scalar(block);
+        }
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
     {
@@ -37,10 +41,12 @@ pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
     debug_assert!(block.len() >= 16);
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
-        // SSE2 is baseline on x86_64
-        // SAFETY: SSE2 is baseline on x86_64
-        let token = unsafe { Sse2Token::forge_token_dangerously() };
-        idct4x4_sse2(token, block);
+        // SSE4.1 implies SSE2; summon() is now fast (no env var check)
+        if let Some(token) = Sse41Token::summon() {
+            idct4x4_sse2(token, block);
+        } else {
+            crate::transform::idct4x4_scalar(block);
+        }
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
     {
@@ -53,10 +59,13 @@ pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
 pub(crate) fn dct4x4_two_intrinsics(block1: &mut [i32; 16], block2: &mut [i32; 16]) {
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
-        // SSE2 is baseline on x86_64
-        // SAFETY: SSE2 is baseline on x86_64
-        let token = unsafe { Sse2Token::forge_token_dangerously() };
-        dct4x4_two_sse2(token, block1, block2);
+        // SSE4.1 implies SSE2; summon() is now fast (no env var check)
+        if let Some(token) = Sse41Token::summon() {
+            dct4x4_two_sse2(token, block1, block2);
+        } else {
+            crate::transform::dct4x4_scalar(block1);
+            crate::transform::dct4x4_scalar(block2);
+        }
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
     {
@@ -73,7 +82,7 @@ pub(crate) fn dct4x4_two_intrinsics(block1: &mut [i32; 16], block2: &mut [i32; 1
 /// Uses _mm_madd_epi16 for efficient multiply-accumulate
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
-fn dct4x4_sse2(token: impl HasSse2 + Copy, block: &mut [i32; 16]) {
+fn dct4x4_sse2(_token: impl Has128BitSimd + Copy, block: &mut [i32; 16]) {
     // Convert i32 block to i16 and reorganize into libwebp's interleaved layout:
     // row01 = [r0c0, r0c1, r1c0, r1c1, r0c2, r0c3, r1c2, r1c3]
     // row23 = [r2c0, r2c1, r3c0, r3c1, r2c2, r2c3, r3c2, r3c3]
@@ -99,16 +108,16 @@ fn dct4x4_sse2(token: impl HasSse2 + Copy, block: &mut [i32; 16]) {
     );
 
     // Forward transform pass 1 (rows)
-    let (v01, v32) = ftransform_pass1_i16(token, row01, row23);
+    let (v01, v32) = ftransform_pass1_i16(_token, row01, row23);
 
     // Forward transform pass 2 (columns)
     let mut out16 = [0i16; 16];
-    ftransform_pass2_i16(token, &v01, &v32, &mut out16);
+    ftransform_pass2_i16(_token, &v01, &v32, &mut out16);
 
     // Convert i16 output back to i32 using SIMD sign extension
     let zero = _mm_setzero_si128();
-    let out01 = sse2::_mm_loadu_si128(token, <&[i16; 8]>::try_from(&out16[0..8]).unwrap());
-    let out23 = sse2::_mm_loadu_si128(token, <&[i16; 8]>::try_from(&out16[8..16]).unwrap());
+    let out01 = simd_mem::_mm_loadu_si128(<&[i16; 8]>::try_from(&out16[0..8]).unwrap());
+    let out23 = simd_mem::_mm_loadu_si128(<&[i16; 8]>::try_from(&out16[8..16]).unwrap());
 
     // Sign extend i16 to i32
     let sign01 = _mm_cmpgt_epi16(zero, out01);
@@ -119,17 +128,17 @@ fn dct4x4_sse2(token: impl HasSse2 + Copy, block: &mut [i32; 16]) {
     let out_2 = _mm_unpacklo_epi16(out23, sign23);
     let out_3 = _mm_unpackhi_epi16(out23, sign23);
 
-    sse2::_mm_storeu_si128(token, <&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(), out_0);
-    sse2::_mm_storeu_si128(token, <&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(), out_1);
-    sse2::_mm_storeu_si128(token, <&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(), out_2);
-    sse2::_mm_storeu_si128(token, <&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(), out_3);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(), out_0);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(), out_1);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(), out_2);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(), out_3);
 }
 
 /// FTransform Pass 1 - matches libwebp FTransformPass1_SSE2 exactly
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
 #[inline]
-fn ftransform_pass1_i16(token: impl HasSse2 + Copy, in01: __m128i, in23: __m128i) -> (__m128i, __m128i) {
+fn ftransform_pass1_i16(_token: impl Has128BitSimd + Copy, in01: __m128i, in23: __m128i) -> (__m128i, __m128i) {
     // Constants matching libwebp exactly
     let k937 = _mm_set1_epi32(937);
     let k1812 = _mm_set1_epi32(1812);
@@ -190,7 +199,7 @@ fn ftransform_pass1_i16(token: impl HasSse2 + Copy, in01: __m128i, in23: __m128i
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
 #[inline]
-fn ftransform_pass2_i16(token: impl HasSse2 + Copy, v01: &__m128i, v32: &__m128i, out: &mut [i16; 16]) {
+fn ftransform_pass2_i16(_token: impl Has128BitSimd + Copy, v01: &__m128i, v32: &__m128i, out: &mut [i16; 16]) {
     let zero = _mm_setzero_si128();
     let seven = _mm_set1_epi16(7);
     let k5352_2217 = _mm_set_epi16(5352, 2217, 5352, 2217, 5352, 2217, 5352, 2217);
@@ -232,25 +241,25 @@ fn ftransform_pass2_i16(token: impl HasSse2 + Copy, v01: &__m128i, v32: &__m128i
     let d0_g1 = _mm_unpacklo_epi64(d0, g1);
     let d2_f3 = _mm_unpacklo_epi64(d2, f3);
 
-    sse2::_mm_storeu_si128(token, <&mut [i16; 8]>::try_from(&mut out[0..8]).unwrap(), d0_g1);
-    sse2::_mm_storeu_si128(token, <&mut [i16; 8]>::try_from(&mut out[8..16]).unwrap(), d2_f3);
+    simd_mem::_mm_storeu_si128(<&mut [i16; 8]>::try_from(&mut out[0..8]).unwrap(), d0_g1);
+    simd_mem::_mm_storeu_si128(<&mut [i16; 8]>::try_from(&mut out[8..16]).unwrap(), d2_f3);
 }
 
 /// Process two blocks at once
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
 #[allow(dead_code)]
-fn dct4x4_two_sse2(token: impl HasSse2 + Copy, block1: &mut [i32; 16], block2: &mut [i32; 16]) {
+fn dct4x4_two_sse2(_token: impl Has128BitSimd + Copy, block1: &mut [i32; 16], block2: &mut [i32; 16]) {
     // Process both blocks using the single-block implementation
     // AVX2 can potentially do this more efficiently with 256-bit registers
-    dct4x4_sse2(token, block1);
-    dct4x4_sse2(token, block2);
+    dct4x4_sse2(_token, block1);
+    dct4x4_sse2(_token, block2);
 }
 
 /// Inverse DCT using SSE2 - matches libwebp ITransform_One_SSE2
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
-fn idct4x4_sse2(token: impl HasSse2 + Copy, block: &mut [i32]) {
+fn idct4x4_sse2(_token: impl Has128BitSimd + Copy, block: &mut [i32]) {
     // libwebp IDCT constants:
     // K1 = sqrt(2) * cos(pi/8) * 65536 = 85627 => k1 = 85627 - 65536 = 20091
     // K2 = sqrt(2) * sin(pi/8) * 65536 = 35468 => k2 = 35468 - 65536 = -30068
@@ -259,20 +268,20 @@ fn idct4x4_sse2(token: impl HasSse2 + Copy, block: &mut [i32]) {
     let zero_four = _mm_set_epi16(0, 0, 0, 0, 4, 4, 4, 4);
 
     // Load i32 values and pack to i16 using SIMD
-    let i32_0 = sse2::_mm_loadu_si128(token, <&[i32; 4]>::try_from(&block[0..4]).unwrap());
-    let i32_1 = sse2::_mm_loadu_si128(token, <&[i32; 4]>::try_from(&block[4..8]).unwrap());
-    let i32_2 = sse2::_mm_loadu_si128(token, <&[i32; 4]>::try_from(&block[8..12]).unwrap());
-    let i32_3 = sse2::_mm_loadu_si128(token, <&[i32; 4]>::try_from(&block[12..16]).unwrap());
+    let i32_0 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&block[0..4]).unwrap());
+    let i32_1 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&block[4..8]).unwrap());
+    let i32_2 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&block[8..12]).unwrap());
+    let i32_3 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&block[12..16]).unwrap());
 
     // Pack i32 to i16 with saturation (values should be small enough)
     let in01 = _mm_packs_epi32(i32_0, i32_1);
     let in23 = _mm_packs_epi32(i32_2, i32_3);
 
     // Vertical pass
-    let (t01, t23) = itransform_pass_sse2(token, in01, in23, k1k2, k2k1);
+    let (t01, t23) = itransform_pass_sse2(_token, in01, in23, k1k2, k2k1);
 
     // Horizontal pass with rounding
-    let (out01, out23) = itransform_pass2_sse2(token, t01, t23, k1k2, k2k1, zero_four);
+    let (out01, out23) = itransform_pass2_sse2(_token, t01, t23, k1k2, k2k1, zero_four);
 
     // Unpack i16 back to i32 using sign extension
     // out01 contains 8 i16 values: [0,1,2,3,4,5,6,7]
@@ -289,10 +298,10 @@ fn idct4x4_sse2(token: impl HasSse2 + Copy, block: &mut [i32]) {
     let out_3 = _mm_unpackhi_epi16(out23, sign23_lo);
 
     // Store results
-    sse2::_mm_storeu_si128(token, <&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(), out_0);
-    sse2::_mm_storeu_si128(token, <&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(), out_1);
-    sse2::_mm_storeu_si128(token, <&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(), out_2);
-    sse2::_mm_storeu_si128(token, <&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(), out_3);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(), out_0);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(), out_1);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(), out_2);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(), out_3);
 }
 
 /// ITransform vertical pass - matches libwebp
@@ -300,7 +309,7 @@ fn idct4x4_sse2(token: impl HasSse2 + Copy, block: &mut [i32]) {
 #[arcane]
 #[inline]
 fn itransform_pass_sse2(
-    token: impl HasSse2 + Copy,
+    _token: impl Has128BitSimd + Copy,
     in01: __m128i,
     in23: __m128i,
     k1k2: __m128i,
@@ -350,7 +359,7 @@ fn itransform_pass_sse2(
 #[arcane]
 #[inline]
 fn itransform_pass2_sse2(
-    token: impl HasSse2 + Copy,
+    _token: impl Has128BitSimd + Copy,
     t01: __m128i,
     t23: __m128i,
     k1k2: __m128i,

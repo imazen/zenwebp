@@ -1,6 +1,6 @@
 //! Decoding and Encoding of WebP Images
 
-#![cfg_attr(not(feature = "unsafe-simd"), forbid(unsafe_code))]
+#![forbid(unsafe_code)]
 #![deny(missing_docs)]
 // Increase recursion limit for the `quick_error!` macro.
 #![recursion_limit = "256"]
@@ -20,18 +20,14 @@ mod encoder;
 mod extended;
 mod huffman;
 mod loop_filter;
-#[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 mod loop_filter_avx2;
-#[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
-mod loop_filter_simd;
 mod lossless;
 mod lossless_transform;
-#[cfg(feature = "unsafe-simd")]
+#[cfg(feature = "simd")]
 mod simd_sse;
 mod transform;
 #[cfg(feature = "simd")]
-mod transform_simd;
-#[cfg(feature = "unsafe-simd")]
 mod transform_simd_intrinsics;
 mod vp8_arithmetic_decoder;
 mod vp8_arithmetic_encoder;
@@ -41,7 +37,7 @@ mod vp8_cost;
 mod vp8_encoder;
 mod vp8_prediction;
 mod yuv;
-#[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 mod yuv_simd;
 
 pub mod vp8;
