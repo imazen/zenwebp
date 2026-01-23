@@ -4,6 +4,12 @@
 //! Processes 32 pixels at a time with SIMD RGB interleaving.
 
 #[cfg(target_arch = "x86_64")]
+use archmage::{arcane, HasSse2, SimdToken, Sse2Token};
+
+#[cfg(target_arch = "x86_64")]
+use archmage::mem::sse2;
+
+#[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
 // YUV to RGB conversion constants (14-bit fixed-point, matching libwebp).
@@ -13,23 +19,26 @@ use core::arch::x86_64::*;
 
 /// Load 8 bytes into the upper 8 bits of 16-bit words (equivalent to << 8).
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "sse2")]
+#[arcane]
 #[inline]
-unsafe fn load_hi_16(src: *const u8) -> __m128i {
+fn load_hi_16(_token: impl HasSse2 + Copy, src: &[u8; 8]) -> __m128i {
     let zero = _mm_setzero_si128();
-    let data = _mm_loadl_epi64(src as *const __m128i);
+    // Load 8 bytes as i64 then convert to __m128i
+    let val = i64::from_le_bytes(*src);
+    let data = _mm_cvtsi64_si128(val);
     _mm_unpacklo_epi8(zero, data)
 }
 
 /// Load 4 U/V bytes and replicate each to get 8 values for 4:2:0.
 /// Result: [u0,u0,u1,u1,u2,u2,u3,u3] in upper 8 bits of 16-bit words.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "sse2")]
+#[arcane]
 #[inline]
-unsafe fn load_uv_hi_8(src: *const u8) -> __m128i {
+fn load_uv_hi_8(_token: impl HasSse2 + Copy, src: &[u8; 4]) -> __m128i {
     let zero = _mm_setzero_si128();
-    // Load 4 bytes
-    let tmp0 = _mm_cvtsi32_si128(core::ptr::read_unaligned(src as *const i32));
+    // Load 4 bytes as i32
+    let val = i32::from_le_bytes(*src);
+    let tmp0 = _mm_cvtsi32_si128(val);
     // Unpack to 16-bit with zeros in low bytes: [0,u0,0,u1,0,u2,0,u3,...]
     let tmp1 = _mm_unpacklo_epi8(zero, tmp0);
     // Replicate: [0,u0,0,u0,0,u1,0,u1,...]
@@ -40,9 +49,14 @@ unsafe fn load_uv_hi_8(src: *const u8) -> __m128i {
 /// Input Y, U, V are in upper 8 bits of 16-bit words.
 /// Output R, G, B are signed 16-bit values (will be clamped later).
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "sse2")]
+#[arcane]
 #[inline]
-unsafe fn convert_yuv444_to_rgb(y: __m128i, u: __m128i, v: __m128i) -> (__m128i, __m128i, __m128i) {
+fn convert_yuv444_to_rgb(
+    _token: impl HasSse2 + Copy,
+    y: __m128i,
+    u: __m128i,
+    v: __m128i,
+) -> (__m128i, __m128i, __m128i) {
     let k19077 = _mm_set1_epi16(19077);
     let k26149 = _mm_set1_epi16(26149);
     let k14234 = _mm_set1_epi16(14234);
@@ -85,18 +99,33 @@ unsafe fn convert_yuv444_to_rgb(y: __m128i, u: __m128i, v: __m128i) -> (__m128i,
 
 /// Pack R, G, B, A (8 pixels each, 16-bit) into 32 bytes of RGBA output.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "sse2")]
+#[arcane]
 #[inline]
 #[allow(dead_code)]
-unsafe fn pack_and_store_rgba(r: __m128i, g: __m128i, b: __m128i, a: __m128i, dst: *mut u8) {
+fn pack_and_store_rgba(
+    token: impl HasSse2 + Copy,
+    r: __m128i,
+    g: __m128i,
+    b: __m128i,
+    a: __m128i,
+    dst: &mut [u8; 32],
+) {
     let rb = _mm_packus_epi16(r, b);
     let ga = _mm_packus_epi16(g, a);
     let rg = _mm_unpacklo_epi8(rb, ga);
     let ba = _mm_unpackhi_epi8(rb, ga);
     let rgba_lo = _mm_unpacklo_epi16(rg, ba);
     let rgba_hi = _mm_unpackhi_epi16(rg, ba);
-    _mm_storeu_si128(dst as *mut __m128i, rgba_lo);
-    _mm_storeu_si128(dst.add(16) as *mut __m128i, rgba_hi);
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut dst[..16]).unwrap(),
+        rgba_lo,
+    );
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut dst[16..32]).unwrap(),
+        rgba_hi,
+    );
 }
 
 /// Helper macro for VP8PlanarTo24b - splits even/odd bytes
@@ -119,9 +148,10 @@ macro_rules! planar_to_24b_helper {
 /// Input: 6 registers (R0, R1, G0, G1, B0, B1) with 16 bytes each = 32 R, 32 G, 32 B
 /// Output: 6 registers with 96 bytes of interleaved RGB
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "sse2")]
+#[arcane]
 #[inline]
-unsafe fn planar_to_24b(
+fn planar_to_24b(
+    _token: impl HasSse2 + Copy,
     in0: __m128i,
     in1: __m128i,
     in2: __m128i,
@@ -152,29 +182,35 @@ unsafe fn planar_to_24b(
 
 /// Convert 32 YUV444 pixels to 96 bytes of RGB.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "sse2")]
+#[arcane]
 #[allow(dead_code)]
-unsafe fn yuv444_to_rgb_32(y: *const u8, u: *const u8, v: *const u8, dst: *mut u8) {
+fn yuv444_to_rgb_32(
+    token: impl HasSse2 + Copy,
+    y: &[u8; 32],
+    u: &[u8; 32],
+    v: &[u8; 32],
+    dst: &mut [u8; 96],
+) {
     // Process 4 groups of 8 pixels
-    let y0 = load_hi_16(y);
-    let u0 = load_hi_16(u);
-    let v0 = load_hi_16(v);
-    let (r0, g0, b0) = convert_yuv444_to_rgb(y0, u0, v0);
+    let y0 = load_hi_16(token, <&[u8; 8]>::try_from(&y[..8]).unwrap());
+    let u0 = load_hi_16(token, <&[u8; 8]>::try_from(&u[..8]).unwrap());
+    let v0 = load_hi_16(token, <&[u8; 8]>::try_from(&v[..8]).unwrap());
+    let (r0, g0, b0) = convert_yuv444_to_rgb(token, y0, u0, v0);
 
-    let y1 = load_hi_16(y.add(8));
-    let u1 = load_hi_16(u.add(8));
-    let v1 = load_hi_16(v.add(8));
-    let (r1, g1, b1) = convert_yuv444_to_rgb(y1, u1, v1);
+    let y1 = load_hi_16(token, <&[u8; 8]>::try_from(&y[8..16]).unwrap());
+    let u1 = load_hi_16(token, <&[u8; 8]>::try_from(&u[8..16]).unwrap());
+    let v1 = load_hi_16(token, <&[u8; 8]>::try_from(&v[8..16]).unwrap());
+    let (r1, g1, b1) = convert_yuv444_to_rgb(token, y1, u1, v1);
 
-    let y2 = load_hi_16(y.add(16));
-    let u2 = load_hi_16(u.add(16));
-    let v2 = load_hi_16(v.add(16));
-    let (r2, g2, b2) = convert_yuv444_to_rgb(y2, u2, v2);
+    let y2 = load_hi_16(token, <&[u8; 8]>::try_from(&y[16..24]).unwrap());
+    let u2 = load_hi_16(token, <&[u8; 8]>::try_from(&u[16..24]).unwrap());
+    let v2 = load_hi_16(token, <&[u8; 8]>::try_from(&v[16..24]).unwrap());
+    let (r2, g2, b2) = convert_yuv444_to_rgb(token, y2, u2, v2);
 
-    let y3 = load_hi_16(y.add(24));
-    let u3 = load_hi_16(u.add(24));
-    let v3 = load_hi_16(v.add(24));
-    let (r3, g3, b3) = convert_yuv444_to_rgb(y3, u3, v3);
+    let y3 = load_hi_16(token, <&[u8; 8]>::try_from(&y[24..32]).unwrap());
+    let u3 = load_hi_16(token, <&[u8; 8]>::try_from(&u[24..32]).unwrap());
+    let v3 = load_hi_16(token, <&[u8; 8]>::try_from(&v[24..32]).unwrap());
+    let (r3, g3, b3) = convert_yuv444_to_rgb(token, y3, u3, v3);
 
     // Pack to 8-bit and arrange as RRRRGGGGBBBB
     let rgb0 = _mm_packus_epi16(r0, r1); // R0-R15
@@ -185,42 +221,73 @@ unsafe fn yuv444_to_rgb_32(y: *const u8, u: *const u8, v: *const u8, dst: *mut u
     let rgb5 = _mm_packus_epi16(b2, b3); // B16-B31
 
     // Interleave to RGBRGBRGB...
-    let (out0, out1, out2, out3, out4, out5) = planar_to_24b(rgb0, rgb1, rgb2, rgb3, rgb4, rgb5);
+    let (out0, out1, out2, out3, out4, out5) =
+        planar_to_24b(token, rgb0, rgb1, rgb2, rgb3, rgb4, rgb5);
 
     // Store 96 bytes
-    _mm_storeu_si128(dst as *mut __m128i, out0);
-    _mm_storeu_si128(dst.add(16) as *mut __m128i, out1);
-    _mm_storeu_si128(dst.add(32) as *mut __m128i, out2);
-    _mm_storeu_si128(dst.add(48) as *mut __m128i, out3);
-    _mm_storeu_si128(dst.add(64) as *mut __m128i, out4);
-    _mm_storeu_si128(dst.add(80) as *mut __m128i, out5);
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut dst[..16]).unwrap(),
+        out0,
+    );
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut dst[16..32]).unwrap(),
+        out1,
+    );
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut dst[32..48]).unwrap(),
+        out2,
+    );
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut dst[48..64]).unwrap(),
+        out3,
+    );
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut dst[64..80]).unwrap(),
+        out4,
+    );
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut dst[80..96]).unwrap(),
+        out5,
+    );
 }
 
 /// Convert 32 YUV420 pixels (32 Y, 16 U, 16 V) to 96 bytes of RGB.
 /// Each U/V value is replicated for 2 adjacent Y pixels.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "sse2")]
-unsafe fn yuv420_to_rgb_32(y: *const u8, u: *const u8, v: *const u8, dst: *mut u8) {
+#[arcane]
+fn yuv420_to_rgb_32(
+    token: impl HasSse2 + Copy,
+    y: &[u8; 32],
+    u: &[u8; 16],
+    v: &[u8; 16],
+    dst: &mut [u8; 96],
+) {
     // Process 4 groups of 8 pixels, with U/V replication
-    let y0 = load_hi_16(y);
-    let u0 = load_uv_hi_8(u);
-    let v0 = load_uv_hi_8(v);
-    let (r0, g0, b0) = convert_yuv444_to_rgb(y0, u0, v0);
+    let y0 = load_hi_16(token, <&[u8; 8]>::try_from(&y[..8]).unwrap());
+    let u0 = load_uv_hi_8(token, <&[u8; 4]>::try_from(&u[..4]).unwrap());
+    let v0 = load_uv_hi_8(token, <&[u8; 4]>::try_from(&v[..4]).unwrap());
+    let (r0, g0, b0) = convert_yuv444_to_rgb(token, y0, u0, v0);
 
-    let y1 = load_hi_16(y.add(8));
-    let u1 = load_uv_hi_8(u.add(4));
-    let v1 = load_uv_hi_8(v.add(4));
-    let (r1, g1, b1) = convert_yuv444_to_rgb(y1, u1, v1);
+    let y1 = load_hi_16(token, <&[u8; 8]>::try_from(&y[8..16]).unwrap());
+    let u1 = load_uv_hi_8(token, <&[u8; 4]>::try_from(&u[4..8]).unwrap());
+    let v1 = load_uv_hi_8(token, <&[u8; 4]>::try_from(&v[4..8]).unwrap());
+    let (r1, g1, b1) = convert_yuv444_to_rgb(token, y1, u1, v1);
 
-    let y2 = load_hi_16(y.add(16));
-    let u2 = load_uv_hi_8(u.add(8));
-    let v2 = load_uv_hi_8(v.add(8));
-    let (r2, g2, b2) = convert_yuv444_to_rgb(y2, u2, v2);
+    let y2 = load_hi_16(token, <&[u8; 8]>::try_from(&y[16..24]).unwrap());
+    let u2 = load_uv_hi_8(token, <&[u8; 4]>::try_from(&u[8..12]).unwrap());
+    let v2 = load_uv_hi_8(token, <&[u8; 4]>::try_from(&v[8..12]).unwrap());
+    let (r2, g2, b2) = convert_yuv444_to_rgb(token, y2, u2, v2);
 
-    let y3 = load_hi_16(y.add(24));
-    let u3 = load_uv_hi_8(u.add(12));
-    let v3 = load_uv_hi_8(v.add(12));
-    let (r3, g3, b3) = convert_yuv444_to_rgb(y3, u3, v3);
+    let y3 = load_hi_16(token, <&[u8; 8]>::try_from(&y[24..32]).unwrap());
+    let u3 = load_uv_hi_8(token, <&[u8; 4]>::try_from(&u[12..16]).unwrap());
+    let v3 = load_uv_hi_8(token, <&[u8; 4]>::try_from(&v[12..16]).unwrap());
+    let (r3, g3, b3) = convert_yuv444_to_rgb(token, y3, u3, v3);
 
     // Pack to 8-bit and arrange as RRRRGGGGBBBB
     let rgb0 = _mm_packus_epi16(r0, r1);
@@ -231,15 +298,40 @@ unsafe fn yuv420_to_rgb_32(y: *const u8, u: *const u8, v: *const u8, dst: *mut u
     let rgb5 = _mm_packus_epi16(b2, b3);
 
     // Interleave to RGBRGBRGB...
-    let (out0, out1, out2, out3, out4, out5) = planar_to_24b(rgb0, rgb1, rgb2, rgb3, rgb4, rgb5);
+    let (out0, out1, out2, out3, out4, out5) =
+        planar_to_24b(token, rgb0, rgb1, rgb2, rgb3, rgb4, rgb5);
 
     // Store 96 bytes
-    _mm_storeu_si128(dst as *mut __m128i, out0);
-    _mm_storeu_si128(dst.add(16) as *mut __m128i, out1);
-    _mm_storeu_si128(dst.add(32) as *mut __m128i, out2);
-    _mm_storeu_si128(dst.add(48) as *mut __m128i, out3);
-    _mm_storeu_si128(dst.add(64) as *mut __m128i, out4);
-    _mm_storeu_si128(dst.add(80) as *mut __m128i, out5);
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut dst[..16]).unwrap(),
+        out0,
+    );
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut dst[16..32]).unwrap(),
+        out1,
+    );
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut dst[32..48]).unwrap(),
+        out2,
+    );
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut dst[48..64]).unwrap(),
+        out3,
+    );
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut dst[64..80]).unwrap(),
+        out4,
+    );
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut dst[80..96]).unwrap(),
+        out5,
+    );
 }
 
 /// Scalar fallback for YUV to RGB conversion (single pixel).
@@ -260,49 +352,49 @@ fn yuv_to_rgb_scalar(y: u8, u: u8, v: u8) -> (u8, u8, u8) {
 /// Convert a row of YUV420 to RGB using SIMD.
 /// Processes 32 pixels at a time, with scalar fallback for remainder.
 ///
-/// # Safety
 /// Requires SSE2. y must have `len` elements, u/v must have `len/2` elements.
 /// dst must have `len * 3` bytes.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "sse2")]
-pub unsafe fn yuv420_to_rgb_row(y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
+pub fn yuv420_to_rgb_row(y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
+    let token = Sse2Token::summon().expect("SSE2 is baseline on x86_64");
+    yuv420_to_rgb_row_inner(token, y, u, v, dst);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn yuv420_to_rgb_row_inner(
+    token: impl HasSse2 + Copy,
+    y: &[u8],
+    u: &[u8],
+    v: &[u8],
+    dst: &mut [u8],
+) {
     let len = y.len();
     debug_assert!(u.len() >= len.div_ceil(2));
     debug_assert!(v.len() >= len.div_ceil(2));
     debug_assert!(dst.len() >= len * 3);
 
     let mut n = 0usize;
-    let mut y_ptr = y.as_ptr();
-    let mut u_ptr = u.as_ptr();
-    let mut v_ptr = v.as_ptr();
-    let mut dst_ptr = dst.as_mut_ptr();
 
     // Process 32 pixels at a time
     while n + 32 <= len {
-        yuv420_to_rgb_32(y_ptr, u_ptr, v_ptr, dst_ptr);
-        y_ptr = y_ptr.add(32);
-        u_ptr = u_ptr.add(16);
-        v_ptr = v_ptr.add(16);
-        dst_ptr = dst_ptr.add(96);
+        let y_arr = <&[u8; 32]>::try_from(&y[n..n + 32]).unwrap();
+        let u_arr = <&[u8; 16]>::try_from(&u[n / 2..n / 2 + 16]).unwrap();
+        let v_arr = <&[u8; 16]>::try_from(&v[n / 2..n / 2 + 16]).unwrap();
+        let dst_arr = <&mut [u8; 96]>::try_from(&mut dst[n * 3..n * 3 + 96]).unwrap();
+        yuv420_to_rgb_32(token, y_arr, u_arr, v_arr, dst_arr);
         n += 32;
     }
 
     // Scalar fallback for remainder
     while n < len {
-        let y_val = *y_ptr;
-        let u_val = *u_ptr;
-        let v_val = *v_ptr;
+        let y_val = y[n];
+        let u_val = u[n / 2];
+        let v_val = v[n / 2];
         let (r, g, b) = yuv_to_rgb_scalar(y_val, u_val, v_val);
-        *dst_ptr = r;
-        *dst_ptr.add(1) = g;
-        *dst_ptr.add(2) = b;
-        y_ptr = y_ptr.add(1);
-        dst_ptr = dst_ptr.add(3);
-        // U/V advance every other pixel
-        if n & 1 == 1 {
-            u_ptr = u_ptr.add(1);
-            v_ptr = v_ptr.add(1);
-        }
+        dst[n * 3] = r;
+        dst[n * 3 + 1] = g;
+        dst[n * 3 + 2] = b;
         n += 1;
     }
 }
@@ -310,13 +402,25 @@ pub unsafe fn yuv420_to_rgb_row(y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
 /// Convert a row of YUV420 to RGBA using SIMD.
 /// Alpha is set to 255.
 ///
-/// # Safety
 /// Requires SSE2. y must have `len` elements, u/v must have `len/2` elements.
 /// dst must have `len * 4` bytes.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "sse2")]
 #[allow(dead_code)]
-pub unsafe fn yuv420_to_rgba_row(y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
+pub fn yuv420_to_rgba_row(y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
+    let token = Sse2Token::summon().expect("SSE2 is baseline on x86_64");
+    yuv420_to_rgba_row_inner(token, y, u, v, dst);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+#[allow(dead_code)]
+fn yuv420_to_rgba_row_inner(
+    token: impl HasSse2 + Copy,
+    y: &[u8],
+    u: &[u8],
+    v: &[u8],
+    dst: &mut [u8],
+) {
     let len = y.len();
     debug_assert!(u.len() >= len.div_ceil(2));
     debug_assert!(v.len() >= len.div_ceil(2));
@@ -324,42 +428,35 @@ pub unsafe fn yuv420_to_rgba_row(y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
 
     let k_alpha = _mm_set1_epi16(255);
     let mut n = 0usize;
-    let mut y_ptr = y.as_ptr();
-    let mut u_ptr = u.as_ptr();
-    let mut v_ptr = v.as_ptr();
-    let mut dst_ptr = dst.as_mut_ptr();
 
     // Process 8 pixels at a time for RGBA
     while n + 8 <= len {
-        let y0 = load_hi_16(y_ptr);
-        let u0 = load_uv_hi_8(u_ptr);
-        let v0 = load_uv_hi_8(v_ptr);
-        let (r, g, b) = convert_yuv444_to_rgb(y0, u0, v0);
-        pack_and_store_rgba(r, g, b, k_alpha, dst_ptr);
+        let y0 = load_hi_16(token, <&[u8; 8]>::try_from(&y[n..n + 8]).unwrap());
+        let u0 = load_uv_hi_8(token, <&[u8; 4]>::try_from(&u[n / 2..n / 2 + 4]).unwrap());
+        let v0 = load_uv_hi_8(token, <&[u8; 4]>::try_from(&v[n / 2..n / 2 + 4]).unwrap());
+        let (r, g, b) = convert_yuv444_to_rgb(token, y0, u0, v0);
+        pack_and_store_rgba(
+            token,
+            r,
+            g,
+            b,
+            k_alpha,
+            <&mut [u8; 32]>::try_from(&mut dst[n * 4..n * 4 + 32]).unwrap(),
+        );
 
-        y_ptr = y_ptr.add(8);
-        u_ptr = u_ptr.add(4);
-        v_ptr = v_ptr.add(4);
-        dst_ptr = dst_ptr.add(32);
         n += 8;
     }
 
     // Scalar fallback for remainder
     while n < len {
-        let y_val = *y_ptr;
-        let u_val = *u_ptr;
-        let v_val = *v_ptr;
+        let y_val = y[n];
+        let u_val = u[n / 2];
+        let v_val = v[n / 2];
         let (r, g, b) = yuv_to_rgb_scalar(y_val, u_val, v_val);
-        *dst_ptr = r;
-        *dst_ptr.add(1) = g;
-        *dst_ptr.add(2) = b;
-        *dst_ptr.add(3) = 255;
-        y_ptr = y_ptr.add(1);
-        dst_ptr = dst_ptr.add(4);
-        if n & 1 == 1 {
-            u_ptr = u_ptr.add(1);
-            v_ptr = v_ptr.add(1);
-        }
+        dst[n * 4] = r;
+        dst[n * 4 + 1] = g;
+        dst[n * 4 + 2] = b;
+        dst[n * 4 + 3] = 255;
         n += 1;
     }
 }
@@ -373,9 +470,10 @@ pub unsafe fn yuv420_to_rgba_row(y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
 ///
 /// Uses libwebp's efficient approach with _mm_avg_epu8.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "sse2")]
+#[arcane]
 #[inline]
-unsafe fn fancy_upsample_16(
+fn fancy_upsample_16(
+    _token: impl HasSse2 + Copy,
     a: __m128i,
     b: __m128i,
     c: __m128i,
@@ -431,15 +529,20 @@ unsafe fn fancy_upsample_16(
 /// Input: 17 pixels from each row (r1, r2)
 /// Output: 32 upsampled pixels for top row, 32 for bottom row
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "sse2")]
+#[arcane]
 #[allow(dead_code)]
-unsafe fn upsample_32_pixels(r1: *const u8, r2: *const u8, out: *mut u8) {
+fn upsample_32_pixels(
+    token: impl HasSse2 + Copy,
+    r1: &[u8; 17],
+    r2: &[u8; 17],
+    out: &mut [u8; 128],
+) {
     let one = _mm_set1_epi8(1);
 
-    let a = _mm_loadu_si128(r1 as *const __m128i);
-    let b = _mm_loadu_si128(r1.add(1) as *const __m128i);
-    let c = _mm_loadu_si128(r2 as *const __m128i);
-    let d = _mm_loadu_si128(r2.add(1) as *const __m128i);
+    let a = sse2::_mm_loadu_si128(token, <&[u8; 16]>::try_from(&r1[..16]).unwrap());
+    let b = sse2::_mm_loadu_si128(token, <&[u8; 16]>::try_from(&r1[1..17]).unwrap());
+    let c = sse2::_mm_loadu_si128(token, <&[u8; 16]>::try_from(&r2[..16]).unwrap());
+    let d = sse2::_mm_loadu_si128(token, <&[u8; 16]>::try_from(&r2[1..17]).unwrap());
 
     let s = _mm_avg_epu8(a, d);
     let t = _mm_avg_epu8(b, c);
@@ -474,32 +577,61 @@ unsafe fn upsample_32_pixels(r1: *const u8, r2: *const u8, out: *mut u8) {
     let t_b = _mm_avg_epu8(b, diag2);
     let t_1 = _mm_unpacklo_epi8(t_a, t_b);
     let t_2 = _mm_unpackhi_epi8(t_a, t_b);
-    _mm_storeu_si128(out as *mut __m128i, t_1);
-    _mm_storeu_si128(out.add(16) as *mut __m128i, t_2);
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut out[..16]).unwrap(),
+        t_1,
+    );
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut out[16..32]).unwrap(),
+        t_2,
+    );
 
     // Pack for bottom row: roles of diag1/diag2 swapped
     let b_a = _mm_avg_epu8(c, diag2);
     let b_b = _mm_avg_epu8(d, diag1);
     let b_1 = _mm_unpacklo_epi8(b_a, b_b);
     let b_2 = _mm_unpackhi_epi8(b_a, b_b);
-    _mm_storeu_si128(out.add(64) as *mut __m128i, b_1);
-    _mm_storeu_si128(out.add(80) as *mut __m128i, b_2);
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut out[64..80]).unwrap(),
+        b_1,
+    );
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut out[80..96]).unwrap(),
+        b_2,
+    );
 }
 
 /// Process 8 pixel pairs with fancy upsampling and YUV->RGB conversion.
 /// This is the main entry point for fancy upsampling used by yuv.rs.
 ///
-/// # Safety
 /// Requires SSE2. All input slices must have the required minimum lengths.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "sse2")]
-pub unsafe fn fancy_upsample_8_pairs(
-    y_row: &[u8],     // 16 Y values
-    u_row_1: &[u8],   // 9 U values from top chroma row
-    u_row_2: &[u8],   // 9 U values from bottom chroma row
-    v_row_1: &[u8],   // 9 V values from top chroma row
-    v_row_2: &[u8],   // 9 V values from bottom chroma row
-    rgb: &mut [u8],   // 48 bytes output
+pub fn fancy_upsample_8_pairs(
+    y_row: &[u8],
+    u_row_1: &[u8],
+    u_row_2: &[u8],
+    v_row_1: &[u8],
+    v_row_2: &[u8],
+    rgb: &mut [u8],
+) {
+    let token = Sse2Token::summon().expect("SSE2 is baseline on x86_64");
+    fancy_upsample_8_pairs_inner(token, y_row, u_row_1, u_row_2, v_row_1, v_row_2, rgb);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn fancy_upsample_8_pairs_inner(
+    token: impl HasSse2 + Copy,
+    y_row: &[u8],
+    u_row_1: &[u8],
+    u_row_2: &[u8],
+    v_row_1: &[u8],
+    v_row_2: &[u8],
+    rgb: &mut [u8],
 ) {
     debug_assert!(y_row.len() >= 16);
     debug_assert!(u_row_1.len() >= 9);
@@ -508,40 +640,46 @@ pub unsafe fn fancy_upsample_8_pairs(
     debug_assert!(v_row_2.len() >= 9);
     debug_assert!(rgb.len() >= 48);
 
-    // Load 8 chroma values from each row
-    let u_a = _mm_loadl_epi64(u_row_1.as_ptr() as *const __m128i);
-    let u_b = _mm_loadl_epi64(u_row_1.as_ptr().add(1) as *const __m128i);
-    let u_c = _mm_loadl_epi64(u_row_2.as_ptr() as *const __m128i);
-    let u_d = _mm_loadl_epi64(u_row_2.as_ptr().add(1) as *const __m128i);
+    // Load 8 chroma values from each row using i64 conversion
+    let load_8 = |slice: &[u8]| -> __m128i {
+        let arr = <&[u8; 8]>::try_from(&slice[..8]).unwrap();
+        let val = i64::from_le_bytes(*arr);
+        _mm_cvtsi64_si128(val)
+    };
 
-    let v_a = _mm_loadl_epi64(v_row_1.as_ptr() as *const __m128i);
-    let v_b = _mm_loadl_epi64(v_row_1.as_ptr().add(1) as *const __m128i);
-    let v_c = _mm_loadl_epi64(v_row_2.as_ptr() as *const __m128i);
-    let v_d = _mm_loadl_epi64(v_row_2.as_ptr().add(1) as *const __m128i);
+    let u_a = load_8(&u_row_1[..8]);
+    let u_b = load_8(&u_row_1[1..9]);
+    let u_c = load_8(&u_row_2[..8]);
+    let u_d = load_8(&u_row_2[1..9]);
+
+    let v_a = load_8(&v_row_1[..8]);
+    let v_b = load_8(&v_row_1[1..9]);
+    let v_c = load_8(&v_row_2[..8]);
+    let v_d = load_8(&v_row_2[1..9]);
 
     // Compute fancy upsampled U/V
-    let (u_diag1, u_diag2) = fancy_upsample_16(u_a, u_b, u_c, u_d);
-    let (v_diag1, v_diag2) = fancy_upsample_16(v_a, v_b, v_c, v_d);
+    let (u_diag1, u_diag2) = fancy_upsample_16(token, u_a, u_b, u_c, u_d);
+    let (v_diag1, v_diag2) = fancy_upsample_16(token, v_a, v_b, v_c, v_d);
 
     // Interleave: [diag1[0], diag2[0], diag1[1], diag2[1], ...]
     let u_interleaved = _mm_unpacklo_epi8(u_diag1, u_diag2);
     let v_interleaved = _mm_unpacklo_epi8(v_diag1, v_diag2);
 
     // Load Y and expand to upper 8 bits of 16-bit words
-    let y_vec = _mm_loadu_si128(y_row.as_ptr() as *const __m128i);
+    let y_vec = sse2::_mm_loadu_si128(token, <&[u8; 16]>::try_from(&y_row[..16]).unwrap());
     let zero = _mm_setzero_si128();
 
     // Process first 8 pixels
     let y_lo = _mm_unpacklo_epi8(zero, y_vec);
     let u_lo = _mm_unpacklo_epi8(zero, u_interleaved);
     let v_lo = _mm_unpacklo_epi8(zero, v_interleaved);
-    let (r0, g0, b0) = convert_yuv444_to_rgb(y_lo, u_lo, v_lo);
+    let (r0, g0, b0) = convert_yuv444_to_rgb(token, y_lo, u_lo, v_lo);
 
     // Process second 8 pixels
     let y_hi = _mm_unpackhi_epi8(zero, y_vec);
     let u_hi = _mm_unpackhi_epi8(zero, u_interleaved);
     let v_hi = _mm_unpackhi_epi8(zero, v_interleaved);
-    let (r1, g1, b1) = convert_yuv444_to_rgb(y_hi, u_hi, v_hi);
+    let (r1, g1, b1) = convert_yuv444_to_rgb(token, y_hi, u_hi, v_hi);
 
     // Pack to 8-bit
     let r8 = _mm_packus_epi16(r0, r1);
@@ -549,11 +687,6 @@ pub unsafe fn fancy_upsample_8_pairs(
     let b8 = _mm_packus_epi16(b0, b1);
 
     // Interleave RGB using partial planar_to_24b
-    // For 16 pixels we need a simpler approach - just do 2 groups of 8
-    // Actually we can use the existing planar conversion with padding
-
-    // Simple approach: pack 16 R, 16 G, 16 B into RGBRGB...
-    // We have only 16 pixels, so need different packing
     let rgb0 = r8;
     let rgb1 = _mm_setzero_si128();
     let rgb2 = g8;
@@ -561,12 +694,24 @@ pub unsafe fn fancy_upsample_8_pairs(
     let rgb4 = b8;
     let rgb5 = _mm_setzero_si128();
 
-    let (out0, out1, out2, _, _, _) = planar_to_24b(rgb0, rgb1, rgb2, rgb3, rgb4, rgb5);
+    let (out0, out1, out2, _, _, _) = planar_to_24b(token, rgb0, rgb1, rgb2, rgb3, rgb4, rgb5);
 
     // Store 48 bytes (16 RGB pixels)
-    _mm_storeu_si128(rgb.as_mut_ptr() as *mut __m128i, out0);
-    _mm_storeu_si128(rgb.as_mut_ptr().add(16) as *mut __m128i, out1);
-    _mm_storeu_si128(rgb.as_mut_ptr().add(32) as *mut __m128i, out2);
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut rgb[..16]).unwrap(),
+        out0,
+    );
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut rgb[16..32]).unwrap(),
+        out1,
+    );
+    sse2::_mm_storeu_si128(
+        token,
+        <&mut [u8; 16]>::try_from(&mut rgb[32..48]).unwrap(),
+        out2,
+    );
 }
 
 #[cfg(test)]
@@ -579,59 +724,36 @@ mod tests {
             return;
         }
 
-        // Test various YUV values
         let test_cases: [(u8, u8, u8); 8] = [
-            (128, 128, 128), // Gray
-            (255, 128, 128), // Bright gray
-            (0, 128, 128),   // Dark
-            (203, 40, 42),   // Test values
+            (128, 128, 128),
+            (255, 128, 128),
+            (0, 128, 128),
+            (203, 40, 42),
             (77, 34, 97),
             (162, 101, 167),
             (202, 84, 150),
             (185, 101, 167),
         ];
 
-        // Test using the row function
         let y: Vec<u8> = test_cases.iter().map(|(y, _, _)| *y).collect();
         let u: Vec<u8> = test_cases.iter().map(|(_, u, _)| *u).collect();
         let v: Vec<u8> = test_cases.iter().map(|(_, _, v)| *v).collect();
 
-        // For 4:2:0, we need half as many U/V values
         let u_420: Vec<u8> = u.iter().step_by(2).copied().collect();
         let v_420: Vec<u8> = v.iter().step_by(2).copied().collect();
 
         let mut rgb_simd = vec![0u8; 24];
+        yuv420_to_rgb_row(&y, &u_420, &v_420, &mut rgb_simd);
 
-        unsafe {
-            yuv420_to_rgb_row(&y, &u_420, &v_420, &mut rgb_simd);
-        }
-
-        // Compare with scalar (each U/V used for 2 pixels)
         for i in 0..8 {
             let y_val = y[i];
             let u_val = u_420[i / 2];
             let v_val = v_420[i / 2];
             let (r_scalar, g_scalar, b_scalar) = yuv_to_rgb_scalar(y_val, u_val, v_val);
 
-            let r_simd = rgb_simd[i * 3];
-            let g_simd = rgb_simd[i * 3 + 1];
-            let b_simd = rgb_simd[i * 3 + 2];
-
-            assert_eq!(
-                r_simd, r_scalar,
-                "R mismatch at {}: SIMD={}, scalar={} (Y={}, U={}, V={})",
-                i, r_simd, r_scalar, y_val, u_val, v_val
-            );
-            assert_eq!(
-                g_simd, g_scalar,
-                "G mismatch at {}: SIMD={}, scalar={} (Y={}, U={}, V={})",
-                i, g_simd, g_scalar, y_val, u_val, v_val
-            );
-            assert_eq!(
-                b_simd, b_scalar,
-                "B mismatch at {}: SIMD={}, scalar={} (Y={}, U={}, V={})",
-                i, b_simd, b_scalar, y_val, u_val, v_val
-            );
+            assert_eq!(rgb_simd[i * 3], r_scalar);
+            assert_eq!(rgb_simd[i * 3 + 1], g_scalar);
+            assert_eq!(rgb_simd[i * 3 + 2], b_scalar);
         }
     }
 
@@ -641,43 +763,22 @@ mod tests {
             return;
         }
 
-        // Test 32 pixels
         let y: Vec<u8> = (0..32).map(|i| (i * 8) as u8).collect();
         let u: Vec<u8> = (0..16).map(|i| (128 + i * 4) as u8).collect();
         let v: Vec<u8> = (0..16).map(|i| (128 - i * 4) as u8).collect();
 
         let mut rgb_simd = vec![0u8; 96];
+        yuv420_to_rgb_row(&y, &u, &v, &mut rgb_simd);
 
-        unsafe {
-            yuv420_to_rgb_row(&y, &u, &v, &mut rgb_simd);
-        }
-
-        // Verify against scalar
         for i in 0..32 {
             let y_val = y[i];
             let u_val = u[i / 2];
             let v_val = v[i / 2];
             let (r_scalar, g_scalar, b_scalar) = yuv_to_rgb_scalar(y_val, u_val, v_val);
 
-            let r_simd = rgb_simd[i * 3];
-            let g_simd = rgb_simd[i * 3 + 1];
-            let b_simd = rgb_simd[i * 3 + 2];
-
-            assert_eq!(
-                r_simd, r_scalar,
-                "R mismatch at {}: SIMD={}, scalar={}",
-                i, r_simd, r_scalar
-            );
-            assert_eq!(
-                g_simd, g_scalar,
-                "G mismatch at {}: SIMD={}, scalar={}",
-                i, g_simd, g_scalar
-            );
-            assert_eq!(
-                b_simd, b_scalar,
-                "B mismatch at {}: SIMD={}, scalar={}",
-                i, b_simd, b_scalar
-            );
+            assert_eq!(rgb_simd[i * 3], r_scalar);
+            assert_eq!(rgb_simd[i * 3 + 1], g_scalar);
+            assert_eq!(rgb_simd[i * 3 + 2], b_scalar);
         }
     }
 
@@ -704,32 +805,17 @@ mod tests {
         let v_row_2: [u8; 9] = [149, 23, 86, 100, 120, 55, 75, 95, 110];
 
         let mut rgb_simd = [0u8; 48];
-        unsafe {
-            fancy_upsample_8_pairs(&y_row, &u_row_1, &u_row_2, &v_row_1, &v_row_2, &mut rgb_simd);
-        }
+        fancy_upsample_8_pairs(&y_row, &u_row_1, &u_row_2, &v_row_1, &v_row_2, &mut rgb_simd);
 
-        // Compare with scalar
         let mut rgb_scalar = [0u8; 48];
         for i in 0..8 {
-            let u_a = u_row_1[i];
-            let u_b = u_row_1[i + 1];
-            let u_c = u_row_2[i];
-            let u_d = u_row_2[i + 1];
-            let v_a = v_row_1[i];
-            let v_b = v_row_1[i + 1];
-            let v_c = v_row_2[i];
-            let v_d = v_row_2[i + 1];
+            let u_diag1 = get_fancy_chroma_value(u_row_1[i], u_row_1[i + 1], u_row_2[i], u_row_2[i + 1]);
+            let v_diag1 = get_fancy_chroma_value(v_row_1[i], v_row_1[i + 1], v_row_2[i], v_row_2[i + 1]);
+            let u_diag2 = get_fancy_chroma_value(u_row_1[i + 1], u_row_1[i], u_row_2[i + 1], u_row_2[i]);
+            let v_diag2 = get_fancy_chroma_value(v_row_1[i + 1], v_row_1[i], v_row_2[i + 1], v_row_2[i]);
 
-            let u_diag1 = get_fancy_chroma_value(u_a, u_b, u_c, u_d);
-            let v_diag1 = get_fancy_chroma_value(v_a, v_b, v_c, v_d);
-            let u_diag2 = get_fancy_chroma_value(u_b, u_a, u_d, u_c);
-            let v_diag2 = get_fancy_chroma_value(v_b, v_a, v_d, v_c);
-
-            let y1 = y_row[i * 2];
-            let y2 = y_row[i * 2 + 1];
-
-            let (r1, g1, b1) = yuv_to_rgb_scalar(y1, u_diag1, v_diag1);
-            let (r2, g2, b2) = yuv_to_rgb_scalar(y2, u_diag2, v_diag2);
+            let (r1, g1, b1) = yuv_to_rgb_scalar(y_row[i * 2], u_diag1, v_diag1);
+            let (r2, g2, b2) = yuv_to_rgb_scalar(y_row[i * 2 + 1], u_diag2, v_diag2);
 
             rgb_scalar[i * 6] = r1;
             rgb_scalar[i * 6 + 1] = g1;
@@ -740,28 +826,9 @@ mod tests {
         }
 
         for i in 0..16 {
-            let r_simd = rgb_simd[i * 3];
-            let g_simd = rgb_simd[i * 3 + 1];
-            let b_simd = rgb_simd[i * 3 + 2];
-            let r_scalar = rgb_scalar[i * 3];
-            let g_scalar = rgb_scalar[i * 3 + 1];
-            let b_scalar = rgb_scalar[i * 3 + 2];
-
-            assert_eq!(
-                r_simd, r_scalar,
-                "R mismatch at pixel {}: SIMD={}, scalar={}",
-                i, r_simd, r_scalar
-            );
-            assert_eq!(
-                g_simd, g_scalar,
-                "G mismatch at pixel {}: SIMD={}, scalar={}",
-                i, g_simd, g_scalar
-            );
-            assert_eq!(
-                b_simd, b_scalar,
-                "B mismatch at pixel {}: SIMD={}, scalar={}",
-                i, b_simd, b_scalar
-            );
+            assert_eq!(rgb_simd[i * 3], rgb_scalar[i * 3]);
+            assert_eq!(rgb_simd[i * 3 + 1], rgb_scalar[i * 3 + 1]);
+            assert_eq!(rgb_simd[i * 3 + 2], rgb_scalar[i * 3 + 2]);
         }
     }
 }

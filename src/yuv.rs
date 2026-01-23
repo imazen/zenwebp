@@ -200,16 +200,14 @@ fn fill_row_fancy_with_2_uv_rows_simd<const BPP: usize>(
     // Process chunks of 16 Y pixels (8 pixel pairs) with SIMD
     // Need at least 16 Y pixels and 9 U/V samples
     while y_offset + 16 <= width && uv_offset + 9 <= u_row_1.len() {
-        unsafe {
-            crate::yuv_simd::fancy_upsample_8_pairs(
-                &y_row[y_offset..],
-                &u_row_1[uv_offset..],
-                &u_row_2[uv_offset..],
-                &v_row_1[uv_offset..],
-                &v_row_2[uv_offset..],
-                &mut row_buffer[rgb_offset..],
-            );
-        }
+        crate::yuv_simd::fancy_upsample_8_pairs(
+            &y_row[y_offset..],
+            &u_row_1[uv_offset..],
+            &u_row_2[uv_offset..],
+            &v_row_1[uv_offset..],
+            &v_row_2[uv_offset..],
+            &mut row_buffer[rgb_offset..],
+        );
         y_offset += 16;
         uv_offset += 8;
         rgb_offset += 48;
@@ -450,9 +448,7 @@ fn fill_rgba_row_simple_simd<const BPP: usize>(
     rgba: &mut [u8],
 ) {
     // Use the new row-based SIMD function that processes 32 pixels at a time
-    unsafe {
-        crate::yuv_simd::yuv420_to_rgb_row(y_vec, u_vec, v_vec, rgba);
-    }
+    crate::yuv_simd::yuv420_to_rgb_row(y_vec, u_vec, v_vec, rgba);
 }
 
 fn fill_rgba_row_simple_scalar<const BPP: usize>(
