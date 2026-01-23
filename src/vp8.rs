@@ -76,6 +76,134 @@ fn simple_filter_vertical_16_cols(
     }
 }
 
+/// Helper to apply normal horizontal macroblock filter to 16 rows with SIMD when available.
+/// Filters the vertical edge at column x0, processing all 16 rows at once.
+#[inline]
+fn normal_filter_horizontal_mb_16_rows(
+    buf: &mut [u8],
+    y_start: usize,
+    x0: usize,
+    stride: usize,
+    hev_threshold: u8,
+    interior_limit: u8,
+    edge_limit: u8,
+) {
+    // TODO: Add SIMD horizontal filter implementation
+    // For now, use scalar
+    for y in 0usize..16 {
+        let y0 = y_start + y;
+        loop_filter::macroblock_filter_horizontal(
+            hev_threshold,
+            interior_limit,
+            edge_limit,
+            &mut buf[y0 * stride + x0 - 4..][..8],
+        );
+    }
+}
+
+/// Helper to apply normal horizontal subblock filter to 16 rows with SIMD when available.
+#[inline]
+fn normal_filter_horizontal_sub_16_rows(
+    buf: &mut [u8],
+    y_start: usize,
+    x0: usize,
+    stride: usize,
+    hev_threshold: u8,
+    interior_limit: u8,
+    edge_limit: u8,
+) {
+    // TODO: Add SIMD horizontal filter implementation
+    // For now, use scalar
+    for y in 0usize..16 {
+        let y0 = y_start + y;
+        loop_filter::subblock_filter_horizontal(
+            hev_threshold,
+            interior_limit,
+            edge_limit,
+            &mut buf[y0 * stride + x0 - 4..][..8],
+        );
+    }
+}
+
+/// Helper to apply normal vertical macroblock filter to 16 columns with SIMD when available.
+/// Filters the horizontal edge at row y0, processing all 16 columns at once.
+#[inline]
+fn normal_filter_vertical_mb_16_cols(
+    buf: &mut [u8],
+    y0: usize,
+    x_start: usize,
+    stride: usize,
+    hev_threshold: u8,
+    interior_limit: u8,
+    edge_limit: u8,
+) {
+    #[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
+    if is_x86_feature_detected!("sse4.1") {
+        let point = y0 * stride + x_start;
+        unsafe {
+            crate::loop_filter_avx2::normal_v_filter16_edge(
+                buf, point, stride,
+                i32::from(hev_threshold),
+                i32::from(interior_limit),
+                i32::from(edge_limit),
+            );
+        }
+        return;
+    }
+
+    // Scalar fallback
+    for x in 0usize..16 {
+        let point = y0 * stride + x_start + x;
+        loop_filter::macroblock_filter_vertical(
+            hev_threshold,
+            interior_limit,
+            edge_limit,
+            buf,
+            point,
+            stride,
+        );
+    }
+}
+
+/// Helper to apply normal vertical subblock filter to 16 columns with SIMD when available.
+#[inline]
+fn normal_filter_vertical_sub_16_cols(
+    buf: &mut [u8],
+    y0: usize,
+    x_start: usize,
+    stride: usize,
+    hev_threshold: u8,
+    interior_limit: u8,
+    edge_limit: u8,
+) {
+    #[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
+    if is_x86_feature_detected!("sse4.1") {
+        let point = y0 * stride + x_start;
+        unsafe {
+            crate::loop_filter_avx2::normal_v_filter16_inner(
+                buf, point, stride,
+                i32::from(hev_threshold),
+                i32::from(interior_limit),
+                i32::from(edge_limit),
+            );
+        }
+        return;
+    }
+
+    // Scalar fallback
+    for x in 0usize..16 {
+        let point = y0 * stride + x_start + x;
+        loop_filter::subblock_filter_vertical(
+            hev_threshold,
+            interior_limit,
+            edge_limit,
+            buf,
+            point,
+            stride,
+        );
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct TreeNode {
     pub left: u8,
@@ -1129,21 +1257,18 @@ impl<R: Read> Vp8Decoder<R> {
                         mbedge_limit,
                     );
                 } else {
-                    //if bottom macroblock, can only filter if there is 3 pixels below
-                    for x in 0usize..16 {
-                        let y0 = mby * 16;
-                        let x0 = mbx * 16 + x;
+                    // Use SIMD helper for luma (16 columns)
+                    normal_filter_vertical_mb_16_cols(
+                        &mut self.frame.ybuf[..],
+                        mby * 16,
+                        mbx * 16,
+                        luma_w,
+                        hev_threshold,
+                        interior_limit,
+                        mbedge_limit,
+                    );
 
-                        loop_filter::macroblock_filter_vertical(
-                            hev_threshold,
-                            interior_limit,
-                            mbedge_limit,
-                            &mut self.frame.ybuf[..],
-                            y0 * luma_w + x0,
-                            luma_w,
-                        );
-                    }
-
+                    // Chroma uses 8 columns - keep scalar
                     for x in 0usize..8 {
                         let y0 = mby * 8;
                         let x0 = mbx * 8 + x;
@@ -1181,20 +1306,17 @@ impl<R: Read> Vp8Decoder<R> {
                         );
                     }
                 } else {
+                    // Use SIMD helper for luma subblock filter (16 columns at once)
                     for y in (4usize..16 - 3).step_by(4) {
-                        for x in 0..16 {
-                            let y0 = mby * 16 + y;
-                            let x0 = mbx * 16 + x;
-
-                            loop_filter::subblock_filter_vertical(
-                                hev_threshold,
-                                interior_limit,
-                                sub_bedge_limit,
-                                &mut self.frame.ybuf[..],
-                                y0 * luma_w + x0,
-                                luma_w,
-                            );
-                        }
+                        normal_filter_vertical_sub_16_cols(
+                            &mut self.frame.ybuf[..],
+                            mby * 16 + y,
+                            mbx * 16,
+                            luma_w,
+                            hev_threshold,
+                            interior_limit,
+                            sub_bedge_limit,
+                        );
                     }
 
                     for x in 0..8 {
