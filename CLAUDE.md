@@ -45,12 +45,13 @@ See global ~/.claude/CLAUDE.md for general instructions.
 
 | Test | Our Decoder | libwebp | Speed Ratio |
 |------|-------------|---------|-------------|
-| libwebp-encoded | 5.8ms (67 MPix/s) | 3.0ms (130 MPix/s) | 1.95x slower |
-| our-encoded | 5.5ms (70 MPix/s) | 2.8ms (137 MPix/s) | 1.95x slower |
+| libwebp-encoded | 5.85ms (67 MPix/s) | 3.0ms (130 MPix/s) | 1.93x slower |
+| our-encoded | 5.74ms (68 MPix/s) | 2.99ms (131 MPix/s) | 1.92x slower |
 
 *Benchmark: 768x512 Kodak image, 100 iterations, release mode*
 
-Our decoder is ~1.95x slower than libwebp (improved from 2.5x baseline). Recent optimizations:
+Our decoder is ~1.92x slower than libwebp (improved from 2.5x baseline). Recent optimizations:
+- **copy_from_slice for macroblock output** (~1-2% speedup)
 - **SIMD normal loop filter for vertical edges** (~10% speedup, commit 3bf30f1)
 - **libwebp-rs style bit reader for coefficients** (16% speedup, commit 5588e44)
 - **Inlined read_tree/is_eof** (~7% additional speedup)
@@ -92,6 +93,8 @@ Per-decode comparison with libwebp:
   - **16% speedup** in overall decode (commit 5588e44)
 
 ### TODO
+- [x] ~~Replace byte-by-byte copy with `copy_from_slice()` (~1-2% gain)~~
+- [ ] **High impact**: Add row cache for better loop filter cache locality
 - [ ] Add SIMD horizontal normal filter (transpose technique like simple filter)
 - [ ] Consider using libwebp-rs bit reader for mode parsing too (self.b field)
 - [ ] Consider SIMD for choose_macroblock_info inner loops (encoder)
@@ -123,20 +126,6 @@ Results:
 
 The ArithmeticDecoder is still used for header/mode parsing (self.b field).
 Only coefficient reading uses the new VP8Partitions/PartitionReader.
-
-### Hardcoded Tree Walker (2026-01-22)
-
-Implemented hardcoded tree walking for coefficient decoding with state shadowing:
-- `read_coefficients_fast()` in `src/vp8.rs` uses hardcoded DCT token tree
-- `fast_coeffs` module in `src/vp8_bit_reader.rs` provides state-shadowed bit reading
-
-**Bug fix**: `get_signed_fast()` had an off-by-one error - was using decremented `bits`
-value instead of original for the value calculation. Fixed by saving `bit_pos` before
-decrementing.
-
-**Performance**: Similar to inlined original (~63-65 MPix/s). The main gain came from
-adding `#[inline(always)]` to `read_tree` and `is_eof`, not from the hardcoded tree.
-The hardcoded version is kept as it works correctly and may provide small benefits.
 
 ### Loop Filter Optimization Opportunity
 
@@ -177,6 +166,80 @@ The inner edge filter `filter_loop24` is 24% of their time - scalar loop over
 
 Conclusion: The ~2.5x gap may be inherent to Rust vs C for this workload, or
 requires deeper investigation into codegen/memory access patterns.
+
+### Cache/Memory Layout Analysis (2026-01-22)
+
+**Root cause of 18x more L1 cache misses identified.**
+
+#### libwebp Architecture
+```
+1. Decode macroblock → 832-byte yuv_b working buffer (BPS=32, cache-aligned)
+2. Copy via WEBP_UNSAFE_MEMCPY → row cache (cache_y/u/v)
+   - cache_y_stride = 16 * mb_w (contiguous row of macroblocks)
+3. Loop filter operates on row cache (contiguous data)
+4. At row completion, FinishRow() outputs to final destination
+```
+
+Code from `frame_dec.c:195`:
+```c
+for (j = 0; j < 16; ++j) {
+    WEBP_UNSAFE_MEMCPY(y_out + j * dec->cache_y_stride, y_dst + j * BPS, 16);
+}
+```
+
+#### Our Architecture
+```
+1. Decode macroblock → 544-byte working buffer (same stride=32)
+2. Copy byte-by-byte → final ybuf/ubuf/vbuf (full image size)
+   - stride = full image width (e.g., 768 for 768x512 image)
+3. Loop filter operates on final buffers (scattered access)
+4. No row cache - immediate output
+```
+
+Code from `vp8.rs:889`:
+```rust
+for y in 0usize..16 {
+    for (ybuf, &ws) in self.frame.ybuf[(mby * 16 + y) * mw * 16 + mbx * 16..][..16]
+        .iter_mut()
+        .zip(ws[(1 + y) * stride + 1..][..16].iter())
+    {
+        *ybuf = ws;
+    }
+}
+```
+
+#### Problems Identified
+
+1. **Byte-by-byte copy** - Rust iterators instead of memcpy
+   - Should use `copy_from_slice()` for 16-byte chunks
+
+2. **Loop filter on scattered data** - Our loop filter accesses memory with full image width stride
+   - For 768px image: each row access jumps 768 bytes
+   - 16 rows = 12KB spread, thrashes L1 cache (32KB)
+   - libwebp's cache_y keeps 16 rows × mb_w macroblocks contiguous
+
+3. **No row cache** - We write directly to final buffers
+   - libwebp batches output per row of macroblocks
+   - Better locality for loop filtering and YUV→RGB conversion
+
+#### Potential Solutions
+
+1. **Quick fix**: Replace byte-by-byte copy with `copy_from_slice()`
+   ```rust
+   for y in 0..16 {
+       let dst_start = (mby * 16 + y) * mw * 16 + mbx * 16;
+       let src_start = (1 + y) * stride + 1;
+       self.frame.ybuf[dst_start..][..16].copy_from_slice(&ws[src_start..][..16]);
+   }
+   ```
+
+2. **Medium fix**: Add row cache like libwebp
+   - Allocate cache_y: 16 * mb_w * num_caches bytes
+   - Decode/copy to cache, loop filter on cache, output at row end
+   - Requires refactoring macroblock processing
+
+3. **Architectural change**: Process row-at-a-time like libwebp
+   - Would require significant refactoring but gives best cache behavior
 
 ## User Feedback Log
 

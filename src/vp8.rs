@@ -879,20 +879,12 @@ impl<R: Read> Vp8Decoder<R> {
             *left = ws[(i + 1) * stride + 16];
         }
 
-        for (top, &w) in self.top_border_y[mbx * 16..][..16]
-            .iter_mut()
-            .zip(&ws[16 * stride + 1..][..16])
-        {
-            *top = w;
-        }
+        self.top_border_y[mbx * 16..][..16].copy_from_slice(&ws[16 * stride + 1..][..16]);
 
         for y in 0usize..16 {
-            for (ybuf, &ws) in self.frame.ybuf[(mby * 16 + y) * mw * 16 + mbx * 16..][..16]
-                .iter_mut()
-                .zip(ws[(1 + y) * stride + 1..][..16].iter())
-            {
-                *ybuf = ws;
-            }
+            let dst_start = (mby * 16 + y) * mw * 16 + mbx * 16;
+            let src_start = (1 + y) * stride + 1;
+            self.frame.ybuf[dst_start..][..16].copy_from_slice(&ws[src_start..][..16]);
         }
     }
 
@@ -945,16 +937,8 @@ impl<R: Read> Vp8Decoder<R> {
         for y in 0usize..8 {
             let uv_buf_index = (mby * 8 + y) * mw * 8 + mbx * 8;
             let ws_index = (1 + y) * stride + 1;
-
-            for (((ub, vb), &uw), &vw) in self.frame.ubuf[uv_buf_index..][..8]
-                .iter_mut()
-                .zip(self.frame.vbuf[uv_buf_index..][..8].iter_mut())
-                .zip(uws[ws_index..][..8].iter())
-                .zip(vws[ws_index..][..8].iter())
-            {
-                *ub = uw;
-                *vb = vw;
-            }
+            self.frame.ubuf[uv_buf_index..][..8].copy_from_slice(&uws[ws_index..][..8]);
+            self.frame.vbuf[uv_buf_index..][..8].copy_from_slice(&vws[ws_index..][..8]);
         }
     }
 
