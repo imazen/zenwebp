@@ -45,12 +45,13 @@ See global ~/.claude/CLAUDE.md for general instructions.
 
 | Test | Our Decoder | libwebp | Speed Ratio |
 |------|-------------|---------|-------------|
-| libwebp-encoded | 5.76ms (68 MPix/s) | 3.08ms (128 MPix/s) | 1.87x slower |
-| our-encoded | 5.58ms (70 MPix/s) | 3.40ms (116 MPix/s) | 1.64x slower |
+| libwebp-encoded | 6.08ms (65 MPix/s) | 3.07ms (128 MPix/s) | 1.98x slower |
+| our-encoded | 5.10ms (77 MPix/s) | 2.96ms (133 MPix/s) | 1.72x slower |
 
 *Benchmark: 768x512 Kodak image, 100 iterations, release mode*
 
-Our decoder is ~1.8x slower than libwebp (improved from 2.5x baseline). Recent optimizations:
+Our decoder is ~1.7-2.0x slower than libwebp (improved from 2.5x baseline). Recent optimizations:
+- **SIMD horizontal loop filter** (DoFilter4/DoFilter6 for vertical edges, commit fc4c33f)
 - **Inline coefficient tree** like libwebp's GetCoeffsFast (12% instruction reduction, commit ac47ba5)
 - **16-bit SIMD YUV conversion** ported from libwebp (18% instruction reduction, commit b7ac4b9)
 - **Row cache with extra rows** for loop filter cache locality (commit c16995f)
@@ -58,24 +59,26 @@ Our decoder is ~1.8x slower than libwebp (improved from 2.5x baseline). Recent o
 - **libwebp-rs style bit reader for coefficients** (16% speedup, commit 5588e44)
 - AVX2 loop filter (16 pixels at once) - simple filter only
 
-### Decoder Profiler Hot Spots (after inline coefficient tree)
+### Decoder Profiler Hot Spots (after SIMD horizontal filter)
 | Function | % Time | Notes |
 |----------|--------|-------|
-| read_coefficients | 42.97% | Coefficient decoding (improved) |
-| fancy_upsample_8_pairs | 12.15% | YUV SIMD |
-| decode_frame_ | 7.85% | Frame processing overhead |
-| ArithmeticDecoder | 6.05% | Mode parsing (still uses old decoder) |
-| add_residue | 4.82% | Prediction + residue |
-| idct4x4_avx2 | 4.07% | Already SIMD |
+| read_coefficients | 20.31% | Coefficient decoding |
+| fancy_upsample_8_pairs | 4.62% | YUV SIMD |
+| decode_frame_ | 4.49% | Frame processing overhead |
+| should_filter_vertical | 3.99% | Loop filter threshold check |
+| macroblock_filter_horizontal | 2.83% | Chroma only (scalar) |
+| ArithmeticDecoder | 2.63% | Mode parsing |
+| idct4x4_avx2 | 1.69% | Already SIMD |
 
-### Cache/Branch Analysis (2026-01-22)
-Per-decode comparison with libwebp:
-| Metric | Ours | libwebp | Ratio |
-|--------|------|---------|-------|
-| Instructions | 24.47M | 16.18M | 1.51x more |
-| Branch misses | 3.81% | 8.15% | Better! |
+### Instruction Breakdown (callgrind)
+| Metric | Previous | Current | Change |
+|--------|----------|---------|--------|
+| Total (200 decodes) | 25.87B | 24.80B | -4% |
+| Loop filter horizontal | 8.4% | 5.7% | -2.7pp |
 
-**Instruction count reduced from 33.85M → 27.77M → 24.47M (28% total reduction).**
+Loop filter now uses SIMD for:
+- Simple filter: both V and H edges (luma)
+- Normal filter: V edges (luma), H edges (luma with SIMD, chroma scalar)
 
 ### SIMD Decoder Optimizations
 - `src/yuv_simd.rs` - SSE2 YUV→RGB (ported from libwebp, commit b7ac4b9)
@@ -84,9 +87,10 @@ Per-decode comparison with libwebp:
   - Processes 32 pixels at a time (simple) or 16 (fancy upsampling)
   - `unsafe-simd` feature now enabled by default
 - `src/loop_filter_avx2.rs` - SSE4.1 loop filter (16 pixels at once)
-  - **Vertical normal filter SIMD integrated** for luma (DoFilter4/DoFilter6)
-  - Uses transpose technique for horizontal filtering (simple filter only)
-  - Horizontal normal filter still TODO
+  - **Normal filter SIMD for both V and H edges** (luma only, commit fc4c33f)
+  - Uses transpose technique for horizontal filtering (16 rows × 8 cols)
+  - Simple filter: both V and H edges have SIMD
+  - Chroma filtering still scalar (8 rows, not 16)
 - `src/vp8_bit_reader.rs` - libwebp-rs style bit reader for coefficients
   - Uses VP8GetBitAlt algorithm with 56-bit buffer
   - `leading_zeros()` for normalization (single LZCNT instruction)
@@ -95,7 +99,8 @@ Per-decode comparison with libwebp:
 ### TODO
 - [x] ~~Replace byte-by-byte copy with `copy_from_slice()` (~1-2% gain)~~
 - [x] ~~Row cache with extra rows for loop filter cache locality~~ (commit c16995f)
-- [ ] Add SIMD horizontal normal filter (transpose technique like simple filter)
+- [x] ~~Add SIMD horizontal normal filter~~ (commit fc4c33f)
+- [ ] Add SIMD loop filter for chroma (8 rows - need different approach)
 - [ ] Consider using libwebp-rs bit reader for mode parsing too (self.b field)
 - [ ] Consider SIMD for choose_macroblock_info inner loops (encoder)
 - [ ] Profile get_residual_cost for optimization opportunities
