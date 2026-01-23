@@ -21,7 +21,8 @@ pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         // SSE2 is baseline on x86_64
-        let token = Sse2Token::summon().expect("SSE2 is baseline on x86_64");
+        // SAFETY: SSE2 is baseline on x86_64
+        let token = unsafe { Sse2Token::forge_token_dangerously() };
         dct4x4_sse2(token, block);
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
@@ -37,7 +38,8 @@ pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         // SSE2 is baseline on x86_64
-        let token = Sse2Token::summon().expect("SSE2 is baseline on x86_64");
+        // SAFETY: SSE2 is baseline on x86_64
+        let token = unsafe { Sse2Token::forge_token_dangerously() };
         idct4x4_sse2(token, block);
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
@@ -52,7 +54,8 @@ pub(crate) fn dct4x4_two_intrinsics(block1: &mut [i32; 16], block2: &mut [i32; 1
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         // SSE2 is baseline on x86_64
-        let token = Sse2Token::summon().expect("SSE2 is baseline on x86_64");
+        // SAFETY: SSE2 is baseline on x86_64
+        let token = unsafe { Sse2Token::forge_token_dangerously() };
         dct4x4_two_sse2(token, block1, block2);
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
@@ -126,7 +129,7 @@ fn dct4x4_sse2(token: impl HasSse2 + Copy, block: &mut [i32; 16]) {
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
 #[inline]
-fn ftransform_pass1_i16(_token: impl HasSse2 + Copy, in01: __m128i, in23: __m128i) -> (__m128i, __m128i) {
+fn ftransform_pass1_i16(token: impl HasSse2 + Copy, in01: __m128i, in23: __m128i) -> (__m128i, __m128i) {
     // Constants matching libwebp exactly
     let k937 = _mm_set1_epi32(937);
     let k1812 = _mm_set1_epi32(1812);
@@ -297,7 +300,7 @@ fn idct4x4_sse2(token: impl HasSse2 + Copy, block: &mut [i32]) {
 #[arcane]
 #[inline]
 fn itransform_pass_sse2(
-    _token: impl HasSse2 + Copy,
+    token: impl HasSse2 + Copy,
     in01: __m128i,
     in23: __m128i,
     k1k2: __m128i,
@@ -347,7 +350,7 @@ fn itransform_pass_sse2(
 #[arcane]
 #[inline]
 fn itransform_pass2_sse2(
-    _token: impl HasSse2 + Copy,
+    token: impl HasSse2 + Copy,
     t01: __m128i,
     t23: __m128i,
     k1k2: __m128i,

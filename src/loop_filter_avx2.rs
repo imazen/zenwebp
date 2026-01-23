@@ -20,7 +20,7 @@ use core::arch::x86_64::*;
 #[arcane]
 #[inline(always)]
 fn needs_filter_16(
-    _token: impl HasSse41,
+    token: impl HasSse41 + Copy,
     p1: __m128i,
     p0: __m128i,
     q0: __m128i,
@@ -55,7 +55,7 @@ fn needs_filter_16(
 #[arcane]
 #[inline(always)]
 fn get_base_delta_16(
-    _token: impl HasSse41,
+    token: impl HasSse41 + Copy,
     p1: __m128i,
     p0: __m128i,
     q0: __m128i,
@@ -84,7 +84,7 @@ fn get_base_delta_16(
 #[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
 #[arcane]
 #[inline(always)]
-fn signed_shift_right_3(_token: impl HasSse41, v: __m128i) -> __m128i {
+fn signed_shift_right_3(token: impl HasSse41 + Copy, v: __m128i) -> __m128i {
     // For signed bytes, we need to handle sign extension properly.
     // Unpack to 16-bit, shift, pack back.
     let lo = _mm_srai_epi16(_mm_unpacklo_epi8(v, v), 11); // sign-extend and shift
@@ -190,7 +190,7 @@ pub fn simple_v_filter16(
 #[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
 #[arcane]
 #[inline(always)]
-fn transpose_8x16_to_16x8(_token: impl HasSse41, rows: &[__m128i; 16]) -> [__m128i; 8] {
+fn transpose_8x16_to_16x8(token: impl HasSse41 + Copy, rows: &[__m128i; 16]) -> [__m128i; 8] {
     // Stage 1: interleave pairs
     let t0 = _mm_unpacklo_epi8(rows[0], rows[1]);
     let t1 = _mm_unpacklo_epi8(rows[2], rows[3]);
@@ -240,7 +240,7 @@ fn transpose_8x16_to_16x8(_token: impl HasSse41, rows: &[__m128i; 16]) -> [__m12
 #[arcane]
 #[inline(always)]
 fn transpose_4x16_to_16x4(
-    _token: impl HasSse41,
+    token: impl HasSse41 + Copy,
     p1: __m128i,
     p0: __m128i,
     q0: __m128i,
@@ -472,7 +472,7 @@ fn needs_filter_normal_16(
 #[arcane]
 #[inline(always)]
 fn high_edge_variance_16(
-    _token: impl HasSse41,
+    token: impl HasSse41 + Copy,
     p1: __m128i,
     p0: __m128i,
     q0: __m128i,
@@ -580,7 +580,7 @@ fn do_filter4_16(
 #[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
 #[arcane]
 #[inline(always)]
-fn signed_shift_right_1(_token: impl HasSse41, v: __m128i) -> __m128i {
+fn signed_shift_right_1(token: impl HasSse41 + Copy, v: __m128i) -> __m128i {
     let lo = _mm_srai_epi16(_mm_unpacklo_epi8(v, v), 9);
     let hi = _mm_srai_epi16(_mm_unpackhi_epi8(v, v), 9);
     _mm_packs_epi16(lo, hi)
@@ -697,7 +697,7 @@ fn do_filter6_16(
 #[arcane]
 #[inline(always)]
 fn filter6_wide_half(
-    _token: impl HasSse41,
+    token: impl HasSse41 + Copy,
     p2: __m128i,
     p1: __m128i,
     p0: __m128i,
@@ -952,7 +952,7 @@ pub fn normal_v_filter16_edge(
 #[arcane]
 #[inline(always)]
 fn transpose_6x16_to_16x6(
-    _token: impl HasSse41,
+    token: impl HasSse41 + Copy,
     p2: __m128i,
     p1: __m128i,
     p0: __m128i,

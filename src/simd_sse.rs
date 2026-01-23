@@ -25,7 +25,8 @@ pub fn sse4x4(a: &[u8; 16], b: &[u8; 16]) -> u32 {
     #[cfg(target_arch = "x86_64")]
     {
         // SSE2 is baseline on x86_64, so summon always succeeds
-        let token = Sse2Token::summon().expect("SSE2 is baseline on x86_64");
+        // SAFETY: SSE2 is baseline on x86_64
+        let token = unsafe { Sse2Token::forge_token_dangerously() };
         sse4x4_sse2(token, a, b)
     }
 }
@@ -92,7 +93,8 @@ pub fn sse4x4_with_residual(src: &[u8; 16], pred: &[u8; 16], residual: &[i32; 16
 
     #[cfg(target_arch = "x86_64")]
     {
-        let token = Sse2Token::summon().expect("SSE2 is baseline on x86_64");
+        // SAFETY: SSE2 is baseline on x86_64
+        let token = unsafe { Sse2Token::forge_token_dangerously() };
         sse4x4_with_residual_sse2(token, src, pred, residual)
     }
 }
@@ -191,7 +193,8 @@ pub fn sse_16x16_luma(
 
     #[cfg(target_arch = "x86_64")]
     {
-        let token = Sse2Token::summon().expect("SSE2 is baseline on x86_64");
+        // SAFETY: SSE2 is baseline on x86_64
+        let token = unsafe { Sse2Token::forge_token_dangerously() };
         sse_16x16_luma_sse2(token, src_y, src_width, mbx, mby, pred)
     }
 }
@@ -293,7 +296,8 @@ pub fn sse_8x8_chroma(
 
     #[cfg(target_arch = "x86_64")]
     {
-        let token = Sse2Token::summon().expect("SSE2 is baseline on x86_64");
+        // SAFETY: SSE2 is baseline on x86_64
+        let token = unsafe { Sse2Token::forge_token_dangerously() };
         sse_8x8_chroma_sse2(token, src_uv, src_width, mbx, mby, pred)
     }
 }
@@ -425,7 +429,8 @@ pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 
     #[cfg(target_arch = "x86_64")]
     {
-        let token = Sse2Token::summon().expect("SSE2 is baseline on x86_64");
+        // SAFETY: SSE2 is baseline on x86_64
+        let token = unsafe { Sse2Token::forge_token_dangerously() };
         t_transform_sse2(token, input, stride, w)
     }
 }

@@ -21,7 +21,7 @@ use core::arch::x86_64::*;
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 #[inline]
-fn load_hi_16(_token: impl HasSse2 + Copy, src: &[u8; 8]) -> __m128i {
+fn load_hi_16(token: impl HasSse2 + Copy, src: &[u8; 8]) -> __m128i {
     let zero = _mm_setzero_si128();
     // Load 8 bytes as i64 then convert to __m128i
     let val = i64::from_le_bytes(*src);
@@ -34,7 +34,7 @@ fn load_hi_16(_token: impl HasSse2 + Copy, src: &[u8; 8]) -> __m128i {
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 #[inline]
-fn load_uv_hi_8(_token: impl HasSse2 + Copy, src: &[u8; 4]) -> __m128i {
+fn load_uv_hi_8(token: impl HasSse2 + Copy, src: &[u8; 4]) -> __m128i {
     let zero = _mm_setzero_si128();
     // Load 4 bytes as i32
     let val = i32::from_le_bytes(*src);
@@ -52,7 +52,7 @@ fn load_uv_hi_8(_token: impl HasSse2 + Copy, src: &[u8; 4]) -> __m128i {
 #[arcane]
 #[inline]
 fn convert_yuv444_to_rgb(
-    _token: impl HasSse2 + Copy,
+    token: impl HasSse2 + Copy,
     y: __m128i,
     u: __m128i,
     v: __m128i,
@@ -151,7 +151,7 @@ macro_rules! planar_to_24b_helper {
 #[arcane]
 #[inline]
 fn planar_to_24b(
-    _token: impl HasSse2 + Copy,
+    token: impl HasSse2 + Copy,
     in0: __m128i,
     in1: __m128i,
     in2: __m128i,
@@ -356,7 +356,8 @@ fn yuv_to_rgb_scalar(y: u8, u: u8, v: u8) -> (u8, u8, u8) {
 /// dst must have `len * 3` bytes.
 #[cfg(target_arch = "x86_64")]
 pub fn yuv420_to_rgb_row(y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
-    let token = Sse2Token::summon().expect("SSE2 is baseline on x86_64");
+    // SAFETY: SSE2 is baseline on x86_64
+    let token = unsafe { Sse2Token::forge_token_dangerously() };
     yuv420_to_rgb_row_inner(token, y, u, v, dst);
 }
 
@@ -407,7 +408,8 @@ fn yuv420_to_rgb_row_inner(
 #[cfg(target_arch = "x86_64")]
 #[allow(dead_code)]
 pub fn yuv420_to_rgba_row(y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
-    let token = Sse2Token::summon().expect("SSE2 is baseline on x86_64");
+    // SAFETY: SSE2 is baseline on x86_64
+    let token = unsafe { Sse2Token::forge_token_dangerously() };
     yuv420_to_rgba_row_inner(token, y, u, v, dst);
 }
 
@@ -473,7 +475,7 @@ fn yuv420_to_rgba_row_inner(
 #[arcane]
 #[inline]
 fn fancy_upsample_16(
-    _token: impl HasSse2 + Copy,
+    token: impl HasSse2 + Copy,
     a: __m128i,
     b: __m128i,
     c: __m128i,
@@ -618,7 +620,8 @@ pub fn fancy_upsample_8_pairs(
     v_row_2: &[u8],
     rgb: &mut [u8],
 ) {
-    let token = Sse2Token::summon().expect("SSE2 is baseline on x86_64");
+    // SAFETY: SSE2 is baseline on x86_64
+    let token = unsafe { Sse2Token::forge_token_dangerously() };
     fancy_upsample_8_pairs_inner(token, y_row, u_row_1, u_row_2, v_row_1, v_row_2, rgb);
 }
 
