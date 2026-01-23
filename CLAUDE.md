@@ -45,12 +45,13 @@ See global ~/.claude/CLAUDE.md for general instructions.
 
 | Test | Our Decoder | libwebp | Speed Ratio |
 |------|-------------|---------|-------------|
-| libwebp-encoded | 4.7ms (84 MPix/s) | 3.0ms (131 MPix/s) | 1.55x slower |
-| our-encoded | 4.5ms (87 MPix/s) | 3.0ms (131 MPix/s) | 1.50x slower |
+| libwebp-encoded | 4.24ms (93 MPix/s) | 3.05ms (129 MPix/s) | 1.39x slower |
+| our-encoded | 4.14ms (95 MPix/s) | 2.91ms (135 MPix/s) | 1.42x slower |
 
 *Benchmark: 768x512 Kodak image, 100 iterations, release mode*
 
-Our decoder is ~1.5x slower than libwebp (improved from 2.5x baseline). Recent optimizations:
+Our decoder is ~1.4x slower than libwebp (improved from 2.5x baseline). Recent optimizations:
+- **SIMD chroma vertical loop filter** - U+V processed together as 16 pixels (10% speedup, 2026-01-23)
 - **Position-indexed probability table** - eliminates COEFF_BANDS lookup (10% instruction reduction, commit 15b3771)
 - **VP8HeaderBitReader for mode parsing** - replaces ArithmeticDecoder (6-8% faster, commit 9b6f963)
 - **SIMD chroma horizontal loop filter** - U+V processed together as 16 rows (7.8% instruction reduction, commit c3b9051)
@@ -75,13 +76,13 @@ Our decoder is ~1.5x slower than libwebp (improved from 2.5x baseline). Recent o
 
 ### Detailed Callgrind/Cachegrind Analysis (2026-01-23)
 
-**Per-decode instruction count (after position-indexed probs, commit 15b3771):**
+**Per-decode instruction count (after chroma vertical SIMD):**
 | Metric | Ours | libwebp | Ratio |
 |--------|------|---------|-------|
 | Coeff reading | 49.1M | 36.4M | 1.35x |
-| Total program | 23.2B/200 | - | -10.3% vs before |
+| Total program | 20.88B/200 | - | -10% vs previous |
 
-*Total instructions reduced from 25.87B → 23.20B (-10.3%)*
+*Total instructions reduced from 23.2B → 20.88B (-10%)*
 | Memory reads | ~12M | 6.7M | 1.8x |
 | Memory writes | ~9M | 4.9M | 1.8x |
 | D1 read miss % | 0.33% | 0.70% | Better! |
@@ -103,7 +104,7 @@ Our decoder is ~1.5x slower than libwebp (improved from 2.5x baseline). Recent o
 
 Loop filter now uses SIMD for:
 - Simple filter: both V and H edges (luma + chroma)
-- Normal filter: V edges (luma), H edges (luma + chroma with SIMD)
+- Normal filter: both V and H edges (luma + chroma with SIMD)
 
 ### SIMD Decoder Optimizations
 - `src/yuv_simd.rs` - SSE2 YUV→RGB (ported from libwebp, commit b7ac4b9)
@@ -113,10 +114,11 @@ Loop filter now uses SIMD for:
   - `unsafe-simd` feature now enabled by default
 - `src/loop_filter_avx2.rs` - SSE4.1 loop filter (16 pixels at once)
   - **Normal filter SIMD for both V and H edges** (luma, commit fc4c33f)
-  - **Chroma SIMD** - U+V processed together as 16 rows (commit c3b9051)
+  - **Chroma horizontal SIMD** - U+V processed together as 16 rows (commit c3b9051)
+  - **Chroma vertical SIMD** - U+V packed as 16 pixels per row (2026-01-23)
   - Uses transpose technique for horizontal filtering (16 rows × 8 cols)
   - Simple filter: both V and H edges have SIMD (luma + chroma)
-  - Normal filter: V edges (luma), H edges (luma + chroma)
+  - Normal filter: both V and H edges have SIMD (luma + chroma)
 - `src/vp8_bit_reader.rs` - libwebp-rs style bit readers
   - **VP8HeaderBitReader** - header/mode parsing (commit 9b6f963)
   - **VP8Partitions/PartitionReader** - coefficient reading (commit 5588e44)
@@ -133,9 +135,10 @@ Priority ordered by instruction savings potential:
    - Consider batch threshold computation
 
 Completed:
+- [x] ~~Chroma vertical SIMD~~ (2026-01-23) - U+V packed as 16 pixels, 10% speedup
 - [x] ~~Position-indexed probability table~~ (commit 15b3771) - 10% instruction reduction
 - [x] ~~Replace ArithmeticDecoder for mode parsing~~ (commit 9b6f963) - 6-8% faster
-- [x] ~~Loop filter SIMD for chroma~~ (commit c3b9051) - U+V together as 16 rows, 7.8% reduction
+- [x] ~~Loop filter SIMD for chroma horizontal~~ (commit c3b9051) - U+V together as 16 rows, 7.8% reduction
 - [x] ~~DC-only IDCT and reusable coefficient buffer~~ (commit 9d08433)
 - [x] ~~Row cache with extra rows for loop filter cache locality~~ (commit c16995f)
 - [x] ~~Add SIMD horizontal normal filter~~ (commit fc4c33f)

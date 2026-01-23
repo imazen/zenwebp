@@ -1045,6 +1045,136 @@ pub unsafe fn normal_h_filter_uv_inner(
     }
 }
 
+// ============================================================================
+// 8-pixel chroma vertical filter functions (filtering horizontal edges)
+// These process both U and V planes together by packing 8 U + 8 V pixels
+// into each __m128i register.
+// ============================================================================
+
+/// Apply normal vertical filter (DoFilter6) to U and V planes together at macroblock edges.
+/// Processes 8 U pixels and 8 V pixels per row, packed into __m128i registers.
+///
+/// # Safety
+/// Requires SSE4.1. Must have at least 4 rows before and after the point.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.1")]
+pub unsafe fn normal_v_filter_uv_edge(
+    u_pixels: &mut [u8],
+    v_pixels: &mut [u8],
+    point: usize,
+    stride: usize,
+    hev_thresh: i32,
+    interior_limit: i32,
+    edge_limit: i32,
+) {
+    // Load 8 rows, each containing 8 U + 8 V pixels packed together
+    // Low 64 bits = U, High 64 bits = V
+    let load_uv_row = |offset: isize| -> __m128i {
+        let u_ptr = u_pixels.as_ptr().offset(offset) as *const __m128i;
+        let v_ptr = v_pixels.as_ptr().offset(offset) as *const __m128i;
+        let u = _mm_loadl_epi64(u_ptr);
+        let v = _mm_loadl_epi64(v_ptr);
+        _mm_unpacklo_epi64(u, v)
+    };
+
+    let base = point as isize;
+    let s = stride as isize;
+
+    let p3 = load_uv_row(base - 4 * s);
+    let mut p2 = load_uv_row(base - 3 * s);
+    let mut p1 = load_uv_row(base - 2 * s);
+    let mut p0 = load_uv_row(base - s);
+    let mut q0 = load_uv_row(base);
+    let mut q1 = load_uv_row(base + s);
+    let mut q2 = load_uv_row(base + 2 * s);
+    let q3 = load_uv_row(base + 3 * s);
+
+    // Check if filtering is needed
+    let mask = needs_filter_normal_16(p3, p2, p1, p0, q0, q1, q2, q3, edge_limit, interior_limit);
+
+    // Check high edge variance
+    let hev = high_edge_variance_16(p1, p0, q0, q1, hev_thresh);
+
+    // Apply DoFilter6
+    do_filter6_16(&mut p2, &mut p1, &mut p0, &mut q0, &mut q1, &mut q2, mask, hev);
+
+    // Store results back
+    // Low 64 bits go to U, high 64 bits go to V
+    let mut store_uv_row = |reg: __m128i, offset: isize| {
+        let u_ptr = u_pixels.as_mut_ptr().offset(offset) as *mut __m128i;
+        let v_ptr = v_pixels.as_mut_ptr().offset(offset) as *mut __m128i;
+        _mm_storel_epi64(u_ptr, reg);
+        _mm_storel_epi64(v_ptr, _mm_srli_si128(reg, 8));
+    };
+
+    store_uv_row(p2, base - 3 * s);
+    store_uv_row(p1, base - 2 * s);
+    store_uv_row(p0, base - s);
+    store_uv_row(q0, base);
+    store_uv_row(q1, base + s);
+    store_uv_row(q2, base + 2 * s);
+}
+
+/// Apply normal vertical filter (DoFilter4) to U and V planes together at subblock edges.
+/// Processes 8 U pixels and 8 V pixels per row, packed into __m128i registers.
+///
+/// # Safety
+/// Requires SSE4.1. Must have at least 4 rows before and after the point.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.1")]
+pub unsafe fn normal_v_filter_uv_inner(
+    u_pixels: &mut [u8],
+    v_pixels: &mut [u8],
+    point: usize,
+    stride: usize,
+    hev_thresh: i32,
+    interior_limit: i32,
+    edge_limit: i32,
+) {
+    // Load 8 rows, each containing 8 U + 8 V pixels packed together
+    let load_uv_row = |offset: isize| -> __m128i {
+        let u_ptr = u_pixels.as_ptr().offset(offset) as *const __m128i;
+        let v_ptr = v_pixels.as_ptr().offset(offset) as *const __m128i;
+        let u = _mm_loadl_epi64(u_ptr);
+        let v = _mm_loadl_epi64(v_ptr);
+        _mm_unpacklo_epi64(u, v)
+    };
+
+    let base = point as isize;
+    let s = stride as isize;
+
+    let p3 = load_uv_row(base - 4 * s);
+    let p2 = load_uv_row(base - 3 * s);
+    let mut p1 = load_uv_row(base - 2 * s);
+    let mut p0 = load_uv_row(base - s);
+    let mut q0 = load_uv_row(base);
+    let mut q1 = load_uv_row(base + s);
+    let q2 = load_uv_row(base + 2 * s);
+    let q3 = load_uv_row(base + 3 * s);
+
+    // Check if filtering is needed
+    let mask = needs_filter_normal_16(p3, p2, p1, p0, q0, q1, q2, q3, edge_limit, interior_limit);
+
+    // Check high edge variance
+    let hev = high_edge_variance_16(p1, p0, q0, q1, hev_thresh);
+
+    // Apply DoFilter4
+    do_filter4_16(&mut p1, &mut p0, &mut q0, &mut q1, mask, hev);
+
+    // Store results back
+    let mut store_uv_row = |reg: __m128i, offset: isize| {
+        let u_ptr = u_pixels.as_mut_ptr().offset(offset) as *mut __m128i;
+        let v_ptr = v_pixels.as_mut_ptr().offset(offset) as *mut __m128i;
+        _mm_storel_epi64(u_ptr, reg);
+        _mm_storel_epi64(v_ptr, _mm_srli_si128(reg, 8));
+    };
+
+    store_uv_row(p1, base - 2 * s);
+    store_uv_row(p0, base - s);
+    store_uv_row(q0, base);
+    store_uv_row(q1, base + s);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -314,6 +314,104 @@ fn normal_filter_horizontal_uv_sub(
     }
 }
 
+/// Helper to apply normal vertical macroblock filter to U and V chroma planes (8 pixels each).
+/// Filters the horizontal edge at row y0, processing 8 U + 8 V pixels together.
+#[inline]
+fn normal_filter_vertical_uv_mb(
+    u_buf: &mut [u8],
+    v_buf: &mut [u8],
+    y0: usize,
+    x_start: usize,
+    stride: usize,
+    hev_threshold: u8,
+    interior_limit: u8,
+    edge_limit: u8,
+) {
+    #[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
+    if is_x86_feature_detected!("sse4.1") {
+        let point = y0 * stride + x_start;
+        unsafe {
+            crate::loop_filter_avx2::normal_v_filter_uv_edge(
+                u_buf, v_buf, point, stride,
+                i32::from(hev_threshold),
+                i32::from(interior_limit),
+                i32::from(edge_limit),
+            );
+        }
+        return;
+    }
+
+    // Scalar fallback
+    for x in 0usize..8 {
+        let point = y0 * stride + x_start + x;
+        loop_filter::macroblock_filter_vertical(
+            hev_threshold,
+            interior_limit,
+            edge_limit,
+            u_buf,
+            point,
+            stride,
+        );
+        loop_filter::macroblock_filter_vertical(
+            hev_threshold,
+            interior_limit,
+            edge_limit,
+            v_buf,
+            point,
+            stride,
+        );
+    }
+}
+
+/// Helper to apply normal vertical subblock filter to U and V chroma planes (8 pixels each).
+/// Filters the horizontal edge at row y0, processing 8 U + 8 V pixels together.
+#[inline]
+fn normal_filter_vertical_uv_sub(
+    u_buf: &mut [u8],
+    v_buf: &mut [u8],
+    y0: usize,
+    x_start: usize,
+    stride: usize,
+    hev_threshold: u8,
+    interior_limit: u8,
+    edge_limit: u8,
+) {
+    #[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
+    if is_x86_feature_detected!("sse4.1") {
+        let point = y0 * stride + x_start;
+        unsafe {
+            crate::loop_filter_avx2::normal_v_filter_uv_inner(
+                u_buf, v_buf, point, stride,
+                i32::from(hev_threshold),
+                i32::from(interior_limit),
+                i32::from(edge_limit),
+            );
+        }
+        return;
+    }
+
+    // Scalar fallback
+    for x in 0usize..8 {
+        let point = y0 * stride + x_start + x;
+        loop_filter::subblock_filter_vertical(
+            hev_threshold,
+            interior_limit,
+            edge_limit,
+            u_buf,
+            point,
+            stride,
+        );
+        loop_filter::subblock_filter_vertical(
+            hev_threshold,
+            interior_limit,
+            edge_limit,
+            v_buf,
+            point,
+            stride,
+        );
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct TreeNode {
     pub left: u8,
@@ -1375,8 +1473,8 @@ impl<R: Read> Vp8Decoder<R> {
 
             transform::iwht4x4(&mut block);
 
-            for k in 0usize..16 {
-                self.coeff_blocks[16 * k] = block[k];
+            for (k, &val) in block.iter().enumerate() {
+                self.coeff_blocks[16 * k] = val;
             }
 
             plane = Plane::YCoeff1;
@@ -1570,25 +1668,17 @@ impl<R: Read> Vp8Decoder<R> {
                         interior_limit,
                         mbedge_limit,
                     );
-                    // Chroma
-                    for x in 0..8 {
-                        loop_filter::macroblock_filter_vertical(
-                            hev_threshold,
-                            interior_limit,
-                            mbedge_limit,
-                            &mut self.cache_u[..],
-                            extra_uv_rows * cache_uv_stride + mbx * 8 + x,
-                            cache_uv_stride,
-                        );
-                        loop_filter::macroblock_filter_vertical(
-                            hev_threshold,
-                            interior_limit,
-                            mbedge_limit,
-                            &mut self.cache_v[..],
-                            extra_uv_rows * cache_uv_stride + mbx * 8 + x,
-                            cache_uv_stride,
-                        );
-                    }
+                    // Chroma - SIMD processes 8 U + 8 V pixels together
+                    normal_filter_vertical_uv_mb(
+                        &mut self.cache_u[..],
+                        &mut self.cache_v[..],
+                        extra_uv_rows,
+                        mbx * 8,
+                        cache_uv_stride,
+                        hev_threshold,
+                        interior_limit,
+                        mbedge_limit,
+                    );
                 }
             }
 
@@ -1616,26 +1706,18 @@ impl<R: Read> Vp8Decoder<R> {
                             sub_bedge_limit,
                         );
                     }
-                    for y in 0..1 {
-                        for x in 0..8 {
-                            loop_filter::subblock_filter_vertical(
-                                hev_threshold,
-                                interior_limit,
-                                sub_bedge_limit,
-                                &mut self.cache_u[..],
-                                (extra_uv_rows + 4 + y * 4) * cache_uv_stride + mbx * 8 + x,
-                                cache_uv_stride,
-                            );
-                            loop_filter::subblock_filter_vertical(
-                                hev_threshold,
-                                interior_limit,
-                                sub_bedge_limit,
-                                &mut self.cache_v[..],
-                                (extra_uv_rows + 4 + y * 4) * cache_uv_stride + mbx * 8 + x,
-                                cache_uv_stride,
-                            );
-                        }
-                    }
+                    // Chroma subblock - only one horizontal edge at row 4
+                    // (chroma is 8x8, so only one subblock edge)
+                    normal_filter_vertical_uv_sub(
+                        &mut self.cache_u[..],
+                        &mut self.cache_v[..],
+                        extra_uv_rows + 4,
+                        mbx * 8,
+                        cache_uv_stride,
+                        hev_threshold,
+                        interior_limit,
+                        sub_bedge_limit,
+                    );
                 }
             }
         }
