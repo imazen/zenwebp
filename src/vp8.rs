@@ -941,6 +941,8 @@ impl<R: Read> Vp8Decoder<R> {
         }
     }
 
+    /// Read DCT coefficients using libwebp's inline tree structure.
+    /// This mirrors GetCoeffsFast from libwebp for maximum performance.
     fn read_coefficients(
         &mut self,
         block: &mut [i32; 16],
@@ -950,85 +952,111 @@ impl<R: Read> Vp8Decoder<R> {
         dcq: i16,
         acq: i16,
     ) -> Result<bool, DecodingError> {
-        // perform bounds checks once up front,
-        // so that the compiler doesn't have to insert them in the hot loop below
-        assert!(complexity <= 2);
+        debug_assert!(complexity <= 2);
 
-        let first_coeff = if plane == Plane::YCoeff1 {
-            1usize
-        } else {
-            0usize
-        };
+        let first = if plane == Plane::YCoeff1 { 1 } else { 0 };
         let probs = &self.token_probs[plane as usize];
         let mut reader = self.partitions.reader(p);
 
-        let mut complexity = complexity;
-        let mut has_coefficients = false;
-        let mut skip = false;
+        // Probability indices in tree nodes match libwebp:
+        // [0] = not EOB, [1] = not zero, [2] = not 1
+        // [3] = >=5 vs 2/3/4, [4] = 3/4 vs 2, [5] = 4 vs 3
+        // [6] = CAT3-6 vs CAT1/2, [7] = CAT2 vs CAT1
+        // [8] = CAT5/6 vs CAT3/4, [9] = CAT4 vs CAT3, [10] = CAT6 vs CAT5
 
-        for i in first_coeff..16usize {
-            let band = COEFF_BANDS[i] as usize;
-            let tree = &probs[band][complexity];
+        let mut n = first;
+        let mut band = COEFF_BANDS[n] as usize;
+        let mut prob = &probs[band][complexity];
 
-            let token = reader.read_tree(tree, tree[skip as usize]);
-
-            let mut abs_value = i32::from(match token {
-                DCT_EOB => break,
-
-                DCT_0 => {
-                    skip = true;
-                    has_coefficients = true;
-                    complexity = 0;
-                    continue;
-                }
-
-                literal @ DCT_1..=DCT_4 => i16::from(literal),
-
-                category @ DCT_CAT1..=DCT_CAT6 => {
-                    let cat_probs = PROB_DCT_CAT[(category - DCT_CAT1) as usize];
-
-                    let mut extra = 0i16;
-
-                    for t in cat_probs.iter().copied() {
-                        if t == 0 {
-                            break;
-                        }
-                        let b = reader.get_bit(t) != 0;
-                        extra = extra + extra + i16::from(b);
-                    }
-
-                    i16::from(DCT_CAT_BASE[(category - DCT_CAT1) as usize]) + extra
-                }
-
-                c => panic!("unknown token: {c}"),
-            });
-
-            skip = false;
-
-            complexity = if abs_value == 0 {
-                0
-            } else if abs_value == 1 {
-                1
-            } else {
-                2
-            };
-
-            // Read sign bit - if negative, negate the value
-            if reader.get_signed(abs_value) < 0 {
-                abs_value = -abs_value;
+        while n < 16 {
+            // Check for EOB (p[0])
+            if reader.get_bit(prob[0].prob) == 0 {
+                break;
             }
 
-            let zigzag = ZIGZAG[i] as usize;
-            block[zigzag] = abs_value * i32::from(if zigzag > 0 { acq } else { dcq });
+            // Skip zeros (p[1]) - libwebp style loop
+            while reader.get_bit(prob[1].prob) == 0 {
+                n += 1;
+                if n >= 16 {
+                    if reader.is_eof() {
+                        return Err(DecodingError::BitStreamError);
+                    }
+                    return Ok(true);
+                }
+                band = COEFF_BANDS[n] as usize;
+                prob = &probs[band][0]; // context 0 after zero
+            }
 
-            has_coefficients = true;
+            // Non-zero coefficient - get next context probabilities
+            let next_band = if n + 1 < 16 { COEFF_BANDS[n + 1] as usize } else { 0 };
+            let v: i32;
+            let next_ctx: usize;
+
+            // Check if value is 1 (p[2])
+            if reader.get_bit(prob[2].prob) == 0 {
+                v = 1;
+                next_ctx = 1;
+            } else {
+                // Larger value - inline GetLargeValue
+                // Check if 2/3/4 vs categories (p[3])
+                if reader.get_bit(prob[3].prob) == 0 {
+                    // Value is 2, 3, or 4
+                    if reader.get_bit(prob[4].prob) == 0 {
+                        v = 2;
+                    } else {
+                        v = 3 + reader.get_bit(prob[5].prob);
+                    }
+                } else {
+                    // Category token (CAT1-CAT6)
+                    if reader.get_bit(prob[6].prob) == 0 {
+                        // CAT1 or CAT2
+                        if reader.get_bit(prob[7].prob) == 0 {
+                            // CAT1: base 5, 1 extra bit
+                            v = 5 + reader.get_bit(159);
+                        } else {
+                            // CAT2: base 7, 2 extra bits
+                            v = 7 + 2 * reader.get_bit(165) + reader.get_bit(145);
+                        }
+                    } else {
+                        // CAT3-6: use p[8], p[9+bit1]
+                        let bit1 = reader.get_bit(prob[8].prob);
+                        let bit0 = reader.get_bit(prob[9 + bit1 as usize].prob);
+                        let cat = (2 * bit1 + bit0) as usize;
+
+                        // Read extra bits from category probability table
+                        let cat_probs = &PROB_DCT_CAT[2 + cat]; // CAT3 is index 2
+                        let mut extra = 0i32;
+                        for &p in cat_probs.iter() {
+                            if p == 0 {
+                                break;
+                            }
+                            extra = extra + extra + reader.get_bit(p);
+                        }
+                        // CAT3: 11, CAT4: 19, CAT5: 35, CAT6: 67
+                        v = 3 + (8 << cat) + extra;
+                    }
+                }
+                next_ctx = 2;
+            }
+
+            // Read sign and apply
+            let signed_v = if reader.get_bit(128) != 0 { -v } else { v };
+
+            let zigzag = ZIGZAG[n] as usize;
+            let q = if zigzag > 0 { acq } else { dcq };
+            block[zigzag] = signed_v * i32::from(q);
+
+            n += 1;
+            if n < 16 {
+                band = COEFF_BANDS[n] as usize;
+                prob = &probs[band][next_ctx];
+            }
         }
 
-        // Check for errors after reading
         if reader.is_eof() {
             return Err(DecodingError::BitStreamError);
         }
-        Ok(has_coefficients)
+        Ok(n > first)
     }
 
     fn read_residual_data(
