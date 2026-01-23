@@ -50,32 +50,32 @@ See global ~/.claude/CLAUDE.md for general instructions.
 
 *Benchmark: 768x512 Kodak image, 100 iterations, release mode*
 
-Our decoder is ~1.64-1.87x slower than libwebp (improved from 2.5x baseline). Recent optimizations:
+Our decoder is ~1.8x slower than libwebp (improved from 2.5x baseline). Recent optimizations:
+- **Inline coefficient tree** like libwebp's GetCoeffsFast (12% instruction reduction, commit ac47ba5)
 - **16-bit SIMD YUV conversion** ported from libwebp (18% instruction reduction, commit b7ac4b9)
 - **Row cache with extra rows** for loop filter cache locality (commit c16995f)
 - **SIMD normal loop filter for vertical edges** (~10% speedup, commit 3bf30f1)
 - **libwebp-rs style bit reader for coefficients** (16% speedup, commit 5588e44)
-- **Inlined read_tree/is_eof** (~7% additional speedup)
 - AVX2 loop filter (16 pixels at once) - simple filter only
 
-### Decoder Profiler Hot Spots (after 16-bit SIMD YUV)
+### Decoder Profiler Hot Spots (after inline coefficient tree)
 | Function | % Time | Notes |
 |----------|--------|-------|
-| read_coefficients | 49.73% | Coefficient decoding (dominates now) |
-| fancy_upsample_8_pairs | 10.71% | YUV SIMD (down from 15.95% scalar) |
-| decode_frame_ | 6.92% | Frame processing overhead |
-| ArithmeticDecoder | 5.33% | Mode parsing (still uses old decoder) |
-| add_residue | 4.24% | Prediction + residue |
-| idct4x4_avx2 | 3.59% | Already SIMD |
+| read_coefficients | 42.97% | Coefficient decoding (improved) |
+| fancy_upsample_8_pairs | 12.15% | YUV SIMD |
+| decode_frame_ | 7.85% | Frame processing overhead |
+| ArithmeticDecoder | 6.05% | Mode parsing (still uses old decoder) |
+| add_residue | 4.82% | Prediction + residue |
+| idct4x4_avx2 | 4.07% | Already SIMD |
 
 ### Cache/Branch Analysis (2026-01-22)
 Per-decode comparison with libwebp:
 | Metric | Ours | libwebp | Ratio |
 |--------|------|---------|-------|
-| Instructions | 27.77M | ~16M | 1.7x more |
+| Instructions | 24.47M | 16.18M | 1.51x more |
 | Branch misses | 3.81% | 8.15% | Better! |
 
-**Instruction count reduced from 33.85M to 27.77M (18% reduction) with new YUV SIMD.**
+**Instruction count reduced from 33.85M → 27.77M → 24.47M (28% total reduction).**
 
 ### SIMD Decoder Optimizations
 - `src/yuv_simd.rs` - SSE2 YUV→RGB (ported from libwebp, commit b7ac4b9)
