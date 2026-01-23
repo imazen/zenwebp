@@ -15,7 +15,7 @@
 
 use dssim_core::Dssim;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
-use image_webp::{ColorType, EncoderParams, WebPEncoder};
+use zenwebp::{ColorType, EncoderParams, WebPEncoder};
 use imgref::ImgVec;
 use rgb::RGBA;
 

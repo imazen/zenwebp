@@ -1,65 +1,65 @@
-# image-webp
+# zenwebp
 
-[![crates.io](https://img.shields.io/crates/v/image-webp.svg)](https://crates.io/crates/image-webp)
-[![Documentation](https://docs.rs/image-webp/badge.svg)](https://docs.rs/image-webp)
-[![Build Status](https://github.com/image-rs/image-webp/workflows/Rust%20CI/badge.svg)](https://github.com/image-rs/image-webp/actions)
+[![crates.io](https://img.shields.io/crates/v/zenwebp.svg)](https://crates.io/crates/zenwebp)
+[![Documentation](https://docs.rs/zenwebp/badge.svg)](https://docs.rs/zenwebp)
+[![Build Status](https://github.com/imazen/zenwebp/workflows/Rust%20CI/badge.svg)](https://github.com/imazen/zenwebp/actions)
 
-This crate is an independent implementation of the WebP image format, written so
-that the `image` crate can have a pure-Rust WebP backend for both encoding and
-decoding.
+High-performance WebP encoding and decoding in pure Rust, forked from `image-webp`.
 
 ## Current Status
 
 * **Decoder:** Supports all WebP format features including both lossless and
   lossy compression, alpha channel, and animation. Both the "simple" and
   "extended" formats are handled, and it exposes methods to extract ICC, EXIF,
-  and XMP chunks. Decoding speed is generally in the range of **70-100%** of the
-  speed of libwebp.
+  and XMP chunks. Decoding speed is approximately **70%** of libwebp.
 
-* **Encoder:** This crate only supports lossless encoding. The encoder
-  implementation is relatively basic which makes it very fast, but it doesn't
-  get as good compression ratios as libwebp can. Nonetheless, it often produces
-  smaller files than PNG, even when compared against the slowest/highest
-  compression options of PNG encoders.
+* **Encoder:** Supports both **lossy and lossless** encoding. The lossy encoder
+  includes RD-optimized mode selection, trellis quantization, and SIMD
+  acceleration. Encoding speed is approximately **40%** of libwebp with
+  comparable quality.
 
-## Future possibilities
+## Features
 
-* We continue to be interested in **optimizations** and **bug fixes** and hope
-  the bring the decoder closer to parity with libwebp.
+- Pure Rust implementation (no C dependencies)
+- SIMD acceleration via `archmage` (SSE2/SSE4.1/AVX2)
+- Lossy encoding with full mode search (I16, I4, UV modes)
+- Lossless encoding
+- Animation support (decode)
+- Alpha channel support
+- ICC, EXIF, XMP metadata extraction
 
-* Another potential area is **animation encoding**. Much of the groundwork is in
-  place for this, but it will require some additional work to implement.
+## Usage
 
-* We would like to add **lossy encoding** support, but this is a non-trivial
-  task and would require a lot of work. If you are interested in helping with
-  this, please get in touch!
+```rust
+use zenwebp::{WebPDecoder, WebPEncoder, EncoderParams};
 
-## Unsafe code
+// Decode
+let decoder = WebPDecoder::new(reader)?;
+let image = decoder.decode()?;
 
-Both this crate and all of its dependencies currently contain no unsafe code.
+// Encode lossy
+let encoder = WebPEncoder::new_with_params(writer, EncoderParams::lossy(75));
+encoder.encode(width, height, color_type, &data)?;
 
-NOTE: This isn't a guarantee that unsafe code will never be added. It may prove
-necessary in the future to improve performance, but we will always strive to
-minimize the use of unsafe code and ensure that it is well-tested and
-documented.
-
+// Encode lossless
+let encoder = WebPEncoder::new_with_params(writer, EncoderParams::lossless());
+encoder.encode(width, height, color_type, &data)?;
 ```
-$ cargo geiger
 
-Metric output format: x/y
-    x = unsafe code used by the build
-    y = total unsafe code found in the crate
+## Performance
 
-Symbols:
-    🔒  = No `unsafe` usage found, declares #![forbid(unsafe_code)]
-    ❓  = No `unsafe` usage found, missing #![forbid(unsafe_code)]
-    ☢️   = `unsafe` usage found
+Benchmarks on 768x512 Kodak image at Q75:
 
-Functions  Expressions  Impls  Traits  Methods  Dependency
+| Encoder | Time | Throughput |
+|---------|------|------------|
+| zenwebp | 66ms | 5.9 MPix/s |
+| libwebp | 25ms | 15.6 MPix/s |
 
-0/0        0/0          0/0    0/0     0/0      🔒 image-webp 0.2.3
-0/0        0/0          0/0    0/0     0/0      🔒 ├── byteorder-lite 0.1.0
-0/0        0/0          0/0    0/0     0/0      ❓ └── quick-error 2.0.1
+| Decoder | Time | Throughput |
+|---------|------|------------|
+| zenwebp | 4.2ms | 93 MPix/s |
+| libwebp | 3.0ms | 129 MPix/s |
 
-0/0        0/0          0/0    0/0     0/0
-```
+## License
+
+Licensed under either of Apache License, Version 2.0 or MIT license at your option.

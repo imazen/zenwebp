@@ -11,7 +11,7 @@
 //! Run with: cargo test --release --test edge_tile_ssim2_comparison -- --nocapture --ignored
 
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
-use image_webp::{ColorType, EncoderParams, WebPEncoder};
+use zenwebp::{ColorType, EncoderParams, WebPEncoder};
 use std::path::{Path, PathBuf};
 
 const KODAK_PATH: &str = concat!(env!("HOME"), "/work/codec-corpus/kodak");

@@ -1,4 +1,4 @@
-# image-webp CLAUDE.md
+# zenwebp CLAUDE.md
 
 See global ~/.claude/CLAUDE.md for general instructions.
 

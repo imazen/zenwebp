@@ -1,13 +1,13 @@
 [package]
-name = "image-webp"
-version = "0.3.0"
+name = "zenwebp"
+version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 rust-version = "1.88"
 
-description = "WebP encoding and decoding in pure Rust"
-homepage = "https://github.com/image-rs/image-webp"
-repository = "https://github.com/image-rs/image-webp"
+description = "High-performance WebP encoding and decoding in pure Rust"
+homepage = "https://github.com/imazen/zenwebp"
+repository = "https://github.com/imazen/zenwebp"
 categories = ["multimedia::images", "multimedia::encoding", "encoding"]
 
 include = ["/src", "LICENSE-APACHE", "LICENSE-MIT", "README.md"]

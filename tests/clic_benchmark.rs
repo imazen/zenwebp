@@ -5,7 +5,7 @@
 //! Run with: cargo test --release clic_benchmark -- --nocapture --ignored
 
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
-use image_webp::{ColorType, EncoderParams, WebPEncoder};
+use zenwebp::{ColorType, EncoderParams, WebPEncoder};
 use std::fs;
 use std::path::Path;
 use std::time::Instant;

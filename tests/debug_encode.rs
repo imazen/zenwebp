@@ -1,5 +1,5 @@
 //! Debug encoder output
-use image_webp::{ColorType, EncoderParams, WebPEncoder};
+use zenwebp::{ColorType, EncoderParams, WebPEncoder};
 use std::path::Path;
 
 #[test]

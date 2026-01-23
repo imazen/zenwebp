@@ -1,4 +1,4 @@
-use image_webp::{ColorType, EncoderParams, WebPEncoder};
+use zenwebp::{ColorType, EncoderParams, WebPEncoder};
 use std::path::Path;
 use std::time::Instant;
 
@@ -35,7 +35,7 @@ fn benchmark_decode(webp_data: &[u8], iterations: usize) {
 
     // Decode once to get dimensions and buffer size
     let cursor = std::io::Cursor::new(webp_data);
-    let decoder = image_webp::WebPDecoder::new(cursor).unwrap();
+    let decoder = zenwebp::WebPDecoder::new(cursor).unwrap();
     let (width, height) = decoder.dimensions();
     let output_size = decoder.output_buffer_size().unwrap();
     println!("Image: {}x{} ({} pixels)", width, height, width * height);
@@ -52,7 +52,7 @@ fn benchmark_decode(webp_data: &[u8], iterations: usize) {
         let start = Instant::now();
         for _ in 0..iterations {
             let cursor = std::io::Cursor::new(webp_data);
-            let mut decoder = image_webp::WebPDecoder::new(cursor).unwrap();
+            let mut decoder = zenwebp::WebPDecoder::new(cursor).unwrap();
             let mut output = vec![0u8; output_size];
             decoder.read_image(&mut output).unwrap();
         }
