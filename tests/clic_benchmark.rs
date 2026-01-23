@@ -5,10 +5,10 @@
 //! Run with: cargo test --release clic_benchmark -- --nocapture --ignored
 
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
-use zenwebp::{ColorType, EncoderParams, WebPEncoder};
 use std::fs;
 use std::path::Path;
 use std::time::Instant;
+use zenwebp::{ColorType, EncoderParams, WebPEncoder};
 
 const CLIC_DIR: &str = "/home/lilith/work/codec-corpus/clic2025/validation";
 

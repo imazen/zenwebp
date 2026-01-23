@@ -1,6 +1,6 @@
-use zenwebp::{ColorType, EncoderParams, WebPEncoder};
 use std::path::Path;
 use std::time::Instant;
+use zenwebp::{ColorType, EncoderParams, WebPEncoder};
 
 fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
     let file = std::fs::File::open(path).unwrap();
@@ -39,7 +39,10 @@ fn main() {
     println!("Loading: {}", path.display());
     let (rgb_data, width, height) = load_png(path);
     println!("Image: {}x{} ({} pixels)", width, height, width * height);
-    println!("Quality: {}, Method: {}, Iterations: {}", quality, method, iterations);
+    println!(
+        "Quality: {}, Method: {}, Iterations: {}",
+        quality, method, iterations
+    );
 
     // Warmup
     let mut output = Vec::new();

@@ -1295,7 +1295,7 @@ impl<W: Write> Vp8Encoder<W> {
     ) -> Result<(), EncodingError> {
         // Store method and configure features based on it
         self.method = method.min(6); // Clamp to 0-6
-        // Trellis quantization only for method >= 4 (like libwebp)
+                                     // Trellis quantization only for method >= 4 (like libwebp)
         self.do_trellis = self.method >= 4;
         let (y_bytes, u_bytes, v_bytes) = match color {
             ColorType::Rgb8 => convert_image_yuv::<3>(data, width, height),
@@ -2216,9 +2216,8 @@ impl<W: Write> Vp8Encoder<W> {
 
             // Skip I4 for very flat DC blocks (method 2-4)
             // For method 5-6, always try I4 for best quality
-            let should_try_i4 = self.method >= 5
-                || i16_score > skip_i4_threshold
-                || luma_mode != LumaMode::DC;
+            let should_try_i4 =
+                self.method >= 5 || i16_score > skip_i4_threshold || luma_mode != LumaMode::DC;
 
             if should_try_i4 {
                 match self.pick_best_intra4(mbx, mby, i16_score) {

@@ -1,6 +1,6 @@
-use zenwebp::{ColorType, EncoderParams, WebPEncoder};
 use std::path::Path;
 use std::time::Instant;
+use zenwebp::{ColorType, EncoderParams, WebPEncoder};
 
 fn load_webp(path: &Path) -> Vec<u8> {
     std::fs::read(path).expect("Failed to read WebP file")
@@ -58,8 +58,9 @@ fn benchmark_decode(webp_data: &[u8], iterations: usize) {
         }
         let elapsed = start.elapsed();
         our_ms = elapsed.as_secs_f64() * 1000.0 / iterations as f64;
-        let our_mpix =
-            (width as f64 * height as f64 * iterations as f64) / elapsed.as_secs_f64() / 1_000_000.0;
+        let our_mpix = (width as f64 * height as f64 * iterations as f64)
+            / elapsed.as_secs_f64()
+            / 1_000_000.0;
         println!("Per iteration: {:.2}ms", our_ms);
         println!("Throughput: {:.2} MPix/s", our_mpix);
     }
@@ -73,8 +74,9 @@ fn benchmark_decode(webp_data: &[u8], iterations: usize) {
         }
         let elapsed = start.elapsed();
         libwebp_ms = elapsed.as_secs_f64() * 1000.0 / iterations as f64;
-        let libwebp_mpix =
-            (width as f64 * height as f64 * iterations as f64) / elapsed.as_secs_f64() / 1_000_000.0;
+        let libwebp_mpix = (width as f64 * height as f64 * iterations as f64)
+            / elapsed.as_secs_f64()
+            / 1_000_000.0;
         println!("Per iteration: {:.2}ms", libwebp_ms);
         println!("Throughput: {:.2} MPix/s", libwebp_mpix);
     }
@@ -103,16 +105,27 @@ fn main() {
             let webp_data = load_webp(Path::new(path));
             benchmark_decode(&webp_data, iterations);
         } else if path.ends_with(".png") {
-            println!("=== Testing with PNG (encoding with libwebp): {} ===\n", path);
+            println!(
+                "=== Testing with PNG (encoding with libwebp): {} ===\n",
+                path
+            );
             let (rgb_data, width, height) = load_png(Path::new(path));
             let pixels = width * height;
-            println!("Source: {}x{} ({:.2} MPix)", width, height, pixels as f64 / 1_000_000.0);
+            println!(
+                "Source: {}x{} ({:.2} MPix)",
+                width,
+                height,
+                pixels as f64 / 1_000_000.0
+            );
             let webp_data = {
                 let encoder = webp::Encoder::from_rgb(&rgb_data, width, height);
                 encoder.encode(75.0).to_vec()
             };
-            println!("Encoded to {} bytes ({:.2} bpp)\n", webp_data.len(),
-                     webp_data.len() as f64 * 8.0 / pixels as f64);
+            println!(
+                "Encoded to {} bytes ({:.2} bpp)\n",
+                webp_data.len(),
+                webp_data.len() as f64 * 8.0 / pixels as f64
+            );
             benchmark_decode(&webp_data, iterations);
         } else {
             eprintln!("Unknown file type. Use .webp or .png");

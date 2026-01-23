@@ -10,7 +10,7 @@ use std::arch::x86_64::*;
 use std::arch::x86::*;
 
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-use archmage::{arcane, Has128BitSimd, Sse41Token, SimdToken};
+use archmage::{arcane, Has128BitSimd, SimdToken, Sse41Token};
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 use safe_unaligned_simd::x86_64 as simd_mem;
 
@@ -131,14 +131,21 @@ fn dct4x4_sse2(_token: impl Has128BitSimd + Copy, block: &mut [i32; 16]) {
     simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(), out_0);
     simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(), out_1);
     simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(), out_2);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(), out_3);
+    simd_mem::_mm_storeu_si128(
+        <&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(),
+        out_3,
+    );
 }
 
 /// FTransform Pass 1 - matches libwebp FTransformPass1_SSE2 exactly
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
 #[inline]
-fn ftransform_pass1_i16(_token: impl Has128BitSimd + Copy, in01: __m128i, in23: __m128i) -> (__m128i, __m128i) {
+fn ftransform_pass1_i16(
+    _token: impl Has128BitSimd + Copy,
+    in01: __m128i,
+    in23: __m128i,
+) -> (__m128i, __m128i) {
     // Constants matching libwebp exactly
     let k937 = _mm_set1_epi32(937);
     let k1812 = _mm_set1_epi32(1812);
@@ -199,7 +206,12 @@ fn ftransform_pass1_i16(_token: impl Has128BitSimd + Copy, in01: __m128i, in23: 
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
 #[inline]
-fn ftransform_pass2_i16(_token: impl Has128BitSimd + Copy, v01: &__m128i, v32: &__m128i, out: &mut [i16; 16]) {
+fn ftransform_pass2_i16(
+    _token: impl Has128BitSimd + Copy,
+    v01: &__m128i,
+    v32: &__m128i,
+    out: &mut [i16; 16],
+) {
     let zero = _mm_setzero_si128();
     let seven = _mm_set1_epi16(7);
     let k5352_2217 = _mm_set_epi16(5352, 2217, 5352, 2217, 5352, 2217, 5352, 2217);
@@ -249,7 +261,11 @@ fn ftransform_pass2_i16(_token: impl Has128BitSimd + Copy, v01: &__m128i, v32: &
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
 #[allow(dead_code)]
-fn dct4x4_two_sse2(_token: impl Has128BitSimd + Copy, block1: &mut [i32; 16], block2: &mut [i32; 16]) {
+fn dct4x4_two_sse2(
+    _token: impl Has128BitSimd + Copy,
+    block1: &mut [i32; 16],
+    block2: &mut [i32; 16],
+) {
     // Process both blocks using the single-block implementation
     // AVX2 can potentially do this more efficiently with 256-bit registers
     dct4x4_sse2(_token, block1);
@@ -429,7 +445,10 @@ fn idct4x4_sse2(_token: impl Has128BitSimd + Copy, block: &mut [i32]) {
     simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(), out_0);
     simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(), out_1);
     simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(), out_2);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(), out_3);
+    simd_mem::_mm_storeu_si128(
+        <&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(),
+        out_3,
+    );
 }
 
 /// ITransform vertical pass - matches libwebp

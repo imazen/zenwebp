@@ -5,8 +5,8 @@
 //! Uses SSIMULACRA2 for perceptual quality measurement (higher = better).
 
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
-use zenwebp::{ColorType, EncoderParams, WebPEncoder};
 use std::path::Path;
+use zenwebp::{ColorType, EncoderParams, WebPEncoder};
 
 const KODAK_PATH: &str = concat!(env!("HOME"), "/work/codec-corpus/kodak");
 
