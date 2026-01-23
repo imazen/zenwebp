@@ -242,6 +242,201 @@ impl<'a> VP8BitReader<'a> {
     }
 }
 
+/// VP8 Boolean Arithmetic Decoder for header/mode parsing.
+/// Owns its data buffer and uses VP8GetBitAlt algorithm.
+/// This replaces ArithmeticDecoder with a faster implementation.
+pub struct VP8HeaderBitReader {
+    /// Owned data buffer
+    data: Box<[u8]>,
+    /// Current position in data
+    pos: usize,
+    /// Current accumulated value
+    value: u64,
+    /// Current range minus 1. In [127, 254] interval.
+    range: u32,
+    /// Number of valid bits left
+    bits: i32,
+    /// True if input is exhausted
+    eof: bool,
+}
+
+impl VP8HeaderBitReader {
+    pub fn new() -> Self {
+        Self {
+            data: Box::new([]),
+            pos: 0,
+            value: 0,
+            range: 255 - 1,
+            bits: -8,
+            eof: false,
+        }
+    }
+
+    /// Initialize the reader with data
+    pub fn init(&mut self, data: Vec<u8>) -> Result<(), DecodingError> {
+        if data.is_empty() {
+            return Err(DecodingError::NotEnoughInitData);
+        }
+        self.data = data.into_boxed_slice();
+        self.pos = 0;
+        self.value = 0;
+        self.range = 255 - 1;
+        self.bits = -8;
+        self.eof = false;
+        self.load_new_bytes();
+        Ok(())
+    }
+
+    #[cold]
+    fn load_final_bytes(&mut self) {
+        if self.pos < self.data.len() {
+            self.bits += 8;
+            self.value = u64::from(self.data[self.pos]) | (self.value << 8);
+            self.pos += 1;
+        } else if !self.eof {
+            self.value <<= 8;
+            self.bits += 8;
+            self.eof = true;
+        } else {
+            self.bits = 0;
+        }
+    }
+
+    #[inline(always)]
+    fn load_new_bytes(&mut self) {
+        let remaining = self.data.len() - self.pos;
+        if remaining >= BYTES_PER_LOAD {
+            let bits: u64;
+
+            #[cfg(target_pointer_width = "64")]
+            {
+                if remaining >= 8 {
+                    let in_bits_full =
+                        u64::from_be_bytes(self.data[self.pos..self.pos + 8].try_into().unwrap());
+                    bits = in_bits_full >> 8;
+                } else {
+                    let mut in_bits: u64 = 0;
+                    for &byte in self.data[self.pos..].iter().take(7) {
+                        in_bits = (in_bits << 8) | u64::from(byte);
+                    }
+                    bits = in_bits;
+                }
+            }
+
+            #[cfg(not(target_pointer_width = "64"))]
+            {
+                let mut in_bits: u64 = 0;
+                for i in 0..3 {
+                    in_bits = (in_bits << 8) | u64::from(self.data[self.pos + i]);
+                }
+                bits = in_bits;
+            }
+
+            self.value = bits | (self.value << BITS);
+            self.bits += BITS;
+            self.pos += BYTES_PER_LOAD;
+        } else {
+            self.load_final_bytes();
+        }
+    }
+
+    /// Read a bit with given probability (0-255).
+    #[inline(always)]
+    pub fn read_bool(&mut self, prob: u8) -> bool {
+        let mut range = self.range;
+        if self.bits < 0 {
+            self.load_new_bytes();
+        }
+
+        let pos = self.bits;
+        let split = (range.wrapping_mul(u32::from(prob))) >> 8;
+        let value = (self.value >> pos) as u32;
+        let bit = value > split;
+
+        if bit {
+            range -= split;
+            self.value = self.value.wrapping_sub((u64::from(split) + 1) << pos);
+        } else {
+            range = split + 1;
+        }
+
+        let shift = 7 ^ (31 ^ range.leading_zeros() as i32);
+        range <<= shift;
+        self.bits -= shift;
+        self.range = range.wrapping_sub(1);
+
+        bit
+    }
+
+    /// Read a bit with probability 128 (50/50).
+    #[inline(always)]
+    pub fn read_flag(&mut self) -> bool {
+        self.read_bool(128)
+    }
+
+    /// Read n bits as an unsigned value (MSB first)
+    #[inline(always)]
+    pub fn read_literal(&mut self, n: u8) -> u8 {
+        let mut v = 0u8;
+        for _ in 0..n {
+            v = (v << 1) | (self.read_flag() as u8);
+        }
+        v
+    }
+
+    /// Read optional signed value (flag + magnitude + sign)
+    #[inline]
+    pub fn read_optional_signed_value(&mut self, n: u8) -> i32 {
+        if !self.read_flag() {
+            return 0;
+        }
+        let magnitude = self.read_literal(n) as i32;
+        if self.read_flag() {
+            -magnitude
+        } else {
+            magnitude
+        }
+    }
+
+    /// Read from a probability tree
+    #[inline]
+    pub fn read_with_tree<const N: usize>(&mut self, tree: &[crate::vp8::TreeNode; N]) -> i8 {
+        let mut node = tree[0];
+        loop {
+            let prob = node.prob;
+            let b = self.read_bool(prob);
+            let i = if b { node.right } else { node.left };
+            let Some(next_node) = tree.get(usize::from(i)) else {
+                return crate::vp8::TreeNode::value_from_branch(i);
+            };
+            node = *next_node;
+        }
+    }
+
+    /// Check if we've read past the end
+    #[inline]
+    #[allow(dead_code)]
+    pub fn is_eof(&self) -> bool {
+        self.eof
+    }
+
+    /// Check that reads were valid, returning an error if EOF was hit
+    #[inline]
+    pub fn check<T>(&self, value: T) -> Result<T, DecodingError> {
+        if self.eof {
+            Err(DecodingError::BitStreamError)
+        } else {
+            Ok(value)
+        }
+    }
+}
+
+impl Default for VP8HeaderBitReader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// State for a single partition reader (can be saved/restored)
 #[derive(Clone, Copy, Default)]
 pub struct VP8BitReaderState {

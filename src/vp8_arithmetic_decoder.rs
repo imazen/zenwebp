@@ -27,15 +27,19 @@ const VP8_SHIFT_TABLE: [u8; 128] = [
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
 ];
 
+/// These types are now only used for testing ArithmeticDecoder.
+#[allow(dead_code)]
 #[must_use]
 #[repr(transparent)]
 pub(crate) struct BitResult<T> {
     value_if_not_past_eof: T,
 }
 
+#[allow(dead_code)]
 #[must_use]
 pub(crate) struct BitResultAccumulator;
 
+#[allow(dead_code)]
 impl<T> BitResult<T> {
     const fn ok(value: T) -> Self {
         Self {
@@ -60,6 +64,9 @@ impl<T: Default> BitResult<T> {
     }
 }
 
+/// ArithmeticDecoder is now only used for testing and verification.
+/// The production code uses VP8HeaderBitReader which is faster.
+#[allow(dead_code)]
 #[cfg_attr(test, derive(Debug))]
 pub(crate) struct ArithmeticDecoder {
     chunks: Box<[[u8; 4]]>,
@@ -84,6 +91,7 @@ struct FastDecoder<'a> {
     save_state: &'a mut State,
 }
 
+#[allow(dead_code)]
 impl ArithmeticDecoder {
     pub(crate) fn new() -> ArithmeticDecoder {
         let state = State {
