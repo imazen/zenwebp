@@ -210,36 +210,31 @@ for y in 0usize..16 {
 
 #### Problems Identified
 
-1. **Byte-by-byte copy** - Rust iterators instead of memcpy
-   - Should use `copy_from_slice()` for 16-byte chunks
+1. **No row cache** - We write directly to final buffers (MAIN ISSUE)
+   - When filtering top edge of MB(x, y), we need data from row y-1
+   - By then, we've processed 48 macroblocks (full row) since touching row y-1
+   - With ~1KB touched per MB, that's 48KB of intervening data
+   - Exceeds L1 cache (32KB), causing eviction and cache misses
 
-2. **Loop filter on scattered data** - Our loop filter accesses memory with full image width stride
-   - For 768px image: each row access jumps 768 bytes
-   - 16 rows = 12KB spread, thrashes L1 cache (32KB)
-   - libwebp's cache_y keeps 16 rows × mb_w macroblocks contiguous
+2. **libwebp's clever "extra rows" solution**:
+   - `cache_y - extra_rows` to `cache_y`: holds last N rows from PREVIOUS mb row
+   - After each row: `memcpy(cache_y - ysize, bottom_of_current_row, ysize)`
+   - Filter reads from extra_rows area (still hot) + current row (hot)
+   - Only keeps what's needed: 2 rows for simple filter, 8 for normal filter
 
-3. **No row cache** - We write directly to final buffers
-   - libwebp batches output per row of macroblocks
-   - Better locality for loop filtering and YUV→RGB conversion
+3. ~~Byte-by-byte copy~~ Fixed with `copy_from_slice()` (~1-2% gain)
 
 #### Potential Solutions
 
-1. **Quick fix**: Replace byte-by-byte copy with `copy_from_slice()`
-   ```rust
-   for y in 0..16 {
-       let dst_start = (mby * 16 + y) * mw * 16 + mbx * 16;
-       let src_start = (1 + y) * stride + 1;
-       self.frame.ybuf[dst_start..][..16].copy_from_slice(&ws[src_start..][..16]);
-   }
-   ```
+1. ~~**Quick fix**: `copy_from_slice()`~~ Done, ~1-2% gain
 
-2. **Medium fix**: Add row cache like libwebp
-   - Allocate cache_y: 16 * mb_w * num_caches bytes
-   - Decode/copy to cache, loop filter on cache, output at row end
-   - Requires refactoring macroblock processing
-
-3. **Architectural change**: Process row-at-a-time like libwebp
-   - Would require significant refactoring but gives best cache behavior
+2. **Row cache with extra rows** (HIGH IMPACT):
+   - Allocate: `cache_y` = `mb_w * 16` bytes (one row of macroblocks)
+   - Plus `extra_rows * mb_w` bytes before cache_y for filter context
+   - After each MB row: copy bottom N rows to extra area
+   - Filter reads from extra area (previous row) + current cache (current row)
+   - Both are small, hot in L1 cache
+   - `extra_rows` = 2 for simple filter, 8 for normal filter (from kFilterExtraRows)
 
 ## User Feedback Log
 
