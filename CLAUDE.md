@@ -86,9 +86,11 @@ The 2.8x slowdown is pure instruction count, not memory access patterns.
 
 The crate supports `no_std` environments with the `alloc` crate:
 - `cargo build --no-default-features` for no_std
-- Error types (`DecodingError`, `EncodingError`) always available
-- Stream-based APIs (`WebPDecoder`, `WebPEncoder`, etc.) require `std` feature
-- Dependencies: `thiserror` (no_std), `whereat` (no_std), `hashbrown` (no_std HashMap)
+- Both decoder and encoder work with no_std+alloc
+- Decoder uses `&[u8]` slices instead of `Read` trait
+- Encoder uses `Vec<u8>` instead of `Write` trait
+- `Encoder.encode_to_writer()` requires `std` feature
+- Dependencies: `thiserror` (no_std), `whereat` (no_std), `hashbrown` (no_std), `libm` (floating-point math)
 
 ### Decoder Performance vs libwebp (2026-01-23)
 
