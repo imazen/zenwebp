@@ -45,44 +45,44 @@ See global ~/.claude/CLAUDE.md for general instructions.
 
 | Test | Our Decoder | libwebp | Speed Ratio |
 |------|-------------|---------|-------------|
-| libwebp-encoded | 5.85ms (67 MPix/s) | 3.0ms (130 MPix/s) | 1.93x slower |
-| our-encoded | 5.74ms (68 MPix/s) | 2.99ms (131 MPix/s) | 1.92x slower |
+| libwebp-encoded | 5.76ms (68 MPix/s) | 3.08ms (128 MPix/s) | 1.87x slower |
+| our-encoded | 5.58ms (70 MPix/s) | 3.40ms (116 MPix/s) | 1.64x slower |
 
 *Benchmark: 768x512 Kodak image, 100 iterations, release mode*
 
-Our decoder is ~1.92x slower than libwebp (improved from 2.5x baseline). Recent optimizations:
+Our decoder is ~1.64-1.87x slower than libwebp (improved from 2.5x baseline). Recent optimizations:
+- **16-bit SIMD YUV conversion** ported from libwebp (18% instruction reduction, commit b7ac4b9)
 - **Row cache with extra rows** for loop filter cache locality (commit c16995f)
 - **SIMD normal loop filter for vertical edges** (~10% speedup, commit 3bf30f1)
 - **libwebp-rs style bit reader for coefficients** (16% speedup, commit 5588e44)
 - **Inlined read_tree/is_eof** (~7% additional speedup)
-- SIMD fancy upsampling for YUV→RGB conversion
 - AVX2 loop filter (16 pixels at once) - simple filter only
 
-### Decoder Profiler Hot Spots (after libwebp-rs bit reader)
+### Decoder Profiler Hot Spots (after 16-bit SIMD YUV)
 | Function | % Time | Notes |
 |----------|--------|-------|
-| read_coefficients | 18.85% | Coefficient decoding (down from 24%) |
-| idct4x4_avx512 | 6.05% | Already SIMD |
-| should_filter_vertical | 5.56% | Loop filter threshold check |
-| decode_frame_ | 5.20% | Frame processing overhead |
-| Loop filter total | ~12% | Multiple functions |
+| read_coefficients | 49.73% | Coefficient decoding (dominates now) |
+| fancy_upsample_8_pairs | 10.71% | YUV SIMD (down from 15.95% scalar) |
+| decode_frame_ | 6.92% | Frame processing overhead |
+| ArithmeticDecoder | 5.33% | Mode parsing (still uses old decoder) |
+| add_residue | 4.24% | Prediction + residue |
+| idct4x4_avx2 | 3.59% | Already SIMD |
 
 ### Cache/Branch Analysis (2026-01-22)
 Per-decode comparison with libwebp:
 | Metric | Ours | libwebp | Ratio |
 |--------|------|---------|-------|
-| Instructions | 449M | 99M | 4.5x more |
+| Instructions | 27.77M | ~16M | 1.7x more |
 | Branch misses | 3.81% | 8.15% | Better! |
-| Cache misses | 14.57% | 5.01% | **3x worse rate** |
-| L1 misses | 4.65M | 256K | **18x more** |
 
-**Main bottleneck is cache efficiency, not branch prediction.**
+**Instruction count reduced from 33.85M to 27.77M (18% reduction) with new YUV SIMD.**
 
 ### SIMD Decoder Optimizations
-- `src/yuv_simd.rs` - SSE4.1 YUV→RGB with fancy upsampling
-  - **Integrated** for both Simple and Fancy (bilinear) upsampling modes
-  - Uses `_mm_avg_epu8` for efficient bilinear interpolation
-  - Feature-gated: `unsafe-simd` feature + x86_64 + SSE4.1 detected
+- `src/yuv_simd.rs` - SSE2 YUV→RGB (ported from libwebp, commit b7ac4b9)
+  - **16-bit arithmetic** using `_mm_mulhi_epu16` (8 values at once vs 4)
+  - **SIMD RGB interleaving** via `planar_to_24b` (6 stores vs 48)
+  - Processes 32 pixels at a time (simple) or 16 (fancy upsampling)
+  - `unsafe-simd` feature now enabled by default
 - `src/loop_filter_avx2.rs` - SSE4.1 loop filter (16 pixels at once)
   - **Vertical normal filter SIMD integrated** for luma (DoFilter4/DoFilter6)
   - Uses transpose technique for horizontal filtering (simple filter only)
