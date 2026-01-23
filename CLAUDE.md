@@ -70,11 +70,30 @@ Our decoder is ~1.6-1.7x slower than libwebp (improved from 2.5x baseline). Rece
 | ArithmeticDecoder | 2.63% | Mode parsing |
 | idct4x4_avx2 | 1.69% | Already SIMD |
 
-### Instruction Breakdown (callgrind)
-| Metric | Previous | Current | Change |
-|--------|----------|---------|--------|
-| Total (200 decodes) | 25.87B | 24.80B | -4% |
-| Loop filter horizontal | 8.4% | 5.7% | -2.7pp |
+### Detailed Callgrind/Cachegrind Analysis (2026-01-23)
+
+**Per-decode instruction count (isolated runs):**
+| Metric | Ours | libwebp | Ratio |
+|--------|------|---------|-------|
+| Instructions | 85.4M | 46.6M | **1.83x** |
+| Memory reads | 12.9M | 6.7M | 1.92x |
+| Memory writes | 10.2M | 4.9M | 2.09x |
+| D1 read miss % | 0.33% | 0.70% | Better! |
+
+**Instruction breakdown comparison:**
+| Category | Ours | libwebp | Extra per decode |
+|----------|------|---------|------------------|
+| Coeff reading | 25.5M (30%) | 20.5M (44%) | +5M |
+| Loop filter total | ~20M (23%) | ~4M (8%) | **+16M** |
+| YUV conversion | ~6M (8%) | ~4M (9%) | +2M |
+| memset zeroing | 2.5M (3%) | ~0 | **+2.5M** |
+| ArithmeticDecoder (modes) | 3.3M (4%) | 0 | +3.3M |
+
+**Root causes of the 1.83x instruction gap:**
+1. **Loop filter scalar overhead** - `should_filter_vertical` called per-pixel (6%), chroma uses full scalar path
+2. **Buffer zeroing** - memset for coefficient blocks costs 2.5M/decode
+3. **Mode parsing** - ArithmeticDecoder still used (3.3M/decode) vs libwebp's inline bit reader
+4. **Coefficient reading** - 24% more instructions than libwebp despite similar algorithm
 
 Loop filter now uses SIMD for:
 - Simple filter: both V and H edges (luma)
@@ -96,12 +115,29 @@ Loop filter now uses SIMD for:
   - `leading_zeros()` for normalization (single LZCNT instruction)
   - **16% speedup** in overall decode (commit 5588e44)
 
-### TODO
-- [x] ~~Replace byte-by-byte copy with `copy_from_slice()` (~1-2% gain)~~
+### TODO - Remaining Optimization Opportunities
+Priority ordered by instruction savings potential:
+
+1. **Loop filter SIMD for chroma** (~8M savings) - 8 rows needs different approach than 16-row luma
+   - `should_filter_vertical` called per-pixel is 6% of time
+   - Chroma uses full scalar path (macroblock_filter_horizontal at 4.1%)
+
+2. **Eliminate buffer zeroing** (~2.5M savings) - memset for coefficient blocks
+   - Consider using uninitialized memory or lazy zeroing
+   - `MaybeUninit` for coefficient blocks?
+
+3. **Replace ArithmeticDecoder for mode parsing** (~3.3M savings)
+   - Use libwebp-style bit reader for `self.b` field
+   - Only coefficient reading uses fast path currently
+
+4. **Reduce coefficient reading overhead** (~5M savings)
+   - Still 24% more instructions than libwebp despite similar algorithm
+   - May be Rust abstraction overhead or bounds checking
+
+Completed:
 - [x] ~~Row cache with extra rows for loop filter cache locality~~ (commit c16995f)
 - [x] ~~Add SIMD horizontal normal filter~~ (commit fc4c33f)
-- [ ] Add SIMD loop filter for chroma (8 rows - need different approach)
-- [ ] Consider using libwebp-rs bit reader for mode parsing too (self.b field)
+- [x] ~~Inline coefficient tree like GetCoeffsFast~~ (commit ac47ba5)
 - [ ] Consider SIMD for choose_macroblock_info inner loops (encoder)
 - [ ] Profile get_residual_cost for optimization opportunities
 
