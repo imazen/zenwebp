@@ -45,15 +45,15 @@ See global ~/.claude/CLAUDE.md for general instructions.
 
 | Test | Our Decoder | libwebp | Speed Ratio |
 |------|-------------|---------|-------------|
-| libwebp-encoded | 6.2ms (63 MPix/s) | 3.0ms (132 MPix/s) | 2.1x slower |
-| our-encoded | 6.1ms (65 MPix/s) | 2.8ms (138 MPix/s) | 2.1x slower |
+| libwebp-encoded | 5.8ms (67 MPix/s) | 3.0ms (130 MPix/s) | 1.95x slower |
+| our-encoded | 5.5ms (70 MPix/s) | 2.8ms (137 MPix/s) | 1.95x slower |
 
 *Benchmark: 768x512 Kodak image, 100 iterations, release mode*
 
-Our decoder is ~2.1x slower than libwebp (improved from 2.5x baseline). Recent optimizations:
+Our decoder is ~1.95x slower than libwebp (improved from 2.5x baseline). Recent optimizations:
+- **SIMD normal loop filter for vertical edges** (~10% speedup, commit 3bf30f1)
 - **libwebp-rs style bit reader for coefficients** (16% speedup, commit 5588e44)
 - **Inlined read_tree/is_eof** (~7% additional speedup)
-- **Hardcoded tree walking for coefficient decoding** (working, ~same perf as inlined)
 - SIMD fancy upsampling for YUV→RGB conversion
 - AVX2 loop filter (16 pixels at once) - simple filter only
 
@@ -83,15 +83,16 @@ Per-decode comparison with libwebp:
   - Uses `_mm_avg_epu8` for efficient bilinear interpolation
   - Feature-gated: `unsafe-simd` feature + x86_64 + SSE4.1 detected
 - `src/loop_filter_avx2.rs` - SSE4.1 loop filter (16 pixels at once)
-  - Uses transpose technique for horizontal filtering
-  - Integrated for simple filter path, not yet for normal filter
+  - **Vertical normal filter SIMD integrated** for luma (DoFilter4/DoFilter6)
+  - Uses transpose technique for horizontal filtering (simple filter only)
+  - Horizontal normal filter still TODO
 - `src/vp8_bit_reader.rs` - libwebp-rs style bit reader for coefficients
   - Uses VP8GetBitAlt algorithm with 56-bit buffer
   - `leading_zeros()` for normalization (single LZCNT instruction)
   - **16% speedup** in overall decode (commit 5588e44)
 
 ### TODO
-- [ ] Integrate SIMD normal/macroblock filter (DoFilter4/DoFilter6) - ~12% opportunity
+- [ ] Add SIMD horizontal normal filter (transpose technique like simple filter)
 - [ ] Consider using libwebp-rs bit reader for mode parsing too (self.b field)
 - [ ] Consider SIMD for choose_macroblock_info inner loops (encoder)
 - [ ] Profile get_residual_cost for optimization opportunities
