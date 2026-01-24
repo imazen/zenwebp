@@ -32,23 +32,29 @@ fn main() {
         .unwrap_or(concat!(env!("HOME"), "/work/codec-corpus/kodak/1.png"));
     let quality: f32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(75.0);
     let iterations: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(10);
+    let method: i32 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(4);
 
     let path = Path::new(image_path);
     println!("Loading: {}", path.display());
     let (rgb_data, width, height) = load_png(path);
     println!("Image: {}x{} ({} pixels)", width, height, width * height);
-    println!("Quality: {}, Iterations: {}", quality, iterations);
+    println!("Quality: {}, Method: {}, Iterations: {}", quality, method, iterations);
+
+    // Create config with method setting
+    let mut config = webp::WebPConfig::new().unwrap();
+    config.quality = quality;
+    config.method = method;
 
     // Warmup
     let encoder = webp::Encoder::from_rgb(&rgb_data, width, height);
-    let output = encoder.encode(quality);
+    let output = encoder.encode_advanced(&config).unwrap();
     println!("Output size: {} bytes", output.len());
 
     // Timed iterations
     let start = Instant::now();
     for _ in 0..iterations {
         let encoder = webp::Encoder::from_rgb(&rgb_data, width, height);
-        let _output = encoder.encode(quality);
+        let _output = encoder.encode_advanced(&config).unwrap();
     }
     let elapsed = start.elapsed();
 
@@ -56,7 +62,7 @@ fn main() {
     let mpix_per_sec =
         (width as f64 * height as f64 * iterations as f64) / elapsed.as_secs_f64() / 1_000_000.0;
 
-    println!("\n=== Results (libwebp) ===");
+    println!("\n=== Results (libwebp, method {}) ===", method);
     println!(
         "Total time: {:.2}ms for {} iterations",
         elapsed.as_secs_f64() * 1000.0,

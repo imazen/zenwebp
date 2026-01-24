@@ -40,37 +40,42 @@ See global ~/.claude/CLAUDE.md for general instructions.
 
 ### Detailed Encoder Callgrind Analysis (2026-01-23)
 
-**Instruction counts (768x512 Kodak, Q75, method 4):**
-| Encoder | Instructions | Ratio |
-|---------|--------------|-------|
-| Ours | 2,350M | 2.88x more |
-| libwebp | 817M | baseline |
+**IMPORTANT: Trellis comparison clarification**
+- libwebp enables trellis only for method >= 5
+- Our method 4 uses trellis, making it comparable to libwebp's method 6
+- Previous "7.8x slower" comparison was invalid (our trellis vs their non-trellis)
+
+**Corrected comparison (our method 4 vs libwebp method 6, both with trellis):**
+| Encoder | Instructions | Time | File Size |
+|---------|--------------|------|-----------|
+| Ours (method 4) | 2,307M | 65ms | 78KB |
+| libwebp (method 6) | 2,065M | 75ms | 73KB |
+
+We're **faster** than libwebp with trellis (65ms vs 75ms), but produce larger files.
+
+**Non-trellis comparison (our method 2 vs libwebp method 4):**
+| Encoder | Instructions | Time | File Size |
+|---------|--------------|------|-----------|
+| Ours (method 2) | ~1,400M | 56ms | 87KB |
+| libwebp (method 4) | 817M | ~30ms | 77KB |
+| Ratio | 1.7x | 1.9x slower | 1.13x larger |
 
 **Cache behavior (D1 miss rate):**
 - Ours: 0.1% (better than libwebp)
 - libwebp: 0.3%
 
-The 2.8x slowdown is pure instruction count, not memory access patterns.
-
-**Hotspot comparison (millions of instructions):**
+**Hotspot comparison (non-trellis, millions of instructions):**
 | Our Function | Ours | libwebp Equivalent | libwebp | Ratio |
 |--------------|------|-------------------|---------|-------|
-| choose_macroblock_info | 1,468M (62%) | VP8Decimate + PickBest* | 580M | 2.5x |
-| get_residual_cost | 349M (15%) | GetResidualCost_SSE2 | 135M | 2.6x |
-| encode_coefficients | 304M (13%) | VP8EmitTokens | 57M | 5.3x |
-| trellis_quantize_block | 304M (13%) | QuantizeBlock_SSE2 | 39M | **7.8x** |
-| get_cost_luma16 | 182M (8%) | VP8GetCostLuma16 | 47M | 3.9x |
-| get_cost_luma4 | 181M (8%) | VP8GetCostLuma4 | 115M | 1.6x |
-| tdisto_16x16 | 154M (7%) | Disto4x4_SSE2 | 52M | 3.0x |
-| idct4x4 | 138M (6%) | ITransform_SSE2 | 64M | 2.2x |
-| dct4x4 | 119M (5%) | FTransform_SSE2 | 41M | 2.9x |
-| write_with_tree | 121M (5%) | VP8PutBit | 44M | 2.8x |
+| get_residual_cost | 306M | GetResidualCost_SSE2 | 126M | 2.4x |
+| idct4x4 | 150M | ITransform_SSE2 | 64M | 2.3x |
+| t_transform_sse2 | 134M | Disto4x4_SSE2 | 52M | 2.6x |
+| dct4x4 | 79M | FTransform_SSE2 | 41M | 1.9x |
 
-**Biggest optimization opportunities (potential instruction savings):**
-1. **trellis_quantize_block** - 7.8x slower, ~265M potential savings
-2. **encode_coefficients** - 5.3x slower, ~247M potential savings
-3. **get_residual_cost** - 2.6x slower, ~214M potential savings (libwebp uses SIMD)
-4. **get_cost_luma16** - 3.9x slower, ~135M potential savings
+**Remaining optimization opportunities:**
+1. **get_residual_cost** - 2.4x slower, SIMD loop improvements possible
+2. **encode_coefficients** - Token emission overhead
+3. **get_cost_luma16** - Mode cost estimation
 
 **libwebp SIMD functions we lack:**
 - `GetResidualCost_SSE2` - residual cost with SIMD

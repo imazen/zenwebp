@@ -738,7 +738,6 @@ fn rd_score_trellis(lambda: u32, rate: i64, distortion: i64) -> i64 {
 
 /// Compute level cost using stored cost table (like libwebp's VP8LevelCost).
 /// cost = VP8LevelFixedCosts[level] + table[min(level, MAX_VARIABLE_LEVEL)] + sign_bit
-/// VP8LevelFixedCosts contains only magnitude encoding costs, sign bit is separate.
 #[inline]
 fn level_cost_with_table(costs: Option<&LevelCostArray>, level: i32) -> u32 {
     let abs_level = level.unsigned_abs() as usize;
@@ -747,7 +746,19 @@ fn level_cost_with_table(costs: Option<&LevelCostArray>, level: i32) -> u32 {
         Some(table) => table[abs_level.min(MAX_VARIABLE_LEVEL)] as u32,
         None => 0,
     };
-    fixed + variable + if abs_level > 0 { 256 } else { 0 } // Sign bit for non-zero levels
+    // Sign bit costs 1 bit (256 in 1/256 bit units) for non-zero levels
+    fixed + variable + if abs_level > 0 { 256 } else { 0 }
+}
+
+/// Fast inline level cost for trellis inner loop.
+/// Assumes: level >= 0, level <= MAX_LEVEL, costs is valid.
+#[inline(always)]
+fn level_cost_fast(costs: &LevelCostArray, level: usize) -> u32 {
+    let fixed = VP8_LEVEL_FIXED_COSTS[level] as u32;
+    let variable = costs[level.min(MAX_VARIABLE_LEVEL)] as u32;
+    // Sign bit costs 1 bit (256 in 1/256 bit units) for non-zero levels
+    let sign_cost = if level > 0 { 256 } else { 0 };
+    fixed + variable + sign_cost
 }
 
 /// Trellis-optimized quantization for a 4x4 block.
@@ -891,20 +902,34 @@ pub fn trellis_quantize_block(
             let base_score = rd_score_trellis(lambda, 0, delta_distortion);
 
             // Find best predecessor using stored cost tables
-            let mut best_cur_score = MAX_COST;
-            let mut best_prev = 0i8;
+            // Unrolled loop for NUM_NODES=2 with fast level cost
+            let level_usize = level as usize;
+            let (best_cur_score, best_prev) = {
+                let ss_prev = &score_states[ss_prev_idx];
 
-            for p in 0..NUM_NODES {
-                // Use predecessor's stored cost table
-                let cost = level_cost_with_table(score_states[ss_prev_idx][p].costs, level) as i64;
-                let score = score_states[ss_prev_idx][p].score + rd_score_trellis(lambda, cost, 0);
-                if score < best_cur_score {
-                    best_cur_score = score;
-                    best_prev = p as i8;
+                // Predecessor 0
+                let cost0 = if let Some(costs) = ss_prev[0].costs {
+                    level_cost_fast(costs, level_usize) as i64
+                } else {
+                    VP8_LEVEL_FIXED_COSTS[level_usize] as i64
+                };
+                let score0 = ss_prev[0].score + cost0 * lambda as i64;
+
+                // Predecessor 1
+                let cost1 = if let Some(costs) = ss_prev[1].costs {
+                    level_cost_fast(costs, level_usize) as i64
+                } else {
+                    VP8_LEVEL_FIXED_COSTS[level_usize] as i64
+                };
+                let score1 = ss_prev[1].score + cost1 * lambda as i64;
+
+                // Select best
+                if score1 < score0 {
+                    (score1 + base_score, 1i8)
+                } else {
+                    (score0 + base_score, 0i8)
                 }
-            }
-
-            best_cur_score += base_score;
+            };
 
             // Store in node
             node.sign = sign;
