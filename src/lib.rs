@@ -109,8 +109,10 @@ mod encoder;
 mod fast_math;
 mod vec_writer;
 mod vp8_arithmetic_encoder;
+mod vp8_analysis;
 mod vp8_cost;
 mod vp8_encoder;
+mod vp8_tables;
 
 // Shared modules (for encoder and decoder)
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
