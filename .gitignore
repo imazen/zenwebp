@@ -1,4 +1,6 @@
 /target
 /Cargo.lock
 tests/out/
-compare_output/perf.data*
+compare_output/
+*.out
+*.rlib
