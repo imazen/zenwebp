@@ -3,7 +3,7 @@ name = "zenwebp"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-rust-version = "1.88"
+rust-version = "1.92"
 
 description = "High-performance WebP encoding and decoding in pure Rust"
 homepage = "https://github.com/imazen/zenwebp"
@@ -23,7 +23,7 @@ png = { version = "0.17.12", optional = true }
 webp = { version = "0.3.0", optional = true }
 multiversed = { version = "0.1.0", optional = true }
 multiversion = { version = "0.8.0", optional = true }
-archmage = { path = "../archmage", optional = true }
+archmage = { version = "0.2.1", optional = true }
 safe_unaligned_simd = { version = "0.2", optional = true }
 
 [dev-dependencies]
@@ -45,9 +45,12 @@ std = ["thiserror/std", "whereat/std", "byteorder-lite/std"]
 fast-yuv = ["dep:yuv"]
 # Enable SIMD intrinsics via archmage (safe API with token-based feature verification).
 # Provides best performance on x86-64 with runtime CPU detection.
+# On wasm32, uses core::arch::wasm32 SIMD128 intrinsics.
 simd = ["dep:multiversed", "dep:multiversion", "dep:archmage", "dep:safe_unaligned_simd"]
 _benchmarks = []
 _profiling = ["dep:png", "dep:webp"]
+# WASM profiling - minimal deps for wasm32 benchmarking
+_wasm_profiling = ["std"]
 
 [[bin]]
 name = "profile_encode"
@@ -63,3 +66,8 @@ required-features = ["_profiling"]
 name = "profile_decode"
 path = "benches/profile_decode.rs"
 required-features = ["_profiling"]
+
+[[bin]]
+name = "profile_wasm"
+path = "benches/profile_wasm.rs"
+required-features = ["_wasm_profiling"]
