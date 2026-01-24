@@ -22,6 +22,14 @@ pub use super::analysis::*;
 // Import pub(crate) items that aren't re-exported
 use super::tables::{LEVELS_FROM_DELTA, MAX_DELTA_SIZE};
 
+// SIMD imports for GetResidualCost optimization
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+use archmage::{arcane, Has128BitSimd, SimdToken, X64V3Token};
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+use core::arch::x86_64::*;
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+use safe_unaligned_simd::x86_64 as simd_mem;
+
 /// Distortion multiplier - scales distortion to match bit cost units
 pub const RD_DISTO_MULT: u32 = 256;
 
@@ -1423,6 +1431,9 @@ impl<'a> Residual<'a> {
 /// Calculate the cost of encoding a residual block using probability-based costs.
 /// Ported from libwebp's GetResidualCost_C.
 ///
+/// On x86_64 with SIMD feature, uses SSE2 for precomputing absolute values and contexts.
+/// Falls back to scalar implementation on other platforms.
+///
 /// # Arguments
 /// * `ctx0` - Initial context (0, 1, or 2)
 /// * `res` - Residual coefficients
@@ -1431,7 +1442,38 @@ impl<'a> Residual<'a> {
 ///
 /// # Returns
 /// Cost in 1/256 bit units
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[multiversed::multiversed("x86-64-v4", "x86-64-v3", "x86-64-v2")]
 pub fn get_residual_cost(
+    ctx0: usize,
+    res: &Residual,
+    costs: &LevelCosts,
+    probs: &TokenProbTables,
+) -> u32 {
+    if let Some(token) = X64V3Token::summon() {
+        get_residual_cost_sse2(token, ctx0, res, costs, probs)
+    } else {
+        get_residual_cost_scalar(ctx0, res, costs, probs)
+    }
+}
+
+/// Calculate the cost of encoding a residual block using probability-based costs.
+/// Scalar fallback for non-SIMD platforms.
+#[cfg(not(all(target_arch = "x86_64", feature = "simd")))]
+#[inline]
+pub fn get_residual_cost(
+    ctx0: usize,
+    res: &Residual,
+    costs: &LevelCosts,
+    probs: &TokenProbTables,
+) -> u32 {
+    get_residual_cost_scalar(ctx0, res, costs, probs)
+}
+
+/// Scalar implementation of residual cost calculation.
+/// Ported from libwebp's GetResidualCost_C.
+#[inline]
+fn get_residual_cost_scalar(
     ctx0: usize,
     res: &Residual,
     costs: &LevelCosts,
@@ -1490,6 +1532,169 @@ pub fn get_residual_cost(
     }
 
     cost
+}
+
+/// SSE2 implementation of residual cost calculation.
+/// Precomputes abs values, contexts, and clamped levels with SIMD.
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[arcane]
+fn get_residual_cost_sse2(
+    _token: impl Has128BitSimd + Copy,
+    ctx0: usize,
+    res: &Residual,
+    costs: &LevelCosts,
+    probs: &TokenProbTables,
+) -> u32 {
+    // Storage for precomputed values
+    let mut ctxs: [u8; 16] = [0; 16];
+    let mut levels: [u8; 16] = [0; 16];
+    let mut abs_levels: [u16; 16] = [0; 16];
+
+    let ctype = res.coeff_type;
+    let mut n = res.first;
+
+    // Get probability p0 for the first coefficient
+    let band = VP8_ENC_BANDS[n] as usize;
+    let p0 = probs[ctype][band][ctx0][0];
+
+    // Current context - starts at ctx0
+    let mut ctx = ctx0;
+
+    // bit_cost(1, p0) is already incorporated in the cost tables, but only if ctx != 0.
+    let mut cost = if ctx0 == 0 {
+        vp8_bit_cost(true, p0) as u32
+    } else {
+        0
+    };
+
+    // If no non-zero coefficients, just return EOB cost
+    if res.last < 0 {
+        return vp8_bit_cost(false, p0) as u32;
+    }
+
+    // Precompute clamped levels and contexts using SIMD
+    // libwebp uses i16 coefficients, but ours are i32. Pack them to i16.
+    {
+        let zero = _mm_setzero_si128();
+        let k_cst2 = _mm_set1_epi8(2);
+        let k_cst67 = _mm_set1_epi8(MAX_VARIABLE_LEVEL as i8);
+
+        // Load coefficients as i32 and pack to i16
+        let c0_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&res.coeffs[0..4]).unwrap());
+        let c1_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&res.coeffs[4..8]).unwrap());
+        let c2_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&res.coeffs[8..12]).unwrap());
+        let c3_32 =
+            simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&res.coeffs[12..16]).unwrap());
+
+        // Pack i32 to i16 (signed saturation)
+        let c0 = _mm_packs_epi32(c0_32, c1_32); // 8 x i16
+        let c1 = _mm_packs_epi32(c2_32, c3_32); // 8 x i16
+
+        // Compute absolute values: abs(v) = max(v, -v)
+        let d0 = _mm_sub_epi16(zero, c0);
+        let d1 = _mm_sub_epi16(zero, c1);
+        let e0 = _mm_max_epi16(c0, d0); // abs, 16-bit
+        let e1 = _mm_max_epi16(c1, d1);
+
+        // Pack to i8 for context and level clamping
+        let f = _mm_packs_epi16(e0, e1); // 16 x i8 abs values
+
+        // Context: min(abs, 2)
+        let g = _mm_min_epu8(f, k_cst2);
+
+        // Clamped level: min(abs, 67) for cost table lookup
+        let h = _mm_min_epu8(f, k_cst67);
+
+        // Store results
+        simd_mem::_mm_storeu_si128(&mut ctxs, g);
+        simd_mem::_mm_storeu_si128(&mut levels, h);
+
+        // Store 16-bit absolute values for fixed cost lookup
+        simd_mem::_mm_storeu_si128(
+            <&mut [u16; 8]>::try_from(&mut abs_levels[0..8]).unwrap(),
+            e0,
+        );
+        simd_mem::_mm_storeu_si128(
+            <&mut [u16; 8]>::try_from(&mut abs_levels[8..16]).unwrap(),
+            e1,
+        );
+    }
+
+    // Process coefficients from first to last-1 using precomputed values
+    while (n as i32) < res.last {
+        let level = levels[n] as usize;
+        let flevel = abs_levels[n] as usize; // full level for fixed cost
+
+        // Cost = fixed cost + variable cost from table
+        let fixed = VP8_LEVEL_FIXED_COSTS[flevel.min(MAX_LEVEL)] as u32;
+        let band_idx = VP8_ENC_BANDS[n] as usize;
+        let variable = costs.level_cost[ctype][band_idx][ctx][level] as u32;
+        cost += fixed + variable;
+
+        // Update context for next position
+        ctx = ctxs[n] as usize;
+        n += 1;
+    }
+
+    // Last coefficient is always non-zero
+    {
+        let level = levels[n] as usize;
+        let flevel = abs_levels[n] as usize;
+        debug_assert!(flevel != 0, "Last coefficient should be non-zero");
+
+        // Add cost using current context
+        let fixed = VP8_LEVEL_FIXED_COSTS[flevel.min(MAX_LEVEL)] as u32;
+        let band_idx = VP8_ENC_BANDS[n] as usize;
+        let variable = costs.level_cost[ctype][band_idx][ctx][level] as u32;
+        cost += fixed + variable;
+
+        // Add EOB cost for the position after the last coefficient
+        if n < 15 {
+            let next_band = VP8_ENC_BANDS[n + 1] as usize;
+            let next_ctx = ctxs[n] as usize;
+            let last_p0 = probs[ctype][next_band][next_ctx][0];
+            cost += vp8_bit_cost(false, last_p0) as u32;
+        }
+    }
+
+    cost
+}
+
+/// Find last non-zero coefficient using SIMD.
+/// Ported from libwebp's SetResidualCoeffs_SSE2.
+///
+/// Returns -1 if all coefficients are zero.
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[arcane]
+#[allow(dead_code)]
+fn find_last_nonzero_simd(_token: impl Has128BitSimd + Copy, coeffs: &[i32; 16]) -> i32 {
+    let zero = _mm_setzero_si128();
+
+    // Load coefficients as i32 and pack to i16
+    let c0_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
+    let c1_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
+    let c2_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
+    let c3_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+
+    // Pack i32 to i16 (signed saturation)
+    let c0 = _mm_packs_epi32(c0_32, c1_32); // 8 x i16
+    let c1 = _mm_packs_epi32(c2_32, c3_32); // 8 x i16
+
+    // Pack i16 to i8
+    let m0 = _mm_packs_epi16(c0, c1); // 16 x i8
+
+    // Compare with zero
+    let m1 = _mm_cmpeq_epi8(m0, zero);
+
+    // Get bitmask: bit is 1 if equal to zero
+    let mask = 0x0000ffff_u32 ^ (_mm_movemask_epi8(m1) as u32);
+
+    // Find position of most significant non-zero bit
+    if mask == 0 {
+        -1
+    } else {
+        (31 - mask.leading_zeros()) as i32
+    }
 }
 
 /// Calculate the cost of encoding a 4x4 luma block (I4 mode).
