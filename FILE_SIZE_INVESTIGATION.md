@@ -174,12 +174,51 @@ but is less efficient at high quality settings.
 - `src/enc/frame_enc.c` - Probability updates
 - `src/dsp/cost.c` - Fixed cost tables
 
+## Numerical Reverse Engineering (2026-01-24)
+
+### Verified Components (All Match libwebp)
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Lambda formulas | ✅ Match | λ_i4, λ_i16, λ_mode, λ_trellis all verified |
+| Quantization tables | ✅ Match | DC_QUANT, AC_QUANT, AC_QUANT2 (×1.55) |
+| Trellis weights | ✅ Match | VP8_WEIGHT_TRELLIS (USE_TDISTO=1) |
+| Bias values | ✅ Match | Y1:(96,110), Y2:(96,108), UV:(110,115) |
+| RD score formula | ✅ Match | rate×λ + RD_DISTO_MULT×(D+SD) |
+| q_i16 calculation | ✅ Match | (y2_dc + 15×y2_ac + 8) >> 4 |
+
+### Quality Crossover Analysis
+
+The SSIM2/filesize crossover at Q75 is unexpected given all parameters match.
+
+**At Q90 (high quality):**
+- File size: 1.7% smaller than libwebp
+- SSIM2: 0.82 worse than libwebp
+- Interpretation: We're over-quantizing (trading quality for size)
+
+**Possible root causes (not yet verified):**
+1. Mode selection threshold differences
+2. Coefficient cost estimation bias
+3. Trellis node exploration differences
+4. Probability table update timing
+
+### Key Quantization Values
+
+| Q | q_idx | y_dc | y_ac | λ_i4 | λ_i16 | λ_mode |
+|---|-------|------|------|------|-------|--------|
+| 75 | 59 | 54 | 68 | 81 | 10,443 | 27 |
+| 90 | 28 | 25 | 32 | 18 | 2,352 | 6 |
+| 95 | 15 | 17 | 19 | 5 | 675 | 1 |
+
+At high quality (low λ), distortion dominates the RD score.
+Our "smaller files, worse quality" pattern suggests rate bias.
+
 ## Next Steps
 
-1. **Compare probability update thresholds** - Read libwebp's `FinalizeTokenProbas` and compare with our `should_update`
-2. **Compare mode selection RD scores** - Log and compare I16 vs I4 scores for specific macroblocks
-3. **Verify coefficient encoding** - Dump actual encoded coefficients and compare bitstreams
-4. **Profile trellis decisions** - Compare level choices made by trellis optimization
+1. **Trace mode selection** - Log I4 vs I16 score comparisons to see if threshold differs
+2. **Compare coefficient counts** - Count non-zeros to identify quantization differences
+3. **Dump probability tables** - Compare token probabilities at Q90
+4. **Profile trellis paths** - Log level choices to identify divergence
 
 ## Appendix: TokenType Usage Sites
 
