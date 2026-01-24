@@ -34,9 +34,22 @@ See global ~/.claude/CLAUDE.md for general instructions.
 | IDCT | 6.53% | Inverse transform (SIMD) |
 | t_transform | 3.24% | Spectral distortion (SIMD) |
 
-### Quality vs libwebp
-- File sizes: 1.17-1.41x of libwebp (down from 2.5x before I4)
+### Quality vs libwebp (2026-01-24)
+- File sizes: 1.045x-1.135x of libwebp (down from 1.17-1.41x before TokenType fix)
 - PSNR gap: ~1.35 dB behind at equal BPP
+
+**File size comparison (kodak/1.png Q75):**
+| Encoder | File Size | vs libwebp |
+|---------|-----------|------------|
+| libwebp method 6 | 73KB | 1.00x |
+| zenwebp method 4 | 76.5KB | 1.045x |
+
+**TokenType fix (2026-01-24):**
+The TokenType enum had I16DC and I16AC values swapped compared to libwebp:
+- libwebp: TYPE_I16_AC=0, TYPE_I16_DC=1
+- ours (was): I16DC=0, I16AC=1 (wrong!)
+This caused incorrect probability tables for Y1 AC and Y2 DC coefficients.
+Fix reduced file sizes by ~2%.
 
 ### Detailed Encoder Callgrind Analysis (2026-01-23)
 
@@ -213,6 +226,28 @@ Completed:
 (none currently)
 
 ## Investigation Notes
+
+### TokenType Fix and File Size Investigation (2026-01-24)
+
+**Root cause found:** The TokenType enum had swapped values for I16AC and I16DC.
+This caused coefficient cost estimation and trellis quantization to use incorrect
+probability tables, leading to suboptimal coefficient level choices.
+
+**After fix:** File sizes reduced from 1.07-1.17x to 1.045-1.135x of libwebp.
+
+**Remaining 4.5% gap investigation:**
+- Lambda calculations: Match libwebp exactly
+- VP8_LEVEL_FIXED_COSTS table: Matches libwebp exactly
+- VP8_FREQ_SHARPENING table: Matches libwebp exactly
+- VP8_WEIGHT_TRELLIS table: Matches libwebp exactly
+- RD score formula: Matches libwebp exactly
+- Trellis distortion calculation: Matches libwebp
+
+**Potential remaining causes:**
+1. Mode selection heuristics (I16 vs I4 decision thresholds)
+2. Probability update threshold differences
+3. Two-pass encoding implementation differences
+4. Coefficient encoding order differences
 
 ### VP8BitReader Success (2026-01-22)
 
