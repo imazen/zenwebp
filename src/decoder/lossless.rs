@@ -8,8 +8,8 @@ use core::mem;
 
 use crate::slice_reader::SliceReader;
 
-use crate::decoder::DecodingError;
-use crate::lossless_transform::{
+use super::api::DecodingError;
+use super::lossless_transform::{
     apply_color_indexing_transform, apply_color_transform, apply_predictor_transform,
     apply_subtract_green_transform,
 };

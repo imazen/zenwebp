@@ -755,7 +755,7 @@ pub(crate) const AC_QUANT: [i16; 128] = [
 
 pub(crate) const ZIGZAG: [u8; 16] = [0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15];
 
-use crate::vp8_cost::{MatrixType, VP8Matrix};
+use crate::encoder::cost::{MatrixType, VP8Matrix};
 
 #[derive(Clone, Default)]
 pub(crate) struct Segment {

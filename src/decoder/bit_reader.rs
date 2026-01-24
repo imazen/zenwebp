@@ -10,7 +10,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use crate::decoder::DecodingError;
+use super::api::DecodingError;
 
 /// BITS can be any multiple of 8 from 8 to 56 (inclusive).
 #[cfg(target_pointer_width = "64")]
@@ -672,7 +672,7 @@ impl Drop for PartitionReader<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vp8_arithmetic_decoder::ArithmeticDecoder;
+    use crate::decoder::arithmetic::ArithmeticDecoder;
 
     #[test]
     fn test_basic_reading() {
@@ -781,7 +781,7 @@ mod tests {
 #[cfg(all(test, feature = "_benchmarks"))]
 mod benchmarks {
     use super::*;
-    use crate::vp8_arithmetic_decoder::ArithmeticDecoder;
+    use crate::decoder::arithmetic::ArithmeticDecoder;
     use test::Bencher;
 
     fn make_test_data(size: usize) -> Vec<u8> {

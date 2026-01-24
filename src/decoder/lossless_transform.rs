@@ -2,7 +2,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Range;
 
-use crate::decoder::DecodingError;
+use super::api::DecodingError;
 
 use super::lossless::subsample_size;
 

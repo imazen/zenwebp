@@ -2,29 +2,29 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
 
-use crate::vec_writer::VecWriter;
+use super::vec_writer::VecWriter;
 
-use crate::transform;
-use crate::vp8_arithmetic_encoder::ArithmeticEncoder;
-use crate::vp8_common::Frame;
-use crate::vp8_common::*;
-use crate::vp8_cost::{
-    self, analyze_image, assign_segments_kmeans, compute_segment_quant, estimate_dc16_cost,
+use crate::common::transform;
+use super::arithmetic::ArithmeticEncoder;
+use crate::common::types::Frame;
+use crate::common::types::*;
+use super::cost::{
+    analyze_image, assign_segments_kmeans, compute_segment_quant, estimate_dc16_cost,
     estimate_residual_cost, get_cost_luma4, record_coeffs, trellis_quantize_block, LevelCosts,
     ProbaStats, TokenType, FIXED_COSTS_I16, FIXED_COSTS_UV,
 };
 // Intra4 imports for coefficient-level cost estimation (used in pick_best_intra4)
-use crate::vp8_cost::get_i4_mode_cost;
+use super::cost::get_i4_mode_cost;
 // Full RD imports for spectral distortion and flat source detection
-use crate::vp8_cost::{
+use super::cost::{
     get_cost_luma16, get_cost_uv, is_flat_coeffs, is_flat_source_16, tdisto_16x16,
     FLATNESS_LIMIT_I16, FLATNESS_LIMIT_UV, FLATNESS_PENALTY, RD_DISTO_MULT, VP8_WEIGHT_Y,
 };
-use crate::vp8_prediction::*;
-use crate::yuv::convert_image_y;
-use crate::yuv::convert_image_yuv;
-use crate::ColorType;
-use crate::EncodingError;
+use crate::common::prediction::*;
+use crate::decoder::yuv::convert_image_y;
+use crate::decoder::yuv::convert_image_yuv;
+use super::api::ColorType;
+use super::api::EncodingError;
 
 //------------------------------------------------------------------------------
 // Quality to quantization index mapping
@@ -43,14 +43,14 @@ fn quality_to_compression(quality: u8) -> f64 {
         2.0 * c - 1.0
     };
     // File size roughly scales as pow(quantizer, 3), so we use inverse
-    crate::fast_math::cbrt(linear_c)
+    super::fast_math::cbrt(linear_c)
 }
 
 /// Convert user-facing quality (0-100) to internal quant index (0-127)
 /// Ported from libwebp's VP8SetSegmentParams().
 fn quality_to_quant_index(quality: u8) -> u8 {
     let c = quality_to_compression(quality);
-    let q = crate::fast_math::round(127.0 * (1.0 - c)) as i32;
+    let q = super::fast_math::round(127.0 * (1.0 - c)) as i32;
     q.clamp(0, 127) as u8
 }
 
@@ -72,7 +72,7 @@ fn sse_16x16_luma(
 ) -> u32 {
     #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
     {
-        crate::simd_sse::sse_16x16_luma(src_y, src_width, mbx, mby, pred)
+        crate::common::simd_sse::sse_16x16_luma(src_y, src_width, mbx, mby, pred)
     }
     #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
     {
@@ -103,7 +103,7 @@ fn sse_8x8_chroma(
 ) -> u32 {
     #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
     {
-        crate::simd_sse::sse_8x8_chroma(src_uv, src_width, mbx, mby, pred)
+        crate::common::simd_sse::sse_8x8_chroma(src_uv, src_width, mbx, mby, pred)
     }
     #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
     {
@@ -574,7 +574,7 @@ impl<'a> Vp8Encoder<'a> {
         u_blocks: &mut [i32; 16 * 4],
         v_blocks: &mut [i32; 16 * 4],
         mbx: usize,
-        uv_matrix: &vp8_cost::VP8Matrix,
+        uv_matrix: &super::cost::VP8Matrix,
     ) {
         // Diffusion constants from libwebp
         const C1: i32 = 7; // fraction from top
@@ -801,7 +801,7 @@ impl<'a> Vp8Encoder<'a> {
         partition_index: usize,
         plane: Plane,
         complexity: usize,
-        matrix: &vp8_cost::VP8Matrix,
+        matrix: &super::cost::VP8Matrix,
         trellis_lambda: Option<u32>,
     ) -> bool {
         // transform block
@@ -1953,7 +1953,7 @@ impl<'a> Vp8Encoder<'a> {
 
                     // Compute SSE between source and reconstructed using SIMD
                     #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
-                    let sse = crate::simd_sse::sse4x4_with_residual(&src_block, pred, &dequantized);
+                    let sse = crate::common::simd_sse::sse4x4_with_residual(&src_block, pred, &dequantized);
                     #[cfg(not(all(
                         feature = "simd",
                         any(target_arch = "x86_64", target_arch = "x86")
@@ -1972,7 +1972,7 @@ impl<'a> Vp8Encoder<'a> {
                     // Compute RD score: distortion + lambda * (mode_cost + coeff_cost)
                     let mode_cost = get_i4_mode_cost(top_ctx, left_ctx, mode_idx);
                     let total_rate = u32::from(mode_cost) + coeff_cost;
-                    let rd_score = vp8_cost::rd_score(sse, total_rate as u16, lambda_i4);
+                    let rd_score = super::cost::rd_score(sse, total_rate as u16, lambda_i4);
 
                     if rd_score < best_block_score {
                         best_block_score = rd_score;
@@ -1998,7 +1998,7 @@ impl<'a> Vp8Encoder<'a> {
                 // Recalculate the block score with lambda_mode for accumulation
                 // (matching libwebp's SetRDScore(lambda_mode, &rd_i4) before AddScore)
                 let block_score_for_comparison =
-                    vp8_cost::rd_score(best_sse, best_rate as u16, lambda_mode);
+                    super::cost::rd_score(best_sse, best_rate as u16, lambda_mode);
 
                 // Add this block's score to running total
                 running_score += block_score_for_comparison;
@@ -2412,7 +2412,7 @@ impl<'a> Vp8Encoder<'a> {
         // Use sharpness=0 (no sharpening reduction) and default filter_strength=50
         let sharpness: u8 = 0;
         let filter_strength: u8 = 50;
-        let filter_level = vp8_cost::compute_filter_level(quant_index, sharpness, filter_strength);
+        let filter_level = super::cost::compute_filter_level(quant_index, sharpness, filter_strength);
 
         self.frame = Frame {
             width,
@@ -2567,7 +2567,7 @@ impl<'a> Vp8Encoder<'a> {
 
                 // ftransform2 outputs i16, convert to i32
                 let mut out16 = [0i16; 32];
-                crate::transform_simd_intrinsics::ftransform2_from_u8(
+                crate::common::transform_simd_intrinsics::ftransform2_from_u8(
                     &self.frame.ybuf[src_start..],
                     &predicted_y_block[pred_start..],
                     src_stride,

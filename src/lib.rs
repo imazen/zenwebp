@@ -78,60 +78,22 @@ extern crate alloc;
 #[cfg(all(test, feature = "_benchmarks"))]
 extern crate test;
 
-// Decoder exports - now available in no_std via slice-based API
-pub use self::decoder::{
+// Core modules
+pub mod common;
+pub mod decoder;
+pub mod encoder;
+
+// Slice reader utility (used by decoder)
+mod slice_reader;
+
+// Re-export decoder public API
+pub use decoder::{
     decode_rgb, decode_rgb_into, decode_rgba, decode_rgba_into, DecodingError, ImageInfo,
     LoopCount, UpsamplingMethod, WebPDecodeOptions, WebPDecoder,
 };
 
-// Encoder exports (error type always available for compatibility)
-pub use self::encoder::EncodingError;
+// Re-export encoder public API
+pub use encoder::{ColorType, Encoder, EncoderConfig, EncoderParams, EncodingError, Preset, WebPEncoder};
 
-// Encoder exports - now work with alloc (no std required)
-pub use self::encoder::{ColorType, Encoder, EncoderConfig, EncoderParams, Preset, WebPEncoder};
-
-// Slice reader for no_std support
-mod slice_reader;
-
-// Decoder support modules
-mod alpha_blending;
-mod decoder;
-mod extended;
-mod huffman;
-mod loop_filter;
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
-mod loop_filter_avx2;
-mod vp8_loop_filter_dispatch;
-mod lossless;
-mod lossless_transform;
-
-// Encoder modules - now work with alloc (no std required)
-mod encoder;
-mod fast_math;
-mod vec_writer;
-mod vp8_arithmetic_encoder;
-mod vp8_analysis;
-mod vp8_cost;
-mod vp8_encoder;
-mod vp8_tables;
-
-// Shared modules (for encoder and decoder)
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
-mod simd_sse;
-mod transform;
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
-mod transform_aarch64;
-#[cfg(feature = "simd")]
-mod transform_simd_intrinsics;
-#[cfg(all(feature = "simd", target_arch = "wasm32"))]
-mod transform_wasm;
-mod vp8_arithmetic_decoder;
-mod vp8_bit_reader;
-mod vp8_common;
-mod vp8_prediction;
-mod yuv;
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
-mod yuv_simd;
-
-// Public VP8 module (decoder)
-pub mod vp8;
+// Re-export VP8 decoder (public module)
+pub use decoder::vp8;

@@ -26,8 +26,8 @@ use core::iter::Peekable;
 use core::slice::ChunksExact;
 use thiserror::Error;
 
-use crate::vec_writer::VecWriter;
-use crate::vp8_encoder::encode_frame_lossy;
+use super::vec_writer::VecWriter;
+use super::vp8::encode_frame_lossy;
 
 /// Error that can occur during encoding.
 #[derive(Debug, Error)]
@@ -634,7 +634,7 @@ impl EncoderConfig {
         EncoderParams {
             use_predictor_transform: true,
             use_lossy: !self.lossless,
-            lossy_quality: crate::fast_math::roundf(self.quality) as u8,
+            lossy_quality: super::fast_math::roundf(self.quality) as u8,
             method: self.method,
         }
     }

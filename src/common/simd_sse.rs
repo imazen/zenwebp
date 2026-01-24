@@ -179,7 +179,7 @@ fn sse4x4_with_residual_sse2(
     _mm_cvtsi128_si32(sum) as u32
 }
 
-use crate::vp8_prediction::{CHROMA_BLOCK_SIZE, CHROMA_STRIDE, LUMA_BLOCK_SIZE, LUMA_STRIDE};
+use super::prediction::{CHROMA_BLOCK_SIZE, CHROMA_STRIDE, LUMA_BLOCK_SIZE, LUMA_STRIDE};
 
 /// Compute SSE for a 16x16 luma block between source and bordered prediction buffer
 ///

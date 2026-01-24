@@ -1,0 +1,29 @@
+//! WebP decoder implementation
+
+mod alpha_blending;
+mod api;
+pub(crate) mod arithmetic;
+mod bit_reader;
+mod extended;
+mod huffman;
+mod loop_filter;
+mod lossless;
+mod lossless_transform;
+pub(crate) mod yuv;
+
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+mod loop_filter_avx2;
+
+mod loop_filter_dispatch;
+
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+mod yuv_simd;
+
+// Public VP8 decoder module
+pub mod vp8;
+
+// Re-export public API
+pub use api::{
+    decode_rgb, decode_rgb_into, decode_rgba, decode_rgba_into, DecodingError, ImageInfo,
+    LoopCount, UpsamplingMethod, WebPDecodeOptions, WebPDecoder,
+};

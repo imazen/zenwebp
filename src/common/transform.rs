@@ -19,11 +19,11 @@ pub(crate) fn idct4x4_dc(block: &mut [i32; 16]) {
 pub(crate) fn idct4x4(block: &mut [i32]) {
     #[cfg(feature = "simd")]
     {
-        crate::transform_simd_intrinsics::idct4x4_intrinsics(block);
+        super::transform_simd_intrinsics::idct4x4_intrinsics(block);
     }
     #[cfg(all(feature = "simd", not(feature = "simd")))]
     {
-        crate::transform_simd::idct4x4_simd(block);
+        super::transform_simd::idct4x4_simd(block);
     }
     #[cfg(not(any(feature = "simd", feature = "simd")))]
     {
@@ -159,11 +159,11 @@ pub(crate) fn wht4x4(block: &mut [i32; 16]) {
 pub(crate) fn dct4x4(block: &mut [i32; 16]) {
     #[cfg(feature = "simd")]
     {
-        crate::transform_simd_intrinsics::dct4x4_intrinsics(block);
+        super::transform_simd_intrinsics::dct4x4_intrinsics(block);
     }
     #[cfg(all(feature = "simd", not(feature = "simd")))]
     {
-        crate::transform_simd::dct4x4_simd(block);
+        super::transform_simd::dct4x4_simd(block);
     }
     #[cfg(not(any(feature = "simd", feature = "simd")))]
     {

@@ -15,12 +15,12 @@
 // Many loops in this file match libwebp's C patterns for clarity when comparing
 #![allow(clippy::needless_range_loop)]
 
-// Re-export tables from vp8_tables for backward compatibility
-pub use crate::vp8_tables::*;
+// Re-export tables from tables for backward compatibility
+pub use super::tables::*;
 // Re-export analysis module for backward compatibility
-pub use crate::vp8_analysis::*;
+pub use super::analysis::*;
 // Import pub(crate) items that aren't re-exported
-use crate::vp8_tables::{LEVELS_FROM_DELTA, MAX_DELTA_SIZE};
+use super::tables::{LEVELS_FROM_DELTA, MAX_DELTA_SIZE};
 
 /// Distortion multiplier - scales distortion to match bit cost units
 pub const RD_DISTO_MULT: u32 = 256;
@@ -51,7 +51,7 @@ pub fn vp8_bit_cost(bit: bool, prob: u8) -> u16 {
 fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
     {
-        crate::simd_sse::t_transform(input, stride, w)
+        crate::common::simd_sse::t_transform(input, stride, w)
     }
     #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
     {
@@ -520,9 +520,12 @@ impl VP8Matrix {
 /// Matrix type for bias selection
 #[derive(Clone, Copy, Debug)]
 pub enum MatrixType {
-    Y1, // Luma AC
-    Y2, // Luma DC (WHT)
-    UV, // Chroma
+    /// Luma AC coefficients
+    Y1,
+    /// Luma DC (WHT) coefficients
+    Y2,
+    /// Chroma coefficients
+    UV,
 }
 
 //------------------------------------------------------------------------------
@@ -1202,7 +1205,7 @@ pub fn record_coeffs(
 // VP8CalculateLevelCosts precomputes cost tables indexed by [type][band][ctx][level].
 // Then remapped_costs provides direct access by coefficient position: [type][n][ctx].
 
-use crate::vp8_common::TokenProbTables;
+use crate::common::types::TokenProbTables;
 
 /// Type alias for level cost array: cost for each level 0..=MAX_VARIABLE_LEVEL
 pub type LevelCostArray = [u16; MAX_VARIABLE_LEVEL + 1];
@@ -1843,7 +1846,7 @@ mod tests {
 
         // Create level costs for test
         let mut level_costs = LevelCosts::new();
-        level_costs.calculate(&crate::vp8_common::COEFF_PROBS);
+        level_costs.calculate(&crate::common::types::COEFF_PROBS);
 
         let trellis_nz = trellis_quantize_block(
             &mut coeffs,
@@ -1890,7 +1893,7 @@ mod tests {
         let lambda = ((7 * 30 * 30) >> 3) as u32;
 
         let mut level_costs = LevelCosts::new();
-        level_costs.calculate(&crate::vp8_common::COEFF_PROBS);
+        level_costs.calculate(&crate::common::types::COEFF_PROBS);
 
         let _ = trellis_quantize_block(
             &mut coeffs,
@@ -1952,7 +1955,7 @@ mod tests {
         let lambda = 787u32;
 
         let mut level_costs = LevelCosts::new();
-        level_costs.calculate(&crate::vp8_common::COEFF_PROBS);
+        level_costs.calculate(&crate::common::types::COEFF_PROBS);
 
         let _ = trellis_quantize_block(
             &mut coeffs,
@@ -1997,7 +2000,7 @@ mod tests {
         eprintln!("Lambda: {}", lambda);
 
         let mut level_costs = LevelCosts::new();
-        level_costs.calculate(&crate::vp8_common::COEFF_PROBS);
+        level_costs.calculate(&crate::common::types::COEFF_PROBS);
 
         for (i, block) in blocks.iter().enumerate() {
             let mut coeffs = *block;
@@ -2051,7 +2054,7 @@ mod tests {
     /// Run with: cargo test --release test_trellis_diagnostic -- --nocapture
     #[test]
     fn test_trellis_diagnostic() {
-        use crate::vp8_common::COEFF_PROBS;
+        use crate::common::types::COEFF_PROBS;
 
         let matrix = VP8Matrix::new(27, 30, MatrixType::Y1);
         let mut level_costs = LevelCosts::new();
@@ -2196,7 +2199,7 @@ mod tests {
     /// Run with: cargo test --release test_trellis_vs_libwebp -- --nocapture
     #[test]
     fn test_trellis_vs_libwebp() {
-        use crate::vp8_common::COEFF_PROBS;
+        use crate::common::types::COEFF_PROBS;
 
         // From libwebp debug log:
         // === BLOCK 0: type=3 ctx0=0 lambda=840 first=0 ===

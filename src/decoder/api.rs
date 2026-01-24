@@ -133,10 +133,10 @@ use core::ops::Range;
 
 use hashbrown::HashMap;
 
-use crate::extended::{self, get_alpha_predictor, read_alpha_chunk, WebPExtendedInfo};
-use crate::lossless::LosslessDecoder;
+use super::extended::{self, get_alpha_predictor, read_alpha_chunk, WebPExtendedInfo};
+use super::lossless::LosslessDecoder;
 use crate::slice_reader::SliceReader;
-use crate::vp8::Vp8Decoder;
+use super::vp8::Vp8Decoder;
 
 /// All possible RIFF chunks in a WebP image file
 #[allow(clippy::upper_case_acronyms)]

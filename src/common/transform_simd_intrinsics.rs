@@ -26,7 +26,7 @@ pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
         if let Some(token) = Sse41Token::summon() {
             dct4x4_sse2(token, block);
         } else {
-            crate::transform::dct4x4_scalar(block);
+            crate::common::transform::dct4x4_scalar(block);
         }
     }
     #[cfg(target_arch = "wasm32")]
@@ -34,9 +34,9 @@ pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
         use archmage::{Simd128Token, SimdToken};
         // WASM SIMD128 is always available when compiled with +simd128
         if let Some(token) = Simd128Token::try_new() {
-            crate::transform_wasm::dct4x4_wasm(token, block);
+            super::transform_wasm::dct4x4_wasm(token, block);
         } else {
-            crate::transform::dct4x4_scalar(block);
+            crate::common::transform::dct4x4_scalar(block);
         }
     }
     #[cfg(target_arch = "aarch64")]
@@ -44,9 +44,9 @@ pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
         use archmage::{NeonToken, SimdToken};
         // NEON is always available on AArch64
         if let Some(token) = NeonToken::try_new() {
-            crate::transform_aarch64::dct4x4_neon(token, block);
+            super::transform_aarch64::dct4x4_neon(token, block);
         } else {
-            crate::transform::dct4x4_scalar(block);
+            crate::common::transform::dct4x4_scalar(block);
         }
     }
     #[cfg(not(any(
@@ -56,7 +56,7 @@ pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
         target_arch = "aarch64"
     )))]
     {
-        crate::transform::dct4x4_scalar(block);
+        crate::common::transform::dct4x4_scalar(block);
     }
 }
 
@@ -70,25 +70,25 @@ pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
         if let Some(token) = Sse41Token::summon() {
             idct4x4_sse2(token, block);
         } else {
-            crate::transform::idct4x4_scalar(block);
+            crate::common::transform::idct4x4_scalar(block);
         }
     }
     #[cfg(target_arch = "wasm32")]
     {
         use archmage::{Simd128Token, SimdToken};
         if let Some(token) = Simd128Token::try_new() {
-            crate::transform_wasm::idct4x4_wasm(token, block);
+            super::transform_wasm::idct4x4_wasm(token, block);
         } else {
-            crate::transform::idct4x4_scalar(block);
+            crate::common::transform::idct4x4_scalar(block);
         }
     }
     #[cfg(target_arch = "aarch64")]
     {
         use archmage::{NeonToken, SimdToken};
         if let Some(token) = NeonToken::try_new() {
-            crate::transform_aarch64::idct4x4_neon(token, block);
+            super::transform_aarch64::idct4x4_neon(token, block);
         } else {
-            crate::transform::idct4x4_scalar(block);
+            crate::common::transform::idct4x4_scalar(block);
         }
     }
     #[cfg(not(any(
@@ -98,7 +98,7 @@ pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
         target_arch = "aarch64"
     )))]
     {
-        crate::transform::idct4x4_scalar(block);
+        crate::common::transform::idct4x4_scalar(block);
     }
 }
 
@@ -111,30 +111,30 @@ pub(crate) fn dct4x4_two_intrinsics(block1: &mut [i32; 16], block2: &mut [i32; 1
         if let Some(token) = Sse41Token::summon() {
             dct4x4_two_sse2(token, block1, block2);
         } else {
-            crate::transform::dct4x4_scalar(block1);
-            crate::transform::dct4x4_scalar(block2);
+            crate::common::transform::dct4x4_scalar(block1);
+            crate::common::transform::dct4x4_scalar(block2);
         }
     }
     #[cfg(target_arch = "wasm32")]
     {
         use archmage::{Simd128Token, SimdToken};
         if let Some(token) = Simd128Token::try_new() {
-            crate::transform_wasm::dct4x4_wasm(token, block1);
-            crate::transform_wasm::dct4x4_wasm(token, block2);
+            super::transform_wasm::dct4x4_wasm(token, block1);
+            super::transform_wasm::dct4x4_wasm(token, block2);
         } else {
-            crate::transform::dct4x4_scalar(block1);
-            crate::transform::dct4x4_scalar(block2);
+            crate::common::transform::dct4x4_scalar(block1);
+            crate::common::transform::dct4x4_scalar(block2);
         }
     }
     #[cfg(target_arch = "aarch64")]
     {
         use archmage::{NeonToken, SimdToken};
         if let Some(token) = NeonToken::try_new() {
-            crate::transform_aarch64::dct4x4_neon(token, block1);
-            crate::transform_aarch64::dct4x4_neon(token, block2);
+            super::transform_aarch64::dct4x4_neon(token, block1);
+            super::transform_aarch64::dct4x4_neon(token, block2);
         } else {
-            crate::transform::dct4x4_scalar(block1);
-            crate::transform::dct4x4_scalar(block2);
+            crate::common::transform::dct4x4_scalar(block1);
+            crate::common::transform::dct4x4_scalar(block2);
         }
     }
     #[cfg(not(any(
@@ -144,8 +144,8 @@ pub(crate) fn dct4x4_two_intrinsics(block1: &mut [i32; 16], block2: &mut [i32; 1
         target_arch = "aarch64"
     )))]
     {
-        crate::transform::dct4x4_scalar(block1);
-        crate::transform::dct4x4_scalar(block2);
+        crate::common::transform::dct4x4_scalar(block1);
+        crate::common::transform::dct4x4_scalar(block2);
     }
 }
 
@@ -467,7 +467,7 @@ fn ftransform2_scalar(
             }
         }
         // Apply DCT
-        crate::transform::dct4x4_scalar(&mut block_data);
+        crate::common::transform::dct4x4_scalar(&mut block_data);
         // Convert to i16
         for (i, &val) in block_data.iter().enumerate() {
             out[block * 16 + i] = val as i16;
@@ -642,7 +642,7 @@ mod tests {
         ];
 
         let mut scalar_block = input;
-        crate::transform::dct4x4_scalar(&mut scalar_block);
+        crate::common::transform::dct4x4_scalar(&mut scalar_block);
 
         let mut intrinsics_block = input;
         dct4x4_intrinsics(&mut intrinsics_block);
@@ -659,10 +659,10 @@ mod tests {
         let mut input: [i32; 16] = [
             38, 6, 210, 107, 42, 125, 185, 151, 241, 224, 125, 233, 227, 8, 57, 96,
         ];
-        crate::transform::dct4x4_scalar(&mut input);
+        crate::common::transform::dct4x4_scalar(&mut input);
 
         let mut scalar_block = input;
-        crate::transform::idct4x4_scalar(&mut scalar_block);
+        crate::common::transform::idct4x4_scalar(&mut scalar_block);
 
         let mut intrinsics_block = input;
         idct4x4_intrinsics(&mut intrinsics_block);
@@ -685,8 +685,8 @@ mod tests {
 
         let mut scalar1 = input1;
         let mut scalar2 = input2;
-        crate::transform::dct4x4_scalar(&mut scalar1);
-        crate::transform::dct4x4_scalar(&mut scalar2);
+        crate::common::transform::dct4x4_scalar(&mut scalar1);
+        crate::common::transform::dct4x4_scalar(&mut scalar2);
 
         let mut intrinsics1 = input1;
         let mut intrinsics2 = input2;
@@ -741,7 +741,7 @@ mod tests {
                     block_data[y * 4 + x] = src_val - ref_val;
                 }
             }
-            crate::transform::dct4x4_scalar(&mut block_data);
+            crate::common::transform::dct4x4_scalar(&mut block_data);
             for (i, &val) in block_data.iter().enumerate() {
                 expected[block * 16 + i] = val as i16;
             }
@@ -789,7 +789,7 @@ mod benchmarks {
     fn bench_idct_intrinsics(b: &mut Bencher) {
         let mut dct_blocks = TEST_BLOCKS;
         for block in &mut dct_blocks {
-            crate::transform::dct4x4_scalar(block);
+            crate::common::transform::dct4x4_scalar(block);
         }
 
         b.iter(|| {

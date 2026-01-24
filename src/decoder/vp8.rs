@@ -20,15 +20,16 @@ use alloc::vec::Vec;
 use core::array;
 use core::default::Default;
 
-use crate::decoder::{DecodingError, UpsamplingMethod};
+use super::api::{DecodingError, UpsamplingMethod};
 use crate::slice_reader::SliceReader;
-use crate::vp8_common::*;
-use crate::vp8_prediction::*;
-use crate::yuv;
+use crate::common::types::*;
+use crate::common::prediction::*;
+use super::yuv;
 
-use super::vp8_bit_reader::{VP8HeaderBitReader, VP8Partitions};
-use super::{transform, vp8_loop_filter_dispatch};
-use vp8_loop_filter_dispatch::*;
+use super::bit_reader::{VP8HeaderBitReader, VP8Partitions};
+use crate::common::transform;
+use super::loop_filter_dispatch;
+use loop_filter_dispatch::*;
 
 
 #[derive(Clone, Copy)]

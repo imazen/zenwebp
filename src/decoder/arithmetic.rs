@@ -1,7 +1,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use crate::decoder::DecodingError;
+use super::api::DecodingError;
 
 use super::vp8::TreeNode;
 

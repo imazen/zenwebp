@@ -994,6 +994,7 @@ pub fn analyze_image(
 }
 
 // Keep old function signatures for compatibility but mark as deprecated
+/// Deprecated: Use analyze_image instead
 #[allow(dead_code)]
 #[deprecated(note = "Use analyze_image instead")]
 pub fn collect_dct_histogram(
@@ -1006,6 +1007,7 @@ pub fn collect_dct_histogram(
     DctHistogram::new()
 }
 
+/// Deprecated: Use analyze_image instead
 #[allow(dead_code)]
 #[deprecated(note = "Use analyze_image instead")]
 pub fn compute_mb_alpha(_dct_coeffs: &[i32; 256]) -> u8 {
@@ -1163,7 +1165,7 @@ pub fn compute_segment_quant(base_quant: u8, segment_alpha: i32, sns_strength: u
     let c_base = 1.0 - (base_quant as f64 / 127.0);
 
     // Apply power-law modulation
-    let c = crate::fast_math::pow(c_base, expn);
+    let c = super::fast_math::pow(c_base, expn);
 
     // Convert back to quantizer index
     let q = (127.0 * (1.0 - c)) as i32;

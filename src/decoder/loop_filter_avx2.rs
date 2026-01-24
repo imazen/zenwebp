@@ -1647,7 +1647,7 @@ mod tests {
 
         // Apply scalar filter
         for x in 0..16 {
-            crate::loop_filter::subblock_filter_vertical(
+            crate::decoder::loop_filter::subblock_filter_vertical(
                 hev_thresh as u8,
                 interior_limit as u8,
                 edge_limit as u8,
@@ -1735,7 +1735,7 @@ mod tests {
 
         // Apply scalar filter
         for x in 0..16 {
-            crate::loop_filter::macroblock_filter_vertical(
+            crate::decoder::loop_filter::macroblock_filter_vertical(
                 hev_thresh as u8,
                 interior_limit as u8,
                 edge_limit as u8,
