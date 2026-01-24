@@ -9,14 +9,15 @@ See global ~/.claude/CLAUDE.md for general instructions.
 **Method Parameter Added** - Speed/quality tradeoff (0-6):
 | Method | Time | Throughput | File Size | Notes |
 |--------|------|------------|-----------|-------|
-| 0 | 55ms | 7.15 MPix/s | 101KB | I16-only, no trellis |
-| 2 | 79ms | 4.97 MPix/s | 87KB | Limited I4 (3 modes), no trellis |
-| 4 | 65ms | 6.05 MPix/s | 78KB | Balanced (4 modes), trellis |
+| 0 | 39ms | 10.2 MPix/s | 101KB | I16-only, no trellis |
+| 2 | 56ms | 7.1 MPix/s | 87KB | Limited I4 (3 modes), no trellis |
+| 4 | 64ms | 6.2 MPix/s | 78KB | Balanced (4 modes), trellis |
 | 6 | 122ms | 3.21 MPix/s | 76KB | Full search (10 modes), trellis |
 
-*Benchmark: 768x512 Kodak image at Q75, 10 iterations, release mode*
+*Benchmark: 768x512 Kodak image at Q75, 20 iterations, release mode*
 
 ### Recent SIMD Optimizations
+- **SIMD quantization** - `wide::i64x4` for simple quantize path (29% speedup for methods 0-3, 2026-01-23)
 - **GetResidualCost SIMD** - Precompute abs/ctx/levels with SSE2 (30% speedup, 2026-01-23)
 - **FTransform2** - Fused residual+DCT for 2 blocks at once (2026-01-23)
 - DCT/IDCT: SIMD i32/i16 conversion (13% speedup)

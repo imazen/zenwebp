@@ -26,6 +26,7 @@ multiversion = { version = "0.8.0", optional = true }
 archmage = { version = "0.2.1", optional = true }
 magetypes = { version = "0.1.0", optional = true }
 safe_unaligned_simd = { version = "0.2.3", optional = true }
+wide = { version = "1.1.1", optional = true }
 
 [dev-dependencies]
 yuv = "0.8"
@@ -47,7 +48,7 @@ fast-yuv = ["dep:yuv"]
 # Enable SIMD intrinsics via archmage (safe API with token-based feature verification).
 # Provides best performance on x86-64 with runtime CPU detection.
 # On wasm32, uses core::arch::wasm32 SIMD128 intrinsics.
-simd = ["dep:multiversed", "dep:multiversion", "dep:archmage", "dep:magetypes", "dep:safe_unaligned_simd"]
+simd = ["dep:multiversed", "dep:multiversion", "dep:archmage", "dep:magetypes", "dep:safe_unaligned_simd", "dep:wide"]
 _benchmarks = []
 _profiling = ["dep:png", "dep:webp"]
 # WASM profiling - minimal deps for wasm32 benchmarking
