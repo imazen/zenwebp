@@ -101,6 +101,7 @@ mod huffman;
 mod loop_filter;
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 mod loop_filter_avx2;
+mod vp8_loop_filter_dispatch;
 mod lossless;
 mod lossless_transform;
 
