@@ -53,6 +53,16 @@ encoder.encode(rgb_pixels, width, height, ColorType::Rgb8)?;
 - **SIMD accelerated** - SSE2/SSE4.1/AVX2 on x86, SIMD128 on WASM
 - **Full format support** - lossy, lossless, alpha, animation (decode), ICC/EXIF/XMP metadata
 
+### Safe SIMD
+
+We achieve both safety and performance through safe abstractions over CPU intrinsics:
+- [`wide`](https://crates.io/crates/wide) - portable SIMD types that autovectorize well
+- [`archmage`](https://crates.io/crates/archmage) and [`magetypes`](https://crates.io/crates/magetypes) - token-gated safe intrinsics
+- [`safe_unaligned_simd`](https://crates.io/crates/safe_unaligned_simd) - safe unaligned load/store
+- `core::arch` - newly stabilized as safe in Rust
+
+These abstractions may not be perfect, but we trust them over hand-rolled unsafe code.
+
 ### Decoder
 
 Supports all WebP features: lossy and lossless compression, alpha channel, animation, and extended format with ICC/EXIF/XMP chunks.
