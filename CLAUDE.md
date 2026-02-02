@@ -2,7 +2,7 @@
 
 See global ~/.claude/CLAUDE.md for general instructions.
 
-## Current Optimization Status (2026-02-01)
+## Current Optimization Status (2026-02-02)
 
 ### Encoder Performance vs libwebp
 
@@ -35,16 +35,16 @@ See global ~/.claude/CLAUDE.md for general instructions.
 | t_transform | 3.24% | Spectral distortion (SIMD) |
 
 ### Quality vs libwebp (2026-02-02)
-- Screenshots: 1.060x of libwebp (Default preset, method 4)
-- CID22 corpus: 1.043x average (method 4)
-- Sharpen+zthresh fix (2026-02-02) improved CID22 from 1.05x → 1.043x
-- 792079 benchmark image: 1.024x (was 1.11x before sharpen fix)
+- CID22 corpus: **0.999x** average (method 4) — aggregate parity with libwebp
+- Screenshots: **1.014x** of libwebp (Default preset, method 4)
+- 792079 benchmark image: 1.036x of libwebp
+- Token buffer (2026-02-02) improved CID22 from 1.043x → 0.999x, screenshots from 1.060x → 1.014x
 
 **CID22 Q75 Default preset (method 4):**
 | Metric | Value |
 |--------|-------|
-| Average ratio | 1.043x |
-| 792079 (benchmark) | 1.024x |
+| Average ratio | 0.999x |
+| 792079 (benchmark) | 1.036x |
 
 **Preset tuning parameters now active (2026-02-01):**
 | Preset | SNS | Filter | Sharp | Segs |
@@ -132,7 +132,11 @@ We're **faster** than libwebp with trellis (65ms vs 75ms), but produce larger fi
 - `FTransform_SSE2` / `ITransform_SSE2` - faster than our SIMD
 
 ### Key Files
-- `src/encoder/vp8.rs` - Main encoder, mode selection, segment assignment
+- `src/encoder/vp8/mod.rs` - Main encoder orchestration, single-pass token loop
+- `src/encoder/vp8/residuals.rs` - TokenBuffer, coefficient token recording/emission
+- `src/encoder/vp8/header.rs` - Bitstream header encoding
+- `src/encoder/vp8/mode_selection.rs` - I16/I4/UV mode selection
+- `src/encoder/vp8/prediction.rs` - Block prediction + transform
 - `src/encoder/api.rs` - Public API, EncoderConfig, EncoderParams, Preset enum
 - `src/encoder/analysis.rs` - DCT analysis, k-means clustering, auto-detection classifier
 - `src/encoder/cost.rs` - Cost estimation, trellis quantization, filter level computation
@@ -367,12 +371,15 @@ Also updated SIMD `quantize()` and `quantize_ac_only()` block methods.
 | Add flatness penalty for I4 | +0.03% (worse) |
 | Disable trellis for method 4 (match libwebp) | +1.5% (much worse, trellis helps us) |
 
-**Remaining gap investigation:**
+**Remaining gap resolved by token buffer (2026-02-02):**
 
-The remaining ~4% gap (methods 2+) may come from:
-1. **I4 token emission** - Our tokens use more bits for equivalent coefficients
-2. **Probability table updates** - May differ in update frequency or thresholds
-3. **Partition 0 overhead** - Our P0 is 34% vs libwebp's 26% at method 2
+The ~4% gap was caused by the two-pass encoding architecture:
+1. Pass 1 stats reflected non-trellis quantization (mismatched probabilities)
+2. No mid-stream probability refresh (stale cost tables)
+3. Mode decisions could differ between passes
+
+Token buffer (commit 9625d4e) replaced two-pass with single-pass recording,
+matching libwebp's VP8EncTokenLoop. CID22 aggregate: 1.043x → **0.999x**.
 
 ### VP8BitReader Success (2026-01-22)
 
