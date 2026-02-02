@@ -15,7 +15,9 @@ use core::arch::x86_64::*;
 use safe_unaligned_simd::x86_64 as simd_mem;
 
 use super::cost::{vp8_bit_cost, LevelCosts};
-use super::tables::{MAX_LEVEL, MAX_VARIABLE_LEVEL, VP8_ENC_BANDS, VP8_LEVEL_FIXED_COSTS};
+use super::tables::VP8_ENC_BANDS;
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+use super::tables::{MAX_LEVEL, MAX_VARIABLE_LEVEL, VP8_LEVEL_FIXED_COSTS};
 use crate::common::types::TokenProbTables;
 
 /// Residual coefficients for cost calculation.
