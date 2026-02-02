@@ -392,10 +392,10 @@ impl<'a> Vp8Encoder<'a> {
         self.updated_probs = Some(updated);
     }
 
-    /// Reset encoder state for a new recording pass.
-    /// Used by multi-pass token recording (method >= 6) to reset borders,
-    /// complexity tracking, and partitions before re-recording.
-    fn reset_for_second_pass(&mut self) {
+    /// Reset encoder state for a new encoding pass.
+    /// Used by multi-pass encoding (method >= 5) to reset all state before
+    /// re-encoding with updated probability/cost tables.
+    fn reset_for_new_pass(&mut self) {
         // Reset complexity tracking
         for complexity in self.top_complexity.iter_mut() {
             *complexity = Complexity::default();
@@ -421,6 +421,12 @@ impl<'a> Vp8Encoder<'a> {
         }
         for val in self.top_border_v.iter_mut() {
             *val = 127;
+        }
+
+        // Reset chroma error diffusion state
+        self.left_derr = [[0; 2]; 2];
+        for derr in self.top_derr.iter_mut() {
+            *derr = [[0; 2]; 2];
         }
 
         // Estimate output size: ~0.3 bytes per pixel is conservative for most quality levels
@@ -491,62 +497,66 @@ impl<'a> Vp8Encoder<'a> {
         // Token buffer encoding (matching libwebp's VP8EncTokenLoop).
         //
         // Records coefficient decisions as compact tokens while collecting
-        // probability statistics with mid-stream refresh. For method >= 6,
-        // performs multiple passes: each pass re-records with probabilities
-        // refined from the previous pass, matching libwebp's multi-pass behavior.
+        // probability statistics with mid-stream refresh. For method >= 5,
+        // performs multiple passes: each pass does FULL re-encoding with
+        // level_costs derived from the previous pass's observed probabilities.
         //
-        // Benefits over the old two-pass approach:
-        // - Statistics reflect actual trellis decisions (no trellis mismatch)
-        // - Mid-stream probability refresh improves later coefficient decisions
-        // - Multi-pass (method 6) iteratively refines probabilities
+        // Benefits of multi-pass (matches libwebp's approach):
+        // - Image-specific probability tables (not generic defaults)
+        // - Better mode selection with empirical cost tables
+        // - More efficient arithmetic coding with observed probabilities
+        //
+        // Key insight: Each pass does full re-encoding (predict → residual → DCT →
+        // quantize → record). Mode decisions and quantization may differ between
+        // passes because level_costs change. Borders come from reconstructed pixels,
+        // so each pass has consistent predictions within itself.
 
         let num_mb = usize::from(self.macroblock_width) * usize::from(self.macroblock_height);
 
-        // NOTE: Multi-pass token recording was tested but provides ZERO benefit.
-        // Re-recording identical tokens produces byte-identical output.
-        // Re-quantization from stored raw DCT made files LARGER and worse quality
-        // because raw DCT depends on pass 0's predictions, which would change if
-        // trellis made different decisions. True multi-pass would require full
-        // re-encoding (re-predict, re-DCT, re-quantize) which is expensive.
-        //
-        // Current methods 5/6 are equivalent to method 4 (single pass with trellis).
-        let num_passes = 1;
+        // Number of passes based on method (matches libwebp's config->pass):
+        // method 0-4: 1 pass (trellis at m4 already gives good results)
+        // method 5: 2 passes (one refinement pass)
+        // method 6: 3 passes (two refinement passes)
+        let num_passes = match self.method {
+            0..=4 => 1,
+            5 => 2,
+            _ => 3, // method 6+
+        };
 
         for pass in 0..num_passes {
+            let is_last_pass = pass == num_passes - 1;
+
+            // Clear token buffer for this pass
             self.token_buffer = Some(residuals::TokenBuffer::with_estimated_capacity(num_mb));
 
-            // For passes after the first, apply the updated probabilities
-            // from the previous pass as the new baseline for cost estimation.
-            // IMPORTANT: In pass 2+, we reuse stored mode decisions and coefficients
-            // from pass 1 rather than re-doing mode selection. This matches libwebp's
-            // behavior where quantization happens once and tokens are re-recorded.
+            // Reset statistics only on first pass or last pass (matches libwebp).
+            // For intermediate passes, statistics ACCUMULATE across passes, giving
+            // a more robust probability estimate based on multiple encodings.
+            if pass == 0 || is_last_pass {
+                self.proba_stats.reset();
+            }
+
+            // Clear stored info - we only keep the last pass's results
+            self.stored_mb_info.clear();
+            self.stored_mb_info.reserve(num_mb);
+            self.stored_mb_coeffs.clear();
+            self.stored_mb_coeffs.reserve(num_mb);
+
             if pass > 0 {
-                // Pass 1+: Re-record tokens with improved probability tables.
-                //
-                // After testing, re-quantization with observed probabilities made
-                // files LARGER and worse quality. The benefit of multi-pass comes
-                // from better statistics for header signaling and entropy coding,
-                // NOT from re-quantization.
-                //
-                // We use updated_probs (signaling-optimized) as the baseline for
-                // this pass. Since we're re-recording the same tokens (not re-
-                // quantizing), level_costs don't need updating.
+                // Pass 1+: Apply updated probabilities from previous pass
+                // This gives us image-specific cost tables for mode selection and trellis
                 if let Some(ref updated) = self.updated_probs {
                     self.token_probs = *updated;
                 }
 
-                // Reset stats for this pass's statistics collection
-                self.proba_stats.reset();
-                self.reset_for_second_pass();
-            } else {
-                // Pass 0: reset stats for fresh statistics collection
-                self.proba_stats.reset();
-                // Pass 0: prepare storage for mode decisions and coefficients
-                self.stored_mb_info.clear();
-                self.stored_mb_info.reserve(num_mb);
-                self.stored_mb_coeffs.clear();
-                self.stored_mb_coeffs.reserve(num_mb);
+                // Recalculate level_costs from the new probabilities
+                // This is the key to multi-pass: trellis and mode selection use
+                // empirical costs, potentially making different (better) decisions
+                self.level_costs.calculate(&self.token_probs);
             }
+
+            // Reset all encoder state for this pass
+            self.reset_for_new_pass();
 
             // Mid-stream refresh interval: roughly every total_mb/8 macroblocks
             let max_count = (num_mb / 8).max(96) as i32; // MIN_COUNT = 96 (matches libwebp)
@@ -555,120 +565,78 @@ impl<'a> Vp8Encoder<'a> {
             let mut total_mb: u32 = 0;
             let mut skip_mb: u32 = 0;
 
-            // ===== RECORDING PASS =====
-            // Pass 0: mode selection + transform + token recording (store coefficients)
-            // Pass 1+: re-record tokens with updated probs (reuse stored coefficients)
+            // ===== ENCODING PASS =====
+            // Each pass does full encoding: mode selection + transform + quantize + record
             for mby in 0..self.macroblock_height {
                 // Reset left state for start of row
                 self.left_complexity = Complexity::default();
                 self.left_b_pred = [IntraMode::default(); 4];
-
-                if pass == 0 {
-                    self.left_derr = [[0; 2]; 2]; // reset chroma error diffusion for row start
-                    self.left_border_y = [129u8; 16 + 1];
-                    self.left_border_u = [129u8; 8 + 1];
-                    self.left_border_v = [129u8; 8 + 1];
-                }
+                self.left_derr = [[0; 2]; 2]; // reset chroma error diffusion for row start
+                self.left_border_y = [129u8; 16 + 1];
+                self.left_border_u = [129u8; 8 + 1];
+                self.left_border_v = [129u8; 8 + 1];
 
                 for mbx in 0..self.macroblock_width {
-                    let mb_idx = (mby as usize) * (self.macroblock_width as usize) + (mbx as usize);
+                    // Mid-stream probability refresh (like libwebp's VP8EncTokenLoop)
+                    refresh_countdown -= 1;
+                    if refresh_countdown < 0 {
+                        self.compute_updated_probabilities();
+                        let probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
+                        self.level_costs.calculate(probs);
+                        refresh_countdown = max_count;
+                    }
 
-                    if pass == 0 {
-                        // Pass 0: Full mode selection + transform + quantize + store coefficients
-                        // Mid-stream probability refresh (like libwebp's VP8EncTokenLoop)
-                        refresh_countdown -= 1;
-                        if refresh_countdown < 0 {
-                            self.compute_updated_probabilities();
-                            let probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
-                            self.level_costs.calculate(probs);
-                            refresh_countdown = max_count;
-                        }
+                    let macroblock_info = self.choose_macroblock_info(mbx.into(), mby.into());
 
-                        let macroblock_info = self.choose_macroblock_info(mbx.into(), mby.into());
+                    // Transform blocks (updates border state for next macroblock)
+                    let y_block_data =
+                        self.transform_luma_block(mbx.into(), mby.into(), &macroblock_info);
 
-                        // Transform blocks (updates border state for next macroblock)
-                        let y_block_data =
-                            self.transform_luma_block(mbx.into(), mby.into(), &macroblock_info);
+                    let (u_block_data, v_block_data) = self.transform_chroma_blocks(
+                        mbx.into(),
+                        mby.into(),
+                        macroblock_info.chroma_mode,
+                    );
 
-                        let (u_block_data, v_block_data) = self.transform_chroma_blocks(
-                            mbx.into(),
-                            mby.into(),
-                            macroblock_info.chroma_mode,
-                        );
+                    // Check if all coefficients are zero (skip detection)
+                    total_mb += 1;
+                    let all_zero = self.check_all_coeffs_zero(
+                        &macroblock_info,
+                        &y_block_data,
+                        &u_block_data,
+                        &v_block_data,
+                    );
 
-                        // Check if all coefficients are zero (skip detection)
-                        total_mb += 1;
-                        let all_zero = self.check_all_coeffs_zero(
+                    let mut mb_info = macroblock_info;
+                    if all_zero {
+                        skip_mb += 1;
+                        mb_info.coeffs_skipped = true;
+                        // Reset complexity for skipped blocks
+                        self.left_complexity
+                            .clear(macroblock_info.luma_mode != LumaMode::B);
+                        self.top_complexity[usize::from(mbx)]
+                            .clear(macroblock_info.luma_mode != LumaMode::B);
+                        // Store empty coefficients for skipped blocks
+                        self.stored_mb_coeffs.push(QuantizedMbCoeffs {
+                            y2_zigzag: [0; 16],
+                            y1_zigzag: [[0; 16]; 16],
+                            u_zigzag: [[0; 16]; 4],
+                            v_zigzag: [[0; 16]; 4],
+                        });
+                    } else {
+                        // Record tokens, quantize, and store quantized coefficients
+                        let stored_coeffs = self.record_residual_tokens_storing(
                             &macroblock_info,
+                            mbx as usize,
                             &y_block_data,
                             &u_block_data,
                             &v_block_data,
                         );
-
-                        let mut mb_info = macroblock_info;
-                        if all_zero {
-                            skip_mb += 1;
-                            mb_info.coeffs_skipped = true;
-                            // Reset complexity for skipped blocks
-                            self.left_complexity
-                                .clear(macroblock_info.luma_mode != LumaMode::B);
-                            self.top_complexity[usize::from(mbx)]
-                                .clear(macroblock_info.luma_mode != LumaMode::B);
-                            // Store empty coefficients for skipped blocks
-                            self.stored_mb_coeffs.push(QuantizedMbCoeffs {
-                                y2_zigzag: [0; 16],
-                                y1_zigzag: [[0; 16]; 16],
-                                u_zigzag: [[0; 16]; 4],
-                                v_zigzag: [[0; 16]; 4],
-                            });
-                        } else {
-                            // Record tokens, quantize, and store quantized coefficients
-                            let stored_coeffs = self.record_residual_tokens_storing(
-                                &macroblock_info,
-                                mbx as usize,
-                                &y_block_data,
-                                &u_block_data,
-                                &v_block_data,
-                            );
-                            self.stored_mb_coeffs.push(stored_coeffs);
-                        }
-
-                        // Store macroblock info for header writing in emit pass
-                        self.stored_mb_info.push(mb_info);
-                    } else {
-                        // Pass 1+: Re-record tokens with observed probability tables.
-                        //
-                        // After testing, re-quantization from raw DCT made files LARGER
-                        // and WORSE quality. This happens because pass 0's quantization
-                        // decisions were already optimal for the input DCT coefficients
-                        // under the initial cost function. Changing cost function and
-                        // re-quantizing doesn't improve results - it just makes different
-                        // (not better) decisions.
-                        //
-                        // The benefit of multi-pass comes from:
-                        // 1. Better probability statistics for header signaling
-                        // 2. More accurate entropy coding with observed probabilities
-                        // 3. NOT from re-quantization
-                        let mb_info = self.stored_mb_info[mb_idx];
-
-                        total_mb += 1;
-                        if mb_info.coeffs_skipped {
-                            skip_mb += 1;
-                            // Reset complexity for skipped blocks
-                            self.left_complexity.clear(mb_info.luma_mode != LumaMode::B);
-                            self.top_complexity[usize::from(mbx)]
-                                .clear(mb_info.luma_mode != LumaMode::B);
-                        } else {
-                            // Re-record tokens from stored quantized coefficients
-                            // (no re-quantization - use pass 0's quantized values)
-                            let stored_coeffs = self.stored_mb_coeffs[mb_idx].clone();
-                            self.record_from_stored_coeffs(
-                                &mb_info,
-                                mbx as usize,
-                                &stored_coeffs,
-                            );
-                        }
+                        self.stored_mb_coeffs.push(stored_coeffs);
                     }
+
+                    // Store macroblock info for header writing
+                    self.stored_mb_info.push(mb_info);
                 }
             }
 
@@ -679,9 +647,8 @@ impl<'a> Vp8Encoder<'a> {
                 self.macroblock_no_skip_coeff = Some(prob.clamp(1, 254));
             }
 
-            // Finalize probabilities from this pass
+            // Finalize probabilities from this pass (used by next pass or final emission)
             self.compute_updated_probabilities();
-
         }
 
         // ===== FINALIZE: write bitstream =====

@@ -12,8 +12,8 @@ See global ~/.claude/CLAUDE.md for general instructions.
 | 0 | 22ms | 13.1KB | 0.89x | I16-only, no trellis |
 | 2 | 31ms | 12.1KB | 1.07x | Limited I4 (3 modes), no trellis |
 | 4 | 26ms | 11.4KB | 1.04x | Full I4, trellis, 1 pass |
-| 5 | 26ms | 11.4KB | 1.04x | Full I4, trellis, 1 pass (same as m4) |
-| 6 | 26ms | 11.4KB | 1.04x | Full I4, trellis, 1 pass (same as m4) |
+| 5 | 40ms | 11.4KB | 1.04x | Full I4, trellis, 2 passes |
+| 6 | 59ms | 11.4KB | 1.04x | Full I4, trellis, 3 passes |
 
 *Benchmark: 512x512 CID22 image (792079) at Q75, 20 iterations, release mode*
 
@@ -31,10 +31,24 @@ See global ~/.claude/CLAUDE.md for general instructions.
 | 5 | 1184966 | 1156406 | 1.025x |
 | 6 | 1184966 | 1140826 | 1.039x |
 
-**Methods 5/6 note:** After investigation, multi-pass token recording was found to
-provide zero benefit. Re-quantization from stored raw DCT made things worse.
-Methods 5/6 are now equivalent to method 4 (single pass with trellis). See
-"Multi-pass Re-quantization Experiment" section in Investigation Notes.
+**Methods 5/6 multi-pass implementation (2026-02-02):**
+Methods 5/6 now perform true multi-pass encoding like libwebp:
+- m5 = 2 passes, m6 = 3 passes (matching libwebp's config->pass)
+- Each pass does full re-encoding with updated level_costs from previous pass
+- Statistics accumulate across intermediate passes (reset only on last pass)
+- Borders come from reconstructed pixels, ensuring consistent predictions within each pass
+
+**Multi-pass results (SNS=0, filter=0, segments=1):**
+| Encoder | 1-pass | 3-pass | Ratio |
+|---------|--------|--------|-------|
+| zenwebp | 12234 | 12270 | 1.003x (0.3% larger) |
+| libwebp | 11720 | 11732 | 1.001x (0.1% larger) |
+
+**Key finding:** Multi-pass without quality search provides NO compression benefit
+in either zenwebp or libwebp. Both produce slightly LARGER files with more passes.
+The benefit of multi-pass comes from quality search (binary search for target size),
+not from probability refinement alone. This matches libwebp's behavior where
+multi-pass is designed for `size_search` or `psnr_search` convergence.
 
 **Remaining gap analysis (all methods):**
 - libwebp m5 enables trellis (we already have trellis at m4), gaining ~2%
@@ -394,46 +408,28 @@ This is fundamentally different from our failed approach (storing raw DCT from p
 Pass 0's raw DCT was `DCT(source - prediction_pass0)`, but pass 1 would have different
 predictions due to different reconstructed neighbors, so the residuals differ.
 
-**Code status:** Removed RawMbCoeffs, store_raw_coeffs, requantize_and_record, and
-compute_observed_probabilities. Multi-pass loop simplified to single pass.
+**Code status:** Multi-pass implemented (2026-02-02). Previous re-quantization approach
+removed. Now does full re-encoding like libwebp.
 
-### True Multi-pass Implementation Plan (TODO)
+### Multi-pass Implementation (COMPLETED 2026-02-02)
 
-To match libwebp's multi-pass behavior, we need to re-run the FULL encoding pipeline
-in each pass, not just re-quantize. Implementation:
+Multi-pass encoding now matches libwebp's VP8EncTokenLoop behavior:
 
-**Phase 1: Refactor encode loop for re-entrancy**
-1. Extract macroblock encoding into `encode_macroblock()` that:
-   - Takes source pixels + boundary state
-   - Returns quantized coefficients + updated boundary state
-2. Store reconstructed boundary pixels after each MB (we currently store source borders)
-3. Ensure border state can be reset to initial values for each pass
+**Implementation details:**
+- m5 = 2 passes, m6 = 3 passes (matching `config->pass`)
+- Each pass: clear token buffer, full encode (predict → DCT → quantize → record)
+- Pass 1+: apply updated probabilities → recalculate level_costs → full re-encode
+- Statistics accumulate across intermediate passes (reset only on last pass, like libwebp)
+- Borders come from RECONSTRUCTED pixels (already correct in our encoder)
+- `reset_for_new_pass()` resets all encoder state between passes
 
-**Phase 2: Implement true multi-pass**
-1. Pass 0: Full encode with default level_costs, collect statistics
-2. After pass 0: `FinalizeTokenProbas()` → observed probabilities → new level_costs
-3. Pass 1+: Full re-encode with updated level_costs
-   - Reset border state to initial values
-   - Re-import source pixels (already done)
-   - Re-predict using THIS pass's reconstructed neighbors
-   - Re-compute residual, DCT, quantize with new level_costs
-   - Token buffer records new (potentially different) tokens
+**Results:** Multi-pass provides NO compression benefit without quality search.
+Both zenwebp and libwebp produce ~0.1-0.3% LARGER files with multiple passes.
+This matches libwebp's design where multi-pass is meant for `do_size_search` or
+`do_psnr_search` convergence, not for probability refinement alone.
 
-**Key changes needed:**
-- `transform_luma_block()` / `transform_chroma_blocks()`: Currently update borders
-  from SOURCE. Need to also track RECONSTRUCTED borders for next MB's prediction.
-- `left_border_y/u/v` and `top_border_y/u/v`: Add parallel `left_recon_y/u/v` and
-  `top_recon_y/u/v` buffers for reconstructed pixels.
-- `prediction.rs`: Use reconstructed borders for prediction (already correct?).
-- Mode selection: May need to re-run if predictions change significantly.
-
-**Cost estimate:** ~2x encoding time for 2-pass. Expected benefit: ~1-2% smaller files
-at same quality, matching libwebp's multi-pass gains.
-
-**Files to modify:**
-- `src/encoder/vp8/mod.rs` - Main loop, border management
-- `src/encoder/vp8/prediction.rs` - Ensure using reconstructed borders
-- `src/encoder/vp8/residuals.rs` - Token recording (already correct)
+**Future improvement:** Implement quality search (binary search for target size).
+This would allow m5/m6 to hit a target file size by adjusting quality between passes
 
 ### SNS Quality-Size Tradeoff Investigation (2026-02-01)
 

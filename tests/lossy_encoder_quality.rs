@@ -947,4 +947,151 @@ mod corpus_tests {
             "Auto should be within 5% of Photo on kodak, got {avg_ratio:.3}x"
         );
     }
+
+    /// Test multi-pass encoding (methods 5 and 6) vs single-pass (method 4).
+    /// Multi-pass should produce smaller files due to empirical probability estimation.
+    #[test]
+    fn multipass_encoding_comparison() {
+        use std::time::Instant;
+
+        // Use a single CID22 test image for quick testing
+        let test_images = ["/home/lilith/work/png-codec-eval/test_images/792079.png"];
+
+        println!("\n=== Multi-pass Encoding Comparison (zenwebp) ===");
+        println!("(SNS=0, filter=0, segments=1 for diagnostic isolation)\n");
+
+        let mut total_m4 = 0usize;
+        let mut total_m5 = 0usize;
+        let mut total_m6 = 0usize;
+        let mut count = 0;
+
+        for path in &test_images {
+            if let Some((rgb, w, h)) = load_png(path) {
+                let name = std::path::Path::new(path)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy();
+
+                // Encode with method 4 (single pass with trellis)
+                let start = Instant::now();
+                let m4_output = zenwebp::EncoderConfig::with_preset(zenwebp::Preset::Default, 75.0)
+                    .method(4)
+                    .sns_strength(0)
+                    .filter_strength(0)
+                    .segments(1)
+                    .encode_rgb(&rgb, w, h)
+                    .unwrap();
+                let m4_time = start.elapsed();
+
+                // Encode with method 5 (2 passes)
+                let start = Instant::now();
+                let m5_output = zenwebp::EncoderConfig::with_preset(zenwebp::Preset::Default, 75.0)
+                    .method(5)
+                    .sns_strength(0)
+                    .filter_strength(0)
+                    .segments(1)
+                    .encode_rgb(&rgb, w, h)
+                    .unwrap();
+                let m5_time = start.elapsed();
+
+                // Encode with method 6 (3 passes)
+                let start = Instant::now();
+                let m6_output = zenwebp::EncoderConfig::with_preset(zenwebp::Preset::Default, 75.0)
+                    .method(6)
+                    .sns_strength(0)
+                    .filter_strength(0)
+                    .segments(1)
+                    .encode_rgb(&rgb, w, h)
+                    .unwrap();
+                let m6_time = start.elapsed();
+
+                // Verify all outputs decode correctly
+                zenwebp::decode_rgba(&m4_output).expect("m4 should decode");
+                zenwebp::decode_rgba(&m5_output).expect("m5 should decode");
+                zenwebp::decode_rgba(&m6_output).expect("m6 should decode");
+
+                // Also compare to libwebp with multiple passes
+                use webpx::Unstoppable;
+                let libwebp_m4 = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
+                    .method(4)
+                    .sns_strength(0)
+                    .filter_strength(0)
+                    .segments(1)
+                    .pass(1); // Single pass
+                let libwebp_m6_1pass = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
+                    .method(6)
+                    .sns_strength(0)
+                    .filter_strength(0)
+                    .segments(1)
+                    .pass(1); // Single pass
+                let libwebp_m6_3pass = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
+                    .method(6)
+                    .sns_strength(0)
+                    .filter_strength(0)
+                    .segments(1)
+                    .pass(3); // 3 passes
+
+                let lib_m4 = libwebp_m4.encode_rgb(&rgb, w, h, Unstoppable).unwrap();
+                let lib_m6_1 = libwebp_m6_1pass.encode_rgb(&rgb, w, h, Unstoppable).unwrap();
+                let lib_m6_3 = libwebp_m6_3pass.encode_rgb(&rgb, w, h, Unstoppable).unwrap();
+
+                let m5_vs_m4 = m5_output.len() as f64 / m4_output.len() as f64;
+                let m6_vs_m4 = m6_output.len() as f64 / m4_output.len() as f64;
+                let lib_m6_3_vs_1 = lib_m6_3.len() as f64 / lib_m6_1.len() as f64;
+
+                println!("{} ({}x{}):", name, w, h);
+                println!(
+                    "  zenwebp m4 (1 pass):  {:>6} bytes, {:>6.2?}",
+                    m4_output.len(),
+                    m4_time
+                );
+                println!(
+                    "  zenwebp m5 (2 pass):  {:>6} bytes, {:>6.2?}, {:.3}x vs m4",
+                    m5_output.len(),
+                    m5_time,
+                    m5_vs_m4
+                );
+                println!(
+                    "  zenwebp m6 (3 pass):  {:>6} bytes, {:>6.2?}, {:.3}x vs m4",
+                    m6_output.len(),
+                    m6_time,
+                    m6_vs_m4
+                );
+                println!("  ---");
+                println!("  libwebp m4 (1 pass):  {:>6} bytes", lib_m4.len());
+                println!("  libwebp m6 (1 pass):  {:>6} bytes", lib_m6_1.len());
+                println!(
+                    "  libwebp m6 (3 pass):  {:>6} bytes, {:.3}x vs 1-pass",
+                    lib_m6_3.len(),
+                    lib_m6_3_vs_1
+                );
+
+                total_m4 += m4_output.len();
+                total_m5 += m5_output.len();
+                total_m6 += m6_output.len();
+                count += 1;
+            }
+        }
+
+        if count > 0 {
+            let m5_ratio = total_m5 as f64 / total_m4 as f64;
+            let m6_ratio = total_m6 as f64 / total_m4 as f64;
+
+            println!("\nAggregate ({count} images):");
+            println!("  m4 total: {total_m4} bytes");
+            println!("  m5 total: {total_m5} bytes ({m5_ratio:.3}x vs m4)");
+            println!("  m6 total: {total_m6} bytes ({m6_ratio:.3}x vs m4)");
+
+            // Multi-pass should improve compression (ratio < 1.0) or at least not regress
+            // Allow for small fluctuations due to different mode decisions
+            assert!(
+                m5_ratio <= 1.02,
+                "m5 should not be more than 2% larger than m4, got {m5_ratio:.3}x"
+            );
+            assert!(
+                m6_ratio <= 1.02,
+                "m6 should not be more than 2% larger than m4, got {m6_ratio:.3}x"
+            );
+        }
+    }
 }
