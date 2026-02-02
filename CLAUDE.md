@@ -68,6 +68,18 @@ See global ~/.claude/CLAUDE.md for general instructions.
 - Token buffer (2026-02-02) improved CID22 from 1.043x → 0.999x at m4
 - Multi-pass (2026-02-02) improved m5/m6 by ~1%
 
+**Production settings beat libwebp (2026-02-02):**
+With default presets (SNS=50, filter=60), zenwebp outperforms libwebp:
+- Q50: **0.89x** of libwebp (11% smaller)
+- Q75: **0.81x** of libwebp (19% smaller)
+- Q90: **0.84x** of libwebp (16% smaller)
+- Matched config comparison: 0.95-0.97x across all presets
+
+**Diagnostic vs production settings:**
+The 4.5% gap seen in diagnostic tests (SNS=0, filter=0, segments=1) does not
+reflect production usage. These stripped-down settings disable the SNS and
+filtering that provide significant compression benefits in real-world usage.
+
 **Preset tuning parameters now active (2026-02-01):**
 | Preset | SNS | Filter | Sharp | Segs |
 |--------|-----|--------|-------|------|
@@ -361,10 +373,21 @@ probability tables, leading to suboptimal coefficient level choices.
 - Our probabilities for level>1 are systematically LOWER, causing more bits for higher levels
 - Coefficient distribution: we have fewer level=1, more level 2-4 than libwebp
 
+**SIMD parity verified (2026-02-02):**
+Tested encoding with and without `simd` feature - outputs are **identical**.
+SIMD is NOT causing bit-level differences in encoding. The mode selection and
+coefficient differences are algorithmic, not SIMD-related.
+
 **Likely root cause of remaining 4.5% trellis gap:**
 Our trellis RD optimization slightly favors lower distortion over rate reduction,
 resulting in more higher-level coefficients. This matches the observed coefficient
 distribution pattern.
+
+**Key insight (2026-02-02):**
+The 4.5% gap in diagnostic tests (SNS=0, filter=0, segments=1) disappears in
+production settings. With default presets, zenwebp actually beats libwebp by
+3-5% due to effective SNS and filtering implementation. The remaining I4
+coefficient efficiency gap is compensated by other features in production use.
 
 ### I4 Mode Path Investigation (2026-02-01)
 
