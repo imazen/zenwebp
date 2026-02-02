@@ -94,7 +94,8 @@ pub use decoder::{
 
 // Re-export encoder public API
 pub use encoder::{
-    ColorType, Encoder, EncoderConfig, EncoderParams, EncodingError, Preset, WebPEncoder,
+    ClassifierDiag, ColorType, ContentType, Encoder, EncoderConfig, EncoderParams, EncodingError,
+    Preset, WebPEncoder,
 };
 
 // Re-export VP8 decoder (public module)

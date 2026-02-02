@@ -1,6 +1,7 @@
 //! WebP encoder implementation
 
-mod analysis;
+/// Image analysis and auto-detection
+pub mod analysis;
 mod api;
 mod arithmetic;
 pub mod cost;
@@ -11,6 +12,7 @@ mod vec_writer;
 pub mod vp8;
 
 // Re-export public API
+pub use analysis::{ClassifierDiag, ContentType};
 pub use api::{
     ColorType, Encoder, EncoderConfig, EncoderParams, EncodingError, Preset, WebPEncoder,
 };
