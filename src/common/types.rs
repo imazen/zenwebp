@@ -802,8 +802,9 @@ pub(crate) struct Segment {
 }
 
 impl Segment {
-    /// Initialize quantization matrices and trellis lambdas from the quantizer values
-    pub(crate) fn init_matrices(&mut self) {
+    /// Initialize quantization matrices and trellis lambdas from the quantizer values.
+    /// `sns_strength` controls spectral distortion weight (0-100, from preset).
+    pub(crate) fn init_matrices(&mut self, sns_strength: u8) {
         self.y1_matrix = Some(VP8Matrix::new(
             self.ydc as u16,
             self.yac as u16,
@@ -847,9 +848,8 @@ impl Segment {
         self.lambda_mode = ((q_i4 * q_i4) >> 7).max(1);
 
         // Compute tlambda for spectral distortion weight
-        // tlambda = (sns_strength * q) >> 5, with default sns_strength=50
+        // tlambda = (sns_strength * q) >> 5
         // This enables TDisto in mode selection
-        let sns_strength = 50u32;
-        self.tlambda = (sns_strength * q_i4) >> 5;
+        self.tlambda = (u32::from(sns_strength) * q_i4) >> 5;
     }
 }

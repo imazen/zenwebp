@@ -202,6 +202,14 @@ struct Vp8Encoder<'a> {
     do_error_diffusion: bool,
     /// Encoding method (0-6): 0=fastest, 6=best quality
     method: u8,
+    /// Spatial noise shaping strength (0-100)
+    sns_strength: u8,
+    /// Loop filter strength (0-100)
+    filter_strength: u8,
+    /// Loop filter sharpness (0-7)
+    filter_sharpness: u8,
+    /// Number of segments (1-4)
+    num_segments: u8,
 
     top_complexity: Vec<Complexity>,
     left_complexity: Complexity,
@@ -260,6 +268,10 @@ impl<'a> Vp8Encoder<'a> {
             do_error_diffusion: true,
             // Default to balanced method
             method: 4,
+            sns_strength: 50,
+            filter_strength: 60,
+            filter_sharpness: 0,
+            num_segments: 4,
 
             top_complexity: Vec::new(),
             left_complexity: Complexity::default(),
@@ -417,9 +429,16 @@ impl<'a> Vp8Encoder<'a> {
                 }
             }
 
-            // Write loop filter deltas for each segment (always 0 for now)
-            for _ in 0..4 {
-                self.encoder.write_flag(false); // no loop filter delta
+            // Write loop filter deltas for each segment
+            for seg in &self.segments {
+                let has_delta = seg.loopfilter_level != 0;
+                self.encoder.write_flag(has_delta);
+                if has_delta {
+                    // Loop filter delta is signed 6-bit value
+                    self.encoder
+                        .write_literal(6, seg.loopfilter_level.unsigned_abs());
+                    self.encoder.write_flag(seg.loopfilter_level < 0);
+                }
             }
         }
 
@@ -1284,13 +1303,17 @@ impl<'a> Vp8Encoder<'a> {
         color: ColorType,
         width: u16,
         height: u16,
-        lossy_quality: u8,
-        method: u8,
+        params: &super::api::EncoderParams,
     ) -> Result<(), EncodingError> {
         // Store method and configure features based on it
-        self.method = method.min(6); // Clamp to 0-6
-                                     // Trellis quantization only for method >= 4 (like libwebp)
+        self.method = params.method.min(6); // Clamp to 0-6
+        // Trellis quantization only for method >= 4 (like libwebp)
         self.do_trellis = self.method >= 4;
+        // Store tuning parameters
+        self.sns_strength = params.sns_strength.min(100);
+        self.filter_strength = params.filter_strength.min(100);
+        self.filter_sharpness = params.filter_sharpness.min(7);
+        self.num_segments = params.num_segments.clamp(1, 4);
         let (y_bytes, u_bytes, v_bytes) = match color {
             ColorType::Rgb8 => convert_image_yuv::<3>(data, width, height),
             ColorType::Rgba8 => convert_image_yuv::<4>(data, width, height),
@@ -1312,7 +1335,7 @@ impl<'a> Vp8Encoder<'a> {
             color
         );
 
-        self.setup_encoding(lossy_quality, width, height, y_bytes, u_bytes, v_bytes);
+        self.setup_encoding(params.lossy_quality, width, height, y_bytes, u_bytes, v_bytes);
 
         // Two-pass encoding with adaptive probabilities.
         // Pass 1: Collect token statistics (without trellis) to estimate probabilities.
@@ -2294,9 +2317,10 @@ impl<'a> Vp8Encoder<'a> {
             uv_stride,
         );
 
-        // Use k-means to assign segments (4 segments)
+        // Use k-means to assign segments
         // weighted_average is computed from final cluster centers, matching libwebp
-        let (centers, alpha_to_segment, mid_alpha) = assign_segments_kmeans(&alpha_histogram, 4);
+        let (centers, alpha_to_segment, mid_alpha) =
+            assign_segments_kmeans(&alpha_histogram, usize::from(self.num_segments));
 
         // Find min and max of centers for alpha transformation
         // This matches libwebp's SetSegmentAlphas
@@ -2314,9 +2338,15 @@ impl<'a> Vp8Encoder<'a> {
             .map(|&alpha| alpha_to_segment[alpha as usize])
             .collect();
 
-        // Configure per-segment quantization
-        // SNS strength of 50 = moderate segment differentiation
-        let sns_strength: u8 = 50;
+        // Configure per-segment quantization using preset's SNS strength
+        let sns_strength = self.sns_strength;
+
+        // Compute base filter level for delta computation
+        let base_filter = super::cost::compute_filter_level(
+            base_quant_index,
+            self.filter_sharpness,
+            self.filter_strength,
+        );
 
         for (seg_idx, &center) in centers.iter().enumerate() {
             let center = center as i32;
@@ -2333,6 +2363,14 @@ impl<'a> Vp8Encoder<'a> {
             // Compute the delta from base quantizer
             let delta = seg_quant_index as i8 - base_quant_index as i8;
 
+            // Compute per-segment loop filter delta
+            let seg_filter = super::cost::compute_filter_level(
+                seg_quant_index,
+                self.filter_sharpness,
+                self.filter_strength,
+            );
+            let filter_delta = (seg_filter as i8) - (base_filter as i8);
+
             let mut segment = Segment {
                 ydc: DC_QUANT[seg_quant_usize],
                 yac: AC_QUANT[seg_quant_usize],
@@ -2341,10 +2379,11 @@ impl<'a> Vp8Encoder<'a> {
                 uvdc: DC_QUANT[seg_quant_usize],
                 uvac: AC_QUANT[seg_quant_usize],
                 quantizer_level: delta,
+                loopfilter_level: filter_delta,
                 quant_index: seg_quant_index,
                 ..Default::default()
             };
-            segment.init_matrices();
+            segment.init_matrices(self.sns_strength);
             self.segments[seg_idx] = segment;
         }
 
@@ -2412,12 +2451,12 @@ impl<'a> Vp8Encoder<'a> {
         self.macroblock_width = mb_width;
         self.macroblock_height = mb_height;
 
-        // Compute optimal filter level based on quantization
-        // Use sharpness=0 (no sharpening reduction) and default filter_strength=50
-        let sharpness: u8 = 0;
-        let filter_strength: u8 = 50;
-        let filter_level =
-            super::cost::compute_filter_level(quant_index, sharpness, filter_strength);
+        // Compute optimal filter level based on quantization and preset tuning params
+        let filter_level = super::cost::compute_filter_level(
+            quant_index,
+            self.filter_sharpness,
+            self.filter_strength,
+        );
 
         self.frame = Frame {
             width,
@@ -2434,7 +2473,7 @@ impl<'a> Vp8Encoder<'a> {
 
             filter_type: false,
             filter_level,
-            sharpness_level: sharpness, // Matches sharpness used in filter level calculation
+            sharpness_level: self.filter_sharpness,
         };
 
         self.top_complexity = vec![Complexity::default(); usize::from(mb_width)];
@@ -2467,7 +2506,7 @@ impl<'a> Vp8Encoder<'a> {
                 quant_index,
                 ..Default::default()
             };
-            segment.init_matrices();
+            segment.init_matrices(self.sns_strength);
             self.segments[seg_idx] = segment;
         }
 
@@ -2479,7 +2518,7 @@ impl<'a> Vp8Encoder<'a> {
         // Only enable for images large enough to benefit (overhead vs gain tradeoff).
         // libwebp uses segments for images with method > 0 and multiple segments configured.
         let total_mbs = usize::from(mb_width) * usize::from(mb_height);
-        let use_segments = total_mbs >= 256; // Enable for images >= 256 macroblocks (~256x256)
+        let use_segments = self.num_segments > 1 && total_mbs >= 256;
 
         if use_segments {
             // DCT-based segment analysis and assignment
@@ -3135,8 +3174,7 @@ pub(crate) fn encode_frame_lossy(
     width: u32,
     height: u32,
     color: ColorType,
-    lossy_quality: u8,
-    method: u8,
+    params: &super::api::EncoderParams,
 ) -> Result<(), EncodingError> {
     let mut vp8_encoder = Vp8Encoder::new(writer);
 
@@ -3147,7 +3185,7 @@ pub(crate) fn encode_frame_lossy(
         .try_into()
         .map_err(|_| EncodingError::InvalidDimensions)?;
 
-    vp8_encoder.encode_image(data, color, width, height, lossy_quality, method)?;
+    vp8_encoder.encode_image(data, color, width, height, params)?;
 
     Ok(())
 }

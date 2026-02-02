@@ -429,6 +429,15 @@ pub struct EncoderParams {
     /// - 3-4: Balanced speed/quality (default: 4)
     /// - 5-6: Best quality, full mode search
     pub method: u8,
+    /// Spatial noise shaping strength (0-100). Controls per-segment quantization spread.
+    /// Higher values give more differentiation between flat/textured regions.
+    pub(crate) sns_strength: u8,
+    /// Loop filter strength (0-100). Controls deblocking filter intensity.
+    pub(crate) filter_strength: u8,
+    /// Loop filter sharpness (0-7). Higher values reduce filter effect near edges.
+    pub(crate) filter_sharpness: u8,
+    /// Number of segments (1-4). More segments allow finer per-region quantization.
+    pub(crate) num_segments: u8,
 }
 
 impl Default for EncoderParams {
@@ -438,6 +447,10 @@ impl Default for EncoderParams {
             use_lossy: false,
             lossy_quality: 95,
             method: 4, // Balanced speed/quality
+            sns_strength: 50,
+            filter_strength: 60,
+            filter_sharpness: 0,
+            num_segments: 4,
         }
     }
 }
@@ -495,6 +508,10 @@ pub struct EncoderConfig {
     exact: bool,
     target_size: u32,
     use_sharp_yuv: bool,
+    sns_strength_override: Option<u8>,
+    filter_strength_override: Option<u8>,
+    filter_sharpness_override: Option<u8>,
+    segments_override: Option<u8>,
 }
 
 impl Default for EncoderConfig {
@@ -509,6 +526,10 @@ impl Default for EncoderConfig {
             exact: false,
             target_size: 0,
             use_sharp_yuv: false,
+            sns_strength_override: None,
+            filter_strength_override: None,
+            filter_sharpness_override: None,
+            segments_override: None,
         }
     }
 }
@@ -629,13 +650,55 @@ impl EncoderConfig {
         self.method
     }
 
+    /// Set spatial noise shaping strength (0-100).
+    #[must_use]
+    pub fn sns_strength(mut self, strength: u8) -> Self {
+        self.sns_strength_override = Some(strength.min(100));
+        self
+    }
+
+    /// Set loop filter strength (0-100).
+    #[must_use]
+    pub fn filter_strength(mut self, strength: u8) -> Self {
+        self.filter_strength_override = Some(strength.min(100));
+        self
+    }
+
+    /// Set loop filter sharpness (0-7).
+    #[must_use]
+    pub fn filter_sharpness(mut self, sharpness: u8) -> Self {
+        self.filter_sharpness_override = Some(sharpness.min(7));
+        self
+    }
+
+    /// Set number of segments (1-4).
+    #[must_use]
+    pub fn segments(mut self, segments: u8) -> Self {
+        self.segments_override = Some(segments.clamp(1, 4));
+        self
+    }
+
     /// Convert to internal EncoderParams.
     fn to_params(&self) -> EncoderParams {
+        // Base tuning values from preset (matches libwebp config_enc.c)
+        let (sns, filter, sharp, segs) = match self.preset {
+            Preset::Default => (50, 60, 0, 4),
+            Preset::Picture => (80, 35, 4, 4),
+            Preset::Photo => (80, 30, 3, 4),
+            Preset::Drawing => (25, 10, 6, 4),
+            Preset::Icon => (0, 0, 0, 4),
+            Preset::Text => (0, 0, 0, 2),
+        };
+
         EncoderParams {
             use_predictor_transform: true,
             use_lossy: !self.lossless,
             lossy_quality: super::fast_math::roundf(self.quality) as u8,
             method: self.method,
+            sns_strength: self.sns_strength_override.unwrap_or(sns),
+            filter_strength: self.filter_strength_override.unwrap_or(filter),
+            filter_sharpness: self.filter_sharpness_override.unwrap_or(sharp),
+            num_segments: self.segments_override.unwrap_or(segs),
         }
     }
 
@@ -827,6 +890,34 @@ impl<'a> Encoder<'a> {
     #[must_use]
     pub fn sharp_yuv(mut self, enable: bool) -> Self {
         self.config = self.config.sharp_yuv(enable);
+        self
+    }
+
+    /// Set spatial noise shaping strength (0-100).
+    #[must_use]
+    pub fn sns_strength(mut self, strength: u8) -> Self {
+        self.config = self.config.sns_strength(strength);
+        self
+    }
+
+    /// Set loop filter strength (0-100).
+    #[must_use]
+    pub fn filter_strength(mut self, strength: u8) -> Self {
+        self.config = self.config.filter_strength(strength);
+        self
+    }
+
+    /// Set loop filter sharpness (0-7).
+    #[must_use]
+    pub fn filter_sharpness(mut self, sharpness: u8) -> Self {
+        self.config = self.config.filter_sharpness(sharpness);
+        self
+    }
+
+    /// Set number of segments (1-4).
+    #[must_use]
+    pub fn segments(mut self, segments: u8) -> Self {
+        self.config = self.config.segments(segments);
         self
     }
 
@@ -1300,15 +1391,7 @@ impl<'a> WebPEncoder<'a> {
         let lossy_with_alpha = self.params.use_lossy && color.has_alpha();
 
         let frame_chunk = if self.params.use_lossy {
-            encode_frame_lossy(
-                &mut frame,
-                data,
-                width,
-                height,
-                color,
-                self.params.lossy_quality,
-                self.params.method,
-            )?;
+            encode_frame_lossy(&mut frame, data, width, height, color, &self.params)?;
             b"VP8 "
         } else {
             encode_frame_lossless(&mut frame, data, width, height, color, self.params, false)?;
