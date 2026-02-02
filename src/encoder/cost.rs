@@ -476,12 +476,18 @@ impl VP8Matrix {
         (sum + 8) >> 4
     }
 
-    /// Quantize a single coefficient
+    /// Quantize a single coefficient (matches libwebp's QuantizeBlock_C)
+    ///
+    /// Adds sharpen boost to absolute coefficient value, then checks against
+    /// zthresh to skip coefficients guaranteed to quantize to zero.
     #[inline]
     pub fn quantize_coeff(&self, coeff: i32, pos: usize) -> i32 {
         let sign = coeff < 0;
-        let abs_coeff = if sign { -coeff } else { coeff } as u32;
-        let level = quantdiv(abs_coeff, self.iq[pos], self.bias[pos]);
+        let abs_coeff = (if sign { -coeff } else { coeff } as u32) + self.sharpen[pos] as u32;
+        if abs_coeff <= self.zthresh[pos] {
+            return 0;
+        }
+        let level = quantdiv(abs_coeff, self.iq[pos], self.bias[pos]).min(MAX_LEVEL as i32);
         if sign {
             -level
         } else {
@@ -510,6 +516,8 @@ impl VP8Matrix {
     }
 
     /// Quantize an entire 4x4 block of coefficients in place (SIMD version)
+    ///
+    /// Includes sharpen boost and zthresh check matching libwebp's QuantizeBlock_C.
     #[cfg(feature = "simd")]
     pub fn quantize(&self, coeffs: &mut [i32; 16]) {
         use wide::i64x4;
@@ -526,9 +534,22 @@ impl VP8Matrix {
                 coeffs[base + 3] as i64,
             ];
 
-            // Compute signs and absolute values
+            // Compute signs and absolute values + sharpen
             let signs = [c[0] < 0, c[1] < 0, c[2] < 0, c[3] < 0];
-            let abs_c = i64x4::from([c[0].abs(), c[1].abs(), c[2].abs(), c[3].abs()]);
+            let abs_c = [
+                c[0].abs() + self.sharpen[base] as i64,
+                c[1].abs() + self.sharpen[base + 1] as i64,
+                c[2].abs() + self.sharpen[base + 2] as i64,
+                c[3].abs() + self.sharpen[base + 3] as i64,
+            ];
+
+            // Load zthresh for early-out check
+            let zt = [
+                self.zthresh[base] as i64,
+                self.zthresh[base + 1] as i64,
+                self.zthresh[base + 2] as i64,
+                self.zthresh[base + 3] as i64,
+            ];
 
             // Load iq and bias as i64
             let iq = i64x4::from([
@@ -545,46 +566,43 @@ impl VP8Matrix {
             ]);
 
             // Quantize: (abs_coeff * iq + bias) >> QFIX
-            let result = (abs_c * iq + bias) >> QFIX as i64;
+            let abs_v = i64x4::from(abs_c);
+            let result = (abs_v * iq + bias) >> QFIX as i64;
             let r = result.to_array();
 
-            // Apply signs and store
-            coeffs[base] = if signs[0] {
-                -(r[0] as i32)
-            } else {
-                r[0] as i32
-            };
-            coeffs[base + 1] = if signs[1] {
-                -(r[1] as i32)
-            } else {
-                r[1] as i32
-            };
-            coeffs[base + 2] = if signs[2] {
-                -(r[2] as i32)
-            } else {
-                r[2] as i32
-            };
-            coeffs[base + 3] = if signs[3] {
-                -(r[3] as i32)
-            } else {
-                r[3] as i32
-            };
+            // Apply signs, zthresh, and store
+            for i in 0..4 {
+                if abs_c[i] <= zt[i] {
+                    coeffs[base + i] = 0;
+                } else {
+                    let level = (r[i] as i32).min(MAX_LEVEL as i32);
+                    coeffs[base + i] = if signs[i] { -level } else { level };
+                }
+            }
         }
     }
 
     /// Quantize an entire 4x4 block of coefficients in place (scalar fallback)
+    ///
+    /// Includes sharpen boost and zthresh check matching libwebp's QuantizeBlock_C.
     #[cfg(not(feature = "simd"))]
     pub fn quantize(&self, coeffs: &mut [i32; 16]) {
         for (pos, coeff) in coeffs.iter_mut().enumerate() {
             let sign = *coeff < 0;
-            let abs_coeff = if sign { -*coeff } else { *coeff } as u32;
-            let level = quantdiv(abs_coeff, self.iq[pos], self.bias[pos]);
+            let abs_coeff = (if sign { -*coeff } else { *coeff } as u32) + self.sharpen[pos] as u32;
+            if abs_coeff <= self.zthresh[pos] {
+                *coeff = 0;
+                continue;
+            }
+            let level = quantdiv(abs_coeff, self.iq[pos], self.bias[pos]).min(MAX_LEVEL as i32);
             *coeff = if sign { -level } else { level };
         }
     }
 
     /// Quantize only AC coefficients (positions 1-15) in place, leaving DC unchanged
     /// This is used for Y1 blocks where the DC goes to the Y2 block
+    ///
+    /// Includes sharpen boost and zthresh check matching libwebp's QuantizeBlock_C.
     #[cfg(feature = "simd")]
     pub fn quantize_ac_only(&self, coeffs: &mut [i32; 16]) {
         use wide::i64x4;
@@ -598,7 +616,19 @@ impl VP8Matrix {
                 0i64, // padding
             ];
             let signs = [c[0] < 0, c[1] < 0, c[2] < 0, false];
-            let abs_c = i64x4::from([c[0].abs(), c[1].abs(), c[2].abs(), 0]);
+            let abs_c = [
+                c[0].abs() + self.sharpen[1] as i64,
+                c[1].abs() + self.sharpen[2] as i64,
+                c[2].abs() + self.sharpen[3] as i64,
+                0i64,
+            ];
+            let zt = [
+                self.zthresh[1] as i64,
+                self.zthresh[2] as i64,
+                self.zthresh[3] as i64,
+                0i64,
+            ];
+            let abs_v = i64x4::from(abs_c);
             let iq = i64x4::from([self.iq[1] as i64, self.iq[2] as i64, self.iq[3] as i64, 0]);
             let bias = i64x4::from([
                 self.bias[1] as i64,
@@ -606,23 +636,16 @@ impl VP8Matrix {
                 self.bias[3] as i64,
                 0,
             ]);
-            let result = (abs_c * iq + bias) >> QFIX as i64;
+            let result = (abs_v * iq + bias) >> QFIX as i64;
             let r = result.to_array();
-            coeffs[1] = if signs[0] {
-                -(r[0] as i32)
-            } else {
-                r[0] as i32
-            };
-            coeffs[2] = if signs[1] {
-                -(r[1] as i32)
-            } else {
-                r[1] as i32
-            };
-            coeffs[3] = if signs[2] {
-                -(r[2] as i32)
-            } else {
-                r[2] as i32
-            };
+            for i in 0..3 {
+                if abs_c[i] <= zt[i] {
+                    coeffs[1 + i] = 0;
+                } else {
+                    let level = (r[i] as i32).min(MAX_LEVEL as i32);
+                    coeffs[1 + i] = if signs[i] { -level } else { level };
+                }
+            }
         }
 
         // Process positions 4-15 (three full chunks)
@@ -635,7 +658,19 @@ impl VP8Matrix {
                 coeffs[base + 3] as i64,
             ];
             let signs = [c[0] < 0, c[1] < 0, c[2] < 0, c[3] < 0];
-            let abs_c = i64x4::from([c[0].abs(), c[1].abs(), c[2].abs(), c[3].abs()]);
+            let abs_c = [
+                c[0].abs() + self.sharpen[base] as i64,
+                c[1].abs() + self.sharpen[base + 1] as i64,
+                c[2].abs() + self.sharpen[base + 2] as i64,
+                c[3].abs() + self.sharpen[base + 3] as i64,
+            ];
+            let zt = [
+                self.zthresh[base] as i64,
+                self.zthresh[base + 1] as i64,
+                self.zthresh[base + 2] as i64,
+                self.zthresh[base + 3] as i64,
+            ];
+            let abs_v = i64x4::from(abs_c);
             let iq = i64x4::from([
                 self.iq[base] as i64,
                 self.iq[base + 1] as i64,
@@ -648,40 +683,35 @@ impl VP8Matrix {
                 self.bias[base + 2] as i64,
                 self.bias[base + 3] as i64,
             ]);
-            let result = (abs_c * iq + bias) >> QFIX as i64;
+            let result = (abs_v * iq + bias) >> QFIX as i64;
             let r = result.to_array();
-            coeffs[base] = if signs[0] {
-                -(r[0] as i32)
-            } else {
-                r[0] as i32
-            };
-            coeffs[base + 1] = if signs[1] {
-                -(r[1] as i32)
-            } else {
-                r[1] as i32
-            };
-            coeffs[base + 2] = if signs[2] {
-                -(r[2] as i32)
-            } else {
-                r[2] as i32
-            };
-            coeffs[base + 3] = if signs[3] {
-                -(r[3] as i32)
-            } else {
-                r[3] as i32
-            };
+            for i in 0..4 {
+                if abs_c[i] <= zt[i] {
+                    coeffs[base + i] = 0;
+                } else {
+                    let level = (r[i] as i32).min(MAX_LEVEL as i32);
+                    coeffs[base + i] = if signs[i] { -level } else { level };
+                }
+            }
         }
     }
 
     /// Quantize only AC coefficients (positions 1-15) in place, leaving DC unchanged
     /// This is used for Y1 blocks where the DC goes to the Y2 block (scalar fallback)
+    ///
+    /// Includes sharpen boost and zthresh check matching libwebp's QuantizeBlock_C.
     #[cfg(not(feature = "simd"))]
     #[allow(clippy::needless_range_loop)] // pos indexes both coeffs and self.iq/self.bias
     pub fn quantize_ac_only(&self, coeffs: &mut [i32; 16]) {
         for pos in 1..16 {
             let sign = coeffs[pos] < 0;
-            let abs_coeff = if sign { -coeffs[pos] } else { coeffs[pos] } as u32;
-            let level = quantdiv(abs_coeff, self.iq[pos], self.bias[pos]);
+            let abs_coeff =
+                (if sign { -coeffs[pos] } else { coeffs[pos] } as u32) + self.sharpen[pos] as u32;
+            if abs_coeff <= self.zthresh[pos] {
+                coeffs[pos] = 0;
+                continue;
+            }
+            let level = quantdiv(abs_coeff, self.iq[pos], self.bias[pos]).min(MAX_LEVEL as i32);
             coeffs[pos] = if sign { -level } else { level };
         }
     }
