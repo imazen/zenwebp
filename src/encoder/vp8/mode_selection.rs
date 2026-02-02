@@ -8,7 +8,7 @@ use crate::common::transform;
 use crate::common::types::*;
 
 use crate::encoder::cost::{
-    estimate_dc16_cost, estimate_residual_cost, get_cost_luma4, get_cost_luma16, get_cost_uv,
+    estimate_dc16_cost, estimate_residual_cost, get_cost_luma16, get_cost_luma4, get_cost_uv,
     get_i4_mode_cost, is_flat_coeffs, is_flat_source_16, tdisto_16x16, FIXED_COSTS_I16,
     FIXED_COSTS_UV, FLATNESS_LIMIT_I16, FLATNESS_LIMIT_UV, FLATNESS_PENALTY, RD_DISTO_MULT,
     VP8_WEIGHT_Y,
@@ -504,7 +504,8 @@ impl<'a> super::Vp8Encoder<'a> {
                     // Compute RD score: distortion + lambda * (mode_cost + coeff_cost)
                     let mode_cost = get_i4_mode_cost(top_ctx, left_ctx, mode_idx);
                     let total_rate = u32::from(mode_cost) + coeff_cost;
-                    let rd_score = crate::encoder::cost::rd_score(sse, total_rate as u16, lambda_i4);
+                    let rd_score =
+                        crate::encoder::cost::rd_score(sse, total_rate as u16, lambda_i4);
 
                     if rd_score < best_block_score {
                         best_block_score = rd_score;

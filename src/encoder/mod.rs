@@ -10,9 +10,9 @@ mod fast_math;
 pub mod quantize;
 /// Residual cost estimation (SIMD-optimized)
 mod residual_cost;
+pub mod tables;
 /// Trellis quantization for RD-optimized coefficient selection
 mod trellis;
-pub mod tables;
 mod vec_writer;
 /// VP8 encoder implementation
 pub mod vp8;

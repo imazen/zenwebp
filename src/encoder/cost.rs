@@ -22,7 +22,6 @@ pub use super::analysis::*;
 // Import pub(crate) items that aren't re-exported
 use super::tables::{LEVELS_FROM_DELTA, MAX_DELTA_SIZE};
 
-
 /// Distortion multiplier - scales distortion to match bit cost units
 pub const RD_DISTO_MULT: u32 = 256;
 
@@ -223,7 +222,6 @@ pub const FLATNESS_PENALTY: u32 = 140;
 // Re-export quantization types and functions from quantize module
 pub use super::quantize::{quantdiv, quantization_bias, MatrixType, VP8Matrix, QFIX};
 
-
 /// Cutoff for very small filter strengths (have close to no visual effect)
 const FSTRENGTH_CUTOFF: u8 = 2;
 
@@ -381,13 +379,11 @@ pub fn calc_tlambda(sns_strength: u32, q: u32) -> u32 {
 /// Default SNS strength value (matches libwebp default)
 pub const DEFAULT_SNS_STRENGTH: u32 = 50;
 
-
 //------------------------------------------------------------------------------
 // Re-export trellis quantization from trellis module
-pub use super::trellis::trellis_quantize_block;
 #[cfg(test)]
 use super::trellis::rd_score_trellis;
-
+pub use super::trellis::trellis_quantize_block;
 
 //------------------------------------------------------------------------------
 // Coefficient cost estimation
@@ -975,9 +971,8 @@ impl LevelCosts {
 }
 // Re-export residual cost functions from residual_cost module
 pub use super::residual_cost::{
-    get_cost_luma4, get_cost_luma16, get_cost_uv, get_residual_cost, Residual,
+    get_cost_luma16, get_cost_luma4, get_cost_uv, get_residual_cost, Residual,
 };
-
 
 #[cfg(test)]
 mod tests {

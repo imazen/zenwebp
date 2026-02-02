@@ -4,16 +4,16 @@ use core::mem;
 
 use super::vec_writer::VecWriter;
 
-use super::arithmetic::ArithmeticEncoder;
 use super::api::ColorType;
 use super::api::EncodingError;
+use super::arithmetic::ArithmeticEncoder;
 use super::cost::{
     analyze_image, assign_segments_kmeans, classify_image_type, compute_segment_quant,
     content_type_to_tuning, LevelCosts, ProbaStats,
 };
+use crate::common::prediction::*;
 use crate::common::types::Frame;
 use crate::common::types::*;
-use crate::common::prediction::*;
 use crate::decoder::yuv::convert_image_y;
 use crate::decoder::yuv::convert_image_yuv;
 
@@ -237,6 +237,14 @@ struct Vp8Encoder<'a> {
     // left_derr[channel][0..2] = errors from block to the left
     top_derr: Vec<[[i8; 2]; 2]>,
     left_derr: [[i8; 2]; 2],
+
+    /// Token buffer for deferred coefficient encoding (method >= 2).
+    /// Stores bit-level tokens during the recording pass for later emission
+    /// with optimized probability tables.
+    token_buffer: Option<residuals::TokenBuffer>,
+    /// Stored macroblock info from token recording pass, used to write
+    /// headers without redoing mode selection.
+    stored_mb_info: Vec<MacroblockInfo>,
 }
 
 impl<'a> Vp8Encoder<'a> {
@@ -293,6 +301,9 @@ impl<'a> Vp8Encoder<'a> {
             // Error diffusion starts with zero
             top_derr: Vec::new(),
             left_derr: [[0; 2]; 2],
+
+            token_buffer: None,
+            stored_mb_info: Vec::new(),
         }
     }
 
@@ -321,7 +332,6 @@ impl<'a> Vp8Encoder<'a> {
             None
         }
     }
-
 
     /// Compute updated probabilities from recorded statistics.
     /// Only includes updates where the savings exceed a minimum threshold.
@@ -364,6 +374,8 @@ impl<'a> Vp8Encoder<'a> {
     }
 
     /// Reset encoder state for second pass encoding.
+    /// Kept as fallback — token buffer path replaces the two-pass approach.
+    #[allow(dead_code)]
     fn reset_for_second_pass(&mut self) {
         // Reset complexity tracking
         for complexity in self.top_complexity.iter_mut() {
@@ -452,112 +464,41 @@ impl<'a> Vp8Encoder<'a> {
             v_bytes,
         );
 
-        // Two-pass encoding with adaptive probabilities.
-        // Pass 1: Collect token statistics (without trellis) to estimate probabilities.
-        // Pass 2: Encode with updated probabilities (with trellis) for better compression.
-        // This is essential for good compression, especially at high quality where
-        // coefficients have more varied magnitudes and accurate probability estimates
-        // are crucial for efficient entropy coding.
-        let use_two_pass = true;
-
-        if use_two_pass {
-            // ===== PASS 1: Collect token statistics for adaptive probabilities =====
-            // Disable trellis during pass 1 to ensure consistent statistics collection.
-            // The statistics should reflect simple quantization, then trellis optimizes
-            // the actual encoding in pass 2 using those probabilities.
-            let trellis_during_pass2 = self.do_trellis;
-            self.do_trellis = false;
-
-            self.proba_stats.reset();
-            let mut total_mb: u32 = 0;
-            let mut skip_mb: u32 = 0;
-
-            for mby in 0..self.macroblock_height {
-                // reset left complexity / bpreds for left of image
-                self.left_complexity = Complexity::default();
-                self.left_b_pred = [IntraMode::default(); 4];
-
-                self.left_border_y = [129u8; 16 + 1];
-                self.left_border_u = [129u8; 8 + 1];
-                self.left_border_v = [129u8; 8 + 1];
-
-                for mbx in 0..self.macroblock_width {
-                    let macroblock_info = self.choose_macroblock_info(mbx.into(), mby.into());
-
-                    // Transform blocks (updates border state for next macroblock)
-                    let y_block_data =
-                        self.transform_luma_block(mbx.into(), mby.into(), &macroblock_info);
-
-                    let (u_block_data, v_block_data) = self.transform_chroma_blocks(
-                        mbx.into(),
-                        mby.into(),
-                        macroblock_info.chroma_mode,
-                    );
-
-                    // Track skip statistics
-                    total_mb += 1;
-                    let all_zero = self.check_all_coeffs_zero(
-                        &macroblock_info,
-                        &y_block_data,
-                        &u_block_data,
-                        &v_block_data,
-                    );
-                    if all_zero {
-                        skip_mb += 1;
-                        // Reset complexity for skipped blocks
-                        self.left_complexity
-                            .clear(macroblock_info.luma_mode != LumaMode::B);
-                        self.top_complexity[usize::from(mbx)]
-                            .clear(macroblock_info.luma_mode != LumaMode::B);
-                    } else {
-                        // Record token statistics for this macroblock
-                        self.record_residual_stats(
-                            &macroblock_info,
-                            mbx as usize,
-                            &y_block_data,
-                            &u_block_data,
-                            &v_block_data,
-                        );
-                    }
-                }
-            }
-
-            // Compute skip probability from actual data
-            // prob_skip_false = P(macroblock has non-zero coefficients)
-            if total_mb > 0 {
-                let non_skip_mb = total_mb - skip_mb;
-                // Round to nearest: (255 * non_skip + total/2) / total
-                let prob = ((255 * non_skip_mb + total_mb / 2) / total_mb).min(255) as u8;
-                // Clamp to valid range [1, 254] - 0 means always skip, 255 means never skip
-                self.macroblock_no_skip_coeff = Some(prob.clamp(1, 254));
-            }
-
-            // Compute optimal probabilities from statistics
-            self.compute_updated_probabilities();
-
-            // Calculate level costs based on final probabilities
-            // This enables accurate mode cost estimation and trellis decisions in pass 2
-            let probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
-            self.level_costs.calculate(probs);
-
-            // Restore trellis setting for pass 2
-            self.do_trellis = trellis_during_pass2;
-
-            // Reset state for actual encoding pass
-            self.reset_for_second_pass();
-        }
-
-        // Calculate level costs for initial probabilities if no two-pass
+        // Calculate initial level costs for mode selection and trellis
         if self.level_costs.is_dirty() {
             self.level_costs.calculate(&self.token_probs);
         }
 
-        self.encode_compressed_frame_header();
+        // Single-pass token buffer encoding (matching libwebp's VP8EncTokenLoop).
+        //
+        // Instead of the old two-pass approach (pass 1: collect stats without trellis,
+        // pass 2: re-encode with trellis), we:
+        // 1. Record coefficient decisions as compact tokens in a buffer
+        // 2. Simultaneously collect probability statistics
+        // 3. Periodically refresh cost tables mid-stream for better trellis decisions
+        // 4. After all MBs: finalize probabilities, write headers, emit tokens
+        //
+        // Benefits over the old two-pass approach:
+        // - No duplicate mode selection + transform + quantization work
+        // - Statistics reflect actual trellis decisions (no trellis/non-trellis mismatch)
+        // - Mid-stream probability refresh improves later coefficient decisions
 
-        // encode residual partitions
+        let num_mb =
+            usize::from(self.macroblock_width) * usize::from(self.macroblock_height);
+        self.token_buffer = Some(residuals::TokenBuffer::with_estimated_capacity(num_mb));
+        self.stored_mb_info = Vec::with_capacity(num_mb);
+        self.proba_stats.reset();
+
+        // Mid-stream refresh interval: roughly every total_mb/8 macroblocks
+        let max_count = (num_mb / 8).max(96) as i32; // MIN_COUNT = 96 (matches libwebp)
+        let mut refresh_countdown = max_count;
+
+        let mut total_mb: u32 = 0;
+        let mut skip_mb: u32 = 0;
+
+        // ===== RECORDING PASS: mode selection + transform + token recording =====
         for mby in 0..self.macroblock_height {
-            let partition_index = usize::from(mby) % self.partitions.len();
-            // reset left complexity / bpreds for left of image
+            // Reset left state for start of row
             self.left_complexity = Complexity::default();
             self.left_b_pred = [IntraMode::default(); 4];
             self.left_derr = [[0; 2]; 2]; // reset chroma error diffusion for row start
@@ -567,9 +508,18 @@ impl<'a> Vp8Encoder<'a> {
             self.left_border_v = [129u8; 8 + 1];
 
             for mbx in 0..self.macroblock_width {
-                let mut macroblock_info = self.choose_macroblock_info(mbx.into(), mby.into());
+                // Mid-stream probability refresh (like libwebp's VP8EncTokenLoop)
+                refresh_countdown -= 1;
+                if refresh_countdown < 0 {
+                    self.compute_updated_probabilities();
+                    let probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
+                    self.level_costs.calculate(probs);
+                    refresh_countdown = max_count;
+                }
 
-                // Transform first to check for skip
+                let macroblock_info = self.choose_macroblock_info(mbx.into(), mby.into());
+
+                // Transform blocks (updates border state for next macroblock)
                 let y_block_data =
                     self.transform_luma_block(mbx.into(), mby.into(), &macroblock_info);
 
@@ -579,40 +529,80 @@ impl<'a> Vp8Encoder<'a> {
                     macroblock_info.chroma_mode,
                 );
 
-                // Check if all coefficients are zero (can skip)
-                if self.macroblock_no_skip_coeff.is_some() {
-                    let all_zero = self.check_all_coeffs_zero(
-                        &macroblock_info,
-                        &y_block_data,
-                        &u_block_data,
-                        &v_block_data,
-                    );
-                    macroblock_info.coeffs_skipped = all_zero;
-                }
+                // Check if all coefficients are zero (skip detection)
+                total_mb += 1;
+                let all_zero = self.check_all_coeffs_zero(
+                    &macroblock_info,
+                    &y_block_data,
+                    &u_block_data,
+                    &v_block_data,
+                );
 
-                // write macroblock headers (now with correct skip flag)
-                self.write_macroblock_header(&macroblock_info, mbx.into());
-
-                if !macroblock_info.coeffs_skipped {
-                    self.encode_residual_data(
+                let mut mb_info = macroblock_info;
+                if all_zero {
+                    skip_mb += 1;
+                    mb_info.coeffs_skipped = true;
+                    // Reset complexity for skipped blocks
+                    self.left_complexity
+                        .clear(macroblock_info.luma_mode != LumaMode::B);
+                    self.top_complexity[usize::from(mbx)]
+                        .clear(macroblock_info.luma_mode != LumaMode::B);
+                } else {
+                    // Record tokens and update statistics simultaneously
+                    self.record_residual_tokens(
                         &macroblock_info,
-                        partition_index,
                         mbx as usize,
                         &y_block_data,
                         &u_block_data,
                         &v_block_data,
                     );
-                } else {
-                    // since coeffs are all zero, need to set all complexities to 0
-                    // except if the luma mode is B then won't set Y2
-                    self.left_complexity
-                        .clear(macroblock_info.luma_mode != LumaMode::B);
-                    self.top_complexity[usize::from(mbx)]
-                        .clear(macroblock_info.luma_mode != LumaMode::B);
                 }
+
+                // Store macroblock info for header writing in emit pass
+                self.stored_mb_info.push(mb_info);
             }
         }
 
+        // ===== FINALIZE: compute probabilities and write bitstream =====
+
+        // Compute skip probability from actual data
+        if total_mb > 0 {
+            let non_skip_mb = total_mb - skip_mb;
+            let prob = ((255 * non_skip_mb + total_mb / 2) / total_mb).min(255) as u8;
+            self.macroblock_no_skip_coeff = Some(prob.clamp(1, 254));
+        }
+
+        // Final probability computation from all accumulated statistics
+        self.compute_updated_probabilities();
+
+        // Write compressed frame header (includes probability updates)
+        self.encode_compressed_frame_header();
+
+        // Write macroblock headers from stored info.
+        // Take the vec out to avoid borrow conflict with self.write_macroblock_header.
+        let stored_mb_info = mem::take(&mut self.stored_mb_info);
+
+        // Reset b-pred tracking state for header writing
+        for pred in self.top_b_pred.iter_mut() {
+            *pred = IntraMode::default();
+        }
+        self.left_b_pred = [IntraMode::default(); 4];
+
+        let mb_w = usize::from(self.macroblock_width);
+        for (idx, mb_info) in stored_mb_info.iter().enumerate() {
+            let mbx = idx % mb_w;
+            if mbx == 0 {
+                self.left_b_pred = [IntraMode::default(); 4];
+            }
+            self.write_macroblock_header(mb_info, mbx);
+        }
+
+        // Emit tokens to partition using final probabilities
+        let final_probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
+        let token_buf = self.token_buffer.take().unwrap();
+        token_buf.emit_tokens(&mut self.partitions[0], final_probs);
+
+        // Assemble output
         let compressed_header_encoder = mem::take(&mut self.encoder);
         let compressed_header_bytes = compressed_header_encoder.flush_and_get_buffer();
 
@@ -622,9 +612,11 @@ impl<'a> Vp8Encoder<'a> {
 
         self.write_partitions();
 
+        // Clean up
+        self.stored_mb_info.clear();
+
         Ok(())
     }
-
 
     /// Merge segments with identical quantizer and filter settings.
     ///
@@ -1018,9 +1010,7 @@ impl<'a> Vp8Encoder<'a> {
         self.top_derr = vec![[[0i8; 2]; 2]; usize::from(self.macroblock_width)];
         self.left_derr = [[0; 2]; 2];
     }
-
 }
-
 
 pub(crate) fn encode_frame_lossy(
     writer: &mut Vec<u8>,
