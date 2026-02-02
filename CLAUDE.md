@@ -38,17 +38,19 @@ Methods 5/6 now perform true multi-pass encoding like libwebp:
 - Statistics accumulate across intermediate passes (reset only on last pass)
 - Borders come from reconstructed pixels, ensuring consistent predictions within each pass
 
-**Multi-pass results (SNS=0, filter=0, segments=1):**
-| Encoder | 1-pass | 3-pass | Ratio |
-|---------|--------|--------|-------|
-| zenwebp | 12234 | 12270 | 1.003x (0.3% larger) |
-| libwebp | 11720 | 11732 | 1.001x (0.1% larger) |
+**Method comparison (SNS=0, filter=0, segments=1, single pass):**
+| Encoder | m4 | m6 | m4→m6 gain |
+|---------|-----|-----|-----------|
+| libwebp | 12018 | 11720 | **2.5% smaller** (trellis-all) |
+| zenwebp | 12234 | 12234 | 0% (we have trellis at m4) |
 
-**Key finding:** Multi-pass without quality search provides NO compression benefit
-in either zenwebp or libwebp. Both produce slightly LARGER files with more passes.
-The benefit of multi-pass comes from quality search (binary search for target size),
-not from probability refinement alone. This matches libwebp's behavior where
-multi-pass is designed for `size_search` or `psnr_search` convergence.
+**Key findings:**
+1. **libwebp m4→m6 helps** because m6 enables `RD_OPT_TRELLIS_ALL` (trellis during
+   mode selection). This is a **single-pass** benefit, not multi-pass.
+2. **Multi-pass alone doesn't help**: libwebp m6 with 3 passes is 0.1% LARGER than
+   with 1 pass. Multi-pass is only useful for quality search convergence.
+3. **Our trellis gap**: zenwebp m4 (with trellis) vs libwebp m6 (with trellis) shows
+   4.4% larger files. This is the real I4 efficiency gap to investigate.
 
 **Quality search (target_size support) - IMPLEMENTED (2026-02-02):**
 
