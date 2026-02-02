@@ -546,6 +546,86 @@ fn benchmark_image_m4_diagnostic() {
     );
 }
 
+/// Quick corpus size comparison across multiple CID22 images
+/// Uses fair comparisons: trellis vs trellis, non-trellis vs non-trellis
+#[test]
+fn quick_corpus_comparison() {
+    println!("\n=== Quick CID22 Corpus Comparison (Q75) ===");
+
+    let images = [
+        "792079.png",
+        "7062177.png",
+        "670530.png",
+        "2020432.png",
+        "5894435.png",
+    ];
+
+    // Fair comparison 1: our m4 (trellis) vs libwebp m6 (trellis)
+    println!("\n--- Trellis comparison: zenwebp m4 vs libwebp m6 ---");
+    let mut total_zen = 0usize;
+    let mut total_lib = 0usize;
+
+    for img_name in images {
+        let path = format!("/tmp/CID22/original/{}", img_name);
+        let (rgb, width, height) = match load_png(&path) {
+            Some(data) => data,
+            None => {
+                println!("Skipping: {} not found", img_name);
+                continue;
+            }
+        };
+
+        let zen_webp = encode_zenwebp(&rgb, width, height, 75.0, 4);
+        let lib_webp = encode_libwebp(&rgb, width, height, 75.0, 6);
+
+        let ratio = zen_webp.len() as f64 / lib_webp.len() as f64;
+        println!(
+            "  {}: zen(m4)={} lib(m6)={} ratio={:.3}x",
+            img_name,
+            zen_webp.len(),
+            lib_webp.len(),
+            ratio
+        );
+
+        total_zen += zen_webp.len();
+        total_lib += lib_webp.len();
+    }
+
+    let total_ratio = total_zen as f64 / total_lib as f64;
+    println!("Aggregate (trellis): zen={} lib={} ratio={:.3}x", total_zen, total_lib, total_ratio);
+
+    // Fair comparison 2: our m2 (no trellis) vs libwebp m4 (no trellis)
+    println!("\n--- Non-trellis comparison: zenwebp m2 vs libwebp m4 ---");
+    total_zen = 0;
+    total_lib = 0;
+
+    for img_name in images {
+        let path = format!("/tmp/CID22/original/{}", img_name);
+        let (rgb, width, height) = match load_png(&path) {
+            Some(data) => data,
+            None => continue,
+        };
+
+        let zen_webp = encode_zenwebp(&rgb, width, height, 75.0, 2);
+        let lib_webp = encode_libwebp(&rgb, width, height, 75.0, 4);
+
+        let ratio = zen_webp.len() as f64 / lib_webp.len() as f64;
+        println!(
+            "  {}: zen(m2)={} lib(m4)={} ratio={:.3}x",
+            img_name,
+            zen_webp.len(),
+            lib_webp.len(),
+            ratio
+        );
+
+        total_zen += zen_webp.len();
+        total_lib += lib_webp.len();
+    }
+
+    let total_ratio = total_zen as f64 / total_lib as f64;
+    println!("Aggregate (non-trellis): zen={} lib={} ratio={:.3}x", total_zen, total_lib, total_ratio);
+}
+
 /// Fair trellis comparison: our m4 (has trellis) vs libwebp m6 (has trellis)
 #[test]
 fn benchmark_trellis_fair_comparison() {
