@@ -4,99 +4,121 @@ Delete this file after loading into a new session.
 
 ## What Was Just Completed
 
-### Phase 1-3 of Preset Tuning Plan (all committed on main)
+### Quality/Size Improvement Plan - All 6 Phases Complete
 
-1. **Phase 1** (commit 1f8b488): Wired up 4 tuning parameters (sns_strength, filter_strength, filter_sharpness, num_segments) from presets through EncoderParams to Vp8Encoder. Per-segment loop filter deltas now computed and written to bitstream.
+1. **Phase 1: UV Quant Deltas** (commit 556f4ab)
+   - Modified `analyze_image()` to return `AnalysisResult` with `uv_alpha_avg`
+   - Added UV quant delta calculation matching libwebp's formula
+   - Applied `dq_uv_dc` and `dq_uv_ac` to segment quantization tables
 
-2. **Phase 2** (commit 9ada505): Preset comparison tests and webpx matched-config benchmarks. Kodak aggregate: 1.014x of libwebp at Default preset.
+2. **Phase 2: Beta and Filter Modulation** (commit 1049cb8)
+   - Added `compute_filter_level_with_beta()` to `src/encoder/cost.rs`
+   - Per-segment beta: `beta = 255 * (center - min) / (max - min)`
+   - Filter modulation: `f = base_strength * level0 / (256 + beta)`
 
-3. **Phase 3** (commits 84fffae, d2425f7, ec75092):
-   - `Preset::Auto` with uniformity-based content detection
-   - Classifier: uniformity ≥ 0.45 → Photo tuning, < 0.45 → Default tuning, ≤128x128 → Icon
-   - Drawing/Text presets map to Default tuning (50,60,0,4) — original values were counterproductive
-   - SSIMULACRA2 quality comparison added to corpus tests
-   - webpx updated to 0.1.3 (we fixed a preset bug in webpx)
+3. **Phase 3: Segment Map Smoothing** (commit 7c442d8)
+   - Added `smooth_segment_map()` with 3x3 majority filter (threshold 5)
+   - Called after segment assignment when num_segments > 1
 
-### Key Findings
+4. **Phase 4: Simplify Segments** (commit 650f3b5)
+   - Added `simplify_segments()` to merge segments with identical quant/filter
+   - Reduces effective segment count to save bits
 
-**Auto-detection results (threshold 0.45):**
-- CID22 (41 diverse images): 0.987x of Default, 2 regressions <0.5% each
-- Screenshots (9 images): 0.954x of Default, 0 regressions
+5. **Phase 5: Butteraugli Corpus Tests** (commit d3d8aa5)
+   - Added `butteraugli = "0.4.0"` to dev-dependencies
+   - Updated `tests/auto_detection_tuning.rs` with both SSIM2 and butteraugli
 
-**SSIMULACRA2 quality-size tradeoff:**
-| Corpus | Encoder | Size ratio | SSIM2 delta | SSIM2/% |
-|--------|---------|------------|-------------|---------|
-| CID22 | zenwebp Photo | 0.985x | -0.57 | 0.38 |
-| CID22 | libwebp Photo | 0.993x | -0.14 | 0.20 |
-| Screenshots | zenwebp Photo | 0.954x | -0.72 | 0.16 |
-| Screenshots | libwebp Photo | 0.959x | -1.19 | 0.29 |
+6. **Phase 6: Classifier Analysis** (commits e7c0031, 3a4d7b1)
+   - Concluded: classifier correctly detects Photo content
+   - Quality gap is NOT in content detection - it's in I4 mode path
 
-zenwebp SNS is more aggressive than libwebp on diverse images, but gentler on screenshots.
+## Critical Finding: I4 Mode Path Issue
 
-## Commits (unpushed, 8 ahead of origin/main)
+**The file size gap is in I4 mode, not I16:**
+
+| Image | Method | zenwebp | libwebp | Ratio |
+|-------|--------|---------|---------|-------|
+| 792079 | 0 (I16 only) | 13294 | 14660 | **0.91x** |
+| 792079 | 2 (I4, no trellis) | 12470 | 11318 | 1.10x |
+| 792079 | 4 (I4 + trellis) | 12188 | 10962 | 1.11x |
+| terminal | 0 (I16 only) | 77490 | 77510 | **1.00x** |
+| terminal | 2 (I4, no trellis) | 70092 | 64098 | 1.09x |
+| terminal | 4 (I4 + trellis) | 68888 | 61612 | 1.12x |
+
+**Key insight:**
+- I16 only (method 0): We're **SMALLER** than libwebp (0.91-1.00x)
+- With I4 (methods 2-6): We're **LARGER** (1.09-1.14x)
+- libwebp's I4 reduces size ~10% from I16; ours only ~2%
+
+## Failed Experiment
+
+Tried adding sharpening and zthresh to `quantize_coeff()`:
+```rust
+let coeff_with_sharpen = abs_coeff + u32::from(self.sharpen[pos]);
+if coeff_with_sharpen <= self.zthresh[pos] { return 0; }
+```
+**Result: Made things WORSE.** Reverted. The issue is not in simple quantization.
+
+## Commits (16 ahead of origin/main)
 
 ```
+3a4d7b1 docs: add I4 mode path investigation findings
+e7c0031 docs: update investigation notes with butteraugli corpus results
+650f3b5 feat: add segment simplification (merge identical segments)
+7c442d8 feat: add segment map smoothing with 3x3 majority filter
+1049cb8 feat: add beta-based filter strength modulation per segment
+d3d8aa5 test: add butteraugli metrics to corpus tests
+556f4ab feat: add UV quant deltas based on uv_alpha analysis
+abb116b docs: add context handoff and update CLAUDE.md with SSIMULACRA2 findings
 ec75092 fix: update webpx to 0.1.3 (preset bug fix)
-d2425f7 test: add SSIMULACRA2 quality comparison to corpus tests
-46cabf3 style: cargo fmt
-84fffae fix: tune auto-detection classifier for reliable compression gains
-373789a docs: update CLAUDE.md with preset tuning and auto-detection status
-e4a0494 feat: add Preset::Auto with content-type detection
-9ada505 test: add preset comparison tests and webpx matched-config benchmarks
-1f8b488 feat: wire up preset tuning parameters (sns, filter, sharpness, segments)
+... (8 more from previous session)
 ```
 
-## Key Files Modified
+## Next Steps: I4 Mode Investigation
 
-| File | What Changed |
-|------|-------------|
-| `src/encoder/api.rs` | EncoderParams tuning fields, preset mapping, builder overrides, Auto variant |
-| `src/encoder/vp8.rs` | Stores params on Vp8Encoder, threads through encode path, writes filter deltas |
-| `src/common/types.rs` | `init_matrices(sns_strength: u8)` parameter added |
-| `src/encoder/analysis.rs` | Uniformity classifier, `content_type_to_tuning()`, `ClassifierDiag` |
-| `tests/auto_detection_tuning.rs` | Corpus tests with SSIMULACRA2 and webpx comparison |
-| `Cargo.toml` | webpx 0.1.3, webpx in dev-deps |
+1. **Compare I4 usage frequency** - Count how many MBs use I4 vs I16 in both encoders
+2. **Trace I4 RD score calculation** - Verify `pick_best_intra4()` matches libwebp's `PickBestIntra4()`
+3. **Check coefficient cost for I4** - `get_cost_luma4()` vs `VP8GetCostLuma4()`
+4. **Compare bit emission** - Same coefficients should produce same bits
 
-## Open Optimization Opportunities
+## Key Files
 
-### Priority 1: SNS Tradeoff Investigation
-Our Photo preset produces more aggressive size savings than libwebp's but with proportionally higher quality loss on CID22. The segment quantization spread likely differs.
+| File | Purpose |
+|------|---------|
+| `src/encoder/vp8.rs:1826-2070` | `pick_best_intra4()` - I4 mode selection |
+| `src/encoder/vp8.rs:1539-1720` | `pick_best_intra16()` - I16 mode selection |
+| `src/encoder/vp8.rs:2237-2275` | `choose_macroblock_info()` - I4 vs I16 decision |
+| `src/encoder/vp8.rs:2368-2520` | `analyze_and_assign_segments()` - segment setup |
+| `src/encoder/cost.rs:1968-1996` | `get_cost_luma4()` - I4 coefficient cost |
+| `src/encoder/cost.rs:1731-1795` | `get_residual_cost_scalar()` - coefficient cost core |
+| `src/encoder/analysis.rs` | `AnalysisResult`, `smooth_segment_map()`, classifier |
+| `tests/auto_detection_tuning.rs` | Corpus tests with SSIM2 + butteraugli |
 
-**To investigate:**
-1. Compare per-segment quant values between zenwebp and libwebp for same image+config
-2. Trace `SetSegmentAlphas()` in libwebp vs our `analyze_and_assign_segments()` in `src/encoder/vp8.rs`
-3. Check if libwebp clamps segment quant deltas differently
+## libwebp Reference Files
 
-### Priority 2: Encoder Speed (instruction count)
-From callgrind profiling (method 4, non-trellis comparison vs libwebp method 4):
-
-| Function | Our instructions | libwebp | Ratio |
-|----------|-----------------|---------|-------|
-| get_residual_cost | 306M | 126M | 2.4x |
-| idct4x4 | 150M | 64M | 2.3x |
-| t_transform | 134M | 52M | 2.6x |
-| dct4x4 | 79M | 41M | 1.9x |
-| trellis_quantize_block | ~90M | ~12M | 7.8x |
-| encode_coefficients | ~60M | ~11M | 5.3x |
-
-### Priority 3: Decoder Speed
-Loop filter overhead: ~10M extra instructions vs libwebp (2.5x more despite SIMD).
-Per-pixel threshold checks (`should_filter_*`) are the main bottleneck.
+| File | Purpose |
+|------|---------|
+| `~/work/libwebp/src/enc/quant_enc.c:1128-1220` | `PickBestIntra4()` |
+| `~/work/libwebp/src/enc/quant_enc.c:1058-1106` | `PickBestIntra16()` |
+| `~/work/libwebp/src/enc/quant_enc.c:681-705` | `QuantizeBlock_C()` - with sharpening |
+| `~/work/libwebp/src/dsp/cost.c:238-287` | `GetResidualCost_C()` |
 
 ## Test Corpora
 
-- `/mnt/v/work/codec-corpus/gb82-sc/` — 10 screenshots
+- `/mnt/v/work/codec-corpus/gb82-sc/` — 9 screenshots
 - `/mnt/v/work/codec-corpus/CID22/CID22-512/validation/` — 41 diverse images
-- `/mnt/v/work/codec-corpus/kodak/` — standard photo test set
+- `/mnt/v/work/codec-corpus/kodak/` — standard photo test set (files: 1.png - 24.png)
 
-Run corpus tests: `cargo test --release --features "_corpus_tests" -- --nocapture`
-
-## Build/Test Commands
+## Test Commands
 
 ```bash
-cargo test --release                                    # basic tests
-cargo test --release --features "_corpus_tests" -- --nocapture  # corpus tests
-cargo clippy --all-targets --features "std,fast-yuv,simd" -- -D warnings
-cargo build --no-default-features                       # no_std check
-cargo doc --no-deps
+# Corpus tests with quality metrics
+cargo test --release --features _corpus_tests auto_detection_cid22 -- --nocapture
+cargo test --release --features _corpus_tests auto_detection_screenshots -- --nocapture
+
+# All unit tests
+cargo test --release
+
+# Clippy
+cargo clippy --all-targets --all-features -- -D warnings
 ```
