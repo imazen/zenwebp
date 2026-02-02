@@ -1933,13 +1933,11 @@ impl<'a> Vp8Encoder<'a> {
                 // and only try the top candidates with lowest SSE
                 // This reduces DCT/IDCT calls while maintaining quality
                 // Number of modes to try depends on method:
-                // - method 2-3: 3 modes (fast)
-                // - method 4: 4 modes (balanced)
-                // - method 5-6: 10 modes (full search)
+                // - method 0-3: 3 modes (fast)
+                // - method 4+: 10 modes (full search, ~0.7% smaller files)
                 let max_modes_to_try = match self.method {
                     0..=3 => 3,
-                    4 => 4,
-                    _ => 10, // method 5-6: try all modes
+                    _ => 10, // method 4+: try all modes
                 };
                 let mut mode_sse: [(u32, usize); 10] = [(0, 0); 10];
                 for (mode_idx, _) in MODES.iter().enumerate() {
