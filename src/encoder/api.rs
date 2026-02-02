@@ -72,6 +72,9 @@ pub enum Preset {
     /// Text-heavy images.
     /// Preserves text readability and sharp character edges.
     Text,
+    /// Auto-detect content type from image statistics.
+    /// Analyzes the image to choose the best preset automatically.
+    Auto,
 }
 
 /// Color type of the image.
@@ -438,6 +441,8 @@ pub struct EncoderParams {
     pub(crate) filter_sharpness: u8,
     /// Number of segments (1-4). More segments allow finer per-region quantization.
     pub(crate) num_segments: u8,
+    /// The selected preset. When Auto, the encoder will detect content type.
+    pub(crate) preset: Preset,
 }
 
 impl Default for EncoderParams {
@@ -451,6 +456,7 @@ impl Default for EncoderParams {
             filter_strength: 60,
             filter_sharpness: 0,
             num_segments: 4,
+            preset: Preset::Default,
         }
     }
 }
@@ -681,8 +687,9 @@ impl EncoderConfig {
     /// Convert to internal EncoderParams.
     fn to_params(&self) -> EncoderParams {
         // Base tuning values from preset (matches libwebp config_enc.c)
+        // Auto uses Default values initially; the encoder overrides after analysis.
         let (sns, filter, sharp, segs) = match self.preset {
-            Preset::Default => (50, 60, 0, 4),
+            Preset::Default | Preset::Auto => (50, 60, 0, 4),
             Preset::Picture => (80, 35, 4, 4),
             Preset::Photo => (80, 30, 3, 4),
             Preset::Drawing => (25, 10, 6, 4),
@@ -699,6 +706,7 @@ impl EncoderConfig {
             filter_strength: self.filter_strength_override.unwrap_or(filter),
             filter_sharpness: self.filter_sharpness_override.unwrap_or(sharp),
             num_segments: self.segments_override.unwrap_or(segs),
+            preset: self.preset,
         }
     }
 

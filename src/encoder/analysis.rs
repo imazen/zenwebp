@@ -1173,3 +1173,172 @@ pub fn compute_segment_quant(base_quant: u8, segment_alpha: i32, sns_strength: u
     let q = (127.0 * (1.0 - c)) as i32;
     q.clamp(0, 127) as u8
 }
+
+/// Detected content type for auto-preset selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ContentType {
+    Photo,
+    Drawing,
+    Text,
+    Icon,
+}
+
+/// Classify image content type from Y plane and alpha histogram.
+///
+/// This runs after `analyze_image()` and uses the alpha histogram (nearly free)
+/// plus a lightweight scan of the Y plane to determine content type.
+///
+/// Heuristics:
+/// 1. Small images (≤128x128) → Icon
+/// 2. Bimodal alpha histogram + high edge density → Text
+/// 3. Bimodal alpha histogram + moderate edges → Drawing (screenshots, UI)
+/// 4. Otherwise → Photo
+pub(crate) fn classify_image_type(
+    y_src: &[u8],
+    width: usize,
+    height: usize,
+    y_stride: usize,
+    alpha_histogram: &[u32; 256],
+) -> ContentType {
+    // 1. Small images → Icon
+    if width <= 128 && height <= 128 {
+        return ContentType::Icon;
+    }
+
+    // Compute alpha histogram shape
+    let total: u32 = alpha_histogram.iter().sum();
+    if total == 0 {
+        return ContentType::Photo;
+    }
+
+    // Check if histogram is bimodal: significant mass at both ends
+    // Low alpha = flat/simple regions, high alpha = textured regions
+    let low_quarter: u32 = alpha_histogram[..64].iter().sum();
+    let high_quarter: u32 = alpha_histogram[192..].iter().sum();
+    let low_frac = low_quarter as f32 / total as f32;
+    let high_frac = high_quarter as f32 / total as f32;
+    let is_bimodal = low_frac > 0.15 && high_frac > 0.15;
+
+    // 2. Compute edge density from Y plane
+    // Sample every 16th row, count sharp horizontal transitions
+    let edge_density = compute_edge_density(y_src, width, height, y_stride);
+
+    // 3. Compute color uniformity: count distinct Y values in sampled blocks
+    let uniformity = compute_color_uniformity(y_src, width, height, y_stride);
+
+    // Classification logic
+    if is_bimodal && edge_density > 0.15 && uniformity > 0.5 {
+        // Lots of sharp edges + uniform blocks = text-heavy
+        ContentType::Text
+    } else if (is_bimodal || uniformity > 0.4) && edge_density > 0.08 {
+        // Moderate edges with bimodal or uniform blocks = screenshot/drawing
+        ContentType::Drawing
+    } else {
+        // Natural content with wide alpha distribution
+        ContentType::Photo
+    }
+}
+
+/// Compute edge density by scanning the Y plane for sharp horizontal transitions.
+/// Returns fraction of sampled pixels that are sharp edges (0.0 to 1.0).
+fn compute_edge_density(y_src: &[u8], width: usize, height: usize, y_stride: usize) -> f32 {
+    if width < 2 || height < 16 {
+        return 0.0;
+    }
+
+    let mut edge_count = 0u32;
+    let mut sample_count = 0u32;
+    let threshold = 32u8; // Sharp edge threshold
+
+    // Sample every 16th row
+    let mut y = 0;
+    while y < height {
+        let row = &y_src[y * y_stride..][..width];
+        for x in 1..width {
+            let diff = row[x].abs_diff(row[x - 1]);
+            if diff > threshold {
+                edge_count += 1;
+            }
+            sample_count += 1;
+        }
+        y += 16;
+    }
+
+    if sample_count == 0 {
+        return 0.0;
+    }
+    edge_count as f32 / sample_count as f32
+}
+
+/// Compute color uniformity by sampling 16x16 blocks and measuring Y value spread.
+/// Returns fraction of blocks that are "uniform" (low Y variance), 0.0 to 1.0.
+fn compute_color_uniformity(
+    y_src: &[u8],
+    width: usize,
+    height: usize,
+    y_stride: usize,
+) -> f32 {
+    let mb_w = width / 16;
+    let mb_h = height / 16;
+    if mb_w == 0 || mb_h == 0 {
+        return 0.0;
+    }
+
+    let mut uniform_count = 0u32;
+    let mut total_blocks = 0u32;
+
+    // Sample every 4th macroblock in both dimensions
+    let mut mby = 0;
+    while mby < mb_h {
+        let mut mbx = 0;
+        while mbx < mb_w {
+            // Count distinct Y values in this 16x16 block
+            let mut seen = [false; 256];
+            let mut distinct = 0u32;
+            for dy in 0..16 {
+                let row_y = mby * 16 + dy;
+                if row_y >= height {
+                    break;
+                }
+                let row = &y_src[row_y * y_stride..];
+                for dx in 0..16 {
+                    let col_x = mbx * 16 + dx;
+                    if col_x >= width {
+                        break;
+                    }
+                    let val = row[col_x] as usize;
+                    if !seen[val] {
+                        seen[val] = true;
+                        distinct += 1;
+                    }
+                }
+            }
+
+            // A block with few distinct values is "uniform"
+            // Screenshots/drawings typically have <32 distinct values per block
+            if distinct <= 32 {
+                uniform_count += 1;
+            }
+            total_blocks += 1;
+
+            mbx += 4;
+        }
+        mby += 4;
+    }
+
+    if total_blocks == 0 {
+        return 0.0;
+    }
+    uniform_count as f32 / total_blocks as f32
+}
+
+/// Get tuning parameters for a detected content type.
+/// Returns (sns_strength, filter_strength, filter_sharpness, num_segments).
+pub(crate) fn content_type_to_tuning(content_type: ContentType) -> (u8, u8, u8, u8) {
+    match content_type {
+        ContentType::Photo => (80, 30, 3, 4),   // Same as Photo preset
+        ContentType::Drawing => (25, 10, 6, 4),  // Same as Drawing preset
+        ContentType::Text => (0, 0, 0, 2),       // Same as Text preset
+        ContentType::Icon => (0, 0, 0, 4),       // Same as Icon preset
+    }
+}

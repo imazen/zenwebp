@@ -6,9 +6,10 @@ use super::vec_writer::VecWriter;
 
 use super::arithmetic::ArithmeticEncoder;
 use super::cost::{
-    analyze_image, assign_segments_kmeans, compute_segment_quant, estimate_dc16_cost,
-    estimate_residual_cost, get_cost_luma4, record_coeffs, trellis_quantize_block, LevelCosts,
-    ProbaStats, TokenType, FIXED_COSTS_I16, FIXED_COSTS_UV,
+    analyze_image, assign_segments_kmeans, classify_image_type, compute_segment_quant,
+    content_type_to_tuning, estimate_dc16_cost, estimate_residual_cost, get_cost_luma4,
+    record_coeffs, trellis_quantize_block, LevelCosts, ProbaStats, TokenType, FIXED_COSTS_I16,
+    FIXED_COSTS_UV,
 };
 use crate::common::transform;
 use crate::common::types::Frame;
@@ -210,6 +211,8 @@ struct Vp8Encoder<'a> {
     filter_sharpness: u8,
     /// Number of segments (1-4)
     num_segments: u8,
+    /// Selected preset (used for Auto detection)
+    preset: super::api::Preset,
 
     top_complexity: Vec<Complexity>,
     left_complexity: Complexity,
@@ -272,6 +275,7 @@ impl<'a> Vp8Encoder<'a> {
             filter_strength: 60,
             filter_sharpness: 0,
             num_segments: 4,
+            preset: super::api::Preset::Default,
 
             top_complexity: Vec::new(),
             left_complexity: Complexity::default(),
@@ -1314,6 +1318,7 @@ impl<'a> Vp8Encoder<'a> {
         self.filter_strength = params.filter_strength.min(100);
         self.filter_sharpness = params.filter_sharpness.min(7);
         self.num_segments = params.num_segments.clamp(1, 4);
+        self.preset = params.preset;
         let (y_bytes, u_bytes, v_bytes) = match color {
             ColorType::Rgb8 => convert_image_yuv::<3>(data, width, height),
             ColorType::Rgba8 => convert_image_yuv::<4>(data, width, height),
@@ -2317,6 +2322,18 @@ impl<'a> Vp8Encoder<'a> {
             uv_stride,
         );
 
+        // Auto-detect content type when Preset::Auto is selected.
+        // Runs after analyze_image (reuses alpha histogram, nearly free).
+        if self.preset == super::api::Preset::Auto {
+            let content_type =
+                classify_image_type(&self.frame.ybuf, width, height, y_stride, &alpha_histogram);
+            let (sns, filter, sharp, segs) = content_type_to_tuning(content_type);
+            self.sns_strength = sns;
+            self.filter_strength = filter;
+            self.filter_sharpness = sharp;
+            self.num_segments = segs;
+        }
+
         // Use k-means to assign segments
         // weighted_average is computed from final cluster centers, matching libwebp
         let (centers, alpha_to_segment, mid_alpha) =
@@ -2521,8 +2538,21 @@ impl<'a> Vp8Encoder<'a> {
         let use_segments = self.num_segments > 1 && total_mbs >= 256;
 
         if use_segments {
-            // DCT-based segment analysis and assignment
+            // DCT-based segment analysis and assignment.
+            // For Preset::Auto, this also runs content detection and may override
+            // sns_strength, filter_strength, filter_sharpness, and num_segments.
             self.analyze_and_assign_segments(quant_index);
+
+            // If Auto detection changed filter params, recompute frame filter level
+            if self.preset == super::api::Preset::Auto {
+                let new_filter = super::cost::compute_filter_level(
+                    quant_index,
+                    self.filter_sharpness,
+                    self.filter_strength,
+                );
+                self.frame.filter_level = new_filter;
+                self.frame.sharpness_level = self.filter_sharpness;
+            }
         } else {
             // Disable segments for small images (overhead not worth it)
             self.segments_enabled = false;

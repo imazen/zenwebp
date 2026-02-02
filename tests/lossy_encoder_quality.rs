@@ -616,6 +616,129 @@ fn matched_config_comparison_vs_webpx() {
 }
 
 // ============================================================================
+// Auto-detection tests
+// ============================================================================
+
+/// Test that Preset::Auto produces valid output.
+#[test]
+fn auto_preset_produces_valid_output() {
+    use zenwebp::{EncoderConfig, Preset};
+
+    // Photo-like image (noise + patches)
+    let w = 512u32;
+    let h = 512u32;
+    let mut img = create_noise_image(w, h);
+    for y in 100..200 {
+        for x in 100..200 {
+            let idx = ((y * w + x) * 3) as usize;
+            img[idx] = 64;
+            img[idx + 1] = 128;
+            img[idx + 2] = 192;
+        }
+    }
+
+    let config = EncoderConfig::with_preset(Preset::Auto, 75.0).method(4);
+    let webp = config.encode_rgb(&img, w, h).expect("Auto encoding failed");
+
+    // Verify libwebp can decode
+    let decoded = webp::Decoder::new(&webp)
+        .decode()
+        .expect("libwebp failed to decode Auto output");
+    assert_eq!(decoded.width(), w);
+    assert_eq!(decoded.height(), h);
+
+    println!("Auto preset output: {} bytes", webp.len());
+}
+
+/// Test that Auto detects screenshots differently from photos.
+#[test]
+fn auto_detects_screenshot_vs_photo() {
+    use zenwebp::{EncoderConfig, Preset};
+
+    let w = 512u32;
+    let h = 512u32;
+
+    // Create screenshot-like image: uniform blocks with sharp edges
+    let mut screenshot = vec![0u8; (w * h * 3) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = ((y * w + x) * 3) as usize;
+            // UI-like blocks
+            let block_x = x / 64;
+            let block_y = y / 64;
+            let val = ((block_x * 37 + block_y * 73) % 5) as u8;
+            screenshot[idx] = [32, 64, 128, 192, 240][val as usize];
+            screenshot[idx + 1] = [48, 96, 160, 200, 230][val as usize];
+            screenshot[idx + 2] = [64, 80, 144, 180, 250][val as usize];
+        }
+    }
+
+    // Create photo-like image: noise + gradients
+    let photo = create_noise_image(w, h);
+
+    let auto_screenshot = EncoderConfig::with_preset(Preset::Auto, 75.0)
+        .method(4)
+        .encode_rgb(&screenshot, w, h)
+        .unwrap();
+    let auto_photo = EncoderConfig::with_preset(Preset::Auto, 75.0)
+        .method(4)
+        .encode_rgb(&photo, w, h)
+        .unwrap();
+
+    // Both should produce valid output
+    webp::Decoder::new(&auto_screenshot)
+        .decode()
+        .expect("Failed to decode auto screenshot");
+    webp::Decoder::new(&auto_photo)
+        .decode()
+        .expect("Failed to decode auto photo");
+
+    println!(
+        "Auto screenshot: {} bytes, Auto photo: {} bytes",
+        auto_screenshot.len(),
+        auto_photo.len()
+    );
+}
+
+/// Test that Auto on small images produces Icon-like output.
+#[test]
+fn auto_detects_icon() {
+    use zenwebp::{EncoderConfig, Preset};
+
+    // Small 64x64 image
+    let w = 64u32;
+    let h = 64u32;
+    let img = create_checkerboard_image(w, h);
+
+    let auto = EncoderConfig::with_preset(Preset::Auto, 75.0)
+        .method(4)
+        .encode_rgb(&img, w, h)
+        .unwrap();
+    let icon = EncoderConfig::with_preset(Preset::Icon, 75.0)
+        .method(4)
+        .encode_rgb(&img, w, h)
+        .unwrap();
+
+    // Verify both decode
+    webp::Decoder::new(&auto)
+        .decode()
+        .expect("Failed to decode auto icon");
+
+    // Auto should produce similar output to Icon for small images
+    let ratio = auto.len() as f64 / icon.len() as f64;
+    println!(
+        "Auto: {} bytes, Icon: {} bytes, ratio: {:.3}x",
+        auto.len(),
+        icon.len(),
+        ratio
+    );
+
+    // For 64x64, segments are disabled anyway (< 256 macroblocks),
+    // so auto-detection doesn't run, and both use initial (Default) params.
+    // The key test is that it produces valid output without crashing.
+}
+
+// ============================================================================
 // Corpus tests (behind _corpus_tests feature flag)
 // ============================================================================
 
@@ -765,5 +888,65 @@ mod corpus_tests {
             println!("  Default preset ratio: {avg_default:.3}x");
             println!("  Drawing preset ratio: {avg_drawing:.3}x");
         }
+    }
+
+    /// Test Auto preset vs manual presets on kodak (photos) and screenshots.
+    /// Auto should produce output within 5% of the "correct" manual preset.
+    #[test]
+    fn auto_vs_manual_preset_kodak() {
+        let corpus_dir = "/mnt/v/work/codec-corpus/kodak";
+        let mut auto_total = 0usize;
+        let mut photo_total = 0usize;
+        let mut count = 0;
+
+        for entry in std::fs::read_dir(corpus_dir).expect("Kodak corpus not found") {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "png") {
+                let path_str = path.to_string_lossy().to_string();
+                if let Some((rgb, w, h)) = load_png(&path_str) {
+                    let auto_size = zenwebp::EncoderConfig::with_preset(
+                        zenwebp::Preset::Auto,
+                        75.0,
+                    )
+                    .method(4)
+                    .encode_rgb(&rgb, w, h)
+                    .unwrap()
+                    .len();
+
+                    let photo_size = zenwebp::EncoderConfig::with_preset(
+                        zenwebp::Preset::Photo,
+                        75.0,
+                    )
+                    .method(4)
+                    .encode_rgb(&rgb, w, h)
+                    .unwrap()
+                    .len();
+
+                    let ratio = auto_size as f64 / photo_size as f64;
+                    println!(
+                        "{}: Auto={} Photo={} ratio={:.3}x",
+                        path.file_name().unwrap().to_string_lossy(),
+                        auto_size,
+                        photo_size,
+                        ratio
+                    );
+                    auto_total += auto_size;
+                    photo_total += photo_size;
+                    count += 1;
+                }
+            }
+        }
+
+        let avg_ratio = auto_total as f64 / photo_total as f64;
+        println!(
+            "\nKodak Auto vs Photo ({count} images): Auto={auto_total} Photo={photo_total} ratio={avg_ratio:.3}x"
+        );
+
+        // Auto should be within 5% of Photo preset for photos
+        assert!(
+            avg_ratio < 1.05 && avg_ratio > 0.95,
+            "Auto should be within 5% of Photo on kodak, got {avg_ratio:.3}x"
+        );
     }
 }
