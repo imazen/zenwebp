@@ -35,16 +35,16 @@ See global ~/.claude/CLAUDE.md for general instructions.
 | t_transform | 3.24% | Spectral distortion (SIMD) |
 
 ### Quality vs libwebp (2026-02-02)
-- Screenshots: 1.059x of libwebp (Default preset, method 4)
-- CID22 corpus: 1.05x average, 1.10x worst case (method 4)
-- The gap is in I4 mode: I16-only produces **0.91x** of libwebp (we're smaller!)
-- Adding I4 increases to 1.05-1.17x (our I4 coefficient encoding is less efficient)
+- Screenshots: 1.060x of libwebp (Default preset, method 4)
+- CID22 corpus: 1.043x average (method 4)
+- Sharpen+zthresh fix (2026-02-02) improved CID22 from 1.05x → 1.043x
+- 792079 benchmark image: 1.024x (was 1.11x before sharpen fix)
 
 **CID22 Q75 Default preset (method 4):**
 | Metric | Value |
 |--------|-------|
-| Average ratio | 1.05x |
-| Worst case | 1.10x |
+| Average ratio | 1.043x |
+| 792079 (benchmark) | 1.024x |
 
 **Preset tuning parameters now active (2026-02-01):**
 | Preset | SNS | Filter | Sharp | Segs |
@@ -341,12 +341,23 @@ benefits as libwebp's. Either:
 2. Our I4 coefficient encoding is less efficient
 3. I4 mode cost estimation underestimates true cost
 
-**Attempted fix:** Adding sharpening and zthresh to quantize_coeff made things
-*worse*, suggesting the issue is not in simple quantization. The sharpening approach
-is designed for libwebp's QuantizeBlock which reconstructs in-place, which differs
-from our architecture.
+**First attempt (failed):** Adding sharpening and zthresh to quantize_coeff made things
+*worse* in a prior session — the implementation was incorrect.
 
-**Further investigation (2026-02-02):**
+**Correct fix (2026-02-02):** `quantize_coeff()` was missing sharpen and zthresh that
+libwebp's `QuantizeBlock_C` uses. The trellis path already had sharpen; only the simple
+quantization path was broken. This affected both mode selection (`pick_best_intra4`) and
+non-trellis encoding (methods 0-3).
+
+Fix: `abs_coeff = |coeff| + sharpen[pos]`, then skip if `abs_coeff <= zthresh[pos]`.
+Also updated SIMD `quantize()` and `quantize_ac_only()` block methods.
+
+**Results after sharpen/zthresh fix:**
+- CID22 corpus (method 4): 1.05x → **1.043x** of libwebp
+- 792079 benchmark image: 1.11x → **1.024x** of libwebp
+- Screenshots: unchanged at 1.060x (expected — mostly I16)
+
+**Earlier experiments (2026-02-02):**
 
 | Experiment | Effect on screenshot corpus size |
 |------------|----------------------------------|
@@ -356,39 +367,12 @@ from our architecture.
 | Add flatness penalty for I4 | +0.03% (worse) |
 | Disable trellis for method 4 (match libwebp) | +1.5% (much worse, trellis helps us) |
 
-**I4 compression efficiency analysis:**
-```
-I4 savings (bytes saved when enabling I4):
-  zenwebp: 2254 bytes (21.8%)
-  libwebp: 4018 bytes (35.0%)
-  libwebp's I4 saves 1.8x more bytes than ours
-```
+**Remaining gap investigation:**
 
-**Current gap by method (2026-02-02):**
-
-| Method | Avg Ratio | Worst Ratio | Notes |
-|--------|-----------|-------------|-------|
-| 0 (I16 only) | **0.91x** | 1.11x | We beat libwebp! |
-| 2 (I4, no trellis) | 1.07x | **1.17x** | Worst case |
-| 4 (I4 + trellis) | 1.05x | 1.10x | Default method |
-| 6 (full search) | 1.09x | 1.14x | |
-
-**What's needed for parity (methods 2+):**
-
-The gap is entirely in I4 coefficient encoding efficiency, NOT mode selection:
+The remaining ~4% gap (methods 2+) may come from:
 1. **I4 token emission** - Our tokens use more bits for equivalent coefficients
 2. **Probability table updates** - May differ in update frequency or thresholds
 3. **Partition 0 overhead** - Our P0 is 34% vs libwebp's 26% at method 2
-
-To investigate:
-- Compare actual token streams between encoders for identical input
-- Check if we're emitting different tokens for same coefficient values
-- Verify probability update logic matches libwebp's `VP8RecordCoeffs`
-
-**To investigate:**
-1. Compare actual bit counts for identical I4 coefficient patterns
-2. Check probability update thresholds between encoders
-3. Trace token emission for a specific I4 block
 
 ### VP8BitReader Success (2026-01-22)
 
