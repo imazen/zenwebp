@@ -393,7 +393,7 @@ pub const FIXED_COSTS_UV: [u16; 4] = [302, 984, 439, 642];
 pub const NUM_BMODES: usize = 10;
 
 /// Context-dependent Intra4 mode costs.
-/// Indexed as VP8_FIXED_COSTS_I4[top_mode][left_mode][mode].
+/// Indexed as VP8_FIXED_COSTS_I4\[top_mode\]\[left_mode\]\[mode\].
 /// From libwebp's VP8FixedCostsI4.
 #[rustfmt::skip]
 pub const VP8_FIXED_COSTS_I4: [[[u16; NUM_BMODES]; NUM_BMODES]; NUM_BMODES] = [

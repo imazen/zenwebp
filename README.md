@@ -26,7 +26,7 @@ let mut decoder = WebPDecoder::new(webp_bytes)?;
 let (width, height) = decoder.dimensions();
 
 // Decode to RGBA
-let mut rgba = vec![0u8; decoder.output_buffer_size()?];
+let mut rgba = vec![0u8; decoder.output_buffer_size().unwrap()];
 decoder.read_image(&mut rgba)?;
 ```
 

@@ -1210,7 +1210,7 @@ pub const NUM_PROBAS: usize = 11;
 /// Ported from libwebp's proba_t type.
 #[derive(Clone, Default)]
 pub struct ProbaStats {
-    /// Statistics array: [type][band][context][proba_node]
+    /// Statistics array: \[type\]\[band\]\[context\]\[proba_node\]
     pub stats: [[[[u32; NUM_PROBAS]; NUM_CTX]; NUM_BANDS]; NUM_TYPES],
 }
 
@@ -1449,11 +1449,11 @@ use crate::common::types::TokenProbTables;
 /// Type alias for level cost array: cost for each level 0..=MAX_VARIABLE_LEVEL
 pub type LevelCostArray = [u16; MAX_VARIABLE_LEVEL + 1];
 
-/// Level costs indexed by [type][band][context]
+/// Level costs indexed by \[type\]\[band\]\[context\]
 /// Each entry is an array of costs for levels 0..=MAX_VARIABLE_LEVEL
 pub type LevelCostTables = [[[LevelCostArray; NUM_CTX]; NUM_BANDS]; NUM_TYPES];
 
-/// Remapped costs indexed by [type][position][context]
+/// Remapped costs indexed by \[type\]\[position\]\[context\]
 /// Maps coefficient position (0..16) directly to its band's level_cost.
 /// This avoids the indirection through VP8_ENC_BANDS during cost calculation.
 pub type RemappedCosts = [[usize; NUM_CTX]; 16];
@@ -1489,7 +1489,7 @@ fn variable_level_cost(level: usize, probas: &[u8; NUM_PROBAS]) -> u16 {
 /// Ported from libwebp's VP8EncProba (level_cost and remapped_costs fields).
 #[derive(Clone)]
 pub struct LevelCosts {
-    /// Level costs indexed by [type][band][ctx][level]
+    /// Level costs indexed by \[type\]\[band\]\[ctx\]\[level\]
     pub level_cost: LevelCostTables,
     /// Remapped indices: [type][position] -> band index for each type
     /// Usage: level_cost[type][remapped[type][n]][ctx][level]

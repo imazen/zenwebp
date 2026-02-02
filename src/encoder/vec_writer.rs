@@ -1,4 +1,4 @@
-//! Vec<u8> writer extension for no_std encoding.
+//! `Vec<u8>` writer extension for no_std encoding.
 //!
 //! Provides write_u16_le, write_u24_le, etc. without requiring std::io::Write.
 

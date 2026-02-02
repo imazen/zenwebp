@@ -1024,8 +1024,8 @@ pub fn compute_mb_alpha(_dct_coeffs: &[i32; 256]) -> u8 {
 ///
 /// # Returns
 /// (centers, map, weighted_average) where:
-/// - centers[i] = alpha center for segment i
-/// - map[alpha] = segment index for that alpha value
+/// - centers\[i\] = alpha center for segment i
+/// - map\[alpha\] = segment index for that alpha value
 /// - weighted_average = weighted average of centers (for SetSegmentAlphas)
 pub fn assign_segments_kmeans(
     alphas: &[u32; 256],

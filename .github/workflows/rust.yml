@@ -10,13 +10,21 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        rust: ["1.92.0", nightly, beta, stable]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        rust: [stable]
+        include:
+          - os: ubuntu-latest
+            rust: "1.92.0"
+          - os: ubuntu-latest
+            rust: beta
+          - os: ubuntu-latest
+            rust: nightly
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - uses: dtolnay/rust-toolchain@nightly
       if: ${{ matrix.rust == '1.92.0' }}
@@ -41,20 +49,12 @@ jobs:
       run: cargo bench -v --features _benchmarks
 
   test_big_endian:
-    # github actions does not support big endian systems directly, but it does support QEMU.
-    # so we install qemu, then build and run the tests in an emulated powerpc system.
-    # note: you can also use this approach to test for big endian locally.
     runs-on: ubuntu-latest
-
-    # we are using the cross project for cross compilation:
-    # https://github.com/cross-rs/cross
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - name: Install or use cached cross-rs/cross
-        uses: baptiste0928/cargo-install@v1
-        with:
-          crate: cross
+      - name: Install cross
+        run: cargo install cross --locked
 
       - name: Cache Cargo Dependencies
         uses: Swatinem/rust-cache@v2
@@ -70,18 +70,33 @@ jobs:
   clippy:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: clippy
-    - run: cargo clippy --all-features -- -D warnings
+    - run: cargo clippy --all-targets --features "std,fast-yuv,simd" -- -D warnings
 
   rustfmt:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt
     - name: Run rustfmt check
       run: cargo fmt -- --check
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: dtolnay/rust-toolchain@stable
+    - name: Install cargo-llvm-cov
+      run: cargo install cargo-llvm-cov --locked
+    - name: Generate coverage
+      run: cargo llvm-cov --lcov --output-path lcov.info
+    - name: Upload to Codecov
+      uses: codecov/codecov-action@v5
+      with:
+        files: lcov.info
+        fail_ci_if_error: false
