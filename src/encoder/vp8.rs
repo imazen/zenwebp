@@ -2368,6 +2368,16 @@ impl<'a> Vp8Encoder<'a> {
             .map(|&alpha| alpha_to_segment[alpha as usize])
             .collect();
 
+        // Smooth segment map to reduce noisy boundaries
+        // Only smooth if we have multiple segments
+        if self.num_segments > 1 {
+            super::cost::smooth_segment_map(
+                &mut self.segment_map,
+                usize::from(self.macroblock_width),
+                usize::from(self.macroblock_height),
+            );
+        }
+
         // Configure per-segment quantization using preset's SNS strength
         let sns_strength = self.sns_strength;
 

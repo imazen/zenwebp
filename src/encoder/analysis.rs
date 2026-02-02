@@ -1421,3 +1421,58 @@ pub fn content_type_to_tuning(content_type: ContentType) -> (u8, u8, u8, u8) {
         ContentType::Icon => (0, 0, 0, 4),    // Icon preset: no SNS, no filter
     }
 }
+
+/// Smooth the segment map by replacing isolated blocks with the majority of neighbors.
+///
+/// Uses a 3x3 majority filter: if 5 or more of the 8 neighbors share a segment ID,
+/// the center block is reassigned to that segment. Border blocks are not modified.
+///
+/// This reduces noisy segment boundaries which can cause visual artifacts and
+/// increase encoded size due to frequent segment ID changes.
+///
+/// Ported from libwebp's SmoothSegmentMap.
+pub fn smooth_segment_map(segment_map: &mut [u8], mb_w: usize, mb_h: usize) {
+    if mb_w < 3 || mb_h < 3 {
+        return; // Too small to smooth
+    }
+
+    const MAJORITY_THRESHOLD: u8 = 5; // 5 out of 8 neighbors must agree
+
+    // Create temporary buffer for smoothed values
+    let mut tmp = vec![0u8; mb_w * mb_h];
+
+    // Copy original values (borders won't be modified)
+    tmp.copy_from_slice(segment_map);
+
+    // Process interior blocks only (skip borders)
+    for y in 1..mb_h - 1 {
+        for x in 1..mb_w - 1 {
+            let idx = x + y * mb_w;
+            let mut counts = [0u8; NUM_SEGMENTS];
+            let current_seg = segment_map[idx];
+
+            // Count 8 neighbors
+            counts[segment_map[idx - mb_w - 1] as usize] += 1; // top-left
+            counts[segment_map[idx - mb_w] as usize] += 1; // top
+            counts[segment_map[idx - mb_w + 1] as usize] += 1; // top-right
+            counts[segment_map[idx - 1] as usize] += 1; // left
+            counts[segment_map[idx + 1] as usize] += 1; // right
+            counts[segment_map[idx + mb_w - 1] as usize] += 1; // bottom-left
+            counts[segment_map[idx + mb_w] as usize] += 1; // bottom
+            counts[segment_map[idx + mb_w + 1] as usize] += 1; // bottom-right
+
+            // Find majority segment (if any)
+            let mut majority_seg = current_seg;
+            for (seg, &count) in counts.iter().enumerate() {
+                if count >= MAJORITY_THRESHOLD {
+                    majority_seg = seg as u8;
+                    break;
+                }
+            }
+            tmp[idx] = majority_seg;
+        }
+    }
+
+    // Copy smoothed values back
+    segment_map.copy_from_slice(&tmp);
+}
