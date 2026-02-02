@@ -312,6 +312,42 @@ probability tables, leading to suboptimal coefficient level choices.
 1. Mode selection heuristics (I16 vs I4 decision thresholds)
 2. Probability update threshold differences
 3. Two-pass encoding implementation differences
+
+### I4 Mode Path Investigation (2026-02-01)
+
+**Key finding: The file size gap is in the I4 mode path, not I16.**
+
+Method comparison for 792079 (512x512) and terminal (1646x1062):
+
+| Image | Method | zenwebp | libwebp | Ratio |
+|-------|--------|---------|---------|-------|
+| 792079 | 0 (I16 only) | 13294 | 14660 | 0.91x |
+| 792079 | 2 (I4, no trellis) | 12470 | 11318 | 1.10x |
+| 792079 | 4 (I4 + trellis) | 12188 | 10962 | 1.11x |
+| terminal | 0 (I16 only) | 77490 | 77510 | 1.00x |
+| terminal | 2 (I4, no trellis) | 70092 | 64098 | 1.09x |
+| terminal | 4 (I4 + trellis) | 68888 | 61612 | 1.12x |
+
+**Analysis:**
+- Method 0 (I16 only): zenwebp produces **smaller** files than libwebp (0.91-1.00x)
+- Methods 2-6 (with I4): zenwebp produces **larger** files (1.09-1.14x)
+- libwebp's I4 gives ~10% reduction from I16; ours gives only ~2%
+
+**Root cause hypothesis:** Our I4 mode path doesn't achieve the same compression
+benefits as libwebp's. Either:
+1. We're using I4 where it doesn't help (over-selecting I4)
+2. Our I4 coefficient encoding is less efficient
+3. I4 mode cost estimation underestimates true cost
+
+**Attempted fix:** Adding sharpening and zthresh to quantize_coeff made things
+*worse*, suggesting the issue is not in simple quantization. The sharpening approach
+is designed for libwebp's QuantizeBlock which reconstructs in-place, which differs
+from our architecture.
+
+**To investigate:**
+1. Compare I4 usage frequency between zenwebp and libwebp
+2. Compare actual bit emission for identical coefficient patterns
+3. Check if our I4 RD score calculation matches libwebp's exactly
 4. Coefficient encoding order differences
 
 ### VP8BitReader Success (2026-01-22)
