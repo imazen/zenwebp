@@ -344,11 +344,30 @@ benefits as libwebp's. Either:
 is designed for libwebp's QuantizeBlock which reconstructs in-place, which differs
 from our architecture.
 
+**Further investigation (2026-02-01):**
+
+| Experiment | Effect on screenshot corpus size |
+|------------|----------------------------------|
+| NZ context tracking in get_cost_luma16 | +0.14% (worse) |
+| Try all 10 I4 modes for method 4 | **-0.71% (better!)** |
+| Add spectral distortion (TDisto) to I4 | +0.06% (worse) |
+| Add flatness penalty for I4 | +0.03% (worse) |
+| Disable trellis for method 4 (match libwebp) | +1.5% (much worse, trellis helps us) |
+
+**Key findings:**
+1. Trying more I4 modes helps - our mode filtering may be too aggressive
+2. libwebp enables trellis at method >= 5, but ours at method >= 4 (our trellis helps)
+3. NZ context, spectral distortion, and flatness penalty don't help
+
+**Remaining hypotheses:**
+1. Our I4 mode selection is good, but I4 coefficient encoding emits more bits
+2. Probability table differences affect final bit count
+3. Token emission order or structure differs
+
 **To investigate:**
-1. Compare I4 usage frequency between zenwebp and libwebp
-2. Compare actual bit emission for identical coefficient patterns
-3. Check if our I4 RD score calculation matches libwebp's exactly
-4. Coefficient encoding order differences
+1. Compare actual bit counts for identical I4 coefficient patterns
+2. Check probability update thresholds between encoders
+3. Trace token emission for a specific I4 block
 
 ### VP8BitReader Success (2026-01-22)
 
