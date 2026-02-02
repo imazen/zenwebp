@@ -2009,9 +2009,20 @@ pub fn get_cost_luma16(
     total_cost += get_residual_cost(0, &dc_res, costs, probs);
 
     // AC blocks (type 0 = I16AC, skipping DC coefficient which is in Y2)
-    for ac in ac_levels.iter() {
-        let ac_res = Residual::new(ac, 0, 1); // Start at position 1 (skip DC)
-        total_cost += get_residual_cost(0, &ac_res, costs, probs);
+    // Track non-zero context like libwebp's VP8GetCostLuma16
+    let mut top_nz = [false; 4];
+    let mut left_nz = [false; 4];
+
+    for y in 0..4 {
+        for x in 0..4 {
+            let block_idx = y * 4 + x;
+            let ctx = (top_nz[x] as usize) + (left_nz[y] as usize);
+            let ac_res = Residual::new(&ac_levels[block_idx], 0, 1); // Start at position 1 (skip DC)
+            total_cost += get_residual_cost(ctx, &ac_res, costs, probs);
+            let has_nz = ac_res.last >= 0;
+            top_nz[x] = has_nz;
+            left_nz[y] = has_nz;
+        }
     }
 
     total_cost
