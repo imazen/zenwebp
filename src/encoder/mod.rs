@@ -6,6 +6,8 @@ mod api;
 mod arithmetic;
 pub mod cost;
 mod fast_math;
+/// Quantization matrix and coefficient quantization
+pub mod quantize;
 pub mod tables;
 mod vec_writer;
 /// VP8 encoder implementation
