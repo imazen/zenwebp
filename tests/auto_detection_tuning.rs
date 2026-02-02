@@ -40,15 +40,9 @@ fn encode_zen_bytes(rgb: &[u8], w: u32, h: u32, preset: zenwebp::Preset) -> Vec<
         .unwrap()
 }
 
-/// Encode with webpx using explicit tuning parameters.
-/// webpx 0.1.2 has a bug where presets are ignored (overwritten by defaults).
-/// Use explicit sns_strength/filter_strength/filter_sharpness until fixed.
-fn encode_wpx_tuned(rgb: &[u8], w: u32, h: u32, sns: u8, filter: u8, sharp: u8) -> Vec<u8> {
-    webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
+fn encode_wpx_bytes(rgb: &[u8], w: u32, h: u32, preset: webpx::Preset) -> Vec<u8> {
+    webpx::EncoderConfig::with_preset(preset, 75.0)
         .method(4)
-        .sns_strength(sns)
-        .filter_strength(filter)
-        .filter_sharpness(sharp)
         .encode_rgb(rgb, w, h, webpx::Unstoppable)
         .unwrap()
 }
@@ -202,8 +196,8 @@ fn auto_detection_cid22() {
             let zen_auto = encode_zen_bytes(&rgb, w, h, zenwebp::Preset::Auto);
             let zen_default = encode_zen_bytes(&rgb, w, h, zenwebp::Preset::Default);
             let zen_photo = encode_zen_bytes(&rgb, w, h, zenwebp::Preset::Photo);
-            let wpx_default = encode_wpx_tuned(&rgb, w, h, 50, 60, 0); // Default tuning
-            let wpx_photo = encode_wpx_tuned(&rgb, w, h, 80, 30, 3); // Photo tuning
+            let wpx_default = encode_wpx_bytes(&rgb, w, h, webpx::Preset::Default);
+            let wpx_photo = encode_wpx_bytes(&rgb, w, h, webpx::Preset::Photo);
 
             let ss_zen_auto = ssim2(&rgb, &zen_auto, w, h);
             let ss_zen_default = ssim2(&rgb, &zen_default, w, h);
@@ -351,8 +345,8 @@ fn auto_detection_screenshots() {
             let zen_default = encode_zen_bytes(&rgb, w, h, zenwebp::Preset::Default);
             let zen_photo = encode_zen_bytes(&rgb, w, h, zenwebp::Preset::Photo);
             // libwebp with explicit tuning (bypasses webpx preset bug)
-            let wpx_default = encode_wpx_tuned(&rgb, w, h, 50, 60, 0); // Default tuning
-            let wpx_photo = encode_wpx_tuned(&rgb, w, h, 80, 30, 3); // Photo tuning
+            let wpx_default = encode_wpx_bytes(&rgb, w, h, webpx::Preset::Default);
+            let wpx_photo = encode_wpx_bytes(&rgb, w, h, webpx::Preset::Photo);
 
             let ss_zen_auto = ssim2(&rgb, &zen_auto, w, h);
             let ss_zen_default = ssim2(&rgb, &zen_default, w, h);

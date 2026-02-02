@@ -41,7 +41,7 @@ png = "0.17.12"
 rand = "0.8.5"
 rgb = "0.8"
 webp = "0.3.1"
-webpx = "0.1.2"
+webpx = "0.1.3"
 
 [features]
 default = ["std", "fast-yuv", "simd"]
