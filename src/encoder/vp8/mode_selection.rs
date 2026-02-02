@@ -9,9 +9,9 @@ use crate::common::types::*;
 
 use crate::encoder::cost::{
     estimate_dc16_cost, estimate_residual_cost, get_cost_luma16, get_cost_luma4, get_cost_uv,
-    get_i4_mode_cost, is_flat_coeffs, is_flat_source_16, tdisto_16x16, FIXED_COSTS_I16,
-    FIXED_COSTS_UV, FLATNESS_LIMIT_I16, FLATNESS_LIMIT_UV, FLATNESS_PENALTY, RD_DISTO_MULT,
-    VP8_WEIGHT_Y,
+    get_i4_mode_cost, is_flat_coeffs, is_flat_source_16, tdisto_16x16, trellis_quantize_block,
+    FIXED_COSTS_I16, FIXED_COSTS_UV, FLATNESS_LIMIT_I16, FLATNESS_LIMIT_UV, FLATNESS_PENALTY,
+    RD_DISTO_MULT, VP8_WEIGHT_Y,
 };
 
 use super::{sse_16x16_luma, sse_8x8_chroma, MacroblockInfo};
@@ -447,6 +447,13 @@ impl<'a> super::Vp8Encoder<'a> {
                 // Sort by SSE (ascending) - try modes with best predictions first
                 mode_sse.sort_unstable_by_key(|&(sse, _)| sse);
 
+                // Get trellis lambda if enabled for mode selection (method >= 6)
+                let trellis_lambda_i4 = if self.do_trellis_i4_mode {
+                    Some(segment.lambda_trellis_i4)
+                } else {
+                    None
+                };
+
                 // Try only the best candidate modes (ordered by prediction SSE)
                 for &(_, mode_idx) in mode_sse[..max_modes_to_try].iter() {
                     let mode = MODES[mode_idx];
@@ -462,18 +469,59 @@ impl<'a> super::Vp8Encoder<'a> {
                     // Transform
                     transform::dct4x4(&mut residual);
 
-                    // Quantize
-                    let mut quantized = [0i32; 16];
-                    for (idx, &val) in residual.iter().enumerate() {
-                        quantized[idx] = y1_matrix.quantize_coeff(val, idx);
-                    }
+                    // Quantize - use trellis if enabled for mode selection (RD_OPT_TRELLIS_ALL)
+                    // quantized_zigzag: coefficients in zigzag order (for cost estimation)
+                    // quantized_natural: coefficients in natural order (for distortion calc)
+                    let mut quantized_zigzag = [0i32; 16];
+                    let mut quantized_natural = [0i32; 16];
+                    let has_nz = if let Some(lambda) = trellis_lambda_i4 {
+                        // Trellis quantization for better RD during mode selection
+                        // Context: 0=neither neighbor has nz, 1=one has nz, 2=both have nz
+                        let ctx0 = usize::from(nz_top) + usize::from(nz_left);
+                        // ctype=3 for I4_AC (TokenType::I4AC)
+                        const CTYPE_I4_AC: usize = 3;
+                        let nz = trellis_quantize_block(
+                            &mut residual,
+                            &mut quantized_zigzag,
+                            y1_matrix,
+                            lambda,
+                            0, // first=0 for I4 (includes DC)
+                            &self.level_costs,
+                            CTYPE_I4_AC,
+                            ctx0,
+                        );
+                        // Convert zigzag to natural order for distortion calculation
+                        for n in 0..16 {
+                            let j = ZIGZAG[n] as usize;
+                            quantized_natural[j] = quantized_zigzag[n];
+                        }
+                        nz
+                    } else {
+                        // Simple quantization (already in natural order)
+                        let mut any_nz = false;
+                        for (idx, &val) in residual.iter().enumerate() {
+                            let q = y1_matrix.quantize_coeff(val, idx);
+                            quantized_natural[idx] = q;
+                            if q != 0 {
+                                any_nz = true;
+                            }
+                        }
+                        // Convert natural to zigzag for cost estimation
+                        for n in 0..16 {
+                            let j = ZIGZAG[n] as usize;
+                            quantized_zigzag[n] = quantized_natural[j];
+                        }
+                        any_nz
+                    };
 
                     // Get accurate coefficient cost using probability tables
-                    let (coeff_cost, has_nz) =
-                        get_cost_luma4(&quantized, nz_top, nz_left, &self.level_costs, probs);
+                    // Cost functions expect zigzag order
+                    let (coeff_cost, _) =
+                        get_cost_luma4(&quantized_zigzag, nz_top, nz_left, &self.level_costs, probs);
 
                     // Compute distortion (SSE of quantized vs original)
-                    let mut dequantized = quantized;
+                    // Use natural order for dequantization and IDCT
+                    let mut dequantized = quantized_natural;
                     for (idx, val) in dequantized.iter_mut().enumerate() {
                         *val = y1_matrix.dequantize(*val, idx);
                     }
@@ -512,7 +560,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         best_mode = mode;
                         best_mode_idx = mode_idx;
                         best_has_nz = has_nz;
-                        best_quantized = quantized;
+                        best_quantized = quantized_natural;
                         best_sse = sse;
                         best_rate = total_rate;
                     }

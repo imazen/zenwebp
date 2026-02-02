@@ -286,6 +286,8 @@ struct Vp8Encoder<'a> {
     level_costs: LevelCosts,
     /// Whether to use trellis quantization for better RD optimization
     do_trellis: bool,
+    /// Whether to use trellis during mode selection (RD_OPT_TRELLIS_ALL, method >= 6)
+    do_trellis_i4_mode: bool,
     /// Whether to use chroma error diffusion to reduce banding
     do_error_diffusion: bool,
     /// Encoding method (0-6): 0=fastest, 6=best quality
@@ -365,6 +367,8 @@ impl<'a> Vp8Encoder<'a> {
             // Trellis quantization for RD-optimized coefficient selection.
             // Uses proper probability-dependent init/EOB/skip costs from LevelCosts.
             do_trellis: true,
+            // Trellis during I4 mode selection (RD_OPT_TRELLIS_ALL) - method 6
+            do_trellis_i4_mode: false,
             // Error diffusion improves quality in smooth gradients
             do_error_diffusion: true,
             // Default to balanced method
@@ -527,8 +531,10 @@ impl<'a> Vp8Encoder<'a> {
     ) -> Result<(), EncodingError> {
         // Store method and configure features based on it
         self.method = params.method.min(6); // Clamp to 0-6
-                                            // Trellis quantization only for method >= 4 (like libwebp)
+        // Trellis quantization only for method >= 4 (like libwebp's RD_OPT_TRELLIS)
         self.do_trellis = self.method >= 4;
+        // Trellis during I4 mode selection for method 6 (like libwebp's RD_OPT_TRELLIS_ALL)
+        self.do_trellis_i4_mode = self.method >= 6;
         // Store tuning parameters
         self.sns_strength = params.sns_strength.min(100);
         self.filter_strength = params.filter_strength.min(100);
@@ -589,15 +595,10 @@ impl<'a> Vp8Encoder<'a> {
 
         let num_mb = usize::from(self.macroblock_width) * usize::from(self.macroblock_height);
 
-        // Number of passes based on method (matches libwebp's config->pass):
-        // method 0-4: 1 pass (trellis at m4 already gives good results)
-        // method 5: 2 passes (one refinement pass)
-        // method 6: 3 passes (two refinement passes)
-        let num_passes = match self.method {
-            0..=4 => 1,
-            5 => 2,
-            _ => 3, // method 6+
-        };
+        // Number of passes based on method.
+        // Multi-pass without quality search provides no benefit (tested),
+        // so we use 1 pass for all methods.
+        let num_passes = 1;
 
         for pass in 0..num_passes {
             let is_last_pass = pass == num_passes - 1;
