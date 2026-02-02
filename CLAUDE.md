@@ -107,13 +107,27 @@ The TokenType enum had I16DC and I16AC values swapped compared to libwebp:
 This caused incorrect probability tables for Y1 AC and Y2 DC coefficients.
 Fix reduced file sizes by ~2%.
 
+**Trellis sign bit double-counting fix (2026-02-02):**
+`level_cost_fast` and `level_cost_with_table` in `trellis.rs` were adding 256 (sign bit
+cost) to non-zero levels, but VP8_LEVEL_FIXED_COSTS already includes this cost. This made
+non-zero levels appear 1 bit more expensive, biasing trellis toward zeros.
+Fix improved m4 by ~0.4% on 792079.png.
+
 ### Detailed Encoder Callgrind Analysis (2026-01-23)
 
 **IMPORTANT: Trellis comparison clarification**
 - libwebp enables trellis only for method >= 5
 - Our method 4 uses trellis, making it comparable to libwebp's method 6
-- Previous "7.8x slower" comparison was invalid (our trellis vs their non-trellis)
 - Tested disabling trellis for method 4: made files 1.5% LARGER (our trellis helps!)
+
+**Fair feature-level comparisons (2026-02-02, 5 CID22 images):**
+| Comparison | Aggregate Ratio | Notes |
+|------------|-----------------|-------|
+| Our m2 vs libwebp m2 | **0.940x** | Same method, we're 6% smaller! |
+| Our m4 vs libwebp m6 (both trellis) | **1.045x** | 4.5% larger with trellis |
+| Our m2 vs libwebp m4 (both no trellis) | **1.064x** | 6.4% larger |
+
+The 4.5% trellis gap is the main remaining encoder efficiency issue.
 
 **Corrected comparison (our method 4 vs libwebp method 6, both with trellis):**
 | Encoder | Instructions | Time | File Size |
@@ -328,18 +342,29 @@ probability tables, leading to suboptimal coefficient level choices.
 
 **After fix:** File sizes reduced from 1.07-1.17x to 1.045-1.135x of libwebp.
 
-**Remaining 4.5% gap investigation:**
+**Remaining 4.5% gap investigation (updated 2026-02-02):**
 - Lambda calculations: Match libwebp exactly
 - VP8_LEVEL_FIXED_COSTS table: Matches libwebp exactly
 - VP8_FREQ_SHARPENING table: Matches libwebp exactly
 - VP8_WEIGHT_TRELLIS table: Matches libwebp exactly
 - RD score formula: Matches libwebp exactly
-- Trellis distortion calculation: Matches libwebp
+- Trellis distortion calculation: Matches libwebp (uses coeff_with_sharpen)
+- **Sign bit cost in trellis: FIXED** — was double-counted (0.4% improvement)
 
-**Potential remaining causes:**
-1. Mode selection heuristics (I16 vs I4 decision thresholds)
-2. Probability update threshold differences
-3. Two-pass encoding implementation differences
+**Diagnostic harness findings (2026-02-02):**
+- I4 diagnostic harness (`tests/i4_diagnostic_harness.rs`) compares:
+  - Segment quantizers: MATCH
+  - Mode decisions: 74.5% match at m4 (74.8% after sign fix)
+  - Coefficient levels: 48% exact match (same modes, different levels)
+  - Probability tables: 86.8% match on real images
+- Probability differences are largest in I4 path (plane 1), high-frequency bands
+- Our probabilities for level>1 are systematically LOWER, causing more bits for higher levels
+- Coefficient distribution: we have fewer level=1, more level 2-4 than libwebp
+
+**Likely root cause of remaining 4.5% trellis gap:**
+Our trellis RD optimization slightly favors lower distortion over rate reduction,
+resulting in more higher-level coefficients. This matches the observed coefficient
+distribution pattern.
 
 ### I4 Mode Path Investigation (2026-02-01)
 
