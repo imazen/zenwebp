@@ -2,7 +2,7 @@
 
 See global ~/.claude/CLAUDE.md for general instructions.
 
-## Current Optimization Status (2026-01-23)
+## Current Optimization Status (2026-02-01)
 
 ### Encoder Performance vs libwebp
 
@@ -36,8 +36,9 @@ See global ~/.claude/CLAUDE.md for general instructions.
 
 ### Quality vs libwebp (2026-02-01)
 - File sizes: Kodak aggregate 1.014x of libwebp (Default preset, matched config)
-- Screenshots: 1.055x of libwebp (Default preset)
-- PSNR gap: ~1.35 dB behind at equal BPP
+- Screenshots: 1.068x of libwebp (Default preset, method 4)
+- The gap is in I4 mode: I16-only produces 0.91-1.00x of libwebp (smaller!)
+- Adding I4 increases to 1.09-1.14x (our I4 is less efficient than libwebp's)
 
 **Kodak Q75 Default preset (method 4, matched config vs webpx):**
 | Metric | Value |
@@ -90,6 +91,7 @@ Fix reduced file sizes by ~2%.
 - libwebp enables trellis only for method >= 5
 - Our method 4 uses trellis, making it comparable to libwebp's method 6
 - Previous "7.8x slower" comparison was invalid (our trellis vs their non-trellis)
+- Tested disabling trellis for method 4: made files 1.5% LARGER (our trellis helps!)
 
 **Corrected comparison (our method 4 vs libwebp method 6, both with trellis):**
 | Encoder | Instructions | Time | File Size |
@@ -122,6 +124,7 @@ We're **faster** than libwebp with trellis (65ms vs 75ms), but produce larger fi
 1. **get_residual_cost** - 2.4x slower, SIMD loop improvements possible
 2. **encode_coefficients** - Token emission overhead
 3. **get_cost_luma16** - Mode cost estimation
+4. **I4 mode filtering** - Trying all 10 modes instead of 4 gives 0.71% smaller files
 
 **libwebp SIMD functions we lack:**
 - `GetResidualCost_SSE2` - residual cost with SIMD
