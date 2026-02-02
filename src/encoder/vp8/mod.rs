@@ -51,6 +51,82 @@ fn quality_to_quant_index(quality: u8) -> u8 {
 }
 
 //------------------------------------------------------------------------------
+// Quality search state for target_size convergence
+//
+// Ported from libwebp src/enc/frame_enc.c PassStats
+
+/// Convergence threshold for quality search (ported from libwebp DQ_LIMIT).
+/// Quality search is considered converged when |dq| < DQ_LIMIT.
+const DQ_LIMIT: f32 = 0.4;
+
+/// State for quality search convergence (target size or PSNR).
+/// Uses secant method to interpolate toward target value.
+/// Ported from libwebp's PassStats struct.
+struct PassStats {
+    is_first: bool,
+    dq: f32,
+    q: f32,
+    last_q: f32,
+    qmin: f32,
+    qmax: f32,
+    value: f64,       // current encoded size
+    last_value: f64,  // previous encoded size
+    target: f64,      // target size
+}
+
+impl PassStats {
+    /// Initialize pass stats for target size search.
+    fn new_for_size(target_size: u32, quality: u8, qmin: u8, qmax: u8) -> Self {
+        let qmin_f = f32::from(qmin);
+        let qmax_f = f32::from(qmax);
+        let q = f32::from(quality).clamp(qmin_f, qmax_f);
+        Self {
+            is_first: true,
+            dq: 10.0,
+            q,
+            last_q: q,
+            qmin: qmin_f,
+            qmax: qmax_f,
+            value: 0.0,
+            last_value: 0.0,
+            target: f64::from(target_size),
+        }
+    }
+
+    /// Compute next quality value using secant method.
+    /// Returns the new quality to try.
+    fn compute_next_q(&mut self) -> f32 {
+        let dq = if self.is_first {
+            // First iteration: move in direction of target
+            self.is_first = false;
+            if self.value > self.target {
+                -self.dq
+            } else {
+                self.dq
+            }
+        } else if (self.value - self.last_value).abs() > f64::EPSILON {
+            // Secant method: linear interpolation to find next q
+            let slope = (self.target - self.value) / (self.last_value - self.value);
+            (slope * f64::from(self.last_q - self.q)) as f32
+        } else {
+            0.0 // converged
+        };
+
+        // Limit dq to avoid large swings
+        self.dq = dq.clamp(-30.0, 30.0);
+        self.last_q = self.q;
+        self.last_value = self.value;
+        self.q = (self.q + self.dq).clamp(self.qmin, self.qmax);
+        self.q
+    }
+
+    /// Check if convergence is reached.
+    fn is_converged(&self) -> bool {
+        self.dq.abs() <= DQ_LIMIT
+    }
+}
+
+//------------------------------------------------------------------------------
 // SSE (Sum of Squared Errors) distortion functions
 //
 // These measure the distortion between source and predicted blocks.
@@ -1098,8 +1174,6 @@ pub(crate) fn encode_frame_lossy(
     color: ColorType,
     params: &super::api::EncoderParams,
 ) -> Result<(), EncodingError> {
-    let mut vp8_encoder = Vp8Encoder::new(writer);
-
     let width = width
         .try_into()
         .map_err(|_| EncodingError::InvalidDimensions)?;
@@ -1107,7 +1181,74 @@ pub(crate) fn encode_frame_lossy(
         .try_into()
         .map_err(|_| EncodingError::InvalidDimensions)?;
 
-    vp8_encoder.encode_image(data, color, width, height, params)?;
+    // Quality search: if target_size is set, iterate quality to converge
+    if params.target_size > 0 {
+        encode_with_quality_search(writer, data, width, height, color, params)?;
+    } else {
+        // Single encoding at specified quality
+        let mut vp8_encoder = Vp8Encoder::new(writer);
+        vp8_encoder.encode_image(data, color, width, height, params)?;
+    }
+
+    Ok(())
+}
+
+/// Encode with quality search to meet target file size.
+/// Uses secant method to converge on target size within DQ_LIMIT threshold.
+fn encode_with_quality_search(
+    writer: &mut Vec<u8>,
+    data: &[u8],
+    width: u16,
+    height: u16,
+    color: ColorType,
+    params: &super::api::EncoderParams,
+) -> Result<(), EncodingError> {
+    // Initialize quality search state
+    // qmin=1, qmax=100 (full range) - libwebp uses config->qmin/qmax
+    let mut stats = PassStats::new_for_size(params.target_size, params.lossy_quality, 1, 100);
+
+    // Max iterations (matches libwebp's config->pass, default 6 for target_size search)
+    let max_passes = (params.method + 3).max(6) as usize;
+    let mut best_output: Option<Vec<u8>> = None;
+    let mut best_diff = f64::MAX;
+
+    for pass in 0..max_passes {
+        // Create temporary buffer for this trial encoding
+        let mut trial_buffer = Vec::new();
+        let mut trial_encoder = Vp8Encoder::new(&mut trial_buffer);
+
+        // Create params with adjusted quality
+        let mut trial_params = params.clone();
+        trial_params.lossy_quality = stats.q.round().clamp(0.0, 100.0) as u8;
+
+        // Encode to trial buffer
+        trial_encoder.encode_image(data, color, width, height, &trial_params)?;
+
+        // Update stats with resulting size
+        let output_size = trial_buffer.len() as f64;
+        stats.value = output_size;
+
+        // Track best result (closest to target)
+        let diff = (output_size - stats.target).abs();
+        if diff < best_diff {
+            best_diff = diff;
+            best_output = Some(trial_buffer);
+        }
+
+        // Check convergence
+        let is_last = pass + 1 >= max_passes || stats.is_converged();
+        if is_last {
+            break;
+        }
+
+        // Compute next quality to try
+        stats.compute_next_q();
+    }
+
+    // Write best result to output
+    if let Some(output) = best_output {
+        writer.extend_from_slice(&output);
+    }
 
     Ok(())
 }

@@ -50,14 +50,30 @@ The benefit of multi-pass comes from quality search (binary search for target si
 not from probability refinement alone. This matches libwebp's behavior where
 multi-pass is designed for `size_search` or `psnr_search` convergence.
 
-**Quality search TODO (target_size support):**
-The `target_size` parameter is now in EncoderParams/EncoderConfig but not yet
-implemented. To implement quality search like libwebp:
-1. Factor out core encoding into a function that can be re-run with different quality
-2. Implement secant method: encode → measure size → adjust quality → repeat
-3. Convergence when |dq| < 0.4 or max iterations (10) reached
-4. libwebp uses `VP8EstimateTokenSize` for mid-loop size estimation; we could use
-   token buffer length as a simpler proxy
+**Quality search (target_size support) - IMPLEMENTED (2026-02-02):**
+
+The `target_size` parameter enables quality search using the secant method:
+```rust
+let output = EncoderConfig::new()
+    .quality(75.0)
+    .target_size(10000)  // Target 10KB output
+    .encode_rgb(&pixels, width, height)?;
+```
+
+Implementation details:
+- Uses secant method (linear interpolation) like libwebp's `ComputeNextQ()`
+- Convergence threshold: |dq| < 0.4 (DQ_LIMIT from libwebp)
+- Max passes: method + 3 or 6, whichever is higher
+- Each pass creates a fresh encoder and does full encoding at adjusted quality
+- Best result (closest to target) is returned even if not fully converged
+
+Test results on 512x512 CID22 image:
+| Target | Actual | Accuracy |
+|--------|--------|----------|
+| 8000 | 8054 | +0.7% |
+| 10000 | 10046 | +0.5% |
+| 12000 | 11778 | -1.8% |
+| 15000 | 15630 | +4.2% |
 
 **Remaining gap analysis (all methods):**
 - libwebp m5 enables trellis (we already have trellis at m4), gaining ~2%

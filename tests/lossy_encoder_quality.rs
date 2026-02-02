@@ -1094,4 +1094,89 @@ mod corpus_tests {
             );
         }
     }
+
+    /// Test quality search to meet target file size.
+    /// Uses secant method to converge on target size.
+    #[test]
+    fn target_size_quality_search() {
+        let test_path = "/home/lilith/work/png-codec-eval/test_images/792079.png";
+
+        if let Some((rgb, w, h)) = load_png(test_path) {
+            // First encode without target_size to get a baseline
+            let baseline = zenwebp::encoder::EncoderConfig::new()
+                .quality(75.0)
+                .encode_rgb(&rgb, w, h)
+                .expect("Baseline encoding failed");
+            let baseline_size = baseline.len();
+            println!("Baseline Q75 size: {} bytes", baseline_size);
+
+            // Now encode with target_size set to ~80% of baseline
+            let target_size = (baseline_size as f64 * 0.8) as u32;
+            println!("Target size: {} bytes", target_size);
+
+            let target_output = zenwebp::encoder::EncoderConfig::new()
+                .quality(75.0)
+                .target_size(target_size)
+                .encode_rgb(&rgb, w, h)
+                .expect("Target size encoding failed");
+            let actual_size = target_output.len();
+            println!("Actual size: {} bytes", actual_size);
+
+            // Allow 15% tolerance around target (quality search isn't exact)
+            let tolerance = 0.15;
+            let min_size = (target_size as f64 * (1.0 - tolerance)) as usize;
+            let max_size = (target_size as f64 * (1.0 + tolerance)) as usize;
+
+            assert!(
+                actual_size >= min_size && actual_size <= max_size,
+                "Actual size {} should be within {}% of target {}, got {}% off",
+                actual_size,
+                (tolerance * 100.0) as i32,
+                target_size,
+                ((actual_size as f64 / target_size as f64) - 1.0).abs() * 100.0
+            );
+
+            // Verify output is valid WebP
+            let (decoded, dw, dh) = zenwebp::decoder::decode_rgb(&target_output)
+                .expect("Failed to decode target-size encoded output");
+            assert_eq!(dw, w);
+            assert_eq!(dh, h);
+            assert!(!decoded.is_empty());
+        } else {
+            println!("Skipping test: test image not found at {}", test_path);
+        }
+    }
+
+    /// Test target_size with various target values.
+    #[test]
+    fn target_size_various_targets() {
+        let test_path = "/home/lilith/work/png-codec-eval/test_images/792079.png";
+
+        if let Some((rgb, w, h)) = load_png(test_path) {
+            // Test several target sizes
+            let targets = [8000u32, 10000, 12000, 15000];
+
+            println!("\nTesting target sizes on {}x{} image:", w, h);
+            for target in targets {
+                let output = zenwebp::encoder::EncoderConfig::new()
+                    .quality(75.0)
+                    .target_size(target)
+                    .encode_rgb(&rgb, w, h)
+                    .expect("Encoding failed");
+
+                let diff_pct = ((output.len() as f64 / target as f64) - 1.0) * 100.0;
+                println!(
+                    "  Target: {:>6} bytes, Actual: {:>6} bytes ({:+.1}%)",
+                    target,
+                    output.len(),
+                    diff_pct
+                );
+
+                // Verify valid output
+                zenwebp::decoder::decode_rgb(&output).expect("Failed to decode");
+            }
+        } else {
+            println!("Skipping test: test image not found");
+        }
+    }
 }
