@@ -6,15 +6,41 @@ See global ~/.claude/CLAUDE.md for general instructions.
 
 ### Encoder Performance vs libwebp
 
-**Method Parameter Added** - Speed/quality tradeoff (0-6):
-| Method | Time | Throughput | File Size | Notes |
-|--------|------|------------|-----------|-------|
-| 0 | 22ms | 11.9 MPix/s | 13.3KB | I16-only, no trellis |
-| 2 | 31ms | 8.6 MPix/s | 12.5KB | Limited I4 (3 modes), no trellis |
-| 4 | 44ms | 6.0 MPix/s | 11.8KB | Full I4 search (10 modes), trellis |
-| 6 | 45ms | 5.8 MPix/s | 11.8KB | Full search, trellis |
+**Method Parameter** - Speed/quality tradeoff (0-6):
+| Method | Time | File Size | vs libwebp | Notes |
+|--------|------|-----------|------------|-------|
+| 0 | 22ms | 13.1KB | 0.89x | I16-only, no trellis |
+| 2 | 31ms | 12.1KB | 1.07x | Limited I4 (3 modes), no trellis |
+| 4 | 26ms | 11.4KB | 1.04x | Full I4, trellis, 1 pass |
+| 5 | 46ms | 11.2KB | 1.03x | Full I4, trellis, 2-pass token refinement |
+| 6 | 45ms | 11.2KB | 1.05x | Full I4, trellis, 2-pass token refinement |
 
 *Benchmark: 512x512 CID22 image (792079) at Q75, 20 iterations, release mode*
+
+**CID22 corpus aggregate (41 images, Q75 Default):**
+| Method | zenwebp | libwebp | Ratio |
+|--------|---------|---------|-------|
+| 4 | 1125390 | 1126840 | **0.999x** |
+| 5 | 1114454 | 1104176 | 1.009x |
+| 6 | 1114454 | 1077358 | 1.034x |
+
+**Screenshot corpus aggregate (10 images, Q75 Default):**
+| Method | zenwebp | libwebp | Ratio |
+|--------|---------|---------|-------|
+| 4 | 1191564 | 1165198 | 1.023x |
+| 5 | 1184966 | 1156406 | 1.025x |
+| 6 | 1184966 | 1140826 | 1.039x |
+
+**Remaining m5/m6 gap analysis:**
+- We have parity at m4. Multi-pass token refinement gains ~1% for m5/m6.
+- libwebp m5 enables trellis (we already have trellis at m4), gaining ~2%
+- libwebp m6 uses trellis-during-selection (we already do this at m4), gaining ~4.4%
+- Our trellis brings us from m2→m4 (6.5% gain), comparable to libwebp's m4→m6 (4.4%)
+- But our non-trellis baseline (m2) is worse than libwebp's (m4), so trellis
+  compensates rather than outperforms
+- Root cause: I4 coefficient encoding efficiency gap in the non-trellis path
+- Closing this requires improving the base coefficient encoding pipeline, not
+  adding more trellis modes or passes
 
 ### Recent SIMD Optimizations
 - **SIMD quantization** - `wide::i64x4` for simple quantize path (29% speedup for methods 0-3, 2026-01-23)
@@ -35,16 +61,12 @@ See global ~/.claude/CLAUDE.md for general instructions.
 | t_transform | 3.24% | Spectral distortion (SIMD) |
 
 ### Quality vs libwebp (2026-02-02)
-- CID22 corpus: **0.999x** average (method 4) — aggregate parity with libwebp
-- Screenshots: **1.014x** of libwebp (Default preset, method 4)
-- 792079 benchmark image: 1.036x of libwebp
-- Token buffer (2026-02-02) improved CID22 from 1.043x → 0.999x, screenshots from 1.060x → 1.014x
-
-**CID22 Q75 Default preset (method 4):**
-| Metric | Value |
-|--------|-------|
-| Average ratio | 0.999x |
-| 792079 (benchmark) | 1.036x |
+- CID22 m4: **0.999x** — aggregate parity with libwebp
+- CID22 m5: **1.009x** — near-parity (multi-pass refinement)
+- CID22 m6: **1.034x** — remaining gap from I4 coefficient efficiency
+- Screenshots m4: **1.023x**
+- Token buffer (2026-02-02) improved CID22 from 1.043x → 0.999x at m4
+- Multi-pass (2026-02-02) improved m5/m6 by ~1%
 
 **Preset tuning parameters now active (2026-02-01):**
 | Preset | SNS | Filter | Sharp | Segs |
