@@ -48,7 +48,8 @@ pub(crate) fn rd_score_trellis(lambda: u32, rate: i64, distortion: i64) -> i64 {
 }
 
 /// Compute level cost using stored cost table (like libwebp's VP8LevelCost).
-/// cost = VP8LevelFixedCosts[level] + table[min(level, MAX_VARIABLE_LEVEL)] + sign_bit
+/// cost = VP8LevelFixedCosts[level] + table[min(level, MAX_VARIABLE_LEVEL)]
+/// Note: VP8LevelFixedCosts already includes the sign bit cost (256) for non-zero levels.
 #[inline]
 fn level_cost_with_table(costs: Option<&LevelCostArray>, level: i32) -> u32 {
     let abs_level = level.unsigned_abs() as usize;
@@ -57,19 +58,17 @@ fn level_cost_with_table(costs: Option<&LevelCostArray>, level: i32) -> u32 {
         Some(table) => table[abs_level.min(MAX_VARIABLE_LEVEL)] as u32,
         None => 0,
     };
-    // Sign bit costs 1 bit (256 in 1/256 bit units) for non-zero levels
-    fixed + variable + if abs_level > 0 { 256 } else { 0 }
+    fixed + variable
 }
 
 /// Fast inline level cost for trellis inner loop.
 /// Assumes: level >= 0, level <= MAX_LEVEL, costs is valid.
+/// Note: VP8LevelFixedCosts already includes the sign bit cost (256) for non-zero levels.
 #[inline(always)]
 fn level_cost_fast(costs: &LevelCostArray, level: usize) -> u32 {
     let fixed = VP8_LEVEL_FIXED_COSTS[level] as u32;
     let variable = costs[level.min(MAX_VARIABLE_LEVEL)] as u32;
-    // Sign bit costs 1 bit (256 in 1/256 bit units) for non-zero levels
-    let sign_cost = if level > 0 { 256 } else { 0 };
-    fixed + variable + sign_cost
+    fixed + variable
 }
 
 /// Trellis-optimized quantization for a 4x4 block.

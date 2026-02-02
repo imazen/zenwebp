@@ -426,7 +426,7 @@ fn benchmark_image_diagnostic() {
     println!("\n=== Benchmark Image Diagnostic (792079.png, method 2, Q75) ===");
 
     // Try to load the benchmark image
-    let path = "/mnt/v/cid22_pngs/cid22/792079.png";
+    let path = "/tmp/CID22/original/792079.png";
     let (rgb, width, height) = match load_png(path) {
         Some(data) => data,
         None => {
@@ -482,6 +482,268 @@ fn benchmark_image_diagnostic() {
         lib_nonzero,
         zen_nonzero as f64 / lib_nonzero as f64
     );
+}
+
+#[test]
+fn benchmark_image_m4_diagnostic() {
+    println!("\n=== Benchmark Image Diagnostic (792079.png, method 4 with trellis, Q75) ===");
+
+    let path = "/tmp/CID22/original/792079.png";
+    let (rgb, width, height) = match load_png(path) {
+        Some(data) => data,
+        None => {
+            println!("Skipping: {} not found", path);
+            return;
+        }
+    };
+
+    println!("Image size: {}x{}", width, height);
+
+    let quality = 75.0;
+    let method = 4;
+
+    let zen_webp = encode_zenwebp(&rgb, width, height, quality, method);
+    let lib_webp = encode_libwebp(&rgb, width, height, quality, method);
+
+    println!(
+        "File sizes: zenwebp={} bytes, libwebp={} bytes, ratio={:.3}x",
+        zen_webp.len(),
+        lib_webp.len(),
+        zen_webp.len() as f64 / lib_webp.len() as f64
+    );
+
+    let zen_vp8 = extract_vp8_chunk(&zen_webp).expect("Failed to extract VP8 from zenwebp");
+    let lib_vp8 = extract_vp8_chunk(&lib_webp).expect("Failed to extract VP8 from libwebp");
+
+    let (_, zen_diag) =
+        Vp8Decoder::decode_diagnostic(zen_vp8).expect("Failed to decode zenwebp with diagnostics");
+    let (_, lib_diag) =
+        Vp8Decoder::decode_diagnostic(lib_vp8).expect("Failed to decode libwebp with diagnostics");
+
+    let stats = compare_diagnostics(&zen_diag, &lib_diag);
+    stats.report();
+
+    // Aggregate nonzero coefficient stats
+    let mut zen_nonzero = 0usize;
+    let mut lib_nonzero = 0usize;
+
+    for mb in &zen_diag.macroblocks {
+        for blk in &mb.y_blocks {
+            zen_nonzero += blk.levels.iter().filter(|&&l| l != 0).count();
+        }
+    }
+    for mb in &lib_diag.macroblocks {
+        for blk in &mb.y_blocks {
+            lib_nonzero += blk.levels.iter().filter(|&&l| l != 0).count();
+        }
+    }
+
+    println!(
+        "\nNonzero Y coefficients: zenwebp={}, libwebp={}, ratio={:.3}x",
+        zen_nonzero,
+        lib_nonzero,
+        zen_nonzero as f64 / lib_nonzero as f64
+    );
+}
+
+/// Fair trellis comparison: our m4 (has trellis) vs libwebp m6 (has trellis)
+#[test]
+fn benchmark_trellis_fair_comparison() {
+    println!("\n=== Fair Trellis: zenwebp m4 vs libwebp m6 (both with trellis) ===");
+
+    let path = "/tmp/CID22/original/792079.png";
+    let (rgb, width, height) = match load_png(path) {
+        Some(data) => data,
+        None => {
+            println!("Skipping: {} not found", path);
+            return;
+        }
+    };
+
+    println!("Image size: {}x{}", width, height);
+
+    let quality = 75.0;
+
+    // Our m4 has trellis; libwebp needs m6 for trellis
+    let zen_webp = encode_zenwebp(&rgb, width, height, quality, 4);
+    let lib_webp = encode_libwebp(&rgb, width, height, quality, 6);
+
+    println!(
+        "File sizes: zenwebp(m4)={} bytes, libwebp(m6)={} bytes, ratio={:.3}x",
+        zen_webp.len(),
+        lib_webp.len(),
+        zen_webp.len() as f64 / lib_webp.len() as f64
+    );
+}
+
+/// Test method 6 (both have trellis) on real image
+#[test]
+fn benchmark_image_m6_vs_libwebp_m6() {
+    println!("\n=== Benchmark Image: zenwebp m6 vs libwebp m6 (both with trellis) ===");
+
+    let path = "/tmp/CID22/original/792079.png";
+    let (rgb, width, height) = match load_png(path) {
+        Some(data) => data,
+        None => {
+            println!("Skipping: {} not found", path);
+            return;
+        }
+    };
+
+    println!("Image size: {}x{}", width, height);
+
+    let quality = 75.0;
+
+    // Both at method 6 - both should have trellis
+    let zen_webp = encode_zenwebp(&rgb, width, height, quality, 6);
+    let lib_webp = encode_libwebp(&rgb, width, height, quality, 6);
+
+    println!(
+        "File sizes: zenwebp={} bytes, libwebp={} bytes, ratio={:.3}x",
+        zen_webp.len(),
+        lib_webp.len(),
+        zen_webp.len() as f64 / lib_webp.len() as f64
+    );
+
+    let zen_vp8 = extract_vp8_chunk(&zen_webp).expect("Failed to extract VP8 from zenwebp");
+    let lib_vp8 = extract_vp8_chunk(&lib_webp).expect("Failed to extract VP8 from libwebp");
+
+    let (_, zen_diag) =
+        Vp8Decoder::decode_diagnostic(zen_vp8).expect("Failed to decode zenwebp with diagnostics");
+    let (_, lib_diag) =
+        Vp8Decoder::decode_diagnostic(lib_vp8).expect("Failed to decode libwebp with diagnostics");
+
+    let stats = compare_diagnostics(&zen_diag, &lib_diag);
+    stats.report();
+}
+
+/// Compare coefficient level distributions between encoders
+#[test]
+fn coefficient_distribution_analysis() {
+    println!("\n=== Coefficient Level Distribution Analysis (792079.png m4) ===");
+
+    let path = "/tmp/CID22/original/792079.png";
+    let (rgb, width, height) = match load_png(path) {
+        Some(data) => data,
+        None => {
+            println!("Skipping: {} not found", path);
+            return;
+        }
+    };
+
+    let zen_webp = encode_zenwebp(&rgb, width, height, 75.0, 4);
+    let lib_webp = encode_libwebp(&rgb, width, height, 75.0, 4);
+
+    let zen_vp8 = extract_vp8_chunk(&zen_webp).expect("Failed to extract VP8");
+    let lib_vp8 = extract_vp8_chunk(&lib_webp).expect("Failed to extract VP8");
+
+    let (_, zen_diag) = Vp8Decoder::decode_diagnostic(zen_vp8).expect("decode");
+    let (_, lib_diag) = Vp8Decoder::decode_diagnostic(lib_vp8).expect("decode");
+
+    // Count coefficient level distribution for both
+    let mut zen_level_counts = [0usize; 128];
+    let mut lib_level_counts = [0usize; 128];
+
+    for mb in &zen_diag.macroblocks {
+        for blk in &mb.y_blocks {
+            for &level in &blk.levels {
+                let idx = level.unsigned_abs().min(127) as usize;
+                zen_level_counts[idx] += 1;
+            }
+        }
+    }
+
+    for mb in &lib_diag.macroblocks {
+        for blk in &mb.y_blocks {
+            for &level in &blk.levels {
+                let idx = level.unsigned_abs().min(127) as usize;
+                lib_level_counts[idx] += 1;
+            }
+        }
+    }
+
+    println!("Level distribution (non-zero levels only):");
+    println!("Level | zenwebp | libwebp | delta");
+    for i in 1..32 {
+        if zen_level_counts[i] > 0 || lib_level_counts[i] > 0 {
+            let delta = zen_level_counts[i] as i64 - lib_level_counts[i] as i64;
+            let delta_sign = if delta > 0 { "+" } else { "" };
+            println!(
+                "{:5} | {:7} | {:7} | {}{}",
+                i, zen_level_counts[i], lib_level_counts[i], delta_sign, delta
+            );
+        }
+    }
+
+    // Total nonzero
+    let zen_total: usize = zen_level_counts[1..].iter().sum();
+    let lib_total: usize = lib_level_counts[1..].iter().sum();
+    println!("\nTotal nonzero: zenwebp={}, libwebp={}", zen_total, lib_total);
+}
+
+/// Compare probability tables on real benchmark image
+#[test]
+fn probability_table_comparison_real_image() {
+    println!("\n=== Probability Table Comparison (792079.png, m4) ===");
+
+    let path = "/tmp/CID22/original/792079.png";
+    let (rgb, width, height) = match load_png(path) {
+        Some(data) => data,
+        None => {
+            println!("Skipping: {} not found", path);
+            return;
+        }
+    };
+
+    let zen_webp = encode_zenwebp(&rgb, width, height, 75.0, 4);
+    let lib_webp = encode_libwebp(&rgb, width, height, 75.0, 4);
+
+    let zen_vp8 = extract_vp8_chunk(&zen_webp).expect("Failed to extract VP8");
+    let lib_vp8 = extract_vp8_chunk(&lib_webp).expect("Failed to extract VP8");
+
+    let (_, zen_diag) = Vp8Decoder::decode_diagnostic(zen_vp8).expect("decode");
+    let (_, lib_diag) = Vp8Decoder::decode_diagnostic(lib_vp8).expect("decode");
+
+    // Compare token probability tables
+    let mut total_entries = 0usize;
+    let mut matching_entries = 0usize;
+    let mut total_diff = 0u64;
+    let mut max_diff = 0u8;
+
+    println!("Probability differences by plane/band (showing divergent entries):");
+    for plane in 0..4 {
+        for band in 0..8 {
+            for ctx in 0..3 {
+                for tok in 0..11 {
+                    total_entries += 1;
+                    let z_prob = zen_diag.token_probs[plane][band][ctx][tok].prob;
+                    let l_prob = lib_diag.token_probs[plane][band][ctx][tok].prob;
+
+                    if z_prob == l_prob {
+                        matching_entries += 1;
+                    } else {
+                        let diff = z_prob.abs_diff(l_prob);
+                        total_diff += diff as u64;
+                        max_diff = max_diff.max(diff);
+                        if diff >= 30 {
+                            println!(
+                                "  [P{} B{} C{} T{}] zen={} lib={} diff={}",
+                                plane, band, ctx, tok, z_prob, l_prob, diff
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    println!(
+        "\nToken probabilities: {}/{} match ({:.1}%)",
+        matching_entries,
+        total_entries,
+        100.0 * matching_entries as f64 / total_entries as f64
+    );
+    println!("Total |prob_diff|: {}, max: {}", total_diff, max_diff);
 }
 
 #[test]
