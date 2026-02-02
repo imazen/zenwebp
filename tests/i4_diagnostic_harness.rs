@@ -554,7 +554,7 @@ fn compare_h_tm_sse_mb_8_0() {
     println!("\n=== Compare H vs TM SSE for MB(8,0) ===");
 
     let path = "/tmp/CID22/original/792079.png";
-    let (rgb, width, height) = match load_png(path) {
+    let (rgb, width, _height) = match load_png(path) {
         Some(data) => data,
         None => {
             println!("Skipping: {} not found", path);

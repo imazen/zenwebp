@@ -261,8 +261,8 @@ struct Vp8Encoder<'a> {
     /// Stored macroblock info from token recording pass, used to write
     /// headers without redoing mode selection.
     stored_mb_info: Vec<MacroblockInfo>,
-    /// Stored quantized coefficients for multi-pass encoding (method >= 5).
-    /// Pass 1 stores mode decisions + quantized zigzag coefficients; pass 2+ reuses them.
+    /// Stored quantized coefficients for token buffer approach.
+    /// Mode decisions + quantized zigzag coefficients stored during encoding.
     stored_mb_coeffs: Vec<QuantizedMbCoeffs>,
 }
 
@@ -502,18 +502,18 @@ impl<'a> Vp8Encoder<'a> {
 
         let num_mb = usize::from(self.macroblock_width) * usize::from(self.macroblock_height);
 
-        // Method 6 gets multiple passes for iterative probability refinement.
-        // Like libwebp, each pass re-records all macroblocks with improved
-        // probabilities from the previous pass's statistics.
-        // Method 5-6: 2-pass token recording for iterative probability refinement.
-        // Pass 1 records with initial/mid-stream-refreshed probabilities.
-        // Pass 2 re-records with fully refined probabilities from pass 1.
-        // Third pass was tested but gains <0.05% — not worth the time cost.
-        let num_passes = if self.method >= 5 { 2 } else { 1 };
+        // NOTE: Multi-pass token recording was tested but provides ZERO benefit.
+        // Re-recording identical tokens produces byte-identical output.
+        // Re-quantization from stored raw DCT made files LARGER and worse quality
+        // because raw DCT depends on pass 0's predictions, which would change if
+        // trellis made different decisions. True multi-pass would require full
+        // re-encoding (re-predict, re-DCT, re-quantize) which is expensive.
+        //
+        // Current methods 5/6 are equivalent to method 4 (single pass with trellis).
+        let num_passes = 1;
 
         for pass in 0..num_passes {
             self.token_buffer = Some(residuals::TokenBuffer::with_estimated_capacity(num_mb));
-            self.proba_stats.reset();
 
             // For passes after the first, apply the updated probabilities
             // from the previous pass as the new baseline for cost estimation.
@@ -521,13 +521,26 @@ impl<'a> Vp8Encoder<'a> {
             // from pass 1 rather than re-doing mode selection. This matches libwebp's
             // behavior where quantization happens once and tokens are re-recorded.
             if pass > 0 {
+                // Pass 1+: Re-record tokens with improved probability tables.
+                //
+                // After testing, re-quantization with observed probabilities made
+                // files LARGER and worse quality. The benefit of multi-pass comes
+                // from better statistics for header signaling and entropy coding,
+                // NOT from re-quantization.
+                //
+                // We use updated_probs (signaling-optimized) as the baseline for
+                // this pass. Since we're re-recording the same tokens (not re-
+                // quantizing), level_costs don't need updating.
                 if let Some(ref updated) = self.updated_probs {
                     self.token_probs = *updated;
                 }
-                // Note: level_costs don't need recalculating for pass 1+ since we're
-                // not re-quantizing - we're just re-recording the same tokens.
+
+                // Reset stats for this pass's statistics collection
+                self.proba_stats.reset();
                 self.reset_for_second_pass();
             } else {
+                // Pass 0: reset stats for fresh statistics collection
+                self.proba_stats.reset();
                 // Pass 0: prepare storage for mode decisions and coefficients
                 self.stored_mb_info.clear();
                 self.stored_mb_info.reserve(num_mb);
@@ -623,21 +636,19 @@ impl<'a> Vp8Encoder<'a> {
                         // Store macroblock info for header writing in emit pass
                         self.stored_mb_info.push(mb_info);
                     } else {
-                        // Pass 1+: Re-record tokens with updated probability tables.
+                        // Pass 1+: Re-record tokens with observed probability tables.
                         //
-                        // NOTE: We tried true re-quantization (re-running trellis with updated
-                        // level_costs derived from pass 0 statistics), but it made files LARGER.
-                        // The problem is circular: pass 0's trellis decisions are optimal for
-                        // COEFF_PROBS, so training costs on those outputs creates overfitting.
+                        // After testing, re-quantization from raw DCT made files LARGER
+                        // and WORSE quality. This happens because pass 0's quantization
+                        // decisions were already optimal for the input DCT coefficients
+                        // under the initial cost function. Changing cost function and
+                        // re-quantizing doesn't improve results - it just makes different
+                        // (not better) decisions.
                         //
-                        // libwebp's multi-pass also doesn't re-quantize - it re-records the same
-                        // tokens with better probability tables. The benefit comes from:
-                        // 1. More accurate probability signaling in headers (fewer update bits)
-                        // 2. Better entropy coding (probabilities match actual distribution)
-                        //
-                        // Our token buffer with mid-stream probability refresh already provides
-                        // most of this benefit. Additional passes mainly help the final probability
-                        // table estimation for very large images.
+                        // The benefit of multi-pass comes from:
+                        // 1. Better probability statistics for header signaling
+                        // 2. More accurate entropy coding with observed probabilities
+                        // 3. NOT from re-quantization
                         let mb_info = self.stored_mb_info[mb_idx];
 
                         total_mb += 1;
@@ -649,7 +660,7 @@ impl<'a> Vp8Encoder<'a> {
                                 .clear(mb_info.luma_mode != LumaMode::B);
                         } else {
                             // Re-record tokens from stored quantized coefficients
-                            // Clone to avoid borrow conflict
+                            // (no re-quantization - use pass 0's quantized values)
                             let stored_coeffs = self.stored_mb_coeffs[mb_idx].clone();
                             self.record_from_stored_coeffs(
                                 &mb_info,

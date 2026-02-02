@@ -12,8 +12,8 @@ See global ~/.claude/CLAUDE.md for general instructions.
 | 0 | 22ms | 13.1KB | 0.89x | I16-only, no trellis |
 | 2 | 31ms | 12.1KB | 1.07x | Limited I4 (3 modes), no trellis |
 | 4 | 26ms | 11.4KB | 1.04x | Full I4, trellis, 1 pass |
-| 5 | 46ms | 11.2KB | 1.03x | Full I4, trellis, 2-pass token refinement |
-| 6 | 45ms | 11.2KB | 1.05x | Full I4, trellis, 2-pass token refinement |
+| 5 | 26ms | 11.4KB | 1.04x | Full I4, trellis, 1 pass (same as m4) |
+| 6 | 26ms | 11.4KB | 1.04x | Full I4, trellis, 1 pass (same as m4) |
 
 *Benchmark: 512x512 CID22 image (792079) at Q75, 20 iterations, release mode*
 
@@ -31,16 +31,18 @@ See global ~/.claude/CLAUDE.md for general instructions.
 | 5 | 1184966 | 1156406 | 1.025x |
 | 6 | 1184966 | 1140826 | 1.039x |
 
-**Remaining m5/m6 gap analysis:**
-- We have parity at m4. Multi-pass token refinement gains ~1% for m5/m6.
+**Methods 5/6 note:** After investigation, multi-pass token recording was found to
+provide zero benefit. Re-quantization from stored raw DCT made things worse.
+Methods 5/6 are now equivalent to method 4 (single pass with trellis). See
+"Multi-pass Re-quantization Experiment" section in Investigation Notes.
+
+**Remaining gap analysis (all methods):**
 - libwebp m5 enables trellis (we already have trellis at m4), gaining ~2%
 - libwebp m6 uses trellis-during-selection (we already do this at m4), gaining ~4.4%
 - Our trellis brings us from m2→m4 (6.5% gain), comparable to libwebp's m4→m6 (4.4%)
 - But our non-trellis baseline (m2) is worse than libwebp's (m4), so trellis
   compensates rather than outperforms
 - Root cause: I4 coefficient encoding efficiency gap in the non-trellis path
-- Closing this requires improving the base coefficient encoding pipeline, not
-  adding more trellis modes or passes
 
 ### Recent SIMD Optimizations
 - **SIMD quantization** - `wide::i64x4` for simple quantize path (29% speedup for methods 0-3, 2026-01-23)
@@ -66,7 +68,8 @@ See global ~/.claude/CLAUDE.md for general instructions.
 - CID22 m6: **1.034x** — remaining gap from I4 coefficient efficiency
 - Screenshots m4: **1.023x**
 - Token buffer (2026-02-02) improved CID22 from 1.043x → 0.999x at m4
-- Multi-pass (2026-02-02) improved m5/m6 by ~1%
+- Multi-pass experiments (2026-02-02): Both token re-recording and re-quantization
+  approaches failed to improve compression. Methods 5/6 now equivalent to method 4.
 
 **Production settings beat libwebp (2026-02-02):**
 With default presets (SNS=50, filter=60), zenwebp outperforms libwebp:
@@ -341,35 +344,39 @@ Completed:
 
 ### Multi-pass Re-quantization Experiment (2026-02-02, ABANDONED)
 
-**Hypothesis:** Storing raw DCT coefficients and re-quantizing in pass 2 with updated
-level_costs (derived from pass 1's probability statistics) would produce smaller files.
+**Tested approaches and results:**
 
-**Implementation:**
-1. Added `RawMbCoeffs` struct to store raw DCT values before quantization
-2. Added `store_raw_coeffs()` to save DCT during pass 0
-3. Added `requantize_and_record()` to re-quantize in pass 1+ using updated level_costs
-4. Updated multi-pass loop to recalculate level_costs with refined probabilities
+1. **Token re-recording (no re-quantization):** Re-record same tokens in pass 1+ with
+   updated probability tables. **Result:** ZERO benefit - outputs are byte-identical
+   because identical tokens → identical statistics → identical probabilities.
 
-**Result:** Files became **LARGER**, not smaller.
-- Method 5 vs 4: +0.29% (worse)
-- Method 6 vs 4: +0.29% (worse)
+2. **Re-quantization from stored raw DCT:** Store raw DCT coefficients from pass 0,
+   re-quantize in pass 1+ with level_costs derived from observed probabilities.
+   **Result:** Files became LARGER (+0.82%) with WORSE quality (MSE 649 vs 511).
 
-**Root cause analysis:** The approach creates a circular dependency:
-1. Pass 0 trellis uses level_costs derived from COEFF_PROBS
-2. Pass 0 outputs are optimal for those level_costs
-3. Pass 1 level_costs are derived from pass 0's output distribution
-4. Pass 1 level_costs are now biased toward pass 0's decisions
-5. Re-quantizing with these biased costs reduces entropy, increasing file size
+**Root cause analysis (revised):** The re-quantization approach was fundamentally
+flawed, not just due to probability estimation issues:
 
-**Conclusion:** libwebp's multi-pass also doesn't re-quantize - it re-records the same
-tokens with better probability tables. The benefit comes from more accurate probability
-signaling in headers and better entropy coding during emission. Our token buffer with
-mid-stream probability refresh already provides most of this benefit. Additional passes
-mainly help final probability table estimation for very large images.
+1. Raw DCT coefficients depend on PREDICTION residuals
+2. Predictions depend on RECONSTRUCTED pixels from previous macroblocks
+3. Reconstructed pixels depend on current pass's quantized coefficients
+4. If pass 1 trellis makes different decisions → different reconstructed pixels →
+   different predictions for subsequent macroblocks → raw DCT from pass 0 is WRONG
 
-**Code status:** Reverted to simpler `record_from_stored_coeffs` approach. The raw
-coefficient storage code was removed. Methods 4/5/6 now produce identical output
-(as expected, since token sequences are identical).
+Using pass 0's raw DCT for pass 1 assumes predictions would be identical, but changing
+trellis decisions changes the entire reconstruction chain. This is why re-quantization
+produces worse results - we're re-quantizing the wrong residuals.
+
+**Why token re-recording provides zero benefit:** Once tokens are decided in pass 0,
+the statistics are fixed. Re-recording the same tokens accumulates the same statistics,
+leading to identical probability tables and identical output.
+
+**True multi-pass would require:** Full re-encoding in each pass (re-predict from
+current reconstructed pixels, re-DCT, re-quantize). This is expensive and not
+implemented. Methods 5/6 are now equivalent to method 4 (single pass with trellis).
+
+**Code status:** Removed RawMbCoeffs, store_raw_coeffs, requantize_and_record, and
+compute_observed_probabilities. Multi-pass loop simplified to single pass.
 
 ### SNS Quality-Size Tradeoff Investigation (2026-02-01)
 
@@ -499,7 +506,7 @@ Also updated SIMD `quantize()` and `quantize_ac_only()` block methods.
 
 **Token buffer resolved the ~4% two-pass mismatch gap (2026-02-02):**
 Token buffer (commit 9625d4e) replaced two-pass with single-pass recording.
-Multi-pass refinement (commit 123d4b2) added 2-pass for m5/m6 (~1% gain).
+Multi-pass experiments abandoned (see Investigation Notes). Methods 5/6 now equivalent to m4.
 CID22 aggregate at m4: 1.043x → **0.999x**.
 
 **Remaining m5/m6 gap (2026-02-02):**

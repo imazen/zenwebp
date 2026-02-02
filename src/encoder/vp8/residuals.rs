@@ -1149,6 +1149,7 @@ impl<'a> super::Vp8Encoder<'a> {
 
     /// Record tokens for a macroblock's residual data and return the quantized coefficients.
     /// Used in multi-pass encoding: pass 1 calls this to get coefficients for storage.
+    #[allow(clippy::needless_range_loop)] // i is used to index both ZIGZAG and output arrays
     pub(super) fn record_residual_tokens_storing(
         &mut self,
         macroblock_info: &MacroblockInfo,
@@ -1433,12 +1434,6 @@ impl<'a> super::Vp8Encoder<'a> {
 
         self.token_buffer = Some(token_buf);
     }
-
-    // NOTE: We experimented with true multi-pass re-quantization (store_raw_coeffs +
-    // requantize_and_record) but it made files LARGER. The problem is circular:
-    // pass 0's trellis decisions are optimal for COEFF_PROBS, so training new level_costs
-    // on those outputs creates overfitting. libwebp's multi-pass also doesn't re-quantize -
-    // it just re-records the same tokens with better probability tables for encoding.
 }
 
 pub(super) fn get_coeffs0_from_block(blocks: &[i32; 16 * 16]) -> [i32; 16] {
