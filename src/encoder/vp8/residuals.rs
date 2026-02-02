@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use crate::common::transform;
 use crate::common::types::*;
 
-use super::MacroblockInfo;
+use super::{MacroblockInfo, QuantizedMbCoeffs};
 use crate::encoder::cost::{
     record_coeffs, trellis_quantize_block, ProbaStats, TokenType, NUM_BANDS, NUM_CTX, NUM_PROBAS,
     NUM_TYPES, VP8_ENC_BANDS,
@@ -969,6 +969,10 @@ impl<'a> super::Vp8Encoder<'a> {
     /// Tokens are stored for deferred emission; statistics are updated simultaneously.
     ///
     /// Includes quantization (trellis or simple) matching the encode path exactly.
+    ///
+    /// NOTE: Currently unused - record_residual_tokens_storing is used instead for
+    /// multi-pass encoding. Kept for reference and potential future use.
+    #[allow(dead_code)]
     pub(super) fn record_residual_tokens(
         &mut self,
         macroblock_info: &MacroblockInfo,
@@ -1140,6 +1144,292 @@ impl<'a> super::Vp8Encoder<'a> {
         }
 
         // Put token buffer back
+        self.token_buffer = Some(token_buf);
+    }
+
+    /// Record tokens for a macroblock's residual data and return the quantized coefficients.
+    /// Used in multi-pass encoding: pass 1 calls this to get coefficients for storage.
+    pub(super) fn record_residual_tokens_storing(
+        &mut self,
+        macroblock_info: &MacroblockInfo,
+        mbx: usize,
+        y_block_data: &[i32; 16 * 16],
+        u_block_data: &[i32; 16 * 4],
+        v_block_data: &[i32; 16 * 4],
+    ) -> QuantizedMbCoeffs {
+        let segment = &self.segments[macroblock_info.segment_id.unwrap_or(0)];
+        let y1_matrix = segment.y1_matrix.clone().unwrap();
+        let y2_matrix = segment.y2_matrix.clone().unwrap();
+        let uv_matrix = segment.uv_matrix.clone().unwrap();
+
+        let is_i4 = macroblock_info.luma_mode == LumaMode::B;
+        let y1_trellis_lambda = if self.do_trellis {
+            Some(if is_i4 {
+                segment.lambda_trellis_i4
+            } else {
+                segment.lambda_trellis_i16
+            })
+        } else {
+            None
+        };
+
+        let token_type_y1 = if is_i4 {
+            TokenType::I4
+        } else {
+            TokenType::I16AC
+        };
+        let first_coeff_y1 = if is_i4 { 0 } else { 1 };
+
+        let mut token_buf = self
+            .token_buffer
+            .take()
+            .expect("token buffer not initialized");
+
+        // Storage for quantized coefficients
+        let mut stored = QuantizedMbCoeffs {
+            y2_zigzag: [0; 16],
+            y1_zigzag: [[0; 16]; 16],
+            u_zigzag: [[0; 16]; 4],
+            v_zigzag: [[0; 16]; 4],
+        };
+
+        // Y2 (DC transform) - only for I16 mode
+        if !is_i4 {
+            let mut coeffs0 = get_coeffs0_from_block(y_block_data);
+            transform::wht4x4(&mut coeffs0);
+
+            for i in 0..16 {
+                let zi = usize::from(ZIGZAG[i]);
+                stored.y2_zigzag[i] = y2_matrix.quantize_coeff(coeffs0[zi], zi);
+            }
+
+            let complexity = self.left_complexity.y2 + self.top_complexity[mbx].y2;
+            let has_coeffs = token_buf.record_coeff_tokens(
+                &mut self.proba_stats,
+                &stored.y2_zigzag,
+                TokenType::I16DC as usize,
+                0,
+                complexity.min(2) as usize,
+            );
+
+            self.left_complexity.y2 = if has_coeffs { 1 } else { 0 };
+            self.top_complexity[mbx].y2 = if has_coeffs { 1 } else { 0 };
+        }
+
+        // Y1 blocks
+        for y in 0usize..4 {
+            let mut left = self.left_complexity.y[y];
+            for x in 0..4 {
+                let block_idx = y * 4 + x;
+                let block: &[i32; 16] = y_block_data[block_idx * 16..][..16]
+                    .try_into()
+                    .unwrap();
+
+                let top = self.top_complexity[mbx].y[x];
+                let ctx0 = (left + top).min(2) as usize;
+
+                if let Some(lambda) = y1_trellis_lambda {
+                    let mut coeffs = *block;
+                    trellis_quantize_block(
+                        &mut coeffs,
+                        &mut stored.y1_zigzag[block_idx],
+                        &y1_matrix,
+                        lambda,
+                        first_coeff_y1,
+                        &self.level_costs,
+                        token_type_y1 as usize,
+                        ctx0,
+                    );
+                } else {
+                    for i in first_coeff_y1..16 {
+                        let zi = usize::from(ZIGZAG[i]);
+                        stored.y1_zigzag[block_idx][i] = y1_matrix.quantize_coeff(block[zi], zi);
+                    }
+                }
+
+                let has_coeffs = token_buf.record_coeff_tokens(
+                    &mut self.proba_stats,
+                    &stored.y1_zigzag[block_idx],
+                    token_type_y1 as usize,
+                    first_coeff_y1,
+                    ctx0,
+                );
+
+                left = if has_coeffs { 1 } else { 0 };
+                self.top_complexity[mbx].y[x] = if has_coeffs { 1 } else { 0 };
+            }
+            self.left_complexity.y[y] = left;
+        }
+
+        // U blocks
+        for y in 0usize..2 {
+            let mut left = self.left_complexity.u[y];
+            for x in 0usize..2 {
+                let block_idx = y * 2 + x;
+                let block: &[i32; 16] = u_block_data[block_idx * 16..][..16]
+                    .try_into()
+                    .unwrap();
+
+                for i in 0..16 {
+                    let zi = usize::from(ZIGZAG[i]);
+                    stored.u_zigzag[block_idx][i] = uv_matrix.quantize_coeff(block[zi], zi);
+                }
+
+                let top = self.top_complexity[mbx].u[x];
+                let complexity = (left + top).min(2) as usize;
+
+                let has_coeffs = token_buf.record_coeff_tokens(
+                    &mut self.proba_stats,
+                    &stored.u_zigzag[block_idx],
+                    TokenType::Chroma as usize,
+                    0,
+                    complexity,
+                );
+
+                left = if has_coeffs { 1 } else { 0 };
+                self.top_complexity[mbx].u[x] = if has_coeffs { 1 } else { 0 };
+            }
+            self.left_complexity.u[y] = left;
+        }
+
+        // V blocks
+        for y in 0usize..2 {
+            let mut left = self.left_complexity.v[y];
+            for x in 0usize..2 {
+                let block_idx = y * 2 + x;
+                let block: &[i32; 16] = v_block_data[block_idx * 16..][..16]
+                    .try_into()
+                    .unwrap();
+
+                for i in 0..16 {
+                    let zi = usize::from(ZIGZAG[i]);
+                    stored.v_zigzag[block_idx][i] = uv_matrix.quantize_coeff(block[zi], zi);
+                }
+
+                let top = self.top_complexity[mbx].v[x];
+                let complexity = (left + top).min(2) as usize;
+
+                let has_coeffs = token_buf.record_coeff_tokens(
+                    &mut self.proba_stats,
+                    &stored.v_zigzag[block_idx],
+                    TokenType::Chroma as usize,
+                    0,
+                    complexity,
+                );
+
+                left = if has_coeffs { 1 } else { 0 };
+                self.top_complexity[mbx].v[x] = if has_coeffs { 1 } else { 0 };
+            }
+            self.left_complexity.v[y] = left;
+        }
+
+        self.token_buffer = Some(token_buf);
+        stored
+    }
+
+    /// Record tokens from pre-quantized coefficients (no re-quantization).
+    /// Used in multi-pass encoding: pass 2+ calls this with stored coefficients.
+    pub(super) fn record_from_stored_coeffs(
+        &mut self,
+        macroblock_info: &MacroblockInfo,
+        mbx: usize,
+        stored: &QuantizedMbCoeffs,
+    ) {
+        let is_i4 = macroblock_info.luma_mode == LumaMode::B;
+
+        let token_type_y1 = if is_i4 {
+            TokenType::I4
+        } else {
+            TokenType::I16AC
+        };
+        let first_coeff_y1 = if is_i4 { 0 } else { 1 };
+
+        let mut token_buf = self
+            .token_buffer
+            .take()
+            .expect("token buffer not initialized");
+
+        // Y2 (DC transform) - only for I16 mode
+        if !is_i4 {
+            let complexity = self.left_complexity.y2 + self.top_complexity[mbx].y2;
+            let has_coeffs = token_buf.record_coeff_tokens(
+                &mut self.proba_stats,
+                &stored.y2_zigzag,
+                TokenType::I16DC as usize,
+                0,
+                complexity.min(2) as usize,
+            );
+
+            self.left_complexity.y2 = if has_coeffs { 1 } else { 0 };
+            self.top_complexity[mbx].y2 = if has_coeffs { 1 } else { 0 };
+        }
+
+        // Y1 blocks
+        for y in 0usize..4 {
+            let mut left = self.left_complexity.y[y];
+            for x in 0..4 {
+                let block_idx = y * 4 + x;
+                let top = self.top_complexity[mbx].y[x];
+                let ctx0 = (left + top).min(2) as usize;
+
+                let has_coeffs = token_buf.record_coeff_tokens(
+                    &mut self.proba_stats,
+                    &stored.y1_zigzag[block_idx],
+                    token_type_y1 as usize,
+                    first_coeff_y1,
+                    ctx0,
+                );
+
+                left = if has_coeffs { 1 } else { 0 };
+                self.top_complexity[mbx].y[x] = if has_coeffs { 1 } else { 0 };
+            }
+            self.left_complexity.y[y] = left;
+        }
+
+        // U blocks
+        for y in 0usize..2 {
+            let mut left = self.left_complexity.u[y];
+            for x in 0usize..2 {
+                let block_idx = y * 2 + x;
+                let top = self.top_complexity[mbx].u[x];
+                let complexity = (left + top).min(2) as usize;
+
+                let has_coeffs = token_buf.record_coeff_tokens(
+                    &mut self.proba_stats,
+                    &stored.u_zigzag[block_idx],
+                    TokenType::Chroma as usize,
+                    0,
+                    complexity,
+                );
+
+                left = if has_coeffs { 1 } else { 0 };
+                self.top_complexity[mbx].u[x] = if has_coeffs { 1 } else { 0 };
+            }
+            self.left_complexity.u[y] = left;
+        }
+
+        // V blocks
+        for y in 0usize..2 {
+            let mut left = self.left_complexity.v[y];
+            for x in 0usize..2 {
+                let block_idx = y * 2 + x;
+                let top = self.top_complexity[mbx].v[x];
+                let complexity = (left + top).min(2) as usize;
+
+                let has_coeffs = token_buf.record_coeff_tokens(
+                    &mut self.proba_stats,
+                    &stored.v_zigzag[block_idx],
+                    TokenType::Chroma as usize,
+                    0,
+                    complexity,
+                );
+
+                left = if has_coeffs { 1 } else { 0 };
+                self.top_complexity[mbx].v[x] = if has_coeffs { 1 } else { 0 };
+            }
+            self.left_complexity.v[y] = left;
+        }
+
         self.token_buffer = Some(token_buf);
     }
 }

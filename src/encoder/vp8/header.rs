@@ -166,6 +166,10 @@ impl<'a> super::Vp8Encoder<'a> {
 
     /// Encode token probability updates to the bitstream.
     /// Uses accumulated statistics to decide which probabilities to update.
+    ///
+    /// IMPORTANT: Compare against COEFF_PROBS (decoder defaults), not token_probs.
+    /// For multi-pass encoding, token_probs may hold intermediate values from
+    /// previous passes, but the decoder always starts from COEFF_PROBS.
     fn encode_updated_token_probabilities(&mut self) {
         // Get the updated probabilities if available
         let updated_probs = self.updated_probs.take();
@@ -174,15 +178,17 @@ impl<'a> super::Vp8Encoder<'a> {
             for (b, js) in is.iter().enumerate() {
                 for (c, ks) in js.iter().enumerate() {
                     for (p, &update_prob) in ks.iter().enumerate() {
-                        let old_prob = self.token_probs[t][b][c][p];
+                        // IMPORTANT: Compare against COEFF_PROBS (decoder's initial state),
+                        // not token_probs (which may have been modified by previous passes).
+                        let default_prob = COEFF_PROBS[t][b][c][p];
 
                         // Check if we have updated probabilities that differ from the default
                         let (should_update, new_prob) = if let Some(ref probs) = updated_probs {
                             let new_p = probs[t][b][c][p];
-                            // Only update if the probability actually changed
-                            (new_p != old_prob, new_p)
+                            // Only update if the probability differs from decoder's default
+                            (new_p != default_prob, new_p)
                         } else {
-                            (false, old_prob)
+                            (false, default_prob)
                         };
 
                         if should_update {
@@ -195,6 +201,8 @@ impl<'a> super::Vp8Encoder<'a> {
                         } else {
                             // Signal no update
                             self.encoder.write_bool(false, update_prob);
+                            // Ensure token_probs matches what decoder will have
+                            self.token_probs[t][b][c][p] = default_prob;
                         }
                     }
                 }

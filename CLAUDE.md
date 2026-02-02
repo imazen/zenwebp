@@ -315,6 +315,34 @@ Completed:
 
 ## Investigation Notes
 
+### Multi-pass Probability Signaling Bug (2026-02-02, FIXED)
+
+**Bug:** Multi-pass encoding (methods 5-6) produced corrupt output that decoded incorrectly.
+99.9% of Y plane pixels differed between method 4 and method 5 decoded output.
+
+**Root cause:** Probability update signaling compared against wrong baseline.
+- In multi-pass, `token_probs` was set to pass 0's updated values at start of pass 1
+- `compute_updated_probabilities` compared new probabilities against pass 0 values
+- Finding no savings (pass 1 ≈ pass 0), it set `updated_probs = None`
+- Header signaled 0 updates (comparing against pass 0, not defaults)
+- Decoder started with `COEFF_PROBS` (defaults) but encoder used pass 0 probs
+- Mismatch caused garbage decoding
+
+**Fix (2 parts):**
+1. `encode_updated_token_probabilities` now compares against `COEFF_PROBS` (decoder defaults),
+   not against `token_probs` (which may have intermediate pass values)
+2. `compute_updated_probabilities` now always computes probabilities relative to `COEFF_PROBS`
+
+**Results after fix:**
+- All methods (4, 5, 6) now produce valid decodable output
+- Method 4: 1.018x of libwebp (near parity)
+- Method 5: 1.024x of libwebp (slightly larger due to no true multi-pass benefit)
+- Method 6: 1.044x of libwebp (same)
+
+**Note:** Our multi-pass currently stores coefficients from pass 1 and reuses them in pass 2,
+so both passes produce identical statistics. True multi-pass benefit would require allowing
+pass 2 to make different quantization decisions, which we don't do.
+
 ### SNS Quality-Size Tradeoff Investigation (2026-02-01)
 
 **Butteraugli corpus test results (2026-02-01):**

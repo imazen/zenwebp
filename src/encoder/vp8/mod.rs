@@ -169,6 +169,22 @@ struct MacroblockInfo {
 
 pub(super) type ChromaCoeffs = [i32; 16 * 4];
 
+/// Quantized zigzag coefficients for a macroblock, stored for multi-pass encoding.
+/// libwebp stores quantized coefficients from pass 1 and reuses them in pass 2+.
+/// These are the final quantized values (post-trellis if applicable), ready for
+/// direct token recording without re-quantization.
+#[derive(Clone)]
+struct QuantizedMbCoeffs {
+    /// Y2 DC transform coefficients (16 values), only used for I16 mode
+    y2_zigzag: [i32; 16],
+    /// Y1 block coefficients (16 blocks × 16 values), zigzag order
+    y1_zigzag: [[i32; 16]; 16],
+    /// U block coefficients (4 blocks × 16 values), zigzag order
+    u_zigzag: [[i32; 16]; 4],
+    /// V block coefficients (4 blocks × 16 values), zigzag order
+    v_zigzag: [[i32; 16]; 4],
+}
+
 struct Vp8Encoder<'a> {
     writer: &'a mut Vec<u8>,
     frame: Frame,
@@ -245,6 +261,9 @@ struct Vp8Encoder<'a> {
     /// Stored macroblock info from token recording pass, used to write
     /// headers without redoing mode selection.
     stored_mb_info: Vec<MacroblockInfo>,
+    /// Stored quantized coefficients for multi-pass encoding (method >= 5).
+    /// Pass 1 stores mode decisions + quantized zigzag coefficients; pass 2+ reuses them.
+    stored_mb_coeffs: Vec<QuantizedMbCoeffs>,
 }
 
 impl<'a> Vp8Encoder<'a> {
@@ -304,6 +323,7 @@ impl<'a> Vp8Encoder<'a> {
 
             token_buffer: None,
             stored_mb_info: Vec::new(),
+            stored_mb_coeffs: Vec::new(),
         }
     }
 
@@ -334,43 +354,42 @@ impl<'a> Vp8Encoder<'a> {
     }
 
     /// Compute updated probabilities from recorded statistics.
-    /// Only includes updates where the savings exceed a minimum threshold.
+    ///
+    /// IMPORTANT: For multi-pass encoding, this computes the optimal probabilities
+    /// to use for emission. The header encoder compares against COEFF_PROBS (decoder
+    /// defaults) to decide which updates to signal.
     fn compute_updated_probabilities(&mut self) {
-        let mut updated = self.token_probs;
-        let mut total_savings = 0i32;
-        let mut num_updates = 0u32;
+        // Always start from COEFF_PROBS (decoder defaults) for computing what to update.
+        // This ensures the header signaling matches what the decoder expects.
+        let mut updated = COEFF_PROBS;
 
         for t in 0..4 {
             for b in 0..8 {
                 for c in 0..3 {
                     for p in 0..11 {
-                        let old_prob = self.token_probs[t][b][c][p];
+                        // Compare against COEFF_PROBS (decoder defaults), not token_probs
+                        let default_prob = COEFF_PROBS[t][b][c][p];
                         let update_prob = COEFF_UPDATE_PROBS[t][b][c][p];
 
-                        let (should_update, new_p, savings) =
+                        let (should_update, new_p, _savings) =
                             self.proba_stats
-                                .should_update(t, b, c, p, old_prob, update_prob);
+                                .should_update(t, b, c, p, default_prob, update_prob);
 
                         // Update if savings are positive, matching libwebp's approach.
                         // The signaling cost (8 bits for value + 1 bit flag) is already
                         // included in the should_update calculation.
-                        if should_update && savings > 0 {
+                        if should_update {
                             updated[t][b][c][p] = new_p;
-                            total_savings += savings;
-                            num_updates += 1;
                         }
                     }
                 }
             }
         }
 
-        // Only use updated probabilities if we have net positive savings
-        if total_savings > 0 && num_updates > 0 {
-            self.updated_probs = Some(updated);
-        } else {
-            // Keep default probabilities - no updates
-            self.updated_probs = None;
-        }
+        // Always set updated_probs with the computed values.
+        // For multi-pass, this ensures the header has the final probabilities to signal.
+        // If no updates are beneficial, updated will equal COEFF_PROBS.
+        self.updated_probs = Some(updated);
     }
 
     /// Reset encoder state for a new recording pass.
@@ -494,18 +513,27 @@ impl<'a> Vp8Encoder<'a> {
 
         for pass in 0..num_passes {
             self.token_buffer = Some(residuals::TokenBuffer::with_estimated_capacity(num_mb));
-            self.stored_mb_info.clear();
-            self.stored_mb_info.reserve(num_mb);
             self.proba_stats.reset();
 
             // For passes after the first, apply the updated probabilities
             // from the previous pass as the new baseline for cost estimation.
+            // IMPORTANT: In pass 2+, we reuse stored mode decisions and coefficients
+            // from pass 1 rather than re-doing mode selection. This matches libwebp's
+            // behavior where quantization happens once and tokens are re-recorded.
             if pass > 0 {
                 if let Some(ref updated) = self.updated_probs {
                     self.token_probs = *updated;
                 }
+                // Note: level_costs update is only needed for mid-stream refresh
+                // but coefficients are already stored from pass 1.
                 self.level_costs.calculate(&self.token_probs);
                 self.reset_for_second_pass();
+            } else {
+                // Pass 0: prepare storage for mode decisions and coefficients
+                self.stored_mb_info.clear();
+                self.stored_mb_info.reserve(num_mb);
+                self.stored_mb_coeffs.clear();
+                self.stored_mb_coeffs.reserve(num_mb);
             }
 
             // Mid-stream refresh interval: roughly every total_mb/8 macroblocks
@@ -515,70 +543,109 @@ impl<'a> Vp8Encoder<'a> {
             let mut total_mb: u32 = 0;
             let mut skip_mb: u32 = 0;
 
-            // ===== RECORDING PASS: mode selection + transform + token recording =====
+            // ===== RECORDING PASS =====
+            // Pass 0: mode selection + transform + token recording (store coefficients)
+            // Pass 1+: re-record tokens with updated probs (reuse stored coefficients)
             for mby in 0..self.macroblock_height {
                 // Reset left state for start of row
                 self.left_complexity = Complexity::default();
                 self.left_b_pred = [IntraMode::default(); 4];
-                self.left_derr = [[0; 2]; 2]; // reset chroma error diffusion for row start
 
-                self.left_border_y = [129u8; 16 + 1];
-                self.left_border_u = [129u8; 8 + 1];
-                self.left_border_v = [129u8; 8 + 1];
+                if pass == 0 {
+                    self.left_derr = [[0; 2]; 2]; // reset chroma error diffusion for row start
+                    self.left_border_y = [129u8; 16 + 1];
+                    self.left_border_u = [129u8; 8 + 1];
+                    self.left_border_v = [129u8; 8 + 1];
+                }
 
                 for mbx in 0..self.macroblock_width {
-                    // Mid-stream probability refresh (like libwebp's VP8EncTokenLoop)
-                    refresh_countdown -= 1;
-                    if refresh_countdown < 0 {
-                        self.compute_updated_probabilities();
-                        let probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
-                        self.level_costs.calculate(probs);
-                        refresh_countdown = max_count;
-                    }
+                    let mb_idx = (mby as usize) * (self.macroblock_width as usize) + (mbx as usize);
 
-                    let macroblock_info = self.choose_macroblock_info(mbx.into(), mby.into());
+                    if pass == 0 {
+                        // Pass 0: Full mode selection + transform + quantize + store coefficients
+                        // Mid-stream probability refresh (like libwebp's VP8EncTokenLoop)
+                        refresh_countdown -= 1;
+                        if refresh_countdown < 0 {
+                            self.compute_updated_probabilities();
+                            let probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
+                            self.level_costs.calculate(probs);
+                            refresh_countdown = max_count;
+                        }
 
-                    // Transform blocks (updates border state for next macroblock)
-                    let y_block_data =
-                        self.transform_luma_block(mbx.into(), mby.into(), &macroblock_info);
+                        let macroblock_info = self.choose_macroblock_info(mbx.into(), mby.into());
 
-                    let (u_block_data, v_block_data) = self.transform_chroma_blocks(
-                        mbx.into(),
-                        mby.into(),
-                        macroblock_info.chroma_mode,
-                    );
+                        // Transform blocks (updates border state for next macroblock)
+                        let y_block_data =
+                            self.transform_luma_block(mbx.into(), mby.into(), &macroblock_info);
 
-                    // Check if all coefficients are zero (skip detection)
-                    total_mb += 1;
-                    let all_zero = self.check_all_coeffs_zero(
-                        &macroblock_info,
-                        &y_block_data,
-                        &u_block_data,
-                        &v_block_data,
-                    );
+                        let (u_block_data, v_block_data) = self.transform_chroma_blocks(
+                            mbx.into(),
+                            mby.into(),
+                            macroblock_info.chroma_mode,
+                        );
 
-                    let mut mb_info = macroblock_info;
-                    if all_zero {
-                        skip_mb += 1;
-                        mb_info.coeffs_skipped = true;
-                        // Reset complexity for skipped blocks
-                        self.left_complexity
-                            .clear(macroblock_info.luma_mode != LumaMode::B);
-                        self.top_complexity[usize::from(mbx)]
-                            .clear(macroblock_info.luma_mode != LumaMode::B);
-                    } else {
-                        // Record tokens and update statistics simultaneously
-                        self.record_residual_tokens(
+                        // Check if all coefficients are zero (skip detection)
+                        total_mb += 1;
+                        let all_zero = self.check_all_coeffs_zero(
                             &macroblock_info,
-                            mbx as usize,
                             &y_block_data,
                             &u_block_data,
                             &v_block_data,
                         );
-                    }
 
-                    // Store macroblock info for header writing in emit pass
-                    self.stored_mb_info.push(mb_info);
+                        let mut mb_info = macroblock_info;
+                        if all_zero {
+                            skip_mb += 1;
+                            mb_info.coeffs_skipped = true;
+                            // Reset complexity for skipped blocks
+                            self.left_complexity
+                                .clear(macroblock_info.luma_mode != LumaMode::B);
+                            self.top_complexity[usize::from(mbx)]
+                                .clear(macroblock_info.luma_mode != LumaMode::B);
+                            // Store empty coefficients for skipped blocks
+                            self.stored_mb_coeffs.push(QuantizedMbCoeffs {
+                                y2_zigzag: [0; 16],
+                                y1_zigzag: [[0; 16]; 16],
+                                u_zigzag: [[0; 16]; 4],
+                                v_zigzag: [[0; 16]; 4],
+                            });
+                        } else {
+                            // Record tokens, quantize, and store quantized coefficients
+                            let stored_coeffs = self.record_residual_tokens_storing(
+                                &macroblock_info,
+                                mbx as usize,
+                                &y_block_data,
+                                &u_block_data,
+                                &v_block_data,
+                            );
+                            self.stored_mb_coeffs.push(stored_coeffs);
+                        }
+
+                        // Store macroblock info for header writing in emit pass
+                        self.stored_mb_info.push(mb_info);
+                    } else {
+                        // Pass 1+: Reuse stored mode decisions and quantized coefficients
+                        // Only re-record tokens with updated probability tables (no re-quantization)
+                        let mb_info = self.stored_mb_info[mb_idx];
+
+                        total_mb += 1;
+                        if mb_info.coeffs_skipped {
+                            skip_mb += 1;
+                            // Reset complexity for skipped blocks
+                            self.left_complexity.clear(mb_info.luma_mode != LumaMode::B);
+                            self.top_complexity[usize::from(mbx)]
+                                .clear(mb_info.luma_mode != LumaMode::B);
+                        } else {
+                            // Re-record tokens from stored quantized coefficients
+                            // Clone to avoid borrow conflict
+                            let stored_coeffs = self.stored_mb_coeffs[mb_idx].clone();
+                            self.record_from_stored_coeffs(
+                                &mb_info,
+                                mbx as usize,
+                                &stored_coeffs,
+                            );
+                        }
+                    }
                 }
             }
 
@@ -591,6 +658,7 @@ impl<'a> Vp8Encoder<'a> {
 
             // Finalize probabilities from this pass
             self.compute_updated_probabilities();
+
         }
 
         // ===== FINALIZE: write bitstream =====

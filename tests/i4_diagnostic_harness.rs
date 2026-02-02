@@ -1098,3 +1098,441 @@ fn probability_table_comparison() {
     );
     println!("Total |prob_diff|: {}, max: {}", total_diff, max_diff);
 }
+
+/// True apples-to-apples comparison: same method number for both encoders
+/// This isolates the encoding efficiency difference from trellis configuration differences
+#[test]
+fn apples_to_apples_same_method() {
+    println!("\n=== Apples-to-Apples: Same Method Number for Both Encoders ===");
+    println!("Settings: SNS=0, filter=0, segments=1, Q75");
+
+    let path = "/tmp/CID22/original/792079.png";
+    let (rgb, width, height) = match load_png(path) {
+        Some(data) => data,
+        None => {
+            println!("Skipping: {} not found", path);
+            return;
+        }
+    };
+
+    println!("Image: 792079.png ({}x{})\n", width, height);
+    println!("Method | zenwebp | libwebp | Ratio  | Notes");
+    println!("-------|---------|---------|--------|-------");
+
+    for method in 0..=6u8 {
+        let zen = encode_zenwebp(&rgb, width, height, 75.0, method);
+        let lib = encode_libwebp(&rgb, width, height, 75.0, method);
+        let ratio = zen.len() as f64 / lib.len() as f64;
+
+        let notes = match method {
+            0 => "I16-only, fastest",
+            1 => "I16-only",
+            2 => "I4 limited modes, no trellis",
+            3 => "I4 limited modes, no trellis",
+            4 => "I4 full, lib:no-trellis zen:trellis",
+            5 => "I4 full, both have trellis",
+            6 => "I4 full, both have trellis+extra",
+            _ => "",
+        };
+
+        println!(
+            "   {}   | {:>7} | {:>7} | {:.3}x | {}",
+            method,
+            zen.len(),
+            lib.len(),
+            ratio,
+            notes
+        );
+    }
+}
+
+/// Detailed I16 vs I4 breakdown to isolate where the gap comes from
+#[test]
+fn i16_vs_i4_breakdown() {
+    println!("\n=== I16 vs I4 Breakdown ===");
+    println!("Comparing coefficient counts and sizes by block type");
+
+    let path = "/tmp/CID22/original/792079.png";
+    let (rgb, width, height) = match load_png(path) {
+        Some(data) => data,
+        None => {
+            println!("Skipping: {} not found", path);
+            return;
+        }
+    };
+
+    // Use method 4 for both (our trellis vs libwebp no-trellis)
+    // and method 6 for both (both have trellis)
+    for method in [4u8, 6] {
+        println!("\n--- Method {} ---", method);
+
+        let zen_webp = encode_zenwebp(&rgb, width, height, 75.0, method);
+        let lib_webp = encode_libwebp(&rgb, width, height, 75.0, method);
+
+        let zen_vp8 = extract_vp8_chunk(&zen_webp).expect("VP8");
+        let lib_vp8 = extract_vp8_chunk(&lib_webp).expect("VP8");
+
+        let (_, zen_diag) = Vp8Decoder::decode_diagnostic(zen_vp8).expect("decode");
+        let (_, lib_diag) = Vp8Decoder::decode_diagnostic(lib_vp8).expect("decode");
+
+        // Count I16 vs I4 blocks
+        let zen_i16 = zen_diag
+            .macroblocks
+            .iter()
+            .filter(|m| m.luma_mode != LumaMode::B)
+            .count();
+        let zen_i4 = zen_diag
+            .macroblocks
+            .iter()
+            .filter(|m| m.luma_mode == LumaMode::B)
+            .count();
+        let lib_i16 = lib_diag
+            .macroblocks
+            .iter()
+            .filter(|m| m.luma_mode != LumaMode::B)
+            .count();
+        let lib_i4 = lib_diag
+            .macroblocks
+            .iter()
+            .filter(|m| m.luma_mode == LumaMode::B)
+            .count();
+
+        println!("Mode distribution:");
+        println!("  zenwebp: {} I16, {} I4", zen_i16, zen_i4);
+        println!("  libwebp: {} I16, {} I4", lib_i16, lib_i4);
+
+        // Count total nonzero coefficients
+        let mut zen_y2_nz = 0usize;
+        let mut zen_y1_nz = 0usize;
+        let mut lib_y2_nz = 0usize;
+        let mut lib_y1_nz = 0usize;
+
+        for mb in &zen_diag.macroblocks {
+            zen_y2_nz += mb.y2_block.levels.iter().filter(|&&l| l != 0).count();
+            for blk in &mb.y_blocks {
+                zen_y1_nz += blk.levels.iter().filter(|&&l| l != 0).count();
+            }
+        }
+        for mb in &lib_diag.macroblocks {
+            lib_y2_nz += mb.y2_block.levels.iter().filter(|&&l| l != 0).count();
+            for blk in &mb.y_blocks {
+                lib_y1_nz += blk.levels.iter().filter(|&&l| l != 0).count();
+            }
+        }
+
+        println!("\nNonzero coefficient counts:");
+        println!(
+            "  Y2 (DC): zenwebp={}, libwebp={}, ratio={:.3}x",
+            zen_y2_nz,
+            lib_y2_nz,
+            zen_y2_nz as f64 / lib_y2_nz as f64
+        );
+        println!(
+            "  Y1 (AC): zenwebp={}, libwebp={}, ratio={:.3}x",
+            zen_y1_nz,
+            lib_y1_nz,
+            zen_y1_nz as f64 / lib_y1_nz as f64
+        );
+
+        // Count MBs where mode matches vs differs
+        let mut mode_match = 0usize;
+        let mut mode_differ = 0usize;
+        let mut match_coeff_diff = 0i64;
+        let mut differ_coeff_diff = 0i64;
+
+        for (zmb, lmb) in zen_diag.macroblocks.iter().zip(lib_diag.macroblocks.iter()) {
+            let modes_match = zmb.luma_mode == lmb.luma_mode;
+
+            // Sum coefficient differences
+            let mut coeff_diff = 0i64;
+            for (zblk, lblk) in zmb.y_blocks.iter().zip(lmb.y_blocks.iter()) {
+                for (zl, ll) in zblk.levels.iter().zip(lblk.levels.iter()) {
+                    coeff_diff += (zl.abs() as i64) - (ll.abs() as i64);
+                }
+            }
+
+            if modes_match {
+                mode_match += 1;
+                match_coeff_diff += coeff_diff;
+            } else {
+                mode_differ += 1;
+                differ_coeff_diff += coeff_diff;
+            }
+        }
+
+        println!("\nMode agreement:");
+        println!(
+            "  Matching modes: {} MBs, sum(|zen|-|lib|) coeffs: {:+}",
+            mode_match, match_coeff_diff
+        );
+        println!(
+            "  Different modes: {} MBs, sum(|zen|-|lib|) coeffs: {:+}",
+            mode_differ, differ_coeff_diff
+        );
+
+        println!(
+            "\nFile sizes: zenwebp={} libwebp={} ratio={:.3}x",
+            zen_webp.len(),
+            lib_webp.len(),
+            zen_webp.len() as f64 / lib_webp.len() as f64
+        );
+    }
+}
+
+/// Analyze blocks where both encoders chose the same mode
+/// This isolates coefficient quantization differences from mode selection
+#[test]
+fn same_mode_coefficient_analysis() {
+    println!("\n=== Same-Mode Coefficient Analysis ===");
+    println!("For blocks where both encoders chose the same mode,");
+    println!("compare coefficient level distributions.\n");
+
+    let path = "/tmp/CID22/original/792079.png";
+    let (rgb, width, height) = match load_png(path) {
+        Some(data) => data,
+        None => {
+            println!("Skipping: {} not found", path);
+            return;
+        }
+    };
+
+    let zen_webp = encode_zenwebp(&rgb, width, height, 75.0, 6);
+    let lib_webp = encode_libwebp(&rgb, width, height, 75.0, 6);
+
+    let zen_vp8 = extract_vp8_chunk(&zen_webp).expect("VP8");
+    let lib_vp8 = extract_vp8_chunk(&lib_webp).expect("VP8");
+
+    let (_, zen_diag) = Vp8Decoder::decode_diagnostic(zen_vp8).expect("decode");
+    let (_, lib_diag) = Vp8Decoder::decode_diagnostic(lib_vp8).expect("decode");
+
+    // For same-mode blocks, compare level distributions
+    let mut zen_levels = [0usize; 32];
+    let mut lib_levels = [0usize; 32];
+    let mut same_mode_blocks = 0usize;
+    let mut exact_match_blocks = 0usize;
+
+    for (zmb, lmb) in zen_diag.macroblocks.iter().zip(lib_diag.macroblocks.iter()) {
+        if zmb.luma_mode != lmb.luma_mode {
+            continue;
+        }
+
+        // Same mode - compare Y blocks
+        for (zblk, lblk) in zmb.y_blocks.iter().zip(lmb.y_blocks.iter()) {
+            same_mode_blocks += 1;
+            let mut exact = true;
+
+            for (zl, ll) in zblk.levels.iter().zip(lblk.levels.iter()) {
+                let zabs = zl.unsigned_abs() as usize;
+                let labs = ll.unsigned_abs() as usize;
+
+                if zabs < 32 {
+                    zen_levels[zabs] += 1;
+                }
+                if labs < 32 {
+                    lib_levels[labs] += 1;
+                }
+
+                if zl != ll {
+                    exact = false;
+                }
+            }
+
+            if exact {
+                exact_match_blocks += 1;
+            }
+        }
+    }
+
+    println!(
+        "Same-mode blocks: {}, exact coefficient match: {} ({:.1}%)",
+        same_mode_blocks,
+        exact_match_blocks,
+        100.0 * exact_match_blocks as f64 / same_mode_blocks as f64
+    );
+
+    println!("\nLevel distribution (same-mode blocks only):");
+    println!("Level | zenwebp | libwebp | Delta");
+    println!("------|---------|---------|------");
+
+    for i in 0..16 {
+        let zc = zen_levels[i];
+        let lc = lib_levels[i];
+        if zc > 0 || lc > 0 {
+            let delta = zc as i64 - lc as i64;
+            let sign = if delta >= 0 { "+" } else { "" };
+            println!("  {:>3} | {:>7} | {:>7} | {}{}", i, zc, lc, sign, delta);
+        }
+    }
+
+    // Show higher levels if present
+    let zen_high: usize = zen_levels[16..].iter().sum();
+    let lib_high: usize = lib_levels[16..].iter().sum();
+    if zen_high > 0 || lib_high > 0 {
+        println!(" 16+  | {:>7} | {:>7} | {:+}", zen_high, lib_high, zen_high as i64 - lib_high as i64);
+    }
+}
+
+/// Compute bits per nonzero coefficient to isolate entropy coding efficiency
+#[test]
+fn bits_per_coefficient_analysis() {
+    println!("\n=== Bits Per Coefficient Analysis ===");
+    println!("Isolating entropy coding efficiency from quantization\n");
+
+    let path = "/tmp/CID22/original/792079.png";
+    let (rgb, width, height) = match load_png(path) {
+        Some(data) => data,
+        None => {
+            println!("Skipping: {} not found", path);
+            return;
+        }
+    };
+
+    println!("Method | zen_bytes | lib_bytes | zen_nz | lib_nz | zen_bpc | lib_bpc | bpc_ratio");
+    println!("-------|-----------|-----------|--------|--------|---------|---------|----------");
+
+    for method in [4u8, 5, 6] {
+        let zen_webp = encode_zenwebp(&rgb, width, height, 75.0, method);
+        let lib_webp = encode_libwebp(&rgb, width, height, 75.0, method);
+
+        let zen_vp8 = extract_vp8_chunk(&zen_webp).expect("VP8");
+        let lib_vp8 = extract_vp8_chunk(&lib_webp).expect("VP8");
+
+        let (_, zen_diag) = Vp8Decoder::decode_diagnostic(zen_vp8).expect("decode");
+        let (_, lib_diag) = Vp8Decoder::decode_diagnostic(lib_vp8).expect("decode");
+
+        // Count nonzero coefficients (Y2 + Y1 + UV)
+        let mut zen_nz = 0usize;
+        let mut lib_nz = 0usize;
+
+        for mb in &zen_diag.macroblocks {
+            zen_nz += mb.y2_block.levels.iter().filter(|&&l| l != 0).count();
+            for blk in &mb.y_blocks {
+                zen_nz += blk.levels.iter().filter(|&&l| l != 0).count();
+            }
+            for blk in &mb.uv_blocks {
+                zen_nz += blk.levels.iter().filter(|&&l| l != 0).count();
+            }
+        }
+        for mb in &lib_diag.macroblocks {
+            lib_nz += mb.y2_block.levels.iter().filter(|&&l| l != 0).count();
+            for blk in &mb.y_blocks {
+                lib_nz += blk.levels.iter().filter(|&&l| l != 0).count();
+            }
+            for blk in &mb.uv_blocks {
+                lib_nz += blk.levels.iter().filter(|&&l| l != 0).count();
+            }
+        }
+
+        // Bits per coefficient (approximation - includes header overhead)
+        let zen_bits = zen_webp.len() * 8;
+        let lib_bits = lib_webp.len() * 8;
+        let zen_bpc = if zen_nz > 0 { zen_bits as f64 / zen_nz as f64 } else { 0.0 };
+        let lib_bpc = if lib_nz > 0 { lib_bits as f64 / lib_nz as f64 } else { 0.0 };
+        let bpc_ratio = zen_bpc / lib_bpc;
+
+        println!(
+            "   {}   | {:>9} | {:>9} | {:>6} | {:>6} | {:>7.2} | {:>7.2} | {:>8.3}x",
+            method,
+            zen_webp.len(),
+            lib_webp.len(),
+            zen_nz,
+            lib_nz,
+            zen_bpc,
+            lib_bpc,
+            bpc_ratio
+        );
+    }
+
+    println!("\nNote: bpc_ratio > 1.0 means we use more bits per coefficient (less efficient)");
+}
+
+#[test]
+#[ignore] // Requires dwebp to be installed
+fn verify_decode_with_dwebp() {
+    println!("\n=== Verifying Decode with dwebp ===");
+    
+    let path = "/tmp/CID22/original/792079.png";
+    let (rgb, width, height) = match load_png(path) {
+        Some(data) => data,
+        None => {
+            println!("Skipping: {} not found", path);
+            return;
+        }
+    };
+
+    for method in [4u8, 5, 6] {
+        let webp = encode_zenwebp(&rgb, width, height, 75.0, method);
+        
+        // Save to file
+        let webp_path = format!("/tmp/test_m{}.webp", method);
+        std::fs::write(&webp_path, &webp).expect("write webp");
+        
+        // Try to decode with dwebp
+        let output = std::process::Command::new("dwebp")
+            .args([&webp_path, "-o", "/tmp/test_decoded.ppm"])
+            .output();
+        
+        match output {
+            Ok(result) => {
+                if result.status.success() {
+                    println!("Method {}: dwebp decode SUCCESS ({} bytes)", method, webp.len());
+                } else {
+                    println!("Method {}: dwebp decode FAILED: {}", method, 
+                        String::from_utf8_lossy(&result.stderr));
+                }
+            }
+            Err(e) => {
+                println!("Method {}: dwebp not available: {}", method, e);
+                break;
+            }
+        }
+    }
+}
+
+#[test]
+fn compare_decoded_pixels() {
+    println!("\n=== Comparing Decoded Pixels Between Methods ===");
+    
+    let path = "/tmp/CID22/original/792079.png";
+    let (rgb, width, height) = match load_png(path) {
+        Some(data) => data,
+        None => {
+            println!("Skipping: {} not found", path);
+            return;
+        }
+    };
+
+    // Encode with m4 and m5
+    let webp_m4 = encode_zenwebp(&rgb, width, height, 75.0, 4);
+    let webp_m5 = encode_zenwebp(&rgb, width, height, 75.0, 5);
+    
+    // Extract VP8 chunks
+    let vp8_m4 = extract_vp8_chunk(&webp_m4).expect("VP8");
+    let vp8_m5 = extract_vp8_chunk(&webp_m5).expect("VP8");
+    
+    // Decode both
+    let (frame_m4, _) = Vp8Decoder::decode_diagnostic(vp8_m4).expect("decode m4");
+    let (frame_m5, _) = Vp8Decoder::decode_diagnostic(vp8_m5).expect("decode m5");
+    
+    // Compare Y planes
+    let mut diff_count = 0usize;
+    let mut max_diff = 0i32;
+    for (y4, y5) in frame_m4.ybuf.iter().zip(frame_m5.ybuf.iter()) {
+        let diff = (*y4 as i32 - *y5 as i32).abs();
+        if diff > 0 {
+            diff_count += 1;
+            max_diff = max_diff.max(diff);
+        }
+    }
+    
+    let total = frame_m4.ybuf.len();
+    println!("Y plane: {} total pixels, {} differ, max diff = {}", total, diff_count, max_diff);
+    
+    // If most pixels differ significantly, there's a bug
+    if diff_count > total / 2 {
+        println!("WARNING: More than 50% of pixels differ between m4 and m5!");
+        // Check if m5 decoded to garbage
+        let m5_avg: f64 = frame_m5.ybuf.iter().map(|&p| p as f64).sum::<f64>() / total as f64;
+        println!("M5 average Y value: {:.1}", m5_avg);
+    }
+}
