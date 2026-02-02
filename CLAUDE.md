@@ -34,17 +34,17 @@ See global ~/.claude/CLAUDE.md for general instructions.
 | IDCT | 6.53% | Inverse transform (SIMD) |
 | t_transform | 3.24% | Spectral distortion (SIMD) |
 
-### Quality vs libwebp (2026-02-01)
-- File sizes: Kodak aggregate 1.014x of libwebp (Default preset, matched config)
-- Screenshots: 1.061x of libwebp (Default preset, method 4 with 10-mode I4 search)
-- The gap is in I4 mode: I16-only produces 0.91-1.00x of libwebp (smaller!)
-- Adding I4 increases to 1.09-1.14x (our I4 is less efficient than libwebp's)
+### Quality vs libwebp (2026-02-02)
+- Screenshots: 1.059x of libwebp (Default preset, method 4)
+- CID22 corpus: 1.05x average, 1.10x worst case (method 4)
+- The gap is in I4 mode: I16-only produces **0.91x** of libwebp (we're smaller!)
+- Adding I4 increases to 1.05-1.17x (our I4 coefficient encoding is less efficient)
 
-**Kodak Q75 Default preset (method 4, matched config vs webpx):**
+**CID22 Q75 Default preset (method 4):**
 | Metric | Value |
 |--------|-------|
-| Aggregate ratio | 1.014x |
-| Range | 0.997x - 1.066x per image |
+| Average ratio | 1.05x |
+| Worst case | 1.10x |
 
 **Preset tuning parameters now active (2026-02-01):**
 | Preset | SNS | Filter | Sharp | Segs |
@@ -346,25 +346,44 @@ benefits as libwebp's. Either:
 is designed for libwebp's QuantizeBlock which reconstructs in-place, which differs
 from our architecture.
 
-**Further investigation (2026-02-01):**
+**Further investigation (2026-02-02):**
 
 | Experiment | Effect on screenshot corpus size |
 |------------|----------------------------------|
-| NZ context tracking in get_cost_luma16 | +0.14% (worse) |
-| Try all 10 I4 modes for method 4 | **-0.71% (better!)** |
+| Try all 10 I4 modes for method 4 | **-0.71% (better!)** - implemented |
+| Fix get_cost_luma16 context tracking | **-0.2% (better!)** - implemented |
 | Add spectral distortion (TDisto) to I4 | +0.06% (worse) |
 | Add flatness penalty for I4 | +0.03% (worse) |
 | Disable trellis for method 4 (match libwebp) | +1.5% (much worse, trellis helps us) |
 
-**Key findings:**
-1. Trying more I4 modes helps - our mode filtering may be too aggressive
-2. libwebp enables trellis at method >= 5, but ours at method >= 4 (our trellis helps)
-3. NZ context, spectral distortion, and flatness penalty don't help
+**I4 compression efficiency analysis:**
+```
+I4 savings (bytes saved when enabling I4):
+  zenwebp: 2254 bytes (21.8%)
+  libwebp: 4018 bytes (35.0%)
+  libwebp's I4 saves 1.8x more bytes than ours
+```
 
-**Remaining hypotheses:**
-1. Our I4 mode selection is good, but I4 coefficient encoding emits more bits
-2. Probability table differences affect final bit count
-3. Token emission order or structure differs
+**Current gap by method (2026-02-02):**
+
+| Method | Avg Ratio | Worst Ratio | Notes |
+|--------|-----------|-------------|-------|
+| 0 (I16 only) | **0.91x** | 1.11x | We beat libwebp! |
+| 2 (I4, no trellis) | 1.07x | **1.17x** | Worst case |
+| 4 (I4 + trellis) | 1.05x | 1.10x | Default method |
+| 6 (full search) | 1.09x | 1.14x | |
+
+**What's needed for parity (methods 2+):**
+
+The gap is entirely in I4 coefficient encoding efficiency, NOT mode selection:
+1. **I4 token emission** - Our tokens use more bits for equivalent coefficients
+2. **Probability table updates** - May differ in update frequency or thresholds
+3. **Partition 0 overhead** - Our P0 is 34% vs libwebp's 26% at method 2
+
+To investigate:
+- Compare actual token streams between encoders for identical input
+- Check if we're emitting different tokens for same coefficient values
+- Verify probability update logic matches libwebp's `VP8RecordCoeffs`
 
 **To investigate:**
 1. Compare actual bit counts for identical I4 coefficient patterns
