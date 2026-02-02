@@ -947,9 +947,13 @@ fn collect_histogram_with_offset(
     DctHistogram::from_distribution(&distribution)
 }
 
-/// Analyze a single macroblock and return its alpha
+/// Analyze a single macroblock and return (mixed alpha, raw uv_alpha)
 /// Ported from libwebp's MBAnalyze
-pub fn analyze_macroblock(it: &mut AnalysisIterator) -> u8 {
+///
+/// Returns:
+/// - mixed alpha: finalized alpha value combining luma and chroma (for segment assignment)
+/// - raw uv_alpha: unfinalized chroma alpha (for UV quant delta computation)
+pub fn analyze_macroblock(it: &mut AnalysisIterator) -> (u8, i32) {
     let (best_alpha, _best_mode) = it.analyze_best_intra16_mode();
     let (best_uv_alpha, _uv_mode) = it.analyze_best_uv_mode();
 
@@ -957,7 +961,18 @@ pub fn analyze_macroblock(it: &mut AnalysisIterator) -> u8 {
     let alpha = (3 * best_alpha + best_uv_alpha + 2) >> 2;
 
     // Finalize: invert and clip
-    final_alpha_value(alpha)
+    (final_alpha_value(alpha), best_uv_alpha)
+}
+
+/// Analysis result containing per-MB alphas and global statistics.
+pub struct AnalysisResult {
+    /// Per-macroblock alpha values (finalized, for segment assignment)
+    pub mb_alphas: Vec<u8>,
+    /// Histogram of alpha values
+    pub alpha_histogram: [u32; 256],
+    /// Average UV alpha across all macroblocks (raw, for UV quant delta)
+    /// Range is typically ~30 (bad) to ~100 (ok to decimate UV more).
+    pub uv_alpha_avg: i32,
 }
 
 /// Run full analysis pass on image and return alpha histogram + per-MB alphas
@@ -970,21 +985,23 @@ pub fn analyze_image(
     height: usize,
     y_stride: usize,
     uv_stride: usize,
-) -> (Vec<u8>, [u32; 256]) {
+) -> AnalysisResult {
     let mut it = AnalysisIterator::new(width, height);
     it.reset();
 
     let total_mbs = it.mb_w * it.mb_h;
     let mut mb_alphas = vec![0u8; total_mbs];
     let mut alpha_histogram = [0u32; 256];
+    let mut uv_alpha_sum: i64 = 0;
 
     let mut mb_idx = 0;
     loop {
         it.import(y_src, u_src, v_src, y_stride, uv_stride);
 
-        let alpha = analyze_macroblock(&mut it);
+        let (alpha, uv_alpha) = analyze_macroblock(&mut it);
         mb_alphas[mb_idx] = alpha;
         alpha_histogram[alpha as usize] += 1;
+        uv_alpha_sum += uv_alpha as i64;
 
         mb_idx += 1;
         if !it.next() {
@@ -992,7 +1009,18 @@ pub fn analyze_image(
         }
     }
 
-    (mb_alphas, alpha_histogram)
+    // Compute average UV alpha (matching libwebp's enc->uv_alpha = sum / total_mb)
+    let uv_alpha_avg = if total_mbs > 0 {
+        (uv_alpha_sum / total_mbs as i64) as i32
+    } else {
+        64 // MID_ALPHA default
+    };
+
+    AnalysisResult {
+        mb_alphas,
+        alpha_histogram,
+        uv_alpha_avg,
+    }
 }
 
 // Keep old function signatures for compatibility but mark as deprecated

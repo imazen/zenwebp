@@ -2319,7 +2319,7 @@ impl<'a> Vp8Encoder<'a> {
         // Run full DCT-based analysis pass using libwebp-compatible algorithm
         // This tests DC and TM modes for I16 and UV, computes per-MB alpha,
         // and builds the alpha histogram
-        let (mb_alphas, alpha_histogram) = analyze_image(
+        let analysis = analyze_image(
             &self.frame.ybuf,
             &self.frame.ubuf,
             &self.frame.vbuf,
@@ -2332,8 +2332,13 @@ impl<'a> Vp8Encoder<'a> {
         // Auto-detect content type when Preset::Auto is selected.
         // Runs after analyze_image (reuses alpha histogram, nearly free).
         if self.preset == super::api::Preset::Auto {
-            let content_type =
-                classify_image_type(&self.frame.ybuf, width, height, y_stride, &alpha_histogram);
+            let content_type = classify_image_type(
+                &self.frame.ybuf,
+                width,
+                height,
+                y_stride,
+                &analysis.alpha_histogram,
+            );
             let (sns, filter, sharp, segs) = content_type_to_tuning(content_type);
             self.sns_strength = sns;
             self.filter_strength = filter;
@@ -2344,7 +2349,7 @@ impl<'a> Vp8Encoder<'a> {
         // Use k-means to assign segments
         // weighted_average is computed from final cluster centers, matching libwebp
         let (centers, alpha_to_segment, mid_alpha) =
-            assign_segments_kmeans(&alpha_histogram, usize::from(self.num_segments));
+            assign_segments_kmeans(&analysis.alpha_histogram, usize::from(self.num_segments));
 
         // Find min and max of centers for alpha transformation
         // This matches libwebp's SetSegmentAlphas
@@ -2357,13 +2362,32 @@ impl<'a> Vp8Encoder<'a> {
         };
 
         // Assign segment IDs to macroblocks
-        self.segment_map = mb_alphas
+        self.segment_map = analysis
+            .mb_alphas
             .iter()
             .map(|&alpha| alpha_to_segment[alpha as usize])
             .collect();
 
         // Configure per-segment quantization using preset's SNS strength
         let sns_strength = self.sns_strength;
+
+        // Compute UV quant deltas from uv_alpha average (from libwebp's VP8SetSegmentParams)
+        // uv_alpha is typically ~30 (bad) to ~100 (ok to decimate UV more), centered ~60
+        // Constants from libwebp quant_enc.c
+        const MID_UV_ALPHA: i32 = 64;
+        const MIN_UV_ALPHA: i32 = 30;
+        const MAX_UV_ALPHA: i32 = 100;
+        const MAX_DQ_UV: i32 = 6;
+        const MIN_DQ_UV: i32 = -4;
+
+        // Map uv_alpha to the safe maximal range of MAX/MIN_DQ_UV
+        let dq_uv_ac = (analysis.uv_alpha_avg - MID_UV_ALPHA) * (MAX_DQ_UV - MIN_DQ_UV)
+            / (MAX_UV_ALPHA - MIN_UV_ALPHA);
+        // Rescale by user-defined SNS strength
+        let dq_uv_ac = (dq_uv_ac * i32::from(sns_strength) / 100).clamp(MIN_DQ_UV, MAX_DQ_UV);
+
+        // Boost dc-uv-quant based on sns-strength (UV is more reactive to high quants)
+        let dq_uv_dc = (-4 * i32::from(sns_strength) / 100).clamp(-15, 15);
 
         // Compute base filter level for delta computation
         let base_filter = super::cost::compute_filter_level(
@@ -2395,13 +2419,19 @@ impl<'a> Vp8Encoder<'a> {
             );
             let filter_delta = (seg_filter as i8) - (base_filter as i8);
 
+            // Apply UV quant deltas (from libwebp's SetupMatrices)
+            // UV DC quant uses dq_uv_dc offset, clamped to [0, 117]
+            // UV AC quant uses dq_uv_ac offset, clamped to [0, 127]
+            let uv_dc_idx = (seg_quant_usize as i32 + dq_uv_dc).clamp(0, 117) as usize;
+            let uv_ac_idx = (seg_quant_usize as i32 + dq_uv_ac).clamp(0, 127) as usize;
+
             let mut segment = Segment {
                 ydc: DC_QUANT[seg_quant_usize],
                 yac: AC_QUANT[seg_quant_usize],
                 y2dc: DC_QUANT[seg_quant_usize] * 2,
                 y2ac: ((i32::from(AC_QUANT[seg_quant_usize]) * 155 / 100) as i16).max(8),
-                uvdc: DC_QUANT[seg_quant_usize],
-                uvac: AC_QUANT[seg_quant_usize],
+                uvdc: DC_QUANT[uv_dc_idx],
+                uvac: AC_QUANT[uv_ac_idx],
                 quantizer_level: delta,
                 loopfilter_level: filter_delta,
                 quant_index: seg_quant_index,
