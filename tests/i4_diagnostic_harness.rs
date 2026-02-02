@@ -179,7 +179,8 @@ impl ComparisonStats {
         }
 
         if self.coeff_blocks_compared > 0 {
-            let coeff_pct = 100.0 * self.coeff_blocks_exact as f64 / self.coeff_blocks_compared as f64;
+            let coeff_pct =
+                100.0 * self.coeff_blocks_exact as f64 / self.coeff_blocks_compared as f64;
             println!(
                 "Coefficient blocks: {}/{} exact ({:.1}%)",
                 self.coeff_blocks_exact, self.coeff_blocks_compared, coeff_pct
@@ -216,14 +217,16 @@ fn compare_diagnostics(zen: &DiagnosticFrame, lib: &DiagnosticFrame) -> Comparis
     println!("\nSegment quantizers:");
     for (i, (z, l)) in zen.segments.iter().zip(lib.segments.iter()).enumerate() {
         let match_str = if z == l { "[MATCH]" } else { "[DIFFER]" };
-        println!(
-            "  Seg {}: zen={:?} lib={:?} {}",
-            i, z, l, match_str
-        );
+        println!("  Seg {}: zen={:?} lib={:?} {}", i, z, l, match_str);
     }
 
     // Compare macroblocks
-    for (mb_idx, (z_mb, l_mb)) in zen.macroblocks.iter().zip(lib.macroblocks.iter()).enumerate() {
+    for (mb_idx, (z_mb, l_mb)) in zen
+        .macroblocks
+        .iter()
+        .zip(lib.macroblocks.iter())
+        .enumerate()
+    {
         let mbx = mb_idx % zen.mb_width as usize;
         let mby = mb_idx / zen.mb_width as usize;
 
@@ -263,11 +266,8 @@ fn compare_diagnostics(zen: &DiagnosticFrame, lib: &DiagnosticFrame) -> Comparis
             }
 
             // Compare Y block coefficients (only when both are I4)
-            for (blk_idx, (z_blk, l_blk)) in z_mb
-                .y_blocks
-                .iter()
-                .zip(l_mb.y_blocks.iter())
-                .enumerate()
+            for (blk_idx, (z_blk, l_blk)) in
+                z_mb.y_blocks.iter().zip(l_mb.y_blocks.iter()).enumerate()
             {
                 stats.coeff_blocks_compared += 1;
                 let mut exact = true;
@@ -546,6 +546,214 @@ fn benchmark_image_m4_diagnostic() {
     );
 }
 
+/// Compare H vs TM prediction SSE for MB(8,0)
+/// This helps understand why we pick different modes than libwebp
+#[test]
+#[allow(clippy::needless_range_loop)]
+fn compare_h_tm_sse_mb_8_0() {
+    println!("\n=== Compare H vs TM SSE for MB(8,0) ===");
+
+    let path = "/tmp/CID22/original/792079.png";
+    let (rgb, width, height) = match load_png(path) {
+        Some(data) => data,
+        None => {
+            println!("Skipping: {} not found", path);
+            return;
+        }
+    };
+
+    // Convert to YUV
+    let y_buf: Vec<u8> = rgb
+        .chunks_exact(3)
+        .map(|p| {
+            let r = p[0] as i32;
+            let g = p[1] as i32;
+            let b = p[2] as i32;
+            ((66 * r + 129 * g + 25 * b + 128) >> 8).clamp(0, 255) as u8 + 16
+        })
+        .collect();
+
+    let src_width = width as usize;
+    let mbx = 8usize;
+    let mby = 0usize;
+
+    // Get the source 16x16 block
+    let mut src_block = [0u8; 256];
+    for y in 0..16 {
+        for x in 0..16 {
+            let src_idx = (mby * 16 + y) * src_width + mbx * 16 + x;
+            src_block[y * 16 + x] = y_buf[src_idx];
+        }
+    }
+
+    // Get border pixels for prediction (top row and left column)
+    let mut top_row = [128u8; 16];
+    let mut left_col = [128u8; 16];
+
+    if mby > 0 {
+        for x in 0..16 {
+            let idx = (mby * 16 - 1) * src_width + mbx * 16 + x;
+            top_row[x] = y_buf[idx];
+        }
+    }
+    if mbx > 0 {
+        for y in 0..16 {
+            let idx = (mby * 16 + y) * src_width + mbx * 16 - 1;
+            left_col[y] = y_buf[idx];
+        }
+    }
+    let top_left = if mby > 0 && mbx > 0 {
+        y_buf[(mby * 16 - 1) * src_width + mbx * 16 - 1]
+    } else {
+        128
+    };
+
+    // Compute H prediction
+    let mut h_pred = [0u8; 256];
+    for y in 0..16 {
+        let left = left_col[y];
+        for x in 0..16 {
+            h_pred[y * 16 + x] = left;
+        }
+    }
+
+    // Compute TM prediction
+    let mut tm_pred = [0u8; 256];
+    for y in 0..16 {
+        let l = left_col[y] as i32;
+        let p = top_left as i32;
+        for x in 0..16 {
+            let a = top_row[x] as i32;
+            tm_pred[y * 16 + x] = (l + a - p).clamp(0, 255) as u8;
+        }
+    }
+
+    // Compute SSE for each prediction
+    let h_sse: u64 = src_block
+        .iter()
+        .zip(h_pred.iter())
+        .map(|(&s, &p)| (s as i64 - p as i64).pow(2) as u64)
+        .sum();
+    let tm_sse: u64 = src_block
+        .iter()
+        .zip(tm_pred.iter())
+        .map(|(&s, &p)| (s as i64 - p as i64).pow(2) as u64)
+        .sum();
+
+    println!("Top-left (P) = {}", top_left);
+    println!("Top row (first 8): {:?}", &top_row[..8]);
+    println!("Left col (first 8): {:?}", &left_col[..8]);
+    println!("Source block (first row): {:?}", &src_block[..16]);
+    println!("\nH prediction SSE: {}", h_sse);
+    println!("TM prediction SSE: {}", tm_sse);
+    println!("Difference (H - TM): {}", h_sse as i64 - tm_sse as i64);
+
+    if tm_sse < h_sse {
+        println!("\n=> TM has lower SSE, libwebp's choice is correct for this prediction");
+    } else {
+        println!("\n=> H has lower or equal SSE, our choice of H is correct for this prediction");
+    }
+}
+
+/// Debug mode selection for specific MB to understand H vs TM decision
+#[test]
+fn debug_mode_selection_mb_8_0() {
+    println!("\n=== Debug Mode Selection for MB(8,0) ===");
+
+    let path = "/tmp/CID22/original/792079.png";
+    let (rgb, width, height) = match load_png(path) {
+        Some(data) => data,
+        None => {
+            println!("Skipping: {} not found", path);
+            return;
+        }
+    };
+
+    // Encode with zenwebp at m4
+    let zen_webp = encode_zenwebp(&rgb, width, height, 75.0, 4);
+    let lib_webp = encode_libwebp(&rgb, width, height, 75.0, 4);
+
+    let zen_vp8 = extract_vp8_chunk(&zen_webp).expect("Failed to extract VP8");
+    let lib_vp8 = extract_vp8_chunk(&lib_webp).expect("Failed to extract VP8");
+
+    let (_, zen_diag) = Vp8Decoder::decode_diagnostic(zen_vp8).expect("decode");
+    let (_, lib_diag) = Vp8Decoder::decode_diagnostic(lib_vp8).expect("decode");
+
+    // Look at MB(8,0) - first mismatch
+    let mb_idx = 8; // row 0, col 8
+    let zen_mb = &zen_diag.macroblocks[mb_idx];
+    let lib_mb = &lib_diag.macroblocks[mb_idx];
+
+    println!("MB(8,0):");
+    println!("  zenwebp luma mode: {:?}", zen_mb.luma_mode);
+    println!("  libwebp luma mode: {:?}", lib_mb.luma_mode);
+    println!("  zenwebp segment: {}", zen_mb.segment_id);
+    println!("  libwebp segment: {}", lib_mb.segment_id);
+
+    // Compare coefficient levels for this MB
+    if zen_mb.luma_mode == LumaMode::B && lib_mb.luma_mode == LumaMode::B {
+        println!("  Both use I4, comparing bpred modes...");
+        for i in 0..16 {
+            if zen_mb.bpred_modes[i] != lib_mb.bpred_modes[i] {
+                println!(
+                    "    Block {}: zen={:?} lib={:?}",
+                    i, zen_mb.bpred_modes[i], lib_mb.bpred_modes[i]
+                );
+            }
+        }
+    } else {
+        println!(
+            "  Different I16 modes (H={:?} vs TM={:?})",
+            zen_mb.luma_mode, lib_mb.luma_mode
+        );
+
+        // For I16 modes, show Y2 (WHT/DC) coefficients
+        println!("\n  Y2 (WHT/DC) coefficients:");
+        print!("    zen: ");
+        for i in 0..16 {
+            print!("{:4} ", zen_mb.y2_block.levels[i]);
+        }
+        println!();
+        print!("    lib: ");
+        for i in 0..16 {
+            print!("{:4} ", lib_mb.y2_block.levels[i]);
+        }
+        println!();
+
+        // Count Y2 nonzero
+        let zen_y2_nz = zen_mb.y2_block.levels.iter().filter(|&&l| l != 0).count();
+        let lib_y2_nz = lib_mb.y2_block.levels.iter().filter(|&&l| l != 0).count();
+        println!("  Nonzero Y2 coeffs: zen={}, lib={}", zen_y2_nz, lib_y2_nz);
+
+        // Y1 AC coefficients
+        let zen_y1_nz: usize = zen_mb
+            .y_blocks
+            .iter()
+            .map(|b| b.levels.iter().filter(|&&l| l != 0).count())
+            .sum();
+        let lib_y1_nz: usize = lib_mb
+            .y_blocks
+            .iter()
+            .map(|b| b.levels.iter().filter(|&&l| l != 0).count())
+            .sum();
+        println!(
+            "  Nonzero Y1 (AC) coeffs: zen={}, lib={}",
+            zen_y1_nz, lib_y1_nz
+        );
+    }
+
+    // Also check the next few MBs
+    println!("\nMBs 8-12 in row 0:");
+    for col in 8..=12 {
+        let zm = &zen_diag.macroblocks[col];
+        let lm = &lib_diag.macroblocks[col];
+        println!(
+            "  MB({},0): zen={:?} lib={:?}",
+            col, zm.luma_mode, lm.luma_mode
+        );
+    }
+}
+
 /// Quick corpus size comparison across multiple CID22 images
 /// Uses fair comparisons: trellis vs trellis, non-trellis vs non-trellis
 #[test]
@@ -592,7 +800,10 @@ fn quick_corpus_comparison() {
     }
 
     let total_ratio = total_zen as f64 / total_lib as f64;
-    println!("Aggregate (trellis): zen={} lib={} ratio={:.3}x", total_zen, total_lib, total_ratio);
+    println!(
+        "Aggregate (trellis): zen={} lib={} ratio={:.3}x",
+        total_zen, total_lib, total_ratio
+    );
 
     // Fair comparison 2: our m2 (no trellis) vs libwebp m4 (no trellis)
     println!("\n--- Non-trellis comparison: zenwebp m2 vs libwebp m4 ---");
@@ -623,7 +834,10 @@ fn quick_corpus_comparison() {
     }
 
     let total_ratio = total_zen as f64 / total_lib as f64;
-    println!("Aggregate (non-trellis): zen={} lib={} ratio={:.3}x", total_zen, total_lib, total_ratio);
+    println!(
+        "Aggregate (non-trellis): zen={} lib={} ratio={:.3}x",
+        total_zen, total_lib, total_ratio
+    );
 }
 
 /// Fair trellis comparison: our m4 (has trellis) vs libwebp m6 (has trellis)
@@ -700,7 +914,7 @@ fn benchmark_image_m6_vs_libwebp_m6() {
 /// Compare coefficient level distributions between encoders
 #[test]
 fn coefficient_distribution_analysis() {
-    println!("\n=== Coefficient Level Distribution Analysis (792079.png m4) ===");
+    println!("\n=== Coefficient Level Distribution Analysis (zen m4 vs lib m6) ===");
 
     let path = "/tmp/CID22/original/792079.png";
     let (rgb, width, height) = match load_png(path) {
@@ -711,8 +925,9 @@ fn coefficient_distribution_analysis() {
         }
     };
 
+    // Fair comparison: our m4 (trellis) vs libwebp m6 (trellis)
     let zen_webp = encode_zenwebp(&rgb, width, height, 75.0, 4);
-    let lib_webp = encode_libwebp(&rgb, width, height, 75.0, 4);
+    let lib_webp = encode_libwebp(&rgb, width, height, 75.0, 6);
 
     let zen_vp8 = extract_vp8_chunk(&zen_webp).expect("Failed to extract VP8");
     let lib_vp8 = extract_vp8_chunk(&lib_webp).expect("Failed to extract VP8");
@@ -758,13 +973,17 @@ fn coefficient_distribution_analysis() {
     // Total nonzero
     let zen_total: usize = zen_level_counts[1..].iter().sum();
     let lib_total: usize = lib_level_counts[1..].iter().sum();
-    println!("\nTotal nonzero: zenwebp={}, libwebp={}", zen_total, lib_total);
+    println!(
+        "\nTotal nonzero: zenwebp={}, libwebp={}",
+        zen_total, lib_total
+    );
 }
 
 /// Compare probability tables on real benchmark image
+/// Fair comparison: zenwebp m4 (trellis) vs libwebp m6 (trellis)
 #[test]
 fn probability_table_comparison_real_image() {
-    println!("\n=== Probability Table Comparison (792079.png, m4) ===");
+    println!("\n=== Probability Table Comparison (792079.png, zen m4 vs lib m6) ===");
 
     let path = "/tmp/CID22/original/792079.png";
     let (rgb, width, height) = match load_png(path) {
@@ -775,8 +994,9 @@ fn probability_table_comparison_real_image() {
         }
     };
 
+    // Fair comparison: our m4 (trellis) vs libwebp m6 (trellis)
     let zen_webp = encode_zenwebp(&rgb, width, height, 75.0, 4);
-    let lib_webp = encode_libwebp(&rgb, width, height, 75.0, 4);
+    let lib_webp = encode_libwebp(&rgb, width, height, 75.0, 6);
 
     let zen_vp8 = extract_vp8_chunk(&zen_webp).expect("Failed to extract VP8");
     let lib_vp8 = extract_vp8_chunk(&lib_webp).expect("Failed to extract VP8");
@@ -876,8 +1096,5 @@ fn probability_table_comparison() {
         total_entries,
         100.0 * matching_entries as f64 / total_entries as f64
     );
-    println!(
-        "Total |prob_diff|: {}, max: {}",
-        total_diff, max_diff
-    );
+    println!("Total |prob_diff|: {}, max: {}", total_diff, max_diff);
 }

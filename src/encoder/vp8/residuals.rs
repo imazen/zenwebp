@@ -1002,7 +1002,10 @@ impl<'a> super::Vp8Encoder<'a> {
         let first_coeff_y1 = if is_i4 { 0 } else { 1 };
 
         // Temporarily take token buffer to avoid borrow conflicts with self.proba_stats
-        let mut token_buf = self.token_buffer.take().expect("token buffer not initialized");
+        let mut token_buf = self
+            .token_buffer
+            .take()
+            .expect("token buffer not initialized");
 
         // Y2 (DC transform) - only for I16 mode
         if !is_i4 {

@@ -1627,9 +1627,7 @@ impl<'a> Vp8Decoder<'a> {
     /// Returns both the decoded Frame and a DiagnosticFrame containing
     /// raw quantized coefficient levels, mode decisions, and probability tables.
     #[doc(hidden)]
-    pub fn decode_diagnostic(
-        data: &'a [u8],
-    ) -> Result<(Frame, DiagnosticFrame), DecodingError> {
+    pub fn decode_diagnostic(data: &'a [u8]) -> Result<(Frame, DiagnosticFrame), DecodingError> {
         let mut decoder = Self::new(data);
         decoder.diagnostic_capture = Some(Vec::new());
         decoder.decode_frame_diagnostic()

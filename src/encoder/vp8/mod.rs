@@ -481,8 +481,7 @@ impl<'a> Vp8Encoder<'a> {
         // - Mid-stream probability refresh improves later coefficient decisions
         // - Multi-pass (method 6) iteratively refines probabilities
 
-        let num_mb =
-            usize::from(self.macroblock_width) * usize::from(self.macroblock_height);
+        let num_mb = usize::from(self.macroblock_width) * usize::from(self.macroblock_height);
 
         // Method 6 gets multiple passes for iterative probability refinement.
         // Like libwebp, each pass re-records all macroblocks with improved
