@@ -27,3 +27,11 @@ pub use api::{
     decode_rgb, decode_rgb_into, decode_rgba, decode_rgba_into, DecodingError, ImageInfo,
     LoopCount, UpsamplingMethod, WebPDecodeOptions, WebPDecoder,
 };
+
+// Re-export diagnostic types for tests (hidden from public docs)
+#[doc(hidden)]
+pub use vp8::{BlockDiagnostic, DiagnosticFrame, MacroblockDiagnostic, TreeNode};
+
+// Re-export common types used in diagnostics
+#[doc(hidden)]
+pub use crate::common::types::{ChromaMode, IntraMode, LumaMode};

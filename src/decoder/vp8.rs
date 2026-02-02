@@ -31,11 +31,73 @@ use super::loop_filter_dispatch;
 use crate::common::transform;
 use loop_filter_dispatch::*;
 
-#[derive(Clone, Copy)]
-pub(crate) struct TreeNode {
+// ============================================================================
+// Diagnostic Types for I4 Encoding Efficiency Analysis
+// ============================================================================
+
+/// Raw quantized coefficient levels for a single 4x4 block (pre-dequantization).
+/// Captures the exact values written to the bitstream for comparison with libwebp.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BlockDiagnostic {
+    /// Raw quantized levels in zigzag order (before dequantization)
+    pub levels: [i32; 16],
+    /// Number of coefficients decoded (0 = all-zero block, position of last nonzero + 1)
+    pub eob_position: u8,
+}
+
+/// Diagnostic capture for a single macroblock's encoded state.
+#[doc(hidden)]
+#[derive(Clone, Debug, Default)]
+pub struct MacroblockDiagnostic {
+    /// Luma prediction mode for this macroblock.
+    pub luma_mode: LumaMode,
+    /// Chroma prediction mode for this macroblock.
+    pub chroma_mode: ChromaMode,
+    /// Segment index (0-3).
+    pub segment_id: u8,
+    /// Whether all coefficients were skipped (zero block).
+    pub coeffs_skipped: bool,
+    /// I4 sub-block prediction modes (only valid when luma_mode == LumaMode::B)
+    pub bpred_modes: [IntraMode; 16],
+    /// Y2 (WHT) block coefficients (only used for non-I4 modes)
+    pub y2_block: BlockDiagnostic,
+    /// 16 Y blocks (4x4 each)
+    pub y_blocks: [BlockDiagnostic; 16],
+    /// 8 UV blocks (4 U + 4 V)
+    pub uv_blocks: [BlockDiagnostic; 8],
+}
+
+/// Complete diagnostic capture for a decoded VP8 frame.
+/// Allows comparison of intermediate encoding state between zenwebp and libwebp.
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct DiagnosticFrame {
+    /// Width in macroblocks.
+    pub mb_width: u16,
+    /// Height in macroblocks.
+    pub mb_height: u16,
+    /// Per-segment quantizer values: (ydc, yac, y2dc, y2ac, uvdc, uvac)
+    pub segments: [(i16, i16, i16, i16, i16, i16); 4],
+    /// All macroblocks in raster order
+    pub macroblocks: Vec<MacroblockDiagnostic>,
+    /// Final token probability tables (for comparing probability updates)
+    pub token_probs: Box<TokenProbTreeNodes>,
+    /// Size of partition 0 (header + mode data)
+    pub partition0_size: u32,
+}
+
+/// VP8 probability tree node for coefficient decoding.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug)]
+pub struct TreeNode {
+    /// Left branch index or value.
     pub left: u8,
+    /// Right branch index or value.
     pub right: u8,
+    /// Probability for this branch.
     pub prob: Prob,
+    /// Index in the tree.
     pub index: u8,
 }
 
@@ -324,6 +386,13 @@ pub struct Vp8Decoder<'a> {
     // Initialized to zeros and maintained as zeros between macroblocks.
     // Each 16-element block is cleared after use in intra_predict_*.
     coeff_blocks: [i32; 384],
+
+    // Diagnostic capture (None for normal decoding, Some for diagnostic mode)
+    diagnostic_capture: Option<Vec<MacroblockDiagnostic>>,
+    current_mb_diag: Option<MacroblockDiagnostic>,
+
+    // Partition 0 size (header + mode data) for diagnostic reporting
+    first_partition_size: u32,
 }
 
 impl<'a> Vp8Decoder<'a> {
@@ -381,6 +450,11 @@ impl<'a> Vp8Decoder<'a> {
             extra_y_rows: 0,
 
             coeff_blocks: [0i32; 384],
+
+            diagnostic_capture: None,
+            current_mb_diag: None,
+
+            first_partition_size: 0,
         }
     }
 
@@ -564,6 +638,7 @@ impl<'a> Vp8Decoder<'a> {
         self.frame.for_display = (tag >> 4) & 1 != 0;
 
         let first_partition_size = tag >> 5;
+        self.first_partition_size = first_partition_size;
 
         let mut tag = [0u8; 3];
         self.r.read_exact(&mut tag)?;
@@ -950,6 +1025,18 @@ impl<'a> Vp8Decoder<'a> {
             let q = if zigzag > 0 { acq } else { dcq };
             self.coeff_blocks[block_idx * 16 + zigzag] = signed_v * i32::from(q);
 
+            // Capture raw level for diagnostic (when enabled)
+            if let Some(ref mut mb_diag) = self.current_mb_diag {
+                // Map block_idx to diagnostic slot
+                let diag_block = if block_idx < 16 {
+                    &mut mb_diag.y_blocks[block_idx]
+                } else {
+                    &mut mb_diag.uv_blocks[block_idx - 16]
+                };
+                diag_block.levels[n] = signed_v;
+                diag_block.eob_position = (n + 1) as u8;
+            }
+
             n += 1;
             if n < 16 {
                 prob = &probs[n][next_ctx];
@@ -1044,6 +1131,14 @@ impl<'a> Vp8Decoder<'a> {
             let zigzag = ZIGZAG[n] as usize;
             let q = if zigzag > 0 { acq } else { dcq };
             block[zigzag] = signed_v * i32::from(q);
+
+            // Capture raw level for Y2 block diagnostic (when enabled)
+            if plane == Plane::Y2 {
+                if let Some(ref mut mb_diag) = self.current_mb_diag {
+                    mb_diag.y2_block.levels[n] = signed_v;
+                    mb_diag.y2_block.eob_position = (n + 1) as u8;
+                }
+            }
 
             n += 1;
             if n < 16 {
@@ -1528,6 +1623,93 @@ impl<'a> Vp8Decoder<'a> {
         decoder.decode_frame_()
     }
 
+    /// Decodes the frame with diagnostic capture enabled.
+    /// Returns both the decoded Frame and a DiagnosticFrame containing
+    /// raw quantized coefficient levels, mode decisions, and probability tables.
+    #[doc(hidden)]
+    pub fn decode_diagnostic(
+        data: &'a [u8],
+    ) -> Result<(Frame, DiagnosticFrame), DecodingError> {
+        let mut decoder = Self::new(data);
+        decoder.diagnostic_capture = Some(Vec::new());
+        decoder.decode_frame_diagnostic()
+    }
+
+    fn decode_frame_diagnostic(mut self) -> Result<(Frame, DiagnosticFrame), DecodingError> {
+        self.read_frame_header()?;
+
+        // Capture segment quantizers
+        let segments: [(i16, i16, i16, i16, i16, i16); 4] = core::array::from_fn(|i| {
+            let s = &self.segment[i];
+            (s.ydc, s.yac, s.y2dc, s.y2ac, s.uvdc, s.uvac)
+        });
+
+        // Run the main decode loop (this populates diagnostic_capture)
+        for mby in 0..self.mbheight as usize {
+            let p = mby % self.num_partitions as usize;
+            self.left = PreviousMacroBlock::default();
+
+            for mbx in 0..self.mbwidth as usize {
+                // Initialize diagnostic capture for this macroblock
+                self.current_mb_diag = Some(MacroblockDiagnostic::default());
+
+                let mut mb = self.read_macroblock_header(mbx)?;
+
+                // Capture mode decisions
+                if let Some(ref mut diag) = self.current_mb_diag {
+                    diag.luma_mode = mb.luma_mode;
+                    diag.chroma_mode = mb.chroma_mode;
+                    diag.segment_id = mb.segmentid;
+                    diag.coeffs_skipped = mb.coeffs_skipped;
+                    diag.bpred_modes = mb.bpred;
+                }
+
+                if !mb.coeffs_skipped {
+                    self.read_residual_data(&mut mb, mbx, p)?;
+                } else {
+                    if mb.luma_mode != LumaMode::B {
+                        self.left.complexity[0] = 0;
+                        self.top[mbx].complexity[0] = 0;
+                    }
+                    for i in 1usize..9 {
+                        self.left.complexity[i] = 0;
+                        self.top[mbx].complexity[i] = 0;
+                    }
+                }
+
+                self.intra_predict_luma(mbx, mby, &mb);
+                self.intra_predict_chroma(mbx, mby, &mb);
+                self.macroblocks.push(mb);
+
+                // Finalize diagnostic capture
+                if let Some(diag) = self.current_mb_diag.take() {
+                    if let Some(ref mut capture) = self.diagnostic_capture {
+                        capture.push(diag);
+                    }
+                }
+            }
+
+            self.filter_row_in_cache(mby);
+            self.output_row_from_cache(mby);
+            self.rotate_extra_rows();
+
+            self.left_border_y = vec![129u8; 1 + 16];
+            self.left_border_u = vec![129u8; 1 + 8];
+            self.left_border_v = vec![129u8; 1 + 8];
+        }
+
+        let diagnostic = DiagnosticFrame {
+            mb_width: self.mbwidth,
+            mb_height: self.mbheight,
+            segments,
+            macroblocks: self.diagnostic_capture.take().unwrap_or_default(),
+            token_probs: self.token_probs.clone(),
+            partition0_size: self.first_partition_size,
+        };
+
+        Ok((self.frame, diagnostic))
+    }
+
     fn decode_frame_(mut self) -> Result<Frame, DecodingError> {
         self.read_frame_header()?;
 
@@ -1537,7 +1719,22 @@ impl<'a> Vp8Decoder<'a> {
 
             // Decode all macroblocks in this row (writes to cache)
             for mbx in 0..self.mbwidth as usize {
+                // Initialize diagnostic capture for this macroblock if in diagnostic mode
+                if self.diagnostic_capture.is_some() {
+                    self.current_mb_diag = Some(MacroblockDiagnostic::default());
+                }
+
                 let mut mb = self.read_macroblock_header(mbx)?;
+
+                // Capture mode decisions for diagnostic
+                if let Some(ref mut diag) = self.current_mb_diag {
+                    diag.luma_mode = mb.luma_mode;
+                    diag.chroma_mode = mb.chroma_mode;
+                    diag.segment_id = mb.segmentid;
+                    diag.coeffs_skipped = mb.coeffs_skipped;
+                    diag.bpred_modes = mb.bpred;
+                }
+
                 if !mb.coeffs_skipped {
                     // Decode coefficients into self.coeff_blocks
                     self.read_residual_data(&mut mb, mbx, p)?;
@@ -1559,6 +1756,13 @@ impl<'a> Vp8Decoder<'a> {
                 self.intra_predict_chroma(mbx, mby, &mb);
 
                 self.macroblocks.push(mb);
+
+                // Finalize diagnostic capture for this macroblock
+                if let Some(diag) = self.current_mb_diag.take() {
+                    if let Some(ref mut capture) = self.diagnostic_capture {
+                        capture.push(diag);
+                    }
+                }
             }
 
             // Row complete: filter in cache, output to final buffer, prepare for next row

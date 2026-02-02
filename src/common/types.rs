@@ -78,10 +78,11 @@ pub(crate) const B_VL_PRED: i8 = 7;
 pub(crate) const B_HD_PRED: i8 = 8;
 pub(crate) const B_HU_PRED: i8 = 9;
 
-// Prediction mode enum
+/// VP8 luma (Y) macroblock prediction mode.
+#[doc(hidden)]
 #[repr(i8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub(crate) enum LumaMode {
+pub enum LumaMode {
     /// Predict DC using row above and column to the left.
     #[default]
     DC = DC_PRED,
@@ -122,9 +123,11 @@ impl LumaMode {
     }
 }
 
+/// VP8 chroma (U/V) macroblock prediction mode.
+#[doc(hidden)]
 #[repr(i8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub(crate) enum ChromaMode {
+pub enum ChromaMode {
     /// Predict DC using row above and column to the left.
     #[default]
     DC = DC_PRED,
@@ -151,19 +154,31 @@ impl ChromaMode {
     }
 }
 
+/// VP8 intra prediction mode for 4x4 sub-blocks (B_PRED mode).
+#[doc(hidden)]
 #[repr(i8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub(crate) enum IntraMode {
+pub enum IntraMode {
+    /// DC prediction - average of neighbors.
     #[default]
     DC = B_DC_PRED,
+    /// True motion - propagate second differences.
     TM = B_TM_PRED,
+    /// Vertical edge prediction.
     VE = B_VE_PRED,
+    /// Horizontal edge prediction.
     HE = B_HE_PRED,
+    /// Left-down diagonal prediction.
     LD = B_LD_PRED,
+    /// Right-down diagonal prediction.
     RD = B_RD_PRED,
+    /// Vertical-right diagonal prediction.
     VR = B_VR_PRED,
+    /// Vertical-left diagonal prediction.
     VL = B_VL_PRED,
+    /// Horizontal-down diagonal prediction.
     HD = B_HD_PRED,
+    /// Horizontal-up diagonal prediction.
     HU = B_HU_PRED,
 }
 
