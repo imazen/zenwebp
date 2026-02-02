@@ -371,12 +371,69 @@ produces worse results - we're re-quantizing the wrong residuals.
 the statistics are fixed. Re-recording the same tokens accumulates the same statistics,
 leading to identical probability tables and identical output.
 
-**True multi-pass would require:** Full re-encoding in each pass (re-predict from
-current reconstructed pixels, re-DCT, re-quantize). This is expensive and not
-implemented. Methods 5/6 are now equivalent to method 4 (single pass with trellis).
+**How libwebp actually does multi-pass (confirmed from source):**
+
+libwebp does FULL re-encoding in each pass. Key code in `frame_enc.c` and `iterator_enc.c`:
+
+1. `VP8IteratorImport()` imports SOURCE pixels from original image to `yuv_in`
+2. `VP8Decimate()` computes prediction from boundary buffers, residual, DCT, quantize
+3. `VP8IteratorSaveBoundary()` saves RECONSTRUCTED pixels from `yuv_out` to boundaries
+
+The critical insight: boundaries are saved from `yuv_out` (reconstructed), not `yuv_in`
+(source). So when pass N runs, it uses boundaries from pass N's previous macroblocks,
+which may differ from pass N-1. Each pass recomputes:
+```
+prediction = f(reconstructed_neighbors_from_THIS_pass)
+residual = source - prediction
+raw_dct = DCT(residual)
+quantized = trellis(raw_dct, level_costs_from_previous_pass)
+reconstructed = IDCT(dequantize(quantized)) + prediction
+```
+
+This is fundamentally different from our failed approach (storing raw DCT from pass 0).
+Pass 0's raw DCT was `DCT(source - prediction_pass0)`, but pass 1 would have different
+predictions due to different reconstructed neighbors, so the residuals differ.
 
 **Code status:** Removed RawMbCoeffs, store_raw_coeffs, requantize_and_record, and
 compute_observed_probabilities. Multi-pass loop simplified to single pass.
+
+### True Multi-pass Implementation Plan (TODO)
+
+To match libwebp's multi-pass behavior, we need to re-run the FULL encoding pipeline
+in each pass, not just re-quantize. Implementation:
+
+**Phase 1: Refactor encode loop for re-entrancy**
+1. Extract macroblock encoding into `encode_macroblock()` that:
+   - Takes source pixels + boundary state
+   - Returns quantized coefficients + updated boundary state
+2. Store reconstructed boundary pixels after each MB (we currently store source borders)
+3. Ensure border state can be reset to initial values for each pass
+
+**Phase 2: Implement true multi-pass**
+1. Pass 0: Full encode with default level_costs, collect statistics
+2. After pass 0: `FinalizeTokenProbas()` → observed probabilities → new level_costs
+3. Pass 1+: Full re-encode with updated level_costs
+   - Reset border state to initial values
+   - Re-import source pixels (already done)
+   - Re-predict using THIS pass's reconstructed neighbors
+   - Re-compute residual, DCT, quantize with new level_costs
+   - Token buffer records new (potentially different) tokens
+
+**Key changes needed:**
+- `transform_luma_block()` / `transform_chroma_blocks()`: Currently update borders
+  from SOURCE. Need to also track RECONSTRUCTED borders for next MB's prediction.
+- `left_border_y/u/v` and `top_border_y/u/v`: Add parallel `left_recon_y/u/v` and
+  `top_recon_y/u/v` buffers for reconstructed pixels.
+- `prediction.rs`: Use reconstructed borders for prediction (already correct?).
+- Mode selection: May need to re-run if predictions change significantly.
+
+**Cost estimate:** ~2x encoding time for 2-pass. Expected benefit: ~1-2% smaller files
+at same quality, matching libwebp's multi-pass gains.
+
+**Files to modify:**
+- `src/encoder/vp8/mod.rs` - Main loop, border management
+- `src/encoder/vp8/prediction.rs` - Ensure using reconstructed borders
+- `src/encoder/vp8/residuals.rs` - Token recording (already correct)
 
 ### SNS Quality-Size Tradeoff Investigation (2026-02-01)
 
