@@ -8,6 +8,8 @@ pub mod cost;
 mod fast_math;
 /// Quantization matrix and coefficient quantization
 pub mod quantize;
+/// Residual cost estimation (SIMD-optimized)
+mod residual_cost;
 /// Trellis quantization for RD-optimized coefficient selection
 mod trellis;
 pub mod tables;
