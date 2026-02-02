@@ -41,6 +41,7 @@ png = "0.17.12"
 rand = "0.8.5"
 rgb = "0.8"
 webp = "0.3.1"
+webpx = "0.1.2"
 
 [features]
 default = ["std", "fast-yuv", "simd"]
@@ -53,6 +54,7 @@ fast-yuv = ["dep:yuv"]
 # On wasm32, uses core::arch::wasm32 SIMD128 intrinsics.
 simd = ["dep:multiversed", "dep:multiversion", "dep:archmage", "dep:magetypes", "dep:safe_unaligned_simd", "dep:wide"]
 _benchmarks = []
+_corpus_tests = []
 _profiling = ["dep:png", "dep:webp"]
 # WASM profiling - minimal deps for wasm32 benchmarking
 _wasm_profiling = ["std"]

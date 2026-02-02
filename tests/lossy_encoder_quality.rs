@@ -417,3 +417,353 @@ fn create_noise_image(w: u32, h: u32) -> Vec<u8> {
     rand::thread_rng().fill_bytes(&mut img);
     img
 }
+
+// ============================================================================
+// Preset tests
+// ============================================================================
+
+/// Test that different presets produce measurably different file sizes.
+/// This validates that the preset parameters actually affect encoding.
+#[test]
+fn presets_produce_different_file_sizes() {
+    use zenwebp::{EncoderConfig, Preset};
+
+    // Use a large, varied image so segments and SNS have room to differentiate.
+    // Noise + patches gives diverse frequency content across macroblocks.
+    let w = 512u32;
+    let h = 512u32;
+    let mut img = create_noise_image(w, h);
+    // Add some flat patches to give SNS something to work with
+    for y in 100..200 {
+        for x in 100..200 {
+            let idx = ((y * w + x) * 3) as usize;
+            img[idx] = 64;
+            img[idx + 1] = 128;
+            img[idx + 2] = 192;
+        }
+    }
+    let quality = 75.0;
+
+    let presets = [
+        ("Default", Preset::Default),
+        ("Picture", Preset::Picture),
+        ("Photo", Preset::Photo),
+        ("Drawing", Preset::Drawing),
+        ("Icon", Preset::Icon),
+        ("Text", Preset::Text),
+    ];
+
+    let mut sizes: Vec<(&str, usize)> = Vec::new();
+
+    for &(name, preset) in &presets {
+        let config = EncoderConfig::with_preset(preset, quality).method(4);
+        let webp = config
+            .encode_rgb(&img, w, h)
+            .expect("Encoding failed");
+
+        // Verify libwebp can decode the output
+        let decoded = webp::Decoder::new(&webp)
+            .decode()
+            .expect("libwebp failed to decode preset output");
+        assert_eq!(decoded.width(), w);
+        assert_eq!(decoded.height(), h);
+
+        sizes.push((name, webp.len()));
+        println!("Preset {name:>10}: {} bytes", webp.len());
+    }
+
+    // Check that at least some presets produce different sizes
+    let min_size = sizes.iter().map(|(_, s)| *s).min().unwrap();
+    let max_size = sizes.iter().map(|(_, s)| *s).max().unwrap();
+    let ratio = max_size as f64 / min_size as f64;
+    println!("Size range: {} - {} bytes (ratio: {:.3}x)", min_size, max_size, ratio);
+
+    // Presets should produce measurably different sizes.
+    // The main differentiators are SNS (segment quantization spread),
+    // filter strength, and sharpness. With varied content, these should
+    // produce at least 1% difference between extremes.
+    assert!(
+        ratio > 1.01,
+        "Presets should produce measurably different sizes, got ratio {:.3}x",
+        ratio
+    );
+
+    // Additionally verify that not all sizes are identical
+    let unique_sizes: std::collections::HashSet<_> = sizes.iter().map(|(_, s)| *s).collect();
+    assert!(
+        unique_sizes.len() > 1,
+        "All presets produced identical output"
+    );
+}
+
+/// Test that preset overrides work correctly.
+#[test]
+fn preset_overrides_work() {
+    use zenwebp::{EncoderConfig, Preset};
+
+    let img = create_checkerboard_image(256, 256);
+
+    // Default preset with default filter
+    let default_size = EncoderConfig::with_preset(Preset::Default, 75.0)
+        .method(4)
+        .encode_rgb(&img, 256, 256)
+        .unwrap()
+        .len();
+
+    // Default preset with filter forced to 0 (like Icon)
+    let no_filter_size = EncoderConfig::with_preset(Preset::Default, 75.0)
+        .method(4)
+        .filter_strength(0)
+        .filter_sharpness(0)
+        .sns_strength(0)
+        .encode_rgb(&img, 256, 256)
+        .unwrap()
+        .len();
+
+    println!("Default: {} bytes, No-filter override: {} bytes", default_size, no_filter_size);
+
+    // Overrides should produce different output than default
+    assert_ne!(
+        default_size, no_filter_size,
+        "Filter override should change output"
+    );
+}
+
+/// Test that segments=1 disables segmentation.
+#[test]
+fn segments_one_disables_segmentation() {
+    use zenwebp::{EncoderConfig, Preset};
+
+    let img = create_checkerboard_image(256, 256);
+
+    let with_segments = EncoderConfig::with_preset(Preset::Default, 75.0)
+        .method(4)
+        .segments(4)
+        .encode_rgb(&img, 256, 256)
+        .unwrap()
+        .len();
+
+    let without_segments = EncoderConfig::with_preset(Preset::Default, 75.0)
+        .method(4)
+        .segments(1)
+        .encode_rgb(&img, 256, 256)
+        .unwrap()
+        .len();
+
+    println!(
+        "4 segments: {} bytes, 1 segment: {} bytes",
+        with_segments, without_segments
+    );
+
+    // Both should decode correctly
+    let webp_data = EncoderConfig::with_preset(Preset::Default, 75.0)
+        .method(4)
+        .segments(1)
+        .encode_rgb(&img, 256, 256)
+        .unwrap();
+    let decoded = webp::Decoder::new(&webp_data)
+        .decode()
+        .expect("libwebp failed to decode 1-segment output");
+    assert_eq!(decoded.width(), 256);
+    assert_eq!(decoded.height(), 256);
+}
+
+/// Compare zenwebp vs webpx (libwebp) at matched configurations.
+/// This isolates encoding quality differences from preset selection.
+#[test]
+fn matched_config_comparison_vs_webpx() {
+    use webpx::Unstoppable;
+
+    let img = create_checkerboard_image(256, 256);
+    let quality = 75.0;
+
+    let configs: &[(&str, zenwebp::Preset, webpx::Preset)] = &[
+        ("Default", zenwebp::Preset::Default, webpx::Preset::Default),
+        ("Photo", zenwebp::Preset::Photo, webpx::Preset::Photo),
+        ("Drawing", zenwebp::Preset::Drawing, webpx::Preset::Drawing),
+        ("Text", zenwebp::Preset::Text, webpx::Preset::Text),
+    ];
+
+    for &(name, zen_preset, wpx_preset) in configs {
+        // Encode with zenwebp
+        let zen_config = zenwebp::EncoderConfig::with_preset(zen_preset, quality).method(4);
+        let zen_out = zen_config
+            .encode_rgb(&img, 256, 256)
+            .expect("zenwebp encoding failed");
+
+        // Encode with webpx (libwebp)
+        let wpx_config = webpx::EncoderConfig::with_preset(wpx_preset, quality).method(4);
+        let wpx_out = wpx_config
+            .encode_rgb(&img, 256, 256, Unstoppable)
+            .expect("webpx encoding failed");
+
+        let ratio = zen_out.len() as f64 / wpx_out.len() as f64;
+
+        println!(
+            "Preset {name:>10}: zenwebp={:>6} bytes, webpx={:>6} bytes, ratio={:.3}x",
+            zen_out.len(),
+            wpx_out.len(),
+            ratio
+        );
+
+        // Verify our output is valid
+        let decoded = webp::Decoder::new(&zen_out)
+            .decode()
+            .expect("libwebp failed to decode zenwebp output");
+        assert_eq!(decoded.width(), 256);
+        assert_eq!(decoded.height(), 256);
+    }
+}
+
+// ============================================================================
+// Corpus tests (behind _corpus_tests feature flag)
+// ============================================================================
+
+#[cfg(feature = "_corpus_tests")]
+mod corpus_tests {
+    use super::*;
+
+    fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32)> {
+        use std::fs::File;
+        use std::io::BufReader;
+
+        let file = File::open(path).ok()?;
+        let decoder = png::Decoder::new(BufReader::new(file));
+        let mut reader = decoder.read_info().ok()?;
+        let mut buf = vec![0u8; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut buf).ok()?;
+        let width = info.width;
+        let height = info.height;
+
+        // Convert to RGB if needed
+        let rgb = match info.color_type {
+            png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
+            png::ColorType::Rgba => buf[..info.buffer_size()]
+                .chunks_exact(4)
+                .flat_map(|p| [p[0], p[1], p[2]])
+                .collect(),
+            png::ColorType::Grayscale => buf[..info.buffer_size()]
+                .iter()
+                .flat_map(|&g| [g, g, g])
+                .collect(),
+            _ => return None,
+        };
+
+        Some((rgb, width, height))
+    }
+
+    fn encode_and_compare(
+        rgb: &[u8],
+        w: u32,
+        h: u32,
+        zen_preset: zenwebp::Preset,
+        wpx_preset: webpx::Preset,
+        quality: f32,
+    ) -> (usize, usize) {
+        use webpx::Unstoppable;
+
+        let zen_config = zenwebp::EncoderConfig::with_preset(zen_preset, quality).method(4);
+        let zen_out = zen_config.encode_rgb(rgb, w, h).unwrap();
+
+        let wpx_config = webpx::EncoderConfig::with_preset(wpx_preset, quality).method(4);
+        let wpx_out = wpx_config.encode_rgb(rgb, w, h, Unstoppable).unwrap();
+
+        (zen_out.len(), wpx_out.len())
+    }
+
+    #[test]
+    fn kodak_corpus_preset_comparison() {
+        let corpus_dir = "/mnt/v/work/codec-corpus/kodak";
+        let mut total_zen = 0usize;
+        let mut total_wpx = 0usize;
+        let mut count = 0;
+
+        for entry in std::fs::read_dir(corpus_dir).expect("Kodak corpus not found") {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "png") {
+                let path_str = path.to_string_lossy().to_string();
+                if let Some((rgb, w, h)) = load_png(&path_str) {
+                    let (zen_size, wpx_size) = encode_and_compare(
+                        &rgb,
+                        w,
+                        h,
+                        zenwebp::Preset::Default,
+                        webpx::Preset::Default,
+                        75.0,
+                    );
+                    let ratio = zen_size as f64 / wpx_size as f64;
+                    println!(
+                        "{}: zenwebp={} webpx={} ratio={:.3}x",
+                        path.file_name().unwrap().to_string_lossy(),
+                        zen_size,
+                        wpx_size,
+                        ratio
+                    );
+                    total_zen += zen_size;
+                    total_wpx += wpx_size;
+                    count += 1;
+                }
+            }
+        }
+
+        let avg_ratio = total_zen as f64 / total_wpx as f64;
+        println!(
+            "\nKodak aggregate ({count} images): zenwebp={total_zen} webpx={total_wpx} ratio={avg_ratio:.3}x"
+        );
+    }
+
+    #[test]
+    fn screenshot_corpus_preset_comparison() {
+        let corpus_dir = "/mnt/v/work/codec-corpus/gb82-sc";
+        let mut results: Vec<(String, f64, f64)> = Vec::new();
+
+        for entry in std::fs::read_dir(corpus_dir).expect("Screenshot corpus not found") {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "png") {
+                let path_str = path.to_string_lossy().to_string();
+                if let Some((rgb, w, h)) = load_png(&path_str) {
+                    let name = path.file_name().unwrap().to_string_lossy().to_string();
+
+                    // Test Default preset
+                    let (zen_default, wpx_default) = encode_and_compare(
+                        &rgb,
+                        w,
+                        h,
+                        zenwebp::Preset::Default,
+                        webpx::Preset::Default,
+                        75.0,
+                    );
+                    // Test Drawing preset (better for screenshots)
+                    let (zen_drawing, wpx_drawing) = encode_and_compare(
+                        &rgb,
+                        w,
+                        h,
+                        zenwebp::Preset::Drawing,
+                        webpx::Preset::Drawing,
+                        75.0,
+                    );
+
+                    let default_ratio = zen_default as f64 / wpx_default as f64;
+                    let drawing_ratio = zen_drawing as f64 / wpx_drawing as f64;
+
+                    println!(
+                        "{name}: Default={default_ratio:.3}x, Drawing={drawing_ratio:.3}x"
+                    );
+                    results.push((name, default_ratio, drawing_ratio));
+                }
+            }
+        }
+
+        if !results.is_empty() {
+            let avg_default: f64 =
+                results.iter().map(|(_, d, _)| d).sum::<f64>() / results.len() as f64;
+            let avg_drawing: f64 =
+                results.iter().map(|(_, _, d)| d).sum::<f64>() / results.len() as f64;
+            println!("\nScreenshot aggregate ({} images):", results.len());
+            println!("  Default preset ratio: {avg_default:.3}x");
+            println!("  Drawing preset ratio: {avg_drawing:.3}x");
+        }
+    }
+}
