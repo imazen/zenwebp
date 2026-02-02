@@ -269,6 +269,31 @@ pub fn filter_strength_from_delta(sharpness: u8, delta: u8) -> u8 {
 /// * `sharpness` - Sharpness level (0-7)
 /// * `filter_strength` - User filter strength (0-100), default 50
 pub fn compute_filter_level(quant_index: u8, sharpness: u8, filter_strength: u8) -> u8 {
+    compute_filter_level_with_beta(quant_index, sharpness, filter_strength, 0)
+}
+
+/// Calculate optimal filter level with per-segment beta modulation.
+///
+/// This implements libwebp's SetupFilterStrength logic with per-segment complexity:
+/// 1. Compute qstep from AC quantizer
+/// 2. Get base strength from delta table
+/// 3. Scale by filter_strength and reduce by segment beta
+///
+/// Segments with lower complexity (low beta) need less filtering because they have
+/// fewer edges/details to preserve. High-complexity segments (high beta) get more
+/// filtering to reduce artifacts.
+///
+/// # Arguments
+/// * `quant_index` - Quantizer index (0-127)
+/// * `sharpness` - Sharpness level (0-7)
+/// * `filter_strength` - User filter strength (0-100), default 50
+/// * `beta` - Segment complexity (0-255), where 0 = simplest, 255 = most complex
+pub fn compute_filter_level_with_beta(
+    quant_index: u8,
+    sharpness: u8,
+    filter_strength: u8,
+    beta: u8,
+) -> u8 {
     // level0 is in [0..500]. Using filter_strength=50 as mid-filtering.
     let level0 = 5 * filter_strength as u32;
 
@@ -278,10 +303,9 @@ pub fn compute_filter_level(quant_index: u8, sharpness: u8, filter_strength: u8)
     // Get base strength from delta table
     let base_strength = filter_strength_from_delta(sharpness, qstep) as u32;
 
-    // Scale by level0 / 256 (simplified: we don't have per-segment beta)
-    // In libwebp: f = base_strength * level0 / (256 + beta)
-    // With beta=0, this simplifies to: f = base_strength * level0 / 256
-    let f = (base_strength * level0) / 256;
+    // Scale by level0 / (256 + beta) - segments with lower beta get less filtering
+    // From libwebp: f = base_strength * level0 / (256 + beta)
+    let f = (base_strength * level0) / (256 + beta as u32);
 
     // Clamp to valid range and apply cutoff
     if f < FSTRENGTH_CUTOFF as u32 {

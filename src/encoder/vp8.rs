@@ -2389,7 +2389,7 @@ impl<'a> Vp8Encoder<'a> {
         // Boost dc-uv-quant based on sns-strength (UV is more reactive to high quants)
         let dq_uv_dc = (-4 * i32::from(sns_strength) / 100).clamp(-15, 15);
 
-        // Compute base filter level for delta computation
+        // Compute base filter level for delta computation (using beta=0 for base)
         let base_filter = super::cost::compute_filter_level(
             base_quant_index,
             self.filter_sharpness,
@@ -2403,6 +2403,11 @@ impl<'a> Vp8Encoder<'a> {
             // Formula from SetSegmentAlphas: alpha = 255 * (center - mid) / (max - min)
             let transformed_alpha = (255 * (center - mid_alpha) / range).clamp(-127, 127);
 
+            // Compute beta for per-segment filter modulation
+            // Formula from libwebp: beta = 255 * (center - min) / (max - min)
+            // Beta indicates segment complexity: 0 = simplest (closer to min), 255 = most complex
+            let beta = (255 * (center - min_center) / range).clamp(0, 255) as u8;
+
             // Compute adjusted quantizer for this segment
             let seg_quant_index =
                 compute_segment_quant(base_quant_index, transformed_alpha, sns_strength);
@@ -2411,11 +2416,13 @@ impl<'a> Vp8Encoder<'a> {
             // Compute the delta from base quantizer
             let delta = seg_quant_index as i8 - base_quant_index as i8;
 
-            // Compute per-segment loop filter delta
-            let seg_filter = super::cost::compute_filter_level(
+            // Compute per-segment loop filter with beta modulation
+            // Simpler segments (low beta) get less filtering
+            let seg_filter = super::cost::compute_filter_level_with_beta(
                 seg_quant_index,
                 self.filter_sharpness,
                 self.filter_strength,
+                beta,
             );
             let filter_delta = (seg_filter as i8) - (base_filter as i8);
 
