@@ -1311,7 +1311,7 @@ impl<'a> Vp8Encoder<'a> {
     ) -> Result<(), EncodingError> {
         // Store method and configure features based on it
         self.method = params.method.min(6); // Clamp to 0-6
-        // Trellis quantization only for method >= 4 (like libwebp)
+                                            // Trellis quantization only for method >= 4 (like libwebp)
         self.do_trellis = self.method >= 4;
         // Store tuning parameters
         self.sns_strength = params.sns_strength.min(100);
@@ -1340,7 +1340,14 @@ impl<'a> Vp8Encoder<'a> {
             color
         );
 
-        self.setup_encoding(params.lossy_quality, width, height, y_bytes, u_bytes, v_bytes);
+        self.setup_encoding(
+            params.lossy_quality,
+            width,
+            height,
+            y_bytes,
+            u_bytes,
+            v_bytes,
+        );
 
         // Two-pass encoding with adaptive probabilities.
         // Pass 1: Collect token statistics (without trellis) to estimate probabilities.

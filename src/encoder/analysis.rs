@@ -1328,12 +1328,7 @@ fn compute_edge_density(y_src: &[u8], width: usize, height: usize, y_stride: usi
 
 /// Compute color uniformity by sampling 16x16 blocks and measuring Y value spread.
 /// Returns fraction of blocks that are "uniform" (low Y variance), 0.0 to 1.0.
-fn compute_color_uniformity(
-    y_src: &[u8],
-    width: usize,
-    height: usize,
-    y_stride: usize,
-) -> f32 {
+fn compute_color_uniformity(y_src: &[u8], width: usize, height: usize, y_stride: usize) -> f32 {
     let mb_w = width / 16;
     let mb_h = height / 16;
     if mb_w == 0 || mb_h == 0 {
@@ -1392,9 +1387,9 @@ fn compute_color_uniformity(
 /// Returns (sns_strength, filter_strength, filter_sharpness, num_segments).
 pub fn content_type_to_tuning(content_type: ContentType) -> (u8, u8, u8, u8) {
     match content_type {
-        ContentType::Photo => (80, 30, 3, 4),    // Photo preset: high SNS for uniform regions
-        ContentType::Drawing => (50, 60, 0, 4),   // Default tuning: moderate SNS, strong filter
-        ContentType::Text => (50, 60, 0, 4),      // Default tuning (Text preset was counterproductive)
-        ContentType::Icon => (0, 0, 0, 4),        // Icon preset: no SNS, no filter
+        ContentType::Photo => (80, 30, 3, 4), // Photo preset: high SNS for uniform regions
+        ContentType::Drawing => (50, 60, 0, 4), // Default tuning: moderate SNS, strong filter
+        ContentType::Text => (50, 60, 0, 4),  // Default tuning (Text preset was counterproductive)
+        ContentType::Icon => (0, 0, 0, 4),    // Icon preset: no SNS, no filter
     }
 }

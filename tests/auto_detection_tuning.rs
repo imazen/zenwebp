@@ -5,9 +5,7 @@
 
 use std::fs;
 use std::io::BufReader;
-use zenwebp::encoder::analysis::{
-    analyze_image, classify_image_type_diag, ContentType,
-};
+use zenwebp::encoder::analysis::{analyze_image, classify_image_type_diag, ContentType};
 
 fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32)> {
     let file = fs::File::open(path).ok()?;
@@ -78,9 +76,8 @@ fn classify_rgb(rgb: &[u8], w: u32, h: u32) -> zenwebp::ClassifierDiag {
     let u_buf = vec![128u8; uv_stride * mb_h * 8];
     let v_buf = vec![128u8; uv_stride * mb_h * 8];
 
-    let (_mb_alphas, alpha_histogram) = analyze_image(
-        &y_buf, &u_buf, &v_buf, width, height, y_stride, uv_stride,
-    );
+    let (_mb_alphas, alpha_histogram) =
+        analyze_image(&y_buf, &u_buf, &v_buf, width, height, y_stride, uv_stride);
 
     classify_image_type_diag(&y_buf, width, height, y_stride, &alpha_histogram)
 }
@@ -101,7 +98,18 @@ fn auto_detection_cid22() {
     println!("\n=== CID22 Validation Set (41 diverse images) ===");
     println!(
         "{:<15} {:>5} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6} {:>5} {:>5} {:>5} {:>5}",
-        "Image", "Det", "Auto", "Deflt", "Photo", "Draw", "wpxD", "A/wpx", "loF", "hiF", "edge", "unif"
+        "Image",
+        "Det",
+        "Auto",
+        "Deflt",
+        "Photo",
+        "Draw",
+        "wpxD",
+        "A/wpx",
+        "loF",
+        "hiF",
+        "edge",
+        "unif"
     );
     println!("{}", "-".repeat(120));
 
@@ -133,7 +141,9 @@ fn auto_detection_cid22() {
 
             let auto_vs_wpx = auto as f64 / wpx_default as f64;
             let flag = if auto > default { "!!!" } else { "" };
-            if auto > default { regressions += 1; }
+            if auto > default {
+                regressions += 1;
+            }
 
             println!(
                 "{:<15} {:>5} {:>7} {:>7} {:>7} {:>7} {:>7} {:>5.3}x {:>4.2} {:>4.2} {:>4.2} {:>4.2} {}",
@@ -172,7 +182,19 @@ fn auto_detection_screenshots() {
     println!("\n=== Screenshot Corpus (gb82-sc) ===");
     println!(
         "{:<15} {:>5} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6} {:>5} {:>5} {:>5} {:>5}",
-        "Image", "Det", "Auto", "Deflt", "Photo", "Draw", "Text", "wpxDrw", "A/wpx", "loF", "hiF", "edge", "unif"
+        "Image",
+        "Det",
+        "Auto",
+        "Deflt",
+        "Photo",
+        "Draw",
+        "Text",
+        "wpxDrw",
+        "A/wpx",
+        "loF",
+        "hiF",
+        "edge",
+        "unif"
     );
     println!("{}", "-".repeat(130));
 

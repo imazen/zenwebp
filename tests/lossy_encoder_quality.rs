@@ -457,9 +457,7 @@ fn presets_produce_different_file_sizes() {
 
     for &(name, preset) in &presets {
         let config = EncoderConfig::with_preset(preset, quality).method(4);
-        let webp = config
-            .encode_rgb(&img, w, h)
-            .expect("Encoding failed");
+        let webp = config.encode_rgb(&img, w, h).expect("Encoding failed");
 
         // Verify libwebp can decode the output
         let decoded = webp::Decoder::new(&webp)
@@ -476,7 +474,10 @@ fn presets_produce_different_file_sizes() {
     let min_size = sizes.iter().map(|(_, s)| *s).min().unwrap();
     let max_size = sizes.iter().map(|(_, s)| *s).max().unwrap();
     let ratio = max_size as f64 / min_size as f64;
-    println!("Size range: {} - {} bytes (ratio: {:.3}x)", min_size, max_size, ratio);
+    println!(
+        "Size range: {} - {} bytes (ratio: {:.3}x)",
+        min_size, max_size, ratio
+    );
 
     // Presets should produce measurably different sizes.
     // The main differentiators are SNS (segment quantization spread),
@@ -520,7 +521,10 @@ fn preset_overrides_work() {
         .unwrap()
         .len();
 
-    println!("Default: {} bytes, No-filter override: {} bytes", default_size, no_filter_size);
+    println!(
+        "Default: {} bytes, No-filter override: {} bytes",
+        default_size, no_filter_size
+    );
 
     // Overrides should produce different output than default
     assert_ne!(
@@ -871,9 +875,7 @@ mod corpus_tests {
                     let default_ratio = zen_default as f64 / wpx_default as f64;
                     let drawing_ratio = zen_drawing as f64 / wpx_drawing as f64;
 
-                    println!(
-                        "{name}: Default={default_ratio:.3}x, Drawing={drawing_ratio:.3}x"
-                    );
+                    println!("{name}: Default={default_ratio:.3}x, Drawing={drawing_ratio:.3}x");
                     results.push((name, default_ratio, drawing_ratio));
                 }
             }
@@ -905,23 +907,19 @@ mod corpus_tests {
             if path.extension().is_some_and(|e| e == "png") {
                 let path_str = path.to_string_lossy().to_string();
                 if let Some((rgb, w, h)) = load_png(&path_str) {
-                    let auto_size = zenwebp::EncoderConfig::with_preset(
-                        zenwebp::Preset::Auto,
-                        75.0,
-                    )
-                    .method(4)
-                    .encode_rgb(&rgb, w, h)
-                    .unwrap()
-                    .len();
+                    let auto_size =
+                        zenwebp::EncoderConfig::with_preset(zenwebp::Preset::Auto, 75.0)
+                            .method(4)
+                            .encode_rgb(&rgb, w, h)
+                            .unwrap()
+                            .len();
 
-                    let photo_size = zenwebp::EncoderConfig::with_preset(
-                        zenwebp::Preset::Photo,
-                        75.0,
-                    )
-                    .method(4)
-                    .encode_rgb(&rgb, w, h)
-                    .unwrap()
-                    .len();
+                    let photo_size =
+                        zenwebp::EncoderConfig::with_preset(zenwebp::Preset::Photo, 75.0)
+                            .method(4)
+                            .encode_rgb(&rgb, w, h)
+                            .unwrap()
+                            .len();
 
                     let ratio = auto_size as f64 / photo_size as f64;
                     println!(
