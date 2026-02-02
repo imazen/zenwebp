@@ -393,15 +393,82 @@ Also updated SIMD `quantize()` and `quantize_ac_only()` block methods.
 | Add flatness penalty for I4 | +0.03% (worse) |
 | Disable trellis for method 4 (match libwebp) | +1.5% (much worse, trellis helps us) |
 
-**Remaining gap resolved by token buffer (2026-02-02):**
+**Token buffer resolved the ~4% two-pass mismatch gap (2026-02-02):**
+Token buffer (commit 9625d4e) replaced two-pass with single-pass recording.
+Multi-pass refinement (commit 123d4b2) added 2-pass for m5/m6 (~1% gain).
+CID22 aggregate at m4: 1.043x → **0.999x**.
 
-The ~4% gap was caused by the two-pass encoding architecture:
-1. Pass 1 stats reflected non-trellis quantization (mismatched probabilities)
-2. No mid-stream probability refresh (stale cost tables)
-3. Mode decisions could differ between passes
+**Remaining m5/m6 gap (2026-02-02):**
+Our trellis compensates for weaker non-trellis I4 efficiency. libwebp adds
+trellis as a NEW capability at m5/m6 on top of an already-efficient m4 baseline.
+We add trellis at m4 to REACH that baseline. So m5/m6 have nothing new to add.
+Root cause: I4 coefficient pipeline efficiency. See decomposition plan below.
 
-Token buffer (commit 9625d4e) replaced two-pass with single-pass recording,
-matching libwebp's VP8EncTokenLoop. CID22 aggregate: 1.043x → **0.999x**.
+### I4 Encoding Efficiency Decomposition Plan (2026-02-02)
+
+**Goal:** Identify WHERE in the I4 pipeline we lose efficiency vs libwebp, so
+we can verify each stage independently instead of treating it as a black box.
+
+**Approach:** For a single macroblock (or small image), compare intermediate
+outputs at each stage between zenwebp and libwebp. Build a test harness that
+feeds identical input and compares stage-by-stage.
+
+**Pipeline stages to verify (for a single I4 macroblock):**
+
+1. **Prediction residuals** — Given identical pixels + prediction mode + reference
+   pixels, do we produce identical residual coefficients before quantization?
+   - zenwebp: `transform_luma_block()` → `y_block_data`
+   - libwebp: `VP8EncIterator.yuv_in/yuv_out` → `VP8FTransform()`
+   - Compare: 16×[16 coefficients] per I4 MB
+
+2. **Quantization** — Given identical residuals + quantization matrix, do we
+   produce identical quantized levels?
+   - zenwebp: `VP8Matrix::quantize()` / `quantize_ac_only()` (non-trellis path)
+   - libwebp: `QuantizeBlock_C()` — includes sharpen and zthresh
+   - Compare: quantized levels for each 4x4 block
+   - Also compare: sharpen[] and zthresh[] arrays per matrix
+
+3. **Mode selection decisions** — Given identical cost tables, do we choose
+   the same I4 prediction modes?
+   - zenwebp: `pick_best_intra4()` → `bpred[16]`
+   - libwebp: `PickBestIntra4()` → `modes_i4[16]`
+   - Compare: per-block mode choices, per-block RD scores
+
+4. **Token/coefficient encoding** — Given identical quantized levels + probability
+   tables, do we produce the same token stream?
+   - zenwebp: `record_coeff_tokens()` → token buffer
+   - libwebp: `VP8RecordCoeffTokens()` → token buffer
+   - Compare: token count per block, total bit cost estimate
+
+5. **Probability table updates** — Given identical token statistics, do we
+   compute the same updated probability tables?
+   - zenwebp: `compute_updated_probabilities()` → `updated_probs`
+   - libwebp: `FinalizeTokenProbas()` → `proba.coeffs`
+   - Compare: all 4×8×3×11 probability values
+
+6. **Arithmetic encoding** — Given identical tokens + probabilities, does our
+   arithmetic encoder produce identical byte output?
+   - zenwebp: `TokenBuffer::emit_tokens()` → ArithmeticEncoder
+   - libwebp: `VP8EmitTokens()` → VP8BitWriter
+   - Compare: final byte stream length and content
+
+**Implementation:** Build a diagnostic test that:
+- Takes a small test image (e.g., 16x16 or 32x32 crop of 792079)
+- Encodes with both zenwebp and libwebp via FFI
+- Dumps intermediate state at each stage via debug hooks
+- Reports first divergence point
+
+**Key insight:** If stages 1-2 match but stage 3 diverges, the problem is in
+mode selection cost estimation. If stages 1-3 match but stage 4 diverges,
+the problem is in token encoding. This narrows the search space dramatically.
+
+**Files involved:**
+- `src/encoder/vp8/prediction.rs` — stage 1 (transforms)
+- `src/encoder/quantize.rs` — stage 2 (quantization)
+- `src/encoder/vp8/mode_selection.rs` — stage 3 (mode decisions)
+- `src/encoder/vp8/residuals.rs` — stage 4 (token recording)
+- `src/encoder/cost.rs` — stage 5 (probability updates)
+- `src/encoder/arithmetic.rs` — stage 6 (arithmetic encoder)
 
 ### VP8BitReader Success (2026-01-22)
 
