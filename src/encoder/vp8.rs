@@ -2302,6 +2302,7 @@ impl<'a> Vp8Encoder<'a> {
     /// count can save bits in the bitstream.
     ///
     /// Ported from libwebp's SimplifySegments.
+    #[allow(clippy::needless_range_loop)] // s1 indexes both seg_map and self.segments
     fn simplify_segments(&mut self) {
         // Map from old segment ID to new segment ID
         let mut seg_map = [0u8, 1, 2, 3];
