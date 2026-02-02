@@ -524,9 +524,8 @@ impl<'a> Vp8Encoder<'a> {
                 if let Some(ref updated) = self.updated_probs {
                     self.token_probs = *updated;
                 }
-                // Note: level_costs update is only needed for mid-stream refresh
-                // but coefficients are already stored from pass 1.
-                self.level_costs.calculate(&self.token_probs);
+                // Note: level_costs don't need recalculating for pass 1+ since we're
+                // not re-quantizing - we're just re-recording the same tokens.
                 self.reset_for_second_pass();
             } else {
                 // Pass 0: prepare storage for mode decisions and coefficients
@@ -624,8 +623,21 @@ impl<'a> Vp8Encoder<'a> {
                         // Store macroblock info for header writing in emit pass
                         self.stored_mb_info.push(mb_info);
                     } else {
-                        // Pass 1+: Reuse stored mode decisions and quantized coefficients
-                        // Only re-record tokens with updated probability tables (no re-quantization)
+                        // Pass 1+: Re-record tokens with updated probability tables.
+                        //
+                        // NOTE: We tried true re-quantization (re-running trellis with updated
+                        // level_costs derived from pass 0 statistics), but it made files LARGER.
+                        // The problem is circular: pass 0's trellis decisions are optimal for
+                        // COEFF_PROBS, so training costs on those outputs creates overfitting.
+                        //
+                        // libwebp's multi-pass also doesn't re-quantize - it re-records the same
+                        // tokens with better probability tables. The benefit comes from:
+                        // 1. More accurate probability signaling in headers (fewer update bits)
+                        // 2. Better entropy coding (probabilities match actual distribution)
+                        //
+                        // Our token buffer with mid-stream probability refresh already provides
+                        // most of this benefit. Additional passes mainly help the final probability
+                        // table estimation for very large images.
                         let mb_info = self.stored_mb_info[mb_idx];
 
                         total_mb += 1;

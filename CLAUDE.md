@@ -339,9 +339,37 @@ Completed:
 - Method 5: 1.024x of libwebp (slightly larger due to no true multi-pass benefit)
 - Method 6: 1.044x of libwebp (same)
 
-**Note:** Our multi-pass currently stores coefficients from pass 1 and reuses them in pass 2,
-so both passes produce identical statistics. True multi-pass benefit would require allowing
-pass 2 to make different quantization decisions, which we don't do.
+### Multi-pass Re-quantization Experiment (2026-02-02, ABANDONED)
+
+**Hypothesis:** Storing raw DCT coefficients and re-quantizing in pass 2 with updated
+level_costs (derived from pass 1's probability statistics) would produce smaller files.
+
+**Implementation:**
+1. Added `RawMbCoeffs` struct to store raw DCT values before quantization
+2. Added `store_raw_coeffs()` to save DCT during pass 0
+3. Added `requantize_and_record()` to re-quantize in pass 1+ using updated level_costs
+4. Updated multi-pass loop to recalculate level_costs with refined probabilities
+
+**Result:** Files became **LARGER**, not smaller.
+- Method 5 vs 4: +0.29% (worse)
+- Method 6 vs 4: +0.29% (worse)
+
+**Root cause analysis:** The approach creates a circular dependency:
+1. Pass 0 trellis uses level_costs derived from COEFF_PROBS
+2. Pass 0 outputs are optimal for those level_costs
+3. Pass 1 level_costs are derived from pass 0's output distribution
+4. Pass 1 level_costs are now biased toward pass 0's decisions
+5. Re-quantizing with these biased costs reduces entropy, increasing file size
+
+**Conclusion:** libwebp's multi-pass also doesn't re-quantize - it re-records the same
+tokens with better probability tables. The benefit comes from more accurate probability
+signaling in headers and better entropy coding during emission. Our token buffer with
+mid-stream probability refresh already provides most of this benefit. Additional passes
+mainly help final probability table estimation for very large images.
+
+**Code status:** Reverted to simpler `record_from_stored_coeffs` approach. The raw
+coefficient storage code was removed. Methods 4/5/6 now produce identical output
+(as expected, since token sequences are identical).
 
 ### SNS Quality-Size Tradeoff Investigation (2026-02-01)
 
