@@ -56,10 +56,26 @@ See global ~/.claude/CLAUDE.md for general instructions.
 | Text | 0 | 0 | 0 | 2 |
 | Auto | detected | detected | detected | detected |
 
-**Preset::Auto content detection:**
-- Kodak (photos) → detected as Photo (1.000x ratio vs manual Photo)
-- Screenshots → detected as Drawing/Text
-- Small images (≤128x128) → detected as Icon
+**Preset::Auto content detection (2026-02-01):**
+- Uniformity-based classifier: ≥0.45 block uniformity → Photo tuning, <0.45 → Default tuning
+- Small images (≤128x128) → Icon tuning
+- Drawing/Text ContentType variants map to Default tuning (50,60,0,4) — original presets were counterproductive
+- CID22 corpus (41 images): Auto 0.987x of Default, 2 regressions <0.5% each
+- Screenshots (9 images): Auto 0.954x of Default, 0 regressions
+
+**SSIMULACRA2 quality-size tradeoff (2026-02-01):**
+
+| Corpus | Encoder | Size ratio | Avg SSIM2 delta | SSIM2 per 1% size |
+|--------|---------|------------|-----------------|-------------------|
+| CID22 | zenwebp Photo | 0.985x | -0.57 | 0.38 |
+| CID22 | libwebp Photo | 0.993x | -0.14 | 0.20 |
+| Screenshots | zenwebp Photo | 0.954x | -0.72 | 0.16 |
+| Screenshots | libwebp Photo | 0.959x | -1.19 | 0.29 |
+
+Key finding: zenwebp's SNS implementation produces a steeper quality-size tradeoff
+than libwebp's on diverse images (CID22), but is actually gentler on screenshots.
+Our segment quantization spread is more aggressive — likely the SNS scaling curve
+or segment quant delta calculation differs. Needs investigation.
 
 **TokenType fix (2026-01-24):**
 The TokenType enum had I16DC and I16AC values swapped compared to libwebp:
@@ -244,6 +260,29 @@ Completed:
 (none currently)
 
 ## Investigation Notes
+
+### SNS Quality-Size Tradeoff Investigation (2026-02-01)
+
+Our Photo preset (SNS=80) produces more aggressive size savings than libwebp's on
+CID22 (diverse images), but with proportionally higher quality loss. On screenshots,
+the situation reverses — libwebp's Photo preset is more destructive (gui screenshot:
+-6.22 SSIM2 for -1.8% size).
+
+**Hypothesis:** Our segment quantization spread calculation differs from libwebp's.
+When SNS=80, we may be assigning larger quant deltas between segments than libwebp
+does, causing more distortion in "flat" regions that get quantized harder.
+
+**To investigate:**
+1. Compare per-segment quant values between zenwebp and libwebp for same image+config
+2. Trace SNS scaling in libwebp's `SetSegmentAlphas()` vs our `analyze_and_assign_segments()`
+3. Check if libwebp clamps segment quant deltas differently
+
+### webpx Preset Bug (2026-02-01, RESOLVED)
+
+webpx 0.1.2 had a bug where `to_libwebp()` overwrote preset-specific filter values
+with defaults after `WebPConfigInitInternal` correctly set them. Fixed in webpx 0.1.3
+by making `sns_strength`, `filter_strength`, `filter_sharpness` fields `Option<u8>`.
+`None` = use preset default, `Some(v)` = user explicitly set.
 
 ### TokenType Fix and File Size Investigation (2026-01-24)
 
