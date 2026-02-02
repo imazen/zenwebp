@@ -59,6 +59,10 @@ build-scalar:
 build-no-std:
     cargo build --no-default-features
 
+# Run I4 diagnostic harness (compares zenwebp vs libwebp bitstream internals)
+diag:
+    cargo test --release --features _corpus_tests --test i4_diagnostic_harness -- --nocapture
+
 # Run all quality checks
 check: fmt clippy test
     @echo "All checks passed!"
