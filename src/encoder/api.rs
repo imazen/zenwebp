@@ -443,6 +443,9 @@ pub struct EncoderParams {
     pub(crate) num_segments: u8,
     /// The selected preset. When Auto, the encoder will detect content type.
     pub(crate) preset: Preset,
+    /// Target file size in bytes. When > 0, enables quality search to hit target.
+    /// Multi-pass encoding will adjust quality to converge on this size.
+    pub(crate) target_size: u32,
 }
 
 impl Default for EncoderParams {
@@ -457,6 +460,7 @@ impl Default for EncoderParams {
             filter_sharpness: 0,
             num_segments: 4,
             preset: Preset::Default,
+            target_size: 0,
         }
     }
 }
@@ -707,6 +711,7 @@ impl EncoderConfig {
             filter_sharpness: self.filter_sharpness_override.unwrap_or(sharp),
             num_segments: self.segments_override.unwrap_or(segs),
             preset: self.preset,
+            target_size: self.target_size,
         }
     }
 
