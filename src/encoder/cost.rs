@@ -525,10 +525,26 @@ impl VP8Matrix {
             let r = result.to_array();
 
             // Apply signs and store
-            coeffs[base] = if signs[0] { -(r[0] as i32) } else { r[0] as i32 };
-            coeffs[base + 1] = if signs[1] { -(r[1] as i32) } else { r[1] as i32 };
-            coeffs[base + 2] = if signs[2] { -(r[2] as i32) } else { r[2] as i32 };
-            coeffs[base + 3] = if signs[3] { -(r[3] as i32) } else { r[3] as i32 };
+            coeffs[base] = if signs[0] {
+                -(r[0] as i32)
+            } else {
+                r[0] as i32
+            };
+            coeffs[base + 1] = if signs[1] {
+                -(r[1] as i32)
+            } else {
+                r[1] as i32
+            };
+            coeffs[base + 2] = if signs[2] {
+                -(r[2] as i32)
+            } else {
+                r[2] as i32
+            };
+            coeffs[base + 3] = if signs[3] {
+                -(r[3] as i32)
+            } else {
+                r[3] as i32
+            };
         }
     }
 
@@ -559,12 +575,7 @@ impl VP8Matrix {
             ];
             let signs = [c[0] < 0, c[1] < 0, c[2] < 0, false];
             let abs_c = i64x4::from([c[0].abs(), c[1].abs(), c[2].abs(), 0]);
-            let iq = i64x4::from([
-                self.iq[1] as i64,
-                self.iq[2] as i64,
-                self.iq[3] as i64,
-                0,
-            ]);
+            let iq = i64x4::from([self.iq[1] as i64, self.iq[2] as i64, self.iq[3] as i64, 0]);
             let bias = i64x4::from([
                 self.bias[1] as i64,
                 self.bias[2] as i64,
@@ -573,9 +584,21 @@ impl VP8Matrix {
             ]);
             let result = (abs_c * iq + bias) >> QFIX as i64;
             let r = result.to_array();
-            coeffs[1] = if signs[0] { -(r[0] as i32) } else { r[0] as i32 };
-            coeffs[2] = if signs[1] { -(r[1] as i32) } else { r[1] as i32 };
-            coeffs[3] = if signs[2] { -(r[2] as i32) } else { r[2] as i32 };
+            coeffs[1] = if signs[0] {
+                -(r[0] as i32)
+            } else {
+                r[0] as i32
+            };
+            coeffs[2] = if signs[1] {
+                -(r[1] as i32)
+            } else {
+                r[1] as i32
+            };
+            coeffs[3] = if signs[2] {
+                -(r[2] as i32)
+            } else {
+                r[2] as i32
+            };
         }
 
         // Process positions 4-15 (three full chunks)
@@ -603,10 +626,26 @@ impl VP8Matrix {
             ]);
             let result = (abs_c * iq + bias) >> QFIX as i64;
             let r = result.to_array();
-            coeffs[base] = if signs[0] { -(r[0] as i32) } else { r[0] as i32 };
-            coeffs[base + 1] = if signs[1] { -(r[1] as i32) } else { r[1] as i32 };
-            coeffs[base + 2] = if signs[2] { -(r[2] as i32) } else { r[2] as i32 };
-            coeffs[base + 3] = if signs[3] { -(r[3] as i32) } else { r[3] as i32 };
+            coeffs[base] = if signs[0] {
+                -(r[0] as i32)
+            } else {
+                r[0] as i32
+            };
+            coeffs[base + 1] = if signs[1] {
+                -(r[1] as i32)
+            } else {
+                r[1] as i32
+            };
+            coeffs[base + 2] = if signs[2] {
+                -(r[2] as i32)
+            } else {
+                r[2] as i32
+            };
+            coeffs[base + 3] = if signs[3] {
+                -(r[3] as i32)
+            } else {
+                r[3] as i32
+            };
         }
     }
 
@@ -1777,8 +1816,7 @@ fn get_residual_cost_sse2(
         let c0_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&res.coeffs[0..4]).unwrap());
         let c1_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&res.coeffs[4..8]).unwrap());
         let c2_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&res.coeffs[8..12]).unwrap());
-        let c3_32 =
-            simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&res.coeffs[12..16]).unwrap());
+        let c3_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&res.coeffs[12..16]).unwrap());
 
         // Pack i32 to i16 (signed saturation)
         let c0 = _mm_packs_epi32(c0_32, c1_32); // 8 x i16

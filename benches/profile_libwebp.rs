@@ -38,7 +38,10 @@ fn main() {
     println!("Loading: {}", path.display());
     let (rgb_data, width, height) = load_png(path);
     println!("Image: {}x{} ({} pixels)", width, height, width * height);
-    println!("Quality: {}, Method: {}, Iterations: {}", quality, method, iterations);
+    println!(
+        "Quality: {}, Method: {}, Iterations: {}",
+        quality, method, iterations
+    );
 
     // Create config with method setting
     let mut config = webp::WebPConfig::new().unwrap();
