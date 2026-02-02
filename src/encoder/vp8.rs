@@ -2297,6 +2297,61 @@ impl<'a> Vp8Encoder<'a> {
         self.estimate_luma16_coeff_cost(&luma_blocks, segment)
     }
 
+    /// Merge segments with identical quantizer and filter settings.
+    ///
+    /// This reduces the number of effective segments when different alpha regions
+    /// end up with the same quantization and filter parameters. Reducing segment
+    /// count can save bits in the bitstream.
+    ///
+    /// Ported from libwebp's SimplifySegments.
+    fn simplify_segments(&mut self) {
+        // Map from old segment ID to new segment ID
+        let mut seg_map = [0u8, 1, 2, 3];
+        let num_segments = self.num_segments as usize;
+        let mut num_final_segments = 1usize;
+
+        // Check each segment starting from 1 to see if it matches an earlier segment
+        for s1 in 1..num_segments {
+            let seg1 = &self.segments[s1];
+            let mut found = false;
+
+            // Check if we already have a segment with same quant_index and loopfilter_level
+            for s2 in 0..num_final_segments {
+                let seg2 = &self.segments[s2];
+                if seg1.quant_index == seg2.quant_index
+                    && seg1.loopfilter_level == seg2.loopfilter_level
+                {
+                    seg_map[s1] = s2 as u8;
+                    found = true;
+                    break;
+                }
+            }
+
+            if !found {
+                // This is a new unique segment
+                seg_map[s1] = num_final_segments as u8;
+                if num_final_segments != s1 {
+                    // Move segment data to its new position
+                    self.segments[num_final_segments] = self.segments[s1].clone();
+                }
+                num_final_segments += 1;
+            }
+        }
+
+        // If we reduced segments, remap the segment map
+        if num_final_segments < num_segments {
+            for seg_id in &mut self.segment_map {
+                *seg_id = seg_map[*seg_id as usize];
+            }
+            self.num_segments = num_final_segments as u8;
+
+            // Replicate trailing segment infos (cosmetic, required by bitstream syntax)
+            for i in num_final_segments..num_segments {
+                self.segments[i] = self.segments[num_final_segments - 1].clone();
+            }
+        }
+    }
+
     /// Analyze image complexity and assign macroblocks to segments.
     ///
     /// This performs a DCT-based analysis pass (ported from libwebp) to:
@@ -2456,6 +2511,12 @@ impl<'a> Vp8Encoder<'a> {
             };
             segment.init_matrices(self.sns_strength);
             self.segments[seg_idx] = segment;
+        }
+
+        // Simplify segments by merging those with identical quant and filter settings
+        // This can reduce the number of effective segments and save bits in the bitstream
+        if self.num_segments > 1 {
+            self.simplify_segments();
         }
 
         // Compute segment tree probabilities from actual distribution
