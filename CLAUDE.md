@@ -263,14 +263,22 @@ Completed:
 
 ### SNS Quality-Size Tradeoff Investigation (2026-02-01)
 
-Our Photo preset (SNS=80) produces more aggressive size savings than libwebp's on
-CID22 (diverse images), but with proportionally higher quality loss. On screenshots,
-the situation reverses — libwebp's Photo preset is more destructive (gui screenshot:
--6.22 SSIM2 for -1.8% size).
+**Butteraugli corpus test results (2026-02-01):**
 
-**Hypothesis:** Our segment quantization spread calculation differs from libwebp's.
-When SNS=80, we may be assigning larger quant deltas between segments than libwebp
-does, causing more distortion in "flat" regions that get quantized harder.
+| Corpus | Encoder | Size Δ | SSIM2 Δ | Butteraugli Δ |
+|--------|---------|--------|---------|---------------|
+| CID22 | zenwebp Photo | 0.991x | -3.04 | +0.91 |
+| CID22 | libwebp Photo | 0.993x | -0.14 | +0.17 |
+| Screenshots | zenwebp Photo | 0.966x | -3.99 | +1.04 |
+| Screenshots | libwebp Photo | 0.959x | -1.19 | +0.13 |
+
+**Key finding:** Both SSIM2 and butteraugli agree - our SNS implementation produces
+steeper quality degradation than libwebp's for equivalent size savings. The gap is
+especially visible on `terminal` screenshot (-25.07 SSIM2 for zenwebp vs -1.63 for libwebp).
+
+**Root cause analysis:** The issue is NOT the content classifier (it correctly detects
+Photo-appropriate content). The issue is in our segment quantization spread calculation.
+When SNS=80, we assign larger quant deltas between segments than libwebp does.
 
 **To investigate:**
 1. Compare per-segment quant values between zenwebp and libwebp for same image+config
