@@ -34,15 +34,32 @@ See global ~/.claude/CLAUDE.md for general instructions.
 | IDCT | 6.53% | Inverse transform (SIMD) |
 | t_transform | 3.24% | Spectral distortion (SIMD) |
 
-### Quality vs libwebp (2026-01-24)
-- File sizes: 1.045x-1.135x of libwebp (down from 1.17-1.41x before TokenType fix)
+### Quality vs libwebp (2026-02-01)
+- File sizes: Kodak aggregate 1.014x of libwebp (Default preset, matched config)
+- Screenshots: 1.055x of libwebp (Default preset)
 - PSNR gap: ~1.35 dB behind at equal BPP
 
-**File size comparison (kodak/1.png Q75):**
-| Encoder | File Size | vs libwebp |
-|---------|-----------|------------|
-| libwebp method 6 | 73KB | 1.00x |
-| zenwebp method 4 | 76.5KB | 1.045x |
+**Kodak Q75 Default preset (method 4, matched config vs webpx):**
+| Metric | Value |
+|--------|-------|
+| Aggregate ratio | 1.014x |
+| Range | 0.997x - 1.066x per image |
+
+**Preset tuning parameters now active (2026-02-01):**
+| Preset | SNS | Filter | Sharp | Segs |
+|--------|-----|--------|-------|------|
+| Default | 50 | 60 | 0 | 4 |
+| Picture | 80 | 35 | 4 | 4 |
+| Photo | 80 | 30 | 3 | 4 |
+| Drawing | 25 | 10 | 6 | 4 |
+| Icon | 0 | 0 | 0 | 4 |
+| Text | 0 | 0 | 0 | 2 |
+| Auto | detected | detected | detected | detected |
+
+**Preset::Auto content detection:**
+- Kodak (photos) → detected as Photo (1.000x ratio vs manual Photo)
+- Screenshots → detected as Drawing/Text
+- Small images (≤128x128) → detected as Icon
 
 **TokenType fix (2026-01-24):**
 The TokenType enum had I16DC and I16AC values swapped compared to libwebp:
@@ -97,10 +114,11 @@ We're **faster** than libwebp with trellis (65ms vs 75ms), but produce larger fi
 - `FTransform_SSE2` / `ITransform_SSE2` - faster than our SIMD
 
 ### Key Files
-- `src/vp8_encoder.rs` - Main encoder, mode selection
-- `src/vp8_cost.rs` - Cost estimation, trellis quantization
-- `src/simd_sse.rs` - SIMD implementations
-- `src/encoder.rs` - Public API, EncoderParams
+- `src/encoder/vp8.rs` - Main encoder, mode selection, segment assignment
+- `src/encoder/api.rs` - Public API, EncoderConfig, EncoderParams, Preset enum
+- `src/encoder/analysis.rs` - DCT analysis, k-means clustering, auto-detection classifier
+- `src/encoder/cost.rs` - Cost estimation, trellis quantization, filter level computation
+- `src/common/types.rs` - Segment struct, init_matrices, quantization tables
 
 ### no_std Support (2026-01-23)
 
