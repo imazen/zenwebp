@@ -30,7 +30,7 @@ fn main() {
     let image_path = args
         .get(1)
         .map(|s| s.as_str())
-        .unwrap_or(concat!(env!("HOME"), "/work/codec-corpus/kodak/1.png"));
+        .unwrap_or("/mnt/v/work/codec-corpus/CID22/CID22-512/validation/792079.png");
     let quality: u8 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(75);
     let iterations: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(10);
     let method: u8 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(4);

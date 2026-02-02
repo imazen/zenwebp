@@ -9,12 +9,12 @@ See global ~/.claude/CLAUDE.md for general instructions.
 **Method Parameter Added** - Speed/quality tradeoff (0-6):
 | Method | Time | Throughput | File Size | Notes |
 |--------|------|------------|-----------|-------|
-| 0 | 39ms | 10.2 MPix/s | 101KB | I16-only, no trellis |
-| 2 | 56ms | 7.1 MPix/s | 87KB | Limited I4 (3 modes), no trellis |
-| 4 | 92ms | 4.3 MPix/s | 76KB | Full I4 search (10 modes), trellis |
-| 6 | 122ms | 3.21 MPix/s | 76KB | Full search, trellis |
+| 0 | 22ms | 11.9 MPix/s | 13.3KB | I16-only, no trellis |
+| 2 | 31ms | 8.6 MPix/s | 12.5KB | Limited I4 (3 modes), no trellis |
+| 4 | 44ms | 6.0 MPix/s | 11.8KB | Full I4 search (10 modes), trellis |
+| 6 | 45ms | 5.8 MPix/s | 11.8KB | Full search, trellis |
 
-*Benchmark: 768x512 Kodak image at Q75, 20 iterations, release mode*
+*Benchmark: 512x512 CID22 image (792079) at Q75, 20 iterations, release mode*
 
 ### Recent SIMD Optimizations
 - **SIMD quantization** - `wide::i64x4` for simple quantize path (29% speedup for methods 0-3, 2026-01-23)
