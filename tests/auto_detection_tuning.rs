@@ -95,6 +95,32 @@ fn ssim2(original_rgb: &[u8], webp_bytes: &[u8], w: u32, h: u32) -> f64 {
     compute_frame_ssimulacra2(orig, dec).unwrap()
 }
 
+fn butteraugli_score(original_rgb: &[u8], webp_bytes: &[u8], w: u32, h: u32) -> f64 {
+    use butteraugli::{butteraugli, ButteraugliParams, RGB8};
+    use imgref::Img;
+
+    let (decoded, dw, dh) = zenwebp::decode_rgb(webp_bytes).unwrap();
+    assert_eq!((dw, dh), (w, h));
+
+    // Convert to RGB8 pixel slices
+    let orig_pixels: Vec<RGB8> = original_rgb
+        .chunks_exact(3)
+        .map(|p| RGB8::new(p[0], p[1], p[2]))
+        .collect();
+    let dec_pixels: Vec<RGB8> = decoded
+        .chunks_exact(3)
+        .map(|p| RGB8::new(p[0], p[1], p[2]))
+        .collect();
+
+    let orig_img = Img::new(orig_pixels, w as usize, h as usize);
+    let dec_img = Img::new(dec_pixels, w as usize, h as usize);
+
+    let params = ButteraugliParams::default();
+    butteraugli(orig_img.as_ref(), dec_img.as_ref(), &params)
+        .map(|r| r.score)
+        .unwrap_or(f64::MAX)
+}
+
 /// Get classifier diagnostics for an RGB image by converting to YUV and running analysis.
 fn classify_rgb(rgb: &[u8], w: u32, h: u32) -> zenwebp::ClassifierDiag {
     let width = w as usize;
@@ -119,10 +145,9 @@ fn classify_rgb(rgb: &[u8], w: u32, h: u32) -> zenwebp::ClassifierDiag {
     let u_buf = vec![128u8; uv_stride * mb_h * 8];
     let v_buf = vec![128u8; uv_stride * mb_h * 8];
 
-    let (_mb_alphas, alpha_histogram) =
-        analyze_image(&y_buf, &u_buf, &v_buf, width, height, y_stride, uv_stride);
+    let analysis = analyze_image(&y_buf, &u_buf, &v_buf, width, height, y_stride, uv_stride);
 
-    classify_image_type_diag(&y_buf, width, height, y_stride, &alpha_histogram)
+    classify_image_type_diag(&y_buf, width, height, y_stride, &analysis.alpha_histogram)
 }
 
 fn ct_label(ct: ContentType) -> &'static str {
@@ -145,11 +170,16 @@ struct ImageResult {
     zen_auto_ss: f64,
     zen_default_ss: f64,
     zen_photo_ss: f64,
+    zen_auto_ba: f64,
+    zen_default_ba: f64,
+    zen_photo_ba: f64,
     // libwebp (via webpx)
     wpx_default_size: usize,
     wpx_photo_size: usize,
     wpx_default_ss: f64,
     wpx_photo_ss: f64,
+    wpx_default_ba: f64,
+    wpx_photo_ba: f64,
     // classifier
     uniformity: f32,
 }
@@ -205,6 +235,13 @@ fn auto_detection_cid22() {
             let ss_wpx_default = ssim2(&rgb, &wpx_default, w, h);
             let ss_wpx_photo = ssim2(&rgb, &wpx_photo, w, h);
 
+            // Compute butteraugli scores
+            let ba_zen_auto = butteraugli_score(&rgb, &zen_auto, w, h);
+            let ba_zen_default = butteraugli_score(&rgb, &zen_default, w, h);
+            let ba_zen_photo = butteraugli_score(&rgb, &zen_photo, w, h);
+            let ba_wpx_default = butteraugli_score(&rgb, &wpx_default, w, h);
+            let ba_wpx_photo = butteraugli_score(&rgb, &wpx_photo, w, h);
+
             println!(
                 "{:<14} {:>5} {:>6} {:>6} {:>6} {:>6} {:>6}  {:>5.1} {:>5.1} {:>5.1} {:>5.1} {:>5.1}  {:>4.2}",
                 &name[..name.len().min(14)],
@@ -225,10 +262,15 @@ fn auto_detection_cid22() {
                 zen_auto_ss: ss_zen_auto,
                 zen_default_ss: ss_zen_default,
                 zen_photo_ss: ss_zen_photo,
+                zen_auto_ba: ba_zen_auto,
+                zen_default_ba: ba_zen_default,
+                zen_photo_ba: ba_zen_photo,
                 wpx_default_size: wpx_default.len(),
                 wpx_photo_size: wpx_photo.len(),
                 wpx_default_ss: ss_wpx_default,
                 wpx_photo_ss: ss_wpx_photo,
+                wpx_default_ba: ba_wpx_default,
+                wpx_photo_ba: ba_wpx_photo,
                 uniformity: diag.uniformity,
             });
         }
@@ -250,51 +292,64 @@ fn auto_detection_cid22() {
     let a_wpx_default = avg(|r| r.wpx_default_ss);
     let a_wpx_photo = avg(|r| r.wpx_photo_ss);
 
+    // Butteraugli averages
+    let ba_zen_auto = avg(|r| r.zen_auto_ba);
+    let ba_zen_default = avg(|r| r.zen_default_ba);
+    let ba_zen_photo = avg(|r| r.zen_photo_ba);
+    let ba_wpx_default = avg(|r| r.wpx_default_ba);
+    let ba_wpx_photo = avg(|r| r.wpx_photo_ba);
+
     println!("{}", "-".repeat(130));
     println!(
-        "\n  {:>20} {:>12} {:>12} {:>10} {:>10}",
-        "", "Size", "SSIM2 avg", "Size delta", "SSIM2 delta"
+        "\n  {:>20} {:>12} {:>12} {:>12} {:>10} {:>10} {:>10}",
+        "", "Size", "SSIM2 avg", "BA avg", "Size Δ", "SSIM2 Δ", "BA Δ"
     );
 
     println!(
-        "  {:>20} {:>12} {:>12.2}",
-        "zenwebp Default", t_zen_default, a_zen_default
+        "  {:>20} {:>12} {:>12.2} {:>12.2}",
+        "zenwebp Default", t_zen_default, a_zen_default, ba_zen_default
     );
     println!(
-        "  {:>20} {:>12} {:>12.2} {:>9.3}x {:>+10.2}",
+        "  {:>20} {:>12} {:>12.2} {:>12.2} {:>9.3}x {:>+10.2} {:>+10.2}",
         "zenwebp Photo",
         t_zen_photo,
         a_zen_photo,
+        ba_zen_photo,
         t_zen_photo as f64 / t_zen_default as f64,
         a_zen_photo - a_zen_default,
+        ba_zen_photo - ba_zen_default,
     );
     println!(
-        "  {:>20} {:>12} {:>12.2} {:>9.3}x {:>+10.2}",
+        "  {:>20} {:>12} {:>12.2} {:>12.2} {:>9.3}x {:>+10.2} {:>+10.2}",
         "zenwebp Auto",
         t_zen_auto,
         a_zen_auto,
+        ba_zen_auto,
         t_zen_auto as f64 / t_zen_default as f64,
         a_zen_auto - a_zen_default,
+        ba_zen_auto - ba_zen_default,
     );
     println!();
     println!(
-        "  {:>20} {:>12} {:>12.2}",
-        "libwebp Default", t_wpx_default, a_wpx_default
+        "  {:>20} {:>12} {:>12.2} {:>12.2}",
+        "libwebp Default", t_wpx_default, a_wpx_default, ba_wpx_default
     );
     println!(
-        "  {:>20} {:>12} {:>12.2} {:>9.3}x {:>+10.2}",
+        "  {:>20} {:>12} {:>12.2} {:>12.2} {:>9.3}x {:>+10.2} {:>+10.2}",
         "libwebp Photo",
         t_wpx_photo,
         a_wpx_photo,
+        ba_wpx_photo,
         t_wpx_photo as f64 / t_wpx_default as f64,
         a_wpx_photo - a_wpx_default,
+        ba_wpx_photo - ba_wpx_default,
     );
 
     // Per-image Photo-vs-Default delta comparison
     println!("\n  Photo-vs-Default tradeoff per image (Photo-detected only):");
     println!(
-        "  {:<14} {:>8} {:>8} {:>8} {:>8}",
-        "Image", "zen Δsz%", "zen Δss", "wpx Δsz%", "wpx Δss"
+        "  {:<14} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}",
+        "Image", "zen Δsz%", "zen Δss", "zen Δba", "wpx Δsz%", "wpx Δss", "wpx Δba"
     );
     for r in &results {
         if r.det != ContentType::Photo {
@@ -302,15 +357,19 @@ fn auto_detection_cid22() {
         }
         let zen_size_delta = (r.zen_photo_size as f64 / r.zen_default_size as f64 - 1.0) * 100.0;
         let zen_ss_delta = r.zen_photo_ss - r.zen_default_ss;
+        let zen_ba_delta = r.zen_photo_ba - r.zen_default_ba;
         let wpx_size_delta = (r.wpx_photo_size as f64 / r.wpx_default_size as f64 - 1.0) * 100.0;
         let wpx_ss_delta = r.wpx_photo_ss - r.wpx_default_ss;
+        let wpx_ba_delta = r.wpx_photo_ba - r.wpx_default_ba;
         println!(
-            "  {:<14} {:>+7.1}% {:>+8.2} {:>+7.1}% {:>+8.2}",
+            "  {:<14} {:>+7.1}% {:>+8.2} {:>+8.2} {:>+7.1}% {:>+8.2} {:>+8.2}",
             &r.name[..r.name.len().min(14)],
             zen_size_delta,
             zen_ss_delta,
+            zen_ba_delta,
             wpx_size_delta,
             wpx_ss_delta,
+            wpx_ba_delta,
         );
     }
 }
@@ -354,6 +413,13 @@ fn auto_detection_screenshots() {
             let ss_wpx_default = ssim2(&rgb, &wpx_default, w, h);
             let ss_wpx_photo = ssim2(&rgb, &wpx_photo, w, h);
 
+            // Compute butteraugli scores
+            let ba_zen_auto = butteraugli_score(&rgb, &zen_auto, w, h);
+            let ba_zen_default = butteraugli_score(&rgb, &zen_default, w, h);
+            let ba_zen_photo = butteraugli_score(&rgb, &zen_photo, w, h);
+            let ba_wpx_default = butteraugli_score(&rgb, &wpx_default, w, h);
+            let ba_wpx_photo = butteraugli_score(&rgb, &wpx_photo, w, h);
+
             println!(
                 "{:<14} {:>6} {:>6} {:>6} {:>6} {:>6}  {:>5.1} {:>5.1} {:>5.1} {:>5.1} {:>5.1}",
                 &name[..name.len().min(14)],
@@ -378,10 +444,15 @@ fn auto_detection_screenshots() {
                 zen_auto_ss: ss_zen_auto,
                 zen_default_ss: ss_zen_default,
                 zen_photo_ss: ss_zen_photo,
+                zen_auto_ba: ba_zen_auto,
+                zen_default_ba: ba_zen_default,
+                zen_photo_ba: ba_zen_photo,
                 wpx_default_size: wpx_default.len(),
                 wpx_photo_size: wpx_photo.len(),
                 wpx_default_ss: ss_wpx_default,
                 wpx_photo_ss: ss_wpx_photo,
+                wpx_default_ba: ba_wpx_default,
+                wpx_photo_ba: ba_wpx_photo,
                 uniformity: diag.uniformity,
             });
         }
@@ -403,64 +474,81 @@ fn auto_detection_screenshots() {
     let a_wpx_default = avg(|r| r.wpx_default_ss);
     let a_wpx_photo = avg(|r| r.wpx_photo_ss);
 
+    // Butteraugli averages
+    let ba_zen_auto = avg(|r| r.zen_auto_ba);
+    let ba_zen_default = avg(|r| r.zen_default_ba);
+    let ba_zen_photo = avg(|r| r.zen_photo_ba);
+    let ba_wpx_default = avg(|r| r.wpx_default_ba);
+    let ba_wpx_photo = avg(|r| r.wpx_photo_ba);
+
     println!("{}", "-".repeat(110));
     println!(
-        "\n  {:>20} {:>12} {:>12} {:>10} {:>10}",
-        "", "Size", "SSIM2 avg", "Size delta", "SSIM2 delta"
+        "\n  {:>20} {:>12} {:>12} {:>12} {:>10} {:>10} {:>10}",
+        "", "Size", "SSIM2 avg", "BA avg", "Size Δ", "SSIM2 Δ", "BA Δ"
     );
 
     println!(
-        "  {:>20} {:>12} {:>12.2}",
-        "zenwebp Default", t_zen_default, a_zen_default
+        "  {:>20} {:>12} {:>12.2} {:>12.2}",
+        "zenwebp Default", t_zen_default, a_zen_default, ba_zen_default
     );
     println!(
-        "  {:>20} {:>12} {:>12.2} {:>9.3}x {:>+10.2}",
+        "  {:>20} {:>12} {:>12.2} {:>12.2} {:>9.3}x {:>+10.2} {:>+10.2}",
         "zenwebp Photo",
         t_zen_photo,
         a_zen_photo,
+        ba_zen_photo,
         t_zen_photo as f64 / t_zen_default as f64,
         a_zen_photo - a_zen_default,
+        ba_zen_photo - ba_zen_default,
     );
     println!(
-        "  {:>20} {:>12} {:>12.2} {:>9.3}x {:>+10.2}",
+        "  {:>20} {:>12} {:>12.2} {:>12.2} {:>9.3}x {:>+10.2} {:>+10.2}",
         "zenwebp Auto",
         t_zen_auto,
         a_zen_auto,
+        ba_zen_auto,
         t_zen_auto as f64 / t_zen_default as f64,
         a_zen_auto - a_zen_default,
+        ba_zen_auto - ba_zen_default,
     );
     println!();
     println!(
-        "  {:>20} {:>12} {:>12.2}",
-        "libwebp Default", t_wpx_default, a_wpx_default
+        "  {:>20} {:>12} {:>12.2} {:>12.2}",
+        "libwebp Default", t_wpx_default, a_wpx_default, ba_wpx_default
     );
     println!(
-        "  {:>20} {:>12} {:>12.2} {:>9.3}x {:>+10.2}",
+        "  {:>20} {:>12} {:>12.2} {:>12.2} {:>9.3}x {:>+10.2} {:>+10.2}",
         "libwebp Photo",
         t_wpx_photo,
         a_wpx_photo,
+        ba_wpx_photo,
         t_wpx_photo as f64 / t_wpx_default as f64,
         a_wpx_photo - a_wpx_default,
+        ba_wpx_photo - ba_wpx_default,
     );
 
     // Per-image comparison
     println!("\n  Photo-vs-Default tradeoff per image:");
     println!(
-        "  {:<14} {:>8} {:>8} {:>8} {:>8}",
-        "Image", "zen Δsz%", "zen Δss", "wpx Δsz%", "wpx Δss"
+        "  {:<14} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}",
+        "Image", "zen Δsz%", "zen Δss", "zen Δba", "wpx Δsz%", "wpx Δss", "wpx Δba"
     );
     for r in &results {
         let zen_size_delta = (r.zen_photo_size as f64 / r.zen_default_size as f64 - 1.0) * 100.0;
         let zen_ss_delta = r.zen_photo_ss - r.zen_default_ss;
+        let zen_ba_delta = r.zen_photo_ba - r.zen_default_ba;
         let wpx_size_delta = (r.wpx_photo_size as f64 / r.wpx_default_size as f64 - 1.0) * 100.0;
         let wpx_ss_delta = r.wpx_photo_ss - r.wpx_default_ss;
+        let wpx_ba_delta = r.wpx_photo_ba - r.wpx_default_ba;
         println!(
-            "  {:<14} {:>+7.1}% {:>+8.2} {:>+7.1}% {:>+8.2}",
+            "  {:<14} {:>+7.1}% {:>+8.2} {:>+8.2} {:>+7.1}% {:>+8.2} {:>+8.2}",
             &r.name[..r.name.len().min(14)],
             zen_size_delta,
             zen_ss_delta,
+            zen_ba_delta,
             wpx_size_delta,
             wpx_ss_delta,
+            wpx_ba_delta,
         );
     }
 }

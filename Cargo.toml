@@ -33,6 +33,7 @@ wide = { version = "1.1.1", optional = true }
 
 [dev-dependencies]
 yuv = "0.8"
+butteraugli = "0.4.0"
 dssim-core = "3.4"
 fast-ssim2 = "0.6.5"
 imgref = "1.10"
