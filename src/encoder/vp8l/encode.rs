@@ -112,8 +112,21 @@ fn encode_argb(
 
     // Predictor transform (applied second, on subtract-green'd image)
     if use_predictor && palette_transform.is_none() {
-        // Choose best predictors per block and compute residuals
-        let pred_bits = config.predictor_bits.clamp(2, 8);
+        // Auto-detect predictor bits from method and image size (matching libwebp)
+        let pred_bits = if config.predictor_bits == 0 {
+            let histo_bits = get_histo_bits(width, height, config.quality.method);
+            let transform_bits = get_transform_bits(config.quality.method, histo_bits);
+            clamp_bits(
+                width,
+                height,
+                transform_bits,
+                MIN_TRANSFORM_BITS,
+                MAX_TRANSFORM_BITS,
+                MAX_PREDICTOR_IMAGE_SIZE,
+            )
+        } else {
+            config.predictor_bits.clamp(2, 8)
+        };
         let predictor_data = apply_predictor_transform(argb, width, height, pred_bits);
 
         // Signal predictor transform
@@ -127,7 +140,20 @@ fn encode_argb(
 
     // Cross-color transform (applied third, on predictor residuals)
     if use_cross_color && palette_transform.is_none() {
-        let cc_bits = config.cross_color_bits.clamp(2, 8);
+        let cc_bits = if config.cross_color_bits == 0 {
+            let histo_bits = get_histo_bits(width, height, config.quality.method);
+            let transform_bits = get_transform_bits(config.quality.method, histo_bits);
+            clamp_bits(
+                width,
+                height,
+                transform_bits,
+                MIN_TRANSFORM_BITS,
+                MAX_TRANSFORM_BITS,
+                MAX_PREDICTOR_IMAGE_SIZE,
+            )
+        } else {
+            config.cross_color_bits.clamp(2, 8)
+        };
         let cross_color_data =
             apply_cross_color_transform(argb, width, height, cc_bits, config.quality.quality);
 
@@ -360,24 +386,68 @@ const MAX_HUFF_IMAGE_SIZE: usize = 2600;
 /// Min/max Huffman bits range (VP8L spec: 3 bits, range [2, 9]).
 const MIN_HUFFMAN_BITS: u8 = 2;
 const MAX_HUFFMAN_BITS: u8 = 9; // 2 + (1 << 3) - 1
+/// Transform bits range (VP8L spec).
+const MIN_TRANSFORM_BITS: u8 = 2;
+const MAX_TRANSFORM_BITS: u8 = 8;
+/// Maximum predictor/cross-color sub-image size.
+const MAX_PREDICTOR_IMAGE_SIZE: usize = 1 << 14; // 16384
+
+/// Clamp bits to keep sub-image size within limits (matching libwebp's ClampBits).
+fn clamp_bits(
+    width: usize,
+    height: usize,
+    bits: u8,
+    min_bits: u8,
+    max_bits: u8,
+    image_size_max: usize,
+) -> u8 {
+    let mut bits = bits.clamp(min_bits, max_bits);
+    let mut image_size =
+        subsample_size(width as u32, bits) as usize * subsample_size(height as u32, bits) as usize;
+    while bits < max_bits && image_size > image_size_max {
+        bits += 1;
+        image_size = subsample_size(width as u32, bits) as usize
+            * subsample_size(height as u32, bits) as usize;
+    }
+    // Don't reduce below needed: if image_size == 1 at current bits,
+    // try going smaller
+    while bits > min_bits {
+        let smaller_size = subsample_size(width as u32, bits - 1) as usize
+            * subsample_size(height as u32, bits - 1) as usize;
+        if smaller_size != 1 {
+            break;
+        }
+        bits -= 1;
+    }
+    bits
+}
 
 /// Calculate optimal histogram bits based on method and image size.
 /// Matches libwebp's GetHistoBits + ClampBits.
 fn get_histo_bits(width: usize, height: usize, method: u8) -> u8 {
     // Make tile size a function of encoding method
     let histo_bits = 7i32 - method as i32;
-    let mut bits = histo_bits.clamp(MIN_HUFFMAN_BITS as i32, MAX_HUFFMAN_BITS as i32) as u8;
+    clamp_bits(
+        width,
+        height,
+        histo_bits.clamp(MIN_HUFFMAN_BITS as i32, MAX_HUFFMAN_BITS as i32) as u8,
+        MIN_HUFFMAN_BITS,
+        MAX_HUFFMAN_BITS,
+        MAX_HUFF_IMAGE_SIZE,
+    )
+}
 
-    // Clamp to keep number of tiles under MAX_HUFF_IMAGE_SIZE
-    let mut image_size =
-        subsample_size(width as u32, bits) as usize * subsample_size(height as u32, bits) as usize;
-    while bits < MAX_HUFFMAN_BITS && image_size > MAX_HUFF_IMAGE_SIZE {
-        bits += 1;
-        image_size = subsample_size(width as u32, bits) as usize
-            * subsample_size(height as u32, bits) as usize;
-    }
-
-    bits
+/// Calculate optimal transform bits (predictor/cross-color) based on method.
+/// Matches libwebp's GetTransformBits.
+fn get_transform_bits(method: u8, histo_bits: u8) -> u8 {
+    let max_transform_bits: u8 = if method < 4 {
+        6
+    } else if method > 4 {
+        4
+    } else {
+        5
+    };
+    histo_bits.min(max_transform_bits)
 }
 
 /// Pre-built Huffman codes for one histogram group (5 trees).

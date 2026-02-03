@@ -83,9 +83,9 @@ pub struct Vp8lConfig {
     pub use_palette: bool,
     /// Use meta-Huffman (spatially-varying codes).
     pub use_meta_huffman: bool,
-    /// Predictor transform block size bits (2-8).
+    /// Predictor transform block size bits (0 = auto-detect from method, 2-8 = explicit).
     pub predictor_bits: u8,
-    /// Cross-color transform block size bits (2-8).
+    /// Cross-color transform block size bits (0 = auto-detect from method, 2-8 = explicit).
     pub cross_color_bits: u8,
 }
 
@@ -99,8 +99,8 @@ impl Default for Vp8lConfig {
             use_subtract_green: true,
             use_palette: true,
             use_meta_huffman: true, // Enable meta-Huffman for spatially-varying codes
-            predictor_bits: 2,      // 4x4 blocks (smallest valid per VP8L spec)
-            cross_color_bits: 4,
+            predictor_bits: 0,      // Auto-detect from method (matching libwebp)
+            cross_color_bits: 0,    // Auto-detect from method (matching libwebp)
         }
     }
 }
