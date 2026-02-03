@@ -414,6 +414,48 @@ Completed:
 - [ ] get_cost_luma16 - 3.9x slower
 - [ ] tdisto_16x16 - 3.0x slower (despite having some SIMD)
 
+## VP8L (Lossless) Encoder Status (2026-02-03)
+
+**Compression ratio vs libwebp (CID22 corpus, Q75, M4):**
+- Training set (209 images): **0.996x** (0.4% smaller)
+- Validation set (41 images): **0.987x** (1.3% smaller)
+
+**Implemented features:**
+- All 14 predictor modes with per-block selection
+- Cross-color transform, subtract green transform
+- Color indexing (palette) with sorting, delta encoding, pixel bundling
+- LZ77 Standard, RLE, Box strategies with TraceBackwards DP
+- Meta-Huffman spatially-varying codes with histogram clustering
+- Color cache with entropy-based size selection
+- imagequant integration (`quantize` feature) for near-lossless palette encoding
+
+**Outlier images:**
+- 3616956: 1.128x (312KB vs libwebp 277KB) — cache selection overvalues high cache_bits
+- 2079234: 1.059x (300KB vs libwebp 283KB) — same cache issue + LZ77 gap
+
+**Cache selection bug (2026-02-03, IDENTIFIED):**
+Entropy estimation picks cache_bits=8-10 for outlier images, but actual output is smaller
+with cache_bits=0-2. Root cause: LZ77 refs are optimized for one cache size, and entropy
+estimation at other sizes is misleading. With forced cache_bits=2, 3616956 goes from
+312KB → 307KB (1.6% improvement). Even so, still 11% larger than libwebp.
+
+**Config fix:** `Vp8lConfig.cache_bits` changed from `u8` to `Option<u8>`:
+- `None` = auto-detect (default)
+- `Some(0)` = disable cache
+- `Some(N)` = max N bits search
+
+**Key files:**
+- `src/encoder/vp8l/encode.rs` — Main encoder pipeline
+- `src/encoder/vp8l/backward_refs.rs` — LZ77 + TraceBackwards + cache selection
+- `src/encoder/vp8l/histogram.rs` — Symbol frequency histograms
+- `src/encoder/vp8l/meta_huffman.rs` — Histogram clustering
+- `src/encoder/vp8l/entropy.rs` — Entropy estimation (matches libwebp)
+- `src/encoder/vp8l/huffman.rs` — Huffman tree construction
+- `src/encoder/vp8l/transforms.rs` — Predictor, cross-color, palette transforms
+- `src/encoder/color_quantize.rs` — imagequant integration (requires `quantize` feature)
+
+**Diagnostic examples:** `cache_test`, `lossless_benchmark` (see examples/)
+
 ## Known Bugs
 
 (none currently)
