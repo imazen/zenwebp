@@ -247,48 +247,53 @@ We're **faster** than libwebp with trellis (65ms vs 75ms), but produce larger fi
 
 ### VP8L (Lossless) Encoder (2026-02-03)
 
-New standalone VP8L lossless encoder implementation in `src/encoder/vp8l/`:
+VP8L lossless encoder implementation in `src/encoder/vp8l/`:
 
-**Status:** Working - produces valid decodable VP8L bitstreams. Current compression ratio
-vs libwebp: **~1.50x larger** (LZ77 and transform optimizations still needed for parity).
+**Status:** Working, beats libwebp compression. CID22 corpus (198 images): **0.998x** of libwebp
+(0.2% smaller on average). Only 2 images > 1.05x (512x512 all-unique-color photos).
+
+**Compression progression:**
+| Date | Change | 10-img | 50-img | 198-img |
+|------|--------|--------|--------|---------|
+| Feb 2 | Initial | 1.228x | - | - |
+| Feb 3 | Predictors | 1.075x | - | - |
+| Feb 3 | Cross-color | 1.060x | - | - |
+| Feb 3 | AnalyzeEntropy | 1.055x | - | - |
+| Feb 3 | CostModel fix | 1.007x | 1.015x | - |
+| Feb 3 | Huffman tree fix | 1.005x | 1.011x | - |
+| Feb 3 | ExtraCost fix | **0.995x** | **0.997x** | **0.998x** |
 
 **Implemented features:**
-- Huffman tree construction with length limiting (max 15 bits)
-- Canonical Huffman codes with LSB-first bit reversal for VP8L
-- Complex tree encoding with RLE (codes 16, 17, 18)
-- LZ77 backward references with hash chain
-- Color cache support (disabled by default for now)
-- Full 14 predictor modes with per-block mode selection (2026-02-03)
+- All 14 predictor modes with per-block entropy-based selection
 - Subtract green transform
+- Cross-color transform
+- Color cache with auto-detection (tests sizes 0-10)
+- LZ77 with hash chain, left-extension, quality-dependent search depth
+- TraceBackwards cost-based optimal parsing (forward DP)
+- Huffman tree construction matching libwebp (count_min doubling, tie-breaking)
+- Meta-Huffman spatially-varying codes with 3-phase clustering
+- AnalyzeEntropy transform selection (5 modes: direct/spatial/subgreen/both/palette)
+- OptimizeHuffmanForRle preprocessing
 - Simple/two-symbol tree encoding
+- VP8LExtraCost in histogram entropy estimation
 
 **Key files:**
-- `src/encoder/vp8l/encode.rs` - Main encoder pipeline
+- `src/encoder/vp8l/encode.rs` - Main encoder pipeline, AnalyzeEntropy
 - `src/encoder/vp8l/huffman.rs` - Huffman tree construction and encoding
-- `src/encoder/vp8l/backward_refs.rs` - LZ77 backward references
+- `src/encoder/vp8l/backward_refs.rs` - LZ77, cache selection, TraceBackwards
 - `src/encoder/vp8l/hash_chain.rs` - Hash chain for match finding
 - `src/encoder/vp8l/histogram.rs` - Symbol frequency histograms
-- `src/encoder/vp8l/transforms.rs` - Image transforms (subtract green, predictor)
-- `src/encoder/vp8l/types.rs` - Core data structures (PixOrCopy, BackwardRefs)
+- `src/encoder/vp8l/entropy.rs` - Entropy cost estimation, PopulationCost
+- `src/encoder/vp8l/meta_huffman.rs` - Histogram clustering
+- `src/encoder/vp8l/cost_model.rs` - TraceBackwards DP cost model
+- `src/encoder/vp8l/transforms.rs` - Image transforms
+- `src/encoder/vp8l/types.rs` - Core data structures
 
-**Key fixes (2026-02-03):**
-- Tree depth starts at 0, not 1 (off-by-one fix)
-- `ensure_valid_code_lengths` fixes Kraft inequality after length clamping
-- Trivial trees (single symbol) skip bit writes during image data encoding
-- RLE encoding matches libwebp's CodeRepeatedZeros/CodeRepeatedValues
-- Fixed modes 5/6/7 swapped vs VP8L spec
-- Fixed ClampAddSubtractHalf (mode 13) missing top_left parameter
-- Fixed Select predictor (mode 11) tie-breaking to match decoder
-- Fixed top_right edge wrapping at x=width-1 to match decoder memory layout
-- Predictor sub-image properly Huffman-coded for variable modes per block
-- Default predictor_bits changed from 9 to 4 (16x16 blocks)
-
-**Remaining work for compression parity:**
-- Optimized LZ77 match finding with quality-dependent search depth
-- Color cache optimization (currently disabled)
-- Cross-color transform
-- Color indexing (palette) transform for low-color images
-- Meta-Huffman (spatially-varying codes)
+**Remaining potential improvements:**
+- Zopfli-style cost interval manager (libwebp's BackwardReferencesHashChainDistanceOnly)
+  would improve the 2 worst outlier images but is complex to implement
+- Multi-config testing at quality >= 75 (try multiple transform combinations)
+- LZ77 Box strategy for palette images with <= 16 colors
 
 ### no_std Support (2026-01-23)
 
