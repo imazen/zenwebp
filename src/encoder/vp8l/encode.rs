@@ -99,10 +99,18 @@ fn encode_argb(
     };
 
     // Apply transforms and signal them in bitstream.
-    // Order: Predictor first, then SubtractGreen (matching libwebp).
-    // The decoder reverses this order.
+    // Order: SubtractGreen → Predictor → CrossColor (matching libwebp).
+    // Subtract green first decorrelates channels so predictor works better.
+    // The decoder reverses this order (LIFO).
 
-    // Predictor transform (applied first, on original image)
+    // Subtract green transform (applied first, decorrelates R/B from G)
+    if use_subtract_green && palette_transform.is_none() {
+        writer.write_bit(true); // transform present
+        writer.write_bits(2, 2); // subtract green = 2
+        apply_subtract_green(argb);
+    }
+
+    // Predictor transform (applied second, on subtract-green'd image)
     if use_predictor && palette_transform.is_none() {
         // Choose best predictors per block and compute residuals
         let pred_bits = config.predictor_bits.clamp(2, 8);
@@ -117,7 +125,7 @@ fn encode_argb(
         write_predictor_image(&mut writer, &predictor_data);
     }
 
-    // Cross-color transform (applied second, decorrelates color channels)
+    // Cross-color transform (applied third, on predictor residuals)
     if use_cross_color && palette_transform.is_none() {
         let cc_bits = config.cross_color_bits.clamp(2, 8);
         let cross_color_data =
@@ -130,13 +138,6 @@ fn encode_argb(
 
         // Write cross-color sub-image
         write_cross_color_image(&mut writer, &cross_color_data);
-    }
-
-    // Subtract green transform (applied third, on cross-color-adjusted residuals)
-    if use_subtract_green && palette_transform.is_none() {
-        writer.write_bit(true); // transform present
-        writer.write_bits(2, 2); // subtract green = 2
-        apply_subtract_green(argb);
     }
 
     // Color indexing transform
