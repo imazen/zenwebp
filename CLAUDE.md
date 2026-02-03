@@ -6,16 +6,19 @@ See global ~/.claude/CLAUDE.md for general instructions.
 
 ### Encoder Performance vs libwebp
 
-**Method Parameter** - Speed/quality tradeoff (0-6):
-| Method | Time | File Size | vs libwebp | Notes |
-|--------|------|-----------|------------|-------|
-| 0 | 22ms | 13.1KB | 0.89x | I16-only, no trellis |
-| 2 | 31ms | 12.1KB | 1.07x | Limited I4 (3 modes), no trellis |
-| 4 | 26ms | 12.2KB | 0.99x | Full I4, trellis final |
-| 5 | 27ms | 12.2KB | 1.01x | Same as m4 (multi-pass removed) |
-| 6 | 32ms | 12.1KB | 1.03x | Trellis during mode selection |
+**Method Parameter** - Apples-to-apples comparison (792079.png, Q75, SNS=0, filter=0, segments=1):
+| Method | zenwebp | libwebp | Size Ratio | Speed | Notes |
+|--------|---------|---------|------------|-------|-------|
+| 0 | 13,988 | 16,678 | **0.84x** | 2.6x | I16-only - we're 16% smaller! |
+| 1 | 13,988 | 16,188 | **0.86x** | 1.5x | I16-only - we're 14% smaller! |
+| 2 | 12,554 | 13,440 | **0.93x** | 2.4x | Limited I4 - we're 7% smaller! |
+| 3 | 12,554 | 12,018 | 1.05x | 1.4x | I4 dominant |
+| 4 | 12,164 | 12,018 | 1.01x | 2.0x | Full I4 + trellis |
+| 5 | 12,164 | 11,952 | 1.02x | 1.8x | Same as m4 |
+| 6 | 12,020 | 11,720 | 1.03x | 2.2x | Trellis during mode selection |
 
-*Benchmark: 512x512 CID22 image (792079) at Q75, SNS=0, filter=0, segments=1*
+**Key finding (2026-02-02):** Our I16 path produces 7-16% smaller files than libwebp!
+The 1-5% gap at methods 3-6 is from I4 coefficient encoding efficiency.
 
 **CID22 corpus aggregate (Q75, SNS=0, filter=0, segments=1):**
 | Method | zenwebp | libwebp | Ratio |
