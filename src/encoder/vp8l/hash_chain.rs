@@ -61,8 +61,7 @@ impl HashChain {
         let mut argb_comp = argb[0] == argb[1];
         let mut pos = 0usize;
         while pos < size.saturating_sub(2) {
-            let argb_comp_next =
-                pos + 2 < size && argb[pos + 1] == argb[pos + 2];
+            let argb_comp_next = pos + 2 < size && argb[pos + 1] == argb[pos + 2];
 
             if argb_comp && argb_comp_next {
                 // Consecutive identical pixels - use (color, run_length) hash
@@ -142,13 +141,8 @@ impl HashChain {
 
             // Heuristic: try previous pixel
             if base_position >= 1 {
-                let curr_len = find_match_length(
-                    argb,
-                    base_position - 1,
-                    argb_start,
-                    best_length,
-                    max_len,
-                );
+                let curr_len =
+                    find_match_length(argb, base_position - 1, argb_start, best_length, max_len);
                 if curr_len > best_length {
                     best_length = curr_len;
                     best_distance = 1;

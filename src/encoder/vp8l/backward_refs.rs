@@ -297,9 +297,7 @@ fn calculate_best_cache_size(
     let cache_bits_max = cache_bits_max.min(MAX_COLOR_CACHE_BITS);
 
     // Build histograms for all cache sizes simultaneously
-    let mut histos: Vec<Histogram> = (0..=cache_bits_max)
-        .map(Histogram::new)
-        .collect();
+    let mut histos: Vec<Histogram> = (0..=cache_bits_max).map(Histogram::new).collect();
 
     // Build color caches for sizes 1..=cache_bits_max
     let mut caches: Vec<ColorCache> = (0..=cache_bits_max)

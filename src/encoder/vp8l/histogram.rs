@@ -103,11 +103,7 @@ impl Histogram {
 
     /// Build histogram from backward references with raw distances,
     /// converting to plane codes on the fly for accurate distance statistics.
-    pub fn from_refs_with_plane_codes(
-        refs: &BackwardRefs,
-        cache_bits: u8,
-        xsize: usize,
-    ) -> Self {
+    pub fn from_refs_with_plane_codes(refs: &BackwardRefs, cache_bits: u8, xsize: usize) -> Self {
         let mut h = Self::new(cache_bits);
         for token in refs.iter() {
             match *token {

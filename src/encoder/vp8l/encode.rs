@@ -7,17 +7,18 @@ use super::bitwriter::BitWriter;
 use super::color_cache::ColorCache;
 use super::histogram::{
     distance_code_extra_bits, distance_code_to_prefix, length_code_extra_bits, length_to_code,
-    Histogram,
 };
 use super::huffman::{
     build_huffman_codes, build_huffman_lengths, write_huffman_tree, write_single_entry_tree,
+    HuffmanCode,
 };
+use super::meta_huffman::{build_meta_huffman, build_single_histogram, MetaHuffmanInfo};
 use super::transforms::{
     apply_cross_color_transform, apply_predictor_transform, apply_subtract_green,
     ColorIndexTransform,
 };
 use super::types::{
-    argb_alpha, argb_blue, argb_green, argb_red, make_argb, PixOrCopy, Vp8lConfig,
+    argb_alpha, argb_blue, argb_green, argb_red, make_argb, subsample_size, PixOrCopy, Vp8lConfig,
     NUM_LENGTH_CODES, NUM_LITERAL_CODES,
 };
 
@@ -177,133 +178,172 @@ fn encode_argb(
         writer.write_bit(false);
     }
 
-    // Meta-Huffman (disabled for now - single Huffman group)
-    writer.write_bit(false);
+    // Build histogram(s) — either single or meta-Huffman with clustering
+    let use_meta = config.use_meta_huffman && width > 16 && height > 16;
+    let histo_bits = if use_meta {
+        get_histo_bits(width, height, config.quality.method)
+    } else {
+        0u8
+    };
 
-    // Build histogram
-    let histogram = Histogram::from_refs(&refs, cache_bits);
+    let meta_info = if use_meta {
+        build_meta_huffman(
+            &refs,
+            width,
+            height,
+            histo_bits,
+            cache_bits,
+            config.quality.quality,
+        )
+    } else {
+        build_single_histogram(&refs, cache_bits)
+    };
 
-    // Build Huffman codes
-    let literal_lengths = build_huffman_lengths(&histogram.literal, 15);
-    let literal_codes = build_huffman_codes(&literal_lengths);
+    // Write meta-Huffman flag and prefix image
+    if meta_info.num_histograms > 1 {
+        writer.write_bit(true); // meta-Huffman present
+        writer.write_bits((meta_info.histo_bits - 2) as u64, 3);
 
-    let red_lengths = build_huffman_lengths(&histogram.red, 15);
-    let red_codes = build_huffman_codes(&red_lengths);
+        // Write histogram prefix image (encoded as sub-image)
+        write_histogram_image(&mut writer, &meta_info);
+    } else {
+        writer.write_bit(false); // no meta-Huffman
+    }
 
-    let blue_lengths = build_huffman_lengths(&histogram.blue, 15);
-    let blue_codes = build_huffman_codes(&blue_lengths);
+    // Build Huffman codes for each histogram group (5 trees per group)
+    let mut all_codes: Vec<HuffmanGroupCodes> = Vec::with_capacity(meta_info.num_histograms);
+    for h in &meta_info.histograms {
+        all_codes.push(build_huffman_group(h));
+    }
 
-    let alpha_lengths = build_huffman_lengths(&histogram.alpha, 15);
-    let alpha_codes = build_huffman_codes(&alpha_lengths);
+    // Write all Huffman trees (5 per histogram group)
+    for group in &all_codes {
+        write_huffman_tree(&mut writer, &group.literal_lengths);
+        write_huffman_tree(&mut writer, &group.red_lengths);
+        write_huffman_tree(&mut writer, &group.blue_lengths);
+        write_huffman_tree(&mut writer, &group.alpha_lengths);
+        write_huffman_tree(&mut writer, &group.dist_lengths);
+    }
 
-    let dist_lengths = build_huffman_lengths(&histogram.distance, 15);
-    let dist_codes = build_huffman_codes(&dist_lengths);
-
-    // Write Huffman trees
-    write_huffman_tree(&mut writer, &literal_lengths);
-    write_huffman_tree(&mut writer, &red_lengths);
-    write_huffman_tree(&mut writer, &blue_lengths);
-    write_huffman_tree(&mut writer, &alpha_lengths);
-    write_huffman_tree(&mut writer, &dist_lengths);
-
-    // Write image data
+    // Write image data with spatially-varying Huffman selection
     let mut color_cache = if cache_bits > 0 {
         Some(ColorCache::new(cache_bits))
     } else {
         None
     };
 
-    // Check for trivial trees (single symbol = no bits needed)
-    let literal_trivial = literal_lengths.iter().filter(|&&l| l > 0).count() <= 1;
-    let red_trivial = red_lengths.iter().filter(|&&l| l > 0).count() <= 1;
-    let blue_trivial = blue_lengths.iter().filter(|&&l| l > 0).count() <= 1;
-    let alpha_trivial = alpha_lengths.iter().filter(|&&l| l > 0).count() <= 1;
-    let dist_trivial = dist_lengths.iter().filter(|&&l| l > 0).count() <= 1;
+    let histo_xsize = if meta_info.num_histograms > 1 {
+        subsample_size(width as u32, meta_info.histo_bits) as usize
+    } else {
+        0
+    };
 
+    let mut x = 0usize;
+    let mut y = 0usize;
     let mut argb_idx = 0usize;
 
     for token in refs.iter() {
+        // Select Huffman group for current tile
+        let group_idx = if meta_info.num_histograms > 1 {
+            let tile_idx = (y >> meta_info.histo_bits) * histo_xsize + (x >> meta_info.histo_bits);
+            meta_info.histogram_symbols[tile_idx] as usize
+        } else {
+            0
+        };
+        let codes = &all_codes[group_idx];
+
         match *token {
             PixOrCopy::Literal(argb_val) => {
-                // Write green + length code (skip if trivial)
-                if !literal_trivial {
+                if !codes.literal_trivial {
                     let g = argb_green(argb_val) as usize;
-                    writer.write_bits(literal_codes[g].code as u64, literal_codes[g].length);
+                    writer.write_bits(
+                        codes.literal_codes[g].code as u64,
+                        codes.literal_codes[g].length,
+                    );
                 }
-
-                // Write red (skip if trivial)
-                if !red_trivial {
+                if !codes.red_trivial {
                     let r = argb_red(argb_val) as usize;
-                    writer.write_bits(red_codes[r].code as u64, red_codes[r].length);
+                    writer.write_bits(codes.red_codes[r].code as u64, codes.red_codes[r].length);
                 }
-
-                // Write blue (skip if trivial)
-                if !blue_trivial {
+                if !codes.blue_trivial {
                     let b = argb_blue(argb_val) as usize;
-                    writer.write_bits(blue_codes[b].code as u64, blue_codes[b].length);
+                    writer.write_bits(codes.blue_codes[b].code as u64, codes.blue_codes[b].length);
                 }
-
-                // Write alpha (skip if trivial)
-                if !alpha_trivial {
+                if !codes.alpha_trivial {
                     let a = argb_alpha(argb_val) as usize;
-                    writer.write_bits(alpha_codes[a].code as u64, alpha_codes[a].length);
+                    writer.write_bits(
+                        codes.alpha_codes[a].code as u64,
+                        codes.alpha_codes[a].length,
+                    );
                 }
 
-                // Update cache
                 if let Some(ref mut cache) = color_cache {
                     cache.insert(argb_val);
+                }
+                x += 1;
+                if x >= width {
+                    x = 0;
+                    y += 1;
                 }
                 argb_idx += 1;
             }
             PixOrCopy::CacheIdx(idx) => {
-                // Cache code = 256 + 24 + idx (in literal tree, so check literal_trivial)
-                if !literal_trivial {
+                if !codes.literal_trivial {
                     let code = NUM_LITERAL_CODES + NUM_LENGTH_CODES + idx as usize;
-                    writer.write_bits(literal_codes[code].code as u64, literal_codes[code].length);
+                    writer.write_bits(
+                        codes.literal_codes[code].code as u64,
+                        codes.literal_codes[code].length,
+                    );
                 }
 
-                // Update cache with actual pixel to maintain state
                 if let Some(ref mut cache) = color_cache {
                     cache.insert(argb[argb_idx]);
+                }
+                x += 1;
+                if x >= width {
+                    x = 0;
+                    y += 1;
                 }
                 argb_idx += 1;
             }
             PixOrCopy::Copy { len, dist } => {
-                // Write length prefix code (in literal tree, so check literal_trivial)
                 let (len_prefix, len_extra) = length_to_code(len);
                 let len_code = NUM_LITERAL_CODES + len_prefix as usize;
-                if !literal_trivial {
+                if !codes.literal_trivial {
                     writer.write_bits(
-                        literal_codes[len_code].code as u64,
-                        literal_codes[len_code].length,
+                        codes.literal_codes[len_code].code as u64,
+                        codes.literal_codes[len_code].length,
                     );
                 }
 
-                // Write length extra bits (always written, not from Huffman tree)
                 let len_extra_bits = length_code_extra_bits(len_prefix);
                 if len_extra_bits > 0 {
                     writer.write_bits(len_extra as u64, len_extra_bits);
                 }
 
-                // Write distance prefix code (in distance tree, check dist_trivial)
                 let (dist_prefix, dist_extra) = distance_code_to_prefix(dist);
-                if !dist_trivial {
+                if !codes.dist_trivial {
                     writer.write_bits(
-                        dist_codes[dist_prefix as usize].code as u64,
-                        dist_codes[dist_prefix as usize].length,
+                        codes.dist_codes[dist_prefix as usize].code as u64,
+                        codes.dist_codes[dist_prefix as usize].length,
                     );
                 }
 
-                // Write distance extra bits (always written, not from Huffman tree)
                 let dist_extra_bits = distance_code_extra_bits(dist_prefix);
                 if dist_extra_bits > 0 {
                     writer.write_bits(dist_extra as u64, dist_extra_bits);
                 }
 
-                // Update cache with copied pixels
                 if let Some(ref mut cache) = color_cache {
                     for k in 0..len as usize {
                         cache.insert(argb[argb_idx + k]);
+                    }
+                }
+                for _ in 0..len {
+                    x += 1;
+                    if x >= width {
+                        x = 0;
+                        y += 1;
                     }
                 }
                 argb_idx += len as usize;
@@ -312,6 +352,138 @@ fn encode_argb(
     }
 
     Ok(writer.finish())
+}
+
+/// Maximum number of histogram tiles (matching libwebp's MAX_HUFF_IMAGE_SIZE).
+const MAX_HUFF_IMAGE_SIZE: usize = 2600;
+/// Min/max Huffman bits range (VP8L spec: 3 bits, range [2, 9]).
+const MIN_HUFFMAN_BITS: u8 = 2;
+const MAX_HUFFMAN_BITS: u8 = 9; // 2 + (1 << 3) - 1
+
+/// Calculate optimal histogram bits based on method and image size.
+/// Matches libwebp's GetHistoBits + ClampBits.
+fn get_histo_bits(width: usize, height: usize, method: u8) -> u8 {
+    // Make tile size a function of encoding method
+    let histo_bits = 7i32 - method as i32;
+    let mut bits = histo_bits.clamp(MIN_HUFFMAN_BITS as i32, MAX_HUFFMAN_BITS as i32) as u8;
+
+    // Clamp to keep number of tiles under MAX_HUFF_IMAGE_SIZE
+    let mut image_size =
+        subsample_size(width as u32, bits) as usize * subsample_size(height as u32, bits) as usize;
+    while bits < MAX_HUFFMAN_BITS && image_size > MAX_HUFF_IMAGE_SIZE {
+        bits += 1;
+        image_size = subsample_size(width as u32, bits) as usize
+            * subsample_size(height as u32, bits) as usize;
+    }
+
+    bits
+}
+
+/// Pre-built Huffman codes for one histogram group (5 trees).
+struct HuffmanGroupCodes {
+    literal_lengths: Vec<u8>,
+    literal_codes: Vec<HuffmanCode>,
+    literal_trivial: bool,
+    red_lengths: Vec<u8>,
+    red_codes: Vec<HuffmanCode>,
+    red_trivial: bool,
+    blue_lengths: Vec<u8>,
+    blue_codes: Vec<HuffmanCode>,
+    blue_trivial: bool,
+    alpha_lengths: Vec<u8>,
+    alpha_codes: Vec<HuffmanCode>,
+    alpha_trivial: bool,
+    dist_lengths: Vec<u8>,
+    dist_codes: Vec<HuffmanCode>,
+    dist_trivial: bool,
+}
+
+/// Build Huffman codes for one histogram.
+fn build_huffman_group(h: &super::histogram::Histogram) -> HuffmanGroupCodes {
+    let literal_lengths = build_huffman_lengths(&h.literal, 15);
+    let literal_codes = build_huffman_codes(&literal_lengths);
+    let literal_trivial = literal_lengths.iter().filter(|&&l| l > 0).count() <= 1;
+
+    let red_lengths = build_huffman_lengths(&h.red, 15);
+    let red_codes = build_huffman_codes(&red_lengths);
+    let red_trivial = red_lengths.iter().filter(|&&l| l > 0).count() <= 1;
+
+    let blue_lengths = build_huffman_lengths(&h.blue, 15);
+    let blue_codes = build_huffman_codes(&blue_lengths);
+    let blue_trivial = blue_lengths.iter().filter(|&&l| l > 0).count() <= 1;
+
+    let alpha_lengths = build_huffman_lengths(&h.alpha, 15);
+    let alpha_codes = build_huffman_codes(&alpha_lengths);
+    let alpha_trivial = alpha_lengths.iter().filter(|&&l| l > 0).count() <= 1;
+
+    let dist_lengths = build_huffman_lengths(&h.distance, 15);
+    let dist_codes = build_huffman_codes(&dist_lengths);
+    let dist_trivial = dist_lengths.iter().filter(|&&l| l > 0).count() <= 1;
+
+    HuffmanGroupCodes {
+        literal_lengths,
+        literal_codes,
+        literal_trivial,
+        red_lengths,
+        red_codes,
+        red_trivial,
+        blue_lengths,
+        blue_codes,
+        blue_trivial,
+        alpha_lengths,
+        alpha_codes,
+        alpha_trivial,
+        dist_lengths,
+        dist_codes,
+        dist_trivial,
+    }
+}
+
+/// Write the histogram prefix image (meta-Huffman sub-image).
+///
+/// Each pixel encodes a histogram group index. The index is stored
+/// as: green = (index & 0xFF), red = (index >> 8), blue = 0, alpha = 0.
+fn write_histogram_image(writer: &mut BitWriter, meta_info: &MetaHuffmanInfo) {
+    // No color cache for sub-images
+    writer.write_bit(false);
+
+    // Build histogram of group indices
+    let mut hist_green = [0u32; 280]; // green channel = low byte of index
+    let mut hist_red = [0u32; 256]; // red channel = high byte of index
+    for &sym in &meta_info.histogram_symbols {
+        hist_green[(sym & 0xFF) as usize] += 1;
+        hist_red[(sym >> 8) as usize] += 1;
+    }
+
+    // Build Huffman codes
+    let g_lengths = build_huffman_lengths(&hist_green, 15);
+    let g_codes = build_huffman_codes(&g_lengths);
+    let r_lengths = build_huffman_lengths(&hist_red, 15);
+    let r_codes = build_huffman_codes(&r_lengths);
+
+    let g_trivial = g_lengths.iter().filter(|&&l| l > 0).count() <= 1;
+    let r_trivial = r_lengths.iter().filter(|&&l| l > 0).count() <= 1;
+
+    // Write 5 Huffman trees for the sub-image
+    write_huffman_tree(writer, &g_lengths); // green (group index low byte)
+    write_huffman_tree(writer, &r_lengths); // red (group index high byte)
+    write_single_entry_tree(writer, 0); // blue (always 0)
+    write_single_entry_tree(writer, 0); // alpha (always 0)
+    write_single_entry_tree(writer, 0); // distance (unused)
+
+    // Write image data: one pixel per tile
+    for &sym in &meta_info.histogram_symbols {
+        let g = (sym & 0xFF) as usize;
+        let r = (sym >> 8) as usize;
+
+        if !g_trivial {
+            writer.write_bits(g_codes[g].code as u64, g_codes[g].length);
+        }
+        if !r_trivial {
+            writer.write_bits(r_codes[r].code as u64, r_codes[r].length);
+        }
+        // blue and alpha are trivial (0), no bits emitted
+    }
 }
 
 /// Check if palette encoding is beneficial.

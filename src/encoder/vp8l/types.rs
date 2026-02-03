@@ -98,8 +98,8 @@ impl Default for Vp8lConfig {
             use_cross_color: false, // Disabled: still hurts on predictor residuals
             use_subtract_green: true,
             use_palette: true,
-            use_meta_huffman: false, // Start without meta-huffman
-            predictor_bits: 2,       // 4x4 blocks (smallest valid per VP8L spec)
+            use_meta_huffman: true, // Enable meta-Huffman for spatially-varying codes
+            predictor_bits: 2,      // 4x4 blocks (smallest valid per VP8L spec)
             cross_color_bits: 4,
         }
     }
