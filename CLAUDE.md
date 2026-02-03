@@ -17,12 +17,12 @@ See global ~/.claude/CLAUDE.md for general instructions.
 
 *Benchmark: 512x512 CID22 image (792079) at Q75, SNS=0, filter=0, segments=1*
 
-**CID22 corpus aggregate (248 images, Q75, SNS=0, filter=0, segments=1):**
+**CID22 corpus aggregate (Q75, SNS=0, filter=0, segments=1):**
 | Method | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| 4 | 7211130 | 7283864 | **0.990x** |
+| 4 | 1161520 | 1169034 | **0.994x** |
 
-*Updated 2026-02-02 after I4 mode context fix - zenwebp now 1% smaller than libwebp*
+*CID22 validation set (41 images) - zenwebp 0.6% smaller than libwebp*
 
 **Screenshot corpus aggregate (10 images, Q75 Default):**
 | Method | zenwebp | libwebp | Ratio |
@@ -95,6 +95,8 @@ Test results on 512x512 CID22 image:
 - DCT/IDCT: SIMD i32/i16 conversion (13% speedup)
 - t_transform: SIMD Hadamard for spectral distortion
 - SSE4x4: SIMD distortion calculation
+- **LTO + inline hints** - Added LTO and codegen-units=1 to release profile, plus #[inline] to
+  hot helper functions (tdisto_*, is_flat_*, compute_filter_level). Marginal improvement (~5-8%).
 
 ### Profiler Hot Spots (method 4)
 | Function | % Runtime | Notes |
