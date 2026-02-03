@@ -245,6 +245,45 @@ We're **faster** than libwebp with trellis (65ms vs 75ms), but produce larger fi
 - `src/encoder/cost.rs` - Cost estimation, trellis quantization, filter level computation
 - `src/common/types.rs` - Segment struct, init_matrices, quantization tables
 
+### VP8L (Lossless) Encoder (2026-02-03)
+
+New standalone VP8L lossless encoder implementation in `src/encoder/vp8l/`:
+
+**Status:** Working - produces valid decodable VP8L bitstreams. Current compression ratio
+vs libwebp: **~1.37x larger** (transforms and LZ77 optimizations still needed for parity).
+
+**Implemented features:**
+- Huffman tree construction with length limiting (max 15 bits)
+- Canonical Huffman codes with LSB-first bit reversal for VP8L
+- Complex tree encoding with RLE (codes 16, 17, 18)
+- LZ77 backward references with hash chain
+- Color cache support (disabled by default for now)
+- Basic transforms: subtract green, predictor (vertical only)
+- Simple/two-symbol tree encoding
+
+**Key files:**
+- `src/encoder/vp8l/encode.rs` - Main encoder pipeline
+- `src/encoder/vp8l/huffman.rs` - Huffman tree construction and encoding
+- `src/encoder/vp8l/backward_refs.rs` - LZ77 backward references
+- `src/encoder/vp8l/hash_chain.rs` - Hash chain for match finding
+- `src/encoder/vp8l/histogram.rs` - Symbol frequency histograms
+- `src/encoder/vp8l/transforms.rs` - Image transforms (subtract green, predictor)
+- `src/encoder/vp8l/types.rs` - Core data structures (PixOrCopy, BackwardRefs)
+
+**Key fixes (2026-02-03):**
+- Tree depth starts at 0, not 1 (off-by-one fix)
+- `ensure_valid_code_lengths` fixes Kraft inequality after length clamping
+- Trivial trees (single symbol) skip bit writes during image data encoding
+- RLE encoding matches libwebp's CodeRepeatedZeros/CodeRepeatedValues
+
+**Remaining work for compression parity:**
+- Full 14 predictor modes (currently only vertical)
+- Optimized LZ77 match finding with quality-dependent search depth
+- Color cache optimization (currently disabled)
+- Cross-color transform
+- Color indexing (palette) transform for low-color images
+- Meta-Huffman (spatially-varying codes)
+
 ### no_std Support (2026-01-23)
 
 The crate supports `no_std` environments with the `alloc` crate:
