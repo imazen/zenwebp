@@ -491,22 +491,24 @@ fn encode_argb(
     let enc_height = enc_argb.len() / enc_width;
 
     // Build backward references (determines optimal cache_bits via entropy estimation)
-    let cache_bits_max = if config.cache_bits == 0 {
-        if let Some(ref pt) = palette_transform {
-            // Cap cache bits for palette images (matching libwebp)
-            let ps = pt.palette.len();
-            if ps < (1 << 10) {
-                // BitsLog2Floor(palette_size) + 1
-                let log2_floor = 31u32.saturating_sub(ps.leading_zeros());
-                (log2_floor + 1).min(10) as u8
+    let cache_bits_max = match config.cache_bits {
+        None => {
+            // Auto-detect optimal cache size
+            if let Some(ref pt) = palette_transform {
+                // Cap cache bits for palette images (matching libwebp)
+                let ps = pt.palette.len();
+                if ps < (1 << 10) {
+                    // BitsLog2Floor(palette_size) + 1
+                    let log2_floor = 31u32.saturating_sub(ps.leading_zeros());
+                    (log2_floor + 1).min(10) as u8
+                } else {
+                    10
+                }
             } else {
-                10
+                10 // Auto-detect: try all sizes up to MAX_COLOR_CACHE_BITS
             }
-        } else {
-            10 // Auto-detect: try all sizes up to MAX_COLOR_CACHE_BITS
         }
-    } else {
-        config.cache_bits.min(10)
+        Some(bits) => bits.min(10),
     };
     let enc_palette_size = palette_transform
         .as_ref()
