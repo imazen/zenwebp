@@ -11,28 +11,29 @@ See global ~/.claude/CLAUDE.md for general instructions.
 |--------|---------|---------|------------|-------|-------|
 | 0 | 13,988 | 16,678 | **0.84x** | 2.6x | I16-only - we're 16% smaller! |
 | 1 | 13,988 | 16,188 | **0.86x** | 1.5x | I16-only - we're 14% smaller! |
-| 2 | 12,554 | 13,440 | **0.93x** | 2.4x | Limited I4 - we're 7% smaller! |
-| 3 | 12,554 | 12,018 | 1.05x | 1.4x | I4 dominant |
-| 4 | 12,164 | 12,018 | 1.01x | 2.0x | Full I4 + trellis |
-| 5 | 12,164 | 11,952 | 1.02x | 1.8x | Same as m4 |
-| 6 | 12,020 | 11,720 | 1.03x | 2.2x | Trellis during mode selection |
+| 2 | 12,502 | 13,440 | **0.93x** | 2.4x | Limited I4 - we're 7% smaller! |
+| 3 | 12,502 | 12,018 | 1.04x | 1.4x | I4 dominant |
+| 4 | 12,090 | 12,018 | **1.006x** | 2.0x | Full I4 + trellis (near parity!) |
+| 5 | 12,090 | 11,952 | 1.01x | 1.8x | Same as m4 |
+| 6 | 12,030 | 11,720 | 1.03x | 2.2x | Trellis during mode selection |
 
 **Key finding (2026-02-02):** Our I16 path produces 7-16% smaller files than libwebp!
-The 1-5% gap at methods 3-6 is from I4 coefficient encoding efficiency.
+The small remaining gap at m4+ is from I4 coefficient encoding, but corpus results show
+overall parity or better.
 
 **CID22 corpus aggregate (Q75, SNS=0, filter=0, segments=1):**
 | Method | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| 4 | 1161520 | 1169034 | **0.994x** |
+| 4 | 1,160,864 | 1,169,034 | **0.993x** |
 
-*CID22 validation set (41 images) - zenwebp 0.6% smaller than libwebp*
+*CID22 validation set (41 images) - zenwebp 0.7% smaller than libwebp*
 
-**Screenshot corpus aggregate (10 images, Q75 Default):**
+**Screenshot corpus aggregate (13 images, Q75, SNS=0):**
 | Method | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| 4 | 1191564 | 1165198 | 1.023x |
-| 5 | 1184966 | 1156406 | 1.025x |
-| 6 | 1184966 | 1140826 | 1.039x |
+| 4 | 4,692,332 | 4,712,730 | **0.996x** |
+
+*Screenshots - zenwebp 0.4% smaller than libwebp*
 
 **Multi-pass removed (2026-02-02):**
 Multi-pass encoding (methods 5/6 doing 2-3 passes) was removed after testing showed
@@ -47,16 +48,20 @@ with quality search (target_size convergence). All methods now use single-pass.
 | zenwebp | 12164 | 12084 | **0.7% smaller** (trellis-all) |
 
 **Key findings:**
-1. **I4 mode context fix (2026-02-02)**: Edge blocks in I4 mode selection were using
+1. **I4 flatness penalty (2026-02-02)**: Added FLATNESS_PENALTY for non-DC I4 modes
+   when coefficients are flat (≤3 non-zero AC). Matches libwebp's PickBestIntra4 behavior.
+   - Mode match rate: 66% → 69% (for shared I4 macroblocks)
+   - Method 4 ratio: 1.012x → 1.006x
+   - CID22 corpus: 0.999x → 0.993x
+2. **I4 mode context fix (2026-02-02)**: Edge blocks in I4 mode selection were using
    hardcoded DC context (0) instead of cross-macroblock context from `top_b_pred`/`left_b_pred`.
    Fixed by updating context during encoding pass, not just header writing.
    - 792079 benchmark: 12174 → 12164 bytes (-0.08%)
-   - CID22 corpus: 0.999x → 0.990x (-0.9%)
-2. **libwebp m4→m6 helps** because m6 enables `RD_OPT_TRELLIS_ALL` (trellis during
+3. **libwebp m4→m6 helps** because m6 enables `RD_OPT_TRELLIS_ALL` (trellis during
    mode selection). This is a **single-pass** benefit, not multi-pass.
-3. **Our m6 now works**: Added trellis during I4 mode selection (2026-02-02).
+4. **Our m6 now works**: Added trellis during I4 mode selection (2026-02-02).
    Method 6 is now 0.7% smaller than method 4.
-4. **Multi-pass removed**: Provides no benefit (tested), only adds overhead.
+5. **Multi-pass removed**: Provides no benefit (tested), only adds overhead.
 
 **Quality search (target_size support) - IMPLEMENTED (2026-02-02):**
 
