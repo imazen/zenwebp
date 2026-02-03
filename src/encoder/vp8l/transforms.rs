@@ -224,14 +224,39 @@ pub fn apply_predictor_transform(
     let blocks_x = subsample_size(width as u32, size_bits) as usize;
     let blocks_y = subsample_size(height as u32, size_bits) as usize;
 
-    // Choose best predictor for each block (only scoring interior pixels)
+    // Choose best predictor for each block using entropy-based scoring.
+    // Accumulated histogram tracks global residual distribution across all tiles.
     let mut predictor_data = vec![0u32; blocks_x * blocks_y];
+    let mut accumulated = [[0u32; 256]; 4];
 
     for by in 0..blocks_y {
         for bx in 0..blocks_x {
-            let best_mode = choose_best_predictor(pixels, width, height, bx, by, block_size);
-            // Store mode in green channel (as per spec), alpha=0
-            predictor_data[by * blocks_x + bx] = make_argb(0, 0, best_mode as u8, 0);
+            // Get left and above modes for spatial coherence bias.
+            // 0xff means no neighbor (edge tiles), ensuring no bias match.
+            let left_mode = if bx > 0 {
+                argb_green(predictor_data[by * blocks_x + bx - 1])
+            } else {
+                0xff
+            };
+            let above_mode = if by > 0 {
+                argb_green(predictor_data[(by - 1) * blocks_x + bx])
+            } else {
+                0xff
+            };
+
+            let best_mode = choose_best_predictor(
+                pixels,
+                width,
+                height,
+                bx,
+                by,
+                block_size,
+                &mut accumulated,
+                left_mode,
+                above_mode,
+            );
+            // Store mode in green channel (as per spec), alpha=0xff (matching libwebp's ARGB_BLACK | mode<<8)
+            predictor_data[by * blocks_x + bx] = 0xff000000 | ((best_mode as u32) << 8);
         }
     }
 
@@ -273,9 +298,15 @@ pub fn apply_predictor_transform(
     predictor_data
 }
 
-/// Choose the best predictor mode for a block.
-/// Only scores interior pixels (y > 0 AND x > 0) since border pixels use
-/// fixed predictors regardless of the block's mode.
+/// Choose the best predictor mode for a block using entropy-based scoring.
+/// Matches libwebp's GetBestPredictorForTile + PredictionCostSpatialHistogram.
+///
+/// Scores each mode by building per-channel residual histograms and evaluating:
+/// 1. Combined Shannon entropy (tile + accumulated global distribution)
+/// 2. Prediction cost bias (favoring residuals near 0)
+/// 3. Spatial coherence bonus (favoring same mode as left/above neighbors)
+///
+/// Updates `accumulated` with the best mode's histogram for subsequent tiles.
 fn choose_best_predictor(
     pixels: &[u32],
     width: usize,
@@ -283,6 +314,9 @@ fn choose_best_predictor(
     bx: usize,
     by: usize,
     block_size: usize,
+    accumulated: &mut [[u32; 256]; 4],
+    left_mode: u8,
+    above_mode: u8,
 ) -> PredictorMode {
     let x_start = bx * block_size;
     let y_start = by * block_size;
@@ -293,16 +327,17 @@ fn choose_best_predictor(
     let x_eff = x_start.max(1);
     let y_eff = y_start.max(1);
 
-    // If no interior pixels to score, default to Top
+    // If no interior pixels to score, default to Black (mode 0, matching libwebp)
     if x_eff >= x_end || y_eff >= y_end {
-        return PredictorMode::Top;
+        return PredictorMode::Black;
     }
 
-    let mut best_mode = PredictorMode::Top;
-    let mut best_score = u64::MAX;
+    let mut best_mode = PredictorMode::Black;
+    let mut best_cost = i64::MAX;
+    let mut best_histo = [[0u32; 256]; 4];
 
     for mode in PredictorMode::all() {
-        let mut score = 0u64;
+        let mut tile_histo = [[0u32; 256]; 4];
 
         for y in y_eff..y_end {
             for x in x_eff..x_end {
@@ -320,18 +355,29 @@ fn choose_best_predictor(
 
                 let pred = predict(mode, left, top, top_left, top_right);
                 let res = residual(pixel, pred);
-
-                // Score: sum of absolute residuals across all channels
-                score += argb_alpha(res) as u64;
-                score += argb_red(res) as u64;
-                score += argb_green(res) as u64;
-                score += argb_blue(res) as u64;
+                update_histo(&mut tile_histo, res);
             }
         }
 
-        if score < best_score {
-            best_score = score;
+        let cost = prediction_cost_spatial_histogram(
+            accumulated,
+            &tile_histo,
+            mode as u8,
+            left_mode,
+            above_mode,
+        );
+
+        if cost < best_cost {
+            best_cost = cost;
             best_mode = mode;
+            best_histo = tile_histo;
+        }
+    }
+
+    // Update accumulated histogram with best mode's histogram
+    for c in 0..4 {
+        for i in 0..256 {
+            accumulated[c][i] += best_histo[c][i];
         }
     }
 
@@ -348,6 +394,9 @@ pub struct CrossColorMultipliers {
 
 /// Fixed-point precision for entropy calculations (matching libwebp).
 const LOG_2_PRECISION_BITS: u32 = 23;
+
+/// Spatial predictor bias: reward tiles that keep the same mode as neighbors.
+const SPATIAL_PREDICTOR_BIAS: i64 = 15i64 << LOG_2_PRECISION_BITS;
 
 /// ColorTransformDelta: 3.5-bit fixed point multiply (matching libwebp).
 #[inline]
@@ -412,6 +461,40 @@ fn prediction_cost_bias(counts: &[u32; 256], weight_0: u64, mut exp_val: u64) ->
         exp_val = div_round((exp_decay_factor * exp_val) as i64, 10) as u64;
     }
     -div_round(bits as i64, 10)
+}
+
+/// Update a 4-channel residual histogram with an ARGB residual value.
+/// Layout: [alpha_0..255, red_0..255, green_0..255, blue_0..255].
+#[inline]
+fn update_histo(histo: &mut [[u32; 256]; 4], argb: u32) {
+    histo[0][(argb >> 24) as usize] += 1;
+    histo[1][((argb >> 16) & 0xff) as usize] += 1;
+    histo[2][((argb >> 8) & 0xff) as usize] += 1;
+    histo[3][(argb & 0xff) as usize] += 1;
+}
+
+/// Score a predictor mode using entropy + bias + spatial coherence.
+/// Matching libwebp's PredictionCostSpatialHistogram.
+fn prediction_cost_spatial_histogram(
+    accumulated: &[[u32; 256]; 4],
+    tile: &[[u32; 256]; 4],
+    mode: u8,
+    left_mode: u8,
+    above_mode: u8,
+) -> i64 {
+    let mut retval: i64 = 0;
+    for i in 0..4 {
+        const K_EXP_VALUE: u64 = 94;
+        retval += prediction_cost_bias(&tile[i], 1, K_EXP_VALUE);
+        retval += combined_shannon_entropy(&tile[i], &accumulated[i]) as i64;
+    }
+    if mode == left_mode {
+        retval -= SPATIAL_PREDICTOR_BIAS;
+    }
+    if mode == above_mode {
+        retval -= SPATIAL_PREDICTOR_BIAS;
+    }
+    retval
 }
 
 /// Cross-color prediction cost (matching libwebp's PredictionCostCrossColor).
