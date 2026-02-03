@@ -2,7 +2,7 @@
 
 See global ~/.claude/CLAUDE.md for general instructions.
 
-## Current Optimization Status (2026-02-02)
+## Current Optimization Status (2026-02-03)
 
 ### Encoder Performance vs libwebp
 
@@ -119,17 +119,21 @@ Test results on 512x512 CID22 image:
 - Multi-pass experiments (2026-02-02): Both token re-recording and re-quantization
   approaches failed to improve compression. Methods 5/6 now equivalent to method 4.
 
-**Production settings beat libwebp (2026-02-02):**
-With default presets (SNS=50, filter=60), zenwebp outperforms libwebp:
-- Q50: **0.89x** of libwebp (11% smaller)
-- Q75: **0.81x** of libwebp (19% smaller)
-- Q90: **0.84x** of libwebp (16% smaller)
-- Matched config comparison: 0.95-0.97x across all presets
+**Production settings (2026-02-03):**
+With default presets (SNS=50, filter=60), zenwebp is close to libwebp:
+- CID22 corpus Q75: **1.0149x** (1.5% larger)
+- CID22 corpus Q90: **1.0060x** (0.6% larger - near parity!)
+- 792079.png Q75: **1.027x** (2.7% larger)
+- 792079.png Q90: **1.026x** (2.6% larger)
+
+**SNS c_base fix (2026-02-03):**
+Fixed bug where compute_segment_quant() computed c_base from base_quant instead
+of directly from quality. This was double-applying segment alpha transformation.
+Improvement: CID22 Q75 1.0210x → 1.0149x, Q90 1.0126x → 1.0060x.
 
 **Diagnostic vs production settings:**
-The 4.5% gap seen in diagnostic tests (SNS=0, filter=0, segments=1) does not
-reflect production usage. These stripped-down settings disable the SNS and
-filtering that provide significant compression benefits in real-world usage.
+In diagnostic mode (SNS=0, filter=0, segments=1), zenwebp is ~1% larger than
+libwebp. Production mode is similar at high quality, slightly worse at low quality.
 
 **Preset tuning parameters now active (2026-02-01):**
 | Preset | SNS | Filter | Sharp | Segs |
@@ -160,8 +164,8 @@ filtering that provide significant compression benefits in real-world usage.
 
 Key finding: zenwebp's SNS implementation produces a steeper quality-size tradeoff
 than libwebp's on diverse images (CID22), but is actually gentler on screenshots.
-Our segment quantization spread is more aggressive — likely the SNS scaling curve
-or segment quant delta calculation differs. Needs investigation.
+**UPDATE (2026-02-03):** The c_base bug (computing from base_quant instead of quality)
+was part of this issue. After fix, Q90 production is now 1.006x (near parity).
 
 **TokenType fix (2026-01-24):**
 The TokenType enum had I16DC and I16AC values swapped compared to libwebp:
@@ -504,13 +508,12 @@ steeper quality degradation than libwebp's for equivalent size savings. The gap 
 especially visible on `terminal` screenshot (-25.07 SSIM2 for zenwebp vs -1.63 for libwebp).
 
 **Root cause analysis:** The issue is NOT the content classifier (it correctly detects
-Photo-appropriate content). The issue is in our segment quantization spread calculation.
-When SNS=80, we assign larger quant deltas between segments than libwebp does.
+Photo-appropriate content). The issue was in our segment quantization spread calculation.
+When SNS=80, we assigned larger quant deltas between segments than libwebp does.
 
-**To investigate:**
-1. Compare per-segment quant values between zenwebp and libwebp for same image+config
-2. Trace SNS scaling in libwebp's `SetSegmentAlphas()` vs our `analyze_and_assign_segments()`
-3. Check if libwebp clamps segment quant deltas differently
+**FIXED (2026-02-03):** Bug was in `compute_segment_quant()` computing c_base from
+base_quant instead of quality directly. See SNS c_base fix in Current Status section.
+Results after fix: CID22 Q90 improved from 1.0126x → 1.0060x (near parity).
 
 ### webpx Preset Bug (2026-02-01, RESOLVED)
 
