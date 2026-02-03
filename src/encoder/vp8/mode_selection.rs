@@ -32,6 +32,24 @@ impl<'a> super::Vp8Encoder<'a> {
     ///
     /// Returns (best_mode, distortion_score) for comparison against Intra4x4.
     fn pick_best_intra16(&self, mbx: usize, mby: usize) -> (LumaMode, u64) {
+        // Check for debug mode
+        #[cfg(feature = "mode_debug")]
+        let debug_i16 = std::env::var("MB_DEBUG")
+            .ok()
+            .and_then(|s| {
+                let parts: Vec<_> = s.split(',').collect();
+                if parts.len() == 2 {
+                    Some((
+                        parts[0].parse::<usize>().ok()?,
+                        parts[1].parse::<usize>().ok()?,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .is_some_and(|(dx, dy)| dx == mbx && dy == mby);
+        #[cfg(not(feature = "mode_debug"))]
+        let debug_i16 = false;
         let mbw = usize::from(self.macroblock_width);
         let src_width = mbw * 16;
 
@@ -61,15 +79,19 @@ impl<'a> super::Vp8Encoder<'a> {
 
         for (mode_idx, &mode) in MODES.iter().enumerate() {
             // Skip V mode if no top row available (first row of macroblocks)
+            // Note: V prediction requires real top pixels, border value 127 gives poor results
             if mode == LumaMode::V && mby == 0 {
                 continue;
             }
             // Skip H mode if no left column available (first column of macroblocks)
+            // Note: H prediction requires real left pixels, border value 129 gives poor results
             if mode == LumaMode::H && mbx == 0 {
                 continue;
             }
-            // Skip TM mode if at top-left corner (needs both top and left)
-            if mode == LumaMode::TM && (mbx == 0 || mby == 0) {
+            // TM mode requires both top and left pixels, but can use border values (127/129)
+            // At edges, TM degenerates to H (if mby=0) or V (if mbx=0), so skip only at corner
+            // where both borders are synthetic
+            if mode == LumaMode::TM && mbx == 0 && mby == 0 {
                 continue;
             }
 
@@ -186,6 +208,14 @@ impl<'a> super::Vp8Encoder<'a> {
             let distortion = i64::from(RD_DISTO_MULT) * (i64::from(d_final) + i64::from(sd_final));
             let rd_score = rate + distortion;
 
+            #[cfg(feature = "mode_debug")]
+            if debug_i16 {
+                eprintln!(
+                    "  I16 {:?}: H={}, R={}, D={}, SD={}, rate={}, disto={}, score={}",
+                    mode, mode_cost, coeff_cost, d_final, sd_final, rate, distortion, rd_score
+                );
+            }
+
             if rd_score < best_rd_score {
                 best_rd_score = rd_score;
                 best_mode = mode;
@@ -205,6 +235,15 @@ impl<'a> super::Vp8Encoder<'a> {
         let final_distortion =
             i64::from(RD_DISTO_MULT) * (i64::from(best_sse) + i64::from(best_spectral_disto));
         let final_score = final_rate + final_distortion;
+
+        #[cfg(feature = "mode_debug")]
+        if debug_i16 {
+            eprintln!(
+                "  I16 FINAL: mode={:?}, H={}, R={}, D={}, SD={}, lambda_mode={}, tlambda={}, rate={}, disto={}, score={}",
+                best_mode, best_mode_cost, best_coeff_cost, best_sse, best_spectral_disto,
+                lambda_mode, tlambda, final_rate, final_distortion, final_score
+            );
+        }
 
         // Convert to u64 for interface compatibility (score should be positive)
         (best_mode, final_score.max(0) as u64)
@@ -323,6 +362,25 @@ impl<'a> super::Vp8Encoder<'a> {
         mby: usize,
         i16_score: u64,
     ) -> Option<([IntraMode; 16], u64)> {
+        // Check for debug mode
+        #[cfg(feature = "mode_debug")]
+        let debug_i4 = std::env::var("MB_DEBUG")
+            .ok()
+            .and_then(|s| {
+                let parts: Vec<_> = s.split(',').collect();
+                if parts.len() == 2 {
+                    Some((
+                        parts[0].parse::<usize>().ok()?,
+                        parts[1].parse::<usize>().ok()?,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .is_some_and(|(dx, dy)| dx == mbx && dy == mby);
+        #[cfg(not(feature = "mode_debug"))]
+        let debug_i4 = false;
+
         let mbw = usize::from(self.macroblock_width);
         let src_width = mbw * 16;
 
@@ -362,6 +420,11 @@ impl<'a> super::Vp8Encoder<'a> {
         const BMODE_COST: u64 = 211;
         let initial_penalty = BMODE_COST * u64::from(lambda_mode);
         let mut running_score = initial_penalty;
+
+        #[cfg(feature = "mode_debug")]
+        if debug_i4 {
+            eprintln!("  I4 BMODE_COST={}, lambda_mode={}, initial_penalty={}", BMODE_COST, lambda_mode, initial_penalty);
+        }
 
         // Track total mode cost for header bit limiting
         let mut total_mode_cost = 0u32;
@@ -447,11 +510,11 @@ impl<'a> super::Vp8Encoder<'a> {
                 // and only try the top candidates with lowest SSE
                 // This reduces DCT/IDCT calls while maintaining quality
                 // Number of modes to try depends on method:
-                // - method 0-3: 3 modes (fast)
-                // - method 4+: 10 modes (full search, ~0.7% smaller files)
+                // - method 0-2: 3 modes (fast, RD_OPT_NONE equivalent)
+                // - method 3+: 10 modes (full search, matches libwebp RD_OPT_BASIC+)
                 let max_modes_to_try = match self.method {
-                    0..=3 => 3,
-                    _ => 10, // method 4+: try all modes
+                    0..=2 => 3,
+                    _ => 10, // method 3+: try all modes
                 };
                 let mut mode_sse: [(u32, usize); 10] = [(0, 0); 10];
                 for (mode_idx, _) in MODES.iter().enumerate() {
@@ -662,6 +725,15 @@ impl<'a> super::Vp8Encoder<'a> {
                     lambda_mode,
                 );
 
+                #[cfg(feature = "mode_debug")]
+                if debug_i4 {
+                    eprintln!(
+                        "  I4 blk[{:2}]: mode={:?}, H={}, R={}, D={}, block_score={}, running={}",
+                        i, best_mode, best_mode_cost, best_coeff_cost, best_sse,
+                        block_score_for_comparison, running_score + block_score_for_comparison
+                    );
+                }
+
                 // Add this block's score to running total
                 running_score += block_score_for_comparison;
 
@@ -690,6 +762,12 @@ impl<'a> super::Vp8Encoder<'a> {
         }
 
         // I4 wins! Return the modes and final score
+        #[cfg(feature = "mode_debug")]
+        if debug_i4 {
+            eprintln!("  I4 FINAL: score={}, i16_score={}, margin={}",
+                      running_score, i16_score, i16_score as i64 - running_score as i64);
+        }
+
         Some((best_modes, running_score))
     }
 
