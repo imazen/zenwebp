@@ -59,7 +59,7 @@ pub fn distance_to_plane_code(xsize: usize, dist: usize) -> u32 {
 
     if xoffset <= 8 && yoffset < 8 {
         u32::from(PLANE_TO_CODE_LUT[yoffset * 16 + 8 - xoffset]) + 1
-    } else if xoffset > xsize - 8 && yoffset < 7 {
+    } else if xoffset + 8 > xsize && yoffset < 7 {
         u32::from(PLANE_TO_CODE_LUT[(yoffset + 1) * 16 + 8 + (xsize - xoffset)]) + 1
     } else {
         (dist + 120) as u32
