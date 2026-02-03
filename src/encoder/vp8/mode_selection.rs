@@ -10,8 +10,8 @@ use crate::common::types::*;
 use crate::encoder::cost::{
     estimate_dc16_cost, estimate_residual_cost, get_cost_luma16, get_cost_luma4, get_cost_uv,
     get_i4_mode_cost, is_flat_coeffs, is_flat_source_16, tdisto_16x16, trellis_quantize_block,
-    FIXED_COSTS_I16, FIXED_COSTS_UV, FLATNESS_LIMIT_I16, FLATNESS_LIMIT_UV, FLATNESS_PENALTY,
-    RD_DISTO_MULT, VP8_WEIGHT_Y,
+    FIXED_COSTS_I16, FIXED_COSTS_UV, FLATNESS_LIMIT_I16, FLATNESS_LIMIT_I4, FLATNESS_LIMIT_UV,
+    FLATNESS_PENALTY, RD_DISTO_MULT, VP8_WEIGHT_Y,
 };
 
 use super::{sse_16x16_luma, sse_8x8_chroma, MacroblockInfo};
@@ -559,11 +559,29 @@ impl<'a> super::Vp8Encoder<'a> {
                         sum
                     };
 
-                    // Compute RD score: distortion + lambda * (mode_cost + coeff_cost)
+                    // Apply flatness penalty for non-DC modes with flat coefficients
+                    // (like libwebp's FLATNESS_PENALTY * kNumBlocks)
+                    // For I4, kNumBlocks = 1, so penalty = FLATNESS_PENALTY
+                    let flatness_penalty = if mode_idx > 0 {
+                        // Check if block is flat: ≤3 non-zero AC coefficients
+                        // Convert quantized_zigzag (i32) to i16 for is_flat_coeffs
+                        let levels_i16: [i16; 16] =
+                            core::array::from_fn(|k| quantized_zigzag[k] as i16);
+                        if is_flat_coeffs(&levels_i16, 1, FLATNESS_LIMIT_I4) {
+                            FLATNESS_PENALTY
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+
+                    // Compute RD score: distortion + lambda * (mode_cost + coeff_cost + flatness_penalty)
                     // Use rd_score_with_coeffs to avoid u16 overflow when total_rate > 65535
                     let mode_cost = get_i4_mode_cost(top_ctx, left_ctx, mode_idx);
+                    let total_rate_cost = coeff_cost + flatness_penalty as u32;
                     let rd_score = crate::encoder::cost::rd_score_with_coeffs(
-                        sse, mode_cost, coeff_cost, lambda_i4,
+                        sse, mode_cost, total_rate_cost, lambda_i4,
                     );
 
                     // Block-level debug output (enabled with BLOCK_DEBUG=mbx,mby,block_idx)
