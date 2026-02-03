@@ -9,6 +9,7 @@
 //! - 2D locality: converts raw distances to plane codes
 
 use super::color_cache::ColorCache;
+use super::cost_model::trace_backwards_optimize;
 use super::entropy::estimate_histogram_bits;
 use super::hash_chain::HashChain;
 use super::histogram::Histogram;
@@ -446,14 +447,16 @@ fn apply_cache_to_refs(
 /// Get the best backward references for the image.
 ///
 /// Tries multiple LZ77 strategies and picks the best one.
+/// For quality >= 25, applies cost-based optimal parsing (TraceBackwards).
 /// Optionally applies color cache for further compression.
 ///
 /// Matches libwebp's GetBackwardReferences flow:
 /// 1. Try LZ77 Standard and RLE strategies
 /// 2. Pick best based on histogram entropy
-/// 3. Estimate optimal color cache size
-/// 4. Apply cache to refs
-/// 5. Apply 2D locality transform
+/// 3. For quality >= 25: apply TraceBackwards DP optimization
+/// 4. Estimate optimal color cache size
+/// 5. Apply cache to refs
+/// 6. Apply 2D locality transform
 pub fn get_backward_references(
     argb: &[u32],
     width: usize,
@@ -488,6 +491,30 @@ pub fn get_backward_references(
     } else {
         refs_lz77
     };
+
+    // For quality >= 25, apply cost-based optimal parsing (TraceBackwards).
+    // This uses DP to find the globally optimal literal/copy sequence
+    // based on a cost model derived from the greedy result.
+    if quality >= 25 {
+        let optimized = trace_backwards_optimize(
+            argb,
+            width,
+            height,
+            0, // No cache during DP (applied separately below)
+            &hash_chain,
+            &best_refs,
+        );
+
+        // Use optimized result if it improves entropy
+        let histo_orig = Histogram::from_refs_with_plane_codes(&best_refs, 0, width);
+        let histo_opt = Histogram::from_refs_with_plane_codes(&optimized, 0, width);
+        let cost_orig = estimate_histogram_bits(&histo_orig);
+        let cost_opt = estimate_histogram_bits(&histo_opt);
+
+        if cost_opt <= cost_orig {
+            best_refs = optimized;
+        }
+    }
 
     // Determine color cache
     let cache_bits = if cache_bits_max > 0 && quality > 25 {

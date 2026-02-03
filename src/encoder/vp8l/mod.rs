@@ -9,6 +9,7 @@
 mod backward_refs;
 mod bitwriter;
 mod color_cache;
+mod cost_model;
 mod encode;
 mod entropy;
 mod hash_chain;
