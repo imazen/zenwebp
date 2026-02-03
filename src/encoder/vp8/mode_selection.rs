@@ -9,9 +9,9 @@ use crate::common::types::*;
 
 use crate::encoder::cost::{
     estimate_dc16_cost, estimate_residual_cost, get_cost_luma16, get_cost_luma4, get_cost_uv,
-    get_i4_mode_cost, is_flat_coeffs, is_flat_source_16, tdisto_16x16, trellis_quantize_block,
-    FIXED_COSTS_I16, FIXED_COSTS_UV, FLATNESS_LIMIT_I16, FLATNESS_LIMIT_I4, FLATNESS_LIMIT_UV,
-    FLATNESS_PENALTY, RD_DISTO_MULT, VP8_WEIGHT_Y,
+    get_i4_mode_cost, is_flat_coeffs, is_flat_source_16, tdisto_16x16, tdisto_4x4,
+    trellis_quantize_block, FIXED_COSTS_I16, FIXED_COSTS_UV, FLATNESS_LIMIT_I16,
+    FLATNESS_LIMIT_I4, FLATNESS_LIMIT_UV, FLATNESS_PENALTY, RD_DISTO_MULT, VP8_WEIGHT_Y,
 };
 
 use super::{sse_16x16_luma, sse_8x8_chroma, MacroblockInfo};
@@ -410,9 +410,11 @@ impl<'a> super::Vp8Encoder<'a> {
         // Get quantizer-dependent lambdas for I4 mode RD scoring
         // lambda_i4 is used for selecting the best mode within each block
         // lambda_mode is used for accumulation and comparison against I16 score
+        // tlambda is used for spectral distortion (TDisto) weighting
         // (This matches libwebp's SetRDScore flow in PickBestIntra4)
         let lambda_i4 = segment.lambda_i4;
         let lambda_mode = segment.lambda_mode;
+        let tlambda = segment.tlambda;
 
         // Initialize I4 running score with the BMODE_COST penalty (211 in 1/256 bits)
         // matching libwebp's PickBestIntra4: rd_best.H = 211; SetRDScore(lambda_mode, &rd_best);
@@ -487,8 +489,9 @@ impl<'a> super::Vp8Encoder<'a> {
                 let mut best_block_score = u64::MAX;
                 let mut best_has_nz = false;
                 let mut best_quantized = [0i32; 16];
-                // Track best block's SSE and coeff cost for recalculating with lambda_mode
+                // Track best block's SSE, spectral distortion, and coeff cost for recalculating with lambda_mode
                 let mut best_sse = 0u32;
+                let mut best_spectral_disto = 0i32;
                 let mut best_coeff_cost = 0u32;
 
                 // Pre-compute all 10 I4 prediction modes at once
@@ -653,16 +656,33 @@ impl<'a> super::Vp8Encoder<'a> {
                         0
                     };
 
-                    // Compute RD score: distortion + lambda * (mode_cost + coeff_cost + flatness_penalty)
-                    // Use rd_score_with_coeffs to avoid u16 overflow when total_rate > 65535
+                    // Compute spectral distortion (TDisto) if tlambda > 0
+                    // This matches libwebp's: rd_tmp.SD = tlambda ? MULT_8B(tlambda, VP8TDisto4x4(...)) : 0
+                    let spectral_disto = if tlambda > 0 {
+                        // Build reconstructed 4x4 block for TDisto
+                        let mut rec_block = [0u8; 16];
+                        for k in 0..16 {
+                            rec_block[k] =
+                                (i32::from(pred[k]) + dequantized[k]).clamp(0, 255) as u8;
+                        }
+                        let td = tdisto_4x4(&src_block, &rec_block, 4, &VP8_WEIGHT_Y);
+                        // Scale by tlambda and round: (tlambda * td + 128) >> 8
+                        (tlambda as i32 * td + 128) >> 8
+                    } else {
+                        0
+                    };
+
+                    // Compute RD score: (R + H) * lambda + RD_DISTO_MULT * (D + SD)
+                    // Use rd_score_full to include spectral distortion
                     let mode_cost = get_i4_mode_cost(top_ctx, left_ctx, mode_idx);
                     let total_rate_cost = coeff_cost + flatness_penalty as u32;
-                    let rd_score = crate::encoder::cost::rd_score_with_coeffs(
+                    let rd_score = crate::encoder::cost::rd_score_full(
                         sse,
+                        spectral_disto,
                         mode_cost,
                         total_rate_cost,
                         lambda_i4,
-                    );
+                    ) as u64;
 
                     // Block-level debug output (enabled with BLOCK_DEBUG=mbx,mby,block_idx)
                     #[cfg(feature = "mode_debug")]
@@ -701,6 +721,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         best_has_nz = has_nz;
                         best_quantized = quantized_natural;
                         best_sse = sse;
+                        best_spectral_disto = spectral_disto;
                         best_coeff_cost = coeff_cost;
                     }
                 }
@@ -717,19 +738,20 @@ impl<'a> super::Vp8Encoder<'a> {
 
                 // Recalculate the block score with lambda_mode for accumulation
                 // (matching libwebp's SetRDScore(lambda_mode, &rd_i4) before AddScore)
-                // Use rd_score_with_coeffs to avoid u16 overflow
-                let block_score_for_comparison = crate::encoder::cost::rd_score_with_coeffs(
+                // Use rd_score_full to include spectral distortion
+                let block_score_for_comparison = crate::encoder::cost::rd_score_full(
                     best_sse,
+                    best_spectral_disto,
                     best_mode_cost,
                     best_coeff_cost,
                     lambda_mode,
-                );
+                ) as u64;
 
                 #[cfg(feature = "mode_debug")]
                 if debug_i4 {
                     eprintln!(
-                        "  I4 blk[{:2}]: mode={:?}, H={}, R={}, D={}, block_score={}, running={}",
-                        i, best_mode, best_mode_cost, best_coeff_cost, best_sse,
+                        "  I4 blk[{:2}]: mode={:?}, H={}, R={}, D={}, SD={}, block_score={}, running={}",
+                        i, best_mode, best_mode_cost, best_coeff_cost, best_sse, best_spectral_disto,
                         block_score_for_comparison, running_score + block_score_for_comparison
                     );
                 }
