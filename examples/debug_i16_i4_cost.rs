@@ -59,10 +59,7 @@ fn main() {
     println!("\nMethod 4 comparison:");
     println!("  zenwebp: {} bytes", zen_m4.len());
     println!("  libwebp: {} bytes", lib_m4.len());
-    println!(
-        "  ratio: {:.3}x",
-        zen_m4.len() as f64 / lib_m4.len() as f64
-    );
+    println!("  ratio: {:.3}x", zen_m4.len() as f64 / lib_m4.len() as f64);
 
     println!("\nSize savings from I4:");
     println!(

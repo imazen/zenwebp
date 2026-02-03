@@ -40,7 +40,7 @@ fn main() {
         let (w, h) = (info.width, info.height);
 
         let zen = EncoderConfig::with_preset(Preset::Default, 75.0)
-            .method(3)  // Method 3
+            .method(3) // Method 3
             .sns_strength(0)
             .filter_strength(0)
             .segments(1)
@@ -48,7 +48,7 @@ fn main() {
             .unwrap();
 
         let lib = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-            .method(3)  // Method 3
+            .method(3) // Method 3
             .sns_strength(0)
             .filter_strength(0)
             .filter_sharpness(0)
@@ -63,7 +63,13 @@ fn main() {
         let ratio = zen.len() as f64 / lib.len() as f64;
         let name = path.file_name().unwrap().to_str().unwrap();
         if ratio > 1.01 || ratio < 0.99 {
-            println!("{}: zen={} lib={} ({:.3}x)", name, zen.len(), lib.len(), ratio);
+            println!(
+                "{}: zen={} lib={} ({:.3}x)",
+                name,
+                zen.len(),
+                lib.len(),
+                ratio
+            );
         }
     }
 

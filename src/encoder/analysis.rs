@@ -1158,12 +1158,27 @@ pub fn assign_segments_kmeans(
     (centers, map, weighted_average)
 }
 
+/// Convert user-facing quality (0-100) to compression factor.
+/// Emulates jpeg-like behaviour where Q75 is "good quality".
+/// Ported from libwebp's QualityToCompression().
+fn quality_to_compression(quality: u8) -> f64 {
+    let c = f64::from(quality) / 100.0;
+    // Piecewise linear mapping to get jpeg-like behavior at Q75
+    let linear_c = if c < 0.75 {
+        c * (2.0 / 3.0)
+    } else {
+        2.0 * c - 1.0
+    };
+    // File size roughly scales as pow(quantizer, 3), so we use inverse
+    super::fast_math::cbrt(linear_c)
+}
+
 /// Compute per-segment quantization using libwebp's formula.
 ///
 /// This matches VP8SetSegmentParams in libwebp/src/enc/quant_enc.c
 ///
 /// # Arguments
-/// * `base_quant` - Base quantizer index (0-127), computed from quality
+/// * `quality` - User-facing quality (0-100), used to compute base compression factor
 /// * `segment_alpha` - Transformed alpha for this segment, in range [-127, 127].
 ///   Computed as: 255 * (center - mid) / (max - min).
 ///   Positive = easier to compress, negative = harder.
@@ -1171,7 +1186,7 @@ pub fn assign_segments_kmeans(
 ///
 /// # Returns
 /// Adjusted quantizer index for this segment
-pub fn compute_segment_quant(base_quant: u8, segment_alpha: i32, sns_strength: u8) -> u8 {
+pub fn compute_segment_quant(quality: u8, segment_alpha: i32, sns_strength: u8) -> u8 {
     // libwebp constant: scaling between SNS strength and quantizer modulation
     const SNS_TO_DQ: f64 = 0.9;
 
@@ -1187,12 +1202,15 @@ pub fn compute_segment_quant(base_quant: u8, segment_alpha: i32, sns_strength: u
 
     // Ensure expn is positive (as asserted in libwebp)
     if expn <= 0.0 {
-        return base_quant;
+        // Fallback: compute base quant from quality
+        let c = quality_to_compression(quality);
+        let q = super::fast_math::round(127.0 * (1.0 - c)) as i32;
+        return q.clamp(0, 127) as u8;
     }
 
-    // Compression factor from base_quant
-    // Since base_quant = 127 * (1 - c_base), we have c_base = 1 - base_quant/127
-    let c_base = 1.0 - (base_quant as f64 / 127.0);
+    // Compression factor computed directly from quality (matches libwebp's QualityToCompression)
+    // BUG FIX: Previously we computed c_base from base_quant, which double-applied segment alpha
+    let c_base = quality_to_compression(quality);
 
     // Apply power-law modulation
     let c = super::fast_math::pow(c_base, expn);

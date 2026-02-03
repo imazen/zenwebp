@@ -38,10 +38,18 @@ fn main() {
 
     let lib_vp8 = extract_vp8(&lib_m4).unwrap();
     let (_, lib_diag) = Vp8Decoder::decode_diagnostic(&lib_vp8).unwrap();
-    let lib_i4 = lib_diag.macroblocks.iter().filter(|m| m.luma_mode == LumaMode::B).count();
+    let lib_i4 = lib_diag
+        .macroblocks
+        .iter()
+        .filter(|m| m.luma_mode == LumaMode::B)
+        .count();
 
-    println!("libwebp m4: {} bytes, I4: {} MBs ({:.1}%)", 
-             lib_m4.len(), lib_i4, 100.0 * lib_i4 as f64 / lib_diag.macroblocks.len() as f64);
+    println!(
+        "libwebp m4: {} bytes, I4: {} MBs ({:.1}%)",
+        lib_m4.len(),
+        lib_i4,
+        100.0 * lib_i4 as f64 / lib_diag.macroblocks.len() as f64
+    );
 
     // zenwebp uses BMODE_COST=211 by default
     let zen_m4 = EncoderConfig::with_preset(Preset::Default, 75.0)
@@ -54,11 +62,21 @@ fn main() {
 
     let zen_vp8 = extract_vp8(&zen_m4).unwrap();
     let (_, zen_diag) = Vp8Decoder::decode_diagnostic(&zen_vp8).unwrap();
-    let zen_i4 = zen_diag.macroblocks.iter().filter(|m| m.luma_mode == LumaMode::B).count();
+    let zen_i4 = zen_diag
+        .macroblocks
+        .iter()
+        .filter(|m| m.luma_mode == LumaMode::B)
+        .count();
 
-    println!("zenwebp m4: {} bytes, I4: {} MBs ({:.1}%)", 
-             zen_m4.len(), zen_i4, 100.0 * zen_i4 as f64 / zen_diag.macroblocks.len() as f64);
-    println!("\nGap: zenwebp selects {} more I4 MBs ({:.1}%)", 
-             zen_i4 as i32 - lib_i4 as i32,
-             100.0 * (zen_i4 as f64 - lib_i4 as f64) / lib_diag.macroblocks.len() as f64);
+    println!(
+        "zenwebp m4: {} bytes, I4: {} MBs ({:.1}%)",
+        zen_m4.len(),
+        zen_i4,
+        100.0 * zen_i4 as f64 / zen_diag.macroblocks.len() as f64
+    );
+    println!(
+        "\nGap: zenwebp selects {} more I4 MBs ({:.1}%)",
+        zen_i4 as i32 - lib_i4 as i32,
+        100.0 * (zen_i4 as f64 - lib_i4 as f64) / lib_diag.macroblocks.len() as f64
+    );
 }

@@ -99,8 +99,12 @@ fn main() {
             diff += 1;
         }
     }
-    println!("\nMode agreement: {} same, {} different ({:.1}% match)",
-             same, diff, 100.0 * same as f64 / (same + diff) as f64);
+    println!(
+        "\nMode agreement: {} same, {} different ({:.1}% match)",
+        same,
+        diff,
+        100.0 * same as f64 / (same + diff) as f64
+    );
 
     println!("\nFile sizes:");
     println!("  zenwebp: {} bytes", zen.len());

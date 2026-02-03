@@ -10,8 +10,8 @@ use crate::common::types::*;
 use crate::encoder::cost::{
     estimate_dc16_cost, estimate_residual_cost, get_cost_luma16, get_cost_luma4, get_cost_uv,
     get_i4_mode_cost, is_flat_coeffs, is_flat_source_16, tdisto_16x16, tdisto_4x4,
-    trellis_quantize_block, FIXED_COSTS_I16, FIXED_COSTS_UV, FLATNESS_LIMIT_I16,
-    FLATNESS_LIMIT_I4, FLATNESS_LIMIT_UV, FLATNESS_PENALTY, RD_DISTO_MULT, VP8_WEIGHT_Y,
+    trellis_quantize_block, FIXED_COSTS_I16, FIXED_COSTS_UV, FLATNESS_LIMIT_I16, FLATNESS_LIMIT_I4,
+    FLATNESS_LIMIT_UV, FLATNESS_PENALTY, RD_DISTO_MULT, VP8_WEIGHT_Y,
 };
 
 use super::{sse_16x16_luma, sse_8x8_chroma, MacroblockInfo};
@@ -432,7 +432,10 @@ impl<'a> super::Vp8Encoder<'a> {
 
         #[cfg(feature = "mode_debug")]
         if debug_i4 {
-            eprintln!("  I4 i4_penalty={}, running_score={}", i4_penalty, running_score);
+            eprintln!(
+                "  I4 i4_penalty={}, running_score={}",
+                i4_penalty, running_score
+            );
         }
 
         // Track total mode cost for header bit limiting
@@ -793,8 +796,12 @@ impl<'a> super::Vp8Encoder<'a> {
         // I4 wins! Return the modes and final score
         #[cfg(feature = "mode_debug")]
         if debug_i4 {
-            eprintln!("  I4 FINAL: score={}, i16_score={}, margin={}",
-                      running_score, i16_score, i16_score as i64 - running_score as i64);
+            eprintln!(
+                "  I4 FINAL: score={}, i16_score={}, margin={}",
+                running_score,
+                i16_score,
+                i16_score as i64 - running_score as i64
+            );
         }
 
         Some((best_modes, running_score))

@@ -540,11 +540,11 @@ impl<'a> Vp8Encoder<'a> {
     ) -> Result<(), EncodingError> {
         // Store method and configure features based on it
         self.method = params.method.min(6); // Clamp to 0-6
-        // Method feature mapping (aligned with libwebp):
-        //   m0-2: RD_OPT_NONE - fast mode, no RD optimization
-        //   m3-4: RD_OPT_BASIC - RD scoring for mode selection, no trellis
-        //   m5:   RD_OPT_TRELLIS - trellis quantization during encoding
-        //   m6:   RD_OPT_TRELLIS_ALL - trellis during I4 mode selection
+                                            // Method feature mapping (aligned with libwebp):
+                                            //   m0-2: RD_OPT_NONE - fast mode, no RD optimization
+                                            //   m3-4: RD_OPT_BASIC - RD scoring for mode selection, no trellis
+                                            //   m5:   RD_OPT_TRELLIS - trellis quantization during encoding
+                                            //   m6:   RD_OPT_TRELLIS_ALL - trellis during I4 mode selection
         self.do_trellis = self.method >= 5;
         self.do_trellis_i4_mode = self.method >= 6;
         // Store tuning parameters
@@ -882,7 +882,7 @@ impl<'a> Vp8Encoder<'a> {
     /// - Textured areas (low alpha) need finer quantization to preserve detail
     ///
     /// Ported from libwebp's VP8EncAnalyze / MBAnalyze.
-    fn analyze_and_assign_segments(&mut self, base_quant_index: u8) {
+    fn analyze_and_assign_segments(&mut self, base_quant_index: u8, quality: u8) {
         let y_stride = usize::from(self.macroblock_width * 16);
         let uv_stride = usize::from(self.macroblock_width * 8);
         let width = usize::from(self.frame.width);
@@ -991,8 +991,8 @@ impl<'a> Vp8Encoder<'a> {
             let beta = (255 * (center - min_center) / range).clamp(0, 255) as u8;
 
             // Compute adjusted quantizer for this segment
-            let seg_quant_index =
-                compute_segment_quant(base_quant_index, transformed_alpha, sns_strength);
+            // Note: we pass quality (not base_quant_index) to match libwebp's QualityToCompression approach
+            let seg_quant_index = compute_segment_quant(quality, transformed_alpha, sns_strength);
             let seg_quant_usize = seg_quant_index as usize;
 
             // Compute the delta from base quantizer
@@ -1173,7 +1173,7 @@ impl<'a> Vp8Encoder<'a> {
             // DCT-based segment analysis and assignment.
             // For Preset::Auto, this also runs content detection and may override
             // sns_strength, filter_strength, filter_sharpness, and num_segments.
-            self.analyze_and_assign_segments(quant_index);
+            self.analyze_and_assign_segments(quant_index, lossy_quality);
 
             // If Auto detection changed filter params, recompute frame filter level
             if self.preset == super::api::Preset::Auto {

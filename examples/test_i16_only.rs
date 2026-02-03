@@ -30,7 +30,7 @@ fn main() {
         .encode_rgb(&rgb, w, h, webpx::Unstoppable)
         .unwrap();
 
-    // Also method 1 
+    // Also method 1
     let zen_m1 = EncoderConfig::with_preset(Preset::Default, 75.0)
         .method(1)
         .sns_strength(0)
@@ -49,8 +49,16 @@ fn main() {
         .unwrap();
 
     println!("I16-only comparison (SNS=0, filter=0, segments=1):");
-    println!("  m0: zenwebp={:6} lib={:6} ratio={:.3}x", 
-             zen_m0.len(), lib_m0.len(), zen_m0.len() as f64 / lib_m0.len() as f64);
-    println!("  m1: zenwebp={:6} lib={:6} ratio={:.3}x", 
-             zen_m1.len(), lib_m1.len(), zen_m1.len() as f64 / lib_m1.len() as f64);
+    println!(
+        "  m0: zenwebp={:6} lib={:6} ratio={:.3}x",
+        zen_m0.len(),
+        lib_m0.len(),
+        zen_m0.len() as f64 / lib_m0.len() as f64
+    );
+    println!(
+        "  m1: zenwebp={:6} lib={:6} ratio={:.3}x",
+        zen_m1.len(),
+        lib_m1.len(),
+        zen_m1.len() as f64 / lib_m1.len() as f64
+    );
 }
