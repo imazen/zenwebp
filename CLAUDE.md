@@ -9,30 +9,27 @@ See global ~/.claude/CLAUDE.md for general instructions.
 **Method Parameter** - Apples-to-apples comparison (792079.png, Q75, SNS=0, filter=0, segments=1):
 | Method | zenwebp | libwebp | Size Ratio | Speed | Notes |
 |--------|---------|---------|------------|-------|-------|
-| 0 | 13,988 | 16,678 | **0.84x** | 3.9x | I16-only - we're 16% smaller! |
-| 1 | 13,988 | 16,188 | **0.86x** | 2.6x | I16-only - we're 14% smaller! |
-| 2 | 12,568 | 13,440 | **0.94x** | 4.4x | Limited I4 - we're 6% smaller! |
-| 3 | 12,568 | 12,018 | 1.05x | 1.5x | I4 dominant |
-| 4 | 12,022 | 12,018 | **1.000x** | 2.2x | Full I4 + trellis (PARITY!) |
-| 5 | 12,022 | 11,952 | 1.006x | 2.0x | Same as m4 |
+| 0 | 13,988 | 16,678 | **0.84x** | 3.7x | I16-only - we're 16% smaller! |
+| 1 | 13,988 | 16,188 | **0.86x** | 3.0x | I16-only - we're 14% smaller! |
+| 2 | 12,568 | 13,440 | **0.94x** | 3.7x | Limited I4 - we're 6% smaller! |
+| 3 | 12,568 | 12,018 | 1.05x | 1.4x | I4 dominant, no trellis |
+| 4 | 12,128 | 12,018 | 1.009x | 2.1x | Full I4, no trellis |
+| 5 | 12,022 | 11,952 | **1.006x** | 2.1x | Trellis (near parity!) |
 | 6 | 11,908 | 11,720 | 1.016x | 1.7x | Trellis during mode selection |
 
-**Key finding (2026-02-02):** Our I16 path produces 6-16% smaller files than libwebp!
-Method 4 now achieves **exact parity** with libwebp on the benchmark image.
+**Key finding (2026-02-02):** Method mapping now aligned with libwebp's RD optimization levels:
+- m0-2: RD_OPT_NONE (fast, no RD optimization)
+- m3-4: RD_OPT_BASIC (RD scoring, no trellis)
+- m5: RD_OPT_TRELLIS (trellis during encoding)
+- m6: RD_OPT_TRELLIS_ALL (trellis during I4 mode selection)
 
 **CID22 corpus aggregate (Q75, SNS=0, filter=0, segments=1):**
 | Method | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| 4 | 1,160,230 | 1,169,034 | **0.9925x** |
+| 4 | 1,180,262 | 1,169,034 | 1.010x |
+| 5 | 1,160,230 | 1,157,802 | **1.002x** |
 
-*CID22 validation set (41 images) - zenwebp 0.75% smaller than libwebp*
-
-**Screenshot corpus aggregate (9 images, Q75, SNS=0):**
-| Method | zenwebp | libwebp | Ratio |
-|--------|---------|---------|-------|
-| 4 | 1,198,994 | 1,195,290 | 1.003x |
-
-*Screenshots - 0.3% larger (screenshots favor I16, our I4 improvements less impactful)*
+*CID22 validation set (41 images) - m5 within 0.2% of libwebp*
 
 **Multi-pass removed (2026-02-02):**
 Multi-pass encoding (methods 5/6 doing 2-3 passes) was removed after testing showed
@@ -41,31 +38,24 @@ more passes. This matches libwebp's behavior where multi-pass only helps when us
 with quality search (target_size convergence). All methods now use single-pass.
 
 **Method comparison (SNS=0, filter=0, segments=1, single pass, 792079.png):**
-| Encoder | m4 | m6 | m4→m6 gain |
-|---------|-----|-----|-----------|
-| libwebp | 12018 | 11720 | **2.5% smaller** (trellis-all) |
-| zenwebp | 12022 | 11908 | **0.9% smaller** (trellis-all) |
+| Encoder | m4 | m5 | m6 | m4→m5 gain | m5→m6 gain |
+|---------|-----|-----|-----|-----------|-----------|
+| libwebp | 12018 | 11952 | 11720 | 0.5% | 1.9% |
+| zenwebp | 12128 | 12022 | 11908 | 0.9% | 0.9% |
 
 **Key findings:**
-1. **I4 flatness penalty (2026-02-02)**: Added FLATNESS_PENALTY for non-DC I4 modes
+1. **Method realignment (2026-02-02)**: Aligned method feature mapping with libwebp:
+   - Moved trellis from m4 to m5 (matching RD_OPT_TRELLIS)
+   - Each method now adds distinct features (see table above)
+   - m5 CID22 corpus: **1.002x** (within 0.2% of libwebp)
+2. **I4 flatness penalty (2026-02-02)**: Added FLATNESS_PENALTY for non-DC I4 modes
    when coefficients are flat (≤3 non-zero AC). Matches libwebp's PickBestIntra4 behavior.
-   - Mode match rate: 66% → 69% (for shared I4 macroblocks)
-   - Method 4 ratio: 1.012x → 1.006x
-   - CID22 corpus: 0.999x → 0.993x
-2. **I4 mode context fix (2026-02-02)**: Edge blocks in I4 mode selection were using
+3. **I4 mode context fix (2026-02-02)**: Edge blocks in I4 mode selection were using
    hardcoded DC context (0) instead of cross-macroblock context from `top_b_pred`/`left_b_pred`.
-   Fixed by updating context during encoding pass, not just header writing.
-   - 792079 benchmark: 12174 → 12164 bytes (-0.08%)
-3. **Cross-macroblock non-zero context fix (2026-02-02)**: I4 mode selection was using
+4. **Cross-macroblock non-zero context fix (2026-02-02)**: I4 mode selection was using
    hardcoded `false` for non-zero context on edge blocks instead of using cross-macroblock
    context from `top_complexity`/`left_complexity`.
-   - Method 4 ratio: 1.006x → 1.000x (792079 benchmark)
-   - CID22 corpus: 0.993x → 0.9925x
-4. **libwebp m4→m6 helps** because m6 enables `RD_OPT_TRELLIS_ALL` (trellis during
-   mode selection). This is a **single-pass** benefit, not multi-pass.
-5. **Our m6 now works**: Added trellis during I4 mode selection (2026-02-02).
-   Method 6 is now 0.7% smaller than method 4.
-6. **Multi-pass removed**: Provides no benefit (tested), only adds overhead.
+5. **Multi-pass removed**: Provides no benefit without quality search (tested).
 
 **Quality search (target_size support) - IMPLEMENTED (2026-02-02):**
 
