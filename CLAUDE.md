@@ -919,3 +919,52 @@ mode selection aspect. The remaining coefficient-level difference is inherent
 to our trellis tuning. Corpus results show overall parity or better, so this
 may be acceptable or even beneficial for perceptual quality.
 
+
+### I4 Over-Selection Investigation (2026-02-03)
+
+**Problem:** zenwebp selects I4 mode for ~5% more macroblocks than libwebp (73.4% vs 68.3%
+on 792079.png), resulting in ~1% larger files despite I4 being theoretically more efficient.
+
+**Key finding:** Our I16-only encoding is 16-19% smaller than libwebp's, but once I4 is
+enabled (methods 3+), we become 1% larger. This means:
+1. Our I16 encoding is MORE efficient than libwebp's
+2. Our I4 encoding is LESS efficient than libwebp's
+3. We're selecting I4 for blocks where it actually produces larger output
+
+**Method comparison (792079.png, SNS=0, filter=0, segments=1, 2026-02-03):**
+| Method | zenwebp | libwebp | Ratio | Notes |
+|--------|---------|---------|-------|-------|
+| 0 | 14,522 | 17,912 | **0.811x** | I16-only |
+| 4 | 12,398 | 12,158 | 1.020x | I4 enabled |
+
+**Verified components that MATCH libwebp:**
+- Lambda values (lambda_i4, lambda_i16, lambda_mode, tlambda)
+- BMODE_COST penalty (211 in 1/256 bits)
+- VP8_FIXED_COSTS_I4 mode cost table
+- VP8_LEVEL_FIXED_COSTS coefficient fixed costs
+- LevelCosts calculation from probability tables
+- RD score formula: (R + H) * lambda + 256 * (D + SD)
+- SSE calculation (sse4x4_with_residual)
+- Context tracking (top_nz, left_nz)
+- SIMD vs scalar parity (outputs identical with and without SIMD)
+
+**Spectral distortion (TDisto) added to I4 (2026-02-03):**
+Added spectral distortion calculation to I4 mode selection matching libwebp:
+- `rd_tmp.SD = tlambda ? MULT_8B(tlambda, VP8TDisto4x4(src, tmp_dst, kWeightY)) : 0`
+- Only has effect when tlambda > 0 (requires SNS > 0)
+- With SNS=0, tlambda=0 so SD=0 (matches libwebp behavior)
+
+**Remaining hypothesis - coefficient encoding efficiency:**
+Our I4 coefficient encoding produces more bits than libwebp's for the same modes.
+Diagnostic harness (same-mode I4 blocks):
+- Exact coefficient match: 57.9% of blocks
+- Total |level| sum: zenwebp 2.7% higher
+- Non-zero coefficient count: zenwebp 1.3% higher
+
+This suggests our quantization or trellis produces slightly different (worse) coefficients.
+The cost ESTIMATION matches libwebp, but the actual ENCODING produces more bits.
+
+**Next steps to investigate:**
+1. Compare trellis decisions for identical input blocks
+2. Check if simple quantization (non-trellis) matches libwebp
+3. Verify probability tables during encoding match mode selection tables
