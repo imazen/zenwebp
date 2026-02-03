@@ -978,6 +978,15 @@ non-zero count 0.998x libwebp. Simple quantization is NOT the cause.
   introduce slight bias when recalculated. Keeping probabilities synced with
   mode selection while level_costs stays at initial values works best for us.
 
-**Remaining investigation:**
-1. Compare trellis decisions for identical input blocks - may explain the ~1% gap
-2. The I4 coefficient efficiency gap is small (~1%) and may be inherent to our trellis tuning
+**Step 1 - Trellis/I4 penalty (INVESTIGATED 2026-02-03):**
+- Investigation found I4 mode over-selection was due to insufficient I4 penalty
+- libwebp uses `i4_penalty = 1000 * q²` with fixed lambdas (λ_i16=106, λ_i4=11)
+- Our scoring uses q-dependent lambdas, so we need a different penalty formula
+- **Fix:** Use `i4_penalty = 3000 * lambda_mode` (where lambda_mode = q²/128)
+- Result: CID22 corpus 1.0101x → **1.0099x** (small improvement)
+
+**Trellis coefficients:** Same-mode I4 blocks have 79.2% exact coefficient match.
+Our total |level| sum is 0.997x of libwebp (slightly more aggressive zeroing).
+The trellis implementation itself is correct; the issue was mode selection threshold.
+
+**Current status:** Near parity with libwebp (1.0099x on CID22 corpus)
