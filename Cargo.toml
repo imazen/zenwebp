@@ -56,6 +56,8 @@ fast-yuv = ["dep:yuv"]
 simd = ["dep:multiversed", "dep:multiversion", "dep:archmage", "dep:magetypes", "dep:safe_unaligned_simd", "dep:wide"]
 _benchmarks = []
 _corpus_tests = []
+# Debug mode selection for encoder (set MB_DEBUG=x,y env var to debug specific macroblock)
+mode_debug = []
 _profiling = ["dep:png", "dep:webp"]
 # WASM profiling - minimal deps for wasm32 benchmarking
 _wasm_profiling = ["std"]

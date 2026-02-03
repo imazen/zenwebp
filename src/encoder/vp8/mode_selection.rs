@@ -789,6 +789,38 @@ impl<'a> super::Vp8Encoder<'a> {
         // Pick the best 16x16 luma mode using RD cost selection
         let (luma_mode, i16_score) = self.pick_best_intra16(mbx, mby);
 
+        // Debug output for specific macroblock (check MB_DEBUG env var)
+        // Set MB_DEBUG=x,y to debug mode selection for that macroblock
+        let debug_mb = if cfg!(feature = "mode_debug") {
+            std::env::var("MB_DEBUG")
+                .ok()
+                .and_then(|s| {
+                    let parts: Vec<_> = s.split(',').collect();
+                    if parts.len() == 2 {
+                        Some((parts[0].parse::<usize>().ok()?, parts[1].parse::<usize>().ok()?))
+                    } else {
+                        None
+                    }
+                })
+                .is_some_and(|(dx, dy)| dx == mbx && dy == mby)
+        } else {
+            false
+        };
+
+        #[allow(unused_variables)]
+        let debug_i16_details = if debug_mb {
+            let segment = self.get_segment_for_mb(mbx, mby);
+            eprintln!("=== MB({},{}) Mode Selection Debug ===", mbx, mby);
+            eprintln!("I16: mode={:?}, score={}", luma_mode, i16_score);
+            eprintln!(
+                "  lambda_mode={}, lambda_i4={}, lambda_i16={}",
+                segment.lambda_mode, segment.lambda_i4, segment.lambda_i16
+            );
+            true
+        } else {
+            false
+        };
+
         // Method-based I4 mode selection:
         // - method 0-1: Skip I4 entirely (fastest)
         // - method 2-4: Try I4 with fast filtering
@@ -808,10 +840,27 @@ impl<'a> super::Vp8Encoder<'a> {
 
             if should_try_i4 {
                 match self.pick_best_intra4(mbx, mby, i16_score) {
-                    Some((modes, _)) => (LumaMode::B, Some(modes)),
-                    None => (luma_mode, None),
+                    Some((modes, i4_score)) => {
+                        if debug_mb {
+                            eprintln!("I4: score={} (beats I16)", i4_score);
+                            eprintln!("  modes={:?}", modes);
+                            eprintln!("  RESULT: I4 wins by {} points", i16_score.saturating_sub(i4_score));
+                        }
+                        (LumaMode::B, Some(modes))
+                    }
+                    None => {
+                        if debug_mb {
+                            eprintln!("I4: score >= {} (I16 wins)", i16_score);
+                            eprintln!("  RESULT: I16 wins");
+                        }
+                        (luma_mode, None)
+                    }
                 }
             } else {
+                if debug_mb {
+                    eprintln!("I4: skipped (flat DC block)");
+                    eprintln!("  RESULT: I16 wins (I4 not tried)");
+                }
                 (luma_mode, None)
             }
         };
