@@ -547,14 +547,7 @@ fn encode_argb(
         // Try with auto-selected cache
         let writer_snapshot = writer.clone();
         let output_with_cache = encode_image_data(
-            writer,
-            &refs,
-            cache_bits,
-            enc_argb,
-            enc_width,
-            enc_height,
-            config,
-            is_palette,
+            writer, &refs, cache_bits, enc_argb, enc_width, enc_height, config, is_palette,
         );
 
         // Try without cache
@@ -578,14 +571,7 @@ fn encode_argb(
         }
     } else {
         Ok(encode_image_data(
-            writer,
-            &refs,
-            cache_bits,
-            enc_argb,
-            enc_width,
-            enc_height,
-            config,
-            is_palette,
+            writer, &refs, cache_bits, enc_argb, enc_width, enc_height, config, is_palette,
         ))
     }
 }

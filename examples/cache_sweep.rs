@@ -1,9 +1,10 @@
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let path = args.get(1).map(|s| s.as_str()).unwrap_or(
-        "/home/lilith/work/codec-corpus/CID22/CID22-512/training/1183021.png"
-    );
-    
+    let path = args
+        .get(1)
+        .map(|s| s.as_str())
+        .unwrap_or("/home/lilith/work/codec-corpus/CID22/CID22-512/training/1183021.png");
+
     let file = std::fs::File::open(path).unwrap();
     let decoder = png::Decoder::new(std::io::BufReader::new(file));
     let mut reader = decoder.read_info().unwrap();
@@ -12,13 +13,16 @@ fn main() {
     let rgb = buf[..info.buffer_size()].to_vec();
     let has_alpha = info.color_type == png::ColorType::Rgba;
     let (w, h) = (info.width, info.height);
-    
+
     println!("Image: {} ({}x{}, alpha={})", path, w, h, has_alpha);
     println!("{:-<60}", "");
-    
+
     for cache_bits in 0..=10u8 {
         let config = zenwebp::encoder::vp8l::Vp8lConfig {
-            quality: zenwebp::encoder::vp8l::Vp8lQuality { quality: 75, method: 4 },
+            quality: zenwebp::encoder::vp8l::Vp8lQuality {
+                quality: 75,
+                method: 4,
+            },
             use_predictor: true,
             use_cross_color: true,
             use_subtract_green: true,

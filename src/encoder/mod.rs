@@ -27,6 +27,6 @@ pub use analysis::{ClassifierDiag, ContentType};
 pub use api::{
     ColorType, Encoder, EncoderConfig, EncoderParams, EncodingError, Preset, WebPEncoder,
 };
-pub use vp8l::{encode_vp8l, Vp8lConfig, Vp8lQuality};
 #[cfg(feature = "quantize")]
 pub use color_quantize::{quantize_rgb, quantize_rgba, QuantizedImage};
+pub use vp8l::{encode_vp8l, Vp8lConfig, Vp8lQuality};

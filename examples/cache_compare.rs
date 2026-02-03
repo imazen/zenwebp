@@ -41,7 +41,10 @@ fn main() {
     pngs.sort();
     pngs.truncate(max);
 
-    println!("{:<25} {:>8} {:>8} {:>6}", "Image", "auto", "cache=0", "delta");
+    println!(
+        "{:<25} {:>8} {:>8} {:>6}",
+        "Image", "auto", "cache=0", "delta"
+    );
     println!("{:-<55}", "");
 
     let mut total_auto = 0u64;
@@ -51,7 +54,11 @@ fn main() {
     let mut ties = 0;
 
     for png_path in &pngs {
-        let name = Path::new(png_path).file_stem().unwrap().to_string_lossy().to_string();
+        let name = Path::new(png_path)
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
         let file = match fs::File::open(png_path) {
             Ok(f) => f,
             Err(_) => continue,
@@ -75,27 +82,32 @@ fn main() {
 
         // Auto cache
         let config_auto = zenwebp::encoder::vp8l::Vp8lConfig {
-            quality: zenwebp::encoder::vp8l::Vp8lQuality { quality: 75, method: 4 },
+            quality: zenwebp::encoder::vp8l::Vp8lQuality {
+                quality: 75,
+                method: 4,
+            },
             use_predictor: true,
             use_cross_color: true,
             use_subtract_green: true,
             use_palette: true,
             ..Default::default()
         };
-        let auto_size = match zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, w, h, has_alpha, &config_auto) {
-            Ok(d) => wrap_vp8l_in_riff(&d).len() as u64,
-            Err(_) => continue,
-        };
+        let auto_size =
+            match zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, w, h, has_alpha, &config_auto) {
+                Ok(d) => wrap_vp8l_in_riff(&d).len() as u64,
+                Err(_) => continue,
+            };
 
         // No cache
         let config_no = zenwebp::encoder::vp8l::Vp8lConfig {
             cache_bits: Some(0),
             ..config_auto.clone()
         };
-        let no_cache_size = match zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, w, h, has_alpha, &config_no) {
-            Ok(d) => wrap_vp8l_in_riff(&d).len() as u64,
-            Err(_) => continue,
-        };
+        let no_cache_size =
+            match zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, w, h, has_alpha, &config_no) {
+                Ok(d) => wrap_vp8l_in_riff(&d).len() as u64,
+                Err(_) => continue,
+            };
 
         let delta = auto_size as i64 - no_cache_size as i64;
         let delta_pct = delta as f64 / no_cache_size as f64 * 100.0;
@@ -126,5 +138,8 @@ fn main() {
         total_no_cache,
         (total_auto as f64 - total_no_cache as f64) / total_no_cache as f64 * 100.0,
     );
-    println!("auto better: {}, cache=0 better: {}, tie: {}", auto_wins, no_cache_wins, ties);
+    println!(
+        "auto better: {}, cache=0 better: {}, tie: {}",
+        auto_wins, no_cache_wins, ties
+    );
 }
