@@ -21,14 +21,15 @@ fn wrap_vp8l_in_riff(vp8l_data: &[u8]) -> Vec<u8> {
 }
 
 fn encode_libwebp_lossless(png_path: &str, quality: u8) -> Option<u64> {
-    let output = "/tmp/libwebp_lossless_bench.webp";
+    // Use a unique temp file based on PID to avoid stale file issues
+    let output = format!("/tmp/libwebp_lossless_bench_{}.webp", std::process::id());
     let result = Command::new("/home/lilith/work/libwebp/examples/cwebp")
         .args([
             "-lossless",
             "-q",
             &quality.to_string(),
             "-o",
-            output,
+            &output,
             png_path,
         ])
         .output()
@@ -36,7 +37,9 @@ fn encode_libwebp_lossless(png_path: &str, quality: u8) -> Option<u64> {
     if !result.status.success() {
         return None;
     }
-    fs::metadata(output).map(|m| m.len()).ok()
+    let size = fs::metadata(&output).map(|m| m.len()).ok();
+    let _ = fs::remove_file(&output); // Clean up
+    size
 }
 
 fn main() {
@@ -70,12 +73,12 @@ fn main() {
         pngs.len(),
         quality
     );
-    println!("{:-<80}", "");
+    println!("{:-<95}", "");
     println!(
-        "{:<30} {:>8} {:>8} {:>8} {:>6}",
-        "Image", "zenwebp", "libwebp", "ratio", "valid"
+        "{:<25} {:>10} {:>8} {:>8} {:>8} {:>6}",
+        "Image", "dims", "zenwebp", "libwebp", "ratio", "valid"
     );
-    println!("{:-<80}", "");
+    println!("{:-<95}", "");
 
     let mut total_zen = 0u64;
     let mut total_lib = 0u64;
@@ -121,7 +124,7 @@ fn main() {
             use_predictor: true,
             use_cross_color: true,
             use_subtract_green: true,
-            use_palette: false,
+            use_palette: true,
             ..Default::default()
         };
 
@@ -208,9 +211,11 @@ fn main() {
             String::new()
         };
 
+        let dims = format!("{}x{}", width, height);
         println!(
-            "{:<30} {:>8} {:>8} {:>8.3}x {:>6} {}",
-            &name[..name.len().min(30)],
+            "{:<25} {:>10} {:>8} {:>8} {:>8.3}x {:>6} {}",
+            &name[..name.len().min(25)],
+            dims,
             zen_size,
             lib_size,
             ratio,
@@ -223,11 +228,12 @@ fn main() {
         count += 1;
     }
 
-    println!("{:-<80}", "");
+    println!("{:-<95}", "");
     if count > 0 && total_lib > 0 {
         println!(
-            "{:<30} {:>8} {:>8} {:>8.3}x",
+            "{:<25} {:>10} {:>8} {:>8} {:>8.3}x",
             "TOTAL",
+            "",
             total_zen,
             total_lib,
             total_zen as f64 / total_lib as f64
