@@ -16,17 +16,16 @@ use super::types::{
 };
 
 /// Fixed-point precision for entropy (matches libwebp LOG_2_PRECISION_BITS).
-const LOG_2_PRECISION_BITS: u32 = 26;
+const LOG_2_PRECISION_BITS: u32 = 23;
 
-/// Compute v * log2(v) in fixed-point (matching libwebp's VP8LFastLog2).
+/// Compute log2(v) in fixed-point (matching libwebp's VP8LFastLog2).
 /// Returns 0 for v == 0 or v == 1.
-fn fast_log2(v: u32) -> u64 {
+fn fast_log2(v: u32) -> u32 {
     if v <= 1 {
         return 0;
     }
     let v_f64 = v as f64;
-    let result = v_f64 * v_f64.log2();
-    (result * (1u64 << LOG_2_PRECISION_BITS) as f64) as u64
+    (v_f64.log2() * (1u64 << LOG_2_PRECISION_BITS) as f64) as u32
 }
 
 /// Rounding division matching libwebp's DivRound.
@@ -55,7 +54,7 @@ fn counts_to_bit_estimates(counts: &[u32]) -> Vec<u32> {
     let logsum = fast_log2(total);
     let mut output = vec![0u32; n];
     for (i, &count) in counts.iter().enumerate() {
-        output[i] = (logsum - fast_log2(count)) as u32;
+        output[i] = logsum.saturating_sub(fast_log2(count));
     }
     output
 }
@@ -331,12 +330,15 @@ mod tests {
     fn test_fast_log2() {
         assert_eq!(fast_log2(0), 0);
         assert_eq!(fast_log2(1), 0);
-        // 2 * log2(2) = 2.0
+        // log2(2) = 1.0
         let result = fast_log2(2) as f64 / (1u64 << LOG_2_PRECISION_BITS) as f64;
-        assert!((result - 2.0).abs() < 0.01);
-        // 8 * log2(8) = 24.0
+        assert!((result - 1.0).abs() < 0.01, "log2(2)={result}");
+        // log2(8) = 3.0
         let result = fast_log2(8) as f64 / (1u64 << LOG_2_PRECISION_BITS) as f64;
-        assert!((result - 24.0).abs() < 0.1);
+        assert!((result - 3.0).abs() < 0.01, "log2(8)={result}");
+        // log2(256) = 8.0
+        let result = fast_log2(256) as f64 / (1u64 << LOG_2_PRECISION_BITS) as f64;
+        assert!((result - 8.0).abs() < 0.01, "log2(256)={result}");
     }
 
     #[test]
