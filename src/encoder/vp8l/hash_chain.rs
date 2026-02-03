@@ -265,6 +265,20 @@ impl HashChain {
     pub fn size(&self) -> usize {
         self.offset_length.len()
     }
+
+    /// Create an empty hash chain with zero-initialized entries.
+    /// Used by LZ77 Box to build a custom chain.
+    pub fn empty(size: usize) -> Self {
+        Self {
+            offset_length: vec![0u32; size],
+        }
+    }
+
+    /// Set the offset/length pair at a position.
+    #[inline]
+    pub fn set(&mut self, pos: usize, offset: usize, length: usize) {
+        self.offset_length[pos] = ((offset as u32) << MAX_LENGTH_BITS) | length as u32;
+    }
 }
 
 /// Get max iterations for quality level.

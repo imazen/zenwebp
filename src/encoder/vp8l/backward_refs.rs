@@ -271,6 +271,170 @@ pub(super) fn backward_references_rle(
     refs
 }
 
+/// Maximum window offsets for LZ77 Box (matching libwebp WINDOW_OFFSETS_SIZE_MAX).
+const WINDOW_OFFSETS_SIZE_MAX: usize = 120;
+
+/// LZ77 Box strategy for palette images.
+///
+/// Uses a fixed spatial window of offsets around each pixel, with run-length
+/// counting for fast matching. Optimized for images with few colors where
+/// consecutive identical pixels are common.
+/// Matches libwebp's BackwardReferencesLz77Box.
+///
+/// Returns a HashChain populated with the best offset/length for each position,
+/// then feeds into the standard BackwardReferencesLz77 to produce final refs.
+pub(super) fn backward_references_lz77_box(
+    argb: &[u32],
+    xsize: usize,
+    ysize: usize,
+    cache_bits: u8,
+    hash_chain_best: &HashChain,
+) -> BackwardRefs {
+    use alloc::vec;
+
+    let pix_count = xsize * ysize;
+    if pix_count == 0 {
+        return BackwardRefs::new();
+    }
+
+    // counts[i] = how many times pixel at i is repeated starting from i
+    let mut counts = vec![0u16; pix_count];
+    counts[pix_count - 1] = 1;
+    for i in (0..pix_count - 1).rev() {
+        if argb[i] == argb[i + 1] {
+            counts[i] = counts[i + 1].saturating_add(1).min(MAX_LENGTH as u16);
+        } else {
+            counts[i] = 1;
+        }
+    }
+
+    // Build window offsets from VP8LDistanceToPlaneCode spiral order
+    let mut window_offsets = [0i32; WINDOW_OFFSETS_SIZE_MAX];
+    let mut window_offsets_size = 0;
+    for y in 0..=6i32 {
+        for x in -6i32..=6 {
+            let offset = y * xsize as i32 + x;
+            if offset <= 0 {
+                continue;
+            }
+            let plane_code = distance_to_plane_code(xsize, offset as usize);
+            let pc = plane_code as usize;
+            if pc == 0 || pc > WINDOW_OFFSETS_SIZE_MAX {
+                continue;
+            }
+            window_offsets[pc - 1] = offset;
+        }
+    }
+    // Remove zero entries (narrow images may not reach all plane codes)
+    let mut compacted = [0i32; WINDOW_OFFSETS_SIZE_MAX];
+    for &wo in &window_offsets {
+        if wo != 0 {
+            compacted[window_offsets_size] = wo;
+            window_offsets_size += 1;
+        }
+    }
+    let window_offsets = &compacted[..window_offsets_size];
+
+    // Find offsets that are new (not reachable from P-1 with existing offsets)
+    let mut window_offsets_new = Vec::with_capacity(window_offsets_size);
+    for &wo in window_offsets {
+        let is_reachable = window_offsets.iter().any(|&wj| wo == wj + 1);
+        if !is_reachable {
+            window_offsets_new.push(wo);
+        }
+    }
+
+    // Build a hash chain with Box-strategy matches
+    let mut box_chain = HashChain::empty(pix_count);
+    let mut best_offset_prev: i32 = -1;
+    let mut best_length_prev: i32 = -1;
+
+    for i in 1..pix_count {
+        let mut best_length = hash_chain_best.find_copy(i).1 as i32;
+        let mut best_offset: i32;
+        let mut do_compute = true;
+
+        if best_length >= MAX_LENGTH as i32 {
+            // Check if best match from hash_chain_best is in our window
+            let bo = hash_chain_best.offset(i) as i32;
+            for &wo in window_offsets {
+                if bo == wo {
+                    do_compute = false;
+                    break;
+                }
+            }
+            best_offset = bo;
+        } else {
+            best_offset = 0;
+        }
+
+        if do_compute {
+            let use_prev = best_length_prev > 1 && best_length_prev < MAX_LENGTH as i32;
+            let offsets_to_try = if use_prev {
+                &window_offsets_new[..]
+            } else {
+                window_offsets
+            };
+
+            best_length = if use_prev { best_length_prev - 1 } else { 0 };
+            best_offset = if use_prev { best_offset_prev } else { 0 };
+
+            for &wo in offsets_to_try {
+                let j_offset = i as i32 - wo;
+                if j_offset < 0 || argb[j_offset as usize] != argb[i] {
+                    continue;
+                }
+
+                // Match using run-length counts for fast comparison
+                let mut curr_length = 0i32;
+                let mut j = i;
+                let mut jo = j_offset as usize;
+                loop {
+                    let cjo = counts[jo] as i32;
+                    let cj = counts[j] as i32;
+                    if cjo != cj {
+                        curr_length += cjo.min(cj);
+                        break;
+                    }
+                    curr_length += cjo;
+                    jo += cjo as usize;
+                    j += cjo as usize;
+                    if curr_length > MAX_LENGTH as i32 || j >= pix_count || argb[jo] != argb[j] {
+                        break;
+                    }
+                }
+
+                if best_length < curr_length {
+                    best_offset = wo;
+                    if curr_length >= MAX_LENGTH as i32 {
+                        best_length = MAX_LENGTH as i32;
+                        break;
+                    } else {
+                        best_length = curr_length;
+                    }
+                }
+            }
+        }
+
+        if best_length <= MIN_LENGTH as i32 {
+            box_chain.set(i, 0, 0);
+            best_offset_prev = 0;
+            best_length_prev = 0;
+        } else {
+            box_chain.set(
+                i,
+                best_offset as usize,
+                best_length.min(MAX_LENGTH as i32) as usize,
+            );
+            best_offset_prev = best_offset;
+            best_length_prev = best_length;
+        }
+    }
+
+    // Use the box chain with standard LZ77 to produce final refs
+    backward_references_lz77(argb, xsize, ysize, cache_bits, &box_chain)
+}
+
 /// Maximum color cache bits.
 const MAX_COLOR_CACHE_BITS: u8 = 10;
 
@@ -471,6 +635,29 @@ pub fn get_backward_references(
     quality: u8,
     cache_bits_max: u8,
 ) -> (BackwardRefs, u8) {
+    get_backward_references_inner(argb, width, height, quality, cache_bits_max, 0)
+}
+
+/// Get backward references with optional LZ77 Box for palette images.
+pub fn get_backward_references_with_palette(
+    argb: &[u32],
+    width: usize,
+    height: usize,
+    quality: u8,
+    cache_bits_max: u8,
+    palette_size: usize,
+) -> (BackwardRefs, u8) {
+    get_backward_references_inner(argb, width, height, quality, cache_bits_max, palette_size)
+}
+
+fn get_backward_references_inner(
+    argb: &[u32],
+    width: usize,
+    height: usize,
+    quality: u8,
+    cache_bits_max: u8,
+    palette_size: usize,
+) -> (BackwardRefs, u8) {
     let size = width * height;
 
     if size == 0 {
@@ -498,6 +685,19 @@ pub fn get_backward_references(
     } else {
         refs_lz77
     };
+    let mut best_cost = cost_lz77.min(cost_rle);
+
+    // Try LZ77 Box for palette images (<=16 colors) — matching libwebp n_lz77s=2
+    if palette_size > 0 && palette_size <= 16 {
+        let refs_box = backward_references_lz77_box(argb, width, height, 0, &hash_chain);
+        let histo_box = Histogram::from_refs_with_plane_codes(&refs_box, 0, width);
+        let cost_box = estimate_histogram_bits(&histo_box);
+        if cost_box < best_cost {
+            best_refs = refs_box;
+            best_cost = cost_box;
+        }
+    }
+    let _ = best_cost; // suppress unused warning
 
     // Determine initial color cache size from greedy refs
     let mut cache_bits = if cache_bits_max > 0 && quality > 25 {

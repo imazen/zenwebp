@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use super::backward_refs::get_backward_references;
+use super::backward_refs::{get_backward_references, get_backward_references_with_palette};
 use super::bitwriter::BitWriter;
 use super::color_cache::ColorCache;
 use super::histogram::{
@@ -507,13 +507,28 @@ fn encode_argb(
     } else {
         config.cache_bits.min(10)
     };
-    let (refs, cache_bits) = get_backward_references(
-        enc_argb,
-        enc_width,
-        enc_height,
-        config.quality.quality,
-        cache_bits_max,
-    );
+    let enc_palette_size = palette_transform
+        .as_ref()
+        .map(|pt| pt.palette.len())
+        .unwrap_or(0);
+    let (refs, cache_bits) = if enc_palette_size > 0 {
+        get_backward_references_with_palette(
+            enc_argb,
+            enc_width,
+            enc_height,
+            config.quality.quality,
+            cache_bits_max,
+            enc_palette_size,
+        )
+    } else {
+        get_backward_references(
+            enc_argb,
+            enc_width,
+            enc_height,
+            config.quality.quality,
+            cache_bits_max,
+        )
+    };
 
     // Write color cache info
     if cache_bits > 0 {
