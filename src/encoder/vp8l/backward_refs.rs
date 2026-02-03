@@ -167,7 +167,6 @@ pub(super) fn backward_references_lz77(
                     }
                 }
             }
-            i_last_check = j_max as i32;
         } else {
             chosen_len = 1;
         }
