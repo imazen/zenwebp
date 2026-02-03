@@ -11,11 +11,11 @@ See global ~/.claude/CLAUDE.md for general instructions.
 |--------|------|-----------|------------|-------|
 | 0 | 22ms | 13.1KB | 0.89x | I16-only, no trellis |
 | 2 | 31ms | 12.1KB | 1.07x | Limited I4 (3 modes), no trellis |
-| 4 | 26ms | 11.4KB | 1.04x | Full I4, trellis, 1 pass |
-| 5 | 40ms | 11.4KB | 1.04x | Full I4, trellis, 2 passes |
-| 6 | 59ms | 11.4KB | 1.04x | Full I4, trellis, 3 passes |
+| 4 | 26ms | 12.2KB | 1.01x | Full I4, trellis final |
+| 5 | 27ms | 12.2KB | 1.01x | Same as m4 (multi-pass removed) |
+| 6 | 32ms | 12.1KB | 1.03x | Trellis during mode selection |
 
-*Benchmark: 512x512 CID22 image (792079) at Q75, 20 iterations, release mode*
+*Benchmark: 512x512 CID22 image (792079) at Q75, SNS=0, filter=0, segments=1*
 
 **CID22 corpus aggregate (41 images, Q75 Default):**
 | Method | zenwebp | libwebp | Ratio |
@@ -31,12 +31,11 @@ See global ~/.claude/CLAUDE.md for general instructions.
 | 5 | 1184966 | 1156406 | 1.025x |
 | 6 | 1184966 | 1140826 | 1.039x |
 
-**Methods 5/6 multi-pass implementation (2026-02-02):**
-Methods 5/6 now perform true multi-pass encoding like libwebp:
-- m5 = 2 passes, m6 = 3 passes (matching libwebp's config->pass)
-- Each pass does full re-encoding with updated level_costs from previous pass
-- Statistics accumulate across intermediate passes (reset only on last pass)
-- Borders come from reconstructed pixels, ensuring consistent predictions within each pass
+**Multi-pass removed (2026-02-02):**
+Multi-pass encoding (methods 5/6 doing 2-3 passes) was removed after testing showed
+it provides **no compression benefit** - in fact, files were 0.1-0.5% LARGER with
+more passes. This matches libwebp's behavior where multi-pass only helps when used
+with quality search (target_size convergence). All methods now use single-pass.
 
 **Method comparison (SNS=0, filter=0, segments=1, single pass):**
 | Encoder | m4 | m6 | m4→m6 gain |
