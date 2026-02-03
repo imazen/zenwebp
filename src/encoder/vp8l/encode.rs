@@ -309,7 +309,8 @@ fn encode_argb(
         .unwrap_or(0);
 
     // Compute transform bits for overhead estimation
-    let histo_bits_est = get_histo_bits(width, height, config.quality.method);
+    let histo_bits_est =
+        get_histo_bits_palette(width, height, config.quality.method, palette_candidate);
     let transform_bits_est = get_transform_bits(config.quality.method, histo_bits_est);
     let transform_bits_clamped = clamp_bits(
         width,
@@ -539,9 +540,10 @@ fn encode_argb(
     }
 
     // Build histogram(s) — either single or meta-Huffman with clustering
+    let is_palette = palette_transform.is_some();
     let use_meta = config.use_meta_huffman && enc_width > 16 && enc_height > 16;
     let histo_bits = if use_meta {
-        get_histo_bits(enc_width, enc_height, config.quality.method)
+        get_histo_bits_palette(enc_width, enc_height, config.quality.method, is_palette)
     } else {
         0u8
     };
@@ -758,8 +760,14 @@ fn clamp_bits(
 /// Calculate optimal histogram bits based on method and image size.
 /// Matches libwebp's GetHistoBits + ClampBits.
 fn get_histo_bits(width: usize, height: usize, method: u8) -> u8 {
-    // Make tile size a function of encoding method
-    let histo_bits = 7i32 - method as i32;
+    get_histo_bits_palette(width, height, method, false)
+}
+
+/// Calculate histogram bits with palette awareness.
+/// Matches libwebp's GetHistoBits: use_palette adds +2 to base bits.
+fn get_histo_bits_palette(width: usize, height: usize, method: u8, use_palette: bool) -> u8 {
+    let base = if use_palette { 9i32 } else { 7i32 };
+    let histo_bits = base - method as i32;
     clamp_bits(
         width,
         height,
