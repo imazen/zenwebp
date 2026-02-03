@@ -249,8 +249,8 @@ We're **faster** than libwebp with trellis (65ms vs 75ms), but produce larger fi
 
 VP8L lossless encoder implementation in `src/encoder/vp8l/`:
 
-**Status:** Working, beats libwebp compression. CID22 corpus (198 images): **0.998x** of libwebp
-(0.2% smaller on average). Only 2 images > 1.05x (512x512 all-unique-color photos).
+**Status:** Working, beats libwebp compression. CID22 50-image subset: **0.996x** of libwebp
+(0.4% smaller on average). Screenshots: **0.995x** (0.5% smaller).
 
 **Compression progression:**
 | Date | Change | 10-img | 50-img | 198-img |
@@ -262,12 +262,13 @@ VP8L lossless encoder implementation in `src/encoder/vp8l/`:
 | Feb 3 | CostModel fix | 1.007x | 1.015x | - |
 | Feb 3 | Huffman tree fix | 1.005x | 1.011x | - |
 | Feb 3 | ExtraCost fix | **0.995x** | **0.997x** | **0.998x** |
+| Feb 3 | Try-both cache | - | **0.996x** | - |
 
 **Implemented features:**
 - All 14 predictor modes with per-block entropy-based selection
 - Subtract green transform
 - Cross-color transform
-- Color cache with auto-detection (tests sizes 0-10)
+- Color cache with auto-detection (tests sizes 0-10) + try-both strategy
 - LZ77 with hash chain, left-extension, quality-dependent search depth
 - TraceBackwards cost-based optimal parsing (forward DP)
 - Huffman tree construction matching libwebp (count_min doubling, tie-breaking)
@@ -288,6 +289,12 @@ VP8L lossless encoder implementation in `src/encoder/vp8l/`:
 - `src/encoder/vp8l/cost_model.rs` - TraceBackwards DP cost model
 - `src/encoder/vp8l/transforms.rs` - Image transforms
 - `src/encoder/vp8l/types.rs` - Core data structures
+
+**Cache auto-detection (2026-02-03):**
+Entropy-based cache size selection uses a global histogram, but actual encoding uses
+per-tile meta-Huffman codes. Larger cache expands the literal alphabet (280→408+
+entries), increasing Huffman tree overhead per tile. Fix: try both auto-selected cache
+and cache=0, return whichever is smaller. Improved CID22 50-image from 0.997x to 0.996x.
 
 **Remaining potential improvements:**
 - Zopfli-style cost interval manager (libwebp's BackwardReferencesHashChainDistanceOnly)
