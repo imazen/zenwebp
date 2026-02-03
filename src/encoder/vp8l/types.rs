@@ -71,7 +71,7 @@ impl Vp8lQuality {
 pub struct Vp8lConfig {
     /// Quality and method settings.
     pub quality: Vp8lQuality,
-    /// Color cache bits (0 = disabled, 1-11 = enabled).
+    /// Color cache bits maximum (0 = auto-detect optimal, 1-10 = explicit max).
     pub cache_bits: u8,
     /// Use predictor transform.
     pub use_predictor: bool,
@@ -93,7 +93,7 @@ impl Default for Vp8lConfig {
     fn default() -> Self {
         Self {
             quality: Vp8lQuality::default(),
-            cache_bits: 0, // Disabled by default, auto-detect later
+            cache_bits: 0, // Auto-detect optimal cache bits
             use_predictor: true,
             use_cross_color: false, // Start without cross-color
             use_subtract_green: true,

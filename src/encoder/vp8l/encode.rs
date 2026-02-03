@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use super::backward_refs::{compute_backward_refs, compute_backward_refs_simple};
+use super::backward_refs::get_backward_references;
 use super::bitwriter::BitWriter;
 use super::color_cache::ColorCache;
 use super::histogram::{
@@ -140,9 +140,15 @@ fn encode_argb(
     // No more transforms
     writer.write_bit(false);
 
-    // Determine cache bits (0 means auto-detect, use negative-like approach with Option)
-    // For now, always use 0 (disabled) to match the working encoder
-    let cache_bits: u8 = 0; // TODO: Re-enable cache with proper testing
+    // Build backward references (determines optimal cache_bits via entropy estimation)
+    let cache_bits_max = if config.cache_bits == 0 {
+        10 // Auto-detect: try all sizes up to MAX_COLOR_CACHE_BITS
+    } else {
+        config.cache_bits.min(10)
+    };
+    let (refs, cache_bits) = get_backward_references(
+        argb, width, height, config.quality.quality, cache_bits_max,
+    );
 
     // Write color cache info
     if cache_bits > 0 {
@@ -154,18 +160,6 @@ fn encode_argb(
 
     // Meta-Huffman (disabled for now - single Huffman group)
     writer.write_bit(false);
-
-    // Build backward references
-    let refs = if config.quality.quality < 25 {
-        compute_backward_refs_simple(argb, width, height)
-    } else {
-        let mut cache = if cache_bits > 0 {
-            Some(ColorCache::new(cache_bits))
-        } else {
-            None
-        };
-        compute_backward_refs(argb, width, height, config.quality.quality, cache.as_mut())
-    };
 
     // Build histogram
     let histogram = Histogram::from_refs(&refs, cache_bits);
@@ -207,6 +201,8 @@ fn encode_argb(
     let alpha_trivial = alpha_lengths.iter().filter(|&&l| l > 0).count() <= 1;
     let dist_trivial = dist_lengths.iter().filter(|&&l| l > 0).count() <= 1;
 
+    let mut argb_idx = 0usize;
+
     for token in refs.iter() {
         match *token {
             PixOrCopy::Literal(argb_val) => {
@@ -238,6 +234,7 @@ fn encode_argb(
                 if let Some(ref mut cache) = color_cache {
                     cache.insert(argb_val);
                 }
+                argb_idx += 1;
             }
             PixOrCopy::CacheIdx(idx) => {
                 // Cache code = 256 + 24 + idx (in literal tree, so check literal_trivial)
@@ -245,6 +242,12 @@ fn encode_argb(
                     let code = NUM_LITERAL_CODES + NUM_LENGTH_CODES + idx as usize;
                     writer.write_bits(literal_codes[code].code as u64, literal_codes[code].length);
                 }
+
+                // Update cache with actual pixel to maintain state
+                if let Some(ref mut cache) = color_cache {
+                    cache.insert(argb[argb_idx]);
+                }
+                argb_idx += 1;
             }
             PixOrCopy::Copy { len, dist } => {
                 // Write length prefix code (in literal tree, so check literal_trivial)
@@ -278,8 +281,13 @@ fn encode_argb(
                     writer.write_bits(dist_extra as u64, dist_extra_bits);
                 }
 
-                // Update cache with copied pixels (we don't have access to them here,
-                // so this is a limitation of the current implementation)
+                // Update cache with copied pixels
+                if let Some(ref mut cache) = color_cache {
+                    for k in 0..len as usize {
+                        cache.insert(argb[argb_idx + k]);
+                    }
+                }
+                argb_idx += len as usize;
             }
         }
     }

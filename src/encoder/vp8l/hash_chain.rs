@@ -1,11 +1,12 @@
 //! Hash chain for LZ77 backward reference finding.
 //!
 //! Uses libwebp's hash function and chain structure for finding matches.
+//! Includes left-extension optimization from libwebp's VP8LHashChainFill.
 
 use alloc::vec;
 use alloc::vec::Vec;
 
-use super::types::{HASH_BITS, HASH_SIZE, MAX_LENGTH, MAX_LENGTH_BITS};
+use super::types::{HASH_BITS, HASH_SIZE, MAX_LENGTH, MAX_LENGTH_BITS, WINDOW_SIZE};
 
 /// Hash multipliers for two-pixel hashing (from libwebp).
 const HASH_MULT_HI: u32 = 0xc6a4a793;
@@ -21,6 +22,10 @@ fn hash_pix_pair(p0: u32, p1: u32) -> usize {
 }
 
 /// Hash chain for efficient LZ77 match finding.
+///
+/// For each pixel position, stores the best (offset, length) match found.
+/// offset = raw distance to matching position.
+/// length = number of matching pixels.
 #[derive(Debug)]
 pub struct HashChain {
     /// For each pixel: (offset << MAX_LENGTH_BITS) | length
@@ -30,6 +35,12 @@ pub struct HashChain {
 
 impl HashChain {
     /// Build hash chain for the given ARGB pixels.
+    ///
+    /// Matches libwebp's VP8LHashChainFill including:
+    /// - Two-pixel hash for normal positions
+    /// - Color+run-length hash for constant-color runs
+    /// - Heuristic row-above and previous-pixel initial guesses
+    /// - Left-extension optimization (fills preceding positions without re-search)
     pub fn new(argb: &[u32], quality: u8, width: usize) -> Self {
         let size = argb.len();
         let mut offset_length = vec![0u32; size];
@@ -41,17 +52,20 @@ impl HashChain {
         let iter_max = get_max_iters(quality);
         let window_size = get_window_size(quality, width);
 
-        // Build the chain: for each position, store the previous position with same hash
-        let mut hash_to_first: Vec<i32> = vec![-1; HASH_SIZE];
+        // Temporarily use offset_length as chain storage (reinterpreted as i32).
+        // This is safe because both are u32/i32 and same size.
         let mut chain: Vec<i32> = vec![-1; size];
+        let mut hash_to_first: Vec<i32> = vec![-1; HASH_SIZE];
 
         // Fill chain linking pixels with same hash
         let mut argb_comp = argb[0] == argb[1];
-        for pos in 0..size.saturating_sub(2) {
-            let argb_comp_next = argb.get(pos + 2).is_some_and(|&p| argb[pos + 1] == p);
+        let mut pos = 0usize;
+        while pos < size.saturating_sub(2) {
+            let argb_comp_next =
+                pos + 2 < size && argb[pos + 1] == argb[pos + 2];
 
             if argb_comp && argb_comp_next {
-                // Consecutive identical pixels - use special hash including run length
+                // Consecutive identical pixels - use (color, run_length) hash
                 let base_color = argb[pos];
                 let mut len = 1usize;
 
@@ -60,30 +74,22 @@ impl HashChain {
                     len += 1;
                 }
 
-                // Skip long runs (they link to predecessor with distance=1)
                 if len > MAX_LENGTH {
-                    for i in 0..(len - MAX_LENGTH) {
+                    // Skip positions that will be covered by distance=1 matches
+                    let skip = len - MAX_LENGTH;
+                    for i in 0..skip {
                         chain[pos + i] = -1;
                     }
-                    // Process remaining
-                    let skip = len - MAX_LENGTH;
-                    for i in 0..MAX_LENGTH.min(len) {
-                        let p = pos + skip + i;
-                        // Hash: (color, remaining_length)
-                        let hash = hash_pix_pair(base_color, (MAX_LENGTH - i) as u32);
-                        chain[p] = hash_to_first[hash];
-                        hash_to_first[hash] = p as i32;
-                    }
-                    argb_comp = false;
-                    continue;
+                    pos += skip;
+                    len = MAX_LENGTH;
                 }
 
-                // Process normal-length runs
+                // Process remaining run positions
                 while len > 0 {
-                    let p = pos + len - 1;
                     let hash = hash_pix_pair(base_color, len as u32);
-                    chain[p] = hash_to_first[hash];
-                    hash_to_first[hash] = p as i32;
+                    chain[pos] = hash_to_first[hash];
+                    hash_to_first[hash] = pos as i32;
+                    pos += 1;
                     len -= 1;
                 }
                 argb_comp = false;
@@ -92,82 +98,148 @@ impl HashChain {
                 let hash = hash_pix_pair(argb[pos], argb[pos + 1]);
                 chain[pos] = hash_to_first[hash];
                 hash_to_first[hash] = pos as i32;
+                pos += 1;
                 argb_comp = argb_comp_next;
             }
         }
 
         // Handle penultimate pixel
         if size >= 2 {
-            let pos = size - 2;
-            let hash = hash_pix_pair(argb[pos], argb[pos + 1]);
-            chain[pos] = hash_to_first[hash];
+            let p = size - 2;
+            let hash = hash_pix_pair(argb[p], argb[p + 1]);
+            chain[p] = hash_to_first[hash];
         }
 
         drop(hash_to_first);
 
-        // Find best matches working backwards
+        // Find best matches working backwards, with left-extension
+        offset_length[0] = 0;
         offset_length[size - 1] = 0;
-        for base_pos in (1..size - 1).rev() {
-            let max_len = max_find_copy_length(size - 1 - base_pos);
-            let argb_start = &argb[base_pos..];
-            let mut best_len = 0usize;
-            let mut best_dist = 0usize;
-            let min_pos = base_pos.saturating_sub(window_size);
-            let length_max = max_len.min(256);
-            let _max_base_pos = base_pos;
 
-            // Heuristic: try row above
-            if base_pos >= width {
-                let curr_len =
-                    find_match_length(&argb[base_pos - width..], argb_start, best_len, max_len);
-                if curr_len > best_len {
-                    best_len = curr_len;
-                    best_dist = width;
+        let mut base_position = size - 2;
+        while base_position > 0 {
+            let max_len = max_find_copy_length(size - 1 - base_position);
+            let argb_start = base_position;
+            let mut best_length = 0usize;
+            let mut best_distance = 0usize;
+            let min_pos = base_position.saturating_sub(window_size);
+            let length_max = max_len.min(256);
+
+            // Heuristic: try row above as initial guess
+            if base_position >= width {
+                let curr_len = find_match_length(
+                    argb,
+                    base_position - width,
+                    argb_start,
+                    best_length,
+                    max_len,
+                );
+                if curr_len > best_length {
+                    best_length = curr_len;
+                    best_distance = width;
                 }
             }
 
             // Heuristic: try previous pixel
-            if base_pos >= 1 {
-                let curr_len =
-                    find_match_length(&argb[base_pos - 1..], argb_start, best_len, max_len);
-                if curr_len > best_len {
-                    best_len = curr_len;
-                    best_dist = 1;
+            if base_position >= 1 {
+                let curr_len = find_match_length(
+                    argb,
+                    base_position - 1,
+                    argb_start,
+                    best_length,
+                    max_len,
+                );
+                if curr_len > best_length {
+                    best_length = curr_len;
+                    best_distance = 1;
                 }
             }
 
-            // Follow hash chain
-            let mut pos = chain[base_pos];
-            let mut iters = iter_max;
-            let mut best_argb = argb_start.get(best_len).copied().unwrap_or(0);
+            // Skip chain traversal if already maximal
+            let mut chain_pos = if best_length == MAX_LENGTH {
+                -1 // Skip chain
+            } else {
+                chain[base_position]
+            };
 
-            while pos >= min_pos as i32 && iters > 0 {
+            // Follow hash chain
+            let mut iters = iter_max;
+            let best_argb_init = if best_length < argb.len() - argb_start {
+                argb[argb_start + best_length]
+            } else {
+                0
+            };
+            let mut best_argb = best_argb_init;
+
+            while chain_pos >= min_pos as i32 && iters > 0 {
                 iters -= 1;
-                let p = pos as usize;
+                let p = chain_pos as usize;
 
                 // Quick rejection: check if end matches
-                if argb.get(p + best_len).copied().unwrap_or(!best_argb) != best_argb {
-                    pos = chain[p];
+                if p + best_length < size {
+                    if argb[p + best_length] != best_argb {
+                        chain_pos = chain[p];
+                        continue;
+                    }
+                } else {
+                    chain_pos = chain[p];
                     continue;
                 }
 
-                let curr_len = vector_mismatch(&argb[p..], argb_start, max_len);
-                if curr_len > best_len {
-                    best_len = curr_len;
-                    best_dist = base_pos - p;
-                    best_argb = argb_start.get(best_len).copied().unwrap_or(0);
+                let curr_len = vector_mismatch(argb, p, argb_start, max_len);
+                if curr_len > best_length {
+                    best_length = curr_len;
+                    best_distance = base_position - p;
+                    if argb_start + best_length < size {
+                        best_argb = argb[argb_start + best_length];
+                    }
 
-                    if best_len >= length_max {
+                    if best_length >= length_max {
                         break;
                     }
                 }
 
-                pos = chain[p];
+                chain_pos = chain[p];
             }
 
-            // Store best match
-            debug_assert!(best_len <= MAX_LENGTH);
-            offset_length[base_pos] = ((best_dist as u32) << MAX_LENGTH_BITS) | (best_len as u32);
+            // Left-extension optimization (from libwebp):
+            // If the match extends to the left, fill in preceding positions
+            // without re-searching the hash chain.
+            let max_base_position = base_position;
+            loop {
+                debug_assert!(best_length <= MAX_LENGTH);
+                debug_assert!(best_distance <= WINDOW_SIZE);
+                offset_length[base_position] =
+                    ((best_distance as u32) << MAX_LENGTH_BITS) | (best_length as u32);
+
+                if base_position == 0 {
+                    break;
+                }
+                base_position -= 1;
+
+                // Stop if no match
+                if best_distance == 0 {
+                    break;
+                }
+                // Stop if we can't extend left
+                if base_position < best_distance {
+                    break;
+                }
+                if argb[base_position - best_distance] != argb[base_position] {
+                    break;
+                }
+                // Stop if at max length with non-trivial distance, and there
+                // could be a closer match
+                if best_length == MAX_LENGTH
+                    && best_distance != 1
+                    && base_position + MAX_LENGTH < max_base_position
+                {
+                    break;
+                }
+                if best_length < MAX_LENGTH {
+                    best_length += 1;
+                }
+            }
         }
 
         Self { offset_length }
@@ -184,6 +256,21 @@ impl HashChain {
     pub fn length(&self, pos: usize) -> usize {
         (self.offset_length[pos] & ((1 << MAX_LENGTH_BITS) - 1)) as usize
     }
+
+    /// Get both offset and length at a position (avoids double lookup).
+    #[inline]
+    pub fn find_copy(&self, pos: usize) -> (usize, usize) {
+        let val = self.offset_length[pos];
+        let offset = (val >> MAX_LENGTH_BITS) as usize;
+        let length = (val & ((1 << MAX_LENGTH_BITS) - 1)) as usize;
+        (offset, length)
+    }
+
+    /// Number of positions in the chain.
+    #[inline]
+    pub fn size(&self) -> usize {
+        self.offset_length.len()
+    }
 }
 
 /// Get max iterations for quality level.
@@ -196,7 +283,7 @@ fn get_max_iters(quality: u8) -> usize {
 #[inline]
 fn get_window_size(quality: u8, width: usize) -> usize {
     let max = if quality > 75 {
-        super::types::WINDOW_SIZE
+        WINDOW_SIZE
     } else if quality > 50 {
         width << 8
     } else if quality > 25 {
@@ -204,7 +291,7 @@ fn get_window_size(quality: u8, width: usize) -> usize {
     } else {
         width << 4
     };
-    max.min(super::types::WINDOW_SIZE)
+    max.min(WINDOW_SIZE)
 }
 
 /// Limit copy length.
@@ -213,25 +300,36 @@ fn max_find_copy_length(len: usize) -> usize {
     len.min(MAX_LENGTH)
 }
 
-/// Find match length between two sequences.
+/// Find match length between two sequences starting at given offsets.
+/// Returns 0 if the character at best_len doesn't match (quick rejection).
 #[inline]
-fn find_match_length(array1: &[u32], array2: &[u32], best_len: usize, max_len: usize) -> usize {
+fn find_match_length(
+    argb: &[u32],
+    pos1: usize,
+    pos2: usize,
+    best_len: usize,
+    max_len: usize,
+) -> usize {
     // Quick check at best_len position
-    if array1.len() <= best_len || array2.len() <= best_len {
+    let remaining1 = argb.len() - pos1;
+    let remaining2 = argb.len() - pos2;
+    if remaining1 <= best_len || remaining2 <= best_len {
         return 0;
     }
-    if array1[best_len] != array2[best_len] {
+    if argb[pos1 + best_len] != argb[pos2 + best_len] {
         return 0;
     }
-    vector_mismatch(array1, array2, max_len)
+    vector_mismatch(argb, pos1, pos2, max_len)
 }
 
-/// Find first mismatch position (or max_len if all match).
+/// Find first mismatch position between two subsequences.
 #[inline]
-fn vector_mismatch(a: &[u32], b: &[u32], max_len: usize) -> usize {
-    let len = a.len().min(b.len()).min(max_len);
+fn vector_mismatch(argb: &[u32], pos1: usize, pos2: usize, max_len: usize) -> usize {
+    let remaining1 = argb.len() - pos1;
+    let remaining2 = argb.len() - pos2;
+    let len = remaining1.min(remaining2).min(max_len);
     for i in 0..len {
-        if a[i] != b[i] {
+        if argb[pos1 + i] != argb[pos2 + i] {
             return i;
         }
     }
@@ -261,13 +359,27 @@ mod tests {
     }
 
     #[test]
-    fn test_vector_mismatch() {
-        let a = [1, 2, 3, 4, 5];
-        let b = [1, 2, 3, 9, 5];
-        assert_eq!(vector_mismatch(&a, &b, 10), 3);
+    fn test_left_extension() {
+        // Test that left-extension fills in consecutive positions
+        let mut pixels = vec![0xFF112233u32; 50];
+        pixels.extend_from_slice(&[0xFFAABBCCu32; 50]);
+        pixels.extend_from_slice(&[0xFF112233u32; 50]);
 
-        let c = [1, 2, 3, 4, 5];
-        let d = [1, 2, 3, 4, 5];
-        assert_eq!(vector_mismatch(&c, &d, 10), 5);
+        let chain = HashChain::new(&pixels, 75, 50);
+
+        // Positions 100-149 should find matches to positions 0-49
+        for i in 100..140 {
+            let (offset, length) = chain.find_copy(i);
+            assert!(length > 0, "Position {} should have a match", i);
+            assert!(offset > 0, "Position {} should have non-zero offset", i);
+        }
+    }
+
+    #[test]
+    fn test_vector_mismatch() {
+        let a = [1, 2, 3, 4, 5, 9, 7, 8];
+        assert_eq!(vector_mismatch(&a, 0, 3, 5), 0); // 1 != 4
+        let b = [1, 2, 3, 1, 2, 3, 7, 8];
+        assert_eq!(vector_mismatch(&b, 0, 3, 5), 3); // matches 3 then differs
     }
 }

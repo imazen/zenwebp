@@ -88,6 +88,7 @@ impl Histogram {
     }
 
     /// Build histogram from backward references.
+    /// Assumes distances in refs are already plane codes.
     pub fn from_refs(refs: &BackwardRefs, cache_bits: u8) -> Self {
         let mut h = Self::new(cache_bits);
         for token in refs.iter() {
@@ -95,6 +96,28 @@ impl Histogram {
                 PixOrCopy::Literal(argb) => h.add_literal(argb),
                 PixOrCopy::CacheIdx(idx) => h.add_cache_idx(idx),
                 PixOrCopy::Copy { len, dist } => h.add_copy(len, dist),
+            }
+        }
+        h
+    }
+
+    /// Build histogram from backward references with raw distances,
+    /// converting to plane codes on the fly for accurate distance statistics.
+    pub fn from_refs_with_plane_codes(
+        refs: &BackwardRefs,
+        cache_bits: u8,
+        xsize: usize,
+    ) -> Self {
+        let mut h = Self::new(cache_bits);
+        for token in refs.iter() {
+            match *token {
+                PixOrCopy::Literal(argb) => h.add_literal(argb),
+                PixOrCopy::CacheIdx(idx) => h.add_cache_idx(idx),
+                PixOrCopy::Copy { len, dist } => {
+                    let plane_code =
+                        super::backward_refs::distance_to_plane_code(xsize, dist as usize);
+                    h.add_copy(len, plane_code);
+                }
             }
         }
         h
