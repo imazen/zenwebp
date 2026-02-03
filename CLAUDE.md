@@ -9,31 +9,30 @@ See global ~/.claude/CLAUDE.md for general instructions.
 **Method Parameter** - Apples-to-apples comparison (792079.png, Q75, SNS=0, filter=0, segments=1):
 | Method | zenwebp | libwebp | Size Ratio | Speed | Notes |
 |--------|---------|---------|------------|-------|-------|
-| 0 | 13,988 | 16,678 | **0.84x** | 2.6x | I16-only - we're 16% smaller! |
-| 1 | 13,988 | 16,188 | **0.86x** | 1.5x | I16-only - we're 14% smaller! |
-| 2 | 12,502 | 13,440 | **0.93x** | 2.4x | Limited I4 - we're 7% smaller! |
-| 3 | 12,502 | 12,018 | 1.04x | 1.4x | I4 dominant |
-| 4 | 12,090 | 12,018 | **1.006x** | 2.0x | Full I4 + trellis (near parity!) |
-| 5 | 12,090 | 11,952 | 1.01x | 1.8x | Same as m4 |
-| 6 | 12,030 | 11,720 | 1.03x | 2.2x | Trellis during mode selection |
+| 0 | 13,988 | 16,678 | **0.84x** | 3.9x | I16-only - we're 16% smaller! |
+| 1 | 13,988 | 16,188 | **0.86x** | 2.6x | I16-only - we're 14% smaller! |
+| 2 | 12,568 | 13,440 | **0.94x** | 4.4x | Limited I4 - we're 6% smaller! |
+| 3 | 12,568 | 12,018 | 1.05x | 1.5x | I4 dominant |
+| 4 | 12,022 | 12,018 | **1.000x** | 2.2x | Full I4 + trellis (PARITY!) |
+| 5 | 12,022 | 11,952 | 1.006x | 2.0x | Same as m4 |
+| 6 | 11,908 | 11,720 | 1.016x | 1.7x | Trellis during mode selection |
 
-**Key finding (2026-02-02):** Our I16 path produces 7-16% smaller files than libwebp!
-The small remaining gap at m4+ is from I4 coefficient encoding, but corpus results show
-overall parity or better.
+**Key finding (2026-02-02):** Our I16 path produces 6-16% smaller files than libwebp!
+Method 4 now achieves **exact parity** with libwebp on the benchmark image.
 
 **CID22 corpus aggregate (Q75, SNS=0, filter=0, segments=1):**
 | Method | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| 4 | 1,160,864 | 1,169,034 | **0.993x** |
+| 4 | 1,160,230 | 1,169,034 | **0.9925x** |
 
-*CID22 validation set (41 images) - zenwebp 0.7% smaller than libwebp*
+*CID22 validation set (41 images) - zenwebp 0.75% smaller than libwebp*
 
-**Screenshot corpus aggregate (13 images, Q75, SNS=0):**
+**Screenshot corpus aggregate (9 images, Q75, SNS=0):**
 | Method | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| 4 | 4,692,332 | 4,712,730 | **0.996x** |
+| 4 | 1,198,994 | 1,195,290 | 1.003x |
 
-*Screenshots - zenwebp 0.4% smaller than libwebp*
+*Screenshots - 0.3% larger (screenshots favor I16, our I4 improvements less impactful)*
 
 **Multi-pass removed (2026-02-02):**
 Multi-pass encoding (methods 5/6 doing 2-3 passes) was removed after testing showed
@@ -45,7 +44,7 @@ with quality search (target_size convergence). All methods now use single-pass.
 | Encoder | m4 | m6 | m4→m6 gain |
 |---------|-----|-----|-----------|
 | libwebp | 12018 | 11720 | **2.5% smaller** (trellis-all) |
-| zenwebp | 12164 | 12084 | **0.7% smaller** (trellis-all) |
+| zenwebp | 12022 | 11908 | **0.9% smaller** (trellis-all) |
 
 **Key findings:**
 1. **I4 flatness penalty (2026-02-02)**: Added FLATNESS_PENALTY for non-DC I4 modes
@@ -57,11 +56,16 @@ with quality search (target_size convergence). All methods now use single-pass.
    hardcoded DC context (0) instead of cross-macroblock context from `top_b_pred`/`left_b_pred`.
    Fixed by updating context during encoding pass, not just header writing.
    - 792079 benchmark: 12174 → 12164 bytes (-0.08%)
-3. **libwebp m4→m6 helps** because m6 enables `RD_OPT_TRELLIS_ALL` (trellis during
+3. **Cross-macroblock non-zero context fix (2026-02-02)**: I4 mode selection was using
+   hardcoded `false` for non-zero context on edge blocks instead of using cross-macroblock
+   context from `top_complexity`/`left_complexity`.
+   - Method 4 ratio: 1.006x → 1.000x (792079 benchmark)
+   - CID22 corpus: 0.993x → 0.9925x
+4. **libwebp m4→m6 helps** because m6 enables `RD_OPT_TRELLIS_ALL` (trellis during
    mode selection). This is a **single-pass** benefit, not multi-pass.
-4. **Our m6 now works**: Added trellis during I4 mode selection (2026-02-02).
+5. **Our m6 now works**: Added trellis during I4 mode selection (2026-02-02).
    Method 6 is now 0.7% smaller than method 4.
-5. **Multi-pass removed**: Provides no benefit (tested), only adds overhead.
+6. **Multi-pass removed**: Provides no benefit (tested), only adds overhead.
 
 **Quality search (target_size support) - IMPLEMENTED (2026-02-02):**
 
