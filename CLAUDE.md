@@ -250,7 +250,7 @@ We're **faster** than libwebp with trellis (65ms vs 75ms), but produce larger fi
 New standalone VP8L lossless encoder implementation in `src/encoder/vp8l/`:
 
 **Status:** Working - produces valid decodable VP8L bitstreams. Current compression ratio
-vs libwebp: **~1.37x larger** (transforms and LZ77 optimizations still needed for parity).
+vs libwebp: **~1.50x larger** (LZ77 and transform optimizations still needed for parity).
 
 **Implemented features:**
 - Huffman tree construction with length limiting (max 15 bits)
@@ -258,7 +258,8 @@ vs libwebp: **~1.37x larger** (transforms and LZ77 optimizations still needed fo
 - Complex tree encoding with RLE (codes 16, 17, 18)
 - LZ77 backward references with hash chain
 - Color cache support (disabled by default for now)
-- Basic transforms: subtract green, predictor (vertical only)
+- Full 14 predictor modes with per-block mode selection (2026-02-03)
+- Subtract green transform
 - Simple/two-symbol tree encoding
 
 **Key files:**
@@ -275,9 +276,14 @@ vs libwebp: **~1.37x larger** (transforms and LZ77 optimizations still needed fo
 - `ensure_valid_code_lengths` fixes Kraft inequality after length clamping
 - Trivial trees (single symbol) skip bit writes during image data encoding
 - RLE encoding matches libwebp's CodeRepeatedZeros/CodeRepeatedValues
+- Fixed modes 5/6/7 swapped vs VP8L spec
+- Fixed ClampAddSubtractHalf (mode 13) missing top_left parameter
+- Fixed Select predictor (mode 11) tie-breaking to match decoder
+- Fixed top_right edge wrapping at x=width-1 to match decoder memory layout
+- Predictor sub-image properly Huffman-coded for variable modes per block
+- Default predictor_bits changed from 9 to 4 (16x16 blocks)
 
 **Remaining work for compression parity:**
-- Full 14 predictor modes (currently only vertical)
 - Optimized LZ77 match finding with quality-dependent search depth
 - Color cache optimization (currently disabled)
 - Cross-color transform
