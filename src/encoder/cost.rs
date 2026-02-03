@@ -126,6 +126,7 @@ pub fn tdisto_4x4(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 /// * `b` - Second 16x16 block (prediction/reconstruction)
 /// * `stride` - Row stride of both buffers
 /// * `w` - 16 weights for frequency weighting
+#[inline]
 pub fn tdisto_16x16(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     let mut d = 0i32;
     for y in 0..4 {
@@ -140,6 +141,7 @@ pub fn tdisto_16x16(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 /// Compute spectral distortion between two 8x8 blocks (for chroma).
 ///
 /// Calls tdisto_4x4 4 times for each 4x4 sub-block.
+#[inline]
 pub fn tdisto_8x8(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     let mut d = 0i32;
     for y in 0..2 {
@@ -166,6 +168,7 @@ pub fn tdisto_8x8(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 /// # Arguments
 /// * `src` - Source pixels (16x16 block accessed with given stride)
 /// * `stride` - Row stride of source buffer
+#[inline]
 pub fn is_flat_source_16(src: &[u8], stride: usize) -> bool {
     let v = src[0];
     for y in 0..16 {
@@ -188,6 +191,7 @@ pub fn is_flat_source_16(src: &[u8], stride: usize) -> bool {
 /// * `levels` - Quantized coefficient levels (16 coeffs per block)
 /// * `num_blocks` - Number of 4x4 blocks to check
 /// * `thresh` - Maximum allowed non-zero AC coefficients
+#[inline]
 pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
     let mut score = 0i32;
     for block in 0..num_blocks {
@@ -245,6 +249,7 @@ pub fn filter_strength_from_delta(sharpness: u8, delta: u8) -> u8 {
 /// * `quant_index` - Quantizer index (0-127)
 /// * `sharpness` - Sharpness level (0-7)
 /// * `filter_strength` - User filter strength (0-100), default 50
+#[inline]
 pub fn compute_filter_level(quant_index: u8, sharpness: u8, filter_strength: u8) -> u8 {
     compute_filter_level_with_beta(quant_index, sharpness, filter_strength, 0)
 }
@@ -265,6 +270,7 @@ pub fn compute_filter_level(quant_index: u8, sharpness: u8, filter_strength: u8)
 /// * `sharpness` - Sharpness level (0-7)
 /// * `filter_strength` - User filter strength (0-100), default 50
 /// * `beta` - Segment complexity (0-255), where 0 = simplest, 255 = most complex
+#[inline]
 pub fn compute_filter_level_with_beta(
     quant_index: u8,
     sharpness: u8,

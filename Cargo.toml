@@ -81,3 +81,7 @@ required-features = ["_profiling"]
 name = "profile_wasm"
 path = "benches/profile_wasm.rs"
 required-features = ["_wasm_profiling"]
+
+[profile.release]
+lto = true
+codegen-units = 1
