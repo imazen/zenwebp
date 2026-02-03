@@ -581,7 +581,10 @@ impl<'a> super::Vp8Encoder<'a> {
                     let mode_cost = get_i4_mode_cost(top_ctx, left_ctx, mode_idx);
                     let total_rate_cost = coeff_cost + flatness_penalty as u32;
                     let rd_score = crate::encoder::cost::rd_score_with_coeffs(
-                        sse, mode_cost, total_rate_cost, lambda_i4,
+                        sse,
+                        mode_cost,
+                        total_rate_cost,
+                        lambda_i4,
                     );
 
                     // Block-level debug output (enabled with BLOCK_DEBUG=mbx,mby,block_idx)

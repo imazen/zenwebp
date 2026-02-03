@@ -9,12 +9,7 @@ use zenwebp::encoder::tables::VP8_ZIGZAG;
 fn main() {
     // Simulate typical I4 block DCT coefficients (in natural order)
     // Large DC, decaying AC - common pattern
-    let coeffs_natural: [i32; 16] = [
-        256, 64, 32, 16, 
-        48, 24, 12, 8, 
-        16, 8, 4, 2, 
-        8, 4, 2, 1,
-    ];
+    let coeffs_natural: [i32; 16] = [256, 64, 32, 16, 48, 24, 12, 8, 16, 8, 4, 2, 8, 4, 2, 1];
 
     // Quality 75 quantizer values
     let q_dc = 24u16;
@@ -36,7 +31,10 @@ fn main() {
     println!("Y1 Matrix:");
     println!("  q:       {:?}", &y1_matrix.q);
     println!("  iq:      {:?}", &y1_matrix.iq);
-    println!("  bias[0]: {} bias[1]: {}", y1_matrix.bias[0], y1_matrix.bias[1]);
+    println!(
+        "  bias[0]: {} bias[1]: {}",
+        y1_matrix.bias[0], y1_matrix.bias[1]
+    );
     println!("  zthresh: {:?}", &y1_matrix.zthresh);
     println!("  sharpen: {:?}", &y1_matrix.sharpen);
     println!();
