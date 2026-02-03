@@ -2,7 +2,6 @@
 //!
 //! Converts image pixels into a stream of literals and LZ77 backward references.
 
-
 use super::color_cache::ColorCache;
 use super::hash_chain::HashChain;
 use super::types::{BackwardRefs, PixOrCopy, MIN_LENGTH, WINDOW_SIZE};
@@ -63,7 +62,11 @@ pub fn plane_code_to_distance(xsize: usize, code: u32) -> usize {
     } else {
         let (xoff, yoff) = DISTANCE_MAP[(code - 1) as usize];
         let dist = xoff as i32 + yoff as i32 * xsize as i32;
-        if dist < 1 { 1 } else { dist as usize }
+        if dist < 1 {
+            1
+        } else {
+            dist as usize
+        }
     }
 }
 
@@ -130,11 +133,7 @@ pub fn compute_backward_refs(
 
 /// Simpler backward reference finder that only uses literals and run-length encoding.
 /// Used for low quality or small images.
-pub fn compute_backward_refs_simple(
-    argb: &[u32],
-    _width: usize,
-    _height: usize,
-) -> BackwardRefs {
+pub fn compute_backward_refs_simple(argb: &[u32], _width: usize, _height: usize) -> BackwardRefs {
     let size = argb.len();
     let mut refs = BackwardRefs::with_capacity(size);
 
@@ -148,7 +147,10 @@ pub fn compute_backward_refs_simple(
 
         // Check for run of identical pixels (distance = 1)
         let mut run_len = 1;
-        while pos + run_len < size && argb[pos + run_len] == argb_val && run_len < super::types::MAX_LENGTH {
+        while pos + run_len < size
+            && argb[pos + run_len] == argb_val
+            && run_len < super::types::MAX_LENGTH
+        {
             run_len += 1;
         }
 

@@ -9,11 +9,13 @@ use super::histogram::{
     distance_code_extra_bits, distance_code_to_prefix, length_code_extra_bits, length_to_code,
     Histogram,
 };
-use super::huffman::{build_huffman_codes, build_huffman_lengths, write_huffman_tree, write_single_entry_tree};
-use super::transforms::{apply_simple_predictor, apply_subtract_green, ColorIndexTransform};
+use super::huffman::{
+    build_huffman_codes, build_huffman_lengths, write_huffman_tree, write_single_entry_tree,
+};
+use super::transforms::{apply_predictor_transform, apply_subtract_green, ColorIndexTransform};
 use super::types::{
-    argb_alpha, argb_blue, argb_green, argb_red, make_argb, subsample_size,
-    PixOrCopy, Vp8lConfig, NUM_LENGTH_CODES, NUM_LITERAL_CODES,
+    argb_alpha, argb_blue, argb_green, argb_red, make_argb, PixOrCopy, Vp8lConfig,
+    NUM_LENGTH_CODES, NUM_LITERAL_CODES,
 };
 
 use crate::encoder::api::EncodingError;
@@ -91,34 +93,29 @@ fn encode_argb(
         None
     };
 
-    // Apply transforms and signal them in bitstream
-    let mut _num_transforms = 0;
+    // Apply transforms and signal them in bitstream.
+    // Order: Predictor first, then SubtractGreen (matching libwebp).
+    // The decoder reverses this order.
 
-    // Subtract green transform
-    if use_subtract_green && palette_transform.is_none() {
-        writer.write_bit(true); // transform present
-        writer.write_bits(2, 2); // subtract green = 2
-        apply_subtract_green(argb);
-        _num_transforms += 1;
-    }
-
-    // Predictor transform
+    // Predictor transform (applied first, on original image)
     if use_predictor && palette_transform.is_none() {
+        // Choose best predictors per block and compute residuals
+        let predictor_data = apply_predictor_transform(argb, width, height, config.predictor_bits);
+
+        // Signal predictor transform
         writer.write_bit(true); // transform present
         writer.write_bits(0, 2); // predictor = 0
         writer.write_bits((config.predictor_bits - 2) as u64, 3);
 
-        // For now, use simple vertical prediction (mode 2)
-        // and write trivial predictor data
-        let blocks_x = subsample_size(width as u32, config.predictor_bits) as usize;
-        let blocks_y = subsample_size(height as u32, config.predictor_bits) as usize;
+        // Write predictor sub-image
+        write_predictor_image(&mut writer, &predictor_data);
+    }
 
-        // Write predictor image (all mode 2 = Top)
-        write_trivial_image(&mut writer, blocks_x, blocks_y, 2);
-
-        // Apply simple predictor
-        apply_simple_predictor(argb, width, height);
-        _num_transforms += 1;
+    // Subtract green transform (applied second, on residuals)
+    if use_subtract_green && palette_transform.is_none() {
+        writer.write_bit(true); // transform present
+        writer.write_bits(2, 2); // subtract green = 2
+        apply_subtract_green(argb);
     }
 
     // Color indexing transform
@@ -138,7 +135,6 @@ fn encode_argb(
         if bits > 0 {
             // Pack pixels (implementation simplified for now)
         }
-        _num_transforms += 1;
     }
 
     // No more transforms
@@ -313,22 +309,55 @@ fn can_use_palette(argb: &[u32]) -> bool {
     seen.len() <= 64
 }
 
-/// Write a trivial sub-image (all same value).
-fn write_trivial_image(writer: &mut BitWriter, _width: usize, _height: usize, value: u8) {
+/// Write predictor sub-image (variable modes per block).
+///
+/// The sub-image encodes one pixel per block with the predictor mode in the
+/// green channel (0-13). Other channels are zero. Uses Huffman coding for
+/// the green channel and trivial single-entry trees for other channels.
+fn write_predictor_image(writer: &mut BitWriter, predictor_data: &[u32]) {
     // No color cache for sub-images
     writer.write_bit(false);
 
-    // NOTE: No meta-Huffman flag for sub-images (it's only used for main image data)
-    // The decoder expects 5 Huffman trees directly after the color cache flag
+    // NOTE: No meta-Huffman flag for sub-images (only for main image)
 
-    // Write 5 trivial Huffman trees (all symbols = 0 except green which carries the mode)
-    write_single_entry_tree(writer, value as usize); // green (predictor mode)
-    write_single_entry_tree(writer, 0); // red
-    write_single_entry_tree(writer, 0); // blue
-    write_single_entry_tree(writer, 0); // alpha (was 255, but should be 0 to match libwebp)
-    write_single_entry_tree(writer, 0); // distance (not used)
+    // Build histogram for the green channel (predictor modes 0-13)
+    let mut hist_green = [0u32; 280]; // 256 literals + 24 length codes
+    for &pixel in predictor_data {
+        hist_green[argb_green(pixel) as usize] += 1;
+    }
 
-    // No image data needed - with trivial trees, all width*height pixels decode to the same value
+    // Check if all blocks use the same mode (trivial case)
+    let unique_count = hist_green.iter().filter(|&&c| c > 0).count();
+
+    if unique_count <= 1 {
+        // Trivial: single mode for all blocks
+        let val = hist_green.iter().position(|&c| c > 0).unwrap_or(2); // default Top
+        write_single_entry_tree(writer, val); // green
+        write_single_entry_tree(writer, 0); // red
+        write_single_entry_tree(writer, 0); // blue
+        write_single_entry_tree(writer, 0); // alpha
+        write_single_entry_tree(writer, 0); // distance
+                                            // No image data needed with all-trivial trees
+        return;
+    }
+
+    // Non-trivial: build Huffman tree for green channel
+    let green_lengths = build_huffman_lengths(&hist_green, 15);
+    let green_codes = build_huffman_codes(&green_lengths);
+
+    // Write 5 Huffman trees
+    write_huffman_tree(writer, &green_lengths); // green (variable modes)
+    write_single_entry_tree(writer, 0); // red (all 0)
+    write_single_entry_tree(writer, 0); // blue (all 0)
+    write_single_entry_tree(writer, 0); // alpha (all 0)
+    write_single_entry_tree(writer, 0); // distance (unused)
+
+    // Write image data: one green value per block
+    // Red/blue/alpha are trivial (no bits), only green emits bits
+    for &pixel in predictor_data {
+        let g = argb_green(pixel) as usize;
+        writer.write_bits(green_codes[g].code as u64, green_codes[g].length);
+    }
 }
 
 /// Write palette data.
@@ -411,7 +440,7 @@ mod tests {
     #[test]
     fn test_encode_simple() {
         // 4x4 red image
-        let pixels: Vec<u8> = vec![255, 0, 0].repeat(16);
+        let pixels: Vec<u8> = [255, 0, 0].repeat(16);
         let config = Vp8lConfig::default();
 
         let result = encode_vp8l(&pixels, 4, 4, false, &config);
@@ -425,7 +454,7 @@ mod tests {
     #[test]
     fn test_encode_with_alpha() {
         // 4x4 semi-transparent red
-        let pixels: Vec<u8> = vec![255, 0, 0, 128].repeat(16);
+        let pixels: Vec<u8> = [255, 0, 0, 128].repeat(16);
         let config = Vp8lConfig::default();
 
         let result = encode_vp8l(&pixels, 4, 4, true, &config);
@@ -455,9 +484,9 @@ mod tests {
         let b = make_argb(50, 100, 100, 5);
         let diff = sub_pixels(a, b);
 
-        assert_eq!(argb_alpha(diff), 50);     // 100 - 50
-        assert_eq!(argb_red(diff), 206);      // 50 - 100 = -50 = 206 (wrapping)
-        assert_eq!(argb_green(diff), 100);    // 200 - 100
-        assert_eq!(argb_blue(diff), 5);       // 10 - 5
+        assert_eq!(argb_alpha(diff), 50); // 100 - 50
+        assert_eq!(argb_red(diff), 206); // 50 - 100 = -50 = 206 (wrapping)
+        assert_eq!(argb_green(diff), 100); // 200 - 100
+        assert_eq!(argb_blue(diff), 5); // 10 - 5
     }
 }

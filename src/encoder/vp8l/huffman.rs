@@ -153,7 +153,8 @@ fn ensure_valid_code_lengths(lengths: &mut [u8], max_len: u8) {
     }
 
     let compute_kraft = |lengths: &[u8]| -> u64 {
-        lengths.iter()
+        lengths
+            .iter()
             .filter(|&&l| l > 0)
             .map(|&l| 1u64 << (max_len - l))
             .sum()
@@ -219,7 +220,6 @@ fn ensure_valid_code_lengths(lengths: &mut [u8], max_len: u8) {
             }
         }
     }
-
 }
 
 /// Build canonical Huffman codes from code lengths.
@@ -264,7 +264,9 @@ pub fn build_huffman_codes(lengths: &[u8]) -> Vec<HuffmanCode> {
 
 /// Reverse bits for a code of given length (max 15 bits).
 fn reverse_bits_16(num_bits: u32, bits: u32) -> u32 {
-    const REVERSED_BITS: [u8; 16] = [0x0, 0x8, 0x4, 0xc, 0x2, 0xa, 0x6, 0xe, 0x1, 0x9, 0x5, 0xd, 0x3, 0xb, 0x7, 0xf];
+    const REVERSED_BITS: [u8; 16] = [
+        0x0, 0x8, 0x4, 0xc, 0x2, 0xa, 0x6, 0xe, 0x1, 0x9, 0x5, 0xd, 0x3, 0xb, 0x7, 0xf,
+    ];
 
     let mut retval = 0u32;
     let mut b = bits;
@@ -279,7 +281,6 @@ fn reverse_bits_16(num_bits: u32, bits: u32) -> u32 {
 
 /// Write a Huffman tree to the bitstream.
 pub fn write_huffman_tree(w: &mut BitWriter, lengths: &[u8]) {
-
     // Check for trivial cases
     let non_zero: Vec<(usize, u8)> = lengths
         .iter()
@@ -295,7 +296,11 @@ pub fn write_huffman_tree(w: &mut BitWriter, lengths: &[u8]) {
         if non_zero.len() == 1 || non_zero.is_empty() {
             // Single symbol (or empty - use symbol 0)
             w.write_bit(false); // 1 symbol (count - 1)
-            let symbol = if non_zero.is_empty() { 0 } else { non_zero[0].0 };
+            let symbol = if non_zero.is_empty() {
+                0
+            } else {
+                non_zero[0].0
+            };
             // If symbol <= 1, use 1 bit; otherwise use 8 bits
             let is_8bit = symbol > 1;
             w.write_bit(is_8bit);
@@ -329,7 +334,7 @@ pub fn write_huffman_tree(w: &mut BitWriter, lengths: &[u8]) {
 /// Token for RLE-encoded Huffman tree (matches libwebp's HuffmanTreeToken).
 #[derive(Clone, Copy, Default)]
 struct HuffmanTreeToken {
-    code: u8,       // 0-15 for code lengths, 16 = repeat, 17 = repeat 0s (3-10), 18 = repeat 0s (11-138)
+    code: u8, // 0-15 for code lengths, 16 = repeat, 17 = repeat 0s (3-10), 18 = repeat 0s (11-138)
     extra_bits: u8, // extra bits for codes 16, 17, 18
 }
 
@@ -373,12 +378,18 @@ fn write_huffman_tree_complex(w: &mut BitWriter, lengths: &[u8]) {
     // Build Huffman code for the code lengths (max depth 7)
     let mut code_length_bitdepth = [0u8; CODE_LENGTH_CODES];
     let mut code_length_codes = [0u16; CODE_LENGTH_CODES];
-    build_code_length_huffman(&histogram, &mut code_length_bitdepth, &mut code_length_codes);
+    build_code_length_huffman(
+        &histogram,
+        &mut code_length_bitdepth,
+        &mut code_length_codes,
+    );
 
     // Store the Huffman tree of Huffman tree (code length code lengths)
     // Throw away trailing zeros (matching StoreHuffmanTreeOfHuffmanTreeToBitMask)
     let mut codes_to_store = CODE_LENGTH_CODES;
-    while codes_to_store > 4 && code_length_bitdepth[CODE_LENGTH_CODE_ORDER[codes_to_store - 1]] == 0 {
+    while codes_to_store > 4
+        && code_length_bitdepth[CODE_LENGTH_CODE_ORDER[codes_to_store - 1]] == 0
+    {
         codes_to_store -= 1;
     }
 
@@ -419,7 +430,11 @@ fn write_huffman_tree_complex(w: &mut BitWriter, lengths: &[u8]) {
     }
 
     let write_trimmed_length = trimmed_length > 1 && trailing_zero_bits > 12;
-    let length = if write_trimmed_length { trimmed_length } else { num_tokens };
+    let length = if write_trimmed_length {
+        trimmed_length
+    } else {
+        num_tokens
+    };
 
     w.write_bit(write_trimmed_length);
     if write_trimmed_length {
@@ -453,39 +468,68 @@ fn code_repeated_zeros(mut repetitions: usize, tokens: &mut Vec<HuffmanTreeToken
     while repetitions >= 1 {
         if repetitions < 3 {
             for _ in 0..repetitions {
-                tokens.push(HuffmanTreeToken { code: 0, extra_bits: 0 });
+                tokens.push(HuffmanTreeToken {
+                    code: 0,
+                    extra_bits: 0,
+                });
             }
             break;
         } else if repetitions < 11 {
-            tokens.push(HuffmanTreeToken { code: 17, extra_bits: (repetitions - 3) as u8 });
+            tokens.push(HuffmanTreeToken {
+                code: 17,
+                extra_bits: (repetitions - 3) as u8,
+            });
             break;
         } else if repetitions < 139 {
-            tokens.push(HuffmanTreeToken { code: 18, extra_bits: (repetitions - 11) as u8 });
+            tokens.push(HuffmanTreeToken {
+                code: 18,
+                extra_bits: (repetitions - 11) as u8,
+            });
             break;
         } else {
-            tokens.push(HuffmanTreeToken { code: 18, extra_bits: 0x7f }); // 138 repeated 0s
+            tokens.push(HuffmanTreeToken {
+                code: 18,
+                extra_bits: 0x7f,
+            }); // 138 repeated 0s
             repetitions -= 138;
         }
     }
 }
 
 /// Encode repeated non-zero values using codes 0-15 and 16 (matches libwebp's CodeRepeatedValues).
-fn code_repeated_values(mut repetitions: usize, tokens: &mut Vec<HuffmanTreeToken>, value: u8, prev_value: u8) {
+fn code_repeated_values(
+    mut repetitions: usize,
+    tokens: &mut Vec<HuffmanTreeToken>,
+    value: u8,
+    prev_value: u8,
+) {
     if value != prev_value {
-        tokens.push(HuffmanTreeToken { code: value, extra_bits: 0 });
+        tokens.push(HuffmanTreeToken {
+            code: value,
+            extra_bits: 0,
+        });
         repetitions -= 1;
     }
     while repetitions >= 1 {
         if repetitions < 3 {
             for _ in 0..repetitions {
-                tokens.push(HuffmanTreeToken { code: value, extra_bits: 0 });
+                tokens.push(HuffmanTreeToken {
+                    code: value,
+                    extra_bits: 0,
+                });
             }
             break;
         } else if repetitions < 7 {
-            tokens.push(HuffmanTreeToken { code: 16, extra_bits: (repetitions - 3) as u8 });
+            tokens.push(HuffmanTreeToken {
+                code: 16,
+                extra_bits: (repetitions - 3) as u8,
+            });
             break;
         } else {
-            tokens.push(HuffmanTreeToken { code: 16, extra_bits: 3 }); // repeat 6 times
+            tokens.push(HuffmanTreeToken {
+                code: 16,
+                extra_bits: 3,
+            }); // repeat 6 times
             repetitions -= 6;
         }
     }
@@ -530,7 +574,9 @@ fn build_code_length_huffman(
 
 /// Reverse bits (matches libwebp's ReverseBits).
 fn reverse_bits(num_bits: u32, bits: u32) -> u32 {
-    const REVERSED_BITS: [u8; 16] = [0x0, 0x8, 0x4, 0xc, 0x2, 0xa, 0x6, 0xe, 0x1, 0x9, 0x5, 0xd, 0x3, 0xb, 0x7, 0xf];
+    const REVERSED_BITS: [u8; 16] = [
+        0x0, 0x8, 0x4, 0xc, 0x2, 0xa, 0x6, 0xe, 0x1, 0x9, 0x5, 0xd, 0x3, 0xb, 0x7, 0xf,
+    ];
 
     let mut retval = 0u32;
     let mut b = bits;
@@ -547,7 +593,7 @@ fn reverse_bits(num_bits: u32, bits: u32) -> u32 {
 pub fn write_single_entry_tree(w: &mut BitWriter, symbol: usize) {
     w.write_bit(true); // simple tree marker
     w.write_bit(false); // 1 symbol (count - 1)
-    // If symbol <= 1, use 1 bit; otherwise use 8 bits
+                        // If symbol <= 1, use 1 bit; otherwise use 8 bits
     let is_8bit = symbol > 1;
     w.write_bit(is_8bit);
     if is_8bit {
@@ -565,8 +611,8 @@ mod tests {
     fn test_build_huffman_16_equal() {
         // 16 equally-likely symbols should each get length 4
         let mut freq = vec![0u32; 256];
-        for i in 0..16 {
-            freq[i] = 16;
+        for f in freq[..16].iter_mut() {
+            *f = 16;
         }
         let lengths = build_huffman_lengths(&freq, 15);
 
@@ -587,7 +633,8 @@ mod tests {
         println!("Length histogram: {:?}", &length_counts[..8]);
 
         // Verify Kraft inequality
-        let kraft: u32 = lengths.iter()
+        let kraft: u32 = lengths
+            .iter()
             .filter(|&&l| l > 0)
             .map(|&l| 1u32 << (15 - l))
             .sum();
@@ -620,7 +667,7 @@ mod tests {
         // Uniform distribution should give length 2 for all, or close to it
         // The algorithm may produce slightly different results depending on tie-breaking
         for &l in &lengths {
-            assert!(l >= 1 && l <= 3, "length {} out of expected range", l);
+            assert!((1..=3).contains(&l), "length {} out of expected range", l);
         }
         // Total should satisfy Kraft inequality
         let kraft: u32 = lengths.iter().map(|&l| 1u32 << (15 - l)).sum();
@@ -644,7 +691,13 @@ mod tests {
 
         println!("Generated codes:");
         for (i, code) in codes.iter().enumerate() {
-            println!("  symbol[{}]: code={:0width$b}, length={}", i, code.code, code.length, width=code.length as usize);
+            println!(
+                "  symbol[{}]: code={:0width$b}, length={}",
+                i,
+                code.code,
+                code.length,
+                width = code.length as usize
+            );
         }
 
         // Canonical codes (before bit reversal): 00, 01, 100, 101

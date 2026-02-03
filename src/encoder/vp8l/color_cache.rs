@@ -80,11 +80,7 @@ impl ColorCache {
 }
 
 /// Determine optimal cache bits by estimating entropy for different sizes.
-pub fn estimate_optimal_cache_bits(
-    pixels: &[u32],
-    _width: usize,
-    quality: u8,
-) -> u8 {
+pub fn estimate_optimal_cache_bits(pixels: &[u32], _width: usize, quality: u8) -> u8 {
     if quality < 25 || pixels.len() < 100 {
         return 0; // Disable cache for low quality or tiny images
     }

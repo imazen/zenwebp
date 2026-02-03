@@ -99,7 +99,7 @@ impl Default for Vp8lConfig {
             use_subtract_green: true,
             use_palette: true,
             use_meta_huffman: false, // Start without meta-huffman
-            predictor_bits: 9, // Use large blocks (512x512) for simpler encoding
+            predictor_bits: 4,       // 16x16 blocks for good local mode adaptation
             cross_color_bits: 4,
         }
     }

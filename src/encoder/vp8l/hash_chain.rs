@@ -14,7 +14,9 @@ const HASH_MULT_LO: u32 = 0x5bd1e996;
 /// Hash two adjacent pixels to get a bucket index.
 #[inline]
 fn hash_pix_pair(p0: u32, p1: u32) -> usize {
-    let key = p1.wrapping_mul(HASH_MULT_HI).wrapping_add(p0.wrapping_mul(HASH_MULT_LO));
+    let key = p1
+        .wrapping_mul(HASH_MULT_HI)
+        .wrapping_add(p0.wrapping_mul(HASH_MULT_LO));
     (key >> (32 - HASH_BITS)) as usize
 }
 
@@ -116,7 +118,8 @@ impl HashChain {
 
             // Heuristic: try row above
             if base_pos >= width {
-                let curr_len = find_match_length(&argb[base_pos - width..], argb_start, best_len, max_len);
+                let curr_len =
+                    find_match_length(&argb[base_pos - width..], argb_start, best_len, max_len);
                 if curr_len > best_len {
                     best_len = curr_len;
                     best_dist = width;
@@ -125,7 +128,8 @@ impl HashChain {
 
             // Heuristic: try previous pixel
             if base_pos >= 1 {
-                let curr_len = find_match_length(&argb[base_pos - 1..], argb_start, best_len, max_len);
+                let curr_len =
+                    find_match_length(&argb[base_pos - 1..], argb_start, best_len, max_len);
                 if curr_len > best_len {
                     best_len = curr_len;
                     best_dist = 1;
@@ -163,8 +167,7 @@ impl HashChain {
 
             // Store best match
             debug_assert!(best_len <= MAX_LENGTH);
-            offset_length[base_pos] =
-                ((best_dist as u32) << MAX_LENGTH_BITS) | (best_len as u32);
+            offset_length[base_pos] = ((best_dist as u32) << MAX_LENGTH_BITS) | (best_len as u32);
         }
 
         Self { offset_length }

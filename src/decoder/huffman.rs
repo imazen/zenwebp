@@ -58,7 +58,10 @@ impl HuffmanTree {
         // Handle special cases
         if num_symbols == 0 {
             #[cfg(debug_assertions)]
-            eprintln!("HuffmanError: num_symbols == 0, code_lengths.len()={}", code_lengths.len());
+            eprintln!(
+                "HuffmanError: num_symbols == 0, code_lengths.len()={}",
+                code_lengths.len()
+            );
             return Err(DecodingError::HuffmanError);
         } else if num_symbols == 1 {
             let root_symbol = code_lengths.iter().position(|&x| x != 0).unwrap() as u16;
@@ -85,8 +88,13 @@ impl HuffmanTree {
         // Confirm that the huffman tree is valid
         if codespace_used != (1 << max_length) {
             #[cfg(debug_assertions)]
-            eprintln!("HuffmanError: codespace_used={}, expected={}, max_length={}, histogram={:?}",
-                codespace_used, 1 << max_length, max_length, &histogram[..max_length+1]);
+            eprintln!(
+                "HuffmanError: codespace_used={}, expected={}, max_length={}, histogram={:?}",
+                codespace_used,
+                1 << max_length,
+                max_length,
+                &histogram[..max_length + 1]
+            );
             return Err(DecodingError::HuffmanError);
         }
 

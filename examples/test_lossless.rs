@@ -1,8 +1,8 @@
 //! Test VP8L lossless encoder - focus on getting a valid bitstream.
 
 use std::fs;
-use std::process::Command;
 use std::path::Path;
+use std::process::Command;
 
 fn main() {
     let test_path = "/tmp/CID22/original/1001682.png";
@@ -19,7 +19,10 @@ fn main() {
     let info = reader.next_frame(&mut buf).unwrap();
 
     let rgb_pixels: Vec<u8> = if info.color_type == png::ColorType::Rgba {
-        buf[..info.buffer_size()].chunks(4).flat_map(|c| [c[0], c[1], c[2]].into_iter()).collect()
+        buf[..info.buffer_size()]
+            .chunks(4)
+            .flat_map(|c| [c[0], c[1], c[2]].into_iter())
+            .collect()
     } else {
         buf[..info.buffer_size()].to_vec()
     };
@@ -40,7 +43,11 @@ fn main() {
 
     print!("Verifying... ");
     let verify = Command::new("/home/lilith/work/libwebp/examples/dwebp")
-        .args(["/tmp/zenwebp_existing.webp", "-o", "/tmp/zenwebp_existing_decoded.ppm"])
+        .args([
+            "/tmp/zenwebp_existing.webp",
+            "-o",
+            "/tmp/zenwebp_existing_decoded.ppm",
+        ])
         .output();
     match verify {
         Ok(out) if out.status.success() => println!("OK"),
@@ -50,7 +57,14 @@ fn main() {
 
     // Compare with libwebp
     let _ = Command::new("/home/lilith/work/libwebp/examples/cwebp")
-        .args(["-lossless", "-q", "75", "-o", "/tmp/libwebp_lossless.webp", test_path])
+        .args([
+            "-lossless",
+            "-q",
+            "75",
+            "-o",
+            "/tmp/libwebp_lossless.webp",
+            test_path,
+        ])
         .output();
 
     let libwebp_size = std::fs::metadata("/tmp/libwebp_lossless.webp")
@@ -68,9 +82,8 @@ fn main() {
         ..Default::default()
     };
 
-    let new_vp8l = zenwebp::encoder::vp8l::encode_vp8l(
-        &rgb_pixels, width, height, false, &config
-    ).unwrap();
+    let new_vp8l =
+        zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, width, height, false, &config).unwrap();
     println!("Size (raw VP8L): {} bytes", new_vp8l.len());
 
     // Wrap in RIFF container
@@ -90,7 +103,11 @@ fn main() {
 
     print!("Verifying new encoder... ");
     let verify = Command::new("/home/lilith/work/libwebp/examples/dwebp")
-        .args(["/tmp/zenwebp_new_vp8l.webp", "-o", "/tmp/zenwebp_new_decoded.ppm"])
+        .args([
+            "/tmp/zenwebp_new_vp8l.webp",
+            "-o",
+            "/tmp/zenwebp_new_decoded.ppm",
+        ])
         .output();
     match verify {
         Ok(out) if out.status.success() => println!("OK"),

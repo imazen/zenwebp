@@ -175,10 +175,7 @@ fn cluster_histograms(
     }
 
     // Build final mapping
-    let final_mapping: Vec<u16> = mapping
-        .iter()
-        .map(|&g| group_remap[g].unwrap())
-        .collect();
+    let final_mapping: Vec<u16> = mapping.iter().map(|&g| group_remap[g].unwrap()).collect();
 
     (final_histos, final_mapping)
 }
@@ -207,8 +204,8 @@ pub fn encode_meta_huffman_image(config: &MetaHuffmanConfig, _blocks_x: usize) -
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::make_argb;
+    use super::*;
 
     #[test]
     fn test_single_group() {

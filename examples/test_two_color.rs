@@ -28,11 +28,14 @@ fn main() {
     };
     config.quality.quality = 0; // Force simple refs (no LZ77)
 
-    let vp8l_data = zenwebp::encoder::vp8l::encode_vp8l(
-        &rgb_pixels, width, height, false, &config
-    ).unwrap();
+    let vp8l_data =
+        zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, width, height, false, &config).unwrap();
 
-    println!("VP8L data ({} bytes): {:02x?}", vp8l_data.len(), &vp8l_data[..vp8l_data.len().min(32)]);
+    println!(
+        "VP8L data ({} bytes): {:02x?}",
+        vp8l_data.len(),
+        &vp8l_data[..vp8l_data.len().min(32)]
+    );
 
     // Wrap in RIFF container
     let mut webp = Vec::new();

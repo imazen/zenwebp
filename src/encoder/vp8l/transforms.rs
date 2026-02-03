@@ -17,24 +17,24 @@ pub enum TransformType {
     ColorIndexing = 3,
 }
 
-/// Predictor modes (14 total).
+/// Predictor modes (14 total, per VP8L spec).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PredictorMode {
-    Black = 0,
-    Left = 1,
-    Top = 2,
-    TopRight = 3,
-    TopLeft = 4,
-    AvgLeftTop = 5,
-    AvgLeftTopRight = 6,
-    AvgLeftTopLeft = 7,
-    AvgTopTopLeft = 8,
-    AvgTopTopRight = 9,
-    AvgLeftTopLeftTopRight = 10,
-    Select = 11,
-    ClampAddSubtractFull = 12,
-    ClampAddSubtractHalf = 13,
+    Black = 0,                 // 0xff000000
+    Left = 1,                  // L
+    Top = 2,                   // T
+    TopRight = 3,              // TR
+    TopLeft = 4,               // TL
+    AvgAvgLtrT = 5,            // Avg(Avg(L,TR), T)
+    AvgLTl = 6,                // Avg(L, TL)
+    AvgLT = 7,                 // Avg(L, T)
+    AvgTlT = 8,                // Avg(TL, T)
+    AvgTTr = 9,                // Avg(T, TR)
+    AvgAvgLTlAvgTTr = 10,      // Avg(Avg(L,TL), Avg(T,TR))
+    Select = 11,               // Select(L, T, TL)
+    ClampAddSubtractFull = 12, // Clamp(L + T - TL)
+    ClampAddSubtractHalf = 13, // Clamp(Avg(L,T) + (Avg(L,T)-TL)/2)
 }
 
 impl PredictorMode {
@@ -46,16 +46,36 @@ impl PredictorMode {
             PredictorMode::Top,
             PredictorMode::TopRight,
             PredictorMode::TopLeft,
-            PredictorMode::AvgLeftTop,
-            PredictorMode::AvgLeftTopRight,
-            PredictorMode::AvgLeftTopLeft,
-            PredictorMode::AvgTopTopLeft,
-            PredictorMode::AvgTopTopRight,
-            PredictorMode::AvgLeftTopLeftTopRight,
+            PredictorMode::AvgAvgLtrT,
+            PredictorMode::AvgLTl,
+            PredictorMode::AvgLT,
+            PredictorMode::AvgTlT,
+            PredictorMode::AvgTTr,
+            PredictorMode::AvgAvgLTlAvgTTr,
             PredictorMode::Select,
             PredictorMode::ClampAddSubtractFull,
             PredictorMode::ClampAddSubtractHalf,
         ]
+    }
+
+    /// Convert from u8 mode value.
+    pub const fn from_u8(val: u8) -> Self {
+        match val {
+            0 => PredictorMode::Black,
+            1 => PredictorMode::Left,
+            2 => PredictorMode::Top,
+            3 => PredictorMode::TopRight,
+            4 => PredictorMode::TopLeft,
+            5 => PredictorMode::AvgAvgLtrT,
+            6 => PredictorMode::AvgLTl,
+            7 => PredictorMode::AvgLT,
+            8 => PredictorMode::AvgTlT,
+            9 => PredictorMode::AvgTTr,
+            10 => PredictorMode::AvgAvgLTlAvgTTr,
+            11 => PredictorMode::Select,
+            12 => PredictorMode::ClampAddSubtractFull,
+            _ => PredictorMode::ClampAddSubtractHalf,
+        }
     }
 }
 
@@ -76,6 +96,7 @@ pub fn apply_subtract_green(pixels: &mut [u32]) {
 }
 
 /// Predict a pixel using the given mode and neighbors.
+/// Must match the decoder's predictor functions exactly for lossless round-tripping.
 #[inline]
 fn predict(mode: PredictorMode, left: u32, top: u32, top_left: u32, top_right: u32) -> u32 {
     match mode {
@@ -84,15 +105,17 @@ fn predict(mode: PredictorMode, left: u32, top: u32, top_left: u32, top_right: u
         PredictorMode::Top => top,
         PredictorMode::TopRight => top_right,
         PredictorMode::TopLeft => top_left,
-        PredictorMode::AvgLeftTop => average2(left, top),
-        PredictorMode::AvgLeftTopRight => average2(left, top_right),
-        PredictorMode::AvgLeftTopLeft => average2(left, top_left),
-        PredictorMode::AvgTopTopLeft => average2(top, top_left),
-        PredictorMode::AvgTopTopRight => average2(top, top_right),
-        PredictorMode::AvgLeftTopLeftTopRight => average2(average2(left, top_left), average2(top, top_right)),
+        PredictorMode::AvgAvgLtrT => average2(average2(left, top_right), top),
+        PredictorMode::AvgLTl => average2(left, top_left),
+        PredictorMode::AvgLT => average2(left, top),
+        PredictorMode::AvgTlT => average2(top_left, top),
+        PredictorMode::AvgTTr => average2(top, top_right),
+        PredictorMode::AvgAvgLTlAvgTTr => {
+            average2(average2(left, top_left), average2(top, top_right))
+        }
         PredictorMode::Select => select(left, top, top_left),
         PredictorMode::ClampAddSubtractFull => clamp_add_subtract_full(left, top, top_left),
-        PredictorMode::ClampAddSubtractHalf => clamp_add_subtract_half(left, top),
+        PredictorMode::ClampAddSubtractHalf => clamp_add_subtract_half(left, top, top_left),
     }
 }
 
@@ -103,28 +126,38 @@ fn average2(a: u32, b: u32) -> u32 {
     let ar = argb_red(a) as u16 + argb_red(b) as u16;
     let ag = argb_green(a) as u16 + argb_green(b) as u16;
     let ab = argb_blue(a) as u16 + argb_blue(b) as u16;
-    make_argb((aa / 2) as u8, (ar / 2) as u8, (ag / 2) as u8, (ab / 2) as u8)
+    make_argb(
+        (aa / 2) as u8,
+        (ar / 2) as u8,
+        (ag / 2) as u8,
+        (ab / 2) as u8,
+    )
 }
 
 /// Select predictor: choose left or top based on gradient.
+/// Matches decoder's tie-breaking: when distances are equal, returns top.
 #[inline]
 fn select(left: u32, top: u32, top_left: u32) -> u32 {
+    // predict_left = |T - TL|: distance from prediction (L+T-TL) to L
     let pa = (argb_alpha(top) as i16 - argb_alpha(top_left) as i16).unsigned_abs();
     let pr = (argb_red(top) as i16 - argb_red(top_left) as i16).unsigned_abs();
     let pg = (argb_green(top) as i16 - argb_green(top_left) as i16).unsigned_abs();
     let pb = (argb_blue(top) as i16 - argb_blue(top_left) as i16).unsigned_abs();
-    let dist_top = pa + pr + pg + pb;
+    let predict_left = pa + pr + pg + pb;
 
+    // predict_top = |L - TL|: distance from prediction (L+T-TL) to T
     let pa = (argb_alpha(left) as i16 - argb_alpha(top_left) as i16).unsigned_abs();
     let pr = (argb_red(left) as i16 - argb_red(top_left) as i16).unsigned_abs();
     let pg = (argb_green(left) as i16 - argb_green(top_left) as i16).unsigned_abs();
     let pb = (argb_blue(left) as i16 - argb_blue(top_left) as i16).unsigned_abs();
-    let dist_left = pa + pr + pg + pb;
+    let predict_top = pa + pr + pg + pb;
 
-    if dist_left < dist_top {
-        top
-    } else {
+    // If prediction is closer to left, choose left; otherwise choose top.
+    // On ties (predict_left == predict_top), choose top (matching decoder).
+    if predict_left < predict_top {
         left
+    } else {
+        top
     }
 }
 
@@ -144,10 +177,19 @@ fn clamp_add_subtract_full(left: u32, top: u32, top_left: u32) -> u32 {
     make_argb(a, r, g, b)
 }
 
-/// ClampAddSubtractHalf: average(left, top) + (average(left, top) - top_left) / 2, clamped.
+/// ClampAddSubtractHalf: clamp(avg + (avg - top_left) / 2) per component,
+/// where avg = (left + top) / 2.
 #[inline]
-fn clamp_add_subtract_half(left: u32, top: u32) -> u32 {
-    average2(left, top)
+fn clamp_add_subtract_half(left: u32, top: u32, top_left: u32) -> u32 {
+    let avg_a = (argb_alpha(left) as i16 + argb_alpha(top) as i16) / 2;
+    let avg_r = (argb_red(left) as i16 + argb_red(top) as i16) / 2;
+    let avg_g = (argb_green(left) as i16 + argb_green(top) as i16) / 2;
+    let avg_b = (argb_blue(left) as i16 + argb_blue(top) as i16) / 2;
+    let a = (avg_a + (avg_a - argb_alpha(top_left) as i16) / 2).clamp(0, 255) as u8;
+    let r = (avg_r + (avg_r - argb_red(top_left) as i16) / 2).clamp(0, 255) as u8;
+    let g = (avg_g + (avg_g - argb_green(top_left) as i16) / 2).clamp(0, 255) as u8;
+    let b = (avg_b + (avg_b - argb_blue(top_left) as i16) / 2).clamp(0, 255) as u8;
+    make_argb(a, r, g, b)
 }
 
 /// Compute residual (pixel - prediction) with wrapping.
@@ -162,6 +204,14 @@ fn residual(pixel: u32, pred: u32) -> u32 {
 
 /// Apply predictor transform.
 /// Returns the predictor mode data (subsampled image of modes).
+///
+/// Border handling matches the VP8L decoder:
+/// - (0,0): Black predictor (0xff000000)
+/// - Row 0, x>0: Left predictor (fixed, regardless of mode)
+/// - Col 0, y>0: Top predictor (fixed, regardless of mode)
+/// - Interior (y>0, x>0): mode from predictor_data
+///
+/// Pixels are processed in reverse order so neighbors remain as original values.
 pub fn apply_predictor_transform(
     pixels: &mut [u32],
     width: usize,
@@ -172,46 +222,48 @@ pub fn apply_predictor_transform(
     let blocks_x = subsample_size(width as u32, size_bits) as usize;
     let blocks_y = subsample_size(height as u32, size_bits) as usize;
 
-    // Choose best predictor for each block
+    // Choose best predictor for each block (only scoring interior pixels)
     let mut predictor_data = vec![0u32; blocks_x * blocks_y];
 
     for by in 0..blocks_y {
         for bx in 0..blocks_x {
             let best_mode = choose_best_predictor(pixels, width, height, bx, by, block_size);
-            // Store mode in green channel (as per spec)
-            predictor_data[by * blocks_x + bx] = make_argb(255, 0, best_mode as u8, 0);
+            // Store mode in green channel (as per spec), alpha=0
+            predictor_data[by * blocks_x + bx] = make_argb(0, 0, best_mode as u8, 0);
         }
     }
 
-    // Apply prediction to pixels
+    // Apply prediction to pixels in reverse order.
+    // Border pixels use fixed predictors matching the decoder.
     for y in (0..height).rev() {
         for x in (0..width).rev() {
-            let bx = x >> size_bits;
-            let by = y >> size_bits;
-            let mode = argb_green(predictor_data[by * blocks_x + bx]);
-            let mode = match mode.min(13) {
-                0 => PredictorMode::Black,
-                1 => PredictorMode::Left,
-                2 => PredictorMode::Top,
-                3 => PredictorMode::TopRight,
-                4 => PredictorMode::TopLeft,
-                5 => PredictorMode::AvgLeftTop,
-                6 => PredictorMode::AvgLeftTopRight,
-                7 => PredictorMode::AvgLeftTopLeft,
-                8 => PredictorMode::AvgTopTopLeft,
-                9 => PredictorMode::AvgTopTopRight,
-                10 => PredictorMode::AvgLeftTopLeftTopRight,
-                11 => PredictorMode::Select,
-                12 => PredictorMode::ClampAddSubtractFull,
-                _ => PredictorMode::ClampAddSubtractHalf,
+            let pred = if y == 0 && x == 0 {
+                // Top-left corner: Black
+                0xff000000
+            } else if y == 0 {
+                // First row: Left predictor
+                pixels[x - 1]
+            } else if x == 0 {
+                // First column: Top predictor
+                pixels[(y - 1) * width]
+            } else {
+                // Interior: use block's predictor mode
+                let bx = x >> size_bits;
+                let by = y >> size_bits;
+                let mode = PredictorMode::from_u8(argb_green(predictor_data[by * blocks_x + bx]));
+                let left = pixels[y * width + x - 1];
+                let top = pixels[(y - 1) * width + x];
+                let top_left = pixels[(y - 1) * width + x - 1];
+                // At right edge (x == width-1), top_right wraps to the first
+                // pixel of the current row. This matches the decoder's memory
+                // layout where image_data[i - width*4 + 4] wraps to row y's start.
+                let top_right = if x + 1 < width {
+                    pixels[(y - 1) * width + x + 1]
+                } else {
+                    pixels[y * width]
+                };
+                predict(mode, left, top, top_left, top_right)
             };
-
-            let left = if x > 0 { pixels[y * width + x - 1] } else { 0xff000000 };
-            let top = if y > 0 { pixels[(y - 1) * width + x] } else { 0xff000000 };
-            let top_left = if x > 0 && y > 0 { pixels[(y - 1) * width + x - 1] } else { 0xff000000 };
-            let top_right = if x + 1 < width && y > 0 { pixels[(y - 1) * width + x + 1] } else { top };
-
-            let pred = predict(mode, left, top, top_left, top_right);
             pixels[y * width + x] = residual(pixels[y * width + x], pred);
         }
     }
@@ -220,6 +272,8 @@ pub fn apply_predictor_transform(
 }
 
 /// Choose the best predictor mode for a block.
+/// Only scores interior pixels (y > 0 AND x > 0) since border pixels use
+/// fixed predictors regardless of the block's mode.
 fn choose_best_predictor(
     pixels: &[u32],
     width: usize,
@@ -233,25 +287,39 @@ fn choose_best_predictor(
     let x_end = (x_start + block_size).min(width);
     let y_end = (y_start + block_size).min(height);
 
-    let mut best_mode = PredictorMode::Top; // Default
+    // Effective start: skip row 0 and col 0 (they use fixed predictors)
+    let x_eff = x_start.max(1);
+    let y_eff = y_start.max(1);
+
+    // If no interior pixels to score, default to Top
+    if x_eff >= x_end || y_eff >= y_end {
+        return PredictorMode::Top;
+    }
+
+    let mut best_mode = PredictorMode::Top;
     let mut best_score = u64::MAX;
 
-    // Try each predictor mode
     for mode in PredictorMode::all() {
         let mut score = 0u64;
 
-        for y in y_start..y_end {
-            for x in x_start..x_end {
+        for y in y_eff..y_end {
+            for x in x_eff..x_end {
                 let pixel = pixels[y * width + x];
-                let left = if x > 0 { pixels[y * width + x - 1] } else { 0xff000000 };
-                let top = if y > 0 { pixels[(y - 1) * width + x] } else { 0xff000000 };
-                let top_left = if x > 0 && y > 0 { pixels[(y - 1) * width + x - 1] } else { 0xff000000 };
-                let top_right = if x + 1 < width && y > 0 { pixels[(y - 1) * width + x + 1] } else { top };
+                let left = pixels[y * width + x - 1];
+                let top = pixels[(y - 1) * width + x];
+                let top_left = pixels[(y - 1) * width + x - 1];
+                // At right edge, top_right wraps to first pixel of current row
+                // (matching decoder's memory layout behavior).
+                let top_right = if x + 1 < width {
+                    pixels[(y - 1) * width + x + 1]
+                } else {
+                    pixels[y * width]
+                };
 
                 let pred = predict(mode, left, top, top_left, top_right);
                 let res = residual(pixel, pred);
 
-                // Score: sum of absolute residuals
+                // Score: sum of absolute residuals across all channels
                 score += argb_alpha(res) as u64;
                 score += argb_red(res) as u64;
                 score += argb_green(res) as u64;
@@ -376,18 +444,18 @@ mod tests {
         let pred = make_argb(90, 60, 70, 150);
         let res = residual(pixel, pred);
 
-        assert_eq!(argb_alpha(res), 10);  // 100 - 90
-        assert_eq!(argb_red(res), 246);   // 50 - 60 = -10 = 246 (wrapping)
-        assert_eq!(argb_green(res), 10);  // 80 - 70
-        assert_eq!(argb_blue(res), 50);   // 200 - 150
+        assert_eq!(argb_alpha(res), 10); // 100 - 90
+        assert_eq!(argb_red(res), 246); // 50 - 60 = -10 = 246 (wrapping)
+        assert_eq!(argb_green(res), 10); // 80 - 70
+        assert_eq!(argb_blue(res), 50); // 200 - 150
     }
 
     #[test]
     fn test_color_index_small_palette() {
         let pixels = vec![
-            make_argb(255, 255, 0, 0),   // Red
-            make_argb(255, 0, 255, 0),   // Green
-            make_argb(255, 255, 0, 0),   // Red again
+            make_argb(255, 255, 0, 0), // Red
+            make_argb(255, 0, 255, 0), // Green
+            make_argb(255, 255, 0, 0), // Red again
         ];
 
         let transform = ColorIndexTransform::try_build(&pixels).unwrap();
@@ -398,9 +466,9 @@ mod tests {
     #[test]
     fn test_color_index_too_many_colors() {
         // Create 257 unique colors - use different channels to ensure uniqueness
-        let pixels: Vec<u32> = (0..257).map(|i| {
-            make_argb(255, (i % 256) as u8, (i / 256) as u8, 0)
-        }).collect();
+        let pixels: Vec<u32> = (0..257)
+            .map(|i| make_argb(255, (i % 256) as u8, (i / 256) as u8, 0))
+            .collect();
         let transform = ColorIndexTransform::try_build(&pixels);
         assert!(transform.is_none());
     }

@@ -29,9 +29,8 @@ fn main() {
         ..Default::default()
     };
 
-    let vp8l_data = zenwebp::encoder::vp8l::encode_vp8l(
-        &rgb_pixels, width, height, false, &config
-    ).unwrap();
+    let vp8l_data =
+        zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, width, height, false, &config).unwrap();
 
     println!("VP8L data ({} bytes)", vp8l_data.len());
 
@@ -52,14 +51,21 @@ fn main() {
 
     print!("Verifying... ");
     let verify = Command::new("/home/lilith/work/libwebp/examples/dwebp")
-        .args(["/tmp/test_gradient_vp8l.webp", "-o", "/tmp/test_gradient.ppm"])
+        .args([
+            "/tmp/test_gradient_vp8l.webp",
+            "-o",
+            "/tmp/test_gradient.ppm",
+        ])
         .output();
     match verify {
         Ok(out) if out.status.success() => {
             println!("OK");
             // Verify pixel values
             let ppm = std::fs::read_to_string("/tmp/test_gradient.ppm").unwrap_or_default();
-            println!("First 200 chars of decoded PPM:\n{}", &ppm[..200.min(ppm.len())]);
+            println!(
+                "First 200 chars of decoded PPM:\n{}",
+                &ppm[..200.min(ppm.len())]
+            );
         }
         Ok(out) => println!("FAILED: {}", String::from_utf8_lossy(&out.stderr)),
         Err(e) => println!("Error: {}", e),

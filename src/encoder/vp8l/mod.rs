@@ -19,4 +19,4 @@ mod transforms;
 mod types;
 
 pub use encode::encode_vp8l;
-pub use types::{Vp8lQuality, Vp8lConfig};
+pub use types::{Vp8lConfig, Vp8lQuality};
