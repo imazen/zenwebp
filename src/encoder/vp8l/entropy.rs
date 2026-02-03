@@ -272,7 +272,28 @@ pub struct HistogramCosts {
     pub is_used: [bool; 5],
 }
 
-/// Compute full histogram cost (all 5 types).
+/// Extra bits cost for prefix-coded values (matching libwebp's VP8LExtraCost).
+///
+/// For prefix codes, codes 4..5 need 1 extra bit, 6..7 need 2, etc.
+/// This returns the total extra bits weighted by population counts.
+fn extra_cost(population: &[u32]) -> u64 {
+    let length = population.len();
+    if length < 6 {
+        return 0;
+    }
+    // Codes 4,5 have 1 extra bit; 6,7 have 2; 8,9 have 3; etc.
+    let mut cost = population[4] as u64 + population[5] as u64;
+    let half_len = length / 2;
+    for i in 2..half_len.saturating_sub(1) {
+        cost += i as u64 * (population[2 * i + 2] as u64 + population[2 * i + 3] as u64);
+    }
+    cost
+}
+
+/// Compute full histogram cost (all 5 types) for clustering.
+///
+/// This is the per-type PopulationCost sum used by histogram clustering.
+/// Does NOT include ExtraCost (that's only in estimate_histogram_bits).
 pub fn compute_histogram_cost(h: &Histogram) -> HistogramCosts {
     let (lit_cost, lit_triv, lit_used) = population_cost(&h.literal);
     let (red_cost, red_triv, red_used) = population_cost(&h.red);
@@ -357,10 +378,21 @@ pub fn get_combined_histogram_cost(
     Some(cost)
 }
 
-/// Estimate bit cost for a histogram using entropy (simple version for backward compat).
+/// Estimate bit cost for a histogram (matching libwebp's VP8LHistogramEstimateBits).
+///
+/// Includes PopulationCost for all 5 types plus ExtraCost for prefix-coded
+/// length and distance values. Used for strategy/cache comparison.
 pub fn estimate_histogram_bits(h: &Histogram) -> u64 {
+    use super::types::{NUM_DISTANCE_CODES, NUM_LENGTH_CODES, NUM_LITERAL_CODES};
+
     let costs = compute_histogram_cost(h);
-    costs.total >> LOG_2_PRECISION_BITS
+
+    // Add extra bits for prefix-coded length and distance values
+    let length_extra = extra_cost(&h.literal[NUM_LITERAL_CODES..][..NUM_LENGTH_CODES]);
+    let distance_extra = extra_cost(&h.distance[..NUM_DISTANCE_CODES]);
+    let extra_bits_cost = (length_extra + distance_extra) << LOG_2_PRECISION_BITS;
+
+    (costs.total + extra_bits_cost) >> LOG_2_PRECISION_BITS
 }
 
 /// Estimate combined bit cost for merging two histograms.
