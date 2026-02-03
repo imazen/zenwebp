@@ -438,10 +438,15 @@ impl<'a> Vp8Encoder<'a> {
     /// IMPORTANT: For multi-pass encoding, this computes the optimal probabilities
     /// to use for emission. The header encoder compares against COEFF_PROBS (decoder
     /// defaults) to decide which updates to signal.
-    fn compute_updated_probabilities(&mut self) {
+    ///
+    /// Returns true if any probabilities were updated (changed from COEFF_PROBS defaults).
+    /// This matches libwebp's FinalizeTokenProbas which sets dirty = has_changed where
+    /// has_changed is true only if any coefficient was set to a value different from default.
+    fn compute_updated_probabilities(&mut self) -> bool {
         // Always start from COEFF_PROBS (decoder defaults) for computing what to update.
         // This ensures the header signaling matches what the decoder expects.
         let mut updated = COEFF_PROBS;
+        let mut has_changed = false;
 
         for t in 0..4 {
             for b in 0..8 {
@@ -460,6 +465,8 @@ impl<'a> Vp8Encoder<'a> {
                         // included in the should_update calculation.
                         if should_update {
                             updated[t][b][c][p] = new_p;
+                            // has_changed is true if new_p differs from default (matching libwebp)
+                            has_changed |= new_p != default_prob;
                         }
                     }
                 }
@@ -470,6 +477,8 @@ impl<'a> Vp8Encoder<'a> {
         // For multi-pass, this ensures the header has the final probabilities to signal.
         // If no updates are beneficial, updated will equal COEFF_PROBS.
         self.updated_probs = Some(updated);
+
+        has_changed
     }
 
     /// Reset encoder state for a new encoding pass.
@@ -632,6 +641,7 @@ impl<'a> Vp8Encoder<'a> {
                 // Recalculate level_costs from the new probabilities
                 // This is the key to multi-pass: trellis and mode selection use
                 // empirical costs, potentially making different (better) decisions
+                self.level_costs.mark_dirty();
                 self.level_costs.calculate(&self.token_probs);
             }
 
@@ -658,11 +668,11 @@ impl<'a> Vp8Encoder<'a> {
 
                 for mbx in 0..self.macroblock_width {
                     // Mid-stream probability refresh (like libwebp's VP8EncTokenLoop)
+                    // We update probabilities mid-stream (helps compression: 1.0111x → 1.0101x)
+                    // but don't recalculate level_costs (hurts compression: 1.0101x → 1.0114x)
                     refresh_countdown -= 1;
                     if refresh_countdown < 0 {
                         self.compute_updated_probabilities();
-                        let probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
-                        self.level_costs.calculate(probs);
                         refresh_countdown = max_count;
                     }
 
