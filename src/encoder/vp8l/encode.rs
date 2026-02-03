@@ -134,8 +134,10 @@ fn encode_argb(
         writer.write_bits(0, 2); // predictor = 0
         writer.write_bits((pred_bits - 2) as u64, 3);
 
-        // Write predictor sub-image
-        write_predictor_image(&mut writer, &predictor_data);
+        // Write predictor sub-image (full LZ77+Huffman encoding)
+        let pred_w = subsample_size(width as u32, pred_bits) as usize;
+        let pred_h = subsample_size(height as u32, pred_bits) as usize;
+        write_predictor_image(&mut writer, &predictor_data, pred_w, pred_h, config.quality.quality);
     }
 
     // Cross-color transform (applied third, on predictor residuals)
@@ -162,8 +164,10 @@ fn encode_argb(
         writer.write_bits(1, 2); // cross-color = 1
         writer.write_bits((cc_bits - 2) as u64, 3);
 
-        // Write cross-color sub-image
-        write_cross_color_image(&mut writer, &cross_color_data);
+        // Write cross-color sub-image (full LZ77+Huffman encoding)
+        let cc_w = subsample_size(width as u32, cc_bits) as usize;
+        let cc_h = subsample_size(height as u32, cc_bits) as usize;
+        write_cross_color_image(&mut writer, &cross_color_data, cc_w, cc_h, config.quality.quality);
     }
 
     // Color indexing transform
@@ -232,7 +236,7 @@ fn encode_argb(
         writer.write_bits((meta_info.histo_bits - 2) as u64, 3);
 
         // Write histogram prefix image (encoded as sub-image)
-        write_histogram_image(&mut writer, &meta_info);
+        write_histogram_image(&mut writer, &meta_info, config.quality.quality);
     } else {
         writer.write_bit(false); // no meta-Huffman
     }
@@ -511,50 +515,29 @@ fn build_huffman_group(h: &super::histogram::Histogram) -> HuffmanGroupCodes {
 }
 
 /// Write the histogram prefix image (meta-Huffman sub-image).
-///
-/// Each pixel encodes a histogram group index. The index is stored
-/// as: green = (index & 0xFF), red = (index >> 8), blue = 0, alpha = 0.
-fn write_histogram_image(writer: &mut BitWriter, meta_info: &MetaHuffmanInfo) {
-    // No color cache for sub-images
-    writer.write_bit(false);
+/// Uses full LZ77+Huffman encoding matching libwebp's EncodeImageNoHuffman.
+fn write_histogram_image(
+    writer: &mut BitWriter,
+    meta_info: &MetaHuffmanInfo,
+    quality: u8,
+) {
+    // Convert histogram symbols to ARGB pixels: green=low byte, red=high byte
+    let argb: Vec<u32> = meta_info
+        .histogram_symbols
+        .iter()
+        .map(|&sym| make_argb(0, (sym >> 8) as u8, (sym & 0xFF) as u8, 0))
+        .collect();
 
-    // Build histogram of group indices
-    let mut hist_green = [0u32; 280]; // green channel = low byte of index
-    let mut hist_red = [0u32; 256]; // red channel = high byte of index
-    for &sym in &meta_info.histogram_symbols {
-        hist_green[(sym & 0xFF) as usize] += 1;
-        hist_red[(sym >> 8) as usize] += 1;
-    }
+    let histo_w = subsample_size(
+        meta_info.image_width as u32,
+        meta_info.histo_bits,
+    ) as usize;
+    let histo_h = subsample_size(
+        meta_info.image_height as u32,
+        meta_info.histo_bits,
+    ) as usize;
 
-    // Build Huffman codes
-    let g_lengths = build_huffman_lengths(&hist_green, 15);
-    let g_codes = build_huffman_codes(&g_lengths);
-    let r_lengths = build_huffman_lengths(&hist_red, 15);
-    let r_codes = build_huffman_codes(&r_lengths);
-
-    let g_trivial = g_lengths.iter().filter(|&&l| l > 0).count() <= 1;
-    let r_trivial = r_lengths.iter().filter(|&&l| l > 0).count() <= 1;
-
-    // Write 5 Huffman trees for the sub-image
-    write_huffman_tree(writer, &g_lengths); // green (group index low byte)
-    write_huffman_tree(writer, &r_lengths); // red (group index high byte)
-    write_single_entry_tree(writer, 0); // blue (always 0)
-    write_single_entry_tree(writer, 0); // alpha (always 0)
-    write_single_entry_tree(writer, 0); // distance (unused)
-
-    // Write image data: one pixel per tile
-    for &sym in &meta_info.histogram_symbols {
-        let g = (sym & 0xFF) as usize;
-        let r = (sym >> 8) as usize;
-
-        if !g_trivial {
-            writer.write_bits(g_codes[g].code as u64, g_codes[g].length);
-        }
-        if !r_trivial {
-            writer.write_bits(r_codes[r].code as u64, r_codes[r].length);
-        }
-        // blue and alpha are trivial (0), no bits emitted
-    }
+    encode_image_no_huffman(writer, &argb, histo_w, histo_h, quality);
 }
 
 /// Check if palette encoding is beneficial.
@@ -584,118 +567,172 @@ fn can_use_palette(argb: &[u32]) -> bool {
 /// The sub-image encodes one pixel per block with the predictor mode in the
 /// green channel (0-13). Other channels are zero. Uses Huffman coding for
 /// the green channel and trivial single-entry trees for other channels.
-fn write_predictor_image(writer: &mut BitWriter, predictor_data: &[u32]) {
-    // No color cache for sub-images
-    writer.write_bit(false);
+/// Encode a sub-image (predictor modes, cross-color data, histogram image, palette)
+/// using full LZ77 + Huffman but no meta-Huffman or transforms.
+/// Matches libwebp's EncodeImageNoHuffman.
+fn encode_image_no_huffman(
+    writer: &mut BitWriter,
+    argb: &[u32],
+    width: usize,
+    height: usize,
+    quality: u8,
+) {
+    use super::backward_refs::{
+        apply_2d_locality, backward_references_lz77, backward_references_rle,
+    };
+    use super::entropy::estimate_histogram_bits;
+    use super::hash_chain::HashChain;
+    use super::histogram::Histogram;
 
-    // NOTE: No meta-Huffman flag for sub-images (only for main image)
-
-    // Build histogram for the green channel (predictor modes 0-13)
-    let mut hist_green = [0u32; 280]; // 256 literals + 24 length codes
-    for &pixel in predictor_data {
-        hist_green[argb_green(pixel) as usize] += 1;
-    }
-
-    // Check if all blocks use the same mode (trivial case)
-    let unique_count = hist_green.iter().filter(|&&c| c > 0).count();
-
-    if unique_count <= 1 {
-        // Trivial: single mode for all blocks
-        let val = hist_green.iter().position(|&c| c > 0).unwrap_or(2); // default Top
-        write_single_entry_tree(writer, val); // green
-        write_single_entry_tree(writer, 0); // red
-        write_single_entry_tree(writer, 0); // blue
-        write_single_entry_tree(writer, 0); // alpha
-        write_single_entry_tree(writer, 0); // distance
-                                            // No image data needed with all-trivial trees
+    let size = argb.len();
+    if size == 0 {
+        // Write no-cache flag and trivial trees
+        writer.write_bit(false); // no color cache
+        for _ in 0..5 {
+            write_single_entry_tree(writer, 0);
+        }
         return;
     }
 
-    // Non-trivial: build Huffman tree for green channel
-    let green_lengths = build_huffman_lengths(&hist_green, 15);
-    let green_codes = build_huffman_codes(&green_lengths);
+    // No color cache for sub-images (matching libwebp: cache_bits=0)
+    let cache_bits: u8 = 0;
 
-    // Write 5 Huffman trees
-    write_huffman_tree(writer, &green_lengths); // green (variable modes)
-    write_single_entry_tree(writer, 0); // red (all 0)
-    write_single_entry_tree(writer, 0); // blue (all 0)
-    write_single_entry_tree(writer, 0); // alpha (all 0)
-    write_single_entry_tree(writer, 0); // distance (unused)
+    // Build hash chain for the sub-image
+    let hash_chain = HashChain::new(argb, quality, width);
 
-    // Write image data: one green value per block
-    // Red/blue/alpha are trivial (no bits), only green emits bits
-    for &pixel in predictor_data {
-        let g = argb_green(pixel) as usize;
-        writer.write_bits(green_codes[g].code as u64, green_codes[g].length);
-    }
-}
+    // Try LZ77 Standard and RLE, pick best by entropy
+    let refs_lz77 = backward_references_lz77(argb, width, height, cache_bits, &hash_chain);
+    let refs_rle = backward_references_rle(argb, width, height, cache_bits);
 
-/// Write cross-color sub-image (multiplier data).
-///
-/// Each pixel encodes three multipliers:
-///   blue channel  = green_to_red
-///   green channel = green_to_blue
-///   red channel   = red_to_blue
-///   alpha         = 0xFF
-fn write_cross_color_image(writer: &mut BitWriter, cross_color_data: &[u32]) {
-    // No color cache for sub-images
-    writer.write_bit(false);
+    let histo_lz77 = Histogram::from_refs_with_plane_codes(&refs_lz77, cache_bits, width);
+    let histo_rle = Histogram::from_refs_with_plane_codes(&refs_rle, cache_bits, width);
 
-    // Build histogram for all channels
-    let mut hist_green = [0u32; 280]; // green_to_blue values
-    let mut hist_red = [0u32; 256]; // red_to_blue values
-    let mut hist_blue = [0u32; 256]; // green_to_red values
-    let mut hist_alpha = [0u32; 256]; // always 0xFF
+    let cost_lz77 = estimate_histogram_bits(&histo_lz77);
+    let cost_rle = estimate_histogram_bits(&histo_rle);
 
-    for &pixel in cross_color_data {
-        hist_green[argb_green(pixel) as usize] += 1;
-        hist_red[argb_red(pixel) as usize] += 1;
-        hist_blue[argb_blue(pixel) as usize] += 1;
-        hist_alpha[argb_alpha(pixel) as usize] += 1;
-    }
+    let mut best_refs = if cost_rle < cost_lz77 {
+        refs_rle
+    } else {
+        refs_lz77
+    };
 
-    // Build Huffman codes
-    let green_lengths = build_huffman_lengths(&hist_green, 15);
-    let green_codes = build_huffman_codes(&green_lengths);
-    let red_lengths = build_huffman_lengths(&hist_red, 15);
+    // Apply 2D locality transform
+    apply_2d_locality(&mut best_refs, width);
+
+    // Build single histogram from refs
+    let histo = Histogram::from_refs(&best_refs, cache_bits);
+
+    // Build Huffman codes for each channel
+    let lit_lengths = build_huffman_lengths(&histo.literal, 15);
+    let lit_codes = build_huffman_codes(&lit_lengths);
+    let lit_trivial = lit_lengths.iter().filter(|&&l| l > 0).count() <= 1;
+
+    let red_lengths = build_huffman_lengths(&histo.red, 15);
     let red_codes = build_huffman_codes(&red_lengths);
-    let blue_lengths = build_huffman_lengths(&hist_blue, 15);
-    let blue_codes = build_huffman_codes(&blue_lengths);
-    let alpha_lengths = build_huffman_lengths(&hist_alpha, 15);
-    let alpha_codes = build_huffman_codes(&alpha_lengths);
-
-    // Check for trivial trees
-    let green_trivial = green_lengths.iter().filter(|&&l| l > 0).count() <= 1;
     let red_trivial = red_lengths.iter().filter(|&&l| l > 0).count() <= 1;
+
+    let blue_lengths = build_huffman_lengths(&histo.blue, 15);
+    let blue_codes = build_huffman_codes(&blue_lengths);
     let blue_trivial = blue_lengths.iter().filter(|&&l| l > 0).count() <= 1;
+
+    let alpha_lengths = build_huffman_lengths(&histo.alpha, 15);
+    let alpha_codes = build_huffman_codes(&alpha_lengths);
     let alpha_trivial = alpha_lengths.iter().filter(|&&l| l > 0).count() <= 1;
 
+    let dist_lengths = build_huffman_lengths(&histo.distance, 15);
+    let dist_codes = build_huffman_codes(&dist_lengths);
+    let dist_trivial = dist_lengths.iter().filter(|&&l| l > 0).count() <= 1;
+
+    // Write no color cache flag
+    writer.write_bit(false);
+
     // Write 5 Huffman trees
-    write_huffman_tree(writer, &green_lengths);
+    write_huffman_tree(writer, &lit_lengths);
     write_huffman_tree(writer, &red_lengths);
     write_huffman_tree(writer, &blue_lengths);
     write_huffman_tree(writer, &alpha_lengths);
-    write_single_entry_tree(writer, 0); // distance (unused)
+    write_huffman_tree(writer, &dist_lengths);
 
-    // Write image data
-    for &pixel in cross_color_data {
-        if !green_trivial {
-            let g = argb_green(pixel) as usize;
-            writer.write_bits(green_codes[g].code as u64, green_codes[g].length);
-        }
-        if !red_trivial {
-            let r = argb_red(pixel) as usize;
-            writer.write_bits(red_codes[r].code as u64, red_codes[r].length);
-        }
-        if !blue_trivial {
-            let b = argb_blue(pixel) as usize;
-            writer.write_bits(blue_codes[b].code as u64, blue_codes[b].length);
-        }
-        if !alpha_trivial {
-            let a = argb_alpha(pixel) as usize;
-            writer.write_bits(alpha_codes[a].code as u64, alpha_codes[a].length);
+    // Write image data with LZ77 tokens
+    for token in best_refs.iter() {
+        match *token {
+            PixOrCopy::Literal(argb_val) => {
+                let g = argb_green(argb_val) as usize;
+                let r = argb_red(argb_val) as usize;
+                let b = argb_blue(argb_val) as usize;
+                let a = argb_alpha(argb_val) as usize;
+
+                if !lit_trivial {
+                    writer.write_bits(lit_codes[g].code as u64, lit_codes[g].length);
+                }
+                if !red_trivial {
+                    writer.write_bits(red_codes[r].code as u64, red_codes[r].length);
+                }
+                if !blue_trivial {
+                    writer.write_bits(blue_codes[b].code as u64, blue_codes[b].length);
+                }
+                if !alpha_trivial {
+                    writer.write_bits(alpha_codes[a].code as u64, alpha_codes[a].length);
+                }
+            }
+            PixOrCopy::CacheIdx(_) => {
+                // No color cache for sub-images, shouldn't happen
+            }
+            PixOrCopy::Copy { len, dist } => {
+                // Write length code
+                let (len_code, len_extra_bits) =
+                    super::histogram::length_to_code(len);
+                let len_extra_bits_count =
+                    super::histogram::length_code_extra_bits(len_code);
+                if !lit_trivial {
+                    let lit_idx = NUM_LITERAL_CODES + len_code as usize;
+                    writer.write_bits(
+                        lit_codes[lit_idx].code as u64,
+                        lit_codes[lit_idx].length,
+                    );
+                }
+                if len_extra_bits_count > 0 {
+                    writer.write_bits(len_extra_bits as u64, len_extra_bits_count);
+                }
+
+                // Write distance code
+                let (dist_code, dist_extra_bits) =
+                    super::histogram::distance_code_to_prefix(dist);
+                let dist_extra_bits_count =
+                    super::histogram::distance_code_extra_bits(dist_code);
+                if !dist_trivial {
+                    writer.write_bits(
+                        dist_codes[dist_code as usize].code as u64,
+                        dist_codes[dist_code as usize].length,
+                    );
+                }
+                if dist_extra_bits_count > 0 {
+                    writer.write_bits(dist_extra_bits as u64, dist_extra_bits_count);
+                }
+            }
         }
     }
+}
+
+fn write_predictor_image(
+    writer: &mut BitWriter,
+    predictor_data: &[u32],
+    width: usize,
+    height: usize,
+    quality: u8,
+) {
+    encode_image_no_huffman(writer, predictor_data, width, height, quality);
+}
+
+/// Write cross-color sub-image (multiplier data).
+fn write_cross_color_image(
+    writer: &mut BitWriter,
+    cross_color_data: &[u32],
+    width: usize,
+    height: usize,
+    quality: u8,
+) {
+    encode_image_no_huffman(writer, cross_color_data, width, height, quality);
 }
 
 /// Write palette data.

@@ -113,7 +113,7 @@ fn add_single_literal(argb_val: u32, cache: &mut Option<&mut ColorCache>, refs: 
 /// - Uses hash chain for best matches
 /// - Look-ahead: checks positions i+1..i+len for better "reach" (j + len_j)
 /// - Stores RAW distances (not plane codes)
-fn backward_references_lz77(
+pub(super) fn backward_references_lz77(
     argb: &[u32],
     _xsize: usize,
     _ysize: usize,
@@ -195,7 +195,7 @@ fn backward_references_lz77(
 /// RLE backward references (distance=1 and distance=xsize only).
 ///
 /// Matches libwebp's BackwardReferencesRle.
-fn backward_references_rle(
+pub(super) fn backward_references_rle(
     argb: &[u32],
     xsize: usize,
     _ysize: usize,

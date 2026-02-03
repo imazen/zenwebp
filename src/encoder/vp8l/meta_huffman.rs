@@ -30,6 +30,10 @@ pub struct MetaHuffmanInfo {
     pub histograms: Vec<Histogram>,
     /// Cached costs for each final histogram.
     pub costs: Vec<HistogramCosts>,
+    /// Image width (for sub-image dimension computation).
+    pub image_width: usize,
+    /// Image height (for sub-image dimension computation).
+    pub image_height: usize,
 }
 
 /// Build per-tile histograms from backward references.
@@ -472,6 +476,8 @@ pub fn build_meta_huffman(
         histogram_symbols: symbols,
         histograms,
         costs,
+        image_width: width,
+        image_height: height,
     }
 }
 
@@ -487,6 +493,8 @@ pub fn build_single_histogram(refs: &BackwardRefs, cache_bits: u8) -> MetaHuffma
         histogram_symbols: Vec::new(),
         histograms: vec![histogram],
         costs,
+        image_width: 0,
+        image_height: 0,
     }
 }
 
