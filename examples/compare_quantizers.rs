@@ -54,7 +54,7 @@ fn main() {
             i, ydc, yac, y2dc, y2ac, uvdc, uvac
         );
         // Compute q_i4 like the encoder does
-        let q_i4 = ((ydc as i32).abs() as u32 + 15 * (yac as i32).abs() as u32 + 8) >> 4;
+        let q_i4 = ((ydc as i32).unsigned_abs() + 15 * (yac as i32).unsigned_abs() + 8) >> 4;
         let lambda_mode = ((q_i4 * q_i4) >> 7).max(1);
         println!("    q_i4={}, lambda_mode={}", q_i4, lambda_mode);
     }
@@ -67,7 +67,7 @@ fn main() {
             i, ydc, yac, y2dc, y2ac, uvdc, uvac
         );
         // Compute q_i4 like the encoder does
-        let q_i4 = ((ydc as i32).abs() as u32 + 15 * (yac as i32).abs() as u32 + 8) >> 4;
+        let q_i4 = ((ydc as i32).unsigned_abs() + 15 * (yac as i32).unsigned_abs() + 8) >> 4;
         let lambda_mode = ((q_i4 * q_i4) >> 7).max(1);
         println!("    q_i4={}, lambda_mode={}", q_i4, lambda_mode);
     }

@@ -155,7 +155,7 @@ fn estimate_bits(blocks: &[zenwebp::decoder::vp8::BlockDiagnostic], is_i4: bool)
         for &l in &b.levels {
             if l != 0 {
                 // Rough estimate: each nonzero costs ~3-5 bits + level encoding
-                bits += 3 + (l.unsigned_abs() as u32).max(1).ilog2();
+                bits += 3 + l.unsigned_abs().max(1).ilog2();
             }
         }
     }

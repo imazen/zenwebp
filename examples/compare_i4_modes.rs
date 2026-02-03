@@ -3,7 +3,7 @@
 // For macroblocks where both chose I4, compare the per-block mode decisions
 
 use zenwebp::decoder::vp8::Vp8Decoder;
-use zenwebp::decoder::{IntraMode, LumaMode};
+use zenwebp::decoder::LumaMode;
 use zenwebp::{EncoderConfig, Preset};
 
 fn main() {
@@ -47,7 +47,7 @@ fn main() {
     let mut zen_mode_counts = [0usize; 10];
     let mut lib_mode_counts = [0usize; 10];
     let mut mode_matches = 0usize;
-    let mut mode_mismatches = 0usize;
+    let mut _mode_mismatches = 0usize;
 
     let mut mismatch_examples = Vec::new();
 
@@ -73,7 +73,7 @@ fn main() {
                 if zm == lm {
                     mode_matches += 1;
                 } else {
-                    mode_mismatches += 1;
+                    _mode_mismatches += 1;
                     if mismatch_examples.len() < 20 {
                         let mbx = mb_idx % zen_diag.mb_width as usize;
                         let mby = mb_idx / zen_diag.mb_width as usize;

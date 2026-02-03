@@ -23,7 +23,7 @@ fn main() {
 
         // Decode and count modes
         let vp8_chunk = extract_vp8(&webp).unwrap();
-        let (_, diag) = Vp8Decoder::decode_diagnostic(&vp8_chunk).unwrap();
+        let (_, diag) = Vp8Decoder::decode_diagnostic(vp8_chunk).unwrap();
 
         let i16_count = diag
             .macroblocks
@@ -57,7 +57,7 @@ fn main() {
         let webp = config.encode_rgb(&rgb, w, h, webpx::Unstoppable).unwrap();
 
         let vp8_chunk = extract_vp8(&webp).unwrap();
-        let (_, diag) = Vp8Decoder::decode_diagnostic(&vp8_chunk).unwrap();
+        let (_, diag) = Vp8Decoder::decode_diagnostic(vp8_chunk).unwrap();
 
         let i16_count = diag
             .macroblocks

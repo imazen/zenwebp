@@ -748,6 +748,7 @@ fn auto_detects_icon() {
 
 #[cfg(feature = "_corpus_tests")]
 mod corpus_tests {
+    #[allow(unused_imports)]
     use super::*;
 
     fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32)> {

@@ -159,15 +159,15 @@ fn main() {
         .y_blocks
         .iter()
         .flat_map(|b| b.levels.iter())
-        .map(|&l| l.abs() as i32)
+        .map(|&l| l.abs())
         .sum();
     let lib_y1_sum: i32 = lib_mb
         .y_blocks
         .iter()
         .flat_map(|b| b.levels.iter())
-        .map(|&l| l.abs() as i32)
+        .map(|&l| l.abs())
         .sum();
-    let lib_y2_sum: i32 = lib_mb.y2_block.levels.iter().map(|&l| l.abs() as i32).sum();
+    let lib_y2_sum: i32 = lib_mb.y2_block.levels.iter().map(|&l| l.abs()).sum();
 
     println!("Sum of |coefficients|:");
     println!("  zenwebp I4: {}", zen_sum);

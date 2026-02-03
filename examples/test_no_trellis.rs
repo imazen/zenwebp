@@ -1,5 +1,4 @@
 // Test to compare with/without trellis at method 4
-use zenwebp::encoder::{EncoderConfig, EncoderParams};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";

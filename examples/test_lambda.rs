@@ -1,6 +1,5 @@
 // Test to check lambda values
 use webpx::Unstoppable;
-use zenwebp::EncoderConfig;
 
 fn main() {
     // Create a minimal image to trigger segment initialization

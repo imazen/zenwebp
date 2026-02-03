@@ -103,11 +103,10 @@ fn main() {
     let mut zen_nz_where_zen_i4_lib_i16 = 0usize;
     let mut lib_nz_where_zen_i4_lib_i16 = 0usize;
 
-    for (i, (z, l)) in zen_diag
+    for (z, l) in zen_diag
         .macroblocks
         .iter()
         .zip(lib_diag.macroblocks.iter())
-        .enumerate()
     {
         let zen_is_i4 = z.luma_mode == LumaMode::B;
         let lib_is_i4 = l.luma_mode == LumaMode::B;

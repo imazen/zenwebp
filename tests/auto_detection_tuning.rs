@@ -160,6 +160,7 @@ fn ct_label(ct: ContentType) -> &'static str {
 }
 
 /// Per-image result for aggregation.
+#[allow(dead_code)]
 struct ImageResult {
     name: String,
     det: ContentType,
