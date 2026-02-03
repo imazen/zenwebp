@@ -1222,9 +1222,7 @@ impl<'a> super::Vp8Encoder<'a> {
             let mut left = self.left_complexity.y[y];
             for x in 0..4 {
                 let block_idx = y * 4 + x;
-                let block: &[i32; 16] = y_block_data[block_idx * 16..][..16]
-                    .try_into()
-                    .unwrap();
+                let block: &[i32; 16] = y_block_data[block_idx * 16..][..16].try_into().unwrap();
 
                 let top = self.top_complexity[mbx].y[x];
                 let ctx0 = (left + top).min(2) as usize;
@@ -1267,9 +1265,7 @@ impl<'a> super::Vp8Encoder<'a> {
             let mut left = self.left_complexity.u[y];
             for x in 0usize..2 {
                 let block_idx = y * 2 + x;
-                let block: &[i32; 16] = u_block_data[block_idx * 16..][..16]
-                    .try_into()
-                    .unwrap();
+                let block: &[i32; 16] = u_block_data[block_idx * 16..][..16].try_into().unwrap();
 
                 for i in 0..16 {
                     let zi = usize::from(ZIGZAG[i]);
@@ -1298,9 +1294,7 @@ impl<'a> super::Vp8Encoder<'a> {
             let mut left = self.left_complexity.v[y];
             for x in 0usize..2 {
                 let block_idx = y * 2 + x;
-                let block: &[i32; 16] = v_block_data[block_idx * 16..][..16]
-                    .try_into()
-                    .unwrap();
+                let block: &[i32; 16] = v_block_data[block_idx * 16..][..16].try_into().unwrap();
 
                 for i in 0..16 {
                     let zi = usize::from(ZIGZAG[i]);

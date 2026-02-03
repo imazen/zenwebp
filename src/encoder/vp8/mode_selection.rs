@@ -521,8 +521,13 @@ impl<'a> super::Vp8Encoder<'a> {
 
                     // Get accurate coefficient cost using probability tables
                     // Cost functions expect zigzag order
-                    let (coeff_cost, _) =
-                        get_cost_luma4(&quantized_zigzag, nz_top, nz_left, &self.level_costs, probs);
+                    let (coeff_cost, _) = get_cost_luma4(
+                        &quantized_zigzag,
+                        nz_top,
+                        nz_left,
+                        &self.level_costs,
+                        probs,
+                    );
 
                     // Compute distortion (SSE of quantized vs original)
                     // Use natural order for dequantization and IDCT
@@ -558,10 +563,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     // Use rd_score_with_coeffs to avoid u16 overflow when total_rate > 65535
                     let mode_cost = get_i4_mode_cost(top_ctx, left_ctx, mode_idx);
                     let rd_score = crate::encoder::cost::rd_score_with_coeffs(
-                        sse,
-                        mode_cost,
-                        coeff_cost,
-                        lambda_i4,
+                        sse, mode_cost, coeff_cost, lambda_i4,
                     );
 
                     // Block-level debug output (enabled with BLOCK_DEBUG=mbx,mby,block_idx)
@@ -832,7 +834,10 @@ impl<'a> super::Vp8Encoder<'a> {
                 .and_then(|s| {
                     let parts: Vec<_> = s.split(',').collect();
                     if parts.len() == 2 {
-                        Some((parts[0].parse::<usize>().ok()?, parts[1].parse::<usize>().ok()?))
+                        Some((
+                            parts[0].parse::<usize>().ok()?,
+                            parts[1].parse::<usize>().ok()?,
+                        ))
                     } else {
                         None
                     }
@@ -879,7 +884,10 @@ impl<'a> super::Vp8Encoder<'a> {
                         if debug_mb {
                             eprintln!("I4: score={} (beats I16)", i4_score);
                             eprintln!("  modes={:?}", modes);
-                            eprintln!("  RESULT: I4 wins by {} points", i16_score.saturating_sub(i4_score));
+                            eprintln!(
+                                "  RESULT: I4 wins by {} points",
+                                i16_score.saturating_sub(i4_score)
+                            );
                         }
                         (LumaMode::B, Some(modes))
                     }

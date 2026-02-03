@@ -1018,22 +1018,28 @@ mod corpus_tests {
                     .filter_strength(0)
                     .segments(1)
                     .pass(1); // Single pass
-                let libwebp_m6_1pass = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-                    .method(6)
-                    .sns_strength(0)
-                    .filter_strength(0)
-                    .segments(1)
-                    .pass(1); // Single pass
-                let libwebp_m6_3pass = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-                    .method(6)
-                    .sns_strength(0)
-                    .filter_strength(0)
-                    .segments(1)
-                    .pass(3); // 3 passes
+                let libwebp_m6_1pass =
+                    webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
+                        .method(6)
+                        .sns_strength(0)
+                        .filter_strength(0)
+                        .segments(1)
+                        .pass(1); // Single pass
+                let libwebp_m6_3pass =
+                    webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
+                        .method(6)
+                        .sns_strength(0)
+                        .filter_strength(0)
+                        .segments(1)
+                        .pass(3); // 3 passes
 
                 let lib_m4 = libwebp_m4.encode_rgb(&rgb, w, h, Unstoppable).unwrap();
-                let lib_m6_1 = libwebp_m6_1pass.encode_rgb(&rgb, w, h, Unstoppable).unwrap();
-                let lib_m6_3 = libwebp_m6_3pass.encode_rgb(&rgb, w, h, Unstoppable).unwrap();
+                let lib_m6_1 = libwebp_m6_1pass
+                    .encode_rgb(&rgb, w, h, Unstoppable)
+                    .unwrap();
+                let lib_m6_3 = libwebp_m6_3pass
+                    .encode_rgb(&rgb, w, h, Unstoppable)
+                    .unwrap();
 
                 let m5_vs_m4 = m5_output.len() as f64 / m4_output.len() as f64;
                 let m6_vs_m4 = m6_output.len() as f64 / m4_output.len() as f64;

@@ -69,9 +69,9 @@ struct PassStats {
     last_q: f32,
     qmin: f32,
     qmax: f32,
-    value: f64,       // current encoded size
-    last_value: f64,  // previous encoded size
-    target: f64,      // target size
+    value: f64,      // current encoded size
+    last_value: f64, // previous encoded size
+    target: f64,     // target size
 }
 
 impl PassStats {
@@ -531,7 +531,7 @@ impl<'a> Vp8Encoder<'a> {
     ) -> Result<(), EncodingError> {
         // Store method and configure features based on it
         self.method = params.method.min(6); // Clamp to 0-6
-        // Trellis quantization only for method >= 4 (like libwebp's RD_OPT_TRELLIS)
+                                            // Trellis quantization only for method >= 4 (like libwebp's RD_OPT_TRELLIS)
         self.do_trellis = self.method >= 4;
         // Trellis during I4 mode selection for method 6 (like libwebp's RD_OPT_TRELLIS_ALL)
         self.do_trellis_i4_mode = self.method >= 6;

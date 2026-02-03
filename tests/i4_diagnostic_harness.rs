@@ -1368,7 +1368,12 @@ fn same_mode_coefficient_analysis() {
     let zen_high: usize = zen_levels[16..].iter().sum();
     let lib_high: usize = lib_levels[16..].iter().sum();
     if zen_high > 0 || lib_high > 0 {
-        println!(" 16+  | {:>7} | {:>7} | {:+}", zen_high, lib_high, zen_high as i64 - lib_high as i64);
+        println!(
+            " 16+  | {:>7} | {:>7} | {:+}",
+            zen_high,
+            lib_high,
+            zen_high as i64 - lib_high as i64
+        );
     }
 }
 
@@ -1426,8 +1431,16 @@ fn bits_per_coefficient_analysis() {
         // Bits per coefficient (approximation - includes header overhead)
         let zen_bits = zen_webp.len() * 8;
         let lib_bits = lib_webp.len() * 8;
-        let zen_bpc = if zen_nz > 0 { zen_bits as f64 / zen_nz as f64 } else { 0.0 };
-        let lib_bpc = if lib_nz > 0 { lib_bits as f64 / lib_nz as f64 } else { 0.0 };
+        let zen_bpc = if zen_nz > 0 {
+            zen_bits as f64 / zen_nz as f64
+        } else {
+            0.0
+        };
+        let lib_bpc = if lib_nz > 0 {
+            lib_bits as f64 / lib_nz as f64
+        } else {
+            0.0
+        };
         let bpc_ratio = zen_bpc / lib_bpc;
 
         println!(
@@ -1450,7 +1463,7 @@ fn bits_per_coefficient_analysis() {
 #[ignore] // Requires dwebp to be installed
 fn verify_decode_with_dwebp() {
     println!("\n=== Verifying Decode with dwebp ===");
-    
+
     let path = "/tmp/CID22/original/792079.png";
     let (rgb, width, height) = match load_png(path) {
         Some(data) => data,
@@ -1462,23 +1475,30 @@ fn verify_decode_with_dwebp() {
 
     for method in [4u8, 5, 6] {
         let webp = encode_zenwebp(&rgb, width, height, 75.0, method);
-        
+
         // Save to file
         let webp_path = format!("/tmp/test_m{}.webp", method);
         std::fs::write(&webp_path, &webp).expect("write webp");
-        
+
         // Try to decode with dwebp
         let output = std::process::Command::new("dwebp")
             .args([&webp_path, "-o", "/tmp/test_decoded.ppm"])
             .output();
-        
+
         match output {
             Ok(result) => {
                 if result.status.success() {
-                    println!("Method {}: dwebp decode SUCCESS ({} bytes)", method, webp.len());
+                    println!(
+                        "Method {}: dwebp decode SUCCESS ({} bytes)",
+                        method,
+                        webp.len()
+                    );
                 } else {
-                    println!("Method {}: dwebp decode FAILED: {}", method, 
-                        String::from_utf8_lossy(&result.stderr));
+                    println!(
+                        "Method {}: dwebp decode FAILED: {}",
+                        method,
+                        String::from_utf8_lossy(&result.stderr)
+                    );
                 }
             }
             Err(e) => {
@@ -1492,7 +1512,7 @@ fn verify_decode_with_dwebp() {
 #[test]
 fn compare_decoded_pixels() {
     println!("\n=== Comparing Decoded Pixels Between Methods ===");
-    
+
     let path = "/tmp/CID22/original/792079.png";
     let (rgb, width, height) = match load_png(path) {
         Some(data) => data,
@@ -1505,15 +1525,15 @@ fn compare_decoded_pixels() {
     // Encode with m4 and m5
     let webp_m4 = encode_zenwebp(&rgb, width, height, 75.0, 4);
     let webp_m5 = encode_zenwebp(&rgb, width, height, 75.0, 5);
-    
+
     // Extract VP8 chunks
     let vp8_m4 = extract_vp8_chunk(&webp_m4).expect("VP8");
     let vp8_m5 = extract_vp8_chunk(&webp_m5).expect("VP8");
-    
+
     // Decode both
     let (frame_m4, _) = Vp8Decoder::decode_diagnostic(vp8_m4).expect("decode m4");
     let (frame_m5, _) = Vp8Decoder::decode_diagnostic(vp8_m5).expect("decode m5");
-    
+
     // Compare Y planes
     let mut diff_count = 0usize;
     let mut max_diff = 0i32;
@@ -1524,10 +1544,13 @@ fn compare_decoded_pixels() {
             max_diff = max_diff.max(diff);
         }
     }
-    
+
     let total = frame_m4.ybuf.len();
-    println!("Y plane: {} total pixels, {} differ, max diff = {}", total, diff_count, max_diff);
-    
+    println!(
+        "Y plane: {} total pixels, {} differ, max diff = {}",
+        total, diff_count, max_diff
+    );
+
     // If most pixels differ significantly, there's a bug
     if diff_count > total / 2 {
         println!("WARNING: More than 50% of pixels differ between m4 and m5!");
