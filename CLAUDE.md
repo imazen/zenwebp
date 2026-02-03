@@ -839,10 +839,13 @@ Encoder debugging tools in `examples/`:
 | Example | Usage |
 |---------|-------|
 | `corpus_test [dir]` | Batch file size comparison vs libwebp |
+| `compare_all_methods` | Per-method size comparison on test image |
+| `compare_coefficients` | Compare quantized levels for same-mode blocks |
 | `compare_i4_modes` | Per-block I4 mode choice comparison |
 | `compare_i4_sse` | Coefficient counts for disputed blocks |
 | `compare_quantizers` | Verify quantizer values match libwebp |
-| `compare_rd_scores` | RD score components for specific MB |
+| `compare_rd_costs` | Macroblock type agreement stats |
+| `compare_trellis_block` | Single-block trellis comparison |
 | `debug_block` | Debug single I4 block with BLOCK_DEBUG env |
 | `debug_mode_decision` | MB_DEBUG env for mode selection |
 | `force_i16_comparison` | File sizes with I4 threshold forcing |
@@ -852,3 +855,27 @@ Encoder debugging tools in `examples/`:
 | `test_tdisto` | Spectral distortion testing |
 
 Run with: `cargo run --release --example <name> [args]`
+
+### I4 Coefficient Level Analysis (2026-02-02)
+
+**Findings from `compare_coefficients` example:**
+
+For same-mode I4 blocks (both encoders chose same prediction mode):
+- Exact coefficient match: 57.9% of blocks
+- Total |level| sum: zenwebp 2.7% higher
+- Non-zero coefficient count: zenwebp 1.3% higher
+
+**Root cause:** Our trellis is slightly less aggressive at zeroing coefficients
+than libwebp's. For example:
+- `zen=3 lib=1` — we kept level 3 where libwebp chose 1
+- `zen=-7 lib=-6` — we kept level -7 where libwebp chose -6
+
+This is consistent with the trellis RD balance favoring slightly lower distortion
+over rate reduction. The effect is small (~1-2% more bits) but compounds across
+many coefficients.
+
+**Mitigation:** The I4 flatness penalty fix (see commit 98b6c85) addresses the
+mode selection aspect. The remaining coefficient-level difference is inherent
+to our trellis tuning. Corpus results show overall parity or better, so this
+may be acceptable or even beneficial for perceptual quality.
+
