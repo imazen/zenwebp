@@ -11,18 +11,18 @@ See global ~/.claude/CLAUDE.md for general instructions.
 |--------|------|-----------|------------|-------|
 | 0 | 22ms | 13.1KB | 0.89x | I16-only, no trellis |
 | 2 | 31ms | 12.1KB | 1.07x | Limited I4 (3 modes), no trellis |
-| 4 | 26ms | 12.2KB | 1.01x | Full I4, trellis final |
+| 4 | 26ms | 12.2KB | 0.99x | Full I4, trellis final |
 | 5 | 27ms | 12.2KB | 1.01x | Same as m4 (multi-pass removed) |
 | 6 | 32ms | 12.1KB | 1.03x | Trellis during mode selection |
 
 *Benchmark: 512x512 CID22 image (792079) at Q75, SNS=0, filter=0, segments=1*
 
-**CID22 corpus aggregate (41 images, Q75 Default):**
+**CID22 corpus aggregate (248 images, Q75, SNS=0, filter=0, segments=1):**
 | Method | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| 4 | 1125390 | 1126840 | **0.999x** |
-| 5 | 1114454 | 1104176 | 1.009x |
-| 6 | 1114454 | 1077358 | 1.034x |
+| 4 | 7211130 | 7283864 | **0.990x** |
+
+*Updated 2026-02-02 after I4 mode context fix - zenwebp now 1% smaller than libwebp*
 
 **Screenshot corpus aggregate (10 images, Q75 Default):**
 | Method | zenwebp | libwebp | Ratio |
@@ -37,20 +37,23 @@ it provides **no compression benefit** - in fact, files were 0.1-0.5% LARGER wit
 more passes. This matches libwebp's behavior where multi-pass only helps when used
 with quality search (target_size convergence). All methods now use single-pass.
 
-**Method comparison (SNS=0, filter=0, segments=1, single pass):**
+**Method comparison (SNS=0, filter=0, segments=1, single pass, 792079.png):**
 | Encoder | m4 | m6 | m4→m6 gain |
 |---------|-----|-----|-----------|
 | libwebp | 12018 | 11720 | **2.5% smaller** (trellis-all) |
-| zenwebp | 12174 | 12084 | **0.7% smaller** (trellis-all) |
+| zenwebp | 12164 | 12084 | **0.7% smaller** (trellis-all) |
 
 **Key findings:**
-1. **libwebp m4→m6 helps** because m6 enables `RD_OPT_TRELLIS_ALL` (trellis during
+1. **I4 mode context fix (2026-02-02)**: Edge blocks in I4 mode selection were using
+   hardcoded DC context (0) instead of cross-macroblock context from `top_b_pred`/`left_b_pred`.
+   Fixed by updating context during encoding pass, not just header writing.
+   - 792079 benchmark: 12174 → 12164 bytes (-0.08%)
+   - CID22 corpus: 0.999x → 0.990x (-0.9%)
+2. **libwebp m4→m6 helps** because m6 enables `RD_OPT_TRELLIS_ALL` (trellis during
    mode selection). This is a **single-pass** benefit, not multi-pass.
-2. **Our m6 now works**: Added trellis during I4 mode selection (2026-02-02).
+3. **Our m6 now works**: Added trellis during I4 mode selection (2026-02-02).
    Method 6 is now 0.7% smaller than method 4.
-3. **Multi-pass removed**: Provides no benefit (tested), only adds overhead.
-4. **Remaining gap vs libwebp**: ~3% larger files. Root cause is likely in I4
-   coefficient efficiency or mode cost estimation differences.
+4. **Multi-pass removed**: Provides no benefit (tested), only adds overhead.
 
 **Quality search (target_size support) - IMPLEMENTED (2026-02-02):**
 
@@ -358,6 +361,29 @@ Completed:
 (none currently)
 
 ## Investigation Notes
+
+### I4 Mode Context Bug (2026-02-02, FIXED)
+
+**Bug:** Edge blocks in I4 mode selection were using hardcoded DC (0) context instead of
+cross-macroblock context from `top_b_pred` and `left_b_pred`. This caused suboptimal mode
+selection for edge blocks because the mode cost tables are context-dependent.
+
+**Root cause:** The `top_b_pred` and `left_b_pred` arrays were only being updated during
+header writing (after all mode selection was complete), not during the encoding pass.
+When mode selection ran for MB(x,y), the context for edge blocks came from either:
+- Reset values (start of row)
+- Stale values from a previous pass
+
+**Fix (2 parts):**
+1. `mode_selection.rs`: Use `self.top_b_pred[mbx * 4 + sbx]` and `self.left_b_pred[sby]`
+   for edge block context instead of hardcoded 0
+2. `mod.rs`: Update `top_b_pred` and `left_b_pred` immediately after `choose_macroblock_info()`
+   returns, so the next macroblock sees correct context
+
+**Results:**
+- Mode distribution shifted: -257 DC modes, +93 VE, +73 HE, +922 TM
+- 792079 benchmark: 12174 → 12164 bytes (-0.08%)
+- CID22 corpus (248 images): 0.999x → 0.990x (zenwebp now 1% smaller than libwebp)
 
 ### Multi-pass Probability Signaling Bug (2026-02-02, FIXED)
 
