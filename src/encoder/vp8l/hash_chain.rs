@@ -46,7 +46,7 @@ impl HashChain {
         // Fill chain linking pixels with same hash
         let mut argb_comp = argb[0] == argb[1];
         for pos in 0..size.saturating_sub(2) {
-            let argb_comp_next = argb.get(pos + 2).map_or(false, |&p| argb[pos + 1] == p);
+            let argb_comp_next = argb.get(pos + 2).is_some_and(|&p| argb[pos + 1] == p);
 
             if argb_comp && argb_comp_next {
                 // Consecutive identical pixels - use special hash including run length
@@ -112,7 +112,7 @@ impl HashChain {
             let mut best_dist = 0usize;
             let min_pos = base_pos.saturating_sub(window_size);
             let length_max = max_len.min(256);
-            let mut max_base_pos = base_pos;
+            let _max_base_pos = base_pos;
 
             // Heuristic: try row above
             if base_pos >= width {
@@ -161,38 +161,10 @@ impl HashChain {
                 pos = chain[p];
             }
 
-            // Store best match and extend leftward
-            loop {
-                debug_assert!(best_len <= MAX_LENGTH);
-                offset_length[base_pos] =
-                    ((best_dist as u32) << MAX_LENGTH_BITS) | (best_len as u32);
-
-                let next_pos = base_pos.wrapping_sub(1);
-                if best_dist == 0 || next_pos == 0 {
-                    break;
-                }
-
-                // Can we extend the match to the left?
-                if next_pos < best_dist {
-                    break;
-                }
-                if argb[next_pos - best_dist] != argb[next_pos] {
-                    break;
-                }
-
-                // Don't extend if at max length and distance > 1
-                if best_len == MAX_LENGTH && best_dist != 1 && next_pos + MAX_LENGTH < max_base_pos {
-                    break;
-                }
-
-                if best_len < MAX_LENGTH {
-                    best_len += 1;
-                    max_base_pos = next_pos;
-                }
-
-                // This is handled by the outer loop
-                break;
-            }
+            // Store best match
+            debug_assert!(best_len <= MAX_LENGTH);
+            offset_length[base_pos] =
+                ((best_dist as u32) << MAX_LENGTH_BITS) | (best_len as u32);
         }
 
         Self { offset_length }

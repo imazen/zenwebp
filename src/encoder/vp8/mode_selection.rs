@@ -49,7 +49,7 @@ impl<'a> super::Vp8Encoder<'a> {
             })
             .is_some_and(|(dx, dy)| dx == mbx && dy == mby);
         #[cfg(not(feature = "mode_debug"))]
-        let debug_i16 = false;
+        let _debug_i16 = false;
         let mbw = usize::from(self.macroblock_width);
         let src_width = mbw * 16;
 
@@ -379,7 +379,7 @@ impl<'a> super::Vp8Encoder<'a> {
             })
             .is_some_and(|(dx, dy)| dx == mbx && dy == mby);
         #[cfg(not(feature = "mode_debug"))]
-        let debug_i4 = false;
+        let _debug_i4 = false;
 
         let mbw = usize::from(self.macroblock_width);
         let src_width = mbw * 16;

@@ -147,8 +147,7 @@ fn clamp_add_subtract_full(left: u32, top: u32, top_left: u32) -> u32 {
 /// ClampAddSubtractHalf: average(left, top) + (average(left, top) - top_left) / 2, clamped.
 #[inline]
 fn clamp_add_subtract_half(left: u32, top: u32) -> u32 {
-    let avg = average2(left, top);
-    avg
+    average2(left, top)
 }
 
 /// Compute residual (pixel - prediction) with wrapping.

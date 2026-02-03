@@ -62,7 +62,7 @@ fn main() {
 
         let ratio = zen.len() as f64 / lib.len() as f64;
         let name = path.file_name().unwrap().to_str().unwrap();
-        if ratio > 1.01 || ratio < 0.99 {
+        if !(0.99..=1.01).contains(&ratio) {
             println!(
                 "{}: zen={} lib={} ({:.3}x)",
                 name,

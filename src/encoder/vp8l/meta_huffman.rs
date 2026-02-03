@@ -192,7 +192,7 @@ fn estimate_combined_cost(h1: &Histogram, h2: &Histogram) -> u64 {
 
 /// Encode the meta-Huffman image.
 /// Returns pixels where green channel contains the group index.
-pub fn encode_meta_huffman_image(config: &MetaHuffmanConfig, blocks_x: usize) -> Vec<u32> {
+pub fn encode_meta_huffman_image(config: &MetaHuffmanConfig, _blocks_x: usize) -> Vec<u32> {
     config
         .block_to_group
         .iter()

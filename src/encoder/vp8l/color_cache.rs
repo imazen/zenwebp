@@ -21,7 +21,7 @@ impl ColorCache {
     /// Create a new color cache with the given number of bits.
     /// `bits` must be in range 1-11.
     pub fn new(bits: u8) -> Self {
-        debug_assert!(bits >= 1 && bits <= 11);
+        debug_assert!((1..=11).contains(&bits));
         let size = 1 << bits;
         Self {
             colors: vec![0; size],
@@ -90,7 +90,7 @@ pub fn estimate_optimal_cache_bits(
     }
 
     // Sample pixels to estimate cache hit rate
-    let sample_size = (pixels.len() / 16).max(256).min(4096);
+    let sample_size = (pixels.len() / 16).clamp(256, 4096);
     let step = pixels.len() / sample_size;
 
     let mut best_bits = 0u8;

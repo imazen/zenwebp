@@ -20,10 +20,12 @@ fn main() {
     println!("Testing {}x{} alternating red/blue image", width, height);
 
     // Encode with new VP8L encoder (no transforms)
-    let mut config = zenwebp::encoder::vp8l::Vp8lConfig::default();
-    config.use_predictor = false;
-    config.use_subtract_green = false;
-    config.use_palette = false;
+    let mut config = zenwebp::encoder::vp8l::Vp8lConfig {
+        use_predictor: false,
+        use_subtract_green: false,
+        use_palette: false,
+        ..Default::default()
+    };
     config.quality.quality = 0; // Force simple refs (no LZ77)
 
     let vp8l_data = zenwebp::encoder::vp8l::encode_vp8l(
@@ -41,7 +43,7 @@ fn main() {
     webp.extend_from_slice(b"VP8L");
     webp.extend_from_slice(&(vp8l_data.len() as u32).to_le_bytes());
     webp.extend_from_slice(&vp8l_data);
-    if vp8l_data.len() % 2 != 0 {
+    if !vp8l_data.len().is_multiple_of(2) {
         webp.push(0);
     }
 
@@ -49,7 +51,7 @@ fn main() {
 
     print!("Verifying... ");
     let verify = Command::new("/home/lilith/work/libwebp/examples/dwebp")
-        .args(&["/tmp/test_two_color.webp", "-o", "/tmp/test_two_color.ppm"])
+        .args(["/tmp/test_two_color.webp", "-o", "/tmp/test_two_color.ppm"])
         .output();
     match verify {
         Ok(out) if out.status.success() => println!("OK"),

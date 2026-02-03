@@ -65,7 +65,7 @@ fn main() {
     let zen_m4_vp8 = extract_vp8(&zen_m4).unwrap();
     let lib_m4_vp8 = extract_vp8(&lib_m4).unwrap();
 
-    let (_, zen_i16_diag) = Vp8Decoder::decode_diagnostic(&zen_i16_vp8).unwrap();
+    let (_, _zen_i16_diag) = Vp8Decoder::decode_diagnostic(&zen_i16_vp8).unwrap();
     let (_, zen_m4_diag) = Vp8Decoder::decode_diagnostic(&zen_m4_vp8).unwrap();
     let (_, lib_m4_diag) = Vp8Decoder::decode_diagnostic(&lib_m4_vp8).unwrap();
 

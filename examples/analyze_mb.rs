@@ -85,13 +85,13 @@ fn main() {
                 .y_blocks
                 .iter()
                 .flat_map(|b| b.levels.iter())
-                .map(|&lv| lv.abs() as i32)
+                .map(|&lv| lv.abs())
                 .sum();
             let lib_sum: i32 = l
                 .y_blocks
                 .iter()
                 .flat_map(|b| b.levels.iter())
-                .map(|&lv| lv.abs() as i32)
+                .map(|&lv| lv.abs())
                 .sum();
 
             println!(

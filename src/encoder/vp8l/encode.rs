@@ -298,7 +298,7 @@ fn can_use_palette(argb: &[u32]) -> bool {
     }
 
     // Quick check: sample pixels to estimate unique color count
-    let sample_size = (argb.len() / 16).max(64).min(1024);
+    let sample_size = (argb.len() / 16).clamp(64, 1024);
     let step = argb.len() / sample_size;
 
     let mut seen = alloc::collections::BTreeSet::new();

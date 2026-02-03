@@ -388,20 +388,10 @@ fn write_huffman_tree_complex(w: &mut BitWriter, lengths: &[u8]) {
     }
 
     // Clear huffman code if only one symbol (matching ClearHuffmanTreeIfOnlyOneSymbol)
-    let mut symbol_count = 0;
-    for i in 0..CODE_LENGTH_CODES {
-        if code_length_bitdepth[i] != 0 {
-            symbol_count += 1;
-            if symbol_count > 1 {
-                break;
-            }
-        }
-    }
+    let symbol_count = code_length_bitdepth.iter().filter(|&&d| d != 0).count();
     if symbol_count <= 1 {
-        for i in 0..CODE_LENGTH_CODES {
-            code_length_bitdepth[i] = 0;
-            code_length_codes[i] = 0;
-        }
+        code_length_bitdepth.fill(0);
+        code_length_codes.fill(0);
     }
 
     // Calculate trimmed length and whether to write it
@@ -437,7 +427,7 @@ fn write_huffman_tree_complex(w: &mut BitWriter, lengths: &[u8]) {
             w.write_bits(0, 3 + 2); // nbitpairs=1, trimmed_length=2
         } else {
             let nbits = 32 - ((trimmed_length - 2) as u32).leading_zeros();
-            let nbitpairs = (nbits as usize + 1) / 2;
+            let nbitpairs = (nbits as usize).div_ceil(2);
             w.write_bits((nbitpairs - 1) as u64, 3);
             w.write_bits((trimmed_length - 2) as u64, (nbitpairs * 2) as u8);
         }
@@ -508,13 +498,11 @@ fn build_code_length_huffman(
     codes: &mut [u16; CODE_LENGTH_CODES],
 ) {
     // Build Huffman tree using existing function
-    let freq_slice: Vec<u32> = histogram.iter().copied().collect();
+    let freq_slice: Vec<u32> = histogram.to_vec();
     let computed_lengths = build_huffman_lengths(&freq_slice, 7);
 
     // Copy lengths
-    for i in 0..CODE_LENGTH_CODES {
-        depths[i] = computed_lengths[i];
-    }
+    depths[..CODE_LENGTH_CODES].copy_from_slice(&computed_lengths[..CODE_LENGTH_CODES]);
 
     // Generate reversed canonical codes (matching libwebp's ConvertBitDepthsToSymbols)
     let mut depth_count = [0u32; 16];

@@ -3,6 +3,9 @@
 //! Implements the VP8L lossless compression format as specified in:
 //! <https://developers.google.com/speed/webp/docs/webp_lossless_bitstream_specification>
 
+// Many infrastructure components are in place for future optimization work
+#![allow(dead_code)]
+
 mod backward_refs;
 mod bitwriter;
 mod color_cache;

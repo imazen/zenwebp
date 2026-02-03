@@ -17,7 +17,7 @@ fn read_png_rgb(path: &str) -> Option<(Vec<u8>, u32, u32)> {
         .ok()?;
     let dims = String::from_utf8_lossy(&identify.stdout);
     let parts: Vec<&str> = dims.trim().split(' ').collect();
-    let width: u32 = parts.get(0)?.parse().ok()?;
+    let width: u32 = parts.first()?.parse().ok()?;
     let height: u32 = parts.get(1)?.parse().ok()?;
     Some((output.stdout, width, height))
 }

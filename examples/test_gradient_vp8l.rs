@@ -22,10 +22,12 @@ fn main() {
     println!("Testing {}x{} gradient image", width, height);
 
     // Encode with new VP8L encoder (no transforms for simplicity)
-    let mut config = zenwebp::encoder::vp8l::Vp8lConfig::default();
-    config.use_predictor = false;
-    config.use_subtract_green = false;
-    config.use_palette = false;
+    let config = zenwebp::encoder::vp8l::Vp8lConfig {
+        use_predictor: false,
+        use_subtract_green: false,
+        use_palette: false,
+        ..Default::default()
+    };
 
     let vp8l_data = zenwebp::encoder::vp8l::encode_vp8l(
         &rgb_pixels, width, height, false, &config
@@ -42,7 +44,7 @@ fn main() {
     webp.extend_from_slice(b"VP8L");
     webp.extend_from_slice(&(vp8l_data.len() as u32).to_le_bytes());
     webp.extend_from_slice(&vp8l_data);
-    if vp8l_data.len() % 2 != 0 {
+    if !vp8l_data.len().is_multiple_of(2) {
         webp.push(0);
     }
 
@@ -50,7 +52,7 @@ fn main() {
 
     print!("Verifying... ");
     let verify = Command::new("/home/lilith/work/libwebp/examples/dwebp")
-        .args(&["/tmp/test_gradient_vp8l.webp", "-o", "/tmp/test_gradient.ppm"])
+        .args(["/tmp/test_gradient_vp8l.webp", "-o", "/tmp/test_gradient.ppm"])
         .output();
     match verify {
         Ok(out) if out.status.success() => {

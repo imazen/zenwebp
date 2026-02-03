@@ -50,7 +50,7 @@ pub fn estimate_combined_bits(h1: &Histogram, h2: &Histogram) -> u64 {
 /// Calculate bit cost savings from using a single symbol (trivial code).
 /// A trivial symbol costs 0 bits per occurrence (just 1 bit to signal single-symbol tree).
 pub fn trivial_symbol_savings(counts: &[u32]) -> u64 {
-    let total: u64 = counts.iter().map(|&c| c as u64).sum();
+    let _total: u64 = counts.iter().map(|&c| c as u64).sum();
     let mut non_zero = 0u32;
     let mut single_symbol_count = 0u64;
 
@@ -79,7 +79,7 @@ pub fn fast_log2(v: u32) -> f64 {
     // Use integer log2 plus linear interpolation for the fraction
     let floor = 31 - v.leading_zeros();
     let frac = (v as f64) / ((1u32 << floor) as f64) - 1.0;
-    floor as f64 + frac * 0.6931471805599453 // ln(2) correction for linear approx
+    floor as f64 + frac * core::f64::consts::LN_2 // ln(2) correction for linear approx
 }
 
 /// Estimate bit cost of encoding a length code (prefix + extra bits).

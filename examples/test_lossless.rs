@@ -17,7 +17,7 @@ fn main() {
     let mut reader = decoder.read_info().unwrap();
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).unwrap();
-    
+
     let rgb_pixels: Vec<u8> = if info.color_type == png::ColorType::Rgba {
         buf[..info.buffer_size()].chunks(4).flat_map(|c| [c[0], c[1], c[2]].into_iter()).collect()
     } else {
@@ -34,13 +34,13 @@ fn main() {
         .lossless(true)
         .encode_rgb(&rgb_pixels, width, height)
         .unwrap();
-    
+
     println!("Size: {} bytes", existing.len());
     std::fs::write("/tmp/zenwebp_existing.webp", &existing).unwrap();
 
     print!("Verifying... ");
     let verify = Command::new("/home/lilith/work/libwebp/examples/dwebp")
-        .args(&["/tmp/zenwebp_existing.webp", "-o", "/tmp/zenwebp_existing_decoded.ppm"])
+        .args(["/tmp/zenwebp_existing.webp", "-o", "/tmp/zenwebp_existing_decoded.ppm"])
         .output();
     match verify {
         Ok(out) if out.status.success() => println!("OK"),
@@ -50,7 +50,7 @@ fn main() {
 
     // Compare with libwebp
     let _ = Command::new("/home/lilith/work/libwebp/examples/cwebp")
-        .args(&["-lossless", "-q", "75", "-o", "/tmp/libwebp_lossless.webp", test_path])
+        .args(["-lossless", "-q", "75", "-o", "/tmp/libwebp_lossless.webp", test_path])
         .output();
 
     let libwebp_size = std::fs::metadata("/tmp/libwebp_lossless.webp")
@@ -62,9 +62,11 @@ fn main() {
 
     // Now test our new VP8L encoder
     println!("\n=== New VP8L encoder ===");
-    let mut config = zenwebp::encoder::vp8l::Vp8lConfig::default();
-    config.use_predictor = false;  // Simplify
-    config.use_subtract_green = false;  // Simplify
+    let config = zenwebp::encoder::vp8l::Vp8lConfig {
+        use_predictor: false,
+        use_subtract_green: false,
+        ..Default::default()
+    };
 
     let new_vp8l = zenwebp::encoder::vp8l::encode_vp8l(
         &rgb_pixels, width, height, false, &config
@@ -80,7 +82,7 @@ fn main() {
     webp.extend_from_slice(b"VP8L");
     webp.extend_from_slice(&(new_vp8l.len() as u32).to_le_bytes());
     webp.extend_from_slice(&new_vp8l);
-    if new_vp8l.len() % 2 != 0 {
+    if !new_vp8l.len().is_multiple_of(2) {
         webp.push(0);
     }
 
@@ -88,7 +90,7 @@ fn main() {
 
     print!("Verifying new encoder... ");
     let verify = Command::new("/home/lilith/work/libwebp/examples/dwebp")
-        .args(&["/tmp/zenwebp_new_vp8l.webp", "-o", "/tmp/zenwebp_new_decoded.ppm"])
+        .args(["/tmp/zenwebp_new_vp8l.webp", "-o", "/tmp/zenwebp_new_decoded.ppm"])
         .output();
     match verify {
         Ok(out) if out.status.success() => println!("OK"),
