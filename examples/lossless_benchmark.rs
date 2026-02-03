@@ -115,10 +115,11 @@ fn main() {
         let width = info.width;
         let height = info.height;
 
-        // Encode with zenwebp
+        // Encode with zenwebp (meta-Huffman enabled)
         let config = zenwebp::encoder::vp8l::Vp8lConfig {
             quality: zenwebp::encoder::vp8l::Vp8lQuality { quality, method: 4 },
             use_predictor: true,
+            use_cross_color: true,
             use_subtract_green: true,
             use_palette: false,
             ..Default::default()
@@ -137,6 +138,16 @@ fn main() {
                 continue;
             }
         };
+
+        // Also encode WITHOUT meta-Huffman for comparison
+        let config_nomh = zenwebp::encoder::vp8l::Vp8lConfig {
+            use_meta_huffman: false,
+            ..config.clone()
+        };
+        let vp8l_nomh = zenwebp::encoder::vp8l::encode_vp8l(
+            &rgb_pixels, width, height, has_alpha, &config_nomh,
+        ).ok();
+
         let webp = wrap_vp8l_in_riff(&vp8l);
         let zen_size = webp.len() as u64;
 
@@ -174,13 +185,26 @@ fn main() {
             0.0
         };
 
+        // Show meta-Huffman benefit
+        let mh_note = if let Some(ref nomh) = vp8l_nomh {
+            let nomh_size = wrap_vp8l_in_riff(nomh).len() as u64;
+            if nomh_size > zen_size {
+                format!("MH-{:.0}%", (1.0 - zen_size as f64 / nomh_size as f64) * 100.0)
+            } else {
+                format!("MH+{:.0}%", (zen_size as f64 / nomh_size as f64 - 1.0) * 100.0)
+            }
+        } else {
+            String::new()
+        };
+
         println!(
-            "{:<30} {:>8} {:>8} {:>8.3}x {:>6}",
+            "{:<30} {:>8} {:>8} {:>8.3}x {:>6} {}",
             &name[..name.len().min(30)],
             zen_size,
             lib_size,
             ratio,
-            valid
+            valid,
+            mh_note,
         );
 
         total_zen += zen_size;
