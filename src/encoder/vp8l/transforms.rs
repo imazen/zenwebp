@@ -2,6 +2,8 @@
 //!
 //! Transforms are applied to decorrelate image data before entropy coding.
 
+#![allow(clippy::too_many_arguments)]
+
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -480,7 +482,16 @@ fn get_prediction_cost_red(
     accumulated_red_histo: &[u32; 256],
 ) -> i64 {
     let mut histo = [0u32; 256];
-    collect_color_red_transforms(argb, width, start_x, start_y, end_x, end_y, green_to_red, &mut histo);
+    collect_color_red_transforms(
+        argb,
+        width,
+        start_x,
+        start_y,
+        end_x,
+        end_y,
+        green_to_red,
+        &mut histo,
+    );
     let mut cur_diff = prediction_cost_cross_color(accumulated_red_histo, &histo);
     if green_to_red == prev_x.green_to_red {
         cur_diff -= 3i64 << LOG_2_PRECISION_BITS;
@@ -510,8 +521,15 @@ fn get_prediction_cost_blue(
 ) -> i64 {
     let mut histo = [0u32; 256];
     collect_color_blue_transforms(
-        argb, width, start_x, start_y, end_x, end_y,
-        green_to_blue, red_to_blue, &mut histo,
+        argb,
+        width,
+        start_x,
+        start_y,
+        end_x,
+        end_y,
+        green_to_blue,
+        red_to_blue,
+        &mut histo,
     );
     let mut cur_diff = prediction_cost_cross_color(accumulated_blue_histo, &histo);
     if green_to_blue == prev_x.green_to_blue {
@@ -551,8 +569,16 @@ fn get_best_green_to_red(
     let max_iters = 4 + ((7 * quality as i32) >> 8); // range [4..6]
     let mut green_to_red_best: i32 = 0;
     let mut best_diff = get_prediction_cost_red(
-        argb, width, start_x, start_y, end_x, end_y,
-        prev_x, prev_y, 0, accumulated_red_histo,
+        argb,
+        width,
+        start_x,
+        start_y,
+        end_x,
+        end_y,
+        prev_x,
+        prev_y,
+        0,
+        accumulated_red_histo,
     );
 
     for iter in 0..max_iters {
@@ -560,8 +586,15 @@ fn get_best_green_to_red(
         for &offset in &[-delta, delta] {
             let green_to_red_cur = offset + green_to_red_best;
             let cur_diff = get_prediction_cost_red(
-                argb, width, start_x, start_y, end_x, end_y,
-                prev_x, prev_y, green_to_red_cur as u8,
+                argb,
+                width,
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                prev_x,
+                prev_y,
+                green_to_red_cur as u8,
                 accumulated_red_histo,
             );
             if cur_diff < best_diff {
@@ -587,8 +620,14 @@ fn get_best_green_red_to_blue(
     accumulated_blue_histo: &[u32; 256],
 ) -> (u8, u8) {
     const OFFSETS: [[i8; 2]; 8] = [
-        [0, -1], [0, 1], [-1, 0], [1, 0],
-        [-1, -1], [-1, 1], [1, -1], [1, 1],
+        [0, -1],
+        [0, 1],
+        [-1, 0],
+        [1, 0],
+        [-1, -1],
+        [-1, 1],
+        [1, -1],
+        [1, 1],
     ];
     const DELTA_LUT: [i32; 7] = [16, 16, 8, 4, 2, 2, 2];
     let iters = if quality < 25 {
@@ -602,8 +641,17 @@ fn get_best_green_red_to_blue(
     let mut green_to_blue_best: i32 = 0;
     let mut red_to_blue_best: i32 = 0;
     let mut best_diff = get_prediction_cost_blue(
-        argb, width, start_x, start_y, end_x, end_y,
-        prev_x, prev_y, 0, 0, accumulated_blue_histo,
+        argb,
+        width,
+        start_x,
+        start_y,
+        end_x,
+        end_y,
+        prev_x,
+        prev_y,
+        0,
+        0,
+        accumulated_blue_histo,
     );
 
     for iter in 0..iters {
@@ -612,9 +660,16 @@ fn get_best_green_red_to_blue(
             let green_to_blue_cur = offset[0] as i32 * delta + green_to_blue_best;
             let red_to_blue_cur = offset[1] as i32 * delta + red_to_blue_best;
             let cur_diff = get_prediction_cost_blue(
-                argb, width, start_x, start_y, end_x, end_y,
-                prev_x, prev_y,
-                green_to_blue_cur as u8, red_to_blue_cur as u8,
+                argb,
+                width,
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                prev_x,
+                prev_y,
+                green_to_blue_cur as u8,
+                red_to_blue_cur as u8,
                 accumulated_blue_histo,
             );
             if cur_diff < best_diff {
@@ -632,7 +687,10 @@ fn get_best_green_red_to_blue(
         }
     }
 
-    ((green_to_blue_best & 0xff) as u8, (red_to_blue_best & 0xff) as u8)
+    (
+        (green_to_blue_best & 0xff) as u8,
+        (red_to_blue_best & 0xff) as u8,
+    )
 }
 
 /// Apply cross-color transform to decorrelate color channels.
@@ -684,14 +742,30 @@ pub fn apply_cross_color_transform(
 
             // Find best green_to_red
             let best_g2r = get_best_green_to_red(
-                pixels, width, start_x, start_y, end_x, end_y,
-                &prev_x, &prev_y, quality, &accumulated_red_histo,
+                pixels,
+                width,
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                &prev_x,
+                &prev_y,
+                quality,
+                &accumulated_red_histo,
             );
 
             // Find best green_to_blue + red_to_blue
             let (best_g2b, best_r2b) = get_best_green_red_to_blue(
-                pixels, width, start_x, start_y, end_x, end_y,
-                &prev_x, &prev_y, quality, &accumulated_blue_histo,
+                pixels,
+                width,
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                &prev_x,
+                &prev_y,
+                quality,
+                &accumulated_blue_histo,
             );
 
             prev_x = CrossColorMultipliers {

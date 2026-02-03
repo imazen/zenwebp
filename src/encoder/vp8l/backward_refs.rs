@@ -94,11 +94,7 @@ pub fn apply_2d_locality(refs: &mut BackwardRefs, xsize: usize) {
 
 /// Add a single literal, checking the color cache first.
 #[inline]
-fn add_single_literal(
-    argb_val: u32,
-    cache: &mut Option<&mut ColorCache>,
-    refs: &mut BackwardRefs,
-) {
+fn add_single_literal(argb_val: u32, cache: &mut Option<&mut ColorCache>, refs: &mut BackwardRefs) {
     if let Some(ref mut c) = cache {
         if let Some(idx) = c.lookup(argb_val) {
             refs.push(PixOrCopy::cache_idx(idx));
@@ -302,7 +298,7 @@ fn calculate_best_cache_size(
 
     // Build histograms for all cache sizes simultaneously
     let mut histos: Vec<Histogram> = (0..=cache_bits_max)
-        .map(|bits| Histogram::new(bits))
+        .map(Histogram::new)
         .collect();
 
     // Build color caches for sizes 1..=cache_bits_max
@@ -340,16 +336,14 @@ fn calculate_best_cache_size(
                 histos[0].alpha[a] += 1;
 
                 // For cache_bits > 0, check cache hit
-                let key_max = (COLOR_CACHE_MULT.wrapping_mul(pix))
-                    >> (32 - cache_bits_max);
+                let key_max = (COLOR_CACHE_MULT.wrapping_mul(pix)) >> (32 - cache_bits_max);
                 let mut key = key_max;
 
                 for i in (1..=cache_bits_max).rev() {
                     let idx = i as usize;
                     if caches[idx].lookup(pix).is_some() {
                         // Cache hit - count as cache index
-                        let cache_code =
-                            NUM_LITERAL_CODES + NUM_LENGTH_CODES + key as usize;
+                        let cache_code = NUM_LITERAL_CODES + NUM_LENGTH_CODES + key as usize;
                         if cache_code < histos[idx].literal.len() {
                             histos[idx].literal[cache_code] += 1;
                         }
@@ -369,8 +363,7 @@ fn calculate_best_cache_size(
             PixOrCopy::Copy { len, .. } => {
                 let len = len as usize;
                 // Length codes go in literal histogram for all sizes
-                let (len_code, _) =
-                    super::histogram::length_to_code(len as u16);
+                let (len_code, _) = super::histogram::length_to_code(len as u16);
                 for h in histos.iter_mut() {
                     h.literal[NUM_LITERAL_CODES + len_code as usize] += 1;
                 }
@@ -407,15 +400,32 @@ fn calculate_best_cache_size(
     best_bits
 }
 
+/// Strip color cache references, converting CacheIdx back to Literal.
+/// Uses the original argb array to recover pixel values.
+fn strip_cache_from_refs(argb: &[u32], refs: &mut BackwardRefs) {
+    let mut pixel_index = 0usize;
+    for token in refs.tokens.iter_mut() {
+        match token {
+            PixOrCopy::Literal(_) => {
+                pixel_index += 1;
+            }
+            PixOrCopy::CacheIdx(_) => {
+                // Convert back to literal using original pixel data
+                *token = PixOrCopy::literal(argb[pixel_index]);
+                pixel_index += 1;
+            }
+            PixOrCopy::Copy { len, .. } => {
+                pixel_index += *len as usize;
+            }
+        }
+    }
+}
+
 /// Apply color cache to existing backward references.
 ///
 /// Converts literal pixels that hit the cache into cache index references.
 /// Matches libwebp's BackwardRefsWithLocalCache.
-fn apply_cache_to_refs(
-    argb: &[u32],
-    cache_bits: u8,
-    refs: &mut BackwardRefs,
-) {
+fn apply_cache_to_refs(argb: &[u32], cache_bits: u8, refs: &mut BackwardRefs) {
     let mut cache = ColorCache::new(cache_bits);
     let mut pixel_index = 0usize;
 
@@ -492,39 +502,54 @@ pub fn get_backward_references(
         refs_lz77
     };
 
-    // For quality >= 25, apply cost-based optimal parsing (TraceBackwards).
-    // This uses DP to find the globally optimal literal/copy sequence
-    // based on a cost model derived from the greedy result.
-    if quality >= 25 {
-        let optimized = trace_backwards_optimize(
-            argb,
-            width,
-            height,
-            0, // No cache during DP (applied separately below)
-            &hash_chain,
-            &best_refs,
-        );
-
-        // Use optimized result if it improves entropy
-        let histo_orig = Histogram::from_refs_with_plane_codes(&best_refs, 0, width);
-        let histo_opt = Histogram::from_refs_with_plane_codes(&optimized, 0, width);
-        let cost_orig = estimate_histogram_bits(&histo_orig);
-        let cost_opt = estimate_histogram_bits(&histo_opt);
-
-        if cost_opt <= cost_orig {
-            best_refs = optimized;
-        }
-    }
-
-    // Determine color cache
-    let cache_bits = if cache_bits_max > 0 && quality > 25 {
+    // Determine initial color cache size from greedy refs
+    let mut cache_bits = if cache_bits_max > 0 && quality > 25 {
         calculate_best_cache_size(argb, quality, &best_refs, cache_bits_max)
     } else {
         0
     };
 
-    // Apply cache if beneficial
+    // Apply cache to refs before TraceBackwards (matching libwebp's flow).
+    // The CostModel needs cache entries to accurately estimate cache costs.
     if cache_bits > 0 {
+        apply_cache_to_refs(argb, cache_bits, &mut best_refs);
+    }
+
+    // For quality >= 25, apply cost-based optimal parsing (TraceBackwards).
+    // This uses DP to find the globally optimal literal/copy sequence
+    // based on a cost model derived from the cache-applied greedy result.
+    if quality >= 25 {
+        let optimized =
+            trace_backwards_optimize(argb, width, height, cache_bits, &hash_chain, &best_refs);
+
+        // Use optimized result if it improves entropy
+        let histo_orig = Histogram::from_refs_with_plane_codes(&best_refs, cache_bits, width);
+        let histo_opt = Histogram::from_refs_with_plane_codes(&optimized, cache_bits, width);
+        let cost_orig = estimate_histogram_bits(&histo_orig);
+        let cost_opt = estimate_histogram_bits(&histo_opt);
+
+        if cost_opt <= cost_orig {
+            best_refs = optimized;
+            // Recalculate cache from optimized refs, re-apply if different
+            if cache_bits_max > 0 {
+                let new_cache_bits =
+                    calculate_best_cache_size(argb, quality, &best_refs, cache_bits_max);
+                if new_cache_bits != cache_bits {
+                    // Strip old cache entries and re-apply with new bits
+                    strip_cache_from_refs(argb, &mut best_refs);
+                    cache_bits = new_cache_bits;
+                    if cache_bits > 0 {
+                        apply_cache_to_refs(argb, cache_bits, &mut best_refs);
+                    }
+                }
+            }
+        } else {
+            // Keep greedy result (already has cache applied)
+        }
+    }
+
+    // If no TraceBackwards was done (quality < 25), apply cache now
+    if quality < 25 && cache_bits > 0 {
         apply_cache_to_refs(argb, cache_bits, &mut best_refs);
     }
 
@@ -549,10 +574,7 @@ pub fn compute_backward_refs_simple(argb: &[u32], _width: usize, _height: usize)
 
         // Check for run of identical pixels (distance = 1)
         let mut run_len = 1;
-        while pos + run_len < size
-            && argb[pos + run_len] == argb_val
-            && run_len < MAX_LENGTH
-        {
+        while pos + run_len < size && argb[pos + run_len] == argb_val && run_len < MAX_LENGTH {
             run_len += 1;
         }
 

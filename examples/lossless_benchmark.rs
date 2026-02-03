@@ -14,7 +14,7 @@ fn wrap_vp8l_in_riff(vp8l_data: &[u8]) -> Vec<u8> {
     webp.extend_from_slice(b"VP8L");
     webp.extend_from_slice(&(vp8l_data.len() as u32).to_le_bytes());
     webp.extend_from_slice(vp8l_data);
-    if vp8l_data.len() % 2 != 0 {
+    if !vp8l_data.len().is_multiple_of(2) {
         webp.push(0);
     }
     webp
@@ -117,19 +117,19 @@ fn main() {
 
         // Encode with zenwebp
         let config = zenwebp::encoder::vp8l::Vp8lConfig {
-            quality: zenwebp::encoder::vp8l::Vp8lQuality {
-                quality,
-                method: 4,
-            },
+            quality: zenwebp::encoder::vp8l::Vp8lQuality { quality, method: 4 },
             use_predictor: true,
             use_subtract_green: true,
             use_palette: false,
-            predictor_bits: 4,
             ..Default::default()
         };
 
         let vp8l = match zenwebp::encoder::vp8l::encode_vp8l(
-            &rgb_pixels, width, height, has_alpha, &config,
+            &rgb_pixels,
+            width,
+            height,
+            has_alpha,
+            &config,
         ) {
             Ok(d) => d,
             Err(e) => {

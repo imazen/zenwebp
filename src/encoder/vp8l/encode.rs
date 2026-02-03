@@ -104,12 +104,13 @@ fn encode_argb(
     // Predictor transform (applied first, on original image)
     if use_predictor && palette_transform.is_none() {
         // Choose best predictors per block and compute residuals
-        let predictor_data = apply_predictor_transform(argb, width, height, config.predictor_bits);
+        let pred_bits = config.predictor_bits.clamp(2, 8);
+        let predictor_data = apply_predictor_transform(argb, width, height, pred_bits);
 
         // Signal predictor transform
         writer.write_bit(true); // transform present
         writer.write_bits(0, 2); // predictor = 0
-        writer.write_bits((config.predictor_bits - 2) as u64, 3);
+        writer.write_bits((pred_bits - 2) as u64, 3);
 
         // Write predictor sub-image
         write_predictor_image(&mut writer, &predictor_data);
@@ -117,12 +118,14 @@ fn encode_argb(
 
     // Cross-color transform (applied second, decorrelates color channels)
     if use_cross_color && palette_transform.is_none() {
-        let cross_color_data = apply_cross_color_transform(argb, width, height, config.cross_color_bits, config.quality.quality);
+        let cc_bits = config.cross_color_bits.clamp(2, 8);
+        let cross_color_data =
+            apply_cross_color_transform(argb, width, height, cc_bits, config.quality.quality);
 
         // Signal cross-color transform
         writer.write_bit(true); // transform present
         writer.write_bits(1, 2); // cross-color = 1
-        writer.write_bits((config.cross_color_bits - 2) as u64, 3);
+        writer.write_bits((cc_bits - 2) as u64, 3);
 
         // Write cross-color sub-image
         write_cross_color_image(&mut writer, &cross_color_data);
@@ -163,9 +166,8 @@ fn encode_argb(
     } else {
         config.cache_bits.min(10)
     };
-    let (refs, cache_bits) = get_backward_references(
-        argb, width, height, config.quality.quality, cache_bits_max,
-    );
+    let (refs, cache_bits) =
+        get_backward_references(argb, width, height, config.quality.quality, cache_bits_max);
 
     // Write color cache info
     if cache_bits > 0 {

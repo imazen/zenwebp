@@ -9,12 +9,10 @@ use alloc::vec::Vec;
 
 use super::backward_refs::distance_to_plane_code;
 use super::color_cache::ColorCache;
-use super::histogram::{
-    distance_code_to_prefix, length_to_code, Histogram,
-};
+use super::histogram::{distance_code_to_prefix, length_to_code, Histogram};
 use super::types::{
-    argb_alpha, argb_blue, argb_green, argb_red, BackwardRefs, PixOrCopy,
-    MAX_LENGTH, NUM_LENGTH_CODES, NUM_LITERAL_CODES,
+    argb_alpha, argb_blue, argb_green, argb_red, BackwardRefs, PixOrCopy, MAX_LENGTH,
+    NUM_LENGTH_CODES, NUM_LITERAL_CODES,
 };
 
 /// Fixed-point precision for entropy (matches libwebp LOG_2_PRECISION_BITS).
@@ -98,8 +96,7 @@ impl CostModel {
         let r = argb_red(argb) as usize;
         let g = argb_green(argb) as usize;
         let b = argb_blue(argb) as usize;
-        self.alpha[a] as i64 + self.red[r] as i64
-            + self.literal[g] as i64 + self.blue[b] as i64
+        self.alpha[a] as i64 + self.red[r] as i64 + self.literal[g] as i64 + self.blue[b] as i64
     }
 
     /// Cost of encoding a color cache index.
@@ -135,8 +132,7 @@ impl CostModel {
         } else {
             (code / 2).saturating_sub(1) as u32
         };
-        self.distance[code as usize] as i64
-            + ((extra_bits as i64) << LOG_2_PRECISION_BITS)
+        self.distance[code as usize] as i64 + ((extra_bits as i64) << LOG_2_PRECISION_BITS)
     }
 }
 
@@ -182,8 +178,8 @@ pub fn trace_backwards_optimize(
     // Index 0 is unused; length_costs[L] = cost of encoding copy length L.
     let max_copy_len = pix_count.min(MAX_LENGTH);
     let mut length_costs = vec![0i64; max_copy_len + 1];
-    for len in 1..=max_copy_len {
-        length_costs[len] = cost_model.length_cost(len as u32);
+    for (len, cost) in length_costs.iter_mut().enumerate().skip(1) {
+        *cost = cost_model.length_cost(len as u32);
     }
 
     // Phase 2: Forward DP pass
@@ -224,9 +220,10 @@ pub fn trace_backwards_optimize(
             let dist_cost = cost_model.distance_cost(plane_code);
 
             let max_len = match_len.min(pix_count - i).min(max_copy_len);
-            for copy_len in 2..=max_len {
+            for (copy_len, &len_cost) in length_costs[2..=max_len].iter().enumerate() {
+                let copy_len = copy_len + 2;
                 let target = i + copy_len - 1; // last pixel of copy
-                let total_cost = prev_cost + dist_cost + length_costs[copy_len];
+                let total_cost = prev_cost + dist_cost + len_cost;
                 if total_cost < costs[target] {
                     costs[target] = total_cost;
                     dist_array[target] = copy_len as u16;
