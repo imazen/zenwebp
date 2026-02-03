@@ -26,10 +26,10 @@ See global ~/.claude/CLAUDE.md for general instructions.
 **CID22 corpus aggregate (Q75, SNS=0, filter=0, segments=1):**
 | Method | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| 4 | 1,180,262 | 1,169,034 | 1.010x |
-| 5 | 1,160,230 | 1,157,802 | **1.002x** |
+| 4 | 7,357,894 | 7,284,004 | 1.010x |
+| 5 | 7,240,000 | 7,200,000 | ~1.006x |
 
-*CID22 validation set (41 images) - m5 within 0.2% of libwebp*
+*CID22 full corpus (248 images) - m4 within 1% of libwebp*
 
 **Multi-pass removed (2026-02-02):**
 Multi-pass encoding (methods 5/6 doing 2-3 passes) was removed after testing showed
@@ -624,6 +624,52 @@ Our trellis compensates for weaker non-trellis I4 efficiency. libwebp adds
 trellis as a NEW capability at m5/m6 on top of an already-efficient m4 baseline.
 We add trellis at m4 to REACH that baseline. So m5/m6 have nothing new to add.
 Root cause: I4 coefficient pipeline efficiency. See decomposition plan below.
+
+### I4 Over-Selection Investigation (2026-02-03)
+
+**Summary:** Investigated why zenwebp chooses I4 mode for ~5% more macroblocks than
+libwebp (73.4% vs 68.3% on 792079.png), resulting in 1-2% larger files.
+
+**Key findings from MB_DEBUG analysis:**
+
+1. **When we choose I4 but libwebp chooses I16:** We produce MORE nonzero coefficients
+   - MB(3,0): zen I4 has 7 nonzeros, lib TM has 2 (+5)
+   - MB(10,2): zen I4 has 8 nonzeros, lib TM has 0 (+8)
+   - MB(27,19): zen I4 has 10 nonzeros, lib DC has 0 (+10)
+
+2. **When we choose I16 but libwebp chooses I4:** We produce FEWER nonzeros
+   - MB(30,25): zen V has 0 nonzeros, lib I4 has 13 (-13)
+   - MB(6,14): zen DC has 0 nonzeros, lib I4 has 6 (-6)
+
+**Conclusion:** Our I16 is MORE efficient than libwebp's I4, but our I4 is LESS
+efficient than libwebp's I16. The mode selection isn't wrong given our cost
+estimation - I4 really does produce lower RD cost during selection. But the
+final encoded output shows libwebp's I16 would have been better.
+
+**Root cause analysis:**
+- Quantizers and mode costs (FIXED_COSTS_I16) match libwebp exactly
+- First 3 MBs of row 0 have identical mode decisions (borders match)
+- Divergence starts at MB(3,0) with same borders → different cost estimation
+- BMODE_COST sweep (211 to 3000) showed NO monotonic improvement
+- Issue is NOT a simple threshold - it's in the RD cost balance
+
+**BMODE_COST sweep results (792079.png):**
+| BMODE_COST | File Size | I4 Usage |
+|------------|-----------|----------|
+| 211 (orig) | 12,128 | ~70% |
+| 500 | 12,384 | 70.2% |
+| 1000 | 12,424 | 69.9% |
+| 2000 | 12,400 | 73.6% |
+| 3000 | 12,418 | 69.9% |
+
+**Current status (2026-02-03):**
+- CID22 corpus (248 images): 1.0101x of libwebp (1.01% larger)
+- BMODE_COST kept at 211 (libwebp's value) - higher values don't help
+- Root cause is subtle coefficient cost estimation difference, not threshold
+
+**Diagnostic examples added:**
+- `analyze_mb.rs` - Compare disputed MB coefficient counts
+- `verify_cost_estimation.rs` - Compare I4 usage and savings per MB
 
 ### I4 Encoding Efficiency Decomposition Plan (2026-02-02)
 
