@@ -12,7 +12,10 @@ use super::histogram::{
 use super::huffman::{
     build_huffman_codes, build_huffman_lengths, write_huffman_tree, write_single_entry_tree,
 };
-use super::transforms::{apply_predictor_transform, apply_subtract_green, ColorIndexTransform};
+use super::transforms::{
+    apply_cross_color_transform, apply_predictor_transform, apply_subtract_green,
+    ColorIndexTransform,
+};
 use super::types::{
     argb_alpha, argb_blue, argb_green, argb_red, make_argb, PixOrCopy, Vp8lConfig,
     NUM_LENGTH_CODES, NUM_LITERAL_CODES,
@@ -84,6 +87,7 @@ fn encode_argb(
     // Determine which transforms to use
     let use_palette = config.use_palette && can_use_palette(argb);
     let use_predictor = config.use_predictor && !use_palette;
+    let use_cross_color = config.use_cross_color && !use_palette;
     let use_subtract_green = config.use_subtract_green && !use_palette;
 
     // Try palette encoding if beneficial
@@ -111,7 +115,20 @@ fn encode_argb(
         write_predictor_image(&mut writer, &predictor_data);
     }
 
-    // Subtract green transform (applied second, on residuals)
+    // Cross-color transform (applied second, decorrelates color channels)
+    if use_cross_color && palette_transform.is_none() {
+        let cross_color_data = apply_cross_color_transform(argb, width, height, config.cross_color_bits, config.quality.quality);
+
+        // Signal cross-color transform
+        writer.write_bit(true); // transform present
+        writer.write_bits(1, 2); // cross-color = 1
+        writer.write_bits((config.cross_color_bits - 2) as u64, 3);
+
+        // Write cross-color sub-image
+        write_cross_color_image(&mut writer, &cross_color_data);
+    }
+
+    // Subtract green transform (applied third, on cross-color-adjusted residuals)
     if use_subtract_green && palette_transform.is_none() {
         writer.write_bit(true); // transform present
         writer.write_bits(2, 2); // subtract green = 2
@@ -365,6 +382,74 @@ fn write_predictor_image(writer: &mut BitWriter, predictor_data: &[u32]) {
     for &pixel in predictor_data {
         let g = argb_green(pixel) as usize;
         writer.write_bits(green_codes[g].code as u64, green_codes[g].length);
+    }
+}
+
+/// Write cross-color sub-image (multiplier data).
+///
+/// Each pixel encodes three multipliers:
+///   blue channel  = green_to_red
+///   green channel = green_to_blue
+///   red channel   = red_to_blue
+///   alpha         = 0xFF
+fn write_cross_color_image(writer: &mut BitWriter, cross_color_data: &[u32]) {
+    // No color cache for sub-images
+    writer.write_bit(false);
+
+    // Build histogram for all channels
+    let mut hist_green = [0u32; 280]; // green_to_blue values
+    let mut hist_red = [0u32; 256]; // red_to_blue values
+    let mut hist_blue = [0u32; 256]; // green_to_red values
+    let mut hist_alpha = [0u32; 256]; // always 0xFF
+
+    for &pixel in cross_color_data {
+        hist_green[argb_green(pixel) as usize] += 1;
+        hist_red[argb_red(pixel) as usize] += 1;
+        hist_blue[argb_blue(pixel) as usize] += 1;
+        hist_alpha[argb_alpha(pixel) as usize] += 1;
+    }
+
+    // Build Huffman codes
+    let green_lengths = build_huffman_lengths(&hist_green, 15);
+    let green_codes = build_huffman_codes(&green_lengths);
+    let red_lengths = build_huffman_lengths(&hist_red, 15);
+    let red_codes = build_huffman_codes(&red_lengths);
+    let blue_lengths = build_huffman_lengths(&hist_blue, 15);
+    let blue_codes = build_huffman_codes(&blue_lengths);
+    let alpha_lengths = build_huffman_lengths(&hist_alpha, 15);
+    let alpha_codes = build_huffman_codes(&alpha_lengths);
+
+    // Check for trivial trees
+    let green_trivial = green_lengths.iter().filter(|&&l| l > 0).count() <= 1;
+    let red_trivial = red_lengths.iter().filter(|&&l| l > 0).count() <= 1;
+    let blue_trivial = blue_lengths.iter().filter(|&&l| l > 0).count() <= 1;
+    let alpha_trivial = alpha_lengths.iter().filter(|&&l| l > 0).count() <= 1;
+
+    // Write 5 Huffman trees
+    write_huffman_tree(writer, &green_lengths);
+    write_huffman_tree(writer, &red_lengths);
+    write_huffman_tree(writer, &blue_lengths);
+    write_huffman_tree(writer, &alpha_lengths);
+    write_single_entry_tree(writer, 0); // distance (unused)
+
+    // Write image data
+    for &pixel in cross_color_data {
+        if !green_trivial {
+            let g = argb_green(pixel) as usize;
+            writer.write_bits(green_codes[g].code as u64, green_codes[g].length);
+        }
+        if !red_trivial {
+            let r = argb_red(pixel) as usize;
+            writer.write_bits(red_codes[r].code as u64, red_codes[r].length);
+        }
+        if !blue_trivial {
+            let b = argb_blue(pixel) as usize;
+            writer.write_bits(blue_codes[b].code as u64, blue_codes[b].length);
+        }
+        if !alpha_trivial {
+            let a = argb_alpha(pixel) as usize;
+            writer.write_bits(alpha_codes[a].code as u64, alpha_codes[a].length);
+        }
     }
 }
 

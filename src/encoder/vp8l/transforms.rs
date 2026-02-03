@@ -336,6 +336,439 @@ fn choose_best_predictor(
     best_mode
 }
 
+/// Cross-color transform multipliers for a tile.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CrossColorMultipliers {
+    pub green_to_red: u8,
+    pub green_to_blue: u8,
+    pub red_to_blue: u8,
+}
+
+/// Fixed-point precision for entropy calculations (matching libwebp).
+const LOG_2_PRECISION_BITS: u32 = 23;
+
+/// ColorTransformDelta: 3.5-bit fixed point multiply (matching libwebp).
+#[inline]
+fn color_transform_delta(color_pred: i8, color: i8) -> i32 {
+    (color_pred as i32 * color as i32) >> 5
+}
+
+/// Compute v * log2(v) in fixed-point (matching libwebp's VP8LFastSLog2).
+/// Returns 0 for v == 0.
+#[inline]
+fn fast_slog2(v: u32) -> u64 {
+    if v == 0 {
+        return 0;
+    }
+    let vf = v as f64;
+    (vf * vf.log2() * (1u64 << LOG_2_PRECISION_BITS) as f64) as u64
+}
+
+/// Combined Shannon entropy of distributions X and X+Y (matching libwebp).
+/// Returns SLog2(sumX) + SLog2(sumXY) - Σ(SLog2(x_i) + SLog2(x_i+y_i))
+fn combined_shannon_entropy(x: &[u32; 256], y: &[u32; 256]) -> u64 {
+    let mut retval: u64 = 0;
+    let mut sum_x: u32 = 0;
+    let mut sum_xy: u32 = 0;
+    for i in 0..256 {
+        let xi = x[i];
+        if xi != 0 {
+            let xy = xi + y[i];
+            sum_x += xi;
+            retval += fast_slog2(xi);
+            sum_xy += xy;
+            retval += fast_slog2(xy);
+        } else if y[i] != 0 {
+            sum_xy += y[i];
+            retval += fast_slog2(y[i]);
+        }
+    }
+    fast_slog2(sum_x) + fast_slog2(sum_xy) - retval
+}
+
+/// Rounding division matching libwebp's DivRound.
+#[inline]
+fn div_round(a: i64, b: i64) -> i64 {
+    if (a < 0) == (b < 0) {
+        (a + b / 2) / b
+    } else {
+        (a - b / 2) / b
+    }
+}
+
+/// Prediction cost bias favoring values near 0 (matching libwebp).
+fn prediction_cost_bias(counts: &[u32; 256], weight_0: u64, mut exp_val: u64) -> i64 {
+    let significant_symbols = 256 >> 4; // 16
+    let exp_decay_factor: u64 = 6; // scaling factor 1/10
+    let mut bits = (weight_0 * counts[0] as u64) << LOG_2_PRECISION_BITS;
+    exp_val <<= LOG_2_PRECISION_BITS;
+    for i in 1..significant_symbols {
+        bits += div_round(
+            (exp_val * (counts[i] as u64 + counts[256 - i] as u64)) as i64,
+            100,
+        ) as u64;
+        exp_val = div_round((exp_decay_factor * exp_val) as i64, 10) as u64;
+    }
+    -div_round(bits as i64, 10)
+}
+
+/// Cross-color prediction cost (matching libwebp's PredictionCostCrossColor).
+fn prediction_cost_cross_color(accumulated: &[u32; 256], counts: &[u32; 256]) -> i64 {
+    const K_EXP_VALUE: u64 = 240;
+    combined_shannon_entropy(counts, accumulated) as i64
+        + prediction_cost_bias(counts, 3, K_EXP_VALUE)
+}
+
+/// Collect histogram of transformed red values for a tile.
+fn collect_color_red_transforms(
+    argb: &[u32],
+    width: usize,
+    start_x: usize,
+    start_y: usize,
+    end_x: usize,
+    end_y: usize,
+    green_to_red: u8,
+    histo: &mut [u32; 256],
+) {
+    for y in start_y..end_y {
+        for x in start_x..end_x {
+            let pixel = argb[y * width + x];
+            let green = (pixel >> 8) as u8 as i8;
+            let mut new_red = (pixel >> 16) as i32;
+            new_red -= color_transform_delta(green_to_red as i8, green);
+            histo[(new_red & 0xff) as usize] += 1;
+        }
+    }
+}
+
+/// Collect histogram of transformed blue values for a tile.
+fn collect_color_blue_transforms(
+    argb: &[u32],
+    width: usize,
+    start_x: usize,
+    start_y: usize,
+    end_x: usize,
+    end_y: usize,
+    green_to_blue: u8,
+    red_to_blue: u8,
+    histo: &mut [u32; 256],
+) {
+    for y in start_y..end_y {
+        for x in start_x..end_x {
+            let pixel = argb[y * width + x];
+            let green = (pixel >> 8) as u8 as i8;
+            let red = (pixel >> 16) as u8 as i8;
+            let mut new_blue = pixel as i32 & 0xff;
+            new_blue -= color_transform_delta(green_to_blue as i8, green);
+            new_blue -= color_transform_delta(red_to_blue as i8, red);
+            histo[(new_blue & 0xff) as usize] += 1;
+        }
+    }
+}
+
+/// Cost of a green_to_red transform on a tile (matching libwebp).
+fn get_prediction_cost_red(
+    argb: &[u32],
+    width: usize,
+    start_x: usize,
+    start_y: usize,
+    end_x: usize,
+    end_y: usize,
+    prev_x: &CrossColorMultipliers,
+    prev_y: &CrossColorMultipliers,
+    green_to_red: u8,
+    accumulated_red_histo: &[u32; 256],
+) -> i64 {
+    let mut histo = [0u32; 256];
+    collect_color_red_transforms(argb, width, start_x, start_y, end_x, end_y, green_to_red, &mut histo);
+    let mut cur_diff = prediction_cost_cross_color(accumulated_red_histo, &histo);
+    if green_to_red == prev_x.green_to_red {
+        cur_diff -= 3i64 << LOG_2_PRECISION_BITS;
+    }
+    if green_to_red == prev_y.green_to_red {
+        cur_diff -= 3i64 << LOG_2_PRECISION_BITS;
+    }
+    if green_to_red == 0 {
+        cur_diff -= 3i64 << LOG_2_PRECISION_BITS;
+    }
+    cur_diff
+}
+
+/// Cost of green_to_blue + red_to_blue transform on a tile (matching libwebp).
+fn get_prediction_cost_blue(
+    argb: &[u32],
+    width: usize,
+    start_x: usize,
+    start_y: usize,
+    end_x: usize,
+    end_y: usize,
+    prev_x: &CrossColorMultipliers,
+    prev_y: &CrossColorMultipliers,
+    green_to_blue: u8,
+    red_to_blue: u8,
+    accumulated_blue_histo: &[u32; 256],
+) -> i64 {
+    let mut histo = [0u32; 256];
+    collect_color_blue_transforms(
+        argb, width, start_x, start_y, end_x, end_y,
+        green_to_blue, red_to_blue, &mut histo,
+    );
+    let mut cur_diff = prediction_cost_cross_color(accumulated_blue_histo, &histo);
+    if green_to_blue == prev_x.green_to_blue {
+        cur_diff -= 3i64 << LOG_2_PRECISION_BITS;
+    }
+    if green_to_blue == prev_y.green_to_blue {
+        cur_diff -= 3i64 << LOG_2_PRECISION_BITS;
+    }
+    if red_to_blue == prev_x.red_to_blue {
+        cur_diff -= 3i64 << LOG_2_PRECISION_BITS;
+    }
+    if red_to_blue == prev_y.red_to_blue {
+        cur_diff -= 3i64 << LOG_2_PRECISION_BITS;
+    }
+    if green_to_blue == 0 {
+        cur_diff -= 3i64 << LOG_2_PRECISION_BITS;
+    }
+    if red_to_blue == 0 {
+        cur_diff -= 3i64 << LOG_2_PRECISION_BITS;
+    }
+    cur_diff
+}
+
+/// Coarse-to-fine 1D search for best green_to_red (matching libwebp).
+fn get_best_green_to_red(
+    argb: &[u32],
+    width: usize,
+    start_x: usize,
+    start_y: usize,
+    end_x: usize,
+    end_y: usize,
+    prev_x: &CrossColorMultipliers,
+    prev_y: &CrossColorMultipliers,
+    quality: u8,
+    accumulated_red_histo: &[u32; 256],
+) -> u8 {
+    let max_iters = 4 + ((7 * quality as i32) >> 8); // range [4..6]
+    let mut green_to_red_best: i32 = 0;
+    let mut best_diff = get_prediction_cost_red(
+        argb, width, start_x, start_y, end_x, end_y,
+        prev_x, prev_y, 0, accumulated_red_histo,
+    );
+
+    for iter in 0..max_iters {
+        let delta: i32 = 32 >> iter;
+        for &offset in &[-delta, delta] {
+            let green_to_red_cur = offset + green_to_red_best;
+            let cur_diff = get_prediction_cost_red(
+                argb, width, start_x, start_y, end_x, end_y,
+                prev_x, prev_y, green_to_red_cur as u8,
+                accumulated_red_histo,
+            );
+            if cur_diff < best_diff {
+                best_diff = cur_diff;
+                green_to_red_best = green_to_red_cur;
+            }
+        }
+    }
+    (green_to_red_best & 0xff) as u8
+}
+
+/// Coarse-to-fine 2D 8-axis search for best green_to_blue + red_to_blue (matching libwebp).
+fn get_best_green_red_to_blue(
+    argb: &[u32],
+    width: usize,
+    start_x: usize,
+    start_y: usize,
+    end_x: usize,
+    end_y: usize,
+    prev_x: &CrossColorMultipliers,
+    prev_y: &CrossColorMultipliers,
+    quality: u8,
+    accumulated_blue_histo: &[u32; 256],
+) -> (u8, u8) {
+    const OFFSETS: [[i8; 2]; 8] = [
+        [0, -1], [0, 1], [-1, 0], [1, 0],
+        [-1, -1], [-1, 1], [1, -1], [1, 1],
+    ];
+    const DELTA_LUT: [i32; 7] = [16, 16, 8, 4, 2, 2, 2];
+    let iters = if quality < 25 {
+        1
+    } else if quality > 50 {
+        7
+    } else {
+        4
+    };
+
+    let mut green_to_blue_best: i32 = 0;
+    let mut red_to_blue_best: i32 = 0;
+    let mut best_diff = get_prediction_cost_blue(
+        argb, width, start_x, start_y, end_x, end_y,
+        prev_x, prev_y, 0, 0, accumulated_blue_histo,
+    );
+
+    for iter in 0..iters {
+        let delta = DELTA_LUT[iter as usize];
+        for (axis, offset) in OFFSETS.iter().enumerate() {
+            let green_to_blue_cur = offset[0] as i32 * delta + green_to_blue_best;
+            let red_to_blue_cur = offset[1] as i32 * delta + red_to_blue_best;
+            let cur_diff = get_prediction_cost_blue(
+                argb, width, start_x, start_y, end_x, end_y,
+                prev_x, prev_y,
+                green_to_blue_cur as u8, red_to_blue_cur as u8,
+                accumulated_blue_histo,
+            );
+            if cur_diff < best_diff {
+                best_diff = cur_diff;
+                green_to_blue_best = green_to_blue_cur;
+                red_to_blue_best = red_to_blue_cur;
+            }
+            // For low quality, only axis-aligned (first 4 directions)
+            if quality < 25 && axis == 3 {
+                break;
+            }
+        }
+        if delta == 2 && green_to_blue_best == 0 && red_to_blue_best == 0 {
+            break;
+        }
+    }
+
+    ((green_to_blue_best & 0xff) as u8, (red_to_blue_best & 0xff) as u8)
+}
+
+/// Apply cross-color transform to decorrelate color channels.
+///
+/// Uses libwebp's entropy-based coarse-to-fine search with accumulated
+/// histograms and spatial consistency bonuses.
+///
+/// Forward transform (encoding):
+///   new_R = (R - green_to_red * G_signed / 32) & 0xFF
+///   new_B = (B - green_to_blue * G_signed / 32 - red_to_blue * R_orig_signed / 32) & 0xFF
+///
+/// The multiplier data is stored as a sub-image where:
+///   blue channel  = green_to_red
+///   green channel = green_to_blue
+///   red channel   = red_to_blue
+///   alpha         = 0xFF
+pub fn apply_cross_color_transform(
+    pixels: &mut [u32],
+    width: usize,
+    height: usize,
+    transform_bits: u8,
+    quality: u8,
+) -> Vec<u32> {
+    let block_size = 1usize << transform_bits;
+    let tiles_x = subsample_size(width as u32, transform_bits) as usize;
+    let tiles_y = subsample_size(height as u32, transform_bits) as usize;
+
+    let mut transform_data = vec![0u32; tiles_x * tiles_y];
+    let mut accumulated_red_histo = [0u32; 256];
+    let mut accumulated_blue_histo = [0u32; 256];
+
+    let mut prev_x = CrossColorMultipliers::default();
+    let mut prev_y = CrossColorMultipliers::default();
+
+    for ty in 0..tiles_y {
+        for tx in 0..tiles_x {
+            let start_x = tx * block_size;
+            let start_y = ty * block_size;
+            let end_x = (start_x + block_size).min(width);
+            let end_y = (start_y + block_size).min(height);
+
+            // Get prev_y from tile above
+            if ty != 0 {
+                let above_code = transform_data[(ty - 1) * tiles_x + tx];
+                prev_y.green_to_red = above_code as u8;
+                prev_y.green_to_blue = (above_code >> 8) as u8;
+                prev_y.red_to_blue = (above_code >> 16) as u8;
+            }
+
+            // Find best green_to_red
+            let best_g2r = get_best_green_to_red(
+                pixels, width, start_x, start_y, end_x, end_y,
+                &prev_x, &prev_y, quality, &accumulated_red_histo,
+            );
+
+            // Find best green_to_blue + red_to_blue
+            let (best_g2b, best_r2b) = get_best_green_red_to_blue(
+                pixels, width, start_x, start_y, end_x, end_y,
+                &prev_x, &prev_y, quality, &accumulated_blue_histo,
+            );
+
+            prev_x = CrossColorMultipliers {
+                green_to_red: best_g2r,
+                green_to_blue: best_g2b,
+                red_to_blue: best_r2b,
+            };
+
+            // Store as sub-image pixel (MultipliersToColorCode)
+            let color_code = 0xFF000000u32
+                | ((best_r2b as u32) << 16)
+                | ((best_g2b as u32) << 8)
+                | (best_g2r as u32);
+            transform_data[ty * tiles_x + tx] = color_code;
+
+            // Apply forward transform to this tile
+            apply_cross_color_tile(pixels, width, start_x, start_y, end_x, end_y, &prev_x);
+
+            // Gather accumulated histogram data (matching libwebp's skip logic)
+            for y in start_y..end_y {
+                for x in start_x..end_x {
+                    let ix = y * width + x;
+                    let pix = pixels[ix];
+                    // Skip repeated pixels (handled by backward references)
+                    if ix >= 2 && pix == pixels[ix - 2] && pix == pixels[ix - 1] {
+                        continue;
+                    }
+                    if ix >= width + 2
+                        && pixels[ix - 2] == pixels[ix - width - 2]
+                        && pixels[ix - 1] == pixels[ix - width - 1]
+                        && pix == pixels[ix - width]
+                    {
+                        continue;
+                    }
+                    accumulated_red_histo[((pix >> 16) & 0xff) as usize] += 1;
+                    accumulated_blue_histo[(pix & 0xff) as usize] += 1;
+                }
+            }
+        }
+    }
+
+    transform_data
+}
+
+/// Apply cross-color forward transform to a single tile (matching libwebp's VP8LTransformColor_C).
+#[inline]
+fn apply_cross_color_tile(
+    pixels: &mut [u32],
+    width: usize,
+    start_x: usize,
+    start_y: usize,
+    end_x: usize,
+    end_y: usize,
+    m: &CrossColorMultipliers,
+) {
+    let g2r = m.green_to_red as i8;
+    let g2b = m.green_to_blue as i8;
+    let r2b = m.red_to_blue as i8;
+
+    for y in start_y..end_y {
+        for x in start_x..end_x {
+            let idx = y * width + x;
+            let argb = pixels[idx];
+            let green = (argb >> 8) as u8 as i8;
+            let red = (argb >> 16) as u8 as i8;
+            let mut new_red = (red as i32) & 0xff;
+            let mut new_blue = argb as i32 & 0xff;
+            new_red -= color_transform_delta(g2r, green);
+            new_red &= 0xff;
+            new_blue -= color_transform_delta(g2b, green);
+            new_blue -= color_transform_delta(r2b, red);
+            new_blue &= 0xff;
+            pixels[idx] = (argb & 0xff00ff00u32) | ((new_red as u32) << 16) | (new_blue as u32);
+        }
+    }
+}
+
 /// Simple predictor transform using only vertical prediction.
 /// Used for quick encoding at lower quality levels.
 pub fn apply_simple_predictor(pixels: &mut [u32], width: usize, height: usize) {

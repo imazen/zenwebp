@@ -95,7 +95,7 @@ impl Default for Vp8lConfig {
             quality: Vp8lQuality::default(),
             cache_bits: 0, // Auto-detect optimal cache bits
             use_predictor: true,
-            use_cross_color: false, // Start without cross-color
+            use_cross_color: false, // Disabled: still hurts on predictor residuals
             use_subtract_green: true,
             use_palette: true,
             use_meta_huffman: false, // Start without meta-huffman
