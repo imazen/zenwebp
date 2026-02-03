@@ -964,7 +964,20 @@ Diagnostic harness (same-mode I4 blocks):
 This suggests our quantization or trellis produces slightly different (worse) coefficients.
 The cost ESTIMATION matches libwebp, but the actual ENCODING produces more bits.
 
-**Next steps to investigate:**
-1. Compare trellis decisions for identical input blocks
-2. Check if simple quantization (non-trellis) matches libwebp
-3. Verify probability tables during encoding match mode selection tables
+**Investigation progress (2026-02-03):**
+
+**Step 2 - Simple quantization (VERIFIED):** Sharpen/zthresh/bias calculations match libwebp.
+For same-mode I4 blocks: 79.2% exact match, total |level| sum 0.997x libwebp (slightly better),
+non-zero count 0.998x libwebp. Simple quantization is NOT the cause.
+
+**Step 3 - Probability tables (VERIFIED with fix):**
+- Mid-stream probability update helps compression (1.0111x → 1.0101x without it)
+- Level_costs recalculation HURTS compression (1.0101x → 1.0114x with it)
+- Fix: Update probabilities mid-stream but don't recalculate level_costs
+- This differs from libwebp which does both, but our level_costs calculation may
+  introduce slight bias when recalculated. Keeping probabilities synced with
+  mode selection while level_costs stays at initial values works best for us.
+
+**Remaining investigation:**
+1. Compare trellis decisions for identical input blocks - may explain the ~1% gap
+2. The I4 coefficient efficiency gap is small (~1%) and may be inherent to our trellis tuning
