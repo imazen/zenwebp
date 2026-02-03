@@ -371,8 +371,20 @@ impl<'a> super::Vp8Encoder<'a> {
         // Track non-zero context for accurate coefficient cost estimation
         // top_nz[x] = whether block above has non-zero coefficients
         // left_nz[y] = whether block to left has non-zero coefficients
-        let mut top_nz = [false; 4];
-        let mut left_nz = [false; 4];
+        // Initialize from cross-macroblock context (top_complexity/left_complexity)
+        // so edge blocks use the correct context from neighboring macroblocks
+        let mut top_nz = [
+            self.top_complexity[mbx].y[0] != 0,
+            self.top_complexity[mbx].y[1] != 0,
+            self.top_complexity[mbx].y[2] != 0,
+            self.top_complexity[mbx].y[3] != 0,
+        ];
+        let mut left_nz = [
+            self.left_complexity.y[0] != 0,
+            self.left_complexity.y[1] != 0,
+            self.left_complexity.y[2] != 0,
+            self.left_complexity.y[3] != 0,
+        ];
 
         // Get probability tables for coefficient cost estimation
         let probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
@@ -402,8 +414,10 @@ impl<'a> super::Vp8Encoder<'a> {
                 };
 
                 // Get non-zero context from neighboring blocks
-                let nz_top = if sby == 0 { false } else { top_nz[sbx] };
-                let nz_left = if sbx == 0 { false } else { left_nz[sby] };
+                // For edge blocks (sby==0 or sbx==0), the cross-macroblock context
+                // is already in top_nz/left_nz from initialization above
+                let nz_top = top_nz[sbx];
+                let nz_left = left_nz[sby];
 
                 let mut best_mode = IntraMode::DC;
                 let mut best_mode_idx = 0usize;
