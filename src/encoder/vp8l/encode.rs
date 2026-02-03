@@ -2,7 +2,9 @@
 
 use alloc::vec::Vec;
 
-use super::backward_refs::{get_backward_references, get_backward_references_with_palette};
+use super::backward_refs::{
+    get_backward_references, get_backward_references_with_palette, strip_cache_from_refs,
+};
 use super::bitwriter::BitWriter;
 use super::color_cache::ColorCache;
 use super::histogram::{
@@ -533,6 +535,76 @@ fn encode_argb(
         )
     };
 
+    // Encode image data from backward references.
+    // If auto-detecting cache and cache_bits > 0, try both with-cache and without-cache
+    // and return whichever produces smaller output. The entropy-based cache selection
+    // uses a global histogram but actual encoding uses per-tile meta-Huffman, so
+    // larger cache can produce larger output due to Huffman tree overhead.
+    let is_palette = palette_transform.is_some();
+    let auto_cache = config.cache_bits.is_none();
+
+    if auto_cache && cache_bits > 0 {
+        // Try with auto-selected cache
+        let writer_snapshot = writer.clone();
+        let output_with_cache = encode_image_data(
+            writer,
+            &refs,
+            cache_bits,
+            enc_argb,
+            enc_width,
+            enc_height,
+            config,
+            is_palette,
+        );
+
+        // Try without cache
+        let mut refs_no_cache = refs;
+        strip_cache_from_refs(enc_argb, &mut refs_no_cache);
+        let output_no_cache = encode_image_data(
+            writer_snapshot,
+            &refs_no_cache,
+            0,
+            enc_argb,
+            enc_width,
+            enc_height,
+            config,
+            is_palette,
+        );
+
+        if output_no_cache.len() < output_with_cache.len() {
+            Ok(output_no_cache)
+        } else {
+            Ok(output_with_cache)
+        }
+    } else {
+        Ok(encode_image_data(
+            writer,
+            &refs,
+            cache_bits,
+            enc_argb,
+            enc_width,
+            enc_height,
+            config,
+            is_palette,
+        ))
+    }
+}
+
+/// Encode image data from backward references into a VP8L bitstream.
+///
+/// Handles: color cache signaling, meta-Huffman, Huffman tree construction/writing,
+/// and image data encoding. Returns the finished byte buffer.
+#[allow(clippy::too_many_arguments)]
+fn encode_image_data(
+    mut writer: BitWriter,
+    refs: &super::types::BackwardRefs,
+    cache_bits: u8,
+    enc_argb: &[u32],
+    enc_width: usize,
+    enc_height: usize,
+    config: &Vp8lConfig,
+    is_palette: bool,
+) -> Vec<u8> {
     // Write color cache info
     if cache_bits > 0 {
         writer.write_bit(true);
@@ -542,7 +614,6 @@ fn encode_argb(
     }
 
     // Build histogram(s) — either single or meta-Huffman with clustering
-    let is_palette = palette_transform.is_some();
     let use_meta = config.use_meta_huffman && enc_width > 16 && enc_height > 16;
     let histo_bits = if use_meta {
         get_histo_bits_palette(enc_width, enc_height, config.quality.method, is_palette)
@@ -552,7 +623,7 @@ fn encode_argb(
 
     let meta_info = if use_meta {
         build_meta_huffman(
-            &refs,
+            refs,
             enc_width,
             enc_height,
             histo_bits,
@@ -560,7 +631,7 @@ fn encode_argb(
             config.quality.quality,
         )
     } else {
-        build_single_histogram(&refs, cache_bits)
+        build_single_histogram(refs, cache_bits)
     };
 
     // Write meta-Huffman flag and prefix image
@@ -715,7 +786,7 @@ fn encode_argb(
         }
     }
 
-    Ok(writer.finish())
+    writer.finish()
 }
 
 /// Maximum number of histogram tiles (matching libwebp's MAX_HUFF_IMAGE_SIZE).

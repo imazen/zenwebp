@@ -563,7 +563,7 @@ fn calculate_best_cache_size(
 
 /// Strip color cache references, converting CacheIdx back to Literal.
 /// Uses the original argb array to recover pixel values.
-fn strip_cache_from_refs(argb: &[u32], refs: &mut BackwardRefs) {
+pub fn strip_cache_from_refs(argb: &[u32], refs: &mut BackwardRefs) {
     let mut pixel_index = 0usize;
     for token in refs.tokens.iter_mut() {
         match token {

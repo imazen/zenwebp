@@ -5,6 +5,7 @@
 use alloc::vec::Vec;
 
 /// VP8L bit writer - writes bits LSB-first.
+#[derive(Clone)]
 pub struct BitWriter {
     /// Output buffer.
     buffer: Vec<u8>,
