@@ -384,14 +384,19 @@ impl<'a> super::Vp8Encoder<'a> {
                 let y0 = sby * 4 + 1;
                 let x0 = sbx * 4 + 1;
 
-                // Get mode context from neighboring blocks (DC=0 if at edge)
+                // Get mode context from neighboring blocks
+                // For edge blocks, use cross-macroblock context from previous MB's I4 modes
                 let top_ctx = if sby == 0 {
-                    0 // DC mode
+                    // Top edge: use mode from macroblock above (stored in top_b_pred)
+                    // Index: mbx * 4 + sbx gives the correct column's top context
+                    self.top_b_pred[mbx * 4 + sbx] as usize
                 } else {
                     best_mode_indices[(sby - 1) * 4 + sbx]
                 };
                 let left_ctx = if sbx == 0 {
-                    0 // DC mode
+                    // Left edge: use mode from macroblock to the left (stored in left_b_pred)
+                    // Index: sby gives the correct row's left context
+                    self.left_b_pred[sby] as usize
                 } else {
                     best_mode_indices[sby * 4 + (sbx - 1)]
                 };
@@ -558,6 +563,36 @@ impl<'a> super::Vp8Encoder<'a> {
                         coeff_cost,
                         lambda_i4,
                     );
+
+                    // Block-level debug output (enabled with BLOCK_DEBUG=mbx,mby,block_idx)
+                    #[cfg(feature = "mode_debug")]
+                    if let Ok(s) = std::env::var("BLOCK_DEBUG") {
+                        let parts: Vec<_> = s.split(',').collect();
+                        if parts.len() == 3 {
+                            if let (Ok(dx), Ok(dy), Ok(db)) = (
+                                parts[0].parse::<usize>(),
+                                parts[1].parse::<usize>(),
+                                parts[2].parse::<usize>(),
+                            ) {
+                                if dx == mbx && dy == mby && db == i {
+                                    // Print context once at start
+                                    static PRINTED_CTX: std::sync::atomic::AtomicBool =
+                                        std::sync::atomic::AtomicBool::new(false);
+                                    if !PRINTED_CTX.swap(true, std::sync::atomic::Ordering::Relaxed)
+                                    {
+                                        eprintln!(
+                                            "Context: top_ctx={}, left_ctx={}, lambda_i4={}",
+                                            top_ctx, left_ctx, lambda_i4
+                                        );
+                                    }
+                                    eprintln!(
+                                        "  Mode {:2} ({:?}): sse={:5}, mode_cost={:4}, coeff_cost={:5}, rd_score={:8}",
+                                        mode_idx, mode, sse, mode_cost, coeff_cost, rd_score
+                                    );
+                                }
+                            }
+                        }
+                    }
 
                     if rd_score < best_block_score {
                         best_block_score = rd_score;

@@ -665,6 +665,33 @@ impl<'a> Vp8Encoder<'a> {
 
                     let macroblock_info = self.choose_macroblock_info(mbx.into(), mby.into());
 
+                    // Update b_pred context for next macroblock's mode selection
+                    // This must happen during encoding pass, not just header writing
+                    let mbx_usize = usize::from(mbx);
+                    if let Some(bpred) = macroblock_info.luma_bpred {
+                        // I4 mode: update with per-block modes
+                        // top_b_pred gets the bottom row (row 3)
+                        for x in 0..4 {
+                            self.top_b_pred[mbx_usize * 4 + x] = bpred[3 * 4 + x];
+                        }
+                        // left_b_pred gets the rightmost column (column 3)
+                        for y in 0..4 {
+                            self.left_b_pred[y] = bpred[y * 4 + 3];
+                        }
+                    } else {
+                        // I16 mode: all context slots get the derived intra mode
+                        let intra_mode = macroblock_info
+                            .luma_mode
+                            .into_intra()
+                            .unwrap_or(IntraMode::DC);
+                        for x in 0..4 {
+                            self.top_b_pred[mbx_usize * 4 + x] = intra_mode;
+                        }
+                        for y in 0..4 {
+                            self.left_b_pred[y] = intra_mode;
+                        }
+                    }
+
                     // Transform blocks (updates border state for next macroblock)
                     let y_block_data =
                         self.transform_luma_block(mbx.into(), mby.into(), &macroblock_info);
