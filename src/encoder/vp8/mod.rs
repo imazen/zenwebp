@@ -531,9 +531,12 @@ impl<'a> Vp8Encoder<'a> {
     ) -> Result<(), EncodingError> {
         // Store method and configure features based on it
         self.method = params.method.min(6); // Clamp to 0-6
-                                            // Trellis quantization only for method >= 4 (like libwebp's RD_OPT_TRELLIS)
-        self.do_trellis = self.method >= 4;
-        // Trellis during I4 mode selection for method 6 (like libwebp's RD_OPT_TRELLIS_ALL)
+        // Method feature mapping (aligned with libwebp):
+        //   m0-2: RD_OPT_NONE - fast mode, no RD optimization
+        //   m3-4: RD_OPT_BASIC - RD scoring for mode selection, no trellis
+        //   m5:   RD_OPT_TRELLIS - trellis quantization during encoding
+        //   m6:   RD_OPT_TRELLIS_ALL - trellis during I4 mode selection
+        self.do_trellis = self.method >= 5;
         self.do_trellis_i4_mode = self.method >= 6;
         // Store tuning parameters
         self.sns_strength = params.sns_strength.min(100);
