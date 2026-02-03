@@ -16,9 +16,12 @@ mod trellis;
 mod vec_writer;
 /// VP8 encoder implementation
 pub mod vp8;
+/// VP8L (lossless) encoder implementation
+pub mod vp8l;
 
 // Re-export public API
 pub use analysis::{ClassifierDiag, ContentType};
 pub use api::{
     ColorType, Encoder, EncoderConfig, EncoderParams, EncodingError, Preset, WebPEncoder,
 };
+pub use vp8l::{encode_vp8l, Vp8lConfig, Vp8lQuality};
