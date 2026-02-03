@@ -123,7 +123,11 @@ fn optimize_huffman_for_rle(counts: &mut [u32]) {
 }
 
 /// Build Huffman code lengths from symbol frequencies.
-/// Uses package-merge algorithm for length-limited codes.
+///
+/// Matches libwebp's GenerateOptimalTree:
+/// - Uses OptimizeHuffmanForRle preprocessing
+/// - Builds tree using sorted array with (count, value) ordering
+/// - Length-limits by doubling count_min and rebuilding
 pub fn build_huffman_lengths(freq: &[u32], max_len: u8) -> Vec<u8> {
     let n = freq.len();
     let mut lengths = vec![0u8; n];
@@ -145,32 +149,74 @@ pub fn build_huffman_lengths(freq: &[u32], max_len: u8) -> Vec<u8> {
     }
 
     if non_zero.len() == 1 {
-        // Single symbol gets length 1 for tree writing purposes.
-        // When encoding image data, we'll check if tree is trivial
-        // and skip writing bits.
         lengths[non_zero[0].0] = 1;
         return lengths;
     }
 
     if non_zero.len() == 2 {
-        // Two symbols each get length 1
         lengths[non_zero[0].0] = 1;
         lengths[non_zero[1].0] = 1;
         return lengths;
     }
 
-    // Build Huffman tree using heap
+    // Build length-limited Huffman tree matching libwebp's GenerateOptimalTree.
+    // Uses count_min doubling: if tree exceeds depth limit, double the minimum
+    // count and rebuild. This produces optimal length-limited codes.
+    let mut count_min = 1u32;
+    loop {
+        let ok = generate_tree_with_min_count(
+            &optimized_freq,
+            &non_zero,
+            count_min,
+            max_len,
+            &mut lengths,
+        );
+        if ok {
+            break;
+        }
+        // Tree exceeded depth limit; double count_min and retry
+        count_min *= 2;
+    }
+
+    lengths
+}
+
+/// Build a length-limited Huffman tree using a BinaryHeap.
+///
+/// Matches libwebp's GenerateOptimalTree tie-breaking:
+/// - CompareHuffmanTrees sorts descending by count, ascending by value
+/// - Internal nodes have value=-1 (combined last among equal-count nodes)
+/// - Leaf nodes use symbol index as value (higher symbols combined first)
+/// - Returns false if any code exceeds tree_depth_limit (caller doubles
+///   count_min and retries)
+fn generate_tree_with_min_count(
+    _freq: &[u32],
+    non_zero: &[(usize, u32)],
+    count_min: u32,
+    tree_depth_limit: u8,
+    lengths: &mut [u8],
+) -> bool {
+    lengths.fill(0);
+
     #[derive(Eq, PartialEq)]
     struct Node {
         weight: u64,
+        /// Matches libwebp's HuffmanTree.value for tie-breaking:
+        /// leaf nodes = symbol index (>= 0), internal nodes = -1.
+        value: i32,
         symbol: Option<usize>,
         children: Option<(Box<Node>, Box<Node>)>,
     }
 
     impl Ord for Node {
         fn cmp(&self, other: &Self) -> Ordering {
-            // Min-heap: reverse comparison
-            other.weight.cmp(&self.weight)
+            // BinaryHeap is a max-heap. We want min-heap on weight, and for
+            // equal weight we want the highest value to pop first (matching
+            // libwebp which combines from end of descending-sorted array).
+            other
+                .weight
+                .cmp(&self.weight)
+                .then(self.value.cmp(&other.value))
         }
     }
 
@@ -180,144 +226,43 @@ pub fn build_huffman_lengths(freq: &[u32], max_len: u8) -> Vec<u8> {
         }
     }
 
-    let _n_nonzero = non_zero.len();
     let mut heap = BinaryHeap::new();
-    for (sym, freq) in non_zero {
+    for &(sym, f) in non_zero.iter() {
         heap.push(Node {
-            weight: freq as u64,
+            weight: f.max(count_min) as u64,
+            value: sym as i32,
             symbol: Some(sym),
             children: None,
         });
     }
 
-    // Build tree
     while heap.len() > 1 {
         let a = heap.pop().unwrap();
         let b = heap.pop().unwrap();
         heap.push(Node {
             weight: a.weight + b.weight,
+            value: -1, // internal node, matching libwebp
             symbol: None,
             children: Some((Box::new(a), Box::new(b))),
         });
     }
 
-    // Extract lengths from tree
-    // Depth starts at 0 for the root. Leaves get depth = number of edges from root.
-    // We DON'T clamp here - that will be done in ensure_valid_code_lengths so it can
-    // properly fix the Kraft inequality.
-    fn collect_lengths(node: &Node, depth: u8, lengths: &mut [u8], actual_max: &mut u8) {
+    fn collect_depths(node: &Node, depth: u8, lengths: &mut [u8], max_depth: &mut u8) {
         if let Some(sym) = node.symbol {
-            // Leaf node: code length = depth (but at least 1 for valid codes)
-            *actual_max = (*actual_max).max(depth);
             lengths[sym] = depth.max(1);
+            *max_depth = (*max_depth).max(depth);
         } else if let Some((ref left, ref right)) = node.children {
-            collect_lengths(left, depth + 1, lengths, actual_max);
-            collect_lengths(right, depth + 1, lengths, actual_max);
+            collect_depths(left, depth + 1, lengths, max_depth);
+            collect_depths(right, depth + 1, lengths, max_depth);
         }
     }
 
     if let Some(root) = heap.pop() {
-        let mut _max_depth = 0u8;
-        collect_lengths(&root, 0, &mut lengths, &mut _max_depth);
-    }
-
-    // Limit code lengths and ensure valid Kraft sum
-    ensure_valid_code_lengths(&mut lengths, max_len);
-
-    lengths
-}
-
-/// Ensure code lengths form a valid Huffman tree with max length constraint.
-/// Uses iterative adjustment to satisfy the Kraft inequality.
-fn ensure_valid_code_lengths(lengths: &mut [u8], max_len: u8) {
-    // Check if any length exceeds max_len
-    let mut need_adjustment = false;
-    for &len in lengths.iter() {
-        if len > max_len {
-            need_adjustment = true;
-            break;
-        }
-    }
-
-    if !need_adjustment {
-        // No length limiting needed, tree should already be valid
-        return;
-    }
-
-    // Cap lengths at max_len
-    for len in lengths.iter_mut() {
-        if *len > max_len {
-            *len = max_len;
-        }
-    }
-
-    let compute_kraft = |lengths: &[u8]| -> u64 {
-        lengths
-            .iter()
-            .filter(|&&l| l > 0)
-            .map(|&l| 1u64 << (max_len - l))
-            .sum()
-    };
-
-    let target = 1u64 << max_len;
-    let mut kraft = compute_kraft(lengths);
-
-    // Adjustment loop
-    let mut iterations = 0;
-    const MAX_ITERATIONS: usize = 10000;
-
-    while kraft != target && iterations < MAX_ITERATIONS {
-        iterations += 1;
-
-        if kraft > target {
-            // Too much codespace used: make some codes LONGER to free up space
-            // A code at length L contributes 2^(max_len-L) to kraft.
-            // Increasing to L+1 contributes 2^(max_len-L-1).
-            // Net change: -2^(max_len-L) + 2^(max_len-L-1) = -2^(max_len-L-1)
-            // Prioritize shortest codes (they free up the most space when lengthened)
-            let mut best_idx = None;
-            let mut best_len = max_len;
-            for (i, &len) in lengths.iter().enumerate() {
-                if len > 0 && len < max_len && len < best_len {
-                    best_idx = Some(i);
-                    best_len = len;
-                }
-            }
-
-            if let Some(idx) = best_idx {
-                let old_contrib = 1u64 << (max_len - best_len);
-                let new_contrib = 1u64 << (max_len - best_len - 1);
-                lengths[idx] += 1;
-                kraft = kraft - old_contrib + new_contrib;
-            } else {
-                // All codes at max_len, can't fix
-                break;
-            }
-        } else {
-            // Not enough codespace used: make some codes SHORTER to use more space
-            // A code at length L contributes 2^(max_len-L) to kraft.
-            // Decreasing to L-1 contributes 2^(max_len-L+1).
-            // Net change: -2^(max_len-L) + 2^(max_len-L+1) = +2^(max_len-L)
-            // Prioritize longest codes (smallest impact per change)
-            let mut best_idx = None;
-            let mut best_len = 0u8;
-            for (i, &len) in lengths.iter().enumerate() {
-                if len > 1 && len > best_len {
-                    best_idx = Some(i);
-                    best_len = len;
-                }
-            }
-
-            if let Some(idx) = best_idx {
-                let old_contrib = 1u64 << (max_len - best_len);
-                let new_contrib = 1u64 << (max_len - best_len + 1);
-                lengths[idx] -= 1;
-                kraft = kraft - old_contrib + new_contrib;
-            } else {
-                // All codes at length 1, can't fix
-                break;
-            }
-        }
+        let mut max_depth = 0u8;
+        collect_depths(&root, 0, lengths, &mut max_depth);
+        max_depth <= tree_depth_limit
+    } else {
+        true
     }
 }
 
