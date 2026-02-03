@@ -821,3 +821,24 @@ for y in 0usize..16 {
 ## User Feedback Log
 
 (none currently)
+
+## Diagnostic Examples
+
+Encoder debugging tools in `examples/`:
+
+| Example | Usage |
+|---------|-------|
+| `corpus_test [dir]` | Batch file size comparison vs libwebp |
+| `compare_i4_modes` | Per-block I4 mode choice comparison |
+| `compare_i4_sse` | Coefficient counts for disputed blocks |
+| `compare_quantizers` | Verify quantizer values match libwebp |
+| `compare_rd_scores` | RD score components for specific MB |
+| `debug_block` | Debug single I4 block with BLOCK_DEBUG env |
+| `debug_mode_decision` | MB_DEBUG env for mode selection |
+| `force_i16_comparison` | File sizes with I4 threshold forcing |
+| `test_i4_vs_i16` | I4 vs I16 decision analysis |
+| `test_lambda` | Lambda value verification |
+| `test_no_trellis` | Test encoding without trellis |
+| `test_tdisto` | Spectral distortion testing |
+
+Run with: `cargo run --release --example <name> [args]`
