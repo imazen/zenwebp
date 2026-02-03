@@ -405,9 +405,9 @@ impl<'a> super::Vp8Encoder<'a> {
                 let mut best_block_score = u64::MAX;
                 let mut best_has_nz = false;
                 let mut best_quantized = [0i32; 16];
-                // Track best block's SSE and rate for recalculating with lambda_mode
+                // Track best block's SSE and coeff cost for recalculating with lambda_mode
                 let mut best_sse = 0u32;
-                let mut best_rate = 0u32;
+                let mut best_coeff_cost = 0u32;
 
                 // Pre-compute all 10 I4 prediction modes at once
                 let preds = I4Predictions::compute(&y_with_border, x0, y0, LUMA_STRIDE);
@@ -550,10 +550,14 @@ impl<'a> super::Vp8Encoder<'a> {
                     };
 
                     // Compute RD score: distortion + lambda * (mode_cost + coeff_cost)
+                    // Use rd_score_with_coeffs to avoid u16 overflow when total_rate > 65535
                     let mode_cost = get_i4_mode_cost(top_ctx, left_ctx, mode_idx);
-                    let total_rate = u32::from(mode_cost) + coeff_cost;
-                    let rd_score =
-                        crate::encoder::cost::rd_score(sse, total_rate as u16, lambda_i4);
+                    let rd_score = crate::encoder::cost::rd_score_with_coeffs(
+                        sse,
+                        mode_cost,
+                        coeff_cost,
+                        lambda_i4,
+                    );
 
                     if rd_score < best_block_score {
                         best_block_score = rd_score;
@@ -562,7 +566,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         best_has_nz = has_nz;
                         best_quantized = quantized_natural;
                         best_sse = sse;
-                        best_rate = total_rate;
+                        best_coeff_cost = coeff_cost;
                     }
                 }
 
@@ -573,13 +577,18 @@ impl<'a> super::Vp8Encoder<'a> {
                 top_nz[sbx] = best_has_nz;
                 left_nz[sby] = best_has_nz;
 
-                let mode_cost = get_i4_mode_cost(top_ctx, left_ctx, best_mode_idx);
-                total_mode_cost += u32::from(mode_cost);
+                let best_mode_cost = get_i4_mode_cost(top_ctx, left_ctx, best_mode_idx);
+                total_mode_cost += u32::from(best_mode_cost);
 
                 // Recalculate the block score with lambda_mode for accumulation
                 // (matching libwebp's SetRDScore(lambda_mode, &rd_i4) before AddScore)
-                let block_score_for_comparison =
-                    crate::encoder::cost::rd_score(best_sse, best_rate as u16, lambda_mode);
+                // Use rd_score_with_coeffs to avoid u16 overflow
+                let block_score_for_comparison = crate::encoder::cost::rd_score_with_coeffs(
+                    best_sse,
+                    best_mode_cost,
+                    best_coeff_cost,
+                    lambda_mode,
+                );
 
                 // Add this block's score to running total
                 running_score += block_score_for_comparison;
