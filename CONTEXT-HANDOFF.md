@@ -1,131 +1,125 @@
-# Context Handoff: I4 Encoding Efficiency Investigation (2026-02-02)
+# Context Handoff: I4 Mode Selection Investigation (2026-02-02)
 
 ## Summary
 
-Investigating why zenwebp produces files ~3% larger than libwebp at method 6 (1.031x).
-Root cause is MODE SELECTION, not entropy coding.
+Investigating why zenwebp produces files ~1.3% larger than libwebp at method 4 (1.013x).
+Root cause is **MODE SELECTION** - we pick I4 for 26 more macroblocks than libwebp.
 
-## Key Discovery
+## Key Discovery: Quantizers Are Identical
 
-**Bits per coefficient is IDENTICAL (1.000x at m4)** - entropy coding is fine.
-The gap comes from **more nonzero coefficients** due to different I4 vs I16 mode decisions.
+**CONFIRMED**: Both zenwebp and libwebp use identical quantizers at Q75:
+- ydc=24, yac=30, y2dc=48, y2ac=46, uvdc=24, uvac=30
+- q_i4=30, lambda_mode=7
 
-### Mode Selection Difference
+Since quantizers and lambdas are the same, the mode decision difference must come from:
+1. **SSE (distortion) calculation** - different reconstruction error
+2. **Coefficient cost estimation** - different rate estimation
 
-| Encoder | I16 | I4 | File Size |
-|---------|-----|-----|-----------|
-| zenwebp m4 | 708 | 316 | 12,174 bytes |
-| libwebp m4 | 734 | 290 | 12,018 bytes |
+## Mode Selection Stats
 
-We pick **26 more I4 macroblocks** than libwebp. This accounts for ~215 extra nonzero coefficients.
+| Category | Count |
+|----------|-------|
+| Both I4 | 260 |
+| Both I16 | 678 |
+| Zen I4, Lib I16 | **56** |
+| Zen I16, Lib I4 | 30 |
+| Net extra I4 | 26 |
 
-### Analysis of Disputed Blocks
+## Detailed Example: MB(25,4)
 
-For the 56 blocks where zenwebp picks I4 but libwebp picks I16:
-- Our I4 produces 2.0 nonzero coefficients per MB (average)
-- Their I16 produces 1.2 nonzero coefficients per MB
-- Result: picking I4 when I16 would be better
+Debug output with `MB_DEBUG=25,4 --features mode_debug`:
+
+```
+I16: mode=V, score=757738
+  lambda_mode=7, lambda_i4=21, lambda_i16=6348
+I4: score=695770 (beats I16)
+  modes=[TM, TM, TM, TM, TM, VE, VE, DC, VE, TM, VE, DC, VE, VE, VE, VE]
+  RESULT: I4 wins by 61968 points
+```
+
+**Coefficient analysis:**
+- zenwebp I4: 21 nonzero coefficients, all ±1
+- libwebp I16: 23 total (15 Y1 AC + 8 Y2 DC), Y2 has values like 5, -3, -2
+
+**Bits used:**
+- zenwebp I4: ~95 bits (rough estimate)
+- libwebp I16: ~48 bits
+
+**Key insight:** I4 uses ~2x MORE bits but still wins the RD comparison. This means the SSE
+must be significantly lower for I4 to compensate for the higher rate cost.
+
+## RD Score Formula
+
+```
+score = (mode_cost + coeff_cost) * lambda_mode + 256 * sse
+```
+
+For MB(25,4):
+- I16 V mode: score = 757738
+- I4 total: score = 695770 = 1477 (BMODE penalty) + 694293 (sum of block scores)
+
+The 61968 point difference could come from:
+- SSE reduction of ~242 units (61968/256)
+- Or rate savings of ~8853 units (61968/7)
+
+Since I4 uses MORE bits, the SSE must be lower.
+
+## Hypotheses for SSE Difference
+
+1. **I4 predictions are better for this content**
+   - I4 uses per-block prediction modes (TM, VE, etc.)
+   - I16 uses single prediction for entire 16x16 block
+   - Per-block predictions may capture local detail better
+
+2. **Our I16 SSE is higher than libwebp's**
+   - Different reconstruction path?
+   - Different prediction implementation?
+
+3. **Our I4 SSE is lower than libwebp's**
+   - More accurate IDCT?
+   - Different rounding?
+
+## Files to Investigate
+
+1. `src/encoder/vp8/mode_selection.rs` - Mode selection with debug output
+   - `pick_best_intra16()` - I16 mode selection
+   - `pick_best_intra4()` - I4 mode selection with early exit
+
+2. `src/encoder/residual_cost.rs` - Coefficient cost estimation
+   - `get_cost_luma16()` - I16 coefficient cost
+   - `get_cost_luma4()` - I4 coefficient cost
+
+3. `src/common/transform.rs` - DCT/IDCT transforms
+   - May affect reconstruction SSE
+
+## Test Commands
+
+```bash
+# Run with mode debug for specific macroblock
+MB_DEBUG=25,4 cargo run --release --features mode_debug --example compare_rd_scores -- 25 4
+
+# Run I4 vs I16 comparison
+cargo run --release --example test_i4_vs_i16
+
+# Compare quantizers
+cargo run --release --example compare_quantizers
+```
+
+## Next Steps
+
+1. **Add SSE debug output** - Print I16 and I4 SSE values separately during mode selection
+2. **Compare reconstruction** - Verify reconstructed pixels match between zenwebp and libwebp
+3. **Check libwebp I4 SSE** - If libwebp evaluates both modes, what SSE does it compute for I4?
 
 ## Files Modified This Session
 
-1. `src/encoder/vp8/mode_selection.rs` - Fixed potential u16 overflow in I4 RD scoring
-   - Changed `rd_score(sse, total_rate as u16, lambda)` to `rd_score_with_coeffs(sse, mode_cost, coeff_cost, lambda)`
-   - The overflow wasn't actually occurring in tests, but fix is correct for safety
-
-## What Was Tried (And Failed)
-
-### Adding Trellis to I16 Mode Selection
-
-Hypothesis: Mismatch between simple quantization in I16 mode selection vs trellis in final encoding.
-
-**Result: Made files LARGER (+18 to +152 bytes)**
-
-Reason: libwebp does NOT use trellis for Y2 (DC) coefficients, even at high methods. Our final encoding also doesn't use trellis for Y2. Adding trellis to Y1 during mode selection created a mismatch.
-
-Code added and reverted:
-- Added trellis for Y2 during I16 mode selection - WRONG (Y2 never uses trellis)
-- Added trellis for Y1 during I16 mode selection - Made things worse
-
-## Remaining Gap Analysis
-
-The ~3% gap at m6 (1.031x) vs libwebp is due to:
-
-1. **Mode selection threshold** - We favor I4 over I16 more than libwebp
-2. **I4 produces more coefficients** when we pick it over I16 incorrectly
-
-## Next Steps To Investigate
-
-### 1. Compare I4 vs I16 RD Score Computation
-
-The I4 vs I16 comparison happens in `choose_macroblock_info()`:
-```rust
-match self.pick_best_intra4(mbx, mby, i16_score) {
-    Some((modes, _)) => (LumaMode::B, Some(modes)),  // I4 wins
-    None => (luma_mode, None),  // I16 wins
-}
-```
-
-Key questions:
-- Why does I4 appear to have a lower RD score when it's actually worse?
-- Is the BMODE_COST (211) penalty correct?
-- Are the I4 sub-block mode costs (VP8_FIXED_COSTS_I4) correct?
-
-### 2. Instrument Mode Selection
-
-Add debug logging to a specific disputed macroblock (e.g., MB(14,1) where zen picks I4 but libwebp picks I16):
-- Print I16 score components: mode_cost, coeff_cost, SSE, spectral_disto, lambda
-- Print I4 running score at each sub-block
-- Compare with libwebp's intermediate values
-
-### 3. Check Lambda Values
-
-The RD comparison uses `lambda_mode` for both I4 and I16. Verify:
-- `lambda_mode` calculation matches libwebp's `dqm->lambda_mode`
-- The formula `lambda_mode = (q² >> 7)` is correct
-
-### 4. Check Coefficient Cost Estimation
-
-The coefficient cost for I4 blocks comes from `get_cost_luma4()`. Verify:
-- Cost tables match libwebp's
-- Context tracking (nz_top, nz_left) is correct
-
-## Diagnostic Test Files
-
-These files are useful for investigation:
-- `tests/i4_diagnostic_harness.rs` - Comprehensive comparison tests
-- `examples/test_i4_vs_i16.rs` - I4 vs I16 decision analysis
-- `examples/test_no_trellis.rs` - Method comparison
-
-Run with:
-```bash
-cargo test --release --features _corpus_tests --test i4_diagnostic_harness -- --nocapture
-cargo run --release --example test_i4_vs_i16
-```
-
-## Benchmark Results (792079.png, Q75, SNS=0, filter=0, segments=1)
-
-| Method | zenwebp | libwebp | Ratio |
-|--------|---------|---------|-------|
-| 0 | 13,988 | 16,678 | **0.839x** |
-| 2 | 12,616 | 13,440 | **0.939x** |
-| 4 | 12,174 | 12,018 | 1.013x |
-| 6 | 12,084 | 11,720 | 1.031x |
-
-Key insight: At methods 0-2 (no I4 or limited I4), we're SMALLER than libwebp.
-The gap opens up at methods 3+ when more I4 modes are enabled.
-
-## Code Locations
-
-- I4 mode selection: `src/encoder/vp8/mode_selection.rs:320-612` (`pick_best_intra4`)
-- I16 mode selection: `src/encoder/vp8/mode_selection.rs:34-211` (`pick_best_intra16`)
-- I4 vs I16 comparison: `src/encoder/vp8/mode_selection.rs:779-808` (`choose_macroblock_info`)
-- Lambda calculations: `src/encoder/cost.rs:315-340` (`calc_lambda_*`)
-- Fixed costs: `src/encoder/tables.rs:386-430` (FIXED_COSTS_I16, VP8_FIXED_COSTS_I4)
+- `Cargo.toml` - Added `mode_debug` feature
+- `src/encoder/vp8/mode_selection.rs` - Added conditional debug output
+- `examples/compare_rd_scores.rs` - New diagnostic tool
+- `examples/compare_quantizers.rs` - New diagnostic tool
+- `examples/debug_mode_decision.rs` - New diagnostic tool
+- `examples/test_i4_vs_i16.rs` - Enhanced with nonzero coefficient info
 
 ## Git State
 
-Working tree has changes:
-- `CLAUDE.md` - Updated with session notes
-- `src/encoder/vp8/mode_selection.rs` - Safety fix for u16 overflow
-
-Commit the safety fix before continuing investigation.
+All changes committed. Examples directory is untracked (intentional).
