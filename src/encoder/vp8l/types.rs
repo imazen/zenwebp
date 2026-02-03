@@ -75,6 +75,9 @@ pub struct Vp8lConfig {
     /// `None` = auto-detect optimal (default), `Some(0)` = disable cache,
     /// `Some(1..=10)` = search up to this many bits.
     pub cache_bits: Option<u8>,
+    /// Near-lossless quality (0-100). 100 = exact lossless (disabled),
+    /// lower values = more aggressive quantization for better compression.
+    pub near_lossless: u8,
     /// Use predictor transform.
     pub use_predictor: bool,
     /// Use cross-color transform.
@@ -95,7 +98,8 @@ impl Default for Vp8lConfig {
     fn default() -> Self {
         Self {
             quality: Vp8lQuality::default(),
-            cache_bits: None, // Auto-detect optimal cache bits
+            cache_bits: None,   // Auto-detect optimal cache bits
+            near_lossless: 100, // Exact lossless (disabled)
             use_predictor: true,
             use_cross_color: true, // Enabled: reduces cross-channel correlation in residuals
             use_subtract_green: true,

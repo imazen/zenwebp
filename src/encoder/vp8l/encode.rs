@@ -356,6 +356,12 @@ fn encode_argb(
         None
     };
 
+    // Apply near-lossless preprocessing if enabled.
+    // Matching libwebp: only when not palette and not predictor mode.
+    if config.near_lossless < 100 && !use_palette && !use_predictor {
+        super::near_lossless::apply_near_lossless(argb, width, height, config.near_lossless);
+    }
+
     // Apply transforms and signal them in bitstream.
     // Order: SubtractGreen → Predictor → CrossColor (matching libwebp).
     // Subtract green first decorrelates channels so predictor works better.

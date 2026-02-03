@@ -16,6 +16,7 @@ mod hash_chain;
 mod histogram;
 mod huffman;
 mod meta_huffman;
+mod near_lossless;
 mod transforms;
 mod types;
 
