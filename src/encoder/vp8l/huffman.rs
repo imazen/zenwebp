@@ -27,14 +27,113 @@ pub struct HuffmanCode {
     pub length: u8,
 }
 
+/// Optimize histogram counts for better RLE encoding of Huffman code lengths.
+/// Matches libwebp's OptimizeHuffmanForRle exactly.
+///
+/// This modifies the population counts so that the consequent Huffman tree
+/// compression, especially its RLE-part, gives smaller output.
+fn optimize_huffman_for_rle(counts: &mut [u32]) {
+    let n = counts.len();
+    if n == 0 {
+        return;
+    }
+
+    // Phase 1: Trim trailing zeros.
+    let mut length = n;
+    while length > 0 && counts[length - 1] == 0 {
+        length -= 1;
+    }
+    if length == 0 {
+        return; // All zeros.
+    }
+
+    // Phase 2: Mark sequences that are already good for RLE encoding.
+    // Mark any seq of 0's that is >= 5 as good_for_rle.
+    // Mark any seq of non-0's that is >= 7 as good_for_rle.
+    let mut good_for_rle = vec![false; n];
+    {
+        let mut symbol = counts[0];
+        let mut stride = 0usize;
+        for i in 0..=length {
+            if i == length || counts[i] != symbol {
+                if (symbol == 0 && stride >= 5) || (symbol != 0 && stride >= 7) {
+                    for k in 0..stride {
+                        good_for_rle[i - k - 1] = true;
+                    }
+                }
+                stride = 1;
+                if i != length {
+                    symbol = counts[i];
+                }
+            } else {
+                stride += 1;
+            }
+        }
+    }
+
+    // Phase 3: Replace population counts that lead to more RLE codes.
+    // Collapse strides of similar values to their average.
+    {
+        let mut stride = 0u32;
+        let mut limit = counts[0];
+        let mut sum = 0u64;
+        for i in 0..=length {
+            if i == length
+                || good_for_rle[i]
+                || (i != 0 && good_for_rle[i - 1])
+                || ((counts[i] as i64 - limit as i64).unsigned_abs() >= 4)
+            {
+                if stride >= 4 || (stride >= 3 && sum == 0) {
+                    // Collapse the stride to its average.
+                    let count = if sum == 0 {
+                        0u32
+                    } else {
+                        let avg = (sum + stride as u64 / 2) / stride as u64;
+                        (avg as u32).max(1)
+                    };
+                    for k in 0..stride {
+                        counts[i - k as usize - 1] = count;
+                    }
+                }
+                stride = 0;
+                sum = 0;
+                if i < length.saturating_sub(3) {
+                    // Look ahead to set limit from next 4 elements.
+                    limit = ((counts[i] as u64
+                        + counts[i + 1] as u64
+                        + counts[i + 2] as u64
+                        + counts[i + 3] as u64
+                        + 2)
+                        / 4) as u32;
+                } else if i < length {
+                    limit = counts[i];
+                } else {
+                    limit = 0;
+                }
+            }
+            stride += 1;
+            if i != length {
+                sum += counts[i] as u64;
+                if stride >= 4 {
+                    limit = ((sum + stride as u64 / 2) / stride as u64) as u32;
+                }
+            }
+        }
+    }
+}
+
 /// Build Huffman code lengths from symbol frequencies.
 /// Uses package-merge algorithm for length-limited codes.
 pub fn build_huffman_lengths(freq: &[u32], max_len: u8) -> Vec<u8> {
     let n = freq.len();
     let mut lengths = vec![0u8; n];
 
-    // Count non-zero symbols
-    let non_zero: Vec<(usize, u32)> = freq
+    // Optimize histogram for RLE encoding (matching libwebp's VP8LCreateHuffmanTree).
+    let mut optimized_freq = freq.to_vec();
+    optimize_huffman_for_rle(&mut optimized_freq);
+
+    // Count non-zero symbols (from optimized histogram)
+    let non_zero: Vec<(usize, u32)> = optimized_freq
         .iter()
         .enumerate()
         .filter(|(_, &f)| f > 0)
