@@ -145,8 +145,13 @@ fn main() {
             ..config.clone()
         };
         let vp8l_nomh = zenwebp::encoder::vp8l::encode_vp8l(
-            &rgb_pixels, width, height, has_alpha, &config_nomh,
-        ).ok();
+            &rgb_pixels,
+            width,
+            height,
+            has_alpha,
+            &config_nomh,
+        )
+        .ok();
 
         let webp = wrap_vp8l_in_riff(&vp8l);
         let zen_size = webp.len() as u64;
@@ -189,9 +194,15 @@ fn main() {
         let mh_note = if let Some(ref nomh) = vp8l_nomh {
             let nomh_size = wrap_vp8l_in_riff(nomh).len() as u64;
             if nomh_size > zen_size {
-                format!("MH-{:.0}%", (1.0 - zen_size as f64 / nomh_size as f64) * 100.0)
+                format!(
+                    "MH-{:.0}%",
+                    (1.0 - zen_size as f64 / nomh_size as f64) * 100.0
+                )
             } else {
-                format!("MH+{:.0}%", (zen_size as f64 / nomh_size as f64 - 1.0) * 100.0)
+                format!(
+                    "MH+{:.0}%",
+                    (zen_size as f64 / nomh_size as f64 - 1.0) * 100.0
+                )
             }
         } else {
             String::new()

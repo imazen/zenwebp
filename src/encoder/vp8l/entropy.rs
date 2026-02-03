@@ -229,6 +229,13 @@ fn div_round(num: u64, den: u64) -> u64 {
     (num + den / 2) / den
 }
 
+/// Bits entropy for a distribution (entropy only, no Huffman tree cost).
+/// Matches libwebp's VP8LBitsEntropy.
+pub fn vp8l_bits_entropy(population: &[u32]) -> u64 {
+    let (bit_entropy, _stats) = get_entropy_unrefined(population);
+    bits_entropy_refine(&bit_entropy)
+}
+
 /// Cost to encode a single population (entropy + Huffman tree cost).
 /// Returns (cost, trivial_sym, is_used).
 pub fn population_cost(population: &[u32]) -> (u64, Option<u16>, bool) {

@@ -22,6 +22,7 @@ use super::types::{
     NUM_LENGTH_CODES, NUM_LITERAL_CODES,
 };
 
+use super::entropy::vp8l_bits_entropy;
 use crate::encoder::api::EncodingError;
 
 /// Encode an image using VP8L lossless compression.
@@ -64,6 +65,212 @@ pub fn encode_vp8l(
     encode_argb(&mut argb, w, h, has_alpha, config)
 }
 
+/// Result of entropy analysis for transform selection.
+/// Matches libwebp's EntropyIx enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EntropyMode {
+    /// No transforms (raw pixel values).
+    Direct,
+    /// Predictor transform only.
+    Spatial,
+    /// Subtract green transform only.
+    SubGreen,
+    /// Subtract green + predictor transforms.
+    SpatialSubGreen,
+    /// Palette transform.
+    Palette,
+}
+
+struct AnalyzeResult {
+    mode: EntropyMode,
+    red_and_blue_always_zero: bool,
+}
+
+/// Analyze image entropy to determine the best transform combination.
+///
+/// Matches libwebp's AnalyzeEntropy: builds 13 histograms (256 buckets each)
+/// in a single pass, estimates Shannon entropy for 5 transform modes, and picks
+/// the mode with lowest total entropy.
+fn analyze_entropy(
+    argb: &[u32],
+    width: usize,
+    height: usize,
+    use_palette: bool,
+    palette_size: usize,
+    transform_bits: u8,
+) -> AnalyzeResult {
+    // Short-circuit for small palettes (always win due to pixel packing)
+    if use_palette && palette_size <= 16 {
+        return AnalyzeResult {
+            mode: EntropyMode::Palette,
+            red_and_blue_always_zero: true,
+        };
+    }
+
+    // 13 histogram categories matching libwebp's HistoIx enum
+    const HISTO_ALPHA: usize = 0;
+    const HISTO_RED: usize = 1;
+    const HISTO_GREEN: usize = 2;
+    const HISTO_BLUE: usize = 3;
+    const HISTO_ALPHA_PRED: usize = 4;
+    const HISTO_RED_PRED: usize = 5;
+    const HISTO_GREEN_PRED: usize = 6;
+    const HISTO_BLUE_PRED: usize = 7;
+    const HISTO_RED_SUB_GREEN: usize = 8;
+    const HISTO_BLUE_SUB_GREEN: usize = 9;
+    const HISTO_RED_PRED_SUB_GREEN: usize = 10;
+    const HISTO_BLUE_PRED_SUB_GREEN: usize = 11;
+    const HISTO_PALETTE: usize = 12;
+    const NUM_HISTO: usize = 13;
+    const NUM_BUCKETS: usize = 256;
+
+    let mut histo = [[0u32; NUM_BUCKETS]; NUM_HISTO];
+
+    // Scan all pixels, building histograms
+    let mut pix_prev = argb[0]; // Skip first pixel (no left neighbor)
+    for y in 0..height {
+        for x in 0..width {
+            let pix = argb[y * width + x];
+            let pix_diff = sub_pixels(pix, pix_prev);
+            pix_prev = pix;
+
+            // Skip pixels identical to left neighbor or above neighbor
+            if pix_diff == 0 || (y > 0 && pix == argb[(y - 1) * width + x]) {
+                continue;
+            }
+
+            let a = (pix >> 24) as usize;
+            let r = ((pix >> 16) & 0xff) as usize;
+            let g = ((pix >> 8) & 0xff) as usize;
+            let b = (pix & 0xff) as usize;
+
+            // kDirect: raw channel values
+            histo[HISTO_ALPHA][a] += 1;
+            histo[HISTO_RED][r] += 1;
+            histo[HISTO_GREEN][g] += 1;
+            histo[HISTO_BLUE][b] += 1;
+
+            // kSpatial: per-channel prediction difference
+            let da = ((pix_diff >> 24) & 0xff) as usize;
+            let dr = ((pix_diff >> 16) & 0xff) as usize;
+            let dg = ((pix_diff >> 8) & 0xff) as usize;
+            let db = (pix_diff & 0xff) as usize;
+            histo[HISTO_ALPHA_PRED][da] += 1;
+            histo[HISTO_RED_PRED][dr] += 1;
+            histo[HISTO_GREEN_PRED][dg] += 1;
+            histo[HISTO_BLUE_PRED][db] += 1;
+
+            // kSubGreen: R-G and B-G (mod 256)
+            histo[HISTO_RED_SUB_GREEN][(r.wrapping_sub(g)) & 0xff] += 1;
+            histo[HISTO_BLUE_SUB_GREEN][(b.wrapping_sub(g)) & 0xff] += 1;
+
+            // kSpatialSubGreen: (R-G) and (B-G) of prediction difference
+            histo[HISTO_RED_PRED_SUB_GREEN][(dr.wrapping_sub(dg)) & 0xff] += 1;
+            histo[HISTO_BLUE_PRED_SUB_GREEN][(db.wrapping_sub(dg)) & 0xff] += 1;
+
+            // kPalette: hash of raw pixel
+            let hash = hash_pix(pix);
+            histo[HISTO_PALETTE][hash as usize] += 1;
+        }
+    }
+
+    // Add one zero to predicted histograms (matching libwebp's correction).
+    // The pix_diff == 0 skip removes zeros too aggressively.
+    histo[HISTO_RED_PRED_SUB_GREEN][0] += 1;
+    histo[HISTO_BLUE_PRED_SUB_GREEN][0] += 1;
+    histo[HISTO_RED_PRED][0] += 1;
+    histo[HISTO_GREEN_PRED][0] += 1;
+    histo[HISTO_BLUE_PRED][0] += 1;
+    histo[HISTO_ALPHA_PRED][0] += 1;
+
+    // Compute VP8LBitsEntropy for each histogram
+    let mut entropy_comp = [0u64; NUM_HISTO];
+    for j in 0..NUM_HISTO {
+        entropy_comp[j] = vp8l_bits_entropy(&histo[j]);
+    }
+
+    // Combine into 5 mode entropies
+    let mut entropy = [0u64; 5];
+    entropy[0] = entropy_comp[HISTO_ALPHA]
+        + entropy_comp[HISTO_RED]
+        + entropy_comp[HISTO_GREEN]
+        + entropy_comp[HISTO_BLUE]; // kDirect
+    entropy[1] = entropy_comp[HISTO_ALPHA_PRED]
+        + entropy_comp[HISTO_RED_PRED]
+        + entropy_comp[HISTO_GREEN_PRED]
+        + entropy_comp[HISTO_BLUE_PRED]; // kSpatial
+    entropy[2] = entropy_comp[HISTO_ALPHA]
+        + entropy_comp[HISTO_RED_SUB_GREEN]
+        + entropy_comp[HISTO_GREEN]
+        + entropy_comp[HISTO_BLUE_SUB_GREEN]; // kSubGreen
+    entropy[3] = entropy_comp[HISTO_ALPHA_PRED]
+        + entropy_comp[HISTO_RED_PRED_SUB_GREEN]
+        + entropy_comp[HISTO_GREEN_PRED]
+        + entropy_comp[HISTO_BLUE_PRED_SUB_GREEN]; // kSpatialSubGreen
+    entropy[4] = entropy_comp[HISTO_PALETTE]; // kPalette
+
+    // Add transform overhead costs (in LOG_2_PRECISION_BITS fixed-point)
+    // kLog2Table[14] = log2(14) * (1 << 23): cost of storing 14 predictor modes per tile
+    const LOG2_14_FIXED: u64 = 31938408;
+    // kLog2Table[24] = log2(24) * (1 << 23): cost of storing color transform per tile
+    const LOG2_24_FIXED: u64 = 38461453;
+
+    let tiles_w = subsample_size(width as u32, transform_bits) as u64;
+    let tiles_h = subsample_size(height as u32, transform_bits) as u64;
+    entropy[1] += tiles_w * tiles_h * LOG2_14_FIXED; // kSpatial overhead
+    entropy[3] += tiles_w * tiles_h * LOG2_24_FIXED; // kSpatialSubGreen overhead
+
+    // Palette overhead: palette_size * 8 bits estimated per entry
+    const LOG_2_PRECISION_BITS: u32 = 23;
+    if use_palette {
+        entropy[4] += (palette_size as u64 * 8) << LOG_2_PRECISION_BITS;
+    }
+
+    // Find minimum entropy mode
+    let last_mode = if use_palette { 5 } else { 4 };
+    let mut best_idx = 0usize;
+    for k in 1..last_mode {
+        if entropy[k] < entropy[best_idx] {
+            best_idx = k;
+        }
+    }
+
+    let mode = match best_idx {
+        0 => EntropyMode::Direct,
+        1 => EntropyMode::Spatial,
+        2 => EntropyMode::SubGreen,
+        3 => EntropyMode::SpatialSubGreen,
+        4 => EntropyMode::Palette,
+        _ => unreachable!(),
+    };
+
+    // Check if red and blue are always zero in the chosen mode's histograms
+    let (red_histo_idx, blue_histo_idx) = match best_idx {
+        0 => (HISTO_RED, HISTO_BLUE),
+        1 => (HISTO_RED_PRED, HISTO_BLUE_PRED),
+        2 => (HISTO_RED_SUB_GREEN, HISTO_BLUE_SUB_GREEN),
+        3 => (HISTO_RED_PRED_SUB_GREEN, HISTO_BLUE_PRED_SUB_GREEN),
+        4 => (HISTO_RED, HISTO_BLUE), // palette mode
+        _ => unreachable!(),
+    };
+
+    let red_and_blue_always_zero =
+        (1..NUM_BUCKETS).all(|i| (histo[red_histo_idx][i] | histo[blue_histo_idx][i]) == 0);
+
+    AnalyzeResult {
+        mode,
+        red_and_blue_always_zero,
+    }
+}
+
+/// Hash a pixel for palette entropy approximation (matching libwebp's HashPix).
+#[inline]
+fn hash_pix(pix: u32) -> u8 {
+    let v = (pix as u64).wrapping_add((pix >> 19) as u64);
+    let h = v.wrapping_mul(0x39c5fba7u64);
+    ((h & 0xffffffff) >> 24) as u8
+}
+
 /// Encode ARGB pixels (internal).
 fn encode_argb(
     argb: &mut [u32],
@@ -85,15 +292,63 @@ fn encode_argb(
     writer.write_bit(has_alpha);
     writer.write_bits(0, 3); // version 0
 
-    // Determine which transforms to use
-    let use_palette = config.use_palette && can_use_palette(argb);
-    let use_predictor = config.use_predictor && !use_palette;
-    let use_cross_color = config.use_cross_color && !use_palette;
-    let use_subtract_green = config.use_subtract_green && !use_palette;
-
-    // Try palette encoding if beneficial
-    let palette_transform = if use_palette {
+    // Determine which transforms to use via entropy analysis (matching libwebp's AnalyzeEntropy)
+    let palette_candidate = if config.use_palette {
+        can_use_palette(argb)
+    } else {
+        false
+    };
+    let palette_transform_candidate = if palette_candidate {
         ColorIndexTransform::try_build(argb)
+    } else {
+        None
+    };
+    let palette_size = palette_transform_candidate
+        .as_ref()
+        .map(|p| p.palette.len())
+        .unwrap_or(0);
+
+    // Compute transform bits for overhead estimation
+    let histo_bits_est = get_histo_bits(width, height, config.quality.method);
+    let transform_bits_est = get_transform_bits(config.quality.method, histo_bits_est);
+    let transform_bits_clamped = clamp_bits(
+        width,
+        height,
+        transform_bits_est,
+        MIN_TRANSFORM_BITS,
+        MAX_TRANSFORM_BITS,
+        MAX_PREDICTOR_IMAGE_SIZE,
+    );
+
+    let analysis = analyze_entropy(
+        argb,
+        width,
+        height,
+        palette_candidate,
+        palette_size,
+        transform_bits_clamped,
+    );
+
+    // Map entropy mode to transform flags (matching libwebp's EncoderAnalyze)
+    let use_palette = matches!(analysis.mode, EntropyMode::Palette);
+    let use_subtract_green = config.use_subtract_green
+        && matches!(
+            analysis.mode,
+            EntropyMode::SubGreen | EntropyMode::SpatialSubGreen
+        );
+    let use_predictor = config.use_predictor
+        && matches!(
+            analysis.mode,
+            EntropyMode::Spatial | EntropyMode::SpatialSubGreen
+        );
+    // Cross-color only when: not palette, not low_effort, R/B not always zero, and predict is on
+    let use_cross_color = config.use_cross_color
+        && !use_palette
+        && !analysis.red_and_blue_always_zero
+        && use_predictor;
+
+    let palette_transform = if use_palette {
+        palette_transform_candidate
     } else {
         None
     };
@@ -137,7 +392,13 @@ fn encode_argb(
         // Write predictor sub-image (full LZ77+Huffman encoding)
         let pred_w = subsample_size(width as u32, pred_bits) as usize;
         let pred_h = subsample_size(height as u32, pred_bits) as usize;
-        write_predictor_image(&mut writer, &predictor_data, pred_w, pred_h, config.quality.quality);
+        write_predictor_image(
+            &mut writer,
+            &predictor_data,
+            pred_w,
+            pred_h,
+            config.quality.quality,
+        );
     }
 
     // Cross-color transform (applied third, on predictor residuals)
@@ -167,7 +428,13 @@ fn encode_argb(
         // Write cross-color sub-image (full LZ77+Huffman encoding)
         let cc_w = subsample_size(width as u32, cc_bits) as usize;
         let cc_h = subsample_size(height as u32, cc_bits) as usize;
-        write_cross_color_image(&mut writer, &cross_color_data, cc_w, cc_h, config.quality.quality);
+        write_cross_color_image(
+            &mut writer,
+            &cross_color_data,
+            cc_w,
+            cc_h,
+            config.quality.quality,
+        );
     }
 
     // Color indexing transform
@@ -516,11 +783,7 @@ fn build_huffman_group(h: &super::histogram::Histogram) -> HuffmanGroupCodes {
 
 /// Write the histogram prefix image (meta-Huffman sub-image).
 /// Uses full LZ77+Huffman encoding matching libwebp's EncodeImageNoHuffman.
-fn write_histogram_image(
-    writer: &mut BitWriter,
-    meta_info: &MetaHuffmanInfo,
-    quality: u8,
-) {
+fn write_histogram_image(writer: &mut BitWriter, meta_info: &MetaHuffmanInfo, quality: u8) {
     // Convert histogram symbols to ARGB pixels: green=low byte, red=high byte
     let argb: Vec<u32> = meta_info
         .histogram_symbols
@@ -528,14 +791,8 @@ fn write_histogram_image(
         .map(|&sym| make_argb(0, (sym >> 8) as u8, (sym & 0xFF) as u8, 0))
         .collect();
 
-    let histo_w = subsample_size(
-        meta_info.image_width as u32,
-        meta_info.histo_bits,
-    ) as usize;
-    let histo_h = subsample_size(
-        meta_info.image_height as u32,
-        meta_info.histo_bits,
-    ) as usize;
+    let histo_w = subsample_size(meta_info.image_width as u32, meta_info.histo_bits) as usize;
+    let histo_h = subsample_size(meta_info.image_height as u32, meta_info.histo_bits) as usize;
 
     encode_image_no_huffman(writer, &argb, histo_w, histo_h, quality);
 }
@@ -680,26 +937,19 @@ fn encode_image_no_huffman(
             }
             PixOrCopy::Copy { len, dist } => {
                 // Write length code
-                let (len_code, len_extra_bits) =
-                    super::histogram::length_to_code(len);
-                let len_extra_bits_count =
-                    super::histogram::length_code_extra_bits(len_code);
+                let (len_code, len_extra_bits) = super::histogram::length_to_code(len);
+                let len_extra_bits_count = super::histogram::length_code_extra_bits(len_code);
                 if !lit_trivial {
                     let lit_idx = NUM_LITERAL_CODES + len_code as usize;
-                    writer.write_bits(
-                        lit_codes[lit_idx].code as u64,
-                        lit_codes[lit_idx].length,
-                    );
+                    writer.write_bits(lit_codes[lit_idx].code as u64, lit_codes[lit_idx].length);
                 }
                 if len_extra_bits_count > 0 {
                     writer.write_bits(len_extra_bits as u64, len_extra_bits_count);
                 }
 
                 // Write distance code
-                let (dist_code, dist_extra_bits) =
-                    super::histogram::distance_code_to_prefix(dist);
-                let dist_extra_bits_count =
-                    super::histogram::distance_code_extra_bits(dist_code);
+                let (dist_code, dist_extra_bits) = super::histogram::distance_code_to_prefix(dist);
+                let dist_extra_bits_count = super::histogram::distance_code_extra_bits(dist_code);
                 if !dist_trivial {
                     writer.write_bits(
                         dist_codes[dist_code as usize].code as u64,
