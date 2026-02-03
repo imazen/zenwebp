@@ -951,42 +951,182 @@ pub struct ColorIndexTransform {
     pub palette: Vec<u32>,
 }
 
+/// Compute the xbits value for pixel packing based on palette size.
+/// Returns: 3 (8 pixels/word) for <=2 colors, 2 (4/word) for <=4,
+/// 1 (2/word) for <=16, 0 (no packing) otherwise.
+pub fn palette_xbits(palette_size: usize) -> u8 {
+    if palette_size <= 2 {
+        3
+    } else if palette_size <= 4 {
+        2
+    } else if palette_size <= 16 {
+        1
+    } else {
+        0
+    }
+}
+
+/// Compute distance between two palette colors for sorting.
+/// Component distances are weighted 9x for RGB, 1x for alpha.
+/// Matches libwebp's PaletteColorDistance.
+fn palette_color_distance(col1: u32, col2: u32) -> u32 {
+    let diff = sub_pixels_color(col1, col2);
+    let component_distance = |v: u8| -> u32 {
+        if v <= 128 {
+            v as u32
+        } else {
+            256 - v as u32
+        }
+    };
+    let score = component_distance(diff as u8)
+        + component_distance((diff >> 8) as u8)
+        + component_distance((diff >> 16) as u8);
+    score * 9 + component_distance((diff >> 24) as u8)
+}
+
+/// Subtract two pixels component-wise (wrapping). Same as sub_pixels below
+/// but works on u32 directly.
+fn sub_pixels_color(a: u32, b: u32) -> u32 {
+    let aa = (a >> 24).wrapping_sub(b >> 24) & 0xff;
+    let ar = ((a >> 16) & 0xff).wrapping_sub((b >> 16) & 0xff) & 0xff;
+    let ag = ((a >> 8) & 0xff).wrapping_sub((b >> 8) & 0xff) & 0xff;
+    let ab = (a & 0xff).wrapping_sub(b & 0xff) & 0xff;
+    (aa << 24) | (ar << 16) | (ag << 8) | ab
+}
+
+/// Sort palette to minimize L1 deltas between consecutive entries.
+/// Matches libwebp's PaletteSortMinimizeDeltas. Greedy nearest-neighbor ordering
+/// weighted toward RGB channels over alpha.
+fn palette_sort_minimize_deltas(palette_sorted: &[u32]) -> Vec<u32> {
+    let num_colors = palette_sorted.len();
+    let mut palette: Vec<u32> = palette_sorted.to_vec();
+
+    // Check if palette already has monotonic deltas (no benefit to reorder)
+    if !palette_has_non_monotonous_deltas(&palette) {
+        return palette;
+    }
+
+    // For palettes > 17 colors, move 0 to the end (matching libwebp)
+    if num_colors > 17 && palette[0] == 0 {
+        let last = num_colors - 1;
+        palette.swap(0, last);
+    }
+
+    // Greedy nearest-neighbor reordering (selection sort by distance)
+    let mut predict = 0u32;
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..num_colors {
+        let mut best_ix = i;
+        let mut best_score = u32::MAX;
+        for k in i..num_colors {
+            let cur_score = palette_color_distance(palette[k], predict);
+            if best_score > cur_score {
+                best_score = cur_score;
+                best_ix = k;
+            }
+        }
+        palette.swap(best_ix, i);
+        predict = palette[i];
+    }
+
+    palette
+}
+
+/// Check if palette has non-monotonous deltas (both positive and negative
+/// changes in the same component). If monotonous, no benefit to reorder.
+/// Matches libwebp's PaletteHasNonMonotonousDeltas.
+fn palette_has_non_monotonous_deltas(palette: &[u32]) -> bool {
+    let mut predict = 0u32;
+    let mut sign_found = 0u8;
+    for &color in palette {
+        let diff = sub_pixels_color(color, predict);
+        let rd = ((diff >> 16) & 0xff) as u8;
+        let gd = ((diff >> 8) & 0xff) as u8;
+        let bd = (diff & 0xff) as u8;
+        if rd != 0 {
+            sign_found |= if rd < 0x80 { 1 } else { 2 };
+        }
+        if gd != 0 {
+            sign_found |= if gd < 0x80 { 8 } else { 16 };
+        }
+        if bd != 0 {
+            sign_found |= if bd < 0x80 { 64 } else { 128 };
+        }
+        predict = color;
+    }
+    (sign_found & (sign_found << 1)) != 0
+}
+
+/// Bundle multiple palette indices into packed pixels.
+/// For palette_size <=2: 8 indices per pixel (1 bit each)
+/// For palette_size <=4: 4 indices per pixel (2 bits each)
+/// For palette_size <=16: 2 indices per pixel (4 bits each)
+/// Matches libwebp's VP8LBundleColorMap_C.
+pub fn bundle_color_map(pixels: &[u32], width: usize, xbits: u8) -> Vec<u32> {
+    if xbits == 0 {
+        // No packing needed - just ensure format is 0xff000000 | (idx << 8)
+        return pixels
+            .iter()
+            .map(|&p| 0xff000000 | ((argb_green(p) as u32) << 8))
+            .collect();
+    }
+
+    let bit_depth = 1u32 << (3 - xbits);
+    let mask = (1usize << xbits) - 1;
+    let packed_width = subsample_size(width as u32, xbits) as usize;
+    let height = pixels.len() / width;
+    let mut dst = Vec::with_capacity(packed_width * height);
+
+    for y in 0..height {
+        let row_start = y * width;
+        let mut code = 0xff000000u32;
+        for x in 0..width {
+            let xsub = x & mask;
+            if xsub == 0 {
+                code = 0xff000000;
+            }
+            let idx = argb_green(pixels[row_start + x]) as u32;
+            code |= idx << (8 + bit_depth * xsub as u32);
+            if xsub == mask || x == width - 1 {
+                dst.push(code);
+            }
+        }
+    }
+
+    dst
+}
+
 impl ColorIndexTransform {
     /// Try to build a color index transform.
     /// Returns None if image has more than 256 colors.
+    /// Palette is sorted lexicographically (matching libwebp's GetColorPalette).
     pub fn try_build(pixels: &[u32]) -> Option<Self> {
-        let mut palette = Vec::with_capacity(256);
         let mut seen = alloc::collections::BTreeSet::new();
 
         for &pixel in pixels {
-            if seen.insert(pixel) {
-                if palette.len() >= 256 {
-                    return None;
-                }
-                palette.push(pixel);
+            seen.insert(pixel);
+            if seen.len() > 256 {
+                return None;
             }
         }
+
+        // BTreeSet iterates in sorted order (lexicographic on u32 = ARGB)
+        let palette_sorted: Vec<u32> = seen.into_iter().collect();
+
+        // Sort to minimize deltas for better delta encoding (matches libwebp kMinimizeDelta)
+        let palette = palette_sort_minimize_deltas(&palette_sorted);
 
         Some(Self { palette })
     }
 
-    /// Get bits per pixel based on palette size.
-    pub fn bits_per_pixel(&self) -> u8 {
-        let n = self.palette.len();
-        if n <= 2 {
-            3 // Pack 8 pixels per pixel (use only 1 bit each)
-        } else if n <= 4 {
-            2 // Pack 4 pixels per pixel (use only 2 bits each)
-        } else if n <= 16 {
-            1 // Pack 2 pixels per pixel (use only 4 bits each)
-        } else {
-            0 // No packing, 8 bits each
-        }
+    /// Get xbits value for pixel packing.
+    pub fn xbits(&self) -> u8 {
+        palette_xbits(self.palette.len())
     }
 
-    /// Apply the transform: convert ARGB to palette indices.
+    /// Apply the transform: convert ARGB to palette indices in green channel.
     pub fn apply(&self, pixels: &mut [u32]) {
-        // Build reverse lookup
+        // Build reverse lookup using a hash map for fast lookups
         let mut lookup = alloc::collections::BTreeMap::new();
         for (i, &color) in self.palette.iter().enumerate() {
             lookup.insert(color, i as u8);
@@ -994,9 +1134,26 @@ impl ColorIndexTransform {
 
         for pixel in pixels.iter_mut() {
             let idx = lookup[pixel];
-            // Store index in green channel
+            // Store index in green channel (A=0xff, R=0, G=idx, B=0)
             *pixel = make_argb(255, 0, idx, 0);
         }
+    }
+
+    /// Apply the transform and bundle pixels into packed format.
+    /// Returns the packed pixel buffer and the new (packed) width.
+    pub fn apply_and_bundle(&self, pixels: &mut [u32], width: usize) -> (Vec<u32>, usize) {
+        // First apply: convert ARGB to palette indices
+        self.apply(pixels);
+
+        let xbits = self.xbits();
+        if xbits == 0 {
+            // No packing needed
+            return (pixels.to_vec(), width);
+        }
+
+        let packed_width = subsample_size(width as u32, xbits) as usize;
+        let packed = bundle_color_map(pixels, width, xbits);
+        (packed, packed_width)
     }
 }
 
@@ -1050,7 +1207,7 @@ mod tests {
 
         let transform = ColorIndexTransform::try_build(&pixels).unwrap();
         assert_eq!(transform.palette.len(), 2);
-        assert_eq!(transform.bits_per_pixel(), 3); // Can pack 8 per pixel
+        assert_eq!(transform.xbits(), 3); // Can pack 8 per pixel
     }
 
     #[test]
@@ -1061,5 +1218,44 @@ mod tests {
             .collect();
         let transform = ColorIndexTransform::try_build(&pixels);
         assert!(transform.is_none());
+    }
+
+    #[test]
+    fn test_palette_bundle_2_colors() {
+        // 2-color palette: xbits=3, 8 pixels per packed pixel
+        let indices: Vec<u32> = (0..16).map(|i| make_argb(255, 0, i & 1, 0)).collect();
+        let bundled = bundle_color_map(&indices, 16, 3);
+        // 16 pixels / 8 per packed = 2 packed pixels
+        assert_eq!(bundled.len(), 2);
+        // First packed pixel: indices 0,1,0,1,0,1,0,1
+        // Each in 1-bit slots at positions 8,9,10,11,12,13,14,15
+        let first = bundled[0];
+        assert_eq!(first & 0xff000000, 0xff000000); // alpha=255
+    }
+
+    #[test]
+    fn test_palette_bundle_16_colors() {
+        // 16-color palette: xbits=1, 2 pixels per packed pixel
+        let indices: Vec<u32> = (0..8)
+            .map(|i| make_argb(255, 0, (i * 3) & 0xf, 0))
+            .collect();
+        let bundled = bundle_color_map(&indices, 8, 1);
+        // 8 pixels / 2 per packed = 4 packed pixels
+        assert_eq!(bundled.len(), 4);
+    }
+
+    #[test]
+    fn test_palette_sort_minimize_deltas() {
+        // Create palette with colors that should be reordered
+        let sorted = vec![
+            make_argb(255, 0, 0, 0),       // black
+            make_argb(255, 128, 128, 128), // gray
+            make_argb(255, 255, 0, 0),     // red
+            make_argb(255, 255, 255, 255), // white
+        ];
+        let reordered = palette_sort_minimize_deltas(&sorted);
+        // Should start from 0 (closest to predict=0), then pick nearest neighbors
+        assert_eq!(reordered[0], make_argb(255, 0, 0, 0)); // black closest to 0
+        assert_eq!(reordered.len(), 4);
     }
 }

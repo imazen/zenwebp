@@ -438,35 +438,82 @@ fn encode_argb(
     }
 
     // Color indexing transform
+    // After palette, we may operate on a packed (narrower) image.
+    let mut packed_buf: Option<Vec<u32>> = None;
+    let mut enc_width = width; // Effective width for LZ77/Huffman (may be packed)
+
     if let Some(ref palette) = palette_transform {
+        let palette_size = palette.palette.len();
+        // Matching libwebp: if last element is 0 and palette_size > 17, omit it
+        // (decoder fills with zeros). Only for non-packed palettes.
+        let encoded_palette_size = if palette.palette[palette_size - 1] == 0 && palette_size > 17 {
+            palette_size - 1
+        } else {
+            palette_size
+        };
+
         writer.write_bit(true); // transform present
         writer.write_bits(3, 2); // color indexing = 3
-        writer.write_bits((palette.palette.len() - 1) as u64, 8);
+        writer.write_bits((encoded_palette_size - 1) as u64, 8);
 
-        // Write palette
-        write_palette(&mut writer, &palette.palette);
+        // Write palette with delta encoding using encode_image_no_huffman
+        // (matching libwebp's EncodePalette: tmp_palette[0] = palette[0],
+        // tmp_palette[i] = palette[i] - palette[i-1] for i >= 1)
+        let mut tmp_palette = Vec::with_capacity(encoded_palette_size);
+        tmp_palette.push(palette.palette[0]);
+        for w in palette.palette[..encoded_palette_size].windows(2) {
+            tmp_palette.push(sub_pixels(w[1], w[0]));
+        }
+        encode_image_no_huffman(&mut writer, &tmp_palette, encoded_palette_size, 1, 20);
 
-        // Apply transform
+        // Apply transform and bundle pixels
+        let xbits = palette.xbits();
         palette.apply(argb);
 
-        // Update width for packed pixels
-        let bits = palette.bits_per_pixel();
-        if bits > 0 {
-            // Pack pixels (implementation simplified for now)
+        if xbits > 0 {
+            let packed_width = subsample_size(width as u32, xbits) as usize;
+            let packed = super::transforms::bundle_color_map(argb, width, xbits);
+            enc_width = packed_width;
+            packed_buf = Some(packed);
         }
     }
 
     // No more transforms
     writer.write_bit(false);
 
+    // Use packed buffer if palette bundling was applied
+    let enc_argb: &[u32] = if let Some(ref buf) = packed_buf {
+        buf
+    } else {
+        argb
+    };
+    let enc_height = enc_argb.len() / enc_width;
+
     // Build backward references (determines optimal cache_bits via entropy estimation)
     let cache_bits_max = if config.cache_bits == 0 {
-        10 // Auto-detect: try all sizes up to MAX_COLOR_CACHE_BITS
+        if let Some(ref pt) = palette_transform {
+            // Cap cache bits for palette images (matching libwebp)
+            let ps = pt.palette.len();
+            if ps < (1 << 10) {
+                // BitsLog2Floor(palette_size) + 1
+                let log2_floor = 31u32.saturating_sub(ps.leading_zeros());
+                (log2_floor + 1).min(10) as u8
+            } else {
+                10
+            }
+        } else {
+            10 // Auto-detect: try all sizes up to MAX_COLOR_CACHE_BITS
+        }
     } else {
         config.cache_bits.min(10)
     };
-    let (refs, cache_bits) =
-        get_backward_references(argb, width, height, config.quality.quality, cache_bits_max);
+    let (refs, cache_bits) = get_backward_references(
+        enc_argb,
+        enc_width,
+        enc_height,
+        config.quality.quality,
+        cache_bits_max,
+    );
 
     // Write color cache info
     if cache_bits > 0 {
@@ -477,9 +524,9 @@ fn encode_argb(
     }
 
     // Build histogram(s) — either single or meta-Huffman with clustering
-    let use_meta = config.use_meta_huffman && width > 16 && height > 16;
+    let use_meta = config.use_meta_huffman && enc_width > 16 && enc_height > 16;
     let histo_bits = if use_meta {
-        get_histo_bits(width, height, config.quality.method)
+        get_histo_bits(enc_width, enc_height, config.quality.method)
     } else {
         0u8
     };
@@ -487,8 +534,8 @@ fn encode_argb(
     let meta_info = if use_meta {
         build_meta_huffman(
             &refs,
-            width,
-            height,
+            enc_width,
+            enc_height,
             histo_bits,
             cache_bits,
             config.quality.quality,
@@ -531,7 +578,7 @@ fn encode_argb(
     };
 
     let histo_xsize = if meta_info.num_histograms > 1 {
-        subsample_size(width as u32, meta_info.histo_bits) as usize
+        subsample_size(enc_width as u32, meta_info.histo_bits) as usize
     } else {
         0
     };
@@ -579,7 +626,7 @@ fn encode_argb(
                     cache.insert(argb_val);
                 }
                 x += 1;
-                if x >= width {
+                if x >= enc_width {
                     x = 0;
                     y += 1;
                 }
@@ -595,10 +642,10 @@ fn encode_argb(
                 }
 
                 if let Some(ref mut cache) = color_cache {
-                    cache.insert(argb[argb_idx]);
+                    cache.insert(enc_argb[argb_idx]);
                 }
                 x += 1;
-                if x >= width {
+                if x >= enc_width {
                     x = 0;
                     y += 1;
                 }
@@ -634,12 +681,12 @@ fn encode_argb(
 
                 if let Some(ref mut cache) = color_cache {
                     for k in 0..len as usize {
-                        cache.insert(argb[argb_idx + k]);
+                        cache.insert(enc_argb[argb_idx + k]);
                     }
                 }
                 for _ in 0..len {
                     x += 1;
-                    if x >= width {
+                    if x >= enc_width {
                         x = 0;
                         y += 1;
                     }
@@ -797,26 +844,43 @@ fn write_histogram_image(writer: &mut BitWriter, meta_info: &MetaHuffmanInfo, qu
     encode_image_no_huffman(writer, &argb, histo_w, histo_h, quality);
 }
 
-/// Check if palette encoding is beneficial.
+/// Check if the image can use a palette (≤256 unique colors).
+/// Matches libwebp's GetColorPalette: returns true if unique color count ≤ MAX_PALETTE_SIZE.
 fn can_use_palette(argb: &[u32]) -> bool {
-    if argb.len() < 100 {
-        return false; // Too small
-    }
+    // Use hash-based approach matching libwebp's GetColorPalette for speed
+    const HASH_SIZE: usize = 256 * 4; // COLOR_HASH_SIZE
+    const HASH_SHIFT: u32 = 22; // 32 - log2(HASH_SIZE)
 
-    // Quick check: sample pixels to estimate unique color count
-    let sample_size = (argb.len() / 16).clamp(64, 1024);
-    let step = argb.len() / sample_size;
+    let mut in_use = [false; HASH_SIZE];
+    let mut colors = [0u32; HASH_SIZE];
+    let mut num_colors = 0;
+    let mut last_pix = !argb.first().copied().unwrap_or(0);
 
-    let mut seen = alloc::collections::BTreeSet::new();
-    for i in (0..argb.len()).step_by(step) {
-        seen.insert(argb[i]);
-        if seen.len() > 256 {
-            return false;
+    for &pix in argb {
+        if pix == last_pix {
+            continue;
+        }
+        last_pix = pix;
+        // Hash matching libwebp's VP8LHashPix
+        let mut key = ((pix.wrapping_mul(0x1e35a7bd)) >> HASH_SHIFT) as usize;
+        loop {
+            if !in_use[key] {
+                colors[key] = pix;
+                in_use[key] = true;
+                num_colors += 1;
+                if num_colors > 256 {
+                    return false;
+                }
+                break;
+            } else if colors[key] == pix {
+                break;
+            } else {
+                key = (key + 1) & (HASH_SIZE - 1);
+            }
         }
     }
 
-    // If sample has few colors, likely palette-friendly
-    seen.len() <= 64
+    true
 }
 
 /// Write predictor sub-image (variable modes per block).
@@ -983,69 +1047,6 @@ fn write_cross_color_image(
     quality: u8,
 ) {
     encode_image_no_huffman(writer, cross_color_data, width, height, quality);
-}
-
-/// Write palette data.
-fn write_palette(writer: &mut BitWriter, palette: &[u32]) {
-    // Palette is written as a 1-row image
-    // No color cache
-    writer.write_bit(false);
-
-    // No meta-Huffman
-    writer.write_bit(false);
-
-    // Build histogram from palette
-    let mut hist_g = [0u32; 280];
-    let mut hist_r = [0u32; 256];
-    let mut hist_b = [0u32; 256];
-    let mut hist_a = [0u32; 256];
-
-    // Palette is differentially coded
-    let mut prev = 0u32;
-    for &color in palette {
-        let diff = sub_pixels(color, prev);
-        hist_g[argb_green(diff) as usize] += 1;
-        hist_r[argb_red(diff) as usize] += 1;
-        hist_b[argb_blue(diff) as usize] += 1;
-        hist_a[argb_alpha(diff) as usize] += 1;
-        prev = color;
-    }
-
-    // Build and write Huffman trees
-    let g_len = build_huffman_lengths(&hist_g, 15);
-    let g_codes = build_huffman_codes(&g_len);
-    let r_len = build_huffman_lengths(&hist_r, 15);
-    let r_codes = build_huffman_codes(&r_len);
-    let b_len = build_huffman_lengths(&hist_b, 15);
-    let b_codes = build_huffman_codes(&b_len);
-    let a_len = build_huffman_lengths(&hist_a, 15);
-    let a_codes = build_huffman_codes(&a_len);
-
-    write_huffman_tree(writer, &g_len);
-    write_huffman_tree(writer, &r_len);
-    write_huffman_tree(writer, &b_len);
-    write_huffman_tree(writer, &a_len);
-    write_single_entry_tree(writer, 0); // distance (not used in palette)
-
-    // Write palette pixels (differentially coded)
-    let mut prev = 0u32;
-    for &color in palette {
-        let diff = sub_pixels(color, prev);
-
-        let g = argb_green(diff) as usize;
-        writer.write_bits(g_codes[g].code as u64, g_codes[g].length);
-
-        let r = argb_red(diff) as usize;
-        writer.write_bits(r_codes[r].code as u64, r_codes[r].length);
-
-        let b = argb_blue(diff) as usize;
-        writer.write_bits(b_codes[b].code as u64, b_codes[b].length);
-
-        let a = argb_alpha(diff) as usize;
-        writer.write_bits(a_codes[a].code as u64, a_codes[a].length);
-
-        prev = color;
-    }
 }
 
 /// Subtract two pixels component-wise (wrapping).
