@@ -105,11 +105,45 @@ cargo run --release --example test_i4_vs_i16
 cargo run --release --example compare_quantizers
 ```
 
+## Major Finding: I4 Efficiency Gap
+
+**The problem is NOT mode selection (I4 vs I16). It's I4 encoding efficiency.**
+
+### I16-only Comparison (m0)
+| Encoder | Size | vs libwebp |
+|---------|------|------------|
+| zenwebp | 13988 | **0.84x** (16% smaller!) |
+| libwebp | 16678 | 1.00x |
+
+### Full I4 Comparison (m4)
+| Encoder | Size | vs libwebp |
+|---------|------|------------|
+| zenwebp | 12174 | 1.013x (1.3% larger) |
+| libwebp | 12018 | 1.00x |
+
+### I4 Benefit (m0 → m4)
+| Encoder | Reduction |
+|---------|-----------|
+| zenwebp | -1814 bytes (13%) |
+| libwebp | -4660 bytes (28%) |
+
+**Key insight:** Our I16 is 16% better than libwebp's, but our I4 only provides 13% benefit
+vs libwebp's 28%. The gap comes from **I4 encoding efficiency, not mode selection**.
+
+## Per-Block I4 Mode Analysis
+
+For macroblocks where BOTH chose I4:
+- **Only 67% of per-block modes match**
+- We use **+172 more DC modes**, +65 more TM modes
+- We use **-161 fewer VE modes**, -42 fewer HE modes
+
+This suggests our per-block RD scoring favors DC/TM when VE/HE would compress better.
+
 ## Next Steps
 
-1. **Add SSE debug output** - Print I16 and I4 SSE values separately during mode selection
-2. **Compare reconstruction** - Verify reconstructed pixels match between zenwebp and libwebp
-3. **Check libwebp I4 SSE** - If libwebp evaluates both modes, what SSE does it compute for I4?
+1. **Investigate per-block mode selection** - Why do we choose DC over VE so often?
+2. **Check VE/HE prediction accuracy** - Are our VE/HE predictions correct?
+3. **Compare coefficient counts per mode** - Does DC really compress better for those blocks?
 
 ## Files Modified This Session
 
