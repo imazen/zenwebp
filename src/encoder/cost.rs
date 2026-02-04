@@ -1,4 +1,4 @@
-//! Cost estimation for VP8 encoding
+//! Cost estimation for VP8 encoding.
 //!
 //! This module provides rate-distortion (RD) cost calculation for mode selection,
 //! based on libwebp's cost estimation approach.
@@ -8,6 +8,23 @@
 //! 2. Coefficient encoding cost (depends on coefficient values and probabilities)
 //!
 //! For mode selection, we use: score = Distortion + lambda * Rate
+//!
+//! ## Key functions
+//!
+//! - [`tdisto_4x4`], [`tdisto_16x16`]: Frequency-weighted spectral distortion
+//!   between source and reconstruction blocks. Uses CSF weights from [`super::psy`]
+//!   to de-emphasize HF errors that humans don't notice.
+//!
+//! - [`rd_score`], [`rd_score_full`]: Compute total RD cost combining SSE distortion,
+//!   spectral distortion, mode cost, and coefficient cost.
+//!
+//! ## Relationship to psy module
+//!
+//! The `t_transform` function here computes a *weighted* Hadamard transform for
+//! distortion measurement. The [`super::psy::satd_4x4`] function computes an
+//! *unweighted* Hadamard for energy measurement. Both use the same transform
+//! but serve different purposes: TDisto measures perceptual error, SATD measures
+//! total signal energy.
 
 // Allow unused items - these tables and functions are part of the complete libwebp
 // cost estimation system and will be used as additional features are implemented.
