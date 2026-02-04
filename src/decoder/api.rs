@@ -1304,8 +1304,8 @@ pub fn decode_yuv420(data: &[u8]) -> Result<YuvPlanes, DecodingError> {
     let (y_bytes, u_bytes, v_bytes) =
         super::yuv::convert_image_yuv::<4>(&rgba, w as u16, h as u16);
 
-    let uv_w = (w + 1) / 2;
-    let uv_h = (h + 1) / 2;
+    let uv_w = w.div_ceil(2);
+    let uv_h = h.div_ceil(2);
     let mb_width = (w as usize).div_ceil(16);
 
     let luma_width = 16 * mb_width;
