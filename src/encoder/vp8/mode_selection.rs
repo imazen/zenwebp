@@ -589,10 +589,12 @@ impl<'a> super::Vp8Encoder<'a> {
                 // This reduces DCT/IDCT calls while maintaining quality
                 // Number of modes to try depends on method:
                 // - method 0-2: 3 modes (fast, RD_OPT_NONE equivalent)
-                // - method 3+: 10 modes (full search, matches libwebp RD_OPT_BASIC+)
+                // - method 3-4: 6 modes (balance of speed/quality)
+                // - method 5+: 10 modes (full search for best compression)
                 let max_modes_to_try = match self.method {
                     0..=2 => 3,
-                    _ => 10, // method 3+: try all modes
+                    3..=4 => 6, // Balance speed/quality
+                    _ => 10, // method 5+: try all modes
                 };
                 let mut mode_sse: [(u32, usize); 10] = [(0, 0); 10];
                 for (mode_idx, _) in MODES.iter().enumerate() {
