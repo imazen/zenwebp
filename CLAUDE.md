@@ -435,6 +435,23 @@ Completed:
 - Meta-Huffman spatially-varying codes with histogram clustering
 - Color cache with entropy-based size selection
 - imagequant integration (`quantize` feature) for near-lossless palette encoding
+- Near-lossless: pixel-level preprocessing + residual-level quantization
+
+**Near-lossless support (2026-02-03):**
+
+Two levels matching libwebp:
+1. **Pixel-level preprocessing** (`apply_near_lossless`): Quantizes non-smooth raw
+   pixels before transforms. Active when predictor is NOT used (SubGreen/Direct modes).
+2. **Residual-level quantization** (`near_lossless_residual`): Quantizes prediction
+   residuals inside the predictor transform with forward-order processing. Active when
+   predictor IS used (Spatial/SpatialSubGreen modes). Source pixels updated with
+   reconstructed values for prediction consistency.
+
+| Corpus | near_lossless | Size savings | vs libwebp |
+|--------|--------------|-------------|------------|
+| CID22 (250 imgs) | 60 | 30.5% | 1.003x |
+| Screenshots (10 imgs) | 60 | 14.1% | 0.999x |
+| CID22 | 100 | 0.0% (exact) | 0.995x |
 
 **Outlier images:**
 - 3616956: 1.128x (312KB vs libwebp 277KB) — cache selection overvalues high cache_bits
@@ -459,6 +476,7 @@ estimation at other sizes is misleading. With forced cache_bits=2, 3616956 goes 
 - `src/encoder/vp8l/entropy.rs` — Entropy estimation (matches libwebp)
 - `src/encoder/vp8l/huffman.rs` — Huffman tree construction
 - `src/encoder/vp8l/transforms.rs` — Predictor, cross-color, palette transforms
+- `src/encoder/vp8l/near_lossless.rs` — Near-lossless pixel + residual quantization
 - `src/encoder/color_quantize.rs` — imagequant integration (requires `quantize` feature)
 
 **Diagnostic examples:** `cache_test`, `lossless_benchmark` (see examples/)
