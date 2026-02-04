@@ -82,6 +82,121 @@ encoder.set_params(EncoderParams::lossy(75).method(0));
 encoder.set_params(EncoderParams::lossy(75).method(6));
 ```
 
+## Feature Comparison with libwebp
+
+zenwebp aims to be a drop-in replacement for libwebp in most use cases. Here's what's implemented and what's not.
+
+### Decoder
+
+| Feature | zenwebp | libwebp |
+|---------|---------|---------|
+| Lossy (VP8) | Yes | Yes |
+| Lossless (VP8L) | Yes | Yes |
+| Alpha channel | Yes | Yes |
+| Animation (ANIM/ANMF) | Yes (read) | Yes (read + write) |
+| Extended format (VP8X) | Yes | Yes |
+| ICC/EXIF/XMP metadata | Yes (raw bytes) | Yes (raw bytes) |
+| Output: RGB, RGBA | Yes | Yes |
+| Output: BGR, BGRA, ARGB | No | Yes |
+| Output: YUV 4:2:0 | No | Yes |
+| Output: RGB565, RGBA4444 | No | Yes |
+| Premultiplied alpha output | No | Yes |
+| Fancy chroma upsampling | Yes | Yes |
+| Simple (nearest) upsampling | Yes | Yes |
+| Incremental/streaming decode | No | Yes |
+| Crop during decode | No | Yes |
+| Scale during decode | No | Yes |
+| Threaded decoding | No | Yes |
+| Dithering | No | Yes |
+
+### Encoder (Lossy VP8)
+
+| Feature | zenwebp | libwebp |
+|---------|---------|---------|
+| Quality (0-100) | Yes | Yes |
+| Method (0-6) speed/quality | Yes | Yes |
+| Presets (Photo, Drawing, etc.) | Yes (7 presets, including Auto) | Yes (6 presets) |
+| Target file size | Yes (secant method) | Yes (multi-pass) |
+| Target PSNR | No | Yes |
+| SNS (spatial noise shaping) | Yes | Yes |
+| Filter strength/sharpness | Yes | Yes |
+| Autofilter | Yes | Yes |
+| Segments (1-4) | Yes | Yes |
+| Token partitions | 1 partition | 1-8 partitions |
+| Intra16 modes (DC/V/H/TM) | Yes | Yes |
+| Intra4 modes (10 modes) | Yes | Yes |
+| Trellis quantization | Yes (m5-6) | Yes (m5-6) |
+| Alpha channel encoding | Yes (lossless) | Yes (lossless or lossy) |
+| Sharp YUV conversion | No | Yes (libsharpyuv) |
+| Multi-pass encoding | Yes | Yes |
+| Near-lossless | Yes | Yes |
+| Input: RGB, RGBA | Yes | Yes |
+| Input: L8 (grayscale) | Yes | No (requires conversion) |
+| Input: BGR, BGRA | No | Yes |
+| Input: YUV 4:2:0 | No | Yes |
+| Encoding statistics | No | Yes (WebPAuxStats) |
+| Progress callback | No | Yes |
+| Threaded encoding | No | Yes (alpha parallel) |
+
+### Encoder (Lossless VP8L)
+
+| Feature | zenwebp | libwebp |
+|---------|---------|---------|
+| Predictor transform (14 modes) | Yes | Yes |
+| Cross-color transform | Yes | Yes |
+| Subtract green transform | Yes | Yes |
+| Color indexing (palette) | Yes | Yes |
+| Palette sorting strategies | Yes (2) | Yes |
+| Pixel bundling (2/4/8 per pixel) | Yes | Yes |
+| Color cache (auto-sized) | Yes | Yes |
+| LZ77 Standard | Yes | Yes |
+| LZ77 RLE | Yes | Yes |
+| LZ77 Box | Yes (palette images) | Yes (palette images) |
+| TraceBackwards DP | Yes (Zopfli-style) | Yes (Zopfli-style) |
+| Meta-Huffman (spatial codes) | Yes | Yes |
+| Multi-config testing | Yes (m5-6) | Yes (m5-6) |
+| Near-lossless | Yes (pixel + residual) | Yes (pixel + residual) |
+| AnalyzeEntropy selection | Yes (5 modes) | Yes (5 modes) |
+
+### Container / Metadata
+
+| Feature | zenwebp | libwebp |
+|---------|---------|---------|
+| RIFF container read | Yes | Yes |
+| RIFF container write | Yes | Yes |
+| VP8X extended format | Yes | Yes |
+| ICC profile read | Yes | Yes |
+| EXIF metadata read | Yes | Yes |
+| XMP metadata read | Yes | Yes |
+| Metadata write (ICC/EXIF/XMP) | No | Yes (via libwebpmux) |
+| Animation write | No | Yes (WebPAnimEncoder) |
+| Mux API (add/remove chunks) | No | Yes (libwebpmux) |
+| Demux API (frame iteration) | No | Yes (libwebpdemux) |
+
+### Platform / Build
+
+| Feature | zenwebp | libwebp |
+|---------|---------|---------|
+| Language | Pure Rust | C |
+| Unsafe code | `#![forbid(unsafe_code)]` | N/A (C) |
+| no_std + alloc | Yes | No |
+| WASM | Yes (SIMD128) | Yes (via Emscripten/SIMDe) |
+| SSE2 | Yes | Yes |
+| SSE4.1 | Yes | Yes |
+| AVX2 | Yes | No |
+| NEON (ARM64) | Yes | Yes |
+| MIPS DSP | No | Yes |
+| Runtime CPU detection | Yes | Yes |
+| Custom allocator | No (uses alloc) | No (compile-time only) |
+
+### What zenwebp has that libwebp doesn't
+
+- **no_std support** - use in embedded, WASM, or kernel contexts with just `alloc`
+- **Memory safety** - `#![forbid(unsafe_code)]`, no buffer overflows by construction
+- **AVX2 SIMD** - wider SIMD for loop filter and YUV conversion
+- **Auto preset** - content-aware preset selection based on image analysis
+- **Grayscale input** - direct L8/LA8 encoding without manual conversion
+
 ## Performance
 
 Benchmarks on a 768x512 image (Kodak test suite):
