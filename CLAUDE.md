@@ -158,17 +158,22 @@ Test results on 512x512 CID22 image:
 - **LTO + inline hints** - Added LTO and codegen-units=1 to release profile, plus #[inline] to
   hot helper functions (tdisto_*, is_flat_*, compute_filter_level). Marginal improvement (~5-8%).
 
-### Profiler Hot Spots (method 4, 2026-02-04, after fused tdisto)
+### Profiler Hot Spots (method 4, 2026-02-04, after SIMD optimizations)
 | Function | % Runtime | Notes |
 |----------|-----------|-------|
-| choose_macroblock_info | 28.1% | Mode selection RD loop |
-| get_residual_cost_sse2 | 6.8% | Coefficient cost estimation (SIMD) |
-| idct4x4 | 6.7% | Inverse transform (SIMD) |
-| encode_image | 4.7% | Main encoding loop |
-| dct4x4 | 4.4% | Forward transform (SIMD) |
-| is_flat_coeffs | 3.3% | Flatness detection |
+| pick_best_intra4 | 26.64% | I4 mode selection (16 blocks × 10 modes) |
+| choose_macroblock_info | 9.68% | I16/UV mode selection + orchestration |
+| get_residual_cost_sse2 | 7.58% | Coefficient cost estimation (SIMD) |
+| encode_image | 5.80% | Main encoding loop |
+| GetResidualCost_SSE2 (libwebp) | 3.87% | For comparison |
+| ITransform_SSE2 (libwebp) | 3.18% | For comparison |
+| Disto4x4_SSE2 (libwebp) | 2.53% | For comparison |
 
-Note: `tdisto_4x4` and `t_transform` are now inlined into `choose_macroblock_info`.
+**Total instruction count (10 CID22 images, M4, SNS=0, filter=0):**
+- zenwebp: 6.39B instructions
+- Ratio improvement: ~6% from SIMD optimizations (was ~6.78B before)
+
+Note: `dct4x4`, `idct4x4`, `is_flat_coeffs`, `tdisto_4x4` are now inlined into parent functions.
 
 ### zenwebp vs libwebp Comparison (2026-02-04)
 
