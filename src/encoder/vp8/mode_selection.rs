@@ -723,6 +723,20 @@ impl<'a> super::Vp8Encoder<'a> {
                         sum
                     };
 
+                    // Early exit: if base RD score (without flatness/spectral/psy) already
+                    // exceeds best, skip remaining work. These penalties are all additive.
+                    let mode_cost = mode_costs[mode_idx];
+                    let base_rd_score = crate::encoder::cost::rd_score_full(
+                        sse,
+                        0,
+                        mode_cost,
+                        coeff_cost,
+                        lambda_i4,
+                    ) as u64;
+                    if base_rd_score >= best_block_score {
+                        continue;
+                    }
+
                     // Apply flatness penalty for non-DC modes with flat coefficients
                     // (like libwebp's FLATNESS_PENALTY * kNumBlocks)
                     // For I4, kNumBlocks = 1, so penalty = FLATNESS_PENALTY
@@ -773,7 +787,6 @@ impl<'a> super::Vp8Encoder<'a> {
                     };
 
                     // Compute RD score: (R + H) * lambda + RD_DISTO_MULT * (D + SD + PSY)
-                    let mode_cost = mode_costs[mode_idx];
                     let total_rate_cost = coeff_cost + flatness_penalty as u32;
                     let rd_score = crate::encoder::cost::rd_score_full(
                         sse,
