@@ -4,7 +4,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::backward_refs::{
-    get_backward_references, get_backward_references_with_palette, strip_cache_from_refs,
+    apply_cache_to_refs, get_backward_references, get_backward_references_with_palette,
+    strip_cache_from_refs,
 };
 use super::bitwriter::BitWriter;
 use super::color_cache::ColorCache;
@@ -667,36 +668,49 @@ fn encode_argb_single_config(
     };
 
     // Encode image data from backward references.
-    // If auto-detecting cache and cache_bits > 0, try both with-cache and without-cache.
+    // If auto-detecting cache, try multiple cache sizes and keep the smallest output.
+    // Entropy estimation can overshoot the optimal cache_bits because it uses a global
+    // histogram, but actual encoding uses per-tile meta-Huffman codes where larger cache
+    // expands the literal alphabet (280→408+ entries), increasing tree overhead per tile.
     let is_palette = palette_transform.is_some();
     let auto_cache = config.cache_bits.is_none();
 
     if auto_cache && cache_bits > 0 {
-        // Try with auto-selected cache
-        let writer_snapshot = writer.clone();
-        let output_with_cache = encode_image_data(
-            writer, &refs, cache_bits, enc_argb, enc_width, enc_height, config, is_palette,
-        );
+        // Strip cache from refs to get the base (cache-free) token sequence.
+        // We'll re-apply cache at each candidate size.
+        let mut base_refs = refs;
+        strip_cache_from_refs(enc_argb, &mut base_refs);
 
-        // Try without cache
-        let mut refs_no_cache = refs;
-        strip_cache_from_refs(enc_argb, &mut refs_no_cache);
-        let output_no_cache = encode_image_data(
-            writer_snapshot,
-            &refs_no_cache,
-            0,
-            enc_argb,
-            enc_width,
-            enc_height,
-            config,
-            is_palette,
-        );
+        let mut best_output: Option<Vec<u8>> = None;
 
-        if output_no_cache.len() < output_with_cache.len() {
-            Ok(output_no_cache)
-        } else {
-            Ok(output_with_cache)
+        // Try all cache sizes from 0 to the entropy-selected value.
+        // Sizes above the entropy estimate are unlikely to be better
+        // (entropy correctly identifies the direction, just overshoots).
+        for cb in 0..=cache_bits {
+            let mut trial_refs = base_refs.clone();
+            if cb > 0 {
+                apply_cache_to_refs(enc_argb, cb, &mut trial_refs);
+            }
+            let output = encode_image_data(
+                writer.clone(),
+                &trial_refs,
+                cb,
+                enc_argb,
+                enc_width,
+                enc_height,
+                config,
+                is_palette,
+            );
+            let keep = match &best_output {
+                None => true,
+                Some(best) => output.len() < best.len(),
+            };
+            if keep {
+                best_output = Some(output);
+            }
         }
+
+        Ok(best_output.unwrap())
     } else {
         Ok(encode_image_data(
             writer, &refs, cache_bits, enc_argb, enc_width, enc_height, config, is_palette,

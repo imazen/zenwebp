@@ -588,7 +588,7 @@ pub fn strip_cache_from_refs(argb: &[u32], refs: &mut BackwardRefs) {
 ///
 /// Converts literal pixels that hit the cache into cache index references.
 /// Matches libwebp's BackwardRefsWithLocalCache.
-fn apply_cache_to_refs(argb: &[u32], cache_bits: u8, refs: &mut BackwardRefs) {
+pub(super) fn apply_cache_to_refs(argb: &[u32], cache_bits: u8, refs: &mut BackwardRefs) {
     let mut cache = ColorCache::new(cache_bits);
     let mut pixel_index = 0usize;
 
