@@ -494,6 +494,28 @@ estimation at other sizes is misleading. With forced cache_bits=2, 3616956 goes 
 
 **Diagnostic examples:** `cache_test`, `lossless_benchmark` (see examples/)
 
+## Mux/Demux/Animation Module (2026-02-03)
+
+**Key files:**
+- `src/mux/mod.rs` — Module declarations, re-exports
+- `src/mux/error.rs` — MuxError enum
+- `src/mux/demux.rs` — WebPDemuxer (zero-copy chunk parser)
+- `src/mux/assemble.rs` — WebPMux (container assembler)
+- `src/mux/anim.rs` — AnimationEncoder (high-level animation API)
+- `tests/mux_tests.rs` — 20 roundtrip/validation tests
+
+**Features:**
+- Demux: parse WebP at chunk level, iterate frames without decoding pixels
+- Mux: assemble WebP containers from pre-encoded chunks + metadata
+- Animation: encode animated WebP frame-by-frame using existing encoder
+- All no_std + alloc compatible
+
+**Design notes:**
+- WebPDemuxer records byte ranges into original `&[u8]`, no copies
+- AnimationEncoder uses timestamp-based durations (next - this)
+- Frame offsets must be even (WebP spec requirement)
+- assemble.rs (not mux.rs) to avoid clippy same-name-as-module lint
+
 ## Known Bugs
 
 (none currently)
