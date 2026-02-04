@@ -771,6 +771,7 @@ pub(crate) const AC_QUANT: [i16; 128] = [
 pub(crate) const ZIGZAG: [u8; 16] = [0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15];
 
 use crate::encoder::cost::{MatrixType, VP8Matrix};
+use crate::encoder::psy::PsyConfig;
 
 #[derive(Clone, Default)]
 pub(crate) struct Segment {
@@ -814,12 +815,16 @@ pub(crate) struct Segment {
     // Spectral distortion weight (tlambda)
     // Controls how much TDisto affects mode selection
     pub(crate) tlambda: u32,
+
+    // Perceptual encoding config (CSF tables, psy-rd/trellis strengths)
+    pub(crate) psy_config: PsyConfig,
 }
 
 impl Segment {
     /// Initialize quantization matrices and trellis lambdas from the quantizer values.
     /// `sns_strength` controls spectral distortion weight (0-100, from preset).
-    pub(crate) fn init_matrices(&mut self, sns_strength: u8) {
+    /// `method` is the encoding method level (0-6) used to gate perceptual features.
+    pub(crate) fn init_matrices(&mut self, sns_strength: u8, method: u8) {
         self.y1_matrix = Some(VP8Matrix::new(
             self.ydc as u16,
             self.yac as u16,
@@ -866,5 +871,8 @@ impl Segment {
         // tlambda = (sns_strength * q) >> 5
         // This enables TDisto in mode selection
         self.tlambda = (u32::from(sns_strength) * q_i4) >> 5;
+
+        // Initialize perceptual config
+        self.psy_config = PsyConfig::new(method, self.quant_index, sns_strength);
     }
 }

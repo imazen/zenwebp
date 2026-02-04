@@ -9,6 +9,8 @@ mod arithmetic;
 pub mod color_quantize;
 pub mod cost;
 mod fast_math;
+/// Perceptual distortion model (CSF tables, psy-rd, psy-trellis)
+pub(crate) mod psy;
 /// Quantization matrix and coefficient quantization
 pub mod quantize;
 /// Residual cost estimation (SIMD-optimized)

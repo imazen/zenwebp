@@ -1174,7 +1174,7 @@ impl<'a> Vp8Encoder<'a> {
                 quant_index: seg_quant_index,
                 ..Default::default()
             };
-            segment.init_matrices(self.sns_strength);
+            segment.init_matrices(self.sns_strength, self.method);
             self.segments[seg_idx] = segment;
         }
 
@@ -1303,7 +1303,7 @@ impl<'a> Vp8Encoder<'a> {
                 quant_index,
                 ..Default::default()
             };
-            segment.init_matrices(self.sns_strength);
+            segment.init_matrices(self.sns_strength, self.method);
             self.segments[seg_idx] = segment;
         }
 

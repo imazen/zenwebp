@@ -11,7 +11,7 @@ use crate::encoder::cost::{
     estimate_dc16_cost, estimate_residual_cost, get_cost_luma16, get_cost_luma4, get_cost_uv,
     get_i4_mode_cost, is_flat_coeffs, is_flat_source_16, tdisto_16x16, tdisto_4x4,
     trellis_quantize_block, FIXED_COSTS_I16, FIXED_COSTS_UV, FLATNESS_LIMIT_I16, FLATNESS_LIMIT_I4,
-    FLATNESS_LIMIT_UV, FLATNESS_PENALTY, RD_DISTO_MULT, VP8_WEIGHT_Y,
+    FLATNESS_LIMIT_UV, FLATNESS_PENALTY, RD_DISTO_MULT,
 };
 
 use super::{sse_16x16_luma, sse_8x8_chroma, MacroblockInfo};
@@ -175,7 +175,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         rec_block[y * 16 + x] = reconstructed[(y + 1) * LUMA_STRIDE + x + 1];
                     }
                 }
-                let td = tdisto_16x16(&src_block, &rec_block, 16, &VP8_WEIGHT_Y);
+                let td = tdisto_16x16(&src_block, &rec_block, 16, &segment.psy_config.luma_csf);
                 // Scale by tlambda and round: (tlambda * td + 128) >> 8
                 (tlambda as i32 * td + 128) >> 8
             } else {
@@ -675,7 +675,8 @@ impl<'a> super::Vp8Encoder<'a> {
                             rec_block[k] =
                                 (i32::from(pred[k]) + dequantized[k]).clamp(0, 255) as u8;
                         }
-                        let td = tdisto_4x4(&src_block, &rec_block, 4, &VP8_WEIGHT_Y);
+                        let td =
+                            tdisto_4x4(&src_block, &rec_block, 4, &segment.psy_config.luma_csf);
                         // Scale by tlambda and round: (tlambda * td + 128) >> 8
                         (tlambda as i32 * td + 128) >> 8
                     } else {
