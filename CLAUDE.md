@@ -151,20 +151,25 @@ Test results on 512x512 CID22 image:
 - **GetResidualCost SIMD** - Precompute abs/ctx/levels with SSE2 (30% speedup, 2026-01-23)
 - **FTransform2** - Fused residual+DCT for 2 blocks at once (2026-01-23)
 - DCT/IDCT: SIMD i32/i16 conversion (13% speedup)
-- t_transform: SIMD Hadamard for spectral distortion
+- **t_transform SIMD fix** - Previous was pseudo-SIMD (extract to scalar). Now uses _mm_madd_epi16 for Hadamard. 14%→4% runtime (2026-02-04)
 - SSE4x4: SIMD distortion calculation
 - **LTO + inline hints** - Added LTO and codegen-units=1 to release profile, plus #[inline] to
   hot helper functions (tdisto_*, is_flat_*, compute_filter_level). Marginal improvement (~5-8%).
 
-### Profiler Hot Spots (method 4)
+### Profiler Hot Spots (method 4, 2026-02-04)
 | Function | % Runtime | Notes |
 |----------|-----------|-------|
-| choose_macroblock_info | 33.82% | Mode selection RD loop |
-| get_residual_cost | 9.38% | Coefficient cost estimation |
-| DCT | 9.29% | Forward transform |
-| trellis_quantize_block | 7.43% | RD-optimized quantization |
-| IDCT | 6.53% | Inverse transform (SIMD) |
-| t_transform | 3.24% | Spectral distortion (SIMD) |
+| choose_macroblock_info | 26.51% | Mode selection RD loop |
+| get_residual_cost_sse2 | 10.93% | Coefficient cost estimation (SIMD) |
+| trellis_quantize_block | 10.54% | RD-optimized quantization |
+| idct4x4 | 7.52% | Inverse transform (SIMD) |
+| dct4x4 | 4.87% | Forward transform (SIMD) |
+| t_transform_sse2 | 3.86% | Spectral distortion (SIMD, optimized 2026-02-04) |
+
+**t_transform SIMD optimization (2026-02-04):**
+Previous pseudo-SIMD implementation loaded with SIMD but extracted to scalar immediately.
+New implementation uses `_mm_madd_epi16` for horizontal Hadamard butterfly, reducing
+t_transform from 14.22% → 3.86% (62% reduction). Overall encoder throughput improved ~1%.
 
 ### Mode Selection Bottleneck Analysis (2026-02-04)
 
