@@ -159,17 +159,47 @@ Test results on 512x512 CID22 image:
 ### Profiler Hot Spots (method 4, 2026-02-04)
 | Function | % Runtime | Notes |
 |----------|-----------|-------|
-| choose_macroblock_info | 26.51% | Mode selection RD loop |
-| get_residual_cost_sse2 | 10.93% | Coefficient cost estimation (SIMD) |
-| trellis_quantize_block | 10.54% | RD-optimized quantization |
-| idct4x4 | 7.52% | Inverse transform (SIMD) |
-| dct4x4 | 4.87% | Forward transform (SIMD) |
-| t_transform_sse2 | 3.86% | Spectral distortion (SIMD, optimized 2026-02-04) |
+| choose_macroblock_info | 33.03% | Mode selection RD loop |
+| t_transform_sse2 | 11.53% | Spectral distortion (SIMD) |
+| get_residual_cost_sse2 | 9.05% | Coefficient cost estimation (SIMD) |
+| idct4x4 | 7.23% | Inverse transform (SIMD) |
+| encode_image | 7.11% | Main encoding loop |
+| tdisto_4x4 | 6.04% | Calls t_transform |
+| dct4x4 | 4.75% | Forward transform (SIMD) |
+
+### zenwebp vs libwebp Comparison (2026-02-04)
+
+**Callgrind/Cachegrind results (5 encodes, 550x368, Q75, M4):**
+
+| Metric | zenwebp | libwebp | Ratio |
+|--------|---------|---------|-------|
+| Instructions | 3,003M | 1,076M | **2.79x** |
+| I1 misses | 4.76M | 0.52M | 9.2x |
+| D refs | 839M | 329M | 2.55x |
+| D1 miss rate | 0.14% | 0.22% | 0.6x (better!) |
+| Wall-clock | 29.6ms | 12.0ms | 2.47x |
+| Output size | 28,230 | 27,910 | 1.01x |
+
+**Function-level comparison (instructions):**
+
+| zenwebp | M instr | libwebp | M instr | Ratio |
+|---------|---------|---------|---------|-------|
+| choose_macroblock_info | 992 | PickBestIntra4 | 80 | **12.5x** |
+| t_transform_sse2 | 346 | Disto4x4_SSE2 | 76 | **4.5x** |
+| tdisto_4x4 | 181 | Disto16x16_SSE2 | 32 | **5.6x** |
+| get_residual_cost_sse2 | 272 | GetResidualCost | 139 | 1.9x |
+| idct4x4 | 217 | ITransform_SSE2 | 96 | 2.3x |
+| dct4x4 | 143 | FTransform_SSE2 | 59 | 2.4x |
+
+**Optimization priorities (by instruction gap):**
+1. Mode selection: 912M gap (12.5x) - biggest opportunity
+2. TDisto/TTransform: 419M gap (4-6x) - Hadamard needs full SIMD
+3. DCT/IDCT: 205M gap (2.3x) - our SIMD is less efficient
+4. Residual cost: 133M gap (1.9x) - closest to parity
 
 **t_transform SIMD optimization (2026-02-04):**
-Previous pseudo-SIMD implementation loaded with SIMD but extracted to scalar immediately.
-New implementation uses `_mm_madd_epi16` for horizontal Hadamard butterfly, reducing
-t_transform from 14.22% → 3.86% (62% reduction). Overall encoder throughput improved ~1%.
+Previous pseudo-SIMD loaded with SIMD but extracted to scalar immediately.
+New uses `_mm_madd_epi16` for horizontal Hadamard, reducing 14%→11.5% (but still 4.5x slower than libwebp).
 
 ### Mode Selection Bottleneck Analysis (2026-02-04)
 
