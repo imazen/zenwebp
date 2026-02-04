@@ -485,6 +485,55 @@ impl<'a> super::Vp8Encoder<'a> {
         chroma_with_border
     }
 
+    /// SIMD version: uses fused residual+DCT for pairs of blocks
+    #[cfg(feature = "simd")]
+    pub(super) fn get_chroma_blocks_from_predicted(
+        &self,
+        predicted_chroma: &[u8; CHROMA_BLOCK_SIZE],
+        chroma_data: &[u8],
+        mbx: usize,
+        mby: usize,
+    ) -> [i32; 16 * 4] {
+        let pred_stride = CHROMA_STRIDE;
+        let src_stride = usize::from(self.macroblock_width * 8);
+        let mut chroma_blocks = [0i32; 16 * 4];
+
+        // Process pairs of horizontally adjacent blocks using fused residual+DCT
+        for block_y in 0..2 {
+            // Starting position for this pair of blocks (2 blocks side by side)
+            let pred_start = (block_y * 4 + 1) * pred_stride + 1;
+            let src_row = mby * 8 + block_y * 4;
+            let src_col = mbx * 8;
+            let src_start = src_row * src_stride + src_col;
+
+            // ftransform2 outputs i16, convert to i32
+            let mut out16 = [0i16; 32];
+            crate::common::transform_simd_intrinsics::ftransform2_from_u8(
+                &chroma_data[src_start..],
+                &predicted_chroma[pred_start..],
+                src_stride,
+                pred_stride,
+                &mut out16,
+            );
+
+            // Copy to output with i16 -> i32 conversion
+            // Block layout: [block0, block1, block2, block3] where blocks are 16 elements each
+            // block_y=0: blocks 0,1 (indices 0-31)
+            // block_y=1: blocks 2,3 (indices 32-63)
+            let out_base0 = block_y * 32; // 0 or 32
+            let out_base1 = out_base0 + 16; // 16 or 48
+
+            for i in 0..16 {
+                chroma_blocks[out_base0 + i] = out16[i] as i32;
+                chroma_blocks[out_base1 + i] = out16[16 + i] as i32;
+            }
+        }
+
+        chroma_blocks
+    }
+
+    /// Scalar fallback
+    #[cfg(not(feature = "simd"))]
     pub(super) fn get_chroma_blocks_from_predicted(
         &self,
         predicted_chroma: &[u8; CHROMA_BLOCK_SIZE],
