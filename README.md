@@ -201,14 +201,18 @@ zenwebp aims to be a drop-in replacement for libwebp in most use cases. Here's w
 
 ## Performance
 
-Benchmarks on a 768x512 image (Kodak test suite):
+Benchmarks on a 517x517 image:
+
+| Operation | zenwebp | libwebp | image-webp |
+|-----------|---------|---------|------------|
+| Decode | 2.0ms | 1.5ms | 3.6ms |
+| Decode ratio | 1.3x slower | 1.0x | 2.4x slower |
 
 | Operation | zenwebp | libwebp | Ratio |
 |-----------|---------|---------|-------|
-| Decode | 4.2ms | 3.0ms | 1.4x slower |
-| Encode (method 4) | 65ms | 75ms* | 1.15x faster |
+| Encode m5 | ~28ms | ~17ms | 1.7x slower |
 
-*libwebp method 6 with trellis, comparable quality settings
+Encoding produces files within 0.1% of libwebp size at method 5.
 
 ### Quality
 
@@ -235,7 +239,7 @@ WebP crate from the image-rs project. Both are excellent choices depending on yo
 | **Safety** | Zero unsafe code in crate AND all dependencies |
 | **Codebase** | ~10,600 lines - small, auditable |
 | **Dependencies** | 2 (byteorder-lite, quick-error) |
-| **Decoder speed** | 70-100% of libwebp |
+| **Decoder speed** | ~2.5-3x slower than libwebp |
 | **Encoder** | Lossless only, basic but fast |
 | **Best for** | Security-critical contexts, minimal attack surface |
 
@@ -247,14 +251,14 @@ or only need lossless encoding. The smaller codebase is easier to audit.
 | Aspect | zenwebp |
 |--------|---------|
 | **Safety** | `#![forbid(unsafe_code)]` but relies on archmage for SIMD |
-| **Codebase** | ~41,000 lines (+30k for lossy encoder) |
+| **Codebase** | ~41,000 lines (+30k for lossy encoder, same decoder base) |
 | **Dependencies** | 14 (7 optional) |
-| **Decoder speed** | 60-70% of libwebp |
+| **Decoder speed** | ~1.4-1.7x slower than libwebp (~2x faster than image-webp) |
 | **Encoder** | Lossy + lossless, matches libwebp compression |
 | **Best for** | Full WebP support, lossy encoding, libwebp replacement |
 
-**Choose zenwebp if:** You need lossy encoding, want to match libwebp's compression ratios,
-or need features like animation encoding, near-lossless, or target file size.
+**Choose zenwebp if:** You need lossy encoding, faster decoding, libwebp-compatible compression,
+or features like animation encoding, near-lossless, or target file size.
 
 ### Honest tradeoffs
 
@@ -263,12 +267,10 @@ increase in attack surface and audit burden. Our SIMD code uses `archmage` which
 `unsafe` blocks via proc macros - while we trust archmage's soundness, it's not the same as
 image-webp's truly zero-unsafe guarantee.
 
-Our decoder is actually **slower** than image-webp's (~1.5-1.7x vs libwebp compared to their
-~1.0-1.4x). We focused optimization effort on the encoder.
-
 ### Feature additions over image-webp
 
 - **Lossy VP8 encoder** - full RD optimization, trellis quantization, all I4/I16 modes
+- **~2x faster decoder** - SIMD loop filter, YUV conversion, coefficient decoding
 - **Animation encoding** - AnimationEncoder with frame timing
 - **Near-lossless** - pixel and residual quantization
 - **Target file size** - secant method convergence
