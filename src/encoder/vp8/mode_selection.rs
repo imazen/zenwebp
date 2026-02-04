@@ -139,14 +139,17 @@ impl<'a> super::Vp8Encoder<'a> {
                 y2_quant[idx] = y2_matrix.quantize_coeff(coeff, idx);
             }
 
-            // 4. Quantize Y1 (AC) coefficients and collect for cost estimation
+            // 4. Quantize Y1 (AC) coefficients using SIMD
+            // Extract each 4x4 block from luma_blocks and quantize AC coefficients
             let mut y1_quant = [[0i32; 16]; 16];
             for block_idx in 0..16 {
-                for i in 1..16 {
-                    // AC coefficients only (DC=0 is handled by Y2)
-                    y1_quant[block_idx][i] =
-                        y1_matrix.quantize_coeff(luma_blocks[block_idx * 16 + i], i);
-                }
+                // Copy block from luma_blocks (DC will be zeroed by quantize_ac_only)
+                let block_start = block_idx * 16;
+                let mut block: [i32; 16] =
+                    luma_blocks[block_start..block_start + 16].try_into().unwrap();
+                block[0] = 0; // DC is handled by Y2
+                crate::encoder::quantize::quantize_ac_only_simd(&mut block, y1_matrix, true);
+                y1_quant[block_idx] = block;
             }
 
             // 5. Compute coefficient cost using probability-dependent tables
