@@ -16,6 +16,7 @@ pub(crate) fn idct4x4_dc(block: &mut [i32; 16]) {
 }
 
 // inverse discrete cosine transform, used in decoding
+#[inline(always)]
 pub(crate) fn idct4x4(block: &mut [i32]) {
     #[cfg(feature = "simd")]
     {
@@ -156,6 +157,7 @@ pub(crate) fn wht4x4(block: &mut [i32; 16]) {
     }
 }
 
+#[inline(always)]
 pub(crate) fn dct4x4(block: &mut [i32; 16]) {
     #[cfg(feature = "simd")]
     {

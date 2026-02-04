@@ -1,10 +1,18 @@
 //! Quantization matrix and coefficient quantization.
 //!
 //! Contains VP8Matrix for quantize/dequantize operations on 4x4 DCT blocks.
+//! SIMD-optimized quantization using SSE2 intrinsics.
 
 // Many loops in this file match libwebp's C patterns for clarity when comparing
 #![allow(clippy::needless_range_loop)]
 #![allow(dead_code)]
+
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+use archmage::{arcane, Has128BitSimd, SimdToken, X64V3Token};
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+use core::arch::x86_64::*;
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+use safe_unaligned_simd::x86_64 as simd_mem;
 
 use super::tables::{MAX_LEVEL, VP8_FREQ_SHARPENING};
 
@@ -201,4 +209,204 @@ pub enum MatrixType {
     Y2,
     /// Chroma coefficients
     UV,
+}
+
+// =============================================================================
+// SIMD Quantization - Ported from libwebp's DoQuantizeBlock_SSE2
+// =============================================================================
+
+/// SIMD-optimized quantization of a 4x4 block.
+/// Returns true if any coefficient is non-zero.
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+pub fn quantize_block_simd(
+    coeffs: &mut [i32; 16],
+    matrix: &VP8Matrix,
+    use_sharpen: bool,
+) -> bool {
+    if let Some(token) = X64V3Token::summon() {
+        quantize_block_sse2(token, coeffs, matrix, use_sharpen)
+    } else {
+        matrix.quantize(coeffs);
+        coeffs.iter().any(|&c| c != 0)
+    }
+}
+
+/// Scalar fallback for non-SIMD platforms
+#[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+pub fn quantize_block_simd(
+    coeffs: &mut [i32; 16],
+    matrix: &VP8Matrix,
+    _use_sharpen: bool,
+) -> bool {
+    matrix.quantize(coeffs);
+    coeffs.iter().any(|&c| c != 0)
+}
+
+/// SSE2 implementation of block quantization.
+/// Matches libwebp's DoQuantizeBlock_SSE2 algorithm.
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[arcane]
+fn quantize_block_sse2(
+    _token: impl Has128BitSimd + Copy,
+    coeffs: &mut [i32; 16],
+    matrix: &VP8Matrix,
+    use_sharpen: bool,
+) -> bool {
+    let max_coeff = _mm_set1_epi16(MAX_LEVEL as i16);
+    let zero = _mm_setzero_si128();
+
+    // Pack i32 coefficients to i16 (safe for typical DCT range)
+    let c0_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
+    let c1_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
+    let c2_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
+    let c3_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+
+    let in0 = _mm_packs_epi32(c0_32, c1_32); // coeffs[0..8] as i16
+    let in8 = _mm_packs_epi32(c2_32, c3_32); // coeffs[8..16] as i16
+
+    // Load quantization parameters (need to convert u32 iq to u16 for SIMD)
+    // Since iq values fit in 16 bits for typical quantizers, this is safe
+    let iq0 = _mm_set_epi16(
+        matrix.iq[7] as i16,
+        matrix.iq[6] as i16,
+        matrix.iq[5] as i16,
+        matrix.iq[4] as i16,
+        matrix.iq[3] as i16,
+        matrix.iq[2] as i16,
+        matrix.iq[1] as i16,
+        matrix.iq[0] as i16,
+    );
+    let iq8 = _mm_set_epi16(
+        matrix.iq[15] as i16,
+        matrix.iq[14] as i16,
+        matrix.iq[13] as i16,
+        matrix.iq[12] as i16,
+        matrix.iq[11] as i16,
+        matrix.iq[10] as i16,
+        matrix.iq[9] as i16,
+        matrix.iq[8] as i16,
+    );
+
+    // Extract sign (0x0000 if positive, 0xffff if negative)
+    let sign0 = _mm_cmpgt_epi16(zero, in0);
+    let sign8 = _mm_cmpgt_epi16(zero, in8);
+
+    // coeff = abs(in) = (in ^ sign) - sign
+    let mut coeff0 = _mm_sub_epi16(_mm_xor_si128(in0, sign0), sign0);
+    let mut coeff8 = _mm_sub_epi16(_mm_xor_si128(in8, sign8), sign8);
+
+    // Add sharpen if enabled
+    if use_sharpen {
+        let sharpen0 = _mm_set_epi16(
+            matrix.sharpen[7] as i16,
+            matrix.sharpen[6] as i16,
+            matrix.sharpen[5] as i16,
+            matrix.sharpen[4] as i16,
+            matrix.sharpen[3] as i16,
+            matrix.sharpen[2] as i16,
+            matrix.sharpen[1] as i16,
+            matrix.sharpen[0] as i16,
+        );
+        let sharpen8 = _mm_set_epi16(
+            matrix.sharpen[15] as i16,
+            matrix.sharpen[14] as i16,
+            matrix.sharpen[13] as i16,
+            matrix.sharpen[12] as i16,
+            matrix.sharpen[11] as i16,
+            matrix.sharpen[10] as i16,
+            matrix.sharpen[9] as i16,
+            matrix.sharpen[8] as i16,
+        );
+        coeff0 = _mm_add_epi16(coeff0, sharpen0);
+        coeff8 = _mm_add_epi16(coeff8, sharpen8);
+    }
+
+    // out = (coeff * iQ + B) >> QFIX
+    // Using mulhi_epu16 + mullo_epi16 to get 32-bit result
+    let coeff_iq0_h = _mm_mulhi_epu16(coeff0, iq0);
+    let coeff_iq0_l = _mm_mullo_epi16(coeff0, iq0);
+    let coeff_iq8_h = _mm_mulhi_epu16(coeff8, iq8);
+    let coeff_iq8_l = _mm_mullo_epi16(coeff8, iq8);
+
+    // Unpack to 32-bit
+    let out_00 = _mm_unpacklo_epi16(coeff_iq0_l, coeff_iq0_h);
+    let out_04 = _mm_unpackhi_epi16(coeff_iq0_l, coeff_iq0_h);
+    let out_08 = _mm_unpacklo_epi16(coeff_iq8_l, coeff_iq8_h);
+    let out_12 = _mm_unpackhi_epi16(coeff_iq8_l, coeff_iq8_h);
+
+    // Add bias
+    let bias_00 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&matrix.bias[0..4]).unwrap());
+    let bias_04 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&matrix.bias[4..8]).unwrap());
+    let bias_08 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&matrix.bias[8..12]).unwrap());
+    let bias_12 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&matrix.bias[12..16]).unwrap());
+
+    let out_00 = _mm_add_epi32(out_00, bias_00);
+    let out_04 = _mm_add_epi32(out_04, bias_04);
+    let out_08 = _mm_add_epi32(out_08, bias_08);
+    let out_12 = _mm_add_epi32(out_12, bias_12);
+
+    // Shift by QFIX (17)
+    let out_00 = _mm_srai_epi32(out_00, QFIX as i32);
+    let out_04 = _mm_srai_epi32(out_04, QFIX as i32);
+    let out_08 = _mm_srai_epi32(out_08, QFIX as i32);
+    let out_12 = _mm_srai_epi32(out_12, QFIX as i32);
+
+    // Pack back to i16
+    let mut out0 = _mm_packs_epi32(out_00, out_04);
+    let mut out8 = _mm_packs_epi32(out_08, out_12);
+
+    // Clamp to MAX_LEVEL
+    out0 = _mm_min_epi16(out0, max_coeff);
+    out8 = _mm_min_epi16(out8, max_coeff);
+
+    // Apply sign back: (out ^ sign) - sign
+    out0 = _mm_sub_epi16(_mm_xor_si128(out0, sign0), sign0);
+    out8 = _mm_sub_epi16(_mm_xor_si128(out8, sign8), sign8);
+
+    // Unpack i16 to i32 for output
+    let sign0_ext = _mm_cmpgt_epi16(zero, out0);
+    let sign8_ext = _mm_cmpgt_epi16(zero, out8);
+
+    let out0_lo = _mm_unpacklo_epi16(out0, sign0_ext);
+    let out0_hi = _mm_unpackhi_epi16(out0, sign0_ext);
+    let out8_lo = _mm_unpacklo_epi16(out8, sign8_ext);
+    let out8_hi = _mm_unpackhi_epi16(out8, sign8_ext);
+
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[0..4]).unwrap(), out0_lo);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[4..8]).unwrap(), out0_hi);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[8..12]).unwrap(), out8_lo);
+    simd_mem::_mm_storeu_si128(
+        <&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(),
+        out8_hi,
+    );
+
+    // Return true if any coefficient is non-zero
+    let packed = _mm_packs_epi16(out0, out8);
+    _mm_movemask_epi8(_mm_cmpeq_epi8(packed, zero)) != 0xffff
+}
+
+/// SIMD-optimized AC-only quantization of a 4x4 block (DC at pos 0 unchanged).
+/// Returns true if any AC coefficient is non-zero.
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+pub fn quantize_ac_only_simd(
+    coeffs: &mut [i32; 16],
+    matrix: &VP8Matrix,
+    use_sharpen: bool,
+) -> bool {
+    let dc = coeffs[0];
+    let has_nz = quantize_block_simd(coeffs, matrix, use_sharpen);
+    coeffs[0] = dc; // Restore DC
+    // Check AC coefficients only
+    coeffs[1..].iter().any(|&c| c != 0) || has_nz
+}
+
+/// Scalar fallback for non-SIMD platforms
+#[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+pub fn quantize_ac_only_simd(
+    coeffs: &mut [i32; 16],
+    matrix: &VP8Matrix,
+    _use_sharpen: bool,
+) -> bool {
+    matrix.quantize_ac_only(coeffs);
+    coeffs[1..].iter().any(|&c| c != 0)
 }

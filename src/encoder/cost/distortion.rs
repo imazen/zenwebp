@@ -240,10 +240,73 @@ fn is_flat_source_16_sse2(
 /// * `num_blocks` - Number of 4x4 blocks to check
 /// * `thresh` - Maximum allowed non-zero AC coefficients
 #[inline]
+/// Check if coefficients are "flat" (few non-zero AC coefficients).
+/// Returns true if total non-zero AC count <= thresh.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
+    use archmage::{SimdToken, X64V3Token};
+
+    if let Some(token) = X64V3Token::summon() {
+        is_flat_coeffs_sse2(token, levels, num_blocks, thresh)
+    } else {
+        is_flat_coeffs_scalar(levels, num_blocks, thresh)
+    }
+}
+
+/// SSE2 implementation using archmage
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[archmage::arcane]
+fn is_flat_coeffs_sse2(
+    _token: impl archmage::Has128BitSimd + Copy,
+    levels: &[i16],
+    num_blocks: usize,
+    thresh: i32,
+) -> bool {
+    use core::arch::x86_64::*;
+    use safe_unaligned_simd::x86_64 as simd_mem;
+
+    let zero = _mm_setzero_si128();
+    let mut total_nz = 0i32;
+
+    for block in 0..num_blocks {
+        let base = block * 16;
+
+        // Load 16 i16 values
+        let v = simd_mem::_mm_loadu_si128(
+            <&[i16; 8]>::try_from(&levels[base..base + 8]).unwrap(),
+        );
+        let v2 = simd_mem::_mm_loadu_si128(
+            <&[i16; 8]>::try_from(&levels[base + 8..base + 16]).unwrap(),
+        );
+
+        // Compare to zero - result is 0xFFFF for zero, 0 for non-zero
+        let eq0 = _mm_cmpeq_epi16(v, zero);
+        let eq8 = _mm_cmpeq_epi16(v2, zero);
+
+        // Pack comparison results to bytes (one byte per i16)
+        let packed = _mm_packs_epi16(eq0, eq8);
+
+        // Get mask: bit is 1 if value was zero
+        let mask = _mm_movemask_epi8(packed) as u32;
+
+        // Count non-zeros (invert mask, then popcnt)
+        // Mask out DC (position 0)
+        let nz_mask = (!mask) & 0xFFFE; // Clear bit 0 (DC)
+        total_nz += nz_mask.count_ones() as i32;
+
+        // Early exit
+        if total_nz > thresh {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Scalar implementation
+fn is_flat_coeffs_scalar(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
     let mut score = 0i32;
     for block in 0..num_blocks {
-        // Skip DC (index 0), check AC coefficients (indices 1-15)
         for i in 1..16 {
             if levels[block * 16 + i] != 0 {
                 score += 1;
@@ -254,6 +317,13 @@ pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
         }
     }
     true
+}
+
+/// Check if coefficients are "flat" (few non-zero AC coefficients).
+/// Returns true if total non-zero AC count <= thresh.
+#[cfg(not(all(feature = "simd", target_arch = "x86_64")))]
+pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
+    is_flat_coeffs_scalar(levels, num_blocks, thresh)
 }
 
 /// Flatness threshold for I16 mode (FLATNESS_LIMIT_I16 in libwebp)

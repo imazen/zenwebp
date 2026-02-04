@@ -668,21 +668,19 @@ impl<'a> super::Vp8Encoder<'a> {
                         }
                         nz
                     } else {
-                        // Simple quantization (already in natural order)
-                        let mut any_nz = false;
-                        for (idx, &val) in residual.iter().enumerate() {
-                            let q = y1_matrix.quantize_coeff(val, idx);
-                            quantized_natural[idx] = q;
-                            if q != 0 {
-                                any_nz = true;
-                            }
-                        }
+                        // Simple quantization using SIMD
+                        quantized_natural = residual;
+                        crate::encoder::quantize::quantize_block_simd(
+                            &mut quantized_natural,
+                            y1_matrix,
+                            true,
+                        );
                         // Convert natural to zigzag for cost estimation
                         for n in 0..16 {
                             let j = ZIGZAG[n] as usize;
                             quantized_zigzag[n] = quantized_natural[j];
                         }
-                        any_nz
+                        quantized_natural.iter().any(|&c| c != 0)
                     };
 
                     // Get accurate coefficient cost using probability tables
