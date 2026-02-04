@@ -66,6 +66,18 @@
 //! decoder.read_image(&mut output)?;
 //! # Ok::<(), zenwebp::DecodingError>(())
 //! ```
+//!
+//! # Safety
+//!
+//! This crate uses `#![forbid(unsafe_code)]` to prevent direct unsafe usage in source.
+//! However, when the `simd` feature is enabled, we rely on the [`archmage`] crate for
+//! safe SIMD intrinsics. The `#[arcane]` proc macro generates unsafe blocks internally
+//! (which bypass the `forbid` lint due to proc-macro span handling). The soundness of
+//! our SIMD code depends on archmage's token-based safety model being correct.
+//!
+//! Without the `simd` feature, this crate contains no unsafe code whatsoever.
+//!
+//! [`archmage`]: https://docs.rs/archmage
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

@@ -725,17 +725,32 @@ estimation at other sizes is misleading. With forced cache_bits=2, 3616956 goes 
 - Frame offsets must be even (WebP spec requirement)
 - assemble.rs (not mux.rs) to avoid clippy same-name-as-module lint
 
+## Safety
+
+This crate uses `#![forbid(unsafe_code)]` to prevent direct unsafe in source files.
+
+**With `simd` feature:** We rely on the `archmage` crate for safe SIMD intrinsics. The
+`#[arcane]` proc macro generates `unsafe` blocks internally that bypass the `forbid` lint
+(due to proc-macro span handling). Soundness depends on archmage's token-based safety:
+- Tokens are only created via `X64V3Token::summon()` which does runtime CPU feature detection
+- No token forging patterns exist in our code
+- No manual `unsafe` blocks, `transmute`, `get_unchecked`, or raw pointer derefs in source
+
+**Without `simd` feature:** No unsafe code whatsoever - pure safe Rust.
+
 ## Known Bugs
 
-### CID22 Compression Regression (2026-02-04)
+(none currently)
 
-**Severity:** Medium - 2% file size regression
+### Historical Note: Method Realignment (2026-02-04, RESOLVED)
 
-At commit `e91f826` (I4 context fix): CID22 corpus ratio was **0.9888x** (1.1% smaller than libwebp)
-At HEAD (`ccc4983`): CID22 corpus ratio is **1.0099x** (1% larger than libwebp)
+Apparent "regression" from 0.9888x to 1.0099x at method 4 was NOT a bug. Commit `47873f5`
+intentionally moved trellis from m4 to m5 to align with libwebp's RD optimization levels.
+The old 0.9888x compared our m4 (with trellis) to libwebp m4 (without trellis) - unfair.
 
-This is a ~2% regression over 127 commits. Needs bisection to identify cause.
-Likely candidates: SIMD optimizations may have introduced subtle coefficient differences.
+Correct comparison after realignment:
+- Method 4 (no trellis): 1.0099x (1% larger, matches libwebp m4 feature set)
+- Method 5 (trellis): **1.0002x** (near-perfect parity with libwebp m5)
 
 **TODO:** Bisect between e91f826..HEAD to find regression commit
 
