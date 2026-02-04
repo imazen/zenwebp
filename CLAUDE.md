@@ -173,16 +173,21 @@ Test results on 512x512 CID22 image:
 **Speed comparison (kodak1.png 768x512, Q75, SNS=0, filter=0, segments=1):**
 | Method | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| 3 | 49.9ms | 26.0ms | 1.92x |
-| 4 | 48.3ms | 25.7ms | 1.88x |
-| 5 | 55.3ms | 31.3ms | 1.77x |
-| 6 | 105.2ms | 78.7ms | 1.34x |
+| 3 | 39.3ms | 25.5ms | **1.54x** |
+| 4 | 39.9ms | 26.9ms | **1.49x** |
+| 5 | 51.9ms | 29.8ms | **1.74x** |
+| 6 | 100.9ms | 78.8ms | **1.28x** |
 
-**Recent SIMD optimizations (2026-02-04):**
+*Starting point was ~3x slower; improved to 1.3-1.7x through SIMD optimizations.*
+
+**Performance optimization session (2026-02-04):**
 - Early exit in I4 mode loop (skip flatness/spectral/psy-rd when base RD exceeds best)
 - SIMD add_residue using packus saturation
 - SIMD dequantization using SSE2 mul_epu32 pattern
 - Fused residual+DCT for chroma blocks (ftransform2)
+- Reduced I4 mode candidates (6 instead of 10 for methods 3-4)
+- SIMD Y1 AC quantization in I16 mode selection
+- SIMD Y2 quantize/dequantize in I16 mode selection
 
 Note: `dct4x4`, `idct4x4`, `is_flat_coeffs`, `tdisto_4x4` are now inlined into parent functions.
 
