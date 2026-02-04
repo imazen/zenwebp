@@ -219,12 +219,28 @@ pub fn trellis_quantize_block(
             // distortion penalty proportional to the coefficient's energy and
             // its perceptual weight. This biases the DP toward retaining
             // coefficients that carry visible texture.
+            //
+            // JND (Just Noticeable Difference) gating (2026 algorithm):
+            // Skip the penalty if the coefficient is below the JND threshold,
+            // meaning zeroing it won't cause visible artifacts anyway.
             if level == 0 && abs_coeff > 0 && psy_config.psy_trellis_strength > 0 {
-                let energy = abs_coeff as i64;
-                let psy_weight = psy_config.trellis_weights[j] as i64;
-                let psy_penalty =
-                    (psy_config.psy_trellis_strength as i64 * psy_weight * energy) >> 16;
-                delta_distortion += psy_penalty;
+                // Check if coefficient is below JND threshold (imperceptible)
+                // ctype: 0=Y2, 1=Y_AC, 2=Y_DC, 3=UV
+                let is_chroma = ctype == 3;
+                let below_jnd = if is_chroma {
+                    psy_config.is_below_jnd_uv(j, coeffs[j])
+                } else {
+                    psy_config.is_below_jnd_y(j, coeffs[j])
+                };
+
+                // Only penalize zeroing if coefficient is perceptible
+                if !below_jnd {
+                    let energy = abs_coeff as i64;
+                    let psy_weight = psy_config.trellis_weights[j] as i64;
+                    let psy_penalty =
+                        (psy_config.psy_trellis_strength as i64 * psy_weight * energy) >> 16;
+                    delta_distortion += psy_penalty;
+                }
             }
 
             let base_score = rd_score_trellis(lambda, 0, delta_distortion);

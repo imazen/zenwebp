@@ -34,6 +34,41 @@ const PSY_WEIGHT_UV: [u16; 16] = [
      3,  2,  1,  1,
 ];
 
+//------------------------------------------------------------------------------
+// JND (Just Noticeable Difference) Visibility Thresholds
+//
+// Frequency-dependent visibility thresholds based on the CSF (Contrast
+// Sensitivity Function). Coefficients below these thresholds are less
+// likely to be perceptible and can be more aggressively quantized.
+//
+// Values are in the same scale as DCT coefficients (8-bit input).
+// Based on research from JPEG-AI and modern perceptual codecs.
+
+/// JND thresholds for 4x4 DCT luma coefficients (zig-zag order).
+/// DC (position 0) has low threshold; HF positions have higher thresholds.
+/// These represent the minimum perceivable coefficient magnitude.
+#[rustfmt::skip]
+const JND_THRESHOLD_Y: [u16; 16] = [
+    // DC   1    2    3   (row 0 - lowest frequency)
+     4,   6,   8,  12,
+    // 4    5    6    7   (row 1)
+     6,   8,  12,  18,
+    // 8    9   10   11   (row 2)
+     8,  12,  18,  26,
+    //12   13   14   15   (row 3 - highest frequency)
+    12,  18,  26,  36,
+];
+
+/// JND thresholds for 4x4 DCT chroma coefficients.
+/// Chroma has higher thresholds (lower sensitivity) than luma.
+#[rustfmt::skip]
+const JND_THRESHOLD_UV: [u16; 16] = [
+     8,  12,  16,  24,
+    12,  16,  24,  36,
+    16,  24,  36,  52,
+    24,  36,  52,  72,
+];
+
 #[derive(Clone, Debug)]
 /// Perceptual encoding configuration for a segment.
 ///
@@ -55,6 +90,17 @@ pub struct PsyConfig {
     pub(crate) chroma_csf: [u16; 16],
     /// Distortion weights for trellis quantization.
     pub(crate) trellis_weights: [u16; 16],
+    /// JND thresholds for luma coefficients.
+    /// Coefficients below these values are less perceptible.
+    pub(crate) jnd_threshold_y: [u16; 16],
+    /// JND thresholds for chroma coefficients.
+    pub(crate) jnd_threshold_uv: [u16; 16],
+    /// Luminance factor for adaptive JND (0-255, 128=neutral).
+    /// Dark (low) and bright (high) areas have different sensitivity.
+    pub(crate) luminance_factor: u8,
+    /// Contrast masking factor (0-255).
+    /// High texture areas can hide more quantization noise.
+    pub(crate) contrast_masking: u8,
 }
 
 impl Default for PsyConfig {
@@ -65,6 +111,10 @@ impl Default for PsyConfig {
             luma_csf: VP8_WEIGHT_Y,
             chroma_csf: VP8_WEIGHT_Y, // same as libwebp default
             trellis_weights: VP8_WEIGHT_TRELLIS,
+            jnd_threshold_y: [0; 16],   // disabled by default
+            jnd_threshold_uv: [0; 16],  // disabled by default
+            luminance_factor: 128,      // neutral
+            contrast_masking: 0,        // disabled
         }
     }
 }
@@ -76,7 +126,7 @@ impl PsyConfig {
     /// - method 0-2: all features disabled (bit-identical to baseline)
     /// - method >= 3: enhanced CSF tables for luma and chroma TDisto
     /// - method >= 4: psy-rd enabled with conservative strength
-    /// - method >= 5: psy-trellis enabled (trellis only runs at method >= 5)
+    /// - method >= 5: psy-trellis + JND thresholds enabled
     pub(crate) fn new(method: u8, quant_index: u8, _sns_strength: u8) -> Self {
         let mut config = Self::default();
 
@@ -101,9 +151,79 @@ impl PsyConfig {
             // (quant_index * 32) >> 7  ≈ 0.25 * q
             // At q=50: strength=12, at q=80: strength=20
             config.psy_trellis_strength = (quant_index as u32 * 32) >> 7;
+
+            // JND thresholds: scale base thresholds by quantizer
+            // Higher quantizer = higher thresholds (more aggressive zeroing)
+            // Base thresholds are for q=50, scale by q/50
+            let scale = quant_index.max(20) as u32; // min q=20 to avoid divide by zero
+            for i in 0..16 {
+                // Scale threshold: base * (q / 50), clamped
+                config.jnd_threshold_y[i] =
+                    ((JND_THRESHOLD_Y[i] as u32 * scale) / 50).min(255) as u16;
+                config.jnd_threshold_uv[i] =
+                    ((JND_THRESHOLD_UV[i] as u32 * scale) / 50).min(255) as u16;
+            }
         }
 
         config
+    }
+
+    /// Check if a luma coefficient is below JND threshold (imperceptible).
+    ///
+    /// Returns true if the coefficient magnitude is small enough that
+    /// zeroing it won't cause visible artifacts.
+    #[inline]
+    pub(crate) fn is_below_jnd_y(&self, pos: usize, coeff: i32) -> bool {
+        let threshold = self.jnd_threshold_y[pos] as i32;
+        if threshold == 0 {
+            return false; // JND disabled
+        }
+
+        let abs_coeff = coeff.abs();
+
+        // Apply luminance adaptation (Weber's law)
+        // Dark areas are more sensitive, bright areas less so
+        let adapted_threshold = if self.luminance_factor < 100 {
+            // Dark: reduce threshold (more sensitive)
+            (threshold * self.luminance_factor as i32) / 128
+        } else if self.luminance_factor > 160 {
+            // Bright: increase threshold (less sensitive)
+            (threshold * self.luminance_factor as i32) / 128
+        } else {
+            threshold
+        };
+
+        // Apply contrast masking
+        // High texture areas can hide more noise
+        let final_threshold = if self.contrast_masking > 0 {
+            adapted_threshold + (self.contrast_masking as i32 / 4)
+        } else {
+            adapted_threshold
+        };
+
+        abs_coeff < final_threshold
+    }
+
+    /// Check if a chroma coefficient is below JND threshold.
+    #[inline]
+    pub(crate) fn is_below_jnd_uv(&self, pos: usize, coeff: i32) -> bool {
+        let threshold = self.jnd_threshold_uv[pos] as i32;
+        if threshold == 0 {
+            return false;
+        }
+        coeff.abs() < threshold
+    }
+
+    /// Set luminance factor for adaptive JND.
+    /// Call with average luminance of the macroblock (0-255).
+    pub(crate) fn set_luminance(&mut self, avg_luma: u8) {
+        self.luminance_factor = avg_luma;
+    }
+
+    /// Set contrast masking factor.
+    /// Call with texture complexity metric (0=flat, 255=highly textured).
+    pub(crate) fn set_contrast_masking(&mut self, masking: u8) {
+        self.contrast_masking = masking;
     }
 }
 
