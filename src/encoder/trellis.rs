@@ -2,6 +2,13 @@
 //!
 //! Uses dynamic programming to find optimal coefficient levels that minimize
 //! the RD cost: distortion + lambda * rate.
+//!
+//! ## Psy-trellis integration
+//!
+//! When `method >= 5`, the trellis uses [`super::psy::PsyConfig`] to add
+//! perceptual penalties for zeroing coefficients that carry visible texture.
+//! The penalty is JND-gated: coefficients below the JND threshold are considered
+//! imperceptible and can be zeroed without penalty.
 
 #![allow(dead_code)]
 #![allow(clippy::needless_range_loop)]
