@@ -1,6 +1,8 @@
-//! Tune psy-rd strength parameter.
+//! Compare encoding methods with butteraugli quality metric.
 //!
-//! Tests different psy-rd strength values to find optimal balance.
+//! Tests different method levels (2-6) to compare size and perceptual quality.
+//!
+//! Usage: cargo run --release --example tune_psy_strength [directory]
 
 use std::env;
 use std::fs;
@@ -10,8 +12,10 @@ use rgb::RGB8;
 use zenwebp::{EncoderConfig, Preset, decode_rgb};
 
 fn main() {
-    let dir = "/home/lilith/work/codec-corpus/CID22/CID22-512/training";
-    
+    let args: Vec<_> = env::args().collect();
+    let dir = args.get(1).map(|s| s.as_str())
+        .unwrap_or("/home/lilith/work/codec-corpus/CID22/CID22-512/training");
+
     // Find PNG files
     let entries: Vec<_> = fs::read_dir(dir)
         .expect("Failed to read directory")
