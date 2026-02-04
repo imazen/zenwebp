@@ -140,6 +140,10 @@ Test results on 512x512 CID22 image:
 - Root cause: I4 coefficient encoding efficiency gap in the non-trellis path
 
 ### Recent SIMD Optimizations
+- **is_flat_source_16 SIMD** - Compare 16 bytes/row with CMPEQ+MOVEMASK (16x speedup, 2026-02-04)
+- **TrueMotion prediction SIMD** - pred_luma16_tm/pred_chroma8_tm with packus clamping (8-16x speedup, 2026-02-04)
+- **Edge density SIMD** - compute_edge_density horizontal diff scan (16x speedup, 2026-02-04)
+- **Mode selection caching** - Pre-extract source blocks for TDisto/psy-rd, reuse across modes (2026-02-04)
 - **SIMD quantization** - `wide::i64x4` for simple quantize path (29% speedup for methods 0-3, 2026-01-23)
 - **GetResidualCost SIMD** - Precompute abs/ctx/levels with SSE2 (30% speedup, 2026-01-23)
 - **FTransform2** - Fused residual+DCT for 2 blocks at once (2026-01-23)
@@ -158,6 +162,26 @@ Test results on 512x512 CID22 image:
 | trellis_quantize_block | 7.43% | RD-optimized quantization |
 | IDCT | 6.53% | Inverse transform (SIMD) |
 | t_transform | 3.24% | Spectral distortion (SIMD) |
+
+### Mode Selection Bottleneck Analysis (2026-02-04)
+
+The `choose_macroblock_info` function (33% of encoder time) is fundamentally expensive
+because VP8 rate-distortion optimization requires full reconstruction for each mode
+candidate to compute accurate SSE distortion.
+
+**Optimizations implemented:**
+- Cache source block extraction for TDisto/psy-rd (extract once per MB, reuse across modes)
+- Cache U/V source blocks in UV mode selection (same optimization)
+
+**Remaining optimization opportunities (not yet implemented):**
+1. **Defer I16 reconstruction** - Only do full IDCT for winning mode (saves ~48 IDCT/MB)
+2. **I4 mode filtering** - Try top 5-7 modes instead of all 10 for methods 3-4
+
+**Why this is fundamentally expensive:**
+- VP8 has 4 I16 modes + 10 I4 modes per block + 4 UV modes
+- RD optimization requires SSE(reconstructed, source), not SSE(prediction, source)
+- Full reconstruction = dequantize + IDCT for accurate distortion measurement
+- This is the same architecture libwebp uses
 
 ### Quality vs libwebp (2026-02-02)
 - CID22 m4: **0.999x** — aggregate parity with libwebp
