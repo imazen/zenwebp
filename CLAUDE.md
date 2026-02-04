@@ -2,6 +2,55 @@
 
 See global ~/.claude/CLAUDE.md for general instructions.
 
+## Perceptual Encoder Optimizations (2026-02-04)
+
+### Enhanced Masking Model (method 4+)
+
+Replaced variance-based masking with modern perceptual model:
+- **SATD-based AC energy** - measures texture in transform domain (more perceptually meaningful)
+- **Luminance masking** - Weber's law: dark areas need finer quantization
+- **Edge detection** - protects edges from coarse quantization
+- **Uniformity check** - smooth gradients need protection
+
+Files: `src/encoder/psy.rs` (compute_masking_alpha)
+
+### JND Visibility Thresholding (method 5+)
+
+Added Just Noticeable Difference (JND) model for coefficient quantization:
+- Frequency-dependent JND thresholds for luma and chroma
+- Thresholds scale with quantizer (higher q = more aggressive zeroing)
+- Luminance and contrast masking adaptation
+- Trellis skips psy_penalty for coefficients below JND threshold
+
+Files: `src/encoder/psy.rs` (JND_THRESHOLD_Y/UV, is_below_jnd_y/uv)
+       `src/encoder/trellis.rs` (JND-gated psy_penalty)
+
+### Butteraugli Tuning Results
+
+Tested perceptual features with butteraugli feedback (20 CID22 images, Q75):
+
+| Method | Avg Size | Butteraugli | Notes |
+|--------|----------|-------------|-------|
+| m2 | 31.5 KB | 4.643 | Baseline |
+| m3 | 31.0 KB | **4.580** | Best quality (CSF only) |
+| m4 | 31.0 KB | 4.681 | Slightly worse |
+| m5 | 30.2 KB | 4.820 | Smaller files |
+| m6 | 29.5 KB | 4.796 | Smallest files |
+
+**Key finding:** Psy-RD (SATD energy preservation) hurts butteraugli scores even
+at low strengths because butteraugli prefers smoother reconstructions while psy-rd
+penalizes smoothing. Psy-RD is now disabled.
+
+**Recommendation:**
+- Use method 3-4 for best perceptual quality
+- Use method 5-6 for smaller files with slightly worse perceptual quality
+- Enhanced CSF tables (method 3+) alone provide the best quality improvement
+
+### SATD SIMD Optimization
+
+Added `#[multiversed]` to SATD functions for autovectorization on x86-64-v3+ targets.
+Clean scalar code autovectorizes well - no manual intrinsics needed.
+
 ## Current Optimization Status (2026-02-03)
 
 ### Encoder Performance vs libwebp
