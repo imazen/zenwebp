@@ -143,7 +143,7 @@ fn pred_luma16_tm_scalar(dst: &mut [u8], left: &[u8], top: &[u8]) {
 
 /// SIMD dispatch for TrueMotion 16x16.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[multiversed::multiversed("x86-64-v4", "x86-64-v3", "x86-64-v2")]
+#[inline]
 fn pred_luma16_tm_dispatch(dst: &mut [u8], left: &[u8], top: &[u8]) {
     if let Some(token) = X64V3Token::summon() {
         pred_luma16_tm_sse2(token, dst, left, top);
@@ -297,7 +297,7 @@ fn pred_chroma8_tm_scalar(dst: &mut [u8], left: &[u8], top: &[u8]) {
 
 /// SIMD dispatch for TrueMotion 8x8.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[multiversed::multiversed("x86-64-v4", "x86-64-v3", "x86-64-v2")]
+#[inline]
 fn pred_chroma8_tm_dispatch(dst: &mut [u8], left: &[u8], top: &[u8]) {
     if let Some(token) = X64V3Token::summon() {
         pred_chroma8_tm_sse2(token, dst, left, top);

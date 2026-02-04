@@ -181,7 +181,7 @@ fn compute_edge_density_scalar(y_src: &[u8], width: usize, height: usize, y_stri
 
 /// SIMD dispatch for edge density.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[multiversed::multiversed("x86-64-v4", "x86-64-v3", "x86-64-v2")]
+#[inline]
 fn compute_edge_density_dispatch(
     y_src: &[u8],
     width: usize,

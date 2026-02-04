@@ -19,9 +19,8 @@ use safe_unaligned_simd::x86_64 as simd_mem;
 // =============================================================================
 
 /// Forward DCT with dynamic dispatch to best available implementation
-/// Uses multiversed for compile-time target feature optimization.
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-#[multiversed::multiversed("x86-64-v4", "x86-64-v3", "x86-64-v2")]
+#[inline]
 pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
     if let Some(token) = X64V3Token::summon() {
         dct4x4_sse2(token, block);
@@ -58,9 +57,8 @@ pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
 }
 
 /// Inverse DCT with dynamic dispatch
-/// Uses multiversed for compile-time target feature optimization.
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-#[multiversed::multiversed("x86-64-v4", "x86-64-v3", "x86-64-v2")]
+#[inline]
 pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
     debug_assert!(block.len() >= 16);
     if let Some(token) = X64V3Token::summon() {

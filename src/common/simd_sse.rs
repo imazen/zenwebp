@@ -18,7 +18,7 @@ use safe_unaligned_simd::x86_64 as simd_mem;
 ///
 /// Both blocks are stored in row-major order as 16 bytes.
 #[cfg(feature = "simd")]
-#[multiversed::multiversed("x86-64-v4", "x86-64-v3", "x86-64-v2")]
+#[inline]
 pub fn sse4x4(a: &[u8; 16], b: &[u8; 16]) -> u32 {
     // Scalar fallback for non-x86 or when no SIMD available
     #[cfg(not(target_arch = "x86_64"))]
@@ -90,7 +90,7 @@ fn sse4x4_sse2(_token: impl Has128BitSimd + Copy, a: &[u8; 16], b: &[u8; 16]) ->
 ///
 /// This is used for RD scoring where we need SSE(src, pred + idct(quantized))
 #[cfg(feature = "simd")]
-#[multiversed::multiversed("x86-64-v4", "x86-64-v3", "x86-64-v2")]
+#[inline]
 pub fn sse4x4_with_residual(src: &[u8; 16], pred: &[u8; 16], residual: &[i32; 16]) -> u32 {
     #[cfg(not(target_arch = "x86_64"))]
     {
@@ -186,7 +186,7 @@ use super::prediction::{CHROMA_BLOCK_SIZE, CHROMA_STRIDE, LUMA_BLOCK_SIZE, LUMA_
 /// Source is in a contiguous row-major array with `src_width` stride.
 /// Prediction is in a bordered buffer with LUMA_STRIDE stride and 1-pixel border.
 #[cfg(feature = "simd")]
-#[multiversed::multiversed("x86-64-v4", "x86-64-v3", "x86-64-v2")]
+#[inline]
 pub fn sse_16x16_luma(
     src_y: &[u8],
     src_width: usize,
@@ -287,7 +287,7 @@ fn sse_16x16_luma_sse2(
 
 /// Compute SSE for an 8x8 chroma block between source and bordered prediction buffer
 #[cfg(feature = "simd")]
-#[multiversed::multiversed("x86-64-v4", "x86-64-v3", "x86-64-v2")]
+#[inline]
 pub fn sse_8x8_chroma(
     src_uv: &[u8],
     src_width: usize,
@@ -428,7 +428,7 @@ pub fn t_transform_scalar(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 
 /// SIMD-accelerated TTransform using SSE2
 #[cfg(feature = "simd")]
-#[multiversed::multiversed("x86-64-v4", "x86-64-v3", "x86-64-v2")]
+#[inline]
 pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     #[cfg(not(target_arch = "x86_64"))]
     {
@@ -560,7 +560,7 @@ pub struct PrecomputedCoeffs {
 /// Precompute coefficient data using SIMD (levels, contexts, abs_levels)
 /// This is the hot path optimization from libwebp's GetResidualCost_SSE2.
 #[cfg(feature = "simd")]
-#[multiversed::multiversed("x86-64-v4", "x86-64-v3", "x86-64-v2")]
+#[inline]
 pub fn precompute_coeffs(coeffs: &[i32; 16]) -> PrecomputedCoeffs {
     #[cfg(not(target_arch = "x86_64"))]
     {
@@ -652,7 +652,7 @@ fn precompute_coeffs_sse2(
 /// Find the last non-zero coefficient using SIMD
 /// Returns -1 if all coefficients are zero
 #[cfg(feature = "simd")]
-#[multiversed::multiversed("x86-64-v4", "x86-64-v3", "x86-64-v2")]
+#[inline]
 pub fn find_last_nonzero(coeffs: &[i32; 16], first: usize) -> i32 {
     #[cfg(not(target_arch = "x86_64"))]
     {

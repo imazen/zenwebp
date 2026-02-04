@@ -139,77 +139,9 @@ impl VP8Matrix {
         level * self.q[pos] as i32
     }
 
-    /// Quantize an entire 4x4 block of coefficients in place (SIMD version)
+    /// Quantize an entire 4x4 block of coefficients in place
     ///
     /// Includes sharpen boost and zthresh check matching libwebp's QuantizeBlock_C.
-    #[cfg(feature = "simd")]
-    pub fn quantize(&self, coeffs: &mut [i32; 16]) {
-        use wide::i64x4;
-
-        // Process 4 coefficients at a time using 64-bit intermediates
-        for chunk in 0..4 {
-            let base = chunk * 4;
-
-            // Load 4 coefficients
-            let c = [
-                coeffs[base] as i64,
-                coeffs[base + 1] as i64,
-                coeffs[base + 2] as i64,
-                coeffs[base + 3] as i64,
-            ];
-
-            // Compute signs and absolute values + sharpen
-            let signs = [c[0] < 0, c[1] < 0, c[2] < 0, c[3] < 0];
-            let abs_c = [
-                c[0].abs() + self.sharpen[base] as i64,
-                c[1].abs() + self.sharpen[base + 1] as i64,
-                c[2].abs() + self.sharpen[base + 2] as i64,
-                c[3].abs() + self.sharpen[base + 3] as i64,
-            ];
-
-            // Load zthresh for early-out check
-            let zt = [
-                self.zthresh[base] as i64,
-                self.zthresh[base + 1] as i64,
-                self.zthresh[base + 2] as i64,
-                self.zthresh[base + 3] as i64,
-            ];
-
-            // Load iq and bias as i64
-            let iq = i64x4::from([
-                self.iq[base] as i64,
-                self.iq[base + 1] as i64,
-                self.iq[base + 2] as i64,
-                self.iq[base + 3] as i64,
-            ]);
-            let bias = i64x4::from([
-                self.bias[base] as i64,
-                self.bias[base + 1] as i64,
-                self.bias[base + 2] as i64,
-                self.bias[base + 3] as i64,
-            ]);
-
-            // Quantize: (abs_coeff * iq + bias) >> QFIX
-            let abs_v = i64x4::from(abs_c);
-            let result = (abs_v * iq + bias) >> QFIX as i64;
-            let r = result.to_array();
-
-            // Apply signs, zthresh, and store
-            for i in 0..4 {
-                if abs_c[i] <= zt[i] {
-                    coeffs[base + i] = 0;
-                } else {
-                    let level = (r[i] as i32).min(MAX_LEVEL as i32);
-                    coeffs[base + i] = if signs[i] { -level } else { level };
-                }
-            }
-        }
-    }
-
-    /// Quantize an entire 4x4 block of coefficients in place (scalar fallback)
-    ///
-    /// Includes sharpen boost and zthresh check matching libwebp's QuantizeBlock_C.
-    #[cfg(not(feature = "simd"))]
     pub fn quantize(&self, coeffs: &mut [i32; 16]) {
         for (pos, coeff) in coeffs.iter_mut().enumerate() {
             let sign = *coeff < 0;
@@ -227,104 +159,6 @@ impl VP8Matrix {
     /// This is used for Y1 blocks where the DC goes to the Y2 block
     ///
     /// Includes sharpen boost and zthresh check matching libwebp's QuantizeBlock_C.
-    #[cfg(feature = "simd")]
-    pub fn quantize_ac_only(&self, coeffs: &mut [i32; 16]) {
-        use wide::i64x4;
-
-        // Process positions 1-3 (first chunk, skip DC at 0)
-        {
-            let c = [
-                coeffs[1] as i64,
-                coeffs[2] as i64,
-                coeffs[3] as i64,
-                0i64, // padding
-            ];
-            let signs = [c[0] < 0, c[1] < 0, c[2] < 0, false];
-            let abs_c = [
-                c[0].abs() + self.sharpen[1] as i64,
-                c[1].abs() + self.sharpen[2] as i64,
-                c[2].abs() + self.sharpen[3] as i64,
-                0i64,
-            ];
-            let zt = [
-                self.zthresh[1] as i64,
-                self.zthresh[2] as i64,
-                self.zthresh[3] as i64,
-                0i64,
-            ];
-            let abs_v = i64x4::from(abs_c);
-            let iq = i64x4::from([self.iq[1] as i64, self.iq[2] as i64, self.iq[3] as i64, 0]);
-            let bias = i64x4::from([
-                self.bias[1] as i64,
-                self.bias[2] as i64,
-                self.bias[3] as i64,
-                0,
-            ]);
-            let result = (abs_v * iq + bias) >> QFIX as i64;
-            let r = result.to_array();
-            for i in 0..3 {
-                if abs_c[i] <= zt[i] {
-                    coeffs[1 + i] = 0;
-                } else {
-                    let level = (r[i] as i32).min(MAX_LEVEL as i32);
-                    coeffs[1 + i] = if signs[i] { -level } else { level };
-                }
-            }
-        }
-
-        // Process positions 4-15 (three full chunks)
-        for chunk in 1..4 {
-            let base = chunk * 4;
-            let c = [
-                coeffs[base] as i64,
-                coeffs[base + 1] as i64,
-                coeffs[base + 2] as i64,
-                coeffs[base + 3] as i64,
-            ];
-            let signs = [c[0] < 0, c[1] < 0, c[2] < 0, c[3] < 0];
-            let abs_c = [
-                c[0].abs() + self.sharpen[base] as i64,
-                c[1].abs() + self.sharpen[base + 1] as i64,
-                c[2].abs() + self.sharpen[base + 2] as i64,
-                c[3].abs() + self.sharpen[base + 3] as i64,
-            ];
-            let zt = [
-                self.zthresh[base] as i64,
-                self.zthresh[base + 1] as i64,
-                self.zthresh[base + 2] as i64,
-                self.zthresh[base + 3] as i64,
-            ];
-            let abs_v = i64x4::from(abs_c);
-            let iq = i64x4::from([
-                self.iq[base] as i64,
-                self.iq[base + 1] as i64,
-                self.iq[base + 2] as i64,
-                self.iq[base + 3] as i64,
-            ]);
-            let bias = i64x4::from([
-                self.bias[base] as i64,
-                self.bias[base + 1] as i64,
-                self.bias[base + 2] as i64,
-                self.bias[base + 3] as i64,
-            ]);
-            let result = (abs_v * iq + bias) >> QFIX as i64;
-            let r = result.to_array();
-            for i in 0..4 {
-                if abs_c[i] <= zt[i] {
-                    coeffs[base + i] = 0;
-                } else {
-                    let level = (r[i] as i32).min(MAX_LEVEL as i32);
-                    coeffs[base + i] = if signs[i] { -level } else { level };
-                }
-            }
-        }
-    }
-
-    /// Quantize only AC coefficients (positions 1-15) in place, leaving DC unchanged
-    /// This is used for Y1 blocks where the DC goes to the Y2 block (scalar fallback)
-    ///
-    /// Includes sharpen boost and zthresh check matching libwebp's QuantizeBlock_C.
-    #[cfg(not(feature = "simd"))]
     #[allow(clippy::needless_range_loop)] // pos indexes both coeffs and self.iq/self.bias
     pub fn quantize_ac_only(&self, coeffs: &mut [i32; 16]) {
         for pos in 1..16 {
@@ -341,54 +175,6 @@ impl VP8Matrix {
     }
 
     /// Dequantize an entire 4x4 block of coefficients in place
-    #[cfg(feature = "simd")]
-    pub fn dequantize_block(&self, coeffs: &mut [i32; 16]) {
-        use wide::i32x4;
-        // Load quantizer steps as i32 vectors (4 at a time)
-        let q0 = i32x4::from([
-            self.q[0] as i32,
-            self.q[1] as i32,
-            self.q[2] as i32,
-            self.q[3] as i32,
-        ]);
-        let q1 = i32x4::from([
-            self.q[4] as i32,
-            self.q[5] as i32,
-            self.q[6] as i32,
-            self.q[7] as i32,
-        ]);
-        let q2 = i32x4::from([
-            self.q[8] as i32,
-            self.q[9] as i32,
-            self.q[10] as i32,
-            self.q[11] as i32,
-        ]);
-        let q3 = i32x4::from([
-            self.q[12] as i32,
-            self.q[13] as i32,
-            self.q[14] as i32,
-            self.q[15] as i32,
-        ]);
-
-        // Load, multiply, store - wide handles the SIMD details
-        let c0 = i32x4::from([coeffs[0], coeffs[1], coeffs[2], coeffs[3]]) * q0;
-        let c1 = i32x4::from([coeffs[4], coeffs[5], coeffs[6], coeffs[7]]) * q1;
-        let c2 = i32x4::from([coeffs[8], coeffs[9], coeffs[10], coeffs[11]]) * q2;
-        let c3 = i32x4::from([coeffs[12], coeffs[13], coeffs[14], coeffs[15]]) * q3;
-
-        // Store results
-        let r0 = c0.to_array();
-        let r1 = c1.to_array();
-        let r2 = c2.to_array();
-        let r3 = c3.to_array();
-        coeffs[0..4].copy_from_slice(&r0);
-        coeffs[4..8].copy_from_slice(&r1);
-        coeffs[8..12].copy_from_slice(&r2);
-        coeffs[12..16].copy_from_slice(&r3);
-    }
-
-    /// Dequantize an entire 4x4 block of coefficients in place (scalar fallback)
-    #[cfg(not(feature = "simd"))]
     pub fn dequantize_block(&self, coeffs: &mut [i32; 16]) {
         for (pos, coeff) in coeffs.iter_mut().enumerate() {
             *coeff *= self.q[pos] as i32;

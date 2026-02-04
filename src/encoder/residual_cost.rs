@@ -67,7 +67,7 @@ impl<'a> Residual<'a> {
 /// # Returns
 /// Cost in 1/256 bit units
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
-#[multiversed::multiversed("x86-64-v4", "x86-64-v3", "x86-64-v2")]
+#[inline]
 pub fn get_residual_cost(
     ctx0: usize,
     res: &Residual,

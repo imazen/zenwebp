@@ -26,12 +26,9 @@ libm = "0.2.16"
 yuv = { version = "0.8", optional = true }
 png = { version = "0.17.12", optional = true }
 webp = { version = "0.3.0", optional = true }
-multiversed = { version = "0.2.0", optional = true }
-multiversion = { version = "0.8.0", optional = true }
 archmage = { version = "0.4.0", optional = true }
 magetypes = { version = "0.4.0", optional = true }
 safe_unaligned_simd = { version = "0.2.3", optional = true }
-wide = { version = "1.1.1", optional = true }
 imagequant = { version = "4.4", optional = true, default-features = false }
 
 [dev-dependencies]
@@ -57,7 +54,7 @@ fast-yuv = ["dep:yuv"]
 # Enable SIMD intrinsics via archmage (safe API with token-based feature verification).
 # Provides best performance on x86-64 with runtime CPU detection.
 # On wasm32, uses core::arch::wasm32 SIMD128 intrinsics.
-simd = ["dep:multiversed", "dep:multiversion", "dep:archmage", "dep:magetypes", "dep:safe_unaligned_simd", "dep:wide"]
+simd = ["dep:archmage", "dep:magetypes", "dep:safe_unaligned_simd"]
 # Color quantization via imagequant for near-lossless palette encoding.
 # Reduces >256 color images to palette for VP8L color indexing transform.
 # Note: imagequant is GPL-3.0-or-later; enabling this changes the effective license.
