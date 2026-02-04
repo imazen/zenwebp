@@ -9,7 +9,7 @@ use crate::common::types::*;
 
 use crate::encoder::cost::{
     estimate_dc16_cost, estimate_residual_cost, get_cost_luma16, get_cost_luma4, get_cost_uv,
-    get_i4_mode_cost, is_flat_coeffs, is_flat_source_16, tdisto_16x16, tdisto_4x4, tdisto_8x8,
+    is_flat_coeffs, is_flat_source_16, tdisto_16x16, tdisto_4x4, tdisto_8x8,
     trellis_quantize_block, FIXED_COSTS_I16, FIXED_COSTS_UV, FLATNESS_LIMIT_I16, FLATNESS_LIMIT_I4,
     FLATNESS_LIMIT_UV, FLATNESS_PENALTY, RD_DISTO_MULT,
 };
@@ -82,10 +82,9 @@ impl<'a> super::Vp8Encoder<'a> {
         let src_block = if need_spectral {
             let mut block = [0u8; 256];
             for y in 0..16 {
-                for x in 0..16 {
-                    let src_idx = (mby * 16 + y) * src_width + mbx * 16 + x;
-                    block[y * 16 + x] = self.frame.ybuf[src_idx];
-                }
+                let src_row = (mby * 16 + y) * src_width + mbx * 16;
+                block[y * 16..(y + 1) * 16]
+                    .copy_from_slice(&self.frame.ybuf[src_row..src_row + 16]);
             }
             Some(block)
         } else {
@@ -192,9 +191,9 @@ impl<'a> super::Vp8Encoder<'a> {
                 // Extract reconstructed block only (source already cached)
                 let mut rec_block = [0u8; 256];
                 for y in 0..16 {
-                    for x in 0..16 {
-                        rec_block[y * 16 + x] = reconstructed[(y + 1) * LUMA_STRIDE + x + 1];
-                    }
+                    let rec_row = (y + 1) * LUMA_STRIDE + 1;
+                    rec_block[y * 16..(y + 1) * 16]
+                        .copy_from_slice(&reconstructed[rec_row..rec_row + 16]);
                 }
 
                 let td = if tlambda > 0 {
@@ -554,6 +553,12 @@ impl<'a> super::Vp8Encoder<'a> {
                 let nz_top = top_nz[sbx];
                 let nz_left = left_nz[sby];
 
+                // Precompute mode costs for all 10 modes (context is constant for this block)
+                // This avoids repeated 3D table lookup inside the tight mode loop
+                let mode_costs: [u16; 10] = core::array::from_fn(|mode_idx| {
+                    crate::encoder::tables::VP8_FIXED_COSTS_I4[top_ctx][left_ctx][mode_idx]
+                });
+
                 let mut best_mode = IntraMode::DC;
                 let mut best_mode_idx = 0usize;
                 let mut best_block_score = u64::MAX;
@@ -568,14 +573,13 @@ impl<'a> super::Vp8Encoder<'a> {
                 // Pre-compute all 10 I4 prediction modes at once
                 let preds = I4Predictions::compute(&y_with_border, x0, y0, LUMA_STRIDE);
 
-                // Compute source block once
+                // Compute source block once (row-wise copy for better cache/vectorization)
                 let src_base = (mby * 16 + sby * 4) * src_width + mbx * 16 + sbx * 4;
                 let mut src_block = [0u8; 16];
                 for y in 0..4 {
                     let src_row = src_base + y * src_width;
-                    for x in 0..4 {
-                        src_block[y * 4 + x] = self.frame.ybuf[src_row + x];
-                    }
+                    src_block[y * 4..y * 4 + 4]
+                        .copy_from_slice(&self.frame.ybuf[src_row..src_row + 4]);
                 }
 
                 let y1_matrix = segment.y1_matrix.as_ref().unwrap();
@@ -593,11 +597,21 @@ impl<'a> super::Vp8Encoder<'a> {
                 let mut mode_sse: [(u32, usize); 10] = [(0, 0); 10];
                 for (mode_idx, _) in MODES.iter().enumerate() {
                     let pred = preds.get(mode_idx);
-                    let mut sse = 0u32;
-                    for k in 0..16 {
-                        let diff = i32::from(src_block[k]) - i32::from(pred[k]);
-                        sse += (diff * diff) as u32;
-                    }
+                    // Use SIMD SSE computation (16 bytes at once)
+                    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+                    let sse = crate::common::simd_sse::sse4x4(&src_block, pred);
+                    #[cfg(not(all(
+                        feature = "simd",
+                        any(target_arch = "x86_64", target_arch = "x86")
+                    )))]
+                    let sse = {
+                        let mut sum = 0u32;
+                        for k in 0..16 {
+                            let diff = i32::from(src_block[k]) - i32::from(pred[k]);
+                            sum += (diff * diff) as u32;
+                        }
+                        sum
+                    };
                     mode_sse[mode_idx] = (sse, mode_idx);
                 }
                 // Sort by SSE (ascending) - try modes with best predictions first
@@ -761,7 +775,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     };
 
                     // Compute RD score: (R + H) * lambda + RD_DISTO_MULT * (D + SD + PSY)
-                    let mode_cost = get_i4_mode_cost(top_ctx, left_ctx, mode_idx);
+                    let mode_cost = mode_costs[mode_idx];
                     let total_rate_cost = coeff_cost + flatness_penalty as u32;
                     let rd_score = crate::encoder::cost::rd_score_full(
                         sse,
@@ -821,7 +835,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 top_nz[sbx] = best_has_nz;
                 left_nz[sby] = best_has_nz;
 
-                let best_mode_cost = get_i4_mode_cost(top_ctx, left_ctx, best_mode_idx);
+                let best_mode_cost = mode_costs[best_mode_idx];
                 total_mode_cost += u32::from(best_mode_cost);
 
                 // Recalculate the block score with lambda_mode for accumulation
@@ -918,11 +932,9 @@ impl<'a> super::Vp8Encoder<'a> {
             let mut u_block = [0u8; 64];
             let mut v_block = [0u8; 64];
             for y in 0..8 {
-                for x in 0..8 {
-                    let src_idx = (mby * 8 + y) * chroma_width + mbx * 8 + x;
-                    u_block[y * 8 + x] = self.frame.ubuf[src_idx];
-                    v_block[y * 8 + x] = self.frame.vbuf[src_idx];
-                }
+                let src_row = (mby * 8 + y) * chroma_width + mbx * 8;
+                u_block[y * 8..(y + 1) * 8].copy_from_slice(&self.frame.ubuf[src_row..src_row + 8]);
+                v_block[y * 8..(y + 1) * 8].copy_from_slice(&self.frame.vbuf[src_row..src_row + 8]);
             }
             (Some(u_block), Some(v_block))
         } else {
@@ -1038,10 +1050,11 @@ impl<'a> super::Vp8Encoder<'a> {
                 let mut rec_u_block = [0u8; 64];
                 let mut rec_v_block = [0u8; 64];
                 for y in 0..8 {
-                    for x in 0..8 {
-                        rec_u_block[y * 8 + x] = reconstructed_u[(y + 1) * CHROMA_STRIDE + x + 1];
-                        rec_v_block[y * 8 + x] = reconstructed_v[(y + 1) * CHROMA_STRIDE + x + 1];
-                    }
+                    let rec_row = (y + 1) * CHROMA_STRIDE + 1;
+                    rec_u_block[y * 8..(y + 1) * 8]
+                        .copy_from_slice(&reconstructed_u[rec_row..rec_row + 8]);
+                    rec_v_block[y * 8..(y + 1) * 8]
+                        .copy_from_slice(&reconstructed_v[rec_row..rec_row + 8]);
                 }
 
                 let td = if tlambda > 0 {
