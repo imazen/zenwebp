@@ -14,6 +14,8 @@ use crate::encoder::cost::{
     FLATNESS_LIMIT_UV, FLATNESS_PENALTY, RD_DISTO_MULT,
 };
 
+use crate::encoder::psy;
+
 use super::{sse_16x16_luma, sse_8x8_chroma, MacroblockInfo};
 
 impl<'a> super::Vp8Encoder<'a> {
@@ -76,6 +78,7 @@ impl<'a> super::Vp8Encoder<'a> {
         let mut best_mode_cost = 0u16;
         let mut best_sse = 0u32;
         let mut best_spectral_disto = 0i32;
+        let mut best_psy_cost = 0i32;
 
         for (mode_idx, &mode) in MODES.iter().enumerate() {
             // Skip V mode if no top row available (first row of macroblocks)
@@ -163,24 +166,40 @@ impl<'a> super::Vp8Encoder<'a> {
             // 8. Compute SSE between source and reconstructed (NOT prediction!)
             let sse = sse_16x16_luma(&self.frame.ybuf, src_width, mbx, mby, &reconstructed);
 
-            // 9. Compute spectral distortion (TDisto) if enabled
-            let spectral_disto = if tlambda > 0 {
-                // Need to extract 16x16 source and reconstructed blocks for TDisto
-                let mut src_block = [0u8; 256];
-                let mut rec_block = [0u8; 256];
-                for y in 0..16 {
-                    for x in 0..16 {
-                        let src_idx = (mby * 16 + y) * src_width + mbx * 16 + x;
-                        src_block[y * 16 + x] = self.frame.ybuf[src_idx];
-                        rec_block[y * 16 + x] = reconstructed[(y + 1) * LUMA_STRIDE + x + 1];
+            // 9. Compute spectral distortion (TDisto) + psy-rd if enabled
+            let (spectral_disto, psy_cost) =
+                if tlambda > 0 || segment.psy_config.psy_rd_strength > 0 {
+                    // Need to extract 16x16 source and reconstructed blocks
+                    let mut src_block = [0u8; 256];
+                    let mut rec_block = [0u8; 256];
+                    for y in 0..16 {
+                        for x in 0..16 {
+                            let src_idx = (mby * 16 + y) * src_width + mbx * 16 + x;
+                            src_block[y * 16 + x] = self.frame.ybuf[src_idx];
+                            rec_block[y * 16 + x] = reconstructed[(y + 1) * LUMA_STRIDE + x + 1];
+                        }
                     }
-                }
-                let td = tdisto_16x16(&src_block, &rec_block, 16, &segment.psy_config.luma_csf);
-                // Scale by tlambda and round: (tlambda * td + 128) >> 8
-                (tlambda as i32 * td + 128) >> 8
-            } else {
-                0
-            };
+
+                    let td = if tlambda > 0 {
+                        let td_raw =
+                            tdisto_16x16(&src_block, &rec_block, 16, &segment.psy_config.luma_csf);
+                        (tlambda as i32 * td_raw + 128) >> 8
+                    } else {
+                        0
+                    };
+
+                    let psy = if segment.psy_config.psy_rd_strength > 0 {
+                        let src_satd = psy::satd_16x16(&src_block, 16);
+                        let rec_satd = psy::satd_16x16(&rec_block, 16);
+                        psy::psy_rd_cost(src_satd, rec_satd, segment.psy_config.psy_rd_strength)
+                    } else {
+                        0
+                    };
+
+                    (td, psy)
+                } else {
+                    (0, 0)
+                };
 
             // 10. Apply flat source penalty if applicable
             let (d_final, sd_final) = if is_flat {
@@ -202,10 +221,11 @@ impl<'a> super::Vp8Encoder<'a> {
             };
 
             // 11. Compute full RD score
-            // score = (R + H) * lambda + RD_DISTO_MULT * (D + SD)
+            // score = (R + H) * lambda + RD_DISTO_MULT * (D + SD + PSY)
             let mode_cost = FIXED_COSTS_I16[mode_idx];
             let rate = (i64::from(mode_cost) + i64::from(coeff_cost)) * i64::from(lambda);
-            let distortion = i64::from(RD_DISTO_MULT) * (i64::from(d_final) + i64::from(sd_final));
+            let distortion = i64::from(RD_DISTO_MULT)
+                * (i64::from(d_final) + i64::from(sd_final) + i64::from(psy_cost));
             let rd_score = rate + distortion;
 
             #[cfg(feature = "mode_debug")]
@@ -224,6 +244,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 best_mode_cost = mode_cost;
                 best_sse = d_final;
                 best_spectral_disto = sd_final;
+                best_psy_cost = psy_cost;
             }
         }
 
@@ -232,8 +253,8 @@ impl<'a> super::Vp8Encoder<'a> {
         let lambda_mode = segment.lambda_mode;
         let final_rate =
             (i64::from(best_mode_cost) + i64::from(best_coeff_cost)) * i64::from(lambda_mode);
-        let final_distortion =
-            i64::from(RD_DISTO_MULT) * (i64::from(best_sse) + i64::from(best_spectral_disto));
+        let final_distortion = i64::from(RD_DISTO_MULT)
+            * (i64::from(best_sse) + i64::from(best_spectral_disto) + i64::from(best_psy_cost));
         let final_score = final_rate + final_distortion;
 
         #[cfg(feature = "mode_debug")]
@@ -499,9 +520,10 @@ impl<'a> super::Vp8Encoder<'a> {
                 let mut best_block_score = u64::MAX;
                 let mut best_has_nz = false;
                 let mut best_quantized = [0i32; 16];
-                // Track best block's SSE, spectral distortion, and coeff cost for recalculating with lambda_mode
+                // Track best block's SSE, spectral distortion, psy cost, and coeff cost for recalculating with lambda_mode
                 let mut best_sse = 0u32;
                 let mut best_spectral_disto = 0i32;
+                let mut best_psy_cost = 0i32;
                 let mut best_coeff_cost = 0u32;
 
                 // Pre-compute all 10 I4 prediction modes at once
@@ -666,30 +688,44 @@ impl<'a> super::Vp8Encoder<'a> {
                         0
                     };
 
-                    // Compute spectral distortion (TDisto) if tlambda > 0
-                    // This matches libwebp's: rd_tmp.SD = tlambda ? MULT_8B(tlambda, VP8TDisto4x4(...)) : 0
-                    let spectral_disto = if tlambda > 0 {
-                        // Build reconstructed 4x4 block for TDisto
+                    // Compute spectral distortion (TDisto) + psy-rd if enabled
+                    let (spectral_disto, psy_cost) = if tlambda > 0
+                        || segment.psy_config.psy_rd_strength > 0
+                    {
+                        // Build reconstructed 4x4 block
                         let mut rec_block = [0u8; 16];
                         for k in 0..16 {
                             rec_block[k] =
                                 (i32::from(pred[k]) + dequantized[k]).clamp(0, 255) as u8;
                         }
-                        let td =
-                            tdisto_4x4(&src_block, &rec_block, 4, &segment.psy_config.luma_csf);
-                        // Scale by tlambda and round: (tlambda * td + 128) >> 8
-                        (tlambda as i32 * td + 128) >> 8
+
+                        let td = if tlambda > 0 {
+                            let td_raw =
+                                tdisto_4x4(&src_block, &rec_block, 4, &segment.psy_config.luma_csf);
+                            (tlambda as i32 * td_raw + 128) >> 8
+                        } else {
+                            0
+                        };
+
+                        let psy = if segment.psy_config.psy_rd_strength > 0 {
+                            let src_satd = psy::satd_4x4(&src_block, 4);
+                            let rec_satd = psy::satd_4x4(&rec_block, 4);
+                            psy::psy_rd_cost(src_satd, rec_satd, segment.psy_config.psy_rd_strength)
+                        } else {
+                            0
+                        };
+
+                        (td, psy)
                     } else {
-                        0
+                        (0, 0)
                     };
 
-                    // Compute RD score: (R + H) * lambda + RD_DISTO_MULT * (D + SD)
-                    // Use rd_score_full to include spectral distortion
+                    // Compute RD score: (R + H) * lambda + RD_DISTO_MULT * (D + SD + PSY)
                     let mode_cost = get_i4_mode_cost(top_ctx, left_ctx, mode_idx);
                     let total_rate_cost = coeff_cost + flatness_penalty as u32;
                     let rd_score = crate::encoder::cost::rd_score_full(
                         sse,
-                        spectral_disto,
+                        spectral_disto + psy_cost,
                         mode_cost,
                         total_rate_cost,
                         lambda_i4,
@@ -733,6 +769,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         best_quantized = quantized_natural;
                         best_sse = sse;
                         best_spectral_disto = spectral_disto;
+                        best_psy_cost = psy_cost;
                         best_coeff_cost = coeff_cost;
                     }
                 }
@@ -749,10 +786,9 @@ impl<'a> super::Vp8Encoder<'a> {
 
                 // Recalculate the block score with lambda_mode for accumulation
                 // (matching libwebp's SetRDScore(lambda_mode, &rd_i4) before AddScore)
-                // Use rd_score_full to include spectral distortion
                 let block_score_for_comparison = crate::encoder::cost::rd_score_full(
                     best_sse,
-                    best_spectral_disto,
+                    best_spectral_disto + best_psy_cost,
                     best_mode_cost,
                     best_coeff_cost,
                     lambda_mode,

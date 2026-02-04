@@ -43,11 +43,188 @@ impl Default for PsyConfig {
 impl PsyConfig {
     /// Create a PsyConfig for the given encoding parameters.
     ///
-    /// Currently all features are disabled (strengths = 0) and tables match
-    /// the libwebp defaults. This is Phase 1: a pure refactor with no
-    /// behavioral change at any method level.
-    pub(crate) fn new(_method: u8, _quant_index: u8, _sns_strength: u8) -> Self {
-        // Phase 1: all disabled, exact same tables as before
-        Self::default()
+    /// Method gating:
+    /// - method 0-3: all features disabled (bit-identical to baseline)
+    /// - method >= 4: psy-rd enabled with conservative strength
+    pub(crate) fn new(method: u8, quant_index: u8, _sns_strength: u8) -> Self {
+        let mut config = Self::default();
+
+        if method >= 4 {
+            // Psy-RD: penalize energy loss. Strength scales with quantizer
+            // because coarser quantization causes more visible smoothing.
+            // Conservative: (quant_index * 48) >> 7  ≈ 0.375 * q
+            // At q=50: strength=18, at q=80: strength=30
+            config.psy_rd_strength = (quant_index as u32 * 48) >> 7;
+        }
+
+        config
+    }
+}
+
+//------------------------------------------------------------------------------
+// SATD (Sum of Absolute Transformed Differences)
+//
+// Measures total signal energy in the Hadamard (Walsh-Hadamard) domain.
+// Unlike TDisto which computes frequency-weighted differences between two blocks,
+// SATD measures the absolute energy of a single block. Used by psy-rd to detect
+// when the encoder is destroying texture energy.
+
+/// Compute SATD for a 4x4 block of pixels.
+///
+/// Applies a 4x4 Hadamard transform and returns sum of |coefficients|.
+/// No frequency weighting — this measures total signal energy.
+///
+/// # Arguments
+/// * `block` - Pixel data (accessed with given stride)
+/// * `stride` - Row stride of input buffer
+#[inline]
+pub(crate) fn satd_4x4(block: &[u8], stride: usize) -> u32 {
+    let mut tmp = [0i32; 16];
+
+    // Horizontal Hadamard
+    for i in 0..4 {
+        let row = i * stride;
+        let a0 = i32::from(block[row]) + i32::from(block[row + 2]);
+        let a1 = i32::from(block[row + 1]) + i32::from(block[row + 3]);
+        let a2 = i32::from(block[row + 1]) - i32::from(block[row + 3]);
+        let a3 = i32::from(block[row]) - i32::from(block[row + 2]);
+        tmp[i * 4] = a0 + a1;
+        tmp[i * 4 + 1] = a3 + a2;
+        tmp[i * 4 + 2] = a3 - a2;
+        tmp[i * 4 + 3] = a0 - a1;
+    }
+
+    // Vertical Hadamard + absolute sum
+    let mut sum = 0u32;
+    for i in 0..4 {
+        let a0 = tmp[i] + tmp[8 + i];
+        let a1 = tmp[4 + i] + tmp[12 + i];
+        let a2 = tmp[4 + i] - tmp[12 + i];
+        let a3 = tmp[i] - tmp[8 + i];
+
+        sum += (a0 + a1).unsigned_abs();
+        sum += (a3 + a2).unsigned_abs();
+        sum += (a3 - a2).unsigned_abs();
+        sum += (a0 - a1).unsigned_abs();
+    }
+    sum
+}
+
+/// Compute SATD for an 8x8 block as sum of four 4x4 SATDs.
+#[inline]
+pub(crate) fn satd_8x8(block: &[u8], stride: usize) -> u32 {
+    let mut sum = 0u32;
+    for y in 0..2 {
+        for x in 0..2 {
+            let offset = y * 4 * stride + x * 4;
+            sum += satd_4x4(&block[offset..], stride);
+        }
+    }
+    sum
+}
+
+/// Compute SATD for a 16x16 block as sum of sixteen 4x4 SATDs.
+#[inline]
+pub(crate) fn satd_16x16(block: &[u8], stride: usize) -> u32 {
+    let mut sum = 0u32;
+    for y in 0..4 {
+        for x in 0..4 {
+            let offset = y * 4 * stride + x * 4;
+            sum += satd_4x4(&block[offset..], stride);
+        }
+    }
+    sum
+}
+
+/// Compute the psy-rd penalty for energy loss between source and reconstruction.
+///
+/// Returns a one-sided penalty: only penalizes when the reconstruction has
+/// LESS energy than the source (smoothing/detail loss). Energy gain (ringing)
+/// is not penalized because ringing is already captured by SSE.
+///
+/// # Arguments
+/// * `src_satd` - SATD energy of source block
+/// * `rec_satd` - SATD energy of reconstructed block
+/// * `psy_rd_strength` - Scaling factor (0 = disabled)
+#[inline]
+pub(crate) fn psy_rd_cost(src_satd: u32, rec_satd: u32, psy_rd_strength: u32) -> i32 {
+    if psy_rd_strength == 0 {
+        return 0;
+    }
+    // One-sided: only penalize energy loss (src > rec means smoothing)
+    let energy_loss = src_satd.saturating_sub(rec_satd);
+    // Scale and shift to match distortion units
+    ((psy_rd_strength as i64 * energy_loss as i64) >> 8) as i32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_satd_4x4_flat_block() {
+        // Flat block (all same value) should have energy only in DC
+        let flat = [128u8; 64]; // 4x4 at stride 16
+        let s = satd_4x4(&flat, 16);
+        // DC = 4*4*128 = 2048, all AC = 0
+        // Hadamard of flat input: DC coefficient = sum of all pixels = 2048
+        assert_eq!(s, 2048);
+    }
+
+    #[test]
+    fn test_satd_4x4_noise_has_energy() {
+        // Block with varying values should have significant energy
+        let noise: [u8; 16] = [
+            10, 200, 50, 180, 90, 30, 220, 70, 150, 110, 40, 190, 60, 250, 20, 100,
+        ];
+        let s = satd_4x4(&noise, 4);
+        // Should be much larger than flat block
+        assert!(s > 2048, "Noisy block SATD={} should exceed flat DC", s);
+    }
+
+    #[test]
+    fn test_satd_16x16_is_sum_of_4x4s() {
+        // Fill a 16x16 block with a pattern
+        let mut block = [0u8; 16 * 16];
+        for (i, pixel) in block.iter_mut().enumerate() {
+            *pixel = (i * 7 + 13) as u8; // arbitrary pattern
+        }
+        let total = satd_16x16(&block, 16);
+        let mut manual_sum = 0u32;
+        for y in 0..4 {
+            for x in 0..4 {
+                manual_sum += satd_4x4(&block[y * 4 * 16 + x * 4..], 16);
+            }
+        }
+        assert_eq!(total, manual_sum);
+    }
+
+    #[test]
+    fn test_psy_rd_cost_disabled() {
+        assert_eq!(psy_rd_cost(1000, 500, 0), 0);
+    }
+
+    #[test]
+    fn test_psy_rd_cost_energy_loss() {
+        // Source has more energy than recon => penalty
+        let cost = psy_rd_cost(1000, 500, 256);
+        assert!(cost > 0, "Energy loss should produce positive penalty");
+    }
+
+    #[test]
+    fn test_psy_rd_cost_energy_gain_no_penalty() {
+        // Recon has more energy than source => no penalty (one-sided)
+        let cost = psy_rd_cost(500, 1000, 256);
+        assert_eq!(cost, 0, "Energy gain should not be penalized");
+    }
+
+    #[test]
+    fn test_psy_rd_cost_scales_with_strength() {
+        let cost_low = psy_rd_cost(1000, 500, 100);
+        let cost_high = psy_rd_cost(1000, 500, 200);
+        assert!(
+            cost_high > cost_low,
+            "Higher strength should give higher penalty"
+        );
     }
 }
