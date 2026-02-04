@@ -140,6 +140,9 @@ Test results on 512x512 CID22 image:
 - Root cause: I4 coefficient encoding efficiency gap in the non-trellis path
 
 ### Recent SIMD Optimizations
+- **I4 mode cost precompute** - Cache all 10 mode costs before inner loop (avoid 3D table lookup, 2026-02-04)
+- **I4 prediction SSE SIMD** - Use sse4x4() for mode filtering instead of scalar loop (2026-02-04)
+- **Row-wise copy_from_slice** - Replace nested loops with memcpy-like ops for block extraction (2026-02-04)
 - **is_flat_source_16 SIMD** - Compare 16 bytes/row with CMPEQ+MOVEMASK (16x speedup, 2026-02-04)
 - **TrueMotion prediction SIMD** - pred_luma16_tm/pred_chroma8_tm with packus clamping (8-16x speedup, 2026-02-04)
 - **Edge density SIMD** - compute_edge_density horizontal diff scan (16x speedup, 2026-02-04)
@@ -169,13 +172,16 @@ The `choose_macroblock_info` function (33% of encoder time) is fundamentally exp
 because VP8 rate-distortion optimization requires full reconstruction for each mode
 candidate to compute accurate SSE distortion.
 
-**Optimizations implemented:**
+**Optimizations implemented (2026-02-04):**
 - Cache source block extraction for TDisto/psy-rd (extract once per MB, reuse across modes)
 - Cache U/V source blocks in UV mode selection (same optimization)
+- Precompute I4 mode costs (cache 10 costs per block, avoid 3D table lookup in loop)
+- SIMD for I4 prediction SSE (sse4x4 instead of 160 scalar ops per block)
+- Row-wise copy_from_slice for all block extractions (better vectorization)
 
 **Remaining optimization opportunities (not yet implemented):**
 1. **Defer I16 reconstruction** - Only do full IDCT for winning mode (saves ~48 IDCT/MB)
-2. **I4 mode filtering** - Try top 5-7 modes instead of all 10 for methods 3-4
+2. **Batch IDCT** - Process multiple 4x4 blocks in one SIMD operation
 
 **Why this is fundamentally expensive:**
 - VP8 has 4 I16 modes + 10 I4 modes per block + 4 UV modes
