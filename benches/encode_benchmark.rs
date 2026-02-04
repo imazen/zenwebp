@@ -88,15 +88,19 @@ fn bench_encode_methods(c: &mut Criterion) {
     group.throughput(Throughput::Elements(pixels));
 
     for method in [0, 2, 4, 6] {
-        group.bench_with_input(BenchmarkId::new("zenwebp", method), &method, |b, &method| {
-            b.iter(|| {
-                EncoderConfig::new()
-                    .quality(75.0)
-                    .method(method)
-                    .encode_rgb(black_box(&rgb_data), width, height)
-                    .unwrap()
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("zenwebp", method),
+            &method,
+            |b, &method| {
+                b.iter(|| {
+                    EncoderConfig::new()
+                        .quality(75.0)
+                        .method(method)
+                        .encode_rgb(black_box(&rgb_data), width, height)
+                        .unwrap()
+                });
+            },
+        );
     }
 
     group.finish();

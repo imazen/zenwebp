@@ -74,16 +74,20 @@ fn bench_methods_comparison(c: &mut Criterion) {
         );
 
         // libwebp
-        group.bench_with_input(BenchmarkId::new("libwebp", method), &method, |b, &method| {
-            let mut config = webp::WebPConfig::new().unwrap();
-            config.quality = 75.0;
-            config.method = method as i32;
+        group.bench_with_input(
+            BenchmarkId::new("libwebp", method),
+            &method,
+            |b, &method| {
+                let mut config = webp::WebPConfig::new().unwrap();
+                config.quality = 75.0;
+                config.method = method as i32;
 
-            b.iter(|| {
-                let encoder = webp::Encoder::from_rgb(black_box(&rgb_data), width, height);
-                encoder.encode_advanced(&config).unwrap()
-            });
-        });
+                b.iter(|| {
+                    let encoder = webp::Encoder::from_rgb(black_box(&rgb_data), width, height);
+                    encoder.encode_advanced(&config).unwrap()
+                });
+            },
+        );
     }
 
     group.finish();

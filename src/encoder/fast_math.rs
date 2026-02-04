@@ -13,7 +13,11 @@
 pub(crate) fn quality_to_compression(quality: u8) -> f64 {
     let c = f64::from(quality) / 100.0;
     // Piecewise linear mapping to get jpeg-like behavior at Q75
-    let linear_c = if c < 0.75 { c * (2.0 / 3.0) } else { 2.0 * c - 1.0 };
+    let linear_c = if c < 0.75 {
+        c * (2.0 / 3.0)
+    } else {
+        2.0 * c - 1.0
+    };
     // File size roughly scales as pow(quantizer, 3), so we use inverse
     cbrt(linear_c)
 }
