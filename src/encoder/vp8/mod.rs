@@ -577,30 +577,52 @@ impl<'a> Vp8Encoder<'a> {
         self.filter_sharpness = params.filter_sharpness.min(7);
         self.num_segments = params.num_segments.clamp(1, 4);
         self.preset = params.preset;
-        let (y_bytes, u_bytes, v_bytes) = if params.use_sharp_yuv {
+        let (y_bytes, u_bytes, v_bytes) = if color == ColorType::Yuv420 {
+            // YUV420 planar data: [Y, U, V] packed into a single buffer
+            let w = usize::from(width);
+            let h = usize::from(height);
+            let y_size = w * h;
+            let uv_w = w.div_ceil(2);
+            let uv_h = h.div_ceil(2);
+            let uv_size = uv_w * uv_h;
+
+            let y_plane = &data[..y_size];
+            let u_plane = &data[y_size..y_size + uv_size];
+            let v_plane = &data[y_size + uv_size..y_size + uv_size * 2];
+
+            crate::decoder::yuv::import_yuv420_planes(
+                y_plane, u_plane, v_plane, width, height,
+            )
+        } else if params.use_sharp_yuv {
             convert_image_sharp_yuv(data, color, width, height)
         } else {
             match color {
                 ColorType::Rgb8 => convert_image_yuv::<3>(data, width, height),
                 ColorType::Rgba8 => convert_image_yuv::<4>(data, width, height),
+                ColorType::Bgr8 => crate::decoder::yuv::convert_image_yuv_bgr::<3>(data, width, height),
+                ColorType::Bgra8 => crate::decoder::yuv::convert_image_yuv_bgr::<4>(data, width, height),
                 ColorType::L8 => convert_image_y::<1>(data, width, height),
                 ColorType::La8 => convert_image_y::<2>(data, width, height),
+                ColorType::Yuv420 => unreachable!(),
             }
         };
 
-        let bytes_per_pixel = match color {
-            ColorType::L8 => 1,
-            ColorType::La8 => 2,
-            ColorType::Rgb8 => 3,
-            ColorType::Rgba8 => 4,
-        };
-        assert_eq!(
-            (u64::from(width) * u64::from(height)).saturating_mul(bytes_per_pixel),
-            data.len() as u64,
-            "width/height doesn't match data length of {} for the color type {:?}",
-            data.len(),
-            color
-        );
+        if color != ColorType::Yuv420 {
+            let bytes_per_pixel = match color {
+                ColorType::L8 => 1,
+                ColorType::La8 => 2,
+                ColorType::Rgb8 | ColorType::Bgr8 => 3,
+                ColorType::Rgba8 | ColorType::Bgra8 => 4,
+                ColorType::Yuv420 => unreachable!(),
+            };
+            assert_eq!(
+                (u64::from(width) * u64::from(height)).saturating_mul(bytes_per_pixel),
+                data.len() as u64,
+                "width/height doesn't match data length of {} for the color type {:?}",
+                data.len(),
+                color
+            );
+        }
 
         self.setup_encoding(
             params.lossy_quality,

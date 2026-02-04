@@ -1144,6 +1144,197 @@ impl ImageInfo {
     }
 }
 
+/// Decoded YUV 4:2:0 planar image data.
+///
+/// Contains separate Y, U, and V planes at their native resolutions.
+/// Y is full resolution, U and V are half resolution in each dimension.
+#[derive(Debug, Clone)]
+pub struct YuvPlanes {
+    /// Luma plane (full resolution).
+    pub y: Vec<u8>,
+    /// Chroma blue plane (half resolution in each dimension).
+    pub u: Vec<u8>,
+    /// Chroma red plane (half resolution in each dimension).
+    pub v: Vec<u8>,
+    /// Width of the luma plane in pixels.
+    pub y_width: u32,
+    /// Height of the luma plane in pixels.
+    pub y_height: u32,
+    /// Width of each chroma plane in pixels.
+    pub uv_width: u32,
+    /// Height of each chroma plane in pixels.
+    pub uv_height: u32,
+}
+
+/// Decode WebP data to BGRA pixels (blue, green, red, alpha order).
+///
+/// Returns the decoded pixels and dimensions.
+pub fn decode_bgra(data: &[u8]) -> Result<(Vec<u8>, u32, u32), DecodingError> {
+    let (mut pixels, width, height) = decode_rgba(data)?;
+    // Swap R and B channels in-place
+    for chunk in pixels.chunks_exact_mut(4) {
+        chunk.swap(0, 2);
+    }
+    Ok((pixels, width, height))
+}
+
+/// Decode WebP data to BGR pixels (blue, green, red order, no alpha).
+///
+/// Returns the decoded pixels and dimensions.
+pub fn decode_bgr(data: &[u8]) -> Result<(Vec<u8>, u32, u32), DecodingError> {
+    let (mut pixels, width, height) = decode_rgb(data)?;
+    // Swap R and B channels in-place
+    for chunk in pixels.chunks_exact_mut(3) {
+        chunk.swap(0, 2);
+    }
+    Ok((pixels, width, height))
+}
+
+/// Decode WebP data directly into a pre-allocated BGRA buffer.
+///
+/// # Arguments
+/// * `data` - WebP encoded data
+/// * `output` - Pre-allocated output buffer (must be at least stride * height bytes)
+/// * `stride_bytes` - Row stride in bytes (must be >= width * 4)
+///
+/// # Returns
+/// Width and height of the decoded image.
+pub fn decode_bgra_into(
+    data: &[u8],
+    output: &mut [u8],
+    stride_bytes: u32,
+) -> Result<(u32, u32), DecodingError> {
+    let (width, height) = decode_rgba_into(data, output, stride_bytes)?;
+    // Swap R and B channels in-place
+    for y in 0..(height as usize) {
+        let row = &mut output[y * (stride_bytes as usize)..][..width as usize * 4];
+        for chunk in row.chunks_exact_mut(4) {
+            chunk.swap(0, 2);
+        }
+    }
+    Ok((width, height))
+}
+
+/// Decode WebP data directly into a pre-allocated BGR buffer.
+///
+/// # Arguments
+/// * `data` - WebP encoded data
+/// * `output` - Pre-allocated output buffer (must be at least stride * height bytes)
+/// * `stride_bytes` - Row stride in bytes (must be >= width * 3)
+///
+/// # Returns
+/// Width and height of the decoded image.
+pub fn decode_bgr_into(
+    data: &[u8],
+    output: &mut [u8],
+    stride_bytes: u32,
+) -> Result<(u32, u32), DecodingError> {
+    let (width, height) = decode_rgb_into(data, output, stride_bytes)?;
+    // Swap R and B channels in-place
+    for y in 0..(height as usize) {
+        let row = &mut output[y * (stride_bytes as usize)..][..width as usize * 3];
+        for chunk in row.chunks_exact_mut(3) {
+            chunk.swap(0, 2);
+        }
+    }
+    Ok((width, height))
+}
+
+/// Decode WebP data to raw YUV 4:2:0 planes.
+///
+/// For VP8 lossy images, returns the native YUV planes without upsampling.
+/// For VP8L lossless images, decodes to RGBA then converts to YUV.
+///
+/// # Returns
+/// [`YuvPlanes`] containing separate Y, U, and V buffers.
+pub fn decode_yuv420(data: &[u8]) -> Result<YuvPlanes, DecodingError> {
+    let decoder = WebPDecoder::new(data)?;
+
+    if decoder.is_lossy() && !decoder.is_animated() {
+        // For lossy images, extract the native YUV planes from the VP8 frame
+        if let Some(range) = decoder.chunks.get(&WebPRiffChunk::VP8) {
+            let data_slice = &decoder.r.get_ref()[range.start as usize..range.end as usize];
+            let frame = Vp8Decoder::decode_frame(data_slice)?;
+
+            let w = u32::from(frame.width);
+            let h = u32::from(frame.height);
+            let uv_w = w.div_ceil(2);
+            let uv_h = h.div_ceil(2);
+
+            // Macroblock-aligned buffer width (same as frame.buffer_width())
+            let buffer_width = {
+                let diff = w % 16;
+                if diff > 0 { (w + 16 - diff) as usize } else { w as usize }
+            };
+            let chroma_bw = buffer_width / 2;
+
+            // Crop from macroblock-aligned buffers to actual dimensions
+            let mut y = Vec::with_capacity((w * h) as usize);
+            for row in 0..h as usize {
+                y.extend_from_slice(
+                    &frame.ybuf[row * buffer_width..row * buffer_width + w as usize],
+                );
+            }
+
+            let mut u = Vec::with_capacity((uv_w * uv_h) as usize);
+            let mut v = Vec::with_capacity((uv_w * uv_h) as usize);
+            for row in 0..uv_h as usize {
+                u.extend_from_slice(
+                    &frame.ubuf[row * chroma_bw..row * chroma_bw + uv_w as usize],
+                );
+                v.extend_from_slice(
+                    &frame.vbuf[row * chroma_bw..row * chroma_bw + uv_w as usize],
+                );
+            }
+
+            return Ok(YuvPlanes {
+                y,
+                u,
+                v,
+                y_width: w,
+                y_height: h,
+                uv_width: uv_w,
+                uv_height: uv_h,
+            });
+        }
+    }
+
+    // For lossless or animated images, decode to RGBA then convert to YUV
+    let (rgba, w, h) = decode_rgba(data)?;
+    let (y_bytes, u_bytes, v_bytes) =
+        super::yuv::convert_image_yuv::<4>(&rgba, w as u16, h as u16);
+
+    let uv_w = (w + 1) / 2;
+    let uv_h = (h + 1) / 2;
+    let mb_width = (w as usize).div_ceil(16);
+
+    let luma_width = 16 * mb_width;
+    let chroma_width = 8 * mb_width;
+
+    // Crop from macroblock-aligned buffers
+    let mut y = Vec::with_capacity((w * h) as usize);
+    for row in 0..h as usize {
+        y.extend_from_slice(&y_bytes[row * luma_width..row * luma_width + w as usize]);
+    }
+
+    let mut u = Vec::with_capacity((uv_w * uv_h) as usize);
+    let mut v = Vec::with_capacity((uv_w * uv_h) as usize);
+    for row in 0..uv_h as usize {
+        u.extend_from_slice(&u_bytes[row * chroma_width..row * chroma_width + uv_w as usize]);
+        v.extend_from_slice(&v_bytes[row * chroma_width..row * chroma_width + uv_w as usize]);
+    }
+
+    Ok(YuvPlanes {
+        y,
+        u,
+        v,
+        y_width: w,
+        y_height: h,
+        uv_width: uv_w,
+        uv_height: uv_h,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

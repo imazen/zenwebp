@@ -102,19 +102,26 @@ pub enum ColorType {
     Rgb8,
     /// Image with a red, green, blue, and alpha byte per pixel.
     Rgba8,
+    /// Opaque image with a blue, green, and red byte per pixel.
+    Bgr8,
+    /// Image with a blue, green, red, and alpha byte per pixel.
+    Bgra8,
+    /// YUV 4:2:0 planar data (3 separate planes packed as \[Y, U, V\]).
+    Yuv420,
 }
 
 impl ColorType {
     fn has_alpha(self) -> bool {
-        self == ColorType::La8 || self == ColorType::Rgba8
+        matches!(self, ColorType::La8 | ColorType::Rgba8 | ColorType::Bgra8)
     }
 
     pub(crate) fn bytes_per_pixel(self) -> usize {
         match self {
             ColorType::L8 => 1,
             ColorType::La8 => 2,
-            ColorType::Rgb8 => 3,
-            ColorType::Rgba8 => 4,
+            ColorType::Rgb8 | ColorType::Bgr8 => 3,
+            ColorType::Rgba8 | ColorType::Bgra8 => 4,
+            ColorType::Yuv420 => 1, // not meaningful for planar; validated separately
         }
     }
 }
@@ -461,6 +468,8 @@ pub struct EncoderParams {
     /// Use sharp (iterative) YUV conversion for higher chroma fidelity.
     /// Requires the `fast-yuv` feature. Falls back to standard conversion without it.
     pub(crate) use_sharp_yuv: bool,
+    /// Alpha channel quality (0-100). 100 = lossless alpha, <100 = quantize alpha levels.
+    pub(crate) alpha_quality: u8,
 }
 
 impl Default for EncoderParams {
@@ -478,6 +487,7 @@ impl Default for EncoderParams {
             target_size: 0,
             target_psnr: 0.0,
             use_sharp_yuv: false,
+            alpha_quality: 100,
         }
     }
 }
@@ -809,6 +819,7 @@ impl EncoderConfig {
             target_size: self.target_size,
             target_psnr: self.target_psnr,
             use_sharp_yuv: self.use_sharp_yuv,
+            alpha_quality: self.alpha_quality,
         }
     }
 
@@ -877,6 +888,102 @@ impl EncoderConfig {
         }
         Ok((output, stats))
     }
+
+    /// Encode BGR byte data to WebP (no alpha).
+    pub fn encode_bgr(
+        &self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>, EncodingError> {
+        validate_buffer_size(data.len(), width, height, 3)?;
+        let mut output = Vec::new();
+        let mut encoder = WebPEncoder::new(&mut output);
+        encoder.set_params(self.to_params());
+        encoder.encode(data, width, height, ColorType::Bgr8)?;
+        Ok(output)
+    }
+
+    /// Encode BGR byte data to WebP (no alpha), returning encoding statistics.
+    pub fn encode_bgr_with_stats(
+        &self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<(Vec<u8>, EncodingStats), EncodingError> {
+        validate_buffer_size(data.len(), width, height, 3)?;
+        let mut output = Vec::new();
+        let stats;
+        {
+            let mut encoder = WebPEncoder::new(&mut output);
+            encoder.set_params(self.to_params());
+            stats = encoder.encode(data, width, height, ColorType::Bgr8)?;
+        }
+        Ok((output, stats))
+    }
+
+    /// Encode BGRA byte data to WebP.
+    pub fn encode_bgra(
+        &self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>, EncodingError> {
+        validate_buffer_size(data.len(), width, height, 4)?;
+        let mut output = Vec::new();
+        let mut encoder = WebPEncoder::new(&mut output);
+        encoder.set_params(self.to_params());
+        encoder.encode(data, width, height, ColorType::Bgra8)?;
+        Ok(output)
+    }
+
+    /// Encode BGRA byte data to WebP, returning encoding statistics.
+    pub fn encode_bgra_with_stats(
+        &self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<(Vec<u8>, EncodingStats), EncodingError> {
+        validate_buffer_size(data.len(), width, height, 4)?;
+        let mut output = Vec::new();
+        let stats;
+        {
+            let mut encoder = WebPEncoder::new(&mut output);
+            encoder.set_params(self.to_params());
+            stats = encoder.encode(data, width, height, ColorType::Bgra8)?;
+        }
+        Ok((output, stats))
+    }
+
+    /// Encode YUV 4:2:0 planar data to WebP (lossy only).
+    ///
+    /// Accepts three separate planes. This skips the internal RGB→YUV conversion.
+    pub fn encode_yuv420(
+        &self,
+        y: &[u8],
+        u: &[u8],
+        v: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>, EncodingError> {
+        Encoder::new_yuv420(y, u, v, width, height)
+            .config(self.clone())
+            .encode()
+    }
+
+    /// Encode YUV 4:2:0 planar data to WebP (lossy only), returning encoding statistics.
+    pub fn encode_yuv420_with_stats(
+        &self,
+        y: &[u8],
+        u: &[u8],
+        v: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<(Vec<u8>, EncodingStats), EncodingError> {
+        Encoder::new_yuv420(y, u, v, width, height)
+            .config(self.clone())
+            .encode_with_stats()
+    }
 }
 
 /// Static default progress callback (does nothing).
@@ -892,6 +999,19 @@ enum EncoderInput<'a> {
     L8(&'a [u8]),
     /// Grayscale with alpha data.
     La8(&'a [u8]),
+    /// BGR 3-channel data.
+    Bgr(&'a [u8]),
+    /// BGRA 4-channel data.
+    Bgra(&'a [u8]),
+    /// YUV 4:2:0 planar data (Y, U, V separate planes).
+    Yuv420 {
+        /// Luma plane.
+        y: &'a [u8],
+        /// Chroma blue plane (quarter resolution).
+        u: &'a [u8],
+        /// Chroma red plane (quarter resolution).
+        v: &'a [u8],
+    },
 }
 
 /// WebP encoder with full configuration options (webpx-compatible API).
@@ -978,6 +1098,70 @@ impl<'a> Encoder<'a> {
     pub fn new_la8(data: &'a [u8], width: u32, height: u32) -> Self {
         Self {
             data: EncoderInput::La8(data),
+            width,
+            height,
+            config: EncoderConfig::default(),
+            icc_profile: None,
+            exif_metadata: None,
+            xmp_metadata: None,
+            stop: &enough::Unstoppable,
+            progress: &NO_PROGRESS,
+        }
+    }
+
+    /// Create a new encoder for contiguous BGR data (no alpha).
+    #[must_use]
+    pub fn new_bgr(data: &'a [u8], width: u32, height: u32) -> Self {
+        Self {
+            data: EncoderInput::Bgr(data),
+            width,
+            height,
+            config: EncoderConfig::default(),
+            icc_profile: None,
+            exif_metadata: None,
+            xmp_metadata: None,
+            stop: &enough::Unstoppable,
+            progress: &NO_PROGRESS,
+        }
+    }
+
+    /// Create a new encoder for contiguous BGRA data.
+    #[must_use]
+    pub fn new_bgra(data: &'a [u8], width: u32, height: u32) -> Self {
+        Self {
+            data: EncoderInput::Bgra(data),
+            width,
+            height,
+            config: EncoderConfig::default(),
+            icc_profile: None,
+            exif_metadata: None,
+            xmp_metadata: None,
+            stop: &enough::Unstoppable,
+            progress: &NO_PROGRESS,
+        }
+    }
+
+    /// Create a new encoder for YUV 4:2:0 planar data.
+    ///
+    /// Accepts three separate planes: Y (full resolution), U and V (quarter resolution).
+    /// This skips the internal RGB→YUV conversion, which is useful when you already
+    /// have YUV data (e.g., from a video decoder).
+    ///
+    /// Only lossy encoding is supported for YUV input.
+    ///
+    /// # Panics
+    ///
+    /// Panics if plane sizes don't match the expected dimensions.
+    #[must_use]
+    pub fn new_yuv420(
+        y: &'a [u8],
+        u: &'a [u8],
+        v: &'a [u8],
+        width: u32,
+        height: u32,
+    ) -> Self {
+        Self {
+            data: EncoderInput::Yuv420 { y, u, v },
             width,
             height,
             config: EncoderConfig::default(),
@@ -1148,11 +1332,75 @@ impl<'a> Encoder<'a> {
     }
 
     fn encode_inner(self) -> Result<(Vec<u8>, EncodingStats), EncodingError> {
-        let (data, color_type) = match self.data {
-            EncoderInput::Rgba(d) => (d, ColorType::Rgba8),
-            EncoderInput::Rgb(d) => (d, ColorType::Rgb8),
-            EncoderInput::L8(d) => (d, ColorType::L8),
-            EncoderInput::La8(d) => (d, ColorType::La8),
+        let (data, color_type) = match &self.data {
+            EncoderInput::Rgba(d) => (*d, ColorType::Rgba8),
+            EncoderInput::Rgb(d) => (*d, ColorType::Rgb8),
+            EncoderInput::L8(d) => (*d, ColorType::L8),
+            EncoderInput::La8(d) => (*d, ColorType::La8),
+            EncoderInput::Bgr(d) => (*d, ColorType::Bgr8),
+            EncoderInput::Bgra(d) => (*d, ColorType::Bgra8),
+            EncoderInput::Yuv420 { y, u, v } => {
+                // For YUV420, pack planes into a single buffer: [Y, U, V]
+                let y_size = (self.width as usize) * (self.height as usize);
+                let uv_w = (self.width as usize).div_ceil(2);
+                let uv_h = (self.height as usize).div_ceil(2);
+                let uv_size = uv_w * uv_h;
+
+                if y.len() < y_size {
+                    return Err(EncodingError::InvalidBufferSize(format!(
+                        "Y plane too small: got {}, expected {}",
+                        y.len(),
+                        y_size
+                    )));
+                }
+                if u.len() < uv_size {
+                    return Err(EncodingError::InvalidBufferSize(format!(
+                        "U plane too small: got {}, expected {}",
+                        u.len(),
+                        uv_size
+                    )));
+                }
+                if v.len() < uv_size {
+                    return Err(EncodingError::InvalidBufferSize(format!(
+                        "V plane too small: got {}, expected {}",
+                        v.len(),
+                        uv_size
+                    )));
+                }
+
+                let mut packed = Vec::with_capacity(y_size + uv_size * 2);
+                packed.extend_from_slice(&y[..y_size]);
+                packed.extend_from_slice(&u[..uv_size]);
+                packed.extend_from_slice(&v[..uv_size]);
+
+                let params = self.config.to_params();
+                if !params.use_lossy {
+                    return Err(EncodingError::InvalidBufferSize(
+                        "YUV 4:2:0 input only supports lossy encoding".into(),
+                    ));
+                }
+
+                let mut output = Vec::new();
+                let stats;
+                {
+                    let mut encoder = WebPEncoder::new(&mut output);
+                    encoder.set_params(params);
+                    encoder.set_stop(self.stop);
+                    encoder.set_progress(self.progress);
+                    if let Some(icc) = self.icc_profile {
+                        encoder.set_icc_profile(icc);
+                    }
+                    if let Some(exif) = self.exif_metadata {
+                        encoder.set_exif_metadata(exif);
+                    }
+                    if let Some(xmp) = self.xmp_metadata {
+                        encoder.set_xmp_metadata(xmp);
+                    }
+                    stats =
+                        encoder.encode(&packed, self.width, self.height, ColorType::Yuv420)?;
+                }
+                return Ok((output, stats));
+            }
         };
 
         validate_buffer_size(
@@ -1245,8 +1493,13 @@ fn encode_frame_lossless(
     let (is_color, is_alpha, bytes_per_pixel) = match color {
         ColorType::L8 => (false, false, 1),
         ColorType::La8 => (false, true, 2),
-        ColorType::Rgb8 => (true, false, 3),
-        ColorType::Rgba8 => (true, true, 4),
+        ColorType::Rgb8 | ColorType::Bgr8 => (true, false, 3),
+        ColorType::Rgba8 | ColorType::Bgra8 => (true, true, 4),
+        ColorType::Yuv420 => {
+            return Err(EncodingError::InvalidBufferSize(
+                "YUV 4:2:0 input only supports lossy encoding".into(),
+            ));
+        }
     };
 
     assert_eq!(
@@ -1300,6 +1553,15 @@ fn encode_frame_lossless(
             .flat_map(|p| [p[0], p[1], p[2], 255])
             .collect(),
         ColorType::Rgba8 => data.to_vec(),
+        ColorType::Bgr8 => data
+            .chunks_exact(3)
+            .flat_map(|p| [p[2], p[1], p[0], 255]) // B,G,R → R,G,B,A
+            .collect(),
+        ColorType::Bgra8 => data
+            .chunks_exact(4)
+            .flat_map(|p| [p[2], p[1], p[0], p[3]]) // B,G,R,A → R,G,B,A
+            .collect(),
+        ColorType::Yuv420 => unreachable!(), // already rejected above
     };
 
     // compute subtract green transform
@@ -1349,7 +1611,8 @@ fn encode_frame_lossless(
                 count_run(pixel, &mut it, &mut frequencies1);
             }
         }
-        ColorType::Rgb8 => {
+        ColorType::Rgb8 | ColorType::Bgr8 => {
+            // BGR already converted to RGB in pixel expansion above
             frequencies3[0] = 1;
             while let Some(pixel) = it.next() {
                 frequencies0[pixel[0] as usize] += 1;
@@ -1358,7 +1621,8 @@ fn encode_frame_lossless(
                 count_run(pixel, &mut it, &mut frequencies1);
             }
         }
-        ColorType::Rgba8 => {
+        ColorType::Rgba8 | ColorType::Bgra8 => {
+            // BGRA already converted to RGBA in pixel expansion above
             while let Some(pixel) = it.next() {
                 frequencies0[pixel[0] as usize] += 1;
                 frequencies1[pixel[1] as usize] += 1;
@@ -1367,6 +1631,7 @@ fn encode_frame_lossless(
                 count_run(pixel, &mut it, &mut frequencies1);
             }
         }
+        ColorType::Yuv420 => unreachable!(),
     }
 
     // compute and write huffman codes
@@ -1419,7 +1684,8 @@ fn encode_frame_lossless(
                 write_run(w, pixel, &mut it, &codes1, &lengths1);
             }
         }
-        ColorType::Rgb8 => {
+        ColorType::Rgb8 | ColorType::Bgr8 => {
+            // BGR already converted to RGB in pixel expansion above
             while let Some(pixel) = it.next() {
                 let len1 = lengths1[pixel[1] as usize];
                 let len0 = lengths0[pixel[0] as usize];
@@ -1433,7 +1699,8 @@ fn encode_frame_lossless(
                 write_run(w, pixel, &mut it, &codes1, &lengths1);
             }
         }
-        ColorType::Rgba8 => {
+        ColorType::Rgba8 | ColorType::Bgra8 => {
+            // BGRA already converted to RGBA in pixel expansion above
             while let Some(pixel) = it.next() {
                 let len1 = lengths1[pixel[1] as usize];
                 let len0 = lengths0[pixel[0] as usize];
@@ -1449,10 +1716,112 @@ fn encode_frame_lossless(
                 write_run(w, pixel, &mut it, &codes1, &lengths1);
             }
         }
+        ColorType::Yuv420 => unreachable!(),
     }
 
     w.flush();
     Ok(())
+}
+
+/// Quantize alpha values to `num_levels` distinct values using k-means clustering.
+///
+/// Matches libwebp's `QuantizeLevels()` behavior: reduces distinct alpha values
+/// for better compression while maintaining perceptual quality.
+fn quantize_alpha_levels(data: &mut [u8], num_levels: u16) {
+    if num_levels >= 256 || data.is_empty() {
+        return;
+    }
+    let num_levels = num_levels.max(2) as usize;
+
+    // Build histogram
+    let mut histogram = [0u32; 256];
+    for &v in data.iter() {
+        histogram[v as usize] += 1;
+    }
+
+    // Find min/max
+    let min_val = histogram.iter().position(|&c| c > 0).unwrap_or(0);
+    let max_val = histogram.iter().rposition(|&c| c > 0).unwrap_or(255);
+
+    if min_val == max_val {
+        return; // single value, nothing to quantize
+    }
+
+    // Initialize cluster centers uniformly across [min, max]
+    let mut centers = Vec::with_capacity(num_levels);
+    for i in 0..num_levels {
+        centers.push(
+            min_val as f32
+                + (max_val - min_val) as f32 * i as f32 / (num_levels - 1) as f32,
+        );
+    }
+
+    // K-means iteration (max 6 iterations, matching libwebp)
+    let mut map = [0u8; 256];
+    for _ in 0..6 {
+        // Assign each value to nearest center
+        for val in min_val..=max_val {
+            if histogram[val] == 0 {
+                continue;
+            }
+            let mut best_idx = 0;
+            let mut best_dist = f32::MAX;
+            for (i, &c) in centers.iter().enumerate() {
+                let d = (val as f32 - c).abs();
+                if d < best_dist {
+                    best_dist = d;
+                    best_idx = i;
+                }
+            }
+            map[val] = best_idx as u8;
+        }
+
+        // Recompute centers
+        let mut sums = alloc::vec![0.0f64; num_levels];
+        let mut counts = alloc::vec![0u64; num_levels];
+        for val in min_val..=max_val {
+            if histogram[val] == 0 {
+                continue;
+            }
+            let idx = map[val] as usize;
+            sums[idx] += val as f64 * histogram[val] as f64;
+            counts[idx] += histogram[val] as u64;
+        }
+
+        let mut converged = true;
+        for i in 0..num_levels {
+            if counts[i] > 0 {
+                let new_center = (sums[i] / counts[i] as f64) as f32;
+                if (new_center - centers[i]).abs() > 0.5 {
+                    converged = false;
+                }
+                centers[i] = new_center;
+            }
+        }
+
+        if converged {
+            break;
+        }
+    }
+
+    // Build final lookup table: value → quantized value (rounded center)
+    let mut lut = [0u8; 256];
+    for val in min_val..=max_val {
+        lut[val] = (centers[map[val] as usize] + 0.5) as u8;
+    }
+    // Values below min_val map to min_val's center
+    for val in 0..min_val {
+        lut[val] = lut[min_val];
+    }
+    // Values above max_val map to max_val's center
+    for val in (max_val + 1)..=255 {
+        lut[val] = lut[max_val];
+    }
+
+    // Apply quantization
+    for v in data.iter_mut() {
+        *v = lut[*v as usize];
+    }
 }
 
 /// Encodes the alpha part of the image data losslessly.
@@ -1467,28 +1836,24 @@ fn encode_alpha_lossless(
     width: u32,
     height: u32,
     color: ColorType,
+    alpha_quality: u8,
 ) -> Result<(), EncodingError> {
     let bytes_per_pixel = match color {
         ColorType::La8 => 2,
-        ColorType::Rgba8 => 4,
+        ColorType::Rgba8 | ColorType::Bgra8 => 4,
         _ => unreachable!(),
     };
     if width == 0 || width > 16384 || height == 0 || height > 16384 {
         return Err(EncodingError::InvalidDimensions);
     }
 
-    let preprocessing = 0u8;
     let filtering_method = 0u8;
     // 0 is raw alpha data
     // 1 is using the lossless format to encode alpha data
     let compression_method = 1u8;
 
-    let initial_byte = preprocessing << 4 | filtering_method << 2 | compression_method;
-
-    writer.push(initial_byte);
-
-    // uncompressed raw alpha data
-    let alpha_data: Vec<u8> = data
+    // Extract alpha channel
+    let mut alpha_data: Vec<u8> = data
         .iter()
         .skip(bytes_per_pixel - 1)
         .step_by(bytes_per_pixel)
@@ -1496,6 +1861,18 @@ fn encode_alpha_lossless(
         .collect();
 
     debug_assert_eq!(alpha_data.len(), (width * height) as usize);
+
+    // Apply lossy alpha quantization if alpha_quality < 100
+    let preprocessing = if alpha_quality < 100 {
+        let num_levels = 1u16 + u16::from(alpha_quality) * 255 / 100;
+        quantize_alpha_levels(&mut alpha_data, num_levels);
+        1u8 // preprocessing = 1 signals quantized levels
+    } else {
+        0u8
+    };
+
+    let initial_byte = preprocessing << 4 | filtering_method << 2 | compression_method;
+    writer.push(initial_byte);
 
     encode_frame_lossless(
         writer,
@@ -1603,6 +1980,7 @@ impl<'a> WebPEncoder<'a> {
         let mut frame = Vec::new();
 
         let lossy_with_alpha = self.params.use_lossy && color.has_alpha();
+        let alpha_quality = self.params.alpha_quality;
 
         let mut stats = EncodingStats::default();
 
@@ -1649,7 +2027,14 @@ impl<'a> WebPEncoder<'a> {
 
             let alpha_chunk_data = if lossy_with_alpha {
                 let mut alpha_chunk = Vec::new();
-                encode_alpha_lossless(&mut alpha_chunk, data, width, height, color)?;
+                encode_alpha_lossless(
+                    &mut alpha_chunk,
+                    data,
+                    width,
+                    height,
+                    color,
+                    alpha_quality,
+                )?;
 
                 total_bytes += chunk_size(alpha_chunk.len());
                 Some(alpha_chunk)

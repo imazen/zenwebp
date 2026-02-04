@@ -88,8 +88,9 @@ mod slice_reader;
 
 // Re-export decoder public API
 pub use decoder::{
-    decode_rgb, decode_rgb_into, decode_rgba, decode_rgba_into, DecodingError, ImageInfo,
-    LoopCount, UpsamplingMethod, WebPDecodeOptions, WebPDecoder,
+    decode_bgr, decode_bgr_into, decode_bgra, decode_bgra_into, decode_rgb, decode_rgb_into,
+    decode_rgba, decode_rgba_into, decode_yuv420, DecodingError, ImageInfo, LoopCount,
+    UpsamplingMethod, WebPDecodeOptions, WebPDecoder, YuvPlanes,
 };
 
 // Re-export encoder public API

@@ -65,6 +65,9 @@ pub fn encode_vp8l(
             .collect()
     };
 
+    // Note: BGR/BGRA callers must swap R↔B before calling encode_vp8l.
+    // The encoder API handles this in the pixel expansion step.
+
     // Encode with the full pipeline
     encode_argb(&mut argb, w, h, has_alpha, config)
 }

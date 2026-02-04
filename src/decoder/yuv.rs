@@ -919,11 +919,15 @@ pub(crate) fn convert_image_sharp_yuv(
     {
         use crate::encoder::ColorType;
 
-        // Sharp YUV only applies to RGB/RGBA inputs (chroma subsampling matters).
+        // Sharp YUV only applies to RGB/RGBA/BGR/BGRA inputs (chroma subsampling matters).
         // For grayscale, fall back to standard conversion.
         match color {
             ColorType::L8 => return convert_image_y::<1>(image_data, width, height),
             ColorType::La8 => return convert_image_y::<2>(image_data, width, height),
+            ColorType::Yuv420 => {
+                // Sharp YUV doesn't apply to already-subsampled data
+                unreachable!("sharp YUV should not be called with Yuv420 input");
+            }
             _ => {}
         }
 
@@ -954,8 +958,8 @@ pub(crate) fn convert_image_sharp_yuv(
         };
 
         let bpp = match color {
-            ColorType::Rgb8 => 3,
-            ColorType::Rgba8 => 4,
+            ColorType::Rgb8 | ColorType::Bgr8 => 3,
+            ColorType::Rgba8 | ColorType::Bgra8 => 4,
             _ => unreachable!(),
         };
         let src_stride = (w * bpp) as u32;
@@ -977,6 +981,22 @@ pub(crate) fn convert_image_sharp_yuv(
                 yuv::YuvStandardMatrix::Bt601,
                 yuv::SharpYuvGammaTransfer::Srgb,
             ),
+            ColorType::Bgr8 => yuv::bgr_to_sharp_yuv420(
+                &mut planar,
+                image_data,
+                src_stride,
+                yuv::YuvRange::Limited,
+                yuv::YuvStandardMatrix::Bt601,
+                yuv::SharpYuvGammaTransfer::Srgb,
+            ),
+            ColorType::Bgra8 => yuv::bgra_to_sharp_yuv420(
+                &mut planar,
+                image_data,
+                src_stride,
+                yuv::YuvRange::Limited,
+                yuv::YuvStandardMatrix::Bt601,
+                yuv::SharpYuvGammaTransfer::Srgb,
+            ),
             _ => unreachable!(),
         };
 
@@ -985,6 +1005,8 @@ pub(crate) fn convert_image_sharp_yuv(
             return match color {
                 ColorType::Rgb8 => convert_image_yuv::<3>(image_data, width, height),
                 ColorType::Rgba8 => convert_image_yuv::<4>(image_data, width, height),
+                ColorType::Bgr8 => convert_image_yuv_bgr::<3>(image_data, width, height),
+                ColorType::Bgra8 => convert_image_yuv_bgr::<4>(image_data, width, height),
                 _ => unreachable!(),
             };
         }
@@ -999,10 +1021,227 @@ pub(crate) fn convert_image_sharp_yuv(
         match color {
             ColorType::Rgb8 => convert_image_yuv::<3>(image_data, width, height),
             ColorType::Rgba8 => convert_image_yuv::<4>(image_data, width, height),
+            ColorType::Bgr8 => convert_image_yuv_bgr::<3>(image_data, width, height),
+            ColorType::Bgra8 => convert_image_yuv_bgr::<4>(image_data, width, height),
             ColorType::L8 => convert_image_y::<1>(image_data, width, height),
             ColorType::La8 => convert_image_y::<2>(image_data, width, height),
+            ColorType::Yuv420 => unreachable!("sharp YUV should not be called with Yuv420 input"),
         }
     }
+}
+
+/// Convert BGR/BGRA image data to YUV420 with macroblock alignment.
+///
+/// Same as `convert_image_yuv` but reads pixels as B,G,R(,A) instead of R,G,B(,A).
+/// BPP=3 for BGR, BPP=4 for BGRA.
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+pub(crate) fn convert_image_yuv_bgr<const BPP: usize>(
+    image_data: &[u8],
+    width: u16,
+    height: u16,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let width = usize::from(width);
+    let height = usize::from(height);
+    let mb_width = width.div_ceil(16);
+    let mb_height = height.div_ceil(16);
+    let y_size = 16 * mb_width * 16 * mb_height;
+    let luma_width = 16 * mb_width;
+    let chroma_width = 8 * mb_width;
+    let chroma_size = 8 * mb_width * 8 * mb_height;
+    let mut y_bytes = vec![0u8; y_size];
+    let mut u_bytes = vec![0u8; chroma_size];
+    let mut v_bytes = vec![0u8; chroma_size];
+
+    // Helper to convert BGR pixel slice to RGB-ordered slice for the rgb_to_* functions.
+    // We swap B and R so the existing rgb_to_y/u/v functions work correctly.
+    #[inline(always)]
+    fn bgr_to_rgb(bgr: &[u8]) -> [u8; 4] {
+        // Return [R, G, B, ...] from [B, G, R, ...]
+        [bgr[2], bgr[1], bgr[0], 0]
+    }
+
+    let row_pairs = height / 2;
+    let odd_height = height & 1 != 0;
+    let col_pairs = width / 2;
+    let odd_width = width & 1 != 0;
+
+    for row_pair in 0..row_pairs {
+        let src_row1 = row_pair * 2;
+        let src_row2 = src_row1 + 1;
+        let chroma_row = row_pair;
+
+        for col_pair in 0..col_pairs {
+            let src_col1 = col_pair * 2;
+            let src_col2 = src_col1 + 1;
+            let chroma_col = col_pair;
+
+            let rgb1 = bgr_to_rgb(&image_data[(src_row1 * width + src_col1) * BPP..]);
+            let rgb2 = bgr_to_rgb(&image_data[(src_row1 * width + src_col2) * BPP..]);
+            let rgb3 = bgr_to_rgb(&image_data[(src_row2 * width + src_col1) * BPP..]);
+            let rgb4 = bgr_to_rgb(&image_data[(src_row2 * width + src_col2) * BPP..]);
+
+            y_bytes[src_row1 * luma_width + src_col1] = rgb_to_y(&rgb1);
+            y_bytes[src_row1 * luma_width + src_col2] = rgb_to_y(&rgb2);
+            y_bytes[src_row2 * luma_width + src_col1] = rgb_to_y(&rgb3);
+            y_bytes[src_row2 * luma_width + src_col2] = rgb_to_y(&rgb4);
+
+            u_bytes[chroma_row * chroma_width + chroma_col] =
+                rgb_to_u_avg(&rgb1, &rgb2, &rgb3, &rgb4);
+            v_bytes[chroma_row * chroma_width + chroma_col] =
+                rgb_to_v_avg(&rgb1, &rgb2, &rgb3, &rgb4);
+        }
+
+        if odd_width {
+            let src_col = width - 1;
+            let chroma_col = col_pairs;
+
+            let rgb1 = bgr_to_rgb(&image_data[(src_row1 * width + src_col) * BPP..]);
+            let rgb3 = bgr_to_rgb(&image_data[(src_row2 * width + src_col) * BPP..]);
+
+            y_bytes[src_row1 * luma_width + src_col] = rgb_to_y(&rgb1);
+            y_bytes[src_row2 * luma_width + src_col] = rgb_to_y(&rgb3);
+
+            u_bytes[chroma_row * chroma_width + chroma_col] =
+                rgb_to_u_avg(&rgb1, &rgb1, &rgb3, &rgb3);
+            v_bytes[chroma_row * chroma_width + chroma_col] =
+                rgb_to_v_avg(&rgb1, &rgb1, &rgb3, &rgb3);
+        }
+    }
+
+    if odd_height {
+        let src_row = height - 1;
+        let chroma_row = row_pairs;
+
+        for col_pair in 0..col_pairs {
+            let src_col1 = col_pair * 2;
+            let src_col2 = src_col1 + 1;
+            let chroma_col = col_pair;
+
+            let rgb1 = bgr_to_rgb(&image_data[(src_row * width + src_col1) * BPP..]);
+            let rgb2 = bgr_to_rgb(&image_data[(src_row * width + src_col2) * BPP..]);
+
+            y_bytes[src_row * luma_width + src_col1] = rgb_to_y(&rgb1);
+            y_bytes[src_row * luma_width + src_col2] = rgb_to_y(&rgb2);
+
+            u_bytes[chroma_row * chroma_width + chroma_col] =
+                rgb_to_u_avg(&rgb1, &rgb2, &rgb1, &rgb2);
+            v_bytes[chroma_row * chroma_width + chroma_col] =
+                rgb_to_v_avg(&rgb1, &rgb2, &rgb1, &rgb2);
+        }
+
+        if odd_width {
+            let src_col = width - 1;
+            let chroma_col = col_pairs;
+
+            let rgb = bgr_to_rgb(&image_data[(src_row * width + src_col) * BPP..]);
+
+            y_bytes[src_row * luma_width + src_col] = rgb_to_y(&rgb);
+
+            u_bytes[chroma_row * chroma_width + chroma_col] =
+                rgb_to_u_avg(&rgb, &rgb, &rgb, &rgb);
+            v_bytes[chroma_row * chroma_width + chroma_col] =
+                rgb_to_v_avg(&rgb, &rgb, &rgb, &rgb);
+        }
+    }
+
+    // Replicate edge pixels to fill macroblock padding (same as convert_image_yuv)
+    for y in 0..height {
+        let last_y = y_bytes[y * luma_width + width - 1];
+        for x in width..luma_width {
+            y_bytes[y * luma_width + x] = last_y;
+        }
+    }
+    for y in height..(mb_height * 16) {
+        for x in 0..luma_width {
+            y_bytes[y * luma_width + x] = y_bytes[(height - 1) * luma_width + x];
+        }
+    }
+    let chroma_height = height.div_ceil(2);
+    let actual_chroma_width = width.div_ceil(2);
+    for y in 0..chroma_height {
+        let last_u = u_bytes[y * chroma_width + actual_chroma_width - 1];
+        let last_v = v_bytes[y * chroma_width + actual_chroma_width - 1];
+        for x in actual_chroma_width..chroma_width {
+            u_bytes[y * chroma_width + x] = last_u;
+            v_bytes[y * chroma_width + x] = last_v;
+        }
+    }
+    for y in chroma_height..(mb_height * 8) {
+        for x in 0..chroma_width {
+            u_bytes[y * chroma_width + x] = u_bytes[(chroma_height - 1) * chroma_width + x];
+            v_bytes[y * chroma_width + x] = v_bytes[(chroma_height - 1) * chroma_width + x];
+        }
+    }
+
+    (y_bytes, u_bytes, v_bytes)
+}
+
+/// Import raw YUV 4:2:0 planes into macroblock-aligned buffers.
+///
+/// Copies Y/U/V planes with macroblock padding (edge replication).
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+pub(crate) fn import_yuv420_planes(
+    y_plane: &[u8],
+    u_plane: &[u8],
+    v_plane: &[u8],
+    width: u16,
+    height: u16,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let w = usize::from(width);
+    let h = usize::from(height);
+    let mb_width = w.div_ceil(16);
+    let mb_height = h.div_ceil(16);
+    let luma_width = 16 * mb_width;
+    let chroma_width = 8 * mb_width;
+    let y_size = luma_width * 16 * mb_height;
+    let chroma_size = chroma_width * 8 * mb_height;
+
+    let uv_w = w.div_ceil(2);
+    let uv_h = h.div_ceil(2);
+
+    let mut y_bytes = vec![0u8; y_size];
+    let mut u_bytes = vec![0u8; chroma_size];
+    let mut v_bytes = vec![0u8; chroma_size];
+
+    // Copy Y plane with horizontal padding
+    for y in 0..h {
+        let src_start = y * w;
+        let dst_start = y * luma_width;
+        y_bytes[dst_start..dst_start + w].copy_from_slice(&y_plane[src_start..src_start + w]);
+        let last_y = y_bytes[dst_start + w - 1];
+        for x in w..luma_width {
+            y_bytes[dst_start + x] = last_y;
+        }
+    }
+    // Vertical padding for Y
+    for y in h..(mb_height * 16) {
+        let src_row = (h - 1) * luma_width;
+        let dst_row = y * luma_width;
+        y_bytes.copy_within(src_row..src_row + luma_width, dst_row);
+    }
+
+    // Copy U/V planes with horizontal padding
+    for y in 0..uv_h {
+        let src_start = y * uv_w;
+        let dst_start = y * chroma_width;
+        u_bytes[dst_start..dst_start + uv_w].copy_from_slice(&u_plane[src_start..src_start + uv_w]);
+        v_bytes[dst_start..dst_start + uv_w].copy_from_slice(&v_plane[src_start..src_start + uv_w]);
+        let last_u = u_bytes[dst_start + uv_w - 1];
+        let last_v = v_bytes[dst_start + uv_w - 1];
+        for x in uv_w..chroma_width {
+            u_bytes[dst_start + x] = last_u;
+            v_bytes[dst_start + x] = last_v;
+        }
+    }
+    // Vertical padding for U/V
+    for y in uv_h..(mb_height * 8) {
+        let src_row = (uv_h - 1) * chroma_width;
+        let dst_row = y * chroma_width;
+        u_bytes.copy_within(src_row..src_row + chroma_width, dst_row);
+        v_bytes.copy_within(src_row..src_row + chroma_width, dst_row);
+    }
+
+    (y_bytes, u_bytes, v_bytes)
 }
 
 #[cfg(test)]

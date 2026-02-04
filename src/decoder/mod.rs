@@ -24,8 +24,9 @@ pub mod vp8;
 
 // Re-export public API
 pub use api::{
-    decode_rgb, decode_rgb_into, decode_rgba, decode_rgba_into, DecodingError, ImageInfo,
-    LoopCount, UpsamplingMethod, WebPDecodeOptions, WebPDecoder,
+    decode_bgr, decode_bgr_into, decode_bgra, decode_bgra_into, decode_rgb, decode_rgb_into,
+    decode_rgba, decode_rgba_into, decode_yuv420, DecodingError, ImageInfo, LoopCount,
+    UpsamplingMethod, WebPDecodeOptions, WebPDecoder, YuvPlanes,
 };
 
 // Re-export diagnostic types for tests (hidden from public docs)
