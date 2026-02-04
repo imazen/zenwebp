@@ -1,6 +1,34 @@
 //! Fast math approximations for no_std.
 //!
 //! Provides round and pow without libm dependency.
+//! Also contains quality-to-quantization mappings used across the encoder.
+
+//------------------------------------------------------------------------------
+// Quality to quantization mapping (deduplicated from vp8/mod.rs and analysis/segment.rs)
+
+/// Convert user-facing quality (0-100) to compression factor.
+/// Emulates jpeg-like behaviour where Q75 is "good quality".
+/// Ported from libwebp's QualityToCompression().
+#[inline]
+pub(crate) fn quality_to_compression(quality: u8) -> f64 {
+    let c = f64::from(quality) / 100.0;
+    // Piecewise linear mapping to get jpeg-like behavior at Q75
+    let linear_c = if c < 0.75 { c * (2.0 / 3.0) } else { 2.0 * c - 1.0 };
+    // File size roughly scales as pow(quantizer, 3), so we use inverse
+    cbrt(linear_c)
+}
+
+/// Convert user-facing quality (0-100) to internal quant index (0-127).
+/// Ported from libwebp's VP8SetSegmentParams().
+#[inline]
+pub(crate) fn quality_to_quant_index(quality: u8) -> u8 {
+    let c = quality_to_compression(quality);
+    let q = round(127.0 * (1.0 - c)) as i32;
+    q.clamp(0, 127) as u8
+}
+
+//------------------------------------------------------------------------------
+// Rounding functions
 
 /// Round f32 to nearest integer (ties to +inf, like libm::roundf).
 /// Only handles non-negative values correctly (sufficient for our use).

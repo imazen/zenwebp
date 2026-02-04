@@ -131,20 +131,8 @@ pub fn assign_segments_kmeans(
     (centers, map, weighted_average)
 }
 
-/// Convert user-facing quality (0-100) to compression factor.
-/// Emulates jpeg-like behaviour where Q75 is "good quality".
-/// Ported from libwebp's QualityToCompression().
-fn quality_to_compression(quality: u8) -> f64 {
-    let c = f64::from(quality) / 100.0;
-    // Piecewise linear mapping to get jpeg-like behavior at Q75
-    let linear_c = if c < 0.75 {
-        c * (2.0 / 3.0)
-    } else {
-        2.0 * c - 1.0
-    };
-    // File size roughly scales as pow(quantizer, 3), so we use inverse
-    crate::encoder::fast_math::cbrt(linear_c)
-}
+// Use centralized quality_to_compression from fast_math
+use crate::encoder::fast_math::quality_to_compression;
 
 /// Compute per-segment quantization using libwebp's formula.
 ///

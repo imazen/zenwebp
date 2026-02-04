@@ -1,8 +1,36 @@
+//! VP8 lossy encoder implementation.
+//!
+//! This module provides DCT-based lossy compression for WebP images,
+//! compatible with the VP8 intra-frame format.
+//!
+//! ## Module organization
+//!
+//! - [`header`]: VP8 bitstream header encoding
+//! - [`mode_selection`]: Intra mode selection (I4, I16, UV) with RD optimization
+//! - [`prediction`]: Block prediction generation
+//! - [`residuals`]: Token buffer and coefficient encoding
+//!
+//! ## Encoding pipeline
+//!
+//! 1. **Color conversion**: RGB → YUV420 (with optional sharp YUV)
+//! 2. **Analysis pass**: Compute per-MB complexity (alpha) for segmentation
+//! 3. **Segmentation**: K-means clustering assigns MBs to 1-4 quantization segments
+//! 4. **Mode selection**: For each MB, choose best prediction mode via RD cost
+//! 5. **Transform & quantize**: DCT + quantization + optional trellis optimization
+//! 6. **Entropy coding**: Arithmetic coding of residual coefficients
+//! 7. **Loop filter**: Deblocking filter parameters computed for decoder
+//!
+//! ## Quality settings
+//!
+//! The encoder supports quality 0-100 (like JPEG), with method levels 0-6
+//! controlling the speed/quality trade-off:
+//! - Methods 0-2: Fast, basic mode selection
+//! - Methods 3-4: Better mode decisions, perceptual optimizations
+//! - Methods 5-6: Exhaustive search, trellis quantization
+
 use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
-
-use super::vec_writer::VecWriter;
 
 use super::api::ColorType;
 use super::api::EncodingError;
@@ -11,6 +39,7 @@ use super::cost::{
     analyze_image, assign_segments_kmeans, classify_image_type, compute_segment_quant,
     content_type_to_tuning, LevelCosts, ProbaStats,
 };
+use super::vec_writer::VecWriter;
 use crate::common::prediction::*;
 use crate::common::types::Frame;
 use crate::common::types::*;
@@ -26,30 +55,9 @@ mod residuals;
 //------------------------------------------------------------------------------
 // Quality to quantization index mapping
 //
-// Ported from libwebp src/enc/quant_enc.c
+// Use centralized functions from fast_math module
 
-/// Convert user-facing quality (0-100) to compression factor.
-/// Emulates jpeg-like behaviour where Q75 is "good quality".
-/// Ported from libwebp's QualityToCompression().
-fn quality_to_compression(quality: u8) -> f64 {
-    let c = f64::from(quality) / 100.0;
-    // Piecewise linear mapping to get jpeg-like behavior at Q75
-    let linear_c = if c < 0.75 {
-        c * (2.0 / 3.0)
-    } else {
-        2.0 * c - 1.0
-    };
-    // File size roughly scales as pow(quantizer, 3), so we use inverse
-    super::fast_math::cbrt(linear_c)
-}
-
-/// Convert user-facing quality (0-100) to internal quant index (0-127)
-/// Ported from libwebp's VP8SetSegmentParams().
-fn quality_to_quant_index(quality: u8) -> u8 {
-    let c = quality_to_compression(quality);
-    let q = super::fast_math::round(127.0 * (1.0 - c)) as i32;
-    q.clamp(0, 127) as u8
-}
+use super::fast_math::quality_to_quant_index;
 
 //------------------------------------------------------------------------------
 // Quality search state for target_size convergence
