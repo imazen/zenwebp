@@ -72,13 +72,15 @@ Clean scalar code autovectorizes well - no manual intrinsics needed.
 - m5: RD_OPT_TRELLIS (trellis during encoding)
 - m6: RD_OPT_TRELLIS_ALL (trellis during I4 mode selection)
 
-**CID22 corpus aggregate (Q75, SNS=0, filter=0, segments=1):**
+**CID22 corpus aggregate (248 images, Q75, SNS=0, filter=0, segments=1):**
 | Method | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| 4 | 7,357,894 | 7,284,004 | 1.010x |
-| 5 | 7,240,000 | 7,200,000 | ~1.006x |
+| 4 | 7,356,472 | 7,284,004 | 1.0099x |
+| 5 | 7,199,446 | 7,197,750 | **1.0002x** |
+| 6 | 7,053,912 | 7,038,104 | 1.0022x |
 
-*CID22 full corpus (248 images) - m4 within 1% of libwebp*
+*Method 5 achieves near-perfect parity (0.02% larger). Method 4 is 1% larger because it
+now matches libwebp's m4 (no trellis) - this is the correct apples-to-apples comparison.*
 
 **Multi-pass removed (2026-02-02):**
 Multi-pass encoding (methods 5/6 doing 2-3 passes) was removed after testing showed
@@ -725,7 +727,17 @@ estimation at other sizes is misleading. With forced cache_bits=2, 3616956 goes 
 
 ## Known Bugs
 
-(none currently)
+### CID22 Compression Regression (2026-02-04)
+
+**Severity:** Medium - 2% file size regression
+
+At commit `e91f826` (I4 context fix): CID22 corpus ratio was **0.9888x** (1.1% smaller than libwebp)
+At HEAD (`ccc4983`): CID22 corpus ratio is **1.0099x** (1% larger than libwebp)
+
+This is a ~2% regression over 127 commits. Needs bisection to identify cause.
+Likely candidates: SIMD optimizations may have introduced subtle coefficient differences.
+
+**TODO:** Bisect between e91f826..HEAD to find regression commit
 
 ## Investigation Notes
 

@@ -1,7 +1,8 @@
 //! Corpus-level file size comparison between zenwebp and libwebp.
 //!
-//! Usage: cargo run --release --example corpus_test [directory]
+//! Usage: cargo run --release --example corpus_test [directory] [method]
 //! Default directory: /tmp/CID22/original
+//! Default method: 4
 
 use std::env;
 use std::fs;
@@ -13,6 +14,10 @@ fn main() {
         .get(1)
         .map(|s| s.as_str())
         .unwrap_or("/tmp/CID22/original");
+    let method: u8 = args
+        .get(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4);
 
     let mut zen_total = 0u64;
     let mut lib_total = 0u64;
@@ -55,7 +60,7 @@ fn main() {
         };
 
         let zen = match EncoderConfig::with_preset(Preset::Default, 75.0)
-            .method(4)
+            .method(method)
             .sns_strength(0)
             .filter_strength(0)
             .segments(1)
@@ -66,7 +71,7 @@ fn main() {
         };
 
         let lib = match webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-            .method(4)
+            .method(method)
             .sns_strength(0)
             .filter_strength(0)
             .filter_sharpness(0)
@@ -99,7 +104,7 @@ fn main() {
         );
     }
 
-    println!("\n=== Corpus Results (m4, Q75, SNS=0) ===");
+    println!("\n=== Corpus Results (m{}, Q75, SNS=0) ===", method);
     println!("Directory: {}", dir);
     println!("Images: {}", count);
     println!("zenwebp total: {} bytes", zen_total);
