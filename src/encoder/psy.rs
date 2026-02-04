@@ -114,17 +114,37 @@ impl PsyConfig {
 // Unlike TDisto which computes frequency-weighted differences between two blocks,
 // SATD measures the absolute energy of a single block. Used by psy-rd to detect
 // when the encoder is destroying texture energy.
+//
+// The #[multiversed] attribute enables autovectorization for the scalar code
+// when compiled for x86-64-v3 (AVX2) or x86-64-v4 (AVX-512) targets.
 
 /// Compute SATD for a 4x4 block of pixels.
 ///
 /// Applies a 4x4 Hadamard transform and returns sum of |coefficients|.
 /// No frequency weighting — this measures total signal energy.
 ///
+/// With the `simd` feature enabled, uses autovectorization via #[multiversed].
+///
 /// # Arguments
 /// * `block` - Pixel data (accessed with given stride)
 /// * `stride` - Row stride of input buffer
+#[cfg(feature = "simd")]
+#[multiversed::multiversed("x86-64-v4", "x86-64-v3", "x86-64-v2")]
 #[inline]
 pub(crate) fn satd_4x4(block: &[u8], stride: usize) -> u32 {
+    satd_4x4_impl(block, stride)
+}
+
+/// Non-SIMD version (or primary implementation when simd feature disabled)
+#[cfg(not(feature = "simd"))]
+#[inline]
+pub(crate) fn satd_4x4(block: &[u8], stride: usize) -> u32 {
+    satd_4x4_impl(block, stride)
+}
+
+/// SATD implementation - scalar code that autovectorizes well with #[multiversed]
+#[inline(always)]
+fn satd_4x4_impl(block: &[u8], stride: usize) -> u32 {
     let mut tmp = [0i32; 16];
 
     // Horizontal Hadamard
