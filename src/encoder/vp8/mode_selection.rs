@@ -9,7 +9,7 @@ use crate::common::types::*;
 
 use crate::encoder::cost::{
     estimate_dc16_cost, estimate_residual_cost, get_cost_luma16, get_cost_luma4, get_cost_uv,
-    get_i4_mode_cost, is_flat_coeffs, is_flat_source_16, tdisto_16x16, tdisto_4x4,
+    get_i4_mode_cost, is_flat_coeffs, is_flat_source_16, tdisto_16x16, tdisto_4x4, tdisto_8x8,
     trellis_quantize_block, FIXED_COSTS_I16, FIXED_COSTS_UV, FLATNESS_LIMIT_I16, FLATNESS_LIMIT_I4,
     FLATNESS_LIMIT_UV, FLATNESS_PENALTY, RD_DISTO_MULT,
 };
@@ -853,8 +853,8 @@ impl<'a> super::Vp8Encoder<'a> {
     /// 4. Include coefficient cost in rate term
     /// 5. Apply flatness penalty for non-DC modes with flat coefficients
     ///
-    /// RD formula: score = (R + H) * lambda + RD_DISTO_MULT * D
-    /// Note: UV does not use spectral distortion (TDisto).
+    /// RD formula: score = (R + H) * lambda + RD_DISTO_MULT * (D + SD + PSY)
+    /// UV spectral distortion and psy-rd are enabled by PsyConfig at method >= 3.
     #[allow(clippy::needless_range_loop)] // block_idx used for both indexing and coordinate computation
     fn pick_best_uv(&self, mbx: usize, mby: usize) -> ChromaMode {
         let mbw = usize::from(self.macroblock_width);
@@ -867,6 +867,7 @@ impl<'a> super::Vp8Encoder<'a> {
         let segment = self.get_segment_for_mb(mbx, mby);
         let uv_matrix = segment.uv_matrix.as_ref().unwrap();
         let lambda = segment.lambda_uv;
+        let tlambda = segment.tlambda;
 
         // Use updated probabilities if available (for consistent mode selection)
         let probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
@@ -972,6 +973,55 @@ impl<'a> super::Vp8Encoder<'a> {
             let sse_v = sse_8x8_chroma(&self.frame.vbuf, chroma_width, mbx, mby, &reconstructed_v);
             let sse = sse_u + sse_v;
 
+            // 4b. Compute UV spectral distortion + psy-rd if enabled
+            let uv_spectral_disto = if tlambda > 0 || segment.psy_config.psy_rd_strength > 0 {
+                // Extract 8x8 source and reconstructed blocks for U and V
+                let mut src_u_block = [0u8; 64];
+                let mut rec_u_block = [0u8; 64];
+                let mut src_v_block = [0u8; 64];
+                let mut rec_v_block = [0u8; 64];
+                for y in 0..8 {
+                    for x in 0..8 {
+                        let src_idx = (mby * 8 + y) * chroma_width + mbx * 8 + x;
+                        src_u_block[y * 8 + x] = self.frame.ubuf[src_idx];
+                        src_v_block[y * 8 + x] = self.frame.vbuf[src_idx];
+                        rec_u_block[y * 8 + x] = reconstructed_u[(y + 1) * CHROMA_STRIDE + x + 1];
+                        rec_v_block[y * 8 + x] = reconstructed_v[(y + 1) * CHROMA_STRIDE + x + 1];
+                    }
+                }
+
+                let td = if tlambda > 0 {
+                    let td_u = tdisto_8x8(
+                        &src_u_block,
+                        &rec_u_block,
+                        8,
+                        &segment.psy_config.chroma_csf,
+                    );
+                    let td_v = tdisto_8x8(
+                        &src_v_block,
+                        &rec_v_block,
+                        8,
+                        &segment.psy_config.chroma_csf,
+                    );
+                    let td_total = td_u + td_v;
+                    (tlambda as i32 * td_total + 128) >> 8
+                } else {
+                    0
+                };
+
+                let psy = if segment.psy_config.psy_rd_strength > 0 {
+                    let src_satd = psy::satd_8x8(&src_u_block, 8) + psy::satd_8x8(&src_v_block, 8);
+                    let rec_satd = psy::satd_8x8(&rec_u_block, 8) + psy::satd_8x8(&rec_v_block, 8);
+                    psy::psy_rd_cost(src_satd, rec_satd, segment.psy_config.psy_rd_strength)
+                } else {
+                    0
+                };
+
+                td + psy
+            } else {
+                0
+            };
+
             // 5. Apply flatness penalty for non-DC modes
             let rate_penalty = if mode_idx > 0 {
                 // Check if coefficients are flat
@@ -992,11 +1042,12 @@ impl<'a> super::Vp8Encoder<'a> {
             };
 
             // 6. Compute full RD score
-            // score = (R + H) * lambda + RD_DISTO_MULT * D
+            // score = (R + H) * lambda + RD_DISTO_MULT * (D + SD)
             let mode_cost = FIXED_COSTS_UV[mode_idx];
             let rate = (i64::from(mode_cost) + i64::from(coeff_cost) + i64::from(rate_penalty))
                 * i64::from(lambda);
-            let distortion = i64::from(RD_DISTO_MULT) * i64::from(sse);
+            let distortion =
+                i64::from(RD_DISTO_MULT) * (i64::from(sse) + i64::from(uv_spectral_disto));
             let rd_score = rate + distortion;
 
             if rd_score < best_rd_score {

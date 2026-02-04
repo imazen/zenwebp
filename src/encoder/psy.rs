@@ -8,6 +8,32 @@
 
 use super::tables::{VP8_WEIGHT_TRELLIS, VP8_WEIGHT_Y};
 
+/// Enhanced luma CSF weights with steeper HF rolloff than VP8_WEIGHT_Y.
+///
+/// Human vision is less sensitive to high-frequency detail, so we can
+/// de-emphasize HF distortion more aggressively than libwebp's defaults.
+/// This lets the encoder spend fewer bits on HF detail that viewers
+/// won't notice, improving rate-quality trade-off.
+#[rustfmt::skip]
+const PSY_WEIGHT_Y: [u16; 16] = [
+    48, 36, 18,  6,
+    36, 30, 14,  5,
+    18, 14,  8,  3,
+     6,  5,  3,  1,
+];
+
+/// Enhanced chroma CSF weights with faster spatial frequency rolloff.
+///
+/// Human vision has much lower spatial acuity for color than luminance,
+/// so chroma HF components can be de-emphasized more aggressively.
+#[rustfmt::skip]
+const PSY_WEIGHT_UV: [u16; 16] = [
+    32, 20, 10,  3,
+    20, 14,  7,  2,
+    10,  7,  4,  1,
+     3,  2,  1,  1,
+];
+
 /// Perceptual encoding configuration for a segment.
 ///
 /// Controls how distortion is computed during mode selection and trellis
@@ -44,10 +70,17 @@ impl PsyConfig {
     /// Create a PsyConfig for the given encoding parameters.
     ///
     /// Method gating:
-    /// - method 0-3: all features disabled (bit-identical to baseline)
+    /// - method 0-2: all features disabled (bit-identical to baseline)
+    /// - method >= 3: enhanced CSF tables for luma and chroma TDisto
     /// - method >= 4: psy-rd enabled with conservative strength
     pub(crate) fn new(method: u8, quant_index: u8, _sns_strength: u8) -> Self {
         let mut config = Self::default();
+
+        if method >= 3 {
+            // Enhanced CSF tables: steeper HF rolloff for better perceptual coding
+            config.luma_csf = PSY_WEIGHT_Y;
+            config.chroma_csf = PSY_WEIGHT_UV;
+        }
 
         if method >= 4 {
             // Psy-RD: penalize energy loss. Strength scales with quantizer
