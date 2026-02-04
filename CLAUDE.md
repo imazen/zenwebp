@@ -286,7 +286,7 @@ VP8L lossless encoder implementation in `src/encoder/vp8l/`:
 - `src/encoder/vp8l/histogram.rs` - Symbol frequency histograms
 - `src/encoder/vp8l/entropy.rs` - Entropy cost estimation, PopulationCost
 - `src/encoder/vp8l/meta_huffman.rs` - Histogram clustering
-- `src/encoder/vp8l/cost_model.rs` - TraceBackwards DP cost model
+- `src/encoder/vp8l/cost_model.rs` - TraceBackwards with Zopfli-style CostManager
 - `src/encoder/vp8l/transforms.rs` - Image transforms
 - `src/encoder/vp8l/types.rs` - Core data structures
 
@@ -306,10 +306,14 @@ Six modes: Direct, Spatial, SubGreen, SpatialSubGreen, Palette, PaletteAndSpatia
 PaletteAndSpatial applies predictor transform on palette-indexed image.
 Palette sorting variants (Lexicographic, MinimizeDelta) tested for palette modes at m6.
 
+**Zopfli cost interval manager (2026-02-03):**
+Replaced O(n * max_match_len) TraceBackwards DP with libwebp's interval-based
+CostManager. Uses a sorted linked list of non-overlapping cost intervals to track
+optimal paths without iterating over all copy lengths per pixel. Includes same-offset
+optimization for constant-color regions. Compression ratio unchanged (0.997x CID22).
+
 **Remaining potential improvements:**
-- Zopfli-style cost interval manager (libwebp's BackwardReferencesHashChainDistanceOnly)
-  would improve the 2 worst outlier images but is complex to implement
-- LZ77 Box strategy for palette images with <= 16 colors
+- LZ77 Box strategy for non-palette structured images (currently only palette <=16)
 
 ### no_std Support (2026-01-23)
 
