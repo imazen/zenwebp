@@ -77,6 +77,21 @@ impl<'a> super::Vp8Encoder<'a> {
         let src_base = mby * 16 * src_width + mbx * 16;
         let is_flat = is_flat_source_16(&self.frame.ybuf[src_base..], src_width);
 
+        // Pre-extract source block for TDisto/psy-rd (avoid repeated extraction per mode)
+        let need_spectral = tlambda > 0 || segment.psy_config.psy_rd_strength > 0;
+        let src_block = if need_spectral {
+            let mut block = [0u8; 256];
+            for y in 0..16 {
+                for x in 0..16 {
+                    let src_idx = (mby * 16 + y) * src_width + mbx * 16 + x;
+                    block[y * 16 + x] = self.frame.ybuf[src_idx];
+                }
+            }
+            Some(block)
+        } else {
+            None
+        };
+
         let mut best_mode = LumaMode::DC;
         let mut best_rd_score = i64::MAX;
         // Store best mode's cost components for final score recalculation with lambda_mode
@@ -173,39 +188,35 @@ impl<'a> super::Vp8Encoder<'a> {
             let sse = sse_16x16_luma(&self.frame.ybuf, src_width, mbx, mby, &reconstructed);
 
             // 9. Compute spectral distortion (TDisto) + psy-rd if enabled
-            let (spectral_disto, psy_cost) =
-                if tlambda > 0 || segment.psy_config.psy_rd_strength > 0 {
-                    // Need to extract 16x16 source and reconstructed blocks
-                    let mut src_block = [0u8; 256];
-                    let mut rec_block = [0u8; 256];
-                    for y in 0..16 {
-                        for x in 0..16 {
-                            let src_idx = (mby * 16 + y) * src_width + mbx * 16 + x;
-                            src_block[y * 16 + x] = self.frame.ybuf[src_idx];
-                            rec_block[y * 16 + x] = reconstructed[(y + 1) * LUMA_STRIDE + x + 1];
-                        }
+            let (spectral_disto, psy_cost) = if let Some(ref src_block) = src_block {
+                // Extract reconstructed block only (source already cached)
+                let mut rec_block = [0u8; 256];
+                for y in 0..16 {
+                    for x in 0..16 {
+                        rec_block[y * 16 + x] = reconstructed[(y + 1) * LUMA_STRIDE + x + 1];
                     }
+                }
 
-                    let td = if tlambda > 0 {
-                        let td_raw =
-                            tdisto_16x16(&src_block, &rec_block, 16, &segment.psy_config.luma_csf);
-                        (tlambda as i32 * td_raw + 128) >> 8
-                    } else {
-                        0
-                    };
-
-                    let psy = if segment.psy_config.psy_rd_strength > 0 {
-                        let src_satd = psy::satd_16x16(&src_block, 16);
-                        let rec_satd = psy::satd_16x16(&rec_block, 16);
-                        psy::psy_rd_cost(src_satd, rec_satd, segment.psy_config.psy_rd_strength)
-                    } else {
-                        0
-                    };
-
-                    (td, psy)
+                let td = if tlambda > 0 {
+                    let td_raw =
+                        tdisto_16x16(src_block, &rec_block, 16, &segment.psy_config.luma_csf);
+                    (tlambda as i32 * td_raw + 128) >> 8
                 } else {
-                    (0, 0)
+                    0
                 };
+
+                let psy = if segment.psy_config.psy_rd_strength > 0 {
+                    let src_satd = psy::satd_16x16(src_block, 16);
+                    let rec_satd = psy::satd_16x16(&rec_block, 16);
+                    psy::psy_rd_cost(src_satd, rec_satd, segment.psy_config.psy_rd_strength)
+                } else {
+                    0
+                };
+
+                (td, psy)
+            } else {
+                (0, 0)
+            };
 
             // 10. Apply flat source penalty if applicable
             let (d_final, sd_final) = if is_flat {
@@ -901,6 +912,23 @@ impl<'a> super::Vp8Encoder<'a> {
         // Use updated probabilities if available (for consistent mode selection)
         let probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
 
+        // Pre-extract source blocks for TDisto/psy-rd (avoid repeated extraction per mode)
+        let need_spectral = tlambda > 0 || segment.psy_config.psy_rd_strength > 0;
+        let (src_u_block, src_v_block) = if need_spectral {
+            let mut u_block = [0u8; 64];
+            let mut v_block = [0u8; 64];
+            for y in 0..8 {
+                for x in 0..8 {
+                    let src_idx = (mby * 8 + y) * chroma_width + mbx * 8 + x;
+                    u_block[y * 8 + x] = self.frame.ubuf[src_idx];
+                    v_block[y * 8 + x] = self.frame.vbuf[src_idx];
+                }
+            }
+            (Some(u_block), Some(v_block))
+        } else {
+            (None, None)
+        };
+
         let mut best_mode = ChromaMode::DC;
         let mut best_rd_score = i64::MAX;
 
@@ -1003,35 +1031,22 @@ impl<'a> super::Vp8Encoder<'a> {
             let sse = sse_u + sse_v;
 
             // 4b. Compute UV spectral distortion + psy-rd if enabled
-            let uv_spectral_disto = if tlambda > 0 || segment.psy_config.psy_rd_strength > 0 {
-                // Extract 8x8 source and reconstructed blocks for U and V
-                let mut src_u_block = [0u8; 64];
+            let uv_spectral_disto = if let (Some(ref src_u), Some(ref src_v)) =
+                (&src_u_block, &src_v_block)
+            {
+                // Extract reconstructed blocks only (source already cached)
                 let mut rec_u_block = [0u8; 64];
-                let mut src_v_block = [0u8; 64];
                 let mut rec_v_block = [0u8; 64];
                 for y in 0..8 {
                     for x in 0..8 {
-                        let src_idx = (mby * 8 + y) * chroma_width + mbx * 8 + x;
-                        src_u_block[y * 8 + x] = self.frame.ubuf[src_idx];
-                        src_v_block[y * 8 + x] = self.frame.vbuf[src_idx];
                         rec_u_block[y * 8 + x] = reconstructed_u[(y + 1) * CHROMA_STRIDE + x + 1];
                         rec_v_block[y * 8 + x] = reconstructed_v[(y + 1) * CHROMA_STRIDE + x + 1];
                     }
                 }
 
                 let td = if tlambda > 0 {
-                    let td_u = tdisto_8x8(
-                        &src_u_block,
-                        &rec_u_block,
-                        8,
-                        &segment.psy_config.chroma_csf,
-                    );
-                    let td_v = tdisto_8x8(
-                        &src_v_block,
-                        &rec_v_block,
-                        8,
-                        &segment.psy_config.chroma_csf,
-                    );
+                    let td_u = tdisto_8x8(src_u, &rec_u_block, 8, &segment.psy_config.chroma_csf);
+                    let td_v = tdisto_8x8(src_v, &rec_v_block, 8, &segment.psy_config.chroma_csf);
                     let td_total = td_u + td_v;
                     (tlambda as i32 * td_total + 128) >> 8
                 } else {
@@ -1039,7 +1054,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 };
 
                 let psy = if segment.psy_config.psy_rd_strength > 0 {
-                    let src_satd = psy::satd_8x8(&src_u_block, 8) + psy::satd_8x8(&src_v_block, 8);
+                    let src_satd = psy::satd_8x8(src_u, 8) + psy::satd_8x8(src_v, 8);
                     let rec_satd = psy::satd_8x8(&rec_u_block, 8) + psy::satd_8x8(&rec_v_block, 8);
                     psy::psy_rd_cost(src_satd, rec_satd, segment.psy_config.psy_rd_strength)
                 } else {

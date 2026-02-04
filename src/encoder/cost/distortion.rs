@@ -148,14 +148,24 @@ pub fn tdisto_8x8(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 /// This is used for edge macroblocks where prediction from unavailable
 /// neighbors would create artifacts.
 ///
-/// This function is a SIMD optimization candidate - could use SIMD
-/// comparison and reduction operations.
-///
 /// # Arguments
 /// * `src` - Source pixels (16x16 block accessed with given stride)
 /// * `stride` - Row stride of source buffer
 #[inline]
 pub fn is_flat_source_16(src: &[u8], stride: usize) -> bool {
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    {
+        is_flat_source_16_dispatch(src, stride)
+    }
+    #[cfg(not(all(feature = "simd", target_arch = "x86_64")))]
+    {
+        is_flat_source_16_scalar(src, stride)
+    }
+}
+
+/// Scalar implementation of is_flat_source_16.
+#[inline]
+pub fn is_flat_source_16_scalar(src: &[u8], stride: usize) -> bool {
     let v = src[0];
     for y in 0..16 {
         let row = y * stride;
@@ -163,6 +173,48 @@ pub fn is_flat_source_16(src: &[u8], stride: usize) -> bool {
             if src[row + x] != v {
                 return false;
             }
+        }
+    }
+    true
+}
+
+/// SIMD dispatch for is_flat_source_16.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[multiversed::multiversed("x86-64-v4", "x86-64-v3", "x86-64-v2")]
+fn is_flat_source_16_dispatch(src: &[u8], stride: usize) -> bool {
+    use archmage::{SimdToken, X64V3Token};
+    if let Some(token) = X64V3Token::summon() {
+        is_flat_source_16_sse2(token, src, stride)
+    } else {
+        is_flat_source_16_scalar(src, stride)
+    }
+}
+
+/// SSE2 implementation: broadcast first pixel, compare 16 bytes per row.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[archmage::arcane]
+fn is_flat_source_16_sse2(
+    _token: impl archmage::Has128BitSimd + Copy,
+    src: &[u8],
+    stride: usize,
+) -> bool {
+    use core::arch::x86_64::*;
+    use safe_unaligned_simd::x86_64 as simd_mem;
+
+    // Broadcast first pixel value to all 16 bytes
+    let v = _mm_set1_epi8(src[0] as i8);
+
+    for y in 0..16 {
+        let row_start = y * stride;
+        // Load 16 bytes from this row
+        let row_arr = <&[u8; 16]>::try_from(&src[row_start..row_start + 16]).unwrap();
+        let row_bytes = simd_mem::_mm_loadu_si128(row_arr);
+        // Compare for equality: 0xFF where equal, 0x00 where different
+        let cmp = _mm_cmpeq_epi8(row_bytes, v);
+        // Extract comparison mask: 0xFFFF if all equal
+        let mask = _mm_movemask_epi8(cmp) as u32;
+        if mask != 0xFFFF {
+            return false;
         }
     }
     true

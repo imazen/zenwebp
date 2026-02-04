@@ -3,12 +3,18 @@
 //! Analyzes the Y plane and alpha histogram to detect content type
 //! (photo, drawing, text, icon) and select appropriate encoding parameters.
 //!
-//! ## SIMD Optimization Opportunities
+//! ## SIMD Optimizations
 //!
-//! - `compute_edge_density`: Horizontal abs_diff scan
-//! - `compute_color_uniformity`: Block-wise distinct value counting
+//! - `compute_edge_density`: SIMD horizontal abs_diff scan
 
 #![allow(dead_code)]
+
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+use archmage::{arcane, Has128BitSimd, SimdToken, X64V3Token};
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+use core::arch::x86_64::*;
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+use safe_unaligned_simd::x86_64 as simd_mem;
 
 /// Detected content type for auto-preset selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,15 +140,26 @@ pub fn classify_image_type_diag(
 /// Compute edge density by scanning the Y plane for sharp horizontal transitions.
 /// Returns fraction of sampled pixels that are sharp edges (0.0 to 1.0).
 fn compute_edge_density(y_src: &[u8], width: usize, height: usize, y_stride: usize) -> f32 {
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    {
+        compute_edge_density_dispatch(y_src, width, height, y_stride)
+    }
+    #[cfg(not(all(feature = "simd", target_arch = "x86_64")))]
+    {
+        compute_edge_density_scalar(y_src, width, height, y_stride)
+    }
+}
+
+/// Scalar implementation of edge density computation.
+fn compute_edge_density_scalar(y_src: &[u8], width: usize, height: usize, y_stride: usize) -> f32 {
     if width < 2 || height < 16 {
         return 0.0;
     }
 
     let mut edge_count = 0u32;
     let mut sample_count = 0u32;
-    let threshold = 32u8; // Sharp edge threshold
+    let threshold = 32u8;
 
-    // Sample every 16th row
     let mut y = 0;
     while y < height {
         let row = &y_src[y * y_stride..][..width];
@@ -153,6 +170,94 @@ fn compute_edge_density(y_src: &[u8], width: usize, height: usize, y_stride: usi
             }
             sample_count += 1;
         }
+        y += 16;
+    }
+
+    if sample_count == 0 {
+        return 0.0;
+    }
+    edge_count as f32 / sample_count as f32
+}
+
+/// SIMD dispatch for edge density.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[multiversed::multiversed("x86-64-v4", "x86-64-v3", "x86-64-v2")]
+fn compute_edge_density_dispatch(
+    y_src: &[u8],
+    width: usize,
+    height: usize,
+    y_stride: usize,
+) -> f32 {
+    if let Some(token) = X64V3Token::summon() {
+        compute_edge_density_sse2(token, y_src, width, height, y_stride)
+    } else {
+        compute_edge_density_scalar(y_src, width, height, y_stride)
+    }
+}
+
+/// SSE2 edge density: Process 16 pixels at a time.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[arcane]
+fn compute_edge_density_sse2(
+    _token: impl Has128BitSimd + Copy,
+    y_src: &[u8],
+    width: usize,
+    height: usize,
+    y_stride: usize,
+) -> f32 {
+    if width < 2 || height < 16 {
+        return 0.0;
+    }
+
+    let mut edge_count = 0u32;
+    let mut sample_count = 0u32;
+    let threshold_vec = _mm_set1_epi8(32i8);
+
+    let mut y = 0;
+    while y < height {
+        let row = &y_src[y * y_stride..];
+
+        // Process 16 pixels at a time (comparing pixels x and x-1)
+        let mut x = 1usize;
+        while x + 15 < width {
+            // Load pixels at positions [x, x+1, ..., x+15] and [x-1, x, ..., x+14]
+            let curr_arr = <&[u8; 16]>::try_from(&row[x..x + 16]).unwrap();
+            let prev_arr = <&[u8; 16]>::try_from(&row[x - 1..x + 15]).unwrap();
+            let curr = simd_mem::_mm_loadu_si128(curr_arr);
+            let prev = simd_mem::_mm_loadu_si128(prev_arr);
+
+            // Compute |curr - prev| using saturating sub both ways
+            let diff1 = _mm_subs_epu8(curr, prev);
+            let diff2 = _mm_subs_epu8(prev, curr);
+            let abs_diff = _mm_or_si128(diff1, diff2);
+
+            // Compare: abs_diff > threshold
+            // Subtract (threshold+1) and check for non-zero (if >= 33, result is non-zero)
+            let above_thresh = _mm_subs_epu8(abs_diff, threshold_vec);
+            // Convert to 0xFF where above threshold
+            let zero = _mm_setzero_si128();
+            let mask = _mm_cmpeq_epi8(above_thresh, zero);
+            // Invert: we want 0xFF where above threshold (mask is 0xFF where NOT above)
+            let edges = _mm_andnot_si128(mask, _mm_set1_epi8(-1i8));
+
+            // Count set bytes (each edge pixel has 0xFF)
+            let mask_bits = _mm_movemask_epi8(edges) as u32;
+            edge_count += mask_bits.count_ones();
+            sample_count += 16;
+
+            x += 16;
+        }
+
+        // Handle remaining pixels with scalar
+        while x < width {
+            let diff = row[x].abs_diff(row[x - 1]);
+            if diff > 32 {
+                edge_count += 1;
+            }
+            sample_count += 1;
+            x += 1;
+        }
+
         y += 16;
     }
 
