@@ -590,17 +590,19 @@ impl<'a> Vp8Encoder<'a> {
             let u_plane = &data[y_size..y_size + uv_size];
             let v_plane = &data[y_size + uv_size..y_size + uv_size * 2];
 
-            crate::decoder::yuv::import_yuv420_planes(
-                y_plane, u_plane, v_plane, width, height,
-            )
+            crate::decoder::yuv::import_yuv420_planes(y_plane, u_plane, v_plane, width, height)
         } else if params.use_sharp_yuv {
             convert_image_sharp_yuv(data, color, width, height)
         } else {
             match color {
                 ColorType::Rgb8 => convert_image_yuv::<3>(data, width, height),
                 ColorType::Rgba8 => convert_image_yuv::<4>(data, width, height),
-                ColorType::Bgr8 => crate::decoder::yuv::convert_image_yuv_bgr::<3>(data, width, height),
-                ColorType::Bgra8 => crate::decoder::yuv::convert_image_yuv_bgr::<4>(data, width, height),
+                ColorType::Bgr8 => {
+                    crate::decoder::yuv::convert_image_yuv_bgr::<3>(data, width, height)
+                }
+                ColorType::Bgra8 => {
+                    crate::decoder::yuv::convert_image_yuv_bgr::<4>(data, width, height)
+                }
                 ColorType::L8 => convert_image_y::<1>(data, width, height),
                 ColorType::La8 => convert_image_y::<2>(data, width, height),
                 ColorType::Yuv420 => unreachable!(),

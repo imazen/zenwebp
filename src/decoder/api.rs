@@ -1264,7 +1264,11 @@ pub fn decode_yuv420(data: &[u8]) -> Result<YuvPlanes, DecodingError> {
             // Macroblock-aligned buffer width (same as frame.buffer_width())
             let buffer_width = {
                 let diff = w % 16;
-                if diff > 0 { (w + 16 - diff) as usize } else { w as usize }
+                if diff > 0 {
+                    (w + 16 - diff) as usize
+                } else {
+                    w as usize
+                }
             };
             let chroma_bw = buffer_width / 2;
 
@@ -1279,12 +1283,8 @@ pub fn decode_yuv420(data: &[u8]) -> Result<YuvPlanes, DecodingError> {
             let mut u = Vec::with_capacity((uv_w * uv_h) as usize);
             let mut v = Vec::with_capacity((uv_w * uv_h) as usize);
             for row in 0..uv_h as usize {
-                u.extend_from_slice(
-                    &frame.ubuf[row * chroma_bw..row * chroma_bw + uv_w as usize],
-                );
-                v.extend_from_slice(
-                    &frame.vbuf[row * chroma_bw..row * chroma_bw + uv_w as usize],
-                );
+                u.extend_from_slice(&frame.ubuf[row * chroma_bw..row * chroma_bw + uv_w as usize]);
+                v.extend_from_slice(&frame.vbuf[row * chroma_bw..row * chroma_bw + uv_w as usize]);
             }
 
             return Ok(YuvPlanes {
@@ -1301,8 +1301,7 @@ pub fn decode_yuv420(data: &[u8]) -> Result<YuvPlanes, DecodingError> {
 
     // For lossless or animated images, decode to RGBA then convert to YUV
     let (rgba, w, h) = decode_rgba(data)?;
-    let (y_bytes, u_bytes, v_bytes) =
-        super::yuv::convert_image_yuv::<4>(&rgba, w as u16, h as u16);
+    let (y_bytes, u_bytes, v_bytes) = super::yuv::convert_image_yuv::<4>(&rgba, w as u16, h as u16);
 
     let uv_w = w.div_ceil(2);
     let uv_h = h.div_ceil(2);

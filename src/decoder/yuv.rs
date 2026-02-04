@@ -1137,10 +1137,8 @@ pub(crate) fn convert_image_yuv_bgr<const BPP: usize>(
 
             y_bytes[src_row * luma_width + src_col] = rgb_to_y(&rgb);
 
-            u_bytes[chroma_row * chroma_width + chroma_col] =
-                rgb_to_u_avg(&rgb, &rgb, &rgb, &rgb);
-            v_bytes[chroma_row * chroma_width + chroma_col] =
-                rgb_to_v_avg(&rgb, &rgb, &rgb, &rgb);
+            u_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_u_avg(&rgb, &rgb, &rgb, &rgb);
+            v_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_v_avg(&rgb, &rgb, &rgb, &rgb);
         }
     }
 
