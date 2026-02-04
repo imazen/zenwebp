@@ -82,8 +82,10 @@ extern crate test;
 pub mod common;
 pub mod decoder;
 pub mod encoder;
+/// WebP mux/demux and animation encoding.
+pub mod mux;
 
-// Slice reader utility (used by decoder)
+// Slice reader utility (used by decoder and mux)
 mod slice_reader;
 
 // Re-export decoder public API
@@ -97,6 +99,12 @@ pub use decoder::{
 pub use encoder::{
     ClassifierDiag, ColorType, ContentType, EncodeProgress, Encoder, EncoderConfig, EncoderParams,
     EncodingError, EncodingStats, NoProgress, Preset, WebPEncoder,
+};
+
+// Re-export mux/demux public API
+pub use mux::{
+    AnimationConfig, AnimationEncoder, BlendMethod, DemuxFrame, DisposeMethod, MuxError, MuxFrame,
+    WebPDemuxer, WebPMux,
 };
 
 // Re-export cooperative cancellation types

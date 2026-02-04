@@ -51,7 +51,7 @@ encoder.encode(rgb_pixels, width, height, ColorType::Rgb8)?;
 - **`#![forbid(unsafe_code)]`** - memory safety guaranteed
 - **no_std compatible** - works with just `alloc`, no standard library needed
 - **SIMD accelerated** - SSE2/SSE4.1/AVX2 on x86, SIMD128 on WASM
-- **Full format support** - lossy, lossless, alpha, animation (decode), ICC/EXIF/XMP metadata
+- **Full format support** - lossy, lossless, alpha, animation (encode + decode), ICC/EXIF/XMP metadata, mux/demux
 
 ### Safe SIMD
 
@@ -93,7 +93,7 @@ zenwebp aims to be a drop-in replacement for libwebp in most use cases. Here's w
 | Lossy (VP8) | Yes | Yes |
 | Lossless (VP8L) | Yes | Yes |
 | Alpha channel | Yes | Yes |
-| Animation (ANIM/ANMF) | Yes (read) | Yes (read + write) |
+| Animation (ANIM/ANMF) | Yes (read + write) | Yes (read + write) |
 | Extended format (VP8X) | Yes | Yes |
 | ICC/EXIF/XMP metadata | Yes (raw bytes) | Yes (raw bytes) |
 | Output: RGB, RGBA | Yes | Yes |
@@ -170,9 +170,9 @@ zenwebp aims to be a drop-in replacement for libwebp in most use cases. Here's w
 | EXIF metadata read | Yes | Yes |
 | XMP metadata read | Yes | Yes |
 | Metadata write (ICC/EXIF/XMP) | Yes | Yes (via libwebpmux) |
-| Animation write | No | Yes (WebPAnimEncoder) |
-| Mux API (add/remove chunks) | No | Yes (libwebpmux) |
-| Demux API (frame iteration) | No | Yes (libwebpdemux) |
+| Animation write | Yes (AnimationEncoder) | Yes (WebPAnimEncoder) |
+| Mux API (assemble chunks) | Yes (WebPMux) | Yes (libwebpmux) |
+| Demux API (frame iteration) | Yes (WebPDemuxer) | Yes (libwebpdemux) |
 
 ### Platform / Build
 

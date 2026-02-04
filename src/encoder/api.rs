@@ -111,7 +111,7 @@ pub enum ColorType {
 }
 
 impl ColorType {
-    fn has_alpha(self) -> bool {
+    pub(crate) fn has_alpha(self) -> bool {
         matches!(self, ColorType::La8 | ColorType::Rgba8 | ColorType::Bgra8)
     }
 
@@ -794,7 +794,7 @@ impl EncoderConfig {
     }
 
     /// Convert to internal EncoderParams.
-    fn to_params(&self) -> EncoderParams {
+    pub(crate) fn to_params(&self) -> EncoderParams {
         // Base tuning values from preset (matches libwebp config_enc.c)
         // Auto uses Default values initially; the encoder overrides after analysis.
         let (sns, filter, sharp, segs) = match self.preset {
@@ -1153,13 +1153,7 @@ impl<'a> Encoder<'a> {
     ///
     /// Panics if plane sizes don't match the expected dimensions.
     #[must_use]
-    pub fn new_yuv420(
-        y: &'a [u8],
-        u: &'a [u8],
-        v: &'a [u8],
-        width: u32,
-        height: u32,
-    ) -> Self {
+    pub fn new_yuv420(y: &'a [u8], u: &'a [u8], v: &'a [u8], width: u32, height: u32) -> Self {
         Self {
             data: EncoderInput::Yuv420 { y, u, v },
             width,
@@ -1396,8 +1390,7 @@ impl<'a> Encoder<'a> {
                     if let Some(xmp) = self.xmp_metadata {
                         encoder.set_xmp_metadata(xmp);
                     }
-                    stats =
-                        encoder.encode(&packed, self.width, self.height, ColorType::Yuv420)?;
+                    stats = encoder.encode(&packed, self.width, self.height, ColorType::Yuv420)?;
                 }
                 return Ok((output, stats));
             }
@@ -1479,7 +1472,7 @@ fn validate_buffer_size(
 /// # Panics
 ///
 /// Panics if the image data is not of the indicated dimensions.
-fn encode_frame_lossless(
+pub(crate) fn encode_frame_lossless(
     writer: &mut Vec<u8>,
     data: &[u8],
     width: u32,
@@ -1750,10 +1743,8 @@ fn quantize_alpha_levels(data: &mut [u8], num_levels: u16) {
     // Initialize cluster centers uniformly across [min, max]
     let mut centers = Vec::with_capacity(num_levels);
     for i in 0..num_levels {
-        centers.push(
-            min_val as f32
-                + (max_val - min_val) as f32 * i as f32 / (num_levels - 1) as f32,
-        );
+        centers
+            .push(min_val as f32 + (max_val - min_val) as f32 * i as f32 / (num_levels - 1) as f32);
     }
 
     // K-means iteration (max 6 iterations, matching libwebp)
@@ -1830,7 +1821,7 @@ fn quantize_alpha_levels(data: &mut [u8], num_levels: u16) {
 /// # Panics
 ///
 /// Panics if the image data is not of the indicated dimensions.
-fn encode_alpha_lossless(
+pub(crate) fn encode_alpha_lossless(
     writer: &mut Vec<u8>,
     data: &[u8],
     width: u32,
@@ -1887,7 +1878,7 @@ fn encode_alpha_lossless(
     Ok(())
 }
 
-const fn chunk_size(inner_bytes: usize) -> u32 {
+pub(crate) const fn chunk_size(inner_bytes: usize) -> u32 {
     if inner_bytes % 2 == 1 {
         (inner_bytes + 1) as u32 + 8
     } else {
@@ -1895,7 +1886,7 @@ const fn chunk_size(inner_bytes: usize) -> u32 {
     }
 }
 
-fn write_chunk(w: &mut Vec<u8>, name: &[u8], data: &[u8]) {
+pub(crate) fn write_chunk(w: &mut Vec<u8>, name: &[u8], data: &[u8]) {
     debug_assert!(name.len() == 4);
 
     w.write_all(name);
@@ -2027,14 +2018,7 @@ impl<'a> WebPEncoder<'a> {
 
             let alpha_chunk_data = if lossy_with_alpha {
                 let mut alpha_chunk = Vec::new();
-                encode_alpha_lossless(
-                    &mut alpha_chunk,
-                    data,
-                    width,
-                    height,
-                    color,
-                    alpha_quality,
-                )?;
+                encode_alpha_lossless(&mut alpha_chunk, data, width, height, color, alpha_quality)?;
 
                 total_bytes += chunk_size(alpha_chunk.len());
                 Some(alpha_chunk)

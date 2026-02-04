@@ -31,3 +31,7 @@ pub use api::{
 #[cfg(feature = "quantize")]
 pub use color_quantize::{quantize_rgb, quantize_rgba, QuantizedImage};
 pub use vp8l::{encode_vp8l, Vp8lConfig, Vp8lQuality};
+
+// Crate-internal re-exports for mux module
+pub(crate) use api::{chunk_size, encode_alpha_lossless, encode_frame_lossless, write_chunk};
+pub(crate) use vec_writer::VecWriter;
