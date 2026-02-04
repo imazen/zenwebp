@@ -229,6 +229,7 @@ fn animation_encode_decode_lossy_roundtrip() {
     let config = AnimationConfig {
         background_color: [0, 0, 0, 0],
         loop_count: LoopCount::Forever,
+        ..Default::default()
     };
     let mut anim = AnimationEncoder::new(64, 64, config).unwrap();
 
@@ -268,6 +269,7 @@ fn animation_encode_decode_lossless_roundtrip() {
     let config = AnimationConfig {
         background_color: [0, 0, 0, 255],
         loop_count: LoopCount::Times(std::num::NonZeroU16::new(3).unwrap()),
+        ..Default::default()
     };
     let mut anim = AnimationEncoder::new(32, 32, config).unwrap();
 
@@ -532,4 +534,367 @@ fn demux_invalid_data() {
     assert!(WebPDemuxer::new(&[]).is_err());
     assert!(WebPDemuxer::new(&[0; 12]).is_err());
     assert!(WebPDemuxer::new(b"not a webp file at all!!").is_err());
+}
+
+// ============================================================================
+// Sub-frame delta compression tests
+// ============================================================================
+
+/// Create an RGBA frame that is mostly `base_color` but has a small patch at
+/// `(px, py)` of size `(pw, ph)` filled with `patch_color`.
+#[allow(clippy::too_many_arguments)]
+fn patched_rgba(
+    width: u32,
+    height: u32,
+    base_color: [u8; 4],
+    px: u32,
+    py: u32,
+    pw: u32,
+    ph: u32,
+    patch_color: [u8; 4],
+) -> Vec<u8> {
+    let mut buf = vec![0u8; (width * height * 4) as usize];
+    for y in 0..height {
+        for x in 0..width {
+            let off = ((y * width + x) * 4) as usize;
+            let color = if x >= px && x < px + pw && y >= py && y < py + ph {
+                patch_color
+            } else {
+                base_color
+            };
+            buf[off..off + 4].copy_from_slice(&color);
+        }
+    }
+    buf
+}
+
+#[test]
+fn subframe_reduces_file_size() {
+    let frame_config = EncoderConfig::new().quality(100.0).lossless(true);
+
+    let base = solid_rgba(64, 64, 100, 100, 100, 255);
+    // Only change a 4x4 patch in each frame
+    let frame2 = patched_rgba(
+        64,
+        64,
+        [100, 100, 100, 255],
+        10,
+        10,
+        4,
+        4,
+        [200, 50, 50, 255],
+    );
+    let frame3 = patched_rgba(
+        64,
+        64,
+        [100, 100, 100, 255],
+        10,
+        10,
+        4,
+        4,
+        [50, 200, 50, 255],
+    );
+
+    // With optimization (default)
+    let config_opt = AnimationConfig::default();
+    let mut anim_opt = AnimationEncoder::new(64, 64, config_opt).unwrap();
+    anim_opt
+        .add_frame(&base, ColorType::Rgba8, 0, &frame_config)
+        .unwrap();
+    anim_opt
+        .add_frame(&frame2, ColorType::Rgba8, 100, &frame_config)
+        .unwrap();
+    anim_opt
+        .add_frame(&frame3, ColorType::Rgba8, 200, &frame_config)
+        .unwrap();
+    let webp_opt = anim_opt.finalize(100).unwrap();
+
+    // Without optimization
+    let config_no = AnimationConfig {
+        minimize_size: false,
+        ..Default::default()
+    };
+    let mut anim_no = AnimationEncoder::new(64, 64, config_no).unwrap();
+    anim_no
+        .add_frame(&base, ColorType::Rgba8, 0, &frame_config)
+        .unwrap();
+    anim_no
+        .add_frame(&frame2, ColorType::Rgba8, 100, &frame_config)
+        .unwrap();
+    anim_no
+        .add_frame(&frame3, ColorType::Rgba8, 200, &frame_config)
+        .unwrap();
+    let webp_no = anim_no.finalize(100).unwrap();
+
+    assert!(
+        webp_opt.len() < webp_no.len(),
+        "optimized ({}) should be smaller than unoptimized ({})",
+        webp_opt.len(),
+        webp_no.len()
+    );
+}
+
+#[test]
+fn identical_frames_produce_tiny_subframe() {
+    let frame_config = EncoderConfig::new().quality(100.0).lossless(true);
+    let pixels = solid_rgba(64, 64, 128, 64, 192, 255);
+
+    let config = AnimationConfig::default();
+    let mut anim = AnimationEncoder::new(64, 64, config).unwrap();
+    anim.add_frame(&pixels, ColorType::Rgba8, 0, &frame_config)
+        .unwrap();
+    anim.add_frame(&pixels, ColorType::Rgba8, 100, &frame_config)
+        .unwrap();
+    let webp = anim.finalize(100).unwrap();
+
+    // Demux and check second frame is 1x1
+    let demuxer = WebPDemuxer::new(&webp).unwrap();
+    assert_eq!(demuxer.num_frames(), 2);
+    let f2 = demuxer.frame(2).unwrap();
+    assert_eq!(f2.width, 1);
+    assert_eq!(f2.height, 1);
+}
+
+#[test]
+fn fully_different_frames_produce_full_canvas() {
+    let frame_config = EncoderConfig::new().quality(75.0).method(0);
+    let frame1 = solid_rgb(32, 32, 255, 0, 0);
+    let frame2 = solid_rgb(32, 32, 0, 255, 0);
+
+    let config = AnimationConfig::default();
+    let mut anim = AnimationEncoder::new(32, 32, config).unwrap();
+    anim.add_frame(&frame1, ColorType::Rgb8, 0, &frame_config)
+        .unwrap();
+    anim.add_frame(&frame2, ColorType::Rgb8, 100, &frame_config)
+        .unwrap();
+    let webp = anim.finalize(100).unwrap();
+
+    let demuxer = WebPDemuxer::new(&webp).unwrap();
+    assert_eq!(demuxer.num_frames(), 2);
+    // Both frames should be full canvas since every pixel differs
+    let f1 = demuxer.frame(1).unwrap();
+    let f2 = demuxer.frame(2).unwrap();
+    assert_eq!(f1.width, 32);
+    assert_eq!(f1.height, 32);
+    assert_eq!(f2.width, 32);
+    assert_eq!(f2.height, 32);
+}
+
+#[test]
+fn subframe_offsets_are_even() {
+    let frame_config = EncoderConfig::new().quality(100.0).lossless(true);
+
+    let base = solid_rgba(64, 64, 0, 0, 0, 255);
+    // Change a single pixel at odd coordinates (3, 5)
+    let mut frame2 = base.clone();
+    let off = ((5 * 64 + 3) * 4) as usize;
+    frame2[off] = 255;
+
+    let config = AnimationConfig::default();
+    let mut anim = AnimationEncoder::new(64, 64, config).unwrap();
+    anim.add_frame(&base, ColorType::Rgba8, 0, &frame_config)
+        .unwrap();
+    anim.add_frame(&frame2, ColorType::Rgba8, 100, &frame_config)
+        .unwrap();
+    let webp = anim.finalize(100).unwrap();
+
+    let demuxer = WebPDemuxer::new(&webp).unwrap();
+    let f2 = demuxer.frame(2).unwrap();
+    assert_eq!(f2.x_offset % 2, 0, "x_offset {} must be even", f2.x_offset);
+    assert_eq!(f2.y_offset % 2, 0, "y_offset {} must be even", f2.y_offset);
+    // The sub-frame must cover the changed pixel at (3, 5)
+    assert!(f2.x_offset <= 3);
+    assert!(f2.y_offset <= 5);
+    assert!(f2.x_offset + f2.width > 3);
+    assert!(f2.y_offset + f2.height > 5);
+}
+
+#[test]
+fn subframe_lossless_roundtrip_correctness() {
+    let frame_config = EncoderConfig::new().quality(100.0).lossless(true);
+
+    // Frame 1: solid green
+    let frame1 = solid_rgba(32, 32, 0, 200, 0, 255);
+    // Frame 2: green with a red patch at (4, 4, 8, 8)
+    let frame2 = patched_rgba(32, 32, [0, 200, 0, 255], 4, 4, 8, 8, [200, 0, 0, 255]);
+    // Frame 3: same as frame 2 (identical, should produce 1x1)
+    let frame3 = frame2.clone();
+
+    let config = AnimationConfig::default();
+    let mut anim = AnimationEncoder::new(32, 32, config).unwrap();
+    anim.add_frame(&frame1, ColorType::Rgba8, 0, &frame_config)
+        .unwrap();
+    anim.add_frame(&frame2, ColorType::Rgba8, 100, &frame_config)
+        .unwrap();
+    anim.add_frame(&frame3, ColorType::Rgba8, 200, &frame_config)
+        .unwrap();
+    let webp = anim.finalize(100).unwrap();
+
+    // Decode and verify pixel content matches
+    let mut decoder = WebPDecoder::new(&webp).unwrap();
+    assert_eq!(decoder.num_frames(), 3);
+    let buf_size = decoder.output_buffer_size().unwrap();
+    let mut buf = vec![0u8; buf_size];
+
+    // Frame 1: all green
+    decoder.read_frame(&mut buf).unwrap();
+    for y in 0..32u32 {
+        for x in 0..32u32 {
+            let off = ((y * 32 + x) * 4) as usize;
+            assert_eq!(
+                &buf[off..off + 4],
+                &[0, 200, 0, 255],
+                "frame 1 pixel ({x},{y}) mismatch"
+            );
+        }
+    }
+
+    // Frame 2: green with red patch
+    decoder.read_frame(&mut buf).unwrap();
+    for y in 0..32u32 {
+        for x in 0..32u32 {
+            let off = ((y * 32 + x) * 4) as usize;
+            let expected = if (4..12).contains(&x) && (4..12).contains(&y) {
+                [200, 0, 0, 255]
+            } else {
+                [0, 200, 0, 255]
+            };
+            assert_eq!(
+                &buf[off..off + 4],
+                &expected,
+                "frame 2 pixel ({x},{y}) mismatch"
+            );
+        }
+    }
+
+    // Frame 3: identical to frame 2
+    decoder.read_frame(&mut buf).unwrap();
+    for y in 0..32u32 {
+        for x in 0..32u32 {
+            let off = ((y * 32 + x) * 4) as usize;
+            let expected = if (4..12).contains(&x) && (4..12).contains(&y) {
+                [200, 0, 0, 255]
+            } else {
+                [0, 200, 0, 255]
+            };
+            assert_eq!(
+                &buf[off..off + 4],
+                &expected,
+                "frame 3 pixel ({x},{y}) mismatch"
+            );
+        }
+    }
+}
+
+#[test]
+fn add_frame_advanced_invalidates_canvas() {
+    let frame_config = EncoderConfig::new().quality(100.0).lossless(true);
+    let pixels = solid_rgba(32, 32, 100, 100, 100, 255);
+
+    let config = AnimationConfig::default();
+    let mut anim = AnimationEncoder::new(32, 32, config).unwrap();
+
+    // First add_frame sets canvas tracking
+    anim.add_frame(&pixels, ColorType::Rgba8, 0, &frame_config)
+        .unwrap();
+
+    // add_frame_advanced should invalidate canvas
+    anim.add_frame_advanced(
+        &pixels,
+        ColorType::Rgba8,
+        32,
+        32,
+        0,
+        0,
+        100,
+        &frame_config,
+        DisposeMethod::Background,
+        BlendMethod::Overwrite,
+    )
+    .unwrap();
+
+    // Next add_frame should produce full-canvas frame (no delta optimization)
+    anim.add_frame(&pixels, ColorType::Rgba8, 200, &frame_config)
+        .unwrap();
+    let webp = anim.finalize(100).unwrap();
+
+    let demuxer = WebPDemuxer::new(&webp).unwrap();
+    assert_eq!(demuxer.num_frames(), 3);
+    // Frame 3 should be full canvas, not a 1x1 sub-frame
+    let f3 = demuxer.frame(3).unwrap();
+    assert_eq!(
+        f3.width, 32,
+        "frame 3 should be full canvas after invalidation"
+    );
+    assert_eq!(f3.height, 32);
+}
+
+#[test]
+fn minimize_size_false_disables_optimization() {
+    let frame_config = EncoderConfig::new().quality(100.0).lossless(true);
+    let pixels = solid_rgba(32, 32, 128, 64, 192, 255);
+
+    let config = AnimationConfig {
+        minimize_size: false,
+        ..Default::default()
+    };
+    let mut anim = AnimationEncoder::new(32, 32, config).unwrap();
+    anim.add_frame(&pixels, ColorType::Rgba8, 0, &frame_config)
+        .unwrap();
+    // Identical frame, but optimization is disabled — should be full canvas
+    anim.add_frame(&pixels, ColorType::Rgba8, 100, &frame_config)
+        .unwrap();
+    let webp = anim.finalize(100).unwrap();
+
+    let demuxer = WebPDemuxer::new(&webp).unwrap();
+    assert_eq!(demuxer.num_frames(), 2);
+    let f2 = demuxer.frame(2).unwrap();
+    assert_eq!(
+        f2.width, 32,
+        "should be full canvas with minimize_size=false"
+    );
+    assert_eq!(f2.height, 32);
+}
+
+#[test]
+fn subframe_rgb_input_works() {
+    // Test with RGB (non-alpha) input to verify the Rgb8→RGBA→Rgb8 path
+    let frame_config = EncoderConfig::new().quality(75.0).method(0);
+
+    let base = solid_rgb(64, 64, 100, 100, 100);
+    // Change a small region
+    let frame2_rgba = patched_rgba(64, 64, [100, 100, 100, 255], 8, 8, 8, 8, [200, 50, 50, 255]);
+    // Convert back to RGB for input
+    let frame2: Vec<u8> = frame2_rgba
+        .chunks_exact(4)
+        .flat_map(|p| [p[0], p[1], p[2]])
+        .collect();
+
+    let config = AnimationConfig::default();
+    let mut anim = AnimationEncoder::new(64, 64, config).unwrap();
+    anim.add_frame(&base, ColorType::Rgb8, 0, &frame_config)
+        .unwrap();
+    anim.add_frame(&frame2, ColorType::Rgb8, 100, &frame_config)
+        .unwrap();
+    let webp = anim.finalize(100).unwrap();
+
+    // Demux and verify sub-frame is smaller than full canvas
+    let demuxer = WebPDemuxer::new(&webp).unwrap();
+    assert_eq!(demuxer.num_frames(), 2);
+    let f2 = demuxer.frame(2).unwrap();
+    // Sub-frame should be smaller than full 64x64
+    assert!(
+        f2.width < 64 || f2.height < 64,
+        "expected sub-frame, got {}x{}",
+        f2.width,
+        f2.height
+    );
+
+    // Verify it decodes
+    let mut decoder = WebPDecoder::new(&webp).unwrap();
+    let buf_size = decoder.output_buffer_size().unwrap();
+    let mut buf = vec![0u8; buf_size];
+    for _ in 0..2 {
+        decoder.read_frame(&mut buf).unwrap();
+    }
 }
