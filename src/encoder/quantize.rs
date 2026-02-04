@@ -142,6 +142,7 @@ impl VP8Matrix {
     /// Quantize an entire 4x4 block of coefficients in place
     ///
     /// Includes sharpen boost and zthresh check matching libwebp's QuantizeBlock_C.
+    #[inline]
     pub fn quantize(&self, coeffs: &mut [i32; 16]) {
         for (pos, coeff) in coeffs.iter_mut().enumerate() {
             let sign = *coeff < 0;
@@ -175,6 +176,7 @@ impl VP8Matrix {
     }
 
     /// Dequantize an entire 4x4 block of coefficients in place
+    #[inline]
     pub fn dequantize_block(&self, coeffs: &mut [i32; 16]) {
         for (pos, coeff) in coeffs.iter_mut().enumerate() {
             *coeff *= self.q[pos] as i32;
