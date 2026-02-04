@@ -37,6 +37,7 @@ imagequant = { version = "4.4", optional = true, default-features = false }
 [dev-dependencies]
 yuv = "0.8"
 butteraugli = "0.4.0"
+criterion = { version = "0.8.1", features = ["html_reports"] }
 dssim-core = "3.4"
 fast-ssim2 = "0.6.5"
 imgref = "1.10"
@@ -92,3 +93,12 @@ required-features = ["_wasm_profiling"]
 [profile.release]
 lto = true
 codegen-units = 1
+
+# Criterion benchmarks
+[[bench]]
+name = "encode_benchmark"
+harness = false
+
+[[bench]]
+name = "encode_vs_libwebp"
+harness = false

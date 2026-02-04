@@ -55,6 +55,12 @@ impl<'a> super::Vp8Encoder<'a> {
         let mbw = usize::from(self.macroblock_width);
         let src_width = mbw * 16;
 
+        // Fast path for method 0-1: DC mode only with SSE-based scoring
+        // This avoids the full RD evaluation loop for maximum speed
+        if self.method <= 1 {
+            return self.pick_intra16_fast_dc(mbx, mby);
+        }
+
         // The 4 modes to try for 16x16 luma prediction (order matches FIXED_COSTS_I16)
         const MODES: [LumaMode; 4] = [LumaMode::DC, LumaMode::V, LumaMode::H, LumaMode::TM];
 
@@ -268,6 +274,28 @@ impl<'a> super::Vp8Encoder<'a> {
 
         // Convert to u64 for interface compatibility (score should be positive)
         (best_mode, final_score.max(0) as u64)
+    }
+
+    /// Fast DC-only mode selection for method 0.
+    ///
+    /// Uses simplified scoring (SSE + fixed mode cost) without full reconstruction.
+    /// This is much faster than the full RD path but may not find the optimal mode.
+    fn pick_intra16_fast_dc(&self, mbx: usize, mby: usize) -> (LumaMode, u64) {
+        let mbw = usize::from(self.macroblock_width);
+        let src_width = mbw * 16;
+        let segment = self.get_segment_for_mb(mbx, mby);
+        let lambda = segment.lambda_i16;
+
+        // For method 0, we use DC mode with simple SSE scoring
+        let pred = self.get_predicted_luma_block_16x16(LumaMode::DC, mbx, mby);
+        let sse = sse_16x16_luma(&self.frame.ybuf, src_width, mbx, mby, &pred);
+
+        // Simple score: SSE + lambda * mode_cost
+        // DC mode has the lowest fixed cost (FIXED_COSTS_I16[0])
+        let mode_cost = FIXED_COSTS_I16[0] as u32;
+        let score = u64::from(sse) + u64::from(lambda) * u64::from(mode_cost);
+
+        (LumaMode::DC, score)
     }
 
     /// Estimate coefficient cost for a 16x16 luma macroblock (I16 mode).
