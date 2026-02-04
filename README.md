@@ -117,7 +117,7 @@ zenwebp aims to be a drop-in replacement for libwebp in most use cases. Here's w
 | Method (0-6) speed/quality | Yes | Yes |
 | Presets (Photo, Drawing, etc.) | Yes (7 presets, including Auto) | Yes (6 presets) |
 | Target file size | Yes (secant method) | Yes (multi-pass) |
-| Target PSNR | No | Yes |
+| Target PSNR | Yes (secant method) | Yes |
 | SNS (spatial noise shaping) | Yes | Yes |
 | Filter strength/sharpness | Yes | Yes |
 | Autofilter | Yes | Yes |
@@ -127,15 +127,15 @@ zenwebp aims to be a drop-in replacement for libwebp in most use cases. Here's w
 | Intra4 modes (10 modes) | Yes | Yes |
 | Trellis quantization | Yes (m5-6) | Yes (m5-6) |
 | Alpha channel encoding | Yes (lossless) | Yes (lossless or lossy) |
-| Sharp YUV conversion | No | Yes (libsharpyuv) |
+| Sharp YUV conversion | Yes (via `yuv` crate, `fast-yuv` feature) | Yes (libsharpyuv) |
 | Multi-pass encoding | Yes | Yes |
 | Near-lossless | Yes | Yes |
 | Input: RGB, RGBA | Yes | Yes |
 | Input: L8 (grayscale) | Yes | No (requires conversion) |
 | Input: BGR, BGRA | No | Yes |
 | Input: YUV 4:2:0 | No | Yes |
-| Encoding statistics | No | Yes (WebPAuxStats) |
-| Progress callback | No | Yes |
+| Encoding statistics | Yes (EncodingStats) | Yes (WebPAuxStats) |
+| Progress callback | Yes (EncodeProgress + Stop) | Yes |
 | Threaded encoding | No | Yes (alpha parallel) |
 
 ### Encoder (Lossless VP8L)
@@ -168,7 +168,7 @@ zenwebp aims to be a drop-in replacement for libwebp in most use cases. Here's w
 | ICC profile read | Yes | Yes |
 | EXIF metadata read | Yes | Yes |
 | XMP metadata read | Yes | Yes |
-| Metadata write (ICC/EXIF/XMP) | No | Yes (via libwebpmux) |
+| Metadata write (ICC/EXIF/XMP) | Yes | Yes (via libwebpmux) |
 | Animation write | No | Yes (WebPAnimEncoder) |
 | Mux API (add/remove chunks) | No | Yes (libwebpmux) |
 | Demux API (frame iteration) | No | Yes (libwebpdemux) |
@@ -196,6 +196,7 @@ zenwebp aims to be a drop-in replacement for libwebp in most use cases. Here's w
 - **AVX2 SIMD** - wider SIMD for loop filter and YUV conversion
 - **Auto preset** - content-aware preset selection based on image analysis
 - **Grayscale input** - direct L8/LA8 encoding without manual conversion
+- **Cooperative cancellation** - separate `Stop` token for external cancellation (via `enough` crate)
 
 ## Performance
 
