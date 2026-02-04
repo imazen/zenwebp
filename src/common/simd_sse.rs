@@ -559,6 +559,17 @@ fn t_transform_sse2(
     sum
 }
 
+/// TDisto for two 4x4 blocks - computes |TTransform(a) - TTransform(b)| >> 5
+/// Uses SIMD-accelerated t_transform for each block
+#[cfg(feature = "simd")]
+#[inline]
+pub fn tdisto_4x4_fused(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
+    // Use the SIMD-accelerated t_transform for each block
+    let sum_a = t_transform(a, stride, w);
+    let sum_b = t_transform(b, stride, w);
+    (sum_b - sum_a).abs() >> 5
+}
+
 //------------------------------------------------------------------------------
 // Residual Cost SIMD Precomputation
 //
@@ -981,6 +992,43 @@ mod tests {
                 stride, scalar, simd
             );
         }
+    }
+
+    #[test]
+    #[cfg(feature = "simd")]
+    fn test_tdisto_4x4_fused_matches_scalar() {
+        let weights: [u16; 16] = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 5, 4, 3, 2, 1, 1];
+
+        // Test with different strides and values
+        for stride in [4, 8, 16, 32] {
+            let mut a = vec![0u8; 4 * stride];
+            let mut b = vec![0u8; 4 * stride];
+            for y in 0..4 {
+                for x in 0..4 {
+                    a[y * stride + x] = ((y * 53 + x * 41 + 17) % 256) as u8;
+                    b[y * stride + x] = ((y * 37 + x * 29 + 11) % 256) as u8;
+                }
+            }
+
+            // Compute with two separate t_transforms (scalar reference)
+            let sum_a = t_transform_scalar(&a, stride, &weights);
+            let sum_b = t_transform_scalar(&b, stride, &weights);
+            let scalar_result = (sum_b - sum_a).abs() >> 5;
+
+            // Compute with fused function
+            let fused_result = tdisto_4x4_fused(&a, &b, stride, &weights);
+
+            assert_eq!(
+                scalar_result, fused_result,
+                "Mismatch at stride {}: scalar={}, fused={}",
+                stride, scalar_result, fused_result
+            );
+        }
+
+        // Test identical blocks (should be 0)
+        let same: [u8; 16] = [128; 16];
+        let result = tdisto_4x4_fused(&same, &same, 4, &weights);
+        assert_eq!(result, 0, "Identical blocks should have 0 distortion");
     }
 
     #[test]

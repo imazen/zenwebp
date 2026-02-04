@@ -88,6 +88,9 @@ pub fn t_transform_scalar(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 /// This measures the perceptual difference between blocks using
 /// a frequency-weighted Hadamard transform.
 ///
+/// Uses fused SIMD implementation that processes both blocks in parallel
+/// like libwebp's Disto4x4_SSE2.
+///
 /// # Arguments
 /// * `a` - First 4x4 block (source)
 /// * `b` - Second 4x4 block (prediction/reconstruction)
@@ -95,9 +98,16 @@ pub fn t_transform_scalar(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 /// * `w` - 16 weights for frequency weighting (CSF table)
 #[inline]
 pub fn tdisto_4x4(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
-    let sum1 = t_transform(a, stride, w);
-    let sum2 = t_transform(b, stride, w);
-    (sum2 - sum1).abs() >> 5
+    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    {
+        crate::common::simd_sse::tdisto_4x4_fused(a, b, stride, w)
+    }
+    #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+    {
+        let sum1 = t_transform(a, stride, w);
+        let sum2 = t_transform(b, stride, w);
+        (sum2 - sum1).abs() >> 5
+    }
 }
 
 /// Compute spectral distortion between two 16x16 blocks.
