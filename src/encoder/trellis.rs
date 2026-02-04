@@ -7,6 +7,7 @@
 #![allow(clippy::needless_range_loop)]
 
 use super::cost::{LevelCostArray, LevelCosts, RD_DISTO_MULT};
+use super::psy::PsyConfig;
 use super::quantize::{quantdiv, quantization_bias, VP8Matrix};
 use super::tables::{
     MAX_LEVEL, MAX_VARIABLE_LEVEL, VP8_LEVEL_FIXED_COSTS, VP8_WEIGHT_TRELLIS, VP8_ZIGZAG,
@@ -90,11 +91,14 @@ fn level_cost_fast(costs: &LevelCostArray, level: usize) -> u32 {
 /// * `level_costs` - Probability-dependent level costs
 /// * `ctype` - Token type for level cost lookup (0=Y2, 1=Y_AC, 2=Y_DC, 3=UV)
 /// * `ctx0` - Initial context from neighboring blocks (0, 1, or 2)
+/// * `psy_config` - Perceptual config; when psy_trellis_strength > 0, adds a
+///   penalty for zeroing perceptually important coefficients
 ///
 /// # Returns
 /// True if any non-zero coefficient was produced
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_range_loop)] // p indexes multiple arrays with different semantics
+#[allow(private_interfaces)] // psy_config is pub(crate), but this function is exposed for debugging
 pub fn trellis_quantize_block(
     coeffs: &mut [i32; 16],
     out: &mut [i32; 16],
@@ -104,6 +108,7 @@ pub fn trellis_quantize_block(
     level_costs: &LevelCosts,
     ctype: usize,
     ctx0: usize,
+    psy_config: &PsyConfig,
 ) -> bool {
     // Number of alternate levels to try: level-0 (MIN_DELTA=0) and level+1 (MAX_DELTA=1)
     const NUM_NODES: usize = 2; // [level, level+1]
@@ -207,7 +212,20 @@ pub fn trellis_quantize_block(
             let orig_error_sq = (coeff_with_sharpen * coeff_with_sharpen) as i64;
             let new_error_sq = (new_error * new_error) as i64;
             let weight = VP8_WEIGHT_TRELLIS[j] as i64;
-            let delta_distortion = weight * (new_error_sq - orig_error_sq);
+            let mut delta_distortion = weight * (new_error_sq - orig_error_sq);
+
+            // Psy-trellis: penalize zeroing perceptually important coefficients.
+            // When level == 0 but the original coefficient is non-zero, add a
+            // distortion penalty proportional to the coefficient's energy and
+            // its perceptual weight. This biases the DP toward retaining
+            // coefficients that carry visible texture.
+            if level == 0 && abs_coeff > 0 && psy_config.psy_trellis_strength > 0 {
+                let energy = abs_coeff as i64;
+                let psy_weight = psy_config.trellis_weights[j] as i64;
+                let psy_penalty =
+                    (psy_config.psy_trellis_strength as i64 * psy_weight * energy) >> 16;
+                delta_distortion += psy_penalty;
+            }
 
             let base_score = rd_score_trellis(lambda, 0, delta_distortion);
 

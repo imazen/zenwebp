@@ -3,7 +3,7 @@
 //! This creates a synthetic block with known coefficients and compares
 //! the trellis output between both encoders.
 
-use zenwebp::encoder::cost::{trellis_quantize_block, LevelCosts, MatrixType, VP8Matrix};
+use zenwebp::encoder::cost::{trellis_quantize_block, LevelCosts, MatrixType, PsyConfig, VP8Matrix};
 use zenwebp::encoder::tables::VP8_ZIGZAG;
 
 fn main() {
@@ -68,6 +68,7 @@ fn main() {
         &level_costs,
         ctype,
         ctx0,
+        &PsyConfig::default(), // no psy-trellis for debugging
     );
 
     println!("Output (zigzag order): {:?}", out);

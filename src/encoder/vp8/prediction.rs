@@ -251,6 +251,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         &self.level_costs,
                         0, // ctype=0 for I16_AC
                         ctx0,
+                        &segment.psy_config,
                     );
                     top_nz[x] = has_nz;
                     left_nz[y] = has_nz;
@@ -413,6 +414,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         &self.level_costs,
                         3, // ctype=3 for I4
                         ctx0,
+                        &segment.psy_config,
                     )
                 } else {
                     // Simple quantization

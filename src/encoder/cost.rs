@@ -389,6 +389,7 @@ pub const DEFAULT_SNS_STRENGTH: u32 = 50;
 // Re-export trellis quantization from trellis module
 #[cfg(test)]
 use super::trellis::rd_score_trellis;
+pub use super::psy::PsyConfig;
 pub use super::trellis::trellis_quantize_block;
 
 //------------------------------------------------------------------------------
@@ -984,6 +985,7 @@ pub use super::residual_cost::{
 mod tests {
     #[allow(unused_imports)]
     use super::*;
+    use crate::encoder::psy::PsyConfig;
 
     #[test]
     fn test_entropy_cost_table() {
@@ -1255,6 +1257,7 @@ mod tests {
             &level_costs,
             3, // I4 type
             0, // initial context
+            &PsyConfig::default(),
         );
 
         // Simple quantization for comparison
@@ -1302,6 +1305,7 @@ mod tests {
             &level_costs,
             3, // I4 type
             0, // initial context
+            &PsyConfig::default(),
         );
 
         // Simple
@@ -1364,6 +1368,7 @@ mod tests {
             &level_costs,
             3, // I4 type
             0, // initial context
+            &PsyConfig::default(),
         );
 
         // Simple produces zeros for small coefficients
@@ -1412,6 +1417,7 @@ mod tests {
                 &level_costs,
                 3, // I4 type
                 0, // initial context
+                &PsyConfig::default(),
             );
 
             // Simple quantization
@@ -1577,6 +1583,7 @@ mod tests {
             &level_costs,
             ctype,
             ctx0,
+            &PsyConfig::default(),
         );
         eprintln!("\nTrellis output (zigzag): {:?}", trellis_out);
 
@@ -1664,6 +1671,7 @@ mod tests {
             &level_costs,
             ctype,
             ctx0,
+            &PsyConfig::default(),
         );
 
         eprintln!("\nOutput comparison:");

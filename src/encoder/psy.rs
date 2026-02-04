@@ -34,27 +34,26 @@ const PSY_WEIGHT_UV: [u16; 16] = [
      3,  2,  1,  1,
 ];
 
+#[derive(Clone, Debug)]
 /// Perceptual encoding configuration for a segment.
 ///
 /// Controls how distortion is computed during mode selection and trellis
 /// quantization. When all strengths are 0, behavior is identical to baseline.
-#[derive(Clone, Debug)]
-pub(crate) struct PsyConfig {
+///
+/// This is primarily an internal type exposed for debugging/testing purposes.
+#[doc(hidden)]
+pub struct PsyConfig {
     /// Psy-RD strength (fixed-point, 0 = disabled).
     /// Penalizes energy loss (smoothing) in SATD domain.
     pub(crate) psy_rd_strength: u32,
     /// Psy-trellis strength (fixed-point, 0 = disabled).
     /// Biases trellis to retain perceptually important coefficients.
-    /// Used in Phase 5 (psy-trellis).
-    #[allow(dead_code)]
     pub(crate) psy_trellis_strength: u32,
     /// CSF weights for luma spectral distortion (TDisto).
     pub(crate) luma_csf: [u16; 16],
     /// CSF weights for chroma spectral distortion (TDisto).
     pub(crate) chroma_csf: [u16; 16],
     /// Distortion weights for trellis quantization.
-    /// Used in Phase 5 (psy-trellis).
-    #[allow(dead_code)]
     pub(crate) trellis_weights: [u16; 16],
 }
 
@@ -77,6 +76,7 @@ impl PsyConfig {
     /// - method 0-2: all features disabled (bit-identical to baseline)
     /// - method >= 3: enhanced CSF tables for luma and chroma TDisto
     /// - method >= 4: psy-rd enabled with conservative strength
+    /// - method >= 5: psy-trellis enabled (trellis only runs at method >= 5)
     pub(crate) fn new(method: u8, quant_index: u8, _sns_strength: u8) -> Self {
         let mut config = Self::default();
 
@@ -92,6 +92,15 @@ impl PsyConfig {
             // Conservative: (quant_index * 48) >> 7  ≈ 0.375 * q
             // At q=50: strength=18, at q=80: strength=30
             config.psy_rd_strength = (quant_index as u32 * 48) >> 7;
+        }
+
+        if method >= 5 {
+            // Psy-trellis: bias trellis DP to retain perceptually important
+            // coefficients. Strength scales with quantizer since coarser
+            // quantization zeros more coefficients.
+            // (quant_index * 32) >> 7  ≈ 0.25 * q
+            // At q=50: strength=12, at q=80: strength=20
+            config.psy_trellis_strength = (quant_index as u32 * 32) >> 7;
         }
 
         config

@@ -428,6 +428,7 @@ impl<'a> super::Vp8Encoder<'a> {
         let y1_matrix = segment.y1_matrix.clone().unwrap();
         let y2_matrix = segment.y2_matrix.clone().unwrap();
         let uv_matrix = segment.uv_matrix.clone().unwrap();
+        let psy_config = segment.psy_config.clone();
 
         // Trellis lambda for Y1 blocks (I4 vs I16 mode)
         let is_i4 = macroblock_info.luma_mode == LumaMode::B;
@@ -460,6 +461,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 complexity.into(),
                 &y2_matrix,
                 None, // No trellis for Y2 DC
+                &psy_config,
             );
 
             self.left_complexity.y2 = if has_coeffs { 1 } else { 0 };
@@ -487,6 +489,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     complexity.into(),
                     &y1_matrix,
                     y1_trellis_lambda,
+                    &psy_config,
                 );
 
                 left = if has_coeffs { 1 } else { 0 };
@@ -519,6 +522,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     complexity.into(),
                     &uv_matrix,
                     None, // No trellis for UV (libwebp: DO_TRELLIS_UV = 0)
+                    &psy_config,
                 );
 
                 left = if has_coeffs { 1 } else { 0 };
@@ -545,6 +549,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     complexity.into(),
                     &uv_matrix,
                     None, // No trellis for UV (libwebp: DO_TRELLIS_UV = 0)
+                    &psy_config,
                 );
 
                 left = if has_coeffs { 1 } else { 0 };
@@ -558,6 +563,7 @@ impl<'a> super::Vp8Encoder<'a> {
     // returns whether there was any non-zero data in the block for the complexity
     // Kept as fallback — token buffer path replaces this.
     #[allow(dead_code)]
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn encode_coefficients(
         &mut self,
         block: &[i32; 16],
@@ -566,6 +572,7 @@ impl<'a> super::Vp8Encoder<'a> {
         complexity: usize,
         matrix: &crate::encoder::cost::VP8Matrix,
         trellis_lambda: Option<u32>,
+        psy_config: &crate::encoder::psy::PsyConfig,
     ) -> bool {
         // transform block
         // dc is used for the 0th coefficient, ac for the others
@@ -595,6 +602,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 &self.level_costs,
                 ctype,
                 complexity,
+                psy_config,
             );
         } else {
             // Simple quantization
@@ -802,6 +810,7 @@ impl<'a> super::Vp8Encoder<'a> {
         let y1_matrix = segment.y1_matrix.clone().unwrap();
         let y2_matrix = segment.y2_matrix.clone().unwrap();
         let uv_matrix = segment.uv_matrix.clone().unwrap();
+        let psy_config = segment.psy_config.clone();
 
         let is_i4 = macroblock_info.luma_mode == LumaMode::B;
 
@@ -873,6 +882,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         &self.level_costs,
                         ctype,
                         ctx0,
+                        &psy_config,
                     );
                 } else {
                     // Simple quantization
@@ -986,6 +996,7 @@ impl<'a> super::Vp8Encoder<'a> {
         let y1_matrix = segment.y1_matrix.clone().unwrap();
         let y2_matrix = segment.y2_matrix.clone().unwrap();
         let uv_matrix = segment.uv_matrix.clone().unwrap();
+        let psy_config = segment.psy_config.clone();
 
         let is_i4 = macroblock_info.luma_mode == LumaMode::B;
         let y1_trellis_lambda = if self.do_trellis {
@@ -1059,6 +1070,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         &self.level_costs,
                         ctype,
                         ctx0,
+                        &psy_config,
                     );
                 } else {
                     for i in first_coeff_y1..16 {
@@ -1162,6 +1174,7 @@ impl<'a> super::Vp8Encoder<'a> {
         let y1_matrix = segment.y1_matrix.clone().unwrap();
         let y2_matrix = segment.y2_matrix.clone().unwrap();
         let uv_matrix = segment.uv_matrix.clone().unwrap();
+        let psy_config = segment.psy_config.clone();
 
         let is_i4 = macroblock_info.luma_mode == LumaMode::B;
         let y1_trellis_lambda = if self.do_trellis {
@@ -1238,6 +1251,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         &self.level_costs,
                         token_type_y1 as usize,
                         ctx0,
+                        &psy_config,
                     );
                 } else {
                     for i in first_coeff_y1..16 {

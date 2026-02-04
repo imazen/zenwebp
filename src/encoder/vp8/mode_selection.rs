@@ -606,6 +606,7 @@ impl<'a> super::Vp8Encoder<'a> {
                             &self.level_costs,
                             CTYPE_I4_AC,
                             ctx0,
+                            &segment.psy_config,
                         );
                         // Convert zigzag to natural order for distortion calculation
                         for n in 0..16 {
