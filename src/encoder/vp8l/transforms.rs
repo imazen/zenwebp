@@ -1186,8 +1186,15 @@ pub fn bundle_color_map(pixels: &[u32], width: usize, xbits: u8) -> Vec<u32> {
 impl ColorIndexTransform {
     /// Try to build a color index transform.
     /// Returns None if image has more than 256 colors.
-    /// Palette is sorted lexicographically (matching libwebp's GetColorPalette).
+    /// Palette is sorted to minimize deltas (default strategy).
     pub fn try_build(pixels: &[u32]) -> Option<Self> {
+        Self::try_build_with_sorting(pixels, true)
+    }
+
+    /// Try to build a color index transform with a specific sorting strategy.
+    /// `minimize_delta`: true = greedy nearest-neighbor, false = lexicographic.
+    /// Returns None if image has more than 256 colors.
+    pub fn try_build_with_sorting(pixels: &[u32], minimize_delta: bool) -> Option<Self> {
         let mut seen = alloc::collections::BTreeSet::new();
 
         for &pixel in pixels {
@@ -1200,10 +1207,20 @@ impl ColorIndexTransform {
         // BTreeSet iterates in sorted order (lexicographic on u32 = ARGB)
         let palette_sorted: Vec<u32> = seen.into_iter().collect();
 
-        // Sort to minimize deltas for better delta encoding (matches libwebp kMinimizeDelta)
-        let palette = palette_sort_minimize_deltas(&palette_sorted);
+        let palette = if minimize_delta {
+            // Sort to minimize deltas for better delta encoding (matches libwebp kMinimizeDelta)
+            palette_sort_minimize_deltas(&palette_sorted)
+        } else {
+            // Use lexicographic order directly
+            palette_sorted
+        };
 
         Some(Self { palette })
+    }
+
+    /// Build from a pre-sorted palette (for multi-config testing).
+    pub fn from_palette(palette: Vec<u32>) -> Self {
+        Self { palette }
     }
 
     /// Get xbits value for pixel packing.

@@ -88,6 +88,117 @@ struct AnalyzeResult {
     red_and_blue_always_zero: bool,
 }
 
+/// Transform combination to try during multi-config encoding.
+/// Extends EntropyMode with PaletteAndSpatial variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CrunchMode {
+    Direct,
+    Spatial,
+    SubGreen,
+    SpatialSubGreen,
+    Palette,
+    PaletteAndSpatial,
+}
+
+impl CrunchMode {
+    fn from_entropy_mode(mode: EntropyMode) -> Self {
+        match mode {
+            EntropyMode::Direct => CrunchMode::Direct,
+            EntropyMode::Spatial => CrunchMode::Spatial,
+            EntropyMode::SubGreen => CrunchMode::SubGreen,
+            EntropyMode::SpatialSubGreen => CrunchMode::SpatialSubGreen,
+            EntropyMode::Palette => CrunchMode::Palette,
+        }
+    }
+}
+
+/// Palette sorting strategy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaletteSorting {
+    /// Lexicographic sort (BTreeSet natural order).
+    Lexicographic,
+    /// Greedy nearest-neighbor to minimize deltas (current default).
+    MinimizeDelta,
+}
+
+/// Configuration for one encoding attempt in multi-config mode.
+#[derive(Debug, Clone, Copy)]
+struct CrunchConfig {
+    mode: CrunchMode,
+    palette_sorting: PaletteSorting,
+}
+
+/// Generate the list of configurations to try based on method and quality.
+///
+/// - Methods 0-4: single config (entropy-based best guess)
+/// - Method 5, quality >= 75: best guess + PaletteAndSpatial variant if palette available
+/// - Method 6, quality == 100: brute-force all viable modes
+fn generate_crunch_configs(
+    analysis: &AnalyzeResult,
+    palette_available: bool,
+    method: u8,
+    quality: u8,
+) -> Vec<CrunchConfig> {
+    let best_mode = CrunchMode::from_entropy_mode(analysis.mode);
+    let default_sorting = PaletteSorting::MinimizeDelta;
+
+    // Method 6, quality 100: brute-force all viable modes
+    if method >= 6 && quality >= 100 {
+        let mut configs = Vec::with_capacity(8);
+        // All 4 non-palette modes
+        for &mode in &[
+            CrunchMode::Direct,
+            CrunchMode::Spatial,
+            CrunchMode::SubGreen,
+            CrunchMode::SpatialSubGreen,
+        ] {
+            configs.push(CrunchConfig {
+                mode,
+                palette_sorting: default_sorting,
+            });
+        }
+        // Both palette modes if palette available, each with 2 sorting strategies
+        if palette_available {
+            for &mode in &[CrunchMode::Palette, CrunchMode::PaletteAndSpatial] {
+                for &sorting in &[PaletteSorting::Lexicographic, PaletteSorting::MinimizeDelta] {
+                    configs.push(CrunchConfig {
+                        mode,
+                        palette_sorting: sorting,
+                    });
+                }
+            }
+        }
+        return configs;
+    }
+
+    // Method 5, quality >= 75: best guess + variant
+    if method >= 5 && quality >= 75 && palette_available {
+        let mut configs = vec![CrunchConfig {
+            mode: best_mode,
+            palette_sorting: default_sorting,
+        }];
+        // If best is Palette, also try PaletteAndSpatial (and vice versa)
+        let variant = match best_mode {
+            CrunchMode::Palette => Some(CrunchMode::PaletteAndSpatial),
+            CrunchMode::PaletteAndSpatial => Some(CrunchMode::Palette),
+            _ => None,
+        };
+        if let Some(v) = variant {
+            configs.push(CrunchConfig {
+                mode: v,
+                palette_sorting: default_sorting,
+            });
+        }
+        return configs;
+    }
+
+    // Default: single config
+    vec![CrunchConfig {
+        mode: best_mode,
+        palette_sorting: default_sorting,
+    }]
+}
+
 /// Analyze image entropy to determine the best transform combination.
 ///
 /// Matches libwebp's AnalyzeEntropy: builds 13 histograms (256 buckets each)
@@ -273,13 +384,102 @@ fn hash_pix(pix: u32) -> u8 {
     ((h & 0xffffffff) >> 24) as u8
 }
 
-/// Encode ARGB pixels (internal).
+/// Encode ARGB pixels (internal). Orchestrates multi-config testing for high
+/// quality/method settings, keeping the smallest output.
 fn encode_argb(
     argb: &mut [u32],
     width: usize,
     height: usize,
     has_alpha: bool,
     config: &Vp8lConfig,
+) -> Result<Vec<u8>, EncodingError> {
+    // Determine if palette is available (needed for config generation)
+    let palette_candidate = if config.use_palette {
+        can_use_palette(argb)
+    } else {
+        false
+    };
+
+    // Run entropy analysis (used for single-config best guess)
+    let palette_size_est = if palette_candidate {
+        // Quick count for entropy estimation (don't build full transform yet)
+        ColorIndexTransform::try_build(argb)
+            .as_ref()
+            .map(|p| p.palette.len())
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let histo_bits_est =
+        get_histo_bits_palette(width, height, config.quality.method, palette_candidate);
+    let transform_bits_est = get_transform_bits(config.quality.method, histo_bits_est);
+    let transform_bits_clamped = clamp_bits(
+        width,
+        height,
+        transform_bits_est,
+        MIN_TRANSFORM_BITS,
+        MAX_TRANSFORM_BITS,
+        MAX_PREDICTOR_IMAGE_SIZE,
+    );
+    let analysis = analyze_entropy(
+        argb,
+        width,
+        height,
+        palette_candidate,
+        palette_size_est,
+        transform_bits_clamped,
+    );
+
+    // Generate configs to try
+    let configs = generate_crunch_configs(
+        &analysis,
+        palette_candidate,
+        config.quality.method,
+        config.quality.quality,
+    );
+
+    if configs.len() == 1 {
+        // Single config: encode in place (no clone needed)
+        encode_argb_single_config(argb, width, height, has_alpha, config, &configs[0])
+    } else {
+        // Multi-config: clone original pixels, try each config, keep smallest
+        let original = argb.to_vec();
+        let mut best_output: Option<Vec<u8>> = None;
+
+        for crunch_config in &configs {
+            argb.copy_from_slice(&original);
+            match encode_argb_single_config(argb, width, height, has_alpha, config, crunch_config) {
+                Ok(output) => {
+                    let keep = match &best_output {
+                        None => true,
+                        Some(best) => output.len() < best.len(),
+                    };
+                    if keep {
+                        best_output = Some(output);
+                    }
+                }
+                Err(_) => {
+                    // Skip configs that fail (e.g., palette mode on non-palette image)
+                }
+            }
+        }
+
+        best_output.ok_or(EncodingError::InvalidBufferSize(alloc::format!(
+            "all {} crunch configs failed",
+            configs.len()
+        )))
+    }
+}
+
+/// Encode ARGB pixels with a specific transform configuration.
+#[allow(clippy::too_many_arguments)]
+fn encode_argb_single_config(
+    argb: &mut [u32],
+    width: usize,
+    height: usize,
+    has_alpha: bool,
+    config: &Vp8lConfig,
+    crunch: &CrunchConfig,
 ) -> Result<Vec<u8>, EncodingError> {
     let mut writer = BitWriter::with_capacity(width * height / 2);
 
@@ -294,64 +494,32 @@ fn encode_argb(
     writer.write_bit(has_alpha);
     writer.write_bits(0, 3); // version 0
 
-    // Determine which transforms to use via entropy analysis (matching libwebp's AnalyzeEntropy)
-    let palette_candidate = if config.use_palette {
-        can_use_palette(argb)
-    } else {
-        false
-    };
-    let palette_transform_candidate = if palette_candidate {
-        ColorIndexTransform::try_build(argb)
-    } else {
-        None
-    };
-    let palette_size = palette_transform_candidate
-        .as_ref()
-        .map(|p| p.palette.len())
-        .unwrap_or(0);
-
-    // Compute transform bits for overhead estimation
-    let histo_bits_est =
-        get_histo_bits_palette(width, height, config.quality.method, palette_candidate);
-    let transform_bits_est = get_transform_bits(config.quality.method, histo_bits_est);
-    let transform_bits_clamped = clamp_bits(
-        width,
-        height,
-        transform_bits_est,
-        MIN_TRANSFORM_BITS,
-        MAX_TRANSFORM_BITS,
-        MAX_PREDICTOR_IMAGE_SIZE,
+    // Derive transform flags from CrunchMode
+    let use_palette = matches!(
+        crunch.mode,
+        CrunchMode::Palette | CrunchMode::PaletteAndSpatial
     );
-
-    let analysis = analyze_entropy(
-        argb,
-        width,
-        height,
-        palette_candidate,
-        palette_size,
-        transform_bits_clamped,
-    );
-
-    // Map entropy mode to transform flags (matching libwebp's EncoderAnalyze)
-    let use_palette = matches!(analysis.mode, EntropyMode::Palette);
-    let use_subtract_green = config.use_subtract_green
-        && matches!(
-            analysis.mode,
-            EntropyMode::SubGreen | EntropyMode::SpatialSubGreen
-        );
     let use_predictor = config.use_predictor
         && matches!(
-            analysis.mode,
-            EntropyMode::Spatial | EntropyMode::SpatialSubGreen
+            crunch.mode,
+            CrunchMode::Spatial | CrunchMode::SpatialSubGreen | CrunchMode::PaletteAndSpatial
         );
-    // Cross-color only when: not palette, not low_effort, R/B not always zero, and predict is on
+    let use_subtract_green = config.use_subtract_green
+        && matches!(
+            crunch.mode,
+            CrunchMode::SubGreen | CrunchMode::SpatialSubGreen
+        );
+    // Cross-color only when: not palette, R/B not always zero, and predictor is on.
+    // For PaletteAndSpatial, cross-color is never used (matching libwebp).
     let use_cross_color = config.use_cross_color
         && !use_palette
-        && !analysis.red_and_blue_always_zero
-        && use_predictor;
+        && use_predictor
+        && !matches!(crunch.mode, CrunchMode::PaletteAndSpatial);
 
+    // Build palette transform if needed
+    let minimize_delta = matches!(crunch.palette_sorting, PaletteSorting::MinimizeDelta);
     let palette_transform = if use_palette {
-        palette_transform_candidate
+        ColorIndexTransform::try_build_with_sorting(argb, minimize_delta)
     } else {
         None
     };
@@ -364,98 +532,27 @@ fn encode_argb(
 
     // Apply transforms and signal them in bitstream.
     // Order: SubtractGreen → Predictor → CrossColor (matching libwebp).
-    // Subtract green first decorrelates channels so predictor works better.
+    // For PaletteAndSpatial: ColorIndexing first, then Predictor.
     // The decoder reverses this order (LIFO).
 
-    // Subtract green transform (applied first, decorrelates R/B from G)
-    if use_subtract_green && palette_transform.is_none() {
-        writer.write_bit(true); // transform present
-        writer.write_bits(2, 2); // subtract green = 2
-        apply_subtract_green(argb);
-    }
+    // For non-palette modes: SubtractGreen → Predictor → CrossColor
+    if !use_palette {
+        // Subtract green transform (applied first, decorrelates R/B from G)
+        if use_subtract_green {
+            writer.write_bit(true); // transform present
+            writer.write_bits(2, 2); // subtract green = 2
+            apply_subtract_green(argb);
+        }
 
-    // Predictor transform (applied second, on subtract-green'd image)
-    if use_predictor && palette_transform.is_none() {
-        // Auto-detect predictor bits from method and image size (matching libwebp)
-        let pred_bits = if config.predictor_bits == 0 {
-            let histo_bits = get_histo_bits(width, height, config.quality.method);
-            let transform_bits = get_transform_bits(config.quality.method, histo_bits);
-            clamp_bits(
-                width,
-                height,
-                transform_bits,
-                MIN_TRANSFORM_BITS,
-                MAX_TRANSFORM_BITS,
-                MAX_PREDICTOR_IMAGE_SIZE,
-            )
-        } else {
-            config.predictor_bits.clamp(2, 8)
-        };
-        let max_quantization = if config.near_lossless < 100 {
-            super::near_lossless::max_quantization_from_quality(config.near_lossless)
-        } else {
-            1
-        };
-        let predictor_data = apply_predictor_transform(
-            argb,
-            width,
-            height,
-            pred_bits,
-            max_quantization,
-            use_subtract_green,
-        );
+        // Predictor transform (applied second, on subtract-green'd image)
+        if use_predictor {
+            write_predictor_transform(&mut writer, argb, width, height, config, use_subtract_green);
+        }
 
-        // Signal predictor transform
-        writer.write_bit(true); // transform present
-        writer.write_bits(0, 2); // predictor = 0
-        writer.write_bits((pred_bits - 2) as u64, 3);
-
-        // Write predictor sub-image (full LZ77+Huffman encoding)
-        let pred_w = subsample_size(width as u32, pred_bits) as usize;
-        let pred_h = subsample_size(height as u32, pred_bits) as usize;
-        write_predictor_image(
-            &mut writer,
-            &predictor_data,
-            pred_w,
-            pred_h,
-            config.quality.quality,
-        );
-    }
-
-    // Cross-color transform (applied third, on predictor residuals)
-    if use_cross_color && palette_transform.is_none() {
-        let cc_bits = if config.cross_color_bits == 0 {
-            let histo_bits = get_histo_bits(width, height, config.quality.method);
-            let transform_bits = get_transform_bits(config.quality.method, histo_bits);
-            clamp_bits(
-                width,
-                height,
-                transform_bits,
-                MIN_TRANSFORM_BITS,
-                MAX_TRANSFORM_BITS,
-                MAX_PREDICTOR_IMAGE_SIZE,
-            )
-        } else {
-            config.cross_color_bits.clamp(2, 8)
-        };
-        let cross_color_data =
-            apply_cross_color_transform(argb, width, height, cc_bits, config.quality.quality);
-
-        // Signal cross-color transform
-        writer.write_bit(true); // transform present
-        writer.write_bits(1, 2); // cross-color = 1
-        writer.write_bits((cc_bits - 2) as u64, 3);
-
-        // Write cross-color sub-image (full LZ77+Huffman encoding)
-        let cc_w = subsample_size(width as u32, cc_bits) as usize;
-        let cc_h = subsample_size(height as u32, cc_bits) as usize;
-        write_cross_color_image(
-            &mut writer,
-            &cross_color_data,
-            cc_w,
-            cc_h,
-            config.quality.quality,
-        );
+        // Cross-color transform (applied third, on predictor residuals)
+        if use_cross_color {
+            write_cross_color_transform(&mut writer, argb, width, height, config);
+        }
     }
 
     // Color indexing transform
@@ -478,8 +575,6 @@ fn encode_argb(
         writer.write_bits((encoded_palette_size - 1) as u64, 8);
 
         // Write palette with delta encoding using encode_image_no_huffman
-        // (matching libwebp's EncodePalette: tmp_palette[0] = palette[0],
-        // tmp_palette[i] = palette[i] - palette[i-1] for i >= 1)
         let mut tmp_palette = Vec::with_capacity(encoded_palette_size);
         tmp_palette.push(palette.palette[0]);
         for w in palette.palette[..encoded_palette_size].windows(2) {
@@ -496,6 +591,24 @@ fn encode_argb(
             let packed = super::transforms::bundle_color_map(argb, width, xbits);
             enc_width = packed_width;
             packed_buf = Some(packed);
+        }
+
+        // PaletteAndSpatial: apply predictor on the palette-indexed image
+        if matches!(crunch.mode, CrunchMode::PaletteAndSpatial) {
+            // Predictor operates on the indexed (possibly packed) image
+            let pred_argb: &mut [u32] = if let Some(ref mut buf) = packed_buf {
+                buf
+            } else {
+                argb
+            };
+            write_predictor_transform(
+                &mut writer,
+                pred_argb,
+                enc_width,
+                pred_argb.len() / enc_width,
+                config,
+                false, // no subtract green with palette
+            );
         }
     }
 
@@ -518,7 +631,6 @@ fn encode_argb(
                 // Cap cache bits for palette images (matching libwebp)
                 let ps = pt.palette.len();
                 if ps < (1 << 10) {
-                    // BitsLog2Floor(palette_size) + 1
                     let log2_floor = 31u32.saturating_sub(ps.leading_zeros());
                     (log2_floor + 1).min(10) as u8
                 } else {
@@ -554,10 +666,7 @@ fn encode_argb(
     };
 
     // Encode image data from backward references.
-    // If auto-detecting cache and cache_bits > 0, try both with-cache and without-cache
-    // and return whichever produces smaller output. The entropy-based cache selection
-    // uses a global histogram but actual encoding uses per-tile meta-Huffman, so
-    // larger cache can produce larger output due to Huffman tree overhead.
+    // If auto-detecting cache and cache_bits > 0, try both with-cache and without-cache.
     let is_palette = palette_transform.is_some();
     let auto_cache = config.cache_bits.is_none();
 
@@ -592,6 +701,102 @@ fn encode_argb(
             writer, &refs, cache_bits, enc_argb, enc_width, enc_height, config, is_palette,
         ))
     }
+}
+
+/// Apply and signal predictor transform.
+fn write_predictor_transform(
+    writer: &mut BitWriter,
+    argb: &mut [u32],
+    width: usize,
+    height: usize,
+    config: &Vp8lConfig,
+    use_subtract_green: bool,
+) {
+    let pred_bits = if config.predictor_bits == 0 {
+        let histo_bits = get_histo_bits(width, height, config.quality.method);
+        let transform_bits = get_transform_bits(config.quality.method, histo_bits);
+        clamp_bits(
+            width,
+            height,
+            transform_bits,
+            MIN_TRANSFORM_BITS,
+            MAX_TRANSFORM_BITS,
+            MAX_PREDICTOR_IMAGE_SIZE,
+        )
+    } else {
+        config.predictor_bits.clamp(2, 8)
+    };
+    let max_quantization = if config.near_lossless < 100 {
+        super::near_lossless::max_quantization_from_quality(config.near_lossless)
+    } else {
+        1
+    };
+    let predictor_data = apply_predictor_transform(
+        argb,
+        width,
+        height,
+        pred_bits,
+        max_quantization,
+        use_subtract_green,
+    );
+
+    // Signal predictor transform
+    writer.write_bit(true); // transform present
+    writer.write_bits(0, 2); // predictor = 0
+    writer.write_bits((pred_bits - 2) as u64, 3);
+
+    // Write predictor sub-image
+    let pred_w = subsample_size(width as u32, pred_bits) as usize;
+    let pred_h = subsample_size(height as u32, pred_bits) as usize;
+    write_predictor_image(
+        writer,
+        &predictor_data,
+        pred_w,
+        pred_h,
+        config.quality.quality,
+    );
+}
+
+/// Apply and signal cross-color transform.
+fn write_cross_color_transform(
+    writer: &mut BitWriter,
+    argb: &mut [u32],
+    width: usize,
+    height: usize,
+    config: &Vp8lConfig,
+) {
+    let cc_bits = if config.cross_color_bits == 0 {
+        let histo_bits = get_histo_bits(width, height, config.quality.method);
+        let transform_bits = get_transform_bits(config.quality.method, histo_bits);
+        clamp_bits(
+            width,
+            height,
+            transform_bits,
+            MIN_TRANSFORM_BITS,
+            MAX_TRANSFORM_BITS,
+            MAX_PREDICTOR_IMAGE_SIZE,
+        )
+    } else {
+        config.cross_color_bits.clamp(2, 8)
+    };
+    let cross_color_data =
+        apply_cross_color_transform(argb, width, height, cc_bits, config.quality.quality);
+
+    // Signal cross-color transform
+    writer.write_bit(true); // transform present
+    writer.write_bits(1, 2); // cross-color = 1
+    writer.write_bits((cc_bits - 2) as u64, 3);
+
+    // Write cross-color sub-image
+    let cc_w = subsample_size(width as u32, cc_bits) as usize;
+    let cc_h = subsample_size(height as u32, cc_bits) as usize;
+    write_cross_color_image(
+        writer,
+        &cross_color_data,
+        cc_w,
+        cc_h,
+        config.quality.quality,
+    );
 }
 
 /// Encode image data from backward references into a VP8L bitstream.
@@ -1214,5 +1419,181 @@ mod tests {
         assert_eq!(argb_red(diff), 206); // 50 - 100 = -50 = 206 (wrapping)
         assert_eq!(argb_green(diff), 100); // 200 - 100
         assert_eq!(argb_blue(diff), 5); // 10 - 5
+    }
+
+    #[test]
+    fn test_generate_configs_single() {
+        // m4, q75: single config
+        let analysis = AnalyzeResult {
+            mode: EntropyMode::SpatialSubGreen,
+            red_and_blue_always_zero: false,
+        };
+        let configs = generate_crunch_configs(&analysis, false, 4, 75);
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].mode, CrunchMode::SpatialSubGreen);
+    }
+
+    #[test]
+    fn test_generate_configs_m5_palette() {
+        // m5, q75, palette available: best guess + variant
+        let analysis = AnalyzeResult {
+            mode: EntropyMode::Palette,
+            red_and_blue_always_zero: true,
+        };
+        let configs = generate_crunch_configs(&analysis, true, 5, 75);
+        assert_eq!(configs.len(), 2);
+        assert_eq!(configs[0].mode, CrunchMode::Palette);
+        assert_eq!(configs[1].mode, CrunchMode::PaletteAndSpatial);
+    }
+
+    #[test]
+    fn test_generate_configs_m5_no_palette() {
+        // m5, q75, no palette: single config
+        let analysis = AnalyzeResult {
+            mode: EntropyMode::Spatial,
+            red_and_blue_always_zero: false,
+        };
+        let configs = generate_crunch_configs(&analysis, false, 5, 75);
+        assert_eq!(configs.len(), 1);
+    }
+
+    #[test]
+    fn test_generate_configs_m6_q100_brute() {
+        // m6, q100, palette available: 4 non-palette + 2*2 palette = 8
+        let analysis = AnalyzeResult {
+            mode: EntropyMode::Direct,
+            red_and_blue_always_zero: false,
+        };
+        let configs = generate_crunch_configs(&analysis, true, 6, 100);
+        assert_eq!(configs.len(), 8);
+    }
+
+    #[test]
+    fn test_generate_configs_m6_q100_no_palette() {
+        // m6, q100, no palette: 4 non-palette modes
+        let analysis = AnalyzeResult {
+            mode: EntropyMode::Direct,
+            red_and_blue_always_zero: false,
+        };
+        let configs = generate_crunch_configs(&analysis, false, 6, 100);
+        assert_eq!(configs.len(), 4);
+    }
+
+    #[test]
+    fn test_multi_config_palette_image() {
+        // 8x8 image with 4 colors: should trigger palette mode.
+        // Test that multi-config mode (m5 q75) produces valid output.
+        let colors: [[u8; 3]; 4] = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0]];
+        let mut pixels = Vec::with_capacity(8 * 8 * 3);
+        for i in 0..64 {
+            let c = colors[i % 4];
+            pixels.extend_from_slice(&c);
+        }
+
+        let mut config = Vp8lConfig::default();
+        config.quality.method = 5;
+        config.quality.quality = 75;
+        let result = encode_vp8l(&pixels, 8, 8, false, &config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()[0], 0x2f); // VP8L signature
+    }
+
+    #[test]
+    fn test_brute_force_all_modes() {
+        // 16x16 image with few colors: m6 q100 brute-force
+        let colors: [[u8; 3]; 4] = [[10, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120]];
+        let mut pixels = Vec::with_capacity(16 * 16 * 3);
+        for i in 0..256 {
+            let c = colors[i % 4];
+            pixels.extend_from_slice(&c);
+        }
+
+        let mut config = Vp8lConfig::default();
+        config.quality.method = 6;
+        config.quality.quality = 100;
+        let result = encode_vp8l(&pixels, 16, 16, false, &config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()[0], 0x2f); // VP8L signature
+    }
+
+    #[test]
+    fn test_palette_and_spatial_forced() {
+        // Force PaletteAndSpatial mode directly and verify output is valid VP8L.
+        let colors: [[u8; 3]; 8] = [
+            [10, 20, 30],
+            [40, 50, 60],
+            [70, 80, 90],
+            [100, 110, 120],
+            [130, 140, 150],
+            [160, 170, 180],
+            [190, 200, 210],
+            [220, 230, 240],
+        ];
+        let w = 16usize;
+        let h = 16usize;
+        let mut pixels = Vec::with_capacity(w * h * 3);
+        for i in 0..(w * h) {
+            let c = colors[i % 8];
+            pixels.extend_from_slice(&c);
+        }
+
+        // Convert to ARGB
+        let mut argb: Vec<u32> = pixels
+            .chunks_exact(3)
+            .map(|p| make_argb(255, p[0], p[1], p[2]))
+            .collect();
+
+        let config = Vp8lConfig::default();
+        let crunch = CrunchConfig {
+            mode: CrunchMode::PaletteAndSpatial,
+            palette_sorting: PaletteSorting::MinimizeDelta,
+        };
+
+        let result = encode_argb_single_config(&mut argb, w, h, false, &config, &crunch);
+        assert!(result.is_ok(), "PaletteAndSpatial encoding failed");
+        let data = result.unwrap();
+        assert_eq!(data[0], 0x2f); // VP8L signature
+        assert!(data.len() > 10); // Non-trivial output
+    }
+
+    #[test]
+    fn test_palette_sorting_lexicographic() {
+        // Test lexicographic sorting produces different (but valid) output
+        let colors: [[u8; 3]; 4] = [[10, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120]];
+        let w = 8usize;
+        let h = 8usize;
+        let mut pixels = Vec::with_capacity(w * h * 3);
+        for i in 0..(w * h) {
+            let c = colors[i % 4];
+            pixels.extend_from_slice(&c);
+        }
+
+        let mut argb: Vec<u32> = pixels
+            .chunks_exact(3)
+            .map(|p| make_argb(255, p[0], p[1], p[2]))
+            .collect();
+
+        let config = Vp8lConfig::default();
+
+        // MinimizeDelta sorting
+        let mut argb_md = argb.clone();
+        let crunch_md = CrunchConfig {
+            mode: CrunchMode::Palette,
+            palette_sorting: PaletteSorting::MinimizeDelta,
+        };
+        let result_md =
+            encode_argb_single_config(&mut argb_md, w, h, false, &config, &crunch_md).unwrap();
+
+        // Lexicographic sorting
+        let crunch_lex = CrunchConfig {
+            mode: CrunchMode::Palette,
+            palette_sorting: PaletteSorting::Lexicographic,
+        };
+        let result_lex =
+            encode_argb_single_config(&mut argb, w, h, false, &config, &crunch_lex).unwrap();
+
+        // Both should be valid VP8L
+        assert_eq!(result_md[0], 0x2f);
+        assert_eq!(result_lex[0], 0x2f);
     }
 }

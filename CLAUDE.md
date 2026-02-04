@@ -296,10 +296,19 @@ per-tile meta-Huffman codes. Larger cache expands the literal alphabet (280→40
 entries), increasing Huffman tree overhead per tile. Fix: try both auto-selected cache
 and cache=0, return whichever is smaller. Improved CID22 50-image from 0.997x to 0.996x.
 
+**Multi-config testing (2026-02-03):**
+Matches libwebp's `CrunchConfig` approach. Tries multiple transform combinations
+and keeps the smallest output:
+- Methods 0-4: single config (no overhead)
+- Method 5, quality >= 75: best guess + PaletteAndSpatial variant (if palette available)
+- Method 6, quality 100: brute-force all viable modes (4-8 configs)
+Six modes: Direct, Spatial, SubGreen, SpatialSubGreen, Palette, PaletteAndSpatial.
+PaletteAndSpatial applies predictor transform on palette-indexed image.
+Palette sorting variants (Lexicographic, MinimizeDelta) tested for palette modes at m6.
+
 **Remaining potential improvements:**
 - Zopfli-style cost interval manager (libwebp's BackwardReferencesHashChainDistanceOnly)
   would improve the 2 worst outlier images but is complex to implement
-- Multi-config testing at quality >= 75 (try multiple transform combinations)
 - LZ77 Box strategy for palette images with <= 16 colors
 
 ### no_std Support (2026-01-23)
