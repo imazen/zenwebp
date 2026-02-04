@@ -499,7 +499,7 @@ fn fast_slog2(v: u32) -> u64 {
         return 0;
     }
     let vf = v as f64;
-    (vf * vf.log2() * (1u64 << LOG_2_PRECISION_BITS) as f64) as u64
+    (vf * libm::log2(vf) * (1u64 << LOG_2_PRECISION_BITS) as f64) as u64
 }
 
 /// Combined Shannon entropy of distributions X and X+Y (matching libwebp).

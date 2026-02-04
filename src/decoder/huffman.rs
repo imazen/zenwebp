@@ -57,7 +57,7 @@ impl HuffmanTree {
 
         // Handle special cases
         if num_symbols == 0 {
-            #[cfg(debug_assertions)]
+            #[cfg(all(debug_assertions, feature = "std"))]
             eprintln!(
                 "HuffmanError: num_symbols == 0, code_lengths.len()={}",
                 code_lengths.len()
@@ -87,7 +87,7 @@ impl HuffmanTree {
 
         // Confirm that the huffman tree is valid
         if codespace_used != (1 << max_length) {
-            #[cfg(debug_assertions)]
+            #[cfg(all(debug_assertions, feature = "std"))]
             eprintln!(
                 "HuffmanError: codespace_used={}, expected={}, max_length={}, histogram={:?}",
                 codespace_used,

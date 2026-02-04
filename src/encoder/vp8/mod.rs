@@ -1260,7 +1260,7 @@ fn encode_with_quality_search(
 
         // Create params with adjusted quality
         let mut trial_params = params.clone();
-        trial_params.lossy_quality = stats.q.round().clamp(0.0, 100.0) as u8;
+        trial_params.lossy_quality = libm::roundf(stats.q).clamp(0.0, 100.0) as u8;
 
         // Encode to trial buffer
         trial_encoder.encode_image(data, color, width, height, &trial_params)?;

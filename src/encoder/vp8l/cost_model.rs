@@ -35,7 +35,7 @@ fn fast_log2(v: u32) -> u32 {
         return 0;
     }
     let v_f64 = v as f64;
-    (v_f64.log2() * (1u64 << LOG_2_PRECISION_BITS) as f64) as u32
+    (libm::log2(v_f64) * (1u64 << LOG_2_PRECISION_BITS) as f64) as u32
 }
 
 /// Rounding division matching libwebp's DivRound.
@@ -208,8 +208,8 @@ impl CostManager {
         if cost_cache_size > 0 {
             cost_cache[0] = cost_model.literal[NUM_LITERAL_CODES] as i64;
         }
-        for k in 1..cost_cache_size {
-            cost_cache[k] = cost_model.length_cost(k as u32);
+        for (k, slot) in cost_cache.iter_mut().enumerate().skip(1) {
+            *slot = cost_model.length_cost(k as u32);
         }
 
         // Build cache_intervals: group consecutive lengths with same cost.

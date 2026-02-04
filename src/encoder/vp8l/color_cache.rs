@@ -3,6 +3,9 @@
 //! The color cache stores recently used colors and allows referencing them
 //! by index instead of encoding the full ARGB value.
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 /// Color cache hash multiplier (must match decoder exactly).
 const COLOR_CACHE_MULT: u32 = 0x1e35a7bd;
 

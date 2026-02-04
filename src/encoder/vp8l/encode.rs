@@ -1,5 +1,6 @@
 //! Main VP8L encoder implementation.
 
+use alloc::vec;
 use alloc::vec::Vec;
 
 use super::backward_refs::{

@@ -2,6 +2,7 @@
 //!
 //! Implements canonical Huffman codes as required by the VP8L bitstream.
 
+use alloc::boxed::Box;
 use alloc::collections::BinaryHeap;
 use alloc::vec;
 use alloc::vec::Vec;

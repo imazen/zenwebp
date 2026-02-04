@@ -8,6 +8,8 @@
 //! - Color cache: estimates optimal cache bits, applies to refs
 //! - 2D locality: converts raw distances to plane codes
 
+use alloc::vec::Vec;
+
 use super::color_cache::ColorCache;
 use super::cost_model::trace_backwards_optimize;
 use super::entropy::estimate_histogram_bits;

@@ -19,7 +19,7 @@ fn fast_slog2(v: u32) -> u64 {
     if v < 256 {
         // For small values, compute directly with float
         let vf = v as f64;
-        return (vf * vf.log2() * (1u64 << LOG_2_PRECISION_BITS) as f64) as u64;
+        return (vf * libm::log2(vf) * (1u64 << LOG_2_PRECISION_BITS) as f64) as u64;
     }
     // For large values, use libwebp's piecewise approximation
     fast_slog2_slow(v)
@@ -29,7 +29,7 @@ fn fast_slog2(v: u32) -> u64 {
 fn fast_slog2_slow(v: u32) -> u64 {
     // Use float for values >= 256
     let vf = v as f64;
-    (vf * vf.log2() * (1u64 << LOG_2_PRECISION_BITS) as f64) as u64
+    (vf * libm::log2(vf) * (1u64 << LOG_2_PRECISION_BITS) as f64) as u64
 }
 
 /// RLE streak statistics matching libwebp's VP8LStreaks.

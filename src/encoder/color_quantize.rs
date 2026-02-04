@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn test_quantize_uniform() {
         // Single color image → should quantize to 1-2 colors
-        let rgb: Vec<u8> = vec![128, 64, 32].repeat(100);
+        let rgb: Vec<u8> = [128, 64, 32].repeat(100);
         let result = quantize_rgb(&rgb, 10, 10, 100, 256).unwrap();
         assert_eq!(result.argb.len(), 100);
         assert!(result.palette_size <= 2);

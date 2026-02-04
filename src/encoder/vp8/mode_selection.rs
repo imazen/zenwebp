@@ -977,34 +977,36 @@ impl<'a> super::Vp8Encoder<'a> {
 
         // Debug output for specific macroblock (check MB_DEBUG env var)
         // Set MB_DEBUG=x,y to debug mode selection for that macroblock
-        let debug_mb = if cfg!(feature = "mode_debug") {
-            std::env::var("MB_DEBUG")
-                .ok()
-                .and_then(|s| {
-                    let parts: Vec<_> = s.split(',').collect();
-                    if parts.len() == 2 {
-                        Some((
-                            parts[0].parse::<usize>().ok()?,
-                            parts[1].parse::<usize>().ok()?,
-                        ))
-                    } else {
-                        None
-                    }
-                })
-                .is_some_and(|(dx, dy)| dx == mbx && dy == mby)
-        } else {
-            false
-        };
+        #[cfg(feature = "mode_debug")]
+        let debug_mb = std::env::var("MB_DEBUG")
+            .ok()
+            .and_then(|s| {
+                let parts: alloc::vec::Vec<_> = s.split(',').collect();
+                if parts.len() == 2 {
+                    Some((
+                        parts[0].parse::<usize>().ok()?,
+                        parts[1].parse::<usize>().ok()?,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .is_some_and(|(dx, dy)| dx == mbx && dy == mby);
+        #[cfg(not(feature = "mode_debug"))]
+        let debug_mb = false;
 
-        #[allow(unused_variables)]
+        #[allow(unused_variables, clippy::needless_bool)]
         let debug_i16_details = if debug_mb {
-            let segment = self.get_segment_for_mb(mbx, mby);
-            eprintln!("=== MB({},{}) Mode Selection Debug ===", mbx, mby);
-            eprintln!("I16: mode={:?}, score={}", luma_mode, i16_score);
-            eprintln!(
-                "  lambda_mode={}, lambda_i4={}, lambda_i16={}",
-                segment.lambda_mode, segment.lambda_i4, segment.lambda_i16
-            );
+            #[cfg(feature = "mode_debug")]
+            {
+                let segment = self.get_segment_for_mb(mbx, mby);
+                eprintln!("=== MB({},{}) Mode Selection Debug ===", mbx, mby);
+                eprintln!("I16: mode={:?}, score={}", luma_mode, i16_score);
+                eprintln!(
+                    "  lambda_mode={}, lambda_i4={}, lambda_i16={}",
+                    segment.lambda_mode, segment.lambda_i4, segment.lambda_i16
+                );
+            }
             true
         } else {
             false
@@ -1029,7 +1031,9 @@ impl<'a> super::Vp8Encoder<'a> {
 
             if should_try_i4 {
                 match self.pick_best_intra4(mbx, mby, i16_score) {
+                    #[allow(unused_variables)]
                     Some((modes, i4_score)) => {
+                        #[cfg(feature = "mode_debug")]
                         if debug_mb {
                             eprintln!("I4: score={} (beats I16)", i4_score);
                             eprintln!("  modes={:?}", modes);
@@ -1041,6 +1045,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         (LumaMode::B, Some(modes))
                     }
                     None => {
+                        #[cfg(feature = "mode_debug")]
                         if debug_mb {
                             eprintln!("I4: score >= {} (I16 wins)", i16_score);
                             eprintln!("  RESULT: I16 wins");
@@ -1049,6 +1054,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     }
                 }
             } else {
+                #[cfg(feature = "mode_debug")]
                 if debug_mb {
                     eprintln!("I4: skipped (flat DC block)");
                     eprintln!("  RESULT: I16 wins (I4 not tried)");
