@@ -1,10 +1,27 @@
 //! Perceptual distortion model for encoder-side optimizations.
 //!
-//! Provides frequency-weighted distortion computation using CSF (Contrast
-//! Sensitivity Function) tables and SATD-based energy preservation (psy-rd).
+//! This module provides psychovisual enhancements for WebP encoding:
+//!
+//! - **CSF (Contrast Sensitivity Function)** tables that weight distortion by
+//!   frequency, de-emphasizing errors in high frequencies where human vision
+//!   is less sensitive
+//! - **JND (Just Noticeable Difference)** thresholds that identify coefficients
+//!   too small to be perceived, allowing more aggressive quantization
+//! - **Masking models** that detect texture complexity and adjust quantization —
+//!   textured areas can hide more noise than flat/edge regions
+//! - **SATD functions** for measuring signal energy in the Hadamard domain
 //!
 //! All features are gated by `method` level — methods 0-2 produce bit-identical
 //! output to the baseline encoder.
+//!
+//! ## Relationship to other modules
+//!
+//! - [`super::cost`]: Uses `TDisto` (frequency-weighted Hadamard difference)
+//!   for mode selection distortion. This module's CSF tables affect TDisto weights.
+//! - [`super::trellis`]: Uses `PsyConfig` for JND-gated coefficient retention
+//!   during trellis quantization.
+//! - [`super::analysis`]: Calls `compute_masking_alpha` and `blend_masking_alpha`
+//!   for adaptive quantization based on local texture complexity.
 
 use super::tables::{VP8_WEIGHT_TRELLIS, VP8_WEIGHT_Y};
 
@@ -125,7 +142,7 @@ impl PsyConfig {
     /// Method gating:
     /// - method 0-2: all features disabled (bit-identical to baseline)
     /// - method >= 3: enhanced CSF tables for luma and chroma TDisto
-    /// - method >= 4: psy-rd enabled with conservative strength
+    /// - method >= 4: reserved (psy-rd disabled after butteraugli testing)
     /// - method >= 5: psy-trellis + JND thresholds enabled
     pub(crate) fn new(method: u8, quant_index: u8, _sns_strength: u8) -> Self {
         let mut config = Self::default();
@@ -221,12 +238,18 @@ impl PsyConfig {
 
     /// Set luminance factor for adaptive JND.
     /// Call with average luminance of the macroblock (0-255).
+    ///
+    /// Reserved for per-macroblock JND adaptation (not yet integrated).
+    #[allow(dead_code)]
     pub(crate) fn set_luminance(&mut self, avg_luma: u8) {
         self.luminance_factor = avg_luma;
     }
 
     /// Set contrast masking factor.
     /// Call with texture complexity metric (0=flat, 255=highly textured).
+    ///
+    /// Reserved for per-macroblock contrast adaptation (not yet integrated).
+    #[allow(dead_code)]
     pub(crate) fn set_contrast_masking(&mut self, masking: u8) {
         self.contrast_masking = masking;
     }
@@ -436,7 +459,7 @@ pub(crate) fn compute_masking_alpha(src: &[u8], stride: usize) -> u8 {
 
     // Average metrics
     let avg_ac_energy = (total_ac_energy / 16) as u32;
-    let avg_luminance = (total_luminance / 16) as u32;
+    let avg_luminance = total_luminance / 16;
 
     // Compute activity masking: textured areas can hide quantization noise
     // Using sqrt-like mapping for perceptual uniformity (similar to butteraugli)
@@ -494,45 +517,8 @@ pub(crate) fn compute_masking_alpha(src: &[u8], stride: usize) -> u8 {
     final_alpha.min(255) as u8
 }
 
-/// Legacy variance-based masking (for comparison/debugging).
-#[allow(dead_code)]
-pub(crate) fn compute_masking_alpha_variance(src: &[u8], stride: usize) -> u8 {
-    // Compute variance for each 4x4 sub-block, then average
-    let mut total_variance = 0u64;
-
-    for by in 0..4 {
-        for bx in 0..4 {
-            let base = by * 4 * stride + bx * 4;
-
-            // Compute mean of 4x4 block
-            let mut sum = 0u32;
-            for y in 0..4 {
-                for x in 0..4 {
-                    sum += src[base + y * stride + x] as u32;
-                }
-            }
-            let mean = sum / 16;
-
-            // Compute variance
-            let mut var = 0u64;
-            for y in 0..4 {
-                for x in 0..4 {
-                    let diff = src[base + y * stride + x] as i32 - mean as i32;
-                    var += (diff * diff) as u64;
-                }
-            }
-            total_variance += var / 16; // normalize per-pixel
-        }
-    }
-
-    // Average across 16 sub-blocks
-    let avg_variance = total_variance / 16;
-
-    // Map variance to alpha range 0-255
-    // Empirically tuned: variance of ~100 → alpha ~128 (mid complexity)
-    // Clamp at 255 for very high variance
-    ((avg_variance * 255) / (avg_variance + 100)).min(255) as u8
-}
+//------------------------------------------------------------------------------
+// Alpha Blending (used by analysis.rs)
 
 /// Adjust DCT-histogram alpha using masking information.
 ///
@@ -573,6 +559,9 @@ pub(crate) fn blend_masking_alpha(dct_alpha: i32, masking_alpha: u8, method: u8)
     dct_alpha + scaled_delta
 }
 
+//------------------------------------------------------------------------------
+// Psy-RD Cost (currently disabled but kept for future experimentation)
+
 /// Compute the psy-rd penalty for energy loss between source and reconstruction.
 ///
 /// Returns a one-sided penalty: only penalizes when the reconstruction has
@@ -597,6 +586,62 @@ pub(crate) fn psy_rd_cost(src_satd: u32, rec_satd: u32, psy_rd_strength: u32) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Legacy variance-based masking (kept for comparison with SATD-based approach).
+    ///
+    /// This was the original masking method before switching to SATD-based AC energy.
+    /// Kept here to verify the new method produces similar results on typical content.
+    fn compute_masking_alpha_variance(src: &[u8], stride: usize) -> u8 {
+        let mut total_variance = 0u64;
+
+        for by in 0..4 {
+            for bx in 0..4 {
+                let base = by * 4 * stride + bx * 4;
+
+                // Compute mean of 4x4 block
+                let mut sum = 0u32;
+                for y in 0..4 {
+                    for x in 0..4 {
+                        sum += src[base + y * stride + x] as u32;
+                    }
+                }
+                let mean = sum / 16;
+
+                // Compute variance
+                let mut var = 0u64;
+                for y in 0..4 {
+                    for x in 0..4 {
+                        let diff = src[base + y * stride + x] as i32 - mean as i32;
+                        var += (diff * diff) as u64;
+                    }
+                }
+                total_variance += var / 16;
+            }
+        }
+
+        let avg_variance = total_variance / 16;
+        ((avg_variance * 255) / (avg_variance + 100)).min(255) as u8
+    }
+
+    #[test]
+    fn test_masking_methods_correlate() {
+        // Both masking methods should rank blocks similarly
+        // (flat < moderate < textured)
+        let flat = [128u8; 256];
+        let mut textured = [0u8; 256];
+        for (i, p) in textured.iter_mut().enumerate() {
+            *p = ((i * 17 + i / 16 * 31) % 256) as u8;
+        }
+
+        let flat_satd = compute_masking_alpha(&flat, 16);
+        let flat_var = compute_masking_alpha_variance(&flat, 16);
+        let text_satd = compute_masking_alpha(&textured, 16);
+        let text_var = compute_masking_alpha_variance(&textured, 16);
+
+        // Both methods should agree: flat has lower alpha than textured
+        assert!(flat_satd < text_satd, "SATD: flat={} should < textured={}", flat_satd, text_satd);
+        assert!(flat_var < text_var, "Variance: flat={} should < textured={}", flat_var, text_var);
+    }
 
     #[test]
     fn test_satd_4x4_flat_block() {
