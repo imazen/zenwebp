@@ -165,9 +165,48 @@ See `src/common/simd_sse.rs` for patterns:
 - `sse_quantize` (line 563) - Coefficient quantization
 - `idct4x4` (line 189) - Inverse DCT
 
+## Profiling Results (2026-02-04)
+
+Hot paths from perf profiling on method 4, 512x512 image:
+
+| Function | % Time | Status |
+|----------|--------|--------|
+| `choose_macroblock_info` | 32.24% | Main mode selection loop |
+| `idct4x4_intrinsics` | 17.71% | SIMD (already optimized) |
+| `dct4x4_intrinsics` | 9.56% | SIMD (already optimized) |
+| `get_residual_cost_sse2` | 8.00% | SIMD (already optimized) |
+| `t_transform_sse2` | 6.80% | SIMD (already optimized) |
+| `collect_histogram_with_offset` | 4.73% | **Scalar - optimization target** |
+| `memmove` | 2.29% | Memory copies |
+
+## Recent Optimizations
+
+### Method 0-1 Fast DC Path (commit 8fd159e)
+- Added `pick_intra16_fast_dc()` for method 0-1
+- Uses DC mode only with simple SSE scoring (no full RD)
+- Method 0 throughput improved ~33%
+
+### Performance Gap Analysis
+
+| Method | zenwebp | libwebp | Ratio |
+|--------|---------|---------|-------|
+| 0 | 9.75 ms | 2.79 ms | 3.5x |
+| 4 | 27.0 ms | 10.5 ms | 2.6x |
+| 6 | 33.3 ms | 16.1 ms | 2.1x |
+
+### Limiting Factor: unsafe Code Forbidden
+
+The crate has `#![forbid(unsafe_code)]`. This prevents using `forge_token_dangerously()`
+to eliminate redundant CPU feature checking inside `#[multiversed]` functions. Each SIMD
+function call does a runtime `summon()` check even when already inside a feature-specialized
+code path.
+
+If unsafe code were allowed, the dispatch overhead could be eliminated for ~10-15% improvement.
+
 ## Notes
 
 - All 156 unit tests pass
 - Pre-existing test failure in `preset_overrides_work` (unrelated to SIMD)
 - Use `#[inline(always)]` for small SIMD helpers called in loops
 - The `wide` crate autovectorizes well inside `#[multiversed]` functions - sometimes easier than manual intrinsics
+- Criterion benchmarks added: `cargo bench` runs encode_benchmark and encode_vs_libwebp
