@@ -445,7 +445,8 @@ pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     }
 }
 
-/// SSE2 implementation of TTransform
+/// SSE2 implementation of TTransform - Hadamard transform with weighted abs sum
+/// Horizontal pass done in SIMD, vertical pass extracted for simplicity
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
 #[allow(dead_code)]
@@ -457,83 +458,104 @@ fn t_transform_sse2(
 ) -> i32 {
     let zero = _mm_setzero_si128();
 
-    // Load 4 rows of 4 bytes each, expand to i16
-    // Row 0
+    // Load 4 rows of 4 bytes each
     let row0 = simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&input[0..4]).unwrap());
-    let row0_16 = _mm_unpacklo_epi8(row0, zero);
-
-    // Row 1
     let row1 = simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&input[stride..][..4]).unwrap());
-    let row1_16 = _mm_unpacklo_epi8(row1, zero);
-
-    // Row 2
     let row2 = simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&input[stride * 2..][..4]).unwrap());
-    let row2_16 = _mm_unpacklo_epi8(row2, zero);
-
-    // Row 3
     let row3 = simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&input[stride * 3..][..4]).unwrap());
-    let row3_16 = _mm_unpacklo_epi8(row3, zero);
 
-    // Use intermediate array
-    let mut tmp = [0i32; 16];
+    // Expand u8 to i16: each row is [x0, x1, x2, x3, 0, 0, 0, 0]
+    let in0 = _mm_unpacklo_epi8(row0, zero);
+    let in1 = _mm_unpacklo_epi8(row1, zero);
+    let in2 = _mm_unpacklo_epi8(row2, zero);
+    let in3 = _mm_unpacklo_epi8(row3, zero);
 
-    // Extract rows to i32 for horizontal pass
-    let r0 = [
-        _mm_extract_epi16(row0_16, 0) as i32,
-        _mm_extract_epi16(row0_16, 1) as i32,
-        _mm_extract_epi16(row0_16, 2) as i32,
-        _mm_extract_epi16(row0_16, 3) as i32,
-    ];
-    let r1 = [
-        _mm_extract_epi16(row1_16, 0) as i32,
-        _mm_extract_epi16(row1_16, 1) as i32,
-        _mm_extract_epi16(row1_16, 2) as i32,
-        _mm_extract_epi16(row1_16, 3) as i32,
-    ];
-    let r2 = [
-        _mm_extract_epi16(row2_16, 0) as i32,
-        _mm_extract_epi16(row2_16, 1) as i32,
-        _mm_extract_epi16(row2_16, 2) as i32,
-        _mm_extract_epi16(row2_16, 3) as i32,
-    ];
-    let r3 = [
-        _mm_extract_epi16(row3_16, 0) as i32,
-        _mm_extract_epi16(row3_16, 1) as i32,
-        _mm_extract_epi16(row3_16, 2) as i32,
-        _mm_extract_epi16(row3_16, 3) as i32,
-    ];
+    // Pack rows 0,1 and 2,3 into single registers for horizontal Hadamard
+    // in01 = [r0x0, r0x1, r0x2, r0x3, r1x0, r1x1, r1x2, r1x3]
+    // in23 = [r2x0, r2x1, r2x2, r2x3, r3x0, r3x1, r3x2, r3x3]
+    let in01 = _mm_unpacklo_epi64(in0, in1);
+    let in23 = _mm_unpacklo_epi64(in2, in3);
 
-    // Horizontal pass
-    for (i, row) in [r0, r1, r2, r3].iter().enumerate() {
-        let a0 = row[0] + row[2];
-        let a1 = row[1] + row[3];
-        let a2 = row[1] - row[3];
-        let a3 = row[0] - row[2];
-        tmp[i * 4] = a0 + a1;
-        tmp[i * 4 + 1] = a3 + a2;
-        tmp[i * 4 + 2] = a3 - a2;
-        tmp[i * 4 + 3] = a0 - a1;
-    }
+    // Horizontal Hadamard: for each row [x0,x1,x2,x3], compute:
+    // a0=x0+x2, a1=x1+x3, a2=x1-x3, a3=x0-x2
+    // out = [a0+a1, a3+a2, a3-a2, a0-a1]
+    //
+    // Shuffle to get [x0,x2,x0,x2, x1,x3,x1,x3] arrangement:
+    // Use _mm_shufflelo_epi16 and _mm_shufflehi_epi16
+    // in01 = [r0x0, r0x1, r0x2, r0x3, r1x0, r1x1, r1x2, r1x3]
+    // Want:  [r0x0, r0x2, r0x1, r0x3, r1x0, r1x2, r1x1, r1x3] (indices 0,2,1,3)
 
-    // Vertical pass with weighting
+    let shuf_02_13 = _mm_shufflelo_epi16(_mm_shufflehi_epi16(in01, 0b11_01_10_00), 0b11_01_10_00);
+    let shuf_02_13_23 = _mm_shufflelo_epi16(_mm_shufflehi_epi16(in23, 0b11_01_10_00), 0b11_01_10_00);
+
+    // Now: shuf_02_13 = [r0x0, r0x2, r0x1, r0x3, r1x0, r1x2, r1x1, r1x3]
+    // Add adjacent pairs: [r0x0+r0x2, r0x1+r0x3, r1x0+r1x2, r1x1+r1x3] = [a0, a1, a0, a1]
+    let add_pairs_01 = _mm_madd_epi16(shuf_02_13, _mm_set1_epi16(1));
+    let add_pairs_23 = _mm_madd_epi16(shuf_02_13_23, _mm_set1_epi16(1));
+
+    // Sub pairs: [r0x0-r0x2, r0x1-r0x3, r1x0-r1x2, r1x1-r1x3] = [a3, a2, a3, a2]
+    // Use madd with [1, -1] pattern
+    let sub_pattern = _mm_set_epi16(1, -1, 1, -1, 1, -1, 1, -1);
+    let sub_pairs_01 = _mm_madd_epi16(shuf_02_13, sub_pattern);
+    let sub_pairs_23 = _mm_madd_epi16(shuf_02_13_23, sub_pattern);
+
+    // add_pairs_01 = [r0_a0, r0_a1, r1_a0, r1_a1] (i32)
+    // sub_pairs_01 = [r0_a3, r0_a2, r1_a3, r1_a2] (i32)
+    // Final horizontal: [a0+a1, a3+a2, a3-a2, a0-a1] for each row
+
+    // Extract to arrays for clarity (vertical pass needs transpose anyway)
+    let mut ap01 = [0i32; 4];
+    let mut sp01 = [0i32; 4];
+    let mut ap23 = [0i32; 4];
+    let mut sp23 = [0i32; 4];
+    simd_mem::_mm_storeu_si128(&mut ap01, add_pairs_01);
+    simd_mem::_mm_storeu_si128(&mut sp01, sub_pairs_01);
+    simd_mem::_mm_storeu_si128(&mut ap23, add_pairs_23);
+    simd_mem::_mm_storeu_si128(&mut sp23, sub_pairs_23);
+
+    // tmp[row][col] after horizontal Hadamard
+    // row 0: [a0+a1, a3+a2, a3-a2, a0-a1] = [ap01[0]+ap01[1], sp01[0]+sp01[1], sp01[0]-sp01[1], ap01[0]-ap01[1]]
+    // Wait, that's not right. ap01 = [r0_a0, r0_a1, r1_a0, r1_a1]
+    // Row 0: a0=ap01[0], a1=ap01[1], a3=sp01[0], a2=sp01[1]
+    let mut tmp = [[0i32; 4]; 4];
+    // Row 0
+    tmp[0][0] = ap01[0] + ap01[1]; // a0 + a1
+    tmp[0][1] = sp01[0] + sp01[1]; // a3 + a2
+    tmp[0][2] = sp01[0] - sp01[1]; // a3 - a2
+    tmp[0][3] = ap01[0] - ap01[1]; // a0 - a1
+    // Row 1
+    tmp[1][0] = ap01[2] + ap01[3];
+    tmp[1][1] = sp01[2] + sp01[3];
+    tmp[1][2] = sp01[2] - sp01[3];
+    tmp[1][3] = ap01[2] - ap01[3];
+    // Row 2
+    tmp[2][0] = ap23[0] + ap23[1];
+    tmp[2][1] = sp23[0] + sp23[1];
+    tmp[2][2] = sp23[0] - sp23[1];
+    tmp[2][3] = ap23[0] - ap23[1];
+    // Row 3
+    tmp[3][0] = ap23[2] + ap23[3];
+    tmp[3][1] = sp23[2] + sp23[3];
+    tmp[3][2] = sp23[2] - sp23[3];
+    tmp[3][3] = ap23[2] - ap23[3];
+
+    // Vertical pass with weighting (same as scalar)
     let mut sum = 0i32;
-
     for i in 0..4 {
-        let a0 = tmp[i] + tmp[8 + i];
-        let a1 = tmp[4 + i] + tmp[12 + i];
-        let a2 = tmp[4 + i] - tmp[12 + i];
-        let a3 = tmp[i] - tmp[8 + i];
+        let a0 = tmp[0][i] + tmp[2][i];
+        let a1 = tmp[1][i] + tmp[3][i];
+        let a2 = tmp[1][i] - tmp[3][i];
+        let a3 = tmp[0][i] - tmp[2][i];
         let b0 = a0 + a1;
         let b1 = a3 + a2;
         let b2 = a3 - a2;
         let b3 = a0 - a1;
 
-        sum += i32::from(w[i]) * b0.abs();
-        sum += i32::from(w[4 + i]) * b1.abs();
-        sum += i32::from(w[8 + i]) * b2.abs();
-        sum += i32::from(w[12 + i]) * b3.abs();
+        sum += w[i] as i32 * b0.abs();
+        sum += w[4 + i] as i32 * b1.abs();
+        sum += w[8 + i] as i32 * b2.abs();
+        sum += w[12 + i] as i32 * b3.abs();
     }
-
     sum
 }
 
