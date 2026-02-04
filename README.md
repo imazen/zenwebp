@@ -223,13 +223,57 @@ zenwebp = { version = "0.2", default-features = false }
 
 Both encoder and decoder work without std. The decoder takes `&[u8]` slices and the encoder writes to `Vec<u8>`. Only `encode_to_writer()` requires the `std` feature.
 
-## Origin
+## Comparison with image-webp
 
-Forked from [`image-webp`](https://github.com/image-rs/image-webp) with significant enhancements:
-- Lossy encoder (original only supported lossless)
-- ~2x faster decoding through SIMD and algorithmic improvements
-- Full no_std support for both encoder and decoder
-- WASM SIMD128 support
+This crate is forked from [`image-webp`](https://github.com/image-rs/image-webp), the official pure-Rust
+WebP crate from the image-rs project. Both are excellent choices depending on your needs.
+
+### When to use image-webp (upstream)
+
+| Aspect | image-webp |
+|--------|------------|
+| **Safety** | Zero unsafe code in crate AND all dependencies |
+| **Codebase** | ~10,600 lines - small, auditable |
+| **Dependencies** | 2 (byteorder-lite, quick-error) |
+| **Decoder speed** | 70-100% of libwebp |
+| **Encoder** | Lossless only, basic but fast |
+| **Best for** | Security-critical contexts, minimal attack surface |
+
+**Choose image-webp if:** You need maximum assurance of memory safety, minimal dependencies,
+or only need lossless encoding. The smaller codebase is easier to audit.
+
+### When to use zenwebp
+
+| Aspect | zenwebp |
+|--------|---------|
+| **Safety** | `#![forbid(unsafe_code)]` but relies on archmage for SIMD |
+| **Codebase** | ~41,000 lines (+30k for lossy encoder) |
+| **Dependencies** | 14 (7 optional) |
+| **Decoder speed** | 60-70% of libwebp |
+| **Encoder** | Lossy + lossless, matches libwebp compression |
+| **Best for** | Full WebP support, lossy encoding, libwebp replacement |
+
+**Choose zenwebp if:** You need lossy encoding, want to match libwebp's compression ratios,
+or need features like animation encoding, near-lossless, or target file size.
+
+### Honest tradeoffs
+
+We added **~30,000 lines** to implement lossy encoding matching libwebp. This is a significant
+increase in attack surface and audit burden. Our SIMD code uses `archmage` which generates
+`unsafe` blocks via proc macros - while we trust archmage's soundness, it's not the same as
+image-webp's truly zero-unsafe guarantee.
+
+Our decoder is actually **slower** than image-webp's (~1.5-1.7x vs libwebp compared to their
+~1.0-1.4x). We focused optimization effort on the encoder.
+
+### Feature additions over image-webp
+
+- **Lossy VP8 encoder** - full RD optimization, trellis quantization, all I4/I16 modes
+- **Animation encoding** - AnimationEncoder with frame timing
+- **Near-lossless** - pixel and residual quantization
+- **Target file size** - secant method convergence
+- **SIMD** - SSE2/SSE4.1/AVX2 via archmage (but at cost of indirect unsafe)
+- **no_std** - both encoder and decoder work with just `alloc`
 
 ## License
 
@@ -241,11 +285,20 @@ Contributions welcome! Please feel free to open issues or pull requests.
 
 ## Credits
 
-- **[image-rs/image-webp](https://github.com/image-rs/image-webp)** - Original crate this was forked from
-- **[libwebp](https://chromium.googlesource.com/webm/libwebp)** (Google) - Reference implementation and algorithm source
+This project builds on excellent work by others:
+
+- **[image-rs/image-webp](https://github.com/image-rs/image-webp)** - The foundation of this crate.
+  The image-rs team built a complete, correct, truly-safe WebP decoder and lossless encoder.
+  We forked their work and added lossy encoding on top. If you don't need lossy encoding,
+  consider using their crate directly for a smaller, simpler dependency.
+
+- **[libwebp](https://chromium.googlesource.com/webm/libwebp)** (Google) - Reference implementation.
+  Our lossy encoder closely follows libwebp's algorithms for RD optimization, trellis quantization,
+  and mode selection. The WebP format itself is Google's creation.
+
+- **[archmage](https://crates.io/crates/archmage)** & **[magetypes](https://crates.io/crates/magetypes)** - Safe SIMD abstractions
 - **[wide](https://crates.io/crates/wide)** (Lokathor) - Portable SIMD types
-- **[archmage](https://crates.io/crates/archmage)** & **[magetypes](https://crates.io/crates/magetypes)** (Lilith) - Safe intrinsics
-- **[safe_unaligned_simd](https://crates.io/crates/safe_unaligned_simd)** (Lilith) - Safe unaligned SIMD operations
-- **Claude** (Anthropic) - AI development assistance
+- **[safe_unaligned_simd](https://crates.io/crates/safe_unaligned_simd)** - Safe unaligned SIMD operations
+- **Claude** (Anthropic) - AI-assisted development
 
 Code review recommended for production use.
