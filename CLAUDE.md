@@ -200,6 +200,75 @@ Note: `tdisto_4x4` and `t_transform` are now inlined into `choose_macroblock_inf
 2. DCT/IDCT: 47M gap (2.6-2.9x) - room for improvement
 3. Residual cost: 35M gap (4.2x) - significant gap remains
 
+### Optimization Opportunities for Handoff (2026-02-04)
+
+**Current state:** 2.99x slower than libwebp (586M vs 196M instructions per encode)
+
+**Priority 1: Mode Selection Inner Loops (14x gap, ~175M savings potential)**
+
+The `choose_macroblock_info` function does full RD evaluation for each mode candidate:
+- I16: 4 modes × (DCT + quantize + dequantize + IDCT + SSE) = ~64 transforms
+- I4: 16 blocks × ~6 modes × same pipeline = ~100+ transforms
+- UV: 4 modes × same = ~8 transforms
+
+**Specific opportunities:**
+1. **Batch DCT/IDCT** - libwebp's `FTransform2_SSE2` and `ITransform_SSE2` process 2 blocks at once
+   - Files: `src/common/transform.rs`, `src/common/transform_simd_intrinsics.rs`
+   - We have `ftransform2_from_u8` but mode selection uses scalar `dct4x4`
+
+2. **SIMD quantization in mode selection** - `VP8Matrix::quantize()` is scalar
+   - File: `src/encoder/quantize.rs`
+   - libwebp's `QuantizeBlock_SSE2` and `Quantize2Blocks_SSE2` are much faster
+   - We have SIMD quantize for encoding path but mode selection uses scalar
+
+3. **Deferred reconstruction** - Only reconstruct winning mode
+   - Currently: reconstruct all 4 I16 modes, pick best
+   - Optimization: use SSE(prediction, source) for initial ranking, reconstruct only winner
+   - Risk: may change mode selection decisions slightly
+
+**Priority 2: DCT/IDCT (2.6-2.9x gap, ~47M savings potential)**
+
+Our SIMD DCT/IDCT is correct but not optimal:
+- Files: `src/common/transform_simd_intrinsics.rs`
+- libwebp uses clever transpose-free algorithms
+- Our `dct4x4_intrinsics` does explicit transpose
+
+**Specific opportunities:**
+1. Port libwebp's `FTransform_SSE2` exactly - uses different Hadamard factorization
+2. Fuse residual computation with DCT (we partially do this with `ftransform2_from_u8`)
+3. Consider AVX2 for 8-block batch processing
+
+**Priority 3: Residual Cost (4.2x gap, ~35M savings potential)**
+
+`get_residual_cost_sse2` precomputes abs/ctx/levels with SIMD but the main loop is scalar:
+- File: `src/encoder/residual_cost.rs`
+- libwebp's `GetResidualCost_SSE2` has tighter inner loop
+
+**Specific opportunities:**
+1. Inline the cost table lookups with computed goto / jump table
+2. Reduce branch mispredictions in the token cost loop
+3. Consider precomputing more data per coefficient
+
+**Profiling commands:**
+```bash
+# Build and profile
+cargo build --release --features simd
+valgrind --tool=callgrind --callgrind-out-file=/tmp/callgrind.out \
+  ./target/release/examples/corpus_test /path/to/images 5
+
+# Analyze
+callgrind_annotate --auto=yes /tmp/callgrind.out | head -60
+
+# Compare to libwebp
+valgrind --tool=callgrind --callgrind-out-file=/tmp/callgrind.lib.out \
+  cwebp -q 75 -m 4 -sns 0 -f 0 -segments 1 -o /tmp/out.webp image.png
+```
+
+**Reference files in libwebp:**
+- `src/dsp/enc_sse2.c` - FTransform_SSE2, ITransform_SSE2, QuantizeBlock_SSE2, Disto4x4_SSE2
+- `src/dsp/common_sse2.h` - VP8Transpose_2_4x4_16b
+- `src/enc/quant_enc.c` - PickBestIntra16, PickBestIntra4, ReconstructIntra4
+
 **t_transform SIMD optimization (2026-02-04):**
 Previous pseudo-SIMD loaded with SIMD but extracted to scalar immediately.
 New uses `_mm_madd_epi16` for horizontal Hadamard, reducing 14%→11.5% (but still 4.5x slower than libwebp).
