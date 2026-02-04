@@ -136,21 +136,26 @@ impl PsyConfig {
             config.chroma_csf = PSY_WEIGHT_UV;
         }
 
-        if method >= 4 {
-            // Psy-RD: penalize energy loss. Strength scales with quantizer
-            // because coarser quantization causes more visible smoothing.
-            // Conservative: (quant_index * 48) >> 7  ≈ 0.375 * q
-            // At q=50: strength=18, at q=80: strength=30
-            config.psy_rd_strength = (quant_index as u32 * 48) >> 7;
-        }
+        // Psy-RD disabled for method 4 based on butteraugli testing (2026-02-04):
+        // Even very low psy-rd strength hurts butteraugli scores because
+        // butteraugli prefers smoother reconstructions while psy-rd penalizes
+        // smoothing. The enhanced CSF tables alone (method 3+) provide the
+        // best perceptual quality without the psy-rd side effects.
+        //
+        // Note: Psy-trellis at method 5+ still uses JND-gated coefficient
+        // retention which works better with butteraugli since it only
+        // protects perceptible coefficients rather than penalizing smoothing.
+        let _ = method; // Silence unused warning if method >= 4 is removed
 
         if method >= 5 {
             // Psy-trellis: bias trellis DP to retain perceptually important
             // coefficients. Strength scales with quantizer since coarser
             // quantization zeros more coefficients.
-            // (quant_index * 32) >> 7  ≈ 0.25 * q
-            // At q=50: strength=12, at q=80: strength=20
-            config.psy_trellis_strength = (quant_index as u32 * 32) >> 7;
+            //
+            // Tuned with butteraugli feedback (2026-02-04):
+            // Very conservative: (quant_index * 6) >> 7 ≈ 0.047 * q
+            // At q=50: strength=2, at q=80: strength=4
+            config.psy_trellis_strength = (quant_index as u32 * 6) >> 7;
 
             // JND thresholds: scale base thresholds by quantizer
             // Higher quantizer = higher thresholds (more aggressive zeroing)
