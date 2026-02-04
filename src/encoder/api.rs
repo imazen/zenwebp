@@ -45,6 +45,16 @@ pub enum EncodingError {
     /// The input buffer is too small.
     #[error("Invalid buffer size: {0}")]
     InvalidBufferSize(String),
+
+    /// Encoding was cancelled via a [`enough::Stop`] or [`EncodeProgress`] callback.
+    #[error("Encoding cancelled: {0}")]
+    Cancelled(enough::StopReason),
+}
+
+impl From<enough::StopReason> for EncodingError {
+    fn from(reason: enough::StopReason) -> Self {
+        Self::Cancelled(reason)
+    }
 }
 
 /// Content-aware encoding presets.
@@ -446,6 +456,11 @@ pub struct EncoderParams {
     /// Target file size in bytes. When > 0, enables quality search to hit target.
     /// Multi-pass encoding will adjust quality to converge on this size.
     pub(crate) target_size: u32,
+    /// Target PSNR in dB. When > 0.0, enables quality search to hit target PSNR.
+    pub(crate) target_psnr: f32,
+    /// Use sharp (iterative) YUV conversion for higher chroma fidelity.
+    /// Requires the `fast-yuv` feature. Falls back to standard conversion without it.
+    pub(crate) use_sharp_yuv: bool,
 }
 
 impl Default for EncoderParams {
@@ -461,6 +476,8 @@ impl Default for EncoderParams {
             num_segments: 4,
             preset: Preset::Default,
             target_size: 0,
+            target_psnr: 0.0,
+            use_sharp_yuv: false,
         }
     }
 }
@@ -479,6 +496,74 @@ impl EncoderParams {
             ..Self::default()
         }
     }
+}
+
+/// Progress callback for encoding. Return `Err(StopReason)` to cancel.
+pub trait EncodeProgress: Send + Sync {
+    /// Called with encoding progress percentage (0-100).
+    fn on_progress(&self, percent: u8) -> Result<(), enough::StopReason>;
+}
+
+/// Default progress callback that does nothing.
+pub struct NoProgress;
+
+impl EncodeProgress for NoProgress {
+    #[inline(always)]
+    fn on_progress(&self, _: u8) -> Result<(), enough::StopReason> {
+        Ok(())
+    }
+}
+
+/// Statistics from an encoding operation.
+///
+/// Provides information about the encoded output, including PSNR measurements,
+/// block counts, segment assignments, and size breakdowns.
+#[derive(Debug, Clone, Default)]
+pub struct EncodingStats {
+    // --- Common ---
+    /// Total coded output size in bytes.
+    pub coded_size: u32,
+
+    // --- Lossy VP8 ---
+    /// PSNR values: \[Y, U, V, All, Alpha\] in dB.
+    /// Computed from accumulated SSE during encoding (no decode needed).
+    pub psnr: [f32; 5],
+    /// Number of macroblocks using I4 prediction mode.
+    pub block_count_i4: u32,
+    /// Number of macroblocks using I16 prediction mode.
+    pub block_count_i16: u32,
+    /// Number of macroblocks with all-zero coefficients (skipped).
+    pub block_count_skip: u32,
+    /// Size of the compressed frame header in bytes.
+    pub header_bytes: u32,
+    /// Size of the mode partition (macroblock headers) in bytes.
+    pub mode_partition_bytes: u32,
+    /// Per-segment output sizes in bytes.
+    pub segment_size: [u32; 4],
+    /// Per-segment quantization index.
+    pub segment_quant: [u8; 4],
+    /// Per-segment loop filter level.
+    pub segment_level: [u8; 4],
+    /// Size of alpha plane data in bytes.
+    pub alpha_data_size: u32,
+
+    // --- Lossless VP8L ---
+    /// Bit flags for lossless features: predictor, cross-color, sub-green, palette.
+    pub lossless_features: u32,
+    /// Histogram bits used for meta-Huffman coding.
+    pub histogram_bits: u8,
+    /// Transform bits for predictor/cross-color block size.
+    pub transform_bits: u8,
+    /// Color cache bits (0 = disabled).
+    pub cache_bits: u8,
+    /// Palette size (0 if no palette).
+    pub palette_size: u16,
+    /// Total lossless data size in bytes.
+    pub lossless_size: u32,
+    /// Lossless header size in bytes.
+    pub lossless_hdr_size: u32,
+    /// Lossless image data size in bytes.
+    pub lossless_data_size: u32,
 }
 
 // ============================================================================
@@ -517,6 +602,7 @@ pub struct EncoderConfig {
     alpha_quality: u8,
     exact: bool,
     target_size: u32,
+    target_psnr: f32,
     use_sharp_yuv: bool,
     sns_strength_override: Option<u8>,
     filter_strength_override: Option<u8>,
@@ -535,6 +621,7 @@ impl Default for EncoderConfig {
             alpha_quality: 100,
             exact: false,
             target_size: 0,
+            target_psnr: 0.0,
             use_sharp_yuv: false,
             sns_strength_override: None,
             filter_strength_override: None,
@@ -629,6 +716,14 @@ impl EncoderConfig {
         self
     }
 
+    /// Set target PSNR in dB (0.0 = disabled).
+    /// When set, the encoder iterates quality to converge on the target PSNR.
+    #[must_use]
+    pub fn target_psnr(mut self, psnr: f32) -> Self {
+        self.target_psnr = if psnr > 0.0 { psnr } else { 0.0 };
+        self
+    }
+
     /// Use sharp YUV conversion (slower but better quality).
     #[must_use]
     pub fn sharp_yuv(mut self, enable: bool) -> Self {
@@ -712,6 +807,8 @@ impl EncoderConfig {
             num_segments: self.segments_override.unwrap_or(segs),
             preset: self.preset,
             target_size: self.target_size,
+            target_psnr: self.target_psnr,
+            use_sharp_yuv: self.use_sharp_yuv,
         }
     }
 
@@ -730,6 +827,24 @@ impl EncoderConfig {
         Ok(output)
     }
 
+    /// Encode RGBA byte data to WebP, returning encoding statistics.
+    pub fn encode_rgba_with_stats(
+        &self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<(Vec<u8>, EncodingStats), EncodingError> {
+        validate_buffer_size(data.len(), width, height, 4)?;
+        let mut output = Vec::new();
+        let stats;
+        {
+            let mut encoder = WebPEncoder::new(&mut output);
+            encoder.set_params(self.to_params());
+            stats = encoder.encode(data, width, height, ColorType::Rgba8)?;
+        }
+        Ok((output, stats))
+    }
+
     /// Encode RGB byte data to WebP (no alpha).
     pub fn encode_rgb(
         &self,
@@ -744,7 +859,28 @@ impl EncoderConfig {
         encoder.encode(data, width, height, ColorType::Rgb8)?;
         Ok(output)
     }
+
+    /// Encode RGB byte data to WebP (no alpha), returning encoding statistics.
+    pub fn encode_rgb_with_stats(
+        &self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<(Vec<u8>, EncodingStats), EncodingError> {
+        validate_buffer_size(data.len(), width, height, 3)?;
+        let mut output = Vec::new();
+        let stats;
+        {
+            let mut encoder = WebPEncoder::new(&mut output);
+            encoder.set_params(self.to_params());
+            stats = encoder.encode(data, width, height, ColorType::Rgb8)?;
+        }
+        Ok((output, stats))
+    }
 }
+
+/// Static default progress callback (does nothing).
+static NO_PROGRESS: NoProgress = NoProgress;
 
 /// Input pixel format for the encoder.
 enum EncoderInput<'a> {
@@ -784,6 +920,8 @@ pub struct Encoder<'a> {
     icc_profile: Option<Vec<u8>>,
     exif_metadata: Option<Vec<u8>>,
     xmp_metadata: Option<Vec<u8>>,
+    stop: &'a dyn enough::Stop,
+    progress: &'a dyn EncodeProgress,
 }
 
 impl<'a> Encoder<'a> {
@@ -798,6 +936,8 @@ impl<'a> Encoder<'a> {
             icc_profile: None,
             exif_metadata: None,
             xmp_metadata: None,
+            stop: &enough::Unstoppable,
+            progress: &NO_PROGRESS,
         }
     }
 
@@ -812,6 +952,8 @@ impl<'a> Encoder<'a> {
             icc_profile: None,
             exif_metadata: None,
             xmp_metadata: None,
+            stop: &enough::Unstoppable,
+            progress: &NO_PROGRESS,
         }
     }
 
@@ -826,6 +968,8 @@ impl<'a> Encoder<'a> {
             icc_profile: None,
             exif_metadata: None,
             xmp_metadata: None,
+            stop: &enough::Unstoppable,
+            progress: &NO_PROGRESS,
         }
     }
 
@@ -840,6 +984,8 @@ impl<'a> Encoder<'a> {
             icc_profile: None,
             exif_metadata: None,
             xmp_metadata: None,
+            stop: &enough::Unstoppable,
+            progress: &NO_PROGRESS,
         }
     }
 
@@ -899,10 +1045,33 @@ impl<'a> Encoder<'a> {
         self
     }
 
+    /// Set target PSNR in dB (0.0 = disabled).
+    #[must_use]
+    pub fn target_psnr(mut self, psnr: f32) -> Self {
+        self.config = self.config.target_psnr(psnr);
+        self
+    }
+
     /// Use sharp YUV conversion (slower but better).
     #[must_use]
     pub fn sharp_yuv(mut self, enable: bool) -> Self {
         self.config = self.config.sharp_yuv(enable);
+        self
+    }
+
+    /// Set a cooperative cancellation token. Encoding will check this
+    /// periodically and return [`EncodingError::Cancelled`] if stopped.
+    #[must_use]
+    pub fn stop(mut self, stop: &'a dyn enough::Stop) -> Self {
+        self.stop = stop;
+        self
+    }
+
+    /// Set a progress callback. Called with percentage (0-100) during encoding.
+    /// Return `Err(StopReason)` from the callback to cancel.
+    #[must_use]
+    pub fn progress(mut self, progress: &'a dyn EncodeProgress) -> Self {
+        self.progress = progress;
         self
     }
 
@@ -966,6 +1135,19 @@ impl<'a> Encoder<'a> {
     ///
     /// Returns the encoded WebP data.
     pub fn encode(self) -> Result<Vec<u8>, EncodingError> {
+        let (output, _stats) = self.encode_inner()?;
+        Ok(output)
+    }
+
+    /// Encode to WebP bytes and return encoding statistics.
+    ///
+    /// Returns the encoded WebP data along with [`EncodingStats`] containing
+    /// PSNR measurements, block counts, and other encoding details.
+    pub fn encode_with_stats(self) -> Result<(Vec<u8>, EncodingStats), EncodingError> {
+        self.encode_inner()
+    }
+
+    fn encode_inner(self) -> Result<(Vec<u8>, EncodingStats), EncodingError> {
         let (data, color_type) = match self.data {
             EncoderInput::Rgba(d) => (d, ColorType::Rgba8),
             EncoderInput::Rgb(d) => (d, ColorType::Rgb8),
@@ -981,9 +1163,12 @@ impl<'a> Encoder<'a> {
         )?;
 
         let mut output = Vec::new();
+        let stats;
         {
             let mut encoder = WebPEncoder::new(&mut output);
             encoder.set_params(self.config.to_params());
+            encoder.set_stop(self.stop);
+            encoder.set_progress(self.progress);
             if let Some(icc) = self.icc_profile {
                 encoder.set_icc_profile(icc);
             }
@@ -993,9 +1178,9 @@ impl<'a> Encoder<'a> {
             if let Some(xmp) = self.xmp_metadata {
                 encoder.set_xmp_metadata(xmp);
             }
-            encoder.encode(data, self.width, self.height, color_type)?;
+            stats = encoder.encode(data, self.width, self.height, color_type)?;
         }
-        Ok(output)
+        Ok((output, stats))
     }
 
     /// Encode to WebP, appending to an existing Vec.
@@ -1351,6 +1536,8 @@ pub struct WebPEncoder<'a> {
     exif_metadata: Vec<u8>,
     xmp_metadata: Vec<u8>,
     params: EncoderParams,
+    stop: &'a dyn enough::Stop,
+    progress: &'a dyn EncodeProgress,
 }
 
 impl<'a> WebPEncoder<'a> {
@@ -1364,6 +1551,8 @@ impl<'a> WebPEncoder<'a> {
             exif_metadata: Vec::new(),
             xmp_metadata: Vec::new(),
             params: EncoderParams::default(),
+            stop: &enough::Unstoppable,
+            progress: &NO_PROGRESS,
         }
     }
 
@@ -1387,7 +1576,19 @@ impl<'a> WebPEncoder<'a> {
         self.params = params;
     }
 
+    /// Set a cooperative cancellation token.
+    pub fn set_stop(&mut self, stop: &'a dyn enough::Stop) {
+        self.stop = stop;
+    }
+
+    /// Set a progress callback.
+    pub fn set_progress(&mut self, progress: &'a dyn EncodeProgress) {
+        self.progress = progress;
+    }
+
     /// Encode image data with the indicated color type.
+    ///
+    /// Returns [`EncodingStats`] with information about the encoded output.
     ///
     /// # Panics
     ///
@@ -1398,13 +1599,24 @@ impl<'a> WebPEncoder<'a> {
         width: u32,
         height: u32,
         color: ColorType,
-    ) -> Result<(), EncodingError> {
+    ) -> Result<EncodingStats, EncodingError> {
         let mut frame = Vec::new();
 
         let lossy_with_alpha = self.params.use_lossy && color.has_alpha();
 
+        let mut stats = EncodingStats::default();
+
         let frame_chunk = if self.params.use_lossy {
-            encode_frame_lossy(&mut frame, data, width, height, color, &self.params)?;
+            stats = encode_frame_lossy(
+                &mut frame,
+                data,
+                width,
+                height,
+                color,
+                &self.params,
+                self.stop,
+                self.progress,
+            )?;
             b"VP8 "
         } else {
             encode_frame_lossless(&mut frame, data, width, height, color, self.params, false)?;
@@ -1489,7 +1701,8 @@ impl<'a> WebPEncoder<'a> {
             }
         }
 
-        Ok(())
+        stats.coded_size = self.writer.len() as u32;
+        Ok(stats)
     }
 }
 

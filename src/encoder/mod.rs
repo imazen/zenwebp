@@ -25,7 +25,8 @@ pub mod vp8l;
 // Re-export public API
 pub use analysis::{ClassifierDiag, ContentType};
 pub use api::{
-    ColorType, Encoder, EncoderConfig, EncoderParams, EncodingError, Preset, WebPEncoder,
+    ColorType, EncodeProgress, Encoder, EncoderConfig, EncoderParams, EncodingError, EncodingStats,
+    NoProgress, Preset, WebPEncoder,
 };
 #[cfg(feature = "quantize")]
 pub use color_quantize::{quantize_rgb, quantize_rgba, QuantizedImage};

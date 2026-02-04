@@ -13,6 +13,25 @@ use crate::encoder::cost::trellis_quantize_block;
 use super::residuals::get_coeffs0_from_block;
 use super::{ChromaCoeffs, MacroblockInfo};
 
+/// Result from luma block transform, containing quantized coefficients
+/// and the prediction/reconstruction buffer for SSE computation.
+pub(super) struct LumaBlockResult {
+    /// Quantized coefficients for all 16 4x4 blocks.
+    pub coeffs: [i32; 16 * 16],
+    /// The bordered prediction/reconstruction buffer.
+    /// After transform, contains reconstructed pixels (prediction + IDCT).
+    pub pred_block: [u8; LUMA_BLOCK_SIZE],
+}
+
+/// Result from chroma block transform, containing quantized coefficients
+/// and the reconstruction buffer for SSE computation.
+pub(super) struct ChromaBlockResult {
+    /// Quantized coefficients for 4 sub-blocks (U or V).
+    pub coeffs: [i32; 16 * 4],
+    /// The bordered prediction/reconstruction buffer.
+    pub pred_block: [u8; CHROMA_BLOCK_SIZE],
+}
+
 impl<'a> super::Vp8Encoder<'a> {
     // this is for all the luma modes except B
     pub(super) fn get_predicted_luma_block_16x16(
@@ -158,7 +177,7 @@ impl<'a> super::Vp8Encoder<'a> {
         mbx: usize,
         mby: usize,
         macroblock_info: &MacroblockInfo,
-    ) -> [i32; 16 * 16] {
+    ) -> LumaBlockResult {
         if macroblock_info.luma_mode == LumaMode::B {
             if let Some(bpred_modes) = macroblock_info.luma_bpred {
                 return self.transform_luma_blocks_4x4(bpred_modes, mbx, mby);
@@ -285,7 +304,10 @@ impl<'a> super::Vp8Encoder<'a> {
             *border_value = y_with_border[16 * LUMA_STRIDE + x + 1];
         }
 
-        luma_blocks
+        LumaBlockResult {
+            coeffs: luma_blocks,
+            pred_block: y_with_border,
+        }
     }
 
     // this is for transforming the luma blocks for each subblock independently
@@ -296,7 +318,7 @@ impl<'a> super::Vp8Encoder<'a> {
         bpred_modes: [IntraMode; 16],
         mbx: usize,
         mby: usize,
-    ) -> [i32; 16 * 16] {
+    ) -> LumaBlockResult {
         let mut luma_blocks = [0i32; 16 * 16];
         let stride = LUMA_STRIDE;
         let mbw = self.macroblock_width;
@@ -421,7 +443,10 @@ impl<'a> super::Vp8Encoder<'a> {
             *border_value = y_with_border[16 * stride + x + 1];
         }
 
-        luma_blocks
+        LumaBlockResult {
+            coeffs: luma_blocks,
+            pred_block: y_with_border,
+        }
     }
 
     pub(super) fn get_predicted_chroma_block(
@@ -550,7 +575,7 @@ impl<'a> super::Vp8Encoder<'a> {
         mbx: usize,
         mby: usize,
         chroma_mode: ChromaMode,
-    ) -> ([i32; 16 * 4], [i32; 16 * 4]) {
+    ) -> (ChromaBlockResult, ChromaBlockResult) {
         let stride = CHROMA_STRIDE;
 
         let mut predicted_u = self.get_predicted_chroma_block(
@@ -626,6 +651,15 @@ impl<'a> super::Vp8Encoder<'a> {
             *v_border_value = predicted_v[8 * stride + x + 1];
         }
 
-        (u_blocks, v_blocks)
+        (
+            ChromaBlockResult {
+                coeffs: u_blocks,
+                pred_block: predicted_u,
+            },
+            ChromaBlockResult {
+                coeffs: v_blocks,
+                pred_block: predicted_v,
+            },
+        )
     }
 }

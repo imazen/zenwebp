@@ -898,6 +898,113 @@ fn rgb_to_v_raw(rgb: &[u8]) -> i32 {
         + (128 << YUV_FIX)
 }
 
+/// Convert image to YUV420 using sharp (iterative) chroma downsampling.
+///
+/// This produces higher-quality chroma planes at the cost of being slower.
+/// Uses the `yuv` crate's sharp YUV implementation with BT.601 matrix and sRGB gamma.
+///
+/// Falls back to standard conversion when the `fast-yuv` feature is not enabled.
+#[cfg_attr(not(feature = "fast-yuv"), allow(unused_variables))]
+pub(crate) fn convert_image_sharp_yuv(
+    image_data: &[u8],
+    color: crate::encoder::ColorType,
+    width: u16,
+    height: u16,
+) -> (
+    alloc::vec::Vec<u8>,
+    alloc::vec::Vec<u8>,
+    alloc::vec::Vec<u8>,
+) {
+    #[cfg(feature = "fast-yuv")]
+    {
+        use crate::encoder::ColorType;
+
+        // Sharp YUV only applies to RGB/RGBA inputs (chroma subsampling matters).
+        // For grayscale, fall back to standard conversion.
+        match color {
+            ColorType::L8 => return convert_image_y::<1>(image_data, width, height),
+            ColorType::La8 => return convert_image_y::<2>(image_data, width, height),
+            _ => {}
+        }
+
+        let w = usize::from(width);
+        let h = usize::from(height);
+        let mb_width = w.div_ceil(16);
+        let mb_height = h.div_ceil(16);
+        let luma_width = 16 * mb_width;
+        let luma_height = 16 * mb_height;
+        let chroma_width = 8 * mb_width;
+        let chroma_height = 8 * mb_height;
+
+        // Allocate planar buffers at macroblock-aligned sizes
+        let mut y_bytes = alloc::vec![0u8; luma_width * luma_height];
+        let mut u_bytes = alloc::vec![0u8; chroma_width * chroma_height];
+        let mut v_bytes = alloc::vec![0u8; chroma_width * chroma_height];
+
+        // Create a YuvPlanarImageMut for the yuv crate
+        let mut planar = yuv::YuvPlanarImageMut {
+            y_plane: yuv::BufferStoreMut::Borrowed(&mut y_bytes),
+            y_stride: luma_width as u32,
+            u_plane: yuv::BufferStoreMut::Borrowed(&mut u_bytes),
+            u_stride: chroma_width as u32,
+            v_plane: yuv::BufferStoreMut::Borrowed(&mut v_bytes),
+            v_stride: chroma_width as u32,
+            width: w as u32,
+            height: h as u32,
+        };
+
+        let bpp = match color {
+            ColorType::Rgb8 => 3,
+            ColorType::Rgba8 => 4,
+            _ => unreachable!(),
+        };
+        let src_stride = (w * bpp) as u32;
+
+        let result = match color {
+            ColorType::Rgb8 => yuv::rgb_to_sharp_yuv420(
+                &mut planar,
+                image_data,
+                src_stride,
+                yuv::YuvRange::Limited,
+                yuv::YuvStandardMatrix::Bt601,
+                yuv::SharpYuvGammaTransfer::Srgb,
+            ),
+            ColorType::Rgba8 => yuv::rgba_to_sharp_yuv420(
+                &mut planar,
+                image_data,
+                src_stride,
+                yuv::YuvRange::Limited,
+                yuv::YuvStandardMatrix::Bt601,
+                yuv::SharpYuvGammaTransfer::Srgb,
+            ),
+            _ => unreachable!(),
+        };
+
+        if result.is_err() {
+            // Fall back to standard conversion if sharp YUV fails
+            return match color {
+                ColorType::Rgb8 => convert_image_yuv::<3>(image_data, width, height),
+                ColorType::Rgba8 => convert_image_yuv::<4>(image_data, width, height),
+                _ => unreachable!(),
+            };
+        }
+
+        (y_bytes, u_bytes, v_bytes)
+    }
+
+    #[cfg(not(feature = "fast-yuv"))]
+    {
+        // Fall back to standard conversion without the fast-yuv feature
+        use crate::encoder::ColorType;
+        match color {
+            ColorType::Rgb8 => convert_image_yuv::<3>(image_data, width, height),
+            ColorType::Rgba8 => convert_image_yuv::<4>(image_data, width, height),
+            ColorType::L8 => convert_image_y::<1>(image_data, width, height),
+            ColorType::La8 => convert_image_y::<2>(image_data, width, height),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

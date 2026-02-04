@@ -94,9 +94,12 @@ pub use decoder::{
 
 // Re-export encoder public API
 pub use encoder::{
-    ClassifierDiag, ColorType, ContentType, Encoder, EncoderConfig, EncoderParams, EncodingError,
-    Preset, WebPEncoder,
+    ClassifierDiag, ColorType, ContentType, EncodeProgress, Encoder, EncoderConfig, EncoderParams,
+    EncodingError, EncodingStats, NoProgress, Preset, WebPEncoder,
 };
+
+// Re-export cooperative cancellation types
+pub use enough::{Stop, StopReason, Unstoppable};
 
 // Re-export VP8 decoder (public module)
 pub use decoder::vp8;

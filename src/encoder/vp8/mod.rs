@@ -14,6 +14,7 @@ use super::cost::{
 use crate::common::prediction::*;
 use crate::common::types::Frame;
 use crate::common::types::*;
+use crate::decoder::yuv::convert_image_sharp_yuv;
 use crate::decoder::yuv::convert_image_y;
 use crate::decoder::yuv::convert_image_yuv;
 
@@ -90,6 +91,26 @@ impl PassStats {
             value: 0.0,
             last_value: 0.0,
             target: f64::from(target_size),
+        }
+    }
+
+    /// Initialize pass stats for target PSNR search.
+    /// PSNR increases with quality, so the secant direction is reversed
+    /// compared to size search (higher quality = higher PSNR).
+    fn new_for_psnr(target_psnr: f32, quality: u8, qmin: u8, qmax: u8) -> Self {
+        let qmin_f = f32::from(qmin);
+        let qmax_f = f32::from(qmax);
+        let q = f32::from(quality).clamp(qmin_f, qmax_f);
+        Self {
+            is_first: true,
+            dq: 10.0,
+            q,
+            last_q: q,
+            qmin: qmin_f,
+            qmax: qmax_f,
+            value: 0.0,
+            last_value: 0.0,
+            target: f64::from(target_psnr),
         }
     }
 
@@ -530,6 +551,7 @@ impl<'a> Vp8Encoder<'a> {
         self.encoder = ArithmeticEncoder::with_capacity(1024);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn encode_image(
         &mut self,
         data: &[u8],
@@ -537,7 +559,9 @@ impl<'a> Vp8Encoder<'a> {
         width: u16,
         height: u16,
         params: &super::api::EncoderParams,
-    ) -> Result<(), EncodingError> {
+        stop: &dyn enough::Stop,
+        progress: &dyn super::api::EncodeProgress,
+    ) -> Result<super::api::EncodingStats, EncodingError> {
         // Store method and configure features based on it
         self.method = params.method.min(6); // Clamp to 0-6
                                             // Method feature mapping (aligned with libwebp):
@@ -553,11 +577,15 @@ impl<'a> Vp8Encoder<'a> {
         self.filter_sharpness = params.filter_sharpness.min(7);
         self.num_segments = params.num_segments.clamp(1, 4);
         self.preset = params.preset;
-        let (y_bytes, u_bytes, v_bytes) = match color {
-            ColorType::Rgb8 => convert_image_yuv::<3>(data, width, height),
-            ColorType::Rgba8 => convert_image_yuv::<4>(data, width, height),
-            ColorType::L8 => convert_image_y::<1>(data, width, height),
-            ColorType::La8 => convert_image_y::<2>(data, width, height),
+        let (y_bytes, u_bytes, v_bytes) = if params.use_sharp_yuv {
+            convert_image_sharp_yuv(data, color, width, height)
+        } else {
+            match color {
+                ColorType::Rgb8 => convert_image_yuv::<3>(data, width, height),
+                ColorType::Rgba8 => convert_image_yuv::<4>(data, width, height),
+                ColorType::L8 => convert_image_y::<1>(data, width, height),
+                ColorType::La8 => convert_image_y::<2>(data, width, height),
+            }
         };
 
         let bytes_per_pixel = match color {
@@ -612,6 +640,14 @@ impl<'a> Vp8Encoder<'a> {
         // so we use 1 pass for all methods.
         let num_passes = 1;
 
+        // Stats accumulators (populated during last pass)
+        let mut final_sse_y: u64 = 0;
+        let mut final_sse_u: u64 = 0;
+        let mut final_sse_v: u64 = 0;
+        let mut final_block_count_i4: u32 = 0;
+        let mut final_block_count_i16: u32 = 0;
+        let mut final_skip_mb: u32 = 0;
+
         for pass in 0..num_passes {
             let is_last_pass = pass == num_passes - 1;
 
@@ -654,6 +690,15 @@ impl<'a> Vp8Encoder<'a> {
 
             let mut total_mb: u32 = 0;
             let mut skip_mb: u32 = 0;
+            let mut block_count_i4: u32 = 0;
+            let mut block_count_i16: u32 = 0;
+            // SSE accumulators for PSNR computation
+            let mut sse_y: u64 = 0;
+            let mut sse_u: u64 = 0;
+            let mut sse_v: u64 = 0;
+            let y_stride = usize::from(self.macroblock_width) * 16;
+            let uv_stride = usize::from(self.macroblock_width) * 8;
+            let mut last_progress_pct: u8 = 0;
 
             // ===== ENCODING PASS =====
             // Each pass does full encoding: mode selection + transform + quantize + record
@@ -667,6 +712,11 @@ impl<'a> Vp8Encoder<'a> {
                 self.left_border_v = [129u8; 8 + 1];
 
                 for mbx in 0..self.macroblock_width {
+                    // Check for cancellation every 16 macroblocks
+                    if total_mb & 15 == 0 {
+                        stop.check()?;
+                    }
+
                     // Mid-stream probability refresh (like libwebp's VP8EncTokenLoop)
                     // We update probabilities mid-stream (helps compression: 1.0111x → 1.0101x)
                     // but don't recalculate level_costs (hurts compression: 1.0101x → 1.0114x)
@@ -715,13 +765,43 @@ impl<'a> Vp8Encoder<'a> {
                         macroblock_info.chroma_mode,
                     );
 
+                    // Accumulate SSE for PSNR computation (source vs reconstructed)
+                    sse_y += u64::from(sse_16x16_luma(
+                        &self.frame.ybuf,
+                        y_stride,
+                        usize::from(mbx),
+                        usize::from(mby),
+                        &y_block_data.pred_block,
+                    ));
+                    sse_u += u64::from(sse_8x8_chroma(
+                        &self.frame.ubuf,
+                        uv_stride,
+                        usize::from(mbx),
+                        usize::from(mby),
+                        &u_block_data.pred_block,
+                    ));
+                    sse_v += u64::from(sse_8x8_chroma(
+                        &self.frame.vbuf,
+                        uv_stride,
+                        usize::from(mbx),
+                        usize::from(mby),
+                        &v_block_data.pred_block,
+                    ));
+
+                    // Count block types
+                    if macroblock_info.luma_mode == LumaMode::B {
+                        block_count_i4 += 1;
+                    } else {
+                        block_count_i16 += 1;
+                    }
+
                     // Check if all coefficients are zero (skip detection)
                     total_mb += 1;
                     let all_zero = self.check_all_coeffs_zero(
                         &macroblock_info,
-                        &y_block_data,
-                        &u_block_data,
-                        &v_block_data,
+                        &y_block_data.coeffs,
+                        &u_block_data.coeffs,
+                        &v_block_data.coeffs,
                     );
 
                     let mut mb_info = macroblock_info;
@@ -745,15 +825,22 @@ impl<'a> Vp8Encoder<'a> {
                         let stored_coeffs = self.record_residual_tokens_storing(
                             &macroblock_info,
                             mbx as usize,
-                            &y_block_data,
-                            &u_block_data,
-                            &v_block_data,
+                            &y_block_data.coeffs,
+                            &u_block_data.coeffs,
+                            &v_block_data.coeffs,
                         );
                         self.stored_mb_coeffs.push(stored_coeffs);
                     }
 
                     // Store macroblock info for header writing
                     self.stored_mb_info.push(mb_info);
+                }
+
+                // Report progress after each row
+                let pct = ((u32::from(mby) + 1) * 100 / u32::from(self.macroblock_height)) as u8;
+                if pct > last_progress_pct {
+                    last_progress_pct = pct;
+                    progress.on_progress(pct.min(99))?; // cap at 99, report 100 after finalize
                 }
             }
 
@@ -766,6 +853,14 @@ impl<'a> Vp8Encoder<'a> {
 
             // Finalize probabilities from this pass (used by next pass or final emission)
             self.compute_updated_probabilities();
+
+            // Save stats from final pass
+            final_sse_y = sse_y;
+            final_sse_u = sse_u;
+            final_sse_v = sse_v;
+            final_block_count_i4 = block_count_i4;
+            final_block_count_i16 = block_count_i16;
+            final_skip_mb = skip_mb;
         }
 
         // ===== FINALIZE: write bitstream =====
@@ -810,7 +905,36 @@ impl<'a> Vp8Encoder<'a> {
         // Clean up
         self.stored_mb_info.clear();
 
-        Ok(())
+        // Build encoding statistics
+        let num_pixels_y =
+            u64::from(self.macroblock_width) * 16 * u64::from(self.macroblock_height) * 16;
+        let num_pixels_uv =
+            u64::from(self.macroblock_width) * 8 * u64::from(self.macroblock_height) * 8;
+
+        let psnr_y = sse_to_psnr(final_sse_y, num_pixels_y);
+        let psnr_u = sse_to_psnr(final_sse_u, num_pixels_uv);
+        let psnr_v = sse_to_psnr(final_sse_v, num_pixels_uv);
+        let total_sse = final_sse_y + final_sse_u + final_sse_v;
+        let total_pixels = num_pixels_y + 2 * num_pixels_uv;
+        let psnr_all = sse_to_psnr(total_sse, total_pixels);
+
+        let mut stats = super::api::EncodingStats {
+            psnr: [psnr_y, psnr_u, psnr_v, psnr_all, 0.0],
+            block_count_i4: final_block_count_i4,
+            block_count_i16: final_block_count_i16,
+            block_count_skip: final_skip_mb,
+            ..Default::default()
+        };
+
+        // Fill segment info
+        for (i, segment) in self.segments.iter().enumerate().take(4) {
+            stats.segment_quant[i] = segment.quant_index;
+            stats.segment_level[i] = self.frame.filter_level;
+        }
+
+        progress.on_progress(100)?;
+
+        Ok(stats)
     }
 
     /// Merge segments with identical quantizer and filter settings.
@@ -1207,6 +1331,17 @@ impl<'a> Vp8Encoder<'a> {
     }
 }
 
+/// Convert SSE to PSNR in dB. Returns 99.0 for perfect reconstruction (SSE=0).
+fn sse_to_psnr(sse: u64, num_pixels: u64) -> f32 {
+    if sse == 0 || num_pixels == 0 {
+        99.0
+    } else {
+        let mse = sse as f64 / num_pixels as f64;
+        (10.0 * libm::log10(255.0 * 255.0 / mse)) as f32
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_frame_lossy(
     writer: &mut Vec<u8>,
     data: &[u8],
@@ -1214,7 +1349,9 @@ pub(crate) fn encode_frame_lossy(
     height: u32,
     color: ColorType,
     params: &super::api::EncoderParams,
-) -> Result<(), EncodingError> {
+    stop: &dyn enough::Stop,
+    progress: &dyn super::api::EncodeProgress,
+) -> Result<super::api::EncodingStats, EncodingError> {
     let width = width
         .try_into()
         .map_err(|_| EncodingError::InvalidDimensions)?;
@@ -1222,20 +1359,21 @@ pub(crate) fn encode_frame_lossy(
         .try_into()
         .map_err(|_| EncodingError::InvalidDimensions)?;
 
-    // Quality search: if target_size is set, iterate quality to converge
+    // Quality search: if target_size or target_psnr is set, iterate quality to converge
     if params.target_size > 0 {
-        encode_with_quality_search(writer, data, width, height, color, params)?;
+        encode_with_quality_search(writer, data, width, height, color, params, stop, progress)
+    } else if params.target_psnr > 0.0 {
+        encode_with_psnr_search(writer, data, width, height, color, params, stop, progress)
     } else {
         // Single encoding at specified quality
         let mut vp8_encoder = Vp8Encoder::new(writer);
-        vp8_encoder.encode_image(data, color, width, height, params)?;
+        vp8_encoder.encode_image(data, color, width, height, params, stop, progress)
     }
-
-    Ok(())
 }
 
 /// Encode with quality search to meet target file size.
 /// Uses secant method to converge on target size within DQ_LIMIT threshold.
+#[allow(clippy::too_many_arguments)]
 fn encode_with_quality_search(
     writer: &mut Vec<u8>,
     data: &[u8],
@@ -1243,47 +1381,61 @@ fn encode_with_quality_search(
     height: u16,
     color: ColorType,
     params: &super::api::EncoderParams,
-) -> Result<(), EncodingError> {
+    stop: &dyn enough::Stop,
+    progress: &dyn super::api::EncodeProgress,
+) -> Result<super::api::EncodingStats, EncodingError> {
     // Initialize quality search state
     // qmin=1, qmax=100 (full range) - libwebp uses config->qmin/qmax
-    let mut stats = PassStats::new_for_size(params.target_size, params.lossy_quality, 1, 100);
+    let mut pass_stats = PassStats::new_for_size(params.target_size, params.lossy_quality, 1, 100);
 
     // Max iterations (matches libwebp's config->pass, default 6 for target_size search)
     let max_passes = (params.method + 3).max(6) as usize;
     let mut best_output: Option<Vec<u8>> = None;
+    let mut best_enc_stats = super::api::EncodingStats::default();
     let mut best_diff = f64::MAX;
 
     for pass in 0..max_passes {
+        stop.check()?;
+
         // Create temporary buffer for this trial encoding
         let mut trial_buffer = Vec::new();
         let mut trial_encoder = Vp8Encoder::new(&mut trial_buffer);
 
         // Create params with adjusted quality
         let mut trial_params = params.clone();
-        trial_params.lossy_quality = libm::roundf(stats.q).clamp(0.0, 100.0) as u8;
+        trial_params.lossy_quality = libm::roundf(pass_stats.q).clamp(0.0, 100.0) as u8;
 
         // Encode to trial buffer
-        trial_encoder.encode_image(data, color, width, height, &trial_params)?;
+        let enc_stats = trial_encoder.encode_image(
+            data,
+            color,
+            width,
+            height,
+            &trial_params,
+            stop,
+            progress,
+        )?;
 
         // Update stats with resulting size
         let output_size = trial_buffer.len() as f64;
-        stats.value = output_size;
+        pass_stats.value = output_size;
 
         // Track best result (closest to target)
-        let diff = (output_size - stats.target).abs();
+        let diff = (output_size - pass_stats.target).abs();
         if diff < best_diff {
             best_diff = diff;
+            best_enc_stats = enc_stats;
             best_output = Some(trial_buffer);
         }
 
         // Check convergence
-        let is_last = pass + 1 >= max_passes || stats.is_converged();
+        let is_last = pass + 1 >= max_passes || pass_stats.is_converged();
         if is_last {
             break;
         }
 
         // Compute next quality to try
-        stats.compute_next_q();
+        pass_stats.compute_next_q();
     }
 
     // Write best result to output
@@ -1291,5 +1443,71 @@ fn encode_with_quality_search(
         writer.extend_from_slice(&output);
     }
 
-    Ok(())
+    Ok(best_enc_stats)
+}
+
+/// Encode with quality search to meet target PSNR.
+/// Uses secant method to converge on target PSNR within DQ_LIMIT threshold.
+#[allow(clippy::too_many_arguments)]
+fn encode_with_psnr_search(
+    writer: &mut Vec<u8>,
+    data: &[u8],
+    width: u16,
+    height: u16,
+    color: ColorType,
+    params: &super::api::EncoderParams,
+    stop: &dyn enough::Stop,
+    progress: &dyn super::api::EncodeProgress,
+) -> Result<super::api::EncodingStats, EncodingError> {
+    let mut pass_stats = PassStats::new_for_psnr(params.target_psnr, params.lossy_quality, 1, 100);
+
+    let max_passes = (params.method + 3).max(6) as usize;
+    let mut best_output: Option<Vec<u8>> = None;
+    let mut best_enc_stats = super::api::EncodingStats::default();
+    let mut best_diff = f64::MAX;
+
+    for pass in 0..max_passes {
+        stop.check()?;
+
+        let mut trial_buffer = Vec::new();
+        let mut trial_encoder = Vp8Encoder::new(&mut trial_buffer);
+
+        let mut trial_params = params.clone();
+        trial_params.lossy_quality = libm::roundf(pass_stats.q).clamp(0.0, 100.0) as u8;
+
+        let enc_stats = trial_encoder.encode_image(
+            data,
+            color,
+            width,
+            height,
+            &trial_params,
+            stop,
+            progress,
+        )?;
+
+        // Use "All" PSNR (index 3) as the convergence metric
+        let psnr_value = f64::from(enc_stats.psnr[3]);
+        pass_stats.value = psnr_value;
+
+        // Track best result (closest PSNR to target)
+        let diff = (psnr_value - pass_stats.target).abs();
+        if diff < best_diff {
+            best_diff = diff;
+            best_enc_stats = enc_stats;
+            best_output = Some(trial_buffer);
+        }
+
+        let is_last = pass + 1 >= max_passes || pass_stats.is_converged();
+        if is_last {
+            break;
+        }
+
+        pass_stats.compute_next_q();
+    }
+
+    if let Some(output) = best_output {
+        writer.extend_from_slice(&output);
+    }
+
+    Ok(best_enc_stats)
 }
