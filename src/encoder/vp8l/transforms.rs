@@ -213,12 +213,21 @@ fn residual(pixel: u32, pred: u32) -> u32 {
 /// - Col 0, y>0: Top predictor (fixed, regardless of mode)
 /// - Interior (y>0, x>0): mode from predictor_data
 ///
-/// Pixels are processed in reverse order so neighbors remain as original values.
+/// When `max_quantization <= 1` (exact lossless), pixels are processed in
+/// reverse order so neighbors remain as original values.
+///
+/// When `max_quantization > 1` (near-lossless), pixels are processed in
+/// forward order. Each pixel's residual is quantized, and the source pixel
+/// is updated with the reconstructed value (predict + quantized_residual)
+/// so subsequent predictions use the reconstructed data. This matches
+/// libwebp's CopyImageWithPrediction / GetResidual flow.
 pub fn apply_predictor_transform(
     pixels: &mut [u32],
     width: usize,
     height: usize,
     size_bits: u8,
+    max_quantization: u32,
+    used_subtract_green: bool,
 ) -> Vec<u32> {
     let block_size = 1usize << size_bits;
     let blocks_x = subsample_size(width as u32, size_bits) as usize;
@@ -260,38 +269,116 @@ pub fn apply_predictor_transform(
         }
     }
 
-    // Apply prediction to pixels in reverse order.
-    // Border pixels use fixed predictors matching the decoder.
-    for y in (0..height).rev() {
-        for x in (0..width).rev() {
-            let pred = if y == 0 && x == 0 {
-                // Top-left corner: Black
-                0xff000000
-            } else if y == 0 {
-                // First row: Left predictor
-                pixels[x - 1]
-            } else if x == 0 {
-                // First column: Top predictor
-                pixels[(y - 1) * width]
-            } else {
-                // Interior: use block's predictor mode
-                let bx = x >> size_bits;
-                let by = y >> size_bits;
-                let mode = PredictorMode::from_u8(argb_green(predictor_data[by * blocks_x + bx]));
-                let left = pixels[y * width + x - 1];
-                let top = pixels[(y - 1) * width + x];
-                let top_left = pixels[(y - 1) * width + x - 1];
-                // At right edge (x == width-1), top_right wraps to the first
-                // pixel of the current row. This matches the decoder's memory
-                // layout where image_data[i - width*4 + 4] wraps to row y's start.
-                let top_right = if x + 1 < width {
-                    pixels[(y - 1) * width + x + 1]
+    if max_quantization > 1 {
+        // Forward-order processing with near-lossless residual quantization.
+        // Precompute max_diffs for all interior rows from ORIGINAL pixel data
+        // before any modifications.
+        let mut all_max_diffs = vec![0u8; width * height];
+        for y in 1..height.saturating_sub(1) {
+            super::near_lossless::max_diffs_for_row(
+                pixels,
+                width,
+                y,
+                &mut all_max_diffs[y * width..],
+                used_subtract_green,
+            );
+        }
+
+        // Process forward, storing residuals separately since we update source
+        // pixels with reconstructed values for subsequent predictions.
+        let mut residuals = vec![0u32; width * height];
+
+        for y in 0..height {
+            for x in 0..width {
+                let idx = y * width + x;
+                let pred = if y == 0 && x == 0 {
+                    0xff000000
+                } else if y == 0 {
+                    // First row: Left predictor (uses possibly-reconstructed left)
+                    pixels[x - 1]
+                } else if x == 0 {
+                    // First column: Top predictor (uses possibly-reconstructed top)
+                    pixels[(y - 1) * width]
                 } else {
-                    pixels[y * width]
+                    let bx = x >> size_bits;
+                    let by = y >> size_bits;
+                    let mode =
+                        PredictorMode::from_u8(argb_green(predictor_data[by * blocks_x + bx]));
+                    let left = pixels[y * width + x - 1];
+                    let top = pixels[(y - 1) * width + x];
+                    let top_left = pixels[(y - 1) * width + x - 1];
+                    let top_right = if x + 1 < width {
+                        pixels[(y - 1) * width + x + 1]
+                    } else {
+                        pixels[y * width]
+                    };
+                    predict(mode, left, top, top_left, top_right)
                 };
-                predict(mode, left, top, top_left, top_right)
-            };
-            pixels[y * width + x] = residual(pixels[y * width + x], pred);
+
+                // Matching libwebp's GetResidual conditions for skipping quantization:
+                // border pixels, mode 0 (Black), first/last row, first/last column
+                let mode_val = if y > 0 && x > 0 {
+                    argb_green(predictor_data[(y >> size_bits) * blocks_x + (x >> size_bits)])
+                } else {
+                    0 // border uses fixed predictors, treat as mode 0
+                };
+
+                if mode_val == 0 || y == 0 || y == height - 1 || x == 0 || x == width - 1 {
+                    // Exact residual for borders and mode 0
+                    residuals[idx] = residual(pixels[idx], pred);
+                    // No source update needed (reconstructed == original for exact residual)
+                } else {
+                    let max_diff = all_max_diffs[idx];
+                    let (res, recon) = super::near_lossless::near_lossless_residual(
+                        pixels[idx],
+                        pred,
+                        max_quantization,
+                        max_diff,
+                        used_subtract_green,
+                    );
+                    residuals[idx] = res;
+                    // Update source pixel with reconstructed value for subsequent predictions
+                    pixels[idx] = recon;
+                }
+            }
+        }
+
+        // Copy residuals to output
+        pixels.copy_from_slice(&residuals);
+    } else {
+        // Exact lossless: reverse-order processing (neighbors stay original).
+        for y in (0..height).rev() {
+            for x in (0..width).rev() {
+                let pred = if y == 0 && x == 0 {
+                    // Top-left corner: Black
+                    0xff000000
+                } else if y == 0 {
+                    // First row: Left predictor
+                    pixels[x - 1]
+                } else if x == 0 {
+                    // First column: Top predictor
+                    pixels[(y - 1) * width]
+                } else {
+                    // Interior: use block's predictor mode
+                    let bx = x >> size_bits;
+                    let by = y >> size_bits;
+                    let mode =
+                        PredictorMode::from_u8(argb_green(predictor_data[by * blocks_x + bx]));
+                    let left = pixels[y * width + x - 1];
+                    let top = pixels[(y - 1) * width + x];
+                    let top_left = pixels[(y - 1) * width + x - 1];
+                    // At right edge (x == width-1), top_right wraps to the first
+                    // pixel of the current row. This matches the decoder's memory
+                    // layout where image_data[i - width*4 + 4] wraps to row y's start.
+                    let top_right = if x + 1 < width {
+                        pixels[(y - 1) * width + x + 1]
+                    } else {
+                        pixels[y * width]
+                    };
+                    predict(mode, left, top, top_left, top_right)
+                };
+                pixels[y * width + x] = residual(pixels[y * width + x], pred);
+            }
         }
     }
 

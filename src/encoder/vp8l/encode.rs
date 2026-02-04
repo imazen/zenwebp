@@ -391,7 +391,19 @@ fn encode_argb(
         } else {
             config.predictor_bits.clamp(2, 8)
         };
-        let predictor_data = apply_predictor_transform(argb, width, height, pred_bits);
+        let max_quantization = if config.near_lossless < 100 {
+            super::near_lossless::max_quantization_from_quality(config.near_lossless)
+        } else {
+            1
+        };
+        let predictor_data = apply_predictor_transform(
+            argb,
+            width,
+            height,
+            pred_bits,
+            max_quantization,
+            use_subtract_green,
+        );
 
         // Signal predictor transform
         writer.write_bit(true); // transform present
