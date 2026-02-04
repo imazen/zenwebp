@@ -1047,6 +1047,8 @@ impl<'a> Vp8Encoder<'a> {
             height,
             y_stride,
             uv_stride,
+            self.method,
+            self.sns_strength,
         );
 
         // Auto-detect content type when Preset::Auto is selected.

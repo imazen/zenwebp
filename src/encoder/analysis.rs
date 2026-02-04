@@ -953,12 +953,28 @@ fn collect_histogram_with_offset(
 /// Returns:
 /// - mixed alpha: finalized alpha value combining luma and chroma (for segment assignment)
 /// - raw uv_alpha: unfinalized chroma alpha (for UV quant delta computation)
-pub fn analyze_macroblock(it: &mut AnalysisIterator) -> (u8, i32) {
+///
+/// When `method >= 4` and `sns_strength > 0`, blends in a masking-based alpha
+/// from local variance to improve adaptive quantization for textured regions.
+pub fn analyze_macroblock(
+    it: &mut AnalysisIterator,
+    method: u8,
+    sns_strength: u8,
+) -> (u8, i32) {
     let (best_alpha, _best_mode) = it.analyze_best_intra16_mode();
     let (best_uv_alpha, _uv_mode) = it.analyze_best_uv_mode();
 
     // Final susceptibility mix
     let alpha = (3 * best_alpha + best_uv_alpha + 2) >> 2;
+
+    // Blend with masking alpha for perceptual adaptive quantization.
+    // Only when method >= 4 AND sns_strength > 0 (user hasn't disabled SNS).
+    let alpha = if method >= 4 && sns_strength > 0 {
+        let masking = crate::encoder::psy::compute_masking_alpha(&it.yuv_in[Y_OFF_ENC..], BPS);
+        crate::encoder::psy::blend_masking_alpha(alpha, masking, method)
+    } else {
+        alpha
+    };
 
     // Finalize: invert and clip
     (final_alpha_value(alpha), best_uv_alpha)
@@ -977,6 +993,9 @@ pub struct AnalysisResult {
 
 /// Run full analysis pass on image and return alpha histogram + per-MB alphas
 /// Ported from libwebp's VP8EncAnalyze / DoSegmentsJob
+///
+/// `method` controls whether perceptual masking is blended into alpha values.
+#[allow(clippy::too_many_arguments)]
 pub fn analyze_image(
     y_src: &[u8],
     u_src: &[u8],
@@ -985,6 +1004,8 @@ pub fn analyze_image(
     height: usize,
     y_stride: usize,
     uv_stride: usize,
+    method: u8,
+    sns_strength: u8,
 ) -> AnalysisResult {
     let mut it = AnalysisIterator::new(width, height);
     it.reset();
@@ -998,7 +1019,7 @@ pub fn analyze_image(
     loop {
         it.import(y_src, u_src, v_src, y_stride, uv_stride);
 
-        let (alpha, uv_alpha) = analyze_macroblock(&mut it);
+        let (alpha, uv_alpha) = analyze_macroblock(&mut it, method, sns_strength);
         mb_alphas[mb_idx] = alpha;
         alpha_histogram[alpha as usize] += 1;
         uv_alpha_sum += uv_alpha as i64;

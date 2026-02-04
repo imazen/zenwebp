@@ -45,12 +45,16 @@ pub(crate) struct PsyConfig {
     pub(crate) psy_rd_strength: u32,
     /// Psy-trellis strength (fixed-point, 0 = disabled).
     /// Biases trellis to retain perceptually important coefficients.
+    /// Used in Phase 5 (psy-trellis).
+    #[allow(dead_code)]
     pub(crate) psy_trellis_strength: u32,
     /// CSF weights for luma spectral distortion (TDisto).
     pub(crate) luma_csf: [u16; 16],
     /// CSF weights for chroma spectral distortion (TDisto).
     pub(crate) chroma_csf: [u16; 16],
     /// Distortion weights for trellis quantization.
+    /// Used in Phase 5 (psy-trellis).
+    #[allow(dead_code)]
     pub(crate) trellis_weights: [u16; 16],
 }
 
@@ -167,6 +171,101 @@ pub(crate) fn satd_16x16(block: &[u8], stride: usize) -> u32 {
         }
     }
     sum
+}
+
+//------------------------------------------------------------------------------
+// Perceptual Adaptive Quantization
+//
+// Computes a masking-based alpha that measures local texture complexity.
+// High-variance regions (grass, fabric, noise) are more tolerant of
+// quantization artifacts, so they can use higher QP without visual loss.
+
+/// Compute masking alpha for a 16x16 macroblock from its Y source pixels.
+///
+/// Returns a value 0-255 where:
+/// - 0 = flat block (needs fine quantization to avoid visible artifacts)
+/// - 255 = highly textured (can tolerate coarser quantization)
+///
+/// The metric is based on local variance computed per 4x4 sub-block.
+///
+/// # Arguments
+/// * `src` - Y source pixels for this macroblock (accessed with given stride)
+/// * `stride` - Row stride of source buffer
+pub(crate) fn compute_masking_alpha(src: &[u8], stride: usize) -> u8 {
+    // Compute variance for each 4x4 sub-block, then average
+    let mut total_variance = 0u64;
+
+    for by in 0..4 {
+        for bx in 0..4 {
+            let base = by * 4 * stride + bx * 4;
+
+            // Compute mean of 4x4 block
+            let mut sum = 0u32;
+            for y in 0..4 {
+                for x in 0..4 {
+                    sum += src[base + y * stride + x] as u32;
+                }
+            }
+            let mean = sum / 16;
+
+            // Compute variance
+            let mut var = 0u64;
+            for y in 0..4 {
+                for x in 0..4 {
+                    let diff = src[base + y * stride + x] as i32 - mean as i32;
+                    var += (diff * diff) as u64;
+                }
+            }
+            total_variance += var / 16; // normalize per-pixel
+        }
+    }
+
+    // Average across 16 sub-blocks
+    let avg_variance = total_variance / 16;
+
+    // Map variance to alpha range 0-255
+    // Empirically tuned: variance of ~100 → alpha ~128 (mid complexity)
+    // Clamp at 255 for very high variance
+    ((avg_variance * 255) / (avg_variance + 100)).min(255) as u8
+}
+
+/// Adjust DCT-histogram alpha using masking information.
+///
+/// Applies a masking-based delta to the DCT alpha. Textured regions
+/// (high masking_alpha) get their alpha pushed higher (more tolerant of
+/// coarse quantization), flat regions (low masking_alpha) get pushed lower
+/// (need finer quantization).
+///
+/// Uses an additive delta rather than linear blending to preserve the
+/// relative spread between DCT alphas across the image. Linear blending
+/// compresses the alpha range, which can collapse segment diversity on
+/// uniform-variance images.
+///
+/// # Arguments
+/// * `dct_alpha` - Alpha from DCT histogram analysis (before finalization)
+/// * `masking_alpha` - Alpha from `compute_masking_alpha` (0=flat, 255=textured)
+/// * `method` - Encoding method level (0-6)
+pub(crate) fn blend_masking_alpha(dct_alpha: i32, masking_alpha: u8, method: u8) -> i32 {
+    if method < 4 {
+        // No blending, pure DCT alpha (bit-identical to baseline)
+        return dct_alpha;
+    }
+
+    // Center masking at 128 so flat regions push alpha down and textured
+    // regions push alpha up. This is additive so it preserves the relative
+    // spread between DCT alphas.
+    let masking_delta = masking_alpha as i32 - 128;
+
+    // Scale the delta by method level:
+    // method 4: ±32 max adjustment (masking_delta * 64 / 256)
+    // method 5-6: ±48 max adjustment (masking_delta * 96 / 256)
+    let scaled_delta = if method >= 5 {
+        (masking_delta * 96) >> 8
+    } else {
+        (masking_delta * 64) >> 8
+    };
+
+    dct_alpha + scaled_delta
 }
 
 /// Compute the psy-rd penalty for energy loss between source and reconstruction.
