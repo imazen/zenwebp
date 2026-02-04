@@ -201,18 +201,26 @@ zenwebp aims to be a drop-in replacement for libwebp in most use cases. Here's w
 
 ## Performance
 
-Benchmarks on a 517x517 image:
+### Decoder benchmarks
 
-| Operation | zenwebp | libwebp | image-webp |
-|-----------|---------|---------|------------|
-| Decode | 2.0ms | 1.5ms | 3.6ms |
-| Decode ratio | 1.3x slower | 1.0x | 2.4x slower |
+Tested across three corpora with varying image sizes and content:
 
-| Operation | zenwebp | libwebp | Ratio |
-|-----------|---------|---------|-------|
-| Encode m5 | ~28ms | ~17ms | 1.7x slower |
+| Corpus | Images | Megapixels | zenwebp | image-webp | zenwebp speedup |
+|--------|--------|------------|---------|------------|-----------------|
+| CLIC2025 | 15 | 42.6 | 1.43x slower | 2.81x slower | **2.0x faster** |
+| Screenshots | 9 | 64.4 | 1.35x slower | 2.46x slower | **1.8x faster** |
+| CID22 | 15 | 3.9 | 1.85x slower | 2.98x slower | **1.6x faster** |
 
-Encoding produces files within 0.1% of libwebp size at method 5.
+*All ratios vs libwebp (C). Lower is better. zenwebp consistently ~2x faster than image-webp.*
+
+### Encoder benchmarks
+
+| Corpus | zenwebp m5 | libwebp m5 | Size ratio |
+|--------|------------|------------|------------|
+| CID22 (248 images) | - | - | 1.0002x |
+| Screenshots (13 images) | - | - | 1.0022x |
+
+Encoding speed is ~1.5-1.7x slower than libwebp. File sizes within 0.2% of libwebp at method 5.
 
 ### Quality
 
@@ -262,10 +270,18 @@ or features like animation encoding, near-lossless, or target file size.
 
 ### Honest tradeoffs
 
-We added **~30,000 lines** to implement lossy encoding matching libwebp. This is a significant
-increase in attack surface and audit burden. Our SIMD code uses `archmage` which generates
-`unsafe` blocks via proc macros - while we trust archmage's soundness, it's not the same as
-image-webp's truly zero-unsafe guarantee.
+**Code size:** We added **~30,000 lines** to implement lossy encoding matching libwebp. This is
+a significant increase in attack surface and audit burden compared to image-webp's compact codebase.
+
+**Safety model:** We use `#![forbid(unsafe_code)]` which prevents any direct unsafe in our source.
+However, our SIMD acceleration depends on the `archmage` crate, whose `#[arcane]` proc macro
+generates `unsafe` blocks internally (to call CPU intrinsics). The generated unsafe bypasses
+Rust's `forbid` lint due to proc-macro span handling. We consider archmage's token-based safety
+model reasonable - tokens are only created after runtime CPU feature detection, and we don't
+forge tokens - but this is not the same as image-webp's truly zero-unsafe guarantee where both
+the crate and all dependencies contain no unsafe whatsoever.
+
+**Without the `simd` feature**, zenwebp contains no unsafe code at all, but decoding will be slower.
 
 ### Feature additions over image-webp
 
