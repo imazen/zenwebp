@@ -97,8 +97,9 @@ zenwebp aims to be a drop-in replacement for libwebp in most use cases. Here's w
 | Extended format (VP8X) | Yes | Yes |
 | ICC/EXIF/XMP metadata | Yes (raw bytes) | Yes (raw bytes) |
 | Output: RGB, RGBA | Yes | Yes |
-| Output: BGR, BGRA, ARGB | No | Yes |
-| Output: YUV 4:2:0 | No | Yes |
+| Output: BGR, BGRA | Yes | Yes |
+| Output: ARGB | No | Yes |
+| Output: YUV 4:2:0 | Yes | Yes |
 | Output: RGB565, RGBA4444 | No | Yes |
 | Premultiplied alpha output | No | Yes |
 | Fancy chroma upsampling | Yes | Yes |
@@ -126,14 +127,14 @@ zenwebp aims to be a drop-in replacement for libwebp in most use cases. Here's w
 | Intra16 modes (DC/V/H/TM) | Yes | Yes |
 | Intra4 modes (10 modes) | Yes | Yes |
 | Trellis quantization | Yes (m5-6) | Yes (m5-6) |
-| Alpha channel encoding | Yes (lossless) | Yes (lossless or lossy) |
+| Alpha channel encoding | Yes (lossless + lossy quantization) | Yes (lossless + lossy quantization) |
 | Sharp YUV conversion | Yes (via `yuv` crate, `fast-yuv` feature) | Yes (libsharpyuv) |
 | Multi-pass encoding | Yes | Yes |
 | Near-lossless | Yes | Yes |
 | Input: RGB, RGBA | Yes | Yes |
 | Input: L8 (grayscale) | Yes | No (requires conversion) |
-| Input: BGR, BGRA | No | Yes |
-| Input: YUV 4:2:0 | No | Yes |
+| Input: BGR, BGRA | Yes | Yes |
+| Input: YUV 4:2:0 | Yes | Yes |
 | Encoding statistics | Yes (EncodingStats) | Yes (WebPAuxStats) |
 | Progress callback | Yes (EncodeProgress + Stop) | Yes |
 | Threaded encoding | No | Yes (alpha parallel) |
