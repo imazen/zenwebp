@@ -6,8 +6,8 @@
 #![allow(dead_code)]
 #![allow(clippy::needless_range_loop)]
 
-use super::vp8_bit_cost;
 use super::super::tables::{MAX_VARIABLE_LEVEL, VP8_ENC_BANDS, VP8_ENTROPY_COST};
+use super::vp8_bit_cost;
 
 /// Number of coefficient types (DCT types: 0=i16-DC, 1=i16-AC, 2=chroma, 3=i4)
 pub const NUM_TYPES: usize = 4;

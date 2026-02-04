@@ -4,23 +4,30 @@
 //!
 //! Usage: cargo run --release --example tune_psy_strength [directory]
 
-use std::env;
-use std::fs;
 use butteraugli::{butteraugli, ButteraugliParams};
 use imgref::Img;
 use rgb::RGB8;
-use zenwebp::{EncoderConfig, Preset, decode_rgb};
+use std::env;
+use std::fs;
+use zenwebp::{decode_rgb, EncoderConfig, Preset};
 
 fn main() {
     let args: Vec<_> = env::args().collect();
-    let dir = args.get(1).map(|s| s.as_str())
+    let dir = args
+        .get(1)
+        .map(|s| s.as_str())
         .unwrap_or("/home/lilith/work/codec-corpus/CID22/CID22-512/training");
 
     // Find PNG files
     let entries: Vec<_> = fs::read_dir(dir)
         .expect("Failed to read directory")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map(|ext| ext == "png").unwrap_or(false))
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|ext| ext == "png")
+                .unwrap_or(false)
+        })
         .take(20)
         .collect();
 
@@ -36,7 +43,7 @@ fn main() {
 
         for entry in &entries {
             let path = entry.path();
-            
+
             // Load PNG
             let file = fs::File::open(&path).unwrap();
             let decoder = png::Decoder::new(std::io::BufReader::new(file));
@@ -51,7 +58,11 @@ fn main() {
             };
 
             let (rgb, w, h) = match info.color_type {
-                png::ColorType::Rgb => (buf[..info.buffer_size()].to_vec(), info.width as usize, info.height as usize),
+                png::ColorType::Rgb => (
+                    buf[..info.buffer_size()].to_vec(),
+                    info.width as usize,
+                    info.height as usize,
+                ),
                 png::ColorType::Rgba => {
                     let rgba = &buf[..info.buffer_size()];
                     let mut rgb = Vec::with_capacity(rgba.len() * 3 / 4);
@@ -80,7 +91,10 @@ fn main() {
 
             // Compute butteraugli
             let src_rgb8: Vec<RGB8> = rgb.chunks(3).map(|c| RGB8::new(c[0], c[1], c[2])).collect();
-            let dst_rgb8: Vec<RGB8> = decoded_rgb.chunks(3).map(|c| RGB8::new(c[0], c[1], c[2])).collect();
+            let dst_rgb8: Vec<RGB8> = decoded_rgb
+                .chunks(3)
+                .map(|c| RGB8::new(c[0], c[1], c[2]))
+                .collect();
             let params = ButteraugliParams::default();
             let result = match butteraugli(
                 Img::new(src_rgb8, w, h).as_ref(),
@@ -97,10 +111,12 @@ fn main() {
         }
 
         if count > 0 {
-            println!("m{} | {:>6.1} KB | {:.3}",
+            println!(
+                "m{} | {:>6.1} KB | {:.3}",
                 method,
                 total_size as f64 / count as f64 / 1024.0,
-                total_score / count as f64);
+                total_score / count as f64
+            );
         }
     }
 

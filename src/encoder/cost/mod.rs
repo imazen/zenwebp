@@ -31,8 +31,8 @@ pub use distortion::{
     FLATNESS_LIMIT_I16, FLATNESS_LIMIT_I4, FLATNESS_LIMIT_UV, FLATNESS_PENALTY,
 };
 pub use lambda::{
-    calc_i4_penalty, calc_lambda_i4, calc_lambda_i16, calc_lambda_mode, calc_lambda_trellis_i4,
-    calc_lambda_trellis_i16, calc_lambda_trellis_uv, calc_lambda_uv, calc_tlambda,
+    calc_i4_penalty, calc_lambda_i16, calc_lambda_i4, calc_lambda_mode, calc_lambda_trellis_i16,
+    calc_lambda_trellis_i4, calc_lambda_trellis_uv, calc_lambda_uv, calc_tlambda,
     compute_filter_level, compute_filter_level_with_beta, filter_strength_from_delta,
     DEFAULT_SNS_STRENGTH, LAMBDA_I16, LAMBDA_I4, LAMBDA_UV,
 };

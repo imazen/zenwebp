@@ -128,10 +128,10 @@ impl Default for PsyConfig {
             luma_csf: VP8_WEIGHT_Y,
             chroma_csf: VP8_WEIGHT_Y, // same as libwebp default
             trellis_weights: VP8_WEIGHT_TRELLIS,
-            jnd_threshold_y: [0; 16],   // disabled by default
-            jnd_threshold_uv: [0; 16],  // disabled by default
-            luminance_factor: 128,      // neutral
-            contrast_masking: 0,        // disabled
+            jnd_threshold_y: [0; 16],  // disabled by default
+            jnd_threshold_uv: [0; 16], // disabled by default
+            luminance_factor: 128,     // neutral
+            contrast_masking: 0,       // disabled
         }
     }
 }
@@ -403,7 +403,8 @@ fn edge_strength_4x4(block: &[u8], stride: usize) -> u32 {
     // Horizontal edges (vertical gradient)
     for y in 0..3 {
         for x in 0..4 {
-            let diff = (block[(y + 1) * stride + x] as i32 - block[y * stride + x] as i32).unsigned_abs();
+            let diff =
+                (block[(y + 1) * stride + x] as i32 - block[y * stride + x] as i32).unsigned_abs();
             h_edge += diff;
         }
     }
@@ -411,7 +412,8 @@ fn edge_strength_4x4(block: &[u8], stride: usize) -> u32 {
     // Vertical edges (horizontal gradient)
     for y in 0..4 {
         for x in 0..3 {
-            let diff = (block[y * stride + x + 1] as i32 - block[y * stride + x] as i32).unsigned_abs();
+            let diff =
+                (block[y * stride + x + 1] as i32 - block[y * stride + x] as i32).unsigned_abs();
             v_edge += diff;
         }
     }
@@ -639,8 +641,18 @@ mod tests {
         let text_var = compute_masking_alpha_variance(&textured, 16);
 
         // Both methods should agree: flat has lower alpha than textured
-        assert!(flat_satd < text_satd, "SATD: flat={} should < textured={}", flat_satd, text_satd);
-        assert!(flat_var < text_var, "Variance: flat={} should < textured={}", flat_var, text_var);
+        assert!(
+            flat_satd < text_satd,
+            "SATD: flat={} should < textured={}",
+            flat_satd,
+            text_satd
+        );
+        assert!(
+            flat_var < text_var,
+            "Variance: flat={} should < textured={}",
+            flat_var,
+            text_var
+        );
     }
 
     #[test]
