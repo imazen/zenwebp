@@ -140,6 +140,8 @@ Test results on 512x512 CID22 image:
 - Root cause: I4 coefficient encoding efficiency gap in the non-trellis path
 
 ### Recent SIMD Optimizations
+- **Fused tdisto_4x4 SIMD** - Port of libwebp's TTransform_SSE2: processes both blocks in parallel using
+  vertical-first Hadamard (valid with symmetric weights). Now inlined, not a separate hotspot (2026-02-04)
 - **I4 mode cost precompute** - Cache all 10 mode costs before inner loop (avoid 3D table lookup, 2026-02-04)
 - **I4 prediction SSE SIMD** - Use sse4x4() for mode filtering instead of scalar loop (2026-02-04)
 - **Row-wise copy_from_slice** - Replace nested loops with memcpy-like ops for block extraction (2026-02-04)
@@ -156,46 +158,47 @@ Test results on 512x512 CID22 image:
 - **LTO + inline hints** - Added LTO and codegen-units=1 to release profile, plus #[inline] to
   hot helper functions (tdisto_*, is_flat_*, compute_filter_level). Marginal improvement (~5-8%).
 
-### Profiler Hot Spots (method 4, 2026-02-04)
+### Profiler Hot Spots (method 4, 2026-02-04, after fused tdisto)
 | Function | % Runtime | Notes |
 |----------|-----------|-------|
-| choose_macroblock_info | 33.03% | Mode selection RD loop |
-| t_transform_sse2 | 11.53% | Spectral distortion (SIMD) |
-| get_residual_cost_sse2 | 9.05% | Coefficient cost estimation (SIMD) |
-| idct4x4 | 7.23% | Inverse transform (SIMD) |
-| encode_image | 7.11% | Main encoding loop |
-| tdisto_4x4 | 6.04% | Calls t_transform |
-| dct4x4 | 4.75% | Forward transform (SIMD) |
+| choose_macroblock_info | 28.1% | Mode selection RD loop |
+| get_residual_cost_sse2 | 6.8% | Coefficient cost estimation (SIMD) |
+| idct4x4 | 6.7% | Inverse transform (SIMD) |
+| encode_image | 4.7% | Main encoding loop |
+| dct4x4 | 4.4% | Forward transform (SIMD) |
+| is_flat_coeffs | 3.3% | Flatness detection |
+
+Note: `tdisto_4x4` and `t_transform` are now inlined into `choose_macroblock_info`.
 
 ### zenwebp vs libwebp Comparison (2026-02-04)
 
-**Callgrind/Cachegrind results (5 encodes, 550x368, Q75, M4):**
+**Per-encode comparison (792079.png, Q75, M4, SNS=0):**
 
 | Metric | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| Instructions | 3,003M | 1,076M | **2.79x** |
-| I1 misses | 4.76M | 0.52M | 9.2x |
-| D refs | 839M | 329M | 2.55x |
-| D1 miss rate | 0.14% | 0.22% | 0.6x (better!) |
-| Wall-clock | 29.6ms | 12.0ms | 2.47x |
-| Output size | 28,230 | 27,910 | 1.01x |
+| Instructions | 586M | 196M | **2.99x** |
+| Output size | 12,198 | 12,018 | 1.015x |
 
-**Function-level comparison (instructions):**
+**CID22 corpus comparison (41 images, Q75, M4, SNS=0):**
+
+| Metric | zenwebp | libwebp | Ratio |
+|--------|---------|---------|-------|
+| Total size | 1,180,418 | 1,169,034 | 1.0097x |
+
+**Function-level comparison (per encode):**
 
 | zenwebp | M instr | libwebp | M instr | Ratio |
 |---------|---------|---------|---------|-------|
-| choose_macroblock_info | 992 | PickBestIntra4 | 80 | **12.5x** |
-| t_transform_sse2 | 346 | Disto4x4_SSE2 | 76 | **4.5x** |
-| tdisto_4x4 | 181 | Disto16x16_SSE2 | 32 | **5.6x** |
-| get_residual_cost_sse2 | 272 | GetResidualCost | 139 | 1.9x |
-| idct4x4 | 217 | ITransform_SSE2 | 96 | 2.3x |
-| dct4x4 | 143 | FTransform_SSE2 | 59 | 2.4x |
+| choose_macroblock_info | 188M | PickBestIntra4 | 13.5M | **14x** |
+| get_residual_cost_sse2 | 46M | GetResidualCost | 11M | 4.2x |
+| idct4x4 | 45M | ITransform_SSE2 | 17M | 2.6x |
+| dct4x4 | 29M | FTransform_SSE2 | 10M | 2.9x |
+| (tdisto inlined) | - | Disto4x4_SSE2 | 13M | - |
 
 **Optimization priorities (by instruction gap):**
-1. Mode selection: 912M gap (12.5x) - biggest opportunity
-2. TDisto/TTransform: 419M gap (4-6x) - Hadamard needs full SIMD
-3. DCT/IDCT: 205M gap (2.3x) - our SIMD is less efficient
-4. Residual cost: 133M gap (1.9x) - closest to parity
+1. Mode selection: 175M gap (14x) - biggest opportunity
+2. DCT/IDCT: 47M gap (2.6-2.9x) - room for improvement
+3. Residual cost: 35M gap (4.2x) - significant gap remains
 
 **t_transform SIMD optimization (2026-02-04):**
 Previous pseudo-SIMD loaded with SIMD but extracted to scalar immediately.
