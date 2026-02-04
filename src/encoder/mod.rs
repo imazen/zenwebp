@@ -1,4 +1,27 @@
-//! WebP encoder implementation
+//! WebP encoder implementation.
+//!
+//! This module provides lossy (VP8) and lossless (VP8L) WebP encoding with
+//! perceptual optimizations for improved rate-quality trade-offs.
+//!
+//! # Module Organization
+//!
+//! **Core encoding:**
+//! - [`vp8`]: Lossy VP8 encoding (DCT-based, like JPEG)
+//! - [`vp8l`]: Lossless VP8L encoding (LZ77 + entropy coding)
+//!
+//! **Rate-distortion optimization:**
+//! - [`analysis`]: Segment-based adaptive quantization (k-means clustering)
+//! - [`cost`]: RD cost estimation for mode selection
+//! - `trellis`: Trellis quantization for optimal coefficient selection
+//!
+//! **Perceptual models:**
+//! - `psy`: CSF weighting, JND thresholds, masking-based AQ
+//!
+//! **Low-level utilities:**
+//! - [`quantize`]: Quantization matrices and coefficient quantization
+//! - [`tables`]: Lookup tables (entropy costs, zigzag order, etc.)
+//! - `arithmetic`: Arithmetic/range coding
+//! - `residual_cost`: SIMD-optimized residual cost estimation
 
 /// Image analysis and auto-detection
 pub mod analysis;
