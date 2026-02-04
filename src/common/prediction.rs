@@ -608,27 +608,37 @@ impl I4Predictions {
             data[0] = [dc; 16];
         }
 
-        // Mode 1: TM prediction
+        // Mode 1: TM prediction (fully unrolled for performance)
         {
             let p_i32 = i32::from(p);
-            for y in 0..4 {
-                let left = match y {
-                    0 => l0,
-                    1 => l1,
-                    2 => l2,
-                    _ => l3,
-                };
-                let left_minus_p = i32::from(left) - p_i32;
-                for x in 0..4 {
-                    let above = match x {
-                        0 => a0,
-                        1 => a1,
-                        2 => a2,
-                        _ => a3,
-                    };
-                    data[1][y * 4 + x] = (left_minus_p + i32::from(above)).clamp(0, 255) as u8;
-                }
-            }
+            let l0_p = i32::from(l0) - p_i32;
+            let l1_p = i32::from(l1) - p_i32;
+            let l2_p = i32::from(l2) - p_i32;
+            let l3_p = i32::from(l3) - p_i32;
+            let a0_i = i32::from(a0);
+            let a1_i = i32::from(a1);
+            let a2_i = i32::from(a2);
+            let a3_i = i32::from(a3);
+            // Row 0: left = l0
+            data[1][0] = (l0_p + a0_i).clamp(0, 255) as u8;
+            data[1][1] = (l0_p + a1_i).clamp(0, 255) as u8;
+            data[1][2] = (l0_p + a2_i).clamp(0, 255) as u8;
+            data[1][3] = (l0_p + a3_i).clamp(0, 255) as u8;
+            // Row 1: left = l1
+            data[1][4] = (l1_p + a0_i).clamp(0, 255) as u8;
+            data[1][5] = (l1_p + a1_i).clamp(0, 255) as u8;
+            data[1][6] = (l1_p + a2_i).clamp(0, 255) as u8;
+            data[1][7] = (l1_p + a3_i).clamp(0, 255) as u8;
+            // Row 2: left = l2
+            data[1][8] = (l2_p + a0_i).clamp(0, 255) as u8;
+            data[1][9] = (l2_p + a1_i).clamp(0, 255) as u8;
+            data[1][10] = (l2_p + a2_i).clamp(0, 255) as u8;
+            data[1][11] = (l2_p + a3_i).clamp(0, 255) as u8;
+            // Row 3: left = l3
+            data[1][12] = (l3_p + a0_i).clamp(0, 255) as u8;
+            data[1][13] = (l3_p + a1_i).clamp(0, 255) as u8;
+            data[1][14] = (l3_p + a2_i).clamp(0, 255) as u8;
+            data[1][15] = (l3_p + a3_i).clamp(0, 255) as u8;
         }
 
         // Mode 2: VE prediction (vertical edge)
