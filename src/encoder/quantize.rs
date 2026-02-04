@@ -184,8 +184,15 @@ impl VP8Matrix {
     }
 
     /// Dequantize an entire 4x4 block of coefficients in place
-    #[inline]
+    #[inline(always)]
     pub fn dequantize_block(&self, coeffs: &mut [i32; 16]) {
+        #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+        {
+            if let Some(token) = X64V3Token::summon() {
+                dequantize_block_sse2(token, &self.q, coeffs);
+                return;
+            }
+        }
         for (pos, coeff) in coeffs.iter_mut().enumerate() {
             *coeff *= self.q[pos] as i32;
         }
@@ -198,6 +205,64 @@ impl VP8Matrix {
             coeffs[pos] *= self.q[pos] as i32;
         }
     }
+}
+
+/// SIMD dequantization using SSE2
+/// Multiplies each coefficient by its quantizer step.
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[arcane]
+#[inline(always)]
+fn dequantize_block_sse2(
+    _token: impl Has128BitSimd + Copy,
+    q: &[u16; 16],
+    coeffs: &mut [i32; 16],
+) {
+    // Load quantizers as u16, zero-extend to i32
+    let q_lo = simd_mem::_mm_loadu_si128(<&[u16; 8]>::try_from(&q[0..8]).unwrap());
+    let q_hi = simd_mem::_mm_loadu_si128(<&[u16; 8]>::try_from(&q[8..16]).unwrap());
+
+    let zero = _mm_setzero_si128();
+
+    // Zero-extend u16 to i32: unpack low/high with zeros
+    let q0_32 = _mm_unpacklo_epi16(q_lo, zero); // q[0..4] as i32
+    let q1_32 = _mm_unpackhi_epi16(q_lo, zero); // q[4..8] as i32
+    let q2_32 = _mm_unpacklo_epi16(q_hi, zero); // q[8..12] as i32
+    let q3_32 = _mm_unpackhi_epi16(q_hi, zero); // q[12..16] as i32
+
+    // Load coefficients as i32
+    let c0 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
+    let c1 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
+    let c2 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
+    let c3 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+
+    // Multiply using SSE2 workaround (no _mm_mullo_epi32 until SSE4.1)
+    // For i32*i32, use _mm_mul_epu32 on even/odd elements separately
+    // Macro to inline the multiplication pattern
+    macro_rules! mul_epi32_sse2 {
+        ($a:expr, $b:expr) => {{
+            // Multiply even elements (positions 0, 2)
+            let even = _mm_mul_epu32($a, $b);
+            // Shuffle to get odd elements (1, 3) to even positions
+            let a_odd = _mm_shuffle_epi32($a, 0xF5); // [1,1,3,3]
+            let b_odd = _mm_shuffle_epi32($b, 0xF5);
+            let odd = _mm_mul_epu32(a_odd, b_odd);
+            // Extract low 32 bits of each 64-bit result and interleave
+            let even_lo = _mm_shuffle_epi32(even, 0x08); // [r0, _, r2, _]
+            let odd_lo = _mm_shuffle_epi32(odd, 0x08); // [r1, _, r3, _]
+            _mm_unpacklo_epi32(even_lo, odd_lo) // [r0, r1, r2, r3]
+        }};
+    }
+
+    let r0 = mul_epi32_sse2!(c0, q0_32);
+    let r1 = mul_epi32_sse2!(c1, q1_32);
+    let r2 = mul_epi32_sse2!(c2, q2_32);
+    let r3 = mul_epi32_sse2!(c3, q3_32);
+
+    // Store results
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[0..4]).unwrap(), r0);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[4..8]).unwrap(), r1);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[8..12]).unwrap(), r2);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(), r3);
 }
 
 /// Matrix type for bias selection
