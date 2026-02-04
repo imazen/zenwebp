@@ -274,7 +274,8 @@ pub(super) fn backward_references_rle(
 }
 
 /// Maximum window offsets for LZ77 Box (matching libwebp WINDOW_OFFSETS_SIZE_MAX).
-const WINDOW_OFFSETS_SIZE_MAX: usize = 120;
+/// Restricts Box to the 32 closest spatial offsets for speed.
+const WINDOW_OFFSETS_SIZE_MAX: usize = 32;
 
 /// LZ77 Box strategy for palette images.
 ///
