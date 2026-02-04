@@ -35,9 +35,6 @@ fn main() {
         (5, "m5 (CSF + psy-rd + psy-trellis + JND)"),
     ];
 
-    // Collect results
-    let mut results: Vec<(String, Vec<(usize, f64, f64)>)> = Vec::new();
-
     for (method, desc) in configs {
         let mut sizes = Vec::new();
         let mut scores = Vec::new();
@@ -114,8 +111,6 @@ fn main() {
             
             println!("{}: avg_size={:.0}KB, avg_butteraugli={:.3}",
                 desc, avg_size / 1024.0, avg_score);
-            
-            results.push((desc.to_string(), sizes.into_iter().zip(scores).map(|(s, b)| (s, b, 0.0)).collect()));
         }
     }
 
