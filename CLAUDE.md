@@ -158,20 +158,31 @@ Test results on 512x512 CID22 image:
 - **LTO + inline hints** - Added LTO and codegen-units=1 to release profile, plus #[inline] to
   hot helper functions (tdisto_*, is_flat_*, compute_filter_level). Marginal improvement (~5-8%).
 
-### Profiler Hot Spots (method 4, 2026-02-04, after SIMD optimizations)
+### Profiler Hot Spots (method 4, 2026-02-04, after all SIMD optimizations)
 | Function | % Runtime | Notes |
 |----------|-----------|-------|
-| pick_best_intra4 | 26.64% | I4 mode selection (16 blocks × 10 modes) |
-| choose_macroblock_info | 9.68% | I16/UV mode selection + orchestration |
-| get_residual_cost_sse2 | 7.58% | Coefficient cost estimation (SIMD) |
-| encode_image | 5.80% | Main encoding loop |
-| GetResidualCost_SSE2 (libwebp) | 3.87% | For comparison |
-| ITransform_SSE2 (libwebp) | 3.18% | For comparison |
-| Disto4x4_SSE2 (libwebp) | 2.53% | For comparison |
+| trellis_quantize_block | 16.23% | Trellis optimization (method 5+) |
+| pick_best_intra4 | 15.18% | I4 mode selection (16 blocks × 10 modes) |
+| get_residual_cost_sse2 | 7.02% | Coefficient cost estimation (SIMD) |
+| choose_macroblock_info | 7.41% | I16/UV mode selection |
+| encode_image | 6.27% | Main encoding loop |
+| GetResidualCost_SSE2 (libwebp) | 3.58% | For comparison |
+| ITransform_SSE2 (libwebp) | 2.01% | For comparison |
+| Disto4x4_SSE2 (libwebp) | 1.44% | For comparison |
 
-**Total instruction count (10 CID22 images, M4, SNS=0, filter=0):**
-- zenwebp: 6.39B instructions
-- Ratio improvement: ~6% from SIMD optimizations (was ~6.78B before)
+**Speed comparison (kodak1.png 768x512, Q75, SNS=0, filter=0, segments=1):**
+| Method | zenwebp | libwebp | Ratio |
+|--------|---------|---------|-------|
+| 3 | 49.9ms | 26.0ms | 1.92x |
+| 4 | 48.3ms | 25.7ms | 1.88x |
+| 5 | 55.3ms | 31.3ms | 1.77x |
+| 6 | 105.2ms | 78.7ms | 1.34x |
+
+**Recent SIMD optimizations (2026-02-04):**
+- Early exit in I4 mode loop (skip flatness/spectral/psy-rd when base RD exceeds best)
+- SIMD add_residue using packus saturation
+- SIMD dequantization using SSE2 mul_epu32 pattern
+- Fused residual+DCT for chroma blocks (ftransform2)
 
 Note: `dct4x4`, `idct4x4`, `is_flat_coeffs`, `tdisto_4x4` are now inlined into parent functions.
 
