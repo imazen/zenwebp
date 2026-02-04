@@ -133,11 +133,9 @@ impl<'a> super::Vp8Encoder<'a> {
             let mut y2_coeffs = dc_coeffs;
             transform::wht4x4(&mut y2_coeffs);
 
-            // 3. Quantize Y2 (DC) coefficients
-            let mut y2_quant = [0i32; 16];
-            for (idx, &coeff) in y2_coeffs.iter().enumerate() {
-                y2_quant[idx] = y2_matrix.quantize_coeff(coeff, idx);
-            }
+            // 3. Quantize Y2 (DC) coefficients using SIMD
+            let mut y2_quant = y2_coeffs;
+            crate::encoder::quantize::quantize_block_simd(&mut y2_quant, y2_matrix, true);
 
             // 4. Quantize Y1 (AC) coefficients using SIMD
             // Extract each 4x4 block from luma_blocks and quantize AC coefficients
@@ -156,11 +154,9 @@ impl<'a> super::Vp8Encoder<'a> {
             // This matches libwebp's VP8GetCostLuma16 which uses proper token probabilities
             let coeff_cost = get_cost_luma16(&y2_quant, &y1_quant, &self.level_costs, probs);
 
-            // 6. Dequantize Y2 and do inverse WHT
-            let mut y2_dequant = [0i32; 16];
-            for (idx, &level) in y2_quant.iter().enumerate() {
-                y2_dequant[idx] = y2_matrix.dequantize(level, idx);
-            }
+            // 6. Dequantize Y2 and do inverse WHT using SIMD
+            let mut y2_dequant = y2_quant;
+            y2_matrix.dequantize_block(&mut y2_dequant);
             transform::iwht4x4(&mut y2_dequant);
 
             // 7. Dequantize Y1, add DC from Y2, and do inverse DCT
