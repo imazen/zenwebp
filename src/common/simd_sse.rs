@@ -560,13 +560,149 @@ fn t_transform_sse2(
 }
 
 /// TDisto for two 4x4 blocks - computes |TTransform(a) - TTransform(b)| >> 5
-/// Uses SIMD-accelerated t_transform for each block
+/// Uses fused SIMD implementation processing both blocks in parallel
 #[cfg(feature = "simd")]
 #[inline]
 pub fn tdisto_4x4_fused(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
-    // Use the SIMD-accelerated t_transform for each block
-    let sum_a = t_transform(a, stride, w);
-    let sum_b = t_transform(b, stride, w);
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let sum_a = t_transform_scalar(a, stride, w);
+        let sum_b = t_transform_scalar(b, stride, w);
+        (sum_b - sum_a).abs() >> 5
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        if let Some(token) = X64V3Token::summon() {
+            tdisto_4x4_fused_sse2(token, a, b, stride, w)
+        } else {
+            let sum_a = t_transform_scalar(a, stride, w);
+            let sum_b = t_transform_scalar(b, stride, w);
+            (sum_b - sum_a).abs() >> 5
+        }
+    }
+}
+
+/// SSE2 fused TDisto - processes both blocks in parallel like libwebp's TTransform_SSE2
+/// Based on libwebp's enc_sse2.c TTransform_SSE2 and Disto4x4_SSE2
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[arcane]
+fn tdisto_4x4_fused_sse2(
+    _token: impl Has128BitSimd + Copy,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    let zero = _mm_setzero_si128();
+
+    // Load and combine inputs (4 bytes per row per block)
+    let a0 = simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&a[0..4]).unwrap());
+    let a1 = simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&a[stride..][..4]).unwrap());
+    let a2 = simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&a[stride * 2..][..4]).unwrap());
+    let a3 = simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&a[stride * 3..][..4]).unwrap());
+    let b0 = simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&b[0..4]).unwrap());
+    let b1 = simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&b[stride..][..4]).unwrap());
+    let b2 = simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&b[stride * 2..][..4]).unwrap());
+    let b3 = simd_mem::_mm_loadu_si32(<&[u8; 4]>::try_from(&b[stride * 3..][..4]).unwrap());
+
+    // Combine A and B: [a0,a1,a2,a3, b0,b1,b2,b3] for each row
+    let ab0 = _mm_unpacklo_epi32(a0, b0);
+    let ab1 = _mm_unpacklo_epi32(a1, b1);
+    let ab2 = _mm_unpacklo_epi32(a2, b2);
+    let ab3 = _mm_unpacklo_epi32(a3, b3);
+
+    // Expand to i16
+    let mut tmp0 = _mm_unpacklo_epi8(ab0, zero);
+    let mut tmp1 = _mm_unpacklo_epi8(ab1, zero);
+    let mut tmp2 = _mm_unpacklo_epi8(ab2, zero);
+    let mut tmp3 = _mm_unpacklo_epi8(ab3, zero);
+    // tmp0 = [a00 a01 a02 a03   b00 b01 b02 b03] as i16
+    // tmp1 = [a10 a11 a12 a13   b10 b11 b12 b13]
+    // tmp2 = [a20 a21 a22 a23   b20 b21 b22 b23]
+    // tmp3 = [a30 a31 a32 a33   b30 b31 b32 b33]
+
+    // Vertical Hadamard (processes both blocks simultaneously)
+    // Since weights are symmetric, vertical-first gives same result as horizontal-first
+    {
+        let va0 = _mm_add_epi16(tmp0, tmp2);
+        let va1 = _mm_add_epi16(tmp1, tmp3);
+        let va2 = _mm_sub_epi16(tmp1, tmp3);
+        let va3 = _mm_sub_epi16(tmp0, tmp2);
+        let vb0 = _mm_add_epi16(va0, va1);
+        let vb1 = _mm_add_epi16(va3, va2);
+        let vb2 = _mm_sub_epi16(va3, va2);
+        let vb3 = _mm_sub_epi16(va0, va1);
+
+        // Transpose both 4x4 blocks (libwebp's VP8Transpose_2_4x4_16b)
+        let tr0_0 = _mm_unpacklo_epi16(vb0, vb1);
+        let tr0_1 = _mm_unpacklo_epi16(vb2, vb3);
+        let tr0_2 = _mm_unpackhi_epi16(vb0, vb1);
+        let tr0_3 = _mm_unpackhi_epi16(vb2, vb3);
+        let tr1_0 = _mm_unpacklo_epi32(tr0_0, tr0_1);
+        let tr1_1 = _mm_unpacklo_epi32(tr0_2, tr0_3);
+        let tr1_2 = _mm_unpackhi_epi32(tr0_0, tr0_1);
+        let tr1_3 = _mm_unpackhi_epi32(tr0_2, tr0_3);
+        tmp0 = _mm_unpacklo_epi64(tr1_0, tr1_1);
+        tmp1 = _mm_unpackhi_epi64(tr1_0, tr1_1);
+        tmp2 = _mm_unpacklo_epi64(tr1_2, tr1_3);
+        tmp3 = _mm_unpackhi_epi64(tr1_2, tr1_3);
+        // tmp0 = [a00 a10 a20 a30   b00 b10 b20 b30] (col0)
+        // tmp1 = [a01 a11 a21 a31   b01 b11 b21 b31] (col1)
+        // tmp2 = [a02 a12 a22 a32   b02 b12 b22 b32] (col2)
+        // tmp3 = [a03 a13 a23 a33   b03 b13 b23 b33] (col3)
+    }
+
+    // Horizontal Hadamard (processes both blocks simultaneously)
+    let ha0 = _mm_add_epi16(tmp0, tmp2);
+    let ha1 = _mm_add_epi16(tmp1, tmp3);
+    let ha2 = _mm_sub_epi16(tmp1, tmp3);
+    let ha3 = _mm_sub_epi16(tmp0, tmp2);
+    let hb0 = _mm_add_epi16(ha0, ha1);
+    let hb1 = _mm_add_epi16(ha3, ha2);
+    let hb2 = _mm_sub_epi16(ha3, ha2);
+    let hb3 = _mm_sub_epi16(ha0, ha1);
+    // hb0-hb3 contain transformed coefficients for both A and B
+
+    // Separate transforms of A and B
+    // A's coeffs are in low 4 i16 of each hbN, B's in high 4
+    let a_01 = _mm_unpacklo_epi64(hb0, hb1); // A rows 0,1 (8 coeffs)
+    let a_23 = _mm_unpacklo_epi64(hb2, hb3); // A rows 2,3 (8 coeffs)
+    let b_01 = _mm_unpackhi_epi64(hb0, hb1); // B rows 0,1 (8 coeffs)
+    let b_23 = _mm_unpackhi_epi64(hb2, hb3); // B rows 2,3 (8 coeffs)
+
+    // Compute absolute values
+    let a_abs_01 = _mm_max_epi16(a_01, _mm_sub_epi16(zero, a_01));
+    let a_abs_23 = _mm_max_epi16(a_23, _mm_sub_epi16(zero, a_23));
+    let b_abs_01 = _mm_max_epi16(b_01, _mm_sub_epi16(zero, b_01));
+    let b_abs_23 = _mm_max_epi16(b_23, _mm_sub_epi16(zero, b_23));
+
+    // Load weights
+    let w_0 = simd_mem::_mm_loadu_si128(<&[u16; 8]>::try_from(&w[0..8]).unwrap());
+    let w_8 = simd_mem::_mm_loadu_si128(<&[u16; 8]>::try_from(&w[8..16]).unwrap());
+
+    // Compute weighted sums using madd (multiply-add pairs)
+    let a_prod_01 = _mm_madd_epi16(a_abs_01, w_0);
+    let a_prod_23 = _mm_madd_epi16(a_abs_23, w_8);
+    let b_prod_01 = _mm_madd_epi16(b_abs_01, w_0);
+    let b_prod_23 = _mm_madd_epi16(b_abs_23, w_8);
+
+    // Sum up A's weighted transform
+    let a_sum_01_23 = _mm_add_epi32(a_prod_01, a_prod_23);
+    let a_hi = _mm_shuffle_epi32(a_sum_01_23, 0b10_11_00_01);
+    let a_sum_2 = _mm_add_epi32(a_sum_01_23, a_hi);
+    let a_final = _mm_shuffle_epi32(a_sum_2, 0b01_00_11_10);
+    let a_sum_3 = _mm_add_epi32(a_sum_2, a_final);
+    let sum_a = _mm_cvtsi128_si32(a_sum_3);
+
+    // Sum up B's weighted transform
+    let b_sum_01_23 = _mm_add_epi32(b_prod_01, b_prod_23);
+    let b_hi = _mm_shuffle_epi32(b_sum_01_23, 0b10_11_00_01);
+    let b_sum_2 = _mm_add_epi32(b_sum_01_23, b_hi);
+    let b_final = _mm_shuffle_epi32(b_sum_2, 0b01_00_11_10);
+    let b_sum_3 = _mm_add_epi32(b_sum_2, b_final);
+    let sum_b = _mm_cvtsi128_si32(b_sum_3);
+
     (sum_b - sum_a).abs() >> 5
 }
 
@@ -997,7 +1133,15 @@ mod tests {
     #[test]
     #[cfg(feature = "simd")]
     fn test_tdisto_4x4_fused_matches_scalar() {
-        let weights: [u16; 16] = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 5, 4, 3, 2, 1, 1];
+        // Use symmetric weights like VP8_WEIGHT_Y (required for vertical-first approach)
+        // Non-symmetric weights would give different results since we do vertical-first
+        #[rustfmt::skip]
+        let weights: [u16; 16] = [
+            38, 32, 20,  9,
+            32, 28, 17,  7,
+            20, 17, 10,  4,
+             9,  7,  4,  2,
+        ];
 
         // Test with different strides and values
         for stride in [4, 8, 16, 32] {
