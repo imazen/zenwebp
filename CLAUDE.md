@@ -658,6 +658,32 @@ let region: &mut [u8; V_FILTER_REGION] =
 - **Result:** ~10% decode speedup, now ~1.15x vs libwebp (from ~1.28x)
 - Memory overhead: ~170KB per decode (57KB × 3 planes, negligible for typical images)
 
+**`unchecked` feature (2026-02-05, IMPLEMENTED):**
+
+For maximum performance with trusted input, the `unchecked` feature eliminates ALL bounds
+checks in loop filter hot paths using raw pointer arithmetic:
+
+```toml
+[dependencies]
+zenwebp = { version = "0.2.1", features = ["simd", "unchecked"] }
+```
+
+Unchecked filter functions implemented:
+- `simple_v_filter16_unchecked` - simple vertical filter
+- `normal_v_filter16_inner_unchecked` - normal vertical inner filter
+- `normal_v_filter16_edge_unchecked` - normal vertical edge filter
+- `simple_h_filter16_unchecked` - simple horizontal filter
+- `normal_h_filter16_inner_unchecked` - normal horizontal inner filter
+- `normal_h_filter16_edge_unchecked` - normal horizontal edge filter
+
+Assembly comparison (simple_h_filter16):
+- Safe version: ~30 bounds check instructions (`cmp`, `ja`, `jbe`) per call
+- Unchecked version: zero bounds check instructions
+
+**WARNING:** Only enable `unchecked` if you trust your WebP input (e.g., self-generated
+files, trusted sources). Malformed input may cause undefined behavior instead of clean
+error returns.
+
 ### Detailed Callgrind/Cachegrind Analysis (2026-01-23)
 
 **Per-decode instruction count (after chroma vertical SIMD):**
