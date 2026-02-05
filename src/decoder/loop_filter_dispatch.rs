@@ -73,6 +73,37 @@ pub(crate) fn simple_filter_vertical_16_cols(
     }
 }
 
+/// Helper to apply simple vertical filter to 32 columns with AVX2.
+/// Filters the horizontal edge at row y0, processing 32 columns (2 macroblocks) at once.
+/// This is 2x faster than two calls to simple_filter_vertical_16_cols.
+#[inline]
+#[allow(dead_code)]
+pub(crate) fn simple_filter_vertical_32_cols(
+    buf: &mut [u8],
+    y0: usize,
+    x_start: usize,
+    stride: usize,
+    edge_limit: u8,
+    simd_token: SimdTokenType,
+) {
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    if let Some(token) = simd_token {
+        let point = y0 * stride + x_start;
+        super::loop_filter_avx2::simple_v_filter32(
+            token,
+            buf,
+            point,
+            stride,
+            i32::from(edge_limit),
+        );
+        return;
+    }
+
+    // Fallback: two 16-column filters
+    simple_filter_vertical_16_cols(buf, y0, x_start, stride, edge_limit, simd_token);
+    simple_filter_vertical_16_cols(buf, y0, x_start + 16, stride, edge_limit, simd_token);
+}
+
 /// Helper to apply normal vertical macroblock filter to 16 columns with SIMD when available.
 /// Filters the horizontal edge at row y0, processing all 16 columns at once.
 #[inline]
