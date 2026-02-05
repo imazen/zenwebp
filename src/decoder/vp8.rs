@@ -1690,9 +1690,9 @@ impl<'a> Vp8Decoder<'a> {
             self.output_row_from_cache(mby);
             self.rotate_extra_rows();
 
-            self.left_border_y = vec![129u8; 1 + 16];
-            self.left_border_u = vec![129u8; 1 + 8];
-            self.left_border_v = vec![129u8; 1 + 8];
+            self.left_border_y.fill(129u8);
+            self.left_border_u.fill(129u8);
+            self.left_border_v.fill(129u8);
         }
 
         let diagnostic = DiagnosticFrame {
@@ -1767,9 +1767,9 @@ impl<'a> Vp8Decoder<'a> {
             self.output_row_from_cache(mby);
             self.rotate_extra_rows();
 
-            self.left_border_y = vec![129u8; 1 + 16];
-            self.left_border_u = vec![129u8; 1 + 8];
-            self.left_border_v = vec![129u8; 1 + 8];
+            self.left_border_y.fill(129u8);
+            self.left_border_u.fill(129u8);
+            self.left_border_v.fill(129u8);
         }
 
         Ok(self.frame)
