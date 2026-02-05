@@ -318,9 +318,10 @@ fn yuv420_to_rgb_row_inner(
     dst: &mut [u8],
 ) {
     let len = y.len();
-    debug_assert!(u.len() >= len.div_ceil(2));
-    debug_assert!(v.len() >= len.div_ceil(2));
-    debug_assert!(dst.len() >= len * 3);
+    // Assert bounds upfront to elide checks in SIMD loads/stores
+    assert!(u.len() >= len.div_ceil(2));
+    assert!(v.len() >= len.div_ceil(2));
+    assert!(dst.len() >= len * 3);
 
     let mut n = 0usize;
 
@@ -371,9 +372,10 @@ fn yuv420_to_rgba_row_inner(
     dst: &mut [u8],
 ) {
     let len = y.len();
-    debug_assert!(u.len() >= len.div_ceil(2));
-    debug_assert!(v.len() >= len.div_ceil(2));
-    debug_assert!(dst.len() >= len * 4);
+    // Assert bounds upfront to elide checks in SIMD loads/stores
+    assert!(u.len() >= len.div_ceil(2));
+    assert!(v.len() >= len.div_ceil(2));
+    assert!(dst.len() >= len * 4);
 
     let k_alpha = _mm_set1_epi16(255);
     let mut n = 0usize;

@@ -949,7 +949,9 @@ impl<'a> Vp8Decoder<'a> {
         dcq: i16,
         acq: i16,
     ) -> Result<bool, DecodingError> {
-        debug_assert!(complexity <= 2);
+        // Assert bounds upfront to elide checks in probs indexing
+        assert!(complexity <= 2);
+        assert!(block_idx < 24, "block_idx must be < 24");
 
         let first = if plane == Plane::YCoeff1 { 1 } else { 0 };
         // Use position-indexed table to avoid COEFF_BANDS lookup in hot path
@@ -1056,7 +1058,8 @@ impl<'a> Vp8Decoder<'a> {
         dcq: i16,
         acq: i16,
     ) -> Result<bool, DecodingError> {
-        debug_assert!(complexity <= 2);
+        // Assert bounds upfront to elide checks in probs indexing
+        assert!(complexity <= 2);
 
         let first = if plane == Plane::YCoeff1 { 1 } else { 0 };
         // Use position-indexed table to avoid COEFF_BANDS lookup in hot path
