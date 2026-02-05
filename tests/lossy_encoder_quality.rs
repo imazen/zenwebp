@@ -502,9 +502,10 @@ fn presets_produce_different_file_sizes() {
 fn preset_overrides_work() {
     use zenwebp::{EncoderConfig, Preset};
 
-    let img = create_checkerboard_image(256, 256);
+    // Use noisy image - checkerboard is too uniform for filter/SNS to matter
+    let img = create_noise_image(256, 256);
 
-    // Default preset with default filter
+    // Default preset with default filter (SNS=50, filter=60)
     let default_size = EncoderConfig::with_preset(Preset::Default, 75.0)
         .method(4)
         .encode_rgb(&img, 256, 256)
@@ -527,9 +528,10 @@ fn preset_overrides_work() {
     );
 
     // Overrides should produce different output than default
+    // For noisy images, SNS affects size significantly
     assert_ne!(
         default_size, no_filter_size,
-        "Filter override should change output"
+        "Filter/SNS override should change output on noisy images"
     );
 }
 
