@@ -100,5 +100,9 @@ harness = false
 name = "encode_vs_libwebp"
 harness = false
 
+[[bench]]
+name = "decode_benchmark"
+harness = false
+
 [dev-dependencies.image-webp]
 version = "0.2"
