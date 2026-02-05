@@ -534,15 +534,16 @@ The crate supports `no_std` environments with the `alloc` crate:
 - `Encoder.encode_to_writer()` requires `std` feature
 - Dependencies: `thiserror` (no_std), `whereat` (no_std), `hashbrown` (no_std), `libm` (floating-point math)
 
-### Decoder Performance vs libwebp (2026-02-05, after fused IDCT)
+### Decoder Performance vs libwebp (2026-02-04, after bounds check elision)
 
-| Image Size | zenwebp | libwebp | Ratio |
-|------------|---------|---------|-------|
-| CID22 512x512 | 112-163 MPix/s | 139-195 MPix/s | **1.15-1.31x** slower |
+| Corpus | zenwebp | libwebp | Ratio |
+|--------|---------|---------|-------|
+| CLIC2025 (10 images) | 150-276 MPix/s | 180-280 MPix/s | **0.93-1.25x** |
 
-*Benchmarks: 50 iterations per image, release mode with SIMD*
+*Benchmarks: 10 iterations per image, release mode with SIMD*
 
-Our decoder averages ~1.21x slower than libwebp on 512x512 images.
+Our decoder averages **~1.15x slower** than libwebp, with one image now **faster** (0.93x).
+Improved from ~1.28x after fixed-region bounds check elimination.
 
 **Recent optimizations (2026-02-05):**
 - **Fused IDCT + add_residue**: Combines IDCT and residual addition in one SIMD pass
@@ -575,9 +576,12 @@ R,G,B planes to interleaved RGB. When processing 16 pixels, we pass zeros for ha
 inputs which wastes operations. A specialized 16-pixel interleave using SSSE3 shuffles
 would be faster in theory, but archmage's function call overhead makes it worse.
 
-**Recent optimization (2026-02-04):**
-- **Fused add_residue + coefficient clear** - Combines adding residuals with zeroing in one
-  SIMD pass, eliminating separate fill(0) calls. 8.3% instruction reduction on CLIC2025.
+**Recent optimizations:**
+- **Fixed-region bounds check elimination (2026-02-04)** - Add FILTER_PADDING (57KB) to pixel
+  buffers, enabling fixed-size region extraction that eliminates per-access bounds checks.
+  ~10% overall decode speedup. Memory overhead: ~170KB per decode.
+- **Fused add_residue + coefficient clear (2026-02-04)** - Combines adding residuals with zeroing
+  in one SIMD pass, eliminating separate fill(0) calls. 8.3% instruction reduction.
 
 Previous optimizations:
 - **SIMD chroma vertical loop filter** - U+V processed together as 16 pixels (10% speedup, 2026-01-23)
@@ -629,20 +633,20 @@ Note: `add_residue_sse2` is now inlined via `add_residue_and_clear_sse2`.
 - This is the cost of safe Rust without `unsafe`; the compiler cannot prove slice
   operations are valid based on earlier asserts due to generic `try_from` internals
 
-**Fixed-region bounds check experiment (2026-02-04):**
-Tested using fixed-size arrays to eliminate bounds checks:
+**Fixed-region bounds check elimination (2026-02-04, IMPLEMENTED):**
+Using fixed-size arrays eliminates per-access bounds checks:
 ```rust
 const V_FILTER_REGION: usize = 3 * MAX_STRIDE + 16;
 let region: &mut [u8; V_FILTER_REGION] =
     <&mut [u8; V_FILTER_REGION]>::try_from(&mut pixels[start..start + V_FILTER_REGION]).unwrap();
 // All subsequent region[offset..] accesses have NO bounds checks
 ```
-- Benchmark results: 2.85x speedup for 16-row scalar filter, 10% for single-pixel filter
 - Assembly confirmed: interior accesses use direct memory loads with no checks
-- **Problem:** V_FILTER_REGION = 3*8192+16 = 24KB for 8K image support
-- Near image boundaries or in tests with small buffers, the region doesn't fit
-- **Conclusion:** Fixed-region works but is impractical for loop filter due to region size
-- Alternative would be `unsafe` pointer arithmetic (not compatible with `#![forbid(unsafe_code)]`)
+- **Solution:** Add FILTER_PADDING (57KB for normal filter, 8K support) to pixel buffers
+- Updated: `ybuf/ubuf/vbuf` and `cache_y/u/v` allocations include padding
+- Updated: `simple_v_filter16`, `normal_v_filter16_inner`, `normal_v_filter16_edge`
+- **Result:** ~10% decode speedup, now ~1.15x vs libwebp (from ~1.28x)
+- Memory overhead: ~170KB per decode (57KB × 3 planes, negligible for typical images)
 
 ### Detailed Callgrind/Cachegrind Analysis (2026-01-23)
 
