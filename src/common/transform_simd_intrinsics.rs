@@ -915,6 +915,163 @@ pub(crate) fn idct_add_residue_inplace_with_token(
 }
 
 // =============================================================================
+// In-place fused IDCT + add_residue for encoder
+// =============================================================================
+
+/// In-place fused IDCT + add residue with dispatch (no token needed).
+/// Reads prediction from `block[y0*stride+x0..]`, performs IDCT on coefficients,
+/// adds residual to prediction, clamps 0-255, stores back, and clears coefficients.
+///
+/// DC-only fast path when `dc_only` is true (skips full IDCT, just adds constant).
+#[inline(always)]
+pub(crate) fn idct_add_residue_inplace(
+    coeffs: &mut [i32; 16],
+    block: &mut [u8],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+    dc_only: bool,
+) {
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    {
+        if let Some(token) = X64V3Token::summon() {
+            idct_add_residue_inplace_sse2(token, coeffs, block, y0, x0, stride, dc_only);
+            return;
+        }
+    }
+    // Scalar fallback: IDCT then add
+    if dc_only {
+        let dc = coeffs[0];
+        let dc_adj = ((dc + 4) >> 3) as i32;
+        for row in 0..4 {
+            let pos = (y0 + row) * stride + x0;
+            for col in 0..4 {
+                let p = block[pos + col] as i32;
+                block[pos + col] = (p + dc_adj).clamp(0, 255) as u8;
+            }
+        }
+    } else {
+        crate::common::transform::idct4x4_scalar(coeffs);
+        let mut pos = y0 * stride + x0;
+        for row in coeffs.chunks(4) {
+            for (p, &a) in block[pos..][..4].iter_mut().zip(row.iter()) {
+                *p = (a + i32::from(*p)).clamp(0, 255) as u8;
+            }
+            pos += stride;
+        }
+    }
+    coeffs.fill(0);
+}
+
+// =============================================================================
+// Fused Residual + DCT for single 4x4 block from flat u8 arrays
+// =============================================================================
+
+/// Fused residual computation + DCT for a single 4x4 block.
+/// Takes flat u8 source and reference arrays (stride=4), outputs i32 coefficients.
+///
+/// Replaces: manual residual loop + dct4x4() in I4 inner loop.
+/// Benefit: avoids i32 intermediate for residuals; computes directly in i16.
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[inline(always)]
+pub(crate) fn ftransform_from_u8_4x4(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
+    if let Some(token) = X64V3Token::summon() {
+        ftransform_from_u8_4x4_sse2(token, src, ref_)
+    } else {
+        ftransform_from_u8_4x4_scalar(src, ref_)
+    }
+}
+
+/// Scalar fallback for non-x86 platforms
+#[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
+#[inline(always)]
+pub(crate) fn ftransform_from_u8_4x4(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
+    ftransform_from_u8_4x4_scalar(src, ref_)
+}
+
+/// Scalar implementation of fused residual+DCT
+fn ftransform_from_u8_4x4_scalar(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
+    let mut block = [0i32; 16];
+    for i in 0..16 {
+        block[i] = src[i] as i32 - ref_[i] as i32;
+    }
+    crate::common::transform::dct4x4_scalar(&mut block);
+    block
+}
+
+/// SSE2 fused residual+DCT for single 4x4 block from flat u8[16] arrays.
+/// Loads bytes, computes diff as i16, runs DCT pass1+pass2, outputs i32[16].
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[arcane]
+fn ftransform_from_u8_4x4_sse2(
+    _token: X64V3Token,
+    src: &[u8; 16],
+    ref_: &[u8; 16],
+) -> [i32; 16] {
+    let zero = _mm_setzero_si128();
+
+    // Load all 16 source bytes and 16 reference bytes as single 128-bit loads
+    let src_all = simd_mem::_mm_loadu_si128(src);
+    let ref_all = simd_mem::_mm_loadu_si128(ref_);
+
+    // Zero-extend u8 to i16
+    let src_lo = _mm_unpacklo_epi8(src_all, zero); // src[0..8] as i16
+    let src_hi = _mm_unpackhi_epi8(src_all, zero); // src[8..16] as i16
+    let ref_lo = _mm_unpacklo_epi8(ref_all, zero); // ref[0..8] as i16
+    let ref_hi = _mm_unpackhi_epi8(ref_all, zero); // ref[8..16] as i16
+
+    // Compute difference (src - ref) as i16 (range -255..255, fits i16)
+    let diff_lo = _mm_sub_epi16(src_lo, ref_lo); // diff[0..8]
+    let diff_hi = _mm_sub_epi16(src_hi, ref_hi); // diff[8..16]
+
+    // diff_lo = [d00, d01, d02, d03, d10, d11, d12, d13]
+    // diff_hi = [d20, d21, d22, d23, d30, d31, d32, d33]
+    // Reorganize into libwebp's interleaved layout for ftransform_pass1_i16:
+    // in01 = [r0c0, r0c1, r1c0, r1c1, r0c2, r0c3, r1c2, r1c3]
+    // in23 = [r2c0, r2c1, r3c0, r3c1, r2c2, r2c3, r3c2, r3c3]
+
+    // diff_lo already has rows 0,1 interleaved as pairs of 32-bit (2 i16 per pair)
+    // Need: [d00,d01,d10,d11, d02,d03,d12,d13]
+    // diff_lo = [d00,d01,d02,d03, d10,d11,d12,d13]
+    // Interleave 32-bit words: unpacklo_epi32 + unpackhi_epi32
+    let in01 = _mm_unpacklo_epi32(diff_lo, _mm_unpackhi_epi64(diff_lo, diff_lo));
+    // = [d00,d01, d10,d11, d02,d03, d12,d13] ✓
+
+    // Same for rows 2,3
+    let in23 = _mm_unpacklo_epi32(diff_hi, _mm_unpackhi_epi64(diff_hi, diff_hi));
+    // = [d20,d21, d30,d31, d22,d23, d32,d33] ✓
+
+    // Forward transform pass 1 (rows)
+    let (v01, v32) = ftransform_pass1_i16(_token, in01, in23);
+
+    // Forward transform pass 2 (columns)
+    let mut out16 = [0i16; 16];
+    ftransform_pass2_i16(_token, &v01, &v32, &mut out16);
+
+    // Convert i16 output to i32 using SIMD sign extension
+    let out01 = simd_mem::_mm_loadu_si128(<&[i16; 8]>::try_from(&out16[0..8]).unwrap());
+    let out23 = simd_mem::_mm_loadu_si128(<&[i16; 8]>::try_from(&out16[8..16]).unwrap());
+
+    let sign01 = _mm_cmpgt_epi16(zero, out01);
+    let sign23 = _mm_cmpgt_epi16(zero, out23);
+
+    let out_0 = _mm_unpacklo_epi16(out01, sign01);
+    let out_1 = _mm_unpackhi_epi16(out01, sign01);
+    let out_2 = _mm_unpacklo_epi16(out23, sign23);
+    let out_3 = _mm_unpackhi_epi16(out23, sign23);
+
+    let mut result = [0i32; 16];
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut result[0..4]).unwrap(), out_0);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut result[4..8]).unwrap(), out_1);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut result[8..12]).unwrap(), out_2);
+    simd_mem::_mm_storeu_si128(
+        <&mut [i32; 4]>::try_from(&mut result[12..16]).unwrap(),
+        out_3,
+    );
+    result
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -995,6 +1152,56 @@ mod tests {
 
         // Should get back original (or very close due to rounding)
         assert_eq!(original, block, "Roundtrip failed");
+    }
+
+    #[test]
+    fn test_ftransform_from_u8_4x4() {
+        // Create test data: flat 4x4 blocks
+        let src: [u8; 16] = [
+            100, 108, 116, 124, 132, 140, 148, 156, 164, 172, 180, 188, 196, 204, 212, 220,
+        ];
+        let ref_: [u8; 16] = [128; 16];
+
+        // Use fused function
+        let simd_result = ftransform_from_u8_4x4(&src, &ref_);
+
+        // Compute expected result using scalar path
+        let mut expected = [0i32; 16];
+        for i in 0..16 {
+            expected[i] = src[i] as i32 - ref_[i] as i32;
+        }
+        crate::common::transform::dct4x4_scalar(&mut expected);
+
+        assert_eq!(
+            simd_result, expected,
+            "ftransform_from_u8_4x4 mismatch.\nSIMD: {:?}\nExpected: {:?}",
+            simd_result, expected
+        );
+    }
+
+    #[test]
+    fn test_ftransform_from_u8_4x4_varied() {
+        // Test with varied pixel values
+        let src: [u8; 16] = [
+            38, 6, 210, 107, 42, 125, 185, 151, 241, 224, 125, 233, 227, 8, 57, 96,
+        ];
+        let ref_: [u8; 16] = [
+            100, 50, 200, 80, 60, 130, 170, 140, 230, 210, 120, 220, 200, 20, 70, 110,
+        ];
+
+        let simd_result = ftransform_from_u8_4x4(&src, &ref_);
+
+        let mut expected = [0i32; 16];
+        for i in 0..16 {
+            expected[i] = src[i] as i32 - ref_[i] as i32;
+        }
+        crate::common::transform::dct4x4_scalar(&mut expected);
+
+        assert_eq!(
+            simd_result, expected,
+            "ftransform_from_u8_4x4 varied mismatch.\nSIMD: {:?}\nExpected: {:?}",
+            simd_result, expected
+        );
     }
 
     #[test]

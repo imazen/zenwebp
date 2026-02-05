@@ -475,3 +475,292 @@ pub fn quantize_ac_only_simd(
     matrix.quantize_ac_only(coeffs);
     coeffs[1..].iter().any(|&c| c != 0)
 }
+
+// =============================================================================
+// Fused Quantize + Dequantize SIMD
+// =============================================================================
+
+/// Fused quantize+dequantize: produces both quantized levels and dequantized
+/// values (quantized * q) in a single SIMD pass. Returns true if any coefficient
+/// is non-zero. Coefficients are in natural (raster) order.
+///
+/// This matches libwebp's DoQuantizeBlock_SSE2 dual-output pattern where
+/// dequantized values are computed immediately after quantization.
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+pub fn quantize_dequantize_block_simd(
+    coeffs: &[i32; 16],
+    matrix: &VP8Matrix,
+    use_sharpen: bool,
+    quantized: &mut [i32; 16],
+    dequantized: &mut [i32; 16],
+) -> bool {
+    if let Some(token) = X64V3Token::summon() {
+        quantize_dequantize_block_sse2(token, coeffs, matrix, use_sharpen, quantized, dequantized)
+    } else {
+        quantize_dequantize_block_scalar(coeffs, matrix, quantized, dequantized)
+    }
+}
+
+/// Scalar fallback for non-SIMD platforms
+#[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+pub fn quantize_dequantize_block_simd(
+    coeffs: &[i32; 16],
+    matrix: &VP8Matrix,
+    _use_sharpen: bool,
+    quantized: &mut [i32; 16],
+    dequantized: &mut [i32; 16],
+) -> bool {
+    quantize_dequantize_block_scalar(coeffs, matrix, quantized, dequantized)
+}
+
+/// Scalar implementation of fused quantize+dequantize
+fn quantize_dequantize_block_scalar(
+    coeffs: &[i32; 16],
+    matrix: &VP8Matrix,
+    quantized: &mut [i32; 16],
+    dequantized: &mut [i32; 16],
+) -> bool {
+    let mut has_nz = false;
+    for pos in 0..16 {
+        quantized[pos] = matrix.quantize_coeff(coeffs[pos], pos);
+        dequantized[pos] = quantized[pos] * matrix.q[pos] as i32;
+        if quantized[pos] != 0 {
+            has_nz = true;
+        }
+    }
+    has_nz
+}
+
+/// SSE2 fused quantize+dequantize.
+/// Quantizes coefficients, then immediately multiplies by q to get dequantized values.
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[arcane]
+fn quantize_dequantize_block_sse2(
+    _token: X64V3Token,
+    coeffs: &[i32; 16],
+    matrix: &VP8Matrix,
+    use_sharpen: bool,
+    quantized: &mut [i32; 16],
+    dequantized: &mut [i32; 16],
+) -> bool {
+    let max_coeff = _mm_set1_epi16(MAX_LEVEL as i16);
+    let zero = _mm_setzero_si128();
+
+    // Pack i32 coefficients to i16
+    let c0_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
+    let c1_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
+    let c2_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
+    let c3_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+
+    let in0 = _mm_packs_epi32(c0_32, c1_32);
+    let in8 = _mm_packs_epi32(c2_32, c3_32);
+
+    // Load quantization parameters
+    let iq0 = _mm_set_epi16(
+        matrix.iq[7] as i16, matrix.iq[6] as i16, matrix.iq[5] as i16, matrix.iq[4] as i16,
+        matrix.iq[3] as i16, matrix.iq[2] as i16, matrix.iq[1] as i16, matrix.iq[0] as i16,
+    );
+    let iq8 = _mm_set_epi16(
+        matrix.iq[15] as i16, matrix.iq[14] as i16, matrix.iq[13] as i16, matrix.iq[12] as i16,
+        matrix.iq[11] as i16, matrix.iq[10] as i16, matrix.iq[9] as i16, matrix.iq[8] as i16,
+    );
+
+    // Extract sign
+    let sign0 = _mm_cmpgt_epi16(zero, in0);
+    let sign8 = _mm_cmpgt_epi16(zero, in8);
+
+    // Absolute value
+    let mut coeff0 = _mm_sub_epi16(_mm_xor_si128(in0, sign0), sign0);
+    let mut coeff8 = _mm_sub_epi16(_mm_xor_si128(in8, sign8), sign8);
+
+    // Add sharpen if enabled
+    if use_sharpen {
+        let sharpen0 = _mm_set_epi16(
+            matrix.sharpen[7] as i16, matrix.sharpen[6] as i16,
+            matrix.sharpen[5] as i16, matrix.sharpen[4] as i16,
+            matrix.sharpen[3] as i16, matrix.sharpen[2] as i16,
+            matrix.sharpen[1] as i16, matrix.sharpen[0] as i16,
+        );
+        let sharpen8 = _mm_set_epi16(
+            matrix.sharpen[15] as i16, matrix.sharpen[14] as i16,
+            matrix.sharpen[13] as i16, matrix.sharpen[12] as i16,
+            matrix.sharpen[11] as i16, matrix.sharpen[10] as i16,
+            matrix.sharpen[9] as i16, matrix.sharpen[8] as i16,
+        );
+        coeff0 = _mm_add_epi16(coeff0, sharpen0);
+        coeff8 = _mm_add_epi16(coeff8, sharpen8);
+    }
+
+    // Quantize: out = (coeff * iQ + B) >> QFIX
+    let coeff_iq0_h = _mm_mulhi_epu16(coeff0, iq0);
+    let coeff_iq0_l = _mm_mullo_epi16(coeff0, iq0);
+    let coeff_iq8_h = _mm_mulhi_epu16(coeff8, iq8);
+    let coeff_iq8_l = _mm_mullo_epi16(coeff8, iq8);
+
+    let out_00 = _mm_unpacklo_epi16(coeff_iq0_l, coeff_iq0_h);
+    let out_04 = _mm_unpackhi_epi16(coeff_iq0_l, coeff_iq0_h);
+    let out_08 = _mm_unpacklo_epi16(coeff_iq8_l, coeff_iq8_h);
+    let out_12 = _mm_unpackhi_epi16(coeff_iq8_l, coeff_iq8_h);
+
+    let bias_00 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&matrix.bias[0..4]).unwrap());
+    let bias_04 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&matrix.bias[4..8]).unwrap());
+    let bias_08 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&matrix.bias[8..12]).unwrap());
+    let bias_12 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&matrix.bias[12..16]).unwrap());
+
+    let out_00 = _mm_srai_epi32(_mm_add_epi32(out_00, bias_00), QFIX as i32);
+    let out_04 = _mm_srai_epi32(_mm_add_epi32(out_04, bias_04), QFIX as i32);
+    let out_08 = _mm_srai_epi32(_mm_add_epi32(out_08, bias_08), QFIX as i32);
+    let out_12 = _mm_srai_epi32(_mm_add_epi32(out_12, bias_12), QFIX as i32);
+
+    // Pack to i16 and clamp
+    let mut qout0 = _mm_packs_epi32(out_00, out_04);
+    let mut qout8 = _mm_packs_epi32(out_08, out_12);
+    qout0 = _mm_min_epi16(qout0, max_coeff);
+    qout8 = _mm_min_epi16(qout8, max_coeff);
+
+    // Apply sign back
+    qout0 = _mm_sub_epi16(_mm_xor_si128(qout0, sign0), sign0);
+    qout8 = _mm_sub_epi16(_mm_xor_si128(qout8, sign8), sign8);
+
+    // === Dequantize: dequantized = quantized * q ===
+    // Load q values as i16
+    let q0 = simd_mem::_mm_loadu_si128(<&[u16; 8]>::try_from(&matrix.q[0..8]).unwrap());
+    let q8 = simd_mem::_mm_loadu_si128(<&[u16; 8]>::try_from(&matrix.q[8..16]).unwrap());
+
+    // Multiply i16 * i16 (result fits in i16 for typical ranges)
+    let dq0 = _mm_mullo_epi16(qout0, q0);
+    let dq8 = _mm_mullo_epi16(qout8, q8);
+
+    // Store quantized values (sign-extend i16 to i32)
+    let qsign0 = _mm_cmpgt_epi16(zero, qout0);
+    let qsign8 = _mm_cmpgt_epi16(zero, qout8);
+
+    simd_mem::_mm_storeu_si128(
+        <&mut [i32; 4]>::try_from(&mut quantized[0..4]).unwrap(),
+        _mm_unpacklo_epi16(qout0, qsign0),
+    );
+    simd_mem::_mm_storeu_si128(
+        <&mut [i32; 4]>::try_from(&mut quantized[4..8]).unwrap(),
+        _mm_unpackhi_epi16(qout0, qsign0),
+    );
+    simd_mem::_mm_storeu_si128(
+        <&mut [i32; 4]>::try_from(&mut quantized[8..12]).unwrap(),
+        _mm_unpacklo_epi16(qout8, qsign8),
+    );
+    simd_mem::_mm_storeu_si128(
+        <&mut [i32; 4]>::try_from(&mut quantized[12..16]).unwrap(),
+        _mm_unpackhi_epi16(qout8, qsign8),
+    );
+
+    // Store dequantized values (sign-extend i16 to i32)
+    let dsign0 = _mm_cmpgt_epi16(zero, dq0);
+    let dsign8 = _mm_cmpgt_epi16(zero, dq8);
+
+    simd_mem::_mm_storeu_si128(
+        <&mut [i32; 4]>::try_from(&mut dequantized[0..4]).unwrap(),
+        _mm_unpacklo_epi16(dq0, dsign0),
+    );
+    simd_mem::_mm_storeu_si128(
+        <&mut [i32; 4]>::try_from(&mut dequantized[4..8]).unwrap(),
+        _mm_unpackhi_epi16(dq0, dsign0),
+    );
+    simd_mem::_mm_storeu_si128(
+        <&mut [i32; 4]>::try_from(&mut dequantized[8..12]).unwrap(),
+        _mm_unpacklo_epi16(dq8, dsign8),
+    );
+    simd_mem::_mm_storeu_si128(
+        <&mut [i32; 4]>::try_from(&mut dequantized[12..16]).unwrap(),
+        _mm_unpackhi_epi16(dq8, dsign8),
+    );
+
+    // Check if any coefficient is non-zero
+    let packed = _mm_packs_epi16(qout0, qout8);
+    _mm_movemask_epi8(_mm_cmpeq_epi8(packed, zero)) != 0xffff
+}
+
+/// Fused quantize+dequantize for AC-only (preserves DC at position 0).
+/// Used for Y1 blocks in I16 mode where DC goes to Y2 block.
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+pub fn quantize_dequantize_ac_only_simd(
+    coeffs: &[i32; 16],
+    matrix: &VP8Matrix,
+    use_sharpen: bool,
+    quantized: &mut [i32; 16],
+    dequantized: &mut [i32; 16],
+) -> bool {
+    let has_nz = quantize_dequantize_block_simd(
+        coeffs, matrix, use_sharpen, quantized, dequantized,
+    );
+    // Restore DC from input
+    quantized[0] = coeffs[0];
+    dequantized[0] = coeffs[0]; // DC will be handled by Y2 path
+    has_nz || quantized[1..].iter().any(|&c| c != 0)
+}
+
+/// Scalar fallback for non-SIMD platforms
+#[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+pub fn quantize_dequantize_ac_only_simd(
+    coeffs: &[i32; 16],
+    matrix: &VP8Matrix,
+    _use_sharpen: bool,
+    quantized: &mut [i32; 16],
+    dequantized: &mut [i32; 16],
+) -> bool {
+    let has_nz = quantize_dequantize_block_scalar(coeffs, matrix, quantized, dequantized);
+    quantized[0] = coeffs[0];
+    dequantized[0] = coeffs[0];
+    has_nz || quantized[1..].iter().any(|&c| c != 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_quantize_dequantize_block_matches_separate() {
+        let matrix = VP8Matrix::new(4, 6, MatrixType::Y1);
+        let coeffs: [i32; 16] = [
+            120, -45, 30, -15, 22, -8, 5, -3, 10, -6, 4, -2, 3, -1, 1, 0,
+        ];
+
+        let mut fused_quantized = [0i32; 16];
+        let mut fused_dequantized = [0i32; 16];
+        let fused_nz = quantize_dequantize_block_simd(
+            &coeffs, &matrix, true, &mut fused_quantized, &mut fused_dequantized,
+        );
+
+        let mut sep_quantized = coeffs;
+        quantize_block_simd(&mut sep_quantized, &matrix, true);
+        let mut sep_dequantized = sep_quantized;
+        matrix.dequantize_block(&mut sep_dequantized);
+        let sep_nz = sep_quantized.iter().any(|&c| c != 0);
+
+        assert_eq!(
+            fused_quantized, sep_quantized,
+            "Quantized mismatch.\nFused: {:?}\nSep: {:?}",
+            fused_quantized, sep_quantized
+        );
+        assert_eq!(
+            fused_dequantized, sep_dequantized,
+            "Dequantized mismatch.\nFused: {:?}\nSep: {:?}",
+            fused_dequantized, sep_dequantized
+        );
+        assert_eq!(fused_nz, sep_nz, "has_nz mismatch");
+    }
+
+    #[test]
+    fn test_quantize_dequantize_block_all_zero() {
+        let matrix = VP8Matrix::new(80, 100, MatrixType::UV);
+        let coeffs = [0i32; 16];
+
+        let mut quantized = [0i32; 16];
+        let mut dequantized = [0i32; 16];
+        let has_nz = quantize_dequantize_block_simd(
+            &coeffs, &matrix, false, &mut quantized, &mut dequantized,
+        );
+
+        assert!(!has_nz);
+        assert_eq!(quantized, [0; 16]);
+        assert_eq!(dequantized, [0; 16]);
+    }
+}
