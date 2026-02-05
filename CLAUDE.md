@@ -149,6 +149,12 @@ Test results on 512x512 CID22 image:
   - `idct_add_residue_inplace` — fused IDCT+add_residue with DC-only fast path
   - Eliminated double IDCT for I4 winning mode (save best_dequantized from inner loop)
   - **Result: 586M → 259M instructions (2.26x reduction), 2.99x → 1.28x vs libwebp**
+- **archmage 0.5 #[rite] conversion (2026-02-05):**
+  - Converted 15 inner `_sse2` functions from `#[arcane]` to `#[rite]`
+  - `#[rite]` applies `#[target_feature]` + `#[inline]` directly — no wrapper function
+  - Enables full inlining when called from arcane/rite context (e.g., evaluate_i4_modes_sse2)
+  - quantize_dequantize_block: 21.1M → 2.4M (inlined into I4 inner loop)
+  - **Result: 259M → 183M instructions (29% reduction), 1.28x → 0.90x vs libwebp**
 - **Fused tdisto_4x4 SIMD** - Port of libwebp's TTransform_SSE2: processes both blocks in parallel using
   vertical-first Hadamard (valid with symmetric weights). Now inlined, not a separate hotspot (2026-02-04)
 - **I4 mode cost precompute** - Cache all 10 mode costs before inner loop (avoid 3D table lookup, 2026-02-04)
@@ -167,19 +173,20 @@ Test results on 512x512 CID22 image:
 - **LTO + inline hints** - Added LTO and codegen-units=1 to release profile, plus #[inline] to
   hot helper functions (tdisto_*, is_flat_*, compute_filter_level). Marginal improvement (~5-8%).
 
-### Profiler Hot Spots (method 4, 2026-02-05, after fused SIMD primitives)
+### Profiler Hot Spots (method 4, 2026-02-05, after #[rite] conversion)
 | Function | % Instr | M instr | Notes |
 |----------|---------|---------|-------|
-| pick_best_intra4 | 24.2% | 62.7M | I4 mode selection (was inlined in choose_macroblock_info) |
-| choose_macroblock_info | 12.6% | 32.8M | I16/UV mode selection |
-| encode_image | 10.9% | 28.2M | Main encoding loop |
-| get_residual_cost_sse2 | 8.8% | 22.9M | Coefficient cost estimation (SIMD) |
-| quantize_dequantize_block | 8.1% | 21.1M | Fused quantize+dequantize (new) |
-| idct4x4_sse2 | 3.6% | 9.4M | IDCT (standalone calls) |
-| ftransform_from_u8_4x4 | 2.7% | 7.0M | Fused residual+DCT from u8 (new) |
-| idct_add_residue_inplace | 2.6% | 6.8M | Fused IDCT+add_residue (new) |
-| ftransform2_sse2 | 2.6% | 6.8M | Fused 2-block DCT |
-| record_coeff_tokens | 2.9% | 7.4M | Token recording |
+| evaluate_i4_modes_sse2 | 20.3% | 37.2M | I4 inner loop (inlines quantize/dequantize/SSE) |
+| encode_image | 13.3% | 24.4M | Main encoding loop |
+| get_residual_cost_sse2 | 12.5% | 22.9M | Coefficient cost estimation |
+| choose_macroblock_info | 10.3% | 18.9M | I16/UV mode selection |
+| convert_image_yuv | 5.2% | 9.5M | YUV conversion |
+| ftransform2 | 4.3% | 7.8M | Fused 2-block DCT |
+| record_coeff_tokens | 4.0% | 7.4M | Token recording |
+| idct_add_residue_inplace | 3.7% | 6.8M | Fused IDCT+add_residue |
+| pick_best_intra4 | 3.1% | 5.6M | I4 outer orchestration |
+| write_bool | 2.5% | 4.6M | Arithmetic encoding |
+| quantize_block (standalone) | 2.4% | 4.3M | Quantize (I16 path) |
 
 **Speed comparison (criterion, 792079.png 512x512, Q75, default target):**
 | Method | zenwebp | libwebp | Ratio |
@@ -189,8 +196,8 @@ Test results on 512x512 CID22 image:
 | 4 | 18.1ms | 10.8ms | **1.68x** |
 | 6 | 27.2ms | 16.7ms | **1.63x** |
 
-*Instruction ratio is 1.28x but wall-clock is ~1.68x due to memory access patterns and
-archmage dispatch overhead (~9.7M instructions in SIMD wrapper functions).*
+*Wall-clock is ~1.68x despite 0.90x instruction ratio — likely memory access patterns.
+archmage dispatch overhead eliminated via #[rite] conversion (was ~9.7M instructions).*
 
 **Performance optimization session (2026-02-04):**
 - Early exit in I4 mode loop (skip flatness/spectral/psy-rd when base RD exceeds best)
@@ -209,10 +216,10 @@ Note: `dct4x4`, `idct4x4`, `is_flat_coeffs`, `tdisto_4x4` are now inlined into p
 
 | Metric | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| Instructions | 259M | 203M | **1.28x** |
+| Instructions | 183M | 203M | **0.90x** |
 | Output size | 12,198 | 12,018 | 1.015x |
 
-*Previously 586M (2.99x), improved to 259M (1.28x) via fused SIMD primitives.*
+*Previously 586M (2.99x) → 259M (1.28x, fused SIMD) → 183M (0.90x, #[rite] inlining).*
 
 **CID22 corpus comparison (41 images, Q75, M4, SNS=0):**
 
@@ -220,29 +227,25 @@ Note: `dct4x4`, `idct4x4`, `is_flat_coeffs`, `tdisto_4x4` are now inlined into p
 |--------|---------|---------|-------|
 | Total size | 1,180,418 | 1,169,034 | 1.0097x |
 
-**Function-level comparison (per encode, 2026-02-05):**
+**Function-level comparison (per encode, 2026-02-05, after #[rite]):**
 
 | zenwebp | M instr | libwebp | M instr | Ratio |
 |---------|---------|---------|---------|-------|
-| pick_best_intra4 + choose_macroblock_info | 95.5M | PickBestIntra4 + quant_enc | 18.3M | 5.2x |
+| evaluate_i4 + choose_macroblock + pick_best_i4 | 61.7M | PickBestIntra4 + quant_enc | 18.3M | 3.4x |
 | get_residual_cost_sse2 | 22.9M | GetResidualCost_SSE2 | 9.7M | 2.4x |
-| quantize_dequantize (fused) | 21.1M | QuantizeBlock_SSE41 | 6.0M | 3.5x |
-| idct4x4 + idct_add_residue | 16.3M | ITransform_SSE2 | 15.9M | **1.02x** |
-| ftransform_from_u8 + ftransform2 | 13.8M | FTransform_SSE2 | 9.8M | 1.4x |
+| idct_add_residue + idct4x4 | 8.6M | ITransform_SSE2 | 15.9M | **0.54x** |
+| ftransform2 + ftransform_from_u8 | 9.6M | FTransform_SSE2 | 9.8M | **0.98x** |
 | record_coeff_tokens | 7.4M | VP8RecordCoeffTokens | 3.4M | 2.2x |
+| quantize_block (standalone) | 4.3M | QuantizeBlock_SSE41 | 6.0M | **0.72x** |
 
-**Fused SIMD primitives (2026-02-05, commit 1f829fa):**
-- `ftransform_from_u8_4x4`: fused residual+DCT from flat u8 arrays (I4 inner loop)
-- `quantize_dequantize_block_simd`: fused quantize+dequantize in single SIMD pass (I4, UV)
-- `quantize_dequantize_ac_only_simd`: AC-only variant (I16 Y1 blocks)
-- `idct_add_residue_inplace`: fused IDCT+add_residue with DC-only fast path (I16, UV)
-- Eliminated double IDCT for I4 winning mode (save best_dequantized from inner loop)
+*After #[rite] conversion: quantize/dequantize inlined into evaluate_i4_modes_sse2,
+no longer visible as separate functions. Mode selection overhead reduced from 5.2x to 3.4x.*
 
 **Remaining optimization opportunities:**
-1. Mode selection still 5.2x vs libwebp — archmage dispatch overhead (~9.7M in wrappers)
-2. Quantize dispatch: 21.1M total = 9.7M wrapper + 11.4M inner (wrapper is 46% overhead)
-3. Residual cost: 2.4x gap, tighter inner loop possible
-4. record_coeff_tokens: 2.2x gap, token emission overhead
+1. Mode selection still 3.4x vs libwebp — I4 inner loop orchestration overhead
+2. Residual cost: 2.4x gap, tighter inner loop possible
+3. record_coeff_tokens: 2.2x gap, token emission overhead
+4. Wall-clock still ~1.7x despite 0.90x instructions — memory access patterns
 
 **Profiling commands:**
 ```bash
