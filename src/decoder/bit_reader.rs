@@ -457,11 +457,11 @@ pub struct VP8BitReaderState {
 /// Owns the data and provides readers that borrow from it.
 pub struct VP8Partitions {
     /// All partition data concatenated
-    data: Box<[u8]>,
+    pub(crate) data: Box<[u8]>,
     /// (start offset, length) for each partition
-    boundaries: [(usize, usize); 8],
+    pub(crate) boundaries: [(usize, usize); 8],
     /// Current state for each partition
-    states: [VP8BitReaderState; 8],
+    pub(crate) states: [VP8BitReaderState; 8],
     /// Number of active partitions
     num_partitions: usize,
 }
@@ -496,8 +496,9 @@ impl VP8Partitions {
         }
     }
 
-    /// Get a reader for partition p
+    /// Get a reader for partition p (copies state, saves on drop)
     #[inline]
+    #[allow(dead_code)]
     pub fn reader(&mut self, p: usize) -> PartitionReader<'_> {
         let (start, len) = self.boundaries[p];
         let state = self.states[p];
@@ -505,6 +506,18 @@ impl VP8Partitions {
             data: &self.data[start..start + len],
             state,
             save_to: &mut self.states[p],
+        }
+    }
+
+    /// Get an active reader for partition p (borrows state directly, no copy overhead).
+    /// Use this when reading many blocks from the same partition.
+    #[inline]
+    #[allow(dead_code)]
+    pub fn active_reader(&mut self, p: usize) -> ActivePartitionReader<'_> {
+        let (start, len) = self.boundaries[p];
+        ActivePartitionReader {
+            data: &self.data[start..start + len],
+            state: &mut self.states[p],
         }
     }
 
@@ -658,6 +671,7 @@ impl<'a> PartitionReader<'a> {
     }
 
     #[inline(always)]
+    #[allow(dead_code)]
     pub fn is_eof(&self) -> bool {
         self.state.eof
     }
@@ -666,6 +680,110 @@ impl<'a> PartitionReader<'a> {
 impl Drop for PartitionReader<'_> {
     fn drop(&mut self) {
         *self.save_to = self.state;
+    }
+}
+
+/// An active reader that borrows partition state directly (no copy overhead).
+/// Use for reading many consecutive blocks from the same partition.
+pub struct ActivePartitionReader<'a> {
+    data: &'a [u8],
+    state: &'a mut VP8BitReaderState,
+}
+
+impl<'a> ActivePartitionReader<'a> {
+    /// Create a new active reader from explicit references.
+    /// Use this when you need to avoid borrowing the entire VP8Partitions struct.
+    #[inline]
+    pub fn new(data: &'a [u8], state: &'a mut VP8BitReaderState) -> Self {
+        Self { data, state }
+    }
+
+    #[cold]
+    fn load_final_bytes(&mut self) {
+        if self.state.pos < self.data.len() {
+            self.state.bits += 8;
+            self.state.value = u64::from(self.data[self.state.pos]) | (self.state.value << 8);
+            self.state.pos += 1;
+        } else if !self.state.eof {
+            self.state.value <<= 8;
+            self.state.bits += 8;
+            self.state.eof = true;
+        } else {
+            self.state.bits = 0;
+        }
+    }
+
+    #[inline(always)]
+    fn load_new_bytes(&mut self) {
+        let remaining = self.data.len() - self.state.pos;
+        if remaining >= BYTES_PER_LOAD {
+            let bits: u64;
+
+            #[cfg(target_pointer_width = "64")]
+            {
+                if remaining >= 8 {
+                    let in_bits_full = u64::from_be_bytes(
+                        self.data[self.state.pos..self.state.pos + 8]
+                            .try_into()
+                            .unwrap(),
+                    );
+                    bits = in_bits_full >> 8;
+                } else {
+                    let mut in_bits: u64 = 0;
+                    for &byte in self.data[self.state.pos..].iter().take(7) {
+                        in_bits = (in_bits << 8) | u64::from(byte);
+                    }
+                    bits = in_bits;
+                }
+            }
+
+            #[cfg(not(target_pointer_width = "64"))]
+            {
+                let mut in_bits: u64 = 0;
+                for i in 0..3 {
+                    in_bits = (in_bits << 8) | u64::from(self.data[self.state.pos + i]);
+                }
+                bits = in_bits;
+            }
+
+            self.state.value = bits | (self.state.value << BITS);
+            self.state.bits += BITS;
+            self.state.pos += BYTES_PER_LOAD;
+        } else {
+            self.load_final_bytes();
+        }
+    }
+
+    #[inline(always)]
+    pub fn get_bit(&mut self, prob: u8) -> i32 {
+        let mut range = self.state.range;
+        if self.state.bits < 0 {
+            self.load_new_bytes();
+        }
+
+        let pos = self.state.bits;
+        let split = (range.wrapping_mul(u32::from(prob))) >> 8;
+        let value = (self.state.value >> pos) as u32;
+        let bit = if value > split { 1 } else { 0 };
+
+        if bit != 0 {
+            range -= split;
+            self.state.value = self.state.value.wrapping_sub((u64::from(split) + 1) << pos);
+        } else {
+            range = split + 1;
+        }
+
+        let shift = 7 ^ (31 ^ range.leading_zeros() as i32);
+        range <<= shift;
+        self.state.bits -= shift;
+        self.state.range = range.wrapping_sub(1);
+
+        bit
+    }
+
+    #[inline(always)]
+    pub fn is_eof(&self) -> bool {
+        self.state.eof
     }
 }
 

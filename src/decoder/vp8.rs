@@ -29,7 +29,7 @@ use crate::common::prediction::*;
 use crate::common::types::*;
 use crate::slice_reader::SliceReader;
 
-use super::bit_reader::{VP8HeaderBitReader, VP8Partitions};
+use super::bit_reader::{ActivePartitionReader, VP8HeaderBitReader, VP8Partitions};
 use super::loop_filter_dispatch;
 use crate::common::transform;
 use loop_filter_dispatch::*;
@@ -325,6 +325,97 @@ impl Frame {
     pub fn get_buf_size(&self) -> usize {
         self.ybuf.len() * 3
     }
+}
+
+/// Read DCT coefficients using an active reader (avoids per-block reader creation overhead).
+/// Returns (has_nonzero_ac, eof_error).
+#[inline]
+fn read_coefficients_inline(
+    reader: &mut ActivePartitionReader<'_>,
+    output: &mut [i32],
+    probs: &[[[TreeNode; NUM_DCT_TOKENS - 1]; 3]; 17],
+    first: usize,
+    complexity: usize,
+    dcq: i16,
+    acq: i16,
+) -> Result<bool, DecodingError> {
+    debug_assert!(complexity <= 2);
+    debug_assert!(output.len() >= 16);
+
+    let mut n = first;
+    let mut prob = &probs[n][complexity];
+
+    while n < 16 {
+        if reader.get_bit(prob[0].prob) == 0 {
+            break;
+        }
+
+        while reader.get_bit(prob[1].prob) == 0 {
+            n += 1;
+            if n >= 16 {
+                if reader.is_eof() {
+                    return Err(DecodingError::BitStreamError);
+                }
+                return Ok(true);
+            }
+            prob = &probs[n][0];
+        }
+
+        let v: i32;
+        let next_ctx: usize;
+
+        if reader.get_bit(prob[2].prob) == 0 {
+            v = 1;
+            next_ctx = 1;
+        } else {
+            if reader.get_bit(prob[3].prob) == 0 {
+                if reader.get_bit(prob[4].prob) == 0 {
+                    v = 2;
+                } else {
+                    v = 3 + reader.get_bit(prob[5].prob);
+                }
+            } else {
+                if reader.get_bit(prob[6].prob) == 0 {
+                    if reader.get_bit(prob[7].prob) == 0 {
+                        v = 5 + reader.get_bit(159);
+                    } else {
+                        v = 7 + 2 * reader.get_bit(165) + reader.get_bit(145);
+                    }
+                } else {
+                    let bit1 = reader.get_bit(prob[8].prob);
+                    let bit0 = reader.get_bit(prob[9 + bit1 as usize].prob);
+                    let cat = (2 * bit1 + bit0) as usize;
+
+                    let cat_probs = &PROB_DCT_CAT[2 + cat];
+                    let mut extra = 0i32;
+                    for &p in cat_probs.iter() {
+                        if p == 0 {
+                            break;
+                        }
+                        extra = extra + extra + reader.get_bit(p);
+                    }
+                    v = 3 + (8 << cat) + extra;
+                }
+            }
+            next_ctx = 2;
+        }
+
+        let signed_v = if reader.get_bit(128) != 0 { -v } else { v };
+
+        let zigzag = ZIGZAG[n] as usize;
+        let q = if zigzag > 0 { acq } else { dcq };
+        output[zigzag] = signed_v * i32::from(q);
+
+        n += 1;
+        if n < 16 {
+            prob = &probs[n][next_ctx];
+        }
+    }
+
+    if reader.is_eof() {
+        return Err(DecodingError::BitStreamError);
+    }
+    Ok(n > first)
 }
 
 /// VP8 Decoder
@@ -965,195 +1056,6 @@ impl<'a> Vp8Decoder<'a> {
     /// Read DCT coefficients using libwebp's inline tree structure.
     /// This mirrors GetCoeffsFast from libwebp for maximum performance.
     /// Writes to self.coeff_blocks at the given block index.
-    fn read_coefficients_to_block(
-        &mut self,
-        block_idx: usize,
-        p: usize,
-        plane: Plane,
-        complexity: usize,
-        dcq: i16,
-        acq: i16,
-    ) -> Result<bool, DecodingError> {
-        debug_assert!(complexity <= 2);
-        debug_assert!(block_idx < 24, "block_idx must be < 24");
-
-        let first = if plane == Plane::YCoeff1 { 1 } else { 0 };
-        // Use position-indexed table to avoid COEFF_BANDS lookup in hot path
-        let probs = &self.token_probs_by_pos[plane as usize];
-        let mut reader = self.partitions.reader(p);
-
-        let mut n = first;
-        // Direct position indexing - compiler can prove n < 17
-        let mut prob = &probs[n][complexity];
-
-        while n < 16 {
-            if reader.get_bit(prob[0].prob) == 0 {
-                break;
-            }
-
-            while reader.get_bit(prob[1].prob) == 0 {
-                n += 1;
-                if n >= 16 {
-                    if reader.is_eof() {
-                        return Err(DecodingError::BitStreamError);
-                    }
-                    return Ok(true);
-                }
-                prob = &probs[n][0];
-            }
-
-            let v: i32;
-            let next_ctx: usize;
-
-            if reader.get_bit(prob[2].prob) == 0 {
-                v = 1;
-                next_ctx = 1;
-            } else {
-                if reader.get_bit(prob[3].prob) == 0 {
-                    if reader.get_bit(prob[4].prob) == 0 {
-                        v = 2;
-                    } else {
-                        v = 3 + reader.get_bit(prob[5].prob);
-                    }
-                } else {
-                    if reader.get_bit(prob[6].prob) == 0 {
-                        if reader.get_bit(prob[7].prob) == 0 {
-                            v = 5 + reader.get_bit(159);
-                        } else {
-                            v = 7 + 2 * reader.get_bit(165) + reader.get_bit(145);
-                        }
-                    } else {
-                        let bit1 = reader.get_bit(prob[8].prob);
-                        let bit0 = reader.get_bit(prob[9 + bit1 as usize].prob);
-                        let cat = (2 * bit1 + bit0) as usize;
-
-                        let cat_probs = &PROB_DCT_CAT[2 + cat];
-                        let mut extra = 0i32;
-                        for &p in cat_probs.iter() {
-                            if p == 0 {
-                                break;
-                            }
-                            extra = extra + extra + reader.get_bit(p);
-                        }
-                        v = 3 + (8 << cat) + extra;
-                    }
-                }
-                next_ctx = 2;
-            }
-
-            let signed_v = if reader.get_bit(128) != 0 { -v } else { v };
-
-            let zigzag = ZIGZAG[n] as usize;
-            let q = if zigzag > 0 { acq } else { dcq };
-            self.coeff_blocks[block_idx * 16 + zigzag] = signed_v * i32::from(q);
-
-            n += 1;
-            if n < 16 {
-                prob = &probs[n][next_ctx];
-            }
-        }
-
-        if reader.is_eof() {
-            return Err(DecodingError::BitStreamError);
-        }
-        Ok(n > first)
-    }
-
-    /// Read DCT coefficients into a provided buffer.
-    /// Used for Y2 (WHT) block which is processed separately.
-    fn read_coefficients(
-        &mut self,
-        block: &mut [i32; 16],
-        p: usize,
-        plane: Plane,
-        complexity: usize,
-        dcq: i16,
-        acq: i16,
-    ) -> Result<bool, DecodingError> {
-        debug_assert!(complexity <= 2);
-
-        let first = if plane == Plane::YCoeff1 { 1 } else { 0 };
-        // Use position-indexed table to avoid COEFF_BANDS lookup in hot path
-        let probs = &self.token_probs_by_pos[plane as usize];
-        let mut reader = self.partitions.reader(p);
-
-        let mut n = first;
-        // Direct position indexing - compiler can prove n < 17
-        let mut prob = &probs[n][complexity];
-
-        while n < 16 {
-            if reader.get_bit(prob[0].prob) == 0 {
-                break;
-            }
-
-            while reader.get_bit(prob[1].prob) == 0 {
-                n += 1;
-                if n >= 16 {
-                    if reader.is_eof() {
-                        return Err(DecodingError::BitStreamError);
-                    }
-                    return Ok(true);
-                }
-                prob = &probs[n][0];
-            }
-
-            let v: i32;
-            let next_ctx: usize;
-
-            if reader.get_bit(prob[2].prob) == 0 {
-                v = 1;
-                next_ctx = 1;
-            } else {
-                if reader.get_bit(prob[3].prob) == 0 {
-                    if reader.get_bit(prob[4].prob) == 0 {
-                        v = 2;
-                    } else {
-                        v = 3 + reader.get_bit(prob[5].prob);
-                    }
-                } else {
-                    if reader.get_bit(prob[6].prob) == 0 {
-                        if reader.get_bit(prob[7].prob) == 0 {
-                            v = 5 + reader.get_bit(159);
-                        } else {
-                            v = 7 + 2 * reader.get_bit(165) + reader.get_bit(145);
-                        }
-                    } else {
-                        let bit1 = reader.get_bit(prob[8].prob);
-                        let bit0 = reader.get_bit(prob[9 + bit1 as usize].prob);
-                        let cat = (2 * bit1 + bit0) as usize;
-
-                        let cat_probs = &PROB_DCT_CAT[2 + cat];
-                        let mut extra = 0i32;
-                        for &p in cat_probs.iter() {
-                            if p == 0 {
-                                break;
-                            }
-                            extra = extra + extra + reader.get_bit(p);
-                        }
-                        v = 3 + (8 << cat) + extra;
-                    }
-                }
-                next_ctx = 2;
-            }
-
-            let signed_v = if reader.get_bit(128) != 0 { -v } else { v };
-
-            let zigzag = ZIGZAG[n] as usize;
-            let q = if zigzag > 0 { acq } else { dcq };
-            block[zigzag] = signed_v * i32::from(q);
-
-            n += 1;
-            if n < 16 {
-                prob = &probs[n][next_ctx];
-            }
-        }
-
-        if reader.is_eof() {
-            return Err(DecodingError::BitStreamError);
-        }
-        Ok(n > first)
-    }
-
     fn read_residual_data(
         &mut self,
         mb: &mut MacroBlock,
@@ -1165,6 +1067,28 @@ impl<'a> Vp8Decoder<'a> {
         // After each IDCT, the block is left with transformed data for intra_predict to use.
         // intra_predict_* is responsible for clearing blocks after use.
         let sindex = mb.segmentid as usize;
+
+        // Extract quantizers upfront
+        let y2dc = self.segment[sindex].y2dc;
+        let y2ac = self.segment[sindex].y2ac;
+        let ydc = self.segment[sindex].ydc;
+        let yac = self.segment[sindex].yac;
+        let uvdc = self.segment[sindex].uvdc;
+        let uvac = self.segment[sindex].uvac;
+
+        // Split borrows: create active reader from partition fields directly
+        // This avoids the per-block PartitionReader creation overhead (~7.7M instructions/decode)
+        let (start, len) = self.partitions.boundaries[p];
+        let partition_data = &self.partitions.data[start..start + len];
+        let partition_state = &mut self.partitions.states[p];
+        let mut reader = ActivePartitionReader::new(partition_data, partition_state);
+
+        // Get references to other fields we need
+        let probs = &*self.token_probs_by_pos;
+        let coeff_blocks = &mut self.coeff_blocks;
+        let top = &mut self.top[mbx];
+        let left = &mut self.left;
+
         let mut plane = if mb.luma_mode == LumaMode::B {
             Plane::YCoeff0
         } else {
@@ -1172,38 +1096,50 @@ impl<'a> Vp8Decoder<'a> {
         };
 
         if plane == Plane::Y2 {
-            let complexity = self.top[mbx].complexity[0] + self.left.complexity[0];
+            let complexity = top.complexity[0] + left.complexity[0];
             let mut block = [0i32; 16];
-            let dcq = self.segment[sindex].y2dc;
-            let acq = self.segment[sindex].y2ac;
-            let n = self.read_coefficients(&mut block, p, plane, complexity as usize, dcq, acq)?;
+            let n = read_coefficients_inline(
+                &mut reader,
+                &mut block,
+                &probs[Plane::Y2 as usize],
+                0, // first
+                complexity as usize,
+                y2dc,
+                y2ac,
+            )?;
 
-            self.left.complexity[0] = if n { 1 } else { 0 };
-            self.top[mbx].complexity[0] = if n { 1 } else { 0 };
+            left.complexity[0] = if n { 1 } else { 0 };
+            top.complexity[0] = if n { 1 } else { 0 };
 
             transform::iwht4x4(&mut block);
 
             for (k, &val) in block.iter().enumerate() {
-                self.coeff_blocks[16 * k] = val;
+                coeff_blocks[16 * k] = val;
             }
 
             plane = Plane::YCoeff1;
         }
 
+        let first_y = if plane == Plane::YCoeff1 { 1 } else { 0 };
+
         for y in 0usize..4 {
-            let mut left = self.left.complexity[y + 1];
+            let mut left_ctx = left.complexity[y + 1];
             for x in 0usize..4 {
                 let i = x + y * 4;
-                let complexity = self.top[mbx].complexity[x + 1] + left;
-                let dcq = self.segment[sindex].ydc;
-                let acq = self.segment[sindex].yac;
+                let complexity = top.complexity[x + 1] + left_ctx;
 
-                let n =
-                    self.read_coefficients_to_block(i, p, plane, complexity as usize, dcq, acq)?;
+                let block_slice = &mut coeff_blocks[i * 16..][..16];
+                let n = read_coefficients_inline(
+                    &mut reader,
+                    block_slice,
+                    &probs[plane as usize],
+                    first_y,
+                    complexity as usize,
+                    ydc,
+                    yac,
+                )?;
 
-                // Get block slice for IDCT (after read_coefficients_to_block completes)
-                let block = &mut self.coeff_blocks[i * 16..][..16];
-                let block: &mut [i32; 16] = block.try_into().unwrap();
+                let block: &mut [i32; 16] = block_slice.try_into().unwrap();
 
                 if block[0] != 0 || n {
                     mb.non_zero_dct = true;
@@ -1214,36 +1150,36 @@ impl<'a> Vp8Decoder<'a> {
                     }
                 }
 
-                left = if n { 1 } else { 0 };
-                self.top[mbx].complexity[x + 1] = if n { 1 } else { 0 };
+                left_ctx = if n { 1 } else { 0 };
+                top.complexity[x + 1] = if n { 1 } else { 0 };
             }
 
-            self.left.complexity[y + 1] = left;
+            left.complexity[y + 1] = left_ctx;
         }
 
-        plane = Plane::Chroma;
+        // Chroma
+        let chroma_probs = &probs[Plane::Chroma as usize];
 
         for &j in &[5usize, 7usize] {
             for y in 0usize..2 {
-                let mut left = self.left.complexity[y + j];
+                let mut left_ctx = left.complexity[y + j];
 
                 for x in 0usize..2 {
                     let i = x + y * 2 + if j == 5 { 16 } else { 20 };
-                    let complexity = self.top[mbx].complexity[x + j] + left;
-                    let dcq = self.segment[sindex].uvdc;
-                    let acq = self.segment[sindex].uvac;
+                    let complexity = top.complexity[x + j] + left_ctx;
 
-                    let n = self.read_coefficients_to_block(
-                        i,
-                        p,
-                        plane,
+                    let block_slice = &mut coeff_blocks[i * 16..][..16];
+                    let n = read_coefficients_inline(
+                        &mut reader,
+                        block_slice,
+                        chroma_probs,
+                        0, // first
                         complexity as usize,
-                        dcq,
-                        acq,
+                        uvdc,
+                        uvac,
                     )?;
 
-                    let block = &mut self.coeff_blocks[i * 16..][..16];
-                    let block: &mut [i32; 16] = block.try_into().unwrap();
+                    let block: &mut [i32; 16] = block_slice.try_into().unwrap();
 
                     if block[0] != 0 || n {
                         mb.non_zero_dct = true;
@@ -1254,11 +1190,11 @@ impl<'a> Vp8Decoder<'a> {
                         }
                     }
 
-                    left = if n { 1 } else { 0 };
-                    self.top[mbx].complexity[x + j] = if n { 1 } else { 0 };
+                    left_ctx = if n { 1 } else { 0 };
+                    top.complexity[x + j] = if n { 1 } else { 0 };
                 }
 
-                self.left.complexity[y + j] = left;
+                left.complexity[y + j] = left_ctx;
             }
         }
 
