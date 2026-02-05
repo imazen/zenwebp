@@ -194,15 +194,22 @@ pub fn is_flat_source_16_scalar(src: &[u8], stride: usize) -> bool {
 fn is_flat_source_16_dispatch(src: &[u8], stride: usize) -> bool {
     use archmage::{SimdToken, X64V3Token};
     if let Some(token) = X64V3Token::summon() {
-        is_flat_source_16_sse2(token, src, stride)
+        is_flat_source_16_entry(token, src, stride)
     } else {
         is_flat_source_16_scalar(src, stride)
     }
 }
 
-/// SSE2 implementation: broadcast first pixel, compare 16 bytes per row.
+/// Entry shim for is_flat_source_16_sse2.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[archmage::arcane]
+fn is_flat_source_16_entry(_token: archmage::X64V3Token, src: &[u8], stride: usize) -> bool {
+    is_flat_source_16_sse2(_token, src, stride)
+}
+
+/// SSE2 implementation: broadcast first pixel, compare 16 bytes per row.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[archmage::rite]
 pub(crate) fn is_flat_source_16_sse2(
     _token: archmage::X64V3Token,
     src: &[u8],
@@ -248,15 +255,27 @@ pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
     use archmage::{SimdToken, X64V3Token};
 
     if let Some(token) = X64V3Token::summon() {
-        is_flat_coeffs_sse2(token, levels, num_blocks, thresh)
+        is_flat_coeffs_entry(token, levels, num_blocks, thresh)
     } else {
         is_flat_coeffs_scalar(levels, num_blocks, thresh)
     }
 }
 
-/// SSE2 implementation using archmage
+/// Entry shim for is_flat_coeffs_sse2.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[archmage::arcane]
+fn is_flat_coeffs_entry(
+    _token: archmage::X64V3Token,
+    levels: &[i16],
+    num_blocks: usize,
+    thresh: i32,
+) -> bool {
+    is_flat_coeffs_sse2(_token, levels, num_blocks, thresh)
+}
+
+/// SSE2 implementation using archmage
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[archmage::rite]
 pub(crate) fn is_flat_coeffs_sse2(
     _token: archmage::X64V3Token,
     levels: &[i16],

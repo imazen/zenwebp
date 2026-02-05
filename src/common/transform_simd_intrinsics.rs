@@ -10,7 +10,7 @@ use core::arch::x86_64::*;
 use core::arch::x86::*;
 
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-use archmage::{arcane, SimdToken, X64V3Token};
+use archmage::{arcane, rite, SimdToken, X64V3Token};
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 use safe_unaligned_simd::x86_64 as simd_mem;
 
@@ -23,7 +23,7 @@ use safe_unaligned_simd::x86_64 as simd_mem;
 #[inline(always)]
 pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
     if let Some(token) = X64V3Token::summon() {
-        dct4x4_sse2(token, block);
+        dct4x4_entry(token, block);
     } else {
         crate::common::transform::dct4x4_scalar(block);
     }
@@ -62,7 +62,7 @@ pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
 pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
     debug_assert!(block.len() >= 16);
     if let Some(token) = X64V3Token::summon() {
-        idct4x4_sse2(token, block);
+        idct4x4_entry(token, block);
     } else {
         crate::common::transform::idct4x4_scalar(block);
     }
@@ -79,7 +79,7 @@ pub(crate) fn idct4x4_intrinsics_with_token(
 ) {
     debug_assert!(block.len() >= 16);
     if let Some(token) = simd_token {
-        idct4x4_sse2(token, block);
+        idct4x4_entry(token, block);
     } else {
         crate::common::transform::idct4x4_scalar(block);
     }
@@ -133,7 +133,7 @@ pub(crate) fn dct4x4_two_intrinsics(block1: &mut [i32; 16], block2: &mut [i32; 1
     {
         // SSE4.1 implies SSE2; summon() is now fast (no env var check)
         if let Some(token) = X64V3Token::summon() {
-            dct4x4_two_sse2(token, block1, block2);
+            dct4x4_two_entry(token, block1, block2);
         } else {
             crate::common::transform::dct4x4_scalar(block1);
             crate::common::transform::dct4x4_scalar(block2);
@@ -177,10 +177,17 @@ pub(crate) fn dct4x4_two_intrinsics(block1: &mut [i32; 16], block2: &mut [i32; 1
 // SSE2 Implementation - matches libwebp's FTransform/ITransform
 // =============================================================================
 
+/// Entry shim for dct4x4_sse2
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[arcane]
+fn dct4x4_entry(_token: X64V3Token, block: &mut [i32; 16]) {
+    dct4x4_sse2(_token, block);
+}
+
 /// Forward DCT using SSE2 with i16 layout matching libwebp's FTransform
 /// Uses _mm_madd_epi16 for efficient multiply-accumulate
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-#[arcane]
+#[rite]
 fn dct4x4_sse2(_token: X64V3Token, block: &mut [i32; 16]) {
     // Convert i32 block to i16 and reorganize into libwebp's interleaved layout:
     // row01 = [r0c0, r0c1, r1c0, r1c1, r0c2, r0c3, r1c2, r1c3]
@@ -238,8 +245,7 @@ fn dct4x4_sse2(_token: X64V3Token, block: &mut [i32; 16]) {
 
 /// FTransform Pass 1 - matches libwebp FTransformPass1_SSE2 exactly
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-#[arcane]
-#[inline]
+#[rite]
 fn ftransform_pass1_i16(_token: X64V3Token, in01: __m128i, in23: __m128i) -> (__m128i, __m128i) {
     // Constants matching libwebp exactly
     let k937 = _mm_set1_epi32(937);
@@ -299,8 +305,7 @@ fn ftransform_pass1_i16(_token: X64V3Token, in01: __m128i, in23: __m128i) -> (__
 
 /// FTransform Pass 2 - matches libwebp FTransformPass2_SSE2 exactly
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-#[arcane]
-#[inline]
+#[rite]
 fn ftransform_pass2_i16(_token: X64V3Token, v01: &__m128i, v32: &__m128i, out: &mut [i16; 16]) {
     let zero = _mm_setzero_si128();
     let seven = _mm_set1_epi16(7);
@@ -347,9 +352,17 @@ fn ftransform_pass2_i16(_token: X64V3Token, v01: &__m128i, v32: &__m128i, out: &
     simd_mem::_mm_storeu_si128(<&mut [i16; 8]>::try_from(&mut out[8..16]).unwrap(), d2_f3);
 }
 
-/// Process two blocks at once
+/// Entry shim for dct4x4_two_sse2
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
+#[allow(dead_code)]
+fn dct4x4_two_entry(_token: X64V3Token, block1: &mut [i32; 16], block2: &mut [i32; 16]) {
+    dct4x4_two_sse2(_token, block1, block2);
+}
+
+/// Process two blocks at once
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[rite]
 #[allow(dead_code)]
 fn dct4x4_two_sse2(_token: X64V3Token, block1: &mut [i32; 16], block2: &mut [i32; 16]) {
     // Process both blocks using the single-block implementation
@@ -372,8 +385,22 @@ fn dct4x4_two_sse2(_token: X64V3Token, block1: &mut [i32; 16], block2: &mut [i32
 /// * `src_stride` - Stride for source rows
 /// * `ref_stride` - Stride for reference rows
 /// * `out` - Output: 32 i16 coefficients (2 blocks × 16 coeffs)
+/// Entry shim for ftransform2_sse2
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
+fn ftransform2_entry(
+    _token: X64V3Token,
+    src: &[u8],
+    ref_: &[u8],
+    src_stride: usize,
+    ref_stride: usize,
+    out: &mut [i16; 32],
+) {
+    ftransform2_sse2(_token, src, ref_, src_stride, ref_stride, out);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[rite]
 fn ftransform2_sse2(
     _token: X64V3Token,
     src: &[u8],
@@ -459,7 +486,7 @@ pub(crate) fn ftransform2_from_u8(
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         if let Some(token) = X64V3Token::summon() {
-            ftransform2_sse2(token, src, ref_, src_stride, ref_stride, out);
+            ftransform2_entry(token, src, ref_, src_stride, ref_stride, out);
             return;
         }
     }
@@ -495,9 +522,16 @@ fn ftransform2_scalar(
     }
 }
 
-/// Inverse DCT using SSE2 - matches libwebp ITransform_One_SSE2
+/// Entry shim for idct4x4_sse2
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
+pub(crate) fn idct4x4_entry(_token: X64V3Token, block: &mut [i32]) {
+    idct4x4_sse2(_token, block);
+}
+
+/// Inverse DCT using SSE2 - matches libwebp ITransform_One_SSE2
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[rite]
 pub(crate) fn idct4x4_sse2(_token: X64V3Token, block: &mut [i32]) {
     // libwebp IDCT constants:
     // K1 = sqrt(2) * cos(pi/8) * 65536 = 85627 => k1 = 85627 - 65536 = 20091
@@ -548,8 +582,7 @@ pub(crate) fn idct4x4_sse2(_token: X64V3Token, block: &mut [i32]) {
 
 /// ITransform vertical pass - matches libwebp
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-#[arcane]
-#[inline]
+#[rite]
 fn itransform_pass_sse2(
     _token: X64V3Token,
     in01: __m128i,
@@ -598,8 +631,7 @@ fn itransform_pass_sse2(
 
 /// ITransform horizontal pass with final shift
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-#[arcane]
-#[inline]
+#[rite]
 fn itransform_pass2_sse2(
     _token: X64V3Token,
     t01: __m128i,
@@ -657,9 +689,38 @@ fn itransform_pass2_sse2(
 /// Takes: coefficients (i32[16]), prediction block, output location
 /// Does: IDCT(coeffs) + prediction → output (clamped to 0-255)
 /// Also clears the coefficient block to zeros.
+/// Entry shim for idct_add_residue_sse2
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
-#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn idct_add_residue_entry(
+    _token: X64V3Token,
+    coeffs: &mut [i32; 16],
+    pred_block: &[u8],
+    pred_stride: usize,
+    out_block: &mut [u8],
+    out_stride: usize,
+    pred_y0: usize,
+    pred_x0: usize,
+    out_y0: usize,
+    out_x0: usize,
+) {
+    idct_add_residue_sse2(
+        _token,
+        coeffs,
+        pred_block,
+        pred_stride,
+        out_block,
+        out_stride,
+        pred_y0,
+        pred_x0,
+        out_y0,
+        out_x0,
+    );
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[rite]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn idct_add_residue_sse2(
     _token: X64V3Token,
@@ -743,11 +804,40 @@ pub(crate) fn idct_add_residue_sse2(
     );
 }
 
+/// Entry shim for idct_add_residue_dc_sse2
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[arcane]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn idct_add_residue_dc_entry(
+    _token: X64V3Token,
+    coeffs: &mut [i32; 16],
+    pred_block: &[u8],
+    pred_stride: usize,
+    out_block: &mut [u8],
+    out_stride: usize,
+    pred_y0: usize,
+    pred_x0: usize,
+    out_y0: usize,
+    out_x0: usize,
+) {
+    idct_add_residue_dc_sse2(
+        _token,
+        coeffs,
+        pred_block,
+        pred_stride,
+        out_block,
+        out_stride,
+        pred_y0,
+        pred_x0,
+        out_y0,
+        out_x0,
+    );
+}
+
 /// DC-only fused IDCT + add residue - when only DC coefficient is non-zero.
 /// Much faster than full IDCT.
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn idct_add_residue_dc_sse2(
     _token: X64V3Token,
@@ -810,7 +900,7 @@ pub(crate) fn idct_add_residue_with_token(
     dc_only: bool,
 ) {
     if dc_only {
-        idct_add_residue_dc_sse2(
+        idct_add_residue_dc_entry(
             token,
             coeffs,
             pred_block,
@@ -823,7 +913,7 @@ pub(crate) fn idct_add_residue_with_token(
             out_x0,
         );
     } else {
-        idct_add_residue_sse2(
+        idct_add_residue_entry(
             token,
             coeffs,
             pred_block,
@@ -842,7 +932,6 @@ pub(crate) fn idct_add_residue_with_token(
 /// Performs IDCT on raw DCT coefficients, adds to prediction block in-place, and clears coefficients.
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
-#[inline(always)]
 pub(crate) fn idct_add_residue_inplace_sse2(
     _token: X64V3Token,
     coeffs: &mut [i32; 16],
@@ -997,7 +1086,7 @@ pub(crate) fn idct_add_residue_inplace(
 #[inline(always)]
 pub(crate) fn ftransform_from_u8_4x4(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
     if let Some(token) = X64V3Token::summon() {
-        ftransform_from_u8_4x4_sse2(token, src, ref_)
+        ftransform_from_u8_4x4_entry(token, src, ref_)
     } else {
         ftransform_from_u8_4x4_scalar(src, ref_)
     }
@@ -1020,10 +1109,17 @@ pub(crate) fn ftransform_from_u8_4x4_scalar(src: &[u8; 16], ref_: &[u8; 16]) -> 
     block
 }
 
+/// Entry shim for ftransform_from_u8_4x4_sse2
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[arcane]
+fn ftransform_from_u8_4x4_entry(_token: X64V3Token, src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
+    ftransform_from_u8_4x4_sse2(_token, src, ref_)
+}
+
 /// SSE2 fused residual+DCT for single 4x4 block from flat u8[16] arrays.
 /// Loads bytes, computes diff as i16, runs DCT pass1+pass2, outputs i32[16].
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-#[arcane]
+#[rite]
 pub(crate) fn ftransform_from_u8_4x4_sse2(
     _token: X64V3Token,
     src: &[u8; 16],

@@ -8,7 +8,7 @@
 #![allow(clippy::needless_range_loop)]
 
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
-use archmage::{arcane, SimdToken, X64V3Token};
+use archmage::{arcane, rite, SimdToken, X64V3Token};
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 use core::arch::x86_64::*;
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
@@ -28,13 +28,19 @@ pub fn sse4x4(a: &[u8; 16], b: &[u8; 16]) -> u32 {
 
     #[cfg(target_arch = "x86_64")]
     {
-        // SSE4.1 implies SSE2; summon() is now fast (no env var check)
         if let Some(token) = X64V3Token::summon() {
-            sse4x4_sse2(token, a, b)
+            sse4x4_entry(token, a, b)
         } else {
             sse4x4_scalar(a, b)
         }
     }
+}
+
+/// Arcane entry point for sse4x4 dispatch (calls #[rite] inner)
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[arcane]
+fn sse4x4_entry(_token: X64V3Token, a: &[u8; 16], b: &[u8; 16]) -> u32 {
+    sse4x4_sse2(_token, a, b)
 }
 
 /// Scalar SSE computation
@@ -51,7 +57,7 @@ pub fn sse4x4_scalar(a: &[u8; 16], b: &[u8; 16]) -> u32 {
 
 /// SSE2 implementation of 4x4 block SSE
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
-#[arcane]
+#[rite]
 #[allow(dead_code)]
 pub(crate) fn sse4x4_sse2(_token: X64V3Token, a: &[u8; 16], b: &[u8; 16]) -> u32 {
     let zero = _mm_setzero_si128();
@@ -100,7 +106,7 @@ pub fn sse4x4_with_residual(src: &[u8; 16], pred: &[u8; 16], residual: &[i32; 16
     #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = X64V3Token::summon() {
-            sse4x4_with_residual_sse2(token, src, pred, residual)
+            sse4x4_with_residual_entry(token, src, pred, residual)
         } else {
             sse4x4_with_residual_scalar(src, pred, residual)
         }
@@ -120,9 +126,21 @@ pub fn sse4x4_with_residual_scalar(src: &[u8; 16], pred: &[u8; 16], residual: &[
     sum
 }
 
-/// SSE2 implementation of SSE with residual
+/// Arcane entry point for dispatch
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
+fn sse4x4_with_residual_entry(
+    _token: X64V3Token,
+    src: &[u8; 16],
+    pred: &[u8; 16],
+    residual: &[i32; 16],
+) -> u32 {
+    sse4x4_with_residual_sse2(_token, src, pred, residual)
+}
+
+/// SSE2 implementation of SSE with residual
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[rite]
 #[allow(dead_code)]
 pub(crate) fn sse4x4_with_residual_sse2(
     _token: X64V3Token,
@@ -202,7 +220,7 @@ pub fn sse_16x16_luma(
     #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = X64V3Token::summon() {
-            sse_16x16_luma_sse2(token, src_y, src_width, mbx, mby, pred)
+            sse_16x16_luma_entry(token, src_y, src_width, mbx, mby, pred)
         } else {
             sse_16x16_luma_scalar(src_y, src_width, mbx, mby, pred)
         }
@@ -234,9 +252,23 @@ pub fn sse_16x16_luma_scalar(
     sse
 }
 
-/// SSE2 implementation of 16x16 luma SSE
+/// Arcane entry point for dispatch
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
+fn sse_16x16_luma_entry(
+    _token: X64V3Token,
+    src_y: &[u8],
+    src_width: usize,
+    mbx: usize,
+    mby: usize,
+    pred: &[u8; LUMA_BLOCK_SIZE],
+) -> u32 {
+    sse_16x16_luma_sse2(_token, src_y, src_width, mbx, mby, pred)
+}
+
+/// SSE2 implementation of 16x16 luma SSE
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[rite]
 #[allow(dead_code)]
 pub(crate) fn sse_16x16_luma_sse2(
     _token: X64V3Token,
@@ -303,7 +335,7 @@ pub fn sse_8x8_chroma(
     #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = X64V3Token::summon() {
-            sse_8x8_chroma_sse2(token, src_uv, src_width, mbx, mby, pred)
+            sse_8x8_chroma_entry(token, src_uv, src_width, mbx, mby, pred)
         } else {
             sse_8x8_chroma_scalar(src_uv, src_width, mbx, mby, pred)
         }
@@ -338,6 +370,19 @@ pub fn sse_8x8_chroma_scalar(
 /// SSE2 implementation of 8x8 chroma SSE
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
+fn sse_8x8_chroma_entry(
+    _token: X64V3Token,
+    src_uv: &[u8],
+    src_width: usize,
+    mbx: usize,
+    mby: usize,
+    pred: &[u8; CHROMA_BLOCK_SIZE],
+) -> u32 {
+    sse_8x8_chroma_sse2(_token, src_uv, src_width, mbx, mby, pred)
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[rite]
 #[allow(dead_code)]
 pub(crate) fn sse_8x8_chroma_sse2(
     _token: X64V3Token,
@@ -438,7 +483,7 @@ pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = X64V3Token::summon() {
-            t_transform_sse2(token, input, stride, w)
+            t_transform_entry(token, input, stride, w)
         } else {
             t_transform_scalar(input, stride, w)
         }
@@ -449,6 +494,12 @@ pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 /// Horizontal pass done in SIMD, vertical pass extracted for simplicity
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
+fn t_transform_entry(_token: X64V3Token, input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
+    t_transform_sse2(_token, input, stride, w)
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[rite]
 #[allow(dead_code)]
 fn t_transform_sse2(_token: X64V3Token, input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     let zero = _mm_setzero_si128();
@@ -570,7 +621,7 @@ pub fn tdisto_4x4_fused(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32
     #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = X64V3Token::summon() {
-            tdisto_4x4_fused_sse2(token, a, b, stride, w)
+            tdisto_4x4_fused_entry(token, a, b, stride, w)
         } else {
             let sum_a = t_transform_scalar(a, stride, w);
             let sum_b = t_transform_scalar(b, stride, w);
@@ -579,10 +630,23 @@ pub fn tdisto_4x4_fused(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32
     }
 }
 
+/// Arcane entry point for dispatch
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[arcane]
+fn tdisto_4x4_fused_entry(
+    _token: X64V3Token,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    tdisto_4x4_fused_sse2(_token, a, b, stride, w)
+}
+
 /// SSE2 fused TDisto - processes both blocks in parallel like libwebp's TTransform_SSE2
 /// Based on libwebp's enc_sse2.c TTransform_SSE2 and Disto4x4_SSE2
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
-#[arcane]
+#[rite]
 pub(crate) fn tdisto_4x4_fused_sse2(
     _token: X64V3Token,
     a: &[u8],
@@ -735,7 +799,7 @@ pub fn precompute_coeffs(coeffs: &[i32; 16]) -> PrecomputedCoeffs {
     #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = X64V3Token::summon() {
-            precompute_coeffs_sse2(token, coeffs)
+            precompute_coeffs_entry(token, coeffs)
         } else {
             precompute_coeffs_scalar(coeffs)
         }
@@ -760,6 +824,12 @@ pub fn precompute_coeffs_scalar(coeffs: &[i32; 16]) -> PrecomputedCoeffs {
 /// Matches libwebp's GetResidualCost_SSE2 precomputation block
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
+fn precompute_coeffs_entry(_token: X64V3Token, coeffs: &[i32; 16]) -> PrecomputedCoeffs {
+    precompute_coeffs_sse2(_token, coeffs)
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[rite]
 #[allow(dead_code)]
 fn precompute_coeffs_sse2(_token: X64V3Token, coeffs: &[i32; 16]) -> PrecomputedCoeffs {
     let zero = _mm_setzero_si128();
@@ -824,7 +894,7 @@ pub fn find_last_nonzero(coeffs: &[i32; 16], first: usize) -> i32 {
     #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = X64V3Token::summon() {
-            find_last_nonzero_sse2(token, coeffs, first)
+            find_last_nonzero_entry(token, coeffs, first)
         } else {
             find_last_nonzero_scalar(coeffs, first)
         }
@@ -847,6 +917,12 @@ pub fn find_last_nonzero_scalar(coeffs: &[i32; 16], first: usize) -> i32 {
 /// Uses SIMD comparison and bitmask to find last non-zero
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
+fn find_last_nonzero_entry(_token: X64V3Token, coeffs: &[i32; 16], first: usize) -> i32 {
+    find_last_nonzero_sse2(_token, coeffs, first)
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[rite]
 #[allow(dead_code)]
 fn find_last_nonzero_sse2(_token: X64V3Token, coeffs: &[i32; 16], first: usize) -> i32 {
     let zero = _mm_setzero_si128();

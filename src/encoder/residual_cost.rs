@@ -8,7 +8,7 @@
 
 // SIMD imports for GetResidualCost optimization
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
-use archmage::{arcane, SimdToken, X64V3Token};
+use archmage::{arcane, rite, SimdToken, X64V3Token};
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 use core::arch::x86_64::*;
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
@@ -75,7 +75,7 @@ pub fn get_residual_cost(
     probs: &TokenProbTables,
 ) -> u32 {
     if let Some(token) = X64V3Token::summon() {
-        get_residual_cost_sse2(token, ctx0, res, costs, probs)
+        get_residual_cost_entry(token, ctx0, res, costs, probs)
     } else {
         get_residual_cost_scalar(ctx0, res, costs, probs)
     }
@@ -158,10 +158,23 @@ pub(crate) fn get_residual_cost_scalar(
     cost
 }
 
+/// Entry shim for get_residual_cost_sse2
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[arcane]
+fn get_residual_cost_entry(
+    _token: X64V3Token,
+    ctx0: usize,
+    res: &Residual,
+    costs: &LevelCosts,
+    probs: &TokenProbTables,
+) -> u32 {
+    get_residual_cost_sse2(_token, ctx0, res, costs, probs)
+}
+
 /// SSE2 implementation of residual cost calculation.
 /// Precomputes abs values, contexts, and clamped levels with SIMD.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
-#[arcane]
+#[rite]
 pub(crate) fn get_residual_cost_sse2(
     _token: X64V3Token,
     ctx0: usize,
@@ -283,12 +296,20 @@ pub(crate) fn get_residual_cost_sse2(
     cost
 }
 
+/// Entry shim for find_last_nonzero_simd
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[arcane]
+#[allow(dead_code)]
+fn find_last_nonzero_simd_entry(_token: X64V3Token, coeffs: &[i32; 16]) -> i32 {
+    find_last_nonzero_simd(_token, coeffs)
+}
+
 /// Find last non-zero coefficient using SIMD.
 /// Ported from libwebp's SetResidualCoeffs_SSE2.
 ///
 /// Returns -1 if all coefficients are zero.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
-#[arcane]
+#[rite]
 #[allow(dead_code)]
 fn find_last_nonzero_simd(_token: X64V3Token, coeffs: &[i32; 16]) -> i32 {
     let zero = _mm_setzero_si128();

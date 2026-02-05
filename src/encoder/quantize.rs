@@ -8,7 +8,7 @@
 #![allow(dead_code)]
 
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
-use archmage::{arcane, SimdToken, X64V3Token};
+use archmage::{arcane, rite, SimdToken, X64V3Token};
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
 use core::arch::x86_64::*;
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
@@ -189,7 +189,7 @@ impl VP8Matrix {
         #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
         {
             if let Some(token) = X64V3Token::summon() {
-                dequantize_block_sse2(token, &self.q, coeffs);
+                dequantize_block_entry(token, &self.q, coeffs);
                 return;
             }
         }
@@ -207,11 +207,17 @@ impl VP8Matrix {
     }
 }
 
+/// Entry shim for dequantize_block_sse2
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[arcane]
+fn dequantize_block_entry(_token: X64V3Token, q: &[u16; 16], coeffs: &mut [i32; 16]) {
+    dequantize_block_sse2(_token, q, coeffs);
+}
+
 /// SIMD dequantization using SSE2
 /// Multiplies each coefficient by its quantizer step.
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
-#[arcane]
-#[inline(always)]
+#[rite]
 pub(crate) fn dequantize_block_sse2(_token: X64V3Token, q: &[u16; 16], coeffs: &mut [i32; 16]) {
     // Load quantizers as u16, zero-extend to i32
     let q_lo = simd_mem::_mm_loadu_si128(<&[u16; 8]>::try_from(&q[0..8]).unwrap());
@@ -281,7 +287,7 @@ pub enum MatrixType {
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
 pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, use_sharpen: bool) -> bool {
     if let Some(token) = X64V3Token::summon() {
-        quantize_block_sse2(token, coeffs, matrix, use_sharpen)
+        quantize_block_entry(token, coeffs, matrix, use_sharpen)
     } else {
         matrix.quantize(coeffs);
         coeffs.iter().any(|&c| c != 0)
@@ -295,10 +301,22 @@ pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, _use_shar
     coeffs.iter().any(|&c| c != 0)
 }
 
+/// Entry shim for quantize_block_sse2
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[arcane]
+fn quantize_block_entry(
+    _token: X64V3Token,
+    coeffs: &mut [i32; 16],
+    matrix: &VP8Matrix,
+    use_sharpen: bool,
+) -> bool {
+    quantize_block_sse2(_token, coeffs, matrix, use_sharpen)
+}
+
 /// SSE2 implementation of block quantization.
 /// Matches libwebp's DoQuantizeBlock_SSE2 algorithm.
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
-#[arcane]
+#[rite]
 pub(crate) fn quantize_block_sse2(
     _token: X64V3Token,
     coeffs: &mut [i32; 16],
@@ -492,7 +510,7 @@ pub fn quantize_dequantize_block_simd(
     dequantized: &mut [i32; 16],
 ) -> bool {
     if let Some(token) = X64V3Token::summon() {
-        quantize_dequantize_block_sse2(token, coeffs, matrix, use_sharpen, quantized, dequantized)
+        quantize_dequantize_block_entry(token, coeffs, matrix, use_sharpen, quantized, dequantized)
     } else {
         quantize_dequantize_block_scalar(coeffs, matrix, quantized, dequantized)
     }
@@ -528,10 +546,24 @@ pub(crate) fn quantize_dequantize_block_scalar(
     has_nz
 }
 
+/// Entry shim for quantize_dequantize_block_sse2
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[arcane]
+fn quantize_dequantize_block_entry(
+    _token: X64V3Token,
+    coeffs: &[i32; 16],
+    matrix: &VP8Matrix,
+    use_sharpen: bool,
+    quantized: &mut [i32; 16],
+    dequantized: &mut [i32; 16],
+) -> bool {
+    quantize_dequantize_block_sse2(_token, coeffs, matrix, use_sharpen, quantized, dequantized)
+}
+
 /// SSE2 fused quantize+dequantize.
 /// Quantizes coefficients, then immediately multiplies by q to get dequantized values.
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
-#[arcane]
+#[rite]
 pub(crate) fn quantize_dequantize_block_sse2(
     _token: X64V3Token,
     coeffs: &[i32; 16],
