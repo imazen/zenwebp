@@ -1703,6 +1703,179 @@ pub unsafe fn normal_v_filter16_edge_unchecked(
     _mm_storeu_si128(q2_ptr as *mut __m128i, q2);
 }
 
+/// UNCHECKED: Simple horizontal filter with all bounds checks eliminated.
+///
+/// # Safety
+/// - `x >= 4` and `(y_start + 15) * stride + x + 4 <= pixels.len()`
+/// - Caller must verify input is trusted (e.g., self-generated WebP files)
+#[cfg(all(feature = "simd", feature = "unchecked", target_arch = "x86_64"))]
+#[arcane]
+#[inline(always)]
+pub unsafe fn simple_h_filter16_unchecked(
+    _token: X64V3Token,
+    pixels: &mut [u8],
+    x: usize,
+    y_start: usize,
+    stride: usize,
+    thresh: i32,
+) {
+    let ptr = pixels.as_mut_ptr();
+
+    // Load 16 rows of 8 pixels each using raw pointer arithmetic
+    let mut rows = [_mm_setzero_si128(); 16];
+    for i in 0..16 {
+        let row_ptr = ptr.add((y_start + i) * stride + x - 4);
+        rows[i] = _mm_loadu_si64(row_ptr);
+    }
+
+    // Transpose 8x16 to 16x8: now we have 8 columns of 16 pixels each
+    let cols = transpose_8x16_to_16x8(_token, &rows);
+    let p1 = cols[2];
+    let mut p0 = cols[3];
+    let mut q0 = cols[4];
+    let q1 = cols[5];
+
+    // Apply simple filter
+    let mask = needs_filter_16(_token, p1, p0, q0, q1, thresh);
+    let fl = get_base_delta_16(_token, p1, p0, q0, q1);
+    let fl_masked = _mm_and_si128(fl, mask);
+    do_simple_filter_16(_token, &mut p0, &mut q0, fl_masked);
+
+    // Transpose back: convert 4 columns of 16 to 16 rows of 4
+    let packed = transpose_4x16_to_16x4(_token, p1, p0, q0, q1);
+
+    // Store 4 bytes per row using raw pointer arithmetic
+    for i in 0..16 {
+        let row_ptr = ptr.add((y_start + i) * stride + x - 2);
+        core::ptr::write_unaligned(row_ptr as *mut i32, packed[i]);
+    }
+}
+
+/// UNCHECKED: Normal horizontal filter (DoFilter4) for inner edges with all bounds checks eliminated.
+///
+/// # Safety
+/// - `x >= 4` and `(y_start + 15) * stride + x + 4 <= pixels.len()`
+/// - Caller must verify input is trusted (e.g., self-generated WebP files)
+#[cfg(all(feature = "simd", feature = "unchecked", target_arch = "x86_64"))]
+#[allow(clippy::too_many_arguments)]
+#[arcane]
+#[inline(always)]
+pub unsafe fn normal_h_filter16_inner_unchecked(
+    _token: X64V3Token,
+    pixels: &mut [u8],
+    x: usize,
+    y_start: usize,
+    stride: usize,
+    hev_thresh: i32,
+    interior_limit: i32,
+    edge_limit: i32,
+) {
+    let ptr = pixels.as_mut_ptr();
+
+    // Load 16 rows of 8 pixels each using raw pointer arithmetic
+    let mut rows = [_mm_setzero_si128(); 16];
+    for i in 0..16 {
+        let row_ptr = ptr.add((y_start + i) * stride + x - 4);
+        rows[i] = _mm_loadu_si64(row_ptr);
+    }
+
+    // Transpose 8x16 to 16x8
+    let cols = transpose_8x16_to_16x8(_token, &rows);
+    let p3 = cols[0];
+    let p2 = cols[1];
+    let mut p1 = cols[2];
+    let mut p0 = cols[3];
+    let mut q0 = cols[4];
+    let mut q1 = cols[5];
+    let q2 = cols[6];
+    let q3 = cols[7];
+
+    // Check if filtering is needed
+    let mask = needs_filter_normal_16(
+        _token, p3, p2, p1, p0, q0, q1, q2, q3, edge_limit, interior_limit,
+    );
+
+    // Check high edge variance
+    let hev = high_edge_variance_16(_token, p1, p0, q0, q1, hev_thresh);
+
+    // Apply filter
+    do_filter4_16(_token, &mut p1, &mut p0, &mut q0, &mut q1, mask, hev);
+
+    // Transpose back: convert 4 columns of 16 to 16 rows of 4
+    let packed = transpose_4x16_to_16x4(_token, p1, p0, q0, q1);
+
+    // Store 4 bytes per row using raw pointer arithmetic
+    for i in 0..16 {
+        let row_ptr = ptr.add((y_start + i) * stride + x - 2);
+        core::ptr::write_unaligned(row_ptr as *mut i32, packed[i]);
+    }
+}
+
+/// UNCHECKED: Normal horizontal filter (DoFilter6) for MB edges with all bounds checks eliminated.
+///
+/// # Safety
+/// - `x >= 4` and `(y_start + 15) * stride + x + 4 <= pixels.len()`
+/// - Caller must verify input is trusted (e.g., self-generated WebP files)
+#[cfg(all(feature = "simd", feature = "unchecked", target_arch = "x86_64"))]
+#[allow(clippy::too_many_arguments)]
+#[arcane]
+#[inline(always)]
+pub unsafe fn normal_h_filter16_edge_unchecked(
+    _token: X64V3Token,
+    pixels: &mut [u8],
+    x: usize,
+    y_start: usize,
+    stride: usize,
+    hev_thresh: i32,
+    interior_limit: i32,
+    edge_limit: i32,
+) {
+    let ptr = pixels.as_mut_ptr();
+
+    // Load 16 rows of 8 pixels each using raw pointer arithmetic
+    let mut rows = [_mm_setzero_si128(); 16];
+    for i in 0..16 {
+        let row_ptr = ptr.add((y_start + i) * stride + x - 4);
+        rows[i] = _mm_loadu_si64(row_ptr);
+    }
+
+    // Transpose 8x16 to 16x8
+    let cols = transpose_8x16_to_16x8(_token, &rows);
+    let p3 = cols[0];
+    let mut p2 = cols[1];
+    let mut p1 = cols[2];
+    let mut p0 = cols[3];
+    let mut q0 = cols[4];
+    let mut q1 = cols[5];
+    let mut q2 = cols[6];
+    let q3 = cols[7];
+
+    // Check if filtering is needed
+    let mask = needs_filter_normal_16(
+        _token, p3, p2, p1, p0, q0, q1, q2, q3, edge_limit, interior_limit,
+    );
+
+    // Check high edge variance
+    let hev = high_edge_variance_16(_token, p1, p0, q0, q1, hev_thresh);
+
+    // Apply filter
+    do_filter6_16(
+        _token, &mut p2, &mut p1, &mut p0, &mut q0, &mut q1, &mut q2, mask, hev,
+    );
+
+    // Transpose back: convert 6 columns of 16 to 16 rows of 6
+    let (packed4, packed2) = transpose_6x16_to_16x6(_token, p2, p1, p0, q0, q1, q2);
+
+    // Store 6 bytes per row using raw pointer arithmetic
+    for i in 0..16 {
+        let row_ptr = ptr.add((y_start + i) * stride + x - 3);
+        // Store first 4 bytes (p2, p1, p0, q0)
+        core::ptr::write_unaligned(row_ptr as *mut i32, packed4[i]);
+        // Store next 2 bytes (q1, q2)
+        core::ptr::write_unaligned(row_ptr.add(4) as *mut i16, packed2[i]);
+    }
+}
+
 /// Transpose 6 columns (p2, p1, p0, q0, q1, q2) of 16 bytes each back to 16 rows of 6 bytes.
 /// Returns values suitable for storing back to memory.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
