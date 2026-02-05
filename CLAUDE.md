@@ -629,6 +629,21 @@ Note: `add_residue_sse2` is now inlined via `add_residue_and_clear_sse2`.
 - This is the cost of safe Rust without `unsafe`; the compiler cannot prove slice
   operations are valid based on earlier asserts due to generic `try_from` internals
 
+**Fixed-region bounds check experiment (2026-02-04):**
+Tested using fixed-size arrays to eliminate bounds checks:
+```rust
+const V_FILTER_REGION: usize = 3 * MAX_STRIDE + 16;
+let region: &mut [u8; V_FILTER_REGION] =
+    <&mut [u8; V_FILTER_REGION]>::try_from(&mut pixels[start..start + V_FILTER_REGION]).unwrap();
+// All subsequent region[offset..] accesses have NO bounds checks
+```
+- Benchmark results: 2.85x speedup for 16-row scalar filter, 10% for single-pixel filter
+- Assembly confirmed: interior accesses use direct memory loads with no checks
+- **Problem:** V_FILTER_REGION = 3*8192+16 = 24KB for 8K image support
+- Near image boundaries or in tests with small buffers, the region doesn't fit
+- **Conclusion:** Fixed-region works but is impractical for loop filter due to region size
+- Alternative would be `unsafe` pointer arithmetic (not compatible with `#![forbid(unsafe_code)]`)
+
 ### Detailed Callgrind/Cachegrind Analysis (2026-01-23)
 
 **Per-decode instruction count (after chroma vertical SIMD):**
