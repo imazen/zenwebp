@@ -188,16 +188,17 @@ Test results on 512x512 CID22 image:
 | write_bool | 2.5% | 4.6M | Arithmetic encoding |
 | quantize_block (standalone) | 2.4% | 4.3M | Quantize (I16 path) |
 
-**Speed comparison (criterion, 792079.png 512x512, Q75, default target):**
+**Speed comparison (criterion, 792079.png 512x512, Q75, default target, 2026-02-05):**
 | Method | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| 0 | 8.0ms | 2.9ms | 2.8x |
-| 2 | 14.6ms | 4.4ms | 3.3x |
-| 4 | 18.1ms | 10.8ms | **1.68x** |
-| 6 | 27.2ms | 16.7ms | **1.63x** |
+| 0 | 7.0ms | 2.7ms | 2.6x |
+| 2 | 12.3ms | 4.2ms | 2.9x |
+| 4 | 15.0ms | 10.2ms | **1.47x** |
+| 6 | 22.2ms | 15.5ms | **1.43x** |
 
-*Wall-clock is ~1.68x despite 0.90x instruction ratio — likely memory access patterns.
-archmage dispatch overhead eliminated via #[rite] conversion (was ~9.7M instructions).*
+*Instruction ratio is 0.90x but wall-clock is ~1.47x — gap is memory access patterns
+(our stride=full image width vs libwebp's compact row cache). #[rite] conversion
+eliminated archmage dispatch overhead (was ~9.7M instructions, 46% of quantize cost).*
 
 **Performance optimization session (2026-02-04):**
 - Early exit in I4 mode loop (skip flatness/spectral/psy-rd when base RD exceeds best)
