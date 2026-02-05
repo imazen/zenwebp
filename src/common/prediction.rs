@@ -200,14 +200,9 @@ fn add_residue_sse2(
             <&[i32; 4]>::try_from(&rblock[row_idx * 4..row_idx * 4 + 4]).unwrap(),
         );
 
-        // Load 4 prediction bytes and zero-extend to i32
-        // _mm_cvtsi32_si128 loads 4 bytes as lowest 32 bits
-        let p_bytes = i32::from_ne_bytes([
-            pblock[pos],
-            pblock[pos + 1],
-            pblock[pos + 2],
-            pblock[pos + 3],
-        ]);
+        // Load 4 prediction bytes using array conversion (avoids per-byte indexing)
+        let p_arr: [u8; 4] = pblock[pos..pos + 4].try_into().unwrap();
+        let p_bytes = i32::from_ne_bytes(p_arr);
         let p4 = _mm_cvtsi32_si128(p_bytes);
         // Unpack bytes to words, then words to dwords (zero extension)
         let p_words = _mm_unpacklo_epi8(p4, zero);
@@ -220,13 +215,96 @@ fn add_residue_sse2(
         let packed_16 = _mm_packs_epi32(sum, sum); // i32 -> i16 (saturate)
         let packed_8 = _mm_packus_epi16(packed_16, packed_16); // i16 -> u8 (saturate)
 
-        // Extract and store 4 bytes
+        // Store 4 bytes using array conversion (avoids per-byte indexing)
         let result = _mm_cvtsi128_si32(packed_8) as u32;
-        let result_bytes = result.to_ne_bytes();
-        pblock[pos] = result_bytes[0];
-        pblock[pos + 1] = result_bytes[1];
-        pblock[pos + 2] = result_bytes[2];
-        pblock[pos + 3] = result_bytes[3];
+        pblock[pos..pos + 4].copy_from_slice(&result.to_ne_bytes());
+
+        pos += stride;
+    }
+}
+
+/// Add residue to prediction block AND clear the coefficient block in one operation.
+/// This avoids a separate fill(0) call in the decoder hot path.
+#[inline(always)]
+pub(crate) fn add_residue_and_clear(
+    pblock: &mut [u8],
+    rblock: &mut [i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    {
+        use archmage::{SimdToken, X64V3Token};
+        if let Some(token) = X64V3Token::summon() {
+            add_residue_and_clear_sse2(token, pblock, rblock, y0, x0, stride);
+            return;
+        }
+    }
+    add_residue_and_clear_scalar(pblock, rblock, y0, x0, stride);
+}
+
+#[inline(always)]
+fn add_residue_and_clear_scalar(
+    pblock: &mut [u8],
+    rblock: &mut [i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    let mut pos = y0 * stride + x0;
+    for row in rblock.chunks_mut(4) {
+        for (p, coeff) in pblock[pos..][..4].iter_mut().zip(row.iter_mut()) {
+            *p = (*coeff + i32::from(*p)).max(0).min(255) as u8;
+            *coeff = 0; // Clear as we go
+        }
+        pos += stride;
+    }
+}
+
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[archmage::arcane]
+#[inline(always)]
+fn add_residue_and_clear_sse2(
+    _token: impl archmage::Has128BitSimd + Copy,
+    pblock: &mut [u8],
+    rblock: &mut [i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    #[cfg(target_arch = "x86_64")]
+    use core::arch::x86_64::*;
+    #[cfg(target_arch = "x86")]
+    use core::arch::x86::*;
+    use safe_unaligned_simd::x86_64 as simd_mem;
+
+    let zero = _mm_setzero_si128();
+    let mut pos = y0 * stride + x0;
+
+    for row_idx in 0..4 {
+        // Load 4 residual values (i32)
+        let rslice = &mut rblock[row_idx * 4..row_idx * 4 + 4];
+        let r = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&*rslice).unwrap());
+
+        // Clear coefficients with SIMD store
+        simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(rslice).unwrap(), zero);
+
+        // Load 4 prediction bytes
+        let p_arr: [u8; 4] = pblock[pos..pos + 4].try_into().unwrap();
+        let p_bytes = i32::from_ne_bytes(p_arr);
+        let p4 = _mm_cvtsi32_si128(p_bytes);
+        let p_words = _mm_unpacklo_epi8(p4, zero);
+        let p = _mm_unpacklo_epi16(p_words, zero);
+
+        // Add and saturate
+        let sum = _mm_add_epi32(p, r);
+        let packed_16 = _mm_packs_epi32(sum, sum);
+        let packed_8 = _mm_packus_epi16(packed_16, packed_16);
+
+        // Store 4 bytes
+        let result = _mm_cvtsi128_si32(packed_8) as u32;
+        pblock[pos..pos + 4].copy_from_slice(&result.to_ne_bytes());
 
         pos += stride;
     }

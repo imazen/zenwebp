@@ -839,10 +839,9 @@ impl<'a> Vp8Decoder<'a> {
                             IntraMode::HU => predict_bhupred(&mut ws, x0, y0, stride),
                         }
 
-                        let rb: &[i32; 16] = self.coeff_blocks[i * 16..][..16].try_into().unwrap();
-                        add_residue(&mut ws, rb, y0, x0, stride);
-                        // Clear block after use to maintain zeros invariant
-                        self.coeff_blocks[i * 16..][..16].fill(0);
+                        let rb: &mut [i32; 16] =
+                            (&mut self.coeff_blocks[i * 16..][..16]).try_into().unwrap();
+                        add_residue_and_clear(&mut ws, rb, y0, x0, stride);
                     }
                 }
             }
@@ -852,13 +851,12 @@ impl<'a> Vp8Decoder<'a> {
             for y in 0usize..4 {
                 for x in 0usize..4 {
                     let i = x + y * 4;
-                    let rb: &[i32; 16] = self.coeff_blocks[i * 16..][..16].try_into().unwrap();
+                    let rb: &mut [i32; 16] =
+                        (&mut self.coeff_blocks[i * 16..][..16]).try_into().unwrap();
                     let y0 = 1 + y * 4;
                     let x0 = 1 + x * 4;
 
-                    add_residue(&mut ws, rb, y0, x0, stride);
-                    // Clear block after use
-                    self.coeff_blocks[i * 16..][..16].fill(0);
+                    add_residue_and_clear(&mut ws, rb, y0, x0, stride);
                 }
             }
         }
@@ -913,17 +911,15 @@ impl<'a> Vp8Decoder<'a> {
                 let u_idx = 16 + i; // U blocks at indices 16-19
                 let v_idx = 20 + i; // V blocks at indices 20-23
 
-                let urb: &[i32; 16] = self.coeff_blocks[u_idx * 16..][..16].try_into().unwrap();
+                let urb: &mut [i32; 16] =
+                    (&mut self.coeff_blocks[u_idx * 16..][..16]).try_into().unwrap();
                 let y0 = 1 + y * 4;
                 let x0 = 1 + x * 4;
-                add_residue(&mut uws, urb, y0, x0, stride);
-                // Clear U block after use
-                self.coeff_blocks[u_idx * 16..][..16].fill(0);
+                add_residue_and_clear(&mut uws, urb, y0, x0, stride);
 
-                let vrb: &[i32; 16] = self.coeff_blocks[v_idx * 16..][..16].try_into().unwrap();
-                add_residue(&mut vws, vrb, y0, x0, stride);
-                // Clear V block after use
-                self.coeff_blocks[v_idx * 16..][..16].fill(0);
+                let vrb: &mut [i32; 16] =
+                    (&mut self.coeff_blocks[v_idx * 16..][..16]).try_into().unwrap();
+                add_residue_and_clear(&mut vws, vrb, y0, x0, stride);
             }
         }
 
