@@ -558,6 +558,7 @@ pub fn fancy_upsample_8_pairs_with_token(
     fancy_upsample_8_pairs_inner(token, y_row, u_row_1, u_row_2, v_row_1, v_row_2, rgb);
 }
 
+#[allow(dead_code)] // Used in tests
 pub fn fancy_upsample_8_pairs(
     y_row: &[u8],
     u_row_1: &[u8],
