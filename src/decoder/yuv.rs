@@ -222,7 +222,24 @@ fn fill_row_fancy_with_2_uv_rows_simd<const BPP: usize>(
     let mut uv_offset = 0;
     let mut rgb_offset = BPP;
 
-    // Process chunks of 16 Y pixels (8 pixel pairs) with SIMD
+    // Process chunks of 32 Y pixels (16 pixel pairs) with SIMD for lower overhead
+    // Need at least 32 Y pixels and 17 U/V samples
+    while y_offset + 32 <= width && uv_offset + 17 <= u_row_1.len() {
+        super::yuv_simd::fancy_upsample_16_pairs_with_token(
+            token,
+            &y_row[y_offset..],
+            &u_row_1[uv_offset..],
+            &u_row_2[uv_offset..],
+            &v_row_1[uv_offset..],
+            &v_row_2[uv_offset..],
+            &mut row_buffer[rgb_offset..],
+        );
+        y_offset += 32;
+        uv_offset += 16;
+        rgb_offset += 96;
+    }
+
+    // Process remaining chunks of 16 Y pixels (8 pixel pairs) with SIMD
     // Need at least 16 Y pixels and 9 U/V samples
     while y_offset + 16 <= width && uv_offset + 9 <= u_row_1.len() {
         super::yuv_simd::fancy_upsample_8_pairs_with_token(

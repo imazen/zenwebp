@@ -695,6 +695,138 @@ fn fancy_upsample_8_pairs_inner(
     fancy_upsample_8_pairs_inner_opt(_token, y, u1, u2, v1, v2, out);
 }
 
+/// Process 16 pixel pairs (32 Y pixels) with fancy upsampling and YUV->RGB conversion.
+/// Processes 2x the pixels of fancy_upsample_8_pairs, reducing loop overhead.
+/// Takes: 32 Y bytes, 17 U/V bytes per row (for overlapping window), 96 RGB bytes output.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub fn fancy_upsample_16_pairs_with_token(
+    token: X64V3Token,
+    y_row: &[u8],
+    u_row_1: &[u8],
+    u_row_2: &[u8],
+    v_row_1: &[u8],
+    v_row_2: &[u8],
+    rgb: &mut [u8],
+) {
+    fancy_upsample_16_pairs_inner(token, y_row, u_row_1, u_row_2, v_row_1, v_row_2, rgb);
+}
+
+/// Optimized inner function for 32 Y pixels (16 chroma pairs).
+/// Takes: 32 Y bytes, 17 U/V bytes per row, 96 RGB bytes output.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn fancy_upsample_16_pairs_inner(
+    _token: impl Has128BitSimd + Copy,
+    y_row: &[u8],
+    u_row_1: &[u8],
+    u_row_2: &[u8],
+    v_row_1: &[u8],
+    v_row_2: &[u8],
+    rgb: &mut [u8],
+) {
+    // Single bounds check at entry
+    let y: &[u8; 32] = y_row[..32].try_into().unwrap();
+    let u1: &[u8; 17] = u_row_1[..17].try_into().unwrap();
+    let u2: &[u8; 17] = u_row_2[..17].try_into().unwrap();
+    let v1: &[u8; 17] = v_row_1[..17].try_into().unwrap();
+    let v2: &[u8; 17] = v_row_2[..17].try_into().unwrap();
+    let out: &mut [u8; 96] = (&mut rgb[..96]).try_into().unwrap();
+
+    fancy_upsample_16_pairs_inner_opt(_token, y, u1, u2, v1, v2, out);
+}
+
+/// Core SIMD implementation for 32 Y pixels (16 chroma pairs).
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn fancy_upsample_16_pairs_inner_opt(
+    _token: impl Has128BitSimd + Copy,
+    y_row: &[u8; 32],
+    u_row_1: &[u8; 17],
+    u_row_2: &[u8; 17],
+    v_row_1: &[u8; 17],
+    v_row_2: &[u8; 17],
+    rgb: &mut [u8; 96],
+) {
+    // Load 16 U/V values for each position (a=offset0, b=offset1)
+    let u_a = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&u_row_1[0..16]).unwrap());
+    let u_b = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&u_row_1[1..17]).unwrap());
+    let u_c = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&u_row_2[0..16]).unwrap());
+    let u_d = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&u_row_2[1..17]).unwrap());
+
+    let v_a = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&v_row_1[0..16]).unwrap());
+    let v_b = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&v_row_1[1..17]).unwrap());
+    let v_c = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&v_row_2[0..16]).unwrap());
+    let v_d = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&v_row_2[1..17]).unwrap());
+
+    // Compute fancy upsampled U/V - produces 16 diag1 + 16 diag2 values each
+    let (u_diag1, u_diag2) = fancy_upsample_16(_token, u_a, u_b, u_c, u_d);
+    let (v_diag1, v_diag2) = fancy_upsample_16(_token, v_a, v_b, v_c, v_d);
+
+    // Interleave diag1/diag2 to get 32 U and 32 V values
+    // First 16: unpacklo gives [d1[0],d2[0],d1[1],d2[1],...d1[7],d2[7]]
+    // Second 16: unpackhi gives [d1[8],d2[8],...d1[15],d2[15]]
+    let u_lo = _mm_unpacklo_epi8(u_diag1, u_diag2); // U values for Y[0..16]
+    let u_hi = _mm_unpackhi_epi8(u_diag1, u_diag2); // U values for Y[16..32]
+    let v_lo = _mm_unpacklo_epi8(v_diag1, v_diag2);
+    let v_hi = _mm_unpackhi_epi8(v_diag1, v_diag2);
+
+    // Load 32 Y values
+    let y_0 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&y_row[0..16]).unwrap());
+    let y_1 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&y_row[16..32]).unwrap());
+
+    let zero = _mm_setzero_si128();
+
+    // Process first 16 Y pixels (4 groups of 8 for YUV conversion)
+    // Group 0: Y[0..8], U_lo[0..8], V_lo[0..8]
+    let y_0_lo = _mm_unpacklo_epi8(zero, y_0);
+    let u_0_lo = _mm_unpacklo_epi8(zero, u_lo);
+    let v_0_lo = _mm_unpacklo_epi8(zero, v_lo);
+    let (r0, g0, b0) = convert_yuv444_to_rgb(_token, y_0_lo, u_0_lo, v_0_lo);
+
+    // Group 1: Y[8..16], U_lo[8..16], V_lo[8..16]
+    let y_0_hi = _mm_unpackhi_epi8(zero, y_0);
+    let u_0_hi = _mm_unpackhi_epi8(zero, u_lo);
+    let v_0_hi = _mm_unpackhi_epi8(zero, v_lo);
+    let (r1, g1, b1) = convert_yuv444_to_rgb(_token, y_0_hi, u_0_hi, v_0_hi);
+
+    // Group 2: Y[16..24], U_hi[0..8], V_hi[0..8]
+    let y_1_lo = _mm_unpacklo_epi8(zero, y_1);
+    let u_1_lo = _mm_unpacklo_epi8(zero, u_hi);
+    let v_1_lo = _mm_unpacklo_epi8(zero, v_hi);
+    let (r2, g2, b2) = convert_yuv444_to_rgb(_token, y_1_lo, u_1_lo, v_1_lo);
+
+    // Group 3: Y[24..32], U_hi[8..16], V_hi[8..16]
+    let y_1_hi = _mm_unpackhi_epi8(zero, y_1);
+    let u_1_hi = _mm_unpackhi_epi8(zero, u_hi);
+    let v_1_hi = _mm_unpackhi_epi8(zero, v_hi);
+    let (r3, g3, b3) = convert_yuv444_to_rgb(_token, y_1_hi, u_1_hi, v_1_hi);
+
+    // Pack R/G/B to 8-bit: each packus gives 16 bytes
+    let r_0 = _mm_packus_epi16(r0, r1); // R for Y[0..16]
+    let r_1 = _mm_packus_epi16(r2, r3); // R for Y[16..32]
+    let g_0 = _mm_packus_epi16(g0, g1);
+    let g_1 = _mm_packus_epi16(g2, g3);
+    let b_0 = _mm_packus_epi16(b0, b1);
+    let b_1 = _mm_packus_epi16(b2, b3);
+
+    // Interleave RGB using planar_to_24b (32 pixels -> 96 bytes)
+    let (out0, out1, out2, out3, out4, out5) = planar_to_24b(_token, r_0, r_1, g_0, g_1, b_0, b_1);
+
+    // Store 96 bytes
+    let (rgb_0, rest) = rgb.split_at_mut(16);
+    let (rgb_1, rest) = rest.split_at_mut(16);
+    let (rgb_2, rest) = rest.split_at_mut(16);
+    let (rgb_3, rest) = rest.split_at_mut(16);
+    let (rgb_4, rgb_5) = rest.split_at_mut(16);
+    simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(rgb_0).unwrap(), out0);
+    simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(rgb_1).unwrap(), out1);
+    simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(rgb_2).unwrap(), out2);
+    simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(rgb_3).unwrap(), out3);
+    simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(rgb_4).unwrap(), out4);
+    simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(rgb_5).unwrap(), out5);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
