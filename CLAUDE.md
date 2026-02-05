@@ -565,17 +565,19 @@ Previous optimizations:
 - **libwebp-rs style bit reader for coefficients** (16% speedup, commit 5588e44)
 - AVX2 loop filter (16 pixels at once) - simple filter only
 
-### Decoder Profiler Hot Spots (2026-02-04, after fused add_residue)
+### Decoder Profiler Hot Spots (2026-02-05, after bounds check elision)
 | Function | % Time | Notes |
 |----------|--------|-------|
-| decode_frame | 27.6% | Main loop + inlined code |
-| read_coefficients_to_block | 24.3% | Coefficient decoding (arithmetic) |
-| fill_row_fancy | 20.9% | YUV→RGB with fancy upsampling |
-| memset | 5.6% | Output buffer allocation |
-| loop filter (combined) | ~16% | 9 filter functions, already SIMD |
-| predict_dcpred | 1.9% | DC prediction |
+| decode_frame | 28.9% | Main loop + orchestration |
+| read_coefficients_to_block | 25.4% | Coefficient decoding (bit reader) |
+| fill_row_fancy_with_2_uv_rows | 17.0% | YUV→RGB with fancy upsampling |
+| memset | 5.8% | Output buffer zero-init |
+| loop filter (combined) | ~14.7% | 9 filter functions, all SIMD |
+| predict_dcpred | 2.0% | DC prediction |
+| memcpy | 1.7% | Memory copying |
 
-Note: `add_residue_sse2` dropped from 10% to negligible after fused optimization.
+Note: `add_residue_sse2` is now inlined via `add_residue_and_clear_sse2`.
+Bounds check elision asserts added to loop filter and YUV functions.
 
 ### Detailed Callgrind/Cachegrind Analysis (2026-01-23)
 
