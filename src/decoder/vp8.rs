@@ -974,9 +974,8 @@ impl<'a> Vp8Decoder<'a> {
         dcq: i16,
         acq: i16,
     ) -> Result<bool, DecodingError> {
-        // Assert bounds upfront to elide checks in probs indexing
-        assert!(complexity <= 2);
-        assert!(block_idx < 24, "block_idx must be < 24");
+        debug_assert!(complexity <= 2);
+        debug_assert!(block_idx < 24, "block_idx must be < 24");
 
         let first = if plane == Plane::YCoeff1 { 1 } else { 0 };
         // Use position-indexed table to avoid COEFF_BANDS lookup in hot path
@@ -1048,18 +1047,6 @@ impl<'a> Vp8Decoder<'a> {
             let q = if zigzag > 0 { acq } else { dcq };
             self.coeff_blocks[block_idx * 16 + zigzag] = signed_v * i32::from(q);
 
-            // Capture raw level for diagnostic (when enabled)
-            if let Some(ref mut mb_diag) = self.current_mb_diag {
-                // Map block_idx to diagnostic slot
-                let diag_block = if block_idx < 16 {
-                    &mut mb_diag.y_blocks[block_idx]
-                } else {
-                    &mut mb_diag.uv_blocks[block_idx - 16]
-                };
-                diag_block.levels[n] = signed_v;
-                diag_block.eob_position = (n + 1) as u8;
-            }
-
             n += 1;
             if n < 16 {
                 prob = &probs[n][next_ctx];
@@ -1083,8 +1070,7 @@ impl<'a> Vp8Decoder<'a> {
         dcq: i16,
         acq: i16,
     ) -> Result<bool, DecodingError> {
-        // Assert bounds upfront to elide checks in probs indexing
-        assert!(complexity <= 2);
+        debug_assert!(complexity <= 2);
 
         let first = if plane == Plane::YCoeff1 { 1 } else { 0 };
         // Use position-indexed table to avoid COEFF_BANDS lookup in hot path
@@ -1155,14 +1141,6 @@ impl<'a> Vp8Decoder<'a> {
             let zigzag = ZIGZAG[n] as usize;
             let q = if zigzag > 0 { acq } else { dcq };
             block[zigzag] = signed_v * i32::from(q);
-
-            // Capture raw level for Y2 block diagnostic (when enabled)
-            if plane == Plane::Y2 {
-                if let Some(ref mut mb_diag) = self.current_mb_diag {
-                    mb_diag.y2_block.levels[n] = signed_v;
-                    mb_diag.y2_block.eob_position = (n + 1) as u8;
-                }
-            }
 
             n += 1;
             if n < 16 {
