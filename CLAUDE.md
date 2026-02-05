@@ -534,22 +534,24 @@ The crate supports `no_std` environments with the `alloc` crate:
 - `Encoder.encode_to_writer()` requires `std` feature
 - Dependencies: `thiserror` (no_std), `whereat` (no_std), `hashbrown` (no_std), `libm` (floating-point math)
 
-### Decoder Performance vs libwebp (2026-02-05, after 32-pixel YUV SIMD)
+### Decoder Performance vs libwebp (2026-02-05, after fused IDCT)
 
 | Image Size | zenwebp | libwebp | Ratio |
 |------------|---------|---------|-------|
-| CLIC 1360x2048 | 106-222 MPix/s | 129-269 MPix/s | **1.21x** slower |
-| CID22 512x512 | ~117 MPix/s | ~164 MPix/s | **1.41x** slower |
+| CID22 512x512 | 112-163 MPix/s | 139-195 MPix/s | **1.15-1.31x** slower |
 
-*Benchmarks: 10-20 iterations per image, release mode with SIMD*
+*Benchmarks: 50 iterations per image, release mode with SIMD*
 
-Our decoder is ~1.21x slower than libwebp on large images.
-Small images have more overhead (1.41x) due to fixed costs per decode.
+Our decoder averages ~1.21x slower than libwebp on 512x512 images.
 
 **Recent optimizations (2026-02-05):**
+- **Fused IDCT + add_residue**: Combines IDCT and residual addition in one SIMD pass
+  - Eliminates intermediate storage of IDCT output
+  - Defers IDCT from coefficient reading to prediction time
+  - DC-only fast path for blocks with only DC coefficient
+- **Concrete X64V3Token types**: Replaced trait bounds for better target-feature optimization
 - **32-pixel SIMD YUV conversion**: Process 32 Y pixels (16 chroma pairs) at once
   - YUV instructions dropped from 5.17% to 1.70% of total (3x improvement)
-  - Throughput: 102 → 106+ MPix/s on CLIC images
 - **Fixed-size array optimization**: Eliminate bounds checks in SIMD inner loops
 - **ActivePartitionReader** (commit 6327e15): Eliminated ~316K struct copy/drop per decode
   - Reader was being created/dropped once per 4x4 block, copying 32 bytes each time
