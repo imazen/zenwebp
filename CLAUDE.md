@@ -534,18 +534,36 @@ The crate supports `no_std` environments with the `alloc` crate:
 - `Encoder.encode_to_writer()` requires `std` feature
 - Dependencies: `thiserror` (no_std), `whereat` (no_std), `hashbrown` (no_std), `libm` (floating-point math)
 
-### Decoder Performance vs libwebp (2026-02-04)
+### Decoder Performance vs libwebp (2026-02-05)
 
-| Corpus | Images | zenwebp | libwebp | Ratio |
-|--------|--------|---------|---------|-------|
-| CLIC2025 | 15 | 155 MPix/s | 199 MPix/s | **1.28x** slower |
-| Screenshots | 9 | ~165 MPix/s | ~202 MPix/s | **1.22x** slower |
-| CID22 | 15 | ~85 MPix/s | ~142 MPix/s | **1.67x** slower |
+**Single-image benchmark** (2048x1216 lossy WebP, 100 iterations):
+| Decoder | Time | Throughput | Instructions/decode |
+|---------|------|------------|---------------------|
+| zenwebp | 18.3ms | 137 MPix/s | 289M |
+| libwebp | 12.7ms | 196 MPix/s | 171M |
+| **Ratio** | **1.44x** | 0.70x | **1.69x** |
 
-*Benchmarks on varied image corpora, 10 iterations per image, release mode*
+*The instruction ratio (1.69x) is larger than the wall-time ratio (1.44x) because
+libwebp has better IPC due to fewer branch mispredictions and better cache behavior.*
 
-Our decoder is ~1.28x slower than libwebp on large images (improved from 2.5x baseline).
-Small images (CID22, avg 262KB) have more overhead per pixel.
+**Per-decode instruction breakdown (2026-02-05):**
+| Category | zenwebp | libwebp | Ratio |
+|----------|---------|---------|-------|
+| Coefficient reading | 79M | 58M | 1.36x |
+| YUV conversion | 44M | 26M | 1.69x |
+| Loop filters | 44M | ~25M | ~1.76x |
+| Main loop/orchestration | 85M | ~60M | ~1.42x |
+
+**Optimization attempts (2026-02-05):**
+1. **SSSE3 shuffle for RGB interleave** - FAILED: archmage generates function calls for
+   `_mm_shuffle_epi8` instead of inline pshufb. Made things 12% slower.
+2. **Replace vec! with fill()** - Minimal impact: allocator was already efficient for
+   small fixed-size allocations.
+
+**Why YUV is 1.69x slower:** Our `planar_to_24b` does 5 passes of permutation to convert
+R,G,B planes to interleaved RGB. When processing 16 pixels, we pass zeros for half the
+inputs which wastes operations. A specialized 16-pixel interleave using SSSE3 shuffles
+would be faster in theory, but archmage's function call overhead makes it worse.
 
 **Recent optimization (2026-02-04):**
 - **Fused add_residue + coefficient clear** - Combines adding residuals with zeroing in one
@@ -565,16 +583,16 @@ Previous optimizations:
 - **libwebp-rs style bit reader for coefficients** (16% speedup, commit 5588e44)
 - AVX2 loop filter (16 pixels at once) - simple filter only
 
-### Decoder Profiler Hot Spots (2026-02-05, after bounds check elision)
-| Function | % Time | Notes |
-|----------|--------|-------|
-| decode_frame | 28.9% | Main loop + orchestration |
-| read_coefficients_to_block | 25.4% | Coefficient decoding (bit reader) |
-| fill_row_fancy_with_2_uv_rows | 17.0% | YUV→RGB with fancy upsampling |
-| memset | 5.8% | Output buffer zero-init |
-| loop filter (combined) | ~14.7% | 9 filter functions, all SIMD |
-| predict_dcpred | 2.0% | DC prediction |
-| memcpy | 1.7% | Memory copying |
+### Decoder Profiler Hot Spots (2026-02-05)
+| Function | % Time | Instructions | Notes |
+|----------|--------|--------------|-------|
+| decode_frame | 29.5% | 85M | Main loop + orchestration |
+| read_coefficients_to_block | 27.3% | 79M | Coefficient decoding (bit reader) |
+| fill_row_fancy_with_2_uv_rows | 15.2% | 44M | YUV→RGB with fancy upsampling |
+| loop filter (combined) | ~15% | ~44M | 9 filter functions, all SIMD |
+| memset | 3.7% | 11M | Output buffer zero-init |
+| memcpy | 1.6% | 5M | Memory copying |
+| predict_dcpred | 1.2% | 4M | DC prediction |
 
 Note: `add_residue_sse2` is now inlined via `add_residue_and_clear_sse2`.
 
