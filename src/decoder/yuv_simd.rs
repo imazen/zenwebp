@@ -574,41 +574,47 @@ pub fn fancy_upsample_8_pairs(
     fancy_upsample_8_pairs_inner(token, y_row, u_row_1, u_row_2, v_row_1, v_row_2, rgb);
 }
 
+/// Optimized inner function taking fixed-size arrays to eliminate bounds checks.
+/// Takes: 16 Y bytes, 9 U/V bytes per row (for overlapping window), 48 RGB bytes output.
 #[cfg(target_arch = "x86_64")]
 #[arcane]
-fn fancy_upsample_8_pairs_inner(
+fn fancy_upsample_8_pairs_inner_opt(
     _token: impl Has128BitSimd + Copy,
-    y_row: &[u8],
-    u_row_1: &[u8],
-    u_row_2: &[u8],
-    v_row_1: &[u8],
-    v_row_2: &[u8],
-    rgb: &mut [u8],
+    y_row: &[u8; 16],
+    u_row_1: &[u8; 9],
+    u_row_2: &[u8; 9],
+    v_row_1: &[u8; 9],
+    v_row_2: &[u8; 9],
+    rgb: &mut [u8; 48],
 ) {
-    // Assert bounds upfront to elide checks in SIMD loads/stores
-    assert!(y_row.len() >= 16);
-    assert!(u_row_1.len() >= 9);
-    assert!(u_row_2.len() >= 9);
-    assert!(v_row_1.len() >= 9);
-    assert!(v_row_2.len() >= 9);
-    assert!(rgb.len() >= 48);
+    // Load 8 chroma values from fixed-size arrays - no bounds checks needed
+    // Use _mm_set_epi64x which doesn't require target_feature (just constructs value)
+    macro_rules! load_8_from_9 {
+        ($arr:expr, 0) => {{
+            let bytes: [u8; 8] = [
+                $arr[0], $arr[1], $arr[2], $arr[3], $arr[4], $arr[5], $arr[6], $arr[7],
+            ];
+            let val = i64::from_le_bytes(bytes);
+            _mm_cvtsi64_si128(val)
+        }};
+        ($arr:expr, 1) => {{
+            let bytes: [u8; 8] = [
+                $arr[1], $arr[2], $arr[3], $arr[4], $arr[5], $arr[6], $arr[7], $arr[8],
+            ];
+            let val = i64::from_le_bytes(bytes);
+            _mm_cvtsi64_si128(val)
+        }};
+    }
 
-    // Load 8 chroma values from each row using i64 conversion
-    let load_8 = |slice: &[u8]| -> __m128i {
-        let arr = <&[u8; 8]>::try_from(&slice[..8]).unwrap();
-        let val = i64::from_le_bytes(*arr);
-        _mm_cvtsi64_si128(val)
-    };
+    let u_a = load_8_from_9!(u_row_1, 0);
+    let u_b = load_8_from_9!(u_row_1, 1);
+    let u_c = load_8_from_9!(u_row_2, 0);
+    let u_d = load_8_from_9!(u_row_2, 1);
 
-    let u_a = load_8(&u_row_1[..8]);
-    let u_b = load_8(&u_row_1[1..9]);
-    let u_c = load_8(&u_row_2[..8]);
-    let u_d = load_8(&u_row_2[1..9]);
-
-    let v_a = load_8(&v_row_1[..8]);
-    let v_b = load_8(&v_row_1[1..9]);
-    let v_c = load_8(&v_row_2[..8]);
-    let v_d = load_8(&v_row_2[1..9]);
+    let v_a = load_8_from_9!(v_row_1, 0);
+    let v_b = load_8_from_9!(v_row_1, 1);
+    let v_c = load_8_from_9!(v_row_2, 0);
+    let v_d = load_8_from_9!(v_row_2, 1);
 
     // Compute fancy upsampled U/V
     let (u_diag1, u_diag2) = fancy_upsample_16(_token, u_a, u_b, u_c, u_d);
@@ -618,8 +624,8 @@ fn fancy_upsample_8_pairs_inner(
     let u_interleaved = _mm_unpacklo_epi8(u_diag1, u_diag2);
     let v_interleaved = _mm_unpacklo_epi8(v_diag1, v_diag2);
 
-    // Load Y and expand to upper 8 bits of 16-bit words
-    let y_vec = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&y_row[..16]).unwrap());
+    // Load Y directly from fixed-size array - no bounds check
+    let y_vec = simd_mem::_mm_loadu_si128(y_row);
     let zero = _mm_setzero_si128();
 
     // Process first 8 pixels
@@ -649,10 +655,44 @@ fn fancy_upsample_8_pairs_inner(
 
     let (out0, out1, out2, _, _, _) = planar_to_24b(_token, rgb0, rgb1, rgb2, rgb3, rgb4, rgb5);
 
-    // Store 48 bytes (16 RGB pixels)
-    simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(&mut rgb[..16]).unwrap(), out0);
-    simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(&mut rgb[16..32]).unwrap(), out1);
-    simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(&mut rgb[32..48]).unwrap(), out2);
+    // Store to fixed-size output - use split_at_mut for non-overlapping borrows
+    let (rgb_0, rest) = rgb.split_at_mut(16);
+    let (rgb_1, rgb_2) = rest.split_at_mut(16);
+    simd_mem::_mm_storeu_si128(
+        <&mut [u8; 16]>::try_from(rgb_0).unwrap(),
+        out0,
+    );
+    simd_mem::_mm_storeu_si128(
+        <&mut [u8; 16]>::try_from(rgb_1).unwrap(),
+        out1,
+    );
+    simd_mem::_mm_storeu_si128(
+        <&mut [u8; 16]>::try_from(rgb_2).unwrap(),
+        out2,
+    );
+}
+
+/// Wrapper that converts slices to fixed-size arrays with a single bounds check.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn fancy_upsample_8_pairs_inner(
+    _token: impl Has128BitSimd + Copy,
+    y_row: &[u8],
+    u_row_1: &[u8],
+    u_row_2: &[u8],
+    v_row_1: &[u8],
+    v_row_2: &[u8],
+    rgb: &mut [u8],
+) {
+    // Single bounds check at entry - arrays are then passed by reference
+    let y: &[u8; 16] = y_row[..16].try_into().unwrap();
+    let u1: &[u8; 9] = u_row_1[..9].try_into().unwrap();
+    let u2: &[u8; 9] = u_row_2[..9].try_into().unwrap();
+    let v1: &[u8; 9] = v_row_1[..9].try_into().unwrap();
+    let v2: &[u8; 9] = v_row_2[..9].try_into().unwrap();
+    let out: &mut [u8; 48] = (&mut rgb[..48]).try_into().unwrap();
+
+    fancy_upsample_8_pairs_inner_opt(_token, y, u1, u2, v1, v2, out);
 }
 
 #[cfg(test)]
