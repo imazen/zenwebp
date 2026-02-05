@@ -32,6 +32,8 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::common::prediction::SimdTokenType;
+
 /// `_mm_mulhi_epu16` emulation
 fn mulhi(v: u8, coeff: u16) -> i32 {
     ((u32::from(v) * u32::from(coeff)) >> 8) as i32
@@ -88,6 +90,17 @@ pub(crate) fn fill_rgb_buffer_fancy<const BPP: usize>(
     height: usize,
     buffer_width: usize,
 ) {
+    // Summon SIMD token once for entire YUV conversion
+    let simd_token: SimdTokenType = {
+        #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+        {
+            use archmage::SimdToken;
+            archmage::X64V3Token::summon()
+        }
+        #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+        { None }
+    };
+
     // buffer width is always even so don't need to do div_ceil
     let chroma_buffer_width = buffer_width / 2;
     let chroma_width = width.div_ceil(2);
@@ -126,6 +139,7 @@ pub(crate) fn fill_rgb_buffer_fancy<const BPP: usize>(
             &u_row_2[..chroma_width],
             &v_row_1[..chroma_width],
             &v_row_2[..chroma_width],
+            simd_token,
         );
         fill_row_fancy_with_2_uv_rows::<BPP>(
             row_buf_2,
@@ -134,6 +148,7 @@ pub(crate) fn fill_rgb_buffer_fancy<const BPP: usize>(
             &u_row_1[..chroma_width],
             &v_row_2[..chroma_width],
             &v_row_1[..chroma_width],
+            simd_token,
         );
     }
 
@@ -165,14 +180,17 @@ fn fill_row_fancy_with_2_uv_rows<const BPP: usize>(
     u_row_2: &[u8],
     v_row_1: &[u8],
     v_row_2: &[u8],
+    simd_token: SimdTokenType,
 ) {
     // Use SIMD for RGB (BPP=3) if available and row is wide enough
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    if BPP == 3 && y_row.len() >= 17 && is_x86_feature_detected!("sse2") {
-        fill_row_fancy_with_2_uv_rows_simd::<BPP>(
-            row_buffer, y_row, u_row_1, u_row_2, v_row_1, v_row_2,
-        );
-        return;
+    if BPP == 3 && y_row.len() >= 17 {
+        if let Some(token) = simd_token {
+            fill_row_fancy_with_2_uv_rows_simd::<BPP>(
+                row_buffer, y_row, u_row_1, u_row_2, v_row_1, v_row_2, token,
+            );
+            return;
+        }
     }
 
     fill_row_fancy_with_2_uv_rows_scalar::<BPP>(
@@ -188,9 +206,8 @@ fn fill_row_fancy_with_2_uv_rows_simd<const BPP: usize>(
     u_row_2: &[u8],
     v_row_1: &[u8],
     v_row_2: &[u8],
+    token: archmage::X64V3Token,
 ) {
-    use archmage::{SimdToken, X64V3Token};
-
     // Handle first pixel separately (edge case)
     {
         let rgb1 = &mut row_buffer[0..3];
@@ -204,9 +221,6 @@ fn fill_row_fancy_with_2_uv_rows_simd<const BPP: usize>(
     let mut y_offset = 1; // Start after first edge pixel
     let mut uv_offset = 0;
     let mut rgb_offset = BPP;
-
-    // Summon token once before the loop to avoid repeated summon() calls
-    let token = X64V3Token::summon().expect("SSE4.1 required for SIMD YUV");
 
     // Process chunks of 16 Y pixels (8 pixel pairs) with SIMD
     // Need at least 16 Y pixels and 9 U/V samples
