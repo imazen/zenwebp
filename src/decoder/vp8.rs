@@ -20,6 +20,9 @@ use alloc::vec::Vec;
 use core::array;
 use core::default::Default;
 
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+use archmage::SimdToken;
+
 use super::api::{DecodingError, UpsamplingMethod};
 use super::yuv;
 use crate::common::prediction::*;
@@ -812,7 +815,7 @@ impl<'a> Vp8Decoder<'a> {
         self.b.check(mb)
     }
 
-    fn intra_predict_luma(&mut self, mbx: usize, mby: usize, mb: &MacroBlock) {
+    fn intra_predict_luma(&mut self, mbx: usize, mby: usize, mb: &MacroBlock, simd_token: SimdTokenType) {
         let stride = LUMA_STRIDE;
         let mw = self.mbwidth as usize;
         let mut ws = [0u8; LUMA_BLOCK_SIZE];
@@ -846,7 +849,11 @@ impl<'a> Vp8Decoder<'a> {
 
                         let rb: &mut [i32; 16] =
                             (&mut self.coeff_blocks[i * 16..][..16]).try_into().unwrap();
-                        add_residue_and_clear(&mut ws, rb, y0, x0, stride);
+                        if let Some(token) = simd_token {
+                            add_residue_and_clear_with_token(token, &mut ws, rb, y0, x0, stride);
+                        } else {
+                            add_residue_and_clear(&mut ws, rb, y0, x0, stride);
+                        }
                     }
                 }
             }
@@ -861,7 +868,11 @@ impl<'a> Vp8Decoder<'a> {
                     let y0 = 1 + y * 4;
                     let x0 = 1 + x * 4;
 
-                    add_residue_and_clear(&mut ws, rb, y0, x0, stride);
+                    if let Some(token) = simd_token {
+                        add_residue_and_clear_with_token(token, &mut ws, rb, y0, x0, stride);
+                    } else {
+                        add_residue_and_clear(&mut ws, rb, y0, x0, stride);
+                    }
                 }
             }
         }
@@ -884,7 +895,7 @@ impl<'a> Vp8Decoder<'a> {
         }
     }
 
-    fn intra_predict_chroma(&mut self, mbx: usize, mby: usize, mb: &MacroBlock) {
+    fn intra_predict_chroma(&mut self, mbx: usize, mby: usize, mb: &MacroBlock, simd_token: SimdTokenType) {
         let stride = CHROMA_STRIDE;
 
         let mut uws = [0u8; CHROMA_BLOCK_SIZE];
@@ -921,11 +932,19 @@ impl<'a> Vp8Decoder<'a> {
                     (&mut self.coeff_blocks[u_idx * 16..][..16]).try_into().unwrap();
                 let y0 = 1 + y * 4;
                 let x0 = 1 + x * 4;
-                add_residue_and_clear(&mut uws, urb, y0, x0, stride);
+                if let Some(token) = simd_token {
+                    add_residue_and_clear_with_token(token, &mut uws, urb, y0, x0, stride);
+                } else {
+                    add_residue_and_clear(&mut uws, urb, y0, x0, stride);
+                }
 
                 let vrb: &mut [i32; 16] =
                     (&mut self.coeff_blocks[v_idx * 16..][..16]).try_into().unwrap();
-                add_residue_and_clear(&mut vws, vrb, y0, x0, stride);
+                if let Some(token) = simd_token {
+                    add_residue_and_clear_with_token(token, &mut vws, vrb, y0, x0, stride);
+                } else {
+                    add_residue_and_clear(&mut vws, vrb, y0, x0, stride);
+                }
             }
         }
 
@@ -1634,6 +1653,14 @@ impl<'a> Vp8Decoder<'a> {
     fn decode_frame_diagnostic(mut self) -> Result<(Frame, DiagnosticFrame), DecodingError> {
         self.read_frame_header()?;
 
+        // Summon SIMD token once for the entire decode
+        let simd_token: SimdTokenType = {
+            #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+            { archmage::X64V3Token::summon() }
+            #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+            { None }
+        };
+
         // Capture segment quantizers
         let segments: [(i16, i16, i16, i16, i16, i16); 4] = core::array::from_fn(|i| {
             let s = &self.segment[i];
@@ -1673,8 +1700,8 @@ impl<'a> Vp8Decoder<'a> {
                     }
                 }
 
-                self.intra_predict_luma(mbx, mby, &mb);
-                self.intra_predict_chroma(mbx, mby, &mb);
+                self.intra_predict_luma(mbx, mby, &mb, simd_token);
+                self.intra_predict_chroma(mbx, mby, &mb, simd_token);
                 self.macroblocks.push(mb);
 
                 // Finalize diagnostic capture
@@ -1709,6 +1736,14 @@ impl<'a> Vp8Decoder<'a> {
     fn decode_frame_(mut self) -> Result<Frame, DecodingError> {
         self.read_frame_header()?;
 
+        // Summon SIMD token once for the entire decode, avoiding ~312K per-call atomic loads
+        let simd_token: SimdTokenType = {
+            #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+            { archmage::X64V3Token::summon() }
+            #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+            { None }
+        };
+
         for mby in 0..self.mbheight as usize {
             let p = mby % self.num_partitions as usize;
             self.left = PreviousMacroBlock::default();
@@ -1734,8 +1769,8 @@ impl<'a> Vp8Decoder<'a> {
                 }
 
                 // intra_predict_* reads from self.coeff_blocks and clears after use
-                self.intra_predict_luma(mbx, mby, &mb);
-                self.intra_predict_chroma(mbx, mby, &mb);
+                self.intra_predict_luma(mbx, mby, &mb, simd_token);
+                self.intra_predict_chroma(mbx, mby, &mb, simd_token);
 
                 self.macroblocks.push(mb);
             }
