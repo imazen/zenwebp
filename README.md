@@ -207,9 +207,9 @@ Tested across three corpora with varying image sizes and content:
 
 | Corpus | Images | Megapixels | zenwebp | image-webp | zenwebp speedup |
 |--------|--------|------------|---------|------------|-----------------|
-| CLIC2025 | 15 | 42.6 | 1.43x slower | 2.81x slower | **2.0x faster** |
-| Screenshots | 9 | 64.4 | 1.35x slower | 2.46x slower | **1.8x faster** |
-| CID22 | 15 | 3.9 | 1.85x slower | 2.98x slower | **1.6x faster** |
+| CLIC2025 | 15 | 42.6 | 1.28x slower | 2.78x slower | **2.2x faster** |
+| Screenshots | 9 | 64.4 | 1.22x slower | 2.46x slower | **2.0x faster** |
+| CID22 | 15 | 3.9 | 1.67x slower | 2.98x slower | **1.8x faster** |
 
 *All ratios vs libwebp (C). Lower is better. zenwebp consistently ~2x faster than image-webp.*
 
