@@ -215,16 +215,24 @@ pub unsafe fn simple_v_filter16_unchecked(
     let ptr = pixels.as_mut_ptr();
 
     // Compute row pointers directly - NO bounds checks
-    let p1_ptr = ptr.add(point - 2 * stride);
-    let p0_ptr = ptr.add(point - stride);
-    let q0_ptr = ptr.add(point);
-    let q1_ptr = ptr.add(point + stride);
+    let (p1_ptr, p0_ptr, q0_ptr, q1_ptr) = unsafe {
+        (
+            ptr.add(point - 2 * stride),
+            ptr.add(point - stride),
+            ptr.add(point),
+            ptr.add(point + stride),
+        )
+    };
 
     // Load 16 pixels from each row
-    let p1 = _mm_loadu_si128(p1_ptr as *const __m128i);
-    let mut p0 = _mm_loadu_si128(p0_ptr as *const __m128i);
-    let mut q0 = _mm_loadu_si128(q0_ptr as *const __m128i);
-    let q1 = _mm_loadu_si128(q1_ptr as *const __m128i);
+    let (p1, mut p0, mut q0, q1) = unsafe {
+        (
+            _mm_loadu_si128(p1_ptr as *const __m128i),
+            _mm_loadu_si128(p0_ptr as *const __m128i),
+            _mm_loadu_si128(q0_ptr as *const __m128i),
+            _mm_loadu_si128(q1_ptr as *const __m128i),
+        )
+    };
 
     // Check which pixels need filtering
     let mask = needs_filter_16(_token, p1, p0, q0, q1, thresh);
@@ -237,8 +245,10 @@ pub unsafe fn simple_v_filter16_unchecked(
     do_simple_filter_16(_token, &mut p0, &mut q0, fl_masked);
 
     // Store results
-    _mm_storeu_si128(p0_ptr as *mut __m128i, p0);
-    _mm_storeu_si128(q0_ptr as *mut __m128i, q0);
+    unsafe {
+        _mm_storeu_si128(p0_ptr as *mut __m128i, p0);
+        _mm_storeu_si128(q0_ptr as *mut __m128i, q0);
+    }
 }
 
 // ============================================================================
@@ -1580,24 +1590,32 @@ pub unsafe fn normal_v_filter16_inner_unchecked(
     let ptr = pixels.as_mut_ptr();
 
     // Compute row pointers directly - NO bounds checks
-    let p3_ptr = ptr.add(point - 4 * stride);
-    let p2_ptr = ptr.add(point - 3 * stride);
-    let p1_ptr = ptr.add(point - 2 * stride);
-    let p0_ptr = ptr.add(point - stride);
-    let q0_ptr = ptr.add(point);
-    let q1_ptr = ptr.add(point + stride);
-    let q2_ptr = ptr.add(point + 2 * stride);
-    let q3_ptr = ptr.add(point + 3 * stride);
+    let (p3_ptr, p2_ptr, p1_ptr, p0_ptr, q0_ptr, q1_ptr, q2_ptr, q3_ptr) = unsafe {
+        (
+            ptr.add(point - 4 * stride),
+            ptr.add(point - 3 * stride),
+            ptr.add(point - 2 * stride),
+            ptr.add(point - stride),
+            ptr.add(point),
+            ptr.add(point + stride),
+            ptr.add(point + 2 * stride),
+            ptr.add(point + 3 * stride),
+        )
+    };
 
     // Load 8 rows of 16 pixels
-    let p3 = _mm_loadu_si128(p3_ptr as *const __m128i);
-    let p2 = _mm_loadu_si128(p2_ptr as *const __m128i);
-    let mut p1 = _mm_loadu_si128(p1_ptr as *const __m128i);
-    let mut p0 = _mm_loadu_si128(p0_ptr as *const __m128i);
-    let mut q0 = _mm_loadu_si128(q0_ptr as *const __m128i);
-    let mut q1 = _mm_loadu_si128(q1_ptr as *const __m128i);
-    let q2 = _mm_loadu_si128(q2_ptr as *const __m128i);
-    let q3 = _mm_loadu_si128(q3_ptr as *const __m128i);
+    let (p3, p2, mut p1, mut p0, mut q0, mut q1, q2, q3) = unsafe {
+        (
+            _mm_loadu_si128(p3_ptr as *const __m128i),
+            _mm_loadu_si128(p2_ptr as *const __m128i),
+            _mm_loadu_si128(p1_ptr as *const __m128i),
+            _mm_loadu_si128(p0_ptr as *const __m128i),
+            _mm_loadu_si128(q0_ptr as *const __m128i),
+            _mm_loadu_si128(q1_ptr as *const __m128i),
+            _mm_loadu_si128(q2_ptr as *const __m128i),
+            _mm_loadu_si128(q3_ptr as *const __m128i),
+        )
+    };
 
     // Check if filtering is needed
     let mask = needs_filter_normal_16(
@@ -1621,10 +1639,12 @@ pub unsafe fn normal_v_filter16_inner_unchecked(
     do_filter4_16(_token, &mut p1, &mut p0, &mut q0, &mut q1, mask, hev);
 
     // Store results
-    _mm_storeu_si128(p1_ptr as *mut __m128i, p1);
-    _mm_storeu_si128(p0_ptr as *mut __m128i, p0);
-    _mm_storeu_si128(q0_ptr as *mut __m128i, q0);
-    _mm_storeu_si128(q1_ptr as *mut __m128i, q1);
+    unsafe {
+        _mm_storeu_si128(p1_ptr as *mut __m128i, p1);
+        _mm_storeu_si128(p0_ptr as *mut __m128i, p0);
+        _mm_storeu_si128(q0_ptr as *mut __m128i, q0);
+        _mm_storeu_si128(q1_ptr as *mut __m128i, q1);
+    }
 }
 
 /// Apply normal vertical filter (DoFilter6) to 16 pixels across a horizontal macroblock edge.
@@ -1739,24 +1759,32 @@ pub unsafe fn normal_v_filter16_edge_unchecked(
     let ptr = pixels.as_mut_ptr();
 
     // Compute row pointers directly - NO bounds checks
-    let p3_ptr = ptr.add(point - 4 * stride);
-    let p2_ptr = ptr.add(point - 3 * stride);
-    let p1_ptr = ptr.add(point - 2 * stride);
-    let p0_ptr = ptr.add(point - stride);
-    let q0_ptr = ptr.add(point);
-    let q1_ptr = ptr.add(point + stride);
-    let q2_ptr = ptr.add(point + 2 * stride);
-    let q3_ptr = ptr.add(point + 3 * stride);
+    let (p3_ptr, p2_ptr, p1_ptr, p0_ptr, q0_ptr, q1_ptr, q2_ptr, q3_ptr) = unsafe {
+        (
+            ptr.add(point - 4 * stride),
+            ptr.add(point - 3 * stride),
+            ptr.add(point - 2 * stride),
+            ptr.add(point - stride),
+            ptr.add(point),
+            ptr.add(point + stride),
+            ptr.add(point + 2 * stride),
+            ptr.add(point + 3 * stride),
+        )
+    };
 
     // Load 8 rows of 16 pixels
-    let p3 = _mm_loadu_si128(p3_ptr as *const __m128i);
-    let mut p2 = _mm_loadu_si128(p2_ptr as *const __m128i);
-    let mut p1 = _mm_loadu_si128(p1_ptr as *const __m128i);
-    let mut p0 = _mm_loadu_si128(p0_ptr as *const __m128i);
-    let mut q0 = _mm_loadu_si128(q0_ptr as *const __m128i);
-    let mut q1 = _mm_loadu_si128(q1_ptr as *const __m128i);
-    let mut q2 = _mm_loadu_si128(q2_ptr as *const __m128i);
-    let q3 = _mm_loadu_si128(q3_ptr as *const __m128i);
+    let (p3, mut p2, mut p1, mut p0, mut q0, mut q1, mut q2, q3) = unsafe {
+        (
+            _mm_loadu_si128(p3_ptr as *const __m128i),
+            _mm_loadu_si128(p2_ptr as *const __m128i),
+            _mm_loadu_si128(p1_ptr as *const __m128i),
+            _mm_loadu_si128(p0_ptr as *const __m128i),
+            _mm_loadu_si128(q0_ptr as *const __m128i),
+            _mm_loadu_si128(q1_ptr as *const __m128i),
+            _mm_loadu_si128(q2_ptr as *const __m128i),
+            _mm_loadu_si128(q3_ptr as *const __m128i),
+        )
+    };
 
     // Check if filtering is needed
     let mask = needs_filter_normal_16(
@@ -1782,12 +1810,14 @@ pub unsafe fn normal_v_filter16_edge_unchecked(
     );
 
     // Store results
-    _mm_storeu_si128(p2_ptr as *mut __m128i, p2);
-    _mm_storeu_si128(p1_ptr as *mut __m128i, p1);
-    _mm_storeu_si128(p0_ptr as *mut __m128i, p0);
-    _mm_storeu_si128(q0_ptr as *mut __m128i, q0);
-    _mm_storeu_si128(q1_ptr as *mut __m128i, q1);
-    _mm_storeu_si128(q2_ptr as *mut __m128i, q2);
+    unsafe {
+        _mm_storeu_si128(p2_ptr as *mut __m128i, p2);
+        _mm_storeu_si128(p1_ptr as *mut __m128i, p1);
+        _mm_storeu_si128(p0_ptr as *mut __m128i, p0);
+        _mm_storeu_si128(q0_ptr as *mut __m128i, q0);
+        _mm_storeu_si128(q1_ptr as *mut __m128i, q1);
+        _mm_storeu_si128(q2_ptr as *mut __m128i, q2);
+    }
 }
 
 /// UNCHECKED: Simple horizontal filter with all bounds checks eliminated.
@@ -1811,8 +1841,10 @@ pub unsafe fn simple_h_filter16_unchecked(
     // Load 16 rows of 8 pixels each using raw pointer arithmetic
     let mut rows = [_mm_setzero_si128(); 16];
     for i in 0..16 {
-        let row_ptr = ptr.add((y_start + i) * stride + x - 4);
-        rows[i] = _mm_loadu_si64(row_ptr);
+        unsafe {
+            let row_ptr = ptr.add((y_start + i) * stride + x - 4);
+            rows[i] = _mm_loadu_si64(row_ptr);
+        }
     }
 
     // Transpose 8x16 to 16x8: now we have 8 columns of 16 pixels each
@@ -1833,8 +1865,10 @@ pub unsafe fn simple_h_filter16_unchecked(
 
     // Store 4 bytes per row using raw pointer arithmetic
     for i in 0..16 {
-        let row_ptr = ptr.add((y_start + i) * stride + x - 2);
-        core::ptr::write_unaligned(row_ptr as *mut i32, packed[i]);
+        unsafe {
+            let row_ptr = ptr.add((y_start + i) * stride + x - 2);
+            core::ptr::write_unaligned(row_ptr as *mut i32, packed[i]);
+        }
     }
 }
 
@@ -1862,8 +1896,10 @@ pub unsafe fn normal_h_filter16_inner_unchecked(
     // Load 16 rows of 8 pixels each using raw pointer arithmetic
     let mut rows = [_mm_setzero_si128(); 16];
     for i in 0..16 {
-        let row_ptr = ptr.add((y_start + i) * stride + x - 4);
-        rows[i] = _mm_loadu_si64(row_ptr);
+        unsafe {
+            let row_ptr = ptr.add((y_start + i) * stride + x - 4);
+            rows[i] = _mm_loadu_si64(row_ptr);
+        }
     }
 
     // Transpose 8x16 to 16x8
@@ -1903,8 +1939,10 @@ pub unsafe fn normal_h_filter16_inner_unchecked(
 
     // Store 4 bytes per row using raw pointer arithmetic
     for i in 0..16 {
-        let row_ptr = ptr.add((y_start + i) * stride + x - 2);
-        core::ptr::write_unaligned(row_ptr as *mut i32, packed[i]);
+        unsafe {
+            let row_ptr = ptr.add((y_start + i) * stride + x - 2);
+            core::ptr::write_unaligned(row_ptr as *mut i32, packed[i]);
+        }
     }
 }
 
@@ -1932,8 +1970,10 @@ pub unsafe fn normal_h_filter16_edge_unchecked(
     // Load 16 rows of 8 pixels each using raw pointer arithmetic
     let mut rows = [_mm_setzero_si128(); 16];
     for i in 0..16 {
-        let row_ptr = ptr.add((y_start + i) * stride + x - 4);
-        rows[i] = _mm_loadu_si64(row_ptr);
+        unsafe {
+            let row_ptr = ptr.add((y_start + i) * stride + x - 4);
+            rows[i] = _mm_loadu_si64(row_ptr);
+        }
     }
 
     // Transpose 8x16 to 16x8
@@ -1975,11 +2015,13 @@ pub unsafe fn normal_h_filter16_edge_unchecked(
 
     // Store 6 bytes per row using raw pointer arithmetic
     for i in 0..16 {
-        let row_ptr = ptr.add((y_start + i) * stride + x - 3);
-        // Store first 4 bytes (p2, p1, p0, q0)
-        core::ptr::write_unaligned(row_ptr as *mut i32, packed4[i]);
-        // Store next 2 bytes (q1, q2)
-        core::ptr::write_unaligned(row_ptr.add(4) as *mut i16, packed2[i]);
+        unsafe {
+            let row_ptr = ptr.add((y_start + i) * stride + x - 3);
+            // Store first 4 bytes (p2, p1, p0, q0)
+            core::ptr::write_unaligned(row_ptr as *mut i32, packed4[i]);
+            // Store next 2 bytes (q1, q2)
+            core::ptr::write_unaligned(row_ptr.add(4) as *mut i16, packed2[i]);
+        }
     }
 }
 

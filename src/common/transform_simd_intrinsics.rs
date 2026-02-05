@@ -385,17 +385,26 @@ fn ftransform2_sse2(
     let zero = _mm_setzero_si128();
 
     // Load 8 bytes per row from src (2 blocks × 4 bytes)
-    // We use unaligned loads since data may not be aligned
-    let src0 = _mm_loadl_epi64(src.as_ptr() as *const __m128i);
-    let src1 = _mm_loadl_epi64(src.as_ptr().add(src_stride) as *const __m128i);
-    let src2 = _mm_loadl_epi64(src.as_ptr().add(src_stride * 2) as *const __m128i);
-    let src3 = _mm_loadl_epi64(src.as_ptr().add(src_stride * 3) as *const __m128i);
+    let src0 = simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&src[..8]).unwrap());
+    let src1 =
+        simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&src[src_stride..src_stride + 8]).unwrap());
+    let src2 = simd_mem::_mm_loadu_si64(
+        <&[u8; 8]>::try_from(&src[src_stride * 2..src_stride * 2 + 8]).unwrap(),
+    );
+    let src3 = simd_mem::_mm_loadu_si64(
+        <&[u8; 8]>::try_from(&src[src_stride * 3..src_stride * 3 + 8]).unwrap(),
+    );
 
     // Load 8 bytes per row from ref
-    let ref0 = _mm_loadl_epi64(ref_.as_ptr() as *const __m128i);
-    let ref1 = _mm_loadl_epi64(ref_.as_ptr().add(ref_stride) as *const __m128i);
-    let ref2 = _mm_loadl_epi64(ref_.as_ptr().add(ref_stride * 2) as *const __m128i);
-    let ref3 = _mm_loadl_epi64(ref_.as_ptr().add(ref_stride * 3) as *const __m128i);
+    let ref0 = simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&ref_[..8]).unwrap());
+    let ref1 =
+        simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&ref_[ref_stride..ref_stride + 8]).unwrap());
+    let ref2 = simd_mem::_mm_loadu_si64(
+        <&[u8; 8]>::try_from(&ref_[ref_stride * 2..ref_stride * 2 + 8]).unwrap(),
+    );
+    let ref3 = simd_mem::_mm_loadu_si64(
+        <&[u8; 8]>::try_from(&ref_[ref_stride * 3..ref_stride * 3 + 8]).unwrap(),
+    );
 
     // Convert u8 to i16 (zero-extend)
     let src_0 = _mm_unpacklo_epi8(src0, zero);
