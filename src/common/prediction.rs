@@ -279,18 +279,23 @@ fn add_residue_and_clear_sse2(
     use core::arch::x86::*;
     use safe_unaligned_simd::x86_64 as simd_mem;
 
+    // Assert bounds upfront to elide checks in the loop
+    let start = y0 * stride + x0;
+    let end = start + 3 * stride + 4;
+    assert!(end <= pblock.len(), "pblock too small for 4x4 block");
+
     let zero = _mm_setzero_si128();
-    let mut pos = y0 * stride + x0;
+    let mut pos = start;
 
     for row_idx in 0..4 {
-        // Load 4 residual values (i32)
+        // Load 4 residual values (i32) - rblock is [i32; 16], indexing is always valid
         let rslice = &mut rblock[row_idx * 4..row_idx * 4 + 4];
         let r = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&*rslice).unwrap());
 
         // Clear coefficients with SIMD store
         simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(rslice).unwrap(), zero);
 
-        // Load 4 prediction bytes
+        // Load 4 prediction bytes - bounds proven by assert above
         let p_arr: [u8; 4] = pblock[pos..pos + 4].try_into().unwrap();
         let p_bytes = i32::from_ne_bytes(p_arr);
         let p4 = _mm_cvtsi32_si128(p_bytes);
@@ -302,7 +307,7 @@ fn add_residue_and_clear_sse2(
         let packed_16 = _mm_packs_epi32(sum, sum);
         let packed_8 = _mm_packus_epi16(packed_16, packed_16);
 
-        // Store 4 bytes
+        // Store 4 bytes - bounds proven by assert above
         let result = _mm_cvtsi128_si32(packed_8) as u32;
         pblock[pos..pos + 4].copy_from_slice(&result.to_ne_bytes());
 

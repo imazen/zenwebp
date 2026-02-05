@@ -583,12 +583,13 @@ fn fancy_upsample_8_pairs_inner(
     v_row_2: &[u8],
     rgb: &mut [u8],
 ) {
-    debug_assert!(y_row.len() >= 16);
-    debug_assert!(u_row_1.len() >= 9);
-    debug_assert!(u_row_2.len() >= 9);
-    debug_assert!(v_row_1.len() >= 9);
-    debug_assert!(v_row_2.len() >= 9);
-    debug_assert!(rgb.len() >= 48);
+    // Assert bounds upfront to elide checks in SIMD loads/stores
+    assert!(y_row.len() >= 16);
+    assert!(u_row_1.len() >= 9);
+    assert!(u_row_2.len() >= 9);
+    assert!(v_row_1.len() >= 9);
+    assert!(v_row_2.len() >= 9);
+    assert!(rgb.len() >= 48);
 
     // Load 8 chroma values from each row using i64 conversion
     let load_8 = |slice: &[u8]| -> __m128i {

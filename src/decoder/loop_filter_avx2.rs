@@ -144,6 +144,12 @@ pub fn simple_v_filter16(
     stride: usize,
     thresh: i32,
 ) {
+    // Assert bounds upfront to elide checks in SIMD loads/stores
+    assert!(
+        point >= 2 * stride && point + stride + 16 <= pixels.len(),
+        "simple_v_filter16: bounds check failed"
+    );
+
     // Load 16 pixels from each of the 4 rows using safe memory operations
     let p1 = simd_mem::_mm_loadu_si128(
         <&[u8; 16]>::try_from(&pixels[point - 2 * stride..][..16]).unwrap(),
@@ -287,6 +293,12 @@ pub fn simple_h_filter16(
     stride: usize,
     thresh: i32,
 ) {
+    // Assert bounds upfront to elide checks in SIMD loads/stores
+    assert!(
+        x >= 4 && (y_start + 15) * stride + x + 4 <= pixels.len(),
+        "simple_h_filter16: bounds check failed"
+    );
+
     // Load 16 rows of 8 pixels each (p3,p2,p1,p0,q0,q1,q2,q3)
     // The edge is between p0 (x-1) and q0 (x), so we load from x-4 to x+3
     let mut rows = [_mm_setzero_si128(); 16];
@@ -752,6 +764,12 @@ pub fn normal_v_filter16_inner(
     interior_limit: i32,
     edge_limit: i32,
 ) {
+    // Assert bounds upfront to elide checks in SIMD loads/stores
+    assert!(
+        point >= 4 * stride && point + 3 * stride + 16 <= pixels.len(),
+        "normal_v_filter16_inner: bounds check failed"
+    );
+
     // Load 8 rows of 16 pixels each
     let p3 = simd_mem::_mm_loadu_si128(
         <&[u8; 16]>::try_from(&pixels[point - 4 * stride..][..16]).unwrap(),
@@ -826,6 +844,12 @@ pub fn normal_v_filter16_edge(
     interior_limit: i32,
     edge_limit: i32,
 ) {
+    // Assert bounds upfront to elide checks in SIMD loads/stores
+    assert!(
+        point >= 4 * stride && point + 3 * stride + 16 <= pixels.len(),
+        "normal_v_filter16_edge: bounds check failed"
+    );
+
     // Load 8 rows of 16 pixels each
     let p3 = simd_mem::_mm_loadu_si128(
         <&[u8; 16]>::try_from(&pixels[point - 4 * stride..][..16]).unwrap(),
@@ -990,6 +1014,12 @@ pub fn normal_h_filter16_inner(
     interior_limit: i32,
     edge_limit: i32,
 ) {
+    // Assert bounds upfront to elide checks in SIMD loads/stores
+    assert!(
+        x >= 4 && (y_start + 15) * stride + x + 4 <= pixels.len(),
+        "normal_h_filter16_inner: bounds check failed"
+    );
+
     // Load 16 rows of 8 pixels each (p3,p2,p1,p0,q0,q1,q2,q3)
     // The edge is between p0 (x-1) and q0 (x), so we load from x-4 to x+3
     let mut rows = [_mm_setzero_si128(); 16];
@@ -1063,6 +1093,12 @@ pub fn normal_h_filter16_edge(
     interior_limit: i32,
     edge_limit: i32,
 ) {
+    // Assert bounds upfront to elide checks in SIMD loads/stores
+    assert!(
+        x >= 4 && (y_start + 15) * stride + x + 4 <= pixels.len(),
+        "normal_h_filter16_edge: bounds check failed"
+    );
+
     // Load 16 rows of 8 pixels each (p3,p2,p1,p0,q0,q1,q2,q3)
     let mut rows = [_mm_setzero_si128(); 16];
     for (i, row) in rows.iter_mut().enumerate() {
@@ -1145,6 +1181,16 @@ pub fn normal_h_filter_uv_edge(
     interior_limit: i32,
     edge_limit: i32,
 ) {
+    // Assert bounds upfront to elide checks in SIMD loads/stores
+    assert!(
+        x >= 4 && (y_start + 7) * stride + x + 4 <= u_pixels.len(),
+        "normal_h_filter_uv_edge: u_pixels bounds check failed"
+    );
+    assert!(
+        x >= 4 && (y_start + 7) * stride + x + 4 <= v_pixels.len(),
+        "normal_h_filter_uv_edge: v_pixels bounds check failed"
+    );
+
     // Load 8 U rows and 8 V rows into a 16-row array
     let mut rows = [_mm_setzero_si128(); 16];
     for i in 0..8 {
@@ -1234,6 +1280,16 @@ pub fn normal_h_filter_uv_inner(
     interior_limit: i32,
     edge_limit: i32,
 ) {
+    // Assert bounds upfront to elide checks in SIMD loads/stores
+    assert!(
+        x >= 4 && (y_start + 7) * stride + x + 4 <= u_pixels.len(),
+        "normal_h_filter_uv_inner: u_pixels bounds check failed"
+    );
+    assert!(
+        x >= 4 && (y_start + 7) * stride + x + 4 <= v_pixels.len(),
+        "normal_h_filter_uv_inner: v_pixels bounds check failed"
+    );
+
     // Load 8 U rows and 8 V rows
     let mut rows = [_mm_setzero_si128(); 16];
     for i in 0..8 {
@@ -1320,6 +1376,18 @@ pub fn normal_v_filter_uv_edge(
     interior_limit: i32,
     edge_limit: i32,
 ) {
+    // Assert bounds upfront to elide checks in SIMD loads/stores
+    // Loads from point - 4*stride to point + 3*stride (8 bytes each)
+    // Stores from point - 3*stride to point + 2*stride (need 16-byte slice for storel_epi64)
+    assert!(
+        point >= 4 * stride && point + 3 * stride + 8 <= u_pixels.len(),
+        "normal_v_filter_uv_edge: u_pixels bounds check failed"
+    );
+    assert!(
+        point >= 4 * stride && point + 3 * stride + 8 <= v_pixels.len(),
+        "normal_v_filter_uv_edge: v_pixels bounds check failed"
+    );
+
     // Helper to load a row with 8 U + 8 V pixels packed together
     let load_uv_row = |u_pix: &[u8], v_pix: &[u8], offset: usize| -> __m128i {
         let u = simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&u_pix[offset..][..8]).unwrap());
@@ -1395,6 +1463,18 @@ pub fn normal_v_filter_uv_inner(
     interior_limit: i32,
     edge_limit: i32,
 ) {
+    // Assert bounds upfront to elide checks in SIMD loads/stores
+    // Loads from point - 4*stride to point + 3*stride (8 bytes each)
+    // Stores from point - 2*stride to point + stride (need 16-byte slice for storel_epi64)
+    assert!(
+        point >= 4 * stride && point + 3 * stride + 8 <= u_pixels.len(),
+        "normal_v_filter_uv_inner: u_pixels bounds check failed"
+    );
+    assert!(
+        point >= 4 * stride && point + 3 * stride + 8 <= v_pixels.len(),
+        "normal_v_filter_uv_inner: v_pixels bounds check failed"
+    );
+
     // Helper to load a row with 8 U + 8 V pixels packed together
     let load_uv_row = |u_pix: &[u8], v_pix: &[u8], offset: usize| -> __m128i {
         let u = simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&u_pix[offset..][..8]).unwrap());
