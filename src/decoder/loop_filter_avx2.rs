@@ -357,6 +357,435 @@ pub fn simple_v_filter32(
     );
 }
 
+// =============================================================================
+// AVX2 32-pixel Normal Filter Helpers
+// =============================================================================
+
+/// Fixed region size for normal vertical filter with 32 pixels.
+const V_FILTER_NORMAL_REGION_32: usize = 7 * MAX_STRIDE + 32;
+
+/// Check if normal filtering is needed for 32 pixels using AVX2.
+/// Returns a mask where each byte is 0xFF if the pixel should be filtered.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[arcane]
+#[inline(always)]
+fn needs_filter_normal_32(
+    _token: X64V3Token,
+    p3: __m256i,
+    p2: __m256i,
+    p1: __m256i,
+    p0: __m256i,
+    q0: __m256i,
+    q1: __m256i,
+    q2: __m256i,
+    q3: __m256i,
+    edge_limit: i32,
+    interior_limit: i32,
+) -> __m256i {
+    // First check simple threshold
+    let simple_mask = needs_filter_32(_token, p1, p0, q0, q1, edge_limit);
+
+    let i_limit = _mm256_set1_epi8(interior_limit as i8);
+
+    // Helper macro for abs diff
+    macro_rules! abs_diff {
+        ($a:expr, $b:expr) => {
+            _mm256_or_si256(_mm256_subs_epu8($a, $b), _mm256_subs_epu8($b, $a))
+        };
+    }
+
+    let d_p3_p2 = abs_diff!(p3, p2);
+    let d_p2_p1 = abs_diff!(p2, p1);
+    let d_p1_p0 = abs_diff!(p1, p0);
+    let d_q0_q1 = abs_diff!(q0, q1);
+    let d_q1_q2 = abs_diff!(q1, q2);
+    let d_q2_q3 = abs_diff!(q2, q3);
+
+    // Take max of all differences
+    let max1 = _mm256_max_epu8(d_p3_p2, d_p2_p1);
+    let max2 = _mm256_max_epu8(d_p1_p0, d_q0_q1);
+    let max3 = _mm256_max_epu8(d_q1_q2, d_q2_q3);
+    let max4 = _mm256_max_epu8(max1, max2);
+    let max_diff = _mm256_max_epu8(max3, max4);
+
+    // Check if max_diff <= interior_limit
+    let exceeds = _mm256_subs_epu8(max_diff, i_limit);
+    let interior_ok = _mm256_cmpeq_epi8(exceeds, _mm256_setzero_si256());
+
+    // Both conditions must be true
+    _mm256_and_si256(simple_mask, interior_ok)
+}
+
+/// Check high edge variance for 32 pixels using AVX2.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[arcane]
+#[inline(always)]
+fn high_edge_variance_32(
+    _token: X64V3Token,
+    p1: __m256i,
+    p0: __m256i,
+    q0: __m256i,
+    q1: __m256i,
+    hev_thresh: i32,
+) -> __m256i {
+    let t = _mm256_set1_epi8(hev_thresh as i8);
+
+    // |p1 - p0|
+    let d_p1_p0 = _mm256_or_si256(_mm256_subs_epu8(p1, p0), _mm256_subs_epu8(p0, p1));
+
+    // |q1 - q0|
+    let d_q1_q0 = _mm256_or_si256(_mm256_subs_epu8(q1, q0), _mm256_subs_epu8(q0, q1));
+
+    // Check if either > thresh
+    let p_exceeds = _mm256_subs_epu8(d_p1_p0, t);
+    let q_exceeds = _mm256_subs_epu8(d_q1_q0, t);
+
+    // hev = true if exceeds > 0
+    let p_hev = _mm256_xor_si256(
+        _mm256_cmpeq_epi8(p_exceeds, _mm256_setzero_si256()),
+        _mm256_set1_epi8(-1),
+    );
+    let q_hev = _mm256_xor_si256(
+        _mm256_cmpeq_epi8(q_exceeds, _mm256_setzero_si256()),
+        _mm256_set1_epi8(-1),
+    );
+
+    _mm256_or_si256(p_hev, q_hev)
+}
+
+/// Signed right shift by 1 for packed bytes using AVX2.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[arcane]
+#[inline(always)]
+fn signed_shift_right_1_avx2(_token: X64V3Token, v: __m256i) -> __m256i {
+    let lo = _mm256_srai_epi16(_mm256_unpacklo_epi8(v, v), 9);
+    let hi = _mm256_srai_epi16(_mm256_unpackhi_epi8(v, v), 9);
+    _mm256_packs_epi16(lo, hi)
+}
+
+/// Apply the subblock/inner filter (DoFilter4) for 32 pixels using AVX2.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[arcane]
+#[inline(always)]
+fn do_filter4_32(
+    _token: X64V3Token,
+    p1: &mut __m256i,
+    p0: &mut __m256i,
+    q0: &mut __m256i,
+    q1: &mut __m256i,
+    mask: __m256i,
+    hev: __m256i,
+) {
+    let sign = _mm256_set1_epi8(-128i8);
+
+    // Convert to signed
+    let p1s = _mm256_xor_si256(*p1, sign);
+    let p0s = _mm256_xor_si256(*p0, sign);
+    let q0s = _mm256_xor_si256(*q0, sign);
+    let q1s = _mm256_xor_si256(*q1, sign);
+
+    // Compute base filter value
+    let outer = _mm256_subs_epi8(p1s, q1s);
+    let outer_masked = _mm256_and_si256(outer, hev);
+
+    let q0_p0 = _mm256_subs_epi8(q0s, p0s);
+
+    // a = outer + 3*(q0 - p0)
+    let a = _mm256_adds_epi8(outer_masked, q0_p0);
+    let a = _mm256_adds_epi8(a, q0_p0);
+    let a = _mm256_adds_epi8(a, q0_p0);
+
+    // Apply mask
+    let a = _mm256_and_si256(a, mask);
+
+    // Compute filter1 = (a + 4) >> 3 and filter2 = (a + 3) >> 3
+    let k3 = _mm256_set1_epi8(3);
+    let k4 = _mm256_set1_epi8(4);
+
+    let f1 = _mm256_adds_epi8(a, k4);
+    let f2 = _mm256_adds_epi8(a, k3);
+
+    let f1 = signed_shift_right_3_avx2(_token, f1);
+    let f2 = signed_shift_right_3_avx2(_token, f2);
+
+    // Update p0, q0
+    let new_p0s = _mm256_adds_epi8(p0s, f2);
+    let new_q0s = _mm256_subs_epi8(q0s, f1);
+
+    // For !hev case, also update p1, q1
+    let a2 = _mm256_adds_epi8(f1, _mm256_set1_epi8(1));
+    let a2 = signed_shift_right_1_avx2(_token, a2);
+    let a2 = _mm256_andnot_si256(hev, a2);
+    let a2 = _mm256_and_si256(a2, mask);
+
+    let new_p1s = _mm256_adds_epi8(p1s, a2);
+    let new_q1s = _mm256_subs_epi8(q1s, a2);
+
+    // Convert back to unsigned
+    *p0 = _mm256_xor_si256(new_p0s, sign);
+    *q0 = _mm256_xor_si256(new_q0s, sign);
+    *p1 = _mm256_xor_si256(new_p1s, sign);
+    *q1 = _mm256_xor_si256(new_q1s, sign);
+}
+
+/// Helper for filter6 wide path using AVX2 - processes 16 pixels in 16-bit precision.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[arcane]
+#[inline(always)]
+fn filter6_wide_half_avx2(
+    _token: X64V3Token,
+    p2: __m256i,
+    p1: __m256i,
+    p0: __m256i,
+    q0: __m256i,
+    q1: __m256i,
+    q2: __m256i,
+) -> (__m256i, __m256i, __m256i, __m256i, __m256i, __m256i) {
+    // Sign extend to 16-bit
+    let p2_16 = _mm256_srai_epi16(p2, 8);
+    let p1_16 = _mm256_srai_epi16(p1, 8);
+    let p0_16 = _mm256_srai_epi16(p0, 8);
+    let q0_16 = _mm256_srai_epi16(q0, 8);
+    let q1_16 = _mm256_srai_epi16(q1, 8);
+    let q2_16 = _mm256_srai_epi16(q2, 8);
+
+    // w = clamp(p1 - q1 + 3*(q0 - p0))
+    let p1_q1 = _mm256_sub_epi16(p1_16, q1_16);
+    let q0_p0 = _mm256_sub_epi16(q0_16, p0_16);
+    let three_q0_p0 = _mm256_add_epi16(_mm256_add_epi16(q0_p0, q0_p0), q0_p0);
+    let w = _mm256_add_epi16(p1_q1, three_q0_p0);
+    let w = _mm256_max_epi16(_mm256_min_epi16(w, _mm256_set1_epi16(127)), _mm256_set1_epi16(-128));
+
+    // a0 = (27*w + 63) >> 7
+    let k27 = _mm256_set1_epi16(27);
+    let k18 = _mm256_set1_epi16(18);
+    let k9 = _mm256_set1_epi16(9);
+    let k63 = _mm256_set1_epi16(63);
+
+    let a0 = _mm256_srai_epi16(_mm256_add_epi16(_mm256_mullo_epi16(w, k27), k63), 7);
+    let a1 = _mm256_srai_epi16(_mm256_add_epi16(_mm256_mullo_epi16(w, k18), k63), 7);
+    let a2 = _mm256_srai_epi16(_mm256_add_epi16(_mm256_mullo_epi16(w, k9), k63), 7);
+
+    // Apply adjustments
+    let new_p0 = _mm256_add_epi16(p0_16, a0);
+    let new_q0 = _mm256_sub_epi16(q0_16, a0);
+    let new_p1 = _mm256_add_epi16(p1_16, a1);
+    let new_q1 = _mm256_sub_epi16(q1_16, a1);
+    let new_p2 = _mm256_add_epi16(p2_16, a2);
+    let new_q2 = _mm256_sub_epi16(q2_16, a2);
+
+    // Clamp to [-128, 127]
+    let clamp =
+        |v: __m256i| _mm256_max_epi16(_mm256_min_epi16(v, _mm256_set1_epi16(127)), _mm256_set1_epi16(-128));
+
+    (
+        clamp(new_p2),
+        clamp(new_p1),
+        clamp(new_p0),
+        clamp(new_q0),
+        clamp(new_q1),
+        clamp(new_q2),
+    )
+}
+
+/// Apply the macroblock/outer filter (DoFilter6) for 32 pixels using AVX2.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[arcane]
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn do_filter6_32(
+    _token: X64V3Token,
+    p2: &mut __m256i,
+    p1: &mut __m256i,
+    p0: &mut __m256i,
+    q0: &mut __m256i,
+    q1: &mut __m256i,
+    q2: &mut __m256i,
+    mask: __m256i,
+    hev: __m256i,
+) {
+    let sign = _mm256_set1_epi8(-128i8);
+    let not_hev = _mm256_andnot_si256(hev, _mm256_set1_epi8(-1));
+
+    // Convert to signed
+    let p2s = _mm256_xor_si256(*p2, sign);
+    let p1s = _mm256_xor_si256(*p1, sign);
+    let p0s = _mm256_xor_si256(*p0, sign);
+    let q0s = _mm256_xor_si256(*q0, sign);
+    let q1s = _mm256_xor_si256(*q1, sign);
+    let q2s = _mm256_xor_si256(*q2, sign);
+
+    // For hev path: same as simple filter
+    let outer = _mm256_subs_epi8(p1s, q1s);
+    let outer_hev = _mm256_and_si256(outer, hev);
+
+    let q0_p0 = _mm256_subs_epi8(q0s, p0s);
+    let a_hev = _mm256_adds_epi8(outer_hev, q0_p0);
+    let a_hev = _mm256_adds_epi8(a_hev, q0_p0);
+    let a_hev = _mm256_adds_epi8(a_hev, q0_p0);
+    let a_hev = _mm256_and_si256(a_hev, _mm256_and_si256(mask, hev));
+
+    let k3 = _mm256_set1_epi8(3);
+    let k4 = _mm256_set1_epi8(4);
+    let f1_hev = signed_shift_right_3_avx2(_token, _mm256_adds_epi8(a_hev, k4));
+    let f2_hev = signed_shift_right_3_avx2(_token, _mm256_adds_epi8(a_hev, k3));
+
+    // For !hev path: wide filter using 16-bit precision
+    // Process low and high halves separately
+    let (new_p2_lo, new_p1_lo, new_p0_lo, new_q0_lo, new_q1_lo, new_q2_lo) = filter6_wide_half_avx2(
+        _token,
+        _mm256_unpacklo_epi8(p2s, p2s),
+        _mm256_unpacklo_epi8(p1s, p1s),
+        _mm256_unpacklo_epi8(p0s, p0s),
+        _mm256_unpacklo_epi8(q0s, q0s),
+        _mm256_unpacklo_epi8(q1s, q1s),
+        _mm256_unpacklo_epi8(q2s, q2s),
+    );
+
+    let (new_p2_hi, new_p1_hi, new_p0_hi, new_q0_hi, new_q1_hi, new_q2_hi) = filter6_wide_half_avx2(
+        _token,
+        _mm256_unpackhi_epi8(p2s, p2s),
+        _mm256_unpackhi_epi8(p1s, p1s),
+        _mm256_unpackhi_epi8(p0s, p0s),
+        _mm256_unpackhi_epi8(q0s, q0s),
+        _mm256_unpackhi_epi8(q1s, q1s),
+        _mm256_unpackhi_epi8(q2s, q2s),
+    );
+
+    // Pack back to bytes
+    let new_p2_wide = _mm256_packs_epi16(new_p2_lo, new_p2_hi);
+    let new_p1_wide = _mm256_packs_epi16(new_p1_lo, new_p1_hi);
+    let new_p0_wide = _mm256_packs_epi16(new_p0_lo, new_p0_hi);
+    let new_q0_wide = _mm256_packs_epi16(new_q0_lo, new_q0_hi);
+    let new_q1_wide = _mm256_packs_epi16(new_q1_lo, new_q1_hi);
+    let new_q2_wide = _mm256_packs_epi16(new_q2_lo, new_q2_hi);
+
+    // Blend hev and !hev results
+    let mask_not_hev = _mm256_and_si256(mask, not_hev);
+
+    // For p0, q0: use hev result where hev, wide result where !hev
+    let new_p0s = _mm256_adds_epi8(p0s, f2_hev);
+    let new_q0s = _mm256_subs_epi8(q0s, f1_hev);
+
+    // Blend using blendv
+    let final_p0s = _mm256_blendv_epi8(new_p0s, new_p0_wide, mask_not_hev);
+    let final_q0s = _mm256_blendv_epi8(new_q0s, new_q0_wide, mask_not_hev);
+
+    // For p1, q1, p2, q2: only update when !hev
+    let final_p1s = _mm256_blendv_epi8(p1s, new_p1_wide, mask_not_hev);
+    let final_q1s = _mm256_blendv_epi8(q1s, new_q1_wide, mask_not_hev);
+    let final_p2s = _mm256_blendv_epi8(p2s, new_p2_wide, mask_not_hev);
+    let final_q2s = _mm256_blendv_epi8(q2s, new_q2_wide, mask_not_hev);
+
+    // Convert back to unsigned
+    *p0 = _mm256_xor_si256(final_p0s, sign);
+    *q0 = _mm256_xor_si256(final_q0s, sign);
+    *p1 = _mm256_xor_si256(final_p1s, sign);
+    *q1 = _mm256_xor_si256(final_q1s, sign);
+    *p2 = _mm256_xor_si256(final_p2s, sign);
+    *q2 = _mm256_xor_si256(final_q2s, sign);
+}
+
+/// Apply normal vertical filter (DoFilter4) to 32 pixels across a horizontal edge.
+/// This is for subblock edges within a macroblock - 2x throughput vs SSE2.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[arcane]
+pub fn normal_v_filter32_inner(
+    _token: X64V3Token,
+    pixels: &mut [u8],
+    point: usize,
+    stride: usize,
+    hev_thresh: i32,
+    interior_limit: i32,
+    edge_limit: i32,
+) {
+    debug_assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
+    let start = point - 4 * stride;
+    let region: &mut [u8; V_FILTER_NORMAL_REGION_32] =
+        <&mut [u8; V_FILTER_NORMAL_REGION_32]>::try_from(&mut pixels[start..start + V_FILTER_NORMAL_REGION_32])
+            .expect("normal_v_filter32_inner: buffer too small");
+
+    let off_p3 = 0;
+    let off_p2 = stride;
+    let off_p1 = 2 * stride;
+    let off_p0 = 3 * stride;
+    let off_q0 = 4 * stride;
+    let off_q1 = 5 * stride;
+    let off_q2 = 6 * stride;
+    let off_q3 = 7 * stride;
+
+    // Load 8 rows of 32 pixels each
+    let p3 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p3..][..32]).unwrap());
+    let p2 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p2..][..32]).unwrap());
+    let mut p1 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p1..][..32]).unwrap());
+    let mut p0 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p0..][..32]).unwrap());
+    let mut q0 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q0..][..32]).unwrap());
+    let mut q1 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q1..][..32]).unwrap());
+    let q2 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q2..][..32]).unwrap());
+    let q3 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q3..][..32]).unwrap());
+
+    let mask = needs_filter_normal_32(_token, p3, p2, p1, p0, q0, q1, q2, q3, edge_limit, interior_limit);
+    let hev = high_edge_variance_32(_token, p1, p0, q0, q1, hev_thresh);
+
+    do_filter4_32(_token, &mut p1, &mut p0, &mut q0, &mut q1, mask, hev);
+
+    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_p1..][..32]).unwrap(), p1);
+    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_p0..][..32]).unwrap(), p0);
+    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_q0..][..32]).unwrap(), q0);
+    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_q1..][..32]).unwrap(), q1);
+}
+
+/// Apply normal vertical filter (DoFilter6) to 32 pixels across a horizontal macroblock edge.
+/// 2x throughput vs SSE2 version.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[arcane]
+pub fn normal_v_filter32_edge(
+    _token: X64V3Token,
+    pixels: &mut [u8],
+    point: usize,
+    stride: usize,
+    hev_thresh: i32,
+    interior_limit: i32,
+    edge_limit: i32,
+) {
+    debug_assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
+    let start = point - 4 * stride;
+    let region: &mut [u8; V_FILTER_NORMAL_REGION_32] =
+        <&mut [u8; V_FILTER_NORMAL_REGION_32]>::try_from(&mut pixels[start..start + V_FILTER_NORMAL_REGION_32])
+            .expect("normal_v_filter32_edge: buffer too small");
+
+    let off_p3 = 0;
+    let off_p2 = stride;
+    let off_p1 = 2 * stride;
+    let off_p0 = 3 * stride;
+    let off_q0 = 4 * stride;
+    let off_q1 = 5 * stride;
+    let off_q2 = 6 * stride;
+    let off_q3 = 7 * stride;
+
+    // Load 8 rows of 32 pixels each
+    let p3 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p3..][..32]).unwrap());
+    let mut p2 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p2..][..32]).unwrap());
+    let mut p1 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p1..][..32]).unwrap());
+    let mut p0 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p0..][..32]).unwrap());
+    let mut q0 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q0..][..32]).unwrap());
+    let mut q1 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q1..][..32]).unwrap());
+    let mut q2 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q2..][..32]).unwrap());
+    let q3 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q3..][..32]).unwrap());
+
+    let mask = needs_filter_normal_32(_token, p3, p2, p1, p0, q0, q1, q2, q3, edge_limit, interior_limit);
+    let hev = high_edge_variance_32(_token, p1, p0, q0, q1, hev_thresh);
+
+    do_filter6_32(_token, &mut p2, &mut p1, &mut p0, &mut q0, &mut q1, &mut q2, mask, hev);
+
+    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_p2..][..32]).unwrap(), p2);
+    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_p1..][..32]).unwrap(), p1);
+    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_p0..][..32]).unwrap(), p0);
+    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_q0..][..32]).unwrap(), q0);
+    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_q1..][..32]).unwrap(), q1);
+    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_q2..][..32]).unwrap(), q2);
+}
+
 /// Transpose an 8x16 matrix of bytes to 16x8.
 /// Input: 16 __m128i values, each containing 8 bytes (low 64 bits used).
 /// Output: 8 __m128i values, each containing 16 bytes.
@@ -2106,6 +2535,212 @@ mod tests {
                 pixels[2 * stride + x],
                 pixels_scalar[2 * stride + x],
                 "q0 mismatch at x={}",
+                x
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    fn test_normal_v_filter32_inner_matches_two_16() {
+        let Some(token) = archmage::X64V3Token::summon() else {
+            return;
+        };
+
+        let stride = 64;
+        // Allocate with V_FILTER_NORMAL_REGION_32 padding
+        let mut pixels = vec![128u8; stride * 12 + V_FILTER_NORMAL_REGION_32];
+        let mut pixels_16 = pixels.clone();
+
+        // Set up gradient data for all 8 rows around the edge (32 pixels wide)
+        for x in 0..32 {
+            pixels[0 * stride + x] = 100;
+            pixels[1 * stride + x] = 105;
+            pixels[2 * stride + x] = 110;
+            pixels[3 * stride + x] = 115;
+            pixels[4 * stride + x] = 145;
+            pixels[5 * stride + x] = 150;
+            pixels[6 * stride + x] = 155;
+            pixels[7 * stride + x] = 160;
+
+            pixels_16[0 * stride + x] = 100;
+            pixels_16[1 * stride + x] = 105;
+            pixels_16[2 * stride + x] = 110;
+            pixels_16[3 * stride + x] = 115;
+            pixels_16[4 * stride + x] = 145;
+            pixels_16[5 * stride + x] = 150;
+            pixels_16[6 * stride + x] = 155;
+            pixels_16[7 * stride + x] = 160;
+        }
+
+        let hev_thresh = 5;
+        let interior_limit = 15;
+        let edge_limit = 25;
+
+        // Apply AVX2 32-pixel filter
+        normal_v_filter32_inner(
+            token,
+            &mut pixels,
+            4 * stride,
+            stride,
+            hev_thresh,
+            interior_limit,
+            edge_limit,
+        );
+
+        // Apply 2x 16-pixel filter
+        normal_v_filter16_inner(
+            token,
+            &mut pixels_16,
+            4 * stride,
+            stride,
+            hev_thresh,
+            interior_limit,
+            edge_limit,
+        );
+        normal_v_filter16_inner(
+            token,
+            &mut pixels_16,
+            4 * stride + 16,
+            stride,
+            hev_thresh,
+            interior_limit,
+            edge_limit,
+        );
+
+        // Compare all 32 pixels for modified rows (p1, p0, q0, q1)
+        for x in 0..32 {
+            assert_eq!(
+                pixels[2 * stride + x],
+                pixels_16[2 * stride + x],
+                "p1 mismatch at x={}",
+                x
+            );
+            assert_eq!(
+                pixels[3 * stride + x],
+                pixels_16[3 * stride + x],
+                "p0 mismatch at x={}",
+                x
+            );
+            assert_eq!(
+                pixels[4 * stride + x],
+                pixels_16[4 * stride + x],
+                "q0 mismatch at x={}",
+                x
+            );
+            assert_eq!(
+                pixels[5 * stride + x],
+                pixels_16[5 * stride + x],
+                "q1 mismatch at x={}",
+                x
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    fn test_normal_v_filter32_edge_matches_two_16() {
+        let Some(token) = archmage::X64V3Token::summon() else {
+            return;
+        };
+
+        let stride = 64;
+        // Allocate with V_FILTER_NORMAL_REGION_32 padding
+        let mut pixels = vec![128u8; stride * 12 + V_FILTER_NORMAL_REGION_32];
+        let mut pixels_16 = pixels.clone();
+
+        // Set up gradient data for all 8 rows around the edge (32 pixels wide)
+        for x in 0..32 {
+            pixels[0 * stride + x] = 100;
+            pixels[1 * stride + x] = 105;
+            pixels[2 * stride + x] = 110;
+            pixels[3 * stride + x] = 115;
+            pixels[4 * stride + x] = 145;
+            pixels[5 * stride + x] = 150;
+            pixels[6 * stride + x] = 155;
+            pixels[7 * stride + x] = 160;
+
+            pixels_16[0 * stride + x] = 100;
+            pixels_16[1 * stride + x] = 105;
+            pixels_16[2 * stride + x] = 110;
+            pixels_16[3 * stride + x] = 115;
+            pixels_16[4 * stride + x] = 145;
+            pixels_16[5 * stride + x] = 150;
+            pixels_16[6 * stride + x] = 155;
+            pixels_16[7 * stride + x] = 160;
+        }
+
+        let hev_thresh = 5;
+        let interior_limit = 15;
+        let edge_limit = 25;
+
+        // Apply AVX2 32-pixel filter
+        normal_v_filter32_edge(
+            token,
+            &mut pixels,
+            4 * stride,
+            stride,
+            hev_thresh,
+            interior_limit,
+            edge_limit,
+        );
+
+        // Apply 2x 16-pixel filter
+        normal_v_filter16_edge(
+            token,
+            &mut pixels_16,
+            4 * stride,
+            stride,
+            hev_thresh,
+            interior_limit,
+            edge_limit,
+        );
+        normal_v_filter16_edge(
+            token,
+            &mut pixels_16,
+            4 * stride + 16,
+            stride,
+            hev_thresh,
+            interior_limit,
+            edge_limit,
+        );
+
+        // Compare all 32 pixels for modified rows (p2, p1, p0, q0, q1, q2)
+        for x in 0..32 {
+            assert_eq!(
+                pixels[1 * stride + x],
+                pixels_16[1 * stride + x],
+                "p2 mismatch at x={}",
+                x
+            );
+            assert_eq!(
+                pixels[2 * stride + x],
+                pixels_16[2 * stride + x],
+                "p1 mismatch at x={}",
+                x
+            );
+            assert_eq!(
+                pixels[3 * stride + x],
+                pixels_16[3 * stride + x],
+                "p0 mismatch at x={}",
+                x
+            );
+            assert_eq!(
+                pixels[4 * stride + x],
+                pixels_16[4 * stride + x],
+                "q0 mismatch at x={}",
+                x
+            );
+            assert_eq!(
+                pixels[5 * stride + x],
+                pixels_16[5 * stride + x],
+                "q1 mismatch at x={}",
+                x
+            );
+            assert_eq!(
+                pixels[6 * stride + x],
+                pixels_16[6 * stride + x],
+                "q2 mismatch at x={}",
                 x
             );
         }
