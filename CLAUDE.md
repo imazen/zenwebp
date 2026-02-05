@@ -1237,6 +1237,51 @@ the existing 16-row infrastructure. See commit c3b9051.
 Remaining loop filter overhead (~6M extra instructions vs libwebp) appears
 to come from per-pixel threshold checks rather than the filter math itself.
 
+### AVX2 32-Pixel Loop Filter Batching (2026-02-04, BLOCKED)
+
+**Goal:** Process 32 columns (2 macroblocks) at once using AVX2 for 2x throughput.
+
+**Status:** AVX2 `simple_v_filter32` implemented and tested (commit 64a6847), but NOT
+integrated into main decode loop due to filter order dependencies.
+
+**Implementation:**
+- `simple_v_filter32` processes 32 contiguous columns using __m256i
+- Helper functions: `needs_filter_32`, `get_base_delta_32`, `do_simple_filter_32`
+- `simple_filter_vertical_32_cols` dispatch function added but unused
+- Test `test_simple_v_filter32_matches_scalar` verifies correctness
+
+**Why batching is blocked:**
+
+The `filter_row_in_cache` loop processes each macroblock sequentially:
+```
+for mbx in 0..mbwidth:
+    filter left edge (horizontal filter on vertical edge)
+    filter subblock vertical edges
+    filter top edge (vertical filter on horizontal edge)  <-- want to batch here
+    filter subblock horizontal edges
+```
+
+To batch MB(mbx) and MB(mbx+1) top edges together, we'd need to process them before
+MB(mbx+1)'s left edge filter runs. But the filter results from MB(mbx+1)'s left edge
+affect the corner pixels that the top edge filter reads.
+
+**Dependency chain:**
+- MB(mbx) left edge → MB(mbx) top edge → MB(mbx+1) left edge → MB(mbx+1) top edge
+- Batching would require: MB(mbx) left → MB(mbx,mbx+1) tops → MB(mbx+1) left
+
+This changes the order, causing corner pixel mismatches (15 test failures).
+
+**Potential solutions (not yet implemented):**
+1. Post-filter phase: After all MBs processed, apply 32-pixel filter to horizontal
+   subblock edges (y=4,8,12) which don't interact with MB boundaries
+2. Two-row buffering: Process mby-1 edges after mby left edges complete
+3. Accept slightly different results (libwebp might not depend on this order)
+
+**Profiling note:** Most test images use NORMAL filter, not SIMPLE filter.
+The 32-pixel optimization only benefits simple filter. Normal filter functions
+(`normal_h_filter16_inner`, etc.) account for ~25% of decode time. AVX2 32-pixel
+normal filter would have more impact.
+
 ### libwebp-rs Mechanical Translation Comparison (2026-01-22)
 
 Profiled `~/work/webp-porting/libwebp-rs` - a direct Rust port of libwebp:
