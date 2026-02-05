@@ -577,7 +577,18 @@ Previous optimizations:
 | memcpy | 1.7% | Memory copying |
 
 Note: `add_residue_sse2` is now inlined via `add_residue_and_clear_sse2`.
-Bounds check elision asserts added to loop filter and YUV functions.
+
+**Bounds check analysis (cargo-asm, 2026-02-05):**
+- Asserts at function entry do NOT eliminate bounds checks on individual slice accesses
+- Each `try_from(&slice[a..b]).unwrap()` generates its own bounds check
+- The pattern `<&[u8; 16]>::try_from(&pixels[offset..][..16]).unwrap()` generates:
+  - Slice creation bounds check (verify offset <= len)
+  - Slice truncation check (verify 16 <= remaining_len)
+  - try_from check (verify slice.len() == 16)
+- simple_v_filter16: ~50 instructions of bounds checks vs ~80 SIMD work (~40% overhead)
+- Loop filters are 14.7% of decode time → bounds checks cost ~6% of total decode time
+- This is the cost of safe Rust without `unsafe`; the compiler cannot prove slice
+  operations are valid based on earlier asserts due to generic `try_from` internals
 
 ### Detailed Callgrind/Cachegrind Analysis (2026-01-23)
 
