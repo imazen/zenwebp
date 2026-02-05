@@ -159,7 +159,7 @@ impl<'a> super::Vp8Encoder<'a> {
             y2_matrix.dequantize_block(&mut y2_dequant);
             transform::iwht4x4(&mut y2_dequant);
 
-            // 7. Dequantize Y1, add DC from Y2, and do inverse DCT
+            // 7. Dequantize Y1, add DC from Y2, and do fused inverse DCT + add residue
             let mut reconstructed = pred;
             for block_idx in 0..16 {
                 let bx = block_idx % 4;
@@ -173,13 +173,18 @@ impl<'a> super::Vp8Encoder<'a> {
                 // DC from Y2
                 block[0] = y2_dequant[block_idx];
 
-                // Inverse DCT
-                transform::idct4x4(&mut block);
-
-                // Add residue to prediction
+                // Fused IDCT + add residue to prediction (reads pred, adds IDCT, clamps, stores)
                 let x0 = 1 + bx * 4;
                 let y0 = 1 + by * 4;
-                add_residue(&mut reconstructed, &block, y0, x0, LUMA_STRIDE);
+                let dc_only = block[1..].iter().all(|&c| c == 0);
+                crate::common::transform_simd_intrinsics::idct_add_residue_inplace(
+                    &mut block,
+                    &mut reconstructed,
+                    y0,
+                    x0,
+                    LUMA_STRIDE,
+                    dc_only,
+                );
             }
 
             // 8. Compute SSE between source and reconstructed (NOT prediction!)
@@ -562,7 +567,8 @@ impl<'a> super::Vp8Encoder<'a> {
                 let mut best_mode_idx = 0usize;
                 let mut best_block_score = u64::MAX;
                 let mut best_has_nz = false;
-                let mut best_quantized = [0i32; 16];
+                // Save best dequantized+IDCT result to avoid recomputing in post-loop
+                let mut best_dequantized = [0i32; 16];
                 // Track best block's SSE, spectral distortion, psy cost, and coeff cost for recalculating with lambda_mode
                 let mut best_sse = 0u32;
                 let mut best_spectral_disto = 0i32;
@@ -629,32 +635,28 @@ impl<'a> super::Vp8Encoder<'a> {
                     // Get pre-computed prediction for this mode
                     let pred = preds.get(mode_idx);
 
-                    // Compute residual using pre-computed prediction
-                    let mut residual = [0i32; 16];
-                    for i in 0..16 {
-                        residual[i] = i32::from(src_block[i]) - i32::from(pred[i]);
-                    }
-
-                    // Transform
-                    transform::dct4x4(&mut residual);
+                    // Fused residual + DCT: computes (src - pred) and DCT in i16 SIMD
+                    let mut residual =
+                        crate::common::transform_simd_intrinsics::ftransform_from_u8_4x4(
+                            &src_block, pred,
+                        );
 
                     // Quantize - use trellis if enabled for mode selection (RD_OPT_TRELLIS_ALL)
                     // quantized_zigzag: coefficients in zigzag order (for cost estimation)
                     // quantized_natural: coefficients in natural order (for distortion calc)
+                    // dequantized: IDCT of dequantized coefficients (for SSE computation)
                     let mut quantized_zigzag = [0i32; 16];
                     let mut quantized_natural = [0i32; 16];
-                    let has_nz = if let Some(lambda) = trellis_lambda_i4 {
+                    let (has_nz, dequantized) = if let Some(lambda) = trellis_lambda_i4 {
                         // Trellis quantization for better RD during mode selection
-                        // Context: 0=neither neighbor has nz, 1=one has nz, 2=both have nz
                         let ctx0 = usize::from(nz_top) + usize::from(nz_left);
-                        // ctype=3 for I4_AC (TokenType::I4AC)
                         const CTYPE_I4_AC: usize = 3;
                         let nz = trellis_quantize_block(
                             &mut residual,
                             &mut quantized_zigzag,
                             y1_matrix,
                             lambda,
-                            0, // first=0 for I4 (includes DC)
+                            0,
                             &self.level_costs,
                             CTYPE_I4_AC,
                             ctx0,
@@ -665,25 +667,35 @@ impl<'a> super::Vp8Encoder<'a> {
                             let j = ZIGZAG[n] as usize;
                             quantized_natural[j] = quantized_zigzag[n];
                         }
-                        nz
+                        // Dequantize + IDCT for trellis path
+                        let mut dq = quantized_natural;
+                        for (idx, val) in dq.iter_mut().enumerate() {
+                            *val = y1_matrix.dequantize(*val, idx);
+                        }
+                        transform::idct4x4(&mut dq);
+                        (nz, dq)
                     } else {
-                        // Simple quantization using SIMD
-                        quantized_natural = residual;
-                        crate::encoder::quantize::quantize_block_simd(
-                            &mut quantized_natural,
+                        // Fused quantize+dequantize using SIMD (single pass)
+                        // Gets both quantized levels AND dequantized values
+                        let mut dequant_natural = [0i32; 16];
+                        let nz = crate::encoder::quantize::quantize_dequantize_block_simd(
+                            &residual,
                             y1_matrix,
                             true,
+                            &mut quantized_natural,
+                            &mut dequant_natural,
                         );
                         // Convert natural to zigzag for cost estimation
                         for n in 0..16 {
                             let j = ZIGZAG[n] as usize;
                             quantized_zigzag[n] = quantized_natural[j];
                         }
-                        quantized_natural.iter().any(|&c| c != 0)
+                        // IDCT the dequantized values (already have dequant from fused op)
+                        transform::idct4x4(&mut dequant_natural);
+                        (nz, dequant_natural)
                     };
 
                     // Get accurate coefficient cost using probability tables
-                    // Cost functions expect zigzag order
                     let (coeff_cost, _) = get_cost_luma4(
                         &quantized_zigzag,
                         nz_top,
@@ -691,14 +703,6 @@ impl<'a> super::Vp8Encoder<'a> {
                         &self.level_costs,
                         probs,
                     );
-
-                    // Compute distortion (SSE of quantized vs original)
-                    // Use natural order for dequantization and IDCT
-                    let mut dequantized = quantized_natural;
-                    for (idx, val) in dequantized.iter_mut().enumerate() {
-                        *val = y1_matrix.dequantize(*val, idx);
-                    }
-                    transform::idct4x4(&mut dequantized);
 
                     // Compute SSE between source and reconstructed using SIMD
                     #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
@@ -830,7 +834,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         best_mode = mode;
                         best_mode_idx = mode_idx;
                         best_has_nz = has_nz;
-                        best_quantized = quantized_natural;
+                        best_dequantized = dequantized;
                         best_sse = sse;
                         best_spectral_disto = spectral_disto;
                         best_psy_cost = psy_cost;
@@ -883,14 +887,9 @@ impl<'a> super::Vp8Encoder<'a> {
                 // Apply the selected mode and reconstruct for next blocks
                 Self::apply_intra4_prediction(&mut y_with_border, best_mode, x0, y0);
 
-                // Dequantize and add back for reconstruction
-                let y1_matrix = segment.y1_matrix.as_ref().unwrap();
-                let mut dequantized = best_quantized;
-                for (idx, val) in dequantized.iter_mut().enumerate() {
-                    *val = y1_matrix.dequantize(*val, idx);
-                }
-                transform::idct4x4(&mut dequantized);
-                add_residue(&mut y_with_border, &dequantized, y0, x0, LUMA_STRIDE);
+                // Add back saved dequantized+IDCT result (already computed in inner loop)
+                // This eliminates a redundant dequantize + IDCT per block
+                add_residue(&mut y_with_border, &best_dequantized, y0, x0, LUMA_STRIDE);
             }
         }
 
@@ -989,29 +988,44 @@ impl<'a> super::Vp8Encoder<'a> {
             let v_blocks =
                 self.get_chroma_blocks_from_predicted(&pred_v, &self.frame.vbuf, mbx, mby);
 
-            // 2. Quantize coefficients
+            // 2. Fused quantize+dequantize coefficients using SIMD
             let mut uv_quant = [[0i32; 16]; 8]; // 4 U blocks + 4 V blocks
+            let mut uv_dequant = [[0i32; 16]; 8]; // dequantized values
 
             // Process U blocks (indices 0-3)
             for block_idx in 0..4 {
-                for i in 0..16 {
-                    uv_quant[block_idx][i] =
-                        uv_matrix.quantize_coeff(u_blocks[block_idx * 16 + i], i);
-                }
+                let block_start = block_idx * 16;
+                let coeffs: [i32; 16] = u_blocks[block_start..block_start + 16]
+                    .try_into()
+                    .unwrap();
+                crate::encoder::quantize::quantize_dequantize_block_simd(
+                    &coeffs,
+                    uv_matrix,
+                    false,
+                    &mut uv_quant[block_idx],
+                    &mut uv_dequant[block_idx],
+                );
             }
 
             // Process V blocks (indices 4-7)
             for block_idx in 0..4 {
-                for i in 0..16 {
-                    uv_quant[4 + block_idx][i] =
-                        uv_matrix.quantize_coeff(v_blocks[block_idx * 16 + i], i);
-                }
+                let block_start = block_idx * 16;
+                let coeffs: [i32; 16] = v_blocks[block_start..block_start + 16]
+                    .try_into()
+                    .unwrap();
+                crate::encoder::quantize::quantize_dequantize_block_simd(
+                    &coeffs,
+                    uv_matrix,
+                    false,
+                    &mut uv_quant[4 + block_idx],
+                    &mut uv_dequant[4 + block_idx],
+                );
             }
 
             // 3. Compute coefficient cost using probability-dependent tables
             let coeff_cost = get_cost_uv(&uv_quant, &self.level_costs, probs);
 
-            // 4. Dequantize and inverse DCT for reconstruction
+            // 4. Fused inverse DCT + add residue for reconstruction
             let mut reconstructed_u = pred_u;
             let mut reconstructed_v = pred_v;
 
@@ -1019,32 +1033,34 @@ impl<'a> super::Vp8Encoder<'a> {
             for block_idx in 0..4 {
                 let bx = block_idx % 2;
                 let by = block_idx / 2;
-
-                let mut block = [0i32; 16];
-                for i in 0..16 {
-                    block[i] = uv_matrix.dequantize(uv_quant[block_idx][i], i);
-                }
-                transform::idct4x4(&mut block);
-
                 let x0 = 1 + bx * 4;
                 let y0 = 1 + by * 4;
-                add_residue(&mut reconstructed_u, &block, y0, x0, CHROMA_STRIDE);
+                let dc_only = uv_dequant[block_idx][1..].iter().all(|&c| c == 0);
+                crate::common::transform_simd_intrinsics::idct_add_residue_inplace(
+                    &mut uv_dequant[block_idx],
+                    &mut reconstructed_u,
+                    y0,
+                    x0,
+                    CHROMA_STRIDE,
+                    dc_only,
+                );
             }
 
             // Reconstruct V blocks
             for block_idx in 0..4 {
                 let bx = block_idx % 2;
                 let by = block_idx / 2;
-
-                let mut block = [0i32; 16];
-                for i in 0..16 {
-                    block[i] = uv_matrix.dequantize(uv_quant[4 + block_idx][i], i);
-                }
-                transform::idct4x4(&mut block);
-
                 let x0 = 1 + bx * 4;
                 let y0 = 1 + by * 4;
-                add_residue(&mut reconstructed_v, &block, y0, x0, CHROMA_STRIDE);
+                let dc_only = uv_dequant[4 + block_idx][1..].iter().all(|&c| c == 0);
+                crate::common::transform_simd_intrinsics::idct_add_residue_inplace(
+                    &mut uv_dequant[4 + block_idx],
+                    &mut reconstructed_v,
+                    y0,
+                    x0,
+                    CHROMA_STRIDE,
+                    dc_only,
+                );
             }
 
             // 4. Compute SSE between source and reconstructed (NOT prediction!)
