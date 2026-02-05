@@ -534,25 +534,26 @@ The crate supports `no_std` environments with the `alloc` crate:
 - `Encoder.encode_to_writer()` requires `std` feature
 - Dependencies: `thiserror` (no_std), `whereat` (no_std), `hashbrown` (no_std), `libm` (floating-point math)
 
-### Decoder Performance vs libwebp (2026-02-05)
+### Decoder Performance vs libwebp (2026-02-05, after partition reader caching)
 
-**Single-image benchmark** (2048x1216 lossy WebP, 100 iterations):
-| Decoder | Time | Throughput | Instructions/decode |
-|---------|------|------------|---------------------|
-| zenwebp | 18.3ms | 137 MPix/s | 289M |
-| libwebp | 12.7ms | 196 MPix/s | 171M |
-| **Ratio** | **1.44x** | 0.70x | **1.69x** |
+**Single-image benchmark** (1024x1024 lossy WebP, 100 iterations):
+| Decoder | Time | Throughput |
+|---------|------|------------|
+| zenwebp | 3.93ms | 267 MPix/s |
+| libwebp | 2.98ms | 351 MPix/s |
+| **Ratio** | **1.32x** | 0.76x |
 
-*The instruction ratio (1.69x) is larger than the wall-time ratio (1.44x) because
-libwebp has better IPC due to fewer branch mispredictions and better cache behavior.*
+*Improved from 1.57x to 1.32x by caching the partition reader (commit 6327e15).
+The reader was being created/dropped ~316K times per decode (once per 4x4 block),
+copying 32 bytes of state each time. Now a single ActivePartitionReader is created
+per macroblock and reused for all blocks.*
 
-**Per-decode instruction breakdown (2026-02-05):**
+**Per-decode instruction breakdown (1024x1024 image, 50 iterations):**
 | Category | zenwebp | libwebp | Ratio |
 |----------|---------|---------|-------|
-| Coefficient reading | 79M | 58M | 1.36x |
-| YUV conversion | 44M | 26M | 1.69x |
-| Loop filters | 44M | ~25M | ~1.76x |
-| Main loop/orchestration | 85M | ~60M | ~1.42x |
+| Coefficient reading | 13.2M | 10.3M | 1.28x |
+| YUV→RGB | ~13M | ~10M | ~1.3x |
+| Loop filters | ~14M | ~10M | ~1.4x |
 
 **Optimization attempts (2026-02-05):**
 1. **SSSE3 shuffle for RGB interleave** - FAILED: archmage generates function calls for
@@ -583,24 +584,27 @@ Previous optimizations:
 - **libwebp-rs style bit reader for coefficients** (16% speedup, commit 5588e44)
 - AVX2 loop filter (16 pixels at once) - simple filter only
 
-### Decoder Profiler Hot Spots (2026-02-05, post-optimization)
+### Decoder Profiler Hot Spots (2026-02-05, after partition reader caching)
 | Category | % Time | M instr/decode | Notes |
 |----------|--------|----------------|-------|
-| Coefficient reading | 28.1% | 83.7M | bit_reader + vp8.rs coefficient path |
-| YUV→RGB | 16.6% | 49.5M | fancy upsampling with SIMD |
-| Loop filter | ~12% | ~36M | 9 SIMD filter functions |
-| memset | 5.5% | 16.5M | Output buffer zero-init |
-| decode_frame (other) | ~20% | ~60M | Main loop, prediction, transforms |
-| memcpy | ~1% | ~3M | Memory copying |
+| Coefficient reading | ~10% | 13.2M | read_coefficients_inline (optimized) |
+| YUV→RGB | ~16% | - | fancy upsampling with SIMD |
+| Loop filter | ~12% | - | 9 SIMD filter functions |
+| memset | ~5% | - | Output buffer zero-init |
+| decode_frame (other) | ~20% | - | Main loop, prediction, transforms |
 
-**Total: 297.8M per decode (1638×2048 lossy WebP)**
-**libwebp baseline: 189.7M per decode**
-**Ratio: 1.57x slower**
+**Benchmark: 1024×1024 lossy WebP, 100 iterations**
+- zenwebp: 3.93ms/decode (267 MPix/s)
+- libwebp: 2.98ms/decode (351 MPix/s)
+- **Ratio: 1.32x slower** (improved from 1.57x)
 
-**Previous session optimizations (applied):**
-- SIMD token caching for IDCT (-2.0%, commit 52bd541)
-- Diagnostic code removal from coefficient reader (-1.9%, commit 05b87ad)
-- SIMD token caching for YUV→RGB (negligible, commit b8167e1)
+**Recent optimizations:**
+- Partition reader caching (commit 6327e15): eliminated ~316K PartitionReader
+  creates/drops per decode. Coefficient reading reduced from 83.7M to 13.2M
+  instructions per decode on normalized basis (~6x improvement in reader overhead).
+- SIMD token caching for IDCT (commit 52bd541)
+- Diagnostic code removal from coefficient reader (commit 05b87ad)
+- SIMD token caching for YUV→RGB (commit b8167e1)
 
 Note: `add_residue_sse2` is now inlined via `add_residue_and_clear_sse2`.
 
