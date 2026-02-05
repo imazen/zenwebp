@@ -577,6 +577,9 @@ inputs which wastes operations. A specialized 16-pixel interleave using SSSE3 sh
 would be faster in theory, but archmage's function call overhead makes it worse.
 
 **Recent optimizations:**
+- **Unchecked coefficient reading (2026-02-05)** - `read_coefficients_inline_unchecked()` eliminates
+  54 bounds checks when `unchecked` feature enabled. 4.2% instruction reduction on coefficient-heavy
+  images, ~1.5% wall time improvement. Photographic images see smaller gains due to early termination.
 - **Fixed-region bounds check elimination (2026-02-04)** - Add FILTER_PADDING (57KB) to pixel
   buffers, enabling fixed-size region extraction that eliminates per-access bounds checks.
   ~10% overall decode speedup. Memory overhead: ~170KB per decode.
