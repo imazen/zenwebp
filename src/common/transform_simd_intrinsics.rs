@@ -10,7 +10,7 @@ use core::arch::x86_64::*;
 use core::arch::x86::*;
 
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-use archmage::{arcane, Has128BitSimd, SimdToken, X64V3Token};
+use archmage::{arcane, SimdToken, X64V3Token};
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 use safe_unaligned_simd::x86_64 as simd_mem;
 
@@ -177,7 +177,7 @@ pub(crate) fn dct4x4_two_intrinsics(block1: &mut [i32; 16], block2: &mut [i32; 1
 /// Uses _mm_madd_epi16 for efficient multiply-accumulate
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
-fn dct4x4_sse2(_token: impl Has128BitSimd + Copy, block: &mut [i32; 16]) {
+fn dct4x4_sse2(_token: X64V3Token, block: &mut [i32; 16]) {
     // Convert i32 block to i16 and reorganize into libwebp's interleaved layout:
     // row01 = [r0c0, r0c1, r1c0, r1c1, r0c2, r0c3, r1c2, r1c3]
     // row23 = [r2c0, r2c1, r3c0, r3c1, r2c2, r2c3, r3c2, r3c3]
@@ -237,7 +237,7 @@ fn dct4x4_sse2(_token: impl Has128BitSimd + Copy, block: &mut [i32; 16]) {
 #[arcane]
 #[inline]
 fn ftransform_pass1_i16(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     in01: __m128i,
     in23: __m128i,
 ) -> (__m128i, __m128i) {
@@ -302,7 +302,7 @@ fn ftransform_pass1_i16(
 #[arcane]
 #[inline]
 fn ftransform_pass2_i16(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     v01: &__m128i,
     v32: &__m128i,
     out: &mut [i16; 16],
@@ -357,7 +357,7 @@ fn ftransform_pass2_i16(
 #[arcane]
 #[allow(dead_code)]
 fn dct4x4_two_sse2(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     block1: &mut [i32; 16],
     block2: &mut [i32; 16],
 ) {
@@ -384,7 +384,7 @@ fn dct4x4_two_sse2(
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
 fn ftransform2_sse2(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     src: &[u8],
     ref_: &[u8],
     src_stride: usize,
@@ -498,7 +498,7 @@ fn ftransform2_scalar(
 /// Inverse DCT using SSE2 - matches libwebp ITransform_One_SSE2
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
-fn idct4x4_sse2(_token: impl Has128BitSimd + Copy, block: &mut [i32]) {
+fn idct4x4_sse2(_token: X64V3Token, block: &mut [i32]) {
     // libwebp IDCT constants:
     // K1 = sqrt(2) * cos(pi/8) * 65536 = 85627 => k1 = 85627 - 65536 = 20091
     // K2 = sqrt(2) * sin(pi/8) * 65536 = 35468 => k2 = 35468 - 65536 = -30068
@@ -551,7 +551,7 @@ fn idct4x4_sse2(_token: impl Has128BitSimd + Copy, block: &mut [i32]) {
 #[arcane]
 #[inline]
 fn itransform_pass_sse2(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     in01: __m128i,
     in23: __m128i,
     k1k2: __m128i,
@@ -601,7 +601,7 @@ fn itransform_pass_sse2(
 #[arcane]
 #[inline]
 fn itransform_pass2_sse2(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     t01: __m128i,
     t23: __m128i,
     k1k2: __m128i,
@@ -645,6 +645,267 @@ fn itransform_pass2_sse2(
     let out23 = _mm_unpackhi_epi16(transpose_0, transpose_1);
 
     (out01, out23)
+}
+
+// =============================================================================
+// Fused IDCT + Add Residue (like libwebp's ITransform_SSE2)
+// =============================================================================
+
+/// Fused IDCT + add residue + clamp, writing directly to output buffer.
+/// This is the hot path optimization - avoids separate IDCT and add_residue calls.
+///
+/// Takes: coefficients (i32[16]), prediction block, output location
+/// Does: IDCT(coeffs) + prediction → output (clamped to 0-255)
+/// Also clears the coefficient block to zeros.
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[arcane]
+#[inline(always)]
+pub(crate) fn idct_add_residue_sse2(
+    _token: X64V3Token,
+    coeffs: &mut [i32; 16],
+    pred_block: &[u8],
+    pred_stride: usize,
+    out_block: &mut [u8],
+    out_stride: usize,
+    pred_y0: usize,
+    pred_x0: usize,
+    out_y0: usize,
+    out_x0: usize,
+) {
+    // IDCT constants
+    let k1k2 = _mm_set_epi16(-30068, -30068, -30068, -30068, 20091, 20091, 20091, 20091);
+    let k2k1 = _mm_set_epi16(20091, 20091, 20091, 20091, -30068, -30068, -30068, -30068);
+    let zero_four = _mm_set_epi16(0, 0, 0, 0, 4, 4, 4, 4);
+    let zero = _mm_setzero_si128();
+
+    // Load i32 coefficients and pack to i16
+    let i32_0 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
+    let i32_1 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
+    let i32_2 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
+    let i32_3 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+
+    let in01 = _mm_packs_epi32(i32_0, i32_1);
+    let in23 = _mm_packs_epi32(i32_2, i32_3);
+
+    // Vertical pass
+    let (t01, t23) = itransform_pass_sse2(_token, in01, in23, k1k2, k2k1);
+
+    // Horizontal pass with rounding → residual in i16
+    let (res01, res23) = itransform_pass2_sse2(_token, t01, t23, k1k2, k2k1, zero_four);
+
+    // res01 = row0[0-3] row1[0-3] as i16
+    // res23 = row2[0-3] row3[0-3] as i16
+
+    // Load 4 prediction bytes per row, extend to i16, add residual, pack to u8
+    macro_rules! process_row {
+        ($res:expr, $row_idx:expr, $hi:expr) => {{
+            // Extract this row's residuals (4 x i16)
+            let residual = if $hi {
+                _mm_unpackhi_epi64($res, $res)
+            } else {
+                $res
+            };
+
+            // Load 4 prediction bytes
+            let pred_pos = (pred_y0 + $row_idx) * pred_stride + pred_x0;
+            let pred_bytes: [u8; 4] = pred_block[pred_pos..pred_pos + 4].try_into().unwrap();
+            let pred_i32 = i32::from_ne_bytes(pred_bytes);
+            let pred_vec = _mm_cvtsi32_si128(pred_i32);
+            // Extend u8 → i16 (zero extend, then treat as signed for addition)
+            let pred_i16 = _mm_unpacklo_epi8(pred_vec, zero);
+
+            // Add residual to prediction (i16 + i16 → i16)
+            let sum = _mm_add_epi16(pred_i16, residual);
+
+            // Pack to u8 with saturation (clamp to 0-255)
+            let packed = _mm_packus_epi16(sum, sum);
+
+            // Store 4 bytes to output
+            let out_pos = (out_y0 + $row_idx) * out_stride + out_x0;
+            let result = _mm_cvtsi128_si32(packed) as u32;
+            out_block[out_pos..out_pos + 4].copy_from_slice(&result.to_ne_bytes());
+        }};
+    }
+
+    process_row!(res01, 0, false);
+    process_row!(res01, 1, true);
+    process_row!(res23, 2, false);
+    process_row!(res23, 3, true);
+
+    // Clear coefficient block
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[0..4]).unwrap(), zero);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[4..8]).unwrap(), zero);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[8..12]).unwrap(), zero);
+    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(), zero);
+}
+
+/// DC-only fused IDCT + add residue - when only DC coefficient is non-zero.
+/// Much faster than full IDCT.
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[arcane]
+#[inline(always)]
+pub(crate) fn idct_add_residue_dc_sse2(
+    _token: X64V3Token,
+    coeffs: &mut [i32; 16],
+    pred_block: &[u8],
+    pred_stride: usize,
+    out_block: &mut [u8],
+    out_stride: usize,
+    pred_y0: usize,
+    pred_x0: usize,
+    out_y0: usize,
+    out_x0: usize,
+) {
+    // DC-only: output = prediction + ((DC + 4) >> 3) for all 16 pixels
+    let dc = coeffs[0];
+    let dc_adj = ((dc + 4) >> 3) as i16;
+    let dc_vec = _mm_set1_epi16(dc_adj);
+    let zero = _mm_setzero_si128();
+
+    for row in 0..4 {
+        // Load 4 prediction bytes
+        let pred_pos = (pred_y0 + row) * pred_stride + pred_x0;
+        let pred_bytes: [u8; 4] = pred_block[pred_pos..pred_pos + 4].try_into().unwrap();
+        let pred_i32 = i32::from_ne_bytes(pred_bytes);
+        let pred_vec = _mm_cvtsi32_si128(pred_i32);
+        let pred_i16 = _mm_unpacklo_epi8(pred_vec, zero);
+
+        // Add DC to prediction
+        let sum = _mm_add_epi16(pred_i16, dc_vec);
+
+        // Pack to u8 with saturation
+        let packed = _mm_packus_epi16(sum, sum);
+
+        // Store 4 bytes
+        let out_pos = (out_y0 + row) * out_stride + out_x0;
+        let result = _mm_cvtsi128_si32(packed) as u32;
+        out_block[out_pos..out_pos + 4].copy_from_slice(&result.to_ne_bytes());
+    }
+
+    // Clear coefficient block
+    coeffs.fill(0);
+}
+
+/// Wrapper with token type parameter for decoder use (separate pred/output)
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[inline(always)]
+pub(crate) fn idct_add_residue_with_token(
+    token: X64V3Token,
+    coeffs: &mut [i32; 16],
+    pred_block: &[u8],
+    pred_stride: usize,
+    out_block: &mut [u8],
+    out_stride: usize,
+    pred_y0: usize,
+    pred_x0: usize,
+    out_y0: usize,
+    out_x0: usize,
+    dc_only: bool,
+) {
+    if dc_only {
+        idct_add_residue_dc_sse2(
+            token, coeffs, pred_block, pred_stride, out_block, out_stride,
+            pred_y0, pred_x0, out_y0, out_x0,
+        );
+    } else {
+        idct_add_residue_sse2(
+            token, coeffs, pred_block, pred_stride, out_block, out_stride,
+            pred_y0, pred_x0, out_y0, out_x0,
+        );
+    }
+}
+
+/// In-place fused IDCT + add residue for decoder hot path.
+/// Performs IDCT on raw DCT coefficients, adds to prediction block in-place, and clears coefficients.
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[arcane]
+#[inline(always)]
+pub(crate) fn idct_add_residue_inplace_sse2(
+    _token: X64V3Token,
+    coeffs: &mut [i32; 16],
+    block: &mut [u8],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+    dc_only: bool,
+) {
+    if dc_only {
+        // DC-only fast path
+        let dc = coeffs[0];
+        let dc_adj = ((dc + 4) >> 3) as i16;
+        let dc_vec = _mm_set1_epi16(dc_adj);
+        let zero = _mm_setzero_si128();
+
+        for row in 0..4 {
+            let pos = (y0 + row) * stride + x0;
+            let pred_bytes: [u8; 4] = block[pos..pos + 4].try_into().unwrap();
+            let pred_i32 = i32::from_ne_bytes(pred_bytes);
+            let pred_vec = _mm_cvtsi32_si128(pred_i32);
+            let pred_i16 = _mm_unpacklo_epi8(pred_vec, zero);
+            let sum = _mm_add_epi16(pred_i16, dc_vec);
+            let packed = _mm_packus_epi16(sum, sum);
+            let result = _mm_cvtsi128_si32(packed) as u32;
+            block[pos..pos + 4].copy_from_slice(&result.to_ne_bytes());
+        }
+    } else {
+        // Full IDCT path
+        let k1k2 = _mm_set_epi16(-30068, -30068, -30068, -30068, 20091, 20091, 20091, 20091);
+        let k2k1 = _mm_set_epi16(20091, 20091, 20091, 20091, -30068, -30068, -30068, -30068);
+        let zero_four = _mm_set_epi16(0, 0, 0, 0, 4, 4, 4, 4);
+        let zero = _mm_setzero_si128();
+
+        // Load and pack coefficients
+        let i32_0 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
+        let i32_1 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
+        let i32_2 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
+        let i32_3 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+
+        let in01 = _mm_packs_epi32(i32_0, i32_1);
+        let in23 = _mm_packs_epi32(i32_2, i32_3);
+
+        // Vertical + horizontal passes → residuals in i16
+        let (t01, t23) = itransform_pass_sse2(_token, in01, in23, k1k2, k2k1);
+        let (res01, res23) = itransform_pass2_sse2(_token, t01, t23, k1k2, k2k1, zero_four);
+
+        // Process each row: load pred, add residual, store
+        macro_rules! process_row {
+            ($res:expr, $row_idx:expr, $hi:expr) => {{
+                let residual = if $hi { _mm_unpackhi_epi64($res, $res) } else { $res };
+                let pos = (y0 + $row_idx) * stride + x0;
+                let pred_bytes: [u8; 4] = block[pos..pos + 4].try_into().unwrap();
+                let pred_i32 = i32::from_ne_bytes(pred_bytes);
+                let pred_vec = _mm_cvtsi32_si128(pred_i32);
+                let pred_i16 = _mm_unpacklo_epi8(pred_vec, zero);
+                let sum = _mm_add_epi16(pred_i16, residual);
+                let packed = _mm_packus_epi16(sum, sum);
+                let result = _mm_cvtsi128_si32(packed) as u32;
+                block[pos..pos + 4].copy_from_slice(&result.to_ne_bytes());
+            }};
+        }
+
+        process_row!(res01, 0, false);
+        process_row!(res01, 1, true);
+        process_row!(res23, 2, false);
+        process_row!(res23, 3, true);
+    }
+
+    // Clear coefficient block
+    coeffs.fill(0);
+}
+
+/// Wrapper for in-place fused IDCT + add residue
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[inline(always)]
+pub(crate) fn idct_add_residue_inplace_with_token(
+    token: X64V3Token,
+    coeffs: &mut [i32; 16],
+    block: &mut [u8],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+    dc_only: bool,
+) {
+    idct_add_residue_inplace_sse2(token, coeffs, block, y0, x0, stride, dc_only);
 }
 
 // =============================================================================

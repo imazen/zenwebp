@@ -10,7 +10,7 @@
 #![allow(dead_code)]
 
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-use archmage::{arcane, Has128BitSimd, SimdToken, X64V3Token};
+use archmage::{arcane, SimdToken, X64V3Token};
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 use core::arch::x86_64::*;
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
@@ -199,7 +199,7 @@ fn compute_edge_density_dispatch(
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[arcane]
 fn compute_edge_density_sse2(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     y_src: &[u8],
     width: usize,
     height: usize,

@@ -4,7 +4,7 @@
 //! Processes 32 pixels at a time with SIMD RGB interleaving.
 
 #[cfg(target_arch = "x86_64")]
-use archmage::{arcane, Has128BitSimd, SimdToken, X64V3Token};
+use archmage::{arcane, SimdToken, X64V3Token};
 
 #[cfg(target_arch = "x86_64")]
 use safe_unaligned_simd::x86_64 as simd_mem;
@@ -21,7 +21,7 @@ use core::arch::x86_64::*;
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 #[inline]
-fn load_hi_16(_token: impl Has128BitSimd + Copy, src: &[u8; 8]) -> __m128i {
+fn load_hi_16(_token: X64V3Token, src: &[u8; 8]) -> __m128i {
     let zero = _mm_setzero_si128();
     // Load 8 bytes as i64 then convert to __m128i
     let val = i64::from_le_bytes(*src);
@@ -34,7 +34,7 @@ fn load_hi_16(_token: impl Has128BitSimd + Copy, src: &[u8; 8]) -> __m128i {
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 #[inline]
-fn load_uv_hi_8(_token: impl Has128BitSimd + Copy, src: &[u8; 4]) -> __m128i {
+fn load_uv_hi_8(_token: X64V3Token, src: &[u8; 4]) -> __m128i {
     let zero = _mm_setzero_si128();
     // Load 4 bytes as i32
     let val = i32::from_le_bytes(*src);
@@ -52,7 +52,7 @@ fn load_uv_hi_8(_token: impl Has128BitSimd + Copy, src: &[u8; 4]) -> __m128i {
 #[arcane]
 #[inline]
 fn convert_yuv444_to_rgb(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     y: __m128i,
     u: __m128i,
     v: __m128i,
@@ -103,7 +103,7 @@ fn convert_yuv444_to_rgb(
 #[inline]
 #[allow(dead_code)]
 fn pack_and_store_rgba(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     r: __m128i,
     g: __m128i,
     b: __m128i,
@@ -146,7 +146,7 @@ macro_rules! planar_to_24b_helper {
 #[arcane]
 #[inline]
 fn planar_to_24b(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     in0: __m128i,
     in1: __m128i,
     in2: __m128i,
@@ -180,7 +180,7 @@ fn planar_to_24b(
 #[arcane]
 #[allow(dead_code)]
 fn yuv444_to_rgb_32(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     y: &[u8; 32],
     u: &[u8; 32],
     v: &[u8; 32],
@@ -233,7 +233,7 @@ fn yuv444_to_rgb_32(
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 fn yuv420_to_rgb_32(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     y: &[u8; 32],
     u: &[u8; 16],
     v: &[u8; 16],
@@ -311,7 +311,7 @@ pub fn yuv420_to_rgb_row(y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 fn yuv420_to_rgb_row_inner(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     y: &[u8],
     u: &[u8],
     v: &[u8],
@@ -365,7 +365,7 @@ pub fn yuv420_to_rgba_row(y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
 #[arcane]
 #[allow(dead_code)]
 fn yuv420_to_rgba_row_inner(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     y: &[u8],
     u: &[u8],
     v: &[u8],
@@ -424,7 +424,7 @@ fn yuv420_to_rgba_row_inner(
 #[arcane]
 #[inline]
 fn fancy_upsample_16(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     a: __m128i,
     b: __m128i,
     c: __m128i,
@@ -483,7 +483,7 @@ fn fancy_upsample_16(
 #[arcane]
 #[allow(dead_code)]
 fn upsample_32_pixels(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     r1: &[u8; 17],
     r2: &[u8; 17],
     out: &mut [u8; 128],
@@ -579,7 +579,7 @@ pub fn fancy_upsample_8_pairs(
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 fn fancy_upsample_8_pairs_inner_opt(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     y_row: &[u8; 16],
     u_row_1: &[u8; 9],
     u_row_2: &[u8; 9],
@@ -678,7 +678,7 @@ fn fancy_upsample_8_pairs_inner_opt(
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 fn fancy_upsample_8_pairs_inner(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     y_row: &[u8],
     u_row_1: &[u8],
     u_row_2: &[u8],
@@ -719,7 +719,7 @@ pub fn fancy_upsample_16_pairs_with_token(
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 fn fancy_upsample_16_pairs_inner(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     y_row: &[u8],
     u_row_1: &[u8],
     u_row_2: &[u8],
@@ -742,7 +742,7 @@ fn fancy_upsample_16_pairs_inner(
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 fn fancy_upsample_16_pairs_inner_opt(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     y_row: &[u8; 32],
     u_row_1: &[u8; 17],
     u_row_2: &[u8; 17],

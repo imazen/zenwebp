@@ -8,7 +8,7 @@
 #![allow(dead_code)]
 
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
-use archmage::{arcane, Has128BitSimd, SimdToken, X64V3Token};
+use archmage::{arcane, SimdToken, X64V3Token};
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
 use core::arch::x86_64::*;
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
@@ -213,7 +213,7 @@ impl VP8Matrix {
 #[arcane]
 #[inline(always)]
 fn dequantize_block_sse2(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     q: &[u16; 16],
     coeffs: &mut [i32; 16],
 ) {
@@ -312,7 +312,7 @@ pub fn quantize_block_simd(
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
 #[arcane]
 fn quantize_block_sse2(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     coeffs: &mut [i32; 16],
     matrix: &VP8Matrix,
     use_sharpen: bool,

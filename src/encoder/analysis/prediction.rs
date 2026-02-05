@@ -14,7 +14,7 @@
 use super::{BPS, C8DC8, C8TM8, I16DC16, I16TM16};
 
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-use archmage::{arcane, Has128BitSimd, SimdToken, X64V3Token};
+use archmage::{arcane, SimdToken, X64V3Token};
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 use core::arch::x86_64::*;
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
@@ -156,7 +156,7 @@ fn pred_luma16_tm_dispatch(dst: &mut [u8], left: &[u8], top: &[u8]) {
 /// Formula: dst[y][x] = clamp(left[y] + top[x] - tl, 0, 255)
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[arcane]
-fn pred_luma16_tm_sse2(_token: impl Has128BitSimd + Copy, dst: &mut [u8], left: &[u8], top: &[u8]) {
+fn pred_luma16_tm_sse2(_token: X64V3Token, dst: &mut [u8], left: &[u8], top: &[u8]) {
     let zero = _mm_setzero_si128();
 
     // Load top row (16 bytes)
@@ -310,7 +310,7 @@ fn pred_chroma8_tm_dispatch(dst: &mut [u8], left: &[u8], top: &[u8]) {
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[arcane]
 fn pred_chroma8_tm_sse2(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     dst: &mut [u8],
     left: &[u8],
     top: &[u8],

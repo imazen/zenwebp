@@ -941,9 +941,9 @@ impl<'a> Vp8Decoder<'a> {
                         let rb: &mut [i32; 16] =
                             (&mut self.coeff_blocks[i * 16..][..16]).try_into().unwrap();
                         if let Some(token) = simd_token {
-                            add_residue_and_clear_with_token(token, &mut ws, rb, y0, x0, stride);
+                            idct_add_residue_and_clear_with_token(token, &mut ws, rb, y0, x0, stride);
                         } else {
-                            add_residue_and_clear(&mut ws, rb, y0, x0, stride);
+                            idct_add_residue_and_clear(&mut ws, rb, y0, x0, stride);
                         }
                     }
                 }
@@ -960,9 +960,9 @@ impl<'a> Vp8Decoder<'a> {
                     let x0 = 1 + x * 4;
 
                     if let Some(token) = simd_token {
-                        add_residue_and_clear_with_token(token, &mut ws, rb, y0, x0, stride);
+                        idct_add_residue_and_clear_with_token(token, &mut ws, rb, y0, x0, stride);
                     } else {
-                        add_residue_and_clear(&mut ws, rb, y0, x0, stride);
+                        idct_add_residue_and_clear(&mut ws, rb, y0, x0, stride);
                     }
                 }
             }
@@ -1024,17 +1024,17 @@ impl<'a> Vp8Decoder<'a> {
                 let y0 = 1 + y * 4;
                 let x0 = 1 + x * 4;
                 if let Some(token) = simd_token {
-                    add_residue_and_clear_with_token(token, &mut uws, urb, y0, x0, stride);
+                    idct_add_residue_and_clear_with_token(token, &mut uws, urb, y0, x0, stride);
                 } else {
-                    add_residue_and_clear(&mut uws, urb, y0, x0, stride);
+                    idct_add_residue_and_clear(&mut uws, urb, y0, x0, stride);
                 }
 
                 let vrb: &mut [i32; 16] =
                     (&mut self.coeff_blocks[v_idx * 16..][..16]).try_into().unwrap();
                 if let Some(token) = simd_token {
-                    add_residue_and_clear_with_token(token, &mut vws, vrb, y0, x0, stride);
+                    idct_add_residue_and_clear_with_token(token, &mut vws, vrb, y0, x0, stride);
                 } else {
-                    add_residue_and_clear(&mut vws, vrb, y0, x0, stride);
+                    idct_add_residue_and_clear(&mut vws, vrb, y0, x0, stride);
                 }
             }
         }
@@ -1141,13 +1141,9 @@ impl<'a> Vp8Decoder<'a> {
 
                 let block: &mut [i32; 16] = block_slice.try_into().unwrap();
 
+                // Track non-zero DCT but defer IDCT to fused function during prediction
                 if block[0] != 0 || n {
                     mb.non_zero_dct = true;
-                    if n {
-                        transform::idct4x4_with_token(block, simd_token);
-                    } else {
-                        transform::idct4x4_dc(block);
-                    }
                 }
 
                 left_ctx = if n { 1 } else { 0 };
@@ -1181,13 +1177,9 @@ impl<'a> Vp8Decoder<'a> {
 
                     let block: &mut [i32; 16] = block_slice.try_into().unwrap();
 
+                    // Track non-zero DCT but defer IDCT to fused function during prediction
                     if block[0] != 0 || n {
                         mb.non_zero_dct = true;
-                        if n {
-                            transform::idct4x4_with_token(block, simd_token);
-                        } else {
-                            transform::idct4x4_dc(block);
-                        }
                     }
 
                     left_ctx = if n { 1 } else { 0 };

@@ -8,7 +8,7 @@
 
 // SIMD imports for GetResidualCost optimization
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
-use archmage::{arcane, Has128BitSimd, SimdToken, X64V3Token};
+use archmage::{arcane, SimdToken, X64V3Token};
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 use core::arch::x86_64::*;
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
@@ -163,7 +163,7 @@ fn get_residual_cost_scalar(
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
 fn get_residual_cost_sse2(
-    _token: impl Has128BitSimd + Copy,
+    _token: X64V3Token,
     ctx0: usize,
     res: &Residual,
     costs: &LevelCosts,
@@ -290,7 +290,7 @@ fn get_residual_cost_sse2(
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
 #[allow(dead_code)]
-fn find_last_nonzero_simd(_token: impl Has128BitSimd + Copy, coeffs: &[i32; 16]) -> i32 {
+fn find_last_nonzero_simd(_token: X64V3Token, coeffs: &[i32; 16]) -> i32 {
     let zero = _mm_setzero_si128();
 
     // Load coefficients as i32 and pack to i16
