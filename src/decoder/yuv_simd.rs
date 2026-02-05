@@ -588,7 +588,9 @@ fn fancy_upsample_8_pairs_inner_opt(
     rgb: &mut [u8; 48],
 ) {
     // Load 8 chroma values from fixed-size arrays - no bounds checks needed
-    // Use _mm_set_epi64x which doesn't require target_feature (just constructs value)
+    // Using a macro instead of a nested function because macros expand at call site,
+    // so _mm_cvtsi64_si128 is called within the #[arcane] function's target_feature context.
+    // A nested function wouldn't inherit target_feature and would fail to compile.
     macro_rules! load_8_from_9 {
         ($arr:expr, 0) => {{
             let bytes: [u8; 8] = [
