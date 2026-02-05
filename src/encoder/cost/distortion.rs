@@ -272,12 +272,9 @@ fn is_flat_coeffs_sse2(
         let base = block * 16;
 
         // Load 16 i16 values
-        let v = simd_mem::_mm_loadu_si128(
-            <&[i16; 8]>::try_from(&levels[base..base + 8]).unwrap(),
-        );
-        let v2 = simd_mem::_mm_loadu_si128(
-            <&[i16; 8]>::try_from(&levels[base + 8..base + 16]).unwrap(),
-        );
+        let v = simd_mem::_mm_loadu_si128(<&[i16; 8]>::try_from(&levels[base..base + 8]).unwrap());
+        let v2 =
+            simd_mem::_mm_loadu_si128(<&[i16; 8]>::try_from(&levels[base + 8..base + 16]).unwrap());
 
         // Compare to zero - result is 0xFFFF for zero, 0 for non-zero
         let eq0 = _mm_cmpeq_epi16(v, zero);

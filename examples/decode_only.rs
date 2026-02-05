@@ -13,17 +13,17 @@ fn main() {
             rgb.push((((x + y) * 127) / (width + height)) as u8);
         }
     }
-    
+
     // Encode to WebP once
     let webp = EncoderConfig::new()
         .quality(75.0)
         .encode_rgb(&rgb, width, height)
         .unwrap();
     eprintln!("Encoded 1024x1024 to {} bytes", webp.len());
-    
+
     // Start profiling from here
     eprintln!("Starting 100 decodes...");
-    
+
     // Decode 100 times
     for _ in 0..100 {
         std::hint::black_box(zenwebp::decode_rgb(&webp).unwrap());

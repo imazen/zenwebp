@@ -12,14 +12,14 @@ fn main() {
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
         rgb.push((seed >> 56) as u8);
     }
-    
+
     // Encode to WebP once
     let webp = EncoderConfig::new()
         .quality(75.0)
         .encode_rgb(&rgb, width, height)
         .unwrap();
     eprintln!("Encoded noisy 1024x1024 to {} bytes", webp.len());
-    
+
     // Decode 100 times
     for _ in 0..100 {
         std::hint::black_box(zenwebp::decode_rgb(&webp).unwrap());

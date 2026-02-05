@@ -286,8 +286,26 @@ pub(crate) fn normal_filter_vertical_mb_32_cols(
     }
 
     // Fallback: two 16-column filters
-    normal_filter_vertical_mb_16_cols(buf, y0, x_start, stride, hev_threshold, interior_limit, edge_limit, simd_token);
-    normal_filter_vertical_mb_16_cols(buf, y0, x_start + 16, stride, hev_threshold, interior_limit, edge_limit, simd_token);
+    normal_filter_vertical_mb_16_cols(
+        buf,
+        y0,
+        x_start,
+        stride,
+        hev_threshold,
+        interior_limit,
+        edge_limit,
+        simd_token,
+    );
+    normal_filter_vertical_mb_16_cols(
+        buf,
+        y0,
+        x_start + 16,
+        stride,
+        hev_threshold,
+        interior_limit,
+        edge_limit,
+        simd_token,
+    );
 }
 
 /// Helper to apply normal vertical subblock filter to 32 columns with AVX2.
@@ -320,8 +338,26 @@ pub(crate) fn normal_filter_vertical_sub_32_cols(
     }
 
     // Fallback: two 16-column filters
-    normal_filter_vertical_sub_16_cols(buf, y0, x_start, stride, hev_threshold, interior_limit, edge_limit, simd_token);
-    normal_filter_vertical_sub_16_cols(buf, y0, x_start + 16, stride, hev_threshold, interior_limit, edge_limit, simd_token);
+    normal_filter_vertical_sub_16_cols(
+        buf,
+        y0,
+        x_start,
+        stride,
+        hev_threshold,
+        interior_limit,
+        edge_limit,
+        simd_token,
+    );
+    normal_filter_vertical_sub_16_cols(
+        buf,
+        y0,
+        x_start + 16,
+        stride,
+        hev_threshold,
+        interior_limit,
+        edge_limit,
+        simd_token,
+    );
 }
 
 /// Helper to apply normal horizontal macroblock filter to 16 rows with SIMD when available.

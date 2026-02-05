@@ -60,11 +60,11 @@ fn benchmark_image(path: &Path) -> Option<(String, u32, u32, f64, f64, f64, f64,
         path.file_name()?.to_string_lossy().to_string(),
         info.width,
         info.height,
-        pixels / zen_decode / 1e6,       // zenwebp MPix/s
-        pixels / upstream_decode / 1e6,  // image-webp MPix/s
-        pixels / lib_decode / 1e6,       // libwebp MPix/s
-        zen_decode / lib_decode,         // zenwebp ratio
-        upstream_decode / lib_decode,    // upstream ratio
+        pixels / zen_decode / 1e6,      // zenwebp MPix/s
+        pixels / upstream_decode / 1e6, // image-webp MPix/s
+        pixels / lib_decode / 1e6,      // libwebp MPix/s
+        zen_decode / lib_decode,        // zenwebp ratio
+        upstream_decode / lib_decode,   // upstream ratio
     ))
 }
 
@@ -100,9 +100,16 @@ fn main() {
         let total_pixels: f64 = results.iter().map(|r| r.1 as f64 * r.2 as f64).sum();
 
         println!();
-        println!("=== Summary ({} images, {:.1} megapixels total) ===", results.len(), total_pixels / 1e6);
+        println!(
+            "=== Summary ({} images, {:.1} megapixels total) ===",
+            results.len(),
+            total_pixels / 1e6
+        );
         println!("zenwebp avg:    {:.2}x vs libwebp", avg_zen);
         println!("image-webp avg: {:.2}x vs libwebp", avg_upstream);
-        println!("zenwebp is {:.1}x faster than image-webp", avg_upstream / avg_zen);
+        println!(
+            "zenwebp is {:.1}x faster than image-webp",
+            avg_upstream / avg_zen
+        );
     }
 }

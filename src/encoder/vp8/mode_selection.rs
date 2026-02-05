@@ -140,11 +140,13 @@ impl<'a> super::Vp8Encoder<'a> {
             // 4. Quantize Y1 (AC) coefficients using SIMD
             // Extract each 4x4 block from luma_blocks and quantize AC coefficients
             let mut y1_quant = [[0i32; 16]; 16];
+            #[allow(clippy::needless_range_loop)]
             for block_idx in 0..16 {
                 // Copy block from luma_blocks (DC will be zeroed by quantize_ac_only)
                 let block_start = block_idx * 16;
-                let mut block: [i32; 16] =
-                    luma_blocks[block_start..block_start + 16].try_into().unwrap();
+                let mut block: [i32; 16] = luma_blocks[block_start..block_start + 16]
+                    .try_into()
+                    .unwrap();
                 block[0] = 0; // DC is handled by Y2
                 crate::encoder::quantize::quantize_ac_only_simd(&mut block, y1_matrix, true);
                 y1_quant[block_idx] = block;
@@ -730,11 +732,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     // exceeds best, skip remaining work. These penalties are all additive.
                     let mode_cost = mode_costs[mode_idx];
                     let base_rd_score = crate::encoder::cost::rd_score_full(
-                        sse,
-                        0,
-                        mode_cost,
-                        coeff_cost,
-                        lambda_i4,
+                        sse, 0, mode_cost, coeff_cost, lambda_i4,
                     ) as u64;
                     if base_rd_score >= best_block_score {
                         continue;
@@ -995,9 +993,7 @@ impl<'a> super::Vp8Encoder<'a> {
             // Process U blocks (indices 0-3)
             for block_idx in 0..4 {
                 let block_start = block_idx * 16;
-                let coeffs: [i32; 16] = u_blocks[block_start..block_start + 16]
-                    .try_into()
-                    .unwrap();
+                let coeffs: [i32; 16] = u_blocks[block_start..block_start + 16].try_into().unwrap();
                 crate::encoder::quantize::quantize_dequantize_block_simd(
                     &coeffs,
                     uv_matrix,
@@ -1010,9 +1006,7 @@ impl<'a> super::Vp8Encoder<'a> {
             // Process V blocks (indices 4-7)
             for block_idx in 0..4 {
                 let block_start = block_idx * 16;
-                let coeffs: [i32; 16] = v_blocks[block_start..block_start + 16]
-                    .try_into()
-                    .unwrap();
+                let coeffs: [i32; 16] = v_blocks[block_start..block_start + 16].try_into().unwrap();
                 crate::encoder::quantize::quantize_dequantize_block_simd(
                     &coeffs,
                     uv_matrix,

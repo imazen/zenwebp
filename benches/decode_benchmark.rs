@@ -129,28 +129,20 @@ fn bench_decode_large(c: &mut Criterion) {
         let pixels = (width * height) as u64;
         group.throughput(Throughput::Elements(pixels));
 
-        group.bench_with_input(
-            BenchmarkId::new("zenwebp", name),
-            &webp_data,
-            |b, data| {
-                b.iter(|| {
-                    let result = zenwebp::decode_rgb(black_box(data)).unwrap();
-                    black_box(result)
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("zenwebp", name), &webp_data, |b, data| {
+            b.iter(|| {
+                let result = zenwebp::decode_rgb(black_box(data)).unwrap();
+                black_box(result)
+            })
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("libwebp", name),
-            &webp_data,
-            |b, data| {
-                b.iter(|| {
-                    let decoder = webp::Decoder::new(black_box(data));
-                    let result = decoder.decode().unwrap();
-                    black_box(result)
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("libwebp", name), &webp_data, |b, data| {
+            b.iter(|| {
+                let decoder = webp::Decoder::new(black_box(data));
+                let result = decoder.decode().unwrap();
+                black_box(result)
+            })
+        });
     }
 
     group.finish();

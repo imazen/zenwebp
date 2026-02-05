@@ -101,7 +101,9 @@ pub(crate) fn fill_rgb_buffer_fancy<const BPP: usize>(
             archmage::X64V3Token::summon()
         }
         #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
-        { None }
+        {
+            None
+        }
     };
 
     // buffer width is always even so don't need to do div_ceil

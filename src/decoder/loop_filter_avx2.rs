@@ -16,9 +16,9 @@
 use archmage::{arcane, X64V3Token};
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
+use core::convert::TryFrom;
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 use safe_unaligned_simd::x86_64 as simd_mem;
-use core::convert::TryFrom;
 
 /// Maximum stride for bounds-check-free filtering (8K image width).
 const MAX_STRIDE: usize = 8192;
@@ -170,10 +170,8 @@ pub fn simple_v_filter16(
 
     // Load 16 pixels from each row - NO per-access bounds checks
     let p1 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p1..][..16]).unwrap());
-    let mut p0 =
-        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p0..][..16]).unwrap());
-    let mut q0 =
-        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q0..][..16]).unwrap());
+    let mut p0 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p0..][..16]).unwrap());
+    let mut q0 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q0..][..16]).unwrap());
     let q1 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q1..][..16]).unwrap());
 
     // Check which pixels need filtering
@@ -600,7 +598,10 @@ fn filter6_wide_half_avx2(
     let q0_p0 = _mm256_sub_epi16(q0_16, p0_16);
     let three_q0_p0 = _mm256_add_epi16(_mm256_add_epi16(q0_p0, q0_p0), q0_p0);
     let w = _mm256_add_epi16(p1_q1, three_q0_p0);
-    let w = _mm256_max_epi16(_mm256_min_epi16(w, _mm256_set1_epi16(127)), _mm256_set1_epi16(-128));
+    let w = _mm256_max_epi16(
+        _mm256_min_epi16(w, _mm256_set1_epi16(127)),
+        _mm256_set1_epi16(-128),
+    );
 
     // a0 = (27*w + 63) >> 7
     let k27 = _mm256_set1_epi16(27);
@@ -621,8 +622,12 @@ fn filter6_wide_half_avx2(
     let new_q2 = _mm256_sub_epi16(q2_16, a2);
 
     // Clamp to [-128, 127]
-    let clamp =
-        |v: __m256i| _mm256_max_epi16(_mm256_min_epi16(v, _mm256_set1_epi16(127)), _mm256_set1_epi16(-128));
+    let clamp = |v: __m256i| {
+        _mm256_max_epi16(
+            _mm256_min_epi16(v, _mm256_set1_epi16(127)),
+            _mm256_set1_epi16(-128),
+        )
+    };
 
     (
         clamp(new_p2),
@@ -748,8 +753,10 @@ pub fn normal_v_filter32_inner(
     debug_assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
     let start = point - 4 * stride;
     let region: &mut [u8; V_FILTER_NORMAL_REGION_32] =
-        <&mut [u8; V_FILTER_NORMAL_REGION_32]>::try_from(&mut pixels[start..start + V_FILTER_NORMAL_REGION_32])
-            .expect("normal_v_filter32_inner: buffer too small");
+        <&mut [u8; V_FILTER_NORMAL_REGION_32]>::try_from(
+            &mut pixels[start..start + V_FILTER_NORMAL_REGION_32],
+        )
+        .expect("normal_v_filter32_inner: buffer too small");
 
     let off_p3 = 0;
     let off_p2 = stride;
@@ -763,22 +770,50 @@ pub fn normal_v_filter32_inner(
     // Load 8 rows of 32 pixels each
     let p3 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p3..][..32]).unwrap());
     let p2 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p2..][..32]).unwrap());
-    let mut p1 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p1..][..32]).unwrap());
-    let mut p0 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p0..][..32]).unwrap());
-    let mut q0 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q0..][..32]).unwrap());
-    let mut q1 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q1..][..32]).unwrap());
+    let mut p1 =
+        simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p1..][..32]).unwrap());
+    let mut p0 =
+        simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p0..][..32]).unwrap());
+    let mut q0 =
+        simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q0..][..32]).unwrap());
+    let mut q1 =
+        simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q1..][..32]).unwrap());
     let q2 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q2..][..32]).unwrap());
     let q3 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q3..][..32]).unwrap());
 
-    let mask = needs_filter_normal_32(_token, p3, p2, p1, p0, q0, q1, q2, q3, edge_limit, interior_limit);
+    let mask = needs_filter_normal_32(
+        _token,
+        p3,
+        p2,
+        p1,
+        p0,
+        q0,
+        q1,
+        q2,
+        q3,
+        edge_limit,
+        interior_limit,
+    );
     let hev = high_edge_variance_32(_token, p1, p0, q0, q1, hev_thresh);
 
     do_filter4_32(_token, &mut p1, &mut p0, &mut q0, &mut q1, mask, hev);
 
-    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_p1..][..32]).unwrap(), p1);
-    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_p0..][..32]).unwrap(), p0);
-    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_q0..][..32]).unwrap(), q0);
-    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_q1..][..32]).unwrap(), q1);
+    simd_mem::_mm256_storeu_si256(
+        <&mut [u8; 32]>::try_from(&mut region[off_p1..][..32]).unwrap(),
+        p1,
+    );
+    simd_mem::_mm256_storeu_si256(
+        <&mut [u8; 32]>::try_from(&mut region[off_p0..][..32]).unwrap(),
+        p0,
+    );
+    simd_mem::_mm256_storeu_si256(
+        <&mut [u8; 32]>::try_from(&mut region[off_q0..][..32]).unwrap(),
+        q0,
+    );
+    simd_mem::_mm256_storeu_si256(
+        <&mut [u8; 32]>::try_from(&mut region[off_q1..][..32]).unwrap(),
+        q1,
+    );
 }
 
 /// Apply normal vertical filter (DoFilter6) to 32 pixels across a horizontal macroblock edge.
@@ -797,8 +832,10 @@ pub fn normal_v_filter32_edge(
     debug_assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
     let start = point - 4 * stride;
     let region: &mut [u8; V_FILTER_NORMAL_REGION_32] =
-        <&mut [u8; V_FILTER_NORMAL_REGION_32]>::try_from(&mut pixels[start..start + V_FILTER_NORMAL_REGION_32])
-            .expect("normal_v_filter32_edge: buffer too small");
+        <&mut [u8; V_FILTER_NORMAL_REGION_32]>::try_from(
+            &mut pixels[start..start + V_FILTER_NORMAL_REGION_32],
+        )
+        .expect("normal_v_filter32_edge: buffer too small");
 
     let off_p3 = 0;
     let off_p2 = stride;
@@ -811,25 +848,63 @@ pub fn normal_v_filter32_edge(
 
     // Load 8 rows of 32 pixels each
     let p3 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p3..][..32]).unwrap());
-    let mut p2 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p2..][..32]).unwrap());
-    let mut p1 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p1..][..32]).unwrap());
-    let mut p0 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p0..][..32]).unwrap());
-    let mut q0 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q0..][..32]).unwrap());
-    let mut q1 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q1..][..32]).unwrap());
-    let mut q2 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q2..][..32]).unwrap());
+    let mut p2 =
+        simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p2..][..32]).unwrap());
+    let mut p1 =
+        simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p1..][..32]).unwrap());
+    let mut p0 =
+        simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p0..][..32]).unwrap());
+    let mut q0 =
+        simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q0..][..32]).unwrap());
+    let mut q1 =
+        simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q1..][..32]).unwrap());
+    let mut q2 =
+        simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q2..][..32]).unwrap());
     let q3 = simd_mem::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q3..][..32]).unwrap());
 
-    let mask = needs_filter_normal_32(_token, p3, p2, p1, p0, q0, q1, q2, q3, edge_limit, interior_limit);
+    let mask = needs_filter_normal_32(
+        _token,
+        p3,
+        p2,
+        p1,
+        p0,
+        q0,
+        q1,
+        q2,
+        q3,
+        edge_limit,
+        interior_limit,
+    );
     let hev = high_edge_variance_32(_token, p1, p0, q0, q1, hev_thresh);
 
-    do_filter6_32(_token, &mut p2, &mut p1, &mut p0, &mut q0, &mut q1, &mut q2, mask, hev);
+    do_filter6_32(
+        _token, &mut p2, &mut p1, &mut p0, &mut q0, &mut q1, &mut q2, mask, hev,
+    );
 
-    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_p2..][..32]).unwrap(), p2);
-    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_p1..][..32]).unwrap(), p1);
-    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_p0..][..32]).unwrap(), p0);
-    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_q0..][..32]).unwrap(), q0);
-    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_q1..][..32]).unwrap(), q1);
-    simd_mem::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut region[off_q2..][..32]).unwrap(), q2);
+    simd_mem::_mm256_storeu_si256(
+        <&mut [u8; 32]>::try_from(&mut region[off_p2..][..32]).unwrap(),
+        p2,
+    );
+    simd_mem::_mm256_storeu_si256(
+        <&mut [u8; 32]>::try_from(&mut region[off_p1..][..32]).unwrap(),
+        p1,
+    );
+    simd_mem::_mm256_storeu_si256(
+        <&mut [u8; 32]>::try_from(&mut region[off_p0..][..32]).unwrap(),
+        p0,
+    );
+    simd_mem::_mm256_storeu_si256(
+        <&mut [u8; 32]>::try_from(&mut region[off_q0..][..32]).unwrap(),
+        q0,
+    );
+    simd_mem::_mm256_storeu_si256(
+        <&mut [u8; 32]>::try_from(&mut region[off_q1..][..32]).unwrap(),
+        q1,
+    );
+    simd_mem::_mm256_storeu_si256(
+        <&mut [u8; 32]>::try_from(&mut region[off_q2..][..32]).unwrap(),
+        q2,
+    );
 }
 
 /// Transpose an 8x16 matrix of bytes to 16x8.
@@ -1418,9 +1493,10 @@ pub fn normal_v_filter16_inner(
     // Fixed-region approach: single bounds check, then all interior accesses are check-free.
     debug_assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
     let start = point - 4 * stride;
-    let region: &mut [u8; V_FILTER_NORMAL_REGION] =
-        <&mut [u8; V_FILTER_NORMAL_REGION]>::try_from(&mut pixels[start..start + V_FILTER_NORMAL_REGION])
-            .expect("normal_v_filter16_inner: buffer too small (missing FILTER_PADDING?)");
+    let region: &mut [u8; V_FILTER_NORMAL_REGION] = <&mut [u8; V_FILTER_NORMAL_REGION]>::try_from(
+        &mut pixels[start..start + V_FILTER_NORMAL_REGION],
+    )
+    .expect("normal_v_filter16_inner: buffer too small (missing FILTER_PADDING?)");
 
     // Offsets within fixed region - compiler proves these are in-bounds
     let off_p3 = 0;
@@ -1435,14 +1511,10 @@ pub fn normal_v_filter16_inner(
     // Load 8 rows of 16 pixels each - NO per-access bounds checks
     let p3 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p3..][..16]).unwrap());
     let p2 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p2..][..16]).unwrap());
-    let mut p1 =
-        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p1..][..16]).unwrap());
-    let mut p0 =
-        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p0..][..16]).unwrap());
-    let mut q0 =
-        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q0..][..16]).unwrap());
-    let mut q1 =
-        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q1..][..16]).unwrap());
+    let mut p1 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p1..][..16]).unwrap());
+    let mut p0 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p0..][..16]).unwrap());
+    let mut q0 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q0..][..16]).unwrap());
+    let mut q1 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q1..][..16]).unwrap());
     let q2 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q2..][..16]).unwrap());
     let q3 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q3..][..16]).unwrap());
 
@@ -1529,7 +1601,17 @@ pub unsafe fn normal_v_filter16_inner_unchecked(
 
     // Check if filtering is needed
     let mask = needs_filter_normal_16(
-        _token, p3, p2, p1, p0, q0, q1, q2, q3, edge_limit, interior_limit,
+        _token,
+        p3,
+        p2,
+        p1,
+        p0,
+        q0,
+        q1,
+        q2,
+        q3,
+        edge_limit,
+        interior_limit,
     );
 
     // Check high edge variance
@@ -1560,9 +1642,10 @@ pub fn normal_v_filter16_edge(
     // Fixed-region approach: single bounds check, then all interior accesses are check-free.
     debug_assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
     let start = point - 4 * stride;
-    let region: &mut [u8; V_FILTER_NORMAL_REGION] =
-        <&mut [u8; V_FILTER_NORMAL_REGION]>::try_from(&mut pixels[start..start + V_FILTER_NORMAL_REGION])
-            .expect("normal_v_filter16_edge: buffer too small (missing FILTER_PADDING?)");
+    let region: &mut [u8; V_FILTER_NORMAL_REGION] = <&mut [u8; V_FILTER_NORMAL_REGION]>::try_from(
+        &mut pixels[start..start + V_FILTER_NORMAL_REGION],
+    )
+    .expect("normal_v_filter16_edge: buffer too small (missing FILTER_PADDING?)");
 
     // Offsets within fixed region
     let off_p3 = 0;
@@ -1576,18 +1659,12 @@ pub fn normal_v_filter16_edge(
 
     // Load 8 rows of 16 pixels each - NO per-access bounds checks
     let p3 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p3..][..16]).unwrap());
-    let mut p2 =
-        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p2..][..16]).unwrap());
-    let mut p1 =
-        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p1..][..16]).unwrap());
-    let mut p0 =
-        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p0..][..16]).unwrap());
-    let mut q0 =
-        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q0..][..16]).unwrap());
-    let mut q1 =
-        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q1..][..16]).unwrap());
-    let mut q2 =
-        simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q2..][..16]).unwrap());
+    let mut p2 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p2..][..16]).unwrap());
+    let mut p1 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p1..][..16]).unwrap());
+    let mut p0 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p0..][..16]).unwrap());
+    let mut q0 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q0..][..16]).unwrap());
+    let mut q1 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q1..][..16]).unwrap());
+    let mut q2 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q2..][..16]).unwrap());
     let q3 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q3..][..16]).unwrap());
 
     // Check if filtering is needed
@@ -1683,7 +1760,17 @@ pub unsafe fn normal_v_filter16_edge_unchecked(
 
     // Check if filtering is needed
     let mask = needs_filter_normal_16(
-        _token, p3, p2, p1, p0, q0, q1, q2, q3, edge_limit, interior_limit,
+        _token,
+        p3,
+        p2,
+        p1,
+        p0,
+        q0,
+        q1,
+        q2,
+        q3,
+        edge_limit,
+        interior_limit,
     );
 
     // Check high edge variance
@@ -1792,7 +1879,17 @@ pub unsafe fn normal_h_filter16_inner_unchecked(
 
     // Check if filtering is needed
     let mask = needs_filter_normal_16(
-        _token, p3, p2, p1, p0, q0, q1, q2, q3, edge_limit, interior_limit,
+        _token,
+        p3,
+        p2,
+        p1,
+        p0,
+        q0,
+        q1,
+        q2,
+        q3,
+        edge_limit,
+        interior_limit,
     );
 
     // Check high edge variance
@@ -1852,7 +1949,17 @@ pub unsafe fn normal_h_filter16_edge_unchecked(
 
     // Check if filtering is needed
     let mask = needs_filter_normal_16(
-        _token, p3, p2, p1, p0, q0, q1, q2, q3, edge_limit, interior_limit,
+        _token,
+        p3,
+        p2,
+        p1,
+        p0,
+        q0,
+        q1,
+        q2,
+        q3,
+        edge_limit,
+        interior_limit,
     );
 
     // Check high edge variance

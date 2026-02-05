@@ -5,21 +5,23 @@ use std::env;
 use std::fs;
 use std::time::Instant;
 
-use zenwebp::decode_rgb as zen_decode;
 use webpx::decode_rgb as lib_decode;
+use zenwebp::decode_rgb as zen_decode;
 
 fn main() {
     let args: Vec<_> = env::args().collect();
-    let img_path = args.get(1).map(|s| s.as_str())
+    let img_path = args
+        .get(1)
+        .map(|s| s.as_str())
         .unwrap_or("/mnt/v/tiled_image.png");
-    
+
     // Load and encode PNG to WebP
     let file = fs::File::open(img_path).expect("Failed to open image");
     let decoder = png::Decoder::new(std::io::BufReader::new(file));
     let mut reader = decoder.read_info().unwrap();
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).unwrap();
-    
+
     let rgb = match info.color_type {
         png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
         png::ColorType::Rgba => {
@@ -32,16 +34,16 @@ fn main() {
         }
         _ => panic!("Unsupported color type"),
     };
-    
+
     // Encode with libwebp
     let webp_data = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
         .method(5)
         .encode_rgb(&rgb, info.width, info.height, webpx::Unstoppable)
         .expect("Failed to encode");
-    
+
     println!("Image: {}x{} ({})", info.width, info.height, img_path);
     println!("WebP size: {} bytes", webp_data.len());
-    
+
     // Warm up
     let _ = zen_decode(&webp_data);
     let _ = lib_decode(&webp_data);
@@ -60,11 +62,11 @@ fn main() {
         let _ = lib_decode(&webp_data).unwrap();
     }
     let lib_time = start.elapsed() / iterations;
-    
+
     let ratio = zen_time.as_secs_f64() / lib_time.as_secs_f64();
     let zen_mpix = (info.width as f64 * info.height as f64) / zen_time.as_secs_f64() / 1_000_000.0;
     let lib_mpix = (info.width as f64 * info.height as f64) / lib_time.as_secs_f64() / 1_000_000.0;
-    
+
     println!("\nDecoder Performance:");
     println!("  zenwebp: {:?} ({:.1} MPix/s)", zen_time, zen_mpix);
     println!("  libwebp: {:?} ({:.1} MPix/s)", lib_time, lib_mpix);

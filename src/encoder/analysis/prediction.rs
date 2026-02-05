@@ -309,12 +309,7 @@ fn pred_chroma8_tm_dispatch(dst: &mut [u8], left: &[u8], top: &[u8]) {
 /// SSE2 TrueMotion for 8x8 chroma: Process 8 pixels per row.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[arcane]
-fn pred_chroma8_tm_sse2(
-    _token: X64V3Token,
-    dst: &mut [u8],
-    left: &[u8],
-    top: &[u8],
-) {
+fn pred_chroma8_tm_sse2(_token: X64V3Token, dst: &mut [u8], left: &[u8], top: &[u8]) {
     let zero = _mm_setzero_si128();
 
     // Load 8 bytes of top using 128-bit load (safe API requires [u8; 16])

@@ -450,12 +450,7 @@ pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
 #[allow(dead_code)]
-fn t_transform_sse2(
-    _token: X64V3Token,
-    input: &[u8],
-    stride: usize,
-    w: &[u16; 16],
-) -> i32 {
+fn t_transform_sse2(_token: X64V3Token, input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     let zero = _mm_setzero_si128();
 
     // Load 4 rows of 4 bytes each
@@ -486,7 +481,8 @@ fn t_transform_sse2(
     // Want:  [r0x0, r0x2, r0x1, r0x3, r1x0, r1x2, r1x1, r1x3] (indices 0,2,1,3)
 
     let shuf_02_13 = _mm_shufflelo_epi16(_mm_shufflehi_epi16(in01, 0b11_01_10_00), 0b11_01_10_00);
-    let shuf_02_13_23 = _mm_shufflelo_epi16(_mm_shufflehi_epi16(in23, 0b11_01_10_00), 0b11_01_10_00);
+    let shuf_02_13_23 =
+        _mm_shufflelo_epi16(_mm_shufflehi_epi16(in23, 0b11_01_10_00), 0b11_01_10_00);
 
     // Now: shuf_02_13 = [r0x0, r0x2, r0x1, r0x3, r1x0, r1x2, r1x1, r1x3]
     // Add adjacent pairs: [r0x0+r0x2, r0x1+r0x3, r1x0+r1x2, r1x1+r1x3] = [a0, a1, a0, a1]
@@ -523,7 +519,7 @@ fn t_transform_sse2(
     tmp[0][1] = sp01[0] + sp01[1]; // a3 + a2
     tmp[0][2] = sp01[0] - sp01[1]; // a3 - a2
     tmp[0][3] = ap01[0] - ap01[1]; // a0 - a1
-    // Row 1
+                                   // Row 1
     tmp[1][0] = ap01[2] + ap01[3];
     tmp[1][1] = sp01[2] + sp01[3];
     tmp[1][2] = sp01[2] - sp01[3];
@@ -765,10 +761,7 @@ pub fn precompute_coeffs_scalar(coeffs: &[i32; 16]) -> PrecomputedCoeffs {
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
 #[allow(dead_code)]
-fn precompute_coeffs_sse2(
-    _token: X64V3Token,
-    coeffs: &[i32; 16],
-) -> PrecomputedCoeffs {
+fn precompute_coeffs_sse2(_token: X64V3Token, coeffs: &[i32; 16]) -> PrecomputedCoeffs {
     let zero = _mm_setzero_si128();
     let cst_2 = _mm_set1_epi8(2);
     let cst_67 = _mm_set1_epi8(MAX_VARIABLE_LEVEL as i8);
@@ -855,11 +848,7 @@ pub fn find_last_nonzero_scalar(coeffs: &[i32; 16], first: usize) -> i32 {
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
 #[allow(dead_code)]
-fn find_last_nonzero_sse2(
-    _token: X64V3Token,
-    coeffs: &[i32; 16],
-    first: usize,
-) -> i32 {
+fn find_last_nonzero_sse2(_token: X64V3Token, coeffs: &[i32; 16], first: usize) -> i32 {
     let zero = _mm_setzero_si128();
 
     // Load and pack coefficients to bytes for comparison

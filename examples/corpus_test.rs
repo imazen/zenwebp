@@ -14,10 +14,7 @@ fn main() {
         .get(1)
         .map(|s| s.as_str())
         .unwrap_or("/tmp/CID22/original");
-    let method: u8 = args
-        .get(2)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(4);
+    let method: u8 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(4);
 
     let mut zen_total = 0u64;
     let mut lib_total = 0u64;

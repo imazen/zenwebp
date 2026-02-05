@@ -4,12 +4,14 @@ use std::env;
 use std::fs;
 use std::time::Instant;
 
-use zenwebp::decode_rgb as zen_decode;
 use webpx::decode_rgb as lib_decode;
+use zenwebp::decode_rgb as zen_decode;
 
 fn main() {
     let args: Vec<_> = env::args().collect();
-    let img_path = args.get(1).map(|s| s.as_str())
+    let img_path = args
+        .get(1)
+        .map(|s| s.as_str())
         .unwrap_or("/mnt/v/tiled_image.png");
 
     let file = fs::File::open(img_path).expect("Failed to open image");

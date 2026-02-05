@@ -38,10 +38,7 @@ pub(crate) fn idct4x4(block: &mut [i32]) {
 /// Inverse DCT with pre-summoned SIMD token (avoids per-call token summoning)
 #[inline(always)]
 #[allow(dead_code)] // May be useful for alternative decode paths
-pub(crate) fn idct4x4_with_token(
-    block: &mut [i32],
-    simd_token: super::prediction::SimdTokenType,
-) {
+pub(crate) fn idct4x4_with_token(block: &mut [i32], simd_token: super::prediction::SimdTokenType) {
     #[cfg(feature = "simd")]
     {
         super::transform_simd_intrinsics::idct4x4_intrinsics_with_token(block, simd_token);

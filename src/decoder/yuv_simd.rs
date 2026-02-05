@@ -310,13 +310,7 @@ pub fn yuv420_to_rgb_row(y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
 
 #[cfg(target_arch = "x86_64")]
 #[arcane]
-fn yuv420_to_rgb_row_inner(
-    _token: X64V3Token,
-    y: &[u8],
-    u: &[u8],
-    v: &[u8],
-    dst: &mut [u8],
-) {
+fn yuv420_to_rgb_row_inner(_token: X64V3Token, y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
     let len = y.len();
     // Assert bounds upfront to elide checks in SIMD loads/stores
     assert!(u.len() >= len.div_ceil(2));
@@ -364,13 +358,7 @@ pub fn yuv420_to_rgba_row(y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 #[allow(dead_code)]
-fn yuv420_to_rgba_row_inner(
-    _token: X64V3Token,
-    y: &[u8],
-    u: &[u8],
-    v: &[u8],
-    dst: &mut [u8],
-) {
+fn yuv420_to_rgba_row_inner(_token: X64V3Token, y: &[u8], u: &[u8], v: &[u8], dst: &mut [u8]) {
     let len = y.len();
     // Assert bounds upfront to elide checks in SIMD loads/stores
     assert!(u.len() >= len.div_ceil(2));
@@ -482,12 +470,7 @@ fn fancy_upsample_16(
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 #[allow(dead_code)]
-fn upsample_32_pixels(
-    _token: X64V3Token,
-    r1: &[u8; 17],
-    r2: &[u8; 17],
-    out: &mut [u8; 128],
-) {
+fn upsample_32_pixels(_token: X64V3Token, r1: &[u8; 17], r2: &[u8; 17], out: &mut [u8; 128]) {
     let one = _mm_set1_epi8(1);
 
     let a = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&r1[..16]).unwrap());
@@ -660,18 +643,9 @@ fn fancy_upsample_8_pairs_inner_opt(
     // Store to fixed-size output - use split_at_mut for non-overlapping borrows
     let (rgb_0, rest) = rgb.split_at_mut(16);
     let (rgb_1, rgb_2) = rest.split_at_mut(16);
-    simd_mem::_mm_storeu_si128(
-        <&mut [u8; 16]>::try_from(rgb_0).unwrap(),
-        out0,
-    );
-    simd_mem::_mm_storeu_si128(
-        <&mut [u8; 16]>::try_from(rgb_1).unwrap(),
-        out1,
-    );
-    simd_mem::_mm_storeu_si128(
-        <&mut [u8; 16]>::try_from(rgb_2).unwrap(),
-        out2,
-    );
+    simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(rgb_0).unwrap(), out0);
+    simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(rgb_1).unwrap(), out1);
+    simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(rgb_2).unwrap(), out2);
 }
 
 /// Wrapper that converts slices to fixed-size arrays with a single bounds check.

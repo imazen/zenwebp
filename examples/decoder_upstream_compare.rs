@@ -6,7 +6,9 @@ use std::time::Instant;
 
 fn main() {
     let args: Vec<_> = env::args().collect();
-    let img_path = args.get(1).map(|s| s.as_str())
+    let img_path = args
+        .get(1)
+        .map(|s| s.as_str())
         .unwrap_or("/mnt/v/tiled_image.png");
 
     // Load PNG and encode to WebP
@@ -42,11 +44,10 @@ fn main() {
     // Warm up all decoders
     let _ = zenwebp::decode_rgb(&webp_data);
     let _ = webpx::decode_rgb(&webp_data);
-    let _ = image_webp::WebPDecoder::new(std::io::Cursor::new(&webp_data))
-        .map(|mut d| {
-            let mut buf = vec![0u8; d.output_buffer_size().unwrap_or(0)];
-            let _ = d.read_image(&mut buf);
-        });
+    let _ = image_webp::WebPDecoder::new(std::io::Cursor::new(&webp_data)).map(|mut d| {
+        let mut buf = vec![0u8; d.output_buffer_size().unwrap_or(0)];
+        let _ = d.read_image(&mut buf);
+    });
 
     let iterations = 50;
 
@@ -75,12 +76,21 @@ fn main() {
 
     let pixels = info.width as f64 * info.height as f64;
     println!("Decoder Performance:");
-    println!("  image-webp (upstream): {:?} ({:.1} MPix/s) - {:.2}x vs libwebp", 
-        upstream_time, pixels / upstream_time.as_secs_f64() / 1e6,
-        upstream_time.as_secs_f64() / lib_time.as_secs_f64());
-    println!("  zenwebp:               {:?} ({:.1} MPix/s) - {:.2}x vs libwebp", 
-        zen_time, pixels / zen_time.as_secs_f64() / 1e6,
-        zen_time.as_secs_f64() / lib_time.as_secs_f64());
-    println!("  libwebp:               {:?} ({:.1} MPix/s) - 1.00x", 
-        lib_time, pixels / lib_time.as_secs_f64() / 1e6);
+    println!(
+        "  image-webp (upstream): {:?} ({:.1} MPix/s) - {:.2}x vs libwebp",
+        upstream_time,
+        pixels / upstream_time.as_secs_f64() / 1e6,
+        upstream_time.as_secs_f64() / lib_time.as_secs_f64()
+    );
+    println!(
+        "  zenwebp:               {:?} ({:.1} MPix/s) - {:.2}x vs libwebp",
+        zen_time,
+        pixels / zen_time.as_secs_f64() / 1e6,
+        zen_time.as_secs_f64() / lib_time.as_secs_f64()
+    );
+    println!(
+        "  libwebp:               {:?} ({:.1} MPix/s) - 1.00x",
+        lib_time,
+        pixels / lib_time.as_secs_f64() / 1e6
+    );
 }

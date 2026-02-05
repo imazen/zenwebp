@@ -256,13 +256,7 @@ pub(crate) fn add_residue(
 
 /// Scalar implementation of add_residue
 #[inline(always)]
-fn add_residue_scalar(
-    pblock: &mut [u8],
-    rblock: &[i32; 16],
-    y0: usize,
-    x0: usize,
-    stride: usize,
-) {
+fn add_residue_scalar(pblock: &mut [u8], rblock: &[i32; 16], y0: usize, x0: usize, stride: usize) {
     let mut pos = y0 * stride + x0;
     for row in rblock.chunks(4) {
         for (p, &a) in pblock[pos..][..4].iter_mut().zip(row.iter()) {
@@ -285,10 +279,10 @@ fn add_residue_sse2(
     x0: usize,
     stride: usize,
 ) {
-    #[cfg(target_arch = "x86_64")]
-    use core::arch::x86_64::*;
     #[cfg(target_arch = "x86")]
     use core::arch::x86::*;
+    #[cfg(target_arch = "x86_64")]
+    use core::arch::x86_64::*;
     use safe_unaligned_simd::x86_64 as simd_mem;
 
     let zero = _mm_setzero_si128();
@@ -418,10 +412,10 @@ fn add_residue_and_clear_sse2(
     x0: usize,
     stride: usize,
 ) {
-    #[cfg(target_arch = "x86_64")]
-    use core::arch::x86_64::*;
     #[cfg(target_arch = "x86")]
     use core::arch::x86::*;
+    #[cfg(target_arch = "x86_64")]
+    use core::arch::x86_64::*;
     use safe_unaligned_simd::x86_64 as simd_mem;
 
     // Assert bounds upfront to elide checks in the loop
@@ -1431,13 +1425,7 @@ pub(crate) fn idct_add_residue_and_clear_with_token(
 
     // Use in-place fused IDCT + add residue
     transform_simd_intrinsics::idct_add_residue_inplace_with_token(
-        token,
-        rblock,
-        pblock,
-        y0,
-        x0,
-        stride,
-        dc_only,
+        token, rblock, pblock, y0, x0, stride, dc_only,
     );
 }
 

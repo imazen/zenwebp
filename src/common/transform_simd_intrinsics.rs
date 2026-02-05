@@ -240,11 +240,7 @@ fn dct4x4_sse2(_token: X64V3Token, block: &mut [i32; 16]) {
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
 #[inline]
-fn ftransform_pass1_i16(
-    _token: X64V3Token,
-    in01: __m128i,
-    in23: __m128i,
-) -> (__m128i, __m128i) {
+fn ftransform_pass1_i16(_token: X64V3Token, in01: __m128i, in23: __m128i) -> (__m128i, __m128i) {
     // Constants matching libwebp exactly
     let k937 = _mm_set1_epi32(937);
     let k1812 = _mm_set1_epi32(1812);
@@ -305,12 +301,7 @@ fn ftransform_pass1_i16(
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
 #[inline]
-fn ftransform_pass2_i16(
-    _token: X64V3Token,
-    v01: &__m128i,
-    v32: &__m128i,
-    out: &mut [i16; 16],
-) {
+fn ftransform_pass2_i16(_token: X64V3Token, v01: &__m128i, v32: &__m128i, out: &mut [i16; 16]) {
     let zero = _mm_setzero_si128();
     let seven = _mm_set1_epi16(7);
     let k5352_2217 = _mm_set_epi16(5352, 2217, 5352, 2217, 5352, 2217, 5352, 2217);
@@ -360,11 +351,7 @@ fn ftransform_pass2_i16(
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
 #[allow(dead_code)]
-fn dct4x4_two_sse2(
-    _token: X64V3Token,
-    block1: &mut [i32; 16],
-    block2: &mut [i32; 16],
-) {
+fn dct4x4_two_sse2(_token: X64V3Token, block1: &mut [i32; 16], block2: &mut [i32; 16]) {
     // Process both blocks using the single-block implementation
     // AVX2 can potentially do this more efficiently with 256-bit registers
     dct4x4_sse2(_token, block1);
@@ -740,7 +727,10 @@ pub(crate) fn idct_add_residue_sse2(
     simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[0..4]).unwrap(), zero);
     simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[4..8]).unwrap(), zero);
     simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[8..12]).unwrap(), zero);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(), zero);
+    simd_mem::_mm_storeu_si128(
+        <&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(),
+        zero,
+    );
 }
 
 /// DC-only fused IDCT + add residue - when only DC coefficient is non-zero.
@@ -810,13 +800,29 @@ pub(crate) fn idct_add_residue_with_token(
 ) {
     if dc_only {
         idct_add_residue_dc_sse2(
-            token, coeffs, pred_block, pred_stride, out_block, out_stride,
-            pred_y0, pred_x0, out_y0, out_x0,
+            token,
+            coeffs,
+            pred_block,
+            pred_stride,
+            out_block,
+            out_stride,
+            pred_y0,
+            pred_x0,
+            out_y0,
+            out_x0,
         );
     } else {
         idct_add_residue_sse2(
-            token, coeffs, pred_block, pred_stride, out_block, out_stride,
-            pred_y0, pred_x0, out_y0, out_x0,
+            token,
+            coeffs,
+            pred_block,
+            pred_stride,
+            out_block,
+            out_stride,
+            pred_y0,
+            pred_x0,
+            out_y0,
+            out_x0,
         );
     }
 }
@@ -876,7 +882,11 @@ pub(crate) fn idct_add_residue_inplace_sse2(
         // Process each row: load pred, add residual, store
         macro_rules! process_row {
             ($res:expr, $row_idx:expr, $hi:expr) => {{
-                let residual = if $hi { _mm_unpackhi_epi64($res, $res) } else { $res };
+                let residual = if $hi {
+                    _mm_unpackhi_epi64($res, $res)
+                } else {
+                    $res
+                };
                 let pos = (y0 + $row_idx) * stride + x0;
                 let pred_bytes: [u8; 4] = block[pos..pos + 4].try_into().unwrap();
                 let pred_i32 = i32::from_ne_bytes(pred_bytes);
@@ -942,7 +952,7 @@ pub(crate) fn idct_add_residue_inplace(
     // Scalar fallback: IDCT then add
     if dc_only {
         let dc = coeffs[0];
-        let dc_adj = ((dc + 4) >> 3) as i32;
+        let dc_adj = (dc + 4) >> 3;
         for row in 0..4 {
             let pos = (y0 + row) * stride + x0;
             for col in 0..4 {
@@ -1003,11 +1013,7 @@ fn ftransform_from_u8_4x4_scalar(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
 /// Loads bytes, computes diff as i16, runs DCT pass1+pass2, outputs i32[16].
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
-fn ftransform_from_u8_4x4_sse2(
-    _token: X64V3Token,
-    src: &[u8; 16],
-    ref_: &[u8; 16],
-) -> [i32; 16] {
+fn ftransform_from_u8_4x4_sse2(_token: X64V3Token, src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
     let zero = _mm_setzero_si128();
 
     // Load all 16 source bytes and 16 reference bytes as single 128-bit loads
@@ -1063,7 +1069,10 @@ fn ftransform_from_u8_4x4_sse2(
     let mut result = [0i32; 16];
     simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut result[0..4]).unwrap(), out_0);
     simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut result[4..8]).unwrap(), out_1);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut result[8..12]).unwrap(), out_2);
+    simd_mem::_mm_storeu_si128(
+        <&mut [i32; 4]>::try_from(&mut result[8..12]).unwrap(),
+        out_2,
+    );
     simd_mem::_mm_storeu_si128(
         <&mut [i32; 4]>::try_from(&mut result[12..16]).unwrap(),
         out_3,

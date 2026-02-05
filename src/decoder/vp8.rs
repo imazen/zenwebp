@@ -617,7 +617,6 @@ pub struct Vp8Decoder<'a> {
     // Each 16-element block is cleared after use in intra_predict_*.
     coeff_blocks: [i32; 384],
 
-
     // Diagnostic capture (None for normal decoding, Some for diagnostic mode)
     diagnostic_capture: Option<Vec<MacroblockDiagnostic>>,
     current_mb_diag: Option<MacroblockDiagnostic>,
@@ -892,16 +891,26 @@ impl<'a> Vp8Decoder<'a> {
         self.left = PreviousMacroBlock::default();
 
         // Pre-allocate macroblocks to avoid repeated Vec reallocation in decode loop
-        self.macroblocks = Vec::with_capacity(usize::from(self.mbwidth) * usize::from(self.mbheight));
+        self.macroblocks =
+            Vec::with_capacity(usize::from(self.mbwidth) * usize::from(self.mbheight));
 
         // Allocate with FILTER_PADDING for bounds-check-free loop filtering.
         // The extra bytes ensure fixed-size region extraction always succeeds.
-        self.frame.ybuf =
-            vec![0u8; usize::from(self.mbwidth) * 16 * usize::from(self.mbheight) * 16 + FILTER_PADDING];
-        self.frame.ubuf =
-            vec![0u8; usize::from(self.mbwidth) * 8 * usize::from(self.mbheight) * 8 + FILTER_PADDING];
-        self.frame.vbuf =
-            vec![0u8; usize::from(self.mbwidth) * 8 * usize::from(self.mbheight) * 8 + FILTER_PADDING];
+        self.frame.ybuf = vec![
+            0u8;
+            usize::from(self.mbwidth) * 16 * usize::from(self.mbheight) * 16
+                + FILTER_PADDING
+        ];
+        self.frame.ubuf = vec![
+            0u8;
+            usize::from(self.mbwidth) * 8 * usize::from(self.mbheight) * 8
+                + FILTER_PADDING
+        ];
+        self.frame.vbuf = vec![
+            0u8;
+            usize::from(self.mbwidth) * 8 * usize::from(self.mbheight) * 8
+                + FILTER_PADDING
+        ];
 
         self.top_border_y = vec![127u8; self.frame.width as usize + 4 + 16];
         self.left_border_y = vec![129u8; 1 + 16];
@@ -1047,11 +1056,24 @@ impl<'a> Vp8Decoder<'a> {
         self.b.check(mb)
     }
 
-    fn intra_predict_luma(&mut self, mbx: usize, mby: usize, mb: &MacroBlock, simd_token: SimdTokenType) {
+    fn intra_predict_luma(
+        &mut self,
+        mbx: usize,
+        mby: usize,
+        mb: &MacroBlock,
+        simd_token: SimdTokenType,
+    ) {
         let stride = LUMA_STRIDE;
         let mw = self.mbwidth as usize;
         let mut ws = [0u8; LUMA_BLOCK_SIZE];
-        update_border_luma(&mut ws, mbx, mby, mw, &self.top_border_y, &self.left_border_y);
+        update_border_luma(
+            &mut ws,
+            mbx,
+            mby,
+            mw,
+            &self.top_border_y,
+            &self.left_border_y,
+        );
 
         match mb.luma_mode {
             LumaMode::V => predict_vpred(&mut ws, 16, 1, 1, stride),
@@ -1082,7 +1104,9 @@ impl<'a> Vp8Decoder<'a> {
                         let rb: &mut [i32; 16] =
                             (&mut self.coeff_blocks[i * 16..][..16]).try_into().unwrap();
                         if let Some(token) = simd_token {
-                            idct_add_residue_and_clear_with_token(token, &mut ws, rb, y0, x0, stride);
+                            idct_add_residue_and_clear_with_token(
+                                token, &mut ws, rb, y0, x0, stride,
+                            );
                         } else {
                             idct_add_residue_and_clear(&mut ws, rb, y0, x0, stride);
                         }
@@ -1127,7 +1151,13 @@ impl<'a> Vp8Decoder<'a> {
         }
     }
 
-    fn intra_predict_chroma(&mut self, mbx: usize, mby: usize, mb: &MacroBlock, simd_token: SimdTokenType) {
+    fn intra_predict_chroma(
+        &mut self,
+        mbx: usize,
+        mby: usize,
+        mb: &MacroBlock,
+        simd_token: SimdTokenType,
+    ) {
         let stride = CHROMA_STRIDE;
 
         let mut uws = [0u8; CHROMA_BLOCK_SIZE];
@@ -1160,8 +1190,9 @@ impl<'a> Vp8Decoder<'a> {
                 let u_idx = 16 + i; // U blocks at indices 16-19
                 let v_idx = 20 + i; // V blocks at indices 20-23
 
-                let urb: &mut [i32; 16] =
-                    (&mut self.coeff_blocks[u_idx * 16..][..16]).try_into().unwrap();
+                let urb: &mut [i32; 16] = (&mut self.coeff_blocks[u_idx * 16..][..16])
+                    .try_into()
+                    .unwrap();
                 let y0 = 1 + y * 4;
                 let x0 = 1 + x * 4;
                 if let Some(token) = simd_token {
@@ -1170,8 +1201,9 @@ impl<'a> Vp8Decoder<'a> {
                     idct_add_residue_and_clear(&mut uws, urb, y0, x0, stride);
                 }
 
-                let vrb: &mut [i32; 16] =
-                    (&mut self.coeff_blocks[v_idx * 16..][..16]).try_into().unwrap();
+                let vrb: &mut [i32; 16] = (&mut self.coeff_blocks[v_idx * 16..][..16])
+                    .try_into()
+                    .unwrap();
                 if let Some(token) = simd_token {
                     idct_add_residue_and_clear_with_token(token, &mut vws, vrb, y0, x0, stride);
                 } else {
@@ -1202,7 +1234,7 @@ impl<'a> Vp8Decoder<'a> {
         mb: &mut MacroBlock,
         mbx: usize,
         p: usize,
-        _simd_token: SimdTokenType,  // Kept for API consistency, IDCT deferred to prediction
+        _simd_token: SimdTokenType, // Kept for API consistency, IDCT deferred to prediction
     ) -> Result<(), DecodingError> {
         // Uses self.coeff_blocks which is maintained as zeros between calls.
         // After each IDCT, the block is left with transformed data for intra_predict to use.
@@ -1716,9 +1748,13 @@ impl<'a> Vp8Decoder<'a> {
         // Summon SIMD token once for the entire decode
         let simd_token: SimdTokenType = {
             #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
-            { archmage::X64V3Token::summon() }
+            {
+                archmage::X64V3Token::summon()
+            }
             #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
-            { None }
+            {
+                None
+            }
         };
 
         // Capture segment quantizers
@@ -1799,9 +1835,13 @@ impl<'a> Vp8Decoder<'a> {
         // Summon SIMD token once for the entire decode, avoiding ~312K per-call atomic loads
         let simd_token: SimdTokenType = {
             #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
-            { archmage::X64V3Token::summon() }
+            {
+                archmage::X64V3Token::summon()
+            }
             #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
-            { None }
+            {
+                None
+            }
         };
 
         for mby in 0..self.mbheight as usize {
