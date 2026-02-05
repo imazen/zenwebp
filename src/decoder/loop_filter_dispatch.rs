@@ -2,13 +2,14 @@
 //!
 //! These functions dispatch to SIMD implementations when available,
 //! falling back to scalar implementations.
+//!
+//! All functions accept a pre-summoned `SimdTokenType` to avoid per-call
+//! token summoning overhead (~4M instructions per decode eliminated).
 
 #![allow(clippy::too_many_arguments)]
 
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
-use archmage::SimdToken;
-
 use super::loop_filter;
+use crate::common::prediction::SimdTokenType;
 
 /// Helper to apply simple horizontal filter to 16 rows with SIMD when available.
 /// Filters the vertical edge at column x0, processing all 16 rows at once.
@@ -19,10 +20,10 @@ pub(crate) fn simple_filter_horizontal_16_rows(
     x0: usize,
     stride: usize,
     edge_limit: u8,
+    simd_token: SimdTokenType,
 ) {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    if let Some(token) = archmage::X64V3Token::try_new() {
-        // Use the new 16-pixel-at-once approach with transpose
+    if let Some(token) = simd_token {
         super::loop_filter_avx2::simple_h_filter16(
             token,
             buf,
@@ -50,10 +51,10 @@ pub(crate) fn simple_filter_vertical_16_cols(
     x_start: usize,
     stride: usize,
     edge_limit: u8,
+    simd_token: SimdTokenType,
 ) {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    if let Some(token) = archmage::X64V3Token::try_new() {
-        // Use the new 16-pixel-at-once approach
+    if let Some(token) = simd_token {
         let point = y0 * stride + x_start;
         super::loop_filter_avx2::simple_v_filter16(
             token,
@@ -83,9 +84,10 @@ pub(crate) fn normal_filter_vertical_mb_16_cols(
     hev_threshold: u8,
     interior_limit: u8,
     edge_limit: u8,
+    simd_token: SimdTokenType,
 ) {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    if let Some(token) = archmage::X64V3Token::try_new() {
+    if let Some(token) = simd_token {
         let point = y0 * stride + x_start;
         super::loop_filter_avx2::normal_v_filter16_edge(
             token,
@@ -123,9 +125,10 @@ pub(crate) fn normal_filter_vertical_sub_16_cols(
     hev_threshold: u8,
     interior_limit: u8,
     edge_limit: u8,
+    simd_token: SimdTokenType,
 ) {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    if let Some(token) = archmage::X64V3Token::try_new() {
+    if let Some(token) = simd_token {
         let point = y0 * stride + x_start;
         super::loop_filter_avx2::normal_v_filter16_inner(
             token,
@@ -164,9 +167,10 @@ pub(crate) fn normal_filter_horizontal_mb_16_rows(
     hev_threshold: u8,
     interior_limit: u8,
     edge_limit: u8,
+    simd_token: SimdTokenType,
 ) {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    if let Some(token) = archmage::X64V3Token::try_new() {
+    if let Some(token) = simd_token {
         super::loop_filter_avx2::normal_h_filter16_edge(
             token,
             buf,
@@ -202,9 +206,10 @@ pub(crate) fn normal_filter_horizontal_sub_16_rows(
     hev_threshold: u8,
     interior_limit: u8,
     edge_limit: u8,
+    simd_token: SimdTokenType,
 ) {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    if let Some(token) = archmage::X64V3Token::try_new() {
+    if let Some(token) = simd_token {
         super::loop_filter_avx2::normal_h_filter16_inner(
             token,
             buf,
@@ -242,9 +247,10 @@ pub(crate) fn normal_filter_horizontal_uv_mb(
     hev_threshold: u8,
     interior_limit: u8,
     edge_limit: u8,
+    simd_token: SimdTokenType,
 ) {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    if let Some(token) = archmage::X64V3Token::try_new() {
+    if let Some(token) = simd_token {
         super::loop_filter_avx2::normal_h_filter_uv_edge(
             token,
             u_buf,
@@ -288,9 +294,10 @@ pub(crate) fn normal_filter_horizontal_uv_sub(
     hev_threshold: u8,
     interior_limit: u8,
     edge_limit: u8,
+    simd_token: SimdTokenType,
 ) {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    if let Some(token) = archmage::X64V3Token::try_new() {
+    if let Some(token) = simd_token {
         super::loop_filter_avx2::normal_h_filter_uv_inner(
             token,
             u_buf,
@@ -335,9 +342,10 @@ pub(crate) fn normal_filter_vertical_uv_mb(
     hev_threshold: u8,
     interior_limit: u8,
     edge_limit: u8,
+    simd_token: SimdTokenType,
 ) {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    if let Some(token) = archmage::X64V3Token::try_new() {
+    if let Some(token) = simd_token {
         let point = y0 * stride + x_start;
         super::loop_filter_avx2::normal_v_filter_uv_edge(
             token,
@@ -386,9 +394,10 @@ pub(crate) fn normal_filter_vertical_uv_sub(
     hev_threshold: u8,
     interior_limit: u8,
     edge_limit: u8,
+    simd_token: SimdTokenType,
 ) {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    if let Some(token) = archmage::X64V3Token::try_new() {
+    if let Some(token) = simd_token {
         let point = y0 * stride + x_start;
         super::loop_filter_avx2::normal_v_filter_uv_inner(
             token,

@@ -1288,7 +1288,7 @@ impl<'a> Vp8Decoder<'a> {
 
     /// Filters a row of macroblocks in the cache
     /// This operates on cache_y/u/v which have stride cache_y_stride/cache_uv_stride
-    fn filter_row_in_cache(&mut self, mby: usize) {
+    fn filter_row_in_cache(&mut self, mby: usize, simd_token: SimdTokenType) {
         let mbwidth = self.mbwidth as usize;
         let cache_y_stride = self.cache_y_stride;
         let cache_uv_stride = self.cache_uv_stride;
@@ -1319,6 +1319,7 @@ impl<'a> Vp8Decoder<'a> {
                         mbx * 16,
                         cache_y_stride,
                         mbedge_limit,
+                        simd_token,
                     );
                 } else {
                     // Normal filter - use SIMD for luma (16 rows)
@@ -1330,6 +1331,7 @@ impl<'a> Vp8Decoder<'a> {
                         hev_threshold,
                         interior_limit,
                         mbedge_limit,
+                        simd_token,
                     );
                     // Chroma - use SIMD for both U and V together
                     normal_filter_horizontal_uv_mb(
@@ -1341,6 +1343,7 @@ impl<'a> Vp8Decoder<'a> {
                         hev_threshold,
                         interior_limit,
                         mbedge_limit,
+                        simd_token,
                     );
                 }
             }
@@ -1355,6 +1358,7 @@ impl<'a> Vp8Decoder<'a> {
                             mbx * 16 + x,
                             cache_y_stride,
                             sub_bedge_limit,
+                            simd_token,
                         );
                     }
                 } else {
@@ -1368,6 +1372,7 @@ impl<'a> Vp8Decoder<'a> {
                             hev_threshold,
                             interior_limit,
                             sub_bedge_limit,
+                            simd_token,
                         );
                     }
                     // Chroma - use SIMD for both U and V together
@@ -1380,6 +1385,7 @@ impl<'a> Vp8Decoder<'a> {
                         hev_threshold,
                         interior_limit,
                         sub_bedge_limit,
+                        simd_token,
                     );
                 }
             }
@@ -1396,6 +1402,7 @@ impl<'a> Vp8Decoder<'a> {
                         mbx * 16,
                         cache_y_stride,
                         mbedge_limit,
+                        simd_token,
                     );
                 } else {
                     // Use SIMD helper for luma
@@ -1407,6 +1414,7 @@ impl<'a> Vp8Decoder<'a> {
                         hev_threshold,
                         interior_limit,
                         mbedge_limit,
+                        simd_token,
                     );
                     // Chroma - SIMD processes 8 U + 8 V pixels together
                     normal_filter_vertical_uv_mb(
@@ -1418,6 +1426,7 @@ impl<'a> Vp8Decoder<'a> {
                         hev_threshold,
                         interior_limit,
                         mbedge_limit,
+                        simd_token,
                     );
                 }
             }
@@ -1432,6 +1441,7 @@ impl<'a> Vp8Decoder<'a> {
                             mbx * 16,
                             cache_y_stride,
                             sub_bedge_limit,
+                            simd_token,
                         );
                     }
                 } else {
@@ -1444,6 +1454,7 @@ impl<'a> Vp8Decoder<'a> {
                             hev_threshold,
                             interior_limit,
                             sub_bedge_limit,
+                            simd_token,
                         );
                     }
                     // Chroma subblock - only one horizontal edge at row 4
@@ -1457,6 +1468,7 @@ impl<'a> Vp8Decoder<'a> {
                         hev_threshold,
                         interior_limit,
                         sub_bedge_limit,
+                        simd_token,
                     );
                 }
             }
@@ -1712,7 +1724,7 @@ impl<'a> Vp8Decoder<'a> {
                 }
             }
 
-            self.filter_row_in_cache(mby);
+            self.filter_row_in_cache(mby, simd_token);
             self.output_row_from_cache(mby);
             self.rotate_extra_rows();
 
@@ -1776,7 +1788,7 @@ impl<'a> Vp8Decoder<'a> {
             }
 
             // Row complete: filter in cache, output to final buffer, prepare for next row
-            self.filter_row_in_cache(mby);
+            self.filter_row_in_cache(mby, simd_token);
             self.output_row_from_cache(mby);
             self.rotate_extra_rows();
 
