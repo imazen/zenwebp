@@ -189,6 +189,8 @@ fn fill_row_fancy_with_2_uv_rows_simd<const BPP: usize>(
     v_row_1: &[u8],
     v_row_2: &[u8],
 ) {
+    use archmage::{SimdToken, X64V3Token};
+
     // Handle first pixel separately (edge case)
     {
         let rgb1 = &mut row_buffer[0..3];
@@ -203,10 +205,14 @@ fn fill_row_fancy_with_2_uv_rows_simd<const BPP: usize>(
     let mut uv_offset = 0;
     let mut rgb_offset = BPP;
 
+    // Summon token once before the loop to avoid repeated summon() calls
+    let token = X64V3Token::summon().expect("SSE4.1 required for SIMD YUV");
+
     // Process chunks of 16 Y pixels (8 pixel pairs) with SIMD
     // Need at least 16 Y pixels and 9 U/V samples
     while y_offset + 16 <= width && uv_offset + 9 <= u_row_1.len() {
-        super::yuv_simd::fancy_upsample_8_pairs(
+        super::yuv_simd::fancy_upsample_8_pairs_with_token(
+            token,
             &y_row[y_offset..],
             &u_row_1[uv_offset..],
             &u_row_2[uv_offset..],

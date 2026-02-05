@@ -543,6 +543,21 @@ fn upsample_32_pixels(
 ///
 /// Requires SSE2. All input slices must have the required minimum lengths.
 #[cfg(target_arch = "x86_64")]
+/// Process 8 pixel pairs with fancy upsampling and YUV->RGB conversion.
+/// This version accepts a pre-summoned token to avoid repeated summon() calls in loops.
+#[inline(always)]
+pub fn fancy_upsample_8_pairs_with_token(
+    token: X64V3Token,
+    y_row: &[u8],
+    u_row_1: &[u8],
+    u_row_2: &[u8],
+    v_row_1: &[u8],
+    v_row_2: &[u8],
+    rgb: &mut [u8],
+) {
+    fancy_upsample_8_pairs_inner(token, y_row, u_row_1, u_row_2, v_row_1, v_row_2, rgb);
+}
+
 pub fn fancy_upsample_8_pairs(
     y_row: &[u8],
     u_row_1: &[u8],
