@@ -387,6 +387,7 @@ pub struct Vp8Decoder<'a> {
     // Each 16-element block is cleared after use in intra_predict_*.
     coeff_blocks: [i32; 384],
 
+
     // Diagnostic capture (None for normal decoding, Some for diagnostic mode)
     diagnostic_capture: Option<Vec<MacroblockDiagnostic>>,
     current_mb_diag: Option<MacroblockDiagnostic>,
@@ -814,7 +815,8 @@ impl<'a> Vp8Decoder<'a> {
     fn intra_predict_luma(&mut self, mbx: usize, mby: usize, mb: &MacroBlock) {
         let stride = LUMA_STRIDE;
         let mw = self.mbwidth as usize;
-        let mut ws = create_border_luma(mbx, mby, mw, &self.top_border_y, &self.left_border_y);
+        let mut ws = [0u8; LUMA_BLOCK_SIZE];
+        update_border_luma(&mut ws, mbx, mby, mw, &self.top_border_y, &self.left_border_y);
 
         match mb.luma_mode {
             LumaMode::V => predict_vpred(&mut ws, 16, 1, 1, stride),
@@ -885,9 +887,10 @@ impl<'a> Vp8Decoder<'a> {
     fn intra_predict_chroma(&mut self, mbx: usize, mby: usize, mb: &MacroBlock) {
         let stride = CHROMA_STRIDE;
 
-        //8x8 with left top border of 1
-        let mut uws = create_border_chroma(mbx, mby, &self.top_border_u, &self.left_border_u);
-        let mut vws = create_border_chroma(mbx, mby, &self.top_border_v, &self.left_border_v);
+        let mut uws = [0u8; CHROMA_BLOCK_SIZE];
+        let mut vws = [0u8; CHROMA_BLOCK_SIZE];
+        update_border_chroma(&mut uws, mbx, mby, &self.top_border_u, &self.left_border_u);
+        update_border_chroma(&mut vws, mbx, mby, &self.top_border_v, &self.left_border_v);
 
         match mb.chroma_mode {
             ChromaMode::DC => {

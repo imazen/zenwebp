@@ -76,6 +76,106 @@ pub(crate) fn create_border_luma(
     ws
 }
 
+/// Updates an existing luma border block in-place (avoids re-zeroing 544 bytes per MB).
+/// Only the border pixels (top row, left column, corner, top-right) are updated.
+/// Interior pixels are overwritten by prediction + add_residue, so their prior values don't matter.
+#[inline(always)]
+pub(crate) fn update_border_luma(
+    ws: &mut [u8; LUMA_BLOCK_SIZE],
+    mbx: usize,
+    mby: usize,
+    mbw: usize,
+    top: &[u8],
+    left: &[u8],
+) {
+    let stride = LUMA_STRIDE;
+
+    // Top border row (A) — bytes 1..stride in row 0
+    if mby == 0 {
+        ws[1..stride].fill(127);
+    } else {
+        ws[1..][..16].copy_from_slice(&top[mbx * 16..][..16]);
+
+        if mbx == mbw - 1 {
+            let last = top[mbx * 16 + 15];
+            ws[17..stride].fill(last);
+        } else {
+            let tr_len = stride - 17; // remaining bytes after 16 luma + 1 border
+            let available = top.len().saturating_sub(mbx * 16 + 16);
+            let copy_len = tr_len.min(available);
+            ws[17..][..copy_len].copy_from_slice(&top[mbx * 16 + 16..][..copy_len]);
+        }
+    }
+
+    // Copy top-right border pixels to rows 4, 8, 12 (for I4 prediction modes)
+    for i in 17usize..21 {
+        ws[4 * stride + i] = ws[i];
+        ws[8 * stride + i] = ws[i];
+        ws[12 * stride + i] = ws[i];
+    }
+
+    // Left border column (L) — column 0 of rows 1..=16
+    if mbx == 0 {
+        for i in 0usize..16 {
+            ws[(i + 1) * stride] = 129;
+        }
+    } else {
+        for (i, &l) in (0usize..16).zip(&left[1..]) {
+            ws[(i + 1) * stride] = l;
+        }
+    }
+
+    // Corner pixel (P) — position [0]
+    ws[0] = if mby == 0 {
+        127
+    } else if mbx == 0 {
+        129
+    } else {
+        left[0]
+    };
+}
+
+/// Updates an existing chroma border block in-place (avoids re-zeroing 288 bytes per MB).
+/// Only 8 bytes of the top border are read by any 8x8 prediction mode.
+#[inline(always)]
+pub(crate) fn update_border_chroma(
+    cb: &mut [u8; CHROMA_BLOCK_SIZE],
+    mbx: usize,
+    mby: usize,
+    top: &[u8],
+    left: &[u8],
+) {
+    let stride = CHROMA_STRIDE;
+
+    // Top border row — only first 8 bytes matter for 8x8 prediction
+    if mby == 0 {
+        // First row: fill entire top border for safety (zero-init assumption)
+        cb[1..stride].fill(127);
+    } else {
+        cb[1..][..8].copy_from_slice(&top[mbx * 8..][..8]);
+    }
+
+    // Left border column
+    if mbx == 0 {
+        for y in 0usize..8 {
+            cb[(y + 1) * stride] = 129;
+        }
+    } else {
+        for (y, &l) in (0usize..8).zip(&left[1..]) {
+            cb[(y + 1) * stride] = l;
+        }
+    }
+
+    // Corner pixel
+    cb[0] = if mby == 0 {
+        127
+    } else if mbx == 0 {
+        129
+    } else {
+        left[0]
+    };
+}
+
 /// Chroma prediction block stride - 32 bytes for cache alignment (matches libwebp BPS)
 pub(crate) const CHROMA_STRIDE: usize = 32;
 /// Chroma prediction block size: 9 rows (1 border + 8) × 32 byte stride
@@ -343,34 +443,33 @@ pub(crate) fn predict_hpred(a: &mut [u8], size: usize, x0: usize, y0: usize, str
     }
 }
 
+#[inline(always)]
 pub(crate) fn predict_dcpred(a: &mut [u8], size: usize, stride: usize, above: bool, left: bool) {
-    let mut sum = 0;
-    let mut shf = if size == 8 { 2 } else { 3 };
+    let mut sum = 0u32;
+    let mut shf = if size == 8 { 2u32 } else { 3u32 };
 
     if left {
         for y in 0usize..size {
             sum += u32::from(a[(y + 1) * stride]);
         }
-
         shf += 1;
     }
 
     if above {
-        sum += a[1..=size].iter().fold(0, |acc, &x| acc + u32::from(x));
-
+        for x in 0usize..size {
+            sum += u32::from(a[1 + x]);
+        }
         shf += 1;
     }
 
     let dcval = if !left && !above {
-        128
+        128u8
     } else {
-        (sum + (1 << (shf - 1))) >> shf
+        ((sum + (1 << (shf - 1))) >> shf) as u8
     };
 
     for y in 0usize..size {
-        a[1 + stride * (y + 1)..][..size]
-            .iter_mut()
-            .for_each(|a| *a = dcval as u8);
+        a[1 + stride * (y + 1)..][..size].fill(dcval);
     }
 }
 
