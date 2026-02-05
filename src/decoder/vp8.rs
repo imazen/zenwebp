@@ -34,6 +34,15 @@ use super::loop_filter_dispatch;
 use crate::common::transform;
 use loop_filter_dispatch::*;
 
+/// Maximum stride supported for bounds-check-free loop filtering.
+/// Supports images up to 8K width (7680 pixels).
+const MAX_FILTER_STRIDE: usize = 8192;
+
+/// Padding added to pixel buffers for bounds-check-free loop filtering.
+/// Allows fixed-size region extraction without per-access bounds checks.
+/// Size: 7 * max_stride + 16 bytes (covers 8 rows for normal filter: p3-p0, q0-q3).
+const FILTER_PADDING: usize = 7 * MAX_FILTER_STRIDE + 16;
+
 // ============================================================================
 // Diagnostic Types for I4 Encoding Efficiency Analysis
 // ============================================================================
@@ -758,10 +767,14 @@ impl<'a> Vp8Decoder<'a> {
         // Pre-allocate macroblocks to avoid repeated Vec reallocation in decode loop
         self.macroblocks = Vec::with_capacity(usize::from(self.mbwidth) * usize::from(self.mbheight));
 
+        // Allocate with FILTER_PADDING for bounds-check-free loop filtering.
+        // The extra bytes ensure fixed-size region extraction always succeeds.
         self.frame.ybuf =
-            vec![0u8; usize::from(self.mbwidth) * 16 * usize::from(self.mbheight) * 16];
-        self.frame.ubuf = vec![0u8; usize::from(self.mbwidth) * 8 * usize::from(self.mbheight) * 8];
-        self.frame.vbuf = vec![0u8; usize::from(self.mbwidth) * 8 * usize::from(self.mbheight) * 8];
+            vec![0u8; usize::from(self.mbwidth) * 16 * usize::from(self.mbheight) * 16 + FILTER_PADDING];
+        self.frame.ubuf =
+            vec![0u8; usize::from(self.mbwidth) * 8 * usize::from(self.mbheight) * 8 + FILTER_PADDING];
+        self.frame.vbuf =
+            vec![0u8; usize::from(self.mbwidth) * 8 * usize::from(self.mbheight) * 8 + FILTER_PADDING];
 
         self.top_border_y = vec![127u8; self.frame.width as usize + 4 + 16];
         self.left_border_y = vec![129u8; 1 + 16];
@@ -824,11 +837,12 @@ impl<'a> Vp8Decoder<'a> {
 
         // Cache layout: [extra_rows][16 rows for current macroblock row]
         // extra_rows holds bottom rows from previous MB row for filter context
+        // FILTER_PADDING allows fixed-size region extraction for bounds-check-free filtering
         let cache_y_rows = self.extra_y_rows + 16;
         let cache_uv_rows = extra_uv_rows + 8;
-        self.cache_y = vec![128u8; cache_y_rows * self.cache_y_stride];
-        self.cache_u = vec![128u8; cache_uv_rows * self.cache_uv_stride];
-        self.cache_v = vec![128u8; cache_uv_rows * self.cache_uv_stride];
+        self.cache_y = vec![128u8; cache_y_rows * self.cache_y_stride + FILTER_PADDING];
+        self.cache_u = vec![128u8; cache_uv_rows * self.cache_uv_stride + FILTER_PADDING];
+        self.cache_v = vec![128u8; cache_uv_rows * self.cache_uv_stride + FILTER_PADDING];
 
         self.num_partitions = num_partitions as u8;
         self.init_partitions(num_partitions)?;
