@@ -80,7 +80,8 @@
 //! [`archmage`]: https://docs.rs/archmage
 
 #![cfg_attr(not(feature = "std"), no_std)]
-#![forbid(unsafe_code)]
+// Forbid unsafe unless the "unchecked" feature enables it for performance
+#![cfg_attr(not(feature = "unchecked"), forbid(unsafe_code))]
 #![deny(missing_docs)]
 // Enable nightly benchmark functionality if "_benchmarks" feature is enabled.
 #![cfg_attr(all(test, feature = "_benchmarks"), feature(test))]

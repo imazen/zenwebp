@@ -55,6 +55,10 @@ fast-yuv = ["dep:yuv"]
 # Provides best performance on x86-64 with runtime CPU detection.
 # On wasm32, uses core::arch::wasm32 SIMD128 intrinsics.
 simd = ["dep:archmage", "dep:magetypes", "dep:safe_unaligned_simd"]
+# UNSAFE: Eliminate bounds checks in hot decoder paths for ~5-10% speedup.
+# Only enable if you trust your WebP input (e.g., self-generated files).
+# Malformed input may cause undefined behavior instead of clean errors.
+unchecked = []
 # Color quantization via imagequant for near-lossless palette encoding.
 # Reduces >256 color images to palette for VP8L color indexing transform.
 # Note: imagequant is GPL-3.0-or-later; enabling this changes the effective license.
