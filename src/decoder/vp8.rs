@@ -660,6 +660,9 @@ impl<'a> Vp8Decoder<'a> {
         self.top = vec![PreviousMacroBlock::default(); self.mbwidth.into()];
         self.left = PreviousMacroBlock::default();
 
+        // Pre-allocate macroblocks to avoid repeated Vec reallocation in decode loop
+        self.macroblocks = Vec::with_capacity(usize::from(self.mbwidth) * usize::from(self.mbheight));
+
         self.frame.ybuf =
             vec![0u8; usize::from(self.mbwidth) * 16 * usize::from(self.mbheight) * 16];
         self.frame.ubuf = vec![0u8; usize::from(self.mbwidth) * 8 * usize::from(self.mbheight) * 8];
@@ -1458,21 +1461,14 @@ impl<'a> Vp8Decoder<'a> {
         // - Last row: output extra area + full current row
 
         let (src_start_row, num_y_rows, dst_start_y_row) = if is_first_row {
-            // First row: output rows extra_y_rows to (extra_y_rows + 16 - extra_y_rows) = 16 - extra_y_rows rows
-            // Starting from cache row extra_y_rows, output 16 - extra_y_rows rows to final row 0
             (extra_y_rows, 16 - extra_y_rows, 0usize)
         } else if is_last_row {
-            // Last row: output extra area (extra_y_rows rows) + full current row (16 rows)
-            // Starting from cache row 0, output extra_y_rows + 16 rows
-            // Destination starts at mby*16 - extra_y_rows
             (0, extra_y_rows + 16, mby * 16 - extra_y_rows)
         } else {
-            // Middle row: output extra area + (16 - extra_y_rows) rows of current
-            // Starting from cache row 0, output extra_y_rows + 16 - extra_y_rows = 16 rows
             (0, 16, mby * 16 - extra_y_rows)
         };
 
-        // Copy luma
+        // Copy luma rows from cache to frame buffer
         for y in 0..num_y_rows {
             let src_row = src_start_row + y;
             let dst_row = dst_start_y_row + y;
@@ -1491,7 +1487,7 @@ impl<'a> Vp8Decoder<'a> {
             (0, 8, mby * 8 - extra_uv_rows)
         };
 
-        // Copy chroma
+        // Copy chroma rows from cache to frame buffer
         for y in 0..num_uv_rows {
             let src_row = src_start_row_uv + y;
             let dst_row = dst_start_uv_row + y;
@@ -1716,21 +1712,7 @@ impl<'a> Vp8Decoder<'a> {
 
             // Decode all macroblocks in this row (writes to cache)
             for mbx in 0..self.mbwidth as usize {
-                // Initialize diagnostic capture for this macroblock if in diagnostic mode
-                if self.diagnostic_capture.is_some() {
-                    self.current_mb_diag = Some(MacroblockDiagnostic::default());
-                }
-
                 let mut mb = self.read_macroblock_header(mbx)?;
-
-                // Capture mode decisions for diagnostic
-                if let Some(ref mut diag) = self.current_mb_diag {
-                    diag.luma_mode = mb.luma_mode;
-                    diag.chroma_mode = mb.chroma_mode;
-                    diag.segment_id = mb.segmentid;
-                    diag.coeffs_skipped = mb.coeffs_skipped;
-                    diag.bpred_modes = mb.bpred;
-                }
 
                 if !mb.coeffs_skipped {
                     // Decode coefficients into self.coeff_blocks
@@ -1753,13 +1735,6 @@ impl<'a> Vp8Decoder<'a> {
                 self.intra_predict_chroma(mbx, mby, &mb);
 
                 self.macroblocks.push(mb);
-
-                // Finalize diagnostic capture for this macroblock
-                if let Some(diag) = self.current_mb_diag.take() {
-                    if let Some(ref mut capture) = self.diagnostic_capture {
-                        capture.push(diag);
-                    }
-                }
             }
 
             // Row complete: filter in cache, output to final buffer, prepare for next row
