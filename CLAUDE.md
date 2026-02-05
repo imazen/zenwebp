@@ -142,6 +142,13 @@ Test results on 512x512 CID22 image:
 - Root cause: I4 coefficient encoding efficiency gap in the non-trellis path
 
 ### Recent SIMD Optimizations
+- **Fused SIMD primitives for mode selection (2026-02-05):**
+  - `ftransform_from_u8_4x4` — residual+DCT from flat u8[16] arrays, eliminates i32 subtract loop
+  - `quantize_dequantize_block_simd` — quantize+dequantize in single SIMD pass (both outputs)
+  - `quantize_dequantize_ac_only_simd` — AC-only variant for I16 Y1 blocks
+  - `idct_add_residue_inplace` — fused IDCT+add_residue with DC-only fast path
+  - Eliminated double IDCT for I4 winning mode (save best_dequantized from inner loop)
+  - **Result: 586M → 259M instructions (2.26x reduction), 2.99x → 1.28x vs libwebp**
 - **Fused tdisto_4x4 SIMD** - Port of libwebp's TTransform_SSE2: processes both blocks in parallel using
   vertical-first Hadamard (valid with symmetric weights). Now inlined, not a separate hotspot (2026-02-04)
 - **I4 mode cost precompute** - Cache all 10 mode costs before inner loop (avoid 3D table lookup, 2026-02-04)
@@ -160,27 +167,30 @@ Test results on 512x512 CID22 image:
 - **LTO + inline hints** - Added LTO and codegen-units=1 to release profile, plus #[inline] to
   hot helper functions (tdisto_*, is_flat_*, compute_filter_level). Marginal improvement (~5-8%).
 
-### Profiler Hot Spots (method 4, 2026-02-04, after all SIMD optimizations)
-| Function | % Runtime | Notes |
-|----------|-----------|-------|
-| trellis_quantize_block | 16.23% | Trellis optimization (method 5+) |
-| pick_best_intra4 | 15.18% | I4 mode selection (16 blocks × 10 modes) |
-| get_residual_cost_sse2 | 7.02% | Coefficient cost estimation (SIMD) |
-| choose_macroblock_info | 7.41% | I16/UV mode selection |
-| encode_image | 6.27% | Main encoding loop |
-| GetResidualCost_SSE2 (libwebp) | 3.58% | For comparison |
-| ITransform_SSE2 (libwebp) | 2.01% | For comparison |
-| Disto4x4_SSE2 (libwebp) | 1.44% | For comparison |
+### Profiler Hot Spots (method 4, 2026-02-05, after fused SIMD primitives)
+| Function | % Instr | M instr | Notes |
+|----------|---------|---------|-------|
+| pick_best_intra4 | 24.2% | 62.7M | I4 mode selection (was inlined in choose_macroblock_info) |
+| choose_macroblock_info | 12.6% | 32.8M | I16/UV mode selection |
+| encode_image | 10.9% | 28.2M | Main encoding loop |
+| get_residual_cost_sse2 | 8.8% | 22.9M | Coefficient cost estimation (SIMD) |
+| quantize_dequantize_block | 8.1% | 21.1M | Fused quantize+dequantize (new) |
+| idct4x4_sse2 | 3.6% | 9.4M | IDCT (standalone calls) |
+| ftransform_from_u8_4x4 | 2.7% | 7.0M | Fused residual+DCT from u8 (new) |
+| idct_add_residue_inplace | 2.6% | 6.8M | Fused IDCT+add_residue (new) |
+| ftransform2_sse2 | 2.6% | 6.8M | Fused 2-block DCT |
+| record_coeff_tokens | 2.9% | 7.4M | Token recording |
 
-**Speed comparison (kodak1.png 768x512, Q75, SNS=0, filter=0, segments=1):**
+**Speed comparison (criterion, 792079.png 512x512, Q75, default target):**
 | Method | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| 3 | 39.3ms | 25.5ms | **1.54x** |
-| 4 | 39.9ms | 26.9ms | **1.49x** |
-| 5 | 51.9ms | 29.8ms | **1.74x** |
-| 6 | 100.9ms | 78.8ms | **1.28x** |
+| 0 | 8.0ms | 2.9ms | 2.8x |
+| 2 | 14.6ms | 4.4ms | 3.3x |
+| 4 | 18.1ms | 10.8ms | **1.68x** |
+| 6 | 27.2ms | 16.7ms | **1.63x** |
 
-*Starting point was ~3x slower; improved to 1.3-1.7x through SIMD optimizations.*
+*Instruction ratio is 1.28x but wall-clock is ~1.68x due to memory access patterns and
+archmage dispatch overhead (~9.7M instructions in SIMD wrapper functions).*
 
 **Performance optimization session (2026-02-04):**
 - Early exit in I4 mode loop (skip flatness/spectral/psy-rd when base RD exceeds best)
@@ -193,14 +203,16 @@ Test results on 512x512 CID22 image:
 
 Note: `dct4x4`, `idct4x4`, `is_flat_coeffs`, `tdisto_4x4` are now inlined into parent functions.
 
-### zenwebp vs libwebp Comparison (2026-02-04)
+### zenwebp vs libwebp Comparison (2026-02-05)
 
 **Per-encode comparison (792079.png, Q75, M4, SNS=0):**
 
 | Metric | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| Instructions | 586M | 196M | **2.99x** |
+| Instructions | 259M | 203M | **1.28x** |
 | Output size | 12,198 | 12,018 | 1.015x |
+
+*Previously 586M (2.99x), improved to 259M (1.28x) via fused SIMD primitives.*
 
 **CID22 corpus comparison (41 images, Q75, M4, SNS=0):**
 
@@ -208,89 +220,44 @@ Note: `dct4x4`, `idct4x4`, `is_flat_coeffs`, `tdisto_4x4` are now inlined into p
 |--------|---------|---------|-------|
 | Total size | 1,180,418 | 1,169,034 | 1.0097x |
 
-**Function-level comparison (per encode):**
+**Function-level comparison (per encode, 2026-02-05):**
 
 | zenwebp | M instr | libwebp | M instr | Ratio |
 |---------|---------|---------|---------|-------|
-| choose_macroblock_info | 188M | PickBestIntra4 | 13.5M | **14x** |
-| get_residual_cost_sse2 | 46M | GetResidualCost | 11M | 4.2x |
-| idct4x4 | 45M | ITransform_SSE2 | 17M | 2.6x |
-| dct4x4 | 29M | FTransform_SSE2 | 10M | 2.9x |
-| (tdisto inlined) | - | Disto4x4_SSE2 | 13M | - |
+| pick_best_intra4 + choose_macroblock_info | 95.5M | PickBestIntra4 + quant_enc | 18.3M | 5.2x |
+| get_residual_cost_sse2 | 22.9M | GetResidualCost_SSE2 | 9.7M | 2.4x |
+| quantize_dequantize (fused) | 21.1M | QuantizeBlock_SSE41 | 6.0M | 3.5x |
+| idct4x4 + idct_add_residue | 16.3M | ITransform_SSE2 | 15.9M | **1.02x** |
+| ftransform_from_u8 + ftransform2 | 13.8M | FTransform_SSE2 | 9.8M | 1.4x |
+| record_coeff_tokens | 7.4M | VP8RecordCoeffTokens | 3.4M | 2.2x |
 
-**Optimization priorities (by instruction gap):**
-1. Mode selection: 175M gap (14x) - biggest opportunity
-2. DCT/IDCT: 47M gap (2.6-2.9x) - room for improvement
-3. Residual cost: 35M gap (4.2x) - significant gap remains
+**Fused SIMD primitives (2026-02-05, commit 1f829fa):**
+- `ftransform_from_u8_4x4`: fused residual+DCT from flat u8 arrays (I4 inner loop)
+- `quantize_dequantize_block_simd`: fused quantize+dequantize in single SIMD pass (I4, UV)
+- `quantize_dequantize_ac_only_simd`: AC-only variant (I16 Y1 blocks)
+- `idct_add_residue_inplace`: fused IDCT+add_residue with DC-only fast path (I16, UV)
+- Eliminated double IDCT for I4 winning mode (save best_dequantized from inner loop)
 
-### Optimization Opportunities for Handoff (2026-02-04)
-
-**Current state:** 2.99x slower than libwebp (586M vs 196M instructions per encode)
-
-**Priority 1: Mode Selection Inner Loops (14x gap, ~175M savings potential)**
-
-The `choose_macroblock_info` function does full RD evaluation for each mode candidate:
-- I16: 4 modes × (DCT + quantize + dequantize + IDCT + SSE) = ~64 transforms
-- I4: 16 blocks × ~6 modes × same pipeline = ~100+ transforms
-- UV: 4 modes × same = ~8 transforms
-
-**Specific opportunities:**
-1. **Batch DCT/IDCT** - libwebp's `FTransform2_SSE2` and `ITransform_SSE2` process 2 blocks at once
-   - Files: `src/common/transform.rs`, `src/common/transform_simd_intrinsics.rs`
-   - We have `ftransform2_from_u8` but mode selection uses scalar `dct4x4`
-
-2. **SIMD quantization in mode selection** - `VP8Matrix::quantize()` is scalar
-   - File: `src/encoder/quantize.rs`
-   - libwebp's `QuantizeBlock_SSE2` and `Quantize2Blocks_SSE2` are much faster
-   - We have SIMD quantize for encoding path but mode selection uses scalar
-
-3. **Deferred reconstruction** - Only reconstruct winning mode
-   - Currently: reconstruct all 4 I16 modes, pick best
-   - Optimization: use SSE(prediction, source) for initial ranking, reconstruct only winner
-   - Risk: may change mode selection decisions slightly
-
-**Priority 2: DCT/IDCT (2.6-2.9x gap, ~47M savings potential)**
-
-Our SIMD DCT/IDCT is correct but not optimal:
-- Files: `src/common/transform_simd_intrinsics.rs`
-- libwebp uses clever transpose-free algorithms
-- Our `dct4x4_intrinsics` does explicit transpose
-
-**Specific opportunities:**
-1. Port libwebp's `FTransform_SSE2` exactly - uses different Hadamard factorization
-2. Fuse residual computation with DCT (we partially do this with `ftransform2_from_u8`)
-3. Consider AVX2 for 8-block batch processing
-
-**Priority 3: Residual Cost (4.2x gap, ~35M savings potential)**
-
-`get_residual_cost_sse2` precomputes abs/ctx/levels with SIMD but the main loop is scalar:
-- File: `src/encoder/residual_cost.rs`
-- libwebp's `GetResidualCost_SSE2` has tighter inner loop
-
-**Specific opportunities:**
-1. Inline the cost table lookups with computed goto / jump table
-2. Reduce branch mispredictions in the token cost loop
-3. Consider precomputing more data per coefficient
+**Remaining optimization opportunities:**
+1. Mode selection still 5.2x vs libwebp — archmage dispatch overhead (~9.7M in wrappers)
+2. Quantize dispatch: 21.1M total = 9.7M wrapper + 11.4M inner (wrapper is 46% overhead)
+3. Residual cost: 2.4x gap, tighter inner loop possible
+4. record_coeff_tokens: 2.2x gap, token emission overhead
 
 **Profiling commands:**
 ```bash
-# Build and profile
-cargo build --release --features simd
+# Pre-convert image for callgrind (avoids PNG decoder AVX-512 issues)
+convert image.png -depth 8 RGB:image_WxH.rgb
+
+# Profile zenwebp
 valgrind --tool=callgrind --callgrind-out-file=/tmp/callgrind.out \
-  ./target/release/examples/corpus_test /path/to/images 5
+  target/release/examples/callgrind_encode image_WxH.rgb W H 75 4
 
-# Analyze
-callgrind_annotate --auto=yes /tmp/callgrind.out | head -60
-
-# Compare to libwebp
-valgrind --tool=callgrind --callgrind-out-file=/tmp/callgrind.lib.out \
-  cwebp -q 75 -m 4 -sns 0 -f 0 -segments 1 -o /tmp/out.webp image.png
+# Profile libwebp (use .libs binary, not libtool wrapper)
+LD_LIBRARY_PATH=~/work/libwebp/src/.libs:~/work/libwebp/sharpyuv/.libs \
+  valgrind --tool=callgrind --callgrind-out-file=/tmp/callgrind.lib.out \
+  ~/work/libwebp/examples/.libs/cwebp -q 75 -m 4 -sns 0 -f 0 -segments 1 -o /dev/null image.png
 ```
-
-**Reference files in libwebp:**
-- `src/dsp/enc_sse2.c` - FTransform_SSE2, ITransform_SSE2, QuantizeBlock_SSE2, Disto4x4_SSE2
-- `src/dsp/common_sse2.h` - VP8Transpose_2_4x4_16b
-- `src/enc/quant_enc.c` - PickBestIntra16, PickBestIntra4, ReconstructIntra4
 
 **t_transform SIMD optimization (2026-02-04):**
 Previous pseudo-SIMD loaded with SIMD but extracted to scalar immediately.
