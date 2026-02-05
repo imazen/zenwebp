@@ -1247,50 +1247,62 @@ the existing 16-row infrastructure. See commit c3b9051.
 Remaining loop filter overhead (~6M extra instructions vs libwebp) appears
 to come from per-pixel threshold checks rather than the filter math itself.
 
-### AVX2 32-Pixel Loop Filter Batching (2026-02-04, BLOCKED)
+### AVX2 32-Pixel Loop Filter Batching (2026-02-05, BLOCKED)
 
-**Goal:** Process 32 columns (2 macroblocks) at once using AVX2 for 2x throughput.
+**Goal:** Process 32 columns/rows at once using AVX2 for 2x throughput.
 
-**Status:** AVX2 `simple_v_filter32` implemented and tested (commit 64a6847), but NOT
-integrated into main decode loop due to filter order dependencies.
+**Implemented filters (commits 64a6847, 924e22d, a08712e):**
+- `simple_v_filter32` - 32-column simple vertical filter
+- `normal_v_filter32_inner`, `normal_v_filter32_edge` - 32-column normal vertical filters
+- `normal_h_filter32_inner`, `normal_h_filter32_edge` - 32-row normal horizontal filters
+- All filters tested and verified correct, but NOT integrated due to dependency issues.
 
-**Implementation:**
-- `simple_v_filter32` processes 32 contiguous columns using __m256i
-- Helper functions: `needs_filter_32`, `get_base_delta_32`, `do_simple_filter_32`
-- `simple_filter_vertical_32_cols` dispatch function added but unused
-- Test `test_simple_v_filter32_matches_scalar` verifies correctness
+**Why 32-column batching (vertical filters) is blocked:**
 
-**Why batching is blocked:**
-
-The `filter_row_in_cache` loop processes each macroblock sequentially:
+Filter order for each macroblock:
 ```
-for mbx in 0..mbwidth:
-    filter left edge (horizontal filter on vertical edge)
-    filter subblock vertical edges
-    filter top edge (vertical filter on horizontal edge)  <-- want to batch here
-    filter subblock horizontal edges
+1. Left edge (horizontal filter on vertical edge)
+2. Vertical subblock edges at x=4,8,12 (horizontal filters)
+3. Top edge (vertical filter on horizontal edge)
+4. Horizontal subblock edges at y=4,8,12 (vertical filters)
 ```
 
-To batch MB(mbx) and MB(mbx+1) top edges together, we'd need to process them before
-MB(mbx+1)'s left edge filter runs. But the filter results from MB(mbx+1)'s left edge
-affect the corner pixels that the top edge filter reads.
+**Dependency 1: Cross-MB write interference (2026-02-05)**
+- MB(mbx+1)'s left edge filter writes to columns 13-18 (columns 13-15 overlap MB(mbx))
+- MB(mbx)'s horizontal subblock filters (step 4) read all 16 columns including 13-15
+- Original order: MB(mbx) complete → MB(mbx+1) left edge writes → ...
+- Two-pass attempt: All horizontal filters for all MBs, then all vertical filters
+- Result: MB(mbx+1)'s left edge modifies columns before MB(mbx) finishes reading them
+- **15 test failures** with two-pass approach
 
-**Dependency chain:**
-- MB(mbx) left edge → MB(mbx) top edge → MB(mbx+1) left edge → MB(mbx+1) top edge
-- Batching would require: MB(mbx) left → MB(mbx,mbx+1) tops → MB(mbx+1) left
+**Dependency 2: Top edge vs horizontal subblock overlap**
+- Top edge filter at y=extra_y_rows writes to rows (extra_y_rows-3) to (extra_y_rows+2)
+- Horizontal subblock at y=4 reads rows (extra_y_rows+1) to (extra_y_rows+7)
+- Overlap: rows extra_y_rows+1 to extra_y_rows+2 (2 rows)
+- Cannot defer top edge without changing what horizontal subblock reads
 
-This changes the order, causing corner pixel mismatches (15 test failures).
+**Why 32-row batching (horizontal filters) requires wider cache:**
 
-**Potential solutions (not yet implemented):**
-1. Post-filter phase: After all MBs processed, apply 32-pixel filter to horizontal
-   subblock edges (y=4,8,12) which don't interact with MB boundaries
-2. Two-row buffering: Process mby-1 edges after mby left edges complete
-3. Accept slightly different results (libwebp might not depend on this order)
+32-row horizontal filters process left edges of MB(mbx, mby) and MB(mbx, mby+1) together.
+This requires 32 rows of decoded data in cache simultaneously.
 
-**Profiling note:** Most test images use NORMAL filter, not SIMPLE filter.
-The 32-pixel optimization only benefits simple filter. Normal filter functions
-(`normal_h_filter16_inner`, etc.) account for ~25% of decode time. AVX2 32-pixel
-normal filter would have more impact.
+**Current cache:** `extra_y_rows + 16` rows (one MB row + overlap for edge filtering)
+**Required cache:** `extra_y_rows + 32` rows (two MB rows)
+
+**Implementation complexity for wider cache:**
+1. Double cache allocation in `read_frame_header()`
+2. Add `cache_row_offset` parameter to `intra_predict_luma/chroma`
+3. Restructure main decode loop to process 2 MB rows before filtering
+4. Create `filter_two_rows_in_cache()` using 32-row horizontal filters
+5. Adjust `output_row_from_cache()` and `rotate_extra_rows()` for paired rows
+
+**Expected benefit:** Loop filter is ~15% of decode time. Even 30% reduction in filter
+overhead yields only ~5% total improvement. High complexity for modest gain.
+
+**Conclusion:** The 32-pixel filters are implemented and tested but integration is
+blocked by fundamental filter order dependencies. The only viable path is wider cache
+buffers for 32-row horizontal batching, which requires significant restructuring.
+Consider if ~5% improvement justifies the implementation complexity.
 
 ### libwebp-rs Mechanical Translation Comparison (2026-01-22)
 
