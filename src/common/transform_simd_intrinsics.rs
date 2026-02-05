@@ -489,7 +489,7 @@ fn ftransform2_scalar(
 /// Inverse DCT using SSE2 - matches libwebp ITransform_One_SSE2
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
-fn idct4x4_sse2(_token: X64V3Token, block: &mut [i32]) {
+pub(crate) fn idct4x4_sse2(_token: X64V3Token, block: &mut [i32]) {
     // libwebp IDCT constants:
     // K1 = sqrt(2) * cos(pi/8) * 65536 = 85627 => k1 = 85627 - 65536 = 20091
     // K2 = sqrt(2) * sin(pi/8) * 65536 = 35468 => k2 = 35468 - 65536 = -30068
@@ -651,6 +651,7 @@ fn itransform_pass2_sse2(
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn idct_add_residue_sse2(
     _token: X64V3Token,
     coeffs: &mut [i32; 16],
@@ -738,6 +739,7 @@ pub(crate) fn idct_add_residue_sse2(
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn idct_add_residue_dc_sse2(
     _token: X64V3Token,
     coeffs: &mut [i32; 16],
@@ -783,7 +785,7 @@ pub(crate) fn idct_add_residue_dc_sse2(
 /// Wrapper with token type parameter for decoder use (separate pred/output)
 /// Note: Currently unused - decoder uses in-place version instead.
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-#[allow(dead_code)]
+#[allow(dead_code, clippy::too_many_arguments)]
 #[inline(always)]
 pub(crate) fn idct_add_residue_with_token(
     token: X64V3Token,
@@ -1000,7 +1002,7 @@ pub(crate) fn ftransform_from_u8_4x4(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 1
 }
 
 /// Scalar implementation of fused residual+DCT
-fn ftransform_from_u8_4x4_scalar(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
+pub(crate) fn ftransform_from_u8_4x4_scalar(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
     let mut block = [0i32; 16];
     for i in 0..16 {
         block[i] = src[i] as i32 - ref_[i] as i32;
@@ -1013,7 +1015,11 @@ fn ftransform_from_u8_4x4_scalar(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
 /// Loads bytes, computes diff as i16, runs DCT pass1+pass2, outputs i32[16].
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
-fn ftransform_from_u8_4x4_sse2(_token: X64V3Token, src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
+pub(crate) fn ftransform_from_u8_4x4_sse2(
+    _token: X64V3Token,
+    src: &[u8; 16],
+    ref_: &[u8; 16],
+) -> [i32; 16] {
     let zero = _mm_setzero_si128();
 
     // Load all 16 source bytes and 16 reference bytes as single 128-bit loads

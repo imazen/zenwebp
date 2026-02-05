@@ -18,6 +18,242 @@ use crate::encoder::psy;
 
 use super::{sse_16x16_luma, sse_8x8_chroma, MacroblockInfo};
 
+// =============================================================================
+// Arcane (SIMD-hoisted) inner functions for I4 mode selection
+//
+// These free functions run entirely within an #[arcane] context, allowing the
+// compiler to inline all SIMD leaf functions (ftransform, quantize, sse4x4,
+// get_residual_cost, etc.) and keep values in SIMD registers across calls.
+// This eliminates the per-call dispatch overhead (~9.7M instructions) and
+// enables cross-function optimizations.
+// =============================================================================
+
+/// Result of evaluating a single I4 block mode
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+struct I4BlockResult {
+    mode_idx: usize,
+    rd_score: u64,
+    has_nz: bool,
+    dequantized: [i32; 16],
+    sse: u32,
+    spectral_disto: i32,
+    psy_cost: i32,
+    coeff_cost: u32,
+}
+
+/// Pre-sort I4 prediction modes by prediction SSE (ascending).
+/// Runs sse4x4 for all 10 modes using direct SIMD calls (no dispatch overhead).
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[archmage::arcane]
+fn presort_i4_modes_sse2(
+    _token: archmage::X64V3Token,
+    src_block: &[u8; 16],
+    preds: &I4Predictions,
+) -> [(u32, usize); 10] {
+    let mut mode_sse: [(u32, usize); 10] = [(0, 0); 10];
+    for (mode_idx, entry) in mode_sse.iter_mut().enumerate() {
+        let pred = preds.get(mode_idx);
+        let sse = crate::common::simd_sse::sse4x4_sse2(_token, src_block, pred);
+        *entry = (sse, mode_idx);
+    }
+    mode_sse.sort_unstable_by_key(|&(sse, _)| sse);
+    mode_sse
+}
+
+/// Evaluate I4 block modes within a single arcane context.
+///
+/// This is the hot inner loop of pick_best_intra4, with all SIMD calls
+/// going directly to `_sse2` variants (inlinable within arcane context).
+///
+/// Returns the best mode result, or None if no mode beats `best_block_score_limit`.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn evaluate_i4_modes_sse2(
+    _token: archmage::X64V3Token,
+    src_block: &[u8; 16],
+    preds: &I4Predictions,
+    mode_sse_order: &[(u32, usize)],
+    max_modes: usize,
+    mode_costs: &[u16; 10],
+    nz_top: bool,
+    nz_left: bool,
+    // RD parameters
+    y1_matrix: &crate::encoder::quantize::VP8Matrix,
+    lambda_i4: u32,
+    tlambda: u32,
+    trellis_lambda_i4: Option<u32>,
+    level_costs: &crate::encoder::cost::LevelCosts,
+    probs: &TokenProbTables,
+    psy_config: &crate::encoder::psy::PsyConfig,
+    luma_csf: &[u16; 16],
+) -> Option<I4BlockResult> {
+    use crate::encoder::residual_cost::Residual;
+
+    let mut best: Option<I4BlockResult> = None;
+    let mut best_block_score = u64::MAX;
+
+    for &(_, mode_idx) in mode_sse_order[..max_modes].iter() {
+        let pred = preds.get(mode_idx);
+
+        // Fused residual + DCT using direct SIMD call
+        let mut residual = crate::common::transform_simd_intrinsics::ftransform_from_u8_4x4_sse2(
+            _token, src_block, pred,
+        );
+
+        // Quantize - use trellis if enabled, otherwise fused quantize+dequantize
+        let mut quantized_zigzag = [0i32; 16];
+        let mut quantized_natural = [0i32; 16];
+        let (has_nz, dequantized) = if let Some(lambda) = trellis_lambda_i4 {
+            // Trellis quantization (scalar, called from arcane context is fine)
+            let ctx0 = usize::from(nz_top) + usize::from(nz_left);
+            const CTYPE_I4_AC: usize = 3;
+            let nz = trellis_quantize_block(
+                &mut residual,
+                &mut quantized_zigzag,
+                y1_matrix,
+                lambda,
+                0,
+                level_costs,
+                CTYPE_I4_AC,
+                ctx0,
+                psy_config,
+            );
+            // Convert zigzag to natural order
+            for n in 0..16 {
+                let j = ZIGZAG[n] as usize;
+                quantized_natural[j] = quantized_zigzag[n];
+            }
+            // Dequantize + IDCT for trellis path
+            let mut dq = quantized_natural;
+            for (idx, val) in dq.iter_mut().enumerate() {
+                *val = y1_matrix.dequantize(*val, idx);
+            }
+            transform::idct4x4(&mut dq);
+            (nz, dq)
+        } else {
+            // Fused quantize+dequantize using direct SIMD call
+            let mut dequant_natural = [0i32; 16];
+            let nz = crate::encoder::quantize::quantize_dequantize_block_sse2(
+                _token,
+                &residual,
+                y1_matrix,
+                true,
+                &mut quantized_natural,
+                &mut dequant_natural,
+            );
+            // Convert natural to zigzag for cost estimation
+            for n in 0..16 {
+                let j = ZIGZAG[n] as usize;
+                quantized_zigzag[n] = quantized_natural[j];
+            }
+            // IDCT the dequantized values
+            transform::idct4x4(&mut dequant_natural);
+            (nz, dequant_natural)
+        };
+
+        // Get coefficient cost using direct SIMD call
+        let ctx0 = (nz_top as usize) + (nz_left as usize);
+        let res = Residual::new(&quantized_zigzag, 3, 0); // CTYPE_I4_AC=3, first=0
+        let coeff_cost = crate::encoder::residual_cost::get_residual_cost_sse2(
+            _token,
+            ctx0,
+            &res,
+            level_costs,
+            probs,
+        );
+
+        // Compute SSE using direct SIMD call
+        let sse = crate::common::simd_sse::sse4x4_with_residual_sse2(
+            _token,
+            src_block,
+            pred,
+            &dequantized,
+        );
+
+        // Early exit: if base RD score already exceeds best, skip extras
+        let mode_cost = mode_costs[mode_idx];
+        let base_rd_score =
+            crate::encoder::cost::rd_score_full(sse, 0, mode_cost, coeff_cost, lambda_i4) as u64;
+        if base_rd_score >= best_block_score {
+            continue;
+        }
+
+        // Flatness penalty for non-DC modes
+        let flatness_penalty = if mode_idx > 0 {
+            let levels_i16: [i16; 16] = core::array::from_fn(|k| quantized_zigzag[k] as i16);
+            if crate::encoder::cost::distortion::is_flat_coeffs_sse2(
+                _token,
+                &levels_i16,
+                1,
+                FLATNESS_LIMIT_I4,
+            ) {
+                FLATNESS_PENALTY
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        // Spectral distortion + psy-rd
+        let (spectral_disto, psy_cost) = if tlambda > 0 || psy_config.psy_rd_strength > 0 {
+            // Build reconstructed 4x4 block
+            let mut rec_block = [0u8; 16];
+            for k in 0..16 {
+                rec_block[k] = (i32::from(pred[k]) + dequantized[k]).clamp(0, 255) as u8;
+            }
+
+            let td = if tlambda > 0 {
+                let td_raw = crate::common::simd_sse::tdisto_4x4_fused_sse2(
+                    _token, src_block, &rec_block, 4, luma_csf,
+                );
+                (tlambda as i32 * td_raw + 128) >> 8
+            } else {
+                0
+            };
+
+            let psy = if psy_config.psy_rd_strength > 0 {
+                let src_satd = psy::satd_4x4(src_block, 4);
+                let rec_satd = psy::satd_4x4(&rec_block, 4);
+                psy::psy_rd_cost(src_satd, rec_satd, psy_config.psy_rd_strength)
+            } else {
+                0
+            };
+
+            (td, psy)
+        } else {
+            (0, 0)
+        };
+
+        // Final RD score
+        let total_rate_cost = coeff_cost + flatness_penalty as u32;
+        let rd_score = crate::encoder::cost::rd_score_full(
+            sse,
+            spectral_disto + psy_cost,
+            mode_cost,
+            total_rate_cost,
+            lambda_i4,
+        ) as u64;
+
+        if rd_score < best_block_score {
+            best_block_score = rd_score;
+            best = Some(I4BlockResult {
+                mode_idx,
+                rd_score,
+                has_nz,
+                dequantized,
+                sse,
+                spectral_disto,
+                psy_cost,
+                coeff_cost,
+            });
+        }
+    }
+
+    best
+}
+
 impl<'a> super::Vp8Encoder<'a> {
     /// Select the best 16x16 luma prediction mode using full RD (rate-distortion) cost.
     ///
@@ -591,9 +827,6 @@ impl<'a> super::Vp8Encoder<'a> {
 
                 let y1_matrix = segment.y1_matrix.as_ref().unwrap();
 
-                // Fast mode filtering: compute prediction SSE for all modes
-                // and only try the top candidates with lowest SSE
-                // This reduces DCT/IDCT calls while maintaining quality
                 // Number of modes to try depends on method:
                 // - method 0-2: 3 modes (fast, RD_OPT_NONE equivalent)
                 // - method 3+: 10 modes (full search, matches libwebp RD_OPT_BASIC+)
@@ -601,28 +834,6 @@ impl<'a> super::Vp8Encoder<'a> {
                     0..=2 => 3,
                     _ => 10, // method 3+: try all modes (matches libwebp RD_OPT_BASIC+)
                 };
-                let mut mode_sse: [(u32, usize); 10] = [(0, 0); 10];
-                for (mode_idx, _) in MODES.iter().enumerate() {
-                    let pred = preds.get(mode_idx);
-                    // Use SIMD SSE computation (16 bytes at once)
-                    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
-                    let sse = crate::common::simd_sse::sse4x4(&src_block, pred);
-                    #[cfg(not(all(
-                        feature = "simd",
-                        any(target_arch = "x86_64", target_arch = "x86")
-                    )))]
-                    let sse = {
-                        let mut sum = 0u32;
-                        for k in 0..16 {
-                            let diff = i32::from(src_block[k]) - i32::from(pred[k]);
-                            sum += (diff * diff) as u32;
-                        }
-                        sum
-                    };
-                    mode_sse[mode_idx] = (sse, mode_idx);
-                }
-                // Sort by SSE (ascending) - try modes with best predictions first
-                mode_sse.sort_unstable_by_key(|&(sse, _)| sse);
 
                 // Get trellis lambda if enabled for mode selection (method >= 6)
                 let trellis_lambda_i4 = if self.do_trellis_i4_mode {
@@ -631,213 +842,107 @@ impl<'a> super::Vp8Encoder<'a> {
                     None
                 };
 
-                // Try only the best candidate modes (ordered by prediction SSE)
-                for &(_, mode_idx) in mode_sse[..max_modes_to_try].iter() {
-                    let mode = MODES[mode_idx];
-                    // Get pre-computed prediction for this mode
-                    let pred = preds.get(mode_idx);
+                // === SIMD-hoisted path: single arcane context for all mode evaluation ===
+                // This eliminates per-call dispatch overhead by running all SIMD operations
+                // (ftransform, quantize, dequantize, sse, tdisto, is_flat, residual_cost)
+                // within a single #[target_feature] context where they can be inlined.
+                #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+                let simd_result = {
+                    use archmage::SimdToken;
+                    archmage::X64V3Token::summon().and_then(|token| {
+                        // Pre-sort modes by prediction SSE using direct SIMD calls
+                        let mode_sse = presort_i4_modes_sse2(token, &src_block, &preds);
 
-                    // Fused residual + DCT: computes (src - pred) and DCT in i16 SIMD
-                    let mut residual =
-                        crate::common::transform_simd_intrinsics::ftransform_from_u8_4x4(
-                            &src_block, pred,
-                        );
-
-                    // Quantize - use trellis if enabled for mode selection (RD_OPT_TRELLIS_ALL)
-                    // quantized_zigzag: coefficients in zigzag order (for cost estimation)
-                    // quantized_natural: coefficients in natural order (for distortion calc)
-                    // dequantized: IDCT of dequantized coefficients (for SSE computation)
-                    let mut quantized_zigzag = [0i32; 16];
-                    let mut quantized_natural = [0i32; 16];
-                    let (has_nz, dequantized) = if let Some(lambda) = trellis_lambda_i4 {
-                        // Trellis quantization for better RD during mode selection
-                        let ctx0 = usize::from(nz_top) + usize::from(nz_left);
-                        const CTYPE_I4_AC: usize = 3;
-                        let nz = trellis_quantize_block(
-                            &mut residual,
-                            &mut quantized_zigzag,
+                        // Evaluate all candidate modes in a single arcane context
+                        evaluate_i4_modes_sse2(
+                            token,
+                            &src_block,
+                            &preds,
+                            &mode_sse,
+                            max_modes_to_try,
+                            &mode_costs,
+                            nz_top,
+                            nz_left,
                             y1_matrix,
-                            lambda,
-                            0,
+                            lambda_i4,
+                            tlambda,
+                            trellis_lambda_i4,
                             &self.level_costs,
-                            CTYPE_I4_AC,
-                            ctx0,
+                            probs,
                             &segment.psy_config,
-                        );
-                        // Convert zigzag to natural order for distortion calculation
-                        for n in 0..16 {
-                            let j = ZIGZAG[n] as usize;
-                            quantized_natural[j] = quantized_zigzag[n];
-                        }
-                        // Dequantize + IDCT for trellis path
-                        let mut dq = quantized_natural;
-                        for (idx, val) in dq.iter_mut().enumerate() {
-                            *val = y1_matrix.dequantize(*val, idx);
-                        }
-                        transform::idct4x4(&mut dq);
-                        (nz, dq)
-                    } else {
-                        // Fused quantize+dequantize using SIMD (single pass)
-                        // Gets both quantized levels AND dequantized values
-                        let mut dequant_natural = [0i32; 16];
-                        let nz = crate::encoder::quantize::quantize_dequantize_block_simd(
-                            &residual,
-                            y1_matrix,
-                            true,
-                            &mut quantized_natural,
-                            &mut dequant_natural,
-                        );
-                        // Convert natural to zigzag for cost estimation
-                        for n in 0..16 {
-                            let j = ZIGZAG[n] as usize;
-                            quantized_zigzag[n] = quantized_natural[j];
-                        }
-                        // IDCT the dequantized values (already have dequant from fused op)
-                        transform::idct4x4(&mut dequant_natural);
-                        (nz, dequant_natural)
-                    };
+                            &segment.psy_config.luma_csf,
+                        )
+                    })
+                };
 
-                    // Get accurate coefficient cost using probability tables
-                    let (coeff_cost, _) = get_cost_luma4(
-                        &quantized_zigzag,
+                #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+                if let Some(result) = simd_result {
+                    // Use the arcane result
+                    best_mode = MODES[result.mode_idx];
+                    best_mode_idx = result.mode_idx;
+                    let _ = result.rd_score; // best_block_score not needed after eval
+                    best_has_nz = result.has_nz;
+                    best_dequantized = result.dequantized;
+                    best_sse = result.sse;
+                    best_spectral_disto = result.spectral_disto;
+                    best_psy_cost = result.psy_cost;
+                    best_coeff_cost = result.coeff_cost;
+                } else {
+                    // Scalar fallback (no SIMD available at runtime or not x86_64)
+                    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+                    {
+                        self.evaluate_i4_modes_scalar(
+                            &src_block,
+                            &preds,
+                            max_modes_to_try,
+                            &mode_costs,
+                            nz_top,
+                            nz_left,
+                            y1_matrix,
+                            lambda_i4,
+                            tlambda,
+                            trellis_lambda_i4,
+                            probs,
+                            segment,
+                            &mut best_mode,
+                            &mut best_mode_idx,
+                            &mut best_block_score,
+                            &mut best_has_nz,
+                            &mut best_dequantized,
+                            &mut best_sse,
+                            &mut best_spectral_disto,
+                            &mut best_psy_cost,
+                            &mut best_coeff_cost,
+                        );
+                    }
+                }
+
+                // Non-x86_64 fallback: use dispatch-based path
+                #[cfg(not(all(feature = "simd", target_arch = "x86_64")))]
+                {
+                    self.evaluate_i4_modes_scalar(
+                        &src_block,
+                        &preds,
+                        max_modes_to_try,
+                        &mode_costs,
                         nz_top,
                         nz_left,
-                        &self.level_costs,
-                        probs,
-                    );
-
-                    // Compute SSE between source and reconstructed using SIMD
-                    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
-                    let sse = crate::common::simd_sse::sse4x4_with_residual(
-                        &src_block,
-                        pred,
-                        &dequantized,
-                    );
-                    #[cfg(not(all(
-                        feature = "simd",
-                        any(target_arch = "x86_64", target_arch = "x86")
-                    )))]
-                    let sse = {
-                        let mut sum = 0u32;
-                        for i in 0..16 {
-                            let reconstructed =
-                                (i32::from(pred[i]) + dequantized[i]).clamp(0, 255) as u8;
-                            let diff = i32::from(src_block[i]) - i32::from(reconstructed);
-                            sum += (diff * diff) as u32;
-                        }
-                        sum
-                    };
-
-                    // Early exit: if base RD score (without flatness/spectral/psy) already
-                    // exceeds best, skip remaining work. These penalties are all additive.
-                    let mode_cost = mode_costs[mode_idx];
-                    let base_rd_score = crate::encoder::cost::rd_score_full(
-                        sse, 0, mode_cost, coeff_cost, lambda_i4,
-                    ) as u64;
-                    if base_rd_score >= best_block_score {
-                        continue;
-                    }
-
-                    // Apply flatness penalty for non-DC modes with flat coefficients
-                    // (like libwebp's FLATNESS_PENALTY * kNumBlocks)
-                    // For I4, kNumBlocks = 1, so penalty = FLATNESS_PENALTY
-                    let flatness_penalty = if mode_idx > 0 {
-                        // Check if block is flat: ≤3 non-zero AC coefficients
-                        // Convert quantized_zigzag (i32) to i16 for is_flat_coeffs
-                        let levels_i16: [i16; 16] =
-                            core::array::from_fn(|k| quantized_zigzag[k] as i16);
-                        if is_flat_coeffs(&levels_i16, 1, FLATNESS_LIMIT_I4) {
-                            FLATNESS_PENALTY
-                        } else {
-                            0
-                        }
-                    } else {
-                        0
-                    };
-
-                    // Compute spectral distortion (TDisto) + psy-rd if enabled
-                    let (spectral_disto, psy_cost) = if tlambda > 0
-                        || segment.psy_config.psy_rd_strength > 0
-                    {
-                        // Build reconstructed 4x4 block
-                        let mut rec_block = [0u8; 16];
-                        for k in 0..16 {
-                            rec_block[k] =
-                                (i32::from(pred[k]) + dequantized[k]).clamp(0, 255) as u8;
-                        }
-
-                        let td = if tlambda > 0 {
-                            let td_raw =
-                                tdisto_4x4(&src_block, &rec_block, 4, &segment.psy_config.luma_csf);
-                            (tlambda as i32 * td_raw + 128) >> 8
-                        } else {
-                            0
-                        };
-
-                        let psy = if segment.psy_config.psy_rd_strength > 0 {
-                            let src_satd = psy::satd_4x4(&src_block, 4);
-                            let rec_satd = psy::satd_4x4(&rec_block, 4);
-                            psy::psy_rd_cost(src_satd, rec_satd, segment.psy_config.psy_rd_strength)
-                        } else {
-                            0
-                        };
-
-                        (td, psy)
-                    } else {
-                        (0, 0)
-                    };
-
-                    // Compute RD score: (R + H) * lambda + RD_DISTO_MULT * (D + SD + PSY)
-                    let total_rate_cost = coeff_cost + flatness_penalty as u32;
-                    let rd_score = crate::encoder::cost::rd_score_full(
-                        sse,
-                        spectral_disto + psy_cost,
-                        mode_cost,
-                        total_rate_cost,
+                        y1_matrix,
                         lambda_i4,
-                    ) as u64;
-
-                    // Block-level debug output (enabled with BLOCK_DEBUG=mbx,mby,block_idx)
-                    #[cfg(feature = "mode_debug")]
-                    if let Ok(s) = std::env::var("BLOCK_DEBUG") {
-                        let parts: Vec<_> = s.split(',').collect();
-                        if parts.len() == 3 {
-                            if let (Ok(dx), Ok(dy), Ok(db)) = (
-                                parts[0].parse::<usize>(),
-                                parts[1].parse::<usize>(),
-                                parts[2].parse::<usize>(),
-                            ) {
-                                if dx == mbx && dy == mby && db == i {
-                                    // Print context once at start
-                                    static PRINTED_CTX: std::sync::atomic::AtomicBool =
-                                        std::sync::atomic::AtomicBool::new(false);
-                                    if !PRINTED_CTX.swap(true, std::sync::atomic::Ordering::Relaxed)
-                                    {
-                                        eprintln!(
-                                            "Context: top_ctx={}, left_ctx={}, lambda_i4={}",
-                                            top_ctx, left_ctx, lambda_i4
-                                        );
-                                    }
-                                    eprintln!(
-                                        "  Mode {:2} ({:?}): sse={:5}, mode_cost={:4}, coeff_cost={:5}, rd_score={:8}",
-                                        mode_idx, mode, sse, mode_cost, coeff_cost, rd_score
-                                    );
-                                }
-                            }
-                        }
-                    }
-
-                    if rd_score < best_block_score {
-                        best_block_score = rd_score;
-                        best_mode = mode;
-                        best_mode_idx = mode_idx;
-                        best_has_nz = has_nz;
-                        best_dequantized = dequantized;
-                        best_sse = sse;
-                        best_spectral_disto = spectral_disto;
-                        best_psy_cost = psy_cost;
-                        best_coeff_cost = coeff_cost;
-                    }
+                        tlambda,
+                        trellis_lambda_i4,
+                        probs,
+                        segment,
+                        &mut best_mode,
+                        &mut best_mode_idx,
+                        &mut best_block_score,
+                        &mut best_has_nz,
+                        &mut best_dequantized,
+                        &mut best_sse,
+                        &mut best_spectral_disto,
+                        &mut best_psy_cost,
+                        &mut best_coeff_cost,
+                    );
                 }
 
                 best_modes[i] = best_mode;
@@ -1240,6 +1345,197 @@ impl<'a> super::Vp8Encoder<'a> {
             chroma_mode,
             segment_id,
             coeffs_skipped: false,
+        }
+    }
+
+    /// Scalar fallback for I4 mode evaluation.
+    /// Used when SIMD is not available or on non-x86_64 platforms.
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_i4_modes_scalar(
+        &self,
+        src_block: &[u8; 16],
+        preds: &I4Predictions,
+        max_modes_to_try: usize,
+        mode_costs: &[u16; 10],
+        nz_top: bool,
+        nz_left: bool,
+        y1_matrix: &crate::encoder::quantize::VP8Matrix,
+        lambda_i4: u32,
+        tlambda: u32,
+        trellis_lambda_i4: Option<u32>,
+        probs: &TokenProbTables,
+        segment: &Segment,
+        best_mode: &mut IntraMode,
+        best_mode_idx: &mut usize,
+        best_block_score: &mut u64,
+        best_has_nz: &mut bool,
+        best_dequantized: &mut [i32; 16],
+        best_sse: &mut u32,
+        best_spectral_disto: &mut i32,
+        best_psy_cost: &mut i32,
+        best_coeff_cost: &mut u32,
+    ) {
+        const MODES: [IntraMode; 10] = [
+            IntraMode::DC,
+            IntraMode::TM,
+            IntraMode::VE,
+            IntraMode::HE,
+            IntraMode::LD,
+            IntraMode::RD,
+            IntraMode::VR,
+            IntraMode::VL,
+            IntraMode::HD,
+            IntraMode::HU,
+        ];
+
+        // Pre-sort modes by SSE
+        let mut mode_sse: [(u32, usize); 10] = [(0, 0); 10];
+        for (mode_idx, _) in MODES.iter().enumerate() {
+            let pred = preds.get(mode_idx);
+            #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+            let sse = crate::common::simd_sse::sse4x4(src_block, pred);
+            #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+            let sse = {
+                let mut sum = 0u32;
+                for k in 0..16 {
+                    let diff = i32::from(src_block[k]) - i32::from(pred[k]);
+                    sum += (diff * diff) as u32;
+                }
+                sum
+            };
+            mode_sse[mode_idx] = (sse, mode_idx);
+        }
+        mode_sse.sort_unstable_by_key(|&(sse, _)| sse);
+
+        for &(_, mode_idx) in mode_sse[..max_modes_to_try].iter() {
+            let pred = preds.get(mode_idx);
+
+            let mut residual =
+                crate::common::transform_simd_intrinsics::ftransform_from_u8_4x4(src_block, pred);
+
+            let mut quantized_zigzag = [0i32; 16];
+            let mut quantized_natural = [0i32; 16];
+            let (has_nz, dequantized) = if let Some(lambda) = trellis_lambda_i4 {
+                let ctx0 = usize::from(nz_top) + usize::from(nz_left);
+                const CTYPE_I4_AC: usize = 3;
+                let nz = trellis_quantize_block(
+                    &mut residual,
+                    &mut quantized_zigzag,
+                    y1_matrix,
+                    lambda,
+                    0,
+                    &self.level_costs,
+                    CTYPE_I4_AC,
+                    ctx0,
+                    &segment.psy_config,
+                );
+                for n in 0..16 {
+                    let j = ZIGZAG[n] as usize;
+                    quantized_natural[j] = quantized_zigzag[n];
+                }
+                let mut dq = quantized_natural;
+                for (idx, val) in dq.iter_mut().enumerate() {
+                    *val = y1_matrix.dequantize(*val, idx);
+                }
+                transform::idct4x4(&mut dq);
+                (nz, dq)
+            } else {
+                let mut dequant_natural = [0i32; 16];
+                let nz = crate::encoder::quantize::quantize_dequantize_block_simd(
+                    &residual,
+                    y1_matrix,
+                    true,
+                    &mut quantized_natural,
+                    &mut dequant_natural,
+                );
+                for n in 0..16 {
+                    let j = ZIGZAG[n] as usize;
+                    quantized_zigzag[n] = quantized_natural[j];
+                }
+                transform::idct4x4(&mut dequant_natural);
+                (nz, dequant_natural)
+            };
+
+            let (coeff_cost_val, _) =
+                get_cost_luma4(&quantized_zigzag, nz_top, nz_left, &self.level_costs, probs);
+
+            #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+            let sse = crate::common::simd_sse::sse4x4_with_residual(src_block, pred, &dequantized);
+            #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+            let sse = {
+                let mut sum = 0u32;
+                for i in 0..16 {
+                    let reconstructed = (i32::from(pred[i]) + dequantized[i]).clamp(0, 255) as u8;
+                    let diff = i32::from(src_block[i]) - i32::from(reconstructed);
+                    sum += (diff * diff) as u32;
+                }
+                sum
+            };
+
+            let mode_cost = mode_costs[mode_idx];
+            let base_rd_score =
+                crate::encoder::cost::rd_score_full(sse, 0, mode_cost, coeff_cost_val, lambda_i4)
+                    as u64;
+            if base_rd_score >= *best_block_score {
+                continue;
+            }
+
+            let flatness_penalty = if mode_idx > 0 {
+                let levels_i16: [i16; 16] = core::array::from_fn(|k| quantized_zigzag[k] as i16);
+                if is_flat_coeffs(&levels_i16, 1, FLATNESS_LIMIT_I4) {
+                    FLATNESS_PENALTY
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
+            let (spectral_disto, psy_cost_val) = if tlambda > 0
+                || segment.psy_config.psy_rd_strength > 0
+            {
+                let mut rec_block = [0u8; 16];
+                for k in 0..16 {
+                    rec_block[k] = (i32::from(pred[k]) + dequantized[k]).clamp(0, 255) as u8;
+                }
+                let td = if tlambda > 0 {
+                    let td_raw = tdisto_4x4(src_block, &rec_block, 4, &segment.psy_config.luma_csf);
+                    (tlambda as i32 * td_raw + 128) >> 8
+                } else {
+                    0
+                };
+                let psy = if segment.psy_config.psy_rd_strength > 0 {
+                    let src_satd = psy::satd_4x4(src_block, 4);
+                    let rec_satd = psy::satd_4x4(&rec_block, 4);
+                    psy::psy_rd_cost(src_satd, rec_satd, segment.psy_config.psy_rd_strength)
+                } else {
+                    0
+                };
+                (td, psy)
+            } else {
+                (0, 0)
+            };
+
+            let total_rate_cost = coeff_cost_val + flatness_penalty as u32;
+            let rd_score = crate::encoder::cost::rd_score_full(
+                sse,
+                spectral_disto + psy_cost_val,
+                mode_cost,
+                total_rate_cost,
+                lambda_i4,
+            ) as u64;
+
+            if rd_score < *best_block_score {
+                *best_block_score = rd_score;
+                *best_mode = MODES[mode_idx];
+                *best_mode_idx = mode_idx;
+                *best_has_nz = has_nz;
+                *best_dequantized = dequantized;
+                *best_sse = sse;
+                *best_spectral_disto = spectral_disto;
+                *best_psy_cost = psy_cost_val;
+                *best_coeff_cost = coeff_cost_val;
+            }
         }
     }
 

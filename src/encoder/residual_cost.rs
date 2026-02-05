@@ -97,7 +97,7 @@ pub fn get_residual_cost(
 /// Scalar implementation of residual cost calculation.
 /// Ported from libwebp's GetResidualCost_C.
 #[inline]
-fn get_residual_cost_scalar(
+pub(crate) fn get_residual_cost_scalar(
     ctx0: usize,
     res: &Residual,
     costs: &LevelCosts,
@@ -162,7 +162,7 @@ fn get_residual_cost_scalar(
 /// Precomputes abs values, contexts, and clamped levels with SIMD.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
-fn get_residual_cost_sse2(
+pub(crate) fn get_residual_cost_sse2(
     _token: X64V3Token,
     ctx0: usize,
     res: &Residual,

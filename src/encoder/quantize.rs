@@ -212,7 +212,7 @@ impl VP8Matrix {
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
 #[arcane]
 #[inline(always)]
-fn dequantize_block_sse2(_token: X64V3Token, q: &[u16; 16], coeffs: &mut [i32; 16]) {
+pub(crate) fn dequantize_block_sse2(_token: X64V3Token, q: &[u16; 16], coeffs: &mut [i32; 16]) {
     // Load quantizers as u16, zero-extend to i32
     let q_lo = simd_mem::_mm_loadu_si128(<&[u16; 8]>::try_from(&q[0..8]).unwrap());
     let q_hi = simd_mem::_mm_loadu_si128(<&[u16; 8]>::try_from(&q[8..16]).unwrap());
@@ -299,7 +299,7 @@ pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, _use_shar
 /// Matches libwebp's DoQuantizeBlock_SSE2 algorithm.
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
 #[arcane]
-fn quantize_block_sse2(
+pub(crate) fn quantize_block_sse2(
     _token: X64V3Token,
     coeffs: &mut [i32; 16],
     matrix: &VP8Matrix,
@@ -511,7 +511,7 @@ pub fn quantize_dequantize_block_simd(
 }
 
 /// Scalar implementation of fused quantize+dequantize
-fn quantize_dequantize_block_scalar(
+pub(crate) fn quantize_dequantize_block_scalar(
     coeffs: &[i32; 16],
     matrix: &VP8Matrix,
     quantized: &mut [i32; 16],
@@ -532,7 +532,7 @@ fn quantize_dequantize_block_scalar(
 /// Quantizes coefficients, then immediately multiplies by q to get dequantized values.
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
 #[arcane]
-fn quantize_dequantize_block_sse2(
+pub(crate) fn quantize_dequantize_block_sse2(
     _token: X64V3Token,
     coeffs: &[i32; 16],
     matrix: &VP8Matrix,

@@ -53,7 +53,7 @@ pub fn sse4x4_scalar(a: &[u8; 16], b: &[u8; 16]) -> u32 {
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
 #[allow(dead_code)]
-fn sse4x4_sse2(_token: X64V3Token, a: &[u8; 16], b: &[u8; 16]) -> u32 {
+pub(crate) fn sse4x4_sse2(_token: X64V3Token, a: &[u8; 16], b: &[u8; 16]) -> u32 {
     let zero = _mm_setzero_si128();
 
     // Load all 16 bytes at once
@@ -124,7 +124,7 @@ pub fn sse4x4_with_residual_scalar(src: &[u8; 16], pred: &[u8; 16], residual: &[
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
 #[allow(dead_code)]
-fn sse4x4_with_residual_sse2(
+pub(crate) fn sse4x4_with_residual_sse2(
     _token: X64V3Token,
     src: &[u8; 16],
     pred: &[u8; 16],
@@ -238,7 +238,7 @@ pub fn sse_16x16_luma_scalar(
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
 #[allow(dead_code)]
-fn sse_16x16_luma_sse2(
+pub(crate) fn sse_16x16_luma_sse2(
     _token: X64V3Token,
     src_y: &[u8],
     src_width: usize,
@@ -339,7 +339,7 @@ pub fn sse_8x8_chroma_scalar(
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
 #[allow(dead_code)]
-fn sse_8x8_chroma_sse2(
+pub(crate) fn sse_8x8_chroma_sse2(
     _token: X64V3Token,
     src_uv: &[u8],
     src_width: usize,
@@ -583,7 +583,7 @@ pub fn tdisto_4x4_fused(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32
 /// Based on libwebp's enc_sse2.c TTransform_SSE2 and Disto4x4_SSE2
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[arcane]
-fn tdisto_4x4_fused_sse2(
+pub(crate) fn tdisto_4x4_fused_sse2(
     _token: X64V3Token,
     a: &[u8],
     b: &[u8],

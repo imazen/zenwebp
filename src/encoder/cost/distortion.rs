@@ -203,8 +203,8 @@ fn is_flat_source_16_dispatch(src: &[u8], stride: usize) -> bool {
 /// SSE2 implementation: broadcast first pixel, compare 16 bytes per row.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[archmage::arcane]
-fn is_flat_source_16_sse2(
-    _token: impl archmage::Has128BitSimd + Copy,
+pub(crate) fn is_flat_source_16_sse2(
+    _token: archmage::X64V3Token,
     src: &[u8],
     stride: usize,
 ) -> bool {
@@ -239,9 +239,10 @@ fn is_flat_source_16_sse2(
 /// * `levels` - Quantized coefficient levels (16 coeffs per block)
 /// * `num_blocks` - Number of 4x4 blocks to check
 /// * `thresh` - Maximum allowed non-zero AC coefficients
-#[inline]
+///
 /// Check if coefficients are "flat" (few non-zero AC coefficients).
 /// Returns true if total non-zero AC count <= thresh.
+#[inline]
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
     use archmage::{SimdToken, X64V3Token};
@@ -256,8 +257,8 @@ pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
 /// SSE2 implementation using archmage
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[archmage::arcane]
-fn is_flat_coeffs_sse2(
-    _token: impl archmage::Has128BitSimd + Copy,
+pub(crate) fn is_flat_coeffs_sse2(
+    _token: archmage::X64V3Token,
     levels: &[i16],
     num_blocks: usize,
     thresh: i32,

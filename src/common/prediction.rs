@@ -260,7 +260,7 @@ fn add_residue_scalar(pblock: &mut [u8], rblock: &[i32; 16], y0: usize, x0: usiz
     let mut pos = y0 * stride + x0;
     for row in rblock.chunks(4) {
         for (p, &a) in pblock[pos..][..4].iter_mut().zip(row.iter()) {
-            *p = (a + i32::from(*p)).max(0).min(255) as u8;
+            *p = (a + i32::from(*p)).clamp(0, 255) as u8;
         }
         pos += stride;
     }
@@ -272,7 +272,7 @@ fn add_residue_scalar(pblock: &mut [u8], rblock: &[i32; 16], y0: usize, x0: usiz
 #[archmage::arcane]
 #[inline(always)]
 fn add_residue_sse2(
-    _token: impl archmage::Has128BitSimd + Copy,
+    _token: archmage::X64V3Token,
     pblock: &mut [u8],
     rblock: &[i32; 16],
     y0: usize,
@@ -394,7 +394,7 @@ fn add_residue_and_clear_scalar(
     let mut pos = y0 * stride + x0;
     for row in rblock.chunks_mut(4) {
         for (p, coeff) in pblock[pos..][..4].iter_mut().zip(row.iter_mut()) {
-            *p = (*coeff + i32::from(*p)).max(0).min(255) as u8;
+            *p = (*coeff + i32::from(*p)).clamp(0, 255) as u8;
             *coeff = 0; // Clear as we go
         }
         pos += stride;
@@ -405,7 +405,7 @@ fn add_residue_and_clear_scalar(
 #[archmage::arcane]
 #[inline(always)]
 fn add_residue_and_clear_sse2(
-    _token: impl archmage::Has128BitSimd + Copy,
+    _token: archmage::X64V3Token,
     pblock: &mut [u8],
     rblock: &mut [i32; 16],
     y0: usize,
