@@ -327,6 +327,10 @@ fn add_residue_sse2(
 /// This avoids a separate fill(0) call in the decoder hot path.
 ///
 /// For hot loops, prefer `add_residue_and_clear_with_token` to avoid per-call token summoning.
+///
+/// Note: Currently unused - decoder now uses fused IDCT+add_residue.
+/// Kept for potential encoder use or alternative decode paths.
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn add_residue_and_clear(
     pblock: &mut [u8],
@@ -348,7 +352,10 @@ pub(crate) fn add_residue_and_clear(
 
 /// SIMD-accelerated add_residue_and_clear with a pre-summoned token.
 /// Eliminates per-call token summoning overhead (~1.1B instructions saved over a full decode).
+///
+/// Note: Currently unused - decoder now uses fused IDCT+add_residue.
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn add_residue_and_clear_with_token(
     token: archmage::X64V3Token,

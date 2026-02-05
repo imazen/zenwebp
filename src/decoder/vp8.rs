@@ -1061,7 +1061,7 @@ impl<'a> Vp8Decoder<'a> {
         mb: &mut MacroBlock,
         mbx: usize,
         p: usize,
-        simd_token: SimdTokenType,
+        _simd_token: SimdTokenType,  // Kept for API consistency, IDCT deferred to prediction
     ) -> Result<(), DecodingError> {
         // Uses self.coeff_blocks which is maintained as zeros between calls.
         // After each IDCT, the block is left with transformed data for intra_predict to use.

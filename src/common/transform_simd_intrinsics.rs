@@ -69,7 +69,9 @@ pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
 }
 
 /// Inverse DCT with pre-summoned token (avoids per-call token summoning)
+/// Note: Currently unused - decoder uses fused IDCT+add_residue.
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn idct4x4_intrinsics_with_token(
     block: &mut [i32],
@@ -113,7 +115,9 @@ pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
 }
 
 /// Inverse DCT with pre-summoned token - non-x86 fallback (ignores token)
+/// Note: Currently unused - decoder uses fused IDCT+add_residue.
 #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
+#[allow(dead_code)]
 #[inline]
 pub(crate) fn idct4x4_intrinsics_with_token(
     block: &mut [i32],
@@ -787,7 +791,9 @@ pub(crate) fn idct_add_residue_dc_sse2(
 }
 
 /// Wrapper with token type parameter for decoder use (separate pred/output)
+/// Note: Currently unused - decoder uses in-place version instead.
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn idct_add_residue_with_token(
     token: X64V3Token,
