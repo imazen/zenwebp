@@ -1181,6 +1181,7 @@ impl<'a> Vp8Decoder<'a> {
         mb: &mut MacroBlock,
         mbx: usize,
         p: usize,
+        simd_token: SimdTokenType,
     ) -> Result<(), DecodingError> {
         // Uses self.coeff_blocks which is maintained as zeros between calls.
         // After each IDCT, the block is left with transformed data for intra_predict to use.
@@ -1229,7 +1230,7 @@ impl<'a> Vp8Decoder<'a> {
                 if block[0] != 0 || n {
                     mb.non_zero_dct = true;
                     if n {
-                        transform::idct4x4(block);
+                        transform::idct4x4_with_token(block, simd_token);
                     } else {
                         transform::idct4x4_dc(block);
                     }
@@ -1269,7 +1270,7 @@ impl<'a> Vp8Decoder<'a> {
                     if block[0] != 0 || n {
                         mb.non_zero_dct = true;
                         if n {
-                            transform::idct4x4(block);
+                            transform::idct4x4_with_token(block, simd_token);
                         } else {
                             transform::idct4x4_dc(block);
                         }
@@ -1700,7 +1701,7 @@ impl<'a> Vp8Decoder<'a> {
                 }
 
                 if !mb.coeffs_skipped {
-                    self.read_residual_data(&mut mb, mbx, p)?;
+                    self.read_residual_data(&mut mb, mbx, p, simd_token)?;
                 } else {
                     if mb.luma_mode != LumaMode::B {
                         self.left.complexity[0] = 0;
@@ -1766,7 +1767,7 @@ impl<'a> Vp8Decoder<'a> {
 
                 if !mb.coeffs_skipped {
                     // Decode coefficients into self.coeff_blocks
-                    self.read_residual_data(&mut mb, mbx, p)?;
+                    self.read_residual_data(&mut mb, mbx, p, simd_token)?;
                 } else {
                     // self.coeff_blocks is already zeros (invariant maintained by intra_predict_*)
                     if mb.luma_mode != LumaMode::B {

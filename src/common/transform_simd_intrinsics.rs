@@ -68,6 +68,21 @@ pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
     }
 }
 
+/// Inverse DCT with pre-summoned token (avoids per-call token summoning)
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[inline(always)]
+pub(crate) fn idct4x4_intrinsics_with_token(
+    block: &mut [i32],
+    simd_token: crate::common::prediction::SimdTokenType,
+) {
+    debug_assert!(block.len() >= 16);
+    if let Some(token) = simd_token {
+        idct4x4_sse2(token, block);
+    } else {
+        crate::common::transform::idct4x4_scalar(block);
+    }
+}
+
 /// Inverse DCT - non-x86 fallback
 #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
 #[inline]
@@ -95,6 +110,16 @@ pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
     {
         crate::common::transform::idct4x4_scalar(block);
     }
+}
+
+/// Inverse DCT with pre-summoned token - non-x86 fallback (ignores token)
+#[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
+#[inline]
+pub(crate) fn idct4x4_intrinsics_with_token(
+    block: &mut [i32],
+    _simd_token: crate::common::prediction::SimdTokenType,
+) {
+    idct4x4_intrinsics(block);
 }
 
 /// Process two blocks at once
