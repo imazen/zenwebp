@@ -1968,6 +1968,294 @@ pub fn normal_h_filter_uv_inner(
 }
 
 // ============================================================================
+// AVX2 32-row horizontal filter functions (filtering vertical edges)
+// These process 32 rows at once by transposing two 16-row groups, filtering
+// with AVX2, then transposing back. Useful for filtering across two vertically
+// adjacent macroblocks.
+// ============================================================================
+
+/// Transpose 32 rows of 8 bytes each into 8 columns of 32 bytes each.
+/// Uses the existing 16-row transpose twice and combines into __m256i.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[arcane]
+#[inline(always)]
+fn transpose_8x32_to_32x8(
+    _token: X64V3Token,
+    rows_lo: &[__m128i; 16],
+    rows_hi: &[__m128i; 16],
+) -> [__m256i; 8] {
+    // Transpose each half using existing SSE transpose
+    let cols_lo = transpose_8x16_to_16x8(_token, rows_lo);
+    let cols_hi = transpose_8x16_to_16x8(_token, rows_hi);
+
+    // Combine low and high halves into AVX2 registers
+    [
+        _mm256_set_m128i(cols_hi[0], cols_lo[0]),
+        _mm256_set_m128i(cols_hi[1], cols_lo[1]),
+        _mm256_set_m128i(cols_hi[2], cols_lo[2]),
+        _mm256_set_m128i(cols_hi[3], cols_lo[3]),
+        _mm256_set_m128i(cols_hi[4], cols_lo[4]),
+        _mm256_set_m128i(cols_hi[5], cols_lo[5]),
+        _mm256_set_m128i(cols_hi[6], cols_lo[6]),
+        _mm256_set_m128i(cols_hi[7], cols_lo[7]),
+    ]
+}
+
+/// Transpose 4 columns of 32 bytes each back to 32 rows of 4 bytes.
+/// Returns values suitable for storing as 32-bit integers per row.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[arcane]
+#[inline(always)]
+fn transpose_4x32_to_32x4(
+    _token: X64V3Token,
+    p1: __m256i,
+    p0: __m256i,
+    q0: __m256i,
+    q1: __m256i,
+) -> [i32; 32] {
+    // Split into low and high halves
+    let p1_lo = _mm256_castsi256_si128(p1);
+    let p1_hi = _mm256_extracti128_si256(p1, 1);
+    let p0_lo = _mm256_castsi256_si128(p0);
+    let p0_hi = _mm256_extracti128_si256(p0, 1);
+    let q0_lo = _mm256_castsi256_si128(q0);
+    let q0_hi = _mm256_extracti128_si256(q0, 1);
+    let q1_lo = _mm256_castsi256_si128(q1);
+    let q1_hi = _mm256_extracti128_si256(q1, 1);
+
+    // Use existing 16-row transpose on each half
+    let lo = transpose_4x16_to_16x4(_token, p1_lo, p0_lo, q0_lo, q1_lo);
+    let hi = transpose_4x16_to_16x4(_token, p1_hi, p0_hi, q0_hi, q1_hi);
+
+    // Combine results
+    let mut result = [0i32; 32];
+    result[..16].copy_from_slice(&lo);
+    result[16..].copy_from_slice(&hi);
+    result
+}
+
+/// Transpose 6 columns of 32 bytes each back to 32 rows of 6 bytes.
+/// Returns (4-byte values, 2-byte values) suitable for storing per row.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[arcane]
+#[inline(always)]
+fn transpose_6x32_to_32x6(
+    _token: X64V3Token,
+    p2: __m256i,
+    p1: __m256i,
+    p0: __m256i,
+    q0: __m256i,
+    q1: __m256i,
+    q2: __m256i,
+) -> ([i32; 32], [i16; 32]) {
+    // Split into low and high halves
+    let p2_lo = _mm256_castsi256_si128(p2);
+    let p2_hi = _mm256_extracti128_si256(p2, 1);
+    let p1_lo = _mm256_castsi256_si128(p1);
+    let p1_hi = _mm256_extracti128_si256(p1, 1);
+    let p0_lo = _mm256_castsi256_si128(p0);
+    let p0_hi = _mm256_extracti128_si256(p0, 1);
+    let q0_lo = _mm256_castsi256_si128(q0);
+    let q0_hi = _mm256_extracti128_si256(q0, 1);
+    let q1_lo = _mm256_castsi256_si128(q1);
+    let q1_hi = _mm256_extracti128_si256(q1, 1);
+    let q2_lo = _mm256_castsi256_si128(q2);
+    let q2_hi = _mm256_extracti128_si256(q2, 1);
+
+    // Use existing 16-row transpose on each half
+    let (lo4, lo2) = transpose_6x16_to_16x6(_token, p2_lo, p1_lo, p0_lo, q0_lo, q1_lo, q2_lo);
+    let (hi4, hi2) = transpose_6x16_to_16x6(_token, p2_hi, p1_hi, p0_hi, q0_hi, q1_hi, q2_hi);
+
+    // Combine results
+    let mut result4 = [0i32; 32];
+    let mut result2 = [0i16; 32];
+    result4[..16].copy_from_slice(&lo4);
+    result4[16..].copy_from_slice(&hi4);
+    result2[..16].copy_from_slice(&lo2);
+    result2[16..].copy_from_slice(&hi2);
+    (result4, result2)
+}
+
+/// Apply normal horizontal filter (DoFilter4) to 32 rows at a vertical edge.
+///
+/// This filters the edge between column (x-1) and column (x), processing
+/// 32 consecutive rows (e.g., two vertically adjacent macroblocks).
+/// Uses the transpose technique: load 32 rows × 8 columns, transpose,
+/// apply DoFilter4 logic with AVX2, transpose back, store.
+///
+/// Each row must have at least 4 bytes before and after the edge point.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[allow(clippy::too_many_arguments)]
+#[arcane]
+pub fn normal_h_filter32_inner(
+    _token: X64V3Token,
+    pixels: &mut [u8],
+    x: usize,
+    y_start: usize,
+    stride: usize,
+    hev_thresh: i32,
+    interior_limit: i32,
+    edge_limit: i32,
+) {
+    // Assert bounds upfront to elide checks in SIMD loads/stores
+    assert!(
+        x >= 4 && (y_start + 31) * stride + x + 4 <= pixels.len(),
+        "normal_h_filter32_inner: bounds check failed"
+    );
+
+    // Load 32 rows of 8 pixels each (p3,p2,p1,p0,q0,q1,q2,q3)
+    // Split into two groups of 16 for the transpose
+    let mut rows_lo = [_mm_setzero_si128(); 16];
+    let mut rows_hi = [_mm_setzero_si128(); 16];
+
+    for (i, row) in rows_lo.iter_mut().enumerate() {
+        let row_start = (y_start + i) * stride + x - 4;
+        *row = simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
+    }
+    for (i, row) in rows_hi.iter_mut().enumerate() {
+        let row_start = (y_start + 16 + i) * stride + x - 4;
+        *row = simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
+    }
+
+    // Transpose 8x32 to 32x8
+    let cols = transpose_8x32_to_32x8(_token, &rows_lo, &rows_hi);
+    let p3 = cols[0];
+    let p2 = cols[1];
+    let mut p1 = cols[2];
+    let mut p0 = cols[3];
+    let mut q0 = cols[4];
+    let mut q1 = cols[5];
+    let q2 = cols[6];
+    let q3 = cols[7];
+
+    // Check if filtering is needed
+    let mask = needs_filter_normal_32(
+        _token,
+        p3,
+        p2,
+        p1,
+        p0,
+        q0,
+        q1,
+        q2,
+        q3,
+        edge_limit,
+        interior_limit,
+    );
+
+    // Check high edge variance
+    let hev = high_edge_variance_32(_token, p1, p0, q0, q1, hev_thresh);
+
+    // Apply filter
+    do_filter4_32(_token, &mut p1, &mut p0, &mut q0, &mut q1, mask, hev);
+
+    // Transpose back: convert 4 columns of 32 to 32 rows of 4
+    let packed = transpose_4x32_to_32x4(_token, p1, p0, q0, q1);
+
+    // Store 4 bytes per row (p1, p0, q0, q1)
+    for (i, &val) in packed.iter().enumerate() {
+        let row_start = (y_start + i) * stride + x - 2;
+        simd_mem::_mm_storeu_si32(
+            <&mut [u8; 4]>::try_from(&mut pixels[row_start..][..4]).unwrap(),
+            _mm_cvtsi32_si128(val),
+        );
+    }
+}
+
+/// Apply normal horizontal filter (DoFilter6) to 32 rows at a vertical macroblock edge.
+///
+/// This filters the edge between column (x-1) and column (x), processing
+/// 32 consecutive rows (e.g., two vertically adjacent macroblocks).
+/// Uses the transpose technique: load 32 rows × 8 columns, transpose,
+/// apply DoFilter6 logic with AVX2, transpose back, store.
+///
+/// Each row must have at least 4 bytes before and after the edge point.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[allow(clippy::too_many_arguments)]
+#[arcane]
+pub fn normal_h_filter32_edge(
+    _token: X64V3Token,
+    pixels: &mut [u8],
+    x: usize,
+    y_start: usize,
+    stride: usize,
+    hev_thresh: i32,
+    interior_limit: i32,
+    edge_limit: i32,
+) {
+    // Assert bounds upfront to elide checks in SIMD loads/stores
+    assert!(
+        x >= 4 && (y_start + 31) * stride + x + 4 <= pixels.len(),
+        "normal_h_filter32_edge: bounds check failed"
+    );
+
+    // Load 32 rows of 8 pixels each
+    let mut rows_lo = [_mm_setzero_si128(); 16];
+    let mut rows_hi = [_mm_setzero_si128(); 16];
+
+    for (i, row) in rows_lo.iter_mut().enumerate() {
+        let row_start = (y_start + i) * stride + x - 4;
+        *row = simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
+    }
+    for (i, row) in rows_hi.iter_mut().enumerate() {
+        let row_start = (y_start + 16 + i) * stride + x - 4;
+        *row = simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
+    }
+
+    // Transpose 8x32 to 32x8
+    let cols = transpose_8x32_to_32x8(_token, &rows_lo, &rows_hi);
+    let p3 = cols[0];
+    let mut p2 = cols[1];
+    let mut p1 = cols[2];
+    let mut p0 = cols[3];
+    let mut q0 = cols[4];
+    let mut q1 = cols[5];
+    let mut q2 = cols[6];
+    let q3 = cols[7];
+
+    // Check if filtering is needed
+    let mask = needs_filter_normal_32(
+        _token,
+        p3,
+        p2,
+        p1,
+        p0,
+        q0,
+        q1,
+        q2,
+        q3,
+        edge_limit,
+        interior_limit,
+    );
+
+    // Check high edge variance
+    let hev = high_edge_variance_32(_token, p1, p0, q0, q1, hev_thresh);
+
+    // Apply filter
+    do_filter6_32(
+        _token, &mut p2, &mut p1, &mut p0, &mut q0, &mut q1, &mut q2, mask, hev,
+    );
+
+    // Transpose back: convert 6 columns of 32 to 32 rows of 6
+    let (packed4, packed2) = transpose_6x32_to_32x6(_token, p2, p1, p0, q0, q1, q2);
+
+    // Store 6 bytes per row (p2, p1, p0, q0, q1, q2)
+    for (i, (&val4, &val2)) in packed4.iter().zip(packed2.iter()).enumerate() {
+        let row_start = (y_start + i) * stride + x - 3;
+        // Store first 4 bytes (p2, p1, p0, q0)
+        simd_mem::_mm_storeu_si32(
+            <&mut [u8; 4]>::try_from(&mut pixels[row_start..][..4]).unwrap(),
+            _mm_cvtsi32_si128(val4),
+        );
+        // Store next 2 bytes (q1, q2)
+        simd_mem::_mm_storeu_si16(
+            <&mut [u8; 2]>::try_from(&mut pixels[row_start + 4..][..2]).unwrap(),
+            _mm_cvtsi32_si128(val2 as i32),
+        );
+    }
+}
+
+// ============================================================================
 // 8-pixel chroma vertical filter functions (filtering horizontal edges)
 // These process both U and V planes together by packing 8 U + 8 V pixels
 // into each __m128i register.
@@ -2743,6 +3031,154 @@ mod tests {
                 "q2 mismatch at x={}",
                 x
             );
+        }
+    }
+
+    #[test]
+    fn test_normal_h_filter32_inner_matches_two_16() {
+        let Some(token) = X64V3Token::summon() else {
+            eprintln!("AVX2 not available, skipping test");
+            return;
+        };
+
+        let width = 64;
+        let height = 48; // Need 32 rows + padding
+        let stride = width;
+        let mut pixels = vec![128u8; stride * height];
+        let mut pixels_16 = pixels.clone();
+
+        // Set up gradient data for all 32 rows around the vertical edge at x=16
+        for y in 0..32 {
+            for x in 0..8 {
+                let base = y * stride + 12 + x; // columns 12-19 around edge at x=16
+                pixels[base] = (100 + x * 10) as u8;
+                pixels_16[base] = (100 + x * 10) as u8;
+            }
+        }
+
+        let hev_thresh = 5;
+        let interior_limit = 15;
+        let edge_limit = 25;
+
+        // Apply AVX2 32-row filter (processing 32 rows at once)
+        normal_h_filter32_inner(
+            token,
+            &mut pixels,
+            16, // x
+            0,  // y_start
+            stride,
+            hev_thresh,
+            interior_limit,
+            edge_limit,
+        );
+
+        // Apply 2x 16-row filter (rows 0-15 and rows 16-31)
+        normal_h_filter16_inner(
+            token,
+            &mut pixels_16,
+            16,
+            0,
+            stride,
+            hev_thresh,
+            interior_limit,
+            edge_limit,
+        );
+        normal_h_filter16_inner(
+            token,
+            &mut pixels_16,
+            16,
+            16,
+            stride,
+            hev_thresh,
+            interior_limit,
+            edge_limit,
+        );
+
+        // Compare all 32 rows for modified columns (p1, p0, q0, q1 = x-2 to x+1)
+        for y in 0..32 {
+            for x in 14..18 {
+                assert_eq!(
+                    pixels[y * stride + x],
+                    pixels_16[y * stride + x],
+                    "mismatch at y={}, x={}",
+                    y,
+                    x
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_normal_h_filter32_edge_matches_two_16() {
+        let Some(token) = X64V3Token::summon() else {
+            eprintln!("AVX2 not available, skipping test");
+            return;
+        };
+
+        let width = 64;
+        let height = 48;
+        let stride = width;
+        let mut pixels = vec![128u8; stride * height];
+        let mut pixels_16 = pixels.clone();
+
+        // Set up gradient data for all 32 rows around the vertical edge at x=16
+        for y in 0..32 {
+            for x in 0..8 {
+                let base = y * stride + 12 + x;
+                pixels[base] = (100 + x * 10) as u8;
+                pixels_16[base] = (100 + x * 10) as u8;
+            }
+        }
+
+        let hev_thresh = 5;
+        let interior_limit = 15;
+        let edge_limit = 25;
+
+        // Apply AVX2 32-row filter
+        normal_h_filter32_edge(
+            token,
+            &mut pixels,
+            16,
+            0,
+            stride,
+            hev_thresh,
+            interior_limit,
+            edge_limit,
+        );
+
+        // Apply 2x 16-row filter
+        normal_h_filter16_edge(
+            token,
+            &mut pixels_16,
+            16,
+            0,
+            stride,
+            hev_thresh,
+            interior_limit,
+            edge_limit,
+        );
+        normal_h_filter16_edge(
+            token,
+            &mut pixels_16,
+            16,
+            16,
+            stride,
+            hev_thresh,
+            interior_limit,
+            edge_limit,
+        );
+
+        // Compare all 32 rows for modified columns (p2, p1, p0, q0, q1, q2 = x-3 to x+2)
+        for y in 0..32 {
+            for x in 13..19 {
+                assert_eq!(
+                    pixels[y * stride + x],
+                    pixels_16[y * stride + x],
+                    "mismatch at y={}, x={}",
+                    y,
+                    x
+                );
+            }
         }
     }
 }

@@ -533,3 +533,113 @@ pub(crate) fn normal_filter_vertical_uv_sub(
         );
     }
 }
+
+// ============================================================================
+// AVX2 32-row horizontal filter dispatch functions
+// These process 32 rows at once (e.g., two vertically adjacent macroblocks).
+// Marked dead_code until decoder restructuring enables their use.
+// ============================================================================
+
+/// Helper to apply normal horizontal macroblock filter to 32 rows with AVX2.
+/// Filters the vertical edge at column x0, processing 32 rows (2 macroblocks) at once.
+#[inline]
+#[allow(dead_code)]
+pub(crate) fn normal_filter_horizontal_mb_32_rows(
+    buf: &mut [u8],
+    y_start: usize,
+    x0: usize,
+    stride: usize,
+    hev_threshold: u8,
+    interior_limit: u8,
+    edge_limit: u8,
+    simd_token: SimdTokenType,
+) {
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    if let Some(token) = simd_token {
+        super::loop_filter_avx2::normal_h_filter32_edge(
+            token,
+            buf,
+            x0,
+            y_start,
+            stride,
+            i32::from(hev_threshold),
+            i32::from(interior_limit),
+            i32::from(edge_limit),
+        );
+        return;
+    }
+
+    // Fallback: two 16-row filters
+    normal_filter_horizontal_mb_16_rows(
+        buf,
+        y_start,
+        x0,
+        stride,
+        hev_threshold,
+        interior_limit,
+        edge_limit,
+        simd_token,
+    );
+    normal_filter_horizontal_mb_16_rows(
+        buf,
+        y_start + 16,
+        x0,
+        stride,
+        hev_threshold,
+        interior_limit,
+        edge_limit,
+        simd_token,
+    );
+}
+
+/// Helper to apply normal horizontal subblock filter to 32 rows with AVX2.
+/// Filters the vertical edge at column x0, processing 32 rows (2 macroblocks) at once.
+#[inline]
+#[allow(dead_code)]
+pub(crate) fn normal_filter_horizontal_sub_32_rows(
+    buf: &mut [u8],
+    y_start: usize,
+    x0: usize,
+    stride: usize,
+    hev_threshold: u8,
+    interior_limit: u8,
+    edge_limit: u8,
+    simd_token: SimdTokenType,
+) {
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    if let Some(token) = simd_token {
+        super::loop_filter_avx2::normal_h_filter32_inner(
+            token,
+            buf,
+            x0,
+            y_start,
+            stride,
+            i32::from(hev_threshold),
+            i32::from(interior_limit),
+            i32::from(edge_limit),
+        );
+        return;
+    }
+
+    // Fallback: two 16-row filters
+    normal_filter_horizontal_sub_16_rows(
+        buf,
+        y_start,
+        x0,
+        stride,
+        hev_threshold,
+        interior_limit,
+        edge_limit,
+        simd_token,
+    );
+    normal_filter_horizontal_sub_16_rows(
+        buf,
+        y_start + 16,
+        x0,
+        stride,
+        hev_threshold,
+        interior_limit,
+        edge_limit,
+        simd_token,
+    );
+}
