@@ -596,6 +596,16 @@ Previous optimizations:
 - **SIMD normal loop filter for vertical edges** (~10% speedup, commit 3bf30f1)
 - **libwebp-rs style bit reader for coefficients** (16% speedup, commit 5588e44)
 - AVX2 loop filter (16 pixels at once) - simple filter only
+- **AVX2 32-pixel normal vertical filter** - normal_v_filter32_inner, normal_v_filter32_edge (commit 924e22d)
+- **AVX2 32-row normal horizontal filter** - normal_h_filter32_inner, normal_h_filter32_edge (commit a08712e)
+
+**Note on 32-pixel filter integration (2026-02-05):**
+The 32-pixel AVX2 filters are implemented but NOT integrated into the decoder due to filter
+order dependencies. Investigation found that MB(x)'s horizontal subblock edges (y=4,8,12)
+read columns 12-15, which overlap with MB(x+1)'s left edge filter writes (columns 12-19).
+This cross-MB dependency prevents restructuring to batch horizontal subblock edges across
+adjacent macroblocks. The 32-pixel filters remain available for future use if the decoder
+architecture changes (e.g., wider cache buffers to hold pre-filtered state).
 
 ### Decoder Profiler Hot Spots (2026-02-05, after partition reader caching)
 | Category | % Time | M instr/decode | Notes |
