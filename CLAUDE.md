@@ -534,16 +534,24 @@ The crate supports `no_std` environments with the `alloc` crate:
 - `Encoder.encode_to_writer()` requires `std` feature
 - Dependencies: `thiserror` (no_std), `whereat` (no_std), `hashbrown` (no_std), `libm` (floating-point math)
 
-### Decoder Performance vs libwebp (2026-01-23)
+### Decoder Performance vs libwebp (2026-02-04)
 
-| Test | Our Decoder | libwebp | Speed Ratio |
-|------|-------------|---------|-------------|
-| libwebp-encoded | 4.24ms (93 MPix/s) | 3.05ms (129 MPix/s) | 1.39x slower |
-| our-encoded | 4.14ms (95 MPix/s) | 2.91ms (135 MPix/s) | 1.42x slower |
+| Corpus | Images | zenwebp | libwebp | Ratio |
+|--------|--------|---------|---------|-------|
+| CLIC2025 | 15 | 155 MPix/s | 199 MPix/s | **1.28x** slower |
+| Screenshots | 9 | ~165 MPix/s | ~202 MPix/s | **1.22x** slower |
+| CID22 | 15 | ~85 MPix/s | ~142 MPix/s | **1.67x** slower |
 
-*Benchmark: 768x512 Kodak image, 100 iterations, release mode*
+*Benchmarks on varied image corpora, 10 iterations per image, release mode*
 
-Our decoder is ~1.4x slower than libwebp (improved from 2.5x baseline). Recent optimizations:
+Our decoder is ~1.28x slower than libwebp on large images (improved from 2.5x baseline).
+Small images (CID22, avg 262KB) have more overhead per pixel.
+
+**Recent optimization (2026-02-04):**
+- **Fused add_residue + coefficient clear** - Combines adding residuals with zeroing in one
+  SIMD pass, eliminating separate fill(0) calls. 8.3% instruction reduction on CLIC2025.
+
+Previous optimizations:
 - **SIMD chroma vertical loop filter** - U+V processed together as 16 pixels (10% speedup, 2026-01-23)
 - **Position-indexed probability table** - eliminates COEFF_BANDS lookup (10% instruction reduction, commit 15b3771)
 - **VP8HeaderBitReader for mode parsing** - replaces ArithmeticDecoder (6-8% faster, commit 9b6f963)
@@ -557,15 +565,17 @@ Our decoder is ~1.4x slower than libwebp (improved from 2.5x baseline). Recent o
 - **libwebp-rs style bit reader for coefficients** (16% speedup, commit 5588e44)
 - AVX2 loop filter (16 pixels at once) - simple filter only
 
-### Decoder Profiler Hot Spots (after VP8HeaderBitReader)
+### Decoder Profiler Hot Spots (2026-02-04, after fused add_residue)
 | Function | % Time | Notes |
 |----------|--------|-------|
-| read_coefficients | ~22% | Coefficient decoding |
-| decode_frame_ | ~12% | Frame processing + inlined mode parsing |
-| fancy_upsample_8_pairs | ~5% | YUV SIMD |
-| should_filter_vertical | ~4% | Loop filter threshold check |
-| idct4x4_avx2 | ~2% | Already SIMD |
-| normal_h_filter_uv_* | ~2% | Chroma SIMD |
+| decode_frame | 27.6% | Main loop + inlined code |
+| read_coefficients_to_block | 24.3% | Coefficient decoding (arithmetic) |
+| fill_row_fancy | 20.9% | YUV→RGB with fancy upsampling |
+| memset | 5.6% | Output buffer allocation |
+| loop filter (combined) | ~16% | 9 filter functions, already SIMD |
+| predict_dcpred | 1.9% | DC prediction |
+
+Note: `add_residue_sse2` dropped from 10% to negligible after fused optimization.
 
 ### Detailed Callgrind/Cachegrind Analysis (2026-01-23)
 
