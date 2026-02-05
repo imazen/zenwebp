@@ -32,6 +32,9 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+#[cfg(feature = "multiverse")]
+use multiversed::multiversed;
+
 use crate::common::prediction::SimdTokenType;
 
 /// `_mm_mulhi_epu16` emulation
@@ -182,7 +185,7 @@ fn fill_row_fancy_with_2_uv_rows<const BPP: usize>(
     v_row_2: &[u8],
     simd_token: SimdTokenType,
 ) {
-    // Use SIMD for RGB (BPP=3) if available and row is wide enough
+    // Use SIMD intrinsics for RGB (BPP=3) if available and row is wide enough
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     if BPP == 3 && y_row.len() >= 17 {
         if let Some(token) = simd_token {
@@ -298,6 +301,7 @@ fn fill_row_fancy_with_2_uv_rows_simd<const BPP: usize>(
     }
 }
 
+#[cfg_attr(feature = "multiverse", multiversed)]
 fn fill_row_fancy_with_2_uv_rows_scalar<const BPP: usize>(
     row_buffer: &mut [u8],
     y_row: &[u8],
@@ -365,6 +369,7 @@ fn fill_row_fancy_with_2_uv_rows_scalar<const BPP: usize>(
     }
 }
 
+#[cfg_attr(feature = "multiverse", multiversed)]
 fn fill_row_fancy_with_1_uv_row<const BPP: usize>(
     row_buffer: &mut [u8],
     y_row: &[u8],

@@ -1,6 +1,9 @@
 // Allow dead code when std is disabled - some functions are encoder-only
 #![cfg_attr(not(feature = "std"), allow(dead_code))]
 
+#[cfg(feature = "multiverse")]
+use multiversed::multiversed;
+
 /// 16 bit fixed point version of cos(PI/8) * sqrt(2) - 1
 const CONST1: i64 = 20091;
 /// 16 bit fixed point version of sin(PI/8) * sqrt(2)
@@ -51,6 +54,7 @@ pub(crate) fn idct4x4_with_token(
 }
 
 #[cfg_attr(feature = "simd", allow(dead_code))]
+#[cfg_attr(feature = "multiverse", multiversed)]
 pub(crate) fn idct4x4_scalar(block: &mut [i32]) {
     // The intermediate results may overflow the types, so we stretch the type.
     fn fetch(block: &[i32], idx: usize) -> i64 {
@@ -98,6 +102,7 @@ pub(crate) fn idct4x4_scalar(block: &mut [i32]) {
 }
 
 // 14.3 inverse walsh-hadamard transform, used in decoding
+#[cfg_attr(feature = "multiverse", multiversed)]
 pub(crate) fn iwht4x4(block: &mut [i32]) {
     // Perform one length check up front to avoid subsequent bounds checks in this function
     assert!(block.len() >= 16);
@@ -132,6 +137,7 @@ pub(crate) fn iwht4x4(block: &mut [i32]) {
     }
 }
 
+#[cfg_attr(feature = "multiverse", multiversed)]
 pub(crate) fn wht4x4(block: &mut [i32; 16]) {
     // The intermediate results may overflow the types, so we stretch the type.
     fn fetch(block: &[i32], idx: usize) -> i64 {
@@ -193,6 +199,7 @@ pub(crate) fn dct4x4(block: &mut [i32; 16]) {
 
 /// Scalar DCT implementation for reference and non-SIMD builds
 #[cfg_attr(feature = "simd", allow(dead_code))]
+#[cfg_attr(feature = "multiverse", multiversed)]
 pub(crate) fn dct4x4_scalar(block: &mut [i32; 16]) {
     // The intermediate results may overflow the types, so we stretch the type.
     fn fetch(block: &[i32], idx: usize) -> i64 {
