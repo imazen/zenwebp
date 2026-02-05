@@ -534,26 +534,33 @@ The crate supports `no_std` environments with the `alloc` crate:
 - `Encoder.encode_to_writer()` requires `std` feature
 - Dependencies: `thiserror` (no_std), `whereat` (no_std), `hashbrown` (no_std), `libm` (floating-point math)
 
-### Decoder Performance vs libwebp (2026-02-05, after partition reader caching)
+### Decoder Performance vs libwebp (2026-02-05, after 32-pixel YUV SIMD)
 
-**Single-image benchmark** (1024x1024 lossy WebP, 100 iterations):
-| Decoder | Time | Throughput |
-|---------|------|------------|
-| zenwebp | 3.93ms | 267 MPix/s |
-| libwebp | 2.98ms | 351 MPix/s |
-| **Ratio** | **1.32x** | 0.76x |
+| Image Size | zenwebp | libwebp | Ratio |
+|------------|---------|---------|-------|
+| CLIC 1360x2048 | 106-222 MPix/s | 129-269 MPix/s | **1.21x** slower |
+| CID22 512x512 | ~117 MPix/s | ~164 MPix/s | **1.41x** slower |
 
-*Improved from 1.57x to 1.32x by caching the partition reader (commit 6327e15).
-The reader was being created/dropped ~316K times per decode (once per 4x4 block),
-copying 32 bytes of state each time. Now a single ActivePartitionReader is created
-per macroblock and reused for all blocks.*
+*Benchmarks: 10-20 iterations per image, release mode with SIMD*
 
-**Per-decode instruction breakdown (1024x1024 image, 50 iterations):**
-| Category | zenwebp | libwebp | Ratio |
-|----------|---------|---------|-------|
-| Coefficient reading | 13.2M | 10.3M | 1.28x |
-| YUV→RGB | ~13M | ~10M | ~1.3x |
-| Loop filters | ~14M | ~10M | ~1.4x |
+Our decoder is ~1.21x slower than libwebp on large images.
+Small images have more overhead (1.41x) due to fixed costs per decode.
+
+**Recent optimizations (2026-02-05):**
+- **32-pixel SIMD YUV conversion**: Process 32 Y pixels (16 chroma pairs) at once
+  - YUV instructions dropped from 5.17% to 1.70% of total (3x improvement)
+  - Throughput: 102 → 106+ MPix/s on CLIC images
+- **Fixed-size array optimization**: Eliminate bounds checks in SIMD inner loops
+- **ActivePartitionReader** (commit 6327e15): Eliminated ~316K struct copy/drop per decode
+  - Reader was being created/dropped once per 4x4 block, copying 32 bytes each time
+
+**Per-decode instruction breakdown (CLIC 1360x2048, 2 iterations):**
+| Category | zenwebp | % | Notes |
+|----------|---------|---|-------|
+| Coefficient reading | 278M | 6.96% | vs libwebp 215M GetCoeffsFast |
+| Main decode loop | 171M | 4.27% | orchestration |
+| YUV→RGB | 68M | 1.70% | down from 5.17% |
+| Loop filters | 97M | 2.4% | 9 SIMD functions |
 
 **Optimization attempts (2026-02-05):**
 1. **SSSE3 shuffle for RGB interleave** - FAILED: archmage generates function calls for
