@@ -583,16 +583,24 @@ Previous optimizations:
 - **libwebp-rs style bit reader for coefficients** (16% speedup, commit 5588e44)
 - AVX2 loop filter (16 pixels at once) - simple filter only
 
-### Decoder Profiler Hot Spots (2026-02-05)
-| Function | % Time | Instructions | Notes |
-|----------|--------|--------------|-------|
-| decode_frame | 29.5% | 85M | Main loop + orchestration |
-| read_coefficients_to_block | 27.3% | 79M | Coefficient decoding (bit reader) |
-| fill_row_fancy_with_2_uv_rows | 15.2% | 44M | YUV→RGB with fancy upsampling |
-| loop filter (combined) | ~15% | ~44M | 9 filter functions, all SIMD |
-| memset | 3.7% | 11M | Output buffer zero-init |
-| memcpy | 1.6% | 5M | Memory copying |
-| predict_dcpred | 1.2% | 4M | DC prediction |
+### Decoder Profiler Hot Spots (2026-02-05, post-optimization)
+| Category | % Time | M instr/decode | Notes |
+|----------|--------|----------------|-------|
+| Coefficient reading | 28.1% | 83.7M | bit_reader + vp8.rs coefficient path |
+| YUV→RGB | 16.6% | 49.5M | fancy upsampling with SIMD |
+| Loop filter | ~12% | ~36M | 9 SIMD filter functions |
+| memset | 5.5% | 16.5M | Output buffer zero-init |
+| decode_frame (other) | ~20% | ~60M | Main loop, prediction, transforms |
+| memcpy | ~1% | ~3M | Memory copying |
+
+**Total: 297.8M per decode (1638×2048 lossy WebP)**
+**libwebp baseline: 189.7M per decode**
+**Ratio: 1.57x slower**
+
+**Previous session optimizations (applied):**
+- SIMD token caching for IDCT (-2.0%, commit 52bd541)
+- Diagnostic code removal from coefficient reader (-1.9%, commit 05b87ad)
+- SIMD token caching for YUV→RGB (negligible, commit b8167e1)
 
 Note: `add_residue_sse2` is now inlined via `add_residue_and_clear_sse2`.
 
