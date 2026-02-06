@@ -242,6 +242,24 @@ pub enum LoopCount {
     Times(NonZeroU16),
 }
 
+impl core::fmt::Display for LoopCount {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            LoopCount::Forever => f.write_str("infinite"),
+            LoopCount::Times(n) => write!(f, "{} time{}", n, if n.get() == 1 { "" } else { "s" }),
+        }
+    }
+}
+
+impl From<u16> for LoopCount {
+    fn from(n: u16) -> Self {
+        match NonZeroU16::new(n) {
+            None => LoopCount::Forever,
+            Some(n) => LoopCount::Times(n),
+        }
+    }
+}
+
 /// WebP decoder configuration options
 #[derive(Clone)]
 #[non_exhaustive]
@@ -257,6 +275,22 @@ impl Default for WebPDecodeOptions {
         Self {
             lossy_upsampling: UpsamplingMethod::Bilinear,
         }
+    }
+}
+
+impl WebPDecodeOptions {
+    /// Set the lossy upsampling method.
+    #[must_use]
+    pub fn lossy_upsampling(mut self, method: UpsamplingMethod) -> Self {
+        self.lossy_upsampling = method;
+        self
+    }
+
+    /// Disable fancy upsampling (use simple nearest-neighbor instead).
+    #[must_use]
+    pub fn no_fancy_upsampling(mut self) -> Self {
+        self.lossy_upsampling = UpsamplingMethod::Simple;
+        self
     }
 }
 
@@ -1161,6 +1195,15 @@ impl ImageInfo {
     }
 }
 
+impl TryFrom<&[u8]> for ImageInfo {
+    type Error = DecodingError;
+
+    /// Parse image information from WebP data.
+    fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
+        Self::from_webp(data)
+    }
+}
+
 /// Bitstream compression format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -1170,6 +1213,15 @@ pub enum BitstreamFormat {
     Lossy,
     /// Lossless compression (VP8L).
     Lossless,
+}
+
+impl core::fmt::Display for BitstreamFormat {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            BitstreamFormat::Lossy => f.write_str("lossy"),
+            BitstreamFormat::Lossless => f.write_str("lossless"),
+        }
+    }
 }
 
 /// Decoded YUV 4:2:0 planar image data.

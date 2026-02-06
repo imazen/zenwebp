@@ -191,7 +191,7 @@ impl<'a> AnimationDecoder<'a> {
         self.frames_read = 0;
     }
 
-    /// Decode all frames at once.
+    /// Decode all remaining frames at once.
     pub fn decode_all(&mut self) -> Result<Vec<AnimFrame>, DecodingError> {
         self.reset();
         let mut frames = Vec::with_capacity(self.total_frames as usize);
@@ -199,5 +199,17 @@ impl<'a> AnimationDecoder<'a> {
             frames.push(frame);
         }
         Ok(frames)
+    }
+}
+
+impl Iterator for AnimationDecoder<'_> {
+    type Item = Result<AnimFrame, DecodingError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.next_frame() {
+            Ok(Some(frame)) => Some(Ok(frame)),
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
+        }
     }
 }

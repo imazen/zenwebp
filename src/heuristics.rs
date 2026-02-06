@@ -117,7 +117,7 @@ pub fn estimate_encode(width: u32, height: u32, bpp: u8, config: &EncoderConfig)
     let pixels = (width as u64) * (height as u64);
     let input_bytes = pixels * (bpp as u64);
 
-    let method = config.get_method();
+    let method = config.current_method();
     let is_lossless = config.is_lossless();
 
     let (fixed, bpp_low, bpp_high) = if is_lossless {
@@ -149,7 +149,7 @@ pub fn estimate_encode(width: u32, height: u32, bpp: u8, config: &EncoderConfig)
     let output_ratio = if is_lossless {
         0.5 // ~50% of input
     } else {
-        let q = config.get_quality() as f64;
+        let q = config.current_quality() as f64;
         0.02 + (q / 100.0) * 0.18
     };
     let output_bytes = (input_bytes as f64 * output_ratio) as u64;

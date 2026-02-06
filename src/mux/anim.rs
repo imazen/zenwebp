@@ -314,18 +314,36 @@ impl AnimationEncoder {
     }
 
     /// Set ICC profile on the output.
-    pub fn set_icc_profile(&mut self, data: Vec<u8>) {
+    pub fn icc_profile(&mut self, data: Vec<u8>) {
         self.mux.set_icc_profile(data);
     }
 
     /// Set EXIF metadata on the output.
-    pub fn set_exif(&mut self, data: Vec<u8>) {
+    pub fn exif(&mut self, data: Vec<u8>) {
         self.mux.set_exif(data);
     }
 
     /// Set XMP metadata on the output.
-    pub fn set_xmp(&mut self, data: Vec<u8>) {
+    pub fn xmp(&mut self, data: Vec<u8>) {
         self.mux.set_xmp(data);
+    }
+
+    /// Set ICC profile on the output.
+    #[deprecated(since = "0.3.0", note = "use `icc_profile()` instead")]
+    pub fn set_icc_profile(&mut self, data: Vec<u8>) {
+        self.icc_profile(data);
+    }
+
+    /// Set EXIF metadata on the output.
+    #[deprecated(since = "0.3.0", note = "use `exif()` instead")]
+    pub fn set_exif(&mut self, data: Vec<u8>) {
+        self.exif(data);
+    }
+
+    /// Set XMP metadata on the output.
+    #[deprecated(since = "0.3.0", note = "use `xmp()` instead")]
+    pub fn set_xmp(&mut self, data: Vec<u8>) {
+        self.xmp(data);
     }
 }
 

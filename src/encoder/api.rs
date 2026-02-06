@@ -22,6 +22,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
+use core::fmt;
 use core::iter::Peekable;
 use core::slice::ChunksExact;
 use thiserror::Error;
@@ -87,6 +88,20 @@ pub enum Preset {
     Auto,
 }
 
+impl fmt::Display for Preset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Preset::Default => f.write_str("default"),
+            Preset::Picture => f.write_str("picture"),
+            Preset::Photo => f.write_str("photo"),
+            Preset::Drawing => f.write_str("drawing"),
+            Preset::Icon => f.write_str("icon"),
+            Preset::Text => f.write_str("text"),
+            Preset::Auto => f.write_str("auto"),
+        }
+    }
+}
+
 /// Color type of the image.
 ///
 /// Note that the WebP format doesn't have a concept of color type. All images are encoded as RGBA
@@ -122,6 +137,20 @@ impl ColorType {
             ColorType::Rgb8 | ColorType::Bgr8 => 3,
             ColorType::Rgba8 | ColorType::Bgra8 => 4,
             ColorType::Yuv420 => 1, // not meaningful for planar; validated separately
+        }
+    }
+}
+
+impl fmt::Display for ColorType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ColorType::L8 => f.write_str("L8"),
+            ColorType::La8 => f.write_str("LA8"),
+            ColorType::Rgb8 => f.write_str("RGB8"),
+            ColorType::Rgba8 => f.write_str("RGBA8"),
+            ColorType::Bgr8 => f.write_str("BGR8"),
+            ColorType::Bgra8 => f.write_str("BGRA8"),
+            ColorType::Yuv420 => f.write_str("YUV420"),
         }
     }
 }
@@ -741,15 +770,15 @@ impl EncoderConfig {
         self
     }
 
-    /// Get the quality setting.
+    /// Get the current quality setting.
     #[must_use]
-    pub fn get_quality(&self) -> f32 {
+    pub fn current_quality(&self) -> f32 {
         self.quality
     }
 
-    /// Get the preset.
+    /// Get the current preset.
     #[must_use]
-    pub fn get_preset(&self) -> Preset {
+    pub fn current_preset(&self) -> Preset {
         self.preset
     }
 
@@ -759,7 +788,28 @@ impl EncoderConfig {
         self.lossless
     }
 
+    /// Get the current method (quality/speed tradeoff).
+    #[must_use]
+    pub fn current_method(&self) -> u8 {
+        self.method
+    }
+
+    /// Get the quality setting.
+    #[deprecated(since = "0.3.0", note = "use `current_quality()` instead")]
+    #[must_use]
+    pub fn get_quality(&self) -> f32 {
+        self.quality
+    }
+
+    /// Get the preset.
+    #[deprecated(since = "0.3.0", note = "use `current_preset()` instead")]
+    #[must_use]
+    pub fn get_preset(&self) -> Preset {
+        self.preset
+    }
+
     /// Get the method (quality/speed tradeoff).
+    #[deprecated(since = "0.3.0", note = "use `current_method()` instead")]
     #[must_use]
     pub fn get_method(&self) -> u8 {
         self.method

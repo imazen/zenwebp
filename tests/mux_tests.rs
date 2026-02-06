@@ -346,8 +346,8 @@ fn animation_with_metadata() {
 
     let icc_data = vec![10, 20, 30, 40];
     let exif_data = vec![50, 60, 70];
-    anim.set_icc_profile(icc_data.clone());
-    anim.set_exif(exif_data.clone());
+    anim.icc_profile(icc_data.clone());
+    anim.exif(exif_data.clone());
 
     let frame_config = EncoderConfig::new().quality(50.0).method(0);
     let pixels = solid_rgb(16, 16, 100, 100, 100);

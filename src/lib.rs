@@ -140,21 +140,39 @@ pub use decoder::vp8;
 /// Extract the ICC color profile from WebP data, if present.
 ///
 /// This is a convenience wrapper around [`WebPDemuxer`].
-pub fn get_icc_profile(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
+pub fn icc_profile(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
     let demuxer = WebPDemuxer::new(data)?;
     Ok(demuxer.icc_profile().map(|s| s.to_vec()))
 }
 
 /// Extract EXIF metadata from WebP data, if present.
-pub fn get_exif(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
+pub fn exif(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
     let demuxer = WebPDemuxer::new(data)?;
     Ok(demuxer.exif().map(|s| s.to_vec()))
 }
 
 /// Extract XMP metadata from WebP data, if present.
-pub fn get_xmp(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
+pub fn xmp(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
     let demuxer = WebPDemuxer::new(data)?;
     Ok(demuxer.xmp().map(|s| s.to_vec()))
+}
+
+/// Extract the ICC color profile from WebP data, if present.
+#[deprecated(since = "0.3.0", note = "use `icc_profile()` instead")]
+pub fn get_icc_profile(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
+    icc_profile(data)
+}
+
+/// Extract EXIF metadata from WebP data, if present.
+#[deprecated(since = "0.3.0", note = "use `exif()` instead")]
+pub fn get_exif(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
+    exif(data)
+}
+
+/// Extract XMP metadata from WebP data, if present.
+#[deprecated(since = "0.3.0", note = "use `xmp()` instead")]
+pub fn get_xmp(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
+    xmp(data)
 }
 
 /// Embed an ICC color profile into WebP data.
