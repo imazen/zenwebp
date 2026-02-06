@@ -236,18 +236,8 @@ pub(crate) fn fancy_upsample_16_pairs_wasm(
     let y1 = load_u8x16(<&[u8; 16]>::try_from(&y[16..32]).unwrap());
 
     let (rgb_0, rgb_1) = out.split_at_mut(48);
-    convert_and_store_rgb16(
-        y0,
-        u_up0,
-        v_up0,
-        <&mut [u8; 48]>::try_from(rgb_0).unwrap(),
-    );
-    convert_and_store_rgb16(
-        y1,
-        u_up1,
-        v_up1,
-        <&mut [u8; 48]>::try_from(rgb_1).unwrap(),
-    );
+    convert_and_store_rgb16(y0, u_up0, v_up0, <&mut [u8; 48]>::try_from(rgb_0).unwrap());
+    convert_and_store_rgb16(y1, u_up1, v_up1, <&mut [u8; 48]>::try_from(rgb_1).unwrap());
 }
 
 /// Process 8 pixel pairs (16 Y pixels) with fancy upsampling and YUV→RGB.

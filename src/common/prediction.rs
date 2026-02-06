@@ -1188,7 +1188,12 @@ pub(crate) fn idct_add_residue_and_clear_with_token(
 /// Scalar fallback for fused IDCT + add residue + clear.
 #[cfg(not(all(
     feature = "simd",
-    any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "wasm32")
+    any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "wasm32"
+    )
 )))]
 #[inline(always)]
 pub(crate) fn idct_add_residue_and_clear_with_token(

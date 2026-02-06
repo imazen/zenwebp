@@ -476,10 +476,7 @@ pub(crate) fn quantize_block_wasm(
     store_i32x4(<&mut [i32; 4]>::try_from(&mut coeffs[0..4]).unwrap(), s0);
     store_i32x4(<&mut [i32; 4]>::try_from(&mut coeffs[4..8]).unwrap(), s4);
     store_i32x4(<&mut [i32; 4]>::try_from(&mut coeffs[8..12]).unwrap(), s8);
-    store_i32x4(
-        <&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(),
-        s12,
-    );
+    store_i32x4(<&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(), s12);
 
     // Check if any coefficient is non-zero
     let or0 = v128_or(qout0, qout8);
@@ -488,11 +485,7 @@ pub(crate) fn quantize_block_wasm(
 
 /// WASM dequantize block: multiply coefficients by quantizer steps
 #[arcane]
-pub(crate) fn dequantize_block_wasm(
-    _token: Wasm128Token,
-    q: &[u16; 16],
-    coeffs: &mut [i32; 16],
-) {
+pub(crate) fn dequantize_block_wasm(_token: Wasm128Token, q: &[u16; 16], coeffs: &mut [i32; 16]) {
     // Load q as u16, extend to i32
     let q0_u16 = load_u16x8(<&[u16; 8]>::try_from(&q[0..8]).unwrap());
     let q8_u16 = load_u16x8(<&[u16; 8]>::try_from(&q[8..16]).unwrap());
@@ -516,10 +509,7 @@ pub(crate) fn dequantize_block_wasm(
     store_i32x4(<&mut [i32; 4]>::try_from(&mut coeffs[0..4]).unwrap(), r0);
     store_i32x4(<&mut [i32; 4]>::try_from(&mut coeffs[4..8]).unwrap(), r4);
     store_i32x4(<&mut [i32; 4]>::try_from(&mut coeffs[8..12]).unwrap(), r8);
-    store_i32x4(
-        <&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(),
-        r12,
-    );
+    store_i32x4(<&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(), r12);
 }
 
 /// WASM fused quantize+dequantize: produces both quantized and dequantized values.

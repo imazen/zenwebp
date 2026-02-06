@@ -189,7 +189,12 @@ pub(super) fn sse_16x16_luma(
     }
     #[cfg(not(all(
         feature = "simd",
-        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "wasm32")
+        any(
+            target_arch = "x86_64",
+            target_arch = "x86",
+            target_arch = "aarch64",
+            target_arch = "wasm32"
+        )
     )))]
     {
         let mut sse = 0u32;
@@ -235,7 +240,12 @@ pub(super) fn sse_8x8_chroma(
     }
     #[cfg(not(all(
         feature = "simd",
-        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "wasm32")
+        any(
+            target_arch = "x86_64",
+            target_arch = "x86",
+            target_arch = "aarch64",
+            target_arch = "wasm32"
+        )
     )))]
     {
         let mut sse = 0u32;

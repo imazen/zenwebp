@@ -146,7 +146,9 @@ fn classify_rgb(rgb: &[u8], w: u32, h: u32) -> zenwebp::ClassifierDiag {
     let u_buf = vec![128u8; uv_stride * mb_h * 8];
     let v_buf = vec![128u8; uv_stride * mb_h * 8];
 
-    let analysis = analyze_image(&y_buf, &u_buf, &v_buf, width, height, y_stride, uv_stride, 4, 50);
+    let analysis = analyze_image(
+        &y_buf, &u_buf, &v_buf, width, height, y_stride, uv_stride, 4, 50,
+    );
 
     classify_image_type_diag(&y_buf, width, height, y_stride, &analysis.alpha_histogram)
 }

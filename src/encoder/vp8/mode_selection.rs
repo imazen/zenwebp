@@ -1435,7 +1435,12 @@ impl<'a> super::Vp8Encoder<'a> {
             };
             #[cfg(not(all(
                 feature = "simd",
-                any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "wasm32")
+                any(
+                    target_arch = "x86_64",
+                    target_arch = "x86",
+                    target_arch = "aarch64",
+                    target_arch = "wasm32"
+                )
             )))]
             let sse = {
                 let mut sum = 0u32;
@@ -1452,8 +1457,7 @@ impl<'a> super::Vp8Encoder<'a> {
         for &(_, mode_idx) in mode_sse[..max_modes_to_try].iter() {
             let pred = preds.get(mode_idx);
 
-            let mut residual =
-                crate::common::transform::ftransform_from_u8_4x4(src_block, pred);
+            let mut residual = crate::common::transform::ftransform_from_u8_4x4(src_block, pred);
 
             let mut quantized_zigzag = [0i32; 16];
             let mut quantized_natural = [0i32; 16];
@@ -1527,7 +1531,12 @@ impl<'a> super::Vp8Encoder<'a> {
             };
             #[cfg(not(all(
                 feature = "simd",
-                any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "wasm32")
+                any(
+                    target_arch = "x86_64",
+                    target_arch = "x86",
+                    target_arch = "aarch64",
+                    target_arch = "wasm32"
+                )
             )))]
             let sse = {
                 let mut sum = 0u32;

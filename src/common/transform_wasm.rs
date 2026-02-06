@@ -100,12 +100,7 @@ const CONST2: i32 = 35468; // sqrt(2)*sin(pi/8)*65536
 /// where MUL(x,K) = x + (x*k)>>16 for K1, or just (x*k)>>16 for K2.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
-fn idct_butterfly(
-    in0: v128,
-    in1: v128,
-    in2: v128,
-    in3: v128,
-) -> (v128, v128, v128, v128) {
+fn idct_butterfly(in0: v128, in1: v128, in2: v128, in3: v128) -> (v128, v128, v128, v128) {
     let a = i32x4_add(in0, in2);
     let b = i32x4_sub(in0, in2);
 
@@ -186,12 +181,7 @@ fn idct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32]) {
 ///   out[i*4+3] = (d*2217 - c*5352 + 7500) >> 12
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
-fn dct_butterfly(
-    in0: v128,
-    in1: v128,
-    in2: v128,
-    in3: v128,
-) -> (v128, v128, v128, v128) {
+fn dct_butterfly(in0: v128, in1: v128, in2: v128, in3: v128) -> (v128, v128, v128, v128) {
     let eight = i32x4_splat(8);
 
     let a = i32x4_mul(i32x4_add(in0, in3), eight);
@@ -238,12 +228,7 @@ fn dct_butterfly(
 ///   out_row3 = (d*2217 - c*5352 + 51000) >> 16
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
-fn dct_butterfly_pass2(
-    in0: v128,
-    in1: v128,
-    in2: v128,
-    in3: v128,
-) -> (v128, v128, v128, v128) {
+fn dct_butterfly_pass2(in0: v128, in1: v128, in2: v128, in3: v128) -> (v128, v128, v128, v128) {
     let a = i32x4_add(in0, in3);
     let b = i32x4_add(in1, in2);
     let c = i32x4_sub(in1, in2);

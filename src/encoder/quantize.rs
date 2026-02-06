@@ -328,7 +328,12 @@ pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, use_sharp
 /// Scalar fallback for non-SIMD platforms
 #[cfg(not(all(
     feature = "simd",
-    any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "wasm32")
+    any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "wasm32"
+    )
 )))]
 pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, _use_sharpen: bool) -> bool {
     matrix.quantize(coeffs);
@@ -543,7 +548,12 @@ pub fn quantize_ac_only_simd(
 /// Scalar fallback for non-SIMD platforms
 #[cfg(not(all(
     feature = "simd",
-    any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "wasm32")
+    any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "wasm32"
+    )
 )))]
 pub fn quantize_ac_only_simd(
     coeffs: &mut [i32; 16],
@@ -612,14 +622,24 @@ pub fn quantize_dequantize_block_simd(
     use archmage::SimdToken;
     let token = archmage::Wasm128Token::summon().unwrap();
     crate::common::simd_wasm::quantize_dequantize_block_wasm(
-        token, coeffs, matrix, use_sharpen, quantized, dequantized,
+        token,
+        coeffs,
+        matrix,
+        use_sharpen,
+        quantized,
+        dequantized,
     )
 }
 
 /// Scalar fallback for non-SIMD platforms
 #[cfg(not(all(
     feature = "simd",
-    any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "wasm32")
+    any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "wasm32"
+    )
 )))]
 pub fn quantize_dequantize_block_simd(
     coeffs: &[i32; 16],
@@ -883,7 +903,12 @@ pub fn quantize_dequantize_ac_only_simd(
 /// Scalar fallback for non-SIMD platforms
 #[cfg(not(all(
     feature = "simd",
-    any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "wasm32")
+    any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "wasm32"
+    )
 )))]
 pub fn quantize_dequantize_ac_only_simd(
     coeffs: &[i32; 16],

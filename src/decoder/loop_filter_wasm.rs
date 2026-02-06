@@ -144,7 +144,13 @@ fn needs_filter2(
     let m4 = u8x16_le(abd_u8x16(q0, q1), it);
     let m5 = u8x16_le(abd_u8x16(q1, q2), it);
     let m6 = u8x16_le(abd_u8x16(q2, q3), it);
-    v128_and(mask, v128_and(v128_and(m1, m2), v128_and(v128_and(m3, m4), v128_and(m5, m6))))
+    v128_and(
+        mask,
+        v128_and(
+            v128_and(m1, m2),
+            v128_and(v128_and(m3, m4), v128_and(m5, m6)),
+        ),
+    )
 }
 
 /// HEV: high edge variance (|p1-p0| > thresh || |q1-q0| > thresh)
@@ -415,7 +421,9 @@ pub(crate) fn normal_v_filter16_edge_wasm(
     let mask = needs_filter2(p3, p2, p1, p0, q0, q1, q2, q3, interior_limit, edge_limit);
     let hev_mask = hev(p1, p0, q0, q1, hev_threshold);
 
-    do_filter6(&mut p2, &mut p1, &mut p0, &mut q0, &mut q1, &mut q2, mask, hev_mask);
+    do_filter6(
+        &mut p2, &mut p1, &mut p0, &mut q0, &mut q1, &mut q2, mask, hev_mask,
+    );
 
     store_row(buf, point - 3 * stride, p2);
     store_row(buf, point - 2 * stride, p1);
@@ -483,7 +491,9 @@ pub(crate) fn normal_h_filter16_edge_wasm(
     let mask = needs_filter2(p3, p2, p1, p0, q0, q1, q2, q3, interior_limit, edge_limit);
     let hev_mask = hev(p1, p0, q0, q1, hev_threshold);
 
-    do_filter6(&mut p2, &mut p1, &mut p0, &mut q0, &mut q1, &mut q2, mask, hev_mask);
+    do_filter6(
+        &mut p2, &mut p1, &mut p0, &mut q0, &mut q1, &mut q2, mask, hev_mask,
+    );
 
     store_col(buf, base - 3, stride, p2);
     store_col(buf, base - 2, stride, p1);
@@ -499,13 +509,7 @@ pub(crate) fn normal_h_filter16_edge_wasm(
 
 /// Load 8 bytes from U and 8 bytes from V, packed into one u8x16
 #[inline(always)]
-fn load_uv_col(
-    u_buf: &[u8],
-    v_buf: &[u8],
-    u_base: usize,
-    v_base: usize,
-    stride: usize,
-) -> v128 {
+fn load_uv_col(u_buf: &[u8], v_buf: &[u8], u_base: usize, v_base: usize, stride: usize) -> v128 {
     u8x16(
         u_buf[u_base],
         u_buf[u_base + stride],
@@ -622,7 +626,9 @@ pub(crate) fn normal_v_filter_uv_edge_wasm(
     let mask = needs_filter2(p3, p2, p1, p0, q0, q1, q2, q3, interior_limit, edge_limit);
     let hev_mask = hev(p1, p0, q0, q1, hev_threshold);
 
-    do_filter6(&mut p2, &mut p1, &mut p0, &mut q0, &mut q1, &mut q2, mask, hev_mask);
+    do_filter6(
+        &mut p2, &mut p1, &mut p0, &mut q0, &mut q1, &mut q2, mask, hev_mask,
+    );
 
     store_uv_row(u_buf, v_buf, point - 3 * stride, point - 3 * stride, p2);
     store_uv_row(u_buf, v_buf, point - 2 * stride, point - 2 * stride, p1);
@@ -691,7 +697,9 @@ pub(crate) fn normal_h_filter_uv_edge_wasm(
     let mask = needs_filter2(p3, p2, p1, p0, q0, q1, q2, q3, interior_limit, edge_limit);
     let hev_mask = hev(p1, p0, q0, q1, hev_threshold);
 
-    do_filter6(&mut p2, &mut p1, &mut p0, &mut q0, &mut q1, &mut q2, mask, hev_mask);
+    do_filter6(
+        &mut p2, &mut p1, &mut p0, &mut q0, &mut q1, &mut q2, mask, hev_mask,
+    );
 
     store_uv_col(u_buf, v_buf, u_base - 3, v_base - 3, stride, p2);
     store_uv_col(u_buf, v_buf, u_base - 2, v_base - 2, stride, p1);
