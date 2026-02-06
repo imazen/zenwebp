@@ -173,19 +173,19 @@ Test results on 512x512 CID22 image:
 - **LTO + inline hints** - Added LTO and codegen-units=1 to release profile, plus #[inline] to
   hot helper functions (tdisto_*, is_flat_*, compute_filter_level). Marginal improvement (~5-8%).
 
-### Profiler Hot Spots (method 4, 2026-02-05, after #[rite] conversion)
+### Profiler Hot Spots (method 4, 2026-02-05, after token opt)
 | Function | % Instr | M instr | Notes |
 |----------|---------|---------|-------|
-| evaluate_i4_modes_sse2 | 20.3% | 37.2M | I4 inner loop (inlines quantize/dequantize/SSE) |
-| encode_image | 13.3% | 24.4M | Main encoding loop |
-| get_residual_cost_sse2 | 12.5% | 22.9M | Coefficient cost estimation |
-| choose_macroblock_info | 10.3% | 18.9M | I16/UV mode selection |
-| convert_image_yuv | 5.2% | 9.5M | YUV conversion |
-| ftransform2 | 4.3% | 7.8M | Fused 2-block DCT |
-| record_coeff_tokens | 4.0% | 7.4M | Token recording |
-| idct_add_residue_inplace | 3.7% | 6.8M | Fused IDCT+add_residue |
+| evaluate_i4_modes_sse2 | 20.8% | 37.2M | I4 inner loop (inlines quantize/dequantize/SSE) |
+| get_residual_cost_sse2 | 12.1% | 21.6M | Coefficient cost estimation |
+| encode_image | 12.1% | 21.6M | Main encoding loop (includes token emit) |
+| choose_macroblock_info | 10.6% | 18.9M | I16/UV mode selection |
+| convert_image_yuv | 5.3% | 9.5M | YUV conversion |
+| ftransform2 | 4.7% | 8.5M | Fused 2-block DCT |
+| record_coeff_tokens | 4.1% | 7.4M | Token recording (pre-resolved stats) |
+| idct_add_residue_inplace | 3.8% | 6.8M | Fused IDCT+add_residue |
 | pick_best_intra4 | 3.1% | 5.6M | I4 outer orchestration |
-| write_bool | 2.5% | 4.6M | Arithmetic encoding |
+| write_bool | 2.6% | 4.6M | Arithmetic encoding |
 | quantize_block (standalone) | 2.4% | 4.3M | Quantize (I16 path) |
 
 **Speed comparison (criterion, 792079.png 512x512, Q75, default target, 2026-02-05):**
@@ -196,9 +196,9 @@ Test results on 512x512 CID22 image:
 | 4 | 15.0ms | 10.2ms | **1.47x** |
 | 6 | 22.2ms | 15.5ms | **1.43x** |
 
-*Instruction ratio is 0.90x but wall-clock is ~1.47x — gap is memory access patterns
-(our stride=full image width vs libwebp's compact row cache). #[rite] conversion
-eliminated archmage dispatch overhead (was ~9.7M instructions, 46% of quantize cost).*
+*Instruction ratio is 1.12x (179M vs ~161M encode-only) but wall-clock is ~1.47x —
+gap is memory access patterns. #[rite] conversion eliminated archmage dispatch
+overhead (was ~9.7M instructions, 46% of quantize cost).*
 
 **Performance optimization session (2026-02-04):**
 - Early exit in I4 mode loop (skip flatness/spectral/psy-rd when base RD exceeds best)
@@ -217,10 +217,11 @@ Note: `dct4x4`, `idct4x4`, `is_flat_coeffs`, `tdisto_4x4` are now inlined into p
 
 | Metric | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| Instructions | 183M | 203M | **0.90x** |
+| Instructions | 179M | ~161M (encode-only) | **1.12x** |
 | Output size | 12,198 | 12,018 | 1.015x |
 
-*Previously 586M (2.99x) → 259M (1.28x, fused SIMD) → 183M (0.90x, #[rite] inlining).*
+*Previously 586M (2.99x) → 259M (1.28x, fused SIMD) → 183M (#[rite]) → 179M (token opt).
+libwebp cwebp total is 195M but includes 35M of PNG/zlib decode overhead.*
 
 **CID22 corpus comparison (41 images, Q75, M4, SNS=0):**
 
@@ -245,8 +246,8 @@ no longer visible as separate functions. Mode selection overhead reduced from 5.
 **Remaining optimization opportunities:**
 1. Mode selection still 3.4x vs libwebp — I4 inner loop orchestration overhead
 2. Residual cost: 2.4x gap, tighter inner loop possible
-3. record_coeff_tokens: 2.2x gap, token emission overhead
-4. Wall-clock still ~1.7x despite 0.90x instructions — memory access patterns
+3. Token emit: flatten_probas eliminated 5 divisions/token, encode_image 24.4M → 21.6M
+4. Wall-clock still ~1.47x despite 1.12x instructions — memory access patterns
 
 **Profiling commands:**
 ```bash
