@@ -1,11 +1,11 @@
 # zenwebp Encoder Optimization Status
 
-## Current Performance (2026-02-05, commit da96836)
+## Current Performance (2026-02-05, commit dc06360)
 
 | Metric | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| **Instructions (diag)** | **182.8M** | **203M** | **0.90x** |
-| **Instructions (default)** | **226.3M** | - | - |
+| **Instructions (diag)** | **182.1M** | **~160.6M** | **1.13x** |
+| **Instructions (default)** | **219.5M** | - | - |
 | Output size (diag) | 12,198 | 12,018 | 1.015x |
 | Output size (default) | 11,864 | - | - |
 | Wall-clock m4 | 16.3ms | 10.2ms | 1.60x |
@@ -13,6 +13,8 @@
 
 *Test image: 792079.png 512x512, Q75, M4*
 *Diagnostic: SNS=0, filter=0, segments=1. Default: SNS=50, filter=60, segments=4.*
+*libwebp instructions: 195.3M total cwebp, minus 34.7M PNG/zlib decode = ~160.6M encode-only.*
+*Previous "0.90x" ratio was incorrect — it compared our encode-only against libwebp's total including PNG decode.*
 
 ## Instruction Breakdown (callgrind, non-inclusive)
 
@@ -32,16 +34,50 @@
 | presort_i4_modes_sse2 | 3.1 | 1.7% | I4 mode SSE pre-sort |
 | quantize_dequantize (standalone) | 2.4 | 1.3% | Fused Q+DQ (UV path) |
 
-## vs libwebp Function Comparison
+## vs libwebp Function Comparison (corrected, 2026-02-05)
+
+libwebp callgrind: 195.3M total, ~34.7M PNG/zlib decode, ~160.6M encode-only.
+libwebp functions aggregated across header-file splits (SSE intrinsics span multiple headers).
+
+### By Functional Category
+
+| Category | zenwebp | libwebp | Ratio | Notes |
+|----------|---------|---------|-------|-------|
+| IDCT | 8.6M | 17.6M | **0.49x** | Fused IDCT+add_residue wins |
+| Quantization | 6.7M | 14.7M | **0.46x** | Fused quantize+dequantize wins |
+| Forward DCT | 10.8M | 19.1M | **0.57x** | ftransform2 paired blocks wins |
+| I4 presort | 3.1M | 4.1M | **0.76x** | |
+| Residual cost | 21.6M | 18.0M | 1.20x | Bounds checks in inner loop |
+| YUV conversion | 9.5M | 7.5M | 1.27x | |
+| I4 mode selection | 45.9M | 32.5M | 1.41x | zen inlines TDisto/SSE/DCT |
+| Token record+emit | 12.0M | 5.2M | **2.31x** | Vec::push + bounds checks |
+| memcpy/memset | 6.1M | 1.0M | **6.1x** | Safe Rust buffer management |
+
+### Per-Function Detail
 
 | zenwebp function | M instr | libwebp equivalent | M instr | Ratio | Root cause |
 |-----------------|---------|-------------------|---------|-------|------------|
-| get_residual_cost_sse2 | 21.6 | GetResidualCost_SSE2 | 9.7 | **2.2x** | Bounds checks in safe Rust |
-| record_coeff_tokens | 7.4 | VP8RecordCoeffTokens | 3.4 | **2.2x** | Vec::push + stats recording overhead |
-| evaluate_i4 + choose_mb + pick_i4 | 61.7 | PickBestIntra4 + quant | 18.3 | **3.4x** | Mode loop overhead + bounds checks |
-| idct_add_residue + idct4x4 | 8.6 | ITransform_SSE2 | 15.9 | **0.54x** | We're faster! |
-| ftransform2 + from_u8 | 9.6 | FTransform_SSE2 | 9.8 | **0.98x** | Parity |
-| quantize_block (standalone) | 4.3 | QuantizeBlock_SSE41 | 6.0 | **0.72x** | We're faster! |
+| get_residual_cost_sse2 | 21.6 | GetResidualCost_SSE2 + wrappers | 18.0 | **1.20x** | Bounds checks |
+| record_coeff_tokens + write_bool | 12.0 | VP8RecordCoeffTokens + PutBit + EmitTokens | 5.2 | **2.31x** | Vec::push overhead |
+| idct_add_residue + idct4x4 | 8.6 | ITransform_SSE2 | 17.6 | **0.49x** | Fused + DC fast path |
+| ftransform2 + fill_luma | 10.8 | FTransform + Pass1/2 + FTransform2 | 19.1 | **0.57x** | Paired block DCT |
+| quantize_block + q_dq | 6.7 | QuantizeBlock + Quantize2Blocks | 14.7 | **0.46x** | Fused q+dq |
+| evaluate_i4 + choose_mb + pick_i4 | 61.7 | PickBestI4 + ReconstructI4 + Preds | 32.5 | **1.90x** | Includes inlined TDisto(16.2M)+SSE(4.2M) |
+
+Note: zenwebp's mode selection functions INLINE TDisto (16.2M in libwebp), SSE distortion
+(6.3M), and level cost computation (5.0M) via #[rite]. Accounting for this inlined work,
+the mode selection ratio drops to ~1.04x — near parity.
+
+### Where Safe Rust Costs Us (~21.5M extra instructions)
+
+| Source | Extra instr | Root cause |
+|--------|-------------|------------|
+| Token recording | 6.8M | Vec::push bounds checks, stats tracking |
+| memcpy/memset | 5.1M | Buffer copies + zero-init in safe Rust |
+| Residual cost | 3.6M | 3 bounds checks per coefficient (27% overhead) |
+| I4 orchestration | 4.7M | Slice operations, iterator overhead |
+| YUV conversion | 2.0M | Bounds checks in pixel loops |
+| **Total** | **~21.5M** | ~13% of our 182.1M total |
 
 ## Cachegrind Analysis (2026-02-05)
 
@@ -92,7 +128,7 @@ These suggest unnecessary buffer copying or zeroing in the hot path.
 | Metric | zenwebp | libwebp | Notes |
 |--------|---------|---------|-------|
 | Cycles | 65.2M | 66.5M | We use fewer cycles! |
-| Instructions | 179M | 195M | 0.92x (fewer instructions) |
+| Instructions | 179M | 195M | 0.92x (total, includes PNG decode in libwebp) |
 | IPC | 2.75 | 2.93 | 6% lower throughput per cycle |
 | Branch misses | 418K (2.17%) | 667K (3.88%) | **We miss fewer!** |
 | Frontend stalls | 8.79% | 11.66% | We stall less |
@@ -139,6 +175,8 @@ Token buffer pre-allocation was increased from 300 to 768 tokens/MB to match lib
 | Feb 5 | Token buffer pre-allocation fix | - | - | eliminates 1 realloc |
 | Feb 5 | SIMD histogram + import_block opt | 247M* | 226.3M* | -8.4% |
 | Feb 5 | TDisto dispatch hoisting | 226.3M* | 219.8M* | -2.9% |
+| Feb 5 | Hoist scratch buffers outside mode loops | 182.8M | 182.1M | -0.4% |
+| Feb 5 | Hoist scratch buffers (default mode) | 219.8M* | 219.5M* | -0.1% |
 
 *\* Default-mode instruction counts (SNS=50, filter=60, segments=4)*
 
@@ -194,7 +232,7 @@ inline fully. From non-arcane context, requires unsafe → use `#[arcane]` entry
 
 ### Wall-Clock vs Instructions Gap
 
-Instructions are 0.90x of libwebp but wall-clock is 1.47x with default settings.
+Instructions are 1.13x of libwebp (encode-only) but wall-clock is 1.60x with default settings.
 Hardware counters in diagnostic mode show near-cycle-parity (65.2M vs 66.5M cycles).
 The remaining wall-clock gap in benchmarks comes from:
 
@@ -220,24 +258,25 @@ in the bounds checks themselves, not the index computation.
 
 ## Remaining Optimization Opportunities
 
-### High Impact (>5M savings potential)
-1. **Mode selection overhead** (evaluate_i4 37.2M) — 3.4x vs libwebp. Mostly safe Rust
-   overhead (bounds checks, slice operations). Would need algorithmic changes or unsafe.
-2. **encode_image** (24.4M) — Main loop orchestration. Profile-guided optimization target.
+The ~21.5M instruction gap vs libwebp comes from safe Rust overhead (bounds checks,
+Vec::push, buffer copies). Our SIMD primitives already BEAT libwebp (IDCT 0.49x,
+DCT 0.57x, Quantize 0.46x). Further gains require either unsafe code or algorithmic changes.
 
 ### Medium Impact (2-5M savings potential)
-3. **get_residual_cost_sse2** (21.6M, 2.2x) — Bounds checks + cache thrashing (27.8% of
-   D1 read misses). Could use unsafe indexing or restructure cost table layout.
-4. **record_coeff_tokens** (7.4M, 2.2x) — Vec::push overhead + stats recording.
+1. **Token recording** (12.0M, 2.31x) — Vec::push bounds checks + stats recording.
+   Could pre-allocate fixed-size token arrays or use unsafe push.
+2. **Residual cost** (21.6M, 1.20x) — 3 bounds checks per coefficient in inner loop.
+   Could use unchecked indexing for the fixed-size cost table.
+3. **memcpy/memset** (6.1M, 6.1x) — Buffer copies and zero-init.
+   Hoisting reduced memset from 2.0M to 1.4M. Remaining copies are structural.
 
 ### Low Impact (<2M savings potential)
-5. **ftransform2** (7.8M) — Already at parity with libwebp. Has 19.8% of D1 read misses.
-6. **presort_i4_modes** (3.1M) — Small function, limited optimization potential.
+4. **YUV conversion** (9.5M, 1.27x) — Bounds checks in pixel loops.
+5. **I4 orchestration** (5.6M) — Rust slice/iterator overhead.
 
 ### Architectural Changes (high effort)
-7. **Write overhead reduction** — Investigate unnecessary buffer copies/zeroing.
-   52% more writes than libwebp, 2.2x more write cache misses. Biggest contributors
-   are memcpy (52% of write misses) and memset (18%).
+6. **Write overhead reduction** — 52% more writes than libwebp, 2.2x more write cache
+   misses. Biggest contributors: memcpy (52% of write misses), memset (18%).
 
 ## Default-Mode Instruction Breakdown (219.8M, commit cf9e91a)
 
