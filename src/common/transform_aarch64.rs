@@ -460,3 +460,66 @@ pub(crate) fn ftransform2_neon(
         out[blk] = ftransform_from_u8_4x4_neon(_token, &s_flat, &r_flat);
     }
 }
+
+// =============================================================================
+// add_residue — add IDCT residuals to prediction block
+// =============================================================================
+
+/// Add residuals (i32[16]) to prediction block (u8) with saturation.
+/// Processes 4 rows of 4 pixels each.
+#[cfg(target_arch = "aarch64")]
+#[arcane]
+pub(crate) fn add_residue_neon(
+    _token: NeonToken,
+    pblock: &mut [u8],
+    rblock: &[i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    add_residue_neon_inner(_token, pblock, rblock, y0, x0, stride);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[rite]
+fn add_residue_neon_inner(
+    _token: NeonToken,
+    pblock: &mut [u8],
+    rblock: &[i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    // Load residuals as i32x4 and narrow to i16x4
+    let r0_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[0..4]).unwrap());
+    let r1_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[4..8]).unwrap());
+    let r2_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[8..12]).unwrap());
+    let r3_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[12..16]).unwrap());
+
+    let r0_i16 = vmovn_s32(r0_i32); // int16x4
+    let r1_i16 = vmovn_s32(r1_i32);
+    let r2_i16 = vmovn_s32(r2_i32);
+    let r3_i16 = vmovn_s32(r3_i32);
+
+    // Process 4 rows
+    for (row, r_i16) in [(0usize, r0_i16), (1, r1_i16), (2, r2_i16), (3, r3_i16)] {
+        let offset = (y0 + row) * stride + x0;
+
+        // Load 4 prediction pixels, zero-extend to i16
+        let mut pred_bytes = [0u8; 8]; // load 4, pad to 8
+        pred_bytes[..4].copy_from_slice(&pblock[offset..offset + 4]);
+        let pred_u8 = simd_mem::vld1_u8(&pred_bytes);
+        let pred_i16 = vreinterpretq_s16_u16(vmovl_u8(pred_u8));
+
+        // Add residual (only low 4 lanes matter)
+        let sum = vaddq_s16(pred_i16, vcombine_s16(r_i16, vdup_n_s16(0)));
+
+        // Saturate to u8
+        let result = vqmovun_s16(sum);
+
+        // Store 4 pixels back
+        let mut out_bytes = [0u8; 8];
+        simd_mem::vst1_u8(&mut out_bytes, result);
+        pblock[offset..offset + 4].copy_from_slice(&out_bytes[..4]);
+    }
+}

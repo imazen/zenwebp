@@ -251,6 +251,16 @@ pub(crate) fn add_residue(
             return;
         }
     }
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    {
+        use archmage::{NeonToken, SimdToken};
+        if let Some(token) = NeonToken::summon() {
+            crate::common::transform_aarch64::add_residue_neon(
+                token, pblock, rblock, y0, x0, stride,
+            );
+            return;
+        }
+    }
     add_residue_scalar(pblock, rblock, y0, x0, stride);
 }
 
