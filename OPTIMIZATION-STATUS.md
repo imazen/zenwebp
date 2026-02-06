@@ -1,6 +1,6 @@
 # zenwebp Encoder Optimization Status
 
-## Current Performance (2026-02-05, commit 92ac1cc)
+## Current Performance (2026-02-05, commit 3df2f8d)
 
 | Metric | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
@@ -40,6 +40,91 @@
 | ftransform2 + from_u8 | 9.6 | FTransform_SSE2 | 9.8 | **0.98x** | Parity |
 | quantize_block (standalone) | 4.3 | QuantizeBlock_SSE41 | 6.0 | **0.72x** | We're faster! |
 
+## Cachegrind Analysis (2026-02-05)
+
+### Summary
+
+| Metric | zenwebp | libwebp | Ratio |
+|--------|---------|---------|-------|
+| D reads | 38.5M | 41.0M | 0.94x |
+| D writes | 20.7M | 13.6M | **1.52x** |
+| D1 read misses | 73,250 | 64,832 | 1.13x |
+| D1 write misses | 91,511 | 41,243 | **2.22x** |
+| D1 read miss rate | 0.2% | 0.2% | ~same |
+| D1 write miss rate | 0.4% | 0.3% | ~same |
+
+### D1 Read Cache Miss Hotspots
+
+| zenwebp function | D1 rd misses | % | libwebp equivalent | D1 rd misses | % |
+|-----------------|-------------|---|-------------------|-------------|---|
+| get_residual_cost_sse2 | 20,354 | **27.8%** | GetResidualCost_SSE2 | 4,336 | 6.7% |
+| ftransform2 | 14,476 | 19.8% | - | - | - |
+| convert_image_yuv | 12,293 | 16.8% | ConvertRGBToY_SSE41 | 12,289 | 19.0% |
+| encode_image | 6,983 | 9.5% | ??? (top fn) | 15,861 | 24.5% |
+| record_coeff_tokens | 6,255 | 8.5% | VP8RecordCoeffTokens | 130 | 0.2% |
+
+**Key finding:** `get_residual_cost_sse2` has **4.7x more D1 read cache misses** than
+libwebp's equivalent. The `LevelCostTables` struct is ~52KB (4×8×3×68×2 bytes), which
+exceeds the 32KB L1 data cache. Our access pattern jumps between different type/band/ctx
+combinations, causing cache thrashing.
+
+libwebp mitigates this by pre-indexing `CostArrayPtr` so the hot inner loop only touches
+a small region of the cost table at a time. We pre-index by type but still index by
+band×ctx in the inner loop, spreading accesses across more cache lines.
+
+### Write Overhead (52% more writes)
+
+Our 20.7M writes vs libwebp's 13.6M comes from:
+- `choose_macroblock_info` + `evaluate_i4_modes`: 6.2M writes (mode selection scratch buffers)
+- `pick_best_intra4`: 1.7M writes (I4 orchestration)
+- `encode_image`: 1.7M writes (main loop)
+- `__memcpy_avx`: 1.1M writes with 52.5% of all write cache misses (buffer copies)
+- `__memset_avx2`: 0.9M writes with 17.9% of write cache misses (zeroing)
+
+Write cache misses are dominated by memcpy (48K misses) and memset (16K misses).
+These suggest unnecessary buffer copying or zeroing in the hot path.
+
+## Hardware Counter Analysis (perf stat, 2026-02-05)
+
+| Metric | zenwebp | libwebp | Notes |
+|--------|---------|---------|-------|
+| Cycles | 65.2M | 66.5M | We use fewer cycles! |
+| Instructions | 179M | 195M | 0.92x (fewer instructions) |
+| IPC | 2.75 | 2.93 | 6% lower throughput per cycle |
+| Branch misses | 418K (2.17%) | 667K (3.88%) | **We miss fewer!** |
+| Frontend stalls | 8.79% | 11.66% | We stall less |
+
+**Important:** These numbers are for diagnostic mode (SNS=0, filter=0, segments=1).
+The criterion benchmarks use default settings (SNS=50, filter=60, segments=4), which
+adds segment analysis, SNS processing, and loop filtering — work not measured here.
+
+**Key insight:** In diagnostic mode, we're at near-cycle-parity with libwebp. The
+1.47x wall-clock gap in criterion benchmarks is likely from default-settings overhead
+(segment analysis, SNS, filter level computation) that doesn't appear in callgrind.
+
+**Counter-intuitive branch miss result:** Our bounds checks ADD branches but they're
+highly predictable (almost never taken). libwebp has fewer total branches but more
+data-dependent branches that mispredict. Net effect: our 2.17% miss rate beats their 3.88%.
+
+## Heap Allocation Analysis (heaptrack, 2026-02-05)
+
+| Metric | Value |
+|--------|-------|
+| Total allocations | 45 |
+| Reallocs | ~10 (Vec growth) |
+| Peak memory | 3.6M |
+| Leaked | 544B (system) |
+
+**Key allocations:**
+- Token buffer: 1.54M (768 tokens/MB × 1024 MBs × 2 bytes) — properly pre-allocated
+- Stored MB coefficients: 1.6M (1024 MBs × 1600 bytes each) — necessary storage
+- YUV buffers: 393K (Y + U + V planes)
+- ArithmeticEncoder partition: 65K
+
+**No allocation bottleneck.** 45 total allocations for a 512×512 encode is excellent.
+Token buffer pre-allocation was increased from 300 to 768 tokens/MB to match libwebp's
+`TOKENS_COUNT_PER_MB = 2 * 16 * 24 = 768`.
+
 ## Optimization History
 
 | Date | Change | Before | After | Savings |
@@ -48,6 +133,7 @@
 | Feb 5 | Hoist SIMD dispatch (arcane I4) | 259M | 259M | ~0% (prep for rite) |
 | Feb 5 | archmage 0.5 #[rite] conversion | 259M | 183.3M | -29% |
 | Feb 5 | Residual cost inner loop indexing | 183.3M | 182.0M | -0.7% |
+| Feb 5 | Token buffer pre-allocation fix | - | - | eliminates 1 realloc |
 
 ## Key Discoveries
 
@@ -76,6 +162,20 @@ Assembly analysis shows the hot loop:
 Options to reduce: (1) use unchecked indexing (requires unsafe), (2) restructure to
 fixed-iteration loops where compiler can prove bounds, (3) accept the gap as cost of safety.
 
+### get_residual_cost Cache Thrashing
+
+The cost table (`LevelCostTables`) is ~52KB, exceeding the 32KB L1 data cache. Our
+`get_residual_cost_sse2` accounts for 27.8% of all D1 read cache misses despite being
+only 11.9% of instructions. libwebp's equivalent accounts for only 6.7%.
+
+The access pattern jumps between `costs_for_type[band][ctx][level]` combinations where
+band and ctx change each iteration, touching different cache lines. Reducing the table
+size or restructuring for sequential access could help.
+
+**Possible mitigation:** The cost table is indexed as `[4 types][8 bands][3 ctx][68 levels]`.
+Most accesses use only type 1 (I4_AC) or type 3 (UV_AC). Pre-extracting the active type's
+sub-table (~13KB = 8×3×68×2) would fit in L1 cache.
+
 ### #[rite] Inlining Is Highly Effective
 
 Converting 15 inner `_sse2` functions from `#[arcane]` to `#[rite]` achieved 29% instruction
@@ -87,14 +187,22 @@ inline fully. From non-arcane context, requires unsafe → use `#[arcane]` entry
 
 ### Wall-Clock vs Instructions Gap
 
-Instructions are 0.90x of libwebp but wall-clock is 1.47x. The gap is NOT from:
-- L1 cache misses (our D1 miss rate is better: 0.1% vs 0.3%)
-- SIMD dispatch overhead (eliminated by #[rite])
+Instructions are 0.90x of libwebp but wall-clock is 1.47x with default settings.
+Hardware counters in diagnostic mode show near-cycle-parity (65.2M vs 66.5M cycles).
+The remaining wall-clock gap in benchmarks comes from:
 
-Likely causes:
-- Memory access patterns (our stride = full image width vs libwebp's compact row cache)
-- Branch misprediction from bounds checks
-- Valgrind's instruction counting doesn't reflect real-world pipeline effects
+1. **Default settings overhead** — criterion uses SNS=50, filter=60, segments=4.
+   Segment analysis, SNS computation, and filter level estimation add significant work
+   not captured in diagnostic-mode profiling.
+2. **Lower IPC** (2.75 vs 2.93) — 6% less instruction-level parallelism, possibly from
+   longer dependency chains in safe Rust code.
+3. **Write overhead** — 52% more memory writes (20.7M vs 13.6M) with 2.2x more write
+   cache misses, suggesting unnecessary buffer copying or zeroing.
+
+**NOT the cause:**
+- L1 cache misses: similar overall miss rate (0.2% both)
+- Branch misprediction: we mispredict FEWER branches (2.17% vs 3.88%)
+- SIMD dispatch overhead: eliminated by #[rite] conversion
 
 ### Pre-Indexing Cost Tables Helps Minimally
 
@@ -111,15 +219,17 @@ in the bounds checks themselves, not the index computation.
 2. **encode_image** (24.4M) — Main loop orchestration. Profile-guided optimization target.
 
 ### Medium Impact (2-5M savings potential)
-3. **get_residual_cost_sse2** (21.6M, 2.2x) — Bounds checks dominate. Could use unsafe
-   indexing but contradicts project safety goals.
-4. **record_coeff_tokens** (7.4M, 2.2x) — Vec::push overhead + stats recording. Could
-   pre-allocate exact capacity or use fixed buffer.
+3. **get_residual_cost_sse2** (21.6M, 2.2x) — Bounds checks + cache thrashing (27.8% of
+   D1 read misses). Could use unsafe indexing or restructure cost table layout.
+4. **record_coeff_tokens** (7.4M, 2.2x) — Vec::push overhead + stats recording.
 
 ### Low Impact (<2M savings potential)
-5. **ftransform2** (7.8M) — Already at parity with libwebp.
+5. **ftransform2** (7.8M) — Already at parity with libwebp. Has 19.8% of D1 read misses.
 6. **presort_i4_modes** (3.1M) — Small function, limited optimization potential.
 
 ### Architectural Changes (high effort)
-7. **Row cache for encoder** — Our encoder writes to full-image buffers (stride = width).
-   libwebp uses a compact row cache. This affects cache behavior but not instruction count.
+7. **Write overhead reduction** — Investigate unnecessary buffer copies/zeroing.
+   52% more writes than libwebp, 2.2x more write cache misses. Biggest contributors
+   are memcpy (52% of write misses) and memset (18%).
+8. **Default settings optimization** — Profile with SNS=50, filter=60, segments=4 to
+   find overhead not visible in diagnostic mode.

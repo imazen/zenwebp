@@ -53,9 +53,9 @@ impl TokenBuffer {
     }
 
     pub fn with_estimated_capacity(num_macroblocks: usize) -> Self {
-        // ~300 tokens per macroblock on average (varies with content)
+        // libwebp uses 2 * 16 * 24 = 768 tokens per macroblock
         Self {
-            tokens: Vec::with_capacity(num_macroblocks * 300),
+            tokens: Vec::with_capacity(num_macroblocks * 768),
         }
     }
 

@@ -21,14 +21,24 @@ fn main() {
         "File size mismatch"
     );
 
-    let output = EncoderConfig::new()
-        .quality(quality)
-        .method(method)
-        .sns_strength(0)
-        .filter_strength(0)
-        .segments(1)
-        .encode_rgb(&rgb_data, width, height)
-        .unwrap();
+    let diagnostic = args.get(6).is_none_or(|s| s != "default");
+
+    let output = if diagnostic {
+        EncoderConfig::new()
+            .quality(quality)
+            .method(method)
+            .sns_strength(0)
+            .filter_strength(0)
+            .segments(1)
+            .encode_rgb(&rgb_data, width, height)
+            .unwrap()
+    } else {
+        EncoderConfig::new()
+            .quality(quality)
+            .method(method)
+            .encode_rgb(&rgb_data, width, height)
+            .unwrap()
+    };
 
     eprintln!("Output: {} bytes", output.len());
 }
