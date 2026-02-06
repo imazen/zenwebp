@@ -129,6 +129,22 @@ pub fn collect_histogram_with_offset(
             );
         }
     }
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::NeonToken::summon() {
+            return collect_histogram_with_offset_neon(
+                token,
+                src_buf,
+                src_base,
+                pred_buf,
+                pred_base,
+                start_block,
+                end_block,
+            );
+        }
+    }
+    #[allow(unreachable_code)]
     collect_histogram_with_offset_scalar(
         src_buf,
         src_base,
@@ -213,6 +229,62 @@ fn collect_histogram_with_offset_sse2(
     }
 
     // Handle odd trailing block (shouldn't happen with VP8_DSP_SCAN but be safe)
+    if j < end_block {
+        let scan_off = VP8_DSP_SCAN[j];
+        let src_off = src_base + scan_off;
+        let pred_off = pred_base + scan_off;
+
+        let dct_out = forward_dct_4x4(&src_buf[src_off..], &pred_buf[pred_off..], BPS, BPS);
+
+        for &coeff in &dct_out {
+            let v = (coeff.unsigned_abs() >> 3) as usize;
+            distribution[v.min(MAX_COEFF_THRESH)] += 1;
+        }
+    }
+
+    DctHistogram::from_distribution(&distribution)
+}
+
+/// NEON histogram collection using ftransform2 for paired-block DCT.
+#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[archmage::arcane]
+fn collect_histogram_with_offset_neon(
+    _token: archmage::NeonToken,
+    src_buf: &[u8],
+    src_base: usize,
+    pred_buf: &[u8],
+    pred_base: usize,
+    start_block: usize,
+    end_block: usize,
+) -> DctHistogram {
+    let mut distribution = [0u32; MAX_COEFF_THRESH + 1];
+
+    let mut j = start_block;
+    while j + 1 < end_block {
+        let scan_off = VP8_DSP_SCAN[j];
+        let src_off = src_base + scan_off;
+        let pred_off = pred_base + scan_off;
+
+        let mut dct_out = [[0i32; 16]; 2];
+        crate::common::transform_aarch64::ftransform2_neon(
+            _token,
+            &src_buf[src_off..],
+            &pred_buf[pred_off..],
+            BPS,
+            BPS,
+            &mut dct_out,
+        );
+
+        for blk in &dct_out {
+            for &coeff in blk {
+                let v = ((coeff.unsigned_abs() >> 3) as usize).min(MAX_COEFF_THRESH);
+                distribution[v] += 1;
+            }
+        }
+
+        j += 2;
+    }
+
     if j < end_block {
         let scan_off = VP8_DSP_SCAN[j];
         let src_off = src_base + scan_off;
