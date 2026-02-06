@@ -1036,6 +1036,8 @@ pub struct Encoder<'a> {
     data: EncoderInput<'a>,
     width: u32,
     height: u32,
+    /// Row stride in bytes. `None` means contiguous (stride == width * bpp).
+    stride_bytes: Option<usize>,
     config: EncoderConfig,
     icc_profile: Option<Vec<u8>>,
     exif_metadata: Option<Vec<u8>>,
@@ -1052,6 +1054,7 @@ impl<'a> Encoder<'a> {
             data: EncoderInput::Rgba(data),
             width,
             height,
+            stride_bytes: None,
             config: EncoderConfig::default(),
             icc_profile: None,
             exif_metadata: None,
@@ -1068,6 +1071,7 @@ impl<'a> Encoder<'a> {
             data: EncoderInput::Rgb(data),
             width,
             height,
+            stride_bytes: None,
             config: EncoderConfig::default(),
             icc_profile: None,
             exif_metadata: None,
@@ -1084,6 +1088,7 @@ impl<'a> Encoder<'a> {
             data: EncoderInput::L8(data),
             width,
             height,
+            stride_bytes: None,
             config: EncoderConfig::default(),
             icc_profile: None,
             exif_metadata: None,
@@ -1100,6 +1105,7 @@ impl<'a> Encoder<'a> {
             data: EncoderInput::La8(data),
             width,
             height,
+            stride_bytes: None,
             config: EncoderConfig::default(),
             icc_profile: None,
             exif_metadata: None,
@@ -1116,6 +1122,7 @@ impl<'a> Encoder<'a> {
             data: EncoderInput::Bgr(data),
             width,
             height,
+            stride_bytes: None,
             config: EncoderConfig::default(),
             icc_profile: None,
             exif_metadata: None,
@@ -1132,6 +1139,7 @@ impl<'a> Encoder<'a> {
             data: EncoderInput::Bgra(data),
             width,
             height,
+            stride_bytes: None,
             config: EncoderConfig::default(),
             icc_profile: None,
             exif_metadata: None,
@@ -1158,6 +1166,7 @@ impl<'a> Encoder<'a> {
             data: EncoderInput::Yuv420 { y, u, v },
             width,
             height,
+            stride_bytes: None,
             config: EncoderConfig::default(),
             icc_profile: None,
             exif_metadata: None,
@@ -1209,6 +1218,54 @@ impl<'a> Encoder<'a> {
             data: input,
             width,
             height,
+            stride_bytes: None,
+            config: EncoderConfig::default(),
+            icc_profile: None,
+            exif_metadata: None,
+            xmp_metadata: None,
+            stop: &enough::Unstoppable,
+            progress: &NO_PROGRESS,
+        }
+    }
+
+    /// Create a new encoder for RGBA data with explicit row stride.
+    ///
+    /// `stride_bytes` is the number of bytes between the start of consecutive
+    /// rows. Must be >= `width * 4`.
+    #[must_use]
+    pub fn new_rgba_stride(
+        data: &'a [u8],
+        width: u32,
+        height: u32,
+        stride_bytes: usize,
+    ) -> Self {
+        Self {
+            data: EncoderInput::Rgba(data),
+            width,
+            height,
+            stride_bytes: Some(stride_bytes),
+            config: EncoderConfig::default(),
+            icc_profile: None,
+            exif_metadata: None,
+            xmp_metadata: None,
+            stop: &enough::Unstoppable,
+            progress: &NO_PROGRESS,
+        }
+    }
+
+    /// Create a new encoder for RGB data with explicit row stride.
+    #[must_use]
+    pub fn new_rgb_stride(
+        data: &'a [u8],
+        width: u32,
+        height: u32,
+        stride_bytes: usize,
+    ) -> Self {
+        Self {
+            data: EncoderInput::Rgb(data),
+            width,
+            height,
+            stride_bytes: Some(stride_bytes),
             config: EncoderConfig::default(),
             icc_profile: None,
             exif_metadata: None,
@@ -1447,11 +1504,38 @@ impl<'a> Encoder<'a> {
             }
         };
 
+        let bpp = color_type.bytes_per_pixel();
+        let row_bytes = self.width as usize * bpp;
+
+        // If stride is set and differs from row width, compact the data
+        let compacted;
+        let encode_data = if let Some(stride) = self.stride_bytes {
+            if stride < row_bytes {
+                return Err(EncodingError::InvalidBufferSize(format!(
+                    "stride {} < row width {}",
+                    stride, row_bytes
+                )));
+            }
+            if stride == row_bytes {
+                // Stride matches — no copy needed
+                data
+            } else {
+                // Copy rows to contiguous buffer
+                compacted = (0..self.height as usize)
+                    .flat_map(|y| &data[y * stride..y * stride + row_bytes])
+                    .copied()
+                    .collect::<Vec<u8>>();
+                &compacted
+            }
+        } else {
+            data
+        };
+
         validate_buffer_size(
-            data.len(),
+            encode_data.len(),
             self.width,
             self.height,
-            color_type.bytes_per_pixel() as u32,
+            bpp as u32,
         )?;
 
         let mut output = Vec::new();
@@ -1470,7 +1554,7 @@ impl<'a> Encoder<'a> {
             if let Some(xmp) = self.xmp_metadata {
                 encoder.set_xmp_metadata(xmp);
             }
-            stats = encoder.encode(data, self.width, self.height, color_type)?;
+            stats = encoder.encode(encode_data, self.width, self.height, color_type)?;
         }
         Ok((output, stats))
     }

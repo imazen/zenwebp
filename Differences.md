@@ -61,13 +61,18 @@ Instruction ratio is 1.12x — remaining gap is memory access patterns.
 | Animation encoder | `AnimationEncoder` (frame-by-frame, delta compression) | `AnimEncoder` |
 | Animation decoder | `AnimationDecoder` (high-level iterator API) | `AnimDecoder` |
 | Typed pixel API | `pixel::decode::<Rgba<u8>>()` via `rgb` crate (optional) | No |
+| `imgref` integration | `pixel::decode_to_img()`, `EncoderConfig::encode_img()` | No |
 | Encoder builder | `Encoder::new_rgba().quality(85.0).encode()` | Similar |
 | Reusable config | `EncoderConfig` encodes multiple images | No |
+| Stride-aware encode | `Encoder::new_rgba_stride()`, `new_rgb_stride()` | No |
 | Demuxer | `WebPDemuxer` (zero-copy chunk parser) | No |
 | Muxer | `WebPMux` (container assembler) | No |
+| Standalone metadata | `get_icc_profile()`, `embed_exif()`, `remove_xmp()`, etc. | No |
 | Presets | `Preset::{Photo, Drawing, Icon, Text, Auto}` | No |
 | Target size search | Secant method via `EncoderConfig::target_size()` | No |
+| Resource estimation | `heuristics::estimate_encode()`, `estimate_decode()` | No |
 | Perceptual model | CSF tables, SATD masking, JND thresholds (method 3+) | No (wraps libwebp) |
+| Bitstream format info | `ImageInfo::format` (`Lossy`/`Lossless`) | No |
 | no_std | Yes | No |
 | Pure Rust | Yes | No (FFI to libwebp C) |
 | SIMD | archmage token-based (SSE2/SSE4.1/AVX2/NEON/WASM) | libwebp's C SIMD |
@@ -87,6 +92,11 @@ Instruction ratio is 1.12x — remaining gap is memory access patterns.
 - Perceptual quality optimization (CSF, masking, JND)
 - Zero-copy demuxer
 - Typed pixel API via `rgb` crate
+- `imgref` integration for 2D image buffers
 - Reusable encoder configuration
+- Stride-aware encoder constructors
+- Standalone metadata convenience functions (get/embed/remove ICC/EXIF/XMP)
+- Resource estimation heuristics (memory, time, output size)
+- Bitstream format detection (`ImageInfo::format`)
 - Content-aware auto-detection (photo/drawing/icon)
 - Sub-frame delta compression in animation encoder

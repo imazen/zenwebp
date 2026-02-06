@@ -33,6 +33,7 @@ multiversed = { version = "0.2.0", optional = true }
 multiversion = { version = "0.8.0", optional = true }
 imagequant = { version = "4.4", optional = true, default-features = false }
 rgb = { version = "0.8", optional = true, default-features = false, features = ["as-bytes"] }
+imgref = { version = "1.12", optional = true, default-features = false }
 
 [dev-dependencies]
 paste = "1.0.14"
@@ -67,6 +68,8 @@ simd = ["dep:archmage", "dep:magetypes", "dep:safe_unaligned_simd"]
 unchecked = []
 # Type-safe pixel format support via the `rgb` crate.
 pixel-types = ["dep:rgb"]
+# imgref integration for Img<Vec<P>> / Img<&[P]> decode/encode.
+imgref = ["dep:imgref", "pixel-types"]
 # Runtime CPU feature detection for optimal SIMD paths (AVX-512, etc.)
 multiverse = ["dep:multiversed", "dep:multiversion"]
 # Color quantization via imagequant for near-lossless palette encoding.

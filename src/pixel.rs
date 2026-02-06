@@ -170,6 +170,88 @@ where
     }
 }
 
+/// Decode WebP data, appending typed pixels to an existing [`Vec`].
+///
+/// Useful for reusing an existing buffer or decoding multiple images
+/// into the same Vec.
+///
+/// Returns `(width, height)` of the decoded image.
+pub fn decode_append<P: DecodePixel>(
+    data: &[u8],
+    output: &mut Vec<P>,
+) -> Result<(u32, u32), DecodingError>
+where
+    [u8]: AsPixels<P>,
+{
+    let (bytes, w, h) = match (P::IS_BGR, P::HAS_ALPHA) {
+        (false, false) => crate::decode_rgb(data)?,
+        (false, true) => crate::decode_rgba(data)?,
+        (true, false) => crate::decode_bgr(data)?,
+        (true, true) => crate::decode_bgra(data)?,
+    };
+    let pixels: &[P] = bytes.as_pixels();
+    output.extend_from_slice(pixels);
+    Ok((w, h))
+}
+
+/// Decode WebP data to an [`imgref::ImgVec`].
+///
+/// Returns a 2D image buffer with typed pixels and dimensions.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use rgb::Rgba;
+///
+/// let webp_data: &[u8] = &[]; // your WebP data
+/// let img: imgref::ImgVec<Rgba<u8>> = zenwebp::pixel::decode_to_img(webp_data)?;
+/// println!("{}x{}", img.width(), img.height());
+/// # Ok::<(), zenwebp::DecodingError>(())
+/// ```
+#[cfg(feature = "imgref")]
+pub fn decode_to_img<P: DecodePixel>(
+    data: &[u8],
+) -> Result<imgref::ImgVec<P>, DecodingError>
+where
+    [u8]: AsPixels<P>,
+{
+    let (pixels, w, h) = decode::<P>(data)?;
+    Ok(imgref::ImgVec::new(pixels, w as usize, h as usize))
+}
+
+/// Encode an [`imgref::ImgRef`] to WebP with default settings.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use rgb::Rgba;
+/// use imgref::ImgVec;
+///
+/// let img = ImgVec::new(vec![Rgba::new(255, 0, 0, 255); 4 * 4], 4, 4);
+/// let webp = zenwebp::pixel::encode_img(img.as_ref())?;
+/// # Ok::<(), zenwebp::EncodingError>(())
+/// ```
+#[cfg(feature = "imgref")]
+pub fn encode_img<P: EncodePixel>(
+    img: imgref::ImgRef<'_, P>,
+) -> Result<Vec<u8>, EncodingError>
+where
+    [P]: ComponentBytes<u8>,
+{
+    // imgref may have stride > width; we need contiguous pixels
+    let width = img.width() as u32;
+    let height = img.height() as u32;
+    if img.stride() == img.width() {
+        // Contiguous — encode directly
+        let buf = img.buf();
+        EncoderConfig::new().encode_pixels(buf, width, height)
+    } else {
+        // Strided — collect rows into contiguous buffer
+        let pixels: Vec<P> = img.rows().flat_map(|row| row.iter().copied()).collect();
+        EncoderConfig::new().encode_pixels(&pixels, width, height)
+    }
+}
+
 /// Encode typed pixel data to WebP with default settings.
 ///
 /// For custom settings, use [`EncoderConfig::encode_pixels`] or
@@ -207,5 +289,24 @@ impl EncoderConfig {
         encoder.set_params(self.to_params());
         encoder.encode(bytes, width, height, color)?;
         Ok(output)
+    }
+
+    /// Encode an [`imgref::ImgRef`] to WebP.
+    #[cfg(feature = "imgref")]
+    pub fn encode_img<P: EncodePixel>(
+        &self,
+        img: imgref::ImgRef<'_, P>,
+    ) -> Result<Vec<u8>, EncodingError>
+    where
+        [P]: ComponentBytes<u8>,
+    {
+        let width = img.width() as u32;
+        let height = img.height() as u32;
+        if img.stride() == img.width() {
+            self.encode_pixels(img.buf(), width, height)
+        } else {
+            let pixels: Vec<P> = img.rows().flat_map(|row| row.iter().copied()).collect();
+            self.encode_pixels(&pixels, width, height)
+        }
     }
 }

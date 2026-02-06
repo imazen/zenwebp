@@ -1128,6 +1128,12 @@ pub struct ImageInfo {
     pub has_alpha: bool,
     /// Whether the image uses lossy compression.
     pub is_lossy: bool,
+    /// Whether the image is animated.
+    pub has_animation: bool,
+    /// Number of frames (1 for static images).
+    pub frame_count: u32,
+    /// Bitstream format (lossy or lossless).
+    pub format: BitstreamFormat,
 }
 
 impl ImageInfo {
@@ -1135,13 +1141,39 @@ impl ImageInfo {
     pub fn from_webp(data: &[u8]) -> Result<Self, DecodingError> {
         let decoder = WebPDecoder::new(data)?;
         let (width, height) = decoder.dimensions();
+        let is_lossy = decoder.is_lossy();
+        let is_animated = decoder.is_animated();
+        let frame_count = if is_animated {
+            decoder.num_frames()
+        } else {
+            1
+        };
+        let format = if is_lossy {
+            BitstreamFormat::Lossy
+        } else {
+            BitstreamFormat::Lossless
+        };
         Ok(Self {
             width,
             height,
             has_alpha: decoder.has_alpha(),
-            is_lossy: decoder.is_lossy(),
+            is_lossy,
+            has_animation: is_animated,
+            frame_count,
+            format,
         })
     }
+}
+
+/// Bitstream compression format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum BitstreamFormat {
+    /// Lossy compression (VP8).
+    #[default]
+    Lossy,
+    /// Lossless compression (VP8L).
+    Lossless,
 }
 
 /// Decoded YUV 4:2:0 planar image data.

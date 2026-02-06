@@ -186,6 +186,21 @@ impl WebPMux {
         self.xmp.as_deref()
     }
 
+    /// Remove ICC profile metadata.
+    pub fn clear_icc_profile(&mut self) {
+        self.icc_profile = None;
+    }
+
+    /// Remove EXIF metadata.
+    pub fn clear_exif(&mut self) {
+        self.exif = None;
+    }
+
+    /// Remove XMP metadata.
+    pub fn clear_xmp(&mut self) {
+        self.xmp = None;
+    }
+
     /// Configure this mux for animation output.
     ///
     /// The `background_color` is in BGRA byte order as per the WebP spec.

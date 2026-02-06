@@ -105,11 +105,14 @@ mod slice_reader;
 #[cfg(feature = "pixel-types")]
 pub mod pixel;
 
+/// Resource estimation heuristics for encoding and decoding operations.
+pub mod heuristics;
+
 // Re-export decoder public API
 pub use decoder::{
     decode_bgr, decode_bgr_into, decode_bgra, decode_bgra_into, decode_rgb, decode_rgb_into,
-    decode_rgba, decode_rgba_into, decode_yuv420, DecodingError, ImageInfo, LoopCount,
-    UpsamplingMethod, WebPDecodeOptions, WebPDecoder, YuvPlanes,
+    decode_rgba, decode_rgba_into, decode_yuv420, BitstreamFormat, DecodingError, ImageInfo,
+    LoopCount, UpsamplingMethod, WebPDecodeOptions, WebPDecoder, YuvPlanes,
 };
 
 // Re-export encoder public API
@@ -129,3 +132,71 @@ pub use enough::{Stop, StopReason, Unstoppable};
 
 // Re-export VP8 decoder (public module)
 pub use decoder::vp8;
+
+// ---------------------------------------------------------------------------
+// Standalone metadata convenience functions
+// ---------------------------------------------------------------------------
+
+/// Extract the ICC color profile from WebP data, if present.
+///
+/// This is a convenience wrapper around [`WebPDemuxer`].
+pub fn get_icc_profile(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
+    let demuxer = WebPDemuxer::new(data)?;
+    Ok(demuxer.icc_profile().map(|s| s.to_vec()))
+}
+
+/// Extract EXIF metadata from WebP data, if present.
+pub fn get_exif(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
+    let demuxer = WebPDemuxer::new(data)?;
+    Ok(demuxer.exif().map(|s| s.to_vec()))
+}
+
+/// Extract XMP metadata from WebP data, if present.
+pub fn get_xmp(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
+    let demuxer = WebPDemuxer::new(data)?;
+    Ok(demuxer.xmp().map(|s| s.to_vec()))
+}
+
+/// Embed an ICC color profile into WebP data.
+///
+/// Reassembles the WebP container with the provided ICC profile.
+pub fn embed_icc(data: &[u8], icc_profile: &[u8]) -> Result<alloc::vec::Vec<u8>, MuxError> {
+    let mut mux = WebPMux::from_data(data)?;
+    mux.set_icc_profile(icc_profile.to_vec());
+    mux.assemble()
+}
+
+/// Embed EXIF metadata into WebP data.
+pub fn embed_exif(data: &[u8], exif: &[u8]) -> Result<alloc::vec::Vec<u8>, MuxError> {
+    let mut mux = WebPMux::from_data(data)?;
+    mux.set_exif(exif.to_vec());
+    mux.assemble()
+}
+
+/// Embed XMP metadata into WebP data.
+pub fn embed_xmp(data: &[u8], xmp: &[u8]) -> Result<alloc::vec::Vec<u8>, MuxError> {
+    let mut mux = WebPMux::from_data(data)?;
+    mux.set_xmp(xmp.to_vec());
+    mux.assemble()
+}
+
+/// Remove ICC color profile from WebP data.
+pub fn remove_icc(data: &[u8]) -> Result<alloc::vec::Vec<u8>, MuxError> {
+    let mut mux = WebPMux::from_data(data)?;
+    mux.clear_icc_profile();
+    mux.assemble()
+}
+
+/// Remove EXIF metadata from WebP data.
+pub fn remove_exif(data: &[u8]) -> Result<alloc::vec::Vec<u8>, MuxError> {
+    let mut mux = WebPMux::from_data(data)?;
+    mux.clear_exif();
+    mux.assemble()
+}
+
+/// Remove XMP metadata from WebP data.
+pub fn remove_xmp(data: &[u8]) -> Result<alloc::vec::Vec<u8>, MuxError> {
+    let mut mux = WebPMux::from_data(data)?;
+    mux.clear_xmp();
+    mux.assemble()
+}
