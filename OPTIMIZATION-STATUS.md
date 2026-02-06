@@ -138,6 +138,7 @@ Token buffer pre-allocation was increased from 300 to 768 tokens/MB to match lib
 | Feb 5 | Residual cost inner loop indexing | 183.3M | 182.0M | -0.7% |
 | Feb 5 | Token buffer pre-allocation fix | - | - | eliminates 1 realloc |
 | Feb 5 | SIMD histogram + import_block opt | 247M* | 226.3M* | -8.4% |
+| Feb 5 | TDisto dispatch hoisting | 226.3M* | 219.8M* | -2.9% |
 
 *\* Default-mode instruction counts (SNS=50, filter=60, segments=4)*
 
@@ -238,24 +239,26 @@ in the bounds checks themselves, not the index computation.
    52% more writes than libwebp, 2.2x more write cache misses. Biggest contributors
    are memcpy (52% of write misses) and memset (18%).
 
-## Default-Mode Instruction Breakdown (226.3M, commit da96836)
+## Default-Mode Instruction Breakdown (219.8M, commit cf9e91a)
 
 | Function | M instr | % | Notes |
 |----------|---------|---|-------|
-| evaluate_i4_modes_sse2 | 42.7 | 18.9% | I4 inner loop |
-| encode_image | 35.9 | 15.9% | Main encoding loop + default settings overhead |
-| get_residual_cost_sse2 | 21.8 | 9.6% | Coefficient cost estimation |
-| choose_macroblock_info | 20.5 | 9.1% | I16/UV mode selection |
-| ftransform2_sse2 | 12.0 | 5.3% | DCT (mode selection + histogram) |
-| tdisto_4x4_fused | 10.6 | 4.7% | Spectral distortion (SNS) |
-| convert_image_yuv | 9.5 | 4.2% | YUV conversion |
-| record_coeff_tokens | 7.3 | 3.2% | Token recording |
-| idct_add_residue | 6.8 | 3.0% | Fused IDCT+add |
-| pick_best_intra4 | 5.9 | 2.6% | I4 orchestration |
-| collect_histogram_sse2 | 5.2 | 2.3% | Analysis histogram (SIMD) |
+| evaluate_i4_modes_sse2 | 42.7 | 19.4% | I4 inner loop |
+| encode_image | 35.9 | 16.4% | Main encoding loop + default settings overhead |
+| get_residual_cost_sse2 | 21.8 | 9.9% | Coefficient cost estimation |
+| choose_macroblock_info | 19.8 | 9.0% | I16/UV mode selection |
+| ftransform2_sse2 | 12.0 | 5.5% | DCT (mode selection + histogram) |
+| convert_image_yuv | 9.5 | 4.3% | YUV conversion |
+| record_coeff_tokens | 7.3 | 3.3% | Token recording |
+| idct_add_residue | 6.8 | 3.1% | Fused IDCT+add |
+| pick_best_intra4 | 5.9 | 2.7% | I4 orchestration |
+| collect_histogram_sse2 | 5.2 | 2.4% | Analysis histogram (SIMD) |
+| tdisto_16x16_sse2 | 4.7 | 2.2% | Spectral distortion (hoisted dispatch) |
 | memcpy | 4.7 | 2.1% | Buffer copies |
 | write_bool | 4.5 | 2.0% | Arithmetic encoding |
-| quantize_block | 4.3 | 1.9% | Quantize (I16 path) |
+| quantize_block | 4.3 | 2.0% | Quantize (I16 path) |
+| presort_i4_modes_sse2 | 3.3 | 1.5% | I4 mode SSE pre-sort |
+| tdisto_8x8_sse2 | 2.3 | 1.1% | Chroma spectral distortion |
 
-Default-mode overhead vs diagnostic: 226.3M - 182.8M = **43.5M** (was 65M before SIMD histogram).
-Main sources: tdisto_4x4 (10.6M), collect_histogram (5.2M), encode_image loop overhead (11.5M).
+Default-mode overhead vs diagnostic: 219.8M - 182.8M = **37.0M** (was 65M before optimizations).
+Main sources: encode_image loop overhead (11.5M), tdisto (7.0M), histogram (5.2M), other (13.3M).
