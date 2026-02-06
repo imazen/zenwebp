@@ -16,7 +16,7 @@ use archmage::NeonToken;
 #[cfg(target_arch = "aarch64")]
 pub(crate) fn dct4x4_neon(_token: NeonToken, block: &mut [i32; 16]) {
     // TODO: Fix NEON SIMD implementation - transpose/shuffle logic differs from x86
-    crate::transform::dct4x4_scalar(block);
+    crate::common::transform::dct4x4_scalar(block);
 }
 
 /// Inverse DCT using NEON (currently uses scalar fallback due to NEON bugs)
@@ -24,5 +24,5 @@ pub(crate) fn dct4x4_neon(_token: NeonToken, block: &mut [i32; 16]) {
 pub(crate) fn idct4x4_neon(_token: NeonToken, block: &mut [i32]) {
     debug_assert!(block.len() >= 16);
     // TODO: Fix NEON SIMD implementation - transpose/shuffle logic differs from x86
-    crate::transform::idct4x4_scalar(block);
+    crate::common::transform::idct4x4_scalar(block);
 }

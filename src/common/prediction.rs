@@ -380,7 +380,13 @@ pub(crate) fn add_residue_and_clear_with_token(
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
 pub(crate) type SimdTokenType = Option<archmage::X64V3Token>;
 
-#[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+pub(crate) type SimdTokenType = Option<archmage::NeonToken>;
+
+#[cfg(not(all(
+    feature = "simd",
+    any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
+)))]
 pub(crate) type SimdTokenType = Option<()>;
 
 #[inline(always)]
@@ -1429,8 +1435,33 @@ pub(crate) fn idct_add_residue_and_clear_with_token(
     );
 }
 
+/// NEON fallback for fused IDCT + add residue + clear (uses scalar for now, token wired).
+#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[inline(always)]
+pub(crate) fn idct_add_residue_and_clear_with_token(
+    _token: archmage::NeonToken,
+    pblock: &mut [u8],
+    rblock: &mut [i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    use crate::common::transform;
+
+    let dc_only = rblock[1..].iter().all(|&c| c == 0);
+    if dc_only {
+        transform::idct4x4_dc(rblock);
+    } else {
+        transform::idct4x4(rblock);
+    }
+    add_residue_and_clear_scalar(pblock, rblock, y0, x0, stride);
+}
+
 /// Scalar fallback for fused IDCT + add residue + clear.
-#[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+#[cfg(not(all(
+    feature = "simd",
+    any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
+)))]
 #[inline(always)]
 pub(crate) fn idct_add_residue_and_clear_with_token(
     _token: (),
@@ -1440,7 +1471,6 @@ pub(crate) fn idct_add_residue_and_clear_with_token(
     x0: usize,
     stride: usize,
 ) {
-    // For scalar: do IDCT first, then add
     use crate::common::transform;
 
     let dc_only = rblock[1..].iter().all(|&c| c == 0);
@@ -1466,6 +1496,14 @@ pub(crate) fn idct_add_residue_and_clear(
     {
         use archmage::{SimdToken, X64V3Token};
         if let Some(token) = X64V3Token::summon() {
+            idct_add_residue_and_clear_with_token(token, pblock, rblock, y0, x0, stride);
+            return;
+        }
+    }
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    {
+        use archmage::{NeonToken, SimdToken};
+        if let Some(token) = NeonToken::summon() {
             idct_add_residue_and_clear_with_token(token, pblock, rblock, y0, x0, stride);
             return;
         }
