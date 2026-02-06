@@ -89,6 +89,19 @@ jobs:
       - name: Cross-test aarch64 with SIMD (NEON)
         run: cross test --target aarch64-unknown-linux-gnu --features "std,fast-yuv,simd" --release -v
 
+  # WASM SIMD128 compile check (runtime tests blocked by C dev-deps)
+  build_wasm:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-unknown-unknown
+    - name: Build WASM with SIMD
+      run: cargo build --target wasm32-unknown-unknown --features simd --lib -v
+    - name: Build WASM without SIMD
+      run: cargo build --target wasm32-unknown-unknown --lib -v
+
   test_big_endian:
     runs-on: ubuntu-latest
     steps:

@@ -7,7 +7,7 @@
 use core::arch::wasm32::*;
 
 #[cfg(target_arch = "wasm32")]
-use archmage::{arcane, Simd128Token};
+use archmage::{arcane, Wasm128Token};
 
 // =============================================================================
 // Public dispatch functions
@@ -15,13 +15,13 @@ use archmage::{arcane, Simd128Token};
 
 /// Forward DCT using WASM SIMD128
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn dct4x4_wasm(token: Simd128Token, block: &mut [i32; 16]) {
+pub(crate) fn dct4x4_wasm(token: Wasm128Token, block: &mut [i32; 16]) {
     dct4x4_wasm_impl(token, block);
 }
 
 /// Inverse DCT using WASM SIMD128
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn idct4x4_wasm(token: Simd128Token, block: &mut [i32]) {
+pub(crate) fn idct4x4_wasm(token: Wasm128Token, block: &mut [i32]) {
     debug_assert!(block.len() >= 16);
     idct4x4_wasm_impl(token, block);
 }
@@ -85,7 +85,7 @@ fn store_i16x8(out: &mut [i16], offset: usize, v: v128) {
 /// Forward DCT implementation using WASM SIMD128
 #[cfg(target_arch = "wasm32")]
 #[arcane]
-fn dct4x4_wasm_impl(_token: Simd128Token, block: &mut [i32; 16]) {
+fn dct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32; 16]) {
     // Convert i32 block to i16 and reorganize into libwebp's interleaved layout:
     // row01 = [r0c0, r0c1, r1c0, r1c1, r0c2, r0c3, r1c2, r1c3]
     // row23 = [r2c0, r2c1, r3c0, r3c1, r2c2, r2c3, r3c2, r3c3]
@@ -209,7 +209,7 @@ fn ftransform_pass2_wasm(v01: &v128, v32: &v128, out: &mut [i16; 16]) {
 /// Inverse DCT implementation using WASM SIMD128
 #[cfg(target_arch = "wasm32")]
 #[arcane]
-fn idct4x4_wasm_impl(_token: Simd128Token, block: &mut [i32]) {
+fn idct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32]) {
     // libwebp IDCT constants
     let k1k2 = i16x8(20091, 20091, 20091, 20091, -30068, -30068, -30068, -30068);
     let k2k1 = i16x8(-30068, -30068, -30068, -30068, 20091, 20091, 20091, 20091);
