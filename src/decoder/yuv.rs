@@ -100,7 +100,15 @@ pub(crate) fn fill_rgb_buffer_fancy<const BPP: usize>(
             use archmage::SimdToken;
             archmage::X64V3Token::summon()
         }
-        #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+        #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+        {
+            use archmage::SimdToken;
+            archmage::NeonToken::summon()
+        }
+        #[cfg(not(all(
+            feature = "simd",
+            any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
+        )))]
         {
             None
         }
@@ -198,6 +206,16 @@ fn fill_row_fancy_with_2_uv_rows<const BPP: usize>(
         }
     }
 
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    if BPP == 3 && y_row.len() >= 17 {
+        if let Some(token) = simd_token {
+            fill_row_fancy_with_2_uv_rows_neon::<BPP>(
+                row_buffer, y_row, u_row_1, u_row_2, v_row_1, v_row_2, token,
+            );
+            return;
+        }
+    }
+
     fill_row_fancy_with_2_uv_rows_scalar::<BPP>(
         row_buffer, y_row, u_row_1, u_row_2, v_row_1, v_row_2,
     );
@@ -263,6 +281,103 @@ fn fill_row_fancy_with_2_uv_rows_simd<const BPP: usize>(
 
     // Handle remaining pixels with scalar code
     // Process remaining full pairs
+    while y_offset + 2 <= width && uv_offset + 2 <= u_row_1.len() {
+        let u_val_1 = &u_row_1[uv_offset..uv_offset + 2];
+        let u_val_2 = &u_row_2[uv_offset..uv_offset + 2];
+        let v_val_1 = &v_row_1[uv_offset..uv_offset + 2];
+        let v_val_2 = &v_row_2[uv_offset..uv_offset + 2];
+
+        {
+            let rgb1 = &mut row_buffer[rgb_offset..rgb_offset + 3];
+            let y_value = y_row[y_offset];
+            let u_value = get_fancy_chroma_value(u_val_1[0], u_val_1[1], u_val_2[0], u_val_2[1]);
+            let v_value = get_fancy_chroma_value(v_val_1[0], v_val_1[1], v_val_2[0], v_val_2[1]);
+            set_pixel(rgb1, y_value, u_value, v_value);
+        }
+        {
+            let rgb2 = &mut row_buffer[rgb_offset + BPP..rgb_offset + BPP + 3];
+            let y_value = y_row[y_offset + 1];
+            let u_value = get_fancy_chroma_value(u_val_1[1], u_val_1[0], u_val_2[1], u_val_2[0]);
+            let v_value = get_fancy_chroma_value(v_val_1[1], v_val_1[0], v_val_2[1], v_val_2[0]);
+            set_pixel(rgb2, y_value, u_value, v_value);
+        }
+
+        y_offset += 2;
+        uv_offset += 1;
+        rgb_offset += BPP * 2;
+    }
+
+    // Handle final odd pixel if present
+    if y_offset < width {
+        let final_u_1 = *u_row_1.last().unwrap();
+        let final_u_2 = *u_row_2.last().unwrap();
+        let final_v_1 = *v_row_1.last().unwrap();
+        let final_v_2 = *v_row_2.last().unwrap();
+
+        let rgb1 = &mut row_buffer[rgb_offset..rgb_offset + 3];
+        let u_value = get_fancy_chroma_value(final_u_1, final_u_1, final_u_2, final_u_2);
+        let v_value = get_fancy_chroma_value(final_v_1, final_v_1, final_v_2, final_v_2);
+        set_pixel(rgb1, y_row[y_offset], u_value, v_value);
+    }
+}
+
+#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+fn fill_row_fancy_with_2_uv_rows_neon<const BPP: usize>(
+    row_buffer: &mut [u8],
+    y_row: &[u8],
+    u_row_1: &[u8],
+    u_row_2: &[u8],
+    v_row_1: &[u8],
+    v_row_2: &[u8],
+    token: archmage::NeonToken,
+) {
+    // Handle first pixel separately (edge case)
+    {
+        let rgb1 = &mut row_buffer[0..3];
+        let y_value = y_row[0];
+        let u_value = get_fancy_chroma_value(u_row_1[0], u_row_1[0], u_row_2[0], u_row_2[0]);
+        let v_value = get_fancy_chroma_value(v_row_1[0], v_row_1[0], v_row_2[0], v_row_2[0]);
+        set_pixel(rgb1, y_value, u_value, v_value);
+    }
+
+    let width = y_row.len();
+    let mut y_offset = 1;
+    let mut uv_offset = 0;
+    let mut rgb_offset = BPP;
+
+    // Process chunks of 32 Y pixels (16 pixel pairs) with NEON
+    while y_offset + 32 <= width && uv_offset + 17 <= u_row_1.len() {
+        super::yuv_neon::fancy_upsample_16_pairs_neon(
+            token,
+            &y_row[y_offset..],
+            &u_row_1[uv_offset..],
+            &u_row_2[uv_offset..],
+            &v_row_1[uv_offset..],
+            &v_row_2[uv_offset..],
+            &mut row_buffer[rgb_offset..],
+        );
+        y_offset += 32;
+        uv_offset += 16;
+        rgb_offset += 96;
+    }
+
+    // Process remaining chunks of 16 Y pixels (8 pixel pairs) with NEON
+    while y_offset + 16 <= width && uv_offset + 9 <= u_row_1.len() {
+        super::yuv_neon::fancy_upsample_8_pairs_neon(
+            token,
+            &y_row[y_offset..],
+            &u_row_1[uv_offset..],
+            &u_row_2[uv_offset..],
+            &v_row_1[uv_offset..],
+            &v_row_2[uv_offset..],
+            &mut row_buffer[rgb_offset..],
+        );
+        y_offset += 16;
+        uv_offset += 8;
+        rgb_offset += 48;
+    }
+
+    // Handle remaining pixels with scalar code
     while y_offset + 2 <= width && uv_offset + 2 <= u_row_1.len() {
         let u_val_1 = &u_row_1[uv_offset..uv_offset + 2];
         let u_val_2 = &u_row_2[uv_offset..uv_offset + 2];
@@ -485,6 +600,15 @@ fn fill_rgba_row_simple<const BPP: usize>(
     if BPP == 3 && y_vec.len() >= 8 && is_x86_feature_detected!("sse2") {
         fill_rgba_row_simple_simd::<BPP>(y_vec, u_vec, v_vec, rgba);
         return;
+    }
+
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    if BPP == 3 && y_vec.len() >= 16 {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::NeonToken::summon() {
+            super::yuv_neon::yuv420_to_rgb_row_neon(token, y_vec, u_vec, v_vec, rgba);
+            return;
+        }
     }
 
     fill_rgba_row_simple_scalar::<BPP>(y_vec, u_vec, v_vec, rgba);
