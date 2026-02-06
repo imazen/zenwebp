@@ -40,7 +40,10 @@ pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
         // The fused version below is the hot path and uses NEON.
         t_transform_scalar(input, stride, w)
     }
-    #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64"))))]
+    #[cfg(not(all(
+        feature = "simd",
+        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
+    )))]
     {
         t_transform_scalar(input, stride, w)
     }
@@ -114,7 +117,10 @@ pub fn tdisto_4x4(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
         let token = archmage::NeonToken::summon().unwrap();
         crate::common::simd_neon::tdisto_4x4_fused_neon(token, a, b, stride, w)
     }
-    #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64"))))]
+    #[cfg(not(all(
+        feature = "simd",
+        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
+    )))]
     {
         let sum1 = t_transform(a, stride, w);
         let sum2 = t_transform(b, stride, w);

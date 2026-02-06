@@ -2,12 +2,9 @@
 //!
 //! Ported from the x86 SSE2 versions in simd_sse.rs.
 
-
 use archmage::{arcane, rite, NeonToken};
 
-
 use safe_unaligned_simd::aarch64 as simd_mem;
-
 
 use core::arch::aarch64::*;
 
@@ -30,7 +27,6 @@ fn hsum_u32x4(_token: NeonToken, v: uint32x4_t) -> u32 {
 pub(crate) fn sse4x4_neon(_token: NeonToken, a: &[u8; 16], b: &[u8; 16]) -> u32 {
     sse4x4_inner(_token, a, b)
 }
-
 
 #[rite]
 fn sse4x4_inner(_token: NeonToken, a: &[u8; 16], b: &[u8; 16]) -> u32 {
@@ -66,7 +62,6 @@ pub(crate) fn sse4x4_with_residual_neon(
 ) -> u32 {
     sse4x4_with_residual_inner(_token, src, pred, residual)
 }
-
 
 #[rite]
 fn sse4x4_with_residual_inner(
@@ -124,7 +119,6 @@ pub(crate) fn sse_16x16_luma_neon(
     sse_16x16_luma_inner(_token, src_y, src_width, mbx, mby, pred)
 }
 
-
 #[rite]
 fn sse_16x16_luma_inner(
     _token: NeonToken,
@@ -170,7 +164,6 @@ pub(crate) fn sse_8x8_chroma_neon(
 ) -> u32 {
     sse_8x8_chroma_inner(_token, src_uv, src_width, mbx, mby, pred)
 }
-
 
 #[rite]
 fn sse_8x8_chroma_inner(
@@ -219,7 +212,6 @@ pub(crate) fn tdisto_4x4_fused_neon(
 ) -> i32 {
     tdisto_4x4_fused_inner(_token, a, b, stride, w)
 }
-
 
 #[rite]
 pub(crate) fn tdisto_4x4_fused_inner(
@@ -275,14 +267,8 @@ pub(crate) fn tdisto_4x4_fused_inner(
         // vzipq returns x2 tuple types; destructure before reinterpret
         let t01 = vzipq_s16(vb0, vb1);
         let t23 = vzipq_s16(vb2, vb3);
-        let r0 = vzipq_s32(
-            vreinterpretq_s32_s16(t01.0),
-            vreinterpretq_s32_s16(t23.0),
-        );
-        let r1 = vzipq_s32(
-            vreinterpretq_s32_s16(t01.1),
-            vreinterpretq_s32_s16(t23.1),
-        );
+        let r0 = vzipq_s32(vreinterpretq_s32_s16(t01.0), vreinterpretq_s32_s16(t23.0));
+        let r1 = vzipq_s32(vreinterpretq_s32_s16(t01.1), vreinterpretq_s32_s16(t23.1));
         tmp0 = vreinterpretq_s16_s32(r0.0);
         tmp1 = vreinterpretq_s16_s32(r0.1);
         tmp2 = vreinterpretq_s16_s32(r1.0);
@@ -345,30 +331,19 @@ pub(crate) fn tdisto_4x4_fused_inner(
 /// Check if a 16x16 source block is all one color
 
 #[arcane]
-pub(crate) fn is_flat_source_16_neon(
-    _token: NeonToken,
-    src: &[u8],
-    stride: usize,
-) -> bool {
+pub(crate) fn is_flat_source_16_neon(_token: NeonToken, src: &[u8], stride: usize) -> bool {
     is_flat_source_16_inner(_token, src, stride)
 }
 
-
 #[rite]
-fn is_flat_source_16_inner(
-    _token: NeonToken,
-    src: &[u8],
-    stride: usize,
-) -> bool {
+fn is_flat_source_16_inner(_token: NeonToken, src: &[u8], stride: usize) -> bool {
     // Compare all bytes against the first byte
     let first = vdupq_n_u8(src[0]);
     let mut all_eq = vdupq_n_u8(0xff);
 
     for row in 0..16 {
         let off = row * stride;
-        let row_data = simd_mem::vld1q_u8(
-            <&[u8; 16]>::try_from(&src[off..off + 16]).unwrap(),
-        );
+        let row_data = simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&src[off..off + 16]).unwrap());
         let eq = vceqq_u8(row_data, first);
         all_eq = vandq_u8(all_eq, eq);
     }
@@ -389,14 +364,8 @@ pub(crate) fn is_flat_coeffs_neon(
     is_flat_coeffs_inner(_token, levels, num_blocks, thresh)
 }
 
-
 #[rite]
-fn is_flat_coeffs_inner(
-    _token: NeonToken,
-    levels: &[i16],
-    num_blocks: usize,
-    thresh: i32,
-) -> bool {
+fn is_flat_coeffs_inner(_token: NeonToken, levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
     let zero = vdupq_n_s16(0);
     let mut count = 0i32;
 
@@ -405,12 +374,8 @@ fn is_flat_coeffs_inner(
         if off + 16 > levels.len() {
             break;
         }
-        let v = simd_mem::vld1q_s16(
-            <&[i16; 8]>::try_from(&levels[off..off + 8]).unwrap(),
-        );
-        let v2 = simd_mem::vld1q_s16(
-            <&[i16; 8]>::try_from(&levels[off + 8..off + 16]).unwrap(),
-        );
+        let v = simd_mem::vld1q_s16(<&[i16; 8]>::try_from(&levels[off..off + 8]).unwrap());
+        let v2 = simd_mem::vld1q_s16(<&[i16; 8]>::try_from(&levels[off + 8..off + 16]).unwrap());
         // Count lanes where v != 0
         let ne0 = vmvnq_u16(vceqq_s16(v, zero));
         let ne1 = vmvnq_u16(vceqq_s16(v2, zero));
@@ -448,7 +413,6 @@ pub(crate) fn quantize_block_neon(
     quantize_block_inner(_token, coeffs, matrix, use_sharpen)
 }
 
-
 #[rite]
 fn quantize_block_inner(
     _token: NeonToken,
@@ -484,12 +448,24 @@ fn quantize_block_inner(
     // Quantize: out = (coeff * iQ + bias) >> QFIX
     // iQ is u32[16], but fits in u16 for typical quantizers
     let iq0 = simd_mem::vld1q_u16(&[
-        matrix.iq[0] as u16, matrix.iq[1] as u16, matrix.iq[2] as u16, matrix.iq[3] as u16,
-        matrix.iq[4] as u16, matrix.iq[5] as u16, matrix.iq[6] as u16, matrix.iq[7] as u16,
+        matrix.iq[0] as u16,
+        matrix.iq[1] as u16,
+        matrix.iq[2] as u16,
+        matrix.iq[3] as u16,
+        matrix.iq[4] as u16,
+        matrix.iq[5] as u16,
+        matrix.iq[6] as u16,
+        matrix.iq[7] as u16,
     ]);
     let iq8 = simd_mem::vld1q_u16(&[
-        matrix.iq[8] as u16, matrix.iq[9] as u16, matrix.iq[10] as u16, matrix.iq[11] as u16,
-        matrix.iq[12] as u16, matrix.iq[13] as u16, matrix.iq[14] as u16, matrix.iq[15] as u16,
+        matrix.iq[8] as u16,
+        matrix.iq[9] as u16,
+        matrix.iq[10] as u16,
+        matrix.iq[11] as u16,
+        matrix.iq[12] as u16,
+        matrix.iq[13] as u16,
+        matrix.iq[14] as u16,
+        matrix.iq[15] as u16,
     ]);
 
     let coeff0_u = vreinterpretq_u16_s16(coeff0);
@@ -550,26 +526,25 @@ fn quantize_block_inner(
 /// NEON dequantize block: multiply coefficients by quantizer steps
 
 #[arcane]
-pub(crate) fn dequantize_block_neon(
-    _token: NeonToken,
-    q: &[u16; 16],
-    coeffs: &mut [i32; 16],
-) {
+pub(crate) fn dequantize_block_neon(_token: NeonToken, q: &[u16; 16], coeffs: &mut [i32; 16]) {
     dequantize_block_inner(_token, q, coeffs);
 }
 
-
 #[rite]
-fn dequantize_block_inner(
-    _token: NeonToken,
-    q: &[u16; 16],
-    coeffs: &mut [i32; 16],
-) {
+fn dequantize_block_inner(_token: NeonToken, q: &[u16; 16], coeffs: &mut [i32; 16]) {
     // Load q as u16, zero-extend to u32
-    let q0 = vmovl_u16(vget_low_u16(simd_mem::vld1q_u16(<&[u16; 8]>::try_from(&q[0..8]).unwrap())));
-    let q4 = vmovl_u16(vget_high_u16(simd_mem::vld1q_u16(<&[u16; 8]>::try_from(&q[0..8]).unwrap())));
-    let q8 = vmovl_u16(vget_low_u16(simd_mem::vld1q_u16(<&[u16; 8]>::try_from(&q[8..16]).unwrap())));
-    let q12 = vmovl_u16(vget_high_u16(simd_mem::vld1q_u16(<&[u16; 8]>::try_from(&q[8..16]).unwrap())));
+    let q0 = vmovl_u16(vget_low_u16(simd_mem::vld1q_u16(
+        <&[u16; 8]>::try_from(&q[0..8]).unwrap(),
+    )));
+    let q4 = vmovl_u16(vget_high_u16(simd_mem::vld1q_u16(
+        <&[u16; 8]>::try_from(&q[0..8]).unwrap(),
+    )));
+    let q8 = vmovl_u16(vget_low_u16(simd_mem::vld1q_u16(
+        <&[u16; 8]>::try_from(&q[8..16]).unwrap(),
+    )));
+    let q12 = vmovl_u16(vget_high_u16(simd_mem::vld1q_u16(
+        <&[u16; 8]>::try_from(&q[8..16]).unwrap(),
+    )));
 
     // Load coefficients
     let c0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
@@ -601,11 +576,8 @@ pub(crate) fn quantize_dequantize_block_neon(
     quantized: &mut [i32; 16],
     dequantized: &mut [i32; 16],
 ) -> bool {
-    quantize_dequantize_block_inner(
-        _token, coeffs, matrix, use_sharpen, quantized, dequantized,
-    )
+    quantize_dequantize_block_inner(_token, coeffs, matrix, use_sharpen, quantized, dequantized)
 }
-
 
 #[rite]
 fn quantize_dequantize_block_inner(
@@ -642,12 +614,24 @@ fn quantize_dequantize_block_inner(
 
     // Load iQ
     let iq0 = simd_mem::vld1q_u16(&[
-        matrix.iq[0] as u16, matrix.iq[1] as u16, matrix.iq[2] as u16, matrix.iq[3] as u16,
-        matrix.iq[4] as u16, matrix.iq[5] as u16, matrix.iq[6] as u16, matrix.iq[7] as u16,
+        matrix.iq[0] as u16,
+        matrix.iq[1] as u16,
+        matrix.iq[2] as u16,
+        matrix.iq[3] as u16,
+        matrix.iq[4] as u16,
+        matrix.iq[5] as u16,
+        matrix.iq[6] as u16,
+        matrix.iq[7] as u16,
     ]);
     let iq8 = simd_mem::vld1q_u16(&[
-        matrix.iq[8] as u16, matrix.iq[9] as u16, matrix.iq[10] as u16, matrix.iq[11] as u16,
-        matrix.iq[12] as u16, matrix.iq[13] as u16, matrix.iq[14] as u16, matrix.iq[15] as u16,
+        matrix.iq[8] as u16,
+        matrix.iq[9] as u16,
+        matrix.iq[10] as u16,
+        matrix.iq[11] as u16,
+        matrix.iq[12] as u16,
+        matrix.iq[13] as u16,
+        matrix.iq[14] as u16,
+        matrix.iq[15] as u16,
     ]);
 
     let coeff0_u = vreinterpretq_u16_s16(coeff0);
@@ -686,10 +670,22 @@ fn quantize_dequantize_block_inner(
     qout8 = vsubq_s16(veorq_s16(qout8, sign8), sign8);
 
     // Store quantized (i16 → i32)
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut quantized[0..4]).unwrap(), vmovl_s16(vget_low_s16(qout0)));
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut quantized[4..8]).unwrap(), vmovl_s16(vget_high_s16(qout0)));
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut quantized[8..12]).unwrap(), vmovl_s16(vget_low_s16(qout8)));
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut quantized[12..16]).unwrap(), vmovl_s16(vget_high_s16(qout8)));
+    simd_mem::vst1q_s32(
+        <&mut [i32; 4]>::try_from(&mut quantized[0..4]).unwrap(),
+        vmovl_s16(vget_low_s16(qout0)),
+    );
+    simd_mem::vst1q_s32(
+        <&mut [i32; 4]>::try_from(&mut quantized[4..8]).unwrap(),
+        vmovl_s16(vget_high_s16(qout0)),
+    );
+    simd_mem::vst1q_s32(
+        <&mut [i32; 4]>::try_from(&mut quantized[8..12]).unwrap(),
+        vmovl_s16(vget_low_s16(qout8)),
+    );
+    simd_mem::vst1q_s32(
+        <&mut [i32; 4]>::try_from(&mut quantized[12..16]).unwrap(),
+        vmovl_s16(vget_high_s16(qout8)),
+    );
 
     // Dequantize: quantized * q
     let q0 = simd_mem::vld1q_u16(<&[u16; 8]>::try_from(&matrix.q[0..8]).unwrap());
@@ -699,10 +695,22 @@ fn quantize_dequantize_block_inner(
     let dq8 = vmulq_s16(qout8, vreinterpretq_s16_u16(q8_val));
 
     // Store dequantized (i16 → i32)
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut dequantized[0..4]).unwrap(), vmovl_s16(vget_low_s16(dq0)));
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut dequantized[4..8]).unwrap(), vmovl_s16(vget_high_s16(dq0)));
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut dequantized[8..12]).unwrap(), vmovl_s16(vget_low_s16(dq8)));
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut dequantized[12..16]).unwrap(), vmovl_s16(vget_high_s16(dq8)));
+    simd_mem::vst1q_s32(
+        <&mut [i32; 4]>::try_from(&mut dequantized[0..4]).unwrap(),
+        vmovl_s16(vget_low_s16(dq0)),
+    );
+    simd_mem::vst1q_s32(
+        <&mut [i32; 4]>::try_from(&mut dequantized[4..8]).unwrap(),
+        vmovl_s16(vget_high_s16(dq0)),
+    );
+    simd_mem::vst1q_s32(
+        <&mut [i32; 4]>::try_from(&mut dequantized[8..12]).unwrap(),
+        vmovl_s16(vget_low_s16(dq8)),
+    );
+    simd_mem::vst1q_s32(
+        <&mut [i32; 4]>::try_from(&mut dequantized[12..16]).unwrap(),
+        vmovl_s16(vget_high_s16(dq8)),
+    );
 
     // Non-zero check
     let or0 = vorrq_s16(qout0, qout8);

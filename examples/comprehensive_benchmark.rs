@@ -1,4 +1,5 @@
 //! Comprehensive decoder/encoder benchmark across multiple corpora
+#![allow(clippy::type_complexity)]
 
 use std::env;
 use std::fs;

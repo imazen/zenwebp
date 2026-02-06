@@ -3,12 +3,9 @@
 //! Ported from libwebp's upsampling_neon.c for efficient YUV→RGB with native
 //! interleaved stores (vst3q_u8). Processes 16 pixels at a time.
 
-
 use archmage::{arcane, rite, NeonToken};
 
-
 use safe_unaligned_simd::aarch64 as simd_mem;
-
 
 use core::arch::aarch64::*;
 
@@ -184,7 +181,6 @@ pub(crate) fn fancy_upsample_16_pairs_neon(
     fancy_upsample_16_pairs_inner_neon(_token, y, u1, u2, v1, v2, out);
 }
 
-
 #[rite]
 fn fancy_upsample_16_pairs_inner_neon(
     _token: NeonToken,
@@ -270,7 +266,6 @@ pub(crate) fn fancy_upsample_8_pairs_neon(
 
     fancy_upsample_8_pairs_inner_neon(_token, y, u1, u2, v1, v2, out);
 }
-
 
 #[rite]
 fn fancy_upsample_8_pairs_inner_neon(

@@ -692,7 +692,8 @@ impl<'a> super::Vp8Encoder<'a> {
         let mbw = usize::from(self.macroblock_width);
         let src_width = mbw * 16;
 
-        // All 10 intra4 modes
+        // All 10 intra4 modes (used by SIMD path on x86_64)
+        #[cfg(all(feature = "simd", target_arch = "x86_64"))]
         const MODES: [IntraMode; 10] = [
             IntraMode::DC,
             IntraMode::TM,
@@ -1426,7 +1427,10 @@ impl<'a> super::Vp8Encoder<'a> {
                 let token = archmage::NeonToken::summon().unwrap();
                 crate::common::simd_neon::sse4x4_neon(token, src_block, pred)
             };
-            #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64"))))]
+            #[cfg(not(all(
+                feature = "simd",
+                any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
+            )))]
             let sse = {
                 let mut sum = 0u32;
                 for k in 0..16 {
@@ -1497,9 +1501,17 @@ impl<'a> super::Vp8Encoder<'a> {
             let sse = {
                 use archmage::SimdToken;
                 let token = archmage::NeonToken::summon().unwrap();
-                crate::common::simd_neon::sse4x4_with_residual_neon(token, src_block, pred, &dequantized)
+                crate::common::simd_neon::sse4x4_with_residual_neon(
+                    token,
+                    src_block,
+                    pred,
+                    &dequantized,
+                )
             };
-            #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64"))))]
+            #[cfg(not(all(
+                feature = "simd",
+                any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
+            )))]
             let sse = {
                 let mut sum = 0u32;
                 for i in 0..16 {

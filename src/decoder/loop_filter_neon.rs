@@ -10,12 +10,9 @@
 
 #![allow(clippy::too_many_arguments)]
 
-
 use archmage::{arcane, rite, NeonToken};
 
-
 use core::arch::aarch64::*;
-
 
 use safe_unaligned_simd::aarch64 as simd_mem;
 
@@ -131,11 +128,7 @@ fn get_base_delta_neon(
 /// GetBaseDelta0: compute 3*(q0-p0) with saturation (no p1/q1)
 
 #[rite]
-fn get_base_delta0_neon(
-    _token: NeonToken,
-    p0s: int8x16_t,
-    q0s: int8x16_t,
-) -> int8x16_t {
+fn get_base_delta0_neon(_token: NeonToken, p0s: int8x16_t, q0s: int8x16_t) -> int8x16_t {
     let q0_p0 = vqsubq_s8(q0s, p0s);
     let s1 = vqaddq_s8(q0_p0, q0_p0); // 2*(q0-p0)
     vqaddq_s8(q0_p0, s1) // 3*(q0-p0)
@@ -192,7 +185,10 @@ fn do_filter2_neon(
     let delta4 = vshrq_n_s8::<3>(delta_p4);
     let sp0 = vqaddq_s8(p0s, delta3);
     let sq0 = vqsubq_s8(q0s, delta4);
-    (flip_sign_back_neon(_token, sp0), flip_sign_back_neon(_token, sq0))
+    (
+        flip_sign_back_neon(_token, sp0),
+        flip_sign_back_neon(_token, sq0),
+    )
 }
 
 /// DoFilter4: 4-tap filter for subblock edges (inner edges)
@@ -337,18 +333,10 @@ fn load_16x4_neon(
     point: usize,
     stride: usize,
 ) -> (uint8x16_t, uint8x16_t, uint8x16_t, uint8x16_t) {
-    let p1 = simd_mem::vld1q_u8(
-        <&[u8; 16]>::try_from(&buf[point - 2 * stride..][..16]).unwrap(),
-    );
-    let p0 = simd_mem::vld1q_u8(
-        <&[u8; 16]>::try_from(&buf[point - stride..][..16]).unwrap(),
-    );
-    let q0 = simd_mem::vld1q_u8(
-        <&[u8; 16]>::try_from(&buf[point..][..16]).unwrap(),
-    );
-    let q1 = simd_mem::vld1q_u8(
-        <&[u8; 16]>::try_from(&buf[point + stride..][..16]).unwrap(),
-    );
+    let p1 = simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&buf[point - 2 * stride..][..16]).unwrap());
+    let p0 = simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&buf[point - stride..][..16]).unwrap());
+    let q0 = simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&buf[point..][..16]).unwrap());
+    let q1 = simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&buf[point + stride..][..16]).unwrap());
     (p1, p0, q0, q1)
 }
 
@@ -371,30 +359,14 @@ fn load_16x8_neon(
     uint8x16_t,
     uint8x16_t,
 ) {
-    let p3 = simd_mem::vld1q_u8(
-        <&[u8; 16]>::try_from(&buf[point - 4 * stride..][..16]).unwrap(),
-    );
-    let p2 = simd_mem::vld1q_u8(
-        <&[u8; 16]>::try_from(&buf[point - 3 * stride..][..16]).unwrap(),
-    );
-    let p1 = simd_mem::vld1q_u8(
-        <&[u8; 16]>::try_from(&buf[point - 2 * stride..][..16]).unwrap(),
-    );
-    let p0 = simd_mem::vld1q_u8(
-        <&[u8; 16]>::try_from(&buf[point - stride..][..16]).unwrap(),
-    );
-    let q0 = simd_mem::vld1q_u8(
-        <&[u8; 16]>::try_from(&buf[point..][..16]).unwrap(),
-    );
-    let q1 = simd_mem::vld1q_u8(
-        <&[u8; 16]>::try_from(&buf[point + stride..][..16]).unwrap(),
-    );
-    let q2 = simd_mem::vld1q_u8(
-        <&[u8; 16]>::try_from(&buf[point + 2 * stride..][..16]).unwrap(),
-    );
-    let q3 = simd_mem::vld1q_u8(
-        <&[u8; 16]>::try_from(&buf[point + 3 * stride..][..16]).unwrap(),
-    );
+    let p3 = simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&buf[point - 4 * stride..][..16]).unwrap());
+    let p2 = simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&buf[point - 3 * stride..][..16]).unwrap());
+    let p1 = simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&buf[point - 2 * stride..][..16]).unwrap());
+    let p0 = simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&buf[point - stride..][..16]).unwrap());
+    let q0 = simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&buf[point..][..16]).unwrap());
+    let q1 = simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&buf[point + stride..][..16]).unwrap());
+    let q2 = simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&buf[point + 2 * stride..][..16]).unwrap());
+    let q3 = simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&buf[point + 3 * stride..][..16]).unwrap());
     (p3, p2, p1, p0, q0, q1, q2, q3)
 }
 
@@ -572,16 +544,7 @@ fn store_8x6x2_neon(
         v_point - 2 * stride,
         stride,
     );
-    store_8x2x2_neon(
-        _token,
-        op0,
-        oq0,
-        u_buf,
-        v_buf,
-        u_point,
-        v_point,
-        stride,
-    );
+    store_8x2x2_neon(_token, op0, oq0, u_buf, v_buf, u_point, v_point, stride);
     store_8x2x2_neon(
         _token,
         oq1,
@@ -642,14 +605,8 @@ fn load_4x16_neon(
     // After transpose: col0[r0 r1 r2 r3 | r4 r5 ... r15]
     let row01 = vtrnq_u8(in0, in1);
     let row23 = vtrnq_u8(in2, in3);
-    let row02 = vtrnq_u16(
-        vreinterpretq_u16_u8(row01.0),
-        vreinterpretq_u16_u8(row23.0),
-    );
-    let row13 = vtrnq_u16(
-        vreinterpretq_u16_u8(row01.1),
-        vreinterpretq_u16_u8(row23.1),
-    );
+    let row02 = vtrnq_u16(vreinterpretq_u16_u8(row01.0), vreinterpretq_u16_u8(row23.0));
+    let row13 = vtrnq_u16(vreinterpretq_u16_u8(row01.1), vreinterpretq_u16_u8(row23.1));
 
     let p1 = vreinterpretq_u8_u16(row02.0);
     let p0 = vreinterpretq_u8_u16(row13.0);
@@ -703,7 +660,7 @@ fn store_2x16_neon(
     for i in 0..16 {
         let offset = (y_start + i) * stride + x0 - 1;
         buf[offset] = vgetq_lane_u8::<0>(vextq_u8::<0>(p0, p0)); // placeholder
-        // This needs per-lane extraction. Let's use a different approach.
+                                                                 // This needs per-lane extraction. Let's use a different approach.
     }
     // Actually, extract all values at once
     let mut p0_bytes = [0u8; 16];
@@ -845,14 +802,8 @@ fn load_4x8x2_neon(
 
     let row01 = vtrnq_u8(in0, in1);
     let row23 = vtrnq_u8(in2, in3);
-    let row02 = vtrnq_u16(
-        vreinterpretq_u16_u8(row01.0),
-        vreinterpretq_u16_u8(row23.0),
-    );
-    let row13 = vtrnq_u16(
-        vreinterpretq_u16_u8(row01.1),
-        vreinterpretq_u16_u8(row23.1),
-    );
+    let row02 = vtrnq_u16(vreinterpretq_u16_u8(row01.0), vreinterpretq_u16_u8(row23.0));
+    let row13 = vtrnq_u16(vreinterpretq_u16_u8(row01.1), vreinterpretq_u16_u8(row23.1));
 
     let p1 = vreinterpretq_u8_u16(row02.0);
     let p0 = vreinterpretq_u8_u16(row13.0);
@@ -891,7 +842,7 @@ fn load_8x8x2_h_neon(
 }
 
 /// Store 2 transposed columns back to 8 U rows + 8 V rows
-
+#[allow(dead_code)]
 #[rite]
 fn store_2x8x2_neon(
     _token: NeonToken,
@@ -1240,8 +1191,7 @@ pub(crate) fn normal_v_filter_uv_edge_neon(
     interior_limit: i32,
     edge_limit: i32,
 ) {
-    let (p3, p2, p1, p0, q0, q1, q2, q3) =
-        load_8x8x2_neon(_token, u_buf, v_buf, point, stride);
+    let (p3, p2, p1, p0, q0, q1, q2, q3) = load_8x8x2_neon(_token, u_buf, v_buf, point, stride);
     let mask = needs_filter2_neon(
         _token,
         p3,
@@ -1276,8 +1226,7 @@ pub(crate) fn normal_v_filter_uv_inner_neon(
     interior_limit: i32,
     edge_limit: i32,
 ) {
-    let (p3, p2, p1, p0, q0, q1, q2, q3) =
-        load_8x8x2_neon(_token, u_buf, v_buf, point, stride);
+    let (p3, p2, p1, p0, q0, q1, q2, q3) = load_8x8x2_neon(_token, u_buf, v_buf, point, stride);
     let mask = needs_filter2_neon(
         _token,
         p3,

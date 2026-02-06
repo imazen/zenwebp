@@ -186,6 +186,7 @@ pub(crate) fn fill_rgb_buffer_fancy<const BPP: usize>(
 }
 
 /// Fills a row with the fancy interpolation as detailed
+#[allow(unused_variables)]
 fn fill_row_fancy_with_2_uv_rows<const BPP: usize>(
     row_buffer: &mut [u8],
     y_row: &[u8],

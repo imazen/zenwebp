@@ -34,7 +34,7 @@ pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
 pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
     #[cfg(target_arch = "wasm32")]
     {
-        use archmage::{Wasm128Token, SimdToken};
+        use archmage::{SimdToken, Wasm128Token};
         if let Some(token) = Wasm128Token::summon() {
             super::transform_wasm::dct4x4_wasm(token, block);
         } else {
@@ -92,7 +92,7 @@ pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
     debug_assert!(block.len() >= 16);
     #[cfg(target_arch = "wasm32")]
     {
-        use archmage::{Wasm128Token, SimdToken};
+        use archmage::{SimdToken, Wasm128Token};
         if let Some(token) = Wasm128Token::summon() {
             super::transform_wasm::idct4x4_wasm(token, block);
         } else {
@@ -141,7 +141,7 @@ pub(crate) fn dct4x4_two_intrinsics(block1: &mut [i32; 16], block2: &mut [i32; 1
     }
     #[cfg(target_arch = "wasm32")]
     {
-        use archmage::{Wasm128Token, SimdToken};
+        use archmage::{SimdToken, Wasm128Token};
         if let Some(token) = Wasm128Token::summon() {
             super::transform_wasm::dct4x4_wasm(token, block1);
             super::transform_wasm::dct4x4_wasm(token, block2);

@@ -7,6 +7,8 @@
 //! token summoning overhead (~4M instructions per decode eliminated).
 
 #![allow(clippy::too_many_arguments)]
+// On WASM, SimdTokenType = Option<()> and simd_token is passed but not dispatched
+#![allow(unused_variables)]
 
 use super::loop_filter;
 use crate::common::prediction::SimdTokenType;

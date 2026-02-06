@@ -6,12 +6,9 @@
 //! All functions operate on the same i32[16] layout as the scalar code,
 //! converting internally to i16 NEON vectors for SIMD processing.
 
-
 use archmage::{arcane, rite, NeonToken};
 
-
 use core::arch::aarch64::*;
-
 
 use safe_unaligned_simd::aarch64 as simd_mem;
 
@@ -26,7 +23,6 @@ use safe_unaligned_simd::aarch64 as simd_mem;
 pub(crate) fn dct4x4_neon(_token: NeonToken, block: &mut [i32; 16]) {
     dct4x4_neon_inner(_token, block);
 }
-
 
 #[rite]
 fn dct4x4_neon_inner(_token: NeonToken, block: &mut [i32; 16]) {
@@ -53,8 +49,14 @@ fn dct4x4_neon_inner(_token: NeonToken, block: &mut [i32; 16]) {
 
     simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(), out[0]);
     simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(), out[1]);
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(), out[2]);
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(), out[3]);
+    simd_mem::vst1q_s32(
+        <&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(),
+        out[2],
+    );
+    simd_mem::vst1q_s32(
+        <&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(),
+        out[3],
+    );
 }
 
 /// Transpose 4x4 i16 matrix (matches libwebp Transpose4x4_S16_NEON).
@@ -71,14 +73,8 @@ fn transpose_4x4_s16_neon(
 ) -> (int16x8_t, int16x8_t) {
     let ab = vtrn_s16(a, b);
     let cd = vtrn_s16(c, d);
-    let tmp02 = vtrn_s32(
-        vreinterpret_s32_s16(ab.0),
-        vreinterpret_s32_s16(cd.0),
-    );
-    let tmp13 = vtrn_s32(
-        vreinterpret_s32_s16(ab.1),
-        vreinterpret_s32_s16(cd.1),
-    );
+    let tmp02 = vtrn_s32(vreinterpret_s32_s16(ab.0), vreinterpret_s32_s16(cd.0));
+    let tmp13 = vtrn_s32(vreinterpret_s32_s16(ab.1), vreinterpret_s32_s16(cd.1));
     let out01 = vreinterpretq_s16_s64(vcombine_s64(
         vreinterpret_s64_s32(tmp02.0),
         vreinterpret_s64_s32(tmp13.0),
@@ -122,11 +118,7 @@ fn forward_pass_1_neon(
 /// Forward DCT pass 2 with final rounding. Returns i32x4[4].
 
 #[rite]
-fn forward_pass_2_neon(
-    _token: NeonToken,
-    d0d1: int16x8_t,
-    d3d2: int16x8_t,
-) -> [int32x4_t; 4] {
+fn forward_pass_2_neon(_token: NeonToken, d0d1: int16x8_t, d3d2: int16x8_t) -> [int32x4_t; 4] {
     let k_cst12000 = vdupq_n_s32(12000 + (1 << 16));
     let k_cst51000 = vdupq_n_s32(51000);
 
@@ -176,7 +168,6 @@ pub(crate) fn idct4x4_neon(_token: NeonToken, block: &mut [i32]) {
     debug_assert!(block.len() >= 16);
     idct4x4_neon_inner(_token, block);
 }
-
 
 #[rite]
 fn idct4x4_neon_inner(_token: NeonToken, block: &mut [i32]) {
@@ -383,7 +374,6 @@ pub(crate) fn ftransform_from_u8_4x4_neon(
     ftransform_from_u8_4x4_neon_inner(_token, src, ref_)
 }
 
-
 #[rite]
 fn ftransform_from_u8_4x4_neon_inner(
     _token: NeonToken,
@@ -413,10 +403,22 @@ fn ftransform_from_u8_4x4_neon_inner(
     let out = forward_pass_2_neon(_token, p0p1, p3p2);
 
     let mut result = [0i32; 16];
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut result[0..4]).unwrap(), out[0]);
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut result[4..8]).unwrap(), out[1]);
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut result[8..12]).unwrap(), out[2]);
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut result[12..16]).unwrap(), out[3]);
+    simd_mem::vst1q_s32(
+        <&mut [i32; 4]>::try_from(&mut result[0..4]).unwrap(),
+        out[0],
+    );
+    simd_mem::vst1q_s32(
+        <&mut [i32; 4]>::try_from(&mut result[4..8]).unwrap(),
+        out[1],
+    );
+    simd_mem::vst1q_s32(
+        <&mut [i32; 4]>::try_from(&mut result[8..12]).unwrap(),
+        out[2],
+    );
+    simd_mem::vst1q_s32(
+        <&mut [i32; 4]>::try_from(&mut result[12..16]).unwrap(),
+        out[3],
+    );
     result
 }
 
@@ -465,7 +467,6 @@ pub(crate) fn add_residue_neon(
 ) {
     add_residue_neon_inner(_token, pblock, rblock, y0, x0, stride);
 }
-
 
 #[rite]
 fn add_residue_neon_inner(

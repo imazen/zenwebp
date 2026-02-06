@@ -373,7 +373,11 @@ pub(crate) fn add_residue_and_clear_with_token(
 }
 
 /// Scalar fallback for add_residue_and_clear (used when no SIMD token available).
-#[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+#[cfg(not(all(
+    feature = "simd",
+    any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
+)))]
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn add_residue_and_clear_with_token(
     _token: (),
@@ -1107,6 +1111,113 @@ impl I4Predictions {
     }
 }
 
+/// Fused IDCT + add residue + clear, avoiding intermediate storage of IDCT output.
+/// This is the hot path replacement for separate idct4x4 + add_residue_and_clear.
+///
+/// Takes raw DCT coefficients (NOT already IDCT'd), performs IDCT, adds to prediction,
+/// and clears the coefficient block.
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[inline(always)]
+pub(crate) fn idct_add_residue_and_clear_with_token(
+    token: archmage::X64V3Token,
+    pblock: &mut [u8],
+    rblock: &mut [i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    use crate::common::transform_simd_intrinsics;
+
+    // Check if block has AC coefficients (elements 1-15)
+    // A block is DC-only if all AC coefficients are zero
+    let dc_only = rblock[1..].iter().all(|&c| c == 0);
+
+    // Use in-place fused IDCT + add residue
+    transform_simd_intrinsics::idct_add_residue_inplace_with_token(
+        token, rblock, pblock, y0, x0, stride, dc_only,
+    );
+}
+
+/// NEON fused IDCT + add residue + clear.
+#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[inline(always)]
+pub(crate) fn idct_add_residue_and_clear_with_token(
+    token: archmage::NeonToken,
+    pblock: &mut [u8],
+    rblock: &mut [i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    let dc_only = rblock[1..].iter().all(|&c| c == 0);
+    crate::common::transform_aarch64::idct_add_residue_inplace_neon(
+        token, rblock, pblock, y0, x0, stride, dc_only,
+    );
+}
+
+/// Scalar fallback for fused IDCT + add residue + clear.
+#[cfg(not(all(
+    feature = "simd",
+    any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
+)))]
+#[inline(always)]
+pub(crate) fn idct_add_residue_and_clear_with_token(
+    _token: (),
+    pblock: &mut [u8],
+    rblock: &mut [i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    use crate::common::transform;
+
+    let dc_only = rblock[1..].iter().all(|&c| c == 0);
+    if dc_only {
+        transform::idct4x4_dc(rblock);
+    } else {
+        transform::idct4x4(rblock);
+    }
+    add_residue_and_clear_scalar(pblock, rblock, y0, x0, stride);
+}
+
+/// Fused IDCT + add residue + clear without pre-summoned token.
+/// Falls back to separate operations if SIMD unavailable.
+#[inline(always)]
+pub(crate) fn idct_add_residue_and_clear(
+    pblock: &mut [u8],
+    rblock: &mut [i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    {
+        use archmage::{SimdToken, X64V3Token};
+        if let Some(token) = X64V3Token::summon() {
+            idct_add_residue_and_clear_with_token(token, pblock, rblock, y0, x0, stride);
+            return;
+        }
+    }
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    {
+        use archmage::{NeonToken, SimdToken};
+        if let Some(token) = NeonToken::summon() {
+            idct_add_residue_and_clear_with_token(token, pblock, rblock, y0, x0, stride);
+            return;
+        }
+    }
+
+    // Scalar fallback
+    use crate::common::transform;
+    let dc_only = rblock[1..].iter().all(|&c| c == 0);
+    if dc_only {
+        transform::idct4x4_dc(rblock);
+    } else {
+        transform::idct4x4(rblock);
+    }
+    add_residue_and_clear_scalar(pblock, rblock, y0, x0, stride);
+}
+
 #[cfg(all(test, feature = "_benchmarks"))]
 mod benches {
     use super::*;
@@ -1416,111 +1527,4 @@ mod tests {
         assert_eq!(im[39], avg_3);
         assert_eq!(im[40], avg_4);
     }
-}
-
-/// Fused IDCT + add residue + clear, avoiding intermediate storage of IDCT output.
-/// This is the hot path replacement for separate idct4x4 + add_residue_and_clear.
-///
-/// Takes raw DCT coefficients (NOT already IDCT'd), performs IDCT, adds to prediction,
-/// and clears the coefficient block.
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
-#[inline(always)]
-pub(crate) fn idct_add_residue_and_clear_with_token(
-    token: archmage::X64V3Token,
-    pblock: &mut [u8],
-    rblock: &mut [i32; 16],
-    y0: usize,
-    x0: usize,
-    stride: usize,
-) {
-    use crate::common::transform_simd_intrinsics;
-
-    // Check if block has AC coefficients (elements 1-15)
-    // A block is DC-only if all AC coefficients are zero
-    let dc_only = rblock[1..].iter().all(|&c| c == 0);
-
-    // Use in-place fused IDCT + add residue
-    transform_simd_intrinsics::idct_add_residue_inplace_with_token(
-        token, rblock, pblock, y0, x0, stride, dc_only,
-    );
-}
-
-/// NEON fused IDCT + add residue + clear.
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
-#[inline(always)]
-pub(crate) fn idct_add_residue_and_clear_with_token(
-    token: archmage::NeonToken,
-    pblock: &mut [u8],
-    rblock: &mut [i32; 16],
-    y0: usize,
-    x0: usize,
-    stride: usize,
-) {
-    let dc_only = rblock[1..].iter().all(|&c| c == 0);
-    crate::common::transform_aarch64::idct_add_residue_inplace_neon(
-        token, rblock, pblock, y0, x0, stride, dc_only,
-    );
-}
-
-/// Scalar fallback for fused IDCT + add residue + clear.
-#[cfg(not(all(
-    feature = "simd",
-    any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
-)))]
-#[inline(always)]
-pub(crate) fn idct_add_residue_and_clear_with_token(
-    _token: (),
-    pblock: &mut [u8],
-    rblock: &mut [i32; 16],
-    y0: usize,
-    x0: usize,
-    stride: usize,
-) {
-    use crate::common::transform;
-
-    let dc_only = rblock[1..].iter().all(|&c| c == 0);
-    if dc_only {
-        transform::idct4x4_dc(rblock);
-    } else {
-        transform::idct4x4(rblock);
-    }
-    add_residue_and_clear_scalar(pblock, rblock, y0, x0, stride);
-}
-
-/// Fused IDCT + add residue + clear without pre-summoned token.
-/// Falls back to separate operations if SIMD unavailable.
-#[inline(always)]
-pub(crate) fn idct_add_residue_and_clear(
-    pblock: &mut [u8],
-    rblock: &mut [i32; 16],
-    y0: usize,
-    x0: usize,
-    stride: usize,
-) {
-    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
-    {
-        use archmage::{SimdToken, X64V3Token};
-        if let Some(token) = X64V3Token::summon() {
-            idct_add_residue_and_clear_with_token(token, pblock, rblock, y0, x0, stride);
-            return;
-        }
-    }
-    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
-    {
-        use archmage::{NeonToken, SimdToken};
-        if let Some(token) = NeonToken::summon() {
-            idct_add_residue_and_clear_with_token(token, pblock, rblock, y0, x0, stride);
-            return;
-        }
-    }
-
-    // Scalar fallback
-    use crate::common::transform;
-    let dc_only = rblock[1..].iter().all(|&c| c == 0);
-    if dc_only {
-        transform::idct4x4_dc(rblock);
-    } else {
-        transform::idct4x4(rblock);
-    }
-    add_residue_and_clear_scalar(pblock, rblock, y0, x0, stride);
 }
