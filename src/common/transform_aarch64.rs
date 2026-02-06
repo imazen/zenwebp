@@ -44,19 +44,12 @@ fn dct4x4_neon_inner(_token: NeonToken, block: &mut [i32; 16]) {
     // Transpose 4x4 for first pass
     let (t0t1, t3t2) = transpose_4x4_s16_neon(_token, d0, d1, d2, d3);
 
-    // First DCT pass
+    // First DCT pass (includes internal transpose at end)
     let (p0p1, p3p2) = forward_pass_1_neon(_token, t0t1, t3t2);
 
-    // Extract rows and transpose for second pass
-    let pp0 = vget_low_s16(p0p1);
-    let pp1 = vget_high_s16(p0p1);
-    let pp2 = vget_high_s16(p3p2);
-    let pp3 = vget_low_s16(p3p2);
-
-    let (s0s1, s3s2) = transpose_4x4_s16_neon(_token, pp0, pp1, pp2, pp3);
-
     // Second DCT pass with final rounding → i32 output
-    let out = forward_pass_2_neon(_token, s0s1, s3s2);
+    // Data is already transposed by pass 1's internal transpose
+    let out = forward_pass_2_neon(_token, p0p1, p3p2);
 
     simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(), out[0]);
     simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(), out[1]);
@@ -413,18 +406,11 @@ fn ftransform_from_u8_4x4_neon_inner(
     // Transpose for first pass
     let (t0t1, t3t2) = transpose_4x4_s16_neon(_token, d0, d1, d2, d3);
 
-    // First DCT pass
+    // First DCT pass (includes internal transpose at end)
     let (p0p1, p3p2) = forward_pass_1_neon(_token, t0t1, t3t2);
 
-    // Transpose for second pass
-    let pp0 = vget_low_s16(p0p1);
-    let pp1 = vget_high_s16(p0p1);
-    let pp2 = vget_high_s16(p3p2);
-    let pp3 = vget_low_s16(p3p2);
-    let (s0s1, s3s2) = transpose_4x4_s16_neon(_token, pp0, pp1, pp2, pp3);
-
-    // Second DCT pass
-    let out = forward_pass_2_neon(_token, s0s1, s3s2);
+    // Second DCT pass — data already transposed by pass 1
+    let out = forward_pass_2_neon(_token, p0p1, p3p2);
 
     let mut result = [0i32; 16];
     simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut result[0..4]).unwrap(), out[0]);
