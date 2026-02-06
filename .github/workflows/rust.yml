@@ -48,6 +48,47 @@ jobs:
       if: ${{ matrix.rust == 'nightly' }}
       run: cargo bench -v --features _benchmarks
 
+  # Native aarch64 testing on Linux ARM and macOS Apple Silicon
+  test_aarch64_native:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, macos-latest, windows-11-arm]
+    steps:
+    - uses: actions/checkout@v6
+    - uses: dtolnay/rust-toolchain@stable
+    - name: Cache Cargo Dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+    - name: Build with SIMD
+      run: cargo build --features "std,fast-yuv,simd" -v
+    - name: Test with SIMD
+      run: cargo test --features "std,fast-yuv,simd" -v
+    - name: Test without SIMD (scalar fallback)
+      run: cargo test --features "std,fast-yuv" --no-default-features -v
+
+  # Cross-compiled aarch64 Linux testing via QEMU (verifies NEON SIMD)
+  test_aarch64_cross:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install cross
+        run: cargo install cross --locked
+
+      - name: Cache Cargo Dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Start Docker (required for cross-rs)
+        run: sudo systemctl start docker
+
+      - name: Cross-test aarch64 with SIMD (NEON)
+        run: cross test --target aarch64-unknown-linux-gnu --features "std,fast-yuv,simd" --release -v
+
   test_big_endian:
     runs-on: ubuntu-latest
     steps:
@@ -74,6 +115,20 @@ jobs:
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: clippy
+    - run: cargo clippy --all-targets --features "std,fast-yuv,simd" -- -D warnings
+
+  # aarch64 clippy (catches NEON-specific lint issues)
+  clippy_aarch64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+    - uses: actions/checkout@v6
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+    - name: Cache Cargo Dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
     - run: cargo clippy --all-targets --features "std,fast-yuv,simd" -- -D warnings
 
   rustfmt:
