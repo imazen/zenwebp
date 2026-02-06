@@ -1188,11 +1188,7 @@ impl<'a> Encoder<'a> {
     /// ```
     #[cfg(feature = "pixel-types")]
     #[must_use]
-    pub fn from_pixels<P: crate::pixel::EncodePixel>(
-        data: &'a [P],
-        width: u32,
-        height: u32,
-    ) -> Self
+    pub fn from_pixels<P: crate::pixel::EncodePixel>(data: &'a [P], width: u32, height: u32) -> Self
     where
         [P]: rgb::ComponentBytes<u8>,
     {

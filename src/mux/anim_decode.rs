@@ -110,10 +110,7 @@ impl<'a> AnimationDecoder<'a> {
             canvas_height: h,
             frame_count: self.total_frames,
             loop_count: self.decoder.loop_count(),
-            background_color: self
-                .decoder
-                .background_color_hint()
-                .unwrap_or([0, 0, 0, 0]),
+            background_color: self.decoder.background_color_hint().unwrap_or([0, 0, 0, 0]),
             has_alpha: self.decoder.has_alpha(),
         }
     }
