@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! Criterion benchmarks for zenwebp encoding performance.
 //!
 //! Tracks performance across:

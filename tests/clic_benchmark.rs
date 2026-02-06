@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! Comprehensive benchmark comparing image-webp vs libwebp on CLIC 2025 validation set.
 //!
 //! Measures: encoding speed, file size, and SSIMULACRA2 quality.

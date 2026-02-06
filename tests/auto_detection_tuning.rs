@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! Auto-detection tuning tests for CID22 and screenshot corpora.
 //! Run with: cargo test --release --features _corpus_tests --test auto_detection_tuning -- --nocapture
 

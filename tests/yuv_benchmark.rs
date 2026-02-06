@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! Benchmark comparing scalar vs SIMD YUV conversion.
 //!
 //! Run with: cargo test --release yuv_benchmark -- --nocapture

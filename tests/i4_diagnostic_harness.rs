@@ -1,3 +1,5 @@
+// Requires C libwebp (webpx) — not available on wasm32
+#![cfg(not(target_arch = "wasm32"))]
 //! I4 Encoding Efficiency Decomposition Harness
 //!
 //! Compares zenwebp and libwebp VP8 bitstreams stage-by-stage to identify

@@ -1,3 +1,5 @@
+// Requires C libwebp (webpx) — not available on wasm32
+#![cfg(not(target_arch = "wasm32"))]
 //! Lossy encoder quality and size comparison tests
 //!
 //! These tests compare the image-webp lossy encoder against libwebp:

@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! Rate-distortion benchmark comparing our encoder vs libwebp
 //!
 //! Uses the Kodak image corpus for standardized comparison.

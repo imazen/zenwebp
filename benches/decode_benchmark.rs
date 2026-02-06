@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! Criterion benchmarks for zenwebp decoding performance.
 //!
 //! Run with: cargo bench --bench decode_benchmark

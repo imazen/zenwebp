@@ -1,3 +1,5 @@
+// Requires C libwebp (webpx) — not available on wasm32
+#![cfg(not(target_arch = "wasm32"))]
 //! Criterion benchmarks comparing zenwebp vs libwebp encoding performance.
 //!
 //! Uses webpx crate (safe Rust wrapper around libwebp) for fair library-to-library

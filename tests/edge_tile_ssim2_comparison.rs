@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! Edge-specific SSIMULACRA2 comparison: our encoder vs libwebp
 //!
 //! Isolates edge handling quality by:

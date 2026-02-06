@@ -2075,7 +2075,7 @@ impl<'a> WebPEncoder<'a> {
     }
 }
 
-#[cfg(all(test, feature = "std"))]
+#[cfg(all(test, feature = "std", not(target_arch = "wasm32")))]
 mod tests {
     use rand::RngCore;
 

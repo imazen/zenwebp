@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! Debug encoder output
 use std::path::Path;
 use zenwebp::{ColorType, EncoderParams, WebPEncoder};
