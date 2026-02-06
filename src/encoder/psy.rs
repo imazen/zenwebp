@@ -454,7 +454,7 @@ pub(crate) fn compute_masking_alpha(src: &[u8], stride: usize) -> u8 {
     let activity_mask = if avg_ac_energy > 0 {
         // Map AC energy to 0-255 with diminishing returns at high energy
         // sqrt(energy) gives perceptually uniform scaling
-        let energy_sqrt = (avg_ac_energy as f32).sqrt();
+        let energy_sqrt = libm::sqrtf(avg_ac_energy as f32);
         (energy_sqrt * 8.0).min(255.0) as u32
     } else {
         0

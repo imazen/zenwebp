@@ -422,7 +422,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 let x0 = 1 + bx * 4;
                 let y0 = 1 + by * 4;
                 let dc_only = recon_dequant_block[1..].iter().all(|&c| c == 0);
-                crate::common::transform_simd_intrinsics::idct_add_residue_inplace(
+                crate::common::transform::idct_add_residue_inplace(
                     &mut recon_dequant_block,
                     &mut reconstructed,
                     y0,
@@ -1162,7 +1162,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 let x0 = 1 + bx * 4;
                 let y0 = 1 + by * 4;
                 let dc_only = uv_dequant[block_idx][1..].iter().all(|&c| c == 0);
-                crate::common::transform_simd_intrinsics::idct_add_residue_inplace(
+                crate::common::transform::idct_add_residue_inplace(
                     &mut uv_dequant[block_idx],
                     &mut reconstructed_u,
                     y0,
@@ -1179,7 +1179,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 let x0 = 1 + bx * 4;
                 let y0 = 1 + by * 4;
                 let dc_only = uv_dequant[4 + block_idx][1..].iter().all(|&c| c == 0);
-                crate::common::transform_simd_intrinsics::idct_add_residue_inplace(
+                crate::common::transform::idct_add_residue_inplace(
                     &mut uv_dequant[4 + block_idx],
                     &mut reconstructed_v,
                     y0,
@@ -1453,7 +1453,7 @@ impl<'a> super::Vp8Encoder<'a> {
             let pred = preds.get(mode_idx);
 
             let mut residual =
-                crate::common::transform_simd_intrinsics::ftransform_from_u8_4x4(src_block, pred);
+                crate::common::transform::ftransform_from_u8_4x4(src_block, pred);
 
             let mut quantized_zigzag = [0i32; 16];
             let mut quantized_natural = [0i32; 16];

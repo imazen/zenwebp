@@ -230,6 +230,71 @@ pub(crate) fn dct4x4_scalar(block: &mut [i32; 16]) {
     }
 }
 
+// =============================================================================
+// Dispatch wrappers (always available, delegates to SIMD or scalar)
+// =============================================================================
+
+/// Fused residual computation + DCT for a single 4x4 block from flat u8 arrays.
+/// Dispatches to SIMD when available, otherwise scalar.
+#[inline(always)]
+pub(crate) fn ftransform_from_u8_4x4(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
+    #[cfg(feature = "simd")]
+    {
+        super::transform_simd_intrinsics::ftransform_from_u8_4x4(src, ref_)
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+        let mut block = [0i32; 16];
+        for i in 0..16 {
+            block[i] = src[i] as i32 - ref_[i] as i32;
+        }
+        dct4x4_scalar(&mut block);
+        block
+    }
+}
+
+/// Fused IDCT + add residue inplace + clear coefficients.
+/// Dispatches to SIMD when available, otherwise scalar.
+pub(crate) fn idct_add_residue_inplace(
+    coeffs: &mut [i32; 16],
+    block: &mut [u8],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+    dc_only: bool,
+) {
+    #[cfg(feature = "simd")]
+    {
+        super::transform_simd_intrinsics::idct_add_residue_inplace(
+            coeffs, block, y0, x0, stride, dc_only,
+        );
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+        if dc_only {
+            let dc = coeffs[0];
+            let dc_adj = (dc + 4) >> 3;
+            for row in 0..4 {
+                let pos = (y0 + row) * stride + x0;
+                for col in 0..4 {
+                    let p = block[pos + col] as i32;
+                    block[pos + col] = (p + dc_adj).clamp(0, 255) as u8;
+                }
+            }
+        } else {
+            idct4x4_scalar(coeffs);
+            let mut pos = y0 * stride + x0;
+            for row in coeffs.chunks(4) {
+                for (p, &a) in block[pos..][..4].iter_mut().zip(row.iter()) {
+                    *p = (a + i32::from(*p)).clamp(0, 255) as u8;
+                }
+                pos += stride;
+            }
+        }
+        coeffs.fill(0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
