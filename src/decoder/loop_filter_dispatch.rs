@@ -51,6 +51,19 @@ pub(crate) fn simple_filter_horizontal_16_rows(
         return;
     }
 
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    if let Some(token) = simd_token {
+        super::loop_filter_neon::simple_h_filter16_neon(
+            token,
+            buf,
+            x0,
+            y_start,
+            stride,
+            i32::from(edge_limit),
+        );
+        return;
+    }
+
     // Scalar fallback
     for y in 0usize..16 {
         let y0 = y_start + y;
@@ -89,6 +102,19 @@ pub(crate) fn simple_filter_vertical_16_cols(
     if let Some(token) = simd_token {
         let point = y0 * stride + x_start;
         super::loop_filter_avx2::simple_v_filter16(
+            token,
+            buf,
+            point,
+            stride,
+            i32::from(edge_limit),
+        );
+        return;
+    }
+
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    if let Some(token) = simd_token {
+        let point = y0 * stride + x_start;
+        super::loop_filter_neon::simple_v_filter16_neon(
             token,
             buf,
             point,
@@ -182,6 +208,21 @@ pub(crate) fn normal_filter_vertical_mb_16_cols(
         return;
     }
 
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    if let Some(token) = simd_token {
+        let point = y0 * stride + x_start;
+        super::loop_filter_neon::normal_v_filter16_edge_neon(
+            token,
+            buf,
+            point,
+            stride,
+            i32::from(hev_threshold),
+            i32::from(interior_limit),
+            i32::from(edge_limit),
+        );
+        return;
+    }
+
     // Scalar fallback
     for x in 0usize..16 {
         let point = y0 * stride + x_start + x;
@@ -230,6 +271,21 @@ pub(crate) fn normal_filter_vertical_sub_16_cols(
     if let Some(token) = simd_token {
         let point = y0 * stride + x_start;
         super::loop_filter_avx2::normal_v_filter16_inner(
+            token,
+            buf,
+            point,
+            stride,
+            i32::from(hev_threshold),
+            i32::from(interior_limit),
+            i32::from(edge_limit),
+        );
+        return;
+    }
+
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    if let Some(token) = simd_token {
+        let point = y0 * stride + x_start;
+        super::loop_filter_neon::normal_v_filter16_inner_neon(
             token,
             buf,
             point,
@@ -406,6 +462,21 @@ pub(crate) fn normal_filter_horizontal_mb_16_rows(
         return;
     }
 
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    if let Some(token) = simd_token {
+        super::loop_filter_neon::normal_h_filter16_edge_neon(
+            token,
+            buf,
+            x0,
+            y_start,
+            stride,
+            i32::from(hev_threshold),
+            i32::from(interior_limit),
+            i32::from(edge_limit),
+        );
+        return;
+    }
+
     // Scalar fallback
     for y in 0usize..16 {
         let row = y_start + y;
@@ -463,6 +534,21 @@ pub(crate) fn normal_filter_horizontal_sub_16_rows(
         return;
     }
 
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    if let Some(token) = simd_token {
+        super::loop_filter_neon::normal_h_filter16_inner_neon(
+            token,
+            buf,
+            x0,
+            y_start,
+            stride,
+            i32::from(hev_threshold),
+            i32::from(interior_limit),
+            i32::from(edge_limit),
+        );
+        return;
+    }
+
     // Scalar fallback
     for y in 0usize..16 {
         let row = y_start + y;
@@ -492,6 +578,22 @@ pub(crate) fn normal_filter_horizontal_uv_mb(
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     if let Some(token) = simd_token {
         super::loop_filter_avx2::normal_h_filter_uv_edge(
+            token,
+            u_buf,
+            v_buf,
+            x0,
+            y_start,
+            stride,
+            i32::from(hev_threshold),
+            i32::from(interior_limit),
+            i32::from(edge_limit),
+        );
+        return;
+    }
+
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    if let Some(token) = simd_token {
+        super::loop_filter_neon::normal_h_filter_uv_edge_neon(
             token,
             u_buf,
             v_buf,
@@ -539,6 +641,22 @@ pub(crate) fn normal_filter_horizontal_uv_sub(
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     if let Some(token) = simd_token {
         super::loop_filter_avx2::normal_h_filter_uv_inner(
+            token,
+            u_buf,
+            v_buf,
+            x0,
+            y_start,
+            stride,
+            i32::from(hev_threshold),
+            i32::from(interior_limit),
+            i32::from(edge_limit),
+        );
+        return;
+    }
+
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    if let Some(token) = simd_token {
+        super::loop_filter_neon::normal_h_filter_uv_inner_neon(
             token,
             u_buf,
             v_buf,
@@ -600,6 +718,22 @@ pub(crate) fn normal_filter_vertical_uv_mb(
         return;
     }
 
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    if let Some(token) = simd_token {
+        let point = y0 * stride + x_start;
+        super::loop_filter_neon::normal_v_filter_uv_edge_neon(
+            token,
+            u_buf,
+            v_buf,
+            point,
+            stride,
+            i32::from(hev_threshold),
+            i32::from(interior_limit),
+            i32::from(edge_limit),
+        );
+        return;
+    }
+
     // Scalar fallback
     for x in 0usize..8 {
         let point = y0 * stride + x_start + x;
@@ -640,6 +774,22 @@ pub(crate) fn normal_filter_vertical_uv_sub(
     if let Some(token) = simd_token {
         let point = y0 * stride + x_start;
         super::loop_filter_avx2::normal_v_filter_uv_inner(
+            token,
+            u_buf,
+            v_buf,
+            point,
+            stride,
+            i32::from(hev_threshold),
+            i32::from(interior_limit),
+            i32::from(edge_limit),
+        );
+        return;
+    }
+
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    if let Some(token) = simd_token {
+        let point = y0 * stride + x_start;
+        super::loop_filter_neon::normal_v_filter_uv_inner_neon(
             token,
             u_buf,
             v_buf,

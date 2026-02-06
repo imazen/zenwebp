@@ -14,6 +14,9 @@ pub(crate) mod yuv;
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 mod loop_filter_avx2;
 
+#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+mod loop_filter_neon;
+
 mod loop_filter_dispatch;
 
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
