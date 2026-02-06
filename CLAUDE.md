@@ -255,13 +255,15 @@ no longer visible as separate functions. Mode selection overhead reduced from 5.
 convert image.png -depth 8 RGB:image_WxH.rgb
 
 # Profile zenwebp
-valgrind --tool=callgrind --callgrind-out-file=/tmp/callgrind.out \
+valgrind --tool=callgrind --callgrind-out-file=/tmp/callgrind.zen.out \
   target/release/examples/callgrind_encode image_WxH.rgb W H 75 4
 
-# Profile libwebp (use .libs binary, not libtool wrapper)
-LD_LIBRARY_PATH=~/work/libwebp/src/.libs:~/work/libwebp/sharpyuv/.libs \
-  valgrind --tool=callgrind --callgrind-out-file=/tmp/callgrind.lib.out \
-  ~/work/libwebp/examples/.libs/cwebp -q 75 -m 4 -sns 0 -f 0 -segments 1 -o /dev/null image.png
+# Profile libwebp (via webpx — fair library-to-library, no PNG overhead)
+valgrind --tool=callgrind --callgrind-out-file=/tmp/callgrind.lib.out \
+  target/release/examples/callgrind_libwebp image_WxH.rgb W H 75 4
+
+# Criterion head-to-head (diagnostic and default settings)
+cargo bench --bench encode_vs_libwebp
 ```
 
 **t_transform SIMD optimization (2026-02-04):**
