@@ -170,6 +170,21 @@ where
     }
 }
 
+/// Encode typed pixel data to WebP with default settings.
+///
+/// For custom settings, use [`EncoderConfig::encode_pixels`] or
+/// [`Encoder::from_pixels`](crate::Encoder::from_pixels).
+pub fn encode<P: EncodePixel>(
+    pixels: &[P],
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, EncodingError>
+where
+    [P]: ComponentBytes<u8>,
+{
+    EncoderConfig::new().encode_pixels(pixels, width, height)
+}
+
 impl EncoderConfig {
     /// Encode typed pixel data to WebP.
     ///

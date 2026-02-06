@@ -1167,6 +1167,61 @@ impl<'a> Encoder<'a> {
         }
     }
 
+    /// Create a new encoder from typed pixel data.
+    ///
+    /// Accepts any type implementing [`EncodePixel`](crate::pixel::EncodePixel):
+    /// [`Rgb<u8>`](rgb::Rgb), [`Rgba<u8>`](rgb::Rgba), [`Bgr<u8>`](rgb::Bgr),
+    /// [`Bgra<u8>`](rgb::Bgra), [`Gray<u8>`](rgb::Gray),
+    /// [`GrayAlpha<u8>`](rgb::GrayAlpha).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use zenwebp::Encoder;
+    /// use rgb::Rgba;
+    ///
+    /// let pixels = vec![Rgba { r: 255, g: 0, b: 0, a: 255 }; 4 * 4];
+    /// let webp = Encoder::from_pixels(&pixels, 4, 4)
+    ///     .quality(90.0)
+    ///     .encode()?;
+    /// # Ok::<(), zenwebp::EncodingError>(())
+    /// ```
+    #[cfg(feature = "pixel-types")]
+    #[must_use]
+    pub fn from_pixels<P: crate::pixel::EncodePixel>(
+        data: &'a [P],
+        width: u32,
+        height: u32,
+    ) -> Self
+    where
+        [P]: rgb::ComponentBytes<u8>,
+    {
+        use rgb::ComponentBytes;
+        let bytes: &[u8] = data.as_bytes();
+        let color = P::color_type();
+        // Map ColorType to the right EncoderInput variant
+        let input = match color {
+            ColorType::Rgb8 => EncoderInput::Rgb(bytes),
+            ColorType::Rgba8 => EncoderInput::Rgba(bytes),
+            ColorType::Bgr8 => EncoderInput::Bgr(bytes),
+            ColorType::Bgra8 => EncoderInput::Bgra(bytes),
+            ColorType::L8 => EncoderInput::L8(bytes),
+            ColorType::La8 => EncoderInput::La8(bytes),
+            ColorType::Yuv420 => unreachable!("no EncodePixel impl for YUV420"),
+        };
+        Self {
+            data: input,
+            width,
+            height,
+            config: EncoderConfig::default(),
+            icc_profile: None,
+            exif_metadata: None,
+            xmp_metadata: None,
+            stop: &enough::Unstoppable,
+            progress: &NO_PROGRESS,
+        }
+    }
+
     /// Set encoding quality (0.0 = smallest, 100.0 = best).
     #[must_use]
     pub fn quality(mut self, quality: f32) -> Self {

@@ -21,7 +21,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::decoder::{DecodingError, LoopCount, WebPDecoder};
+use crate::decoder::{DecodingError, LoopCount, UpsamplingMethod, WebPDecodeOptions, WebPDecoder};
 
 /// A decoded animation frame with owned RGBA pixel data.
 #[derive(Debug, Clone)]
@@ -63,6 +63,8 @@ pub struct AnimationDecoder<'a> {
     decoder: WebPDecoder<'a>,
     buf: Vec<u8>,
     cumulative_ms: u32,
+    frames_read: u32,
+    total_frames: u32,
 }
 
 impl<'a> AnimationDecoder<'a> {
@@ -70,12 +72,23 @@ impl<'a> AnimationDecoder<'a> {
     ///
     /// Returns an error if the data is not a valid animated WebP.
     pub fn new(data: &'a [u8]) -> Result<Self, DecodingError> {
-        let decoder = WebPDecoder::new(data)?;
+        Self::new_with_options(data, WebPDecodeOptions::default())
+    }
+
+    /// Create a new animation decoder with custom decode options.
+    ///
+    /// Returns an error if the data is not a valid animated WebP.
+    pub fn new_with_options(
+        data: &'a [u8],
+        options: WebPDecodeOptions,
+    ) -> Result<Self, DecodingError> {
+        let decoder = WebPDecoder::new_with_options(data, options)?;
         if !decoder.is_animated() {
             return Err(DecodingError::InvalidParameter(
                 alloc::string::String::from("not an animated WebP"),
             ));
         }
+        let total_frames = decoder.num_frames();
         let buf_size = decoder
             .output_buffer_size()
             .ok_or(DecodingError::ImageTooLarge)?;
@@ -84,6 +97,8 @@ impl<'a> AnimationDecoder<'a> {
             decoder,
             buf,
             cumulative_ms: 0,
+            frames_read: 0,
+            total_frames,
         })
     }
 
@@ -93,7 +108,7 @@ impl<'a> AnimationDecoder<'a> {
         AnimationInfo {
             canvas_width: w,
             canvas_height: h,
-            frame_count: self.decoder.num_frames(),
+            frame_count: self.total_frames,
             loop_count: self.decoder.loop_count(),
             background_color: self
                 .decoder
@@ -105,10 +120,50 @@ impl<'a> AnimationDecoder<'a> {
 
     /// Returns `true` if there are more frames to decode.
     pub fn has_more_frames(&self) -> bool {
-        // WebPDecoder tracks next_frame internally; we detect end via NoMoreFrames error.
-        // We can check by comparing frame count, but the decoder doesn't expose current index.
-        // Instead we rely on next_frame() returning None.
-        true // conservative; next_frame() returns None at end
+        self.frames_read < self.total_frames
+    }
+
+    /// Returns the number of frames decoded so far.
+    pub fn frames_read(&self) -> u32 {
+        self.frames_read
+    }
+
+    /// Set memory limit for the underlying decoder.
+    pub fn set_memory_limit(&mut self, limit: usize) {
+        self.decoder.set_memory_limit(limit);
+    }
+
+    /// Set background color for compositing.
+    pub fn set_background_color(&mut self, color: [u8; 4]) -> Result<(), DecodingError> {
+        self.decoder.set_background_color(color)
+    }
+
+    /// Set upsampling method for lossy frames.
+    pub fn set_lossy_upsampling(&mut self, method: UpsamplingMethod) {
+        self.decoder.set_lossy_upsampling(method);
+    }
+
+    /// Read the embedded ICC profile, if any.
+    pub fn icc_profile(&mut self) -> Result<Option<Vec<u8>>, DecodingError> {
+        self.decoder.icc_profile()
+    }
+
+    /// Read the embedded EXIF metadata, if any.
+    pub fn exif_metadata(&mut self) -> Result<Option<Vec<u8>>, DecodingError> {
+        self.decoder.exif_metadata()
+    }
+
+    /// Read the embedded XMP metadata, if any.
+    pub fn xmp_metadata(&mut self) -> Result<Option<Vec<u8>>, DecodingError> {
+        self.decoder.xmp_metadata()
+    }
+
+    /// Total duration of all frames in milliseconds.
+    ///
+    /// Only accurate after all frames have been read, or from the container
+    /// header if available.
+    pub fn loop_duration(&self) -> u64 {
+        self.decoder.loop_duration()
     }
 
     /// Decode the next frame, returning `None` when all frames have been read.
@@ -117,6 +172,7 @@ impl<'a> AnimationDecoder<'a> {
             Ok(duration_ms) => {
                 let timestamp_ms = self.cumulative_ms;
                 self.cumulative_ms = self.cumulative_ms.saturating_add(duration_ms);
+                self.frames_read += 1;
                 let (w, h) = self.decoder.dimensions();
                 Ok(Some(AnimFrame {
                     data: self.buf.clone(),
@@ -135,12 +191,13 @@ impl<'a> AnimationDecoder<'a> {
     pub fn reset(&mut self) {
         self.decoder.reset_animation();
         self.cumulative_ms = 0;
+        self.frames_read = 0;
     }
 
     /// Decode all frames at once.
     pub fn decode_all(&mut self) -> Result<Vec<AnimFrame>, DecodingError> {
         self.reset();
-        let mut frames = Vec::new();
+        let mut frames = Vec::with_capacity(self.total_frames as usize);
         while let Some(frame) = self.next_frame()? {
             frames.push(frame);
         }
