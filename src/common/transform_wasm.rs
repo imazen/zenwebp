@@ -1,7 +1,7 @@
 //! WASM SIMD128 intrinsics for DCT/IDCT transforms.
 //!
-//! Uses v128 type and i16x8/i32x4 intrinsics matching the x86 SSE2 implementation.
-//! All intrinsics used here are safe in Rust 1.89+.
+//! Uses i32x4 arithmetic matching the scalar implementation for correctness,
+//! with SIMD parallelism across 4 columns/rows at once.
 
 #[cfg(target_arch = "wasm32")]
 use core::arch::wasm32::*;
@@ -27,308 +27,288 @@ pub(crate) fn idct4x4_wasm(token: Wasm128Token, block: &mut [i32]) {
 }
 
 // =============================================================================
-// WASM SIMD128 Implementation
+// Helpers
 // =============================================================================
 
-/// Load 4 i32 values into a v128 using safe lane constructors
+/// Load 4 i32 values from a block row
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
-fn load_i32x4(block: &[i32], offset: usize) -> v128 {
+fn load_row(block: &[i32], row: usize) -> v128 {
+    let off = row * 4;
+    i32x4(block[off], block[off + 1], block[off + 2], block[off + 3])
+}
+
+/// Store v128 as 4 i32 values into a block row
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn store_row(block: &mut [i32], row: usize, v: v128) {
+    let off = row * 4;
+    block[off] = i32x4_extract_lane::<0>(v);
+    block[off + 1] = i32x4_extract_lane::<1>(v);
+    block[off + 2] = i32x4_extract_lane::<2>(v);
+    block[off + 3] = i32x4_extract_lane::<3>(v);
+}
+
+/// Compute (v * constant) >> 16 using 64-bit intermediates.
+/// Matches the scalar `(val * CONST) >> 16` pattern used in VP8 transforms.
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn mulhi32x4(v: v128, c: i32) -> v128 {
+    let c_vec = i32x4_splat(c);
+    let lo_prod = i64x2_extmul_low_i32x4(v, c_vec);
+    let hi_prod = i64x2_extmul_high_i32x4(v, c_vec);
+    let lo_shifted = i64x2_shr(lo_prod, 16);
+    let hi_shifted = i64x2_shr(hi_prod, 16);
+    // Narrow back to i32x4 by extracting low 32 bits of each i64
     i32x4(
-        block[offset],
-        block[offset + 1],
-        block[offset + 2],
-        block[offset + 3],
+        i64x2_extract_lane::<0>(lo_shifted) as i32,
+        i64x2_extract_lane::<1>(lo_shifted) as i32,
+        i64x2_extract_lane::<0>(hi_shifted) as i32,
+        i64x2_extract_lane::<1>(hi_shifted) as i32,
     )
 }
 
-/// Store v128 as 4 i32 values using safe lane extraction
+/// Transpose a 4x4 matrix of i32 values stored as 4 row vectors.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
-fn store_i32x4(block: &mut [i32], offset: usize, v: v128) {
-    block[offset] = i32x4_extract_lane::<0>(v);
-    block[offset + 1] = i32x4_extract_lane::<1>(v);
-    block[offset + 2] = i32x4_extract_lane::<2>(v);
-    block[offset + 3] = i32x4_extract_lane::<3>(v);
+fn transpose4x4(r0: v128, r1: v128, r2: v128, r3: v128) -> (v128, v128, v128, v128) {
+    // Step 1: interleave pairs of 32-bit elements
+    let t0 = i32x4_shuffle::<0, 4, 1, 5>(r0, r1); // r0[0], r1[0], r0[1], r1[1]
+    let t1 = i32x4_shuffle::<2, 6, 3, 7>(r0, r1); // r0[2], r1[2], r0[3], r1[3]
+    let t2 = i32x4_shuffle::<0, 4, 1, 5>(r2, r3); // r2[0], r3[0], r2[1], r3[1]
+    let t3 = i32x4_shuffle::<2, 6, 3, 7>(r2, r3); // r2[2], r3[2], r2[3], r3[3]
+
+    // Step 2: interleave 64-bit pairs
+    let o0 = i64x2_shuffle::<0, 2>(t0, t2); // col 0: r0[0], r1[0], r2[0], r3[0]
+    let o1 = i64x2_shuffle::<1, 3>(t0, t2); // col 1: r0[1], r1[1], r2[1], r3[1]
+    let o2 = i64x2_shuffle::<0, 2>(t1, t3); // col 2: r0[2], r1[2], r2[2], r3[2]
+    let o3 = i64x2_shuffle::<1, 3>(t1, t3); // col 3: r0[3], r1[3], r2[3], r3[3]
+
+    (o0, o1, o2, o3)
 }
 
-/// Load 8 i16 values into a v128
+// =============================================================================
+// Inverse DCT
+// =============================================================================
+
+// VP8 IDCT constants
+const CONST1: i32 = 20091; // sqrt(2)*cos(pi/8)*65536 - 65536
+const CONST2: i32 = 35468; // sqrt(2)*sin(pi/8)*65536
+
+/// One pass of the IDCT butterfly. Processes 4 elements in parallel.
+/// Matches the scalar: a=in0+in2, b=in0-in2, c=MUL(in1,K2)-MUL(in3,K1), d=MUL(in1,K1)+MUL(in3,K2)
+/// where MUL(x,K) = x + (x*k)>>16 for K1, or just (x*k)>>16 for K2.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
-fn load_i16x8_from_i32(block: &[i32], indices: [usize; 8]) -> v128 {
-    i16x8(
-        block[indices[0]] as i16,
-        block[indices[1]] as i16,
-        block[indices[2]] as i16,
-        block[indices[3]] as i16,
-        block[indices[4]] as i16,
-        block[indices[5]] as i16,
-        block[indices[6]] as i16,
-        block[indices[7]] as i16,
-    )
+fn idct_butterfly(
+    in0: v128,
+    in1: v128,
+    in2: v128,
+    in3: v128,
+) -> (v128, v128, v128, v128) {
+    let a = i32x4_add(in0, in2);
+    let b = i32x4_sub(in0, in2);
+
+    // t1 = (in1 * CONST2) >> 16
+    let t1_c = mulhi32x4(in1, CONST2);
+    // t2 = in3 + (in3 * CONST1) >> 16  = MUL(in3, K1)
+    let t2_c = i32x4_add(in3, mulhi32x4(in3, CONST1));
+    let c = i32x4_sub(t1_c, t2_c);
+
+    // t1 = in1 + (in1 * CONST1) >> 16  = MUL(in1, K1)
+    let t1_d = i32x4_add(in1, mulhi32x4(in1, CONST1));
+    // t2 = (in3 * CONST2) >> 16
+    let t2_d = mulhi32x4(in3, CONST2);
+    let d = i32x4_add(t1_d, t2_d);
+
+    let out0 = i32x4_add(a, d);
+    let out1 = i32x4_add(b, c);
+    let out2 = i32x4_sub(b, c);
+    let out3 = i32x4_sub(a, d);
+
+    (out0, out1, out2, out3)
 }
 
-/// Store 8 i16 values to array
-#[cfg(target_arch = "wasm32")]
-#[inline(always)]
-fn store_i16x8(out: &mut [i16], offset: usize, v: v128) {
-    out[offset] = i16x8_extract_lane::<0>(v);
-    out[offset + 1] = i16x8_extract_lane::<1>(v);
-    out[offset + 2] = i16x8_extract_lane::<2>(v);
-    out[offset + 3] = i16x8_extract_lane::<3>(v);
-    out[offset + 4] = i16x8_extract_lane::<4>(v);
-    out[offset + 5] = i16x8_extract_lane::<5>(v);
-    out[offset + 6] = i16x8_extract_lane::<6>(v);
-    out[offset + 7] = i16x8_extract_lane::<7>(v);
-}
-
-/// Forward DCT implementation using WASM SIMD128
-#[cfg(target_arch = "wasm32")]
-#[arcane]
-fn dct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32; 16]) {
-    // Convert i32 block to i16 and reorganize into libwebp's interleaved layout:
-    // row01 = [r0c0, r0c1, r1c0, r1c1, r0c2, r0c3, r1c2, r1c3]
-    // row23 = [r2c0, r2c1, r3c0, r3c1, r2c2, r2c3, r3c2, r3c3]
-    let row01 = load_i16x8_from_i32(block, [0, 1, 4, 5, 2, 3, 6, 7]);
-    let row23 = load_i16x8_from_i32(block, [8, 9, 12, 13, 10, 11, 14, 15]);
-
-    // Forward transform pass 1 (rows)
-    let (v01, v32) = ftransform_pass1_wasm(row01, row23);
-
-    // Forward transform pass 2 (columns)
-    let mut out16 = [0i16; 16];
-    ftransform_pass2_wasm(&v01, &v32, &mut out16);
-
-    // Convert i16 output back to i32
-    for i in 0..16 {
-        block[i] = out16[i] as i32;
-    }
-}
-
-/// FTransform Pass 1 - matches libwebp FTransformPass1_SSE2
-#[cfg(target_arch = "wasm32")]
-#[inline]
-fn ftransform_pass1_wasm(in01: v128, in23: v128) -> (v128, v128) {
-    // Constants matching libwebp exactly
-    let k937 = i32x4_splat(937);
-    let k1812 = i32x4_splat(1812);
-    let k88p = i16x8(8, 8, 8, 8, 8, 8, 8, 8);
-    let k88m = i16x8(8, -8, 8, -8, 8, -8, 8, -8);
-    let k5352_2217p = i16x8(5352, 2217, 5352, 2217, 5352, 2217, 5352, 2217);
-    let k5352_2217m = i16x8(2217, -5352, 2217, -5352, 2217, -5352, 2217, -5352);
-
-    // Shuffle high words: swap pairs in high 64-bits
-    // shufflehi(in01, 0b10_11_00_01) = 00 01 10 11 03 02 13 12
-    let shuf01_p = i16x8_shuffle::<0, 1, 2, 3, 5, 4, 7, 6>(in01, in01);
-    let shuf23_p = i16x8_shuffle::<0, 1, 2, 3, 5, 4, 7, 6>(in23, in23);
-
-    // Interleave to separate low/high parts
-    let s01 = i64x2_shuffle::<0, 2>(shuf01_p, shuf23_p);
-    let s32 = i64x2_shuffle::<1, 3>(shuf01_p, shuf23_p);
-
-    // a01 = [d0+d3, d1+d2], a32 = [d0-d3, d1-d2]
-    let a01 = i16x8_add(s01, s32);
-    let a32 = i16x8_sub(s01, s32);
-
-    // tmp0 = (a0 + a1) << 3, tmp2 = (a0 - a1) << 3
-    let tmp0 = i32x4_dot_i16x8(a01, k88p);
-    let tmp2 = i32x4_dot_i16x8(a01, k88m);
-
-    // tmp1 = (a3*5352 + a2*2217 + 1812) >> 9
-    // tmp3 = (a3*2217 - a2*5352 + 937) >> 9
-    let tmp1_1 = i32x4_dot_i16x8(a32, k5352_2217p);
-    let tmp3_1 = i32x4_dot_i16x8(a32, k5352_2217m);
-    let tmp1_2 = i32x4_add(tmp1_1, k1812);
-    let tmp3_2 = i32x4_add(tmp3_1, k937);
-    let tmp1 = i32x4_shr(tmp1_2, 9);
-    let tmp3 = i32x4_shr(tmp3_2, 9);
-
-    // Pack back to i16 with saturation
-    let s03 = i16x8_narrow_i32x4(tmp0, tmp2);
-    let s12 = i16x8_narrow_i32x4(tmp1, tmp3);
-
-    // Interleave to get proper output order
-    let s_lo = i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(s03, s12);
-    let s_hi = i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(s03, s12);
-    let v23 = i32x4_shuffle::<2, 3, 6, 7>(s_lo, s_hi);
-    let out01 = i32x4_shuffle::<0, 1, 4, 5>(s_lo, s_hi);
-    let out32 = i32x4_shuffle::<1, 0, 3, 2>(v23, v23);
-
-    (out01, out32)
-}
-
-/// FTransform Pass 2 - matches libwebp FTransformPass2_SSE2
-#[cfg(target_arch = "wasm32")]
-#[inline]
-fn ftransform_pass2_wasm(v01: &v128, v32: &v128, out: &mut [i16; 16]) {
-    let zero = i16x8_splat(0);
-    let seven = i16x8_splat(7);
-    let k5352_2217 = i16x8(2217, 5352, 2217, 5352, 2217, 5352, 2217, 5352);
-    let k2217_5352 = i16x8(-5352, 2217, -5352, 2217, -5352, 2217, -5352, 2217);
-    let k12000_plus_one = i32x4_splat(12000 + (1 << 16));
-    let k51000 = i32x4_splat(51000);
-
-    // a3 = v0 - v3, a2 = v1 - v2
-    let a32 = i16x8_sub(*v01, *v32);
-    let a22 = i64x2_shuffle::<1, 1>(a32, a32);
-
-    let b23 = i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(a22, a32);
-    let c1 = i32x4_dot_i16x8(b23, k5352_2217);
-    let c3 = i32x4_dot_i16x8(b23, k2217_5352);
-    let d1 = i32x4_add(c1, k12000_plus_one);
-    let d3 = i32x4_add(c3, k51000);
-    let e1 = i32x4_shr(d1, 16);
-    let e3 = i32x4_shr(d3, 16);
-
-    let f1 = i16x8_narrow_i32x4(e1, e1);
-    let f3 = i16x8_narrow_i32x4(e3, e3);
-
-    // g1 = f1 + (a3 != 0)
-    let cmp = i16x8_eq(a32, zero);
-    let g1 = i16x8_add(f1, cmp);
-
-    // a0 = v0 + v3, a1 = v1 + v2
-    let a01 = i16x8_add(*v01, *v32);
-    let a01_plus_7 = i16x8_add(a01, seven);
-    let a11 = i64x2_shuffle::<1, 1>(a01, a01);
-    let c0 = i16x8_add(a01_plus_7, a11);
-    let c2 = i16x8_sub(a01_plus_7, a11);
-
-    let d0 = i16x8_shr(c0, 4);
-    let d2 = i16x8_shr(c2, 4);
-
-    // Combine outputs
-    let d0_g1 = i64x2_shuffle::<0, 2>(d0, g1);
-    let d2_f3 = i64x2_shuffle::<0, 2>(d2, f3);
-
-    // Store results
-    store_i16x8(out, 0, d0_g1);
-    store_i16x8(out, 8, d2_f3);
-}
-
-/// Inverse DCT implementation using WASM SIMD128
+/// WASM SIMD128 inverse DCT. Uses i32x4 arithmetic matching the scalar implementation.
+///
+/// Scalar pass order: column pass (for i in 0..4, reads block[i], block[4+i], ...),
+/// then row pass (for i in 0..4, reads block[4*i], block[4*i+1], ...).
+///
+/// With row vectors r0..r3, `idct_butterfly(r0,r1,r2,r3)` processes lane j as
+/// butterfly(row0[j], row1[j], row2[j], row3[j]) = column pass (no transpose needed).
+/// For the row pass, we transpose so each vector holds a row's elements as lanes.
 #[cfg(target_arch = "wasm32")]
 #[arcane]
 fn idct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32]) {
-    // libwebp IDCT constants
-    let k1k2 = i16x8(20091, 20091, 20091, 20091, -30068, -30068, -30068, -30068);
-    let k2k1 = i16x8(-30068, -30068, -30068, -30068, 20091, 20091, 20091, 20091);
-    let zero_four = i16x8(4, 4, 4, 4, 0, 0, 0, 0);
+    // Load 4 rows
+    let r0 = load_row(block, 0);
+    let r1 = load_row(block, 1);
+    let r2 = load_row(block, 2);
+    let r3 = load_row(block, 3);
 
-    // Load i32 values and pack to i16
-    let i32_0 = load_i32x4(block, 0);
-    let i32_1 = load_i32x4(block, 4);
-    let i32_2 = load_i32x4(block, 8);
-    let i32_3 = load_i32x4(block, 12);
+    // Pass 1: column pass — butterfly on row vectors processes columns in parallel
+    let (v0, v1, v2, v3) = idct_butterfly(r0, r1, r2, r3);
 
-    // Pack i32 to i16 with saturation
-    let in01 = i16x8_narrow_i32x4(i32_0, i32_1);
-    let in23 = i16x8_narrow_i32x4(i32_2, i32_3);
+    // Pass 2: row pass — transpose so each vector holds one row's elements,
+    // butterfly processes rows, then transpose back to row-major
+    let (c0, c1, c2, c3) = transpose4x4(v0, v1, v2, v3);
+    let (t0, t1, t2, t3) = idct_butterfly(c0, c1, c2, c3);
+    let (f0, f1, f2, f3) = transpose4x4(t0, t1, t2, t3);
 
-    // Vertical pass
-    let (t01, t23) = itransform_pass_wasm(in01, in23, k1k2, k2k1);
-
-    // Horizontal pass with rounding
-    let (out01, out23) = itransform_pass2_wasm(t01, t23, k1k2, k2k1, zero_four);
-
-    // Unpack i16 back to i32 using sign extension
-    let zero = i16x8_splat(0);
-
-    let sign01_lo = i16x8_gt(zero, out01);
-    let out_0 = i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(out01, sign01_lo);
-    let out_1 = i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(out01, sign01_lo);
-
-    let sign23_lo = i16x8_gt(zero, out23);
-    let out_2 = i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(out23, sign23_lo);
-    let out_3 = i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(out23, sign23_lo);
+    // Final rounding: (val + 4) >> 3
+    let four = i32x4_splat(4);
+    let o0 = i32x4_shr(i32x4_add(f0, four), 3);
+    let o1 = i32x4_shr(i32x4_add(f1, four), 3);
+    let o2 = i32x4_shr(i32x4_add(f2, four), 3);
+    let o3 = i32x4_shr(i32x4_add(f3, four), 3);
 
     // Store results
-    store_i32x4(block, 0, out_0);
-    store_i32x4(block, 4, out_1);
-    store_i32x4(block, 8, out_2);
-    store_i32x4(block, 12, out_3);
+    store_row(block, 0, o0);
+    store_row(block, 1, o1);
+    store_row(block, 2, o2);
+    store_row(block, 3, o3);
 }
 
-/// ITransform vertical pass
+// =============================================================================
+// Forward DCT
+// =============================================================================
+
+/// First pass of the forward DCT butterfly (row pass). Processes 4 elements in parallel.
+///
+/// Scalar row pass (for each row i):
+///   a = (block[i*4+0] + block[i*4+3]) * 8
+///   b = (block[i*4+1] + block[i*4+2]) * 8
+///   c = (block[i*4+1] - block[i*4+2]) * 8
+///   d = (block[i*4+0] - block[i*4+3]) * 8
+///   out[i*4]   = a + b
+///   out[i*4+1] = (c*2217 + d*5352 + 14500) >> 12
+///   out[i*4+2] = a - b
+///   out[i*4+3] = (d*2217 - c*5352 + 7500) >> 12
 #[cfg(target_arch = "wasm32")]
-#[inline]
-fn itransform_pass_wasm(in01: v128, in23: v128, k1k2: v128, k2k1: v128) -> (v128, v128) {
-    let in1 = i64x2_shuffle::<1, 1>(in01, in01);
-    let in3 = i64x2_shuffle::<1, 1>(in23, in23);
+#[inline(always)]
+fn dct_butterfly(
+    in0: v128,
+    in1: v128,
+    in2: v128,
+    in3: v128,
+) -> (v128, v128, v128, v128) {
+    let eight = i32x4_splat(8);
 
-    let a_d3 = i16x8_add(in01, in23);
-    let b_c3 = i16x8_sub(in01, in23);
+    let a = i32x4_mul(i32x4_add(in0, in3), eight);
+    let b = i32x4_mul(i32x4_add(in1, in2), eight);
+    let c = i32x4_mul(i32x4_sub(in1, in2), eight);
+    let d = i32x4_mul(i32x4_sub(in0, in3), eight);
 
-    // Use q15mulr_sat for the multiply-high operation
-    let c1d1 = i16x8_q15mulr_sat(in1, k2k1);
-    let c2d2 = i16x8_q15mulr_sat(in3, k1k2);
-    let c3 = i64x2_shuffle::<1, 1>(b_c3, b_c3);
-    let c4 = i16x8_sub(c1d1, c2d2);
-    let c = i16x8_add(c3, c4);
-    let d4u = i16x8_add(c1d1, c2d2);
-    let du = i16x8_add(a_d3, d4u);
-    let d = i64x2_shuffle::<1, 1>(du, du);
+    let k2217 = i32x4_splat(2217);
+    let k5352 = i32x4_splat(5352);
 
-    let comb_ab = i64x2_shuffle::<0, 2>(a_d3, b_c3);
-    let comb_dc = i64x2_shuffle::<0, 2>(d, c);
+    let out0 = i32x4_add(a, b);
 
-    let tmp01 = i16x8_add(comb_ab, comb_dc);
-    let tmp32 = i16x8_sub(comb_ab, comb_dc);
-    let tmp23 = i32x4_shuffle::<2, 3, 0, 1>(tmp32, tmp32);
+    // out1 = (c * 2217 + d * 5352 + 14500) >> 12
+    let k14500 = i32x4_splat(14500);
+    let out1 = i32x4_shr(
+        i32x4_add(i32x4_add(i32x4_mul(c, k2217), i32x4_mul(d, k5352)), k14500),
+        12,
+    );
 
-    let transpose_0 = i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(tmp01, tmp23);
-    let transpose_1 = i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(tmp01, tmp23);
+    // out2 = a - b
+    let out2 = i32x4_sub(a, b);
 
-    let t01 = i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(transpose_0, transpose_1);
-    let t23 = i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(transpose_0, transpose_1);
+    // out3 = (d * 2217 - c * 5352 + 7500) >> 12
+    let k7500 = i32x4_splat(7500);
+    let out3 = i32x4_shr(
+        i32x4_add(i32x4_sub(i32x4_mul(d, k2217), i32x4_mul(c, k5352)), k7500),
+        12,
+    );
 
-    (t01, t23)
+    (out0, out1, out2, out3)
 }
 
-/// ITransform horizontal pass with final shift
+/// Second pass of forward DCT (column pass). Same butterfly pairing as pass 1,
+/// but different constants and rounding.
+///
+/// Scalar column pass (for column i):
+///   a = block[i] + block[i+12]         (row0 + row3)
+///   b = block[i+4] + block[i+8]        (row1 + row2)
+///   c = block[i+4] - block[i+8]        (row1 - row2)
+///   d = block[i] - block[i+12]         (row0 - row3)
+///   out_row0 = (a + b + 7) >> 4
+///   out_row1 = (c*2217 + d*5352 + 12000) >> 16 + (d != 0)
+///   out_row2 = (a - b + 7) >> 4
+///   out_row3 = (d*2217 - c*5352 + 51000) >> 16
 #[cfg(target_arch = "wasm32")]
-#[inline]
-fn itransform_pass2_wasm(
-    t01: v128,
-    t23: v128,
-    k1k2: v128,
-    k2k1: v128,
-    zero_four: v128,
-) -> (v128, v128) {
-    let t1 = i64x2_shuffle::<1, 1>(t01, t01);
-    let t3 = i64x2_shuffle::<1, 1>(t23, t23);
+#[inline(always)]
+fn dct_butterfly_pass2(
+    in0: v128,
+    in1: v128,
+    in2: v128,
+    in3: v128,
+) -> (v128, v128, v128, v128) {
+    let a = i32x4_add(in0, in3);
+    let b = i32x4_add(in1, in2);
+    let c = i32x4_sub(in1, in2);
+    let d = i32x4_sub(in0, in3);
 
-    let dc = i16x8_add(t01, zero_four);
+    let k2217 = i32x4_splat(2217);
+    let k5352 = i32x4_splat(5352);
+    let k7 = i32x4_splat(7);
+    let k12000 = i32x4_splat(12000);
+    let k51000 = i32x4_splat(51000);
 
-    let a_d3 = i16x8_add(dc, t23);
-    let b_c3 = i16x8_sub(dc, t23);
+    // out0 = (a + b + 7) >> 4
+    let out0 = i32x4_shr(i32x4_add(i32x4_add(a, b), k7), 4);
 
-    let c1d1 = i16x8_q15mulr_sat(t1, k2k1);
-    let c2d2 = i16x8_q15mulr_sat(t3, k1k2);
-    let c3 = i64x2_shuffle::<1, 1>(b_c3, b_c3);
-    let c4 = i16x8_sub(c1d1, c2d2);
-    let c = i16x8_add(c3, c4);
-    let d4u = i16x8_add(c1d1, c2d2);
-    let du = i16x8_add(a_d3, d4u);
-    let d = i64x2_shuffle::<1, 1>(du, du);
+    // out1 = (c * 2217 + d * 5352 + 12000) >> 16 + (d != 0)
+    let out1_raw = i32x4_shr(
+        i32x4_add(i32x4_add(i32x4_mul(c, k2217), i32x4_mul(d, k5352)), k12000),
+        16,
+    );
+    // d_ne_0: 0xFFFFFFFF when d != 0, 0 when d == 0
+    // We need +1 when d != 0, so negate the mask (-(-1) = 1)
+    let d_ne_0 = v128_not(i32x4_eq(d, i32x4_splat(0)));
+    let out1 = i32x4_sub(out1_raw, d_ne_0);
 
-    let comb_ab = i64x2_shuffle::<0, 2>(a_d3, b_c3);
-    let comb_dc = i64x2_shuffle::<0, 2>(d, c);
+    // out2 = (a - b + 7) >> 4
+    let out2 = i32x4_shr(i32x4_add(i32x4_sub(a, b), k7), 4);
 
-    let tmp01 = i16x8_add(comb_ab, comb_dc);
-    let tmp32 = i16x8_sub(comb_ab, comb_dc);
-    let tmp23 = i32x4_shuffle::<2, 3, 0, 1>(tmp32, tmp32);
+    // out3 = (d * 2217 - c * 5352 + 51000) >> 16
+    let out3 = i32x4_shr(
+        i32x4_add(i32x4_sub(i32x4_mul(d, k2217), i32x4_mul(c, k5352)), k51000),
+        16,
+    );
 
-    // Final shift >> 3
-    let shifted01 = i16x8_shr(tmp01, 3);
-    let shifted23 = i16x8_shr(tmp23, 3);
+    (out0, out1, out2, out3)
+}
 
-    // Transpose back
-    let transpose_0 = i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(shifted01, shifted23);
-    let transpose_1 = i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(shifted01, shifted23);
+/// WASM SIMD128 forward DCT. Uses i32x4 arithmetic matching the scalar implementation.
+///
+/// Scalar pass order: row pass first (for i in 0..4, reads block[i*4..i*4+3]),
+/// then column pass (for i in 0..4, reads block[i], block[i+4], ...).
+///
+/// With row vectors, `dct_butterfly(r0,r1,r2,r3)` processes lane j as
+/// butterfly(row0[j], row1[j], row2[j], row3[j]) = column pass.
+/// For the row pass, we transpose so each vector holds one row's elements.
+#[cfg(target_arch = "wasm32")]
+#[arcane]
+fn dct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32; 16]) {
+    // Load 4 rows
+    let r0 = load_row(block, 0);
+    let r1 = load_row(block, 1);
+    let r2 = load_row(block, 2);
+    let r3 = load_row(block, 3);
 
-    let out01 = i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(transpose_0, transpose_1);
-    let out23 = i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(transpose_0, transpose_1);
+    // Pass 1: row pass — transpose so each vector holds one row's elements,
+    // butterfly processes rows, then transpose back to row-major
+    let (c0, c1, c2, c3) = transpose4x4(r0, r1, r2, r3);
+    let (v0, v1, v2, v3) = dct_butterfly(c0, c1, c2, c3);
+    let (t0, t1, t2, t3) = transpose4x4(v0, v1, v2, v3);
 
-    (out01, out23)
+    // Pass 2: column pass — butterfly on row vectors processes columns in parallel
+    let (o0, o1, o2, o3) = dct_butterfly_pass2(t0, t1, t2, t3);
+
+    // Store results
+    store_row(block, 0, o0);
+    store_row(block, 1, o1);
+    store_row(block, 2, o2);
+    store_row(block, 3, o3);
 }

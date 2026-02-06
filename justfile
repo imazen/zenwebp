@@ -47,6 +47,10 @@ profile-decode webp_path="" iterations="100":
 profile-encode png_path="" iterations="10":
     cargo run --release --bin profile_encode --features _profiling -- {{png_path}} {{iterations}}
 
+# Run WASM lib tests via wasmtime
+wasm-test:
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime" RUSTFLAGS="-C target-feature=+simd128" cargo test --target wasm32-wasip1 --features simd --lib
+
 # Check that WASM target compiles (without running)
 wasm-check:
     RUSTFLAGS="-C target-feature=+simd128" cargo check --target wasm32-wasip1 --features simd

@@ -245,9 +245,7 @@ mod tests {
         dct4x4(&mut dct_block);
 
         let mut inverse_dct_block = dct_block;
-
         idct4x4(&mut inverse_dct_block);
-
         assert_eq!(BLOCK, inverse_dct_block);
     }
 }
