@@ -181,9 +181,15 @@ pub(super) fn sse_16x16_luma(
         let token = archmage::NeonToken::summon().unwrap();
         crate::common::simd_neon::sse_16x16_luma_neon(token, src_y, src_width, mbx, mby, pred)
     }
+    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    {
+        use archmage::SimdToken;
+        let token = archmage::Wasm128Token::summon().unwrap();
+        crate::common::simd_wasm::sse_16x16_luma_wasm(token, src_y, src_width, mbx, mby, pred)
+    }
     #[cfg(not(all(
         feature = "simd",
-        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
+        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "wasm32")
     )))]
     {
         let mut sse = 0u32;
@@ -221,9 +227,15 @@ pub(super) fn sse_8x8_chroma(
         let token = archmage::NeonToken::summon().unwrap();
         crate::common::simd_neon::sse_8x8_chroma_neon(token, src_uv, src_width, mbx, mby, pred)
     }
+    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    {
+        use archmage::SimdToken;
+        let token = archmage::Wasm128Token::summon().unwrap();
+        crate::common::simd_wasm::sse_8x8_chroma_wasm(token, src_uv, src_width, mbx, mby, pred)
+    }
     #[cfg(not(all(
         feature = "simd",
-        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
+        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "wasm32")
     )))]
     {
         let mut sse = 0u32;

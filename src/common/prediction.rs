@@ -397,9 +397,17 @@ pub(crate) type SimdTokenType = Option<archmage::X64V3Token>;
 #[cfg(all(feature = "simd", target_arch = "aarch64"))]
 pub(crate) type SimdTokenType = Option<archmage::NeonToken>;
 
+#[cfg(all(feature = "simd", target_arch = "wasm32"))]
+pub(crate) type SimdTokenType = Option<archmage::Wasm128Token>;
+
 #[cfg(not(all(
     feature = "simd",
-    any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
+    any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "wasm32"
+    )
 )))]
 pub(crate) type SimdTokenType = Option<()>;
 
@@ -1155,10 +1163,32 @@ pub(crate) fn idct_add_residue_and_clear_with_token(
     );
 }
 
+/// WASM SIMD128 fused IDCT + add residue + clear.
+#[cfg(all(feature = "simd", target_arch = "wasm32"))]
+#[inline(always)]
+pub(crate) fn idct_add_residue_and_clear_with_token(
+    token: archmage::Wasm128Token,
+    pblock: &mut [u8],
+    rblock: &mut [i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    use crate::common::transform;
+
+    let dc_only = rblock[1..].iter().all(|&c| c == 0);
+    if dc_only {
+        transform::idct4x4_dc(rblock);
+    } else {
+        crate::common::transform_wasm::idct4x4_wasm(token, rblock);
+    }
+    add_residue_and_clear_scalar(pblock, rblock, y0, x0, stride);
+}
+
 /// Scalar fallback for fused IDCT + add residue + clear.
 #[cfg(not(all(
     feature = "simd",
-    any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
+    any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "wasm32")
 )))]
 #[inline(always)]
 pub(crate) fn idct_add_residue_and_clear_with_token(
@@ -1202,6 +1232,14 @@ pub(crate) fn idct_add_residue_and_clear(
     {
         use archmage::{NeonToken, SimdToken};
         if let Some(token) = NeonToken::summon() {
+            idct_add_residue_and_clear_with_token(token, pblock, rblock, y0, x0, stride);
+            return;
+        }
+    }
+    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    {
+        use archmage::{SimdToken, Wasm128Token};
+        if let Some(token) = Wasm128Token::summon() {
             idct_add_residue_and_clear_with_token(token, pblock, rblock, y0, x0, stride);
             return;
         }

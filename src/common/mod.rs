@@ -18,4 +18,7 @@ pub mod transform_aarch64;
 pub mod transform_simd_intrinsics;
 
 #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+pub mod simd_wasm;
+
+#[cfg(all(feature = "simd", target_arch = "wasm32"))]
 pub mod transform_wasm;

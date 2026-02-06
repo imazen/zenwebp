@@ -490,6 +490,28 @@ pub(crate) fn ftransform2_from_u8(
             return;
         }
     }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::{SimdToken, Wasm128Token};
+        if let Some(token) = Wasm128Token::summon() {
+            // Process two blocks using single-block WASM DCT
+            for block in 0..2 {
+                let mut block_data = [0i32; 16];
+                for y in 0..4 {
+                    for x in 0..4 {
+                        let src_val = src[y * src_stride + block * 4 + x] as i32;
+                        let ref_val = ref_[y * ref_stride + block * 4 + x] as i32;
+                        block_data[y * 4 + x] = src_val - ref_val;
+                    }
+                }
+                super::transform_wasm::dct4x4_wasm(token, &mut block_data);
+                for (i, &val) in block_data.iter().enumerate() {
+                    out[block * 16 + i] = val as i16;
+                }
+            }
+            return;
+        }
+    }
     // Scalar fallback
     ftransform2_scalar(src, ref_, src_stride, ref_stride, out);
 }
@@ -1111,6 +1133,18 @@ pub(crate) fn ftransform_from_u8_4x4(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 1
         use archmage::{NeonToken, SimdToken};
         if let Some(token) = NeonToken::summon() {
             return super::transform_aarch64::ftransform_from_u8_4x4_neon(token, src, ref_);
+        }
+    }
+    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    {
+        use archmage::{SimdToken, Wasm128Token};
+        if let Some(token) = Wasm128Token::summon() {
+            let mut block = [0i32; 16];
+            for i in 0..16 {
+                block[i] = src[i] as i32 - ref_[i] as i32;
+            }
+            super::transform_wasm::dct4x4_wasm(token, &mut block);
+            return block;
         }
     }
     ftransform_from_u8_4x4_scalar(src, ref_)

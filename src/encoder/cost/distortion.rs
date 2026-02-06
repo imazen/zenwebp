@@ -117,9 +117,15 @@ pub fn tdisto_4x4(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
         let token = archmage::NeonToken::summon().unwrap();
         crate::common::simd_neon::tdisto_4x4_fused_neon(token, a, b, stride, w)
     }
+    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    {
+        use archmage::SimdToken;
+        let token = archmage::Wasm128Token::summon().unwrap();
+        crate::common::simd_wasm::tdisto_4x4_fused_wasm(token, a, b, stride, w)
+    }
     #[cfg(not(all(
         feature = "simd",
-        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
+        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "wasm32")
     )))]
     {
         let sum1 = t_transform(a, stride, w);
@@ -152,6 +158,19 @@ pub fn tdisto_16x16(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
         use archmage::SimdToken;
         let token = archmage::NeonToken::summon().unwrap();
         return tdisto_16x16_neon(token, a, b, stride, w);
+    }
+    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    {
+        use archmage::SimdToken;
+        let token = archmage::Wasm128Token::summon().unwrap();
+        let mut d = 0i32;
+        for y in 0..4 {
+            for x in 0..4 {
+                let offset = y * 4 * stride + x * 4;
+                d += crate::common::simd_wasm::tdisto_4x4_fused_wasm(token, &a[offset..], &b[offset..], stride, w);
+            }
+        }
+        return d;
     }
     // Scalar fallback (x86 without SIMD support, or non-SIMD platforms)
     #[allow(unreachable_code)]
@@ -211,6 +230,19 @@ pub fn tdisto_8x8(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
         use archmage::SimdToken;
         let token = archmage::NeonToken::summon().unwrap();
         return tdisto_8x8_neon(token, a, b, stride, w);
+    }
+    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    {
+        use archmage::SimdToken;
+        let token = archmage::Wasm128Token::summon().unwrap();
+        let mut d = 0i32;
+        for y in 0..2 {
+            for x in 0..2 {
+                let offset = y * 4 * stride + x * 4;
+                d += crate::common::simd_wasm::tdisto_4x4_fused_wasm(token, &a[offset..], &b[offset..], stride, w);
+            }
+        }
+        return d;
     }
     #[allow(unreachable_code)]
     {
@@ -330,7 +362,13 @@ pub fn is_flat_source_16(src: &[u8], stride: usize) -> bool {
         let token = archmage::NeonToken::summon().unwrap();
         crate::common::simd_neon::is_flat_source_16_neon(token, src, stride)
     }
-    #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    {
+        use archmage::SimdToken;
+        let token = archmage::Wasm128Token::summon().unwrap();
+        crate::common::simd_wasm::is_flat_source_16_wasm(token, src, stride)
+    }
+    #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "wasm32"))))]
     {
         is_flat_source_16_scalar(src, stride)
     }
@@ -511,7 +549,17 @@ fn is_flat_coeffs_scalar(levels: &[i16], num_blocks: usize, thresh: i32) -> bool
 
 /// Check if coefficients are "flat" (few non-zero AC coefficients).
 /// Returns true if total non-zero AC count <= thresh.
-#[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[inline]
+#[cfg(all(feature = "simd", target_arch = "wasm32"))]
+pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
+    use archmage::SimdToken;
+    let token = archmage::Wasm128Token::summon().unwrap();
+    crate::common::simd_wasm::is_flat_coeffs_wasm(token, levels, num_blocks, thresh)
+}
+
+/// Check if coefficients are "flat" (few non-zero AC coefficients).
+/// Returns true if total non-zero AC count <= thresh.
+#[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "wasm32"))))]
 pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
     is_flat_coeffs_scalar(levels, num_blocks, thresh)
 }

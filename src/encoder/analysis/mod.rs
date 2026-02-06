@@ -30,6 +30,8 @@ pub mod iterator;
 pub mod prediction;
 pub mod segment;
 
+use alloc::vec::Vec;
+
 // Re-exports
 pub use classifier::{
     classify_image_type, classify_image_type_diag, content_type_to_tuning, ClassifierDiag,

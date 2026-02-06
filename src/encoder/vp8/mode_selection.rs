@@ -1427,9 +1427,15 @@ impl<'a> super::Vp8Encoder<'a> {
                 let token = archmage::NeonToken::summon().unwrap();
                 crate::common::simd_neon::sse4x4_neon(token, src_block, pred)
             };
+            #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+            let sse = {
+                use archmage::SimdToken;
+                let token = archmage::Wasm128Token::summon().unwrap();
+                crate::common::simd_wasm::sse4x4_wasm(token, src_block, pred)
+            };
             #[cfg(not(all(
                 feature = "simd",
-                any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
+                any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "wasm32")
             )))]
             let sse = {
                 let mut sum = 0u32;
@@ -1508,9 +1514,20 @@ impl<'a> super::Vp8Encoder<'a> {
                     &dequantized,
                 )
             };
+            #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+            let sse = {
+                use archmage::SimdToken;
+                let token = archmage::Wasm128Token::summon().unwrap();
+                crate::common::simd_wasm::sse4x4_with_residual_wasm(
+                    token,
+                    src_block,
+                    pred,
+                    &dequantized,
+                )
+            };
             #[cfg(not(all(
                 feature = "simd",
-                any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
+                any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "wasm32")
             )))]
             let sse = {
                 let mut sum = 0u32;
