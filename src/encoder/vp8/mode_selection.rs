@@ -1419,7 +1419,14 @@ impl<'a> super::Vp8Encoder<'a> {
             let pred = preds.get(mode_idx);
             #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
             let sse = crate::common::simd_sse::sse4x4(src_block, pred);
-            #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+            #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+            let sse = {
+                use archmage::SimdToken;
+                // NEON is always available on aarch64
+                let token = archmage::NeonToken::summon().unwrap();
+                crate::common::simd_neon::sse4x4_neon(token, src_block, pred)
+            };
+            #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64"))))]
             let sse = {
                 let mut sum = 0u32;
                 for k in 0..16 {
@@ -1486,7 +1493,13 @@ impl<'a> super::Vp8Encoder<'a> {
 
             #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
             let sse = crate::common::simd_sse::sse4x4_with_residual(src_block, pred, &dequantized);
-            #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+            #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+            let sse = {
+                use archmage::SimdToken;
+                let token = archmage::NeonToken::summon().unwrap();
+                crate::common::simd_neon::sse4x4_with_residual_neon(token, src_block, pred, &dequantized)
+            };
+            #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64"))))]
             let sse = {
                 let mut sum = 0u32;
                 for i in 0..16 {

@@ -9,6 +9,9 @@ pub mod types;
 pub mod simd_sse;
 
 #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+pub mod simd_neon;
+
+#[cfg(all(feature = "simd", target_arch = "aarch64"))]
 pub mod transform_aarch64;
 
 #[cfg(feature = "simd")]

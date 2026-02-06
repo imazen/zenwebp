@@ -175,7 +175,13 @@ pub(super) fn sse_16x16_luma(
     {
         crate::common::simd_sse::sse_16x16_luma(src_y, src_width, mbx, mby, pred)
     }
-    #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    {
+        use archmage::SimdToken;
+        let token = archmage::NeonToken::summon().unwrap();
+        crate::common::simd_neon::sse_16x16_luma_neon(token, src_y, src_width, mbx, mby, pred)
+    }
+    #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64"))))]
     {
         let mut sse = 0u32;
         let src_base = mby * 16 * src_width + mbx * 16;
@@ -206,7 +212,13 @@ pub(super) fn sse_8x8_chroma(
     {
         crate::common::simd_sse::sse_8x8_chroma(src_uv, src_width, mbx, mby, pred)
     }
-    #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    {
+        use archmage::SimdToken;
+        let token = archmage::NeonToken::summon().unwrap();
+        crate::common::simd_neon::sse_8x8_chroma_neon(token, src_uv, src_width, mbx, mby, pred)
+    }
+    #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64"))))]
     {
         let mut sse = 0u32;
         let src_base = mby * 8 * src_width + mbx * 8;
