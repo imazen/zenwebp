@@ -1195,15 +1195,6 @@ impl ImageInfo {
     }
 }
 
-impl TryFrom<&[u8]> for ImageInfo {
-    type Error = DecodingError;
-
-    /// Parse image information from WebP data.
-    fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
-        Self::from_webp(data)
-    }
-}
-
 /// Bitstream compression format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
