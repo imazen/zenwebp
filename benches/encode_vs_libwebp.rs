@@ -1,8 +1,10 @@
 //! Criterion benchmarks comparing zenwebp vs libwebp encoding performance.
 //!
-//! Tracks performance parity across methods 0-6 and quality levels.
+//! Uses webpx crate (safe Rust wrapper around libwebp) for fair library-to-library
+//! comparison — both encoders receive identical in-memory RGB data with matched settings.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use std::hint::black_box;
 use std::path::Path;
 use zenwebp::EncoderConfig;
 
@@ -47,8 +49,8 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 /// Default test image path
 const DEFAULT_IMAGE: &str = "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/792079.png";
 
-fn bench_methods_comparison(c: &mut Criterion) {
-    let mut group = c.benchmark_group("method_comparison");
+fn bench_methods_diagnostic(c: &mut Criterion) {
+    let mut group = c.benchmark_group("method_diagnostic");
 
     let (rgb_data, width, height) =
         load_png(Path::new(DEFAULT_IMAGE)).expect("Test image not found");
@@ -56,9 +58,59 @@ fn bench_methods_comparison(c: &mut Criterion) {
     let pixels = (width * height) as u64;
     group.throughput(Throughput::Elements(pixels));
 
-    // Test methods 0, 2, 4, 6 (representative of speed range)
+    // Diagnostic settings: SNS=0, filter=0, segments=1
+    // Isolates encoder core from preprocessing
     for method in [0, 2, 4, 6] {
-        // zenwebp
+        group.bench_with_input(
+            BenchmarkId::new("zenwebp", method),
+            &method,
+            |b, &method| {
+                b.iter(|| {
+                    EncoderConfig::new()
+                        .quality(75.0)
+                        .method(method)
+                        .sns_strength(0)
+                        .filter_strength(0)
+                        .segments(1)
+                        .encode_rgb(black_box(&rgb_data), width, height)
+                        .unwrap()
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("libwebp", method),
+            &method,
+            |b, &method| {
+                b.iter(|| {
+                    webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
+                        .method(method)
+                        .sns_strength(0)
+                        .filter_strength(0)
+                        .filter_sharpness(0)
+                        .segments(1)
+                        .encode_rgb(black_box(&rgb_data), width, height, webpx::Unstoppable)
+                        .unwrap()
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+fn bench_methods_default(c: &mut Criterion) {
+    let mut group = c.benchmark_group("method_default");
+
+    let (rgb_data, width, height) =
+        load_png(Path::new(DEFAULT_IMAGE)).expect("Test image not found");
+
+    let pixels = (width * height) as u64;
+    group.throughput(Throughput::Elements(pixels));
+
+    // Default settings (SNS=50, filter=60, segments=4)
+    // Production-realistic comparison
+    for method in [0, 2, 4, 6] {
         group.bench_with_input(
             BenchmarkId::new("zenwebp", method),
             &method,
@@ -73,18 +125,15 @@ fn bench_methods_comparison(c: &mut Criterion) {
             },
         );
 
-        // libwebp
         group.bench_with_input(
             BenchmarkId::new("libwebp", method),
             &method,
             |b, &method| {
-                let mut config = webp::WebPConfig::new().unwrap();
-                config.quality = 75.0;
-                config.method = method as i32;
-
                 b.iter(|| {
-                    let encoder = webp::Encoder::from_rgb(black_box(&rgb_data), width, height);
-                    encoder.encode_advanced(&config).unwrap()
+                    webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
+                        .method(method)
+                        .encode_rgb(black_box(&rgb_data), width, height, webpx::Unstoppable)
+                        .unwrap()
                 });
             },
         );
@@ -102,9 +151,7 @@ fn bench_quality_comparison(c: &mut Criterion) {
     let pixels = (width * height) as u64;
     group.throughput(Throughput::Elements(pixels));
 
-    // Test quality 50, 75, 90 at method 4
-    for quality in [50.0, 75.0, 90.0] {
-        // zenwebp
+    for quality in [50.0f32, 75.0, 90.0] {
         group.bench_with_input(
             BenchmarkId::new("zenwebp", quality as u32),
             &quality,
@@ -119,18 +166,15 @@ fn bench_quality_comparison(c: &mut Criterion) {
             },
         );
 
-        // libwebp
         group.bench_with_input(
             BenchmarkId::new("libwebp", quality as u32),
             &quality,
             |b, &quality| {
-                let mut config = webp::WebPConfig::new().unwrap();
-                config.quality = quality as f32;
-                config.method = 4;
-
                 b.iter(|| {
-                    let encoder = webp::Encoder::from_rgb(black_box(&rgb_data), width, height);
-                    encoder.encode_advanced(&config).unwrap()
+                    webpx::EncoderConfig::with_preset(webpx::Preset::Default, quality)
+                        .method(4)
+                        .encode_rgb(black_box(&rgb_data), width, height, webpx::Unstoppable)
+                        .unwrap()
                 });
             },
         );
@@ -139,88 +183,10 @@ fn bench_quality_comparison(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_overall_throughput(c: &mut Criterion) {
-    let mut group = c.benchmark_group("overall_throughput");
-
-    let (rgb_data, width, height) =
-        load_png(Path::new(DEFAULT_IMAGE)).expect("Test image not found");
-
-    let pixels = (width * height) as u64;
-    group.throughput(Throughput::Elements(pixels));
-
-    // Default settings (method 4, quality 75)
-    group.bench_function("zenwebp_default", |b| {
-        b.iter(|| {
-            EncoderConfig::new()
-                .quality(75.0)
-                .method(4)
-                .encode_rgb(black_box(&rgb_data), width, height)
-                .unwrap()
-        });
-    });
-
-    group.bench_function("libwebp_default", |b| {
-        let mut config = webp::WebPConfig::new().unwrap();
-        config.quality = 75.0;
-        config.method = 4;
-
-        b.iter(|| {
-            let encoder = webp::Encoder::from_rgb(black_box(&rgb_data), width, height);
-            encoder.encode_advanced(&config).unwrap()
-        });
-    });
-
-    // Fast settings (method 0)
-    group.bench_function("zenwebp_fast", |b| {
-        b.iter(|| {
-            EncoderConfig::new()
-                .quality(75.0)
-                .method(0)
-                .encode_rgb(black_box(&rgb_data), width, height)
-                .unwrap()
-        });
-    });
-
-    group.bench_function("libwebp_fast", |b| {
-        let mut config = webp::WebPConfig::new().unwrap();
-        config.quality = 75.0;
-        config.method = 0;
-
-        b.iter(|| {
-            let encoder = webp::Encoder::from_rgb(black_box(&rgb_data), width, height);
-            encoder.encode_advanced(&config).unwrap()
-        });
-    });
-
-    // Best quality settings (method 6)
-    group.bench_function("zenwebp_best", |b| {
-        b.iter(|| {
-            EncoderConfig::new()
-                .quality(75.0)
-                .method(6)
-                .encode_rgb(black_box(&rgb_data), width, height)
-                .unwrap()
-        });
-    });
-
-    group.bench_function("libwebp_best", |b| {
-        let mut config = webp::WebPConfig::new().unwrap();
-        config.quality = 75.0;
-        config.method = 6;
-
-        b.iter(|| {
-            let encoder = webp::Encoder::from_rgb(black_box(&rgb_data), width, height);
-            encoder.encode_advanced(&config).unwrap()
-        });
-    });
-
-    group.finish();
-}
-
 criterion_group!(
     benches,
-    bench_methods_comparison,
+    bench_methods_diagnostic,
+    bench_methods_default,
     bench_quality_comparison,
-    bench_overall_throughput,
 );
 criterion_main!(benches);

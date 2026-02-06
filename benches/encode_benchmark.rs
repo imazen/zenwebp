@@ -5,7 +5,8 @@
 //! - Quality levels (50, 75, 90)
 //! - Image types (photo, screenshot, icon)
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use std::hint::black_box;
 use std::path::Path;
 use zenwebp::{EncoderConfig, Preset};
 
