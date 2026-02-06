@@ -27,10 +27,8 @@ use super::{
 #[inline]
 fn import_block(src: &[u8], src_stride: usize, dst: &mut [u8], w: usize, h: usize, size: usize) {
     for y in 0..h {
-        // Copy row
-        for x in 0..w {
-            dst[y * BPS + x] = src[y * src_stride + x];
-        }
+        // Copy row using memcpy
+        dst[y * BPS..y * BPS + w].copy_from_slice(&src[y * src_stride..y * src_stride + w]);
         // Replicate last pixel if width < size
         if w < size {
             let last_pixel = dst[y * BPS + w - 1];
@@ -40,9 +38,13 @@ fn import_block(src: &[u8], src_stride: usize, dst: &mut [u8], w: usize, h: usiz
         }
     }
     // Replicate last row if height < size
-    for y in h..size {
-        for x in 0..size {
-            dst[y * BPS + x] = dst[(h - 1) * BPS + x];
+    if h < size {
+        // Copy last valid row to a temp buffer to avoid overlapping borrow
+        let last_row_start = (h - 1) * BPS;
+        let mut last_row = [0u8; 16]; // max size is 16
+        last_row[..size].copy_from_slice(&dst[last_row_start..last_row_start + size]);
+        for y in h..size {
+            dst[y * BPS..y * BPS + size].copy_from_slice(&last_row[..size]);
         }
     }
 }

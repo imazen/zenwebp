@@ -114,6 +114,40 @@ pub fn collect_histogram_with_offset(
     start_block: usize,
     end_block: usize,
 ) -> DctHistogram {
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::X64V3Token::summon() {
+            return collect_histogram_with_offset_sse2(
+                token,
+                src_buf,
+                src_base,
+                pred_buf,
+                pred_base,
+                start_block,
+                end_block,
+            );
+        }
+    }
+    collect_histogram_with_offset_scalar(
+        src_buf,
+        src_base,
+        pred_buf,
+        pred_base,
+        start_block,
+        end_block,
+    )
+}
+
+/// Scalar fallback for histogram collection
+fn collect_histogram_with_offset_scalar(
+    src_buf: &[u8],
+    src_base: usize,
+    pred_buf: &[u8],
+    pred_base: usize,
+    start_block: usize,
+    end_block: usize,
+) -> DctHistogram {
     let mut distribution = [0u32; MAX_COEFF_THRESH + 1];
 
     for j in start_block..end_block {
@@ -127,6 +161,68 @@ pub fn collect_histogram_with_offset(
             let v = (coeff.unsigned_abs() >> 3) as usize;
             let clipped = v.min(MAX_COEFF_THRESH);
             distribution[clipped] += 1;
+        }
+    }
+
+    DctHistogram::from_distribution(&distribution)
+}
+
+/// SIMD histogram collection using ftransform2 for paired-block DCT.
+///
+/// Processes blocks in pairs (adjacent scan offsets differ by 4), using
+/// ftransform2_sse2 for double-block DCT. The DCT is the expensive part;
+/// histogram scatter is scalar since bin indices are data-dependent.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[archmage::arcane]
+fn collect_histogram_with_offset_sse2(
+    _token: archmage::X64V3Token,
+    src_buf: &[u8],
+    src_base: usize,
+    pred_buf: &[u8],
+    pred_base: usize,
+    start_block: usize,
+    end_block: usize,
+) -> DctHistogram {
+    let mut distribution = [0u32; MAX_COEFF_THRESH + 1];
+
+    // Process blocks in pairs using ftransform2
+    let mut j = start_block;
+    while j + 1 < end_block {
+        let scan_off = VP8_DSP_SCAN[j];
+        let src_off = src_base + scan_off;
+        let pred_off = pred_base + scan_off;
+
+        // ftransform2 processes two adjacent 4x4 blocks (8 bytes wide per row)
+        let mut dct_out = [0i16; 32];
+        crate::common::transform_simd_intrinsics::ftransform2_sse2(
+            _token,
+            &src_buf[src_off..],
+            &pred_buf[pred_off..],
+            BPS,
+            BPS,
+            &mut dct_out,
+        );
+
+        // Scatter to histogram: abs >> 3, clamp to MAX_COEFF_THRESH
+        for &coeff in &dct_out {
+            let v = (coeff.unsigned_abs() >> 3) as usize;
+            distribution[v.min(MAX_COEFF_THRESH)] += 1;
+        }
+
+        j += 2;
+    }
+
+    // Handle odd trailing block (shouldn't happen with VP8_DSP_SCAN but be safe)
+    if j < end_block {
+        let scan_off = VP8_DSP_SCAN[j];
+        let src_off = src_base + scan_off;
+        let pred_off = pred_base + scan_off;
+
+        let dct_out = forward_dct_4x4(&src_buf[src_off..], &pred_buf[pred_off..], BPS, BPS);
+
+        for &coeff in &dct_out {
+            let v = (coeff.unsigned_abs() >> 3) as usize;
+            distribution[v.min(MAX_COEFF_THRESH)] += 1;
         }
     }
 

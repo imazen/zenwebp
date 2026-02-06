@@ -401,7 +401,7 @@ fn ftransform2_entry(
 
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[rite]
-fn ftransform2_sse2(
+pub(crate) fn ftransform2_sse2(
     _token: X64V3Token,
     src: &[u8],
     ref_: &[u8],
