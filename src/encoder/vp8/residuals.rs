@@ -99,6 +99,11 @@ impl TokenBuffer {
         encoder: &mut crate::encoder::arithmetic::ArithmeticEncoder,
         probas: &TokenProbTables,
     ) {
+        // Flatten 4D probability table to 1D for direct indexing.
+        // Layout matches token_id(): probas[t][b][c][p] → flat[token_id(t,b,c) + p]
+        // This eliminates 5 integer divisions per dynamic token in the hot loop.
+        let flat_probas = Self::flatten_probas(probas);
+
         for &token in &self.tokens {
             let bit = (token >> 15) != 0;
             if (token & FIXED_PROBA_BIT) != 0 {
@@ -106,17 +111,28 @@ impl TokenBuffer {
                 let proba = (token & 0xff) as u8;
                 encoder.write_bool(bit, proba);
             } else {
-                // Dynamic probability: decompose flat index into [t][b][c][p]
+                // Dynamic probability: direct flat index lookup (no decomposition needed)
                 let idx = (token & 0x3fff) as usize;
-                let p = idx % NUM_PROBAS;
-                let rest = idx / NUM_PROBAS;
-                let c = rest % NUM_CTX;
-                let rest = rest / NUM_CTX;
-                let b = rest % NUM_BANDS;
-                let t = rest / NUM_BANDS;
-                encoder.write_bool(bit, probas[t][b][c][p]);
+                encoder.write_bool(bit, flat_probas[idx]);
             }
         }
+    }
+
+    /// Flatten 4D probability table to match token_id() flat indexing.
+    /// TokenProbTables is [4][8][3][11] = 1056 bytes, same layout as flat array.
+    fn flatten_probas(
+        probas: &TokenProbTables,
+    ) -> [u8; NUM_TYPES * NUM_BANDS * NUM_CTX * NUM_PROBAS] {
+        let mut flat = [0u8; NUM_TYPES * NUM_BANDS * NUM_CTX * NUM_PROBAS];
+        for (t, type_bands) in probas.iter().enumerate() {
+            for (b, band_ctxs) in type_bands.iter().enumerate() {
+                for (c, ctx_probas) in band_ctxs.iter().enumerate() {
+                    let offset = NUM_PROBAS * (c + NUM_CTX * (b + NUM_BANDS * t));
+                    flat[offset..offset + NUM_PROBAS].copy_from_slice(ctx_probas);
+                }
+            }
+        }
+        flat
     }
 
     /// Record tokens for a quantized coefficient block.
@@ -126,7 +142,9 @@ impl TokenBuffer {
     ///
     /// Returns true if the block has non-zero coefficients (for complexity tracking).
     ///
-    /// Follows libwebp's `VP8RecordCoeffTokens` (token_enc.c) structure.
+    /// Optimized vs libwebp's `VP8RecordCoeffTokens` (token_enc.c):
+    /// - Pre-resolves stats row `&mut [u32; 11]` per band/ctx (eliminates 4D index per call)
+    /// - Inlines magnitude tree (avoids passing &mut stats through function boundary)
     pub fn record_coeff_tokens(
         &mut self,
         stats: &mut ProbaStats,
@@ -150,7 +168,7 @@ impl TokenBuffer {
         // Node 0: Is there any non-zero coefficient? (not EOB)
         let not_eob = last >= first_coeff as i32;
         self.add_token(not_eob, base_id);
-        stats.record(coeff_type, band, ctx, 0, not_eob);
+        record_stat(&mut stats.stats[coeff_type][band][ctx][0], not_eob);
 
         if !not_eob {
             return false; // All zero
@@ -162,9 +180,13 @@ impl TokenBuffer {
             let sign = c < 0;
             let v = c.unsigned_abs();
 
+            // Pre-resolve stats row for current band/ctx.
+            // All nodes (1-10) within one coefficient use the same band/ctx.
+            let s = &mut stats.stats[coeff_type][band][ctx];
+
             // Node 1: Is this coefficient non-zero?
             self.add_token(v != 0, base_id + 1);
-            stats.record(coeff_type, band, ctx, 1, v != 0);
+            record_stat(&mut s[1], v != 0);
 
             if v == 0 {
                 // Zero coefficient: context = 0
@@ -176,20 +198,97 @@ impl TokenBuffer {
 
             // Node 2: Is |coeff| > 1?
             self.add_token(v > 1, base_id + 2);
-            stats.record(coeff_type, band, ctx, 2, v > 1);
+            record_stat(&mut s[2], v > 1);
 
-            if v <= 1 {
-                // |coeff| == 1: context = 1
-                band = VP8_ENC_BANDS[n] as usize;
-                ctx = 1;
-                base_id = token_id(coeff_type, band, ctx);
-            } else {
-                // |coeff| > 1: encode magnitude, context = 2
-                self.record_magnitude(stats, v, coeff_type, band, ctx, base_id);
-                band = VP8_ENC_BANDS[n] as usize;
-                ctx = 2;
-                base_id = token_id(coeff_type, band, ctx);
+            if v > 1 {
+                // Magnitude tree (nodes 3-10), all same band/ctx as s
+                self.add_token(v > 4, base_id + 3);
+                record_stat(&mut s[3], v > 4);
+
+                if v <= 4 {
+                    self.add_token(v != 2, base_id + 4);
+                    record_stat(&mut s[4], v != 2);
+                    if v != 2 {
+                        self.add_token(v == 4, base_id + 5);
+                        record_stat(&mut s[5], v == 4);
+                    }
+                } else {
+                    self.add_token(v > 10, base_id + 6);
+                    record_stat(&mut s[6], v > 10);
+
+                    if v <= 10 {
+                        self.add_token(v > 6, base_id + 7);
+                        record_stat(&mut s[7], v > 6);
+
+                        if v <= 6 {
+                            self.add_constant_token(v == 6, 159);
+                        } else {
+                            self.add_constant_token(v >= 9, 165);
+                            self.add_constant_token((v & 1) == 0, 145);
+                        }
+                    } else {
+                        let residue = v - 3;
+                        if residue < (8 << 1) {
+                            // Cat3
+                            self.add_token(false, base_id + 8);
+                            record_stat(&mut s[8], false);
+                            self.add_token(false, base_id + 9);
+                            record_stat(&mut s[9], false);
+                            let r = residue - 8;
+                            for (i, &prob) in PROB_DCT_CAT[2].iter().enumerate() {
+                                if prob == 0 {
+                                    break;
+                                }
+                                self.add_constant_token((r & (1 << (2 - i))) != 0, prob);
+                            }
+                        } else if residue < (8 << 2) {
+                            // Cat4
+                            self.add_token(false, base_id + 8);
+                            record_stat(&mut s[8], false);
+                            self.add_token(true, base_id + 9);
+                            record_stat(&mut s[9], true);
+                            let r = residue - (8 << 1);
+                            for (i, &prob) in PROB_DCT_CAT[3].iter().enumerate() {
+                                if prob == 0 {
+                                    break;
+                                }
+                                self.add_constant_token((r & (1 << (3 - i))) != 0, prob);
+                            }
+                        } else if residue < (8 << 3) {
+                            // Cat5
+                            self.add_token(true, base_id + 8);
+                            record_stat(&mut s[8], true);
+                            self.add_token(false, base_id + 10);
+                            record_stat(&mut s[10], false);
+                            let r = residue - (8 << 2);
+                            for (i, &prob) in PROB_DCT_CAT[4].iter().enumerate() {
+                                if prob == 0 {
+                                    break;
+                                }
+                                self.add_constant_token((r & (1 << (4 - i))) != 0, prob);
+                            }
+                        } else {
+                            // Cat6
+                            self.add_token(true, base_id + 8);
+                            record_stat(&mut s[8], true);
+                            self.add_token(true, base_id + 10);
+                            record_stat(&mut s[10], true);
+                            let r = residue - (8 << 3);
+                            for (i, &prob) in PROB_DCT_CAT[5].iter().enumerate() {
+                                if prob == 0 {
+                                    break;
+                                }
+                                self.add_constant_token((r & (1 << (10 - i))) != 0, prob);
+                            }
+                        }
+                    }
+                }
             }
+
+            // Update band/ctx for next coefficient
+            band = VP8_ENC_BANDS[n] as usize;
+            ctx = if v <= 1 { 1 } else { 2 };
+            base_id = token_id(coeff_type, band, ctx);
 
             // Sign bit (constant probability 128)
             self.add_constant_token(sign, 128);
@@ -198,10 +297,9 @@ impl TokenBuffer {
             if n == 16 {
                 return true;
             }
-            band = VP8_ENC_BANDS[n] as usize;
             let not_eob_next = (n as i32) <= last;
             self.add_token(not_eob_next, base_id);
-            stats.record(coeff_type, band, ctx, 0, not_eob_next);
+            record_stat(&mut stats.stats[coeff_type][band][ctx][0], not_eob_next);
 
             if !not_eob_next {
                 return true; // EOB
@@ -210,110 +308,16 @@ impl TokenBuffer {
 
         true
     }
+}
 
-    /// Record magnitude tree tokens for |coeff| > 1.
-    ///
-    /// Encodes the token tree nodes (3-10) and category extra bits.
-    /// Follows libwebp's magnitude encoding in VP8RecordCoeffTokens.
-    #[inline]
-    fn record_magnitude(
-        &mut self,
-        stats: &mut ProbaStats,
-        v: u32,
-        coeff_type: usize,
-        band: usize,
-        ctx: usize,
-        base_id: u16,
-    ) {
-        // Node 3: Is |coeff| > 4?
-        self.add_token(v > 4, base_id + 3);
-        stats.record(coeff_type, band, ctx, 3, v > 4);
-
-        if v <= 4 {
-            // Nodes 4-5: Encode value 2, 3, or 4
-            self.add_token(v != 2, base_id + 4);
-            stats.record(coeff_type, band, ctx, 4, v != 2);
-            if v != 2 {
-                self.add_token(v == 4, base_id + 5);
-                stats.record(coeff_type, band, ctx, 5, v == 4);
-            }
-        } else {
-            // Node 6: Is |coeff| > 10?
-            self.add_token(v > 10, base_id + 6);
-            stats.record(coeff_type, band, ctx, 6, v > 10);
-
-            if v <= 10 {
-                // Node 7: Is |coeff| > 6? (Cat1 or Cat2)
-                self.add_token(v > 6, base_id + 7);
-                stats.record(coeff_type, band, ctx, 7, v > 6);
-
-                if v <= 6 {
-                    // Cat1: value 5 or 6 (1 extra bit)
-                    self.add_constant_token(v == 6, 159);
-                } else {
-                    // Cat2: values 7-10 (2 extra bits)
-                    self.add_constant_token(v >= 9, 165);
-                    self.add_constant_token((v & 1) == 0, 145);
-                }
-            } else {
-                // Cat3-Cat6: encode category then extra bits
-                let residue = v - 3;
-                if residue < (8 << 1) {
-                    // Cat3 (3 extra bits, values 11-18)
-                    self.add_token(false, base_id + 8);
-                    stats.record(coeff_type, band, ctx, 8, false);
-                    self.add_token(false, base_id + 9);
-                    stats.record(coeff_type, band, ctx, 9, false);
-                    let r = residue - 8;
-                    for (i, &prob) in PROB_DCT_CAT[2].iter().enumerate() {
-                        if prob == 0 {
-                            break;
-                        }
-                        self.add_constant_token((r & (1 << (2 - i))) != 0, prob);
-                    }
-                } else if residue < (8 << 2) {
-                    // Cat4 (4 extra bits, values 19-34)
-                    self.add_token(false, base_id + 8);
-                    stats.record(coeff_type, band, ctx, 8, false);
-                    self.add_token(true, base_id + 9);
-                    stats.record(coeff_type, band, ctx, 9, true);
-                    let r = residue - (8 << 1);
-                    for (i, &prob) in PROB_DCT_CAT[3].iter().enumerate() {
-                        if prob == 0 {
-                            break;
-                        }
-                        self.add_constant_token((r & (1 << (3 - i))) != 0, prob);
-                    }
-                } else if residue < (8 << 3) {
-                    // Cat5 (5 extra bits, values 35-66)
-                    self.add_token(true, base_id + 8);
-                    stats.record(coeff_type, band, ctx, 8, true);
-                    self.add_token(false, base_id + 10);
-                    stats.record(coeff_type, band, ctx, 10, false);
-                    let r = residue - (8 << 2);
-                    for (i, &prob) in PROB_DCT_CAT[4].iter().enumerate() {
-                        if prob == 0 {
-                            break;
-                        }
-                        self.add_constant_token((r & (1 << (4 - i))) != 0, prob);
-                    }
-                } else {
-                    // Cat6 (11 extra bits, values 67+)
-                    self.add_token(true, base_id + 8);
-                    stats.record(coeff_type, band, ctx, 8, true);
-                    self.add_token(true, base_id + 10);
-                    stats.record(coeff_type, band, ctx, 10, true);
-                    let r = residue - (8 << 3);
-                    for (i, &prob) in PROB_DCT_CAT[5].iter().enumerate() {
-                        if prob == 0 {
-                            break;
-                        }
-                        self.add_constant_token((r & (1 << (10 - i))) != 0, prob);
-                    }
-                }
-            }
-        }
+/// Record a single probability statistic (inlined).
+/// Matches libwebp's VP8RecordStats: upper 16 bits = total, lower 16 = count of 1s.
+#[inline(always)]
+fn record_stat(stat: &mut u32, bit: bool) {
+    if *stat >= 0xfffe_0000 {
+        *stat = ((*stat + 1) >> 1) & 0x7fff_7fff;
     }
+    *stat += 0x0001_0000 + bit as u32;
 }
 
 impl<'a> super::Vp8Encoder<'a> {
