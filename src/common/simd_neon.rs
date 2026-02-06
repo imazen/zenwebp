@@ -2,13 +2,13 @@
 //!
 //! Ported from the x86 SSE2 versions in simd_sse.rs.
 
-#[cfg(target_arch = "aarch64")]
+
 use archmage::{arcane, rite, NeonToken};
 
-#[cfg(target_arch = "aarch64")]
+
 use safe_unaligned_simd::aarch64 as simd_mem;
 
-#[cfg(target_arch = "aarch64")]
+
 use core::arch::aarch64::*;
 
 use super::prediction::{CHROMA_BLOCK_SIZE, CHROMA_STRIDE, LUMA_BLOCK_SIZE, LUMA_STRIDE};
@@ -18,20 +18,20 @@ use super::prediction::{CHROMA_BLOCK_SIZE, CHROMA_STRIDE, LUMA_BLOCK_SIZE, LUMA_
 // =============================================================================
 
 /// NEON horizontal sum of four i32 values in a uint32x4_t
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn hsum_u32x4(_token: NeonToken, v: uint32x4_t) -> u32 {
     vaddvq_u32(v)
 }
 
 /// SSE between two 4x4 blocks (16 bytes each)
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn sse4x4_neon(_token: NeonToken, a: &[u8; 16], b: &[u8; 16]) -> u32 {
     sse4x4_inner(_token, a, b)
 }
 
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn sse4x4_inner(_token: NeonToken, a: &[u8; 16], b: &[u8; 16]) -> u32 {
     let a_vec = simd_mem::vld1q_u8(a);
@@ -56,7 +56,7 @@ fn sse4x4_inner(_token: NeonToken, a: &[u8; 16], b: &[u8; 16]) -> u32 {
 }
 
 /// SSE with fused prediction + residual reconstruction
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn sse4x4_with_residual_neon(
     _token: NeonToken,
@@ -67,7 +67,7 @@ pub(crate) fn sse4x4_with_residual_neon(
     sse4x4_with_residual_inner(_token, src, pred, residual)
 }
 
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn sse4x4_with_residual_inner(
     _token: NeonToken,
@@ -111,7 +111,7 @@ fn sse4x4_with_residual_inner(
 }
 
 /// SSE for 16x16 luma macroblock
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn sse_16x16_luma_neon(
     _token: NeonToken,
@@ -124,7 +124,7 @@ pub(crate) fn sse_16x16_luma_neon(
     sse_16x16_luma_inner(_token, src_y, src_width, mbx, mby, pred)
 }
 
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn sse_16x16_luma_inner(
     _token: NeonToken,
@@ -158,7 +158,7 @@ fn sse_16x16_luma_inner(
 }
 
 /// SSE for 8x8 chroma block
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn sse_8x8_chroma_neon(
     _token: NeonToken,
@@ -171,7 +171,7 @@ pub(crate) fn sse_8x8_chroma_neon(
     sse_8x8_chroma_inner(_token, src_uv, src_width, mbx, mby, pred)
 }
 
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn sse_8x8_chroma_inner(
     _token: NeonToken,
@@ -208,7 +208,7 @@ fn sse_8x8_chroma_inner(
 // =============================================================================
 
 /// Fused TDisto for two 4x4 blocks: |weighted_hadamard(b) - weighted_hadamard(a)| >> 5
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn tdisto_4x4_fused_neon(
     _token: NeonToken,
@@ -220,7 +220,7 @@ pub(crate) fn tdisto_4x4_fused_neon(
     tdisto_4x4_fused_inner(_token, a, b, stride, w)
 }
 
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 pub(crate) fn tdisto_4x4_fused_inner(
     _token: NeonToken,
@@ -343,7 +343,7 @@ pub(crate) fn tdisto_4x4_fused_inner(
 // =============================================================================
 
 /// Check if a 16x16 source block is all one color
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn is_flat_source_16_neon(
     _token: NeonToken,
@@ -353,7 +353,7 @@ pub(crate) fn is_flat_source_16_neon(
     is_flat_source_16_inner(_token, src, stride)
 }
 
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn is_flat_source_16_inner(
     _token: NeonToken,
@@ -378,7 +378,7 @@ fn is_flat_source_16_inner(
 }
 
 /// Check if coefficients are "flat" (few non-zero AC coefficients)
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn is_flat_coeffs_neon(
     _token: NeonToken,
@@ -389,7 +389,7 @@ pub(crate) fn is_flat_coeffs_neon(
     is_flat_coeffs_inner(_token, levels, num_blocks, thresh)
 }
 
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn is_flat_coeffs_inner(
     _token: NeonToken,
@@ -437,7 +437,7 @@ use crate::encoder::tables::MAX_LEVEL;
 /// NEON quantize block: quantizes i32[16] coefficients in-place.
 /// Returns true if any coefficient is non-zero.
 /// Matches the SSE2 DoQuantizeBlock algorithm.
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn quantize_block_neon(
     _token: NeonToken,
@@ -448,7 +448,7 @@ pub(crate) fn quantize_block_neon(
     quantize_block_inner(_token, coeffs, matrix, use_sharpen)
 }
 
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn quantize_block_inner(
     _token: NeonToken,
@@ -548,7 +548,7 @@ fn quantize_block_inner(
 }
 
 /// NEON dequantize block: multiply coefficients by quantizer steps
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn dequantize_block_neon(
     _token: NeonToken,
@@ -558,7 +558,7 @@ pub(crate) fn dequantize_block_neon(
     dequantize_block_inner(_token, q, coeffs);
 }
 
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn dequantize_block_inner(
     _token: NeonToken,
@@ -591,7 +591,7 @@ fn dequantize_block_inner(
 
 /// NEON fused quantize+dequantize: produces both quantized and dequantized values.
 /// Returns true if any coefficient is non-zero.
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn quantize_dequantize_block_neon(
     _token: NeonToken,
@@ -606,7 +606,7 @@ pub(crate) fn quantize_dequantize_block_neon(
     )
 }
 
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn quantize_dequantize_block_inner(
     _token: NeonToken,

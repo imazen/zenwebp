@@ -10,13 +10,13 @@
 
 #![allow(clippy::too_many_arguments)]
 
-#[cfg(target_arch = "aarch64")]
+
 use archmage::{arcane, rite, NeonToken};
 
-#[cfg(target_arch = "aarch64")]
+
 use core::arch::aarch64::*;
 
-#[cfg(target_arch = "aarch64")]
+
 use safe_unaligned_simd::aarch64 as simd_mem;
 
 // =============================================================================
@@ -24,7 +24,7 @@ use safe_unaligned_simd::aarch64 as simd_mem;
 // =============================================================================
 
 /// NeedsFilter: returns mask where 2*|p0-q0| + |p1-q1|/2 <= thresh
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn needs_filter_neon(
     _token: NeonToken,
@@ -45,7 +45,7 @@ fn needs_filter_neon(
 
 /// NeedsFilter2: extended filter check for normal (non-simple) filter
 /// Checks NeedsFilter AND all adjacent differences <= ithresh
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn needs_filter2_neon(
     _token: NeonToken,
@@ -78,7 +78,7 @@ fn needs_filter2_neon(
 }
 
 /// NeedsHev: returns mask where max(|p1-p0|, |q1-q0|) > hev_thresh
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn needs_hev_neon(
     _token: NeonToken,
@@ -96,7 +96,7 @@ fn needs_hev_neon(
 }
 
 /// Convert unsigned to signed by XOR with 0x80
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn flip_sign_neon(_token: NeonToken, v: uint8x16_t) -> int8x16_t {
     let sign_bit = vdupq_n_u8(0x80);
@@ -104,7 +104,7 @@ fn flip_sign_neon(_token: NeonToken, v: uint8x16_t) -> int8x16_t {
 }
 
 /// Convert signed back to unsigned by XOR with 0x80
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn flip_sign_back_neon(_token: NeonToken, v: int8x16_t) -> uint8x16_t {
     let sign_bit = vdupq_n_s8(-128); // 0x80 as i8
@@ -112,7 +112,7 @@ fn flip_sign_back_neon(_token: NeonToken, v: int8x16_t) -> uint8x16_t {
 }
 
 /// GetBaseDelta: compute (p1-q1) + 3*(q0-p0) with saturation
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn get_base_delta_neon(
     _token: NeonToken,
@@ -129,7 +129,7 @@ fn get_base_delta_neon(
 }
 
 /// GetBaseDelta0: compute 3*(q0-p0) with saturation (no p1/q1)
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn get_base_delta0_neon(
     _token: NeonToken,
@@ -146,7 +146,7 @@ fn get_base_delta0_neon(
 // =============================================================================
 
 /// ApplyFilter2NoFlip: 2-tap filter without sign flip back (stays in signed domain)
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn apply_filter2_no_flip_neon(
     _token: NeonToken,
@@ -167,7 +167,7 @@ fn apply_filter2_no_flip_neon(
 
 /// DoFilter2: simple 2-tap filter (used for simple loop filter)
 /// Returns (filtered_p0, filtered_q0) as unsigned
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn do_filter2_neon(
     _token: NeonToken,
@@ -197,7 +197,7 @@ fn do_filter2_neon(
 
 /// DoFilter4: 4-tap filter for subblock edges (inner edges)
 /// Returns (op1, op0, oq0, oq1)
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn do_filter4_neon(
     _token: NeonToken,
@@ -248,7 +248,7 @@ fn do_filter4_neon(
 
 /// DoFilter6: 6-tap filter for macroblock edges
 /// Returns (op2, op1, op0, oq0, oq1, oq2)
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 #[allow(clippy::type_complexity)]
 fn do_filter6_neon(
@@ -329,7 +329,7 @@ fn do_filter6_neon(
 // =============================================================================
 
 /// Load 16 pixels from 4 consecutive rows (for vertical filter)
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn load_16x4_neon(
     _token: NeonToken,
@@ -353,7 +353,7 @@ fn load_16x4_neon(
 }
 
 /// Load 16 pixels from 8 consecutive rows (for normal vertical filter)
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 #[allow(clippy::type_complexity)]
 fn load_16x8_neon(
@@ -399,7 +399,7 @@ fn load_16x8_neon(
 }
 
 /// Store 16 pixels to 2 consecutive rows
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn store_16x2_neon(
     _token: NeonToken,
@@ -421,7 +421,7 @@ fn store_16x2_neon(
 
 /// Load 8 U pixels + 8 V pixels into a single uint8x16_t per row (for UV vertical filter)
 /// Loads 8 rows centered on the edge.
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 #[allow(clippy::type_complexity)]
 fn load_8x8x2_neon(
@@ -477,7 +477,7 @@ fn load_8x8x2_neon(
 }
 
 /// Store 8x2x2: store U+V packed results back to separate buffers (2 rows)
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn store_8x2x2_neon(
     _token: NeonToken,
@@ -509,7 +509,7 @@ fn store_8x2x2_neon(
 }
 
 /// Store 8x4x2: store U+V packed results (4 rows)
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn store_8x4x2_neon(
     _token: NeonToken,
@@ -546,7 +546,7 @@ fn store_8x4x2_neon(
 }
 
 /// Store 6 rows (3 above, 3 below) for UV 6-tap filter
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn store_8x6x2_neon(
     _token: NeonToken,
@@ -601,7 +601,7 @@ fn store_8x6x2_neon(
 /// Load 4 columns from 16 rows as transposed uint8x16_t vectors.
 /// Loads 4 bytes per row, packs into u32x4 registers, and transposes.
 /// buf[y_start + row * stride + x0 - 2 .. x0 + 2] for row 0..16
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn load_4x16_neon(
     _token: NeonToken,
@@ -660,7 +660,7 @@ fn load_4x16_neon(
 }
 
 /// Load 8 columns from 16 rows (for normal horizontal filter)
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 #[allow(clippy::type_complexity)]
 fn load_8x16_neon(
@@ -688,7 +688,7 @@ fn load_8x16_neon(
 
 /// Store 2 transposed columns back to 16 rows
 /// Writes p0 and q0 to columns (x0-1) and (x0) for 16 rows
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn store_2x16_neon(
     _token: NeonToken,
@@ -720,7 +720,7 @@ fn store_2x16_neon(
 
 /// Store 4 transposed columns back to 16 rows
 /// Writes p1, p0, q0, q1 to columns (x0-2)..(x0+2) for 16 rows
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn store_4x16_neon(
     _token: NeonToken,
@@ -752,7 +752,7 @@ fn store_4x16_neon(
 }
 
 /// Store 6 transposed columns back to 16 rows (for normal h-filter edge)
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn store_6x16_neon(
     _token: NeonToken,
@@ -796,7 +796,7 @@ fn store_6x16_neon(
 // =============================================================================
 
 /// Load 4 columns from 8 U rows + 8 V rows, packed in uint8x16_t (transposed)
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn load_4x8x2_neon(
     _token: NeonToken,
@@ -863,7 +863,7 @@ fn load_4x8x2_neon(
 }
 
 /// Load 8 columns from 8 U rows + 8 V rows for normal horizontal chroma filter
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 #[allow(clippy::type_complexity)]
 fn load_8x8x2_h_neon(
@@ -891,7 +891,7 @@ fn load_8x8x2_h_neon(
 }
 
 /// Store 2 transposed columns back to 8 U rows + 8 V rows
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn store_2x8x2_neon(
     _token: NeonToken,
@@ -921,7 +921,7 @@ fn store_2x8x2_neon(
 }
 
 /// Store 4 transposed columns back to 8 U rows + 8 V rows
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn store_4x8x2_neon(
     _token: NeonToken,
@@ -961,7 +961,7 @@ fn store_4x8x2_neon(
 }
 
 /// Store 6 transposed columns back to 8 U rows + 8 V rows (6-tap edge filter)
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn store_6x8x2_neon(
     _token: NeonToken,
@@ -1015,7 +1015,7 @@ fn store_6x8x2_neon(
 // =============================================================================
 
 /// Simple vertical filter: 16 pixels across a horizontal edge
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn simple_v_filter16_neon(
     _token: NeonToken,
@@ -1031,7 +1031,7 @@ pub(crate) fn simple_v_filter16_neon(
 }
 
 /// Simple horizontal filter: 16 rows across a vertical edge
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn simple_h_filter16_neon(
     _token: NeonToken,
@@ -1052,7 +1052,7 @@ pub(crate) fn simple_h_filter16_neon(
 // =============================================================================
 
 /// Normal vertical filter for subblock edge (inner edge, 4-tap)
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn normal_v_filter16_inner_neon(
     _token: NeonToken,
@@ -1100,7 +1100,7 @@ pub(crate) fn normal_v_filter16_inner_neon(
 }
 
 /// Normal vertical filter for macroblock edge (6-tap)
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn normal_v_filter16_edge_neon(
     _token: NeonToken,
@@ -1157,7 +1157,7 @@ pub(crate) fn normal_v_filter16_edge_neon(
 }
 
 /// Normal horizontal filter for subblock edge (inner edge, 4-tap)
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn normal_h_filter16_inner_neon(
     _token: NeonToken,
@@ -1189,7 +1189,7 @@ pub(crate) fn normal_h_filter16_inner_neon(
 }
 
 /// Normal horizontal filter for macroblock edge (6-tap)
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn normal_h_filter16_edge_neon(
     _token: NeonToken,
@@ -1228,7 +1228,7 @@ pub(crate) fn normal_h_filter16_edge_neon(
 // =============================================================================
 
 /// Normal vertical filter for UV macroblock edge (6-tap)
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn normal_v_filter_uv_edge_neon(
     _token: NeonToken,
@@ -1264,7 +1264,7 @@ pub(crate) fn normal_v_filter_uv_edge_neon(
 }
 
 /// Normal vertical filter for UV subblock edge (4-tap)
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn normal_v_filter_uv_inner_neon(
     _token: NeonToken,
@@ -1299,7 +1299,7 @@ pub(crate) fn normal_v_filter_uv_inner_neon(
 }
 
 /// Normal horizontal filter for UV macroblock edge (6-tap)
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn normal_h_filter_uv_edge_neon(
     _token: NeonToken,
@@ -1336,7 +1336,7 @@ pub(crate) fn normal_h_filter_uv_edge_neon(
 }
 
 /// Normal horizontal filter for UV subblock edge (4-tap)
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn normal_h_filter_uv_inner_neon(
     _token: NeonToken,

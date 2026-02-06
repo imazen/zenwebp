@@ -6,13 +6,13 @@
 //! All functions operate on the same i32[16] layout as the scalar code,
 //! converting internally to i16 NEON vectors for SIMD processing.
 
-#[cfg(target_arch = "aarch64")]
+
 use archmage::{arcane, rite, NeonToken};
 
-#[cfg(target_arch = "aarch64")]
+
 use core::arch::aarch64::*;
 
-#[cfg(target_arch = "aarch64")]
+
 use safe_unaligned_simd::aarch64 as simd_mem;
 
 // =============================================================================
@@ -21,13 +21,13 @@ use safe_unaligned_simd::aarch64 as simd_mem;
 
 /// Forward DCT using NEON intrinsics.
 /// Input/output: i32[16] in row-major order.
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn dct4x4_neon(_token: NeonToken, block: &mut [i32; 16]) {
     dct4x4_neon_inner(_token, block);
 }
 
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn dct4x4_neon_inner(_token: NeonToken, block: &mut [i32; 16]) {
     // Load i32[16] as 4 × i32x4, then narrow to i16x4
@@ -67,7 +67,7 @@ fn dct4x4_neon_inner(_token: NeonToken, block: &mut [i32; 16]) {
 /// Transpose 4x4 i16 matrix (matches libwebp Transpose4x4_S16_NEON).
 /// Input: 4 rows as i16x4. Output: (col01, col32) as two i16x8.
 /// col01 = col0 | col1, col32 = col3 | col2
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn transpose_4x4_s16_neon(
     _token: NeonToken,
@@ -98,7 +98,7 @@ fn transpose_4x4_s16_neon(
 }
 
 /// Forward DCT pass 1 (from libwebp FTransform_NEON, first pass).
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn forward_pass_1_neon(
     _token: NeonToken,
@@ -127,7 +127,7 @@ fn forward_pass_1_neon(
 }
 
 /// Forward DCT pass 2 with final rounding. Returns i32x4[4].
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn forward_pass_2_neon(
     _token: NeonToken,
@@ -177,14 +177,14 @@ const KC2_HALF: i16 = 17734; // 35468 / 2
 
 /// Inverse DCT using NEON intrinsics.
 /// Input/output: i32[16+] in row-major order.
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn idct4x4_neon(_token: NeonToken, block: &mut [i32]) {
     debug_assert!(block.len() >= 16);
     idct4x4_neon_inner(_token, block);
 }
 
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn idct4x4_neon_inner(_token: NeonToken, block: &mut [i32]) {
     // Load i32[16] and pack to i16x8 pairs
@@ -226,7 +226,7 @@ fn idct4x4_neon_inner(_token: NeonToken, block: &mut [i32]) {
 
 /// IDCT TransformPass — matches libwebp's TransformPass_NEON.
 /// rows packed as (row0|row1, row2|row3) in i16x8 pairs.
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn itransform_pass_neon(
     _token: NeonToken,
@@ -269,7 +269,7 @@ fn itransform_pass_neon(
 /// Fused IDCT + add residue + clear coefficients.
 /// Performs IDCT on raw DCT coefficients, adds to prediction block in-place,
 /// clamps to [0,255], and zeros the coefficient buffer.
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn idct_add_residue_inplace_neon(
     _token: NeonToken,
@@ -289,7 +289,7 @@ pub(crate) fn idct_add_residue_inplace_neon(
 }
 
 /// DC-only fast path: add constant to all 16 pixels.
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn idct_add_residue_dc_neon(
     _token: NeonToken,
@@ -321,7 +321,7 @@ fn idct_add_residue_dc_neon(
 }
 
 /// Full IDCT + add residue.
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn idct_add_residue_full_neon(
     _token: NeonToken,
@@ -380,7 +380,7 @@ fn idct_add_residue_full_neon(
 
 /// Fused residual computation + DCT for a single 4x4 block.
 /// Takes flat u8 source and reference arrays (stride=4), outputs i32 coefficients.
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn ftransform_from_u8_4x4_neon(
     _token: NeonToken,
@@ -390,7 +390,7 @@ pub(crate) fn ftransform_from_u8_4x4_neon(
     ftransform_from_u8_4x4_neon_inner(_token, src, ref_)
 }
 
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn ftransform_from_u8_4x4_neon_inner(
     _token: NeonToken,
@@ -439,7 +439,7 @@ fn ftransform_from_u8_4x4_neon_inner(
 // =============================================================================
 
 /// Process two 4x4 blocks with forward DCT.
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn ftransform2_neon(
     _token: NeonToken,
@@ -467,7 +467,7 @@ pub(crate) fn ftransform2_neon(
 
 /// Add residuals (i32[16]) to prediction block (u8) with saturation.
 /// Processes 4 rows of 4 pixels each.
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn add_residue_neon(
     _token: NeonToken,
@@ -480,7 +480,7 @@ pub(crate) fn add_residue_neon(
     add_residue_neon_inner(_token, pblock, rblock, y0, x0, stride);
 }
 
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn add_residue_neon_inner(
     _token: NeonToken,

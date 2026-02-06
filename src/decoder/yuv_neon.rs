@@ -3,13 +3,13 @@
 //! Ported from libwebp's upsampling_neon.c for efficient YUV→RGB with native
 //! interleaved stores (vst3q_u8). Processes 16 pixels at a time.
 
-#[cfg(target_arch = "aarch64")]
+
 use archmage::{arcane, rite, NeonToken};
 
-#[cfg(target_arch = "aarch64")]
+
 use safe_unaligned_simd::aarch64 as simd_mem;
 
-#[cfg(target_arch = "aarch64")]
+
 use core::arch::aarch64::*;
 
 // YUV to RGB conversion constants (matching libwebp's upsampling_neon.c):
@@ -41,7 +41,7 @@ const B_MULT_EXTRA: i16 = 282;
 ///
 /// Input: 16 Y values, 16 U values (upsampled), 16 V values (upsampled)
 /// Output: 48 bytes of interleaved RGB
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn convert_and_store_rgb16_neon(
     _token: NeonToken,
@@ -125,7 +125,7 @@ fn convert_and_store_rgb16_neon(
 /// where diag1[i] = (9*a[i] + 3*b[i] + 3*c[i] + d[i] + 8) / 16
 ///       diag2[i] = (9*b[i] + 3*a[i] + 3*d[i] + c[i] + 8) / 16
 /// a=row1[0..8], b=row1[1..9], c=row2[0..8], d=row2[1..9]
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn upsample_16pixels_neon(
     _token: NeonToken,
@@ -162,7 +162,7 @@ fn upsample_16pixels_neon(
 /// This is the NEON equivalent of fancy_upsample_16_pairs_with_token.
 ///
 /// Takes: 32 Y bytes, 17 U/V bytes per row (overlapping window), 96 RGB bytes output.
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn fancy_upsample_16_pairs_neon(
     _token: NeonToken,
@@ -184,7 +184,7 @@ pub(crate) fn fancy_upsample_16_pairs_neon(
     fancy_upsample_16_pairs_inner_neon(_token, y, u1, u2, v1, v2, out);
 }
 
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn fancy_upsample_16_pairs_inner_neon(
     _token: NeonToken,
@@ -250,7 +250,7 @@ fn fancy_upsample_16_pairs_inner_neon(
 /// This is the NEON equivalent of fancy_upsample_8_pairs_with_token.
 ///
 /// Takes: 16 Y bytes, 9 U/V bytes per row (overlapping window), 48 RGB bytes output.
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn fancy_upsample_8_pairs_neon(
     _token: NeonToken,
@@ -271,7 +271,7 @@ pub(crate) fn fancy_upsample_8_pairs_neon(
     fancy_upsample_8_pairs_inner_neon(_token, y, u1, u2, v1, v2, out);
 }
 
-#[cfg(target_arch = "aarch64")]
+
 #[rite]
 fn fancy_upsample_8_pairs_inner_neon(
     _token: NeonToken,
@@ -303,7 +303,7 @@ fn fancy_upsample_8_pairs_inner_neon(
 /// Convert a row of YUV420 to RGB using NEON.
 /// Simple (non-fancy) upsampling: each U/V value maps to 2 adjacent Y pixels.
 /// Processes 16 pixels at a time.
-#[cfg(target_arch = "aarch64")]
+
 #[arcane]
 pub(crate) fn yuv420_to_rgb_row_neon(
     _token: NeonToken,
