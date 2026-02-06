@@ -101,6 +101,10 @@ pub mod mux;
 // Slice reader utility (used by decoder and mux)
 mod slice_reader;
 
+/// Type-safe pixel format traits for decoding and encoding.
+#[cfg(feature = "pixel-types")]
+pub mod pixel;
+
 // Re-export decoder public API
 pub use decoder::{
     decode_bgr, decode_bgr_into, decode_bgra, decode_bgra_into, decode_rgb, decode_rgb_into,
@@ -116,8 +120,8 @@ pub use encoder::{
 
 // Re-export mux/demux public API
 pub use mux::{
-    AnimationConfig, AnimationEncoder, BlendMethod, DemuxFrame, DisposeMethod, MuxError, MuxFrame,
-    WebPDemuxer, WebPMux,
+    AnimFrame, AnimationConfig, AnimationDecoder, AnimationEncoder, AnimationInfo, BlendMethod,
+    DemuxFrame, DisposeMethod, MuxError, MuxFrame, WebPDemuxer, WebPMux,
 };
 
 // Re-export cooperative cancellation types
