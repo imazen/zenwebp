@@ -1,15 +1,18 @@
 # zenwebp Encoder Optimization Status
 
-## Current Performance (2026-02-05, commit 3df2f8d)
+## Current Performance (2026-02-05, commit da96836)
 
 | Metric | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| **Instructions** | **182.0M** | **203M** | **0.90x** |
-| Output size | 12,198 | 12,018 | 1.015x |
-| Wall-clock m4 | 15.0ms | 10.2ms | 1.47x |
-| Wall-clock m6 | 22.2ms | 15.5ms | 1.43x |
+| **Instructions (diag)** | **182.8M** | **203M** | **0.90x** |
+| **Instructions (default)** | **226.3M** | - | - |
+| Output size (diag) | 12,198 | 12,018 | 1.015x |
+| Output size (default) | 11,864 | - | - |
+| Wall-clock m4 | 16.3ms | 10.2ms | 1.60x |
+| Wall-clock m6 | 23.8ms | 15.5ms | 1.53x |
 
-*Test image: 792079.png 512x512, Q75, M4, SNS=0, filter=0, segments=1*
+*Test image: 792079.png 512x512, Q75, M4*
+*Diagnostic: SNS=0, filter=0, segments=1. Default: SNS=50, filter=60, segments=4.*
 
 ## Instruction Breakdown (callgrind, non-inclusive)
 
@@ -134,6 +137,9 @@ Token buffer pre-allocation was increased from 300 to 768 tokens/MB to match lib
 | Feb 5 | archmage 0.5 #[rite] conversion | 259M | 183.3M | -29% |
 | Feb 5 | Residual cost inner loop indexing | 183.3M | 182.0M | -0.7% |
 | Feb 5 | Token buffer pre-allocation fix | - | - | eliminates 1 realloc |
+| Feb 5 | SIMD histogram + import_block opt | 247M* | 226.3M* | -8.4% |
+
+*\* Default-mode instruction counts (SNS=50, filter=60, segments=4)*
 
 ## Key Discoveries
 
@@ -231,5 +237,25 @@ in the bounds checks themselves, not the index computation.
 7. **Write overhead reduction** — Investigate unnecessary buffer copies/zeroing.
    52% more writes than libwebp, 2.2x more write cache misses. Biggest contributors
    are memcpy (52% of write misses) and memset (18%).
-8. **Default settings optimization** — Profile with SNS=50, filter=60, segments=4 to
-   find overhead not visible in diagnostic mode.
+
+## Default-Mode Instruction Breakdown (226.3M, commit da96836)
+
+| Function | M instr | % | Notes |
+|----------|---------|---|-------|
+| evaluate_i4_modes_sse2 | 42.7 | 18.9% | I4 inner loop |
+| encode_image | 35.9 | 15.9% | Main encoding loop + default settings overhead |
+| get_residual_cost_sse2 | 21.8 | 9.6% | Coefficient cost estimation |
+| choose_macroblock_info | 20.5 | 9.1% | I16/UV mode selection |
+| ftransform2_sse2 | 12.0 | 5.3% | DCT (mode selection + histogram) |
+| tdisto_4x4_fused | 10.6 | 4.7% | Spectral distortion (SNS) |
+| convert_image_yuv | 9.5 | 4.2% | YUV conversion |
+| record_coeff_tokens | 7.3 | 3.2% | Token recording |
+| idct_add_residue | 6.8 | 3.0% | Fused IDCT+add |
+| pick_best_intra4 | 5.9 | 2.6% | I4 orchestration |
+| collect_histogram_sse2 | 5.2 | 2.3% | Analysis histogram (SIMD) |
+| memcpy | 4.7 | 2.1% | Buffer copies |
+| write_bool | 4.5 | 2.0% | Arithmetic encoding |
+| quantize_block | 4.3 | 1.9% | Quantize (I16 path) |
+
+Default-mode overhead vs diagnostic: 226.3M - 182.8M = **43.5M** (was 65M before SIMD histogram).
+Main sources: tdisto_4x4 (10.6M), collect_histogram (5.2M), encode_image loop overhead (11.5M).
