@@ -113,6 +113,7 @@ pub fn tdisto_4x4(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 /// Compute spectral distortion between two 16x16 blocks.
 ///
 /// Calls tdisto_4x4 16 times for each 4x4 sub-block.
+/// On x86_64 with SIMD, dispatches once and calls SSE2 variant directly for all 16 blocks.
 ///
 /// # Arguments
 /// * `a` - First 16x16 block (source)
@@ -121,6 +122,13 @@ pub fn tdisto_4x4(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 /// * `w` - 16 weights for frequency weighting (CSF table)
 #[inline]
 pub fn tdisto_16x16(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::X64V3Token::summon() {
+            return tdisto_16x16_sse2(token, a, b, stride, w);
+        }
+    }
     let mut d = 0i32;
     for y in 0..4 {
         for x in 0..4 {
@@ -131,16 +139,76 @@ pub fn tdisto_16x16(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     d
 }
 
+/// SSE2 variant: single dispatch for all 16 sub-blocks
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[archmage::arcane]
+fn tdisto_16x16_sse2(
+    _token: archmage::X64V3Token,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    let mut d = 0i32;
+    for y in 0..4 {
+        for x in 0..4 {
+            let offset = y * 4 * stride + x * 4;
+            d += crate::common::simd_sse::tdisto_4x4_fused_sse2(
+                _token,
+                &a[offset..],
+                &b[offset..],
+                stride,
+                w,
+            );
+        }
+    }
+    d
+}
+
 /// Compute spectral distortion between two 8x8 blocks (for chroma).
 ///
 /// Calls tdisto_4x4 4 times for each 4x4 sub-block.
+/// On x86_64 with SIMD, dispatches once and calls SSE2 variant directly.
 #[inline]
 pub fn tdisto_8x8(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::X64V3Token::summon() {
+            return tdisto_8x8_sse2(token, a, b, stride, w);
+        }
+    }
     let mut d = 0i32;
     for y in 0..2 {
         for x in 0..2 {
             let offset = y * 4 * stride + x * 4;
             d += tdisto_4x4(&a[offset..], &b[offset..], stride, w);
+        }
+    }
+    d
+}
+
+/// SSE2 variant: single dispatch for all 4 sub-blocks
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[archmage::arcane]
+fn tdisto_8x8_sse2(
+    _token: archmage::X64V3Token,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    let mut d = 0i32;
+    for y in 0..2 {
+        for x in 0..2 {
+            let offset = y * 4 * stride + x * 4;
+            d += crate::common::simd_sse::tdisto_4x4_fused_sse2(
+                _token,
+                &a[offset..],
+                &b[offset..],
+                stride,
+                w,
+            );
         }
     }
     d
