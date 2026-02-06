@@ -209,9 +209,7 @@ where
 /// # Ok::<(), zenwebp::DecodingError>(())
 /// ```
 #[cfg(feature = "imgref")]
-pub fn decode_to_img<P: DecodePixel>(
-    data: &[u8],
-) -> Result<imgref::ImgVec<P>, DecodingError>
+pub fn decode_to_img<P: DecodePixel>(data: &[u8]) -> Result<imgref::ImgVec<P>, DecodingError>
 where
     [u8]: AsPixels<P>,
 {
@@ -232,9 +230,7 @@ where
 /// # Ok::<(), zenwebp::EncodingError>(())
 /// ```
 #[cfg(feature = "imgref")]
-pub fn encode_img<P: EncodePixel>(
-    img: imgref::ImgRef<'_, P>,
-) -> Result<Vec<u8>, EncodingError>
+pub fn encode_img<P: EncodePixel>(img: imgref::ImgRef<'_, P>) -> Result<Vec<u8>, EncodingError>
 where
     [P]: ComponentBytes<u8>,
 {

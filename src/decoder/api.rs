@@ -1143,11 +1143,7 @@ impl ImageInfo {
         let (width, height) = decoder.dimensions();
         let is_lossy = decoder.is_lossy();
         let is_animated = decoder.is_animated();
-        let frame_count = if is_animated {
-            decoder.num_frames()
-        } else {
-            1
-        };
+        let frame_count = if is_animated { decoder.num_frames() } else { 1 };
         let format = if is_lossy {
             BitstreamFormat::Lossy
         } else {

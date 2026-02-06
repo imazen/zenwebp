@@ -193,8 +193,7 @@ pub fn estimate_decode(width: u32, height: u32, output_bpp: u8) -> DecodeEstimat
     let pixels = (width as u64) * (height as u64);
     let output_bytes = pixels * (output_bpp as u64);
 
-    let peak_memory_bytes =
-        DECODE_FIXED_OVERHEAD + (pixels as f64 * DECODE_BYTES_PER_PIXEL) as u64;
+    let peak_memory_bytes = DECODE_FIXED_OVERHEAD + (pixels as f64 * DECODE_BYTES_PER_PIXEL) as u64;
 
     let time_ms = (pixels as f64 / (DECODE_THROUGHPUT_MPIXELS * 1000.0)) as f32;
 

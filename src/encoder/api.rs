@@ -1233,12 +1233,7 @@ impl<'a> Encoder<'a> {
     /// `stride_bytes` is the number of bytes between the start of consecutive
     /// rows. Must be >= `width * 4`.
     #[must_use]
-    pub fn new_rgba_stride(
-        data: &'a [u8],
-        width: u32,
-        height: u32,
-        stride_bytes: usize,
-    ) -> Self {
+    pub fn new_rgba_stride(data: &'a [u8], width: u32, height: u32, stride_bytes: usize) -> Self {
         Self {
             data: EncoderInput::Rgba(data),
             width,
@@ -1255,12 +1250,7 @@ impl<'a> Encoder<'a> {
 
     /// Create a new encoder for RGB data with explicit row stride.
     #[must_use]
-    pub fn new_rgb_stride(
-        data: &'a [u8],
-        width: u32,
-        height: u32,
-        stride_bytes: usize,
-    ) -> Self {
+    pub fn new_rgb_stride(data: &'a [u8], width: u32, height: u32, stride_bytes: usize) -> Self {
         Self {
             data: EncoderInput::Rgb(data),
             width,
@@ -1531,12 +1521,7 @@ impl<'a> Encoder<'a> {
             data
         };
 
-        validate_buffer_size(
-            encode_data.len(),
-            self.width,
-            self.height,
-            bpp as u32,
-        )?;
+        validate_buffer_size(encode_data.len(), self.width, self.height, bpp as u32)?;
 
         let mut output = Vec::new();
         let stats;
