@@ -75,6 +75,19 @@ impl<'a> super::Vp8Encoder<'a> {
         self.get_luma_blocks_from_predicted_16x16_scalar(predicted_y_block, mbx, mby)
     }
 
+    // Non-SIMD output parameter variant
+    #[cfg(not(feature = "simd"))]
+    pub(super) fn fill_luma_blocks_from_predicted_16x16(
+        &self,
+        predicted_y_block: &[u8; LUMA_BLOCK_SIZE],
+        mbx: usize,
+        mby: usize,
+        luma_blocks: &mut [i32; 16 * 16],
+    ) {
+        *luma_blocks =
+            self.get_luma_blocks_from_predicted_16x16_scalar(predicted_y_block, mbx, mby);
+    }
+
     // SIMD version: uses fused residual+DCT for pairs of blocks
     #[cfg(feature = "simd")]
     pub(super) fn get_luma_blocks_from_predicted_16x16(
@@ -83,9 +96,22 @@ impl<'a> super::Vp8Encoder<'a> {
         mbx: usize,
         mby: usize,
     ) -> [i32; 16 * 16] {
+        let mut luma_blocks = [0i32; 16 * 16];
+        self.fill_luma_blocks_from_predicted_16x16(predicted_y_block, mbx, mby, &mut luma_blocks);
+        luma_blocks
+    }
+
+    // SIMD version with output parameter: avoids redundant zero-init when caller reuses buffer
+    #[cfg(feature = "simd")]
+    pub(super) fn fill_luma_blocks_from_predicted_16x16(
+        &self,
+        predicted_y_block: &[u8; LUMA_BLOCK_SIZE],
+        mbx: usize,
+        mby: usize,
+        luma_blocks: &mut [i32; 16 * 16],
+    ) {
         let pred_stride = LUMA_STRIDE;
         let src_stride = usize::from(self.macroblock_width * 16);
-        let mut luma_blocks = [0i32; 16 * 16];
 
         // Process pairs of horizontally adjacent blocks using fused residual+DCT
         for block_y in 0..4 {
@@ -120,8 +146,6 @@ impl<'a> super::Vp8Encoder<'a> {
                 }
             }
         }
-
-        luma_blocks
     }
 
     // Scalar fallback
@@ -494,9 +518,29 @@ impl<'a> super::Vp8Encoder<'a> {
         mbx: usize,
         mby: usize,
     ) -> [i32; 16 * 4] {
+        let mut chroma_blocks = [0i32; 16 * 4];
+        self.fill_chroma_blocks_from_predicted(
+            predicted_chroma,
+            chroma_data,
+            mbx,
+            mby,
+            &mut chroma_blocks,
+        );
+        chroma_blocks
+    }
+
+    /// SIMD version with output parameter: avoids redundant zero-init when caller reuses buffer
+    #[cfg(feature = "simd")]
+    pub(super) fn fill_chroma_blocks_from_predicted(
+        &self,
+        predicted_chroma: &[u8; CHROMA_BLOCK_SIZE],
+        chroma_data: &[u8],
+        mbx: usize,
+        mby: usize,
+        chroma_blocks: &mut [i32; 16 * 4],
+    ) {
         let pred_stride = CHROMA_STRIDE;
         let src_stride = usize::from(self.macroblock_width * 8);
-        let mut chroma_blocks = [0i32; 16 * 4];
 
         // Process pairs of horizontally adjacent blocks using fused residual+DCT
         for block_y in 0..2 {
@@ -517,19 +561,27 @@ impl<'a> super::Vp8Encoder<'a> {
             );
 
             // Copy to output with i16 -> i32 conversion
-            // Block layout: [block0, block1, block2, block3] where blocks are 16 elements each
-            // block_y=0: blocks 0,1 (indices 0-31)
-            // block_y=1: blocks 2,3 (indices 32-63)
-            let out_base0 = block_y * 32; // 0 or 32
-            let out_base1 = out_base0 + 16; // 16 or 48
+            let out_base0 = block_y * 32;
+            let out_base1 = out_base0 + 16;
 
             for i in 0..16 {
                 chroma_blocks[out_base0 + i] = out16[i] as i32;
                 chroma_blocks[out_base1 + i] = out16[16 + i] as i32;
             }
         }
+    }
 
-        chroma_blocks
+    /// Scalar fallback with output parameter
+    #[cfg(not(feature = "simd"))]
+    pub(super) fn fill_chroma_blocks_from_predicted(
+        &self,
+        predicted_chroma: &[u8; CHROMA_BLOCK_SIZE],
+        chroma_data: &[u8],
+        mbx: usize,
+        mby: usize,
+        out: &mut [i32; 16 * 4],
+    ) {
+        *out = self.get_chroma_blocks_from_predicted(predicted_chroma, chroma_data, mbx, mby);
     }
 
     /// Scalar fallback

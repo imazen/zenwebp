@@ -336,6 +336,14 @@ impl<'a> super::Vp8Encoder<'a> {
         let mut best_spectral_disto = 0i32;
         let mut best_psy_cost = 0i32;
 
+        // Pre-allocate scratch buffers outside mode loop to avoid redundant zero-init.
+        // All elements are written before read in each iteration.
+        let mut luma_blocks = [0i32; 256];
+        let mut y1_quant = [[0i32; 16]; 16];
+        let mut recon_dequant_block = [0i32; 16];
+        let mut rec_block = [0u8; 256];
+        let mut all_levels = [0i16; 256];
+
         for (mode_idx, &mode) in MODES.iter().enumerate() {
             // Skip V mode if no top row available (first row of macroblocks)
             // Note: V prediction requires real top pixels, border value 127 gives poor results
@@ -358,8 +366,8 @@ impl<'a> super::Vp8Encoder<'a> {
             let pred = self.get_predicted_luma_block_16x16(mode, mbx, mby);
 
             // === Full reconstruction for RD evaluation ===
-            // 1. Compute residuals and forward DCT
-            let luma_blocks = self.get_luma_blocks_from_predicted_16x16(&pred, mbx, mby);
+            // 1. Compute residuals and forward DCT (luma_blocks hoisted outside mode loop)
+            self.fill_luma_blocks_from_predicted_16x16(&pred, mbx, mby, &mut luma_blocks);
 
             // 2. Extract DC coefficients and do WHT
             let mut dc_coeffs = [0i32; 16];
@@ -375,7 +383,7 @@ impl<'a> super::Vp8Encoder<'a> {
 
             // 4. Quantize Y1 (AC) coefficients using SIMD
             // Extract each 4x4 block from luma_blocks and quantize AC coefficients
-            let mut y1_quant = [[0i32; 16]; 16];
+            // (y1_quant hoisted outside mode loop to avoid redundant zero-init)
             #[allow(clippy::needless_range_loop)]
             for block_idx in 0..16 {
                 // Copy block from luma_blocks (DC will be zeroed by quantize_ac_only)
@@ -403,20 +411,19 @@ impl<'a> super::Vp8Encoder<'a> {
                 let bx = block_idx % 4;
                 let by = block_idx / 4;
 
-                let mut block = [0i32; 16];
-                // AC from Y1
+                // AC from Y1 (recon_dequant_block hoisted outside mode loop)
                 for i in 1..16 {
-                    block[i] = y1_matrix.dequantize(y1_quant[block_idx][i], i);
+                    recon_dequant_block[i] = y1_matrix.dequantize(y1_quant[block_idx][i], i);
                 }
                 // DC from Y2
-                block[0] = y2_dequant[block_idx];
+                recon_dequant_block[0] = y2_dequant[block_idx];
 
                 // Fused IDCT + add residue to prediction (reads pred, adds IDCT, clamps, stores)
                 let x0 = 1 + bx * 4;
                 let y0 = 1 + by * 4;
-                let dc_only = block[1..].iter().all(|&c| c == 0);
+                let dc_only = recon_dequant_block[1..].iter().all(|&c| c == 0);
                 crate::common::transform_simd_intrinsics::idct_add_residue_inplace(
-                    &mut block,
+                    &mut recon_dequant_block,
                     &mut reconstructed,
                     y0,
                     x0,
@@ -431,7 +438,7 @@ impl<'a> super::Vp8Encoder<'a> {
             // 9. Compute spectral distortion (TDisto) + psy-rd if enabled
             let (spectral_disto, psy_cost) = if let Some(ref src_block) = src_block {
                 // Extract reconstructed block only (source already cached)
-                let mut rec_block = [0u8; 256];
+                // (rec_block hoisted outside mode loop to avoid redundant zero-init)
                 for y in 0..16 {
                     let rec_row = (y + 1) * LUMA_STRIDE + 1;
                     rec_block[y * 16..(y + 1) * 16]
@@ -462,7 +469,7 @@ impl<'a> super::Vp8Encoder<'a> {
             // 10. Apply flat source penalty if applicable
             let (d_final, sd_final) = if is_flat {
                 // Check if coefficients are also flat
-                let mut all_levels = [0i16; 256];
+                // (all_levels hoisted outside mode loop to avoid redundant zero-init)
                 for block_idx in 0..16 {
                     for i in 1..16 {
                         all_levels[block_idx * 16 + i] = y1_quant[block_idx][i] as i16;
@@ -1056,6 +1063,16 @@ impl<'a> super::Vp8Encoder<'a> {
         let mut best_mode = ChromaMode::DC;
         let mut best_rd_score = i64::MAX;
 
+        // Pre-allocate scratch buffers outside mode loop to avoid redundant zero-init.
+        // All elements are written before read in each iteration.
+        let mut u_blocks = [0i32; 64];
+        let mut v_blocks = [0i32; 64];
+        let mut uv_quant = [[0i32; 16]; 8];
+        let mut uv_dequant = [[0i32; 16]; 8];
+        let mut rec_u_block = [0u8; 64];
+        let mut rec_v_block = [0u8; 64];
+        let mut all_levels_uv = [0i16; 128];
+
         for (mode_idx, &mode) in MODES.iter().enumerate() {
             // Skip modes that need unavailable reference pixels
             if mode == ChromaMode::V && mby == 0 {
@@ -1085,15 +1102,24 @@ impl<'a> super::Vp8Encoder<'a> {
             );
 
             // === Full reconstruction for RD evaluation ===
-            // 1. Compute residuals and forward DCT
-            let u_blocks =
-                self.get_chroma_blocks_from_predicted(&pred_u, &self.frame.ubuf, mbx, mby);
-            let v_blocks =
-                self.get_chroma_blocks_from_predicted(&pred_v, &self.frame.vbuf, mbx, mby);
+            // 1. Compute residuals and forward DCT (buffers hoisted outside mode loop)
+            self.fill_chroma_blocks_from_predicted(
+                &pred_u,
+                &self.frame.ubuf,
+                mbx,
+                mby,
+                &mut u_blocks,
+            );
+            self.fill_chroma_blocks_from_predicted(
+                &pred_v,
+                &self.frame.vbuf,
+                mbx,
+                mby,
+                &mut v_blocks,
+            );
 
             // 2. Fused quantize+dequantize coefficients using SIMD
-            let mut uv_quant = [[0i32; 16]; 8]; // 4 U blocks + 4 V blocks
-            let mut uv_dequant = [[0i32; 16]; 8]; // dequantized values
+            // (uv_quant/uv_dequant hoisted outside mode loop to avoid redundant zero-init)
 
             // Process U blocks (indices 0-3)
             for block_idx in 0..4 {
@@ -1172,8 +1198,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 (&src_u_block, &src_v_block)
             {
                 // Extract reconstructed blocks only (source already cached)
-                let mut rec_u_block = [0u8; 64];
-                let mut rec_v_block = [0u8; 64];
+                // (rec_u_block/rec_v_block hoisted outside mode loop)
                 for y in 0..8 {
                     let rec_row = (y + 1) * CHROMA_STRIDE + 1;
                     rec_u_block[y * 8..(y + 1) * 8]
@@ -1207,13 +1232,13 @@ impl<'a> super::Vp8Encoder<'a> {
             // 5. Apply flatness penalty for non-DC modes
             let rate_penalty = if mode_idx > 0 {
                 // Check if coefficients are flat
-                let mut all_levels = [0i16; 128]; // 8 blocks * 16 coeffs
+                // (all_levels_uv hoisted outside mode loop)
                 for block_idx in 0..8 {
                     for i in 0..16 {
-                        all_levels[block_idx * 16 + i] = uv_quant[block_idx][i] as i16;
+                        all_levels_uv[block_idx * 16 + i] = uv_quant[block_idx][i] as i16;
                     }
                 }
-                if is_flat_coeffs(&all_levels, 8, FLATNESS_LIMIT_UV) {
+                if is_flat_coeffs(&all_levels_uv, 8, FLATNESS_LIMIT_UV) {
                     // Add flatness penalty: FLATNESS_PENALTY * num_blocks
                     FLATNESS_PENALTY * 8
                 } else {
