@@ -1435,26 +1435,21 @@ pub(crate) fn idct_add_residue_and_clear_with_token(
     );
 }
 
-/// NEON fallback for fused IDCT + add residue + clear (uses scalar for now, token wired).
+/// NEON fused IDCT + add residue + clear.
 #[cfg(all(feature = "simd", target_arch = "aarch64"))]
 #[inline(always)]
 pub(crate) fn idct_add_residue_and_clear_with_token(
-    _token: archmage::NeonToken,
+    token: archmage::NeonToken,
     pblock: &mut [u8],
     rblock: &mut [i32; 16],
     y0: usize,
     x0: usize,
     stride: usize,
 ) {
-    use crate::common::transform;
-
     let dc_only = rblock[1..].iter().all(|&c| c == 0);
-    if dc_only {
-        transform::idct4x4_dc(rblock);
-    } else {
-        transform::idct4x4(rblock);
-    }
-    add_residue_and_clear_scalar(pblock, rblock, y0, x0, stride);
+    crate::common::transform_aarch64::idct_add_residue_inplace_neon(
+        token, rblock, pblock, y0, x0, stride, dc_only,
+    );
 }
 
 /// Scalar fallback for fused IDCT + add residue + clear.

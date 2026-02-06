@@ -1049,6 +1049,16 @@ pub(crate) fn idct_add_residue_inplace(
             return;
         }
     }
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    {
+        use archmage::{NeonToken, SimdToken};
+        if let Some(token) = NeonToken::summon() {
+            super::transform_aarch64::idct_add_residue_inplace_neon(
+                token, coeffs, block, y0, x0, stride, dc_only,
+            );
+            return;
+        }
+    }
     // Scalar fallback: IDCT then add
     if dc_only {
         let dc = coeffs[0];
@@ -1092,10 +1102,17 @@ pub(crate) fn ftransform_from_u8_4x4(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 1
     }
 }
 
-/// Scalar fallback for non-x86 platforms
+/// Non-x86 fallback: try NEON on aarch64, else scalar
 #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
 #[inline(always)]
 pub(crate) fn ftransform_from_u8_4x4(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    {
+        use archmage::{NeonToken, SimdToken};
+        if let Some(token) = NeonToken::summon() {
+            return super::transform_aarch64::ftransform_from_u8_4x4_neon(token, src, ref_);
+        }
+    }
     ftransform_from_u8_4x4_scalar(src, ref_)
 }
 
