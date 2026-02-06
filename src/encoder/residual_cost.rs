@@ -256,33 +256,30 @@ pub(crate) fn get_residual_cost_sse2(
         );
     }
 
+    // Pre-index the cost table by type (matches libwebp's CostArrayPtr pattern).
+    // libwebp: t = costs[n][ctx0] then t = costs[n+1][ctx] in loop.
+    // We pre-index by ctype once, then do costs_for_type[band][ctx][level] in loop.
+    let costs_for_type = &costs.level_cost[ctype];
+    let mut t = &costs_for_type[VP8_ENC_BANDS[n] as usize][ctx];
+
     // Process coefficients from first to last-1 using precomputed values
     while (n as i32) < res.last {
         let level = levels[n] as usize;
-        let flevel = abs_levels[n] as usize; // full level for fixed cost
+        let flevel = abs_levels[n] as usize;
 
-        // Cost = fixed cost + variable cost from table
-        let fixed = VP8_LEVEL_FIXED_COSTS[flevel.min(MAX_LEVEL)] as u32;
-        let band_idx = VP8_ENC_BANDS[n] as usize;
-        let variable = costs.level_cost[ctype][band_idx][ctx][level] as u32;
-        cost += fixed + variable;
+        cost += VP8_LEVEL_FIXED_COSTS[flevel.min(MAX_LEVEL)] as u32 + t[level] as u32;
 
-        // Update context for next position
         ctx = ctxs[n] as usize;
         n += 1;
+        t = &costs_for_type[VP8_ENC_BANDS[n] as usize][ctx];
     }
 
     // Last coefficient is always non-zero
     {
         let level = levels[n] as usize;
         let flevel = abs_levels[n] as usize;
-        debug_assert!(flevel != 0, "Last coefficient should be non-zero");
 
-        // Add cost using current context
-        let fixed = VP8_LEVEL_FIXED_COSTS[flevel.min(MAX_LEVEL)] as u32;
-        let band_idx = VP8_ENC_BANDS[n] as usize;
-        let variable = costs.level_cost[ctype][band_idx][ctx][level] as u32;
-        cost += fixed + variable;
+        cost += VP8_LEVEL_FIXED_COSTS[flevel.min(MAX_LEVEL)] as u32 + t[level] as u32;
 
         // Add EOB cost for the position after the last coefficient
         if n < 15 {
