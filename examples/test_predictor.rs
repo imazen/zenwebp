@@ -55,7 +55,7 @@ fn test_gradient() {
         predictor_bits: 4, // 16x16 blocks
         ..Default::default()
     };
-    let vp8l = zenwebp::encoder::vp8l::encode_vp8l(&rgb, width, height, false, &config).unwrap();
+    let vp8l = zenwebp::encoder::vp8l::encode_vp8l(&rgb, width, height, false, &config, &enough::Unstoppable).unwrap();
     let webp = wrap_vp8l_in_riff(&vp8l);
     std::fs::write("/tmp/test_predictor_gradient.webp", &webp).unwrap();
     println!("  Size with predictor: {} bytes", webp.len());
@@ -68,7 +68,7 @@ fn test_gradient() {
         ..Default::default()
     };
     let vp8l_no =
-        zenwebp::encoder::vp8l::encode_vp8l(&rgb, width, height, false, &config_no).unwrap();
+        zenwebp::encoder::vp8l::encode_vp8l(&rgb, width, height, false, &config_no, &enough::Unstoppable).unwrap();
     let webp_no = wrap_vp8l_in_riff(&vp8l_no);
     println!("  Size without predictor: {} bytes", webp_no.len());
     println!(
@@ -158,7 +158,7 @@ fn test_photo() {
         predictor_bits: 4,
         ..Default::default()
     };
-    let vp8l = zenwebp::encoder::vp8l::encode_vp8l(&rgb, width, height, false, &config).unwrap();
+    let vp8l = zenwebp::encoder::vp8l::encode_vp8l(&rgb, width, height, false, &config, &enough::Unstoppable).unwrap();
     let webp = wrap_vp8l_in_riff(&vp8l);
     std::fs::write("/tmp/test_predictor_photo.webp", &webp).unwrap();
     println!("  Size with predictor: {} bytes", webp.len());
@@ -171,7 +171,7 @@ fn test_photo() {
         ..Default::default()
     };
     let vp8l_no =
-        zenwebp::encoder::vp8l::encode_vp8l(&rgb, width, height, false, &config_no).unwrap();
+        zenwebp::encoder::vp8l::encode_vp8l(&rgb, width, height, false, &config_no, &enough::Unstoppable).unwrap();
     let webp_no = wrap_vp8l_in_riff(&vp8l_no);
     println!("  Size without predictor: {} bytes", webp_no.len());
     println!(

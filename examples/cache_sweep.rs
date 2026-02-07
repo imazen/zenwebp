@@ -30,7 +30,7 @@ fn main() {
             cache_bits: Some(cache_bits),
             ..Default::default()
         };
-        match zenwebp::encoder::vp8l::encode_vp8l(&rgb, w, h, has_alpha, &config) {
+        match zenwebp::encoder::vp8l::encode_vp8l(&rgb, w, h, has_alpha, &config, &enough::Unstoppable) {
             Ok(vp8l) => {
                 let total = 12 + 8 + vp8l.len() + (vp8l.len() % 2);
                 println!("cache_bits={:>2}: {:>8} bytes", cache_bits, total);

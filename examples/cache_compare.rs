@@ -93,7 +93,7 @@ fn main() {
             ..Default::default()
         };
         let auto_size =
-            match zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, w, h, has_alpha, &config_auto) {
+            match zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, w, h, has_alpha, &config_auto, &enough::Unstoppable) {
                 Ok(d) => wrap_vp8l_in_riff(&d).len() as u64,
                 Err(_) => continue,
             };
@@ -104,7 +104,7 @@ fn main() {
             ..config_auto.clone()
         };
         let no_cache_size =
-            match zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, w, h, has_alpha, &config_no) {
+            match zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, w, h, has_alpha, &config_no, &enough::Unstoppable) {
                 Ok(d) => wrap_vp8l_in_riff(&d).len() as u64,
                 Err(_) => continue,
             };

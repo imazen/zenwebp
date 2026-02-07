@@ -272,13 +272,23 @@ Run with: `cargo run --release --example <name> [args]`
 
 See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec comparison.
 
-- [ ] Rename `EncodingError` → `EncodeError`
-- [ ] Rename `DecodingError` → `DecodeError`
-- [ ] Rename `EncodingStats` → `EncodeStats`
-- [x] Add `At<>` error wrapping (from `whereat` crate) like zenjpeg/zengif
-- [ ] Add streaming encoder pattern (`push()`/`finish()`) alongside one-shot `encode()`
-- [ ] Standardize output methods: `finish()` → Vec, `finish_into()` → caller buf, `finish_to(impl Write)` → std-only
-- [ ] Move metadata (ICC/EXIF/XMP) to encode request only, not on reusable config
-- [x] Add `Limits` struct for resource management (like zengif)
-- [ ] Standardize cancellation to `S: Stop` generic (like zengif) instead of `&dyn Stop` on request
-- [ ] Standardize dimension types to `u32`
+**Three-layer pattern: EncoderConfig → EncodeRequest<'a> → Encoder (streaming only)**
+
+Done:
+- [x] `EncodeError`/`DecodeError` naming ✓
+- [x] `EncodeStats` naming ✓
+- [x] `At<>` error wrapping ✓
+- [x] `Limits` struct (decode side) ✓
+- [x] `&dyn Stop` cancellation ✓
+- [x] `#[non_exhaustive]` on errors ✓
+- [x] `EncodeRequest<'a>` intermediate layer ✓
+- [x] Metadata on request, not config ✓
+
+Remaining:
+- [ ] Rename `finish()` → `encode()` on `EncodeRequest` (one-shot, nothing was "started")
+- [ ] Rename `finish_into()` → `encode_into()`, `finish_to()` → `encode_to()` on request
+- [ ] Remove deprecated aliases (`encode()`, `encode_into()`, `encode_to_writer()`)
+- [ ] Add `EncodeRequest::build()` → streaming `Encoder` with `push()`/`finish()`
+- [ ] Add `Limits` on encode side (currently decode-only)
+- [ ] Replace `ColorType` with `PixelLayout` (or rename — same concept, just naming)
+- [ ] `Limits` fields: standardize to `Option<u64>`

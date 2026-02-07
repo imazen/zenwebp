@@ -134,6 +134,7 @@ fn main() {
             height,
             has_alpha,
             &config,
+            &enough::Unstoppable,
         ) {
             Ok(d) => d,
             Err(e) => {
@@ -153,6 +154,7 @@ fn main() {
             height,
             has_alpha,
             &config_nomh,
+            &enough::Unstoppable,
         )
         .ok();
 

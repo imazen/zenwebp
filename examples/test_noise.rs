@@ -13,7 +13,7 @@ fn wrap_vp8l_in_riff(vp8l_data: &[u8]) -> Vec<u8> {
     webp
 }
 fn test(name: &str, rgb: &[u8], w: u32, h: u32, config: &zenwebp::encoder::vp8l::Vp8lConfig) {
-    let vp8l = zenwebp::encoder::vp8l::encode_vp8l(rgb, w, h, false, config).unwrap();
+    let vp8l = zenwebp::encoder::vp8l::encode_vp8l(rgb, w, h, false, config, &enough::Unstoppable).unwrap();
     let webp = wrap_vp8l_in_riff(&vp8l);
     let mismatches = match zenwebp::decode_rgba(&webp) {
         Ok((data, _, _)) => (0..(w * h) as usize)

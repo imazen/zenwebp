@@ -54,7 +54,7 @@ fn main() {
         };
 
         let vp8l =
-            match zenwebp::encoder::vp8l::encode_vp8l(&rgb, width, height, has_alpha, &config) {
+            match zenwebp::encoder::vp8l::encode_vp8l(&rgb, width, height, has_alpha, &config, &enough::Unstoppable) {
                 Ok(d) => d,
                 Err(e) => {
                     eprintln!("cache_bits={}: ERROR {:?}", cache_bits, e);
@@ -79,7 +79,7 @@ fn main() {
         ..Default::default()
     };
     let vp8l =
-        zenwebp::encoder::vp8l::encode_vp8l(&rgb, width, height, has_alpha, &config_auto).unwrap();
+        zenwebp::encoder::vp8l::encode_vp8l(&rgb, width, height, has_alpha, &config_auto, &enough::Unstoppable).unwrap();
     let webp = wrap_vp8l_in_riff(&vp8l);
     println!("cache=auto: {} bytes", webp.len());
 }

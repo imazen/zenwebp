@@ -30,7 +30,7 @@ fn main() {
     };
 
     let vp8l_data =
-        zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, width, height, false, &config).unwrap();
+        zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, width, height, false, &config, &enough::Unstoppable).unwrap();
 
     println!("VP8L data ({} bytes)", vp8l_data.len());
 

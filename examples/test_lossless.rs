@@ -84,7 +84,7 @@ fn main() {
     };
 
     let new_vp8l =
-        zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, width, height, false, &config).unwrap();
+        zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, width, height, false, &config, &enough::Unstoppable).unwrap();
     println!("Size (raw VP8L): {} bytes", new_vp8l.len());
 
     // Wrap in RIFF container
