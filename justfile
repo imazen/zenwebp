@@ -67,6 +67,18 @@ build-no-std:
 diag:
     cargo test --release --features _corpus_tests --test i4_diagnostic_harness -- --nocapture
 
+# Cross-test i686 (32-bit x86) via QEMU
+test-i686:
+    cross test --features "std,fast-yuv,simd,pixel-types" --target i686-unknown-linux-gnu
+
+# Cross-test armv7 (32-bit ARM) via QEMU
+test-armv7:
+    cross test --features "std,fast-yuv,simd,pixel-types" --target armv7-unknown-linux-gnueabihf
+
+# Cross-test all non-native targets
+test-cross: test-i686 test-armv7
+    @echo "All cross tests passed!"
+
 # Run all quality checks
 check: fmt clippy test
     @echo "All checks passed!"

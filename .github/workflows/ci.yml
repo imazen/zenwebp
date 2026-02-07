@@ -1,0 +1,281 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CI: true
+  # Default features for testing: std + fast-yuv + simd + pixel-types
+  DEFAULT_FEATURES: "std,fast-yuv,simd,pixel-types"
+
+jobs:
+  # ==========================================================================
+  # Native x86_64 testing
+  # ==========================================================================
+  test-x64:
+    name: Test x64 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build (default features)
+        run: cargo build --features "${{ env.DEFAULT_FEATURES }}"
+
+      - name: Test (default features)
+        run: cargo test --features "${{ env.DEFAULT_FEATURES }}"
+
+      - name: Test (no_std + alloc, no SIMD)
+        run: cargo test --no-default-features --lib
+
+      - name: Build docs
+        run: cargo doc --features "${{ env.DEFAULT_FEATURES }}" --no-deps
+
+  # ==========================================================================
+  # Native aarch64 testing
+  # ==========================================================================
+  test-aarch64:
+    name: Test aarch64 (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04-arm, name: Linux }
+          - { os: macos-latest, name: macOS }
+          - { os: windows-11-arm, name: Windows }
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build with SIMD
+        run: cargo build --features "${{ env.DEFAULT_FEATURES }}"
+
+      - name: Test with SIMD
+        run: cargo test --features "${{ env.DEFAULT_FEATURES }}"
+
+      - name: Test without SIMD (scalar fallback)
+        run: cargo test --no-default-features --features "std,fast-yuv" --lib
+
+  # ==========================================================================
+  # Cross-compiled testing (32-bit + ARM) via QEMU
+  # ==========================================================================
+  test-cross:
+    name: Cross (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - i686-unknown-linux-gnu
+          - armv7-unknown-linux-gnueabihf
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build (cross)
+        run: cross build --features "${{ env.DEFAULT_FEATURES }}" --target ${{ matrix.target }}
+
+      - name: Test (cross/QEMU)
+        run: cross test --features "${{ env.DEFAULT_FEATURES }}" --target ${{ matrix.target }}
+
+  # ==========================================================================
+  # WASM SIMD128 testing
+  # ==========================================================================
+  test-wasm:
+    name: Test WASM SIMD128
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown,wasm32-wasip1
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install wasmtime
+        run: |
+          curl https://wasmtime.dev/install.sh -sSf | bash
+          echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
+
+      - name: Build WASM with SIMD (wasm32-unknown-unknown)
+        env:
+          RUSTFLAGS: "-C target-feature=+simd128"
+        run: cargo build --target wasm32-unknown-unknown --features simd --lib
+
+      - name: Test WASM with SIMD (wasm32-wasip1)
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime --dir=. --"
+          RUSTFLAGS: "-C target-feature=+simd128"
+        run: cargo test --target wasm32-wasip1 --features simd --lib --tests
+
+      - name: Test WASM without SIMD (scalar fallback)
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime --dir=. --"
+        run: cargo test --target wasm32-wasip1 --lib --tests
+
+  # ==========================================================================
+  # Big-endian testing (PowerPC)
+  # ==========================================================================
+  test-big-endian:
+    name: Cross (powerpc-unknown-linux-gnu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cross-test big-endian (PowerPC)
+        run: cross test --target powerpc-unknown-linux-gnu
+
+  # ==========================================================================
+  # MSRV check
+  # ==========================================================================
+  msrv:
+    name: MSRV (1.92)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust 1.92
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.92"
+
+      - name: Install nightly for minimal-versions
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Generate minimal-version lockfile
+        run: cargo +nightly -Zminimal-versions generate-lockfile
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check MSRV
+        run: cargo +1.92 check --features "${{ env.DEFAULT_FEATURES }}"
+
+  # ==========================================================================
+  # Clippy (x86_64)
+  # ==========================================================================
+  clippy:
+    name: Clippy (x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --all-targets --features "${{ env.DEFAULT_FEATURES }}" -- -D warnings
+
+  # ==========================================================================
+  # Clippy (aarch64)
+  # ==========================================================================
+  clippy-aarch64:
+    name: Clippy (aarch64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --all-targets --features "${{ env.DEFAULT_FEATURES }}" -- -D warnings
+
+  # ==========================================================================
+  # Format check
+  # ==========================================================================
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Format check
+        run: cargo fmt -- --check
+
+  # ==========================================================================
+  # Code coverage
+  # ==========================================================================
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Generate coverage
+        run: cargo llvm-cov --features "${{ env.DEFAULT_FEATURES }}" --lcov --output-path lcov.info
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
