@@ -12,16 +12,16 @@
 //! **Rate-distortion optimization:**
 //! - [`analysis`]: Segment-based adaptive quantization (k-means clustering)
 //! - [`cost`]: RD cost estimation for mode selection
-//! - `trellis`: Trellis quantization for optimal coefficient selection
+//! - trellis: Trellis quantization for optimal coefficient selection
 //!
 //! **Perceptual models:**
-//! - `psy`: CSF weighting, JND thresholds, masking-based AQ
+//! - psy: CSF weighting, JND thresholds, masking-based AQ
 //!
 //! **Low-level utilities:**
 //! - [`quantize`]: Quantization matrices and coefficient quantization
 //! - [`tables`]: Lookup tables (entropy costs, zigzag order, etc.)
-//! - `arithmetic`: Arithmetic/range coding
-//! - `residual_cost`: SIMD-optimized residual cost estimation
+//! - arithmetic: Arithmetic/range coding
+//! - residual_cost: SIMD-optimized residual cost estimation
 
 /// Image analysis and auto-detection
 pub mod analysis;

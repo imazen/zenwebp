@@ -1,5 +1,110 @@
 # Release Notes
 
+### Version 0.3.0
+
+**BREAKING CHANGES - Complete API overhaul for type safety and convergence**
+
+This release completes the API convergence initiative, bringing zenwebp in line with modern Rust
+codec design patterns. **No backward compatibility** - this is a clean break from 0.2.x.
+
+#### Type-Safe Encoder Configuration
+
+The unified `EncoderConfig` struct has been split into separate lossy and lossless types:
+
+**Old API (0.2.x):**
+```rust
+let config = EncoderConfig::new().quality(85.0).lossless(false);
+```
+
+**New API (0.3.0):**
+```rust
+// Compile-time mode selection
+let config = LossyConfig::new().with_quality(85.0);
+let webp = EncodeRequest::lossy(&config, pixels, layout, w, h).encode()?;
+
+// Or runtime selection
+let config = EncoderConfig::new_lossy().with_quality(85.0);
+let webp = EncodeRequest::new(&config, pixels, layout, w, h).encode()?;
+```
+
+This prevents setting invalid parameter combinations (e.g., `sns_strength` on lossless) at compile time.
+
+#### Builder Convention - with_ Prefix
+
+All builder methods now use `with_` prefix following Rust conventions:
+- `quality()` → `with_quality()`
+- `method()` → `with_method()`
+- `sns_strength()` → `with_sns_strength()`
+- `stop()` → `with_stop()`
+- `progress()` → `with_progress()`
+- 25+ other method renames
+
+#### ImageMetadata Struct
+
+Metadata is now grouped in a dedicated struct instead of individual request methods:
+```rust
+let metadata = ImageMetadata::new()
+    .with_icc_profile(&icc_data)
+    .with_exif(&exif_data);
+
+EncodeRequest::lossy(&config, pixels, layout, w, h)
+    .with_metadata(metadata)
+    .encode()?;
+```
+
+#### Memory Estimation
+
+New methods on all config types:
+```rust
+let peak_mem = config.estimate_memory(width, height, bpp);
+let worst_case = config.estimate_memory_ceiling(width, height, bpp);
+```
+
+#### Image Probing
+
+Fast header-only parsing without decoding:
+```rust
+let info = ImageInfo::from_bytes(webp_data)?;  // NEW: Probing API
+println!("{}x{}", info.width, info.height);
+
+// Minimum bytes needed
+ImageInfo::PROBE_BYTES  // 64 bytes
+```
+
+#### Two-Phase Decoder
+
+Explicit build → inspect → decode pattern:
+```rust
+// Parse headers
+let decoder = WebPDecoder::build(data)?;
+
+// Inspect metadata (zero-cost)
+let info = decoder.info();
+
+// Decode (no re-parsing)
+let (pixels, w, h) = decoder.decode_rgba()?;
+```
+
+#### Migration Guide
+
+**Encoder:**
+- Replace `EncoderConfig::new()` with `LossyConfig::new()` or `LosslessConfig::new()`
+- Add `with_` prefix to all builder methods
+- Use `EncodeRequest::lossy()` or `EncodeRequest::lossless()` instead of `::new()`
+
+**Decoder:**
+- Use `WebPDecoder::build()` instead of `::new()` for clarity (though `new()` still works)
+- Use `decoder.info()` to get `ImageInfo` instead of calling individual methods
+
+**Full API guide:** See `examples/api_guide.rs` for 100% coverage of the new API.
+
+#### Other Changes
+
+- Added `ColorType` → `PixelLayout` rename (ColorType deprecated)
+- Added `Limits` support on encoder side
+- Renamed `finish()` → `encode()` on `EncodeRequest`
+- All examples and benchmarks updated
+
 ### Version 0.2.4
 
 Changes:

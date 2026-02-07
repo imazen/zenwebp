@@ -24,27 +24,48 @@ zenwebp = "0.2"
 use zenwebp::WebPDecoder;
 
 let webp_bytes: &[u8] = /* your WebP data */;
-let mut decoder = WebPDecoder::new(webp_bytes)?;
-let (width, height) = decoder.dimensions();
 
-// Decode to RGBA
-let mut rgba = vec![0u8; decoder.output_buffer_size().unwrap()];
-decoder.read_image(&mut rgba)?;
+// Two-phase decoding: parse headers first
+let decoder = WebPDecoder::build(webp_bytes)?;
+let info = decoder.info();
+println!("{}x{}, alpha={}", info.width, info.height, info.has_alpha);
+
+// Then decode
+let (rgba, width, height) = decoder.decode_rgba()?;
 ```
 
-### Encode to WebP
+### Encode to WebP (Lossy)
 
 ```rust
-use zenwebp::{WebPEncoder, EncoderParams, ColorType};
+use zenwebp::{LossyConfig, EncodeRequest, PixelLayout};
 
 let rgb_pixels: &[u8] = /* your RGB data */;
 let (width, height) = (800, 600);
 
-// Lossy encoding at quality 75
-let mut webp_output = Vec::new();
-let mut encoder = WebPEncoder::new(&mut webp_output);
-encoder.set_params(EncoderParams::lossy(75));
-encoder.encode(rgb_pixels, width, height, ColorType::Rgb8)?;
+// Create reusable config
+let config = LossyConfig::new()
+    .with_quality(85.0)
+    .with_method(4);  // 0=fast, 6=best
+
+// Encode
+let webp = EncodeRequest::lossy(&config, rgb_pixels, PixelLayout::Rgb8, width, height)
+    .encode()?;
+```
+
+### Encode to WebP (Lossless)
+
+```rust
+use zenwebp::{LosslessConfig, EncodeRequest, PixelLayout};
+
+let rgba_pixels: &[u8] = /* your RGBA data */;
+let (width, height) = (800, 600);
+
+let config = LosslessConfig::new()
+    .with_quality(90.0)
+    .with_method(6);
+
+let webp = EncodeRequest::lossless(&config, rgba_pixels, PixelLayout::Rgba8, width, height)
+    .encode()?;
 ```
 
 ## Features
@@ -74,14 +95,19 @@ Supports all WebP features: lossy and lossless compression, alpha channel, anima
 Supports lossy and lossless encoding with configurable quality (0-100) and speed/quality tradeoff (method 0-6).
 
 ```rust
+use zenwebp::{LossyConfig, LosslessConfig, EncodeRequest, PixelLayout};
+
 // Lossless encoding
-encoder.set_params(EncoderParams::lossless());
+let config = LosslessConfig::new().with_quality(100.0);
+let webp = EncodeRequest::lossless(&config, pixels, PixelLayout::Rgba8, w, h).encode()?;
 
 // Fast lossy encoding (larger files)
-encoder.set_params(EncoderParams::lossy(75).method(0));
+let config = LossyConfig::new().with_quality(75.0).with_method(0);
+let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode()?;
 
 // High quality lossy (slower, smaller files)
-encoder.set_params(EncoderParams::lossy(75).method(6));
+let config = LossyConfig::new().with_quality(75.0).with_method(6);
+let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode()?;
 ```
 
 ## Feature Comparison with libwebp

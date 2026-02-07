@@ -8,7 +8,7 @@
 //! - [`header`]: VP8 bitstream header encoding
 //! - [`mode_selection`]: Intra mode selection (I4, I16, UV) with RD optimization
 //! - [`prediction`]: Block prediction generation
-//! - [`residuals`]: Token buffer and coefficient encoding
+//! - residuals: Token buffer and coefficient encoding
 //!
 //! ## Encoding pipeline
 //!

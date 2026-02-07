@@ -20,14 +20,14 @@
 //!
 //! # Encoding
 //!
-//! Use [`EncoderConfig`] + [`EncodeRequest`]:
+//! Use [`LossyConfig`] or [`LosslessConfig`] with [`EncodeRequest`]:
 //!
 //! ```rust
-//! use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, Preset};
+//! use zenwebp::{EncodeRequest, LossyConfig, PixelLayout};
 //!
-//! let config = EncoderConfig::new().quality(85.0).preset(Preset::Photo);
+//! let config = LossyConfig::new().with_quality(85.0).with_method(4);
 //! let rgba_data = vec![255u8; 4 * 4 * 4];
-//! let webp = EncodeRequest::new(&config, &rgba_data, PixelLayout::Rgba8, 4, 4)
+//! let webp = EncodeRequest::lossy(&config, &rgba_data, PixelLayout::Rgba8, 4, 4)
 //!     .encode()?;
 //! # Ok::<(), zenwebp::EncodeError>(())
 //! ```
