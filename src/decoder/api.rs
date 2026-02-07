@@ -127,6 +127,12 @@ pub enum DecodeError {
 #[deprecated(since = "0.4.0", note = "Use DecodeError instead")]
 pub type DecodingError = DecodeError;
 
+/// Result type alias using `At<DecodeError>` for automatic location tracking.
+///
+/// Errors wrapped in `At<>` automatically capture file and line information,
+/// making debugging easier in production environments.
+pub type DecodeResult<T> = core::result::Result<T, whereat::At<DecodeError>>;
+
 impl From<enough::StopReason> for DecodeError {
     fn from(reason: enough::StopReason) -> Self {
         Self::Cancelled(reason)

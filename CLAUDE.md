@@ -275,7 +275,7 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [ ] Rename `EncodingError` → `EncodeError`
 - [ ] Rename `DecodingError` → `DecodeError`
 - [ ] Rename `EncodingStats` → `EncodeStats`
-- [ ] Add `At<>` error wrapping (from `whereat` crate) like zenjpeg/zengif
+- [x] Add `At<>` error wrapping (from `whereat` crate) like zenjpeg/zengif
 - [ ] Add streaming encoder pattern (`push()`/`finish()`) alongside one-shot `encode()`
 - [ ] Standardize output methods: `finish()` → Vec, `finish_into()` → caller buf, `finish_to()` → Write
 - [ ] Move metadata (ICC/EXIF/XMP) to encode request only, not on reusable config

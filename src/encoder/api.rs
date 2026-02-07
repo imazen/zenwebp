@@ -54,6 +54,12 @@ pub enum EncodeError {
 #[deprecated(since = "0.4.0", note = "Use EncodeError instead")]
 pub type EncodingError = EncodeError;
 
+/// Result type alias using `At<EncodeError>` for automatic location tracking.
+///
+/// Errors wrapped in `At<>` automatically capture file and line information,
+/// making debugging easier in production environments.
+pub type EncodeResult<T> = core::result::Result<T, whereat::At<EncodeError>>;
+
 impl From<enough::StopReason> for EncodeError {
     fn from(reason: enough::StopReason) -> Self {
         Self::Cancelled(reason)

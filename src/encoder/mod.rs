@@ -51,7 +51,7 @@ pub mod vp8l;
 pub use analysis::{ClassifierDiag, ContentType};
 pub(crate) use api::EncoderParams;
 pub use api::{
-    ColorType, EncodeProgress, EncodeRequest, EncoderConfig, EncodeError, EncodeStats,
+    ColorType, EncodeProgress, EncodeRequest, EncoderConfig, EncodeError, EncodeResult, EncodeStats,
     NoProgress, Preset,
 };
 #[allow(deprecated)]

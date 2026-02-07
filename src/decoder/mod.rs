@@ -39,7 +39,7 @@ pub mod vp8;
 pub use api::{
     decode_bgr, decode_bgr_into, decode_bgra, decode_bgra_into, decode_rgb, decode_rgb_into,
     decode_rgba, decode_rgba_into, decode_yuv420, BitstreamFormat, DecodeConfig, DecodeRequest,
-    DecodeError, ImageInfo, LoopCount, UpsamplingMethod, WebPDecoder, YuvPlanes,
+    DecodeError, DecodeResult, ImageInfo, LoopCount, UpsamplingMethod, WebPDecoder, YuvPlanes,
 };
 #[allow(deprecated)]
 pub use api::DecodingError;
