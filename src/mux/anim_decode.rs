@@ -21,7 +21,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::decoder::{DecodingError, LoopCount, UpsamplingMethod, WebPDecodeOptions, WebPDecoder};
+use crate::decoder::{DecodeConfig, DecodingError, LoopCount, UpsamplingMethod, WebPDecoder};
 
 /// A decoded animation frame with owned RGBA pixel data.
 #[derive(Debug, Clone)]
@@ -72,17 +72,17 @@ impl<'a> AnimationDecoder<'a> {
     ///
     /// Returns an error if the data is not a valid animated WebP.
     pub fn new(data: &'a [u8]) -> Result<Self, DecodingError> {
-        Self::new_with_options(data, WebPDecodeOptions::default())
+        Self::new_with_config(data, &DecodeConfig::default())
     }
 
-    /// Create a new animation decoder with custom decode options.
+    /// Create a new animation decoder with custom decode configuration.
     ///
     /// Returns an error if the data is not a valid animated WebP.
-    pub fn new_with_options(
-        data: &'a [u8],
-        options: WebPDecodeOptions,
-    ) -> Result<Self, DecodingError> {
-        let decoder = WebPDecoder::new_with_options(data, options)?;
+    pub fn new_with_config(data: &'a [u8], config: &DecodeConfig) -> Result<Self, DecodingError> {
+        let mut decoder = WebPDecoder::new_with_options(data, config.to_options())?;
+        if config.memory_limit > 0 {
+            decoder.set_memory_limit(config.memory_limit);
+        }
         if !decoder.is_animated() {
             return Err(DecodingError::InvalidParameter(
                 alloc::string::String::from("not an animated WebP"),

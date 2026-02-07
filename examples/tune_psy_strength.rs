@@ -9,7 +9,7 @@ use imgref::Img;
 use rgb::RGB8;
 use std::env;
 use std::fs;
-use zenwebp::{decode_rgb, EncoderConfig, Preset};
+use zenwebp::{decode_rgb, ColorType, EncodeRequest, EncoderConfig, Preset};
 
 fn main() {
     let args: Vec<_> = env::args().collect();
@@ -75,9 +75,9 @@ fn main() {
             };
 
             // Encode
-            let webp = match EncoderConfig::with_preset(Preset::Default, 75.0)
-                .method(method)
-                .encode_rgb(&rgb, w as u32, h as u32)
+            let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0).method(method);
+            let webp = match EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w as u32, h as u32)
+                .encode()
             {
                 Ok(v) => v,
                 Err(_) => continue,

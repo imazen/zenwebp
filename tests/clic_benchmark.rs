@@ -9,7 +9,7 @@ use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharact
 use std::fs;
 use std::path::Path;
 use std::time::Instant;
-use zenwebp::{ColorType, EncoderParams, WebPEncoder};
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig};
 
 const CLIC_DIR: &str = "/home/lilith/work/codec-corpus/clic2025/validation";
 
@@ -123,14 +123,12 @@ struct BenchResult {
 fn benchmark_image(rgb: &[u8], width: u32, height: u32, quality: u8) -> Option<BenchResult> {
     // Encode with our encoder
     let start = Instant::now();
-    let mut ours_output = Vec::new();
-    {
-        let mut encoder = WebPEncoder::new(&mut ours_output);
-        encoder.set_params(EncoderParams::lossy(quality));
-        if encoder.encode(rgb, width, height, ColorType::Rgb8).is_err() {
-            return None;
-        }
-    }
+    let config = EncoderConfig::new().quality(quality as f32);
+    let ours_output =
+        match EncodeRequest::new(&config, rgb, ColorType::Rgb8, width, height).encode() {
+            Ok(v) => v,
+            Err(_) => return None,
+        };
     let ours_time = start.elapsed();
 
     // Encode with libwebp

@@ -3,7 +3,7 @@
 use std::io::BufReader;
 use zenwebp::decoder::vp8::Vp8Decoder;
 use zenwebp::decoder::LumaMode;
-use zenwebp::{EncoderConfig, Preset};
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig, Preset};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";
@@ -16,20 +16,22 @@ fn main() {
     let (w, h) = (info.width, info.height);
 
     // Compare I16-only vs I4-enabled
-    let zen_i16 = EncoderConfig::with_preset(Preset::Default, 75.0)
+    let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
         .method(0) // I16 only
         .sns_strength(0)
         .filter_strength(0)
-        .segments(1)
-        .encode_rgb(&rgb, w, h)
+        .segments(1);
+    let zen_i16 = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h)
+        .encode()
         .unwrap();
 
-    let zen_m4 = EncoderConfig::with_preset(Preset::Default, 75.0)
+    let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
         .method(4)
         .sns_strength(0)
         .filter_strength(0)
-        .segments(1)
-        .encode_rgb(&rgb, w, h)
+        .segments(1);
+    let zen_m4 = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h)
+        .encode()
         .unwrap();
 
     let lib_m4 = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)

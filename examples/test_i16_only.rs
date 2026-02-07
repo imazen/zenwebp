@@ -1,6 +1,6 @@
 // Compare I16-only encoding between zenwebp and libwebp
 use std::io::BufReader;
-use zenwebp::{EncoderConfig, Preset};
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig, Preset};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";
@@ -13,12 +13,13 @@ fn main() {
     let (w, h) = (info.width, info.height);
 
     // Method 0 forces I16-only
-    let zen_m0 = EncoderConfig::with_preset(Preset::Default, 75.0)
+    let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
         .method(0)
         .sns_strength(0)
         .filter_strength(0)
-        .segments(1)
-        .encode_rgb(&rgb, w, h)
+        .segments(1);
+    let zen_m0 = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h)
+        .encode()
         .unwrap();
 
     let lib_m0 = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
@@ -31,12 +32,13 @@ fn main() {
         .unwrap();
 
     // Also method 1
-    let zen_m1 = EncoderConfig::with_preset(Preset::Default, 75.0)
+    let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
         .method(1)
         .sns_strength(0)
         .filter_strength(0)
-        .segments(1)
-        .encode_rgb(&rgb, w, h)
+        .segments(1);
+    let zen_m1 = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h)
+        .encode()
         .unwrap();
 
     let lib_m1 = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)

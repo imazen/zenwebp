@@ -2,7 +2,7 @@
 use std::io::BufReader;
 use zenwebp::decoder::vp8::Vp8Decoder;
 use zenwebp::decoder::LumaMode;
-use zenwebp::{EncoderConfig, Preset};
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig, Preset};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";
@@ -52,12 +52,13 @@ fn main() {
     );
 
     // zenwebp uses BMODE_COST=211 by default
-    let zen_m4 = EncoderConfig::with_preset(Preset::Default, 75.0)
+    let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
         .method(4)
         .sns_strength(0)
         .filter_strength(0)
-        .segments(1)
-        .encode_rgb(&rgb, w, h)
+        .segments(1);
+    let zen_m4 = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h)
+        .encode()
         .unwrap();
 
     let zen_vp8 = extract_vp8(&zen_m4).unwrap();

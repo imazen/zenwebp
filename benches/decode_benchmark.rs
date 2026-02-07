@@ -7,6 +7,7 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
 use std::path::Path;
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig};
 
 /// Load a PNG image, encode to WebP, return WebP data.
 fn make_webp(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
@@ -28,11 +29,9 @@ fn make_webp(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
         _ => return None,
     };
 
-    // Encode to WebP using zenwebp
-    let webp = zenwebp::EncoderConfig::new()
-        .quality(75.0)
-        .method(4)
-        .encode_rgb(&rgb_data, info.width, info.height)
+    let config = EncoderConfig::new().quality(75.0).method(4);
+    let webp = EncodeRequest::new(&config, &rgb_data, ColorType::Rgb8, info.width, info.height)
+        .encode()
         .ok()?;
 
     Some((webp, info.width, info.height))
@@ -76,7 +75,6 @@ fn bench_decode(c: &mut Criterion) {
         let pixels = (width * height) as u64;
         group.throughput(Throughput::Elements(pixels));
 
-        // Benchmark zenwebp decoder
         group.bench_with_input(
             BenchmarkId::new("zenwebp", test.name),
             &webp_data,
@@ -88,7 +86,6 @@ fn bench_decode(c: &mut Criterion) {
             },
         );
 
-        // Benchmark webp crate (libwebp binding) decoder for comparison
         group.bench_with_input(
             BenchmarkId::new("libwebp", test.name),
             &webp_data,
@@ -107,9 +104,8 @@ fn bench_decode(c: &mut Criterion) {
 
 fn bench_decode_large(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode_large");
-    group.sample_size(20); // Fewer samples for large images
+    group.sample_size(20);
 
-    // Try CLIC images if available
     let clic_paths = [
         "/mnt/v/clic/clic2025_test_image_000001.png",
         "/mnt/v/clic/clic2025_test_image_000010.png",

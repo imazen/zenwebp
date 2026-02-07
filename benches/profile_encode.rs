@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::time::Instant;
-use zenwebp::{ColorType, EncoderParams, WebPEncoder};
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig};
 
 fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
     let file = std::fs::File::open(path).unwrap();
@@ -31,7 +31,7 @@ fn main() {
         .get(1)
         .map(|s| s.as_str())
         .unwrap_or("/mnt/v/work/codec-corpus/CID22/CID22-512/validation/792079.png");
-    let quality: u8 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(75);
+    let quality: f32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(75.0);
     let iterations: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(10);
     let method: u8 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(4);
 
@@ -45,28 +45,18 @@ fn main() {
     );
 
     // Warmup
-    let mut output = Vec::new();
-    {
-        let mut encoder = WebPEncoder::new(&mut output);
-        let mut params = EncoderParams::lossy(quality);
-        params.method = method;
-        encoder.set_params(params);
-        encoder
-            .encode(&rgb_data, width, height, ColorType::Rgb8)
-            .unwrap();
-    }
+    let config = EncoderConfig::new().quality(quality).method(method);
+    let output = EncodeRequest::new(&config, &rgb_data, ColorType::Rgb8, width, height)
+        .encode()
+        .unwrap();
     println!("Output size: {} bytes", output.len());
 
     // Timed iterations
     let start = Instant::now();
     for _ in 0..iterations {
-        output.clear();
-        let mut encoder = WebPEncoder::new(&mut output);
-        let mut params = EncoderParams::lossy(quality);
-        params.method = method;
-        encoder.set_params(params);
-        encoder
-            .encode(&rgb_data, width, height, ColorType::Rgb8)
+        let config = EncoderConfig::new().quality(quality).method(method);
+        let _output = EncodeRequest::new(&config, &rgb_data, ColorType::Rgb8, width, height)
+            .encode()
             .unwrap();
     }
     let elapsed = start.elapsed();

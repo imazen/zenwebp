@@ -15,7 +15,7 @@ use std::io::BufReader;
 use webpx::Unstoppable;
 use zenwebp::decoder::vp8::{DiagnosticFrame, Vp8Decoder};
 use zenwebp::decoder::LumaMode;
-use zenwebp::{EncoderConfig, Preset};
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig, Preset};
 
 // ============================================================================
 // Image Loading
@@ -102,14 +102,15 @@ fn extract_vp8_chunk(webp: &[u8]) -> Option<&[u8]> {
 
 /// Encode with zenwebp using diagnostic-friendly settings
 fn encode_zenwebp(rgb: &[u8], width: u32, height: u32, quality: f32, method: u8) -> Vec<u8> {
-    EncoderConfig::with_preset(Preset::Default, quality)
+    let config = EncoderConfig::with_preset(Preset::Default, quality)
         .method(method)
         // Disable SNS and filtering for cleaner comparison
         .sns_strength(0)
         .filter_strength(0)
         .filter_sharpness(0)
-        .segments(1) // Single segment simplifies quantizer comparison
-        .encode_rgb(rgb, width, height)
+        .segments(1); // Single segment simplifies quantizer comparison
+    EncodeRequest::new(&config, rgb, ColorType::Rgb8, width, height)
+        .encode()
         .expect("zenwebp encoding failed")
 }
 

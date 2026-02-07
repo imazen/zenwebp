@@ -4,7 +4,7 @@
 
 use std::env;
 use std::fs;
-use zenwebp::EncoderConfig;
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -24,19 +24,19 @@ fn main() {
     let diagnostic = args.get(6).is_none_or(|s| s != "default");
 
     let output = if diagnostic {
-        EncoderConfig::new()
+        let _cfg = EncoderConfig::new()
             .quality(quality)
             .method(method)
             .sns_strength(0)
             .filter_strength(0)
-            .segments(1)
-            .encode_rgb(&rgb_data, width, height)
+            .segments(1);
+        EncodeRequest::new(&_cfg, &rgb_data, ColorType::Rgb8, width, height)
+            .encode()
             .unwrap()
     } else {
-        EncoderConfig::new()
-            .quality(quality)
-            .method(method)
-            .encode_rgb(&rgb_data, width, height)
+        let _cfg = EncoderConfig::new().quality(quality).method(method);
+        EncodeRequest::new(&_cfg, &rgb_data, ColorType::Rgb8, width, height)
+            .encode()
             .unwrap()
     };
 

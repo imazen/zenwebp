@@ -1,7 +1,7 @@
 //! Corpus comparison at method 3
 use std::env;
 use std::fs;
-use zenwebp::{EncoderConfig, Preset};
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig, Preset};
 
 fn main() {
     let args: Vec<_> = env::args().collect();
@@ -39,12 +39,13 @@ fn main() {
         let rgb = buf[..info.buffer_size()].to_vec();
         let (w, h) = (info.width, info.height);
 
-        let zen = EncoderConfig::with_preset(Preset::Default, 75.0)
+        let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
             .method(3) // Method 3
             .sns_strength(0)
             .filter_strength(0)
-            .segments(1)
-            .encode_rgb(&rgb, w, h)
+            .segments(1);
+        let zen = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h)
+            .encode()
             .unwrap();
 
         let lib = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)

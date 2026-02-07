@@ -11,17 +11,18 @@ fn main() {
     let (w, h) = (info.width, info.height);
 
     use zenwebp::decoder::vp8::Vp8Decoder;
-    use zenwebp::{EncoderConfig, Preset};
+    use zenwebp::{ColorType, EncodeRequest, EncoderConfig, Preset};
 
     println!("=== Quantizer Comparison at Q75 ===\n");
 
     // Encode with both
-    let zen = EncoderConfig::with_preset(Preset::Default, 75.0)
+    let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
         .method(4)
         .sns_strength(0)
         .filter_strength(0)
-        .segments(1)
-        .encode_rgb(&rgb, w, h)
+        .segments(1);
+    let zen = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h)
+        .encode()
         .unwrap();
 
     let lib = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)

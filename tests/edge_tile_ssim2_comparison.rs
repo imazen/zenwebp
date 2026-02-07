@@ -13,7 +13,7 @@
 
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use std::path::{Path, PathBuf};
-use zenwebp::{ColorType, EncoderParams, WebPEncoder};
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig};
 
 const KODAK_PATH: &str = concat!(env!("HOME"), "/work/codec-corpus/kodak");
 
@@ -101,13 +101,10 @@ fn tile_bottom_edge(rgb: &[u8], width: usize, height: usize, edge_height: usize)
 
 /// Encode with our encoder
 fn encode_ours(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
-    let mut output = Vec::new();
-    let mut encoder = WebPEncoder::new(&mut output);
-    encoder.set_params(EncoderParams::lossy(quality));
-    encoder
-        .encode(rgb, width, height, ColorType::Rgb8)
-        .expect("Encoding failed");
-    output
+    let config = EncoderConfig::new().quality(quality as f32);
+    EncodeRequest::new(&config, rgb, ColorType::Rgb8, width, height)
+        .encode()
+        .expect("Encoding failed")
 }
 
 /// Encode with libwebp

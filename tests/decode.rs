@@ -37,17 +37,18 @@ fn save_image(data: &[u8], file: &str, i: Option<u32>, has_alpha: bool, width: u
 }
 
 fn reference_test(file: &str) {
-    reference_test_with_options(file, zenwebp::WebPDecodeOptions::default(), None);
+    reference_test_with_options(file, zenwebp::DecodeConfig::default(), None);
 }
 
 fn reference_test_with_options(
     file: &str,
-    options: zenwebp::WebPDecodeOptions,
+    options: zenwebp::DecodeConfig,
     custom_reference_file: Option<&str>,
 ) {
     // Prepare WebP decoder
     let contents = std::fs::read(format!("tests/images/{file}.webp")).unwrap();
-    let mut decoder = zenwebp::WebPDecoder::new_with_options(&contents, options).unwrap();
+    let mut decoder = zenwebp::WebPDecoder::new(&contents).unwrap();
+    decoder.set_lossy_upsampling(options.upsampling);
     let (width, height) = decoder.dimensions();
 
     // Decode reference PNG
@@ -170,8 +171,8 @@ macro_rules! reftest_nofancy {
         paste::paste! {
             #[test]
             fn [<reftest_nofancy_ $basename _ $name>]() {
-                let mut options = zenwebp::WebPDecodeOptions::default();
-                options.lossy_upsampling = zenwebp::UpsamplingMethod::Simple;
+                let mut options = zenwebp::DecodeConfig::default();
+                options.upsampling = zenwebp::UpsamplingMethod::Simple;
                 reference_test_with_options(
                     concat!(stringify!($basename), "/", stringify!($name)),
                     options,

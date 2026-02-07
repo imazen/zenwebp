@@ -2,7 +2,7 @@
 //
 // This helps determine if our I4 mode selections are beneficial or harmful
 
-use zenwebp::{EncoderConfig, Preset};
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig, Preset};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";
@@ -24,12 +24,13 @@ fn main() {
     ];
 
     for (name, method) in settings {
-        let webp = EncoderConfig::with_preset(Preset::Default, 75.0)
+        let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
             .method(method)
             .sns_strength(0)
             .filter_strength(0)
-            .segments(1)
-            .encode_rgb(&rgb, w, h)
+            .segments(1);
+        let webp = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h)
+            .encode()
             .unwrap();
         println!("{}: {} bytes", name, webp.len());
     }

@@ -18,29 +18,17 @@
 //!
 //! All decoding functions take `&[u8]` slices directly - no Read/Seek traits required.
 //!
-//! # Encoding (requires `std`)
+//! # Encoding
 //!
-//! Use the [`Encoder`] builder for a fluent API:
-//!
-//! ```rust
-//! use zenwebp::{Encoder, Preset};
-//!
-//! let rgba_data = vec![255u8; 4 * 4 * 4]; // 4x4 RGBA image
-//! let webp = Encoder::new_rgba(&rgba_data, 4, 4)
-//!     .preset(Preset::Photo)
-//!     .quality(85.0)
-//!     .encode()?;
-//! # Ok::<(), zenwebp::EncodingError>(())
-//! ```
-//!
-//! Or use [`EncoderConfig`] for reusable configuration:
+//! Use [`EncoderConfig`] + [`EncodeRequest`]:
 //!
 //! ```rust
-//! use zenwebp::{EncoderConfig, Preset};
+//! use zenwebp::{EncodeRequest, EncoderConfig, ColorType, Preset};
 //!
 //! let config = EncoderConfig::new().quality(85.0).preset(Preset::Photo);
 //! let rgba_data = vec![255u8; 4 * 4 * 4];
-//! let webp = config.encode_rgba(&rgba_data, 4, 4)?;
+//! let webp = EncodeRequest::new(&config, &rgba_data, ColorType::Rgba8, 4, 4)
+//!     .encode()?;
 //! # Ok::<(), zenwebp::EncodingError>(())
 //! ```
 //!
@@ -111,14 +99,14 @@ pub mod heuristics;
 // Re-export decoder public API
 pub use decoder::{
     decode_bgr, decode_bgr_into, decode_bgra, decode_bgra_into, decode_rgb, decode_rgb_into,
-    decode_rgba, decode_rgba_into, decode_yuv420, BitstreamFormat, DecodingError, ImageInfo,
-    LoopCount, UpsamplingMethod, WebPDecodeOptions, WebPDecoder, YuvPlanes,
+    decode_rgba, decode_rgba_into, decode_yuv420, BitstreamFormat, DecodeConfig, DecodeRequest,
+    DecodingError, ImageInfo, LoopCount, UpsamplingMethod, WebPDecoder, YuvPlanes,
 };
 
 // Re-export encoder public API
 pub use encoder::{
-    ClassifierDiag, ColorType, ContentType, EncodeProgress, Encoder, EncoderConfig, EncoderParams,
-    EncodingError, EncodingStats, NoProgress, Preset, WebPEncoder,
+    ClassifierDiag, ColorType, ContentType, EncodeProgress, EncodeRequest, EncoderConfig,
+    EncodingError, EncodingStats, NoProgress, Preset,
 };
 
 // Re-export mux/demux public API
@@ -155,24 +143,6 @@ pub fn exif(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
 pub fn xmp(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
     let demuxer = WebPDemuxer::new(data)?;
     Ok(demuxer.xmp().map(|s| s.to_vec()))
-}
-
-/// Extract the ICC color profile from WebP data, if present.
-#[deprecated(since = "0.3.0", note = "use `icc_profile()` instead")]
-pub fn get_icc_profile(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
-    icc_profile(data)
-}
-
-/// Extract EXIF metadata from WebP data, if present.
-#[deprecated(since = "0.3.0", note = "use `exif()` instead")]
-pub fn get_exif(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
-    exif(data)
-}
-
-/// Extract XMP metadata from WebP data, if present.
-#[deprecated(since = "0.3.0", note = "use `xmp()` instead")]
-pub fn get_xmp(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
-    xmp(data)
 }
 
 /// Embed an ICC color profile into WebP data.

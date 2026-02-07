@@ -1,22 +1,20 @@
 //! Encoding of WebP images.
 //!
-//! # Builder API (webpx-compatible)
+//! # API
 //!
 //! ```rust
-//! use zenwebp::{Encoder, Preset};
+//! use zenwebp::{EncodeRequest, EncoderConfig, ColorType, Preset};
 //!
-//! let rgba_data = vec![255u8; 4 * 4 * 4]; // 4x4 RGBA image
-//! let webp = Encoder::new_rgba(&rgba_data, 4, 4)
+//! let config = EncoderConfig::new()
 //!     .preset(Preset::Photo)
 //!     .quality(85.0)
-//!     .method(4)
+//!     .method(4);
+//!
+//! let rgba_data = vec![255u8; 4 * 4 * 4]; // 4x4 RGBA image
+//! let webp = EncodeRequest::new(&config, &rgba_data, ColorType::Rgba8, 4, 4)
 //!     .encode()?;
 //! # Ok::<(), zenwebp::EncodingError>(())
 //! ```
-//!
-//! # Legacy API
-//!
-//! The [`WebPEncoder`] type provides the original API for streaming output.
 use alloc::collections::BinaryHeap;
 use alloc::format;
 use alloc::string::String;
@@ -521,22 +519,6 @@ impl Default for EncoderParams {
     }
 }
 
-impl EncoderParams {
-    /// Create parameters for lossless encoding (default).
-    pub fn lossless() -> Self {
-        Self::default()
-    }
-
-    /// Create parameters for lossy encoding with the given quality (0-100).
-    pub fn lossy(quality: u8) -> Self {
-        Self {
-            use_lossy: true,
-            lossy_quality: quality,
-            ..Self::default()
-        }
-    }
-}
-
 /// Progress callback for encoding. Return `Err(StopReason)` to cancel.
 pub trait EncodeProgress: Send + Sync {
     /// Called with encoding progress percentage (0-100).
@@ -611,13 +593,13 @@ pub struct EncodingStats {
 
 /// WebP encoder configuration. Dimension-independent, reusable across images.
 ///
-/// Use the builder pattern to configure encoding options, then call one of
-/// the `encode_*` methods to create an encoder.
+/// All fields are public for direct construction and inspection.
+/// Builder methods are provided for ergonomic chained construction.
 ///
 /// # Example
 ///
 /// ```rust
-/// use zenwebp::{EncoderConfig, Preset};
+/// use zenwebp::{EncoderConfig, EncodeRequest, ColorType, Preset};
 ///
 /// let config = EncoderConfig::new()
 ///     .quality(85.0)
@@ -627,26 +609,40 @@ pub struct EncodingStats {
 /// // Reuse config for multiple images
 /// let image1 = vec![0u8; 4 * 4 * 4]; // 4x4 RGBA
 /// let image2 = vec![0u8; 8 * 6 * 4]; // 8x6 RGBA
-/// let webp1 = config.encode_rgba(&image1, 4, 4)?;
-/// let webp2 = config.encode_rgba(&image2, 8, 6)?;
+/// let webp1 = EncodeRequest::new(&config, &image1, ColorType::Rgba8, 4, 4).encode()?;
+/// let webp2 = EncodeRequest::new(&config, &image2, ColorType::Rgba8, 8, 6).encode()?;
 /// # Ok::<(), zenwebp::EncodingError>(())
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EncoderConfig {
-    quality: f32,
-    preset: Preset,
-    lossless: bool,
-    method: u8,
-    near_lossless: u8,
-    alpha_quality: u8,
-    exact: bool,
-    target_size: u32,
-    target_psnr: f32,
-    use_sharp_yuv: bool,
-    sns_strength_override: Option<u8>,
-    filter_strength_override: Option<u8>,
-    filter_sharpness_override: Option<u8>,
-    segments_override: Option<u8>,
+    /// Encoding quality (0.0 = smallest, 100.0 = best). Default: 75.0.
+    pub quality: f32,
+    /// Content-aware preset. Default: `Preset::Default`.
+    pub preset: Preset,
+    /// Whether to use lossless compression. Default: `false`.
+    pub lossless: bool,
+    /// Quality/speed tradeoff (0 = fast, 6 = slower but better). Default: 4.
+    pub method: u8,
+    /// Near-lossless preprocessing (0 = max preprocessing, 100 = off). Default: 100.
+    pub near_lossless: u8,
+    /// Alpha channel quality (0-100, 100 = lossless alpha). Default: 100.
+    pub alpha_quality: u8,
+    /// Preserve exact RGB values under transparent areas. Default: `false`.
+    pub exact: bool,
+    /// Target file size in bytes (0 = disabled). Default: 0.
+    pub target_size: u32,
+    /// Target PSNR in dB (0.0 = disabled). Default: 0.0.
+    pub target_psnr: f32,
+    /// Use sharp (iterative) YUV conversion. Default: `false`.
+    pub sharp_yuv: bool,
+    /// Spatial noise shaping strength override (0-100). `None` = use preset default.
+    pub sns_strength: Option<u8>,
+    /// Loop filter strength override (0-100). `None` = use preset default.
+    pub filter_strength: Option<u8>,
+    /// Loop filter sharpness override (0-7). `None` = use preset default.
+    pub filter_sharpness: Option<u8>,
+    /// Number of segments override (1-4). `None` = use preset default.
+    pub segments: Option<u8>,
 }
 
 impl Default for EncoderConfig {
@@ -661,11 +657,11 @@ impl Default for EncoderConfig {
             exact: false,
             target_size: 0,
             target_psnr: 0.0,
-            use_sharp_yuv: false,
-            sns_strength_override: None,
-            filter_strength_override: None,
-            filter_sharpness_override: None,
-            segments_override: None,
+            sharp_yuv: false,
+            sns_strength: None,
+            filter_strength: None,
+            filter_sharpness: None,
+            segments: None,
         }
     }
 }
@@ -766,80 +762,35 @@ impl EncoderConfig {
     /// Use sharp YUV conversion (slower but better quality).
     #[must_use]
     pub fn sharp_yuv(mut self, enable: bool) -> Self {
-        self.use_sharp_yuv = enable;
+        self.sharp_yuv = enable;
         self
-    }
-
-    /// Get the current quality setting.
-    #[must_use]
-    pub fn current_quality(&self) -> f32 {
-        self.quality
-    }
-
-    /// Get the current preset.
-    #[must_use]
-    pub fn current_preset(&self) -> Preset {
-        self.preset
-    }
-
-    /// Check if lossless mode is enabled.
-    #[must_use]
-    pub fn is_lossless(&self) -> bool {
-        self.lossless
-    }
-
-    /// Get the current method (quality/speed tradeoff).
-    #[must_use]
-    pub fn current_method(&self) -> u8 {
-        self.method
-    }
-
-    /// Get the quality setting.
-    #[deprecated(since = "0.3.0", note = "use `current_quality()` instead")]
-    #[must_use]
-    pub fn get_quality(&self) -> f32 {
-        self.quality
-    }
-
-    /// Get the preset.
-    #[deprecated(since = "0.3.0", note = "use `current_preset()` instead")]
-    #[must_use]
-    pub fn get_preset(&self) -> Preset {
-        self.preset
-    }
-
-    /// Get the method (quality/speed tradeoff).
-    #[deprecated(since = "0.3.0", note = "use `current_method()` instead")]
-    #[must_use]
-    pub fn get_method(&self) -> u8 {
-        self.method
     }
 
     /// Set spatial noise shaping strength (0-100).
     #[must_use]
     pub fn sns_strength(mut self, strength: u8) -> Self {
-        self.sns_strength_override = Some(strength.min(100));
+        self.sns_strength = Some(strength.min(100));
         self
     }
 
     /// Set loop filter strength (0-100).
     #[must_use]
     pub fn filter_strength(mut self, strength: u8) -> Self {
-        self.filter_strength_override = Some(strength.min(100));
+        self.filter_strength = Some(strength.min(100));
         self
     }
 
     /// Set loop filter sharpness (0-7).
     #[must_use]
     pub fn filter_sharpness(mut self, sharpness: u8) -> Self {
-        self.filter_sharpness_override = Some(sharpness.min(7));
+        self.filter_sharpness = Some(sharpness.min(7));
         self
     }
 
     /// Set number of segments (1-4).
     #[must_use]
     pub fn segments(mut self, segments: u8) -> Self {
-        self.segments_override = Some(segments.clamp(1, 4));
+        self.segments = Some(segments.clamp(1, 4));
         self
     }
 
@@ -861,251 +812,67 @@ impl EncoderConfig {
             use_lossy: !self.lossless,
             lossy_quality: super::fast_math::roundf(self.quality) as u8,
             method: self.method,
-            sns_strength: self.sns_strength_override.unwrap_or(sns),
-            filter_strength: self.filter_strength_override.unwrap_or(filter),
-            filter_sharpness: self.filter_sharpness_override.unwrap_or(sharp),
-            num_segments: self.segments_override.unwrap_or(segs),
+            sns_strength: self.sns_strength.unwrap_or(sns),
+            filter_strength: self.filter_strength.unwrap_or(filter),
+            filter_sharpness: self.filter_sharpness.unwrap_or(sharp),
+            num_segments: self.segments.unwrap_or(segs),
             preset: self.preset,
             target_size: self.target_size,
             target_psnr: self.target_psnr,
-            use_sharp_yuv: self.use_sharp_yuv,
+            use_sharp_yuv: self.sharp_yuv,
             alpha_quality: self.alpha_quality,
         }
-    }
-
-    /// Encode RGBA byte data to WebP.
-    pub fn encode_rgba(
-        &self,
-        data: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<Vec<u8>, EncodingError> {
-        validate_buffer_size(data.len(), width, height, 4)?;
-        let mut output = Vec::new();
-        let mut encoder = WebPEncoder::new(&mut output);
-        encoder.set_params(self.to_params());
-        encoder.encode(data, width, height, ColorType::Rgba8)?;
-        Ok(output)
-    }
-
-    /// Encode RGBA byte data to WebP, returning encoding statistics.
-    pub fn encode_rgba_with_stats(
-        &self,
-        data: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<(Vec<u8>, EncodingStats), EncodingError> {
-        validate_buffer_size(data.len(), width, height, 4)?;
-        let mut output = Vec::new();
-        let stats;
-        {
-            let mut encoder = WebPEncoder::new(&mut output);
-            encoder.set_params(self.to_params());
-            stats = encoder.encode(data, width, height, ColorType::Rgba8)?;
-        }
-        Ok((output, stats))
-    }
-
-    /// Encode RGB byte data to WebP (no alpha).
-    pub fn encode_rgb(
-        &self,
-        data: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<Vec<u8>, EncodingError> {
-        validate_buffer_size(data.len(), width, height, 3)?;
-        let mut output = Vec::new();
-        let mut encoder = WebPEncoder::new(&mut output);
-        encoder.set_params(self.to_params());
-        encoder.encode(data, width, height, ColorType::Rgb8)?;
-        Ok(output)
-    }
-
-    /// Encode RGB byte data to WebP (no alpha), returning encoding statistics.
-    pub fn encode_rgb_with_stats(
-        &self,
-        data: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<(Vec<u8>, EncodingStats), EncodingError> {
-        validate_buffer_size(data.len(), width, height, 3)?;
-        let mut output = Vec::new();
-        let stats;
-        {
-            let mut encoder = WebPEncoder::new(&mut output);
-            encoder.set_params(self.to_params());
-            stats = encoder.encode(data, width, height, ColorType::Rgb8)?;
-        }
-        Ok((output, stats))
-    }
-
-    /// Encode BGR byte data to WebP (no alpha).
-    pub fn encode_bgr(
-        &self,
-        data: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<Vec<u8>, EncodingError> {
-        validate_buffer_size(data.len(), width, height, 3)?;
-        let mut output = Vec::new();
-        let mut encoder = WebPEncoder::new(&mut output);
-        encoder.set_params(self.to_params());
-        encoder.encode(data, width, height, ColorType::Bgr8)?;
-        Ok(output)
-    }
-
-    /// Encode BGR byte data to WebP (no alpha), returning encoding statistics.
-    pub fn encode_bgr_with_stats(
-        &self,
-        data: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<(Vec<u8>, EncodingStats), EncodingError> {
-        validate_buffer_size(data.len(), width, height, 3)?;
-        let mut output = Vec::new();
-        let stats;
-        {
-            let mut encoder = WebPEncoder::new(&mut output);
-            encoder.set_params(self.to_params());
-            stats = encoder.encode(data, width, height, ColorType::Bgr8)?;
-        }
-        Ok((output, stats))
-    }
-
-    /// Encode BGRA byte data to WebP.
-    pub fn encode_bgra(
-        &self,
-        data: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<Vec<u8>, EncodingError> {
-        validate_buffer_size(data.len(), width, height, 4)?;
-        let mut output = Vec::new();
-        let mut encoder = WebPEncoder::new(&mut output);
-        encoder.set_params(self.to_params());
-        encoder.encode(data, width, height, ColorType::Bgra8)?;
-        Ok(output)
-    }
-
-    /// Encode BGRA byte data to WebP, returning encoding statistics.
-    pub fn encode_bgra_with_stats(
-        &self,
-        data: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<(Vec<u8>, EncodingStats), EncodingError> {
-        validate_buffer_size(data.len(), width, height, 4)?;
-        let mut output = Vec::new();
-        let stats;
-        {
-            let mut encoder = WebPEncoder::new(&mut output);
-            encoder.set_params(self.to_params());
-            stats = encoder.encode(data, width, height, ColorType::Bgra8)?;
-        }
-        Ok((output, stats))
-    }
-
-    /// Encode YUV 4:2:0 planar data to WebP (lossy only).
-    ///
-    /// Accepts three separate planes. This skips the internal RGB→YUV conversion.
-    pub fn encode_yuv420(
-        &self,
-        y: &[u8],
-        u: &[u8],
-        v: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<Vec<u8>, EncodingError> {
-        Encoder::new_yuv420(y, u, v, width, height)
-            .config(self.clone())
-            .encode()
-    }
-
-    /// Encode YUV 4:2:0 planar data to WebP (lossy only), returning encoding statistics.
-    pub fn encode_yuv420_with_stats(
-        &self,
-        y: &[u8],
-        u: &[u8],
-        v: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<(Vec<u8>, EncodingStats), EncodingError> {
-        Encoder::new_yuv420(y, u, v, width, height)
-            .config(self.clone())
-            .encode_with_stats()
     }
 }
 
 /// Static default progress callback (does nothing).
 static NO_PROGRESS: NoProgress = NoProgress;
 
-/// Input pixel format for the encoder.
-enum EncoderInput<'a> {
-    /// RGBA 4-channel data.
-    Rgba(&'a [u8]),
-    /// RGB 3-channel data.
-    Rgb(&'a [u8]),
-    /// Grayscale data.
-    L8(&'a [u8]),
-    /// Grayscale with alpha data.
-    La8(&'a [u8]),
-    /// BGR 3-channel data.
-    Bgr(&'a [u8]),
-    /// BGRA 4-channel data.
-    Bgra(&'a [u8]),
-    /// YUV 4:2:0 planar data (Y, U, V separate planes).
-    Yuv420 {
-        /// Luma plane.
-        y: &'a [u8],
-        /// Chroma blue plane (quarter resolution).
-        u: &'a [u8],
-        /// Chroma red plane (quarter resolution).
-        v: &'a [u8],
-    },
-}
-
-/// WebP encoder with full configuration options (webpx-compatible API).
-///
-/// This is the preferred API for encoding WebP images. Use the builder pattern
-/// to configure encoding options, then call [`encode()`](Encoder::encode) to
-/// encode the image.
+/// Encoding request that borrows configuration, pixel data, and optional
+/// callbacks. Short-lived — created, configured, and consumed in one call chain.
 ///
 /// # Example
 ///
 /// ```rust
-/// use zenwebp::{Encoder, Preset};
+/// use zenwebp::{EncodeRequest, EncoderConfig, ColorType};
 ///
-/// let rgba: &[u8] = &[0u8; 640 * 480 * 4]; // placeholder
-/// let webp = Encoder::new_rgba(rgba, 640, 480)
-///     .preset(Preset::Photo)
-///     .quality(85.0)
+/// let config = EncoderConfig::new().quality(85.0);
+/// let rgba = vec![0u8; 640 * 480 * 4];
+/// let webp = EncodeRequest::new(&config, &rgba, ColorType::Rgba8, 640, 480)
 ///     .encode()?;
 /// # Ok::<(), zenwebp::EncodingError>(())
 /// ```
-pub struct Encoder<'a> {
-    data: EncoderInput<'a>,
+pub struct EncodeRequest<'a> {
+    config: &'a EncoderConfig,
+    pixels: &'a [u8],
+    color_type: ColorType,
     width: u32,
     height: u32,
-    /// Row stride in bytes. `None` means contiguous (stride == width * bpp).
     stride_bytes: Option<usize>,
-    config: EncoderConfig,
-    icc_profile: Option<Vec<u8>>,
-    exif_metadata: Option<Vec<u8>>,
-    xmp_metadata: Option<Vec<u8>>,
+    icc_profile: Option<&'a [u8]>,
+    exif_metadata: Option<&'a [u8]>,
+    xmp_metadata: Option<&'a [u8]>,
     stop: &'a dyn enough::Stop,
     progress: &'a dyn EncodeProgress,
 }
 
-impl<'a> Encoder<'a> {
-    /// Create a new encoder for contiguous RGBA data.
+impl<'a> EncodeRequest<'a> {
+    /// Create a new encoding request.
     #[must_use]
-    pub fn new_rgba(data: &'a [u8], width: u32, height: u32) -> Self {
+    pub fn new(
+        config: &'a EncoderConfig,
+        pixels: &'a [u8],
+        color_type: ColorType,
+        width: u32,
+        height: u32,
+    ) -> Self {
         Self {
-            data: EncoderInput::Rgba(data),
+            config,
+            pixels,
+            color_type,
             width,
             height,
             stride_bytes: None,
-            config: EncoderConfig::default(),
             icc_profile: None,
             exif_metadata: None,
             xmp_metadata: None,
@@ -1114,437 +881,76 @@ impl<'a> Encoder<'a> {
         }
     }
 
-    /// Create a new encoder for contiguous RGB data (no alpha).
-    #[must_use]
-    pub fn new_rgb(data: &'a [u8], width: u32, height: u32) -> Self {
-        Self {
-            data: EncoderInput::Rgb(data),
-            width,
-            height,
-            stride_bytes: None,
-            config: EncoderConfig::default(),
-            icc_profile: None,
-            exif_metadata: None,
-            xmp_metadata: None,
-            stop: &enough::Unstoppable,
-            progress: &NO_PROGRESS,
-        }
-    }
-
-    /// Create a new encoder for grayscale data.
-    #[must_use]
-    pub fn new_l8(data: &'a [u8], width: u32, height: u32) -> Self {
-        Self {
-            data: EncoderInput::L8(data),
-            width,
-            height,
-            stride_bytes: None,
-            config: EncoderConfig::default(),
-            icc_profile: None,
-            exif_metadata: None,
-            xmp_metadata: None,
-            stop: &enough::Unstoppable,
-            progress: &NO_PROGRESS,
-        }
-    }
-
-    /// Create a new encoder for grayscale with alpha data.
-    #[must_use]
-    pub fn new_la8(data: &'a [u8], width: u32, height: u32) -> Self {
-        Self {
-            data: EncoderInput::La8(data),
-            width,
-            height,
-            stride_bytes: None,
-            config: EncoderConfig::default(),
-            icc_profile: None,
-            exif_metadata: None,
-            xmp_metadata: None,
-            stop: &enough::Unstoppable,
-            progress: &NO_PROGRESS,
-        }
-    }
-
-    /// Create a new encoder for contiguous BGR data (no alpha).
-    #[must_use]
-    pub fn new_bgr(data: &'a [u8], width: u32, height: u32) -> Self {
-        Self {
-            data: EncoderInput::Bgr(data),
-            width,
-            height,
-            stride_bytes: None,
-            config: EncoderConfig::default(),
-            icc_profile: None,
-            exif_metadata: None,
-            xmp_metadata: None,
-            stop: &enough::Unstoppable,
-            progress: &NO_PROGRESS,
-        }
-    }
-
-    /// Create a new encoder for contiguous BGRA data.
-    #[must_use]
-    pub fn new_bgra(data: &'a [u8], width: u32, height: u32) -> Self {
-        Self {
-            data: EncoderInput::Bgra(data),
-            width,
-            height,
-            stride_bytes: None,
-            config: EncoderConfig::default(),
-            icc_profile: None,
-            exif_metadata: None,
-            xmp_metadata: None,
-            stop: &enough::Unstoppable,
-            progress: &NO_PROGRESS,
-        }
-    }
-
-    /// Create a new encoder for YUV 4:2:0 planar data.
-    ///
-    /// Accepts three separate planes: Y (full resolution), U and V (quarter resolution).
-    /// This skips the internal RGB→YUV conversion, which is useful when you already
-    /// have YUV data (e.g., from a video decoder).
-    ///
-    /// Only lossy encoding is supported for YUV input.
-    ///
-    /// # Panics
-    ///
-    /// Panics if plane sizes don't match the expected dimensions.
-    #[must_use]
-    pub fn new_yuv420(y: &'a [u8], u: &'a [u8], v: &'a [u8], width: u32, height: u32) -> Self {
-        Self {
-            data: EncoderInput::Yuv420 { y, u, v },
-            width,
-            height,
-            stride_bytes: None,
-            config: EncoderConfig::default(),
-            icc_profile: None,
-            exif_metadata: None,
-            xmp_metadata: None,
-            stop: &enough::Unstoppable,
-            progress: &NO_PROGRESS,
-        }
-    }
-
-    /// Create a new encoder from typed pixel data.
-    ///
-    /// Accepts any type implementing [`EncodePixel`](crate::pixel::EncodePixel):
-    /// [`Rgb<u8>`](rgb::Rgb), [`Rgba<u8>`](rgb::Rgba), [`Bgr<u8>`](rgb::Bgr),
-    /// [`Bgra<u8>`](rgb::Bgra), [`Gray<u8>`](rgb::Gray),
-    /// [`GrayAlpha<u8>`](rgb::GrayAlpha).
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use zenwebp::Encoder;
-    /// use rgb::Rgba;
-    ///
-    /// let pixels = vec![Rgba { r: 255, g: 0, b: 0, a: 255 }; 4 * 4];
-    /// let webp = Encoder::from_pixels(&pixels, 4, 4)
-    ///     .quality(90.0)
-    ///     .encode()?;
-    /// # Ok::<(), zenwebp::EncodingError>(())
-    /// ```
-    #[cfg(feature = "pixel-types")]
-    #[must_use]
-    pub fn from_pixels<P: crate::pixel::EncodePixel>(data: &'a [P], width: u32, height: u32) -> Self
-    where
-        [P]: rgb::ComponentBytes<u8>,
-    {
-        use rgb::ComponentBytes;
-        let bytes: &[u8] = data.as_bytes();
-        let color = P::color_type();
-        // Map ColorType to the right EncoderInput variant
-        let input = match color {
-            ColorType::Rgb8 => EncoderInput::Rgb(bytes),
-            ColorType::Rgba8 => EncoderInput::Rgba(bytes),
-            ColorType::Bgr8 => EncoderInput::Bgr(bytes),
-            ColorType::Bgra8 => EncoderInput::Bgra(bytes),
-            ColorType::L8 => EncoderInput::L8(bytes),
-            ColorType::La8 => EncoderInput::La8(bytes),
-            ColorType::Yuv420 => unreachable!("no EncodePixel impl for YUV420"),
-        };
-        Self {
-            data: input,
-            width,
-            height,
-            stride_bytes: None,
-            config: EncoderConfig::default(),
-            icc_profile: None,
-            exif_metadata: None,
-            xmp_metadata: None,
-            stop: &enough::Unstoppable,
-            progress: &NO_PROGRESS,
-        }
-    }
-
-    /// Create a new encoder for RGBA data with explicit row stride.
-    ///
-    /// `stride_bytes` is the number of bytes between the start of consecutive
-    /// rows. Must be >= `width * 4`.
-    #[must_use]
-    pub fn new_rgba_stride(data: &'a [u8], width: u32, height: u32, stride_bytes: usize) -> Self {
-        Self {
-            data: EncoderInput::Rgba(data),
-            width,
-            height,
-            stride_bytes: Some(stride_bytes),
-            config: EncoderConfig::default(),
-            icc_profile: None,
-            exif_metadata: None,
-            xmp_metadata: None,
-            stop: &enough::Unstoppable,
-            progress: &NO_PROGRESS,
-        }
-    }
-
-    /// Create a new encoder for RGB data with explicit row stride.
-    #[must_use]
-    pub fn new_rgb_stride(data: &'a [u8], width: u32, height: u32, stride_bytes: usize) -> Self {
-        Self {
-            data: EncoderInput::Rgb(data),
-            width,
-            height,
-            stride_bytes: Some(stride_bytes),
-            config: EncoderConfig::default(),
-            icc_profile: None,
-            exif_metadata: None,
-            xmp_metadata: None,
-            stop: &enough::Unstoppable,
-            progress: &NO_PROGRESS,
-        }
-    }
-
-    /// Set encoding quality (0.0 = smallest, 100.0 = best).
-    #[must_use]
-    pub fn quality(mut self, quality: f32) -> Self {
-        self.config = self.config.quality(quality);
-        self
-    }
-
-    /// Set content-aware preset.
-    #[must_use]
-    pub fn preset(mut self, preset: Preset) -> Self {
-        self.config = self.config.preset(preset);
-        self
-    }
-
-    /// Enable lossless compression.
-    #[must_use]
-    pub fn lossless(mut self, lossless: bool) -> Self {
-        self.config = self.config.lossless(lossless);
-        self
-    }
-
-    /// Set quality/speed tradeoff (0 = fast, 6 = slower but better).
-    #[must_use]
-    pub fn method(mut self, method: u8) -> Self {
-        self.config = self.config.method(method);
-        self
-    }
-
-    /// Set near-lossless preprocessing (0 = max, 100 = off).
-    #[must_use]
-    pub fn near_lossless(mut self, value: u8) -> Self {
-        self.config = self.config.near_lossless(value);
-        self
-    }
-
-    /// Set alpha quality (0-100).
-    #[must_use]
-    pub fn alpha_quality(mut self, quality: u8) -> Self {
-        self.config = self.config.alpha_quality(quality);
-        self
-    }
-
-    /// Preserve exact RGB values under transparent areas.
-    #[must_use]
-    pub fn exact(mut self, exact: bool) -> Self {
-        self.config = self.config.exact(exact);
-        self
-    }
-
-    /// Set target file size in bytes (0 = disabled).
-    #[must_use]
-    pub fn target_size(mut self, size: u32) -> Self {
-        self.config = self.config.target_size(size);
-        self
-    }
-
-    /// Set target PSNR in dB (0.0 = disabled).
-    #[must_use]
-    pub fn target_psnr(mut self, psnr: f32) -> Self {
-        self.config = self.config.target_psnr(psnr);
-        self
-    }
-
-    /// Use sharp YUV conversion (slower but better).
-    #[must_use]
-    pub fn sharp_yuv(mut self, enable: bool) -> Self {
-        self.config = self.config.sharp_yuv(enable);
-        self
-    }
-
-    /// Set a cooperative cancellation token. Encoding will check this
-    /// periodically and return [`EncodingError::Cancelled`] if stopped.
+    /// Set a cooperative cancellation token.
     #[must_use]
     pub fn stop(mut self, stop: &'a dyn enough::Stop) -> Self {
         self.stop = stop;
         self
     }
 
-    /// Set a progress callback. Called with percentage (0-100) during encoding.
-    /// Return `Err(StopReason)` from the callback to cancel.
+    /// Set a progress callback.
     #[must_use]
     pub fn progress(mut self, progress: &'a dyn EncodeProgress) -> Self {
         self.progress = progress;
         self
     }
 
-    /// Set spatial noise shaping strength (0-100).
+    /// Set row stride in bytes. Must be >= `width * bytes_per_pixel`.
     #[must_use]
-    pub fn sns_strength(mut self, strength: u8) -> Self {
-        self.config = self.config.sns_strength(strength);
-        self
-    }
-
-    /// Set loop filter strength (0-100).
-    #[must_use]
-    pub fn filter_strength(mut self, strength: u8) -> Self {
-        self.config = self.config.filter_strength(strength);
-        self
-    }
-
-    /// Set loop filter sharpness (0-7).
-    #[must_use]
-    pub fn filter_sharpness(mut self, sharpness: u8) -> Self {
-        self.config = self.config.filter_sharpness(sharpness);
-        self
-    }
-
-    /// Set number of segments (1-4).
-    #[must_use]
-    pub fn segments(mut self, segments: u8) -> Self {
-        self.config = self.config.segments(segments);
-        self
-    }
-
-    /// Set full encoder configuration.
-    #[must_use]
-    pub fn config(mut self, config: EncoderConfig) -> Self {
-        self.config = config;
+    pub fn stride(mut self, stride: usize) -> Self {
+        self.stride_bytes = Some(stride);
         self
     }
 
     /// Set ICC profile to embed.
     #[must_use]
-    pub fn icc_profile(mut self, profile: Vec<u8>) -> Self {
-        self.icc_profile = Some(profile);
+    pub fn icc_profile(mut self, data: &'a [u8]) -> Self {
+        self.icc_profile = Some(data);
         self
     }
 
     /// Set EXIF metadata to embed.
     #[must_use]
-    pub fn exif_metadata(mut self, data: Vec<u8>) -> Self {
+    pub fn exif(mut self, data: &'a [u8]) -> Self {
         self.exif_metadata = Some(data);
         self
     }
 
     /// Set XMP metadata to embed.
     #[must_use]
-    pub fn xmp_metadata(mut self, data: Vec<u8>) -> Self {
+    pub fn xmp(mut self, data: &'a [u8]) -> Self {
         self.xmp_metadata = Some(data);
         self
     }
 
     /// Encode to WebP bytes.
-    ///
-    /// Returns the encoded WebP data.
     pub fn encode(self) -> Result<Vec<u8>, EncodingError> {
         let (output, _stats) = self.encode_inner()?;
         Ok(output)
     }
 
+    /// Encode to WebP bytes, appending to an existing Vec.
+    pub fn encode_into(self, output: &mut Vec<u8>) -> Result<(), EncodingError> {
+        let encoded = self.encode()?;
+        output.extend_from_slice(&encoded);
+        Ok(())
+    }
+
     /// Encode to WebP bytes and return encoding statistics.
-    ///
-    /// Returns the encoded WebP data along with [`EncodingStats`] containing
-    /// PSNR measurements, block counts, and other encoding details.
     pub fn encode_with_stats(self) -> Result<(Vec<u8>, EncodingStats), EncodingError> {
         self.encode_inner()
     }
 
+    /// Encode to WebP, writing to an [`io::Write`](std::io::Write) implementor.
+    #[cfg(feature = "std")]
+    pub fn encode_to_writer<W: std::io::Write>(self, mut writer: W) -> Result<(), EncodingError> {
+        let encoded = self.encode()?;
+        writer.write_all(&encoded)?;
+        Ok(())
+    }
+
     fn encode_inner(self) -> Result<(Vec<u8>, EncodingStats), EncodingError> {
-        let (data, color_type) = match &self.data {
-            EncoderInput::Rgba(d) => (*d, ColorType::Rgba8),
-            EncoderInput::Rgb(d) => (*d, ColorType::Rgb8),
-            EncoderInput::L8(d) => (*d, ColorType::L8),
-            EncoderInput::La8(d) => (*d, ColorType::La8),
-            EncoderInput::Bgr(d) => (*d, ColorType::Bgr8),
-            EncoderInput::Bgra(d) => (*d, ColorType::Bgra8),
-            EncoderInput::Yuv420 { y, u, v } => {
-                // For YUV420, pack planes into a single buffer: [Y, U, V]
-                let y_size = (self.width as usize) * (self.height as usize);
-                let uv_w = (self.width as usize).div_ceil(2);
-                let uv_h = (self.height as usize).div_ceil(2);
-                let uv_size = uv_w * uv_h;
-
-                if y.len() < y_size {
-                    return Err(EncodingError::InvalidBufferSize(format!(
-                        "Y plane too small: got {}, expected {}",
-                        y.len(),
-                        y_size
-                    )));
-                }
-                if u.len() < uv_size {
-                    return Err(EncodingError::InvalidBufferSize(format!(
-                        "U plane too small: got {}, expected {}",
-                        u.len(),
-                        uv_size
-                    )));
-                }
-                if v.len() < uv_size {
-                    return Err(EncodingError::InvalidBufferSize(format!(
-                        "V plane too small: got {}, expected {}",
-                        v.len(),
-                        uv_size
-                    )));
-                }
-
-                let mut packed = Vec::with_capacity(y_size + uv_size * 2);
-                packed.extend_from_slice(&y[..y_size]);
-                packed.extend_from_slice(&u[..uv_size]);
-                packed.extend_from_slice(&v[..uv_size]);
-
-                let params = self.config.to_params();
-                if !params.use_lossy {
-                    return Err(EncodingError::InvalidBufferSize(
-                        "YUV 4:2:0 input only supports lossy encoding".into(),
-                    ));
-                }
-
-                let mut output = Vec::new();
-                let stats;
-                {
-                    let mut encoder = WebPEncoder::new(&mut output);
-                    encoder.set_params(params);
-                    encoder.set_stop(self.stop);
-                    encoder.set_progress(self.progress);
-                    if let Some(icc) = self.icc_profile {
-                        encoder.set_icc_profile(icc);
-                    }
-                    if let Some(exif) = self.exif_metadata {
-                        encoder.set_exif_metadata(exif);
-                    }
-                    if let Some(xmp) = self.xmp_metadata {
-                        encoder.set_xmp_metadata(xmp);
-                    }
-                    stats = encoder.encode(&packed, self.width, self.height, ColorType::Yuv420)?;
-                }
-                return Ok((output, stats));
-            }
-        };
-
-        let bpp = color_type.bytes_per_pixel();
+        let bpp = self.color_type.bytes_per_pixel();
         let row_bytes = self.width as usize * bpp;
 
         // If stride is set and differs from row width, compact the data
@@ -1557,21 +963,21 @@ impl<'a> Encoder<'a> {
                 )));
             }
             if stride == row_bytes {
-                // Stride matches — no copy needed
-                data
+                self.pixels
             } else {
-                // Copy rows to contiguous buffer
                 compacted = (0..self.height as usize)
-                    .flat_map(|y| &data[y * stride..y * stride + row_bytes])
+                    .flat_map(|y| &self.pixels[y * stride..y * stride + row_bytes])
                     .copied()
                     .collect::<Vec<u8>>();
                 &compacted
             }
         } else {
-            data
+            self.pixels
         };
 
-        validate_buffer_size(encode_data.len(), self.width, self.height, bpp as u32)?;
+        if self.color_type != ColorType::Yuv420 {
+            validate_buffer_size(encode_data.len(), self.width, self.height, bpp as u32)?;
+        }
 
         let mut output = Vec::new();
         let stats;
@@ -1581,35 +987,17 @@ impl<'a> Encoder<'a> {
             encoder.set_stop(self.stop);
             encoder.set_progress(self.progress);
             if let Some(icc) = self.icc_profile {
-                encoder.set_icc_profile(icc);
+                encoder.set_icc_profile(icc.to_vec());
             }
             if let Some(exif) = self.exif_metadata {
-                encoder.set_exif_metadata(exif);
+                encoder.set_exif_metadata(exif.to_vec());
             }
             if let Some(xmp) = self.xmp_metadata {
-                encoder.set_xmp_metadata(xmp);
+                encoder.set_xmp_metadata(xmp.to_vec());
             }
-            stats = encoder.encode(encode_data, self.width, self.height, color_type)?;
+            stats = encoder.encode(encode_data, self.width, self.height, self.color_type)?;
         }
         Ok((output, stats))
-    }
-
-    /// Encode to WebP, appending to an existing Vec.
-    pub fn encode_into(self, output: &mut Vec<u8>) -> Result<(), EncodingError> {
-        let encoded = self.encode()?;
-        output.extend_from_slice(&encoded);
-        Ok(())
-    }
-}
-
-// std-only encode_to_writer method
-#[cfg(feature = "std")]
-impl Encoder<'_> {
-    /// Encode to WebP, writing to an [`io::Write`](std::io::Write) implementor.
-    pub fn encode_to_writer<W: std::io::Write>(self, mut writer: W) -> Result<(), EncodingError> {
-        let encoded = self.encode()?;
-        writer.write_all(&encoded)?;
-        Ok(())
     }
 }
 
@@ -2067,8 +1455,8 @@ pub(crate) fn write_chunk(w: &mut Vec<u8>, name: &[u8], data: &[u8]) {
     }
 }
 
-/// WebP Encoder.
-pub struct WebPEncoder<'a> {
+/// Internal WebP encoder (not public API — use [`EncodeRequest`] instead).
+pub(crate) struct WebPEncoder<'a> {
     writer: &'a mut Vec<u8>,
     icc_profile: Vec<u8>,
     exif_metadata: Vec<u8>,

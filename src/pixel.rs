@@ -12,9 +12,10 @@
 //! let (pixels, w, h): (Vec<Rgba<u8>>, u32, u32) = pixel::decode(webp_data)?;
 //!
 //! // Encode from typed pixels
-//! use zenwebp::EncoderConfig;
+//! use zenwebp::{EncoderConfig, EncodeRequest, ColorType};
 //! let pixels: Vec<Rgb<u8>> = vec![Rgb::new(255, 0, 0); 4 * 4];
-//! let webp = EncoderConfig::new().encode_pixels(&pixels, 4, 4)?;
+//! let config = EncoderConfig::new();
+//! let webp = config.encode_pixels(&pixels, 4, 4)?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
@@ -23,7 +24,7 @@ use alloc::vec::Vec;
 use rgb::{AsPixels, ComponentBytes, Rgb, Rgba};
 
 use crate::decoder::DecodingError;
-use crate::encoder::{ColorType, EncoderConfig, EncodingError};
+use crate::encoder::{ColorType, EncodeRequest, EncoderConfig, EncodingError};
 
 mod private {
     pub trait Sealed {}
@@ -250,8 +251,7 @@ where
 
 /// Encode typed pixel data to WebP with default settings.
 ///
-/// For custom settings, use [`EncoderConfig::encode_pixels`] or
-/// [`Encoder::from_pixels`](crate::Encoder::from_pixels).
+/// For custom settings, use [`EncoderConfig::encode_pixels`].
 pub fn encode<P: EncodePixel>(
     pixels: &[P],
     width: u32,
@@ -280,11 +280,7 @@ impl EncoderConfig {
     {
         let bytes: &[u8] = pixels.as_bytes();
         let color = P::color_type();
-        let mut output = Vec::new();
-        let mut encoder = crate::encoder::WebPEncoder::new(&mut output);
-        encoder.set_params(self.to_params());
-        encoder.encode(bytes, width, height, color)?;
-        Ok(output)
+        EncodeRequest::new(self, bytes, color, width, height).encode()
     }
 
     /// Encode an [`imgref::ImgRef`] to WebP.

@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::time::Instant;
-use zenwebp::{ColorType, EncoderParams, WebPEncoder};
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig};
 
 fn load_webp(path: &Path) -> Vec<u8> {
     std::fs::read(path).expect("Failed to read WebP file")
@@ -29,11 +29,9 @@ fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
 }
 
 fn benchmark_decode(webp_data: &[u8], iterations: usize) {
-    // Check environment variables for isolated benchmarking
     let only_ours = std::env::var("BENCH_OURS").is_ok();
     let only_libwebp = std::env::var("BENCH_LIBWEBP").is_ok();
 
-    // Decode once to get dimensions and buffer size
     let decoder = zenwebp::WebPDecoder::new(webp_data).unwrap();
     let (width, height) = decoder.dimensions();
     let output_size = decoder.output_buffer_size().unwrap();
@@ -45,7 +43,6 @@ fn benchmark_decode(webp_data: &[u8], iterations: usize) {
     let mut our_ms = 0.0;
     let mut libwebp_ms = 0.0;
 
-    // Benchmark our decoder
     if !only_libwebp {
         println!("\n=== Our Decoder ===");
         let start = Instant::now();
@@ -63,7 +60,6 @@ fn benchmark_decode(webp_data: &[u8], iterations: usize) {
         println!("Throughput: {:.2} MPix/s", our_mpix);
     }
 
-    // Benchmark libwebp decoder
     if !only_ours {
         println!("\n=== libwebp Decoder ===");
         let start = Instant::now();
@@ -79,7 +75,6 @@ fn benchmark_decode(webp_data: &[u8], iterations: usize) {
         println!("Throughput: {:.2} MPix/s", libwebp_mpix);
     }
 
-    // Summary (only if both were run)
     if !only_ours && !only_libwebp {
         println!("\n=== Summary ===");
         println!("Speed ratio: {:.2}x (ours / libwebp)", our_ms / libwebp_ms);
@@ -130,12 +125,10 @@ fn main() {
             std::process::exit(1);
         }
     } else {
-        // Test with both libwebp-encoded and our-encoded WebP
         let png_path = concat!(env!("HOME"), "/work/codec-corpus/kodak/1.png");
         println!("Loading PNG: {}\n", png_path);
         let (rgb_data, width, height) = load_png(Path::new(png_path));
 
-        // Test 1: libwebp-encoded WebP
         println!("========================================");
         println!("Test 1: Decoding libwebp-encoded WebP");
         println!("========================================");
@@ -145,18 +138,14 @@ fn main() {
         };
         benchmark_decode(&libwebp_encoded, iterations);
 
-        // Test 2: Our encoder's WebP
         println!("\n========================================");
         println!("Test 2: Decoding our-encoded WebP");
         println!("========================================");
         let our_encoded = {
-            let mut output = Vec::new();
-            let mut encoder = WebPEncoder::new(&mut output);
-            encoder.set_params(EncoderParams::lossy(75));
-            encoder
-                .encode(&rgb_data, width, height, ColorType::Rgb8)
-                .unwrap();
-            output
+            let config = EncoderConfig::new().quality(75.0);
+            EncodeRequest::new(&config, &rgb_data, ColorType::Rgb8, width, height)
+                .encode()
+                .unwrap()
         };
         benchmark_decode(&our_encoded, iterations);
     }

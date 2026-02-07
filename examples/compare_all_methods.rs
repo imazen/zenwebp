@@ -1,6 +1,7 @@
 //! Compare all methods (0-6) between zenwebp and libwebp apples-to-apples
 
 use std::time::Instant;
+use zenwebp::{ColorType, EncodeRequest};
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
@@ -40,13 +41,14 @@ fn main() {
         let zen_start = Instant::now();
         let mut zen_size = 0;
         for _ in 0..iterations {
-            let out = zenwebp::EncoderConfig::new()
+            let _cfg = zenwebp::EncoderConfig::new()
                 .quality(75.0)
                 .method(method)
                 .sns_strength(0)
                 .filter_strength(0)
-                .segments(1)
-                .encode_rgb(&rgb, w, h)
+                .segments(1);
+            let out = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h)
+                .encode()
                 .unwrap();
             zen_size = out.len();
         }

@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 //! Debug encoder output
 use std::path::Path;
-use zenwebp::{ColorType, EncoderParams, WebPEncoder};
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig};
 
 #[test]
 #[ignore]
@@ -35,14 +35,11 @@ fn debug_encode_kodak1() {
 
     for q in [50u8, 75, 90, 95] {
         // Ours
-        let mut our_output = Vec::new();
-        {
-            let mut encoder = WebPEncoder::new(&mut our_output);
-            encoder.set_params(EncoderParams::lossy(q));
-            encoder
-                .encode(&rgb_data, info.width, info.height, ColorType::Rgb8)
+        let config = EncoderConfig::new().quality(q as f32);
+        let our_output =
+            EncodeRequest::new(&config, &rgb_data, ColorType::Rgb8, info.width, info.height)
+                .encode()
                 .unwrap();
-        }
 
         // libwebp
         let lib_encoder = webp::Encoder::from_rgb(&rgb_data, info.width, info.height);

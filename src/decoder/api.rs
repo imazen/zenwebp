@@ -26,11 +26,6 @@ pub enum DecodingError {
     #[error("Invalid Chunk header: {0:x?}")]
     ChunkHeaderInvalid([u8; 4]),
 
-    /// Some bits were invalid
-    #[deprecated]
-    #[error("Reserved bits set")]
-    ReservedBitSet,
-
     /// The ALPH chunk preprocessing info flag was invalid
     #[error("Alpha chunk preprocessing flag invalid")]
     InvalidAlphaPreprocessing,
@@ -122,6 +117,16 @@ pub enum DecodingError {
     /// No more frames in image
     #[error("No more frames")]
     NoMoreFrames,
+
+    /// Decoding was cancelled via a [`enough::Stop`] token.
+    #[error("Decoding cancelled: {0}")]
+    Cancelled(enough::StopReason),
+}
+
+impl From<enough::StopReason> for DecodingError {
+    fn from(reason: enough::StopReason) -> Self {
+        Self::Cancelled(reason)
+    }
 }
 
 // Core decoder implementation using SliceReader for no_std compatibility
@@ -260,13 +265,175 @@ impl From<u16> for LoopCount {
     }
 }
 
-/// WebP decoder configuration options
+/// WebP decoder configuration. Reusable across requests.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DecodeConfig {
+    /// Upsampling method for lossy chroma reconstruction. Default: `Bilinear`.
+    pub upsampling: UpsamplingMethod,
+    /// Memory limit in bytes (0 = no limit). Default: 0.
+    pub memory_limit: usize,
+}
+
+impl Default for DecodeConfig {
+    fn default() -> Self {
+        Self {
+            upsampling: UpsamplingMethod::Bilinear,
+            memory_limit: 0,
+        }
+    }
+}
+
+impl DecodeConfig {
+    /// Set the upsampling method.
+    #[must_use]
+    pub fn upsampling(mut self, method: UpsamplingMethod) -> Self {
+        self.upsampling = method;
+        self
+    }
+
+    /// Set a memory limit in bytes (0 = no limit).
+    #[must_use]
+    pub fn memory_limit(mut self, limit: usize) -> Self {
+        self.memory_limit = limit;
+        self
+    }
+
+    /// Disable fancy upsampling.
+    #[must_use]
+    pub fn no_fancy_upsampling(mut self) -> Self {
+        self.upsampling = UpsamplingMethod::Simple;
+        self
+    }
+
+    pub(crate) fn to_options(&self) -> WebPDecodeOptions {
+        WebPDecodeOptions {
+            lossy_upsampling: self.upsampling,
+        }
+    }
+}
+
+/// Decoding request that borrows configuration and input data.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use zenwebp::{DecodeConfig, DecodeRequest};
+///
+/// let config = DecodeConfig::default();
+/// let webp_data: &[u8] = &[]; // your WebP data
+/// let (pixels, w, h) = DecodeRequest::new(&config, webp_data).decode_rgba()?;
+/// # Ok::<(), zenwebp::DecodingError>(())
+/// ```
+pub struct DecodeRequest<'a> {
+    config: &'a DecodeConfig,
+    data: &'a [u8],
+    stop: Option<&'a dyn enough::Stop>,
+}
+
+impl<'a> DecodeRequest<'a> {
+    /// Create a new decoding request.
+    #[must_use]
+    pub fn new(config: &'a DecodeConfig, data: &'a [u8]) -> Self {
+        Self {
+            config,
+            data,
+            stop: None,
+        }
+    }
+
+    /// Set a cooperative cancellation token.
+    #[must_use]
+    pub fn stop(mut self, stop: &'a dyn enough::Stop) -> Self {
+        self.stop = Some(stop);
+        self
+    }
+
+    /// Decode to RGBA pixels.
+    pub fn decode_rgba(self) -> Result<(Vec<u8>, u32, u32), DecodingError> {
+        let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
+        if self.config.memory_limit > 0 {
+            decoder.set_memory_limit(self.config.memory_limit);
+        }
+        let (w, h) = decoder.dimensions();
+        let size = (w as usize)
+            .checked_mul(h as usize)
+            .and_then(|n| n.checked_mul(4))
+            .ok_or(DecodingError::ImageTooLarge)?;
+        let mut buf = alloc::vec![0u8; size];
+        decoder.read_image(&mut buf)?;
+        Ok((buf, w, h))
+    }
+
+    /// Decode to RGB pixels (no alpha).
+    pub fn decode_rgb(self) -> Result<(Vec<u8>, u32, u32), DecodingError> {
+        // Decode as RGBA, then strip alpha
+        let (rgba, w, h) = self.decode_rgba()?;
+        let mut rgb = Vec::with_capacity((w as usize) * (h as usize) * 3);
+        for chunk in rgba.chunks_exact(4) {
+            rgb.extend_from_slice(&chunk[..3]);
+        }
+        Ok((rgb, w, h))
+    }
+
+    /// Decode to RGBA, writing into a pre-allocated buffer.
+    pub fn decode_rgba_into(self, output: &mut [u8]) -> Result<(u32, u32), DecodingError> {
+        let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
+        if self.config.memory_limit > 0 {
+            decoder.set_memory_limit(self.config.memory_limit);
+        }
+        let (w, h) = decoder.dimensions();
+        decoder.read_image(output)?;
+        Ok((w, h))
+    }
+
+    /// Decode to RGB, writing into a pre-allocated buffer.
+    pub fn decode_rgb_into(self, output: &mut [u8]) -> Result<(u32, u32), DecodingError> {
+        let (w, h) = {
+            let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
+            if self.config.memory_limit > 0 {
+                decoder.set_memory_limit(self.config.memory_limit);
+            }
+            let dims = decoder.dimensions();
+            let buf_size = decoder
+                .output_buffer_size()
+                .ok_or(DecodingError::ImageTooLarge)?;
+            let mut rgba = alloc::vec![0u8; buf_size];
+            decoder.read_image(&mut rgba)?;
+            // Strip alpha into output
+            let npix = (dims.0 as usize) * (dims.1 as usize);
+            if output.len() < npix * 3 {
+                return Err(DecodingError::InvalidParameter(alloc::format!(
+                    "output buffer too small: got {}, need {}",
+                    output.len(),
+                    npix * 3
+                )));
+            }
+            for (i, chunk) in rgba.chunks_exact(4).enumerate() {
+                output[i * 3] = chunk[0];
+                output[i * 3 + 1] = chunk[1];
+                output[i * 3 + 2] = chunk[2];
+            }
+            dims
+        };
+        Ok((w, h))
+    }
+
+    /// Read image info without decoding pixel data.
+    pub fn info(self) -> Result<ImageInfo, DecodingError> {
+        ImageInfo::from_webp(self.data)
+    }
+
+    /// Decode to YUV 4:2:0 planes (lossy only).
+    pub fn decode_yuv420(self) -> Result<YuvPlanes, DecodingError> {
+        decode_yuv420(self.data)
+    }
+}
+
+/// WebP decoder configuration options (internal, used by AnimationDecoder)
 #[derive(Clone)]
 #[non_exhaustive]
-pub struct WebPDecodeOptions {
+pub(crate) struct WebPDecodeOptions {
     /// The upsampling method used in conversion from lossy yuv to rgb
-    ///
-    /// Defaults to `Bilinear`.
     pub lossy_upsampling: UpsamplingMethod,
 }
 
@@ -278,27 +445,11 @@ impl Default for WebPDecodeOptions {
     }
 }
 
-impl WebPDecodeOptions {
-    /// Set the lossy upsampling method.
-    #[must_use]
-    pub fn lossy_upsampling(mut self, method: UpsamplingMethod) -> Self {
-        self.lossy_upsampling = method;
-        self
-    }
-
-    /// Disable fancy upsampling (use simple nearest-neighbor instead).
-    #[must_use]
-    pub fn no_fancy_upsampling(mut self) -> Self {
-        self.lossy_upsampling = UpsamplingMethod::Simple;
-        self
-    }
-}
-
 /// Methods for upsampling the chroma values in lossy decoding
 ///
 /// The chroma red and blue planes are encoded in VP8 as half the size of the luma plane
 /// Therefore we need to upsample these values up to fit each pixel in the image.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum UpsamplingMethod {
     /// Fancy upsampling
     ///
@@ -342,7 +493,7 @@ impl<'a> WebPDecoder<'a> {
     }
 
     /// Create a new `WebPDecoder` from the data slice with the given options.
-    pub fn new_with_options(
+    pub(crate) fn new_with_options(
         data: &'a [u8],
         webp_decode_options: WebPDecodeOptions,
     ) -> Result<Self, DecodingError> {

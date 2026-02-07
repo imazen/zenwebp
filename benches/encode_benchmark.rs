@@ -1,17 +1,11 @@
 #![cfg(not(target_arch = "wasm32"))]
 //! Criterion benchmarks for zenwebp encoding performance.
-//!
-//! Tracks performance across:
-//! - Methods 0-6 (speed/quality tradeoff)
-//! - Quality levels (50, 75, 90)
-//! - Image types (photo, screenshot, icon)
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
 use std::path::Path;
-use zenwebp::{EncoderConfig, Preset};
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig, Preset};
 
-/// Load a PNG image and return RGB data with dimensions.
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let file = std::fs::File::open(path).ok()?;
     let decoder = png::Decoder::new(file);
@@ -49,7 +43,6 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     Some((rgb_data, info.width, info.height))
 }
 
-/// Test image with metadata
 struct TestImage {
     name: &'static str,
     path: &'static str,
@@ -57,19 +50,16 @@ struct TestImage {
 }
 
 const TEST_IMAGES: &[TestImage] = &[
-    // Photos from CID22
     TestImage {
         name: "photo_512",
         path: "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/792079.png",
         category: "photo",
     },
-    // Screenshots
     TestImage {
         name: "screenshot",
         path: "/home/lilith/work/codec-corpus/gb82-sc/gui.png",
         category: "screenshot",
     },
-    // Photos from gb82
     TestImage {
         name: "flowers",
         path: "/home/lilith/work/codec-corpus/gb82/flowers-lossless.png",
@@ -80,7 +70,6 @@ const TEST_IMAGES: &[TestImage] = &[
 fn bench_encode_methods(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_method");
 
-    // Load first available test image
     let (rgb_data, width, height) = TEST_IMAGES
         .iter()
         .find_map(|img| load_png(Path::new(img.path)))
@@ -95,11 +84,16 @@ fn bench_encode_methods(c: &mut Criterion) {
             &method,
             |b, &method| {
                 b.iter(|| {
-                    EncoderConfig::new()
-                        .quality(75.0)
-                        .method(method)
-                        .encode_rgb(black_box(&rgb_data), width, height)
-                        .unwrap()
+                    let config = EncoderConfig::new().quality(75.0).method(method);
+                    EncodeRequest::new(
+                        &config,
+                        black_box(&rgb_data),
+                        ColorType::Rgb8,
+                        width,
+                        height,
+                    )
+                    .encode()
+                    .unwrap()
                 });
             },
         );
@@ -125,11 +119,16 @@ fn bench_encode_quality(c: &mut Criterion) {
             &quality,
             |b, &quality| {
                 b.iter(|| {
-                    EncoderConfig::new()
-                        .quality(quality)
-                        .method(4)
-                        .encode_rgb(black_box(&rgb_data), width, height)
-                        .unwrap()
+                    let config = EncoderConfig::new().quality(quality).method(4);
+                    EncodeRequest::new(
+                        &config,
+                        black_box(&rgb_data),
+                        ColorType::Rgb8,
+                        width,
+                        height,
+                    )
+                    .encode()
+                    .unwrap()
                 });
             },
         );
@@ -159,10 +158,16 @@ fn bench_encode_presets(c: &mut Criterion) {
     for (name, preset) in presets {
         group.bench_with_input(BenchmarkId::new("zenwebp", name), &preset, |b, &preset| {
             b.iter(|| {
-                EncoderConfig::with_preset(preset, 75.0)
-                    .method(4)
-                    .encode_rgb(black_box(&rgb_data), width, height)
-                    .unwrap()
+                let config = EncoderConfig::with_preset(preset, 75.0).method(4);
+                EncodeRequest::new(
+                    &config,
+                    black_box(&rgb_data),
+                    ColorType::Rgb8,
+                    width,
+                    height,
+                )
+                .encode()
+                .unwrap()
             });
         });
     }
@@ -183,10 +188,9 @@ fn bench_encode_by_image_type(c: &mut Criterion) {
                 &(&rgb_data, width, height),
                 |b, (data, w, h)| {
                     b.iter(|| {
-                        EncoderConfig::new()
-                            .quality(75.0)
-                            .method(4)
-                            .encode_rgb(black_box(data), *w, *h)
+                        let config = EncoderConfig::new().quality(75.0).method(4);
+                        EncodeRequest::new(&config, black_box(data), ColorType::Rgb8, *w, *h)
+                            .encode()
                             .unwrap()
                     });
                 },

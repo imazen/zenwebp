@@ -1,4 +1,5 @@
 //! Compare production (default) settings between zenwebp and libwebp
+use zenwebp::{ColorType, EncodeRequest};
 fn main() {
     let path = std::env::args()
         .nth(1)
@@ -22,10 +23,9 @@ fn main() {
     println!("----  --------  --------  -------");
 
     for q in [50, 75, 90] {
-        let zen = zenwebp::EncoderConfig::new()
-            .quality(q as f32)
-            .method(4)
-            .encode_rgb(&pixels, w, h)
+        let _cfg = zenwebp::EncoderConfig::new().quality(q as f32).method(4);
+        let zen = EncodeRequest::new(&_cfg, &pixels, ColorType::Rgb8, w, h)
+            .encode()
             .unwrap();
 
         let lib = webpx::EncoderConfig::new()

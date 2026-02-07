@@ -35,9 +35,9 @@ fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 fn encode_zen_bytes(rgb: &[u8], w: u32, h: u32, preset: zenwebp::Preset) -> Vec<u8> {
-    zenwebp::EncoderConfig::with_preset(preset, 75.0)
-        .method(4)
-        .encode_rgb(rgb, w, h)
+    let config = zenwebp::EncoderConfig::with_preset(preset, 75.0).method(4);
+    zenwebp::EncodeRequest::new(&config, rgb, zenwebp::ColorType::Rgb8, w, h)
+        .encode()
         .unwrap()
 }
 

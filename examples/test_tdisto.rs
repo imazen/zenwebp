@@ -1,6 +1,6 @@
 // Test to check TDisto and mode selection details
 use zenwebp::decoder::vp8::Vp8Decoder;
-use zenwebp::{EncoderConfig, Preset};
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig, Preset};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";
@@ -19,7 +19,9 @@ fn main() {
             .sns_strength(0)
             .filter_strength(0)
             .segments(1);
-        let webp = config.encode_rgb(&rgb, w, h).unwrap();
+        let webp = EncodeRequest::new(&config, &rgb, ColorType::Rgb8, w, h)
+            .encode()
+            .unwrap();
 
         // Decode and count modes
         let vp8_chunk = extract_vp8(&webp).unwrap();

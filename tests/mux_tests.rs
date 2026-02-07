@@ -3,7 +3,7 @@
 use zenwebp::mux::{
     AnimationConfig, AnimationEncoder, BlendMethod, DisposeMethod, MuxFrame, WebPDemuxer, WebPMux,
 };
-use zenwebp::{ColorType, EncoderConfig, LoopCount, WebPDecoder};
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig, LoopCount, WebPDecoder};
 
 /// Create a solid-color RGBA frame.
 fn solid_rgba(width: u32, height: u32, r: u8, g: u8, b: u8, a: u8) -> Vec<u8> {
@@ -97,7 +97,9 @@ fn demux_simple_lossy() {
     // Encode a simple lossy image
     let pixels = solid_rgb(64, 64, 128, 64, 192);
     let config = EncoderConfig::new().quality(75.0);
-    let webp = config.encode_rgb(&pixels, 64, 64).unwrap();
+    let webp = EncodeRequest::new(&config, &pixels, ColorType::Rgb8, 64, 64)
+        .encode()
+        .unwrap();
 
     let demuxer = WebPDemuxer::new(&webp).unwrap();
     assert!(!demuxer.is_animated());
@@ -118,7 +120,9 @@ fn demux_simple_lossless() {
     // Encode a simple lossless image
     let pixels = solid_rgba(32, 32, 128, 64, 192, 255);
     let config = EncoderConfig::new().quality(100.0).lossless(true);
-    let webp = config.encode_rgba(&pixels, 32, 32).unwrap();
+    let webp = EncodeRequest::new(&config, &pixels, ColorType::Rgba8, 32, 32)
+        .encode()
+        .unwrap();
 
     let demuxer = WebPDemuxer::new(&webp).unwrap();
     assert!(!demuxer.is_animated());
@@ -140,7 +144,9 @@ fn mux_single_image_simple() {
     // Encode a frame, then wrap it in a mux container
     let pixels = solid_rgb(64, 64, 200, 100, 50);
     let config = EncoderConfig::new().quality(75.0);
-    let webp = config.encode_rgb(&pixels, 64, 64).unwrap();
+    let webp = EncodeRequest::new(&config, &pixels, ColorType::Rgb8, 64, 64)
+        .encode()
+        .unwrap();
 
     // Demux to get raw bitstream
     let demuxer = WebPDemuxer::new(&webp).unwrap();
@@ -171,7 +177,9 @@ fn mux_single_image_simple() {
 fn mux_single_image_with_metadata() {
     let pixels = solid_rgb(32, 32, 100, 100, 100);
     let config = EncoderConfig::new().quality(75.0);
-    let webp = config.encode_rgb(&pixels, 32, 32).unwrap();
+    let webp = EncodeRequest::new(&config, &pixels, ColorType::Rgb8, 32, 32)
+        .encode()
+        .unwrap();
 
     let demuxer = WebPDemuxer::new(&webp).unwrap();
     let frame = demuxer.frame(1).unwrap();

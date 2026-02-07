@@ -1,6 +1,6 @@
 // Debug a specific I4 block to see all mode RD scores
 
-use zenwebp::{EncoderConfig, Preset};
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig, Preset};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";
@@ -32,12 +32,13 @@ fn main() {
     std::env::set_var("BLOCK_DEBUG", format!("{},{},{}", mbx, mby, block));
 
     // Encode - this will print debug output for the specified block
-    let _zen = EncoderConfig::with_preset(Preset::Default, 75.0)
+    let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
         .method(4)
         .sns_strength(0)
         .filter_strength(0)
-        .segments(1)
-        .encode_rgb(&rgb, w, h)
+        .segments(1);
+    let _zen = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h)
+        .encode()
         .unwrap();
 
     println!("\nDone.");

@@ -1,5 +1,5 @@
 // Decode-only benchmark for profiling
-use zenwebp::EncoderConfig;
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig};
 
 fn main() {
     // Generate a test image (gradient)
@@ -15,9 +15,9 @@ fn main() {
     }
 
     // Encode to WebP once
-    let webp = EncoderConfig::new()
-        .quality(75.0)
-        .encode_rgb(&rgb, width, height)
+    let _cfg = EncoderConfig::new().quality(75.0);
+    let webp = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, width, height)
+        .encode()
         .unwrap();
     eprintln!("Encoded 1024x1024 to {} bytes", webp.len());
 

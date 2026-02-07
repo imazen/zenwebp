@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use zenwebp::{ColorType, EncodeRequest};
 
 fn main() {
     let test_path = "/tmp/CID22/original/1001682.png";
@@ -33,9 +34,9 @@ fn main() {
 
     // Test the EXISTING encoder which produces valid output
     println!("\n=== Existing integrated encoder ===");
-    let existing = zenwebp::EncoderConfig::new()
-        .lossless(true)
-        .encode_rgb(&rgb_pixels, width, height)
+    let _cfg = zenwebp::EncoderConfig::new().lossless(true);
+    let existing = EncodeRequest::new(&_cfg, &rgb_pixels, ColorType::Rgb8, width, height)
+        .encode()
         .unwrap();
 
     println!("Size: {} bytes", existing.len());

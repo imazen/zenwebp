@@ -1,16 +1,12 @@
 // Requires C libwebp (webpx) — not available on wasm32
 #![cfg(not(target_arch = "wasm32"))]
 //! Criterion benchmarks comparing zenwebp vs libwebp encoding performance.
-//!
-//! Uses webpx crate (safe Rust wrapper around libwebp) for fair library-to-library
-//! comparison — both encoders receive identical in-memory RGB data with matched settings.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
 use std::path::Path;
-use zenwebp::EncoderConfig;
+use zenwebp::{ColorType, EncodeRequest, EncoderConfig};
 
-/// Load a PNG image and return RGB data with dimensions.
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let file = std::fs::File::open(path).ok()?;
     let decoder = png::Decoder::new(file);
@@ -48,7 +44,6 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     Some((rgb_data, info.width, info.height))
 }
 
-/// Default test image path
 const DEFAULT_IMAGE: &str = "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/792079.png";
 
 fn bench_methods_diagnostic(c: &mut Criterion) {
@@ -60,22 +55,27 @@ fn bench_methods_diagnostic(c: &mut Criterion) {
     let pixels = (width * height) as u64;
     group.throughput(Throughput::Elements(pixels));
 
-    // Diagnostic settings: SNS=0, filter=0, segments=1
-    // Isolates encoder core from preprocessing
     for method in [0, 2, 4, 6] {
         group.bench_with_input(
             BenchmarkId::new("zenwebp", method),
             &method,
             |b, &method| {
                 b.iter(|| {
-                    EncoderConfig::new()
+                    let config = EncoderConfig::new()
                         .quality(75.0)
                         .method(method)
                         .sns_strength(0)
                         .filter_strength(0)
-                        .segments(1)
-                        .encode_rgb(black_box(&rgb_data), width, height)
-                        .unwrap()
+                        .segments(1);
+                    EncodeRequest::new(
+                        &config,
+                        black_box(&rgb_data),
+                        ColorType::Rgb8,
+                        width,
+                        height,
+                    )
+                    .encode()
+                    .unwrap()
                 });
             },
         );
@@ -110,19 +110,22 @@ fn bench_methods_default(c: &mut Criterion) {
     let pixels = (width * height) as u64;
     group.throughput(Throughput::Elements(pixels));
 
-    // Default settings (SNS=50, filter=60, segments=4)
-    // Production-realistic comparison
     for method in [0, 2, 4, 6] {
         group.bench_with_input(
             BenchmarkId::new("zenwebp", method),
             &method,
             |b, &method| {
                 b.iter(|| {
-                    EncoderConfig::new()
-                        .quality(75.0)
-                        .method(method)
-                        .encode_rgb(black_box(&rgb_data), width, height)
-                        .unwrap()
+                    let config = EncoderConfig::new().quality(75.0).method(method);
+                    EncodeRequest::new(
+                        &config,
+                        black_box(&rgb_data),
+                        ColorType::Rgb8,
+                        width,
+                        height,
+                    )
+                    .encode()
+                    .unwrap()
                 });
             },
         );
@@ -159,11 +162,16 @@ fn bench_quality_comparison(c: &mut Criterion) {
             &quality,
             |b, &quality| {
                 b.iter(|| {
-                    EncoderConfig::new()
-                        .quality(quality)
-                        .method(4)
-                        .encode_rgb(black_box(&rgb_data), width, height)
-                        .unwrap()
+                    let config = EncoderConfig::new().quality(quality).method(4);
+                    EncodeRequest::new(
+                        &config,
+                        black_box(&rgb_data),
+                        ColorType::Rgb8,
+                        width,
+                        height,
+                    )
+                    .encode()
+                    .unwrap()
                 });
             },
         );
