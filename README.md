@@ -325,6 +325,10 @@ the crate and all dependencies contain no unsafe whatsoever.
 
 Licensed under either [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option.
 
+**Important:** If you enable the optional `quantize` feature, the `imagequant` dependency is GPL-3.0-or-later,
+which changes the effective license of the combined work to GPL-3.0-or-later. The `quantize` feature is not
+enabled by default.
+
 ## Contributing
 
 Contributions welcome! Please feel free to open issues or pull requests.
