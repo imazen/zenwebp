@@ -9,6 +9,7 @@ mod huffman;
 mod loop_filter;
 mod lossless;
 mod lossless_transform;
+mod streaming;
 pub(crate) mod yuv;
 
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
@@ -40,6 +41,7 @@ pub use api::{
     decode_rgba, decode_rgba_into, decode_yuv420, BitstreamFormat, DecodeConfig, DecodeRequest,
     DecodingError, ImageInfo, LoopCount, UpsamplingMethod, WebPDecoder, YuvPlanes,
 };
+pub use streaming::{StreamStatus, StreamingDecoder};
 
 // Re-export diagnostic types for tests (hidden from public docs)
 #[doc(hidden)]

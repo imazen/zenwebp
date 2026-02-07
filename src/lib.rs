@@ -100,7 +100,8 @@ pub mod heuristics;
 pub use decoder::{
     decode_bgr, decode_bgr_into, decode_bgra, decode_bgra_into, decode_rgb, decode_rgb_into,
     decode_rgba, decode_rgba_into, decode_yuv420, BitstreamFormat, DecodeConfig, DecodeRequest,
-    DecodingError, ImageInfo, LoopCount, UpsamplingMethod, WebPDecoder, YuvPlanes,
+    DecodingError, ImageInfo, LoopCount, StreamStatus, StreamingDecoder, UpsamplingMethod,
+    WebPDecoder, YuvPlanes,
 };
 
 // Re-export encoder public API
