@@ -6,11 +6,22 @@
 //!
 //! # Accuracy
 //!
-//! Estimates are based on profiling zenwebp's pure-Rust implementation.
+//! Estimates are based on profiling zenwebp's pure-Rust implementation using
+//! `examples/profile_memory.rs`. Throughput measurements are empirically derived
+//! from 580+ encode and 20+ decode operations across various sizes and configurations.
+//!
 //! Actual usage varies with content complexity:
 //! - Simple content (solid colors, gradients): lower bound
-//! - Typical photos: middle estimate
-//! - High-entropy content (noise): upper bound
+//! - Typical photos (gradients, natural scenes): middle estimate
+//! - High-entropy content (noise, detailed textures): upper bound
+//!
+//! To regenerate estimates:
+//! ```bash
+//! cargo build --release --example profile_memory
+//! target/release/examples/profile_memory encode > encode_profile.csv
+//! target/release/examples/profile_memory decode > decode_profile.csv
+//! cargo run --release --example analyze_profiles encode_profile.csv decode_profile.csv
+//! ```
 //!
 //! # Example
 //!
@@ -64,17 +75,18 @@ const DECODE_FIXED_OVERHEAD: u64 = 100_000;
 const DECODE_BYTES_PER_PIXEL: f64 = 12.0;
 
 // =============================================================================
-// Throughput constants (measured on i7-13700K, single-threaded, 2026-02-05)
+// Throughput constants (measured via examples/profile_memory.rs, 2026-02-06)
 // =============================================================================
 
 /// Lossy encode throughput at method 4 in Mpix/s.
-const LOSSY_ENCODE_THROUGHPUT_MPIXELS: f64 = 17.0; // 512x512 in 15ms
+const LOSSY_ENCODE_THROUGHPUT_MPIXELS: f64 = 14.5; // Measured average across sizes
 
 /// Lossless encode throughput in Mpix/s (method 6).
-const LOSSLESS_ENCODE_THROUGHPUT_MPIXELS: f64 = 4.0;
+const LOSSLESS_ENCODE_THROUGHPUT_MPIXELS: f64 = 221.0; // Measured average
 
-/// Decode throughput in Mpix/s (lossy, typical).
-const DECODE_THROUGHPUT_MPIXELS: f64 = 267.0; // 1024x1024 in ~4ms
+/// Decode throughput in Mpix/s (mixed lossy/lossless).
+/// Lossy: ~85 Mpix/s, Lossless: ~352 Mpix/s, using conservative estimate.
+const DECODE_THROUGHPUT_MPIXELS: f64 = 150.0;
 
 /// Resource estimation for encoding operations.
 #[derive(Debug, Clone, Copy)]
@@ -154,15 +166,16 @@ pub fn estimate_encode(width: u32, height: u32, bpp: u8, config: &EncoderConfig)
     };
     let output_bytes = (input_bytes as f64 * output_ratio) as u64;
 
-    // Time estimate
+    // Time estimate (multiplier relative to method 4)
+    // Measured: m0=25.7, m2=16.7, m4=14.5, m6=11.1 Mpix/s
     let method_speed = match method {
-        0 => 4.0,
-        1 => 2.5,
-        2 => 1.8,
-        3 => 1.3,
-        4 => 1.0,
-        5 => 0.95,
-        _ => 0.9,
+        0 => 25.7 / 14.5,  // 1.77x faster than method 4
+        1 => 1.5,          // interpolated
+        2 => 16.7 / 14.5,  // 1.15x faster than method 4
+        3 => 1.08,         // interpolated
+        4 => 1.0,          // baseline
+        5 => 0.95,         // interpolated
+        _ => 11.1 / 14.5,  // 0.77x (method 6, slower than 4)
     };
 
     let throughput = if is_lossless {
