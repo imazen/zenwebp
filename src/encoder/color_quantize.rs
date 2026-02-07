@@ -1,11 +1,31 @@
 //! Color quantization for near-lossless palette encoding.
 //!
-//! Uses imagequant (Kornel Lesiński's libimagequant) to reduce images with >256 unique
-//! colors to a 256-color palette. The quantized image can then be encoded losslessly
-//! via VP8L's color indexing transform for significant compression gains.
+//! Reduces images with >256 unique colors to a 256-color palette. The quantized image
+//! can then be encoded losslessly via VP8L's color indexing transform for significant
+//! compression gains.
 //!
-//! This module requires the `quantize` feature flag, which enables the `imagequant` dependency.
-//! Note: imagequant is GPL-3.0-or-later, so enabling this feature changes the effective license.
+//! # Backends
+//!
+//! Two backends are available (choose via feature flags):
+//!
+//! - **`quantize-quantizr`** (default): MIT-licensed backend using the `quantizr` crate.
+//!   Good quality, compatible with MIT/Apache-2.0 licensing.
+//!
+//! - **`quantize-imagequant`**: GPL-3.0-or-later backend using Kornel Lesiński's
+//!   `imagequant` crate. Generally produces better quality palettes but requires
+//!   GPL-3.0-or-later licensing for the combined work.
+//!
+//! The `quantize` feature is an alias for `quantize-quantizr` (MIT default).
+//!
+//! # Example
+//!
+//! ```toml
+//! # Use MIT-licensed backend (default)
+//! zenwebp = { version = "0.3", features = ["quantize"] }
+//!
+//! # Or explicitly choose GPL backend for better quality
+//! zenwebp = { version = "0.3", features = ["quantize-imagequant"] }
+//! ```
 
 use alloc::vec::Vec;
 
@@ -21,7 +41,9 @@ pub struct QuantizedImage {
     pub palette_size: usize,
 }
 
-/// Quantize an RGB image to ≤256 colors using imagequant.
+/// Quantize an RGB image to ≤256 colors.
+///
+/// Uses the selected backend (quantizr or imagequant) based on feature flags.
 ///
 /// # Arguments
 /// * `rgb` - Input RGB pixels (3 bytes per pixel, no alpha)
@@ -43,7 +65,9 @@ pub fn quantize_rgb(
     quantize_rgba_impl(rgb, width, height, false, quality, max_colors)
 }
 
-/// Quantize an RGBA image to ≤256 colors using imagequant.
+/// Quantize an RGBA image to ≤256 colors.
+///
+/// Uses the selected backend (quantizr or imagequant) based on feature flags.
 ///
 /// # Arguments
 /// * `rgba` - Input RGBA pixels (4 bytes per pixel)
@@ -65,6 +89,7 @@ pub fn quantize_rgba(
     quantize_rgba_impl(rgba, width, height, true, quality, max_colors)
 }
 
+#[cfg(feature = "quantize-imagequant")]
 fn quantize_rgba_impl(
     pixels: &[u8],
     width: u32,
@@ -116,6 +141,76 @@ fn quantize_rgba_impl(
         .iter()
         .map(|&idx| {
             let c = &palette[idx as usize];
+            ((c.a as u32) << 24) | ((c.r as u32) << 16) | ((c.g as u32) << 8) | (c.b as u32)
+        })
+        .collect();
+
+    Some(QuantizedImage {
+        argb,
+        width,
+        height,
+        palette_size,
+    })
+}
+
+#[cfg(feature = "quantize-quantizr")]
+fn quantize_rgba_impl(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    has_alpha: bool,
+    _quality: u8,  // quantizr doesn't have quality parameter
+    max_colors: u16,
+) -> Option<QuantizedImage> {
+    let w = width as usize;
+    let h = height as usize;
+    let bpp = if has_alpha { 4 } else { 3 };
+    let expected_len = w * h * bpp;
+    if pixels.len() < expected_len {
+        return None;
+    }
+
+    // Convert to RGBA format (quantizr expects contiguous RGBA)
+    let rgba_pixels: Vec<u8> = if has_alpha {
+        pixels[..expected_len].to_vec()
+    } else {
+        // Expand RGB to RGBA
+        let mut rgba = Vec::with_capacity(w * h * 4);
+        for chunk in pixels[..expected_len].chunks_exact(3) {
+            rgba.push(chunk[0]); // R
+            rgba.push(chunk[1]); // G
+            rgba.push(chunk[2]); // B
+            rgba.push(255);      // A
+        }
+        rgba
+    };
+
+    // Create image
+    let image = quantizr::Image::new(&rgba_pixels, w, h).ok()?;
+
+    // Configure options
+    let mut opts = quantizr::Options::default();
+    let max_colors = max_colors.clamp(2, 256) as i32;
+    opts.set_max_colors(max_colors).ok()?;
+
+    // Quantize
+    let mut result = quantizr::QuantizeResult::quantize(&image, &opts);
+
+    // Disable dithering for lossless encoding
+    result.set_dithering_level(0.0).ok()?;
+
+    // Get palette and remap
+    let palette = result.get_palette();
+    let palette_size = palette.count as usize;
+
+    let mut indices = vec![0u8; w * h];
+    result.remap_image(&image, &mut indices).ok()?;
+
+    // Convert to ARGB format used by VP8L
+    let argb: Vec<u32> = indices
+        .iter()
+        .map(|&idx| {
+            let c = &palette.entries[idx as usize];
             ((c.a as u32) << 24) | ((c.r as u32) << 16) | ((c.g as u32) << 8) | (c.b as u32)
         })
         .collect();

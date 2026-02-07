@@ -32,6 +32,7 @@ safe_unaligned_simd = { version = "0.2.4", optional = true }
 multiversed = { version = "0.2.0", optional = true }
 multiversion = { version = "0.8.0", optional = true }
 imagequant = { version = "4.4", optional = true, default-features = false }
+quantizr = { version = "1.4", optional = true }
 rgb = { version = "0.8", optional = true, default-features = false, features = ["as-bytes"] }
 imgref = { version = "1.12", optional = true, default-features = false }
 
@@ -72,10 +73,14 @@ pixel-types = ["dep:rgb"]
 imgref = ["dep:imgref", "pixel-types"]
 # Runtime CPU feature detection for optimal SIMD paths (AVX-512, etc.)
 multiverse = ["dep:multiversed", "dep:multiversion"]
-# Color quantization via imagequant for near-lossless palette encoding.
+# Color quantization for near-lossless palette encoding.
 # Reduces >256 color images to palette for VP8L color indexing transform.
-# Note: imagequant is GPL-3.0-or-later; enabling this changes the effective license.
-quantize = ["dep:imagequant", "std"]
+# Choose backend based on licensing needs:
+# - quantize-quantizr: MIT-licensed backend (default for quantize feature)
+# - quantize-imagequant: GPL-3.0-or-later backend (better quality, restrictive license)
+quantize = ["quantize-quantizr"]
+quantize-quantizr = ["dep:quantizr", "std"]
+quantize-imagequant = ["dep:imagequant", "std"]
 _benchmarks = []
 _corpus_tests = []
 # Debug mode selection for encoder (set MB_DEBUG=x,y env var to debug specific macroblock)

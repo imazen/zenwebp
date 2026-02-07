@@ -98,6 +98,24 @@ let (pixels, w, h) = decoder.decode_rgba()?;
 
 **Full API guide:** See `examples/api_guide.rs` for 100% coverage of the new API.
 
+#### Color Quantization Backend Choice
+
+The `quantize` feature now supports two backends with different licensing:
+
+```toml
+# MIT/Apache-2.0 (default) - uses quantizr
+zenwebp = { version = "0.3", features = ["quantize"] }
+
+# GPL-3.0-or-later - uses imagequant (better quality)
+zenwebp = { version = "0.3", features = ["quantize-imagequant"] }
+```
+
+**Backend comparison:**
+- **`quantize-quantizr`** (default): MIT-licensed, good quality, no licensing restrictions
+- **`quantize-imagequant`**: GPL-3.0-or-later, generally better palette quality, requires GPL licensing
+
+Choose based on your licensing requirements. The API is identical regardless of backend.
+
 #### Other Changes
 
 - Added `ColorType` → `PixelLayout` rename (ColorType deprecated)

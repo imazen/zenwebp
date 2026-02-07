@@ -325,9 +325,27 @@ the crate and all dependencies contain no unsafe whatsoever.
 
 Licensed under either [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option.
 
-**Important:** If you enable the optional `quantize` feature, the `imagequant` dependency is GPL-3.0-or-later,
-which changes the effective license of the combined work to GPL-3.0-or-later. The `quantize` feature is not
-enabled by default.
+### Color Quantization Features
+
+The optional color quantization features provide two backend choices:
+
+- **`quantize`** or **`quantize-quantizr`** (MIT-licensed): Uses the `quantizr` crate. The entire combined work
+  remains MIT OR Apache-2.0. This is the default if you enable `quantize`.
+
+- **`quantize-imagequant`** (GPL-3.0-or-later): Uses the `imagequant` crate, which generally produces better
+  quality palettes. Enabling this feature changes the effective license of the combined work to GPL-3.0-or-later.
+
+Choose based on your licensing requirements:
+
+```toml
+# MIT/Apache-2.0 compatible (default)
+zenwebp = { version = "0.3", features = ["quantize"] }
+
+# Better quality, GPL-3.0-or-later license
+zenwebp = { version = "0.3", features = ["quantize-imagequant"] }
+```
+
+All quantization features are disabled by default.
 
 ## Contributing
 
