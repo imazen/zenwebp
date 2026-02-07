@@ -25,16 +25,16 @@ fn main() {
 
     let output = if diagnostic {
         let _cfg = LossyConfig::new()
-            .quality(quality)
-            .method(method)
-            .sns_strength(0)
-            .filter_strength(0)
-            .segments(1);
+            .with_quality(quality)
+            .with_method(method)
+            .with_sns_strength(0)
+            .with_filter_strength(0)
+            .with_segments(1);
         EncodeRequest::lossy(&_cfg, &rgb_data, PixelLayout::Rgb8, width, height)
             .encode()
             .unwrap()
     } else {
-        let _cfg = LossyConfig::new().quality(quality).method(method);
+        let _cfg = LossyConfig::new().with_quality(quality).with_method(method);
         EncodeRequest::lossy(&_cfg, &rgb_data, PixelLayout::Rgb8, width, height)
             .encode()
             .unwrap()

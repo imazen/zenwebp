@@ -29,7 +29,7 @@ fn make_webp(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
         _ => return None,
     };
 
-    let config = EncoderConfig::new_lossy().quality(75.0).method(4);
+    let config = EncoderConfig::new_lossy().with_quality(75.0).with_method(4);
     let webp = EncodeRequest::new(
         &config,
         &rgb_data,

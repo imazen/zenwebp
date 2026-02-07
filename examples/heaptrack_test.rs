@@ -30,7 +30,9 @@ fn main() {
             );
 
             let img = generate_test_image(width, height, 4);
-            let config = EncoderConfig::new_lossy().quality(quality).method(method);
+            let config = EncoderConfig::new_lossy()
+                .with_quality(quality)
+                .with_method(method);
 
             match EncodeRequest::new(&config, &img, PixelLayout::Rgba8, width, height).encode() {
                 Ok(output) => {
@@ -50,7 +52,7 @@ fn main() {
 
             // First encode
             let img = generate_test_image(width, height, 4);
-            let config = EncoderConfig::new_lossy().quality(75.0).method(4);
+            let config = EncoderConfig::new_lossy().with_quality(75.0).with_method(4);
             let webp = EncodeRequest::new(&config, &img, PixelLayout::Rgba8, width, height)
                 .encode()
                 .expect("Failed to encode test image");

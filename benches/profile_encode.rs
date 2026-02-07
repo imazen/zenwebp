@@ -45,7 +45,9 @@ fn main() {
     );
 
     // Warmup
-    let config = EncoderConfig::new_lossy().quality(quality).method(method);
+    let config = EncoderConfig::new_lossy()
+        .with_quality(quality)
+        .with_method(method);
     let output = EncodeRequest::new(&config, &rgb_data, PixelLayout::Rgb8, width, height)
         .encode()
         .unwrap();
@@ -54,7 +56,9 @@ fn main() {
     // Timed iterations
     let start = Instant::now();
     for _ in 0..iterations {
-        let config = EncoderConfig::new_lossy().quality(quality).method(method);
+        let config = EncoderConfig::new_lossy()
+            .with_quality(quality)
+            .with_method(method);
         let _output = EncodeRequest::new(&config, &rgb_data, PixelLayout::Rgb8, width, height)
             .encode()
             .unwrap();

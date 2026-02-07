@@ -85,7 +85,9 @@ fn profile_encode() {
 
                     let mem_before = get_memory_usage();
                     let start = Instant::now();
-                    let config = EncoderConfig::new_lossy().quality(quality).method(method);
+                    let config = EncoderConfig::new_lossy()
+                        .with_quality(quality)
+                        .with_method(method);
 
                     if let Ok(output) =
                         EncodeRequest::new(&config, &img, *layout, width, height).encode()
@@ -123,8 +125,8 @@ fn profile_encode() {
                     let mem_before = get_memory_usage();
                     let start = Instant::now();
                     let config = EncoderConfig::new_lossless()
-                        .quality(quality)
-                        .method(method);
+                        .with_quality(quality)
+                        .with_method(method);
 
                     if let Ok(output) =
                         EncodeRequest::new(&config, &img, *layout, width, height).encode()
@@ -212,7 +214,7 @@ fn profile_decode() {
 
         // Lossy test image
         let img = generate_test_image(width, height, 4);
-        let config = EncoderConfig::new_lossy().quality(75.0).method(4);
+        let config = EncoderConfig::new_lossy().with_quality(75.0).with_method(4);
 
         if let Ok(webp) =
             EncodeRequest::new(&config, &img, PixelLayout::Rgba8, width, height).encode()

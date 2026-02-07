@@ -107,7 +107,8 @@ pub use decoder::{
 // Re-export encoder public API
 pub use encoder::{
     ClassifierDiag, ContentType, EncodeError, EncodeProgress, EncodeRequest, EncodeResult,
-    EncodeStats, EncoderConfig, LosslessConfig, LossyConfig, NoProgress, PixelLayout, Preset,
+    EncodeStats, EncoderConfig, ImageMetadata, LosslessConfig, LossyConfig, NoProgress,
+    PixelLayout, Preset,
 };
 
 #[allow(deprecated)]

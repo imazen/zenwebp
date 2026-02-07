@@ -34,7 +34,7 @@ fn main() {
 
     // Test the EXISTING encoder which produces valid output
     println!("\n=== Existing integrated encoder ===");
-    let _cfg = zenwebp::EncoderConfig::new_lossy().lossless(true);
+    let _cfg = zenwebp::EncoderConfig::new_lossy().with_lossless(true);
     let existing = EncodeRequest::new(&_cfg, &rgb_pixels, PixelLayout::Rgb8, width, height)
         .encode()
         .unwrap();

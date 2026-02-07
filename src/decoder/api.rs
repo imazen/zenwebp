@@ -611,9 +611,67 @@ pub struct WebPDecoder<'a> {
 }
 
 impl<'a> WebPDecoder<'a> {
+    /// Create a new `WebPDecoder` from the data slice (alias for [`new`](Self::new)).
+    ///
+    /// This method parses the WebP headers and prepares for decoding. Use [`info()`](Self::info)
+    /// to inspect metadata before calling decode methods.
+    ///
+    /// # Example - Two-phase decoding
+    ///
+    /// ```rust
+    /// use zenwebp::WebPDecoder;
+    ///
+    /// # let webp_data = &[];
+    /// // Phase 1: Parse headers
+    /// let decoder = WebPDecoder::build(webp_data)?;
+    ///
+    /// // Phase 2: Inspect metadata
+    /// let info = decoder.info();
+    /// println!("{}x{}, alpha={}", info.width, info.height, info.has_alpha);
+    ///
+    /// // Phase 3: Decode (no re-parsing)
+    /// let (pixels, w, h) = decoder.decode_rgba()?;
+    /// # Ok::<(), zenwebp::DecodeError>(())
+    /// ```
+    pub fn build(data: &'a [u8]) -> Result<Self, DecodeError> {
+        Self::new(data)
+    }
+
     /// Create a new `WebPDecoder` from the data slice.
     pub fn new(data: &'a [u8]) -> Result<Self, DecodeError> {
         Self::new_with_options(data, WebPDecodeOptions::default())
+    }
+
+    /// Get image information without decoding the full image.
+    ///
+    /// Returns metadata that was parsed during construction. This is a zero-cost
+    /// operation that doesn't re-parse or decode any data.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use zenwebp::WebPDecoder;
+    ///
+    /// # let webp_data = &[];
+    /// let decoder = WebPDecoder::new(webp_data)?;
+    /// let info = decoder.info();
+    /// println!("Format: {:?}, {}x{}", info.format, info.width, info.height);
+    /// # Ok::<(), zenwebp::DecodeError>(())
+    /// ```
+    pub fn info(&self) -> ImageInfo {
+        ImageInfo {
+            width: self.width,
+            height: self.height,
+            has_alpha: self.has_alpha,
+            is_lossy: self.is_lossy,
+            has_animation: self.is_animated(),
+            frame_count: self.num_frames,
+            format: if self.is_lossy {
+                BitstreamFormat::Lossy
+            } else {
+                BitstreamFormat::Lossless
+            },
+        }
     }
 
     /// Create a new `WebPDecoder` from the data slice with the given options.
@@ -1467,6 +1525,32 @@ pub struct ImageInfo {
 }
 
 impl ImageInfo {
+    /// Minimum bytes needed to probe WebP metadata.
+    ///
+    /// This is a conservative estimate that covers the RIFF header, VP8/VP8L chunk
+    /// header, and enough data to read basic image metadata. Actual images may be
+    /// larger, but this is sufficient for probing.
+    pub const PROBE_BYTES: usize = 64;
+
+    /// Parse image information from WebP data (alias for [`from_webp`](Self::from_webp)).
+    ///
+    /// This is a fast probing operation that only parses headers without decoding
+    /// the full image data.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use zenwebp::ImageInfo;
+    ///
+    /// # let webp_data = &[];
+    /// let info = ImageInfo::from_bytes(webp_data)?;
+    /// println!("{}x{}, alpha={}", info.width, info.height, info.has_alpha);
+    /// # Ok::<(), zenwebp::DecodeError>(())
+    /// ```
+    pub fn from_bytes(data: &[u8]) -> Result<Self, DecodeError> {
+        Self::from_webp(data)
+    }
+
     /// Parse image information from WebP data.
     pub fn from_webp(data: &[u8]) -> Result<Self, DecodeError> {
         let decoder = WebPDecoder::new(data)?;

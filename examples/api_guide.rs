@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1.1 Basic encoding with builder pattern
     println!("1.1 Basic encoding (builder pattern)");
-    let config = EncoderConfig::new_lossy().quality(75.0).method(4);
+    let config = EncoderConfig::new_lossy().with_quality(75.0).with_method(4);
 
     let webp_data =
         EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height).encode()?;
@@ -39,15 +39,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1.2 Encoding with all parameters
     println!("1.2 Full parameter configuration");
     let config = EncoderConfig::new_lossy()
-        .quality(80.0)
-        .method(6)
-        .segments(4)
-        .sns_strength(50)
-        .filter_strength(60)
-        .filter_sharpness(0)
-        .target_size(0)
-        .target_psnr(0.0)
-        .sharp_yuv(false);
+        .with_quality(80.0)
+        .with_method(6)
+        .with_segments(4)
+        .with_sns_strength(50)
+        .with_filter_strength(60)
+        .with_filter_sharpness(0)
+        .with_target_size(0)
+        .with_target_psnr(0.0)
+        .with_sharp_yuv(false);
 
     let webp_data =
         EncodeRequest::new(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
@@ -72,9 +72,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1.4 Target size encoding
     println!("1.4 Target size encoding");
     let config = EncoderConfig::new_lossy()
-        .quality(75.0)
-        .method(4)
-        .target_size(5000);
+        .with_quality(75.0)
+        .with_method(4)
+        .with_target_size(5000);
 
     let webp_data =
         EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height).encode()?;
@@ -83,9 +83,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1.5 Target PSNR encoding
     println!("1.5 Target PSNR encoding");
     let config = EncoderConfig::new_lossy()
-        .quality(75.0)
-        .method(4)
-        .target_psnr(42.0);
+        .with_quality(75.0)
+        .with_method(4)
+        .with_target_psnr(42.0);
 
     let webp_data =
         EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height).encode()?;
@@ -97,17 +97,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let exif_data = b"fake EXIF data";
     let xmp_data = b"<x:xmpmeta>fake XMP</x:xmpmeta>";
 
-    let config = EncoderConfig::new_lossy().quality(75.0);
+    let config = EncoderConfig::new_lossy().with_quality(75.0);
     let webp_data = EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height)
-        .icc_profile(iccp_profile)
-        .exif(exif_data)
-        .xmp(xmp_data)
+        .with_icc_profile(iccp_profile)
+        .with_exif(exif_data)
+        .with_xmp(xmp_data)
         .encode()?;
     println!("  ✓ With ICCP/EXIF/XMP → {} bytes\n", webp_data.len());
 
     // 1.7 Encoding with stats collection
     println!("1.7 Encoding with stats");
-    let config = EncoderConfig::new_lossy().quality(75.0).method(4);
+    let config = EncoderConfig::new_lossy().with_quality(75.0).with_method(4);
     let (webp_data, stats) =
         EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height)
             .encode_with_stats()?;
@@ -127,7 +127,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1.8 Encoding into pre-allocated Vec
     println!("1.8 Encoding into pre-allocated Vec");
-    let config = EncoderConfig::new_lossy().quality(75.0);
+    let config = EncoderConfig::new_lossy().with_quality(75.0);
     let mut buffer = Vec::new();
     EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height)
         .encode_into(&mut buffer)?;
@@ -137,7 +137,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "std")]
     {
         println!("1.9 Encoding to writer");
-        let config = EncoderConfig::new_lossy().quality(75.0);
+        let config = EncoderConfig::new_lossy().with_quality(75.0);
         let mut cursor = Cursor::new(Vec::new());
         EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height)
             .encode_to(&mut cursor)?;
@@ -149,9 +149,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("1.10 Encoding with limits");
     let limits = Limits::default()
         .max_total_pixels(1_000_000)
-        .max_dimensions(2000, 2000);
+        .with_max_dimensions(2000, 2000);
 
-    let config = EncoderConfig::new_lossy().quality(75.0).limits(limits);
+    let config = EncoderConfig::new_lossy()
+        .with_quality(75.0)
+        .with_limits(limits);
 
     let webp_data =
         EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height).encode()?;
@@ -160,13 +162,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1.11 Encoding with cancellation (Stop trait)
     println!("1.11 Encoding with cancellation support");
     let webp_data = EncodeRequest::new(
-        &EncoderConfig::new_lossy().quality(75.0),
+        &EncoderConfig::new_lossy().with_quality(75.0),
         &rgb_img,
         PixelLayout::Rgb8,
         width,
         height,
     )
-    .stop(&Unstoppable as &dyn Stop)
+    .with_stop(&Unstoppable as &dyn Stop)
     .encode()?;
     println!("  ✓ With cancellation → {} bytes\n", webp_data.len());
 
@@ -182,9 +184,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let config = EncoderConfig::new_lossy().quality(75.0);
+    let config = EncoderConfig::new_lossy().with_quality(75.0);
     let webp_data = EncodeRequest::new(&config, &padded_img, PixelLayout::Rgb8, width, height)
-        .stride(stride_width as usize)
+        .with_stride(stride_width as usize)
         .encode()?;
     println!("  ✓ With custom stride → {} bytes\n", webp_data.len());
 
@@ -203,9 +205,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 2.2 Lossless with quality parameter
     println!("2.2 Lossless with quality parameter");
     let config = EncoderConfig::new_lossy()
-        .lossless(true)
-        .quality(90.0) // 0-100, controls encoding effort
-        .method(6); // 0-6, higher = slower but better compression
+        .with_lossless(true)
+        .with_quality(90.0) // 0-100, controls encoding effort
+        .with_method(6); // 0-6, higher = slower but better compression
 
     let webp_data =
         EncodeRequest::new(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
@@ -213,7 +215,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2.3 Near-lossless encoding
     println!("2.3 Near-lossless encoding");
-    let config = EncoderConfig::new_lossy().lossless(true).near_lossless(60); // 0-100, 100 = lossless
+    let config = EncoderConfig::new_lossy()
+        .with_lossless(true)
+        .with_near_lossless(60); // 0-100, 100 = lossless
 
     let webp_data =
         EncodeRequest::new(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
@@ -221,7 +225,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2.4 Lossless with exact color preservation
     println!("2.4 Lossless with exact colors");
-    let config = EncoderConfig::new_lossy().lossless(true).exact(true); // Preserve RGB even under YUV conversion
+    let config = EncoderConfig::new_lossy()
+        .with_lossless(true)
+        .with_exact(true); // Preserve RGB even under YUV conversion
 
     let webp_data =
         EncodeRequest::new(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
@@ -229,7 +235,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2.5 Lossless with alpha quality
     println!("2.5 Lossless with alpha quality");
-    let config = EncoderConfig::new_lossy().lossless(true).alpha_quality(90); // 0-100, lossy alpha compression
+    let config = EncoderConfig::new_lossy()
+        .with_lossless(true)
+        .with_alpha_quality(90); // 0-100, lossy alpha compression
 
     let webp_data =
         EncodeRequest::new(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
@@ -239,9 +247,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("2.6 Lossless with metadata");
     let config = EncoderConfig::new_lossless();
     let webp_data = EncodeRequest::new(&config, &rgba_img, PixelLayout::Rgba8, width, height)
-        .icc_profile(iccp_profile)
-        .exif(exif_data)
-        .xmp(xmp_data)
+        .with_icc_profile(iccp_profile)
+        .with_exif(exif_data)
+        .with_xmp(xmp_data)
         .encode()?;
     println!("  ✓ With ICCP/EXIF/XMP → {} bytes\n", webp_data.len());
 
@@ -252,11 +260,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Encode a test image for decoding
     let test_webp = {
-        let config = EncoderConfig::new_lossy().quality(75.0);
+        let config = EncoderConfig::new_lossy().with_quality(75.0);
         EncodeRequest::new(&config, &rgba_img, PixelLayout::Rgba8, width, height)
-            .icc_profile(iccp_profile)
-            .exif(exif_data)
-            .xmp(xmp_data)
+            .with_icc_profile(iccp_profile)
+            .with_exif(exif_data)
+            .with_xmp(xmp_data)
             .encode()?
     };
 
@@ -310,11 +318,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("3.5 Decoding with limits");
     let limits = Limits::default()
         .max_total_pixels(10_000_000)
-        .max_dimensions(4000, 4000)
+        .with_max_dimensions(4000, 4000)
         .max_file_size(10 * 1024 * 1024)
-        .max_memory(512 * 1024 * 1024);
+        .with_max_memory(512 * 1024 * 1024);
 
-    let config = zenwebp::DecodeConfig::default().limits(limits);
+    let config = zenwebp::DecodeConfig::default().with_limits(limits);
     let request = zenwebp::DecodeRequest::new(&config, &test_webp);
     let (pixels, w, h) = request.decode_rgba()?;
     println!("  ✓ With limits → {}x{}\n", w, h);
@@ -322,7 +330,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 3.6 Decoding with cancellation
     println!("3.6 Decoding with cancellation");
     let config = zenwebp::DecodeConfig::default();
-    let request = zenwebp::DecodeRequest::new(&config, &test_webp).stop(&Unstoppable as &dyn Stop);
+    let request =
+        zenwebp::DecodeRequest::new(&config, &test_webp).with_stop(&Unstoppable as &dyn Stop);
     let (pixels, w, h) = request.decode_rgba()?;
     println!("  ✓ With cancellation → {}x{}\n", w, h);
 
@@ -337,7 +346,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut anim = AnimationEncoder::new(width, height, anim_config)?;
 
     // Add frames with encoder config
-    let encoder_config = EncoderConfig::new_lossy().quality(75.0);
+    let encoder_config = EncoderConfig::new_lossy().with_quality(75.0);
 
     anim.add_frame(&rgb_img, PixelLayout::Rgb8, 0, &encoder_config)?;
     anim.add_frame(&rgb_img, PixelLayout::Rgb8, 100, &encoder_config)?;
@@ -357,11 +366,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         minimize_size: true,
     };
     let mut anim = AnimationEncoder::new(width, height, anim_config)?;
-    anim.icc_profile(iccp_profile.to_vec());
-    anim.exif(exif_data.to_vec());
-    anim.xmp(xmp_data.to_vec());
+    anim.with_icc_profile(iccp_profile.to_vec());
+    anim.with_exif(exif_data.to_vec());
+    anim.with_xmp(xmp_data.to_vec());
 
-    let encoder_config = EncoderConfig::new_lossy().quality(75.0);
+    let encoder_config = EncoderConfig::new_lossy().with_quality(75.0);
     anim.add_frame(&rgb_img, PixelLayout::Rgb8, 0, &encoder_config)?;
     anim.add_frame(&rgb_img, PixelLayout::Rgb8, 100, &encoder_config)?;
 
@@ -372,7 +381,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("4.3 Animation with lossless frames");
     let mut anim = AnimationEncoder::new(width, height, AnimationConfig::default())?;
 
-    let lossless_config = EncoderConfig::new_lossless().quality(90.0);
+    let lossless_config = EncoderConfig::new_lossless().with_quality(90.0);
     anim.add_frame(&rgba_img, PixelLayout::Rgba8, 0, &lossless_config)?;
     anim.add_frame(&rgba_img, PixelLayout::Rgba8, 100, &lossless_config)?;
 
@@ -383,7 +392,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("4.4 Animation with advanced control");
     let mut anim = AnimationEncoder::new(width, height, AnimationConfig::default())?;
 
-    let encoder_config = EncoderConfig::new_lossy().quality(75.0);
+    let encoder_config = EncoderConfig::new_lossy().with_quality(75.0);
     // Add a full-canvas frame
     anim.add_frame_advanced(
         &rgb_img,
@@ -454,13 +463,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("5.1 Demuxing chunks");
     let demuxer = WebPDemuxer::new(&test_webp)?;
 
-    if let Some(iccp) = demuxer.icc_profile() {
+    if let Some(iccp) = demuxer.with_icc_profile() {
         println!("  ✓ ICCP chunk: {} bytes", iccp.len());
     }
-    if let Some(exif) = demuxer.exif() {
+    if let Some(exif) = demuxer.with_exif() {
         println!("  ✓ EXIF chunk: {} bytes", exif.len());
     }
-    if let Some(xmp) = demuxer.xmp() {
+    if let Some(xmp) = demuxer.with_xmp() {
         println!("  ✓ XMP chunk: {} bytes", xmp.len());
     }
     println!();
@@ -517,7 +526,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for (layout, name, bpp) in formats {
         let img = vec![128u8; width as usize * height as usize * bpp];
-        let config = EncoderConfig::new_lossy().quality(75.0);
+        let config = EncoderConfig::new_lossy().with_quality(75.0);
         let webp = EncodeRequest::new(&config, &img, layout, width, height).encode()?;
         println!("  ✓ {} → {} bytes", name, webp.len());
     }
@@ -534,7 +543,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Exceeded limits (test first since 0x0 dimensions cause panic - encoder bug)
     let result: Result<Vec<u8>, EncodeError> = {
         let limits = Limits::default().max_total_pixels(100);
-        let config = EncoderConfig::new_lossy().quality(75.0).limits(limits);
+        let config = EncoderConfig::new_lossy()
+            .with_quality(75.0)
+            .with_limits(limits);
 
         EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height).encode()
     };
@@ -555,7 +566,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Exceeded limits
     let result: Result<(Vec<u8>, u32, u32), DecodeError> = {
         let limits = Limits::default().max_total_pixels(100);
-        let config = zenwebp::DecodeConfig::default().limits(limits);
+        let config = zenwebp::DecodeConfig::default().with_limits(limits);
         let request = zenwebp::DecodeRequest::new(&config, &test_webp);
         request.decode_rgba()
     };
@@ -581,7 +592,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 8.1 Resource estimation
     println!("8.1 Resource estimation");
     let estimate = EncoderConfig::new_lossy()
-        .quality(75.0)
+        .with_quality(75.0)
         .estimate(width, height, 4);
     println!(
         "  ✓ Estimated peak memory: {} bytes",

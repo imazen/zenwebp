@@ -900,6 +900,66 @@ impl EncoderConfig {
 /// Static default progress callback (does nothing).
 static NO_PROGRESS: NoProgress = NoProgress;
 
+/// Image metadata (ICC profile, EXIF, XMP).
+///
+/// Use this to attach metadata to encoded images. All fields are optional.
+/// This struct borrows data with lifetime `'a` to match EncodeRequest's pattern.
+///
+/// # Example
+///
+/// ```rust
+/// use zenwebp::{EncodeRequest, LossyConfig, PixelLayout, ImageMetadata};
+///
+/// let config = LossyConfig::new();
+/// let pixels = vec![255u8; 4 * 4 * 4];
+/// let icc_data = vec![/* ICC data */];
+/// let metadata = ImageMetadata::new()
+///     .with_icc_profile(&icc_data);
+///
+/// let webp = EncodeRequest::lossy(&config, &pixels, PixelLayout::Rgba8, 4, 4)
+///     .with_metadata(metadata)
+///     .encode()?;
+/// # Ok::<(), zenwebp::EncodeError>(())
+/// ```
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ImageMetadata<'a> {
+    /// ICC color profile data.
+    pub icc_profile: Option<&'a [u8]>,
+    /// EXIF metadata.
+    pub exif: Option<&'a [u8]>,
+    /// XMP metadata.
+    pub xmp: Option<&'a [u8]>,
+}
+
+impl<'a> ImageMetadata<'a> {
+    /// Create empty metadata.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set ICC color profile.
+    #[must_use]
+    pub fn with_icc_profile(mut self, data: &'a [u8]) -> Self {
+        self.icc_profile = Some(data);
+        self
+    }
+
+    /// Set EXIF metadata.
+    #[must_use]
+    pub fn with_exif(mut self, data: &'a [u8]) -> Self {
+        self.exif = Some(data);
+        self
+    }
+
+    /// Set XMP metadata.
+    #[must_use]
+    pub fn with_xmp(mut self, data: &'a [u8]) -> Self {
+        self.xmp = Some(data);
+        self
+    }
+}
+
 /// Internal enum to hold different configuration types.
 enum ConfigKind<'a> {
     Lossy(&'a config::LossyConfig),
@@ -1102,43 +1162,79 @@ impl<'a> EncodeRequest<'a> {
 
     /// Set a cooperative cancellation token.
     #[must_use]
-    pub fn stop(mut self, stop: &'a dyn enough::Stop) -> Self {
+    pub fn with_stop(mut self, stop: &'a dyn enough::Stop) -> Self {
         self.stop = stop;
         self
     }
 
     /// Set a progress callback.
     #[must_use]
-    pub fn progress(mut self, progress: &'a dyn EncodeProgress) -> Self {
+    pub fn with_progress(mut self, progress: &'a dyn EncodeProgress) -> Self {
         self.progress = progress;
         self
     }
 
     /// Set row stride in pixels. Must be >= `width`.
     #[must_use]
-    pub fn stride(mut self, stride_pixels: usize) -> Self {
+    pub fn with_stride(mut self, stride_pixels: usize) -> Self {
         self.stride_pixels = Some(stride_pixels);
         self
     }
 
     /// Set ICC profile to embed.
     #[must_use]
-    pub fn icc_profile(mut self, data: &'a [u8]) -> Self {
+    pub fn with_icc_profile(mut self, data: &'a [u8]) -> Self {
         self.icc_profile = Some(data);
         self
     }
 
     /// Set EXIF metadata to embed.
     #[must_use]
-    pub fn exif(mut self, data: &'a [u8]) -> Self {
+    pub fn with_exif(mut self, data: &'a [u8]) -> Self {
         self.exif_metadata = Some(data);
         self
     }
 
     /// Set XMP metadata to embed.
     #[must_use]
-    pub fn xmp(mut self, data: &'a [u8]) -> Self {
+    pub fn with_xmp(mut self, data: &'a [u8]) -> Self {
         self.xmp_metadata = Some(data);
+        self
+    }
+
+    /// Set all metadata at once from an [`ImageMetadata`] struct.
+    ///
+    /// This is a convenience method that sets ICC profile, EXIF, and XMP metadata
+    /// in a single call. For setting individual fields, use [`with_icc_profile()`](Self::with_icc_profile),
+    /// [`with_exif()`](Self::with_exif), or [`with_xmp()`](Self::with_xmp).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use zenwebp::{EncodeRequest, LossyConfig, PixelLayout, ImageMetadata};
+    ///
+    /// let config = LossyConfig::new();
+    /// let pixels = vec![255u8; 4 * 4 * 4];
+    /// let icc_data = vec![/* ICC data */];
+    /// let metadata = ImageMetadata::new()
+    ///     .with_icc_profile(&icc_data);
+    ///
+    /// let webp = EncodeRequest::lossy(&config, &pixels, PixelLayout::Rgba8, 4, 4)
+    ///     .with_metadata(metadata)
+    ///     .encode()?;
+    /// # Ok::<(), zenwebp::EncodeError>(())
+    /// ```
+    #[must_use]
+    pub fn with_metadata(mut self, meta: ImageMetadata<'a>) -> Self {
+        if let Some(icc) = meta.icc_profile {
+            self.icc_profile = Some(icc);
+        }
+        if let Some(exif) = meta.exif {
+            self.exif_metadata = Some(exif);
+        }
+        if let Some(xmp) = meta.xmp {
+            self.xmp_metadata = Some(xmp);
+        }
         self
     }
 

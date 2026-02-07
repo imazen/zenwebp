@@ -111,21 +111,21 @@ impl LossyConfig {
 
     /// Set encoding quality (0.0 = smallest file, 100.0 = best quality).
     #[must_use]
-    pub fn quality(mut self, quality: f32) -> Self {
+    pub fn with_quality(mut self, quality: f32) -> Self {
         self.quality = quality.clamp(0.0, 100.0);
         self
     }
 
     /// Set method (0 = fastest, 6 = slowest but best compression).
     #[must_use]
-    pub fn method(mut self, method: u8) -> Self {
+    pub fn with_method(mut self, method: u8) -> Self {
         self.method = method.min(6);
         self
     }
 
     /// Set alpha channel quality (0-100, 100 = lossless alpha).
     #[must_use]
-    pub fn alpha_quality(mut self, quality: u8) -> Self {
+    pub fn with_alpha_quality(mut self, quality: u8) -> Self {
         self.alpha_quality = quality.min(100);
         self
     }
@@ -139,21 +139,21 @@ impl LossyConfig {
 
     /// Target PSNR in dB (encoder will adjust quality).
     #[must_use]
-    pub fn target_psnr(mut self, psnr: f32) -> Self {
+    pub fn with_target_psnr(mut self, psnr: f32) -> Self {
         self.target_psnr = psnr;
         self
     }
 
     /// Apply a content-aware preset (overrides SNS, filter, sharpness defaults).
     #[must_use]
-    pub fn preset(mut self, preset: Preset) -> Self {
+    pub fn with_preset_value(mut self, preset: Preset) -> Self {
         self.preset = Some(preset);
         self
     }
 
     /// Enable sharp (iterative) YUV conversion for better quality.
     #[must_use]
-    pub fn sharp_yuv(mut self, enable: bool) -> Self {
+    pub fn with_sharp_yuv(mut self, enable: bool) -> Self {
         self.sharp_yuv = enable;
         self
     }
@@ -161,7 +161,7 @@ impl LossyConfig {
     /// Override spatial noise shaping strength (0-100).
     /// Higher values preserve more texture detail.
     #[must_use]
-    pub fn sns_strength(mut self, strength: u8) -> Self {
+    pub fn with_sns_strength(mut self, strength: u8) -> Self {
         self.sns_strength = Some(strength.min(100));
         self
     }
@@ -169,44 +169,72 @@ impl LossyConfig {
     /// Override loop filter strength (0-100).
     /// Higher values produce smoother output.
     #[must_use]
-    pub fn filter_strength(mut self, strength: u8) -> Self {
+    pub fn with_filter_strength(mut self, strength: u8) -> Self {
         self.filter_strength = Some(strength.min(100));
         self
     }
 
     /// Override loop filter sharpness (0-7).
     #[must_use]
-    pub fn filter_sharpness(mut self, sharpness: u8) -> Self {
+    pub fn with_filter_sharpness(mut self, sharpness: u8) -> Self {
         self.filter_sharpness = Some(sharpness.min(7));
         self
     }
 
     /// Override number of segments for adaptive quantization (1-4).
     #[must_use]
-    pub fn segments(mut self, segments: u8) -> Self {
+    pub fn with_segments(mut self, segments: u8) -> Self {
         self.segments = Some(segments.clamp(1, 4));
         self
     }
 
     /// Set resource limits for validation.
     #[must_use]
-    pub fn limits(mut self, limits: Limits) -> Self {
+    pub fn with_limits(mut self, limits: Limits) -> Self {
         self.limits = limits;
         self
     }
 
     /// Set maximum dimensions.
     #[must_use]
-    pub fn max_dimensions(mut self, width: u32, height: u32) -> Self {
+    pub fn with_max_dimensions(mut self, width: u32, height: u32) -> Self {
         self.limits = self.limits.max_dimensions(width, height);
         self
     }
 
     /// Set maximum memory usage in bytes.
     #[must_use]
-    pub fn max_memory(mut self, bytes: u64) -> Self {
+    pub fn with_max_memory(mut self, bytes: u64) -> Self {
         self.limits = self.limits.max_memory(bytes);
         self
+    }
+
+    /// Estimate peak memory usage for encoding an image.
+    ///
+    /// Returns the typical peak memory consumption in bytes.
+    #[must_use]
+    pub fn estimate_memory(&self, width: u32, height: u32, bpp: u8) -> u64 {
+        crate::heuristics::estimate_encode(
+            width,
+            height,
+            bpp,
+            &crate::EncoderConfig::Lossy(self.clone()),
+        )
+        .peak_memory_bytes
+    }
+
+    /// Estimate worst-case peak memory usage for encoding an image.
+    ///
+    /// Returns the maximum expected peak memory (high-entropy content).
+    #[must_use]
+    pub fn estimate_memory_ceiling(&self, width: u32, height: u32, bpp: u8) -> u64 {
+        crate::heuristics::estimate_encode(
+            width,
+            height,
+            bpp,
+            &crate::EncoderConfig::Lossy(self.clone()),
+        )
+        .peak_memory_bytes_max
     }
 }
 
@@ -258,21 +286,21 @@ impl LosslessConfig {
 
     /// Set encoding effort (0.0 = fastest, 100.0 = best compression).
     #[must_use]
-    pub fn quality(mut self, quality: f32) -> Self {
+    pub fn with_quality(mut self, quality: f32) -> Self {
         self.quality = quality.clamp(0.0, 100.0);
         self
     }
 
     /// Set method (0 = fastest, 6 = slowest but best compression).
     #[must_use]
-    pub fn method(mut self, method: u8) -> Self {
+    pub fn with_method(mut self, method: u8) -> Self {
         self.method = method.min(6);
         self
     }
 
     /// Set alpha channel quality (0-100, 100 = lossless alpha).
     #[must_use]
-    pub fn alpha_quality(mut self, quality: u8) -> Self {
+    pub fn with_alpha_quality(mut self, quality: u8) -> Self {
         self.alpha_quality = quality.min(100);
         self
     }
@@ -289,7 +317,7 @@ impl LosslessConfig {
     /// Values < 100 allow slight color changes to improve compression while
     /// maintaining the illusion of lossless quality.
     #[must_use]
-    pub fn near_lossless(mut self, value: u8) -> Self {
+    pub fn with_near_lossless(mut self, value: u8) -> Self {
         self.near_lossless = value.min(100);
         self
     }
@@ -299,30 +327,58 @@ impl LosslessConfig {
     /// By default, RGB values under alpha=0 may be modified for better compression.
     /// Enable this to preserve them exactly (e.g., for alpha compositing workflows).
     #[must_use]
-    pub fn exact(mut self, exact: bool) -> Self {
+    pub fn with_exact(mut self, exact: bool) -> Self {
         self.exact = exact;
         self
     }
 
     /// Set resource limits for validation.
     #[must_use]
-    pub fn limits(mut self, limits: Limits) -> Self {
+    pub fn with_limits(mut self, limits: Limits) -> Self {
         self.limits = limits;
         self
     }
 
     /// Set maximum dimensions.
     #[must_use]
-    pub fn max_dimensions(mut self, width: u32, height: u32) -> Self {
+    pub fn with_max_dimensions(mut self, width: u32, height: u32) -> Self {
         self.limits = self.limits.max_dimensions(width, height);
         self
     }
 
     /// Set maximum memory usage in bytes.
     #[must_use]
-    pub fn max_memory(mut self, bytes: u64) -> Self {
+    pub fn with_max_memory(mut self, bytes: u64) -> Self {
         self.limits = self.limits.max_memory(bytes);
         self
+    }
+
+    /// Estimate peak memory usage for encoding an image.
+    ///
+    /// Returns the typical peak memory consumption in bytes.
+    #[must_use]
+    pub fn estimate_memory(&self, width: u32, height: u32, bpp: u8) -> u64 {
+        crate::heuristics::estimate_encode(
+            width,
+            height,
+            bpp,
+            &crate::EncoderConfig::Lossless(self.clone()),
+        )
+        .peak_memory_bytes
+    }
+
+    /// Estimate worst-case peak memory usage for encoding an image.
+    ///
+    /// Returns the maximum expected peak memory (high-entropy content).
+    #[must_use]
+    pub fn estimate_memory_ceiling(&self, width: u32, height: u32, bpp: u8) -> u64 {
+        crate::heuristics::estimate_encode(
+            width,
+            height,
+            bpp,
+            &crate::EncoderConfig::Lossless(self.clone()),
+        )
+        .peak_memory_bytes_max
     }
 }
 
@@ -379,7 +435,7 @@ impl EncoderConfig {
     ///
     /// Works for both lossy and lossless configurations.
     #[must_use]
-    pub fn quality(mut self, quality: f32) -> Self {
+    pub fn with_quality(mut self, quality: f32) -> Self {
         match &mut self {
             Self::Lossy(cfg) => cfg.quality = quality,
             Self::Lossless(cfg) => cfg.quality = quality,
@@ -391,7 +447,7 @@ impl EncoderConfig {
     ///
     /// Works for both lossy and lossless configurations.
     #[must_use]
-    pub fn method(mut self, method: u8) -> Self {
+    pub fn with_method(mut self, method: u8) -> Self {
         match &mut self {
             Self::Lossy(cfg) => cfg.method = method,
             Self::Lossless(cfg) => cfg.method = method,
@@ -401,7 +457,7 @@ impl EncoderConfig {
 
     /// Set SNS strength (lossy only, 0-100). No effect on lossless.
     #[must_use]
-    pub fn sns_strength(mut self, strength: u8) -> Self {
+    pub fn with_sns_strength(mut self, strength: u8) -> Self {
         if let Self::Lossy(cfg) = &mut self {
             cfg.sns_strength = Some(strength);
         }
@@ -410,7 +466,7 @@ impl EncoderConfig {
 
     /// Set filter strength (lossy only, 0-100). No effect on lossless.
     #[must_use]
-    pub fn filter_strength(mut self, strength: u8) -> Self {
+    pub fn with_filter_strength(mut self, strength: u8) -> Self {
         if let Self::Lossy(cfg) = &mut self {
             cfg.filter_strength = Some(strength);
         }
@@ -419,7 +475,7 @@ impl EncoderConfig {
 
     /// Set filter sharpness (lossy only, 0-7). No effect on lossless.
     #[must_use]
-    pub fn filter_sharpness(mut self, sharpness: u8) -> Self {
+    pub fn with_filter_sharpness(mut self, sharpness: u8) -> Self {
         if let Self::Lossy(cfg) = &mut self {
             cfg.filter_sharpness = Some(sharpness);
         }
@@ -428,7 +484,7 @@ impl EncoderConfig {
 
     /// Set number of segments (lossy only, 1-4). No effect on lossless.
     #[must_use]
-    pub fn segments(mut self, segments: u8) -> Self {
+    pub fn with_segments(mut self, segments: u8) -> Self {
         if let Self::Lossy(cfg) = &mut self {
             cfg.segments = Some(segments);
         }
@@ -437,7 +493,7 @@ impl EncoderConfig {
 
     /// Set near-lossless preprocessing (lossless only, 0-100). No effect on lossy.
     #[must_use]
-    pub fn near_lossless(mut self, value: u8) -> Self {
+    pub fn with_near_lossless(mut self, value: u8) -> Self {
         if let Self::Lossless(cfg) = &mut self {
             cfg.near_lossless = value;
         }
@@ -448,7 +504,7 @@ impl EncoderConfig {
     ///
     /// Works for both lossy and lossless configurations.
     #[must_use]
-    pub fn target_size(mut self, bytes: u32) -> Self {
+    pub fn with_target_size(mut self, bytes: u32) -> Self {
         match &mut self {
             Self::Lossy(cfg) => cfg.target_size = bytes,
             Self::Lossless(cfg) => cfg.target_size = bytes,
@@ -458,7 +514,7 @@ impl EncoderConfig {
 
     /// Set target PSNR in dB (lossy only). 0.0 = disabled. No effect on lossless.
     #[must_use]
-    pub fn target_psnr(mut self, psnr: f32) -> Self {
+    pub fn with_target_psnr(mut self, psnr: f32) -> Self {
         if let Self::Lossy(cfg) = &mut self {
             cfg.target_psnr = psnr;
         }
@@ -479,7 +535,7 @@ impl EncoderConfig {
 
     /// Enable/disable sharp YUV conversion (lossy only). No effect on lossless.
     #[must_use]
-    pub fn sharp_yuv(mut self, enable: bool) -> Self {
+    pub fn with_sharp_yuv(mut self, enable: bool) -> Self {
         if let Self::Lossy(cfg) = &mut self {
             cfg.sharp_yuv = enable;
         }
@@ -490,7 +546,7 @@ impl EncoderConfig {
     ///
     /// When switching, preserves common settings (quality, method, limits, etc.).
     #[must_use]
-    pub fn lossless(self, enable: bool) -> Self {
+    pub fn with_lossless(self, enable: bool) -> Self {
         match (&self, enable) {
             (Self::Lossy(_), true) => {
                 // Switch to lossless
@@ -526,6 +582,22 @@ impl EncoderConfig {
     #[must_use]
     pub fn estimate(&self, width: u32, height: u32, bpp: u8) -> crate::heuristics::EncodeEstimate {
         crate::heuristics::estimate_encode(width, height, bpp, self)
+    }
+
+    /// Estimate peak memory usage for encoding an image.
+    ///
+    /// Returns the typical peak memory consumption in bytes.
+    #[must_use]
+    pub fn estimate_memory(&self, width: u32, height: u32, bpp: u8) -> u64 {
+        crate::heuristics::estimate_encode(width, height, bpp, self).peak_memory_bytes
+    }
+
+    /// Estimate worst-case peak memory usage for encoding an image.
+    ///
+    /// Returns the maximum expected peak memory (high-entropy content).
+    #[must_use]
+    pub fn estimate_memory_ceiling(&self, width: u32, height: u32, bpp: u8) -> u64 {
+        crate::heuristics::estimate_encode(width, height, bpp, self).peak_memory_bytes_max
     }
 
     /// Check if this is a lossless configuration.

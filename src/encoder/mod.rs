@@ -55,8 +55,8 @@ pub use analysis::{ClassifierDiag, ContentType};
 pub use api::ColorType;
 pub(crate) use api::EncoderParams;
 pub use api::{
-    EncodeError, EncodeProgress, EncodeRequest, EncodeResult, EncodeStats, NoProgress, PixelLayout,
-    Preset,
+    EncodeError, EncodeProgress, EncodeRequest, EncodeResult, EncodeStats, ImageMetadata,
+    NoProgress, PixelLayout, Preset,
 };
 #[allow(deprecated)]
 pub use api::{EncodingError, EncodingStats};

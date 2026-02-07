@@ -35,7 +35,7 @@ fn main() {
 
     // Encode with libwebp LOSSLESS
     let webp_data = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 100.0)
-        .lossless(true)
+        .with_lossless(true)
         .encode_rgb(&rgb, info.width, info.height, webpx::Unstoppable)
         .expect("Failed to encode");
 

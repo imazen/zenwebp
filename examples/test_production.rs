@@ -23,14 +23,14 @@ fn main() {
     println!("----  --------  --------  -------");
 
     for q in [50, 75, 90] {
-        let _cfg = LossyConfig::new().quality(q as f32).method(4);
+        let _cfg = LossyConfig::new().with_quality(q as f32).with_method(4);
         let zen = EncodeRequest::lossy(&_cfg, &pixels, PixelLayout::Rgb8, w, h)
             .encode()
             .unwrap();
 
         let lib = webpx::EncoderConfig::new()
-            .quality(q as f32)
-            .method(4)
+            .with_quality(q as f32)
+            .with_method(4)
             .encode_rgb(&pixels, w, h, webpx::Unstoppable)
             .unwrap();
 

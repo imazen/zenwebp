@@ -15,9 +15,9 @@ fn main() {
     ];
 
     for (width, height, bpp, lossless, method) in cases {
-        let mut config = EncoderConfig::new_lossy().method(method);
+        let mut config = EncoderConfig::new_lossy().with_method(method);
         if lossless {
-            config = config.lossless(true);
+            config = config.with_lossless(true);
         }
 
         let est = estimate_encode(width, height, bpp, &config);

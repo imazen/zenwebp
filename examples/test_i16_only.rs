@@ -14,39 +14,39 @@ fn main() {
 
     // Method 0 forces I16-only
     let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
-        .method(0)
-        .sns_strength(0)
-        .filter_strength(0)
-        .segments(1);
+        .with_method(0)
+        .with_sns_strength(0)
+        .with_filter_strength(0)
+        .with_segments(1);
     let zen_m0 = EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, w, h)
         .encode()
         .unwrap();
 
     let lib_m0 = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-        .method(0)
-        .sns_strength(0)
-        .filter_strength(0)
-        .filter_sharpness(0)
-        .segments(1)
+        .with_method(0)
+        .with_sns_strength(0)
+        .with_filter_strength(0)
+        .with_filter_sharpness(0)
+        .with_segments(1)
         .encode_rgb(&rgb, w, h, webpx::Unstoppable)
         .unwrap();
 
     // Also method 1
     let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
-        .method(1)
-        .sns_strength(0)
-        .filter_strength(0)
-        .segments(1);
+        .with_method(1)
+        .with_sns_strength(0)
+        .with_filter_strength(0)
+        .with_segments(1);
     let zen_m1 = EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, w, h)
         .encode()
         .unwrap();
 
     let lib_m1 = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-        .method(1)
-        .sns_strength(0)
-        .filter_strength(0)
-        .filter_sharpness(0)
-        .segments(1)
+        .with_method(1)
+        .with_sns_strength(0)
+        .with_filter_strength(0)
+        .with_filter_sharpness(0)
+        .with_segments(1)
         .encode_rgb(&rgb, w, h, webpx::Unstoppable)
         .unwrap();
 

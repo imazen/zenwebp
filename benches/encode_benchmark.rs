@@ -84,7 +84,9 @@ fn bench_encode_methods(c: &mut Criterion) {
             &method,
             |b, &method| {
                 b.iter(|| {
-                    let config = EncoderConfig::new_lossy().quality(75.0).method(method);
+                    let config = EncoderConfig::new_lossy()
+                        .with_quality(75.0)
+                        .with_method(method);
                     EncodeRequest::new(
                         &config,
                         black_box(&rgb_data),
@@ -119,7 +121,9 @@ fn bench_encode_quality(c: &mut Criterion) {
             &quality,
             |b, &quality| {
                 b.iter(|| {
-                    let config = EncoderConfig::new_lossy().quality(quality).method(4);
+                    let config = EncoderConfig::new_lossy()
+                        .with_quality(quality)
+                        .with_method(4);
                     EncodeRequest::new(
                         &config,
                         black_box(&rgb_data),
@@ -158,7 +162,7 @@ fn bench_encode_presets(c: &mut Criterion) {
     for (name, preset) in presets {
         group.bench_with_input(BenchmarkId::new("zenwebp", name), &preset, |b, &preset| {
             b.iter(|| {
-                let config = EncoderConfig::with_preset(preset, 75.0).method(4);
+                let config = EncoderConfig::with_preset(preset, 75.0).with_method(4);
                 EncodeRequest::new(
                     &config,
                     black_box(&rgb_data),
@@ -188,7 +192,7 @@ fn bench_encode_by_image_type(c: &mut Criterion) {
                 &(&rgb_data, width, height),
                 |b, (data, w, h)| {
                     b.iter(|| {
-                        let config = EncoderConfig::new_lossy().quality(75.0).method(4);
+                        let config = EncoderConfig::new_lossy().with_quality(75.0).with_method(4);
                         EncodeRequest::new(&config, black_box(data), PixelLayout::Rgb8, *w, *h)
                             .encode()
                             .unwrap()

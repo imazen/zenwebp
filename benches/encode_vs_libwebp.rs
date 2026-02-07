@@ -62,11 +62,11 @@ fn bench_methods_diagnostic(c: &mut Criterion) {
             |b, &method| {
                 b.iter(|| {
                     let config = EncoderConfig::new_lossy()
-                        .quality(75.0)
-                        .method(method)
-                        .sns_strength(0)
-                        .filter_strength(0)
-                        .segments(1);
+                        .with_quality(75.0)
+                        .with_method(method)
+                        .with_sns_strength(0)
+                        .with_filter_strength(0)
+                        .with_segments(1);
                     EncodeRequest::new(
                         &config,
                         black_box(&rgb_data),
@@ -86,11 +86,11 @@ fn bench_methods_diagnostic(c: &mut Criterion) {
             |b, &method| {
                 b.iter(|| {
                     webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-                        .method(method)
-                        .sns_strength(0)
-                        .filter_strength(0)
-                        .filter_sharpness(0)
-                        .segments(1)
+                        .with_method(method)
+                        .with_sns_strength(0)
+                        .with_filter_strength(0)
+                        .with_filter_sharpness(0)
+                        .with_segments(1)
                         .encode_rgb(black_box(&rgb_data), width, height, webpx::Unstoppable)
                         .unwrap()
                 });
@@ -116,7 +116,9 @@ fn bench_methods_default(c: &mut Criterion) {
             &method,
             |b, &method| {
                 b.iter(|| {
-                    let config = EncoderConfig::new_lossy().quality(75.0).method(method);
+                    let config = EncoderConfig::new_lossy()
+                        .with_quality(75.0)
+                        .with_method(method);
                     EncodeRequest::new(
                         &config,
                         black_box(&rgb_data),
@@ -136,7 +138,7 @@ fn bench_methods_default(c: &mut Criterion) {
             |b, &method| {
                 b.iter(|| {
                     webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-                        .method(method)
+                        .with_method(method)
                         .encode_rgb(black_box(&rgb_data), width, height, webpx::Unstoppable)
                         .unwrap()
                 });
@@ -162,7 +164,9 @@ fn bench_quality_comparison(c: &mut Criterion) {
             &quality,
             |b, &quality| {
                 b.iter(|| {
-                    let config = EncoderConfig::new_lossy().quality(quality).method(4);
+                    let config = EncoderConfig::new_lossy()
+                        .with_quality(quality)
+                        .with_method(4);
                     EncodeRequest::new(
                         &config,
                         black_box(&rgb_data),
@@ -182,7 +186,7 @@ fn bench_quality_comparison(c: &mut Criterion) {
             |b, &quality| {
                 b.iter(|| {
                     webpx::EncoderConfig::with_preset(webpx::Preset::Default, quality)
-                        .method(4)
+                        .with_method(4)
                         .encode_rgb(black_box(&rgb_data), width, height, webpx::Unstoppable)
                         .unwrap()
                 });

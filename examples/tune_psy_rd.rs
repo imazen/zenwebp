@@ -80,7 +80,7 @@ fn main() {
             };
 
             // Encode
-            let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0).method(method);
+            let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0).with_method(method);
             let webp = match EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, w as u32, h as u32)
                 .encode()
             {

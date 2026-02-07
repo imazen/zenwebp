@@ -42,11 +42,11 @@ fn main() {
         let mut zen_size = 0;
         for _ in 0..iterations {
             let _cfg = zenwebp::EncoderConfig::new_lossy()
-                .quality(75.0)
-                .method(method)
-                .sns_strength(0)
-                .filter_strength(0)
-                .segments(1);
+                .with_quality(75.0)
+                .with_method(method)
+                .with_sns_strength(0)
+                .with_filter_strength(0)
+                .with_segments(1);
             let out = EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, w, h)
                 .encode()
                 .unwrap();
@@ -59,11 +59,11 @@ fn main() {
         let mut lib_size = 0;
         for _ in 0..iterations {
             let out = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-                .method(method)
-                .sns_strength(0)
-                .filter_strength(0)
-                .filter_sharpness(0)
-                .segments(1)
+                .with_method(method)
+                .with_sns_strength(0)
+                .with_filter_strength(0)
+                .with_filter_sharpness(0)
+                .with_segments(1)
                 .encode_rgb(&rgb, w, h, webpx::Unstoppable)
                 .unwrap();
             lib_size = out.len();

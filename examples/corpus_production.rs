@@ -47,15 +47,15 @@ fn main() {
 
         if let Some((pixels, w, h)) = read_png_rgb(&path_str) {
             // Production settings (defaults)
-            let _cfg = zenwebp::EncoderConfig::new_lossy().quality(q).method(4);
+            let _cfg = zenwebp::EncoderConfig::new_lossy()
+                .with_quality(q)
+                .with_method(4);
             let zen = EncodeRequest::new(&_cfg, &pixels, PixelLayout::Rgb8, w, h).encode();
 
-            let lib = webpx::EncoderConfig::new().quality(q).method(4).encode_rgb(
-                &pixels,
-                w,
-                h,
-                webpx::Unstoppable,
-            );
+            let lib = webpx::EncoderConfig::new()
+                .with_quality(q)
+                .with_method(4)
+                .encode_rgb(&pixels, w, h, webpx::Unstoppable);
 
             if let (Ok(z), Ok(l)) = (zen, lib) {
                 zen_total += z.len() as u64;

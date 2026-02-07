@@ -67,20 +67,20 @@ fn main() {
     use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, Preset};
 
     let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
-        .method(4)
-        .sns_strength(0)
-        .filter_strength(0)
-        .segments(1);
+        .with_method(4)
+        .with_sns_strength(0)
+        .with_filter_strength(0)
+        .with_segments(1);
     let zen_webp = EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, w, h)
         .encode()
         .unwrap();
 
     let lib_webp = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-        .method(4)
-        .sns_strength(0)
-        .filter_strength(0)
-        .filter_sharpness(0)
-        .segments(1)
+        .with_method(4)
+        .with_sns_strength(0)
+        .with_filter_strength(0)
+        .with_filter_sharpness(0)
+        .with_segments(1)
         .encode_rgb(&rgb, w, h, webpx::Unstoppable)
         .unwrap();
 

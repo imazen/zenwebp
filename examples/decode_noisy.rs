@@ -14,7 +14,7 @@ fn main() {
     }
 
     // Encode to WebP once
-    let _cfg = EncoderConfig::new_lossy().quality(75.0);
+    let _cfg = EncoderConfig::new_lossy().with_quality(75.0);
     let webp = EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, width, height)
         .encode()
         .unwrap();

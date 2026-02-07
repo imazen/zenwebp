@@ -142,7 +142,7 @@ fn main() {
         println!("Test 2: Decoding our-encoded WebP");
         println!("========================================");
         let our_encoded = {
-            let config = EncoderConfig::new_lossy().quality(75.0);
+            let config = EncoderConfig::new_lossy().with_quality(75.0);
             EncodeRequest::new(&config, &rgb_data, PixelLayout::Rgb8, width, height)
                 .encode()
                 .unwrap()

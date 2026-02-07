@@ -29,7 +29,7 @@ fn benchmark_image(path: &Path) -> Option<(String, u32, u32, f64, f64, f64, f64,
 
     // Encode with libwebp for decode testing
     let webp_data = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-        .method(5)
+        .with_method(5)
         .encode_rgb(&rgb, info.width, info.height, webpx::Unstoppable)
         .ok()?;
 
