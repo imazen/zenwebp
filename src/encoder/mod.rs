@@ -30,6 +30,8 @@ mod arithmetic;
 /// Color quantization via imagequant (requires `quantize` feature)
 #[cfg(feature = "quantize")]
 pub mod color_quantize;
+/// Type-safe encoder configuration
+pub mod config;
 pub mod cost;
 mod fast_math;
 /// Perceptual distortion model (CSF tables, psy-rd, psy-trellis)
@@ -49,17 +51,18 @@ pub mod vp8l;
 
 // Re-export public API
 pub use analysis::{ClassifierDiag, ContentType};
-pub(crate) use api::EncoderParams;
-pub use api::{
-    PixelLayout, EncodeProgress, EncodeRequest, EncoderConfig, EncodeError, EncodeResult, EncodeStats,
-    NoProgress, Preset,
-};
 #[allow(deprecated)]
 pub use api::ColorType;
+pub(crate) use api::EncoderParams;
+pub use api::{
+    EncodeError, EncodeProgress, EncodeRequest, EncodeResult, EncodeStats, NoProgress, PixelLayout,
+    Preset,
+};
 #[allow(deprecated)]
 pub use api::{EncodingError, EncodingStats};
 #[cfg(feature = "quantize")]
 pub use color_quantize::{quantize_rgb, quantize_rgba, QuantizedImage};
+pub use config::{EncoderConfig, LosslessConfig, LossyConfig};
 pub use vp8l::{encode_vp8l, Vp8lConfig, Vp8lQuality};
 
 // Crate-internal re-exports for mux module

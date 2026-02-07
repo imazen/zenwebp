@@ -6,7 +6,7 @@
 use std::io::BufReader;
 use zenwebp::decoder::vp8::Vp8Decoder;
 use zenwebp::decoder::LumaMode;
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
+use zenwebp::{EncodeRequest, LossyConfig, PixelLayout, Preset};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";
@@ -19,12 +19,12 @@ fn main() {
     let (w, h) = (info.width, info.height);
 
     // Encode with both
-    let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
+    let _cfg = LossyConfig::with_preset(Preset::Default, 75.0)
         .method(4)
         .sns_strength(0)
         .filter_strength(0)
         .segments(1);
-    let zen = EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, w, h)
+    let zen = EncodeRequest::lossy(&_cfg, &rgb, PixelLayout::Rgb8, w, h)
         .encode()
         .unwrap();
 

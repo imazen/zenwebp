@@ -8,14 +8,14 @@ fn main() {
 
     // Test cases from our profile data
     let cases = [
-        (1024, 1024, 4, false, 4),  // 1MP RGBA lossy
-        (1920, 1080, 4, false, 4),  // 2MP RGBA lossy
-        (3840, 2160, 4, false, 4),  // 8MP RGBA lossy (4K)
-        (1024, 1024, 4, true, 6),   // 1MP RGBA lossless
+        (1024, 1024, 4, false, 4), // 1MP RGBA lossy
+        (1920, 1080, 4, false, 4), // 2MP RGBA lossy
+        (3840, 2160, 4, false, 4), // 8MP RGBA lossy (4K)
+        (1024, 1024, 4, true, 6),  // 1MP RGBA lossless
     ];
 
     for (width, height, bpp, lossless, method) in cases {
-        let mut config = EncoderConfig::new().method(method);
+        let mut config = EncoderConfig::new_lossy().method(method);
         if lossless {
             config = config.lossless(true);
         }

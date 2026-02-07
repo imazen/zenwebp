@@ -128,9 +128,9 @@ impl StreamingDecoder {
     /// Get image information, available after [`StreamStatus::HeaderReady`].
     pub fn info(&self) -> Result<ImageInfo, DecodeError> {
         if !self.header_parsed {
-            return Err(DecodeError::InvalidParameter(
-                alloc::string::String::from("headers not yet available"),
-            ));
+            return Err(DecodeError::InvalidParameter(alloc::string::String::from(
+                "headers not yet available",
+            )));
         }
         ImageInfo::from_webp(&self.buf)
     }
@@ -188,9 +188,9 @@ impl StreamingDecoder {
 
     fn ensure_complete(&self) -> Result<(), DecodeError> {
         if !self.is_complete() {
-            return Err(DecodeError::InvalidParameter(
-                alloc::string::String::from("data incomplete"),
-            ));
+            return Err(DecodeError::InvalidParameter(alloc::string::String::from(
+                "data incomplete",
+            )));
         }
         Ok(())
     }

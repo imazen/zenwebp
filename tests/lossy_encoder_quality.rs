@@ -19,7 +19,7 @@ use dssim_core::Dssim;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use imgref::ImgVec;
 use rgb::RGBA;
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig};
+use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
 /// Simple PSNR calculation (not great for perceptual quality, but simple)
 fn calculate_psnr(original: &[u8], decoded: &[u8]) -> f64 {

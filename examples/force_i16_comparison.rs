@@ -2,7 +2,7 @@
 //
 // This helps determine if our I4 mode selections are beneficial or harmful
 
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
+use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, Preset};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";

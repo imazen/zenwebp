@@ -6,11 +6,11 @@ pub(crate) mod arithmetic;
 mod bit_reader;
 mod extended;
 mod huffman;
+mod limits;
 mod loop_filter;
 mod lossless;
 mod lossless_transform;
 mod streaming;
-mod limits;
 pub(crate) mod yuv;
 
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
@@ -37,15 +37,15 @@ mod yuv_wasm;
 pub mod vp8;
 
 // Re-export public API
+#[allow(deprecated)]
+pub use api::DecodingError;
 pub use api::{
     decode_bgr, decode_bgr_into, decode_bgra, decode_bgra_into, decode_rgb, decode_rgb_into,
-    decode_rgba, decode_rgba_into, decode_yuv420, BitstreamFormat, DecodeConfig, DecodeRequest,
-    DecodeError, DecodeResult, ImageInfo, LoopCount, UpsamplingMethod, WebPDecoder, YuvPlanes,
+    decode_rgba, decode_rgba_into, decode_yuv420, BitstreamFormat, DecodeConfig, DecodeError,
+    DecodeRequest, DecodeResult, ImageInfo, LoopCount, UpsamplingMethod, WebPDecoder, YuvPlanes,
 };
 #[allow(deprecated)]
 pub use limits::Limits;
-#[allow(deprecated)]
-pub use api::DecodingError;
 pub use streaming::{StreamStatus, StreamingDecoder};
 
 // Re-export diagnostic types for tests (hidden from public docs)

@@ -1,5 +1,5 @@
 // Test to compare with/without trellis at method 4
-use zenwebp::{PixelLayout, EncodeRequest};
+use zenwebp::{EncodeRequest, PixelLayout};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";
@@ -15,7 +15,7 @@ fn main() {
     println!("Settings: SNS=0, filter=0, segments=1, Q75\n");
 
     for method in [2, 3, 4, 5, 6] {
-        let config = zenwebp::EncoderConfig::new()
+        let config = zenwebp::EncoderConfig::new_lossy()
             .quality(75.0)
             .method(method)
             .sns_strength(0)

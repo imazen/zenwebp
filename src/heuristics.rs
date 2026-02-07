@@ -129,8 +129,8 @@ pub fn estimate_encode(width: u32, height: u32, bpp: u8, config: &EncoderConfig)
     let pixels = (width as u64) * (height as u64);
     let input_bytes = pixels * (bpp as u64);
 
-    let method = config.method;
-    let is_lossless = config.lossless;
+    let method = config.get_method();
+    let is_lossless = config.is_lossless();
 
     let (fixed, bpp_low, bpp_high) = if is_lossless {
         (
@@ -161,7 +161,7 @@ pub fn estimate_encode(width: u32, height: u32, bpp: u8, config: &EncoderConfig)
     let output_ratio = if is_lossless {
         0.5 // ~50% of input
     } else {
-        let q = config.quality as f64;
+        let q = config.get_quality() as f64;
         0.02 + (q / 100.0) * 0.18
     };
     let output_bytes = (input_bytes as f64 * output_ratio) as u64;
@@ -169,13 +169,13 @@ pub fn estimate_encode(width: u32, height: u32, bpp: u8, config: &EncoderConfig)
     // Time estimate (multiplier relative to method 4)
     // Measured: m0=25.7, m2=16.7, m4=14.5, m6=11.1 Mpix/s
     let method_speed = match method {
-        0 => 25.7 / 14.5,  // 1.77x faster than method 4
-        1 => 1.5,          // interpolated
-        2 => 16.7 / 14.5,  // 1.15x faster than method 4
-        3 => 1.08,         // interpolated
-        4 => 1.0,          // baseline
-        5 => 0.95,         // interpolated
-        _ => 11.1 / 14.5,  // 0.77x (method 6, slower than 4)
+        0 => 25.7 / 14.5, // 1.77x faster than method 4
+        1 => 1.5,         // interpolated
+        2 => 16.7 / 14.5, // 1.15x faster than method 4
+        3 => 1.08,        // interpolated
+        4 => 1.0,         // baseline
+        5 => 0.95,        // interpolated
+        _ => 11.1 / 14.5, // 0.77x (method 6, slower than 4)
     };
 
     let throughput = if is_lossless {

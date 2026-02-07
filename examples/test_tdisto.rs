@@ -1,6 +1,6 @@
 // Test to check TDisto and mode selection details
 use zenwebp::decoder::vp8::Vp8Decoder;
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
+use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, Preset};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";

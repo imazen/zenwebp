@@ -1,5 +1,5 @@
 //! Compare production (default) settings between zenwebp and libwebp
-use zenwebp::{PixelLayout, EncodeRequest};
+use zenwebp::{EncodeRequest, LossyConfig, PixelLayout};
 fn main() {
     let path = std::env::args()
         .nth(1)
@@ -23,8 +23,8 @@ fn main() {
     println!("----  --------  --------  -------");
 
     for q in [50, 75, 90] {
-        let _cfg = zenwebp::EncoderConfig::new().quality(q as f32).method(4);
-        let zen = EncodeRequest::new(&_cfg, &pixels, PixelLayout::Rgb8, w, h)
+        let _cfg = LossyConfig::new().quality(q as f32).method(4);
+        let zen = EncodeRequest::lossy(&_cfg, &pixels, PixelLayout::Rgb8, w, h)
             .encode()
             .unwrap();
 

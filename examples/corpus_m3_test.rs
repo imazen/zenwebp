@@ -1,7 +1,7 @@
 //! Corpus comparison at method 3
 use std::env;
 use std::fs;
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
+use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, Preset};
 
 fn main() {
     let args: Vec<_> = env::args().collect();

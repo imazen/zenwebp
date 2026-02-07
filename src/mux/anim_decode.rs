@@ -83,9 +83,9 @@ impl<'a> AnimationDecoder<'a> {
         let mut decoder = WebPDecoder::new_with_options(data, config.to_options())?;
         decoder.set_limits(config.limits.clone());
         if !decoder.is_animated() {
-            return Err(DecodeError::InvalidParameter(
-                alloc::string::String::from("not an animated WebP"),
-            ));
+            return Err(DecodeError::InvalidParameter(alloc::string::String::from(
+                "not an animated WebP",
+            )));
         }
         let total_frames = decoder.num_frames();
         let buf_size = decoder

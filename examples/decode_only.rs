@@ -1,5 +1,5 @@
 // Decode-only benchmark for profiling
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig};
+use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
 fn main() {
     // Generate a test image (gradient)
@@ -15,7 +15,7 @@ fn main() {
     }
 
     // Encode to WebP once
-    let _cfg = EncoderConfig::new().quality(75.0);
+    let _cfg = EncoderConfig::new_lossy().quality(75.0);
     let webp = EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, width, height)
         .encode()
         .unwrap();

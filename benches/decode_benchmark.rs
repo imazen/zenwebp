@@ -7,7 +7,7 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
 use std::path::Path;
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig};
+use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
 /// Load a PNG image, encode to WebP, return WebP data.
 fn make_webp(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
@@ -29,10 +29,16 @@ fn make_webp(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
         _ => return None,
     };
 
-    let config = EncoderConfig::new().quality(75.0).method(4);
-    let webp = EncodeRequest::new(&config, &rgb_data, PixelLayout::Rgb8, info.width, info.height)
-        .encode()
-        .ok()?;
+    let config = EncoderConfig::new_lossy().quality(75.0).method(4);
+    let webp = EncodeRequest::new(
+        &config,
+        &rgb_data,
+        PixelLayout::Rgb8,
+        info.width,
+        info.height,
+    )
+    .encode()
+    .ok()?;
 
     Some((webp, info.width, info.height))
 }

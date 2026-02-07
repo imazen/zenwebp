@@ -34,8 +34,8 @@ use super::error::MuxError;
 use crate::decoder::LoopCount;
 use crate::encoder::vp8::encode_frame_lossy;
 use crate::encoder::{
-    encode_alpha_lossless, encode_frame_lossless, PixelLayout, EncoderConfig, EncoderParams,
-    NoProgress,
+    encode_alpha_lossless, encode_frame_lossless, EncoderConfig, EncoderParams, NoProgress,
+    PixelLayout,
 };
 use enough::Unstoppable;
 

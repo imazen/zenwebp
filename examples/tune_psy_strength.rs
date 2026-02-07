@@ -9,7 +9,7 @@ use imgref::Img;
 use rgb::RGB8;
 use std::env;
 use std::fs;
-use zenwebp::{decode_rgb, PixelLayout, EncodeRequest, EncoderConfig, Preset};
+use zenwebp::{decode_rgb, EncodeRequest, EncoderConfig, PixelLayout, Preset};
 
 fn main() {
     let args: Vec<_> = env::args().collect();

@@ -4,7 +4,7 @@
 
 use zenwebp::decoder::vp8::Vp8Decoder;
 use zenwebp::decoder::LumaMode;
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
+use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, Preset};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";

@@ -292,6 +292,11 @@ Remaining:
 - [x] Add `Limits` on encode side (currently decode-only)
 - [x] Replace `ColorType` with `PixelLayout` (or rename — same concept, just naming)
 - [x] `Limits` fields: standardize to `Option<u64>`
+- [ ] Split `EncoderConfig` into `LossyConfig` / `LosslessConfig` (compile-time invalid state prevention)
+- [ ] Add `estimate_memory()` / `estimate_memory_ceiling()` on both config types
+- [ ] Factor metadata into `ImageMetadata` struct (keep request clean)
+- [ ] Add probing: `ImageInfo::from_bytes(&[u8])` static probe with `PROBE_BYTES` constant
+- [ ] Two-phase decoder: `build()` parses header → `info()` inspects → `decode()` continues without re-parsing
 
 ## Why Streaming Encoding Doesn't Make Sense for WebP
 

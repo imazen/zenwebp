@@ -1,6 +1,6 @@
 // Debug a specific I4 block to see all mode RD scores
 
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
+use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, Preset};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";

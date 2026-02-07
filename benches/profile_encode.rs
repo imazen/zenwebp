@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::time::Instant;
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig};
+use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
 fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
     let file = std::fs::File::open(path).unwrap();
@@ -45,7 +45,7 @@ fn main() {
     );
 
     // Warmup
-    let config = EncoderConfig::new().quality(quality).method(method);
+    let config = EncoderConfig::new_lossy().quality(quality).method(method);
     let output = EncodeRequest::new(&config, &rgb_data, PixelLayout::Rgb8, width, height)
         .encode()
         .unwrap();
@@ -54,7 +54,7 @@ fn main() {
     // Timed iterations
     let start = Instant::now();
     for _ in 0..iterations {
-        let config = EncoderConfig::new().quality(quality).method(method);
+        let config = EncoderConfig::new_lossy().quality(quality).method(method);
         let _output = EncodeRequest::new(&config, &rgb_data, PixelLayout::Rgb8, width, height)
             .encode()
             .unwrap();

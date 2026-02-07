@@ -15,7 +15,7 @@ use std::io::BufReader;
 use webpx::Unstoppable;
 use zenwebp::decoder::vp8::{DiagnosticFrame, Vp8Decoder};
 use zenwebp::decoder::LumaMode;
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
+use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, Preset};
 
 // ============================================================================
 // Image Loading

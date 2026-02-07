@@ -32,8 +32,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
 
-use super::api::PixelLayout;
 use super::api::EncodeError;
+use super::api::PixelLayout;
 use super::arithmetic::ArithmeticEncoder;
 use super::cost::{
     analyze_image, assign_segments_kmeans, classify_image_type, compute_segment_quant,

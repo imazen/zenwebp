@@ -85,10 +85,10 @@ fn profile_encode() {
 
                     let mem_before = get_memory_usage();
                     let start = Instant::now();
-                    let config = EncoderConfig::new().quality(quality).method(method);
+                    let config = EncoderConfig::new_lossy().quality(quality).method(method);
 
-                    if let Ok(output) = EncodeRequest::new(&config, &img, *layout, width, height)
-                        .encode()
+                    if let Ok(output) =
+                        EncodeRequest::new(&config, &img, *layout, width, height).encode()
                     {
                         let elapsed_us = start.elapsed().as_micros();
                         let mem_after = get_memory_usage();
@@ -212,7 +212,7 @@ fn profile_decode() {
 
         // Lossy test image
         let img = generate_test_image(width, height, 4);
-        let config = EncoderConfig::new().quality(75.0).method(4);
+        let config = EncoderConfig::new_lossy().quality(75.0).method(4);
 
         if let Ok(webp) =
             EncodeRequest::new(&config, &img, PixelLayout::Rgba8, width, height).encode()
@@ -229,7 +229,13 @@ fn profile_decode() {
 
                 println!(
                     "{},{},{},{},false,{},{},{}",
-                    w, h, pixels, webp.len(), peak_rss, peak_vm, elapsed_us
+                    w,
+                    h,
+                    pixels,
+                    webp.len(),
+                    peak_rss,
+                    peak_vm,
+                    elapsed_us
                 );
             }
         }
@@ -251,7 +257,13 @@ fn profile_decode() {
 
                 println!(
                     "{},{},{},{},true,{},{},{}",
-                    w, h, pixels, webp.len(), peak_rss, peak_vm, elapsed_us
+                    w,
+                    h,
+                    pixels,
+                    webp.len(),
+                    peak_rss,
+                    peak_vm,
+                    elapsed_us
                 );
             }
         }
@@ -322,7 +334,10 @@ fn get_memory_usage() -> MemoryUsage {
         }
     }
 
-    MemoryUsage { rss_kb: 0, vm_kb: 0 }
+    MemoryUsage {
+        rss_kb: 0,
+        vm_kb: 0,
+    }
 }
 
 /// Force a garbage collection pass (best effort)

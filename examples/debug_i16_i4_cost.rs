@@ -1,6 +1,6 @@
 // Debug tool to analyze I16 vs I4 coefficient cost components
 use std::io::BufReader;
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
+use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, Preset};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";

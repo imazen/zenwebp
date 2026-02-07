@@ -43,8 +43,15 @@ fn main() {
             predictor_bits: bits,
             ..Default::default()
         };
-        let vp8l =
-            zenwebp::encoder::vp8l::encode_vp8l(&rgb, width, height, false, &config, &enough::Unstoppable).unwrap();
+        let vp8l = zenwebp::encoder::vp8l::encode_vp8l(
+            &rgb,
+            width,
+            height,
+            false,
+            &config,
+            &enough::Unstoppable,
+        )
+        .unwrap();
         let webp = wrap_vp8l_in_riff(&vp8l);
         let path = format!("/tmp/test_pred_bits{}.webp", bits);
         std::fs::write(&path, &webp).unwrap();

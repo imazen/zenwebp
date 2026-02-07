@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::time::Instant;
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig};
+use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
 fn load_webp(path: &Path) -> Vec<u8> {
     std::fs::read(path).expect("Failed to read WebP file")
@@ -142,7 +142,7 @@ fn main() {
         println!("Test 2: Decoding our-encoded WebP");
         println!("========================================");
         let our_encoded = {
-            let config = EncoderConfig::new().quality(75.0);
+            let config = EncoderConfig::new_lossy().quality(75.0);
             EncodeRequest::new(&config, &rgb_data, PixelLayout::Rgb8, width, height)
                 .encode()
                 .unwrap()

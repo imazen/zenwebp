@@ -10,7 +10,10 @@ use std::io::{BufRead, BufReader};
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
-        eprintln!("Usage: {} <encode_profile.csv> <decode_profile.csv>", args[0]);
+        eprintln!(
+            "Usage: {} <encode_profile.csv> <decode_profile.csv>",
+            args[0]
+        );
         std::process::exit(1);
     }
 
@@ -80,7 +83,11 @@ fn analyze_encode(path: &str) {
 
     // Analyze by method
     for method in 0..=6 {
-        let method_rows: Vec<_> = lossy.iter().filter(|r| r.method == method).copied().collect();
+        let method_rows: Vec<_> = lossy
+            .iter()
+            .filter(|r| r.method == method)
+            .copied()
+            .collect();
         if !method_rows.is_empty() {
             analyze_throughput(&format!("Lossy method {}", method), &method_rows);
         }
@@ -127,7 +134,10 @@ fn analyze_memory_formula(name: &str, rows: &[&EncodeRow]) {
     let fixed = (sum_mem - bpp * sum_pixels) / n;
 
     println!("  Samples: {}", rows.len());
-    println!("  Formula: peak_memory = {:.0} + {:.2} * pixels", fixed, bpp);
+    println!(
+        "  Formula: peak_memory = {:.0} + {:.2} * pixels",
+        fixed, bpp
+    );
     println!("  Fixed overhead: {:.1} KB", fixed / 1024.0);
     println!("  Bytes per pixel: {:.2}", bpp);
 
@@ -169,7 +179,10 @@ fn analyze_memory_formula(name: &str, rows: &[&EncodeRow]) {
             let avg: f64 = bpps.iter().sum::<f64>() / bpps.len() as f64;
             let min = bpps.iter().cloned().fold(f64::INFINITY, f64::min);
             let max = bpps.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            println!("    Method {}: {:.2} (range: {:.2}-{:.2})", method, avg, min, max);
+            println!(
+                "    Method {}: {:.2} (range: {:.2}-{:.2})",
+                method, avg, min, max
+            );
         }
     }
 }
@@ -190,7 +203,10 @@ fn analyze_throughput(name: &str, rows: &[&EncodeRow]) {
 
     let avg = throughputs.iter().sum::<f64>() / throughputs.len() as f64;
     let min = throughputs.iter().cloned().fold(f64::INFINITY, f64::min);
-    let max = throughputs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let max = throughputs
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max);
 
     println!("\n### {} Throughput", name);
     println!("  Average: {:.1} Mpix/s", avg);
@@ -257,7 +273,10 @@ fn analyze_decode(path: &str) {
 
         println!("\n### Decode Memory");
         println!("  Samples: {}", rows.len());
-        println!("  Formula: peak_memory = {:.0} + {:.2} * pixels", fixed, bpp);
+        println!(
+            "  Formula: peak_memory = {:.0} + {:.2} * pixels",
+            fixed, bpp
+        );
         println!("  Fixed overhead: {:.1} KB", fixed / 1024.0);
         println!("  Bytes per pixel: {:.2}", bpp);
     }
@@ -274,7 +293,10 @@ fn analyze_decode(path: &str) {
 
     let avg = throughputs.iter().sum::<f64>() / throughputs.len() as f64;
     let min = throughputs.iter().cloned().fold(f64::INFINITY, f64::min);
-    let max = throughputs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let max = throughputs
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max);
 
     println!("\n### Decode Throughput");
     println!("  Average: {:.1} Mpix/s", avg);

@@ -5,7 +5,7 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
 use std::path::Path;
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig};
+use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let file = std::fs::File::open(path).ok()?;
@@ -61,7 +61,7 @@ fn bench_methods_diagnostic(c: &mut Criterion) {
             &method,
             |b, &method| {
                 b.iter(|| {
-                    let config = EncoderConfig::new()
+                    let config = EncoderConfig::new_lossy()
                         .quality(75.0)
                         .method(method)
                         .sns_strength(0)
@@ -116,7 +116,7 @@ fn bench_methods_default(c: &mut Criterion) {
             &method,
             |b, &method| {
                 b.iter(|| {
-                    let config = EncoderConfig::new().quality(75.0).method(method);
+                    let config = EncoderConfig::new_lossy().quality(75.0).method(method);
                     EncodeRequest::new(
                         &config,
                         black_box(&rgb_data),
@@ -162,7 +162,7 @@ fn bench_quality_comparison(c: &mut Criterion) {
             &quality,
             |b, &quality| {
                 b.iter(|| {
-                    let config = EncoderConfig::new().quality(quality).method(4);
+                    let config = EncoderConfig::new_lossy().quality(quality).method(4);
                     EncodeRequest::new(
                         &config,
                         black_box(&rgb_data),

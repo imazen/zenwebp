@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use zenwebp::{PixelLayout, EncodeRequest};
+use zenwebp::{EncodeRequest, PixelLayout};
 
 fn main() {
     let test_path = "/tmp/CID22/original/1001682.png";
@@ -34,7 +34,7 @@ fn main() {
 
     // Test the EXISTING encoder which produces valid output
     println!("\n=== Existing integrated encoder ===");
-    let _cfg = zenwebp::EncoderConfig::new().lossless(true);
+    let _cfg = zenwebp::EncoderConfig::new_lossy().lossless(true);
     let existing = EncodeRequest::new(&_cfg, &rgb_pixels, PixelLayout::Rgb8, width, height)
         .encode()
         .unwrap();
@@ -83,8 +83,15 @@ fn main() {
         ..Default::default()
     };
 
-    let new_vp8l =
-        zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, width, height, false, &config, &enough::Unstoppable).unwrap();
+    let new_vp8l = zenwebp::encoder::vp8l::encode_vp8l(
+        &rgb_pixels,
+        width,
+        height,
+        false,
+        &config,
+        &enough::Unstoppable,
+    )
+    .unwrap();
     println!("Size (raw VP8L): {} bytes", new_vp8l.len());
 
     // Wrap in RIFF container

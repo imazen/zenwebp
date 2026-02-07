@@ -24,7 +24,7 @@ use alloc::vec::Vec;
 use rgb::{AsPixels, ComponentBytes, Rgb, Rgba};
 
 use crate::decoder::DecodeError;
-use crate::encoder::{PixelLayout, EncodeRequest, EncoderConfig, EncodeError};
+use crate::encoder::{EncodeError, EncodeRequest, EncoderConfig, PixelLayout};
 
 mod private {
     pub trait Sealed {}
@@ -251,15 +251,11 @@ where
 /// Encode typed pixel data to WebP with default settings.
 ///
 /// For custom settings, use [`EncoderConfig::encode_pixels`].
-pub fn encode<P: EncodePixel>(
-    pixels: &[P],
-    width: u32,
-    height: u32,
-) -> Result<Vec<u8>, EncodeError>
+pub fn encode<P: EncodePixel>(pixels: &[P], width: u32, height: u32) -> Result<Vec<u8>, EncodeError>
 where
     [P]: ComponentBytes<u8>,
 {
-    EncoderConfig::new().encode_pixels(pixels, width, height)
+    EncoderConfig::new_lossy().encode_pixels(pixels, width, height)
 }
 
 impl EncoderConfig {

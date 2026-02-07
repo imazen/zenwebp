@@ -1,7 +1,7 @@
 //! Compare all methods (0-6) between zenwebp and libwebp apples-to-apples
 
 use std::time::Instant;
-use zenwebp::{PixelLayout, EncodeRequest};
+use zenwebp::{EncodeRequest, PixelLayout};
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
@@ -41,7 +41,7 @@ fn main() {
         let zen_start = Instant::now();
         let mut zen_size = 0;
         for _ in 0..iterations {
-            let _cfg = zenwebp::EncoderConfig::new()
+            let _cfg = zenwebp::EncoderConfig::new_lossy()
                 .quality(75.0)
                 .method(method)
                 .sns_strength(0)

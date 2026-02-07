@@ -1052,8 +1052,8 @@ impl<'a> Vp8Decoder<'a> {
         }
 
         let chroma = self.b.read_with_tree(&KEYFRAME_UV_MODE_NODES);
-        mb.chroma_mode = ChromaMode::from_i8(chroma)
-            .ok_or(DecodeError::ChromaPredictionModeInvalid(chroma))?;
+        mb.chroma_mode =
+            ChromaMode::from_i8(chroma).ok_or(DecodeError::ChromaPredictionModeInvalid(chroma))?;
 
         // top should store the bottom of the current bpred, which is the final 4 values
         self.top[mbx].bpred = mb.bpred[12..].try_into().unwrap();

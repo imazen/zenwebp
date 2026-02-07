@@ -1,6 +1,6 @@
 // Test to check lambda values
 use webpx::Unstoppable;
-use zenwebp::{PixelLayout, EncodeRequest};
+use zenwebp::{EncodeRequest, PixelLayout};
 
 fn main() {
     // Create a minimal image to trigger segment initialization
@@ -9,7 +9,7 @@ fn main() {
     // These values are internal, so we can't directly access them
     // But let me print what we can access from the config
 
-    let config = zenwebp::EncoderConfig::new()
+    let config = zenwebp::EncoderConfig::new_lossy()
         .quality(75.0)
         .method(4)
         .sns_strength(0)

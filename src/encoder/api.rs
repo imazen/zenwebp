@@ -25,6 +25,7 @@ use core::iter::Peekable;
 use core::slice::ChunksExact;
 use thiserror::Error;
 
+use super::config;
 use super::vec_writer::VecWriter;
 use super::vp8::encode_frame_lossy;
 
@@ -139,7 +140,10 @@ pub type ColorType = PixelLayout;
 
 impl PixelLayout {
     pub(crate) fn has_alpha(self) -> bool {
-        matches!(self, PixelLayout::La8 | PixelLayout::Rgba8 | PixelLayout::Bgra8)
+        matches!(
+            self,
+            PixelLayout::La8 | PixelLayout::Rgba8 | PixelLayout::Bgra8
+        )
     }
 
     pub(crate) fn bytes_per_pixel(self) -> usize {
@@ -871,13 +875,60 @@ impl EncoderConfig {
     /// Returns memory, time, and output size estimates. See
     /// [`heuristics::estimate_encode`](crate::heuristics::estimate_encode) for details.
     #[must_use]
-    pub fn estimate(&self, width: u32, height: u32, bpp: u8) -> crate::heuristics::EncodeEstimate {
-        crate::heuristics::estimate_encode(width, height, bpp, self)
+    #[deprecated(
+        since = "0.3.0",
+        note = "Use LossyConfig or LosslessConfig with heuristics module"
+    )]
+    #[doc(hidden)]
+    pub fn estimate(
+        &self,
+        _width: u32,
+        _height: u32,
+        _bpp: u8,
+    ) -> crate::heuristics::EncodeEstimate {
+        // Deprecated - no longer functional with new config types
+        crate::heuristics::EncodeEstimate {
+            peak_memory_bytes_min: 0,
+            peak_memory_bytes: 0,
+            peak_memory_bytes_max: 0,
+            time_ms: 0.0,
+            output_bytes: 0,
+        }
     }
 }
 
 /// Static default progress callback (does nothing).
 static NO_PROGRESS: NoProgress = NoProgress;
+
+/// Internal enum to hold different configuration types.
+enum ConfigKind<'a> {
+    Lossy(&'a config::LossyConfig),
+    Lossless(&'a config::LosslessConfig),
+    Enum(&'a config::EncoderConfig),
+    OldApi(&'a EncoderConfig), // Temporary for backward compatibility
+}
+
+impl<'a> ConfigKind<'a> {
+    /// Convert to EncoderParams for internal use.
+    fn to_params(&self) -> EncoderParams {
+        match self {
+            Self::Lossy(cfg) => cfg.to_params(),
+            Self::Lossless(cfg) => cfg.to_params(),
+            Self::Enum(cfg) => cfg.to_params(),
+            Self::OldApi(cfg) => cfg.to_params(),
+        }
+    }
+
+    /// Get the limits from the configuration.
+    fn get_limits(&self) -> &crate::decoder::Limits {
+        match self {
+            Self::Lossy(cfg) => &cfg.limits,
+            Self::Lossless(cfg) => &cfg.limits,
+            Self::Enum(cfg) => cfg.get_limits(),
+            Self::OldApi(cfg) => &cfg.limits,
+        }
+    }
+}
 
 /// Encoding request that borrows configuration, pixel data, and optional
 /// callbacks. Short-lived — created, configured, and consumed in one call chain.
@@ -885,16 +936,16 @@ static NO_PROGRESS: NoProgress = NoProgress;
 /// # Example
 ///
 /// ```rust
-/// use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
+/// use zenwebp::{EncodeRequest, LossyConfig, PixelLayout};
 ///
-/// let config = EncoderConfig::new().quality(85.0);
+/// let config = LossyConfig::new().quality(85.0);
 /// let rgba = vec![0u8; 640 * 480 * 4];
-/// let webp = EncodeRequest::new(&config, &rgba, PixelLayout::Rgba8, 640, 480)
+/// let webp = EncodeRequest::lossy(&config, &rgba, PixelLayout::Rgba8, 640, 480)
 ///     .encode()?;
 /// # Ok::<(), zenwebp::EncodeError>(())
 /// ```
 pub struct EncodeRequest<'a> {
-    config: &'a EncoderConfig,
+    config: ConfigKind<'a>,
     pixels: &'a [u8],
     color_type: PixelLayout,
     width: u32,
@@ -908,9 +959,126 @@ pub struct EncodeRequest<'a> {
 }
 
 impl<'a> EncodeRequest<'a> {
-    /// Create a new encoding request.
+    /// Create an encoding request with a lossy configuration.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use zenwebp::{EncodeRequest, LossyConfig, PixelLayout};
+    ///
+    /// let config = LossyConfig::new().quality(85.0).method(4);
+    /// let rgba = vec![0u8; 640 * 480 * 4];
+    /// let webp = EncodeRequest::lossy(&config, &rgba, PixelLayout::Rgba8, 640, 480)
+    ///     .encode()?;
+    /// # Ok::<(), zenwebp::EncodeError>(())
+    /// ```
+    #[must_use]
+    pub fn lossy(
+        config: &'a config::LossyConfig,
+        pixels: &'a [u8],
+        color_type: PixelLayout,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        Self {
+            config: ConfigKind::Lossy(config),
+            pixels,
+            color_type,
+            width,
+            height,
+            stride_pixels: None,
+            icc_profile: None,
+            exif_metadata: None,
+            xmp_metadata: None,
+            stop: &enough::Unstoppable,
+            progress: &NO_PROGRESS,
+        }
+    }
+
+    /// Create an encoding request with a lossless configuration.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use zenwebp::{EncodeRequest, LosslessConfig, PixelLayout};
+    ///
+    /// let config = LosslessConfig::new().quality(90.0);
+    /// let rgba = vec![0u8; 640 * 480 * 4];
+    /// let webp = EncodeRequest::lossless(&config, &rgba, PixelLayout::Rgba8, 640, 480)
+    ///     .encode()?;
+    /// # Ok::<(), zenwebp::EncodeError>(())
+    /// ```
+    #[must_use]
+    pub fn lossless(
+        config: &'a config::LosslessConfig,
+        pixels: &'a [u8],
+        color_type: PixelLayout,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        Self {
+            config: ConfigKind::Lossless(config),
+            pixels,
+            color_type,
+            width,
+            height,
+            stride_pixels: None,
+            icc_profile: None,
+            exif_metadata: None,
+            xmp_metadata: None,
+            stop: &enough::Unstoppable,
+            progress: &NO_PROGRESS,
+        }
+    }
+
+    /// Create an encoding request with an enum configuration (runtime selection).
+    ///
+    /// Use this when you need to choose between lossy and lossless at runtime.
+    /// For compile-time mode selection, use [`lossy()`](Self::lossy) or
+    /// [`lossless()`](Self::lossless) instead.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
+    ///
+    /// let config = EncoderConfig::new_lossy().quality(85.0);
+    /// let rgba = vec![0u8; 640 * 480 * 4];
+    /// let webp = EncodeRequest::new(&config, &rgba, PixelLayout::Rgba8, 640, 480)
+    ///     .encode()?;
+    /// # Ok::<(), zenwebp::EncodeError>(())
+    /// ```
     #[must_use]
     pub fn new(
+        config: &'a config::EncoderConfig,
+        pixels: &'a [u8],
+        color_type: PixelLayout,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        Self {
+            config: ConfigKind::Enum(config),
+            pixels,
+            color_type,
+            width,
+            height,
+            stride_pixels: None,
+            icc_profile: None,
+            exif_metadata: None,
+            xmp_metadata: None,
+            stop: &enough::Unstoppable,
+            progress: &NO_PROGRESS,
+        }
+    }
+
+    /// Create a new encoding request (deprecated, use `lossy()` or `lossless()` instead).
+    #[must_use]
+    #[deprecated(
+        since = "0.3.0",
+        note = "Use lossy(), lossless(), or new() with EncoderConfig enum"
+    )]
+    #[doc(hidden)]
+    pub fn with_old_config(
         config: &'a EncoderConfig,
         pixels: &'a [u8],
         color_type: PixelLayout,
@@ -918,7 +1086,7 @@ impl<'a> EncodeRequest<'a> {
         height: u32,
     ) -> Self {
         Self {
-            config,
+            config: ConfigKind::OldApi(config),
             pixels,
             color_type,
             width,
@@ -1003,7 +1171,7 @@ impl<'a> EncodeRequest<'a> {
     fn encode_inner(self) -> Result<(Vec<u8>, EncodeStats), EncodeError> {
         // Validate dimensions against limits
         self.config
-            .limits
+            .get_limits()
             .check_dimensions(self.width, self.height)
             .map_err(|e| EncodeError::InvalidBufferSize(format!("{}", e)))?;
 
@@ -1060,12 +1228,7 @@ impl<'a> EncodeRequest<'a> {
 }
 
 /// Validate buffer size for encoding.
-fn validate_buffer_size(
-    size: usize,
-    width: u32,
-    height: u32,
-    bpp: u32,
-) -> Result<(), EncodeError> {
+fn validate_buffer_size(size: usize, width: u32, height: u32, bpp: u32) -> Result<(), EncodeError> {
     let expected = (width as usize)
         .saturating_mul(height as usize)
         .saturating_mul(bpp as usize);

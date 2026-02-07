@@ -3,7 +3,6 @@
 //! These limits protect against malicious or malformed inputs that could
 //! cause excessive memory usage or processing time.
 
-
 use super::api::DecodeError;
 
 /// Configuration for decode limits.
@@ -122,35 +121,32 @@ impl Limits {
     pub fn check_dimensions(&self, width: u32, height: u32) -> Result<(), DecodeError> {
         if let Some(max_w) = self.max_width {
             if width > max_w {
-                return Err(DecodeError::InvalidParameter(
-                    alloc::format!(
-                        "width {} exceeds limit {}",
-                        width, max_w
-                    ),
-                ));
+                return Err(DecodeError::InvalidParameter(alloc::format!(
+                    "width {} exceeds limit {}",
+                    width,
+                    max_w
+                )));
             }
         }
 
         if let Some(max_h) = self.max_height {
             if height > max_h {
-                return Err(DecodeError::InvalidParameter(
-                    alloc::format!(
-                        "height {} exceeds limit {}",
-                        height, max_h
-                    ),
-                ));
+                return Err(DecodeError::InvalidParameter(alloc::format!(
+                    "height {} exceeds limit {}",
+                    height,
+                    max_h
+                )));
             }
         }
 
         let total_pixels = width as u64 * height as u64;
         if let Some(max_pixels) = self.max_total_pixels {
             if total_pixels > max_pixels {
-                return Err(DecodeError::InvalidParameter(
-                    alloc::format!(
-                        "total pixels {} exceeds limit {}",
-                        total_pixels, max_pixels
-                    ),
-                ));
+                return Err(DecodeError::InvalidParameter(alloc::format!(
+                    "total pixels {} exceeds limit {}",
+                    total_pixels,
+                    max_pixels
+                )));
             }
         }
 
@@ -161,12 +157,11 @@ impl Limits {
     pub fn check_frame_count(&self, count: usize) -> Result<(), DecodeError> {
         if let Some(max) = self.max_frame_count {
             if count as u64 >= max {
-                return Err(DecodeError::InvalidParameter(
-                    alloc::format!(
-                        "frame count {} exceeds limit {}",
-                        count, max
-                    ),
-                ));
+                return Err(DecodeError::InvalidParameter(alloc::format!(
+                    "frame count {} exceeds limit {}",
+                    count,
+                    max
+                )));
             }
         }
         Ok(())
@@ -176,12 +171,11 @@ impl Limits {
     pub fn check_file_size(&self, size: u64) -> Result<(), DecodeError> {
         if let Some(max) = self.max_file_size {
             if size > max {
-                return Err(DecodeError::InvalidParameter(
-                    alloc::format!(
-                        "file size {} bytes exceeds limit {} bytes",
-                        size, max
-                    ),
-                ));
+                return Err(DecodeError::InvalidParameter(alloc::format!(
+                    "file size {} bytes exceeds limit {} bytes",
+                    size,
+                    max
+                )));
             }
         }
         Ok(())

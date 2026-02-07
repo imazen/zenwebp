@@ -1,6 +1,6 @@
 // Compare I16-only encoding between zenwebp and libwebp
 use std::io::BufReader;
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
+use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, Preset};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";

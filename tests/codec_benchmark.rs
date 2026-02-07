@@ -7,7 +7,7 @@
 
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use std::path::Path;
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig};
+use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
 const KODAK_PATH: &str = concat!(env!("HOME"), "/work/codec-corpus/kodak");
 

@@ -99,15 +99,15 @@ pub mod heuristics;
 // Re-export decoder public API
 pub use decoder::{
     decode_bgr, decode_bgr_into, decode_bgra, decode_bgra_into, decode_rgb, decode_rgb_into,
-    decode_rgba, decode_rgba_into, decode_yuv420, BitstreamFormat, DecodeConfig, DecodeRequest,
-    DecodeError, DecodeResult, ImageInfo, Limits, LoopCount, StreamStatus, StreamingDecoder, UpsamplingMethod,
-    WebPDecoder, YuvPlanes,
+    decode_rgba, decode_rgba_into, decode_yuv420, BitstreamFormat, DecodeConfig, DecodeError,
+    DecodeRequest, DecodeResult, ImageInfo, Limits, LoopCount, StreamStatus, StreamingDecoder,
+    UpsamplingMethod, WebPDecoder, YuvPlanes,
 };
 
 // Re-export encoder public API
 pub use encoder::{
-    ClassifierDiag, PixelLayout, ContentType, EncodeProgress, EncodeRequest, EncoderConfig,
-    EncodeError, EncodeResult, EncodeStats, NoProgress, Preset,
+    ClassifierDiag, ContentType, EncodeError, EncodeProgress, EncodeRequest, EncodeResult,
+    EncodeStats, EncoderConfig, LosslessConfig, LossyConfig, NoProgress, PixelLayout, Preset,
 };
 
 #[allow(deprecated)]
@@ -123,7 +123,6 @@ pub use enough::{Stop, StopReason, Unstoppable};
 
 // Re-export VP8 decoder (public module)
 pub use decoder::vp8;
-
 
 // Deprecated type aliases (backwards compatibility)
 #[allow(deprecated)]

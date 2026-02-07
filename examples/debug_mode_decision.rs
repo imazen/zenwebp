@@ -64,7 +64,7 @@ fn main() {
     // Encode and compare
     use zenwebp::decoder::vp8::Vp8Decoder;
     use zenwebp::decoder::LumaMode;
-    use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
+    use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, Preset};
 
     let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
         .method(4)

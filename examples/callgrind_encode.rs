@@ -4,7 +4,7 @@
 
 use std::env;
 use std::fs;
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig};
+use zenwebp::{EncodeRequest, LossyConfig, PixelLayout};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -24,18 +24,18 @@ fn main() {
     let diagnostic = args.get(6).is_none_or(|s| s != "default");
 
     let output = if diagnostic {
-        let _cfg = EncoderConfig::new()
+        let _cfg = LossyConfig::new()
             .quality(quality)
             .method(method)
             .sns_strength(0)
             .filter_strength(0)
             .segments(1);
-        EncodeRequest::new(&_cfg, &rgb_data, PixelLayout::Rgb8, width, height)
+        EncodeRequest::lossy(&_cfg, &rgb_data, PixelLayout::Rgb8, width, height)
             .encode()
             .unwrap()
     } else {
-        let _cfg = EncoderConfig::new().quality(quality).method(method);
-        EncodeRequest::new(&_cfg, &rgb_data, PixelLayout::Rgb8, width, height)
+        let _cfg = LossyConfig::new().quality(quality).method(method);
+        EncodeRequest::lossy(&_cfg, &rgb_data, PixelLayout::Rgb8, width, height)
             .encode()
             .unwrap()
     };

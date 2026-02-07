@@ -20,7 +20,8 @@ fn test(name: &str, rgb: &[u8], w: u32, h: u32, bits: u8) {
         predictor_bits: bits,
         ..Default::default()
     };
-    let vp8l = zenwebp::encoder::vp8l::encode_vp8l(rgb, w, h, false, &config, &enough::Unstoppable).unwrap();
+    let vp8l = zenwebp::encoder::vp8l::encode_vp8l(rgb, w, h, false, &config, &enough::Unstoppable)
+        .unwrap();
     let webp = wrap_vp8l_in_riff(&vp8l);
     let path = format!("/tmp/test_pred_512_{}.webp", name);
     std::fs::write(&path, &webp).unwrap();

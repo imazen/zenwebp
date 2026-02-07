@@ -2,7 +2,7 @@
 use std::env;
 use std::fs;
 use std::process::Command;
-use zenwebp::{PixelLayout, EncodeRequest};
+use zenwebp::{EncodeRequest, PixelLayout};
 
 fn read_png_rgb(path: &str) -> Option<(Vec<u8>, u32, u32)> {
     let output = Command::new("convert")
@@ -47,7 +47,7 @@ fn main() {
 
         if let Some((pixels, w, h)) = read_png_rgb(&path_str) {
             // Production settings (defaults)
-            let _cfg = zenwebp::EncoderConfig::new().quality(q).method(4);
+            let _cfg = zenwebp::EncoderConfig::new_lossy().quality(q).method(4);
             let zen = EncodeRequest::new(&_cfg, &pixels, PixelLayout::Rgb8, w, h).encode();
 
             let lib = webpx::EncoderConfig::new().quality(q).method(4).encode_rgb(

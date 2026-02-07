@@ -11,7 +11,7 @@ fn main() {
     let (w, h) = (info.width, info.height);
 
     use zenwebp::decoder::vp8::Vp8Decoder;
-    use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
+    use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, Preset};
 
     println!("=== Quantizer Comparison at Q75 ===\n");
 

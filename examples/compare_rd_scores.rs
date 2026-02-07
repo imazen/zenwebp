@@ -26,14 +26,14 @@ fn main() {
     );
 
     // Compare file sizes to quantify the impact
-    use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
+    use zenwebp::{EncodeRequest, LossyConfig, PixelLayout, Preset};
 
-    let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
+    let _cfg = LossyConfig::with_preset(Preset::Default, 75.0)
         .method(4)
         .sns_strength(0)
         .filter_strength(0)
         .segments(1);
-    let zen = EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, w, h)
+    let zen = EncodeRequest::lossy(&_cfg, &rgb, PixelLayout::Rgb8, w, h)
         .encode()
         .unwrap();
 

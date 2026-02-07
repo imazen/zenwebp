@@ -9,7 +9,7 @@ use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharact
 use std::fs;
 use std::path::Path;
 use std::time::Instant;
-use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig};
+use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
 const CLIC_DIR: &str = "/home/lilith/work/codec-corpus/clic2025/validation";
 

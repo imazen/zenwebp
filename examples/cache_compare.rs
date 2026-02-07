@@ -92,22 +92,34 @@ fn main() {
             use_palette: true,
             ..Default::default()
         };
-        let auto_size =
-            match zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, w, h, has_alpha, &config_auto, &enough::Unstoppable) {
-                Ok(d) => wrap_vp8l_in_riff(&d).len() as u64,
-                Err(_) => continue,
-            };
+        let auto_size = match zenwebp::encoder::vp8l::encode_vp8l(
+            &rgb_pixels,
+            w,
+            h,
+            has_alpha,
+            &config_auto,
+            &enough::Unstoppable,
+        ) {
+            Ok(d) => wrap_vp8l_in_riff(&d).len() as u64,
+            Err(_) => continue,
+        };
 
         // No cache
         let config_no = zenwebp::encoder::vp8l::Vp8lConfig {
             cache_bits: Some(0),
             ..config_auto.clone()
         };
-        let no_cache_size =
-            match zenwebp::encoder::vp8l::encode_vp8l(&rgb_pixels, w, h, has_alpha, &config_no, &enough::Unstoppable) {
-                Ok(d) => wrap_vp8l_in_riff(&d).len() as u64,
-                Err(_) => continue,
-            };
+        let no_cache_size = match zenwebp::encoder::vp8l::encode_vp8l(
+            &rgb_pixels,
+            w,
+            h,
+            has_alpha,
+            &config_no,
+            &enough::Unstoppable,
+        ) {
+            Ok(d) => wrap_vp8l_in_riff(&d).len() as u64,
+            Err(_) => continue,
+        };
 
         let delta = auto_size as i64 - no_cache_size as i64;
         let delta_pct = delta as f64 / no_cache_size as f64 * 100.0;
