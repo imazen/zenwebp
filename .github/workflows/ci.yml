@@ -279,3 +279,46 @@ jobs:
         with:
           files: lcov.info
           fail_ci_if_error: false
+
+  # ==========================================================================
+  # WebP Conformance Tests
+  # ==========================================================================
+  conformance:
+    name: WebP Conformance
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache codec-corpus
+        uses: actions/cache@v4
+        with:
+          path: ~/codec-corpus
+          key: corpus-codec-eval-v1
+
+      - name: Clone codec-corpus (if not cached)
+        run: |
+          [ -d ~/codec-corpus ] || \
+            git clone --depth=1 https://github.com/imazen/codec-corpus.git ~/codec-corpus
+
+      - name: Test WebP Valid Files
+        run: cargo test --release test_webp_valid_files -- --ignored --nocapture
+        env:
+          CORPUS_DIR: ~/codec-corpus/webp-conformance/valid
+
+      - name: Test WebP Invalid Files (robustness)
+        run: cargo test --release test_webp_invalid_robustness -- --ignored --nocapture
+        env:
+          CORPUS_DIR: ~/codec-corpus/webp-conformance/invalid
+
+      - name: Test WebP Non-Conformant (regression)
+        run: cargo test --release test_webp_non_conformant_regression -- --ignored --nocapture
+        env:
+          CORPUS_DIR: ~/codec-corpus/webp-conformance/non-conformant

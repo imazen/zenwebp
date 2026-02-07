@@ -260,6 +260,47 @@ Exception: `unchecked` feature for loop filter hot paths.
 
 Run with: `cargo run --release --example <name> [args]`
 
+## TODO: WebP Conformance Testing
+
+**Status**: CI infrastructure in place, pending invalid/non-conformant files
+
+**Phase 1 (DONE):**
+- [x] Add conformance test file (`tests/webp_conformance.rs`)
+- [x] Add conformance CI job (`.github/workflows/ci.yml`)
+- [x] Integrate 225 valid WebP files from codec-corpus
+
+**Phase 2 (Pending):**
+- [ ] Create `invalid/` test files (corrupted/truncated WebP)
+  - [ ] Truncated files (incomplete bitstream)
+  - [ ] Malformed headers (bad chunk sizes, invalid FourCC)
+  - [ ] Oversized dimensions (width/height > 16384)
+  - [ ] Reserved field violations
+- [ ] Create `non-conformant/` test files (gray-area edge cases)
+  - [ ] Loop filter edge cases
+  - [ ] Color space ambiguities (no ICC profile)
+  - [ ] Alpha blending semantics
+  - [ ] Rounding behavior differences
+
+**Generation script:** Use `codec-corpus/webp-conformance/generate_corpus.py` to regenerate
+synthetic valid files if needed. For invalid files, corrupt valid files programmatically:
+
+```bash
+# Truncate a valid file
+truncate -s 500 ~/codec-corpus/webp-conformance/valid/file.webp > \
+  ~/codec-corpus/webp-conformance/invalid/truncated/incomplete.webp
+
+# Corrupt chunk size (Python)
+python3 << 'EOF'
+import struct
+data = open('~/codec-corpus/webp-conformance/valid/file.webp', 'rb').read()
+modified = bytearray(data)
+modified[4:8] = struct.pack('<I', len(data) - 100)  # Wrong chunk size
+open('~/codec-corpus/webp-conformance/invalid/malformed/bad_chunk_size.webp', 'wb').write(modified)
+EOF
+```
+
+**Testing:** Run with `cargo test --release test_webp -- --ignored`
+
 ## Known Bugs
 
 (none currently)
