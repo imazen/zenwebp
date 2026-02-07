@@ -848,7 +848,7 @@ pub struct EncodeRequest<'a> {
     color_type: ColorType,
     width: u32,
     height: u32,
-    stride_bytes: Option<usize>,
+    stride_pixels: Option<usize>,
     icc_profile: Option<&'a [u8]>,
     exif_metadata: Option<&'a [u8]>,
     xmp_metadata: Option<&'a [u8]>,
@@ -872,7 +872,7 @@ impl<'a> EncodeRequest<'a> {
             color_type,
             width,
             height,
-            stride_bytes: None,
+            stride_pixels: None,
             icc_profile: None,
             exif_metadata: None,
             xmp_metadata: None,
@@ -895,10 +895,10 @@ impl<'a> EncodeRequest<'a> {
         self
     }
 
-    /// Set row stride in bytes. Must be >= `width * bytes_per_pixel`.
+    /// Set row stride in pixels. Must be >= `width`.
     #[must_use]
-    pub fn stride(mut self, stride: usize) -> Self {
-        self.stride_bytes = Some(stride);
+    pub fn stride(mut self, stride_pixels: usize) -> Self {
+        self.stride_pixels = Some(stride_pixels);
         self
     }
 
@@ -955,18 +955,19 @@ impl<'a> EncodeRequest<'a> {
 
         // If stride is set and differs from row width, compact the data
         let compacted;
-        let encode_data = if let Some(stride) = self.stride_bytes {
-            if stride < row_bytes {
+        let encode_data = if let Some(stride_px) = self.stride_pixels {
+            if stride_px < self.width as usize {
                 return Err(EncodingError::InvalidBufferSize(format!(
-                    "stride {} < row width {}",
-                    stride, row_bytes
+                    "stride_pixels {} < width {}",
+                    stride_px, self.width
                 )));
             }
-            if stride == row_bytes {
+            let stride_bytes = stride_px * bpp;
+            if stride_bytes == row_bytes {
                 self.pixels
             } else {
                 compacted = (0..self.height as usize)
-                    .flat_map(|y| &self.pixels[y * stride..y * stride + row_bytes])
+                    .flat_map(|y| &self.pixels[y * stride_bytes..y * stride_bytes + row_bytes])
                     .copied()
                     .collect::<Vec<u8>>();
                 &compacted

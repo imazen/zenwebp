@@ -161,13 +161,12 @@ pub fn decode_into<P: DecodePixel>(
 where
     [P]: ComponentBytes<u8>,
 {
-    let byte_stride = stride_pixels as usize * P::CHANNELS;
     let buf: &mut [u8] = output.as_bytes_mut();
     match (P::IS_BGR, P::HAS_ALPHA) {
-        (false, false) => crate::decode_rgb_into(data, buf, byte_stride as u32),
-        (false, true) => crate::decode_rgba_into(data, buf, byte_stride as u32),
-        (true, false) => crate::decode_bgr_into(data, buf, byte_stride as u32),
-        (true, true) => crate::decode_bgra_into(data, buf, byte_stride as u32),
+        (false, false) => crate::decode_rgb_into(data, buf, stride_pixels),
+        (false, true) => crate::decode_rgba_into(data, buf, stride_pixels),
+        (true, false) => crate::decode_bgr_into(data, buf, stride_pixels),
+        (true, true) => crate::decode_bgra_into(data, buf, stride_pixels),
     }
 }
 
