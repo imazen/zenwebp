@@ -10,6 +10,7 @@ mod loop_filter;
 mod lossless;
 mod lossless_transform;
 mod streaming;
+mod limits;
 pub(crate) mod yuv;
 
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
@@ -41,6 +42,8 @@ pub use api::{
     decode_rgba, decode_rgba_into, decode_yuv420, BitstreamFormat, DecodeConfig, DecodeRequest,
     DecodeError, DecodeResult, ImageInfo, LoopCount, UpsamplingMethod, WebPDecoder, YuvPlanes,
 };
+#[allow(deprecated)]
+pub use limits::Limits;
 #[allow(deprecated)]
 pub use api::DecodingError;
 pub use streaming::{StreamStatus, StreamingDecoder};

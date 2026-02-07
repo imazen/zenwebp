@@ -81,9 +81,7 @@ impl<'a> AnimationDecoder<'a> {
     /// Returns an error if the data is not a valid animated WebP.
     pub fn new_with_config(data: &'a [u8], config: &DecodeConfig) -> Result<Self, DecodeError> {
         let mut decoder = WebPDecoder::new_with_options(data, config.to_options())?;
-        if config.memory_limit > 0 {
-            decoder.set_memory_limit(config.memory_limit);
-        }
+        decoder.set_limits(config.limits.clone());
         if !decoder.is_animated() {
             return Err(DecodeError::InvalidParameter(
                 alloc::string::String::from("not an animated WebP"),

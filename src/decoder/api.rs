@@ -280,7 +280,12 @@ impl From<u16> for LoopCount {
 pub struct DecodeConfig {
     /// Upsampling method for lossy chroma reconstruction. Default: `Bilinear`.
     pub upsampling: UpsamplingMethod,
-    /// Memory limit in bytes (0 = no limit). Default: 0.
+
+    /// Decode limits for dimensions, memory, frame count, etc.
+    pub limits: super::limits::Limits,
+
+    /// Deprecated: Use `limits.max_memory` instead.
+    #[deprecated(since = "0.4.0", note = "Use limits.max_memory instead")]
     pub memory_limit: usize,
 }
 
@@ -288,6 +293,8 @@ impl Default for DecodeConfig {
     fn default() -> Self {
         Self {
             upsampling: UpsamplingMethod::Bilinear,
+            limits: super::limits::Limits::default(),
+            #[allow(deprecated)]
             memory_limit: 0,
         }
     }
@@ -301,10 +308,36 @@ impl DecodeConfig {
         self
     }
 
-    /// Set a memory limit in bytes (0 = no limit).
+    /// Set decode limits.
     #[must_use]
+    pub fn limits(mut self, limits: super::limits::Limits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Set maximum dimensions.
+    #[must_use]
+    pub fn max_dimensions(mut self, width: u32, height: u32) -> Self {
+        self.limits = self.limits.max_dimensions(width, height);
+        self
+    }
+
+    /// Set maximum memory usage.
+    #[must_use]
+    pub fn max_memory(mut self, bytes: usize) -> Self {
+        self.limits = self.limits.max_memory(bytes);
+        self
+    }
+
+    /// Deprecated: Use `max_memory()` or `limits()` instead.
+    #[must_use]
+    #[deprecated(since = "0.4.0", note = "Use max_memory() or limits() instead")]
     pub fn memory_limit(mut self, limit: usize) -> Self {
-        self.memory_limit = limit;
+        self.limits = self.limits.max_memory(limit);
+        #[allow(deprecated)]
+        {
+            self.memory_limit = limit;
+        }
         self
     }
 
@@ -370,6 +403,8 @@ impl<'a> DecodeRequest<'a> {
     /// Decode to RGBA pixels.
     pub fn decode_rgba(self) -> Result<(Vec<u8>, u32, u32), DecodeError> {
         let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
+        decoder.set_limits(self.config.limits.clone());
+        #[allow(deprecated)]
         if self.config.memory_limit > 0 {
             decoder.set_memory_limit(self.config.memory_limit);
         }
@@ -401,6 +436,8 @@ impl<'a> DecodeRequest<'a> {
     /// Otherwise rows are packed (stride == width).
     pub fn decode_rgba_into(self, output: &mut [u8]) -> Result<(u32, u32), DecodeError> {
         let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
+        decoder.set_limits(self.config.limits.clone());
+        #[allow(deprecated)]
         if self.config.memory_limit > 0 {
             decoder.set_memory_limit(self.config.memory_limit);
         }
@@ -456,6 +493,8 @@ impl<'a> DecodeRequest<'a> {
     pub fn decode_rgb_into(self, output: &mut [u8]) -> Result<(u32, u32), DecodeError> {
         let (w, h) = {
             let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
+            decoder.set_limits(self.config.limits.clone());
+            #[allow(deprecated)]
             if self.config.memory_limit > 0 {
                 decoder.set_memory_limit(self.config.memory_limit);
             }
@@ -550,6 +589,7 @@ pub enum UpsamplingMethod {
 pub struct WebPDecoder<'a> {
     r: SliceReader<'a>,
     memory_limit: usize,
+    limits: super::limits::Limits,
 
     width: u32,
     height: u32,
@@ -590,6 +630,7 @@ impl<'a> WebPDecoder<'a> {
             chunks: HashMap::new(),
             animation: Default::default(),
             memory_limit: usize::MAX,
+            limits: super::limits::Limits::none(), // No limits by default
             is_lossy: false,
             has_alpha: false,
             loop_count: LoopCount::Times(NonZeroU16::new(1).unwrap()),
@@ -640,6 +681,8 @@ impl<'a> WebPDecoder<'a> {
                     return Err(DecodeError::InconsistentImageSizes);
                 }
 
+                self.limits.check_dimensions(self.width, self.height)?;
+
                 self.chunks
                     .insert(WebPRiffChunk::VP8, start..start + chunk_size);
                 self.kind = ImageKind::Lossy;
@@ -659,6 +702,7 @@ impl<'a> WebPDecoder<'a> {
 
                 self.width = (1 + header) & 0x3FFF;
                 self.height = (1 + (header >> 14)) & 0x3FFF;
+                self.limits.check_dimensions(self.width, self.height)?;
                 self.chunks
                     .insert(WebPRiffChunk::VP8L, start..start + chunk_size);
                 self.kind = ImageKind::Lossless;
@@ -668,6 +712,7 @@ impl<'a> WebPDecoder<'a> {
                 let mut info = extended::read_extended_header(&mut self.r)?;
                 self.width = info.canvas_width;
                 self.height = info.canvas_height;
+                self.limits.check_dimensions(self.width, self.height)?;
 
                 let mut position = start + chunk_size_rounded;
                 let max_position = position + riff_size.saturating_sub(12);
@@ -796,6 +841,11 @@ impl<'a> WebPDecoder<'a> {
     /// Sets the memory limit in bytes for decoded image buffers.
     pub fn set_memory_limit(&mut self, limit: usize) {
         self.memory_limit = limit;
+    }
+
+    /// Set decode limits for validation.
+    pub fn set_limits(&mut self, limits: super::limits::Limits) {
+        self.limits = limits;
     }
 
     /// Get the background color specified in the image file if the image is extended and animated webp.
