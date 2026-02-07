@@ -285,10 +285,10 @@ Done:
 - [x] Metadata on request, not config ✓
 
 Remaining:
-- [ ] Rename `finish()` → `encode()` on `EncodeRequest` (one-shot, nothing was "started")
+- [x] Rename `finish()` → `encode()` on `EncodeRequest` (one-shot, nothing was "started")
 - [ ] Rename `finish_into()` → `encode_into()`, `finish_to()` → `encode_to()` on request
 - [ ] Remove deprecated aliases (`encode()`, `encode_into()`, `encode_to_writer()`)
 - [ ] Add `EncodeRequest::build()` → streaming `Encoder` with `push()`/`finish()`
-- [ ] Add `Limits` on encode side (currently decode-only)
-- [ ] Replace `ColorType` with `PixelLayout` (or rename — same concept, just naming)
-- [ ] `Limits` fields: standardize to `Option<u64>`
+- [x] Add `Limits` on encode side (currently decode-only)
+- [x] Replace `ColorType` with `PixelLayout` (or rename — same concept, just naming)
+- [x] `Limits` fields: standardize to `Option<u64>`
