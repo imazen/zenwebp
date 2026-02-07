@@ -324,7 +324,7 @@ impl DecodeConfig {
 
     /// Set maximum memory usage.
     #[must_use]
-    pub fn max_memory(mut self, bytes: usize) -> Self {
+    pub fn max_memory(mut self, bytes: u64) -> Self {
         self.limits = self.limits.max_memory(bytes);
         self
     }
@@ -333,7 +333,7 @@ impl DecodeConfig {
     #[must_use]
     #[deprecated(since = "0.4.0", note = "Use max_memory() or limits() instead")]
     pub fn memory_limit(mut self, limit: usize) -> Self {
-        self.limits = self.limits.max_memory(limit);
+        self.limits = self.limits.max_memory(limit as u64);
         #[allow(deprecated)]
         {
             self.memory_limit = limit;

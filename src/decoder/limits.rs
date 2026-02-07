@@ -37,13 +37,13 @@ pub struct Limits {
     pub max_total_pixels: Option<u64>,
 
     /// Maximum number of frames in an animation.
-    pub max_frame_count: Option<usize>,
+    pub max_frame_count: Option<u64>,
 
     /// Maximum input file size in bytes.
     pub max_file_size: Option<u64>,
 
     /// Maximum memory usage in bytes during decoding.
-    pub max_memory: Option<usize>,
+    pub max_memory: Option<u64>,
 }
 
 impl Default for Limits {
@@ -99,7 +99,7 @@ impl Limits {
 
     /// Set maximum frame count.
     #[must_use]
-    pub fn max_frame_count(mut self, count: usize) -> Self {
+    pub fn max_frame_count(mut self, count: u64) -> Self {
         self.max_frame_count = Some(count);
         self
     }
@@ -113,7 +113,7 @@ impl Limits {
 
     /// Set maximum memory usage in bytes.
     #[must_use]
-    pub fn max_memory(mut self, bytes: usize) -> Self {
+    pub fn max_memory(mut self, bytes: u64) -> Self {
         self.max_memory = Some(bytes);
         self
     }
@@ -160,7 +160,7 @@ impl Limits {
     /// Check if frame count is within limits.
     pub fn check_frame_count(&self, count: usize) -> Result<(), DecodeError> {
         if let Some(max) = self.max_frame_count {
-            if count >= max {
+            if count as u64 >= max {
                 return Err(DecodeError::InvalidParameter(
                     alloc::format!(
                         "frame count {} exceeds limit {}",
@@ -190,7 +190,7 @@ impl Limits {
     /// Check if memory usage is within limits.
     pub fn check_memory(&self, bytes: usize) -> Result<(), DecodeError> {
         if let Some(max) = self.max_memory {
-            if bytes > max {
+            if bytes as u64 > max {
                 return Err(DecodeError::MemoryLimitExceeded);
             }
         }
