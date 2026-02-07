@@ -946,30 +946,59 @@ impl<'a> EncodeRequest<'a> {
         self
     }
 
-    /// Encode to WebP bytes.
-    pub fn encode(self) -> Result<Vec<u8>, EncodeError> {
+    /// Encode to WebP bytes (recommended name).
+    ///
+    /// This is the preferred method name for builder-pattern encoding.
+    /// `encode()` is kept as an alias for backward compatibility.
+    pub fn finish(self) -> Result<Vec<u8>, EncodeError> {
         let (output, _stats) = self.encode_inner()?;
         Ok(output)
     }
 
+    /// Encode to WebP bytes (legacy name).
+    ///
+    /// Prefer [`finish()`](Self::finish) for builder-pattern consistency.
+    pub fn encode(self) -> Result<Vec<u8>, EncodeError> {
+        self.finish()
+    }
+
     /// Encode to WebP bytes, appending to an existing Vec.
-    pub fn encode_into(self, output: &mut Vec<u8>) -> Result<(), EncodeError> {
-        let encoded = self.encode()?;
+    pub fn finish_into(self, output: &mut Vec<u8>) -> Result<(), EncodeError> {
+        let encoded = self.finish()?;
         output.extend_from_slice(&encoded);
         Ok(())
     }
 
+    /// Deprecated: Use [`finish_into`](Self::finish_into) instead.
+    #[deprecated(since = "0.4.0", note = "Use finish_into instead")]
+    pub fn encode_into(self, output: &mut Vec<u8>) -> Result<(), EncodeError> {
+        self.finish_into(output)
+    }
+
     /// Encode to WebP bytes and return encoding statistics.
-    pub fn encode_with_stats(self) -> Result<(Vec<u8>, EncodeStats), EncodeError> {
+    pub fn finish_with_stats(self) -> Result<(Vec<u8>, EncodeStats), EncodeError> {
         self.encode_inner()
+    }
+
+    /// Deprecated: Use [`finish_with_stats`](Self::finish_with_stats) instead.
+    #[deprecated(since = "0.4.0", note = "Use finish_with_stats instead")]
+    pub fn encode_with_stats(self) -> Result<(Vec<u8>, EncodeStats), EncodeError> {
+        self.finish_with_stats()
     }
 
     /// Encode to WebP, writing to an [`io::Write`](std::io::Write) implementor.
     #[cfg(feature = "std")]
-    pub fn encode_to_writer<W: std::io::Write>(self, mut writer: W) -> Result<(), EncodeError> {
-        let encoded = self.encode()?;
+    pub fn finish_to<W: std::io::Write>(self, mut writer: W) -> Result<(), EncodeError> {
+        let encoded = self.finish()?;
         writer.write_all(&encoded)?;
         Ok(())
+    }
+
+    /// Deprecated: Use [`finish_to`](Self::finish_to) instead.
+    #[cfg(feature = "std")]
+    #[deprecated(since = "0.4.0", note = "Use finish_to instead")]
+    pub fn encode_to_writer<W: std::io::Write>(self, writer: W) -> Result<(), EncodeError> {
+        self.finish_to(writer)
     }
 
     fn encode_inner(self) -> Result<(Vec<u8>, EncodeStats), EncodeError> {
