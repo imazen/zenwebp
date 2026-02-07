@@ -16,6 +16,8 @@ Add to your `Cargo.toml`:
 zenwebp = "0.2"
 ```
 
+**📚 New to zenwebp?** Check out the comprehensive [API guide](examples/api_guide.rs) that demonstrates 100% of the public API with runnable examples.
+
 ### Decode a WebP image
 
 ```rust
