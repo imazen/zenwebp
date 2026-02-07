@@ -290,7 +290,9 @@ Done:
 
 **Project standards**: `#![forbid(unsafe_code)]` with default features. no_std+alloc (minimum: wasm32). CI with codecov. README with badges and usage examples. As of Rust 1.92, almost everything is in `core::` (including `Error`) — don't assume `std` is needed. Use `wasmtimer` crate for timing on wasm.
 
-Remaining:
+**All API convergence tasks complete ✓ 2026-02-06**
+
+Done:
 - [x] Rename `finish()` → `encode()` on `EncodeRequest` (one-shot, nothing was "started")
 - [x] Rename `finish_into()` → `encode_into()`, `finish_to()` → `encode_to()` on request
 - [x] Remove deprecated aliases (`encode()`, `encode_into()`, `encode_to_writer()`)
@@ -299,12 +301,12 @@ Remaining:
 - [x] Replace `ColorType` with `PixelLayout` (or rename — same concept, just naming)
 - [x] `Limits` fields: standardize to `Option<u64>`
 - [x] Split `EncoderConfig` into `LossyConfig` / `LosslessConfig` (compile-time invalid state prevention) ✓ 2026-02-06
-- [ ] Add `estimate_memory()` / `estimate_memory_ceiling()` on both config types
-- [ ] Factor metadata into `ImageMetadata` struct (keep request clean)
-- [ ] Adopt `with_` prefix convention for all builder setters on Config/Request
-- [ ] Support `Rgba8` and `Bgra8` for both encode and decode (A=255 on decode for lossy, ignore A on encode)
-- [ ] Add probing: `ImageInfo::from_bytes(&[u8])` static probe with `PROBE_BYTES` constant
-- [ ] Two-phase decoder: `build()` parses header → `info()` inspects → `decode()` continues without re-parsing
+- [x] Add `estimate_memory()` / `estimate_memory_ceiling()` on both config types ✓ 2026-02-06
+- [x] Factor metadata into `ImageMetadata` struct (keep request clean) ✓ 2026-02-06
+- [x] Adopt `with_` prefix convention for all builder setters on Config/Request ✓ 2026-02-06
+- [x] Support `Rgba8` and `Bgra8` for both encode and decode ✓ 2026-02-06
+- [x] Add probing: `ImageInfo::from_bytes(&[u8])` static probe with `PROBE_BYTES` constant ✓ 2026-02-06
+- [x] Two-phase decoder: `build()` parses header → `info()` inspects → `decode()` continues without re-parsing ✓ 2026-02-06
 
 ## Why Streaming Encoding Doesn't Make Sense for WebP
 
