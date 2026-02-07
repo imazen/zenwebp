@@ -65,6 +65,7 @@ pub struct AnimationDecoder<'a> {
     cumulative_ms: u32,
     frames_read: u32,
     total_frames: u32,
+    stop: Option<&'a dyn enough::Stop>,
 }
 
 impl<'a> AnimationDecoder<'a> {
@@ -99,6 +100,7 @@ impl<'a> AnimationDecoder<'a> {
             cumulative_ms: 0,
             frames_read: 0,
             total_frames,
+            stop: None,
         })
     }
 
@@ -135,6 +137,12 @@ impl<'a> AnimationDecoder<'a> {
         self.decoder.set_background_color(color)
     }
 
+    /// Set a cooperative cancellation token.
+    pub fn set_stop(&mut self, stop: &'a dyn enough::Stop) {
+        self.stop = Some(stop);
+        self.decoder.set_stop(Some(stop));
+    }
+
     /// Set upsampling method for lossy frames.
     pub fn set_lossy_upsampling(&mut self, method: UpsamplingMethod) {
         self.decoder.set_lossy_upsampling(method);
@@ -165,6 +173,9 @@ impl<'a> AnimationDecoder<'a> {
 
     /// Decode the next frame, returning `None` when all frames have been read.
     pub fn next_frame(&mut self) -> Result<Option<AnimFrame>, DecodingError> {
+        if let Some(stop) = self.stop {
+            stop.check()?;
+        }
         match self.decoder.read_frame(&mut self.buf) {
             Ok(duration_ms) => {
                 let timestamp_ms = self.cumulative_ms;
@@ -185,15 +196,16 @@ impl<'a> AnimationDecoder<'a> {
     }
 
     /// Reset the decoder to the first frame.
-    pub fn reset(&mut self) {
-        self.decoder.reset_animation();
+    pub fn reset(&mut self) -> Result<(), DecodingError> {
+        self.decoder.reset_animation()?;
         self.cumulative_ms = 0;
         self.frames_read = 0;
+        Ok(())
     }
 
     /// Decode all remaining frames at once.
     pub fn decode_all(&mut self) -> Result<Vec<AnimFrame>, DecodingError> {
-        self.reset();
+        self.reset()?;
         let mut frames = Vec::with_capacity(self.total_frames as usize);
         while let Some(frame) = self.next_frame()? {
             frames.push(frame);

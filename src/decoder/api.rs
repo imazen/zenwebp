@@ -354,6 +354,7 @@ impl<'a> DecodeRequest<'a> {
         if self.config.memory_limit > 0 {
             decoder.set_memory_limit(self.config.memory_limit);
         }
+        decoder.set_stop(self.stop);
         let (w, h) = decoder.dimensions();
         let size = (w as usize)
             .checked_mul(h as usize)
@@ -381,6 +382,7 @@ impl<'a> DecodeRequest<'a> {
         if self.config.memory_limit > 0 {
             decoder.set_memory_limit(self.config.memory_limit);
         }
+        decoder.set_stop(self.stop);
         let (w, h) = decoder.dimensions();
         decoder.read_image(output)?;
         Ok((w, h))
@@ -393,6 +395,7 @@ impl<'a> DecodeRequest<'a> {
             if self.config.memory_limit > 0 {
                 decoder.set_memory_limit(self.config.memory_limit);
             }
+            decoder.set_stop(self.stop);
             let dims = decoder.dimensions();
             let buf_size = decoder
                 .output_buffer_size()
@@ -484,6 +487,8 @@ pub struct WebPDecoder<'a> {
     chunks: HashMap<WebPRiffChunk, Range<u64>>,
 
     webp_decode_options: WebPDecodeOptions,
+
+    stop: Option<&'a dyn enough::Stop>,
 }
 
 impl<'a> WebPDecoder<'a> {
@@ -511,6 +516,7 @@ impl<'a> WebPDecoder<'a> {
             loop_count: LoopCount::Times(NonZeroU16::new(1).unwrap()),
             loop_duration: 0,
             webp_decode_options,
+            stop: None,
         };
         decoder.read_data()?;
         Ok(decoder)
@@ -703,6 +709,12 @@ impl<'a> WebPDecoder<'a> {
     /// Sets the maximum amount of memory that the decoder is allowed to allocate at once.
     ///
     /// TODO: Some allocations currently ignore this limit.
+    /// Set a cooperative cancellation token for decoding.
+    pub fn set_stop(&mut self, stop: Option<&'a dyn enough::Stop>) {
+        self.stop = stop;
+    }
+
+    /// Sets the memory limit in bytes for decoded image buffers.
     pub fn set_memory_limit(&mut self, limit: usize) {
         self.memory_limit = limit;
     }
@@ -833,6 +845,7 @@ impl<'a> WebPDecoder<'a> {
         } else if let Some(range) = self.chunks.get(&WebPRiffChunk::VP8L) {
             let data_slice = &self.r.get_ref()[range.start as usize..range.end as usize];
             let mut decoder = LosslessDecoder::new(data_slice);
+            decoder.set_stop(self.stop);
 
             if self.has_alpha {
                 decoder.decode_frame(self.width, self.height, false, buf)?;
@@ -849,7 +862,7 @@ impl<'a> WebPDecoder<'a> {
                 .get(&WebPRiffChunk::VP8)
                 .ok_or(DecodingError::ChunkMissing)?;
             let data_slice = &self.r.get_ref()[range.start as usize..range.end as usize];
-            let frame = Vp8Decoder::decode_frame(data_slice)?;
+            let frame = Vp8Decoder::decode_frame_with_stop(data_slice, self.stop)?;
             if u32::from(frame.width) != self.width || u32::from(frame.height) != self.height {
                 return Err(DecodingError::InconsistentImageSizes);
             }
@@ -897,12 +910,15 @@ impl<'a> WebPDecoder<'a> {
     /// in milliseconds. If there are no more frames, the method returns
     /// `DecodingError::NoMoreFrames` and `buf` is left unchanged.
     ///
-    /// # Panics
-    ///
-    /// Panics if the image is not animated.
     pub fn read_frame(&mut self, buf: &mut [u8]) -> Result<u32, DecodingError> {
-        assert!(self.is_animated());
-        assert_eq!(Some(buf.len()), self.output_buffer_size());
+        if !self.is_animated() {
+            return Err(DecodingError::InvalidParameter(String::from(
+                "not an animated WebP",
+            )));
+        }
+        if Some(buf.len()) != self.output_buffer_size() {
+            return Err(DecodingError::ImageTooLarge);
+        }
 
         if self.animation.next_frame == self.num_frames {
             return Err(DecodingError::NoMoreFrames);
@@ -950,7 +966,7 @@ impl<'a> WebPDecoder<'a> {
         let (frame, frame_has_alpha): (Vec<u8>, bool) = match chunk {
             WebPRiffChunk::VP8 => {
                 let data_slice = self.r.take_slice(chunk_size as usize)?;
-                let raw_frame = Vp8Decoder::decode_frame(data_slice)?;
+                let raw_frame = Vp8Decoder::decode_frame_with_stop(data_slice, self.stop)?;
                 if u32::from(raw_frame.width) != frame_width
                     || u32::from(raw_frame.height) != frame_height
                 {
@@ -963,6 +979,7 @@ impl<'a> WebPDecoder<'a> {
             WebPRiffChunk::VP8L => {
                 let data_slice = self.r.take_slice(chunk_size as usize)?;
                 let mut lossless_decoder = LosslessDecoder::new(data_slice);
+                lossless_decoder.set_stop(self.stop);
                 let mut rgba_frame = vec![0; frame_width as usize * frame_height as usize * 4];
                 lossless_decoder.decode_frame(frame_width, frame_height, false, &mut rgba_frame)?;
                 (rgba_frame, true)
@@ -989,7 +1006,7 @@ impl<'a> WebPDecoder<'a> {
                 }
 
                 let vp8_slice = self.r.take_slice(next_chunk_size as usize)?;
-                let frame = Vp8Decoder::decode_frame(vp8_slice)?;
+                let frame = Vp8Decoder::decode_frame_with_stop(vp8_slice, self.stop)?;
 
                 let mut rgba_frame = vec![0; frame_width as usize * frame_height as usize * 4];
                 frame.fill_rgba(&mut rgba_frame, self.webp_decode_options.lossy_upsampling);
@@ -1073,15 +1090,16 @@ impl<'a> WebPDecoder<'a> {
 
     /// Resets the animation to the first frame.
     ///
-    /// # Panics
-    ///
-    /// Panics if the image is not animated.
-    pub fn reset_animation(&mut self) {
-        assert!(self.is_animated());
-
+    pub fn reset_animation(&mut self) -> Result<(), DecodingError> {
+        if !self.is_animated() {
+            return Err(DecodingError::InvalidParameter(String::from(
+                "not an animated WebP",
+            )));
+        }
         self.animation.next_frame = 0;
         self.animation.next_frame_start = self.chunks.get(&WebPRiffChunk::ANMF).unwrap().start - 8;
         self.animation.dispose_next_frame = true;
+        Ok(())
     }
 
     /// Sets the upsampling method that is used in lossy decoding

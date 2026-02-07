@@ -623,6 +623,9 @@ pub struct Vp8Decoder<'a> {
 
     // Partition 0 size (header + mode data) for diagnostic reporting
     first_partition_size: u32,
+
+    // Cooperative cancellation token
+    stop: Option<&'a dyn enough::Stop>,
 }
 
 impl<'a> Vp8Decoder<'a> {
@@ -685,6 +688,8 @@ impl<'a> Vp8Decoder<'a> {
             current_mb_diag: None,
 
             first_partition_size: 0,
+
+            stop: None,
         }
     }
 
@@ -1732,6 +1737,16 @@ impl<'a> Vp8Decoder<'a> {
         decoder.decode_frame_()
     }
 
+    /// Decodes the current frame with cooperative cancellation support.
+    pub fn decode_frame_with_stop(
+        data: &'a [u8],
+        stop: Option<&'a dyn enough::Stop>,
+    ) -> Result<Frame, DecodingError> {
+        let mut decoder = Self::new(data);
+        decoder.stop = stop;
+        decoder.decode_frame_()
+    }
+
     /// Decodes the frame with diagnostic capture enabled.
     /// Returns both the decoded Frame and a DiagnosticFrame containing
     /// raw quantized coefficient levels, mode decisions, and probability tables.
@@ -1879,6 +1894,11 @@ impl<'a> Vp8Decoder<'a> {
             self.filter_row_in_cache(mby, simd_token);
             self.output_row_from_cache(mby);
             self.rotate_extra_rows();
+
+            // Check for cooperative cancellation between macroblock rows
+            if let Some(stop) = self.stop {
+                stop.check()?;
+            }
 
             self.left_border_y.fill(129u8);
             self.left_border_u.fill(129u8);

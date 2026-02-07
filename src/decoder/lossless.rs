@@ -63,13 +63,13 @@ pub(crate) fn subsample_size(size: u16, bits: u8) -> u16 {
 const NUM_TRANSFORM_TYPES: usize = 4;
 
 //Decodes lossless WebP images
-#[derive(Debug)]
 pub(crate) struct LosslessDecoder<'a> {
     bit_reader: BitReader<'a>,
     transforms: [Option<TransformType>; NUM_TRANSFORM_TYPES],
     transform_order: Vec<u8>,
     width: u16,
     height: u16,
+    stop: Option<&'a dyn enough::Stop>,
 }
 
 impl<'a> LosslessDecoder<'a> {
@@ -81,7 +81,13 @@ impl<'a> LosslessDecoder<'a> {
             transform_order: Vec::new(),
             width: 0,
             height: 0,
+            stop: None,
         }
+    }
+
+    /// Set a cooperative cancellation token.
+    pub(crate) fn set_stop(&mut self, stop: Option<&'a dyn enough::Stop>) {
+        self.stop = stop;
     }
 
     /// Decodes a frame.
@@ -495,6 +501,11 @@ impl<'a> LosslessDecoder<'a> {
             self.bit_reader.fill()?;
 
             if index >= next_block_start {
+                // Check for cooperative cancellation at block boundaries
+                if let Some(stop) = self.stop {
+                    stop.check()?;
+                }
+
                 let x = index % usize::from(width);
                 let y = index / usize::from(width);
                 next_block_start = (x | usize::from(huffman_info.mask)).min(usize::from(width - 1))
