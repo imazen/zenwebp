@@ -6,7 +6,7 @@
 
 use std::env;
 use std::fs;
-use zenwebp::{ColorType, EncodeRequest, EncoderConfig, Preset};
+use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
 
 fn main() {
     let args: Vec<_> = env::args().collect();
@@ -44,8 +44,8 @@ fn main() {
         };
 
         let (rgb, w, h) = match info.color_type {
-            png::ColorType::Rgb => (buf[..info.buffer_size()].to_vec(), info.width, info.height),
-            png::ColorType::Rgba => {
+            png::PixelLayout::Rgb => (buf[..info.buffer_size()].to_vec(), info.width, info.height),
+            png::PixelLayout::Rgba => {
                 let rgba = &buf[..info.buffer_size()];
                 let mut rgb = Vec::with_capacity(rgba.len() * 3 / 4);
                 for chunk in rgba.chunks(4) {
@@ -61,7 +61,7 @@ fn main() {
             .sns_strength(0)
             .filter_strength(0)
             .segments(1);
-        let zen = match EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h).encode() {
+        let zen = match EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, w, h).encode() {
             Ok(v) => v,
             Err(_) => continue,
         };

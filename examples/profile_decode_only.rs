@@ -22,8 +22,8 @@ fn main() {
         let info = reader.next_frame(&mut buf).unwrap();
 
         let rgb: Vec<u8> = match info.color_type {
-            png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-            png::ColorType::Rgba => buf[..info.buffer_size()]
+            png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
+            png::PixelLayout::Rgba => buf[..info.buffer_size()]
                 .chunks(4)
                 .flat_map(|c| &c[..3])
                 .copied()

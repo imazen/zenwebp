@@ -1,5 +1,5 @@
 // Test to compare with/without trellis at method 4
-use zenwebp::{ColorType, EncodeRequest};
+use zenwebp::{PixelLayout, EncodeRequest};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";
@@ -21,7 +21,7 @@ fn main() {
             .sns_strength(0)
             .filter_strength(0)
             .segments(1);
-        let output = EncodeRequest::new(&config, &rgb, ColorType::Rgb8, w, h)
+        let output = EncodeRequest::new(&config, &rgb, PixelLayout::Rgb8, w, h)
             .encode()
             .unwrap();
         println!("Method {}: {} bytes", method, output.len());

@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use zenwebp::{ColorType, EncodeRequest};
+use zenwebp::{PixelLayout, EncodeRequest};
 
 fn main() {
     let test_path = "/tmp/CID22/original/1001682.png";
@@ -19,7 +19,7 @@ fn main() {
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).unwrap();
 
-    let rgb_pixels: Vec<u8> = if info.color_type == png::ColorType::Rgba {
+    let rgb_pixels: Vec<u8> = if info.color_type == png::PixelLayout::Rgba {
         buf[..info.buffer_size()]
             .chunks(4)
             .flat_map(|c| [c[0], c[1], c[2]].into_iter())
@@ -35,7 +35,7 @@ fn main() {
     // Test the EXISTING encoder which produces valid output
     println!("\n=== Existing integrated encoder ===");
     let _cfg = zenwebp::EncoderConfig::new().lossless(true);
-    let existing = EncodeRequest::new(&_cfg, &rgb_pixels, ColorType::Rgb8, width, height)
+    let existing = EncodeRequest::new(&_cfg, &rgb_pixels, PixelLayout::Rgb8, width, height)
         .encode()
         .unwrap();
 

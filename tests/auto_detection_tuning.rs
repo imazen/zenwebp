@@ -19,12 +19,12 @@ fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32)> {
     let height = info.height;
 
     let rgb = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => buf[..info.buffer_size()]
+        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::PixelLayout::Rgba => buf[..info.buffer_size()]
             .chunks_exact(4)
             .flat_map(|p| [p[0], p[1], p[2]])
             .collect(),
-        png::ColorType::Grayscale => buf[..info.buffer_size()]
+        png::PixelLayout::Grayscale => buf[..info.buffer_size()]
             .iter()
             .flat_map(|&g| [g, g, g])
             .collect(),
@@ -36,7 +36,7 @@ fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32)> {
 
 fn encode_zen_bytes(rgb: &[u8], w: u32, h: u32, preset: zenwebp::Preset) -> Vec<u8> {
     let config = zenwebp::EncoderConfig::with_preset(preset, 75.0).method(4);
-    zenwebp::EncodeRequest::new(&config, rgb, zenwebp::ColorType::Rgb8, w, h)
+    zenwebp::EncodeRequest::new(&config, rgb, zenwebp::PixelLayout::Rgb8, w, h)
         .encode()
         .unwrap()
 }

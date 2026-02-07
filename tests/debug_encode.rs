@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 //! Debug encoder output
 use std::path::Path;
-use zenwebp::{ColorType, EncodeRequest, EncoderConfig};
+use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig};
 
 #[test]
 #[ignore]
@@ -14,8 +14,8 @@ fn debug_encode_kodak1() {
     let info = reader.next_frame(&mut buf).unwrap();
 
     let rgb_data = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => {
+        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::PixelLayout::Rgba => {
             let mut rgb = Vec::with_capacity((info.width * info.height * 3) as usize);
             for chunk in buf[..info.buffer_size()].chunks(4) {
                 rgb.extend_from_slice(&chunk[..3]);
@@ -37,7 +37,7 @@ fn debug_encode_kodak1() {
         // Ours
         let config = EncoderConfig::new().quality(q as f32);
         let our_output =
-            EncodeRequest::new(&config, &rgb_data, ColorType::Rgb8, info.width, info.height)
+            EncodeRequest::new(&config, &rgb_data, PixelLayout::Rgb8, info.width, info.height)
                 .encode()
                 .unwrap();
 

@@ -64,14 +64,14 @@ fn main() {
     // Encode and compare
     use zenwebp::decoder::vp8::Vp8Decoder;
     use zenwebp::decoder::LumaMode;
-    use zenwebp::{ColorType, EncodeRequest, EncoderConfig, Preset};
+    use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
 
     let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
         .method(4)
         .sns_strength(0)
         .filter_strength(0)
         .segments(1);
-    let zen_webp = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h)
+    let zen_webp = EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, w, h)
         .encode()
         .unwrap();
 

@@ -15,8 +15,8 @@ fn benchmark_image(path: &Path) -> Option<(String, u32, u32, f64, f64, f64, f64,
     let info = reader.next_frame(&mut buf).ok()?;
 
     let rgb = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => {
+        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::PixelLayout::Rgba => {
             let rgba = &buf[..info.buffer_size()];
             let mut rgb = Vec::with_capacity(rgba.len() * 3 / 4);
             for chunk in rgba.chunks(4) {

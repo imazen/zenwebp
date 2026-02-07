@@ -1,7 +1,7 @@
 //! Corpus comparison at method 3
 use std::env;
 use std::fs;
-use zenwebp::{ColorType, EncodeRequest, EncoderConfig, Preset};
+use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
 
 fn main() {
     let args: Vec<_> = env::args().collect();
@@ -44,7 +44,7 @@ fn main() {
             .sns_strength(0)
             .filter_strength(0)
             .segments(1);
-        let zen = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h)
+        let zen = EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, w, h)
             .encode()
             .unwrap();
 

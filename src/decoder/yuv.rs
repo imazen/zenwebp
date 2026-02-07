@@ -1192,7 +1192,7 @@ fn rgb_to_v_raw(rgb: &[u8]) -> i32 {
 #[cfg_attr(not(feature = "fast-yuv"), allow(unused_variables))]
 pub(crate) fn convert_image_sharp_yuv(
     image_data: &[u8],
-    color: crate::encoder::ColorType,
+    color: crate::encoder::PixelLayout,
     width: u16,
     height: u16,
 ) -> (
@@ -1202,14 +1202,14 @@ pub(crate) fn convert_image_sharp_yuv(
 ) {
     #[cfg(feature = "fast-yuv")]
     {
-        use crate::encoder::ColorType;
+        use crate::encoder::PixelLayout;
 
         // Sharp YUV only applies to RGB/RGBA/BGR/BGRA inputs (chroma subsampling matters).
         // For grayscale, fall back to standard conversion.
         match color {
-            ColorType::L8 => return convert_image_y::<1>(image_data, width, height),
-            ColorType::La8 => return convert_image_y::<2>(image_data, width, height),
-            ColorType::Yuv420 => {
+            PixelLayout::L8 => return convert_image_y::<1>(image_data, width, height),
+            PixelLayout::La8 => return convert_image_y::<2>(image_data, width, height),
+            PixelLayout::Yuv420 => {
                 // Sharp YUV doesn't apply to already-subsampled data
                 unreachable!("sharp YUV should not be called with Yuv420 input");
             }
@@ -1243,14 +1243,14 @@ pub(crate) fn convert_image_sharp_yuv(
         };
 
         let bpp = match color {
-            ColorType::Rgb8 | ColorType::Bgr8 => 3,
-            ColorType::Rgba8 | ColorType::Bgra8 => 4,
+            PixelLayout::Rgb8 | PixelLayout::Bgr8 => 3,
+            PixelLayout::Rgba8 | PixelLayout::Bgra8 => 4,
             _ => unreachable!(),
         };
         let src_stride = (w * bpp) as u32;
 
         let result = match color {
-            ColorType::Rgb8 => yuv::rgb_to_sharp_yuv420(
+            PixelLayout::Rgb8 => yuv::rgb_to_sharp_yuv420(
                 &mut planar,
                 image_data,
                 src_stride,
@@ -1258,7 +1258,7 @@ pub(crate) fn convert_image_sharp_yuv(
                 yuv::YuvStandardMatrix::Bt601,
                 yuv::SharpYuvGammaTransfer::Srgb,
             ),
-            ColorType::Rgba8 => yuv::rgba_to_sharp_yuv420(
+            PixelLayout::Rgba8 => yuv::rgba_to_sharp_yuv420(
                 &mut planar,
                 image_data,
                 src_stride,
@@ -1266,7 +1266,7 @@ pub(crate) fn convert_image_sharp_yuv(
                 yuv::YuvStandardMatrix::Bt601,
                 yuv::SharpYuvGammaTransfer::Srgb,
             ),
-            ColorType::Bgr8 => yuv::bgr_to_sharp_yuv420(
+            PixelLayout::Bgr8 => yuv::bgr_to_sharp_yuv420(
                 &mut planar,
                 image_data,
                 src_stride,
@@ -1274,7 +1274,7 @@ pub(crate) fn convert_image_sharp_yuv(
                 yuv::YuvStandardMatrix::Bt601,
                 yuv::SharpYuvGammaTransfer::Srgb,
             ),
-            ColorType::Bgra8 => yuv::bgra_to_sharp_yuv420(
+            PixelLayout::Bgra8 => yuv::bgra_to_sharp_yuv420(
                 &mut planar,
                 image_data,
                 src_stride,
@@ -1288,10 +1288,10 @@ pub(crate) fn convert_image_sharp_yuv(
         if result.is_err() {
             // Fall back to standard conversion if sharp YUV fails
             return match color {
-                ColorType::Rgb8 => convert_image_yuv::<3>(image_data, width, height),
-                ColorType::Rgba8 => convert_image_yuv::<4>(image_data, width, height),
-                ColorType::Bgr8 => convert_image_yuv_bgr::<3>(image_data, width, height),
-                ColorType::Bgra8 => convert_image_yuv_bgr::<4>(image_data, width, height),
+                PixelLayout::Rgb8 => convert_image_yuv::<3>(image_data, width, height),
+                PixelLayout::Rgba8 => convert_image_yuv::<4>(image_data, width, height),
+                PixelLayout::Bgr8 => convert_image_yuv_bgr::<3>(image_data, width, height),
+                PixelLayout::Bgra8 => convert_image_yuv_bgr::<4>(image_data, width, height),
                 _ => unreachable!(),
             };
         }
@@ -1302,15 +1302,15 @@ pub(crate) fn convert_image_sharp_yuv(
     #[cfg(not(feature = "fast-yuv"))]
     {
         // Fall back to standard conversion without the fast-yuv feature
-        use crate::encoder::ColorType;
+        use crate::encoder::PixelLayout;
         match color {
-            ColorType::Rgb8 => convert_image_yuv::<3>(image_data, width, height),
-            ColorType::Rgba8 => convert_image_yuv::<4>(image_data, width, height),
-            ColorType::Bgr8 => convert_image_yuv_bgr::<3>(image_data, width, height),
-            ColorType::Bgra8 => convert_image_yuv_bgr::<4>(image_data, width, height),
-            ColorType::L8 => convert_image_y::<1>(image_data, width, height),
-            ColorType::La8 => convert_image_y::<2>(image_data, width, height),
-            ColorType::Yuv420 => unreachable!("sharp YUV should not be called with Yuv420 input"),
+            PixelLayout::Rgb8 => convert_image_yuv::<3>(image_data, width, height),
+            PixelLayout::Rgba8 => convert_image_yuv::<4>(image_data, width, height),
+            PixelLayout::Bgr8 => convert_image_yuv_bgr::<3>(image_data, width, height),
+            PixelLayout::Bgra8 => convert_image_yuv_bgr::<4>(image_data, width, height),
+            PixelLayout::L8 => convert_image_y::<1>(image_data, width, height),
+            PixelLayout::La8 => convert_image_y::<2>(image_data, width, height),
+            PixelLayout::Yuv420 => unreachable!("sharp YUV should not be called with Yuv420 input"),
         }
     }
 }

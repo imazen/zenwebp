@@ -1,5 +1,5 @@
 // Decode benchmark with noisy image (more coefficients)
-use zenwebp::{ColorType, EncodeRequest, EncoderConfig};
+use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig};
 
 fn main() {
     // Generate a noisy test image (random noise)
@@ -15,7 +15,7 @@ fn main() {
 
     // Encode to WebP once
     let _cfg = EncoderConfig::new().quality(75.0);
-    let webp = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, width, height)
+    let webp = EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, width, height)
         .encode()
         .unwrap();
     eprintln!("Encoded noisy 1024x1024 to {} bytes", webp.len());

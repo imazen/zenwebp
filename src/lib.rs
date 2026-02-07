@@ -23,11 +23,11 @@
 //! Use [`EncoderConfig`] + [`EncodeRequest`]:
 //!
 //! ```rust
-//! use zenwebp::{EncodeRequest, EncoderConfig, ColorType, Preset};
+//! use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, Preset};
 //!
 //! let config = EncoderConfig::new().quality(85.0).preset(Preset::Photo);
 //! let rgba_data = vec![255u8; 4 * 4 * 4];
-//! let webp = EncodeRequest::new(&config, &rgba_data, ColorType::Rgba8, 4, 4)
+//! let webp = EncodeRequest::new(&config, &rgba_data, PixelLayout::Rgba8, 4, 4)
 //!     .encode()?;
 //! # Ok::<(), zenwebp::EncodeError>(())
 //! ```
@@ -106,10 +106,12 @@ pub use decoder::{
 
 // Re-export encoder public API
 pub use encoder::{
-    ClassifierDiag, ColorType, ContentType, EncodeProgress, EncodeRequest, EncoderConfig,
+    ClassifierDiag, PixelLayout, ContentType, EncodeProgress, EncodeRequest, EncoderConfig,
     EncodeError, EncodeResult, EncodeStats, NoProgress, Preset,
 };
 
+#[allow(deprecated)]
+pub use encoder::ColorType;
 // Re-export mux/demux public API
 pub use mux::{
     AnimFrame, AnimationConfig, AnimationDecoder, AnimationEncoder, AnimationInfo, BlendMethod,

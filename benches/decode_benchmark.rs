@@ -7,7 +7,7 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
 use std::path::Path;
-use zenwebp::{ColorType, EncodeRequest, EncoderConfig};
+use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig};
 
 /// Load a PNG image, encode to WebP, return WebP data.
 fn make_webp(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
@@ -18,8 +18,8 @@ fn make_webp(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let info = reader.next_frame(&mut buf).ok()?;
 
     let rgb_data = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => {
+        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::PixelLayout::Rgba => {
             let mut rgb = Vec::with_capacity((info.width * info.height * 3) as usize);
             for chunk in buf[..info.buffer_size()].chunks(4) {
                 rgb.extend_from_slice(&chunk[..3]);
@@ -30,7 +30,7 @@ fn make_webp(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     };
 
     let config = EncoderConfig::new().quality(75.0).method(4);
-    let webp = EncodeRequest::new(&config, &rgb_data, ColorType::Rgb8, info.width, info.height)
+    let webp = EncodeRequest::new(&config, &rgb_data, PixelLayout::Rgb8, info.width, info.height)
         .encode()
         .ok()?;
 

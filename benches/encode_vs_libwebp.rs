@@ -5,7 +5,7 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
 use std::path::Path;
-use zenwebp::{ColorType, EncodeRequest, EncoderConfig};
+use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig};
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let file = std::fs::File::open(path).ok()?;
@@ -15,22 +15,22 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let info = reader.next_frame(&mut buf).ok()?;
 
     let rgb_data = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => {
+        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::PixelLayout::Rgba => {
             let mut rgb = Vec::with_capacity((info.width * info.height * 3) as usize);
             for chunk in buf[..info.buffer_size()].chunks(4) {
                 rgb.extend_from_slice(&chunk[..3]);
             }
             rgb
         }
-        png::ColorType::Grayscale => {
+        png::PixelLayout::Grayscale => {
             let mut rgb = Vec::with_capacity((info.width * info.height * 3) as usize);
             for &g in &buf[..info.buffer_size()] {
                 rgb.extend_from_slice(&[g, g, g]);
             }
             rgb
         }
-        png::ColorType::GrayscaleAlpha => {
+        png::PixelLayout::GrayscaleAlpha => {
             let mut rgb = Vec::with_capacity((info.width * info.height * 3) as usize);
             for chunk in buf[..info.buffer_size()].chunks(2) {
                 let g = chunk[0];
@@ -70,7 +70,7 @@ fn bench_methods_diagnostic(c: &mut Criterion) {
                     EncodeRequest::new(
                         &config,
                         black_box(&rgb_data),
-                        ColorType::Rgb8,
+                        PixelLayout::Rgb8,
                         width,
                         height,
                     )
@@ -120,7 +120,7 @@ fn bench_methods_default(c: &mut Criterion) {
                     EncodeRequest::new(
                         &config,
                         black_box(&rgb_data),
-                        ColorType::Rgb8,
+                        PixelLayout::Rgb8,
                         width,
                         height,
                     )
@@ -166,7 +166,7 @@ fn bench_quality_comparison(c: &mut Criterion) {
                     EncodeRequest::new(
                         &config,
                         black_box(&rgb_data),
-                        ColorType::Rgb8,
+                        PixelLayout::Rgb8,
                         width,
                         height,
                     )

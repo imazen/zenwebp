@@ -1,7 +1,7 @@
 //! Compare all methods (0-6) between zenwebp and libwebp apples-to-apples
 
 use std::time::Instant;
-use zenwebp::{ColorType, EncodeRequest};
+use zenwebp::{PixelLayout, EncodeRequest};
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
@@ -14,8 +14,8 @@ fn main() {
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).unwrap();
     let rgb: Vec<u8> = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => buf[..info.buffer_size()]
+        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::PixelLayout::Rgba => buf[..info.buffer_size()]
             .chunks(4)
             .flat_map(|c| &c[..3])
             .copied()
@@ -47,7 +47,7 @@ fn main() {
                 .sns_strength(0)
                 .filter_strength(0)
                 .segments(1);
-            let out = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h)
+            let out = EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, w, h)
                 .encode()
                 .unwrap();
             zen_size = out.len();

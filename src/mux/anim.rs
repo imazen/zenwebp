@@ -6,7 +6,7 @@
 //!
 //! ```rust,no_run
 //! use zenwebp::mux::{AnimationEncoder, AnimationConfig};
-//! use zenwebp::{EncoderConfig, ColorType, LoopCount};
+//! use zenwebp::{EncoderConfig, PixelLayout, LoopCount};
 //!
 //! let config = AnimationConfig {
 //!     background_color: [0, 0, 0, 0],
@@ -19,8 +19,8 @@
 //!
 //! // Frame pixels (320x240 RGBA)
 //! let pixels = vec![255u8; 320 * 240 * 4];
-//! anim.add_frame(&pixels, ColorType::Rgba8, 0, &frame_config)?;
-//! anim.add_frame(&pixels, ColorType::Rgba8, 100, &frame_config)?;
+//! anim.add_frame(&pixels, PixelLayout::Rgba8, 0, &frame_config)?;
+//! anim.add_frame(&pixels, PixelLayout::Rgba8, 100, &frame_config)?;
 //!
 //! let webp = anim.finalize(100)?;
 //! # Ok::<(), zenwebp::mux::MuxError>(())
@@ -34,7 +34,7 @@ use super::error::MuxError;
 use crate::decoder::LoopCount;
 use crate::encoder::vp8::encode_frame_lossy;
 use crate::encoder::{
-    encode_alpha_lossless, encode_frame_lossless, ColorType, EncoderConfig, EncoderParams,
+    encode_alpha_lossless, encode_frame_lossless, PixelLayout, EncoderConfig, EncoderParams,
     NoProgress,
 };
 use enough::Unstoppable;
@@ -162,13 +162,13 @@ impl AnimationEncoder {
     pub fn add_frame(
         &mut self,
         pixels: &[u8],
-        color_type: ColorType,
+        color_type: PixelLayout,
         timestamp_ms: u32,
         encoder_config: &EncoderConfig,
     ) -> Result<(), MuxError> {
         // If optimization is disabled, or input is YUV420 (can't diff planar
         // data pixel-by-pixel), fall through to full-canvas encoding.
-        if !self.minimize_size || color_type == ColorType::Yuv420 {
+        if !self.minimize_size || color_type == PixelLayout::Yuv420 {
             let result = self.add_frame_advanced(
                 pixels,
                 color_type,
@@ -182,7 +182,7 @@ impl AnimationEncoder {
                 BlendMethod::Overwrite,
             );
             // Invalidate canvas tracking for YUV420 (can't convert)
-            if color_type == ColorType::Yuv420 {
+            if color_type == PixelLayout::Yuv420 {
                 self.prev_canvas = None;
             }
             return result;
@@ -204,9 +204,9 @@ impl AnimationEncoder {
                         &rgba[..3]
                     };
                     let sub_color = if color_type.has_alpha() {
-                        ColorType::Rgba8
+                        PixelLayout::Rgba8
                     } else {
-                        ColorType::Rgb8
+                        PixelLayout::Rgb8
                     };
                     let encoded = encode_frame_data(one_pixel, 1, 1, sub_color, &params)?;
                     self.push_encoded_frame(
@@ -224,9 +224,9 @@ impl AnimationEncoder {
                     let include_alpha = color_type.has_alpha();
                     let sub_pixels = extract_sub_rect(&rgba, self.width, x, y, w, h, include_alpha);
                     let sub_color = if include_alpha {
-                        ColorType::Rgba8
+                        PixelLayout::Rgba8
                     } else {
-                        ColorType::Rgb8
+                        PixelLayout::Rgb8
                     };
                     let encoded = encode_frame_data(&sub_pixels, w, h, sub_color, &params)?;
                     self.push_encoded_frame(
@@ -271,7 +271,7 @@ impl AnimationEncoder {
     pub fn add_frame_advanced(
         &mut self,
         pixels: &[u8],
-        color_type: ColorType,
+        color_type: PixelLayout,
         frame_width: u32,
         frame_height: u32,
         x_offset: u32,
@@ -331,41 +331,41 @@ impl AnimationEncoder {
 
 /// Convert pixel data to RGBA. Returns `None` for YUV420 (planar data
 /// can't be compared pixel-by-pixel for delta compression).
-fn to_rgba(pixels: &[u8], color_type: ColorType, width: u32, height: u32) -> Option<Vec<u8>> {
+fn to_rgba(pixels: &[u8], color_type: PixelLayout, width: u32, height: u32) -> Option<Vec<u8>> {
     let npixels = (width as usize) * (height as usize);
     match color_type {
-        ColorType::L8 => Some(
+        PixelLayout::L8 => Some(
             pixels[..npixels]
                 .iter()
                 .flat_map(|&p| [p, p, p, 255])
                 .collect(),
         ),
-        ColorType::La8 => Some(
+        PixelLayout::La8 => Some(
             pixels[..npixels * 2]
                 .chunks_exact(2)
                 .flat_map(|p| [p[0], p[0], p[0], p[1]])
                 .collect(),
         ),
-        ColorType::Rgb8 => Some(
+        PixelLayout::Rgb8 => Some(
             pixels[..npixels * 3]
                 .chunks_exact(3)
                 .flat_map(|p| [p[0], p[1], p[2], 255])
                 .collect(),
         ),
-        ColorType::Rgba8 => Some(pixels[..npixels * 4].to_vec()),
-        ColorType::Bgr8 => Some(
+        PixelLayout::Rgba8 => Some(pixels[..npixels * 4].to_vec()),
+        PixelLayout::Bgr8 => Some(
             pixels[..npixels * 3]
                 .chunks_exact(3)
                 .flat_map(|p| [p[2], p[1], p[0], 255])
                 .collect(),
         ),
-        ColorType::Bgra8 => Some(
+        PixelLayout::Bgra8 => Some(
             pixels[..npixels * 4]
                 .chunks_exact(4)
                 .flat_map(|p| [p[2], p[1], p[0], p[3]])
                 .collect(),
         ),
-        ColorType::Yuv420 => None,
+        PixelLayout::Yuv420 => None,
     }
 }
 
@@ -463,7 +463,7 @@ fn encode_frame_data(
     pixels: &[u8],
     width: u32,
     height: u32,
-    color: ColorType,
+    color: PixelLayout,
     params: &EncoderParams,
 ) -> Result<EncodedFrame, MuxError> {
     let mut bitstream = Vec::new();

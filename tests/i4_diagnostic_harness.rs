@@ -15,7 +15,7 @@ use std::io::BufReader;
 use webpx::Unstoppable;
 use zenwebp::decoder::vp8::{DiagnosticFrame, Vp8Decoder};
 use zenwebp::decoder::LumaMode;
-use zenwebp::{ColorType, EncodeRequest, EncoderConfig, Preset};
+use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
 
 // ============================================================================
 // Image Loading
@@ -31,12 +31,12 @@ fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32)> {
     let height = info.height;
 
     let rgb = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => buf[..info.buffer_size()]
+        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::PixelLayout::Rgba => buf[..info.buffer_size()]
             .chunks_exact(4)
             .flat_map(|p| [p[0], p[1], p[2]])
             .collect(),
-        png::ColorType::Grayscale => buf[..info.buffer_size()]
+        png::PixelLayout::Grayscale => buf[..info.buffer_size()]
             .iter()
             .flat_map(|&g| [g, g, g])
             .collect(),
@@ -109,7 +109,7 @@ fn encode_zenwebp(rgb: &[u8], width: u32, height: u32, quality: f32, method: u8)
         .filter_strength(0)
         .filter_sharpness(0)
         .segments(1); // Single segment simplifies quantizer comparison
-    EncodeRequest::new(&config, rgb, ColorType::Rgb8, width, height)
+    EncodeRequest::new(&config, rgb, PixelLayout::Rgb8, width, height)
         .encode()
         .expect("zenwebp encoding failed")
 }

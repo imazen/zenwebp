@@ -24,9 +24,9 @@ fn save_image(data: &[u8], file: &str, i: Option<u32>, has_alpha: bool, width: u
 
     let mut encoder = png::Encoder::new(&mut f, width, height);
     if has_alpha {
-        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_color(png::PixelLayout::Rgba);
     } else {
-        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_color(png::PixelLayout::Rgb);
     }
     encoder
         .write_header()
@@ -70,8 +70,8 @@ fn reference_test_with_options(
     assert_eq!(width, reference_decoder.info().width);
     assert_eq!(height, reference_decoder.info().height);
     match reference_decoder.info().color_type {
-        png::ColorType::Rgb => assert!(!decoder.has_alpha()),
-        png::ColorType::Rgba => assert!(decoder.has_alpha()),
+        png::PixelLayout::Rgb => assert!(!decoder.has_alpha()),
+        png::PixelLayout::Rgba => assert!(decoder.has_alpha()),
         _ => unreachable!(),
     }
 

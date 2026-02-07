@@ -31,7 +31,7 @@ fn main() {
     let rgb = buf[..info.buffer_size()].to_vec();
     let width = info.width;
     let height = info.height;
-    let has_alpha = info.color_type == png::ColorType::Rgba;
+    let has_alpha = info.color_type == png::PixelLayout::Rgba;
 
     println!(
         "Image: {} ({}x{}, alpha={})",

@@ -2,7 +2,7 @@
 //
 // This helps determine if our I4 mode selections are beneficial or harmful
 
-use zenwebp::{ColorType, EncodeRequest, EncoderConfig, Preset};
+use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";
@@ -29,7 +29,7 @@ fn main() {
             .sns_strength(0)
             .filter_strength(0)
             .segments(1);
-        let webp = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h)
+        let webp = EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, w, h)
             .encode()
             .unwrap();
         println!("{}: {} bytes", name, webp.len());

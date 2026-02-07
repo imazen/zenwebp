@@ -1,6 +1,6 @@
 // Test to check lambda values
 use webpx::Unstoppable;
-use zenwebp::{ColorType, EncodeRequest};
+use zenwebp::{PixelLayout, EncodeRequest};
 
 fn main() {
     // Create a minimal image to trigger segment initialization
@@ -29,7 +29,7 @@ fn main() {
     println!("  libwebp config created (internal lambdas not exposed)");
 
     // The segment quantizers should match - let's verify by comparing encoded output structure
-    let zen_out = EncodeRequest::new(&config, &rgb, ColorType::Rgb8, 16, 16)
+    let zen_out = EncodeRequest::new(&config, &rgb, PixelLayout::Rgb8, 16, 16)
         .encode()
         .unwrap();
     let lib_out = lib_config.encode_rgb(&rgb, 16, 16, Unstoppable).unwrap();

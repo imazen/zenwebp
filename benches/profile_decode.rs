@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::time::Instant;
-use zenwebp::{ColorType, EncodeRequest, EncoderConfig};
+use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig};
 
 fn load_webp(path: &Path) -> Vec<u8> {
     std::fs::read(path).expect("Failed to read WebP file")
@@ -14,8 +14,8 @@ fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
     let info = reader.next_frame(&mut buf).unwrap();
 
     let rgb_data: Vec<u8> = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => {
+        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::PixelLayout::Rgba => {
             let mut rgb = Vec::with_capacity((info.width * info.height * 3) as usize);
             for chunk in buf[..info.buffer_size()].chunks(4) {
                 rgb.extend_from_slice(&chunk[..3]);
@@ -143,7 +143,7 @@ fn main() {
         println!("========================================");
         let our_encoded = {
             let config = EncoderConfig::new().quality(75.0);
-            EncodeRequest::new(&config, &rgb_data, ColorType::Rgb8, width, height)
+            EncodeRequest::new(&config, &rgb_data, PixelLayout::Rgb8, width, height)
                 .encode()
                 .unwrap()
         };

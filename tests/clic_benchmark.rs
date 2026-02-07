@@ -9,7 +9,7 @@ use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharact
 use std::fs;
 use std::path::Path;
 use std::time::Instant;
-use zenwebp::{ColorType, EncodeRequest, EncoderConfig};
+use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig};
 
 const CLIC_DIR: &str = "/home/lilith/work/codec-corpus/clic2025/validation";
 
@@ -25,8 +25,8 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 
     // Convert to RGB if needed
     let rgb = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => {
+        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::PixelLayout::Rgba => {
             let rgba = &buf[..info.buffer_size()];
             let mut rgb = Vec::with_capacity((width * height * 3) as usize);
             for pixel in rgba.chunks_exact(4) {
@@ -34,7 +34,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
             }
             rgb
         }
-        png::ColorType::Grayscale => {
+        png::PixelLayout::Grayscale => {
             let gray = &buf[..info.buffer_size()];
             let mut rgb = Vec::with_capacity((width * height * 3) as usize);
             for &g in gray {
@@ -42,7 +42,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
             }
             rgb
         }
-        png::ColorType::GrayscaleAlpha => {
+        png::PixelLayout::GrayscaleAlpha => {
             let ga = &buf[..info.buffer_size()];
             let mut rgb = Vec::with_capacity((width * height * 3) as usize);
             for pixel in ga.chunks_exact(2) {
@@ -125,7 +125,7 @@ fn benchmark_image(rgb: &[u8], width: u32, height: u32, quality: u8) -> Option<B
     let start = Instant::now();
     let config = EncoderConfig::new().quality(quality as f32);
     let ours_output =
-        match EncodeRequest::new(&config, rgb, ColorType::Rgb8, width, height).encode() {
+        match EncodeRequest::new(&config, rgb, PixelLayout::Rgb8, width, height).encode() {
             Ok(v) => v,
             Err(_) => return None,
         };

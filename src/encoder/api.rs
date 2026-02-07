@@ -3,7 +3,7 @@
 //! # API
 //!
 //! ```rust
-//! use zenwebp::{EncodeRequest, EncoderConfig, ColorType, Preset};
+//! use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, Preset};
 //!
 //! let config = EncoderConfig::new()
 //!     .preset(Preset::Photo)
@@ -11,7 +11,7 @@
 //!     .method(4);
 //!
 //! let rgba_data = vec![255u8; 4 * 4 * 4]; // 4x4 RGBA image
-//! let webp = EncodeRequest::new(&config, &rgba_data, ColorType::Rgba8, 4, 4)
+//! let webp = EncodeRequest::new(&config, &rgba_data, PixelLayout::Rgba8, 4, 4)
 //!     .encode()?;
 //! # Ok::<(), zenwebp::EncodeError>(())
 //! ```
@@ -116,7 +116,7 @@ impl fmt::Display for Preset {
 /// and some decoders may treat them as such. This enum is used to indicate the color type of the
 /// input data provided to the encoder, which can help improve compression ratio.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ColorType {
+pub enum PixelLayout {
     /// Opaque image with a single luminance byte per pixel.
     L8,
     /// Image with a luminance and alpha byte per pixel.
@@ -133,32 +133,36 @@ pub enum ColorType {
     Yuv420,
 }
 
-impl ColorType {
+/// Deprecated: Use [`PixelLayout`] instead.
+#[deprecated(since = "0.4.0", note = "Use PixelLayout instead")]
+pub type ColorType = PixelLayout;
+
+impl PixelLayout {
     pub(crate) fn has_alpha(self) -> bool {
-        matches!(self, ColorType::La8 | ColorType::Rgba8 | ColorType::Bgra8)
+        matches!(self, PixelLayout::La8 | PixelLayout::Rgba8 | PixelLayout::Bgra8)
     }
 
     pub(crate) fn bytes_per_pixel(self) -> usize {
         match self {
-            ColorType::L8 => 1,
-            ColorType::La8 => 2,
-            ColorType::Rgb8 | ColorType::Bgr8 => 3,
-            ColorType::Rgba8 | ColorType::Bgra8 => 4,
-            ColorType::Yuv420 => 1, // not meaningful for planar; validated separately
+            PixelLayout::L8 => 1,
+            PixelLayout::La8 => 2,
+            PixelLayout::Rgb8 | PixelLayout::Bgr8 => 3,
+            PixelLayout::Rgba8 | PixelLayout::Bgra8 => 4,
+            PixelLayout::Yuv420 => 1, // not meaningful for planar; validated separately
         }
     }
 }
 
-impl fmt::Display for ColorType {
+impl fmt::Display for PixelLayout {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ColorType::L8 => f.write_str("L8"),
-            ColorType::La8 => f.write_str("LA8"),
-            ColorType::Rgb8 => f.write_str("RGB8"),
-            ColorType::Rgba8 => f.write_str("RGBA8"),
-            ColorType::Bgr8 => f.write_str("BGR8"),
-            ColorType::Bgra8 => f.write_str("BGRA8"),
-            ColorType::Yuv420 => f.write_str("YUV420"),
+            PixelLayout::L8 => f.write_str("L8"),
+            PixelLayout::La8 => f.write_str("LA8"),
+            PixelLayout::Rgb8 => f.write_str("RGB8"),
+            PixelLayout::Rgba8 => f.write_str("RGBA8"),
+            PixelLayout::Bgr8 => f.write_str("BGR8"),
+            PixelLayout::Bgra8 => f.write_str("BGRA8"),
+            PixelLayout::Yuv420 => f.write_str("YUV420"),
         }
     }
 }
@@ -613,7 +617,7 @@ pub type EncodingStats = EncodeStats;
 /// # Example
 ///
 /// ```rust
-/// use zenwebp::{EncoderConfig, EncodeRequest, ColorType, Preset};
+/// use zenwebp::{EncoderConfig, EncodeRequest, PixelLayout, Preset};
 ///
 /// let config = EncoderConfig::new()
 ///     .quality(85.0)
@@ -623,8 +627,8 @@ pub type EncodingStats = EncodeStats;
 /// // Reuse config for multiple images
 /// let image1 = vec![0u8; 4 * 4 * 4]; // 4x4 RGBA
 /// let image2 = vec![0u8; 8 * 6 * 4]; // 8x6 RGBA
-/// let webp1 = EncodeRequest::new(&config, &image1, ColorType::Rgba8, 4, 4).encode()?;
-/// let webp2 = EncodeRequest::new(&config, &image2, ColorType::Rgba8, 8, 6).encode()?;
+/// let webp1 = EncodeRequest::new(&config, &image1, PixelLayout::Rgba8, 4, 4).encode()?;
+/// let webp2 = EncodeRequest::new(&config, &image2, PixelLayout::Rgba8, 8, 6).encode()?;
 /// # Ok::<(), zenwebp::EncodeError>(())
 /// ```
 #[derive(Debug, Clone, PartialEq)]
@@ -857,18 +861,18 @@ static NO_PROGRESS: NoProgress = NoProgress;
 /// # Example
 ///
 /// ```rust
-/// use zenwebp::{EncodeRequest, EncoderConfig, ColorType};
+/// use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 ///
 /// let config = EncoderConfig::new().quality(85.0);
 /// let rgba = vec![0u8; 640 * 480 * 4];
-/// let webp = EncodeRequest::new(&config, &rgba, ColorType::Rgba8, 640, 480)
+/// let webp = EncodeRequest::new(&config, &rgba, PixelLayout::Rgba8, 640, 480)
 ///     .encode()?;
 /// # Ok::<(), zenwebp::EncodeError>(())
 /// ```
 pub struct EncodeRequest<'a> {
     config: &'a EncoderConfig,
     pixels: &'a [u8],
-    color_type: ColorType,
+    color_type: PixelLayout,
     width: u32,
     height: u32,
     stride_pixels: Option<usize>,
@@ -885,7 +889,7 @@ impl<'a> EncodeRequest<'a> {
     pub fn new(
         config: &'a EncoderConfig,
         pixels: &'a [u8],
-        color_type: ColorType,
+        color_type: PixelLayout,
         width: u32,
         height: u32,
     ) -> Self {
@@ -999,7 +1003,7 @@ impl<'a> EncodeRequest<'a> {
             self.pixels
         };
 
-        if self.color_type != ColorType::Yuv420 {
+        if self.color_type != PixelLayout::Yuv420 {
             validate_buffer_size(encode_data.len(), self.width, self.height, bpp as u32)?;
         }
 
@@ -1060,7 +1064,7 @@ pub(crate) fn encode_frame_lossless(
     data: &[u8],
     width: u32,
     height: u32,
-    color: ColorType,
+    color: PixelLayout,
     params: EncoderParams,
     implicit_dimensions: bool,
     stop: &dyn enough::Stop,
@@ -1068,11 +1072,11 @@ pub(crate) fn encode_frame_lossless(
     let w = &mut BitWriter::new(writer);
 
     let (is_color, is_alpha, bytes_per_pixel) = match color {
-        ColorType::L8 => (false, false, 1),
-        ColorType::La8 => (false, true, 2),
-        ColorType::Rgb8 | ColorType::Bgr8 => (true, false, 3),
-        ColorType::Rgba8 | ColorType::Bgra8 => (true, true, 4),
-        ColorType::Yuv420 => {
+        PixelLayout::L8 => (false, false, 1),
+        PixelLayout::La8 => (false, true, 2),
+        PixelLayout::Rgb8 | PixelLayout::Bgr8 => (true, false, 3),
+        PixelLayout::Rgba8 | PixelLayout::Bgra8 => (true, true, 4),
+        PixelLayout::Yuv420 => {
             return Err(EncodeError::InvalidBufferSize(
                 "YUV 4:2:0 input only supports lossy encoding".into(),
             ));
@@ -1120,25 +1124,25 @@ pub(crate) fn encode_frame_lossless(
 
     // expand to RGBA
     let mut pixels = match color {
-        ColorType::L8 => data.iter().flat_map(|&p| [p, p, p, 255]).collect(),
-        ColorType::La8 => data
+        PixelLayout::L8 => data.iter().flat_map(|&p| [p, p, p, 255]).collect(),
+        PixelLayout::La8 => data
             .chunks_exact(2)
             .flat_map(|p| [p[0], p[0], p[0], p[1]])
             .collect(),
-        ColorType::Rgb8 => data
+        PixelLayout::Rgb8 => data
             .chunks_exact(3)
             .flat_map(|p| [p[0], p[1], p[2], 255])
             .collect(),
-        ColorType::Rgba8 => data.to_vec(),
-        ColorType::Bgr8 => data
+        PixelLayout::Rgba8 => data.to_vec(),
+        PixelLayout::Bgr8 => data
             .chunks_exact(3)
             .flat_map(|p| [p[2], p[1], p[0], 255]) // B,G,R → R,G,B,A
             .collect(),
-        ColorType::Bgra8 => data
+        PixelLayout::Bgra8 => data
             .chunks_exact(4)
             .flat_map(|p| [p[2], p[1], p[0], p[3]]) // B,G,R,A → R,G,B,A
             .collect(),
-        ColorType::Yuv420 => unreachable!(), // already rejected above
+        PixelLayout::Yuv420 => unreachable!(), // already rejected above
     };
 
     // compute subtract green transform
@@ -1172,7 +1176,7 @@ pub(crate) fn encode_frame_lossless(
     let mut frequencies3 = [0u32; 256];
     let mut it = pixels.chunks_exact(4).peekable();
     match color {
-        ColorType::L8 => {
+        PixelLayout::L8 => {
             frequencies0[0] = 1;
             frequencies2[0] = 1;
             frequencies3[0] = 1;
@@ -1181,7 +1185,7 @@ pub(crate) fn encode_frame_lossless(
                 count_run(pixel, &mut it, &mut frequencies1);
             }
         }
-        ColorType::La8 => {
+        PixelLayout::La8 => {
             frequencies0[0] = 1;
             frequencies2[0] = 1;
             while let Some(pixel) = it.next() {
@@ -1190,7 +1194,7 @@ pub(crate) fn encode_frame_lossless(
                 count_run(pixel, &mut it, &mut frequencies1);
             }
         }
-        ColorType::Rgb8 | ColorType::Bgr8 => {
+        PixelLayout::Rgb8 | PixelLayout::Bgr8 => {
             // BGR already converted to RGB in pixel expansion above
             frequencies3[0] = 1;
             while let Some(pixel) = it.next() {
@@ -1200,7 +1204,7 @@ pub(crate) fn encode_frame_lossless(
                 count_run(pixel, &mut it, &mut frequencies1);
             }
         }
-        ColorType::Rgba8 | ColorType::Bgra8 => {
+        PixelLayout::Rgba8 | PixelLayout::Bgra8 => {
             // BGRA already converted to RGBA in pixel expansion above
             while let Some(pixel) = it.next() {
                 frequencies0[pixel[0] as usize] += 1;
@@ -1210,7 +1214,7 @@ pub(crate) fn encode_frame_lossless(
                 count_run(pixel, &mut it, &mut frequencies1);
             }
         }
-        ColorType::Yuv420 => unreachable!(),
+        PixelLayout::Yuv420 => unreachable!(),
     }
 
     // compute and write huffman codes
@@ -1242,7 +1246,7 @@ pub(crate) fn encode_frame_lossless(
     // Write image data
     let mut it = pixels.chunks_exact(4).peekable();
     match color {
-        ColorType::L8 => {
+        PixelLayout::L8 => {
             while let Some(pixel) = it.next() {
                 w.write_bits(
                     u64::from(codes1[pixel[1] as usize]),
@@ -1251,7 +1255,7 @@ pub(crate) fn encode_frame_lossless(
                 write_run(w, pixel, &mut it, &codes1, &lengths1);
             }
         }
-        ColorType::La8 => {
+        PixelLayout::La8 => {
             while let Some(pixel) = it.next() {
                 let len1 = lengths1[pixel[1] as usize];
                 let len3 = lengths3[pixel[3] as usize];
@@ -1263,7 +1267,7 @@ pub(crate) fn encode_frame_lossless(
                 write_run(w, pixel, &mut it, &codes1, &lengths1);
             }
         }
-        ColorType::Rgb8 | ColorType::Bgr8 => {
+        PixelLayout::Rgb8 | PixelLayout::Bgr8 => {
             // BGR already converted to RGB in pixel expansion above
             while let Some(pixel) = it.next() {
                 let len1 = lengths1[pixel[1] as usize];
@@ -1278,7 +1282,7 @@ pub(crate) fn encode_frame_lossless(
                 write_run(w, pixel, &mut it, &codes1, &lengths1);
             }
         }
-        ColorType::Rgba8 | ColorType::Bgra8 => {
+        PixelLayout::Rgba8 | PixelLayout::Bgra8 => {
             // BGRA already converted to RGBA in pixel expansion above
             while let Some(pixel) = it.next() {
                 let len1 = lengths1[pixel[1] as usize];
@@ -1295,7 +1299,7 @@ pub(crate) fn encode_frame_lossless(
                 write_run(w, pixel, &mut it, &codes1, &lengths1);
             }
         }
-        ColorType::Yuv420 => unreachable!(),
+        PixelLayout::Yuv420 => unreachable!(),
     }
 
     w.flush();
@@ -1412,13 +1416,13 @@ pub(crate) fn encode_alpha_lossless(
     data: &[u8],
     width: u32,
     height: u32,
-    color: ColorType,
+    color: PixelLayout,
     alpha_quality: u8,
     stop: &dyn enough::Stop,
 ) -> Result<(), EncodeError> {
     let bytes_per_pixel = match color {
-        ColorType::La8 => 2,
-        ColorType::Rgba8 | ColorType::Bgra8 => 4,
+        PixelLayout::La8 => 2,
+        PixelLayout::Rgba8 | PixelLayout::Bgra8 => 4,
         _ => unreachable!(),
     };
     if width == 0 || width > 16384 || height == 0 || height > 16384 {
@@ -1457,7 +1461,7 @@ pub(crate) fn encode_alpha_lossless(
         &alpha_data,
         width,
         height,
-        ColorType::L8,
+        PixelLayout::L8,
         EncoderParams::default(),
         true,
         stop,
@@ -1554,7 +1558,7 @@ impl<'a> WebPEncoder<'a> {
         data: &[u8],
         width: u32,
         height: u32,
-        color: ColorType,
+        color: PixelLayout,
     ) -> Result<EncodeStats, EncodeError> {
         let mut frame = Vec::new();
 
@@ -1693,7 +1697,7 @@ mod tests {
 
         let mut output = Vec::new();
         WebPEncoder::new(&mut output)
-            .encode(&img, 256, 256, crate::ColorType::Rgba8)
+            .encode(&img, 256, 256, crate::PixelLayout::Rgba8)
             .unwrap();
 
         let mut decoder = crate::WebPDecoder::new(&output).unwrap();
@@ -1714,7 +1718,7 @@ mod tests {
         let mut encoder = WebPEncoder::new(&mut output);
         encoder.set_exif_metadata(exif.clone());
         encoder
-            .encode(&img, 256, 256, crate::ColorType::Rgb8)
+            .encode(&img, 256, 256, crate::PixelLayout::Rgb8)
             .unwrap();
 
         let mut decoder = crate::WebPDecoder::new(&output).unwrap();
@@ -1746,7 +1750,7 @@ mod tests {
         let mut encoder = WebPEncoder::new(&mut output);
         encoder.set_params(params.clone());
         encoder
-            .encode(&img[..256 * 256 * 3], 256, 256, crate::ColorType::Rgb8)
+            .encode(&img[..256 * 256 * 3], 256, 256, crate::PixelLayout::Rgb8)
             .unwrap();
         let decoded = webp::Decoder::new(&output).decode().unwrap();
         assert_eq!(img[..256 * 256 * 3], *decoded);
@@ -1755,7 +1759,7 @@ mod tests {
         let mut encoder = WebPEncoder::new(&mut output);
         encoder.set_params(params.clone());
         encoder
-            .encode(&img, 256, 256, crate::ColorType::Rgba8)
+            .encode(&img, 256, 256, crate::PixelLayout::Rgba8)
             .unwrap();
         let decoded = webp::Decoder::new(&output).decode().unwrap();
         assert_eq!(img, *decoded);
@@ -1765,7 +1769,7 @@ mod tests {
         encoder.set_params(params.clone());
         encoder.set_icc_profile(vec![0; 10]);
         encoder
-            .encode(&img, 256, 256, crate::ColorType::Rgba8)
+            .encode(&img, 256, 256, crate::PixelLayout::Rgba8)
             .unwrap();
         let decoded = webp::Decoder::new(&output).decode().unwrap();
         assert_eq!(img, *decoded);
@@ -1775,7 +1779,7 @@ mod tests {
         encoder.set_params(params.clone());
         encoder.set_exif_metadata(vec![0; 10]);
         encoder
-            .encode(&img, 256, 256, crate::ColorType::Rgba8)
+            .encode(&img, 256, 256, crate::PixelLayout::Rgba8)
             .unwrap();
         let decoded = webp::Decoder::new(&output).decode().unwrap();
         assert_eq!(img, *decoded);
@@ -1787,7 +1791,7 @@ mod tests {
         encoder.set_icc_profile(vec![0; 8]);
         encoder.set_icc_profile(vec![0; 9]);
         encoder
-            .encode(&img, 256, 256, crate::ColorType::Rgba8)
+            .encode(&img, 256, 256, crate::PixelLayout::Rgba8)
             .unwrap();
         let decoded = webp::Decoder::new(&output).decode().unwrap();
         assert_eq!(img, *decoded);

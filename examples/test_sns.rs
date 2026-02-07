@@ -2,7 +2,7 @@
 use std::io::BufReader;
 use zenwebp::decoder::vp8::Vp8Decoder;
 use zenwebp::decoder::LumaMode;
-use zenwebp::{ColorType, EncodeRequest, EncoderConfig, Preset};
+use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
 
 fn main() {
     let path = "/tmp/CID22/original/792079.png";
@@ -20,7 +20,7 @@ fn main() {
         .sns_strength(50)
         .filter_strength(0)
         .segments(1);
-    let zen_m4_sns = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h)
+    let zen_m4_sns = EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, w, h)
         .encode()
         .unwrap();
 
@@ -83,7 +83,7 @@ fn main() {
         .sns_strength(0)
         .filter_strength(0)
         .segments(1);
-    let zen_m4 = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h)
+    let zen_m4 = EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, w, h)
         .encode()
         .unwrap();
 

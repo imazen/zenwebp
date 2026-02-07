@@ -9,7 +9,7 @@ use imgref::Img;
 use rgb::RGB8;
 use std::env;
 use std::fs;
-use zenwebp::{decode_rgb, ColorType, EncodeRequest, EncoderConfig, Preset};
+use zenwebp::{decode_rgb, PixelLayout, EncodeRequest, EncoderConfig, Preset};
 
 fn main() {
     let args: Vec<_> = env::args().collect();
@@ -58,12 +58,12 @@ fn main() {
             };
 
             let (rgb, w, h) = match info.color_type {
-                png::ColorType::Rgb => (
+                png::PixelLayout::Rgb => (
                     buf[..info.buffer_size()].to_vec(),
                     info.width as usize,
                     info.height as usize,
                 ),
-                png::ColorType::Rgba => {
+                png::PixelLayout::Rgba => {
                     let rgba = &buf[..info.buffer_size()];
                     let mut rgb = Vec::with_capacity(rgba.len() * 3 / 4);
                     for chunk in rgba.chunks(4) {
@@ -76,7 +76,7 @@ fn main() {
 
             // Encode
             let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0).method(method);
-            let webp = match EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w as u32, h as u32)
+            let webp = match EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, w as u32, h as u32)
                 .encode()
             {
                 Ok(v) => v,

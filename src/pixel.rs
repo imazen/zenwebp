@@ -12,7 +12,7 @@
 //! let (pixels, w, h): (Vec<Rgba<u8>>, u32, u32) = pixel::decode(webp_data)?;
 //!
 //! // Encode from typed pixels
-//! use zenwebp::{EncoderConfig, EncodeRequest, ColorType};
+//! use zenwebp::{EncoderConfig, EncodeRequest, PixelLayout};
 //! let pixels: Vec<Rgb<u8>> = vec![Rgb::new(255, 0, 0); 4 * 4];
 //! let config = EncoderConfig::new();
 //! let webp = config.encode_pixels(&pixels, 4, 4)?;
@@ -24,7 +24,7 @@ use alloc::vec::Vec;
 use rgb::{AsPixels, ComponentBytes, Rgb, Rgba};
 
 use crate::decoder::DecodeError;
-use crate::encoder::{ColorType, EncodeRequest, EncoderConfig, EncodeError};
+use crate::encoder::{PixelLayout, EncodeRequest, EncoderConfig, EncodeError};
 
 mod private {
     pub trait Sealed {}
@@ -44,8 +44,8 @@ pub trait DecodePixel: Copy + 'static + private::Sealed {
 pub trait EncodePixel: Copy + 'static + private::Sealed {
     /// Number of color channels.
     const CHANNELS: usize;
-    /// The corresponding [`ColorType`] for encoding.
-    fn color_type() -> ColorType;
+    /// The corresponding [`PixelLayout`] for encoding.
+    fn color_type() -> PixelLayout;
 }
 
 // --- Sealed impls ---
@@ -87,43 +87,43 @@ impl DecodePixel for rgb::Bgra<u8> {
 
 impl EncodePixel for Rgb<u8> {
     const CHANNELS: usize = 3;
-    fn color_type() -> ColorType {
-        ColorType::Rgb8
+    fn color_type() -> PixelLayout {
+        PixelLayout::Rgb8
     }
 }
 
 impl EncodePixel for Rgba<u8> {
     const CHANNELS: usize = 4;
-    fn color_type() -> ColorType {
-        ColorType::Rgba8
+    fn color_type() -> PixelLayout {
+        PixelLayout::Rgba8
     }
 }
 
 impl EncodePixel for rgb::Bgr<u8> {
     const CHANNELS: usize = 3;
-    fn color_type() -> ColorType {
-        ColorType::Bgr8
+    fn color_type() -> PixelLayout {
+        PixelLayout::Bgr8
     }
 }
 
 impl EncodePixel for rgb::Bgra<u8> {
     const CHANNELS: usize = 4;
-    fn color_type() -> ColorType {
-        ColorType::Bgra8
+    fn color_type() -> PixelLayout {
+        PixelLayout::Bgra8
     }
 }
 
 impl EncodePixel for rgb::Gray<u8> {
     const CHANNELS: usize = 1;
-    fn color_type() -> ColorType {
-        ColorType::L8
+    fn color_type() -> PixelLayout {
+        PixelLayout::L8
     }
 }
 
 impl EncodePixel for rgb::GrayAlpha<u8> {
     const CHANNELS: usize = 2;
-    fn color_type() -> ColorType {
-        ColorType::La8
+    fn color_type() -> PixelLayout {
+        PixelLayout::La8
     }
 }
 

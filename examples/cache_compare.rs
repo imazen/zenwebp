@@ -74,8 +74,8 @@ fn main() {
             Err(_) => continue,
         };
         let (rgb_pixels, has_alpha) = match info.color_type {
-            png::ColorType::Rgba => (buf[..info.buffer_size()].to_vec(), true),
-            png::ColorType::Rgb => (buf[..info.buffer_size()].to_vec(), false),
+            png::PixelLayout::Rgba => (buf[..info.buffer_size()].to_vec(), true),
+            png::PixelLayout::Rgb => (buf[..info.buffer_size()].to_vec(), false),
             _ => continue,
         };
         let (w, h) = (info.width, info.height);

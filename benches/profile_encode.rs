@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::time::Instant;
-use zenwebp::{ColorType, EncodeRequest, EncoderConfig};
+use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig};
 
 fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
     let file = std::fs::File::open(path).unwrap();
@@ -10,8 +10,8 @@ fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
     let info = reader.next_frame(&mut buf).unwrap();
 
     let rgb_data = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => {
+        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::PixelLayout::Rgba => {
             let mut rgb = Vec::with_capacity((info.width * info.height * 3) as usize);
             for chunk in buf[..info.buffer_size()].chunks(4) {
                 rgb.extend_from_slice(&chunk[..3]);
@@ -46,7 +46,7 @@ fn main() {
 
     // Warmup
     let config = EncoderConfig::new().quality(quality).method(method);
-    let output = EncodeRequest::new(&config, &rgb_data, ColorType::Rgb8, width, height)
+    let output = EncodeRequest::new(&config, &rgb_data, PixelLayout::Rgb8, width, height)
         .encode()
         .unwrap();
     println!("Output size: {} bytes", output.len());
@@ -55,7 +55,7 @@ fn main() {
     let start = Instant::now();
     for _ in 0..iterations {
         let config = EncoderConfig::new().quality(quality).method(method);
-        let _output = EncodeRequest::new(&config, &rgb_data, ColorType::Rgb8, width, height)
+        let _output = EncodeRequest::new(&config, &rgb_data, PixelLayout::Rgb8, width, height)
             .encode()
             .unwrap();
     }

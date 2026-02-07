@@ -11,7 +11,7 @@ fn main() {
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).unwrap();
     let rgb = buf[..info.buffer_size()].to_vec();
-    let has_alpha = info.color_type == png::ColorType::Rgba;
+    let has_alpha = info.color_type == png::PixelLayout::Rgba;
     let (w, h) = (info.width, info.height);
 
     println!("Image: {} ({}x{}, alpha={})", path, w, h, has_alpha);

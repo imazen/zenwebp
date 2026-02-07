@@ -32,7 +32,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
 
-use super::api::ColorType;
+use super::api::PixelLayout;
 use super::api::EncodeError;
 use super::arithmetic::ArithmeticEncoder;
 use super::cost::{
@@ -603,7 +603,7 @@ impl<'a> Vp8Encoder<'a> {
     fn encode_image(
         &mut self,
         data: &[u8],
-        color: ColorType,
+        color: PixelLayout,
         width: u16,
         height: u16,
         params: &super::api::EncoderParams,
@@ -625,7 +625,7 @@ impl<'a> Vp8Encoder<'a> {
         self.filter_sharpness = params.filter_sharpness.min(7);
         self.num_segments = params.num_segments.clamp(1, 4);
         self.preset = params.preset;
-        let (y_bytes, u_bytes, v_bytes) = if color == ColorType::Yuv420 {
+        let (y_bytes, u_bytes, v_bytes) = if color == PixelLayout::Yuv420 {
             // YUV420 planar data: [Y, U, V] packed into a single buffer
             let w = usize::from(width);
             let h = usize::from(height);
@@ -643,27 +643,27 @@ impl<'a> Vp8Encoder<'a> {
             convert_image_sharp_yuv(data, color, width, height)
         } else {
             match color {
-                ColorType::Rgb8 => convert_image_yuv::<3>(data, width, height),
-                ColorType::Rgba8 => convert_image_yuv::<4>(data, width, height),
-                ColorType::Bgr8 => {
+                PixelLayout::Rgb8 => convert_image_yuv::<3>(data, width, height),
+                PixelLayout::Rgba8 => convert_image_yuv::<4>(data, width, height),
+                PixelLayout::Bgr8 => {
                     crate::decoder::yuv::convert_image_yuv_bgr::<3>(data, width, height)
                 }
-                ColorType::Bgra8 => {
+                PixelLayout::Bgra8 => {
                     crate::decoder::yuv::convert_image_yuv_bgr::<4>(data, width, height)
                 }
-                ColorType::L8 => convert_image_y::<1>(data, width, height),
-                ColorType::La8 => convert_image_y::<2>(data, width, height),
-                ColorType::Yuv420 => unreachable!(),
+                PixelLayout::L8 => convert_image_y::<1>(data, width, height),
+                PixelLayout::La8 => convert_image_y::<2>(data, width, height),
+                PixelLayout::Yuv420 => unreachable!(),
             }
         };
 
-        if color != ColorType::Yuv420 {
+        if color != PixelLayout::Yuv420 {
             let bytes_per_pixel = match color {
-                ColorType::L8 => 1,
-                ColorType::La8 => 2,
-                ColorType::Rgb8 | ColorType::Bgr8 => 3,
-                ColorType::Rgba8 | ColorType::Bgra8 => 4,
-                ColorType::Yuv420 => unreachable!(),
+                PixelLayout::L8 => 1,
+                PixelLayout::La8 => 2,
+                PixelLayout::Rgb8 | PixelLayout::Bgr8 => 3,
+                PixelLayout::Rgba8 | PixelLayout::Bgra8 => 4,
+                PixelLayout::Yuv420 => unreachable!(),
             };
             assert_eq!(
                 (u64::from(width) * u64::from(height)).saturating_mul(bytes_per_pixel),
@@ -1421,7 +1421,7 @@ pub(crate) fn encode_frame_lossy(
     data: &[u8],
     width: u32,
     height: u32,
-    color: ColorType,
+    color: PixelLayout,
     params: &super::api::EncoderParams,
     stop: &dyn enough::Stop,
     progress: &dyn super::api::EncodeProgress,
@@ -1453,7 +1453,7 @@ fn encode_with_quality_search(
     data: &[u8],
     width: u16,
     height: u16,
-    color: ColorType,
+    color: PixelLayout,
     params: &super::api::EncoderParams,
     stop: &dyn enough::Stop,
     progress: &dyn super::api::EncodeProgress,
@@ -1528,7 +1528,7 @@ fn encode_with_psnr_search(
     data: &[u8],
     width: u16,
     height: u16,
-    color: ColorType,
+    color: PixelLayout,
     params: &super::api::EncoderParams,
     stop: &dyn enough::Stop,
     progress: &dyn super::api::EncodeProgress,

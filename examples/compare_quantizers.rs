@@ -11,7 +11,7 @@ fn main() {
     let (w, h) = (info.width, info.height);
 
     use zenwebp::decoder::vp8::Vp8Decoder;
-    use zenwebp::{ColorType, EncodeRequest, EncoderConfig, Preset};
+    use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig, Preset};
 
     println!("=== Quantizer Comparison at Q75 ===\n");
 
@@ -21,7 +21,7 @@ fn main() {
         .sns_strength(0)
         .filter_strength(0)
         .segments(1);
-    let zen = EncodeRequest::new(&_cfg, &rgb, ColorType::Rgb8, w, h)
+    let zen = EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, w, h)
         .encode()
         .unwrap();
 

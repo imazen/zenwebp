@@ -4,7 +4,7 @@
 
 use std::env;
 use std::fs;
-use zenwebp::{ColorType, EncodeRequest, EncoderConfig};
+use zenwebp::{PixelLayout, EncodeRequest, EncoderConfig};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -30,12 +30,12 @@ fn main() {
             .sns_strength(0)
             .filter_strength(0)
             .segments(1);
-        EncodeRequest::new(&_cfg, &rgb_data, ColorType::Rgb8, width, height)
+        EncodeRequest::new(&_cfg, &rgb_data, PixelLayout::Rgb8, width, height)
             .encode()
             .unwrap()
     } else {
         let _cfg = EncoderConfig::new().quality(quality).method(method);
-        EncodeRequest::new(&_cfg, &rgb_data, ColorType::Rgb8, width, height)
+        EncodeRequest::new(&_cfg, &rgb_data, PixelLayout::Rgb8, width, height)
             .encode()
             .unwrap()
     };
