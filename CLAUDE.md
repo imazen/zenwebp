@@ -292,3 +292,64 @@ Remaining:
 - [x] Add `Limits` on encode side (currently decode-only)
 - [x] Replace `ColorType` with `PixelLayout` (or rename — same concept, just naming)
 - [x] `Limits` fields: standardize to `Option<u64>`
+
+## Why Streaming Encoding Doesn't Make Sense for WebP
+
+**TL;DR:** WebP encoding algorithms require the entire image before encoding can start. A streaming/push-based API would use MORE memory, not less.
+
+### Algorithmic Requirements
+
+**VP8L (Lossless):**
+- Backward references (LZ77) - needs to look back at all previous pixels
+- Palette detection - must see all colors to build palette
+- Predictor/color transforms - needs whole-image analysis to choose best transform
+- Huffman coding - requires complete frequency statistics from entire image
+- **Fundamentally cannot encode incrementally**
+
+**VP8 (Lossy):**
+- Segmentation - analyzes all macroblocks to cluster into 4 groups
+- SNS (spatial noise shaping) - global texture analysis
+- Filter strength - computed from whole-image statistics
+- Rate-distortion optimization - benefits from seeing all data
+- Could theoretically encode row-by-row, but quality would be significantly worse
+- **Requires full image for good quality**
+
+**Animation:**
+- Each frame must be fully encoded before moving to next
+- `AnimationEncoder::add_frame()` already provides frame-by-frame streaming
+- **Already has the right API**
+
+### Memory Analysis
+
+**Current one-shot API:**
+```rust
+let img = vec![0u8; w * h * 4];  // User owns
+EncodeRequest::new(&config, &img, ...).encode()?;  // We borrow
+// Total: user buffer + working buffers
+```
+
+**Hypothetical streaming API:**
+```rust
+let mut encoder = EncodeRequest::build()?;
+for row in rows {
+    encoder.push(row)?;  // Must accumulate internally
+}
+encoder.finish()?;
+// Total: our internal buffer (duplicate) + same working buffers
+```
+
+**Streaming would use MORE memory** because:
+1. We'd need to buffer all rows internally (algorithms need complete image)
+2. This duplicates the user's data
+3. Same working buffers needed for actual encoding
+4. Only saves memory if user generates procedurally and discards chunks
+   - But user could just `Vec::extend()` themselves with same result
+
+### Conclusion
+
+The current one-shot `EncodeRequest::encode()` is the **optimal API** for WebP:
+- User provides complete image (by reference, no copy)
+- We encode it in one pass with necessary working buffers
+- Minimal memory overhead
+
+**Streaming encoder task marked as N/A** - doesn't fit WebP's algorithmic requirements.
