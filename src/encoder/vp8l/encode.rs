@@ -27,7 +27,7 @@ use super::types::{
 };
 
 use super::entropy::vp8l_bits_entropy;
-use crate::encoder::api::EncodingError;
+use crate::encoder::api::EncodeError;
 
 /// Encode an image using VP8L lossless compression.
 pub fn encode_vp8l(
@@ -37,16 +37,16 @@ pub fn encode_vp8l(
     has_alpha: bool,
     config: &Vp8lConfig,
     stop: &dyn enough::Stop,
-) -> Result<Vec<u8>, EncodingError> {
+) -> Result<Vec<u8>, EncodeError> {
     if width == 0 || width > 16384 || height == 0 || height > 16384 {
-        return Err(EncodingError::InvalidDimensions);
+        return Err(EncodeError::InvalidDimensions);
     }
 
     let w = width as usize;
     let h = height as usize;
     let expected_len = w * h * if has_alpha { 4 } else { 3 };
     if pixels.len() != expected_len {
-        return Err(EncodingError::InvalidBufferSize(alloc::format!(
+        return Err(EncodeError::InvalidBufferSize(alloc::format!(
             "expected {} bytes, got {}",
             expected_len,
             pixels.len()
@@ -399,7 +399,7 @@ fn encode_argb(
     has_alpha: bool,
     config: &Vp8lConfig,
     stop: &dyn enough::Stop,
-) -> Result<Vec<u8>, EncodingError> {
+) -> Result<Vec<u8>, EncodeError> {
     // Determine if palette is available (needed for config generation)
     let palette_candidate = if config.use_palette {
         can_use_palette(argb)
@@ -480,7 +480,7 @@ fn encode_argb(
             }
         }
 
-        best_output.ok_or(EncodingError::InvalidBufferSize(alloc::format!(
+        best_output.ok_or(EncodeError::InvalidBufferSize(alloc::format!(
             "all {} crunch configs failed",
             configs.len()
         )))
@@ -497,7 +497,7 @@ fn encode_argb_single_config(
     config: &Vp8lConfig,
     crunch: &CrunchConfig,
     stop: &dyn enough::Stop,
-) -> Result<Vec<u8>, EncodingError> {
+) -> Result<Vec<u8>, EncodeError> {
     let mut writer = BitWriter::with_capacity(width * height / 2);
 
     // Write VP8L signature

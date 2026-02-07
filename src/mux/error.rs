@@ -3,8 +3,8 @@
 use alloc::string::String;
 use thiserror::Error;
 
-use crate::decoder::DecodingError;
-use crate::encoder::EncodingError;
+use crate::decoder::DecodeError;
+use crate::encoder::EncodeError;
 
 /// Errors that can occur during mux/demux operations.
 #[derive(Debug, Error)]
@@ -34,11 +34,11 @@ pub enum MuxError {
 
     /// An error occurred during encoding.
     #[error("Encoding error: {0}")]
-    EncodingError(#[from] EncodingError),
+    EncodeError(#[from] EncodeError),
 
     /// An error occurred during decoding/parsing.
     #[error("Decoding error: {0}")]
-    DecodingError(#[from] DecodingError),
+    DecodeError(#[from] DecodeError),
 
     /// No frames were added before assembly.
     #[error("No frames to assemble")]

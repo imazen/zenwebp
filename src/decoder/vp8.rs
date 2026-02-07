@@ -23,7 +23,7 @@ use core::default::Default;
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
 use archmage::SimdToken;
 
-use super::api::{DecodingError, UpsamplingMethod};
+use super::api::{DecodeError, UpsamplingMethod};
 use super::yuv;
 use crate::common::prediction::*;
 use crate::common::types::*;
@@ -348,7 +348,7 @@ fn read_coefficients_safe(
     complexity: usize,
     dcq: i16,
     acq: i16,
-) -> Result<bool, DecodingError> {
+) -> Result<bool, DecodeError> {
     debug_assert!(complexity <= 2);
     debug_assert!(output.len() >= 16);
 
@@ -364,7 +364,7 @@ fn read_coefficients_safe(
             n += 1;
             if n >= 16 {
                 if reader.is_eof() {
-                    return Err(DecodingError::BitStreamError);
+                    return Err(DecodeError::BitStreamError);
                 }
                 return Ok(true);
             }
@@ -423,7 +423,7 @@ fn read_coefficients_safe(
     }
 
     if reader.is_eof() {
-        return Err(DecodingError::BitStreamError);
+        return Err(DecodeError::BitStreamError);
     }
     Ok(n > first)
 }
@@ -438,7 +438,7 @@ fn read_coefficients(
     complexity: usize,
     dcq: i16,
     acq: i16,
-) -> Result<bool, DecodingError> {
+) -> Result<bool, DecodeError> {
     #[cfg(feature = "unchecked")]
     {
         // SAFETY: All callers ensure:
@@ -473,7 +473,7 @@ unsafe fn read_coefficients_inline_unchecked(
     complexity: usize,
     dcq: i16,
     acq: i16,
-) -> Result<bool, DecodingError> {
+) -> Result<bool, DecodeError> {
     debug_assert!(complexity <= 2);
     debug_assert!(output.len() >= 16);
     debug_assert!(first < 16);
@@ -490,7 +490,7 @@ unsafe fn read_coefficients_inline_unchecked(
             n += 1;
             if n >= 16 {
                 if reader.is_eof() {
-                    return Err(DecodingError::BitStreamError);
+                    return Err(DecodeError::BitStreamError);
                 }
                 return Ok(true);
             }
@@ -549,7 +549,7 @@ unsafe fn read_coefficients_inline_unchecked(
     }
 
     if reader.is_eof() {
-        return Err(DecodingError::BitStreamError);
+        return Err(DecodeError::BitStreamError);
     }
     Ok(n > first)
 }
@@ -693,7 +693,7 @@ impl<'a> Vp8Decoder<'a> {
         }
     }
 
-    fn update_token_probabilities(&mut self) -> Result<(), DecodingError> {
+    fn update_token_probabilities(&mut self) -> Result<(), DecodeError> {
         for (i, is) in COEFF_UPDATE_PROBS.iter().enumerate() {
             for (j, js) in is.iter().enumerate() {
                 for (k, ks) in js.iter().enumerate() {
@@ -727,7 +727,7 @@ impl<'a> Vp8Decoder<'a> {
         }
     }
 
-    fn init_partitions(&mut self, n: usize) -> Result<(), DecodingError> {
+    fn init_partitions(&mut self, n: usize) -> Result<(), DecodeError> {
         use byteorder_lite::{ByteOrder, LittleEndian};
 
         let mut all_data = Vec::new();
@@ -758,7 +758,7 @@ impl<'a> Vp8Decoder<'a> {
         Ok(())
     }
 
-    fn read_quantization_indices(&mut self) -> Result<(), DecodingError> {
+    fn read_quantization_indices(&mut self) -> Result<(), DecodeError> {
         fn dc_quant(index: i32) -> i16 {
             DC_QUANT[index.clamp(0, 127) as usize]
         }
@@ -812,7 +812,7 @@ impl<'a> Vp8Decoder<'a> {
         self.b.check(())
     }
 
-    fn read_loop_filter_adjustments(&mut self) -> Result<(), DecodingError> {
+    fn read_loop_filter_adjustments(&mut self) -> Result<(), DecodeError> {
         if self.b.read_flag() {
             for i in 0usize..4 {
                 self.ref_delta[i] = self.b.read_optional_signed_value(6);
@@ -826,7 +826,7 @@ impl<'a> Vp8Decoder<'a> {
         self.b.check(())
     }
 
-    fn read_segment_updates(&mut self) -> Result<(), DecodingError> {
+    fn read_segment_updates(&mut self) -> Result<(), DecodeError> {
         // Section 9.3
         self.segments_update_map = self.b.read_flag();
         let update_segment_feature_data = self.b.read_flag();
@@ -859,12 +859,12 @@ impl<'a> Vp8Decoder<'a> {
         self.b.check(())
     }
 
-    fn read_frame_header(&mut self) -> Result<(), DecodingError> {
+    fn read_frame_header(&mut self) -> Result<(), DecodeError> {
         let tag = self.r.read_u24_le()?;
 
         let keyframe = tag & 1 == 0;
         if !keyframe {
-            return Err(DecodingError::UnsupportedFeature(
+            return Err(DecodeError::UnsupportedFeature(
                 "Non-keyframe frames".into(),
             ));
         }
@@ -879,7 +879,7 @@ impl<'a> Vp8Decoder<'a> {
         self.r.read_exact(&mut tag)?;
 
         if tag != [0x9d, 0x01, 0x2a] {
-            return Err(DecodingError::Vp8MagicInvalid(tag));
+            return Err(DecodeError::Vp8MagicInvalid(tag));
         }
 
         let w = self.r.read_u16_le()?;
@@ -945,7 +945,7 @@ impl<'a> Vp8Decoder<'a> {
         self.frame.pixel_type = self.b.read_literal(1);
 
         if color_space != 0 {
-            return Err(DecodingError::ColorSpaceInvalid(color_space));
+            return Err(DecodeError::ColorSpaceInvalid(color_space));
         }
 
         self.segments_enabled = self.b.read_flag();
@@ -1006,7 +1006,7 @@ impl<'a> Vp8Decoder<'a> {
         Ok(())
     }
 
-    fn read_macroblock_header(&mut self, mbx: usize) -> Result<MacroBlock, DecodingError> {
+    fn read_macroblock_header(&mut self, mbx: usize) -> Result<MacroBlock, DecodeError> {
         let mut mb = MacroBlock::default();
 
         if self.segments_enabled && self.segments_update_map {
@@ -1022,7 +1022,7 @@ impl<'a> Vp8Decoder<'a> {
         // intra prediction
         let luma = self.b.read_with_tree(&KEYFRAME_YMODE_NODES);
         mb.luma_mode =
-            LumaMode::from_i8(luma).ok_or(DecodingError::LumaPredictionModeInvalid(luma))?;
+            LumaMode::from_i8(luma).ok_or(DecodeError::LumaPredictionModeInvalid(luma))?;
 
         match mb.luma_mode.into_intra() {
             // `LumaMode::B` - This is predicted individually
@@ -1035,7 +1035,7 @@ impl<'a> Vp8Decoder<'a> {
                             &KEYFRAME_BPRED_MODE_NODES[top as usize][left as usize],
                         );
                         let bmode = IntraMode::from_i8(intra)
-                            .ok_or(DecodingError::IntraPredictionModeInvalid(intra))?;
+                            .ok_or(DecodeError::IntraPredictionModeInvalid(intra))?;
                         mb.bpred[x + y * 4] = bmode;
 
                         self.top[mbx].bpred[x] = bmode;
@@ -1053,7 +1053,7 @@ impl<'a> Vp8Decoder<'a> {
 
         let chroma = self.b.read_with_tree(&KEYFRAME_UV_MODE_NODES);
         mb.chroma_mode = ChromaMode::from_i8(chroma)
-            .ok_or(DecodingError::ChromaPredictionModeInvalid(chroma))?;
+            .ok_or(DecodeError::ChromaPredictionModeInvalid(chroma))?;
 
         // top should store the bottom of the current bpred, which is the final 4 values
         self.top[mbx].bpred = mb.bpred[12..].try_into().unwrap();
@@ -1240,7 +1240,7 @@ impl<'a> Vp8Decoder<'a> {
         mbx: usize,
         p: usize,
         _simd_token: SimdTokenType, // Kept for API consistency, IDCT deferred to prediction
-    ) -> Result<(), DecodingError> {
+    ) -> Result<(), DecodeError> {
         // Uses self.coeff_blocks which is maintained as zeros between calls.
         // After each IDCT, the block is left with transformed data for intra_predict to use.
         // intra_predict_* is responsible for clearing blocks after use.
@@ -1732,7 +1732,7 @@ impl<'a> Vp8Decoder<'a> {
     }
 
     /// Decodes the current frame
-    pub fn decode_frame(data: &'a [u8]) -> Result<Frame, DecodingError> {
+    pub fn decode_frame(data: &'a [u8]) -> Result<Frame, DecodeError> {
         let decoder = Self::new(data);
         decoder.decode_frame_()
     }
@@ -1741,7 +1741,7 @@ impl<'a> Vp8Decoder<'a> {
     pub fn decode_frame_with_stop(
         data: &'a [u8],
         stop: Option<&'a dyn enough::Stop>,
-    ) -> Result<Frame, DecodingError> {
+    ) -> Result<Frame, DecodeError> {
         let mut decoder = Self::new(data);
         decoder.stop = stop;
         decoder.decode_frame_()
@@ -1751,13 +1751,13 @@ impl<'a> Vp8Decoder<'a> {
     /// Returns both the decoded Frame and a DiagnosticFrame containing
     /// raw quantized coefficient levels, mode decisions, and probability tables.
     #[doc(hidden)]
-    pub fn decode_diagnostic(data: &'a [u8]) -> Result<(Frame, DiagnosticFrame), DecodingError> {
+    pub fn decode_diagnostic(data: &'a [u8]) -> Result<(Frame, DiagnosticFrame), DecodeError> {
         let mut decoder = Self::new(data);
         decoder.diagnostic_capture = Some(Vec::new());
         decoder.decode_frame_diagnostic()
     }
 
-    fn decode_frame_diagnostic(mut self) -> Result<(Frame, DiagnosticFrame), DecodingError> {
+    fn decode_frame_diagnostic(mut self) -> Result<(Frame, DiagnosticFrame), DecodeError> {
         self.read_frame_header()?;
 
         // Summon SIMD token once for the entire decode
@@ -1844,7 +1844,7 @@ impl<'a> Vp8Decoder<'a> {
         Ok((self.frame, diagnostic))
     }
 
-    fn decode_frame_(mut self) -> Result<Frame, DecodingError> {
+    fn decode_frame_(mut self) -> Result<Frame, DecodeError> {
         self.read_frame_header()?;
 
         // Summon SIMD token once for the entire decode, avoiding ~312K per-call atomic loads

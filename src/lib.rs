@@ -29,7 +29,7 @@
 //! let rgba_data = vec![255u8; 4 * 4 * 4];
 //! let webp = EncodeRequest::new(&config, &rgba_data, ColorType::Rgba8, 4, 4)
 //!     .encode()?;
-//! # Ok::<(), zenwebp::EncodingError>(())
+//! # Ok::<(), zenwebp::EncodeError>(())
 //! ```
 //!
 //! # Decoding
@@ -39,7 +39,7 @@
 //! ```rust,no_run
 //! let webp_data: &[u8] = &[]; // your WebP data
 //! let (pixels, width, height) = zenwebp::decode_rgba(webp_data)?;
-//! # Ok::<(), zenwebp::DecodingError>(())
+//! # Ok::<(), zenwebp::DecodeError>(())
 //! ```
 //!
 //! Or the [`WebPDecoder`] for more control:
@@ -52,7 +52,7 @@
 //! let (width, height) = decoder.dimensions();
 //! let mut output = vec![0u8; decoder.output_buffer_size().unwrap()];
 //! decoder.read_image(&mut output)?;
-//! # Ok::<(), zenwebp::DecodingError>(())
+//! # Ok::<(), zenwebp::DecodeError>(())
 //! ```
 //!
 //! # Safety
@@ -100,14 +100,14 @@ pub mod heuristics;
 pub use decoder::{
     decode_bgr, decode_bgr_into, decode_bgra, decode_bgra_into, decode_rgb, decode_rgb_into,
     decode_rgba, decode_rgba_into, decode_yuv420, BitstreamFormat, DecodeConfig, DecodeRequest,
-    DecodingError, ImageInfo, LoopCount, StreamStatus, StreamingDecoder, UpsamplingMethod,
+    DecodeError, ImageInfo, LoopCount, StreamStatus, StreamingDecoder, UpsamplingMethod,
     WebPDecoder, YuvPlanes,
 };
 
 // Re-export encoder public API
 pub use encoder::{
     ClassifierDiag, ColorType, ContentType, EncodeProgress, EncodeRequest, EncoderConfig,
-    EncodingError, EncodingStats, NoProgress, Preset,
+    EncodeError, EncodeStats, NoProgress, Preset,
 };
 
 // Re-export mux/demux public API
@@ -122,6 +122,12 @@ pub use enough::{Stop, StopReason, Unstoppable};
 // Re-export VP8 decoder (public module)
 pub use decoder::vp8;
 
+
+// Deprecated type aliases (backwards compatibility)
+#[allow(deprecated)]
+pub use decoder::DecodingError;
+#[allow(deprecated)]
+pub use encoder::{EncodingError, EncodingStats};
 // ---------------------------------------------------------------------------
 // Standalone metadata convenience functions
 // ---------------------------------------------------------------------------

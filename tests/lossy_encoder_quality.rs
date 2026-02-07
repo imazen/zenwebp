@@ -800,7 +800,7 @@ mod corpus_tests {
         use webpx::Unstoppable;
 
         let zen_config = zenwebp::EncoderConfig::with_preset(zen_preset, quality).method(4);
-        let zen_out = EncodeRequest::new(&zen_config, &rgb, ColorType::Rgb8, w, h)
+        let zen_out = EncodeRequest::new(&zen_config, rgb, ColorType::Rgb8, w, h)
             .encode()
             .unwrap();
 

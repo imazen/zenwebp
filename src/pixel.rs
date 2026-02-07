@@ -23,8 +23,8 @@ use alloc::vec::Vec;
 
 use rgb::{AsPixels, ComponentBytes, Rgb, Rgba};
 
-use crate::decoder::DecodingError;
-use crate::encoder::{ColorType, EncodeRequest, EncoderConfig, EncodingError};
+use crate::decoder::DecodeError;
+use crate::encoder::{ColorType, EncodeRequest, EncoderConfig, EncodeError};
 
 mod private {
     pub trait Sealed {}
@@ -136,7 +136,7 @@ impl EncodePixel for rgb::GrayAlpha<u8> {
 /// - [`Bgra<u8>`](rgb::Bgra) — BGRA with alpha
 ///
 /// Returns `(pixels, width, height)`.
-pub fn decode<P: DecodePixel>(data: &[u8]) -> Result<(Vec<P>, u32, u32), DecodingError>
+pub fn decode<P: DecodePixel>(data: &[u8]) -> Result<(Vec<P>, u32, u32), DecodeError>
 where
     [u8]: AsPixels<P>,
 {
@@ -157,7 +157,7 @@ pub fn decode_into<P: DecodePixel>(
     data: &[u8],
     output: &mut [P],
     stride_pixels: u32,
-) -> Result<(u32, u32), DecodingError>
+) -> Result<(u32, u32), DecodeError>
 where
     [P]: ComponentBytes<u8>,
 {
@@ -179,7 +179,7 @@ where
 pub fn decode_append<P: DecodePixel>(
     data: &[u8],
     output: &mut Vec<P>,
-) -> Result<(u32, u32), DecodingError>
+) -> Result<(u32, u32), DecodeError>
 where
     [u8]: AsPixels<P>,
 {
@@ -206,10 +206,10 @@ where
 /// let webp_data: &[u8] = &[]; // your WebP data
 /// let img: imgref::ImgVec<Rgba<u8>> = zenwebp::pixel::decode_to_img(webp_data)?;
 /// println!("{}x{}", img.width(), img.height());
-/// # Ok::<(), zenwebp::DecodingError>(())
+/// # Ok::<(), zenwebp::DecodeError>(())
 /// ```
 #[cfg(feature = "imgref")]
-pub fn decode_to_img<P: DecodePixel>(data: &[u8]) -> Result<imgref::ImgVec<P>, DecodingError>
+pub fn decode_to_img<P: DecodePixel>(data: &[u8]) -> Result<imgref::ImgVec<P>, DecodeError>
 where
     [u8]: AsPixels<P>,
 {
@@ -227,10 +227,10 @@ where
 ///
 /// let img = ImgVec::new(vec![Rgba::new(255, 0, 0, 255); 4 * 4], 4, 4);
 /// let webp = zenwebp::pixel::encode_img(img.as_ref())?;
-/// # Ok::<(), zenwebp::EncodingError>(())
+/// # Ok::<(), zenwebp::EncodeError>(())
 /// ```
 #[cfg(feature = "imgref")]
-pub fn encode_img<P: EncodePixel>(img: imgref::ImgRef<'_, P>) -> Result<Vec<u8>, EncodingError>
+pub fn encode_img<P: EncodePixel>(img: imgref::ImgRef<'_, P>) -> Result<Vec<u8>, EncodeError>
 where
     [P]: ComponentBytes<u8>,
 {
@@ -255,7 +255,7 @@ pub fn encode<P: EncodePixel>(
     pixels: &[P],
     width: u32,
     height: u32,
-) -> Result<Vec<u8>, EncodingError>
+) -> Result<Vec<u8>, EncodeError>
 where
     [P]: ComponentBytes<u8>,
 {
@@ -273,7 +273,7 @@ impl EncoderConfig {
         pixels: &[P],
         width: u32,
         height: u32,
-    ) -> Result<Vec<u8>, EncodingError>
+    ) -> Result<Vec<u8>, EncodeError>
     where
         [P]: ComponentBytes<u8>,
     {
@@ -287,7 +287,7 @@ impl EncoderConfig {
     pub fn encode_img<P: EncodePixel>(
         &self,
         img: imgref::ImgRef<'_, P>,
-    ) -> Result<Vec<u8>, EncodingError>
+    ) -> Result<Vec<u8>, EncodeError>
     where
         [P]: ComponentBytes<u8>,
     {

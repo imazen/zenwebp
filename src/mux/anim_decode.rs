@@ -15,13 +15,13 @@
 //! while let Some(frame) = decoder.next_frame()? {
 //!     println!("frame at {}ms, duration {}ms", frame.timestamp_ms, frame.duration_ms);
 //! }
-//! # Ok::<(), zenwebp::DecodingError>(())
+//! # Ok::<(), zenwebp::DecodeError>(())
 //! ```
 
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::decoder::{DecodeConfig, DecodingError, LoopCount, UpsamplingMethod, WebPDecoder};
+use crate::decoder::{DecodeConfig, DecodeError, LoopCount, UpsamplingMethod, WebPDecoder};
 
 /// A decoded animation frame with owned RGBA pixel data.
 #[derive(Debug, Clone)]
@@ -72,27 +72,27 @@ impl<'a> AnimationDecoder<'a> {
     /// Create a new animation decoder from WebP data.
     ///
     /// Returns an error if the data is not a valid animated WebP.
-    pub fn new(data: &'a [u8]) -> Result<Self, DecodingError> {
+    pub fn new(data: &'a [u8]) -> Result<Self, DecodeError> {
         Self::new_with_config(data, &DecodeConfig::default())
     }
 
     /// Create a new animation decoder with custom decode configuration.
     ///
     /// Returns an error if the data is not a valid animated WebP.
-    pub fn new_with_config(data: &'a [u8], config: &DecodeConfig) -> Result<Self, DecodingError> {
+    pub fn new_with_config(data: &'a [u8], config: &DecodeConfig) -> Result<Self, DecodeError> {
         let mut decoder = WebPDecoder::new_with_options(data, config.to_options())?;
         if config.memory_limit > 0 {
             decoder.set_memory_limit(config.memory_limit);
         }
         if !decoder.is_animated() {
-            return Err(DecodingError::InvalidParameter(
+            return Err(DecodeError::InvalidParameter(
                 alloc::string::String::from("not an animated WebP"),
             ));
         }
         let total_frames = decoder.num_frames();
         let buf_size = decoder
             .output_buffer_size()
-            .ok_or(DecodingError::ImageTooLarge)?;
+            .ok_or(DecodeError::ImageTooLarge)?;
         let buf = vec![0u8; buf_size];
         Ok(Self {
             decoder,
@@ -133,7 +133,7 @@ impl<'a> AnimationDecoder<'a> {
     }
 
     /// Set background color for compositing.
-    pub fn set_background_color(&mut self, color: [u8; 4]) -> Result<(), DecodingError> {
+    pub fn set_background_color(&mut self, color: [u8; 4]) -> Result<(), DecodeError> {
         self.decoder.set_background_color(color)
     }
 
@@ -149,17 +149,17 @@ impl<'a> AnimationDecoder<'a> {
     }
 
     /// Read the embedded ICC profile, if any.
-    pub fn icc_profile(&mut self) -> Result<Option<Vec<u8>>, DecodingError> {
+    pub fn icc_profile(&mut self) -> Result<Option<Vec<u8>>, DecodeError> {
         self.decoder.icc_profile()
     }
 
     /// Read the embedded EXIF metadata, if any.
-    pub fn exif_metadata(&mut self) -> Result<Option<Vec<u8>>, DecodingError> {
+    pub fn exif_metadata(&mut self) -> Result<Option<Vec<u8>>, DecodeError> {
         self.decoder.exif_metadata()
     }
 
     /// Read the embedded XMP metadata, if any.
-    pub fn xmp_metadata(&mut self) -> Result<Option<Vec<u8>>, DecodingError> {
+    pub fn xmp_metadata(&mut self) -> Result<Option<Vec<u8>>, DecodeError> {
         self.decoder.xmp_metadata()
     }
 
@@ -172,7 +172,7 @@ impl<'a> AnimationDecoder<'a> {
     }
 
     /// Decode the next frame, returning `None` when all frames have been read.
-    pub fn next_frame(&mut self) -> Result<Option<AnimFrame>, DecodingError> {
+    pub fn next_frame(&mut self) -> Result<Option<AnimFrame>, DecodeError> {
         if let Some(stop) = self.stop {
             stop.check()?;
         }
@@ -190,13 +190,13 @@ impl<'a> AnimationDecoder<'a> {
                     duration_ms,
                 }))
             }
-            Err(DecodingError::NoMoreFrames) => Ok(None),
+            Err(DecodeError::NoMoreFrames) => Ok(None),
             Err(e) => Err(e),
         }
     }
 
     /// Reset the decoder to the first frame.
-    pub fn reset(&mut self) -> Result<(), DecodingError> {
+    pub fn reset(&mut self) -> Result<(), DecodeError> {
         self.decoder.reset_animation()?;
         self.cumulative_ms = 0;
         self.frames_read = 0;
@@ -204,7 +204,7 @@ impl<'a> AnimationDecoder<'a> {
     }
 
     /// Decode all remaining frames at once.
-    pub fn decode_all(&mut self) -> Result<Vec<AnimFrame>, DecodingError> {
+    pub fn decode_all(&mut self) -> Result<Vec<AnimFrame>, DecodeError> {
         self.reset()?;
         let mut frames = Vec::with_capacity(self.total_frames as usize);
         while let Some(frame) = self.next_frame()? {
@@ -215,7 +215,7 @@ impl<'a> AnimationDecoder<'a> {
 }
 
 impl Iterator for AnimationDecoder<'_> {
-    type Item = Result<AnimFrame, DecodingError>;
+    type Item = Result<AnimFrame, DecodeError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.next_frame() {

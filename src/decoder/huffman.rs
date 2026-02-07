@@ -1,7 +1,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use super::api::DecodingError;
+use super::api::DecodeError;
 use super::lossless::BitReader;
 
 const MAX_ALLOWED_CODE_LENGTH: usize = 15;
@@ -44,7 +44,7 @@ impl HuffmanTree {
 
     /// Builds a tree implicitly, just from code lengths
     #[allow(clippy::needless_range_loop)]
-    pub(crate) fn build_implicit(code_lengths: Vec<u16>) -> Result<Self, DecodingError> {
+    pub(crate) fn build_implicit(code_lengths: Vec<u16>) -> Result<Self, DecodeError> {
         // Count symbols and build histogram
         let mut num_symbols = 0;
         let mut histogram = [0; MAX_ALLOWED_CODE_LENGTH + 1];
@@ -62,7 +62,7 @@ impl HuffmanTree {
                 "HuffmanError: num_symbols == 0, code_lengths.len()={}",
                 code_lengths.len()
             );
-            return Err(DecodingError::HuffmanError);
+            return Err(DecodeError::HuffmanError);
         } else if num_symbols == 1 {
             let root_symbol = code_lengths.iter().position(|&x| x != 0).unwrap() as u16;
             return Ok(Self::build_single_node(root_symbol));
@@ -95,7 +95,7 @@ impl HuffmanTree {
                 max_length,
                 &histogram[..max_length + 1]
             );
-            return Err(DecodingError::HuffmanError);
+            return Err(DecodeError::HuffmanError);
         }
 
         // Calculate table/tree parameters
@@ -208,7 +208,7 @@ impl HuffmanTree {
         v: u16,
         primary_table_entry: u16,
         bit_reader: &mut BitReader<'_>,
-    ) -> Result<u16, DecodingError> {
+    ) -> Result<u16, DecodeError> {
         let length = primary_table_entry >> 12;
         let mask = (1 << (length - MAX_TABLE_BITS as u16)) - 1;
         let secondary_index = ((primary_table_entry & 0xfff) as usize)
@@ -222,7 +222,7 @@ impl HuffmanTree {
     ///
     /// You must call call `bit_reader.fill()` before calling this function or it may erroroneosly
     /// detect the end of the stream and return a bitstream error.
-    pub(crate) fn read_symbol(&self, bit_reader: &mut BitReader<'_>) -> Result<u16, DecodingError> {
+    pub(crate) fn read_symbol(&self, bit_reader: &mut BitReader<'_>) -> Result<u16, DecodeError> {
         match &self.0 {
             HuffmanTreeInner::Tree {
                 primary_table,

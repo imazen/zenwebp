@@ -2,7 +2,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Range;
 
-use super::api::DecodingError;
+use super::api::DecodeError;
 
 use super::lossless::subsample_size;
 
@@ -29,7 +29,7 @@ pub(crate) fn apply_predictor_transform(
     height: u16,
     size_bits: u8,
     predictor_data: &[u8],
-) -> Result<(), DecodingError> {
+) -> Result<(), DecodeError> {
     let block_xsize = usize::from(subsample_size(width, size_bits));
     let width = usize::from(width);
     let height = usize::from(height);

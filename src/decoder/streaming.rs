@@ -24,12 +24,12 @@
 //! }
 //!
 //! let (pixels, w, h) = decoder.finish_rgba()?;
-//! # Ok::<(), zenwebp::DecodingError>(())
+//! # Ok::<(), zenwebp::DecodeError>(())
 //! ```
 
 use alloc::vec::Vec;
 
-use super::api::{DecodeConfig, DecodingError, ImageInfo, WebPDecoder};
+use super::api::{DecodeConfig, DecodeError, ImageInfo, WebPDecoder};
 
 /// Status returned from [`StreamingDecoder::append`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,19 +83,19 @@ impl StreamingDecoder {
     /// Append data to the internal buffer and check progress.
     ///
     /// Returns the current status after incorporating the new data.
-    pub fn append(&mut self, data: &[u8]) -> Result<StreamStatus, DecodingError> {
+    pub fn append(&mut self, data: &[u8]) -> Result<StreamStatus, DecodeError> {
         self.buf.extend_from_slice(data);
 
         // Try to parse RIFF header (12 bytes minimum)
         if self.riff_size.is_none() && self.buf.len() >= 12 {
             if &self.buf[0..4] != b"RIFF" {
-                return Err(DecodingError::RiffSignatureInvalid(
+                return Err(DecodeError::RiffSignatureInvalid(
                     self.buf[0..4].try_into().unwrap(),
                 ));
             }
             let size = u32::from_le_bytes(self.buf[4..8].try_into().unwrap());
             if &self.buf[8..12] != b"WEBP" {
-                return Err(DecodingError::WebpSignatureInvalid(
+                return Err(DecodeError::WebpSignatureInvalid(
                     self.buf[8..12].try_into().unwrap(),
                 ));
             }
@@ -126,9 +126,9 @@ impl StreamingDecoder {
     }
 
     /// Get image information, available after [`StreamStatus::HeaderReady`].
-    pub fn info(&self) -> Result<ImageInfo, DecodingError> {
+    pub fn info(&self) -> Result<ImageInfo, DecodeError> {
         if !self.header_parsed {
-            return Err(DecodingError::InvalidParameter(
+            return Err(DecodeError::InvalidParameter(
                 alloc::string::String::from("headers not yet available"),
             ));
         }
@@ -157,7 +157,7 @@ impl StreamingDecoder {
     /// Consume the decoder and decode to RGBA pixels.
     ///
     /// Returns an error if data is incomplete.
-    pub fn finish_rgba(self) -> Result<(Vec<u8>, u32, u32), DecodingError> {
+    pub fn finish_rgba(self) -> Result<(Vec<u8>, u32, u32), DecodeError> {
         self.ensure_complete()?;
         super::api::DecodeRequest::new(&self.config, &self.buf).decode_rgba()
     }
@@ -165,7 +165,7 @@ impl StreamingDecoder {
     /// Consume the decoder and decode to RGB pixels.
     ///
     /// Returns an error if data is incomplete.
-    pub fn finish_rgb(self) -> Result<(Vec<u8>, u32, u32), DecodingError> {
+    pub fn finish_rgb(self) -> Result<(Vec<u8>, u32, u32), DecodeError> {
         self.ensure_complete()?;
         super::api::DecodeRequest::new(&self.config, &self.buf).decode_rgb()
     }
@@ -173,7 +173,7 @@ impl StreamingDecoder {
     /// Consume the decoder and decode RGBA into a pre-allocated buffer.
     ///
     /// Returns an error if data is incomplete.
-    pub fn finish_rgba_into(self, output: &mut [u8]) -> Result<(u32, u32), DecodingError> {
+    pub fn finish_rgba_into(self, output: &mut [u8]) -> Result<(u32, u32), DecodeError> {
         self.ensure_complete()?;
         super::api::DecodeRequest::new(&self.config, &self.buf).decode_rgba_into(output)
     }
@@ -186,9 +186,9 @@ impl StreamingDecoder {
         self.buf
     }
 
-    fn ensure_complete(&self) -> Result<(), DecodingError> {
+    fn ensure_complete(&self) -> Result<(), DecodeError> {
         if !self.is_complete() {
-            return Err(DecodingError::InvalidParameter(
+            return Err(DecodeError::InvalidParameter(
                 alloc::string::String::from("data incomplete"),
             ));
         }

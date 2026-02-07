@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 use byteorder_lite::{ByteOrder, LittleEndian};
 use core::fmt;
 
-use crate::DecodingError;
+use crate::DecodeError;
 
 /// A reader that wraps a byte slice and tracks the current position.
 ///
@@ -72,10 +72,10 @@ impl<'a> SliceReader<'a> {
 
     /// Seek to a position from the start.
     #[inline]
-    pub fn seek_from_start(&mut self, pos: u64) -> Result<u64, DecodingError> {
+    pub fn seek_from_start(&mut self, pos: u64) -> Result<u64, DecodeError> {
         let pos = pos as usize;
         if pos > self.data.len() {
-            return Err(DecodingError::BitStreamError);
+            return Err(DecodeError::BitStreamError);
         }
         self.pos = pos;
         Ok(self.pos as u64)
@@ -83,7 +83,7 @@ impl<'a> SliceReader<'a> {
 
     /// Seek relative to current position.
     #[inline]
-    pub fn seek_relative(&mut self, offset: i64) -> Result<(), DecodingError> {
+    pub fn seek_relative(&mut self, offset: i64) -> Result<(), DecodeError> {
         let new_pos = if offset >= 0 {
             self.pos.checked_add(offset as usize)
         } else {
@@ -95,16 +95,16 @@ impl<'a> SliceReader<'a> {
                 self.pos = pos;
                 Ok(())
             }
-            _ => Err(DecodingError::BitStreamError),
+            _ => Err(DecodeError::BitStreamError),
         }
     }
 
     /// Read exactly `n` bytes into the buffer.
     #[inline]
-    pub fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), DecodingError> {
+    pub fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), DecodeError> {
         let n = buf.len();
         if self.pos + n > self.data.len() {
-            return Err(DecodingError::BitStreamError);
+            return Err(DecodeError::BitStreamError);
         }
         buf.copy_from_slice(&self.data[self.pos..self.pos + n]);
         self.pos += n;
@@ -123,9 +123,9 @@ impl<'a> SliceReader<'a> {
 
     /// Read a single byte.
     #[inline]
-    pub fn read_u8(&mut self) -> Result<u8, DecodingError> {
+    pub fn read_u8(&mut self) -> Result<u8, DecodeError> {
         if self.pos >= self.data.len() {
-            return Err(DecodingError::BitStreamError);
+            return Err(DecodeError::BitStreamError);
         }
         let byte = self.data[self.pos];
         self.pos += 1;
@@ -134,9 +134,9 @@ impl<'a> SliceReader<'a> {
 
     /// Read a u16 in little-endian byte order.
     #[inline]
-    pub fn read_u16_le(&mut self) -> Result<u16, DecodingError> {
+    pub fn read_u16_le(&mut self) -> Result<u16, DecodeError> {
         if self.pos + 2 > self.data.len() {
-            return Err(DecodingError::BitStreamError);
+            return Err(DecodeError::BitStreamError);
         }
         let val = LittleEndian::read_u16(&self.data[self.pos..]);
         self.pos += 2;
@@ -145,9 +145,9 @@ impl<'a> SliceReader<'a> {
 
     /// Read a u24 in little-endian byte order (as u32).
     #[inline]
-    pub fn read_u24_le(&mut self) -> Result<u32, DecodingError> {
+    pub fn read_u24_le(&mut self) -> Result<u32, DecodeError> {
         if self.pos + 3 > self.data.len() {
-            return Err(DecodingError::BitStreamError);
+            return Err(DecodeError::BitStreamError);
         }
         let val = LittleEndian::read_u24(&self.data[self.pos..]);
         self.pos += 3;
@@ -156,9 +156,9 @@ impl<'a> SliceReader<'a> {
 
     /// Read a u32 in little-endian byte order.
     #[inline]
-    pub fn read_u32_le(&mut self) -> Result<u32, DecodingError> {
+    pub fn read_u32_le(&mut self) -> Result<u32, DecodeError> {
         if self.pos + 4 > self.data.len() {
-            return Err(DecodingError::BitStreamError);
+            return Err(DecodeError::BitStreamError);
         }
         let val = LittleEndian::read_u32(&self.data[self.pos..]);
         self.pos += 4;
@@ -186,7 +186,7 @@ impl<'a> SliceReader<'a> {
 
     /// Read all remaining bytes into the provided Vec.
     #[inline]
-    pub fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize, DecodingError> {
+    pub fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize, DecodeError> {
         let remaining = self.remaining_slice();
         let len = remaining.len();
         buf.extend_from_slice(remaining);
@@ -197,9 +197,9 @@ impl<'a> SliceReader<'a> {
     /// Take a slice of n bytes from the current position and advance position.
     /// Returns a slice reference without copying data.
     #[inline]
-    pub fn take_slice(&mut self, n: usize) -> Result<&'a [u8], DecodingError> {
+    pub fn take_slice(&mut self, n: usize) -> Result<&'a [u8], DecodeError> {
         if self.pos + n > self.data.len() {
-            return Err(DecodingError::BitStreamError);
+            return Err(DecodeError::BitStreamError);
         }
         let slice = &self.data[self.pos..self.pos + n];
         self.pos += n;
@@ -208,9 +208,9 @@ impl<'a> SliceReader<'a> {
 
     /// Get a slice of n bytes from the current position without advancing.
     #[inline]
-    pub fn peek_slice(&self, n: usize) -> Result<&'a [u8], DecodingError> {
+    pub fn peek_slice(&self, n: usize) -> Result<&'a [u8], DecodeError> {
         if self.pos + n > self.data.len() {
-            return Err(DecodingError::BitStreamError);
+            return Err(DecodeError::BitStreamError);
         }
         Ok(&self.data[self.pos..self.pos + n])
     }

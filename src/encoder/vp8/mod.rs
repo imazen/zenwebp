@@ -33,7 +33,7 @@ use alloc::vec::Vec;
 use core::mem;
 
 use super::api::ColorType;
-use super::api::EncodingError;
+use super::api::EncodeError;
 use super::arithmetic::ArithmeticEncoder;
 use super::cost::{
     analyze_image, assign_segments_kmeans, classify_image_type, compute_segment_quant,
@@ -609,7 +609,7 @@ impl<'a> Vp8Encoder<'a> {
         params: &super::api::EncoderParams,
         stop: &dyn enough::Stop,
         progress: &dyn super::api::EncodeProgress,
-    ) -> Result<super::api::EncodingStats, EncodingError> {
+    ) -> Result<super::api::EncodeStats, EncodeError> {
         // Store method and configure features based on it
         self.method = params.method.min(6); // Clamp to 0-6
                                             // Method feature mapping (aligned with libwebp):
@@ -990,7 +990,7 @@ impl<'a> Vp8Encoder<'a> {
         let total_pixels = num_pixels_y + 2 * num_pixels_uv;
         let psnr_all = sse_to_psnr(total_sse, total_pixels);
 
-        let mut stats = super::api::EncodingStats {
+        let mut stats = super::api::EncodeStats {
             psnr: [psnr_y, psnr_u, psnr_v, psnr_all, 0.0],
             block_count_i4: final_block_count_i4,
             block_count_i16: final_block_count_i16,
@@ -1425,13 +1425,13 @@ pub(crate) fn encode_frame_lossy(
     params: &super::api::EncoderParams,
     stop: &dyn enough::Stop,
     progress: &dyn super::api::EncodeProgress,
-) -> Result<super::api::EncodingStats, EncodingError> {
+) -> Result<super::api::EncodeStats, EncodeError> {
     let width = width
         .try_into()
-        .map_err(|_| EncodingError::InvalidDimensions)?;
+        .map_err(|_| EncodeError::InvalidDimensions)?;
     let height = height
         .try_into()
-        .map_err(|_| EncodingError::InvalidDimensions)?;
+        .map_err(|_| EncodeError::InvalidDimensions)?;
 
     // Quality search: if target_size or target_psnr is set, iterate quality to converge
     if params.target_size > 0 {
@@ -1457,7 +1457,7 @@ fn encode_with_quality_search(
     params: &super::api::EncoderParams,
     stop: &dyn enough::Stop,
     progress: &dyn super::api::EncodeProgress,
-) -> Result<super::api::EncodingStats, EncodingError> {
+) -> Result<super::api::EncodeStats, EncodeError> {
     // Initialize quality search state
     // qmin=1, qmax=100 (full range) - libwebp uses config->qmin/qmax
     let mut pass_stats = PassStats::new_for_size(params.target_size, params.lossy_quality, 1, 100);
@@ -1465,7 +1465,7 @@ fn encode_with_quality_search(
     // Max iterations (matches libwebp's config->pass, default 6 for target_size search)
     let max_passes = (params.method + 3).max(6) as usize;
     let mut best_output: Option<Vec<u8>> = None;
-    let mut best_enc_stats = super::api::EncodingStats::default();
+    let mut best_enc_stats = super::api::EncodeStats::default();
     let mut best_diff = f64::MAX;
 
     for pass in 0..max_passes {
@@ -1532,12 +1532,12 @@ fn encode_with_psnr_search(
     params: &super::api::EncoderParams,
     stop: &dyn enough::Stop,
     progress: &dyn super::api::EncodeProgress,
-) -> Result<super::api::EncodingStats, EncodingError> {
+) -> Result<super::api::EncodeStats, EncodeError> {
     let mut pass_stats = PassStats::new_for_psnr(params.target_psnr, params.lossy_quality, 1, 100);
 
     let max_passes = (params.method + 3).max(6) as usize;
     let mut best_output: Option<Vec<u8>> = None;
-    let mut best_enc_stats = super::api::EncodingStats::default();
+    let mut best_enc_stats = super::api::EncodeStats::default();
     let mut best_diff = f64::MAX;
 
     for pass in 0..max_passes {

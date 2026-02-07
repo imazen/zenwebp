@@ -10,7 +10,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use super::api::DecodingError;
+use super::api::DecodeError;
 
 /// BITS can be any multiple of 8 from 8 to 56 (inclusive).
 #[cfg(target_pointer_width = "64")]
@@ -218,9 +218,9 @@ impl<'a> VP8BitReader<'a> {
     /// Check that reads were valid
     #[inline]
     #[allow(dead_code)]
-    pub fn check(&self) -> Result<(), DecodingError> {
+    pub fn check(&self) -> Result<(), DecodeError> {
         if self.eof {
-            Err(DecodingError::BitStreamError)
+            Err(DecodeError::BitStreamError)
         } else {
             Ok(())
         }
@@ -279,9 +279,9 @@ impl VP8HeaderBitReader {
     }
 
     /// Initialize the reader with data
-    pub fn init(&mut self, data: Vec<u8>) -> Result<(), DecodingError> {
+    pub fn init(&mut self, data: Vec<u8>) -> Result<(), DecodeError> {
         if data.is_empty() {
-            return Err(DecodingError::NotEnoughInitData);
+            return Err(DecodeError::NotEnoughInitData);
         }
         self.data = data.into_boxed_slice();
         self.pos = 0;
@@ -428,9 +428,9 @@ impl VP8HeaderBitReader {
 
     /// Check that reads were valid, returning an error if EOF was hit
     #[inline]
-    pub fn check<T>(&self, value: T) -> Result<T, DecodingError> {
+    pub fn check<T>(&self, value: T) -> Result<T, DecodeError> {
         if self.eof {
-            Err(DecodingError::BitStreamError)
+            Err(DecodeError::BitStreamError)
         } else {
             Ok(value)
         }
@@ -523,10 +523,10 @@ impl VP8Partitions {
 
     /// Check if any partition hit EOF
     #[allow(dead_code)]
-    pub fn check(&self) -> Result<(), DecodingError> {
+    pub fn check(&self) -> Result<(), DecodeError> {
         for i in 0..self.num_partitions {
             if self.states[i].eof {
-                return Err(DecodingError::BitStreamError);
+                return Err(DecodeError::BitStreamError);
             }
         }
         Ok(())

@@ -51,9 +51,11 @@ pub mod vp8l;
 pub use analysis::{ClassifierDiag, ContentType};
 pub(crate) use api::EncoderParams;
 pub use api::{
-    ColorType, EncodeProgress, EncodeRequest, EncoderConfig, EncodingError, EncodingStats,
+    ColorType, EncodeProgress, EncodeRequest, EncoderConfig, EncodeError, EncodeStats,
     NoProgress, Preset,
 };
+#[allow(deprecated)]
+pub use api::{EncodingError, EncodingStats};
 #[cfg(feature = "quantize")]
 pub use color_quantize::{quantize_rgb, quantize_rgba, QuantizedImage};
 pub use vp8l::{encode_vp8l, Vp8lConfig, Vp8lQuality};

@@ -13,7 +13,7 @@
 //! let rgba_data = vec![255u8; 4 * 4 * 4]; // 4x4 RGBA image
 //! let webp = EncodeRequest::new(&config, &rgba_data, ColorType::Rgba8, 4, 4)
 //!     .encode()?;
-//! # Ok::<(), zenwebp::EncodingError>(())
+//! # Ok::<(), zenwebp::EncodeError>(())
 //! ```
 use alloc::collections::BinaryHeap;
 use alloc::format;
@@ -31,7 +31,7 @@ use super::vp8::encode_frame_lossy;
 /// Error that can occur during encoding.
 #[derive(Debug, Error)]
 #[non_exhaustive]
-pub enum EncodingError {
+pub enum EncodeError {
     /// An IO error occurred.
     #[cfg(feature = "std")]
     #[error("IO error: {0}")]
@@ -50,7 +50,11 @@ pub enum EncodingError {
     Cancelled(enough::StopReason),
 }
 
-impl From<enough::StopReason> for EncodingError {
+/// Deprecated: Use [`EncodeError`] instead.
+#[deprecated(since = "0.4.0", note = "Use EncodeError instead")]
+pub type EncodingError = EncodeError;
+
+impl From<enough::StopReason> for EncodeError {
     fn from(reason: enough::StopReason) -> Self {
         Self::Cancelled(reason)
     }
@@ -540,7 +544,7 @@ impl EncodeProgress for NoProgress {
 /// Provides information about the encoded output, including PSNR measurements,
 /// block counts, segment assignments, and size breakdowns.
 #[derive(Debug, Clone, Default)]
-pub struct EncodingStats {
+pub struct EncodeStats {
     // --- Common ---
     /// Total coded output size in bytes.
     pub coded_size: u32,
@@ -587,6 +591,10 @@ pub struct EncodingStats {
     pub lossless_data_size: u32,
 }
 
+/// Deprecated: Use [`EncodeStats`] instead.
+#[deprecated(since = "0.4.0", note = "Use EncodeStats instead")]
+pub type EncodingStats = EncodeStats;
+
 // ============================================================================
 // Builder-style Encoder API (webpx-compatible)
 // ============================================================================
@@ -611,7 +619,7 @@ pub struct EncodingStats {
 /// let image2 = vec![0u8; 8 * 6 * 4]; // 8x6 RGBA
 /// let webp1 = EncodeRequest::new(&config, &image1, ColorType::Rgba8, 4, 4).encode()?;
 /// let webp2 = EncodeRequest::new(&config, &image2, ColorType::Rgba8, 8, 6).encode()?;
-/// # Ok::<(), zenwebp::EncodingError>(())
+/// # Ok::<(), zenwebp::EncodeError>(())
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct EncoderConfig {
@@ -849,7 +857,7 @@ static NO_PROGRESS: NoProgress = NoProgress;
 /// let rgba = vec![0u8; 640 * 480 * 4];
 /// let webp = EncodeRequest::new(&config, &rgba, ColorType::Rgba8, 640, 480)
 ///     .encode()?;
-/// # Ok::<(), zenwebp::EncodingError>(())
+/// # Ok::<(), zenwebp::EncodeError>(())
 /// ```
 pub struct EncodeRequest<'a> {
     config: &'a EncoderConfig,
@@ -933,32 +941,32 @@ impl<'a> EncodeRequest<'a> {
     }
 
     /// Encode to WebP bytes.
-    pub fn encode(self) -> Result<Vec<u8>, EncodingError> {
+    pub fn encode(self) -> Result<Vec<u8>, EncodeError> {
         let (output, _stats) = self.encode_inner()?;
         Ok(output)
     }
 
     /// Encode to WebP bytes, appending to an existing Vec.
-    pub fn encode_into(self, output: &mut Vec<u8>) -> Result<(), EncodingError> {
+    pub fn encode_into(self, output: &mut Vec<u8>) -> Result<(), EncodeError> {
         let encoded = self.encode()?;
         output.extend_from_slice(&encoded);
         Ok(())
     }
 
     /// Encode to WebP bytes and return encoding statistics.
-    pub fn encode_with_stats(self) -> Result<(Vec<u8>, EncodingStats), EncodingError> {
+    pub fn encode_with_stats(self) -> Result<(Vec<u8>, EncodeStats), EncodeError> {
         self.encode_inner()
     }
 
     /// Encode to WebP, writing to an [`io::Write`](std::io::Write) implementor.
     #[cfg(feature = "std")]
-    pub fn encode_to_writer<W: std::io::Write>(self, mut writer: W) -> Result<(), EncodingError> {
+    pub fn encode_to_writer<W: std::io::Write>(self, mut writer: W) -> Result<(), EncodeError> {
         let encoded = self.encode()?;
         writer.write_all(&encoded)?;
         Ok(())
     }
 
-    fn encode_inner(self) -> Result<(Vec<u8>, EncodingStats), EncodingError> {
+    fn encode_inner(self) -> Result<(Vec<u8>, EncodeStats), EncodeError> {
         let bpp = self.color_type.bytes_per_pixel();
         let row_bytes = self.width as usize * bpp;
 
@@ -966,7 +974,7 @@ impl<'a> EncodeRequest<'a> {
         let compacted;
         let encode_data = if let Some(stride_px) = self.stride_pixels {
             if stride_px < self.width as usize {
-                return Err(EncodingError::InvalidBufferSize(format!(
+                return Err(EncodeError::InvalidBufferSize(format!(
                     "stride_pixels {} < width {}",
                     stride_px, self.width
                 )));
@@ -1017,13 +1025,13 @@ fn validate_buffer_size(
     width: u32,
     height: u32,
     bpp: u32,
-) -> Result<(), EncodingError> {
+) -> Result<(), EncodeError> {
     let expected = (width as usize)
         .saturating_mul(height as usize)
         .saturating_mul(bpp as usize);
 
     if size < expected {
-        return Err(EncodingError::InvalidBufferSize(format!(
+        return Err(EncodeError::InvalidBufferSize(format!(
             "buffer too small: got {}, expected {}",
             size, expected
         )));
@@ -1050,7 +1058,7 @@ pub(crate) fn encode_frame_lossless(
     params: EncoderParams,
     implicit_dimensions: bool,
     stop: &dyn enough::Stop,
-) -> Result<(), EncodingError> {
+) -> Result<(), EncodeError> {
     let w = &mut BitWriter::new(writer);
 
     let (is_color, is_alpha, bytes_per_pixel) = match color {
@@ -1059,7 +1067,7 @@ pub(crate) fn encode_frame_lossless(
         ColorType::Rgb8 | ColorType::Bgr8 => (true, false, 3),
         ColorType::Rgba8 | ColorType::Bgra8 => (true, true, 4),
         ColorType::Yuv420 => {
-            return Err(EncodingError::InvalidBufferSize(
+            return Err(EncodeError::InvalidBufferSize(
                 "YUV 4:2:0 input only supports lossy encoding".into(),
             ));
         }
@@ -1071,7 +1079,7 @@ pub(crate) fn encode_frame_lossless(
     );
 
     if width == 0 || width > 16384 || height == 0 || height > 16384 {
-        return Err(EncodingError::InvalidDimensions);
+        return Err(EncodeError::InvalidDimensions);
     }
 
     if !implicit_dimensions {
@@ -1401,14 +1409,14 @@ pub(crate) fn encode_alpha_lossless(
     color: ColorType,
     alpha_quality: u8,
     stop: &dyn enough::Stop,
-) -> Result<(), EncodingError> {
+) -> Result<(), EncodeError> {
     let bytes_per_pixel = match color {
         ColorType::La8 => 2,
         ColorType::Rgba8 | ColorType::Bgra8 => 4,
         _ => unreachable!(),
     };
     if width == 0 || width > 16384 || height == 0 || height > 16384 {
-        return Err(EncodingError::InvalidDimensions);
+        return Err(EncodeError::InvalidDimensions);
     }
 
     let filtering_method = 0u8;
@@ -1530,7 +1538,7 @@ impl<'a> WebPEncoder<'a> {
 
     /// Encode image data with the indicated color type.
     ///
-    /// Returns [`EncodingStats`] with information about the encoded output.
+    /// Returns [`EncodeStats`] with information about the encoded output.
     ///
     /// # Panics
     ///
@@ -1541,13 +1549,13 @@ impl<'a> WebPEncoder<'a> {
         width: u32,
         height: u32,
         color: ColorType,
-    ) -> Result<EncodingStats, EncodingError> {
+    ) -> Result<EncodeStats, EncodeError> {
         let mut frame = Vec::new();
 
         let lossy_with_alpha = self.params.use_lossy && color.has_alpha();
         let alpha_quality = self.params.alpha_quality;
 
-        let mut stats = EncodingStats::default();
+        let mut stats = EncodeStats::default();
 
         let frame_chunk = if self.params.use_lossy {
             stats = encode_frame_lossy(

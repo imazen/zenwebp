@@ -4,7 +4,7 @@ use thiserror::Error;
 /// Errors that can occur when attempting to decode a WebP image
 #[derive(Debug, Error)]
 #[non_exhaustive]
-pub enum DecodingError {
+pub enum DecodeError {
     /// An IO error occurred while reading the file
     #[cfg(feature = "std")]
     #[error("IO Error: {0}")]
@@ -123,7 +123,11 @@ pub enum DecodingError {
     Cancelled(enough::StopReason),
 }
 
-impl From<enough::StopReason> for DecodingError {
+/// Deprecated: Use [`DecodeError`] instead.
+#[deprecated(since = "0.4.0", note = "Use DecodeError instead")]
+pub type DecodingError = DecodeError;
+
+impl From<enough::StopReason> for DecodeError {
     fn from(reason: enough::StopReason) -> Self {
         Self::Cancelled(reason)
     }
@@ -322,7 +326,7 @@ impl DecodeConfig {
 /// let config = DecodeConfig::default();
 /// let webp_data: &[u8] = &[]; // your WebP data
 /// let (pixels, w, h) = DecodeRequest::new(&config, webp_data).decode_rgba()?;
-/// # Ok::<(), zenwebp::DecodingError>(())
+/// # Ok::<(), zenwebp::DecodeError>(())
 /// ```
 pub struct DecodeRequest<'a> {
     config: &'a DecodeConfig,
@@ -358,7 +362,7 @@ impl<'a> DecodeRequest<'a> {
     }
 
     /// Decode to RGBA pixels.
-    pub fn decode_rgba(self) -> Result<(Vec<u8>, u32, u32), DecodingError> {
+    pub fn decode_rgba(self) -> Result<(Vec<u8>, u32, u32), DecodeError> {
         let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
         if self.config.memory_limit > 0 {
             decoder.set_memory_limit(self.config.memory_limit);
@@ -368,14 +372,14 @@ impl<'a> DecodeRequest<'a> {
         let size = (w as usize)
             .checked_mul(h as usize)
             .and_then(|n| n.checked_mul(4))
-            .ok_or(DecodingError::ImageTooLarge)?;
+            .ok_or(DecodeError::ImageTooLarge)?;
         let mut buf = alloc::vec![0u8; size];
         decoder.read_image(&mut buf)?;
         Ok((buf, w, h))
     }
 
     /// Decode to RGB pixels (no alpha).
-    pub fn decode_rgb(self) -> Result<(Vec<u8>, u32, u32), DecodingError> {
+    pub fn decode_rgb(self) -> Result<(Vec<u8>, u32, u32), DecodeError> {
         // Decode as RGBA, then strip alpha
         let (rgba, w, h) = self.decode_rgba()?;
         let mut rgb = Vec::with_capacity((w as usize) * (h as usize) * 3);
@@ -389,7 +393,7 @@ impl<'a> DecodeRequest<'a> {
     ///
     /// If [`stride`](Self::stride) is set, rows are written with that pixel stride.
     /// Otherwise rows are packed (stride == width).
-    pub fn decode_rgba_into(self, output: &mut [u8]) -> Result<(u32, u32), DecodingError> {
+    pub fn decode_rgba_into(self, output: &mut [u8]) -> Result<(u32, u32), DecodeError> {
         let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
         if self.config.memory_limit > 0 {
             decoder.set_memory_limit(self.config.memory_limit);
@@ -399,7 +403,7 @@ impl<'a> DecodeRequest<'a> {
 
         if let Some(stride_px) = self.stride_pixels {
             if stride_px < w {
-                return Err(DecodingError::InvalidParameter(format!(
+                return Err(DecodeError::InvalidParameter(format!(
                     "stride_pixels {} < width {}",
                     stride_px, w
                 )));
@@ -407,7 +411,7 @@ impl<'a> DecodeRequest<'a> {
             let stride_bytes = stride_px as usize * 4;
             let required = stride_bytes * h as usize;
             if output.len() < required {
-                return Err(DecodingError::InvalidParameter(format!(
+                return Err(DecodeError::InvalidParameter(format!(
                     "output buffer too small: got {}, need {}",
                     output.len(),
                     required
@@ -416,7 +420,7 @@ impl<'a> DecodeRequest<'a> {
             // Decode to temp, then scatter with stride
             let buf_size = decoder
                 .output_buffer_size()
-                .ok_or(DecodingError::ImageTooLarge)?;
+                .ok_or(DecodeError::ImageTooLarge)?;
             let mut temp = alloc::vec![0u8; buf_size];
             decoder.read_image(&mut temp)?;
             let has_alpha = decoder.has_alpha();
@@ -443,7 +447,7 @@ impl<'a> DecodeRequest<'a> {
     ///
     /// If [`stride`](Self::stride) is set, rows are written with that pixel stride.
     /// Otherwise rows are packed (stride == width).
-    pub fn decode_rgb_into(self, output: &mut [u8]) -> Result<(u32, u32), DecodingError> {
+    pub fn decode_rgb_into(self, output: &mut [u8]) -> Result<(u32, u32), DecodeError> {
         let (w, h) = {
             let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
             if self.config.memory_limit > 0 {
@@ -453,13 +457,13 @@ impl<'a> DecodeRequest<'a> {
             let dims = decoder.dimensions();
             let buf_size = decoder
                 .output_buffer_size()
-                .ok_or(DecodingError::ImageTooLarge)?;
+                .ok_or(DecodeError::ImageTooLarge)?;
             let mut rgba = alloc::vec![0u8; buf_size];
             decoder.read_image(&mut rgba)?;
 
             let stride_px = self.stride_pixels.unwrap_or(dims.0) as usize;
             if stride_px < dims.0 as usize {
-                return Err(DecodingError::InvalidParameter(alloc::format!(
+                return Err(DecodeError::InvalidParameter(alloc::format!(
                     "stride_pixels {} < width {}",
                     stride_px,
                     dims.0
@@ -468,7 +472,7 @@ impl<'a> DecodeRequest<'a> {
             let stride_bytes = stride_px * 3;
             let required = stride_bytes * dims.1 as usize;
             if output.len() < required {
-                return Err(DecodingError::InvalidParameter(alloc::format!(
+                return Err(DecodeError::InvalidParameter(alloc::format!(
                     "output buffer too small: got {}, need {}",
                     output.len(),
                     required
@@ -491,12 +495,12 @@ impl<'a> DecodeRequest<'a> {
     }
 
     /// Read image info without decoding pixel data.
-    pub fn info(self) -> Result<ImageInfo, DecodingError> {
+    pub fn info(self) -> Result<ImageInfo, DecodeError> {
         ImageInfo::from_webp(self.data)
     }
 
     /// Decode to YUV 4:2:0 planes (lossy only).
-    pub fn decode_yuv420(self) -> Result<YuvPlanes, DecodingError> {
+    pub fn decode_yuv420(self) -> Result<YuvPlanes, DecodeError> {
         decode_yuv420(self.data)
     }
 }
@@ -562,7 +566,7 @@ pub struct WebPDecoder<'a> {
 
 impl<'a> WebPDecoder<'a> {
     /// Create a new `WebPDecoder` from the data slice.
-    pub fn new(data: &'a [u8]) -> Result<Self, DecodingError> {
+    pub fn new(data: &'a [u8]) -> Result<Self, DecodeError> {
         Self::new_with_options(data, WebPDecodeOptions::default())
     }
 
@@ -570,7 +574,7 @@ impl<'a> WebPDecoder<'a> {
     pub(crate) fn new_with_options(
         data: &'a [u8],
         webp_decode_options: WebPDecodeOptions,
-    ) -> Result<Self, DecodingError> {
+    ) -> Result<Self, DecodeError> {
         let mut decoder = Self {
             r: SliceReader::new(data),
             width: 0,
@@ -591,14 +595,14 @@ impl<'a> WebPDecoder<'a> {
         Ok(decoder)
     }
 
-    fn read_data(&mut self) -> Result<(), DecodingError> {
+    fn read_data(&mut self) -> Result<(), DecodeError> {
         let (WebPRiffChunk::RIFF, riff_size, _) = read_chunk_header(&mut self.r)? else {
-            return Err(DecodingError::ChunkHeaderInvalid(*b"RIFF"));
+            return Err(DecodeError::ChunkHeaderInvalid(*b"RIFF"));
         };
 
         match &read_fourcc(&mut self.r)? {
             WebPRiffChunk::WEBP => {}
-            fourcc => return Err(DecodingError::WebpSignatureInvalid(fourcc.to_fourcc())),
+            fourcc => return Err(DecodeError::WebpSignatureInvalid(fourcc.to_fourcc())),
         }
 
         let (chunk, chunk_size, chunk_size_rounded) = read_chunk_header(&mut self.r)?;
@@ -610,7 +614,7 @@ impl<'a> WebPDecoder<'a> {
 
                 let keyframe = tag & 1 == 0;
                 if !keyframe {
-                    return Err(DecodingError::UnsupportedFeature(
+                    return Err(DecodeError::UnsupportedFeature(
                         "Non-keyframe frames".into(),
                     ));
                 }
@@ -618,7 +622,7 @@ impl<'a> WebPDecoder<'a> {
                 let mut tag = [0u8; 3];
                 self.r.read_exact(&mut tag)?;
                 if tag != [0x9d, 0x01, 0x2a] {
-                    return Err(DecodingError::Vp8MagicInvalid(tag));
+                    return Err(DecodeError::Vp8MagicInvalid(tag));
                 }
 
                 let w = self.r.read_u16_le()?;
@@ -627,7 +631,7 @@ impl<'a> WebPDecoder<'a> {
                 self.width = u32::from(w & 0x3FFF);
                 self.height = u32::from(h & 0x3FFF);
                 if self.width == 0 || self.height == 0 {
-                    return Err(DecodingError::InconsistentImageSizes);
+                    return Err(DecodeError::InconsistentImageSizes);
                 }
 
                 self.chunks
@@ -638,13 +642,13 @@ impl<'a> WebPDecoder<'a> {
             WebPRiffChunk::VP8L => {
                 let signature = self.r.read_u8()?;
                 if signature != 0x2f {
-                    return Err(DecodingError::LosslessSignatureInvalid(signature));
+                    return Err(DecodeError::LosslessSignatureInvalid(signature));
                 }
 
                 let header = self.r.read_u32_le()?;
                 let version = header >> 29;
                 if version != 0 {
-                    return Err(DecodingError::VersionNumberInvalid(version as u8));
+                    return Err(DecodeError::VersionNumberInvalid(version as u8));
                 }
 
                 self.width = (1 + header) & 0x3FFF;
@@ -676,7 +680,7 @@ impl<'a> WebPDecoder<'a> {
                             if chunk == WebPRiffChunk::ANMF {
                                 self.num_frames += 1;
                                 if chunk_size < 24 {
-                                    return Err(DecodingError::InvalidChunkSize);
+                                    return Err(DecodeError::InvalidChunkSize);
                                 }
 
                                 self.r.seek_relative(12)?;
@@ -704,7 +708,7 @@ impl<'a> WebPDecoder<'a> {
 
                             self.r.seek_relative(chunk_size_rounded as i64)?;
                         }
-                        Err(DecodingError::BitStreamError) => {
+                        Err(DecodeError::BitStreamError) => {
                             break;
                         }
                         Err(e) => return Err(e),
@@ -723,7 +727,7 @@ impl<'a> WebPDecoder<'a> {
                         && self.chunks.contains_key(&WebPRiffChunk::VP8)
                             == self.chunks.contains_key(&WebPRiffChunk::VP8L)
                 {
-                    return Err(DecodingError::ChunkMissing);
+                    return Err(DecodeError::ChunkMissing);
                 }
 
                 // Decode ANIM chunk.
@@ -739,9 +743,9 @@ impl<'a> WebPDecoder<'a> {
                             self.animation.next_frame_start =
                                 self.chunks.get(&WebPRiffChunk::ANMF).unwrap().start - 8;
                         }
-                        Ok(None) => return Err(DecodingError::ChunkMissing),
-                        Err(DecodingError::MemoryLimitExceeded) => {
-                            return Err(DecodingError::InvalidChunkSize)
+                        Ok(None) => return Err(DecodeError::ChunkMissing),
+                        Err(DecodeError::MemoryLimitExceeded) => {
+                            return Err(DecodeError::InvalidChunkSize)
                         }
                         Err(e) => return Err(e),
                     }
@@ -769,7 +773,7 @@ impl<'a> WebPDecoder<'a> {
                 self.has_alpha = info.alpha;
                 self.kind = ImageKind::Extended(info);
             }
-            _ => return Err(DecodingError::ChunkHeaderInvalid(chunk.to_fourcc())),
+            _ => return Err(DecodeError::ChunkHeaderInvalid(chunk.to_fourcc())),
         };
 
         Ok(())
@@ -798,12 +802,12 @@ impl<'a> WebPDecoder<'a> {
     }
 
     /// Sets the background color if the image is an extended and animated webp.
-    pub fn set_background_color(&mut self, color: [u8; 4]) -> Result<(), DecodingError> {
+    pub fn set_background_color(&mut self, color: [u8; 4]) -> Result<(), DecodeError> {
         if let ImageKind::Extended(info) = &mut self.kind {
             info.background_color = Some(color);
             Ok(())
         } else {
-            Err(DecodingError::InvalidParameter(
+            Err(DecodeError::InvalidParameter(
                 "Background color can only be set on animated webp".into(),
             ))
         }
@@ -856,11 +860,11 @@ impl<'a> WebPDecoder<'a> {
         &mut self,
         chunk: WebPRiffChunk,
         max_size: usize,
-    ) -> Result<Option<Vec<u8>>, DecodingError> {
+    ) -> Result<Option<Vec<u8>>, DecodeError> {
         match self.chunks.get(&chunk) {
             Some(range) => {
                 if range.end - range.start > max_size as u64 {
-                    return Err(DecodingError::MemoryLimitExceeded);
+                    return Err(DecodeError::MemoryLimitExceeded);
                 }
 
                 self.r.seek_from_start(range.start)?;
@@ -873,17 +877,17 @@ impl<'a> WebPDecoder<'a> {
     }
 
     /// Returns the raw bytes of the ICC profile, or None if there is no ICC profile.
-    pub fn icc_profile(&mut self) -> Result<Option<Vec<u8>>, DecodingError> {
+    pub fn icc_profile(&mut self) -> Result<Option<Vec<u8>>, DecodeError> {
         self.read_chunk(WebPRiffChunk::ICCP, self.memory_limit)
     }
 
     /// Returns the raw bytes of the EXIF metadata, or None if there is no EXIF metadata.
-    pub fn exif_metadata(&mut self) -> Result<Option<Vec<u8>>, DecodingError> {
+    pub fn exif_metadata(&mut self) -> Result<Option<Vec<u8>>, DecodeError> {
         self.read_chunk(WebPRiffChunk::EXIF, self.memory_limit)
     }
 
     /// Returns the raw bytes of the XMP metadata, or None if there is no XMP metadata.
-    pub fn xmp_metadata(&mut self) -> Result<Option<Vec<u8>>, DecodingError> {
+    pub fn xmp_metadata(&mut self) -> Result<Option<Vec<u8>>, DecodeError> {
         self.read_chunk(WebPRiffChunk::XMP, self.memory_limit)
     }
 
@@ -899,9 +903,9 @@ impl<'a> WebPDecoder<'a> {
     /// Returns the raw bytes of the image. For animated images, this is the first frame.
     ///
     /// Fails with `ImageTooLarge` if `buf` has length different than `output_buffer_size()`
-    pub fn read_image(&mut self, buf: &mut [u8]) -> Result<(), DecodingError> {
+    pub fn read_image(&mut self, buf: &mut [u8]) -> Result<(), DecodeError> {
         if Some(buf.len()) != self.output_buffer_size() {
-            return Err(DecodingError::ImageTooLarge);
+            return Err(DecodeError::ImageTooLarge);
         }
 
         if self.is_animated() {
@@ -929,11 +933,11 @@ impl<'a> WebPDecoder<'a> {
             let range = self
                 .chunks
                 .get(&WebPRiffChunk::VP8)
-                .ok_or(DecodingError::ChunkMissing)?;
+                .ok_or(DecodeError::ChunkMissing)?;
             let data_slice = &self.r.get_ref()[range.start as usize..range.end as usize];
             let frame = Vp8Decoder::decode_frame_with_stop(data_slice, self.stop)?;
             if u32::from(frame.width) != self.width || u32::from(frame.height) != self.height {
-                return Err(DecodingError::InconsistentImageSizes);
+                return Err(DecodeError::InconsistentImageSizes);
             }
 
             if self.has_alpha() {
@@ -942,7 +946,7 @@ impl<'a> WebPDecoder<'a> {
                 let range = self
                     .chunks
                     .get(&WebPRiffChunk::ALPH)
-                    .ok_or(DecodingError::ChunkMissing)?
+                    .ok_or(DecodeError::ChunkMissing)?
                     .clone();
                 let alpha_slice = &self.r.get_ref()[range.start as usize..range.end as usize];
                 let alpha_chunk =
@@ -977,20 +981,20 @@ impl<'a> WebPDecoder<'a> {
     ///
     /// The frame contents are written into `buf` and the method returns the duration of the frame
     /// in milliseconds. If there are no more frames, the method returns
-    /// `DecodingError::NoMoreFrames` and `buf` is left unchanged.
+    /// `DecodeError::NoMoreFrames` and `buf` is left unchanged.
     ///
-    pub fn read_frame(&mut self, buf: &mut [u8]) -> Result<u32, DecodingError> {
+    pub fn read_frame(&mut self, buf: &mut [u8]) -> Result<u32, DecodeError> {
         if !self.is_animated() {
-            return Err(DecodingError::InvalidParameter(String::from(
+            return Err(DecodeError::InvalidParameter(String::from(
                 "not an animated WebP",
             )));
         }
         if Some(buf.len()) != self.output_buffer_size() {
-            return Err(DecodingError::ImageTooLarge);
+            return Err(DecodeError::ImageTooLarge);
         }
 
         if self.animation.next_frame == self.num_frames {
-            return Err(DecodingError::NoMoreFrames);
+            return Err(DecodeError::NoMoreFrames);
         }
 
         let ImageKind::Extended(info) = &self.kind else {
@@ -1001,7 +1005,7 @@ impl<'a> WebPDecoder<'a> {
 
         let anmf_size = match read_chunk_header(&mut self.r)? {
             (WebPRiffChunk::ANMF, size, _) if size >= 32 => size,
-            _ => return Err(DecodingError::ChunkHeaderInvalid(*b"ANMF")),
+            _ => return Err(DecodeError::ChunkHeaderInvalid(*b"ANMF")),
         };
 
         // Read ANMF chunk
@@ -1010,10 +1014,10 @@ impl<'a> WebPDecoder<'a> {
         let frame_width = extended::read_3_bytes(&mut self.r)? + 1;
         let frame_height = extended::read_3_bytes(&mut self.r)? + 1;
         if frame_width > 16384 || frame_height > 16384 {
-            return Err(DecodingError::ImageTooLarge);
+            return Err(DecodeError::ImageTooLarge);
         }
         if frame_x + frame_width > self.width || frame_y + frame_height > self.height {
-            return Err(DecodingError::FrameOutsideImage);
+            return Err(DecodeError::FrameOutsideImage);
         }
         let duration = extended::read_3_bytes(&mut self.r)?;
         let frame_info = self.r.read_u8()?;
@@ -1029,7 +1033,7 @@ impl<'a> WebPDecoder<'a> {
         // Read normal bitstream now
         let (chunk, chunk_size, chunk_size_rounded) = read_chunk_header(&mut self.r)?;
         if chunk_size_rounded + 24 > anmf_size {
-            return Err(DecodingError::ChunkHeaderInvalid(chunk.to_fourcc()));
+            return Err(DecodeError::ChunkHeaderInvalid(chunk.to_fourcc()));
         }
 
         let (frame, frame_has_alpha): (Vec<u8>, bool) = match chunk {
@@ -1039,7 +1043,7 @@ impl<'a> WebPDecoder<'a> {
                 if u32::from(raw_frame.width) != frame_width
                     || u32::from(raw_frame.height) != frame_height
                 {
-                    return Err(DecodingError::InconsistentImageSizes);
+                    return Err(DecodeError::InconsistentImageSizes);
                 }
                 let mut rgb_frame = vec![0; frame_width as usize * frame_height as usize * 3];
                 raw_frame.fill_rgb(&mut rgb_frame, self.webp_decode_options.lossy_upsampling);
@@ -1055,7 +1059,7 @@ impl<'a> WebPDecoder<'a> {
             }
             WebPRiffChunk::ALPH => {
                 if chunk_size_rounded + 32 > anmf_size {
-                    return Err(DecodingError::ChunkHeaderInvalid(chunk.to_fourcc()));
+                    return Err(DecodeError::ChunkHeaderInvalid(chunk.to_fourcc()));
                 }
 
                 // read alpha
@@ -1071,7 +1075,7 @@ impl<'a> WebPDecoder<'a> {
                 // read opaque
                 let (next_chunk, next_chunk_size, _) = read_chunk_header(&mut self.r)?;
                 if chunk_size + next_chunk_size + 32 > anmf_size {
-                    return Err(DecodingError::ChunkHeaderInvalid(next_chunk.to_fourcc()));
+                    return Err(DecodeError::ChunkHeaderInvalid(next_chunk.to_fourcc()));
                 }
 
                 let vp8_slice = self.r.take_slice(next_chunk_size as usize)?;
@@ -1101,7 +1105,7 @@ impl<'a> WebPDecoder<'a> {
 
                 (rgba_frame, true)
             }
-            _ => return Err(DecodingError::ChunkHeaderInvalid(chunk.to_fourcc())),
+            _ => return Err(DecodeError::ChunkHeaderInvalid(chunk.to_fourcc())),
         };
 
         // fill starting canvas with clear color
@@ -1159,9 +1163,9 @@ impl<'a> WebPDecoder<'a> {
 
     /// Resets the animation to the first frame.
     ///
-    pub fn reset_animation(&mut self) -> Result<(), DecodingError> {
+    pub fn reset_animation(&mut self) -> Result<(), DecodeError> {
         if !self.is_animated() {
-            return Err(DecodingError::InvalidParameter(String::from(
+            return Err(DecodeError::InvalidParameter(String::from(
                 "not an animated WebP",
             )));
         }
@@ -1177,7 +1181,7 @@ impl<'a> WebPDecoder<'a> {
     }
 }
 
-pub(crate) fn read_fourcc(r: &mut SliceReader) -> Result<WebPRiffChunk, DecodingError> {
+pub(crate) fn read_fourcc(r: &mut SliceReader) -> Result<WebPRiffChunk, DecodeError> {
     let mut chunk_fourcc = [0; 4];
     r.read_exact(&mut chunk_fourcc)?;
     Ok(WebPRiffChunk::from_fourcc(chunk_fourcc))
@@ -1185,7 +1189,7 @@ pub(crate) fn read_fourcc(r: &mut SliceReader) -> Result<WebPRiffChunk, Decoding
 
 pub(crate) fn read_chunk_header(
     r: &mut SliceReader,
-) -> Result<(WebPRiffChunk, u64, u64), DecodingError> {
+) -> Result<(WebPRiffChunk, u64, u64), DecodeError> {
     let chunk = read_fourcc(r)?;
     let chunk_size = r.read_u32_le()?;
     let chunk_size_rounded = chunk_size.saturating_add(chunk_size & 1);
@@ -1205,14 +1209,14 @@ pub(crate) fn read_chunk_header(
 /// ```rust,no_run
 /// let webp_data: &[u8] = &[]; // your WebP data
 /// let (pixels, width, height) = zenwebp::decode_rgba(webp_data)?;
-/// # Ok::<(), zenwebp::DecodingError>(())
+/// # Ok::<(), zenwebp::DecodeError>(())
 /// ```
-pub fn decode_rgba(data: &[u8]) -> Result<(Vec<u8>, u32, u32), DecodingError> {
+pub fn decode_rgba(data: &[u8]) -> Result<(Vec<u8>, u32, u32), DecodeError> {
     let mut decoder = WebPDecoder::new(data)?;
     let (width, height) = decoder.dimensions();
     let output_size = decoder
         .output_buffer_size()
-        .ok_or(DecodingError::ImageTooLarge)?;
+        .ok_or(DecodeError::ImageTooLarge)?;
 
     // Get output in native format (RGB or RGBA)
     let mut output = vec![0u8; output_size];
@@ -1240,14 +1244,14 @@ pub fn decode_rgba(data: &[u8]) -> Result<(Vec<u8>, u32, u32), DecodingError> {
 /// ```rust,no_run
 /// let webp_data: &[u8] = &[]; // your WebP data
 /// let (pixels, width, height) = zenwebp::decode_rgb(webp_data)?;
-/// # Ok::<(), zenwebp::DecodingError>(())
+/// # Ok::<(), zenwebp::DecodeError>(())
 /// ```
-pub fn decode_rgb(data: &[u8]) -> Result<(Vec<u8>, u32, u32), DecodingError> {
+pub fn decode_rgb(data: &[u8]) -> Result<(Vec<u8>, u32, u32), DecodeError> {
     let mut decoder = WebPDecoder::new(data)?;
     let (width, height) = decoder.dimensions();
     let output_size = decoder
         .output_buffer_size()
-        .ok_or(DecodingError::ImageTooLarge)?;
+        .ok_or(DecodeError::ImageTooLarge)?;
 
     let mut output = vec![0u8; output_size];
     decoder.read_image(&mut output)?;
@@ -1277,12 +1281,12 @@ pub fn decode_rgba_into(
     data: &[u8],
     output: &mut [u8],
     stride_pixels: u32,
-) -> Result<(u32, u32), DecodingError> {
+) -> Result<(u32, u32), DecodeError> {
     let mut decoder = WebPDecoder::new(data)?;
     let (width, height) = decoder.dimensions();
 
     if stride_pixels < width {
-        return Err(DecodingError::InvalidParameter(format!(
+        return Err(DecodeError::InvalidParameter(format!(
             "stride_pixels {} < width {}",
             stride_pixels, width
         )));
@@ -1291,7 +1295,7 @@ pub fn decode_rgba_into(
     let stride_bytes = stride_pixels as usize * 4;
     let required = stride_bytes * (height as usize);
     if output.len() < required {
-        return Err(DecodingError::InvalidParameter(format!(
+        return Err(DecodeError::InvalidParameter(format!(
             "output buffer too small: got {}, need {}",
             output.len(),
             required
@@ -1301,7 +1305,7 @@ pub fn decode_rgba_into(
     // Decode into temporary buffer
     let output_size = decoder
         .output_buffer_size()
-        .ok_or(DecodingError::ImageTooLarge)?;
+        .ok_or(DecodeError::ImageTooLarge)?;
     let mut temp = vec![0u8; output_size];
     decoder.read_image(&mut temp)?;
 
@@ -1339,12 +1343,12 @@ pub fn decode_rgb_into(
     data: &[u8],
     output: &mut [u8],
     stride_pixels: u32,
-) -> Result<(u32, u32), DecodingError> {
+) -> Result<(u32, u32), DecodeError> {
     let mut decoder = WebPDecoder::new(data)?;
     let (width, height) = decoder.dimensions();
 
     if stride_pixels < width {
-        return Err(DecodingError::InvalidParameter(format!(
+        return Err(DecodeError::InvalidParameter(format!(
             "stride_pixels {} < width {}",
             stride_pixels, width
         )));
@@ -1353,7 +1357,7 @@ pub fn decode_rgb_into(
     let stride_bytes = stride_pixels as usize * 3;
     let required = stride_bytes * (height as usize);
     if output.len() < required {
-        return Err(DecodingError::InvalidParameter(format!(
+        return Err(DecodeError::InvalidParameter(format!(
             "output buffer too small: got {}, need {}",
             output.len(),
             required
@@ -1363,7 +1367,7 @@ pub fn decode_rgb_into(
     // Decode into temporary buffer
     let output_size = decoder
         .output_buffer_size()
-        .ok_or(DecodingError::ImageTooLarge)?;
+        .ok_or(DecodeError::ImageTooLarge)?;
     let mut temp = vec![0u8; output_size];
     decoder.read_image(&mut temp)?;
 
@@ -1408,7 +1412,7 @@ pub struct ImageInfo {
 
 impl ImageInfo {
     /// Parse image information from WebP data.
-    pub fn from_webp(data: &[u8]) -> Result<Self, DecodingError> {
+    pub fn from_webp(data: &[u8]) -> Result<Self, DecodeError> {
         let decoder = WebPDecoder::new(data)?;
         let (width, height) = decoder.dimensions();
         let is_lossy = decoder.is_lossy();
@@ -1489,7 +1493,7 @@ pub struct YuvPlanes {
 /// Decode WebP data to BGRA pixels (blue, green, red, alpha order).
 ///
 /// Returns the decoded pixels and dimensions.
-pub fn decode_bgra(data: &[u8]) -> Result<(Vec<u8>, u32, u32), DecodingError> {
+pub fn decode_bgra(data: &[u8]) -> Result<(Vec<u8>, u32, u32), DecodeError> {
     let (mut pixels, width, height) = decode_rgba(data)?;
     // Swap R and B channels in-place
     for chunk in pixels.chunks_exact_mut(4) {
@@ -1501,7 +1505,7 @@ pub fn decode_bgra(data: &[u8]) -> Result<(Vec<u8>, u32, u32), DecodingError> {
 /// Decode WebP data to BGR pixels (blue, green, red order, no alpha).
 ///
 /// Returns the decoded pixels and dimensions.
-pub fn decode_bgr(data: &[u8]) -> Result<(Vec<u8>, u32, u32), DecodingError> {
+pub fn decode_bgr(data: &[u8]) -> Result<(Vec<u8>, u32, u32), DecodeError> {
     let (mut pixels, width, height) = decode_rgb(data)?;
     // Swap R and B channels in-place
     for chunk in pixels.chunks_exact_mut(3) {
@@ -1523,7 +1527,7 @@ pub fn decode_bgra_into(
     data: &[u8],
     output: &mut [u8],
     stride_pixels: u32,
-) -> Result<(u32, u32), DecodingError> {
+) -> Result<(u32, u32), DecodeError> {
     let (width, height) = decode_rgba_into(data, output, stride_pixels)?;
     let stride_bytes = stride_pixels as usize * 4;
     for y in 0..(height as usize) {
@@ -1548,7 +1552,7 @@ pub fn decode_bgr_into(
     data: &[u8],
     output: &mut [u8],
     stride_pixels: u32,
-) -> Result<(u32, u32), DecodingError> {
+) -> Result<(u32, u32), DecodeError> {
     let (width, height) = decode_rgb_into(data, output, stride_pixels)?;
     let stride_bytes = stride_pixels as usize * 3;
     for y in 0..(height as usize) {
@@ -1567,7 +1571,7 @@ pub fn decode_bgr_into(
 ///
 /// # Returns
 /// [`YuvPlanes`] containing separate Y, U, and V buffers.
-pub fn decode_yuv420(data: &[u8]) -> Result<YuvPlanes, DecodingError> {
+pub fn decode_yuv420(data: &[u8]) -> Result<YuvPlanes, DecodeError> {
     let decoder = WebPDecoder::new(data)?;
 
     if decoder.is_lossy() && !decoder.is_animated() {

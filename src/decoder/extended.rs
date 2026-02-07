@@ -2,7 +2,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::alpha_blending::do_alpha_blending;
-use super::api::DecodingError;
+use super::api::DecodeError;
 use super::lossless::LosslessDecoder;
 use crate::slice_reader::SliceReader;
 
@@ -212,7 +212,7 @@ pub(crate) fn get_alpha_predictor(
 
 pub(crate) fn read_extended_header(
     reader: &mut SliceReader,
-) -> Result<WebPExtendedInfo, DecodingError> {
+) -> Result<WebPExtendedInfo, DecodeError> {
     let chunk_flags = reader.read_u8()?;
 
     let icc_profile = chunk_flags & 0b00100000 != 0;
@@ -229,7 +229,7 @@ pub(crate) fn read_extended_header(
 
     //product of canvas dimensions cannot be larger than u32 max
     if u32::checked_mul(canvas_width, canvas_height).is_none() {
-        return Err(DecodingError::ImageTooLarge);
+        return Err(DecodeError::ImageTooLarge);
     }
 
     let info = WebPExtendedInfo {
@@ -247,7 +247,7 @@ pub(crate) fn read_extended_header(
     Ok(info)
 }
 
-pub(crate) fn read_3_bytes(reader: &mut SliceReader) -> Result<u32, DecodingError> {
+pub(crate) fn read_3_bytes(reader: &mut SliceReader) -> Result<u32, DecodeError> {
     let mut buffer: [u8; 3] = [0; 3];
     reader.read_exact(&mut buffer)?;
     let value: u32 =
@@ -274,9 +274,9 @@ pub(crate) fn read_alpha_chunk(
     data: &[u8],
     width: u16,
     height: u16,
-) -> Result<AlphaChunk, DecodingError> {
+) -> Result<AlphaChunk, DecodeError> {
     if data.is_empty() {
-        return Err(DecodingError::BitStreamError);
+        return Err(DecodeError::BitStreamError);
     }
     let info_byte = data[0];
 
@@ -287,7 +287,7 @@ pub(crate) fn read_alpha_chunk(
     let preprocessing = match preprocessing {
         0 => false,
         1 => true,
-        _ => return Err(DecodingError::InvalidAlphaPreprocessing),
+        _ => return Err(DecodeError::InvalidAlphaPreprocessing),
     };
 
     let filtering_method = match filtering {
@@ -301,7 +301,7 @@ pub(crate) fn read_alpha_chunk(
     let lossless_compression = match compression {
         0 => false,
         1 => true,
-        _ => return Err(DecodingError::InvalidCompressionMethod),
+        _ => return Err(DecodeError::InvalidCompressionMethod),
     };
 
     let alpha_data = &data[1..];
@@ -319,7 +319,7 @@ pub(crate) fn read_alpha_chunk(
     } else {
         let required = width as usize * height as usize;
         if alpha_data.len() < required {
-            return Err(DecodingError::BitStreamError);
+            return Err(DecodeError::BitStreamError);
         }
         alpha_data[..required].to_vec()
     };
