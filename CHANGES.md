@@ -1,5 +1,23 @@
 # Release Notes
 
+### Version 0.4.0
+
+**BREAKING CHANGE - License Change**
+
+zenwebp is now licensed under **AGPL-3.0-or-later** (was MIT OR Apache-2.0).
+
+**Why AGPL?**
+- Ensures improvements benefit the community, especially for server-side/SaaS deployments
+- Aligns with the project's goal of providing professional-grade WebP processing
+- Commercial licenses available for closed-source use: support@imazen.io
+
+**Migration:**
+- If you're using zenwebp in open-source software: No action needed (AGPL compatible)
+- If you're using zenwebp in closed-source/proprietary software: Contact us for commercial licensing
+- If you need to stay on MIT/Apache-2.0: Use version 0.3.x (maintenance only)
+
+No API changes in this release - purely a licensing update.
+
 ### Version 0.3.0
 
 **BREAKING CHANGES - Complete API overhaul for type safety and convergence**

@@ -323,30 +323,34 @@ the crate and all dependencies contain no unsafe whatsoever.
 
 ## License
 
-Licensed under either [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option.
+Licensed under the [GNU Affero General Public License v3.0 or later](LICENSE-AGPL).
+
+**Commercial licensing available** for projects that cannot comply with AGPL requirements. Contact: support@imazen.io
+
+### Why AGPL?
+
+zenwebp is designed for high-quality image processing in production environments. The AGPL ensures that improvements to the library benefit the entire community, especially important for server-side/SaaS use cases. If you need to use zenwebp in closed-source software, we offer commercial licenses at reasonable rates.
+
+### Previous Versions
+
+Versions 0.1.x - 0.3.x were dual-licensed under MIT OR Apache-2.0. See the git history for those license files.
 
 ### Color Quantization Features
 
 The optional color quantization features provide two backend choices:
 
-- **`quantize`** or **`quantize-quantizr`** (MIT-licensed): Uses the `quantizr` crate. The entire combined work
-  remains MIT OR Apache-2.0. This is the default if you enable `quantize`.
+- **`quantize`** or **`quantize-quantizr`** (MIT-licensed): Uses the `quantizr` crate. Compatible with AGPL.
 
 - **`quantize-imagequant`** (GPL-3.0-or-later): Uses the [`imagequant`](https://github.com/ImageOptim/libimagequant) crate, which **produces dramatically better
-  file sizes** via more compressible dithering and quantization patterns. Enabling this feature changes the
-  effective license of the combined work to GPL-3.0-or-later. [Commercial license available from upstream](https://supso.org/projects/pngquant).
-
-Choose based on your licensing requirements:
+  file sizes** via more compressible dithering and quantization patterns. GPL is compatible with AGPL. [Commercial license available from upstream](https://supso.org/projects/pngquant) if you purchase both.
 
 ```toml
-# MIT/Apache-2.0 compatible (default)
-zenwebp = { version = "0.3", features = ["quantize"] }
+# Default quantizer (MIT, compatible with AGPL)
+zenwebp = { version = "0.4", features = ["quantize"] }
 
-# Better quality, GPL-3.0-or-later license
-zenwebp = { version = "0.3", features = ["quantize-imagequant"] }
+# Better quality GPL quantizer (also compatible with AGPL)
+zenwebp = { version = "0.4", features = ["quantize-imagequant"] }
 ```
-
-All quantization features are disabled by default.
 
 ## Contributing
 
