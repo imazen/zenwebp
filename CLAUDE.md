@@ -286,8 +286,8 @@ Done:
 
 Remaining:
 - [x] Rename `finish()` → `encode()` on `EncodeRequest` (one-shot, nothing was "started")
-- [ ] Rename `finish_into()` → `encode_into()`, `finish_to()` → `encode_to()` on request
-- [ ] Remove deprecated aliases (`encode()`, `encode_into()`, `encode_to_writer()`)
+- [x] Rename `finish_into()` → `encode_into()`, `finish_to()` → `encode_to()` on request
+- [x] Remove deprecated aliases (`encode()`, `encode_into()`, `encode_to_writer()`)
 - [ ] Add `EncodeRequest::build()` → streaming `Encoder` with `push()`/`finish()`
 - [x] Add `Limits` on encode side (currently decode-only)
 - [x] Replace `ColorType` with `PixelLayout` (or rename — same concept, just naming)
