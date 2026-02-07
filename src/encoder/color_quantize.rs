@@ -12,9 +12,9 @@
 //!   Decent quality, compatible with MIT/Apache-2.0 licensing.
 //!
 //! - **`quantize-imagequant`**: GPL-3.0-or-later backend using Kornel Lesiński's
-//!   `imagequant` crate. **Produces dramatically better file sizes** via more compressible
+//!   [`imagequant`](https://github.com/ImageOptim/libimagequant) crate. **Produces dramatically better file sizes** via more compressible
 //!   dithering and quantization patterns, but requires GPL-3.0-or-later licensing for
-//!   the combined work.
+//!   the combined work. [Commercial license available from upstream](https://supso.org/projects/pngquant).
 //!
 //! The `quantize` feature is an alias for `quantize-quantizr` (MIT default).
 //!
