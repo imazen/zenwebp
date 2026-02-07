@@ -661,6 +661,8 @@ pub struct EncoderConfig {
     pub filter_sharpness: Option<u8>,
     /// Number of segments override (1-4). `None` = use preset default.
     pub segments: Option<u8>,
+    /// Encode limits for dimensions and memory validation.
+    pub limits: crate::Limits,
 }
 
 impl Default for EncoderConfig {
@@ -680,6 +682,7 @@ impl Default for EncoderConfig {
             filter_strength: None,
             filter_sharpness: None,
             segments: None,
+            limits: crate::Limits::none(), // No limits by default
         }
     }
 }
@@ -809,6 +812,27 @@ impl EncoderConfig {
     #[must_use]
     pub fn segments(mut self, segments: u8) -> Self {
         self.segments = Some(segments.clamp(1, 4));
+        self
+    }
+
+    /// Set encode limits for validation.
+    #[must_use]
+    pub fn limits(mut self, limits: crate::Limits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Set maximum input dimensions.
+    #[must_use]
+    pub fn max_dimensions(mut self, width: u32, height: u32) -> Self {
+        self.limits = self.limits.max_dimensions(width, height);
+        self
+    }
+
+    /// Set maximum memory usage during encoding.
+    #[must_use]
+    pub fn max_memory(mut self, bytes: u64) -> Self {
+        self.limits = self.limits.max_memory(bytes);
         self
     }
 
@@ -977,6 +1001,12 @@ impl<'a> EncodeRequest<'a> {
     }
 
     fn encode_inner(self) -> Result<(Vec<u8>, EncodeStats), EncodeError> {
+        // Validate dimensions against limits
+        self.config
+            .limits
+            .check_dimensions(self.width, self.height)
+            .map_err(|e| EncodeError::InvalidBufferSize(format!("{}", e)))?;
+
         let bpp = self.color_type.bytes_per_pixel();
         let row_bytes = self.width as usize * bpp;
 
