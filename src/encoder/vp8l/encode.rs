@@ -36,6 +36,7 @@ pub fn encode_vp8l(
     height: u32,
     has_alpha: bool,
     config: &Vp8lConfig,
+    stop: &dyn enough::Stop,
 ) -> Result<Vec<u8>, EncodingError> {
     if width == 0 || width > 16384 || height == 0 || height > 16384 {
         return Err(EncodingError::InvalidDimensions);
@@ -69,7 +70,7 @@ pub fn encode_vp8l(
     // The encoder API handles this in the pixel expansion step.
 
     // Encode with the full pipeline
-    encode_argb(&mut argb, w, h, has_alpha, config)
+    encode_argb(&mut argb, w, h, has_alpha, config, stop)
 }
 
 /// Result of entropy analysis for transform selection.
@@ -397,6 +398,7 @@ fn encode_argb(
     height: usize,
     has_alpha: bool,
     config: &Vp8lConfig,
+    stop: &dyn enough::Stop,
 ) -> Result<Vec<u8>, EncodingError> {
     // Determine if palette is available (needed for config generation)
     let palette_candidate = if config.use_palette {
@@ -445,15 +447,24 @@ fn encode_argb(
 
     if configs.len() == 1 {
         // Single config: encode in place (no clone needed)
-        encode_argb_single_config(argb, width, height, has_alpha, config, &configs[0])
+        encode_argb_single_config(argb, width, height, has_alpha, config, &configs[0], stop)
     } else {
         // Multi-config: clone original pixels, try each config, keep smallest
         let original = argb.to_vec();
         let mut best_output: Option<Vec<u8>> = None;
 
         for crunch_config in &configs {
+            stop.check()?;
             argb.copy_from_slice(&original);
-            match encode_argb_single_config(argb, width, height, has_alpha, config, crunch_config) {
+            match encode_argb_single_config(
+                argb,
+                width,
+                height,
+                has_alpha,
+                config,
+                crunch_config,
+                stop,
+            ) {
                 Ok(output) => {
                     let keep = match &best_output {
                         None => true,
@@ -485,6 +496,7 @@ fn encode_argb_single_config(
     has_alpha: bool,
     config: &Vp8lConfig,
     crunch: &CrunchConfig,
+    stop: &dyn enough::Stop,
 ) -> Result<Vec<u8>, EncodingError> {
     let mut writer = BitWriter::with_capacity(width * height / 2);
 
@@ -651,6 +663,8 @@ fn encode_argb_single_config(
         .as_ref()
         .map(|pt| pt.palette.len())
         .unwrap_or(0);
+    stop.check()?;
+
     let (refs, cache_bits) = if enc_palette_size > 0 {
         get_backward_references_with_palette(
             enc_argb,
@@ -690,6 +704,7 @@ fn encode_argb_single_config(
         // Sizes above the entropy estimate are unlikely to be better
         // (entropy correctly identifies the direction, just overshoots).
         for cb in 0..=cache_bits {
+            stop.check()?;
             let mut trial_refs = base_refs.clone();
             if cb > 0 {
                 apply_cache_to_refs(enc_argb, cb, &mut trial_refs);
@@ -1392,7 +1407,7 @@ mod tests {
         let pixels: Vec<u8> = [255, 0, 0].repeat(16);
         let config = Vp8lConfig::default();
 
-        let result = encode_vp8l(&pixels, 4, 4, false, &config);
+        let result = encode_vp8l(&pixels, 4, 4, false, &config, &enough::Unstoppable);
         assert!(result.is_ok());
 
         let data = result.unwrap();
@@ -1406,7 +1421,7 @@ mod tests {
         let pixels: Vec<u8> = [255, 0, 0, 128].repeat(16);
         let config = Vp8lConfig::default();
 
-        let result = encode_vp8l(&pixels, 4, 4, true, &config);
+        let result = encode_vp8l(&pixels, 4, 4, true, &config, &enough::Unstoppable);
         assert!(result.is_ok());
     }
 
@@ -1423,7 +1438,7 @@ mod tests {
         }
 
         let config = Vp8lConfig::default();
-        let result = encode_vp8l(&pixels, 16, 16, false, &config);
+        let result = encode_vp8l(&pixels, 16, 16, false, &config, &enough::Unstoppable);
         assert!(result.is_ok());
     }
 
@@ -1511,7 +1526,7 @@ mod tests {
         let mut config = Vp8lConfig::default();
         config.quality.method = 5;
         config.quality.quality = 75;
-        let result = encode_vp8l(&pixels, 8, 8, false, &config);
+        let result = encode_vp8l(&pixels, 8, 8, false, &config, &enough::Unstoppable);
         assert!(result.is_ok());
         assert_eq!(result.unwrap()[0], 0x2f); // VP8L signature
     }
@@ -1529,7 +1544,7 @@ mod tests {
         let mut config = Vp8lConfig::default();
         config.quality.method = 6;
         config.quality.quality = 100;
-        let result = encode_vp8l(&pixels, 16, 16, false, &config);
+        let result = encode_vp8l(&pixels, 16, 16, false, &config, &enough::Unstoppable);
         assert!(result.is_ok());
         assert_eq!(result.unwrap()[0], 0x2f); // VP8L signature
     }
@@ -1567,7 +1582,15 @@ mod tests {
             palette_sorting: PaletteSorting::MinimizeDelta,
         };
 
-        let result = encode_argb_single_config(&mut argb, w, h, false, &config, &crunch);
+        let result = encode_argb_single_config(
+            &mut argb,
+            w,
+            h,
+            false,
+            &config,
+            &crunch,
+            &enough::Unstoppable,
+        );
         assert!(result.is_ok(), "PaletteAndSpatial encoding failed");
         let data = result.unwrap();
         assert_eq!(data[0], 0x2f); // VP8L signature
@@ -1599,16 +1622,32 @@ mod tests {
             mode: CrunchMode::Palette,
             palette_sorting: PaletteSorting::MinimizeDelta,
         };
-        let result_md =
-            encode_argb_single_config(&mut argb_md, w, h, false, &config, &crunch_md).unwrap();
+        let result_md = encode_argb_single_config(
+            &mut argb_md,
+            w,
+            h,
+            false,
+            &config,
+            &crunch_md,
+            &enough::Unstoppable,
+        )
+        .unwrap();
 
         // Lexicographic sorting
         let crunch_lex = CrunchConfig {
             mode: CrunchMode::Palette,
             palette_sorting: PaletteSorting::Lexicographic,
         };
-        let result_lex =
-            encode_argb_single_config(&mut argb, w, h, false, &config, &crunch_lex).unwrap();
+        let result_lex = encode_argb_single_config(
+            &mut argb,
+            w,
+            h,
+            false,
+            &config,
+            &crunch_lex,
+            &enough::Unstoppable,
+        )
+        .unwrap();
 
         // Both should be valid VP8L
         assert_eq!(result_md[0], 0x2f);

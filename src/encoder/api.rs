@@ -823,6 +823,15 @@ impl EncoderConfig {
             alpha_quality: self.alpha_quality,
         }
     }
+
+    /// Estimate resource consumption for encoding an image with this config.
+    ///
+    /// Returns memory, time, and output size estimates. See
+    /// [`heuristics::estimate_encode`](crate::heuristics::estimate_encode) for details.
+    #[must_use]
+    pub fn estimate(&self, width: u32, height: u32, bpp: u8) -> crate::heuristics::EncodeEstimate {
+        crate::heuristics::estimate_encode(width, height, bpp, self)
+    }
 }
 
 /// Static default progress callback (does nothing).
@@ -1031,6 +1040,7 @@ fn validate_buffer_size(
 /// # Panics
 ///
 /// Panics if the image data is not of the indicated dimensions.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_frame_lossless(
     writer: &mut Vec<u8>,
     data: &[u8],
@@ -1039,6 +1049,7 @@ pub(crate) fn encode_frame_lossless(
     color: ColorType,
     params: EncoderParams,
     implicit_dimensions: bool,
+    stop: &dyn enough::Stop,
 ) -> Result<(), EncodingError> {
     let w = &mut BitWriter::new(writer);
 
@@ -1137,6 +1148,8 @@ pub(crate) fn encode_frame_lossless(
         }
         pixels[3] = pixels[3].wrapping_sub(255);
     }
+
+    stop.check()?;
 
     // compute frequencies
     let mut frequencies0 = [0u32; 256];
@@ -1387,6 +1400,7 @@ pub(crate) fn encode_alpha_lossless(
     height: u32,
     color: ColorType,
     alpha_quality: u8,
+    stop: &dyn enough::Stop,
 ) -> Result<(), EncodingError> {
     let bytes_per_pixel = match color {
         ColorType::La8 => 2,
@@ -1432,6 +1446,7 @@ pub(crate) fn encode_alpha_lossless(
         ColorType::L8,
         EncoderParams::default(),
         true,
+        stop,
     )?;
 
     Ok(())
@@ -1547,7 +1562,16 @@ impl<'a> WebPEncoder<'a> {
             )?;
             b"VP8 "
         } else {
-            encode_frame_lossless(&mut frame, data, width, height, color, self.params, false)?;
+            encode_frame_lossless(
+                &mut frame,
+                data,
+                width,
+                height,
+                color,
+                self.params,
+                false,
+                self.stop,
+            )?;
             b"VP8L"
         };
 
@@ -1577,7 +1601,15 @@ impl<'a> WebPEncoder<'a> {
 
             let alpha_chunk_data = if lossy_with_alpha {
                 let mut alpha_chunk = Vec::new();
-                encode_alpha_lossless(&mut alpha_chunk, data, width, height, color, alpha_quality)?;
+                encode_alpha_lossless(
+                    &mut alpha_chunk,
+                    data,
+                    width,
+                    height,
+                    color,
+                    alpha_quality,
+                    self.stop,
+                )?;
 
                 total_bytes += chunk_size(alpha_chunk.len());
                 Some(alpha_chunk)

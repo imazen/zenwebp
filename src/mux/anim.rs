@@ -490,6 +490,7 @@ fn encode_frame_data(
                 height,
                 color,
                 params.alpha_quality,
+                &Unstoppable,
             )?;
             Some(alpha)
         } else {
@@ -510,6 +511,7 @@ fn encode_frame_data(
             color,
             params.clone(),
             false,
+            &Unstoppable,
         )?;
         Ok(EncodedFrame {
             bitstream,

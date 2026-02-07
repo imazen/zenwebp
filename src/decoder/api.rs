@@ -1429,6 +1429,19 @@ impl ImageInfo {
             format,
         })
     }
+
+    /// Estimate resource consumption for decoding this image.
+    ///
+    /// Returns memory, time, and output size estimates. See
+    /// [`heuristics::estimate_decode`](crate::heuristics::estimate_decode) for details.
+    #[must_use]
+    pub fn estimate_decode(&self, output_bpp: u8) -> crate::heuristics::DecodeEstimate {
+        if self.has_animation {
+            crate::heuristics::estimate_animation_decode(self.width, self.height, self.frame_count)
+        } else {
+            crate::heuristics::estimate_decode(self.width, self.height, output_bpp)
+        }
+    }
 }
 
 /// Bitstream compression format.
