@@ -332,8 +332,9 @@ The optional color quantization features provide two backend choices:
 - **`quantize`** or **`quantize-quantizr`** (MIT-licensed): Uses the `quantizr` crate. The entire combined work
   remains MIT OR Apache-2.0. This is the default if you enable `quantize`.
 
-- **`quantize-imagequant`** (GPL-3.0-or-later): Uses the `imagequant` crate, which generally produces better
-  quality palettes. Enabling this feature changes the effective license of the combined work to GPL-3.0-or-later.
+- **`quantize-imagequant`** (GPL-3.0-or-later): Uses the `imagequant` crate, which **produces dramatically better
+  file sizes** via more compressible dithering and quantization patterns. Enabling this feature changes the
+  effective license of the combined work to GPL-3.0-or-later.
 
 Choose based on your licensing requirements:
 

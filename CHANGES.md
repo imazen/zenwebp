@@ -111,8 +111,9 @@ zenwebp = { version = "0.3", features = ["quantize-imagequant"] }
 ```
 
 **Backend comparison:**
-- **`quantize-quantizr`** (default): MIT-licensed, good quality, no licensing restrictions
-- **`quantize-imagequant`**: GPL-3.0-or-later, generally better palette quality, requires GPL licensing
+- **`quantize-quantizr`** (default): MIT-licensed, decent quality, no licensing restrictions
+- **`quantize-imagequant`**: GPL-3.0-or-later, **dramatically better file sizes** via more compressible
+  dithering and quantization patterns, requires GPL licensing
 
 Choose based on your licensing requirements. The API is identical regardless of backend.
 

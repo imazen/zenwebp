@@ -9,11 +9,12 @@
 //! Two backends are available (choose via feature flags):
 //!
 //! - **`quantize-quantizr`** (default): MIT-licensed backend using the `quantizr` crate.
-//!   Good quality, compatible with MIT/Apache-2.0 licensing.
+//!   Decent quality, compatible with MIT/Apache-2.0 licensing.
 //!
 //! - **`quantize-imagequant`**: GPL-3.0-or-later backend using Kornel Lesiński's
-//!   `imagequant` crate. Generally produces better quality palettes but requires
-//!   GPL-3.0-or-later licensing for the combined work.
+//!   `imagequant` crate. **Produces dramatically better file sizes** via more compressible
+//!   dithering and quantization patterns, but requires GPL-3.0-or-later licensing for
+//!   the combined work.
 //!
 //! The `quantize` feature is an alias for `quantize-quantizr` (MIT default).
 //!
