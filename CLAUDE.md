@@ -245,20 +245,23 @@ Dependencies: `thiserror`, `whereat`, `hashbrown`, `libm` (all no_std).
 unsafe internally). No manual unsafe, transmute, get_unchecked, or raw pointer derefs.
 Exception: `unchecked` feature for loop filter hot paths.
 
-## Diagnostic Examples
+## Examples and Dev Tools
 
-| Example | Usage |
-|---------|-------|
+**examples/** — Public API demonstrations:
+- `api_guide.rs` — Comprehensive demo of 100% of zenwebp's public API
+
+**dev/** — Internal diagnostic, benchmark, and comparison tools (48 files).
+Not compiled by default. To use, move back to `examples/` or add `[[example]]`
+entries to Cargo.toml. Key tools:
+
+| Tool | Usage |
+|------|-------|
 | `corpus_test [dir]` | Batch file size comparison vs libwebp |
 | `compare_all_methods` | Per-method size comparison |
-| `compare_coefficients` | Quantized level comparison |
-| `compare_i4_modes` | Per-block I4 mode choice comparison |
-| `compare_rd_costs` | Macroblock type agreement stats |
+| `callgrind_encode` | Minimal encoder for callgrind profiling |
+| `decode_benchmark` | Decode speed comparison |
 | `debug_mode_decision` | MB_DEBUG env for mode selection |
-| `cache_test` | Lossless cache size testing |
 | `lossless_benchmark` | Lossless corpus benchmark |
-
-Run with: `cargo run --release --example <name> [args]`
 
 ## TODO: WebP Conformance Testing
 
