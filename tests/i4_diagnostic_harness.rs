@@ -31,12 +31,12 @@ fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32)> {
     let height = info.height;
 
     let rgb = match info.color_type {
-        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::PixelLayout::Rgba => buf[..info.buffer_size()]
+        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::ColorType::Rgba => buf[..info.buffer_size()]
             .chunks_exact(4)
             .flat_map(|p| [p[0], p[1], p[2]])
             .collect(),
-        png::PixelLayout::Grayscale => buf[..info.buffer_size()]
+        png::ColorType::Grayscale => buf[..info.buffer_size()]
             .iter()
             .flat_map(|&g| [g, g, g])
             .collect(),
@@ -103,12 +103,12 @@ fn extract_vp8_chunk(webp: &[u8]) -> Option<&[u8]> {
 /// Encode with zenwebp using diagnostic-friendly settings
 fn encode_zenwebp(rgb: &[u8], width: u32, height: u32, quality: f32, method: u8) -> Vec<u8> {
     let config = EncoderConfig::with_preset(Preset::Default, quality)
-        .method(method)
+        .with_method(method)
         // Disable SNS and filtering for cleaner comparison
-        .sns_strength(0)
-        .filter_strength(0)
-        .filter_sharpness(0)
-        .segments(1); // Single segment simplifies quantizer comparison
+        .with_sns_strength(0)
+        .with_filter_strength(0)
+        .with_filter_sharpness(0)
+        .with_segments(1); // Single segment simplifies quantizer comparison
     EncodeRequest::new(&config, rgb, PixelLayout::Rgb8, width, height)
         .encode()
         .expect("zenwebp encoding failed")

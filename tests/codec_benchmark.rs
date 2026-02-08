@@ -84,8 +84,8 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 
     // Convert to RGB if needed
     let rgb_data = match info.color_type {
-        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::PixelLayout::Rgba => {
+        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::ColorType::Rgba => {
             let mut rgb = Vec::with_capacity((info.width * info.height * 3) as usize);
             for chunk in buf[..info.buffer_size()].chunks(4) {
                 rgb.extend_from_slice(&chunk[..3]);
@@ -100,7 +100,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 
 /// Encode with our encoder at given quality
 fn encode_ours(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
-    let config = EncoderConfig::new().quality(quality as f32);
+    let config = EncoderConfig::new_lossy().with_quality(quality as f32);
     EncodeRequest::new(&config, rgb, PixelLayout::Rgb8, width, height)
         .encode()
         .expect("Our encoding failed")

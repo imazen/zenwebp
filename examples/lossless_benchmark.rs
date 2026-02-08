@@ -108,11 +108,11 @@ fn main() {
         };
 
         let (rgb_pixels, has_alpha) = match info.color_type {
-            png::PixelLayout::Rgba => {
+            png::ColorType::Rgba => {
                 let rgba = buf[..info.buffer_size()].to_vec();
                 (rgba, true)
             }
-            png::PixelLayout::Rgb => (buf[..info.buffer_size()].to_vec(), false),
+            png::ColorType::Rgb => (buf[..info.buffer_size()].to_vec(), false),
             _ => continue,
         };
         let width = info.width;

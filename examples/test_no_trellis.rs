@@ -30,11 +30,11 @@ fn main() {
     println!("\nComparing to libwebp:");
     for method in [2, 3, 4, 5, 6] {
         let config = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-            .with_method(method)
-            .with_sns_strength(0)
-            .with_filter_strength(0)
-            .with_filter_sharpness(0)
-            .with_segments(1);
+            .method(method)
+            .sns_strength(0)
+            .filter_strength(0)
+            .filter_sharpness(0)
+            .segments(1);
         let output = config.encode_rgb(&rgb, w, h, webpx::Unstoppable).unwrap();
         println!("libwebp m{}: {} bytes", method, output.len());
     }

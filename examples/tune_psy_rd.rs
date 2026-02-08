@@ -67,12 +67,12 @@ fn main() {
             };
 
             let (rgb, w, h) = match info.color_type {
-                png::PixelLayout::Rgb => (
+                png::ColorType::Rgb => (
                     buf[..info.buffer_size()].to_vec(),
                     info.width as usize,
                     info.height as usize,
                 ),
-                png::PixelLayout::Rgba => {
+                png::ColorType::Rgba => {
                     let rgba = &buf[..info.buffer_size()];
                     let mut rgb = Vec::with_capacity(rgba.len() * 3 / 4);
                     for chunk in rgba.chunks(4) {

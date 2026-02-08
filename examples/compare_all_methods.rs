@@ -20,8 +20,8 @@ fn main() {
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).unwrap();
     let rgb: Vec<u8> = match info.color_type {
-        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::PixelLayout::Rgba => buf[..info.buffer_size()]
+        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::ColorType::Rgba => buf[..info.buffer_size()]
             .chunks(4)
             .flat_map(|c| &c[..3])
             .copied()
@@ -65,11 +65,11 @@ fn main() {
         let mut lib_size = 0;
         for _ in 0..iterations {
             let out = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-                .with_method(method)
-                .with_sns_strength(0)
-                .with_filter_strength(0)
-                .with_filter_sharpness(0)
-                .with_segments(1)
+                .method(method)
+                .sns_strength(0)
+                .filter_strength(0)
+                .filter_sharpness(0)
+                .segments(1)
                 .encode_rgb(&rgb, w, h, webpx::Unstoppable)
                 .unwrap();
             lib_size = out.len();

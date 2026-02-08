@@ -8,7 +8,7 @@
 use std::{io::Cursor, num::NonZeroU16};
 use zenwebp::{
     AnimationConfig, AnimationEncoder, BlendMethod, DecodeError, DisposeMethod, EncodeError,
-    EncodeRequest, EncoderConfig, Limits, LoopCount, MuxError, MuxFrame, PixelLayout, Preset, Stop,
+    EncodeRequest, EncoderConfig, Limits, LoopCount, MuxError, PixelLayout, Preset, Stop,
     Unstoppable, WebPDemuxer, WebPMux,
 };
 
@@ -108,7 +108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1.7 Encoding with stats collection
     println!("1.7 Encoding with stats");
     let config = EncoderConfig::new_lossy().with_quality(75.0).with_method(4);
-    let (webp_data, stats) =
+    let (_webp_data, stats) =
         EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height)
             .encode_with_stats()?;
 
@@ -149,11 +149,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("1.10 Encoding with limits");
     let limits = Limits::default()
         .max_total_pixels(1_000_000)
-        .with_max_dimensions(2000, 2000);
+        .max_dimensions(2000, 2000);
 
     let config = EncoderConfig::new_lossy()
         .with_quality(75.0)
-        .with_limits(limits);
+        .limits(limits);
 
     let webp_data =
         EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height).encode()?;
@@ -225,9 +225,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2.4 Lossless with exact color preservation
     println!("2.4 Lossless with exact colors");
-    let config = EncoderConfig::new_lossy()
-        .with_lossless(true)
-        .with_exact(true); // Preserve RGB even under YUV conversion
+    let config = EncoderConfig::Lossless(
+        zenwebp::LosslessConfig::new().with_exact(true),
+    );
 
     let webp_data =
         EncodeRequest::new(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
@@ -235,9 +235,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2.5 Lossless with alpha quality
     println!("2.5 Lossless with alpha quality");
-    let config = EncoderConfig::new_lossy()
-        .with_lossless(true)
-        .with_alpha_quality(90); // 0-100, lossy alpha compression
+    let config = EncoderConfig::Lossless(
+        zenwebp::LosslessConfig::new().with_alpha_quality(90),
+    );
 
     let webp_data =
         EncodeRequest::new(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
@@ -318,21 +318,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("3.5 Decoding with limits");
     let limits = Limits::default()
         .max_total_pixels(10_000_000)
-        .with_max_dimensions(4000, 4000)
+        .max_dimensions(4000, 4000)
         .max_file_size(10 * 1024 * 1024)
-        .with_max_memory(512 * 1024 * 1024);
+        .max_memory(512 * 1024 * 1024);
 
-    let config = zenwebp::DecodeConfig::default().with_limits(limits);
+    let config = zenwebp::DecodeConfig::default().limits(limits);
     let request = zenwebp::DecodeRequest::new(&config, &test_webp);
-    let (pixels, w, h) = request.decode_rgba()?;
+    let (_pixels, w, h) = request.decode_rgba()?;
     println!("  ✓ With limits → {}x{}\n", w, h);
 
     // 3.6 Decoding with cancellation
     println!("3.6 Decoding with cancellation");
     let config = zenwebp::DecodeConfig::default();
     let request =
-        zenwebp::DecodeRequest::new(&config, &test_webp).with_stop(&Unstoppable as &dyn Stop);
-    let (pixels, w, h) = request.decode_rgba()?;
+        zenwebp::DecodeRequest::new(&config, &test_webp).stop(&Unstoppable as &dyn Stop);
+    let (_pixels, w, h) = request.decode_rgba()?;
     println!("  ✓ With cancellation → {}x{}\n", w, h);
 
     // ========================================================================
@@ -366,9 +366,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         minimize_size: true,
     };
     let mut anim = AnimationEncoder::new(width, height, anim_config)?;
-    anim.with_icc_profile(iccp_profile.to_vec());
-    anim.with_exif(exif_data.to_vec());
-    anim.with_xmp(xmp_data.to_vec());
+    anim.icc_profile(iccp_profile.to_vec());
+    anim.exif(exif_data.to_vec());
+    anim.xmp(xmp_data.to_vec());
 
     let encoder_config = EncoderConfig::new_lossy().with_quality(75.0);
     anim.add_frame(&rgb_img, PixelLayout::Rgb8, 0, &encoder_config)?;
@@ -410,7 +410,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Add a sub-frame (partial update)
     let sub_width = width / 2;
     let sub_height = height / 2;
-    let mut sub_img = vec![255u8; (sub_width * sub_height * 3) as usize];
+    let sub_img = vec![255u8; (sub_width * sub_height * 3) as usize];
     anim.add_frame_advanced(
         &sub_img,
         PixelLayout::Rgb8,
@@ -463,13 +463,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("5.1 Demuxing chunks");
     let demuxer = WebPDemuxer::new(&test_webp)?;
 
-    if let Some(iccp) = demuxer.with_icc_profile() {
+    if let Some(iccp) = demuxer.icc_profile() {
         println!("  ✓ ICCP chunk: {} bytes", iccp.len());
     }
-    if let Some(exif) = demuxer.with_exif() {
+    if let Some(exif) = demuxer.exif() {
         println!("  ✓ EXIF chunk: {} bytes", exif.len());
     }
-    if let Some(xmp) = demuxer.with_xmp() {
+    if let Some(xmp) = demuxer.xmp() {
         println!("  ✓ XMP chunk: {} bytes", xmp.len());
     }
     println!();
@@ -545,7 +545,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let limits = Limits::default().max_total_pixels(100);
         let config = EncoderConfig::new_lossy()
             .with_quality(75.0)
-            .with_limits(limits);
+            .limits(limits);
 
         EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height).encode()
     };
@@ -566,7 +566,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Exceeded limits
     let result: Result<(Vec<u8>, u32, u32), DecodeError> = {
         let limits = Limits::default().max_total_pixels(100);
-        let config = zenwebp::DecodeConfig::default().with_limits(limits);
+        let config = zenwebp::DecodeConfig::default().limits(limits);
         let request = zenwebp::DecodeRequest::new(&config, &test_webp);
         request.decode_rgba()
     };
@@ -611,7 +611,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 8.2 Content analysis
     println!("8.2 Content analysis");
     let config = EncoderConfig::with_preset(Preset::Auto, 75.0);
-    let (webp, stats) = EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height)
+    let (webp, _stats) = EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height)
         .encode_with_stats()?;
     println!("  ✓ Auto preset → {} bytes", webp.len());
     println!("  ✓ Detected content type from stats\n");

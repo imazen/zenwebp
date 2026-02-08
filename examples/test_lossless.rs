@@ -19,7 +19,7 @@ fn main() {
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).unwrap();
 
-    let rgb_pixels: Vec<u8> = if info.color_type == png::PixelLayout::Rgba {
+    let rgb_pixels: Vec<u8> = if info.color_type == png::ColorType::Rgba {
         buf[..info.buffer_size()]
             .chunks(4)
             .flat_map(|c| [c[0], c[1], c[2]].into_iter())

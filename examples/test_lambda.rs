@@ -18,11 +18,11 @@ fn main() {
 
     // Let's print from libwebp's perspective using webpx debug
     let lib_config = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-        .with_method(4)
-        .with_sns_strength(0)
-        .with_filter_strength(0)
-        .with_filter_sharpness(0)
-        .with_segments(1);
+        .method(4)
+        .sns_strength(0)
+        .filter_strength(0)
+        .filter_sharpness(0)
+        .segments(1);
 
     println!("Q75 settings:");
     println!("  zenwebp config created (internal lambdas not exposed)");

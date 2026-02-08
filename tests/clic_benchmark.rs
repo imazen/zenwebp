@@ -28,8 +28,8 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 
     // Convert to RGB if needed
     let rgb = match info.color_type {
-        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::PixelLayout::Rgba => {
+        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::ColorType::Rgba => {
             let rgba = &buf[..info.buffer_size()];
             let mut rgb = Vec::with_capacity((width * height * 3) as usize);
             for pixel in rgba.chunks_exact(4) {
@@ -37,7 +37,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
             }
             rgb
         }
-        png::PixelLayout::Grayscale => {
+        png::ColorType::Grayscale => {
             let gray = &buf[..info.buffer_size()];
             let mut rgb = Vec::with_capacity((width * height * 3) as usize);
             for &g in gray {
@@ -45,7 +45,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
             }
             rgb
         }
-        png::PixelLayout::GrayscaleAlpha => {
+        png::ColorType::GrayscaleAlpha => {
             let ga = &buf[..info.buffer_size()];
             let mut rgb = Vec::with_capacity((width * height * 3) as usize);
             for pixel in ga.chunks_exact(2) {
@@ -126,7 +126,7 @@ struct BenchResult {
 fn benchmark_image(rgb: &[u8], width: u32, height: u32, quality: u8) -> Option<BenchResult> {
     // Encode with our encoder
     let start = Instant::now();
-    let config = EncoderConfig::new().quality(quality as f32);
+    let config = EncoderConfig::new_lossy().with_quality(quality as f32);
     let ours_output =
         match EncodeRequest::new(&config, rgb, PixelLayout::Rgb8, width, height).encode() {
             Ok(v) => v,

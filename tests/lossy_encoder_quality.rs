@@ -155,7 +155,7 @@ fn calculate_ssimulacra2(original: &[u8], decoded: &[u8], width: u32, height: u3
 
 /// Helper to create lossy encoder params
 fn lossy_config(quality: u8) -> EncoderConfig {
-    EncoderConfig::new().quality(quality as f32)
+    EncoderConfig::new_lossy().with_quality(quality as f32)
 }
 
 /// Test that libwebp can decode our lossy output
@@ -454,7 +454,7 @@ fn presets_produce_different_file_sizes() {
     let mut sizes: Vec<(&str, usize)> = Vec::new();
 
     for &(name, preset) in &presets {
-        let config = EncoderConfig::with_preset(preset, quality).method(4);
+        let config = EncoderConfig::with_preset(preset, quality).with_method(4);
         let webp = EncodeRequest::new(&config, &img, PixelLayout::Rgb8, w, h)
             .encode()
             .expect("Encoding failed");
@@ -506,7 +506,7 @@ fn preset_overrides_work() {
     let img = create_noise_image(256, 256);
 
     // Default preset with default filter (SNS=50, filter=60)
-    let _cfg1 = EncoderConfig::with_preset(Preset::Default, 75.0).method(4);
+    let _cfg1 = EncoderConfig::with_preset(Preset::Default, 75.0).with_method(4);
     let default_size = EncodeRequest::new(&_cfg1, &img, PixelLayout::Rgb8, 256, 256)
         .encode()
         .unwrap()
@@ -514,10 +514,10 @@ fn preset_overrides_work() {
 
     // Default preset with filter forced to 0 (like Icon)
     let _cfg2 = EncoderConfig::with_preset(Preset::Default, 75.0)
-        .method(4)
-        .filter_strength(0)
-        .filter_sharpness(0)
-        .sns_strength(0);
+        .with_method(4)
+        .with_filter_strength(0)
+        .with_filter_sharpness(0)
+        .with_sns_strength(0);
     let no_filter_size = EncodeRequest::new(&_cfg2, &img, PixelLayout::Rgb8, 256, 256)
         .encode()
         .unwrap()
@@ -544,16 +544,16 @@ fn segments_one_disables_segmentation() {
     let img = create_checkerboard_image(256, 256);
 
     let _cfg3 = EncoderConfig::with_preset(Preset::Default, 75.0)
-        .method(4)
-        .segments(4);
+        .with_method(4)
+        .with_segments(4);
     let with_segments = EncodeRequest::new(&_cfg3, &img, PixelLayout::Rgb8, 256, 256)
         .encode()
         .unwrap()
         .len();
 
     let _cfg4 = EncoderConfig::with_preset(Preset::Default, 75.0)
-        .method(4)
-        .segments(1);
+        .with_method(4)
+        .with_segments(1);
     let without_segments = EncodeRequest::new(&_cfg4, &img, PixelLayout::Rgb8, 256, 256)
         .encode()
         .unwrap()
@@ -566,8 +566,8 @@ fn segments_one_disables_segmentation() {
 
     // Both should decode correctly
     let _cfg5 = EncoderConfig::with_preset(Preset::Default, 75.0)
-        .method(4)
-        .segments(1);
+        .with_method(4)
+        .with_segments(1);
     let webp_data = EncodeRequest::new(&_cfg5, &img, PixelLayout::Rgb8, 256, 256)
         .encode()
         .unwrap();
@@ -596,7 +596,7 @@ fn matched_config_comparison_vs_webpx() {
 
     for &(name, zen_preset, wpx_preset) in configs {
         // Encode with zenwebp
-        let zen_config = zenwebp::EncoderConfig::with_preset(zen_preset, quality).method(4);
+        let zen_config = zenwebp::EncoderConfig::with_preset(zen_preset, quality).with_method(4);
         let _cfg6 = zen_config;
         let zen_out = EncodeRequest::new(&_cfg6, &img, PixelLayout::Rgb8, 256, 256)
             .encode()
@@ -648,7 +648,7 @@ fn auto_preset_produces_valid_output() {
         }
     }
 
-    let config = EncoderConfig::with_preset(Preset::Auto, 75.0).method(4);
+    let config = EncoderConfig::with_preset(Preset::Auto, 75.0).with_method(4);
     let webp = EncodeRequest::new(&config, &img, PixelLayout::Rgb8, w, h)
         .encode()
         .expect("Auto encoding failed");
@@ -689,11 +689,11 @@ fn auto_detects_screenshot_vs_photo() {
     // Create photo-like image: noise + gradients
     let photo = create_noise_image(w, h);
 
-    let _cfg7 = EncoderConfig::with_preset(Preset::Auto, 75.0).method(4);
+    let _cfg7 = EncoderConfig::with_preset(Preset::Auto, 75.0).with_method(4);
     let auto_screenshot = EncodeRequest::new(&_cfg7, &screenshot, PixelLayout::Rgb8, w, h)
         .encode()
         .unwrap();
-    let _cfg8 = EncoderConfig::with_preset(Preset::Auto, 75.0).method(4);
+    let _cfg8 = EncoderConfig::with_preset(Preset::Auto, 75.0).with_method(4);
     let auto_photo = EncodeRequest::new(&_cfg8, &photo, PixelLayout::Rgb8, w, h)
         .encode()
         .unwrap();
@@ -723,11 +723,11 @@ fn auto_detects_icon() {
     let h = 64u32;
     let img = create_checkerboard_image(w, h);
 
-    let _cfg9 = EncoderConfig::with_preset(Preset::Auto, 75.0).method(4);
+    let _cfg9 = EncoderConfig::with_preset(Preset::Auto, 75.0).with_method(4);
     let auto = EncodeRequest::new(&_cfg9, &img, PixelLayout::Rgb8, w, h)
         .encode()
         .unwrap();
-    let _cfg10 = EncoderConfig::with_preset(Preset::Icon, 75.0).method(4);
+    let _cfg10 = EncoderConfig::with_preset(Preset::Icon, 75.0).with_method(4);
     let icon = EncodeRequest::new(&_cfg10, &img, PixelLayout::Rgb8, w, h)
         .encode()
         .unwrap();
@@ -774,12 +774,12 @@ mod corpus_tests {
 
         // Convert to RGB if needed
         let rgb = match info.color_type {
-            png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
-            png::PixelLayout::Rgba => buf[..info.buffer_size()]
+            png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
+            png::ColorType::Rgba => buf[..info.buffer_size()]
                 .chunks_exact(4)
                 .flat_map(|p| [p[0], p[1], p[2]])
                 .collect(),
-            png::PixelLayout::Grayscale => buf[..info.buffer_size()]
+            png::ColorType::Grayscale => buf[..info.buffer_size()]
                 .iter()
                 .flat_map(|&g| [g, g, g])
                 .collect(),
@@ -799,7 +799,7 @@ mod corpus_tests {
     ) -> (usize, usize) {
         use webpx::Unstoppable;
 
-        let zen_config = zenwebp::EncoderConfig::with_preset(zen_preset, quality).method(4);
+        let zen_config = zenwebp::EncoderConfig::with_preset(zen_preset, quality).with_method(4);
         let zen_out = EncodeRequest::new(&zen_config, rgb, PixelLayout::Rgb8, w, h)
             .encode()
             .unwrap();
@@ -923,14 +923,14 @@ mod corpus_tests {
                 let path_str = path.to_string_lossy().to_string();
                 if let Some((rgb, w, h)) = load_png(&path_str) {
                     let auto_cfg =
-                        zenwebp::EncoderConfig::with_preset(zenwebp::Preset::Auto, 75.0).method(4);
+                        zenwebp::EncoderConfig::with_preset(zenwebp::Preset::Auto, 75.0).with_method(4);
                     let auto_size = EncodeRequest::new(&auto_cfg, &rgb, PixelLayout::Rgb8, w, h)
                         .encode()
                         .unwrap()
                         .len();
 
                     let photo_cfg =
-                        zenwebp::EncoderConfig::with_preset(zenwebp::Preset::Photo, 75.0).method(4);
+                        zenwebp::EncoderConfig::with_preset(zenwebp::Preset::Photo, 75.0).with_method(4);
                     let photo_size = EncodeRequest::new(&photo_cfg, &rgb, PixelLayout::Rgb8, w, h)
                         .encode()
                         .unwrap()
@@ -990,10 +990,10 @@ mod corpus_tests {
                 // Encode with method 4 (single pass with trellis)
                 let start = Instant::now();
                 let _cfg11 = zenwebp::EncoderConfig::with_preset(zenwebp::Preset::Default, 75.0)
-                    .method(4)
-                    .sns_strength(0)
-                    .filter_strength(0)
-                    .segments(1);
+                    .with_method(4)
+                    .with_sns_strength(0)
+                    .with_filter_strength(0)
+                    .with_segments(1);
                 let m4_output = EncodeRequest::new(&_cfg11, &rgb, PixelLayout::Rgb8, w, h)
                     .encode()
                     .unwrap();
@@ -1002,10 +1002,10 @@ mod corpus_tests {
                 // Encode with method 5 (2 passes)
                 let start = Instant::now();
                 let _cfg12 = zenwebp::EncoderConfig::with_preset(zenwebp::Preset::Default, 75.0)
-                    .method(5)
-                    .sns_strength(0)
-                    .filter_strength(0)
-                    .segments(1);
+                    .with_method(5)
+                    .with_sns_strength(0)
+                    .with_filter_strength(0)
+                    .with_segments(1);
                 let m5_output = EncodeRequest::new(&_cfg12, &rgb, PixelLayout::Rgb8, w, h)
                     .encode()
                     .unwrap();
@@ -1014,10 +1014,10 @@ mod corpus_tests {
                 // Encode with method 6 (3 passes)
                 let start = Instant::now();
                 let _cfg13 = zenwebp::EncoderConfig::with_preset(zenwebp::Preset::Default, 75.0)
-                    .method(6)
-                    .sns_strength(0)
-                    .filter_strength(0)
-                    .segments(1);
+                    .with_method(6)
+                    .with_sns_strength(0)
+                    .with_filter_strength(0)
+                    .with_segments(1);
                 let m6_output = EncodeRequest::new(&_cfg13, &rgb, PixelLayout::Rgb8, w, h)
                     .encode()
                     .unwrap();
@@ -1127,7 +1127,7 @@ mod corpus_tests {
 
         if let Some((rgb, w, h)) = load_png(test_path) {
             // First encode without target_size to get a baseline
-            let _cfg14 = zenwebp::encoder::EncoderConfig::new().quality(75.0);
+            let _cfg14 = zenwebp::encoder::EncoderConfig::new_lossy().with_quality(75.0);
             let baseline = EncodeRequest::new(&_cfg14, &rgb, PixelLayout::Rgb8, w, h)
                 .encode()
                 .expect("Baseline encoding failed");
@@ -1138,9 +1138,9 @@ mod corpus_tests {
             let target_size = (baseline_size as f64 * 0.8) as u32;
             println!("Target size: {} bytes", target_size);
 
-            let _cfg15 = zenwebp::encoder::EncoderConfig::new()
-                .quality(75.0)
-                .target_size(target_size);
+            let _cfg15 = zenwebp::encoder::EncoderConfig::new_lossy()
+                .with_quality(75.0)
+                .with_target_size(target_size);
             let target_output = EncodeRequest::new(&_cfg15, &rgb, PixelLayout::Rgb8, w, h)
                 .encode()
                 .expect("Target size encoding failed");
@@ -1183,9 +1183,9 @@ mod corpus_tests {
 
             println!("\nTesting target sizes on {}x{} image:", w, h);
             for target in targets {
-                let _cfg16 = zenwebp::encoder::EncoderConfig::new()
-                    .quality(75.0)
-                    .target_size(target);
+                let _cfg16 = zenwebp::encoder::EncoderConfig::new_lossy()
+                    .with_quality(75.0)
+                    .with_target_size(target);
                 let output = EncodeRequest::new(&_cfg16, &rgb, PixelLayout::Rgb8, w, h)
                     .encode()
                     .expect("Encoding failed");

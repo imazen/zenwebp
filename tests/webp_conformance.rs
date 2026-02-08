@@ -102,9 +102,8 @@ fn test_webp_invalid_robustness() {
 
     for entry in fs::read_dir(&corpus_path).unwrap_or_else(|_| {
         eprintln!("Warning: Failed to read invalid/ directory");
-        return fs::read_dir("/dev/null").unwrap(); // Return empty iterator
-    }) {
-        if let Ok(entry) = entry {
+        fs::read_dir("/dev/null").unwrap()
+    }).flatten() {
             let path = entry.path();
             if path.extension().and_then(|ext| ext.to_str()) != Some("webp") {
                 continue;
@@ -137,7 +136,6 @@ fn test_webp_invalid_robustness() {
                 crashed += 1;
                 eprintln!("CRASH: {}", path.display());
             }
-        }
     }
 
     if tested == 0 {
@@ -171,9 +169,8 @@ fn test_webp_non_conformant_regression() {
 
     for entry in fs::read_dir(&corpus_path).unwrap_or_else(|_| {
         eprintln!("Warning: Failed to read non-conformant/ directory");
-        return fs::read_dir("/dev/null").unwrap();
-    }) {
-        if let Ok(entry) = entry {
+        fs::read_dir("/dev/null").unwrap()
+    }).flatten() {
             let path = entry.path();
             if path.extension().and_then(|ext| ext.to_str()) != Some("webp") {
                 continue;
@@ -221,7 +218,6 @@ fn test_webp_non_conformant_regression() {
                     );
                 }
             }
-        }
     }
 
     if tested == 0 {

@@ -22,8 +22,8 @@ fn main() {
         let info = reader.next_frame(&mut buf).unwrap();
 
         let rgb: Vec<u8> = match info.color_type {
-            png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
-            png::PixelLayout::Rgba => buf[..info.buffer_size()]
+            png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
+            png::ColorType::Rgba => buf[..info.buffer_size()]
                 .chunks(4)
                 .flat_map(|c| &c[..3])
                 .copied()
@@ -32,7 +32,7 @@ fn main() {
         };
 
         let webp = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-            .with_method(5)
+            .method(5)
             .encode_rgb(&rgb, info.width, info.height, webpx::Unstoppable)
             .unwrap();
         fs::write("/tmp/profile_test.webp", &webp).ok();

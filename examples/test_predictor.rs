@@ -154,7 +154,7 @@ fn test_photo() {
     let width = info.width;
     let height = info.height;
 
-    let rgb: Vec<u8> = if info.color_type == png::PixelLayout::Rgba {
+    let rgb: Vec<u8> = if info.color_type == png::ColorType::Rgba {
         buf[..info.buffer_size()]
             .chunks(4)
             .flat_map(|c| [c[0], c[1], c[2]].into_iter())

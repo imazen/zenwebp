@@ -15,8 +15,8 @@ fn debug_encode_kodak1() {
     let info = reader.next_frame(&mut buf).unwrap();
 
     let rgb_data = match info.color_type {
-        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::PixelLayout::Rgba => {
+        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::ColorType::Rgba => {
             let mut rgb = Vec::with_capacity((info.width * info.height * 3) as usize);
             for chunk in buf[..info.buffer_size()].chunks(4) {
                 rgb.extend_from_slice(&chunk[..3]);
@@ -36,7 +36,7 @@ fn debug_encode_kodak1() {
 
     for q in [50u8, 75, 90, 95] {
         // Ours
-        let config = EncoderConfig::new().quality(q as f32);
+        let config = EncoderConfig::new_lossy().with_quality(q as f32);
         let our_output = EncodeRequest::new(
             &config,
             &rgb_data,

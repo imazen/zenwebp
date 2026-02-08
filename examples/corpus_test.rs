@@ -44,8 +44,8 @@ fn main() {
         };
 
         let (rgb, w, h) = match info.color_type {
-            png::PixelLayout::Rgb => (buf[..info.buffer_size()].to_vec(), info.width, info.height),
-            png::PixelLayout::Rgba => {
+            png::ColorType::Rgb => (buf[..info.buffer_size()].to_vec(), info.width, info.height),
+            png::ColorType::Rgba => {
                 let rgba = &buf[..info.buffer_size()];
                 let mut rgb = Vec::with_capacity(rgba.len() * 3 / 4);
                 for chunk in rgba.chunks(4) {
@@ -67,11 +67,11 @@ fn main() {
         };
 
         let lib = match webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-            .with_method(method)
-            .with_sns_strength(0)
-            .with_filter_strength(0)
-            .with_filter_sharpness(0)
-            .with_segments(1)
+            .method(method)
+            .sns_strength(0)
+            .filter_strength(0)
+            .filter_sharpness(0)
+            .segments(1)
             .encode_rgb(&rgb, w, h, webpx::Unstoppable)
         {
             Ok(v) => v,

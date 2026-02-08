@@ -47,11 +47,11 @@ fn main() {
 
     for (name, method) in lib_settings {
         let webp = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-            .with_method(method)
-            .with_sns_strength(0)
-            .with_filter_strength(0)
-            .with_filter_sharpness(0)
-            .with_segments(1)
+            .method(method)
+            .sns_strength(0)
+            .filter_strength(0)
+            .filter_sharpness(0)
+            .segments(1)
             .encode_rgb(&rgb, w, h, webpx::Unstoppable)
             .unwrap();
         println!("{}: {} bytes", name, webp.len());

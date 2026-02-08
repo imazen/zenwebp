@@ -51,11 +51,11 @@ fn main() {
     println!("\nlibwebp:");
     for method in [4u8, 6] {
         let config = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-            .with_method(method)
-            .with_sns_strength(0)
-            .with_filter_strength(0)
-            .with_filter_sharpness(0)
-            .with_segments(1);
+            .method(method)
+            .sns_strength(0)
+            .filter_strength(0)
+            .filter_sharpness(0)
+            .segments(1);
         let webp = config.encode_rgb(&rgb, w, h, webpx::Unstoppable).unwrap();
 
         let vp8_chunk = extract_vp8(&webp).unwrap();

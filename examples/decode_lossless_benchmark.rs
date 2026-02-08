@@ -21,8 +21,8 @@ fn main() {
     let info = reader.next_frame(&mut buf).unwrap();
 
     let rgb = match info.color_type {
-        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::PixelLayout::Rgba => {
+        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::ColorType::Rgba => {
             let rgba = &buf[..info.buffer_size()];
             let mut rgb = Vec::with_capacity(rgba.len() * 3 / 4);
             for chunk in rgba.chunks(4) {
@@ -35,7 +35,7 @@ fn main() {
 
     // Encode with libwebp LOSSLESS
     let webp_data = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 100.0)
-        .with_lossless(true)
+        .lossless(true)
         .encode_rgb(&rgb, info.width, info.height, webpx::Unstoppable)
         .expect("Failed to encode");
 

@@ -15,22 +15,22 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let info = reader.next_frame(&mut buf).ok()?;
 
     let rgb_data = match info.color_type {
-        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::PixelLayout::Rgba => {
+        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::ColorType::Rgba => {
             let mut rgb = Vec::with_capacity((info.width * info.height * 3) as usize);
             for chunk in buf[..info.buffer_size()].chunks(4) {
                 rgb.extend_from_slice(&chunk[..3]);
             }
             rgb
         }
-        png::PixelLayout::Grayscale => {
+        png::ColorType::Grayscale => {
             let mut rgb = Vec::with_capacity((info.width * info.height * 3) as usize);
             for &g in &buf[..info.buffer_size()] {
                 rgb.extend_from_slice(&[g, g, g]);
             }
             rgb
         }
-        png::PixelLayout::GrayscaleAlpha => {
+        png::ColorType::GrayscaleAlpha => {
             let mut rgb = Vec::with_capacity((info.width * info.height * 3) as usize);
             for chunk in buf[..info.buffer_size()].chunks(2) {
                 let g = chunk[0];
@@ -86,11 +86,11 @@ fn bench_methods_diagnostic(c: &mut Criterion) {
             |b, &method| {
                 b.iter(|| {
                     webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-                        .with_method(method)
-                        .with_sns_strength(0)
-                        .with_filter_strength(0)
-                        .with_filter_sharpness(0)
-                        .with_segments(1)
+                        .method(method)
+                        .sns_strength(0)
+                        .filter_strength(0)
+                        .filter_sharpness(0)
+                        .segments(1)
                         .encode_rgb(black_box(&rgb_data), width, height, webpx::Unstoppable)
                         .unwrap()
                 });
@@ -138,7 +138,7 @@ fn bench_methods_default(c: &mut Criterion) {
             |b, &method| {
                 b.iter(|| {
                     webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-                        .with_method(method)
+                        .method(method)
                         .encode_rgb(black_box(&rgb_data), width, height, webpx::Unstoppable)
                         .unwrap()
                 });
@@ -186,7 +186,7 @@ fn bench_quality_comparison(c: &mut Criterion) {
             |b, &quality| {
                 b.iter(|| {
                     webpx::EncoderConfig::with_preset(webpx::Preset::Default, quality)
-                        .with_method(4)
+                        .method(4)
                         .encode_rgb(black_box(&rgb_data), width, height, webpx::Unstoppable)
                         .unwrap()
                 });

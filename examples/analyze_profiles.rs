@@ -25,6 +25,7 @@ fn main() {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct EncodeRow {
     pixels: u64,
     method: u8,

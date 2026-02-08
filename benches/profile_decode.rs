@@ -14,8 +14,8 @@ fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
     let info = reader.next_frame(&mut buf).unwrap();
 
     let rgb_data: Vec<u8> = match info.color_type {
-        png::PixelLayout::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::PixelLayout::Rgba => {
+        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::ColorType::Rgba => {
             let mut rgb = Vec::with_capacity((info.width * info.height * 3) as usize);
             for chunk in buf[..info.buffer_size()].chunks(4) {
                 rgb.extend_from_slice(&chunk[..3]);

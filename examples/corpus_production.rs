@@ -53,8 +53,8 @@ fn main() {
             let zen = EncodeRequest::new(&_cfg, &pixels, PixelLayout::Rgb8, w, h).encode();
 
             let lib = webpx::EncoderConfig::new()
-                .with_quality(q)
-                .with_method(4)
+                .quality(q)
+                .method(4)
                 .encode_rgb(&pixels, w, h, webpx::Unstoppable);
 
             if let (Ok(z), Ok(l)) = (zen, lib) {

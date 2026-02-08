@@ -29,8 +29,8 @@ fn main() {
             .unwrap();
 
         let lib = webpx::EncoderConfig::new()
-            .with_quality(q as f32)
-            .with_method(4)
+            .quality(q as f32)
+            .method(4)
             .encode_rgb(&pixels, w, h, webpx::Unstoppable)
             .unwrap();
 

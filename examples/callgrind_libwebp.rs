@@ -28,16 +28,16 @@ fn main() {
 
     let output = if diagnostic {
         webpx::EncoderConfig::with_preset(webpx::Preset::Default, quality)
-            .with_method(method)
-            .with_sns_strength(0)
-            .with_filter_strength(0)
-            .with_filter_sharpness(0)
-            .with_segments(1)
+            .method(method)
+            .sns_strength(0)
+            .filter_strength(0)
+            .filter_sharpness(0)
+            .segments(1)
             .encode_rgb(&rgb_data, width, height, webpx::Unstoppable)
             .unwrap()
     } else {
         webpx::EncoderConfig::with_preset(webpx::Preset::Default, quality)
-            .with_method(method)
+            .method(method)
             .encode_rgb(&rgb_data, width, height, webpx::Unstoppable)
             .unwrap()
     };

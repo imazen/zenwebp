@@ -23,11 +23,11 @@ fn main() {
         .unwrap();
 
     let lib_i16 = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-        .with_method(0) // I16 only
-        .with_sns_strength(0)
-        .with_filter_strength(0)
-        .with_filter_sharpness(0)
-        .with_segments(1)
+        .method(0) // I16 only
+        .sns_strength(0)
+        .filter_strength(0)
+        .filter_sharpness(0)
+        .segments(1)
         .encode_rgb(&rgb, w, h, webpx::Unstoppable)
         .unwrap();
 
@@ -50,11 +50,11 @@ fn main() {
         .unwrap();
 
     let lib_m4 = webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-        .with_method(4)
-        .with_sns_strength(0)
-        .with_filter_strength(0)
-        .with_filter_sharpness(0)
-        .with_segments(1)
+        .method(4)
+        .sns_strength(0)
+        .filter_strength(0)
+        .filter_sharpness(0)
+        .segments(1)
         .encode_rgb(&rgb, w, h, webpx::Unstoppable)
         .unwrap();
 
