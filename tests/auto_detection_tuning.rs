@@ -191,7 +191,9 @@ struct ImageResult {
 #[test]
 fn auto_detection_cid22() {
     let corpus = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
-    let corpus_dir = corpus.get("CID22/CID22-512/validation").expect("CID22 corpus unavailable");
+    let corpus_dir = corpus
+        .get("CID22/CID22-512/validation")
+        .expect("CID22 corpus unavailable");
 
     println!("\n=== CID22 Validation Set — Size & Quality Comparison ===");
     println!(

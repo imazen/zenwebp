@@ -9,7 +9,9 @@ fn main() {
         std::path::PathBuf::from(d)
     } else {
         let corpus = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
-        corpus.get("CID22/CID22-512/validation").expect("corpus path unavailable")
+        corpus
+            .get("CID22/CID22-512/validation")
+            .expect("corpus path unavailable")
     };
 
     let mut zen_total = 0u64;

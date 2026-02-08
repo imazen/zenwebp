@@ -400,6 +400,34 @@ impl<'a> DecodeRequest<'a> {
         self
     }
 
+    /// Decode to the image's native pixel format (RGB or RGBA).
+    ///
+    /// Returns RGBA if the image has alpha, RGB otherwise. This avoids
+    /// both unnecessary alpha expansion and alpha stripping.
+    ///
+    /// The returned [`PixelLayout`](crate::PixelLayout) indicates the format.
+    pub fn decode(self) -> Result<(Vec<u8>, u32, u32, crate::PixelLayout), DecodeError> {
+        let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
+        decoder.set_limits(self.config.limits.clone());
+        #[allow(deprecated)]
+        if self.config.memory_limit > 0 {
+            decoder.set_memory_limit(self.config.memory_limit);
+        }
+        decoder.set_stop(self.stop);
+        let (w, h) = decoder.dimensions();
+        let output_size = decoder
+            .output_buffer_size()
+            .ok_or(DecodeError::ImageTooLarge)?;
+        let mut pixels = alloc::vec![0u8; output_size];
+        decoder.read_image(&mut pixels)?;
+        let layout = if decoder.has_alpha() {
+            crate::PixelLayout::Rgba8
+        } else {
+            crate::PixelLayout::Rgb8
+        };
+        Ok((pixels, w, h, layout))
+    }
+
     /// Decode to RGBA pixels. If the image has no alpha channel, alpha is set to 255.
     pub fn decode_rgba(self) -> Result<(Vec<u8>, u32, u32), DecodeError> {
         let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
@@ -688,6 +716,15 @@ impl<'a> WebPDecoder<'a> {
     /// # Ok::<(), zenwebp::DecodeError>(())
     /// ```
     pub fn info(&self) -> ImageInfo {
+        let icc_profile = self
+            .read_chunk_direct(WebPRiffChunk::ICCP, self.memory_limit)
+            .unwrap_or(None);
+        let exif = self
+            .read_chunk_direct(WebPRiffChunk::EXIF, self.memory_limit)
+            .unwrap_or(None);
+        let xmp = self
+            .read_chunk_direct(WebPRiffChunk::XMP, self.memory_limit)
+            .unwrap_or(None);
         ImageInfo {
             width: self.width,
             height: self.height,
@@ -700,6 +737,9 @@ impl<'a> WebPDecoder<'a> {
             } else {
                 BitstreamFormat::Lossless
             },
+            icc_profile,
+            exif,
+            xmp,
         }
     }
 
@@ -1004,16 +1044,23 @@ impl<'a> WebPDecoder<'a> {
         chunk: WebPRiffChunk,
         max_size: usize,
     ) -> Result<Option<Vec<u8>>, DecodeError> {
+        self.read_chunk_direct(chunk, max_size)
+    }
+
+    fn read_chunk_direct(
+        &self,
+        chunk: WebPRiffChunk,
+        max_size: usize,
+    ) -> Result<Option<Vec<u8>>, DecodeError> {
         match self.chunks.get(&chunk) {
             Some(range) => {
-                if range.end - range.start > max_size as u64 {
+                let len = (range.end - range.start) as usize;
+                if len > max_size {
                     return Err(DecodeError::MemoryLimitExceeded);
                 }
-
-                self.r.seek_from_start(range.start)?;
-                let mut data = vec![0; (range.end - range.start) as usize];
-                self.r.read_exact(&mut data)?;
-                Ok(Some(data))
+                let start = range.start as usize;
+                let end = range.end as usize;
+                Ok(Some(self.r.get_ref()[start..end].to_vec()))
             }
             None => Ok(None),
         }
@@ -1551,6 +1598,12 @@ pub struct ImageInfo {
     pub frame_count: u32,
     /// Bitstream format (lossy or lossless).
     pub format: BitstreamFormat,
+    /// ICC color profile, if present.
+    pub icc_profile: Option<Vec<u8>>,
+    /// EXIF metadata, if present.
+    pub exif: Option<Vec<u8>>,
+    /// XMP metadata, if present.
+    pub xmp: Option<Vec<u8>>,
 }
 
 impl ImageInfo {
@@ -1581,8 +1634,12 @@ impl ImageInfo {
     }
 
     /// Parse image information from WebP data.
+    ///
+    /// Extracts dimensions, format info, and metadata (ICC, EXIF, XMP) in a single
+    /// pass. This replaces the need to use both [`WebPDecoder`] and
+    /// [`WebPDemuxer`](crate::WebPDemuxer) for probing.
     pub fn from_webp(data: &[u8]) -> Result<Self, DecodeError> {
-        let decoder = WebPDecoder::new(data)?;
+        let mut decoder = WebPDecoder::new(data)?;
         let (width, height) = decoder.dimensions();
         let is_lossy = decoder.is_lossy();
         let is_animated = decoder.is_animated();
@@ -1592,6 +1649,9 @@ impl ImageInfo {
         } else {
             BitstreamFormat::Lossless
         };
+        let icc_profile = decoder.icc_profile().unwrap_or(None);
+        let exif = decoder.exif_metadata().unwrap_or(None);
+        let xmp = decoder.xmp_metadata().unwrap_or(None);
         Ok(Self {
             width,
             height,
@@ -1600,6 +1660,9 @@ impl ImageInfo {
             has_animation: is_animated,
             frame_count,
             format,
+            icc_profile,
+            exif,
+            xmp,
         })
     }
 

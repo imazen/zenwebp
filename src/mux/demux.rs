@@ -385,6 +385,11 @@ impl<'a> WebPDemuxer<'a> {
         }
     }
 
+    /// Number of frames (alias for [`num_frames()`](Self::num_frames)).
+    pub fn frame_count(&self) -> u32 {
+        self.num_frames()
+    }
+
     /// Loop count for animated images.
     pub fn loop_count(&self) -> LoopCount {
         self.loop_count

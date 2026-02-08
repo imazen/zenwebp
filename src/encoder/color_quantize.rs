@@ -160,7 +160,7 @@ fn quantize_rgba_impl(
     width: u32,
     height: u32,
     has_alpha: bool,
-    _quality: u8,  // quantizr doesn't have quality parameter
+    _quality: u8, // quantizr doesn't have quality parameter
     max_colors: u16,
 ) -> Option<QuantizedImage> {
     let w = width as usize;
@@ -181,7 +181,7 @@ fn quantize_rgba_impl(
             rgba.push(chunk[0]); // R
             rgba.push(chunk[1]); // G
             rgba.push(chunk[2]); // B
-            rgba.push(255);      // A
+            rgba.push(255); // A
         }
         rgba
     };

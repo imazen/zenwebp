@@ -16,7 +16,9 @@ fn test_webp_valid_files() {
     let corpus_path = get_corpus_path("webp-conformance/valid");
     if corpus_path.is_none() {
         eprintln!("Skipping: codec-corpus not found. Set CORPUS_DIR or clone:");
-        eprintln!("  git clone --depth=1 https://github.com/imazen/codec-corpus.git ~/codec-corpus");
+        eprintln!(
+            "  git clone --depth=1 https://github.com/imazen/codec-corpus.git ~/codec-corpus"
+        );
         return;
     }
 
@@ -145,7 +147,8 @@ fn test_webp_invalid_robustness() {
 
     println!(
         "WebP Invalid File Test: {}/{} files handled safely (no crashes)",
-        tested - crashed, tested
+        tested - crashed,
+        tested
     );
     assert_eq!(
         crashed, 0,
@@ -190,14 +193,16 @@ fn test_webp_non_conformant_regression() {
                 (Ok((w1, h1)), Ok((w2, h2))) => {
                     // For regression: check dimensions match
                     assert_eq!(
-                        w1, w2,
+                        w1,
+                        w2,
                         "Width mismatch on {}: {} vs {}",
                         path.display(),
                         w1,
                         w2
                     );
                     assert_eq!(
-                        h1, h2,
+                        h1,
+                        h2,
                         "Height mismatch on {}: {} vs {}",
                         path.display(),
                         h1,
@@ -224,7 +229,10 @@ fn test_webp_non_conformant_regression() {
         return;
     }
 
-    println!("WebP Non-Conformant Regression Test: {}/{} files checked", tested, tested);
+    println!(
+        "WebP Non-Conformant Regression Test: {}/{} files checked",
+        tested, tested
+    );
 }
 
 /// Helper function to decode WebP and return dimensions.

@@ -6,8 +6,12 @@ use zenwebp::{EncodeRequest, PixelLayout};
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
         let corpus = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
-        corpus.get("CID22/CID22-512/validation").expect("corpus path unavailable")
-            .join("792079.png").to_string_lossy().to_string()
+        corpus
+            .get("CID22/CID22-512/validation")
+            .expect("corpus path unavailable")
+            .join("792079.png")
+            .to_string_lossy()
+            .to_string()
     });
 
     let file = std::fs::File::open(&path).unwrap();

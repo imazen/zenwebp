@@ -163,9 +163,31 @@ pub fn xmp(data: &[u8]) -> Result<Option<alloc::vec::Vec<u8>>, MuxError> {
     Ok(demuxer.xmp().map(|s| s.to_vec()))
 }
 
+/// Embed metadata (ICC, EXIF, XMP) into WebP data in a single pass.
+///
+/// This is more efficient than calling [`embed_icc`], [`embed_exif`], and [`embed_xmp`]
+/// separately, since it only parses and reassembles the RIFF container once.
+pub fn embed_metadata(
+    data: &[u8],
+    metadata: &ImageMetadata<'_>,
+) -> Result<alloc::vec::Vec<u8>, MuxError> {
+    let mut mux = WebPMux::from_data(data)?;
+    if let Some(icc) = metadata.icc_profile {
+        mux.set_icc_profile(icc.to_vec());
+    }
+    if let Some(exif) = metadata.exif {
+        mux.set_exif(exif.to_vec());
+    }
+    if let Some(xmp) = metadata.xmp {
+        mux.set_xmp(xmp.to_vec());
+    }
+    mux.assemble()
+}
+
 /// Embed an ICC color profile into WebP data.
 ///
 /// Reassembles the WebP container with the provided ICC profile.
+/// For embedding multiple metadata types at once, use [`embed_metadata`] instead.
 pub fn embed_icc(data: &[u8], icc_profile: &[u8]) -> Result<alloc::vec::Vec<u8>, MuxError> {
     let mut mux = WebPMux::from_data(data)?;
     mux.set_icc_profile(icc_profile.to_vec());

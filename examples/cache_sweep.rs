@@ -4,8 +4,12 @@ fn main() {
         p.to_string()
     } else {
         let corpus = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
-        corpus.get("CID22/CID22-512/training").expect("corpus path unavailable")
-            .join("1183021.png").to_string_lossy().to_string()
+        corpus
+            .get("CID22/CID22-512/training")
+            .expect("corpus path unavailable")
+            .join("1183021.png")
+            .to_string_lossy()
+            .to_string()
     };
 
     let file = std::fs::File::open(&path).unwrap();
