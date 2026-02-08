@@ -13,7 +13,7 @@
 //! ## Relationship to psy module
 //!
 //! The `t_transform` here computes a *weighted* Hadamard for distortion.
-//! The [`super::super::psy::satd_4x4`] computes an *unweighted* Hadamard
+//! The `psy::satd_4x4` computes an *unweighted* Hadamard
 //! for energy measurement. Both use the same transform kernel.
 
 #![allow(dead_code)]

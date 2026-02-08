@@ -8,6 +8,7 @@ rust-version = "1.92"
 description = "High-performance WebP encoding and decoding in pure Rust"
 homepage = "https://github.com/imazen/zenwebp"
 repository = "https://github.com/imazen/zenwebp"
+documentation = "https://docs.rs/zenwebp"
 categories = ["multimedia::images", "multimedia::encoding", "encoding"]
 keywords = ["webp", "image", "encoder", "decoder", "codec"]
 readme = "README.md"

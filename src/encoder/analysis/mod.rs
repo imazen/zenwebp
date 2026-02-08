@@ -5,11 +5,11 @@
 //!
 //! ## Module organization
 //!
-//! - [`classifier`]: Content type detection for auto-preset selection
-//! - [`histogram`]: DCT coefficient histogram collection (SIMD candidate)
-//! - [`iterator`]: Macroblock iteration for analysis pass
-//! - [`prediction`]: Intra prediction for analysis (SIMD candidate)
-//! - [`segment`]: K-means segment assignment and quantization
+//! - `classifier`: Content type detection for auto-preset selection
+//! - `histogram`: DCT coefficient histogram collection (SIMD candidate)
+//! - `iterator`: Macroblock iteration for analysis pass
+//! - `prediction`: Intra prediction for analysis (SIMD candidate)
+//! - `segment`: K-means segment assignment and quantization
 //!
 //! ## Analysis pipeline
 //!

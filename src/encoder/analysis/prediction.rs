@@ -103,7 +103,7 @@ pub fn pred_luma16_dc(dst: &mut [u8], left: Option<&[u8]>, top: Option<&[u8]>) {
 /// Generate TM (TrueMotion) prediction for 16x16 luma block
 /// Ported from libwebp's TrueMotion
 ///
-/// left_with_corner[0] = top-left corner, left_with_corner[1..17] = left pixels
+/// left_with_corner\[0\] = top-left corner, left_with_corner\[1..17\] = left pixels
 pub fn pred_luma16_tm(dst: &mut [u8], left_with_corner: Option<&[u8]>, top: Option<&[u8]>) {
     match (left_with_corner, top) {
         (Some(left), Some(top)) => {
@@ -194,7 +194,7 @@ fn pred_luma16_tm_sse2(_token: X64V3Token, dst: &mut [u8], left: &[u8], top: &[u
 /// Generate all I16 predictions into yuv_p buffer
 /// Ported from libwebp's VP8EncPredLuma16
 ///
-/// left_with_corner: full y_left array where [0]=corner, [1..17]=left pixels
+/// left_with_corner: full y_left array where \[0\]=corner, \[1..17\]=left pixels
 pub fn make_luma16_preds(yuv_p: &mut [u8], left_with_corner: Option<&[u8]>, top: Option<&[u8]>) {
     // DC prediction at I16DC16 (only needs left pixels, not corner)
     let left_only = left_with_corner.map(|l| &l[1..17]);
@@ -257,7 +257,7 @@ pub fn pred_chroma8_dc(dst: &mut [u8], left: Option<&[u8]>, top: Option<&[u8]>) 
 /// Generate TM prediction for 8x8 chroma block
 /// Ported from libwebp's TrueMotion
 ///
-/// left_with_corner: [0]=corner, [1..9]=left pixels (matching u_left/v_left layout)
+/// left_with_corner: \[0\]=corner, \[1..9\]=left pixels (matching u_left/v_left layout)
 pub fn pred_chroma8_tm(dst: &mut [u8], left_with_corner: Option<&[u8]>, top: Option<&[u8]>) {
     match (left_with_corner, top) {
         (Some(left), Some(top)) => {
@@ -348,7 +348,7 @@ fn pred_chroma8_tm_sse2(_token: X64V3Token, dst: &mut [u8], left: &[u8], top: &[
 /// Ported from libwebp's VP8EncPredChroma8
 ///
 /// Note: In libwebp, U and V predictions are interleaved in the buffer.
-/// u_left_with_corner/v_left_with_corner: [0]=corner, [1..9]=left pixels
+/// u_left_with_corner/v_left_with_corner: \[0\]=corner, \[1..9\]=left pixels
 /// uv_top: U at [0..8], V at [8..16]
 pub fn make_chroma8_preds(
     yuv_p: &mut [u8],

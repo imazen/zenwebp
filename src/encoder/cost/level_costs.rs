@@ -3,8 +3,8 @@
 //! Ported from libwebp src/enc/cost_enc.c
 //!
 //! The key insight is that coefficient costs depend on the probability context.
-//! VP8CalculateLevelCosts precomputes cost tables indexed by [type][band][ctx][level].
-//! Then remapped_costs provides direct access by coefficient position: [type][n][ctx].
+//! VP8CalculateLevelCosts precomputes cost tables indexed by \[type\]\[band\]\[ctx\]\[level\].
+//! Then remapped_costs provides direct access by coefficient position: \[type\]\[n\]\[ctx\].
 
 #![allow(dead_code)]
 #![allow(clippy::needless_range_loop)]

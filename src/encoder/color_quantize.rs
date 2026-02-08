@@ -32,7 +32,7 @@ use alloc::vec::Vec;
 
 /// Result of color quantization.
 pub struct QuantizedImage {
-    /// ARGB pixels (each pixel is palette[index]), suitable for VP8L encoding.
+    /// ARGB pixels (each pixel is palette\[index\]), suitable for VP8L encoding.
     pub argb: Vec<u32>,
     /// Width of the image.
     pub width: u32,

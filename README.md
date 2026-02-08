@@ -333,7 +333,7 @@ a sliding scale. You can also use this under the AGPL v3.
 
 ### Previous Versions
 
-Versions 0.1.x - 0.3.x were dual-licensed under MIT OR Apache-2.0. See the git history for those license files.
+Versions 0.1.x - 0.2.x were dual-licensed under MIT OR Apache-2.0. See the git history for those license files.
 
 ### Color Quantization Features
 
