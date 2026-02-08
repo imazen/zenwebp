@@ -400,7 +400,7 @@ impl<'a> DecodeRequest<'a> {
         self
     }
 
-    /// Decode to RGBA pixels.
+    /// Decode to RGBA pixels. If the image has no alpha channel, alpha is set to 255.
     pub fn decode_rgba(self) -> Result<(Vec<u8>, u32, u32), DecodeError> {
         let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
         decoder.set_limits(self.config.limits.clone());
@@ -410,24 +410,53 @@ impl<'a> DecodeRequest<'a> {
         }
         decoder.set_stop(self.stop);
         let (w, h) = decoder.dimensions();
-        let size = (w as usize)
-            .checked_mul(h as usize)
-            .and_then(|n| n.checked_mul(4))
+        let output_size = decoder
+            .output_buffer_size()
             .ok_or(DecodeError::ImageTooLarge)?;
-        let mut buf = alloc::vec![0u8; size];
-        decoder.read_image(&mut buf)?;
-        Ok((buf, w, h))
+        let mut native = alloc::vec![0u8; output_size];
+        decoder.read_image(&mut native)?;
+
+        if decoder.has_alpha() {
+            Ok((native, w, h))
+        } else {
+            // Expand RGB to RGBA
+            let pixel_count = (w as usize) * (h as usize);
+            let mut rgba = Vec::with_capacity(pixel_count * 4);
+            for chunk in native.chunks_exact(3) {
+                rgba.extend_from_slice(chunk);
+                rgba.push(255);
+            }
+            Ok((rgba, w, h))
+        }
     }
 
-    /// Decode to RGB pixels (no alpha).
+    /// Decode to RGB pixels (no alpha). If the image has alpha, it is discarded.
     pub fn decode_rgb(self) -> Result<(Vec<u8>, u32, u32), DecodeError> {
-        // Decode as RGBA, then strip alpha
-        let (rgba, w, h) = self.decode_rgba()?;
-        let mut rgb = Vec::with_capacity((w as usize) * (h as usize) * 3);
-        for chunk in rgba.chunks_exact(4) {
-            rgb.extend_from_slice(&chunk[..3]);
+        let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
+        decoder.set_limits(self.config.limits.clone());
+        #[allow(deprecated)]
+        if self.config.memory_limit > 0 {
+            decoder.set_memory_limit(self.config.memory_limit);
         }
-        Ok((rgb, w, h))
+        decoder.set_stop(self.stop);
+        let (w, h) = decoder.dimensions();
+        let output_size = decoder
+            .output_buffer_size()
+            .ok_or(DecodeError::ImageTooLarge)?;
+        let mut native = alloc::vec![0u8; output_size];
+        decoder.read_image(&mut native)?;
+
+        if !decoder.has_alpha() {
+            Ok((native, w, h))
+        } else {
+            // Strip alpha from RGBA
+            let pixel_count = (w as usize) * (h as usize);
+            let mut rgb = Vec::with_capacity(pixel_count * 3);
+            for chunk in native.chunks_exact(4) {
+                rgb.extend_from_slice(&chunk[..3]);
+            }
+            Ok((rgb, w, h))
+        }
     }
 
     /// Decode to RGBA, writing into a pre-allocated buffer.
