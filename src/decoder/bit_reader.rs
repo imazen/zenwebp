@@ -790,6 +790,8 @@ impl<'a> ActivePartitionReader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
+    use alloc::vec::Vec;
     use crate::decoder::arithmetic::ArithmeticDecoder;
 
     #[test]
@@ -852,14 +854,10 @@ mod tests {
             let new_bit = new_reader.get_flag();
             if old_bit != new_bit {
                 differences += 1;
-                if differences <= 5 {
-                    eprintln!("Difference at flag {}: old={}, new={}", i, old_bit, new_bit);
-                }
             }
         }
 
-        eprintln!("Flag differences: {}/100", differences);
-        assert_eq!(differences, 0, "Flag reads should match");
+        assert_eq!(differences, 0, "Flag reads should match (got {differences}/100 differences)");
     }
 
     /// Test with various probabilities
@@ -887,7 +885,6 @@ mod tests {
                     diffs += 1;
                 }
             }
-            eprintln!("Prob {}: {}/20 differences", prob, diffs);
             total_diffs += diffs;
         }
 

@@ -651,6 +651,7 @@ pub fn write_single_entry_tree(w: &mut BitWriter, symbol: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_build_huffman_16_equal() {
@@ -661,13 +662,6 @@ mod tests {
         }
         let lengths = build_huffman_lengths(&freq, 15);
 
-        println!("Lengths for 16 equal symbols:");
-        for (i, &len) in lengths.iter().enumerate() {
-            if len > 0 {
-                println!("  symbol[{}] = {}", i, len);
-            }
-        }
-
         // Count how many at each length
         let mut length_counts = [0usize; 16];
         for &len in &lengths {
@@ -675,7 +669,6 @@ mod tests {
                 length_counts[len as usize] += 1;
             }
         }
-        println!("Length histogram: {:?}", &length_counts[..8]);
 
         // Verify Kraft inequality
         let kraft: u32 = lengths
@@ -683,7 +676,7 @@ mod tests {
             .filter(|&&l| l > 0)
             .map(|&l| 1u32 << (15 - l))
             .sum();
-        println!("Kraft sum (should be {}): {}", 1u32 << 15, kraft);
+        assert_eq!(kraft, 1u32 << 15);
 
         // All 16 symbols should have length 4
         assert_eq!(length_counts[4], 16, "Expected 16 symbols with length 4");
@@ -733,17 +726,6 @@ mod tests {
     fn test_canonical_codes() {
         let lengths = [2u8, 2, 3, 3];
         let codes = build_huffman_codes(&lengths);
-
-        println!("Generated codes:");
-        for (i, code) in codes.iter().enumerate() {
-            println!(
-                "  symbol[{}]: code={:0width$b}, length={}",
-                i,
-                code.code,
-                code.length,
-                width = code.length as usize
-            );
-        }
 
         // Canonical codes (before bit reversal): 00, 01, 100, 101
         // After bit reversal for LSB-first VP8L:

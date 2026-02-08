@@ -1340,6 +1340,8 @@ mod benches {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
+    use alloc::vec::Vec;
 
     #[test]
     fn test_avg2() {

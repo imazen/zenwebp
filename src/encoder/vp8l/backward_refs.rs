@@ -799,6 +799,8 @@ pub fn compute_backward_refs_simple(argb: &[u32], _width: usize, _height: usize)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
+    use alloc::vec::Vec;
 
     #[test]
     fn test_distance_code_roundtrip() {

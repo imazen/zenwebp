@@ -375,6 +375,8 @@ pub fn apply_near_lossless(argb: &mut [u32], w: usize, h: usize, quality: u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
+    use alloc::vec::Vec;
 
     #[test]
     fn test_max_quantization_from_quality() {

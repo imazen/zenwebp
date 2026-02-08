@@ -668,6 +668,7 @@ impl FastDecoder<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_arithmetic_decoder_hello_short() {
