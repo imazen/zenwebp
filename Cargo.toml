@@ -82,12 +82,16 @@ multiverse = ["dep:multiversed", "dep:multiversion"]
 quantize = ["quantize-quantizr"]
 quantize-quantizr = ["dep:quantizr", "std"]
 quantize-imagequant = ["dep:imagequant", "std"]
+# --- Internal features (not for public use, underscore prefix = private) ---
+# Nightly-only: enables #[bench] micro-benchmarks. Requires `cargo +nightly test`.
 _benchmarks = []
+# Run corpus-based integration tests (requires codec-corpus data).
 _corpus_tests = []
-# Debug mode selection for encoder (set MB_DEBUG=x,y env var to debug specific macroblock)
+# Debug mode selection for encoder (set MB_DEBUG=x,y env var to debug specific macroblock).
 mode_debug = ["std"]
+# Enable PNG/WebP deps for profiling binaries.
 _profiling = ["dep:png", "dep:webp"]
-# WASM profiling - minimal deps for wasm32 benchmarking
+# WASM profiling - minimal deps for wasm32 benchmarking.
 _wasm_profiling = ["std"]
 
 [[bin]]
