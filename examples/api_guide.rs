@@ -303,13 +303,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 3.4 Metadata extraction
     println!("3.4 Metadata extraction");
-    if let Some(iccp) = zenwebp::icc_profile(&test_webp)? {
+    if let Some(iccp) = zenwebp::metadata::icc_profile(&test_webp)? {
         println!("  ✓ ICCP: {} bytes", iccp.len());
     }
-    if let Some(exif) = zenwebp::exif(&test_webp)? {
+    if let Some(exif) = zenwebp::metadata::exif(&test_webp)? {
         println!("  ✓ EXIF: {} bytes", exif.len());
     }
-    if let Some(xmp) = zenwebp::xmp(&test_webp)? {
+    if let Some(xmp) = zenwebp::metadata::xmp(&test_webp)? {
         println!("  ✓ XMP: {} bytes", xmp.len());
     }
     println!();
@@ -490,22 +490,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 5.3 Metadata embedding/removal
     println!("5.3 Metadata operations");
-    let with_icc = zenwebp::embed_icc(&test_webp, iccp_profile)?;
+    let with_icc = zenwebp::metadata::embed_icc(&test_webp, iccp_profile)?;
     println!("  ✓ embed_icc() → {} bytes", with_icc.len());
 
-    let with_exif = zenwebp::embed_exif(&test_webp, exif_data)?;
+    let with_exif = zenwebp::metadata::embed_exif(&test_webp, exif_data)?;
     println!("  ✓ embed_exif() → {} bytes", with_exif.len());
 
-    let with_xmp = zenwebp::embed_xmp(&test_webp, xmp_data)?;
+    let with_xmp = zenwebp::metadata::embed_xmp(&test_webp, xmp_data)?;
     println!("  ✓ embed_xmp() → {} bytes", with_xmp.len());
 
-    let no_icc = zenwebp::remove_icc(&with_icc)?;
+    let no_icc = zenwebp::metadata::remove_icc(&with_icc)?;
     println!("  ✓ remove_icc() → {} bytes", no_icc.len());
 
-    let no_exif = zenwebp::remove_exif(&with_exif)?;
+    let no_exif = zenwebp::metadata::remove_exif(&with_exif)?;
     println!("  ✓ remove_exif() → {} bytes", no_exif.len());
 
-    let no_xmp = zenwebp::remove_xmp(&with_xmp)?;
+    let no_xmp = zenwebp::metadata::remove_xmp(&with_xmp)?;
     println!("  ✓ remove_xmp() → {} bytes\n", no_xmp.len());
 
     // ========================================================================
