@@ -675,19 +675,20 @@ impl<'a> WebPDecoder<'a> {
     ///
     /// # Example - Two-phase decoding
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use zenwebp::WebPDecoder;
     ///
-    /// # let webp_data = &[];
+    /// # let webp_data: &[u8] = &[]; // your WebP data
     /// // Phase 1: Parse headers
-    /// let decoder = WebPDecoder::build(webp_data)?;
+    /// let mut decoder = WebPDecoder::build(webp_data)?;
     ///
     /// // Phase 2: Inspect metadata
     /// let info = decoder.info();
     /// println!("{}x{}, alpha={}", info.width, info.height, info.has_alpha);
     ///
     /// // Phase 3: Decode (no re-parsing)
-    /// let (pixels, w, h) = decoder.decode_rgba()?;
+    /// let mut output = vec![0u8; decoder.output_buffer_size().unwrap()];
+    /// decoder.read_image(&mut output)?;
     /// # Ok::<(), zenwebp::DecodeError>(())
     /// ```
     pub fn build(data: &'a [u8]) -> Result<Self, DecodeError> {
@@ -706,10 +707,10 @@ impl<'a> WebPDecoder<'a> {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use zenwebp::WebPDecoder;
     ///
-    /// # let webp_data = &[];
+    /// let webp_data: &[u8] = &[]; // your WebP data
     /// let decoder = WebPDecoder::new(webp_data)?;
     /// let info = decoder.info();
     /// println!("Format: {:?}, {}x{}", info.format, info.width, info.height);
@@ -1621,10 +1622,10 @@ impl ImageInfo {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use zenwebp::ImageInfo;
     ///
-    /// # let webp_data = &[];
+    /// let webp_data: &[u8] = &[]; // your WebP data
     /// let info = ImageInfo::from_bytes(webp_data)?;
     /// println!("{}x{}, alpha={}", info.width, info.height, info.has_alpha);
     /// # Ok::<(), zenwebp::DecodeError>(())

@@ -29,7 +29,7 @@
 //! use zenwebp::heuristics::{estimate_encode, estimate_decode};
 //! use zenwebp::EncoderConfig;
 //!
-//! let est = estimate_encode(1920, 1080, 4, &EncoderConfig::new());
+//! let est = estimate_encode(1920, 1080, 4, &EncoderConfig::new_lossy());
 //! println!("Peak memory: ~{:.1} MB", est.peak_memory_bytes as f64 / 1_000_000.0);
 //!
 //! let dec = estimate_decode(1920, 1080, 4);

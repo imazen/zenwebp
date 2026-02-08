@@ -15,7 +15,7 @@
 //! };
 //! let mut anim = AnimationEncoder::new(320, 240, config)?;
 //!
-//! let frame_config = EncoderConfig::new().quality(75.0);
+//! let frame_config = EncoderConfig::new_lossy().with_quality(75.0);
 //!
 //! // Frame pixels (320x240 RGBA)
 //! let pixels = vec![255u8; 320 * 240 * 4];

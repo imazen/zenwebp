@@ -14,7 +14,7 @@
 //! // Encode from typed pixels
 //! use zenwebp::{EncoderConfig, EncodeRequest, PixelLayout};
 //! let pixels: Vec<Rgb<u8>> = vec![Rgb::new(255, 0, 0); 4 * 4];
-//! let config = EncoderConfig::new();
+//! let config = EncoderConfig::new_lossy();
 //! let webp = config.encode_pixels(&pixels, 4, 4)?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```

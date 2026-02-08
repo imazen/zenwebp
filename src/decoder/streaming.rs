@@ -7,19 +7,21 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use zenwebp::StreamingDecoder;
+//! use zenwebp::{StreamingDecoder, StreamStatus};
 //!
 //! let mut decoder = StreamingDecoder::new();
 //!
 //! // Feed data as it arrives
-//! for chunk in network_chunks {
-//!     match decoder.append(&chunk)? {
+//! let network_chunks: Vec<Vec<u8>> = vec![]; // your data chunks
+//! for chunk in &network_chunks {
+//!     match decoder.append(chunk)? {
 //!         StreamStatus::NeedMoreData => continue,
 //!         StreamStatus::HeaderReady => {
-//!             let info = decoder.info().unwrap();
+//!             let info = decoder.info()?;
 //!             println!("{}x{}", info.width, info.height);
 //!         }
 //!         StreamStatus::Complete => break,
+//!         _ => {}
 //!     }
 //! }
 //!

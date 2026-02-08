@@ -5,10 +5,8 @@
 //! ```rust
 //! use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, Preset};
 //!
-//! let config = EncoderConfig::new()
-//!     .preset(Preset::Photo)
-//!     .quality(85.0)
-//!     .method(4);
+//! let config = EncoderConfig::with_preset(Preset::Photo, 85.0)
+//!     .with_method(4);
 //!
 //! let rgba_data = vec![255u8; 4 * 4 * 4]; // 4x4 RGBA image
 //! let webp = EncodeRequest::new(&config, &rgba_data, PixelLayout::Rgba8, 4, 4)
@@ -623,10 +621,8 @@ pub type EncodingStats = EncodeStats;
 /// ```rust
 /// use zenwebp::{EncoderConfig, EncodeRequest, PixelLayout, Preset};
 ///
-/// let config = EncoderConfig::new()
-///     .quality(85.0)
-///     .preset(Preset::Photo)
-///     .method(4);
+/// let config = EncoderConfig::with_preset(Preset::Photo, 85.0)
+///     .with_method(4);
 ///
 /// // Reuse config for multiple images
 /// let image1 = vec![0u8; 4 * 4 * 4]; // 4x4 RGBA
@@ -998,7 +994,7 @@ impl<'a> ConfigKind<'a> {
 /// ```rust
 /// use zenwebp::{EncodeRequest, LossyConfig, PixelLayout};
 ///
-/// let config = LossyConfig::new().quality(85.0);
+/// let config = LossyConfig::new().with_quality(85.0);
 /// let rgba = vec![0u8; 640 * 480 * 4];
 /// let webp = EncodeRequest::lossy(&config, &rgba, PixelLayout::Rgba8, 640, 480)
 ///     .encode()?;
@@ -1026,7 +1022,7 @@ impl<'a> EncodeRequest<'a> {
     /// ```rust
     /// use zenwebp::{EncodeRequest, LossyConfig, PixelLayout};
     ///
-    /// let config = LossyConfig::new().quality(85.0).method(4);
+    /// let config = LossyConfig::new().with_quality(85.0).with_method(4);
     /// let rgba = vec![0u8; 640 * 480 * 4];
     /// let webp = EncodeRequest::lossy(&config, &rgba, PixelLayout::Rgba8, 640, 480)
     ///     .encode()?;
@@ -1062,7 +1058,7 @@ impl<'a> EncodeRequest<'a> {
     /// ```rust
     /// use zenwebp::{EncodeRequest, LosslessConfig, PixelLayout};
     ///
-    /// let config = LosslessConfig::new().quality(90.0);
+    /// let config = LosslessConfig::new().with_quality(90.0);
     /// let rgba = vec![0u8; 640 * 480 * 4];
     /// let webp = EncodeRequest::lossless(&config, &rgba, PixelLayout::Rgba8, 640, 480)
     ///     .encode()?;
@@ -1102,7 +1098,7 @@ impl<'a> EncodeRequest<'a> {
     /// ```rust
     /// use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
     ///
-    /// let config = EncoderConfig::new_lossy().quality(85.0);
+    /// let config = EncoderConfig::new_lossy().with_quality(85.0);
     /// let rgba = vec![0u8; 640 * 480 * 4];
     /// let webp = EncodeRequest::new(&config, &rgba, PixelLayout::Rgba8, 640, 480)
     ///     .encode()?;

@@ -11,8 +11,8 @@
 //! use zenwebp::{LossyConfig, EncodeRequest, PixelLayout};
 //!
 //! let config = LossyConfig::new()
-//!     .quality(75.0)
-//!     .sns_strength(50);
+//!     .with_quality(75.0)
+//!     .with_sns_strength(50);
 //!
 //! let pixels = vec![0u8; 64 * 64 * 4];
 //! let webp = EncodeRequest::lossy(&config, &pixels, PixelLayout::Rgba8, 64, 64)
@@ -396,7 +396,7 @@ impl LosslessConfig {
 ///     if has_transparency {
 ///         EncoderConfig::Lossless(LosslessConfig::new())
 ///     } else {
-///         EncoderConfig::Lossy(LossyConfig::new().quality(80.0))
+///         EncoderConfig::Lossy(LossyConfig::new().with_quality(80.0))
 ///     }
 /// }
 /// ```
