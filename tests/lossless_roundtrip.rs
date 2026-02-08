@@ -22,8 +22,8 @@ fn wrap_vp8l_in_riff(vp8l_data: &[u8]) -> Vec<u8> {
 
 /// Encode RGB pixels to VP8L, wrap in RIFF, decode, and verify pixel-identical roundtrip.
 fn assert_lossless_roundtrip(rgb: &[u8], w: u32, h: u32, config: &Vp8lConfig) {
-    let vp8l = encode_vp8l(rgb, w, h, false, config, &enough::Unstoppable)
-        .expect("VP8L encoding failed");
+    let vp8l =
+        encode_vp8l(rgb, w, h, false, config, &enough::Unstoppable).expect("VP8L encoding failed");
     let webp = wrap_vp8l_in_riff(&vp8l);
     let (decoded, dw, dh) = zenwebp::decode_rgba(&webp).expect("decode failed");
     assert_eq!(dw, w);

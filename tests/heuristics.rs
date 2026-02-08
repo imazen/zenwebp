@@ -8,8 +8,16 @@ fn estimate_lossy_1mp() {
     let config = EncoderConfig::new_lossy().with_method(4);
     let est = estimate_encode(1024, 1024, 4, &config);
     // Peak memory should be reasonable for 1MP (order of magnitude check)
-    assert!(est.peak_memory_bytes > 1_000_000, "too low: {}", est.peak_memory_bytes);
-    assert!(est.peak_memory_bytes < 500_000_000, "too high: {}", est.peak_memory_bytes);
+    assert!(
+        est.peak_memory_bytes > 1_000_000,
+        "too low: {}",
+        est.peak_memory_bytes
+    );
+    assert!(
+        est.peak_memory_bytes < 500_000_000,
+        "too high: {}",
+        est.peak_memory_bytes
+    );
     assert!(est.time_ms > 0.0);
 }
 
