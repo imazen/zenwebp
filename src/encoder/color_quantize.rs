@@ -154,7 +154,7 @@ fn quantize_rgba_impl(
     })
 }
 
-#[cfg(feature = "quantize-quantizr")]
+#[cfg(all(feature = "quantize-quantizr", not(feature = "quantize-imagequant")))]
 fn quantize_rgba_impl(
     pixels: &[u8],
     width: u32,
