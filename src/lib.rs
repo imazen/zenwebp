@@ -120,8 +120,6 @@ pub use encoder::{
     PixelLayout, Preset,
 };
 
-#[allow(deprecated)]
-pub use encoder::ColorType;
 // Re-export mux/demux public API
 pub use mux::{
     AnimFrame, AnimationConfig, AnimationDecoder, AnimationEncoder, AnimationInfo, BlendMethod,
@@ -133,12 +131,6 @@ pub use enough::{Stop, StopReason, Unstoppable};
 
 // Re-export VP8 decoder (public module)
 pub use decoder::vp8;
-
-// Deprecated type aliases (backwards compatibility)
-#[allow(deprecated)]
-pub use decoder::DecodingError;
-#[allow(deprecated)]
-pub use encoder::{EncodingError, EncodingStats};
 
 /// Standalone metadata convenience functions for already-encoded WebP data.
 ///

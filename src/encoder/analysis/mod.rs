@@ -297,24 +297,3 @@ pub fn analyze_image(
         uv_alpha_avg,
     }
 }
-
-// Keep old function signatures for compatibility but mark as deprecated
-/// Deprecated: Use analyze_image instead
-#[allow(dead_code)]
-#[deprecated(note = "Use analyze_image instead")]
-pub fn collect_dct_histogram(
-    _src: &[u8],
-    _pred: &[u8],
-    _src_stride: usize,
-    _pred_stride: usize,
-    _block_offsets: &[(usize, usize)],
-) -> DctHistogram {
-    DctHistogram::new()
-}
-
-/// Deprecated: Use analyze_image instead
-#[allow(dead_code)]
-#[deprecated(note = "Use analyze_image instead")]
-pub fn compute_mb_alpha(_dct_coeffs: &[i32; 256]) -> u8 {
-    128
-}

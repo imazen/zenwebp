@@ -123,10 +123,6 @@ pub enum DecodeError {
     Cancelled(enough::StopReason),
 }
 
-/// Deprecated: Use [`DecodeError`] instead.
-#[deprecated(since = "0.4.0", note = "Use DecodeError instead")]
-pub type DecodingError = DecodeError;
-
 /// Result type alias using `At<DecodeError>` for automatic location tracking.
 ///
 /// Errors wrapped in `At<>` automatically capture file and line information,
@@ -283,10 +279,6 @@ pub struct DecodeConfig {
 
     /// Decode limits for dimensions, memory, frame count, etc.
     pub limits: super::limits::Limits,
-
-    /// Deprecated: Use `limits.max_memory` instead.
-    #[deprecated(since = "0.4.0", note = "Use limits.max_memory instead")]
-    pub memory_limit: usize,
 }
 
 impl Default for DecodeConfig {
@@ -294,8 +286,6 @@ impl Default for DecodeConfig {
         Self {
             upsampling: UpsamplingMethod::Bilinear,
             limits: super::limits::Limits::default(),
-            #[allow(deprecated)]
-            memory_limit: 0,
         }
     }
 }
@@ -326,18 +316,6 @@ impl DecodeConfig {
     #[must_use]
     pub fn max_memory(mut self, bytes: u64) -> Self {
         self.limits = self.limits.max_memory(bytes);
-        self
-    }
-
-    /// Deprecated: Use `max_memory()` or `limits()` instead.
-    #[must_use]
-    #[deprecated(since = "0.4.0", note = "Use max_memory() or limits() instead")]
-    pub fn memory_limit(mut self, limit: usize) -> Self {
-        self.limits = self.limits.max_memory(limit as u64);
-        #[allow(deprecated)]
-        {
-            self.memory_limit = limit;
-        }
         self
     }
 
@@ -409,10 +387,6 @@ impl<'a> DecodeRequest<'a> {
     pub fn decode(self) -> Result<(Vec<u8>, u32, u32, crate::PixelLayout), DecodeError> {
         let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
         decoder.set_limits(self.config.limits.clone());
-        #[allow(deprecated)]
-        if self.config.memory_limit > 0 {
-            decoder.set_memory_limit(self.config.memory_limit);
-        }
         decoder.set_stop(self.stop);
         let (w, h) = decoder.dimensions();
         let output_size = decoder
@@ -432,10 +406,6 @@ impl<'a> DecodeRequest<'a> {
     pub fn decode_rgba(self) -> Result<(Vec<u8>, u32, u32), DecodeError> {
         let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
         decoder.set_limits(self.config.limits.clone());
-        #[allow(deprecated)]
-        if self.config.memory_limit > 0 {
-            decoder.set_memory_limit(self.config.memory_limit);
-        }
         decoder.set_stop(self.stop);
         let (w, h) = decoder.dimensions();
         let output_size = decoder
@@ -462,10 +432,6 @@ impl<'a> DecodeRequest<'a> {
     pub fn decode_rgb(self) -> Result<(Vec<u8>, u32, u32), DecodeError> {
         let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
         decoder.set_limits(self.config.limits.clone());
-        #[allow(deprecated)]
-        if self.config.memory_limit > 0 {
-            decoder.set_memory_limit(self.config.memory_limit);
-        }
         decoder.set_stop(self.stop);
         let (w, h) = decoder.dimensions();
         let output_size = decoder
@@ -494,10 +460,6 @@ impl<'a> DecodeRequest<'a> {
     pub fn decode_rgba_into(self, output: &mut [u8]) -> Result<(u32, u32), DecodeError> {
         let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
         decoder.set_limits(self.config.limits.clone());
-        #[allow(deprecated)]
-        if self.config.memory_limit > 0 {
-            decoder.set_memory_limit(self.config.memory_limit);
-        }
         decoder.set_stop(self.stop);
         let (w, h) = decoder.dimensions();
 
@@ -551,10 +513,6 @@ impl<'a> DecodeRequest<'a> {
         let (w, h) = {
             let mut decoder = WebPDecoder::new_with_options(self.data, self.config.to_options())?;
             decoder.set_limits(self.config.limits.clone());
-            #[allow(deprecated)]
-            if self.config.memory_limit > 0 {
-                decoder.set_memory_limit(self.config.memory_limit);
-            }
             decoder.set_stop(self.stop);
             let dims = decoder.dimensions();
             let buf_size = decoder

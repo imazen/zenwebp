@@ -49,10 +49,6 @@ pub enum EncodeError {
     Cancelled(enough::StopReason),
 }
 
-/// Deprecated: Use [`EncodeError`] instead.
-#[deprecated(since = "0.4.0", note = "Use EncodeError instead")]
-pub type EncodingError = EncodeError;
-
 /// Result type alias using `At<EncodeError>` for automatic location tracking.
 ///
 /// Errors wrapped in `At<>` automatically capture file and line information,
@@ -131,10 +127,6 @@ pub enum PixelLayout {
     /// YUV 4:2:0 planar data (3 separate planes packed as \[Y, U, V\]).
     Yuv420,
 }
-
-/// Deprecated: Use [`PixelLayout`] instead.
-#[deprecated(since = "0.4.0", note = "Use PixelLayout instead")]
-pub type ColorType = PixelLayout;
 
 impl PixelLayout {
     pub(crate) fn has_alpha(self) -> bool {
@@ -603,10 +595,6 @@ pub struct EncodeStats {
     pub lossless_data_size: u32,
 }
 
-/// Deprecated: Use [`EncodeStats`] instead.
-#[deprecated(since = "0.4.0", note = "Use EncodeStats instead")]
-pub type EncodingStats = EncodeStats;
-
 // ============================================================================
 // Builder-style Encoder API (webpx-compatible)
 // ============================================================================
@@ -631,6 +619,7 @@ pub type EncodingStats = EncodeStats;
 /// let webp2 = EncodeRequest::new(&config, &image2, PixelLayout::Rgba8, 8, 6).encode()?;
 /// # Ok::<(), zenwebp::EncodeError>(())
 /// ```
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct EncoderConfig {
     /// Encoding quality (0.0 = smallest, 100.0 = best). Default: 75.0.
@@ -687,6 +676,7 @@ impl Default for EncoderConfig {
     }
 }
 
+#[allow(dead_code)]
 impl EncoderConfig {
     /// Create a new encoder configuration with default settings.
     ///
@@ -961,7 +951,6 @@ enum ConfigKind<'a> {
     Lossy(&'a config::LossyConfig),
     Lossless(&'a config::LosslessConfig),
     Enum(&'a config::EncoderConfig),
-    OldApi(&'a EncoderConfig), // Temporary for backward compatibility
 }
 
 impl<'a> ConfigKind<'a> {
@@ -971,7 +960,6 @@ impl<'a> ConfigKind<'a> {
             Self::Lossy(cfg) => cfg.to_params(),
             Self::Lossless(cfg) => cfg.to_params(),
             Self::Enum(cfg) => cfg.to_params(),
-            Self::OldApi(cfg) => cfg.to_params(),
         }
     }
 
@@ -981,7 +969,6 @@ impl<'a> ConfigKind<'a> {
             Self::Lossy(cfg) => &cfg.limits,
             Self::Lossless(cfg) => &cfg.limits,
             Self::Enum(cfg) => cfg.get_limits(),
-            Self::OldApi(cfg) => &cfg.limits,
         }
     }
 }
@@ -1114,35 +1101,6 @@ impl<'a> EncodeRequest<'a> {
     ) -> Self {
         Self {
             config: ConfigKind::Enum(config),
-            pixels,
-            color_type,
-            width,
-            height,
-            stride_pixels: None,
-            icc_profile: None,
-            exif_metadata: None,
-            xmp_metadata: None,
-            stop: &enough::Unstoppable,
-            progress: &NO_PROGRESS,
-        }
-    }
-
-    /// Create a new encoding request (deprecated, use `lossy()` or `lossless()` instead).
-    #[must_use]
-    #[deprecated(
-        since = "0.3.0",
-        note = "Use lossy(), lossless(), or new() with EncoderConfig enum"
-    )]
-    #[doc(hidden)]
-    pub fn with_old_config(
-        config: &'a EncoderConfig,
-        pixels: &'a [u8],
-        color_type: PixelLayout,
-        width: u32,
-        height: u32,
-    ) -> Self {
-        Self {
-            config: ConfigKind::OldApi(config),
             pixels,
             color_type,
             width,
