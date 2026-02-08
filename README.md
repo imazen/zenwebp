@@ -26,12 +26,13 @@ use zenwebp::WebPDecoder;
 let webp_bytes: &[u8] = /* your WebP data */;
 
 // Two-phase decoding: parse headers first
-let decoder = WebPDecoder::build(webp_bytes)?;
+let mut decoder = WebPDecoder::build(webp_bytes)?;
 let info = decoder.info();
 println!("{}x{}, alpha={}", info.width, info.height, info.has_alpha);
 
-// Then decode
-let (rgba, width, height) = decoder.decode_rgba()?;
+// Then decode into a pre-allocated buffer
+let mut output = vec![0u8; decoder.output_buffer_size().unwrap()];
+decoder.read_image(&mut output)?;
 ```
 
 ### Encode to WebP (Lossy)
@@ -75,14 +76,13 @@ let webp = EncodeRequest::lossless(&config, rgba_pixels, PixelLayout::Rgba8, wid
 - **no_std compatible** - works with just `alloc`, no standard library needed
 - **SIMD accelerated** - SSE2/SSE4.1/AVX2 on x86, SIMD128 on WASM
 - **Full format support** - lossy, lossless, alpha, animation (encode + decode), ICC/EXIF/XMP metadata, mux/demux
+- **Metadata module** - `zenwebp::metadata` for extracting/embedding ICC, EXIF, and XMP in encoded WebP bytes without decoding pixels
 
 ### Safe SIMD
 
 We achieve both safety and performance through safe abstractions over CPU intrinsics:
-- [`wide`](https://crates.io/crates/wide) - portable SIMD types that autovectorize well
-- [`archmage`](https://crates.io/crates/archmage) and [`magetypes`](https://crates.io/crates/magetypes) - token-gated safe intrinsics
+- [`archmage`](https://crates.io/crates/archmage) and [`magetypes`](https://crates.io/crates/magetypes) - token-gated safe intrinsics with runtime CPU detection
 - [`safe_unaligned_simd`](https://crates.io/crates/safe_unaligned_simd) - safe unaligned load/store
-- `core::arch` - newly stabilized as safe in Rust
 
 These abstractions may not be perfect, but we trust them over hand-rolled unsafe code.
 
@@ -163,7 +163,7 @@ zenwebp aims to be a drop-in replacement for libwebp in most use cases. Here's w
 | Input: L8 (grayscale) | Yes | No (requires conversion) |
 | Input: BGR, BGRA | Yes | Yes |
 | Input: YUV 4:2:0 | Yes | Yes |
-| Encoding statistics | Yes (EncodingStats) | Yes (WebPAuxStats) |
+| Encoding statistics | Yes (EncodeStats) | Yes (WebPAuxStats) |
 | Progress callback | Yes (EncodeProgress + Stop) | Yes |
 | Threaded encoding | No | Yes (alpha parallel) |
 
@@ -258,7 +258,7 @@ At the same quality setting, zenwebp produces files within 1-5% of libwebp's siz
 
 ```toml
 [dependencies]
-zenwebp = { version = "0.2", default-features = false }
+zenwebp = { version = "0.3", default-features = false }
 ```
 
 Both encoder and decoder work without std. The decoder takes `&[u8]` slices and the encoder writes to `Vec<u8>`. Only `encode_to_writer()` requires the `std` feature.
@@ -370,7 +370,6 @@ This project builds on excellent work by others:
   and mode selection. The WebP format itself is Google's creation.
 
 - **[archmage](https://crates.io/crates/archmage)** & **[magetypes](https://crates.io/crates/magetypes)** - Safe SIMD abstractions
-- **[wide](https://crates.io/crates/wide)** (Lokathor) - Portable SIMD types
 - **[safe_unaligned_simd](https://crates.io/crates/safe_unaligned_simd)** - Safe unaligned SIMD operations
 - **Claude** (Anthropic) - AI-assisted development
 
