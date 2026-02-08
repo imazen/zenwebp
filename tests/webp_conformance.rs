@@ -100,42 +100,45 @@ fn test_webp_invalid_robustness() {
     let mut tested = 0;
     let mut crashed = 0;
 
-    for entry in fs::read_dir(&corpus_path).unwrap_or_else(|_| {
-        eprintln!("Warning: Failed to read invalid/ directory");
-        fs::read_dir("/dev/null").unwrap()
-    }).flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("webp") {
-                continue;
-            }
+    for entry in fs::read_dir(&corpus_path)
+        .unwrap_or_else(|_| {
+            eprintln!("Warning: Failed to read invalid/ directory");
+            fs::read_dir("/dev/null").unwrap()
+        })
+        .flatten()
+    {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("webp") {
+            continue;
+        }
 
-            tested += 1;
-            let data = match fs::read(&path) {
-                Ok(d) => d,
-                Err(_) => continue,
-            };
+        tested += 1;
+        let data = match fs::read(&path) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
 
-            // Main requirement: should NOT panic or crash
-            // Result (Ok or Err) is acceptable; we just care about safety
-            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                match WebPDecoder::new(&data) {
-                    Ok(mut decoder) => {
-                        let output_size = decoder.output_buffer_size().unwrap_or(0);
-                        if output_size > 0 && output_size < 10_000_000 {
-                            let mut output = alloc::vec![0u8; output_size];
-                            let _ = decoder.read_image(&mut output);
-                        }
-                    }
-                    Err(_) => {
-                        // Parse error is acceptable for invalid files
+        // Main requirement: should NOT panic or crash
+        // Result (Ok or Err) is acceptable; we just care about safety
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            match WebPDecoder::new(&data) {
+                Ok(mut decoder) => {
+                    let output_size = decoder.output_buffer_size().unwrap_or(0);
+                    if output_size > 0 && output_size < 10_000_000 {
+                        let mut output = alloc::vec![0u8; output_size];
+                        let _ = decoder.read_image(&mut output);
                     }
                 }
-            }))
-            .is_err()
-            {
-                crashed += 1;
-                eprintln!("CRASH: {}", path.display());
+                Err(_) => {
+                    // Parse error is acceptable for invalid files
+                }
             }
+        }))
+        .is_err()
+        {
+            crashed += 1;
+            eprintln!("CRASH: {}", path.display());
+        }
     }
 
     if tested == 0 {
@@ -167,57 +170,60 @@ fn test_webp_non_conformant_regression() {
     let corpus_path = corpus_path.unwrap();
     let mut tested = 0;
 
-    for entry in fs::read_dir(&corpus_path).unwrap_or_else(|_| {
-        eprintln!("Warning: Failed to read non-conformant/ directory");
-        fs::read_dir("/dev/null").unwrap()
-    }).flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("webp") {
-                continue;
+    for entry in fs::read_dir(&corpus_path)
+        .unwrap_or_else(|_| {
+            eprintln!("Warning: Failed to read non-conformant/ directory");
+            fs::read_dir("/dev/null").unwrap()
+        })
+        .flatten()
+    {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("webp") {
+            continue;
+        }
+
+        tested += 1;
+        let data = match fs::read(&path) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+
+        // Decode twice - should produce identical results (regression test)
+        let result1 = decode_webp(&data);
+        let result2 = decode_webp(&data);
+
+        match (result1, result2) {
+            (Ok((w1, h1)), Ok((w2, h2))) => {
+                // For regression: check dimensions match
+                assert_eq!(
+                    w1,
+                    w2,
+                    "Width mismatch on {}: {} vs {}",
+                    path.display(),
+                    w1,
+                    w2
+                );
+                assert_eq!(
+                    h1,
+                    h2,
+                    "Height mismatch on {}: {} vs {}",
+                    path.display(),
+                    h1,
+                    h2
+                );
             }
-
-            tested += 1;
-            let data = match fs::read(&path) {
-                Ok(d) => d,
-                Err(_) => continue,
-            };
-
-            // Decode twice - should produce identical results (regression test)
-            let result1 = decode_webp(&data);
-            let result2 = decode_webp(&data);
-
-            match (result1, result2) {
-                (Ok((w1, h1)), Ok((w2, h2))) => {
-                    // For regression: check dimensions match
-                    assert_eq!(
-                        w1,
-                        w2,
-                        "Width mismatch on {}: {} vs {}",
-                        path.display(),
-                        w1,
-                        w2
-                    );
-                    assert_eq!(
-                        h1,
-                        h2,
-                        "Height mismatch on {}: {} vs {}",
-                        path.display(),
-                        h1,
-                        h2
-                    );
-                }
-                (Err(e1), Err(_)) => {
-                    // Both failed - acceptable for consistency
-                    eprintln!("Both decodes failed for {}: {}", path.display(), e1);
-                }
-                (Ok(_), Err(e2)) | (Err(e2), Ok(_)) => {
-                    eprintln!(
-                        "Inconsistent decode result for {}: one succeeded, one failed: {}",
-                        path.display(),
-                        e2
-                    );
-                }
+            (Err(e1), Err(_)) => {
+                // Both failed - acceptable for consistency
+                eprintln!("Both decodes failed for {}: {}", path.display(), e1);
             }
+            (Ok(_), Err(e2)) | (Err(e2), Ok(_)) => {
+                eprintln!(
+                    "Inconsistent decode result for {}: one succeeded, one failed: {}",
+                    path.display(),
+                    e2
+                );
+            }
+        }
     }
 
     if tested == 0 {

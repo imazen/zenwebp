@@ -922,15 +922,16 @@ mod corpus_tests {
             if path.extension().is_some_and(|e| e == "png") {
                 let path_str = path.to_string_lossy().to_string();
                 if let Some((rgb, w, h)) = load_png(&path_str) {
-                    let auto_cfg =
-                        zenwebp::EncoderConfig::with_preset(zenwebp::Preset::Auto, 75.0).with_method(4);
+                    let auto_cfg = zenwebp::EncoderConfig::with_preset(zenwebp::Preset::Auto, 75.0)
+                        .with_method(4);
                     let auto_size = EncodeRequest::new(&auto_cfg, &rgb, PixelLayout::Rgb8, w, h)
                         .encode()
                         .unwrap()
                         .len();
 
                     let photo_cfg =
-                        zenwebp::EncoderConfig::with_preset(zenwebp::Preset::Photo, 75.0).with_method(4);
+                        zenwebp::EncoderConfig::with_preset(zenwebp::Preset::Photo, 75.0)
+                            .with_method(4);
                     let photo_size = EncodeRequest::new(&photo_cfg, &rgb, PixelLayout::Rgb8, w, h)
                         .encode()
                         .unwrap()

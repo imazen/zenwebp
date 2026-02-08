@@ -52,10 +52,12 @@ fn main() {
                 .with_method(4);
             let zen = EncodeRequest::new(&_cfg, &pixels, PixelLayout::Rgb8, w, h).encode();
 
-            let lib = webpx::EncoderConfig::new()
-                .quality(q)
-                .method(4)
-                .encode_rgb(&pixels, w, h, webpx::Unstoppable);
+            let lib = webpx::EncoderConfig::new().quality(q).method(4).encode_rgb(
+                &pixels,
+                w,
+                h,
+                webpx::Unstoppable,
+            );
 
             if let (Ok(z), Ok(l)) = (zen, lib) {
                 zen_total += z.len() as u64;

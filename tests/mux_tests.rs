@@ -119,7 +119,9 @@ fn demux_simple_lossy() {
 fn demux_simple_lossless() {
     // Encode a simple lossless image
     let pixels = solid_rgba(32, 32, 128, 64, 192, 255);
-    let config = EncoderConfig::new_lossy().with_quality(100.0).with_lossless(true);
+    let config = EncoderConfig::new_lossy()
+        .with_quality(100.0)
+        .with_lossless(true);
     let webp = EncodeRequest::new(&config, &pixels, PixelLayout::Rgba8, 32, 32)
         .encode()
         .unwrap();
@@ -281,7 +283,9 @@ fn animation_encode_decode_lossless_roundtrip() {
     };
     let mut anim = AnimationEncoder::new(32, 32, config).unwrap();
 
-    let frame_config = EncoderConfig::new_lossy().with_quality(100.0).with_lossless(true);
+    let frame_config = EncoderConfig::new_lossy()
+        .with_quality(100.0)
+        .with_lossless(true);
 
     let frame1 = solid_rgba(32, 32, 255, 0, 0, 255);
     let frame2 = solid_rgba(32, 32, 0, 255, 0, 255);
@@ -578,7 +582,9 @@ fn patched_rgba(
 
 #[test]
 fn subframe_reduces_file_size() {
-    let frame_config = EncoderConfig::new_lossy().with_quality(100.0).with_lossless(true);
+    let frame_config = EncoderConfig::new_lossy()
+        .with_quality(100.0)
+        .with_lossless(true);
 
     let base = solid_rgba(64, 64, 100, 100, 100, 255);
     // Only change a 4x4 patch in each frame
@@ -644,7 +650,9 @@ fn subframe_reduces_file_size() {
 
 #[test]
 fn identical_frames_produce_tiny_subframe() {
-    let frame_config = EncoderConfig::new_lossy().with_quality(100.0).with_lossless(true);
+    let frame_config = EncoderConfig::new_lossy()
+        .with_quality(100.0)
+        .with_lossless(true);
     let pixels = solid_rgba(64, 64, 128, 64, 192, 255);
 
     let config = AnimationConfig::default();
@@ -690,7 +698,9 @@ fn fully_different_frames_produce_full_canvas() {
 
 #[test]
 fn subframe_offsets_are_even() {
-    let frame_config = EncoderConfig::new_lossy().with_quality(100.0).with_lossless(true);
+    let frame_config = EncoderConfig::new_lossy()
+        .with_quality(100.0)
+        .with_lossless(true);
 
     let base = solid_rgba(64, 64, 0, 0, 0, 255);
     // Change a single pixel at odd coordinates (3, 5)
@@ -719,7 +729,9 @@ fn subframe_offsets_are_even() {
 
 #[test]
 fn subframe_lossless_roundtrip_correctness() {
-    let frame_config = EncoderConfig::new_lossy().with_quality(100.0).with_lossless(true);
+    let frame_config = EncoderConfig::new_lossy()
+        .with_quality(100.0)
+        .with_lossless(true);
 
     // Frame 1: solid green
     let frame1 = solid_rgba(32, 32, 0, 200, 0, 255);
@@ -796,7 +808,9 @@ fn subframe_lossless_roundtrip_correctness() {
 
 #[test]
 fn add_frame_advanced_invalidates_canvas() {
-    let frame_config = EncoderConfig::new_lossy().with_quality(100.0).with_lossless(true);
+    let frame_config = EncoderConfig::new_lossy()
+        .with_quality(100.0)
+        .with_lossless(true);
     let pixels = solid_rgba(32, 32, 100, 100, 100, 255);
 
     let config = AnimationConfig::default();
@@ -839,7 +853,9 @@ fn add_frame_advanced_invalidates_canvas() {
 
 #[test]
 fn minimize_size_false_disables_optimization() {
-    let frame_config = EncoderConfig::new_lossy().with_quality(100.0).with_lossless(true);
+    let frame_config = EncoderConfig::new_lossy()
+        .with_quality(100.0)
+        .with_lossless(true);
     let pixels = solid_rgba(32, 32, 128, 64, 192, 255);
 
     let config = AnimationConfig {

@@ -240,11 +240,11 @@ where
     if img.stride() == img.width() {
         // Contiguous — encode directly
         let buf = img.buf();
-        EncoderConfig::new().encode_pixels(buf, width, height)
+        EncoderConfig::new_lossy().encode_pixels(buf, width, height)
     } else {
         // Strided — collect rows into contiguous buffer
         let pixels: Vec<P> = img.rows().flat_map(|row| row.iter().copied()).collect();
-        EncoderConfig::new().encode_pixels(&pixels, width, height)
+        EncoderConfig::new_lossy().encode_pixels(&pixels, width, height)
     }
 }
 

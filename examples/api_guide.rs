@@ -151,9 +151,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .max_total_pixels(1_000_000)
         .max_dimensions(2000, 2000);
 
-    let config = EncoderConfig::new_lossy()
-        .with_quality(75.0)
-        .limits(limits);
+    let config = EncoderConfig::new_lossy().with_quality(75.0).limits(limits);
 
     let webp_data =
         EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height).encode()?;
@@ -225,9 +223,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2.4 Lossless with exact color preservation
     println!("2.4 Lossless with exact colors");
-    let config = EncoderConfig::Lossless(
-        zenwebp::LosslessConfig::new().with_exact(true),
-    );
+    let config = EncoderConfig::Lossless(zenwebp::LosslessConfig::new().with_exact(true));
 
     let webp_data =
         EncodeRequest::new(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
@@ -235,9 +231,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2.5 Lossless with alpha quality
     println!("2.5 Lossless with alpha quality");
-    let config = EncoderConfig::Lossless(
-        zenwebp::LosslessConfig::new().with_alpha_quality(90),
-    );
+    let config = EncoderConfig::Lossless(zenwebp::LosslessConfig::new().with_alpha_quality(90));
 
     let webp_data =
         EncodeRequest::new(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
@@ -330,8 +324,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 3.6 Decoding with cancellation
     println!("3.6 Decoding with cancellation");
     let config = zenwebp::DecodeConfig::default();
-    let request =
-        zenwebp::DecodeRequest::new(&config, &test_webp).stop(&Unstoppable as &dyn Stop);
+    let request = zenwebp::DecodeRequest::new(&config, &test_webp).stop(&Unstoppable as &dyn Stop);
     let (_pixels, w, h) = request.decode_rgba()?;
     println!("  ✓ With cancellation → {}x{}\n", w, h);
 
@@ -543,9 +536,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Exceeded limits (test first since 0x0 dimensions cause panic - encoder bug)
     let result: Result<Vec<u8>, EncodeError> = {
         let limits = Limits::default().max_total_pixels(100);
-        let config = EncoderConfig::new_lossy()
-            .with_quality(75.0)
-            .limits(limits);
+        let config = EncoderConfig::new_lossy().with_quality(75.0).limits(limits);
 
         EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height).encode()
     };
