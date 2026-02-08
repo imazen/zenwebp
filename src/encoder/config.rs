@@ -132,7 +132,7 @@ impl LossyConfig {
 
     /// Target output file size in bytes (encoder will adjust quality).
     #[must_use]
-    pub fn target_size(mut self, size: u32) -> Self {
+    pub fn with_target_size(mut self, size: u32) -> Self {
         self.target_size = size;
         self
     }
@@ -307,7 +307,7 @@ impl LosslessConfig {
 
     /// Target output file size in bytes (encoder will adjust effort).
     #[must_use]
-    pub fn target_size(mut self, size: u32) -> Self {
+    pub fn with_target_size(mut self, size: u32) -> Self {
         self.target_size = size;
         self
     }

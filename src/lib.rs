@@ -13,19 +13,20 @@
 //!
 //! # Features
 //!
-//! - `std` (default): Enable standard library support including lossy encoding.
-//! - `simd`: Enable SIMD optimizations for faster encoding/decoding.
-//! - `fast-yuv`: Enable optimized YUV conversion.
+//! - `std` (default): Enables `encode_to_writer()`. Everything else works without it.
+//! - `simd` (default): SIMD optimizations (SSE2/SSE4.1/AVX2 on x86, SIMD128 on WASM).
+//! - `fast-yuv` (default): Optimized YUV conversion via the `yuv` crate.
+//! - `pixel-types`: Type-safe pixel formats via the `rgb` crate.
 //!
 //! # no_std Support
 //!
-//! Decoding is fully supported in `no_std` environments (requires `alloc`):
+//! Both encoding and decoding work in `no_std` environments (requires `alloc`):
 //! ```toml
 //! [dependencies]
 //! zenwebp = { version = "...", default-features = false }
 //! ```
 //!
-//! All decoding functions take `&[u8]` slices directly - no Read/Seek traits required.
+//! Only [`EncodeRequest::encode_to`] requires `std` (for `std::io::Write`).
 //!
 //! # Encoding
 //!
@@ -51,14 +52,16 @@
 //! # Ok::<(), zenwebp::DecodeError>(())
 //! ```
 //!
-//! Or the [`WebPDecoder`] for more control:
+//! Or [`WebPDecoder`] for two-phase decoding (inspect headers before allocating):
 //!
 //! ```rust,no_run
 //! use zenwebp::WebPDecoder;
 //!
 //! let webp_data: &[u8] = &[]; // your WebP data
-//! let mut decoder = WebPDecoder::new(webp_data)?;
-//! let (width, height) = decoder.dimensions();
+//! let mut decoder = WebPDecoder::build(webp_data)?;
+//! let info = decoder.info();
+//! println!("{}x{}, alpha={}", info.width, info.height, info.has_alpha);
+//!
 //! let mut output = vec![0u8; decoder.output_buffer_size().unwrap()];
 //! decoder.read_image(&mut output)?;
 //! # Ok::<(), zenwebp::DecodeError>(())

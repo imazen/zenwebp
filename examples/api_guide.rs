@@ -8,8 +8,8 @@
 use std::{io::Cursor, num::NonZeroU16};
 use zenwebp::{
     AnimationConfig, AnimationEncoder, BlendMethod, DecodeError, DisposeMethod, EncodeError,
-    EncodeRequest, EncoderConfig, Limits, LoopCount, MuxError, PixelLayout, Preset, Stop,
-    Unstoppable, WebPDemuxer, WebPMux,
+    EncodeRequest, EncoderConfig, Limits, LoopCount, LosslessConfig, LossyConfig, MuxError,
+    PixelLayout, Preset, Stop, Unstoppable, WebPDemuxer, WebPMux,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -23,12 +23,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ========================================================================
     println!("1. LOSSY ENCODING\n");
 
-    // 1.1 Basic encoding with builder pattern
-    println!("1.1 Basic encoding (builder pattern)");
-    let config = EncoderConfig::new_lossy().with_quality(75.0).with_method(4);
+    // 1.1 Basic encoding with typed config (recommended)
+    println!("1.1 Basic encoding (LossyConfig + EncodeRequest::lossy)");
+    let config = LossyConfig::new().with_quality(75.0).with_method(4);
 
     let webp_data =
-        EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height).encode()?;
+        EncodeRequest::lossy(&config, &rgb_img, PixelLayout::Rgb8, width, height).encode()?;
     println!(
         "  ✓ Encoded {}x{} RGB → {} bytes\n",
         width,
@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1.2 Encoding with all parameters
     println!("1.2 Full parameter configuration");
-    let config = EncoderConfig::new_lossy()
+    let config = LossyConfig::new()
         .with_quality(80.0)
         .with_method(6)
         .with_segments(4)
@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_sharp_yuv(false);
 
     let webp_data =
-        EncodeRequest::new(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
+        EncodeRequest::lossy(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
     println!("  ✓ Encoded with all params → {} bytes\n", webp_data.len());
 
     // 1.3 Preset-based encoding
@@ -193,54 +193,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ========================================================================
     println!("\n2. LOSSLESS ENCODING\n");
 
-    // 2.1 Basic lossless encoding
+    // 2.1 Basic lossless encoding (typed config, recommended)
     println!("2.1 Basic lossless encoding");
-    let config = EncoderConfig::new_lossless();
+    let config = LosslessConfig::new();
     let webp_data =
-        EncodeRequest::new(&config, &rgb_img, PixelLayout::Rgb8, width, height).encode()?;
+        EncodeRequest::lossless(&config, &rgb_img, PixelLayout::Rgb8, width, height).encode()?;
     println!("  ✓ Lossless RGB → {} bytes\n", webp_data.len());
 
     // 2.2 Lossless with quality parameter
     println!("2.2 Lossless with quality parameter");
-    let config = EncoderConfig::new_lossy()
-        .with_lossless(true)
+    let config = LosslessConfig::new()
         .with_quality(90.0) // 0-100, controls encoding effort
         .with_method(6); // 0-6, higher = slower but better compression
 
     let webp_data =
-        EncodeRequest::new(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
+        EncodeRequest::lossless(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
     println!("  ✓ With quality/method → {} bytes\n", webp_data.len());
 
     // 2.3 Near-lossless encoding
     println!("2.3 Near-lossless encoding");
-    let config = EncoderConfig::new_lossy()
-        .with_lossless(true)
-        .with_near_lossless(60); // 0-100, 100 = lossless
+    let config = LosslessConfig::new().with_near_lossless(60); // 0-100, 100 = lossless
 
     let webp_data =
-        EncodeRequest::new(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
+        EncodeRequest::lossless(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
     println!("  ✓ Near-lossless → {} bytes\n", webp_data.len());
 
     // 2.4 Lossless with exact color preservation
     println!("2.4 Lossless with exact colors");
-    let config = EncoderConfig::Lossless(zenwebp::LosslessConfig::new().with_exact(true));
+    let config = LosslessConfig::new().with_exact(true);
 
     let webp_data =
-        EncodeRequest::new(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
+        EncodeRequest::lossless(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
     println!("  ✓ Exact colors → {} bytes\n", webp_data.len());
 
     // 2.5 Lossless with alpha quality
     println!("2.5 Lossless with alpha quality");
-    let config = EncoderConfig::Lossless(zenwebp::LosslessConfig::new().with_alpha_quality(90));
+    let config = LosslessConfig::new().with_alpha_quality(90);
 
     let webp_data =
-        EncodeRequest::new(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
+        EncodeRequest::lossless(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;
     println!("  ✓ With alpha quality → {} bytes\n", webp_data.len());
 
     // 2.6 Lossless with metadata
     println!("2.6 Lossless with metadata");
-    let config = EncoderConfig::new_lossless();
-    let webp_data = EncodeRequest::new(&config, &rgba_img, PixelLayout::Rgba8, width, height)
+    let config = LosslessConfig::new();
+    let webp_data = EncodeRequest::lossless(&config, &rgba_img, PixelLayout::Rgba8, width, height)
         .with_icc_profile(iccp_profile)
         .with_exif(exif_data)
         .with_xmp(xmp_data)
