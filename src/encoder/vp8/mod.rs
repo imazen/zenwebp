@@ -972,7 +972,18 @@ impl<'a> Vp8Encoder<'a> {
         let compressed_header_encoder = mem::take(&mut self.encoder);
         let compressed_header_bytes = compressed_header_encoder.flush_and_get_buffer();
 
-        self.write_uncompressed_frame_header(compressed_header_bytes.len() as u32);
+        // VP8 frame tag encodes partition 0 size in 19 bits (max 524,287 bytes).
+        // Exceeding this produces a corrupt bitstream that decoders reject.
+        const VP8_MAX_PARTITION0_SIZE: u32 = (1 << 19) - 1;
+        let partition0_size = compressed_header_bytes.len() as u32;
+        if partition0_size > VP8_MAX_PARTITION0_SIZE {
+            return Err(EncodeError::Partition0Overflow {
+                size: partition0_size,
+                max: VP8_MAX_PARTITION0_SIZE,
+            });
+        }
+
+        self.write_uncompressed_frame_header(partition0_size);
 
         self.writer.write_all(&compressed_header_bytes);
 

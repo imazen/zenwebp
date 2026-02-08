@@ -47,6 +47,19 @@ pub enum EncodeError {
     /// Encoding was cancelled via a [`enough::Stop`] or [`EncodeProgress`] callback.
     #[error("Encoding cancelled: {0}")]
     Cancelled(enough::StopReason),
+
+    /// The compressed header (partition 0) exceeds the VP8 19-bit size limit (524,287 bytes).
+    ///
+    /// This occurs with very large, high-entropy images where macroblock prediction
+    /// mode headers exceed the VP8 frame tag capacity. Try reducing image dimensions,
+    /// lowering quality, or splitting into tiles.
+    #[error("Partition 0 overflow: {size} bytes exceeds VP8 limit of {max} bytes")]
+    Partition0Overflow {
+        /// Actual partition 0 size in bytes.
+        size: u32,
+        /// Maximum allowed size (524,287).
+        max: u32,
+    },
 }
 
 /// Result type alias using `At<EncodeError>` for automatic location tracking.

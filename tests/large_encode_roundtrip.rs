@@ -1,16 +1,15 @@
-//! Test that large image encode/decode roundtrips produce valid bitstreams.
+//! Test that large image encode/decode roundtrips produce valid bitstreams,
+//! and that the encoder returns a clean error (not corrupt output) when the
+//! VP8 partition 0 size limit is exceeded.
 //!
-//! Reproduces a bug where encoding noisy images above ~25 megapixels produces
-//! WebP data that fails to decode with "Corrupt bitstream".
-//!
-//! Root cause: The VP8 frame header encodes partition_0_size in 19 bits
-//! (max 524,287 bytes). For high-entropy images above ~25MP, the compressed
-//! header partition exceeds this limit, and `write_u24_le(partition_size << 5)`
-//! silently truncates the value in `header.rs:21`.
+//! VP8 frame tag: partition_0_size is 19 bits (max 524,287 bytes).
+//! For high-entropy images above ~25MP, macroblock mode headers push
+//! partition 0 past this limit. The encoder must return
+//! `EncodeError::Partition0Overflow` rather than producing a corrupt bitstream.
 //!
 //! See VP8 RFC 6386 Section 9.2 for the frame tag format.
 
-use zenwebp::{DecodeRequest, EncodeRequest, LossyConfig, PixelLayout};
+use zenwebp::{DecodeRequest, EncodeError, EncodeRequest, LossyConfig, PixelLayout};
 
 /// Generate a smooth gradient image (RGB, low entropy — compresses small).
 fn generate_gradient_rgb(width: u32, height: u32) -> Vec<u8> {
@@ -44,6 +43,7 @@ fn generate_noisy_rgb(width: u32, height: u32) -> Vec<u8> {
     pixels
 }
 
+/// Encode and decode an RGB image, asserting both succeed and dimensions match.
 fn roundtrip_rgb(pixels: &[u8], width: u32, height: u32, quality: f32) {
     let config = LossyConfig::new().with_quality(quality);
     let encoded = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, width, height)
@@ -66,6 +66,27 @@ fn roundtrip_rgb(pixels: &[u8], width: u32, height: u32, quality: f32) {
             panic!(
                 "decode failed at {width}x{height} q{quality} (encoded {} bytes): {e}",
                 encoded.len()
+            );
+        }
+    }
+}
+
+/// Attempt to encode, asserting that it fails with Partition0Overflow.
+fn expect_partition0_overflow(pixels: &[u8], width: u32, height: u32, quality: f32) {
+    let config = LossyConfig::new().with_quality(quality);
+    let result = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, width, height).encode();
+    match result {
+        Err(e) => {
+            assert!(
+                matches!(e, EncodeError::Partition0Overflow { .. }),
+                "expected Partition0Overflow at {width}x{height} q{quality}, got: {e}"
+            );
+        }
+        Ok(data) => {
+            panic!(
+                "expected Partition0Overflow at {width}x{height} q{quality}, \
+                 but encode succeeded ({} bytes)",
+                data.len()
             );
         }
     }
@@ -115,45 +136,40 @@ fn noisy_5824x4368() {
 }
 
 #[test]
-#[should_panic(expected = "decode failed")]
-fn noisy_5888x4416() {
-    // 26.0MP — FAILS: partition_0_size overflows 19-bit field
+fn noisy_5888x4416_overflow() {
+    // 26.0MP — partition_0_size exceeds 19-bit field
     let pixels = generate_noisy_rgb(5888, 4416);
-    roundtrip_rgb(&pixels, 5888, 4416, 80.0);
+    expect_partition0_overflow(&pixels, 5888, 4416, 80.0);
 }
 
 #[test]
-#[should_panic(expected = "decode failed")]
-fn noisy_7680x5760() {
-    // 44.2MP — FAILS
+fn noisy_7680x5760_overflow() {
+    // 44.2MP — well over limit
     let pixels = generate_noisy_rgb(7680, 5760);
-    roundtrip_rgb(&pixels, 7680, 5760, 80.0);
+    expect_partition0_overflow(&pixels, 7680, 5760, 80.0);
 }
 
 #[test]
-#[should_panic(expected = "decode failed")]
-fn noisy_8192x8192() {
-    // 67.1MP — FAILS
+fn noisy_8192x8192_overflow() {
+    // 67.1MP — well over limit
     let pixels = generate_noisy_rgb(8192, 8192);
-    roundtrip_rgb(&pixels, 8192, 8192, 80.0);
+    expect_partition0_overflow(&pixels, 8192, 8192, 80.0);
 }
 
 // --- Shape doesn't matter, only total pixel count ---
 
 #[test]
-#[should_panic(expected = "decode failed")]
-fn noisy_8192x3456_wide() {
-    // 28.3MP wide — FAILS
+fn noisy_8192x3456_wide_overflow() {
+    // 28.3MP wide — overflows
     let pixels = generate_noisy_rgb(8192, 3456);
-    roundtrip_rgb(&pixels, 8192, 3456, 80.0);
+    expect_partition0_overflow(&pixels, 8192, 3456, 80.0);
 }
 
 #[test]
-#[should_panic(expected = "decode failed")]
-fn noisy_3456x8192_tall() {
-    // 28.3MP tall — FAILS
+fn noisy_3456x8192_tall_overflow() {
+    // 28.3MP tall — overflows
     let pixels = generate_noisy_rgb(3456, 8192);
-    roundtrip_rgb(&pixels, 3456, 8192, 80.0);
+    expect_partition0_overflow(&pixels, 3456, 8192, 80.0);
 }
 
 // --- Quality affects compression ratio, thus partition size ---
@@ -166,9 +182,8 @@ fn noisy_7680x5760_q10() {
 }
 
 #[test]
-#[should_panic(expected = "decode failed")]
-fn noisy_7680x5760_q50() {
-    // q50 — partition too large. FAILS.
+fn noisy_7680x5760_q50_overflow() {
+    // q50 — partition too large. Overflows.
     let pixels = generate_noisy_rgb(7680, 5760);
-    roundtrip_rgb(&pixels, 7680, 5760, 50.0);
+    expect_partition0_overflow(&pixels, 7680, 5760, 50.0);
 }
