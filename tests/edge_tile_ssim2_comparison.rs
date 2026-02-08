@@ -15,7 +15,10 @@ use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharact
 use std::path::{Path, PathBuf};
 use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
-const KODAK_PATH: &str = concat!(env!("HOME"), "/work/codec-corpus/kodak");
+fn kodak_path() -> Option<std::path::PathBuf> {
+    let corpus = codec_corpus::Corpus::new().ok()?;
+    corpus.get("kodak").ok()
+}
 
 /// Load PNG and return RGB data with dimensions
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
@@ -178,11 +181,13 @@ fn calculate_ssim2(rgb1: &[u8], rgb2: &[u8], width: usize, height: usize) -> f64
 #[test]
 #[ignore]
 fn test_edge_tile_ssim2_comparison() {
-    let kodak_dir = Path::new(KODAK_PATH);
-    if !kodak_dir.exists() {
-        eprintln!("Kodak corpus not found at {}", KODAK_PATH);
-        return;
-    }
+    let kodak_dir = match kodak_path() {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping: kodak corpus unavailable");
+            return;
+        }
+    };
 
     // Find test images (use first 6 for reasonable test time)
     let mut images: Vec<PathBuf> = (1..=6)
@@ -356,11 +361,13 @@ fn test_edge_tile_ssim2_comparison() {
 #[test]
 #[ignore]
 fn test_edge_full_image_comparison() {
-    let kodak_dir = Path::new(KODAK_PATH);
-    if !kodak_dir.exists() {
-        eprintln!("Kodak corpus not found at {}", KODAK_PATH);
-        return;
-    }
+    let kodak_dir = match kodak_path() {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping: kodak corpus unavailable");
+            return;
+        }
+    };
 
     println!("\n=== FULL IMAGE QUALITY AT NON-ALIGNED SIZES ===\n");
 

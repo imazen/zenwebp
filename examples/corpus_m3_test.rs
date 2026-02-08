@@ -5,16 +5,18 @@ use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, Preset};
 
 fn main() {
     let args: Vec<_> = env::args().collect();
-    let dir = args
-        .get(1)
-        .map(|s| s.as_str())
-        .unwrap_or("/home/lilith/work/codec-corpus/CID22/CID22-512/validation");
+    let dir = if let Some(d) = args.get(1) {
+        std::path::PathBuf::from(d)
+    } else {
+        let corpus = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
+        corpus.get("CID22/CID22-512/validation").expect("corpus path unavailable")
+    };
 
     let mut zen_total = 0u64;
     let mut lib_total = 0u64;
     let mut count = 0;
 
-    let entries: Vec<_> = fs::read_dir(dir)
+    let entries: Vec<_> = fs::read_dir(&dir)
         .expect("Failed to read directory")
         .filter_map(|e| e.ok())
         .collect();
@@ -75,7 +77,7 @@ fn main() {
     }
 
     println!("\n=== Corpus Results (m3, Q75, SNS=0) ===");
-    println!("Directory: {}", dir);
+    println!("Directory: {}", dir.display());
     println!("Images: {}", count);
     println!("zenwebp total: {} bytes", zen_total);
     println!("libwebp total: {} bytes", lib_total);

@@ -11,7 +11,10 @@ use std::path::Path;
 use std::time::Instant;
 use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
-const CLIC_DIR: &str = "/home/lilith/work/codec-corpus/clic2025/validation";
+fn clic_path() -> Option<std::path::PathBuf> {
+    let corpus = codec_corpus::Corpus::new().ok()?;
+    corpus.get("clic2025/validation").ok()
+}
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let file = fs::File::open(path).ok()?;
@@ -158,13 +161,15 @@ fn benchmark_image(rgb: &[u8], width: u32, height: u32, quality: u8) -> Option<B
 #[test]
 #[ignore]
 fn clic_benchmark() {
-    let clic_path = Path::new(CLIC_DIR);
-    if !clic_path.exists() {
-        eprintln!("CLIC directory not found: {}", CLIC_DIR);
-        return;
-    }
+    let clic_dir = match clic_path() {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping: CLIC corpus unavailable");
+            return;
+        }
+    };
 
-    let mut images: Vec<_> = fs::read_dir(clic_path)
+    let mut images: Vec<_> = fs::read_dir(&clic_dir)
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| {
@@ -288,14 +293,16 @@ fn format_size(bytes: usize) -> String {
 #[test]
 #[ignore]
 fn clic_detailed_quality_sweep() {
-    let clic_path = Path::new(CLIC_DIR);
-    if !clic_path.exists() {
-        eprintln!("CLIC directory not found: {}", CLIC_DIR);
-        return;
-    }
+    let clic_dir = match clic_path() {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping: CLIC corpus unavailable");
+            return;
+        }
+    };
 
     // Pick first 5 images for detailed sweep
-    let mut images: Vec<_> = fs::read_dir(clic_path)
+    let mut images: Vec<_> = fs::read_dir(&clic_dir)
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| {

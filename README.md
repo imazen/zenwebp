@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/zenwebp.svg)](https://crates.io/crates/zenwebp)
 [![Documentation](https://docs.rs/zenwebp/badge.svg)](https://docs.rs/zenwebp)
 [![Build Status](https://github.com/imazen/zenwebp/workflows/Rust%20CI/badge.svg)](https://github.com/imazen/zenwebp/actions)
-[![License](https://img.shields.io/crates/l/zenwebp.svg)](https://github.com/imazen/zenwebp#license)
+[![License: AGPL/Commercial](https://img.shields.io/badge/License-AGPL%2FCommercial-blue.svg)](https://github.com/imazen/zenwebp#license)
 
 Pure Rust WebP encoding and decoding. No C dependencies, no unsafe code.
 
@@ -13,7 +13,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-zenwebp = "0.2"
+zenwebp = "0.3"
 ```
 
 **📚 New to zenwebp?** Check out the comprehensive [API guide](examples/api_guide.rs) that demonstrates 100% of the public API with runnable examples.
@@ -323,13 +323,13 @@ the crate and all dependencies contain no unsafe whatsoever.
 
 ## License
 
-Licensed under the [GNU Affero General Public License v3.0 or later](LICENSE-AGPL).
+Sustainable, large-scale open source work requires a funding model, and I have been
+doing this full-time for 15 years. If you are using this for closed-source development
+AND make over $1 million per year, you'll need to buy a commercial license at
+https://www.imazen.io/pricing
 
-**Commercial licensing available** for projects that cannot comply with AGPL requirements. Contact: support@imazen.io
-
-### Why AGPL?
-
-zenwebp is designed for high-quality image processing in production environments. The AGPL ensures that improvements to the library benefit the entire community, especially important for server-side/SaaS use cases. If you need to use zenwebp in closed-source software, we offer commercial licenses at reasonable rates.
+Commercial licenses are similar to the Apache 2 license but company-specific, and on
+a sliding scale. You can also use this under the AGPL v3.
 
 ### Previous Versions
 
@@ -346,10 +346,10 @@ The optional color quantization features provide two backend choices:
 
 ```toml
 # Default quantizer (MIT, compatible with AGPL)
-zenwebp = { version = "0.4", features = ["quantize"] }
+zenwebp = { version = "0.3", features = ["quantize"] }
 
 # Better quality GPL quantizer (also compatible with AGPL)
-zenwebp = { version = "0.4", features = ["quantize-imagequant"] }
+zenwebp = { version = "0.3", features = ["quantize-imagequant"] }
 ```
 
 ## Contributing

@@ -1,12 +1,13 @@
 #![cfg(not(target_arch = "wasm32"))]
 //! Debug encoder output
-use std::path::Path;
 use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
 #[test]
 #[ignore]
 fn debug_encode_kodak1() {
-    let path = Path::new(concat!(env!("HOME"), "/work/codec-corpus/kodak/1.png"));
+    let corpus = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
+    let kodak_dir = corpus.get("kodak").expect("kodak corpus unavailable");
+    let path = kodak_dir.join("1.png");
     let file = std::fs::File::open(path).unwrap();
     let decoder = png::Decoder::new(file);
     let mut reader = decoder.read_info().unwrap();

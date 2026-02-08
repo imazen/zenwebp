@@ -19,7 +19,9 @@ fn wrap_vp8l_in_riff(vp8l_data: &[u8]) -> Vec<u8> {
 
 fn main() {
     let png_path = std::env::args().nth(1).unwrap_or_else(|| {
-        "/home/lilith/work/codec-corpus/CID22/CID22-512/training/3616956.png".to_string()
+        let corpus = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
+        corpus.get("CID22/CID22-512/training").expect("corpus path unavailable")
+            .join("3616956.png").to_string_lossy().to_string()
     });
 
     // Load PNG

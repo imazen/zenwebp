@@ -9,7 +9,10 @@ use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharact
 use std::path::Path;
 use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
-const KODAK_PATH: &str = concat!(env!("HOME"), "/work/codec-corpus/kodak");
+fn kodak_path() -> Option<std::path::PathBuf> {
+    let corpus = codec_corpus::Corpus::new().ok()?;
+    corpus.get("kodak").ok()
+}
 
 /// Calculate SSIMULACRA2 between two RGB images
 /// Returns score where: 90+ = excellent, 70-90 = good, 50-70 = acceptable, <50 = poor
@@ -220,12 +223,13 @@ fn interpolate_ssim2_at_bpp(results: &[EncodeResult], target_bpp: f64) -> Option
 #[test]
 #[ignore] // Run with: cargo test codec_benchmark --release -- --ignored --nocapture
 fn codec_benchmark_kodak() {
-    let kodak_dir = Path::new(KODAK_PATH);
-    if !kodak_dir.exists() {
-        eprintln!("Kodak corpus not found at {}", KODAK_PATH);
-        eprintln!("Skipping benchmark");
-        return;
-    }
+    let kodak_dir = match kodak_path() {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping: kodak corpus unavailable");
+            return;
+        }
+    };
 
     println!("\n=== Kodak Corpus Rate-Distortion Benchmark ===\n");
 

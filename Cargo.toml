@@ -1,6 +1,6 @@
 [package]
 name = "zenwebp"
-version = "0.4.0"
+version = "0.3.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 rust-version = "1.92"
@@ -37,6 +37,7 @@ rgb = { version = "0.8", optional = true, default-features = false, features = [
 imgref = { version = "1.12", optional = true, default-features = false }
 
 [dev-dependencies]
+codec-corpus = "1"
 paste = "1.0.14"
 png = "0.17.12"
 rand = "0.8.5"

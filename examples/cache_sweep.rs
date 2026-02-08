@@ -1,11 +1,14 @@
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let path = args
-        .get(1)
-        .map(|s| s.as_str())
-        .unwrap_or("/home/lilith/work/codec-corpus/CID22/CID22-512/training/1183021.png");
+    let path = if let Some(p) = args.get(1) {
+        p.to_string()
+    } else {
+        let corpus = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
+        corpus.get("CID22/CID22-512/training").expect("corpus path unavailable")
+            .join("1183021.png").to_string_lossy().to_string()
+    };
 
-    let file = std::fs::File::open(path).unwrap();
+    let file = std::fs::File::open(&path).unwrap();
     let decoder = png::Decoder::new(std::io::BufReader::new(file));
     let mut reader = decoder.read_info().unwrap();
     let mut buf = vec![0u8; reader.output_buffer_size()];

@@ -812,12 +812,13 @@ mod corpus_tests {
 
     #[test]
     fn kodak_corpus_preset_comparison() {
-        let corpus_dir = "/mnt/v/work/codec-corpus/kodak";
+        let corpus = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
+        let corpus_dir = corpus.get("kodak").expect("kodak corpus unavailable");
         let mut total_zen = 0usize;
         let mut total_wpx = 0usize;
         let mut count = 0;
 
-        for entry in std::fs::read_dir(corpus_dir).expect("Kodak corpus not found") {
+        for entry in std::fs::read_dir(&corpus_dir).expect("Kodak corpus not found") {
             let entry = entry.unwrap();
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "png") {
@@ -854,10 +855,11 @@ mod corpus_tests {
 
     #[test]
     fn screenshot_corpus_preset_comparison() {
-        let corpus_dir = "/mnt/v/work/codec-corpus/gb82-sc";
+        let corpus = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
+        let corpus_dir = corpus.get("gb82-sc").expect("gb82-sc corpus unavailable");
         let mut results: Vec<(String, f64, f64)> = Vec::new();
 
-        for entry in std::fs::read_dir(corpus_dir).expect("Screenshot corpus not found") {
+        for entry in std::fs::read_dir(&corpus_dir).expect("Screenshot corpus not found") {
             let entry = entry.unwrap();
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "png") {
@@ -908,12 +910,13 @@ mod corpus_tests {
     /// Auto should produce output within 5% of the "correct" manual preset.
     #[test]
     fn auto_vs_manual_preset_kodak() {
-        let corpus_dir = "/mnt/v/work/codec-corpus/kodak";
+        let corpus = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
+        let corpus_dir = corpus.get("kodak").expect("kodak corpus unavailable");
         let mut auto_total = 0usize;
         let mut photo_total = 0usize;
         let mut count = 0;
 
-        for entry in std::fs::read_dir(corpus_dir).expect("Kodak corpus not found") {
+        for entry in std::fs::read_dir(&corpus_dir).expect("Kodak corpus not found") {
             let entry = entry.unwrap();
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "png") {

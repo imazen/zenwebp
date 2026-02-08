@@ -13,13 +13,15 @@ use zenwebp::{decode_rgb, EncodeRequest, EncoderConfig, PixelLayout, Preset};
 
 fn main() {
     let args: Vec<_> = env::args().collect();
-    let dir = args
-        .get(1)
-        .map(|s| s.as_str())
-        .unwrap_or("/home/lilith/work/codec-corpus/CID22/CID22-512/training");
+    let dir = if let Some(d) = args.get(1) {
+        std::path::PathBuf::from(d)
+    } else {
+        let corpus = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
+        corpus.get("CID22/CID22-512/training").expect("corpus path unavailable")
+    };
 
     // Find PNG files
-    let entries: Vec<_> = fs::read_dir(dir)
+    let entries: Vec<_> = fs::read_dir(&dir)
         .expect("Failed to read directory")
         .filter_map(|e| e.ok())
         .filter(|e| {

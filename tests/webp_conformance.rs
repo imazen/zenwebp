@@ -5,7 +5,6 @@
 //! Or via CI: `cargo test --release test_webp -- --ignored`
 
 use std::fs;
-use std::path::Path;
 use zenwebp::WebPDecoder;
 
 extern crate alloc;
@@ -241,29 +240,7 @@ fn decode_webp(data: &[u8]) -> Result<(u32, u32), Box<dyn std::error::Error>> {
 }
 
 /// Get the codec-corpus path for a specific subdirectory.
-/// Looks in order: CORPUS_DIR env var, ~/codec-corpus/, .
 fn get_corpus_path(subdir: &str) -> Option<std::path::PathBuf> {
-    // Try CORPUS_DIR environment variable first
-    if let Ok(corpus_dir) = std::env::var("CORPUS_DIR") {
-        let path = Path::new(&corpus_dir).join(subdir);
-        if path.exists() {
-            return Some(path);
-        }
-    }
-
-    // Try ~/codec-corpus/
-    if let Ok(home) = std::env::var("HOME") {
-        let path = Path::new(&home).join("codec-corpus").join(subdir);
-        if path.exists() {
-            return Some(path);
-        }
-    }
-
-    // Try . (current directory)
-    let path = Path::new(".").join("codec-corpus").join(subdir);
-    if path.exists() {
-        return Some(path);
-    }
-
-    None
+    let corpus = codec_corpus::Corpus::new().ok()?;
+    corpus.get(subdir).ok()
 }
