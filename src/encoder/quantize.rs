@@ -203,9 +203,10 @@ impl VP8Matrix {
         #[cfg(all(feature = "simd", target_arch = "wasm32"))]
         {
             use archmage::SimdToken;
-            let token = archmage::Wasm128Token::summon().unwrap();
-            crate::common::simd_wasm::dequantize_block_wasm(token, &self.q, coeffs);
-            return;
+            if let Some(token) = archmage::Wasm128Token::summon() {
+                crate::common::simd_wasm::dequantize_block_wasm(token, &self.q, coeffs);
+                return;
+            }
         }
         #[allow(unreachable_code)]
         for (pos, coeff) in coeffs.iter_mut().enumerate() {
@@ -321,8 +322,11 @@ pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, use_sharp
 #[cfg(all(feature = "simd", target_arch = "wasm32"))]
 pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, use_sharpen: bool) -> bool {
     use archmage::SimdToken;
-    let token = archmage::Wasm128Token::summon().unwrap();
-    crate::common::simd_wasm::quantize_block_wasm(token, coeffs, matrix, use_sharpen)
+    if let Some(token) = archmage::Wasm128Token::summon() {
+        return crate::common::simd_wasm::quantize_block_wasm(token, coeffs, matrix, use_sharpen);
+    }
+    matrix.quantize(coeffs);
+    coeffs.iter().any(|&c| c != 0)
 }
 
 /// Scalar fallback for non-SIMD platforms
@@ -620,15 +624,17 @@ pub fn quantize_dequantize_block_simd(
     dequantized: &mut [i32; 16],
 ) -> bool {
     use archmage::SimdToken;
-    let token = archmage::Wasm128Token::summon().unwrap();
-    crate::common::simd_wasm::quantize_dequantize_block_wasm(
-        token,
-        coeffs,
-        matrix,
-        use_sharpen,
-        quantized,
-        dequantized,
-    )
+    if let Some(token) = archmage::Wasm128Token::summon() {
+        return crate::common::simd_wasm::quantize_dequantize_block_wasm(
+            token,
+            coeffs,
+            matrix,
+            use_sharpen,
+            quantized,
+            dequantized,
+        );
+    }
+    quantize_dequantize_block_scalar(coeffs, matrix, quantized, dequantized)
 }
 
 /// Scalar fallback for non-SIMD platforms

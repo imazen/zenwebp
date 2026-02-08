@@ -1430,8 +1430,16 @@ impl<'a> super::Vp8Encoder<'a> {
             #[cfg(all(feature = "simd", target_arch = "wasm32"))]
             let sse = {
                 use archmage::SimdToken;
-                let token = archmage::Wasm128Token::summon().unwrap();
-                crate::common::simd_wasm::sse4x4_wasm(token, src_block, pred)
+                if let Some(token) = archmage::Wasm128Token::summon() {
+                    crate::common::simd_wasm::sse4x4_wasm(token, src_block, pred)
+                } else {
+                    let mut sum = 0u32;
+                    for k in 0..16 {
+                        let diff = i32::from(src_block[k]) - i32::from(pred[k]);
+                        sum += (diff * diff) as u32;
+                    }
+                    sum
+                }
             };
             #[cfg(not(all(
                 feature = "simd",
@@ -1521,13 +1529,23 @@ impl<'a> super::Vp8Encoder<'a> {
             #[cfg(all(feature = "simd", target_arch = "wasm32"))]
             let sse = {
                 use archmage::SimdToken;
-                let token = archmage::Wasm128Token::summon().unwrap();
-                crate::common::simd_wasm::sse4x4_with_residual_wasm(
-                    token,
-                    src_block,
-                    pred,
-                    &dequantized,
-                )
+                if let Some(token) = archmage::Wasm128Token::summon() {
+                    crate::common::simd_wasm::sse4x4_with_residual_wasm(
+                        token,
+                        src_block,
+                        pred,
+                        &dequantized,
+                    )
+                } else {
+                    let mut sum = 0u32;
+                    for i in 0..16 {
+                        let reconstructed =
+                            (i32::from(pred[i]) + dequantized[i]).clamp(0, 255) as u8;
+                        let diff = i32::from(src_block[i]) - i32::from(reconstructed);
+                        sum += (diff * diff) as u32;
+                    }
+                    sum
+                }
             };
             #[cfg(not(all(
                 feature = "simd",
