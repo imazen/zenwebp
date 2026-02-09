@@ -35,8 +35,8 @@ use crate::common::transform;
 use loop_filter_dispatch::*;
 
 /// Maximum stride supported for bounds-check-free loop filtering.
-/// Supports images up to 8K width (7680 pixels).
-const MAX_FILTER_STRIDE: usize = 8192;
+/// WebP max dimension is 16383, rounded up to MB boundary = 16384.
+const MAX_FILTER_STRIDE: usize = 16384;
 
 /// Padding added to pixel buffers for bounds-check-free loop filtering.
 /// Allows fixed-size region extraction without per-access bounds checks.

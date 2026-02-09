@@ -20,8 +20,9 @@ use core::convert::TryFrom;
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 use safe_unaligned_simd::x86_64 as simd_mem;
 
-/// Maximum stride for bounds-check-free filtering (8K image width).
-const MAX_STRIDE: usize = 8192;
+/// Maximum stride for bounds-check-free filtering.
+/// WebP max dimension is 16383, rounded up to MB boundary = 16384.
+const MAX_STRIDE: usize = 16384;
 
 /// Fixed region size for simple vertical filter: 4 rows (p1, p0, q0, q1) plus 16 bytes.
 const V_FILTER_REGION: usize = 3 * MAX_STRIDE + 16;
