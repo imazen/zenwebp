@@ -332,7 +332,7 @@ Done:
 
 **Builder convention**: `with_` prefix for consuming builder setters, bare-name for getters. Config and Request setters use `with_foo(mut self, val) -> Self`. Getters use `foo(&self) -> T`.
 
-**Licensing**: zenwebp is AGPL-3.0-or-later with commercial licensing available (contact support@imazen.io). Versions 0.1.x-0.3.x were MIT OR Apache-2.0. The optional quantization features (`quantize-quantizr` MIT, `quantize-imagequant` GPL) are both compatible with AGPL.
+**Licensing**: zenwebp is AGPL-3.0-or-later with commercial licensing available (contact support@imazen.io). Versions 0.1.x-0.3.x were MIT OR Apache-2.0.
 
 **Project standards**: `#![forbid(unsafe_code)]` with default features. no_std+alloc (minimum: wasm32). CI with codecov. README with badges and usage examples. As of Rust 1.92, almost everything is in `core::` (including `Error`) — don't assume `std` is needed. Use `wasmtimer` crate for timing on wasm. Fuzz targets required (decode, roundtrip, limits, streaming). Codecs must be safe for malicious input on real-time image proxies — no amplification, bound memory/CPU, periodic DoS/security audits.
 

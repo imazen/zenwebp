@@ -27,9 +27,6 @@
 pub mod analysis;
 mod api;
 mod arithmetic;
-/// Color quantization via imagequant (requires `quantize` feature)
-#[cfg(feature = "quantize")]
-pub mod color_quantize;
 /// Type-safe encoder configuration
 pub mod config;
 pub mod cost;
@@ -56,8 +53,6 @@ pub use api::{
     EncodeError, EncodeProgress, EncodeRequest, EncodeResult, EncodeStats, ImageMetadata,
     NoProgress, PixelLayout, Preset,
 };
-#[cfg(feature = "quantize")]
-pub use color_quantize::{quantize_rgb, quantize_rgba, QuantizedImage};
 pub use config::{EncoderConfig, LosslessConfig, LossyConfig};
 pub use vp8l::{encode_vp8l, Vp8lConfig, Vp8lQuality};
 

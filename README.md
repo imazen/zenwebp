@@ -335,22 +335,6 @@ a sliding scale. You can also use this under the AGPL v3.
 
 Versions 0.1.x - 0.2.x were dual-licensed under MIT OR Apache-2.0. See the git history for those license files.
 
-### Color Quantization Features
-
-The optional color quantization features provide two backend choices:
-
-- **`quantize`** or **`quantize-quantizr`** (MIT-licensed): Uses the `quantizr` crate. Compatible with AGPL.
-
-- **`quantize-imagequant`** (GPL-3.0-or-later): Uses the [`imagequant`](https://github.com/ImageOptim/libimagequant) crate, which **produces dramatically better
-  file sizes** via more compressible dithering and quantization patterns. GPL is compatible with AGPL. [Commercial license available from upstream](https://supso.org/projects/pngquant) if you purchase both.
-
-```toml
-# Default quantizer (MIT, compatible with AGPL)
-zenwebp = { version = "0.3", features = ["quantize"] }
-
-# Better quality GPL quantizer (also compatible with AGPL)
-zenwebp = { version = "0.3", features = ["quantize-imagequant"] }
-```
 
 ## Contributing
 
