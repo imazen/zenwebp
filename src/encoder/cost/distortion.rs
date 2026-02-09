@@ -126,11 +126,7 @@ pub fn tdisto_4x4(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     }
     #[cfg(not(all(
         feature = "simd",
-        any(
-            target_arch = "x86_64",
-            target_arch = "x86",
-            target_arch = "aarch64",
-        )
+        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64",)
     )))]
     {
         let sum1 = t_transform(a, stride, w);
@@ -390,10 +386,7 @@ pub fn is_flat_source_16(src: &[u8], stride: usize) -> bool {
     }
     #[cfg(not(all(
         feature = "simd",
-        any(
-            target_arch = "x86_64",
-            target_arch = "aarch64",
-        )
+        any(target_arch = "x86_64", target_arch = "aarch64",)
     )))]
     {
         is_flat_source_16_scalar(src, stride)
