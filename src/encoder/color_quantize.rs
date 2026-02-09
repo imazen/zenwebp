@@ -6,26 +6,29 @@
 //!
 //! # Backends
 //!
-//! Two backends are available (choose via feature flags):
+//! Three backends are available (choose via feature flags):
 //!
-//! - **`quantize-quantizr`** (default): MIT-licensed backend using the `quantizr` crate.
+//! - **`quantize-zenquant`** (default): Best perceptual quality via AQ-informed
+//!   palette selection. AGPL-3.0-or-later licensed.
+//!
+//! - **`quantize-quantizr`**: MIT-licensed backend using the `quantizr` crate.
 //!   Decent quality, compatible with MIT/Apache-2.0 licensing.
 //!
 //! - **`quantize-imagequant`**: GPL-3.0-or-later backend using Kornel Lesiński's
-//!   [`imagequant`](https://github.com/ImageOptim/libimagequant) crate. **Produces dramatically better file sizes** via more compressible
-//!   dithering and quantization patterns, but requires GPL-3.0-or-later licensing for
-//!   the combined work. [Commercial license available from upstream](https://supso.org/projects/pngquant).
+//!   [`imagequant`](https://github.com/ImageOptim/libimagequant) crate.
+//!   Good compression, but requires GPL-3.0-or-later compliance.
+//!   [Commercial license available from upstream](https://supso.org/projects/pngquant).
 //!
-//! The `quantize` feature is an alias for `quantize-quantizr` (MIT default).
+//! The `quantize` feature is an alias for `quantize-zenquant`.
 //!
 //! # Example
 //!
 //! ```toml
-//! # Use MIT-licensed backend (default)
+//! # Use default backend (best quality)
 //! zenwebp = { version = "0.3", features = ["quantize"] }
 //!
-//! # Or explicitly choose GPL backend for better quality
-//! zenwebp = { version = "0.3", features = ["quantize-imagequant"] }
+//! # Or explicitly choose MIT backend
+//! zenwebp = { version = "0.3", features = ["quantize-quantizr"] }
 //! ```
 
 use alloc::vec::Vec;
@@ -90,7 +93,93 @@ pub fn quantize_rgba(
     quantize_rgba_impl(rgba, width, height, true, quality, max_colors)
 }
 
-#[cfg(feature = "quantize-imagequant")]
+#[cfg(feature = "quantize-zenquant")]
+fn quantize_rgba_impl(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    has_alpha: bool,
+    quality: u8,
+    max_colors: u16,
+) -> Option<QuantizedImage> {
+    let w = width as usize;
+    let h = height as usize;
+    let bpp = if has_alpha { 4 } else { 3 };
+    let expected_len = w * h * bpp;
+    if pixels.len() < expected_len {
+        return None;
+    }
+
+    // Build zenquant config
+    let mut config = zenquant::QuantizeConfig::new(zenquant::OutputFormat::WebpLossless);
+    config = if quality >= 75 {
+        config.quality(zenquant::Quality::Best)
+    } else if quality >= 40 {
+        config.quality(zenquant::Quality::Balanced)
+    } else {
+        config.quality(zenquant::Quality::Fast)
+    };
+    let max_colors = max_colors.clamp(2, 256);
+    config = config.max_colors(max_colors as u32);
+    // Disable dithering for lossless encoding (dithering adds noise)
+    config = config._no_dither();
+
+    if has_alpha {
+        // RGBA path
+        let rgba_pixels: Vec<zenquant::RGBA<u8>> = pixels[..expected_len]
+            .chunks_exact(4)
+            .map(|p| zenquant::RGBA::new(p[0], p[1], p[2], p[3]))
+            .collect();
+
+        let result = zenquant::quantize_rgba(&rgba_pixels, w, h, &config).ok()?;
+        let palette = result.palette_rgba();
+        let palette_size = result.palette_len();
+
+        let argb: Vec<u32> = result
+            .indices()
+            .iter()
+            .map(|&idx| {
+                let c = palette[idx as usize];
+                ((c[3] as u32) << 24) | ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | (c[2] as u32)
+            })
+            .collect();
+
+        Some(QuantizedImage {
+            argb,
+            width,
+            height,
+            palette_size,
+        })
+    } else {
+        // RGB path
+        let rgb_pixels: Vec<zenquant::RGB<u8>> = pixels[..expected_len]
+            .chunks_exact(3)
+            .map(|p| zenquant::RGB::new(p[0], p[1], p[2]))
+            .collect();
+
+        let result = zenquant::quantize(&rgb_pixels, w, h, &config).ok()?;
+        let palette = result.palette();
+        let palette_size = result.palette_len();
+
+        let argb: Vec<u32> = result
+            .indices()
+            .iter()
+            .map(|&idx| {
+                let c = palette[idx as usize];
+                (0xFF00_0000) | ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | (c[2] as u32)
+            })
+            .collect();
+
+        Some(QuantizedImage {
+            argb,
+            width,
+            height,
+            palette_size,
+        })
+    }
+}
+
+#[cfg(all(feature = "quantize-imagequant", not(feature = "quantize-zenquant")))]
 fn quantize_rgba_impl(
     pixels: &[u8],
     width: u32,
@@ -154,7 +243,7 @@ fn quantize_rgba_impl(
     })
 }
 
-#[cfg(all(feature = "quantize-quantizr", not(feature = "quantize-imagequant")))]
+#[cfg(all(feature = "quantize-quantizr", not(feature = "quantize-zenquant"), not(feature = "quantize-imagequant")))]
 fn quantize_rgba_impl(
     pixels: &[u8],
     width: u32,

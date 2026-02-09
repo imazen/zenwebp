@@ -34,6 +34,7 @@ multiversed = { version = "0.2.0", optional = true }
 multiversion = { version = "0.8.0", optional = true }
 imagequant = { version = "4.4", optional = true, default-features = false }
 quantizr = { version = "1.4", optional = true }
+zenquant = { path = "../zenquant", optional = true, default-features = false, features = ["std"] }
 rgb = { version = "0.8", optional = true, default-features = false, features = ["as-bytes"] }
 imgref = { version = "1.12", optional = true, default-features = false }
 
@@ -78,9 +79,11 @@ multiverse = ["dep:multiversed", "dep:multiversion"]
 # Color quantization for near-lossless palette encoding.
 # Reduces >256 color images to palette for VP8L color indexing transform.
 # Choose backend based on licensing needs:
-# - quantize-quantizr: MIT-licensed backend (default for quantize feature)
-# - quantize-imagequant: GPL-3.0-or-later backend (better quality, restrictive license)
-quantize = ["quantize-quantizr"]
+# - quantize-zenquant: Best perceptual quality (default for quantize feature)
+# - quantize-quantizr: MIT-licensed backend
+# - quantize-imagequant: GPL-3.0-or-later backend (best compression, restrictive license)
+quantize = ["quantize-zenquant"]
+quantize-zenquant = ["dep:zenquant", "std"]
 quantize-quantizr = ["dep:quantizr", "std"]
 quantize-imagequant = ["dep:imagequant", "std"]
 # --- Internal features (not for public use, underscore prefix = private) ---
