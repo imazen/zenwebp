@@ -135,6 +135,9 @@ pub use enough::{Stop, StopReason, Unstoppable};
 // Re-export VP8 decoder (public module)
 pub use decoder::vp8;
 
+mod zencodec;
+pub use zencodec::{WebpDecodeJob, WebpDecoding, WebpEncodeJob, WebpEncoding};
+
 /// Standalone metadata convenience functions for already-encoded WebP data.
 ///
 /// For embedding metadata during encoding, use
