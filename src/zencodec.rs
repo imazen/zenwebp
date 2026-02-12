@@ -501,11 +501,7 @@ impl<'a> DecodingJob<'a> for WebpDecodeJob<'a> {
                     rgba_req.decode_rgba()?
                 };
                 let rgba = bytes_to_rgba(&rgba_pixels);
-                PixelData::Rgba8(zencodec_types::ImgVec::new(
-                    rgba,
-                    rw as usize,
-                    rh as usize,
-                ))
+                PixelData::Rgba8(zencodec_types::ImgVec::new(rgba, rw as usize, rh as usize))
             }
         };
 
@@ -519,6 +515,51 @@ impl<'a> DecodingJob<'a> for WebpDecodeJob<'a> {
         };
 
         Ok(DecodeOutput::new(pixel_data, info))
+    }
+
+    fn decode_into_rgba8(
+        self,
+        data: &[u8],
+        dst: zencodec_types::ImgRefMut<'_, zencodec_types::Rgba<u8>>,
+    ) -> Result<ImageInfo, Self::Error> {
+        // Check file size limit
+        if let Some(max) = self.effective_file_size_limit() {
+            if data.len() as u64 > max {
+                return Err(DecodeError::InvalidParameter(alloc::format!(
+                    "file size {} exceeds limit {}",
+                    data.len(),
+                    max
+                )));
+            }
+        }
+
+        let cfg = self.build_config();
+        let mut req = DecodeRequest::new(&cfg, data);
+        if let Some(stop) = self.stop {
+            req = req.stop(stop);
+        }
+
+        // Use stride if dst has padding between rows
+        let width = dst.width();
+        let stride = dst.stride();
+        if stride != width {
+            req = req.stride(stride as u32);
+        }
+
+        // Cast the caller's Rgba<u8> buffer to raw bytes for zero-copy decode
+        use zencodec_types::rgb::ComponentBytes;
+        let bytes: &mut [u8] = dst.into_buf().as_bytes_mut();
+        let (w, h) = req.decode_rgba_into(bytes)?;
+
+        // Build metadata
+        let native_info = crate::ImageInfo::from_webp(data).ok();
+        let info = if let Some(ref ni) = native_info {
+            to_image_info(ni)
+        } else {
+            ImageInfo::new(w, h, ImageFormat::WebP).with_alpha(true)
+        };
+
+        Ok(info)
     }
 }
 
@@ -666,14 +707,7 @@ mod tests {
     #[test]
     fn job_with_stop() {
         use zencodec_types::Unstoppable;
-        let pixels: Vec<Rgb<u8>> = vec![
-            Rgb {
-                r: 0,
-                g: 0,
-                b: 0,
-            };
-            8 * 8
-        ];
+        let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 0, g: 0, b: 0 }; 8 * 8];
         let img = ImgVec::new(pixels, 8, 8);
         let enc = WebpEncoding::lossy();
         let output = enc
