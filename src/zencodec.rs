@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 
 use zencodec_types::{
     DecodeOutput, Decoding, DecodingJob, EncodeOutput, Encoding, EncodingJob, ImageFormat,
-    ImageInfo, ImageMetadata, ImgRef, PixelData, Stop,
+    ImageInfo, ImageMetadata, ImgRef, PixelData, ResourceLimits, Stop,
 };
 
 use crate::encoder::config::EncoderConfig;
@@ -20,7 +20,7 @@ use crate::{DecodeConfig, DecodeError, DecodeRequest, EncodeError, EncodeRequest
 
 /// WebP encoder configuration implementing [`Encoding`].
 ///
-/// Wraps [`EncoderConfig`] (lossy/lossless enum) with limit fields for the
+/// Wraps [`EncoderConfig`] (lossy/lossless enum) with resource limits for the
 /// trait interface.
 ///
 /// # Examples
@@ -36,9 +36,7 @@ use crate::{DecodeConfig, DecodeError, DecodeRequest, EncodeError, EncodeRequest
 #[derive(Clone, Debug)]
 pub struct WebpEncoding {
     inner: EncoderConfig,
-    limit_pixels: Option<u64>,
-    limit_memory: Option<u64>,
-    limit_output: Option<u64>,
+    limits: ResourceLimits,
 }
 
 impl WebpEncoding {
@@ -47,9 +45,7 @@ impl WebpEncoding {
     pub fn lossy() -> Self {
         Self {
             inner: EncoderConfig::new_lossy(),
-            limit_pixels: None,
-            limit_memory: None,
-            limit_output: None,
+            limits: ResourceLimits::none(),
         }
     }
 
@@ -58,9 +54,7 @@ impl WebpEncoding {
     pub fn lossless() -> Self {
         Self {
             inner: EncoderConfig::new_lossless(),
-            limit_pixels: None,
-            limit_memory: None,
-            limit_output: None,
+            limits: ResourceLimits::none(),
         }
     }
 
@@ -69,10 +63,41 @@ impl WebpEncoding {
     pub fn with_preset(preset: crate::Preset, quality: f32) -> Self {
         Self {
             inner: EncoderConfig::with_preset(preset, quality),
-            limit_pixels: None,
-            limit_memory: None,
-            limit_output: None,
+            limits: ResourceLimits::none(),
         }
+    }
+
+    /// Set encoding quality (0.0 = smallest, 100.0 = best).
+    #[must_use]
+    pub fn with_quality(mut self, quality: f32) -> Self {
+        self.inner = self.inner.with_quality(quality);
+        self
+    }
+
+    /// Set quality/speed tradeoff (0-10, mapped to WebP method 0-6).
+    #[must_use]
+    pub fn with_effort(mut self, effort: u32) -> Self {
+        let method = ((effort as u64 * 6) / 10).min(6) as u8;
+        self.inner = self.inner.with_method(method);
+        self
+    }
+
+    /// Enable or disable lossless encoding.
+    #[must_use]
+    pub fn with_lossless(mut self, lossless: bool) -> Self {
+        self.inner = self.inner.with_lossless(lossless);
+        self
+    }
+
+    /// Set alpha plane quality (0.0-100.0).
+    #[must_use]
+    pub fn with_alpha_quality(mut self, quality: f32) -> Self {
+        let aq = quality.clamp(0.0, 100.0) as u8;
+        match &mut self.inner {
+            EncoderConfig::Lossy(cfg) => cfg.alpha_quality = aq,
+            EncoderConfig::Lossless(cfg) => cfg.alpha_quality = aq,
+        }
+        self
     }
 
     /// Enable sharp YUV conversion (lossy only).
@@ -126,44 +151,8 @@ impl Encoding for WebpEncoding {
     type Error = EncodeError;
     type Job<'a> = WebpEncodeJob<'a>;
 
-    fn with_quality(mut self, quality: f32) -> Self {
-        self.inner = self.inner.with_quality(quality);
-        self
-    }
-
-    fn with_effort(mut self, effort: u32) -> Self {
-        // Map 0-10 to WebP method 0-6
-        let method = ((effort as u64 * 6) / 10).min(6) as u8;
-        self.inner = self.inner.with_method(method);
-        self
-    }
-
-    fn with_lossless(mut self, lossless: bool) -> Self {
-        self.inner = self.inner.with_lossless(lossless);
-        self
-    }
-
-    fn with_alpha_quality(mut self, quality: f32) -> Self {
-        let aq = quality.clamp(0.0, 100.0) as u8;
-        match &mut self.inner {
-            EncoderConfig::Lossy(cfg) => cfg.alpha_quality = aq,
-            EncoderConfig::Lossless(cfg) => cfg.alpha_quality = aq,
-        }
-        self
-    }
-
-    fn with_limit_pixels(mut self, max: u64) -> Self {
-        self.limit_pixels = Some(max);
-        self
-    }
-
-    fn with_limit_memory(mut self, bytes: u64) -> Self {
-        self.limit_memory = Some(bytes);
-        self
-    }
-
-    fn with_limit_output(mut self, bytes: u64) -> Self {
-        self.limit_output = Some(bytes);
+    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
+        self.limits = limits.clone();
         self
     }
 
@@ -174,8 +163,7 @@ impl Encoding for WebpEncoding {
             icc: None,
             exif: None,
             xmp: None,
-            limit_pixels: None,
-            limit_memory: None,
+            limits: ResourceLimits::none(),
         }
     }
 }
@@ -187,17 +175,39 @@ pub struct WebpEncodeJob<'a> {
     icc: Option<&'a [u8]>,
     exif: Option<&'a [u8]>,
     xmp: Option<&'a [u8]>,
-    limit_pixels: Option<u64>,
-    limit_memory: Option<u64>,
+    limits: ResourceLimits,
 }
 
 impl<'a> WebpEncodeJob<'a> {
+    /// Set ICC profile data.
+    #[must_use]
+    pub fn with_icc(mut self, icc: &'a [u8]) -> Self {
+        self.icc = Some(icc);
+        self
+    }
+
+    /// Set EXIF data.
+    #[must_use]
+    pub fn with_exif(mut self, exif: &'a [u8]) -> Self {
+        self.exif = Some(exif);
+        self
+    }
+
+    /// Set XMP data.
+    #[must_use]
+    pub fn with_xmp(mut self, xmp: &'a [u8]) -> Self {
+        self.xmp = Some(xmp);
+        self
+    }
+
     fn effective_limit_pixels(&self) -> Option<u64> {
-        self.limit_pixels.or(self.config.limit_pixels)
+        self.limits.max_pixels.or(self.config.limits.max_pixels)
     }
 
     fn effective_limit_memory(&self) -> Option<u64> {
-        self.limit_memory.or(self.config.limit_memory)
+        self.limits
+            .max_memory_bytes
+            .or(self.config.limits.max_memory_bytes)
     }
 
     fn build_inner_config(&self) -> EncoderConfig {
@@ -232,7 +242,13 @@ impl<'a> WebpEncodeJob<'a> {
         self.icc.is_some() || self.exif.is_some() || self.xmp.is_some()
     }
 
-    fn do_encode(self, pixels: &[u8], layout: PixelLayout, w: u32, h: u32) -> Result<EncodeOutput, EncodeError> {
+    fn do_encode(
+        self,
+        pixels: &[u8],
+        layout: PixelLayout,
+        w: u32,
+        h: u32,
+    ) -> Result<EncodeOutput, EncodeError> {
         let inner = self.build_inner_config();
         let mut req = EncodeRequest::new(&inner, pixels, layout, w, h);
 
@@ -270,47 +286,42 @@ impl<'a> EncodingJob<'a> for WebpEncodeJob<'a> {
         self
     }
 
-    fn with_icc(mut self, icc: &'a [u8]) -> Self {
-        self.icc = Some(icc);
+    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
+        self.limits = limits.clone();
         self
     }
 
-    fn with_exif(mut self, exif: &'a [u8]) -> Self {
-        self.exif = Some(exif);
-        self
-    }
-
-    fn with_xmp(mut self, xmp: &'a [u8]) -> Self {
-        self.xmp = Some(xmp);
-        self
-    }
-
-    fn with_limit_pixels(mut self, max: u64) -> Self {
-        self.limit_pixels = Some(max);
-        self
-    }
-
-    fn with_limit_memory(mut self, bytes: u64) -> Self {
-        self.limit_memory = Some(bytes);
-        self
-    }
-
-    fn encode_rgb8(self, img: ImgRef<'_, zencodec_types::Rgb<u8>>) -> Result<EncodeOutput, Self::Error> {
+    fn encode_rgb8(
+        self,
+        img: ImgRef<'_, zencodec_types::Rgb<u8>>,
+    ) -> Result<EncodeOutput, Self::Error> {
         let (buf, w, h) = img_rgb_to_bytes(img);
         self.do_encode(&buf, PixelLayout::Rgb8, w, h)
     }
 
-    fn encode_rgba8(self, img: ImgRef<'_, zencodec_types::Rgba<u8>>) -> Result<EncodeOutput, Self::Error> {
+    fn encode_rgba8(
+        self,
+        img: ImgRef<'_, zencodec_types::Rgba<u8>>,
+    ) -> Result<EncodeOutput, Self::Error> {
         let (buf, w, h) = img_rgba_to_bytes(img);
         self.do_encode(&buf, PixelLayout::Rgba8, w, h)
     }
 
-    fn encode_gray8(self, img: ImgRef<'_, zencodec_types::Gray<u8>>) -> Result<EncodeOutput, Self::Error> {
+    fn encode_gray8(
+        self,
+        img: ImgRef<'_, zencodec_types::Gray<u8>>,
+    ) -> Result<EncodeOutput, Self::Error> {
         // WebP doesn't support grayscale natively — expand to RGB
         let (buf, _, _) = img.to_contiguous_buf();
         let w = img.width() as u32;
         let h = img.height() as u32;
-        let rgb: Vec<u8> = buf.iter().flat_map(|g| { let v = g.value(); [v, v, v] }).collect();
+        let rgb: Vec<u8> = buf
+            .iter()
+            .flat_map(|g| {
+                let v = g.value();
+                [v, v, v]
+            })
+            .collect();
         self.do_encode(&rgb, PixelLayout::Rgb8, w, h)
     }
 }
@@ -319,11 +330,11 @@ impl<'a> EncodingJob<'a> for WebpEncodeJob<'a> {
 
 /// WebP decoder configuration implementing [`Decoding`].
 ///
-/// Wraps [`DecodeConfig`] with additional limit fields for the trait interface.
+/// Wraps [`DecodeConfig`] with resource limits for the trait interface.
 #[derive(Clone, Debug)]
 pub struct WebpDecoding {
     inner: DecodeConfig,
-    limit_file_size: Option<u64>,
+    limits: ResourceLimits,
 }
 
 impl WebpDecoding {
@@ -332,7 +343,7 @@ impl WebpDecoding {
     pub fn new() -> Self {
         Self {
             inner: DecodeConfig::default(),
-            limit_file_size: None,
+            limits: ResourceLimits::none(),
         }
     }
 
@@ -365,23 +376,20 @@ impl Decoding for WebpDecoding {
     type Error = DecodeError;
     type Job<'a> = WebpDecodeJob<'a>;
 
-    fn with_limit_pixels(mut self, max: u64) -> Self {
-        self.inner.limits = self.inner.limits.max_total_pixels(max);
-        self
-    }
-
-    fn with_limit_memory(mut self, bytes: u64) -> Self {
-        self.inner.limits = self.inner.limits.max_memory(bytes);
-        self
-    }
-
-    fn with_limit_dimensions(mut self, width: u32, height: u32) -> Self {
-        self.inner.limits = self.inner.limits.max_dimensions(width, height);
-        self
-    }
-
-    fn with_limit_file_size(mut self, bytes: u64) -> Self {
-        self.limit_file_size = Some(bytes);
+    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
+        self.limits = limits.clone();
+        // Also propagate supported limits to the inner DecodeConfig
+        if let Some(px) = limits.max_pixels {
+            self.inner.limits = self.inner.limits.max_total_pixels(px);
+        }
+        if let Some(mem) = limits.max_memory_bytes {
+            self.inner.limits = self.inner.limits.max_memory(mem);
+        }
+        if let Some(w) = limits.max_width {
+            if let Some(h) = limits.max_height {
+                self.inner.limits = self.inner.limits.max_dimensions(w, h);
+            }
+        }
         self
     }
 
@@ -389,13 +397,12 @@ impl Decoding for WebpDecoding {
         WebpDecodeJob {
             config: self,
             stop: None,
-            limit_pixels: None,
-            limit_memory: None,
+            limits: ResourceLimits::none(),
         }
     }
 
     fn probe(&self, data: &[u8]) -> Result<ImageInfo, Self::Error> {
-        if let Some(max) = self.limit_file_size {
+        if let Some(max) = self.limits.max_file_size {
             if data.len() as u64 > max {
                 return Err(DecodeError::InvalidParameter(alloc::format!(
                     "file size {} exceeds limit {}",
@@ -413,20 +420,30 @@ impl Decoding for WebpDecoding {
 pub struct WebpDecodeJob<'a> {
     config: &'a WebpDecoding,
     stop: Option<&'a dyn Stop>,
-    limit_pixels: Option<u64>,
-    limit_memory: Option<u64>,
+    limits: ResourceLimits,
 }
 
 impl<'a> WebpDecodeJob<'a> {
     fn build_config(&self) -> DecodeConfig {
         let mut cfg = self.config.inner.clone();
-        if let Some(px) = self.limit_pixels {
+        if let Some(px) = self.limits.max_pixels {
             cfg.limits = cfg.limits.max_total_pixels(px);
         }
-        if let Some(mem) = self.limit_memory {
+        if let Some(mem) = self.limits.max_memory_bytes {
             cfg.limits = cfg.limits.max_memory(mem);
         }
+        if let Some(w) = self.limits.max_width {
+            if let Some(h) = self.limits.max_height {
+                cfg.limits = cfg.limits.max_dimensions(w, h);
+            }
+        }
         cfg
+    }
+
+    fn effective_file_size_limit(&self) -> Option<u64> {
+        self.limits
+            .max_file_size
+            .or(self.config.limits.max_file_size)
     }
 }
 
@@ -438,19 +455,14 @@ impl<'a> DecodingJob<'a> for WebpDecodeJob<'a> {
         self
     }
 
-    fn with_limit_pixels(mut self, max: u64) -> Self {
-        self.limit_pixels = Some(max);
-        self
-    }
-
-    fn with_limit_memory(mut self, bytes: u64) -> Self {
-        self.limit_memory = Some(bytes);
+    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
+        self.limits = limits.clone();
         self
     }
 
     fn decode(self, data: &[u8]) -> Result<DecodeOutput, Self::Error> {
         // Check file size limit
-        if let Some(max) = self.config.limit_file_size {
+        if let Some(max) = self.effective_file_size_limit() {
             if data.len() as u64 > max {
                 return Err(DecodeError::InvalidParameter(alloc::format!(
                     "file size {} exceeds limit {}",
@@ -503,8 +515,7 @@ impl<'a> DecodingJob<'a> for WebpDecodeJob<'a> {
         let info = if let Some(ref ni) = native_info {
             to_image_info(ni)
         } else {
-            ImageInfo::new(w, h, ImageFormat::WebP)
-                .with_alpha(pixel_data.has_alpha())
+            ImageInfo::new(w, h, ImageFormat::WebP).with_alpha(pixel_data.has_alpha())
         };
 
         Ok(DecodeOutput::new(pixel_data, info))
@@ -552,21 +563,30 @@ fn img_rgba_to_bytes(img: ImgRef<'_, zencodec_types::Rgba<u8>>) -> (Vec<u8>, u32
 /// Convert raw RGB bytes to Vec<Rgb<u8>>.
 fn bytes_to_rgb(data: &[u8]) -> Vec<zencodec_types::Rgb<u8>> {
     data.chunks_exact(3)
-        .map(|c| zencodec_types::Rgb { r: c[0], g: c[1], b: c[2] })
+        .map(|c| zencodec_types::Rgb {
+            r: c[0],
+            g: c[1],
+            b: c[2],
+        })
         .collect()
 }
 
 /// Convert raw RGBA bytes to Vec<Rgba<u8>>.
 fn bytes_to_rgba(data: &[u8]) -> Vec<zencodec_types::Rgba<u8>> {
     data.chunks_exact(4)
-        .map(|c| zencodec_types::Rgba { r: c[0], g: c[1], b: c[2], a: c[3] })
+        .map(|c| zencodec_types::Rgba {
+            r: c[0],
+            g: c[1],
+            b: c[2],
+            a: c[3],
+        })
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zencodec_types::{Encoding, Decoding, ImgVec, Rgb, Rgba};
+    use zencodec_types::{Decoding, Encoding, ImgVec, Rgb, Rgba};
 
     #[test]
     fn roundtrip_rgb8_lossy() {
