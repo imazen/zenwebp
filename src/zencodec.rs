@@ -9,9 +9,10 @@
 use alloc::vec::Vec;
 
 use zencodec_types::{
-    DecodeOutput, Decoding, DecodingJob, EncodeOutput, Encoding, EncodingJob, ImageFormat,
-    ImageInfo, ImageMetadata, ImgRef, PixelData, ResourceLimits, Stop,
+    CodecCapabilities, DecodeOutput, Decoding, DecodingJob, EncodeOutput, Encoding, EncodingJob,
+    ImageFormat, ImageInfo, ImageMetadata, ImgRef, PixelData, ResourceLimits, Stop,
 };
+use zencodec_types::rgb::alt::BGRA;
 
 use crate::encoder::config::EncoderConfig;
 use crate::{DecodeConfig, DecodeError, DecodeRequest, EncodeError, EncodeRequest, PixelLayout};
@@ -147,12 +148,22 @@ impl WebpEncoding {
     }
 }
 
+static ENCODE_CAPS: CodecCapabilities = CodecCapabilities::new()
+    .with_encode_icc(true)
+    .with_encode_exif(true)
+    .with_encode_xmp(true)
+    .with_encode_cancel(true);
+
 impl Encoding for WebpEncoding {
     type Error = EncodeError;
     type Job<'a> = WebpEncodeJob<'a>;
 
-    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
-        self.limits = limits.clone();
+    fn capabilities() -> &'static CodecCapabilities {
+        &ENCODE_CAPS
+    }
+
+    fn with_limits(mut self, limits: ResourceLimits) -> Self {
+        self.limits = limits;
         self
     }
 
@@ -286,8 +297,8 @@ impl<'a> EncodingJob<'a> for WebpEncodeJob<'a> {
         self
     }
 
-    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
-        self.limits = limits.clone();
+    fn with_limits(mut self, limits: ResourceLimits) -> Self {
+        self.limits = limits;
         self
     }
 
@@ -319,6 +330,97 @@ impl<'a> EncodingJob<'a> for WebpEncodeJob<'a> {
             .iter()
             .flat_map(|g| {
                 let v = g.value();
+                [v, v, v]
+            })
+            .collect();
+        self.do_encode(&rgb, PixelLayout::Rgb8, w, h)
+    }
+
+    fn encode_bgra8(
+        self,
+        img: ImgRef<'_, BGRA<u8>>,
+    ) -> Result<EncodeOutput, Self::Error> {
+        // Swizzle BGRA → RGBA
+        let (buf, _, _) = img.to_contiguous_buf();
+        let w = img.width() as u32;
+        let h = img.height() as u32;
+        let rgba: Vec<u8> = buf
+            .iter()
+            .flat_map(|p| [p.r, p.g, p.b, p.a])
+            .collect();
+        self.do_encode(&rgba, PixelLayout::Rgba8, w, h)
+    }
+
+    fn encode_bgrx8(
+        self,
+        img: ImgRef<'_, BGRA<u8>>,
+    ) -> Result<EncodeOutput, Self::Error> {
+        // Swizzle BGRA → RGB (drop alpha/padding)
+        let (buf, _, _) = img.to_contiguous_buf();
+        let w = img.width() as u32;
+        let h = img.height() as u32;
+        let rgb: Vec<u8> = buf
+            .iter()
+            .flat_map(|p| [p.r, p.g, p.b])
+            .collect();
+        self.do_encode(&rgb, PixelLayout::Rgb8, w, h)
+    }
+
+    fn encode_rgb_f32(
+        self,
+        img: ImgRef<'_, zencodec_types::Rgb<f32>>,
+    ) -> Result<EncodeOutput, Self::Error> {
+        use linear_srgb::default::linear_to_srgb_u8;
+        let (buf, _, _) = img.to_contiguous_buf();
+        let w = img.width() as u32;
+        let h = img.height() as u32;
+        let rgb: Vec<u8> = buf
+            .iter()
+            .flat_map(|p| {
+                [
+                    linear_to_srgb_u8(p.r.clamp(0.0, 1.0)),
+                    linear_to_srgb_u8(p.g.clamp(0.0, 1.0)),
+                    linear_to_srgb_u8(p.b.clamp(0.0, 1.0)),
+                ]
+            })
+            .collect();
+        self.do_encode(&rgb, PixelLayout::Rgb8, w, h)
+    }
+
+    fn encode_rgba_f32(
+        self,
+        img: ImgRef<'_, zencodec_types::Rgba<f32>>,
+    ) -> Result<EncodeOutput, Self::Error> {
+        use linear_srgb::default::linear_to_srgb_u8;
+        let (buf, _, _) = img.to_contiguous_buf();
+        let w = img.width() as u32;
+        let h = img.height() as u32;
+        let rgba: Vec<u8> = buf
+            .iter()
+            .flat_map(|p| {
+                [
+                    linear_to_srgb_u8(p.r.clamp(0.0, 1.0)),
+                    linear_to_srgb_u8(p.g.clamp(0.0, 1.0)),
+                    linear_to_srgb_u8(p.b.clamp(0.0, 1.0)),
+                    (p.a.clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+                ]
+            })
+            .collect();
+        self.do_encode(&rgba, PixelLayout::Rgba8, w, h)
+    }
+
+    fn encode_gray_f32(
+        self,
+        img: ImgRef<'_, zencodec_types::Gray<f32>>,
+    ) -> Result<EncodeOutput, Self::Error> {
+        use linear_srgb::default::linear_to_srgb_u8;
+        let (buf, _, _) = img.to_contiguous_buf();
+        let w = img.width() as u32;
+        let h = img.height() as u32;
+        let rgb: Vec<u8> = buf
+            .iter()
+            .flat_map(|g| {
+                let v = linear_to_srgb_u8(g.value().clamp(0.0, 1.0));
                 [v, v, v]
             })
             .collect();
@@ -372,12 +474,22 @@ impl Default for WebpDecoding {
     }
 }
 
+static DECODE_CAPS: CodecCapabilities = CodecCapabilities::new()
+    .with_decode_icc(true)
+    .with_decode_exif(true)
+    .with_decode_xmp(true)
+    .with_decode_cancel(true)
+    .with_cheap_probe(true);
+
 impl Decoding for WebpDecoding {
     type Error = DecodeError;
     type Job<'a> = WebpDecodeJob<'a>;
 
-    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
-        self.limits = limits.clone();
+    fn capabilities() -> &'static CodecCapabilities {
+        &DECODE_CAPS
+    }
+
+    fn with_limits(mut self, limits: ResourceLimits) -> Self {
         // Also propagate supported limits to the inner DecodeConfig
         if let Some(px) = limits.max_pixels {
             self.inner.limits = self.inner.limits.max_total_pixels(px);
@@ -390,6 +502,7 @@ impl Decoding for WebpDecoding {
                 self.inner.limits = self.inner.limits.max_dimensions(w, h);
             }
         }
+        self.limits = limits;
         self
     }
 
@@ -401,7 +514,7 @@ impl Decoding for WebpDecoding {
         }
     }
 
-    fn probe(&self, data: &[u8]) -> Result<ImageInfo, Self::Error> {
+    fn probe_header(&self, data: &[u8]) -> Result<ImageInfo, Self::Error> {
         if let Some(max) = self.limits.max_file_size {
             if data.len() as u64 > max {
                 return Err(DecodeError::InvalidParameter(alloc::format!(
@@ -455,8 +568,8 @@ impl<'a> DecodingJob<'a> for WebpDecodeJob<'a> {
         self
     }
 
-    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
-        self.limits = limits.clone();
+    fn with_limits(mut self, limits: ResourceLimits) -> Self {
+        self.limits = limits;
         self
     }
 
@@ -517,6 +630,47 @@ impl<'a> DecodingJob<'a> for WebpDecodeJob<'a> {
         Ok(DecodeOutput::new(pixel_data, info))
     }
 
+    fn decode_into_rgb8(
+        self,
+        data: &[u8],
+        dst: zencodec_types::ImgRefMut<'_, zencodec_types::Rgb<u8>>,
+    ) -> Result<ImageInfo, Self::Error> {
+        if let Some(max) = self.effective_file_size_limit() {
+            if data.len() as u64 > max {
+                return Err(DecodeError::InvalidParameter(alloc::format!(
+                    "file size {} exceeds limit {}",
+                    data.len(),
+                    max
+                )));
+            }
+        }
+
+        let cfg = self.build_config();
+        let mut req = DecodeRequest::new(&cfg, data);
+        if let Some(stop) = self.stop {
+            req = req.stop(stop);
+        }
+
+        let width = dst.width();
+        let stride = dst.stride();
+        if stride != width {
+            req = req.stride(stride as u32);
+        }
+
+        use zencodec_types::rgb::ComponentBytes;
+        let bytes: &mut [u8] = dst.into_buf().as_bytes_mut();
+        let (w, h) = req.decode_rgb_into(bytes)?;
+
+        let native_info = crate::ImageInfo::from_webp(data).ok();
+        let info = if let Some(ref ni) = native_info {
+            to_image_info(ni)
+        } else {
+            ImageInfo::new(w, h, ImageFormat::WebP)
+        };
+
+        Ok(info)
+    }
+
     fn decode_into_rgba8(
         self,
         data: &[u8],
@@ -559,6 +713,121 @@ impl<'a> DecodingJob<'a> for WebpDecodeJob<'a> {
             ImageInfo::new(w, h, ImageFormat::WebP).with_alpha(true)
         };
 
+        Ok(info)
+    }
+
+    fn decode_into_gray8(
+        self,
+        data: &[u8],
+        mut dst: zencodec_types::ImgRefMut<'_, zencodec_types::Gray<u8>>,
+    ) -> Result<ImageInfo, Self::Error> {
+        // WebP has no native grayscale — decode RGB and convert
+        let output = self.decode(data)?;
+        let info = output.info().clone();
+        let src = output.into_rgb8();
+        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
+            for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
+                // ITU-R BT.601 luma
+                let luma = ((s.r as u16 * 77 + s.g as u16 * 150 + s.b as u16 * 29) >> 8) as u8;
+                *d = zencodec_types::Gray(luma);
+            }
+        }
+        Ok(info)
+    }
+
+    fn decode_into_bgra8(
+        self,
+        data: &[u8],
+        mut dst: zencodec_types::ImgRefMut<'_, BGRA<u8>>,
+    ) -> Result<ImageInfo, Self::Error> {
+        let output = self.decode(data)?;
+        let info = output.info().clone();
+        let src = output.into_rgba8();
+        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
+            for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
+                *d = BGRA { b: s.b, g: s.g, r: s.r, a: s.a };
+            }
+        }
+        Ok(info)
+    }
+
+    fn decode_into_bgrx8(
+        self,
+        data: &[u8],
+        mut dst: zencodec_types::ImgRefMut<'_, BGRA<u8>>,
+    ) -> Result<ImageInfo, Self::Error> {
+        let output = self.decode(data)?;
+        let info = output.info().clone();
+        let src = output.into_rgb8();
+        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
+            for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
+                *d = BGRA { b: s.b, g: s.g, r: s.r, a: 255 };
+            }
+        }
+        Ok(info)
+    }
+
+    fn decode_into_rgb_f32(
+        self,
+        data: &[u8],
+        mut dst: zencodec_types::ImgRefMut<'_, zencodec_types::Rgb<f32>>,
+    ) -> Result<ImageInfo, Self::Error> {
+        use linear_srgb::default::srgb_u8_to_linear;
+        let output = self.decode(data)?;
+        let info = output.info().clone();
+        let src = output.into_rgb8();
+        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
+            for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
+                *d = zencodec_types::Rgb {
+                    r: srgb_u8_to_linear(s.r),
+                    g: srgb_u8_to_linear(s.g),
+                    b: srgb_u8_to_linear(s.b),
+                };
+            }
+        }
+        Ok(info)
+    }
+
+    fn decode_into_rgba_f32(
+        self,
+        data: &[u8],
+        mut dst: zencodec_types::ImgRefMut<'_, zencodec_types::Rgba<f32>>,
+    ) -> Result<ImageInfo, Self::Error> {
+        use linear_srgb::default::srgb_u8_to_linear;
+        let output = self.decode(data)?;
+        let info = output.info().clone();
+        let src = output.into_rgba8();
+        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
+            for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
+                *d = zencodec_types::Rgba {
+                    r: srgb_u8_to_linear(s.r),
+                    g: srgb_u8_to_linear(s.g),
+                    b: srgb_u8_to_linear(s.b),
+                    a: s.a as f32 / 255.0,
+                };
+            }
+        }
+        Ok(info)
+    }
+
+    fn decode_into_gray_f32(
+        self,
+        data: &[u8],
+        mut dst: zencodec_types::ImgRefMut<'_, zencodec_types::Gray<f32>>,
+    ) -> Result<ImageInfo, Self::Error> {
+        use linear_srgb::default::srgb_u8_to_linear;
+        let output = self.decode(data)?;
+        let info = output.info().clone();
+        let src = output.into_rgb8();
+        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
+            for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
+                // Convert to linear, then luma via linear-light coefficients
+                let r = srgb_u8_to_linear(s.r);
+                let g = srgb_u8_to_linear(s.g);
+                let b = srgb_u8_to_linear(s.b);
+                *d = zencodec_types::Gray(0.2126 * r + 0.7152 * g + 0.0722 * b);
+            }
+        }
         Ok(info)
     }
 }
@@ -674,7 +943,7 @@ mod tests {
     }
 
     #[test]
-    fn probe() {
+    fn probe_header() {
         let pixels: Vec<Rgb<u8>> = vec![
             Rgb {
                 r: 128,
@@ -687,7 +956,7 @@ mod tests {
         let output = WebpEncoding::lossy().encode_rgb8(img.as_ref()).unwrap();
 
         let dec = WebpDecoding::new();
-        let info = dec.probe(output.bytes()).unwrap();
+        let info = dec.probe_header(output.bytes()).unwrap();
         assert_eq!(info.width, 16);
         assert_eq!(info.height, 16);
         assert_eq!(info.format, ImageFormat::WebP);
@@ -716,5 +985,61 @@ mod tests {
             .encode_rgb8(img.as_ref())
             .unwrap();
         assert!(!output.is_empty());
+    }
+
+    #[test]
+    fn f32_roundtrip_all_simd_tiers() {
+        use archmage::testing::{for_each_token_permutation, CompileTimePolicy};
+        use zencodec_types::Gray;
+
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |_perm| {
+            // Encode linear f32 → WebP → decode back to f32
+            let pixels: Vec<Rgb<f32>> = (0..16 * 16)
+                .map(|i| {
+                    let t = i as f32 / 255.0;
+                    Rgb {
+                        r: t,
+                        g: (t * 0.7),
+                        b: (t * 0.3),
+                    }
+                })
+                .collect();
+            let img = ImgVec::new(pixels, 16, 16);
+
+            let enc = WebpEncoding::lossless();
+            let output = enc.encode_rgb_f32(img.as_ref()).unwrap();
+            assert!(!output.is_empty());
+
+            let dec = WebpDecoding::new();
+            let dst = vec![
+                Rgb {
+                    r: 0.0f32,
+                    g: 0.0,
+                    b: 0.0,
+                };
+                16 * 16
+            ];
+            let mut dst_img = ImgVec::new(dst, 16, 16);
+            let _info = dec
+                .decode_into_rgb_f32(output.bytes(), dst_img.as_mut())
+                .unwrap();
+
+            // Verify values are in valid range
+            for p in dst_img.buf().iter() {
+                assert!(p.r >= 0.0 && p.r <= 1.0, "r out of range: {}", p.r);
+                assert!(p.g >= 0.0 && p.g <= 1.0, "g out of range: {}", p.g);
+                assert!(p.b >= 0.0 && p.b <= 1.0, "b out of range: {}", p.b);
+            }
+
+            // Also test gray f32 path
+            let gray_pixels: Vec<Gray<f32>> =
+                (0..8 * 8).map(|i| Gray(i as f32 / 63.0)).collect();
+            let gray_img = ImgVec::new(gray_pixels, 8, 8);
+            let gray_out = WebpEncoding::lossless()
+                .encode_gray_f32(gray_img.as_ref())
+                .unwrap();
+            assert!(!gray_out.is_empty());
+        });
+        assert!(report.permutations_run >= 1);
     }
 }
