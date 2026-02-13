@@ -1042,4 +1042,71 @@ mod tests {
         });
         assert!(report.permutations_run >= 1);
     }
+
+    #[test]
+    fn f32_rgba_roundtrip_lossless() {
+        let pixels: Vec<Rgba<f32>> = (0..16 * 16)
+            .map(|i| {
+                let t = i as f32 / 255.0;
+                Rgba {
+                    r: t,
+                    g: (t * 0.7),
+                    b: (t * 0.3),
+                    a: 1.0 - t * 0.5,
+                }
+            })
+            .collect();
+        let img = ImgVec::new(pixels, 16, 16);
+
+        let enc = WebpEncoding::lossless();
+        let output = enc.encode_rgba_f32(img.as_ref()).unwrap();
+        assert!(!output.is_empty());
+
+        let dec = WebpDecoding::new();
+        let mut dst_img = ImgVec::new(
+            vec![Rgba { r: 0.0f32, g: 0.0, b: 0.0, a: 0.0 }; 16 * 16],
+            16,
+            16,
+        );
+        dec.decode_into_rgba_f32(output.bytes(), dst_img.as_mut())
+            .unwrap();
+
+        for p in dst_img.buf().iter() {
+            assert!(p.r >= 0.0 && p.r <= 1.0, "r out of range: {}", p.r);
+            assert!(p.g >= 0.0 && p.g <= 1.0, "g out of range: {}", p.g);
+            assert!(p.b >= 0.0 && p.b <= 1.0, "b out of range: {}", p.b);
+            assert!(p.a >= 0.0 && p.a <= 1.0, "a out of range: {}", p.a);
+        }
+    }
+
+    #[test]
+    fn f32_gray_decode_values() {
+        use linear_srgb::default::srgb_u8_to_linear;
+        use zencodec_types::Gray;
+
+        // Encode known sRGB gray values as RGB, decode to gray f32
+        let pixels = vec![
+            Rgb { r: 0u8, g: 0, b: 0 },
+            Rgb { r: 128, g: 128, b: 128 },
+            Rgb { r: 255, g: 255, b: 255 },
+            Rgb { r: 128, g: 128, b: 128 },
+        ];
+        let img = ImgVec::new(pixels, 2, 2);
+        let enc = WebpEncoding::lossless();
+        let output = enc.encode_rgb8(img.as_ref()).unwrap();
+
+        let dec = WebpDecoding::new();
+        let mut dst = ImgVec::new(vec![Gray(0.0f32); 4], 2, 2);
+        dec.decode_into_gray_f32(output.bytes(), dst.as_mut())
+            .unwrap();
+
+        let buf = dst.buf();
+        // Black → 0.0
+        assert!(buf[0].0.abs() < 0.02, "black: {}", buf[0].0);
+        // White → 1.0
+        assert!((buf[2].0 - 1.0).abs() < 0.02, "white: {}", buf[2].0);
+        // Mid-gray → should be close to srgb_u8_to_linear(128)
+        let expected = srgb_u8_to_linear(128);
+        assert!((buf[1].0 - expected).abs() < 0.05, "mid: {} vs {}", buf[1].0, expected);
+    }
 }
