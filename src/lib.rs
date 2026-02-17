@@ -136,7 +136,10 @@ pub use enough::{Stop, StopReason, Unstoppable};
 pub use decoder::vp8;
 
 mod zencodec;
-pub use zencodec::{WebpDecodeJob, WebpDecoding, WebpEncodeJob, WebpEncoding};
+pub use zencodec::{
+    WebpDecodeJob, WebpDecoder, WebpDecoderConfig, WebpEncodeJob, WebpEncoder, WebpEncoderConfig,
+    WebpFrameDecoder, WebpFrameEncoder,
+};
 
 /// Standalone metadata convenience functions for already-encoded WebP data.
 ///
