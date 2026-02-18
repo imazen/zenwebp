@@ -204,7 +204,7 @@ impl VP8Matrix {
         {
             use archmage::SimdToken;
             if let Some(token) = archmage::Wasm128Token::summon() {
-                crate::common::simd_wasm::dequantize_block_wasm(token, &self.q, coeffs);
+                crate::common::simd_wasm::dequantize_block_wasm_entry(token, &self.q, coeffs);
                 return;
             }
         }
@@ -323,7 +323,7 @@ pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, use_sharp
 pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, use_sharpen: bool) -> bool {
     use archmage::SimdToken;
     if let Some(token) = archmage::Wasm128Token::summon() {
-        return crate::common::simd_wasm::quantize_block_wasm(token, coeffs, matrix, use_sharpen);
+        return crate::common::simd_wasm::quantize_block_wasm_entry(token, coeffs, matrix, use_sharpen);
     }
     matrix.quantize(coeffs);
     coeffs.iter().any(|&c| c != 0)
@@ -625,7 +625,7 @@ pub fn quantize_dequantize_block_simd(
 ) -> bool {
     use archmage::SimdToken;
     if let Some(token) = archmage::Wasm128Token::summon() {
-        return crate::common::simd_wasm::quantize_dequantize_block_wasm(
+        return crate::common::simd_wasm::quantize_dequantize_block_wasm_entry(
             token,
             coeffs,
             matrix,

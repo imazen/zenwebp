@@ -185,7 +185,7 @@ pub(super) fn sse_16x16_luma(
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::Wasm128Token::summon() {
-            return crate::common::simd_wasm::sse_16x16_luma_wasm(
+            return crate::common::simd_wasm::sse_16x16_luma_wasm_entry(
                 token, src_y, src_width, mbx, mby, pred,
             );
         }
@@ -234,7 +234,7 @@ pub(super) fn sse_8x8_chroma(
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::Wasm128Token::summon() {
-            return crate::common::simd_wasm::sse_8x8_chroma_wasm(
+            return crate::common::simd_wasm::sse_8x8_chroma_wasm_entry(
                 token, src_uv, src_width, mbx, mby, pred,
             );
         }

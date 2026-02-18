@@ -2,7 +2,7 @@
 //!
 //! Ported from the NEON versions in simd_neon.rs using core::arch::wasm32 intrinsics.
 
-use archmage::{arcane, Wasm128Token};
+use archmage::{arcane, rite, Wasm128Token};
 
 use core::arch::wasm32::*;
 
@@ -93,15 +93,21 @@ fn sse_u8x16_acc(a: v128, b: v128) -> v128 {
 // =============================================================================
 
 /// SSE between two 4x4 blocks (16 bytes each)
-#[arcane]
+#[rite]
 pub(crate) fn sse4x4_wasm(_token: Wasm128Token, a: &[u8; 16], b: &[u8; 16]) -> u32 {
     let a_vec = load_u8x16(a);
     let b_vec = load_u8x16(b);
     hsum_i32x4(sse_u8x16_acc(a_vec, b_vec)) as u32
 }
 
-/// SSE with fused prediction + residual reconstruction
+/// Entry shim for sse4x4_wasm
 #[arcane]
+pub(crate) fn sse4x4_wasm_entry(_token: Wasm128Token, a: &[u8; 16], b: &[u8; 16]) -> u32 {
+    sse4x4_wasm(_token, a, b)
+}
+
+/// SSE with fused prediction + residual reconstruction
+#[rite]
 pub(crate) fn sse4x4_with_residual_wasm(
     _token: Wasm128Token,
     src: &[u8; 16],
@@ -132,8 +138,19 @@ pub(crate) fn sse4x4_with_residual_wasm(
     hsum_i32x4(sse_u8x16_acc(src_vec, rec)) as u32
 }
 
-/// SSE for 16x16 luma macroblock
+/// Entry shim for sse4x4_with_residual_wasm
 #[arcane]
+pub(crate) fn sse4x4_with_residual_wasm_entry(
+    _token: Wasm128Token,
+    src: &[u8; 16],
+    pred: &[u8; 16],
+    residual: &[i32; 16],
+) -> u32 {
+    sse4x4_with_residual_wasm(_token, src, pred, residual)
+}
+
+/// SSE for 16x16 luma macroblock
+#[rite]
 pub(crate) fn sse_16x16_luma_wasm(
     _token: Wasm128Token,
     src_y: &[u8],
@@ -159,8 +176,21 @@ pub(crate) fn sse_16x16_luma_wasm(
     hsum_i32x4(acc) as u32
 }
 
-/// SSE for 8x8 chroma block
+/// Entry shim for sse_16x16_luma_wasm
 #[arcane]
+pub(crate) fn sse_16x16_luma_wasm_entry(
+    _token: Wasm128Token,
+    src_y: &[u8],
+    src_width: usize,
+    mbx: usize,
+    mby: usize,
+    pred: &[u8; LUMA_BLOCK_SIZE],
+) -> u32 {
+    sse_16x16_luma_wasm(_token, src_y, src_width, mbx, mby, pred)
+}
+
+/// SSE for 8x8 chroma block
+#[rite]
 pub(crate) fn sse_8x8_chroma_wasm(
     _token: Wasm128Token,
     src_uv: &[u8],
@@ -195,12 +225,25 @@ pub(crate) fn sse_8x8_chroma_wasm(
     hsum_i32x4(acc) as u32
 }
 
+/// Entry shim for sse_8x8_chroma_wasm
+#[arcane]
+pub(crate) fn sse_8x8_chroma_wasm_entry(
+    _token: Wasm128Token,
+    src_uv: &[u8],
+    src_width: usize,
+    mbx: usize,
+    mby: usize,
+    pred: &[u8; CHROMA_BLOCK_SIZE],
+) -> u32 {
+    sse_8x8_chroma_wasm(_token, src_uv, src_width, mbx, mby, pred)
+}
+
 // =============================================================================
 // Spectral distortion (TDisto / Hadamard transform)
 // =============================================================================
 
 /// Fused TDisto for two 4x4 blocks: |weighted_hadamard(b) - weighted_hadamard(a)| >> 5
-#[arcane]
+#[rite]
 pub(crate) fn tdisto_4x4_fused_wasm(
     _token: Wasm128Token,
     a: &[u8],
@@ -297,12 +340,24 @@ pub(crate) fn tdisto_4x4_fused_wasm(
     (sum_b - sum_a).abs() >> 5
 }
 
+/// Entry shim for tdisto_4x4_fused_wasm
+#[arcane]
+pub(crate) fn tdisto_4x4_fused_wasm_entry(
+    _token: Wasm128Token,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    tdisto_4x4_fused_wasm(_token, a, b, stride, w)
+}
+
 // =============================================================================
 // Flatness check functions
 // =============================================================================
 
 /// Check if a 16x16 source block is all one color
-#[arcane]
+#[rite]
 pub(crate) fn is_flat_source_16_wasm(_token: Wasm128Token, src: &[u8], stride: usize) -> bool {
     let first = u8x16_splat(src[0]);
     let mut all_eq = u8x16_splat(0xff);
@@ -318,8 +373,18 @@ pub(crate) fn is_flat_source_16_wasm(_token: Wasm128Token, src: &[u8], stride: u
     u8x16_bitmask(all_eq) == 0xFFFF
 }
 
-/// Check if coefficients are "flat" (few non-zero AC coefficients)
+/// Entry shim for is_flat_source_16_wasm
 #[arcane]
+pub(crate) fn is_flat_source_16_wasm_entry(
+    _token: Wasm128Token,
+    src: &[u8],
+    stride: usize,
+) -> bool {
+    is_flat_source_16_wasm(_token, src, stride)
+}
+
+/// Check if coefficients are "flat" (few non-zero AC coefficients)
+#[rite]
 pub(crate) fn is_flat_coeffs_wasm(
     _token: Wasm128Token,
     levels: &[i16],
@@ -373,6 +438,17 @@ pub(crate) fn is_flat_coeffs_wasm(
     count <= thresh
 }
 
+/// Entry shim for is_flat_coeffs_wasm
+#[arcane]
+pub(crate) fn is_flat_coeffs_wasm_entry(
+    _token: Wasm128Token,
+    levels: &[i16],
+    num_blocks: usize,
+    thresh: i32,
+) -> bool {
+    is_flat_coeffs_wasm(_token, levels, num_blocks, thresh)
+}
+
 // =============================================================================
 // Quantization functions
 // =============================================================================
@@ -382,7 +458,7 @@ use crate::encoder::tables::MAX_LEVEL;
 
 /// WASM quantize block: quantizes i32[16] coefficients in-place.
 /// Returns true if any coefficient is non-zero.
-#[arcane]
+#[rite]
 pub(crate) fn quantize_block_wasm(
     _token: Wasm128Token,
     coeffs: &mut [i32; 16],
@@ -483,8 +559,19 @@ pub(crate) fn quantize_block_wasm(
     hsum_abs_i16x8(or0) != 0
 }
 
-/// WASM dequantize block: multiply coefficients by quantizer steps
+/// Entry shim for quantize_block_wasm
 #[arcane]
+pub(crate) fn quantize_block_wasm_entry(
+    _token: Wasm128Token,
+    coeffs: &mut [i32; 16],
+    matrix: &VP8Matrix,
+    use_sharpen: bool,
+) -> bool {
+    quantize_block_wasm(_token, coeffs, matrix, use_sharpen)
+}
+
+/// WASM dequantize block: multiply coefficients by quantizer steps
+#[rite]
 pub(crate) fn dequantize_block_wasm(_token: Wasm128Token, q: &[u16; 16], coeffs: &mut [i32; 16]) {
     // Load q as u16, extend to i32
     let q0_u16 = load_u16x8(<&[u16; 8]>::try_from(&q[0..8]).unwrap());
@@ -512,9 +599,19 @@ pub(crate) fn dequantize_block_wasm(_token: Wasm128Token, q: &[u16; 16], coeffs:
     store_i32x4(<&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(), r12);
 }
 
+/// Entry shim for dequantize_block_wasm
+#[arcane]
+pub(crate) fn dequantize_block_wasm_entry(
+    _token: Wasm128Token,
+    q: &[u16; 16],
+    coeffs: &mut [i32; 16],
+) {
+    dequantize_block_wasm(_token, q, coeffs);
+}
+
 /// WASM fused quantize+dequantize: produces both quantized and dequantized values.
 /// Returns true if any coefficient is non-zero.
-#[arcane]
+#[rite]
 pub(crate) fn quantize_dequantize_block_wasm(
     _token: Wasm128Token,
     coeffs: &[i32; 16],
@@ -641,4 +738,17 @@ pub(crate) fn quantize_dequantize_block_wasm(
     // Non-zero check
     let or0 = v128_or(qout0, qout8);
     hsum_abs_i16x8(or0) != 0
+}
+
+/// Entry shim for quantize_dequantize_block_wasm
+#[arcane]
+pub(crate) fn quantize_dequantize_block_wasm_entry(
+    _token: Wasm128Token,
+    coeffs: &[i32; 16],
+    matrix: &VP8Matrix,
+    use_sharpen: bool,
+    quantized: &mut [i32; 16],
+    dequantized: &mut [i32; 16],
+) -> bool {
+    quantize_dequantize_block_wasm(_token, coeffs, matrix, use_sharpen, quantized, dequantized)
 }

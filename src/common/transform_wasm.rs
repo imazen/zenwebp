@@ -7,23 +7,25 @@
 use core::arch::wasm32::*;
 
 #[cfg(target_arch = "wasm32")]
-use archmage::{arcane, Wasm128Token};
+use archmage::{arcane, rite, Wasm128Token};
 
 // =============================================================================
 // Public dispatch functions
 // =============================================================================
 
-/// Forward DCT using WASM SIMD128
+/// Forward DCT using WASM SIMD128 (entry shim)
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn dct4x4_wasm(token: Wasm128Token, block: &mut [i32; 16]) {
-    dct4x4_wasm_impl(token, block);
+#[arcane]
+pub(crate) fn dct4x4_wasm(_token: Wasm128Token, block: &mut [i32; 16]) {
+    dct4x4_wasm_impl(_token, block);
 }
 
-/// Inverse DCT using WASM SIMD128
+/// Inverse DCT using WASM SIMD128 (entry shim)
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn idct4x4_wasm(token: Wasm128Token, block: &mut [i32]) {
+#[arcane]
+pub(crate) fn idct4x4_wasm(_token: Wasm128Token, block: &mut [i32]) {
     debug_assert!(block.len() >= 16);
-    idct4x4_wasm_impl(token, block);
+    idct4x4_wasm_impl(_token, block);
 }
 
 // =============================================================================
@@ -133,8 +135,8 @@ fn idct_butterfly(in0: v128, in1: v128, in2: v128, in3: v128) -> (v128, v128, v1
 /// butterfly(row0[j], row1[j], row2[j], row3[j]) = column pass (no transpose needed).
 /// For the row pass, we transpose so each vector holds a row's elements as lanes.
 #[cfg(target_arch = "wasm32")]
-#[arcane]
-fn idct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32]) {
+#[rite]
+pub(crate) fn idct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32]) {
     // Load 4 rows
     let r0 = load_row(block, 0);
     let r1 = load_row(block, 1);
@@ -274,8 +276,8 @@ fn dct_butterfly_pass2(in0: v128, in1: v128, in2: v128, in3: v128) -> (v128, v12
 /// butterfly(row0[j], row1[j], row2[j], row3[j]) = column pass.
 /// For the row pass, we transpose so each vector holds one row's elements.
 #[cfg(target_arch = "wasm32")]
-#[arcane]
-fn dct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32; 16]) {
+#[rite]
+pub(crate) fn dct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32; 16]) {
     // Load 4 rows
     let r0 = load_row(block, 0);
     let r1 = load_row(block, 1);

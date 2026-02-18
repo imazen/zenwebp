@@ -121,7 +121,7 @@ pub fn tdisto_4x4(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::Wasm128Token::summon() {
-            return crate::common::simd_wasm::tdisto_4x4_fused_wasm(token, a, b, stride, w);
+            return crate::common::simd_wasm::tdisto_4x4_fused_wasm_entry(token, a, b, stride, w);
         }
     }
     #[cfg(not(all(
@@ -168,7 +168,7 @@ pub fn tdisto_16x16(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
             for y in 0..4 {
                 for x in 0..4 {
                     let offset = y * 4 * stride + x * 4;
-                    d += crate::common::simd_wasm::tdisto_4x4_fused_wasm(
+                    d += crate::common::simd_wasm::tdisto_4x4_fused_wasm_entry(
                         token,
                         &a[offset..],
                         &b[offset..],
@@ -247,7 +247,7 @@ pub fn tdisto_8x8(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
             for y in 0..2 {
                 for x in 0..2 {
                     let offset = y * 4 * stride + x * 4;
-                    d += crate::common::simd_wasm::tdisto_4x4_fused_wasm(
+                    d += crate::common::simd_wasm::tdisto_4x4_fused_wasm_entry(
                         token,
                         &a[offset..],
                         &b[offset..],
@@ -381,7 +381,7 @@ pub fn is_flat_source_16(src: &[u8], stride: usize) -> bool {
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::Wasm128Token::summon() {
-            return crate::common::simd_wasm::is_flat_source_16_wasm(token, src, stride);
+            return crate::common::simd_wasm::is_flat_source_16_wasm_entry(token, src, stride);
         }
     }
     #[cfg(not(all(
@@ -573,7 +573,7 @@ fn is_flat_coeffs_scalar(levels: &[i16], num_blocks: usize, thresh: i32) -> bool
 pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
     use archmage::SimdToken;
     if let Some(token) = archmage::Wasm128Token::summon() {
-        return crate::common::simd_wasm::is_flat_coeffs_wasm(token, levels, num_blocks, thresh);
+        return crate::common::simd_wasm::is_flat_coeffs_wasm_entry(token, levels, num_blocks, thresh);
     }
     is_flat_coeffs_scalar(levels, num_blocks, thresh)
 }

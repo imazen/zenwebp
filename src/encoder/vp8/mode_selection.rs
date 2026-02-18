@@ -1431,7 +1431,7 @@ impl<'a> super::Vp8Encoder<'a> {
             let sse = {
                 use archmage::SimdToken;
                 if let Some(token) = archmage::Wasm128Token::summon() {
-                    crate::common::simd_wasm::sse4x4_wasm(token, src_block, pred)
+                    crate::common::simd_wasm::sse4x4_wasm_entry(token, src_block, pred)
                 } else {
                     let mut sum = 0u32;
                     for k in 0..16 {
@@ -1530,7 +1530,7 @@ impl<'a> super::Vp8Encoder<'a> {
             let sse = {
                 use archmage::SimdToken;
                 if let Some(token) = archmage::Wasm128Token::summon() {
-                    crate::common::simd_wasm::sse4x4_with_residual_wasm(
+                    crate::common::simd_wasm::sse4x4_with_residual_wasm_entry(
                         token,
                         src_block,
                         pred,
