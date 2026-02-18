@@ -171,6 +171,10 @@ impl zencodec_types::EncoderConfig for WebpEncoderConfig {
     type Error = EncodeError;
     type Job<'a> = WebpEncodeJob<'a>;
 
+    fn format() -> ImageFormat {
+        ImageFormat::WebP
+    }
+
     fn supported_descriptors() -> &'static [PixelDescriptor] {
         ENCODE_DESCRIPTORS
     }
@@ -655,6 +659,10 @@ impl zencodec_types::DecoderConfig for WebpDecoderConfig {
     type Error = DecodeError;
     type Job<'a> = WebpDecodeJob<'a>;
 
+    fn format() -> ImageFormat {
+        ImageFormat::WebP
+    }
+
     fn supported_descriptors() -> &'static [PixelDescriptor] {
         DECODE_DESCRIPTORS
     }
@@ -825,6 +833,49 @@ impl WebpDecoder<'_> {
     }
 }
 
+fn to_rgb8(pixels: PixelData) -> zencodec_types::ImgVec<zencodec_types::Rgb<u8>> {
+    match pixels {
+        PixelData::Rgb8(img) => img,
+        PixelData::Rgba8(img) => {
+            let w = img.width();
+            let h = img.height();
+            let buf: Vec<zencodec_types::Rgb<u8>> = img
+                .into_buf()
+                .into_iter()
+                .map(|p| zencodec_types::Rgb {
+                    r: p.r,
+                    g: p.g,
+                    b: p.b,
+                })
+                .collect();
+            zencodec_types::ImgVec::new(buf, w, h)
+        }
+        other => unreachable!("WebP decoder produced unexpected format: {other:?}"),
+    }
+}
+
+fn to_rgba8(pixels: PixelData) -> zencodec_types::ImgVec<zencodec_types::Rgba<u8>> {
+    match pixels {
+        PixelData::Rgba8(img) => img,
+        PixelData::Rgb8(img) => {
+            let w = img.width();
+            let h = img.height();
+            let buf: Vec<zencodec_types::Rgba<u8>> = img
+                .into_buf()
+                .into_iter()
+                .map(|p| zencodec_types::Rgba {
+                    r: p.r,
+                    g: p.g,
+                    b: p.b,
+                    a: 255,
+                })
+                .collect();
+            zencodec_types::ImgVec::new(buf, w, h)
+        }
+        other => unreachable!("WebP decoder produced unexpected format: {other:?}"),
+    }
+}
+
 impl zencodec_types::Decoder for WebpDecoder<'_> {
     type Error = DecodeError;
 
@@ -931,7 +982,8 @@ impl zencodec_types::Decoder for WebpDecoder<'_> {
         } else if desc == PixelDescriptor::BGRA8_SRGB {
             // Decode as RGBA, swizzle to BGRA
             let output = self.decode(data)?;
-            let src = output.into_rgba8();
+            let pixels = output.into_pixels();
+            let src = to_rgba8(pixels);
             let row_bytes = w as usize * 4;
             for y in 0..h {
                 let src_row = &src.as_ref().rows().nth(y as usize).unwrap();
@@ -947,7 +999,8 @@ impl zencodec_types::Decoder for WebpDecoder<'_> {
         } else if desc == PixelDescriptor::GRAY8_SRGB {
             // Decode as RGB, convert to luma
             let output = self.decode(data)?;
-            let src = output.into_rgb8();
+            let pixels = output.into_pixels();
+            let src = to_rgb8(pixels);
             for y in 0..h {
                 let src_row = src.as_ref().rows().nth(y as usize).unwrap();
                 let dst_row = &mut dst.row_mut(y)[..w as usize];
@@ -961,7 +1014,8 @@ impl zencodec_types::Decoder for WebpDecoder<'_> {
         } else if desc == PixelDescriptor::RGBF32_LINEAR {
             use linear_srgb::default::srgb_u8_to_linear;
             let output = self.decode(data)?;
-            let src = output.into_rgb8();
+            let pixels = output.into_pixels();
+            let src = to_rgb8(pixels);
             let row_bytes = w as usize * 12;
             for y in 0..h {
                 let src_row = src.as_ref().rows().nth(y as usize).unwrap();
@@ -978,7 +1032,8 @@ impl zencodec_types::Decoder for WebpDecoder<'_> {
         } else if desc == PixelDescriptor::RGBAF32_LINEAR {
             use linear_srgb::default::srgb_u8_to_linear;
             let output = self.decode(data)?;
-            let src = output.into_rgba8();
+            let pixels = output.into_pixels();
+            let src = to_rgba8(pixels);
             let row_bytes = w as usize * 16;
             for y in 0..h {
                 let src_row = src.as_ref().rows().nth(y as usize).unwrap();
@@ -997,7 +1052,8 @@ impl zencodec_types::Decoder for WebpDecoder<'_> {
         } else if desc == PixelDescriptor::GRAYF32_LINEAR {
             use linear_srgb::default::srgb_u8_to_linear;
             let output = self.decode(data)?;
-            let src = output.into_rgb8();
+            let pixels = output.into_pixels();
+            let src = to_rgb8(pixels);
             let row_bytes = w as usize * 4;
             for y in 0..h {
                 let src_row = src.as_ref().rows().nth(y as usize).unwrap();
