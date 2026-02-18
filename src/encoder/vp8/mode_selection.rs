@@ -29,7 +29,7 @@ use super::{sse_16x16_luma, sse_8x8_chroma, MacroblockInfo};
 // =============================================================================
 
 /// Result of evaluating a single I4 block mode
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "wasm32")))]
 struct I4BlockResult {
     mode_idx: usize,
     rd_score: u64,
@@ -206,6 +206,219 @@ fn evaluate_i4_modes_sse2(
 
             let td = if tlambda > 0 {
                 let td_raw = crate::common::simd_sse::tdisto_4x4_fused_sse2(
+                    _token, src_block, &rec_block, 4, luma_csf,
+                );
+                (tlambda as i32 * td_raw + 128) >> 8
+            } else {
+                0
+            };
+
+            let psy = if psy_config.psy_rd_strength > 0 {
+                let src_satd = psy::satd_4x4(src_block, 4);
+                let rec_satd = psy::satd_4x4(&rec_block, 4);
+                psy::psy_rd_cost(src_satd, rec_satd, psy_config.psy_rd_strength)
+            } else {
+                0
+            };
+
+            (td, psy)
+        } else {
+            (0, 0)
+        };
+
+        // Final RD score
+        let total_rate_cost = coeff_cost + flatness_penalty as u32;
+        let rd_score = crate::encoder::cost::rd_score_full(
+            sse,
+            spectral_disto + psy_cost,
+            mode_cost,
+            total_rate_cost,
+            lambda_i4,
+        ) as u64;
+
+        if rd_score < best_block_score {
+            best_block_score = rd_score;
+            best = Some(I4BlockResult {
+                mode_idx,
+                rd_score,
+                has_nz,
+                dequantized,
+                sse,
+                spectral_disto,
+                psy_cost,
+                coeff_cost,
+            });
+        }
+    }
+
+    best
+}
+
+/// Pre-sort I4 prediction modes by prediction SSE (ascending) for wasm SIMD128.
+/// Runs sse4x4 for all 10 modes using direct SIMD calls (no dispatch overhead).
+#[cfg(all(feature = "simd", target_arch = "wasm32"))]
+#[archmage::arcane]
+fn presort_i4_modes_wasm(
+    _token: archmage::Wasm128Token,
+    src_block: &[u8; 16],
+    preds: &I4Predictions,
+) -> [(u32, usize); 10] {
+    let mut mode_sse: [(u32, usize); 10] = [(0, 0); 10];
+    for (mode_idx, entry) in mode_sse.iter_mut().enumerate() {
+        let pred = preds.get(mode_idx);
+        let sse = crate::common::simd_wasm::sse4x4_wasm(_token, src_block, pred);
+        *entry = (sse, mode_idx);
+    }
+    mode_sse.sort_unstable_by_key(|&(sse, _)| sse);
+    mode_sse
+}
+
+/// Evaluate I4 block modes within a single arcane context for wasm SIMD128.
+///
+/// This is the hot inner loop of pick_best_intra4, with all SIMD calls
+/// going directly to `_wasm` #[rite] variants (inlinable within arcane context).
+///
+/// Returns the best mode result, or None if no mode beats `best_block_score_limit`.
+#[cfg(all(feature = "simd", target_arch = "wasm32"))]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn evaluate_i4_modes_wasm(
+    _token: archmage::Wasm128Token,
+    src_block: &[u8; 16],
+    preds: &I4Predictions,
+    mode_sse_order: &[(u32, usize)],
+    max_modes: usize,
+    mode_costs: &[u16; 10],
+    nz_top: bool,
+    nz_left: bool,
+    // RD parameters
+    y1_matrix: &crate::encoder::quantize::VP8Matrix,
+    lambda_i4: u32,
+    tlambda: u32,
+    trellis_lambda_i4: Option<u32>,
+    level_costs: &crate::encoder::cost::LevelCosts,
+    probs: &TokenProbTables,
+    psy_config: &crate::encoder::psy::PsyConfig,
+    luma_csf: &[u16; 16],
+) -> Option<I4BlockResult> {
+    use crate::encoder::residual_cost::Residual;
+
+    let mut best: Option<I4BlockResult> = None;
+    let mut best_block_score = u64::MAX;
+
+    for &(_, mode_idx) in mode_sse_order[..max_modes].iter() {
+        let pred = preds.get(mode_idx);
+
+        // Fused residual + DCT using direct SIMD call
+        let mut residual = crate::common::transform_wasm::ftransform_from_u8_4x4_wasm_impl(
+            _token, src_block, pred,
+        );
+
+        // Quantize - use trellis if enabled, otherwise fused quantize+dequantize
+        let mut quantized_zigzag = [0i32; 16];
+        let mut quantized_natural = [0i32; 16];
+        let (has_nz, dequantized) = if let Some(lambda) = trellis_lambda_i4 {
+            // Trellis quantization (scalar, called from arcane context is fine)
+            let ctx0 = usize::from(nz_top) + usize::from(nz_left);
+            const CTYPE_I4_AC: usize = 3;
+            let nz = trellis_quantize_block(
+                &mut residual,
+                &mut quantized_zigzag,
+                y1_matrix,
+                lambda,
+                0,
+                level_costs,
+                CTYPE_I4_AC,
+                ctx0,
+                psy_config,
+            );
+            // Convert zigzag to natural order
+            for n in 0..16 {
+                let j = ZIGZAG[n] as usize;
+                quantized_natural[j] = quantized_zigzag[n];
+            }
+            // Dequantize + IDCT for trellis path
+            let mut dq = quantized_natural;
+            for (idx, val) in dq.iter_mut().enumerate() {
+                *val = y1_matrix.dequantize(*val, idx);
+            }
+            transform::idct4x4(&mut dq);
+            (nz, dq)
+        } else {
+            // Fused quantize+dequantize using direct SIMD call
+            let mut dequant_natural = [0i32; 16];
+            let nz = crate::common::simd_wasm::quantize_dequantize_block_wasm(
+                _token,
+                &residual,
+                y1_matrix,
+                true,
+                &mut quantized_natural,
+                &mut dequant_natural,
+            );
+            // Convert natural to zigzag for cost estimation
+            for n in 0..16 {
+                let j = ZIGZAG[n] as usize;
+                quantized_zigzag[n] = quantized_natural[j];
+            }
+            // IDCT the dequantized values
+            transform::idct4x4(&mut dequant_natural);
+            (nz, dequant_natural)
+        };
+
+        // Get coefficient cost using direct SIMD call
+        let ctx0 = (nz_top as usize) + (nz_left as usize);
+        let res = Residual::new(&quantized_zigzag, 3, 0); // CTYPE_I4_AC=3, first=0
+        let coeff_cost = crate::encoder::residual_cost::get_residual_cost_wasm(
+            _token,
+            ctx0,
+            &res,
+            level_costs,
+            probs,
+        );
+
+        // Compute SSE using direct SIMD call
+        let sse = crate::common::simd_wasm::sse4x4_with_residual_wasm(
+            _token,
+            src_block,
+            pred,
+            &dequantized,
+        );
+
+        // Early exit: if base RD score already exceeds best, skip extras
+        let mode_cost = mode_costs[mode_idx];
+        let base_rd_score =
+            crate::encoder::cost::rd_score_full(sse, 0, mode_cost, coeff_cost, lambda_i4) as u64;
+        if base_rd_score >= best_block_score {
+            continue;
+        }
+
+        // Flatness penalty for non-DC modes
+        let flatness_penalty = if mode_idx > 0 {
+            let levels_i16: [i16; 16] = core::array::from_fn(|k| quantized_zigzag[k] as i16);
+            if crate::common::simd_wasm::is_flat_coeffs_wasm(
+                _token,
+                &levels_i16,
+                1,
+                FLATNESS_LIMIT_I4,
+            ) {
+                FLATNESS_PENALTY
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        // Spectral distortion + psy-rd
+        let (spectral_disto, psy_cost) = if tlambda > 0 || psy_config.psy_rd_strength > 0 {
+            // Build reconstructed 4x4 block
+            let mut rec_block = [0u8; 16];
+            for k in 0..16 {
+                rec_block[k] = (i32::from(pred[k]) + dequantized[k]).clamp(0, 255) as u8;
+            }
+
+            let td = if tlambda > 0 {
+                let td_raw = crate::common::simd_wasm::tdisto_4x4_fused_wasm(
                     _token, src_block, &rec_block, 4, luma_csf,
                 );
                 (tlambda as i32 * td_raw + 128) >> 8
@@ -692,8 +905,8 @@ impl<'a> super::Vp8Encoder<'a> {
         let mbw = usize::from(self.macroblock_width);
         let src_width = mbw * 16;
 
-        // All 10 intra4 modes (used by SIMD path on x86_64)
-        #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+        // All 10 intra4 modes (used by SIMD path on x86_64 and wasm32)
+        #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "wasm32")))]
         const MODES: [IntraMode; 10] = [
             IntraMode::DC,
             IntraMode::TM,
@@ -925,8 +1138,79 @@ impl<'a> super::Vp8Encoder<'a> {
                     }
                 }
 
-                // Non-x86_64 fallback: use dispatch-based path
-                #[cfg(not(all(feature = "simd", target_arch = "x86_64")))]
+                // === WASM SIMD128 path ===
+                #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+                let simd_result = {
+                    use archmage::SimdToken;
+                    archmage::Wasm128Token::summon().and_then(|token| {
+                        let mode_sse = presort_i4_modes_wasm(token, &src_block, &preds);
+
+                        evaluate_i4_modes_wasm(
+                            token,
+                            &src_block,
+                            &preds,
+                            &mode_sse,
+                            max_modes_to_try,
+                            &mode_costs,
+                            nz_top,
+                            nz_left,
+                            y1_matrix,
+                            lambda_i4,
+                            tlambda,
+                            trellis_lambda_i4,
+                            &self.level_costs,
+                            probs,
+                            &segment.psy_config,
+                            &segment.psy_config.luma_csf,
+                        )
+                    })
+                };
+
+                #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+                if let Some(result) = simd_result {
+                    best_mode = MODES[result.mode_idx];
+                    best_mode_idx = result.mode_idx;
+                    let _ = result.rd_score;
+                    best_has_nz = result.has_nz;
+                    best_dequantized = result.dequantized;
+                    best_sse = result.sse;
+                    best_spectral_disto = result.spectral_disto;
+                    best_psy_cost = result.psy_cost;
+                    best_coeff_cost = result.coeff_cost;
+                } else {
+                    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+                    {
+                        self.evaluate_i4_modes_scalar(
+                            &src_block,
+                            &preds,
+                            max_modes_to_try,
+                            &mode_costs,
+                            nz_top,
+                            nz_left,
+                            y1_matrix,
+                            lambda_i4,
+                            tlambda,
+                            trellis_lambda_i4,
+                            probs,
+                            segment,
+                            &mut best_mode,
+                            &mut best_mode_idx,
+                            &mut best_block_score,
+                            &mut best_has_nz,
+                            &mut best_dequantized,
+                            &mut best_sse,
+                            &mut best_spectral_disto,
+                            &mut best_psy_cost,
+                            &mut best_coeff_cost,
+                        );
+                    }
+                }
+
+                // Fallback: no SIMD available
+                #[cfg(not(all(
+                    feature = "simd",
+                    any(target_arch = "x86_64", target_arch = "wasm32")
+                )))]
                 {
                     self.evaluate_i4_modes_scalar(
                         &src_block,
