@@ -25,7 +25,7 @@ fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32)> {
     let file = fs::File::open(path).ok()?;
     let decoder = png::Decoder::new(BufReader::new(file));
     let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let mut buf = vec![0u8; reader.output_buffer_size()?];
     let info = reader.next_frame(&mut buf).ok()?;
     let width = info.width;
     let height = info.height;

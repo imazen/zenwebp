@@ -63,7 +63,7 @@ fn reference_test_with_options(
         .read_info()
         .unwrap();
     assert_eq!(reference_decoder.info().bit_depth, png::BitDepth::Eight);
-    let mut reference_data = vec![0; reference_decoder.output_buffer_size()];
+    let mut reference_data = vec![0; reference_decoder.output_buffer_size().unwrap()];
     reference_decoder.next_frame(&mut reference_data).unwrap();
 
     // Compare metadata
@@ -125,7 +125,7 @@ fn reference_test_with_options(
                 .read_info()
                 .unwrap();
             assert_eq!(reference_decoder.info().bit_depth, png::BitDepth::Eight);
-            let mut reference_data = vec![0; reference_decoder.output_buffer_size()];
+            let mut reference_data = vec![0; reference_decoder.output_buffer_size().unwrap()];
             reference_decoder.next_frame(&mut reference_data).unwrap();
 
             // Decode WebP

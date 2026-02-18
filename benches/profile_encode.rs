@@ -4,9 +4,9 @@ use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
 fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
     let file = std::fs::File::open(path).unwrap();
-    let decoder = png::Decoder::new(file);
+    let decoder = png::Decoder::new(std::io::BufReader::new(file));
     let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0; reader.output_buffer_size()];
+    let mut buf = vec![0; reader.output_buffer_size().unwrap()];
     let info = reader.next_frame(&mut buf).unwrap();
 
     let rgb_data = match info.color_type {
