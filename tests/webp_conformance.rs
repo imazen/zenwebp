@@ -3,6 +3,9 @@
 //! Tests that zenwebp correctly decodes RFC 6386-compliant WebP files.
 //! Run with: `cargo test --test webp_conformance -- --ignored`
 //! Or via CI: `cargo test --release test_webp -- --ignored`
+//!
+//! Requires codec-corpus which is only available on native platforms.
+#![cfg(not(target_arch = "wasm32"))]
 
 use std::fs;
 use zenwebp::WebPDecoder;
