@@ -164,20 +164,7 @@ pub fn tdisto_16x16(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::Wasm128Token::summon() {
-            let mut d = 0i32;
-            for y in 0..4 {
-                for x in 0..4 {
-                    let offset = y * 4 * stride + x * 4;
-                    d += crate::common::simd_wasm::tdisto_4x4_fused_wasm_entry(
-                        token,
-                        &a[offset..],
-                        &b[offset..],
-                        stride,
-                        w,
-                    );
-                }
-            }
-            return d;
+            return tdisto_16x16_wasm(token, a, b, stride, w);
         }
     }
     // Scalar fallback (x86 without SIMD support, or non-SIMD platforms)
@@ -243,20 +230,7 @@ pub fn tdisto_8x8(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::Wasm128Token::summon() {
-            let mut d = 0i32;
-            for y in 0..2 {
-                for x in 0..2 {
-                    let offset = y * 4 * stride + x * 4;
-                    d += crate::common::simd_wasm::tdisto_4x4_fused_wasm_entry(
-                        token,
-                        &a[offset..],
-                        &b[offset..],
-                        stride,
-                        w,
-                    );
-                }
-            }
-            return d;
+            return tdisto_8x8_wasm(token, a, b, stride, w);
         }
     }
     #[allow(unreachable_code)]
@@ -313,6 +287,58 @@ fn tdisto_8x8_neon(
         for x in 0..2 {
             let offset = y * 4 * stride + x * 4;
             d += crate::common::simd_neon::tdisto_4x4_fused_inner(
+                _token,
+                &a[offset..],
+                &b[offset..],
+                stride,
+                w,
+            );
+        }
+    }
+    d
+}
+
+/// Wasm SIMD128 variant: single dispatch for all 16 sub-blocks
+#[cfg(all(feature = "simd", target_arch = "wasm32"))]
+#[archmage::arcane]
+fn tdisto_16x16_wasm(
+    _token: archmage::Wasm128Token,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    let mut d = 0i32;
+    for y in 0..4 {
+        for x in 0..4 {
+            let offset = y * 4 * stride + x * 4;
+            d += crate::common::simd_wasm::tdisto_4x4_fused_wasm(
+                _token,
+                &a[offset..],
+                &b[offset..],
+                stride,
+                w,
+            );
+        }
+    }
+    d
+}
+
+/// Wasm SIMD128 variant: single dispatch for all 4 sub-blocks
+#[cfg(all(feature = "simd", target_arch = "wasm32"))]
+#[archmage::arcane]
+fn tdisto_8x8_wasm(
+    _token: archmage::Wasm128Token,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    let mut d = 0i32;
+    for y in 0..2 {
+        for x in 0..2 {
+            let offset = y * 4 * stride + x * 4;
+            d += crate::common::simd_wasm::tdisto_4x4_fused_wasm(
                 _token,
                 &a[offset..],
                 &b[offset..],
