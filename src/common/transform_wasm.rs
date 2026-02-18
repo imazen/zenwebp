@@ -267,6 +267,70 @@ fn dct_butterfly_pass2(in0: v128, in1: v128, in2: v128, in3: v128) -> (v128, v12
     (out0, out1, out2, out3)
 }
 
+/// Fused residual computation + forward DCT for a single 4x4 block.
+/// Takes flat u8 source and reference arrays (stride=4), outputs i32 coefficients.
+///
+/// Fuses: residual = src - ref, then DCT on residual.
+/// Avoids intermediate i32 storage by computing diff in i16 then widening to i32.
+#[cfg(target_arch = "wasm32")]
+#[arcane]
+pub(crate) fn ftransform_from_u8_4x4_wasm(
+    _token: Wasm128Token,
+    src: &[u8; 16],
+    ref_: &[u8; 16],
+) -> [i32; 16] {
+    ftransform_from_u8_4x4_wasm_impl(_token, src, ref_)
+}
+
+/// Inner #[rite] implementation of fused residual+DCT for wasm.
+#[cfg(target_arch = "wasm32")]
+#[rite]
+pub(crate) fn ftransform_from_u8_4x4_wasm_impl(
+    _token: Wasm128Token,
+    src: &[u8; 16],
+    ref_: &[u8; 16],
+) -> [i32; 16] {
+    // Load src and ref as u8x16
+    let src_vec = u8x16(
+        src[0], src[1], src[2], src[3], src[4], src[5], src[6], src[7], src[8], src[9], src[10],
+        src[11], src[12], src[13], src[14], src[15],
+    );
+    let ref_vec = u8x16(
+        ref_[0], ref_[1], ref_[2], ref_[3], ref_[4], ref_[5], ref_[6], ref_[7], ref_[8],
+        ref_[9], ref_[10], ref_[11], ref_[12], ref_[13], ref_[14], ref_[15],
+    );
+
+    // Zero-extend to i16 and compute diff (src - ref)
+    let src_lo = u16x8_extend_low_u8x16(src_vec);
+    let src_hi = u16x8_extend_high_u8x16(src_vec);
+    let ref_lo = u16x8_extend_low_u8x16(ref_vec);
+    let ref_hi = u16x8_extend_high_u8x16(ref_vec);
+    let diff_lo = i16x8_sub(src_lo, ref_lo);
+    let diff_hi = i16x8_sub(src_hi, ref_hi);
+
+    // Widen i16 → i32 for DCT (4 rows of 4 values)
+    let r0 = i32x4_extend_low_i16x8(diff_lo);
+    let r1 = i32x4_extend_high_i16x8(diff_lo);
+    let r2 = i32x4_extend_low_i16x8(diff_hi);
+    let r3 = i32x4_extend_high_i16x8(diff_hi);
+
+    // Forward DCT pass 1: row pass (transpose, butterfly, transpose back)
+    let (c0, c1, c2, c3) = transpose4x4(r0, r1, r2, r3);
+    let (v0, v1, v2, v3) = dct_butterfly(c0, c1, c2, c3);
+    let (t0, t1, t2, t3) = transpose4x4(v0, v1, v2, v3);
+
+    // Forward DCT pass 2: column pass
+    let (o0, o1, o2, o3) = dct_butterfly_pass2(t0, t1, t2, t3);
+
+    // Store results
+    let mut result = [0i32; 16];
+    store_row(&mut result, 0, o0);
+    store_row(&mut result, 1, o1);
+    store_row(&mut result, 2, o2);
+    store_row(&mut result, 3, o3);
+    result
+}
+
 /// WASM SIMD128 forward DCT. Uses i32x4 arithmetic matching the scalar implementation.
 ///
 /// Scalar pass order: row pass first (for i in 0..4, reads block[i*4..i*4+3]),

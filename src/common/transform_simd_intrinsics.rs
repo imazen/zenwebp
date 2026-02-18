@@ -1139,12 +1139,7 @@ pub(crate) fn ftransform_from_u8_4x4(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 1
     {
         use archmage::{SimdToken, Wasm128Token};
         if let Some(token) = Wasm128Token::summon() {
-            let mut block = [0i32; 16];
-            for i in 0..16 {
-                block[i] = src[i] as i32 - ref_[i] as i32;
-            }
-            super::transform_wasm::dct4x4_wasm(token, &mut block);
-            return block;
+            return super::transform_wasm::ftransform_from_u8_4x4_wasm(token, src, ref_);
         }
     }
     ftransform_from_u8_4x4_scalar(src, ref_)
