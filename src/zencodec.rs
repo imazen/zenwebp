@@ -742,7 +742,6 @@ impl<'a> zencodec_types::DecodeJob<'a> for WebpDecodeJob<'a> {
     type Error = DecodeError;
     type Decoder = WebpDecoder<'a>;
     type FrameDecoder = WebpFrameDecoder;
-
     fn with_stop(mut self, stop: &'a dyn Stop) -> Self {
         self.stop = Some(stop);
         self
@@ -828,6 +827,7 @@ impl<'a> zencodec_types::DecodeJob<'a> for WebpDecodeJob<'a> {
             total_frames,
         })
     }
+
 }
 
 // ── Decoder ─────────────────────────────────────────────────────────────────
