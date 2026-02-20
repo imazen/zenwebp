@@ -48,6 +48,10 @@ pub enum EncodeError {
     #[error("Encoding cancelled: {0}")]
     Cancelled(enough::StopReason),
 
+    /// A resource limit was exceeded (dimensions, memory, etc.).
+    #[error("Limit exceeded: {0}")]
+    LimitExceeded(String),
+
     /// The compressed header (partition 0) exceeds the VP8 19-bit size limit (524,287 bytes).
     ///
     /// This occurs with very large, high-entropy images where macroblock prediction

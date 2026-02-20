@@ -338,6 +338,7 @@ impl<'a> zencodec_types::EncodeJob<'a> for WebpEncodeJob<'a> {
             inner_config,
             stop: self.stop,
             metadata,
+            limits: self.limits,
         }
     }
 
@@ -359,6 +360,7 @@ pub struct WebpEncoder<'a> {
     inner_config: EncoderConfig,
     stop: Option<&'a dyn Stop>,
     metadata: Option<crate::ImageMetadata<'a>>,
+    limits: ResourceLimits,
 }
 
 impl<'a> WebpEncoder<'a> {
@@ -369,6 +371,16 @@ impl<'a> WebpEncoder<'a> {
         w: u32,
         h: u32,
     ) -> Result<EncodeOutput, EncodeError> {
+        // Pre-flight limit checks
+        self.limits
+            .check_dimensions(w, h)
+            .map_err(|e| EncodeError::LimitExceeded(alloc::format!("{e}")))?;
+        let bpp = layout.bytes_per_pixel() as u64;
+        let estimated_mem = w as u64 * h as u64 * bpp;
+        self.limits
+            .check_memory(estimated_mem)
+            .map_err(|e| EncodeError::LimitExceeded(alloc::format!("{e}")))?;
+
         let mut req = EncodeRequest::new(&self.inner_config, pixels, layout, w, h);
         if let Some(stop) = self.stop {
             req = req.with_stop(stop);
@@ -761,6 +773,7 @@ impl<'a> zencodec_types::DecodeJob<'a> for WebpDecodeJob<'a> {
             config: cfg,
             stop: self.stop,
             file_size_limit: self.effective_file_size_limit(),
+            limits: self.limits,
         }
     }
 
@@ -824,6 +837,7 @@ pub struct WebpDecoder<'a> {
     config: DecodeConfig,
     stop: Option<&'a dyn Stop>,
     file_size_limit: Option<u64>,
+    limits: ResourceLimits,
 }
 
 impl WebpDecoder<'_> {
@@ -889,6 +903,13 @@ impl zencodec_types::Decoder for WebpDecoder<'_> {
 
     fn decode(self, data: &[u8]) -> Result<DecodeOutput, DecodeError> {
         self.check_file_size(data)?;
+
+        // Pre-flight dimension check: probe dimensions before full decode
+        if let Ok(info) = crate::ImageInfo::from_webp(data) {
+            self.limits
+                .check_dimensions(info.width, info.height)
+                .map_err(|e| DecodeError::InvalidParameter(alloc::format!("{e}")))?;
+        }
 
         let mut req = DecodeRequest::new(&self.config, data);
         if let Some(stop) = self.stop {
