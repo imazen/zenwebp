@@ -270,6 +270,12 @@ impl<'a> WebpEncodeJob<'a> {
         if let Some(mem) = self.limits.max_memory_bytes {
             limits = limits.max_memory(mem);
         }
+        if self.limits.max_width.is_some() || self.limits.max_height.is_some() {
+            limits = limits.max_dimensions(
+                self.limits.max_width.unwrap_or(u32::MAX),
+                self.limits.max_height.unwrap_or(u32::MAX),
+            );
+        }
         inner = inner.limits(limits);
         inner
     }
@@ -618,10 +624,11 @@ impl WebpDecoderConfig {
         if let Some(mem) = limits.max_memory_bytes {
             self.inner.limits = self.inner.limits.max_memory(mem);
         }
-        if let Some(w) = limits.max_width {
-            if let Some(h) = limits.max_height {
-                self.inner.limits = self.inner.limits.max_dimensions(w, h);
-            }
+        if limits.max_width.is_some() || limits.max_height.is_some() {
+            self.inner.limits = self.inner.limits.max_dimensions(
+                limits.max_width.unwrap_or(u32::MAX),
+                limits.max_height.unwrap_or(u32::MAX),
+            );
         }
         self
     }
@@ -703,10 +710,11 @@ impl<'a> WebpDecodeJob<'a> {
         if let Some(mem) = self.limits.max_memory_bytes {
             cfg.limits = cfg.limits.max_memory(mem);
         }
-        if let Some(w) = self.limits.max_width {
-            if let Some(h) = self.limits.max_height {
-                cfg.limits = cfg.limits.max_dimensions(w, h);
-            }
+        if self.limits.max_width.is_some() || self.limits.max_height.is_some() {
+            cfg.limits = cfg.limits.max_dimensions(
+                self.limits.max_width.unwrap_or(u32::MAX),
+                self.limits.max_height.unwrap_or(u32::MAX),
+            );
         }
         cfg
     }
