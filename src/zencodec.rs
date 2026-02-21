@@ -1114,7 +1114,7 @@ impl zencodec_types::Decoder for WebpDecoder<'_> {
     fn decode_rows(
         self,
         data: &[u8],
-        _sink: &mut dyn FnMut(u32, PixelSlice<'_>),
+        _sink: &mut dyn zencodec_types::DecodeRowSink,
     ) -> Result<ImageInfo, DecodeError> {
         // WebP doesn't support incremental row output, just do a full decode
         let output = self.decode(data)?;
@@ -1169,7 +1169,7 @@ impl zencodec_types::FrameDecoder for WebpFrameDecoder {
 
     fn next_frame_rows(
         &mut self,
-        _sink: &mut dyn FnMut(u32, PixelSlice<'_>),
+        _sink: &mut dyn zencodec_types::DecodeRowSink,
     ) -> Result<Option<ImageInfo>, DecodeError> {
         Err(DecodeError::InvalidParameter(
             "WebP animation row-level decode not supported".into(),
