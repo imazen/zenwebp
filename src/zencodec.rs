@@ -393,47 +393,39 @@ impl<'a> WebpEncoder<'a> {
     }
 }
 
-/// Collect pixel data from a `PixelSlice` into contiguous bytes.
-fn collect_contiguous_bytes(pixels: &PixelSlice<'_>) -> Vec<u8> {
-    let h = pixels.rows();
-    let w = pixels.width();
-    let bpp = pixels.descriptor().bytes_per_pixel();
-    let row_bytes = w as usize * bpp;
-    let mut out = Vec::with_capacity(row_bytes * h as usize);
-    for y in 0..h {
-        out.extend_from_slice(&pixels.row(y)[..row_bytes]);
-    }
-    out
-}
-
 /// Convert a PixelSlice to raw bytes + PixelLayout for the native WebP API.
-fn pixels_to_webp_input(
-    pixels: PixelSlice<'_>,
-) -> Result<(Vec<u8>, PixelLayout, u32, u32), EncodeError> {
+///
+/// Returns `Cow::Borrowed` (zero-copy) for RGB8/RGBA8 when tightly packed,
+/// `Cow::Owned` when pixel format conversion or stride stripping is needed.
+fn pixels_to_webp_input<'a>(
+    pixels: &PixelSlice<'a>,
+) -> Result<(alloc::borrow::Cow<'a, [u8]>, PixelLayout, u32, u32), EncodeError> {
+    use alloc::borrow::Cow;
+
     let desc = pixels.descriptor();
     let w = pixels.width();
     let h = pixels.rows();
 
     if desc == PixelDescriptor::RGB8_SRGB {
-        Ok((collect_contiguous_bytes(&pixels), PixelLayout::Rgb8, w, h))
+        Ok((pixels.contiguous_bytes(), PixelLayout::Rgb8, w, h))
     } else if desc == PixelDescriptor::RGBA8_SRGB {
-        Ok((collect_contiguous_bytes(&pixels), PixelLayout::Rgba8, w, h))
+        Ok((pixels.contiguous_bytes(), PixelLayout::Rgba8, w, h))
     } else if desc == PixelDescriptor::BGRA8_SRGB {
         // Swizzle BGRA → RGBA
-        let raw = collect_contiguous_bytes(&pixels);
+        let raw = pixels.contiguous_bytes();
         let rgba: Vec<u8> = raw
             .chunks_exact(4)
             .flat_map(|c| [c[2], c[1], c[0], c[3]])
             .collect();
-        Ok((rgba, PixelLayout::Rgba8, w, h))
+        Ok((Cow::Owned(rgba), PixelLayout::Rgba8, w, h))
     } else if desc == PixelDescriptor::GRAY8_SRGB {
         // Expand grayscale → RGB
-        let raw = collect_contiguous_bytes(&pixels);
+        let raw = pixels.contiguous_bytes();
         let rgb: Vec<u8> = raw.iter().flat_map(|&g| [g, g, g]).collect();
-        Ok((rgb, PixelLayout::Rgb8, w, h))
+        Ok((Cow::Owned(rgb), PixelLayout::Rgb8, w, h))
     } else if desc == PixelDescriptor::RGBF32_LINEAR {
         use linear_srgb::default::linear_to_srgb_u8;
-        let raw = collect_contiguous_bytes(&pixels);
+        let raw = pixels.contiguous_bytes();
         let rgb: Vec<u8> = raw
             .chunks_exact(12)
             .flat_map(|c| {
@@ -447,10 +439,10 @@ fn pixels_to_webp_input(
                 ]
             })
             .collect();
-        Ok((rgb, PixelLayout::Rgb8, w, h))
+        Ok((Cow::Owned(rgb), PixelLayout::Rgb8, w, h))
     } else if desc == PixelDescriptor::RGBAF32_LINEAR {
         use linear_srgb::default::linear_to_srgb_u8;
-        let raw = collect_contiguous_bytes(&pixels);
+        let raw = pixels.contiguous_bytes();
         let rgba: Vec<u8> = raw
             .chunks_exact(16)
             .flat_map(|c| {
@@ -466,10 +458,10 @@ fn pixels_to_webp_input(
                 ]
             })
             .collect();
-        Ok((rgba, PixelLayout::Rgba8, w, h))
+        Ok((Cow::Owned(rgba), PixelLayout::Rgba8, w, h))
     } else if desc == PixelDescriptor::GRAYF32_LINEAR {
         use linear_srgb::default::linear_to_srgb_u8;
-        let raw = collect_contiguous_bytes(&pixels);
+        let raw = pixels.contiguous_bytes();
         let rgb: Vec<u8> = raw
             .chunks_exact(4)
             .flat_map(|c| {
@@ -478,7 +470,7 @@ fn pixels_to_webp_input(
                 [s, s, s]
             })
             .collect();
-        Ok((rgb, PixelLayout::Rgb8, w, h))
+        Ok((Cow::Owned(rgb), PixelLayout::Rgb8, w, h))
     } else {
         Err(EncodeError::InvalidBufferSize(alloc::format!(
             "unsupported pixel format for WebP encode: {:?}",
@@ -491,7 +483,7 @@ impl zencodec_types::Encoder for WebpEncoder<'_> {
     type Error = EncodeError;
 
     fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, EncodeError> {
-        let (buf, layout, w, h) = pixels_to_webp_input(pixels)?;
+        let (buf, layout, w, h) = pixels_to_webp_input(&pixels)?;
         self.do_encode(&buf, layout, w, h)
     }
 
@@ -547,7 +539,7 @@ impl zencodec_types::FrameEncoder for WebpFrameEncoder<'_> {
         if let Some(stop) = self.stop {
             stop.check().map_err(EncodeError::Cancelled)?;
         }
-        let (buf, layout, w, h) = pixels_to_webp_input(pixels)?;
+        let (buf, layout, w, h) = pixels_to_webp_input(&pixels)?;
         // Initialize the animation encoder lazily on first frame
         if self.anim_enc.is_none() {
             let config = AnimationConfig::default();
