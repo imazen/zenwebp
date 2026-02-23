@@ -296,8 +296,8 @@ pub(crate) fn ftransform_from_u8_4x4_wasm_impl(
         src[11], src[12], src[13], src[14], src[15],
     );
     let ref_vec = u8x16(
-        ref_[0], ref_[1], ref_[2], ref_[3], ref_[4], ref_[5], ref_[6], ref_[7], ref_[8],
-        ref_[9], ref_[10], ref_[11], ref_[12], ref_[13], ref_[14], ref_[15],
+        ref_[0], ref_[1], ref_[2], ref_[3], ref_[4], ref_[5], ref_[6], ref_[7], ref_[8], ref_[9],
+        ref_[10], ref_[11], ref_[12], ref_[13], ref_[14], ref_[15],
     );
 
     // Zero-extend to i16 and compute diff (src - ref)

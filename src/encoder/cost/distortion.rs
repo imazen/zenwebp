@@ -599,7 +599,9 @@ fn is_flat_coeffs_scalar(levels: &[i16], num_blocks: usize, thresh: i32) -> bool
 pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
     use archmage::SimdToken;
     if let Some(token) = archmage::Wasm128Token::summon() {
-        return crate::common::simd_wasm::is_flat_coeffs_wasm_entry(token, levels, num_blocks, thresh);
+        return crate::common::simd_wasm::is_flat_coeffs_wasm_entry(
+            token, levels, num_blocks, thresh,
+        );
     }
     is_flat_coeffs_scalar(levels, num_blocks, thresh)
 }

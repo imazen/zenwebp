@@ -819,7 +819,6 @@ impl<'a> zencodec_types::DecodeJob<'a> for WebpDecodeJob<'a> {
             total_frames,
         })
     }
-
 }
 
 // ── Decoder ─────────────────────────────────────────────────────────────────
@@ -1102,7 +1101,6 @@ impl zencodec_types::Decoder for WebpDecoder<'_> {
         };
         Ok(info)
     }
-
 }
 // ── Frame Decoder ───────────────────────────────────────────────────────────
 
@@ -1148,7 +1146,6 @@ impl zencodec_types::FrameDecoder for WebpFrameDecoder {
             "WebP animation decode_into not yet supported".into(),
         ))
     }
-
 }
 // ── Helpers ─────────────────────────────────────────────────────────────────
 

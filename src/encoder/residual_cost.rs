@@ -104,10 +104,7 @@ pub fn get_residual_cost(
 
 /// Calculate the cost of encoding a residual block using probability-based costs.
 /// Scalar fallback for non-SIMD platforms.
-#[cfg(not(all(
-    feature = "simd",
-    any(target_arch = "x86_64", target_arch = "wasm32")
-)))]
+#[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "wasm32"))))]
 #[inline]
 pub fn get_residual_cost(
     ctx0: usize,
@@ -426,7 +423,12 @@ pub(crate) fn get_residual_cost_wasm(
         let c0 = i32x4(res.coeffs[0], res.coeffs[1], res.coeffs[2], res.coeffs[3]);
         let c1 = i32x4(res.coeffs[4], res.coeffs[5], res.coeffs[6], res.coeffs[7]);
         let c2 = i32x4(res.coeffs[8], res.coeffs[9], res.coeffs[10], res.coeffs[11]);
-        let c3 = i32x4(res.coeffs[12], res.coeffs[13], res.coeffs[14], res.coeffs[15]);
+        let c3 = i32x4(
+            res.coeffs[12],
+            res.coeffs[13],
+            res.coeffs[14],
+            res.coeffs[15],
+        );
 
         // Pack i32 → i16 (signed saturation)
         let s0 = i16x8_narrow_i32x4(c0, c1);

@@ -323,7 +323,12 @@ pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, use_sharp
 pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, use_sharpen: bool) -> bool {
     use archmage::SimdToken;
     if let Some(token) = archmage::Wasm128Token::summon() {
-        return crate::common::simd_wasm::quantize_block_wasm_entry(token, coeffs, matrix, use_sharpen);
+        return crate::common::simd_wasm::quantize_block_wasm_entry(
+            token,
+            coeffs,
+            matrix,
+            use_sharpen,
+        );
     }
     matrix.quantize(coeffs);
     coeffs.iter().any(|&c| c != 0)
