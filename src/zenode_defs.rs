@@ -204,10 +204,7 @@ mod tests {
     #[test]
     fn lossless_from_kv_method() {
         let mut kv = KvPairs::from_querystring("webp.lossless.method=2");
-        let node = ENCODE_WEBP_LOSSLESS_NODE
-            .from_kv(&mut kv)
-            .unwrap()
-            .unwrap();
+        let node = ENCODE_WEBP_LOSSLESS_NODE.from_kv(&mut kv).unwrap().unwrap();
         assert_eq!(node.get_param("method"), Some(ParamValue::I32(2)));
         assert_eq!(kv.unconsumed().count(), 0);
     }
