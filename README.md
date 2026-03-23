@@ -112,120 +112,113 @@ let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode
 
 ## Feature Comparison with libwebp
 
-zenwebp aims to be a drop-in replacement for libwebp in most use cases. Here's what's implemented and what's not.
-
 ### Decoder
 
 | Feature | zenwebp | libwebp |
-|---------|---------|---------|
-| Lossy (VP8) | Yes | Yes |
-| Lossless (VP8L) | Yes | Yes |
-| Alpha channel | Yes | Yes |
-| Animation (ANIM/ANMF) | Yes (read + write) | Yes (read + write) |
-| Extended format (VP8X) | Yes | Yes |
-| ICC/EXIF/XMP metadata | Yes (raw bytes) | Yes (raw bytes) |
-| Output: RGB, RGBA | Yes | Yes |
-| Output: BGR, BGRA | Yes | Yes |
-| Output: ARGB | No | Yes |
-| Output: YUV 4:2:0 | Yes | Yes |
-| Output: RGB565, RGBA4444 | No | Yes |
-| Premultiplied alpha output | No | Yes |
-| Fancy chroma upsampling | Yes | Yes |
-| Simple (nearest) upsampling | Yes | Yes |
-| Incremental/streaming decode | No | Yes |
-| Crop during decode | No | Yes |
-| Scale during decode | No | Yes |
-| Threaded decoding | No | Yes |
-| Dithering | No | Yes |
+|---------|:-------:|:-------:|
+| Lossy (VP8) | :white_check_mark: | :white_check_mark: |
+| Lossless (VP8L) | :white_check_mark: | :white_check_mark: |
+| Alpha channel | :white_check_mark: | :white_check_mark: |
+| Animation (ANIM/ANMF) | :white_check_mark: read + write | :white_check_mark: read + write |
+| Extended format (VP8X) | :white_check_mark: | :white_check_mark: |
+| ICC/EXIF/XMP metadata | :white_check_mark: | :white_check_mark: |
+| Metadata without pixel decode | :white_check_mark: | :white_check_mark: |
+| Output: RGB, RGBA | :white_check_mark: | :white_check_mark: |
+| Output: BGR, BGRA | :white_check_mark: | :white_check_mark: |
+| Output: ARGB | :x: | :white_check_mark: |
+| Output: YUV 4:2:0 | :white_check_mark: | :white_check_mark: |
+| Output: RGB565, RGBA4444 | :x: | :white_check_mark: |
+| Premultiplied alpha output | :x: | :white_check_mark: |
+| Fancy chroma upsampling | :white_check_mark: | :white_check_mark: |
+| Bilinear chroma upsampling | :white_check_mark: | :white_check_mark: |
+| Nearest-neighbor upsampling | :white_check_mark: | :white_check_mark: |
+| Incremental/streaming decode | :x: | :white_check_mark: |
+| Crop during decode | :x: | :white_check_mark: |
+| Scale during decode | :x: | :white_check_mark: |
+| Threaded decoding | :x: | :white_check_mark: |
+| Dithering | :x: | :white_check_mark: |
+| Memory limits | :white_check_mark: | :x: |
 
 ### Encoder (Lossy VP8)
 
 | Feature | zenwebp | libwebp |
-|---------|---------|---------|
-| Quality (0-100) | Yes | Yes |
-| Method (0-6) speed/quality | Yes | Yes |
-| Presets (Photo, Drawing, etc.) | Yes (7 presets, including Auto) | Yes (6 presets) |
-| Target file size | Yes (secant method) | Yes (multi-pass) |
-| Target PSNR | Yes (secant method) | Yes |
-| SNS (spatial noise shaping) | Yes | Yes |
-| Filter strength/sharpness | Yes | Yes |
-| Autofilter | Yes | Yes |
-| Segments (1-4) | Yes | Yes |
-| Token partitions | 1 partition | 1-8 partitions |
-| Intra16 modes (DC/V/H/TM) | Yes | Yes |
-| Intra4 modes (10 modes) | Yes | Yes |
-| Trellis quantization | Yes (m5-6) | Yes (m5-6) |
-| Alpha channel encoding | Yes (lossless + lossy quantization) | Yes (lossless + lossy quantization) |
-| Sharp YUV conversion | Yes (via `yuv` crate, `fast-yuv` feature) | Yes (libsharpyuv) |
-| Multi-pass encoding | Yes | Yes |
-| Near-lossless | Yes | Yes |
-| Input: RGB, RGBA | Yes | Yes |
-| Input: L8 (grayscale) | Yes | No (requires conversion) |
-| Input: BGR, BGRA | Yes | Yes |
-| Input: YUV 4:2:0 | Yes | Yes |
-| Encoding statistics | Yes (EncodeStats) | Yes (WebPAuxStats) |
-| Progress callback | Yes (EncodeProgress + Stop) | Yes |
-| Threaded encoding | No | Yes (alpha parallel) |
+|---------|:-------:|:-------:|
+| Quality (0-100) | :white_check_mark: | :white_check_mark: |
+| Method (0-6) speed/quality | :white_check_mark: | :white_check_mark: |
+| Presets | :white_check_mark: 7 (incl. Auto) | :white_check_mark: 6 |
+| Target file size | :white_check_mark: secant method | :white_check_mark: multi-pass |
+| Target PSNR | :white_check_mark: | :white_check_mark: |
+| SNS (spatial noise shaping) | :white_check_mark: | :white_check_mark: |
+| Filter strength/sharpness | :white_check_mark: | :white_check_mark: |
+| Autofilter | :white_check_mark: | :white_check_mark: |
+| Segments (1-4) | :white_check_mark: | :white_check_mark: |
+| Token partitions | 1 | 1-8 |
+| Intra16 modes (DC/V/H/TM) | :white_check_mark: | :white_check_mark: |
+| Intra4 modes (10 modes) | :white_check_mark: | :white_check_mark: |
+| Trellis quantization (m5-6) | :white_check_mark: | :white_check_mark: |
+| Alpha channel (lossless + lossy quant) | :white_check_mark: | :white_check_mark: |
+| Sharp YUV conversion | :white_check_mark: | :white_check_mark: |
+| Multi-pass encoding | :white_check_mark: | :white_check_mark: |
+| Near-lossless | :white_check_mark: | :white_check_mark: |
+| Encoding statistics | :white_check_mark: | :white_check_mark: |
+| Progress callback | :white_check_mark: + cooperative Stop | :white_check_mark: |
+| Threaded encoding | :x: | :white_check_mark: alpha parallel |
 
 ### Encoder (Lossless VP8L)
 
 | Feature | zenwebp | libwebp |
-|---------|---------|---------|
-| Predictor transform (14 modes) | Yes | Yes |
-| Cross-color transform | Yes | Yes |
-| Subtract green transform | Yes | Yes |
-| Color indexing (palette) | Yes | Yes |
-| Palette sorting strategies | Yes (2) | Yes |
-| Pixel bundling (2/4/8 per pixel) | Yes | Yes |
-| Color cache (auto-sized) | Yes | Yes |
-| LZ77 Standard | Yes | Yes |
-| LZ77 RLE | Yes | Yes |
-| LZ77 Box | Yes (palette images) | Yes (palette images) |
-| TraceBackwards DP | Yes (Zopfli-style) | Yes (Zopfli-style) |
-| Meta-Huffman (spatial codes) | Yes | Yes |
-| Multi-config testing | Yes (m5-6) | Yes (m5-6) |
-| Near-lossless | Yes (pixel + residual) | Yes (pixel + residual) |
-| AnalyzeEntropy selection | Yes (5 modes) | Yes (5 modes) |
+|---------|:-------:|:-------:|
+| Predictor transform (14 modes) | :white_check_mark: | :white_check_mark: |
+| Cross-color transform | :white_check_mark: | :white_check_mark: |
+| Subtract green transform | :white_check_mark: | :white_check_mark: |
+| Color indexing (palette) | :white_check_mark: | :white_check_mark: |
+| Palette sorting strategies | :white_check_mark: 2 | :white_check_mark: |
+| Pixel bundling (2/4/8 per pixel) | :white_check_mark: | :white_check_mark: |
+| Color cache (auto-sized) | :white_check_mark: | :white_check_mark: |
+| LZ77 (standard + RLE + box) | :white_check_mark: | :white_check_mark: |
+| TraceBackwards DP (Zopfli-style) | :white_check_mark: | :white_check_mark: |
+| Meta-Huffman (spatial codes) | :white_check_mark: | :white_check_mark: |
+| Multi-config testing (m5-6) | :white_check_mark: | :white_check_mark: |
+| Near-lossless (pixel + residual) | :white_check_mark: | :white_check_mark: |
+| AnalyzeEntropy (5 modes) | :white_check_mark: | :white_check_mark: |
+
+### Encoder Input Formats
+
+| Format | zenwebp | libwebp |
+|--------|:-------:|:-------:|
+| RGB, RGBA | :white_check_mark: | :white_check_mark: |
+| BGR, BGRA | :white_check_mark: | :white_check_mark: |
+| ARGB | :x: | :white_check_mark: |
+| YUV 4:2:0 | :white_check_mark: | :white_check_mark: |
+| L8 (grayscale) | :white_check_mark: | :x: requires conversion |
+| LA8 (grayscale + alpha) | :white_check_mark: | :x: requires conversion |
+| Streaming input (push_rows) | :white_check_mark: | :x: |
 
 ### Container / Metadata
 
 | Feature | zenwebp | libwebp |
-|---------|---------|---------|
-| RIFF container read | Yes | Yes |
-| RIFF container write | Yes | Yes |
-| VP8X extended format | Yes | Yes |
-| ICC profile read | Yes | Yes |
-| EXIF metadata read | Yes | Yes |
-| XMP metadata read | Yes | Yes |
-| Metadata write (ICC/EXIF/XMP) | Yes | Yes (via libwebpmux) |
-| Animation write | Yes (AnimationEncoder) | Yes (WebPAnimEncoder) |
-| Mux API (assemble chunks) | Yes (WebPMux) | Yes (libwebpmux) |
-| Demux API (frame iteration) | Yes (WebPDemuxer) | Yes (libwebpdemux) |
+|---------|:-------:|:-------:|
+| RIFF container read/write | :white_check_mark: | :white_check_mark: |
+| VP8X extended format | :white_check_mark: | :white_check_mark: |
+| ICC/EXIF/XMP read | :white_check_mark: | :white_check_mark: |
+| ICC/EXIF/XMP write | :white_check_mark: | :white_check_mark: via libwebpmux |
+| Animation encode | :white_check_mark: | :white_check_mark: |
+| Mux API (assemble chunks) | :white_check_mark: | :white_check_mark: via libwebpmux |
+| Demux API (frame iteration) | :white_check_mark: | :white_check_mark: via libwebpdemux |
 
 ### Platform / Build
 
 | Feature | zenwebp | libwebp |
-|---------|---------|---------|
+|---------|:-------:|:-------:|
 | Language | Pure Rust | C |
-| Unsafe code | `#![forbid(unsafe_code)]` | N/A (C) |
-| no_std + alloc | Yes | No |
-| WASM | Yes (SIMD128) | Yes (via Emscripten/SIMDe) |
-| SSE2 | Yes | Yes |
-| SSE4.1 | Yes | Yes |
-| AVX2 | Yes | No |
-| NEON (ARM64) | Yes | Yes |
-| MIPS DSP | No | Yes |
-| Runtime CPU detection | Yes | Yes |
-| Custom allocator | No (uses alloc) | No (compile-time only) |
-
-### What zenwebp has that libwebp doesn't
-
-- **no_std support** - use in embedded, WASM, or kernel contexts with just `alloc`
-- **Memory safety** - `#![forbid(unsafe_code)]`, no buffer overflows by construction
-- **AVX2 SIMD** - wider SIMD for loop filter and YUV conversion
-- **Auto preset** - content-aware preset selection based on image analysis
-- **Grayscale input** - direct L8/LA8 encoding without manual conversion
-- **Cooperative cancellation** - separate `Stop` token for external cancellation (via `enough` crate)
+| Memory safety | :white_check_mark: `#![forbid(unsafe_code)]` | :x: manual C memory management |
+| no_std + alloc | :white_check_mark: | :x: |
+| WASM | :white_check_mark: SIMD128 | :white_check_mark: via Emscripten |
+| SSE2 / SSE4.1 | :white_check_mark: | :white_check_mark: |
+| AVX2 | :white_check_mark: | :x: |
+| NEON (ARM64) | :white_check_mark: | :white_check_mark: |
+| MIPS DSP | :x: | :white_check_mark: |
+| Runtime CPU detection | :white_check_mark: | :white_check_mark: |
 
 ## Performance
 
