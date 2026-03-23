@@ -2087,6 +2087,16 @@ pub fn decode_bgra_premultiplied(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32
     Ok((pixels, w, h))
 }
 
+/// Decode WebP data to premultiplied ARGB pixels.
+///
+/// Each color channel is multiplied by its alpha: `C' = C × A / 255`.
+#[track_caller]
+pub fn decode_argb_premultiplied(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
+    let (mut pixels, w, h) = decode_rgba_premultiplied(data)?;
+    garb::bytes::rgba_to_argb_inplace(&mut pixels).map_err(|e| at!(garb_err(e)))?;
+    Ok((pixels, w, h))
+}
+
 /// Decode WebP data to RGB565 pixels (2 bytes per pixel, little-endian).
 ///
 /// Bit layout per u16: `R[15:11] G[10:5] B[4:0]`.
