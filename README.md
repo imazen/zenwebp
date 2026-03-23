@@ -132,11 +132,11 @@ let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode
 | Fancy chroma upsampling | :white_check_mark: | :white_check_mark: |
 | Bilinear chroma upsampling | :white_check_mark: | :white_check_mark: |
 | Nearest-neighbor upsampling | :white_check_mark: | :white_check_mark: |
-| Incremental/streaming decode | :x: | :white_check_mark: |
+| Incremental decode (partial bytes in, rows out) | :x: | :white_check_mark: |
 | Crop during decode | :x: | :white_check_mark: |
 | Scale during decode | :x: | :white_check_mark: |
-| Threaded decoding | :x: | :white_check_mark: |
-| Dithering | :x: | :white_check_mark: |
+| Pipelined MB row decode + filter | :x: | :white_check_mark: width >= 512 |
+| Chroma dithering (hides banding at low Q) | :x: | :white_check_mark: |
 | Memory limits | :white_check_mark: | :x: |
 
 ### Encoder (Lossy VP8)
@@ -164,7 +164,7 @@ let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode
 | Near-lossless | :white_check_mark: | :white_check_mark: |
 | Encoding statistics | :white_check_mark: | :white_check_mark: |
 | Progress callback | :white_check_mark: | :white_check_mark: |
-| Cooperative cancellation (Stop token) | :white_check_mark: | :x: |
+| Cancellation without thread killing (key for untrusted input) | :white_check_mark: | :x: |
 | Alpha encoded on 2nd thread | :x: | :white_check_mark: |
 
 ### Encoder (Lossless VP8L)
@@ -216,7 +216,8 @@ let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode
 | Language | Pure Rust | C |
 | Memory safety | :white_check_mark: `#![forbid(unsafe_code)]` | :x: manual C memory management |
 | no_std + alloc | :white_check_mark: | :x: |
-| WASM | :white_check_mark: SIMD128 | :white_check_mark: via Emscripten |
+| WASM | :white_check_mark: | :white_check_mark: via Emscripten |
+| WASM SIMD128 acceleration | :white_check_mark: | :white_check_mark: via SIMDe |
 | SSE2 / SSE4.1 | :white_check_mark: | :white_check_mark: |
 | AVX2 | :white_check_mark: | :x: |
 | NEON (ARM64) | :white_check_mark: | :white_check_mark: |
@@ -308,7 +309,7 @@ WebP crate from the image-rs project.
 | Alpha channel (lossless+lossy quant) | :white_check_mark: lossless | :white_check_mark: lossless+lossy |
 | Sharp YUV conversion | :x: | :white_check_mark: |
 | Progress callback | :x: | :white_check_mark: |
-| Cooperative cancellation (Stop token) | :x: | :white_check_mark: |
+| Cancellation without thread killing (key for untrusted input) | :x: | :white_check_mark: |
 | Encoding statistics | :x: | :white_check_mark: |
 | Compression vs libwebp | not measured | within 0.2% at m5 |
 
@@ -361,7 +362,8 @@ WebP crate from the image-rs project.
 | `#![forbid(unsafe_code)]` | :white_check_mark: | :white_check_mark: |
 | Zero unsafe in all deps | :white_check_mark: | :x: archmage generates unsafe for SIMD |
 | no_std + alloc | :x: requires std | :white_check_mark: |
-| WASM | :x: | :white_check_mark: SIMD128 |
+| WASM | :x: | :white_check_mark: |
+| WASM SIMD128 acceleration | :x: | :white_check_mark: |
 | SSE2 / SSE4.1 SIMD | :x: | :white_check_mark: |
 | AVX2 SIMD | :x: | :white_check_mark: |
 | NEON (ARM64) SIMD | :x: | :white_check_mark: |
