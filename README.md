@@ -125,7 +125,7 @@ let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode
 | Metadata without pixel decode | :white_check_mark: | :white_check_mark: |
 | Output: RGB, RGBA | :white_check_mark: | :white_check_mark: |
 | Output: BGR, BGRA | :white_check_mark: | :white_check_mark: |
-| Output: ARGB | :x: | :white_check_mark: |
+| Output: ARGB | :white_check_mark: | :white_check_mark: |
 | Output: YUV 4:2:0 | :white_check_mark: | :white_check_mark: |
 | Output: RGB565, RGBA4444 | :x: | :white_check_mark: |
 | Premultiplied alpha output | :x: | :white_check_mark: |
@@ -191,7 +191,7 @@ let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode
 |--------|:-------:|:-------:|
 | RGB, RGBA | :white_check_mark: | :white_check_mark: |
 | BGR, BGRA | :white_check_mark: | :white_check_mark: |
-| ARGB | :x: | :white_check_mark: |
+| ARGB | :white_check_mark: | :white_check_mark: |
 | YUV 4:2:0 | :white_check_mark: | :white_check_mark: |
 | L8 (grayscale) | :white_check_mark: | :x: requires conversion |
 | LA8 (grayscale + alpha) | :white_check_mark: | :x: requires conversion |

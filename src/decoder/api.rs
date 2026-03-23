@@ -1838,6 +1838,84 @@ pub fn decode_bgra_into(
     Ok((width, height))
 }
 
+/// Decode WebP data to ARGB pixels (alpha, red, green, blue order).
+///
+/// Returns the decoded pixels and dimensions.
+#[track_caller]
+pub fn decode_argb(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
+    let mut decoder = WebPDecoder::new(data).map_err(|e| at!(e))?;
+    let (width, height) = decoder.dimensions();
+    let output_size = decoder
+        .output_buffer_size()
+        .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
+    let mut native = vec![0u8; output_size];
+    decoder.read_image(&mut native).map_err(|e| at!(e))?;
+
+    if decoder.has_alpha() {
+        garb::bytes::rgba_to_argb_inplace(&mut native).map_err(|e| at!(garb_err(e)))?;
+        Ok((native, width, height))
+    } else {
+        let mut argb = vec![0u8; (width * height * 4) as usize];
+        garb::bytes::rgb_to_argb(&native, &mut argb).map_err(|e| at!(garb_err(e)))?;
+        Ok((argb, width, height))
+    }
+}
+
+/// Decode WebP data directly into a pre-allocated ARGB buffer.
+///
+/// Also suitable for XRGB output — alpha bytes are set to 255 for opaque images.
+///
+/// # Arguments
+/// * `data` - WebP encoded data
+/// * `output` - Pre-allocated output buffer (must be at least `stride_pixels * height * 4` bytes)
+/// * `stride_pixels` - Row stride in pixels (must be >= width)
+///
+/// # Returns
+/// Width and height of the decoded image.
+#[track_caller]
+pub fn decode_argb_into(
+    data: &[u8],
+    output: &mut [u8],
+    stride_pixels: u32,
+) -> DecodeResult<(u32, u32)> {
+    let mut decoder = WebPDecoder::new(data).map_err(|e| at!(e))?;
+    let (width, height) = decoder.dimensions();
+    let w = width as usize;
+    let h = height as usize;
+
+    if stride_pixels < width {
+        return Err(at!(DecodeError::InvalidParameter(format!(
+            "stride_pixels {} < width {}",
+            stride_pixels, width
+        ))));
+    }
+    let dst_stride = stride_pixels as usize * 4;
+    let required = dst_stride * h;
+    if output.len() < required {
+        return Err(at!(DecodeError::InvalidParameter(format!(
+            "output buffer too small: got {}, need {}",
+            output.len(),
+            required
+        ))));
+    }
+
+    let output_size = decoder
+        .output_buffer_size()
+        .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
+    let mut temp = vec![0u8; output_size];
+    decoder.read_image(&mut temp).map_err(|e| at!(e))?;
+
+    if decoder.has_alpha() {
+        garb::bytes::rgba_to_argb_strided(&temp, output, w, h, w * 4, dst_stride)
+            .map_err(|e| at!(garb_err(e)))?;
+    } else {
+        garb::bytes::rgb_to_argb_strided(&temp, output, w, h, w * 3, dst_stride)
+            .map_err(|e| at!(garb_err(e)))?;
+    }
+
+    Ok((width, height))
+}
+
 /// Decode WebP data directly into a pre-allocated BGR buffer.
 ///
 /// # Arguments

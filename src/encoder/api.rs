@@ -147,6 +147,8 @@ pub enum PixelLayout {
     Bgr8,
     /// Image with a blue, green, red, and alpha byte per pixel.
     Bgra8,
+    /// Image with an alpha, red, green, and blue byte per pixel.
+    Argb8,
     /// YUV 4:2:0 planar data (3 separate planes packed as \[Y, U, V\]).
     Yuv420,
 }
@@ -155,7 +157,7 @@ impl PixelLayout {
     pub(crate) fn has_alpha(self) -> bool {
         matches!(
             self,
-            PixelLayout::La8 | PixelLayout::Rgba8 | PixelLayout::Bgra8
+            PixelLayout::La8 | PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8
         )
     }
 
@@ -164,7 +166,7 @@ impl PixelLayout {
             PixelLayout::L8 => 1,
             PixelLayout::La8 => 2,
             PixelLayout::Rgb8 | PixelLayout::Bgr8 => 3,
-            PixelLayout::Rgba8 | PixelLayout::Bgra8 => 4,
+            PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => 4,
             PixelLayout::Yuv420 => 1, // not meaningful for planar; validated separately
         }
     }
@@ -179,6 +181,7 @@ impl fmt::Display for PixelLayout {
             PixelLayout::Rgba8 => f.write_str("RGBA8"),
             PixelLayout::Bgr8 => f.write_str("BGR8"),
             PixelLayout::Bgra8 => f.write_str("BGRA8"),
+            PixelLayout::Argb8 => f.write_str("ARGB8"),
             PixelLayout::Yuv420 => f.write_str("YUV420"),
         }
     }
@@ -1358,7 +1361,7 @@ pub(crate) fn encode_frame_lossless(
         PixelLayout::L8 => (false, false, 1),
         PixelLayout::La8 => (false, true, 2),
         PixelLayout::Rgb8 | PixelLayout::Bgr8 => (true, false, 3),
-        PixelLayout::Rgba8 | PixelLayout::Bgra8 => (true, true, 4),
+        PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => (true, true, 4),
         PixelLayout::Yuv420 => {
             return Err(EncodeError::InvalidBufferSize(
                 "YUV 4:2:0 input only supports lossy encoding".into(),
@@ -1487,6 +1490,17 @@ pub(crate) fn encode_frame_lossless(
             }
             out
         }
+        PixelLayout::Argb8 => {
+            let mut out = alloc::vec![0u8; npixels * 4];
+            for y in 0..hh {
+                garb::bytes::argb_to_rgba(
+                    &data[y * stride_bytes..y * stride_bytes + row_bytes],
+                    &mut out[y * ww * 4..(y + 1) * ww * 4],
+                )
+                .expect("validated buffer sizes");
+            }
+            out
+        }
         PixelLayout::Yuv420 => unreachable!(), // already rejected above
     };
 
@@ -1549,8 +1563,8 @@ pub(crate) fn encode_frame_lossless(
                 count_run(pixel, &mut it, &mut frequencies1);
             }
         }
-        PixelLayout::Rgba8 | PixelLayout::Bgra8 => {
-            // BGRA already converted to RGBA in pixel expansion above
+        PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => {
+            // BGRA/ARGB already converted to RGBA in pixel expansion above
             while let Some(pixel) = it.next() {
                 frequencies0[pixel[0] as usize] += 1;
                 frequencies1[pixel[1] as usize] += 1;
@@ -1627,8 +1641,8 @@ pub(crate) fn encode_frame_lossless(
                 write_run(w, pixel, &mut it, &codes1, &lengths1);
             }
         }
-        PixelLayout::Rgba8 | PixelLayout::Bgra8 => {
-            // BGRA already converted to RGBA in pixel expansion above
+        PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => {
+            // BGRA/ARGB already converted to RGBA in pixel expansion above
             while let Some(pixel) = it.next() {
                 let len1 = lengths1[pixel[1] as usize];
                 let len0 = lengths0[pixel[0] as usize];
@@ -1769,8 +1783,13 @@ pub(crate) fn encode_alpha_lossless(
 ) -> Result<(), EncodeError> {
     let bytes_per_pixel = match color {
         PixelLayout::La8 => 2usize,
-        PixelLayout::Rgba8 | PixelLayout::Bgra8 => 4,
+        PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => 4,
         _ => unreachable!(),
+    };
+    // Alpha channel offset within each pixel
+    let alpha_offset = match color {
+        PixelLayout::Argb8 => 0usize,
+        _ => bytes_per_pixel - 1,
     };
     if width == 0 || width > 16384 || height == 0 || height > 16384 {
         return Err(EncodeError::InvalidDimensions);
@@ -1789,11 +1808,7 @@ pub(crate) fn encode_alpha_lossless(
     let mut alpha_data = Vec::with_capacity(ww * hh);
     for y in 0..hh {
         let row = &data[y * stride_bytes..y * stride_bytes + row_bytes];
-        alpha_data.extend(
-            row.iter()
-                .skip(bytes_per_pixel - 1)
-                .step_by(bytes_per_pixel),
-        );
+        alpha_data.extend(row.iter().skip(alpha_offset).step_by(bytes_per_pixel));
     }
 
     debug_assert_eq!(alpha_data.len(), (width * height) as usize);

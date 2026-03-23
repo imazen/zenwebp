@@ -360,6 +360,10 @@ fn to_rgba(pixels: &[u8], color_type: PixelLayout, width: u32, height: u32) -> O
             garb::bytes::bgra_to_rgba(&pixels[..npixels * 4], &mut rgba).ok()?;
             Some(rgba)
         }
+        PixelLayout::Argb8 => {
+            garb::bytes::argb_to_rgba(&pixels[..npixels * 4], &mut rgba).ok()?;
+            Some(rgba)
+        }
         PixelLayout::Yuv420 => None,
     }
 }

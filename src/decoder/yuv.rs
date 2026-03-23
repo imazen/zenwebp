@@ -1315,7 +1315,9 @@ pub(crate) fn convert_image_sharp_yuv(
             PixelLayout::Bgra8 => convert_image_yuv_bgr::<4>(image_data, width, height, stride),
             PixelLayout::L8 => convert_image_y::<1>(image_data, width, height, stride),
             PixelLayout::La8 => convert_image_y::<2>(image_data, width, height, stride),
-            PixelLayout::Yuv420 => unreachable!("sharp YUV should not be called with Yuv420 input"),
+            PixelLayout::Yuv420 | PixelLayout::Argb8 => {
+                unreachable!("sharp YUV should not be called with Yuv420 or Argb8 input")
+            }
         }
     }
 }

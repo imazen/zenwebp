@@ -622,6 +622,28 @@ impl<'a> Vp8Encoder<'a> {
         self.filter_sharpness = params.filter_sharpness.min(7);
         self.num_segments = params.num_segments.clamp(1, 4);
         self.preset = params.preset;
+        // For ARGB input, convert to RGBA so the standard RGBA code path handles it.
+        let argb_converted;
+        let (data, color) = if color == PixelLayout::Argb8 {
+            let w = usize::from(width);
+            let h = usize::from(height);
+            let bpp = 4usize;
+            let stride_bytes = stride * bpp;
+            let row_bytes = w * bpp;
+            let mut out = alloc::vec![0u8; w * h * 4];
+            for y in 0..h {
+                garb::bytes::argb_to_rgba(
+                    &data[y * stride_bytes..y * stride_bytes + row_bytes],
+                    &mut out[y * w * 4..(y + 1) * w * 4],
+                )
+                .expect("validated buffer sizes");
+            }
+            argb_converted = out;
+            (argb_converted.as_slice(), PixelLayout::Rgba8)
+        } else {
+            (data, color)
+        };
+
         let (y_bytes, u_bytes, v_bytes) = if color == PixelLayout::Yuv420 {
             // YUV420 planar data: [Y, U, V] packed into a single buffer
             let w = usize::from(width);
@@ -650,7 +672,7 @@ impl<'a> Vp8Encoder<'a> {
                 }
                 PixelLayout::L8 => convert_image_y::<1>(data, width, height, stride),
                 PixelLayout::La8 => convert_image_y::<2>(data, width, height, stride),
-                PixelLayout::Yuv420 => unreachable!(),
+                PixelLayout::Yuv420 | PixelLayout::Argb8 => unreachable!(),
             }
         };
 
@@ -659,7 +681,7 @@ impl<'a> Vp8Encoder<'a> {
                 PixelLayout::L8 => 1usize,
                 PixelLayout::La8 => 2,
                 PixelLayout::Rgb8 | PixelLayout::Bgr8 => 3,
-                PixelLayout::Rgba8 | PixelLayout::Bgra8 => 4,
+                PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => 4,
                 PixelLayout::Yuv420 => unreachable!(),
             };
             let w = usize::from(width);

@@ -54,6 +54,7 @@ impl private::Sealed for Rgb<u8> {}
 impl private::Sealed for Rgba<u8> {}
 impl private::Sealed for rgb::Bgr<u8> {}
 impl private::Sealed for rgb::Bgra<u8> {}
+impl private::Sealed for rgb::Argb<u8> {}
 impl private::Sealed for rgb::Gray<u8> {}
 impl private::Sealed for rgb::GrayAlpha<u8> {}
 
@@ -110,6 +111,13 @@ impl EncodePixel for rgb::Bgra<u8> {
     const CHANNELS: usize = 4;
     fn color_type() -> PixelLayout {
         PixelLayout::Bgra8
+    }
+}
+
+impl EncodePixel for rgb::Argb<u8> {
+    const CHANNELS: usize = 4;
+    fn color_type() -> PixelLayout {
+        PixelLayout::Argb8
     }
 }
 
