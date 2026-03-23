@@ -40,8 +40,9 @@ pub mod vp8;
 pub use api::{
     BitstreamFormat, DecodeConfig, DecodeError, DecodeRequest, DecodeResult, ImageInfo, LoopCount,
     UpsamplingMethod, WebPDecoder, YuvPlanes, decode_argb, decode_argb_into, decode_bgr,
-    decode_bgr_into, decode_bgra, decode_bgra_into, decode_rgb, decode_rgb_into, decode_rgba,
-    decode_rgba_into, decode_yuv420,
+    decode_bgr_into, decode_bgra, decode_bgra_into, decode_bgra_premultiplied, decode_rgb,
+    decode_rgb_into, decode_rgb565, decode_rgba, decode_rgba_into, decode_rgba_premultiplied,
+    decode_rgba4444, decode_yuv420,
 };
 #[allow(deprecated)]
 pub use limits::Limits;

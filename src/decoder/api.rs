@@ -2065,6 +2065,50 @@ pub fn decode_yuv420(data: &[u8]) -> DecodeResult<YuvPlanes> {
     })
 }
 
+/// Decode WebP data to premultiplied RGBA pixels.
+///
+/// Each color channel is multiplied by its alpha: `C' = C × A / 255`.
+/// This is the native format for GPU compositing and avoids a per-pixel
+/// multiply during alpha blending. Lossy for low-alpha pixels.
+#[track_caller]
+pub fn decode_rgba_premultiplied(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
+    let (mut pixels, w, h) = decode_rgba(data)?;
+    garb::bytes::premultiply_alpha_rgba_u8(&mut pixels).map_err(|e| at!(garb_err(e)))?;
+    Ok((pixels, w, h))
+}
+
+/// Decode WebP data to premultiplied BGRA pixels.
+///
+/// Each color channel is multiplied by its alpha: `C' = C × A / 255`.
+#[track_caller]
+pub fn decode_bgra_premultiplied(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
+    let (mut pixels, w, h) = decode_bgra(data)?;
+    garb::bytes::premultiply_alpha_bgra_u8(&mut pixels).map_err(|e| at!(garb_err(e)))?;
+    Ok((pixels, w, h))
+}
+
+/// Decode WebP data to RGB565 pixels (2 bytes per pixel, little-endian).
+///
+/// Bit layout per u16: `R[15:11] G[10:5] B[4:0]`.
+#[track_caller]
+pub fn decode_rgb565(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
+    let (rgba, w, h) = decode_rgba(data)?;
+    let mut out = vec![0u8; (w * h * 2) as usize];
+    garb::bytes::rgba_to_rgb565(&rgba, &mut out).map_err(|e| at!(garb_err(e)))?;
+    Ok((out, w, h))
+}
+
+/// Decode WebP data to RGBA4444 pixels (2 bytes per pixel, little-endian).
+///
+/// Bit layout per u16: `R[15:12] G[11:8] B[7:4] A[3:0]`.
+#[track_caller]
+pub fn decode_rgba4444(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
+    let (rgba, w, h) = decode_rgba(data)?;
+    let mut out = vec![0u8; (w * h * 2) as usize];
+    garb::bytes::rgba_to_rgba4444(&rgba, &mut out).map_err(|e| at!(garb_err(e)))?;
+    Ok((out, w, h))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
