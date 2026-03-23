@@ -72,39 +72,22 @@ pub(crate) fn composite_frame(
         return Ok(());
     }
 
-    // clear rectangle occupied by previous frame
+    // Clear rectangle occupied by previous frame.
+    // The canvas is always RGBA (4 bytes/pixel) regardless of whether the
+    // current frame carries alpha, so we always clear with 4-byte pixels.
     if let Some(clear_color) = clear_color {
-        match (frame_is_full_size, frame_has_alpha) {
-            (true, true) => {
-                for pixel in canvas.chunks_exact_mut(4) {
-                    pixel.copy_from_slice(&clear_color);
-                }
+        if frame_is_full_size {
+            for pixel in canvas[..expected_canvas_size].chunks_exact_mut(4) {
+                pixel.copy_from_slice(&clear_color);
             }
-            (true, false) => {
-                for pixel in canvas.chunks_exact_mut(3) {
-                    pixel.copy_from_slice(&clear_color[..3]);
-                }
-            }
-            (false, true) => {
-                for y in 0..previous_frame_height as usize {
-                    for x in 0..previous_frame_width as usize {
-                        let canvas_index = (x + previous_frame_offset_x as usize) * 4
-                            + (y + previous_frame_offset_y as usize) * canvas_stride;
+        } else {
+            for y in 0..previous_frame_height as usize {
+                for x in 0..previous_frame_width as usize {
+                    let canvas_index = (x + previous_frame_offset_x as usize) * 4
+                        + (y + previous_frame_offset_y as usize) * canvas_stride;
 
-                        let output = &mut canvas[canvas_index..][..4];
-                        output.copy_from_slice(&clear_color);
-                    }
-                }
-            }
-            (false, false) => {
-                for y in 0..previous_frame_height as usize {
-                    for x in 0..previous_frame_width as usize {
-                        let canvas_index = (x + previous_frame_offset_x as usize) * 3
-                            + (y + previous_frame_offset_y as usize) * (canvas_width as usize * 3);
-
-                        let output = &mut canvas[canvas_index..][..3];
-                        output.copy_from_slice(&clear_color[..3]);
-                    }
+                    let output = &mut canvas[canvas_index..][..4];
+                    output.copy_from_slice(&clear_color);
                 }
             }
         }
@@ -334,4 +317,127 @@ pub(crate) fn read_alpha_chunk(
     };
 
     Ok(chunk)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Before the fix, clearing the canvas for a non-alpha frame used 3-byte
+    /// stride on the always-RGBA canvas, corrupting pixel alignment.
+    #[test]
+    fn dispose_clear_fullsize_rgb_frame() {
+        let w = 4u32;
+        let h = 4u32;
+        // Canvas pre-filled with a recognizable pattern (0xAA in every byte).
+        let mut canvas = vec![0xAA_u8; (w * h * 4) as usize];
+
+        // RGB frame (no alpha) — white pixels.
+        let frame = vec![0xFF_u8; (w * h * 3) as usize];
+
+        // Dispose previous full-size frame to transparent black, then composite
+        // the RGB frame.  `frame_use_alpha_blending = true` prevents the
+        // fast-path early return so the clear code actually runs.
+        composite_frame(
+            &mut canvas,
+            w,
+            h,
+            Some([0, 0, 0, 0]),
+            &frame,
+            0,
+            0,
+            w,
+            h,
+            false, // frame_has_alpha
+            true,  // frame_use_alpha_blending (forces slow path)
+            w,
+            h,
+            0,
+            0,
+        )
+        .unwrap();
+
+        // After clear + RGB→RGBA composite, every pixel should be opaque white.
+        for (i, pixel) in canvas.chunks_exact(4).enumerate() {
+            assert_eq!(
+                pixel,
+                [0xFF, 0xFF, 0xFF, 0xFF],
+                "pixel {i} corrupted: {pixel:?}"
+            );
+        }
+    }
+
+    /// Same bug for sub-frame clear: 3-byte stride wrote to wrong canvas offsets.
+    #[test]
+    fn dispose_clear_subframe_rgb_frame() {
+        let canvas_w = 8u32;
+        let canvas_h = 8u32;
+        let mut canvas = vec![0xAA_u8; (canvas_w * canvas_h * 4) as usize];
+
+        // Previous frame occupied (2,2)-(6,6) — a 4×4 sub-frame.
+        let prev_x = 2u32;
+        let prev_y = 2u32;
+        let prev_w = 4u32;
+        let prev_h = 4u32;
+
+        // New frame: 4×4 RGB at (0,0).
+        let frame_w = 4u32;
+        let frame_h = 4u32;
+        let frame = vec![0xFF_u8; (frame_w * frame_h * 3) as usize];
+
+        composite_frame(
+            &mut canvas,
+            canvas_w,
+            canvas_h,
+            Some([0, 0, 0, 0]),
+            &frame,
+            0,
+            0,
+            frame_w,
+            frame_h,
+            false,
+            true,
+            prev_w,
+            prev_h,
+            prev_x,
+            prev_y,
+        )
+        .unwrap();
+
+        let stride = canvas_w as usize * 4;
+
+        // The previous-frame rectangle (2,2)-(6,6) should be cleared to [0,0,0,0].
+        for y in prev_y as usize..(prev_y + prev_h) as usize {
+            for x in prev_x as usize..(prev_x + prev_w) as usize {
+                let idx = y * stride + x * 4;
+                let pixel = &canvas[idx..idx + 4];
+                // Pixels inside new frame (0..4, 0..4) get overwritten by composite,
+                // so only check the region that is cleared but NOT overwritten.
+                if x >= frame_w as usize || y >= frame_h as usize {
+                    assert_eq!(
+                        pixel,
+                        [0, 0, 0, 0],
+                        "prev-frame pixel ({x},{y}) not cleared: {pixel:?}"
+                    );
+                }
+            }
+        }
+
+        // New frame region (0,0)-(4,4) should be opaque white from RGB→RGBA.
+        for y in 0..frame_h as usize {
+            for x in 0..frame_w as usize {
+                let idx = y * stride + x * 4;
+                let pixel = &canvas[idx..idx + 4];
+                assert_eq!(
+                    pixel,
+                    [0xFF, 0xFF, 0xFF, 0xFF],
+                    "new-frame pixel ({x},{y}) wrong: {pixel:?}"
+                );
+            }
+        }
+
+        // Pixels outside both rectangles should be untouched (0xAA).
+        let pixel = &canvas[7 * 4..7 * 4 + 4]; // (7,0) — outside both
+        assert_eq!(pixel, [0xAA, 0xAA, 0xAA, 0xAA], "untouched pixel modified");
+    }
 }
