@@ -128,7 +128,7 @@ let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode
 | Output: ARGB | :white_check_mark: | :white_check_mark: |
 | Output: YUV 4:2:0 | :white_check_mark: | :white_check_mark: |
 | Output: RGB565, RGBA4444 | :white_check_mark: | :white_check_mark: |
-| Premultiplied alpha output (RGBA, BGRA) | :white_check_mark: | :white_check_mark: |
+| Premultiplied alpha output (RGBA, BGRA, ARGB) | :white_check_mark: | :white_check_mark: |
 | Fancy chroma upsampling | :white_check_mark: | :white_check_mark: |
 | Bilinear chroma upsampling | :white_check_mark: | :white_check_mark: |
 | Nearest-neighbor upsampling | :white_check_mark: | :white_check_mark: |
@@ -276,8 +276,10 @@ WebP crate from the image-rs project.
 | Extended format (VP8X) | :white_check_mark: | :white_check_mark: |
 | ICC/EXIF/XMP extraction | :white_check_mark: | :white_check_mark: |
 | Output: RGB, RGBA | :white_check_mark: | :white_check_mark: |
-| Output: BGR, BGRA | :x: | :white_check_mark: |
+| Output: BGR, BGRA, ARGB | :x: | :white_check_mark: |
+| Output: RGB565, RGBA4444 | :x: | :white_check_mark: |
 | Output: YUV 4:2:0 | :x: | :white_check_mark: |
+| Premultiplied alpha output | :x: | :white_check_mark: |
 | Fancy chroma upsampling | :x: | :white_check_mark: |
 | Bilinear chroma upsampling | :white_check_mark: | :white_check_mark: |
 | Nearest-neighbor upsampling | :white_check_mark: | :white_check_mark: |
