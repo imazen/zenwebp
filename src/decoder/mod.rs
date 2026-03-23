@@ -4,6 +4,7 @@ mod alpha_blending;
 mod api;
 pub(crate) mod arithmetic;
 mod bit_reader;
+mod dither;
 mod extended;
 mod huffman;
 mod limits;

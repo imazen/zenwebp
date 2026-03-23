@@ -289,6 +289,10 @@ pub struct DecodeConfig {
 
     /// Decode limits for dimensions, memory, frame count, etc.
     pub limits: super::limits::Limits,
+
+    /// Chroma dithering strength for lossy decoding (0-100, 0=off). Default: 50.
+    /// Adds noise to U/V planes to hide banding at low quality settings.
+    pub dithering_strength: u8,
 }
 
 impl Default for DecodeConfig {
@@ -296,6 +300,7 @@ impl Default for DecodeConfig {
         Self {
             upsampling: UpsamplingMethod::Bilinear,
             limits: super::limits::Limits::default(),
+            dithering_strength: 50,
         }
     }
 }
@@ -336,9 +341,20 @@ impl DecodeConfig {
         self
     }
 
+    /// Set chroma dithering strength (0=off, 100=max). Default: 50.
+    ///
+    /// Adds random noise to U/V chroma planes after loop filtering to hide
+    /// banding artifacts from coarse chroma quantization at low quality settings.
+    #[must_use]
+    pub fn with_dithering_strength(mut self, strength: u8) -> Self {
+        self.dithering_strength = strength;
+        self
+    }
+
     pub(crate) fn to_options(&self) -> WebPDecodeOptions {
         WebPDecodeOptions {
             lossy_upsampling: self.upsampling,
+            dithering_strength: self.dithering_strength,
         }
     }
 }
@@ -597,12 +613,15 @@ impl<'a> DecodeRequest<'a> {
 pub(crate) struct WebPDecodeOptions {
     /// The upsampling method used in conversion from lossy yuv to rgb
     pub lossy_upsampling: UpsamplingMethod,
+    /// Chroma dithering strength (0=off, 100=max). Default: 50.
+    pub dithering_strength: u8,
 }
 
 impl Default for WebPDecodeOptions {
     fn default() -> Self {
         Self {
             lossy_upsampling: UpsamplingMethod::Bilinear,
+            dithering_strength: 50,
         }
     }
 }
@@ -1120,7 +1139,11 @@ impl<'a> WebPDecoder<'a> {
                 .get(&WebPRiffChunk::VP8)
                 .ok_or(DecodeError::ChunkMissing)?;
             let data_slice = self.chunk_slice(range)?;
-            let frame = Vp8Decoder::decode_frame_with_stop(data_slice, self.stop)?;
+            let frame = Vp8Decoder::decode_frame_with_stop(
+                data_slice,
+                self.stop,
+                self.webp_decode_options.dithering_strength,
+            )?;
             if u32::from(frame.width) != self.width || u32::from(frame.height) != self.height {
                 return Err(DecodeError::InconsistentImageSizes);
             }
@@ -1218,7 +1241,11 @@ impl<'a> WebPDecoder<'a> {
         let frame_has_alpha: bool = match chunk {
             WebPRiffChunk::VP8 => {
                 let data_slice = self.r.take_slice(chunk_size as usize)?;
-                let raw_frame = Vp8Decoder::decode_frame_with_stop(data_slice, self.stop)?;
+                let raw_frame = Vp8Decoder::decode_frame_with_stop(
+                    data_slice,
+                    self.stop,
+                    self.webp_decode_options.dithering_strength,
+                )?;
                 if u32::from(raw_frame.width) != frame_width
                     || u32::from(raw_frame.height) != frame_height
                 {
@@ -1270,7 +1297,11 @@ impl<'a> WebPDecoder<'a> {
                 }
 
                 let vp8_slice = self.r.take_slice(next_chunk_size as usize)?;
-                let raw_frame = Vp8Decoder::decode_frame_with_stop(vp8_slice, self.stop)?;
+                let raw_frame = Vp8Decoder::decode_frame_with_stop(
+                    vp8_slice,
+                    self.stop,
+                    self.webp_decode_options.dithering_strength,
+                )?;
 
                 let frame_alloc = frame_width as usize * frame_height as usize * 4;
                 self.limits.check_memory(frame_alloc)?;

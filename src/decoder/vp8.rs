@@ -499,6 +499,14 @@ pub struct Vp8Decoder<'a> {
 
     // Cooperative cancellation token
     stop: Option<&'a dyn enough::Stop>,
+
+    // Chroma dithering state
+    dither_strength_pending: u8,
+    dither_enabled: bool,
+    dither_rg: super::dither::VP8Random,
+    dither_amp: [i32; MAX_SEGMENTS],
+    /// UV AC quantizer indices per segment (for dithering amplitude computation)
+    uv_quant_indices: [i32; MAX_SEGMENTS],
 }
 
 impl<'a> Vp8Decoder<'a> {
@@ -563,6 +571,12 @@ impl<'a> Vp8Decoder<'a> {
             first_partition_size: 0,
 
             stop: None,
+
+            dither_strength_pending: 0,
+            dither_enabled: false,
+            dither_rg: super::dither::VP8Random::new(),
+            dither_amp: [0; MAX_SEGMENTS],
+            uv_quant_indices: [0; MAX_SEGMENTS],
         }
     }
 
@@ -672,6 +686,8 @@ impl<'a> Vp8Decoder<'a> {
 
             self.segment[i].uvdc = dc_quant(base + uvdc_delta);
             self.segment[i].uvac = ac_quant(base + uvac_delta);
+            // Store UV AC quantizer index for dithering amplitude computation
+            self.uv_quant_indices[i] = base + uvac_delta;
 
             if self.segment[i].y2ac < 8 {
                 self.segment[i].y2ac = 8;
@@ -1610,13 +1626,15 @@ impl<'a> Vp8Decoder<'a> {
         decoder.decode_frame_()
     }
 
-    /// Decodes the current frame with cooperative cancellation support.
+    /// Decodes the current frame with cooperative cancellation support and dithering.
     pub fn decode_frame_with_stop(
         data: &'a [u8],
         stop: Option<&'a dyn enough::Stop>,
+        dithering_strength: u8,
     ) -> Result<Frame, DecodeError> {
         let mut decoder = Self::new(data);
         decoder.stop = stop;
+        decoder.dither_strength_pending = dithering_strength;
         decoder.decode_frame_()
     }
 
@@ -1720,6 +1738,16 @@ impl<'a> Vp8Decoder<'a> {
     fn decode_frame_(mut self) -> Result<Frame, DecodeError> {
         self.read_frame_header()?;
 
+        // Initialize chroma dithering after frame header (which populates segments)
+        if self.dither_strength_pending > 0 {
+            let (enabled, amps) = super::dither::init_dither_amplitudes(
+                &self.uv_quant_indices,
+                self.dither_strength_pending,
+            );
+            self.dither_enabled = enabled;
+            self.dither_amp = amps;
+        }
+
         // Summon SIMD token once for the entire decode, avoiding ~312K per-call atomic loads
         let simd_token: SimdTokenType = {
             #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
@@ -1763,8 +1791,31 @@ impl<'a> Vp8Decoder<'a> {
                 self.macroblocks.push(mb);
             }
 
-            // Row complete: filter in cache, output to final buffer, prepare for next row
+            // Row complete: filter in cache, dither chroma, output to final buffer
             self.filter_row_in_cache(mby, simd_token);
+
+            // Apply chroma dithering after filtering, before output
+            if self.dither_enabled {
+                let extra_uv_rows = self.extra_y_rows / 2;
+                let mbwidth = self.mbwidth as usize;
+                let mb_row_start = mby * mbwidth;
+                // Collect segment IDs for this row's macroblocks
+                let seg_ids: Vec<u8> = (0..mbwidth)
+                    .map(|mbx| self.macroblocks[mb_row_start + mbx].segmentid)
+                    .collect();
+                super::dither::dither_row(
+                    &mut self.dither_rg,
+                    super::dither::DitherRowParams {
+                        cache_u: &mut self.cache_u,
+                        cache_v: &mut self.cache_v,
+                        cache_uv_stride: self.cache_uv_stride,
+                        extra_uv_rows,
+                        mb_segment_ids: &seg_ids,
+                        dither_amp: &self.dither_amp,
+                    },
+                );
+            }
+
             self.output_row_from_cache(mby);
             self.rotate_extra_rows();
 
