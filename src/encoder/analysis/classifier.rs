@@ -156,10 +156,7 @@ fn compute_edge_density(y_src: &[u8], width: usize, height: usize, y_stride: usi
     {
         compute_edge_density_neon_dispatch(y_src, width, height, y_stride)
     }
-    #[cfg(not(all(
-        feature = "simd",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )))]
+    #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "aarch64"))))]
     {
         compute_edge_density_scalar(y_src, width, height, y_stride)
     }

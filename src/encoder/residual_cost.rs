@@ -30,7 +30,11 @@ use super::cost::{LevelCosts, vp8_bit_cost};
 use super::tables::VP8_ENC_BANDS;
 #[cfg(all(
     feature = "simd",
-    any(target_arch = "x86_64", target_arch = "wasm32", target_arch = "aarch64")
+    any(
+        target_arch = "x86_64",
+        target_arch = "wasm32",
+        target_arch = "aarch64"
+    )
 ))]
 use super::tables::{MAX_LEVEL, MAX_VARIABLE_LEVEL, VP8_LEVEL_FIXED_COSTS};
 use crate::common::types::TokenProbTables;
@@ -129,7 +133,11 @@ pub fn get_residual_cost(
 /// Scalar fallback for non-SIMD platforms.
 #[cfg(not(all(
     feature = "simd",
-    any(target_arch = "x86_64", target_arch = "wasm32", target_arch = "aarch64")
+    any(
+        target_arch = "x86_64",
+        target_arch = "wasm32",
+        target_arch = "aarch64"
+    )
 )))]
 #[inline]
 pub fn get_residual_cost(
