@@ -119,7 +119,7 @@ let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode
 | Lossy (VP8) | :white_check_mark: | :white_check_mark: |
 | Lossless (VP8L) | :white_check_mark: | :white_check_mark: |
 | Alpha channel | :white_check_mark: | :white_check_mark: |
-| Animation (ANIM/ANMF) | :white_check_mark: read + write | :white_check_mark: read + write |
+| Animation decode + encode (ANIM/ANMF) | :white_check_mark: | :white_check_mark: |
 | Extended format (VP8X) | :white_check_mark: | :white_check_mark: |
 | ICC/EXIF/XMP metadata | :white_check_mark: | :white_check_mark: |
 | Metadata without pixel decode | :white_check_mark: | :white_check_mark: |
@@ -145,8 +145,10 @@ let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode
 |---------|:-------:|:-------:|
 | Quality (0-100) | :white_check_mark: | :white_check_mark: |
 | Method (0-6) speed/quality | :white_check_mark: | :white_check_mark: |
-| Presets | :white_check_mark: 7 (incl. Auto) | :white_check_mark: 6 |
-| Target file size | :white_check_mark: secant method | :white_check_mark: multi-pass |
+| Presets (Photo, Drawing, etc.) | :white_check_mark: 6 | :white_check_mark: 6 |
+| Auto preset (content-aware selection) | :white_check_mark: | :x: |
+| Target file size (secant method) | :white_check_mark: | :x: |
+| Target file size (multi-pass) | :x: | :white_check_mark: |
 | Target PSNR | :white_check_mark: | :white_check_mark: |
 | SNS (spatial noise shaping) | :white_check_mark: | :white_check_mark: |
 | Filter strength/sharpness | :white_check_mark: | :white_check_mark: |
@@ -161,8 +163,9 @@ let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode
 | Multi-pass encoding | :white_check_mark: | :white_check_mark: |
 | Near-lossless | :white_check_mark: | :white_check_mark: |
 | Encoding statistics | :white_check_mark: | :white_check_mark: |
-| Progress callback | :white_check_mark: + cooperative Stop | :white_check_mark: |
-| Threaded encoding | :x: | :white_check_mark: alpha parallel |
+| Progress callback | :white_check_mark: | :white_check_mark: |
+| Cooperative cancellation (Stop token) | :white_check_mark: | :x: |
+| Alpha encoded on 2nd thread | :x: | :white_check_mark: |
 
 ### Encoder (Lossless VP8L)
 
@@ -297,13 +300,15 @@ WebP crate from the image-rs project.
 | SNS (spatial noise shaping) | :x: | :white_check_mark: |
 | Filter strength/sharpness | :x: | :white_check_mark: |
 | Autofilter | :x: | :white_check_mark: |
-| Presets (Photo, Drawing, Auto, etc.) | :x: | :white_check_mark: 7 presets |
-| Target file size | :x: | :white_check_mark: |
+| Presets (Photo, Drawing, etc.) | :x: | :white_check_mark: 6 |
+| Auto preset (content-aware selection) | :x: | :white_check_mark: |
+| Target file size (secant method) | :x: | :white_check_mark: |
 | Target PSNR | :x: | :white_check_mark: |
 | Multi-pass encoding | :x: | :white_check_mark: |
 | Alpha channel (lossless+lossy quant) | :white_check_mark: lossless | :white_check_mark: lossless+lossy |
 | Sharp YUV conversion | :x: | :white_check_mark: |
-| Progress callback / cancellation | :x: | :white_check_mark: |
+| Progress callback | :x: | :white_check_mark: |
+| Cooperative cancellation (Stop token) | :x: | :white_check_mark: |
 | Encoding statistics | :x: | :white_check_mark: |
 | Compression vs libwebp | not measured | within 0.2% at m5 |
 
