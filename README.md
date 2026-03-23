@@ -265,61 +265,126 @@ Both encoder and decoder work without std. The decoder takes `&[u8]` slices and 
 
 ## Comparison with image-webp
 
-This crate is forked from [`image-webp`](https://github.com/image-rs/image-webp), the official pure-Rust
-WebP crate from the image-rs project. Both are excellent choices depending on your needs.
+Forked from [`image-webp`](https://github.com/image-rs/image-webp), the official pure-Rust
+WebP crate from the image-rs project.
 
-### When to use image-webp (upstream)
+### Decoder
 
-| Aspect | image-webp |
-|--------|------------|
-| **Safety** | Zero unsafe code in crate AND all dependencies |
-| **Codebase** | ~10,600 lines - small, auditable |
-| **Dependencies** | 2 (byteorder-lite, quick-error) |
-| **Decoder speed** | ~2.5-3x slower than libwebp |
-| **Encoder** | Lossless only, basic but fast |
-| **Best for** | Security-critical contexts, minimal attack surface |
+| Feature | image-webp | zenwebp |
+|---------|:----------:|:-------:|
+| Lossy (VP8) decode | :white_check_mark: | :white_check_mark: |
+| Lossless (VP8L) decode | :white_check_mark: | :white_check_mark: |
+| Alpha channel decode | :white_check_mark: | :white_check_mark: |
+| Animation decode (ANIM/ANMF) | :white_check_mark: | :white_check_mark: |
+| Extended format (VP8X) | :white_check_mark: | :white_check_mark: |
+| ICC/EXIF/XMP extraction | :white_check_mark: | :white_check_mark: |
+| Output: RGB, RGBA | :white_check_mark: | :white_check_mark: |
+| Output: BGR, BGRA | :x: | :white_check_mark: |
+| Output: YUV 4:2:0 | :x: | :white_check_mark: |
+| Fancy chroma upsampling | :x: | :white_check_mark: |
+| Bilinear chroma upsampling | :white_check_mark: | :white_check_mark: |
+| Nearest-neighbor upsampling | :white_check_mark: | :white_check_mark: |
+| SIMD loop filter | :x: | :white_check_mark: |
+| SIMD YUV-to-RGB | :x: | :white_check_mark: |
+| Memory limits | :white_check_mark: | :white_check_mark: |
+| Decode speed vs libwebp | ~2.5-3x slower | ~1.3-1.7x slower |
 
-**Choose image-webp if:** You need maximum assurance of memory safety, minimal dependencies,
-or only need lossless encoding. The smaller codebase is easier to audit.
+### Encoder (Lossy)
 
-### When to use zenwebp
+| Feature | image-webp | zenwebp |
+|---------|:----------:|:-------:|
+| Lossy VP8 encoding | :white_check_mark: basic | :white_check_mark: full |
+| Quality (0-100) | :white_check_mark: | :white_check_mark: |
+| Method (0-6) speed/quality tradeoff | :x: | :white_check_mark: |
+| I16 prediction (DC/V/H/TM) | DC only | all 4 modes |
+| I4 prediction (10 modes) | :x: | :white_check_mark: |
+| RD optimization | :x: | :white_check_mark: |
+| Trellis quantization | :x: | :white_check_mark: |
+| Segments (1-4) | :x: | :white_check_mark: |
+| SNS (spatial noise shaping) | :x: | :white_check_mark: |
+| Filter strength/sharpness | :x: | :white_check_mark: |
+| Autofilter | :x: | :white_check_mark: |
+| Presets (Photo, Drawing, Auto, etc.) | :x: | :white_check_mark: 7 presets |
+| Target file size | :x: | :white_check_mark: |
+| Target PSNR | :x: | :white_check_mark: |
+| Multi-pass encoding | :x: | :white_check_mark: |
+| Alpha channel (lossless+lossy quant) | :white_check_mark: lossless | :white_check_mark: lossless+lossy |
+| Sharp YUV conversion | :x: | :white_check_mark: |
+| Progress callback / cancellation | :x: | :white_check_mark: |
+| Encoding statistics | :x: | :white_check_mark: |
+| Compression vs libwebp | not measured | within 0.2% at m5 |
 
-| Aspect | zenwebp |
-|--------|---------|
-| **Safety** | `#![forbid(unsafe_code)]` but relies on archmage for SIMD |
-| **Codebase** | ~41,000 lines (+30k for lossy encoder, same decoder base) |
-| **Dependencies** | 14 (7 optional) |
-| **Decoder speed** | ~1.4-1.7x slower than libwebp (~2x faster than image-webp) |
-| **Encoder** | Lossy + lossless, matches libwebp compression |
-| **Best for** | Full WebP support, lossy encoding, libwebp replacement |
+### Encoder (Lossless)
 
-**Choose zenwebp if:** You need lossy encoding, faster decoding, libwebp-compatible compression,
-or features like animation encoding, near-lossless, or target file size.
+| Feature | image-webp | zenwebp |
+|---------|:----------:|:-------:|
+| Predictor transform | :white_check_mark: | :white_check_mark: |
+| Cross-color transform | :white_check_mark: | :white_check_mark: |
+| Subtract green transform | :white_check_mark: | :white_check_mark: |
+| Color indexing (palette) | :white_check_mark: | :white_check_mark: |
+| Pixel bundling | :white_check_mark: | :white_check_mark: |
+| Color cache | :white_check_mark: | :white_check_mark: |
+| LZ77 (standard + RLE) | :white_check_mark: | :white_check_mark: |
+| TraceBackwards DP (Zopfli-style) | :x: | :white_check_mark: |
+| Meta-Huffman (spatial codes) | :x: | :white_check_mark: |
+| Multi-config testing (m5-6) | :x: | :white_check_mark: |
+| Near-lossless (pixel + residual) | :x: | :white_check_mark: |
+| AnalyzeEntropy (5 modes) | :x: | :white_check_mark: |
+| Compression vs libwebp | larger than libwebp | 0.4% smaller |
 
-### Honest tradeoffs
+### Container / Animation
 
-**Code size:** We added **~30,000 lines** to implement lossy encoding matching libwebp. This is
-a significant increase in attack surface and audit burden compared to image-webp's compact codebase.
+| Feature | image-webp | zenwebp |
+|---------|:----------:|:-------:|
+| RIFF read/write | :white_check_mark: | :white_check_mark: |
+| ICC/EXIF/XMP write | :white_check_mark: | :white_check_mark: |
+| Animation decode | :white_check_mark: | :white_check_mark: |
+| Animation encode | :x: | :white_check_mark: |
+| Mux API (assemble chunks) | :x: | :white_check_mark: |
+| Demux API (frame iteration) | :x: | :white_check_mark: |
+| Metadata module (no pixel decode) | :x: | :white_check_mark: |
 
-**Safety model:** We use `#![forbid(unsafe_code)]` which prevents any direct unsafe in our source.
-However, our SIMD acceleration depends on the `archmage` crate, whose `#[arcane]` proc macro
-generates `unsafe` blocks internally (to call CPU intrinsics). The generated unsafe bypasses
-Rust's `forbid` lint due to proc-macro span handling. We consider archmage's token-based safety
-model reasonable - tokens are only created after runtime CPU feature detection, and we don't
-forge tokens - but this is not the same as image-webp's truly zero-unsafe guarantee where both
-the crate and all dependencies contain no unsafe whatsoever.
+### Encoder Input Formats
 
-**Without the `simd` feature**, zenwebp contains no unsafe code at all, but decoding will be slower.
+| Format | image-webp | zenwebp |
+|--------|:----------:|:-------:|
+| RGB8 | :white_check_mark: | :white_check_mark: |
+| RGBA8 | :white_check_mark: | :white_check_mark: |
+| L8 (grayscale) | :white_check_mark: | :white_check_mark: |
+| LA8 (grayscale+alpha) | :white_check_mark: | :white_check_mark: |
+| BGR8, BGRA8 | :x: | :white_check_mark: |
+| YUV 4:2:0 | :x: | :white_check_mark: |
+| Streaming input (push_rows) | :x: | :white_check_mark: |
 
-### Feature additions over image-webp
+### Platform / Safety
 
-- **Lossy VP8 encoder** - full RD optimization, trellis quantization, all I4/I16 modes
-- **~2x faster decoder** - SIMD loop filter, YUV conversion, coefficient decoding
-- **Animation encoding** - AnimationEncoder with frame timing
-- **Near-lossless** - pixel and residual quantization
-- **Target file size** - secant method convergence
-- **SIMD** - SSE2/SSE4.1/AVX2 via archmage (but at cost of indirect unsafe)
-- **no_std** - both encoder and decoder work with just `alloc`
+| Feature | image-webp | zenwebp |
+|---------|:----------:|:-------:|
+| `#![forbid(unsafe_code)]` | :white_check_mark: | :white_check_mark: |
+| Zero unsafe in all deps | :white_check_mark: | :x: archmage generates unsafe for SIMD |
+| no_std + alloc | :x: requires std | :white_check_mark: |
+| WASM | :x: | :white_check_mark: SIMD128 |
+| SSE2 / SSE4.1 SIMD | :x: | :white_check_mark: |
+| AVX2 SIMD | :x: | :white_check_mark: |
+| NEON (ARM64) SIMD | :x: | :white_check_mark: |
+| Runtime CPU detection | :x: | :white_check_mark: |
+| Dependencies | 2 | 14 (7 optional) |
+| Codebase size | ~10,600 lines | ~41,000 lines |
+| License | MIT OR Apache-2.0 | AGPL-3.0 / Commercial |
+
+### Tradeoffs
+
+**Choose image-webp if** you need the smallest possible dependency tree, zero unsafe
+anywhere in the build, or only need lossless encoding. Its ~10k line codebase is easy to audit.
+
+**Choose zenwebp if** you need lossy encoding competitive with libwebp, faster decoding,
+animation encoding, near-lossless, target file size, no_std, or SIMD acceleration.
+
+**Safety model:** Both crates use `#![forbid(unsafe_code)]`. image-webp extends this to all
+dependencies — truly zero unsafe anywhere. zenwebp's SIMD acceleration depends on `archmage`,
+whose `#[arcane]` proc macro generates unsafe blocks internally to call CPU intrinsics. We
+consider archmage's token-based safety model sound, but it is not the same as zero-unsafe.
+Without the `simd` feature, zenwebp also contains no unsafe at all.
 
 ## License
 
@@ -346,8 +411,9 @@ This project builds on excellent work by others:
 
 - **[image-rs/image-webp](https://github.com/image-rs/image-webp)** - The foundation of this crate.
   The image-rs team built a complete, correct, truly-safe WebP decoder and lossless encoder.
-  We forked their work and added lossy encoding on top. If you don't need lossy encoding,
-  consider using their crate directly for a smaller, simpler dependency.
+  We forked their work and added SIMD acceleration, lossy encoding with full RD optimization,
+  animation encoding, and more. If you don't need those features, consider using their crate
+  directly for a smaller, simpler dependency.
 
 - **[libwebp](https://chromium.googlesource.com/webm/libwebp)** (Google) - Reference implementation.
   Our lossy encoder closely follows libwebp's algorithms for RD optimization, trellis quantization,
