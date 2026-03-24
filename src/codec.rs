@@ -1162,14 +1162,15 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob<'a> {
     }
 
     fn decoder(
-        self,
+        mut self,
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
     ) -> Result<WebpDecoder<'a>, At<DecodeError>> {
         let cfg = self.build_config();
+        let stop = self.stop.take();
         Ok(WebpDecoder {
             config: cfg,
-            stop: self.stop,
+            stop,
             input_size_limit: self.effective_input_size_limit(),
             limits: self.limits,
             data,
@@ -1323,7 +1324,7 @@ impl WebpDecoder<'_> {
         }
 
         let mut req = DecodeRequest::new(&self.config, data);
-        if let Some(stop) = self.stop {
+        if let Some(ref stop) = self.stop {
             req = req.stop(stop);
         }
 
@@ -1337,7 +1338,7 @@ impl WebpDecoder<'_> {
             _ => {
                 // Fallback: decode as RGBA
                 let rgba_req = DecodeRequest::new(&self.config, data);
-                let (rgba_pixels, rw, rh) = if let Some(stop) = self.stop {
+                let (rgba_pixels, rw, rh) = if let Some(ref stop) = self.stop {
                     rgba_req
                         .stop(stop)
                         .decode_rgba()
