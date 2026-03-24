@@ -319,12 +319,38 @@ fn dithered_output_similar_to_libwebp() {
         npixels * 4
     );
 
-    // Dithering uses a PRNG, so if our seed table matches libwebp exactly
-    // the output should be identical (max_diff=0). If not, differences
-    // should still be bounded by the dither amplitude (small).
+    // Our PRNG seed table, amplitude computation, and per-MB filtering all
+    // match libwebp exactly — output should be pixel-identical.
     assert!(
-        max_diff <= 12,
-        "dithered decode differs from libwebp by up to {max_diff} — \
-         expected <= 12 (2x max dither amplitude)"
+        max_diff == 0,
+        "dithered decode differs from libwebp by up to {max_diff} — expected exact match"
     );
+}
+
+/// Test exact dithering match with the gallery test images at various strengths.
+#[test]
+fn dithered_matches_libwebp_gallery_images() {
+    for path in &[
+        "tests/images/gallery1/1.webp",
+        "tests/images/gallery1/2.webp",
+        "tests/images/gallery1/3.webp",
+        "tests/images/gallery1/4.webp",
+        "tests/images/gallery1/5.webp",
+    ] {
+        let webp_data = std::fs::read(path).expect("failed to read test image");
+
+        for strength in [0, 25, 50, 75, 100] {
+            let config = DecodeConfig::default().with_dithering_strength(strength);
+            let (zen_pixels, _, _) = DecodeRequest::new(&config, &webp_data)
+                .decode_rgba()
+                .expect("zenwebp decode failed");
+
+            let lib_pixels = decode_with_libwebp(&webp_data, i32::from(strength));
+
+            assert_eq!(
+                zen_pixels, lib_pixels,
+                "{path} at strength={strength}: pixel mismatch"
+            );
+        }
+    }
 }
