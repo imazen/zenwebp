@@ -10,9 +10,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
-use zenwebp::{
-    DecodeConfig, DecodeRequest, DecoderThreading, EncodeRequest, EncoderConfig, PixelLayout,
-};
+use zenwebp::{DecodeConfig, DecodeRequest, EncodeRequest, EncoderConfig, PixelLayout};
 
 /// Load a PNG image, encode to WebP at Q75 m4, return (webp_data, width, height).
 fn make_webp(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
@@ -114,28 +112,14 @@ fn bench_decode_threading(c: &mut Criterion) {
         let pixels = (width * height) as u64;
         group.throughput(Throughput::Elements(pixels));
 
-        // zenwebp single-threaded
-        let config_st = DecodeConfig::default().with_threading(DecoderThreading::SingleThreaded);
+        // zenwebp (single-threaded, current implementation)
+        let config_zen = DecodeConfig::default();
         group.bench_with_input(
-            BenchmarkId::new("zenwebp_1t", img.name),
+            BenchmarkId::new("zenwebp", img.name),
             &webp_data,
             |b, data| {
                 b.iter(|| {
-                    DecodeRequest::new(&config_st, black_box(data))
-                        .decode_rgba()
-                        .unwrap()
-                })
-            },
-        );
-
-        // zenwebp threaded (auto)
-        let config_mt = DecodeConfig::default().with_threading(DecoderThreading::Auto);
-        group.bench_with_input(
-            BenchmarkId::new("zenwebp_2t", img.name),
-            &webp_data,
-            |b, data| {
-                b.iter(|| {
-                    DecodeRequest::new(&config_mt, black_box(data))
+                    DecodeRequest::new(&config_zen, black_box(data))
                         .decode_rgba()
                         .unwrap()
                 })
@@ -151,7 +135,7 @@ fn bench_decode_threading(c: &mut Criterion) {
                 b.iter(|| {
                     webpx::Decoder::new(black_box(data))
                         .unwrap()
-                        .config(libwebp_cfg_1t)
+                        .config(libwebp_cfg_1t.clone())
                         .decode_rgba_raw()
                         .unwrap()
                 })
@@ -167,7 +151,7 @@ fn bench_decode_threading(c: &mut Criterion) {
                 b.iter(|| {
                     webpx::Decoder::new(black_box(data))
                         .unwrap()
-                        .config(libwebp_cfg_2t)
+                        .config(libwebp_cfg_2t.clone())
                         .decode_rgba_raw()
                         .unwrap()
                 })
