@@ -335,7 +335,7 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
         Some(aq as f32)
     }
 
-    fn job(self) -> WebpEncodeJob<'static> {
+    fn job<'a>(self) -> WebpEncodeJob<'a> {
         WebpEncodeJob {
             config: self,
             stop: None,

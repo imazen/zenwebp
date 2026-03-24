@@ -134,19 +134,21 @@ pub(crate) struct DitherRowParams<'a> {
     pub cache_v: &'a mut [u8],
     pub cache_uv_stride: usize,
     pub extra_uv_rows: usize,
-    pub mb_segment_ids: &'a [u8],
-    pub dither_amp: &'a [i32; MAX_SEGMENTS],
+    /// Pre-computed per-MB dither amplitudes. Zero means skip that MB
+    /// (either below threshold, coefficients skipped, or has UV AC content).
+    pub mb_dither_amps: &'a [i32],
 }
 
 /// Dither all U/V macroblocks in a decoded row.
 ///
 /// Called after loop filtering, before output. Each macroblock's chroma
-/// gets dithered based on its segment's amplitude.
+/// gets dithered based on its pre-computed amplitude.
+///
+/// Matching libwebp: only MBs with all-zero UV AC coefficients are dithered.
+/// MBs with actual chroma detail or skipped coefficients are left untouched.
 pub(crate) fn dither_row(rg: &mut VP8Random, params: DitherRowParams<'_>) {
     let cache_offset = params.extra_uv_rows * params.cache_uv_stride;
-    for (mbx, &seg_id) in params.mb_segment_ids.iter().enumerate() {
-        let seg_id = seg_id as usize;
-        let amp = params.dither_amp[seg_id.min(MAX_SEGMENTS - 1)];
+    for (mbx, &amp) in params.mb_dither_amps.iter().enumerate() {
         if amp >= MIN_DITHER_AMP {
             let offset = cache_offset + mbx * 8;
             dither_8x8(

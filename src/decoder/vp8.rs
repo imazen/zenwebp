@@ -211,6 +211,9 @@ struct MacroBlock {
     segmentid: u8,
     coeffs_skipped: bool,
     non_zero_dct: bool,
+    /// True if any UV sub-block has non-zero AC coefficients.
+    /// Used to suppress dithering on blocks with actual chroma detail.
+    has_nonzero_uv_ac: bool,
 }
 
 /// Info required from a previously decoded macro block in future
@@ -1249,6 +1252,20 @@ impl<'a> Vp8Decoder<'a> {
                         mb.non_zero_dct = true;
                     }
 
+                    // Check for non-zero UV AC coefficients (any coeff at index > 0).
+                    // libwebp suppresses dithering on MBs with UV AC content
+                    // (non_zero_uv & 0xaaaa test in ParseResiduals).
+                    // n is true when at least one coefficient was decoded, but that
+                    // includes DC-only. Check the block directly for AC content.
+                    if !mb.has_nonzero_uv_ac {
+                        for &coeff in block[1..].iter() {
+                            if coeff != 0 {
+                                mb.has_nonzero_uv_ac = true;
+                                break;
+                            }
+                        }
+                    }
+
                     left_ctx = if n { 1 } else { 0 };
                     top.complexity[x + j] = if n { 1 } else { 0 };
                 }
@@ -1794,14 +1811,24 @@ impl<'a> Vp8Decoder<'a> {
             // Row complete: filter in cache, dither chroma, output to final buffer
             self.filter_row_in_cache(mby, simd_token);
 
-            // Apply chroma dithering after filtering, before output
+            // Apply chroma dithering after filtering, before output.
+            // Per libwebp: only dither MBs with all-zero UV AC coefficients
+            // (smooth/flat blocks where banding is visible).
             if self.dither_enabled {
                 let extra_uv_rows = self.extra_y_rows / 2;
                 let mbwidth = self.mbwidth as usize;
                 let mb_row_start = mby * mbwidth;
-                // Collect segment IDs for this row's macroblocks
-                let seg_ids: Vec<u8> = (0..mbwidth)
-                    .map(|mbx| self.macroblocks[mb_row_start + mbx].segmentid)
+                // Compute per-MB dither amplitude: segment amp if UV AC is zero,
+                // 0 if UV has AC content or coefficients were skipped.
+                let mb_dither: Vec<i32> = (0..mbwidth)
+                    .map(|mbx| {
+                        let mb = &self.macroblocks[mb_row_start + mbx];
+                        if mb.coeffs_skipped || mb.has_nonzero_uv_ac {
+                            0
+                        } else {
+                            self.dither_amp[mb.segmentid as usize]
+                        }
+                    })
                     .collect();
                 super::dither::dither_row(
                     &mut self.dither_rg,
@@ -1810,8 +1837,7 @@ impl<'a> Vp8Decoder<'a> {
                         cache_v: &mut self.cache_v,
                         cache_uv_stride: self.cache_uv_stride,
                         extra_uv_rows,
-                        mb_segment_ids: &seg_ids,
-                        dither_amp: &self.dither_amp,
+                        mb_dither_amps: &mb_dither,
                     },
                 );
             }
