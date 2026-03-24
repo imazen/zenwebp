@@ -354,3 +354,124 @@ fn dithered_matches_libwebp_gallery_images() {
         }
     }
 }
+
+/// Test across quality levels: encode at Q10..Q95, decode with each
+/// dithering strength, verify pixel-perfect match with libwebp.
+///
+/// This catches gating differences at all quantizer ranges:
+/// - Q10-Q50: uv_quant >= 12, dithering disabled (amplitude = 0)
+/// - Q75-Q90: borderline, some segments may dither
+/// - Q95: uv_quant < 12, dithering active
+#[test]
+fn dithered_matches_libwebp_across_quality_levels() {
+    let width = 64u32;
+    let height = 64u32;
+    let pixels = make_gradient(width as usize, height as usize);
+
+    for quality in [10.0, 25.0, 50.0, 75.0, 85.0, 90.0, 95.0] {
+        let config = LossyConfig::new().with_quality(quality).with_method(0);
+        let webp_data = EncodeRequest::lossy(&config, &pixels, PixelLayout::Rgb8, width, height)
+            .encode()
+            .unwrap_or_else(|e| panic!("encode Q{quality} failed: {e}"));
+
+        for strength in [0u8, 50, 100] {
+            let dc = DecodeConfig::default().with_dithering_strength(strength);
+            let (zen_pixels, _, _) = DecodeRequest::new(&dc, &webp_data)
+                .decode_rgba()
+                .unwrap_or_else(|e| panic!("zenwebp Q{quality} s{strength} failed: {e}"));
+
+            let lib_pixels = decode_with_libwebp(&webp_data, i32::from(strength));
+
+            assert_eq!(
+                zen_pixels, lib_pixels,
+                "Q{quality} strength={strength}: pixel mismatch"
+            );
+        }
+    }
+}
+
+/// Test with segments enabled (SNS/filter produces multiple segments
+/// with different quantizers, testing per-segment amplitude computation).
+#[test]
+fn dithered_matches_libwebp_with_segments() {
+    let width = 128u32;
+    let height = 128u32;
+    let pixels = make_gradient(width as usize, height as usize);
+
+    // Method 4+ with SNS enables segments
+    let config = LossyConfig::new().with_quality(90.0).with_method(4);
+    let webp_data = EncodeRequest::lossy(&config, &pixels, PixelLayout::Rgb8, width, height)
+        .encode()
+        .expect("encode with segments failed");
+
+    for strength in [0u8, 50, 100] {
+        let dc = DecodeConfig::default().with_dithering_strength(strength);
+        let (zen_pixels, _, _) = DecodeRequest::new(&dc, &webp_data)
+            .decode_rgba()
+            .expect("zenwebp decode failed");
+
+        let lib_pixels = decode_with_libwebp(&webp_data, i32::from(strength));
+
+        assert_eq!(
+            zen_pixels, lib_pixels,
+            "segments test strength={strength}: pixel mismatch"
+        );
+    }
+}
+
+/// Test with simple loop filter (different extra_rows than normal filter).
+#[test]
+fn dithered_matches_libwebp_simple_filter() {
+    let width = 64u32;
+    let height = 64u32;
+    let pixels = make_gradient(width as usize, height as usize);
+
+    // Low filter strength often triggers simple filter
+    let config = LossyConfig::new().with_quality(95.0).with_method(0);
+    let webp_data = EncodeRequest::lossy(&config, &pixels, PixelLayout::Rgb8, width, height)
+        .encode()
+        .expect("encode failed");
+
+    for strength in [0u8, 50, 100] {
+        let dc = DecodeConfig::default().with_dithering_strength(strength);
+        let (zen_pixels, _, _) = DecodeRequest::new(&dc, &webp_data)
+            .decode_rgba()
+            .expect("zenwebp decode failed");
+
+        let lib_pixels = decode_with_libwebp(&webp_data, i32::from(strength));
+
+        assert_eq!(
+            zen_pixels, lib_pixels,
+            "simple filter strength={strength}: pixel mismatch"
+        );
+    }
+}
+
+/// Test with non-multiple-of-16 dimensions (partial macroblocks at edges).
+#[test]
+fn dithered_matches_libwebp_odd_dimensions() {
+    let width = 100u32;
+    let height = 77u32;
+    let pixels = make_gradient(width as usize, height as usize);
+
+    for quality in [50.0, 95.0] {
+        let config = LossyConfig::new().with_quality(quality).with_method(0);
+        let webp_data = EncodeRequest::lossy(&config, &pixels, PixelLayout::Rgb8, width, height)
+            .encode()
+            .unwrap_or_else(|e| panic!("encode {width}x{height} Q{quality} failed: {e}"));
+
+        for strength in [0u8, 50, 100] {
+            let dc = DecodeConfig::default().with_dithering_strength(strength);
+            let (zen_pixels, _, _) = DecodeRequest::new(&dc, &webp_data)
+                .decode_rgba()
+                .unwrap_or_else(|e| panic!("decode {width}x{height} Q{quality} s{strength}: {e}"));
+
+            let lib_pixels = decode_with_libwebp(&webp_data, i32::from(strength));
+
+            assert_eq!(
+                zen_pixels, lib_pixels,
+                "{width}x{height} Q{quality} strength={strength}: pixel mismatch"
+            );
+        }
+    }
+}
