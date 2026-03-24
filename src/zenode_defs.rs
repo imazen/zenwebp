@@ -10,7 +10,7 @@ use zenode::*;
 /// JSON API: `{ "quality": 80, "method": 4, "sharp_yuv": true }`
 /// RIAPI: `?webp.quality=80&webp.method=4&webp.sharp_yuv=true`
 #[derive(Node, Clone, Debug)]
-#[node(id = "zenwebp.encode_lossy", group = Encode, phase = Encode)]
+#[node(id = "zenwebp.encode_lossy", group = Encode, role = Encode)]
 #[node(tags("codec", "webp", "encode", "lossy"))]
 pub struct EncodeWebpLossy {
     /// Encoding quality (0 = smallest file, 100 = best quality).
@@ -60,7 +60,7 @@ impl Default for EncodeWebpLossy {
 /// JSON API: `{ "method": 4 }`
 /// RIAPI: `?webp.lossless.method=4`
 #[derive(Node, Clone, Debug)]
-#[node(id = "zenwebp.encode_lossless", group = Encode, phase = Encode)]
+#[node(id = "zenwebp.encode_lossless", group = Encode, role = Encode)]
 #[node(tags("codec", "webp", "encode", "lossless"))]
 pub struct EncodeWebpLossless {
     /// Compression method (0 = fast, 6 = slowest but best compression).
@@ -99,7 +99,7 @@ mod tests {
         let schema = ENCODE_WEBP_LOSSY_NODE.schema();
         assert_eq!(schema.id, "zenwebp.encode_lossy");
         assert_eq!(schema.group, NodeGroup::Encode);
-        assert_eq!(schema.phase, Phase::Encode);
+        assert_eq!(schema.role, NodeRole::Encode);
         assert!(schema.tags.contains(&"webp"));
         assert!(schema.tags.contains(&"lossy"));
         assert!(schema.tags.contains(&"codec"));
@@ -182,7 +182,7 @@ mod tests {
         let schema = ENCODE_WEBP_LOSSLESS_NODE.schema();
         assert_eq!(schema.id, "zenwebp.encode_lossless");
         assert_eq!(schema.group, NodeGroup::Encode);
-        assert_eq!(schema.phase, Phase::Encode);
+        assert_eq!(schema.role, NodeRole::Encode);
         assert!(schema.tags.contains(&"webp"));
         assert!(schema.tags.contains(&"lossless"));
     }
