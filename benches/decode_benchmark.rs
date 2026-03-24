@@ -125,9 +125,10 @@ fn bench_decode_threading(c: &mut Criterion) {
             },
         );
 
-        // libwebp
+        // libwebp single-threaded (via webpx advanced API)
+        let libwebp_cfg_1t = webpx::DecoderConfig::new().use_threads(false);
         group.bench_with_input(
-            BenchmarkId::new("libwebp", img.name),
+            BenchmarkId::new("libwebp_1t", img.name),
             &webp_data,
             |b, data| {
                 b.iter(|| {
