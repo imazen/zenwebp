@@ -33,10 +33,15 @@ fn make_webp(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     };
 
     let config = EncoderConfig::new_lossy().with_quality(75.0).with_method(4);
-    let webp =
-        EncodeRequest::new(&config, &rgb_data, PixelLayout::Rgb8, info.width, info.height)
-            .encode()
-            .ok()?;
+    let webp = EncodeRequest::new(
+        &config,
+        &rgb_data,
+        PixelLayout::Rgb8,
+        info.width,
+        info.height,
+    )
+    .encode()
+    .ok()?;
 
     Some((webp, info.width, info.height))
 }
@@ -45,11 +50,7 @@ fn corpus_path(subdir: &str, filename: &str) -> Option<PathBuf> {
     let corpus = codec_corpus::Corpus::new().ok()?;
     let dir = corpus.get(subdir).ok()?;
     let path = dir.join(filename);
-    if path.exists() {
-        Some(path)
-    } else {
-        None
-    }
+    if path.exists() { Some(path) } else { None }
 }
 
 struct BenchImage {
@@ -141,14 +142,34 @@ fn bench_decode_threading(c: &mut Criterion) {
             },
         );
 
-        // libwebp
+        // libwebp single-threaded (via webpx advanced API)
+        let libwebp_cfg_1t = webpx::DecoderConfig::new().use_threads(false);
         group.bench_with_input(
-            BenchmarkId::new("libwebp", img.name),
+            BenchmarkId::new("libwebp_1t", img.name),
             &webp_data,
             |b, data| {
                 b.iter(|| {
-                    let decoder = webp::Decoder::new(black_box(data));
-                    decoder.decode().unwrap()
+                    webpx::Decoder::new(black_box(data))
+                        .unwrap()
+                        .config(libwebp_cfg_1t)
+                        .decode_rgba_raw()
+                        .unwrap()
+                })
+            },
+        );
+
+        // libwebp threaded (via webpx advanced API, use_threads=true)
+        let libwebp_cfg_2t = webpx::DecoderConfig::new().use_threads(true);
+        group.bench_with_input(
+            BenchmarkId::new("libwebp_2t", img.name),
+            &webp_data,
+            |b, data| {
+                b.iter(|| {
+                    webpx::Decoder::new(black_box(data))
+                        .unwrap()
+                        .config(libwebp_cfg_2t)
+                        .decode_rgba_raw()
+                        .unwrap()
                 })
             },
         );

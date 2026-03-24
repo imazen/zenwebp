@@ -92,36 +92,11 @@ whereat::define_at_crate_info!();
 #[cfg(all(test, feature = "_benchmarks"))]
 extern crate test;
 
-/// Conditionally applies `#[autoversion]` and adds a `SimdToken` parameter
-/// when the `simd` feature is enabled, otherwise defines the function as-is.
-macro_rules! maybe_autoversion {
-    (
-        $(#[$attr:meta])*
-        $vis:vis fn $name:ident($($arg:ident : $ty:ty),* $(,)?) $(-> $ret:ty)? $body:block
-    ) => {
-        #[cfg(feature = "simd")]
-        #[archmage::autoversion]
-        $(#[$attr])*
-        $vis fn $name(_token: archmage::SimdToken, $($arg : $ty),*) $(-> $ret)? $body
-
-        #[cfg(not(feature = "simd"))]
-        $(#[$attr])*
-        $vis fn $name($($arg : $ty),*) $(-> $ret)? $body
-    };
-    (
-        $(#[$attr:meta])*
-        $vis:vis fn $name:ident<const $C:ident : $CT:ty>($($arg:ident : $ty:ty),* $(,)?) $(-> $ret:ty)? $body:block
-    ) => {
-        #[cfg(feature = "simd")]
-        #[archmage::autoversion]
-        $(#[$attr])*
-        $vis fn $name<const $C: $CT>(_token: archmage::SimdToken, $($arg : $ty),*) $(-> $ret)? $body
-
-        #[cfg(not(feature = "simd"))]
-        $(#[$attr])*
-        $vis fn $name<const $C: $CT>($($arg : $ty),*) $(-> $ret)? $body
-    };
-}
+// maybe_autoversion! macro removed — #[archmage::autoversion] inside macro_rules!
+// causes label hygiene issues with '__dispatch on Rust 1.93+/archmage 0.9.5+.
+// The affected functions (idct4x4_scalar, iwht4x4, wht4x4, dct4x4_scalar,
+// fill_row_fancy_*) are now defined directly without autoversion since they are
+// scalar-only implementations that don't benefit from SIMD dispatch.
 
 // Core modules
 pub mod common;
