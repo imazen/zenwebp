@@ -493,6 +493,13 @@ pub struct Vp8Decoder<'a> {
     // Each 16-element block is cleared after use in intra_predict_*.
     coeff_blocks: [i32; 384],
 
+    // Reusable prediction workspaces — avoids re-zeroing 544+288+288=1120 bytes per macroblock.
+    // update_border_* writes all border pixels; prediction functions write all interior pixels
+    // in raster order before any reads, so zero-init is not needed between macroblocks.
+    luma_ws: [u8; LUMA_BLOCK_SIZE],
+    chroma_u_ws: [u8; CHROMA_BLOCK_SIZE],
+    chroma_v_ws: [u8; CHROMA_BLOCK_SIZE],
+
     // Diagnostic capture (None for normal decoding, Some for diagnostic mode)
     diagnostic_capture: Option<Vec<MacroblockDiagnostic>>,
     current_mb_diag: Option<MacroblockDiagnostic>,
@@ -567,6 +574,10 @@ impl<'a> Vp8Decoder<'a> {
             extra_y_rows: 0,
 
             coeff_blocks: [0i32; 384],
+
+            luma_ws: [0u8; LUMA_BLOCK_SIZE],
+            chroma_u_ws: [0u8; CHROMA_BLOCK_SIZE],
+            chroma_v_ws: [0u8; CHROMA_BLOCK_SIZE],
 
             diagnostic_capture: None,
             current_mb_diag: None,
@@ -916,12 +927,14 @@ impl<'a> Vp8Decoder<'a> {
         mb.luma_mode =
             LumaMode::from_i8(luma).ok_or(DecodeError::LumaPredictionModeInvalid(luma))?;
 
+        // Extract top[mbx] once to eliminate per-access bounds checks in the B-mode loop
+        let top_mb = &mut self.top[mbx];
         match mb.luma_mode.into_intra() {
             // `LumaMode::B` - This is predicted individually
             None => {
                 for y in 0usize..4 {
                     for x in 0usize..4 {
-                        let top = self.top[mbx].bpred[x];
+                        let top = top_mb.bpred[x];
                         let left = self.left.bpred[y];
                         let intra = self.b.read_with_tree(
                             &KEYFRAME_BPRED_MODE_NODES[top as usize][left as usize],
@@ -930,7 +943,7 @@ impl<'a> Vp8Decoder<'a> {
                             .ok_or(DecodeError::IntraPredictionModeInvalid(intra))?;
                         mb.bpred[x + y * 4] = bmode;
 
-                        self.top[mbx].bpred[x] = bmode;
+                        top_mb.bpred[x] = bmode;
                         self.left.bpred[y] = bmode;
                     }
                 }
@@ -948,7 +961,7 @@ impl<'a> Vp8Decoder<'a> {
             ChromaMode::from_i8(chroma).ok_or(DecodeError::ChromaPredictionModeInvalid(chroma))?;
 
         // top should store the bottom of the current bpred, which is the final 4 values
-        self.top[mbx].bpred = mb.bpred[12..].try_into().unwrap();
+        top_mb.bpred = mb.bpred[12..].try_into().unwrap();
 
         self.b.check(mb)
     }
@@ -962,21 +975,16 @@ impl<'a> Vp8Decoder<'a> {
     ) {
         let stride = LUMA_STRIDE;
         let mw = self.mbwidth as usize;
-        let mut ws = [0u8; LUMA_BLOCK_SIZE];
-        update_border_luma(
-            &mut ws,
-            mbx,
-            mby,
-            mw,
-            &self.top_border_y,
-            &self.left_border_y,
-        );
+        // Reuse persistent workspace — only borders are updated; interior is overwritten
+        // by prediction + IDCT before any reads occur (raster-order processing invariant).
+        let ws = &mut self.luma_ws;
+        update_border_luma(ws, mbx, mby, mw, &self.top_border_y, &self.left_border_y);
 
         match mb.luma_mode {
-            LumaMode::V => predict_vpred(&mut ws, 16, 1, 1, stride),
-            LumaMode::H => predict_hpred(&mut ws, 16, 1, 1, stride),
-            LumaMode::TM => predict_tmpred(&mut ws, 16, 1, 1, stride),
-            LumaMode::DC => predict_dcpred(&mut ws, 16, stride, mby != 0, mbx != 0),
+            LumaMode::V => predict_vpred(ws, 16, 1, 1, stride),
+            LumaMode::H => predict_hpred(ws, 16, 1, 1, stride),
+            LumaMode::TM => predict_tmpred(ws, 16, 1, 1, stride),
+            LumaMode::DC => predict_dcpred(ws, 16, stride, mby != 0, mbx != 0),
             LumaMode::B => {
                 // B-mode: predict and add residue for each 4x4 sub-block
                 for sby in 0usize..4 {
@@ -986,26 +994,24 @@ impl<'a> Vp8Decoder<'a> {
                         let x0 = sbx * 4 + 1;
 
                         match mb.bpred[i] {
-                            IntraMode::TM => predict_tmpred(&mut ws, 4, x0, y0, stride),
-                            IntraMode::VE => predict_bvepred(&mut ws, x0, y0, stride),
-                            IntraMode::HE => predict_bhepred(&mut ws, x0, y0, stride),
-                            IntraMode::DC => predict_bdcpred(&mut ws, x0, y0, stride),
-                            IntraMode::LD => predict_bldpred(&mut ws, x0, y0, stride),
-                            IntraMode::RD => predict_brdpred(&mut ws, x0, y0, stride),
-                            IntraMode::VR => predict_bvrpred(&mut ws, x0, y0, stride),
-                            IntraMode::VL => predict_bvlpred(&mut ws, x0, y0, stride),
-                            IntraMode::HD => predict_bhdpred(&mut ws, x0, y0, stride),
-                            IntraMode::HU => predict_bhupred(&mut ws, x0, y0, stride),
+                            IntraMode::TM => predict_tmpred(ws, 4, x0, y0, stride),
+                            IntraMode::VE => predict_bvepred(ws, x0, y0, stride),
+                            IntraMode::HE => predict_bhepred(ws, x0, y0, stride),
+                            IntraMode::DC => predict_bdcpred(ws, x0, y0, stride),
+                            IntraMode::LD => predict_bldpred(ws, x0, y0, stride),
+                            IntraMode::RD => predict_brdpred(ws, x0, y0, stride),
+                            IntraMode::VR => predict_bvrpred(ws, x0, y0, stride),
+                            IntraMode::VL => predict_bvlpred(ws, x0, y0, stride),
+                            IntraMode::HD => predict_bhdpred(ws, x0, y0, stride),
+                            IntraMode::HU => predict_bhupred(ws, x0, y0, stride),
                         }
 
                         let rb: &mut [i32; 16] =
                             (&mut self.coeff_blocks[i * 16..][..16]).try_into().unwrap();
                         if let Some(token) = simd_token {
-                            idct_add_residue_and_clear_with_token(
-                                token, &mut ws, rb, y0, x0, stride,
-                            );
+                            idct_add_residue_and_clear_with_token(token, ws, rb, y0, x0, stride);
                         } else {
-                            idct_add_residue_and_clear(&mut ws, rb, y0, x0, stride);
+                            idct_add_residue_and_clear(ws, rb, y0, x0, stride);
                         }
                     }
                 }
@@ -1022,9 +1028,9 @@ impl<'a> Vp8Decoder<'a> {
                     let x0 = 1 + x * 4;
 
                     if let Some(token) = simd_token {
-                        idct_add_residue_and_clear_with_token(token, &mut ws, rb, y0, x0, stride);
+                        idct_add_residue_and_clear_with_token(token, ws, rb, y0, x0, stride);
                     } else {
-                        idct_add_residue_and_clear(&mut ws, rb, y0, x0, stride);
+                        idct_add_residue_and_clear(ws, rb, y0, x0, stride);
                     }
                 }
             }
@@ -1040,11 +1046,15 @@ impl<'a> Vp8Decoder<'a> {
 
         // Write to row cache instead of final buffer
         // Cache layout: [extra_y_rows rows][16 rows for current MB row]
+        // Pre-slice the destination region once to eliminate per-iteration bounds checks.
         let cache_y_offset = self.extra_y_rows * self.cache_y_stride;
+        let cache_y_stride = self.cache_y_stride;
+        let region_start = cache_y_offset + mbx * 16;
+        let region_len = 15 * cache_y_stride + 16;
+        let cache_region = &mut self.cache_y[region_start..region_start + region_len];
         for y in 0usize..16 {
-            let dst_start = cache_y_offset + y * self.cache_y_stride + mbx * 16;
             let src_start = (1 + y) * stride + 1;
-            self.cache_y[dst_start..][..16].copy_from_slice(&ws[src_start..][..16]);
+            cache_region[y * cache_y_stride..][..16].copy_from_slice(&ws[src_start..][..16]);
         }
     }
 
@@ -1057,27 +1067,28 @@ impl<'a> Vp8Decoder<'a> {
     ) {
         let stride = CHROMA_STRIDE;
 
-        let mut uws = [0u8; CHROMA_BLOCK_SIZE];
-        let mut vws = [0u8; CHROMA_BLOCK_SIZE];
-        update_border_chroma(&mut uws, mbx, mby, &self.top_border_u, &self.left_border_u);
-        update_border_chroma(&mut vws, mbx, mby, &self.top_border_v, &self.left_border_v);
+        // Reuse persistent workspaces — avoids re-zeroing 288 bytes × 2 per macroblock.
+        let uws = &mut self.chroma_u_ws;
+        let vws = &mut self.chroma_v_ws;
+        update_border_chroma(uws, mbx, mby, &self.top_border_u, &self.left_border_u);
+        update_border_chroma(vws, mbx, mby, &self.top_border_v, &self.left_border_v);
 
         match mb.chroma_mode {
             ChromaMode::DC => {
-                predict_dcpred(&mut uws, 8, stride, mby != 0, mbx != 0);
-                predict_dcpred(&mut vws, 8, stride, mby != 0, mbx != 0);
+                predict_dcpred(uws, 8, stride, mby != 0, mbx != 0);
+                predict_dcpred(vws, 8, stride, mby != 0, mbx != 0);
             }
             ChromaMode::V => {
-                predict_vpred(&mut uws, 8, 1, 1, stride);
-                predict_vpred(&mut vws, 8, 1, 1, stride);
+                predict_vpred(uws, 8, 1, 1, stride);
+                predict_vpred(vws, 8, 1, 1, stride);
             }
             ChromaMode::H => {
-                predict_hpred(&mut uws, 8, 1, 1, stride);
-                predict_hpred(&mut vws, 8, 1, 1, stride);
+                predict_hpred(uws, 8, 1, 1, stride);
+                predict_hpred(vws, 8, 1, 1, stride);
             }
             ChromaMode::TM => {
-                predict_tmpred(&mut uws, 8, 1, 1, stride);
-                predict_tmpred(&mut vws, 8, 1, 1, stride);
+                predict_tmpred(uws, 8, 1, 1, stride);
+                predict_tmpred(vws, 8, 1, 1, stride);
             }
         }
 
@@ -1093,33 +1104,38 @@ impl<'a> Vp8Decoder<'a> {
                 let y0 = 1 + y * 4;
                 let x0 = 1 + x * 4;
                 if let Some(token) = simd_token {
-                    idct_add_residue_and_clear_with_token(token, &mut uws, urb, y0, x0, stride);
+                    idct_add_residue_and_clear_with_token(token, uws, urb, y0, x0, stride);
                 } else {
-                    idct_add_residue_and_clear(&mut uws, urb, y0, x0, stride);
+                    idct_add_residue_and_clear(uws, urb, y0, x0, stride);
                 }
 
                 let vrb: &mut [i32; 16] = (&mut self.coeff_blocks[v_idx * 16..][..16])
                     .try_into()
                     .unwrap();
                 if let Some(token) = simd_token {
-                    idct_add_residue_and_clear_with_token(token, &mut vws, vrb, y0, x0, stride);
+                    idct_add_residue_and_clear_with_token(token, vws, vrb, y0, x0, stride);
                 } else {
-                    idct_add_residue_and_clear(&mut vws, vrb, y0, x0, stride);
+                    idct_add_residue_and_clear(vws, vrb, y0, x0, stride);
                 }
             }
         }
 
-        set_chroma_border(&mut self.left_border_u, &mut self.top_border_u, &uws, mbx);
-        set_chroma_border(&mut self.left_border_v, &mut self.top_border_v, &vws, mbx);
+        set_chroma_border(&mut self.left_border_u, &mut self.top_border_u, uws, mbx);
+        set_chroma_border(&mut self.left_border_v, &mut self.top_border_v, vws, mbx);
 
         // Write to row cache instead of final buffer
+        // Pre-slice destination regions once to eliminate per-iteration bounds checks.
         let extra_uv_rows = self.extra_y_rows / 2;
-        let cache_uv_offset = extra_uv_rows * self.cache_uv_stride;
+        let cache_uv_stride = self.cache_uv_stride;
+        let cache_uv_offset = extra_uv_rows * cache_uv_stride;
+        let uv_region_start = cache_uv_offset + mbx * 8;
+        let uv_region_len = 7 * cache_uv_stride + 8;
+        let cache_u_region = &mut self.cache_u[uv_region_start..uv_region_start + uv_region_len];
+        let cache_v_region = &mut self.cache_v[uv_region_start..uv_region_start + uv_region_len];
         for y in 0usize..8 {
-            let dst_start = cache_uv_offset + y * self.cache_uv_stride + mbx * 8;
             let ws_index = (1 + y) * stride + 1;
-            self.cache_u[dst_start..][..8].copy_from_slice(&uws[ws_index..][..8]);
-            self.cache_v[dst_start..][..8].copy_from_slice(&vws[ws_index..][..8]);
+            cache_u_region[y * cache_uv_stride..][..8].copy_from_slice(&uws[ws_index..][..8]);
+            cache_v_region[y * cache_uv_stride..][..8].copy_from_slice(&vws[ws_index..][..8]);
         }
     }
 
@@ -1493,14 +1509,19 @@ impl<'a> Vp8Decoder<'a> {
             (0, 16, mby * 16 - extra_y_rows)
         };
 
-        // Copy luma rows from cache to frame buffer
-        for y in 0..num_y_rows {
-            let src_row = src_start_row + y;
-            let dst_row = dst_start_y_row + y;
-            let src_start = src_row * self.cache_y_stride;
-            let dst_start = dst_row * luma_w;
-            self.frame.ybuf[dst_start..dst_start + luma_w]
-                .copy_from_slice(&self.cache_y[src_start..src_start + luma_w]);
+        // Copy luma rows from cache to frame buffer.
+        // cache_y_stride == luma_w, so source rows are contiguous.
+        // Pre-slice both source and destination to eliminate per-row bounds checks.
+        {
+            let src_start = src_start_row * self.cache_y_stride;
+            let dst_start = dst_start_y_row * luma_w;
+            let total = num_y_rows * luma_w;
+            let src = &self.cache_y[src_start..src_start + total];
+            let dst = &mut self.frame.ybuf[dst_start..dst_start + total];
+            for y in 0..num_y_rows {
+                let off = y * luma_w;
+                dst[off..off + luma_w].copy_from_slice(&src[off..off + luma_w]);
+            }
         }
 
         // Same logic for chroma but with half the rows
@@ -1512,16 +1533,22 @@ impl<'a> Vp8Decoder<'a> {
             (0, 8, mby * 8 - extra_uv_rows)
         };
 
-        // Copy chroma rows from cache to frame buffer
-        for y in 0..num_uv_rows {
-            let src_row = src_start_row_uv + y;
-            let dst_row = dst_start_uv_row + y;
-            let src_start = src_row * self.cache_uv_stride;
-            let dst_start = dst_row * chroma_w;
-            self.frame.ubuf[dst_start..dst_start + chroma_w]
-                .copy_from_slice(&self.cache_u[src_start..src_start + chroma_w]);
-            self.frame.vbuf[dst_start..dst_start + chroma_w]
-                .copy_from_slice(&self.cache_v[src_start..src_start + chroma_w]);
+        // Copy chroma rows from cache to frame buffer.
+        // cache_uv_stride == chroma_w, so source rows are contiguous.
+        // Pre-slice both source and destination to eliminate per-row bounds checks.
+        {
+            let src_start = src_start_row_uv * self.cache_uv_stride;
+            let dst_start = dst_start_uv_row * chroma_w;
+            let total = num_uv_rows * chroma_w;
+            let u_src = &self.cache_u[src_start..src_start + total];
+            let v_src = &self.cache_v[src_start..src_start + total];
+            let u_dst = &mut self.frame.ubuf[dst_start..dst_start + total];
+            let v_dst = &mut self.frame.vbuf[dst_start..dst_start + total];
+            for y in 0..num_uv_rows {
+                let off = y * chroma_w;
+                u_dst[off..off + chroma_w].copy_from_slice(&u_src[off..off + chroma_w]);
+                v_dst[off..off + chroma_w].copy_from_slice(&v_src[off..off + chroma_w]);
+            }
         }
     }
 
@@ -1790,14 +1817,16 @@ impl<'a> Vp8Decoder<'a> {
                     self.read_residual_data(&mut mb, mbx, p, simd_token)?;
                 } else {
                     // self.coeff_blocks is already zeros (invariant maintained by intra_predict_*)
+                    // Extract top[mbx] once to avoid repeated bounds checks
+                    let top_mb = &mut self.top[mbx];
                     if mb.luma_mode != LumaMode::B {
                         self.left.complexity[0] = 0;
-                        self.top[mbx].complexity[0] = 0;
+                        top_mb.complexity[0] = 0;
                     }
 
                     for i in 1usize..9 {
                         self.left.complexity[i] = 0;
-                        self.top[mbx].complexity[i] = 0;
+                        top_mb.complexity[i] = 0;
                     }
                 }
 
@@ -1863,22 +1892,19 @@ impl<'a> Vp8Decoder<'a> {
 fn set_chroma_border(
     left_border: &mut [u8],
     top_border: &mut [u8],
-    chroma_block: &[u8],
+    chroma_block: &[u8; CHROMA_BLOCK_SIZE],
     mbx: usize,
 ) {
     let stride = CHROMA_STRIDE;
     // top left is top right of previous chroma block
     left_border[0] = chroma_block[8];
 
-    // left border
+    // left border — chroma_block is fixed-size so stride offsets are provably in-bounds
     for (i, left) in left_border[1..][..8].iter_mut().enumerate() {
         *left = chroma_block[(i + 1) * stride + 8];
     }
 
-    for (top, &w) in top_border[mbx * 8..][..8]
-        .iter_mut()
-        .zip(&chroma_block[8 * stride + 1..][..8])
-    {
-        *top = w;
-    }
+    // Pre-slice top_border to eliminate repeated mbx*8 bounds check
+    let top_region = &mut top_border[mbx * 8..][..8];
+    top_region.copy_from_slice(&chroma_block[8 * stride + 1..8 * stride + 9]);
 }

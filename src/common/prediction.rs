@@ -94,20 +94,23 @@ pub(crate) fn update_border_luma(
     if mby == 0 {
         ws[1..stride].fill(127);
     } else {
-        ws[1..][..16].copy_from_slice(&top[mbx * 16..][..16]);
+        // Pre-slice top border to eliminate repeated mbx*16 bounds checks.
+        let top_mb = &top[mbx * 16..];
+        ws[1..][..16].copy_from_slice(&top_mb[..16]);
 
         if mbx == mbw - 1 {
-            let last = top[mbx * 16 + 15];
+            let last = top_mb[15];
             ws[17..stride].fill(last);
         } else {
             let tr_len = stride - 17; // remaining bytes after 16 luma + 1 border
-            let available = top.len().saturating_sub(mbx * 16 + 16);
-            let copy_len = tr_len.min(available);
-            ws[17..][..copy_len].copy_from_slice(&top[mbx * 16 + 16..][..copy_len]);
+            let copy_len = tr_len.min(top_mb.len() - 16);
+            ws[17..][..copy_len].copy_from_slice(&top_mb[16..][..copy_len]);
         }
     }
 
     // Copy top-right border pixels to rows 4, 8, 12 (for I4 prediction modes)
+    // Use direct array indexing — ws is [u8; LUMA_BLOCK_SIZE] so all offsets
+    // are compile-time provable in-bounds (max: 12*32+20 = 404 < 544).
     for i in 17usize..21 {
         ws[4 * stride + i] = ws[i];
         ws[8 * stride + i] = ws[i];
@@ -152,7 +155,8 @@ pub(crate) fn update_border_chroma(
         // First row: fill entire top border for safety (zero-init assumption)
         cb[1..stride].fill(127);
     } else {
-        cb[1..][..8].copy_from_slice(&top[mbx * 8..][..8]);
+        // Pre-slice to avoid double bounds check on mbx*8
+        cb[1..][..8].copy_from_slice(&top[mbx * 8..mbx * 8 + 8]);
     }
 
     // Left border column
