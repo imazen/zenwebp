@@ -75,7 +75,7 @@ let webp = EncodeRequest::lossless(&config, rgba_pixels, PixelLayout::Rgba8, wid
 - **`#![forbid(unsafe_code)]`** - memory safety guaranteed
 - **no_std compatible** - works with just `alloc`, no standard library needed
 - **SIMD accelerated** - SSE2/SSE4.1/AVX2 on x86, SIMD128 on WASM
-- **Full format support** - lossy, lossless, alpha, animation (encode + decode), ICC/EXIF/XMP metadata, mux/demux
+- **Full format support** - lossy, lossless, alpha, animation (encode + decode), ICC/EXIF/XMP metadata, mux/demux, chroma dithering
 - **Metadata module** - `zenwebp::metadata` for extracting/embedding ICC, EXIF, and XMP in encoded WebP bytes without decoding pixels
 
 ### Safe SIMD
@@ -88,7 +88,7 @@ These abstractions may not be perfect, but we trust them over hand-rolled unsafe
 
 ### Decoder
 
-Supports all WebP features: lossy and lossless compression, alpha channel, animation, and extended format with ICC/EXIF/XMP chunks.
+Supports all WebP features: lossy and lossless compression, alpha channel, animation, and extended format with ICC/EXIF/XMP chunks. Output formats: RGB, RGBA, BGR, BGRA, ARGB, YUV 4:2:0, RGB565, RGBA4444, premultiplied RGBA/BGRA/ARGB. Chroma dithering matches libwebp pixel-for-pixel.
 
 ### Encoder
 
@@ -283,6 +283,7 @@ WebP crate from the image-rs project.
 | Fancy chroma upsampling | :x: | :white_check_mark: |
 | Bilinear chroma upsampling | :white_check_mark: | :white_check_mark: |
 | Nearest-neighbor upsampling | :white_check_mark: | :white_check_mark: |
+| Chroma dithering | :x: | :white_check_mark: pixel-identical to libwebp |
 | SIMD loop filter | :x: | :white_check_mark: |
 | SIMD YUV-to-RGB | :x: | :white_check_mark: |
 | Memory limits | :white_check_mark: | :white_check_mark: |
