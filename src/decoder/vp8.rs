@@ -342,6 +342,13 @@ impl Frame {
 /// Read DCT coefficients using an active reader (avoids per-block reader creation overhead).
 /// Returns (has_nonzero_ac, eof_error).
 #[inline]
+/// Read and dequantize DCT coefficients for one 4×4 block.
+///
+/// Returns true if any coefficient beyond `first` was non-zero.
+/// Does NOT check for EOF — caller must check `reader.is_eof()` after
+/// processing all blocks in the macroblock (matching libwebp's approach
+/// where VP8DecodeMB checks EOF once per MB, not per block).
+#[inline]
 fn read_coefficients(
     reader: &mut ActivePartitionReader<'_>,
     output: &mut [i32],
@@ -350,7 +357,7 @@ fn read_coefficients(
     complexity: usize,
     dcq: i16,
     acq: i16,
-) -> Result<bool, DecodeError> {
+) -> bool {
     debug_assert!(complexity <= 2);
     debug_assert!(output.len() >= 16);
 
@@ -365,10 +372,7 @@ fn read_coefficients(
         while reader.get_bit(prob[1].prob) == 0 {
             n += 1;
             if n >= 16 {
-                if reader.is_eof() {
-                    return Err(DecodeError::BitStreamError);
-                }
-                return Ok(true);
+                return true;
             }
             prob = &probs[n][0];
         }
@@ -424,10 +428,7 @@ fn read_coefficients(
         }
     }
 
-    if reader.is_eof() {
-        return Err(DecodeError::BitStreamError);
-    }
-    Ok(n > first)
+    n > first
 }
 
 /// VP8 Decoder
@@ -1192,7 +1193,7 @@ impl<'a> Vp8Decoder<'a> {
                 complexity as usize,
                 y2dc,
                 y2ac,
-            )?;
+            );
 
             left.complexity[0] = if n { 1 } else { 0 };
             top.complexity[0] = if n { 1 } else { 0 };
@@ -1223,7 +1224,7 @@ impl<'a> Vp8Decoder<'a> {
                     complexity as usize,
                     ydc,
                     yac,
-                )?;
+                );
 
                 let block: &mut [i32; 16] = block_slice.try_into().unwrap();
 
@@ -1259,7 +1260,7 @@ impl<'a> Vp8Decoder<'a> {
                         complexity as usize,
                         uvdc,
                         uvac,
-                    )?;
+                    );
 
                     let block: &mut [i32; 16] = block_slice.try_into().unwrap();
 
@@ -1288,6 +1289,12 @@ impl<'a> Vp8Decoder<'a> {
 
                 left.complexity[y + j] = left_ctx;
             }
+        }
+
+        // Single EOF check after all blocks in the MB — matches libwebp's
+        // VP8DecodeMB which checks once per MB, not per block.
+        if reader.is_eof() {
+            return Err(DecodeError::BitStreamError);
         }
 
         Ok(())
