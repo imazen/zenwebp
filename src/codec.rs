@@ -1091,7 +1091,7 @@ impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
 /// Per-operation WebP decode job.
 pub struct WebpDecodeJob<'a> {
     config: &'a WebpDecoderConfig,
-    stop: Option<&'a dyn enough::Stop>,
+    stop: Option<zencodec::StopToken>,
     limits: ResourceLimits,
     start_frame_index: u32,
 }
@@ -1127,7 +1127,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob<'a> {
     type StreamDec = zencodec::Unsupported<At<DecodeError>>;
     type FullFrameDec = WebpFullFrameDecoder;
 
-    fn with_stop(mut self, stop: &'a dyn enough::Stop) -> Self {
+    fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
         self.stop = Some(stop);
         self
     }
@@ -1292,7 +1292,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob<'a> {
 /// Single-image WebP decoder.
 pub struct WebpDecoder<'a> {
     config: DecodeConfig,
-    stop: Option<&'a dyn enough::Stop>,
+    stop: Option<zencodec::StopToken>,
     input_size_limit: Option<u64>,
     limits: ResourceLimits,
     data: Cow<'a, [u8]>,
