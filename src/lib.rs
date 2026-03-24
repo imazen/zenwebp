@@ -144,12 +144,12 @@ pub mod heuristics;
 
 // Re-export decoder public API
 pub use decoder::{
-    BitstreamFormat, DecodeConfig, DecodeError, DecodeRequest, DecodeResult, ImageInfo, Limits,
-    LoopCount, StreamStatus, StreamingDecoder, UpsamplingMethod, WebPDecoder, YuvPlanes,
-    decode_argb, decode_argb_into, decode_argb_premultiplied, decode_bgr, decode_bgr_into,
-    decode_bgra, decode_bgra_into, decode_bgra_premultiplied, decode_rgb, decode_rgb_into,
-    decode_rgb565, decode_rgba, decode_rgba_into, decode_rgba_premultiplied, decode_rgba4444,
-    decode_yuv420,
+    BitstreamFormat, DecodeConfig, DecodeError, DecodeRequest, DecodeResult, DecoderThreading,
+    ImageInfo, Limits, LoopCount, StreamStatus, StreamingDecoder, UpsamplingMethod, WebPDecoder,
+    YuvPlanes, decode_argb, decode_argb_into, decode_argb_premultiplied, decode_bgr,
+    decode_bgr_into, decode_bgra, decode_bgra_into, decode_bgra_premultiplied, decode_rgb,
+    decode_rgb_into, decode_rgb565, decode_rgba, decode_rgba_into, decode_rgba_premultiplied,
+    decode_rgba4444, decode_yuv420,
 };
 
 // Re-export encoder public API

@@ -281,6 +281,21 @@ impl From<u16> for LoopCount {
     }
 }
 
+/// Threading strategy for lossy VP8 decoding.
+///
+/// When enabled, the decoder uses a 2-thread pipeline: the main thread
+/// reconstructs macroblock row N+1 while a worker thread filters, dithers,
+/// and outputs row N. This requires double-buffered caches and the `std` feature.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DecoderThreading {
+    /// Automatically enable threading when the `std` feature is active and
+    /// image width >= 512 pixels. Falls back to single-threaded otherwise.
+    #[default]
+    Auto,
+    /// Force single-threaded decoding regardless of image size or features.
+    SingleThreaded,
+}
+
 /// WebP decoder configuration. Reusable across requests.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DecodeConfig {
@@ -293,6 +308,9 @@ pub struct DecodeConfig {
     /// Chroma dithering strength for lossy decoding (0-100, 0=off). Default: 50.
     /// Adds noise to U/V planes to hide banding at low quality settings.
     pub dithering_strength: u8,
+
+    /// Threading strategy for lossy decoding. Default: `Auto`.
+    pub threading: DecoderThreading,
 }
 
 impl Default for DecodeConfig {
@@ -301,6 +319,7 @@ impl Default for DecodeConfig {
             upsampling: UpsamplingMethod::Bilinear,
             limits: super::limits::Limits::default(),
             dithering_strength: 50,
+            threading: DecoderThreading::Auto,
         }
     }
 }
@@ -351,10 +370,22 @@ impl DecodeConfig {
         self
     }
 
+    /// Set the threading strategy for lossy decoding.
+    ///
+    /// `Auto` (default) enables 2-thread pipelined decoding when the `std` feature
+    /// is active and image width >= 512 pixels. `SingleThreaded` forces
+    /// single-threaded decoding regardless.
+    #[must_use]
+    pub fn with_threading(mut self, threading: DecoderThreading) -> Self {
+        self.threading = threading;
+        self
+    }
+
     pub(crate) fn to_options(&self) -> WebPDecodeOptions {
         WebPDecodeOptions {
             lossy_upsampling: self.upsampling,
             dithering_strength: self.dithering_strength,
+            threading: self.threading,
         }
     }
 }
@@ -615,6 +646,8 @@ pub(crate) struct WebPDecodeOptions {
     pub lossy_upsampling: UpsamplingMethod,
     /// Chroma dithering strength (0=off, 100=max). Default: 50.
     pub dithering_strength: u8,
+    /// Threading strategy for lossy decoding.
+    pub threading: DecoderThreading,
 }
 
 impl Default for WebPDecodeOptions {
@@ -622,6 +655,7 @@ impl Default for WebPDecodeOptions {
         Self {
             lossy_upsampling: UpsamplingMethod::Bilinear,
             dithering_strength: 50,
+            threading: DecoderThreading::Auto,
         }
     }
 }
@@ -1143,6 +1177,7 @@ impl<'a> WebPDecoder<'a> {
                 data_slice,
                 self.stop,
                 self.webp_decode_options.dithering_strength,
+                self.webp_decode_options.threading,
             )?;
             if u32::from(frame.width) != self.width || u32::from(frame.height) != self.height {
                 return Err(DecodeError::InconsistentImageSizes);
@@ -1245,6 +1280,7 @@ impl<'a> WebPDecoder<'a> {
                     data_slice,
                     self.stop,
                     self.webp_decode_options.dithering_strength,
+                    self.webp_decode_options.threading,
                 )?;
                 if u32::from(raw_frame.width) != frame_width
                     || u32::from(raw_frame.height) != frame_height
@@ -1301,6 +1337,7 @@ impl<'a> WebPDecoder<'a> {
                     vp8_slice,
                     self.stop,
                     self.webp_decode_options.dithering_strength,
+                    self.webp_decode_options.threading,
                 )?;
 
                 let frame_alloc = frame_width as usize * frame_height as usize * 4;
