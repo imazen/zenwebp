@@ -227,10 +227,19 @@ zenwebp: 207.5M vs libwebp: 93.8M (**2.21x instruction ratio**)
 4. **Defer I16 reconstruction** — only IDCT winning mode (saves ~48 IDCT/MB)
 
 ### Decoder
-1. **read_coefficients 1.31x** — bit reader overhead, bounds checks in inner loop
-2. **decode_frame_ orchestration 1.57x** — prediction border copies, cache management
-3. **Loop filter AVX2 3.4x** — AVX2 filter worse than libwebp SSE2; investigate
-4. **IDCT 1.33x** — arcane SSE2 wrapper overhead vs direct Transform_SSE2
+1. **decode_frame_ orchestration 21.7M vs 13.8M (1.57x)** — biggest bang-for-buck.
+   Prediction border copies (memcpy for top_border/left_border per MB), cache
+   write bounds checks, function call overhead between read_residual/intra_predict.
+2. **read_coefficients 62.5M vs 56.2M (1.11x)** — only 11% excess when accounting
+   for GetLargeValue (8.6M) being a separate function in libwebp. Bit reader itself
+   is already optimized (VP8GetBitAlt with LZCNT). Remaining excess is bounds checks
+   on `output[zigzag]` writes and probs table lookup chain.
+3. **Loop filter AVX2 5.8M vs SSE2 1.7M (3.4x)** — algorithmic: we load 8 columns
+   and do full 8×16 transpose when libwebp's Load16x4/Store16x4 only loads 4 columns
+   with interleaved unpacks. Helper dispatch overhead eliminated (rite conversion),
+   but the transpose is the real cost. Fix: rewrite load/store to match libwebp's
+   4-column approach.
+4. **IDCT 8.4M vs 6.3M (1.33x)** — arcane wrapper overhead.
 
 ## Profiling Commands
 
