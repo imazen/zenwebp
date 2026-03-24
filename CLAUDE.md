@@ -193,13 +193,30 @@ instruction count, not cache efficiency.
 | ftransform2 + ftransform_from_u8 | 9.6M | FTransform_SSE2 | 9.8M | **0.98x** |
 | quantize_block (standalone) | 4.3M | QuantizeBlock_SSE41 | 6.0M | **0.72x** |
 
-### Decoder (2026-02-05)
-| Category | % Time | Notes |
-|----------|--------|-------|
-| Coefficient reading | ~10% | read_coefficients_inline (optimized) |
-| YUV→RGB | ~16% | fancy upsampling with SIMD |
-| Loop filter | ~12% | 9 SIMD filter functions |
-| memset | ~5% | Output buffer zero-init |
+### Decoder (2026-03-24, gallery1/3.webp 1280×720)
+
+zenwebp: 207.5M vs libwebp: 93.8M (**2.21x instruction ratio**)
+
+| zenwebp function | M instr | libwebp equivalent | M instr | Ratio |
+|-----------------|---------|-------------------|---------|-------|
+| read_coefficients | 62.5M | GetCoeffsFast | 47.6M | **1.31x** |
+| decode_frame_ (orchestration) | 21.7M | VP8DecodeMB+ReconstructRow+ParseIntraMode | 13.8M | **1.57x** |
+| IDCT arcane SSE2 | 8.4M | Transform_SSE2 | 6.3M | **1.33x** |
+| simple_h_filter AVX2 | 5.8M | SimpleHFilter16i_SSE2 | 1.7M | **3.4x** |
+| fancy_upsample SIMD | 7.7M | VP8YuvToRgb32_SSE2 | 7.6M | 1.01x |
+| fill_row_fancy scalar | 2.6M | UpsampleRgbLinePair_SSE2 | 1.9M | 1.37x |
+| drop_in_place\<DecodeError\> | 1.1M | — | 0 | pure overhead |
+| memset | 0.9M | — | 0 | buffer zeroing |
+| memcpy | 0.5M | — | 0 | buffer copies |
+
+**Top 3 optimization targets (113.7M → 68.4M potential = 45.3M savings):**
+1. **read_coefficients 62.5M** — 14.9M excess vs libwebp's GetCoeffsFast. Tight inner
+   loop with bit reading + dequant. Profile the per-coefficient overhead.
+2. **decode_frame_ orchestration 21.7M** — 7.9M excess. Prediction + border management +
+   cache writes. Rust bounds checks, memcpy for borders, function call overhead.
+3. **simple_h_filter AVX2 5.8M** — 3.4x vs SSE2. AVX2 filter is doing MORE work than
+   SSE2 — likely function call overhead from archmage dispatch or AVX→SSE transition
+   penalties. Consider using SSE2 filter or investigating AVX2 variant.
 
 ## Remaining Optimization Opportunities
 
@@ -210,10 +227,10 @@ instruction count, not cache efficiency.
 4. **Defer I16 reconstruction** — only IDCT winning mode (saves ~48 IDCT/MB)
 
 ### Decoder
-1. **Loop filter overhead** — still 2.5x more instructions than libwebp despite SIMD;
-   per-pixel threshold checks are expensive. Consider batch threshold computation.
-2. **YUV→RGB 1.69x slower** — `planar_to_24b` does 5 permutation passes; SSSE3 shuffle
-   fails due to archmage function call overhead instead of inline pshufb.
+1. **read_coefficients 1.31x** — bit reader overhead, bounds checks in inner loop
+2. **decode_frame_ orchestration 1.57x** — prediction border copies, cache management
+3. **Loop filter AVX2 3.4x** — AVX2 filter worse than libwebp SSE2; investigate
+4. **IDCT 1.33x** — arcane SSE2 wrapper overhead vs direct Transform_SSE2
 
 ## Profiling Commands
 
