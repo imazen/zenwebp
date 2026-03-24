@@ -75,6 +75,28 @@ CID22 50-image subset: **0.996x** (0.4% smaller). Screenshots: **0.995x** (0.5% 
 | CLIC2025 (10 images) | **0.93-1.25x** (avg ~1.15x slower) |
 | 1024×1024 lossy | **1.32x slower** (267 vs 351 MPix/s) |
 
+### Decoder Threading Investigation (2026-03-24)
+
+**Result: NOT WORTH IMPLEMENTING.** libwebp's 2-thread pipeline is a net negative.
+
+Verified with `WEBP_USE_THREAD` patched into libwebp-sys and strace-confirmed
+`clone3(CLONE_THREAD)` calls:
+
+| Image              | lib 1T | lib 2T  | threading |
+|--------------------|--------|---------|-----------|
+| codec_wiki 2560w   | 8.6ms  | 12.1ms  | **-37%**  |
+| terminal 1646w     | 4.1ms  |  5.6ms  | **-22%**  |
+| imac 2940w         | 16.6ms | 16.9ms  | -2%       |
+| windows 2560w      | 12.4ms | 12.1ms  | +3%       |
+
+libwebp's `use_threads` defaults to OFF (simple API never enables it).
+The `webpx` crate had a bug where `use_threads` was silently ignored
+(fixed in 0.1.4). Coefficient parsing is ~10% of decode — too small
+to pipeline effectively. Thread sync overhead dominates.
+
+Our 1.13-1.41x gap vs libwebp is purely single-threaded instruction
+count and memory access patterns.
+
 ## Perceptual Encoder Features (method 3+)
 
 - **Enhanced CSF tables** (method 3+) — best quality improvement alone

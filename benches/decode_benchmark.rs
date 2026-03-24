@@ -31,10 +31,15 @@ fn make_webp(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     };
 
     let config = EncoderConfig::new_lossy().with_quality(75.0).with_method(4);
-    let webp =
-        EncodeRequest::new(&config, &rgb_data, PixelLayout::Rgb8, info.width, info.height)
-            .encode()
-            .ok()?;
+    let webp = EncodeRequest::new(
+        &config,
+        &rgb_data,
+        PixelLayout::Rgb8,
+        info.width,
+        info.height,
+    )
+    .encode()
+    .ok()?;
 
     Some((webp, info.width, info.height))
 }
@@ -43,11 +48,7 @@ fn corpus_path(subdir: &str, filename: &str) -> Option<PathBuf> {
     let corpus = codec_corpus::Corpus::new().ok()?;
     let dir = corpus.get(subdir).ok()?;
     let path = dir.join(filename);
-    if path.exists() {
-        Some(path)
-    } else {
-        None
-    }
+    if path.exists() { Some(path) } else { None }
 }
 
 struct BenchImage {
