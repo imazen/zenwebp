@@ -15,7 +15,7 @@
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 use archmage::intrinsics::x86_64 as simd_mem;
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-use archmage::{X64V3Token, arcane};
+use archmage::{X64V3Token, arcane, rite};
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 use core::convert::TryFrom;
@@ -34,8 +34,7 @@ const V_FILTER_NORMAL_REGION: usize = 7 * MAX_STRIDE + 16;
 /// Returns a mask where each byte is 0xFF if the pixel should be filtered, 0x00 otherwise.
 /// Condition: |p0 - q0| * 2 + |p1 - q1| / 2 <= thresh
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn needs_filter_16(
     _token: X64V3Token,
     p1: __m128i,
@@ -69,8 +68,7 @@ fn needs_filter_16(
 /// Get the base delta for the simple filter: clamp(p1 - q1 + 3*(q0 - p0))
 /// Uses signed arithmetic with sign bit flipping.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn get_base_delta_16(
     _token: X64V3Token,
     p1: __m128i,
@@ -99,8 +97,7 @@ fn get_base_delta_16(
 
 /// Signed right shift by 3 for packed bytes (in signed domain).
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn signed_shift_right_3(_token: X64V3Token, v: __m128i) -> __m128i {
     // For signed bytes, we need to handle sign extension properly.
     // Unpack to 16-bit, shift, pack back.
@@ -111,8 +108,7 @@ fn signed_shift_right_3(_token: X64V3Token, v: __m128i) -> __m128i {
 
 /// Apply the simple filter to p0 and q0 given the filter value.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn do_simple_filter_16(_token: X64V3Token, p0: &mut __m128i, q0: &mut __m128i, fl: __m128i) {
     let sign = _mm_set1_epi8(-128i8);
     let k3 = _mm_set1_epi8(3);
@@ -205,8 +201,7 @@ const V_FILTER_REGION_32: usize = 3 * MAX_STRIDE + 32;
 
 /// Compute "needs filter" mask for 32 pixels using AVX2.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn needs_filter_32(
     _token: X64V3Token,
     p1: __m256i,
@@ -239,8 +234,7 @@ fn needs_filter_32(
 
 /// Get base delta for 32 pixels using AVX2.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn get_base_delta_32(
     _token: X64V3Token,
     p1: __m256i,
@@ -269,8 +263,7 @@ fn get_base_delta_32(
 
 /// Signed right shift by 3 for packed bytes using AVX2.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn signed_shift_right_3_avx2(_token: X64V3Token, v: __m256i) -> __m256i {
     // Unpack to 16-bit, shift, pack back
     let lo = _mm256_srai_epi16(_mm256_unpacklo_epi8(v, v), 11);
@@ -280,8 +273,7 @@ fn signed_shift_right_3_avx2(_token: X64V3Token, v: __m256i) -> __m256i {
 
 /// Apply simple filter to 32 pixels using AVX2.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn do_simple_filter_32(_token: X64V3Token, p0: &mut __m256i, q0: &mut __m256i, fl: __m256i) {
     let sign = _mm256_set1_epi8(-128i8);
     let k3 = _mm256_set1_epi8(3);
@@ -366,8 +358,7 @@ const V_FILTER_NORMAL_REGION_32: usize = 7 * MAX_STRIDE + 32;
 /// Check if normal filtering is needed for 32 pixels using AVX2.
 /// Returns a mask where each byte is 0xFF if the pixel should be filtered.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn needs_filter_normal_32(
     _token: X64V3Token,
     p3: __m256i,
@@ -417,8 +408,7 @@ fn needs_filter_normal_32(
 
 /// Check high edge variance for 32 pixels using AVX2.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn high_edge_variance_32(
     _token: X64V3Token,
     p1: __m256i,
@@ -454,8 +444,7 @@ fn high_edge_variance_32(
 
 /// Signed right shift by 1 for packed bytes using AVX2.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn signed_shift_right_1_avx2(_token: X64V3Token, v: __m256i) -> __m256i {
     let lo = _mm256_srai_epi16(_mm256_unpacklo_epi8(v, v), 9);
     let hi = _mm256_srai_epi16(_mm256_unpackhi_epi8(v, v), 9);
@@ -464,8 +453,7 @@ fn signed_shift_right_1_avx2(_token: X64V3Token, v: __m256i) -> __m256i {
 
 /// Apply the subblock/inner filter (DoFilter4) for 32 pixels using AVX2.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn do_filter4_32(
     _token: X64V3Token,
     p1: &mut __m256i,
@@ -529,8 +517,7 @@ fn do_filter4_32(
 
 /// Helper for filter6 wide path using AVX2 - processes 16 pixels in 16-bit precision.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn filter6_wide_half_avx2(
     _token: X64V3Token,
     p2: __m256i,
@@ -596,8 +583,7 @@ fn filter6_wide_half_avx2(
 
 /// Apply the macroblock/outer filter (DoFilter6) for 32 pixels using AVX2.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 #[allow(clippy::too_many_arguments)]
 fn do_filter6_32(
     _token: X64V3Token,
@@ -866,8 +852,7 @@ pub fn normal_v_filter32_edge(
 /// Input: 16 __m128i values, each containing 8 bytes (low 64 bits used).
 /// Output: 8 __m128i values, each containing 16 bytes.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn transpose_8x16_to_16x8(_token: X64V3Token, rows: &[__m128i; 16]) -> [__m128i; 8] {
     // Stage 1: interleave pairs
     let t0 = _mm_unpacklo_epi8(rows[0], rows[1]);
@@ -915,8 +900,7 @@ fn transpose_8x16_to_16x8(_token: X64V3Token, rows: &[__m128i; 16]) -> [__m128i;
 /// Transpose 4 columns (p1, p0, q0, q1) of 16 bytes each back to 16 rows of 4 bytes.
 /// Returns values suitable for storing as 32-bit integers per row.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn transpose_4x16_to_16x4(
     _token: X64V3Token,
     p1: __m128i,
@@ -1094,8 +1078,7 @@ pub fn simple_filter_subblock_edge_h(
 /// Check if pixels need filtering using the full normal filter threshold.
 /// Condition: simple_threshold AND all interior differences <= interior_limit
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 #[allow(clippy::too_many_arguments)]
 fn needs_filter_normal_16(
     _token: X64V3Token,
@@ -1149,8 +1132,7 @@ fn needs_filter_normal_16(
 
 /// Check high edge variance: |p1 - p0| > thresh OR |q1 - q0| > thresh
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn high_edge_variance_16(
     _token: X64V3Token,
     p1: __m128i,
@@ -1189,8 +1171,7 @@ fn high_edge_variance_16(
 /// When hev=true: only modify p0, q0 (use outer taps)
 /// When hev=false: modify p1, p0, q0, q1
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn do_filter4_16(
     _token: X64V3Token,
     p1: &mut __m128i,
@@ -1258,8 +1239,7 @@ fn do_filter4_16(
 
 /// Signed right shift by 1 for packed bytes
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn signed_shift_right_1(_token: X64V3Token, v: __m128i) -> __m128i {
     let lo = _mm_srai_epi16(_mm_unpacklo_epi8(v, v), 9);
     let hi = _mm_srai_epi16(_mm_unpackhi_epi8(v, v), 9);
@@ -1270,8 +1250,7 @@ fn signed_shift_right_1(_token: X64V3Token, v: __m128i) -> __m128i {
 /// When hev=true: only modify p0, q0 (use outer taps)
 /// When hev=false: modify p2, p1, p0, q0, q1, q2 with weighted filter
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 #[allow(clippy::too_many_arguments)]
 fn do_filter6_16(
     _token: X64V3Token,
@@ -1374,8 +1353,7 @@ fn do_filter6_16(
 
 /// Helper for filter6 wide path - processes 8 pixels in 16-bit precision
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn filter6_wide_half(
     _token: X64V3Token,
     p2: __m128i,
@@ -1606,8 +1584,7 @@ pub fn normal_v_filter16_edge(
 /// Transpose 6 columns (p2, p1, p0, q0, q1, q2) of 16 bytes each back to 16 rows of 6 bytes.
 /// Returns values suitable for storing back to memory.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn transpose_6x16_to_16x6(
     _token: X64V3Token,
     p2: __m128i,
@@ -2045,8 +2022,7 @@ pub fn normal_h_filter_uv_inner(
 /// Transpose 32 rows of 8 bytes each into 8 columns of 32 bytes each.
 /// Uses the existing 16-row transpose twice and combines into __m256i.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn transpose_8x32_to_32x8(
     _token: X64V3Token,
     rows_lo: &[__m128i; 16],
@@ -2072,8 +2048,7 @@ fn transpose_8x32_to_32x8(
 /// Transpose 4 columns of 32 bytes each back to 32 rows of 4 bytes.
 /// Returns values suitable for storing as 32-bit integers per row.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn transpose_4x32_to_32x4(
     _token: X64V3Token,
     p1: __m256i,
@@ -2105,8 +2080,7 @@ fn transpose_4x32_to_32x4(
 /// Transpose 6 columns of 32 bytes each back to 32 rows of 6 bytes.
 /// Returns (4-byte values, 2-byte values) suitable for storing per row.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn transpose_6x32_to_32x6(
     _token: X64V3Token,
     p2: __m256i,
