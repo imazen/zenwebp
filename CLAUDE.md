@@ -75,20 +75,6 @@ CID22 50-image subset: **0.996x** (0.4% smaller). Screenshots: **0.995x** (0.5% 
 | CLIC2025 (10 images) | **0.93-1.25x** (avg ~1.15x slower) |
 | 1024×1024 lossy | **1.32x slower** (267 vs 351 MPix/s) |
 
-### Decoder Threading
-
-2-thread pipelined lossy decoding (matching libwebp's threading model):
-- Main thread reconstructs row N+1 while worker filters+dithers+outputs row N
-- Double-buffered caches with ownership transfer via `std::thread::scope`
-- Gated on `std` feature + width >= 512px + `DecoderThreading::Auto` (default)
-- Bit-identical output vs single-threaded path
-- Key files: `src/decoder/vp8.rs` (`decode_frame_threaded`, `filter_row_free`, `rotate_extra_rows_to`)
-- Config: `DecodeConfig::with_threading(DecoderThreading::SingleThreaded)` to force single-threaded
-
-**Critical design note:** Filter border rotation must use the FILTERED previous row's bottom
-pixels. The loop filter modifies near-boundary pixels, so rotating from unfiltered data
-produces incorrect filter context for the next row.
-
 ## Perceptual Encoder Features (method 3+)
 
 - **Enhanced CSF tables** (method 3+) — best quality improvement alone
