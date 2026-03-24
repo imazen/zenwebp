@@ -848,6 +848,197 @@ pub fn normal_v_filter32_edge(
     );
 }
 
+// ============================================================================
+// Load16x4 / Store16x4 — libwebp's approach for horizontal filters.
+//
+// Instead of loading 8 bytes per row and doing a full 8×16→16×8 transpose,
+// load only 4 bytes per row and use a lighter 4-column transpose.
+// This halves memory reads for the simple filter and reduces transpose ops
+// from 32 to 18 for the 4-column case.
+//
+// All helpers are fully inlined (load_8x4 logic is fused into each caller)
+// to avoid function-call overhead that prevents the compiler from inlining
+// #[rite] functions into the #[arcane] filter entry points.
+// ============================================================================
+
+/// Load 8 rows of 4 bytes each from `pixels` starting at `base` with `stride`.
+/// Transposes into 2 packed registers: (cols01, cols23).
+///
+/// Mirrors libwebp's `Load8x4_SSE2`.
+macro_rules! load_8x4_impl {
+    ($pixels:expr, $base:expr, $stride:expr) => {{
+        let base_ = $base;
+        let stride_ = $stride;
+        let pixels_: &[u8] = &*$pixels;
+        let r0 = i32::from_ne_bytes(<[u8; 4]>::try_from(&pixels_[base_..][..4]).unwrap());
+        let r1 = i32::from_ne_bytes(<[u8; 4]>::try_from(&pixels_[base_ + stride_..][..4]).unwrap());
+        let r2 =
+            i32::from_ne_bytes(<[u8; 4]>::try_from(&pixels_[base_ + 2 * stride_..][..4]).unwrap());
+        let r3 =
+            i32::from_ne_bytes(<[u8; 4]>::try_from(&pixels_[base_ + 3 * stride_..][..4]).unwrap());
+        let r4 =
+            i32::from_ne_bytes(<[u8; 4]>::try_from(&pixels_[base_ + 4 * stride_..][..4]).unwrap());
+        let r5 =
+            i32::from_ne_bytes(<[u8; 4]>::try_from(&pixels_[base_ + 5 * stride_..][..4]).unwrap());
+        let r6 =
+            i32::from_ne_bytes(<[u8; 4]>::try_from(&pixels_[base_ + 6 * stride_..][..4]).unwrap());
+        let r7 =
+            i32::from_ne_bytes(<[u8; 4]>::try_from(&pixels_[base_ + 7 * stride_..][..4]).unwrap());
+
+        let a0 = _mm_set_epi32(r6, r2, r4, r0);
+        let a1 = _mm_set_epi32(r7, r3, r5, r1);
+
+        let b0 = _mm_unpacklo_epi8(a0, a1);
+        let b1 = _mm_unpackhi_epi8(a0, a1);
+        let c0 = _mm_unpacklo_epi16(b0, b1);
+        let c1 = _mm_unpackhi_epi16(b0, b1);
+
+        (_mm_unpacklo_epi32(c0, c1), _mm_unpackhi_epi32(c0, c1))
+    }};
+}
+
+/// Store 4 rows of 4 bytes each from a single __m128i register.
+macro_rules! store_4x4_impl {
+    ($pixels:expr, $base:expr, $stride:expr, $vals:expr) => {{
+        let base_ = $base;
+        let stride_ = $stride;
+        let vals_ = $vals;
+        let p_ = &mut *$pixels;
+        simd_mem::_mm_storeu_si32(
+            <&mut [u8; 4]>::try_from(&mut p_[base_..][..4]).unwrap(),
+            vals_,
+        );
+        simd_mem::_mm_storeu_si32(
+            <&mut [u8; 4]>::try_from(&mut p_[base_ + stride_..][..4]).unwrap(),
+            _mm_srli_si128(vals_, 4),
+        );
+        simd_mem::_mm_storeu_si32(
+            <&mut [u8; 4]>::try_from(&mut p_[base_ + 2 * stride_..][..4]).unwrap(),
+            _mm_srli_si128(vals_, 8),
+        );
+        simd_mem::_mm_storeu_si32(
+            <&mut [u8; 4]>::try_from(&mut p_[base_ + 3 * stride_..][..4]).unwrap(),
+            _mm_srli_si128(vals_, 12),
+        );
+    }};
+}
+
+/// Load 4 bytes from each of 16 rows, producing 4 column __m128i values.
+/// Mirrors libwebp's `Load16x4_SSE2`.
+macro_rules! load_16x4_impl {
+    ($pixels:expr, $base:expr, $stride:expr) => {{
+        let (pq_lo_a, pq_hi_a) = load_8x4_impl!($pixels, $base, $stride);
+        let (pq_lo_b, pq_hi_b) = load_8x4_impl!($pixels, $base + 8 * $stride, $stride);
+        (
+            _mm_unpacklo_epi64(pq_lo_a, pq_lo_b),
+            _mm_unpackhi_epi64(pq_lo_a, pq_lo_b),
+            _mm_unpacklo_epi64(pq_hi_a, pq_hi_b),
+            _mm_unpackhi_epi64(pq_hi_a, pq_hi_b),
+        )
+    }};
+}
+
+/// Transpose 4 columns and store as 16 rows of 4 bytes.
+/// Mirrors libwebp's `Store16x4_SSE2`.
+macro_rules! store_16x4_impl {
+    ($pixels:expr, $base:expr, $stride:expr, $col0:expr, $col1:expr, $col2:expr, $col3:expr) => {{
+        let t0_ = _mm_unpacklo_epi8($col0, $col1);
+        let t1_ = _mm_unpackhi_epi8($col0, $col1);
+        let t2_ = _mm_unpacklo_epi8($col2, $col3);
+        let t3_ = _mm_unpackhi_epi8($col2, $col3);
+        let r0_ = _mm_unpacklo_epi16(t0_, t2_);
+        let r1_ = _mm_unpackhi_epi16(t0_, t2_);
+        let r2_ = _mm_unpacklo_epi16(t1_, t3_);
+        let r3_ = _mm_unpackhi_epi16(t1_, t3_);
+        store_4x4_impl!($pixels, $base, $stride, r0_);
+        store_4x4_impl!($pixels, $base + 4 * $stride, $stride, r1_);
+        store_4x4_impl!($pixels, $base + 8 * $stride, $stride, r2_);
+        store_4x4_impl!($pixels, $base + 12 * $stride, $stride, r3_);
+    }};
+}
+
+/// Store q1,q2 as 2-byte rows for 16 rows.
+macro_rules! store_q1q2_16_impl {
+    ($pixels:expr, $base:expr, $stride:expr, $q1:expr, $q2:expr) => {{
+        let t0_ = _mm_unpacklo_epi8($q1, $q2);
+        let t1_ = _mm_unpackhi_epi8($q1, $q2);
+        macro_rules! _sq {
+            ($r:expr, $l:expr, $row:expr) => {
+                let val_ = _mm_extract_epi16($r, $l) as u16;
+                let off_ = $base + $row * $stride;
+                $pixels[off_] = val_ as u8;
+                $pixels[off_ + 1] = (val_ >> 8) as u8;
+            };
+        }
+        _sq!(t0_, 0, 0);
+        _sq!(t0_, 1, 1);
+        _sq!(t0_, 2, 2);
+        _sq!(t0_, 3, 3);
+        _sq!(t0_, 4, 4);
+        _sq!(t0_, 5, 5);
+        _sq!(t0_, 6, 6);
+        _sq!(t0_, 7, 7);
+        _sq!(t1_, 0, 8);
+        _sq!(t1_, 1, 9);
+        _sq!(t1_, 2, 10);
+        _sq!(t1_, 3, 11);
+        _sq!(t1_, 4, 12);
+        _sq!(t1_, 5, 13);
+        _sq!(t1_, 6, 14);
+        _sq!(t1_, 7, 15);
+    }};
+}
+
+/// Store 4 columns as 8 U rows and 8 V rows of 4 bytes each.
+macro_rules! store_uv_16x4_impl {
+    ($u:expr, $v:expr, $base:expr, $stride:expr, $c0:expr, $c1:expr, $c2:expr, $c3:expr) => {{
+        let t0_ = _mm_unpacklo_epi8($c0, $c1);
+        let t1_ = _mm_unpackhi_epi8($c0, $c1);
+        let t2_ = _mm_unpacklo_epi8($c2, $c3);
+        let t3_ = _mm_unpackhi_epi8($c2, $c3);
+        let r0_ = _mm_unpacklo_epi16(t0_, t2_);
+        let r1_ = _mm_unpackhi_epi16(t0_, t2_);
+        let r2_ = _mm_unpacklo_epi16(t1_, t3_);
+        let r3_ = _mm_unpackhi_epi16(t1_, t3_);
+        store_4x4_impl!($u, $base, $stride, r0_);
+        store_4x4_impl!($u, $base + 4 * $stride, $stride, r1_);
+        store_4x4_impl!($v, $base, $stride, r2_);
+        store_4x4_impl!($v, $base + 4 * $stride, $stride, r3_);
+    }};
+}
+
+/// Store q1,q2 as 2-byte rows for 8 U + 8 V rows.
+macro_rules! store_q1q2_uv_16_impl {
+    ($u:expr, $v:expr, $base:expr, $stride:expr, $q1:expr, $q2:expr) => {{
+        let t0_ = _mm_unpacklo_epi8($q1, $q2); // U rows 0-7
+        let t1_ = _mm_unpackhi_epi8($q1, $q2); // V rows 0-7
+        macro_rules! _sq {
+            ($r:expr, $l:expr, $buf:expr, $row:expr) => {
+                let val_ = _mm_extract_epi16($r, $l) as u16;
+                let off_ = $base + $row * $stride;
+                $buf[off_] = val_ as u8;
+                $buf[off_ + 1] = (val_ >> 8) as u8;
+            };
+        }
+        _sq!(t0_, 0, $u, 0);
+        _sq!(t0_, 1, $u, 1);
+        _sq!(t0_, 2, $u, 2);
+        _sq!(t0_, 3, $u, 3);
+        _sq!(t0_, 4, $u, 4);
+        _sq!(t0_, 5, $u, 5);
+        _sq!(t0_, 6, $u, 6);
+        _sq!(t0_, 7, $u, 7);
+        _sq!(t1_, 0, $v, 0);
+        _sq!(t1_, 1, $v, 1);
+        _sq!(t1_, 2, $v, 2);
+        _sq!(t1_, 3, $v, 3);
+        _sq!(t1_, 4, $v, 4);
+        _sq!(t1_, 5, $v, 5);
+        _sq!(t1_, 6, $v, 6);
+        _sq!(t1_, 7, $v, 7);
+    }};
+}
+
 /// Transpose an 8x16 matrix of bytes to 16x8.
 /// Input: 16 __m128i values, each containing 8 bytes (low 64 bits used).
 /// Output: 8 __m128i values, each containing 16 bytes.
@@ -944,10 +1135,10 @@ fn transpose_4x16_to_16x4(
 /// Apply simple horizontal filter to 16 rows at a vertical edge.
 ///
 /// This filters the edge between column (x-1) and column (x).
-/// Uses the transpose technique: load 16 rows × 8 columns, transpose,
-/// apply vertical filter logic, transpose back, store.
+/// Uses Load16x4/Store16x4 (libwebp's approach): load only 4 bytes per row,
+/// transpose 4 columns with a lightweight 3-stage unpack, filter, store back.
 ///
-/// Each row must have at least 4 bytes before and after the edge point.
+/// Each row must have at least 2 bytes before and 2 bytes after the edge point.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[arcane]
 pub fn simple_h_filter16(
@@ -960,29 +1151,16 @@ pub fn simple_h_filter16(
 ) {
     // Assert bounds upfront to elide checks in SIMD loads/stores
     assert!(
-        x >= 4 && (y_start + 15) * stride + x + 4 <= pixels.len(),
+        x >= 2 && (y_start + 15) * stride + x + 2 <= pixels.len(),
         "simple_h_filter16: bounds check failed"
     );
 
-    // Load 16 rows of 8 pixels each (p3,p2,p1,p0,q0,q1,q2,q3)
-    // The edge is between p0 (x-1) and q0 (x), so we load from x-4 to x+3
-    let mut rows = [_mm_setzero_si128(); 16];
-    for (i, row) in rows.iter_mut().enumerate() {
-        let row_start = (y_start + i) * stride + x - 4;
-        *row = simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
-    }
+    // Load 4 bytes per row (p1,p0,q0,q1) from 16 rows, transpose into 4 columns
+    let base = y_start * stride + x - 2;
+    let (p1, p0, q0, q1) = load_16x4_impl!(pixels, base, stride);
 
-    // Transpose 8x16 to 16x8: now we have 8 columns of 16 pixels each
-    let cols = transpose_8x16_to_16x8(_token, &rows);
-    // cols[2] = p1 (16 pixels from 16 different rows)
-    // cols[3] = p0
-    // cols[4] = q0
-    // cols[5] = q1
-
-    let p1 = cols[2];
-    let mut p0 = cols[3];
-    let mut q0 = cols[4];
-    let q1 = cols[5];
+    let mut p0 = p0;
+    let mut q0 = q0;
 
     // Apply simple filter (same logic as vertical, but on transposed data)
     let mask = needs_filter_16(_token, p1, p0, q0, q1, thresh);
@@ -990,17 +1168,8 @@ pub fn simple_h_filter16(
     let fl_masked = _mm_and_si128(fl, mask);
     do_simple_filter_16(_token, &mut p0, &mut q0, fl_masked);
 
-    // Transpose back: convert 4 columns of 16 to 16 rows of 4
-    let packed = transpose_4x16_to_16x4(_token, p1, p0, q0, q1);
-
-    // Store 4 bytes per row (p1, p0, q0, q1) using safe store
-    for (i, &val) in packed.iter().enumerate() {
-        let row_start = (y_start + i) * stride + x - 2;
-        simd_mem::_mm_storeu_si32(
-            <&mut [u8; 4]>::try_from(&mut pixels[row_start..][..4]).unwrap(),
-            _mm_cvtsi32_si128(val),
-        );
-    }
+    // Transpose back and store 4 bytes per row
+    store_16x4_impl!(pixels, base, stride, p1, p0, q0, q1);
 }
 
 /// Apply simple vertical filter to entire macroblock edge (16 pixels).
@@ -1655,8 +1824,7 @@ fn transpose_6x16_to_16x6(
 /// Apply normal horizontal filter (DoFilter4) to 16 rows at a vertical edge.
 ///
 /// This filters the edge between column (x-1) and column (x).
-/// Uses the transpose technique: load 16 rows × 8 columns, transpose,
-/// apply DoFilter4 logic, transpose back, store.
+/// Uses 8-wide load + full transpose for all 8 columns, then Store16x4 for output.
 ///
 /// Each row must have at least 4 bytes before and after the edge point.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
@@ -1679,14 +1847,13 @@ pub fn normal_h_filter16_inner(
     );
 
     // Load 16 rows of 8 pixels each (p3,p2,p1,p0,q0,q1,q2,q3)
-    // The edge is between p0 (x-1) and q0 (x), so we load from x-4 to x+3
     let mut rows = [_mm_setzero_si128(); 16];
     for (i, row) in rows.iter_mut().enumerate() {
         let row_start = (y_start + i) * stride + x - 4;
         *row = simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
     }
 
-    // Transpose 8x16 to 16x8: now we have 8 columns of 16 pixels each
+    // Transpose 8x16 to 16x8
     let cols = transpose_8x16_to_16x8(_token, &rows);
     let p3 = cols[0];
     let p2 = cols[1];
@@ -1718,24 +1885,15 @@ pub fn normal_h_filter16_inner(
     // Apply filter
     do_filter4_16(_token, &mut p1, &mut p0, &mut q0, &mut q1, mask, hev);
 
-    // Transpose back: convert 4 columns of 16 to 16 rows of 4
-    let packed = transpose_4x16_to_16x4(_token, p1, p0, q0, q1);
-
-    // Store 4 bytes per row (p1, p0, q0, q1)
-    for (i, &val) in packed.iter().enumerate() {
-        let row_start = (y_start + i) * stride + x - 2;
-        simd_mem::_mm_storeu_si32(
-            <&mut [u8; 4]>::try_from(&mut pixels[row_start..][..4]).unwrap(),
-            _mm_cvtsi32_si128(val),
-        );
-    }
+    // Store only the 4 modified columns via Store16x4
+    let store_base = y_start * stride + x - 2;
+    store_16x4_impl!(pixels, store_base, stride, p1, p0, q0, q1);
 }
 
 /// Apply normal horizontal filter (DoFilter6) to 16 rows at a vertical macroblock edge.
 ///
 /// This filters the edge between column (x-1) and column (x).
-/// Uses the transpose technique: load 16 rows × 8 columns, transpose,
-/// apply DoFilter6 logic, transpose back, store.
+/// Uses 8-wide load + full transpose for all 8 columns, then Store16x4+q1q2 for output.
 ///
 /// Each row must have at least 4 bytes before and after the edge point.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
@@ -1757,7 +1915,7 @@ pub fn normal_h_filter16_edge(
         "normal_h_filter16_edge: bounds check failed"
     );
 
-    // Load 16 rows of 8 pixels each (p3,p2,p1,p0,q0,q1,q2,q3)
+    // Load 16 rows of 8 pixels each
     let mut rows = [_mm_setzero_si128(); 16];
     for (i, row) in rows.iter_mut().enumerate() {
         let row_start = (y_start + i) * stride + x - 4;
@@ -1798,23 +1956,10 @@ pub fn normal_h_filter16_edge(
         _token, &mut p2, &mut p1, &mut p0, &mut q0, &mut q1, &mut q2, mask, hev,
     );
 
-    // Transpose back: convert 6 columns of 16 to 16 rows of 6
-    let (packed4, packed2) = transpose_6x16_to_16x6(_token, p2, p1, p0, q0, q1, q2);
-
-    // Store 6 bytes per row (p2, p1, p0, q0, q1, q2)
-    for (i, (&val4, &val2)) in packed4.iter().zip(packed2.iter()).enumerate() {
-        let row_start = (y_start + i) * stride + x - 3;
-        // Store first 4 bytes (p2, p1, p0, q0)
-        simd_mem::_mm_storeu_si32(
-            <&mut [u8; 4]>::try_from(&mut pixels[row_start..][..4]).unwrap(),
-            _mm_cvtsi32_si128(val4),
-        );
-        // Store next 2 bytes (q1, q2)
-        simd_mem::_mm_storeu_si16(
-            <&mut [u8; 2]>::try_from(&mut pixels[row_start + 4..][..2]).unwrap(),
-            _mm_cvtsi32_si128(val2 as i32),
-        );
-    }
+    // Store 6 modified columns via Store16x4 + q1q2 store
+    let store_base = y_start * stride + x - 3;
+    store_16x4_impl!(pixels, store_base, stride, p2, p1, p0, q0);
+    store_q1q2_16_impl!(pixels, store_base + 4, stride, q1, q2);
 }
 
 // ============================================================================
@@ -1824,6 +1969,7 @@ pub fn normal_h_filter16_edge(
 
 /// Apply normal horizontal filter (DoFilter6) to U and V planes together.
 /// Processes 8 U rows and 8 V rows as a single 16-row operation.
+/// Uses Load16x4/Store16x6 (libwebp's approach) with split U/V loads.
 ///
 /// Each row must have at least 4 bytes before and after the edge point.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
@@ -1893,36 +2039,15 @@ pub fn normal_h_filter_uv_edge(
         _token, &mut p2, &mut p1, &mut p0, &mut q0, &mut q1, &mut q2, mask, hev,
     );
 
-    // Transpose 6 columns back to 16 rows of 6 bytes
-    let (vals4, vals2) = transpose_6x16_to_16x6(_token, p2, p1, p0, q0, q1, q2);
-
-    // Store 8 U rows and 8 V rows
-    for i in 0..8 {
-        let row_start = (y_start + i) * stride + x - 3;
-        simd_mem::_mm_storeu_si32(
-            <&mut [u8; 4]>::try_from(&mut u_pixels[row_start..][..4]).unwrap(),
-            _mm_cvtsi32_si128(vals4[i]),
-        );
-        simd_mem::_mm_storeu_si16(
-            <&mut [u8; 2]>::try_from(&mut u_pixels[row_start + 4..][..2]).unwrap(),
-            _mm_cvtsi32_si128(vals2[i] as i32),
-        );
-    }
-    for i in 0..8 {
-        let row_start = (y_start + i) * stride + x - 3;
-        simd_mem::_mm_storeu_si32(
-            <&mut [u8; 4]>::try_from(&mut v_pixels[row_start..][..4]).unwrap(),
-            _mm_cvtsi32_si128(vals4[i + 8]),
-        );
-        simd_mem::_mm_storeu_si16(
-            <&mut [u8; 2]>::try_from(&mut v_pixels[row_start + 4..][..2]).unwrap(),
-            _mm_cvtsi32_si128(vals2[i + 8] as i32),
-        );
-    }
+    // Store 6 modified columns back to U and V planes via Store16x4 + q1q2
+    let store_base = y_start * stride + x - 3;
+    store_uv_16x4_impl!(u_pixels, v_pixels, store_base, stride, p2, p1, p0, q0);
+    store_q1q2_uv_16_impl!(u_pixels, v_pixels, store_base + 4, stride, q1, q2);
 }
 
 /// Apply normal horizontal filter (DoFilter4) to U and V planes together at subblock edges.
 /// Processes 8 U rows and 8 V rows as a single 16-row operation.
+/// Uses 8-wide load + full transpose, Store16x4 for output.
 ///
 /// Each row must have at least 4 bytes before and after the edge point.
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
@@ -1990,26 +2115,9 @@ pub fn normal_h_filter_uv_inner(
     // Apply DoFilter4
     do_filter4_16(_token, &mut p1, &mut p0, &mut q0, &mut q1, mask, hev);
 
-    // Transpose 4 columns back to 16 rows of 4 bytes
-    let packed = transpose_4x16_to_16x4(_token, p1, p0, q0, q1);
-
-    // Store 8 U rows and 8 V rows
-    for i in 0..8 {
-        let val = packed[i];
-        let row_start = (y_start + i) * stride + x - 2;
-        simd_mem::_mm_storeu_si32(
-            <&mut [u8; 4]>::try_from(&mut u_pixels[row_start..][..4]).unwrap(),
-            _mm_cvtsi32_si128(val),
-        );
-    }
-    for i in 0..8 {
-        let val = packed[i + 8];
-        let row_start = (y_start + i) * stride + x - 2;
-        simd_mem::_mm_storeu_si32(
-            <&mut [u8; 4]>::try_from(&mut v_pixels[row_start..][..4]).unwrap(),
-            _mm_cvtsi32_si128(val),
-        );
-    }
+    // Store 4 modified columns back to U and V planes via Store16x4
+    let store_base = y_start * stride + x - 2;
+    store_uv_16x4_impl!(u_pixels, v_pixels, store_base, stride, p1, p0, q0, q1);
 }
 
 // ============================================================================
