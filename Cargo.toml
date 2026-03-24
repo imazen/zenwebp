@@ -57,8 +57,8 @@ libwebp-sys = "0.14"
 webp = "0.3.1"
 webpx = "0.1.4"
 yuv = "0.8"
-serde_json = "1"
-zenbench = { path = "../zenbench" }
+# serde_json = "1"
+# zenbench = { path = "../zenbench" }
 zensim = "0.1"
 zensim-regress = "0.1"
 
