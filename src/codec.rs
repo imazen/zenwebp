@@ -276,7 +276,7 @@ fn interp_quality(table: &[(f32, f32)], x: f32) -> f32 {
 
 impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
     type Error = At<EncodeError>;
-    type Job<'a> = WebpEncodeJob<'a>;
+    type Job = WebpEncodeJob;
 
     fn format() -> ImageFormat {
         ImageFormat::WebP
@@ -335,7 +335,7 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
         Some(aq as f32)
     }
 
-    fn job<'a>(self) -> WebpEncodeJob<'a> {
+    fn job(self) -> WebpEncodeJob {
         WebpEncodeJob {
             config: self,
             stop: None,
@@ -352,9 +352,9 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
 // ── Encode Job ──────────────────────────────────────────────────────────────
 
 /// Per-operation WebP encode job.
-pub struct WebpEncodeJob<'a> {
+pub struct WebpEncodeJob {
     config: WebpEncoderConfig,
-    stop: Option<&'a dyn enough::Stop>,
+    stop: Option<zencodec::StopToken>,
     icc: Option<Arc<[u8]>>,
     exif: Option<Arc<[u8]>>,
     xmp: Option<Arc<[u8]>>,
@@ -363,7 +363,7 @@ pub struct WebpEncodeJob<'a> {
     loop_count: Option<Option<u32>>,
 }
 
-impl<'a> WebpEncodeJob<'a> {
+impl WebpEncodeJob {
     fn build_inner_config(&self) -> EncoderConfig {
         let mut inner = self.config.inner.clone();
         let mut limits = crate::Limits::none();
@@ -402,12 +402,12 @@ impl<'a> WebpEncodeJob<'a> {
     }
 }
 
-impl<'a> zencodec::encode::EncodeJob<'a> for WebpEncodeJob<'a> {
+impl zencodec::encode::EncodeJob for WebpEncodeJob {
     type Error = At<EncodeError>;
-    type Enc = WebpEncoder<'a>;
+    type Enc = WebpEncoder;
     type FullFrameEnc = WebpFullFrameEncoder;
 
-    fn with_stop(mut self, stop: &'a dyn enough::Stop) -> Self {
+    fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
         self.stop = Some(stop);
         self
     }
@@ -440,7 +440,7 @@ impl<'a> zencodec::encode::EncodeJob<'a> for WebpEncodeJob<'a> {
         self
     }
 
-    fn encoder(self) -> Result<WebpEncoder<'a>, At<EncodeError>> {
+    fn encoder(self) -> Result<WebpEncoder, At<EncodeError>> {
         let inner_config = self.build_inner_config();
         Ok(WebpEncoder {
             inner_config,
@@ -505,9 +505,9 @@ enum StreamAccum {
 }
 
 /// Single-image WebP encoder.
-pub struct WebpEncoder<'a> {
+pub struct WebpEncoder {
     inner_config: EncoderConfig,
-    stop: Option<&'a dyn enough::Stop>,
+    stop: Option<zencodec::StopToken>,
     icc: Option<Arc<[u8]>>,
     exif: Option<Arc<[u8]>>,
     xmp: Option<Arc<[u8]>>,
@@ -516,7 +516,7 @@ pub struct WebpEncoder<'a> {
     stream: Option<StreamAccum>,
 }
 
-impl<'a> WebpEncoder<'a> {
+impl WebpEncoder {
     fn do_encode(
         self,
         pixels: &[u8],
@@ -536,7 +536,7 @@ impl<'a> WebpEncoder<'a> {
 
         let mut req =
             EncodeRequest::new(&self.inner_config, pixels, layout, w, h).with_stride(stride_pixels);
-        if let Some(stop) = self.stop {
+        if let Some(ref stop) = self.stop {
             req = req.with_stop(stop);
         }
         {
@@ -695,7 +695,7 @@ fn convert_single_row_to_yuv(
     }
 }
 
-impl zencodec::encode::Encoder for WebpEncoder<'_> {
+impl zencodec::encode::Encoder for WebpEncoder {
     type Error = At<EncodeError>;
 
     fn reject(op: UnsupportedOperation) -> At<EncodeError> {
