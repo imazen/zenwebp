@@ -144,3 +144,4 @@ libwebp-sys = { path = "/tmp/libwebp-sys-patched" }
 archmage = { path = "../../archmage" }
 archmage-macros = { path = "../../archmage/archmage-macros" }
 magetypes = { path = "../../archmage/magetypes" }
+webpx = { path = "../../webpx" }
