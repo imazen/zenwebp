@@ -135,7 +135,7 @@ let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode
 | Incremental decode (partial bytes in, rows out) | :x: | :white_check_mark: |
 | Crop during decode | :x: | :white_check_mark: |
 | Scale during decode | :x: | :white_check_mark: |
-| Pipelined MB row decode + filter | :x: | :white_check_mark: width >= 512 |
+| 2-thread decode pipeline (reconstruct + filter overlap) | :x: | :white_check_mark: width >= 512 |
 | Chroma dithering (hides banding at high Q) | :white_check_mark: default 50 | :white_check_mark: default 50 |
 | Memory limits | :white_check_mark: | :x: |
 
