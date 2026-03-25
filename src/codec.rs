@@ -484,6 +484,7 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
             last_frame_duration_ms: 100,
             canvas_size: self.canvas_size,
             loop_count,
+            limits: self.limits,
         })
     }
 }
@@ -563,6 +564,9 @@ impl WebpEncoder {
             req = req.with_metadata(meta);
         }
         let data = req.encode().map_err(|e| e.decompose().0)?;
+        self.limits
+            .check_output_size(data.len() as u64)
+            .map_err(|e| EncodeError::LimitExceeded(alloc::format!("{e}")))?;
         Ok(EncodeOutput::new(data, ImageFormat::WebP))
     }
 }
@@ -917,6 +921,7 @@ pub struct WebpAnimationFrameEncoder {
     last_frame_duration_ms: u32,
     canvas_size: Option<(u32, u32)>,
     loop_count: crate::LoopCount,
+    limits: ResourceLimits,
 }
 
 /// Convert a [`MuxError`] to an [`EncodeError`].
@@ -983,6 +988,9 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
         let data = enc
             .finalize(self.last_frame_duration_ms)
             .map_err(|e| at!(mux_to_encode_err(e.decompose().0)))?;
+        self.limits
+            .check_output_size(data.len() as u64)
+            .map_err(|e| at!(EncodeError::LimitExceeded(alloc::format!("{e}"))))?;
         Ok(EncodeOutput::new(data, ImageFormat::WebP))
     }
 }
@@ -1164,6 +1172,9 @@ impl<'a> WebpDecodeJob<'a> {
                 self.limits.max_width.unwrap_or(u32::MAX),
                 self.limits.max_height.unwrap_or(u32::MAX),
             );
+        }
+        if let Some(max_frames) = self.limits.max_frames {
+            cfg.limits = cfg.limits.max_frame_count(max_frames as u64);
         }
         cfg
     }
@@ -1363,6 +1374,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob<'a> {
             info: shared_info,
             total_frames,
             anim_loop_count,
+            limits: self.limits,
+            accumulated_duration_ms: 0,
         })
     }
 }
@@ -1554,6 +1567,10 @@ pub struct WebpAnimationFrameDecoder {
     info: Arc<ImageInfo>,
     total_frames: u32,
     anim_loop_count: Option<u32>,
+    /// Resource limits for frame count and animation duration enforcement.
+    limits: ResourceLimits,
+    /// Accumulated duration of all yielded frames in milliseconds.
+    accumulated_duration_ms: u64,
 }
 
 impl WebpAnimationFrameDecoder {
@@ -1684,6 +1701,19 @@ impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
         let idx = self.next_frame_index;
         self.next_frame_index += 1;
 
+        // Enforce max_frames limit.
+        self.limits
+            .check_frames(self.next_frame_index)
+            .map_err(|e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))?;
+
+        // Enforce max_animation_ms limit.
+        self.accumulated_duration_ms = self
+            .accumulated_duration_ms
+            .saturating_add(self.current_duration_ms as u64);
+        self.limits
+            .check_animation_ms(self.accumulated_duration_ms)
+            .map_err(|e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))?;
+
         // Zero-alloc: create PixelSlice directly from the reusable frame_buf.
         let stride = self.stride();
         let slice = PixelSlice::new(
@@ -1719,6 +1749,19 @@ impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
         }
         let idx = self.next_frame_index;
         self.next_frame_index += 1;
+
+        // Enforce max_frames limit.
+        self.limits
+            .check_frames(self.next_frame_index)
+            .map_err(|e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))?;
+
+        // Enforce max_animation_ms limit.
+        self.accumulated_duration_ms = self
+            .accumulated_duration_ms
+            .saturating_add(self.current_duration_ms as u64);
+        self.limits
+            .check_animation_ms(self.accumulated_duration_ms)
+            .map_err(|e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))?;
 
         // Take the frame_buf for the owned PixelBuffer. A fresh buffer will
         // be allocated on the next call (unavoidable for owned output).
