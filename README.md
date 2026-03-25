@@ -245,7 +245,7 @@ Tested across three corpora with varying image sizes and content:
 | CID22 (248 images) | - | - | 1.0002x |
 | Screenshots (13 images) | - | - | 1.0022x |
 
-Encoding speed is ~1.5-1.7x slower than libwebp. File sizes within 0.2% of libwebp at method 5.
+Encoding speed is ~1.4-2.6x slower than libwebp depending on method (1.43x at m6, 2.6x at m0). File sizes within 0.2% of libwebp at method 5.
 
 ### Quality
 
