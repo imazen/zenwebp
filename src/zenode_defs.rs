@@ -91,6 +91,73 @@ impl Default for EncodeWebpLossless {
     }
 }
 
+#[cfg(feature = "zencodec")]
+impl EncodeWebpLossy {
+    /// Apply this node's explicitly-set params on top of an existing config.
+    ///
+    /// Fields at their default/sentinel value are skipped:
+    /// - `quality`: `-1` means not set
+    /// - `webp_quality`: `-1.0` means not set
+    /// - `method`: `4` is the default (only apply if changed)
+    /// - `sharp_yuv`: `false` means not set
+    ///
+    /// Codec-specific `webp_quality` is applied AFTER generic `quality`,
+    /// so it takes precedence when both are set.
+    pub fn apply(
+        &self,
+        mut config: crate::WebpEncoderConfig,
+    ) -> crate::WebpEncoderConfig {
+        use zencodec::encode::EncoderConfig as _;
+
+        // Generic quality first (calibrated mapping)
+        if self.quality >= 0 {
+            config = config.with_generic_quality(self.quality as f32);
+        }
+        // Codec-specific quality override (direct WebP quality)
+        if self.webp_quality >= 0.0 {
+            config = config.with_quality(self.webp_quality);
+        }
+        // Compression method (0-6)
+        // Default is 4; only apply effort mapping when user changed it
+        if self.method != 4 {
+            config = config.with_effort_u32(self.method.clamp(0, 6) as u32);
+        }
+        // Sharp YUV
+        if self.sharp_yuv {
+            config = config.with_sharp_yuv(true);
+        }
+        config
+    }
+
+    /// Build a config from scratch using only this node's params.
+    pub fn to_encoder_config(&self) -> crate::WebpEncoderConfig {
+        self.apply(crate::WebpEncoderConfig::lossy())
+    }
+}
+
+#[cfg(feature = "zencodec")]
+impl EncodeWebpLossless {
+    /// Apply this node's explicitly-set params on top of an existing config.
+    ///
+    /// Fields at their default value are skipped:
+    /// - `method`: `4` is the default (only apply if changed)
+    pub fn apply(
+        &self,
+        mut config: crate::WebpEncoderConfig,
+    ) -> crate::WebpEncoderConfig {
+        // Compression method (0-6)
+        if self.method != 4 {
+            config = config.with_effort_u32(self.method.clamp(0, 6) as u32);
+        }
+        config
+    }
+
+    /// Build a config from scratch using only this node's params.
+    pub fn to_encoder_config(&self) -> crate::WebpEncoderConfig {
+        self.apply(crate::WebpEncoderConfig::lossless())
+    }
+}
+
 /// Register all WebP zennode definitions with a registry.
 pub fn register(registry: &mut NodeRegistry) {
     registry.register(&ENCODE_WEBP_LOSSY_NODE);
@@ -270,6 +337,74 @@ mod tests {
         let node = ENCODE_WEBP_LOSSLESS_NODE.create_default().unwrap();
         let enc = node.as_any().downcast_ref::<EncodeWebpLossless>().unwrap();
         assert_eq!(enc.method, 4);
+    }
+
+    // ── apply() / to_encoder_config() tests ──
+
+    #[cfg(feature = "zencodec")]
+    #[test]
+    fn lossy_to_encoder_config_defaults() {
+        let node = EncodeWebpLossy::default();
+        let _config = node.to_encoder_config();
+    }
+
+    #[cfg(feature = "zencodec")]
+    #[test]
+    fn lossy_apply_generic_quality() {
+        let mut node = EncodeWebpLossy::default();
+        node.quality = 80;
+        let config = node.to_encoder_config();
+        let q = zencodec::encode::EncoderConfig::generic_quality(&config);
+        assert!(q.is_some());
+    }
+
+    #[cfg(feature = "zencodec")]
+    #[test]
+    fn lossy_apply_codec_specific_overrides() {
+        let mut node = EncodeWebpLossy::default();
+        node.quality = 50;
+        node.webp_quality = 90.0;
+        let _config = node.to_encoder_config();
+    }
+
+    #[cfg(feature = "zencodec")]
+    #[test]
+    fn lossy_apply_preserves_existing() {
+        let base = crate::WebpEncoderConfig::lossy().with_sharp_yuv(true);
+        let node = EncodeWebpLossy::default();
+        let _config = node.apply(base);
+    }
+
+    #[cfg(feature = "zencodec")]
+    #[test]
+    fn lossy_apply_sharp_yuv_and_method() {
+        let mut node = EncodeWebpLossy::default();
+        node.sharp_yuv = true;
+        node.method = 6;
+        let _config = node.to_encoder_config();
+    }
+
+    #[cfg(feature = "zencodec")]
+    #[test]
+    fn lossless_to_encoder_config_defaults() {
+        let node = EncodeWebpLossless::default();
+        let _config = node.to_encoder_config();
+    }
+
+    #[cfg(feature = "zencodec")]
+    #[test]
+    fn lossless_apply_method() {
+        let mut node = EncodeWebpLossless::default();
+        node.method = 2;
+        let _config = node.to_encoder_config();
+    }
+
+    #[cfg(feature = "zencodec")]
+    #[test]
+    fn lossless_apply_preserves_existing() {
+        let base = crate::WebpEncoderConfig::lossless();
+        let node = EncodeWebpLossless::default();
+        let _config = node.apply(base);
     }
 
     // ── Registry integration ──
