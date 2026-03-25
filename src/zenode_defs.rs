@@ -1,9 +1,9 @@
-//! zenode node definitions for WebP encoding.
+//! zennode node definitions for WebP encoding.
 //!
 //! Defines [`EncodeWebpLossy`] and [`EncodeWebpLossless`] with RIAPI-compatible
 //! querystring keys for WebP encoding parameters.
 
-use zenode::*;
+use zennode::*;
 
 /// Lossy WebP encoding with quality, compression method, and sharp YUV options.
 ///
@@ -13,14 +13,25 @@ use zenode::*;
 #[node(id = "zenwebp.encode_lossy", group = Encode, role = Encode)]
 #[node(tags("codec", "webp", "encode", "lossy"))]
 pub struct EncodeWebpLossy {
-    /// Encoding quality (0 = smallest file, 100 = best quality).
+    /// Generic quality 0-100 (mapped via with_generic_quality at execution time).
+    ///
+    /// When set (>= 0), this value is passed through zencodec's
+    /// `with_generic_quality()` which maps it to the codec's native
+    /// quality scale. Use this for uniform quality across all codecs.
+    #[param(range(0..=100), default = -1, step = 1)]
+    #[param(unit = "", section = "Main", label = "Quality")]
+    #[kv("quality")]
+    pub quality: i32,
+
+    /// Codec-specific WebP quality override (0-100).
     ///
     /// Controls the DCT quantization level. Higher values produce
     /// larger files with better visual quality.
-    #[param(range(0.0..=100.0), default = 75.0, identity = 75.0, step = 1.0)]
-    #[param(unit = "", section = "Main", label = "Quality")]
+    /// When set (>= 0), takes precedence over the generic `quality` field.
+    #[param(range(0.0..=100.0), default = -1.0, identity = 75.0, step = 1.0)]
+    #[param(unit = "", section = "Main", label = "WebP Quality")]
     #[kv("webp.quality")]
-    pub quality: f32,
+    pub webp_quality: f32,
 
     /// Compression method (0 = fast, 6 = slower but better compression).
     ///
@@ -45,7 +56,8 @@ pub struct EncodeWebpLossy {
 impl Default for EncodeWebpLossy {
     fn default() -> Self {
         Self {
-            quality: 75.0,
+            quality: -1,
+            webp_quality: -1.0,
             method: 4,
             sharp_yuv: false,
         }
@@ -79,13 +91,13 @@ impl Default for EncodeWebpLossless {
     }
 }
 
-/// Register all WebP zenode definitions with a registry.
+/// Register all WebP zennode definitions with a registry.
 pub fn register(registry: &mut NodeRegistry) {
     registry.register(&ENCODE_WEBP_LOSSY_NODE);
     registry.register(&ENCODE_WEBP_LOSSLESS_NODE);
 }
 
-/// All WebP zenode definitions.
+/// All WebP zennode definitions.
 pub static ALL: &[&dyn NodeDef] = &[&ENCODE_WEBP_LOSSY_NODE, &ENCODE_WEBP_LOSSLESS_NODE];
 
 #[cfg(test)]
@@ -111,25 +123,45 @@ mod tests {
         let schema = ENCODE_WEBP_LOSSY_NODE.schema();
         let names: Vec<&str> = schema.params.iter().map(|p| p.name).collect();
         assert!(names.contains(&"quality"));
+        assert!(names.contains(&"webp_quality"));
         assert!(names.contains(&"method"));
         assert!(names.contains(&"sharp_yuv"));
-        assert_eq!(names.len(), 3);
+        assert_eq!(names.len(), 4);
     }
 
     #[test]
     fn lossy_defaults() {
         let node = ENCODE_WEBP_LOSSY_NODE.create_default().unwrap();
-        assert_eq!(node.get_param("quality"), Some(ParamValue::F32(75.0)));
+        assert_eq!(node.get_param("quality"), Some(ParamValue::I32(-1)));
+        assert_eq!(node.get_param("webp_quality"), Some(ParamValue::F32(-1.0)));
         assert_eq!(node.get_param("method"), Some(ParamValue::I32(4)));
         assert_eq!(node.get_param("sharp_yuv"), Some(ParamValue::Bool(false)));
     }
 
     #[test]
-    fn lossy_from_kv_quality() {
+    fn lossy_from_kv_webp_quality() {
         let mut kv = KvPairs::from_querystring("webp.quality=90&webp.sharp_yuv=true");
         let node = ENCODE_WEBP_LOSSY_NODE.from_kv(&mut kv).unwrap().unwrap();
-        assert_eq!(node.get_param("quality"), Some(ParamValue::F32(90.0)));
+        assert_eq!(node.get_param("webp_quality"), Some(ParamValue::F32(90.0)));
         assert_eq!(node.get_param("sharp_yuv"), Some(ParamValue::Bool(true)));
+        assert_eq!(kv.unconsumed().count(), 0);
+    }
+
+    #[test]
+    fn lossy_from_kv_generic_quality() {
+        let mut kv = KvPairs::from_querystring("quality=80");
+        let node = ENCODE_WEBP_LOSSY_NODE.from_kv(&mut kv).unwrap().unwrap();
+        assert_eq!(node.get_param("quality"), Some(ParamValue::I32(80)));
+        // webp_quality remains unset
+        assert_eq!(node.get_param("webp_quality"), Some(ParamValue::F32(-1.0)));
+    }
+
+    #[test]
+    fn lossy_from_kv_both_qualities() {
+        let mut kv = KvPairs::from_querystring("quality=80&webp.quality=90");
+        let node = ENCODE_WEBP_LOSSY_NODE.from_kv(&mut kv).unwrap().unwrap();
+        assert_eq!(node.get_param("quality"), Some(ParamValue::I32(80)));
+        assert_eq!(node.get_param("webp_quality"), Some(ParamValue::F32(90.0)));
         assert_eq!(kv.unconsumed().count(), 0);
     }
 
@@ -150,19 +182,22 @@ mod tests {
     #[test]
     fn lossy_json_round_trip() {
         let mut params = ParamMap::new();
-        params.insert("quality".into(), ParamValue::F32(92.0));
+        params.insert("quality".into(), ParamValue::I32(80));
+        params.insert("webp_quality".into(), ParamValue::F32(92.0));
         params.insert("method".into(), ParamValue::I32(5));
         params.insert("sharp_yuv".into(), ParamValue::Bool(true));
 
         let node = ENCODE_WEBP_LOSSY_NODE.create(&params).unwrap();
-        assert_eq!(node.get_param("quality"), Some(ParamValue::F32(92.0)));
+        assert_eq!(node.get_param("quality"), Some(ParamValue::I32(80)));
+        assert_eq!(node.get_param("webp_quality"), Some(ParamValue::F32(92.0)));
         assert_eq!(node.get_param("method"), Some(ParamValue::I32(5)));
         assert_eq!(node.get_param("sharp_yuv"), Some(ParamValue::Bool(true)));
 
         // Round-trip
         let exported = node.to_params();
         let node2 = ENCODE_WEBP_LOSSY_NODE.create(&exported).unwrap();
-        assert_eq!(node2.get_param("quality"), Some(ParamValue::F32(92.0)));
+        assert_eq!(node2.get_param("quality"), Some(ParamValue::I32(80)));
+        assert_eq!(node2.get_param("webp_quality"), Some(ParamValue::F32(92.0)));
         assert_eq!(node2.get_param("method"), Some(ParamValue::I32(5)));
     }
 
@@ -170,7 +205,8 @@ mod tests {
     fn lossy_downcast_to_concrete() {
         let node = ENCODE_WEBP_LOSSY_NODE.create_default().unwrap();
         let enc = node.as_any().downcast_ref::<EncodeWebpLossy>().unwrap();
-        assert!((enc.quality - 75.0).abs() < f32::EPSILON);
+        assert_eq!(enc.quality, -1);
+        assert!((enc.webp_quality - (-1.0)).abs() < f32::EPSILON);
         assert_eq!(enc.method, 4);
         assert!(!enc.sharp_yuv);
     }
@@ -245,9 +281,15 @@ mod tests {
         assert!(registry.get("zenwebp.encode_lossy").is_some());
         assert!(registry.get("zenwebp.encode_lossless").is_some());
 
+        // webp.quality triggers codec-specific path
         let result = registry.from_querystring("webp.quality=80&webp.sharp_yuv=true");
         assert_eq!(result.instances.len(), 1);
         assert_eq!(result.instances[0].schema().id, "zenwebp.encode_lossy");
+
+        // generic quality also triggers the lossy node
+        let result2 = registry.from_querystring("quality=80");
+        assert_eq!(result2.instances.len(), 1);
+        assert_eq!(result2.instances[0].schema().id, "zenwebp.encode_lossy");
     }
 
     #[test]
