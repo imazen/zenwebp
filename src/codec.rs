@@ -557,6 +557,19 @@ impl WebpEncoder {
 /// For passthrough formats (RGB8, RGBA8), bytes may be borrowed zero-copy.
 /// For converted formats, bytes are always owned and contiguous (stride = width).
 #[allow(clippy::type_complexity)]
+/// Cast `&[u8]` to `&[f32]`, copying to an aligned buffer only if needed.
+fn as_f32_slice(data: &[u8]) -> Cow<'_, [f32]> {
+    match bytemuck::try_cast_slice(data) {
+        Ok(s) => Cow::Borrowed(s),
+        Err(bytemuck::PodCastError::TargetAlignmentGreaterAndInputNotAligned) => Cow::Owned(
+            data.chunks_exact(4)
+                .map(|c| f32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
+                .collect(),
+        ),
+        Err(e) => panic!("cannot cast &[u8] to &[f32]: {e:?}"),
+    }
+}
+
 fn pixels_to_webp_input<'a>(
     pixels: &'a PixelSlice<'a>,
 ) -> Result<(alloc::borrow::Cow<'a, [u8]>, PixelLayout, u32, u32, usize), EncodeError> {
@@ -596,19 +609,19 @@ fn pixels_to_webp_input<'a>(
         Ok((Cow::Owned(rgb), PixelLayout::Rgb8, w, h, w as usize))
     } else if desc == PixelDescriptor::RGBF32_LINEAR {
         let raw = pixels.contiguous_bytes();
-        let floats: &[f32] = bytemuck::cast_slice(&raw);
+        let floats = as_f32_slice(&raw);
         let mut rgb = alloc::vec![0u8; floats.len()];
-        linear_srgb::default::linear_to_srgb_u8_slice(floats, &mut rgb);
+        linear_srgb::default::linear_to_srgb_u8_slice(&floats, &mut rgb);
         Ok((Cow::Owned(rgb), PixelLayout::Rgb8, w, h, w as usize))
     } else if desc == PixelDescriptor::RGBAF32_LINEAR {
         let raw = pixels.contiguous_bytes();
-        let floats: &[f32] = bytemuck::cast_slice(&raw);
+        let floats = as_f32_slice(&raw);
         let mut rgba = alloc::vec![0u8; floats.len()];
-        linear_srgb::default::linear_to_srgb_u8_rgba_slice(floats, &mut rgba);
+        linear_srgb::default::linear_to_srgb_u8_rgba_slice(&floats, &mut rgba);
         Ok((Cow::Owned(rgba), PixelLayout::Rgba8, w, h, w as usize))
     } else if desc == PixelDescriptor::GRAYF32_LINEAR {
         let raw = pixels.contiguous_bytes();
-        let floats: &[f32] = bytemuck::cast_slice(&raw);
+        let floats = as_f32_slice(&raw);
         let mut gray_u8 = alloc::vec![0u8; floats.len()];
         linear_srgb::default::linear_to_srgb_u8_slice(floats, &mut gray_u8);
         // gray→rgb: no garb::gray_to_rgb without experimental feature, expand manually
