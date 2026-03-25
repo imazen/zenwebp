@@ -94,6 +94,26 @@ jobs:
       - name: Check WASM (no_std)
         run: cargo check --target wasm32-wasip1 --no-default-features
 
+  feature-permutations:
+    name: Feature permutations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: no_std + alloc (no default features)
+        run: cargo test --no-default-features
+      - name: std only
+        run: cargo test --no-default-features --features std
+      - name: zencodec
+        run: cargo test --features zencodec
+      - name: zencodec + imgref
+        run: cargo test --features "zencodec,imgref"
+      - name: simd + avx512
+        run: cargo check --features "simd,avx512"
+      - name: All public features
+        run: cargo test --features "std,fast-yuv,simd,pixel-types,imgref,avx512,zencodec"
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
