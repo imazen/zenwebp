@@ -1,7 +1,51 @@
-/target
 /Cargo.lock
 tests/out/
 compare_output/
 *.out
-*.rlib
 rustc-ice-*.txt
+
+# === Standard exclusions (do not depend on user ~/.gitignore) ===
+
+# Rust build artifacts
+target/
+
+# Fuzz build artifacts and crashes
+fuzz/target/
+fuzz/artifacts/
+
+# Profiling
+perf.data
+perf.data.old
+flamegraph.svg
+heaptrack.*.zst
+cachegrind.out.*
+callgrind.out.*
+massif.out.*
+
+# C/C++ build artifacts
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.rlib
+
+# Compiled binaries with no extension
+rust_out
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
