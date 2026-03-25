@@ -25,6 +25,7 @@ thiserror = { version = "2.0.18", default-features = false }
 whereat = { version = "0.1.4", default-features = false }
 libm = "0.2.16"
 zencodec = { version = "0.1.1", optional = true }
+zennode = { path = "../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 zenpixels = { version = "0.2.0", default-features = false, optional = true }
 self_cell = { version = "1.2", optional = true }
 bytemuck = { version = "1", default-features = false, features = ["extern_crate_alloc"] }
@@ -91,6 +92,8 @@ _profiling = ["dep:png", "dep:webp"]
 _wasm_profiling = ["std"]
 # Enable zencodec trait integration
 zencodec = ["dep:zencodec", "dep:zenpixels", "dep:self_cell"]
+# Enable zennode pipeline node definitions
+zennode = ["dep:zennode"]
 
 [[example]]
 name = "hrtb_test"
