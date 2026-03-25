@@ -339,9 +339,6 @@ impl Frame {
     }
 }
 
-/// Read DCT coefficients using an active reader (avoids per-block reader creation overhead).
-/// Returns (has_nonzero_ac, eof_error).
-#[inline]
 /// Read and dequantize DCT coefficients for one 4×4 block.
 ///
 /// Returns true if any coefficient beyond `first` was non-zero.

@@ -630,9 +630,9 @@ dependencies = [
 
 [[package]]
 name = "garb"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49be2cda31381aead2725e4c1ee466f25c72677feee8e27226570943a5726ddf"
+checksum = "61ee8d8f5e43a45183480ea077c4e046e43ab9604928c87d6ad2080e666dc519"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -853,9 +853,9 @@ dependencies = [
 
 [[package]]
 name = "linear-srgb"
-version = "0.6.3"
+version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "125a2ceb187051329f82182e8aa5ad24a988749bb58c3ab5ee64ea65c0284bc8"
+checksum = "9f66e11d2bab842db599aaed858bfb0450f58ee9d274d9d478be46bcc6916316"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -1856,9 +1856,9 @@ checksum = "00f1f60154ad4ef9871d606765c3ea037cde93bbd77536327b594de8f82df1cb"
 
 [[package]]
 name = "zencodec"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bef17621ad124f749d37dc97fb7b67cd10915a9c58c2583dee278681e19bda05"
+checksum = "99ba55a38b9c8fcd685bddc640c6b9891108c026aa24ee8af206628d1a3e561b"
 dependencies = [
  "almost-enough",
  "enough",
@@ -1873,8 +1873,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0828926cd37f826702d167dc46e15dde519279d20a30d458acabc122043c8325"
 dependencies = [
  "bytemuck",
- "imgref",
- "rgb",
  "whereat",
 ]
 

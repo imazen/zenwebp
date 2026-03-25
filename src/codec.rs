@@ -546,7 +546,7 @@ impl WebpEncoder {
             }
             req = req.with_metadata(meta);
         }
-        let data = req.encode().map_err(|e| e.into_inner())?;
+        let data = req.encode().map_err(|e| e.decompose().0)?;
         Ok(EncodeOutput::new(data, ImageFormat::WebP))
     }
 }
@@ -556,7 +556,6 @@ impl WebpEncoder {
 /// Returns `(bytes, layout, width, height, stride_pixels)`.
 /// For passthrough formats (RGB8, RGBA8), bytes may be borrowed zero-copy.
 /// For converted formats, bytes are always owned and contiguous (stride = width).
-#[allow(clippy::type_complexity)]
 /// Cast `&[u8]` to `&[f32]`, copying to an aligned buffer only if needed.
 fn as_f32_slice(data: &[u8]) -> Cow<'_, [f32]> {
     match bytemuck::try_cast_slice(data) {
@@ -570,6 +569,7 @@ fn as_f32_slice(data: &[u8]) -> Cow<'_, [f32]> {
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn pixels_to_webp_input<'a>(
     pixels: &'a PixelSlice<'a>,
 ) -> Result<(alloc::borrow::Cow<'a, [u8]>, PixelLayout, u32, u32, usize), EncodeError> {
@@ -623,7 +623,7 @@ fn pixels_to_webp_input<'a>(
         let raw = pixels.contiguous_bytes();
         let floats = as_f32_slice(&raw);
         let mut gray_u8 = alloc::vec![0u8; floats.len()];
-        linear_srgb::default::linear_to_srgb_u8_slice(floats, &mut gray_u8);
+        linear_srgb::default::linear_to_srgb_u8_slice(&floats, &mut gray_u8);
         // gray→rgb: no garb::gray_to_rgb without experimental feature, expand manually
         let mut rgb = alloc::vec![0u8; floats.len() * 3];
         for (i, &g) in gray_u8.iter().enumerate() {
@@ -922,7 +922,7 @@ impl WebpAnimationFrameEncoder {
                 ..AnimationConfig::default()
             };
             let enc = AnimationEncoder::new(cw, ch, config)
-                .map_err(|e| at!(mux_to_encode_err(e.into_inner())))?;
+                .map_err(|e| at!(mux_to_encode_err(e.decompose().0)))?;
             self.anim_enc = Some(enc);
         }
         Ok(())
@@ -950,7 +950,7 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
         let timestamp_ms = self.cumulative_ms;
         let enc = self.anim_enc.as_mut().unwrap();
         enc.add_frame(&buf, layout, timestamp_ms, &self.inner_config)
-            .map_err(|e| at!(mux_to_encode_err(e.into_inner())))?;
+            .map_err(|e| at!(mux_to_encode_err(e.decompose().0)))?;
         self.cumulative_ms = self.cumulative_ms.saturating_add(duration_ms);
         self.last_frame_duration_ms = duration_ms;
         Ok(())
@@ -966,7 +966,7 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
             .map_err(|e| at!(e))?;
         let data = enc
             .finalize(self.last_frame_duration_ms)
-            .map_err(|e| at!(mux_to_encode_err(e.into_inner())))?;
+            .map_err(|e| at!(mux_to_encode_err(e.decompose().0)))?;
         Ok(EncodeOutput::new(data, ImageFormat::WebP))
     }
 }
@@ -1335,7 +1335,7 @@ impl WebpDecoder<'_> {
             req = req.stop(stop);
         }
 
-        let (pixels, w, h, layout) = req.decode().map_err(|e| e.into_inner())?;
+        let (pixels, w, h, layout) = req.decode().map_err(|e| e.decompose().0)?;
 
         let buf: PixelBuffer = match layout {
             PixelLayout::Rgb8 => PixelBuffer::from_vec(pixels, w, h, PixelDescriptor::RGB8_SRGB)
@@ -1349,9 +1349,9 @@ impl WebpDecoder<'_> {
                     rgba_req
                         .stop(stop)
                         .decode_rgba()
-                        .map_err(|e| e.into_inner())?
+                        .map_err(|e| e.decompose().0)?
                 } else {
-                    rgba_req.decode_rgba().map_err(|e| e.into_inner())?
+                    rgba_req.decode_rgba().map_err(|e| e.decompose().0)?
                 };
                 PixelBuffer::from_vec(rgba_pixels, rw, rh, PixelDescriptor::RGBA8_SRGB)
                     .map_err(|_| DecodeError::InvalidParameter("pixel count mismatch".into()))?

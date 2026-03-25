@@ -527,7 +527,6 @@ fn fill_row_fancy_with_2_uv_rows_wasm<const BPP: usize>(
 
 #[archmage::autoversion(cfg(simd))]
 fn fill_row_fancy_with_2_uv_rows_scalar<const BPP: usize>(
-    _token: archmage::SimdToken,
     row_buffer: &mut [u8],
     y_row: &[u8],
     u_row_1: &[u8],
@@ -596,7 +595,6 @@ fn fill_row_fancy_with_2_uv_rows_scalar<const BPP: usize>(
 
 #[archmage::autoversion(cfg(simd))]
 fn fill_row_fancy_with_1_uv_row<const BPP: usize>(
-    _token: archmage::SimdToken,
     row_buffer: &mut [u8],
     y_row: &[u8],
     u_row: &[u8],

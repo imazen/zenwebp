@@ -36,17 +36,7 @@ jobs:
             os: windows-11-arm
     steps:
       - uses: actions/checkout@v6
-      - name: Configure git for private repos
-        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
-      - name: Clone sibling repos for path deps
-        shell: bash
-        run: |
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zencodec ../zencodec
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenpixels ../zenpixels
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/linear-srgb ../linear-srgb
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenode ../zenode
-          rm -f Cargo.lock
       - uses: Swatinem/rust-cache@v2
       - name: Run tests (default features)
         run: cargo test
@@ -72,17 +62,7 @@ jobs:
             os: windows-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Configure git for private repos
-        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
-      - name: Clone sibling repos for path deps
-        shell: bash
-        run: |
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zencodec ../zencodec
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenpixels ../zenpixels
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/linear-srgb ../linear-srgb
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenode ../zenode
-          rm -f Cargo.lock
       - uses: Swatinem/rust-cache@v2
       - name: Check (--features avx512)
         run: cargo check --features avx512
@@ -92,19 +72,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Configure git for private repos
-        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: i686-unknown-linux-gnu
-      - name: Clone sibling repos for path deps
-        shell: bash
-        run: |
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zencodec ../zencodec
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenpixels ../zenpixels
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/linear-srgb ../linear-srgb
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenode ../zenode
-          rm -f Cargo.lock
       - uses: taiki-e/install-action@cross
       - uses: Swatinem/rust-cache@v2
         with:
@@ -117,19 +87,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Configure git for private repos
-        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip1
-      - name: Clone sibling repos for path deps
-        shell: bash
-        run: |
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zencodec ../zencodec
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenpixels ../zenpixels
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/linear-srgb ../linear-srgb
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenode ../zenode
-          rm -f Cargo.lock
       - uses: Swatinem/rust-cache@v2
       - name: Check WASM (no_std)
         run: cargo check --target wasm32-wasip1 --no-default-features
@@ -139,19 +99,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Configure git for private repos
-        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - name: Clone sibling repos for path deps
-        shell: bash
-        run: |
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zencodec ../zencodec
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenpixels ../zenpixels
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/linear-srgb ../linear-srgb
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenode ../zenode
-          rm -f Cargo.lock
       - uses: Swatinem/rust-cache@v2
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
@@ -161,19 +111,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Configure git for private repos
-        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: Clone sibling repos for path deps
-        shell: bash
-        run: |
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zencodec ../zencodec
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenpixels ../zenpixels
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/linear-srgb ../linear-srgb
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenode ../zenode
-          rm -f Cargo.lock
       - name: Check formatting
         run: cargo fmt -- --check
 
@@ -182,17 +122,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Configure git for private repos
-        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
-      - name: Clone sibling repos for path deps
-        shell: bash
-        run: |
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zencodec ../zencodec
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenpixels ../zenpixels
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/linear-srgb ../linear-srgb
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenode ../zenode
-          rm -f Cargo.lock
       - uses: taiki-e/install-action@cargo-hack
       - uses: Swatinem/rust-cache@v2
       - name: Check MSRV
@@ -203,17 +133,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Configure git for private repos
-        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
-      - name: Clone sibling repos for path deps
-        shell: bash
-        run: |
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zencodec ../zencodec
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenpixels ../zenpixels
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/linear-srgb ../linear-srgb
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenode ../zenode
-          rm -f Cargo.lock
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
       - name: Generate coverage

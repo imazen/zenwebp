@@ -121,7 +121,7 @@ impl AnimationEncoder {
             let duration = timestamp_ms.saturating_sub(prev.timestamp_ms);
             let mut frame = prev.mux_frame;
             frame.duration_ms = duration;
-            self.mux.push_frame(frame).map_err(|e| e.into_inner())?;
+            self.mux.push_frame(frame).map_err(|e| e.decompose().0)?;
         }
 
         let mux_frame = MuxFrame {
