@@ -116,6 +116,8 @@ let (pixels, w, h) = decoder.decode_rgba()?;
 
 **Full API guide:** See `examples/api_guide.rs` for 100% coverage of the new API.
 
+> **Note:** The quantization features described in v0.3.0 were later removed.
+
 #### Color Quantization Backend Choice
 
 The `quantize` feature now supports two backends with different licensing:
