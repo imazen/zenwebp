@@ -197,10 +197,6 @@ static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGB8_SRGB,
     PixelDescriptor::RGBA8_SRGB,
     PixelDescriptor::BGRA8_SRGB,
-    PixelDescriptor::GRAY8_SRGB,
-    PixelDescriptor::RGBF32_LINEAR,
-    PixelDescriptor::RGBAF32_LINEAR,
-    PixelDescriptor::GRAYF32_LINEAR,
 ];
 
 static ENCODE_CAPABILITIES: zencodec::encode::EncodeCapabilities =
@@ -1151,7 +1147,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob<'a> {
 
     fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<DecodeError>> {
         let native = crate::ImageInfo::from_webp(data)?;
-        let mut info = to_image_info(&native);
+        let mut info = to_image_info(&native, None);
         if let Ok(probe) = crate::detect::probe(data) {
             info = info.with_source_encoding_details(probe);
         }
@@ -1190,8 +1186,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob<'a> {
         _data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
     ) -> Result<zencodec::Unsupported<At<DecodeError>>, At<DecodeError>> {
-        Err(at!(DecodeError::InvalidParameter(
-            "WebP does not support streaming decode".into(),
+        Err(At::from(DecodeError::from(
+            UnsupportedOperation::RowLevelDecode,
         )))
     }
 
@@ -1229,8 +1225,13 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob<'a> {
         // Probe animation metadata with a temporary decoder.
         let probe_anim = AnimationDecoder::new_with_config(&data, &cfg).map_err(|e| at!(e))?;
         let anim_info = probe_anim.info();
+        let total_frames = anim_info.frame_count;
+        let anim_loop_count = match anim_info.loop_count {
+            crate::LoopCount::Forever => Some(0),
+            crate::LoopCount::Times(n) => Some(n.get() as u32),
+        };
         let base_info = if let Some(ref ni) = native_info {
-            to_image_info(ni)
+            to_image_info(ni, Some(anim_loop_count))
         } else {
             ImageInfo::new(
                 anim_info.canvas_width,
@@ -1238,18 +1239,15 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob<'a> {
                 ImageFormat::WebP,
             )
             .with_alpha(anim_info.has_alpha)
+            .with_bit_depth(8)
+            .with_channel_count(if anim_info.has_alpha { 4 } else { 3 })
             .with_sequence(ImageSequence::Animation {
                 frame_count: Some(anim_info.frame_count),
-                loop_count: None,
+                loop_count: anim_loop_count,
                 random_access: false,
             })
         };
         let shared_info = Arc::new(base_info);
-        let total_frames = anim_info.frame_count;
-        let anim_loop_count = match anim_info.loop_count {
-            crate::LoopCount::Forever => Some(0),
-            crate::LoopCount::Times(n) => Some(n.get() as u32),
-        };
         drop(probe_anim);
 
         // Build the self-referential struct: owned data + borrowing AnimationDecoder.
@@ -1361,9 +1359,12 @@ impl WebpDecoder<'_> {
         let has_alpha = buf.has_alpha();
         let native_info = crate::ImageInfo::from_webp(data).ok();
         let info = if let Some(ref ni) = native_info {
-            to_image_info(ni)
+            to_image_info(ni, None)
         } else {
-            ImageInfo::new(w, h, ImageFormat::WebP).with_alpha(has_alpha)
+            ImageInfo::new(w, h, ImageFormat::WebP)
+                .with_alpha(has_alpha)
+                .with_bit_depth(8)
+                .with_channel_count(if has_alpha { 4 } else { 3 })
         };
 
         let mut output = DecodeOutput::new(buf, info);
@@ -1656,13 +1657,20 @@ impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Convert a native `crate::ImageInfo` to a `zencodec::ImageInfo`.
-fn to_image_info(native: &crate::ImageInfo) -> ImageInfo {
+///
+/// `loop_count` is optional because lightweight probing paths may not have
+/// parsed the ANIM chunk. When available (e.g. from the animation decoder),
+/// pass `Some(count)` where `0` means infinite looping.
+fn to_image_info(native: &crate::ImageInfo, loop_count: Option<Option<u32>>) -> ImageInfo {
+    let channel_count: u8 = if native.has_alpha { 4 } else { 3 };
     let mut info = ImageInfo::new(native.width, native.height, ImageFormat::WebP)
         .with_alpha(native.has_alpha)
+        .with_bit_depth(8)
+        .with_channel_count(channel_count)
         .with_sequence(if native.has_animation {
             ImageSequence::Animation {
                 frame_count: Some(native.frame_count),
-                loop_count: None,
+                loop_count: loop_count.unwrap_or(None),
                 random_access: false,
             }
         } else {
