@@ -11,11 +11,7 @@ fn corpus_path(subdir: &str, filename: &str) -> Option<PathBuf> {
     let corpus = codec_corpus::Corpus::new().ok()?;
     let dir = corpus.get(subdir).ok()?;
     let path = dir.join(filename);
-    if path.exists() {
-        Some(path)
-    } else {
-        None
-    }
+    if path.exists() { Some(path) } else { None }
 }
 
 fn load_png_as_rgb(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
@@ -91,24 +87,22 @@ zenbench::main!(|suite| {
             group.bench("zenwebp", move |b| {
                 let config = zenwebp::DecodeConfig::default();
                 let webp_bytes = data_zen.clone();
-                b.with_input(move || webp_bytes.clone())
-                    .run(|data| {
-                        black_box(
-                            zenwebp::DecodeRequest::new(&config, black_box(&data))
-                                .decode_rgba()
-                                .unwrap(),
-                        )
-                    })
+                b.with_input(move || webp_bytes.clone()).run(|data| {
+                    black_box(
+                        zenwebp::DecodeRequest::new(&config, black_box(&data))
+                            .decode_rgba()
+                            .unwrap(),
+                    )
+                })
             });
 
             let data_lib = webp.clone();
             group.bench("libwebp", move |b| {
                 let webp_bytes = data_lib.clone();
-                b.with_input(move || webp_bytes.clone())
-                    .run(|data| {
-                        let decoder = webp::Decoder::new(black_box(&data));
-                        black_box(decoder.decode().unwrap())
-                    })
+                b.with_input(move || webp_bytes.clone()).run(|data| {
+                    let decoder = webp::Decoder::new(black_box(&data));
+                    black_box(decoder.decode().unwrap())
+                })
             });
         });
     }

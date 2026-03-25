@@ -149,8 +149,8 @@ pub use decoder::vp8;
 mod codec;
 #[cfg(feature = "zencodec")]
 pub use codec::{
-    WebpDecodeJob, WebpDecoder, WebpDecoderConfig, WebpEncodeJob, WebpEncoder, WebpEncoderConfig,
-    WebpFullFrameDecoder, WebpFullFrameEncoder,
+    WebpAnimationFrameDecoder, WebpAnimationFrameEncoder, WebpDecodeJob, WebpDecoder,
+    WebpDecoderConfig, WebpEncodeJob, WebpEncoder, WebpEncoderConfig,
 };
 
 /// Standalone metadata convenience functions for already-encoded WebP data.

@@ -12,18 +12,18 @@
 //! | `EncoderConfig` | [`WebpEncoderConfig`] |
 //! | `EncodeJob<'a>` | [`WebpEncodeJob`] |
 //! | `Encoder` | [`WebpEncoder`] |
-//! | `FullFrameEncoder` | [`WebpFullFrameEncoder`] |
+//! | `AnimationFrameEncoder` | [`WebpAnimationFrameEncoder`] |
 //! | `DecoderConfig` | [`WebpDecoderConfig`] |
 //! | `DecodeJob<'a>` | [`WebpDecodeJob`] |
 //! | `Decode` | [`WebpDecoder`] |
-//! | `FullFrameDecoder` | [`WebpFullFrameDecoder`] |
+//! | `AnimationFrameDecoder` | [`WebpAnimationFrameDecoder`] |
 
 use alloc::borrow::Cow;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use whereat::{At, ResultAtExt, at};
-use zencodec::decode::{DecodeOutput, FullFrame, OutputInfo, OwnedFullFrame, SinkError};
+use zencodec::decode::{AnimationFrame, DecodeOutput, OutputInfo, OwnedAnimationFrame, SinkError};
 use zencodec::encode::EncodeOutput;
 use zencodec::{
     ImageFormat, ImageInfo, ImageSequence, Metadata, ResourceLimits, UnsupportedOperation,
@@ -405,23 +405,17 @@ impl WebpEncodeJob {
 impl zencodec::encode::EncodeJob for WebpEncodeJob {
     type Error = At<EncodeError>;
     type Enc = WebpEncoder;
-    type FullFrameEnc = WebpFullFrameEncoder;
+    type AnimationFrameEnc = WebpAnimationFrameEncoder;
 
     fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
         self.stop = Some(stop);
         self
     }
 
-    fn with_metadata(mut self, meta: &Metadata) -> Self {
-        if let Some(ref icc) = meta.icc_profile {
-            self.icc = Some(icc.clone());
-        }
-        if let Some(ref exif) = meta.exif {
-            self.exif = Some(exif.clone());
-        }
-        if let Some(ref xmp) = meta.xmp {
-            self.xmp = Some(xmp.clone());
-        }
+    fn with_metadata(mut self, meta: Metadata) -> Self {
+        self.icc = meta.icc_profile;
+        self.exif = meta.exif;
+        self.xmp = meta.xmp;
         self
     }
 
@@ -454,7 +448,7 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
         })
     }
 
-    fn full_frame_encoder(self) -> Result<WebpFullFrameEncoder, At<EncodeError>> {
+    fn animation_frame_encoder(self) -> Result<WebpAnimationFrameEncoder, At<EncodeError>> {
         let inner_config = self.build_inner_config();
         let loop_count = match self.loop_count {
             Some(Some(0)) | None => crate::LoopCount::Forever,
@@ -467,7 +461,7 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
                 )
             }
         };
-        Ok(WebpFullFrameEncoder {
+        Ok(WebpAnimationFrameEncoder {
             inner_config,
             anim_enc: None,
             cumulative_ms: 0,
@@ -887,7 +881,7 @@ impl zencodec::encode::Encoder for WebpEncoder {
 ///
 /// The animation encoder is created lazily on the first frame push
 /// (to determine canvas dimensions).
-pub struct WebpFullFrameEncoder {
+pub struct WebpAnimationFrameEncoder {
     inner_config: EncoderConfig,
     anim_enc: Option<AnimationEncoder>,
     cumulative_ms: u32,
@@ -906,7 +900,7 @@ fn mux_to_encode_err(e: MuxError) -> EncodeError {
     }
 }
 
-impl WebpFullFrameEncoder {
+impl WebpAnimationFrameEncoder {
     fn ensure_encoder(&mut self, frame_w: u32, frame_h: u32) -> Result<(), At<EncodeError>> {
         if self.anim_enc.is_none() {
             let (cw, ch) = self.canvas_size.unwrap_or((frame_w, frame_h));
@@ -922,7 +916,7 @@ impl WebpFullFrameEncoder {
     }
 }
 
-impl zencodec::encode::FullFrameEncoder for WebpFullFrameEncoder {
+impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
     type Error = At<EncodeError>;
 
     fn reject(op: UnsupportedOperation) -> At<EncodeError> {
@@ -1125,7 +1119,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob<'a> {
     type Error = At<DecodeError>;
     type Dec = WebpDecoder<'a>;
     type StreamDec = zencodec::Unsupported<At<DecodeError>>;
-    type FullFrameDec = WebpFullFrameDecoder;
+    type AnimationFrameDec = WebpAnimationFrameDecoder;
 
     fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
         self.stop = Some(stop);
@@ -1199,11 +1193,11 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob<'a> {
         })
     }
 
-    fn full_frame_decoder(
+    fn animation_frame_decoder(
         self,
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
-    ) -> Result<WebpFullFrameDecoder, At<DecodeError>> {
+    ) -> Result<WebpAnimationFrameDecoder, At<DecodeError>> {
         if let Some(max) = self.effective_input_size_limit()
             && data.len() as u64 > max
         {
@@ -1269,7 +1263,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob<'a> {
             PixelDescriptor::RGB8_SRGB
         };
 
-        Ok(WebpFullFrameDecoder {
+        Ok(WebpAnimationFrameDecoder {
             decoder,
             preferred: preferred.to_vec(),
             frame_buf: alloc::vec![0u8; buf_size],
@@ -1429,8 +1423,8 @@ self_cell::self_cell! {
 ///
 /// The [`AnimationDecoder`] borrows `&[u8]` from the input data. A self-referential
 /// struct ([`OwnedAnimDecoder`] via `self_cell`) stores the owned data alongside
-/// the borrowing decoder, satisfying the `'static` requirement on `FullFrameDec`.
-pub struct WebpFullFrameDecoder {
+/// the borrowing decoder, satisfying the `'static` requirement on `AnimationFrameDec`.
+pub struct WebpAnimationFrameDecoder {
     decoder: OwnedAnimDecoder,
     preferred: Vec<PixelDescriptor>,
     /// Reusable buffer for composited frame data. Pre-allocated to canvas size;
@@ -1456,7 +1450,7 @@ pub struct WebpFullFrameDecoder {
     anim_loop_count: Option<u32>,
 }
 
-impl WebpFullFrameDecoder {
+impl WebpAnimationFrameDecoder {
     /// Decode and discard frames before `start_frame_index` (needed for
     /// correct compositing state). Called lazily on first `render_next_frame`.
     fn skip_to_start(&mut self) -> Result<(), At<DecodeError>> {
@@ -1550,7 +1544,7 @@ fn negotiate_format_inplace(
     source
 }
 
-impl zencodec::decode::FullFrameDecoder for WebpFullFrameDecoder {
+impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
     type Error = At<DecodeError>;
 
     fn wrap_sink_error(err: SinkError) -> At<DecodeError> {
@@ -1572,7 +1566,7 @@ impl zencodec::decode::FullFrameDecoder for WebpFullFrameDecoder {
     fn render_next_frame(
         &mut self,
         stop: Option<&dyn enough::Stop>,
-    ) -> Result<Option<FullFrame<'_>>, At<DecodeError>> {
+    ) -> Result<Option<AnimationFrame<'_>>, At<DecodeError>> {
         if let Some(s) = stop {
             s.check().map_err(|e| at!(DecodeError::from(e)))?;
         }
@@ -1598,13 +1592,17 @@ impl zencodec::decode::FullFrameDecoder for WebpFullFrameDecoder {
                 "frame buffer mismatch".into(),
             ))
         })?;
-        Ok(Some(FullFrame::new(slice, self.current_duration_ms, idx)))
+        Ok(Some(AnimationFrame::new(
+            slice,
+            self.current_duration_ms,
+            idx,
+        )))
     }
 
     fn render_next_frame_owned(
         &mut self,
         stop: Option<&dyn enough::Stop>,
-    ) -> Result<Option<OwnedFullFrame>, At<DecodeError>> {
+    ) -> Result<Option<OwnedAnimationFrame>, At<DecodeError>> {
         if let Some(s) = stop {
             s.check().map_err(|e| at!(DecodeError::from(e)))?;
         }
@@ -1626,7 +1624,7 @@ impl zencodec::decode::FullFrameDecoder for WebpFullFrameDecoder {
             self.current_descriptor,
         )
         .map_err(|_| at!(DecodeError::InvalidParameter("frame size mismatch".into())))?;
-        Ok(Some(OwnedFullFrame::new(
+        Ok(Some(OwnedAnimationFrame::new(
             buf,
             self.current_duration_ms,
             idx,
@@ -1943,26 +1941,26 @@ mod tests {
 
     #[test]
     fn animation_roundtrip_lazy_decode() {
-        use zencodec::decode::FullFrameDecoder;
-        use zencodec::encode::FullFrameEncoder;
+        use zencodec::decode::AnimationFrameDecoder;
+        use zencodec::encode::AnimationFrameEncoder;
 
         // Encode a 3-frame animation.
         let frame1 = make_rgba8_pixels(16, 16);
         let frame2 = make_rgba8_pixels(16, 16);
         let frame3 = make_rgba8_pixels(16, 16);
         let enc_config = WebpEncoderConfig::lossy().with_quality(90.0);
-        let mut enc = enc_config.job().full_frame_encoder().unwrap();
+        let mut enc = enc_config.job().animation_frame_encoder().unwrap();
         enc.push_frame(frame1.as_slice(), 100, None).unwrap();
         enc.push_frame(frame2.as_slice(), 100, None).unwrap();
         enc.push_frame(frame3.as_slice(), 100, None).unwrap();
         let output = enc.finish(None).unwrap();
         assert!(!output.is_empty());
 
-        // Decode lazily through FullFrameDecoder.
+        // Decode lazily through AnimationFrameDecoder.
         let dec_config = WebpDecoderConfig::new();
         let mut dec = dec_config
             .job()
-            .full_frame_decoder(Cow::Owned(output.data().to_vec()), &[])
+            .animation_frame_decoder(Cow::Owned(output.data().to_vec()), &[])
             .unwrap();
 
         assert_eq!(dec.frame_count(), Some(3));
@@ -1984,12 +1982,12 @@ mod tests {
 
     #[test]
     fn animation_lazy_decode_with_start_frame() {
-        use zencodec::decode::FullFrameDecoder;
-        use zencodec::encode::FullFrameEncoder;
+        use zencodec::decode::AnimationFrameDecoder;
+        use zencodec::encode::AnimationFrameEncoder;
 
         // Encode 4 frames.
         let enc_config = WebpEncoderConfig::lossy().with_quality(90.0);
-        let mut enc = enc_config.job().full_frame_encoder().unwrap();
+        let mut enc = enc_config.job().animation_frame_encoder().unwrap();
         for _ in 0..4 {
             let frame = make_rgba8_pixels(8, 8);
             enc.push_frame(frame.as_slice(), 50, None).unwrap();
@@ -2001,7 +1999,7 @@ mod tests {
         let mut dec = dec_config
             .job()
             .with_start_frame_index(2)
-            .full_frame_decoder(Cow::Owned(output.data().to_vec()), &[])
+            .animation_frame_decoder(Cow::Owned(output.data().to_vec()), &[])
             .unwrap();
 
         // First yielded frame should be index 2.
@@ -2149,12 +2147,12 @@ mod tests {
 
     #[test]
     fn last_frame_duration_preserved() {
-        use zencodec::decode::FullFrameDecoder;
-        use zencodec::encode::FullFrameEncoder;
+        use zencodec::decode::AnimationFrameDecoder;
+        use zencodec::encode::AnimationFrameEncoder;
 
         // Encode 3 frames with distinct durations: 200, 50, 300.
         let enc_config = WebpEncoderConfig::lossy().with_quality(90.0);
-        let mut enc = enc_config.job().full_frame_encoder().unwrap();
+        let mut enc = enc_config.job().animation_frame_encoder().unwrap();
         let frame = make_rgba8_pixels(16, 16);
         enc.push_frame(frame.as_slice(), 200, None).unwrap();
         enc.push_frame(frame.as_slice(), 50, None).unwrap();
@@ -2165,7 +2163,7 @@ mod tests {
         let dec_config = WebpDecoderConfig::new();
         let mut dec = dec_config
             .job()
-            .full_frame_decoder(Cow::Owned(output.data().to_vec()), &[])
+            .animation_frame_decoder(Cow::Owned(output.data().to_vec()), &[])
             .unwrap();
 
         let f1 = dec.render_next_frame(None).unwrap().expect("frame 1");
