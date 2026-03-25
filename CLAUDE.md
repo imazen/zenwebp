@@ -28,8 +28,6 @@ Historical investigation notes and resolved bugs are in [LOG.md](LOG.md).
 - `src/encoder/vp8l/cost_model.rs` - TraceBackwards with Zopfli-style CostManager
 - `src/encoder/vp8l/transforms.rs` - Image transforms
 - `src/encoder/vp8l/near_lossless.rs` - Near-lossless pixel + residual quantization
-- `src/encoder/color_quantize.rs` - imagequant integration (`quantize` feature)
-
 **Mux/Demux/Animation:**
 - `src/mux/demux.rs` - WebPDemuxer (zero-copy chunk parser)
 - `src/mux/assemble.rs` - WebPMux (container assembler)
@@ -108,7 +106,7 @@ Files: `src/encoder/psy.rs`, `src/encoder/trellis.rs`
 
 ## SIMD Architecture
 
-### Encoder SIMD (archmage 0.5)
+### Encoder SIMD (archmage 0.9)
 
 **Fused primitives (2026-02-05):**
 - `ftransform_from_u8_4x4` — residual+DCT from flat u8[16] arrays
