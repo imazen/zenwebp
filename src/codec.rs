@@ -341,6 +341,7 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
             limits: ResourceLimits::none(),
             canvas_size: None,
             loop_count: None,
+            policy: None,
         }
     }
 }
@@ -357,6 +358,7 @@ pub struct WebpEncodeJob {
     limits: ResourceLimits,
     canvas_size: Option<(u32, u32)>,
     loop_count: Option<Option<u32>>,
+    policy: Option<zencodec::encode::EncodePolicy>,
 }
 
 impl WebpEncodeJob {
@@ -408,6 +410,11 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
         self
     }
 
+    fn with_policy(mut self, policy: zencodec::encode::EncodePolicy) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+
     fn with_metadata(mut self, meta: Metadata) -> Self {
         self.icc = meta.icc_profile;
         self.exif = meta.exif;
@@ -432,12 +439,25 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
 
     fn encoder(self) -> Result<WebpEncoder, At<EncodeError>> {
         let inner_config = self.build_inner_config();
+        let policy = self.policy.unwrap_or_default();
         Ok(WebpEncoder {
             inner_config,
             stop: self.stop,
-            icc: self.icc,
-            exif: self.exif,
-            xmp: self.xmp,
+            icc: if policy.resolve_icc(true) {
+                self.icc
+            } else {
+                None
+            },
+            exif: if policy.resolve_exif(true) {
+                self.exif
+            } else {
+                None
+            },
+            xmp: if policy.resolve_xmp(true) {
+                self.xmp
+            } else {
+                None
+            },
             limits: self.limits,
             canvas_size: self.canvas_size,
             stream: None,
@@ -1085,6 +1105,8 @@ impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
             stop: None,
             limits: ResourceLimits::none(),
             start_frame_index: 0,
+            policy: None,
+            preferred: Vec::new(),
         }
     }
 }
@@ -1097,9 +1119,38 @@ pub struct WebpDecodeJob<'a> {
     stop: Option<zencodec::StopToken>,
     limits: ResourceLimits,
     start_frame_index: u32,
+    policy: Option<zencodec::decode::DecodePolicy>,
+    preferred: Vec<PixelDescriptor>,
 }
 
 impl<'a> WebpDecodeJob<'a> {
+    /// Set preferred pixel formats for `output_info()` prediction.
+    ///
+    /// This is an inherent method (not part of the trait) because
+    /// `output_info()` does not receive a `preferred` list.
+    /// Call this before `output_info()` to predict the actual decode format.
+    #[must_use]
+    pub fn with_preferred(mut self, preferred: &[PixelDescriptor]) -> Self {
+        self.preferred = preferred.to_vec();
+        self
+    }
+
+    /// Apply decode policy to strip metadata from an `ImageInfo`.
+    fn apply_policy_to_info(&self, mut info: ImageInfo) -> ImageInfo {
+        if let Some(ref policy) = self.policy {
+            if !policy.resolve_icc(true) {
+                info.source_color.icc_profile = None;
+            }
+            if !policy.resolve_exif(true) {
+                info.embedded_metadata.exif = None;
+            }
+            if !policy.resolve_xmp(true) {
+                info.embedded_metadata.xmp = None;
+            }
+        }
+        info
+    }
+
     fn build_config(&self) -> DecodeConfig {
         let mut cfg = self.config.inner.clone();
         if let Some(px) = self.limits.max_pixels {
@@ -1140,6 +1191,11 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob<'a> {
         self
     }
 
+    fn with_policy(mut self, policy: zencodec::decode::DecodePolicy) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+
     fn with_start_frame_index(mut self, index: u32) -> Self {
         self.start_frame_index = index;
         self
@@ -1151,16 +1207,23 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob<'a> {
         if let Ok(probe) = crate::detect::probe(data) {
             info = info.with_source_encoding_details(probe);
         }
-        Ok(info)
+        Ok(self.apply_policy_to_info(info))
     }
 
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<DecodeError>> {
         let native = crate::ImageInfo::from_webp(data)?;
-        let desc = if native.has_alpha {
+        let mut desc = if native.has_alpha {
             PixelDescriptor::RGBA8_SRGB
         } else {
             PixelDescriptor::RGB8_SRGB
         };
+        // Apply RGBA→BGRA negotiation if the stored preferred list requests it.
+        if !self.preferred.is_empty()
+            && self.preferred.contains(&PixelDescriptor::BGRA8_SRGB)
+            && desc == PixelDescriptor::RGBA8_SRGB
+        {
+            desc = PixelDescriptor::BGRA8_SRGB;
+        }
         Ok(OutputInfo::full_decode(native.width, native.height, desc))
     }
 
@@ -1178,6 +1241,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob<'a> {
             limits: self.limits,
             data,
             preferred: preferred.to_vec(),
+            policy: self.policy,
         })
     }
 
@@ -1207,6 +1271,15 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob<'a> {
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
     ) -> Result<WebpAnimationFrameDecoder, At<DecodeError>> {
+        // Block animation if policy denies it.
+        if let Some(ref policy) = self.policy
+            && !policy.resolve_animation(true)
+        {
+            return Err(At::from(DecodeError::from(
+                UnsupportedOperation::AnimationDecode,
+            )));
+        }
+
         if let Some(max) = self.effective_input_size_limit()
             && data.len() as u64 > max
         {
@@ -1247,6 +1320,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob<'a> {
                 random_access: false,
             })
         };
+        let base_info = self.apply_policy_to_info(base_info);
         let shared_info = Arc::new(base_info);
         drop(probe_anim);
 
@@ -1303,9 +1377,26 @@ pub struct WebpDecoder<'a> {
     limits: ResourceLimits,
     data: Cow<'a, [u8]>,
     preferred: Vec<PixelDescriptor>,
+    policy: Option<zencodec::decode::DecodePolicy>,
 }
 
 impl WebpDecoder<'_> {
+    /// Apply decode policy to strip metadata from an `ImageInfo`.
+    fn apply_policy_to_info(&self, mut info: ImageInfo) -> ImageInfo {
+        if let Some(ref policy) = self.policy {
+            if !policy.resolve_icc(true) {
+                info.source_color.icc_profile = None;
+            }
+            if !policy.resolve_exif(true) {
+                info.embedded_metadata.exif = None;
+            }
+            if !policy.resolve_xmp(true) {
+                info.embedded_metadata.xmp = None;
+            }
+        }
+        info
+    }
+
     fn check_input_size(&self, data: &[u8]) -> Result<(), DecodeError> {
         if let Some(max) = self.input_size_limit
             && data.len() as u64 > max
@@ -1366,6 +1457,7 @@ impl WebpDecoder<'_> {
                 .with_bit_depth(8)
                 .with_channel_count(if has_alpha { 4 } else { 3 })
         };
+        let info = self.apply_policy_to_info(info);
 
         let mut output = DecodeOutput::new(buf, info);
         if let Ok(probe) = crate::detect::probe(data) {
