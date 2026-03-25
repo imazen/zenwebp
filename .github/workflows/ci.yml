@@ -45,6 +45,7 @@ jobs:
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zencodec ../zencodec
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenpixels ../zenpixels
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/linear-srgb ../linear-srgb
+          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zennode ../zennode
           rm -f Cargo.lock
       - uses: Swatinem/rust-cache@v2
       - name: Run tests (default features)
@@ -80,6 +81,7 @@ jobs:
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zencodec ../zencodec
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenpixels ../zenpixels
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/linear-srgb ../linear-srgb
+          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zennode ../zennode
           rm -f Cargo.lock
       - uses: Swatinem/rust-cache@v2
       - name: Check (--features avx512)
@@ -101,6 +103,7 @@ jobs:
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zencodec ../zencodec
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenpixels ../zenpixels
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/linear-srgb ../linear-srgb
+          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zennode ../zennode
           rm -f Cargo.lock
       - uses: taiki-e/install-action@cross
       - uses: Swatinem/rust-cache@v2
@@ -125,6 +128,7 @@ jobs:
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zencodec ../zencodec
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenpixels ../zenpixels
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/linear-srgb ../linear-srgb
+          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zennode ../zennode
           rm -f Cargo.lock
       - uses: Swatinem/rust-cache@v2
       - name: Check WASM (no_std)
@@ -146,6 +150,7 @@ jobs:
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zencodec ../zencodec
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenpixels ../zenpixels
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/linear-srgb ../linear-srgb
+          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zennode ../zennode
           rm -f Cargo.lock
       - uses: Swatinem/rust-cache@v2
       - name: Clippy
@@ -156,9 +161,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+      - name: Clone sibling repos for path deps
+        shell: bash
+        run: |
+          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zencodec ../zencodec
+          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenpixels ../zenpixels
+          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/linear-srgb ../linear-srgb
+          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zennode ../zennode
+          rm -f Cargo.lock
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -176,6 +191,7 @@ jobs:
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zencodec ../zencodec
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenpixels ../zenpixels
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/linear-srgb ../linear-srgb
+          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zennode ../zennode
           rm -f Cargo.lock
       - uses: taiki-e/install-action@cargo-hack
       - uses: Swatinem/rust-cache@v2
@@ -196,6 +212,7 @@ jobs:
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zencodec ../zencodec
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zenpixels ../zenpixels
           git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/linear-srgb ../linear-srgb
+          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/imazen/zennode ../zennode
           rm -f Cargo.lock
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
