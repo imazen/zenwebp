@@ -10,26 +10,138 @@ use super::histogram::Histogram;
 /// Fixed-point precision for entropy calculations (matching libwebp).
 const LOG_2_PRECISION_BITS: u32 = 23;
 
-/// Lookup table for v * log2(v) in fixed-point (for v in 0..256).
-/// kSLog2Table[v] = v * log2(v) * (1 << LOG_2_PRECISION_BITS).
+/// Constants matching libwebp's lossless_common.h.
+const LOG_2_RECIPROCAL_FIXED: u64 = 12102203;
+const APPROX_LOG_WITH_CORRECTION_MAX: u32 = 65536;
+
+/// Precomputed v * log2(v) * (1 << 23) for v in 0..256 (from libwebp kSLog2Table).
+#[rustfmt::skip]
+const K_SLOG2_TABLE: [u64; 256] = [
+    0, 0, 16777216, 39886887, 67108864, 97388723, 130105423, 164848600,
+    201326592, 239321324, 278663526, 319217973, 360874141, 403539997,
+    447137711, 491600606, 536870912, 582898099, 629637592, 677049776,
+    725099212, 773754010, 822985323, 872766924, 923074875, 973887230,
+    1025183802, 1076945958, 1129156447, 1181799249, 1234859451, 1288323135,
+    1342177280, 1396409681, 1451008871, 1505964059, 1561265072, 1616902301,
+    1672866655, 1729149526, 1785742744, 1842638548, 1899829557, 1957308741,
+    2015069397, 2073105127, 2131409817, 2189977618, 2248802933, 2307880396,
+    2367204859, 2426771383, 2486575220, 2546611805, 2606876748, 2667365819,
+    2728074942, 2789000187, 2850137762, 2911484006, 2973035382, 3034788471,
+    3096739966, 3158886666, 3221225472, 3283753383, 3346467489, 3409364969,
+    3472443085, 3535699182, 3599130679, 3662735070, 3726509920, 3790452862,
+    3854561593, 3918833872, 3983267519, 4047860410, 4112610476, 4177515704,
+    4242574127, 4307783833, 4373142952, 4438649662, 4504302186, 4570098787,
+    4636037770, 4702117480, 4768336298, 4834692645, 4901184974, 4967811774,
+    5034571569, 5101462912, 5168484389, 5235634615, 5302912235, 5370315922,
+    5437844376, 5505496324, 5573270518, 5641165737, 5709180782, 5777314477,
+    5845565671, 5913933235, 5982416059, 6051013057, 6119723161, 6188545324,
+    6257478518, 6326521733, 6395673979, 6464934282, 6534301685, 6603775250,
+    6673354052, 6743037185, 6812823756, 6882712890, 6952703725, 7022795412,
+    7092987118, 7163278025, 7233667324, 7304154222, 7374737939, 7445417707,
+    7516192768, 7587062379, 7658025806, 7729082328, 7800231234, 7871471825,
+    7942803410, 8014225311, 8085736859, 8157337394, 8229026267, 8300802839,
+    8372666477, 8444616560, 8516652476, 8588773618, 8660979393, 8733269211,
+    8805642493, 8878098667, 8950637170, 9023257446, 9095958945, 9168741125,
+    9241603454, 9314545403, 9387566451, 9460666086, 9533843800, 9607099093,
+    9680431471, 9753840445, 9827325535, 9900886263, 9974522161, 10048232765,
+    10122017615, 10195876260, 10269808253, 10343813150, 10417890516,
+    10492039919, 10566260934, 10640553138, 10714916116, 10789349456,
+    10863852751, 10938425600, 11013067604, 11087778372, 11162557513,
+    11237404645, 11312319387, 11387301364, 11462350205, 11537465541,
+    11612647010, 11687894253, 11763206912, 11838584638, 11914027082,
+    11989533899, 12065104750, 12140739296, 12216437206, 12292198148,
+    12368021795, 12443907826, 12519855920, 12595865759, 12671937032,
+    12748069427, 12824262637, 12900516358, 12976830290, 13053204134,
+    13129637595, 13206130381, 13282682202, 13359292772, 13435961806,
+    13512689025, 13589474149, 13666316903, 13743217014, 13820174211,
+    13897188225, 13974258793, 14051385649, 14128568535, 14205807192,
+    14283101363, 14360450796, 14437855239, 14515314443, 14592828162,
+    14670396151, 14748018167, 14825693972, 14903423326, 14981205995,
+    15059041743, 15136930339, 15214871554, 15292865160, 15370910930,
+    15449008641, 15527158071, 15605359001, 15683611210, 15761914485,
+    15840268608, 15918673369, 15997128556, 16075633960, 16154189373,
+    16232794589, 16311449405, 16390153617, 16468907026, 16547709431,
+    16626560636, 16705460444, 16784408661, 16863405094, 16942449552,
+    17021541845, 17100681785,
+];
+
+/// Precomputed log2(v) * (1 << 23) for v in 0..256 (from libwebp kLog2Table).
+#[rustfmt::skip]
+const K_LOG2_TABLE: [u32; 256] = [
+    0, 0, 8388608, 13295629, 16777216, 19477745, 21684237, 23549800,
+    25165824, 26591258, 27866353, 29019816, 30072845, 31041538, 31938408,
+    32773374, 33554432, 34288123, 34979866, 35634199, 36254961, 36845429,
+    37408424, 37946388, 38461453, 38955489, 39430146, 39886887, 40327016,
+    40751698, 41161982, 41558811, 41943040, 42315445, 42676731, 43027545,
+    43368474, 43700062, 44022807, 44337167, 44643569, 44942404, 45234037,
+    45518808, 45797032, 46069003, 46334996, 46595268, 46850061, 47099600,
+    47344097, 47583753, 47818754, 48049279, 48275495, 48497560, 48715624,
+    48929828, 49140306, 49347187, 49550590, 49750631, 49947419, 50141058,
+    50331648, 50519283, 50704053, 50886044, 51065339, 51242017, 51416153,
+    51587818, 51757082, 51924012, 52088670, 52251118, 52411415, 52569616,
+    52725775, 52879946, 53032177, 53182516, 53331012, 53477707, 53622645,
+    53765868, 53907416, 54047327, 54185640, 54322389, 54457611, 54591338,
+    54723604, 54854440, 54983876, 55111943, 55238669, 55364082, 55488208,
+    55611074, 55732705, 55853126, 55972361, 56090432, 56207362, 56323174,
+    56437887, 56551524, 56664103, 56775645, 56886168, 56995691, 57104232,
+    57211808, 57318436, 57424133, 57528914, 57632796, 57735795, 57837923,
+    57939198, 58039632, 58139239, 58238033, 58336027, 58433234, 58529666,
+    58625336, 58720256, 58814437, 58907891, 59000628, 59092661, 59183999,
+    59274652, 59364632, 59453947, 59542609, 59630625, 59718006, 59804761,
+    59890898, 59976426, 60061354, 60145690, 60229443, 60312620, 60395229,
+    60477278, 60558775, 60639726, 60720140, 60800023, 60879382, 60958224,
+    61036555, 61114383, 61191714, 61268554, 61344908, 61420785, 61496188,
+    61571124, 61645600, 61719620, 61793189, 61866315, 61939001, 62011253,
+    62083076, 62154476, 62225457, 62296024, 62366182, 62435935, 62505289,
+    62574248, 62642816, 62710997, 62778797, 62846219, 62913267, 62979946,
+    63046260, 63112212, 63177807, 63243048, 63307939, 63372484, 63436687,
+    63500551, 63564080, 63627277, 63690146, 63752690, 63814912, 63876816,
+    63938405, 63999682, 64060650, 64121313, 64181673, 64241734, 64301498,
+    64360969, 64420148, 64479040, 64537646, 64595970, 64654014, 64711782,
+    64769274, 64826495, 64883447, 64940132, 64996553, 65052711, 65108611,
+    65164253, 65219641, 65274776, 65329662, 65384299, 65438691, 65492840,
+    65546747, 65600416, 65653847, 65707044, 65760008, 65812741, 65865245,
+    65917522, 65969575, 66021404, 66073013, 66124403, 66175575, 66226531,
+    66277275, 66327806, 66378127, 66428240, 66478146, 66527847, 66577345,
+    66626641, 66675737, 66724635, 66773336, 66821842, 66870154, 66918274,
+    66966204, 67013944, 67061497,
+];
+
+/// Compute v * log2(v) in fixed-point (matching libwebp's VP8LFastSLog2).
+/// 256-entry LUT for v < 256, CLZ + kLog2Table for v >= 256. No log() calls.
+#[inline]
 fn fast_slog2(v: u32) -> u64 {
-    if v == 0 {
-        return 0;
-    }
     if v < 256 {
-        // For small values, compute directly with float
-        let vf = v as f64;
-        return (vf * libm::log2(vf) * (1u64 << LOG_2_PRECISION_BITS) as f64) as u64;
+        return K_SLOG2_TABLE[v as usize];
     }
-    // For large values, use libwebp's piecewise approximation
     fast_slog2_slow(v)
 }
 
+/// Public wrapper for `fast_slog2` for use by other VP8L modules.
+#[inline]
+pub(super) fn fast_slog2_public(v: u32) -> u64 {
+    fast_slog2(v)
+}
+
 /// Extended range SLog2 for v >= 256 (matches libwebp's FastSLog2Slow_C).
+/// Uses bit-shifting + table lookup + linear correction — no log() calls
+/// for v < 65536 (covers virtually all histogram entries).
+#[inline]
 fn fast_slog2_slow(v: u32) -> u64 {
-    // Use float for values >= 256
-    let vf = v as f64;
-    (vf * libm::log2(vf) * (1u64 << LOG_2_PRECISION_BITS) as f64) as u64
+    if v < APPROX_LOG_WITH_CORRECTION_MAX {
+        let orig_v = v as u64;
+        // Find how many bits to shift down to get v into 0..255 range
+        let log_cnt = (31 - v.leading_zeros()) as u64 - 7;
+        let y = 1u64 << log_cnt;
+        let shifted = (v >> log_cnt as u32) as usize; // now in 0..255
+        // Linear correction: log2(1 + d) ≈ d / ln(2)
+        let correction = LOG_2_RECIPROCAL_FIXED * (orig_v & (y - 1));
+        orig_v * (K_LOG2_TABLE[shifted] as u64 + (log_cnt << LOG_2_PRECISION_BITS)) + correction
+    } else {
+        // Fallback for very large values (rare in practice)
+        let vf = v as f64;
+        (vf * libm::log2(vf) * (1u64 << LOG_2_PRECISION_BITS) as f64 + 0.5) as u64
+    }
 }
 
 /// RLE streak statistics matching libwebp's VP8LStreaks.
@@ -54,7 +166,7 @@ struct BitEntropy {
 }
 
 /// Process a run-length streak (matches libwebp's GetEntropyUnrefinedHelper).
-#[inline]
+#[inline(always)]
 fn entropy_unrefined_helper(
     val: u32,
     i: usize,
@@ -85,6 +197,8 @@ fn entropy_unrefined_helper(
 }
 
 /// Calculate entropy + streak stats for a single distribution (matches VP8LGetEntropyUnrefined).
+///
+/// Optimized with batch zero-skipping for sparse histograms.
 fn get_entropy_unrefined(x: &[u32]) -> (BitEntropy, Streaks) {
     let mut bit_entropy = BitEntropy::default();
     let mut stats = Streaks::default();
@@ -93,10 +207,46 @@ fn get_entropy_unrefined(x: &[u32]) -> (BitEntropy, Streaks) {
         return (bit_entropy, stats);
     }
 
+    let len = x.len();
     let mut i_prev = 0usize;
     let mut x_prev = x[0];
 
-    for (i, &xv) in x.iter().enumerate().skip(1) {
+    let chunks_end = 1 + ((len.saturating_sub(2)) / 8) * 8;
+    let mut i = 1usize;
+
+    while i < chunks_end {
+        let or_all =
+            x[i] | x[i + 1] | x[i + 2] | x[i + 3] | x[i + 4] | x[i + 5] | x[i + 6] | x[i + 7];
+
+        if or_all == 0 {
+            if x_prev == 0 {
+                i += 8;
+                continue;
+            }
+            entropy_unrefined_helper(0, i, &mut x_prev, &mut i_prev, &mut bit_entropy, &mut stats);
+            i += 8;
+            continue;
+        }
+
+        let end = i + 8;
+        while i < end {
+            let xv = x[i];
+            if xv != x_prev {
+                entropy_unrefined_helper(
+                    xv,
+                    i,
+                    &mut x_prev,
+                    &mut i_prev,
+                    &mut bit_entropy,
+                    &mut stats,
+                );
+            }
+            i += 1;
+        }
+    }
+
+    while i < len {
+        let xv = x[i];
         if xv != x_prev {
             entropy_unrefined_helper(
                 xv,
@@ -107,10 +257,12 @@ fn get_entropy_unrefined(x: &[u32]) -> (BitEntropy, Streaks) {
                 &mut stats,
             );
         }
+        i += 1;
     }
+
     entropy_unrefined_helper(
         0,
-        x.len(),
+        len,
         &mut x_prev,
         &mut i_prev,
         &mut bit_entropy,
@@ -124,6 +276,10 @@ fn get_entropy_unrefined(x: &[u32]) -> (BitEntropy, Streaks) {
 
 /// Calculate combined entropy for TWO distributions without merging them.
 /// Matches libwebp's GetCombinedEntropyUnrefined_C.
+///
+/// Optimized with batch zero-skipping: for contiguous zero regions in both x
+/// and y, skips chunks of 8 elements at a time using a single OR-reduction test.
+/// Since histograms are typically 90%+ sparse, this avoids most per-element work.
 fn get_combined_entropy_unrefined(x: &[u32], y: &[u32]) -> (BitEntropy, Streaks) {
     debug_assert_eq!(x.len(), y.len());
     let mut bit_entropy = BitEntropy::default();
@@ -133,10 +289,75 @@ fn get_combined_entropy_unrefined(x: &[u32], y: &[u32]) -> (BitEntropy, Streaks)
         return (bit_entropy, stats);
     }
 
+    let len = x.len().min(y.len());
     let mut i_prev = 0usize;
     let mut xy_prev = x[0] + y[0];
 
-    for i in 1..x.len() {
+    // Process in chunks of 8 with batch zero-skipping.
+    // When all 16 values (8 from x + 8 from y) OR to zero, the chunk is entirely
+    // zero. If we're already in a zero streak, we can skip the entire chunk.
+    let x = &x[..len];
+    let y = &y[..len];
+    let chunks_end = 1 + ((len.saturating_sub(2)) / 8) * 8;
+    let mut i = 1usize;
+
+    while i < chunks_end {
+        let or_all = x[i]
+            | x[i + 1]
+            | x[i + 2]
+            | x[i + 3]
+            | x[i + 4]
+            | x[i + 5]
+            | x[i + 6]
+            | x[i + 7]
+            | y[i]
+            | y[i + 1]
+            | y[i + 2]
+            | y[i + 3]
+            | y[i + 4]
+            | y[i + 5]
+            | y[i + 6]
+            | y[i + 7];
+
+        if or_all == 0 {
+            if xy_prev == 0 {
+                // Zero streak continues - skip entire chunk
+                i += 8;
+                continue;
+            }
+            // Transition from nonzero to zero at first element
+            entropy_unrefined_helper(
+                0,
+                i,
+                &mut xy_prev,
+                &mut i_prev,
+                &mut bit_entropy,
+                &mut stats,
+            );
+            i += 8;
+            continue;
+        }
+
+        // Chunk has nonzero elements - process individually
+        let end = i + 8;
+        while i < end {
+            let xy = x[i] + y[i];
+            if xy != xy_prev {
+                entropy_unrefined_helper(
+                    xy,
+                    i,
+                    &mut xy_prev,
+                    &mut i_prev,
+                    &mut bit_entropy,
+                    &mut stats,
+                );
+            }
+            i += 1;
+        }
+    }
+
+    // Tail: remaining elements
+    while i < len {
         let xy = x[i] + y[i];
         if xy != xy_prev {
             entropy_unrefined_helper(
@@ -148,10 +369,13 @@ fn get_combined_entropy_unrefined(x: &[u32], y: &[u32]) -> (BitEntropy, Streaks)
                 &mut stats,
             );
         }
+        i += 1;
     }
+
+    // Final flush
     entropy_unrefined_helper(
         0,
-        x.len(),
+        len,
         &mut xy_prev,
         &mut i_prev,
         &mut bit_entropy,
@@ -163,7 +387,39 @@ fn get_combined_entropy_unrefined(x: &[u32], y: &[u32]) -> (BitEntropy, Streaks)
     (bit_entropy, stats)
 }
 
+/// Fast combined Shannon entropy for histogram clustering comparison.
+/// Matches libwebp's CombinedShannonEntropy_C — a tight loop that computes
+/// sum(slog2(x) + slog2(x+y)) for nonzero entries, then subtracts from
+/// slog2(sum_x) + slog2(sum_xy). Much faster than get_combined_entropy_unrefined
+/// because it skips streak tracking and Huffman cost estimation.
+///
+/// Returns the combined entropy in fixed-point (scaled by 1 << LOG_2_PRECISION_BITS).
+#[inline]
+fn combined_shannon_entropy(x: &[u32], y: &[u32]) -> u64 {
+    debug_assert_eq!(x.len(), y.len());
+    let mut retval = 0u64;
+    let mut sum_x = 0u32;
+    let mut sum_xy = 0u32;
+
+    for i in 0..x.len() {
+        let xi = x[i];
+        if xi != 0 {
+            let xy = xi + y[i];
+            sum_x += xi;
+            retval += fast_slog2(xi);
+            sum_xy += xy;
+            retval += fast_slog2(xy);
+        } else if y[i] != 0 {
+            sum_xy += y[i];
+            retval += fast_slog2(y[i]);
+        }
+    }
+
+    fast_slog2(sum_x) + fast_slog2(sum_xy) - retval
+}
+
 /// Refine entropy using perceptual adjustments (matches BitsEntropyRefine).
+#[inline]
 fn bits_entropy_refine(entropy: &BitEntropy) -> u64 {
     if entropy.nonzeros < 5 {
         if entropy.nonzeros <= 1 {
@@ -209,6 +465,7 @@ fn initial_huffman_cost() -> u64 {
 }
 
 /// Huffman tree cost from RLE stats (matches libwebp's FinalHuffmanCost).
+#[inline]
 fn final_huffman_cost(stats: &Streaks) -> u64 {
     let mut retval = initial_huffman_cost();
 
@@ -254,6 +511,7 @@ pub fn population_cost(population: &[u32]) -> (u64, Option<u16>, bool) {
 }
 
 /// Cost to encode two populations combined (without modifying them).
+#[inline]
 fn combined_entropy(x: &[u32], y: &[u32]) -> u64 {
     let (bit_entropy, stats) = get_combined_entropy_unrefined(x, y);
     bits_entropy_refine(&bit_entropy) + final_huffman_cost(&stats)
@@ -311,6 +569,7 @@ pub fn compute_histogram_cost(h: &Histogram) -> HistogramCosts {
 
 /// Get combined entropy cost of two histograms for a single type index.
 /// Fast path: handles trivial/unused cases without computation.
+#[inline]
 fn get_combined_cost_for_type(
     h1: &Histogram,
     h1_costs: &HistogramCosts,

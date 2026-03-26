@@ -1340,6 +1340,10 @@ fn validate_buffer_size(
 
 /// Encode image data losslessly with the indicated color type.
 ///
+/// Uses the full VP8L pipeline (LZ77, histogram clustering, transforms)
+/// for main image encoding. Falls back to a simple literal-only encoder
+/// for alpha plane encoding (implicit_dimensions = true).
+///
 /// # Panics
 ///
 /// Panics if the image data is not of the indicated dimensions.
@@ -1355,8 +1359,6 @@ pub(crate) fn encode_frame_lossless(
     implicit_dimensions: bool,
     stop: &dyn enough::Stop,
 ) -> Result<(), EncodeError> {
-    let w = &mut BitWriter::new(writer);
-
     let (is_color, is_alpha, bytes_per_pixel) = match color {
         PixelLayout::L8 => (false, false, 1),
         PixelLayout::La8 => (false, true, 2),
@@ -1392,6 +1394,30 @@ pub(crate) fn encode_frame_lossless(
     if width == 0 || width > 16384 || height == 0 || height > 16384 {
         return Err(EncodeError::InvalidDimensions);
     }
+
+    // For main image encoding (not alpha plane), use the full VP8L pipeline.
+    if !implicit_dimensions && is_color {
+        // Convert to contiguous RGBA or RGB for encode_vp8l
+        let (pixels, has_alpha) = convert_to_contiguous(data, width, height, stride, color);
+
+        // Build VP8L config from params
+        let quality = params.lossy_quality; // quality field controls lossless effort
+        let method = params.method;
+        let vp8l_config = super::vp8l::Vp8lConfig {
+            quality: super::vp8l::Vp8lQuality { quality, method },
+            ..super::vp8l::Vp8lConfig::default()
+        };
+
+        let vp8l_data =
+            super::vp8l::encode_vp8l(&pixels, width, height, has_alpha, &vp8l_config, stop)?;
+        writer.extend_from_slice(&vp8l_data);
+        return Ok(());
+    }
+
+    // Fallback: simple literal-only encoder for alpha planes and grayscale.
+    // This is fast but produces larger files; used only for implicit_dimensions
+    // (alpha plane of lossy+alpha encoding) and non-color images (L8, La8).
+    let w = &mut BitWriter::new(writer);
 
     if !implicit_dimensions {
         w.write_bits(0x2f, 8); // signature
@@ -1663,6 +1689,108 @@ pub(crate) fn encode_frame_lossless(
 
     w.flush();
     Ok(())
+}
+
+/// Convert pixel data to contiguous RGBA or RGB for encode_vp8l.
+///
+/// Returns (pixel_data, has_alpha).
+fn convert_to_contiguous(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    stride: usize,
+    color: PixelLayout,
+) -> (Vec<u8>, bool) {
+    let ww = width as usize;
+    let hh = height as usize;
+    let npixels = ww * hh;
+    let bpp = color.bytes_per_pixel();
+    let stride_bytes = stride * bpp;
+    let row_bytes = ww * bpp;
+
+    match color {
+        PixelLayout::Rgb8 => {
+            let mut out = alloc::vec![0u8; npixels * 3];
+            for y in 0..hh {
+                out[y * ww * 3..(y + 1) * ww * 3]
+                    .copy_from_slice(&data[y * stride_bytes..y * stride_bytes + row_bytes]);
+            }
+            (out, false)
+        }
+        PixelLayout::Rgba8 => {
+            let mut out = alloc::vec![0u8; npixels * 4];
+            for y in 0..hh {
+                out[y * ww * 4..(y + 1) * ww * 4]
+                    .copy_from_slice(&data[y * stride_bytes..y * stride_bytes + row_bytes]);
+            }
+            (out, true)
+        }
+        PixelLayout::Bgr8 => {
+            // Convert BGR to RGB
+            let mut out = alloc::vec![0u8; npixels * 3];
+            for y in 0..hh {
+                let src = &data[y * stride_bytes..y * stride_bytes + row_bytes];
+                let dst = &mut out[y * ww * 3..(y + 1) * ww * 3];
+                for (d, s) in dst.chunks_exact_mut(3).zip(src.chunks_exact(3)) {
+                    d[0] = s[2]; // R
+                    d[1] = s[1]; // G
+                    d[2] = s[0]; // B
+                }
+            }
+            (out, false)
+        }
+        PixelLayout::Bgra8 => {
+            // Convert BGRA to RGBA
+            let mut out = alloc::vec![0u8; npixels * 4];
+            for y in 0..hh {
+                garb::bytes::bgra_to_rgba(
+                    &data[y * stride_bytes..y * stride_bytes + row_bytes],
+                    &mut out[y * ww * 4..(y + 1) * ww * 4],
+                )
+                .expect("validated buffer sizes");
+            }
+            (out, true)
+        }
+        PixelLayout::Argb8 => {
+            // Convert ARGB to RGBA
+            let mut out = alloc::vec![0u8; npixels * 4];
+            for y in 0..hh {
+                garb::bytes::argb_to_rgba(
+                    &data[y * stride_bytes..y * stride_bytes + row_bytes],
+                    &mut out[y * ww * 4..(y + 1) * ww * 4],
+                )
+                .expect("validated buffer sizes");
+            }
+            (out, true)
+        }
+        PixelLayout::L8 => {
+            // Grayscale → RGB
+            let mut out = alloc::vec![0u8; npixels * 3];
+            for y in 0..hh {
+                let src = &data[y * stride_bytes..y * stride_bytes + ww];
+                let dst = &mut out[y * ww * 3..(y + 1) * ww * 3];
+                for (d, &s) in dst.chunks_exact_mut(3).zip(src.iter()) {
+                    d[0] = s;
+                    d[1] = s;
+                    d[2] = s;
+                }
+            }
+            (out, false)
+        }
+        PixelLayout::La8 => {
+            // Grayscale+Alpha → RGBA
+            let mut out = alloc::vec![0u8; npixels * 4];
+            for y in 0..hh {
+                garb::bytes::gray_alpha_to_rgba(
+                    &data[y * stride_bytes..y * stride_bytes + row_bytes],
+                    &mut out[y * ww * 4..(y + 1) * ww * 4],
+                )
+                .expect("validated buffer sizes");
+            }
+            (out, true)
+        }
+        PixelLayout::Yuv420 => unreachable!(),
+    }
 }
 
 /// Quantize alpha values to `num_levels` distinct values using k-means clustering.

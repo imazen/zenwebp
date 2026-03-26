@@ -253,6 +253,9 @@ fn cluster_histograms(
         let num_tries_no_success = outer_iters / 2;
         let mut tries_with_no_success = 0usize;
 
+        // Reusable buffer for active indices — avoids Vec alloc per iteration
+        let mut active_indices: Vec<usize> = (0..n).filter(|&i| active[i]).collect();
+
         for _iter in 0..outer_iters {
             if num_active < 2 || num_active <= target_size {
                 break;
@@ -262,8 +265,6 @@ fn cluster_histograms(
                 break;
             }
 
-            // Build active index list for this iteration
-            let active_indices: Vec<usize> = (0..n).filter(|&i| active[i]).collect();
             let size = active_indices.len();
             if size < 2 {
                 break;
@@ -326,6 +327,9 @@ fn cluster_histograms(
 
                 num_active -= 1;
                 tries_with_no_success = 0; // Reset on success
+
+                // Rebuild active indices after merge (remove best_j)
+                active_indices.retain(|&i| i != best_j);
             }
         }
     }

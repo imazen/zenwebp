@@ -492,14 +492,10 @@ fn color_transform_delta(color_pred: i8, color: i8) -> i32 {
 }
 
 /// Compute v * log2(v) in fixed-point (matching libwebp's VP8LFastSLog2).
-/// Returns 0 for v == 0.
+/// Delegates to the entropy module's optimized lookup-table version.
 #[inline]
 fn fast_slog2(v: u32) -> u64 {
-    if v == 0 {
-        return 0;
-    }
-    let vf = v as f64;
-    (vf * libm::log2(vf) * (1u64 << LOG_2_PRECISION_BITS) as f64) as u64
+    super::entropy::fast_slog2_public(v)
 }
 
 /// Combined Shannon entropy of distributions X and X+Y (matching libwebp).

@@ -489,6 +489,82 @@ fn predictor_gradient_with_subtract_green() {
     );
 }
 
+// --- Method parameter affects backward references ---
+
+#[test]
+fn method_0_differs_from_method_4() {
+    // Use an image with repeating patterns where color cache and TraceBackwards
+    // produce meaningfully different backward references than greedy-only.
+    // A gradient-like image with some repetition is ideal.
+    let (w, h) = (128u32, 128u32);
+    let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+    let mut seed = 7u64;
+    for y in 0..h {
+        for x in 0..w {
+            // Mix of gradients and semi-random patterns to create LZ77 opportunities
+            // that TraceBackwards can optimize
+            let r = ((x.wrapping_mul(3).wrapping_add(y)) & 0xFF) as u8;
+            let g = ((y.wrapping_mul(5).wrapping_add(x * 2)) & 0xFF) as u8;
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let b = ((seed >> 40) as u8) & 0x3F | (((x + y) & 0xFF) as u8 & 0xC0);
+            rgb.push(r);
+            rgb.push(g);
+            rgb.push(b);
+        }
+    }
+
+    let config_m0 = Vp8lConfig {
+        quality: zenwebp::encoder::vp8l::Vp8lQuality {
+            quality: 75,
+            method: 0,
+        },
+        ..Default::default()
+    };
+    let config_m4 = Vp8lConfig {
+        quality: zenwebp::encoder::vp8l::Vp8lQuality {
+            quality: 75,
+            method: 4,
+        },
+        ..Default::default()
+    };
+
+    let vp8l_m0 = encode_vp8l(&rgb, w, h, false, &config_m0, &enough::Unstoppable)
+        .expect("method 0 encoding failed");
+    let vp8l_m4 = encode_vp8l(&rgb, w, h, false, &config_m4, &enough::Unstoppable)
+        .expect("method 4 encoding failed");
+
+    // Method 0 skips TraceBackwards and color cache, so output should differ
+    assert_ne!(
+        vp8l_m0,
+        vp8l_m4,
+        "method 0 and method 4 should produce different VP8L output \
+         (m0={} bytes, m4={} bytes)",
+        vp8l_m0.len(),
+        vp8l_m4.len(),
+    );
+
+    // Both must still roundtrip correctly
+    assert_lossless_roundtrip(&rgb, w, h, &config_m0);
+    assert_lossless_roundtrip(&rgb, w, h, &config_m4);
+}
+
+#[test]
+fn all_methods_roundtrip_correctly() {
+    let rgb = bidirectional_gradient(64, 64);
+    let (w, h) = (64u32, 64u32);
+
+    for method in 0..=6u8 {
+        let config = Vp8lConfig {
+            quality: zenwebp::encoder::vp8l::Vp8lQuality {
+                quality: 75,
+                method,
+            },
+            ..Default::default()
+        };
+        assert_lossless_roundtrip(&rgb, w, h, &config);
+    }
+}
+
 // --- High-level API roundtrip ---
 
 #[test]
