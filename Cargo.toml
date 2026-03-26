@@ -24,7 +24,7 @@ hashbrown = { version = "0.16", default-features = false, features = ["default-h
 thiserror = { version = "2.0.18", default-features = false }
 whereat = { version = "0.1.4", default-features = false }
 libm = "0.2.16"
-zencodec = { version = "0.1.3", optional = true }
+zencodec = { version = "0.1.4", optional = true }
 zennode = { path = "../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 zenpixels = { version = "0.2.0", default-features = false, optional = true }
 self_cell = { version = "1.2", optional = true }
@@ -50,7 +50,6 @@ rgb = "0.8"
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 butteraugli = "0.8"
 codec-corpus = "1"
-criterion = { version = "0.8.1", features = ["html_reports"] }
 dssim-core = "3.4"
 fast-ssim2 = "0.6.5"
 imgref = "1.12"
@@ -59,7 +58,7 @@ webp = "0.3.1"
 webpx = "0.1.4"
 yuv = "0.8"
 # serde_json = "1"
-# zenbench = { path = "../zenbench" }
+zenbench = { version = "0.1.0", features = ["criterion-compat"] }
 zensim = "0.1"
 zensim-regress = "0.1"
 
