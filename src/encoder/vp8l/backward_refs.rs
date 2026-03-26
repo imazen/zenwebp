@@ -609,24 +609,24 @@ pub(super) fn apply_cache_to_refs(argb: &[u32], cache_bits: u8, refs: &mut Backw
 /// Get the best backward references for the image.
 ///
 /// Tries multiple LZ77 strategies and picks the best one.
-/// For quality >= 25, applies cost-based optimal parsing (TraceBackwards).
+/// For quality >= 25 and method >= 1, applies cost-based optimal parsing (TraceBackwards).
 /// Optionally applies color cache for further compression.
 ///
-/// Matches libwebp's GetBackwardReferences flow:
-/// 1. Try LZ77 Standard and RLE strategies
-/// 2. Pick best based on histogram entropy
-/// 3. For quality >= 25: apply TraceBackwards DP optimization
-/// 4. Estimate optimal color cache size
-/// 5. Apply cache to refs
-/// 6. Apply 2D locality transform
+/// Method controls backward reference strategy matching libwebp:
+/// - Method 0 (low_effort): no color cache, no TraceBackwards, Standard+RLE only
+/// - Method 1-4: color cache + TraceBackwards for quality >= 25
+/// - Method 5-6: same as 1-4 (multi-config already handled in encode.rs)
+///
+/// Matches libwebp's GetBackwardReferences / GetBackwardReferencesLowEffort flow.
 pub fn get_backward_references(
     argb: &[u32],
     width: usize,
     height: usize,
     quality: u8,
+    method: u8,
     cache_bits_max: u8,
 ) -> (BackwardRefs, u8) {
-    get_backward_references_inner(argb, width, height, quality, cache_bits_max, 0)
+    get_backward_references_inner(argb, width, height, quality, method, cache_bits_max, 0)
 }
 
 /// Get backward references with optional LZ77 Box for palette images.
@@ -635,10 +635,19 @@ pub fn get_backward_references_with_palette(
     width: usize,
     height: usize,
     quality: u8,
+    method: u8,
     cache_bits_max: u8,
     palette_size: usize,
 ) -> (BackwardRefs, u8) {
-    get_backward_references_inner(argb, width, height, quality, cache_bits_max, palette_size)
+    get_backward_references_inner(
+        argb,
+        width,
+        height,
+        quality,
+        method,
+        cache_bits_max,
+        palette_size,
+    )
 }
 
 fn get_backward_references_inner(
@@ -646,6 +655,7 @@ fn get_backward_references_inner(
     width: usize,
     height: usize,
     quality: u8,
+    method: u8,
     cache_bits_max: u8,
     palette_size: usize,
 ) -> (BackwardRefs, u8) {
@@ -654,6 +664,10 @@ fn get_backward_references_inner(
     if size == 0 {
         return (BackwardRefs::new(), 0);
     }
+
+    // Method 0 (low_effort): matching libwebp's GetBackwardReferencesLowEffort.
+    // No color cache, no TraceBackwards, Standard+RLE only, 2D locality applied.
+    let low_effort = method == 0;
 
     // Build hash chain
     let hash_chain = HashChain::new(argb, quality, width);
@@ -679,7 +693,8 @@ fn get_backward_references_inner(
     let mut best_cost = cost_lz77.min(cost_rle);
 
     // Try LZ77 Box for palette images (<=16 colors) — matching libwebp n_lz77s=2
-    if palette_size > 0 && palette_size <= 16 {
+    // Skip for method 0 (low_effort uses Standard+RLE only)
+    if !low_effort && palette_size > 0 && palette_size <= 16 {
         let refs_box = backward_references_lz77_box(argb, width, height, 0, &hash_chain);
         let histo_box = Histogram::from_refs_with_plane_codes(&refs_box, 0, width);
         let cost_box = estimate_histogram_bits(&histo_box);
@@ -689,6 +704,12 @@ fn get_backward_references_inner(
         }
     }
     let _ = best_cost; // suppress unused warning
+
+    // Method 0: no color cache, no TraceBackwards — just apply 2D locality and return
+    if low_effort {
+        apply_2d_locality(&mut best_refs, width);
+        return (best_refs, 0);
+    }
 
     // Determine initial color cache size from greedy refs
     let mut cache_bits = if cache_bits_max > 0 && quality > 25 {
@@ -825,7 +846,7 @@ mod tests {
             pixels.push(0xFF112233u32);
             pixels.push(0xFF445566u32);
         }
-        let (refs, _cache_bits) = get_backward_references(&pixels, 10, 20, 75, 10);
+        let (refs, _cache_bits) = get_backward_references(&pixels, 10, 20, 75, 4, 10);
         assert!(!refs.is_empty());
     }
 
