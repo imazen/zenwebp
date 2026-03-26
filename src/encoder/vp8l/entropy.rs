@@ -685,6 +685,57 @@ pub fn get_combined_histogram_cost(
     Some(cost)
 }
 
+/// Like `get_combined_histogram_cost` but also returns per-type costs.
+/// Used by histogram clustering to update costs after merge without recomputing
+/// from scratch (matching libwebp's `UpdateHistogramCost` pattern).
+pub fn get_combined_histogram_cost_with_detail(
+    h1: &Histogram,
+    h1_costs: &HistogramCosts,
+    h2: &Histogram,
+    h2_costs: &HistogramCosts,
+    cost_threshold: u64,
+) -> Option<(u64, [u64; 5])> {
+    if cost_threshold == 0 {
+        return None;
+    }
+
+    let mut cost = 0u64;
+    let mut per_type = [0u64; 5];
+    for i in 0..5 {
+        let c = get_combined_cost_for_type(h1, h1_costs, h2, h2_costs, i);
+        per_type[i] = c;
+        cost += c;
+        if cost >= cost_threshold {
+            return None;
+        }
+    }
+
+    Some((cost, per_type))
+}
+
+/// Build `HistogramCosts` from precomputed per-type costs (after a merge).
+/// Derives trivial_sym and is_used from the two source costs.
+pub fn costs_from_merge(
+    total: u64,
+    per_type: [u64; 5],
+    c1: &HistogramCosts,
+    c2: &HistogramCosts,
+) -> HistogramCosts {
+    let mut trivial_sym = [None; 5];
+    let mut is_used = [false; 5];
+    for i in 0..5 {
+        trivial_sym[i] = if c1.trivial_sym[i].is_some()
+            && c1.trivial_sym[i] == c2.trivial_sym[i]
+        {
+            c1.trivial_sym[i]
+        } else {
+            None
+        };
+        is_used[i] = c1.is_used[i] || c2.is_used[i];
+    }
+    HistogramCosts { total, per_type, trivial_sym, is_used }
+}
+
 /// Estimate bit cost for a histogram (matching libwebp's VP8LHistogramEstimateBits).
 ///
 /// Includes PopulationCost for all 5 types plus ExtraCost for prefix-coded

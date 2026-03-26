@@ -7,7 +7,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use super::entropy::{HistogramCosts, compute_histogram_cost, get_combined_histogram_cost};
+use super::entropy::{HistogramCosts, compute_histogram_cost, get_combined_histogram_cost, get_combined_histogram_cost_with_detail, costs_from_merge};
 use super::histogram::Histogram;
 use super::types::{BackwardRefs, PixOrCopy, subsample_size};
 
@@ -333,7 +333,7 @@ impl HistoQueue {
             return 0;
         }
 
-        if let Some(cost_combo) = get_combined_histogram_cost(
+        if let Some((cost_combo, per_type)) = get_combined_histogram_cost_with_detail(
             &histos[idx1],
             &costs[idx1],
             &histos[idx2],
@@ -346,7 +346,7 @@ impl HistoQueue {
                 idx2,
                 cost_diff,
                 cost_combo,
-                per_type_costs: [0; 5], // Not needed for stochastic
+                per_type_costs: per_type,
             };
             self.queue.push(pair);
             self.update_head(self.queue.len() - 1);
@@ -369,7 +369,7 @@ impl HistoQueue {
             return;
         }
 
-        if let Some(cost_combo) = get_combined_histogram_cost(
+        if let Some((cost_combo, per_type)) = get_combined_histogram_cost_with_detail(
             &histos[idx1],
             &costs[idx1],
             &histos[idx2],
@@ -385,7 +385,7 @@ impl HistoQueue {
                 idx2,
                 cost_diff,
                 cost_combo,
-                per_type_costs: [0; 5],
+                per_type_costs: per_type,
             };
             self.queue.push(pair);
             self.update_head(self.queue.len() - 1);
@@ -434,7 +434,7 @@ impl HistoQueue {
         if sum_cost <= 0 {
             return false;
         }
-        if let Some(cost_combo) = get_combined_histogram_cost(
+        if let Some((cost_combo, per_type)) = get_combined_histogram_cost_with_detail(
             &histos[pair.idx1],
             &costs[pair.idx1],
             &histos[pair.idx2],
@@ -443,6 +443,7 @@ impl HistoQueue {
         ) {
             pair.cost_diff = cost_combo as i64 - sum_cost;
             pair.cost_combo = cost_combo;
+            pair.per_type_costs = per_type;
             pair.cost_diff < 0
         } else {
             false
@@ -563,20 +564,21 @@ fn cluster_histograms(
                         div_round_i64(bit_cost_incoming as i64 * combine_cost_factor, 100) as u64
                     );
 
-                if get_combined_histogram_cost(
+                if let Some((combined_cost, per_type)) = get_combined_histogram_cost_with_detail(
                     &histos[first],
                     &costs[first],
                     &histos[i],
                     &costs[i],
                     cost_thresh_val,
                 )
-                .is_some()
                 {
-                    // Merge i into first
+                    // Merge i into first — use precomputed costs instead of recomputing
                     cluster_trace::inc_entropy_bin_merges();
+                    let first_costs = costs[first].clone();
+                    let i_costs = costs[i].clone();
                     let i_histo = histos[i].clone();
                     histos[first].add(&i_histo);
-                    costs[first] = compute_histogram_cost(&histos[first]);
+                    costs[first] = costs_from_merge(combined_cost, per_type, &first_costs, &i_costs);
                     active[i] = false;
 
                     // Remap all tiles pointing to i → first
@@ -677,13 +679,15 @@ fn cluster_histograms(
             let merge_idx2 = histo_queue.queue[0].idx2;
             cluster_trace::inc_stochastic_merges();
 
-            // Merge idx2 into idx1
+            // Merge idx2 into idx1 — use precomputed costs from queue
+            let best_pair = &histo_queue.queue[0];
+            let combined_cost = best_pair.cost_combo;
+            let per_type = best_pair.per_type_costs;
+            let c1 = costs[best_idx1].clone();
+            let c2 = costs[merge_idx2].clone();
             let j_histo = histos[merge_idx2].clone();
             histos[best_idx1].add(&j_histo);
-            // Update cost from the queue's precomputed combined cost
-            costs[best_idx1].total = histo_queue.queue[0].cost_combo;
-            // Recompute per-type costs for the merged histogram
-            costs[best_idx1] = compute_histogram_cost(&histos[best_idx1]);
+            costs[best_idx1] = costs_from_merge(combined_cost, per_type, &c1, &c2);
 
             active[merge_idx2] = false;
 
@@ -769,10 +773,14 @@ fn cluster_histograms(
             let best_idx2 = histo_queue.queue[0].idx2;
             cluster_trace::inc_greedy_merges();
 
-            // Merge idx2 into idx1
+            // Merge idx2 into idx1 — use precomputed costs from queue
+            let combined_cost = histo_queue.queue[0].cost_combo;
+            let per_type = histo_queue.queue[0].per_type_costs;
+            let c1 = costs[best_idx1].clone();
+            let c2 = costs[best_idx2].clone();
             let j_histo = histos[best_idx2].clone();
             histos[best_idx1].add(&j_histo);
-            costs[best_idx1] = compute_histogram_cost(&histos[best_idx1]);
+            costs[best_idx1] = costs_from_merge(combined_cost, per_type, &c1, &c2);
             active[best_idx2] = false;
 
             for m in mapping.iter_mut() {
