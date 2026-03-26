@@ -366,9 +366,10 @@ fn cluster_histograms(
                 // Try to merge with first histogram in bin
                 let bit_cost = costs[first].total;
                 let threshold = bit_cost + costs[i].total;
-                let cost_thresh_val = threshold.saturating_sub(
-                    div_round_i64(bit_cost as i64 * combine_cost_factor, 100) as u64,
-                );
+                let cost_thresh_val = threshold
+                    .saturating_sub(
+                        div_round_i64(bit_cost as i64 * combine_cost_factor, 100) as u64
+                    );
 
                 if get_combined_histogram_cost(
                     &histos[first],
@@ -460,8 +461,7 @@ fn cluster_histograms(
                 let idx1 = compact[ci1];
                 let idx2 = compact[ci2];
 
-                let curr_cost =
-                    histo_queue.push(&histos, &costs, idx1, idx2, best_cost.min(0));
+                let curr_cost = histo_queue.push(&histos, &costs, idx1, idx2, best_cost.min(0));
                 if curr_cost < 0 {
                     // Break if queue reached full capacity
                     if histo_queue.queue.len() >= histo_queue.max_size {
@@ -518,11 +518,7 @@ fn cluster_histograms(
 
                 if is_idx1_best || is_idx2_best {
                     // Fix index references
-                    HistoQueue::fix_pair_idx(
-                        &mut histo_queue.queue[j],
-                        merge_idx2,
-                        best_idx1,
-                    );
+                    HistoQueue::fix_pair_idx(&mut histo_queue.queue[j], merge_idx2, best_idx1);
                     // Re-evaluate cost
                     if !HistoQueue::update_pair(&histos, &costs, &mut histo_queue.queue[j]) {
                         histo_queue.pop_at(j);
@@ -560,12 +556,7 @@ fn cluster_histograms(
 
         for ai in 0..active_n {
             for aj in (ai + 1)..active_n {
-                histo_queue.push_greedy(
-                    &histos,
-                    &costs,
-                    active_indices[ai],
-                    active_indices[aj],
-                );
+                histo_queue.push_greedy(&histos, &costs, active_indices[ai], active_indices[aj]);
             }
         }
 
@@ -590,8 +581,10 @@ fn cluster_histograms(
             let mut j = 0usize;
             while j < histo_queue.queue.len() {
                 let p = &histo_queue.queue[j];
-                if p.idx1 == best_idx1 || p.idx2 == best_idx1
-                    || p.idx1 == best_idx2 || p.idx2 == best_idx2
+                if p.idx1 == best_idx1
+                    || p.idx2 == best_idx1
+                    || p.idx1 == best_idx2
+                    || p.idx2 == best_idx2
                 {
                     histo_queue.pop_at(j);
                 } else {
