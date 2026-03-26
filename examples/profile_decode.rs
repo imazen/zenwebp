@@ -39,9 +39,20 @@ fn main() {
 
     eprintln!("WebP size: {} bytes", webp.len());
 
-    // Decode 10 times for stable profiling
-    for _ in 0..10 {
+    let iterations = if args.len() > 2 {
+        args[2].parse::<u32>().unwrap_or(10)
+    } else {
+        10
+    };
+
+    // Warm up
+    std::hint::black_box(zenwebp::decode_rgb(&webp).unwrap());
+
+    let start = std::time::Instant::now();
+    for _ in 0..iterations {
         std::hint::black_box(zenwebp::decode_rgb(&webp).unwrap());
     }
-    eprintln!("Done");
+    let elapsed = start.elapsed();
+    let per_decode = elapsed / iterations;
+    eprintln!("Decoded {} times in {:?} ({:?}/decode)", iterations, elapsed, per_decode);
 }
