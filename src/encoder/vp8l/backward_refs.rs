@@ -453,23 +453,23 @@ fn calculate_best_cache_size(
     // Build histograms for all cache sizes simultaneously
     let mut histos: Vec<Histogram> = (0..=cache_bits_max).map(Histogram::new).collect();
 
-    // Build color caches for sizes 1..=cache_bits_max
-    let mut caches: Vec<ColorCache> = (0..=cache_bits_max)
-        .map(|bits| {
-            if bits > 0 {
-                ColorCache::new(bits)
-            } else {
-                ColorCache::new(1) // Dummy, not used
-            }
-        })
-        .collect();
+    // Flat cache storage: one contiguous buffer for all cache sizes.
+    // Cache for size i starts at offset (1<<1 + 1<<2 + ... + 1<<(i-1)) = (1<<i) - 2.
+    // We use a simpler layout: cache_flat[cache_offset[i]..cache_offset[i] + (1<<i)].
+    let mut cache_offsets = [0usize; 12]; // indices 0..=11
+    let mut total_cache = 0usize;
+    for i in 1..=cache_bits_max as usize {
+        cache_offsets[i] = total_cache;
+        total_cache += 1 << i;
+    }
+    let mut cache_flat = alloc::vec![0u32; total_cache];
 
+    let hash_shift_max = 32 - cache_bits_max as u32;
     let mut argb_idx = 0usize;
 
     for token in refs.iter() {
         match *token {
             PixOrCopy::Literal(_) | PixOrCopy::CacheIdx(_) => {
-                // Get the actual pixel value (from token if literal, from argb if cache idx)
                 let pix = if let PixOrCopy::Literal(p) = *token {
                     p
                 } else {
@@ -487,25 +487,22 @@ fn calculate_best_cache_size(
                 histos[0].blue[b] += 1;
                 histos[0].alpha[a] += 1;
 
-                // For cache_bits > 0, check cache hit
-                let key_max = (COLOR_CACHE_MULT.wrapping_mul(pix)) >> (32 - cache_bits_max);
-                let mut key = key_max;
+                // For cache_bits > 0, check cache hit using precomputed key.
+                let mut key = (COLOR_CACHE_MULT.wrapping_mul(pix) >> hash_shift_max) as usize;
 
-                for i in (1..=cache_bits_max).rev() {
-                    let idx = i as usize;
-                    if caches[idx].lookup(pix).is_some() {
-                        // Cache hit - count as cache index
-                        let cache_code = NUM_LITERAL_CODES + NUM_LENGTH_CODES + key as usize;
-                        if cache_code < histos[idx].literal.len() {
-                            histos[idx].literal[cache_code] += 1;
-                        }
+                for i in (1..=cache_bits_max as usize).rev() {
+                    let cache_base = cache_offsets[i];
+                    if cache_flat[cache_base + key] == pix {
+                        // Cache hit
+                        let cache_code = NUM_LITERAL_CODES + NUM_LENGTH_CODES + key;
+                        histos[i].literal[cache_code] += 1;
                     } else {
-                        // Cache miss - count as literal, insert into cache
-                        caches[idx].insert(pix);
-                        histos[idx].literal[g] += 1;
-                        histos[idx].red[r] += 1;
-                        histos[idx].blue[b] += 1;
-                        histos[idx].alpha[a] += 1;
+                        // Cache miss
+                        cache_flat[cache_base + key] = pix;
+                        histos[i].literal[g] += 1;
+                        histos[i].red[r] += 1;
+                        histos[i].blue[b] += 1;
+                        histos[i].alpha[a] += 1;
                     }
                     key >>= 1;
                 }
@@ -514,20 +511,20 @@ fn calculate_best_cache_size(
             }
             PixOrCopy::Copy { len, .. } => {
                 let len = len as usize;
-                // Length codes go in literal histogram for all sizes
                 let (len_code, _) = super::histogram::length_to_code(len as u16);
                 for h in histos.iter_mut() {
                     h.literal[NUM_LITERAL_CODES + len_code as usize] += 1;
                 }
 
-                // Update caches with copied pixels
                 let mut prev_argb = argb[argb_idx] ^ 0xFFFFFFFF;
                 for k in 0..len {
                     let pix = argb[argb_idx + k];
                     if pix != prev_argb {
-                        // Only update when color changes (optimization)
-                        for i in (1..=cache_bits_max).rev() {
-                            caches[i as usize].insert(pix);
+                        let mut key =
+                            (COLOR_CACHE_MULT.wrapping_mul(pix) >> hash_shift_max) as usize;
+                        for i in (1..=cache_bits_max as usize).rev() {
+                            cache_flat[cache_offsets[i] + key] = pix;
+                            key >>= 1;
                         }
                         prev_argb = pix;
                     }

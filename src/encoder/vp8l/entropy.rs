@@ -276,7 +276,8 @@ fn entropy_unrefined_helper(
 
 /// Calculate entropy + streak stats for a single distribution (matches VP8LGetEntropyUnrefined).
 ///
-/// Optimized with batch zero-skipping for sparse histograms.
+/// Simple loop matching libwebp's GetEntropyUnrefined_C exactly.
+/// Uses iterator to eliminate bounds checks.
 fn get_entropy_unrefined(x: &[u32]) -> (BitEntropy, Streaks) {
     let mut bit_entropy = BitEntropy::default();
     let mut stats = Streaks::default();
@@ -289,42 +290,7 @@ fn get_entropy_unrefined(x: &[u32]) -> (BitEntropy, Streaks) {
     let mut i_prev = 0usize;
     let mut x_prev = x[0];
 
-    let chunks_end = 1 + ((len.saturating_sub(2)) / 8) * 8;
-    let mut i = 1usize;
-
-    while i < chunks_end {
-        let or_all =
-            x[i] | x[i + 1] | x[i + 2] | x[i + 3] | x[i + 4] | x[i + 5] | x[i + 6] | x[i + 7];
-
-        if or_all == 0 {
-            if x_prev == 0 {
-                i += 8;
-                continue;
-            }
-            entropy_unrefined_helper(0, i, &mut x_prev, &mut i_prev, &mut bit_entropy, &mut stats);
-            i += 8;
-            continue;
-        }
-
-        let end = i + 8;
-        while i < end {
-            let xv = x[i];
-            if xv != x_prev {
-                entropy_unrefined_helper(
-                    xv,
-                    i,
-                    &mut x_prev,
-                    &mut i_prev,
-                    &mut bit_entropy,
-                    &mut stats,
-                );
-            }
-            i += 1;
-        }
-    }
-
-    while i < len {
-        let xv = x[i];
+    for (i, &xv) in x.iter().enumerate().skip(1) {
         if xv != x_prev {
             entropy_unrefined_helper(
                 xv,
@@ -335,7 +301,6 @@ fn get_entropy_unrefined(x: &[u32]) -> (BitEntropy, Streaks) {
                 &mut stats,
             );
         }
-        i += 1;
     }
 
     entropy_unrefined_helper(
