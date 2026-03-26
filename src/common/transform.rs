@@ -47,7 +47,7 @@ pub(crate) fn idct4x4_with_token(block: &mut [i32], simd_token: super::predictio
     }
 }
 
-#[archmage::autoversion(cfg(simd))]
+#[cfg_attr(feature = "simd", archmage::autoversion(cfg(simd)))]
 #[cfg_attr(feature = "simd", allow(dead_code))]
 pub(crate) fn idct4x4_scalar(block: &mut [i32]) {
     // The intermediate results may overflow the types, so we stretch the type.
@@ -96,7 +96,7 @@ pub(crate) fn idct4x4_scalar(block: &mut [i32]) {
 }
 
 // 14.3 inverse walsh-hadamard transform, used in decoding
-#[archmage::autoversion(cfg(simd))]
+#[cfg_attr(feature = "simd", archmage::autoversion(cfg(simd)))]
 pub(crate) fn iwht4x4(block: &mut [i32]) {
     // Perform one length check up front to avoid subsequent bounds checks in this function
     assert!(block.len() >= 16);
@@ -131,7 +131,7 @@ pub(crate) fn iwht4x4(block: &mut [i32]) {
     }
 }
 
-#[archmage::autoversion(cfg(simd))]
+#[cfg_attr(feature = "simd", archmage::autoversion(cfg(simd)))]
 pub(crate) fn wht4x4(block: &mut [i32; 16]) {
     // The intermediate results may overflow the types, so we stretch the type.
     fn fetch(block: &[i32], idx: usize) -> i64 {
@@ -192,7 +192,7 @@ pub(crate) fn dct4x4(block: &mut [i32; 16]) {
 }
 
 // Scalar DCT implementation for reference and non-SIMD builds
-#[archmage::autoversion(cfg(simd))]
+#[cfg_attr(feature = "simd", archmage::autoversion(cfg(simd)))]
 #[cfg_attr(feature = "simd", allow(dead_code))]
 pub(crate) fn dct4x4_scalar(block: &mut [i32; 16]) {
     // The intermediate results may overflow the types, so we stretch the type.

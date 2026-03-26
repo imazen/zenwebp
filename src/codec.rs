@@ -145,6 +145,17 @@ impl WebpEncoderConfig {
         self
     }
 
+    /// Preserve exact RGB values under fully transparent pixels (lossless only).
+    ///
+    /// No-op if the config is lossy.
+    #[must_use]
+    pub fn with_exact(mut self, exact: bool) -> Self {
+        if let crate::encoder::config::EncoderConfig::Lossless(ref mut cfg) = self.inner {
+            *cfg = cfg.clone().with_exact(exact);
+        }
+        self
+    }
+
     /// Set filter strength (lossy only, 0-100).
     #[must_use]
     pub fn with_filter_strength(mut self, strength: u8) -> Self {

@@ -525,7 +525,7 @@ fn fill_row_fancy_with_2_uv_rows_wasm<const BPP: usize>(
     }
 }
 
-#[archmage::autoversion(cfg(simd))]
+#[cfg_attr(feature = "simd", archmage::autoversion(cfg(simd)))]
 fn fill_row_fancy_with_2_uv_rows_scalar<const BPP: usize>(
     row_buffer: &mut [u8],
     y_row: &[u8],
@@ -593,7 +593,7 @@ fn fill_row_fancy_with_2_uv_rows_scalar<const BPP: usize>(
     }
 }
 
-#[archmage::autoversion(cfg(simd))]
+#[cfg_attr(feature = "simd", archmage::autoversion(cfg(simd)))]
 fn fill_row_fancy_with_1_uv_row<const BPP: usize>(
     row_buffer: &mut [u8],
     y_row: &[u8],
@@ -703,7 +703,7 @@ fn fill_rgba_row_simple<const BPP: usize>(
     rgba: &mut [u8],
 ) {
     // Use SIMD for RGB (BPP=3) if available and row is wide enough
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "simd", feature = "std", target_arch = "x86_64"))]
     if BPP == 3 && y_vec.len() >= 8 && is_x86_feature_detected!("sse2") {
         fill_rgba_row_simple_simd::<BPP>(y_vec, u_vec, v_vec, rgba);
         return;
