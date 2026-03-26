@@ -271,6 +271,7 @@ fn get_combined_entropy_unrefined(x: &[u32], y: &[u32]) -> (BitEntropy, Streaks)
 }
 
 /// Refine entropy using perceptual adjustments (matches BitsEntropyRefine).
+#[inline]
 fn bits_entropy_refine(entropy: &BitEntropy) -> u64 {
     if entropy.nonzeros < 5 {
         if entropy.nonzeros <= 1 {
@@ -316,6 +317,7 @@ fn initial_huffman_cost() -> u64 {
 }
 
 /// Huffman tree cost from RLE stats (matches libwebp's FinalHuffmanCost).
+#[inline]
 fn final_huffman_cost(stats: &Streaks) -> u64 {
     let mut retval = initial_huffman_cost();
 
@@ -361,6 +363,7 @@ pub fn population_cost(population: &[u32]) -> (u64, Option<u16>, bool) {
 }
 
 /// Cost to encode two populations combined (without modifying them).
+#[inline]
 fn combined_entropy(x: &[u32], y: &[u32]) -> u64 {
     let (bit_entropy, stats) = get_combined_entropy_unrefined(x, y);
     bits_entropy_refine(&bit_entropy) + final_huffman_cost(&stats)
@@ -418,6 +421,7 @@ pub fn compute_histogram_cost(h: &Histogram) -> HistogramCosts {
 
 /// Get combined entropy cost of two histograms for a single type index.
 /// Fast path: handles trivial/unused cases without computation.
+#[inline]
 fn get_combined_cost_for_type(
     h1: &Histogram,
     h1_costs: &HistogramCosts,
