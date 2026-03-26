@@ -686,6 +686,7 @@ fn encode_argb_single_config(
             enc_width,
             enc_height,
             config.quality.quality,
+            config.quality.method,
             cache_bits_max,
             enc_palette_size,
         )
@@ -695,6 +696,7 @@ fn encode_argb_single_config(
             enc_width,
             enc_height,
             config.quality.quality,
+            config.quality.method,
             cache_bits_max,
         )
     };
