@@ -58,7 +58,7 @@ webp = "0.3.1"
 webpx = "0.1.4"
 yuv = "0.8"
 # serde_json = "1"
-zenbench = { version = "0.1.0", features = ["criterion-compat"] }
+zenbench = { version = "0.1.1", features = ["criterion-compat"] }
 zensim = "0.1"
 zensim-regress = "0.1"
 
