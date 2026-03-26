@@ -641,6 +641,11 @@ pub fn get_backward_references_with_palette(
     get_backward_references_inner(argb, width, height, quality, cache_bits_max, palette_size)
 }
 
+/// LZ77 type flags (matching libwebp's VP8LLZ77Type enum).
+const LZ77_STANDARD: u32 = 1;
+const LZ77_RLE: u32 = 2;
+const LZ77_BOX: u32 = 4;
+
 fn get_backward_references_inner(
     argb: &[u32],
     width: usize,
@@ -658,93 +663,125 @@ fn get_backward_references_inner(
     // Build hash chain
     let hash_chain = HashChain::new(argb, quality, width);
 
-    // Try LZ77 Standard (no cache initially - find best LZ77 first)
-    let refs_lz77 = backward_references_lz77(argb, width, height, 0, &hash_chain);
+    // Determine which LZ77 types to try (matching libwebp's n_lz77s logic).
+    // First sub-config always tries Standard + RLE.
+    // Second sub-config (for palette images <=16 colors) tries Box.
+    let lz77_types_to_try = LZ77_STANDARD | LZ77_RLE;
+    let try_box = palette_size > 0 && palette_size <= 16;
 
-    // Try RLE
-    let refs_rle = backward_references_rle(argb, width, height, 0);
+    // Phase 1: Find best LZ77 type with cache optimization.
+    // Matches libwebp's GetBackwardReferences: for each LZ77 type, compute
+    // refs with cache_bits=0, then evaluate with optimal cache.
+    let mut histo = Histogram::new(MAX_COLOR_CACHE_BITS);
+    let mut best_refs = BackwardRefs::new();
+    let mut cache_bits_best = 0u8;
+    let mut best_cost = u64::MAX;
+    let mut best_lz77_type = 0u32;
 
-    // Pick best strategy based on histogram entropy
-    let histo_lz77 = Histogram::from_refs_with_plane_codes(&refs_lz77, 0, width);
-    let histo_rle = Histogram::from_refs_with_plane_codes(&refs_rle, 0, width);
+    // Box hash chain (lazily initialized)
+    let mut hash_chain_box: Option<HashChain> = None;
 
-    let cost_lz77 = estimate_histogram_bits(&histo_lz77);
-    let cost_rle = estimate_histogram_bits(&histo_rle);
+    let mut lz77_type = 1u32;
+    let mut types_remaining = lz77_types_to_try;
+    while types_remaining != 0 {
+        if types_remaining & lz77_type == 0 {
+            lz77_type <<= 1;
+            continue;
+        }
+        types_remaining &= !lz77_type;
 
-    let mut best_refs = if cost_rle < cost_lz77 {
-        refs_rle
-    } else {
-        refs_lz77
-    };
-    let mut best_cost = cost_lz77.min(cost_rle);
+        let refs_tmp = match lz77_type {
+            LZ77_RLE => backward_references_rle(argb, width, height, 0),
+            LZ77_STANDARD => backward_references_lz77(argb, width, height, 0, &hash_chain),
+            _ => continue,
+        };
 
-    // Try LZ77 Box for palette images (<=16 colors) — matching libwebp n_lz77s=2
-    if palette_size > 0 && palette_size <= 16 {
+        // Evaluate with color cache
+        let mut cache_bits = cache_bits_max;
+        if cache_bits > 0 {
+            cache_bits = calculate_best_cache_size(argb, quality, &refs_tmp, cache_bits_max);
+        }
+
+        let mut refs_with_cache = refs_tmp;
+        if cache_bits > 0 {
+            apply_cache_to_refs(argb, cache_bits, &mut refs_with_cache);
+        }
+
+        histo.clear();
+        histo = Histogram::from_refs_with_plane_codes(&refs_with_cache, cache_bits, width);
+        let bit_cost = estimate_histogram_bits(&histo);
+
+        if bit_cost < best_cost {
+            best_cost = bit_cost;
+            best_refs = refs_with_cache;
+            cache_bits_best = cache_bits;
+            best_lz77_type = lz77_type;
+        }
+
+        lz77_type <<= 1;
+    }
+
+    // Try LZ77 Box for palette images
+    if try_box {
         let refs_box = backward_references_lz77_box(argb, width, height, 0, &hash_chain);
-        let histo_box = Histogram::from_refs_with_plane_codes(&refs_box, 0, width);
-        let cost_box = estimate_histogram_bits(&histo_box);
-        if cost_box < best_cost {
-            best_refs = refs_box;
-            best_cost = cost_box;
+
+        let mut cache_bits = cache_bits_max;
+        if cache_bits > 0 {
+            cache_bits = calculate_best_cache_size(argb, quality, &refs_box, cache_bits_max);
+        }
+
+        let mut refs_with_cache = refs_box;
+        if cache_bits > 0 {
+            apply_cache_to_refs(argb, cache_bits, &mut refs_with_cache);
+        }
+
+        histo = Histogram::from_refs_with_plane_codes(&refs_with_cache, cache_bits, width);
+        let bit_cost = estimate_histogram_bits(&histo);
+
+        if bit_cost < best_cost {
+            best_cost = bit_cost;
+            best_refs = refs_with_cache;
+            cache_bits_best = cache_bits;
+            best_lz77_type = LZ77_BOX;
+
+            // Save box chain for potential TraceBackwards use
+            hash_chain_box = Some(HashChain::empty(size));
+            // Rebuild box chain since we need it for TraceBackwards
         }
     }
-    let _ = best_cost; // suppress unused warning
 
-    // Determine initial color cache size from greedy refs
-    let mut cache_bits = if cache_bits_max > 0 && quality > 25 {
-        calculate_best_cache_size(argb, quality, &best_refs, cache_bits_max)
-    } else {
-        0
-    };
-
-    // Apply cache to refs before TraceBackwards (matching libwebp's flow).
-    // The CostModel needs cache entries to accurately estimate cache costs.
-    if cache_bits > 0 {
-        apply_cache_to_refs(argb, cache_bits, &mut best_refs);
-    }
-
-    // For quality >= 25, apply cost-based optimal parsing (TraceBackwards).
-    // This uses DP to find the globally optimal literal/copy sequence
-    // based on a cost model derived from the cache-applied greedy result.
-    if quality >= 25 {
-        let optimized =
-            trace_backwards_optimize(argb, width, height, cache_bits, &hash_chain, &best_refs);
-
-        // Use optimized result if it improves entropy
-        let histo_orig = Histogram::from_refs_with_plane_codes(&best_refs, cache_bits, width);
-        let histo_opt = Histogram::from_refs_with_plane_codes(&optimized, cache_bits, width);
-        let cost_orig = estimate_histogram_bits(&histo_orig);
-        let cost_opt = estimate_histogram_bits(&histo_opt);
-
-        if cost_opt <= cost_orig {
-            best_refs = optimized;
-            // Recalculate cache from optimized refs, re-apply if different
-            if cache_bits_max > 0 {
-                let new_cache_bits =
-                    calculate_best_cache_size(argb, quality, &best_refs, cache_bits_max);
-                if new_cache_bits != cache_bits {
-                    // Strip old cache entries and re-apply with new bits
-                    strip_cache_from_refs(argb, &mut best_refs);
-                    cache_bits = new_cache_bits;
-                    if cache_bits > 0 {
-                        apply_cache_to_refs(argb, cache_bits, &mut best_refs);
-                    }
-                }
-            }
+    // Phase 2: Improve on simple LZ77 with TraceBackwards (quality >= 25).
+    // Matches libwebp: only for Standard or Box LZ77 types.
+    if (best_lz77_type == LZ77_STANDARD || best_lz77_type == LZ77_BOX) && quality >= 25 {
+        let hash_chain_for_tb = if best_lz77_type == LZ77_BOX {
+            hash_chain_box.as_ref().unwrap_or(&hash_chain)
         } else {
-            // Keep greedy result (already has cache applied)
+            &hash_chain
+        };
+
+        let optimized = trace_backwards_optimize(
+            argb,
+            width,
+            height,
+            cache_bits_best,
+            hash_chain_for_tb,
+            &best_refs,
+        );
+
+        // Compare TraceBackwards result against current best
+        histo = Histogram::from_refs_with_plane_codes(&optimized, cache_bits_best, width);
+        let cost_trace = estimate_histogram_bits(&histo);
+
+        if cost_trace < best_cost {
+            best_refs = optimized;
+            // Note: do NOT recalculate cache_bits_best (matching libwebp)
         }
     }
 
-    // If no TraceBackwards was done (quality < 25), apply cache now
-    if quality < 25 && cache_bits > 0 {
-        apply_cache_to_refs(argb, cache_bits, &mut best_refs);
-    }
-
-    // Apply 2D locality transform (convert raw distances to plane codes)
+    // Phase 3: Apply 2D locality transform
     apply_2d_locality(&mut best_refs, width);
 
-    (best_refs, cache_bits)
+    (best_refs, cache_bits_best)
 }
 
 /// Simple backward reference finder for very low quality.
