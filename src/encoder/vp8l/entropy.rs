@@ -107,14 +107,20 @@ const K_LOG2_TABLE: [u32; 256] = [
     66966204, 67013944, 67061497,
 ];
 
-/// v * log2(v) in fixed-point. Table lookup for v < 256, bit-manipulation for larger.
-/// Matches libwebp's VP8LFastSLog2 / FastSLog2Slow_C exactly.
+/// Compute v * log2(v) in fixed-point (matching libwebp's VP8LFastSLog2).
+/// 256-entry LUT for v < 256, CLZ + kLog2Table for v >= 256. No log() calls.
 #[inline]
 fn fast_slog2(v: u32) -> u64 {
     if v < 256 {
         return K_SLOG2_TABLE[v as usize];
     }
     fast_slog2_slow(v)
+}
+
+/// Public wrapper for `fast_slog2` for use by other VP8L modules.
+#[inline]
+pub(super) fn fast_slog2_public(v: u32) -> u64 {
+    fast_slog2(v)
 }
 
 /// Extended range SLog2 for v >= 256 (matches libwebp's FastSLog2Slow_C).
