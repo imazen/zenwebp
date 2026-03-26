@@ -202,7 +202,7 @@ fn apply_subtract_green_sse2(_token: Sse2Token, pixels: &mut [u32]) {
 
 /// Predict a pixel using the given mode and neighbors.
 /// Must match the decoder's predictor functions exactly for lossless round-tripping.
-#[inline]
+#[inline(always)]
 fn predict(mode: PredictorMode, left: u32, top: u32, top_left: u32, top_right: u32) -> u32 {
     match mode {
         PredictorMode::Black => 0xff000000,
@@ -298,7 +298,7 @@ fn clamp_add_subtract_half(left: u32, top: u32, top_left: u32) -> u32 {
 }
 
 /// Compute residual (pixel - prediction) with wrapping.
-#[inline]
+#[inline(always)]
 fn residual(pixel: u32, pred: u32) -> u32 {
     let a = argb_alpha(pixel).wrapping_sub(argb_alpha(pred));
     let r = argb_red(pixel).wrapping_sub(argb_red(pred));
@@ -739,7 +739,7 @@ fn prediction_cost_bias(counts: &[u32; 256], weight_0: u64, mut exp_val: u64) ->
 
 /// Update a 4-channel residual histogram with an ARGB residual value.
 /// Layout: [alpha_0..255, red_0..255, green_0..255, blue_0..255].
-#[inline]
+#[inline(always)]
 fn update_histo(histo: &mut [[u32; 256]; 4], argb: u32) {
     histo[0][(argb >> 24) as usize] += 1;
     histo[1][((argb >> 16) & 0xff) as usize] += 1;
