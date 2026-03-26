@@ -2,9 +2,9 @@
 #![cfg(not(target_arch = "wasm32"))]
 //! Criterion benchmarks comparing zenwebp vs libwebp encoding performance.
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use std::hint::black_box;
 use std::path::Path;
+use zenbench::criterion_compat::*;
+use zenbench::{criterion_group, criterion_main};
 use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {

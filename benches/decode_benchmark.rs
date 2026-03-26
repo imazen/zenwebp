@@ -7,9 +7,9 @@
 //! Run with: cargo bench --bench decode_benchmark
 //! Run with native: RUSTFLAGS="-C target-cpu=native" cargo bench --bench decode_benchmark
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use std::hint::black_box;
 use std::path::{Path, PathBuf};
+use zenbench::criterion_compat::*;
+use zenbench::{criterion_group, criterion_main};
 use zenwebp::{DecodeConfig, DecodeRequest, EncodeRequest, EncoderConfig, PixelLayout};
 
 /// Load a PNG image, encode to WebP at Q75 m4, return (webp_data, width, height).
