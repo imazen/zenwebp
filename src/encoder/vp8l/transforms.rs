@@ -1198,8 +1198,34 @@ pub fn apply_cross_color_transform(
 }
 
 /// Apply cross-color forward transform to a single tile (matching libwebp's VP8LTransformColor_C).
+///
+/// On x86/x86_64 with SIMD, processes 4 pixels at a time with SSE2,
+/// matching libwebp's TransformColor_SSE2.
 #[inline]
 fn apply_cross_color_tile(
+    pixels: &mut [u32],
+    width: usize,
+    start_x: usize,
+    start_y: usize,
+    end_x: usize,
+    end_y: usize,
+    m: &CrossColorMultipliers,
+) {
+    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = Sse2Token::summon() {
+            apply_cross_color_tile_sse2_entry(
+                token, pixels, width, start_x, start_y, end_x, end_y, m,
+            );
+            return;
+        }
+    }
+    apply_cross_color_tile_scalar(pixels, width, start_x, start_y, end_x, end_y, m);
+}
+
+/// Scalar cross-color tile transform.
+fn apply_cross_color_tile_scalar(
     pixels: &mut [u32],
     width: usize,
     start_x: usize,
@@ -1226,6 +1252,129 @@ fn apply_cross_color_tile(
             new_blue -= color_transform_delta(r2b, red);
             new_blue &= 0xff;
             pixels[idx] = (argb & 0xff00ff00u32) | ((new_red as u32) << 16) | (new_blue as u32);
+        }
+    }
+}
+
+/// Pre-shift multiplier to 16-bit for mulhi_epi16 (matching libwebp's CST_5b macro).
+/// The multiplier is treated as a signed 3.5 fixed-point value, pre-shifted so that
+/// mulhi_epi16 produces (color * multiplier) >> 5.
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[inline]
+fn cst_5b(x: u8) -> i16 {
+    // Equivalent to C's: (((int16_t)((uint16_t)(X) << 8)) >> 5)
+    (((x as u16) << 8) as i16) >> 5
+}
+
+/// Entry point for SSE2 cross-color tile transform.
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[arcane]
+fn apply_cross_color_tile_sse2_entry(
+    _token: Sse2Token,
+    pixels: &mut [u32],
+    width: usize,
+    start_x: usize,
+    start_y: usize,
+    end_x: usize,
+    end_y: usize,
+    m: &CrossColorMultipliers,
+) {
+    apply_cross_color_tile_sse2(
+        _token, pixels, width, start_x, start_y, end_x, end_y, m,
+    );
+}
+
+/// SSE2 cross-color transform matching libwebp's TransformColor_SSE2.
+///
+/// Processes 4 pixels at a time. For each pixel:
+///   new_R = R - (green_to_red * G_signed) >> 5
+///   new_B = B - (green_to_blue * G_signed) >> 5 - (red_to_blue * R_orig_signed) >> 5
+/// A and G channels are preserved.
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[rite]
+fn apply_cross_color_tile_sse2(
+    _token: Sse2Token,
+    pixels: &mut [u32],
+    width: usize,
+    start_x: usize,
+    start_y: usize,
+    end_x: usize,
+    end_y: usize,
+    m: &CrossColorMultipliers,
+) {
+    // Pre-compute SIMD constants matching libwebp's MK_CST_16 pattern
+    // mults_rb: packed [green_to_red(hi16), green_to_blue(lo16)] for mulhi_epi16
+    let g2r_cst = cst_5b(m.green_to_red);
+    let g2b_cst = cst_5b(m.green_to_blue);
+    let r2b_cst = cst_5b(m.red_to_blue);
+
+    let mults_rb_val = ((g2r_cst as u16 as u32) << 16) | (g2b_cst as u16 as u32);
+    let mults_rb = _mm_set1_epi32(mults_rb_val as i32);
+    let mults_b2_val = (r2b_cst as u16 as u32) << 16;
+    let mults_b2 = _mm_set1_epi32(mults_b2_val as i32);
+    let mask_ag = _mm_set1_epi32(0xff00ff00u32 as i32);
+    let mask_rb = _mm_set1_epi32(0x00ff00ff_i32);
+
+    let tile_width = end_x - start_x;
+
+    for y in start_y..end_y {
+        let row_start = y * width + start_x;
+        let row = &mut pixels[row_start..row_start + tile_width];
+
+        let mut x = 0;
+        while x + 4 <= tile_width {
+            let chunk = <&mut [u32; 4]>::try_from(&mut row[x..x + 4]).unwrap();
+            let inp = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&*chunk).unwrap());
+
+            // A = (inp & mask_ag): extract alpha and green bytes [a 0 g 0]
+            let a_val = _mm_and_si128(inp, mask_ag);
+
+            // Shuffle green to both 16-bit positions: [g 0 g 0] per pixel
+            let b_val = _mm_shufflelo_epi16(a_val, 0xA0); // _MM_SHUFFLE(2,2,0,0)
+            let c_val = _mm_shufflehi_epi16(b_val, 0xA0);
+
+            // D = mulhi(green_spread, mults_rb): [x dr x db1] per pixel
+            let d_val = _mm_mulhi_epi16(c_val, mults_rb);
+
+            // E = inp << 8 as epi16: [r 0 b 0] (original red/blue in high bytes)
+            let e_val = _mm_slli_epi16(inp, 8);
+
+            // F = mulhi(E, mults_b2): [x db2 0 0] per pixel
+            let f_val = _mm_mulhi_epi16(e_val, mults_b2);
+
+            // G = F >> 16 as epi32: shift red_to_blue contribution to blue position
+            let g_val = _mm_srli_epi32(f_val, 16);
+
+            // H = D + G: combine both blue contributions with red contribution
+            let h_val = _mm_add_epi8(g_val, d_val);
+
+            // I = H & mask_rb: keep only the delta bytes in R and B positions
+            let i_val = _mm_and_si128(h_val, mask_rb);
+
+            // out = inp - I: subtract deltas from R and B
+            let out = _mm_sub_epi8(inp, i_val);
+
+            simd_mem::_mm_storeu_si128(chunk, out);
+            x += 4;
+        }
+
+        // Scalar tail for remaining pixels
+        let g2r = m.green_to_red as i8;
+        let g2b = m.green_to_blue as i8;
+        let r2b = m.red_to_blue as i8;
+        while x < tile_width {
+            let argb = row[x];
+            let green = (argb >> 8) as u8 as i8;
+            let red = (argb >> 16) as u8 as i8;
+            let mut new_red = (red as i32) & 0xff;
+            let mut new_blue = argb as i32 & 0xff;
+            new_red -= color_transform_delta(g2r, green);
+            new_red &= 0xff;
+            new_blue -= color_transform_delta(g2b, green);
+            new_blue -= color_transform_delta(r2b, red);
+            new_blue &= 0xff;
+            row[x] = (argb & 0xff00ff00u32) | ((new_red as u32) << 16) | (new_blue as u32);
+            x += 1;
         }
     }
 }
