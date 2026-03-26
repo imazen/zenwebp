@@ -713,12 +713,17 @@ fn encode_argb_single_config(
     };
 
     // Encode image data from backward references.
-    // Try both cache_bits=0 and cache_bits=N when auto-detected cache is
-    // nonzero, keeping the smaller output.
+    // Match libwebp: only try both cache_bits values at method 5+ quality 75+
+    // (or method 6 quality 100). At lower methods, the entropy-selected
+    // cache_bits is used directly. This halves histogram clustering work.
     let is_palette = palette_transform.is_some();
     let auto_cache = config.cache_bits.is_none();
+    let do_cache_trial = auto_cache
+        && cache_bits > 0
+        && ((config.quality.method >= 5 && config.quality.quality >= 75)
+            || (config.quality.method >= 6 && config.quality.quality >= 100));
 
-    if auto_cache && cache_bits > 0 {
+    if do_cache_trial {
         // Strip cache from refs to get the base (cache-free) token sequence.
         let mut base_refs = refs;
         strip_cache_from_refs(enc_argb, &mut base_refs);
