@@ -1104,7 +1104,7 @@ static DECODE_CAPABILITIES: zencodec::decode::DecodeCapabilities =
 
 impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
     type Error = At<DecodeError>;
-    type Job<'a> = WebpDecodeJob<'a>;
+    type Job = WebpDecodeJob;
 
     fn formats() -> &'static [ImageFormat] {
         &[ImageFormat::WebP]
@@ -1118,7 +1118,7 @@ impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
         &DECODE_CAPABILITIES
     }
 
-    fn job(&self) -> WebpDecodeJob<'_> {
+    fn job(self) -> WebpDecodeJob {
         WebpDecodeJob {
             config: self,
             stop: None,
@@ -1133,8 +1133,8 @@ impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
 // ── Decode Job ──────────────────────────────────────────────────────────────
 
 /// Per-operation WebP decode job.
-pub struct WebpDecodeJob<'a> {
-    config: &'a WebpDecoderConfig,
+pub struct WebpDecodeJob {
+    config: WebpDecoderConfig,
     stop: Option<zencodec::StopToken>,
     limits: ResourceLimits,
     start_frame_index: u32,
@@ -1142,7 +1142,7 @@ pub struct WebpDecodeJob<'a> {
     preferred: Vec<PixelDescriptor>,
 }
 
-impl<'a> WebpDecodeJob<'a> {
+impl WebpDecodeJob {
     /// Set preferred pixel formats for `output_info()` prediction.
     ///
     /// This is an inherent method (not part of the trait) because
@@ -1197,7 +1197,7 @@ impl<'a> WebpDecodeJob<'a> {
     }
 }
 
-impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob<'a> {
+impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
     type Error = At<DecodeError>;
     type Dec = WebpDecoder<'a>;
     type StreamDec = zencodec::Unsupported<At<DecodeError>>;
@@ -1946,7 +1946,7 @@ mod tests {
             .unwrap();
 
         let config = WebpDecoderConfig::new();
-        let job = config.job();
+        let job = config.clone().job();
         let info = job.output_info(encoded.data()).unwrap();
         assert_eq!(info.width, 8);
         assert_eq!(info.height, 8);
