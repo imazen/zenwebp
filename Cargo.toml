@@ -2,7 +2,7 @@
 name = "zenwebp"
 version = "0.3.2"
 edition = "2024"
-license = "AGPL-3.0-or-later"
+license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
 rust-version = "1.89"
 
 description = "High-performance WebP encoding and decoding in pure Rust"
@@ -142,6 +142,10 @@ harness = false
 
 [[bench]]
 name = "decode_zenbench"
+harness = false
+
+[[bench]]
+name = "compare_zenbench"
 harness = false
 
 [dev-dependencies.image-webp]
