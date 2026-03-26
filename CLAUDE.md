@@ -82,22 +82,20 @@ for small images), not backward refs.
 
 **Histogram clustering optimization (2026-03-25):**
 
-Rewrote histogram clustering to match libwebp's algorithmic structure:
-- Priority-queue-based greedy (O(n^2 init + n/merge) vs O(n^2/merge))
-- Queue-based stochastic with size-9 priority queue (matching kHistoQueueSize)
-- Greedy only runs when stochastic reaches target_size (was: MAX_HISTO_GREEDY=100)
-- Remap phase uses progressive threshold tightening
+Fixed entropy bin threshold bug: was using accumulator's cost instead of incoming
+histogram's cost for merge threshold. This made merging progressively harder as
+bins grew, leaving 941 histograms for stochastic phase (vs libwebp's ~24).
 
-| Function | Before | After | Reduction |
-|----------|--------|-------|-----------|
-| get_combined_histogram_cost | 7,341M | 1,717M | **4.3x** |
-| get_entropy_unrefined | 432M | 81M | **5.3x** |
-| Total encoder (512x512 m4 lossless) | 9,350M | 3,709M | **2.52x** |
+| Function | Before | Previous fix | After bin fix | Reduction |
+|----------|--------|--------|-------|-----------|
+| get_combined_histogram_cost | 7,341M | 1,717M | **519M** | **14.1x** |
+| Total encoder (512x512 m4) | 9,350M | 3,709M | **2,525M** | **3.7x** |
+| vs libwebp (1,815M) | 5.15x | 2.04x | **1.39x** | |
 
-Remaining gap vs libwebp (90M for GetCombinedEntropyUnrefined): ~19x. This is
-from stochastic phase call count differences — our queue-based approach uses the
-same algorithm but different threshold dynamics than libwebp's within-iteration
-best_cost update.
+Per-call `get_combined_histogram_cost` is now at parity with libwebp's
+`GetCombinedEntropyUnrefined_C` (260M vs 311M per clustering call).
+
+ZENWEBP_TRACE=1 env var enables call count instrumentation.
 
 ### Decoder vs libwebp
 
