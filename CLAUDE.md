@@ -82,18 +82,19 @@ for small images), not backward refs.
 
 **Histogram clustering optimization (2026-03-25):**
 
-Fixed entropy bin threshold bug: was using accumulator's cost instead of incoming
-histogram's cost for merge threshold. This made merging progressively harder as
-bins grew, leaving 941 histograms for stochastic phase (vs libwebp's ~24).
+Two fixes: (1) entropy bin threshold bug — was using accumulator's cost instead
+of incoming histogram's cost, making merges progressively harder. (2) cache trial
+at m0-m4 — was trying both cache_bits=0 and cache_bits=N, but libwebp only does
+this at m5+ q75+.
 
-| Function | Before | Previous fix | After bin fix | Reduction |
-|----------|--------|--------|-------|-----------|
-| get_combined_histogram_cost | 7,341M | 1,717M | **519M** | **14.1x** |
-| Total encoder (512x512 m4) | 9,350M | 3,709M | **2,525M** | **3.7x** |
-| vs libwebp (1,815M) | 5.15x | 2.04x | **1.39x** | |
+| Metric | Original | After queue rewrite | After bin+cache fix |
+|--------|----------|---------------------|---------------------|
+| get_combined_histogram_cost | 7,341M | 1,717M | **307M** |
+| Total encoder (512x512 m4) | 9,350M | 3,709M | **2,211M** |
+| vs libwebp (1,815M) | 5.15x | 2.04x | **1.22x** |
 
-Per-call `get_combined_histogram_cost` is now at parity with libwebp's
-`GetCombinedEntropyUnrefined_C` (260M vs 311M per clustering call).
+`get_combined_histogram_cost` at parity with libwebp's
+`GetCombinedEntropyUnrefined_C` (307M vs 311M).
 
 ZENWEBP_TRACE=1 env var enables call count instrumentation.
 
