@@ -391,19 +391,37 @@ Without the `simd` feature, zenwebp also contains no unsafe at all.
 
 ## License
 
-Sustainable, large-scale open source work requires a funding model, and I have been
-doing this full-time for 15 years. If you are using this for closed-source development
-AND make over $1 million per year, you'll need to buy a commercial license at
-https://www.imazen.io/pricing
+Dual-licensed: [AGPL-3.0](LICENSE-AGPL3) or [commercial](LICENSE-COMMERCIAL).
 
-Commercial licenses are similar to the Apache 2 license but company-specific, and on
-a sliding scale. You can also use this under the AGPL v3.
+I've maintained and developed open-source image server software — and the 40+
+library ecosystem it depends on — full-time since 2011. Fifteen years of
+continual maintenance, backwards compatibility, support, and the (very rare)
+security patch. That kind of stability requires sustainable funding, and
+dual-licensing is how we make it work without venture capital or rug-pulls.
+Support sustainable and secure software; swap patch tuesday for patch leap-year.
 
-### Previous Versions
+[Our open-source products](https://www.imazen.io/open-source)
 
-Versions 0.1.x - 0.2.x were dual-licensed under MIT OR Apache-2.0. See the git history for those license files.
+**Your options:**
 
+- **Startup license** — $1 if your company has under $1M revenue and fewer
+  than 5 employees. [Get a key →](https://www.imazen.io/pricing)
+- **Commercial subscription** — Governed by the Imazen Site-wide Subscription
+  License v1.1 or later. Apache 2.0-like terms, no source-sharing requirement.
+  Sliding scale by company size.
+  [Pricing & 60-day free trial →](https://www.imazen.io/pricing)
+- **AGPL v3** — Free and open. Share your source if you distribute.
 
+See [LICENSE-COMMERCIAL](LICENSE-COMMERCIAL) for details.
+
+Upstream code from [image-rs/image-webp](https://github.com/image-rs/image-webp) is licensed under MIT OR Apache-2.0.
+Our additions and improvements are AGPL-3.0-or-later with commercial licensing as above.
+
+### Upstream Contribution
+
+We are willing to release our improvements under the original MIT OR Apache-2.0
+license if upstream takes over maintenance of those improvements. We'd rather
+contribute back than maintain a parallel codebase. Open an issue or reach out.
 ## Contributing
 
 Contributions welcome! Please feel free to open issues or pull requests.
