@@ -781,6 +781,30 @@ impl<'a> ActivePartitionReader<'a> {
         bit
     }
 
+    /// VP8GetSigned - optimized branchless sign bit reading with prob=128.
+    /// Returns +v or -v based on the next bit.
+    #[inline(always)]
+    pub fn get_signed(&mut self, v: i32) -> i32 {
+        if self.state.bits < 0 {
+            self.load_new_bytes();
+        }
+
+        let pos = self.state.bits;
+        let split = self.state.range >> 1;
+        let value = (self.state.value >> pos) as u32;
+        // mask = -1 if value > split, else 0
+        let mask = (split.wrapping_sub(value) as i32) >> 31;
+
+        self.state.bits -= 1;
+        self.state.range = self.state.range.wrapping_add(mask as u32);
+        self.state.range |= 1;
+
+        let term = (u64::from(split) + 1) & (mask as u32 as u64);
+        self.state.value = self.state.value.wrapping_sub(term << pos);
+
+        (v ^ mask) - mask
+    }
+
     #[inline(always)]
     pub fn is_eof(&self) -> bool {
         self.state.eof

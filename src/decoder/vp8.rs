@@ -342,21 +342,26 @@ impl Frame {
 /// Read and dequantize DCT coefficients for one 4×4 block.
 ///
 /// Returns true if any coefficient beyond `first` was non-zero.
+/// Read and dequantize DCT coefficients from the bitstream.
+///
+/// Optimized to match libwebp's GetCoeffsFast:
+/// - Uses branchless get_signed for sign bits (VP8GetSigned)
+/// - Uses 2-element dequant array indexed by `n > 0` (no branch)
+/// - Takes &mut [i32; 16] to eliminate bounds checks on zigzag writes
+///
 /// Does NOT check for EOF — caller must check `reader.is_eof()` after
 /// processing all blocks in the macroblock (matching libwebp's approach
 /// where VP8DecodeMB checks EOF once per MB, not per block).
-#[inline]
+#[inline(always)]
 fn read_coefficients(
     reader: &mut ActivePartitionReader<'_>,
-    output: &mut [i32],
+    output: &mut [i32; 16],
     probs: &[[[TreeNode; NUM_DCT_TOKENS - 1]; 3]; 17],
     first: usize,
     complexity: usize,
-    dcq: i16,
-    acq: i16,
+    dq: [i32; 2], // [dc_quant, ac_quant] — indexed by (n > 0) like libwebp
 ) -> bool {
     debug_assert!(complexity <= 2);
-    debug_assert!(output.len() >= 16);
 
     let mut n = first;
     let mut prob = &probs[n][complexity];
@@ -413,11 +418,8 @@ fn read_coefficients(
             next_ctx = 2;
         }
 
-        let signed_v = if reader.get_bit(128) != 0 { -v } else { v };
-
-        let zigzag = ZIGZAG[n] as usize;
-        let q = if zigzag > 0 { acq } else { dcq };
-        output[zigzag] = signed_v * i32::from(q);
+        // Branchless sign reading (VP8GetSigned) + dequantize with array lookup
+        output[ZIGZAG[n] as usize] = reader.get_signed(v) * dq[(n > 0) as usize];
 
         n += 1;
         if n < 16 {
@@ -1152,13 +1154,10 @@ impl<'a> Vp8Decoder<'a> {
         // intra_predict_* is responsible for clearing blocks after use.
         let sindex = mb.segmentid as usize;
 
-        // Extract quantizers upfront
-        let y2dc = self.segment[sindex].y2dc;
-        let y2ac = self.segment[sindex].y2ac;
-        let ydc = self.segment[sindex].ydc;
-        let yac = self.segment[sindex].yac;
-        let uvdc = self.segment[sindex].uvdc;
-        let uvac = self.segment[sindex].uvac;
+        // Extract quantizers as 2-element arrays [dc, ac] — indexed by (n > 0) like libwebp
+        let y2_dq = [i32::from(self.segment[sindex].y2dc), i32::from(self.segment[sindex].y2ac)];
+        let y_dq = [i32::from(self.segment[sindex].ydc), i32::from(self.segment[sindex].yac)];
+        let uv_dq = [i32::from(self.segment[sindex].uvdc), i32::from(self.segment[sindex].uvac)];
 
         // Split borrows: create active reader from partition fields directly
         // This avoids the per-block PartitionReader creation overhead (~7.7M instructions/decode)
@@ -1188,8 +1187,7 @@ impl<'a> Vp8Decoder<'a> {
                 &probs[Plane::Y2 as usize],
                 0, // first
                 complexity as usize,
-                y2dc,
-                y2ac,
+                y2_dq,
             );
 
             left.complexity[0] = if n { 1 } else { 0 };
@@ -1212,18 +1210,16 @@ impl<'a> Vp8Decoder<'a> {
                 let i = x + y * 4;
                 let complexity = top.complexity[x + 1] + left_ctx;
 
-                let block_slice = &mut coeff_blocks[i * 16..][..16];
+                let block: &mut [i32; 16] =
+                    (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
                 let n = read_coefficients(
                     &mut reader,
-                    block_slice,
+                    block,
                     &probs[plane as usize],
                     first_y,
                     complexity as usize,
-                    ydc,
-                    yac,
+                    y_dq,
                 );
-
-                let block: &mut [i32; 16] = block_slice.try_into().unwrap();
 
                 // Track non-zero DCT but defer IDCT to fused function during prediction
                 if block[0] != 0 || n {
@@ -1248,18 +1244,16 @@ impl<'a> Vp8Decoder<'a> {
                     let i = x + y * 2 + if j == 5 { 16 } else { 20 };
                     let complexity = top.complexity[x + j] + left_ctx;
 
-                    let block_slice = &mut coeff_blocks[i * 16..][..16];
+                    let block: &mut [i32; 16] =
+                        (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
                     let n = read_coefficients(
                         &mut reader,
-                        block_slice,
+                        block,
                         chroma_probs,
                         0, // first
                         complexity as usize,
-                        uvdc,
-                        uvac,
+                        uv_dq,
                     );
-
-                    let block: &mut [i32; 16] = block_slice.try_into().unwrap();
 
                     // Track non-zero DCT but defer IDCT to fused function during prediction
                     if block[0] != 0 || n {
