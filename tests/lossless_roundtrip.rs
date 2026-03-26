@@ -535,7 +535,8 @@ fn method_0_differs_from_method_4() {
 
     // Method 0 skips TraceBackwards and color cache, so output should differ
     assert_ne!(
-        vp8l_m0, vp8l_m4,
+        vp8l_m0,
+        vp8l_m4,
         "method 0 and method 4 should produce different VP8L output \
          (m0={} bytes, m4={} bytes)",
         vp8l_m0.len(),
