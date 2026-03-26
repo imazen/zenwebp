@@ -66,6 +66,20 @@ Historical investigation notes and resolved bugs are in [LOG.md](LOG.md).
 
 CID22 50-image subset: **0.996x** (0.4% smaller). Screenshots: **0.995x** (0.5% smaller).
 
+**Backward references parity (synthetic, 2026-03-25):**
+
+| Size | m1 | m2 | m4 | m5 |
+|------|-----|-----|-----|-----|
+| 256x256 | — | — | **0.996x** | — |
+| 512x512 | **1.000x** | **1.001x** | 1.014x | 1.004x |
+| 640x480 | — | — | 1.017x | — |
+
+Backward refs pipeline (hash chain, LZ77, TraceBackwards, color cache, 2D locality)
+verified at parity. Remaining 1-2% gap at m3-m6 is from histogram clustering
+differences (stochastic combining index compaction behavior), not backward refs.
+128x128 blowup at m2 (4.4x) diagnosed as predictor transform_bits issue (large blocks
+for small images), not backward refs.
+
 ### Decoder vs libwebp
 
 | Corpus | Ratio |
