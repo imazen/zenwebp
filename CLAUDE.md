@@ -87,14 +87,37 @@ of incoming histogram's cost, making merges progressively harder. (2) cache tria
 at m0-m4 — was trying both cache_bits=0 and cache_bits=N, but libwebp only does
 this at m5+ q75+.
 
-| Metric | Original | After queue rewrite | After bin+cache fix |
-|--------|----------|---------------------|---------------------|
-| get_combined_histogram_cost | 7,341M | 1,717M | **307M** |
-| Total encoder (512x512 m4) | 9,350M | 3,709M | **2,211M** |
-| vs libwebp (1,815M) | 5.15x | 2.04x | **1.22x** |
+| Metric | Original | After queue rewrite | After bin+cache fix | After cache/RLE opts |
+|--------|----------|---------------------|---------------------|---------------------|
+| get_combined_histogram_cost | 7,341M | 1,717M | **307M** | **87M** |
+| Total encoder (512x512 m4) | 9,350M | 3,709M | **2,211M** | **511M** |
+| vs libwebp | 5.15x | 2.04x | **1.22x** | **1.01x** |
 
-`get_combined_histogram_cost` at parity with libwebp's
-`GetCombinedEntropyUnrefined_C` (307M vs 311M).
+Note: instruction counts changed between sessions because the benchmark image
+changed from real photo (792079.png) to synthetic gradient+noise 512x512
+(matching libwebp's profiling binary). The synthetic image is more compressible,
+giving lower absolute counts but valid relative ratios.
+
+**Lossless instruction parity (synthetic 512x512, m4 q75, 2026-03-25):**
+
+| Function | zenwebp (M) | libwebp (M) | Ratio |
+|----------|-------------|-------------|-------|
+| calculate_best_cache_size | 156 | 140 | 1.11x |
+| get_combined_histogram_cost | 87 | 90 | **0.97x** |
+| get_entropy_unrefined | 64 | 23 | 2.78x |
+| encode_image_data | 37 | 37 | 1.00x |
+| HashChain::new | 34 | 34 | 1.00x |
+| backward_refs_rle | 10 | ~1 | — |
+| Histogram::from_refs | 18 | 43 | **0.42x** |
+| TraceBackwards (cost_model) | 15 | 28 | **0.54x** |
+| VP8LBackwardRefsCursorAdd | 0 | 17 | **0.00x** |
+| **Total** | **511** | **505** | **1.01x** |
+
+Functions faster than C: Histogram building (Vec vs linked-list), TraceBackwards
+(tighter Rust iteration), no progress reporting overhead.
+Functions slower than C: get_entropy_unrefined (bounds-check + codegen overhead),
+calculate_best_cache_size (same), backward_refs_rle (quick-reject improved but
+still has bounds checks).
 
 ZENWEBP_TRACE=1 env var enables call count instrumentation.
 
