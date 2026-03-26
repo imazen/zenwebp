@@ -161,7 +161,7 @@ struct BitEntropy {
 }
 
 /// Process a run-length streak (matches libwebp's GetEntropyUnrefinedHelper).
-#[inline]
+#[inline(always)]
 fn entropy_unrefined_helper(
     val: u32,
     i: usize,
@@ -268,6 +268,37 @@ fn get_combined_entropy_unrefined(x: &[u32], y: &[u32]) -> (BitEntropy, Streaks)
     bit_entropy.entropy = fast_slog2(bit_entropy.sum).saturating_sub(bit_entropy.entropy);
 
     (bit_entropy, stats)
+}
+
+/// Fast combined Shannon entropy for histogram clustering comparison.
+/// Matches libwebp's CombinedShannonEntropy_C — a tight loop that computes
+/// sum(slog2(x) + slog2(x+y)) for nonzero entries, then subtracts from
+/// slog2(sum_x) + slog2(sum_xy). Much faster than get_combined_entropy_unrefined
+/// because it skips streak tracking and Huffman cost estimation.
+///
+/// Returns the combined entropy in fixed-point (scaled by 1 << LOG_2_PRECISION_BITS).
+#[inline]
+fn combined_shannon_entropy(x: &[u32], y: &[u32]) -> u64 {
+    debug_assert_eq!(x.len(), y.len());
+    let mut retval = 0u64;
+    let mut sum_x = 0u32;
+    let mut sum_xy = 0u32;
+
+    for i in 0..x.len() {
+        let xi = x[i];
+        if xi != 0 {
+            let xy = xi + y[i];
+            sum_x += xi;
+            retval += fast_slog2(xi);
+            sum_xy += xy;
+            retval += fast_slog2(xy);
+        } else if y[i] != 0 {
+            sum_xy += y[i];
+            retval += fast_slog2(y[i]);
+        }
+    }
+
+    fast_slog2(sum_x) + fast_slog2(sum_xy) - retval
 }
 
 /// Refine entropy using perceptual adjustments (matches BitsEntropyRefine).
