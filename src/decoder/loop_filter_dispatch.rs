@@ -476,6 +476,52 @@ pub(crate) fn normal_filter_horizontal_mb_16_rows(
     }
 }
 
+/// Fused normal horizontal subblock filter for all 3 inner edges of a macroblock.
+/// Processes edges at x_start+4, x_start+8, x_start+12 in a single pass,
+/// reusing loaded columns between edges (matching libwebp's HFilter16i_SSE2).
+///
+/// Falls back to 3 separate filter calls on non-x86_64 or without SIMD.
+#[inline]
+pub(crate) fn normal_filter_horizontal_sub_3edges(
+    buf: &mut [u8],
+    y_start: usize,
+    x_start: usize,
+    stride: usize,
+    hev_threshold: u8,
+    interior_limit: u8,
+    edge_limit: u8,
+    simd_token: SimdTokenType,
+) {
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    if let Some(token) = simd_token {
+        super::loop_filter_avx2::normal_h_filter16i(
+            token,
+            buf,
+            x_start,
+            y_start,
+            stride,
+            i32::from(hev_threshold),
+            i32::from(interior_limit),
+            i32::from(edge_limit),
+        );
+        return;
+    }
+
+    // Fallback: 3 separate filter calls
+    for offset in [4usize, 8, 12] {
+        normal_filter_horizontal_sub_16_rows(
+            buf,
+            y_start,
+            x_start + offset,
+            stride,
+            hev_threshold,
+            interior_limit,
+            edge_limit,
+            simd_token,
+        );
+    }
+}
+
 /// Helper to apply normal horizontal subblock filter to 16 rows with SIMD when available.
 #[inline]
 pub(crate) fn normal_filter_horizontal_sub_16_rows(

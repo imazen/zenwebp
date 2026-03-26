@@ -1962,6 +1962,101 @@ pub fn normal_h_filter16_edge(
     store_q1q2_16_impl!(pixels, store_base + 4, stride, q1, q2);
 }
 
+/// Fused normal horizontal subblock filter for all 3 inner edges of a macroblock.
+///
+/// Matches libwebp's HFilter16i_SSE2: loads 4 columns at a time via Load16x4,
+/// reuses columns between adjacent edges. Each edge only needs one new Load16x4
+/// instead of a full 8-column load + 8x16 transpose.
+///
+/// Processes edges at x_start+4, x_start+8, x_start+12.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[allow(clippy::too_many_arguments)]
+#[arcane]
+pub fn normal_h_filter16i(
+    _token: X64V3Token,
+    pixels: &mut [u8],
+    x_start: usize,
+    y_start: usize,
+    stride: usize,
+    hev_thresh: i32,
+    interior_limit: i32,
+    edge_limit: i32,
+) {
+    // Bounds check: need columns x_start..x_start+16 for 16 rows
+    assert!(
+        (y_start + 15) * stride + x_start + 16 <= pixels.len(),
+        "normal_h_filter16i: bounds check failed"
+    );
+
+    // Prologue: load first 4 columns (x_start..x_start+3 = p3, p2, p1, p0 for first edge)
+    let base = y_start * stride + x_start;
+    let (p3, p2, p1, p0) = load_16x4_impl!(pixels, base, stride);
+    let mut p3 = p3;
+    let mut p2 = p2;
+    let mut p1 = p1;
+    let mut p0 = p0;
+
+    for k in 0..3 {
+        let edge_x = x_start + 4 + k * 4;
+
+        // MAX_DIFF1: compute left-side interior diffs from current p3,p2,p1,p0
+        let d_p1_p0 = _mm_or_si128(_mm_subs_epu8(p1, p0), _mm_subs_epu8(p0, p1));
+        let d_p3_p2 = _mm_or_si128(_mm_subs_epu8(p3, p2), _mm_subs_epu8(p2, p3));
+        let d_p2_p1 = _mm_or_si128(_mm_subs_epu8(p2, p1), _mm_subs_epu8(p1, p2));
+        let mut max_diff = _mm_max_epu8(d_p1_p0, _mm_max_epu8(d_p3_p2, d_p2_p1));
+
+        // Load next 4 columns (q0, q1, q2, q3 relative to this edge)
+        // In libwebp: Load16x4 overwrites p3, p2, and puts extras in tmp1, tmp2
+        let next_base = y_start * stride + edge_x;
+        let (new_p3, new_p2, tmp1, tmp2) = load_16x4_impl!(pixels, next_base, stride);
+        // new_p3 = col at edge_x (= q0), new_p2 = col at edge_x+1 (= q1)
+        // tmp1 = col at edge_x+2 (= q2), tmp2 = col at edge_x+3 (= q3)
+
+        // MAX_DIFF2: add right-side interior diffs
+        let d1 = _mm_or_si128(
+            _mm_subs_epu8(new_p3, new_p2),
+            _mm_subs_epu8(new_p2, new_p3),
+        );
+        let d2 = _mm_or_si128(_mm_subs_epu8(tmp1, tmp2), _mm_subs_epu8(tmp2, tmp1));
+        let d3 = _mm_or_si128(
+            _mm_subs_epu8(new_p2, tmp1),
+            _mm_subs_epu8(tmp1, new_p2),
+        );
+        max_diff = _mm_max_epu8(max_diff, _mm_max_epu8(d1, _mm_max_epu8(d2, d3)));
+
+        // ComplexMask: interior check + simple threshold
+        // p1, p0 are the left pair; new_p3 (=q0), new_p2 (=q1) are the right pair
+        let i_limit = _mm_set1_epi8(interior_limit as i8);
+        let exceeds = _mm_subs_epu8(max_diff, i_limit);
+        let interior_ok = _mm_cmpeq_epi8(exceeds, _mm_setzero_si128());
+        let simple_mask = needs_filter_16(_token, p1, p0, new_p3, new_p2, edge_limit);
+        let mask = _mm_and_si128(simple_mask, interior_ok);
+
+        // HEV check
+        let hev = high_edge_variance_16(_token, p1, p0, new_p3, new_p2, hev_thresh);
+
+        // DoFilter4: modifies p1, p0, q0, q1 in place
+        let mut fp1 = p1;
+        let mut fp0 = p0;
+        let mut fq0 = new_p3;
+        let mut fq1 = new_p2;
+        do_filter4_16(_token, &mut fp1, &mut fp0, &mut fq0, &mut fq1, mask, hev);
+
+        // Store 4 modified columns: p1, p0, q0, q1 centered on the edge
+        let store_base = y_start * stride + edge_x - 2;
+        store_16x4_impl!(pixels, store_base, stride, fp1, fp0, fq0, fq1);
+
+        // Rotate for next edge (matching libwebp):
+        // After filter: fq0 = filtered q0, fq1 = filtered q1
+        // These become p3, p2 for the next edge.
+        // tmp1, tmp2 (= q2, q3) become p1, p0.
+        p3 = fq0;
+        p2 = fq1;
+        p1 = tmp1;
+        p0 = tmp2;
+    }
+}
+
 // ============================================================================
 // 8-row chroma filter functions
 // These process both U and V planes together as 16 rows for efficiency.
