@@ -27,11 +27,7 @@ fn load_png_rgba(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32, String)> 
             .collect(),
         _ => return None,
     };
-    let name = path
-        .file_stem()
-        .unwrap()
-        .to_string_lossy()
-        .into_owned();
+    let name = path.file_stem().unwrap().to_string_lossy().into_owned();
     Some((rgba, info.width, info.height, name))
 }
 
@@ -105,7 +101,10 @@ fn main() {
     println!("# All encoders: lossless mode, same method, RGBA input");
     println!();
 
-    for (corpus_name, images) in [("CID22 photos", &photo_images), ("Screenshots", &screenshot_images)] {
+    for (corpus_name, images) in [
+        ("CID22 photos", &photo_images),
+        ("Screenshots", &screenshot_images),
+    ] {
         if images.is_empty() {
             continue;
         }
@@ -171,7 +170,11 @@ fn main() {
 
                 let zen_size = zen_out.len() as u64;
                 let lib_size = lib_out.len() as u64;
-                let iwp_size = if iwp_out.is_empty() { 0 } else { iwp_out.len() as u64 };
+                let iwp_size = if iwp_out.is_empty() {
+                    0
+                } else {
+                    iwp_out.len() as u64
+                };
 
                 zen_total += zen_size;
                 lib_total += lib_size;
@@ -231,8 +234,16 @@ fn main() {
                 zen_ms_total,
                 lib_total,
                 lib_ms_total,
-                if iwp_total > 0 { iwp_total.to_string() } else { "—".into() },
-                if method <= 4 { format!("{:.1}", iwp_ms_total) } else { "—".into() },
+                if iwp_total > 0 {
+                    iwp_total.to_string()
+                } else {
+                    "—".into()
+                },
+                if method <= 4 {
+                    format!("{:.1}", iwp_ms_total)
+                } else {
+                    "—".into()
+                },
             );
             println!(
                 "  zen/lib size: {:.3}x | lib/zen time: {:.1}x faster | zen/iwp size: {}",

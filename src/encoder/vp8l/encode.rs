@@ -773,7 +773,9 @@ fn write_predictor_transform(
             MAX_PREDICTOR_IMAGE_SIZE,
         )
     } else {
-        config.predictor_bits.clamp(MIN_TRANSFORM_BITS, MAX_TRANSFORM_BITS)
+        config
+            .predictor_bits
+            .clamp(MIN_TRANSFORM_BITS, MAX_TRANSFORM_BITS)
     };
     let max_quantization = if config.near_lossless < 100 {
         super::near_lossless::max_quantization_from_quality(config.near_lossless)
@@ -828,7 +830,9 @@ fn write_cross_color_transform(
             MAX_PREDICTOR_IMAGE_SIZE,
         )
     } else {
-        config.cross_color_bits.clamp(MIN_TRANSFORM_BITS, MAX_TRANSFORM_BITS)
+        config
+            .cross_color_bits
+            .clamp(MIN_TRANSFORM_BITS, MAX_TRANSFORM_BITS)
     };
     let cross_color_data =
         apply_cross_color_transform(argb, width, height, cc_bits, config.quality.quality);

@@ -10,14 +10,28 @@ fn main() {
     let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
     let info = reader.next_frame(&mut buf).unwrap();
     let rgba: Vec<u8> = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].chunks(3).flat_map(|c| [c[0],c[1],c[2],255]).collect(),
+        png::ColorType::Rgb => buf[..info.buffer_size()]
+            .chunks(3)
+            .flat_map(|c| [c[0], c[1], c[2], 255])
+            .collect(),
         png::ColorType::Rgba => buf[..info.buffer_size()].to_vec(),
         _ => panic!("unsupported color type"),
     };
-    eprintln!("{}x{} RGBA, {} pixels", info.width, info.height, info.width * info.height);
+    eprintln!(
+        "{}x{} RGBA, {} pixels",
+        info.width,
+        info.height,
+        info.width * info.height
+    );
     let config = zenwebp::EncoderConfig::new_lossless().with_method(4);
-    let out = zenwebp::EncodeRequest::new(&config, &rgba, zenwebp::PixelLayout::Rgba8, info.width, info.height)
-        .encode()
-        .unwrap();
+    let out = zenwebp::EncodeRequest::new(
+        &config,
+        &rgba,
+        zenwebp::PixelLayout::Rgba8,
+        info.width,
+        info.height,
+    )
+    .encode()
+    .unwrap();
     eprintln!("encoded {} bytes (method 4 lossless)", out.len());
 }

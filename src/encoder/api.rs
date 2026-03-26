@@ -1408,14 +1408,8 @@ pub(crate) fn encode_frame_lossless(
             ..super::vp8l::Vp8lConfig::default()
         };
 
-        let vp8l_data = super::vp8l::encode_vp8l(
-            &pixels,
-            width,
-            height,
-            has_alpha,
-            &vp8l_config,
-            stop,
-        )?;
+        let vp8l_data =
+            super::vp8l::encode_vp8l(&pixels, width, height, has_alpha, &vp8l_config, stop)?;
         writer.extend_from_slice(&vp8l_data);
         return Ok(());
     }

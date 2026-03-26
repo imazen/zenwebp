@@ -54,9 +54,21 @@ struct TestImage {
 }
 
 const IMAGES: &[TestImage] = &[
-    TestImage { name: "photo_512", subdir: "CID22/CID22-512/validation", filename: "792079.png" },
-    TestImage { name: "codec_wiki", subdir: "gb82-sc", filename: "codec_wiki.png" },
-    TestImage { name: "terminal", subdir: "gb82-sc", filename: "terminal.png" },
+    TestImage {
+        name: "photo_512",
+        subdir: "CID22/CID22-512/validation",
+        filename: "792079.png",
+    },
+    TestImage {
+        name: "codec_wiki",
+        subdir: "gb82-sc",
+        filename: "codec_wiki.png",
+    },
+    TestImage {
+        name: "terminal",
+        subdir: "gb82-sc",
+        filename: "terminal.png",
+    },
 ];
 
 zenbench::main!(decode_compare, encode_compare, lossless_compare);
@@ -65,7 +77,10 @@ fn decode_compare(suite: &mut zenbench::Suite) {
     for img in IMAGES {
         let path = match corpus_path(img.subdir, img.filename) {
             Some(p) => p,
-            None => { eprintln!("Skipping {}: not found", img.name); continue; }
+            None => {
+                eprintln!("Skipping {}: not found", img.name);
+                continue;
+            }
         };
         let (rgb, w, h) = match load_png_rgb(&path) {
             Some(d) => d,
@@ -104,7 +119,9 @@ fn decode_compare(suite: &mut zenbench::Suite) {
             group.bench("image-webp", move |b| {
                 let d = data.clone();
                 b.with_input(move || d.clone()).run(|bytes| {
-                    let mut decoder = image_webp::WebPDecoder::new(std::io::Cursor::new(black_box(&bytes))).unwrap();
+                    let mut decoder =
+                        image_webp::WebPDecoder::new(std::io::Cursor::new(black_box(&bytes)))
+                            .unwrap();
                     let size = decoder.output_buffer_size().unwrap();
                     let mut out = vec![0u8; size];
                     decoder.read_image(&mut out).unwrap();
@@ -118,7 +135,10 @@ fn decode_compare(suite: &mut zenbench::Suite) {
 fn encode_compare(suite: &mut zenbench::Suite) {
     let path = match corpus_path("CID22/CID22-512/validation", "792079.png") {
         Some(p) => p,
-        None => { eprintln!("Skipping encode: corpus not found"); return; }
+        None => {
+            eprintln!("Skipping encode: corpus not found");
+            return;
+        }
     };
     let (rgb, w, h) = match load_png_rgb(&path) {
         Some(d) => d,
@@ -190,14 +210,20 @@ fn encode_compare(suite: &mut zenbench::Suite) {
 fn lossless_compare(suite: &mut zenbench::Suite) {
     let path = match corpus_path("CID22/CID22-512/validation", "792079.png") {
         Some(p) => p,
-        None => { eprintln!("Skipping lossless: corpus not found"); return; }
+        None => {
+            eprintln!("Skipping lossless: corpus not found");
+            return;
+        }
     };
     let (rgb, w, h) = match load_png_rgb(&path) {
         Some(d) => d,
         None => return,
     };
     let pixels = (w as u64) * (h as u64);
-    let rgba: Vec<u8> = rgb.chunks(3).flat_map(|c| [c[0], c[1], c[2], 255]).collect();
+    let rgba: Vec<u8> = rgb
+        .chunks(3)
+        .flat_map(|c| [c[0], c[1], c[2], 255])
+        .collect();
 
     // Default lossless (method 4, quality 75 for all three)
     suite.compare("lossless_m4", |group| {

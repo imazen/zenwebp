@@ -638,7 +638,15 @@ pub fn get_backward_references_with_palette(
     cache_bits_max: u8,
     palette_size: usize,
 ) -> (BackwardRefs, u8) {
-    get_backward_references_inner(argb, width, height, quality, method, cache_bits_max, palette_size)
+    get_backward_references_inner(
+        argb,
+        width,
+        height,
+        quality,
+        method,
+        cache_bits_max,
+        palette_size,
+    )
 }
 
 /// LZ77 type flags (matching libwebp's VP8LLZ77Type enum).

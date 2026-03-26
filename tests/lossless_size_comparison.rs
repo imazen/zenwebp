@@ -28,8 +28,7 @@ fn generate_photo_like(width: u32, height: u32, seed: u32) -> Vec<u8> {
 fn zenwebp_lossless(rgb: &[u8], width: u32, height: u32, quality: u8, method: u8) -> Vec<u8> {
     let mut config = Vp8lConfig::default();
     config.quality = Vp8lQuality { quality, method };
-    encode_vp8l(rgb, width, height, false, &config, &enough::Unstoppable)
-        .expect("encode failed")
+    encode_vp8l(rgb, width, height, false, &config, &enough::Unstoppable).expect("encode failed")
 }
 
 fn libwebp_lossless(rgb: &[u8], width: u32, height: u32, quality: f32, method: u8) -> Vec<u8> {
@@ -37,7 +36,8 @@ fn libwebp_lossless(rgb: &[u8], width: u32, height: u32, quality: f32, method: u
         .lossless(true)
         .quality(quality)
         .method(method);
-    config.encode_rgb(rgb, width, height, &webpx::Unstoppable)
+    config
+        .encode_rgb(rgb, width, height, &webpx::Unstoppable)
         .expect("encode failed")
 }
 
@@ -49,8 +49,14 @@ fn backward_refs_parity_512x512() {
     let height = 512;
     let rgb = generate_photo_like(width, height, 1);
 
-    println!("\nBackward refs parity test: Photo-like {}x{}", width, height);
-    println!("{:<10} {:>12} {:>12} {:>8}", "Method", "zenwebp", "libwebp", "ratio");
+    println!(
+        "\nBackward refs parity test: Photo-like {}x{}",
+        width, height
+    );
+    println!(
+        "{:<10} {:>12} {:>12} {:>8}",
+        "Method", "zenwebp", "libwebp", "ratio"
+    );
     println!("{}", "-".repeat(46));
 
     let mut max_ratio = 0.0f64;
@@ -58,8 +64,13 @@ fn backward_refs_parity_512x512() {
         let zen = zenwebp_lossless(&rgb, width, height, 75, method);
         let lib = libwebp_lossless(&rgb, width, height, 75.0, method);
         let ratio = zen.len() as f64 / lib.len() as f64;
-        println!("{:<10} {:>12} {:>12} {:>8.4}x",
-            format!("m{}", method), zen.len(), lib.len(), ratio);
+        println!(
+            "{:<10} {:>12} {:>12} {:>8.4}x",
+            format!("m{}", method),
+            zen.len(),
+            lib.len(),
+            ratio
+        );
         // Skip m0 since it uses different mode selection
         if method > 0 && ratio > max_ratio {
             max_ratio = ratio;
@@ -67,19 +78,23 @@ fn backward_refs_parity_512x512() {
     }
 
     // At 512x512, methods 1-6 should be within 2% of libwebp
-    assert!(max_ratio < 1.02,
-        "worst ratio {:.4}x exceeds 2% target", max_ratio);
+    assert!(
+        max_ratio < 1.02,
+        "worst ratio {:.4}x exceeds 2% target",
+        max_ratio
+    );
 }
 
 /// Test at multiple sizes to verify consistency.
 #[test]
 fn backward_refs_parity_multiple_sizes() {
-    let sizes: &[(u32, u32)] = &[
-        (256, 256), (384, 256), (512, 384), (512, 512), (640, 480),
-    ];
+    let sizes: &[(u32, u32)] = &[(256, 256), (384, 256), (512, 384), (512, 512), (640, 480)];
 
     println!("\nBackward refs parity at method 4, quality 75:");
-    println!("{:<15} {:>12} {:>12} {:>8}", "Size", "zenwebp", "libwebp", "ratio");
+    println!(
+        "{:<15} {:>12} {:>12} {:>8}",
+        "Size", "zenwebp", "libwebp", "ratio"
+    );
     println!("{}", "-".repeat(50));
 
     let mut max_ratio = 0.0f64;
@@ -88,16 +103,24 @@ fn backward_refs_parity_multiple_sizes() {
         let zen = zenwebp_lossless(&rgb, w, h, 75, 4);
         let lib = libwebp_lossless(&rgb, w, h, 75.0, 4);
         let ratio = zen.len() as f64 / lib.len() as f64;
-        println!("{:<15} {:>12} {:>12} {:>8.4}x",
-            format!("{}x{}", w, h), zen.len(), lib.len(), ratio);
+        println!(
+            "{:<15} {:>12} {:>12} {:>8.4}x",
+            format!("{}x{}", w, h),
+            zen.len(),
+            lib.len(),
+            ratio
+        );
         if ratio > max_ratio {
             max_ratio = ratio;
         }
     }
 
     // All sizes at m4 should be within 2% of libwebp
-    assert!(max_ratio < 1.02,
-        "worst ratio {:.4}x exceeds 2% target", max_ratio);
+    assert!(
+        max_ratio < 1.02,
+        "worst ratio {:.4}x exceeds 2% target",
+        max_ratio
+    );
 }
 
 /// Verify lossless roundtrip correctness with all methods.
@@ -137,6 +160,10 @@ fn lossless_roundtrip_all_methods() {
                 mismatches += 1;
             }
         }
-        assert_eq!(mismatches, 0, "method {} had {} mismatches", method, mismatches);
+        assert_eq!(
+            mismatches, 0,
+            "method {} had {} mismatches",
+            method, mismatches
+        );
     }
 }

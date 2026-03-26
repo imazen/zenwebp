@@ -41,12 +41,29 @@ fn encode_libwebp(rgba: &[u8], w: u32, h: u32, method: u8) -> Vec<u8> {
 
 fn decode_zenwebp_rgba(webp: &[u8]) -> Vec<u8> {
     let config = zenwebp::DecodeConfig::default();
-    { let (pixels, _w, _h) = zenwebp::DecodeRequest::new(&config, webp).decode_rgba().unwrap(); pixels }
+    {
+        let (pixels, _w, _h) = zenwebp::DecodeRequest::new(&config, webp)
+            .decode_rgba()
+            .unwrap();
+        pixels
+    }
 }
 
 fn main() {
-    let photos = ["792079.png", "750463.png", "725551.png", "890595.png", "816411.png"];
-    let screenshots = ["codec_wiki.png", "terminal.png", "windows.png", "imac_dark.png", "imac_g3.png"];
+    let photos = [
+        "792079.png",
+        "750463.png",
+        "725551.png",
+        "890595.png",
+        "816411.png",
+    ];
+    let screenshots = [
+        "codec_wiki.png",
+        "terminal.png",
+        "windows.png",
+        "imac_dark.png",
+        "imac_g3.png",
+    ];
 
     let mut images: Vec<(String, Vec<u8>, u32, u32)> = Vec::new();
     for f in &photos {
@@ -69,7 +86,10 @@ fn main() {
         return;
     }
 
-    println!("{:<20} {:>6} {:>8} {:>8} {:>6} {:>12}", "image", "method", "zenwebp", "libwebp", "ratio", "rt_check");
+    println!(
+        "{:<20} {:>6} {:>8} {:>8} {:>6} {:>12}",
+        "image", "method", "zenwebp", "libwebp", "ratio", "rt_check"
+    );
     println!("{:-<70}", "");
 
     let mut total_checked = 0u32;
@@ -88,7 +108,7 @@ fn main() {
             // Roundtrip check: decode zenwebp output and compare pixels
             let decoded = decode_zenwebp_rgba(&zen_webp);
             let expected_len = (*w as usize) * (*h as usize) * 4;
-            
+
             let rt_ok = if decoded.len() != expected_len {
                 false
             } else {
@@ -96,24 +116,42 @@ fn main() {
             };
 
             total_checked += 1;
-            if !rt_ok { total_failed += 1; }
-            if smaller { total_smaller += 1; }
+            if !rt_ok {
+                total_failed += 1;
+            }
+            if smaller {
+                total_smaller += 1;
+            }
 
             let rt_str = if rt_ok { "EXACT" } else { "MISMATCH!" };
             let flag = if smaller { " <<<" } else { "" };
 
-            println!("{:<20} {:>6} {:>8} {:>8} {:>5.3}x {:>10}{}", 
-                &name[..name.len().min(20)], 
-                format!("m{method}"), 
-                zen_size, lib_size, ratio, rt_str, flag);
+            println!(
+                "{:<20} {:>6} {:>8} {:>8} {:>5.3}x {:>10}{}",
+                &name[..name.len().min(20)],
+                format!("m{method}"),
+                zen_size,
+                lib_size,
+                ratio,
+                rt_str,
+                flag
+            );
         }
     }
 
     println!("{:-<70}", "");
-    println!("{} images × 4 methods = {} checks", images.len(), total_checked);
-    println!("{} pixel-exact, {} MISMATCH", total_checked - total_failed, total_failed);
+    println!(
+        "{} images × 4 methods = {} checks",
+        images.len(),
+        total_checked
+    );
+    println!(
+        "{} pixel-exact, {} MISMATCH",
+        total_checked - total_failed,
+        total_failed
+    );
     println!("{} cases where zenwebp <= libwebp", total_smaller);
-    
+
     if total_failed > 0 {
         std::process::exit(1);
     }
