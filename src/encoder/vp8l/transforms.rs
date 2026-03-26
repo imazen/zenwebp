@@ -151,7 +151,7 @@ fn apply_subtract_green_sse2(_token: Sse2Token, pixels: &mut [u32]) {
         // Low 64 bits: shufflelo with pattern (2,2,0,0) -> [0 g0 | 0 g0 | 0 g1 | 0 g1]
         let b = _mm_shufflelo_epi16(ag, 0xA0); // _MM_SHUFFLE(2,2,0,0) = 0b10_10_00_00 = 0xA0
         // High 64 bits: shufflehi with same pattern
-        let c = _mm_shufflehi_epi16(b, 0xA0);  // [0 g0 | 0 g0 | 0 g1 | 0 g1 | 0 g2 | 0 g2 | 0 g3 | 0 g3]
+        let c = _mm_shufflehi_epi16(b, 0xA0); // [0 g0 | 0 g0 | 0 g1 | 0 g1 | 0 g2 | 0 g2 | 0 g3 | 0 g3]
 
         // Subtract as bytes (wrapping): R -= G, B -= G. A -= 0, G -= G = 0 wait...
         // Actually: the green bytes in the subtrahend are at the same positions as green
@@ -642,11 +642,7 @@ fn combined_shannon_entropy_scalar(x: &[u32; 256], y: &[u32; 256]) -> u64 {
 /// Entry point for SSE2 combined Shannon entropy (adds #[target_feature]).
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
 #[arcane]
-fn combined_shannon_entropy_entry(
-    _token: Sse2Token,
-    x: &[u32; 256],
-    y: &[u32; 256],
-) -> u64 {
+fn combined_shannon_entropy_entry(_token: Sse2Token, x: &[u32; 256], y: &[u32; 256]) -> u64 {
     combined_shannon_entropy_sse2(_token, x, y)
 }
 
@@ -658,11 +654,7 @@ fn combined_shannon_entropy_entry(
 /// For sparse histograms (90%+ zeros), this skips most entries entirely.
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
 #[rite]
-fn combined_shannon_entropy_sse2(
-    _token: Sse2Token,
-    x: &[u32; 256],
-    y: &[u32; 256],
-) -> u64 {
+fn combined_shannon_entropy_sse2(_token: Sse2Token, x: &[u32; 256], y: &[u32; 256]) -> u64 {
     let mut retval: u64 = 0;
     let mut sum_x: u32 = 0;
     let mut sum_xy: u32 = 0;
@@ -671,44 +663,22 @@ fn combined_shannon_entropy_sse2(
     let mut i = 0usize;
     while i < 256 {
         // Load 16 u32 values from X (4 SSE2 registers)
-        let x0 = simd_mem::_mm_loadu_si128(
-            <&[u32; 4]>::try_from(&x[i..i + 4]).unwrap(),
-        );
-        let x1 = simd_mem::_mm_loadu_si128(
-            <&[u32; 4]>::try_from(&x[i + 4..i + 8]).unwrap(),
-        );
-        let x2 = simd_mem::_mm_loadu_si128(
-            <&[u32; 4]>::try_from(&x[i + 8..i + 12]).unwrap(),
-        );
-        let x3 = simd_mem::_mm_loadu_si128(
-            <&[u32; 4]>::try_from(&x[i + 12..i + 16]).unwrap(),
-        );
+        let x0 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&x[i..i + 4]).unwrap());
+        let x1 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&x[i + 4..i + 8]).unwrap());
+        let x2 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&x[i + 8..i + 12]).unwrap());
+        let x3 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&x[i + 12..i + 16]).unwrap());
 
         // Load 16 u32 values from Y
-        let y0 = simd_mem::_mm_loadu_si128(
-            <&[u32; 4]>::try_from(&y[i..i + 4]).unwrap(),
-        );
-        let y1 = simd_mem::_mm_loadu_si128(
-            <&[u32; 4]>::try_from(&y[i + 4..i + 8]).unwrap(),
-        );
-        let y2 = simd_mem::_mm_loadu_si128(
-            <&[u32; 4]>::try_from(&y[i + 8..i + 12]).unwrap(),
-        );
-        let y3 = simd_mem::_mm_loadu_si128(
-            <&[u32; 4]>::try_from(&y[i + 12..i + 16]).unwrap(),
-        );
+        let y0 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&y[i..i + 4]).unwrap());
+        let y1 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&y[i + 4..i + 8]).unwrap());
+        let y2 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&y[i + 8..i + 12]).unwrap());
+        let y3 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&y[i + 12..i + 16]).unwrap());
 
         // Pack 16 x i32 -> 16 x i8 via signed saturation (i32->i16->i8).
         // Any nonzero u32 histogram count packs to nonzero i8 (saturates to [1,127]).
         // Zero stays zero.
-        let x4 = _mm_packs_epi16(
-            _mm_packs_epi32(x0, x1),
-            _mm_packs_epi32(x2, x3),
-        );
-        let y4 = _mm_packs_epi16(
-            _mm_packs_epi32(y0, y1),
-            _mm_packs_epi32(y2, y3),
-        );
+        let x4 = _mm_packs_epi16(_mm_packs_epi32(x0, x1), _mm_packs_epi32(x2, x3));
+        let y4 = _mm_packs_epi16(_mm_packs_epi32(y0, y1), _mm_packs_epi32(y2, y3));
 
         // Create bitmask: bit j is set if X[i+j] > 0 (signed comparison)
         let mx = _mm_movemask_epi8(_mm_cmpgt_epi8(x4, zero)) as u32;
@@ -1279,9 +1249,7 @@ fn apply_cross_color_tile_sse2_entry(
     end_y: usize,
     m: &CrossColorMultipliers,
 ) {
-    apply_cross_color_tile_sse2(
-        _token, pixels, width, start_x, start_y, end_x, end_y, m,
-    );
+    apply_cross_color_tile_sse2(_token, pixels, width, start_x, start_y, end_x, end_y, m);
 }
 
 /// SSE2 cross-color transform matching libwebp's TransformColor_SSE2.
