@@ -80,6 +80,25 @@ differences (stochastic combining index compaction behavior), not backward refs.
 128x128 blowup at m2 (4.4x) diagnosed as predictor transform_bits issue (large blocks
 for small images), not backward refs.
 
+**Histogram clustering optimization (2026-03-25):**
+
+Rewrote histogram clustering to match libwebp's algorithmic structure:
+- Priority-queue-based greedy (O(n^2 init + n/merge) vs O(n^2/merge))
+- Queue-based stochastic with size-9 priority queue (matching kHistoQueueSize)
+- Greedy only runs when stochastic reaches target_size (was: MAX_HISTO_GREEDY=100)
+- Remap phase uses progressive threshold tightening
+
+| Function | Before | After | Reduction |
+|----------|--------|-------|-----------|
+| get_combined_histogram_cost | 7,341M | 1,717M | **4.3x** |
+| get_entropy_unrefined | 432M | 81M | **5.3x** |
+| Total encoder (512x512 m4 lossless) | 9,350M | 3,709M | **2.52x** |
+
+Remaining gap vs libwebp (90M for GetCombinedEntropyUnrefined): ~19x. This is
+from stochastic phase call count differences — our queue-based approach uses the
+same algorithm but different threshold dynamics than libwebp's within-iteration
+best_cost update.
+
 ### Decoder vs libwebp
 
 | Corpus | Ratio |
