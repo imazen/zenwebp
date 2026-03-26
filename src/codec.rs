@@ -1104,7 +1104,7 @@ static DECODE_CAPABILITIES: zencodec::decode::DecodeCapabilities =
 
 impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
     type Error = At<DecodeError>;
-    type Job = WebpDecodeJob;
+    type Job<'a> = WebpDecodeJob;
 
     fn formats() -> &'static [ImageFormat] {
         &[ImageFormat::WebP]
@@ -1118,7 +1118,7 @@ impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
         &DECODE_CAPABILITIES
     }
 
-    fn job(self) -> WebpDecodeJob {
+    fn job<'a>(self) -> Self::Job<'a> {
         WebpDecodeJob {
             config: self,
             stop: None,
