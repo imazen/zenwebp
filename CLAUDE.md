@@ -113,6 +113,11 @@ giving lower absolute counts but valid relative ratios.
 | VP8LBackwardRefsCursorAdd | 0 | 17 | **0.00x** |
 | **Total** | **511** | **505** | **1.01x** |
 
+**VP8L core is faster than C:** encode_argb_single_config inclusive 482M vs
+libwebp VP8LEncodeStream 496M = **0.97x (3% faster)**. The 6M total excess
+(511M vs 505M) is pixel format conversion and test harness overhead outside
+the VP8L encoder core.
+
 Functions faster than C: Histogram building (Vec vs linked-list), TraceBackwards
 (tighter Rust iteration), no progress reporting overhead.
 Functions slower than C: get_entropy_unrefined (bounds-check + codegen overhead),
