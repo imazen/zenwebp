@@ -128,10 +128,21 @@ ZENWEBP_TRACE=1 env var enables call count instrumentation.
 
 ### Decoder vs libwebp
 
-| Corpus | Ratio |
-|--------|-------|
-| CLIC2025 (10 images) | **0.93-1.25x** (avg ~1.15x slower) |
-| 1024×1024 lossy | **1.32x slower** (267 vs 351 MPix/s) |
+**Wall-clock (x86-64-v3, gallery1 corpus, 200 iterations, 2026-03-25):**
+
+| Image | Dimensions | zenwebp | libwebp | Ratio |
+|-------|------------|---------|---------|-------|
+| gallery1/1 | 550x368 | 2.21ms | 1.38ms | 1.60x |
+| gallery1/2 | 550x404 | 3.29ms | 2.39ms | 1.38x |
+| gallery1/3 | 1280x720 | 9.16ms | 8.27ms | **1.11x** |
+| gallery1/4 | 1024x772 | 8.31ms | 7.01ms | 1.19x |
+| gallery1/5 | 1024x752 | 4.43ms | 4.52ms | **0.98x** |
+
+Large images (720p+): **1.08-1.19x** (near parity).
+Small images (550px): **1.38-1.60x** (per-frame overhead: allocation, setup).
+
+**Instruction ratio (callgrind, same WebP, 1024x1024):**
+zenwebp 91.4M vs libwebp 79.4M = **1.15x**
 
 ### Decoder Threading Investigation (2026-03-24)
 
@@ -251,30 +262,29 @@ instruction count, not cache efficiency.
 | ftransform2 + ftransform_from_u8 | 9.6M | FTransform_SSE2 | 9.8M | **0.98x** |
 | quantize_block (standalone) | 4.3M | QuantizeBlock_SSE41 | 6.0M | **0.72x** |
 
-### Decoder (2026-03-24, gallery1/3.webp 1280×720)
+### Decoder (2026-03-25, 1024×1024 synthetic lossy, same WebP file, 10 decodes)
 
-zenwebp: 207.5M vs libwebp: 93.8M (**2.21x instruction ratio**)
+zenwebp: 91.4M vs libwebp: 79.4M (**1.15x instruction ratio**)
 
 | zenwebp function | M instr | libwebp equivalent | M instr | Ratio |
 |-----------------|---------|-------------------|---------|-------|
-| read_coefficients | 62.5M | GetCoeffsFast | 47.6M | **1.31x** |
-| decode_frame_ (orchestration) | 21.7M | VP8DecodeMB+ReconstructRow+ParseIntraMode | 13.8M | **1.57x** |
-| IDCT arcane SSE2 | 8.4M | Transform_SSE2 | 6.3M | **1.33x** |
-| simple_h_filter AVX2 | 5.8M | SimpleHFilter16i_SSE2 | 1.7M | **3.4x** |
-| fancy_upsample SIMD | 7.7M | VP8YuvToRgb32_SSE2 | 7.6M | 1.01x |
-| fill_row_fancy scalar | 2.6M | UpsampleRgbLinePair_SSE2 | 1.9M | 1.37x |
-| drop_in_place\<DecodeError\> | 1.1M | — | 0 | pure overhead |
-| memset | 0.9M | — | 0 | buffer zeroing |
-| memcpy | 0.5M | — | 0 | buffer copies |
+| read_residual_data | 40.8M | GetCoeffsFast (3 entries) | 36.5M | **1.12x** |
+| filter_row_in_cache | 17.5M | HFilter/VFilter/DoFilter6 SSE2 | 9.9M | **1.77x** |
+| decode_frame_ (exclusive) | 15.1M | VP8DecodeMB+ReconstructRow+ParseIntraMode | ~10.5M | **1.44x** |
+| fill_row_fancy | 11.3M | YUV2RGB+Upsample SSE41 | 8.6M | **1.31x** |
+| memset | 4.5M | — | 0 | buffer zeroing |
+| drop_in_place\<DecodeError\> | 0.4M | — | 0 | `?` overhead |
+| memcpy | 0.4M | — | 0 | buffer copies |
 
-**Top 3 optimization targets (113.7M → 68.4M potential = 45.3M savings):**
-1. **read_coefficients 62.5M** — 14.9M excess vs libwebp's GetCoeffsFast. Tight inner
-   loop with bit reading + dequant. Profile the per-coefficient overhead.
-2. **decode_frame_ orchestration 21.7M** — 7.9M excess. Prediction + border management +
-   cache writes. Rust bounds checks, memcpy for borders, function call overhead.
-3. **simple_h_filter AVX2 5.8M** — 3.4x vs SSE2. AVX2 filter is doing MORE work than
-   SSE2 — likely function call overhead from archmage dispatch or AVX→SSE transition
-   penalties. Consider using SSE2 filter or investigating AVX2 variant.
+**Remaining optimization targets:**
+1. **filter_row_in_cache 7.6M excess** — archmage `#[arcane]` dispatch overhead on
+   many small filter calls. Fused 3-edge filter implemented but `#[arcane]` wrapper
+   negated gains. Need `#[rite]` integration or filter order restructuring.
+2. **read_residual_data 4.3M excess** — dequant array optimization already applied.
+   Remaining excess: bounds checks on probs table, cat_probs loop, coefficient
+   overhead per block.
+3. **fill_row_fancy 2.7M excess** — scalar edge handling + fewer pixels per SIMD pass.
+4. **memset 4.5M** — unavoidable frame buffer allocation zeroing.
 
 ## Remaining Optimization Opportunities
 
@@ -285,19 +295,18 @@ zenwebp: 207.5M vs libwebp: 93.8M (**2.21x instruction ratio**)
 4. **Defer I16 reconstruction** — only IDCT winning mode (saves ~48 IDCT/MB)
 
 ### Decoder
-1. **decode_frame_ orchestration 21.7M vs 13.8M (1.57x)** — biggest bang-for-buck.
-   Prediction border copies (memcpy for top_border/left_border per MB), cache
-   write bounds checks, function call overhead between read_residual/intra_predict.
-2. **read_coefficients 62.5M vs 56.2M (1.11x)** — only 11% excess when accounting
-   for GetLargeValue (8.6M) being a separate function in libwebp. Bit reader itself
-   is already optimized (VP8GetBitAlt with LZCNT). Remaining excess is bounds checks
-   on `output[zigzag]` writes and probs table lookup chain.
-3. **Loop filter AVX2 5.8M vs SSE2 1.7M (3.4x)** — algorithmic: we load 8 columns
-   and do full 8×16 transpose when libwebp's Load16x4/Store16x4 only loads 4 columns
-   with interleaved unpacks. Helper dispatch overhead eliminated (rite conversion),
-   but the transpose is the real cost. Fix: rewrite load/store to match libwebp's
-   4-column approach.
-4. **IDCT 8.4M vs 6.3M (1.33x)** — arcane wrapper overhead.
+1. **Loop filter 17.5M vs 9.9M (1.77x)** — `#[arcane]` dispatch overhead on per-edge
+   filter calls. Fused 3-edge horizontal filter (normal_h_filter16i) implemented in
+   loop_filter_avx2.rs matching libwebp's HFilter16i approach (column reuse), but
+   `#[arcane]` wrapper overhead negated the algorithmic gains (+19M worse).
+   Need `#[rite]` conversion to benefit.
+2. **read_residual_data 40.8M vs 36.5M (1.12x)** — dequant array optimization applied
+   (i32[2] indexed by n>0). Remaining excess: bounds checks on prob table lookups,
+   cat_probs loop overhead, try_into().unwrap() on block slices.
+3. **decode_frame_ orchestration 15.1M vs ~10.5M (1.44x)** — prediction border copies,
+   cache write bounds checks, function call overhead.
+4. **fill_row_fancy 11.3M vs 8.6M (1.31x)** — scalar edge pixel handling, fewer
+   pixels per SIMD iteration than libwebp's wider processing.
 
 ## Profiling Commands
 
