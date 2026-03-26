@@ -7,6 +7,13 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+use archmage::intrinsics::x86_64 as simd_mem;
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+use archmage::{Sse2Token, arcane, rite};
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+use core::arch::x86_64::*;
+
 use super::types::{argb_alpha, argb_blue, argb_green, argb_red, make_argb, subsample_size};
 
 /// Transform type identifier.
@@ -500,7 +507,23 @@ fn fast_slog2(v: u32) -> u64 {
 
 /// Combined Shannon entropy of distributions X and X+Y (matching libwebp).
 /// Returns SLog2(sumX) + SLog2(sumXY) - Σ(SLog2(x_i) + SLog2(x_i+y_i))
+///
+/// On x86/x86_64 with SIMD enabled, uses SSE2 bitmask scanning to skip zero
+/// entries in bulk (16 at a time via pack+movemask), matching libwebp's
+/// CombinedShannonEntropy_SSE2.
 fn combined_shannon_entropy(x: &[u32; 256], y: &[u32; 256]) -> u64 {
+    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = Sse2Token::summon() {
+            return combined_shannon_entropy_entry(token, x, y);
+        }
+    }
+    combined_shannon_entropy_scalar(x, y)
+}
+
+/// Scalar fallback for combined_shannon_entropy.
+fn combined_shannon_entropy_scalar(x: &[u32; 256], y: &[u32; 256]) -> u64 {
     let mut retval: u64 = 0;
     let mut sum_x: u32 = 0;
     let mut sum_xy: u32 = 0;
@@ -517,6 +540,108 @@ fn combined_shannon_entropy(x: &[u32; 256], y: &[u32; 256]) -> u64 {
             retval += fast_slog2(y[i]);
         }
     }
+    fast_slog2(sum_x) + fast_slog2(sum_xy) - retval
+}
+
+/// Entry point for SSE2 combined Shannon entropy (adds #[target_feature]).
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[arcane]
+fn combined_shannon_entropy_entry(
+    _token: Sse2Token,
+    x: &[u32; 256],
+    y: &[u32; 256],
+) -> u64 {
+    combined_shannon_entropy_sse2(_token, x, y)
+}
+
+/// SSE2 combined Shannon entropy matching libwebp's CombinedShannonEntropy_SSE2.
+///
+/// Loads 16 u32 values at a time, packs to bytes via signed saturation
+/// (i32->i16->i8), then uses cmpgt+movemask to create a bitmask of nonzero
+/// positions. Iterates only nonzero entries using trailing_zeros().
+/// For sparse histograms (90%+ zeros), this skips most entries entirely.
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[rite]
+fn combined_shannon_entropy_sse2(
+    _token: Sse2Token,
+    x: &[u32; 256],
+    y: &[u32; 256],
+) -> u64 {
+    let mut retval: u64 = 0;
+    let mut sum_x: u32 = 0;
+    let mut sum_xy: u32 = 0;
+    let zero = _mm_setzero_si128();
+
+    let mut i = 0usize;
+    while i < 256 {
+        // Load 16 u32 values from X (4 SSE2 registers)
+        let x0 = simd_mem::_mm_loadu_si128(
+            <&[u32; 4]>::try_from(&x[i..i + 4]).unwrap(),
+        );
+        let x1 = simd_mem::_mm_loadu_si128(
+            <&[u32; 4]>::try_from(&x[i + 4..i + 8]).unwrap(),
+        );
+        let x2 = simd_mem::_mm_loadu_si128(
+            <&[u32; 4]>::try_from(&x[i + 8..i + 12]).unwrap(),
+        );
+        let x3 = simd_mem::_mm_loadu_si128(
+            <&[u32; 4]>::try_from(&x[i + 12..i + 16]).unwrap(),
+        );
+
+        // Load 16 u32 values from Y
+        let y0 = simd_mem::_mm_loadu_si128(
+            <&[u32; 4]>::try_from(&y[i..i + 4]).unwrap(),
+        );
+        let y1 = simd_mem::_mm_loadu_si128(
+            <&[u32; 4]>::try_from(&y[i + 4..i + 8]).unwrap(),
+        );
+        let y2 = simd_mem::_mm_loadu_si128(
+            <&[u32; 4]>::try_from(&y[i + 8..i + 12]).unwrap(),
+        );
+        let y3 = simd_mem::_mm_loadu_si128(
+            <&[u32; 4]>::try_from(&y[i + 12..i + 16]).unwrap(),
+        );
+
+        // Pack 16 x i32 -> 16 x i8 via signed saturation (i32->i16->i8).
+        // Any nonzero u32 histogram count packs to nonzero i8 (saturates to [1,127]).
+        // Zero stays zero.
+        let x4 = _mm_packs_epi16(
+            _mm_packs_epi32(x0, x1),
+            _mm_packs_epi32(x2, x3),
+        );
+        let y4 = _mm_packs_epi16(
+            _mm_packs_epi32(y0, y1),
+            _mm_packs_epi32(y2, y3),
+        );
+
+        // Create bitmask: bit j is set if X[i+j] > 0 (signed comparison)
+        let mx = _mm_movemask_epi8(_mm_cmpgt_epi8(x4, zero)) as u32;
+        // my = positions where EITHER X or Y is nonzero
+        let mut my = (_mm_movemask_epi8(_mm_cmpgt_epi8(y4, zero)) as u32) | mx;
+
+        // Iterate only nonzero positions using bit scanning
+        while my != 0 {
+            let j = my.trailing_zeros() as usize;
+
+            // If X[i+j] is nonzero, accumulate its contribution
+            if (mx >> j) & 1 != 0 {
+                let xv = x[i + j];
+                sum_x += xv;
+                retval += fast_slog2(xv);
+            }
+
+            // X[i+j] + Y[i+j] -- when mx bit is clear, X[i+j] == 0,
+            // so this reduces to Y[i+j]
+            let xy = x[i + j] + y[i + j];
+            sum_xy += xy;
+            retval += fast_slog2(xy);
+
+            my &= my - 1; // Clear lowest set bit
+        }
+
+        i += 16;
+    }
+
     fast_slog2(sum_x) + fast_slog2(sum_xy) - retval
 }
 
