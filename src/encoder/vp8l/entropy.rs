@@ -136,8 +136,7 @@ fn fast_slog2_slow(v: u32) -> u64 {
         let shifted = (v >> log_cnt as u32) as usize; // now in 0..255
         // Linear correction: log2(1 + d) ≈ d / ln(2)
         let correction = LOG_2_RECIPROCAL_FIXED * (orig_v & (y - 1));
-        orig_v * (K_LOG2_TABLE[shifted] as u64 + (log_cnt << LOG_2_PRECISION_BITS))
-            + correction
+        orig_v * (K_LOG2_TABLE[shifted] as u64 + (log_cnt << LOG_2_PRECISION_BITS)) + correction
     } else {
         // Fallback for very large values (rare in practice)
         let vf = v as f64;
@@ -198,6 +197,8 @@ fn entropy_unrefined_helper(
 }
 
 /// Calculate entropy + streak stats for a single distribution (matches VP8LGetEntropyUnrefined).
+///
+/// Optimized with batch zero-skipping for sparse histograms.
 fn get_entropy_unrefined(x: &[u32]) -> (BitEntropy, Streaks) {
     let mut bit_entropy = BitEntropy::default();
     let mut stats = Streaks::default();
@@ -206,10 +207,46 @@ fn get_entropy_unrefined(x: &[u32]) -> (BitEntropy, Streaks) {
         return (bit_entropy, stats);
     }
 
+    let len = x.len();
     let mut i_prev = 0usize;
     let mut x_prev = x[0];
 
-    for (i, &xv) in x.iter().enumerate().skip(1) {
+    let chunks_end = 1 + ((len.saturating_sub(2)) / 8) * 8;
+    let mut i = 1usize;
+
+    while i < chunks_end {
+        let or_all =
+            x[i] | x[i + 1] | x[i + 2] | x[i + 3] | x[i + 4] | x[i + 5] | x[i + 6] | x[i + 7];
+
+        if or_all == 0 {
+            if x_prev == 0 {
+                i += 8;
+                continue;
+            }
+            entropy_unrefined_helper(0, i, &mut x_prev, &mut i_prev, &mut bit_entropy, &mut stats);
+            i += 8;
+            continue;
+        }
+
+        let end = i + 8;
+        while i < end {
+            let xv = x[i];
+            if xv != x_prev {
+                entropy_unrefined_helper(
+                    xv,
+                    i,
+                    &mut x_prev,
+                    &mut i_prev,
+                    &mut bit_entropy,
+                    &mut stats,
+                );
+            }
+            i += 1;
+        }
+    }
+
+    while i < len {
+        let xv = x[i];
         if xv != x_prev {
             entropy_unrefined_helper(
                 xv,
@@ -220,10 +257,12 @@ fn get_entropy_unrefined(x: &[u32]) -> (BitEntropy, Streaks) {
                 &mut stats,
             );
         }
+        i += 1;
     }
+
     entropy_unrefined_helper(
         0,
-        x.len(),
+        len,
         &mut x_prev,
         &mut i_prev,
         &mut bit_entropy,
@@ -237,6 +276,10 @@ fn get_entropy_unrefined(x: &[u32]) -> (BitEntropy, Streaks) {
 
 /// Calculate combined entropy for TWO distributions without merging them.
 /// Matches libwebp's GetCombinedEntropyUnrefined_C.
+///
+/// Optimized with batch zero-skipping: for contiguous zero regions in both x
+/// and y, skips chunks of 8 elements at a time using a single OR-reduction test.
+/// Since histograms are typically 90%+ sparse, this avoids most per-element work.
 fn get_combined_entropy_unrefined(x: &[u32], y: &[u32]) -> (BitEntropy, Streaks) {
     debug_assert_eq!(x.len(), y.len());
     let mut bit_entropy = BitEntropy::default();
@@ -246,10 +289,75 @@ fn get_combined_entropy_unrefined(x: &[u32], y: &[u32]) -> (BitEntropy, Streaks)
         return (bit_entropy, stats);
     }
 
+    let len = x.len().min(y.len());
     let mut i_prev = 0usize;
     let mut xy_prev = x[0] + y[0];
 
-    for i in 1..x.len() {
+    // Process in chunks of 8 with batch zero-skipping.
+    // When all 16 values (8 from x + 8 from y) OR to zero, the chunk is entirely
+    // zero. If we're already in a zero streak, we can skip the entire chunk.
+    let x = &x[..len];
+    let y = &y[..len];
+    let chunks_end = 1 + ((len.saturating_sub(2)) / 8) * 8;
+    let mut i = 1usize;
+
+    while i < chunks_end {
+        let or_all = x[i]
+            | x[i + 1]
+            | x[i + 2]
+            | x[i + 3]
+            | x[i + 4]
+            | x[i + 5]
+            | x[i + 6]
+            | x[i + 7]
+            | y[i]
+            | y[i + 1]
+            | y[i + 2]
+            | y[i + 3]
+            | y[i + 4]
+            | y[i + 5]
+            | y[i + 6]
+            | y[i + 7];
+
+        if or_all == 0 {
+            if xy_prev == 0 {
+                // Zero streak continues - skip entire chunk
+                i += 8;
+                continue;
+            }
+            // Transition from nonzero to zero at first element
+            entropy_unrefined_helper(
+                0,
+                i,
+                &mut xy_prev,
+                &mut i_prev,
+                &mut bit_entropy,
+                &mut stats,
+            );
+            i += 8;
+            continue;
+        }
+
+        // Chunk has nonzero elements - process individually
+        let end = i + 8;
+        while i < end {
+            let xy = x[i] + y[i];
+            if xy != xy_prev {
+                entropy_unrefined_helper(
+                    xy,
+                    i,
+                    &mut xy_prev,
+                    &mut i_prev,
+                    &mut bit_entropy,
+                    &mut stats,
+                );
+            }
+            i += 1;
+        }
+    }
+
+    // Tail: remaining elements
+    while i < len {
         let xy = x[i] + y[i];
         if xy != xy_prev {
             entropy_unrefined_helper(
@@ -261,10 +369,13 @@ fn get_combined_entropy_unrefined(x: &[u32], y: &[u32]) -> (BitEntropy, Streaks)
                 &mut stats,
             );
         }
+        i += 1;
     }
+
+    // Final flush
     entropy_unrefined_helper(
         0,
-        x.len(),
+        len,
         &mut xy_prev,
         &mut i_prev,
         &mut bit_entropy,
