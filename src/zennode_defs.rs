@@ -242,6 +242,11 @@ impl EncodeWebpLossless {
         // Near-lossless
         config = config.with_near_lossless(self.near_lossless.min(100) as u8);
 
+        // Exact (preserve RGB under transparent pixels)
+        if self.exact {
+            config = config.with_exact(true);
+        }
+
         config
     }
 
