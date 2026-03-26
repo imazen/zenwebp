@@ -21,4 +21,6 @@ mod transforms;
 mod types;
 
 pub use encode::encode_vp8l;
+pub use entropy::print_entropy_stats;
+pub use meta_huffman::print_clustering_stats;
 pub use types::{Vp8lConfig, Vp8lQuality};

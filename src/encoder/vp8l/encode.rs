@@ -460,7 +460,7 @@ pub(crate) fn encode_argb(
         config.quality.quality,
     );
 
-    if configs.len() == 1 {
+    let result = if configs.len() == 1 {
         // Single config: encode in place (no clone needed)
         encode_argb_single_config(argb, width, height, has_alpha, config, &configs[0], stop)
     } else {
@@ -499,7 +499,18 @@ pub(crate) fn encode_argb(
             "all {} crunch configs failed",
             configs.len()
         )))
+    };
+
+    // Print instrumentation stats if ZENWEBP_TRACE is set
+    #[cfg(feature = "std")]
+    {
+        if std::env::var("ZENWEBP_TRACE").is_ok() {
+            super::entropy::print_entropy_stats();
+            super::meta_huffman::print_clustering_stats();
+        }
     }
+
+    result
 }
 
 /// Encode ARGB pixels with a specific transform configuration.
@@ -702,8 +713,8 @@ fn encode_argb_single_config(
     };
 
     // Encode image data from backward references.
-    // Match libwebp: try the entropy-selected cache_bits AND cache_bits=0,
-    // keep the smaller output. libwebp only ever tries these 2 values.
+    // Try both cache_bits=0 and cache_bits=N when auto-detected cache is
+    // nonzero, keeping the smaller output.
     let is_palette = palette_transform.is_some();
     let auto_cache = config.cache_bits.is_none();
 

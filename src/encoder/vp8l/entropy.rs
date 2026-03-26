@@ -7,6 +7,84 @@
 
 use super::histogram::Histogram;
 
+// === Instrumentation counters for tracing call counts ===
+#[cfg(feature = "std")]
+mod trace {
+    use core::sync::atomic::{AtomicU64, Ordering};
+
+    static GET_COMBINED_HISTOGRAM_COST_CALLS: AtomicU64 = AtomicU64::new(0);
+    static GET_COMBINED_COST_FOR_TYPE_CALLS: AtomicU64 = AtomicU64::new(0);
+    static COMBINED_ENTROPY_CALLS: AtomicU64 = AtomicU64::new(0);
+    static COMBINED_ENTROPY_ELEMENTS: AtomicU64 = AtomicU64::new(0);
+    static POPULATION_COST_CALLS: AtomicU64 = AtomicU64::new(0);
+    static COMPUTE_HISTOGRAM_COST_CALLS: AtomicU64 = AtomicU64::new(0);
+
+    #[inline]
+    pub fn inc_get_combined_histogram_cost() {
+        GET_COMBINED_HISTOGRAM_COST_CALLS.fetch_add(1, Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn inc_get_combined_cost_for_type() {
+        GET_COMBINED_COST_FOR_TYPE_CALLS.fetch_add(1, Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn inc_combined_entropy(elements: u64) {
+        COMBINED_ENTROPY_CALLS.fetch_add(1, Ordering::Relaxed);
+        COMBINED_ENTROPY_ELEMENTS.fetch_add(elements, Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn inc_population_cost() {
+        POPULATION_COST_CALLS.fetch_add(1, Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn inc_compute_histogram_cost() {
+        COMPUTE_HISTOGRAM_COST_CALLS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn print_and_reset() {
+        eprintln!("=== Entropy Call Stats ===");
+        eprintln!(
+            "get_combined_histogram_cost: {}",
+            GET_COMBINED_HISTOGRAM_COST_CALLS.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "get_combined_cost_for_type: {}",
+            GET_COMBINED_COST_FOR_TYPE_CALLS.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "combined_entropy (full calc): {}",
+            COMBINED_ENTROPY_CALLS.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "combined_entropy total elements: {}",
+            COMBINED_ENTROPY_ELEMENTS.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "population_cost: {}",
+            POPULATION_COST_CALLS.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "compute_histogram_cost: {}",
+            COMPUTE_HISTOGRAM_COST_CALLS.swap(0, Ordering::Relaxed)
+        );
+    }
+}
+
+#[cfg(not(feature = "std"))]
+mod trace {
+    #[inline]
+    pub fn inc_get_combined_histogram_cost() {}
+    #[inline]
+    pub fn inc_get_combined_cost_for_type() {}
+    #[inline]
+    pub fn inc_combined_entropy(_elements: u64) {}
+    #[inline]
+    pub fn inc_population_cost() {}
+    #[inline]
+    pub fn inc_compute_histogram_cost() {}
+    pub fn print_and_reset() {}
+}
+
 /// Fixed-point precision for entropy calculations (matching libwebp).
 const LOG_2_PRECISION_BITS: u32 = 23;
 
@@ -496,6 +574,7 @@ pub fn vp8l_bits_entropy(population: &[u32]) -> u64 {
 /// Cost to encode a single population (entropy + Huffman tree cost).
 /// Returns (cost, trivial_sym, is_used).
 pub fn population_cost(population: &[u32]) -> (u64, Option<u16>, bool) {
+    trace::inc_population_cost();
     let (bit_entropy, stats) = get_entropy_unrefined(population);
 
     let trivial_sym = if bit_entropy.nonzeros == 1 {
@@ -513,6 +592,7 @@ pub fn population_cost(population: &[u32]) -> (u64, Option<u16>, bool) {
 /// Cost to encode two populations combined (without modifying them).
 #[inline]
 fn combined_entropy(x: &[u32], y: &[u32]) -> u64 {
+    trace::inc_combined_entropy(x.len() as u64);
     let (bit_entropy, stats) = get_combined_entropy_unrefined(x, y);
     bits_entropy_refine(&bit_entropy) + final_huffman_cost(&stats)
 }
@@ -553,6 +633,7 @@ fn extra_cost(population: &[u32]) -> u64 {
 /// This is the per-type PopulationCost sum used by histogram clustering.
 /// Does NOT include ExtraCost (that's only in estimate_histogram_bits).
 pub fn compute_histogram_cost(h: &Histogram) -> HistogramCosts {
+    trace::inc_compute_histogram_cost();
     let (lit_cost, lit_triv, lit_used) = population_cost(&h.literal);
     let (red_cost, red_triv, red_used) = population_cost(&h.red);
     let (blue_cost, blue_triv, blue_used) = population_cost(&h.blue);
@@ -577,6 +658,7 @@ fn get_combined_cost_for_type(
     h2_costs: &HistogramCosts,
     type_idx: usize,
 ) -> u64 {
+    trace::inc_get_combined_cost_for_type();
     let h1_used = h1_costs.is_used[type_idx];
     let h2_used = h2_costs.is_used[type_idx];
 
@@ -622,6 +704,7 @@ pub fn get_combined_histogram_cost(
     h2_costs: &HistogramCosts,
     cost_threshold: u64,
 ) -> Option<u64> {
+    trace::inc_get_combined_histogram_cost();
     if cost_threshold == 0 {
         return None;
     }
@@ -659,6 +742,11 @@ pub fn estimate_combined_bits(h1: &Histogram, h2: &Histogram) -> u64 {
     let mut combined = h1.clone();
     combined.add(h2);
     estimate_histogram_bits(&combined)
+}
+
+/// Print and reset entropy call statistics.
+pub fn print_entropy_stats() {
+    trace::print_and_reset();
 }
 
 #[cfg(test)]

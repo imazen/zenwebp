@@ -11,6 +11,182 @@ use super::entropy::{HistogramCosts, compute_histogram_cost, get_combined_histog
 use super::histogram::Histogram;
 use super::types::{BackwardRefs, PixOrCopy, subsample_size};
 
+// === Instrumentation counters for tracing clustering behavior ===
+#[cfg(feature = "std")]
+mod cluster_trace {
+    use core::sync::atomic::{AtomicU64, Ordering};
+
+    static CLUSTER_CALLS: AtomicU64 = AtomicU64::new(0);
+    static INITIAL_HISTOGRAMS: AtomicU64 = AtomicU64::new(0);
+    static ENTROPY_BIN_MERGES: AtomicU64 = AtomicU64::new(0);
+    static STOCHASTIC_OUTER_ITERS: AtomicU64 = AtomicU64::new(0);
+    static STOCHASTIC_PAIR_EVALS: AtomicU64 = AtomicU64::new(0);
+    static STOCHASTIC_MERGES: AtomicU64 = AtomicU64::new(0);
+    static STOCHASTIC_QUEUE_UPDATES: AtomicU64 = AtomicU64::new(0);
+    static GREEDY_INITIAL_PAIRS: AtomicU64 = AtomicU64::new(0);
+    static GREEDY_MERGES: AtomicU64 = AtomicU64::new(0);
+    static GREEDY_NEW_PAIRS: AtomicU64 = AtomicU64::new(0);
+    static REMAP_EVALS: AtomicU64 = AtomicU64::new(0);
+    static POST_ENTROPY_BIN_COUNT: AtomicU64 = AtomicU64::new(0);
+    static POST_STOCHASTIC_COUNT: AtomicU64 = AtomicU64::new(0);
+    static POST_GREEDY_COUNT: AtomicU64 = AtomicU64::new(0);
+
+    #[inline]
+    pub fn inc_cluster_calls() {
+        CLUSTER_CALLS.fetch_add(1, Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn add_initial_histograms(n: u64) {
+        INITIAL_HISTOGRAMS.fetch_add(n, Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn inc_entropy_bin_merges() {
+        ENTROPY_BIN_MERGES.fetch_add(1, Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn inc_stochastic_outer_iters() {
+        STOCHASTIC_OUTER_ITERS.fetch_add(1, Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn add_stochastic_pair_evals(n: u64) {
+        STOCHASTIC_PAIR_EVALS.fetch_add(n, Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn inc_stochastic_merges() {
+        STOCHASTIC_MERGES.fetch_add(1, Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn inc_stochastic_queue_updates() {
+        STOCHASTIC_QUEUE_UPDATES.fetch_add(1, Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn add_greedy_initial_pairs(n: u64) {
+        GREEDY_INITIAL_PAIRS.fetch_add(n, Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn inc_greedy_merges() {
+        GREEDY_MERGES.fetch_add(1, Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn add_greedy_new_pairs(n: u64) {
+        GREEDY_NEW_PAIRS.fetch_add(n, Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn add_remap_evals(n: u64) {
+        REMAP_EVALS.fetch_add(n, Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn set_post_entropy_bin_count(n: u64) {
+        POST_ENTROPY_BIN_COUNT.fetch_add(n, Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn set_post_stochastic_count(n: u64) {
+        POST_STOCHASTIC_COUNT.fetch_add(n, Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn set_post_greedy_count(n: u64) {
+        POST_GREEDY_COUNT.fetch_add(n, Ordering::Relaxed);
+    }
+
+    pub fn print_and_reset() {
+        eprintln!("=== Clustering Stats ===");
+        eprintln!(
+            "cluster_histograms calls: {}",
+            CLUSTER_CALLS.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "initial histograms (total): {}",
+            INITIAL_HISTOGRAMS.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "entropy bin merges: {}",
+            ENTROPY_BIN_MERGES.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "post-entropy-bin active: {}",
+            POST_ENTROPY_BIN_COUNT.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "stochastic outer iters: {}",
+            STOCHASTIC_OUTER_ITERS.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "stochastic pair evals (HistoQueuePush): {}",
+            STOCHASTIC_PAIR_EVALS.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "stochastic merges: {}",
+            STOCHASTIC_MERGES.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "stochastic queue update re-evals: {}",
+            STOCHASTIC_QUEUE_UPDATES.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "post-stochastic active: {}",
+            POST_STOCHASTIC_COUNT.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "greedy initial pairs eval: {}",
+            GREEDY_INITIAL_PAIRS.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "greedy merges: {}",
+            GREEDY_MERGES.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "greedy new pair evals: {}",
+            GREEDY_NEW_PAIRS.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "post-greedy active: {}",
+            POST_GREEDY_COUNT.swap(0, Ordering::Relaxed)
+        );
+        eprintln!(
+            "remap evals: {}",
+            REMAP_EVALS.swap(0, Ordering::Relaxed)
+        );
+    }
+}
+
+#[cfg(not(feature = "std"))]
+mod cluster_trace {
+    #[inline]
+    pub fn inc_cluster_calls() {}
+    #[inline]
+    pub fn add_initial_histograms(_n: u64) {}
+    #[inline]
+    pub fn inc_entropy_bin_merges() {}
+    #[inline]
+    pub fn inc_stochastic_outer_iters() {}
+    #[inline]
+    pub fn add_stochastic_pair_evals(_n: u64) {}
+    #[inline]
+    pub fn inc_stochastic_merges() {}
+    #[inline]
+    pub fn inc_stochastic_queue_updates() {}
+    #[inline]
+    pub fn add_greedy_initial_pairs(_n: u64) {}
+    #[inline]
+    pub fn inc_greedy_merges() {}
+    #[inline]
+    pub fn add_greedy_new_pairs(_n: u64) {}
+    #[inline]
+    pub fn add_remap_evals(_n: u64) {}
+    #[inline]
+    pub fn set_post_entropy_bin_count(_n: u64) {}
+    #[inline]
+    pub fn set_post_stochastic_count(_n: u64) {}
+    #[inline]
+    pub fn set_post_greedy_count(_n: u64) {}
+    pub fn print_and_reset() {}
+}
+
+/// Print and reset clustering statistics.
+pub fn print_clustering_stats() {
+    cluster_trace::print_and_reset();
+}
+
 /// Maximum Huffman group count for greedy combining.
 const MAX_HISTO_GREEDY: usize = 100;
 
@@ -283,6 +459,20 @@ fn cluster_histograms(
     cache_bits: u8,
 ) -> (Vec<Histogram>, Vec<u16>) {
     let n = tile_histos.len();
+    cluster_trace::inc_cluster_calls();
+    cluster_trace::add_initial_histograms(n as u64);
+    #[cfg(feature = "std")]
+    if std::env::var("ZENWEBP_TRACE").is_ok() {
+        // Count empty histograms (no symbols in any type)
+        let empty_count = tile_histos.iter().filter(|h| {
+            !h.literal.iter().any(|&c| c > 0)
+                && !h.red.iter().any(|&c| c > 0)
+                && !h.blue.iter().any(|&c| c > 0)
+                && !h.alpha.iter().any(|&c| c > 0)
+                && !h.distance.iter().any(|&c| c > 0)
+        }).count();
+        eprintln!("[cluster_histograms] n={} quality={} cache_bits={} empty={}", n, quality, cache_bits, empty_count);
+    }
 
     if n <= 1 {
         if n == 1 {
@@ -363,12 +553,14 @@ fn cluster_histograms(
 
             let bin_id = bin_ids[i];
             if let Some(first) = bin_first[bin_id] {
-                // Try to merge with first histogram in bin
-                let bit_cost = costs[first].total;
-                let threshold = bit_cost + costs[i].total;
+                // Try to merge with first histogram in bin.
+                // libwebp uses the incoming histogram's cost for the threshold
+                // (not the accumulator's), matching HistogramCombineEntropyBin.
+                let bit_cost_incoming = costs[i].total;
+                let threshold = costs[first].total + bit_cost_incoming;
                 let cost_thresh_val = threshold
                     .saturating_sub(
-                        div_round_i64(bit_cost as i64 * combine_cost_factor, 100) as u64
+                        div_round_i64(bit_cost_incoming as i64 * combine_cost_factor, 100) as u64
                     );
 
                 if get_combined_histogram_cost(
@@ -381,6 +573,7 @@ fn cluster_histograms(
                 .is_some()
                 {
                     // Merge i into first
+                    cluster_trace::inc_entropy_bin_merges();
                     let i_histo = histos[i].clone();
                     histos[first].add(&i_histo);
                     costs[first] = compute_histogram_cost(&histos[first]);
@@ -408,6 +601,7 @@ fn cluster_histograms(
     };
 
     let num_active_pre_stochastic = active.iter().filter(|&&a| a).count();
+    cluster_trace::set_post_entropy_bin_count(num_active_pre_stochastic as u64);
 
     // do_greedy tracks whether we should run the greedy phase after stochastic
     let mut do_greedy = num_active_pre_stochastic <= target_size;
@@ -435,6 +629,7 @@ fn cluster_histograms(
             if tries_with_no_success >= num_tries_no_success {
                 break;
             }
+            cluster_trace::inc_stochastic_outer_iters();
 
             let best_cost = if histo_queue.queue.is_empty() {
                 0i64
@@ -445,6 +640,7 @@ fn cluster_histograms(
             let num_tries = compact_size / 2;
 
             // Pick random samples (matching libwebp's inner loop)
+            let mut pair_evals_this_iter = 0u64;
             for _ in 0..num_tries {
                 if compact_size < 2 {
                     break;
@@ -461,6 +657,7 @@ fn cluster_histograms(
                 let idx1 = compact[ci1];
                 let idx2 = compact[ci2];
 
+                pair_evals_this_iter += 1;
                 let curr_cost = histo_queue.push(&histos, &costs, idx1, idx2, best_cost.min(0));
                 if curr_cost < 0 {
                     // Break if queue reached full capacity
@@ -469,6 +666,7 @@ fn cluster_histograms(
                     }
                 }
             }
+            cluster_trace::add_stochastic_pair_evals(pair_evals_this_iter);
 
             if histo_queue.queue.is_empty() {
                 continue;
@@ -477,6 +675,7 @@ fn cluster_histograms(
             // Get the best pair from the queue head
             let best_idx1 = histo_queue.queue[0].idx1;
             let merge_idx2 = histo_queue.queue[0].idx2;
+            cluster_trace::inc_stochastic_merges();
 
             // Merge idx2 into idx1
             let j_histo = histos[merge_idx2].clone();
@@ -520,6 +719,7 @@ fn cluster_histograms(
                     // Fix index references
                     HistoQueue::fix_pair_idx(&mut histo_queue.queue[j], merge_idx2, best_idx1);
                     // Re-evaluate cost
+                    cluster_trace::inc_stochastic_queue_updates();
                     if !HistoQueue::update_pair(&histos, &costs, &mut histo_queue.queue[j]) {
                         histo_queue.pop_at(j);
                         continue;
@@ -546,6 +746,7 @@ fn cluster_histograms(
     // HistogramCombineGreedy). O(n^2) initial pair evaluation + O(n) per merge.
     // Only runs when stochastic brought count <= target_size (matching libwebp).
     let num_active = active.iter().filter(|&&a| a).count();
+    cluster_trace::set_post_stochastic_count(num_active as u64);
 
     if do_greedy && num_active > 1 {
         let active_indices: Vec<usize> = (0..n).filter(|&i| active[i]).collect();
@@ -553,6 +754,8 @@ fn cluster_histograms(
 
         // Initialize priority queue with all pairs
         let mut histo_queue = HistoQueue::new(active_n * active_n);
+        let greedy_init_pairs = (active_n * (active_n - 1)) / 2;
+        cluster_trace::add_greedy_initial_pairs(greedy_init_pairs as u64);
 
         for ai in 0..active_n {
             for aj in (ai + 1)..active_n {
@@ -564,6 +767,7 @@ fn cluster_histograms(
         while !histo_queue.queue.is_empty() {
             let best_idx1 = histo_queue.queue[0].idx1;
             let best_idx2 = histo_queue.queue[0].idx2;
+            cluster_trace::inc_greedy_merges();
 
             // Merge idx2 into idx1
             let j_histo = histos[best_idx2].clone();
@@ -595,23 +799,30 @@ fn cluster_histograms(
             }
 
             // Add new pairs involving the merged histogram (best_idx1)
+            let mut new_pairs = 0u64;
             for i in 0..n {
                 if !active[i] || i == best_idx1 {
                     continue;
                 }
+                new_pairs += 1;
                 histo_queue.push_greedy(&histos, &costs, best_idx1, i);
             }
+            cluster_trace::add_greedy_new_pairs(new_pairs);
         }
     }
 
     // Phase 4: Remap - find best cluster for each original tile histogram
     // Matches libwebp's HistogramRemap with progressive threshold tightening.
     let active_indices: Vec<usize> = (0..n).filter(|&i| active[i]).collect();
+    cluster_trace::set_post_greedy_count(active_indices.len() as u64);
 
     if active_indices.len() > 1 {
         // Cache tile histogram costs to avoid recomputation
         let tile_costs: Vec<HistogramCosts> =
             tile_histos.iter().map(compute_histogram_cost).collect();
+
+        let remap_total = n as u64 * active_indices.len() as u64;
+        cluster_trace::add_remap_evals(remap_total);
 
         for tile_idx in 0..n {
             let mut best_cluster = mapping[tile_idx];
@@ -704,6 +915,14 @@ pub fn build_meta_huffman(
     quality: u8,
 ) -> MetaHuffmanInfo {
     let histo_bits = histo_bits.clamp(2, 8);
+    #[cfg(feature = "std")]
+    if std::env::var("ZENWEBP_TRACE").is_ok() {
+        let xsize = super::types::subsample_size(width as u32, histo_bits);
+        let ysize = super::types::subsample_size(height as u32, histo_bits);
+        eprintln!("[build_meta_huffman] {}x{} histo_bits={} tiles={}x{}={} cache_bits={} quality={}",
+            width, height, histo_bits, xsize, ysize, xsize as usize * ysize as usize,
+            cache_bits, quality);
+    }
 
     // Build per-tile histograms from backward reference tokens
     let tile_histos = build_tile_histograms(refs, width, height, histo_bits, cache_bits);
