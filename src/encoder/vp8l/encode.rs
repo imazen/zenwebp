@@ -16,7 +16,7 @@ use super::huffman::{
     HuffmanCode, build_huffman_codes, build_huffman_lengths, write_huffman_tree,
     write_single_entry_tree,
 };
-use super::meta_huffman::{MetaHuffmanInfo, build_meta_huffman, build_single_histogram};
+use super::meta_huffman::{build_meta_huffman, build_single_histogram};
 use super::transforms::{
     ColorIndexTransform, apply_cross_color_transform, apply_predictor_transform,
     apply_subtract_green,
@@ -774,7 +774,7 @@ fn write_predictor_transform(
             MAX_PREDICTOR_IMAGE_SIZE,
         )
     } else {
-        config.predictor_bits.clamp(2, 8)
+        config.predictor_bits.clamp(MIN_TRANSFORM_BITS, MAX_TRANSFORM_BITS)
     };
     let max_quantization = if config.near_lossless < 100 {
         super::near_lossless::max_quantization_from_quality(config.near_lossless)
@@ -790,14 +790,16 @@ fn write_predictor_transform(
         use_subtract_green,
     );
 
+    let actual_bits = pred_bits;
+
     // Signal predictor transform
     writer.write_bit(true); // transform present
     writer.write_bits(0, 2); // predictor = 0
-    writer.write_bits((pred_bits - 2) as u64, 3);
+    writer.write_bits((actual_bits - 2) as u64, 3);
 
     // Write predictor sub-image
-    let pred_w = subsample_size(width as u32, pred_bits) as usize;
-    let pred_h = subsample_size(height as u32, pred_bits) as usize;
+    let pred_w = subsample_size(width as u32, actual_bits) as usize;
+    let pred_h = subsample_size(height as u32, actual_bits) as usize;
     write_predictor_image(
         writer,
         &predictor_data,
@@ -827,19 +829,21 @@ fn write_cross_color_transform(
             MAX_PREDICTOR_IMAGE_SIZE,
         )
     } else {
-        config.cross_color_bits.clamp(2, 8)
+        config.cross_color_bits.clamp(MIN_TRANSFORM_BITS, MAX_TRANSFORM_BITS)
     };
     let cross_color_data =
         apply_cross_color_transform(argb, width, height, cc_bits, config.quality.quality);
 
+    let actual_bits = cc_bits;
+
     // Signal cross-color transform
     writer.write_bit(true); // transform present
     writer.write_bits(1, 2); // cross-color = 1
-    writer.write_bits((cc_bits - 2) as u64, 3);
+    writer.write_bits((actual_bits - 2) as u64, 3);
 
     // Write cross-color sub-image
-    let cc_w = subsample_size(width as u32, cc_bits) as usize;
-    let cc_h = subsample_size(height as u32, cc_bits) as usize;
+    let cc_w = subsample_size(width as u32, actual_bits) as usize;
+    let cc_h = subsample_size(height as u32, actual_bits) as usize;
     write_cross_color_image(
         writer,
         &cross_color_data,
@@ -893,13 +897,63 @@ fn encode_image_data(
         build_single_histogram(refs, cache_bits)
     };
 
-    // Write meta-Huffman flag and prefix image
+    // Write meta-Huffman flag and prefix image.
+    // Apply optimize_sampling to potentially coarsen the histogram image,
+    // matching libwebp's VP8LOptimizeSampling call in EncodeImageInternal.
+    let mut meta_info = meta_info;
     if meta_info.num_histograms > 1 {
         writer.write_bit(true); // meta-Huffman present
-        writer.write_bits((meta_info.histo_bits - 2) as u64, 3);
+
+        // Convert histogram symbols to ARGB pixels (green channel = symbol index)
+        // matching libwebp's format: symbol << 8 stored in green channel
+        let mut histo_argb: Vec<u32> = meta_info
+            .histogram_symbols
+            .iter()
+            .map(|&sym| (sym as u32) << 8)
+            .collect();
+
+        // Optimize sampling: check if histogram image can use coarser blocks
+        let actual_histo_bits = optimize_sampling(
+            &mut histo_argb,
+            enc_width,
+            enc_height,
+            meta_info.histo_bits,
+            MAX_HUFFMAN_BITS,
+        );
+
+        writer.write_bits((actual_histo_bits - 2) as u64, 3);
 
         // Write histogram prefix image (encoded as sub-image)
-        write_histogram_image(&mut writer, &meta_info, config.quality.quality);
+        let actual_w = subsample_size(enc_width as u32, actual_histo_bits) as usize;
+        let actual_h = subsample_size(enc_height as u32, actual_histo_bits) as usize;
+
+        // Convert back to ARGB format for encoding
+        let histo_argb_pixels: Vec<u32> = histo_argb[..actual_w * actual_h]
+            .iter()
+            .map(|&v| {
+                let sym = v >> 8;
+                make_argb(0, (sym >> 8) as u8, (sym & 0xFF) as u8, 0)
+            })
+            .collect();
+
+        encode_image_no_huffman(
+            &mut writer,
+            &histo_argb_pixels,
+            actual_w,
+            actual_h,
+            config.quality.quality,
+        );
+
+        // Update meta_info to reflect optimized sampling for image data encoding
+        if actual_histo_bits != meta_info.histo_bits {
+            // Rebuild symbols array at new resolution
+            let new_symbols: Vec<u16> = histo_argb[..actual_w * actual_h]
+                .iter()
+                .map(|&v| (v >> 8) as u16)
+                .collect();
+            meta_info.histo_bits = actual_histo_bits;
+            meta_info.histogram_symbols = new_symbols;
+        }
     } else {
         writer.write_bit(false); // no meta-Huffman
     }
@@ -1055,7 +1109,7 @@ const MIN_HUFFMAN_BITS: u8 = 2;
 const MAX_HUFFMAN_BITS: u8 = 9; // 2 + (1 << 3) - 1
 /// Transform bits range (VP8L spec).
 const MIN_TRANSFORM_BITS: u8 = 2;
-const MAX_TRANSFORM_BITS: u8 = 8;
+const MAX_TRANSFORM_BITS: u8 = 9; // MIN_TRANSFORM_BITS + (1 << NUM_TRANSFORM_BITS) - 1
 /// Maximum predictor/cross-color sub-image size.
 const MAX_PREDICTOR_IMAGE_SIZE: usize = 1 << 14; // 16384
 
@@ -1123,6 +1177,94 @@ fn get_transform_bits(method: u8, histo_bits: u8) -> u8 {
     histo_bits.min(max_transform_bits)
 }
 
+/// Optimize the sampling of a sub-image (predictor or histogram).
+///
+/// Matches libwebp's VP8LOptimizeSampling: checks if the sub-image can be
+/// represented at a coarser resolution (larger blocks) without losing
+/// information. If so, subsamples the image and returns the new bits value.
+///
+/// For example, if every 2x2 group of tiles has the same predictor mode,
+/// we can double the block size (bits + 1) and halve the sub-image.
+fn optimize_sampling(
+    image: &mut [u32],
+    full_width: usize,
+    full_height: usize,
+    bits: u8,
+    max_bits: u8,
+) -> u8 {
+    let width = subsample_size(full_width as u32, bits) as usize;
+    let height = subsample_size(full_height as u32, bits) as usize;
+    let mut best_bits = bits;
+
+    // Check rows first: can we merge adjacent row pairs?
+    while best_bits < max_bits {
+        let square_size = 1usize << (best_bits - bits);
+        let new_square_size = 1usize << (best_bits + 1 - bits);
+        let mut is_good = true;
+        let mut y = 0;
+        while y + square_size < height {
+            // Check if row y and row y+square_size are identical
+            let row1_start = y * width;
+            let row2_start = (y + square_size) * width;
+            if image[row1_start..row1_start + width] != image[row2_start..row2_start + width] {
+                is_good = false;
+                break;
+            }
+            y += new_square_size;
+        }
+        if is_good {
+            best_bits += 1;
+        } else {
+            break;
+        }
+    }
+
+    if best_bits == bits {
+        return bits;
+    }
+
+    // Check columns: verify that within each row, values are constant within blocks.
+    while best_bits > bits {
+        let square_size = 1usize << (best_bits - bits);
+        let mut is_good = true;
+        'outer: for y in 0..height {
+            let mut x = 0;
+            while x < width {
+                let end = (x + square_size).min(width);
+                let val = image[y * width + x];
+                for i in (x + 1)..end {
+                    if image[y * width + i] != val {
+                        is_good = false;
+                        break 'outer;
+                    }
+                }
+                x += square_size;
+            }
+        }
+        if is_good {
+            break;
+        }
+        best_bits -= 1;
+    }
+
+    if best_bits == bits {
+        return bits;
+    }
+
+    // Subsample the image
+    let square_size = 1usize << (best_bits - bits);
+    let old_width = width;
+    let new_width = subsample_size(full_width as u32, best_bits) as usize;
+    let new_height = subsample_size(full_height as u32, best_bits) as usize;
+    for y in 0..new_height {
+        for x in 0..new_width {
+            image[y * new_width + x] = image[square_size * (y * old_width + x)];
+        }
+    }
+
+    best_bits
+}
+
 /// Pre-built Huffman codes for one histogram group (5 trees).
 struct HuffmanGroupCodes {
     literal_lengths: Vec<u8>,
@@ -1181,22 +1323,6 @@ fn build_huffman_group(h: &super::histogram::Histogram) -> HuffmanGroupCodes {
         dist_codes,
         dist_trivial,
     }
-}
-
-/// Write the histogram prefix image (meta-Huffman sub-image).
-/// Uses full LZ77+Huffman encoding matching libwebp's EncodeImageNoHuffman.
-fn write_histogram_image(writer: &mut BitWriter, meta_info: &MetaHuffmanInfo, quality: u8) {
-    // Convert histogram symbols to ARGB pixels: green=low byte, red=high byte
-    let argb: Vec<u32> = meta_info
-        .histogram_symbols
-        .iter()
-        .map(|&sym| make_argb(0, (sym >> 8) as u8, (sym & 0xFF) as u8, 0))
-        .collect();
-
-    let histo_w = subsample_size(meta_info.image_width as u32, meta_info.histo_bits) as usize;
-    let histo_h = subsample_size(meta_info.image_height as u32, meta_info.histo_bits) as usize;
-
-    encode_image_no_huffman(writer, &argb, histo_w, histo_h, quality);
 }
 
 /// Check if the image can use a palette (≤256 unique colors).
