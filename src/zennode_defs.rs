@@ -23,91 +23,91 @@ use crate::encoder::config::{EncoderConfig, LosslessConfig, LossyConfig};
 /// WebP lossy (VP8) encode node for pipeline use.
 ///
 /// Maps directly to [`LossyConfig`] via [`to_encoder_config()`](Self::to_encoder_config).
-/// Advanced parameters use `-1` as a sentinel meaning "use preset default."
-#[derive(Node, Clone, Debug)]
+/// All parameters are `Option<T>` — `None` means "inherit from base config / use
+/// preset default," which is critical for correct overlay semantics.
+#[derive(Node, Clone, Debug, Default)]
 #[node(id = "zenwebp.encode_lossy", group = Encode, role = Encode)]
 #[node(tags("webp", "lossy", "encode"))]
 pub struct EncodeWebpLossy {
     /// Lossy quality (0 = smallest file, 100 = best quality).
-    #[param(range(0.0..=100.0), default = 75.0, step = 1.0)]
+    #[param(range(0.0..=100.0), step = 1.0)]
     #[param(section = "Main", label = "Quality")]
     #[kv("webp.quality", "webp.q")]
-    pub quality: f32,
+    pub quality: Option<f32>,
 
     /// Speed/quality tradeoff (0 = fastest, 10 = best compression).
     /// Mapped internally to WebP method 0-6.
-    #[param(range(0..=10), default = 7)]
+    #[param(range(0..=10))]
     #[param(section = "Main", label = "Effort")]
     #[kv("webp.effort")]
-    pub effort: u32,
+    pub effort: Option<u32>,
 
     /// Use iterative (sharp) YUV conversion for better chroma fidelity.
-    #[param(default = true)]
     #[param(section = "Main", label = "Sharp YUV")]
     #[kv("webp.sharp_yuv")]
-    pub sharp_yuv: bool,
+    pub sharp_yuv: Option<bool>,
 
     /// Alpha channel quality (0 = smallest, 100 = lossless alpha).
-    #[param(range(0..=100), default = 100)]
+    #[param(range(0..=100))]
     #[param(section = "Alpha", label = "Alpha Quality")]
     #[kv("webp.alpha_quality", "webp.aq")]
-    pub alpha_quality: u32,
+    pub alpha_quality: Option<u32>,
 
-    /// Spatial noise shaping strength (0-100). -1 = use preset default.
-    #[param(range(-1..=100), default = -1)]
+    /// Spatial noise shaping strength (0-100). None = use preset default.
+    #[param(range(0..=100))]
     #[param(section = "Advanced", label = "SNS Strength")]
     #[kv("webp.sns")]
-    pub sns_strength: i32,
+    pub sns_strength: Option<u32>,
 
-    /// Loop filter strength (0-100). -1 = use preset default.
-    #[param(range(-1..=100), default = -1)]
+    /// Loop filter strength (0-100). None = use preset default.
+    #[param(range(0..=100))]
     #[param(section = "Advanced", label = "Filter Strength")]
     #[kv("webp.filter")]
-    pub filter_strength: i32,
+    pub filter_strength: Option<u32>,
 
-    /// Loop filter sharpness (0-7). -1 = use preset default.
-    #[param(range(-1..=7), default = -1)]
+    /// Loop filter sharpness (0-7). None = use preset default.
+    #[param(range(0..=7))]
     #[param(section = "Advanced", label = "Filter Sharpness")]
     #[kv("webp.sharpness")]
-    pub filter_sharpness: i32,
-}
-
-impl Default for EncodeWebpLossy {
-    fn default() -> Self {
-        Self {
-            quality: 75.0,
-            effort: 7,
-            sharp_yuv: true,
-            alpha_quality: 100,
-            sns_strength: -1,
-            filter_strength: -1,
-            filter_sharpness: -1,
-        }
-    }
+    pub filter_sharpness: Option<u32>,
 }
 
 impl EncodeWebpLossy {
+    /// Default quality when building a standalone [`EncoderConfig`].
+    const DEFAULT_QUALITY: f32 = 75.0;
+    /// Default effort (0-10) when building a standalone [`EncoderConfig`].
+    const DEFAULT_EFFORT: u32 = 7;
+    /// Default sharp-YUV setting when building a standalone [`EncoderConfig`].
+    const DEFAULT_SHARP_YUV: bool = true;
+    /// Default alpha quality when building a standalone [`EncoderConfig`].
+    const DEFAULT_ALPHA_QUALITY: u32 = 100;
+
     /// Convert this node into a native [`EncoderConfig`] for zenwebp.
     ///
     /// Effort 0-10 is mapped to WebP method 0-6.
-    /// Parameters at their sentinel value (-1) inherit from the preset defaults.
+    /// `None` parameters inherit from the preset defaults.
     #[must_use]
     pub fn to_encoder_config(&self) -> EncoderConfig {
-        let method = ((self.effort as u64 * 6) / 10).min(6) as u8;
-        let mut cfg = LossyConfig::new()
-            .with_quality(self.quality)
-            .with_method(method)
-            .with_sharp_yuv(self.sharp_yuv)
-            .with_alpha_quality(self.alpha_quality.min(100) as u8);
+        let quality = self.quality.unwrap_or(Self::DEFAULT_QUALITY);
+        let effort = self.effort.unwrap_or(Self::DEFAULT_EFFORT);
+        let sharp_yuv = self.sharp_yuv.unwrap_or(Self::DEFAULT_SHARP_YUV);
+        let alpha_quality = self.alpha_quality.unwrap_or(Self::DEFAULT_ALPHA_QUALITY);
 
-        if self.sns_strength >= 0 {
-            cfg = cfg.with_sns_strength(self.sns_strength.min(100) as u8);
+        let method = ((effort as u64 * 6) / 10).min(6) as u8;
+        let mut cfg = LossyConfig::new()
+            .with_quality(quality)
+            .with_method(method)
+            .with_sharp_yuv(sharp_yuv)
+            .with_alpha_quality(alpha_quality.min(100) as u8);
+
+        if let Some(v) = self.sns_strength {
+            cfg = cfg.with_sns_strength(v.min(100) as u8);
         }
-        if self.filter_strength >= 0 {
-            cfg = cfg.with_filter_strength(self.filter_strength.min(100) as u8);
+        if let Some(v) = self.filter_strength {
+            cfg = cfg.with_filter_strength(v.min(100) as u8);
         }
-        if self.filter_sharpness >= 0 {
-            cfg = cfg.with_filter_sharpness(self.filter_sharpness.min(7) as u8);
+        if let Some(v) = self.filter_sharpness {
+            cfg = cfg.with_filter_sharpness(v.min(7) as u8);
         }
 
         EncoderConfig::Lossy(cfg)
@@ -119,34 +119,28 @@ impl EncodeWebpLossy {
     /// Apply this node's explicitly-set params on top of an existing
     /// [`WebpEncoderConfig`](crate::WebpEncoderConfig).
     ///
-    /// Fields at their default/sentinel value are skipped so that the
-    /// base config's values are preserved.
-    pub fn apply(
-        &self,
-        mut config: crate::WebpEncoderConfig,
-    ) -> crate::WebpEncoderConfig {
-        // Quality (75.0 is the default, but always apply since any explicit
-        // quality= in the querystring should take effect)
-        config = config.with_quality(self.quality);
-
-        // Effort → method
-        config = config.with_effort_u32(self.effort);
-
-        // Sharp YUV
-        config = config.with_sharp_yuv(self.sharp_yuv);
-
-        // Alpha quality
-        config = config.with_alpha_quality_value(self.alpha_quality as f32);
-
-        // Advanced: only apply when explicitly set (sentinel = -1)
-        if self.sns_strength >= 0 {
-            config = config.with_sns_strength(self.sns_strength.min(100) as u8);
+    /// `None` fields are skipped so that the base config's values are preserved.
+    pub fn apply(&self, mut config: crate::WebpEncoderConfig) -> crate::WebpEncoderConfig {
+        if let Some(q) = self.quality {
+            config = config.with_quality(q);
         }
-        if self.filter_strength >= 0 {
-            config = config.with_filter_strength(self.filter_strength.min(100) as u8);
+        if let Some(e) = self.effort {
+            config = config.with_effort_u32(e);
         }
-        if self.filter_sharpness >= 0 {
-            config = config.with_filter_sharpness(self.filter_sharpness.min(7) as u8);
+        if let Some(s) = self.sharp_yuv {
+            config = config.with_sharp_yuv(s);
+        }
+        if let Some(aq) = self.alpha_quality {
+            config = config.with_alpha_quality_value(aq as f32);
+        }
+        if let Some(v) = self.sns_strength {
+            config = config.with_sns_strength(v.min(100) as u8);
+        }
+        if let Some(v) = self.filter_strength {
+            config = config.with_filter_strength(v.min(100) as u8);
+        }
+        if let Some(v) = self.filter_sharpness {
+            config = config.with_filter_sharpness(v.min(7) as u8);
         }
 
         config
@@ -168,43 +162,42 @@ impl EncodeWebpLossy {
 ///
 /// The `effort` parameter (0-100) controls both the internal quality setting
 /// and the method level (0-6), derived as `round(effort / 100 * 6)`.
-#[derive(Node, Clone, Debug)]
+///
+/// All parameters are `Option<T>` — `None` means "inherit from base config,"
+/// which is critical for correct overlay semantics.
+#[derive(Node, Clone, Debug, Default)]
 #[node(id = "zenwebp.encode_lossless", group = Encode, role = Encode)]
 #[node(tags("webp", "lossless", "encode"))]
 pub struct EncodeWebpLossless {
     /// Compression effort (0 = fastest, 100 = best compression).
     /// Controls both the VP8L quality parameter and method level.
-    #[param(range(0.0..=100.0), default = 75.0, step = 1.0)]
+    #[param(range(0.0..=100.0), step = 1.0)]
     #[param(section = "Main", label = "Compression Effort")]
     #[kv("webp.effort")]
-    pub effort: f32,
+    pub effort: Option<f32>,
 
     /// Near-lossless preprocessing (0 = max preprocessing, 100 = fully lossless).
     /// Values below 100 allow slight color changes for better compression.
-    #[param(range(0..=100), default = 100)]
+    #[param(range(0..=100))]
     #[param(section = "Main", label = "Near-Lossless")]
     #[kv("webp.near_lossless", "webp.nl")]
-    pub near_lossless: u32,
+    pub near_lossless: Option<u32>,
 
     /// Preserve exact RGB values under fully transparent pixels.
     /// When false, RGB under alpha=0 may be modified for better compression.
-    #[param(default = false)]
     #[param(section = "Advanced")]
     #[kv("webp.exact")]
-    pub exact: bool,
-}
-
-impl Default for EncodeWebpLossless {
-    fn default() -> Self {
-        Self {
-            effort: 75.0,
-            near_lossless: 100,
-            exact: false,
-        }
-    }
+    pub exact: Option<bool>,
 }
 
 impl EncodeWebpLossless {
+    /// Default effort when building a standalone [`EncoderConfig`].
+    const DEFAULT_EFFORT: f32 = 75.0;
+    /// Default near-lossless when building a standalone [`EncoderConfig`].
+    const DEFAULT_NEAR_LOSSLESS: u32 = 100;
+    /// Default exact flag when building a standalone [`EncoderConfig`].
+    const DEFAULT_EXACT: bool = false;
+
     /// Convert this node into a native [`EncoderConfig`] for zenwebp.
     ///
     /// Effort 0-100 maps to:
@@ -212,15 +205,21 @@ impl EncodeWebpLossless {
     /// - VP8L method = round(effort / 100 * 6), clamped to 0-6
     #[must_use]
     pub fn to_encoder_config(&self) -> EncoderConfig {
-        let effort = self.effort.clamp(0.0, 100.0);
+        let effort = self
+            .effort
+            .unwrap_or(Self::DEFAULT_EFFORT)
+            .clamp(0.0, 100.0);
+        let near_lossless = self.near_lossless.unwrap_or(Self::DEFAULT_NEAR_LOSSLESS);
+        let exact = self.exact.unwrap_or(Self::DEFAULT_EXACT);
+
         let method = ((effort / 100.0 * 6.0) + 0.5) as u8;
         let method = method.min(6);
 
         let cfg = LosslessConfig::new()
             .with_quality(effort)
             .with_method(method)
-            .with_near_lossless(self.near_lossless.min(100) as u8)
-            .with_exact(self.exact);
+            .with_near_lossless(near_lossless.min(100) as u8)
+            .with_exact(exact);
 
         EncoderConfig::Lossless(cfg)
     }
@@ -230,21 +229,19 @@ impl EncodeWebpLossless {
 impl EncodeWebpLossless {
     /// Apply this node's explicitly-set params on top of an existing
     /// [`WebpEncoderConfig`](crate::WebpEncoderConfig).
-    pub fn apply(
-        &self,
-        mut config: crate::WebpEncoderConfig,
-    ) -> crate::WebpEncoderConfig {
-        // Effort → quality + method (effort 0-100 maps to both)
-        let effort = self.effort.clamp(0.0, 100.0) as u32;
-        config = config.with_effort_u32(effort);
-        config = config.with_quality(self.effort.clamp(0.0, 100.0));
-
-        // Near-lossless
-        config = config.with_near_lossless(self.near_lossless.min(100) as u8);
-
-        // Exact (preserve RGB under transparent pixels)
-        if self.exact {
-            config = config.with_exact(true);
+    ///
+    /// `None` fields are skipped so that the base config's values are preserved.
+    pub fn apply(&self, mut config: crate::WebpEncoderConfig) -> crate::WebpEncoderConfig {
+        if let Some(effort) = self.effort {
+            let effort = effort.clamp(0.0, 100.0);
+            config = config.with_effort_u32(effort as u32);
+            config = config.with_quality(effort);
+        }
+        if let Some(nl) = self.near_lossless {
+            config = config.with_near_lossless(nl.min(100) as u8);
+        }
+        if let Some(exact) = self.exact {
+            config = config.with_exact(exact);
         }
 
         config
@@ -299,15 +296,23 @@ mod tests {
     }
 
     #[test]
+    fn lossy_params_are_optional() {
+        let schema = ENCODE_WEBP_LOSSY_NODE.schema();
+        for param in schema.params {
+            assert!(param.optional, "param {} should be optional", param.name);
+        }
+    }
+
+    #[test]
     fn lossy_defaults() {
         let node = ENCODE_WEBP_LOSSY_NODE.create_default().unwrap();
-        assert_eq!(node.get_param("quality"), Some(ParamValue::F32(75.0)));
-        assert_eq!(node.get_param("effort"), Some(ParamValue::U32(7)));
-        assert_eq!(node.get_param("sharp_yuv"), Some(ParamValue::Bool(true)));
-        assert_eq!(node.get_param("alpha_quality"), Some(ParamValue::U32(100)));
-        assert_eq!(node.get_param("sns_strength"), Some(ParamValue::I32(-1)));
-        assert_eq!(node.get_param("filter_strength"), Some(ParamValue::I32(-1)));
-        assert_eq!(node.get_param("filter_sharpness"), Some(ParamValue::I32(-1)));
+        assert_eq!(node.get_param("quality"), Some(ParamValue::None));
+        assert_eq!(node.get_param("effort"), Some(ParamValue::None));
+        assert_eq!(node.get_param("sharp_yuv"), Some(ParamValue::None));
+        assert_eq!(node.get_param("alpha_quality"), Some(ParamValue::None));
+        assert_eq!(node.get_param("sns_strength"), Some(ParamValue::None));
+        assert_eq!(node.get_param("filter_strength"), Some(ParamValue::None));
+        assert_eq!(node.get_param("filter_sharpness"), Some(ParamValue::None));
     }
 
     #[test]
@@ -337,9 +342,9 @@ mod tests {
     fn lossy_from_kv_advanced() {
         let mut kv = KvPairs::from_querystring("webp.sns=50&webp.filter=30&webp.sharpness=3");
         let node = ENCODE_WEBP_LOSSY_NODE.from_kv(&mut kv).unwrap().unwrap();
-        assert_eq!(node.get_param("sns_strength"), Some(ParamValue::I32(50)));
-        assert_eq!(node.get_param("filter_strength"), Some(ParamValue::I32(30)));
-        assert_eq!(node.get_param("filter_sharpness"), Some(ParamValue::I32(3)));
+        assert_eq!(node.get_param("sns_strength"), Some(ParamValue::U32(50)));
+        assert_eq!(node.get_param("filter_strength"), Some(ParamValue::U32(30)));
+        assert_eq!(node.get_param("filter_sharpness"), Some(ParamValue::U32(3)));
         assert_eq!(kv.unconsumed().count(), 0);
     }
 
@@ -357,14 +362,14 @@ mod tests {
         params.insert("effort".into(), ParamValue::U32(5));
         params.insert("sharp_yuv".into(), ParamValue::Bool(false));
         params.insert("alpha_quality".into(), ParamValue::U32(80));
-        params.insert("sns_strength".into(), ParamValue::I32(50));
+        params.insert("sns_strength".into(), ParamValue::U32(50));
 
         let node = ENCODE_WEBP_LOSSY_NODE.create(&params).unwrap();
         assert_eq!(node.get_param("quality"), Some(ParamValue::F32(92.0)));
         assert_eq!(node.get_param("effort"), Some(ParamValue::U32(5)));
         assert_eq!(node.get_param("sharp_yuv"), Some(ParamValue::Bool(false)));
         assert_eq!(node.get_param("alpha_quality"), Some(ParamValue::U32(80)));
-        assert_eq!(node.get_param("sns_strength"), Some(ParamValue::I32(50)));
+        assert_eq!(node.get_param("sns_strength"), Some(ParamValue::U32(50)));
 
         // Round-trip
         let exported = node.to_params();
@@ -377,11 +382,11 @@ mod tests {
     fn lossy_downcast_to_concrete() {
         let node = ENCODE_WEBP_LOSSY_NODE.create_default().unwrap();
         let enc = node.as_any().downcast_ref::<EncodeWebpLossy>().unwrap();
-        assert!((enc.quality - 75.0).abs() < f32::EPSILON);
-        assert_eq!(enc.effort, 7);
-        assert!(enc.sharp_yuv);
-        assert_eq!(enc.alpha_quality, 100);
-        assert_eq!(enc.sns_strength, -1);
+        assert_eq!(enc.quality, None);
+        assert_eq!(enc.effort, None);
+        assert_eq!(enc.sharp_yuv, None);
+        assert_eq!(enc.alpha_quality, None);
+        assert_eq!(enc.sns_strength, None);
     }
 
     #[test]
@@ -390,21 +395,21 @@ mod tests {
         let config = node.to_encoder_config();
         match config {
             EncoderConfig::Lossy(cfg) => {
-                assert!((cfg.quality - 75.0).abs() < f32::EPSILON);
-                assert!(cfg.sharp_yuv);
+                assert!((cfg.quality - EncodeWebpLossy::DEFAULT_QUALITY).abs() < f32::EPSILON);
+                assert_eq!(cfg.sharp_yuv, EncodeWebpLossy::DEFAULT_SHARP_YUV);
             }
             _ => panic!("expected Lossy config"),
         }
     }
 
     #[test]
-    fn lossy_to_encoder_config_sentinel_skips() {
-        // sns_strength=-1 means default, should NOT override
+    fn lossy_to_encoder_config_none_skips() {
+        // None means default, should NOT override preset
         let node = EncodeWebpLossy::default();
         let config = node.to_encoder_config();
         match config {
             EncoderConfig::Lossy(cfg) => {
-                // Sentinels leave the preset defaults in place
+                // None leaves the preset defaults in place
                 assert_eq!(cfg.sns_strength, LossyConfig::new().sns_strength);
             }
             _ => panic!("expected Lossy config"),
@@ -414,13 +419,13 @@ mod tests {
     #[test]
     fn lossy_to_encoder_config_custom() {
         let node = EncodeWebpLossy {
-            quality: 90.0,
-            effort: 10,
-            sharp_yuv: false,
-            alpha_quality: 80,
-            sns_strength: 50,
-            filter_strength: 30,
-            filter_sharpness: 3,
+            quality: Some(90.0),
+            effort: Some(10),
+            sharp_yuv: Some(false),
+            alpha_quality: Some(80),
+            sns_strength: Some(50),
+            filter_strength: Some(30),
+            filter_sharpness: Some(3),
         };
         let config = node.to_encoder_config();
         match config {
@@ -461,11 +466,19 @@ mod tests {
     }
 
     #[test]
+    fn lossless_params_are_optional() {
+        let schema = ENCODE_WEBP_LOSSLESS_NODE.schema();
+        for param in schema.params {
+            assert!(param.optional, "param {} should be optional", param.name);
+        }
+    }
+
+    #[test]
     fn lossless_defaults() {
         let node = ENCODE_WEBP_LOSSLESS_NODE.create_default().unwrap();
-        assert_eq!(node.get_param("effort"), Some(ParamValue::F32(75.0)));
-        assert_eq!(node.get_param("near_lossless"), Some(ParamValue::U32(100)));
-        assert_eq!(node.get_param("exact"), Some(ParamValue::Bool(false)));
+        assert_eq!(node.get_param("effort"), Some(ParamValue::None));
+        assert_eq!(node.get_param("near_lossless"), Some(ParamValue::None));
+        assert_eq!(node.get_param("exact"), Some(ParamValue::None));
     }
 
     #[test]
@@ -511,9 +524,9 @@ mod tests {
     fn lossless_downcast_to_concrete() {
         let node = ENCODE_WEBP_LOSSLESS_NODE.create_default().unwrap();
         let enc = node.as_any().downcast_ref::<EncodeWebpLossless>().unwrap();
-        assert!((enc.effort - 75.0).abs() < f32::EPSILON);
-        assert_eq!(enc.near_lossless, 100);
-        assert!(!enc.exact);
+        assert_eq!(enc.effort, None);
+        assert_eq!(enc.near_lossless, None);
+        assert_eq!(enc.exact, None);
     }
 
     #[test]
@@ -524,9 +537,12 @@ mod tests {
             EncoderConfig::Lossless(cfg) => {
                 // effort 75 → method round(75/100*6) = round(4.5) = 5
                 assert_eq!(cfg.method, 5);
-                assert!((cfg.quality - 75.0).abs() < f32::EPSILON);
-                assert_eq!(cfg.near_lossless, 100);
-                assert!(!cfg.exact);
+                assert!((cfg.quality - EncodeWebpLossless::DEFAULT_EFFORT).abs() < f32::EPSILON);
+                assert_eq!(
+                    cfg.near_lossless,
+                    EncodeWebpLossless::DEFAULT_NEAR_LOSSLESS as u8
+                );
+                assert_eq!(cfg.exact, EncodeWebpLossless::DEFAULT_EXACT);
             }
             _ => panic!("expected Lossless config"),
         }
@@ -535,9 +551,9 @@ mod tests {
     #[test]
     fn lossless_to_encoder_config_custom() {
         let node = EncodeWebpLossless {
-            effort: 100.0,
-            near_lossless: 60,
-            exact: true,
+            effort: Some(100.0),
+            near_lossless: Some(60),
+            exact: Some(true),
         };
         let config = node.to_encoder_config();
         match config {
@@ -573,8 +589,8 @@ mod tests {
     #[test]
     fn lossy_apply_sharp_yuv_and_effort() {
         let mut node = EncodeWebpLossy::default();
-        node.sharp_yuv = false;
-        node.effort = 10;
+        node.sharp_yuv = Some(false);
+        node.effort = Some(10);
         let _config = node.to_webp_encoder_config();
     }
 
