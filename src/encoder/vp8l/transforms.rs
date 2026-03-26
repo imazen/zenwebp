@@ -90,7 +90,23 @@ impl PredictorMode {
 
 /// Apply subtract green transform in place.
 /// R -= G, B -= G
+///
+/// On x86/x86_64 with SIMD, processes 4 pixels at a time with SSE2,
+/// matching libwebp's SubtractGreenFromBlueAndRed_SSE2.
 pub fn apply_subtract_green(pixels: &mut [u32]) {
+    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = Sse2Token::summon() {
+            apply_subtract_green_sse2_entry(token, pixels);
+            return;
+        }
+    }
+    apply_subtract_green_scalar(pixels);
+}
+
+/// Scalar fallback for subtract green.
+fn apply_subtract_green_scalar(pixels: &mut [u32]) {
     for pixel in pixels.iter_mut() {
         let a = argb_alpha(*pixel);
         let r = argb_red(*pixel);
@@ -101,6 +117,86 @@ pub fn apply_subtract_green(pixels: &mut [u32]) {
         let new_b = b.wrapping_sub(g);
 
         *pixel = make_argb(a, new_r, g, new_b);
+    }
+}
+
+/// Entry point for SSE2 subtract green.
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[arcane]
+fn apply_subtract_green_sse2_entry(_token: Sse2Token, pixels: &mut [u32]) {
+    apply_subtract_green_sse2(_token, pixels);
+}
+
+/// SSE2 subtract green matching libwebp's SubtractGreenFromBlueAndRed_SSE2.
+///
+/// For each pixel (ARGB packed as u32):
+///   R -= G (wrapping), B -= G (wrapping), A and G unchanged.
+/// Processes 4 pixels per SSE2 iteration.
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[rite]
+fn apply_subtract_green_sse2(_token: Sse2Token, pixels: &mut [u32]) {
+    let len = pixels.len();
+    let simd_len = len & !3; // Round down to multiple of 4
+
+    let mut i = 0;
+    while i < simd_len {
+        // Load 4 pixels: [a0 r0 g0 b0 | a1 r1 g1 b1 | a2 r2 g2 b2 | a3 r3 g3 b3]
+        let chunk = <&mut [u32; 4]>::try_from(&mut pixels[i..i + 4]).unwrap();
+        let inp = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&*chunk).unwrap());
+
+        // Shift right 8 bits as 16-bit elements: each u16 pair becomes [0 a | 0 g]
+        let ag = _mm_srli_epi16(inp, 8);
+
+        // Shuffle to replicate green into both positions of each pixel:
+        // Low 64 bits: shufflelo with pattern (2,2,0,0) -> [0 g0 | 0 g0 | 0 g1 | 0 g1]
+        let b = _mm_shufflelo_epi16(ag, 0xA0); // _MM_SHUFFLE(2,2,0,0) = 0b10_10_00_00 = 0xA0
+        // High 64 bits: shufflehi with same pattern
+        let c = _mm_shufflehi_epi16(b, 0xA0);  // [0 g0 | 0 g0 | 0 g1 | 0 g1 | 0 g2 | 0 g2 | 0 g3 | 0 g3]
+
+        // Subtract as bytes (wrapping): R -= G, B -= G. A -= 0, G -= G = 0 wait...
+        // Actually: the green bytes in the subtrahend are at the same positions as green
+        // in the original, so G -= G = 0. But we want G unchanged!
+        // In libwebp, the output has G in the green position. Let me re-check...
+        //
+        // libwebp: `out = _mm_sub_epi8(in, C)` where C has green spread to all channel positions.
+        // But C is [0 g 0 g] for each pixel, so:
+        //   A byte: a - 0 = a (unchanged)
+        //   R byte: r - g = new_r
+        //   G byte: g - 0 = g (unchanged) -- wait, position!
+        //
+        // Layout per pixel (big-endian in u32): a(31:24) r(23:16) g(15:8) b(7:0)
+        // In memory (little-endian): b(7:0) g(15:8) r(23:16) a(31:24)
+        //
+        // After srli_epi16 by 8: each pair of bytes shifts right by 8 as u16:
+        //   Memory layout per pixel: [b g r a] -> shifts each u16 right by 8
+        //   u16_lo = (g << 8 | b) >> 8 = g (as byte in low position)
+        //   u16_hi = (a << 8 | r) >> 8 = a (as byte in low position)
+        //   So result per pixel in memory: [g 0 a 0]
+        //
+        // After shuffle (replicate position 0 and 2 of each 64-bit half):
+        //   Position 0 = g, position 2 = g (from first pixel in low 64 bits)
+        //   So C per pixel in memory: [g 0 g 0]
+        //
+        // Subtract: [b g r a] - [g 0 g 0] = [b-g, g-0, r-g, a-0] = [b-g, g, r-g, a]
+        //
+        // That's exactly what we want! G stays as g (unchanged), R and B get green subtracted.
+
+        let out = _mm_sub_epi8(inp, c);
+        simd_mem::_mm_storeu_si128(chunk, out);
+        i += 4;
+    }
+
+    // Handle remaining pixels with scalar
+    while i < len {
+        let pixel = pixels[i];
+        let a = argb_alpha(pixel);
+        let r = argb_red(pixel);
+        let g = argb_green(pixel);
+        let b = argb_blue(pixel);
+        let new_r = r.wrapping_sub(g);
+        let new_b = b.wrapping_sub(g);
+        pixels[i] = make_argb(a, new_r, g, new_b);
+        i += 1;
     }
 }
 

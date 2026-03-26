@@ -331,17 +331,121 @@ fn find_match_length(
 }
 
 /// Find first mismatch position between two subsequences.
+///
+/// On x86/x86_64 with SIMD, uses SSE2 to compare 4 u32 values at a time,
+/// matching libwebp's VectorMismatch_SSE2. For long matches (common in LZ77),
+/// this is significantly faster than per-element comparison.
 #[inline]
 fn vector_mismatch(argb: &[u32], pos1: usize, pos2: usize, max_len: usize) -> usize {
     let remaining1 = argb.len() - pos1;
     let remaining2 = argb.len() - pos2;
     let len = remaining1.min(remaining2).min(max_len);
+
+    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    {
+        use archmage::SimdToken;
+        if let Some(_token) = archmage::Sse2Token::summon() {
+            return vector_mismatch_sse2(_token, &argb[pos1..], &argb[pos2..], len);
+        }
+    }
+
+    vector_mismatch_scalar(&argb[pos1..], &argb[pos2..], len)
+}
+
+/// Scalar vector mismatch fallback.
+#[inline]
+fn vector_mismatch_scalar(a: &[u32], b: &[u32], len: usize) -> usize {
     for i in 0..len {
-        if argb[pos1 + i] != argb[pos2 + i] {
+        if a[i] != b[i] {
             return i;
         }
     }
     len
+}
+
+/// SSE2 vector mismatch matching libwebp's VectorMismatch_SSE2.
+///
+/// Compares 4 u32 values at a time using cmpeq+movemask. When all 4 match
+/// (mask == 0xffff), advances by 4. Unrolls to compare 8 per iteration
+/// with early load of next block.
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[archmage::arcane]
+fn vector_mismatch_sse2(
+    _token: archmage::Sse2Token,
+    a: &[u32],
+    b: &[u32],
+    length: usize,
+) -> usize {
+    use archmage::intrinsics::x86_64 as simd_mem;
+    use core::arch::x86_64::*;
+
+    let mut match_len = 0;
+
+    if length >= 12 {
+        let mut a0 = simd_mem::_mm_loadu_si128(
+            <&[u32; 4]>::try_from(&a[0..4]).unwrap(),
+        );
+        let mut b0 = simd_mem::_mm_loadu_si128(
+            <&[u32; 4]>::try_from(&b[0..4]).unwrap(),
+        );
+
+        while match_len + 12 < length {
+            let cmp_a = _mm_cmpeq_epi32(a0, b0);
+            // Pre-load next block
+            let a1 = simd_mem::_mm_loadu_si128(
+                <&[u32; 4]>::try_from(&a[match_len + 4..match_len + 8]).unwrap(),
+            );
+            let b1 = simd_mem::_mm_loadu_si128(
+                <&[u32; 4]>::try_from(&b[match_len + 4..match_len + 8]).unwrap(),
+            );
+            if _mm_movemask_epi8(cmp_a) != 0xffff_i32 {
+                break;
+            }
+            match_len += 4;
+
+            let cmp_b = _mm_cmpeq_epi32(a1, b1);
+            a0 = simd_mem::_mm_loadu_si128(
+                <&[u32; 4]>::try_from(&a[match_len + 4..match_len + 8]).unwrap(),
+            );
+            b0 = simd_mem::_mm_loadu_si128(
+                <&[u32; 4]>::try_from(&b[match_len + 4..match_len + 8]).unwrap(),
+            );
+            if _mm_movemask_epi8(cmp_b) != 0xffff_i32 {
+                break;
+            }
+            match_len += 4;
+        }
+    } else if length >= 4 {
+        use archmage::intrinsics::x86_64 as simd_mem;
+        use core::arch::x86_64::*;
+
+        let a0 = simd_mem::_mm_loadu_si128(
+            <&[u32; 4]>::try_from(&a[0..4]).unwrap(),
+        );
+        let b0 = simd_mem::_mm_loadu_si128(
+            <&[u32; 4]>::try_from(&b[0..4]).unwrap(),
+        );
+        if _mm_movemask_epi8(_mm_cmpeq_epi32(a0, b0)) == 0xffff_i32 {
+            match_len = 4;
+            if length >= 8 {
+                let a1 = simd_mem::_mm_loadu_si128(
+                    <&[u32; 4]>::try_from(&a[4..8]).unwrap(),
+                );
+                let b1 = simd_mem::_mm_loadu_si128(
+                    <&[u32; 4]>::try_from(&b[4..8]).unwrap(),
+                );
+                if _mm_movemask_epi8(_mm_cmpeq_epi32(a1, b1)) == 0xffff_i32 {
+                    match_len = 8;
+                }
+            }
+        }
+    }
+
+    // Scalar tail
+    while match_len < length && a[match_len] == b[match_len] {
+        match_len += 1;
+    }
+    match_len
 }
 
 #[cfg(test)]
