@@ -1064,13 +1064,13 @@ impl WebpDecoderConfig {
     /// Convenience: probe image header.
     pub fn probe_header(&self, data: &[u8]) -> Result<ImageInfo, At<DecodeError>> {
         use zencodec::decode::{DecodeJob, DecoderConfig};
-        <Self as DecoderConfig>::job(self).probe(data)
+        <Self as DecoderConfig>::job(self.clone()).probe(data)
     }
 
     /// Convenience: decode image with this config.
     pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, At<DecodeError>> {
         use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
-        <Self as DecoderConfig>::job(self)
+        <Self as DecoderConfig>::job(self.clone())
             .decoder(Cow::Borrowed(data), &[])
             .at()?
             .decode()
