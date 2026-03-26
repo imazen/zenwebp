@@ -215,26 +215,26 @@ pub(super) fn backward_references_rle(
         let max_len = (pix_count - i).min(MAX_LENGTH);
 
         // Check RLE match (distance=1, same as previous pixel)
-        let rle_len = {
-            let mut len = 0;
+        // Quick rejection before expensive linear scan (matching libwebp's FindMatchLength)
+        let rle_len = if argb[i] != argb[i - 1] {
+            0
+        } else {
+            let mut len = 1;
             while len < max_len && argb[i + len] == argb[i - 1 + len] {
                 len += 1;
             }
-            // Quick rejection first
-            if argb[i] != argb[i - 1] { 0 } else { len }
+            len
         };
 
         // Check previous row match (distance=xsize)
-        let prev_row_len = if i < xsize {
+        let prev_row_len = if i < xsize || argb[i] != argb[i - xsize] {
             0
         } else {
-            let mut len = 0;
-            let max = max_len;
-            while len < max && argb[i + len] == argb[i - xsize + len] {
+            let mut len = 1;
+            while len < max_len && argb[i + len] == argb[i - xsize + len] {
                 len += 1;
             }
-            // Quick rejection
-            if argb[i] != argb[i - xsize] { 0 } else { len }
+            len
         };
 
         if rle_len >= prev_row_len && rle_len >= MIN_LENGTH {
