@@ -293,7 +293,7 @@ WebP crate from the image-rs project.
 
 | Feature | image-webp | zenwebp |
 |---------|:----------:|:-------:|
-| Lossy VP8 encoding | :white_check_mark: basic | :white_check_mark: full |
+| Lossy VP8 encoding | :white_check_mark: | :white_check_mark: |
 | Quality (0-100) | :white_check_mark: | :white_check_mark: |
 | Method (0-6) speed/quality tradeoff | :x: | :white_check_mark: |
 | I16 prediction (DC/V/H/TM) | DC only | all 4 modes |
