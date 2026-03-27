@@ -368,6 +368,16 @@ impl<'a> LosslessDecoder<'a> {
         };
         info.build_group_meta();
 
+        #[cfg(feature = "std")]
+        if std::env::var("ZENWEBP_TRACE").is_ok() && read_meta {
+            for (i, meta) in info.group_meta.iter().enumerate() {
+                eprintln!(
+                    "  group[{}]: trivial_code={} trivial_lit={} packed={}",
+                    i, meta.is_trivial_code, meta.is_trivial_literal, meta.use_packed_table
+                );
+            }
+        }
+
         Ok(info)
     }
 
@@ -439,7 +449,7 @@ impl<'a> LosslessDecoder<'a> {
             }
             max_symbol -= 1;
 
-            self.bit_reader.fill()?;
+            self.bit_reader.fill();
             let code_len = table.read_symbol(&mut self.bit_reader)?;
 
             if code_len < 16 {
@@ -545,7 +555,7 @@ impl<'a> LosslessDecoder<'a> {
                 continue;
             }
 
-            self.bit_reader.fill()?;
+            self.bit_reader.fill();
 
             // Fast path 2: use_packed_table - single 6-bit lookup decodes entire pixel
             let code;
@@ -589,7 +599,7 @@ impl<'a> LosslessDecoder<'a> {
                 } else {
                     let red = tree[RED].read_symbol(&mut self.bit_reader)? as u8;
                     if self.bit_reader.nbits < 15 {
-                        self.bit_reader.fill()?;
+                        self.bit_reader.fill();
                     }
                     let blue = tree[BLUE].read_symbol(&mut self.bit_reader)? as u8;
                     let alpha = tree[ALPHA].read_symbol(&mut self.bit_reader)? as u8;
@@ -972,27 +982,31 @@ impl<'a> BitReader<'a> {
 
     /// Fills the buffer with bits from the input stream.
     ///
-    /// After this function, the internal buffer will contain 64-bits or have reached the end of
-    /// the input stream.
-    pub(crate) fn fill(&mut self) -> Result<(), DecodeError> {
+    /// After this function, the internal buffer will contain at least 56 bits or have reached
+    /// the end of the input stream. This function is infallible — it cannot fail.
+    #[inline(always)]
+    pub(crate) fn fill(&mut self) {
         debug_assert!(self.nbits < 64);
 
-        let mut buf = self.reader.fill_buf();
+        let buf = self.reader.fill_buf();
         if buf.len() >= 8 {
             let lookahead = u64::from_le_bytes(buf[..8].try_into().unwrap());
             self.reader.consume(usize::from((63 - self.nbits) / 8));
             self.buffer |= lookahead << self.nbits;
             self.nbits |= 56;
         } else {
-            while !buf.is_empty() && self.nbits < 56 {
-                self.buffer |= u64::from(buf[0]) << self.nbits;
-                self.nbits += 8;
-                self.reader.consume(1);
-                buf = self.reader.fill_buf();
-            }
+            self.fill_slow(buf);
         }
+    }
 
-        Ok(())
+    #[inline(never)]
+    fn fill_slow(&mut self, mut buf: &'a [u8]) {
+        while !buf.is_empty() && self.nbits < 56 {
+            self.buffer |= u64::from(buf[0]) << self.nbits;
+            self.nbits += 8;
+            self.reader.consume(1);
+            buf = self.reader.fill_buf();
+        }
     }
 
     /// Peeks at the next `num` bits in the buffer.
@@ -1022,7 +1036,7 @@ impl<'a> BitReader<'a> {
         debug_assert!(num <= 32);
 
         if self.nbits < num {
-            self.fill()?;
+            self.fill();
         }
         let value = self.peek(num) as u32;
         self.consume(num)?;
