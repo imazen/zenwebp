@@ -214,6 +214,10 @@ struct MacroBlock {
     /// True if any UV sub-block has non-zero AC coefficients.
     /// Used to suppress dithering on blocks with actual chroma detail.
     has_nonzero_uv_ac: bool,
+    /// Per-block non-zero bitmap. Bit i set means block i has non-zero coefficients.
+    /// Blocks 0-15 = Y, 16-19 = U, 20-23 = V.
+    /// Used to skip IDCT on zero blocks (matches libwebp's non_zero_y/non_zero_uv).
+    non_zero_blocks: u32,
 }
 
 /// Info required from a previously decoded macro block in future
@@ -980,6 +984,8 @@ impl<'a> Vp8Decoder<'a> {
         let ws = &mut self.luma_ws;
         update_border_luma(ws, mbx, mby, mw, &self.top_border_y, &self.left_border_y);
 
+        let nz = mb.non_zero_blocks;
+
         match mb.luma_mode {
             LumaMode::V => predict_vpred(ws, 16, 1, 1, stride),
             LumaMode::H => predict_hpred(ws, 16, 1, 1, stride),
@@ -1008,10 +1014,19 @@ impl<'a> Vp8Decoder<'a> {
 
                         let rb: &mut [i32; 16] =
                             (&mut self.coeff_blocks[i * 16..][..16]).try_into().unwrap();
-                        if let Some(token) = simd_token {
-                            idct_add_residue_and_clear_with_token(token, ws, rb, y0, x0, stride);
+                        // Skip IDCT for zero blocks (matches libwebp's DoTransform case 0)
+                        if nz & (1u32 << i) != 0 {
+                            if let Some(token) = simd_token {
+                                idct_add_residue_and_clear_with_token(
+                                    token, ws, rb, y0, x0, stride,
+                                );
+                            } else {
+                                idct_add_residue_and_clear(ws, rb, y0, x0, stride);
+                            }
                         } else {
-                            idct_add_residue_and_clear(ws, rb, y0, x0, stride);
+                            // Verify the block is truly zero (debug assertion)
+                            debug_assert!(rb.iter().all(|&c| c == 0),
+                                "Block {i} has non-zero coeffs but non_zero_blocks bit not set");
                         }
                     }
                 }
@@ -1019,18 +1034,29 @@ impl<'a> Vp8Decoder<'a> {
         }
 
         if mb.luma_mode != LumaMode::B {
-            for y in 0usize..4 {
-                for x in 0usize..4 {
-                    let i = x + y * 4;
-                    let rb: &mut [i32; 16] =
-                        (&mut self.coeff_blocks[i * 16..][..16]).try_into().unwrap();
-                    let y0 = 1 + y * 4;
-                    let x0 = 1 + x * 4;
+            // Skip IDCT entirely if no Y blocks have non-zero coefficients
+            // (matches libwebp's `if (bits != 0)` check in ReconstructRow)
+            if nz & 0xFFFF != 0 {
+                for y in 0usize..4 {
+                    for x in 0usize..4 {
+                        let i = x + y * 4;
+                        let rb: &mut [i32; 16] =
+                            (&mut self.coeff_blocks[i * 16..][..16]).try_into().unwrap();
+                        if nz & (1u32 << i) != 0 {
+                            let y0 = 1 + y * 4;
+                            let x0 = 1 + x * 4;
 
-                    if let Some(token) = simd_token {
-                        idct_add_residue_and_clear_with_token(token, ws, rb, y0, x0, stride);
-                    } else {
-                        idct_add_residue_and_clear(ws, rb, y0, x0, stride);
+                            if let Some(token) = simd_token {
+                                idct_add_residue_and_clear_with_token(
+                                    token, ws, rb, y0, x0, stride,
+                                );
+                            } else {
+                                idct_add_residue_and_clear(ws, rb, y0, x0, stride);
+                            }
+                        } else {
+                            debug_assert!(rb.iter().all(|&c| c == 0),
+                                "Block {i} has non-zero coeffs but non_zero_blocks bit not set");
+                        }
                     }
                 }
             }
@@ -1092,30 +1118,44 @@ impl<'a> Vp8Decoder<'a> {
             }
         }
 
-        for y in 0usize..2 {
-            for x in 0usize..2 {
-                let i = x + y * 2;
-                let u_idx = 16 + i; // U blocks at indices 16-19
-                let v_idx = 20 + i; // V blocks at indices 20-23
+        let nz = mb.non_zero_blocks;
+        // Skip all UV IDCT if no UV blocks have non-zero coefficients
+        // (matches libwebp's DoUVTransform `if (bits & 0xff)` check)
+        if nz & 0xFF_0000 != 0 {
+            for y in 0usize..2 {
+                for x in 0usize..2 {
+                    let i = x + y * 2;
+                    let u_idx = 16 + i; // U blocks at indices 16-19
+                    let v_idx = 20 + i; // V blocks at indices 20-23
 
-                let urb: &mut [i32; 16] = (&mut self.coeff_blocks[u_idx * 16..][..16])
-                    .try_into()
-                    .unwrap();
-                let y0 = 1 + y * 4;
-                let x0 = 1 + x * 4;
-                if let Some(token) = simd_token {
-                    idct_add_residue_and_clear_with_token(token, uws, urb, y0, x0, stride);
-                } else {
-                    idct_add_residue_and_clear(uws, urb, y0, x0, stride);
-                }
+                    let y0 = 1 + y * 4;
+                    let x0 = 1 + x * 4;
 
-                let vrb: &mut [i32; 16] = (&mut self.coeff_blocks[v_idx * 16..][..16])
-                    .try_into()
-                    .unwrap();
-                if let Some(token) = simd_token {
-                    idct_add_residue_and_clear_with_token(token, vws, vrb, y0, x0, stride);
-                } else {
-                    idct_add_residue_and_clear(vws, vrb, y0, x0, stride);
+                    if nz & (1u32 << u_idx) != 0 {
+                        let urb: &mut [i32; 16] = (&mut self.coeff_blocks[u_idx * 16..][..16])
+                            .try_into()
+                            .unwrap();
+                        if let Some(token) = simd_token {
+                            idct_add_residue_and_clear_with_token(
+                                token, uws, urb, y0, x0, stride,
+                            );
+                        } else {
+                            idct_add_residue_and_clear(uws, urb, y0, x0, stride);
+                        }
+                    }
+
+                    if nz & (1u32 << v_idx) != 0 {
+                        let vrb: &mut [i32; 16] = (&mut self.coeff_blocks[v_idx * 16..][..16])
+                            .try_into()
+                            .unwrap();
+                        if let Some(token) = simd_token {
+                            idct_add_residue_and_clear_with_token(
+                                token, vws, vrb, y0, x0, stride,
+                            );
+                        } else {
+                            idct_add_residue_and_clear(vws, vrb, y0, x0, stride);
+                        }
+                    }
                 }
             }
         }
@@ -1197,6 +1237,10 @@ impl<'a> Vp8Decoder<'a> {
 
             for (k, &val) in block.iter().enumerate() {
                 coeff_blocks[16 * k] = val;
+                // Mark Y block as non-zero if WHT gave it a non-zero DC
+                if val != 0 {
+                    mb.non_zero_blocks |= 1u32 << k;
+                }
             }
 
             plane = Plane::YCoeff1;
@@ -1221,9 +1265,11 @@ impl<'a> Vp8Decoder<'a> {
                     y_dq,
                 );
 
-                // Track non-zero DCT but defer IDCT to fused function during prediction
+                // Track non-zero DCT but defer IDCT to fused function during prediction.
+                // Also set per-block bitmap for IDCT skip optimization.
                 if block[0] != 0 || n {
                     mb.non_zero_dct = true;
+                    mb.non_zero_blocks |= 1u32 << i;
                 }
 
                 left_ctx = if n { 1 } else { 0 };
@@ -1255,9 +1301,11 @@ impl<'a> Vp8Decoder<'a> {
                         uv_dq,
                     );
 
-                    // Track non-zero DCT but defer IDCT to fused function during prediction
+                    // Track non-zero DCT but defer IDCT to fused function during prediction.
+                    // Also set per-block bitmap.
                     if block[0] != 0 || n {
                         mb.non_zero_dct = true;
+                        mb.non_zero_blocks |= 1u32 << i;
                     }
 
                     // Check for non-zero UV AC coefficients (any coeff at index > 0).
