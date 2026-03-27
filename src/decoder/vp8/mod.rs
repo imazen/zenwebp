@@ -35,9 +35,9 @@ use crate::common::types::*;
 use crate::slice_reader::SliceReader;
 
 use super::bit_reader::{ActivePartitionReader, VP8HeaderBitReader, VP8Partitions};
-use super::loop_filter_dispatch;
+use super::loop_filter;
 use crate::common::transform;
-use loop_filter_dispatch::*;
+use loop_filter::*;
 
 /// Summon the best available SIMD token for the current platform.
 /// Called once at decode start to avoid per-call atomic loads.

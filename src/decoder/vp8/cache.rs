@@ -32,7 +32,7 @@ impl<'a> Vp8Decoder<'a> {
                 mb.luma_mode == LumaMode::B || (!mb.coeffs_skipped && mb.non_zero_dct);
 
             self.mb_filter_params
-                .push(loop_filter_dispatch::MbFilterParams {
+                .push(loop_filter::MbFilterParams {
                     filter_level,
                     interior_limit,
                     hev_threshold,
@@ -55,7 +55,7 @@ impl<'a> Vp8Decoder<'a> {
             target_arch = "wasm32",
         ))]
         if let Some(token) = simd_token {
-            loop_filter_dispatch::filter_row_simd(
+            loop_filter::filter_row_simd(
                 token,
                 &mut self.cache_y[..],
                 &mut self.cache_u[..],

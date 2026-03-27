@@ -17,16 +17,6 @@ mod lossless_transform_simd;
 mod streaming;
 pub(crate) mod yuv;
 
-#[cfg(target_arch = "x86_64")]
-mod loop_filter_avx2;
-
-#[cfg(target_arch = "aarch64")]
-mod loop_filter_neon;
-
-#[cfg(target_arch = "wasm32")]
-mod loop_filter_wasm;
-
-mod loop_filter_dispatch;
 mod predict_simd;
 
 #[cfg(target_arch = "x86_64")]
