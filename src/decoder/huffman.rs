@@ -233,30 +233,6 @@ impl HuffmanTree {
         }
     }
 
-    /// Read a symbol from the primary table only, consuming bits.
-    /// Returns (symbol, bits_consumed). Caller must ensure the tree
-    /// has no secondary table entries (max_code_bits <= MAX_TABLE_BITS).
-    #[inline(always)]
-    pub(crate) fn read_symbol_primary_only(
-        &self,
-        bit_reader: &mut BitReader<'_>,
-    ) -> Result<u16, DecodeError> {
-        match &self.0 {
-            HuffmanTreeInner::Tree {
-                primary_table,
-                table_mask,
-                ..
-            } => {
-                let v = bit_reader.peek_full() as u16;
-                let entry = primary_table[(v & table_mask) as usize];
-                let bits = (entry >> 12) as u8;
-                bit_reader.consume(bits)?;
-                Ok(entry & 0xfff)
-            }
-            HuffmanTreeInner::Single(symbol) => Ok(*symbol),
-        }
-    }
-
     /// Get symbol and bits for a given bit pattern from the primary table.
     /// Returns (symbol, bits_consumed). Only valid for trees with no secondary table.
     #[inline(always)]
@@ -314,25 +290,4 @@ impl HuffmanTree {
         }
     }
 
-    /// Peek at the next symbol in the bitstream if it can be read with only a primary table lookup.
-    ///
-    /// Returns a tuple of the codelength and symbol value. This function may return wrong
-    /// information if there aren't enough bits in the bit reader to read the next symbol.
-    pub(crate) fn peek_symbol(&self, bit_reader: &BitReader<'_>) -> Option<(u8, u16)> {
-        match &self.0 {
-            HuffmanTreeInner::Tree {
-                primary_table,
-                table_mask,
-                ..
-            } => {
-                let v = bit_reader.peek_full() as u16;
-                let entry = primary_table[(v & table_mask) as usize];
-                if (entry >> 12) <= MAX_TABLE_BITS as u16 {
-                    return Some(((entry >> 12) as u8, entry & 0xfff));
-                }
-                None
-            }
-            HuffmanTreeInner::Single(symbol) => Some((0, *symbol)),
-        }
-    }
 }

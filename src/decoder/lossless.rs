@@ -927,19 +927,6 @@ impl ColorCache {
         self.insert_u32(pixel_to_u32(color));
     }
 
-    /// Insert a pixel read directly from a byte slice at the given byte offset.
-    /// Avoids the overhead of try_into().unwrap() for [u8;4] conversion.
-    #[inline(always)]
-    fn insert_from_bytes(&mut self, data: &[u8], byte_offset: usize) {
-        let r = data[byte_offset];
-        let g = data[byte_offset + 1];
-        let b = data[byte_offset + 2];
-        let a = data[byte_offset + 3];
-        let argb =
-            (u32::from(a) << 24) | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
-        self.insert_u32(argb);
-    }
-
     #[inline(always)]
     fn lookup_u32(&self, index: usize) -> u32 {
         self.color_cache[index]
