@@ -143,9 +143,12 @@ zenwebp 182.0M vs libwebp 161.4M = **1.13x** per decode
 6. Bit reader sub-slice bounds check elimination (load_new_bytes hot path)
 7. Inline state fields into ActivePartitionReader (eliminates pointer indirection;
    read_residual_data 45.4M -> 42.6M per decode, -6.2%)
+8. Out-of-line read_coefficients + get_large_value (2026-03-27): Eliminates
+   BTB aliasing from 25x inlining. Coeff mispredicts 3.66M -> 1.36M (-62.8%),
+   matching libwebp's 1.39M. Adds ~100M instruction overhead from calls.
 
 Total: 229.3M -> 182.0M -> ~179M per decode.
-Wall-clock: ~2.3x -> ~1.26-1.36x vs libwebp on codec_wiki.
+Wall-clock: ~2.3x -> ~1.25-1.28x vs libwebp on codec_wiki.
 
 **Remaining instruction gap breakdown (per decode, codec_wiki):**
 
@@ -165,6 +168,8 @@ Main remaining opportunities:
 - **memset 17.8M**: Frame buffer zero-init. Every byte overwritten before read.
   Could use uninitialized allocation but requires unsafe or refactoring.
 - **Coeff parsing 4.3M excess**: Prob table bounds checks, zigzag/dequant indexing.
+  Branch mispredicts now at parity with C (1.36M vs 1.39M per 10 decodes).
+  Remaining excess is bounds checks on `probs[n][ctx]` array indexing.
 - **Loop filter 7.3M excess**: SIMD dispatch overhead, bounds checks.
 - **YUV->RGB 7.6M excess**: Scalar edge handling, bounds checks.
 
@@ -371,6 +376,8 @@ parsing / loop filter / YUV->RGB conversion (~7-8M excess each).
    lookups, zigzag indexing, dequant array access. Bit reader load_new_bytes bounds
    checks eliminated (sub-slice pattern), state pointer indirection eliminated
    (inline fields + Drop writeback). Was 47.0M, now 42.6M.
+   Branch mispredicts reduced to C parity (1.36M vs 1.39M/10 decodes) via
+   #[inline(never)] on read_coefficients + get_large_value split.
 4. **YUV->RGB 45.7M vs 38.1M (1.20x)** — scalar edge handling, bounds checks.
 5. **memset 17.8M** — frame buffer zero-init. Every byte is overwritten before read.
 6. **decode_frame_ orchestration** — now at parity with libwebp (~22.9M vs ~24.9M).
@@ -482,6 +489,36 @@ EOF
 ```
 
 **Testing:** Run with `cargo test --release test_webp -- --ignored`
+
+## Investigation Notes
+
+### Branchless coefficient parsing (2026-03-27)
+
+Attempted multiple approaches to reduce VP8 coefficient parsing branches.
+Summary of findings (codec_wiki 2560x1664, cachegrind branch-sim):
+
+**What worked:**
+- `#[inline(never)]` on `read_coefficients` + `get_large_value` split:
+  Coeff mispredicts 3.66M -> 1.36M (C's 1.39M). Eliminates BTB aliasing
+  from 25x inlining. Wall-clock within noise (~1-2% improvement).
+
+**What did NOT work:**
+- **Branchless get_bit (multiply-select):** Eliminated 7.6M branches but
+  added 37.4M instructions from mul/wrapping_sub codegen. Mispredicts
+  unchanged (the `value > split` branch was already well-predicted). Net negative.
+- **Branchless get_bit (cmov hint):** LLVM did generate 88 cmovs (up from 4),
+  but the conditional arithmetic overhead cancelled the branch savings.
+- **Flat prob table (u8 vs TreeNode):** 4x smaller memory, but changed code
+  layout enough to INCREASE mispredicts by 0.3M. Cache was not the bottleneck.
+- **Deferred refill (get_bit_fast):** Skipping `bits < 0` check works for
+  normal-size images but fails at EOF for tiny images (2x2, 3x3). The
+  `bits < 0` check is perfectly predicted anyway — zero mispredict savings.
+
+**Key insight:** VP8's boolean decoder branches are highly biased and
+predict well. The excess branch COUNT (69.5M vs 21.3M when inlined 25x)
+came from BTB aliasing, not from inherently unpredictable branches.
+Making the function out-of-line was the only approach that addressed
+the root cause.
 
 ## Known Bugs
 
