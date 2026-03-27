@@ -20,7 +20,6 @@ use alloc::vec::Vec;
 use core::array;
 use core::default::Default;
 
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 use archmage::SimdToken;
 
 use super::api::{DecodeError, UpsamplingMethod};
@@ -34,6 +33,33 @@ use super::bit_reader::{ActivePartitionReader, VP8HeaderBitReader, VP8Partitions
 use super::loop_filter_dispatch;
 use crate::common::transform;
 use loop_filter_dispatch::*;
+
+/// Summon the best available SIMD token for the current platform.
+/// Called once at decode start to avoid per-call atomic loads.
+#[inline(always)]
+fn summon_simd_token() -> SimdTokenType {
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    {
+        archmage::X64V3Token::summon()
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        archmage::NeonToken::summon()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        archmage::Wasm128Token::summon()
+    }
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "wasm32"
+    )))]
+    {
+        None
+    }
+}
 
 /// Maximum stride supported for bounds-check-free loop filtering.
 /// WebP max dimension is 16383, rounded up to MB boundary = 16384.
@@ -1801,16 +1827,7 @@ impl<'a> Vp8Decoder<'a> {
         self.read_frame_header()?;
 
         // Summon SIMD token once for the entire decode
-        let simd_token: SimdTokenType = {
-            #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-            {
-                archmage::X64V3Token::summon()
-            }
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
-            {
-                None
-            }
-        };
+        let simd_token: SimdTokenType = summon_simd_token();
 
         // Capture segment quantizers
         let segments: [(i16, i16, i16, i16, i16, i16); 4] = core::array::from_fn(|i| {
@@ -1909,16 +1926,7 @@ impl<'a> Vp8Decoder<'a> {
         }
 
         // Summon SIMD token once for the entire decode, avoiding ~312K per-call atomic loads
-        let simd_token: SimdTokenType = {
-            #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-            {
-                archmage::X64V3Token::summon()
-            }
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
-            {
-                None
-            }
-        };
+        let simd_token: SimdTokenType = summon_simd_token();
 
         self.decode_mb_rows(simd_token).map_err(DecodeError::from)?;
 
