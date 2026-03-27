@@ -195,10 +195,7 @@ impl<'a> LosslessDecoder<'a> {
         data: &mut [u8],
     ) -> Result<(), DecodeError> {
         let color_cache_bits = self.read_color_cache()?;
-        let color_cache = color_cache_bits.map(|bits| ColorCache {
-            color_cache_bits: bits,
-            color_cache: vec![[0; 4]; 1 << bits],
-        });
+        let color_cache = color_cache_bits.map(ColorCache::new);
 
         let huffman_info = self.read_huffman_codes(is_argb_img, xsize, ysize, color_cache)?;
         self.decode_image_data(xsize, ysize, huffman_info, data)
@@ -359,7 +356,7 @@ impl<'a> LosslessDecoder<'a> {
             (1 << huffman_bits) - 1
         };
 
-        let info = HuffmanInfo {
+        let mut info = HuffmanInfo {
             xsize: huffman_xsize,
             _ysize: huffman_ysize,
             color_cache,
@@ -367,7 +364,9 @@ impl<'a> LosslessDecoder<'a> {
             bits: huffman_bits,
             mask: huffman_mask,
             huffman_code_groups: hufftree_groups,
+            group_meta: Vec::new(),
         };
+        info.build_group_meta();
 
         Ok(info)
     }
@@ -482,7 +481,13 @@ impl<'a> LosslessDecoder<'a> {
         Ok(code_lengths)
     }
 
-    /// Decodes the image data using the huffman trees and either of the 3 methods of decoding
+    /// Decodes the image data using the huffman trees and either of the 3 methods of decoding.
+    ///
+    /// This is the hot loop. Optimizations matching libwebp's DecodeImageData:
+    /// - `is_trivial_code`: all 5 trees single-symbol, no bits read
+    /// - `use_packed_table`: single 6-bit lookup decodes entire ARGB pixel
+    /// - `is_trivial_literal`: R/B/A are constant, only read green from bitstream
+    /// - Incremental col/row tracking: avoid div/mod per block boundary
     fn decode_image_data(
         &mut self,
         width: u16,
@@ -490,87 +495,121 @@ impl<'a> LosslessDecoder<'a> {
         mut huffman_info: HuffmanInfo,
         data: &mut [u8],
     ) -> Result<(), DecodeError> {
-        let num_values = usize::from(width) * usize::from(height);
+        let width_usize = usize::from(width);
+        let num_values = width_usize * usize::from(height);
+        let len_code_limit: u16 = 256 + 24;
+        let color_cache_limit: u16 = len_code_limit
+            + huffman_info
+                .color_cache
+                .as_ref()
+                .map_or(0, |cc| 1u16 << cc.color_cache_bits);
+        let mask = usize::from(huffman_info.mask);
+
+        let mut col: usize = 0;
+        let mut row: usize = 0;
+        let mut index: usize = 0;
 
         let huff_index = huffman_info.get_huff_index(0, 0);
+        let mut group_idx = huff_index;
         let mut tree = &huffman_info.huffman_code_groups[huff_index];
-        let mut index = 0;
+        let mut meta = &huffman_info.group_meta[huff_index];
 
-        let mut next_block_start = 0;
         while index < num_values {
-            self.bit_reader.fill()?;
+            // Update huffman group at tile boundaries (col & mask == 0)
+            if (col & mask) == 0 {
+                let new_idx = huffman_info.get_huff_index(col as u16, row as u16);
+                if new_idx != group_idx {
+                    group_idx = new_idx;
+                    tree = &huffman_info.huffman_code_groups[group_idx];
+                    meta = &huffman_info.group_meta[group_idx];
+                }
 
-            if index >= next_block_start {
                 // Check for cooperative cancellation at block boundaries
                 if let Some(stop) = self.stop {
                     stop.check()?;
                 }
-
-                let x = index % usize::from(width);
-                let y = index / usize::from(width);
-                next_block_start = (x | usize::from(huffman_info.mask)).min(usize::from(width - 1))
-                    + y * usize::from(width)
-                    + 1;
-
-                let huff_index = huffman_info.get_huff_index(x as u16, y as u16);
-                tree = &huffman_info.huffman_code_groups[huff_index];
-
-                // Fast path: If all the codes each contain only a single
-                // symbol, then the pixel data isn't written to the bitstream
-                // and we can just fill the output buffer with the symbol
-                // directly.
-                if tree[..4].iter().all(|t| t.is_single_node()) {
-                    let code = tree[GREEN].read_symbol(&mut self.bit_reader)?;
-                    if code < 256 {
-                        let n = if huffman_info.bits == 0 {
-                            num_values
-                        } else {
-                            next_block_start - index
-                        };
-
-                        let red = tree[RED].read_symbol(&mut self.bit_reader)?;
-                        let blue = tree[BLUE].read_symbol(&mut self.bit_reader)?;
-                        let alpha = tree[ALPHA].read_symbol(&mut self.bit_reader)?;
-                        let value = [red as u8, code as u8, blue as u8, alpha as u8];
-
-                        for i in 0..n {
-                            data[index * 4 + i * 4..][..4].copy_from_slice(&value);
-                        }
-
-                        if let Some(color_cache) = huffman_info.color_cache.as_mut() {
-                            color_cache.insert(value);
-                        }
-
-                        index += n;
-                        continue;
-                    }
-                }
             }
 
-            let code = tree[GREEN].read_symbol(&mut self.bit_reader)?;
-
-            //check code
-            if code < 256 {
-                //literal, so just use huffman codes and read as argb
-                let green = code as u8;
-                let red = tree[RED].read_symbol(&mut self.bit_reader)? as u8;
-                let blue = tree[BLUE].read_symbol(&mut self.bit_reader)? as u8;
-                if self.bit_reader.nbits < 15 {
-                    self.bit_reader.fill()?;
-                }
-                let alpha = tree[ALPHA].read_symbol(&mut self.bit_reader)? as u8;
-
-                data[index * 4] = red;
-                data[index * 4 + 1] = green;
-                data[index * 4 + 2] = blue;
-                data[index * 4 + 3] = alpha;
-
-                if let Some(color_cache) = huffman_info.color_cache.as_mut() {
-                    color_cache.insert([red, green, blue, alpha]);
+            // Fast path 1: is_trivial_code - all trees are single-symbol, no bits read
+            if meta.is_trivial_code {
+                data[index * 4..][..4].copy_from_slice(&meta.trivial_pixel);
+                if let Some(cc) = huffman_info.color_cache.as_mut() {
+                    cc.insert(meta.trivial_pixel);
                 }
                 index += 1;
-            } else if code < 256 + 24 {
-                //backward reference, so go back and use that to add image data
+                col += 1;
+                if col >= width_usize {
+                    col = 0;
+                    row += 1;
+                }
+                continue;
+            }
+
+            self.bit_reader.fill()?;
+
+            // Fast path 2: use_packed_table - single 6-bit lookup decodes entire pixel
+            let code;
+            if meta.use_packed_table {
+                let val =
+                    (self.bit_reader.peek_full() as usize) & (PACKED_TABLE_SIZE - 1);
+                let entry = meta.packed_table[val];
+                if entry.bits < BITS_SPECIAL_MARKER {
+                    // Literal pixel decoded in one lookup
+                    self.bit_reader.consume(entry.bits)?;
+                    data[index * 4..][..4].copy_from_slice(&entry.value);
+                    if let Some(cc) = huffman_info.color_cache.as_mut() {
+                        cc.insert(entry.value);
+                    }
+                    index += 1;
+                    col += 1;
+                    if col >= width_usize {
+                        col = 0;
+                        row += 1;
+                    }
+                    continue;
+                }
+                // Non-literal: extract green code, fall through to normal processing
+                let actual_bits = entry.bits - BITS_SPECIAL_MARKER;
+                self.bit_reader.consume(actual_bits)?;
+                code = u16::from(entry.value[1]) | (u16::from(entry.value[2]) << 8);
+            } else {
+                code = tree[GREEN].read_symbol(&mut self.bit_reader)?;
+            }
+
+            if code < 256 {
+                // Literal pixel
+                let green = code as u8;
+                if meta.is_trivial_literal {
+                    // R, B, A are constant - only read green from bitstream
+                    let pixel = [meta.literal_arb[0], green, meta.literal_arb[2], meta.literal_arb[3]];
+                    data[index * 4..][..4].copy_from_slice(&pixel);
+                    if let Some(cc) = huffman_info.color_cache.as_mut() {
+                        cc.insert(pixel);
+                    }
+                } else {
+                    let red = tree[RED].read_symbol(&mut self.bit_reader)? as u8;
+                    if self.bit_reader.nbits < 15 {
+                        self.bit_reader.fill()?;
+                    }
+                    let blue = tree[BLUE].read_symbol(&mut self.bit_reader)? as u8;
+                    let alpha = tree[ALPHA].read_symbol(&mut self.bit_reader)? as u8;
+                    data[index * 4] = red;
+                    data[index * 4 + 1] = green;
+                    data[index * 4 + 2] = blue;
+                    data[index * 4 + 3] = alpha;
+                    if let Some(cc) = huffman_info.color_cache.as_mut() {
+                        cc.insert([red, green, blue, alpha]);
+                    }
+                }
+
+                index += 1;
+                col += 1;
+                if col >= width_usize {
+                    col = 0;
+                    row += 1;
+                }
+            } else if code < len_code_limit {
+                // Backward reference
                 let length_symbol = code - 256;
                 let length = Self::get_copy_distance(&mut self.bit_reader, length_symbol)?;
 
@@ -582,6 +621,7 @@ impl<'a> LosslessDecoder<'a> {
                     return Err(DecodeError::BitStreamError);
                 }
 
+                // Copy block
                 if dist == 1 {
                     let value: [u8; 4] = data[(index - dist) * 4..][..4].try_into().unwrap();
                     for i in 0..length {
@@ -603,32 +643,48 @@ impl<'a> LosslessDecoder<'a> {
                         }
                     }
 
-                    if let Some(color_cache) = huffman_info.color_cache.as_mut() {
+                    if let Some(cc) = huffman_info.color_cache.as_mut() {
                         for pixel in data[index * 4..][..length * 4].chunks_exact(4) {
-                            color_cache.insert(pixel.try_into().unwrap());
+                            cc.insert(pixel.try_into().unwrap());
                         }
                     }
                 }
+
                 index += length;
-            } else {
-                //color cache, so use previously stored pixels to get this pixel
+                col += length;
+                while col >= width_usize {
+                    col -= width_usize;
+                    row += 1;
+                }
+
+                // Update huffman group if we crossed a tile boundary
+                if (col & mask) != 0 {
+                    let new_idx = huffman_info.get_huff_index(col as u16, row as u16);
+                    if new_idx != group_idx {
+                        group_idx = new_idx;
+                        tree = &huffman_info.huffman_code_groups[group_idx];
+                        meta = &huffman_info.group_meta[group_idx];
+                    }
+                }
+            } else if code < color_cache_limit {
+                // Color cache lookup
                 let color_cache = huffman_info
                     .color_cache
                     .as_mut()
                     .ok_or(DecodeError::BitStreamError)?;
-                let color = color_cache.lookup((code - 280).into());
-                data[index * 4..][..4].copy_from_slice(&color);
-                index += 1;
+                let key = usize::from(code - len_code_limit);
+                let cached_u32 = color_cache.lookup_u32(key);
+                let pixel = u32_to_pixel(cached_u32);
+                data[index * 4..][..4].copy_from_slice(&pixel);
 
-                if index < next_block_start
-                    && let Some((bits, code)) = tree[GREEN].peek_symbol(&self.bit_reader)
-                    && code >= 280
-                {
-                    self.bit_reader.consume(bits)?;
-                    data[index * 4..][..4]
-                        .copy_from_slice(&color_cache.lookup((code - 280).into()));
-                    index += 1;
+                index += 1;
+                col += 1;
+                if col >= width_usize {
+                    col = 0;
+                    row += 1;
                 }
+            } else {
+                return Err(DecodeError::BitStreamError);
             }
         }
 
@@ -683,6 +739,44 @@ impl<'a> LosslessDecoder<'a> {
     }
 }
 
+/// Packed table size: 2^6 = 64 entries, matching libwebp's HUFFMAN_PACKED_BITS=6.
+/// When all 4 channel codes (green+red+blue+alpha) fit in <= 6 total bits,
+/// a single table lookup decodes the entire ARGB pixel.
+const PACKED_BITS: u8 = 6;
+const PACKED_TABLE_SIZE: usize = 1 << PACKED_BITS;
+/// Marker in the `bits` field of a PackedEntry to signal that the green code
+/// is a non-literal (length prefix or color cache code). The actual bits
+/// consumed for the green code is `bits - BITS_SPECIAL_MARKER`.
+const BITS_SPECIAL_MARKER: u8 = 64;
+
+/// A single entry in the packed lookup table.
+#[derive(Debug, Clone, Copy, Default)]
+struct PackedEntry {
+    /// Total bits consumed. If >= BITS_SPECIAL_MARKER, this is a non-literal
+    /// green code and the actual bits consumed is `bits - BITS_SPECIAL_MARKER`.
+    bits: u8,
+    /// For literals: packed pixel as [R, G, B, A].
+    /// For non-literals: green code stored in value[1] and value[0].
+    value: [u8; 4],
+}
+
+/// Per-group metadata matching libwebp's HTreeGroup optimizations.
+#[derive(Debug, Clone)]
+struct GroupMeta {
+    /// True if R, B, A Huffman trees each have a single symbol (bits==0).
+    is_trivial_literal: bool,
+    /// Pre-packed [R, 0, B, A] for trivial literals (green channel zeroed).
+    literal_arb: [u8; 4],
+    /// True if all 5 trees are single-symbol (no bits read at all).
+    is_trivial_code: bool,
+    /// If is_trivial_code, the complete pixel value.
+    trivial_pixel: [u8; 4],
+    /// True if a packed table is available for this group.
+    use_packed_table: bool,
+    /// Packed lookup table: 64 entries indexed by the next 6 bits.
+    packed_table: [PackedEntry; PACKED_TABLE_SIZE],
+}
+
 #[derive(Debug, Clone)]
 struct HuffmanInfo {
     xsize: u16,
@@ -692,6 +786,8 @@ struct HuffmanInfo {
     bits: u8,
     mask: u16,
     huffman_code_groups: Vec<HuffmanCodeGroup>,
+    /// Per-group metadata for fast-path optimizations.
+    group_meta: Vec<GroupMeta>,
 }
 
 impl HuffmanInfo {
@@ -701,31 +797,161 @@ impl HuffmanInfo {
         }
         let position =
             usize::from(y >> self.bits) * usize::from(self.xsize) + usize::from(x >> self.bits);
-        let meta_huff_code: usize = usize::from(self.image[position]);
-        meta_huff_code
+        usize::from(self.image[position])
+    }
+
+    /// Build per-group metadata after all Huffman trees have been read.
+    fn build_group_meta(&mut self) {
+        let num_groups = self.huffman_code_groups.len();
+        self.group_meta = Vec::with_capacity(num_groups);
+
+        for group in &self.huffman_code_groups {
+            // Check is_trivial_literal: R, B, A trees each have single symbol
+            let is_trivial_literal = group[RED].is_single_node()
+                && group[BLUE].is_single_node()
+                && group[ALPHA].is_single_node();
+
+            let mut literal_arb = [0u8; 4];
+            let mut is_trivial_code = false;
+            let mut trivial_pixel = [0u8; 4];
+
+            if is_trivial_literal {
+                // Pre-pack the constant R, B, A values
+                let (red, _) = group[RED].decode_primary(0);
+                let (blue, _) = group[BLUE].decode_primary(0);
+                let (alpha, _) = group[ALPHA].decode_primary(0);
+                literal_arb = [red as u8, 0, blue as u8, alpha as u8];
+
+                // Check if GREEN is also trivial
+                if group[GREEN].is_single_node() {
+                    let (green, _) = group[GREEN].decode_primary(0);
+                    if green < 256 {
+                        is_trivial_code = true;
+                        trivial_pixel = [red as u8, green as u8, blue as u8, alpha as u8];
+                    }
+                }
+            }
+
+            // Compute max_bits across G+R+B+A (not DIST) for packed table decision
+            let mut max_bits_total: u16 = 0;
+            let mut can_pack = !is_trivial_code;
+            for j in 0..4 {
+                // GREEN=0, RED=1, BLUE=2, ALPHA=3
+                let mb = group[j].max_code_bits();
+                max_bits_total += u16::from(mb);
+            }
+            if max_bits_total >= u16::from(PACKED_BITS) {
+                can_pack = false;
+            }
+
+            let mut packed_table = [PackedEntry::default(); PACKED_TABLE_SIZE];
+
+            if can_pack {
+                // Build packed table: for each possible 6-bit input, decode G+R+B+A
+                for code in 0..PACKED_TABLE_SIZE {
+                    let bits = code as u16;
+
+                    // Decode green
+                    let (green_sym, green_bits) = group[GREEN].decode_primary(bits);
+
+                    if green_sym >= 256 {
+                        // Non-literal green code (length prefix or color cache)
+                        packed_table[code] = PackedEntry {
+                            bits: green_bits + BITS_SPECIAL_MARKER,
+                            value: [0, green_sym as u8, (green_sym >> 8) as u8, 0],
+                        };
+                    } else {
+                        // Literal: decode R, B, A from remaining bits
+                        let remaining = bits >> green_bits;
+                        let (red_sym, red_bits) = group[RED].decode_primary(remaining);
+                        let remaining2 = remaining >> red_bits;
+                        let (blue_sym, blue_bits) = group[BLUE].decode_primary(remaining2);
+                        let remaining3 = remaining2 >> blue_bits;
+                        let (alpha_sym, alpha_bits) = group[ALPHA].decode_primary(remaining3);
+
+                        let total_bits = green_bits + red_bits + blue_bits + alpha_bits;
+                        packed_table[code] = PackedEntry {
+                            bits: total_bits,
+                            value: [red_sym as u8, green_sym as u8, blue_sym as u8, alpha_sym as u8],
+                        };
+                    }
+                }
+            }
+
+            self.group_meta.push(GroupMeta {
+                is_trivial_literal,
+                literal_arb,
+                is_trivial_code,
+                trivial_pixel,
+                use_packed_table: can_pack,
+                packed_table,
+            });
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 struct ColorCache {
     color_cache_bits: u8,
-    color_cache: Vec<[u8; 4]>,
+    hash_shift: u8,
+    color_cache: Vec<u32>,
 }
 
 impl ColorCache {
-    #[inline(always)]
-    fn insert(&mut self, color: [u8; 4]) {
-        let [r, g, b, a] = color;
-        let color_u32 =
-            (u32::from(r) << 16) | (u32::from(g) << 8) | (u32::from(b)) | (u32::from(a) << 24);
-        let index = (0x1e35a7bdu32.wrapping_mul(color_u32)) >> (32 - self.color_cache_bits);
-        self.color_cache[index as usize] = color;
+    fn new(bits: u8) -> Self {
+        Self {
+            color_cache_bits: bits,
+            hash_shift: 32 - bits,
+            color_cache: vec![0u32; 1 << bits],
+        }
     }
 
     #[inline(always)]
-    fn lookup(&self, index: usize) -> [u8; 4] {
+    fn insert_u32(&mut self, argb: u32) {
+        let index = (0x1e35a7bdu32.wrapping_mul(argb)) >> self.hash_shift;
+        self.color_cache[index as usize] = argb;
+    }
+
+    #[inline(always)]
+    fn insert(&mut self, color: [u8; 4]) {
+        self.insert_u32(pixel_to_u32(color));
+    }
+
+    /// Insert a pixel read directly from a byte slice at the given byte offset.
+    /// Avoids the overhead of try_into().unwrap() for [u8;4] conversion.
+    #[inline(always)]
+    fn insert_from_bytes(&mut self, data: &[u8], byte_offset: usize) {
+        let r = data[byte_offset];
+        let g = data[byte_offset + 1];
+        let b = data[byte_offset + 2];
+        let a = data[byte_offset + 3];
+        let argb =
+            (u32::from(a) << 24) | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
+        self.insert_u32(argb);
+    }
+
+    #[inline(always)]
+    fn lookup_u32(&self, index: usize) -> u32 {
         self.color_cache[index]
     }
+}
+
+/// Convert [R,G,B,A] to u32 in ARGB layout for hashing (matching libwebp's convention).
+#[inline(always)]
+fn pixel_to_u32(pixel: [u8; 4]) -> u32 {
+    let [r, g, b, a] = pixel;
+    (u32::from(a) << 24) | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)
+}
+
+/// Convert u32 in ARGB layout back to [R,G,B,A].
+#[inline(always)]
+fn u32_to_pixel(v: u32) -> [u8; 4] {
+    [
+        (v >> 16) as u8,
+        (v >> 8) as u8,
+        v as u8,
+        (v >> 24) as u8,
+    ]
 }
 
 #[derive(Debug, Clone)]
