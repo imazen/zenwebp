@@ -194,7 +194,10 @@ went from 21.1M → 2.4M instructions (inlined into I4 inner loop).
 
 ### Decoder SIMD
 
-**Loop filters:** All V/H edge filters for luma+chroma use SSE2/SSE4.1 SIMD.
+**Loop filters:** All V/H edge filters for luma+chroma use `#[rite]` (target_feature + inline).
+A single `#[arcane]` entry point in `loop_filter_dispatch::filter_row_simd` wraps the entire
+filter-row loop, allowing LLVM to inline all filter calls into one target_feature region.
+The dispatch layer (`loop_filter_dispatch.rs`) is scalar-only fallback.
 - 32-pixel AVX2 filters implemented but NOT integrated (filter order dependencies, see below)
 
 **YUV→RGB:** 32-pixel SIMD conversion, 16-bit arithmetic via `_mm_mulhi_epu16`.
@@ -277,9 +280,9 @@ zenwebp: 91.4M vs libwebp: 79.4M (**1.15x instruction ratio**)
 | memcpy | 0.4M | — | 0 | buffer copies |
 
 **Remaining optimization targets:**
-1. **filter_row_in_cache 7.6M excess** — archmage `#[arcane]` dispatch overhead on
-   many small filter calls. Fused 3-edge filter implemented but `#[arcane]` wrapper
-   negated gains. Need `#[rite]` integration or filter order restructuring.
+1. **filter_row_in_cache** — `#[arcane]` dispatch overhead ELIMINATED (2026-03-25).
+   All filter functions converted to `#[rite]`, single `#[arcane]` entry in
+   `filter_row_simd`. Fused 3-edge filter (normal_h_filter16i) now benefits.
 2. **read_residual_data 4.3M excess** — dequant array optimization already applied.
    Remaining excess: bounds checks on probs table, cat_probs loop, coefficient
    overhead per block.
@@ -295,10 +298,8 @@ zenwebp: 91.4M vs libwebp: 79.4M (**1.15x instruction ratio**)
 4. **Defer I16 reconstruction** — only IDCT winning mode (saves ~48 IDCT/MB)
 
 ### Decoder
-1. **Loop filter 17.5M vs 9.9M (1.77x)** — `#[arcane]` dispatch overhead on per-edge
-   filter calls. Fused 3-edge horizontal filter (normal_h_filter16i) implemented in
-   loop_filter_avx2.rs matching libwebp's HFilter16i approach (column reuse), but
-   `#[arcane]` wrapper overhead negated the algorithmic gains (+19M worse).
+1. **Loop filter** — `#[rite]` conversion done (2026-03-25). All filter functions
+   now inline into single `#[arcane]` entry in `filter_row_simd`.
    Need `#[rite]` conversion to benefit.
 2. **read_residual_data 40.8M vs 36.5M (1.12x)** — dequant array optimization applied
    (i32[2] indexed by n>0). Remaining excess: bounds checks on prob table lookups,
