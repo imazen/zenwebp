@@ -11,6 +11,8 @@ mod limits;
 mod loop_filter;
 mod lossless;
 mod lossless_transform;
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+mod lossless_transform_simd;
 mod streaming;
 pub(crate) mod yuv;
 

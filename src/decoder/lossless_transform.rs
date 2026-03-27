@@ -30,6 +30,33 @@ pub(crate) fn apply_predictor_transform(
     size_bits: u8,
     predictor_data: &[u8],
 ) -> Result<(), DecodeError> {
+    // SSE2 fast path: single #[arcane] entry with #[rite] inner functions
+    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Sse2Token::summon() {
+            super::lossless_transform_simd::apply_predictor_transform_sse2_entry(
+                token,
+                image_data,
+                width,
+                height,
+                size_bits,
+                predictor_data,
+            );
+            return Ok(());
+        }
+    }
+
+    apply_predictor_transform_scalar(image_data, width, height, size_bits, predictor_data)
+}
+
+fn apply_predictor_transform_scalar(
+    image_data: &mut [u8],
+    width: u16,
+    height: u16,
+    size_bits: u8,
+    predictor_data: &[u8],
+) -> Result<(), DecodeError> {
     let block_xsize = usize::from(subsample_size(width, size_bits));
     let width = usize::from(width);
     let height = usize::from(height);
@@ -358,14 +385,36 @@ pub(crate) fn apply_color_transform(
     size_bits: u8,
     transform_data: &[u8],
 ) {
+    // SSE2 fast path
+    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Sse2Token::summon() {
+            super::lossless_transform_simd::transform_color_inverse_sse2_entry(
+                token,
+                image_data,
+                usize::from(width),
+                size_bits,
+                transform_data,
+            );
+            return;
+        }
+    }
+
+    apply_color_transform_scalar(image_data, width, size_bits, transform_data);
+}
+
+fn apply_color_transform_scalar(
+    image_data: &mut [u8],
+    width: u16,
+    size_bits: u8,
+    transform_data: &[u8],
+) {
     let block_xsize = usize::from(subsample_size(width, size_bits));
     let width = usize::from(width);
 
     for (y, row) in image_data.chunks_exact_mut(width * 4).enumerate() {
         let row_transform_data_start = (y >> size_bits) * block_xsize * 4;
-        // the length of block_tf_data should be `block_xsize * 4`, so we could slice it with [..block_xsize * 4]
-        // but there is no point - `.zip()` runs until either of the iterators is consumed,
-        // so the extra slicing operation would be doing more work for no reason
         let row_tf_data = &transform_data[row_transform_data_start..];
 
         for (block, transform) in row
@@ -393,6 +442,22 @@ pub(crate) fn apply_color_transform(
 }
 
 pub(crate) fn apply_subtract_green_transform(image_data: &mut [u8]) {
+    // SSE2 fast path
+    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Sse2Token::summon() {
+            super::lossless_transform_simd::add_green_to_blue_and_red_sse2_entry(
+                token, image_data,
+            );
+            return;
+        }
+    }
+
+    apply_subtract_green_transform_scalar(image_data);
+}
+
+fn apply_subtract_green_transform_scalar(image_data: &mut [u8]) {
     for pixel in image_data.chunks_exact_mut(4) {
         pixel[0] = pixel[0].wrapping_add(pixel[1]);
         pixel[2] = pixel[2].wrapping_add(pixel[1]);
@@ -578,8 +643,13 @@ fn apply_color_indexing_transform_small_table<const W_BITS: u8, const EXP_ENTRY_
 
 //predictor functions
 
+/// Compute block_xsize for transforms.
+pub(crate) fn block_xsize(width: u16, size_bits: u8) -> usize {
+    usize::from(subsample_size(width, size_bits))
+}
+
 /// Get average of 2 bytes
-fn average2(a: u8, b: u8) -> u8 {
+pub(crate) fn average2(a: u8, b: u8) -> u8 {
     ((u16::from(a) + u16::from(b)) / 2) as u8
 }
 
@@ -606,7 +676,7 @@ fn clamp_add_subtract_half(a: i16, b: i16) -> u8 {
 }
 
 /// Does color transform on 2 numbers
-fn color_transform_delta(t: i8, c: i8) -> u32 {
+pub(crate) fn color_transform_delta(t: i8, c: i8) -> u32 {
     (i32::from(t) * i32::from(c)) as u32 >> 5
 }
 
