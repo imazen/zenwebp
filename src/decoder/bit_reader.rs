@@ -685,6 +685,10 @@ impl Drop for PartitionReader<'_> {
 
 /// An active reader that borrows partition state directly (no copy overhead).
 /// Use for reading many consecutive blocks from the same partition.
+///
+/// Uses sub-slice bounds check elimination: `load_new_bytes` takes a sub-slice
+/// from the current position, then checks its length. This lets LLVM prove the
+/// subsequent 8-byte read is in bounds without a separate pos+8 overflow check.
 pub struct ActivePartitionReader<'a> {
     data: &'a [u8],
     state: &'a mut VP8BitReaderState,
@@ -713,40 +717,55 @@ impl<'a> ActivePartitionReader<'a> {
         }
     }
 
+    /// Load 7 bytes (56 bits) into the value buffer.
+    ///
+    /// Takes a sub-slice `tail = &data[pos..]` first (single bounds check on pos),
+    /// then checks `tail.len() >= 8`. Since both the length check and the `tail[..8]`
+    /// access operate on the same slice variable, LLVM can prove the 8-byte read is
+    /// in bounds and emit a direct `movbe` without additional bounds/overflow checks.
     #[inline(always)]
     fn load_new_bytes(&mut self) {
-        let remaining = self.data.len() - self.state.pos;
-        if remaining >= BYTES_PER_LOAD {
-            let bits: u64;
-
+        let tail = &self.data[self.state.pos..];
+        if tail.len() >= 8 {
             #[cfg(target_pointer_width = "64")]
             {
-                if remaining >= 8 {
-                    let in_bits_full = u64::from_be_bytes(
-                        self.data[self.state.pos..self.state.pos + 8]
-                            .try_into()
-                            .unwrap(),
-                    );
-                    bits = in_bits_full >> 8;
-                } else {
-                    let mut in_bits: u64 = 0;
-                    for &byte in self.data[self.state.pos..].iter().take(7) {
-                        in_bits = (in_bits << 8) | u64::from(byte);
-                    }
-                    bits = in_bits;
-                }
+                let chunk: [u8; 8] = tail[..8].try_into().unwrap();
+                let bits = u64::from_be_bytes(chunk) >> 8;
+                self.state.value = bits | (self.state.value << BITS);
+                self.state.bits += BITS;
+                self.state.pos += BYTES_PER_LOAD;
             }
 
             #[cfg(not(target_pointer_width = "64"))]
             {
                 let mut in_bits: u64 = 0;
                 for i in 0..3 {
-                    in_bits = (in_bits << 8) | u64::from(self.data[self.state.pos + i]);
+                    in_bits = (in_bits << 8) | u64::from(tail[i]);
                 }
-                bits = in_bits;
+                self.state.value = in_bits | (self.state.value << BITS);
+                self.state.bits += BITS;
+                self.state.pos += BYTES_PER_LOAD;
+            }
+        } else if tail.len() >= BYTES_PER_LOAD {
+            // Exactly 7 bytes remaining (rare, only happens once at partition end).
+            #[cfg(target_pointer_width = "64")]
+            {
+                let mut in_bits: u64 = 0;
+                for &byte in tail.iter().take(7) {
+                    in_bits = (in_bits << 8) | u64::from(byte);
+                }
+                self.state.value = in_bits | (self.state.value << BITS);
             }
 
-            self.state.value = bits | (self.state.value << BITS);
+            #[cfg(not(target_pointer_width = "64"))]
+            {
+                let mut in_bits: u64 = 0;
+                for i in 0..3 {
+                    in_bits = (in_bits << 8) | u64::from(tail[i]);
+                }
+                self.state.value = in_bits | (self.state.value << BITS);
+            }
+
             self.state.bits += BITS;
             self.state.pos += BYTES_PER_LOAD;
         } else {
