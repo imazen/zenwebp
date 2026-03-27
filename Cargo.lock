@@ -1885,9 +1885,9 @@ checksum = "00f1f60154ad4ef9871d606765c3ea037cde93bbd77536327b594de8f82df1cb"
 
 [[package]]
 name = "zenbench"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd13383ee045c949969f4d29996fc3e55e202d52702e597c09a97a28af2ef6ff"
+checksum = "608aa467d997f62def7d8a8f206c9fc1754ec61e159423c7d374eb4db1c5b01e"
 dependencies = [
  "clap",
  "fs4",
