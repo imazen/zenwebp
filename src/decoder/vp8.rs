@@ -1238,15 +1238,27 @@ impl<'a> Vp8Decoder<'a> {
             left.complexity[0] = if n { 1 } else { 0 };
             top.complexity[0] = if n { 1 } else { 0 };
 
-            transform::iwht4x4(&mut block);
-
-            for (k, &val) in block.iter().enumerate() {
-                coeff_blocks[16 * k] = val;
-                // Mark Y block as non-zero if WHT gave it a non-zero DC
-                if val != 0 {
-                    mb.non_zero_blocks |= 1u32 << k;
+            // Optimized WHT: if only DC is non-zero, broadcast simplified value
+            // (matches libwebp's shortcut in ParseResiduals)
+            let has_ac = block[1..].iter().any(|&c| c != 0);
+            if has_ac {
+                transform::iwht4x4(&mut block);
+                for (k, &val) in block.iter().enumerate() {
+                    coeff_blocks[16 * k] = val;
+                    if val != 0 {
+                        mb.non_zero_blocks |= 1u32 << k;
+                    }
                 }
+            } else if block[0] != 0 {
+                // DC-only: simplified WHT = (dc[0] + 3) >> 3, broadcast to all 16 blocks
+                let dc0 = (block[0] + 3) >> 3;
+                for k in 0..16 {
+                    coeff_blocks[16 * k] = dc0;
+                }
+                // All 16 Y blocks have non-zero DC
+                mb.non_zero_blocks |= 0xFFFF;
             }
+            // else: all zeros, nothing to do
 
             plane = Plane::YCoeff1;
         }
