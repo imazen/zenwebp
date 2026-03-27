@@ -1298,182 +1298,150 @@ impl<'a> Vp8Decoder<'a> {
         let cache_y_stride = self.cache_y_stride;
         let cache_uv_stride = self.cache_uv_stride;
         let extra_y_rows = self.extra_y_rows;
-        let extra_uv_rows = extra_y_rows / 2;
 
+        // Precompute filter parameters for all macroblocks in this row.
+        // This separates parameter computation (which accesses decoder state)
+        // from the filter loop (which only needs buffers + params).
+        let mut mb_params = alloc::vec::Vec::with_capacity(mbwidth);
         for mbx in 0..mbwidth {
             let mb = self.macroblocks[mby * mbwidth + mbx];
             let (filter_level, interior_limit, hev_threshold) =
                 self.calculate_filter_parameters(&mb);
-
-            if filter_level == 0 {
-                continue;
-            }
 
             let mbedge_limit = (filter_level + 2) * 2 + interior_limit;
             let sub_bedge_limit = (filter_level * 2) + interior_limit;
             let do_subblock_filtering =
                 mb.luma_mode == LumaMode::B || (!mb.coeffs_skipped && mb.non_zero_dct);
 
-            // Filter across left of macroblock (horizontal filter on vertical edge)
+            mb_params.push(loop_filter_dispatch::MbFilterParams {
+                filter_level,
+                interior_limit,
+                hev_threshold,
+                mbedge_limit,
+                sub_bedge_limit,
+                do_subblock_filtering,
+            });
+        }
+
+        // Use the single #[arcane] entry point when SIMD is available.
+        // All #[rite] filter functions inline into this one target_feature region,
+        // eliminating per-call dispatch overhead (~7.6M instructions saved).
+        #[cfg(all(feature = "simd", any(
+            target_arch = "x86_64",
+            target_arch = "x86",
+            target_arch = "aarch64",
+            target_arch = "wasm32",
+        )))]
+        if let Some(token) = simd_token {
+            loop_filter_dispatch::filter_row_simd(
+                token,
+                &mut self.cache_y[..],
+                &mut self.cache_u[..],
+                &mut self.cache_v[..],
+                cache_y_stride,
+                cache_uv_stride,
+                extra_y_rows,
+                self.frame.filter_type,
+                mby,
+                &mb_params,
+            );
+            return;
+        }
+
+        // Scalar fallback (no SIMD token available)
+        let extra_uv_rows = extra_y_rows / 2;
+        for mbx in 0..mbwidth {
+            let p = &mb_params[mbx];
+            if p.filter_level == 0 {
+                continue;
+            }
+
+            let mbedge_limit = p.mbedge_limit;
+            let sub_bedge_limit = p.sub_bedge_limit;
+            let hev_threshold = p.hev_threshold;
+            let interior_limit = p.interior_limit;
+            let do_subblock_filtering = p.do_subblock_filtering;
+
             if mbx > 0 {
                 if self.frame.filter_type {
-                    // Simple filter
                     simple_filter_horizontal_16_rows(
-                        &mut self.cache_y[..],
-                        extra_y_rows,
-                        mbx * 16,
-                        cache_y_stride,
-                        mbedge_limit,
-                        simd_token,
+                        &mut self.cache_y[..], extra_y_rows, mbx * 16,
+                        cache_y_stride, mbedge_limit,
                     );
                 } else {
-                    // Normal filter - use SIMD for luma (16 rows)
                     normal_filter_horizontal_mb_16_rows(
-                        &mut self.cache_y[..],
-                        extra_y_rows,
-                        mbx * 16,
-                        cache_y_stride,
-                        hev_threshold,
-                        interior_limit,
-                        mbedge_limit,
-                        simd_token,
+                        &mut self.cache_y[..], extra_y_rows, mbx * 16,
+                        cache_y_stride, hev_threshold, interior_limit, mbedge_limit,
                     );
-                    // Chroma - use SIMD for both U and V together
                     normal_filter_horizontal_uv_mb(
-                        &mut self.cache_u[..],
-                        &mut self.cache_v[..],
-                        extra_uv_rows,
-                        mbx * 8,
-                        cache_uv_stride,
-                        hev_threshold,
-                        interior_limit,
-                        mbedge_limit,
-                        simd_token,
+                        &mut self.cache_u[..], &mut self.cache_v[..],
+                        extra_uv_rows, mbx * 8, cache_uv_stride,
+                        hev_threshold, interior_limit, mbedge_limit,
                     );
                 }
             }
 
-            // Filter across vertical subblocks
             if do_subblock_filtering {
                 if self.frame.filter_type {
                     for x in (4usize..16 - 1).step_by(4) {
                         simple_filter_horizontal_16_rows(
-                            &mut self.cache_y[..],
-                            extra_y_rows,
-                            mbx * 16 + x,
-                            cache_y_stride,
-                            sub_bedge_limit,
-                            simd_token,
+                            &mut self.cache_y[..], extra_y_rows, mbx * 16 + x,
+                            cache_y_stride, sub_bedge_limit,
                         );
                     }
                 } else {
-                    // Use SIMD for luma subblock horizontal filtering
                     for x in (4usize..16 - 3).step_by(4) {
                         normal_filter_horizontal_sub_16_rows(
-                            &mut self.cache_y[..],
-                            extra_y_rows,
-                            mbx * 16 + x,
-                            cache_y_stride,
-                            hev_threshold,
-                            interior_limit,
-                            sub_bedge_limit,
-                            simd_token,
+                            &mut self.cache_y[..], extra_y_rows, mbx * 16 + x,
+                            cache_y_stride, hev_threshold, interior_limit, sub_bedge_limit,
                         );
                     }
-                    // Chroma - use SIMD for both U and V together
                     normal_filter_horizontal_uv_sub(
-                        &mut self.cache_u[..],
-                        &mut self.cache_v[..],
-                        extra_uv_rows,
-                        mbx * 8 + 4,
-                        cache_uv_stride,
-                        hev_threshold,
-                        interior_limit,
-                        sub_bedge_limit,
-                        simd_token,
+                        &mut self.cache_u[..], &mut self.cache_v[..],
+                        extra_uv_rows, mbx * 8 + 4, cache_uv_stride,
+                        hev_threshold, interior_limit, sub_bedge_limit,
                     );
                 }
             }
 
-            // Filter across top of macroblock (vertical filter on horizontal edge)
-            // For mby > 0, we filter between extra_rows area and current row
             if mby > 0 {
-                // The edge is at row extra_y_rows (start of current MB row)
-                // We need rows (extra_y_rows - 4) to (extra_y_rows + 4) approximately
                 if self.frame.filter_type {
                     simple_filter_vertical_16_cols(
-                        &mut self.cache_y[..],
-                        extra_y_rows,
-                        mbx * 16,
-                        cache_y_stride,
-                        mbedge_limit,
-                        simd_token,
+                        &mut self.cache_y[..], extra_y_rows, mbx * 16,
+                        cache_y_stride, mbedge_limit,
                     );
                 } else {
-                    // Use SIMD helper for luma
                     normal_filter_vertical_mb_16_cols(
-                        &mut self.cache_y[..],
-                        extra_y_rows,
-                        mbx * 16,
-                        cache_y_stride,
-                        hev_threshold,
-                        interior_limit,
-                        mbedge_limit,
-                        simd_token,
+                        &mut self.cache_y[..], extra_y_rows, mbx * 16,
+                        cache_y_stride, hev_threshold, interior_limit, mbedge_limit,
                     );
-                    // Chroma - SIMD processes 8 U + 8 V pixels together
                     normal_filter_vertical_uv_mb(
-                        &mut self.cache_u[..],
-                        &mut self.cache_v[..],
-                        extra_uv_rows,
-                        mbx * 8,
-                        cache_uv_stride,
-                        hev_threshold,
-                        interior_limit,
-                        mbedge_limit,
-                        simd_token,
+                        &mut self.cache_u[..], &mut self.cache_v[..],
+                        extra_uv_rows, mbx * 8, cache_uv_stride,
+                        hev_threshold, interior_limit, mbedge_limit,
                     );
                 }
             }
 
-            // Filter across horizontal subblock edges
             if do_subblock_filtering {
                 if self.frame.filter_type {
                     for y in (4usize..16 - 1).step_by(4) {
                         simple_filter_vertical_16_cols(
-                            &mut self.cache_y[..],
-                            extra_y_rows + y,
-                            mbx * 16,
-                            cache_y_stride,
-                            sub_bedge_limit,
-                            simd_token,
+                            &mut self.cache_y[..], extra_y_rows + y, mbx * 16,
+                            cache_y_stride, sub_bedge_limit,
                         );
                     }
                 } else {
                     for y in (4usize..16 - 3).step_by(4) {
                         normal_filter_vertical_sub_16_cols(
-                            &mut self.cache_y[..],
-                            extra_y_rows + y,
-                            mbx * 16,
-                            cache_y_stride,
-                            hev_threshold,
-                            interior_limit,
-                            sub_bedge_limit,
-                            simd_token,
+                            &mut self.cache_y[..], extra_y_rows + y, mbx * 16,
+                            cache_y_stride, hev_threshold, interior_limit, sub_bedge_limit,
                         );
                     }
-                    // Chroma subblock - only one horizontal edge at row 4
-                    // (chroma is 8x8, so only one subblock edge)
                     normal_filter_vertical_uv_sub(
-                        &mut self.cache_u[..],
-                        &mut self.cache_v[..],
-                        extra_uv_rows + 4,
-                        mbx * 8,
-                        cache_uv_stride,
-                        hev_threshold,
-                        interior_limit,
-                        sub_bedge_limit,
-                        simd_token,
+                        &mut self.cache_u[..], &mut self.cache_v[..],
+                        extra_uv_rows + 4, mbx * 8, cache_uv_stride,
+                        hev_threshold, interior_limit, sub_bedge_limit,
                     );
                 }
             }

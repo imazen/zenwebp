@@ -5,7 +5,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use archmage::{Wasm128Token, arcane};
+use archmage::{Wasm128Token, rite};
 
 use core::arch::wasm32::*;
 
@@ -320,7 +320,7 @@ fn do_filter6(
 // =============================================================================
 
 /// Simple vertical filter: processes horizontal edge at `point`, 16 columns wide
-#[arcane]
+#[rite]
 pub(crate) fn simple_v_filter16_wasm(
     _token: Wasm128Token,
     buf: &mut [u8],
@@ -341,7 +341,7 @@ pub(crate) fn simple_v_filter16_wasm(
 }
 
 /// Simple horizontal filter: processes vertical edge at column x0, 16 rows
-#[arcane]
+#[rite]
 pub(crate) fn simple_h_filter16_wasm(
     _token: Wasm128Token,
     buf: &mut [u8],
@@ -368,7 +368,7 @@ pub(crate) fn simple_h_filter16_wasm(
 // =============================================================================
 
 /// Normal vertical inner filter (subblock edge)
-#[arcane]
+#[rite]
 pub(crate) fn normal_v_filter16_inner_wasm(
     _token: Wasm128Token,
     buf: &mut [u8],
@@ -399,7 +399,7 @@ pub(crate) fn normal_v_filter16_inner_wasm(
 }
 
 /// Normal vertical edge filter (macroblock edge)
-#[arcane]
+#[rite]
 pub(crate) fn normal_v_filter16_edge_wasm(
     _token: Wasm128Token,
     buf: &mut [u8],
@@ -434,7 +434,7 @@ pub(crate) fn normal_v_filter16_edge_wasm(
 }
 
 /// Normal horizontal inner filter (subblock edge): vertical edge at x0, 16 rows
-#[arcane]
+#[rite]
 pub(crate) fn normal_h_filter16_inner_wasm(
     _token: Wasm128Token,
     buf: &mut [u8],
@@ -467,7 +467,7 @@ pub(crate) fn normal_h_filter16_inner_wasm(
 }
 
 /// Normal horizontal edge filter (macroblock edge): vertical edge at x0, 16 rows
-#[arcane]
+#[rite]
 pub(crate) fn normal_h_filter16_edge_wasm(
     _token: Wasm128Token,
     buf: &mut [u8],
@@ -603,7 +603,7 @@ fn store_uv_row(u_buf: &mut [u8], v_buf: &mut [u8], u_off: usize, v_off: usize, 
 }
 
 /// Normal vertical UV edge filter
-#[arcane]
+#[rite]
 pub(crate) fn normal_v_filter_uv_edge_wasm(
     _token: Wasm128Token,
     u_buf: &mut [u8],
@@ -639,7 +639,7 @@ pub(crate) fn normal_v_filter_uv_edge_wasm(
 }
 
 /// Normal vertical UV inner filter
-#[arcane]
+#[rite]
 pub(crate) fn normal_v_filter_uv_inner_wasm(
     _token: Wasm128Token,
     u_buf: &mut [u8],
@@ -671,7 +671,7 @@ pub(crate) fn normal_v_filter_uv_inner_wasm(
 }
 
 /// Normal horizontal UV edge filter
-#[arcane]
+#[rite]
 pub(crate) fn normal_h_filter_uv_edge_wasm(
     _token: Wasm128Token,
     u_buf: &mut [u8],
@@ -710,7 +710,7 @@ pub(crate) fn normal_h_filter_uv_edge_wasm(
 }
 
 /// Normal horizontal UV inner filter
-#[arcane]
+#[rite]
 pub(crate) fn normal_h_filter_uv_inner_wasm(
     _token: Wasm128Token,
     u_buf: &mut [u8],
