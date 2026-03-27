@@ -515,10 +515,10 @@ impl VP8Partitions {
     #[allow(dead_code)]
     pub fn active_reader(&mut self, p: usize) -> ActivePartitionReader<'_> {
         let (start, len) = self.boundaries[p];
-        ActivePartitionReader {
-            data: &self.data[start..start + len],
-            state: &mut self.states[p],
-        }
+        ActivePartitionReader::new(
+            &self.data[start..start + len],
+            &mut self.states[p],
+        )
     }
 
     /// Check if any partition hit EOF
@@ -683,57 +683,69 @@ impl Drop for PartitionReader<'_> {
     }
 }
 
-/// An active reader that borrows partition state directly (no copy overhead).
-/// Use for reading many consecutive blocks from the same partition.
+/// An active reader that borrows partition state directly.
+/// Copies state fields into local storage for faster access (no pointer
+/// indirection per `get_bit` call), and writes back on drop.
 ///
-/// Uses sub-slice bounds check elimination: `load_new_bytes` takes a sub-slice
-/// from the current position, then checks its length. This lets LLVM prove the
-/// subsequent 8-byte read is in bounds without a separate pos+8 overflow check.
+/// Uses sub-slice bounds check elimination in `load_new_bytes`.
 pub struct ActivePartitionReader<'a> {
     data: &'a [u8],
-    state: &'a mut VP8BitReaderState,
+    /// Local copies of hot state fields (written back on drop).
+    value: u64,
+    range: u32,
+    bits: i32,
+    pos: usize,
+    eof: bool,
+    /// Where to write back state on drop.
+    save_to: &'a mut VP8BitReaderState,
 }
 
 impl<'a> ActivePartitionReader<'a> {
     /// Create a new active reader from explicit references.
-    /// Use this when you need to avoid borrowing the entire VP8Partitions struct.
+    /// Copies state into local fields for register-friendly access.
     #[inline]
     pub fn new(data: &'a [u8], state: &'a mut VP8BitReaderState) -> Self {
-        Self { data, state }
+        Self {
+            data,
+            value: state.value,
+            range: state.range,
+            bits: state.bits,
+            pos: state.pos,
+            eof: state.eof,
+            save_to: state,
+        }
     }
 
     #[cold]
     fn load_final_bytes(&mut self) {
-        if self.state.pos < self.data.len() {
-            self.state.bits += 8;
-            self.state.value = u64::from(self.data[self.state.pos]) | (self.state.value << 8);
-            self.state.pos += 1;
-        } else if !self.state.eof {
-            self.state.value <<= 8;
-            self.state.bits += 8;
-            self.state.eof = true;
+        if self.pos < self.data.len() {
+            self.bits += 8;
+            self.value = u64::from(self.data[self.pos]) | (self.value << 8);
+            self.pos += 1;
+        } else if !self.eof {
+            self.value <<= 8;
+            self.bits += 8;
+            self.eof = true;
         } else {
-            self.state.bits = 0;
+            self.bits = 0;
         }
     }
 
     /// Load 7 bytes (56 bits) into the value buffer.
     ///
     /// Takes a sub-slice `tail = &data[pos..]` first (single bounds check on pos),
-    /// then checks `tail.len() >= 8`. Since both the length check and the `tail[..8]`
-    /// access operate on the same slice variable, LLVM can prove the 8-byte read is
-    /// in bounds and emit a direct `movbe` without additional bounds/overflow checks.
+    /// then checks `tail.len() >= 8`. LLVM can prove the 8-byte read is in bounds.
     #[inline(always)]
     fn load_new_bytes(&mut self) {
-        let tail = &self.data[self.state.pos..];
+        let tail = &self.data[self.pos..];
         if tail.len() >= 8 {
             #[cfg(target_pointer_width = "64")]
             {
                 let chunk: [u8; 8] = tail[..8].try_into().unwrap();
                 let bits = u64::from_be_bytes(chunk) >> 8;
-                self.state.value = bits | (self.state.value << BITS);
-                self.state.bits += BITS;
-                self.state.pos += BYTES_PER_LOAD;
+                self.value = bits | (self.value << BITS);
+                self.bits += BITS;
+                self.pos += BYTES_PER_LOAD;
             }
 
             #[cfg(not(target_pointer_width = "64"))]
@@ -742,9 +754,9 @@ impl<'a> ActivePartitionReader<'a> {
                 for i in 0..3 {
                     in_bits = (in_bits << 8) | u64::from(tail[i]);
                 }
-                self.state.value = in_bits | (self.state.value << BITS);
-                self.state.bits += BITS;
-                self.state.pos += BYTES_PER_LOAD;
+                self.value = in_bits | (self.value << BITS);
+                self.bits += BITS;
+                self.pos += BYTES_PER_LOAD;
             }
         } else if tail.len() >= BYTES_PER_LOAD {
             // Exactly 7 bytes remaining (rare, only happens once at partition end).
@@ -754,7 +766,7 @@ impl<'a> ActivePartitionReader<'a> {
                 for &byte in tail.iter().take(7) {
                     in_bits = (in_bits << 8) | u64::from(byte);
                 }
-                self.state.value = in_bits | (self.state.value << BITS);
+                self.value = in_bits | (self.value << BITS);
             }
 
             #[cfg(not(target_pointer_width = "64"))]
@@ -763,11 +775,11 @@ impl<'a> ActivePartitionReader<'a> {
                 for i in 0..3 {
                     in_bits = (in_bits << 8) | u64::from(tail[i]);
                 }
-                self.state.value = in_bits | (self.state.value << BITS);
+                self.value = in_bits | (self.value << BITS);
             }
 
-            self.state.bits += BITS;
-            self.state.pos += BYTES_PER_LOAD;
+            self.bits += BITS;
+            self.pos += BYTES_PER_LOAD;
         } else {
             self.load_final_bytes();
         }
@@ -775,27 +787,27 @@ impl<'a> ActivePartitionReader<'a> {
 
     #[inline(always)]
     pub fn get_bit(&mut self, prob: u8) -> i32 {
-        let mut range = self.state.range;
-        if self.state.bits < 0 {
+        let mut range = self.range;
+        if self.bits < 0 {
             self.load_new_bytes();
         }
 
-        let pos = self.state.bits;
+        let pos = self.bits;
         let split = (range.wrapping_mul(u32::from(prob))) >> 8;
-        let value = (self.state.value >> pos) as u32;
+        let value = (self.value >> pos) as u32;
         let bit = if value > split { 1 } else { 0 };
 
         if bit != 0 {
             range -= split;
-            self.state.value = self.state.value.wrapping_sub((u64::from(split) + 1) << pos);
+            self.value = self.value.wrapping_sub((u64::from(split) + 1) << pos);
         } else {
             range = split + 1;
         }
 
         let shift = 7 ^ (31 ^ range.leading_zeros() as i32);
         range <<= shift;
-        self.state.bits -= shift;
-        self.state.range = range.wrapping_sub(1);
+        self.bits -= shift;
+        self.range = range.wrapping_sub(1);
 
         bit
     }
@@ -804,29 +816,40 @@ impl<'a> ActivePartitionReader<'a> {
     /// Returns +v or -v based on the next bit.
     #[inline(always)]
     pub fn get_signed(&mut self, v: i32) -> i32 {
-        if self.state.bits < 0 {
+        if self.bits < 0 {
             self.load_new_bytes();
         }
 
-        let pos = self.state.bits;
-        let split = self.state.range >> 1;
-        let value = (self.state.value >> pos) as u32;
+        let pos = self.bits;
+        let split = self.range >> 1;
+        let value = (self.value >> pos) as u32;
         // mask = -1 if value > split, else 0
         let mask = (split.wrapping_sub(value) as i32) >> 31;
 
-        self.state.bits -= 1;
-        self.state.range = self.state.range.wrapping_add(mask as u32);
-        self.state.range |= 1;
+        self.bits -= 1;
+        self.range = self.range.wrapping_add(mask as u32);
+        self.range |= 1;
 
         let term = (u64::from(split) + 1) & (mask as u32 as u64);
-        self.state.value = self.state.value.wrapping_sub(term << pos);
+        self.value = self.value.wrapping_sub(term << pos);
 
         (v ^ mask) - mask
     }
 
     #[inline(always)]
     pub fn is_eof(&self) -> bool {
-        self.state.eof
+        self.eof
+    }
+}
+
+impl Drop for ActivePartitionReader<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        self.save_to.value = self.value;
+        self.save_to.range = self.range;
+        self.save_to.bits = self.bits;
+        self.save_to.pos = self.pos;
+        self.save_to.eof = self.eof;
     }
 }
 
