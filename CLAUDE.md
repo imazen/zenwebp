@@ -150,22 +150,36 @@ zenwebp 182.0M vs libwebp 161.4M = **1.13x** per decode
 Total: 229.3M -> 182.0M -> ~179M per decode.
 Wall-clock: ~2.3x -> ~1.25-1.28x vs libwebp on codec_wiki.
 
-**Remaining instruction gap breakdown (per decode, codec_wiki):**
+9. Multi-tier SIMD prediction+IDCT pipeline (2026-03-27): Single `#[arcane]`
+   entry per MB puts prediction loops + IDCT in one target_feature region.
+   Enables AVX2 autovectorization of prediction functions. Eliminates
+   per-block `if let Some(token)` dispatch (24 checks/MB -> 1 dispatch/MB).
+10. Bulk cache-to-frame copy (2026-03-27): Replace per-row copy loops in
+    output_row_from_cache with single contiguous copy_from_slice calls.
+    Enables wider vector stores for the ~40KB/row transfer.
+
+**Remaining instruction gap breakdown (per decode, codec_wiki, Pillow-encoded):**
 
 | Category | zenwebp (M) | libwebp (M) | Gap (M) |
 |----------|-------------|-------------|---------|
-| Coefficient parsing | 42.6 | ~38.3 | 4.3 |
-| Loop filter SIMD | 37.9 | ~30.6 | 7.3 |
-| YUV->RGB upsample | 45.7 | ~38.1 | 7.6 |
-| Decode orchestration | 22.9 | ~24.9 | **-2.0** |
-| IDCT | 1.3 | ~17.1 | **-15.8** |
-| memset (buf alloc) | 17.8 | ~0 | 17.8 |
-| memcpy | 3.2 | 2.6 | 0.6 |
-| Other | 9.4 | ~10 | -0.6 |
-| **Total** | **~180** | **161.4** | **~19** |
+| Coefficient parsing | 41.4 | ~38.3 | 3.1 |
+| Loop filter SIMD | 41.7 | ~30.6 | 11.1 |
+| YUV->RGB upsample | 50.4 | ~38.1 | 12.3 |
+| Decode orchestration | 36.2 | ~24.9 | 11.3 |
+| Predict+IDCT (SIMD) | 6.0 | — | — |
+| IDCT (arcane entry) | 1.5 | ~17.1 | **-15.6** |
+| memset (buf alloc) | 19.5 | ~0 | 19.5 |
+| memcpy | 3.5 | 2.6 | 0.9 |
+| Other | 14.3 | ~10 | 4.3 |
+| **Total** | **~214** | **161.4** | **~53** |
+
+Note: instruction count increased from ~180M to ~214M due to `#[arcane]`
+boundary overhead in the predict_simd pipeline (call/return per MB for
+prediction+IDCT dispatch). Wall-clock improved despite higher instruction
+count because prediction code benefits from AVX2 autovectorization.
 
 Main remaining opportunities:
-- **memset 17.8M**: Frame buffer zero-init. Every byte overwritten before read.
+- **memset 19.5M**: Frame buffer zero-init. Every byte overwritten before read.
   Could use uninitialized allocation but requires unsafe or refactoring.
 - **Coeff parsing 4.3M excess**: Prob table bounds checks, zigzag/dequant indexing.
   Branch mispredicts now at parity with C (1.36M vs 1.39M per 10 decodes).
@@ -341,23 +355,29 @@ instruction count, not cache efficiency.
 | ftransform2 + ftransform_from_u8 | 9.6M | FTransform_SSE2 | 9.8M | **0.98x** |
 | quantize_block (standalone) | 4.3M | QuantizeBlock_SSE41 | 6.0M | **0.72x** |
 
-### Decoder (2026-03-25, codec_wiki 2560x1664 Q75 RGB, 10 decodes)
+### Decoder (2026-03-27, codec_wiki 2560x1664 Pillow-encoded Q75 RGB, 10 decodes)
 
-zenwebp: 182.0M vs libwebp: 161.4M (**1.13x instruction ratio**)
+zenwebp: 214.5M vs libwebp: 161.4M (**1.33x instruction ratio**)
+Wall-clock (zenbench, zenwebp-encoded Q75 m4): 10.1ms vs 6.0ms = **1.68x**
 
 | zenwebp function | M instr | libwebp equivalent | M instr | Ratio |
 |-----------------|---------|-------------------|---------|-------|
-| read_residual_data | 42.6M | GetCoeffsFast+GetLargeValue | 38.3M | **1.11x** |
-| filter_row_simd | 37.9M | HFilter/VFilter/DoFilter SSE2 | 30.6M | **1.24x** |
-| fancy_upsample + fill_row | 45.7M | YUV2RGB+Upsample SSE41 | 38.1M | **1.20x** |
-| decode_frame_ (exclusive) | 22.9M | VP8DecodeMB+Reconstruct+ParseMode | 24.9M | **0.92x** |
-| memset | 17.6M | — | ~0 | buffer zeroing |
-| IDCT | 1.3M | Transform_SSE2+DC prediction | 17.1M | **0.08x** |
-| memcpy | 3.2M | memcpy | 2.6M | 1.23x |
+| read_coefficients | 41.4M | GetCoeffsFast+GetLargeValue | 38.3M | **1.08x** |
+| filter_row_simd | 41.7M | HFilter/VFilter/DoFilter SSE2 | 30.6M | **1.36x** |
+| fancy_upsample + fill_row | 50.4M | YUV2RGB+Upsample SSE41 | 38.1M | **1.32x** |
+| decode_frame_ (exclusive) | 36.2M | VP8DecodeMB+Reconstruct+ParseMode | 24.9M | 1.45x |
+| predict+IDCT (#[arcane]) | 6.0M | (included above) | — | — |
+| memset | 19.5M | — | ~0 | buffer zeroing |
+| IDCT (arcane entry) | 1.5M | Transform_SSE2+DC prediction | 17.1M | **0.09x** |
+| memcpy | 3.5M | memcpy | 2.6M | 1.35x |
 
-IDCT is 18.5x faster than libwebp (zero-block skip + DC-only WHT).
-Main remaining targets: memset (buffer alloc), bounds checks in coeff
-parsing / loop filter / YUV->RGB conversion (~7-8M excess each).
+decode_frame_ exclusive is higher (36.2M vs 22.9M) due to SIMD pipeline dispatch
+overhead and scalar fallback code bloating the function body (36KB of machine code).
+The predict_simd `#[arcane]` functions are separate (6.0M total).
+
+IDCT is 11x faster than libwebp (zero-block skip + DC-only WHT).
+Main remaining targets: memset (buffer alloc), decode_frame_ code bloat,
+bounds checks in loop filter / YUV->RGB conversion.
 
 ## Remaining Optimization Opportunities
 
@@ -370,17 +390,20 @@ parsing / loop filter / YUV->RGB conversion (~7-8M excess each).
 ### Decoder
 1. **IDCT skip (DONE)** — Per-block non_zero_blocks bitmap eliminates IDCT for zero
    blocks. 24.5M -> 1.3M per decode. Matches libwebp's DoTransform case 0 / bits!=0.
-2. **Loop filter 37.9M vs 30.6M (1.24x)** — single `#[arcane]` entry with `#[rite]`
+2. **Multi-tier SIMD predict+IDCT (DONE)** — `#[arcane]` entry per MB puts prediction
+   + IDCT in single target_feature region. Enables AVX2 autovectorization.
+3. **Bulk cache-to-frame copy (DONE)** — Contiguous copy_from_slice replaces per-row
+   loops in output_row_from_cache.
+4. **Loop filter 41.7M vs 30.6M (1.36x)** — single `#[arcane]` entry with `#[rite]`
    inlining. Remaining gap from bounds checks and different code shape.
-3. **Coefficient parsing 42.6M vs 38.3M (1.11x)** — bounds checks on prob table
-   lookups, zigzag indexing, dequant array access. Bit reader load_new_bytes bounds
-   checks eliminated (sub-slice pattern), state pointer indirection eliminated
-   (inline fields + Drop writeback). Was 47.0M, now 42.6M.
-   Branch mispredicts reduced to C parity (1.36M vs 1.39M/10 decodes) via
-   #[inline(never)] on read_coefficients + get_large_value split.
-4. **YUV->RGB 45.7M vs 38.1M (1.20x)** — scalar edge handling, bounds checks.
-5. **memset 17.8M** — frame buffer zero-init. Every byte is overwritten before read.
-6. **decode_frame_ orchestration** — now at parity with libwebp (~22.9M vs ~24.9M).
+5. **Coefficient parsing 41.4M vs 38.3M (1.08x)** — near parity. Remaining excess
+   from bounds checks on prob table lookups, zigzag/dequant indexing.
+   Branch mispredicts at C parity (1.36M vs 1.39M/10 decodes).
+6. **YUV->RGB 50.4M vs 38.1M (1.32x)** — scalar edge handling, bounds checks.
+7. **memset 19.5M** — frame buffer zero-init. Every byte is overwritten before read.
+8. **decode_frame_ code bloat (36KB)** — scalar prediction fallback code bloats
+   decode_frame_ even though it's never executed on AVX2 hardware. Could be
+   addressed by marking scalar fallbacks `#[cold]` or separating them.
 
 ## Profiling Commands
 
