@@ -9,6 +9,7 @@ use core::mem;
 use crate::slice_reader::SliceReader;
 
 use super::api::DecodeError;
+use super::internal_error::InternalDecodeError;
 use super::lossless_transform::{
     apply_color_indexing_transform, apply_color_transform, apply_predictor_transform,
     apply_subtract_green_transform,
@@ -102,25 +103,36 @@ impl<'a> LosslessDecoder<'a> {
         implicit_dimensions: bool,
         buf: &mut [u8],
     ) -> Result<(), DecodeError> {
+        self.decode_frame_internal(width, height, implicit_dimensions, buf)
+            .map_err(DecodeError::from)
+    }
+
+    fn decode_frame_internal(
+        &mut self,
+        width: u32,
+        height: u32,
+        implicit_dimensions: bool,
+        buf: &mut [u8],
+    ) -> Result<(), InternalDecodeError> {
         if implicit_dimensions {
             self.width = width as u16;
             self.height = height as u16;
         } else {
             let signature = self.bit_reader.read_bits::<u8>(8)?;
             if signature != 0x2f {
-                return Err(DecodeError::LosslessSignatureInvalid(signature));
+                return Err(InternalDecodeError::BitStreamError);
             }
 
             self.width = self.bit_reader.read_bits::<u16>(14)? + 1;
             self.height = self.bit_reader.read_bits::<u16>(14)? + 1;
             if u32::from(self.width) != width || u32::from(self.height) != height {
-                return Err(DecodeError::InconsistentImageSizes);
+                return Err(InternalDecodeError::BitStreamError);
             }
 
             let _alpha_used = self.bit_reader.read_bits::<u8>(1)?;
             let version_num = self.bit_reader.read_bits::<u8>(3)?;
             if version_num != 0 {
-                return Err(DecodeError::VersionNumberInvalid(version_num));
+                return Err(InternalDecodeError::BitStreamError);
             }
         }
 
@@ -193,7 +205,7 @@ impl<'a> LosslessDecoder<'a> {
         ysize: u16,
         is_argb_img: bool,
         data: &mut [u8],
-    ) -> Result<(), DecodeError> {
+    ) -> Result<(), InternalDecodeError> {
         let color_cache_bits = self.read_color_cache()?;
         let color_cache = color_cache_bits.map(ColorCache::new);
 
@@ -202,7 +214,7 @@ impl<'a> LosslessDecoder<'a> {
     }
 
     /// Reads transforms and their data from the bitstream
-    fn read_transforms(&mut self) -> Result<u16, DecodeError> {
+    fn read_transforms(&mut self) -> Result<u16, InternalDecodeError> {
         let mut xsize = self.width;
 
         while self.bit_reader.read_bits::<u8>(1)? == 1 {
@@ -210,7 +222,7 @@ impl<'a> LosslessDecoder<'a> {
 
             if self.transforms[usize::from(transform_type_val)].is_some() {
                 //can only have one of each transform, error
-                return Err(DecodeError::TransformError);
+                return Err(InternalDecodeError::TransformError);
             }
 
             self.transform_order.push(transform_type_val);
@@ -303,7 +315,7 @@ impl<'a> LosslessDecoder<'a> {
         xsize: u16,
         ysize: u16,
         color_cache: Option<ColorCache>,
-    ) -> Result<HuffmanInfo, DecodeError> {
+    ) -> Result<HuffmanInfo, InternalDecodeError> {
         let mut num_huff_groups = 1u32;
 
         let mut huffman_bits = 0;
@@ -382,7 +394,7 @@ impl<'a> LosslessDecoder<'a> {
     }
 
     /// Decodes and returns a single huffman tree
-    fn read_huffman_code(&mut self, alphabet_size: u16) -> Result<HuffmanTree, DecodeError> {
+    fn read_huffman_code(&mut self, alphabet_size: u16) -> Result<HuffmanTree, InternalDecodeError> {
         let simple = self.bit_reader.read_bits::<u8>(1)? == 1;
 
         if simple {
@@ -392,7 +404,7 @@ impl<'a> LosslessDecoder<'a> {
             let zero_symbol = self.bit_reader.read_bits::<u16>(1 + 7 * is_first_8bits)?;
 
             if zero_symbol >= alphabet_size {
-                return Err(DecodeError::BitStreamError);
+                return Err(InternalDecodeError::BitStreamError);
             }
 
             if num_symbols == 1 {
@@ -400,7 +412,7 @@ impl<'a> LosslessDecoder<'a> {
             } else {
                 let one_symbol = self.bit_reader.read_bits::<u16>(8)?;
                 if one_symbol >= alphabet_size {
-                    return Err(DecodeError::BitStreamError);
+                    return Err(InternalDecodeError::BitStreamError);
                 }
                 Ok(HuffmanTree::build_two_node(zero_symbol, one_symbol))
             }
@@ -416,7 +428,7 @@ impl<'a> LosslessDecoder<'a> {
             let new_code_lengths =
                 self.read_huffman_code_lengths(code_length_code_lengths, alphabet_size)?;
 
-            HuffmanTree::build_implicit(new_code_lengths)
+            HuffmanTree::build_implicit(new_code_lengths).map_err(|_| InternalDecodeError::HuffmanError)
         }
     }
 
@@ -425,14 +437,15 @@ impl<'a> LosslessDecoder<'a> {
         &mut self,
         code_length_code_lengths: Vec<u16>,
         num_symbols: u16,
-    ) -> Result<Vec<u16>, DecodeError> {
-        let table = HuffmanTree::build_implicit(code_length_code_lengths)?;
+    ) -> Result<Vec<u16>, InternalDecodeError> {
+        let table = HuffmanTree::build_implicit(code_length_code_lengths)
+            .map_err(|_| InternalDecodeError::HuffmanError)?;
 
         let mut max_symbol = if self.bit_reader.read_bits::<u8>(1)? == 1 {
             let length_nbits = 2 + 2 * self.bit_reader.read_bits::<u8>(3)?;
             let max_minus_two = self.bit_reader.read_bits::<u16>(length_nbits)?;
             if max_minus_two > num_symbols - 2 {
-                return Err(DecodeError::BitStreamError);
+                return Err(InternalDecodeError::BitStreamError);
             }
             2 + max_minus_two
         } else {
@@ -465,18 +478,18 @@ impl<'a> LosslessDecoder<'a> {
                     0 => 2,
                     1 => 3,
                     2 => 7,
-                    _ => return Err(DecodeError::BitStreamError),
+                    _ => return Err(InternalDecodeError::BitStreamError),
                 };
                 let repeat_offset = match slot {
                     0 | 1 => 3,
                     2 => 11,
-                    _ => return Err(DecodeError::BitStreamError),
+                    _ => return Err(InternalDecodeError::BitStreamError),
                 };
 
                 let mut repeat = self.bit_reader.read_bits::<u16>(extra_bits)? + repeat_offset;
 
                 if symbol + repeat > num_symbols {
-                    return Err(DecodeError::BitStreamError);
+                    return Err(InternalDecodeError::BitStreamError);
                 }
 
                 let length = if use_prev { prev_code_len } else { 0 };
@@ -504,7 +517,7 @@ impl<'a> LosslessDecoder<'a> {
         height: u16,
         mut huffman_info: HuffmanInfo,
         data: &mut [u8],
-    ) -> Result<(), DecodeError> {
+    ) -> Result<(), InternalDecodeError> {
         let width_usize = usize::from(width);
         let num_values = width_usize * usize::from(height);
         let len_code_limit: u16 = 256 + 24;
@@ -628,7 +641,7 @@ impl<'a> LosslessDecoder<'a> {
                 let dist = Self::plane_code_to_distance(width, dist_code);
 
                 if index < dist || num_values - index < length {
-                    return Err(DecodeError::BitStreamError);
+                    return Err(InternalDecodeError::BitStreamError);
                 }
 
                 // Copy block
@@ -681,7 +694,7 @@ impl<'a> LosslessDecoder<'a> {
                 let color_cache = huffman_info
                     .color_cache
                     .as_mut()
-                    .ok_or(DecodeError::BitStreamError)?;
+                    .ok_or(InternalDecodeError::BitStreamError)?;
                 let key = usize::from(code - len_code_limit);
                 let cached_u32 = color_cache.lookup_u32(key);
                 let pixel = u32_to_pixel(cached_u32);
@@ -694,7 +707,7 @@ impl<'a> LosslessDecoder<'a> {
                     row += 1;
                 }
             } else {
-                return Err(DecodeError::BitStreamError);
+                return Err(InternalDecodeError::BitStreamError);
             }
         }
 
@@ -702,12 +715,12 @@ impl<'a> LosslessDecoder<'a> {
     }
 
     /// Reads color cache data from the bitstream
-    fn read_color_cache(&mut self) -> Result<Option<u8>, DecodeError> {
+    fn read_color_cache(&mut self) -> Result<Option<u8>, InternalDecodeError> {
         if self.bit_reader.read_bits::<u8>(1)? == 1 {
             let code_bits = self.bit_reader.read_bits::<u8>(4)?;
 
             if !(1..=11).contains(&code_bits) {
-                return Err(DecodeError::InvalidColorCacheBits(code_bits));
+                return Err(InternalDecodeError::InvalidColorCacheBits);
             }
 
             Ok(Some(code_bits))
@@ -720,7 +733,7 @@ impl<'a> LosslessDecoder<'a> {
     fn get_copy_distance(
         bit_reader: &mut BitReader<'_>,
         prefix_code: u16,
-    ) -> Result<usize, DecodeError> {
+    ) -> Result<usize, InternalDecodeError> {
         if prefix_code < 4 {
             return Ok(usize::from(prefix_code + 1));
         }
@@ -1007,9 +1020,9 @@ impl<'a> BitReader<'a> {
     }
 
     /// Consumes `num` bits from the buffer returning an error if there are not enough bits.
-    pub(crate) fn consume(&mut self, num: u8) -> Result<(), DecodeError> {
+    pub(crate) fn consume(&mut self, num: u8) -> Result<(), InternalDecodeError> {
         if self.nbits < num {
-            return Err(DecodeError::BitStreamError);
+            return Err(InternalDecodeError::BitStreamError);
         }
 
         self.buffer >>= num;
@@ -1027,7 +1040,7 @@ impl<'a> BitReader<'a> {
     }
 
     /// Convenience function to read a number of bits and convert them to a type.
-    pub(crate) fn read_bits<T: TryFrom<u32>>(&mut self, num: u8) -> Result<T, DecodeError> {
+    pub(crate) fn read_bits<T: TryFrom<u32>>(&mut self, num: u8) -> Result<T, InternalDecodeError> {
         debug_assert!(num as usize <= 8 * mem::size_of::<T>());
         debug_assert!(num <= 32);
 
@@ -1039,7 +1052,7 @@ impl<'a> BitReader<'a> {
 
         value.try_into().map_err(|_| {
             debug_assert!(false, "Value too large to fit in type");
-            DecodeError::BitStreamError
+            InternalDecodeError::BitStreamError
         })
     }
 }

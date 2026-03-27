@@ -11,6 +11,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use super::api::DecodeError;
+use super::internal_error::InternalDecodeError;
 
 /// BITS can be any multiple of 8 from 8 to 56 (inclusive).
 #[cfg(target_pointer_width = "64")]
@@ -428,9 +429,9 @@ impl VP8HeaderBitReader {
 
     /// Check that reads were valid, returning an error if EOF was hit
     #[inline]
-    pub fn check<T>(&self, value: T) -> Result<T, DecodeError> {
+    pub fn check<T>(&self, value: T) -> Result<T, InternalDecodeError> {
         if self.eof {
-            Err(DecodeError::BitStreamError)
+            Err(InternalDecodeError::BitStreamError)
         } else {
             Ok(value)
         }

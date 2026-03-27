@@ -2,7 +2,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Range;
 
-use super::api::DecodeError;
+use super::internal_error::InternalDecodeError;
 
 use super::lossless::subsample_size;
 
@@ -29,7 +29,7 @@ pub(crate) fn apply_predictor_transform(
     height: u16,
     size_bits: u8,
     predictor_data: &[u8],
-) -> Result<(), DecodeError> {
+) -> Result<(), InternalDecodeError> {
     // SSE2 fast path: single #[arcane] entry with #[rite] inner functions
     #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
     {
@@ -56,7 +56,7 @@ pub(crate) fn apply_predictor_transform_scalar(
     height: u16,
     size_bits: u8,
     predictor_data: &[u8],
-) -> Result<(), DecodeError> {
+) -> Result<(), InternalDecodeError> {
     let block_xsize = usize::from(subsample_size(width, size_bits));
     let width = usize::from(width);
     let height = usize::from(height);

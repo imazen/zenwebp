@@ -2,6 +2,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::api::DecodeError;
+use super::internal_error::InternalDecodeError;
 use super::lossless::BitReader;
 
 const MAX_ALLOWED_CODE_LENGTH: usize = 15;
@@ -256,7 +257,7 @@ impl HuffmanTree {
         v: u16,
         primary_table_entry: u16,
         bit_reader: &mut BitReader<'_>,
-    ) -> Result<u16, DecodeError> {
+    ) -> Result<u16, InternalDecodeError> {
         let length = primary_table_entry >> 12;
         let mask = (1 << (length - MAX_TABLE_BITS as u16)) - 1;
         let secondary_index = ((primary_table_entry & 0xfff) as usize)
@@ -270,7 +271,7 @@ impl HuffmanTree {
     ///
     /// You must call `bit_reader.fill()` before calling this function or it may erroneously
     /// detect the end of the stream and return a bitstream error.
-    pub(crate) fn read_symbol(&self, bit_reader: &mut BitReader<'_>) -> Result<u16, DecodeError> {
+    pub(crate) fn read_symbol(&self, bit_reader: &mut BitReader<'_>) -> Result<u16, InternalDecodeError> {
         match &self.0 {
             HuffmanTreeInner::Tree {
                 primary_table,
@@ -294,7 +295,7 @@ impl HuffmanTree {
     /// Caller must guarantee that `bit_reader.fill()` has been called recently
     /// enough that at least MAX_TABLE_BITS bits are available.
     #[inline(always)]
-    pub(crate) fn read_symbol_fast(&self, bit_reader: &mut BitReader<'_>) -> Result<u16, DecodeError> {
+    pub(crate) fn read_symbol_fast(&self, bit_reader: &mut BitReader<'_>) -> Result<u16, InternalDecodeError> {
         match &self.0 {
             HuffmanTreeInner::Tree {
                 primary_table,

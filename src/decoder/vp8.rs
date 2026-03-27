@@ -24,6 +24,7 @@ use core::default::Default;
 use archmage::SimdToken;
 
 use super::api::{DecodeError, UpsamplingMethod};
+use super::internal_error::InternalDecodeError;
 use super::yuv;
 use crate::common::prediction::*;
 use crate::common::types::*;
@@ -628,7 +629,7 @@ impl<'a> Vp8Decoder<'a> {
                 }
             }
         }
-        self.b.check(())
+        Ok(self.b.check(())?)
     }
 
     /// Populate the position-indexed probability table from token_probs.
@@ -733,7 +734,7 @@ impl<'a> Vp8Decoder<'a> {
             }
         }
 
-        self.b.check(())
+        Ok(self.b.check(())?)
     }
 
     fn read_loop_filter_adjustments(&mut self) -> Result<(), DecodeError> {
@@ -747,7 +748,7 @@ impl<'a> Vp8Decoder<'a> {
             }
         }
 
-        self.b.check(())
+        Ok(self.b.check(())?)
     }
 
     fn read_segment_updates(&mut self) -> Result<(), DecodeError> {
@@ -780,7 +781,7 @@ impl<'a> Vp8Decoder<'a> {
             }
         }
 
-        self.b.check(())
+        Ok(self.b.check(())?)
     }
 
     fn read_frame_header(&mut self) -> Result<(), DecodeError> {
@@ -929,7 +930,7 @@ impl<'a> Vp8Decoder<'a> {
         Ok(())
     }
 
-    fn read_macroblock_header(&mut self, mbx: usize) -> Result<MacroBlock, DecodeError> {
+    fn read_macroblock_header(&mut self, mbx: usize) -> Result<MacroBlock, InternalDecodeError> {
         let mut mb = MacroBlock::default();
 
         if self.segments_enabled && self.segments_update_map {
@@ -945,7 +946,7 @@ impl<'a> Vp8Decoder<'a> {
         // intra prediction
         let luma = self.b.read_with_tree(&KEYFRAME_YMODE_NODES);
         mb.luma_mode =
-            LumaMode::from_i8(luma).ok_or(DecodeError::LumaPredictionModeInvalid(luma))?;
+            LumaMode::from_i8(luma).ok_or(InternalDecodeError::LumaPredictionModeInvalid)?;
 
         // Extract top[mbx] once to eliminate per-access bounds checks in the B-mode loop
         let top_mb = &mut self.top[mbx];
@@ -960,7 +961,7 @@ impl<'a> Vp8Decoder<'a> {
                             &KEYFRAME_BPRED_MODE_NODES[top as usize][left as usize],
                         );
                         let bmode = IntraMode::from_i8(intra)
-                            .ok_or(DecodeError::IntraPredictionModeInvalid(intra))?;
+                            .ok_or(InternalDecodeError::IntraPredictionModeInvalid)?;
                         mb.bpred[x + y * 4] = bmode;
 
                         top_mb.bpred[x] = bmode;
@@ -978,7 +979,7 @@ impl<'a> Vp8Decoder<'a> {
 
         let chroma = self.b.read_with_tree(&KEYFRAME_UV_MODE_NODES);
         mb.chroma_mode =
-            ChromaMode::from_i8(chroma).ok_or(DecodeError::ChromaPredictionModeInvalid(chroma))?;
+            ChromaMode::from_i8(chroma).ok_or(InternalDecodeError::ChromaPredictionModeInvalid)?;
 
         // top should store the bottom of the current bpred, which is the final 4 values
         top_mb.bpred = mb.bpred[12..].try_into().unwrap();
@@ -1204,7 +1205,7 @@ impl<'a> Vp8Decoder<'a> {
         mbx: usize,
         p: usize,
         _simd_token: SimdTokenType, // Kept for API consistency, IDCT deferred to prediction
-    ) -> Result<(), DecodeError> {
+    ) -> Result<(), InternalDecodeError> {
         // Uses self.coeff_blocks which is maintained as zeros between calls.
         // After each IDCT, the block is left with transformed data for intra_predict to use.
         // intra_predict_* is responsible for clearing blocks after use.
@@ -1361,7 +1362,7 @@ impl<'a> Vp8Decoder<'a> {
         // Single EOF check after all blocks in the MB — matches libwebp's
         // VP8DecodeMB which checks once per MB, not per block.
         if reader.is_eof() {
-            return Err(DecodeError::BitStreamError);
+            return Err(InternalDecodeError::BitStreamError);
         }
 
         Ok(())
@@ -1764,6 +1765,26 @@ impl<'a> Vp8Decoder<'a> {
         });
 
         // Run the main decode loop (this populates diagnostic_capture)
+        self.decode_mb_rows_diagnostic(simd_token)
+            .map_err(DecodeError::from)?;
+
+        let diagnostic = DiagnosticFrame {
+            mb_width: self.mbwidth,
+            mb_height: self.mbheight,
+            segments,
+            macroblocks: self.diagnostic_capture.take().unwrap_or_default(),
+            token_probs: self.token_probs.clone(),
+            partition0_size: self.first_partition_size,
+        };
+
+        Ok((self.frame, diagnostic))
+    }
+
+    /// Diagnostic decode loop — same as `decode_mb_rows` but captures per-MB diagnostics.
+    fn decode_mb_rows_diagnostic(
+        &mut self,
+        simd_token: SimdTokenType,
+    ) -> Result<(), InternalDecodeError> {
         for mby in 0..self.mbheight as usize {
             let p = mby % self.num_partitions as usize;
             self.left = PreviousMacroBlock::default();
@@ -1817,16 +1838,7 @@ impl<'a> Vp8Decoder<'a> {
             self.left_border_v.fill(129u8);
         }
 
-        let diagnostic = DiagnosticFrame {
-            mb_width: self.mbwidth,
-            mb_height: self.mbheight,
-            segments,
-            macroblocks: self.diagnostic_capture.take().unwrap_or_default(),
-            token_probs: self.token_probs.clone(),
-            partition0_size: self.first_partition_size,
-        };
-
-        Ok((self.frame, diagnostic))
+        Ok(())
     }
 
     fn decode_frame_(mut self) -> Result<Frame, DecodeError> {
@@ -1854,6 +1866,15 @@ impl<'a> Vp8Decoder<'a> {
             }
         };
 
+        self.decode_mb_rows(simd_token)
+            .map_err(DecodeError::from)?;
+
+        Ok(self.frame)
+    }
+
+    /// Main decode loop — uses `InternalDecodeError` to avoid String drop
+    /// overhead on every `?` operator in the hot path.
+    fn decode_mb_rows(&mut self, simd_token: SimdTokenType) -> Result<(), InternalDecodeError> {
         for mby in 0..self.mbheight as usize {
             let p = mby % self.num_partitions as usize;
             self.left = PreviousMacroBlock::default();
@@ -1926,7 +1947,7 @@ impl<'a> Vp8Decoder<'a> {
 
             // Check for cooperative cancellation between macroblock rows
             if let Some(stop) = self.stop {
-                stop.check()?;
+                stop.check().map_err(InternalDecodeError::from)?;
             }
 
             self.left_border_y.fill(129u8);
@@ -1934,7 +1955,7 @@ impl<'a> Vp8Decoder<'a> {
             self.left_border_v.fill(129u8);
         }
 
-        Ok(self.frame)
+        Ok(())
     }
 }
 

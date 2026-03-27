@@ -7,6 +7,7 @@ mod bit_reader;
 mod dither;
 mod extended;
 mod huffman;
+mod internal_error;
 mod limits;
 mod loop_filter;
 mod lossless;
