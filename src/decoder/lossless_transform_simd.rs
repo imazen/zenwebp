@@ -276,7 +276,7 @@ fn apply_predictor_1_sse2(
     // Broadcast to all 4 pixel positions.
     let prev_bytes = <&[u8; 4]>::try_from(&image_data[start - 4..start]).unwrap();
     let prev_pixel = _mm_cvtsi32_si128(i32::from_le_bytes(*prev_bytes));
-    let mut prev = _mm_shuffle_epi32(prev_pixel, 0xFF); // broadcast to all 4 lanes
+    let mut prev = _mm_shuffle_epi32(prev_pixel, 0x00); // broadcast lane 0 to all 4 lanes
 
     let mut i = start;
     while i < simd_end {
@@ -724,5 +724,120 @@ mod tests {
                 "Mismatch for multipliers r2b={r2b} g2b={g2b} g2r={g2r}"
             );
         }
+    }
+
+    /// Test predictor 1 (left) SSE2 matches scalar via full roundtrip.
+    #[test]
+    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    fn test_predictor_1_sse2_matches_scalar() {
+        let Some(token) = archmage::Sse2Token::summon() else {
+            return;
+        };
+
+        // Use a large block that covers entire rows (size_bits=6 → 64 pixels per block)
+        let width: usize = 64;
+        let height: usize = 4;
+        let size_bits: u8 = 6;
+        let block_xsize =
+            super::super::lossless_transform::block_xsize(width as u16, size_bits);
+
+        let mut scalar_data = vec![0u8; width * height * 4];
+        let mut simd_data = vec![0u8; width * height * 4];
+
+        for i in 0..scalar_data.len() {
+            scalar_data[i] = (i * 53 + 7) as u8;
+            simd_data[i] = (i * 53 + 7) as u8;
+        }
+
+        // Predictor data: all blocks use predictor 1 (left)
+        let pred_data_len = block_xsize * ((height >> size_bits) + 2) * 4;
+        let mut pred_data = vec![0u8; pred_data_len];
+        for chunk in pred_data.chunks_exact_mut(4) {
+            chunk[1] = 1; // predictor index in byte 1
+        }
+
+        super::super::lossless_transform::apply_predictor_transform_scalar(
+            &mut scalar_data,
+            width as u16,
+            height as u16,
+            size_bits,
+            &pred_data,
+        )
+        .unwrap();
+
+        super::apply_predictor_transform_sse2_entry(
+            token,
+            &mut simd_data,
+            width as u16,
+            height as u16,
+            size_bits,
+            &pred_data,
+        );
+
+        // Find first mismatch for debugging
+        for i in 0..scalar_data.len() {
+            if scalar_data[i] != simd_data[i] {
+                panic!(
+                    "Mismatch at byte {i} (pixel {}, channel {}, row {}, col {}): scalar={} simd={}",
+                    i / 4,
+                    i % 4,
+                    (i / 4) / width,
+                    (i / 4) % width,
+                    scalar_data[i],
+                    simd_data[i],
+                );
+            }
+        }
+    }
+
+    /// Test predictor 2 (top) SSE2 matches scalar.
+    #[test]
+    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    fn test_predictor_2_sse2_matches_scalar() {
+        let Some(token) = archmage::Sse2Token::summon() else {
+            return;
+        };
+
+        let width: usize = 32;
+        let height: usize = 8;
+        let size_bits: u8 = 3;
+        let block_xsize =
+            super::super::lossless_transform::block_xsize(width as u16, size_bits);
+
+        let mut scalar_data = vec![0u8; width * height * 4];
+        let mut simd_data = vec![0u8; width * height * 4];
+
+        for i in 0..scalar_data.len() {
+            scalar_data[i] = (i * 41 + 19) as u8;
+            simd_data[i] = (i * 41 + 19) as u8;
+        }
+
+        let mut pred_data = vec![0u8; block_xsize * (height + 1) * 4];
+        for chunk in pred_data.chunks_exact_mut(4) {
+            chunk[1] = 2; // predictor 2 (top)
+        }
+
+        super::super::lossless_transform::apply_predictor_transform_scalar(
+            &mut scalar_data,
+            width as u16,
+            height as u16,
+            size_bits,
+            &pred_data,
+        )
+        .unwrap();
+
+        super::apply_predictor_transform_sse2_entry(
+            token,
+            &mut simd_data,
+            width as u16,
+            height as u16,
+            size_bits,
+            &pred_data,
+        );
+
+        assert_eq!(
+            scalar_data, simd_data,
+            "Predictor 2 SSE2 doesn't match scalar"
+        );
     }
 }

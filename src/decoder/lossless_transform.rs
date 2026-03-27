@@ -50,7 +50,7 @@ pub(crate) fn apply_predictor_transform(
     apply_predictor_transform_scalar(image_data, width, height, size_bits, predictor_data)
 }
 
-fn apply_predictor_transform_scalar(
+pub(crate) fn apply_predictor_transform_scalar(
     image_data: &mut [u8],
     width: u16,
     height: u16,
