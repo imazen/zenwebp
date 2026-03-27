@@ -140,15 +140,18 @@ zenwebp 182.0M vs libwebp 161.4M = **1.13x** per decode
 3. Fixed-length cat_probs iteration (no sentinel branch)
 4. Reusable filter parameter buffer (eliminates per-row allocation)
 5. Frame buffer FILTER_PADDING removal (saves 344KB per decode)
+6. Bit reader sub-slice bounds check elimination (load_new_bytes hot path)
+7. Inline state fields into ActivePartitionReader (eliminates pointer indirection;
+   read_residual_data 45.4M -> 42.6M per decode, -6.2%)
 
-Total: 229.3M -> 182.0M per decode (21% reduction).
+Total: 229.3M -> 182.0M -> ~179M per decode.
 Wall-clock: ~2.3x -> ~1.26-1.36x vs libwebp on codec_wiki.
 
 **Remaining instruction gap breakdown (per decode, codec_wiki):**
 
 | Category | zenwebp (M) | libwebp (M) | Gap (M) |
 |----------|-------------|-------------|---------|
-| Coefficient parsing | 47.0 | ~38.3 | 8.7 |
+| Coefficient parsing | 42.6 | ~38.3 | 4.3 |
 | Loop filter SIMD | 37.9 | ~30.6 | 7.3 |
 | YUV->RGB upsample | 45.7 | ~38.1 | 7.6 |
 | Decode orchestration | 22.9 | ~24.9 | **-2.0** |
@@ -156,12 +159,12 @@ Wall-clock: ~2.3x -> ~1.26-1.36x vs libwebp on codec_wiki.
 | memset (buf alloc) | 17.8 | ~0 | 17.8 |
 | memcpy | 3.2 | 2.6 | 0.6 |
 | Other | 9.4 | ~10 | -0.6 |
-| **Total** | **185.2** | **161.4** | **23.8** |
+| **Total** | **~180** | **161.4** | **~19** |
 
 Main remaining opportunities:
 - **memset 17.8M**: Frame buffer zero-init. Every byte overwritten before read.
   Could use uninitialized allocation but requires unsafe or refactoring.
-- **Coeff parsing 8.7M excess**: Bounds checks on prob table, cat_probs loop.
+- **Coeff parsing 4.3M excess**: Prob table bounds checks, zigzag/dequant indexing.
 - **Loop filter 7.3M excess**: SIMD dispatch overhead, bounds checks.
 - **YUV->RGB 7.6M excess**: Scalar edge handling, bounds checks.
 
@@ -289,7 +292,7 @@ zenwebp: 182.0M vs libwebp: 161.4M (**1.13x instruction ratio**)
 
 | zenwebp function | M instr | libwebp equivalent | M instr | Ratio |
 |-----------------|---------|-------------------|---------|-------|
-| read_residual_data | 46.4M | GetCoeffsFast+GetLargeValue | 38.3M | **1.21x** |
+| read_residual_data | 42.6M | GetCoeffsFast+GetLargeValue | 38.3M | **1.11x** |
 | filter_row_simd | 37.9M | HFilter/VFilter/DoFilter SSE2 | 30.6M | **1.24x** |
 | fancy_upsample + fill_row | 45.7M | YUV2RGB+Upsample SSE41 | 38.1M | **1.20x** |
 | decode_frame_ (exclusive) | 22.9M | VP8DecodeMB+Reconstruct+ParseMode | 24.9M | **0.92x** |
@@ -314,8 +317,10 @@ parsing / loop filter / YUV->RGB conversion (~7-8M excess each).
    blocks. 24.5M -> 1.3M per decode. Matches libwebp's DoTransform case 0 / bits!=0.
 2. **Loop filter 37.9M vs 30.6M (1.24x)** — single `#[arcane]` entry with `#[rite]`
    inlining. Remaining gap from bounds checks and different code shape.
-3. **Coefficient parsing 47.0M vs 38.3M (1.23x)** — bounds checks on prob table
-   lookups, cat_probs loop, try_into().unwrap() on block slices.
+3. **Coefficient parsing 42.6M vs 38.3M (1.11x)** — bounds checks on prob table
+   lookups, zigzag indexing, dequant array access. Bit reader load_new_bytes bounds
+   checks eliminated (sub-slice pattern), state pointer indirection eliminated
+   (inline fields + Drop writeback). Was 47.0M, now 42.6M.
 4. **YUV->RGB 45.7M vs 38.1M (1.20x)** — scalar edge handling, bounds checks.
 5. **memset 17.8M** — frame buffer zero-init. Every byte is overwritten before read.
 6. **decode_frame_ orchestration** — now at parity with libwebp (~22.9M vs ~24.9M).
