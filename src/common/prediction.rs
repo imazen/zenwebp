@@ -259,7 +259,7 @@ pub(crate) fn add_residue(
     {
         use archmage::{NeonToken, SimdToken};
         if let Some(token) = NeonToken::summon() {
-            crate::common::transform_aarch64::add_residue_neon(
+            crate::common::transform::add_residue_neon(
                 token, pblock, rblock, y0, x0, stride,
             );
             return;
@@ -1131,14 +1131,13 @@ pub(crate) fn idct_add_residue_and_clear_with_token(
     x0: usize,
     stride: usize,
 ) {
-    use crate::common::transform_simd_intrinsics;
-
     // Check if block has AC coefficients (elements 1-15)
     // A block is DC-only if all AC coefficients are zero
     let dc_only = rblock[1..].iter().all(|&c| c == 0);
 
     // Use in-place fused IDCT + add residue
-    transform_simd_intrinsics::idct_add_residue_inplace_with_token(
+    use crate::common::transform;
+    transform::idct_add_residue_inplace_with_token(
         token, rblock, pblock, y0, x0, stride, dc_only,
     );
 }
@@ -1155,7 +1154,7 @@ pub(crate) fn idct_add_residue_and_clear_with_token(
     stride: usize,
 ) {
     let dc_only = rblock[1..].iter().all(|&c| c == 0);
-    crate::common::transform_aarch64::idct_add_residue_inplace_neon(
+    crate::common::transform::idct_add_residue_inplace_neon(
         token, rblock, pblock, y0, x0, stride, dc_only,
     );
 }
@@ -1177,7 +1176,7 @@ pub(crate) fn idct_add_residue_and_clear_with_token(
     if dc_only {
         transform::idct4x4_dc(rblock);
     } else {
-        crate::common::transform_wasm::idct4x4_wasm(token, rblock);
+        crate::common::transform::idct4x4_wasm(token, rblock);
     }
     add_residue_and_clear_scalar(pblock, rblock, y0, x0, stride);
 }

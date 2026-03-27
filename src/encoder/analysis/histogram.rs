@@ -209,7 +209,7 @@ fn collect_histogram_with_offset_sse2(
 
         // ftransform2 processes two adjacent 4x4 blocks (8 bytes wide per row)
         let mut dct_out = [0i16; 32];
-        crate::common::transform_simd_intrinsics::ftransform2_sse2(
+        crate::common::transform::ftransform2_sse2(
             _token,
             &src_buf[src_off..],
             &pred_buf[pred_off..],
@@ -264,7 +264,7 @@ fn collect_histogram_with_offset_neon(
         let pred_off = pred_base + scan_off;
 
         let mut dct_out = [[0i32; 16]; 2];
-        crate::common::transform_aarch64::ftransform2_neon(
+        crate::common::transform::ftransform2_neon(
             _token,
             &src_buf[src_off..],
             &pred_buf[pred_off..],

@@ -94,7 +94,7 @@ fn process_luma_mb_idct_x86(
                     let rb: &mut [i32; 16] =
                         (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
                     let dc_only = rb[1..].iter().all(|&c| c == 0);
-                    crate::common::transform_simd_intrinsics::idct_add_residue_inplace_sse2_inner(
+                    crate::common::transform::idct_add_residue_inplace_sse2_inner(
                         _token, rb, ws, y0, x0, stride, dc_only,
                     );
                 }
@@ -112,7 +112,7 @@ fn process_luma_mb_idct_x86(
                         let rb: &mut [i32; 16] =
                             (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
                         let dc_only = rb[1..].iter().all(|&c| c == 0);
-                        crate::common::transform_simd_intrinsics::idct_add_residue_inplace_sse2_inner(
+                        crate::common::transform::idct_add_residue_inplace_sse2_inner(
                             _token, rb, ws, y0, x0, stride, dc_only,
                         );
                     }
@@ -147,7 +147,7 @@ fn process_chroma_mb_idct_x86(
                     let urb: &mut [i32; 16] =
                         (&mut coeff_blocks[u_idx * 16..][..16]).try_into().unwrap();
                     let dc_only = urb[1..].iter().all(|&c| c == 0);
-                    crate::common::transform_simd_intrinsics::idct_add_residue_inplace_sse2_inner(
+                    crate::common::transform::idct_add_residue_inplace_sse2_inner(
                         _token, urb, uws, y0, x0, stride, dc_only,
                     );
                 }
@@ -156,7 +156,7 @@ fn process_chroma_mb_idct_x86(
                     let vrb: &mut [i32; 16] =
                         (&mut coeff_blocks[v_idx * 16..][..16]).try_into().unwrap();
                     let dc_only = vrb[1..].iter().all(|&c| c == 0);
-                    crate::common::transform_simd_intrinsics::idct_add_residue_inplace_sse2_inner(
+                    crate::common::transform::idct_add_residue_inplace_sse2_inner(
                         _token, vrb, vws, y0, x0, stride, dc_only,
                     );
                 }
@@ -240,7 +240,7 @@ fn process_luma_mb_idct_neon(
                     let rb: &mut [i32; 16] =
                         (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
                     let dc_only = rb[1..].iter().all(|&c| c == 0);
-                    crate::common::transform_aarch64::idct_add_residue_inplace_neon_inner(
+                    crate::common::transform::idct_add_residue_inplace_neon_inner(
                         _token, rb, ws, y0, x0, stride, dc_only,
                     );
                 }
@@ -257,7 +257,7 @@ fn process_luma_mb_idct_neon(
                         let rb: &mut [i32; 16] =
                             (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
                         let dc_only = rb[1..].iter().all(|&c| c == 0);
-                        crate::common::transform_aarch64::idct_add_residue_inplace_neon_inner(
+                        crate::common::transform::idct_add_residue_inplace_neon_inner(
                             _token, rb, ws, y0, x0, stride, dc_only,
                         );
                     }
@@ -292,7 +292,7 @@ fn process_chroma_mb_idct_neon(
                     let urb: &mut [i32; 16] =
                         (&mut coeff_blocks[u_idx * 16..][..16]).try_into().unwrap();
                     let dc_only = urb[1..].iter().all(|&c| c == 0);
-                    crate::common::transform_aarch64::idct_add_residue_inplace_neon_inner(
+                    crate::common::transform::idct_add_residue_inplace_neon_inner(
                         _token, urb, uws, y0, x0, stride, dc_only,
                     );
                 }
@@ -301,7 +301,7 @@ fn process_chroma_mb_idct_neon(
                     let vrb: &mut [i32; 16] =
                         (&mut coeff_blocks[v_idx * 16..][..16]).try_into().unwrap();
                     let dc_only = vrb[1..].iter().all(|&c| c == 0);
-                    crate::common::transform_aarch64::idct_add_residue_inplace_neon_inner(
+                    crate::common::transform::idct_add_residue_inplace_neon_inner(
                         _token, vrb, vws, y0, x0, stride, dc_only,
                     );
                 }

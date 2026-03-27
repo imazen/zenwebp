@@ -11,13 +11,5 @@ pub mod simd_sse;
 #[cfg(target_arch = "aarch64")]
 pub mod simd_neon;
 
-#[cfg(target_arch = "aarch64")]
-pub mod transform_aarch64;
-
-pub mod transform_simd_intrinsics;
-
 #[cfg(target_arch = "wasm32")]
 pub mod simd_wasm;
-
-#[cfg(target_arch = "wasm32")]
-pub mod transform_wasm;

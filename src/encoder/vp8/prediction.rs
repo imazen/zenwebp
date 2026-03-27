@@ -100,7 +100,7 @@ impl<'a> super::Vp8Encoder<'a> {
 
                 // ftransform2 outputs i16, convert to i32
                 let mut out16 = [0i16; 32];
-                crate::common::transform_simd_intrinsics::ftransform2_from_u8(
+                crate::common::transform::ftransform2_from_u8(
                     &self.frame.ybuf[src_start..],
                     &predicted_y_block[pred_start..],
                     src_stride,
@@ -524,7 +524,7 @@ impl<'a> super::Vp8Encoder<'a> {
 
             // ftransform2 outputs i16, convert to i32
             let mut out16 = [0i16; 32];
-            crate::common::transform_simd_intrinsics::ftransform2_from_u8(
+            crate::common::transform::ftransform2_from_u8(
                 &chroma_data[src_start..],
                 &predicted_chroma[pred_start..],
                 src_stride,

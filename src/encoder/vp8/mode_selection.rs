@@ -97,7 +97,7 @@ fn evaluate_i4_modes_sse2(
         let pred = preds.get(mode_idx);
 
         // Fused residual + DCT using direct SIMD call
-        let mut residual = crate::common::transform_simd_intrinsics::ftransform_from_u8_4x4_sse2(
+        let mut residual = crate::common::transform::ftransform_from_u8_4x4_sse2(
             _token, src_block, pred,
         );
 
@@ -308,7 +308,7 @@ fn evaluate_i4_modes_wasm(
         let pred = preds.get(mode_idx);
 
         // Fused residual + DCT using direct SIMD call
-        let mut residual = crate::common::transform_wasm::ftransform_from_u8_4x4_wasm_impl(
+        let mut residual = crate::common::transform::ftransform_from_u8_4x4_wasm_impl(
             _token, src_block, pred,
         );
 
