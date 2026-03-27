@@ -394,7 +394,10 @@ impl<'a> LosslessDecoder<'a> {
     }
 
     /// Decodes and returns a single huffman tree
-    fn read_huffman_code(&mut self, alphabet_size: u16) -> Result<HuffmanTree, InternalDecodeError> {
+    fn read_huffman_code(
+        &mut self,
+        alphabet_size: u16,
+    ) -> Result<HuffmanTree, InternalDecodeError> {
         let simple = self.bit_reader.read_bits::<u8>(1)? == 1;
 
         if simple {
@@ -428,7 +431,8 @@ impl<'a> LosslessDecoder<'a> {
             let new_code_lengths =
                 self.read_huffman_code_lengths(code_length_code_lengths, alphabet_size)?;
 
-            HuffmanTree::build_implicit(new_code_lengths).map_err(|_| InternalDecodeError::HuffmanError)
+            HuffmanTree::build_implicit(new_code_lengths)
+                .map_err(|_| InternalDecodeError::HuffmanError)
         }
     }
 
@@ -573,8 +577,7 @@ impl<'a> LosslessDecoder<'a> {
             // Fast path 2: use_packed_table - single 6-bit lookup decodes entire pixel
             let code;
             if meta.use_packed_table {
-                let val =
-                    (self.bit_reader.peek_full() as usize) & (PACKED_TABLE_SIZE - 1);
+                let val = (self.bit_reader.peek_full() as usize) & (PACKED_TABLE_SIZE - 1);
                 let entry = meta.packed_table[val];
                 if entry.bits < BITS_SPECIAL_MARKER {
                     // Literal pixel decoded in one lookup
@@ -604,7 +607,12 @@ impl<'a> LosslessDecoder<'a> {
                 let green = code as u8;
                 if meta.is_trivial_literal {
                     // R, B, A are constant - only read green from bitstream
-                    let pixel = [meta.literal_arb[0], green, meta.literal_arb[2], meta.literal_arb[3]];
+                    let pixel = [
+                        meta.literal_arb[0],
+                        green,
+                        meta.literal_arb[2],
+                        meta.literal_arb[3],
+                    ];
                     data[index * 4..][..4].copy_from_slice(&pixel);
                     if let Some(cc) = huffman_info.color_cache.as_mut() {
                         cc.insert(pixel);
@@ -895,7 +903,12 @@ impl HuffmanInfo {
                         let total_bits = green_bits + red_bits + blue_bits + alpha_bits;
                         packed_table[code] = PackedEntry {
                             bits: total_bits,
-                            value: [red_sym as u8, green_sym as u8, blue_sym as u8, alpha_sym as u8],
+                            value: [
+                                red_sym as u8,
+                                green_sym as u8,
+                                blue_sym as u8,
+                                alpha_sym as u8,
+                            ],
                         };
                     }
                 }
@@ -956,12 +969,7 @@ fn pixel_to_u32(pixel: [u8; 4]) -> u32 {
 /// Convert u32 in ARGB layout back to [R,G,B,A].
 #[inline(always)]
 fn u32_to_pixel(v: u32) -> [u8; 4] {
-    [
-        (v >> 16) as u8,
-        (v >> 8) as u8,
-        v as u8,
-        (v >> 24) as u8,
-    ]
+    [(v >> 16) as u8, (v >> 8) as u8, v as u8, (v >> 24) as u8]
 }
 
 #[derive(Debug, Clone)]

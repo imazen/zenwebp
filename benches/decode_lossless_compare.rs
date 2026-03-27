@@ -36,9 +36,21 @@ struct TestImage {
 }
 
 const IMAGES: &[TestImage] = &[
-    TestImage { name: "photo_512", subdir: "CID22/CID22-512/validation", filename: "792079.png" },
-    TestImage { name: "codec_wiki", subdir: "gb82-sc", filename: "codec_wiki.png" },
-    TestImage { name: "terminal", subdir: "gb82-sc", filename: "terminal.png" },
+    TestImage {
+        name: "photo_512",
+        subdir: "CID22/CID22-512/validation",
+        filename: "792079.png",
+    },
+    TestImage {
+        name: "codec_wiki",
+        subdir: "gb82-sc",
+        filename: "codec_wiki.png",
+    },
+    TestImage {
+        name: "terminal",
+        subdir: "gb82-sc",
+        filename: "terminal.png",
+    },
 ];
 
 zenbench::main!(decode_lossless);
@@ -47,7 +59,10 @@ fn decode_lossless(suite: &mut zenbench::Suite) {
     for img in IMAGES {
         let path = match corpus_path(img.subdir, img.filename) {
             Some(p) => p,
-            None => { eprintln!("Skipping {}: not found", img.name); continue; }
+            None => {
+                eprintln!("Skipping {}: not found", img.name);
+                continue;
+            }
         };
         let (rgba, w, h) = match load_png_rgba(&path) {
             Some(d) => d,
@@ -57,9 +72,10 @@ fn decode_lossless(suite: &mut zenbench::Suite) {
 
         // Encode lossless with zenwebp
         let config = zenwebp::EncoderConfig::new_lossless().with_method(4);
-        let webp_data = zenwebp::EncodeRequest::new(
-            &config, &rgba, zenwebp::PixelLayout::Rgba8, w, h,
-        ).encode().unwrap();
+        let webp_data =
+            zenwebp::EncodeRequest::new(&config, &rgba, zenwebp::PixelLayout::Rgba8, w, h)
+                .encode()
+                .unwrap();
 
         // Also encode with libwebp for a fair comparison (same format, different encoder)
         let libwebp_data = webpx::EncoderConfig::new_lossless()
@@ -67,8 +83,14 @@ fn decode_lossless(suite: &mut zenbench::Suite) {
             .encode_rgba(&rgba, w, h, webpx::Unstoppable)
             .unwrap();
 
-        eprintln!("{}: {}x{}, zen={} lib={} bytes",
-            img.name, w, h, webp_data.len(), libwebp_data.len());
+        eprintln!(
+            "{}: {}x{}, zen={} lib={} bytes",
+            img.name,
+            w,
+            h,
+            webp_data.len(),
+            libwebp_data.len()
+        );
 
         // Decode zenwebp-encoded data
         let label = format!("lossless_decode_{}", img.name);
@@ -108,9 +130,9 @@ fn decode_lossless(suite: &mut zenbench::Suite) {
             group.bench("image-webp", move |b| {
                 let d = data.clone();
                 b.with_input(move || d.clone()).run(|bytes| {
-                    let mut decoder = image_webp::WebPDecoder::new(
-                        std::io::Cursor::new(black_box(&bytes))
-                    ).unwrap();
+                    let mut decoder =
+                        image_webp::WebPDecoder::new(std::io::Cursor::new(black_box(&bytes)))
+                            .unwrap();
                     let size = decoder.output_buffer_size().unwrap();
                     let mut out = vec![0u8; size];
                     decoder.read_image(&mut out).unwrap();

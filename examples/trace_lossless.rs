@@ -14,14 +14,8 @@ fn main() {
     eprintln!("{}x{} RGBA, {} pixels (synthetic)", w, h, w * h);
 
     let config = zenwebp::EncoderConfig::new_lossless().with_method(4);
-    let out = zenwebp::EncodeRequest::new(
-        &config,
-        &rgba,
-        zenwebp::PixelLayout::Rgba8,
-        w,
-        h,
-    )
-    .encode()
-    .unwrap();
+    let out = zenwebp::EncodeRequest::new(&config, &rgba, zenwebp::PixelLayout::Rgba8, w, h)
+        .encode()
+        .unwrap();
     eprintln!("encoded {} bytes (method 4 lossless)", out.len());
 }

@@ -724,16 +724,19 @@ pub fn costs_from_merge(
     let mut trivial_sym = [None; 5];
     let mut is_used = [false; 5];
     for i in 0..5 {
-        trivial_sym[i] = if c1.trivial_sym[i].is_some()
-            && c1.trivial_sym[i] == c2.trivial_sym[i]
-        {
+        trivial_sym[i] = if c1.trivial_sym[i].is_some() && c1.trivial_sym[i] == c2.trivial_sym[i] {
             c1.trivial_sym[i]
         } else {
             None
         };
         is_used[i] = c1.is_used[i] || c2.is_used[i];
     }
-    HistogramCosts { total, per_type, trivial_sym, is_used }
+    HistogramCosts {
+        total,
+        per_type,
+        trivial_sym,
+        is_used,
+    }
 }
 
 /// Estimate bit cost for a histogram (matching libwebp's VP8LHistogramEstimateBits).

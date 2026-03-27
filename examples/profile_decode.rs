@@ -54,5 +54,8 @@ fn main() {
     }
     let elapsed = start.elapsed();
     let per_decode = elapsed / iterations;
-    eprintln!("Decoded {} times in {:?} ({:?}/decode)", iterations, elapsed, per_decode);
+    eprintln!(
+        "Decoded {} times in {:?} ({:?}/decode)",
+        iterations, elapsed, per_decode
+    );
 }

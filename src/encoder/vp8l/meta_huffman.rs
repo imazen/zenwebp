@@ -7,7 +7,10 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use super::entropy::{HistogramCosts, compute_histogram_cost, get_combined_histogram_cost, get_combined_histogram_cost_with_detail, costs_from_merge};
+use super::entropy::{
+    HistogramCosts, compute_histogram_cost, costs_from_merge, get_combined_histogram_cost,
+    get_combined_histogram_cost_with_detail,
+};
 use super::histogram::Histogram;
 use super::types::{BackwardRefs, PixOrCopy, subsample_size};
 
@@ -142,10 +145,7 @@ mod cluster_trace {
             "post-greedy active: {}",
             POST_GREEDY_COUNT.swap(0, Ordering::Relaxed)
         );
-        eprintln!(
-            "remap evals: {}",
-            REMAP_EVALS.swap(0, Ordering::Relaxed)
-        );
+        eprintln!("remap evals: {}", REMAP_EVALS.swap(0, Ordering::Relaxed));
     }
 }
 
@@ -465,14 +465,20 @@ fn cluster_histograms(
     #[cfg(feature = "std")]
     if std::env::var("ZENWEBP_TRACE").is_ok() {
         // Count empty histograms (no symbols in any type)
-        let empty_count = tile_histos.iter().filter(|h| {
-            !h.literal.iter().any(|&c| c > 0)
-                && !h.red.iter().any(|&c| c > 0)
-                && !h.blue.iter().any(|&c| c > 0)
-                && !h.alpha.iter().any(|&c| c > 0)
-                && !h.distance.iter().any(|&c| c > 0)
-        }).count();
-        eprintln!("[cluster_histograms] n={} quality={} cache_bits={} empty={}", n, quality, cache_bits, empty_count);
+        let empty_count = tile_histos
+            .iter()
+            .filter(|h| {
+                !h.literal.iter().any(|&c| c > 0)
+                    && !h.red.iter().any(|&c| c > 0)
+                    && !h.blue.iter().any(|&c| c > 0)
+                    && !h.alpha.iter().any(|&c| c > 0)
+                    && !h.distance.iter().any(|&c| c > 0)
+            })
+            .count();
+        eprintln!(
+            "[cluster_histograms] n={} quality={} cache_bits={} empty={}",
+            n, quality, cache_bits, empty_count
+        );
     }
 
     if n <= 1 {
@@ -559,10 +565,10 @@ fn cluster_histograms(
                 // (not the accumulator's), matching HistogramCombineEntropyBin.
                 let bit_cost_incoming = costs[i].total;
                 let threshold = costs[first].total + bit_cost_incoming;
-                let cost_thresh_val = threshold
-                    .saturating_sub(
-                        div_round_i64(bit_cost_incoming as i64 * combine_cost_factor, 100) as u64
-                    );
+                let cost_thresh_val = threshold.saturating_sub(div_round_i64(
+                    bit_cost_incoming as i64 * combine_cost_factor,
+                    100,
+                ) as u64);
 
                 if let Some((combined_cost, per_type)) = get_combined_histogram_cost_with_detail(
                     &histos[first],
@@ -570,15 +576,15 @@ fn cluster_histograms(
                     &histos[i],
                     &costs[i],
                     cost_thresh_val,
-                )
-                {
+                ) {
                     // Merge i into first — use precomputed costs instead of recomputing
                     cluster_trace::inc_entropy_bin_merges();
                     let first_costs = costs[first].clone();
                     let i_costs = costs[i].clone();
                     let i_histo = histos[i].clone();
                     histos[first].add(&i_histo);
-                    costs[first] = costs_from_merge(combined_cost, per_type, &first_costs, &i_costs);
+                    costs[first] =
+                        costs_from_merge(combined_cost, per_type, &first_costs, &i_costs);
                     active[i] = false;
 
                     // Remap all tiles pointing to i → first
@@ -927,9 +933,17 @@ pub fn build_meta_huffman(
     if std::env::var("ZENWEBP_TRACE").is_ok() {
         let xsize = super::types::subsample_size(width as u32, histo_bits);
         let ysize = super::types::subsample_size(height as u32, histo_bits);
-        eprintln!("[build_meta_huffman] {}x{} histo_bits={} tiles={}x{}={} cache_bits={} quality={}",
-            width, height, histo_bits, xsize, ysize, xsize as usize * ysize as usize,
-            cache_bits, quality);
+        eprintln!(
+            "[build_meta_huffman] {}x{} histo_bits={} tiles={}x{}={} cache_bits={} quality={}",
+            width,
+            height,
+            histo_bits,
+            xsize,
+            ysize,
+            xsize as usize * ysize as usize,
+            cache_bits,
+            quality
+        );
     }
 
     // Build per-tile histograms from backward reference tokens

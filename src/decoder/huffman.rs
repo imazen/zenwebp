@@ -271,7 +271,10 @@ impl HuffmanTree {
     ///
     /// You must call `bit_reader.fill()` before calling this function or it may erroneously
     /// detect the end of the stream and return a bitstream error.
-    pub(crate) fn read_symbol(&self, bit_reader: &mut BitReader<'_>) -> Result<u16, InternalDecodeError> {
+    pub(crate) fn read_symbol(
+        &self,
+        bit_reader: &mut BitReader<'_>,
+    ) -> Result<u16, InternalDecodeError> {
         match &self.0 {
             HuffmanTreeInner::Tree {
                 primary_table,
@@ -295,7 +298,10 @@ impl HuffmanTree {
     /// Caller must guarantee that `bit_reader.fill()` has been called recently
     /// enough that at least MAX_TABLE_BITS bits are available.
     #[inline(always)]
-    pub(crate) fn read_symbol_fast(&self, bit_reader: &mut BitReader<'_>) -> Result<u16, InternalDecodeError> {
+    pub(crate) fn read_symbol_fast(
+        &self,
+        bit_reader: &mut BitReader<'_>,
+    ) -> Result<u16, InternalDecodeError> {
         match &self.0 {
             HuffmanTreeInner::Tree {
                 primary_table,

@@ -81,20 +81,17 @@ fn decode_compare(suite: &mut zenbench::Suite) {
         let config = zenwebp::EncoderConfig::new_lossy()
             .with_quality(75.0)
             .with_method(4);
-        let webp_data = zenwebp::EncodeRequest::new(
-            &config,
-            &rgb,
-            zenwebp::PixelLayout::Rgb8,
-            w,
-            h,
-        )
-        .encode()
-        .unwrap();
+        let webp_data =
+            zenwebp::EncodeRequest::new(&config, &rgb, zenwebp::PixelLayout::Rgb8, w, h)
+                .encode()
+                .unwrap();
 
         let pixels = (w as u64) * (h as u64);
         eprintln!(
             "{}: {}x{} ({:.2} MPix), WebP {} bytes",
-            img.name, w, h,
+            img.name,
+            w,
+            h,
             pixels as f64 / 1_000_000.0,
             webp_data.len()
         );

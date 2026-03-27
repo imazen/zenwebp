@@ -54,9 +54,7 @@ impl From<InternalDecodeError> for DecodeError {
             InternalDecodeError::ChromaPredictionModeInvalid => {
                 DecodeError::ChromaPredictionModeInvalid(0)
             }
-            InternalDecodeError::Cancelled => {
-                DecodeError::Cancelled(enough::StopReason::Cancelled)
-            }
+            InternalDecodeError::Cancelled => DecodeError::Cancelled(enough::StopReason::Cancelled),
         }
     }
 }

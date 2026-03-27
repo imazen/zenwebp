@@ -516,10 +516,7 @@ impl VP8Partitions {
     #[allow(dead_code)]
     pub fn active_reader(&mut self, p: usize) -> ActivePartitionReader<'_> {
         let (start, len) = self.boundaries[p];
-        ActivePartitionReader::new(
-            &self.data[start..start + len],
-            &mut self.states[p],
-        )
+        ActivePartitionReader::new(&self.data[start..start + len], &mut self.states[p])
     }
 
     /// Check if any partition hit EOF
