@@ -1693,18 +1693,13 @@ impl<'a> Vp8Decoder<'a> {
         };
 
         // Copy luma rows from cache to frame buffer.
-        // cache_y_stride == luma_w, so source rows are contiguous.
-        // Pre-slice both source and destination to eliminate per-row bounds checks.
+        // cache_y_stride == luma_w, so source rows are contiguous — use bulk copy.
         {
             let src_start = src_start_row * self.cache_y_stride;
             let dst_start = dst_start_y_row * luma_w;
             let total = num_y_rows * luma_w;
-            let src = &self.cache_y[src_start..src_start + total];
-            let dst = &mut self.frame.ybuf[dst_start..dst_start + total];
-            for y in 0..num_y_rows {
-                let off = y * luma_w;
-                dst[off..off + luma_w].copy_from_slice(&src[off..off + luma_w]);
-            }
+            self.frame.ybuf[dst_start..dst_start + total]
+                .copy_from_slice(&self.cache_y[src_start..src_start + total]);
         }
 
         // Same logic for chroma but with half the rows
@@ -1717,21 +1712,15 @@ impl<'a> Vp8Decoder<'a> {
         };
 
         // Copy chroma rows from cache to frame buffer.
-        // cache_uv_stride == chroma_w, so source rows are contiguous.
-        // Pre-slice both source and destination to eliminate per-row bounds checks.
+        // cache_uv_stride == chroma_w, so source rows are contiguous — use bulk copy.
         {
             let src_start = src_start_row_uv * self.cache_uv_stride;
             let dst_start = dst_start_uv_row * chroma_w;
             let total = num_uv_rows * chroma_w;
-            let u_src = &self.cache_u[src_start..src_start + total];
-            let v_src = &self.cache_v[src_start..src_start + total];
-            let u_dst = &mut self.frame.ubuf[dst_start..dst_start + total];
-            let v_dst = &mut self.frame.vbuf[dst_start..dst_start + total];
-            for y in 0..num_uv_rows {
-                let off = y * chroma_w;
-                u_dst[off..off + chroma_w].copy_from_slice(&u_src[off..off + chroma_w]);
-                v_dst[off..off + chroma_w].copy_from_slice(&v_src[off..off + chroma_w]);
-            }
+            self.frame.ubuf[dst_start..dst_start + total]
+                .copy_from_slice(&self.cache_u[src_start..src_start + total]);
+            self.frame.vbuf[dst_start..dst_start + total]
+                .copy_from_slice(&self.cache_v[src_start..src_start + total]);
         }
     }
 
