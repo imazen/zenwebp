@@ -119,6 +119,9 @@ fn main() {
                 webp_data.len(),
                 webp_data.len() as f64 * 8.0 / pixels as f64
             );
+            // Save WebP for C profiler comparison
+            std::fs::write("/tmp/profile_test.webp", &webp_data).unwrap();
+            println!("Saved to /tmp/profile_test.webp");
             benchmark_decode(&webp_data, iterations);
         } else {
             eprintln!("Unknown file type. Use .webp or .png");
