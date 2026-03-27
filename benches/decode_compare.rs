@@ -41,18 +41,39 @@ struct TestImage {
 }
 
 const IMAGES: &[TestImage] = &[
+    // ~4K screenshot (3508x2480)
     TestImage {
-        name: "codec_wiki",
+        name: "4k_wiki",
+        subdir: "png-conformance",
+        filename: "wm_upload_wikimedia_org_a23d1e831e128dff.png",
+    },
+    // ~3K screenshot (2940x1912)
+    TestImage {
+        name: "3k_imac",
+        subdir: "gb82-sc",
+        filename: "imac_g3.png",
+    },
+    // ~2.5K screenshot (2560x1664)
+    TestImage {
+        name: "2k_wiki",
         subdir: "gb82-sc",
         filename: "codec_wiki.png",
     },
+    // ~2K photo (2048x2048)
     TestImage {
-        name: "terminal",
+        name: "2k_photo",
+        subdir: "clic2025/final-test",
+        filename: "ebfd571f1c6824316047a29cb5f376eec15f56dd51821119c1842be068a8b950.png",
+    },
+    // ~1.6K screenshot (1646x1062)
+    TestImage {
+        name: "1k_term",
         subdir: "gb82-sc",
         filename: "terminal.png",
     },
+    // 512px photo
     TestImage {
-        name: "photo_512",
+        name: "512_photo",
         subdir: "CID22/CID22-512/validation",
         filename: "792079.png",
     },
