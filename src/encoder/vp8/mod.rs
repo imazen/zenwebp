@@ -171,17 +171,17 @@ pub(super) fn sse_16x16_luma(
     mby: usize,
     pred: &[u8; LUMA_BLOCK_SIZE],
 ) -> u32 {
-    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         crate::common::simd_sse::sse_16x16_luma(src_y, src_width, mbx, mby, pred)
     }
-    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     {
         use archmage::SimdToken;
         let token = archmage::NeonToken::summon().unwrap();
         crate::common::simd_neon::sse_16x16_luma_neon(token, src_y, src_width, mbx, mby, pred)
     }
-    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    #[cfg(target_arch = "wasm32")]
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::Wasm128Token::summon() {
@@ -190,10 +190,7 @@ pub(super) fn sse_16x16_luma(
             );
         }
     }
-    #[cfg(not(all(
-        feature = "simd",
-        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64",)
-    )))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64",)))]
     {
         let mut sse = 0u32;
         let src_base = mby * 16 * src_width + mbx * 16;
@@ -220,17 +217,17 @@ pub(super) fn sse_8x8_chroma(
     mby: usize,
     pred: &[u8; CHROMA_BLOCK_SIZE],
 ) -> u32 {
-    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         crate::common::simd_sse::sse_8x8_chroma(src_uv, src_width, mbx, mby, pred)
     }
-    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     {
         use archmage::SimdToken;
         let token = archmage::NeonToken::summon().unwrap();
         crate::common::simd_neon::sse_8x8_chroma_neon(token, src_uv, src_width, mbx, mby, pred)
     }
-    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    #[cfg(target_arch = "wasm32")]
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::Wasm128Token::summon() {
@@ -239,10 +236,7 @@ pub(super) fn sse_8x8_chroma(
             );
         }
     }
-    #[cfg(not(all(
-        feature = "simd",
-        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64",)
-    )))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64",)))]
     {
         let mut sse = 0u32;
         let src_base = mby * 8 * src_width + mbx * 8;

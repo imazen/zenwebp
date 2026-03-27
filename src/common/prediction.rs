@@ -247,7 +247,7 @@ pub(crate) fn add_residue(
     x0: usize,
     stride: usize,
 ) {
-    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         use archmage::{SimdToken, X64V3Token};
         if let Some(token) = X64V3Token::summon() {
@@ -255,7 +255,7 @@ pub(crate) fn add_residue(
             return;
         }
     }
-    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     {
         use archmage::{NeonToken, SimdToken};
         if let Some(token) = NeonToken::summon() {
@@ -282,7 +282,6 @@ fn add_residue_scalar(pblock: &mut [u8], rblock: &[i32; 16], y0: usize, x0: usiz
 
 /// SIMD implementation of add_residue using SSE2.
 /// Processes one row at a time: load 4 u8, zero-extend, add i32, pack back to u8 with saturation.
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
 #[archmage::arcane]
 #[inline(always)]
 fn add_residue_sse2(
@@ -347,7 +346,7 @@ pub(crate) fn add_residue_and_clear(
     x0: usize,
     stride: usize,
 ) {
-    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         use archmage::{SimdToken, X64V3Token};
         if let Some(token) = X64V3Token::summon() {
@@ -362,7 +361,7 @@ pub(crate) fn add_residue_and_clear(
 /// Eliminates per-call token summoning overhead (~1.1B instructions saved over a full decode).
 ///
 /// Note: Currently unused - decoder now uses fused IDCT+add_residue.
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn add_residue_and_clear_with_token(
@@ -377,10 +376,7 @@ pub(crate) fn add_residue_and_clear_with_token(
 }
 
 /// Scalar fallback for add_residue_and_clear (used when no SIMD token available).
-#[cfg(not(all(
-    feature = "simd",
-    any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
-)))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")))]
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn add_residue_and_clear_with_token(
@@ -395,24 +391,22 @@ pub(crate) fn add_residue_and_clear_with_token(
 }
 
 /// Type alias for the SIMD token used in the decoder hot path.
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 pub(crate) type SimdTokenType = Option<archmage::X64V3Token>;
 
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 pub(crate) type SimdTokenType = Option<archmage::NeonToken>;
 
-#[cfg(all(feature = "simd", target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 pub(crate) type SimdTokenType = Option<archmage::Wasm128Token>;
 
-#[cfg(not(all(
-    feature = "simd",
-    any(
-        target_arch = "x86_64",
-        target_arch = "x86",
-        target_arch = "aarch64",
-        target_arch = "wasm32"
-    )
+#[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "x86",
+    target_arch = "aarch64",
+    target_arch = "wasm32"
 )))]
+
 pub(crate) type SimdTokenType = Option<()>;
 
 #[inline(always)]
@@ -433,7 +427,6 @@ fn add_residue_and_clear_scalar(
     }
 }
 
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
 #[archmage::arcane]
 #[inline(always)]
 fn add_residue_and_clear_sse2(
@@ -1128,7 +1121,7 @@ impl I4Predictions {
 ///
 /// Takes raw DCT coefficients (NOT already IDCT'd), performs IDCT, adds to prediction,
 /// and clears the coefficient block.
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[inline(always)]
 pub(crate) fn idct_add_residue_and_clear_with_token(
     token: archmage::X64V3Token,
@@ -1151,7 +1144,7 @@ pub(crate) fn idct_add_residue_and_clear_with_token(
 }
 
 /// NEON fused IDCT + add residue + clear.
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 #[inline(always)]
 pub(crate) fn idct_add_residue_and_clear_with_token(
     token: archmage::NeonToken,
@@ -1168,7 +1161,7 @@ pub(crate) fn idct_add_residue_and_clear_with_token(
 }
 
 /// WASM SIMD128 fused IDCT + add residue + clear.
-#[cfg(all(feature = "simd", target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 #[inline(always)]
 pub(crate) fn idct_add_residue_and_clear_with_token(
     token: archmage::Wasm128Token,
@@ -1190,14 +1183,11 @@ pub(crate) fn idct_add_residue_and_clear_with_token(
 }
 
 /// Scalar fallback for fused IDCT + add residue + clear.
-#[cfg(not(all(
-    feature = "simd",
-    any(
-        target_arch = "x86_64",
-        target_arch = "x86",
-        target_arch = "aarch64",
-        target_arch = "wasm32"
-    )
+#[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "x86",
+    target_arch = "aarch64",
+    target_arch = "wasm32"
 )))]
 #[inline(always)]
 pub(crate) fn idct_add_residue_and_clear_with_token(
@@ -1229,7 +1219,7 @@ pub(crate) fn idct_add_residue_and_clear(
     x0: usize,
     stride: usize,
 ) {
-    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         use archmage::{SimdToken, X64V3Token};
         if let Some(token) = X64V3Token::summon() {
@@ -1237,7 +1227,7 @@ pub(crate) fn idct_add_residue_and_clear(
             return;
         }
     }
-    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     {
         use archmage::{NeonToken, SimdToken};
         if let Some(token) = NeonToken::summon() {
@@ -1245,7 +1235,7 @@ pub(crate) fn idct_add_residue_and_clear(
             return;
         }
     }
-    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    #[cfg(target_arch = "wasm32")]
     {
         use archmage::{SimdToken, Wasm128Token};
         if let Some(token) = Wasm128Token::summon() {

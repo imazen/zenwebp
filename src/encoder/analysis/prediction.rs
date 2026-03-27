@@ -13,18 +13,18 @@
 
 use super::{BPS, C8DC8, C8TM8, I16DC16, I16TM16};
 
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use archmage::intrinsics::x86_64 as simd_mem;
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use archmage::{SimdToken, X64V3Token, arcane};
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 use archmage::intrinsics::aarch64 as simd_mem;
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 use archmage::{NeonToken, SimdToken, arcane};
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
 
 //------------------------------------------------------------------------------
@@ -114,18 +114,15 @@ pub fn pred_luma16_dc(dst: &mut [u8], left: Option<&[u8]>, top: Option<&[u8]>) {
 pub fn pred_luma16_tm(dst: &mut [u8], left_with_corner: Option<&[u8]>, top: Option<&[u8]>) {
     match (left_with_corner, top) {
         (Some(left), Some(top)) => {
-            #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+            #[cfg(target_arch = "x86_64")]
             {
                 pred_luma16_tm_dispatch(dst, left, top);
             }
-            #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+            #[cfg(target_arch = "aarch64")]
             {
                 pred_luma16_tm_neon_dispatch(dst, left, top);
             }
-            #[cfg(not(all(
-                feature = "simd",
-                any(target_arch = "x86_64", target_arch = "aarch64")
-            )))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             {
                 pred_luma16_tm_scalar(dst, left, top);
             }
@@ -156,7 +153,7 @@ fn pred_luma16_tm_scalar(dst: &mut [u8], left: &[u8], top: &[u8]) {
 }
 
 /// SIMD dispatch for TrueMotion 16x16.
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[inline]
 fn pred_luma16_tm_dispatch(dst: &mut [u8], left: &[u8], top: &[u8]) {
     if let Some(token) = X64V3Token::summon() {
@@ -168,7 +165,7 @@ fn pred_luma16_tm_dispatch(dst: &mut [u8], left: &[u8], top: &[u8]) {
 
 /// SSE2 TrueMotion: Process 16 pixels per row.
 /// Formula: dst[y][x] = clamp(left[y] + top[x] - tl, 0, 255)
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn pred_luma16_tm_sse2(_token: X64V3Token, dst: &mut [u8], left: &[u8], top: &[u8]) {
     let zero = _mm_setzero_si128();
@@ -275,18 +272,15 @@ pub fn pred_chroma8_dc(dst: &mut [u8], left: Option<&[u8]>, top: Option<&[u8]>) 
 pub fn pred_chroma8_tm(dst: &mut [u8], left_with_corner: Option<&[u8]>, top: Option<&[u8]>) {
     match (left_with_corner, top) {
         (Some(left), Some(top)) => {
-            #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+            #[cfg(target_arch = "x86_64")]
             {
                 pred_chroma8_tm_dispatch(dst, left, top);
             }
-            #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+            #[cfg(target_arch = "aarch64")]
             {
                 pred_chroma8_tm_neon_dispatch(dst, left, top);
             }
-            #[cfg(not(all(
-                feature = "simd",
-                any(target_arch = "x86_64", target_arch = "aarch64")
-            )))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             {
                 pred_chroma8_tm_scalar(dst, left, top);
             }
@@ -317,7 +311,7 @@ fn pred_chroma8_tm_scalar(dst: &mut [u8], left: &[u8], top: &[u8]) {
 }
 
 /// SIMD dispatch for TrueMotion 8x8.
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[inline]
 fn pred_chroma8_tm_dispatch(dst: &mut [u8], left: &[u8], top: &[u8]) {
     if let Some(token) = X64V3Token::summon() {
@@ -328,7 +322,7 @@ fn pred_chroma8_tm_dispatch(dst: &mut [u8], left: &[u8], top: &[u8]) {
 }
 
 /// SSE2 TrueMotion for 8x8 chroma: Process 8 pixels per row.
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn pred_chroma8_tm_sse2(_token: X64V3Token, dst: &mut [u8], left: &[u8], top: &[u8]) {
     let zero = _mm_setzero_si128();
@@ -370,7 +364,7 @@ fn pred_chroma8_tm_sse2(_token: X64V3Token, dst: &mut [u8], left: &[u8], top: &[
 // =============================================================================
 
 /// NEON dispatch for TrueMotion 16x16.
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 #[inline]
 fn pred_luma16_tm_neon_dispatch(dst: &mut [u8], left: &[u8], top: &[u8]) {
     let token = NeonToken::summon().unwrap();
@@ -379,7 +373,7 @@ fn pred_luma16_tm_neon_dispatch(dst: &mut [u8], left: &[u8], top: &[u8]) {
 
 /// NEON TrueMotion: Process 16 pixels per row.
 /// Formula: dst[y][x] = clamp(left[y] + top[x] - tl, 0, 255)
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 #[arcane]
 fn pred_luma16_tm_neon(_token: NeonToken, dst: &mut [u8], left: &[u8], top: &[u8]) {
     // Load top row (16 bytes) and unpack to i16
@@ -412,7 +406,7 @@ fn pred_luma16_tm_neon(_token: NeonToken, dst: &mut [u8], left: &[u8], top: &[u8
 }
 
 /// NEON dispatch for TrueMotion 8x8.
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 #[inline]
 fn pred_chroma8_tm_neon_dispatch(dst: &mut [u8], left: &[u8], top: &[u8]) {
     let token = NeonToken::summon().unwrap();
@@ -420,7 +414,7 @@ fn pred_chroma8_tm_neon_dispatch(dst: &mut [u8], left: &[u8], top: &[u8]) {
 }
 
 /// NEON TrueMotion for 8x8 chroma: Process 8 pixels per row.
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 #[arcane]
 fn pred_chroma8_tm_neon(_token: NeonToken, dst: &mut [u8], left: &[u8], top: &[u8]) {
     // Load 8 bytes of top and unpack to i16

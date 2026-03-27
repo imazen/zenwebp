@@ -30,20 +30,17 @@
 /// * `w` - 16 weights for frequency weighting (CSF table)
 #[inline]
 pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
-    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         crate::common::simd_sse::t_transform(input, stride, w)
     }
-    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     {
         // t_transform is one half of tdisto_4x4_fused; use scalar here.
         // The fused version below is the hot path and uses NEON.
         t_transform_scalar(input, stride, w)
     }
-    #[cfg(not(all(
-        feature = "simd",
-        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
-    )))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")))]
     {
         t_transform_scalar(input, stride, w)
     }
@@ -53,7 +50,7 @@ pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 ///
 /// This can be optimized with SIMD (AVX2/NEON) for significant speedup.
 #[inline]
-#[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
 pub fn t_transform_scalar(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     let mut tmp = [0i32; 16];
 
@@ -107,27 +104,24 @@ pub fn t_transform_scalar(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 /// * `w` - 16 weights for frequency weighting (CSF table)
 #[inline]
 pub fn tdisto_4x4(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
-    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         crate::common::simd_sse::tdisto_4x4_fused(a, b, stride, w)
     }
-    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     {
         use archmage::SimdToken;
         let token = archmage::NeonToken::summon().unwrap();
         crate::common::simd_neon::tdisto_4x4_fused_neon(token, a, b, stride, w)
     }
-    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    #[cfg(target_arch = "wasm32")]
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::Wasm128Token::summon() {
             return crate::common::simd_wasm::tdisto_4x4_fused_wasm_entry(token, a, b, stride, w);
         }
     }
-    #[cfg(not(all(
-        feature = "simd",
-        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64",)
-    )))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64",)))]
     {
         let sum1 = t_transform(a, stride, w);
         let sum2 = t_transform(b, stride, w);
@@ -147,20 +141,20 @@ pub fn tdisto_4x4(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 /// * `w` - 16 weights for frequency weighting (CSF table)
 #[inline]
 pub fn tdisto_16x16(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::X64V3Token::summon() {
             return tdisto_16x16_sse2(token, a, b, stride, w);
         }
     }
-    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     {
         use archmage::SimdToken;
         let token = archmage::NeonToken::summon().unwrap();
         return tdisto_16x16_neon(token, a, b, stride, w);
     }
-    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    #[cfg(target_arch = "wasm32")]
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::Wasm128Token::summon() {
@@ -182,7 +176,6 @@ pub fn tdisto_16x16(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 }
 
 /// SSE2 variant: single dispatch for all 16 sub-blocks
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[archmage::arcane]
 fn tdisto_16x16_sse2(
     _token: archmage::X64V3Token,
@@ -213,20 +206,20 @@ fn tdisto_16x16_sse2(
 /// On x86_64 with SIMD, dispatches once and calls SSE2 variant directly.
 #[inline]
 pub fn tdisto_8x8(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::X64V3Token::summon() {
             return tdisto_8x8_sse2(token, a, b, stride, w);
         }
     }
-    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     {
         use archmage::SimdToken;
         let token = archmage::NeonToken::summon().unwrap();
         return tdisto_8x8_neon(token, a, b, stride, w);
     }
-    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    #[cfg(target_arch = "wasm32")]
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::Wasm128Token::summon() {
@@ -247,7 +240,6 @@ pub fn tdisto_8x8(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 }
 
 /// NEON variant: single dispatch for all 16 sub-blocks
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
 #[archmage::arcane]
 fn tdisto_16x16_neon(
     _token: archmage::NeonToken,
@@ -273,7 +265,6 @@ fn tdisto_16x16_neon(
 }
 
 /// NEON variant: single dispatch for all 4 sub-blocks
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
 #[archmage::arcane]
 fn tdisto_8x8_neon(
     _token: archmage::NeonToken,
@@ -299,7 +290,6 @@ fn tdisto_8x8_neon(
 }
 
 /// Wasm SIMD128 variant: single dispatch for all 16 sub-blocks
-#[cfg(all(feature = "simd", target_arch = "wasm32"))]
 #[archmage::arcane]
 fn tdisto_16x16_wasm(
     _token: archmage::Wasm128Token,
@@ -325,7 +315,6 @@ fn tdisto_16x16_wasm(
 }
 
 /// Wasm SIMD128 variant: single dispatch for all 4 sub-blocks
-#[cfg(all(feature = "simd", target_arch = "wasm32"))]
 #[archmage::arcane]
 fn tdisto_8x8_wasm(
     _token: archmage::Wasm128Token,
@@ -351,7 +340,6 @@ fn tdisto_8x8_wasm(
 }
 
 /// SSE2 variant: single dispatch for all 4 sub-blocks
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[archmage::arcane]
 fn tdisto_8x8_sse2(
     _token: archmage::X64V3Token,
@@ -393,27 +381,24 @@ fn tdisto_8x8_sse2(
 /// * `stride` - Row stride of source buffer
 #[inline]
 pub fn is_flat_source_16(src: &[u8], stride: usize) -> bool {
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         is_flat_source_16_dispatch(src, stride)
     }
-    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     {
         use archmage::SimdToken;
         let token = archmage::NeonToken::summon().unwrap();
         crate::common::simd_neon::is_flat_source_16_neon(token, src, stride)
     }
-    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    #[cfg(target_arch = "wasm32")]
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::Wasm128Token::summon() {
             return crate::common::simd_wasm::is_flat_source_16_wasm_entry(token, src, stride);
         }
     }
-    #[cfg(not(all(
-        feature = "simd",
-        any(target_arch = "x86_64", target_arch = "aarch64",)
-    )))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64",)))]
     {
         is_flat_source_16_scalar(src, stride)
     }
@@ -435,7 +420,7 @@ pub fn is_flat_source_16_scalar(src: &[u8], stride: usize) -> bool {
 }
 
 /// SIMD dispatch for is_flat_source_16.
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[inline]
 fn is_flat_source_16_dispatch(src: &[u8], stride: usize) -> bool {
     use archmage::{SimdToken, X64V3Token};
@@ -447,14 +432,12 @@ fn is_flat_source_16_dispatch(src: &[u8], stride: usize) -> bool {
 }
 
 /// Entry shim for is_flat_source_16_sse2.
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[archmage::arcane]
 fn is_flat_source_16_entry(_token: archmage::X64V3Token, src: &[u8], stride: usize) -> bool {
     is_flat_source_16_sse2(_token, src, stride)
 }
 
 /// SSE2 implementation: broadcast first pixel, compare 16 bytes per row.
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[archmage::rite]
 pub(crate) fn is_flat_source_16_sse2(
     _token: archmage::X64V3Token,
@@ -496,7 +479,7 @@ pub(crate) fn is_flat_source_16_sse2(
 /// Check if coefficients are "flat" (few non-zero AC coefficients).
 /// Returns true if total non-zero AC count <= thresh.
 #[inline]
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
     use archmage::{SimdToken, X64V3Token};
 
@@ -510,7 +493,7 @@ pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
 /// Check if coefficients are "flat" (few non-zero AC coefficients).
 /// Returns true if total non-zero AC count <= thresh.
 #[inline]
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
     use archmage::SimdToken;
     let token = archmage::NeonToken::summon().unwrap();
@@ -518,7 +501,6 @@ pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
 }
 
 /// Entry shim for is_flat_coeffs_sse2.
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[archmage::arcane]
 fn is_flat_coeffs_entry(
     _token: archmage::X64V3Token,
@@ -530,7 +512,6 @@ fn is_flat_coeffs_entry(
 }
 
 /// SSE2 implementation using archmage
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[archmage::rite]
 pub(crate) fn is_flat_coeffs_sse2(
     _token: archmage::X64V3Token,
@@ -595,7 +576,7 @@ fn is_flat_coeffs_scalar(levels: &[i16], num_blocks: usize, thresh: i32) -> bool
 /// Check if coefficients are "flat" (few non-zero AC coefficients).
 /// Returns true if total non-zero AC count <= thresh.
 #[inline]
-#[cfg(all(feature = "simd", target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
     use archmage::SimdToken;
     if let Some(token) = archmage::Wasm128Token::summon() {
@@ -608,14 +589,12 @@ pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
 
 /// Check if coefficients are "flat" (few non-zero AC coefficients).
 /// Returns true if total non-zero AC count <= thresh.
-#[cfg(not(all(
-    feature = "simd",
-    any(
-        target_arch = "x86_64",
-        target_arch = "aarch64",
-        target_arch = "wasm32"
-    )
+#[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "wasm32"
 )))]
+
 pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
     is_flat_coeffs_scalar(levels, num_blocks, thresh)
 }

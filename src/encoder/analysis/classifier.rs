@@ -9,18 +9,18 @@
 
 #![allow(dead_code)]
 
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use archmage::intrinsics::x86_64 as simd_mem;
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use archmage::{SimdToken, X64V3Token, arcane};
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 use archmage::intrinsics::aarch64 as simd_mem;
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 use archmage::{NeonToken, SimdToken, arcane};
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
 
 /// Detected content type for auto-preset selection.
@@ -148,15 +148,15 @@ pub fn classify_image_type_diag(
 /// Compute edge density by scanning the Y plane for sharp horizontal transitions.
 /// Returns fraction of sampled pixels that are sharp edges (0.0 to 1.0).
 fn compute_edge_density(y_src: &[u8], width: usize, height: usize, y_stride: usize) -> f32 {
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         compute_edge_density_dispatch(y_src, width, height, y_stride)
     }
-    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     {
         compute_edge_density_neon_dispatch(y_src, width, height, y_stride)
     }
-    #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
         compute_edge_density_scalar(y_src, width, height, y_stride)
     }
@@ -192,7 +192,7 @@ fn compute_edge_density_scalar(y_src: &[u8], width: usize, height: usize, y_stri
 }
 
 /// SIMD dispatch for edge density.
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[inline]
 fn compute_edge_density_dispatch(
     y_src: &[u8],
@@ -208,7 +208,7 @@ fn compute_edge_density_dispatch(
 }
 
 /// SSE2 edge density: Process 16 pixels at a time.
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn compute_edge_density_sse2(
     _token: X64V3Token,
@@ -284,7 +284,7 @@ fn compute_edge_density_sse2(
 // =============================================================================
 
 /// NEON dispatch for edge density.
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 #[inline]
 fn compute_edge_density_neon_dispatch(
     y_src: &[u8],
@@ -297,7 +297,7 @@ fn compute_edge_density_neon_dispatch(
 }
 
 /// NEON edge density: Process 16 pixels at a time.
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 #[arcane]
 fn compute_edge_density_neon(
     _token: NeonToken,

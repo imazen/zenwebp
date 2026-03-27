@@ -114,7 +114,7 @@ pub fn collect_histogram_with_offset(
     start_block: usize,
     end_block: usize,
 ) -> DctHistogram {
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::X64V3Token::summon() {
@@ -129,7 +129,7 @@ pub fn collect_histogram_with_offset(
             );
         }
     }
-    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::NeonToken::summon() {
@@ -188,7 +188,6 @@ fn collect_histogram_with_offset_scalar(
 /// Processes blocks in pairs (adjacent scan offsets differ by 4), using
 /// ftransform2_sse2 for double-block DCT. The DCT is the expensive part;
 /// histogram scatter is scalar since bin indices are data-dependent.
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[archmage::arcane]
 fn collect_histogram_with_offset_sse2(
     _token: archmage::X64V3Token,
@@ -246,7 +245,6 @@ fn collect_histogram_with_offset_sse2(
 }
 
 /// NEON histogram collection using ftransform2 for paired-block DCT.
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
 #[archmage::arcane]
 fn collect_histogram_with_offset_neon(
     _token: archmage::NeonToken,

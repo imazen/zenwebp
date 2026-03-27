@@ -92,20 +92,17 @@ pub(crate) fn fill_rgb_buffer_fancy<const BPP: usize>(
 ) {
     // Summon SIMD token once for entire YUV conversion
     let simd_token: SimdTokenType = {
-        #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+        #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
         {
             use archmage::SimdToken;
             archmage::X64V3Token::summon()
         }
-        #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+        #[cfg(target_arch = "aarch64")]
         {
             use archmage::SimdToken;
             archmage::NeonToken::summon()
         }
-        #[cfg(not(all(
-            feature = "simd",
-            any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")
-        )))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")))]
         {
             None
         }
@@ -194,7 +191,7 @@ fn fill_row_fancy_with_2_uv_rows<const BPP: usize>(
     simd_token: SimdTokenType,
 ) {
     // Use SIMD intrinsics for RGB (BPP=3) if available and row is wide enough
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     if BPP == 3
         && y_row.len() >= 17
         && let Some(token) = simd_token
@@ -205,7 +202,7 @@ fn fill_row_fancy_with_2_uv_rows<const BPP: usize>(
         return;
     }
 
-    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     if BPP == 3
         && y_row.len() >= 17
         && let Some(token) = simd_token
@@ -216,7 +213,7 @@ fn fill_row_fancy_with_2_uv_rows<const BPP: usize>(
         return;
     }
 
-    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    #[cfg(target_arch = "wasm32")]
     if BPP == 3 && y_row.len() >= 17 {
         if let Some(token) = simd_token {
             fill_row_fancy_with_2_uv_rows_wasm::<BPP>(
@@ -231,7 +228,7 @@ fn fill_row_fancy_with_2_uv_rows<const BPP: usize>(
     );
 }
 
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 fn fill_row_fancy_with_2_uv_rows_simd<const BPP: usize>(
     row_buffer: &mut [u8],
     y_row: &[u8],
@@ -331,7 +328,7 @@ fn fill_row_fancy_with_2_uv_rows_simd<const BPP: usize>(
     }
 }
 
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 fn fill_row_fancy_with_2_uv_rows_neon<const BPP: usize>(
     row_buffer: &mut [u8],
     y_row: &[u8],
@@ -428,7 +425,7 @@ fn fill_row_fancy_with_2_uv_rows_neon<const BPP: usize>(
     }
 }
 
-#[cfg(all(feature = "simd", target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 fn fill_row_fancy_with_2_uv_rows_wasm<const BPP: usize>(
     row_buffer: &mut [u8],
     y_row: &[u8],
@@ -525,7 +522,7 @@ fn fill_row_fancy_with_2_uv_rows_wasm<const BPP: usize>(
     }
 }
 
-#[cfg_attr(feature = "simd", archmage::autoversion(cfg(simd)))]
+#[archmage::autoversion(cfg(simd))]
 fn fill_row_fancy_with_2_uv_rows_scalar<const BPP: usize>(
     row_buffer: &mut [u8],
     y_row: &[u8],
@@ -593,7 +590,7 @@ fn fill_row_fancy_with_2_uv_rows_scalar<const BPP: usize>(
     }
 }
 
-#[cfg_attr(feature = "simd", archmage::autoversion(cfg(simd)))]
+#[archmage::autoversion(cfg(simd))]
 fn fill_row_fancy_with_1_uv_row<const BPP: usize>(
     row_buffer: &mut [u8],
     y_row: &[u8],
@@ -703,13 +700,13 @@ fn fill_rgba_row_simple<const BPP: usize>(
     rgba: &mut [u8],
 ) {
     // Use SIMD for RGB (BPP=3) if available and row is wide enough
-    #[cfg(all(feature = "simd", feature = "std", target_arch = "x86_64"))]
+    #[cfg(all(feature = "std", target_arch = "x86_64"))]
     if BPP == 3 && y_vec.len() >= 8 && is_x86_feature_detected!("sse2") {
         fill_rgba_row_simple_simd::<BPP>(y_vec, u_vec, v_vec, rgba);
         return;
     }
 
-    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     if BPP == 3 && y_vec.len() >= 16 {
         use archmage::SimdToken;
         if let Some(token) = archmage::NeonToken::summon() {
@@ -718,7 +715,7 @@ fn fill_rgba_row_simple<const BPP: usize>(
         }
     }
 
-    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    #[cfg(target_arch = "wasm32")]
     if BPP == 3 && y_vec.len() >= 16 {
         use archmage::SimdToken;
         if let Some(token) = archmage::Wasm128Token::summon() {
@@ -730,7 +727,7 @@ fn fill_rgba_row_simple<const BPP: usize>(
     fill_rgba_row_simple_scalar::<BPP>(y_vec, u_vec, v_vec, rgba);
 }
 
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 fn fill_rgba_row_simple_simd<const BPP: usize>(
     y_vec: &[u8],
     u_vec: &[u8],

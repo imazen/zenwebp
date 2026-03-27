@@ -7,11 +7,11 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 use archmage::intrinsics::x86_64 as simd_mem;
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 use archmage::{Sse2Token, arcane, rite};
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 use core::arch::x86_64::*;
 
 use super::types::{argb_alpha, argb_blue, argb_green, argb_red, make_argb, subsample_size};
@@ -94,7 +94,7 @@ impl PredictorMode {
 /// On x86/x86_64 with SIMD, processes 4 pixels at a time with SSE2,
 /// matching libwebp's SubtractGreenFromBlueAndRed_SSE2.
 pub fn apply_subtract_green(pixels: &mut [u32]) {
-    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         use archmage::SimdToken;
         if let Some(token) = Sse2Token::summon() {
@@ -121,7 +121,7 @@ fn apply_subtract_green_scalar(pixels: &mut [u32]) {
 }
 
 /// Entry point for SSE2 subtract green.
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
 fn apply_subtract_green_sse2_entry(_token: Sse2Token, pixels: &mut [u32]) {
     apply_subtract_green_sse2(_token, pixels);
@@ -132,7 +132,7 @@ fn apply_subtract_green_sse2_entry(_token: Sse2Token, pixels: &mut [u32]) {
 /// For each pixel (ARGB packed as u32):
 ///   R -= G (wrapping), B -= G (wrapping), A and G unchanged.
 /// Processes 4 pixels per SSE2 iteration.
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[rite]
 fn apply_subtract_green_sse2(_token: Sse2Token, pixels: &mut [u32]) {
     let len = pixels.len();
@@ -608,7 +608,7 @@ fn fast_slog2(v: u32) -> u64 {
 /// entries in bulk (16 at a time via pack+movemask), matching libwebp's
 /// CombinedShannonEntropy_SSE2.
 fn combined_shannon_entropy(x: &[u32; 256], y: &[u32; 256]) -> u64 {
-    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         use archmage::SimdToken;
         if let Some(token) = Sse2Token::summon() {
@@ -640,7 +640,7 @@ fn combined_shannon_entropy_scalar(x: &[u32; 256], y: &[u32; 256]) -> u64 {
 }
 
 /// Entry point for SSE2 combined Shannon entropy (adds #[target_feature]).
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
 fn combined_shannon_entropy_entry(_token: Sse2Token, x: &[u32; 256], y: &[u32; 256]) -> u64 {
     combined_shannon_entropy_sse2(_token, x, y)
@@ -652,7 +652,7 @@ fn combined_shannon_entropy_entry(_token: Sse2Token, x: &[u32; 256], y: &[u32; 2
 /// (i32->i16->i8), then uses cmpgt+movemask to create a bitmask of nonzero
 /// positions. Iterates only nonzero entries using trailing_zeros().
 /// For sparse histograms (90%+ zeros), this skips most entries entirely.
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[rite]
 fn combined_shannon_entropy_sse2(_token: Sse2Token, x: &[u32; 256], y: &[u32; 256]) -> u64 {
     let mut retval: u64 = 0;
@@ -1181,7 +1181,7 @@ fn apply_cross_color_tile(
     end_y: usize,
     m: &CrossColorMultipliers,
 ) {
-    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         use archmage::SimdToken;
         if let Some(token) = Sse2Token::summon() {
@@ -1229,7 +1229,7 @@ fn apply_cross_color_tile_scalar(
 /// Pre-shift multiplier to 16-bit for mulhi_epi16 (matching libwebp's CST_5b macro).
 /// The multiplier is treated as a signed 3.5 fixed-point value, pre-shifted so that
 /// mulhi_epi16 produces (color * multiplier) >> 5.
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[inline]
 fn cst_5b(x: u8) -> i16 {
     // Equivalent to C's: (((int16_t)((uint16_t)(X) << 8)) >> 5)
@@ -1237,7 +1237,7 @@ fn cst_5b(x: u8) -> i16 {
 }
 
 /// Entry point for SSE2 cross-color tile transform.
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
 fn apply_cross_color_tile_sse2_entry(
     _token: Sse2Token,
@@ -1258,7 +1258,7 @@ fn apply_cross_color_tile_sse2_entry(
 ///   new_R = R - (green_to_red * G_signed) >> 5
 ///   new_B = B - (green_to_blue * G_signed) >> 5 - (red_to_blue * R_orig_signed) >> 5
 /// A and G channels are preserved.
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[rite]
 fn apply_cross_color_tile_sse2(
     _token: Sse2Token,

@@ -64,32 +64,7 @@ impl<'a> super::Vp8Encoder<'a> {
         y_with_border
     }
 
-    // gets the luma blocks with the DCT applied to them
-    #[cfg(not(feature = "simd"))]
-    pub(super) fn get_luma_blocks_from_predicted_16x16(
-        &self,
-        predicted_y_block: &[u8; LUMA_BLOCK_SIZE],
-        mbx: usize,
-        mby: usize,
-    ) -> [i32; 16 * 16] {
-        self.get_luma_blocks_from_predicted_16x16_scalar(predicted_y_block, mbx, mby)
-    }
-
-    // Non-SIMD output parameter variant
-    #[cfg(not(feature = "simd"))]
-    pub(super) fn fill_luma_blocks_from_predicted_16x16(
-        &self,
-        predicted_y_block: &[u8; LUMA_BLOCK_SIZE],
-        mbx: usize,
-        mby: usize,
-        luma_blocks: &mut [i32; 16 * 16],
-    ) {
-        *luma_blocks =
-            self.get_luma_blocks_from_predicted_16x16_scalar(predicted_y_block, mbx, mby);
-    }
-
-    // SIMD version: uses fused residual+DCT for pairs of blocks
-    #[cfg(feature = "simd")]
+    // Uses fused residual+DCT for pairs of blocks
     pub(super) fn get_luma_blocks_from_predicted_16x16(
         &self,
         predicted_y_block: &[u8; LUMA_BLOCK_SIZE],
@@ -102,7 +77,6 @@ impl<'a> super::Vp8Encoder<'a> {
     }
 
     // SIMD version with output parameter: avoids redundant zero-init when caller reuses buffer
-    #[cfg(feature = "simd")]
     pub(super) fn fill_luma_blocks_from_predicted_16x16(
         &self,
         predicted_y_block: &[u8; LUMA_BLOCK_SIZE],
@@ -510,7 +484,6 @@ impl<'a> super::Vp8Encoder<'a> {
     }
 
     /// SIMD version: uses fused residual+DCT for pairs of blocks
-    #[cfg(feature = "simd")]
     pub(super) fn get_chroma_blocks_from_predicted(
         &self,
         predicted_chroma: &[u8; CHROMA_BLOCK_SIZE],
@@ -530,7 +503,6 @@ impl<'a> super::Vp8Encoder<'a> {
     }
 
     /// SIMD version with output parameter: avoids redundant zero-init when caller reuses buffer
-    #[cfg(feature = "simd")]
     pub(super) fn fill_chroma_blocks_from_predicted(
         &self,
         predicted_chroma: &[u8; CHROMA_BLOCK_SIZE],
@@ -569,62 +541,6 @@ impl<'a> super::Vp8Encoder<'a> {
                 chroma_blocks[out_base1 + i] = out16[16 + i] as i32;
             }
         }
-    }
-
-    /// Scalar fallback with output parameter
-    #[cfg(not(feature = "simd"))]
-    pub(super) fn fill_chroma_blocks_from_predicted(
-        &self,
-        predicted_chroma: &[u8; CHROMA_BLOCK_SIZE],
-        chroma_data: &[u8],
-        mbx: usize,
-        mby: usize,
-        out: &mut [i32; 16 * 4],
-    ) {
-        *out = self.get_chroma_blocks_from_predicted(predicted_chroma, chroma_data, mbx, mby);
-    }
-
-    /// Scalar fallback
-    #[cfg(not(feature = "simd"))]
-    pub(super) fn get_chroma_blocks_from_predicted(
-        &self,
-        predicted_chroma: &[u8; CHROMA_BLOCK_SIZE],
-        chroma_data: &[u8],
-        mbx: usize,
-        mby: usize,
-    ) -> [i32; 16 * 4] {
-        let mut chroma_blocks = [0i32; 16 * 4];
-        let stride = CHROMA_STRIDE;
-
-        let chroma_width = usize::from(self.macroblock_width * 8);
-
-        for block_y in 0..2 {
-            for block_x in 0..2 {
-                // the index on the chroma block
-                let block_index = block_y * 16 * 2 + block_x * 16;
-                let border_block_index = (block_y * 4 + 1) * stride + block_x * 4 + 1;
-                let chroma_data_block_index =
-                    (mby * 8 + block_y * 4) * chroma_width + mbx * 8 + block_x * 4;
-
-                let mut chroma_block = [0i32; 16];
-                for y in 0..4 {
-                    for x in 0..4 {
-                        let predicted_index = border_block_index + y * stride + x;
-                        let predicted_value = predicted_chroma[predicted_index];
-                        let actual_index = chroma_data_block_index + y * chroma_width + x;
-                        let actual_value = chroma_data[actual_index];
-                        chroma_block[y * 4 + x] =
-                            i32::from(actual_value) - i32::from(predicted_value);
-                    }
-                }
-
-                transform::dct4x4(&mut chroma_block);
-
-                chroma_blocks[block_index..][..16].copy_from_slice(&chroma_block);
-            }
-        }
-
-        chroma_blocks
     }
 
     fn get_chroma_block_coeffs(

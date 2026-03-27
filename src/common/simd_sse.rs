@@ -7,17 +7,16 @@
 
 #![allow(clippy::needless_range_loop)]
 
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 use archmage::intrinsics::x86_64 as simd_mem;
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 use archmage::{SimdToken, X64V3Token, arcane, rite};
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
 /// Compute Sum of Squared Errors between two 4x4 blocks
 ///
 /// Both blocks are stored in row-major order as 16 bytes.
-#[cfg(feature = "simd")]
 #[inline]
 pub fn sse4x4(a: &[u8; 16], b: &[u8; 16]) -> u32 {
     // Scalar fallback for non-x86 or when no SIMD available
@@ -37,7 +36,7 @@ pub fn sse4x4(a: &[u8; 16], b: &[u8; 16]) -> u32 {
 }
 
 /// Arcane entry point for sse4x4 dispatch (calls #[rite] inner)
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn sse4x4_entry(_token: X64V3Token, a: &[u8; 16], b: &[u8; 16]) -> u32 {
     sse4x4_sse2(_token, a, b)
@@ -56,7 +55,7 @@ pub fn sse4x4_scalar(a: &[u8; 16], b: &[u8; 16]) -> u32 {
 }
 
 /// SSE2 implementation of 4x4 block SSE
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 #[allow(dead_code)]
 pub(crate) fn sse4x4_sse2(_token: X64V3Token, a: &[u8; 16], b: &[u8; 16]) -> u32 {
@@ -95,7 +94,6 @@ pub(crate) fn sse4x4_sse2(_token: X64V3Token, a: &[u8; 16], b: &[u8; 16]) -> u32
 /// Compute SSE between a source block and a reconstructed block (pred + residual)
 ///
 /// This is used for RD scoring where we need SSE(src, pred + idct(quantized))
-#[cfg(feature = "simd")]
 #[inline]
 pub fn sse4x4_with_residual(src: &[u8; 16], pred: &[u8; 16], residual: &[i32; 16]) -> u32 {
     #[cfg(not(target_arch = "x86_64"))]
@@ -127,7 +125,7 @@ pub fn sse4x4_with_residual_scalar(src: &[u8; 16], pred: &[u8; 16], residual: &[
 }
 
 /// Arcane entry point for dispatch
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn sse4x4_with_residual_entry(
     _token: X64V3Token,
@@ -139,7 +137,7 @@ fn sse4x4_with_residual_entry(
 }
 
 /// SSE2 implementation of SSE with residual
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 #[allow(dead_code)]
 pub(crate) fn sse4x4_with_residual_sse2(
@@ -203,7 +201,6 @@ use super::prediction::{CHROMA_BLOCK_SIZE, CHROMA_STRIDE, LUMA_BLOCK_SIZE, LUMA_
 ///
 /// Source is in a contiguous row-major array with `src_width` stride.
 /// Prediction is in a bordered buffer with LUMA_STRIDE stride and 1-pixel border.
-#[cfg(feature = "simd")]
 #[inline]
 pub fn sse_16x16_luma(
     src_y: &[u8],
@@ -253,7 +250,7 @@ pub fn sse_16x16_luma_scalar(
 }
 
 /// Arcane entry point for dispatch
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn sse_16x16_luma_entry(
     _token: X64V3Token,
@@ -267,7 +264,7 @@ fn sse_16x16_luma_entry(
 }
 
 /// SSE2 implementation of 16x16 luma SSE
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 #[allow(dead_code)]
 pub(crate) fn sse_16x16_luma_sse2(
@@ -318,7 +315,6 @@ pub(crate) fn sse_16x16_luma_sse2(
 }
 
 /// Compute SSE for an 8x8 chroma block between source and bordered prediction buffer
-#[cfg(feature = "simd")]
 #[inline]
 pub fn sse_8x8_chroma(
     src_uv: &[u8],
@@ -368,7 +364,7 @@ pub fn sse_8x8_chroma_scalar(
 }
 
 /// SSE2 implementation of 8x8 chroma SSE
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn sse_8x8_chroma_entry(
     _token: X64V3Token,
@@ -381,7 +377,7 @@ fn sse_8x8_chroma_entry(
     sse_8x8_chroma_sse2(_token, src_uv, src_width, mbx, mby, pred)
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 #[allow(dead_code)]
 pub(crate) fn sse_8x8_chroma_sse2(
@@ -472,7 +468,6 @@ pub fn t_transform_scalar(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 }
 
 /// SIMD-accelerated TTransform using SSE2
-#[cfg(feature = "simd")]
 #[inline]
 pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     #[cfg(not(target_arch = "x86_64"))]
@@ -492,13 +487,13 @@ pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 
 /// SSE2 implementation of TTransform - Hadamard transform with weighted abs sum
 /// Horizontal pass done in SIMD, vertical pass extracted for simplicity
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn t_transform_entry(_token: X64V3Token, input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     t_transform_sse2(_token, input, stride, w)
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 #[allow(dead_code)]
 fn t_transform_sse2(_token: X64V3Token, input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
@@ -608,7 +603,6 @@ fn t_transform_sse2(_token: X64V3Token, input: &[u8], stride: usize, w: &[u16; 1
 
 /// TDisto for two 4x4 blocks - computes |TTransform(a) - TTransform(b)| >> 5
 /// Uses fused SIMD implementation processing both blocks in parallel
-#[cfg(feature = "simd")]
 #[inline]
 pub fn tdisto_4x4_fused(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     #[cfg(not(target_arch = "x86_64"))]
@@ -631,7 +625,7 @@ pub fn tdisto_4x4_fused(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32
 }
 
 /// Arcane entry point for dispatch
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn tdisto_4x4_fused_entry(
     _token: X64V3Token,
@@ -645,7 +639,7 @@ fn tdisto_4x4_fused_entry(
 
 /// SSE2 fused TDisto - processes both blocks in parallel like libwebp's TTransform_SSE2
 /// Based on libwebp's enc_sse2.c TTransform_SSE2 and Disto4x4_SSE2
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 pub(crate) fn tdisto_4x4_fused_sse2(
     _token: X64V3Token,
@@ -788,7 +782,6 @@ pub struct PrecomputedCoeffs {
 
 /// Precompute coefficient data using SIMD (levels, contexts, abs_levels)
 /// This is the hot path optimization from libwebp's GetResidualCost_SSE2.
-#[cfg(feature = "simd")]
 #[inline]
 pub fn precompute_coeffs(coeffs: &[i32; 16]) -> PrecomputedCoeffs {
     #[cfg(not(target_arch = "x86_64"))]
@@ -822,13 +815,13 @@ pub fn precompute_coeffs_scalar(coeffs: &[i32; 16]) -> PrecomputedCoeffs {
 
 /// SSE2 implementation of coefficient precomputation
 /// Matches libwebp's GetResidualCost_SSE2 precomputation block
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn precompute_coeffs_entry(_token: X64V3Token, coeffs: &[i32; 16]) -> PrecomputedCoeffs {
     precompute_coeffs_sse2(_token, coeffs)
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 #[allow(dead_code)]
 fn precompute_coeffs_sse2(_token: X64V3Token, coeffs: &[i32; 16]) -> PrecomputedCoeffs {
@@ -883,7 +876,6 @@ fn precompute_coeffs_sse2(_token: X64V3Token, coeffs: &[i32; 16]) -> Precomputed
 
 /// Find the last non-zero coefficient using SIMD
 /// Returns -1 if all coefficients are zero
-#[cfg(feature = "simd")]
 #[inline]
 pub fn find_last_nonzero(coeffs: &[i32; 16], first: usize) -> i32 {
     #[cfg(not(target_arch = "x86_64"))]
@@ -915,13 +907,13 @@ pub fn find_last_nonzero_scalar(coeffs: &[i32; 16], first: usize) -> i32 {
 
 /// SSE2 implementation of find_last_nonzero
 /// Uses SIMD comparison and bitmask to find last non-zero
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn find_last_nonzero_entry(_token: X64V3Token, coeffs: &[i32; 16], first: usize) -> i32 {
     find_last_nonzero_sse2(_token, coeffs, first)
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 #[allow(dead_code)]
 fn find_last_nonzero_sse2(_token: X64V3Token, coeffs: &[i32; 16], first: usize) -> i32 {
@@ -977,7 +969,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "simd")]
     fn test_sse4x4_simd_matches_scalar() {
         let a: [u8; 16] = [
             10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160,
@@ -1000,7 +991,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "simd")]
     fn test_sse4x4_with_residual_simd_matches_scalar() {
         let src: [u8; 16] = [
             100, 110, 120, 130, 90, 80, 70, 60, 50, 40, 30, 20, 10, 5, 3, 1,
@@ -1041,7 +1031,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "simd")]
     fn test_sse_16x16_luma_simd_matches_scalar() {
         let src_width = 32;
         let mut src_y = vec![0u8; 32 * 32];
@@ -1087,7 +1076,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "simd")]
     fn test_sse_8x8_chroma_simd_matches_scalar() {
         let src_width = 16;
         let mut src_uv = vec![0u8; 16 * 16];
@@ -1149,7 +1137,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "simd")]
     fn test_t_transform_simd_matches_scalar() {
         // Create a varied 4x4 block
         let mut input = [0u8; 64];
@@ -1172,7 +1159,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "simd")]
     fn test_t_transform_simd_matches_scalar_varied() {
         // Test with different strides and values
         for stride in [4, 8, 16, 32] {
@@ -1196,7 +1182,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "simd")]
     fn test_tdisto_4x4_fused_matches_scalar() {
         // Use symmetric weights like VP8_WEIGHT_Y (required for vertical-first approach)
         // Non-symmetric weights would give different results since we do vertical-first
@@ -1265,7 +1250,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "simd")]
     fn test_precompute_coeffs_simd_matches_scalar() {
         let coeffs: [i32; 16] = [0, -1, 2, -3, 4, -5, 100, -200, 0, 0, 67, 68, 1, 2, -50, 30];
 
@@ -1317,7 +1301,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "simd")]
     fn test_find_last_nonzero_simd_matches_scalar() {
         // Test various patterns
         let test_cases: Vec<[i32; 16]> = vec![

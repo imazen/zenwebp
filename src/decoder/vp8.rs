@@ -20,7 +20,7 @@ use alloc::vec::Vec;
 use core::array;
 use core::default::Default;
 
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 use archmage::SimdToken;
 
 use super::api::{DecodeError, UpsamplingMethod};
@@ -827,18 +827,10 @@ impl<'a> Vp8Decoder<'a> {
         // Frame buffers don't need FILTER_PADDING — padding is only needed on
         // cache buffers where loop filtering operates. Frame buffers receive the
         // final output from output_row_from_cache via copy_from_slice within bounds.
-        self.frame.ybuf = vec![
-            0u8;
-            usize::from(self.mbwidth) * 16 * usize::from(self.mbheight) * 16
-        ];
-        self.frame.ubuf = vec![
-            0u8;
-            usize::from(self.mbwidth) * 8 * usize::from(self.mbheight) * 8
-        ];
-        self.frame.vbuf = vec![
-            0u8;
-            usize::from(self.mbwidth) * 8 * usize::from(self.mbheight) * 8
-        ];
+        self.frame.ybuf =
+            vec![0u8; usize::from(self.mbwidth) * 16 * usize::from(self.mbheight) * 16];
+        self.frame.ubuf = vec![0u8; usize::from(self.mbwidth) * 8 * usize::from(self.mbheight) * 8];
+        self.frame.vbuf = vec![0u8; usize::from(self.mbwidth) * 8 * usize::from(self.mbheight) * 8];
 
         self.top_border_y = vec![127u8; self.frame.width as usize + 4 + 16];
         self.left_border_y = vec![129u8; 1 + 16];
@@ -1042,8 +1034,10 @@ impl<'a> Vp8Decoder<'a> {
                             }
                         } else {
                             // Verify the block is truly zero (debug assertion)
-                            debug_assert!(rb.iter().all(|&c| c == 0),
-                                "Block {i} has non-zero coeffs but non_zero_blocks bit not set");
+                            debug_assert!(
+                                rb.iter().all(|&c| c == 0),
+                                "Block {i} has non-zero coeffs but non_zero_blocks bit not set"
+                            );
                         }
                     }
                 }
@@ -1071,8 +1065,10 @@ impl<'a> Vp8Decoder<'a> {
                                 idct_add_residue_and_clear(ws, rb, y0, x0, stride);
                             }
                         } else {
-                            debug_assert!(rb.iter().all(|&c| c == 0),
-                                "Block {i} has non-zero coeffs but non_zero_blocks bit not set");
+                            debug_assert!(
+                                rb.iter().all(|&c| c == 0),
+                                "Block {i} has non-zero coeffs but non_zero_blocks bit not set"
+                            );
                         }
                     }
                 }
@@ -1153,9 +1149,7 @@ impl<'a> Vp8Decoder<'a> {
                             .try_into()
                             .unwrap();
                         if let Some(token) = simd_token {
-                            idct_add_residue_and_clear_with_token(
-                                token, uws, urb, y0, x0, stride,
-                            );
+                            idct_add_residue_and_clear_with_token(token, uws, urb, y0, x0, stride);
                         } else {
                             idct_add_residue_and_clear(uws, urb, y0, x0, stride);
                         }
@@ -1166,9 +1160,7 @@ impl<'a> Vp8Decoder<'a> {
                             .try_into()
                             .unwrap();
                         if let Some(token) = simd_token {
-                            idct_add_residue_and_clear_with_token(
-                                token, vws, vrb, y0, x0, stride,
-                            );
+                            idct_add_residue_and_clear_with_token(token, vws, vrb, y0, x0, stride);
                         } else {
                             idct_add_residue_and_clear(vws, vrb, y0, x0, stride);
                         }
@@ -1212,9 +1204,18 @@ impl<'a> Vp8Decoder<'a> {
         let sindex = mb.segmentid as usize;
 
         // Extract quantizers as 2-element arrays [dc, ac] — indexed by (n > 0) like libwebp
-        let y2_dq = [i32::from(self.segment[sindex].y2dc), i32::from(self.segment[sindex].y2ac)];
-        let y_dq = [i32::from(self.segment[sindex].ydc), i32::from(self.segment[sindex].yac)];
-        let uv_dq = [i32::from(self.segment[sindex].uvdc), i32::from(self.segment[sindex].uvac)];
+        let y2_dq = [
+            i32::from(self.segment[sindex].y2dc),
+            i32::from(self.segment[sindex].y2ac),
+        ];
+        let y_dq = [
+            i32::from(self.segment[sindex].ydc),
+            i32::from(self.segment[sindex].yac),
+        ];
+        let uv_dq = [
+            i32::from(self.segment[sindex].uvdc),
+            i32::from(self.segment[sindex].uvac),
+        ];
 
         // Split borrows: create active reader from partition fields directly
         // This avoids the per-block PartitionReader creation overhead (~7.7M instructions/decode)
@@ -1283,8 +1284,7 @@ impl<'a> Vp8Decoder<'a> {
                 let i = x + y * 4;
                 let complexity = top.complexity[x + 1] + left_ctx;
 
-                let block: &mut [i32; 16] =
-                    (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
+                let block: &mut [i32; 16] = (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
                 let n = read_coefficients(
                     &mut reader,
                     block,
@@ -1380,7 +1380,8 @@ impl<'a> Vp8Decoder<'a> {
         // Reuse persistent buffer to avoid per-row heap allocation.
         self.mb_filter_params.clear();
         if self.mb_filter_params.capacity() < mbwidth {
-            self.mb_filter_params.reserve(mbwidth - self.mb_filter_params.capacity());
+            self.mb_filter_params
+                .reserve(mbwidth - self.mb_filter_params.capacity());
         }
         for mbx in 0..mbwidth {
             let mb = self.macroblocks[mby * mbwidth + mbx];
@@ -1392,14 +1393,15 @@ impl<'a> Vp8Decoder<'a> {
             let do_subblock_filtering =
                 mb.luma_mode == LumaMode::B || (!mb.coeffs_skipped && mb.non_zero_dct);
 
-            self.mb_filter_params.push(loop_filter_dispatch::MbFilterParams {
-                filter_level,
-                interior_limit,
-                hev_threshold,
-                mbedge_limit,
-                sub_bedge_limit,
-                do_subblock_filtering,
-            });
+            self.mb_filter_params
+                .push(loop_filter_dispatch::MbFilterParams {
+                    filter_level,
+                    interior_limit,
+                    hev_threshold,
+                    mbedge_limit,
+                    sub_bedge_limit,
+                    do_subblock_filtering,
+                });
         }
 
         // Take ownership of mb_params to allow split borrows with cache buffers
@@ -1408,12 +1410,12 @@ impl<'a> Vp8Decoder<'a> {
         // Use the single #[arcane] entry point when SIMD is available.
         // All #[rite] filter functions inline into this one target_feature region,
         // eliminating per-call dispatch overhead (~7.6M instructions saved).
-        #[cfg(all(feature = "simd", any(
+        #[cfg(any(
             target_arch = "x86_64",
             target_arch = "x86",
             target_arch = "aarch64",
             target_arch = "wasm32",
-        )))]
+        ))]
         if let Some(token) = simd_token {
             loop_filter_dispatch::filter_row_simd(
                 token,
@@ -1448,18 +1450,31 @@ impl<'a> Vp8Decoder<'a> {
             if mbx > 0 {
                 if self.frame.filter_type {
                     simple_filter_horizontal_16_rows(
-                        &mut self.cache_y[..], extra_y_rows, mbx * 16,
-                        cache_y_stride, mbedge_limit,
+                        &mut self.cache_y[..],
+                        extra_y_rows,
+                        mbx * 16,
+                        cache_y_stride,
+                        mbedge_limit,
                     );
                 } else {
                     normal_filter_horizontal_mb_16_rows(
-                        &mut self.cache_y[..], extra_y_rows, mbx * 16,
-                        cache_y_stride, hev_threshold, interior_limit, mbedge_limit,
+                        &mut self.cache_y[..],
+                        extra_y_rows,
+                        mbx * 16,
+                        cache_y_stride,
+                        hev_threshold,
+                        interior_limit,
+                        mbedge_limit,
                     );
                     normal_filter_horizontal_uv_mb(
-                        &mut self.cache_u[..], &mut self.cache_v[..],
-                        extra_uv_rows, mbx * 8, cache_uv_stride,
-                        hev_threshold, interior_limit, mbedge_limit,
+                        &mut self.cache_u[..],
+                        &mut self.cache_v[..],
+                        extra_uv_rows,
+                        mbx * 8,
+                        cache_uv_stride,
+                        hev_threshold,
+                        interior_limit,
+                        mbedge_limit,
                     );
                 }
             }
@@ -1468,21 +1483,34 @@ impl<'a> Vp8Decoder<'a> {
                 if self.frame.filter_type {
                     for x in (4usize..16 - 1).step_by(4) {
                         simple_filter_horizontal_16_rows(
-                            &mut self.cache_y[..], extra_y_rows, mbx * 16 + x,
-                            cache_y_stride, sub_bedge_limit,
+                            &mut self.cache_y[..],
+                            extra_y_rows,
+                            mbx * 16 + x,
+                            cache_y_stride,
+                            sub_bedge_limit,
                         );
                     }
                 } else {
                     for x in (4usize..16 - 3).step_by(4) {
                         normal_filter_horizontal_sub_16_rows(
-                            &mut self.cache_y[..], extra_y_rows, mbx * 16 + x,
-                            cache_y_stride, hev_threshold, interior_limit, sub_bedge_limit,
+                            &mut self.cache_y[..],
+                            extra_y_rows,
+                            mbx * 16 + x,
+                            cache_y_stride,
+                            hev_threshold,
+                            interior_limit,
+                            sub_bedge_limit,
                         );
                     }
                     normal_filter_horizontal_uv_sub(
-                        &mut self.cache_u[..], &mut self.cache_v[..],
-                        extra_uv_rows, mbx * 8 + 4, cache_uv_stride,
-                        hev_threshold, interior_limit, sub_bedge_limit,
+                        &mut self.cache_u[..],
+                        &mut self.cache_v[..],
+                        extra_uv_rows,
+                        mbx * 8 + 4,
+                        cache_uv_stride,
+                        hev_threshold,
+                        interior_limit,
+                        sub_bedge_limit,
                     );
                 }
             }
@@ -1490,18 +1518,31 @@ impl<'a> Vp8Decoder<'a> {
             if mby > 0 {
                 if self.frame.filter_type {
                     simple_filter_vertical_16_cols(
-                        &mut self.cache_y[..], extra_y_rows, mbx * 16,
-                        cache_y_stride, mbedge_limit,
+                        &mut self.cache_y[..],
+                        extra_y_rows,
+                        mbx * 16,
+                        cache_y_stride,
+                        mbedge_limit,
                     );
                 } else {
                     normal_filter_vertical_mb_16_cols(
-                        &mut self.cache_y[..], extra_y_rows, mbx * 16,
-                        cache_y_stride, hev_threshold, interior_limit, mbedge_limit,
+                        &mut self.cache_y[..],
+                        extra_y_rows,
+                        mbx * 16,
+                        cache_y_stride,
+                        hev_threshold,
+                        interior_limit,
+                        mbedge_limit,
                     );
                     normal_filter_vertical_uv_mb(
-                        &mut self.cache_u[..], &mut self.cache_v[..],
-                        extra_uv_rows, mbx * 8, cache_uv_stride,
-                        hev_threshold, interior_limit, mbedge_limit,
+                        &mut self.cache_u[..],
+                        &mut self.cache_v[..],
+                        extra_uv_rows,
+                        mbx * 8,
+                        cache_uv_stride,
+                        hev_threshold,
+                        interior_limit,
+                        mbedge_limit,
                     );
                 }
             }
@@ -1510,21 +1551,34 @@ impl<'a> Vp8Decoder<'a> {
                 if self.frame.filter_type {
                     for y in (4usize..16 - 1).step_by(4) {
                         simple_filter_vertical_16_cols(
-                            &mut self.cache_y[..], extra_y_rows + y, mbx * 16,
-                            cache_y_stride, sub_bedge_limit,
+                            &mut self.cache_y[..],
+                            extra_y_rows + y,
+                            mbx * 16,
+                            cache_y_stride,
+                            sub_bedge_limit,
                         );
                     }
                 } else {
                     for y in (4usize..16 - 3).step_by(4) {
                         normal_filter_vertical_sub_16_cols(
-                            &mut self.cache_y[..], extra_y_rows + y, mbx * 16,
-                            cache_y_stride, hev_threshold, interior_limit, sub_bedge_limit,
+                            &mut self.cache_y[..],
+                            extra_y_rows + y,
+                            mbx * 16,
+                            cache_y_stride,
+                            hev_threshold,
+                            interior_limit,
+                            sub_bedge_limit,
                         );
                     }
                     normal_filter_vertical_uv_sub(
-                        &mut self.cache_u[..], &mut self.cache_v[..],
-                        extra_uv_rows + 4, mbx * 8, cache_uv_stride,
-                        hev_threshold, interior_limit, sub_bedge_limit,
+                        &mut self.cache_u[..],
+                        &mut self.cache_v[..],
+                        extra_uv_rows + 4,
+                        mbx * 8,
+                        cache_uv_stride,
+                        hev_threshold,
+                        interior_limit,
+                        sub_bedge_limit,
                     );
                 }
             }
@@ -1748,11 +1802,11 @@ impl<'a> Vp8Decoder<'a> {
 
         // Summon SIMD token once for the entire decode
         let simd_token: SimdTokenType = {
-            #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+            #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
             {
                 archmage::X64V3Token::summon()
             }
-            #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
             {
                 None
             }
@@ -1856,18 +1910,17 @@ impl<'a> Vp8Decoder<'a> {
 
         // Summon SIMD token once for the entire decode, avoiding ~312K per-call atomic loads
         let simd_token: SimdTokenType = {
-            #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+            #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
             {
                 archmage::X64V3Token::summon()
             }
-            #[cfg(not(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86"))))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
             {
                 None
             }
         };
 
-        self.decode_mb_rows(simd_token)
-            .map_err(DecodeError::from)?;
+        self.decode_mb_rows(simd_token).map_err(DecodeError::from)?;
 
         Ok(self.frame)
     }

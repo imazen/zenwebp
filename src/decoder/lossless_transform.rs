@@ -31,7 +31,7 @@ pub(crate) fn apply_predictor_transform(
     predictor_data: &[u8],
 ) -> Result<(), InternalDecodeError> {
     // SSE2 fast path: single #[arcane] entry with #[rite] inner functions
-    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::Sse2Token::summon() {
@@ -386,7 +386,7 @@ pub(crate) fn apply_color_transform(
     transform_data: &[u8],
 ) {
     // SSE2 fast path
-    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::Sse2Token::summon() {
@@ -443,13 +443,11 @@ fn apply_color_transform_scalar(
 
 pub(crate) fn apply_subtract_green_transform(image_data: &mut [u8]) {
     // SSE2 fast path
-    #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::Sse2Token::summon() {
-            super::lossless_transform_simd::add_green_to_blue_and_red_sse2_entry(
-                token, image_data,
-            );
+            super::lossless_transform_simd::add_green_to_blue_and_red_sse2_entry(token, image_data);
             return;
         }
     }

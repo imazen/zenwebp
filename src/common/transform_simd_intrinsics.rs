@@ -1072,7 +1072,7 @@ pub(crate) fn idct_add_residue_inplace(
             return;
         }
     }
-    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     {
         use archmage::{NeonToken, SimdToken};
         if let Some(token) = NeonToken::summon() {
@@ -1129,14 +1129,14 @@ pub(crate) fn ftransform_from_u8_4x4(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 1
 #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
 #[inline(always)]
 pub(crate) fn ftransform_from_u8_4x4(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
-    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     {
         use archmage::{NeonToken, SimdToken};
         if let Some(token) = NeonToken::summon() {
             return super::transform_aarch64::ftransform_from_u8_4x4_neon(token, src, ref_);
         }
     }
-    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+    #[cfg(target_arch = "wasm32")]
     {
         use archmage::{SimdToken, Wasm128Token};
         if let Some(token) = Wasm128Token::summon() {

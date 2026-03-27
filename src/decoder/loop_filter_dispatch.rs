@@ -283,7 +283,6 @@ pub(crate) fn normal_filter_vertical_uv_sub(
 ///
 /// All `#[rite]` filter functions inline into this one target_feature region,
 /// eliminating per-call dispatch overhead.
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[archmage::arcane]
 pub(crate) fn filter_row_simd(
     _token: archmage::X64V3Token,
@@ -315,16 +314,34 @@ pub(crate) fn filter_row_simd(
         if mbx > 0 {
             if filter_type {
                 super::loop_filter_avx2::simple_h_filter16(
-                    _token, cache_y, mbx * 16, extra_y_rows, cache_y_stride, mbedge_limit_i,
+                    _token,
+                    cache_y,
+                    mbx * 16,
+                    extra_y_rows,
+                    cache_y_stride,
+                    mbedge_limit_i,
                 );
             } else {
                 super::loop_filter_avx2::normal_h_filter16_edge(
-                    _token, cache_y, mbx * 16, extra_y_rows, cache_y_stride,
-                    hev_i, interior_i, mbedge_limit_i,
+                    _token,
+                    cache_y,
+                    mbx * 16,
+                    extra_y_rows,
+                    cache_y_stride,
+                    hev_i,
+                    interior_i,
+                    mbedge_limit_i,
                 );
                 super::loop_filter_avx2::normal_h_filter_uv_edge(
-                    _token, cache_u, cache_v, mbx * 8, extra_uv_rows, cache_uv_stride,
-                    hev_i, interior_i, mbedge_limit_i,
+                    _token,
+                    cache_u,
+                    cache_v,
+                    mbx * 8,
+                    extra_uv_rows,
+                    cache_uv_stride,
+                    hev_i,
+                    interior_i,
+                    mbedge_limit_i,
                 );
             }
         }
@@ -334,19 +351,36 @@ pub(crate) fn filter_row_simd(
             if filter_type {
                 for x in (4usize..16 - 1).step_by(4) {
                     super::loop_filter_avx2::simple_h_filter16(
-                        _token, cache_y, mbx * 16 + x, extra_y_rows, cache_y_stride,
+                        _token,
+                        cache_y,
+                        mbx * 16 + x,
+                        extra_y_rows,
+                        cache_y_stride,
                         sub_bedge_limit_i,
                     );
                 }
             } else {
                 // Use fused 3-edge horizontal filter for luma subblocks
                 super::loop_filter_avx2::normal_h_filter16i(
-                    _token, cache_y, mbx * 16, extra_y_rows, cache_y_stride,
-                    hev_i, interior_i, sub_bedge_limit_i,
+                    _token,
+                    cache_y,
+                    mbx * 16,
+                    extra_y_rows,
+                    cache_y_stride,
+                    hev_i,
+                    interior_i,
+                    sub_bedge_limit_i,
                 );
                 super::loop_filter_avx2::normal_h_filter_uv_inner(
-                    _token, cache_u, cache_v, mbx * 8 + 4, extra_uv_rows, cache_uv_stride,
-                    hev_i, interior_i, sub_bedge_limit_i,
+                    _token,
+                    cache_u,
+                    cache_v,
+                    mbx * 8 + 4,
+                    extra_uv_rows,
+                    cache_uv_stride,
+                    hev_i,
+                    interior_i,
+                    sub_bedge_limit_i,
                 );
             }
         }
@@ -356,18 +390,33 @@ pub(crate) fn filter_row_simd(
             if filter_type {
                 let point = extra_y_rows * cache_y_stride + mbx * 16;
                 super::loop_filter_avx2::simple_v_filter16(
-                    _token, cache_y, point, cache_y_stride, mbedge_limit_i,
+                    _token,
+                    cache_y,
+                    point,
+                    cache_y_stride,
+                    mbedge_limit_i,
                 );
             } else {
                 let point_y = extra_y_rows * cache_y_stride + mbx * 16;
                 super::loop_filter_avx2::normal_v_filter16_edge(
-                    _token, cache_y, point_y, cache_y_stride,
-                    hev_i, interior_i, mbedge_limit_i,
+                    _token,
+                    cache_y,
+                    point_y,
+                    cache_y_stride,
+                    hev_i,
+                    interior_i,
+                    mbedge_limit_i,
                 );
                 let point_uv = extra_uv_rows * cache_uv_stride + mbx * 8;
                 super::loop_filter_avx2::normal_v_filter_uv_edge(
-                    _token, cache_u, cache_v, point_uv, cache_uv_stride,
-                    hev_i, interior_i, mbedge_limit_i,
+                    _token,
+                    cache_u,
+                    cache_v,
+                    point_uv,
+                    cache_uv_stride,
+                    hev_i,
+                    interior_i,
+                    mbedge_limit_i,
                 );
             }
         }
@@ -378,21 +427,36 @@ pub(crate) fn filter_row_simd(
                 for y in (4usize..16 - 1).step_by(4) {
                     let point = (extra_y_rows + y) * cache_y_stride + mbx * 16;
                     super::loop_filter_avx2::simple_v_filter16(
-                        _token, cache_y, point, cache_y_stride, sub_bedge_limit_i,
+                        _token,
+                        cache_y,
+                        point,
+                        cache_y_stride,
+                        sub_bedge_limit_i,
                     );
                 }
             } else {
                 for y in (4usize..16 - 3).step_by(4) {
                     let point = (extra_y_rows + y) * cache_y_stride + mbx * 16;
                     super::loop_filter_avx2::normal_v_filter16_inner(
-                        _token, cache_y, point, cache_y_stride,
-                        hev_i, interior_i, sub_bedge_limit_i,
+                        _token,
+                        cache_y,
+                        point,
+                        cache_y_stride,
+                        hev_i,
+                        interior_i,
+                        sub_bedge_limit_i,
                     );
                 }
                 let point_uv = (extra_uv_rows + 4) * cache_uv_stride + mbx * 8;
                 super::loop_filter_avx2::normal_v_filter_uv_inner(
-                    _token, cache_u, cache_v, point_uv, cache_uv_stride,
-                    hev_i, interior_i, sub_bedge_limit_i,
+                    _token,
+                    cache_u,
+                    cache_v,
+                    point_uv,
+                    cache_uv_stride,
+                    hev_i,
+                    interior_i,
+                    sub_bedge_limit_i,
                 );
             }
         }
@@ -400,7 +464,6 @@ pub(crate) fn filter_row_simd(
 }
 
 /// NEON filter row entry point.
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
 #[archmage::arcane]
 pub(crate) fn filter_row_simd(
     _token: archmage::NeonToken,
@@ -431,16 +494,34 @@ pub(crate) fn filter_row_simd(
         if mbx > 0 {
             if filter_type {
                 super::loop_filter_neon::simple_h_filter16_neon(
-                    _token, cache_y, mbx * 16, extra_y_rows, cache_y_stride, mbedge_limit_i,
+                    _token,
+                    cache_y,
+                    mbx * 16,
+                    extra_y_rows,
+                    cache_y_stride,
+                    mbedge_limit_i,
                 );
             } else {
                 super::loop_filter_neon::normal_h_filter16_edge_neon(
-                    _token, cache_y, mbx * 16, extra_y_rows, cache_y_stride,
-                    hev_i, interior_i, mbedge_limit_i,
+                    _token,
+                    cache_y,
+                    mbx * 16,
+                    extra_y_rows,
+                    cache_y_stride,
+                    hev_i,
+                    interior_i,
+                    mbedge_limit_i,
                 );
                 super::loop_filter_neon::normal_h_filter_uv_edge_neon(
-                    _token, cache_u, cache_v, mbx * 8, extra_uv_rows, cache_uv_stride,
-                    hev_i, interior_i, mbedge_limit_i,
+                    _token,
+                    cache_u,
+                    cache_v,
+                    mbx * 8,
+                    extra_uv_rows,
+                    cache_uv_stride,
+                    hev_i,
+                    interior_i,
+                    mbedge_limit_i,
                 );
             }
         }
@@ -449,20 +530,37 @@ pub(crate) fn filter_row_simd(
             if filter_type {
                 for x in (4usize..16 - 1).step_by(4) {
                     super::loop_filter_neon::simple_h_filter16_neon(
-                        _token, cache_y, mbx * 16 + x, extra_y_rows, cache_y_stride,
+                        _token,
+                        cache_y,
+                        mbx * 16 + x,
+                        extra_y_rows,
+                        cache_y_stride,
                         sub_bedge_limit_i,
                     );
                 }
             } else {
                 for x in (4usize..16 - 3).step_by(4) {
                     super::loop_filter_neon::normal_h_filter16_inner_neon(
-                        _token, cache_y, mbx * 16 + x, extra_y_rows, cache_y_stride,
-                        hev_i, interior_i, sub_bedge_limit_i,
+                        _token,
+                        cache_y,
+                        mbx * 16 + x,
+                        extra_y_rows,
+                        cache_y_stride,
+                        hev_i,
+                        interior_i,
+                        sub_bedge_limit_i,
                     );
                 }
                 super::loop_filter_neon::normal_h_filter_uv_inner_neon(
-                    _token, cache_u, cache_v, mbx * 8 + 4, extra_uv_rows, cache_uv_stride,
-                    hev_i, interior_i, sub_bedge_limit_i,
+                    _token,
+                    cache_u,
+                    cache_v,
+                    mbx * 8 + 4,
+                    extra_uv_rows,
+                    cache_uv_stride,
+                    hev_i,
+                    interior_i,
+                    sub_bedge_limit_i,
                 );
             }
         }
@@ -471,18 +569,33 @@ pub(crate) fn filter_row_simd(
             if filter_type {
                 let point = extra_y_rows * cache_y_stride + mbx * 16;
                 super::loop_filter_neon::simple_v_filter16_neon(
-                    _token, cache_y, point, cache_y_stride, mbedge_limit_i,
+                    _token,
+                    cache_y,
+                    point,
+                    cache_y_stride,
+                    mbedge_limit_i,
                 );
             } else {
                 let point_y = extra_y_rows * cache_y_stride + mbx * 16;
                 super::loop_filter_neon::normal_v_filter16_edge_neon(
-                    _token, cache_y, point_y, cache_y_stride,
-                    hev_i, interior_i, mbedge_limit_i,
+                    _token,
+                    cache_y,
+                    point_y,
+                    cache_y_stride,
+                    hev_i,
+                    interior_i,
+                    mbedge_limit_i,
                 );
                 let point_uv = extra_uv_rows * cache_uv_stride + mbx * 8;
                 super::loop_filter_neon::normal_v_filter_uv_edge_neon(
-                    _token, cache_u, cache_v, point_uv, cache_uv_stride,
-                    hev_i, interior_i, mbedge_limit_i,
+                    _token,
+                    cache_u,
+                    cache_v,
+                    point_uv,
+                    cache_uv_stride,
+                    hev_i,
+                    interior_i,
+                    mbedge_limit_i,
                 );
             }
         }
@@ -492,21 +605,36 @@ pub(crate) fn filter_row_simd(
                 for y in (4usize..16 - 1).step_by(4) {
                     let point = (extra_y_rows + y) * cache_y_stride + mbx * 16;
                     super::loop_filter_neon::simple_v_filter16_neon(
-                        _token, cache_y, point, cache_y_stride, sub_bedge_limit_i,
+                        _token,
+                        cache_y,
+                        point,
+                        cache_y_stride,
+                        sub_bedge_limit_i,
                     );
                 }
             } else {
                 for y in (4usize..16 - 3).step_by(4) {
                     let point = (extra_y_rows + y) * cache_y_stride + mbx * 16;
                     super::loop_filter_neon::normal_v_filter16_inner_neon(
-                        _token, cache_y, point, cache_y_stride,
-                        hev_i, interior_i, sub_bedge_limit_i,
+                        _token,
+                        cache_y,
+                        point,
+                        cache_y_stride,
+                        hev_i,
+                        interior_i,
+                        sub_bedge_limit_i,
                     );
                 }
                 let point_uv = (extra_uv_rows + 4) * cache_uv_stride + mbx * 8;
                 super::loop_filter_neon::normal_v_filter_uv_inner_neon(
-                    _token, cache_u, cache_v, point_uv, cache_uv_stride,
-                    hev_i, interior_i, sub_bedge_limit_i,
+                    _token,
+                    cache_u,
+                    cache_v,
+                    point_uv,
+                    cache_uv_stride,
+                    hev_i,
+                    interior_i,
+                    sub_bedge_limit_i,
                 );
             }
         }
@@ -514,7 +642,6 @@ pub(crate) fn filter_row_simd(
 }
 
 /// WASM SIMD128 filter row entry point.
-#[cfg(all(feature = "simd", target_arch = "wasm32"))]
 #[archmage::arcane]
 pub(crate) fn filter_row_simd(
     _token: archmage::Wasm128Token,
@@ -545,16 +672,34 @@ pub(crate) fn filter_row_simd(
         if mbx > 0 {
             if filter_type {
                 super::loop_filter_wasm::simple_h_filter16_wasm(
-                    _token, cache_y, mbx * 16, extra_y_rows, cache_y_stride, mbedge_limit_i,
+                    _token,
+                    cache_y,
+                    mbx * 16,
+                    extra_y_rows,
+                    cache_y_stride,
+                    mbedge_limit_i,
                 );
             } else {
                 super::loop_filter_wasm::normal_h_filter16_edge_wasm(
-                    _token, cache_y, mbx * 16, extra_y_rows, cache_y_stride,
-                    hev_i, interior_i, mbedge_limit_i,
+                    _token,
+                    cache_y,
+                    mbx * 16,
+                    extra_y_rows,
+                    cache_y_stride,
+                    hev_i,
+                    interior_i,
+                    mbedge_limit_i,
                 );
                 super::loop_filter_wasm::normal_h_filter_uv_edge_wasm(
-                    _token, cache_u, cache_v, mbx * 8, extra_uv_rows, cache_uv_stride,
-                    hev_i, interior_i, mbedge_limit_i,
+                    _token,
+                    cache_u,
+                    cache_v,
+                    mbx * 8,
+                    extra_uv_rows,
+                    cache_uv_stride,
+                    hev_i,
+                    interior_i,
+                    mbedge_limit_i,
                 );
             }
         }
@@ -563,20 +708,37 @@ pub(crate) fn filter_row_simd(
             if filter_type {
                 for x in (4usize..16 - 1).step_by(4) {
                     super::loop_filter_wasm::simple_h_filter16_wasm(
-                        _token, cache_y, mbx * 16 + x, extra_y_rows, cache_y_stride,
+                        _token,
+                        cache_y,
+                        mbx * 16 + x,
+                        extra_y_rows,
+                        cache_y_stride,
                         sub_bedge_limit_i,
                     );
                 }
             } else {
                 for x in (4usize..16 - 3).step_by(4) {
                     super::loop_filter_wasm::normal_h_filter16_inner_wasm(
-                        _token, cache_y, mbx * 16 + x, extra_y_rows, cache_y_stride,
-                        hev_i, interior_i, sub_bedge_limit_i,
+                        _token,
+                        cache_y,
+                        mbx * 16 + x,
+                        extra_y_rows,
+                        cache_y_stride,
+                        hev_i,
+                        interior_i,
+                        sub_bedge_limit_i,
                     );
                 }
                 super::loop_filter_wasm::normal_h_filter_uv_inner_wasm(
-                    _token, cache_u, cache_v, mbx * 8 + 4, extra_uv_rows, cache_uv_stride,
-                    hev_i, interior_i, sub_bedge_limit_i,
+                    _token,
+                    cache_u,
+                    cache_v,
+                    mbx * 8 + 4,
+                    extra_uv_rows,
+                    cache_uv_stride,
+                    hev_i,
+                    interior_i,
+                    sub_bedge_limit_i,
                 );
             }
         }
@@ -585,18 +747,33 @@ pub(crate) fn filter_row_simd(
             if filter_type {
                 let point = extra_y_rows * cache_y_stride + mbx * 16;
                 super::loop_filter_wasm::simple_v_filter16_wasm(
-                    _token, cache_y, point, cache_y_stride, mbedge_limit_i,
+                    _token,
+                    cache_y,
+                    point,
+                    cache_y_stride,
+                    mbedge_limit_i,
                 );
             } else {
                 let point_y = extra_y_rows * cache_y_stride + mbx * 16;
                 super::loop_filter_wasm::normal_v_filter16_edge_wasm(
-                    _token, cache_y, point_y, cache_y_stride,
-                    hev_i, interior_i, mbedge_limit_i,
+                    _token,
+                    cache_y,
+                    point_y,
+                    cache_y_stride,
+                    hev_i,
+                    interior_i,
+                    mbedge_limit_i,
                 );
                 let point_uv = extra_uv_rows * cache_uv_stride + mbx * 8;
                 super::loop_filter_wasm::normal_v_filter_uv_edge_wasm(
-                    _token, cache_u, cache_v, point_uv, cache_uv_stride,
-                    hev_i, interior_i, mbedge_limit_i,
+                    _token,
+                    cache_u,
+                    cache_v,
+                    point_uv,
+                    cache_uv_stride,
+                    hev_i,
+                    interior_i,
+                    mbedge_limit_i,
                 );
             }
         }
@@ -606,21 +783,36 @@ pub(crate) fn filter_row_simd(
                 for y in (4usize..16 - 1).step_by(4) {
                     let point = (extra_y_rows + y) * cache_y_stride + mbx * 16;
                     super::loop_filter_wasm::simple_v_filter16_wasm(
-                        _token, cache_y, point, cache_y_stride, sub_bedge_limit_i,
+                        _token,
+                        cache_y,
+                        point,
+                        cache_y_stride,
+                        sub_bedge_limit_i,
                     );
                 }
             } else {
                 for y in (4usize..16 - 3).step_by(4) {
                     let point = (extra_y_rows + y) * cache_y_stride + mbx * 16;
                     super::loop_filter_wasm::normal_v_filter16_inner_wasm(
-                        _token, cache_y, point, cache_y_stride,
-                        hev_i, interior_i, sub_bedge_limit_i,
+                        _token,
+                        cache_y,
+                        point,
+                        cache_y_stride,
+                        hev_i,
+                        interior_i,
+                        sub_bedge_limit_i,
                     );
                 }
                 let point_uv = (extra_uv_rows + 4) * cache_uv_stride + mbx * 8;
                 super::loop_filter_wasm::normal_v_filter_uv_inner_wasm(
-                    _token, cache_u, cache_v, point_uv, cache_uv_stride,
-                    hev_i, interior_i, sub_bedge_limit_i,
+                    _token,
+                    cache_u,
+                    cache_v,
+                    point_uv,
+                    cache_uv_stride,
+                    hev_i,
+                    interior_i,
+                    sub_bedge_limit_i,
                 );
             }
         }

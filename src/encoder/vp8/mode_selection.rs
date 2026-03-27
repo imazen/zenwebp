@@ -30,7 +30,7 @@ use super::{MacroblockInfo, sse_8x8_chroma, sse_16x16_luma};
 // =============================================================================
 
 /// Result of evaluating a single I4 block mode
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "wasm32")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "wasm32"))]
 struct I4BlockResult {
     mode_idx: usize,
     rd_score: u64,
@@ -44,7 +44,6 @@ struct I4BlockResult {
 
 /// Pre-sort I4 prediction modes by prediction SSE (ascending).
 /// Runs sse4x4 for all 10 modes using direct SIMD calls (no dispatch overhead).
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[archmage::arcane]
 fn presort_i4_modes_sse2(
     _token: archmage::X64V3Token,
@@ -67,7 +66,7 @@ fn presort_i4_modes_sse2(
 /// going directly to `_sse2` variants (inlinable within arcane context).
 ///
 /// Returns the best mode result, or None if no mode beats `best_block_score_limit`.
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[allow(clippy::too_many_arguments)]
 #[archmage::arcane]
 fn evaluate_i4_modes_sse2(
@@ -257,7 +256,6 @@ fn evaluate_i4_modes_sse2(
 
 /// Pre-sort I4 prediction modes by prediction SSE (ascending) for wasm SIMD128.
 /// Runs sse4x4 for all 10 modes using direct SIMD calls (no dispatch overhead).
-#[cfg(all(feature = "simd", target_arch = "wasm32"))]
 #[archmage::arcane]
 fn presort_i4_modes_wasm(
     _token: archmage::Wasm128Token,
@@ -280,7 +278,6 @@ fn presort_i4_modes_wasm(
 /// going directly to `_wasm` #[rite] variants (inlinable within arcane context).
 ///
 /// Returns the best mode result, or None if no mode beats `best_block_score_limit`.
-#[cfg(all(feature = "simd", target_arch = "wasm32"))]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
 fn evaluate_i4_modes_wasm(
@@ -915,7 +912,7 @@ impl<'a> super::Vp8Encoder<'a> {
         let src_width = mbw * 16;
 
         // All 10 intra4 modes (used by SIMD path on x86_64 and wasm32)
-        #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "wasm32")))]
+        #[cfg(any(target_arch = "x86_64", target_arch = "wasm32"))]
         const MODES: [IntraMode; 10] = [
             IntraMode::DC,
             IntraMode::TM,
@@ -1076,7 +1073,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 // This eliminates per-call dispatch overhead by running all SIMD operations
                 // (ftransform, quantize, dequantize, sse, tdisto, is_flat, residual_cost)
                 // within a single #[target_feature] context where they can be inlined.
-                #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+                #[cfg(target_arch = "x86_64")]
                 let simd_result = {
                     use archmage::SimdToken;
                     archmage::X64V3Token::summon().and_then(|token| {
@@ -1105,7 +1102,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     })
                 };
 
-                #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+                #[cfg(target_arch = "x86_64")]
                 if let Some(result) = simd_result {
                     // Use the arcane result
                     best_mode = MODES[result.mode_idx];
@@ -1119,7 +1116,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     best_coeff_cost = result.coeff_cost;
                 } else {
                     // Scalar fallback (no SIMD available at runtime or not x86_64)
-                    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+                    #[cfg(target_arch = "x86_64")]
                     {
                         self.evaluate_i4_modes_scalar(
                             &src_block,
@@ -1148,7 +1145,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 }
 
                 // === WASM SIMD128 path ===
-                #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+                #[cfg(target_arch = "wasm32")]
                 let simd_result = {
                     use archmage::SimdToken;
                     archmage::Wasm128Token::summon().and_then(|token| {
@@ -1175,7 +1172,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     })
                 };
 
-                #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+                #[cfg(target_arch = "wasm32")]
                 if let Some(result) = simd_result {
                     best_mode = MODES[result.mode_idx];
                     best_mode_idx = result.mode_idx;
@@ -1187,7 +1184,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     best_psy_cost = result.psy_cost;
                     best_coeff_cost = result.coeff_cost;
                 } else {
-                    #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+                    #[cfg(target_arch = "wasm32")]
                     {
                         self.evaluate_i4_modes_scalar(
                             &src_block,
@@ -1216,10 +1213,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 }
 
                 // Fallback: no SIMD available
-                #[cfg(not(all(
-                    feature = "simd",
-                    any(target_arch = "x86_64", target_arch = "wasm32")
-                )))]
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "wasm32")))]
                 {
                     self.evaluate_i4_modes_scalar(
                         &src_block,
@@ -1716,16 +1710,16 @@ impl<'a> super::Vp8Encoder<'a> {
         let mut mode_sse: [(u32, usize); 10] = [(0, 0); 10];
         for (mode_idx, _) in MODES.iter().enumerate() {
             let pred = preds.get(mode_idx);
-            #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+            #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
             let sse = crate::common::simd_sse::sse4x4(src_block, pred);
-            #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+            #[cfg(target_arch = "aarch64")]
             let sse = {
                 use archmage::SimdToken;
                 // NEON is always available on aarch64
                 let token = archmage::NeonToken::summon().unwrap();
                 crate::common::simd_neon::sse4x4_neon(token, src_block, pred)
             };
-            #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+            #[cfg(target_arch = "wasm32")]
             let sse = {
                 use archmage::SimdToken;
                 if let Some(token) = archmage::Wasm128Token::summon() {
@@ -1739,14 +1733,11 @@ impl<'a> super::Vp8Encoder<'a> {
                     sum
                 }
             };
-            #[cfg(not(all(
-                feature = "simd",
-                any(
-                    target_arch = "x86_64",
-                    target_arch = "x86",
-                    target_arch = "aarch64",
-                    target_arch = "wasm32"
-                )
+            #[cfg(not(any(
+                target_arch = "x86_64",
+                target_arch = "x86",
+                target_arch = "aarch64",
+                target_arch = "wasm32"
             )))]
             let sse = {
                 let mut sum = 0u32;
@@ -1811,9 +1802,9 @@ impl<'a> super::Vp8Encoder<'a> {
             let (coeff_cost_val, _) =
                 get_cost_luma4(&quantized_zigzag, nz_top, nz_left, &self.level_costs, probs);
 
-            #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+            #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
             let sse = crate::common::simd_sse::sse4x4_with_residual(src_block, pred, &dequantized);
-            #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+            #[cfg(target_arch = "aarch64")]
             let sse = {
                 use archmage::SimdToken;
                 let token = archmage::NeonToken::summon().unwrap();
@@ -1824,7 +1815,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     &dequantized,
                 )
             };
-            #[cfg(all(feature = "simd", target_arch = "wasm32"))]
+            #[cfg(target_arch = "wasm32")]
             let sse = {
                 use archmage::SimdToken;
                 if let Some(token) = archmage::Wasm128Token::summon() {
@@ -1845,14 +1836,11 @@ impl<'a> super::Vp8Encoder<'a> {
                     sum
                 }
             };
-            #[cfg(not(all(
-                feature = "simd",
-                any(
-                    target_arch = "x86_64",
-                    target_arch = "x86",
-                    target_arch = "aarch64",
-                    target_arch = "wasm32"
-                )
+            #[cfg(not(any(
+                target_arch = "x86_64",
+                target_arch = "x86",
+                target_arch = "aarch64",
+                target_arch = "wasm32"
             )))]
             let sse = {
                 let mut sum = 0u32;

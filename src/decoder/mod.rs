@@ -12,29 +12,29 @@ mod limits;
 mod loop_filter;
 mod lossless;
 mod lossless_transform;
-#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 mod lossless_transform_simd;
 mod streaming;
 pub(crate) mod yuv;
 
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 mod loop_filter_avx2;
 
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 mod loop_filter_neon;
 
-#[cfg(all(feature = "simd", target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 mod loop_filter_wasm;
 
 mod loop_filter_dispatch;
 
-#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 mod yuv_simd;
 
-#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 mod yuv_neon;
 
-#[cfg(all(feature = "simd", target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 mod yuv_wasm;
 
 // Public VP8 decoder module

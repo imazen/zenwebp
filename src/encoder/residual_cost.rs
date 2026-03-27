@@ -7,34 +7,31 @@
 #![allow(clippy::needless_range_loop)]
 
 // SIMD imports for GetResidualCost optimization
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 use archmage::intrinsics::x86_64 as simd_mem;
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 use archmage::{SimdToken, X64V3Token, arcane, rite};
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
-#[cfg(all(target_arch = "wasm32", feature = "simd"))]
+#[cfg(target_arch = "wasm32")]
 use archmage::{Wasm128Token, arcane, rite};
-#[cfg(all(target_arch = "wasm32", feature = "simd"))]
+#[cfg(target_arch = "wasm32")]
 use core::arch::wasm32::*;
 
-#[cfg(all(target_arch = "aarch64", feature = "simd"))]
+#[cfg(target_arch = "aarch64")]
 use archmage::intrinsics::aarch64 as simd_mem;
-#[cfg(all(target_arch = "aarch64", feature = "simd"))]
+#[cfg(target_arch = "aarch64")]
 use archmage::{NeonToken, SimdToken, arcane, rite};
-#[cfg(all(target_arch = "aarch64", feature = "simd"))]
+#[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
 
 use super::cost::{LevelCosts, vp8_bit_cost};
 use super::tables::VP8_ENC_BANDS;
-#[cfg(all(
-    feature = "simd",
-    any(
-        target_arch = "x86_64",
-        target_arch = "wasm32",
-        target_arch = "aarch64"
-    )
+#[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "wasm32",
+    target_arch = "aarch64"
 ))]
 use super::tables::{MAX_LEVEL, MAX_VARIABLE_LEVEL, VP8_LEVEL_FIXED_COSTS};
 use crate::common::types::TokenProbTables;
@@ -85,7 +82,7 @@ impl<'a> Residual<'a> {
 ///
 /// # Returns
 /// Cost in 1/256 bit units
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[inline]
 pub fn get_residual_cost(
     ctx0: usize,
@@ -101,7 +98,7 @@ pub fn get_residual_cost(
 }
 
 /// WASM SIMD128 dispatch for residual cost calculation.
-#[cfg(all(target_arch = "wasm32", feature = "simd"))]
+#[cfg(target_arch = "wasm32")]
 #[inline]
 pub fn get_residual_cost(
     ctx0: usize,
@@ -117,7 +114,7 @@ pub fn get_residual_cost(
 }
 
 /// NEON dispatch for residual cost calculation.
-#[cfg(all(target_arch = "aarch64", feature = "simd"))]
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn get_residual_cost(
     ctx0: usize,
@@ -131,13 +128,10 @@ pub fn get_residual_cost(
 
 /// Calculate the cost of encoding a residual block using probability-based costs.
 /// Scalar fallback for non-SIMD platforms.
-#[cfg(not(all(
-    feature = "simd",
-    any(
-        target_arch = "x86_64",
-        target_arch = "wasm32",
-        target_arch = "aarch64"
-    )
+#[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "wasm32",
+    target_arch = "aarch64"
 )))]
 #[inline]
 pub fn get_residual_cost(
@@ -214,7 +208,7 @@ pub(crate) fn get_residual_cost_scalar(
 }
 
 /// Entry shim for get_residual_cost_sse2
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn get_residual_cost_entry(
     _token: X64V3Token,
@@ -228,7 +222,7 @@ fn get_residual_cost_entry(
 
 /// SSE2 implementation of residual cost calculation.
 /// Precomputes abs values, contexts, and clamped levels with SIMD.
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 pub(crate) fn get_residual_cost_sse2(
     _token: X64V3Token,
@@ -349,7 +343,7 @@ pub(crate) fn get_residual_cost_sse2(
 }
 
 /// Entry shim for find_last_nonzero_simd
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 #[allow(dead_code)]
 fn find_last_nonzero_simd_entry(_token: X64V3Token, coeffs: &[i32; 16]) -> i32 {
@@ -360,7 +354,7 @@ fn find_last_nonzero_simd_entry(_token: X64V3Token, coeffs: &[i32; 16]) -> i32 {
 /// Ported from libwebp's SetResidualCoeffs_SSE2.
 ///
 /// Returns -1 if all coefficients are zero.
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 #[allow(dead_code)]
 fn find_last_nonzero_simd(_token: X64V3Token, coeffs: &[i32; 16]) -> i32 {
@@ -398,7 +392,7 @@ fn find_last_nonzero_simd(_token: X64V3Token, coeffs: &[i32; 16]) -> i32 {
 // =============================================================================
 
 /// Entry shim for get_residual_cost_neon
-#[cfg(all(target_arch = "aarch64", feature = "simd"))]
+#[cfg(target_arch = "aarch64")]
 #[arcane]
 fn get_residual_cost_neon_entry(
     _token: NeonToken,
@@ -412,7 +406,7 @@ fn get_residual_cost_neon_entry(
 
 /// NEON implementation of residual cost calculation.
 /// Precomputes abs values, contexts, and clamped levels with SIMD.
-#[cfg(all(target_arch = "aarch64", feature = "simd"))]
+#[cfg(target_arch = "aarch64")]
 #[rite]
 pub(crate) fn get_residual_cost_neon(
     _token: NeonToken,
@@ -527,7 +521,7 @@ pub(crate) fn get_residual_cost_neon(
 }
 
 /// Entry shim for find_last_nonzero_neon
-#[cfg(all(target_arch = "aarch64", feature = "simd"))]
+#[cfg(target_arch = "aarch64")]
 #[arcane]
 #[allow(dead_code)]
 fn find_last_nonzero_neon_entry(_token: NeonToken, coeffs: &[i32; 16]) -> i32 {
@@ -536,7 +530,7 @@ fn find_last_nonzero_neon_entry(_token: NeonToken, coeffs: &[i32; 16]) -> i32 {
 
 /// Find last non-zero coefficient using NEON.
 /// Returns -1 if all coefficients are zero.
-#[cfg(all(target_arch = "aarch64", feature = "simd"))]
+#[cfg(target_arch = "aarch64")]
 #[rite]
 #[allow(dead_code)]
 fn find_last_nonzero_neon(_token: NeonToken, coeffs: &[i32; 16]) -> i32 {
@@ -589,7 +583,7 @@ fn find_last_nonzero_neon(_token: NeonToken, coeffs: &[i32; 16]) -> i32 {
 // =============================================================================
 
 /// Entry shim for get_residual_cost_wasm
-#[cfg(all(target_arch = "wasm32", feature = "simd"))]
+#[cfg(target_arch = "wasm32")]
 #[arcane]
 fn get_residual_cost_wasm_entry(
     _token: Wasm128Token,
@@ -603,7 +597,7 @@ fn get_residual_cost_wasm_entry(
 
 /// WASM SIMD128 implementation of residual cost calculation.
 /// Precomputes abs values, contexts, and clamped levels with SIMD.
-#[cfg(all(target_arch = "wasm32", feature = "simd"))]
+#[cfg(target_arch = "wasm32")]
 #[rite]
 pub(crate) fn get_residual_cost_wasm(
     _token: Wasm128Token,

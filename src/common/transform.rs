@@ -18,37 +18,18 @@ pub(crate) fn idct4x4_dc(block: &mut [i32; 16]) {
 // inverse discrete cosine transform, used in decoding
 #[inline(always)]
 pub(crate) fn idct4x4(block: &mut [i32]) {
-    #[cfg(feature = "simd")]
-    {
-        super::transform_simd_intrinsics::idct4x4_intrinsics(block);
-    }
-    #[cfg(all(feature = "simd", not(feature = "simd")))]
-    {
-        super::transform_simd::idct4x4_simd(block);
-    }
-    #[cfg(not(any(feature = "simd", feature = "simd")))]
-    {
-        idct4x4_scalar(block);
-    }
+    super::transform_simd_intrinsics::idct4x4_intrinsics(block);
 }
 
 /// Inverse DCT with pre-summoned SIMD token (avoids per-call token summoning)
 #[inline(always)]
 #[allow(dead_code)] // May be useful for alternative decode paths
 pub(crate) fn idct4x4_with_token(block: &mut [i32], simd_token: super::prediction::SimdTokenType) {
-    #[cfg(feature = "simd")]
-    {
-        super::transform_simd_intrinsics::idct4x4_intrinsics_with_token(block, simd_token);
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        let _ = simd_token;
-        idct4x4_scalar(block);
-    }
+    super::transform_simd_intrinsics::idct4x4_intrinsics_with_token(block, simd_token);
 }
 
-#[cfg_attr(feature = "simd", archmage::autoversion(cfg(simd)))]
-#[cfg_attr(feature = "simd", allow(dead_code))]
+#[archmage::autoversion(cfg(simd))]
+#[allow(dead_code)]
 pub(crate) fn idct4x4_scalar(block: &mut [i32]) {
     // The intermediate results may overflow the types, so we stretch the type.
     fn fetch(block: &[i32], idx: usize) -> i64 {
@@ -96,7 +77,7 @@ pub(crate) fn idct4x4_scalar(block: &mut [i32]) {
 }
 
 // 14.3 inverse walsh-hadamard transform, used in decoding
-#[cfg_attr(feature = "simd", archmage::autoversion(cfg(simd)))]
+#[archmage::autoversion(cfg(simd))]
 pub(crate) fn iwht4x4(block: &mut [i32]) {
     // Perform one length check up front to avoid subsequent bounds checks in this function
     assert!(block.len() >= 16);
@@ -131,7 +112,7 @@ pub(crate) fn iwht4x4(block: &mut [i32]) {
     }
 }
 
-#[cfg_attr(feature = "simd", archmage::autoversion(cfg(simd)))]
+#[archmage::autoversion(cfg(simd))]
 pub(crate) fn wht4x4(block: &mut [i32; 16]) {
     // The intermediate results may overflow the types, so we stretch the type.
     fn fetch(block: &[i32], idx: usize) -> i64 {
@@ -177,23 +158,12 @@ pub(crate) fn wht4x4(block: &mut [i32; 16]) {
 
 #[inline(always)]
 pub(crate) fn dct4x4(block: &mut [i32; 16]) {
-    #[cfg(feature = "simd")]
-    {
-        super::transform_simd_intrinsics::dct4x4_intrinsics(block);
-    }
-    #[cfg(all(feature = "simd", not(feature = "simd")))]
-    {
-        super::transform_simd::dct4x4_simd(block);
-    }
-    #[cfg(not(any(feature = "simd", feature = "simd")))]
-    {
-        dct4x4_scalar(block);
-    }
+    super::transform_simd_intrinsics::dct4x4_intrinsics(block);
 }
 
 // Scalar DCT implementation for reference and non-SIMD builds
-#[cfg_attr(feature = "simd", archmage::autoversion(cfg(simd)))]
-#[cfg_attr(feature = "simd", allow(dead_code))]
+#[archmage::autoversion(cfg(simd))]
+#[allow(dead_code)]
 pub(crate) fn dct4x4_scalar(block: &mut [i32; 16]) {
     // The intermediate results may overflow the types, so we stretch the type.
     fn fetch(block: &[i32], idx: usize) -> i64 {
@@ -235,19 +205,7 @@ pub(crate) fn dct4x4_scalar(block: &mut [i32; 16]) {
 /// Dispatches to SIMD when available, otherwise scalar.
 #[inline(always)]
 pub(crate) fn ftransform_from_u8_4x4(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
-    #[cfg(feature = "simd")]
-    {
-        super::transform_simd_intrinsics::ftransform_from_u8_4x4(src, ref_)
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        let mut block = [0i32; 16];
-        for i in 0..16 {
-            block[i] = src[i] as i32 - ref_[i] as i32;
-        }
-        dct4x4_scalar(&mut block);
-        block
-    }
+    super::transform_simd_intrinsics::ftransform_from_u8_4x4(src, ref_)
 }
 
 /// Fused IDCT + add residue inplace + clear coefficients.
@@ -260,36 +218,9 @@ pub(crate) fn idct_add_residue_inplace(
     stride: usize,
     dc_only: bool,
 ) {
-    #[cfg(feature = "simd")]
-    {
-        super::transform_simd_intrinsics::idct_add_residue_inplace(
-            coeffs, block, y0, x0, stride, dc_only,
-        );
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        if dc_only {
-            let dc = coeffs[0];
-            let dc_adj = (dc + 4) >> 3;
-            for row in 0..4 {
-                let pos = (y0 + row) * stride + x0;
-                for col in 0..4 {
-                    let p = block[pos + col] as i32;
-                    block[pos + col] = (p + dc_adj).clamp(0, 255) as u8;
-                }
-            }
-        } else {
-            idct4x4_scalar(coeffs);
-            let mut pos = y0 * stride + x0;
-            for row in coeffs.chunks(4) {
-                for (p, &a) in block[pos..][..4].iter_mut().zip(row.iter()) {
-                    *p = (a + i32::from(*p)).clamp(0, 255) as u8;
-                }
-                pos += stride;
-            }
-        }
-        coeffs.fill(0);
-    }
+    super::transform_simd_intrinsics::idct_add_residue_inplace(
+        coeffs, block, y0, x0, stride, dc_only,
+    );
 }
 
 #[cfg(test)]
