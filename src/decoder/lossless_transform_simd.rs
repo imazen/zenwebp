@@ -251,6 +251,66 @@ fn transform_color_inverse_block_sse2(
 // Predictor transforms with SSE2 batch operations
 // =============================================================================
 
+/// SSE2 predictor 1 (left): prefix-sum within 4 pixels.
+///
+/// Port of libwebp's PredictorAdd1_SSE2. Uses parallel prefix sum:
+///   src = [a, b, c, d] (residuals)
+///   sum = [a, a+b, a+b+c, a+b+c+d] (prefix sum)
+///   result = sum + broadcast(prev_pixel)
+///
+/// The trick is that wrapping byte addition is associative, so the prefix
+/// sum can be computed without serial dependency within the 4-pixel group.
+#[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
+#[rite]
+fn apply_predictor_1_sse2(
+    _token: Sse2Token,
+    image_data: &mut [u8],
+    range: core::ops::Range<usize>,
+    _width: usize,
+) {
+    let start = range.start;
+    let end = range.end;
+    let simd_end = start + ((end - start) & !15);
+
+    // Load previous pixel (the left neighbor of the first pixel in range).
+    // Broadcast to all 4 pixel positions.
+    let prev_bytes = <&[u8; 4]>::try_from(&image_data[start - 4..start]).unwrap();
+    let prev_pixel = _mm_cvtsi32_si128(i32::from_le_bytes(*prev_bytes));
+    let mut prev = _mm_shuffle_epi32(prev_pixel, 0xFF); // broadcast to all 4 lanes
+
+    let mut i = start;
+    while i < simd_end {
+        // Load 4 residual pixels
+        let src = simd_mem::_mm_loadu_si128(chunk16_ref(image_data, i));
+
+        // Parallel prefix sum (byte-wise wrapping add):
+        // Step 1: shift left by 1 pixel (4 bytes) and add
+        //   [a, b, c, d] + [0, a, b, c] = [a, a+b, b+c, c+d]
+        let shift0 = _mm_slli_si128(src, 4);
+        let sum0 = _mm_add_epi8(src, shift0);
+
+        // Step 2: shift left by 2 pixels (8 bytes) and add
+        //   [a, a+b, b+c, c+d] + [0, 0, a, a+b] = [a, a+b, a+b+c, a+b+c+d]
+        let shift1 = _mm_slli_si128(sum0, 8);
+        let sum1 = _mm_add_epi8(sum0, shift1);
+
+        // Add previous pixel value (broadcast to all lanes)
+        let res = _mm_add_epi8(sum1, prev);
+        simd_mem::_mm_storeu_si128(chunk16(image_data, i), res);
+
+        // Broadcast the last pixel (lane 3) for the next iteration
+        prev = _mm_shuffle_epi32(res, 0xFF); // _MM_SHUFFLE(3,3,3,3)
+
+        i += 16;
+    }
+
+    // Scalar remainder
+    while i < end {
+        image_data[i] = image_data[i].wrapping_add(image_data[i - 4]);
+        i += 1;
+    }
+}
+
 /// SSE2 predictor 2 (top): out[i] += upper[i], 4 pixels at a time.
 #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "x86")))]
 #[rite]
@@ -473,9 +533,7 @@ pub(crate) fn apply_predictor_transform_sse2_entry(
                 0 => super::lossless_transform::apply_predictor_transform_0(
                     image_data, range, width,
                 ),
-                1 => super::lossless_transform::apply_predictor_transform_1(
-                    image_data, range, width,
-                ),
+                1 => apply_predictor_1_sse2(_token, image_data, range, width),
                 2 => apply_predictor_2_sse2(_token, image_data, range, width),
                 3 => apply_predictor_3_sse2(_token, image_data, range, width),
                 4 => apply_predictor_4_sse2(_token, image_data, range, width),
