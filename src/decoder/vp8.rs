@@ -811,22 +811,20 @@ impl<'a> Vp8Decoder<'a> {
         self.macroblocks =
             Vec::with_capacity(usize::from(self.mbwidth) * usize::from(self.mbheight));
 
-        // Allocate with FILTER_PADDING for bounds-check-free loop filtering.
-        // The extra bytes ensure fixed-size region extraction always succeeds.
+        // Frame buffers don't need FILTER_PADDING — padding is only needed on
+        // cache buffers where loop filtering operates. Frame buffers receive the
+        // final output from output_row_from_cache via copy_from_slice within bounds.
         self.frame.ybuf = vec![
             0u8;
             usize::from(self.mbwidth) * 16 * usize::from(self.mbheight) * 16
-                + FILTER_PADDING
         ];
         self.frame.ubuf = vec![
             0u8;
             usize::from(self.mbwidth) * 8 * usize::from(self.mbheight) * 8
-                + FILTER_PADDING
         ];
         self.frame.vbuf = vec![
             0u8;
             usize::from(self.mbwidth) * 8 * usize::from(self.mbheight) * 8
-                + FILTER_PADDING
         ];
 
         self.top_border_y = vec![127u8; self.frame.width as usize + 4 + 16];
@@ -890,7 +888,8 @@ impl<'a> Vp8Decoder<'a> {
 
         // Cache layout: [extra_rows][16 rows for current macroblock row]
         // extra_rows holds bottom rows from previous MB row for filter context
-        // FILTER_PADDING allows fixed-size region extraction for bounds-check-free filtering
+        // FILTER_PADDING allows fixed-size region extraction for bounds-check-free filtering.
+        // Uses MAX_FILTER_STRIDE to match compile-time constant region sizes in loop_filter_avx2.
         let cache_y_rows = self.extra_y_rows + 16;
         let cache_uv_rows = extra_uv_rows + 8;
         self.cache_y = vec![128u8; cache_y_rows * self.cache_y_stride + FILTER_PADDING];
