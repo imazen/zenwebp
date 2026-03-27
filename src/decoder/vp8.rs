@@ -408,13 +408,13 @@ fn read_coefficients(
                     let bit0 = reader.get_bit(prob[9 + bit1 as usize].prob);
                     let cat = (2 * bit1 + bit0) as usize;
 
+                    // Fixed-length category probability reads (no sentinel check).
+                    // Category sizes: cat3=3, cat4=4, cat5=5, cat6=11 probabilities.
                     let cat_probs = &PROB_DCT_CAT[2 + cat];
+                    let cat_len = [3usize, 4, 5, 11][cat];
                     let mut extra = 0i32;
-                    for &p in cat_probs.iter() {
-                        if p == 0 {
-                            break;
-                        }
-                        extra = extra + extra + reader.get_bit(p);
+                    for i in 0..cat_len {
+                        extra = extra + extra + reader.get_bit(cat_probs[i]);
                     }
                     v = 3 + (8 << cat) + extra;
                 }
