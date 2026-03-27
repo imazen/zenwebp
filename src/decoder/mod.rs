@@ -19,15 +19,6 @@ pub(crate) mod yuv;
 
 mod predict_simd;
 
-#[cfg(target_arch = "x86_64")]
-mod yuv_simd;
-
-#[cfg(target_arch = "aarch64")]
-mod yuv_neon;
-
-#[cfg(target_arch = "wasm32")]
-mod yuv_wasm;
-
 // Public VP8 decoder module
 pub mod vp8;
 
