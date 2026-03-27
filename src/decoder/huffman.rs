@@ -268,7 +268,7 @@ impl HuffmanTree {
 
     /// Reads a symbol using the bit reader.
     ///
-    /// You must call call `bit_reader.fill()` before calling this function or it may erroroneosly
+    /// You must call `bit_reader.fill()` before calling this function or it may erroneously
     /// detect the end of the stream and return a bitstream error.
     pub(crate) fn read_symbol(&self, bit_reader: &mut BitReader<'_>) -> Result<u16, DecodeError> {
         match &self.0 {
@@ -290,4 +290,28 @@ impl HuffmanTree {
         }
     }
 
+    /// Read a symbol, using unchecked consume for the primary-table fast path.
+    /// Caller must guarantee that `bit_reader.fill()` has been called recently
+    /// enough that at least MAX_TABLE_BITS bits are available.
+    #[inline(always)]
+    pub(crate) fn read_symbol_fast(&self, bit_reader: &mut BitReader<'_>) -> Result<u16, DecodeError> {
+        match &self.0 {
+            HuffmanTreeInner::Tree {
+                primary_table,
+                secondary_table,
+                table_mask,
+            } => {
+                let v = bit_reader.peek_full() as u16;
+                let entry = primary_table[(v & table_mask) as usize];
+                if (entry >> 12) <= MAX_TABLE_BITS as u16 {
+                    // Use unchecked consume: fill() guarantees enough bits
+                    bit_reader.consume_unchecked((entry >> 12) as u8);
+                    return Ok(entry & 0xfff);
+                }
+
+                Self::read_symbol_slowpath(secondary_table, v, entry, bit_reader)
+            }
+            HuffmanTreeInner::Single(symbol) => Ok(*symbol),
+        }
+    }
 }

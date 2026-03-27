@@ -583,7 +583,7 @@ impl<'a> LosslessDecoder<'a> {
                 self.bit_reader.consume(actual_bits)?;
                 code = u16::from(entry.value[1]) | (u16::from(entry.value[2]) << 8);
             } else {
-                code = tree[GREEN].read_symbol(&mut self.bit_reader)?;
+                code = tree[GREEN].read_symbol_fast(&mut self.bit_reader)?;
             }
 
             if code < 256 {
@@ -597,12 +597,12 @@ impl<'a> LosslessDecoder<'a> {
                         cc.insert(pixel);
                     }
                 } else {
-                    let red = tree[RED].read_symbol(&mut self.bit_reader)? as u8;
+                    let red = tree[RED].read_symbol_fast(&mut self.bit_reader)? as u8;
                     if self.bit_reader.nbits < 15 {
                         self.bit_reader.fill();
                     }
-                    let blue = tree[BLUE].read_symbol(&mut self.bit_reader)? as u8;
-                    let alpha = tree[ALPHA].read_symbol(&mut self.bit_reader)? as u8;
+                    let blue = tree[BLUE].read_symbol_fast(&mut self.bit_reader)? as u8;
+                    let alpha = tree[ALPHA].read_symbol_fast(&mut self.bit_reader)? as u8;
                     data[index * 4] = red;
                     data[index * 4 + 1] = green;
                     data[index * 4 + 2] = blue;
@@ -1015,6 +1015,15 @@ impl<'a> BitReader<'a> {
         self.buffer >>= num;
         self.nbits -= num;
         Ok(())
+    }
+
+    /// Consume bits without checking if enough are available.
+    /// Caller must ensure `self.nbits >= num` (e.g., after calling `fill()`).
+    #[inline(always)]
+    pub(crate) fn consume_unchecked(&mut self, num: u8) {
+        debug_assert!(self.nbits >= num);
+        self.buffer >>= num;
+        self.nbits -= num;
     }
 
     /// Convenience function to read a number of bits and convert them to a type.
