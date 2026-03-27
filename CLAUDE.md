@@ -132,12 +132,17 @@ ZENWEBP_TRACE=1 env var enables call count instrumentation.
 zenwebp ~10.7ms vs libwebp ~7.9ms = **1.36x** (median)
 
 **Instruction ratio (callgrind, codec_wiki 2560x1664 Q75 RGB, 10 decodes):**
-zenwebp 185.2M vs libwebp 161.4M = **1.15x** per decode
+zenwebp 182.0M vs libwebp 161.4M = **1.13x** per decode
 
-**IDCT skip optimization (2026-03-25):** Per-block non_zero_blocks bitmap
-skips IDCT for zero-coefficient blocks. IDCT went from 24.5M to 1.3M per
-decode (18.5x). Total instructions: 229.3M -> 185.2M (19% reduction).
-Wall-clock improved from ~2.3x to ~1.36x vs libwebp on codec_wiki.
+**Decoder optimizations (2026-03-25):**
+1. Per-block non_zero_blocks bitmap skips IDCT for zero blocks (24.5M -> 1.3M)
+2. DC-only WHT fast path for Y2 block (iwht4x4 eliminated for DC-only case)
+3. Fixed-length cat_probs iteration (no sentinel branch)
+4. Reusable filter parameter buffer (eliminates per-row allocation)
+5. Frame buffer FILTER_PADDING removal (saves 344KB per decode)
+
+Total: 229.3M -> 182.0M per decode (21% reduction).
+Wall-clock: ~2.3x -> ~1.26-1.36x vs libwebp on codec_wiki.
 
 **Remaining instruction gap breakdown (per decode, codec_wiki):**
 
@@ -280,21 +285,21 @@ instruction count, not cache efficiency.
 
 ### Decoder (2026-03-25, codec_wiki 2560x1664 Q75 RGB, 10 decodes)
 
-zenwebp: 185.2M vs libwebp: 161.4M (**1.15x instruction ratio**)
+zenwebp: 182.0M vs libwebp: 161.4M (**1.13x instruction ratio**)
 
 | zenwebp function | M instr | libwebp equivalent | M instr | Ratio |
 |-----------------|---------|-------------------|---------|-------|
-| read_residual_data | 47.0M | GetCoeffsFast+GetLargeValue | 38.3M | **1.23x** |
+| read_residual_data | 46.4M | GetCoeffsFast+GetLargeValue | 38.3M | **1.21x** |
 | filter_row_simd | 37.9M | HFilter/VFilter/DoFilter SSE2 | 30.6M | **1.24x** |
 | fancy_upsample + fill_row | 45.7M | YUV2RGB+Upsample SSE41 | 38.1M | **1.20x** |
 | decode_frame_ (exclusive) | 22.9M | VP8DecodeMB+Reconstruct+ParseMode | 24.9M | **0.92x** |
-| memset | 17.8M | — | ~0 | buffer zeroing |
+| memset | 17.6M | — | ~0 | buffer zeroing |
 | IDCT | 1.3M | Transform_SSE2+DC prediction | 17.1M | **0.08x** |
 | memcpy | 3.2M | memcpy | 2.6M | 1.23x |
 
-IDCT is now 18.5x faster than libwebp (zero-block skip). Main remaining
-targets: memset (buffer alloc), bounds checks in coeff parsing, loop filter,
-and YUV->RGB conversion.
+IDCT is 18.5x faster than libwebp (zero-block skip + DC-only WHT).
+Main remaining targets: memset (buffer alloc), bounds checks in coeff
+parsing / loop filter / YUV->RGB conversion (~7-8M excess each).
 
 ## Remaining Optimization Opportunities
 
