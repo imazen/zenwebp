@@ -1149,6 +1149,8 @@ impl<'a> Vp8Decoder<'a> {
     }
 
     /// Scalar fallback for luma prediction + IDCT (no SIMD token available).
+    #[cold]
+    #[inline(never)]
     fn intra_predict_luma_scalar(
         ws: &mut [u8; LUMA_BLOCK_SIZE],
         coeff_blocks: &mut [i32],
@@ -1211,6 +1213,8 @@ impl<'a> Vp8Decoder<'a> {
     }
 
     /// Scalar fallback for chroma prediction + IDCT (no SIMD token available).
+    #[cold]
+    #[inline(never)]
     fn intra_predict_chroma_scalar(
         uws: &mut [u8; CHROMA_BLOCK_SIZE],
         vws: &mut [u8; CHROMA_BLOCK_SIZE],
