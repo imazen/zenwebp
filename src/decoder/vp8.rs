@@ -521,6 +521,9 @@ pub struct Vp8Decoder<'a> {
     dither_amp: [i32; MAX_SEGMENTS],
     /// UV AC quantizer indices per segment (for dithering amplitude computation)
     uv_quant_indices: [i32; MAX_SEGMENTS],
+
+    // Reusable filter parameter buffer — avoids per-row heap allocation.
+    mb_filter_params: Vec<MbFilterParams>,
 }
 
 impl<'a> Vp8Decoder<'a> {
@@ -595,6 +598,8 @@ impl<'a> Vp8Decoder<'a> {
             dither_rg: super::dither::VP8Random::new(),
             dither_amp: [0; MAX_SEGMENTS],
             uv_quant_indices: [0; MAX_SEGMENTS],
+
+            mb_filter_params: Vec::new(),
         }
     }
 
@@ -1348,9 +1353,11 @@ impl<'a> Vp8Decoder<'a> {
         let extra_y_rows = self.extra_y_rows;
 
         // Precompute filter parameters for all macroblocks in this row.
-        // This separates parameter computation (which accesses decoder state)
-        // from the filter loop (which only needs buffers + params).
-        let mut mb_params = alloc::vec::Vec::with_capacity(mbwidth);
+        // Reuse persistent buffer to avoid per-row heap allocation.
+        self.mb_filter_params.clear();
+        if self.mb_filter_params.capacity() < mbwidth {
+            self.mb_filter_params.reserve(mbwidth - self.mb_filter_params.capacity());
+        }
         for mbx in 0..mbwidth {
             let mb = self.macroblocks[mby * mbwidth + mbx];
             let (filter_level, interior_limit, hev_threshold) =
@@ -1361,7 +1368,7 @@ impl<'a> Vp8Decoder<'a> {
             let do_subblock_filtering =
                 mb.luma_mode == LumaMode::B || (!mb.coeffs_skipped && mb.non_zero_dct);
 
-            mb_params.push(loop_filter_dispatch::MbFilterParams {
+            self.mb_filter_params.push(loop_filter_dispatch::MbFilterParams {
                 filter_level,
                 interior_limit,
                 hev_threshold,
@@ -1370,6 +1377,9 @@ impl<'a> Vp8Decoder<'a> {
                 do_subblock_filtering,
             });
         }
+
+        // Take ownership of mb_params to allow split borrows with cache buffers
+        let mb_params = core::mem::take(&mut self.mb_filter_params);
 
         // Use the single #[arcane] entry point when SIMD is available.
         // All #[rite] filter functions inline into this one target_feature region,
@@ -1393,6 +1403,7 @@ impl<'a> Vp8Decoder<'a> {
                 mby,
                 &mb_params,
             );
+            self.mb_filter_params = mb_params;
             return;
         }
 
@@ -1494,6 +1505,8 @@ impl<'a> Vp8Decoder<'a> {
                 }
             }
         }
+
+        self.mb_filter_params = mb_params;
     }
 
     /// Copy the filtered row from cache to final output buffers
