@@ -10,7 +10,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use archmage::{NeonToken, arcane, rite};
+use archmage::{NeonToken, rite};
 
 use core::arch::aarch64::*;
 
@@ -967,7 +967,7 @@ fn store_6x8x2_neon(
 
 /// Simple vertical filter: 16 pixels across a horizontal edge
 
-#[arcane]
+#[rite]
 pub(crate) fn simple_v_filter16_neon(
     _token: NeonToken,
     buf: &mut [u8],
@@ -983,7 +983,7 @@ pub(crate) fn simple_v_filter16_neon(
 
 /// Simple horizontal filter: 16 rows across a vertical edge
 
-#[arcane]
+#[rite]
 pub(crate) fn simple_h_filter16_neon(
     _token: NeonToken,
     buf: &mut [u8],
@@ -1004,7 +1004,7 @@ pub(crate) fn simple_h_filter16_neon(
 
 /// Normal vertical filter for subblock edge (inner edge, 4-tap)
 
-#[arcane]
+#[rite]
 pub(crate) fn normal_v_filter16_inner_neon(
     _token: NeonToken,
     buf: &mut [u8],
@@ -1052,7 +1052,7 @@ pub(crate) fn normal_v_filter16_inner_neon(
 
 /// Normal vertical filter for macroblock edge (6-tap)
 
-#[arcane]
+#[rite]
 pub(crate) fn normal_v_filter16_edge_neon(
     _token: NeonToken,
     buf: &mut [u8],
@@ -1109,7 +1109,7 @@ pub(crate) fn normal_v_filter16_edge_neon(
 
 /// Normal horizontal filter for subblock edge (inner edge, 4-tap)
 
-#[arcane]
+#[rite]
 pub(crate) fn normal_h_filter16_inner_neon(
     _token: NeonToken,
     buf: &mut [u8],
@@ -1141,7 +1141,7 @@ pub(crate) fn normal_h_filter16_inner_neon(
 
 /// Normal horizontal filter for macroblock edge (6-tap)
 
-#[arcane]
+#[rite]
 pub(crate) fn normal_h_filter16_edge_neon(
     _token: NeonToken,
     buf: &mut [u8],
@@ -1180,7 +1180,7 @@ pub(crate) fn normal_h_filter16_edge_neon(
 
 /// Normal vertical filter for UV macroblock edge (6-tap)
 
-#[arcane]
+#[rite]
 pub(crate) fn normal_v_filter_uv_edge_neon(
     _token: NeonToken,
     u_buf: &mut [u8],
@@ -1215,7 +1215,7 @@ pub(crate) fn normal_v_filter_uv_edge_neon(
 
 /// Normal vertical filter for UV subblock edge (4-tap)
 
-#[arcane]
+#[rite]
 pub(crate) fn normal_v_filter_uv_inner_neon(
     _token: NeonToken,
     u_buf: &mut [u8],
@@ -1249,7 +1249,7 @@ pub(crate) fn normal_v_filter_uv_inner_neon(
 
 /// Normal horizontal filter for UV macroblock edge (6-tap)
 
-#[arcane]
+#[rite]
 pub(crate) fn normal_h_filter_uv_edge_neon(
     _token: NeonToken,
     u_buf: &mut [u8],
@@ -1286,7 +1286,7 @@ pub(crate) fn normal_h_filter_uv_edge_neon(
 
 /// Normal horizontal filter for UV subblock edge (4-tap)
 
-#[arcane]
+#[rite]
 pub(crate) fn normal_h_filter_uv_inner_neon(
     _token: NeonToken,
     u_buf: &mut [u8],
