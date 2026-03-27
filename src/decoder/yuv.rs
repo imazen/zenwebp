@@ -102,7 +102,17 @@ pub(crate) fn fill_rgb_buffer_fancy<const BPP: usize>(
             use archmage::SimdToken;
             archmage::NeonToken::summon()
         }
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")))]
+        #[cfg(target_arch = "wasm32")]
+        {
+            use archmage::SimdToken;
+            archmage::Wasm128Token::summon()
+        }
+        #[cfg(not(any(
+            target_arch = "x86_64",
+            target_arch = "x86",
+            target_arch = "aarch64",
+            target_arch = "wasm32"
+        )))]
         {
             None
         }
