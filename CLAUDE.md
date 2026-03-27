@@ -190,6 +190,52 @@ to pipeline effectively. Thread sync overhead dominates.
 Our 1.13-1.41x gap vs libwebp is purely single-threaded instruction
 count and memory access patterns.
 
+### Lossless Decoder vs libwebp (2026-03-25)
+
+**Wall-clock (x86-64-v3, codec_wiki 2560x1664 lossless, 5 decodes):**
+zenwebp ~22ms vs libwebp ~29ms = **0.76x (24% faster wall-clock)**
+
+**Instruction ratio (callgrind, same file, 5 decodes):**
+zenwebp 1420M vs libwebp 715M = **1.99x instruction count**
+
+Despite 2x more instructions, zenwebp is faster in wall-clock because:
+1. No BGRA->RGBA conversion needed (libwebp stores ARGB, converts on output: 51M)
+2. No extra memcpy for format conversion (libwebp: 64M)
+3. Better IPC from scalar code (fewer stalls, simpler memory access patterns)
+
+**Optimizations applied (2026-03-25):**
+1. Packed table: 6-bit single-lookup pixel decode (fires for images with short codes)
+2. is_trivial_code: skip all bit reading when all trees are single-symbol
+3. is_trivial_literal: pre-pack R/B/A when those channels are constant
+4. Incremental col/row tracking (avoids div/mod at tile boundaries)
+5. Infallible BitReader::fill() with slow-path split
+6. Unchecked consume in Huffman fast path (read_symbol_fast)
+
+**Instruction breakdown per 5 decodes (codec_wiki lossless):**
+
+| Component | zenwebp (M) | libwebp (M) | Ratio |
+|-----------|-------------|-------------|-------|
+| Pixel decode loop | 551 | 241 | 2.29x |
+| Inverse transforms | 778 | 254 | 3.06x |
+| BGRA->RGBA convert | 0 | 51 | **0x** |
+| memset (buffer init) | 69 | 0 | - |
+| memcpy | 0 | 64 | **0x** |
+| Huffman build | 7 | 7 | 1.0x |
+| Other | 15 | 98 | 0.15x |
+| **Total** | **1420** | **715** | **1.99x** |
+
+**Remaining opportunities:**
+- Transforms 3x gap: purely SIMD (SSE2/SSE4.1 in C vs scalar Rust).
+  apply_color_transform: 84M/decode (C: 23M), apply_predictor: 56M (C: 15M),
+  apply_subtract_green: 19M (C: 7M). Autovectorization fails for byte-interleaved
+  pixel operations. Would need archmage SIMD to close this gap.
+- memset 69M: buffer zero-init. Every byte overwritten before read.
+- Deferred color cache: C batches inserts at row boundaries; Rust can't match
+  because byte-array pixel storage requires 4-byte read + reconstruct for hash,
+  making batch inserts MORE expensive than per-pixel insert (tested, confirmed).
+- Decode loop 2.3x: Huffman match overhead, bounds checks on table lookups,
+  Result error-path codegen, per-pixel color cache hash.
+
 ## Perceptual Encoder Features (method 3+)
 
 - **Enhanced CSF tables** (method 3+) — best quality improvement alone

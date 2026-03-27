@@ -202,6 +202,54 @@ impl HuffmanTree {
         matches!(self.0, HuffmanTreeInner::Single(_))
     }
 
+    /// Returns the maximum code length (number of bits) used in this tree.
+    /// For single-node trees, returns 0. For table-based trees, returns
+    /// the number of bits in the primary table (log2 of table size).
+    /// This is used for the packed table optimization.
+    pub(crate) fn max_code_bits(&self) -> u8 {
+        match &self.0 {
+            HuffmanTreeInner::Single(_) => 0,
+            HuffmanTreeInner::Tree {
+                primary_table,
+                secondary_table,
+                ..
+            } => {
+                if secondary_table.is_empty() {
+                    // All codes fit in primary table
+                    // Find the actual max code length used
+                    let mut max_bits = 0u8;
+                    for &entry in primary_table.iter() {
+                        let bits = (entry >> 12) as u8;
+                        if bits > max_bits {
+                            max_bits = bits;
+                        }
+                    }
+                    max_bits
+                } else {
+                    // Has secondary table, codes are too long for packed table
+                    MAX_TABLE_BITS + 1
+                }
+            }
+        }
+    }
+
+    /// Get symbol and bits for a given bit pattern from the primary table.
+    /// Returns (symbol, bits_consumed). Only valid for trees with no secondary table.
+    #[inline(always)]
+    pub(crate) fn decode_primary(&self, bits: u16) -> (u16, u8) {
+        match &self.0 {
+            HuffmanTreeInner::Tree {
+                primary_table,
+                table_mask,
+                ..
+            } => {
+                let entry = primary_table[(bits & table_mask) as usize];
+                (entry & 0xfff, (entry >> 12) as u8)
+            }
+            HuffmanTreeInner::Single(symbol) => (*symbol, 0),
+        }
+    }
+
     #[inline(never)]
     fn read_symbol_slowpath(
         secondary_table: &[u16],
@@ -220,7 +268,7 @@ impl HuffmanTree {
 
     /// Reads a symbol using the bit reader.
     ///
-    /// You must call call `bit_reader.fill()` before calling this function or it may erroroneosly
+    /// You must call `bit_reader.fill()` before calling this function or it may erroneously
     /// detect the end of the stream and return a bitstream error.
     pub(crate) fn read_symbol(&self, bit_reader: &mut BitReader<'_>) -> Result<u16, DecodeError> {
         match &self.0 {
@@ -242,25 +290,28 @@ impl HuffmanTree {
         }
     }
 
-    /// Peek at the next symbol in the bitstream if it can be read with only a primary table lookup.
-    ///
-    /// Returns a tuple of the codelength and symbol value. This function may return wrong
-    /// information if there aren't enough bits in the bit reader to read the next symbol.
-    pub(crate) fn peek_symbol(&self, bit_reader: &BitReader<'_>) -> Option<(u8, u16)> {
+    /// Read a symbol, using unchecked consume for the primary-table fast path.
+    /// Caller must guarantee that `bit_reader.fill()` has been called recently
+    /// enough that at least MAX_TABLE_BITS bits are available.
+    #[inline(always)]
+    pub(crate) fn read_symbol_fast(&self, bit_reader: &mut BitReader<'_>) -> Result<u16, DecodeError> {
         match &self.0 {
             HuffmanTreeInner::Tree {
                 primary_table,
+                secondary_table,
                 table_mask,
-                ..
             } => {
                 let v = bit_reader.peek_full() as u16;
                 let entry = primary_table[(v & table_mask) as usize];
                 if (entry >> 12) <= MAX_TABLE_BITS as u16 {
-                    return Some(((entry >> 12) as u8, entry & 0xfff));
+                    // Use unchecked consume: fill() guarantees enough bits
+                    bit_reader.consume_unchecked((entry >> 12) as u8);
+                    return Ok(entry & 0xfff);
                 }
-                None
+
+                Self::read_symbol_slowpath(secondary_table, v, entry, bit_reader)
             }
-            HuffmanTreeInner::Single(symbol) => Some((0, *symbol)),
+            HuffmanTreeInner::Single(symbol) => Ok(*symbol),
         }
     }
 }
