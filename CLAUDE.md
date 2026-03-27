@@ -128,21 +128,37 @@ ZENWEBP_TRACE=1 env var enables call count instrumentation.
 
 ### Decoder vs libwebp
 
-**Wall-clock (x86-64-v3, gallery1 corpus, 200 iterations, 2026-03-25):**
+**Wall-clock (x86-64-v3, codec_wiki 2560x1664, 200 iterations, 2026-03-25):**
+zenwebp ~10.7ms vs libwebp ~7.9ms = **1.36x** (median)
 
-| Image | Dimensions | zenwebp | libwebp | Ratio |
-|-------|------------|---------|---------|-------|
-| gallery1/1 | 550x368 | 2.21ms | 1.38ms | 1.60x |
-| gallery1/2 | 550x404 | 3.29ms | 2.39ms | 1.38x |
-| gallery1/3 | 1280x720 | 9.16ms | 8.27ms | **1.11x** |
-| gallery1/4 | 1024x772 | 8.31ms | 7.01ms | 1.19x |
-| gallery1/5 | 1024x752 | 4.43ms | 4.52ms | **0.98x** |
+**Instruction ratio (callgrind, codec_wiki 2560x1664 Q75 RGB, 10 decodes):**
+zenwebp 185.2M vs libwebp 161.4M = **1.15x** per decode
 
-Large images (720p+): **1.08-1.19x** (near parity).
-Small images (550px): **1.38-1.60x** (per-frame overhead: allocation, setup).
+**IDCT skip optimization (2026-03-25):** Per-block non_zero_blocks bitmap
+skips IDCT for zero-coefficient blocks. IDCT went from 24.5M to 1.3M per
+decode (18.5x). Total instructions: 229.3M -> 185.2M (19% reduction).
+Wall-clock improved from ~2.3x to ~1.36x vs libwebp on codec_wiki.
 
-**Instruction ratio (callgrind, same WebP, 1024x1024):**
-zenwebp 91.4M vs libwebp 79.4M = **1.15x**
+**Remaining instruction gap breakdown (per decode, codec_wiki):**
+
+| Category | zenwebp (M) | libwebp (M) | Gap (M) |
+|----------|-------------|-------------|---------|
+| Coefficient parsing | 47.0 | ~38.3 | 8.7 |
+| Loop filter SIMD | 37.9 | ~30.6 | 7.3 |
+| YUV->RGB upsample | 45.7 | ~38.1 | 7.6 |
+| Decode orchestration | 22.9 | ~24.9 | **-2.0** |
+| IDCT | 1.3 | ~17.1 | **-15.8** |
+| memset (buf alloc) | 17.8 | ~0 | 17.8 |
+| memcpy | 3.2 | 2.6 | 0.6 |
+| Other | 9.4 | ~10 | -0.6 |
+| **Total** | **185.2** | **161.4** | **23.8** |
+
+Main remaining opportunities:
+- **memset 17.8M**: Frame buffer zero-init. Every byte overwritten before read.
+  Could use uninitialized allocation but requires unsafe or refactoring.
+- **Coeff parsing 8.7M excess**: Bounds checks on prob table, cat_probs loop.
+- **Loop filter 7.3M excess**: SIMD dispatch overhead, bounds checks.
+- **YUV->RGB 7.6M excess**: Scalar edge handling, bounds checks.
 
 ### Decoder Threading Investigation (2026-03-24)
 
@@ -262,29 +278,23 @@ instruction count, not cache efficiency.
 | ftransform2 + ftransform_from_u8 | 9.6M | FTransform_SSE2 | 9.8M | **0.98x** |
 | quantize_block (standalone) | 4.3M | QuantizeBlock_SSE41 | 6.0M | **0.72x** |
 
-### Decoder (2026-03-25, 1024×1024 synthetic lossy, same WebP file, 10 decodes)
+### Decoder (2026-03-25, codec_wiki 2560x1664 Q75 RGB, 10 decodes)
 
-zenwebp: 91.4M vs libwebp: 79.4M (**1.15x instruction ratio**)
+zenwebp: 185.2M vs libwebp: 161.4M (**1.15x instruction ratio**)
 
 | zenwebp function | M instr | libwebp equivalent | M instr | Ratio |
 |-----------------|---------|-------------------|---------|-------|
-| read_residual_data | 40.8M | GetCoeffsFast (3 entries) | 36.5M | **1.12x** |
-| filter_row_in_cache | 17.5M | HFilter/VFilter/DoFilter6 SSE2 | 9.9M | **1.77x** |
-| decode_frame_ (exclusive) | 15.1M | VP8DecodeMB+ReconstructRow+ParseIntraMode | ~10.5M | **1.44x** |
-| fill_row_fancy | 11.3M | YUV2RGB+Upsample SSE41 | 8.6M | **1.31x** |
-| memset | 4.5M | — | 0 | buffer zeroing |
-| drop_in_place\<DecodeError\> | 0.4M | — | 0 | `?` overhead |
-| memcpy | 0.4M | — | 0 | buffer copies |
+| read_residual_data | 47.0M | GetCoeffsFast+GetLargeValue | 38.3M | **1.23x** |
+| filter_row_simd | 37.9M | HFilter/VFilter/DoFilter SSE2 | 30.6M | **1.24x** |
+| fancy_upsample + fill_row | 45.7M | YUV2RGB+Upsample SSE41 | 38.1M | **1.20x** |
+| decode_frame_ (exclusive) | 22.9M | VP8DecodeMB+Reconstruct+ParseMode | 24.9M | **0.92x** |
+| memset | 17.8M | — | ~0 | buffer zeroing |
+| IDCT | 1.3M | Transform_SSE2+DC prediction | 17.1M | **0.08x** |
+| memcpy | 3.2M | memcpy | 2.6M | 1.23x |
 
-**Remaining optimization targets:**
-1. **filter_row_in_cache 7.6M excess** — archmage `#[arcane]` dispatch overhead on
-   many small filter calls. Fused 3-edge filter implemented but `#[arcane]` wrapper
-   negated gains. Need `#[rite]` integration or filter order restructuring.
-2. **read_residual_data 4.3M excess** — dequant array optimization already applied.
-   Remaining excess: bounds checks on probs table, cat_probs loop, coefficient
-   overhead per block.
-3. **fill_row_fancy 2.7M excess** — scalar edge handling + fewer pixels per SIMD pass.
-4. **memset 4.5M** — unavoidable frame buffer allocation zeroing.
+IDCT is now 18.5x faster than libwebp (zero-block skip). Main remaining
+targets: memset (buffer alloc), bounds checks in coeff parsing, loop filter,
+and YUV->RGB conversion.
 
 ## Remaining Optimization Opportunities
 
@@ -295,18 +305,15 @@ zenwebp: 91.4M vs libwebp: 79.4M (**1.15x instruction ratio**)
 4. **Defer I16 reconstruction** — only IDCT winning mode (saves ~48 IDCT/MB)
 
 ### Decoder
-1. **Loop filter 17.5M vs 9.9M (1.77x)** — `#[arcane]` dispatch overhead on per-edge
-   filter calls. Fused 3-edge horizontal filter (normal_h_filter16i) implemented in
-   loop_filter_avx2.rs matching libwebp's HFilter16i approach (column reuse), but
-   `#[arcane]` wrapper overhead negated the algorithmic gains (+19M worse).
-   Need `#[rite]` conversion to benefit.
-2. **read_residual_data 40.8M vs 36.5M (1.12x)** — dequant array optimization applied
-   (i32[2] indexed by n>0). Remaining excess: bounds checks on prob table lookups,
-   cat_probs loop overhead, try_into().unwrap() on block slices.
-3. **decode_frame_ orchestration 15.1M vs ~10.5M (1.44x)** — prediction border copies,
-   cache write bounds checks, function call overhead.
-4. **fill_row_fancy 11.3M vs 8.6M (1.31x)** — scalar edge pixel handling, fewer
-   pixels per SIMD iteration than libwebp's wider processing.
+1. **IDCT skip (DONE)** — Per-block non_zero_blocks bitmap eliminates IDCT for zero
+   blocks. 24.5M -> 1.3M per decode. Matches libwebp's DoTransform case 0 / bits!=0.
+2. **Loop filter 37.9M vs 30.6M (1.24x)** — single `#[arcane]` entry with `#[rite]`
+   inlining. Remaining gap from bounds checks and different code shape.
+3. **Coefficient parsing 47.0M vs 38.3M (1.23x)** — bounds checks on prob table
+   lookups, cat_probs loop, try_into().unwrap() on block slices.
+4. **YUV->RGB 45.7M vs 38.1M (1.20x)** — scalar edge handling, bounds checks.
+5. **memset 17.8M** — frame buffer zero-init. Every byte is overwritten before read.
+6. **decode_frame_ orchestration** — now at parity with libwebp (~22.9M vs ~24.9M).
 
 ## Profiling Commands
 
