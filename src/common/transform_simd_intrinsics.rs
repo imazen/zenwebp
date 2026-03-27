@@ -951,11 +951,27 @@ pub(crate) fn idct_add_residue_with_token(
     }
 }
 
-/// In-place fused IDCT + add residue for decoder hot path.
-/// Performs IDCT on raw DCT coefficients, adds to prediction block in-place, and clears coefficients.
+/// In-place fused IDCT + add residue for decoder hot path (entry point).
+/// Wrapper for callers that don't have a target_feature context.
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
 pub(crate) fn idct_add_residue_inplace_sse2(
+    _token: X64V3Token,
+    coeffs: &mut [i32; 16],
+    block: &mut [u8],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+    dc_only: bool,
+) {
+    idct_add_residue_inplace_sse2_inner(_token, coeffs, block, y0, x0, stride, dc_only);
+}
+
+/// In-place fused IDCT + add residue — `#[rite]` version for inlining into
+/// `#[arcane]` callers (e.g., the prediction+IDCT pipeline).
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[rite]
+pub(crate) fn idct_add_residue_inplace_sse2_inner(
     _token: X64V3Token,
     coeffs: &mut [i32; 16],
     block: &mut [u8],

@@ -264,6 +264,20 @@ pub(crate) fn idct_add_residue_inplace_neon(
     stride: usize,
     dc_only: bool,
 ) {
+    idct_add_residue_inplace_neon_inner(_token, coeffs, block, y0, x0, stride, dc_only);
+}
+
+/// `#[rite]` version for inlining into `#[arcane]` prediction+IDCT pipelines.
+#[rite]
+pub(crate) fn idct_add_residue_inplace_neon_inner(
+    _token: NeonToken,
+    coeffs: &mut [i32; 16],
+    block: &mut [u8],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+    dc_only: bool,
+) {
     if dc_only {
         idct_add_residue_dc_neon(_token, coeffs, block, y0, x0, stride);
     } else {

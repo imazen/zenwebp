@@ -27,6 +27,7 @@ mod loop_filter_neon;
 mod loop_filter_wasm;
 
 mod loop_filter_dispatch;
+mod predict_simd;
 
 #[cfg(target_arch = "x86_64")]
 mod yuv_simd;
