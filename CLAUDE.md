@@ -192,47 +192,51 @@ count and memory access patterns.
 
 ### Lossless Decoder vs libwebp (2026-03-25)
 
-**Wall-clock (x86-64-v3, codec_wiki 2560x1664 lossless, 5 decodes):**
-zenwebp ~22ms vs libwebp ~29ms = **0.76x (24% faster wall-clock)**
+**Wall-clock (x86-64-v3, codec_wiki 2560x1664 lossless, zenbench):**
+zenwebp ~11.3ms vs libwebp ~8.5ms = **1.33x**
 
 **Instruction ratio (callgrind, same file, 5 decodes):**
-zenwebp 1420M vs libwebp 715M = **1.99x instruction count**
+zenwebp 1072M vs libwebp 715M = **1.50x instruction count**
 
-Despite 2x more instructions, zenwebp is faster in wall-clock because:
-1. No BGRA->RGBA conversion needed (libwebp stores ARGB, converts on output: 51M)
-2. No extra memcpy for format conversion (libwebp: 64M)
-3. Better IPC from scalar code (fewer stalls, simpler memory access patterns)
-
-**Optimizations applied (2026-03-25):**
+**Optimizations applied:**
 1. Packed table: 6-bit single-lookup pixel decode (fires for images with short codes)
 2. is_trivial_code: skip all bit reading when all trees are single-symbol
 3. is_trivial_literal: pre-pack R/B/A when those channels are constant
 4. Incremental col/row tracking (avoids div/mod at tile boundaries)
 5. Infallible BitReader::fill() with slow-path split
 6. Unchecked consume in Huffman fast path (read_symbol_fast)
+7. SSE2 inverse transforms via archmage (2026-03-25):
+   - TransformColorInverse: mulhi_epi16 trick for fixed-point multiply
+   - AddGreenToBlueAndRed: shuffle+add for green channel broadcast
+   - Predictor 1 (left): parallel prefix-sum of 4 pixels
+   - Predictors 2,3,4 (top/TR/TL): batch 4-pixel byte-add
+   - Predictors 8,9 (avg TL/T, avg T/TR): batch floor-average + add
 
 **Instruction breakdown per 5 decodes (codec_wiki lossless):**
 
 | Component | zenwebp (M) | libwebp (M) | Ratio |
 |-----------|-------------|-------------|-------|
 | Pixel decode loop | 551 | 241 | 2.29x |
-| Inverse transforms | 778 | 254 | 3.06x |
+| Inverse transforms | 430 | 254 | 1.69x |
 | BGRA->RGBA convert | 0 | 51 | **0x** |
 | memset (buffer init) | 69 | 0 | - |
 | memcpy | 0 | 64 | **0x** |
 | Huffman build | 7 | 7 | 1.0x |
 | Other | 15 | 98 | 0.15x |
-| **Total** | **1420** | **715** | **1.99x** |
+| **Total** | **1072** | **715** | **1.50x** |
+
+**Inverse transform SIMD progress (per 5 decodes, codec_wiki):**
+- Before SIMD: 778M (3.06x vs C)
+- After SSE2: 430M (1.69x vs C) — **45% reduction**
+- C target: 254M (SSE2+SSE4.1)
+- Remaining gap: predictors 5-13 still scalar (serial data dependencies),
+  bounds checks in scalar predictor fallbacks, Rust codegen overhead.
 
 **Remaining opportunities:**
-- Transforms 3x gap: purely SIMD (SSE2/SSE4.1 in C vs scalar Rust).
-  apply_color_transform: 84M/decode (C: 23M), apply_predictor: 56M (C: 15M),
-  apply_subtract_green: 19M (C: 7M). Autovectorization fails for byte-interleaved
-  pixel operations. Would need archmage SIMD to close this gap.
+- Transforms: predictors 5-7 (average with left, serial), 10-13 (complex
+  serial) still scalar. Could use per-pixel SSE2 for predictors 11-13
+  (select, clamp) as C does. Predictors 5-7 can't be parallelized.
 - memset 69M: buffer zero-init. Every byte overwritten before read.
-- Deferred color cache: C batches inserts at row boundaries; Rust can't match
-  because byte-array pixel storage requires 4-byte read + reconstruct for hash,
-  making batch inserts MORE expensive than per-pixel insert (tested, confirmed).
 - Decode loop 2.3x: Huffman match overhead, bounds checks on table lookups,
   Result error-path codegen, per-pixel color cache hash.
 
