@@ -343,20 +343,52 @@ impl Frame {
     }
 }
 
-/// Read and dequantize DCT coefficients for one 4×4 block.
+/// Decode large coefficient values (categories 3-6).
+///
+/// Separated from `read_coefficients` to keep the hot path small,
+/// matching C's `GetLargeValue`/`GetCoeffsFast` split. Both functions
+/// are `#[inline(never)]` so the CPU branch predictor tracks each
+/// through a single set of addresses, reducing BTB aliasing.
+#[inline(never)]
+fn get_large_value(
+    reader: &mut ActivePartitionReader<'_>,
+    prob: &[TreeNode; NUM_DCT_TOKENS - 1],
+) -> i32 {
+    if reader.get_bit(prob[6].prob) == 0 {
+        if reader.get_bit(prob[7].prob) == 0 {
+            5 + reader.get_bit(159)
+        } else {
+            7 + 2 * reader.get_bit(165) + reader.get_bit(145)
+        }
+    } else {
+        let bit1 = reader.get_bit(prob[8].prob);
+        let bit0 = reader.get_bit(prob[9 + bit1 as usize].prob);
+        let cat = (2 * bit1 + bit0) as usize;
+
+        let cat_probs = &PROB_DCT_CAT[2 + cat];
+        let cat_len = [3usize, 4, 5, 11][cat];
+        let mut extra = 0i32;
+        for i in 0..cat_len {
+            extra = extra + extra + reader.get_bit(cat_probs[i]);
+        }
+        3 + (8 << cat) + extra
+    }
+}
+
+/// Read and dequantize DCT coefficients for one 4x4 block.
 ///
 /// Returns true if any coefficient beyond `first` was non-zero.
-/// Read and dequantize DCT coefficients from the bitstream.
 ///
-/// Optimized to match libwebp's GetCoeffsFast:
-/// - Uses branchless get_signed for sign bits (VP8GetSigned)
-/// - Uses 2-element dequant array indexed by `n > 0` (no branch)
-/// - Takes &mut [i32; 16] to eliminate bounds checks on zigzag writes
+/// NOT inlined so the CPU branch predictor tracks all coefficient
+/// decoding through a single set of branch addresses. When inlined 25x
+/// (once per block in a macroblock), BTB aliasing causes ~2.3M extra
+/// mispredicts per decode (measured via cachegrind). The function call
+/// overhead is compensated by the mispredict savings.
 ///
 /// Does NOT check for EOF — caller must check `reader.is_eof()` after
 /// processing all blocks in the macroblock (matching libwebp's approach
 /// where VP8DecodeMB checks EOF once per MB, not per block).
-#[inline(always)]
+#[inline(never)]
 fn read_coefficients(
     reader: &mut ActivePartitionReader<'_>,
     output: &mut [i32; 16],
@@ -397,27 +429,7 @@ fn read_coefficients(
                     v = 3 + reader.get_bit(prob[5].prob);
                 }
             } else {
-                if reader.get_bit(prob[6].prob) == 0 {
-                    if reader.get_bit(prob[7].prob) == 0 {
-                        v = 5 + reader.get_bit(159);
-                    } else {
-                        v = 7 + 2 * reader.get_bit(165) + reader.get_bit(145);
-                    }
-                } else {
-                    let bit1 = reader.get_bit(prob[8].prob);
-                    let bit0 = reader.get_bit(prob[9 + bit1 as usize].prob);
-                    let cat = (2 * bit1 + bit0) as usize;
-
-                    // Fixed-length category probability reads (no sentinel check).
-                    // Category sizes: cat3=3, cat4=4, cat5=5, cat6=11 probabilities.
-                    let cat_probs = &PROB_DCT_CAT[2 + cat];
-                    let cat_len = [3usize, 4, 5, 11][cat];
-                    let mut extra = 0i32;
-                    for i in 0..cat_len {
-                        extra = extra + extra + reader.get_bit(cat_probs[i]);
-                    }
-                    v = 3 + (8 << cat) + extra;
-                }
+                v = get_large_value(reader, prob);
             }
             next_ctx = 2;
         }
