@@ -597,6 +597,10 @@ impl<'a> Vp8Decoder<'a> {
     fn decode_frame_diagnostic(mut self) -> Result<(Frame, DiagnosticFrame), DecodeError> {
         self.read_frame_header()?;
 
+        // Pre-allocate macroblocks for the diagnostic path (filter_row_in_cache reads from it).
+        self.macroblocks =
+            Vec::with_capacity(usize::from(self.mbwidth) * usize::from(self.mbheight));
+
         // Summon SIMD token once for the entire decode
         let simd_token: SimdTokenType = summon_simd_token();
 
@@ -779,7 +783,9 @@ impl<'a> Vp8Decoder<'a> {
                     self.mb_dither_buf.push(amp);
                 }
 
-                self.macroblocks.push(mb);
+                // Note: mb is NOT pushed to self.macroblocks — all per-MB data
+                // (filter params, dither amps) was already extracted above.
+                // The diagnostic path uses its own push in decode_mb_rows_diagnostic.
             }
 
             // Row complete: filter in cache using pre-populated mb_filter_params.

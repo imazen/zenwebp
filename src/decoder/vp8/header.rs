@@ -211,9 +211,9 @@ impl<'a> Vp8Decoder<'a> {
         self.top = vec![PreviousMacroBlock::default(); self.mbwidth.into()];
         self.left = PreviousMacroBlock::default();
 
-        // Pre-allocate macroblocks to avoid repeated Vec reallocation in decode loop
-        self.macroblocks =
-            Vec::with_capacity(usize::from(self.mbwidth) * usize::from(self.mbheight));
+        // Macroblocks vec is only used by the diagnostic path.
+        // The main decode path (decode_mb_rows) extracts per-MB data inline
+        // and doesn't push to this vec, saving ~932KB for 4K images.
 
         // Frame buffers don't need FILTER_PADDING — padding is only needed on
         // cache buffers where loop filtering operates. Frame buffers receive the
