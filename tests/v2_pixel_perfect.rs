@@ -560,9 +560,7 @@ fn cat2_decode_webp_conformance() {
         }
     }
 
-    println!(
-        "\n  Summary: {tested} tested, {skipped} skipped (non-lossy)"
-    );
+    println!("\n  Summary: {tested} tested, {skipped} skipped (non-lossy)");
     println!(
         "  v2 vs v1: {v1_diff_count} files with differences, \
          worst max_diff={worst_v1_max} ({worst_v1_file})"
@@ -575,7 +573,10 @@ fn cat2_decode_webp_conformance() {
         eprintln!("  FAIL: {f}");
     }
 
-    assert!(tested > 0, "No lossy WebP files found in conformance corpus");
+    assert!(
+        tested > 0,
+        "No lossy WebP files found in conformance corpus"
+    );
     assert!(
         failures.is_empty(),
         "{} files exceeded v2-vs-v1 tolerance of {V2_V1_MAX_TOLERANCE}",
@@ -827,7 +828,9 @@ fn cat4_quality_sweep() {
     let h = 256;
     let rgb = gradient_rgb(w, h);
 
-    let qualities = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 95.0, 99.0];
+    let qualities = [
+        10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 95.0, 99.0,
+    ];
 
     let mut worst_v1 = 0u8;
     let mut worst_v1_q = 0.0f32;
@@ -846,12 +849,8 @@ fn cat4_quality_sweep() {
         }
     }
 
-    println!(
-        "\n  Worst v2-vs-v1: {worst_v1} (at Q{worst_v1_q})"
-    );
-    println!(
-        "  Worst v2-vs-libwebp RGB: {worst_lib_rgb} (at Q{worst_lib_q})"
-    );
+    println!("\n  Worst v2-vs-v1: {worst_v1} (at Q{worst_v1_q})");
+    println!("  Worst v2-vs-libwebp RGB: {worst_lib_rgb} (at Q{worst_lib_q})");
     assert!(
         worst_v1 <= V2_V1_MAX_TOLERANCE,
         "v2 vs v1 max diff {worst_v1} at Q{worst_v1_q} exceeds tolerance {V2_V1_MAX_TOLERANCE}"
@@ -865,7 +864,9 @@ fn cat4_quality_sweep_noise() {
     let h = 256;
     let rgb = noise_rgb(w, h, 99);
 
-    let qualities = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 95.0, 99.0];
+    let qualities = [
+        10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 95.0, 99.0,
+    ];
 
     let mut worst_v1 = 0u8;
     let mut worst_v1_q = 0.0f32;
@@ -884,12 +885,8 @@ fn cat4_quality_sweep_noise() {
         }
     }
 
-    println!(
-        "\n  Worst v2-vs-v1: {worst_v1} (at Q{worst_v1_q})"
-    );
-    println!(
-        "  Worst v2-vs-libwebp RGB: {worst_lib_rgb} (at Q{worst_lib_q})"
-    );
+    println!("\n  Worst v2-vs-v1: {worst_v1} (at Q{worst_v1_q})");
+    println!("  Worst v2-vs-libwebp RGB: {worst_lib_rgb} (at Q{worst_lib_q})");
     assert!(
         worst_v1 <= V2_V1_MAX_TOLERANCE,
         "v2 vs v1 max diff {worst_v1} at Q{worst_v1_q} exceeds tolerance {V2_V1_MAX_TOLERANCE}"
@@ -938,8 +935,7 @@ fn context_reuse_produces_identical_output() {
         let mut pass_ok = true;
         for (i, webp) in webp_files.iter().enumerate() {
             // Strip RIFF header to get raw VP8 data
-            let chunk_size =
-                u32::from_le_bytes([webp[16], webp[17], webp[18], webp[19]]) as usize;
+            let chunk_size = u32::from_le_bytes([webp[16], webp[17], webp[18], webp[19]]) as usize;
             let vp8_data = &webp[20..20 + chunk_size.min(webp.len() - 20)];
 
             let mut output = Vec::new();
@@ -950,23 +946,15 @@ fn context_reuse_produces_identical_output() {
 
             match decode_result {
                 Err(e) => {
-                    let msg = format!(
-                        "pass {pass} image {i} ({iw}x{ih}): decode error: {e}"
-                    );
+                    let msg = format!("pass {pass} image {i} ({iw}x{ih}): decode error: {e}");
                     eprintln!("  FAIL: {msg}");
                     reuse_failures.push(msg);
                     pass_ok = false;
                     continue;
                 }
                 Ok((w, h)) => {
-                    assert_eq!(
-                        w, fw,
-                        "width mismatch on reuse pass {pass} image {i}"
-                    );
-                    assert_eq!(
-                        h, fh,
-                        "height mismatch on reuse pass {pass} image {i}"
-                    );
+                    assert_eq!(w, fw, "width mismatch on reuse pass {pass} image {i}");
+                    assert_eq!(h, fh, "height mismatch on reuse pass {pass} image {i}");
 
                     if output.len() != fresh_rgba.len() {
                         let msg = format!(
@@ -981,12 +969,7 @@ fn context_reuse_produces_identical_output() {
                     }
 
                     // Compare pixel-by-pixel
-                    let stats = compute_diff(
-                        &output,
-                        fresh_rgba,
-                        u32::from(w),
-                        u32::from(h),
-                    );
+                    let stats = compute_diff(&output, fresh_rgba, u32::from(w), u32::from(h));
                     if stats.max_diff > 0 {
                         let msg = format!(
                             "pass {pass} image {i} ({w}x{h}): max_diff={}, {} bytes differ",
