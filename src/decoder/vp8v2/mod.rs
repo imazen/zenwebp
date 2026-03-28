@@ -10,6 +10,7 @@
 mod coefficients;
 mod context;
 mod header;
+pub(super) mod predict_fused;
 mod tables;
 
 pub(crate) use context::DecoderContext;
