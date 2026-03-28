@@ -17,6 +17,44 @@ use core::arch::x86_64::*;
 use super::tables::{MAX_LEVEL, VP8_FREQ_SHARPENING};
 
 //------------------------------------------------------------------------------
+// Fixed-size array splitting helpers (zero-cost, all checks elided at compile time)
+
+/// Split `&[T; 16]` into four `&[T; 4]` without runtime bounds checks.
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[inline(always)]
+fn split4_ref<T>(arr: &[T; 16]) -> (&[T; 4], &[T; 4], &[T; 4], &[T; 4]) {
+    let (a, rest) = arr.split_first_chunk::<4>().unwrap();
+    let rest: &[T; 12] = rest.try_into().unwrap();
+    let (b, rest) = rest.split_first_chunk::<4>().unwrap();
+    let rest: &[T; 8] = rest.try_into().unwrap();
+    let (c, d) = rest.split_first_chunk::<4>().unwrap();
+    let d: &[T; 4] = d.try_into().unwrap();
+    (a, b, c, d)
+}
+
+/// Split `&mut [T; 16]` into four `&mut [T; 4]` without runtime bounds checks.
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[inline(always)]
+fn split4_mut<T>(arr: &mut [T; 16]) -> (&mut [T; 4], &mut [T; 4], &mut [T; 4], &mut [T; 4]) {
+    let (a, rest) = arr.split_first_chunk_mut::<4>().unwrap();
+    let rest: &mut [T; 12] = rest.try_into().unwrap();
+    let (b, rest) = rest.split_first_chunk_mut::<4>().unwrap();
+    let rest: &mut [T; 8] = rest.try_into().unwrap();
+    let (c, d) = rest.split_first_chunk_mut::<4>().unwrap();
+    let d: &mut [T; 4] = d.try_into().unwrap();
+    (a, b, c, d)
+}
+
+/// Split `&[T; 16]` into two `&[T; 8]` without runtime bounds checks.
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[inline(always)]
+fn split2_ref<T>(arr: &[T; 16]) -> (&[T; 8], &[T; 8]) {
+    let (a, b) = arr.split_first_chunk::<8>().unwrap();
+    let b: &[T; 8] = b.try_into().unwrap();
+    (a, b)
+}
+
+//------------------------------------------------------------------------------
 // Quantization constants
 
 /// Fixed-point precision for quantization
@@ -228,8 +266,9 @@ fn dequantize_block_entry(_token: X64V3Token, q: &[u16; 16], coeffs: &mut [i32; 
 #[rite]
 pub(crate) fn dequantize_block_sse2(_token: X64V3Token, q: &[u16; 16], coeffs: &mut [i32; 16]) {
     // Load quantizers as u16, zero-extend to i32
-    let q_lo = simd_mem::_mm_loadu_si128(<&[u16; 8]>::try_from(&q[0..8]).unwrap());
-    let q_hi = simd_mem::_mm_loadu_si128(<&[u16; 8]>::try_from(&q[8..16]).unwrap());
+    let (q_lo_arr, q_hi_arr) = split2_ref(q);
+    let q_lo = simd_mem::_mm_loadu_si128(q_lo_arr);
+    let q_hi = simd_mem::_mm_loadu_si128(q_hi_arr);
 
     let zero = _mm_setzero_si128();
 
@@ -240,10 +279,11 @@ pub(crate) fn dequantize_block_sse2(_token: X64V3Token, q: &[u16; 16], coeffs: &
     let q3_32 = _mm_unpackhi_epi16(q_hi, zero); // q[12..16] as i32
 
     // Load coefficients as i32
-    let c0 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-    let c1 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-    let c2 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-    let c3 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+    let (c0_arr, c1_arr, c2_arr, c3_arr) = split4_ref(coeffs);
+    let c0 = simd_mem::_mm_loadu_si128(c0_arr);
+    let c1 = simd_mem::_mm_loadu_si128(c1_arr);
+    let c2 = simd_mem::_mm_loadu_si128(c2_arr);
+    let c3 = simd_mem::_mm_loadu_si128(c3_arr);
 
     // Multiply using SSE2 workaround (no _mm_mullo_epi32 until SSE4.1)
     // For i32*i32, use _mm_mul_epu32 on even/odd elements separately
@@ -269,10 +309,11 @@ pub(crate) fn dequantize_block_sse2(_token: X64V3Token, q: &[u16; 16], coeffs: &
     let r3 = mul_epi32_sse2!(c3, q3_32);
 
     // Store results
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[0..4]).unwrap(), r0);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[4..8]).unwrap(), r1);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[8..12]).unwrap(), r2);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(), r3);
+    let (s0, s1, s2, s3) = split4_mut(coeffs);
+    simd_mem::_mm_storeu_si128(s0, r0);
+    simd_mem::_mm_storeu_si128(s1, r1);
+    simd_mem::_mm_storeu_si128(s2, r2);
+    simd_mem::_mm_storeu_si128(s3, r3);
 }
 
 /// Matrix type for bias selection
@@ -365,10 +406,11 @@ pub(crate) fn quantize_block_sse2(
     let zero = _mm_setzero_si128();
 
     // Pack i32 coefficients to i16 (safe for typical DCT range)
-    let c0_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-    let c1_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-    let c2_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-    let c3_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+    let (c0_arr, c1_arr, c2_arr, c3_arr) = split4_ref(coeffs);
+    let c0_32 = simd_mem::_mm_loadu_si128(c0_arr);
+    let c1_32 = simd_mem::_mm_loadu_si128(c1_arr);
+    let c2_32 = simd_mem::_mm_loadu_si128(c2_arr);
+    let c3_32 = simd_mem::_mm_loadu_si128(c3_arr);
 
     let in0 = _mm_packs_epi32(c0_32, c1_32); // coeffs[0..8] as i16
     let in8 = _mm_packs_epi32(c2_32, c3_32); // coeffs[8..16] as i16
@@ -444,10 +486,11 @@ pub(crate) fn quantize_block_sse2(
     let out_12 = _mm_unpackhi_epi16(coeff_iq8_l, coeff_iq8_h);
 
     // Add bias
-    let bias_00 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&matrix.bias[0..4]).unwrap());
-    let bias_04 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&matrix.bias[4..8]).unwrap());
-    let bias_08 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&matrix.bias[8..12]).unwrap());
-    let bias_12 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&matrix.bias[12..16]).unwrap());
+    let (b0, b1, b2, b3) = split4_ref(&matrix.bias);
+    let bias_00 = simd_mem::_mm_loadu_si128(b0);
+    let bias_04 = simd_mem::_mm_loadu_si128(b1);
+    let bias_08 = simd_mem::_mm_loadu_si128(b2);
+    let bias_12 = simd_mem::_mm_loadu_si128(b3);
 
     let out_00 = _mm_add_epi32(out_00, bias_00);
     let out_04 = _mm_add_epi32(out_04, bias_04);
@@ -481,22 +524,11 @@ pub(crate) fn quantize_block_sse2(
     let out8_lo = _mm_unpacklo_epi16(out8, sign8_ext);
     let out8_hi = _mm_unpackhi_epi16(out8, sign8_ext);
 
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut coeffs[0..4]).unwrap(),
-        out0_lo,
-    );
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut coeffs[4..8]).unwrap(),
-        out0_hi,
-    );
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut coeffs[8..12]).unwrap(),
-        out8_lo,
-    );
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(),
-        out8_hi,
-    );
+    let (s0, s1, s2, s3) = split4_mut(coeffs);
+    simd_mem::_mm_storeu_si128(s0, out0_lo);
+    simd_mem::_mm_storeu_si128(s1, out0_hi);
+    simd_mem::_mm_storeu_si128(s2, out8_lo);
+    simd_mem::_mm_storeu_si128(s3, out8_hi);
 
     // Return true if any coefficient is non-zero
     let packed = _mm_packs_epi16(out0, out8);
@@ -696,10 +728,11 @@ pub(crate) fn quantize_dequantize_block_sse2(
     let zero = _mm_setzero_si128();
 
     // Pack i32 coefficients to i16
-    let c0_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-    let c1_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-    let c2_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-    let c3_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+    let (c0_arr, c1_arr, c2_arr, c3_arr) = split4_ref(coeffs);
+    let c0_32 = simd_mem::_mm_loadu_si128(c0_arr);
+    let c1_32 = simd_mem::_mm_loadu_si128(c1_arr);
+    let c2_32 = simd_mem::_mm_loadu_si128(c2_arr);
+    let c3_32 = simd_mem::_mm_loadu_si128(c3_arr);
 
     let in0 = _mm_packs_epi32(c0_32, c1_32);
     let in8 = _mm_packs_epi32(c2_32, c3_32);
@@ -771,10 +804,11 @@ pub(crate) fn quantize_dequantize_block_sse2(
     let out_08 = _mm_unpacklo_epi16(coeff_iq8_l, coeff_iq8_h);
     let out_12 = _mm_unpackhi_epi16(coeff_iq8_l, coeff_iq8_h);
 
-    let bias_00 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&matrix.bias[0..4]).unwrap());
-    let bias_04 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&matrix.bias[4..8]).unwrap());
-    let bias_08 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&matrix.bias[8..12]).unwrap());
-    let bias_12 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&matrix.bias[12..16]).unwrap());
+    let (b0, b1, b2, b3) = split4_ref(&matrix.bias);
+    let bias_00 = simd_mem::_mm_loadu_si128(b0);
+    let bias_04 = simd_mem::_mm_loadu_si128(b1);
+    let bias_08 = simd_mem::_mm_loadu_si128(b2);
+    let bias_12 = simd_mem::_mm_loadu_si128(b3);
 
     let out_00 = _mm_srai_epi32(_mm_add_epi32(out_00, bias_00), QFIX as i32);
     let out_04 = _mm_srai_epi32(_mm_add_epi32(out_04, bias_04), QFIX as i32);
@@ -793,8 +827,9 @@ pub(crate) fn quantize_dequantize_block_sse2(
 
     // === Dequantize: dequantized = quantized * q ===
     // Load q values as i16
-    let q0 = simd_mem::_mm_loadu_si128(<&[u16; 8]>::try_from(&matrix.q[0..8]).unwrap());
-    let q8 = simd_mem::_mm_loadu_si128(<&[u16; 8]>::try_from(&matrix.q[8..16]).unwrap());
+    let (q0_arr, q8_arr) = split2_ref(&matrix.q);
+    let q0 = simd_mem::_mm_loadu_si128(q0_arr);
+    let q8 = simd_mem::_mm_loadu_si128(q8_arr);
 
     // Multiply i16 * i16 (result fits in i16 for typical ranges)
     let dq0 = _mm_mullo_epi16(qout0, q0);
@@ -804,43 +839,21 @@ pub(crate) fn quantize_dequantize_block_sse2(
     let qsign0 = _mm_cmpgt_epi16(zero, qout0);
     let qsign8 = _mm_cmpgt_epi16(zero, qout8);
 
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut quantized[0..4]).unwrap(),
-        _mm_unpacklo_epi16(qout0, qsign0),
-    );
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut quantized[4..8]).unwrap(),
-        _mm_unpackhi_epi16(qout0, qsign0),
-    );
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut quantized[8..12]).unwrap(),
-        _mm_unpacklo_epi16(qout8, qsign8),
-    );
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut quantized[12..16]).unwrap(),
-        _mm_unpackhi_epi16(qout8, qsign8),
-    );
+    let (qs0, qs1, qs2, qs3) = split4_mut(quantized);
+    simd_mem::_mm_storeu_si128(qs0, _mm_unpacklo_epi16(qout0, qsign0));
+    simd_mem::_mm_storeu_si128(qs1, _mm_unpackhi_epi16(qout0, qsign0));
+    simd_mem::_mm_storeu_si128(qs2, _mm_unpacklo_epi16(qout8, qsign8));
+    simd_mem::_mm_storeu_si128(qs3, _mm_unpackhi_epi16(qout8, qsign8));
 
     // Store dequantized values (sign-extend i16 to i32)
     let dsign0 = _mm_cmpgt_epi16(zero, dq0);
     let dsign8 = _mm_cmpgt_epi16(zero, dq8);
 
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut dequantized[0..4]).unwrap(),
-        _mm_unpacklo_epi16(dq0, dsign0),
-    );
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut dequantized[4..8]).unwrap(),
-        _mm_unpackhi_epi16(dq0, dsign0),
-    );
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut dequantized[8..12]).unwrap(),
-        _mm_unpacklo_epi16(dq8, dsign8),
-    );
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut dequantized[12..16]).unwrap(),
-        _mm_unpackhi_epi16(dq8, dsign8),
-    );
+    let (ds0, ds1, ds2, ds3) = split4_mut(dequantized);
+    simd_mem::_mm_storeu_si128(ds0, _mm_unpacklo_epi16(dq0, dsign0));
+    simd_mem::_mm_storeu_si128(ds1, _mm_unpackhi_epi16(dq0, dsign0));
+    simd_mem::_mm_storeu_si128(ds2, _mm_unpacklo_epi16(dq8, dsign8));
+    simd_mem::_mm_storeu_si128(ds3, _mm_unpackhi_epi16(dq8, dsign8));
 
     // Check if any coefficient is non-zero
     let packed = _mm_packs_epi16(qout0, qout8);
