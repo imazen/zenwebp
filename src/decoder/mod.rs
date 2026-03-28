@@ -16,6 +16,7 @@ mod lossless_transform;
 mod lossless_transform_simd;
 mod streaming;
 pub(crate) mod yuv;
+mod yuv_fused;
 
 mod predict_simd;
 

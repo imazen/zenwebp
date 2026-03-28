@@ -86,17 +86,17 @@ fn clip(v: i32) -> u8 {
 }
 
 #[inline(always)]
-fn yuv_to_r(y: u8, v: u8) -> u8 {
+pub(crate) fn yuv_to_r(y: u8, v: u8) -> u8 {
     clip(mulhi(y, 19077) + mulhi(v, 26149) - 14234)
 }
 
 #[inline(always)]
-fn yuv_to_g(y: u8, u: u8, v: u8) -> u8 {
+pub(crate) fn yuv_to_g(y: u8, u: u8, v: u8) -> u8 {
     clip(mulhi(y, 19077) - mulhi(u, 6419) - mulhi(v, 13320) + 8708)
 }
 
 #[inline(always)]
-fn yuv_to_b(y: u8, u: u8) -> u8 {
+pub(crate) fn yuv_to_b(y: u8, u: u8) -> u8 {
     clip(mulhi(y, 19077) + mulhi(u, 33050) - 17685)
 }
 
@@ -222,35 +222,11 @@ fn fill_row_fancy_with_2_uv_rows<const BPP: usize>(
     v_row_2: &[u8],
     simd_token: SimdTokenType,
 ) {
-    // Use SIMD intrinsics for RGB (BPP=3) if available and row is wide enough
-    #[cfg(target_arch = "x86_64")]
-    if BPP == 3
-        && y_row.len() >= 17
-        && let Some(token) = simd_token
-    {
-        fill_row_fancy_with_2_uv_rows_simd::<BPP>(
-            row_buffer, y_row, u_row_1, u_row_2, v_row_1, v_row_2, token,
-        );
-        return;
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    if BPP == 3
-        && y_row.len() >= 17
-        && let Some(token) = simd_token
-    {
-        fill_row_fancy_with_2_uv_rows_neon::<BPP>(
-            row_buffer, y_row, u_row_1, u_row_2, v_row_1, v_row_2, token,
-        );
-        return;
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    if BPP == 3 && y_row.len() >= 17 {
-        if let Some(token) = simd_token {
-            fill_row_fancy_with_2_uv_rows_wasm::<BPP>(
-                row_buffer, y_row, u_row_1, u_row_2, v_row_1, v_row_2, token,
-            );
+    // Fused kernel: single #[arcane] boundary per row (upsample + convert in one pass)
+    if BPP == 3 {
+        if super::yuv_fused::fused_fill_row_fancy_with_2_uv_rows(
+            row_buffer, y_row, u_row_1, u_row_2, v_row_1, v_row_2, simd_token,
+        ) {
             return;
         }
     }
@@ -261,6 +237,7 @@ fn fill_row_fancy_with_2_uv_rows<const BPP: usize>(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[allow(dead_code)]
 fn fill_row_fancy_with_2_uv_rows_simd<const BPP: usize>(
     row_buffer: &mut [u8],
     y_row: &[u8],
@@ -677,7 +654,7 @@ fn fill_row_fancy_with_1_uv_row<const BPP: usize>(
 }
 
 #[inline]
-fn get_fancy_chroma_value(main: u8, secondary1: u8, secondary2: u8, tertiary: u8) -> u8 {
+pub(crate) fn get_fancy_chroma_value(main: u8, secondary1: u8, secondary2: u8, tertiary: u8) -> u8 {
     let val0 = u16::from(main);
     let val1 = u16::from(secondary1);
     let val2 = u16::from(secondary2);
@@ -686,7 +663,7 @@ fn get_fancy_chroma_value(main: u8, secondary1: u8, secondary2: u8, tertiary: u8
 }
 
 #[inline]
-fn set_pixel(rgb: &mut [u8], y: u8, u: u8, v: u8) {
+pub(crate) fn set_pixel(rgb: &mut [u8], y: u8, u: u8, v: u8) {
     rgb[0] = yuv_to_r(y, v);
     rgb[1] = yuv_to_g(y, u, v);
     rgb[2] = yuv_to_b(y, u);
@@ -2156,6 +2133,7 @@ fn upsample_32_pixels(_token: X64V3Token, r1: &[u8; 17], r2: &[u8; 17], out: &mu
 /// Process 8 pixel pairs with fancy upsampling and YUV->RGB conversion.
 /// This version accepts a pre-summoned token to avoid repeated summon() calls in loops.
 #[inline(always)]
+#[allow(dead_code)]
 pub fn fancy_upsample_8_pairs_with_token(
     token: X64V3Token,
     y_row: &[u8],
@@ -2301,6 +2279,7 @@ fn fancy_upsample_8_pairs_inner(
 /// Takes: 32 Y bytes, 17 U/V bytes per row (for overlapping window), 96 RGB bytes output.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
+#[allow(dead_code)]
 pub fn fancy_upsample_16_pairs_with_token(
     token: X64V3Token,
     y_row: &[u8],
