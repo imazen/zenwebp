@@ -14,6 +14,7 @@ mod header;
 mod pipeline;
 pub(super) mod predict_fused;
 mod tables;
+pub(crate) mod yuv_exact;
 
 pub use context::DecoderContext;
 
@@ -90,6 +91,9 @@ impl DecoderContext {
     /// `data` is the raw VP8 bitstream. `output` receives the pixel data.
     /// `bpp` is 3 for RGB or 4 for RGBA.
     ///
+    /// Uses the fused fancy-upsample + YUV→RGB kernel in `yuv_exact`,
+    /// which is bit-exact with libwebp regardless of the `fast-yuv` feature.
+    ///
     /// Returns `(width, height)` on success.
     pub fn decode_to_rgb(
         &mut self,
@@ -97,23 +101,33 @@ impl DecoderContext {
         output: &mut Vec<u8>,
         bpp: usize,
     ) -> Result<(u16, u16), DecodeError> {
-        let frame = self.decode_to_frame(data)?;
-        let w = frame.width;
-        let h = frame.height;
-        let pixel_count = usize::from(w) * usize::from(h);
-        output.resize(pixel_count * bpp, 0);
-
-        match bpp {
-            3 => frame.fill_rgb(output, crate::decoder::api::UpsamplingMethod::Bilinear),
-            4 => frame.fill_rgba(output, crate::decoder::api::UpsamplingMethod::Bilinear),
-            _ => {
-                return Err(DecodeError::InvalidParameter(alloc::format!(
-                    "unsupported bpp: {bpp}"
-                )));
-            }
+        if bpp != 3 && bpp != 4 {
+            return Err(DecodeError::InvalidParameter(alloc::format!(
+                "unsupported bpp: {bpp}"
+            )));
         }
 
-        Ok((w, h))
+        let frame = self.decode_to_frame(data)?;
+        let w = usize::from(frame.width);
+        let h = usize::from(frame.height);
+        // buffer_width = MB-aligned width (round up to multiple of 16)
+        let mbwidth = (w + 15) / 16;
+        let y_stride = mbwidth * 16;
+        let uv_stride = mbwidth * 8;
+
+        yuv_exact::yuv420_to_rgb_exact(
+            &frame.ybuf,
+            &frame.ubuf,
+            &frame.vbuf,
+            w,
+            h,
+            y_stride,
+            uv_stride,
+            output,
+            bpp,
+        );
+
+        Ok((frame.width, frame.height))
     }
 
     /// Main decode loop. For each row: parse + predict/IDCT each MB
@@ -262,7 +276,10 @@ impl DecoderContext {
         let is_first_row = mby == 0;
         let is_last_row = mby == mbheight - 1;
 
-        let (src_start_row, num_y_rows, dst_start_y_row) = if is_first_row {
+        let (src_start_row, num_y_rows, dst_start_y_row) = if is_first_row && is_last_row {
+            // Single MB row: output from extra_y_rows through the end of the MB
+            (extra_y_rows, 16, 0usize)
+        } else if is_first_row {
             (extra_y_rows, 16 - extra_y_rows, 0usize)
         } else if is_last_row {
             (0, extra_y_rows + 16, mby * 16 - extra_y_rows)
@@ -280,7 +297,9 @@ impl DecoderContext {
         }
 
         // Copy U/V
-        let (src_start_row_uv, num_uv_rows, dst_start_uv_row) = if is_first_row {
+        let (src_start_row_uv, num_uv_rows, dst_start_uv_row) = if is_first_row && is_last_row {
+            (extra_uv_rows, 8, 0usize)
+        } else if is_first_row {
             (extra_uv_rows, 8 - extra_uv_rows, 0usize)
         } else if is_last_row {
             (0, extra_uv_rows + 8, mby * 8 - extra_uv_rows)
