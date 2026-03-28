@@ -129,6 +129,9 @@ impl DecoderContext {
         // ---- Precompute filter parameters ----
         self.precompute_filter_params();
 
+        // Store the header reader for per-MB mode parsing during decode
+        self.header_reader = b;
+
         Ok(())
     }
 
@@ -144,13 +147,11 @@ impl DecoderContext {
             }
 
             for i in 0..MAX_SEGMENTS {
-                self.tables.segment_quantizer_level[i] =
-                    b.read_optional_signed_value(7) as i8;
+                self.tables.segment_quantizer_level[i] = b.read_optional_signed_value(7) as i8;
             }
 
             for i in 0..MAX_SEGMENTS {
-                self.tables.segment_loopfilter_level[i] =
-                    b.read_optional_signed_value(6) as i8;
+                self.tables.segment_loopfilter_level[i] = b.read_optional_signed_value(6) as i8;
             }
         }
 
@@ -180,11 +181,7 @@ impl DecoderContext {
         Ok(b.check(())?)
     }
 
-    fn init_partitions(
-        &mut self,
-        r: &mut SliceReader<'_>,
-        n: usize,
-    ) -> Result<(), DecodeError> {
+    fn init_partitions(&mut self, r: &mut SliceReader<'_>, n: usize) -> Result<(), DecodeError> {
         use byteorder_lite::{ByteOrder, LittleEndian};
 
         let mut all_data = Vec::new();
@@ -323,8 +320,7 @@ impl DecoderContext {
                 let mut filter_level = base_filter_level;
 
                 if filter_level == 0 {
-                    self.tables.filter[seg_id][is_b as usize] =
-                        PrecomputedFilterParams::default();
+                    self.tables.filter[seg_id][is_b as usize] = PrecomputedFilterParams::default();
                     continue;
                 }
 

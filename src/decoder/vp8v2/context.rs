@@ -6,10 +6,10 @@
 
 use alloc::vec::Vec;
 
-use super::tables::FrameTables;
 use super::MbRowEntry;
+use super::tables::FrameTables;
 use crate::common::prediction::{CHROMA_BLOCK_SIZE, LUMA_BLOCK_SIZE, MB_COEFF_SIZE};
-use crate::decoder::bit_reader::VP8Partitions;
+use crate::decoder::bit_reader::{VP8HeaderBitReader, VP8Partitions};
 use crate::decoder::loop_filter::MbFilterParams;
 
 /// Maximum stride supported for bounds-check-free loop filtering.
@@ -72,6 +72,9 @@ pub struct DecoderContext {
     // ---- Precomputed tables (rebuilt per frame) ----
     pub(super) tables: FrameTables,
 
+    // ---- Header bit reader (partition 0, used for per-MB mode parsing) ----
+    pub(super) header_reader: VP8HeaderBitReader,
+
     // ---- Partitions ----
     pub(super) partitions: VP8Partitions,
 
@@ -113,6 +116,8 @@ impl DecoderContext {
             left: PreviousMacroBlock::default(),
 
             tables: FrameTables::new(),
+
+            header_reader: VP8HeaderBitReader::new(),
 
             partitions: VP8Partitions::new(),
 
@@ -171,8 +176,7 @@ impl DecoderContext {
         self.top_border_v.resize(mbw * 8, 127);
 
         // Top MB context
-        self.top
-            .resize(mbw, PreviousMacroBlock::default());
+        self.top.resize(mbw, PreviousMacroBlock::default());
 
         // Reset left border to initial state
         self.left_border_y = [129u8; 17];

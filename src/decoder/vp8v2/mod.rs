@@ -7,6 +7,7 @@
 //! - Flat u8 probability tables (no TreeNode indirection)
 //! - Fixed-size arrays for per-MB working storage
 
+mod coefficients;
 mod context;
 mod header;
 mod tables;
@@ -38,4 +39,3 @@ pub(super) struct MbRowEntry {
     /// Used to suppress dithering on blocks with actual chroma detail.
     pub has_nonzero_uv_ac: bool,
 }
-
