@@ -213,6 +213,11 @@ v2 vs libwebp: 6-12% slower for most images (geometric mean ~0.90x).
 
 Previous v1 vs libwebp was ~1.36x; v2 reduces the gap to ~1.11x.
 
+**Correctness:** v2 produces byte-identical YUV planes to v1 on all 218
+conformance files and all roundtrip/edge-case tests. The previous max_diff=7
+on 49 files was caused by v1's default chroma dithering (strength=50) which
+v2 does not implement. With dithering disabled, V2_V1_MAX_TOLERANCE=0.
+
 ### Decoder Threading Investigation (2026-03-24)
 
 **Result: NOT WORTH IMPLEMENTING.** libwebp's 2-thread pipeline is a net negative.
