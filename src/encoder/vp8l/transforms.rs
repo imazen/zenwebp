@@ -141,8 +141,8 @@ fn apply_subtract_green_sse2(_token: Sse2Token, pixels: &mut [u32]) {
     let mut i = 0;
     while i < simd_len {
         // Load 4 pixels: [a0 r0 g0 b0 | a1 r1 g1 b1 | a2 r2 g2 b2 | a3 r3 g3 b3]
-        let chunk = <&mut [u32; 4]>::try_from(&mut pixels[i..i + 4]).unwrap();
-        let inp = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&*chunk).unwrap());
+        let chunk = pixels[i..].first_chunk_mut::<4>().unwrap();
+        let inp = simd_mem::_mm_loadu_si128(&*chunk);
 
         // Shift right 8 bits as 16-bit elements: each u16 pair becomes [0 a | 0 g]
         let ag = _mm_srli_epi16(inp, 8);
@@ -663,16 +663,16 @@ fn combined_shannon_entropy_sse2(_token: Sse2Token, x: &[u32; 256], y: &[u32; 25
     let mut i = 0usize;
     while i < 256 {
         // Load 16 u32 values from X (4 SSE2 registers)
-        let x0 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&x[i..i + 4]).unwrap());
-        let x1 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&x[i + 4..i + 8]).unwrap());
-        let x2 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&x[i + 8..i + 12]).unwrap());
-        let x3 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&x[i + 12..i + 16]).unwrap());
+        let x0 = simd_mem::_mm_loadu_si128(x[i..].first_chunk::<4>().unwrap());
+        let x1 = simd_mem::_mm_loadu_si128(x[i + 4..].first_chunk::<4>().unwrap());
+        let x2 = simd_mem::_mm_loadu_si128(x[i + 8..].first_chunk::<4>().unwrap());
+        let x3 = simd_mem::_mm_loadu_si128(x[i + 12..].first_chunk::<4>().unwrap());
 
         // Load 16 u32 values from Y
-        let y0 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&y[i..i + 4]).unwrap());
-        let y1 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&y[i + 4..i + 8]).unwrap());
-        let y2 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&y[i + 8..i + 12]).unwrap());
-        let y3 = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&y[i + 12..i + 16]).unwrap());
+        let y0 = simd_mem::_mm_loadu_si128(y[i..].first_chunk::<4>().unwrap());
+        let y1 = simd_mem::_mm_loadu_si128(y[i + 4..].first_chunk::<4>().unwrap());
+        let y2 = simd_mem::_mm_loadu_si128(y[i + 8..].first_chunk::<4>().unwrap());
+        let y3 = simd_mem::_mm_loadu_si128(y[i + 12..].first_chunk::<4>().unwrap());
 
         // Pack 16 x i32 -> 16 x i8 via signed saturation (i32->i16->i8).
         // Any nonzero u32 histogram count packs to nonzero i8 (saturates to [1,127]).
@@ -1291,8 +1291,8 @@ fn apply_cross_color_tile_sse2(
 
         let mut x = 0;
         while x + 4 <= tile_width {
-            let chunk = <&mut [u32; 4]>::try_from(&mut row[x..x + 4]).unwrap();
-            let inp = simd_mem::_mm_loadu_si128(<&[u32; 4]>::try_from(&*chunk).unwrap());
+            let chunk = row[x..].first_chunk_mut::<4>().unwrap();
+            let inp = simd_mem::_mm_loadu_si128(&*chunk);
 
             // A = (inp & mask_ag): extract alpha and green bytes [a 0 g 0]
             let a_val = _mm_and_si128(inp, mask_ag);
