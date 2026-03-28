@@ -290,13 +290,13 @@ impl<'a> Vp8Decoder<'a> {
 
         // Cache layout: [extra_rows][16 rows for current macroblock row]
         // extra_rows holds bottom rows from previous MB row for filter context
-        // FILTER_PADDING allows fixed-size region extraction for bounds-check-free filtering.
+        // FILTER_PADDING_Y/UV allows fixed-size region extraction for bounds-check-free filtering.
         // Uses MAX_FILTER_STRIDE to match compile-time constant region sizes in loop_filter.
         let cache_y_rows = self.extra_y_rows + 16;
         let cache_uv_rows = extra_uv_rows + 8;
-        self.cache_y = vec![128u8; cache_y_rows * self.cache_y_stride + FILTER_PADDING];
-        self.cache_u = vec![128u8; cache_uv_rows * self.cache_uv_stride + FILTER_PADDING];
-        self.cache_v = vec![128u8; cache_uv_rows * self.cache_uv_stride + FILTER_PADDING];
+        self.cache_y = vec![128u8; cache_y_rows * self.cache_y_stride + FILTER_PADDING_Y];
+        self.cache_u = vec![128u8; cache_uv_rows * self.cache_uv_stride + FILTER_PADDING_UV];
+        self.cache_v = vec![128u8; cache_uv_rows * self.cache_uv_stride + FILTER_PADDING_UV];
 
         self.num_partitions = num_partitions as u8;
         self.init_partitions(num_partitions)?;

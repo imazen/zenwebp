@@ -70,10 +70,13 @@ fn summon_simd_token() -> SimdTokenType {
 /// WebP max dimension is 16383, rounded up to MB boundary = 16384.
 const MAX_FILTER_STRIDE: usize = 16384;
 
-/// Padding added to pixel buffers for bounds-check-free loop filtering.
-/// Allows fixed-size region extraction without per-access bounds checks.
-/// Size: 15 * max_stride + 16 bytes (covers horizontal filter fused 3-edge: 16 rows × 16 cols).
-const FILTER_PADDING: usize = 15 * MAX_FILTER_STRIDE + 16;
+/// Y-channel padding for bounds-check-free loop filtering.
+/// Covers horizontal filter fused 3-edge: 16 rows x 16 columns.
+const FILTER_PADDING_Y: usize = 15 * MAX_FILTER_STRIDE + 16;
+
+/// UV-channel padding for bounds-check-free loop filtering.
+/// Covers normal vertical filter: 8 rows of 16 bytes and horizontal filter: 8 rows of 8 bytes.
+const FILTER_PADDING_UV: usize = 7 * MAX_FILTER_STRIDE + 16;
 
 // ============================================================================
 // Diagnostic Types for I4 Encoding Efficiency Analysis
