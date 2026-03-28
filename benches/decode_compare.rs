@@ -41,42 +41,35 @@ struct TestImage {
 }
 
 const IMAGES: &[TestImage] = &[
-    // ~4K screenshot (3508x2480)
-    TestImage {
-        name: "4k_wiki",
-        subdir: "png-conformance",
-        filename: "wm_upload_wikimedia_org_a23d1e831e128dff.png",
-    },
-    // ~3K screenshot (2940x1912)
-    TestImage {
-        name: "3k_imac",
-        subdir: "gb82-sc",
-        filename: "imac_g3.png",
-    },
-    // ~2.5K screenshot (2560x1664)
-    TestImage {
-        name: "2k_wiki",
-        subdir: "gb82-sc",
-        filename: "codec_wiki.png",
-    },
-    // ~2K photo (2048x2048)
-    TestImage {
-        name: "2k_photo",
-        subdir: "clic2025/final-test",
-        filename: "ebfd571f1c6824316047a29cb5f376eec15f56dd51821119c1842be068a8b950.png",
-    },
-    // ~1.6K screenshot (1646x1062)
-    TestImage {
-        name: "1k_term",
-        subdir: "gb82-sc",
-        filename: "terminal.png",
-    },
-    // 512px photo
-    TestImage {
-        name: "512_photo",
-        subdir: "CID22/CID22-512/validation",
-        filename: "792079.png",
-    },
+    // --- Screenshots (UI, text, flat areas + sharp edges) ---
+    // 3508x2480 Wikipedia article screenshot
+    TestImage { name: "sc_4k_wiki", subdir: "png-conformance", filename: "wm_upload_wikimedia_org_a23d1e831e128dff.png" },
+    // 2940x1912 iMac G3 screenshot
+    TestImage { name: "sc_3k_imac", subdir: "gb82-sc", filename: "imac_g3.png" },
+    // 2560x1664 codec wiki screenshot
+    TestImage { name: "sc_2k_wiki", subdir: "gb82-sc", filename: "codec_wiki.png" },
+    // 1920x1920 large UI screenshot
+    TestImage { name: "sc_2k_ui", subdir: "png-conformance", filename: "wm_upload_wikimedia_org_c8a458b0cef3d942.png" },
+    // 1646x1062 terminal screenshot
+    TestImage { name: "sc_1k_term", subdir: "gb82-sc", filename: "terminal.png" },
+
+    // --- Photos (natural images, CLIC2025 professional) ---
+    // 2048x2048 CLIC2025 square photo
+    TestImage { name: "ph_2k_sq", subdir: "clic2025/final-test", filename: "ebfd571f1c6824316047a29cb5f376eec15f56dd51821119c1842be068a8b950.png" },
+    // 2048x1536 CLIC2025 4:3 photo
+    TestImage { name: "ph_2k_43", subdir: "clic2025/final-test", filename: "937476dd72f98638f34299dda5e9c252621b5e809c364692fc2934e000583286.png" },
+    // 2048x1360 CLIC2025 3:2 photo
+    TestImage { name: "ph_2k_32", subdir: "clic2025/final-test", filename: "ff32adfa29d4b5de26293352f53cc983d12d3ededd71fe65ca0ef0d887be65c4.png" },
+    // 2048x976 CLIC2025 ultrawide photo
+    TestImage { name: "ph_2k_uw", subdir: "clic2025/final-test", filename: "86127fbdb368eb28c3039cf61aff1c4cfdc4ade24070c8f2389968d5ead681e1.png" },
+    // 1360x2048 CLIC2025 portrait photo
+    TestImage { name: "ph_2k_pt", subdir: "clic2025/final-test", filename: "e0d8e29cadfc99663c7d1a4a5afe20c454ec54d0d873776ec397c59405c74790.png" },
+
+    // --- Small photos (gb82 576x576, CID22 512x512) ---
+    TestImage { name: "ph_576_baby", subdir: "gb82", filename: "baby-lossless.png" },
+    TestImage { name: "ph_576_city", subdir: "gb82", filename: "city-lossless.png" },
+    TestImage { name: "ph_576_flowers", subdir: "gb82", filename: "flowers-lossless.png" },
+    TestImage { name: "ph_512_cid", subdir: "CID22/CID22-512/validation", filename: "792079.png" },
 ];
 
 zenbench::main!(decode_compare);
