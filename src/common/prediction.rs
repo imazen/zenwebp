@@ -259,9 +259,7 @@ pub(crate) fn add_residue(
     {
         use archmage::{NeonToken, SimdToken};
         if let Some(token) = NeonToken::summon() {
-            crate::common::transform::add_residue_neon(
-                token, pblock, rblock, y0, x0, stride,
-            );
+            crate::common::transform::add_residue_neon(token, pblock, rblock, y0, x0, stride);
             return;
         }
     }
@@ -1137,9 +1135,7 @@ pub(crate) fn idct_add_residue_and_clear_with_token(
 
     // Use in-place fused IDCT + add residue
     use crate::common::transform;
-    transform::idct_add_residue_inplace_with_token(
-        token, rblock, pblock, y0, x0, stride, dc_only,
-    );
+    transform::idct_add_residue_inplace_with_token(token, rblock, pblock, y0, x0, stride, dc_only);
 }
 
 /// NEON fused IDCT + add residue + clear.

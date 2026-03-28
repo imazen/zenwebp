@@ -97,9 +97,8 @@ fn evaluate_i4_modes_sse2(
         let pred = preds.get(mode_idx);
 
         // Fused residual + DCT using direct SIMD call
-        let mut residual = crate::common::transform::ftransform_from_u8_4x4_sse2(
-            _token, src_block, pred,
-        );
+        let mut residual =
+            crate::common::transform::ftransform_from_u8_4x4_sse2(_token, src_block, pred);
 
         // Quantize - use trellis if enabled, otherwise fused quantize+dequantize
         let mut quantized_zigzag = [0i32; 16];
@@ -308,9 +307,8 @@ fn evaluate_i4_modes_wasm(
         let pred = preds.get(mode_idx);
 
         // Fused residual + DCT using direct SIMD call
-        let mut residual = crate::common::transform::ftransform_from_u8_4x4_wasm_impl(
-            _token, src_block, pred,
-        );
+        let mut residual =
+            crate::common::transform::ftransform_from_u8_4x4_wasm_impl(_token, src_block, pred);
 
         // Quantize - use trellis if enabled, otherwise fused quantize+dequantize
         let mut quantized_zigzag = [0i32; 16];

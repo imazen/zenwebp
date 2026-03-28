@@ -31,15 +31,14 @@ impl<'a> Vp8Decoder<'a> {
             let do_subblock_filtering =
                 mb.luma_mode == LumaMode::B || (!mb.coeffs_skipped && mb.non_zero_dct);
 
-            self.mb_filter_params
-                .push(loop_filter::MbFilterParams {
-                    filter_level,
-                    interior_limit,
-                    hev_threshold,
-                    mbedge_limit,
-                    sub_bedge_limit,
-                    do_subblock_filtering,
-                });
+            self.mb_filter_params.push(loop_filter::MbFilterParams {
+                filter_level,
+                interior_limit,
+                hev_threshold,
+                mbedge_limit,
+                sub_bedge_limit,
+                do_subblock_filtering,
+            });
         }
 
         // Take ownership of mb_params to allow split borrows with cache buffers

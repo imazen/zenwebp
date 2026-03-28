@@ -14,17 +14,17 @@ use core::convert::TryFrom;
 
 // x86_64 SSE2/AVX2 types and safe memory ops
 #[cfg(target_arch = "x86_64")]
-use archmage::intrinsics::x86_64 as simd_mem_x86;
-#[cfg(target_arch = "x86_64")]
 use archmage::X64V3Token;
+#[cfg(target_arch = "x86_64")]
+use archmage::intrinsics::x86_64 as simd_mem_x86;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
 // AArch64 NEON types and safe memory ops
 #[cfg(target_arch = "aarch64")]
-use archmage::intrinsics::aarch64 as simd_mem_neon;
-#[cfg(target_arch = "aarch64")]
 use archmage::NeonToken;
+#[cfg(target_arch = "aarch64")]
+use archmage::intrinsics::aarch64 as simd_mem_neon;
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
 
@@ -34,11 +34,9 @@ use archmage::Wasm128Token;
 #[cfg(target_arch = "wasm32")]
 use core::arch::wasm32::*;
 
-
 // ============================================================================
 // Scalar filter implementations
 // ============================================================================
-
 
 #[inline]
 fn c(val: i32) -> i32 {
@@ -480,7 +478,6 @@ mod benches {
 // SSE2/AVX2 filter implementations (x86_64)
 // ============================================================================
 
-
 /// Maximum stride for bounds-check-free filtering.
 /// WebP max dimension is 16383, rounded up to MB boundary = 16384.
 const MAX_STRIDE: usize = 16384;
@@ -628,8 +625,10 @@ pub(crate) fn simple_v_filter16(
 
     // Load 16 pixels from each row - NO per-access bounds checks
     let p1 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p1..][..16]).unwrap());
-    let mut p0 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p0..][..16]).unwrap());
-    let mut q0 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q0..][..16]).unwrap());
+    let mut p0 =
+        simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p0..][..16]).unwrap());
+    let mut q0 =
+        simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q0..][..16]).unwrap());
     let q1 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q1..][..16]).unwrap());
 
     // Check which pixels need filtering
@@ -781,12 +780,14 @@ pub(crate) fn simple_v_filter32(
     let off_q1 = 3 * stride;
 
     // Load 32 pixels from each row using AVX2
-    let p1 = simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p1..][..32]).unwrap());
+    let p1 =
+        simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p1..][..32]).unwrap());
     let mut p0 =
         simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p0..][..32]).unwrap());
     let mut q0 =
         simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q0..][..32]).unwrap());
-    let q1 = simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q1..][..32]).unwrap());
+    let q1 =
+        simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q1..][..32]).unwrap());
 
     // Check which pixels need filtering
     let mask = needs_filter_32(_token, p1, p0, q0, q1, thresh);
@@ -1170,8 +1171,10 @@ pub(crate) fn normal_v_filter32_inner(
     let off_q3 = 7 * stride;
 
     // Load 8 rows of 32 pixels each
-    let p3 = simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p3..][..32]).unwrap());
-    let p2 = simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p2..][..32]).unwrap());
+    let p3 =
+        simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p3..][..32]).unwrap());
+    let p2 =
+        simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p2..][..32]).unwrap());
     let mut p1 =
         simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p1..][..32]).unwrap());
     let mut p0 =
@@ -1180,8 +1183,10 @@ pub(crate) fn normal_v_filter32_inner(
         simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q0..][..32]).unwrap());
     let mut q1 =
         simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q1..][..32]).unwrap());
-    let q2 = simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q2..][..32]).unwrap());
-    let q3 = simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q3..][..32]).unwrap());
+    let q2 =
+        simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q2..][..32]).unwrap());
+    let q3 =
+        simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q3..][..32]).unwrap());
 
     let mask = needs_filter_normal_32(
         _token,
@@ -1249,7 +1254,8 @@ pub(crate) fn normal_v_filter32_edge(
     let off_q3 = 7 * stride;
 
     // Load 8 rows of 32 pixels each
-    let p3 = simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p3..][..32]).unwrap());
+    let p3 =
+        simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p3..][..32]).unwrap());
     let mut p2 =
         simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_p2..][..32]).unwrap());
     let mut p1 =
@@ -1262,7 +1268,8 @@ pub(crate) fn normal_v_filter32_edge(
         simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q1..][..32]).unwrap());
     let mut q2 =
         simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q2..][..32]).unwrap());
-    let q3 = simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q3..][..32]).unwrap());
+    let q3 =
+        simd_mem_x86::_mm256_loadu_si256(<&[u8; 32]>::try_from(&region[off_q3..][..32]).unwrap());
 
     let mask = needs_filter_normal_32(
         _token,
@@ -2074,10 +2081,14 @@ pub(crate) fn normal_v_filter16_inner(
     // Load 8 rows of 16 pixels each - NO per-access bounds checks
     let p3 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p3..][..16]).unwrap());
     let p2 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p2..][..16]).unwrap());
-    let mut p1 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p1..][..16]).unwrap());
-    let mut p0 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p0..][..16]).unwrap());
-    let mut q0 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q0..][..16]).unwrap());
-    let mut q1 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q1..][..16]).unwrap());
+    let mut p1 =
+        simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p1..][..16]).unwrap());
+    let mut p0 =
+        simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p0..][..16]).unwrap());
+    let mut q0 =
+        simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q0..][..16]).unwrap());
+    let mut q1 =
+        simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q1..][..16]).unwrap());
     let q2 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q2..][..16]).unwrap());
     let q3 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q3..][..16]).unwrap());
 
@@ -2153,12 +2164,18 @@ pub(crate) fn normal_v_filter16_edge(
 
     // Load 8 rows of 16 pixels each - NO per-access bounds checks
     let p3 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p3..][..16]).unwrap());
-    let mut p2 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p2..][..16]).unwrap());
-    let mut p1 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p1..][..16]).unwrap());
-    let mut p0 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p0..][..16]).unwrap());
-    let mut q0 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q0..][..16]).unwrap());
-    let mut q1 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q1..][..16]).unwrap());
-    let mut q2 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q2..][..16]).unwrap());
+    let mut p2 =
+        simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p2..][..16]).unwrap());
+    let mut p1 =
+        simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p1..][..16]).unwrap());
+    let mut p0 =
+        simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_p0..][..16]).unwrap());
+    let mut q0 =
+        simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q0..][..16]).unwrap());
+    let mut q1 =
+        simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q1..][..16]).unwrap());
+    let mut q2 =
+        simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q2..][..16]).unwrap());
     let q3 = simd_mem_x86::_mm_loadu_si128(<&[u8; 16]>::try_from(&region[off_q3..][..16]).unwrap());
 
     // Check if filtering is needed
@@ -2311,7 +2328,8 @@ pub(crate) fn normal_h_filter16_inner(
     let mut rows = [_mm_setzero_si128(); 16];
     for (i, row) in rows.iter_mut().enumerate() {
         let row_start = (y_start + i) * stride + x - 4;
-        *row = simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
+        *row =
+            simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
     }
 
     // Transpose 8x16 to 16x8
@@ -2380,7 +2398,8 @@ pub(crate) fn normal_h_filter16_edge(
     let mut rows = [_mm_setzero_si128(); 16];
     for (i, row) in rows.iter_mut().enumerate() {
         let row_start = (y_start + i) * stride + x - 4;
-        *row = simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
+        *row =
+            simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
     }
 
     // Transpose 8x16 to 16x8
@@ -2549,10 +2568,12 @@ pub(crate) fn normal_h_filter_uv_edge(
     let mut rows = [_mm_setzero_si128(); 16];
     for i in 0..8 {
         let row_start = (y_start + i) * stride + x - 4;
-        rows[i] =
-            simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&u_pixels[row_start..][..8]).unwrap());
-        rows[i + 8] =
-            simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&v_pixels[row_start..][..8]).unwrap());
+        rows[i] = simd_mem_x86::_mm_loadu_si64(
+            <&[u8; 8]>::try_from(&u_pixels[row_start..][..8]).unwrap(),
+        );
+        rows[i + 8] = simd_mem_x86::_mm_loadu_si64(
+            <&[u8; 8]>::try_from(&v_pixels[row_start..][..8]).unwrap(),
+        );
     }
 
     // Transpose 8x16 to 16x8
@@ -2627,10 +2648,12 @@ pub(crate) fn normal_h_filter_uv_inner(
     let mut rows = [_mm_setzero_si128(); 16];
     for i in 0..8 {
         let row_start = (y_start + i) * stride + x - 4;
-        rows[i] =
-            simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&u_pixels[row_start..][..8]).unwrap());
-        rows[i + 8] =
-            simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&v_pixels[row_start..][..8]).unwrap());
+        rows[i] = simd_mem_x86::_mm_loadu_si64(
+            <&[u8; 8]>::try_from(&u_pixels[row_start..][..8]).unwrap(),
+        );
+        rows[i + 8] = simd_mem_x86::_mm_loadu_si64(
+            <&[u8; 8]>::try_from(&v_pixels[row_start..][..8]).unwrap(),
+        );
     }
 
     // Transpose 8x16 to 16x8
@@ -2810,11 +2833,13 @@ pub(crate) fn normal_h_filter32_inner(
 
     for (i, row) in rows_lo.iter_mut().enumerate() {
         let row_start = (y_start + i) * stride + x - 4;
-        *row = simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
+        *row =
+            simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
     }
     for (i, row) in rows_hi.iter_mut().enumerate() {
         let row_start = (y_start + 16 + i) * stride + x - 4;
-        *row = simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
+        *row =
+            simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
     }
 
     // Transpose 8x32 to 32x8
@@ -2895,11 +2920,13 @@ pub(crate) fn normal_h_filter32_edge(
 
     for (i, row) in rows_lo.iter_mut().enumerate() {
         let row_start = (y_start + i) * stride + x - 4;
-        *row = simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
+        *row =
+            simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
     }
     for (i, row) in rows_hi.iter_mut().enumerate() {
         let row_start = (y_start + 16 + i) * stride + x - 4;
-        *row = simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
+        *row =
+            simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
     }
 
     // Transpose 8x32 to 32x8
@@ -4103,7 +4130,6 @@ mod tests {
 // NEON filter implementations (aarch64)
 // ============================================================================
 
-
 // =============================================================================
 // Core filter helpers (ported from libwebp dec_neon.c)
 // =============================================================================
@@ -4421,7 +4447,8 @@ fn load_16x4_neon(
     point: usize,
     stride: usize,
 ) -> (uint8x16_t, uint8x16_t, uint8x16_t, uint8x16_t) {
-    let p1 = simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point - 2 * stride..][..16]).unwrap());
+    let p1 =
+        simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point - 2 * stride..][..16]).unwrap());
     let p0 = simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point - stride..][..16]).unwrap());
     let q0 = simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point..][..16]).unwrap());
     let q1 = simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point + stride..][..16]).unwrap());
@@ -4447,14 +4474,19 @@ fn load_16x8_neon(
     uint8x16_t,
     uint8x16_t,
 ) {
-    let p3 = simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point - 4 * stride..][..16]).unwrap());
-    let p2 = simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point - 3 * stride..][..16]).unwrap());
-    let p1 = simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point - 2 * stride..][..16]).unwrap());
+    let p3 =
+        simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point - 4 * stride..][..16]).unwrap());
+    let p2 =
+        simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point - 3 * stride..][..16]).unwrap());
+    let p1 =
+        simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point - 2 * stride..][..16]).unwrap());
     let p0 = simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point - stride..][..16]).unwrap());
     let q0 = simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point..][..16]).unwrap());
     let q1 = simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point + stride..][..16]).unwrap());
-    let q2 = simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point + 2 * stride..][..16]).unwrap());
-    let q3 = simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point + 3 * stride..][..16]).unwrap());
+    let q2 =
+        simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point + 2 * stride..][..16]).unwrap());
+    let q3 =
+        simd_mem_neon::vld1q_u8(<&[u8; 16]>::try_from(&buf[point + 3 * stride..][..16]).unwrap());
     (p3, p2, p1, p0, q0, q1, q2, q3)
 }
 
@@ -6168,7 +6200,6 @@ pub(crate) fn normal_h_filter_uv_inner_wasm(
 // Dispatch: precomputed filter params and #[arcane] entry points
 // ============================================================================
 
-
 /// Precomputed filter parameters for a single macroblock.
 /// Computed by `calculate_filter_parameters` before entering the filter loop.
 #[derive(Clone, Copy)]
@@ -6550,13 +6581,7 @@ pub(crate) fn filter_row_simd(
         if mby > 0 {
             if filter_type {
                 let point = extra_y_rows * cache_y_stride + mbx * 16;
-                simple_v_filter16(
-                    _token,
-                    cache_y,
-                    point,
-                    cache_y_stride,
-                    mbedge_limit_i,
-                );
+                simple_v_filter16(_token, cache_y, point, cache_y_stride, mbedge_limit_i);
             } else {
                 let point_y = extra_y_rows * cache_y_stride + mbx * 16;
                 normal_v_filter16_edge(
@@ -6587,13 +6612,7 @@ pub(crate) fn filter_row_simd(
             if filter_type {
                 for y in (4usize..16 - 1).step_by(4) {
                     let point = (extra_y_rows + y) * cache_y_stride + mbx * 16;
-                    simple_v_filter16(
-                        _token,
-                        cache_y,
-                        point,
-                        cache_y_stride,
-                        sub_bedge_limit_i,
-                    );
+                    simple_v_filter16(_token, cache_y, point, cache_y_stride, sub_bedge_limit_i);
                 }
             } else {
                 for y in (4usize..16 - 3).step_by(4) {
@@ -6729,13 +6748,7 @@ pub(crate) fn filter_row_simd(
         if mby > 0 {
             if filter_type {
                 let point = extra_y_rows * cache_y_stride + mbx * 16;
-                simple_v_filter16_neon(
-                    _token,
-                    cache_y,
-                    point,
-                    cache_y_stride,
-                    mbedge_limit_i,
-                );
+                simple_v_filter16_neon(_token, cache_y, point, cache_y_stride, mbedge_limit_i);
             } else {
                 let point_y = extra_y_rows * cache_y_stride + mbx * 16;
                 normal_v_filter16_edge_neon(
@@ -6907,13 +6920,7 @@ pub(crate) fn filter_row_simd(
         if mby > 0 {
             if filter_type {
                 let point = extra_y_rows * cache_y_stride + mbx * 16;
-                simple_v_filter16_wasm(
-                    _token,
-                    cache_y,
-                    point,
-                    cache_y_stride,
-                    mbedge_limit_i,
-                );
+                simple_v_filter16_wasm(_token, cache_y, point, cache_y_stride, mbedge_limit_i);
             } else {
                 let point_y = extra_y_rows * cache_y_stride + mbx * 16;
                 normal_v_filter16_edge_wasm(

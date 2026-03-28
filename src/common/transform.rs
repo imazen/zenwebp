@@ -226,12 +226,9 @@ pub(crate) fn dct4x4_scalar(block: &mut [i32; 16]) {
     }
 }
 
-
-
 // ============================================================================
 // SSE2 implementations (from transform_simd_intrinsics.rs)
 // ============================================================================
-
 
 // =============================================================================
 // Public dispatch functions
@@ -1310,9 +1307,7 @@ pub(crate) fn idct_add_residue_inplace(
     {
         use archmage::{NeonToken, SimdToken};
         if let Some(token) = NeonToken::summon() {
-            idct_add_residue_inplace_neon(
-                token, coeffs, block, y0, x0, stride, dc_only,
-            );
+            idct_add_residue_inplace_neon(token, coeffs, block, y0, x0, stride, dc_only);
             return;
         }
     }
@@ -1713,514 +1708,513 @@ mod benchmarks {
 // ============================================================================
 #[cfg(target_arch = "aarch64")]
 mod neon_transform {
-use super::*;
+    use super::*;
 
-  
-  #[arcane]
-  pub(crate) fn dct4x4_neon(_token: NeonToken, block: &mut [i32; 16]) {
-      dct4x4_neon_inner(_token, block);
-  }
-  
-  #[rite]
-  fn dct4x4_neon_inner(_token: NeonToken, block: &mut [i32; 16]) {
-      // Load i32[16] as 4 × i32x4, then narrow to i16x4
-      let r0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[0..4]).unwrap());
-      let r1 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[4..8]).unwrap());
-      let r2 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[8..12]).unwrap());
-      let r3 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[12..16]).unwrap());
-  
-      let d0 = vmovn_s32(r0);
-      let d1 = vmovn_s32(r1);
-      let d2 = vmovn_s32(r2);
-      let d3 = vmovn_s32(r3);
-  
-      // Transpose 4x4 for first pass
-      let (t0t1, t3t2) = transpose_4x4_s16_neon(_token, d0, d1, d2, d3);
-  
-      // First DCT pass (includes internal transpose at end)
-      let (p0p1, p3p2) = forward_pass_1_neon(_token, t0t1, t3t2);
-  
-      // Second DCT pass with final rounding → i32 output
-      // Data is already transposed by pass 1's internal transpose
-      let out = forward_pass_2_neon(_token, p0p1, p3p2);
-  
-      simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(), out[0]);
-      simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(), out[1]);
-      simd_mem::vst1q_s32(
-          <&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(),
-          out[2],
-      );
-      simd_mem::vst1q_s32(
-          <&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(),
-          out[3],
-      );
-  }
-  
-  /// Transpose 4x4 i16 matrix (matches libwebp Transpose4x4_S16_NEON).
-  /// Input: 4 rows as i16x4. Output: (col01, col32) as two i16x8.
-  /// col01 = col0 | col1, col32 = col3 | col2
-  
-  #[rite]
-  fn transpose_4x4_s16_neon(
-      _token: NeonToken,
-      a: int16x4_t,
-      b: int16x4_t,
-      c: int16x4_t,
-      d: int16x4_t,
-  ) -> (int16x8_t, int16x8_t) {
-      let ab = vtrn_s16(a, b);
-      let cd = vtrn_s16(c, d);
-      let tmp02 = vtrn_s32(vreinterpret_s32_s16(ab.0), vreinterpret_s32_s16(cd.0));
-      let tmp13 = vtrn_s32(vreinterpret_s32_s16(ab.1), vreinterpret_s32_s16(cd.1));
-      let out01 = vreinterpretq_s16_s64(vcombine_s64(
-          vreinterpret_s64_s32(tmp02.0),
-          vreinterpret_s64_s32(tmp13.0),
-      ));
-      let out32 = vreinterpretq_s16_s64(vcombine_s64(
-          vreinterpret_s64_s32(tmp13.1),
-          vreinterpret_s64_s32(tmp02.1),
-      ));
-      (out01, out32)
-  }
-  
-  /// Forward DCT pass 1 (from libwebp FTransform_NEON, first pass).
-  
-  #[rite]
-  fn forward_pass_1_neon(
-      _token: NeonToken,
-      d0d1: int16x8_t,
-      d3d2: int16x8_t,
-  ) -> (int16x8_t, int16x8_t) {
-      let k_cst937 = vdupq_n_s32(937);
-      let k_cst1812 = vdupq_n_s32(1812);
-  
-      let a0a1 = vaddq_s16(d0d1, d3d2);
-      let a3a2 = vsubq_s16(d0d1, d3d2);
-  
-      let a0a1_2 = vshlq_n_s16::<3>(a0a1);
-      let tmp0 = vadd_s16(vget_low_s16(a0a1_2), vget_high_s16(a0a1_2));
-      let tmp2 = vsub_s16(vget_low_s16(a0a1_2), vget_high_s16(a0a1_2));
-  
-      let a3_2217 = vmull_n_s16(vget_low_s16(a3a2), 2217);
-      let a2_2217 = vmull_n_s16(vget_high_s16(a3a2), 2217);
-      let a2_p_a3 = vmlal_n_s16(a2_2217, vget_low_s16(a3a2), 5352);
-      let a3_m_a2 = vmlsl_n_s16(a3_2217, vget_high_s16(a3a2), 5352);
-  
-      let tmp1 = vshrn_n_s32::<9>(vaddq_s32(a2_p_a3, k_cst1812));
-      let tmp3 = vshrn_n_s32::<9>(vaddq_s32(a3_m_a2, k_cst937));
-  
-      transpose_4x4_s16_neon(_token, tmp0, tmp1, tmp2, tmp3)
-  }
-  
-  /// Forward DCT pass 2 with final rounding. Returns i32x4[4].
-  
-  #[rite]
-  fn forward_pass_2_neon(_token: NeonToken, d0d1: int16x8_t, d3d2: int16x8_t) -> [int32x4_t; 4] {
-      let k_cst12000 = vdupq_n_s32(12000 + (1 << 16));
-      let k_cst51000 = vdupq_n_s32(51000);
-  
-      let a0a1 = vaddq_s16(d0d1, d3d2);
-      let a3a2 = vsubq_s16(d0d1, d3d2);
-  
-      let a0_k7 = vadd_s16(vget_low_s16(a0a1), vdup_n_s16(7));
-      let out0 = vshr_n_s16::<4>(vadd_s16(a0_k7, vget_high_s16(a0a1)));
-      let out2 = vshr_n_s16::<4>(vsub_s16(a0_k7, vget_high_s16(a0a1)));
-  
-      let a3_2217 = vmull_n_s16(vget_low_s16(a3a2), 2217);
-      let a2_2217 = vmull_n_s16(vget_high_s16(a3a2), 2217);
-      let a2_p_a3 = vmlal_n_s16(a2_2217, vget_low_s16(a3a2), 5352);
-      let a3_m_a2 = vmlsl_n_s16(a3_2217, vget_high_s16(a3a2), 5352);
-  
-      let tmp1 = vaddhn_s32(a2_p_a3, k_cst12000);
-      let out3 = vaddhn_s32(a3_m_a2, k_cst51000);
-  
-      // out1 += (a3 != 0): ceq returns all-ones (0xFFFF = -1), so add -1 when eq
-      let a3_eq_0 = vreinterpret_s16_u16(vceq_s16(vget_low_s16(a3a2), vdup_n_s16(0)));
-      let out1 = vadd_s16(tmp1, a3_eq_0);
-  
-      // Widen i16x4 → i32x4
-      [
-          vmovl_s16(out0),
-          vmovl_s16(out1),
-          vmovl_s16(out2),
-          vmovl_s16(out3),
-      ]
-  }
-  
-  // =============================================================================
-  // Inverse DCT — ported from libwebp's TransformPass_NEON + ITransformOne_NEON
-  // =============================================================================
-  
-  // VP8 IDCT constants for vqdmulh doubling multiply-high:
-  // kC1 = 20091 (cos(PI/8)*sqrt(2)-1, fixed-point)
-  // kC2_half = 17734 (sin(PI/8)*sqrt(2) / 2 for vqdmulh)
-  const KC1: i16 = 20091;
-  const KC2_HALF: i16 = 17734; // 35468 / 2
-  
-  /// Inverse DCT using NEON intrinsics.
-  /// Input/output: i32[16+] in row-major order.
-  
-  #[arcane]
-  pub(crate) fn idct4x4_neon(_token: NeonToken, block: &mut [i32]) {
-      debug_assert!(block.len() >= 16);
-      idct4x4_neon_inner(_token, block);
-  }
-  
-  #[rite]
-  fn idct4x4_neon_inner(_token: NeonToken, block: &mut [i32]) {
-      // Load i32[16] and pack to i16x8 pairs
-      let r0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[0..4]).unwrap());
-      let r1 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[4..8]).unwrap());
-      let r2 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[8..12]).unwrap());
-      let r3 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[12..16]).unwrap());
-  
-      let in01 = vcombine_s16(vmovn_s32(r0), vmovn_s32(r1));
-      let in23 = vcombine_s16(vmovn_s32(r2), vmovn_s32(r3));
-  
-      // Two passes of TransformPass (vertical then horizontal)
-      let (t01, t23) = itransform_pass_neon(_token, in01, in23);
-      let (res01, res23) = itransform_pass_neon(_token, t01, t23);
-  
-      // Final: (val + 4) >> 3 rounding
-      let four = vdupq_n_s16(4);
-      let res01_r = vshrq_n_s16::<3>(vaddq_s16(res01, four));
-      let res23_r = vshrq_n_s16::<3>(vaddq_s16(res23, four));
-  
-      // Widen i16 → i32 and store
-      simd_mem::vst1q_s32(
-          <&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(),
-          vmovl_s16(vget_low_s16(res01_r)),
-      );
-      simd_mem::vst1q_s32(
-          <&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(),
-          vmovl_s16(vget_high_s16(res01_r)),
-      );
-      simd_mem::vst1q_s32(
-          <&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(),
-          vmovl_s16(vget_low_s16(res23_r)),
-      );
-      simd_mem::vst1q_s32(
-          <&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(),
-          vmovl_s16(vget_high_s16(res23_r)),
-      );
-  }
-  
-  /// IDCT TransformPass — matches libwebp's TransformPass_NEON.
-  /// rows packed as (row0|row1, row2|row3) in i16x8 pairs.
-  
-  #[rite]
-  fn itransform_pass_neon(
-      _token: NeonToken,
-      in01: int16x8_t,
-      in23: int16x8_t,
-  ) -> (int16x8_t, int16x8_t) {
-      // B1 = in4 | in12 (high halves)
-      let b1 = vcombine_s16(vget_high_s16(in01), vget_high_s16(in23));
-  
-      // C0 = kC1 * B1: vqdmulh gives (B1*kC1*2)>>16, then vsraq adds B1>>1
-      let c0 = vsraq_n_s16::<1>(b1, vqdmulhq_n_s16(b1, KC1));
-      // C1 = kC2 * B1 / 2^16 via vqdmulh with kC2/2
-      let c1 = vqdmulhq_n_s16(b1, KC2_HALF);
-  
-      // a = in0 + in8, b = in0 - in8
-      let a = vqadd_s16(vget_low_s16(in01), vget_low_s16(in23));
-      let b = vqsub_s16(vget_low_s16(in01), vget_low_s16(in23));
-  
-      // c = kC2*in4 - kC1*in12, d = kC1*in4 + kC2*in12
-      let c = vqsub_s16(vget_low_s16(c1), vget_high_s16(c0));
-      let d = vqadd_s16(vget_low_s16(c0), vget_high_s16(c1));
-  
-      let d0 = vcombine_s16(a, b); // a | b
-      let d1 = vcombine_s16(d, c); // d | c
-  
-      let e0 = vqaddq_s16(d0, d1); // a+d | b+c
-      let e_tmp = vqsubq_s16(d0, d1); // a-d | b-c
-      let e1 = vcombine_s16(vget_high_s16(e_tmp), vget_low_s16(e_tmp)); // b-c | a-d
-  
-      // Transpose 8x2
-      let tmp = vzipq_s16(e0, e1);
-      let out = vzipq_s16(tmp.0, tmp.1);
-      (out.0, out.1)
-  }
-  
-  // =============================================================================
-  // Fused IDCT + add_residue (decoder hot path, in-place)
-  // =============================================================================
-  
-  /// Fused IDCT + add residue + clear coefficients.
-  /// Performs IDCT on raw DCT coefficients, adds to prediction block in-place,
-  /// clamps to [0,255], and zeros the coefficient buffer.
-  
-  #[arcane]
-  pub(crate) fn idct_add_residue_inplace_neon(
-      _token: NeonToken,
-      coeffs: &mut [i32; 16],
-      block: &mut [u8],
-      y0: usize,
-      x0: usize,
-      stride: usize,
-      dc_only: bool,
-  ) {
-      idct_add_residue_inplace_neon_inner(_token, coeffs, block, y0, x0, stride, dc_only);
-  }
-  
-  /// `#[rite]` version for inlining into `#[arcane]` prediction+IDCT pipelines.
-  #[rite]
-  pub(crate) fn idct_add_residue_inplace_neon_inner(
-      _token: NeonToken,
-      coeffs: &mut [i32; 16],
-      block: &mut [u8],
-      y0: usize,
-      x0: usize,
-      stride: usize,
-      dc_only: bool,
-  ) {
-      if dc_only {
-          idct_add_residue_dc_neon(_token, coeffs, block, y0, x0, stride);
-      } else {
-          idct_add_residue_full_neon(_token, coeffs, block, y0, x0, stride);
-      }
-      coeffs.fill(0);
-  }
-  
-  /// DC-only fast path: add constant to all 16 pixels.
-  
-  #[rite]
-  fn idct_add_residue_dc_neon(
-      _token: NeonToken,
-      coeffs: &[i32; 16],
-      block: &mut [u8],
-      y0: usize,
-      x0: usize,
-      stride: usize,
-  ) {
-      let dc = coeffs[0];
-      let dc_adj = ((dc + 4) >> 3) as i16;
-      let dc_vec = vdupq_n_s16(dc_adj);
-  
-      for row in 0..4 {
-          let pos = (y0 + row) * stride + x0;
-          let pred_bytes: [u8; 4] = block[pos..pos + 4].try_into().unwrap();
-          // Load 4 prediction bytes, zero-extend to i16
-          let pred_u32 = u32::from_ne_bytes(pred_bytes);
-          let pred_v = vreinterpret_u8_u32(vmov_n_u32(pred_u32));
-          let pred_i16 = vreinterpretq_s16_u16(vmovl_u8(pred_v));
-          // Add DC
-          let sum = vaddq_s16(pred_i16, dc_vec);
-          // Saturate to u8
-          let packed = vqmovun_s16(sum);
-          // Store 4 bytes
-          let result_u32 = vget_lane_u32::<0>(vreinterpret_u32_u8(packed));
-          block[pos..pos + 4].copy_from_slice(&result_u32.to_ne_bytes());
-      }
-  }
-  
-  /// Full IDCT + add residue.
-  
-  #[rite]
-  fn idct_add_residue_full_neon(
-      _token: NeonToken,
-      coeffs: &[i32; 16],
-      block: &mut [u8],
-      y0: usize,
-      x0: usize,
-      stride: usize,
-  ) {
-      // Load and pack coefficients to i16
-      let r0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-      let r1 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-      let r2 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-      let r3 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
-  
-      let in01 = vcombine_s16(vmovn_s32(r0), vmovn_s32(r1));
-      let in23 = vcombine_s16(vmovn_s32(r2), vmovn_s32(r3));
-  
-      // Two IDCT passes
-      let (t01, t23) = itransform_pass_neon(_token, in01, in23);
-      let (res01, res23) = itransform_pass_neon(_token, t01, t23);
-  
-      // Process each row: load pred, add residual with rounding shift, saturate, store
-      // libwebp uses vrsraq_n_s16 for: pred + (residual + rounding) >> 3
-      let res_rows: [(int16x8_t, bool); 4] = [
-          (res01, false), // row 0 = low half of res01
-          (res01, true),  // row 1 = high half of res01
-          (res23, false), // row 2 = low half of res23
-          (res23, true),  // row 3 = high half of res23
-      ];
-  
-      for (row_idx, &(res, use_high)) in res_rows.iter().enumerate() {
-          let residual = if use_high {
-              vcombine_s16(vget_high_s16(res), vget_high_s16(res))
-          } else {
-              vcombine_s16(vget_low_s16(res), vget_low_s16(res))
-          };
-  
-          let pos = (y0 + row_idx) * stride + x0;
-          let pred_bytes: [u8; 4] = block[pos..pos + 4].try_into().unwrap();
-          let pred_u32 = u32::from_ne_bytes(pred_bytes);
-          let pred_v = vreinterpret_u8_u32(vmov_n_u32(pred_u32));
-          let pred_i16 = vreinterpretq_s16_u16(vmovl_u8(pred_v));
-  
-          // vrsraq: pred + (residual + 4) >> 3
-          let out = vrsraq_n_s16::<3>(pred_i16, residual);
-          let packed = vqmovun_s16(out);
-          let result_u32 = vget_lane_u32::<0>(vreinterpret_u32_u8(packed));
-          block[pos..pos + 4].copy_from_slice(&result_u32.to_ne_bytes());
-      }
-  }
-  
-  // =============================================================================
-  // Fused residual + DCT from u8 arrays (encoder hot path)
-  // =============================================================================
-  
-  /// Fused residual computation + DCT for a single 4x4 block.
-  /// Takes flat u8 source and reference arrays (stride=4), outputs i32 coefficients.
-  
-  #[arcane]
-  pub(crate) fn ftransform_from_u8_4x4_neon(
-      _token: NeonToken,
-      src: &[u8; 16],
-      ref_: &[u8; 16],
-  ) -> [i32; 16] {
-      ftransform_from_u8_4x4_neon_inner(_token, src, ref_)
-  }
-  
-  #[rite]
-  fn ftransform_from_u8_4x4_neon_inner(
-      _token: NeonToken,
-      src: &[u8; 16],
-      ref_: &[u8; 16],
-  ) -> [i32; 16] {
-      // Load src and ref as u8x16
-      let s = simd_mem::vld1q_u8(src);
-      let r = simd_mem::vld1q_u8(ref_);
-  
-      // Compute difference as i16: rows 0-1 and rows 2-3
-      let diff_01 = vreinterpretq_s16_u16(vsubl_u8(vget_low_u8(s), vget_low_u8(r)));
-      let diff_23 = vreinterpretq_s16_u16(vsubl_u8(vget_high_u8(s), vget_high_u8(r)));
-  
-      let d0 = vget_low_s16(diff_01);
-      let d1 = vget_high_s16(diff_01);
-      let d2 = vget_low_s16(diff_23);
-      let d3 = vget_high_s16(diff_23);
-  
-      // Transpose for first pass
-      let (t0t1, t3t2) = transpose_4x4_s16_neon(_token, d0, d1, d2, d3);
-  
-      // First DCT pass (includes internal transpose at end)
-      let (p0p1, p3p2) = forward_pass_1_neon(_token, t0t1, t3t2);
-  
-      // Second DCT pass — data already transposed by pass 1
-      let out = forward_pass_2_neon(_token, p0p1, p3p2);
-  
-      let mut result = [0i32; 16];
-      simd_mem::vst1q_s32(
-          <&mut [i32; 4]>::try_from(&mut result[0..4]).unwrap(),
-          out[0],
-      );
-      simd_mem::vst1q_s32(
-          <&mut [i32; 4]>::try_from(&mut result[4..8]).unwrap(),
-          out[1],
-      );
-      simd_mem::vst1q_s32(
-          <&mut [i32; 4]>::try_from(&mut result[8..12]).unwrap(),
-          out[2],
-      );
-      simd_mem::vst1q_s32(
-          <&mut [i32; 4]>::try_from(&mut result[12..16]).unwrap(),
-          out[3],
-      );
-      result
-  }
-  
-  // =============================================================================
-  // ftransform2 — two adjacent 4x4 blocks
-  // =============================================================================
-  
-  /// Process two 4x4 blocks with forward DCT.
-  
-  #[arcane]
-  pub(crate) fn ftransform2_neon(
-      _token: NeonToken,
-      src: &[u8],
-      ref_: &[u8],
-      src_stride: usize,
-      ref_stride: usize,
-      out: &mut [[i32; 16]; 2],
-  ) {
-      for blk in 0..2 {
-          let sx = blk * 4;
-          let mut s_flat = [0u8; 16];
-          let mut r_flat = [0u8; 16];
-          for row in 0..4 {
-              s_flat[row * 4..row * 4 + 4].copy_from_slice(&src[row * src_stride + sx..][..4]);
-              r_flat[row * 4..row * 4 + 4].copy_from_slice(&ref_[row * ref_stride + sx..][..4]);
-          }
-          out[blk] = ftransform_from_u8_4x4_neon(_token, &s_flat, &r_flat);
-      }
-  }
-  
-  // =============================================================================
-  // add_residue — add IDCT residuals to prediction block
-  // =============================================================================
-  
-  /// Add residuals (i32[16]) to prediction block (u8) with saturation.
-  /// Processes 4 rows of 4 pixels each.
-  
-  #[arcane]
-  pub(crate) fn add_residue_neon(
-      _token: NeonToken,
-      pblock: &mut [u8],
-      rblock: &[i32; 16],
-      y0: usize,
-      x0: usize,
-      stride: usize,
-  ) {
-      add_residue_neon_inner(_token, pblock, rblock, y0, x0, stride);
-  }
-  
-  #[rite]
-  fn add_residue_neon_inner(
-      _token: NeonToken,
-      pblock: &mut [u8],
-      rblock: &[i32; 16],
-      y0: usize,
-      x0: usize,
-      stride: usize,
-  ) {
-      // Load residuals as i32x4 and narrow to i16x4
-      let r0_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[0..4]).unwrap());
-      let r1_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[4..8]).unwrap());
-      let r2_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[8..12]).unwrap());
-      let r3_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[12..16]).unwrap());
-  
-      let r0_i16 = vmovn_s32(r0_i32); // int16x4
-      let r1_i16 = vmovn_s32(r1_i32);
-      let r2_i16 = vmovn_s32(r2_i32);
-      let r3_i16 = vmovn_s32(r3_i32);
-  
-      // Process 4 rows
-      for (row, r_i16) in [(0usize, r0_i16), (1, r1_i16), (2, r2_i16), (3, r3_i16)] {
-          let offset = (y0 + row) * stride + x0;
-  
-          // Load 4 prediction pixels, zero-extend to i16
-          let mut pred_bytes = [0u8; 8]; // load 4, pad to 8
-          pred_bytes[..4].copy_from_slice(&pblock[offset..offset + 4]);
-          let pred_u8 = simd_mem::vld1_u8(&pred_bytes);
-          let pred_i16 = vreinterpretq_s16_u16(vmovl_u8(pred_u8));
-  
-          // Add residual (only low 4 lanes matter)
-          let sum = vaddq_s16(pred_i16, vcombine_s16(r_i16, vdup_n_s16(0)));
-  
-          // Saturate to u8
-          let result = vqmovun_s16(sum);
-  
-          // Store 4 pixels back
-          let mut out_bytes = [0u8; 8];
-          simd_mem::vst1_u8(&mut out_bytes, result);
-          pblock[offset..offset + 4].copy_from_slice(&out_bytes[..4]);
-      }
-}
+    #[arcane]
+    pub(crate) fn dct4x4_neon(_token: NeonToken, block: &mut [i32; 16]) {
+        dct4x4_neon_inner(_token, block);
+    }
+
+    #[rite]
+    fn dct4x4_neon_inner(_token: NeonToken, block: &mut [i32; 16]) {
+        // Load i32[16] as 4 × i32x4, then narrow to i16x4
+        let r0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[0..4]).unwrap());
+        let r1 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[4..8]).unwrap());
+        let r2 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[8..12]).unwrap());
+        let r3 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[12..16]).unwrap());
+
+        let d0 = vmovn_s32(r0);
+        let d1 = vmovn_s32(r1);
+        let d2 = vmovn_s32(r2);
+        let d3 = vmovn_s32(r3);
+
+        // Transpose 4x4 for first pass
+        let (t0t1, t3t2) = transpose_4x4_s16_neon(_token, d0, d1, d2, d3);
+
+        // First DCT pass (includes internal transpose at end)
+        let (p0p1, p3p2) = forward_pass_1_neon(_token, t0t1, t3t2);
+
+        // Second DCT pass with final rounding → i32 output
+        // Data is already transposed by pass 1's internal transpose
+        let out = forward_pass_2_neon(_token, p0p1, p3p2);
+
+        simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(), out[0]);
+        simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(), out[1]);
+        simd_mem::vst1q_s32(
+            <&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(),
+            out[2],
+        );
+        simd_mem::vst1q_s32(
+            <&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(),
+            out[3],
+        );
+    }
+
+    /// Transpose 4x4 i16 matrix (matches libwebp Transpose4x4_S16_NEON).
+    /// Input: 4 rows as i16x4. Output: (col01, col32) as two i16x8.
+    /// col01 = col0 | col1, col32 = col3 | col2
+
+    #[rite]
+    fn transpose_4x4_s16_neon(
+        _token: NeonToken,
+        a: int16x4_t,
+        b: int16x4_t,
+        c: int16x4_t,
+        d: int16x4_t,
+    ) -> (int16x8_t, int16x8_t) {
+        let ab = vtrn_s16(a, b);
+        let cd = vtrn_s16(c, d);
+        let tmp02 = vtrn_s32(vreinterpret_s32_s16(ab.0), vreinterpret_s32_s16(cd.0));
+        let tmp13 = vtrn_s32(vreinterpret_s32_s16(ab.1), vreinterpret_s32_s16(cd.1));
+        let out01 = vreinterpretq_s16_s64(vcombine_s64(
+            vreinterpret_s64_s32(tmp02.0),
+            vreinterpret_s64_s32(tmp13.0),
+        ));
+        let out32 = vreinterpretq_s16_s64(vcombine_s64(
+            vreinterpret_s64_s32(tmp13.1),
+            vreinterpret_s64_s32(tmp02.1),
+        ));
+        (out01, out32)
+    }
+
+    /// Forward DCT pass 1 (from libwebp FTransform_NEON, first pass).
+
+    #[rite]
+    fn forward_pass_1_neon(
+        _token: NeonToken,
+        d0d1: int16x8_t,
+        d3d2: int16x8_t,
+    ) -> (int16x8_t, int16x8_t) {
+        let k_cst937 = vdupq_n_s32(937);
+        let k_cst1812 = vdupq_n_s32(1812);
+
+        let a0a1 = vaddq_s16(d0d1, d3d2);
+        let a3a2 = vsubq_s16(d0d1, d3d2);
+
+        let a0a1_2 = vshlq_n_s16::<3>(a0a1);
+        let tmp0 = vadd_s16(vget_low_s16(a0a1_2), vget_high_s16(a0a1_2));
+        let tmp2 = vsub_s16(vget_low_s16(a0a1_2), vget_high_s16(a0a1_2));
+
+        let a3_2217 = vmull_n_s16(vget_low_s16(a3a2), 2217);
+        let a2_2217 = vmull_n_s16(vget_high_s16(a3a2), 2217);
+        let a2_p_a3 = vmlal_n_s16(a2_2217, vget_low_s16(a3a2), 5352);
+        let a3_m_a2 = vmlsl_n_s16(a3_2217, vget_high_s16(a3a2), 5352);
+
+        let tmp1 = vshrn_n_s32::<9>(vaddq_s32(a2_p_a3, k_cst1812));
+        let tmp3 = vshrn_n_s32::<9>(vaddq_s32(a3_m_a2, k_cst937));
+
+        transpose_4x4_s16_neon(_token, tmp0, tmp1, tmp2, tmp3)
+    }
+
+    /// Forward DCT pass 2 with final rounding. Returns i32x4[4].
+
+    #[rite]
+    fn forward_pass_2_neon(_token: NeonToken, d0d1: int16x8_t, d3d2: int16x8_t) -> [int32x4_t; 4] {
+        let k_cst12000 = vdupq_n_s32(12000 + (1 << 16));
+        let k_cst51000 = vdupq_n_s32(51000);
+
+        let a0a1 = vaddq_s16(d0d1, d3d2);
+        let a3a2 = vsubq_s16(d0d1, d3d2);
+
+        let a0_k7 = vadd_s16(vget_low_s16(a0a1), vdup_n_s16(7));
+        let out0 = vshr_n_s16::<4>(vadd_s16(a0_k7, vget_high_s16(a0a1)));
+        let out2 = vshr_n_s16::<4>(vsub_s16(a0_k7, vget_high_s16(a0a1)));
+
+        let a3_2217 = vmull_n_s16(vget_low_s16(a3a2), 2217);
+        let a2_2217 = vmull_n_s16(vget_high_s16(a3a2), 2217);
+        let a2_p_a3 = vmlal_n_s16(a2_2217, vget_low_s16(a3a2), 5352);
+        let a3_m_a2 = vmlsl_n_s16(a3_2217, vget_high_s16(a3a2), 5352);
+
+        let tmp1 = vaddhn_s32(a2_p_a3, k_cst12000);
+        let out3 = vaddhn_s32(a3_m_a2, k_cst51000);
+
+        // out1 += (a3 != 0): ceq returns all-ones (0xFFFF = -1), so add -1 when eq
+        let a3_eq_0 = vreinterpret_s16_u16(vceq_s16(vget_low_s16(a3a2), vdup_n_s16(0)));
+        let out1 = vadd_s16(tmp1, a3_eq_0);
+
+        // Widen i16x4 → i32x4
+        [
+            vmovl_s16(out0),
+            vmovl_s16(out1),
+            vmovl_s16(out2),
+            vmovl_s16(out3),
+        ]
+    }
+
+    // =============================================================================
+    // Inverse DCT — ported from libwebp's TransformPass_NEON + ITransformOne_NEON
+    // =============================================================================
+
+    // VP8 IDCT constants for vqdmulh doubling multiply-high:
+    // kC1 = 20091 (cos(PI/8)*sqrt(2)-1, fixed-point)
+    // kC2_half = 17734 (sin(PI/8)*sqrt(2) / 2 for vqdmulh)
+    const KC1: i16 = 20091;
+    const KC2_HALF: i16 = 17734; // 35468 / 2
+
+    /// Inverse DCT using NEON intrinsics.
+    /// Input/output: i32[16+] in row-major order.
+
+    #[arcane]
+    pub(crate) fn idct4x4_neon(_token: NeonToken, block: &mut [i32]) {
+        debug_assert!(block.len() >= 16);
+        idct4x4_neon_inner(_token, block);
+    }
+
+    #[rite]
+    fn idct4x4_neon_inner(_token: NeonToken, block: &mut [i32]) {
+        // Load i32[16] and pack to i16x8 pairs
+        let r0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[0..4]).unwrap());
+        let r1 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[4..8]).unwrap());
+        let r2 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[8..12]).unwrap());
+        let r3 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[12..16]).unwrap());
+
+        let in01 = vcombine_s16(vmovn_s32(r0), vmovn_s32(r1));
+        let in23 = vcombine_s16(vmovn_s32(r2), vmovn_s32(r3));
+
+        // Two passes of TransformPass (vertical then horizontal)
+        let (t01, t23) = itransform_pass_neon(_token, in01, in23);
+        let (res01, res23) = itransform_pass_neon(_token, t01, t23);
+
+        // Final: (val + 4) >> 3 rounding
+        let four = vdupq_n_s16(4);
+        let res01_r = vshrq_n_s16::<3>(vaddq_s16(res01, four));
+        let res23_r = vshrq_n_s16::<3>(vaddq_s16(res23, four));
+
+        // Widen i16 → i32 and store
+        simd_mem::vst1q_s32(
+            <&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(),
+            vmovl_s16(vget_low_s16(res01_r)),
+        );
+        simd_mem::vst1q_s32(
+            <&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(),
+            vmovl_s16(vget_high_s16(res01_r)),
+        );
+        simd_mem::vst1q_s32(
+            <&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(),
+            vmovl_s16(vget_low_s16(res23_r)),
+        );
+        simd_mem::vst1q_s32(
+            <&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(),
+            vmovl_s16(vget_high_s16(res23_r)),
+        );
+    }
+
+    /// IDCT TransformPass — matches libwebp's TransformPass_NEON.
+    /// rows packed as (row0|row1, row2|row3) in i16x8 pairs.
+
+    #[rite]
+    fn itransform_pass_neon(
+        _token: NeonToken,
+        in01: int16x8_t,
+        in23: int16x8_t,
+    ) -> (int16x8_t, int16x8_t) {
+        // B1 = in4 | in12 (high halves)
+        let b1 = vcombine_s16(vget_high_s16(in01), vget_high_s16(in23));
+
+        // C0 = kC1 * B1: vqdmulh gives (B1*kC1*2)>>16, then vsraq adds B1>>1
+        let c0 = vsraq_n_s16::<1>(b1, vqdmulhq_n_s16(b1, KC1));
+        // C1 = kC2 * B1 / 2^16 via vqdmulh with kC2/2
+        let c1 = vqdmulhq_n_s16(b1, KC2_HALF);
+
+        // a = in0 + in8, b = in0 - in8
+        let a = vqadd_s16(vget_low_s16(in01), vget_low_s16(in23));
+        let b = vqsub_s16(vget_low_s16(in01), vget_low_s16(in23));
+
+        // c = kC2*in4 - kC1*in12, d = kC1*in4 + kC2*in12
+        let c = vqsub_s16(vget_low_s16(c1), vget_high_s16(c0));
+        let d = vqadd_s16(vget_low_s16(c0), vget_high_s16(c1));
+
+        let d0 = vcombine_s16(a, b); // a | b
+        let d1 = vcombine_s16(d, c); // d | c
+
+        let e0 = vqaddq_s16(d0, d1); // a+d | b+c
+        let e_tmp = vqsubq_s16(d0, d1); // a-d | b-c
+        let e1 = vcombine_s16(vget_high_s16(e_tmp), vget_low_s16(e_tmp)); // b-c | a-d
+
+        // Transpose 8x2
+        let tmp = vzipq_s16(e0, e1);
+        let out = vzipq_s16(tmp.0, tmp.1);
+        (out.0, out.1)
+    }
+
+    // =============================================================================
+    // Fused IDCT + add_residue (decoder hot path, in-place)
+    // =============================================================================
+
+    /// Fused IDCT + add residue + clear coefficients.
+    /// Performs IDCT on raw DCT coefficients, adds to prediction block in-place,
+    /// clamps to [0,255], and zeros the coefficient buffer.
+
+    #[arcane]
+    pub(crate) fn idct_add_residue_inplace_neon(
+        _token: NeonToken,
+        coeffs: &mut [i32; 16],
+        block: &mut [u8],
+        y0: usize,
+        x0: usize,
+        stride: usize,
+        dc_only: bool,
+    ) {
+        idct_add_residue_inplace_neon_inner(_token, coeffs, block, y0, x0, stride, dc_only);
+    }
+
+    /// `#[rite]` version for inlining into `#[arcane]` prediction+IDCT pipelines.
+    #[rite]
+    pub(crate) fn idct_add_residue_inplace_neon_inner(
+        _token: NeonToken,
+        coeffs: &mut [i32; 16],
+        block: &mut [u8],
+        y0: usize,
+        x0: usize,
+        stride: usize,
+        dc_only: bool,
+    ) {
+        if dc_only {
+            idct_add_residue_dc_neon(_token, coeffs, block, y0, x0, stride);
+        } else {
+            idct_add_residue_full_neon(_token, coeffs, block, y0, x0, stride);
+        }
+        coeffs.fill(0);
+    }
+
+    /// DC-only fast path: add constant to all 16 pixels.
+
+    #[rite]
+    fn idct_add_residue_dc_neon(
+        _token: NeonToken,
+        coeffs: &[i32; 16],
+        block: &mut [u8],
+        y0: usize,
+        x0: usize,
+        stride: usize,
+    ) {
+        let dc = coeffs[0];
+        let dc_adj = ((dc + 4) >> 3) as i16;
+        let dc_vec = vdupq_n_s16(dc_adj);
+
+        for row in 0..4 {
+            let pos = (y0 + row) * stride + x0;
+            let pred_bytes: [u8; 4] = block[pos..pos + 4].try_into().unwrap();
+            // Load 4 prediction bytes, zero-extend to i16
+            let pred_u32 = u32::from_ne_bytes(pred_bytes);
+            let pred_v = vreinterpret_u8_u32(vmov_n_u32(pred_u32));
+            let pred_i16 = vreinterpretq_s16_u16(vmovl_u8(pred_v));
+            // Add DC
+            let sum = vaddq_s16(pred_i16, dc_vec);
+            // Saturate to u8
+            let packed = vqmovun_s16(sum);
+            // Store 4 bytes
+            let result_u32 = vget_lane_u32::<0>(vreinterpret_u32_u8(packed));
+            block[pos..pos + 4].copy_from_slice(&result_u32.to_ne_bytes());
+        }
+    }
+
+    /// Full IDCT + add residue.
+
+    #[rite]
+    fn idct_add_residue_full_neon(
+        _token: NeonToken,
+        coeffs: &[i32; 16],
+        block: &mut [u8],
+        y0: usize,
+        x0: usize,
+        stride: usize,
+    ) {
+        // Load and pack coefficients to i16
+        let r0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
+        let r1 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
+        let r2 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
+        let r3 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+
+        let in01 = vcombine_s16(vmovn_s32(r0), vmovn_s32(r1));
+        let in23 = vcombine_s16(vmovn_s32(r2), vmovn_s32(r3));
+
+        // Two IDCT passes
+        let (t01, t23) = itransform_pass_neon(_token, in01, in23);
+        let (res01, res23) = itransform_pass_neon(_token, t01, t23);
+
+        // Process each row: load pred, add residual with rounding shift, saturate, store
+        // libwebp uses vrsraq_n_s16 for: pred + (residual + rounding) >> 3
+        let res_rows: [(int16x8_t, bool); 4] = [
+            (res01, false), // row 0 = low half of res01
+            (res01, true),  // row 1 = high half of res01
+            (res23, false), // row 2 = low half of res23
+            (res23, true),  // row 3 = high half of res23
+        ];
+
+        for (row_idx, &(res, use_high)) in res_rows.iter().enumerate() {
+            let residual = if use_high {
+                vcombine_s16(vget_high_s16(res), vget_high_s16(res))
+            } else {
+                vcombine_s16(vget_low_s16(res), vget_low_s16(res))
+            };
+
+            let pos = (y0 + row_idx) * stride + x0;
+            let pred_bytes: [u8; 4] = block[pos..pos + 4].try_into().unwrap();
+            let pred_u32 = u32::from_ne_bytes(pred_bytes);
+            let pred_v = vreinterpret_u8_u32(vmov_n_u32(pred_u32));
+            let pred_i16 = vreinterpretq_s16_u16(vmovl_u8(pred_v));
+
+            // vrsraq: pred + (residual + 4) >> 3
+            let out = vrsraq_n_s16::<3>(pred_i16, residual);
+            let packed = vqmovun_s16(out);
+            let result_u32 = vget_lane_u32::<0>(vreinterpret_u32_u8(packed));
+            block[pos..pos + 4].copy_from_slice(&result_u32.to_ne_bytes());
+        }
+    }
+
+    // =============================================================================
+    // Fused residual + DCT from u8 arrays (encoder hot path)
+    // =============================================================================
+
+    /// Fused residual computation + DCT for a single 4x4 block.
+    /// Takes flat u8 source and reference arrays (stride=4), outputs i32 coefficients.
+
+    #[arcane]
+    pub(crate) fn ftransform_from_u8_4x4_neon(
+        _token: NeonToken,
+        src: &[u8; 16],
+        ref_: &[u8; 16],
+    ) -> [i32; 16] {
+        ftransform_from_u8_4x4_neon_inner(_token, src, ref_)
+    }
+
+    #[rite]
+    fn ftransform_from_u8_4x4_neon_inner(
+        _token: NeonToken,
+        src: &[u8; 16],
+        ref_: &[u8; 16],
+    ) -> [i32; 16] {
+        // Load src and ref as u8x16
+        let s = simd_mem::vld1q_u8(src);
+        let r = simd_mem::vld1q_u8(ref_);
+
+        // Compute difference as i16: rows 0-1 and rows 2-3
+        let diff_01 = vreinterpretq_s16_u16(vsubl_u8(vget_low_u8(s), vget_low_u8(r)));
+        let diff_23 = vreinterpretq_s16_u16(vsubl_u8(vget_high_u8(s), vget_high_u8(r)));
+
+        let d0 = vget_low_s16(diff_01);
+        let d1 = vget_high_s16(diff_01);
+        let d2 = vget_low_s16(diff_23);
+        let d3 = vget_high_s16(diff_23);
+
+        // Transpose for first pass
+        let (t0t1, t3t2) = transpose_4x4_s16_neon(_token, d0, d1, d2, d3);
+
+        // First DCT pass (includes internal transpose at end)
+        let (p0p1, p3p2) = forward_pass_1_neon(_token, t0t1, t3t2);
+
+        // Second DCT pass — data already transposed by pass 1
+        let out = forward_pass_2_neon(_token, p0p1, p3p2);
+
+        let mut result = [0i32; 16];
+        simd_mem::vst1q_s32(
+            <&mut [i32; 4]>::try_from(&mut result[0..4]).unwrap(),
+            out[0],
+        );
+        simd_mem::vst1q_s32(
+            <&mut [i32; 4]>::try_from(&mut result[4..8]).unwrap(),
+            out[1],
+        );
+        simd_mem::vst1q_s32(
+            <&mut [i32; 4]>::try_from(&mut result[8..12]).unwrap(),
+            out[2],
+        );
+        simd_mem::vst1q_s32(
+            <&mut [i32; 4]>::try_from(&mut result[12..16]).unwrap(),
+            out[3],
+        );
+        result
+    }
+
+    // =============================================================================
+    // ftransform2 — two adjacent 4x4 blocks
+    // =============================================================================
+
+    /// Process two 4x4 blocks with forward DCT.
+
+    #[arcane]
+    pub(crate) fn ftransform2_neon(
+        _token: NeonToken,
+        src: &[u8],
+        ref_: &[u8],
+        src_stride: usize,
+        ref_stride: usize,
+        out: &mut [[i32; 16]; 2],
+    ) {
+        for blk in 0..2 {
+            let sx = blk * 4;
+            let mut s_flat = [0u8; 16];
+            let mut r_flat = [0u8; 16];
+            for row in 0..4 {
+                s_flat[row * 4..row * 4 + 4].copy_from_slice(&src[row * src_stride + sx..][..4]);
+                r_flat[row * 4..row * 4 + 4].copy_from_slice(&ref_[row * ref_stride + sx..][..4]);
+            }
+            out[blk] = ftransform_from_u8_4x4_neon(_token, &s_flat, &r_flat);
+        }
+    }
+
+    // =============================================================================
+    // add_residue — add IDCT residuals to prediction block
+    // =============================================================================
+
+    /// Add residuals (i32[16]) to prediction block (u8) with saturation.
+    /// Processes 4 rows of 4 pixels each.
+
+    #[arcane]
+    pub(crate) fn add_residue_neon(
+        _token: NeonToken,
+        pblock: &mut [u8],
+        rblock: &[i32; 16],
+        y0: usize,
+        x0: usize,
+        stride: usize,
+    ) {
+        add_residue_neon_inner(_token, pblock, rblock, y0, x0, stride);
+    }
+
+    #[rite]
+    fn add_residue_neon_inner(
+        _token: NeonToken,
+        pblock: &mut [u8],
+        rblock: &[i32; 16],
+        y0: usize,
+        x0: usize,
+        stride: usize,
+    ) {
+        // Load residuals as i32x4 and narrow to i16x4
+        let r0_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[0..4]).unwrap());
+        let r1_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[4..8]).unwrap());
+        let r2_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[8..12]).unwrap());
+        let r3_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[12..16]).unwrap());
+
+        let r0_i16 = vmovn_s32(r0_i32); // int16x4
+        let r1_i16 = vmovn_s32(r1_i32);
+        let r2_i16 = vmovn_s32(r2_i32);
+        let r3_i16 = vmovn_s32(r3_i32);
+
+        // Process 4 rows
+        for (row, r_i16) in [(0usize, r0_i16), (1, r1_i16), (2, r2_i16), (3, r3_i16)] {
+            let offset = (y0 + row) * stride + x0;
+
+            // Load 4 prediction pixels, zero-extend to i16
+            let mut pred_bytes = [0u8; 8]; // load 4, pad to 8
+            pred_bytes[..4].copy_from_slice(&pblock[offset..offset + 4]);
+            let pred_u8 = simd_mem::vld1_u8(&pred_bytes);
+            let pred_i16 = vreinterpretq_s16_u16(vmovl_u8(pred_u8));
+
+            // Add residual (only low 4 lanes matter)
+            let sum = vaddq_s16(pred_i16, vcombine_s16(r_i16, vdup_n_s16(0)));
+
+            // Saturate to u8
+            let result = vqmovun_s16(sum);
+
+            // Store 4 pixels back
+            let mut out_bytes = [0u8; 8];
+            simd_mem::vst1_u8(&mut out_bytes, result);
+            pblock[offset..offset + 4].copy_from_slice(&out_bytes[..4]);
+        }
+    }
 } // mod neon_transform
 
 #[cfg(target_arch = "aarch64")]
@@ -2231,357 +2225,355 @@ pub(crate) use neon_transform::*;
 // ============================================================================
 #[cfg(target_arch = "wasm32")]
 mod wasm_transform {
-use super::*;
+    use super::*;
 
-  
-  pub(crate) fn dct4x4_wasm(_token: Wasm128Token, block: &mut [i32; 16]) {
-      dct4x4_wasm_impl(_token, block);
-  }
-  
-  /// Inverse DCT using WASM SIMD128 (entry shim)
-  #[cfg(target_arch = "wasm32")]
-  #[arcane]
-  pub(crate) fn idct4x4_wasm(_token: Wasm128Token, block: &mut [i32]) {
-      debug_assert!(block.len() >= 16);
-      idct4x4_wasm_impl(_token, block);
-  }
-  
-  // =============================================================================
-  // Helpers
-  // =============================================================================
-  
-  /// Load 4 i32 values from a block row
-  #[cfg(target_arch = "wasm32")]
-  #[inline(always)]
-  fn load_row(block: &[i32], row: usize) -> v128 {
-      let off = row * 4;
-      i32x4(block[off], block[off + 1], block[off + 2], block[off + 3])
-  }
-  
-  /// Store v128 as 4 i32 values into a block row
-  #[cfg(target_arch = "wasm32")]
-  #[inline(always)]
-  fn store_row(block: &mut [i32], row: usize, v: v128) {
-      let off = row * 4;
-      block[off] = i32x4_extract_lane::<0>(v);
-      block[off + 1] = i32x4_extract_lane::<1>(v);
-      block[off + 2] = i32x4_extract_lane::<2>(v);
-      block[off + 3] = i32x4_extract_lane::<3>(v);
-  }
-  
-  /// Compute (v * constant) >> 16 using 64-bit intermediates.
-  /// Matches the scalar `(val * CONST) >> 16` pattern used in VP8 transforms.
-  #[cfg(target_arch = "wasm32")]
-  #[inline(always)]
-  fn mulhi32x4(v: v128, c: i32) -> v128 {
-      let c_vec = i32x4_splat(c);
-      let lo_prod = i64x2_extmul_low_i32x4(v, c_vec);
-      let hi_prod = i64x2_extmul_high_i32x4(v, c_vec);
-      let lo_shifted = i64x2_shr(lo_prod, 16);
-      let hi_shifted = i64x2_shr(hi_prod, 16);
-      // Narrow back to i32x4 by extracting low 32 bits of each i64
-      i32x4(
-          i64x2_extract_lane::<0>(lo_shifted) as i32,
-          i64x2_extract_lane::<1>(lo_shifted) as i32,
-          i64x2_extract_lane::<0>(hi_shifted) as i32,
-          i64x2_extract_lane::<1>(hi_shifted) as i32,
-      )
-  }
-  
-  /// Transpose a 4x4 matrix of i32 values stored as 4 row vectors.
-  #[cfg(target_arch = "wasm32")]
-  #[inline(always)]
-  fn transpose4x4(r0: v128, r1: v128, r2: v128, r3: v128) -> (v128, v128, v128, v128) {
-      // Step 1: interleave pairs of 32-bit elements
-      let t0 = i32x4_shuffle::<0, 4, 1, 5>(r0, r1); // r0[0], r1[0], r0[1], r1[1]
-      let t1 = i32x4_shuffle::<2, 6, 3, 7>(r0, r1); // r0[2], r1[2], r0[3], r1[3]
-      let t2 = i32x4_shuffle::<0, 4, 1, 5>(r2, r3); // r2[0], r3[0], r2[1], r3[1]
-      let t3 = i32x4_shuffle::<2, 6, 3, 7>(r2, r3); // r2[2], r3[2], r2[3], r3[3]
-  
-      // Step 2: interleave 64-bit pairs
-      let o0 = i64x2_shuffle::<0, 2>(t0, t2); // col 0: r0[0], r1[0], r2[0], r3[0]
-      let o1 = i64x2_shuffle::<1, 3>(t0, t2); // col 1: r0[1], r1[1], r2[1], r3[1]
-      let o2 = i64x2_shuffle::<0, 2>(t1, t3); // col 2: r0[2], r1[2], r2[2], r3[2]
-      let o3 = i64x2_shuffle::<1, 3>(t1, t3); // col 3: r0[3], r1[3], r2[3], r3[3]
-  
-      (o0, o1, o2, o3)
-  }
-  
-  // =============================================================================
-  // Inverse DCT
-  // =============================================================================
-  
-  // VP8 IDCT constants (WASM version, i32)
-  const WASM_CONST1: i32 = 20091; // sqrt(2)*cos(pi/8)*65536 - 65536
-  const WASM_CONST2: i32 = 35468; // sqrt(2)*sin(pi/8)*65536
-  
-  /// One pass of the IDCT butterfly. Processes 4 elements in parallel.
-  /// Matches the scalar: a=in0+in2, b=in0-in2, c=MUL(in1,K2)-MUL(in3,K1), d=MUL(in1,K1)+MUL(in3,K2)
-  /// where MUL(x,K) = x + (x*k)>>16 for K1, or just (x*k)>>16 for K2.
-  #[cfg(target_arch = "wasm32")]
-  #[inline(always)]
-  fn idct_butterfly(in0: v128, in1: v128, in2: v128, in3: v128) -> (v128, v128, v128, v128) {
-      let a = i32x4_add(in0, in2);
-      let b = i32x4_sub(in0, in2);
-  
-      // t1 = (in1 * WASM_CONST2) >> 16
-      let t1_c = mulhi32x4(in1, WASM_CONST2);
-      // t2 = in3 + (in3 * WASM_CONST1) >> 16  = MUL(in3, K1)
-      let t2_c = i32x4_add(in3, mulhi32x4(in3, WASM_CONST1));
-      let c = i32x4_sub(t1_c, t2_c);
-  
-      // t1 = in1 + (in1 * WASM_CONST1) >> 16  = MUL(in1, K1)
-      let t1_d = i32x4_add(in1, mulhi32x4(in1, WASM_CONST1));
-      // t2 = (in3 * WASM_CONST2) >> 16
-      let t2_d = mulhi32x4(in3, WASM_CONST2);
-      let d = i32x4_add(t1_d, t2_d);
-  
-      let out0 = i32x4_add(a, d);
-      let out1 = i32x4_add(b, c);
-      let out2 = i32x4_sub(b, c);
-      let out3 = i32x4_sub(a, d);
-  
-      (out0, out1, out2, out3)
-  }
-  
-  /// WASM SIMD128 inverse DCT. Uses i32x4 arithmetic matching the scalar implementation.
-  ///
-  /// Scalar pass order: column pass (for i in 0..4, reads block[i], block[4+i], ...),
-  /// then row pass (for i in 0..4, reads block[4*i], block[4*i+1], ...).
-  ///
-  /// With row vectors r0..r3, `idct_butterfly(r0,r1,r2,r3)` processes lane j as
-  /// butterfly(row0[j], row1[j], row2[j], row3[j]) = column pass (no transpose needed).
-  /// For the row pass, we transpose so each vector holds a row's elements as lanes.
-  #[cfg(target_arch = "wasm32")]
-  #[rite]
-  pub(crate) fn idct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32]) {
-      // Load 4 rows
-      let r0 = load_row(block, 0);
-      let r1 = load_row(block, 1);
-      let r2 = load_row(block, 2);
-      let r3 = load_row(block, 3);
-  
-      // Pass 1: column pass — butterfly on row vectors processes columns in parallel
-      let (v0, v1, v2, v3) = idct_butterfly(r0, r1, r2, r3);
-  
-      // Pass 2: row pass — transpose so each vector holds one row's elements,
-      // butterfly processes rows, then transpose back to row-major
-      let (c0, c1, c2, c3) = transpose4x4(v0, v1, v2, v3);
-      let (t0, t1, t2, t3) = idct_butterfly(c0, c1, c2, c3);
-      let (f0, f1, f2, f3) = transpose4x4(t0, t1, t2, t3);
-  
-      // Final rounding: (val + 4) >> 3
-      let four = i32x4_splat(4);
-      let o0 = i32x4_shr(i32x4_add(f0, four), 3);
-      let o1 = i32x4_shr(i32x4_add(f1, four), 3);
-      let o2 = i32x4_shr(i32x4_add(f2, four), 3);
-      let o3 = i32x4_shr(i32x4_add(f3, four), 3);
-  
-      // Store results
-      store_row(block, 0, o0);
-      store_row(block, 1, o1);
-      store_row(block, 2, o2);
-      store_row(block, 3, o3);
-  }
-  
-  // =============================================================================
-  // Forward DCT
-  // =============================================================================
-  
-  /// First pass of the forward DCT butterfly (row pass). Processes 4 elements in parallel.
-  ///
-  /// Scalar row pass (for each row i):
-  ///   a = (block[i*4+0] + block[i*4+3]) * 8
-  ///   b = (block[i*4+1] + block[i*4+2]) * 8
-  ///   c = (block[i*4+1] - block[i*4+2]) * 8
-  ///   d = (block[i*4+0] - block[i*4+3]) * 8
-  ///   out[i*4]   = a + b
-  ///   out[i*4+1] = (c*2217 + d*5352 + 14500) >> 12
-  ///   out[i*4+2] = a - b
-  ///   out[i*4+3] = (d*2217 - c*5352 + 7500) >> 12
-  #[cfg(target_arch = "wasm32")]
-  #[inline(always)]
-  fn dct_butterfly(in0: v128, in1: v128, in2: v128, in3: v128) -> (v128, v128, v128, v128) {
-      let eight = i32x4_splat(8);
-  
-      let a = i32x4_mul(i32x4_add(in0, in3), eight);
-      let b = i32x4_mul(i32x4_add(in1, in2), eight);
-      let c = i32x4_mul(i32x4_sub(in1, in2), eight);
-      let d = i32x4_mul(i32x4_sub(in0, in3), eight);
-  
-      let k2217 = i32x4_splat(2217);
-      let k5352 = i32x4_splat(5352);
-  
-      let out0 = i32x4_add(a, b);
-  
-      // out1 = (c * 2217 + d * 5352 + 14500) >> 12
-      let k14500 = i32x4_splat(14500);
-      let out1 = i32x4_shr(
-          i32x4_add(i32x4_add(i32x4_mul(c, k2217), i32x4_mul(d, k5352)), k14500),
-          12,
-      );
-  
-      // out2 = a - b
-      let out2 = i32x4_sub(a, b);
-  
-      // out3 = (d * 2217 - c * 5352 + 7500) >> 12
-      let k7500 = i32x4_splat(7500);
-      let out3 = i32x4_shr(
-          i32x4_add(i32x4_sub(i32x4_mul(d, k2217), i32x4_mul(c, k5352)), k7500),
-          12,
-      );
-  
-      (out0, out1, out2, out3)
-  }
-  
-  /// Second pass of forward DCT (column pass). Same butterfly pairing as pass 1,
-  /// but different constants and rounding.
-  ///
-  /// Scalar column pass (for column i):
-  ///   a = block[i] + block[i+12]         (row0 + row3)
-  ///   b = block[i+4] + block[i+8]        (row1 + row2)
-  ///   c = block[i+4] - block[i+8]        (row1 - row2)
-  ///   d = block[i] - block[i+12]         (row0 - row3)
-  ///   out_row0 = (a + b + 7) >> 4
-  ///   out_row1 = (c*2217 + d*5352 + 12000) >> 16 + (d != 0)
-  ///   out_row2 = (a - b + 7) >> 4
-  ///   out_row3 = (d*2217 - c*5352 + 51000) >> 16
-  #[cfg(target_arch = "wasm32")]
-  #[inline(always)]
-  fn dct_butterfly_pass2(in0: v128, in1: v128, in2: v128, in3: v128) -> (v128, v128, v128, v128) {
-      let a = i32x4_add(in0, in3);
-      let b = i32x4_add(in1, in2);
-      let c = i32x4_sub(in1, in2);
-      let d = i32x4_sub(in0, in3);
-  
-      let k2217 = i32x4_splat(2217);
-      let k5352 = i32x4_splat(5352);
-      let k7 = i32x4_splat(7);
-      let k12000 = i32x4_splat(12000);
-      let k51000 = i32x4_splat(51000);
-  
-      // out0 = (a + b + 7) >> 4
-      let out0 = i32x4_shr(i32x4_add(i32x4_add(a, b), k7), 4);
-  
-      // out1 = (c * 2217 + d * 5352 + 12000) >> 16 + (d != 0)
-      let out1_raw = i32x4_shr(
-          i32x4_add(i32x4_add(i32x4_mul(c, k2217), i32x4_mul(d, k5352)), k12000),
-          16,
-      );
-      // d_ne_0: 0xFFFFFFFF when d != 0, 0 when d == 0
-      // We need +1 when d != 0, so negate the mask (-(-1) = 1)
-      let d_ne_0 = v128_not(i32x4_eq(d, i32x4_splat(0)));
-      let out1 = i32x4_sub(out1_raw, d_ne_0);
-  
-      // out2 = (a - b + 7) >> 4
-      let out2 = i32x4_shr(i32x4_add(i32x4_sub(a, b), k7), 4);
-  
-      // out3 = (d * 2217 - c * 5352 + 51000) >> 16
-      let out3 = i32x4_shr(
-          i32x4_add(i32x4_sub(i32x4_mul(d, k2217), i32x4_mul(c, k5352)), k51000),
-          16,
-      );
-  
-      (out0, out1, out2, out3)
-  }
-  
-  /// Fused residual computation + forward DCT for a single 4x4 block.
-  /// Takes flat u8 source and reference arrays (stride=4), outputs i32 coefficients.
-  ///
-  /// Fuses: residual = src - ref, then DCT on residual.
-  /// Avoids intermediate i32 storage by computing diff in i16 then widening to i32.
-  #[cfg(target_arch = "wasm32")]
-  #[arcane]
-  pub(crate) fn ftransform_from_u8_4x4_wasm(
-      _token: Wasm128Token,
-      src: &[u8; 16],
-      ref_: &[u8; 16],
-  ) -> [i32; 16] {
-      ftransform_from_u8_4x4_wasm_impl(_token, src, ref_)
-  }
-  
-  /// Inner #[rite] implementation of fused residual+DCT for wasm.
-  #[cfg(target_arch = "wasm32")]
-  #[rite]
-  pub(crate) fn ftransform_from_u8_4x4_wasm_impl(
-      _token: Wasm128Token,
-      src: &[u8; 16],
-      ref_: &[u8; 16],
-  ) -> [i32; 16] {
-      // Load src and ref as u8x16
-      let src_vec = u8x16(
-          src[0], src[1], src[2], src[3], src[4], src[5], src[6], src[7], src[8], src[9], src[10],
-          src[11], src[12], src[13], src[14], src[15],
-      );
-      let ref_vec = u8x16(
-          ref_[0], ref_[1], ref_[2], ref_[3], ref_[4], ref_[5], ref_[6], ref_[7], ref_[8], ref_[9],
-          ref_[10], ref_[11], ref_[12], ref_[13], ref_[14], ref_[15],
-      );
-  
-      // Zero-extend to i16 and compute diff (src - ref)
-      let src_lo = u16x8_extend_low_u8x16(src_vec);
-      let src_hi = u16x8_extend_high_u8x16(src_vec);
-      let ref_lo = u16x8_extend_low_u8x16(ref_vec);
-      let ref_hi = u16x8_extend_high_u8x16(ref_vec);
-      let diff_lo = i16x8_sub(src_lo, ref_lo);
-      let diff_hi = i16x8_sub(src_hi, ref_hi);
-  
-      // Widen i16 → i32 for DCT (4 rows of 4 values)
-      let r0 = i32x4_extend_low_i16x8(diff_lo);
-      let r1 = i32x4_extend_high_i16x8(diff_lo);
-      let r2 = i32x4_extend_low_i16x8(diff_hi);
-      let r3 = i32x4_extend_high_i16x8(diff_hi);
-  
-      // Forward DCT pass 1: row pass (transpose, butterfly, transpose back)
-      let (c0, c1, c2, c3) = transpose4x4(r0, r1, r2, r3);
-      let (v0, v1, v2, v3) = dct_butterfly(c0, c1, c2, c3);
-      let (t0, t1, t2, t3) = transpose4x4(v0, v1, v2, v3);
-  
-      // Forward DCT pass 2: column pass
-      let (o0, o1, o2, o3) = dct_butterfly_pass2(t0, t1, t2, t3);
-  
-      // Store results
-      let mut result = [0i32; 16];
-      store_row(&mut result, 0, o0);
-      store_row(&mut result, 1, o1);
-      store_row(&mut result, 2, o2);
-      store_row(&mut result, 3, o3);
-      result
-  }
-  
-  /// WASM SIMD128 forward DCT. Uses i32x4 arithmetic matching the scalar implementation.
-  ///
-  /// Scalar pass order: row pass first (for i in 0..4, reads block[i*4..i*4+3]),
-  /// then column pass (for i in 0..4, reads block[i], block[i+4], ...).
-  ///
-  /// With row vectors, `dct_butterfly(r0,r1,r2,r3)` processes lane j as
-  /// butterfly(row0[j], row1[j], row2[j], row3[j]) = column pass.
-  /// For the row pass, we transpose so each vector holds one row's elements.
-  #[cfg(target_arch = "wasm32")]
-  #[rite]
-  pub(crate) fn dct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32; 16]) {
-      // Load 4 rows
-      let r0 = load_row(block, 0);
-      let r1 = load_row(block, 1);
-      let r2 = load_row(block, 2);
-      let r3 = load_row(block, 3);
-  
-      // Pass 1: row pass — transpose so each vector holds one row's elements,
-      // butterfly processes rows, then transpose back to row-major
-      let (c0, c1, c2, c3) = transpose4x4(r0, r1, r2, r3);
-      let (v0, v1, v2, v3) = dct_butterfly(c0, c1, c2, c3);
-      let (t0, t1, t2, t3) = transpose4x4(v0, v1, v2, v3);
-  
-      // Pass 2: column pass — butterfly on row vectors processes columns in parallel
-      let (o0, o1, o2, o3) = dct_butterfly_pass2(t0, t1, t2, t3);
-  
-      // Store results
-      store_row(block, 0, o0);
-      store_row(block, 1, o1);
-      store_row(block, 2, o2);
-      store_row(block, 3, o3);
-  }
-  
+    pub(crate) fn dct4x4_wasm(_token: Wasm128Token, block: &mut [i32; 16]) {
+        dct4x4_wasm_impl(_token, block);
+    }
+
+    /// Inverse DCT using WASM SIMD128 (entry shim)
+    #[cfg(target_arch = "wasm32")]
+    #[arcane]
+    pub(crate) fn idct4x4_wasm(_token: Wasm128Token, block: &mut [i32]) {
+        debug_assert!(block.len() >= 16);
+        idct4x4_wasm_impl(_token, block);
+    }
+
+    // =============================================================================
+    // Helpers
+    // =============================================================================
+
+    /// Load 4 i32 values from a block row
+    #[cfg(target_arch = "wasm32")]
+    #[inline(always)]
+    fn load_row(block: &[i32], row: usize) -> v128 {
+        let off = row * 4;
+        i32x4(block[off], block[off + 1], block[off + 2], block[off + 3])
+    }
+
+    /// Store v128 as 4 i32 values into a block row
+    #[cfg(target_arch = "wasm32")]
+    #[inline(always)]
+    fn store_row(block: &mut [i32], row: usize, v: v128) {
+        let off = row * 4;
+        block[off] = i32x4_extract_lane::<0>(v);
+        block[off + 1] = i32x4_extract_lane::<1>(v);
+        block[off + 2] = i32x4_extract_lane::<2>(v);
+        block[off + 3] = i32x4_extract_lane::<3>(v);
+    }
+
+    /// Compute (v * constant) >> 16 using 64-bit intermediates.
+    /// Matches the scalar `(val * CONST) >> 16` pattern used in VP8 transforms.
+    #[cfg(target_arch = "wasm32")]
+    #[inline(always)]
+    fn mulhi32x4(v: v128, c: i32) -> v128 {
+        let c_vec = i32x4_splat(c);
+        let lo_prod = i64x2_extmul_low_i32x4(v, c_vec);
+        let hi_prod = i64x2_extmul_high_i32x4(v, c_vec);
+        let lo_shifted = i64x2_shr(lo_prod, 16);
+        let hi_shifted = i64x2_shr(hi_prod, 16);
+        // Narrow back to i32x4 by extracting low 32 bits of each i64
+        i32x4(
+            i64x2_extract_lane::<0>(lo_shifted) as i32,
+            i64x2_extract_lane::<1>(lo_shifted) as i32,
+            i64x2_extract_lane::<0>(hi_shifted) as i32,
+            i64x2_extract_lane::<1>(hi_shifted) as i32,
+        )
+    }
+
+    /// Transpose a 4x4 matrix of i32 values stored as 4 row vectors.
+    #[cfg(target_arch = "wasm32")]
+    #[inline(always)]
+    fn transpose4x4(r0: v128, r1: v128, r2: v128, r3: v128) -> (v128, v128, v128, v128) {
+        // Step 1: interleave pairs of 32-bit elements
+        let t0 = i32x4_shuffle::<0, 4, 1, 5>(r0, r1); // r0[0], r1[0], r0[1], r1[1]
+        let t1 = i32x4_shuffle::<2, 6, 3, 7>(r0, r1); // r0[2], r1[2], r0[3], r1[3]
+        let t2 = i32x4_shuffle::<0, 4, 1, 5>(r2, r3); // r2[0], r3[0], r2[1], r3[1]
+        let t3 = i32x4_shuffle::<2, 6, 3, 7>(r2, r3); // r2[2], r3[2], r2[3], r3[3]
+
+        // Step 2: interleave 64-bit pairs
+        let o0 = i64x2_shuffle::<0, 2>(t0, t2); // col 0: r0[0], r1[0], r2[0], r3[0]
+        let o1 = i64x2_shuffle::<1, 3>(t0, t2); // col 1: r0[1], r1[1], r2[1], r3[1]
+        let o2 = i64x2_shuffle::<0, 2>(t1, t3); // col 2: r0[2], r1[2], r2[2], r3[2]
+        let o3 = i64x2_shuffle::<1, 3>(t1, t3); // col 3: r0[3], r1[3], r2[3], r3[3]
+
+        (o0, o1, o2, o3)
+    }
+
+    // =============================================================================
+    // Inverse DCT
+    // =============================================================================
+
+    // VP8 IDCT constants (WASM version, i32)
+    const WASM_CONST1: i32 = 20091; // sqrt(2)*cos(pi/8)*65536 - 65536
+    const WASM_CONST2: i32 = 35468; // sqrt(2)*sin(pi/8)*65536
+
+    /// One pass of the IDCT butterfly. Processes 4 elements in parallel.
+    /// Matches the scalar: a=in0+in2, b=in0-in2, c=MUL(in1,K2)-MUL(in3,K1), d=MUL(in1,K1)+MUL(in3,K2)
+    /// where MUL(x,K) = x + (x*k)>>16 for K1, or just (x*k)>>16 for K2.
+    #[cfg(target_arch = "wasm32")]
+    #[inline(always)]
+    fn idct_butterfly(in0: v128, in1: v128, in2: v128, in3: v128) -> (v128, v128, v128, v128) {
+        let a = i32x4_add(in0, in2);
+        let b = i32x4_sub(in0, in2);
+
+        // t1 = (in1 * WASM_CONST2) >> 16
+        let t1_c = mulhi32x4(in1, WASM_CONST2);
+        // t2 = in3 + (in3 * WASM_CONST1) >> 16  = MUL(in3, K1)
+        let t2_c = i32x4_add(in3, mulhi32x4(in3, WASM_CONST1));
+        let c = i32x4_sub(t1_c, t2_c);
+
+        // t1 = in1 + (in1 * WASM_CONST1) >> 16  = MUL(in1, K1)
+        let t1_d = i32x4_add(in1, mulhi32x4(in1, WASM_CONST1));
+        // t2 = (in3 * WASM_CONST2) >> 16
+        let t2_d = mulhi32x4(in3, WASM_CONST2);
+        let d = i32x4_add(t1_d, t2_d);
+
+        let out0 = i32x4_add(a, d);
+        let out1 = i32x4_add(b, c);
+        let out2 = i32x4_sub(b, c);
+        let out3 = i32x4_sub(a, d);
+
+        (out0, out1, out2, out3)
+    }
+
+    /// WASM SIMD128 inverse DCT. Uses i32x4 arithmetic matching the scalar implementation.
+    ///
+    /// Scalar pass order: column pass (for i in 0..4, reads block[i], block[4+i], ...),
+    /// then row pass (for i in 0..4, reads block[4*i], block[4*i+1], ...).
+    ///
+    /// With row vectors r0..r3, `idct_butterfly(r0,r1,r2,r3)` processes lane j as
+    /// butterfly(row0[j], row1[j], row2[j], row3[j]) = column pass (no transpose needed).
+    /// For the row pass, we transpose so each vector holds a row's elements as lanes.
+    #[cfg(target_arch = "wasm32")]
+    #[rite]
+    pub(crate) fn idct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32]) {
+        // Load 4 rows
+        let r0 = load_row(block, 0);
+        let r1 = load_row(block, 1);
+        let r2 = load_row(block, 2);
+        let r3 = load_row(block, 3);
+
+        // Pass 1: column pass — butterfly on row vectors processes columns in parallel
+        let (v0, v1, v2, v3) = idct_butterfly(r0, r1, r2, r3);
+
+        // Pass 2: row pass — transpose so each vector holds one row's elements,
+        // butterfly processes rows, then transpose back to row-major
+        let (c0, c1, c2, c3) = transpose4x4(v0, v1, v2, v3);
+        let (t0, t1, t2, t3) = idct_butterfly(c0, c1, c2, c3);
+        let (f0, f1, f2, f3) = transpose4x4(t0, t1, t2, t3);
+
+        // Final rounding: (val + 4) >> 3
+        let four = i32x4_splat(4);
+        let o0 = i32x4_shr(i32x4_add(f0, four), 3);
+        let o1 = i32x4_shr(i32x4_add(f1, four), 3);
+        let o2 = i32x4_shr(i32x4_add(f2, four), 3);
+        let o3 = i32x4_shr(i32x4_add(f3, four), 3);
+
+        // Store results
+        store_row(block, 0, o0);
+        store_row(block, 1, o1);
+        store_row(block, 2, o2);
+        store_row(block, 3, o3);
+    }
+
+    // =============================================================================
+    // Forward DCT
+    // =============================================================================
+
+    /// First pass of the forward DCT butterfly (row pass). Processes 4 elements in parallel.
+    ///
+    /// Scalar row pass (for each row i):
+    ///   a = (block[i*4+0] + block[i*4+3]) * 8
+    ///   b = (block[i*4+1] + block[i*4+2]) * 8
+    ///   c = (block[i*4+1] - block[i*4+2]) * 8
+    ///   d = (block[i*4+0] - block[i*4+3]) * 8
+    ///   out[i*4]   = a + b
+    ///   out[i*4+1] = (c*2217 + d*5352 + 14500) >> 12
+    ///   out[i*4+2] = a - b
+    ///   out[i*4+3] = (d*2217 - c*5352 + 7500) >> 12
+    #[cfg(target_arch = "wasm32")]
+    #[inline(always)]
+    fn dct_butterfly(in0: v128, in1: v128, in2: v128, in3: v128) -> (v128, v128, v128, v128) {
+        let eight = i32x4_splat(8);
+
+        let a = i32x4_mul(i32x4_add(in0, in3), eight);
+        let b = i32x4_mul(i32x4_add(in1, in2), eight);
+        let c = i32x4_mul(i32x4_sub(in1, in2), eight);
+        let d = i32x4_mul(i32x4_sub(in0, in3), eight);
+
+        let k2217 = i32x4_splat(2217);
+        let k5352 = i32x4_splat(5352);
+
+        let out0 = i32x4_add(a, b);
+
+        // out1 = (c * 2217 + d * 5352 + 14500) >> 12
+        let k14500 = i32x4_splat(14500);
+        let out1 = i32x4_shr(
+            i32x4_add(i32x4_add(i32x4_mul(c, k2217), i32x4_mul(d, k5352)), k14500),
+            12,
+        );
+
+        // out2 = a - b
+        let out2 = i32x4_sub(a, b);
+
+        // out3 = (d * 2217 - c * 5352 + 7500) >> 12
+        let k7500 = i32x4_splat(7500);
+        let out3 = i32x4_shr(
+            i32x4_add(i32x4_sub(i32x4_mul(d, k2217), i32x4_mul(c, k5352)), k7500),
+            12,
+        );
+
+        (out0, out1, out2, out3)
+    }
+
+    /// Second pass of forward DCT (column pass). Same butterfly pairing as pass 1,
+    /// but different constants and rounding.
+    ///
+    /// Scalar column pass (for column i):
+    ///   a = block[i] + block[i+12]         (row0 + row3)
+    ///   b = block[i+4] + block[i+8]        (row1 + row2)
+    ///   c = block[i+4] - block[i+8]        (row1 - row2)
+    ///   d = block[i] - block[i+12]         (row0 - row3)
+    ///   out_row0 = (a + b + 7) >> 4
+    ///   out_row1 = (c*2217 + d*5352 + 12000) >> 16 + (d != 0)
+    ///   out_row2 = (a - b + 7) >> 4
+    ///   out_row3 = (d*2217 - c*5352 + 51000) >> 16
+    #[cfg(target_arch = "wasm32")]
+    #[inline(always)]
+    fn dct_butterfly_pass2(in0: v128, in1: v128, in2: v128, in3: v128) -> (v128, v128, v128, v128) {
+        let a = i32x4_add(in0, in3);
+        let b = i32x4_add(in1, in2);
+        let c = i32x4_sub(in1, in2);
+        let d = i32x4_sub(in0, in3);
+
+        let k2217 = i32x4_splat(2217);
+        let k5352 = i32x4_splat(5352);
+        let k7 = i32x4_splat(7);
+        let k12000 = i32x4_splat(12000);
+        let k51000 = i32x4_splat(51000);
+
+        // out0 = (a + b + 7) >> 4
+        let out0 = i32x4_shr(i32x4_add(i32x4_add(a, b), k7), 4);
+
+        // out1 = (c * 2217 + d * 5352 + 12000) >> 16 + (d != 0)
+        let out1_raw = i32x4_shr(
+            i32x4_add(i32x4_add(i32x4_mul(c, k2217), i32x4_mul(d, k5352)), k12000),
+            16,
+        );
+        // d_ne_0: 0xFFFFFFFF when d != 0, 0 when d == 0
+        // We need +1 when d != 0, so negate the mask (-(-1) = 1)
+        let d_ne_0 = v128_not(i32x4_eq(d, i32x4_splat(0)));
+        let out1 = i32x4_sub(out1_raw, d_ne_0);
+
+        // out2 = (a - b + 7) >> 4
+        let out2 = i32x4_shr(i32x4_add(i32x4_sub(a, b), k7), 4);
+
+        // out3 = (d * 2217 - c * 5352 + 51000) >> 16
+        let out3 = i32x4_shr(
+            i32x4_add(i32x4_sub(i32x4_mul(d, k2217), i32x4_mul(c, k5352)), k51000),
+            16,
+        );
+
+        (out0, out1, out2, out3)
+    }
+
+    /// Fused residual computation + forward DCT for a single 4x4 block.
+    /// Takes flat u8 source and reference arrays (stride=4), outputs i32 coefficients.
+    ///
+    /// Fuses: residual = src - ref, then DCT on residual.
+    /// Avoids intermediate i32 storage by computing diff in i16 then widening to i32.
+    #[cfg(target_arch = "wasm32")]
+    #[arcane]
+    pub(crate) fn ftransform_from_u8_4x4_wasm(
+        _token: Wasm128Token,
+        src: &[u8; 16],
+        ref_: &[u8; 16],
+    ) -> [i32; 16] {
+        ftransform_from_u8_4x4_wasm_impl(_token, src, ref_)
+    }
+
+    /// Inner #[rite] implementation of fused residual+DCT for wasm.
+    #[cfg(target_arch = "wasm32")]
+    #[rite]
+    pub(crate) fn ftransform_from_u8_4x4_wasm_impl(
+        _token: Wasm128Token,
+        src: &[u8; 16],
+        ref_: &[u8; 16],
+    ) -> [i32; 16] {
+        // Load src and ref as u8x16
+        let src_vec = u8x16(
+            src[0], src[1], src[2], src[3], src[4], src[5], src[6], src[7], src[8], src[9],
+            src[10], src[11], src[12], src[13], src[14], src[15],
+        );
+        let ref_vec = u8x16(
+            ref_[0], ref_[1], ref_[2], ref_[3], ref_[4], ref_[5], ref_[6], ref_[7], ref_[8],
+            ref_[9], ref_[10], ref_[11], ref_[12], ref_[13], ref_[14], ref_[15],
+        );
+
+        // Zero-extend to i16 and compute diff (src - ref)
+        let src_lo = u16x8_extend_low_u8x16(src_vec);
+        let src_hi = u16x8_extend_high_u8x16(src_vec);
+        let ref_lo = u16x8_extend_low_u8x16(ref_vec);
+        let ref_hi = u16x8_extend_high_u8x16(ref_vec);
+        let diff_lo = i16x8_sub(src_lo, ref_lo);
+        let diff_hi = i16x8_sub(src_hi, ref_hi);
+
+        // Widen i16 → i32 for DCT (4 rows of 4 values)
+        let r0 = i32x4_extend_low_i16x8(diff_lo);
+        let r1 = i32x4_extend_high_i16x8(diff_lo);
+        let r2 = i32x4_extend_low_i16x8(diff_hi);
+        let r3 = i32x4_extend_high_i16x8(diff_hi);
+
+        // Forward DCT pass 1: row pass (transpose, butterfly, transpose back)
+        let (c0, c1, c2, c3) = transpose4x4(r0, r1, r2, r3);
+        let (v0, v1, v2, v3) = dct_butterfly(c0, c1, c2, c3);
+        let (t0, t1, t2, t3) = transpose4x4(v0, v1, v2, v3);
+
+        // Forward DCT pass 2: column pass
+        let (o0, o1, o2, o3) = dct_butterfly_pass2(t0, t1, t2, t3);
+
+        // Store results
+        let mut result = [0i32; 16];
+        store_row(&mut result, 0, o0);
+        store_row(&mut result, 1, o1);
+        store_row(&mut result, 2, o2);
+        store_row(&mut result, 3, o3);
+        result
+    }
+
+    /// WASM SIMD128 forward DCT. Uses i32x4 arithmetic matching the scalar implementation.
+    ///
+    /// Scalar pass order: row pass first (for i in 0..4, reads block[i*4..i*4+3]),
+    /// then column pass (for i in 0..4, reads block[i], block[i+4], ...).
+    ///
+    /// With row vectors, `dct_butterfly(r0,r1,r2,r3)` processes lane j as
+    /// butterfly(row0[j], row1[j], row2[j], row3[j]) = column pass.
+    /// For the row pass, we transpose so each vector holds one row's elements.
+    #[cfg(target_arch = "wasm32")]
+    #[rite]
+    pub(crate) fn dct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32; 16]) {
+        // Load 4 rows
+        let r0 = load_row(block, 0);
+        let r1 = load_row(block, 1);
+        let r2 = load_row(block, 2);
+        let r3 = load_row(block, 3);
+
+        // Pass 1: row pass — transpose so each vector holds one row's elements,
+        // butterfly processes rows, then transpose back to row-major
+        let (c0, c1, c2, c3) = transpose4x4(r0, r1, r2, r3);
+        let (v0, v1, v2, v3) = dct_butterfly(c0, c1, c2, c3);
+        let (t0, t1, t2, t3) = transpose4x4(v0, v1, v2, v3);
+
+        // Pass 2: column pass — butterfly on row vectors processes columns in parallel
+        let (o0, o1, o2, o3) = dct_butterfly_pass2(t0, t1, t2, t3);
+
+        // Store results
+        store_row(block, 0, o0);
+        store_row(block, 1, o1);
+        store_row(block, 2, o2);
+        store_row(block, 3, o3);
+    }
 } // mod wasm_transform
 
 #[cfg(target_arch = "wasm32")]
