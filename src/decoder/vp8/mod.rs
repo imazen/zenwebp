@@ -477,6 +477,9 @@ pub struct Vp8Decoder<'a> {
     // Reusable filter parameter buffer — avoids per-row heap allocation.
     mb_filter_params: Vec<MbFilterParams>,
 
+    // Reusable dither amplitude buffer — avoids per-row Vec allocation.
+    mb_dither_buf: Vec<i32>,
+
     // Precomputed filter parameters per segment+mode.
     // Indexed by [segment_id][is_b_mode], where is_b_mode = (luma_mode == LumaMode::B).
     // Computed once after reading frame header; eliminates per-MB calculation.
@@ -557,6 +560,7 @@ impl<'a> Vp8Decoder<'a> {
             uv_quant_indices: [0; MAX_SEGMENTS],
 
             mb_filter_params: Vec::new(),
+            mb_dither_buf: Vec::new(),
 
             precomputed_filter: [[PrecomputedFilterParams::default(); 2]; MAX_SEGMENTS],
         }
@@ -746,18 +750,22 @@ impl<'a> Vp8Decoder<'a> {
                 let extra_uv_rows = self.extra_y_rows / 2;
                 let mbwidth = self.mbwidth as usize;
                 let mb_row_start = mby * mbwidth;
-                // Compute per-MB dither amplitude: segment amp if UV AC is zero,
-                // 0 if UV has AC content or coefficients were skipped.
-                let mb_dither: Vec<i32> = (0..mbwidth)
-                    .map(|mbx| {
-                        let mb = &self.macroblocks[mb_row_start + mbx];
-                        if mb.coeffs_skipped || mb.has_nonzero_uv_ac {
-                            0
-                        } else {
-                            self.dither_amp[mb.segmentid as usize]
-                        }
-                    })
-                    .collect();
+                // Compute per-MB dither amplitude into reusable buffer.
+                self.mb_dither_buf.clear();
+                if self.mb_dither_buf.capacity() < mbwidth {
+                    self.mb_dither_buf
+                        .reserve(mbwidth - self.mb_dither_buf.capacity());
+                }
+                for mbx in 0..mbwidth {
+                    let mb = &self.macroblocks[mb_row_start + mbx];
+                    let amp = if mb.coeffs_skipped || mb.has_nonzero_uv_ac {
+                        0
+                    } else {
+                        self.dither_amp[mb.segmentid as usize]
+                    };
+                    self.mb_dither_buf.push(amp);
+                }
+                let dither_buf = core::mem::take(&mut self.mb_dither_buf);
                 super::dither::dither_row(
                     &mut self.dither_rg,
                     super::dither::DitherRowParams {
@@ -765,9 +773,10 @@ impl<'a> Vp8Decoder<'a> {
                         cache_v: &mut self.cache_v,
                         cache_uv_stride: self.cache_uv_stride,
                         extra_uv_rows,
-                        mb_dither_amps: &mb_dither,
+                        mb_dither_amps: &dither_buf,
                     },
                 );
+                self.mb_dither_buf = dither_buf;
             }
 
             self.output_row_from_cache(mby);
