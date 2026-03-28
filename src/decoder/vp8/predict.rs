@@ -153,7 +153,7 @@ impl<'a> Vp8Decoder<'a> {
     #[inline(never)]
     fn intra_predict_luma_scalar(
         ws: &mut [u8; LUMA_BLOCK_SIZE],
-        coeff_blocks: &mut [i32],
+        coeff_blocks: &mut [i32; MB_COEFF_SIZE],
         mb: &MacroBlock,
         nz: u32,
         mbx: usize,
@@ -186,8 +186,7 @@ impl<'a> Vp8Decoder<'a> {
                             IntraMode::HU => predict_bhupred(ws, x0, y0, stride),
                         }
 
-                        let rb: &mut [i32; 16] =
-                            (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
+                        let rb = coeff_block(coeff_blocks, i);
                         if nz & (1u32 << i) != 0 {
                             idct_add_residue_and_clear(ws, rb, y0, x0, stride);
                         }
@@ -203,8 +202,7 @@ impl<'a> Vp8Decoder<'a> {
                     if nz & (1u32 << i) != 0 {
                         let y0 = 1 + y * 4;
                         let x0 = 1 + x * 4;
-                        let rb: &mut [i32; 16] =
-                            (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
+                        let rb = coeff_block(coeff_blocks, i);
                         idct_add_residue_and_clear(ws, rb, y0, x0, stride);
                     }
                 }
@@ -218,7 +216,7 @@ impl<'a> Vp8Decoder<'a> {
     fn intra_predict_chroma_scalar(
         uws: &mut [u8; CHROMA_BLOCK_SIZE],
         vws: &mut [u8; CHROMA_BLOCK_SIZE],
-        coeff_blocks: &mut [i32],
+        coeff_blocks: &mut [i32; MB_COEFF_SIZE],
         mb: &MacroBlock,
         nz: u32,
         mbx: usize,
@@ -255,14 +253,12 @@ impl<'a> Vp8Decoder<'a> {
                     let x0 = 1 + x * 4;
 
                     if nz & (1u32 << u_idx) != 0 {
-                        let urb: &mut [i32; 16] =
-                            (&mut coeff_blocks[u_idx * 16..][..16]).try_into().unwrap();
+                        let urb = coeff_block(coeff_blocks, u_idx);
                         idct_add_residue_and_clear(uws, urb, y0, x0, stride);
                     }
 
                     if nz & (1u32 << v_idx) != 0 {
-                        let vrb: &mut [i32; 16] =
-                            (&mut coeff_blocks[v_idx * 16..][..16]).try_into().unwrap();
+                        let vrb = coeff_block(coeff_blocks, v_idx);
                         idct_add_residue_and_clear(vws, vrb, y0, x0, stride);
                     }
                 }
