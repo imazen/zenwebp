@@ -30,6 +30,47 @@ use core::arch::wasm32::*;
 
 use core::convert::TryFrom;
 
+// ============================================================================
+// Array splitting helpers — zero-cost conversion from [T; 16] to [T; 4] rows
+// ============================================================================
+
+/// Split `&[T; 16]` into four `&[T; 4]` references (rows 0-3).
+/// Compiles to no-ops — just pointer arithmetic.
+#[inline(always)]
+fn rows4<T>(a: &[T; 16]) -> (&[T; 4], &[T; 4], &[T; 4], &[T; 4]) {
+    let (r0, rest) = a.split_first_chunk::<4>().unwrap();
+    let (r1, rest) = rest.split_first_chunk::<4>().unwrap();
+    let (r2, rest) = rest.split_first_chunk::<4>().unwrap();
+    let r3: &[T; 4] = rest.try_into().unwrap();
+    (r0, r1, r2, r3)
+}
+
+/// Split `&mut [T; 16]` into four `&mut [T; 4]` references (rows 0-3).
+#[inline(always)]
+fn rows4_mut<T>(a: &mut [T; 16]) -> (&mut [T; 4], &mut [T; 4], &mut [T; 4], &mut [T; 4]) {
+    let (r0, rest) = a.split_first_chunk_mut::<4>().unwrap();
+    let (r1, rest) = rest.split_first_chunk_mut::<4>().unwrap();
+    let (r2, rest) = rest.split_first_chunk_mut::<4>().unwrap();
+    let r3: &mut [T; 4] = rest.try_into().unwrap();
+    (r0, r1, r2, r3)
+}
+
+/// Split `&[T; 16]` into two `&[T; 8]` halves.
+#[inline(always)]
+fn halves8<T>(a: &[T; 16]) -> (&[T; 8], &[T; 8]) {
+    let (lo, rest) = a.split_first_chunk::<8>().unwrap();
+    let hi: &[T; 8] = rest.try_into().unwrap();
+    (lo, hi)
+}
+
+/// Split `&mut [T; 16]` into two `&mut [T; 8]` halves.
+#[inline(always)]
+fn halves8_mut<T>(a: &mut [T; 16]) -> (&mut [T; 8], &mut [T; 8]) {
+    let (lo, rest) = a.split_first_chunk_mut::<8>().unwrap();
+    let hi: &mut [T; 8] = rest.try_into().unwrap();
+    (lo, hi)
+}
+
 /// 16 bit fixed point version of cos(PI/8) * sqrt(2) - 1
 const CONST1: i64 = 20091;
 /// 16 bit fixed point version of sin(PI/8) * sqrt(2)
@@ -46,27 +87,27 @@ pub(crate) fn idct4x4_dc(block: &mut [i32; 16]) {
 
 // inverse discrete cosine transform, used in decoding
 #[inline(always)]
-pub(crate) fn idct4x4(block: &mut [i32]) {
+pub(crate) fn idct4x4(block: &mut [i32; 16]) {
     idct4x4_intrinsics(block);
 }
 
 /// Inverse DCT with pre-summoned SIMD token (avoids per-call token summoning)
 #[inline(always)]
 #[allow(dead_code)] // May be useful for alternative decode paths
-pub(crate) fn idct4x4_with_token(block: &mut [i32], simd_token: super::prediction::SimdTokenType) {
+pub(crate) fn idct4x4_with_token(
+    block: &mut [i32; 16],
+    simd_token: super::prediction::SimdTokenType,
+) {
     idct4x4_intrinsics_with_token(block, simd_token);
 }
 
 #[archmage::autoversion(cfg(simd))]
 #[allow(dead_code)]
-pub(crate) fn idct4x4_scalar(block: &mut [i32]) {
+pub(crate) fn idct4x4_scalar(block: &mut [i32; 16]) {
     // The intermediate results may overflow the types, so we stretch the type.
     fn fetch(block: &[i32], idx: usize) -> i64 {
         i64::from(block[idx])
     }
-
-    // Perform one length check up front to avoid subsequent bounds checks in this function
-    assert!(block.len() >= 16);
 
     for i in 0usize..4 {
         let a1 = fetch(block, i) + fetch(block, 8 + i);
@@ -107,10 +148,7 @@ pub(crate) fn idct4x4_scalar(block: &mut [i32]) {
 
 // 14.3 inverse walsh-hadamard transform, used in decoding
 #[archmage::autoversion(cfg(simd))]
-pub(crate) fn iwht4x4(block: &mut [i32]) {
-    // Perform one length check up front to avoid subsequent bounds checks in this function
-    assert!(block.len() >= 16);
-
+pub(crate) fn iwht4x4(block: &mut [i32; 16]) {
     for i in 0usize..4 {
         let a1 = block[i] + block[12 + i];
         let b1 = block[4 + i] + block[8 + i];
@@ -275,8 +313,7 @@ pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
 /// Inverse DCT with dynamic dispatch
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[inline(always)]
-pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
-    debug_assert!(block.len() >= 16);
+pub(crate) fn idct4x4_intrinsics(block: &mut [i32; 16]) {
     if let Some(token) = X64V3Token::summon() {
         idct4x4_entry(token, block);
     } else {
@@ -290,10 +327,9 @@ pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn idct4x4_intrinsics_with_token(
-    block: &mut [i32],
+    block: &mut [i32; 16],
     simd_token: crate::common::prediction::SimdTokenType,
 ) {
-    debug_assert!(block.len() >= 16);
     if let Some(token) = simd_token {
         idct4x4_entry(token, block);
     } else {
@@ -304,8 +340,7 @@ pub(crate) fn idct4x4_intrinsics_with_token(
 /// Inverse DCT - non-x86 fallback
 #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
 #[inline]
-pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
-    debug_assert!(block.len() >= 16);
+pub(crate) fn idct4x4_intrinsics(block: &mut [i32; 16]) {
     #[cfg(target_arch = "wasm32")]
     {
         use archmage::{SimdToken, Wasm128Token};
@@ -336,7 +371,7 @@ pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
 #[allow(dead_code)]
 #[inline]
 pub(crate) fn idct4x4_intrinsics_with_token(
-    block: &mut [i32],
+    block: &mut [i32; 16],
     _simd_token: crate::common::prediction::SimdTokenType,
 ) {
     idct4x4_intrinsics(block);
@@ -438,8 +473,9 @@ fn dct4x4_sse2(_token: X64V3Token, block: &mut [i32; 16]) {
 
     // Convert i16 output back to i32 using SIMD sign extension
     let zero = _mm_setzero_si128();
-    let out01 = simd_mem::_mm_loadu_si128(<&[i16; 8]>::try_from(&out16[0..8]).unwrap());
-    let out23 = simd_mem::_mm_loadu_si128(<&[i16; 8]>::try_from(&out16[8..16]).unwrap());
+    let (out16_lo, out16_hi) = halves8(&out16);
+    let out01 = simd_mem::_mm_loadu_si128(out16_lo);
+    let out23 = simd_mem::_mm_loadu_si128(out16_hi);
 
     // Sign extend i16 to i32
     let sign01 = _mm_cmpgt_epi16(zero, out01);
@@ -450,13 +486,11 @@ fn dct4x4_sse2(_token: X64V3Token, block: &mut [i32; 16]) {
     let out_2 = _mm_unpacklo_epi16(out23, sign23);
     let out_3 = _mm_unpackhi_epi16(out23, sign23);
 
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(), out_0);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(), out_1);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(), out_2);
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(),
-        out_3,
-    );
+    let (r0, r1, r2, r3) = rows4_mut(block);
+    simd_mem::_mm_storeu_si128(r0, out_0);
+    simd_mem::_mm_storeu_si128(r1, out_1);
+    simd_mem::_mm_storeu_si128(r2, out_2);
+    simd_mem::_mm_storeu_si128(r3, out_3);
 }
 
 /// FTransform Pass 1 - matches libwebp FTransformPass1_SSE2 exactly
@@ -564,8 +598,9 @@ fn ftransform_pass2_i16(_token: X64V3Token, v01: &__m128i, v32: &__m128i, out: &
     let d0_g1 = _mm_unpacklo_epi64(d0, g1);
     let d2_f3 = _mm_unpacklo_epi64(d2, f3);
 
-    simd_mem::_mm_storeu_si128(<&mut [i16; 8]>::try_from(&mut out[0..8]).unwrap(), d0_g1);
-    simd_mem::_mm_storeu_si128(<&mut [i16; 8]>::try_from(&mut out[8..16]).unwrap(), d2_f3);
+    let (out_lo, out_hi) = halves8_mut(out);
+    simd_mem::_mm_storeu_si128(out_lo, d0_g1);
+    simd_mem::_mm_storeu_si128(out_hi, d2_f3);
 }
 
 /// Entry shim for dct4x4_two_sse2
@@ -625,6 +660,11 @@ pub(crate) fn ftransform2_sse2(
     ref_stride: usize,
     out: &mut [i16; 32],
 ) {
+    // One bounds check at entry eliminates all interior checks
+    let src_min = src_stride * 3 + 8;
+    let ref_min = ref_stride * 3 + 8;
+    assert!(src.len() >= src_min && ref_.len() >= ref_min);
+
     let zero = _mm_setzero_si128();
 
     // Load 8 bytes per row from src (2 blocks × 4 bytes)
@@ -763,14 +803,14 @@ fn ftransform2_scalar(
 /// Entry shim for idct4x4_sse2
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
-pub(crate) fn idct4x4_entry(_token: X64V3Token, block: &mut [i32]) {
+pub(crate) fn idct4x4_entry(_token: X64V3Token, block: &mut [i32; 16]) {
     idct4x4_sse2(_token, block);
 }
 
 /// Inverse DCT using SSE2 - matches libwebp ITransform_One_SSE2
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[rite]
-pub(crate) fn idct4x4_sse2(_token: X64V3Token, block: &mut [i32]) {
+pub(crate) fn idct4x4_sse2(_token: X64V3Token, block: &mut [i32; 16]) {
     // libwebp IDCT constants:
     // K1 = sqrt(2) * cos(pi/8) * 65536 = 85627 => k1 = 85627 - 65536 = 20091
     // K2 = sqrt(2) * sin(pi/8) * 65536 = 35468 => k2 = 35468 - 65536 = -30068
@@ -779,10 +819,11 @@ pub(crate) fn idct4x4_sse2(_token: X64V3Token, block: &mut [i32]) {
     let zero_four = _mm_set_epi16(0, 0, 0, 0, 4, 4, 4, 4);
 
     // Load i32 values and pack to i16 using SIMD
-    let i32_0 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&block[0..4]).unwrap());
-    let i32_1 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&block[4..8]).unwrap());
-    let i32_2 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&block[8..12]).unwrap());
-    let i32_3 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&block[12..16]).unwrap());
+    let (r0, r1, r2, r3) = rows4(block);
+    let i32_0 = simd_mem::_mm_loadu_si128(r0);
+    let i32_1 = simd_mem::_mm_loadu_si128(r1);
+    let i32_2 = simd_mem::_mm_loadu_si128(r2);
+    let i32_3 = simd_mem::_mm_loadu_si128(r3);
 
     // Pack i32 to i16 with saturation (values should be small enough)
     let in01 = _mm_packs_epi32(i32_0, i32_1);
@@ -795,8 +836,6 @@ pub(crate) fn idct4x4_sse2(_token: X64V3Token, block: &mut [i32]) {
     let (out01, out23) = itransform_pass2_sse2(_token, t01, t23, k1k2, k2k1, zero_four);
 
     // Unpack i16 back to i32 using sign extension
-    // out01 contains 8 i16 values: [0,1,2,3,4,5,6,7]
-    // out23 contains 8 i16 values: [8,9,10,11,12,13,14,15]
     let zero = _mm_setzero_si128();
 
     // Sign extend low 4 i16 values to i32
@@ -809,13 +848,11 @@ pub(crate) fn idct4x4_sse2(_token: X64V3Token, block: &mut [i32]) {
     let out_3 = _mm_unpackhi_epi16(out23, sign23_lo);
 
     // Store results
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(), out_0);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(), out_1);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(), out_2);
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(),
-        out_3,
-    );
+    let (r0, r1, r2, r3) = rows4_mut(block);
+    simd_mem::_mm_storeu_si128(r0, out_0);
+    simd_mem::_mm_storeu_si128(r1, out_1);
+    simd_mem::_mm_storeu_si128(r2, out_2);
+    simd_mem::_mm_storeu_si128(r3, out_3);
 }
 
 /// ITransform vertical pass - matches libwebp
@@ -972,6 +1009,14 @@ pub(crate) fn idct_add_residue_sse2(
     out_y0: usize,
     out_x0: usize,
 ) {
+    // Region-based bounds checks: one per buffer at entry
+    let pred_base = pred_y0 * pred_stride + pred_x0;
+    let pred_region = &pred_block[pred_base..pred_base + 3 * pred_stride + 4];
+    let out_base = out_y0 * out_stride + out_x0;
+    let out_region = &mut out_block[out_base..out_base + 3 * out_stride + 4];
+    let ps = pred_stride;
+    let os = out_stride;
+
     // IDCT constants
     let k1k2 = _mm_set_epi16(-30068, -30068, -30068, -30068, 20091, 20091, 20091, 20091);
     let k2k1 = _mm_set_epi16(20091, 20091, 20091, 20091, -30068, -30068, -30068, -30068);
@@ -979,10 +1024,11 @@ pub(crate) fn idct_add_residue_sse2(
     let zero = _mm_setzero_si128();
 
     // Load i32 coefficients and pack to i16
-    let i32_0 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-    let i32_1 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-    let i32_2 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-    let i32_3 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+    let (c0, c1, c2, c3) = rows4(coeffs);
+    let i32_0 = simd_mem::_mm_loadu_si128(c0);
+    let i32_1 = simd_mem::_mm_loadu_si128(c1);
+    let i32_2 = simd_mem::_mm_loadu_si128(c2);
+    let i32_3 = simd_mem::_mm_loadu_si128(c3);
 
     let in01 = _mm_packs_epi32(i32_0, i32_1);
     let in23 = _mm_packs_epi32(i32_2, i32_3);
@@ -993,53 +1039,35 @@ pub(crate) fn idct_add_residue_sse2(
     // Horizontal pass with rounding → residual in i16
     let (res01, res23) = itransform_pass2_sse2(_token, t01, t23, k1k2, k2k1, zero_four);
 
-    // res01 = row0[0-3] row1[0-3] as i16
-    // res23 = row2[0-3] row3[0-3] as i16
-
-    // Load 4 prediction bytes per row, extend to i16, add residual, pack to u8
+    // Process each row: load pred, add residual, store to output
     macro_rules! process_row {
-        ($res:expr, $row_idx:expr, $hi:expr) => {{
-            // Extract this row's residuals (4 x i16)
+        ($res:expr, $pred_off:expr, $out_off:expr, $hi:expr) => {{
             let residual = if $hi {
                 _mm_unpackhi_epi64($res, $res)
             } else {
                 $res
             };
-
-            // Load 4 prediction bytes
-            let pred_pos = (pred_y0 + $row_idx) * pred_stride + pred_x0;
-            let pred_bytes: [u8; 4] = pred_block[pred_pos..pred_pos + 4].try_into().unwrap();
-            let pred_i32 = i32::from_ne_bytes(pred_bytes);
-            let pred_vec = _mm_cvtsi32_si128(pred_i32);
-            // Extend u8 → i16 (zero extend, then treat as signed for addition)
+            let pred_bytes: [u8; 4] = pred_region[$pred_off..$pred_off + 4].try_into().unwrap();
+            let pred_vec = _mm_cvtsi32_si128(i32::from_ne_bytes(pred_bytes));
             let pred_i16 = _mm_unpacklo_epi8(pred_vec, zero);
-
-            // Add residual to prediction (i16 + i16 → i16)
             let sum = _mm_add_epi16(pred_i16, residual);
-
-            // Pack to u8 with saturation (clamp to 0-255)
             let packed = _mm_packus_epi16(sum, sum);
-
-            // Store 4 bytes to output
-            let out_pos = (out_y0 + $row_idx) * out_stride + out_x0;
             let result = _mm_cvtsi128_si32(packed) as u32;
-            out_block[out_pos..out_pos + 4].copy_from_slice(&result.to_ne_bytes());
+            out_region[$out_off..$out_off + 4].copy_from_slice(&result.to_ne_bytes());
         }};
     }
 
-    process_row!(res01, 0, false);
-    process_row!(res01, 1, true);
-    process_row!(res23, 2, false);
-    process_row!(res23, 3, true);
+    process_row!(res01, 0, 0, false);
+    process_row!(res01, ps, os, true);
+    process_row!(res23, ps * 2, os * 2, false);
+    process_row!(res23, ps * 3, os * 3, true);
 
     // Clear coefficient block
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[0..4]).unwrap(), zero);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[4..8]).unwrap(), zero);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[8..12]).unwrap(), zero);
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(),
-        zero,
-    );
+    let (c0, c1, c2, c3) = rows4_mut(coeffs);
+    simd_mem::_mm_storeu_si128(c0, zero);
+    simd_mem::_mm_storeu_si128(c1, zero);
+    simd_mem::_mm_storeu_si128(c2, zero);
+    simd_mem::_mm_storeu_si128(c3, zero);
 }
 
 /// Entry shim for idct_add_residue_dc_sse2
@@ -1089,30 +1117,28 @@ pub(crate) fn idct_add_residue_dc_sse2(
     out_y0: usize,
     out_x0: usize,
 ) {
+    // Region-based bounds checks: one per buffer at entry
+    let pred_base = pred_y0 * pred_stride + pred_x0;
+    let pred_region = &pred_block[pred_base..pred_base + 3 * pred_stride + 4];
+    let out_base = out_y0 * out_stride + out_x0;
+    let out_region = &mut out_block[out_base..out_base + 3 * out_stride + 4];
+    let ps = pred_stride;
+    let os = out_stride;
+
     // DC-only: output = prediction + ((DC + 4) >> 3) for all 16 pixels
     let dc = coeffs[0];
     let dc_adj = ((dc + 4) >> 3) as i16;
     let dc_vec = _mm_set1_epi16(dc_adj);
     let zero = _mm_setzero_si128();
 
-    for row in 0..4 {
-        // Load 4 prediction bytes
-        let pred_pos = (pred_y0 + row) * pred_stride + pred_x0;
-        let pred_bytes: [u8; 4] = pred_block[pred_pos..pred_pos + 4].try_into().unwrap();
-        let pred_i32 = i32::from_ne_bytes(pred_bytes);
-        let pred_vec = _mm_cvtsi32_si128(pred_i32);
+    for (pred_off, out_off) in [(0, 0), (ps, os), (ps * 2, os * 2), (ps * 3, os * 3)] {
+        let pred_bytes: [u8; 4] = pred_region[pred_off..pred_off + 4].try_into().unwrap();
+        let pred_vec = _mm_cvtsi32_si128(i32::from_ne_bytes(pred_bytes));
         let pred_i16 = _mm_unpacklo_epi8(pred_vec, zero);
-
-        // Add DC to prediction
         let sum = _mm_add_epi16(pred_i16, dc_vec);
-
-        // Pack to u8 with saturation
         let packed = _mm_packus_epi16(sum, sum);
-
-        // Store 4 bytes
-        let out_pos = (out_y0 + row) * out_stride + out_x0;
         let result = _mm_cvtsi128_si32(packed) as u32;
-        out_block[out_pos..out_pos + 4].copy_from_slice(&result.to_ne_bytes());
+        out_region[out_off..out_off + 4].copy_from_slice(&result.to_ne_bytes());
     }
 
     // Clear coefficient block
@@ -1195,6 +1221,14 @@ pub(crate) fn idct_add_residue_inplace_sse2_inner(
     stride: usize,
     dc_only: bool,
 ) {
+    // Subslice starting at first pixel row; single bounds check eliminates all interior checks.
+    // The region covers 3*stride+4 bytes (4 rows of 4 pixels at stride offsets).
+    let base = y0 * stride + x0;
+    let region = &mut block[base..base + 3 * stride + 4];
+    let s1 = stride;
+    let s2 = stride * 2;
+    let s3 = stride * 3;
+
     if dc_only {
         // DC-only fast path
         let dc = coeffs[0];
@@ -1202,16 +1236,14 @@ pub(crate) fn idct_add_residue_inplace_sse2_inner(
         let dc_vec = _mm_set1_epi16(dc_adj);
         let zero = _mm_setzero_si128();
 
-        for row in 0..4 {
-            let pos = (y0 + row) * stride + x0;
-            let pred_bytes: [u8; 4] = block[pos..pos + 4].try_into().unwrap();
-            let pred_i32 = i32::from_ne_bytes(pred_bytes);
-            let pred_vec = _mm_cvtsi32_si128(pred_i32);
+        for &off in &[0, s1, s2, s3] {
+            let pred_bytes: [u8; 4] = region[off..off + 4].try_into().unwrap();
+            let pred_vec = _mm_cvtsi32_si128(i32::from_ne_bytes(pred_bytes));
             let pred_i16 = _mm_unpacklo_epi8(pred_vec, zero);
             let sum = _mm_add_epi16(pred_i16, dc_vec);
             let packed = _mm_packus_epi16(sum, sum);
             let result = _mm_cvtsi128_si32(packed) as u32;
-            block[pos..pos + 4].copy_from_slice(&result.to_ne_bytes());
+            region[off..off + 4].copy_from_slice(&result.to_ne_bytes());
         }
     } else {
         // Full IDCT path
@@ -1221,10 +1253,11 @@ pub(crate) fn idct_add_residue_inplace_sse2_inner(
         let zero = _mm_setzero_si128();
 
         // Load and pack coefficients
-        let i32_0 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-        let i32_1 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-        let i32_2 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-        let i32_3 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+        let (c0, c1, c2, c3) = rows4(coeffs);
+        let i32_0 = simd_mem::_mm_loadu_si128(c0);
+        let i32_1 = simd_mem::_mm_loadu_si128(c1);
+        let i32_2 = simd_mem::_mm_loadu_si128(c2);
+        let i32_3 = simd_mem::_mm_loadu_si128(c3);
 
         let in01 = _mm_packs_epi32(i32_0, i32_1);
         let in23 = _mm_packs_epi32(i32_2, i32_3);
@@ -1235,28 +1268,26 @@ pub(crate) fn idct_add_residue_inplace_sse2_inner(
 
         // Process each row: load pred, add residual, store
         macro_rules! process_row {
-            ($res:expr, $row_idx:expr, $hi:expr) => {{
+            ($res:expr, $off:expr, $hi:expr) => {{
                 let residual = if $hi {
                     _mm_unpackhi_epi64($res, $res)
                 } else {
                     $res
                 };
-                let pos = (y0 + $row_idx) * stride + x0;
-                let pred_bytes: [u8; 4] = block[pos..pos + 4].try_into().unwrap();
-                let pred_i32 = i32::from_ne_bytes(pred_bytes);
-                let pred_vec = _mm_cvtsi32_si128(pred_i32);
+                let pred_bytes: [u8; 4] = region[$off..$off + 4].try_into().unwrap();
+                let pred_vec = _mm_cvtsi32_si128(i32::from_ne_bytes(pred_bytes));
                 let pred_i16 = _mm_unpacklo_epi8(pred_vec, zero);
                 let sum = _mm_add_epi16(pred_i16, residual);
                 let packed = _mm_packus_epi16(sum, sum);
                 let result = _mm_cvtsi128_si32(packed) as u32;
-                block[pos..pos + 4].copy_from_slice(&result.to_ne_bytes());
+                region[$off..$off + 4].copy_from_slice(&result.to_ne_bytes());
             }};
         }
 
         process_row!(res01, 0, false);
-        process_row!(res01, 1, true);
-        process_row!(res23, 2, false);
-        process_row!(res23, 3, true);
+        process_row!(res01, s1, true);
+        process_row!(res23, s2, false);
+        process_row!(res23, s3, true);
     }
 
     // Clear coefficient block
@@ -1442,8 +1473,9 @@ pub(crate) fn ftransform_from_u8_4x4_sse2(
     ftransform_pass2_i16(_token, &v01, &v32, &mut out16);
 
     // Convert i16 output to i32 using SIMD sign extension
-    let out01 = simd_mem::_mm_loadu_si128(<&[i16; 8]>::try_from(&out16[0..8]).unwrap());
-    let out23 = simd_mem::_mm_loadu_si128(<&[i16; 8]>::try_from(&out16[8..16]).unwrap());
+    let (out16_lo, out16_hi) = halves8(&out16);
+    let out01 = simd_mem::_mm_loadu_si128(out16_lo);
+    let out23 = simd_mem::_mm_loadu_si128(out16_hi);
 
     let sign01 = _mm_cmpgt_epi16(zero, out01);
     let sign23 = _mm_cmpgt_epi16(zero, out23);
@@ -1454,16 +1486,11 @@ pub(crate) fn ftransform_from_u8_4x4_sse2(
     let out_3 = _mm_unpackhi_epi16(out23, sign23);
 
     let mut result = [0i32; 16];
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut result[0..4]).unwrap(), out_0);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut result[4..8]).unwrap(), out_1);
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut result[8..12]).unwrap(),
-        out_2,
-    );
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut result[12..16]).unwrap(),
-        out_3,
-    );
+    let (r0, r1, r2, r3) = rows4_mut(&mut result);
+    simd_mem::_mm_storeu_si128(r0, out_0);
+    simd_mem::_mm_storeu_si128(r1, out_1);
+    simd_mem::_mm_storeu_si128(r2, out_2);
+    simd_mem::_mm_storeu_si128(r3, out_3);
     result
 }
 
@@ -1718,10 +1745,11 @@ mod neon_transform {
     #[rite]
     fn dct4x4_neon_inner(_token: NeonToken, block: &mut [i32; 16]) {
         // Load i32[16] as 4 × i32x4, then narrow to i16x4
-        let r0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[0..4]).unwrap());
-        let r1 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[4..8]).unwrap());
-        let r2 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[8..12]).unwrap());
-        let r3 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[12..16]).unwrap());
+        let (b0, b1, b2, b3) = rows4(block);
+        let r0 = simd_mem::vld1q_s32(b0);
+        let r1 = simd_mem::vld1q_s32(b1);
+        let r2 = simd_mem::vld1q_s32(b2);
+        let r3 = simd_mem::vld1q_s32(b3);
 
         let d0 = vmovn_s32(r0);
         let d1 = vmovn_s32(r1);
@@ -1738,16 +1766,11 @@ mod neon_transform {
         // Data is already transposed by pass 1's internal transpose
         let out = forward_pass_2_neon(_token, p0p1, p3p2);
 
-        simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(), out[0]);
-        simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(), out[1]);
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(),
-            out[2],
-        );
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(),
-            out[3],
-        );
+        let (b0, b1, b2, b3) = rows4_mut(block);
+        simd_mem::vst1q_s32(b0, out[0]);
+        simd_mem::vst1q_s32(b1, out[1]);
+        simd_mem::vst1q_s32(b2, out[2]);
+        simd_mem::vst1q_s32(b3, out[3]);
     }
 
     /// Transpose 4x4 i16 matrix (matches libwebp Transpose4x4_S16_NEON).
@@ -1855,18 +1878,18 @@ mod neon_transform {
     /// Input/output: i32[16+] in row-major order.
 
     #[arcane]
-    pub(crate) fn idct4x4_neon(_token: NeonToken, block: &mut [i32]) {
-        debug_assert!(block.len() >= 16);
+    pub(crate) fn idct4x4_neon(_token: NeonToken, block: &mut [i32; 16]) {
         idct4x4_neon_inner(_token, block);
     }
 
     #[rite]
-    fn idct4x4_neon_inner(_token: NeonToken, block: &mut [i32]) {
+    fn idct4x4_neon_inner(_token: NeonToken, block: &mut [i32; 16]) {
         // Load i32[16] and pack to i16x8 pairs
-        let r0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[0..4]).unwrap());
-        let r1 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[4..8]).unwrap());
-        let r2 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[8..12]).unwrap());
-        let r3 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[12..16]).unwrap());
+        let (b0, b1, b2, b3) = rows4(block);
+        let r0 = simd_mem::vld1q_s32(b0);
+        let r1 = simd_mem::vld1q_s32(b1);
+        let r2 = simd_mem::vld1q_s32(b2);
+        let r3 = simd_mem::vld1q_s32(b3);
 
         let in01 = vcombine_s16(vmovn_s32(r0), vmovn_s32(r1));
         let in23 = vcombine_s16(vmovn_s32(r2), vmovn_s32(r3));
@@ -1881,22 +1904,11 @@ mod neon_transform {
         let res23_r = vshrq_n_s16::<3>(vaddq_s16(res23, four));
 
         // Widen i16 → i32 and store
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(),
-            vmovl_s16(vget_low_s16(res01_r)),
-        );
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(),
-            vmovl_s16(vget_high_s16(res01_r)),
-        );
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(),
-            vmovl_s16(vget_low_s16(res23_r)),
-        );
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(),
-            vmovl_s16(vget_high_s16(res23_r)),
-        );
+        let (b0, b1, b2, b3) = rows4_mut(block);
+        simd_mem::vst1q_s32(b0, vmovl_s16(vget_low_s16(res01_r)));
+        simd_mem::vst1q_s32(b1, vmovl_s16(vget_high_s16(res01_r)));
+        simd_mem::vst1q_s32(b2, vmovl_s16(vget_low_s16(res23_r)));
+        simd_mem::vst1q_s32(b3, vmovl_s16(vget_high_s16(res23_r)));
     }
 
     /// IDCT TransformPass — matches libwebp's TransformPass_NEON.
@@ -1988,24 +2000,23 @@ mod neon_transform {
         x0: usize,
         stride: usize,
     ) {
+        // Region-based bounds check at entry
+        let base = y0 * stride + x0;
+        let region = &mut block[base..base + 3 * stride + 4];
+
         let dc = coeffs[0];
         let dc_adj = ((dc + 4) >> 3) as i16;
         let dc_vec = vdupq_n_s16(dc_adj);
 
-        for row in 0..4 {
-            let pos = (y0 + row) * stride + x0;
-            let pred_bytes: [u8; 4] = block[pos..pos + 4].try_into().unwrap();
-            // Load 4 prediction bytes, zero-extend to i16
+        for &off in &[0, stride, stride * 2, stride * 3] {
+            let pred_bytes: [u8; 4] = region[off..off + 4].try_into().unwrap();
             let pred_u32 = u32::from_ne_bytes(pred_bytes);
             let pred_v = vreinterpret_u8_u32(vmov_n_u32(pred_u32));
             let pred_i16 = vreinterpretq_s16_u16(vmovl_u8(pred_v));
-            // Add DC
             let sum = vaddq_s16(pred_i16, dc_vec);
-            // Saturate to u8
             let packed = vqmovun_s16(sum);
-            // Store 4 bytes
             let result_u32 = vget_lane_u32::<0>(vreinterpret_u32_u8(packed));
-            block[pos..pos + 4].copy_from_slice(&result_u32.to_ne_bytes());
+            region[off..off + 4].copy_from_slice(&result_u32.to_ne_bytes());
         }
     }
 
@@ -2020,11 +2031,16 @@ mod neon_transform {
         x0: usize,
         stride: usize,
     ) {
+        // Region-based bounds check at entry
+        let base = y0 * stride + x0;
+        let region = &mut block[base..base + 3 * stride + 4];
+
         // Load and pack coefficients to i16
-        let r0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-        let r1 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-        let r2 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-        let r3 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+        let (c0, c1, c2, c3) = rows4(coeffs);
+        let r0 = simd_mem::vld1q_s32(c0);
+        let r1 = simd_mem::vld1q_s32(c1);
+        let r2 = simd_mem::vld1q_s32(c2);
+        let r3 = simd_mem::vld1q_s32(c3);
 
         let in01 = vcombine_s16(vmovn_s32(r0), vmovn_s32(r1));
         let in23 = vcombine_s16(vmovn_s32(r2), vmovn_s32(r3));
@@ -2034,23 +2050,19 @@ mod neon_transform {
         let (res01, res23) = itransform_pass_neon(_token, t01, t23);
 
         // Process each row: load pred, add residual with rounding shift, saturate, store
-        // libwebp uses vrsraq_n_s16 for: pred + (residual + rounding) >> 3
-        let res_rows: [(int16x8_t, bool); 4] = [
-            (res01, false), // row 0 = low half of res01
-            (res01, true),  // row 1 = high half of res01
-            (res23, false), // row 2 = low half of res23
-            (res23, true),  // row 3 = high half of res23
-        ];
+        let res_rows: [(int16x8_t, bool); 4] =
+            [(res01, false), (res01, true), (res23, false), (res23, true)];
 
-        for (row_idx, &(res, use_high)) in res_rows.iter().enumerate() {
+        let offsets = [0, stride, stride * 2, stride * 3];
+        for (idx, &(res, use_high)) in res_rows.iter().enumerate() {
             let residual = if use_high {
                 vcombine_s16(vget_high_s16(res), vget_high_s16(res))
             } else {
                 vcombine_s16(vget_low_s16(res), vget_low_s16(res))
             };
 
-            let pos = (y0 + row_idx) * stride + x0;
-            let pred_bytes: [u8; 4] = block[pos..pos + 4].try_into().unwrap();
+            let off = offsets[idx];
+            let pred_bytes: [u8; 4] = region[off..off + 4].try_into().unwrap();
             let pred_u32 = u32::from_ne_bytes(pred_bytes);
             let pred_v = vreinterpret_u8_u32(vmov_n_u32(pred_u32));
             let pred_i16 = vreinterpretq_s16_u16(vmovl_u8(pred_v));
@@ -2059,7 +2071,7 @@ mod neon_transform {
             let out = vrsraq_n_s16::<3>(pred_i16, residual);
             let packed = vqmovun_s16(out);
             let result_u32 = vget_lane_u32::<0>(vreinterpret_u32_u8(packed));
-            block[pos..pos + 4].copy_from_slice(&result_u32.to_ne_bytes());
+            region[off..off + 4].copy_from_slice(&result_u32.to_ne_bytes());
         }
     }
 
@@ -2108,22 +2120,11 @@ mod neon_transform {
         let out = forward_pass_2_neon(_token, p0p1, p3p2);
 
         let mut result = [0i32; 16];
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut result[0..4]).unwrap(),
-            out[0],
-        );
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut result[4..8]).unwrap(),
-            out[1],
-        );
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut result[8..12]).unwrap(),
-            out[2],
-        );
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut result[12..16]).unwrap(),
-            out[3],
-        );
+        let (r0, r1, r2, r3) = rows4_mut(&mut result);
+        simd_mem::vst1q_s32(r0, out[0]);
+        simd_mem::vst1q_s32(r1, out[1]);
+        simd_mem::vst1q_s32(r2, out[2]);
+        simd_mem::vst1q_s32(r3, out[3]);
         result
     }
 
@@ -2183,10 +2184,11 @@ mod neon_transform {
         stride: usize,
     ) {
         // Load residuals as i32x4 and narrow to i16x4
-        let r0_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[0..4]).unwrap());
-        let r1_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[4..8]).unwrap());
-        let r2_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[8..12]).unwrap());
-        let r3_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[12..16]).unwrap());
+        let (b0, b1, b2, b3) = rows4(rblock);
+        let r0_i32 = simd_mem::vld1q_s32(b0);
+        let r1_i32 = simd_mem::vld1q_s32(b1);
+        let r2_i32 = simd_mem::vld1q_s32(b2);
+        let r3_i32 = simd_mem::vld1q_s32(b3);
 
         let r0_i16 = vmovn_s32(r0_i32); // int16x4
         let r1_i16 = vmovn_s32(r1_i32);
@@ -2234,8 +2236,7 @@ mod wasm_transform {
     /// Inverse DCT using WASM SIMD128 (entry shim)
     #[cfg(target_arch = "wasm32")]
     #[arcane]
-    pub(crate) fn idct4x4_wasm(_token: Wasm128Token, block: &mut [i32]) {
-        debug_assert!(block.len() >= 16);
+    pub(crate) fn idct4x4_wasm(_token: Wasm128Token, block: &mut [i32; 16]) {
         idct4x4_wasm_impl(_token, block);
     }
 
@@ -2347,7 +2348,7 @@ mod wasm_transform {
     /// For the row pass, we transpose so each vector holds a row's elements as lanes.
     #[cfg(target_arch = "wasm32")]
     #[rite]
-    pub(crate) fn idct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32]) {
+    pub(crate) fn idct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32; 16]) {
         // Load 4 rows
         let r0 = load_row(block, 0);
         let r1 = load_row(block, 1);
