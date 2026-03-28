@@ -153,6 +153,7 @@ use hashbrown::HashMap;
 use super::extended::{self, WebPExtendedInfo, get_alpha_predictor, read_alpha_chunk};
 use super::lossless::LosslessDecoder;
 use super::vp8::Vp8Decoder;
+use super::vp8v2::DecoderContext;
 use crate::slice_reader::SliceReader;
 
 /// All possible RIFF chunks in a WebP image file
@@ -237,6 +238,10 @@ struct AnimationState {
     /// Reusable scratch buffer for per-frame decode data.
     /// Avoids allocating a fresh Vec<u8> for every animation frame.
     frame_scratch: Vec<u8>,
+    /// Reusable v2 decoder context for lossy VP8 frames in animations.
+    /// Shared across all lossy frames to avoid per-frame allocation
+    /// of coefficient/prediction/filter buffers (~100KB savings per frame).
+    v2_ctx: DecoderContext,
 }
 impl Default for AnimationState {
     fn default() -> Self {
@@ -250,6 +255,7 @@ impl Default for AnimationState {
             previous_frame_y_offset: 0,
             canvas: None,
             frame_scratch: Vec::new(),
+            v2_ctx: DecoderContext::new(),
         }
     }
 }
@@ -518,25 +524,25 @@ impl<'a> DecodeRequest<'a> {
         decode_yuv420(self.data)
     }
 
-    /// Decode using the v2 decoder (experimental), returning RGB.
+    /// Decode using the v2 decoder, returning RGB.
     ///
     /// Returns `(pixels, width, height)` where pixels are RGB (3 bytes/pixel).
-    /// Only supports simple lossy VP8 (no alpha, no lossless, no animation).
+    /// Supports simple lossy VP8 and VP8X extended format (with lossy VP8 content).
+    /// Does not support lossless VP8L or animation.
     pub fn decode_rgb_v2(self) -> DecodeResult<(Vec<u8>, u16, u16)> {
         self.decode_v2_internal(3)
     }
 
-    /// Decode using the v2 decoder (experimental), returning RGBA.
+    /// Decode using the v2 decoder, returning RGBA.
     ///
     /// Returns `(pixels, width, height)` where pixels are RGBA (4 bytes/pixel).
-    /// Only supports simple lossy VP8 (no alpha, no lossless, no animation).
+    /// Supports simple lossy VP8 and VP8X extended format (with lossy VP8 content).
+    /// Does not support lossless VP8L or animation.
     pub fn decode_rgba_v2(self) -> DecodeResult<(Vec<u8>, u16, u16)> {
         self.decode_v2_internal(4)
     }
 
     fn decode_v2_internal(self, bpp: usize) -> DecodeResult<(Vec<u8>, u16, u16)> {
-        use super::vp8v2;
-
         let data = self.data;
         if data.len() < 20 {
             return Err(whereat::at!(DecodeError::NotEnoughInitData));
@@ -553,26 +559,105 @@ impl<'a> DecodeRequest<'a> {
             sig.copy_from_slice(&data[8..12]);
             return Err(whereat::at!(DecodeError::WebpSignatureInvalid(sig)));
         }
-        if &data[12..16] != b"VP8 " {
-            return Err(whereat::at!(DecodeError::UnsupportedFeature(
+
+        let first_chunk = &data[12..16];
+
+        match first_chunk {
+            b"VP8 " => {
+                // Simple lossy VP8
+                let chunk_size =
+                    u32::from_le_bytes([data[16], data[17], data[18], data[19]]) as usize;
+                let vp8_start = 20;
+                let vp8_end = (vp8_start + chunk_size).min(data.len());
+                let vp8_data = &data[vp8_start..vp8_end];
+
+                let mut ctx = DecoderContext::new();
+                let mut output = Vec::new();
+                let (w, h) = ctx
+                    .decode_to_rgb(vp8_data, &mut output, bpp)
+                    .map_err(|e| whereat::at!(e))?;
+                Ok((output, w, h))
+            }
+            b"VP8X" => {
+                // Extended format — use the demuxer to find the VP8 bitstream
+                use crate::mux::WebPDemuxer;
+
+                let demuxer = WebPDemuxer::new(data).map_err(|e| {
+                    whereat::at!(DecodeError::InvalidParameter(alloc::format!(
+                        "demux error: {e}"
+                    )))
+                })?;
+
+                if demuxer.is_animated() {
+                    return Err(whereat::at!(DecodeError::UnsupportedFeature(
+                        "v2 single-frame decode does not support animation; use AnimationDecoder"
+                            .into()
+                    )));
+                }
+
+                let frame = demuxer.frame(1).ok_or_else(|| {
+                    whereat::at!(DecodeError::ChunkMissing)
+                })?;
+
+                if !frame.is_lossy {
+                    return Err(whereat::at!(DecodeError::UnsupportedFeature(
+                        "v2 decoder only supports lossy VP8, got VP8L".into()
+                    )));
+                }
+
+                let mut ctx = DecoderContext::new();
+                let mut output = Vec::new();
+
+                // Decode lossy bitstream, requesting RGBA if alpha is present
+                let decode_bpp = if frame.has_alpha { 4 } else { bpp };
+                let (w, h) = ctx
+                    .decode_to_rgb(frame.bitstream, &mut output, decode_bpp)
+                    .map_err(|e| whereat::at!(e))?;
+
+                // Apply alpha channel if present
+                if let Some(alpha_data) = frame.alpha_data {
+                    let alpha_chunk =
+                        read_alpha_chunk(alpha_data, w, h).map_err(|e| whereat::at!(e))?;
+
+                    let fw = usize::from(w);
+                    let fh = usize::from(h);
+                    for y in 0..fh {
+                        for x in 0..fw {
+                            let predictor: u8 = get_alpha_predictor(
+                                x,
+                                y,
+                                fw,
+                                alpha_chunk.filtering_method,
+                                &output,
+                            );
+
+                            let alpha_index = y * fw + x;
+                            let buffer_index = alpha_index * 4 + 3;
+
+                            output[buffer_index] =
+                                predictor.wrapping_add(alpha_chunk.data[alpha_index]);
+                        }
+                    }
+                }
+
+                // Convert to requested bpp if needed
+                if decode_bpp == 4 && bpp == 3 {
+                    let pixel_count = usize::from(w) * usize::from(h);
+                    let mut rgb = alloc::vec![0u8; pixel_count * 3];
+                    garb::bytes::rgba_to_rgb(&output, &mut rgb)
+                        .map_err(|e| whereat::at!(garb_err(e)))?;
+                    Ok((rgb, w, h))
+                } else {
+                    Ok((output, w, h))
+                }
+            }
+            _ => Err(whereat::at!(DecodeError::UnsupportedFeature(
                 alloc::format!(
                     "v2 decoder only supports lossy VP8, got {:?}",
-                    &data[12..16]
+                    first_chunk
                 )
-            )));
+            ))),
         }
-
-        let chunk_size = u32::from_le_bytes([data[16], data[17], data[18], data[19]]) as usize;
-        let vp8_start = 20;
-        let vp8_end = (vp8_start + chunk_size).min(data.len());
-        let vp8_data = &data[vp8_start..vp8_end];
-
-        let mut ctx = vp8v2::DecoderContext::new();
-        let mut output = Vec::new();
-        let (w, h) = ctx
-            .decode_to_rgb(vp8_data, &mut output, bpp)
-            .map_err(|e| whereat::at!(e))?;
-        Ok((output, w, h))
     }
 }
 
@@ -1106,48 +1191,55 @@ impl<'a> WebPDecoder<'a> {
             let range = self
                 .chunks
                 .get(&WebPRiffChunk::VP8)
-                .ok_or(DecodeError::ChunkMissing)?;
-            let data_slice = self.chunk_slice(range)?;
-            let frame = Vp8Decoder::decode_frame_with_stop(
-                data_slice,
-                self.stop,
-                self.webp_decode_options.dithering_strength,
-            )?;
-            if u32::from(frame.width) != self.width || u32::from(frame.height) != self.height {
+                .ok_or(DecodeError::ChunkMissing)?
+                .clone();
+            let data_buf = self.r.get_ref();
+            let vp8_data = &data_buf[range.start as usize..range.end as usize];
+
+            // Use v2 decoder for lossy VP8 frames
+            let bpp = if self.has_alpha() { 4 } else { 3 };
+            let mut output = Vec::new();
+            let (w, h) = self
+                .animation
+                .v2_ctx
+                .decode_to_rgb(vp8_data, &mut output, bpp)?;
+            if u32::from(w) != self.width || u32::from(h) != self.height {
                 return Err(DecodeError::InconsistentImageSizes);
             }
 
             if self.has_alpha() {
-                frame.fill_rgba(buf, self.webp_decode_options.lossy_upsampling);
+                buf.copy_from_slice(&output);
 
-                let range = self
+                let alpha_range = self
                     .chunks
                     .get(&WebPRiffChunk::ALPH)
                     .ok_or(DecodeError::ChunkMissing)?
                     .clone();
-                let alpha_slice = self.chunk_slice(&range)?;
+                let alpha_slice =
+                    &data_buf[alpha_range.start as usize..alpha_range.end as usize];
                 let alpha_chunk =
                     read_alpha_chunk(alpha_slice, self.width as u16, self.height as u16)?;
 
-                for y in 0..frame.height {
-                    for x in 0..frame.width {
+                let fw = usize::from(w);
+                let fh = usize::from(h);
+                for y in 0..fh {
+                    for x in 0..fw {
                         let predictor: u8 = get_alpha_predictor(
-                            x.into(),
-                            y.into(),
-                            frame.width.into(),
+                            x,
+                            y,
+                            fw,
                             alpha_chunk.filtering_method,
                             buf,
                         );
 
-                        let alpha_index =
-                            usize::from(y) * usize::from(frame.width) + usize::from(x);
+                        let alpha_index = y * fw + x;
                         let buffer_index = alpha_index * 4 + 3;
 
                         buf[buffer_index] = predictor.wrapping_add(alpha_chunk.data[alpha_index]);
                     }
                 }
             } else {
-                frame.fill_rgb(buf, self.webp_decode_options.lossy_upsampling);
+                buf.copy_from_slice(&output);
             }
         }
 
@@ -1209,24 +1301,17 @@ impl<'a> WebPDecoder<'a> {
 
         let frame_has_alpha: bool = match chunk {
             WebPRiffChunk::VP8 => {
+                // Use v2 decoder with buffer reuse across animation frames.
+                // DecoderContext is reused from self.animation.v2_ctx, saving
+                // ~100KB of allocation per frame for coefficient/filter buffers.
                 let data_slice = self.r.take_slice(chunk_size as usize)?;
-                let raw_frame = Vp8Decoder::decode_frame_with_stop(
-                    data_slice,
-                    self.stop,
-                    self.webp_decode_options.dithering_strength,
-                )?;
-                if u32::from(raw_frame.width) != frame_width
-                    || u32::from(raw_frame.height) != frame_height
-                {
+                let (w, h) = self
+                    .animation
+                    .v2_ctx
+                    .decode_to_rgb(data_slice, &mut self.animation.frame_scratch, 3)?;
+                if u32::from(w) != frame_width || u32::from(h) != frame_height {
                     return Err(DecodeError::InconsistentImageSizes);
                 }
-                let frame_alloc = frame_width as usize * frame_height as usize * 3;
-                self.limits.check_memory(frame_alloc)?;
-                self.animation.frame_scratch.resize(frame_alloc, 0);
-                raw_frame.fill_rgb(
-                    &mut self.animation.frame_scratch,
-                    self.webp_decode_options.lossy_upsampling,
-                );
                 false
             }
             WebPRiffChunk::VP8L => {
@@ -1259,39 +1344,32 @@ impl<'a> WebPDecoder<'a> {
                 let alpha_chunk =
                     read_alpha_chunk(alpha_slice, frame_width as u16, frame_height as u16)?;
 
-                // read opaque
+                // read opaque — use v2 decoder with buffer reuse
                 let (next_chunk, next_chunk_size, _) = read_chunk_header(&mut self.r)?;
                 if chunk_size + next_chunk_size + 32 > anmf_size {
                     return Err(DecodeError::ChunkHeaderInvalid(next_chunk.to_fourcc()));
                 }
 
                 let vp8_slice = self.r.take_slice(next_chunk_size as usize)?;
-                let raw_frame = Vp8Decoder::decode_frame_with_stop(
-                    vp8_slice,
-                    self.stop,
-                    self.webp_decode_options.dithering_strength,
-                )?;
+                let (w, h) = self
+                    .animation
+                    .v2_ctx
+                    .decode_to_rgb(vp8_slice, &mut self.animation.frame_scratch, 4)?;
 
-                let frame_alloc = frame_width as usize * frame_height as usize * 4;
-                self.limits.check_memory(frame_alloc)?;
-                self.animation.frame_scratch.resize(frame_alloc, 0);
-                raw_frame.fill_rgba(
-                    &mut self.animation.frame_scratch,
-                    self.webp_decode_options.lossy_upsampling,
-                );
+                let fw = usize::from(w);
+                let fh = usize::from(h);
 
-                for y in 0..raw_frame.height {
-                    for x in 0..raw_frame.width {
+                for y in 0..fh {
+                    for x in 0..fw {
                         let predictor: u8 = get_alpha_predictor(
-                            x.into(),
-                            y.into(),
-                            raw_frame.width.into(),
+                            x,
+                            y,
+                            fw,
                             alpha_chunk.filtering_method,
                             &self.animation.frame_scratch,
                         );
 
-                        let alpha_index =
-                            usize::from(y) * usize::from(raw_frame.width) + usize::from(x);
+                        let alpha_index = y * fw + x;
                         let buffer_index = alpha_index * 4 + 3;
 
                         self.animation.frame_scratch[buffer_index] =
