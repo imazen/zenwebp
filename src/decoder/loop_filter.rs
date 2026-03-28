@@ -488,6 +488,21 @@ const V_FILTER_REGION: usize = 3 * MAX_STRIDE + 16;
 /// Fixed region size for normal vertical filter: 8 rows (p3-p0, q0-q3) plus 16 bytes.
 const V_FILTER_NORMAL_REGION: usize = 7 * MAX_STRIDE + 16;
 
+/// Fixed region size for simple horizontal filter: 16 rows of 4 bytes each.
+const H_FILTER_SIMPLE_REGION: usize = 15 * MAX_STRIDE + 4;
+
+/// Fixed region size for normal horizontal filter: 16 rows of 8 bytes each.
+const H_FILTER_NORMAL_REGION: usize = 15 * MAX_STRIDE + 8;
+
+/// Fixed region size for normal horizontal filter fused 3-edge: 16 rows of 16 bytes each.
+const H_FILTER_FUSED_REGION: usize = 15 * MAX_STRIDE + 16;
+
+/// Fixed region size for UV horizontal filter: 8 rows of 8 bytes each.
+const H_FILTER_UV_REGION: usize = 7 * MAX_STRIDE + 8;
+
+/// Fixed region size for UV vertical filter: 8 rows of 16 bytes (load 8, store needs 16).
+const V_FILTER_UV_REGION: usize = 7 * MAX_STRIDE + 16;
+
 /// Compute the "needs filter" mask for simple filter.
 /// Returns a mask where each byte is 0xFF if the pixel should be filtered, 0x00 otherwise.
 /// Condition: |p0 - q0| * 2 + |p1 - q1| / 2 <= thresh
@@ -611,7 +626,7 @@ pub(crate) fn simple_v_filter16(
 ) {
     // Fixed-region approach: single bounds check, then all interior accesses are check-free.
     // Requires pixel buffer to have FILTER_PADDING bytes at the end.
-    debug_assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
+    assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
     let start = point - 2 * stride;
     let region: &mut [u8; V_FILTER_REGION] =
         <&mut [u8; V_FILTER_REGION]>::try_from(&mut pixels[start..start + V_FILTER_REGION])
@@ -768,7 +783,7 @@ pub(crate) fn simple_v_filter32(
     thresh: i32,
 ) {
     // Fixed-region approach for bounds check elimination
-    debug_assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
+    assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
     let start = point - 2 * stride;
     let region: &mut [u8; V_FILTER_REGION_32] =
         <&mut [u8; V_FILTER_REGION_32]>::try_from(&mut pixels[start..start + V_FILTER_REGION_32])
@@ -1153,7 +1168,7 @@ pub(crate) fn normal_v_filter32_inner(
     interior_limit: i32,
     edge_limit: i32,
 ) {
-    debug_assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
+    assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
     let start = point - 4 * stride;
     let region: &mut [u8; V_FILTER_NORMAL_REGION_32] =
         <&mut [u8; V_FILTER_NORMAL_REGION_32]>::try_from(
@@ -1236,7 +1251,7 @@ pub(crate) fn normal_v_filter32_edge(
     interior_limit: i32,
     edge_limit: i32,
 ) {
-    debug_assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
+    assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
     let start = point - 4 * stride;
     let region: &mut [u8; V_FILTER_NORMAL_REGION_32] =
         <&mut [u8; V_FILTER_NORMAL_REGION_32]>::try_from(
@@ -1617,15 +1632,18 @@ pub(crate) fn simple_h_filter16(
     stride: usize,
     thresh: i32,
 ) {
-    // Assert bounds upfront to elide checks in SIMD loads/stores
-    assert!(
-        x >= 2 && (y_start + 15) * stride + x + 2 <= pixels.len(),
-        "simple_h_filter16: bounds check failed"
-    );
+    // Fixed-region approach: assert stride bound + single array conversion,
+    // then all interior accesses are check-free.
+    assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
+    let base = y_start * stride + x - 2;
+    let region: &mut [u8; H_FILTER_SIMPLE_REGION] =
+        <&mut [u8; H_FILTER_SIMPLE_REGION]>::try_from(
+            &mut pixels[base..base + H_FILTER_SIMPLE_REGION],
+        )
+        .expect("simple_h_filter16: buffer too small (missing FILTER_PADDING?)");
 
     // Load 4 bytes per row (p1,p0,q0,q1) from 16 rows, transpose into 4 columns
-    let base = y_start * stride + x - 2;
-    let (p1, p0, q0, q1) = load_16x4_impl!(pixels, base, stride);
+    let (p1, p0, q0, q1) = load_16x4_impl!(region, 0, stride);
 
     let mut p0 = p0;
     let mut q0 = q0;
@@ -1637,7 +1655,7 @@ pub(crate) fn simple_h_filter16(
     do_simple_filter_16(_token, &mut p0, &mut q0, fl_masked);
 
     // Transpose back and store 4 bytes per row
-    store_16x4_impl!(pixels, base, stride, p1, p0, q0, q1);
+    store_16x4_impl!(region, 0, stride, p1, p0, q0, q1);
 }
 
 /// Apply simple vertical filter to entire macroblock edge (16 pixels).
@@ -2061,7 +2079,7 @@ pub(crate) fn normal_v_filter16_inner(
     edge_limit: i32,
 ) {
     // Fixed-region approach: single bounds check, then all interior accesses are check-free.
-    debug_assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
+    assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
     let start = point - 4 * stride;
     let region: &mut [u8; V_FILTER_NORMAL_REGION] = <&mut [u8; V_FILTER_NORMAL_REGION]>::try_from(
         &mut pixels[start..start + V_FILTER_NORMAL_REGION],
@@ -2145,7 +2163,7 @@ pub(crate) fn normal_v_filter16_edge(
     edge_limit: i32,
 ) {
     // Fixed-region approach: single bounds check, then all interior accesses are check-free.
-    debug_assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
+    assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
     let start = point - 4 * stride;
     let region: &mut [u8; V_FILTER_NORMAL_REGION] = <&mut [u8; V_FILTER_NORMAL_REGION]>::try_from(
         &mut pixels[start..start + V_FILTER_NORMAL_REGION],
@@ -2318,18 +2336,22 @@ pub(crate) fn normal_h_filter16_inner(
     interior_limit: i32,
     edge_limit: i32,
 ) {
-    // Assert bounds upfront to elide checks in SIMD loads/stores
-    assert!(
-        x >= 4 && (y_start + 15) * stride + x + 4 <= pixels.len(),
-        "normal_h_filter16_inner: bounds check failed"
-    );
+    // Fixed-region approach: assert stride bound + single array conversion,
+    // then all interior accesses are check-free.
+    assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
+    let base = y_start * stride + x - 4;
+    let region: &mut [u8; H_FILTER_NORMAL_REGION] =
+        <&mut [u8; H_FILTER_NORMAL_REGION]>::try_from(
+            &mut pixels[base..base + H_FILTER_NORMAL_REGION],
+        )
+        .expect("normal_h_filter16_inner: buffer too small (missing FILTER_PADDING?)");
 
     // Load 16 rows of 8 pixels each (p3,p2,p1,p0,q0,q1,q2,q3)
     let mut rows = [_mm_setzero_si128(); 16];
     for (i, row) in rows.iter_mut().enumerate() {
-        let row_start = (y_start + i) * stride + x - 4;
+        let row_start = i * stride;
         *row =
-            simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
+            simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&region[row_start..][..8]).unwrap());
     }
 
     // Transpose 8x16 to 16x8
@@ -2365,8 +2387,8 @@ pub(crate) fn normal_h_filter16_inner(
     do_filter4_16(_token, &mut p1, &mut p0, &mut q0, &mut q1, mask, hev);
 
     // Store only the 4 modified columns via Store16x4
-    let store_base = y_start * stride + x - 2;
-    store_16x4_impl!(pixels, store_base, stride, p1, p0, q0, q1);
+    // Region base is (y_start * stride + x - 4), store base is (y_start * stride + x - 2) = +2
+    store_16x4_impl!(region, 2, stride, p1, p0, q0, q1);
 }
 
 /// Apply normal horizontal filter (DoFilter6) to 16 rows at a vertical macroblock edge.
@@ -2388,18 +2410,22 @@ pub(crate) fn normal_h_filter16_edge(
     interior_limit: i32,
     edge_limit: i32,
 ) {
-    // Assert bounds upfront to elide checks in SIMD loads/stores
-    assert!(
-        x >= 4 && (y_start + 15) * stride + x + 4 <= pixels.len(),
-        "normal_h_filter16_edge: bounds check failed"
-    );
+    // Fixed-region approach: assert stride bound + single array conversion,
+    // then all interior accesses are check-free.
+    assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
+    let base = y_start * stride + x - 4;
+    let region: &mut [u8; H_FILTER_NORMAL_REGION] =
+        <&mut [u8; H_FILTER_NORMAL_REGION]>::try_from(
+            &mut pixels[base..base + H_FILTER_NORMAL_REGION],
+        )
+        .expect("normal_h_filter16_edge: buffer too small (missing FILTER_PADDING?)");
 
     // Load 16 rows of 8 pixels each
     let mut rows = [_mm_setzero_si128(); 16];
     for (i, row) in rows.iter_mut().enumerate() {
-        let row_start = (y_start + i) * stride + x - 4;
+        let row_start = i * stride;
         *row =
-            simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&pixels[row_start..][..8]).unwrap());
+            simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&region[row_start..][..8]).unwrap());
     }
 
     // Transpose 8x16 to 16x8
@@ -2437,9 +2463,9 @@ pub(crate) fn normal_h_filter16_edge(
     );
 
     // Store 6 modified columns via Store16x4 + q1q2 store
-    let store_base = y_start * stride + x - 3;
-    store_16x4_impl!(pixels, store_base, stride, p2, p1, p0, q0);
-    store_q1q2_16_impl!(pixels, store_base + 4, stride, q1, q2);
+    // Region base is (y_start * stride + x - 4), store base is (y_start * stride + x - 3) = +1
+    store_16x4_impl!(region, 1, stride, p2, p1, p0, q0);
+    store_q1q2_16_impl!(region, 5, stride, q1, q2);
 }
 
 /// Fused normal horizontal subblock filter for all 3 inner edges of a macroblock.
@@ -2462,15 +2488,18 @@ pub(crate) fn normal_h_filter16i(
     interior_limit: i32,
     edge_limit: i32,
 ) {
-    // Bounds check: need columns x_start..x_start+16 for 16 rows
-    assert!(
-        (y_start + 15) * stride + x_start + 16 <= pixels.len(),
-        "normal_h_filter16i: bounds check failed"
-    );
+    // Fixed-region approach: assert stride bound + single array conversion,
+    // then all interior accesses are check-free.
+    assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
+    let base = y_start * stride + x_start;
+    let region: &mut [u8; H_FILTER_FUSED_REGION] =
+        <&mut [u8; H_FILTER_FUSED_REGION]>::try_from(
+            &mut pixels[base..base + H_FILTER_FUSED_REGION],
+        )
+        .expect("normal_h_filter16i: buffer too small (missing FILTER_PADDING?)");
 
     // Prologue: load first 4 columns (x_start..x_start+3 = p3, p2, p1, p0 for first edge)
-    let base = y_start * stride + x_start;
-    let (p3, p2, p1, p0) = load_16x4_impl!(pixels, base, stride);
+    let (p3, p2, p1, p0) = load_16x4_impl!(region, 0, stride);
     let mut p3 = p3;
     let mut p2 = p2;
     let mut p1 = p1;
@@ -2487,8 +2516,8 @@ pub(crate) fn normal_h_filter16i(
 
         // Load next 4 columns (q0, q1, q2, q3 relative to this edge)
         // In libwebp: Load16x4 overwrites p3, p2, and puts extras in tmp1, tmp2
-        let next_base = y_start * stride + edge_x;
-        let (new_p3, new_p2, tmp1, tmp2) = load_16x4_impl!(pixels, next_base, stride);
+        let next_off = edge_x - x_start;
+        let (new_p3, new_p2, tmp1, tmp2) = load_16x4_impl!(region, next_off, stride);
         // new_p3 = col at edge_x (= q0), new_p2 = col at edge_x+1 (= q1)
         // tmp1 = col at edge_x+2 (= q2), tmp2 = col at edge_x+3 (= q3)
 
@@ -2517,8 +2546,8 @@ pub(crate) fn normal_h_filter16i(
         do_filter4_16(_token, &mut fp1, &mut fp0, &mut fq0, &mut fq1, mask, hev);
 
         // Store 4 modified columns: p1, p0, q0, q1 centered on the edge
-        let store_base = y_start * stride + edge_x - 2;
-        store_16x4_impl!(pixels, store_base, stride, fp1, fp0, fq0, fq1);
+        let store_off = edge_x - x_start - 2;
+        store_16x4_impl!(region, store_off, stride, fp1, fp0, fq0, fq1);
 
         // Rotate for next edge (matching libwebp):
         // After filter: fq0 = filtered q0, fq1 = filtered q1
@@ -2554,25 +2583,30 @@ pub(crate) fn normal_h_filter_uv_edge(
     interior_limit: i32,
     edge_limit: i32,
 ) {
-    // Assert bounds upfront to elide checks in SIMD loads/stores
-    assert!(
-        x >= 4 && (y_start + 7) * stride + x + 4 <= u_pixels.len(),
-        "normal_h_filter_uv_edge: u_pixels bounds check failed"
-    );
-    assert!(
-        x >= 4 && (y_start + 7) * stride + x + 4 <= v_pixels.len(),
-        "normal_h_filter_uv_edge: v_pixels bounds check failed"
-    );
+    // Fixed-region approach: assert stride bound + single array conversion per plane,
+    // then all interior accesses are check-free.
+    assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
+    let base = y_start * stride + x - 4;
+    let u_region: &mut [u8; H_FILTER_UV_REGION] =
+        <&mut [u8; H_FILTER_UV_REGION]>::try_from(
+            &mut u_pixels[base..base + H_FILTER_UV_REGION],
+        )
+        .expect("normal_h_filter_uv_edge: u_pixels buffer too small");
+    let v_region: &mut [u8; H_FILTER_UV_REGION] =
+        <&mut [u8; H_FILTER_UV_REGION]>::try_from(
+            &mut v_pixels[base..base + H_FILTER_UV_REGION],
+        )
+        .expect("normal_h_filter_uv_edge: v_pixels buffer too small");
 
     // Load 8 U rows and 8 V rows into a 16-row array
     let mut rows = [_mm_setzero_si128(); 16];
     for i in 0..8 {
-        let row_start = (y_start + i) * stride + x - 4;
+        let row_start = i * stride;
         rows[i] = simd_mem_x86::_mm_loadu_si64(
-            <&[u8; 8]>::try_from(&u_pixels[row_start..][..8]).unwrap(),
+            <&[u8; 8]>::try_from(&u_region[row_start..][..8]).unwrap(),
         );
         rows[i + 8] = simd_mem_x86::_mm_loadu_si64(
-            <&[u8; 8]>::try_from(&v_pixels[row_start..][..8]).unwrap(),
+            <&[u8; 8]>::try_from(&v_region[row_start..][..8]).unwrap(),
         );
     }
 
@@ -2611,9 +2645,9 @@ pub(crate) fn normal_h_filter_uv_edge(
     );
 
     // Store 6 modified columns back to U and V planes via Store16x4 + q1q2
-    let store_base = y_start * stride + x - 3;
-    store_uv_16x4_impl!(u_pixels, v_pixels, store_base, stride, p2, p1, p0, q0);
-    store_q1q2_uv_16_impl!(u_pixels, v_pixels, store_base + 4, stride, q1, q2);
+    // Region base is (y_start * stride + x - 4), store base is (y_start * stride + x - 3) = +1
+    store_uv_16x4_impl!(u_region, v_region, 1, stride, p2, p1, p0, q0);
+    store_q1q2_uv_16_impl!(u_region, v_region, 5, stride, q1, q2);
 }
 
 /// Apply normal horizontal filter (DoFilter4) to U and V planes together at subblock edges.
@@ -2634,25 +2668,30 @@ pub(crate) fn normal_h_filter_uv_inner(
     interior_limit: i32,
     edge_limit: i32,
 ) {
-    // Assert bounds upfront to elide checks in SIMD loads/stores
-    assert!(
-        x >= 4 && (y_start + 7) * stride + x + 4 <= u_pixels.len(),
-        "normal_h_filter_uv_inner: u_pixels bounds check failed"
-    );
-    assert!(
-        x >= 4 && (y_start + 7) * stride + x + 4 <= v_pixels.len(),
-        "normal_h_filter_uv_inner: v_pixels bounds check failed"
-    );
+    // Fixed-region approach: assert stride bound + single array conversion per plane,
+    // then all interior accesses are check-free.
+    assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
+    let base = y_start * stride + x - 4;
+    let u_region: &mut [u8; H_FILTER_UV_REGION] =
+        <&mut [u8; H_FILTER_UV_REGION]>::try_from(
+            &mut u_pixels[base..base + H_FILTER_UV_REGION],
+        )
+        .expect("normal_h_filter_uv_inner: u_pixels buffer too small");
+    let v_region: &mut [u8; H_FILTER_UV_REGION] =
+        <&mut [u8; H_FILTER_UV_REGION]>::try_from(
+            &mut v_pixels[base..base + H_FILTER_UV_REGION],
+        )
+        .expect("normal_h_filter_uv_inner: v_pixels buffer too small");
 
     // Load 8 U rows and 8 V rows
     let mut rows = [_mm_setzero_si128(); 16];
     for i in 0..8 {
-        let row_start = (y_start + i) * stride + x - 4;
+        let row_start = i * stride;
         rows[i] = simd_mem_x86::_mm_loadu_si64(
-            <&[u8; 8]>::try_from(&u_pixels[row_start..][..8]).unwrap(),
+            <&[u8; 8]>::try_from(&u_region[row_start..][..8]).unwrap(),
         );
         rows[i + 8] = simd_mem_x86::_mm_loadu_si64(
-            <&[u8; 8]>::try_from(&v_pixels[row_start..][..8]).unwrap(),
+            <&[u8; 8]>::try_from(&v_region[row_start..][..8]).unwrap(),
         );
     }
 
@@ -2689,8 +2728,8 @@ pub(crate) fn normal_h_filter_uv_inner(
     do_filter4_16(_token, &mut p1, &mut p0, &mut q0, &mut q1, mask, hev);
 
     // Store 4 modified columns back to U and V planes via Store16x4
-    let store_base = y_start * stride + x - 2;
-    store_uv_16x4_impl!(u_pixels, v_pixels, store_base, stride, p1, p0, q0, q1);
+    // Region base is (y_start * stride + x - 4), store base is (y_start * stride + x - 2) = +2
+    store_uv_16x4_impl!(u_region, v_region, 2, stride, p1, p0, q0, q1);
 }
 
 // ============================================================================
@@ -2820,11 +2859,14 @@ pub(crate) fn normal_h_filter32_inner(
     interior_limit: i32,
     edge_limit: i32,
 ) {
-    // Assert bounds upfront to elide checks in SIMD loads/stores
+    // Assert bounds upfront and truncate slice so LLVM can prove all interior
+    // accesses are in-bounds (eliminates per-row bounds checks).
+    let validated_end = (y_start + 31) * stride + x + 4;
     assert!(
-        x >= 4 && (y_start + 31) * stride + x + 4 <= pixels.len(),
+        x >= 4 && validated_end <= pixels.len(),
         "normal_h_filter32_inner: bounds check failed"
     );
+    let pixels = &mut pixels[..validated_end];
 
     // Load 32 rows of 8 pixels each (p3,p2,p1,p0,q0,q1,q2,q3)
     // Split into two groups of 16 for the transpose
@@ -2908,11 +2950,14 @@ pub(crate) fn normal_h_filter32_edge(
     interior_limit: i32,
     edge_limit: i32,
 ) {
-    // Assert bounds upfront to elide checks in SIMD loads/stores
+    // Assert bounds upfront and truncate slice so LLVM can prove all interior
+    // accesses are in-bounds (eliminates per-row bounds checks).
+    let validated_end = (y_start + 31) * stride + x + 4;
     assert!(
-        x >= 4 && (y_start + 31) * stride + x + 4 <= pixels.len(),
+        x >= 4 && validated_end <= pixels.len(),
         "normal_h_filter32_edge: bounds check failed"
     );
+    let pixels = &mut pixels[..validated_end];
 
     // Load 32 rows of 8 pixels each
     let mut rows_lo = [_mm_setzero_si128(); 16];
@@ -3004,33 +3049,50 @@ pub(crate) fn normal_v_filter_uv_edge(
     interior_limit: i32,
     edge_limit: i32,
 ) {
-    // Assert bounds upfront to elide checks in SIMD loads/stores
-    // Loads from point - 4*stride to point + 3*stride (8 bytes each)
-    // Stores from point - 3*stride to point + 2*stride (need 16-byte slice for storel_epi64)
-    assert!(
-        point >= 4 * stride && point + 3 * stride + 8 <= u_pixels.len(),
-        "normal_v_filter_uv_edge: u_pixels bounds check failed"
-    );
-    assert!(
-        point >= 4 * stride && point + 3 * stride + 8 <= v_pixels.len(),
-        "normal_v_filter_uv_edge: v_pixels bounds check failed"
-    );
+    // Fixed-region approach: assert stride bound + single array conversion per plane,
+    // then all interior accesses are check-free.
+    assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
+    let region_start = point - 4 * stride;
+    let u_region: &mut [u8; V_FILTER_UV_REGION] =
+        <&mut [u8; V_FILTER_UV_REGION]>::try_from(
+            &mut u_pixels[region_start..region_start + V_FILTER_UV_REGION],
+        )
+        .expect("normal_v_filter_uv_edge: u_pixels buffer too small");
+    let v_region: &mut [u8; V_FILTER_UV_REGION] =
+        <&mut [u8; V_FILTER_UV_REGION]>::try_from(
+            &mut v_pixels[region_start..region_start + V_FILTER_UV_REGION],
+        )
+        .expect("normal_v_filter_uv_edge: v_pixels buffer too small");
 
     // Helper to load a row with 8 U + 8 V pixels packed together
-    let load_uv_row = |u_pix: &[u8], v_pix: &[u8], offset: usize| -> __m128i {
-        let u = simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&u_pix[offset..][..8]).unwrap());
-        let v = simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&v_pix[offset..][..8]).unwrap());
+    // Offsets are relative to region start (point - 4*stride)
+    let load_uv_row = |u_reg: &[u8; V_FILTER_UV_REGION],
+                        v_reg: &[u8; V_FILTER_UV_REGION],
+                        offset: usize|
+     -> __m128i {
+        let u = simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&u_reg[offset..][..8]).unwrap());
+        let v = simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&v_reg[offset..][..8]).unwrap());
         _mm_unpacklo_epi64(u, v)
     };
 
-    let p3 = load_uv_row(u_pixels, v_pixels, point - 4 * stride);
-    let mut p2 = load_uv_row(u_pixels, v_pixels, point - 3 * stride);
-    let mut p1 = load_uv_row(u_pixels, v_pixels, point - 2 * stride);
-    let mut p0 = load_uv_row(u_pixels, v_pixels, point - stride);
-    let mut q0 = load_uv_row(u_pixels, v_pixels, point);
-    let mut q1 = load_uv_row(u_pixels, v_pixels, point + stride);
-    let mut q2 = load_uv_row(u_pixels, v_pixels, point + 2 * stride);
-    let q3 = load_uv_row(u_pixels, v_pixels, point + 3 * stride);
+    // Offsets relative to region start: point - 4*stride maps to offset 0
+    let off_p3 = 0;
+    let off_p2 = stride;
+    let off_p1 = 2 * stride;
+    let off_p0 = 3 * stride;
+    let off_q0 = 4 * stride;
+    let off_q1 = 5 * stride;
+    let off_q2 = 6 * stride;
+    let off_q3 = 7 * stride;
+
+    let p3 = load_uv_row(u_region, v_region, off_p3);
+    let mut p2 = load_uv_row(u_region, v_region, off_p2);
+    let mut p1 = load_uv_row(u_region, v_region, off_p1);
+    let mut p0 = load_uv_row(u_region, v_region, off_p0);
+    let mut q0 = load_uv_row(u_region, v_region, off_q0);
+    let mut q1 = load_uv_row(u_region, v_region, off_q1);
+    let mut q2 = load_uv_row(u_region, v_region, off_q2);
+    let q3 = load_uv_row(u_region, v_region, off_q3);
 
     // Check if filtering is needed
     let mask = needs_filter_normal_16(
@@ -3056,23 +3118,28 @@ pub(crate) fn normal_v_filter_uv_edge(
     );
 
     // Store results back - low 64 bits to U, high 64 bits to V
-    let store_uv_row = |u_pix: &mut [u8], v_pix: &mut [u8], offset: usize, reg: __m128i| {
-        simd_mem_x86::_mm_storel_epi64(
-            <&mut [u8; 16]>::try_from(&mut u_pix[offset..][..16]).unwrap(),
-            reg,
-        );
-        simd_mem_x86::_mm_storel_epi64(
-            <&mut [u8; 16]>::try_from(&mut v_pix[offset..][..16]).unwrap(),
-            _mm_srli_si128(reg, 8),
-        );
-    };
+    // Offsets relative to region start (point - 4*stride)
+    let store_uv_row =
+        |u_reg: &mut [u8; V_FILTER_UV_REGION],
+         v_reg: &mut [u8; V_FILTER_UV_REGION],
+         offset: usize,
+         reg: __m128i| {
+            simd_mem_x86::_mm_storel_epi64(
+                <&mut [u8; 16]>::try_from(&mut u_reg[offset..][..16]).unwrap(),
+                reg,
+            );
+            simd_mem_x86::_mm_storel_epi64(
+                <&mut [u8; 16]>::try_from(&mut v_reg[offset..][..16]).unwrap(),
+                _mm_srli_si128(reg, 8),
+            );
+        };
 
-    store_uv_row(u_pixels, v_pixels, point - 3 * stride, p2);
-    store_uv_row(u_pixels, v_pixels, point - 2 * stride, p1);
-    store_uv_row(u_pixels, v_pixels, point - stride, p0);
-    store_uv_row(u_pixels, v_pixels, point, q0);
-    store_uv_row(u_pixels, v_pixels, point + stride, q1);
-    store_uv_row(u_pixels, v_pixels, point + 2 * stride, q2);
+    store_uv_row(u_region, v_region, off_p2, p2);
+    store_uv_row(u_region, v_region, off_p1, p1);
+    store_uv_row(u_region, v_region, off_p0, p0);
+    store_uv_row(u_region, v_region, off_q0, q0);
+    store_uv_row(u_region, v_region, off_q1, q1);
+    store_uv_row(u_region, v_region, off_q2, q2);
 }
 
 /// Apply normal vertical filter (DoFilter4) to U and V planes together at subblock edges.
@@ -3091,33 +3158,50 @@ pub(crate) fn normal_v_filter_uv_inner(
     interior_limit: i32,
     edge_limit: i32,
 ) {
-    // Assert bounds upfront to elide checks in SIMD loads/stores
-    // Loads from point - 4*stride to point + 3*stride (8 bytes each)
-    // Stores from point - 2*stride to point + stride (need 16-byte slice for storel_epi64)
-    assert!(
-        point >= 4 * stride && point + 3 * stride + 8 <= u_pixels.len(),
-        "normal_v_filter_uv_inner: u_pixels bounds check failed"
-    );
-    assert!(
-        point >= 4 * stride && point + 3 * stride + 8 <= v_pixels.len(),
-        "normal_v_filter_uv_inner: v_pixels bounds check failed"
-    );
+    // Fixed-region approach: assert stride bound + single array conversion per plane,
+    // then all interior accesses are check-free.
+    assert!(stride <= MAX_STRIDE, "stride exceeds MAX_STRIDE");
+    let region_start = point - 4 * stride;
+    let u_region: &mut [u8; V_FILTER_UV_REGION] =
+        <&mut [u8; V_FILTER_UV_REGION]>::try_from(
+            &mut u_pixels[region_start..region_start + V_FILTER_UV_REGION],
+        )
+        .expect("normal_v_filter_uv_inner: u_pixels buffer too small");
+    let v_region: &mut [u8; V_FILTER_UV_REGION] =
+        <&mut [u8; V_FILTER_UV_REGION]>::try_from(
+            &mut v_pixels[region_start..region_start + V_FILTER_UV_REGION],
+        )
+        .expect("normal_v_filter_uv_inner: v_pixels buffer too small");
 
     // Helper to load a row with 8 U + 8 V pixels packed together
-    let load_uv_row = |u_pix: &[u8], v_pix: &[u8], offset: usize| -> __m128i {
-        let u = simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&u_pix[offset..][..8]).unwrap());
-        let v = simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&v_pix[offset..][..8]).unwrap());
+    // Offsets are relative to region start (point - 4*stride)
+    let load_uv_row = |u_reg: &[u8; V_FILTER_UV_REGION],
+                        v_reg: &[u8; V_FILTER_UV_REGION],
+                        offset: usize|
+     -> __m128i {
+        let u = simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&u_reg[offset..][..8]).unwrap());
+        let v = simd_mem_x86::_mm_loadu_si64(<&[u8; 8]>::try_from(&v_reg[offset..][..8]).unwrap());
         _mm_unpacklo_epi64(u, v)
     };
 
-    let p3 = load_uv_row(u_pixels, v_pixels, point - 4 * stride);
-    let p2 = load_uv_row(u_pixels, v_pixels, point - 3 * stride);
-    let mut p1 = load_uv_row(u_pixels, v_pixels, point - 2 * stride);
-    let mut p0 = load_uv_row(u_pixels, v_pixels, point - stride);
-    let mut q0 = load_uv_row(u_pixels, v_pixels, point);
-    let mut q1 = load_uv_row(u_pixels, v_pixels, point + stride);
-    let q2 = load_uv_row(u_pixels, v_pixels, point + 2 * stride);
-    let q3 = load_uv_row(u_pixels, v_pixels, point + 3 * stride);
+    // Offsets relative to region start: point - 4*stride maps to offset 0
+    let off_p3 = 0;
+    let off_p2 = stride;
+    let off_p1 = 2 * stride;
+    let off_p0 = 3 * stride;
+    let off_q0 = 4 * stride;
+    let off_q1 = 5 * stride;
+    let off_q2 = 6 * stride;
+    let off_q3 = 7 * stride;
+
+    let p3 = load_uv_row(u_region, v_region, off_p3);
+    let p2 = load_uv_row(u_region, v_region, off_p2);
+    let mut p1 = load_uv_row(u_region, v_region, off_p1);
+    let mut p0 = load_uv_row(u_region, v_region, off_p0);
+    let mut q0 = load_uv_row(u_region, v_region, off_q0);
+    let mut q1 = load_uv_row(u_region, v_region, off_q1);
+    let q2 = load_uv_row(u_region, v_region, off_q2);
+    let q3 = load_uv_row(u_region, v_region, off_q3);
 
     // Check if filtering is needed
     let mask = needs_filter_normal_16(
@@ -3141,21 +3225,26 @@ pub(crate) fn normal_v_filter_uv_inner(
     do_filter4_16(_token, &mut p1, &mut p0, &mut q0, &mut q1, mask, hev);
 
     // Store results back - low 64 bits to U, high 64 bits to V
-    let store_uv_row = |u_pix: &mut [u8], v_pix: &mut [u8], offset: usize, reg: __m128i| {
-        simd_mem_x86::_mm_storel_epi64(
-            <&mut [u8; 16]>::try_from(&mut u_pix[offset..][..16]).unwrap(),
-            reg,
-        );
-        simd_mem_x86::_mm_storel_epi64(
-            <&mut [u8; 16]>::try_from(&mut v_pix[offset..][..16]).unwrap(),
-            _mm_srli_si128(reg, 8),
-        );
-    };
+    // Offsets relative to region start (point - 4*stride)
+    let store_uv_row =
+        |u_reg: &mut [u8; V_FILTER_UV_REGION],
+         v_reg: &mut [u8; V_FILTER_UV_REGION],
+         offset: usize,
+         reg: __m128i| {
+            simd_mem_x86::_mm_storel_epi64(
+                <&mut [u8; 16]>::try_from(&mut u_reg[offset..][..16]).unwrap(),
+                reg,
+            );
+            simd_mem_x86::_mm_storel_epi64(
+                <&mut [u8; 16]>::try_from(&mut v_reg[offset..][..16]).unwrap(),
+                _mm_srli_si128(reg, 8),
+            );
+        };
 
-    store_uv_row(u_pixels, v_pixels, point - 2 * stride, p1);
-    store_uv_row(u_pixels, v_pixels, point - stride, p0);
-    store_uv_row(u_pixels, v_pixels, point, q0);
-    store_uv_row(u_pixels, v_pixels, point + stride, q1);
+    store_uv_row(u_region, v_region, off_p1, p1);
+    store_uv_row(u_region, v_region, off_p0, p0);
+    store_uv_row(u_region, v_region, off_q0, q0);
+    store_uv_row(u_region, v_region, off_q1, q1);
 }
 
 #[cfg(test)]
@@ -3474,7 +3563,7 @@ mod tests {
         };
 
         let stride = 32;
-        let mut pixels = vec![128u8; stride * 20];
+        let mut pixels = vec![128u8; stride * 20 + H_FILTER_SIMPLE_REGION];
         let mut pixels_scalar = pixels.clone();
 
         // Set up a vertical edge with gradient
@@ -3987,7 +4076,7 @@ mod tests {
         let width = 64;
         let height = 48; // Need 32 rows + padding
         let stride = width;
-        let mut pixels = vec![128u8; stride * height];
+        let mut pixels = vec![128u8; stride * height + H_FILTER_NORMAL_REGION];
         let mut pixels_16 = pixels.clone();
 
         // Set up gradient data for all 32 rows around the vertical edge at x=16
@@ -4061,7 +4150,7 @@ mod tests {
         let width = 64;
         let height = 48;
         let stride = width;
-        let mut pixels = vec![128u8; stride * height];
+        let mut pixels = vec![128u8; stride * height + H_FILTER_NORMAL_REGION];
         let mut pixels_16 = pixels.clone();
 
         // Set up gradient data for all 32 rows around the vertical edge at x=16

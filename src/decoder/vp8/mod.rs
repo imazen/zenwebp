@@ -72,8 +72,8 @@ const MAX_FILTER_STRIDE: usize = 16384;
 
 /// Padding added to pixel buffers for bounds-check-free loop filtering.
 /// Allows fixed-size region extraction without per-access bounds checks.
-/// Size: 7 * max_stride + 16 bytes (covers 8 rows for normal filter: p3-p0, q0-q3).
-const FILTER_PADDING: usize = 7 * MAX_FILTER_STRIDE + 16;
+/// Size: 15 * max_stride + 16 bytes (covers horizontal filter fused 3-edge: 16 rows × 16 cols).
+const FILTER_PADDING: usize = 15 * MAX_FILTER_STRIDE + 16;
 
 // ============================================================================
 // Diagnostic Types for I4 Encoding Efficiency Analysis
