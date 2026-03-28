@@ -151,45 +151,26 @@ mod x86_fused {
 
     /// Process 32 Y pixels (16 chroma pairs) → 96 bytes RGB.
     /// All work happens in-register: upsample chroma, convert YUV→RGB, interleave, store.
-    #[allow(clippy::too_many_arguments)]
+    /// Fixed-size array inputs eliminate all interior bounds checks.
     #[rite(v3, import_intrinsics)]
     fn process_32_pixels(
-        y_row: &[u8],
-        y_offset: usize,
-        u_row_1: &[u8],
-        u_row_2: &[u8],
-        v_row_1: &[u8],
-        v_row_2: &[u8],
-        uv_offset: usize,
-        rgb: &mut [u8],
-        rgb_offset: usize,
+        y: &[u8; 32],
+        u1: &[u8; 17],
+        u2: &[u8; 17],
+        v1: &[u8; 17],
+        v2: &[u8; 17],
+        rgb: &mut [u8; 96],
     ) {
-        // Load 16+1 chroma samples for overlapping window
-        let u_a = simd_mem::_mm_loadu_si128(
-            <&[u8; 16]>::try_from(&u_row_1[uv_offset..uv_offset + 16]).unwrap(),
-        );
-        let u_b = simd_mem::_mm_loadu_si128(
-            <&[u8; 16]>::try_from(&u_row_1[uv_offset + 1..uv_offset + 17]).unwrap(),
-        );
-        let u_c = simd_mem::_mm_loadu_si128(
-            <&[u8; 16]>::try_from(&u_row_2[uv_offset..uv_offset + 16]).unwrap(),
-        );
-        let u_d = simd_mem::_mm_loadu_si128(
-            <&[u8; 16]>::try_from(&u_row_2[uv_offset + 1..uv_offset + 17]).unwrap(),
-        );
+        // Load 16+1 chroma samples — compiler proves these are always valid on [u8; 17]
+        let u_a = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&u1[0..16]).unwrap());
+        let u_b = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&u1[1..17]).unwrap());
+        let u_c = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&u2[0..16]).unwrap());
+        let u_d = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&u2[1..17]).unwrap());
 
-        let v_a = simd_mem::_mm_loadu_si128(
-            <&[u8; 16]>::try_from(&v_row_1[uv_offset..uv_offset + 16]).unwrap(),
-        );
-        let v_b = simd_mem::_mm_loadu_si128(
-            <&[u8; 16]>::try_from(&v_row_1[uv_offset + 1..uv_offset + 17]).unwrap(),
-        );
-        let v_c = simd_mem::_mm_loadu_si128(
-            <&[u8; 16]>::try_from(&v_row_2[uv_offset..uv_offset + 16]).unwrap(),
-        );
-        let v_d = simd_mem::_mm_loadu_si128(
-            <&[u8; 16]>::try_from(&v_row_2[uv_offset + 1..uv_offset + 17]).unwrap(),
-        );
+        let v_a = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&v1[0..16]).unwrap());
+        let v_b = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&v1[1..17]).unwrap());
+        let v_c = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&v2[0..16]).unwrap());
+        let v_d = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&v2[1..17]).unwrap());
 
         // Upsample: 16 chroma → 32 luma-aligned values
         let (u_diag1, u_diag2) = fancy_upsample_16(u_a, u_b, u_c, u_d);
@@ -200,13 +181,9 @@ mod x86_fused {
         let v_lo = _mm_unpacklo_epi8(v_diag1, v_diag2);
         let v_hi = _mm_unpackhi_epi8(v_diag1, v_diag2);
 
-        // Load 32 Y values
-        let y_0 = simd_mem::_mm_loadu_si128(
-            <&[u8; 16]>::try_from(&y_row[y_offset..y_offset + 16]).unwrap(),
-        );
-        let y_1 = simd_mem::_mm_loadu_si128(
-            <&[u8; 16]>::try_from(&y_row[y_offset + 16..y_offset + 32]).unwrap(),
-        );
+        // Load 32 Y values — compiler proves valid on [u8; 32]
+        let y_0 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&y[0..16]).unwrap());
+        let y_1 = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&y[16..32]).unwrap());
 
         let zero = _mm_setzero_si128();
 
@@ -245,75 +222,58 @@ mod x86_fused {
         // Interleave RGB
         let (out0, out1, out2, out3, out4, out5) = planar_to_24b(r_0, r_1, g_0, g_1, b_0, b_1);
 
-        // Store 96 bytes
-        let o = rgb_offset;
-        simd_mem::_mm_storeu_si128(
-            <&mut [u8; 16]>::try_from(&mut rgb[o..o + 16]).unwrap(),
-            out0,
-        );
-        simd_mem::_mm_storeu_si128(
-            <&mut [u8; 16]>::try_from(&mut rgb[o + 16..o + 32]).unwrap(),
-            out1,
-        );
-        simd_mem::_mm_storeu_si128(
-            <&mut [u8; 16]>::try_from(&mut rgb[o + 32..o + 48]).unwrap(),
-            out2,
-        );
-        simd_mem::_mm_storeu_si128(
-            <&mut [u8; 16]>::try_from(&mut rgb[o + 48..o + 64]).unwrap(),
-            out3,
-        );
-        simd_mem::_mm_storeu_si128(
-            <&mut [u8; 16]>::try_from(&mut rgb[o + 64..o + 80]).unwrap(),
-            out4,
-        );
-        simd_mem::_mm_storeu_si128(
-            <&mut [u8; 16]>::try_from(&mut rgb[o + 80..o + 96]).unwrap(),
-            out5,
-        );
+        // Store 96 bytes — try_from on [u8; 96] sub-slices, compiler proves valid
+        let (s0, rest) = rgb.split_at_mut(16);
+        let (s1, rest) = rest.split_at_mut(16);
+        let (s2, rest) = rest.split_at_mut(16);
+        let (s3, rest) = rest.split_at_mut(16);
+        let (s4, s5) = rest.split_at_mut(16);
+        simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(s0).unwrap(), out0);
+        simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(s1).unwrap(), out1);
+        simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(s2).unwrap(), out2);
+        simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(s3).unwrap(), out3);
+        simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(s4).unwrap(), out4);
+        simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(s5).unwrap(), out5);
     }
 
     /// Process 16 Y pixels (8 chroma pairs) → 48 bytes RGB.
-    #[allow(clippy::too_many_arguments)]
+    /// Fixed-size array inputs eliminate all interior bounds checks.
     #[rite(v3, import_intrinsics)]
     fn process_16_pixels(
-        y_row: &[u8],
-        y_offset: usize,
-        u_row_1: &[u8],
-        u_row_2: &[u8],
-        v_row_1: &[u8],
-        v_row_2: &[u8],
-        uv_offset: usize,
-        rgb: &mut [u8],
-        rgb_offset: usize,
+        y: &[u8; 16],
+        u1: &[u8; 9],
+        u2: &[u8; 9],
+        v1: &[u8; 9],
+        v2: &[u8; 9],
+        rgb: &mut [u8; 48],
     ) {
-        // Load 8 chroma samples from each row (need 9 for overlapping window)
-        macro_rules! load_8_from_slice {
-            ($slice:expr, $off:expr) => {{
+        // Load 8 chroma samples from fixed-size arrays — no bounds checks
+        macro_rules! load_8_from_arr {
+            ($arr:expr, $off:expr) => {{
                 let bytes: [u8; 8] = [
-                    $slice[$off],
-                    $slice[$off + 1],
-                    $slice[$off + 2],
-                    $slice[$off + 3],
-                    $slice[$off + 4],
-                    $slice[$off + 5],
-                    $slice[$off + 6],
-                    $slice[$off + 7],
+                    $arr[$off],
+                    $arr[$off + 1],
+                    $arr[$off + 2],
+                    $arr[$off + 3],
+                    $arr[$off + 4],
+                    $arr[$off + 5],
+                    $arr[$off + 6],
+                    $arr[$off + 7],
                 ];
                 let val = i64::from_le_bytes(bytes);
                 _mm_cvtsi64_si128(val)
             }};
         }
 
-        let u_a = load_8_from_slice!(u_row_1, uv_offset);
-        let u_b = load_8_from_slice!(u_row_1, uv_offset + 1);
-        let u_c = load_8_from_slice!(u_row_2, uv_offset);
-        let u_d = load_8_from_slice!(u_row_2, uv_offset + 1);
+        let u_a = load_8_from_arr!(u1, 0);
+        let u_b = load_8_from_arr!(u1, 1);
+        let u_c = load_8_from_arr!(u2, 0);
+        let u_d = load_8_from_arr!(u2, 1);
 
-        let v_a = load_8_from_slice!(v_row_1, uv_offset);
-        let v_b = load_8_from_slice!(v_row_1, uv_offset + 1);
-        let v_c = load_8_from_slice!(v_row_2, uv_offset);
-        let v_d = load_8_from_slice!(v_row_2, uv_offset + 1);
+        let v_a = load_8_from_arr!(v1, 0);
+        let v_b = load_8_from_arr!(v1, 1);
+        let v_c = load_8_from_arr!(v2, 0);
+        let v_d = load_8_from_arr!(v2, 1);
 
         // Upsample
         let (u_diag1, u_diag2) = fancy_upsample_16(u_a, u_b, u_c, u_d);
@@ -322,10 +282,8 @@ mod x86_fused {
         let u_interleaved = _mm_unpacklo_epi8(u_diag1, u_diag2);
         let v_interleaved = _mm_unpacklo_epi8(v_diag1, v_diag2);
 
-        // Load 16 Y
-        let y_vec = simd_mem::_mm_loadu_si128(
-            <&[u8; 16]>::try_from(&y_row[y_offset..y_offset + 16]).unwrap(),
-        );
+        // Load 16 Y — no bounds check on [u8; 16]
+        let y_vec = simd_mem::_mm_loadu_si128(y);
         let zero = _mm_setzero_si128();
 
         // Process 2 groups of 8
@@ -352,25 +310,19 @@ mod x86_fused {
             _mm_setzero_si128(),
         );
 
-        let o = rgb_offset;
-        simd_mem::_mm_storeu_si128(
-            <&mut [u8; 16]>::try_from(&mut rgb[o..o + 16]).unwrap(),
-            out0,
-        );
-        simd_mem::_mm_storeu_si128(
-            <&mut [u8; 16]>::try_from(&mut rgb[o + 16..o + 32]).unwrap(),
-            out1,
-        );
-        simd_mem::_mm_storeu_si128(
-            <&mut [u8; 16]>::try_from(&mut rgb[o + 32..o + 48]).unwrap(),
-            out2,
-        );
+        // Store 48 bytes — split_at_mut on [u8; 48], compiler proves valid
+        let (s0, rest) = rgb.split_at_mut(16);
+        let (s1, s2) = rest.split_at_mut(16);
+        simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(s0).unwrap(), out0);
+        simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(s1).unwrap(), out1);
+        simd_mem::_mm_storeu_si128(<&mut [u8; 16]>::try_from(s2).unwrap(), out2);
     }
 
     // ---- Single #[arcane] entry point for the entire row ----
 
     /// Fused fancy-upsample + YUV→RGB for one row, with two chroma rows (interior rows).
     /// Single target_feature boundary for the entire row.
+    /// Pre-validates all row lengths upfront, then passes fixed-size arrays to inner functions.
     #[arcane]
     pub(crate) fn fused_row_2uv_x86(
         _token: X64V3Token,
@@ -382,6 +334,7 @@ mod x86_fused {
         v_row_2: &[u8],
     ) {
         let width = y_row.len();
+        let chroma_width = u_row_1.len();
         debug_assert!(rgb.len() >= width * 3);
 
         // Handle first pixel (edge: no left chroma neighbor)
@@ -397,27 +350,38 @@ mod x86_fused {
         let mut rgb_offset: usize = 3; // BPP=3
 
         // Process 32 Y pixels (16 chroma pairs) per iteration
-        while y_offset + 32 <= width && uv_offset + 17 <= u_row_1.len() {
-            process_32_pixels(
-                y_row, y_offset, u_row_1, u_row_2, v_row_1, v_row_2, uv_offset, rgb, rgb_offset,
-            );
+        while y_offset + 32 <= width && uv_offset + 17 <= chroma_width {
+            // Convert to fixed-size arrays at the boundary — one check per iteration
+            let y_arr: &[u8; 32] = y_row[y_offset..y_offset + 32].try_into().unwrap();
+            let u1_arr: &[u8; 17] = u_row_1[uv_offset..uv_offset + 17].try_into().unwrap();
+            let u2_arr: &[u8; 17] = u_row_2[uv_offset..uv_offset + 17].try_into().unwrap();
+            let v1_arr: &[u8; 17] = v_row_1[uv_offset..uv_offset + 17].try_into().unwrap();
+            let v2_arr: &[u8; 17] = v_row_2[uv_offset..uv_offset + 17].try_into().unwrap();
+            let rgb_arr: &mut [u8; 96] =
+                (&mut rgb[rgb_offset..rgb_offset + 96]).try_into().unwrap();
+            process_32_pixels(y_arr, u1_arr, u2_arr, v1_arr, v2_arr, rgb_arr);
             y_offset += 32;
             uv_offset += 16;
             rgb_offset += 96;
         }
 
         // Process 16 Y pixels (8 chroma pairs)
-        while y_offset + 16 <= width && uv_offset + 9 <= u_row_1.len() {
-            process_16_pixels(
-                y_row, y_offset, u_row_1, u_row_2, v_row_1, v_row_2, uv_offset, rgb, rgb_offset,
-            );
+        while y_offset + 16 <= width && uv_offset + 9 <= chroma_width {
+            let y_arr: &[u8; 16] = y_row[y_offset..y_offset + 16].try_into().unwrap();
+            let u1_arr: &[u8; 9] = u_row_1[uv_offset..uv_offset + 9].try_into().unwrap();
+            let u2_arr: &[u8; 9] = u_row_2[uv_offset..uv_offset + 9].try_into().unwrap();
+            let v1_arr: &[u8; 9] = v_row_1[uv_offset..uv_offset + 9].try_into().unwrap();
+            let v2_arr: &[u8; 9] = v_row_2[uv_offset..uv_offset + 9].try_into().unwrap();
+            let rgb_arr: &mut [u8; 48] =
+                (&mut rgb[rgb_offset..rgb_offset + 48]).try_into().unwrap();
+            process_16_pixels(y_arr, u1_arr, u2_arr, v1_arr, v2_arr, rgb_arr);
             y_offset += 16;
             uv_offset += 8;
             rgb_offset += 48;
         }
 
         // Scalar remainder: process pairs
-        while y_offset + 2 <= width && uv_offset + 2 <= u_row_1.len() {
+        while y_offset + 2 <= width && uv_offset + 2 <= chroma_width {
             {
                 let y_value = y_row[y_offset];
                 let u_value = get_fancy_chroma_value(
@@ -631,6 +595,7 @@ mod neon_fused {
     }
 
     /// Single #[arcane] entry: process entire row with 2 UV rows (interior).
+    /// Pre-validates row lengths, then passes fixed-size arrays to inner functions.
     #[arcane]
     pub(crate) fn fused_row_2uv_neon(
         _token: NeonToken,
@@ -642,6 +607,7 @@ mod neon_fused {
         v_row_2: &[u8],
     ) {
         let width = y_row.len();
+        let chroma_width = u_row_1.len();
         debug_assert!(rgb.len() >= width * 3);
 
         // Handle first pixel (edge)
@@ -657,81 +623,57 @@ mod neon_fused {
         let mut rgb_offset: usize = 3;
 
         // 32 Y pixels (16 chroma pairs) per iteration
-        while y_offset + 32 <= width && uv_offset + 17 <= u_row_1.len() {
-            let u_a0 = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&u_row_1[uv_offset..uv_offset + 8]).unwrap(),
-            );
-            let u_b0 = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&u_row_1[uv_offset + 1..uv_offset + 9]).unwrap(),
-            );
-            let u_c0 = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&u_row_2[uv_offset..uv_offset + 8]).unwrap(),
-            );
-            let u_d0 = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&u_row_2[uv_offset + 1..uv_offset + 9]).unwrap(),
-            );
-            let u_a1 = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&u_row_1[uv_offset + 8..uv_offset + 16]).unwrap(),
-            );
-            let u_b1 = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&u_row_1[uv_offset + 9..uv_offset + 17]).unwrap(),
-            );
-            let u_c1 = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&u_row_2[uv_offset + 8..uv_offset + 16]).unwrap(),
-            );
-            let u_d1 = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&u_row_2[uv_offset + 9..uv_offset + 17]).unwrap(),
-            );
+        while y_offset + 32 <= width && uv_offset + 17 <= chroma_width {
+            // Convert to fixed-size arrays — one check per array per iteration
+            let u1: &[u8; 17] = u_row_1[uv_offset..uv_offset + 17].try_into().unwrap();
+            let u2: &[u8; 17] = u_row_2[uv_offset..uv_offset + 17].try_into().unwrap();
+            let v1: &[u8; 17] = v_row_1[uv_offset..uv_offset + 17].try_into().unwrap();
+            let v2: &[u8; 17] = v_row_2[uv_offset..uv_offset + 17].try_into().unwrap();
 
-            let v_a0 = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&v_row_1[uv_offset..uv_offset + 8]).unwrap(),
-            );
-            let v_b0 = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&v_row_1[uv_offset + 1..uv_offset + 9]).unwrap(),
-            );
-            let v_c0 = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&v_row_2[uv_offset..uv_offset + 8]).unwrap(),
-            );
-            let v_d0 = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&v_row_2[uv_offset + 1..uv_offset + 9]).unwrap(),
-            );
-            let v_a1 = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&v_row_1[uv_offset + 8..uv_offset + 16]).unwrap(),
-            );
-            let v_b1 = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&v_row_1[uv_offset + 9..uv_offset + 17]).unwrap(),
-            );
-            let v_c1 = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&v_row_2[uv_offset + 8..uv_offset + 16]).unwrap(),
-            );
-            let v_d1 = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&v_row_2[uv_offset + 9..uv_offset + 17]).unwrap(),
-            );
+            // All sub-slice try_from below operate on [u8; 17], compiler proves valid
+            let u_a0 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&u1[0..8]).unwrap());
+            let u_b0 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&u1[1..9]).unwrap());
+            let u_c0 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&u2[0..8]).unwrap());
+            let u_d0 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&u2[1..9]).unwrap());
+            let u_a1 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&u1[8..16]).unwrap());
+            let u_b1 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&u1[9..17]).unwrap());
+            let u_c1 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&u2[8..16]).unwrap());
+            let u_d1 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&u2[9..17]).unwrap());
+
+            let v_a0 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&v1[0..8]).unwrap());
+            let v_b0 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&v1[1..9]).unwrap());
+            let v_c0 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&v2[0..8]).unwrap());
+            let v_d0 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&v2[1..9]).unwrap());
+            let v_a1 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&v1[8..16]).unwrap());
+            let v_b1 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&v1[9..17]).unwrap());
+            let v_c1 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&v2[8..16]).unwrap());
+            let v_d1 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&v2[9..17]).unwrap());
 
             let u_up0 = upsample_16pixels_neon(_token, u_a0, u_b0, u_c0, u_d0);
             let u_up1 = upsample_16pixels_neon(_token, u_a1, u_b1, u_c1, u_d1);
             let v_up0 = upsample_16pixels_neon(_token, v_a0, v_b0, v_c0, v_d0);
             let v_up1 = upsample_16pixels_neon(_token, v_a1, v_b1, v_c1, v_d1);
 
-            let y0 =
-                simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&y_row[y_offset..y_offset + 16]).unwrap());
-            let y1 = simd_mem::vld1q_u8(
-                <&[u8; 16]>::try_from(&y_row[y_offset + 16..y_offset + 32]).unwrap(),
-            );
+            let y_arr: &[u8; 32] = y_row[y_offset..y_offset + 32].try_into().unwrap();
+            let y0 = simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&y_arr[0..16]).unwrap());
+            let y1 = simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&y_arr[16..32]).unwrap());
 
+            let rgb_arr: &mut [u8; 96] =
+                (&mut rgb[rgb_offset..rgb_offset + 96]).try_into().unwrap();
+            let (rgb_0, rgb_1) = rgb_arr.split_at_mut(48);
             convert_and_store_rgb16_neon(
                 _token,
                 y0,
                 u_up0,
                 v_up0,
-                <&mut [u8; 48]>::try_from(&mut rgb[rgb_offset..rgb_offset + 48]).unwrap(),
+                <&mut [u8; 48]>::try_from(rgb_0).unwrap(),
             );
             convert_and_store_rgb16_neon(
                 _token,
                 y1,
                 u_up1,
                 v_up1,
-                <&mut [u8; 48]>::try_from(&mut rgb[rgb_offset + 48..rgb_offset + 96]).unwrap(),
+                <&mut [u8; 48]>::try_from(rgb_1).unwrap(),
             );
 
             y_offset += 32;
@@ -740,37 +682,26 @@ mod neon_fused {
         }
 
         // 16 Y pixels (8 chroma pairs)
-        while y_offset + 16 <= width && uv_offset + 9 <= u_row_1.len() {
-            let u_a = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&u_row_1[uv_offset..uv_offset + 8]).unwrap(),
-            );
-            let u_b = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&u_row_1[uv_offset + 1..uv_offset + 9]).unwrap(),
-            );
-            let u_c = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&u_row_2[uv_offset..uv_offset + 8]).unwrap(),
-            );
-            let u_d = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&u_row_2[uv_offset + 1..uv_offset + 9]).unwrap(),
-            );
-            let v_a = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&v_row_1[uv_offset..uv_offset + 8]).unwrap(),
-            );
-            let v_b = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&v_row_1[uv_offset + 1..uv_offset + 9]).unwrap(),
-            );
-            let v_c = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&v_row_2[uv_offset..uv_offset + 8]).unwrap(),
-            );
-            let v_d = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(&v_row_2[uv_offset + 1..uv_offset + 9]).unwrap(),
-            );
+        while y_offset + 16 <= width && uv_offset + 9 <= chroma_width {
+            let u1: &[u8; 9] = u_row_1[uv_offset..uv_offset + 9].try_into().unwrap();
+            let u2: &[u8; 9] = u_row_2[uv_offset..uv_offset + 9].try_into().unwrap();
+            let v1: &[u8; 9] = v_row_1[uv_offset..uv_offset + 9].try_into().unwrap();
+            let v2: &[u8; 9] = v_row_2[uv_offset..uv_offset + 9].try_into().unwrap();
+
+            let u_a = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&u1[0..8]).unwrap());
+            let u_b = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&u1[1..9]).unwrap());
+            let u_c = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&u2[0..8]).unwrap());
+            let u_d = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&u2[1..9]).unwrap());
+            let v_a = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&v1[0..8]).unwrap());
+            let v_b = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&v1[1..9]).unwrap());
+            let v_c = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&v2[0..8]).unwrap());
+            let v_d = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&v2[1..9]).unwrap());
 
             let u_up = upsample_16pixels_neon(_token, u_a, u_b, u_c, u_d);
             let v_up = upsample_16pixels_neon(_token, v_a, v_b, v_c, v_d);
 
-            let y_vec =
-                simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&y_row[y_offset..y_offset + 16]).unwrap());
+            let y_arr: &[u8; 16] = y_row[y_offset..y_offset + 16].try_into().unwrap();
+            let y_vec = simd_mem::vld1q_u8(y_arr);
 
             convert_and_store_rgb16_neon(
                 _token,
@@ -786,7 +717,7 @@ mod neon_fused {
         }
 
         // Scalar remainder
-        while y_offset + 2 <= width && uv_offset + 2 <= u_row_1.len() {
+        while y_offset + 2 <= width && uv_offset + 2 <= chroma_width {
             {
                 let y_value = y_row[y_offset];
                 let u_value = get_fancy_chroma_value(
@@ -1111,108 +1042,73 @@ mod wasm_fused {
             }
         }
 
-        // Main SIMD loops — same structure as x86, but using wasm128 intrinsics
-        // For wasm, delegate to the existing per-chunk approach but inside single #[arcane]
-        // The 32-pixel and 16-pixel loops inline the full upsample+convert pipeline
+        // Main SIMD loops — pre-validate into fixed-size arrays to eliminate interior checks
+        let chroma_width = u_row_1.len();
 
-        while y_offset + 32 <= width && uv_offset + 17 <= u_row_1.len() {
-            let u_a0 =
-                load_u8x8_low(<&[u8; 8]>::try_from(&u_row_1[uv_offset..uv_offset + 8]).unwrap());
-            let u_b0 = load_u8x8_low(
-                <&[u8; 8]>::try_from(&u_row_1[uv_offset + 1..uv_offset + 9]).unwrap(),
-            );
-            let u_c0 =
-                load_u8x8_low(<&[u8; 8]>::try_from(&u_row_2[uv_offset..uv_offset + 8]).unwrap());
-            let u_d0 = load_u8x8_low(
-                <&[u8; 8]>::try_from(&u_row_2[uv_offset + 1..uv_offset + 9]).unwrap(),
-            );
-            let u_a1 = load_u8x8_low(
-                <&[u8; 8]>::try_from(&u_row_1[uv_offset + 8..uv_offset + 16]).unwrap(),
-            );
-            let u_b1 = load_u8x8_low(
-                <&[u8; 8]>::try_from(&u_row_1[uv_offset + 9..uv_offset + 17]).unwrap(),
-            );
-            let u_c1 = load_u8x8_low(
-                <&[u8; 8]>::try_from(&u_row_2[uv_offset + 8..uv_offset + 16]).unwrap(),
-            );
-            let u_d1 = load_u8x8_low(
-                <&[u8; 8]>::try_from(&u_row_2[uv_offset + 9..uv_offset + 17]).unwrap(),
-            );
-            let v_a0 =
-                load_u8x8_low(<&[u8; 8]>::try_from(&v_row_1[uv_offset..uv_offset + 8]).unwrap());
-            let v_b0 = load_u8x8_low(
-                <&[u8; 8]>::try_from(&v_row_1[uv_offset + 1..uv_offset + 9]).unwrap(),
-            );
-            let v_c0 =
-                load_u8x8_low(<&[u8; 8]>::try_from(&v_row_2[uv_offset..uv_offset + 8]).unwrap());
-            let v_d0 = load_u8x8_low(
-                <&[u8; 8]>::try_from(&v_row_2[uv_offset + 1..uv_offset + 9]).unwrap(),
-            );
-            let v_a1 = load_u8x8_low(
-                <&[u8; 8]>::try_from(&v_row_1[uv_offset + 8..uv_offset + 16]).unwrap(),
-            );
-            let v_b1 = load_u8x8_low(
-                <&[u8; 8]>::try_from(&v_row_1[uv_offset + 9..uv_offset + 17]).unwrap(),
-            );
-            let v_c1 = load_u8x8_low(
-                <&[u8; 8]>::try_from(&v_row_2[uv_offset + 8..uv_offset + 16]).unwrap(),
-            );
-            let v_d1 = load_u8x8_low(
-                <&[u8; 8]>::try_from(&v_row_2[uv_offset + 9..uv_offset + 17]).unwrap(),
-            );
+        while y_offset + 32 <= width && uv_offset + 17 <= chroma_width {
+            // Convert to fixed-size arrays — compiler proves sub-slice accesses valid
+            let u1: &[u8; 17] = u_row_1[uv_offset..uv_offset + 17].try_into().unwrap();
+            let u2: &[u8; 17] = u_row_2[uv_offset..uv_offset + 17].try_into().unwrap();
+            let v1: &[u8; 17] = v_row_1[uv_offset..uv_offset + 17].try_into().unwrap();
+            let v2: &[u8; 17] = v_row_2[uv_offset..uv_offset + 17].try_into().unwrap();
+
+            let u_a0 = load_u8x8_low(<&[u8; 8]>::try_from(&u1[0..8]).unwrap());
+            let u_b0 = load_u8x8_low(<&[u8; 8]>::try_from(&u1[1..9]).unwrap());
+            let u_c0 = load_u8x8_low(<&[u8; 8]>::try_from(&u2[0..8]).unwrap());
+            let u_d0 = load_u8x8_low(<&[u8; 8]>::try_from(&u2[1..9]).unwrap());
+            let u_a1 = load_u8x8_low(<&[u8; 8]>::try_from(&u1[8..16]).unwrap());
+            let u_b1 = load_u8x8_low(<&[u8; 8]>::try_from(&u1[9..17]).unwrap());
+            let u_c1 = load_u8x8_low(<&[u8; 8]>::try_from(&u2[8..16]).unwrap());
+            let u_d1 = load_u8x8_low(<&[u8; 8]>::try_from(&u2[9..17]).unwrap());
+            let v_a0 = load_u8x8_low(<&[u8; 8]>::try_from(&v1[0..8]).unwrap());
+            let v_b0 = load_u8x8_low(<&[u8; 8]>::try_from(&v1[1..9]).unwrap());
+            let v_c0 = load_u8x8_low(<&[u8; 8]>::try_from(&v2[0..8]).unwrap());
+            let v_d0 = load_u8x8_low(<&[u8; 8]>::try_from(&v2[1..9]).unwrap());
+            let v_a1 = load_u8x8_low(<&[u8; 8]>::try_from(&v1[8..16]).unwrap());
+            let v_b1 = load_u8x8_low(<&[u8; 8]>::try_from(&v1[9..17]).unwrap());
+            let v_c1 = load_u8x8_low(<&[u8; 8]>::try_from(&v2[8..16]).unwrap());
+            let v_d1 = load_u8x8_low(<&[u8; 8]>::try_from(&v2[9..17]).unwrap());
 
             let u_up0 = upsample_16pixels(u_a0, u_b0, u_c0, u_d0);
             let u_up1 = upsample_16pixels(u_a1, u_b1, u_c1, u_d1);
             let v_up0 = upsample_16pixels(v_a0, v_b0, v_c0, v_d0);
             let v_up1 = upsample_16pixels(v_a1, v_b1, v_c1, v_d1);
 
-            let y0 = load_u8x16(<&[u8; 16]>::try_from(&y_row[y_offset..y_offset + 16]).unwrap());
-            let y1 =
-                load_u8x16(<&[u8; 16]>::try_from(&y_row[y_offset + 16..y_offset + 32]).unwrap());
+            let y_arr: &[u8; 32] = y_row[y_offset..y_offset + 32].try_into().unwrap();
+            let y0 = load_u8x16(<&[u8; 16]>::try_from(&y_arr[0..16]).unwrap());
+            let y1 = load_u8x16(<&[u8; 16]>::try_from(&y_arr[16..32]).unwrap());
 
-            convert_and_store_rgb16(
-                y0,
-                u_up0,
-                v_up0,
-                <&mut [u8; 48]>::try_from(&mut rgb[rgb_offset..rgb_offset + 48]).unwrap(),
-            );
-            convert_and_store_rgb16(
-                y1,
-                u_up1,
-                v_up1,
-                <&mut [u8; 48]>::try_from(&mut rgb[rgb_offset + 48..rgb_offset + 96]).unwrap(),
-            );
+            let rgb_arr: &mut [u8; 96] =
+                (&mut rgb[rgb_offset..rgb_offset + 96]).try_into().unwrap();
+            let (rgb_0, rgb_1) = rgb_arr.split_at_mut(48);
+            convert_and_store_rgb16(y0, u_up0, v_up0, <&mut [u8; 48]>::try_from(rgb_0).unwrap());
+            convert_and_store_rgb16(y1, u_up1, v_up1, <&mut [u8; 48]>::try_from(rgb_1).unwrap());
 
             y_offset += 32;
             uv_offset += 16;
             rgb_offset += 96;
         }
 
-        while y_offset + 16 <= width && uv_offset + 9 <= u_row_1.len() {
-            let u_a =
-                load_u8x8_low(<&[u8; 8]>::try_from(&u_row_1[uv_offset..uv_offset + 8]).unwrap());
-            let u_b = load_u8x8_low(
-                <&[u8; 8]>::try_from(&u_row_1[uv_offset + 1..uv_offset + 9]).unwrap(),
-            );
-            let u_c =
-                load_u8x8_low(<&[u8; 8]>::try_from(&u_row_2[uv_offset..uv_offset + 8]).unwrap());
-            let u_d = load_u8x8_low(
-                <&[u8; 8]>::try_from(&u_row_2[uv_offset + 1..uv_offset + 9]).unwrap(),
-            );
-            let v_a =
-                load_u8x8_low(<&[u8; 8]>::try_from(&v_row_1[uv_offset..uv_offset + 8]).unwrap());
-            let v_b = load_u8x8_low(
-                <&[u8; 8]>::try_from(&v_row_1[uv_offset + 1..uv_offset + 9]).unwrap(),
-            );
-            let v_c =
-                load_u8x8_low(<&[u8; 8]>::try_from(&v_row_2[uv_offset..uv_offset + 8]).unwrap());
-            let v_d = load_u8x8_low(
-                <&[u8; 8]>::try_from(&v_row_2[uv_offset + 1..uv_offset + 9]).unwrap(),
-            );
+        while y_offset + 16 <= width && uv_offset + 9 <= chroma_width {
+            let u1: &[u8; 9] = u_row_1[uv_offset..uv_offset + 9].try_into().unwrap();
+            let u2: &[u8; 9] = u_row_2[uv_offset..uv_offset + 9].try_into().unwrap();
+            let v1: &[u8; 9] = v_row_1[uv_offset..uv_offset + 9].try_into().unwrap();
+            let v2: &[u8; 9] = v_row_2[uv_offset..uv_offset + 9].try_into().unwrap();
+
+            let u_a = load_u8x8_low(<&[u8; 8]>::try_from(&u1[0..8]).unwrap());
+            let u_b = load_u8x8_low(<&[u8; 8]>::try_from(&u1[1..9]).unwrap());
+            let u_c = load_u8x8_low(<&[u8; 8]>::try_from(&u2[0..8]).unwrap());
+            let u_d = load_u8x8_low(<&[u8; 8]>::try_from(&u2[1..9]).unwrap());
+            let v_a = load_u8x8_low(<&[u8; 8]>::try_from(&v1[0..8]).unwrap());
+            let v_b = load_u8x8_low(<&[u8; 8]>::try_from(&v1[1..9]).unwrap());
+            let v_c = load_u8x8_low(<&[u8; 8]>::try_from(&v2[0..8]).unwrap());
+            let v_d = load_u8x8_low(<&[u8; 8]>::try_from(&v2[1..9]).unwrap());
 
             let u_up = upsample_16pixels(u_a, u_b, u_c, u_d);
             let v_up = upsample_16pixels(v_a, v_b, v_c, v_d);
-            let y_vec = load_u8x16(<&[u8; 16]>::try_from(&y_row[y_offset..y_offset + 16]).unwrap());
+
+            let y_arr: &[u8; 16] = y_row[y_offset..y_offset + 16].try_into().unwrap();
+            let y_vec = load_u8x16(y_arr);
 
             convert_and_store_rgb16(
                 y_vec,
@@ -1227,7 +1123,7 @@ mod wasm_fused {
         }
 
         // Scalar remainder
-        while y_offset + 2 <= width && uv_offset + 2 <= u_row_1.len() {
+        while y_offset + 2 <= width && uv_offset + 2 <= chroma_width {
             {
                 let y_value = y_row[y_offset];
                 let u_value = get_fancy_chroma_value(
