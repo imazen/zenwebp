@@ -544,6 +544,7 @@ impl<'a> DecodeRequest<'a> {
 
     fn decode_v2_internal(self, bpp: usize) -> DecodeResult<(Vec<u8>, u16, u16)> {
         let data = self.data;
+        let dither_strength = self.config.dithering_strength;
         if data.len() < 20 {
             return Err(whereat::at!(DecodeError::NotEnoughInitData));
         }
@@ -571,7 +572,7 @@ impl<'a> DecodeRequest<'a> {
                 let vp8_end = (vp8_start + chunk_size).min(data.len());
                 let vp8_data = &data[vp8_start..vp8_end];
 
-                let mut ctx = DecoderContext::new();
+                let mut ctx = DecoderContext::new().with_dithering_strength(dither_strength);
                 let mut output = Vec::new();
                 let (w, h) = ctx
                     .decode_to_rgb(vp8_data, &mut output, bpp)
@@ -605,7 +606,7 @@ impl<'a> DecodeRequest<'a> {
                     )));
                 }
 
-                let mut ctx = DecoderContext::new();
+                let mut ctx = DecoderContext::new().with_dithering_strength(dither_strength);
                 let mut output = Vec::new();
 
                 // Decode lossy bitstream, requesting RGBA if alpha is present
@@ -1195,6 +1196,9 @@ impl<'a> WebPDecoder<'a> {
 
             // Use v2 decoder for lossy VP8 frames
             let bpp = if self.has_alpha() { 4 } else { 3 };
+            self.animation
+                .v2_ctx
+                .set_dithering_strength(self.webp_decode_options.dithering_strength);
             let mut output = Vec::new();
             let (w, h) = self
                 .animation
@@ -1283,6 +1287,11 @@ impl<'a> WebPDecoder<'a> {
         let frame_info = self.r.read_u8()?;
         let use_alpha_blending = frame_info & 0b00000010 == 0;
         let dispose = frame_info & 0b00000001 != 0;
+
+        // Propagate dithering strength to the reusable v2 context.
+        self.animation
+            .v2_ctx
+            .set_dithering_strength(self.webp_decode_options.dithering_strength);
 
         // Read normal bitstream now
         let (chunk, chunk_size, chunk_size_rounded) = read_chunk_header(&mut self.r)?;

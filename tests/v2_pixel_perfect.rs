@@ -35,8 +35,9 @@ use zenwebp::{DecodeConfig, DecodeRequest, EncodeRequest, EncoderConfig, PixelLa
 // ---------------------------------------------------------------------------
 
 /// Decode WebP bytes with zenwebp v2 decoder, returning RGBA.
+/// Disables dithering for pixel-perfect comparison against libwebp.
 fn decode_with_v2(webp_data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
-    let config = DecodeConfig::default();
+    let config = DecodeConfig::default().with_dithering_strength(0);
     let (rgba, w, h) = DecodeRequest::new(&config, webp_data)
         .decode_rgba_v2()
         .map_err(|e| format!("v2 decode failed: {e}"))?;
@@ -44,10 +45,7 @@ fn decode_with_v2(webp_data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
 }
 
 /// Decode WebP bytes with zenwebp v1 decoder, returning RGBA.
-///
-/// Uses dithering_strength=0 to match v2's behavior. The v2 decoder does
-/// not implement chroma dithering, so comparing with dithering enabled would
-/// produce false positives (up to max_diff=7 from dithering noise on UV planes).
+/// Disables dithering for pixel-perfect comparison against libwebp.
 fn decode_with_v1(webp_data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
     let config = DecodeConfig::default().with_dithering_strength(0);
     let (rgba, w, h) = DecodeRequest::new(&config, webp_data)

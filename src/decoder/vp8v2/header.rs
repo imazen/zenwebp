@@ -129,6 +129,20 @@ impl DecoderContext {
         // ---- Precompute filter parameters ----
         self.precompute_filter_params();
 
+        // ---- Initialize chroma dithering ----
+        if self.dither_strength > 0 {
+            let (enabled, amps) = crate::decoder::dither::init_dither_amplitudes(
+                &self.tables.uv_quant_indices,
+                self.dither_strength,
+            );
+            self.dither_enabled = enabled;
+            self.dither_amp = amps;
+            self.dither_rg = crate::decoder::dither::VP8Random::new();
+        } else {
+            self.dither_enabled = false;
+            self.dither_amp = [0; MAX_SEGMENTS];
+        }
+
         // Store the header reader for per-MB mode parsing during decode
         self.header_reader = b;
 
@@ -262,6 +276,9 @@ impl DecoderContext {
             self.tables.dequant[i][0] = DequantPair { dc: ydc, ac: yac };
             self.tables.dequant[i][1] = DequantPair { dc: y2dc, ac: y2ac };
             self.tables.dequant[i][2] = DequantPair { dc: uvdc, ac: uvac };
+
+            // Store UV AC quantizer index for dithering amplitude computation
+            self.tables.uv_quant_indices[i] = base + uvac_delta;
         }
 
         Ok(b.check(())?)

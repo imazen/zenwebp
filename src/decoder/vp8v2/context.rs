@@ -9,7 +9,9 @@ use alloc::vec::Vec;
 use super::MbRowEntry;
 use super::tables::FrameTables;
 use crate::common::prediction::{CHROMA_BLOCK_SIZE, LUMA_BLOCK_SIZE, MB_COEFF_SIZE};
+use crate::common::types::MAX_SEGMENTS;
 use crate::decoder::bit_reader::{VP8HeaderBitReader, VP8Partitions};
+use crate::decoder::dither::VP8Random;
 use crate::decoder::loop_filter::MbFilterParams;
 
 /// Maximum stride supported for bounds-check-free loop filtering.
@@ -90,6 +92,16 @@ pub struct DecoderContext {
     pub(super) prev_last_u_row: Vec<u8>,
     pub(super) prev_last_v_row: Vec<u8>,
 
+    // ---- Chroma dithering state ----
+    /// User-requested dithering strength (0-100, 0=off). Default: 50.
+    pub(super) dither_strength: u8,
+    /// Whether dithering is active for the current frame (computed after header parsing).
+    pub(super) dither_enabled: bool,
+    /// PRNG for dithering noise generation.
+    pub(super) dither_rg: VP8Random,
+    /// Per-segment dither amplitudes (computed from UV AC quantizer indices and strength).
+    pub(super) dither_amp: [i32; MAX_SEGMENTS],
+
     // ---- Reuse tracking ----
     pub(super) last_mbwidth: u16,
     pub(super) last_mbheight: u16,
@@ -140,9 +152,29 @@ impl DecoderContext {
             prev_last_u_row: Vec::new(),
             prev_last_v_row: Vec::new(),
 
+            dither_strength: 50,
+            dither_enabled: false,
+            dither_rg: VP8Random::new(),
+            dither_amp: [0; MAX_SEGMENTS],
+
             last_mbwidth: 0,
             last_mbheight: 0,
         }
+    }
+
+    /// Set chroma dithering strength (0=off, 100=max). Default: 50.
+    ///
+    /// Adds random noise to U/V chroma planes after loop filtering to hide
+    /// banding artifacts from coarse chroma quantization at low quality settings.
+    #[must_use]
+    pub fn with_dithering_strength(mut self, strength: u8) -> Self {
+        self.dither_strength = strength;
+        self
+    }
+
+    /// Set chroma dithering strength on an existing context (non-consuming).
+    pub fn set_dithering_strength(&mut self, strength: u8) {
+        self.dither_strength = strength;
     }
 
     /// Resize buffers for the given macroblock dimensions and filter context.

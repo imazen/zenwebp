@@ -106,6 +106,9 @@ pub(super) struct FrameTables {
 
     /// Height in macroblocks.
     pub mbheight: u16,
+
+    /// UV AC quantizer indices per segment, used for dithering amplitude computation.
+    pub uv_quant_indices: [i32; MAX_SEGMENTS],
 }
 
 impl FrameTables {
@@ -138,6 +141,7 @@ impl FrameTables {
             height: 0,
             mbwidth: 0,
             mbheight: 0,
+            uv_quant_indices: [0; MAX_SEGMENTS],
         }
     }
 }

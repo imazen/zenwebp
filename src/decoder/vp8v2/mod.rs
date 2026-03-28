@@ -254,6 +254,7 @@ impl DecoderContext {
         let mbwidth = usize::from(self.tables.mbwidth);
         let extra_y_rows = self.tables.extra_y_rows;
         let filter_type = self.tables.filter_type;
+        let dither_enabled = self.dither_enabled;
         let p = mby % self.tables.num_partitions as usize;
         self.left = PreviousMacroBlock::default();
 
@@ -342,6 +343,16 @@ impl DecoderContext {
                 sub_bedge_limit: fp.sub_bedge_limit,
                 do_subblock_filtering,
             };
+
+            // Compute dither amplitude inline (matching v1).
+            // Dithering is suppressed for skipped MBs and MBs with UV AC content.
+            if dither_enabled {
+                self.mb_dither_buf[mbx] = if mb.coeffs_skipped || mb.has_nonzero_uv_ac {
+                    0
+                } else {
+                    self.dither_amp[mb.segmentid as usize]
+                };
+            }
         }
 
         // Filter the entire row (single SIMD boundary)
@@ -356,6 +367,24 @@ impl DecoderContext {
             mby,
             &self.mb_filter_params[..mbwidth],
         );
+
+        // Apply chroma dithering after filtering, before output.
+        if dither_enabled {
+            let extra_uv_rows = extra_y_rows / 2;
+            let cache_uv_stride = self.cache_uv_stride;
+            let dither_buf = core::mem::take(&mut self.mb_dither_buf);
+            crate::decoder::dither::dither_row(
+                &mut self.dither_rg,
+                crate::decoder::dither::DitherRowParams {
+                    cache_u: &mut self.cache_u,
+                    cache_v: &mut self.cache_v,
+                    cache_uv_stride,
+                    extra_uv_rows,
+                    mb_dither_amps: &dither_buf[..mbwidth],
+                },
+            );
+            self.mb_dither_buf = dither_buf;
+        }
 
         Ok(())
     }
