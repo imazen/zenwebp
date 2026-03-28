@@ -149,7 +149,6 @@ pub(crate) fn idct4x4_scalar(block: &mut [i32; 16]) {
 // 14.3 inverse walsh-hadamard transform, used in decoding
 #[archmage::autoversion(cfg(simd))]
 pub(crate) fn iwht4x4(block: &mut [i32; 16]) {
-
     for i in 0usize..4 {
         let a1 = block[i] + block[12 + i];
         let b1 = block[4 + i] + block[8 + i];
@@ -669,8 +668,7 @@ pub(crate) fn ftransform2_sse2(
     let zero = _mm_setzero_si128();
 
     // Load 8 bytes per row from src (2 blocks × 4 bytes)
-    let src0 =
-        simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&src[..8]).unwrap());
+    let src0 = simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&src[..8]).unwrap());
     let src1 =
         simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&src[src_stride..src_stride + 8]).unwrap());
     let src2 = simd_mem::_mm_loadu_si64(
@@ -681,8 +679,7 @@ pub(crate) fn ftransform2_sse2(
     );
 
     // Load 8 bytes per row from ref
-    let ref0 =
-        simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&ref_[..8]).unwrap());
+    let ref0 = simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&ref_[..8]).unwrap());
     let ref1 =
         simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&ref_[ref_stride..ref_stride + 8]).unwrap());
     let ref2 = simd_mem::_mm_loadu_si64(
@@ -2053,12 +2050,8 @@ mod neon_transform {
         let (res01, res23) = itransform_pass_neon(_token, t01, t23);
 
         // Process each row: load pred, add residual with rounding shift, saturate, store
-        let res_rows: [(int16x8_t, bool); 4] = [
-            (res01, false),
-            (res01, true),
-            (res23, false),
-            (res23, true),
-        ];
+        let res_rows: [(int16x8_t, bool); 4] =
+            [(res01, false), (res01, true), (res23, false), (res23, true)];
 
         let offsets = [0, stride, stride * 2, stride * 3];
         for (idx, &(res, use_high)) in res_rows.iter().enumerate() {
