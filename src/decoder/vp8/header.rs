@@ -220,8 +220,14 @@ impl<'a> Vp8Decoder<'a> {
         // final output from output_row_from_cache via copy_from_slice within bounds.
         self.frame.ybuf =
             vec![0u8; usize::from(self.mbwidth) * 16 * usize::from(self.mbheight) * 16];
-        self.frame.ubuf = vec![0u8; usize::from(self.mbwidth) * 8 * usize::from(self.mbheight) * 8];
-        self.frame.vbuf = vec![0u8; usize::from(self.mbwidth) * 8 * usize::from(self.mbheight) * 8];
+        // Extra chroma row: the `yuv` crate's bilinear path uses
+        // `.windows(stride * 2)` which needs `(chroma_h + 1) * stride` bytes.
+        // Adding one extra row avoids the last 2 luma rows being left unwritten
+        // when chroma_h exactly equals `mbheight * 8`.
+        let chroma_plane_size =
+            usize::from(self.mbwidth) * 8 * (usize::from(self.mbheight) * 8 + 1);
+        self.frame.ubuf = vec![0u8; chroma_plane_size];
+        self.frame.vbuf = vec![0u8; chroma_plane_size];
 
         self.top_border_y = vec![127u8; self.frame.width as usize + 4 + 16];
         self.left_border_y = vec![129u8; 1 + 16];

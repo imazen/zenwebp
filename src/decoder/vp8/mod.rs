@@ -309,62 +309,150 @@ impl Frame {
         }
     }
 
-    /// Fills an rgb buffer from the YUV buffers
-    pub(crate) fn fill_rgb(&self, buf: &mut [u8], upsampling_method: UpsamplingMethod) {
-        const BPP: usize = 3;
+    /// Construct a `yuv::YuvPlanarImage` from the frame's Y/U/V buffers.
+    ///
+    /// Two buffer sizing constraints must be met simultaneously:
+    ///
+    /// 1. The `yuv` crate's bilinear path uses `.chunks_exact(stride).last()`
+    ///    for odd-height images. If the buffer is oversized (MB-padded), `.last()`
+    ///    grabs the wrong row. We truncate to the visible region plus one extra
+    ///    chroma row.
+    ///
+    /// 2. The bilinear path uses `.windows(stride * 2).step_by(stride)` for
+    ///    chroma planes. With exactly `chroma_h * stride` bytes, this produces
+    ///    `chroma_h - 1` windows, leaving the last 2 luma rows unwritten for
+    ///    even-height images. We allocate one extra chroma row (in header.rs)
+    ///    and include it here so the window iterator covers all pairs.
+    #[cfg(feature = "fast-yuv")]
+    fn as_yuv_planar_image(&self) -> ::yuv::YuvPlanarImage<'_, u8> {
+        let y_stride = u32::from(self.buffer_width());
+        let uv_stride = y_stride / 2;
+        let h = u32::from(self.height);
+        let chroma_h = h.div_ceil(2);
 
-        match upsampling_method {
-            UpsamplingMethod::Bilinear => {
-                yuv::fill_rgb_buffer_fancy::<BPP>(
-                    buf,
-                    &self.ybuf,
-                    &self.ubuf,
-                    &self.vbuf,
-                    usize::from(self.width),
-                    usize::from(self.height),
-                    usize::from(self.buffer_width()),
-                );
-            }
-            UpsamplingMethod::Simple => {
-                yuv::fill_rgb_buffer_simple::<BPP>(
-                    buf,
-                    &self.ybuf,
-                    &self.ubuf,
-                    &self.vbuf,
-                    usize::from(self.width),
-                    usize::from(self.chroma_width()),
-                    usize::from(self.buffer_width()),
-                );
+        // Truncate Y to visible rows only (prevents .last() on the luma side
+        // from picking MB-padding rows).
+        let y_len = (h * y_stride) as usize;
+
+        // Include `chroma_h + 1` rows for bilinear `.windows(stride * 2)`.
+        // The extra row was allocated in header.rs.
+        let uv_len = ((chroma_h + 1) * uv_stride) as usize;
+        let uv_len = uv_len.min(self.ubuf.len());
+
+        ::yuv::YuvPlanarImage {
+            y_plane: &self.ybuf[..y_len],
+            y_stride,
+            u_plane: &self.ubuf[..uv_len],
+            u_stride: uv_stride,
+            v_plane: &self.vbuf[..uv_len],
+            v_stride: uv_stride,
+            width: u32::from(self.width),
+            height: h,
+        }
+    }
+
+    /// Fills an rgb buffer from the YUV buffers
+    #[allow(clippy::needless_return)] // return needed for cfg-gated fallthrough
+    pub(crate) fn fill_rgb(&self, buf: &mut [u8], upsampling_method: UpsamplingMethod) {
+        #[cfg(feature = "fast-yuv")]
+        {
+            // VP8 uses BT.601 limited range (Y: 16-235, UV: 16-240)
+            let planar = self.as_yuv_planar_image();
+            let stride = u32::from(self.width) * 3;
+            let func = match upsampling_method {
+                UpsamplingMethod::Bilinear => ::yuv::yuv420_to_rgb_bilinear,
+                UpsamplingMethod::Simple => ::yuv::yuv420_to_rgb,
+            };
+            func(
+                &planar,
+                buf,
+                stride,
+                ::yuv::YuvRange::Limited,
+                ::yuv::YuvStandardMatrix::Bt601,
+            )
+            .expect("yuv420_to_rgb failed");
+            return;
+        }
+
+        #[cfg(not(feature = "fast-yuv"))]
+        {
+            const BPP: usize = 3;
+            match upsampling_method {
+                UpsamplingMethod::Bilinear => {
+                    yuv::fill_rgb_buffer_fancy::<BPP>(
+                        buf,
+                        &self.ybuf,
+                        &self.ubuf,
+                        &self.vbuf,
+                        usize::from(self.width),
+                        usize::from(self.height),
+                        usize::from(self.buffer_width()),
+                    );
+                }
+                UpsamplingMethod::Simple => {
+                    yuv::fill_rgb_buffer_simple::<BPP>(
+                        buf,
+                        &self.ybuf,
+                        &self.ubuf,
+                        &self.vbuf,
+                        usize::from(self.width),
+                        usize::from(self.chroma_width()),
+                        usize::from(self.buffer_width()),
+                    );
+                }
             }
         }
     }
 
     /// Fills an rgba buffer from the YUV buffers
+    #[allow(clippy::needless_return)] // return needed for cfg-gated fallthrough
     pub(crate) fn fill_rgba(&self, buf: &mut [u8], upsampling_method: UpsamplingMethod) {
-        const BPP: usize = 4;
+        #[cfg(feature = "fast-yuv")]
+        {
+            // VP8 uses BT.601 limited range (Y: 16-235, UV: 16-240)
+            let planar = self.as_yuv_planar_image();
+            let stride = u32::from(self.width) * 4;
+            let func = match upsampling_method {
+                UpsamplingMethod::Bilinear => ::yuv::yuv420_to_rgba_bilinear,
+                UpsamplingMethod::Simple => ::yuv::yuv420_to_rgba,
+            };
+            func(
+                &planar,
+                buf,
+                stride,
+                ::yuv::YuvRange::Limited,
+                ::yuv::YuvStandardMatrix::Bt601,
+            )
+            .expect("yuv420_to_rgba failed");
+            return;
+        }
 
-        match upsampling_method {
-            UpsamplingMethod::Bilinear => {
-                yuv::fill_rgb_buffer_fancy::<BPP>(
-                    buf,
-                    &self.ybuf,
-                    &self.ubuf,
-                    &self.vbuf,
-                    usize::from(self.width),
-                    usize::from(self.height),
-                    usize::from(self.buffer_width()),
-                );
-            }
-            UpsamplingMethod::Simple => {
-                yuv::fill_rgb_buffer_simple::<BPP>(
-                    buf,
-                    &self.ybuf,
-                    &self.ubuf,
-                    &self.vbuf,
-                    usize::from(self.width),
-                    usize::from(self.chroma_width()),
-                    usize::from(self.buffer_width()),
-                );
+        #[cfg(not(feature = "fast-yuv"))]
+        {
+            const BPP: usize = 4;
+            match upsampling_method {
+                UpsamplingMethod::Bilinear => {
+                    yuv::fill_rgb_buffer_fancy::<BPP>(
+                        buf,
+                        &self.ybuf,
+                        &self.ubuf,
+                        &self.vbuf,
+                        usize::from(self.width),
+                        usize::from(self.height),
+                        usize::from(self.buffer_width()),
+                    );
+                }
+                UpsamplingMethod::Simple => {
+                    yuv::fill_rgb_buffer_simple::<BPP>(
+                        buf,
+                        &self.ybuf,
+                        &self.ubuf,
+                        &self.vbuf,
+                        usize::from(self.width),
+                        usize::from(self.chroma_width()),
+                        usize::from(self.buffer_width()),
+                    );
+                }
             }
         }
     }

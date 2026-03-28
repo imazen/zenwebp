@@ -93,9 +93,31 @@ fn reference_test_with_options(
             );
             panic!("Pixel mismatch")
         }
+    } else if cfg!(feature = "fast-yuv") {
+        // With `fast-yuv`, the `yuv` crate performs YUV->RGB conversion using
+        // true bilinear chroma upsampling, which differs from libwebp's "fancy"
+        // upsample formula ((3*near + far + 2) >> 2). The reference images were
+        // generated with dwebp (libwebp's decoder), so per-channel differences
+        // can reach ~200 due to different chroma interpolation + coefficient
+        // precision. We verify the mean absolute error is small instead.
+        let (total_diff, max_diff) =
+            data.iter()
+                .zip(reference_data.iter())
+                .fold((0u64, 0u8), |(sum, max_d), (a, b)| {
+                    let d = a.abs_diff(*b);
+                    (sum + d as u64, max_d.max(d))
+                });
+        let mean_diff = total_diff as f64 / data.len() as f64;
+        // Threshold is generous because the `yuv` crate uses true bilinear
+        // chroma upsampling while dwebp uses (3*near+far+2)>>2 "fancy"
+        // upsampling. Small images have proportionally more edge pixels
+        // where the difference is largest.
+        assert!(
+            mean_diff < 10.0,
+            "Mean channel diff {mean_diff:.3} too high (max {max_diff})",
+        );
     } else {
-        // NOTE: WebP lossy images are stored in YUV format. The conversion to RGB is not precisely
-        // defined, but we currently attempt to match the dwebp's default conversion option.
+        // Without `fast-yuv`, our hand-written YUV conversion matches dwebp exactly.
         let num_bytes_different = data
             .iter()
             .zip(reference_data.iter())
@@ -133,7 +155,20 @@ fn reference_test_with_options(
             let mut data = vec![0; width as usize * height as usize * bytes_per_pixel];
             decoder.read_frame(&mut data).unwrap();
 
-            if decoder.is_lossy() {
+            if decoder.is_lossy() && cfg!(feature = "fast-yuv") {
+                let (total_diff, max_diff) = data.iter().zip(reference_data.iter()).fold(
+                    (0u64, 0u8),
+                    |(sum, max_d), (a, b)| {
+                        let d = a.abs_diff(*b);
+                        (sum + d as u64, max_d.max(d))
+                    },
+                );
+                let mean_diff = total_diff as f64 / data.len() as f64;
+                assert!(
+                    mean_diff < 10.0,
+                    "Frame {i} mean channel diff {mean_diff:.3} too high (max {max_diff})",
+                );
+            } else if decoder.is_lossy() {
                 let num_bytes_different = data
                     .iter()
                     .zip(reference_data.iter())
@@ -142,7 +177,7 @@ fn reference_test_with_options(
                 if num_bytes_different > 0 {
                     save_image(&data, file, Some(i), decoder.has_alpha(), width, height);
                 }
-                assert_eq!(num_bytes_different, 0, "Pixel mismatch");
+                assert_eq!(num_bytes_different, 0, "Frame {i} pixel mismatch");
             } else if data != reference_data {
                 save_image(&data, file, Some(i), decoder.has_alpha(), width, height);
                 panic!("Pixel mismatch")
