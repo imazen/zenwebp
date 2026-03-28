@@ -21,8 +21,7 @@ impl<'a> Vp8Decoder<'a> {
             let mb = self.macroblocks[mby * mbwidth + mbx];
             let is_b = mb.luma_mode == LumaMode::B;
             let p = &self.precomputed_filter[mb.segmentid as usize][is_b as usize];
-            let do_subblock_filtering =
-                is_b || (!mb.coeffs_skipped && mb.non_zero_dct);
+            let do_subblock_filtering = is_b || (!mb.coeffs_skipped && mb.non_zero_dct);
 
             self.mb_filter_params.push(loop_filter::MbFilterParams {
                 filter_level: p.filter_level,
