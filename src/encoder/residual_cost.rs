@@ -6,6 +6,31 @@
 #![allow(dead_code)]
 #![allow(clippy::needless_range_loop)]
 
+//------------------------------------------------------------------------------
+// Fixed-size array splitting helpers (zero-cost, all checks elided at compile time)
+
+/// Split `&[T; 16]` into four `&[T; 4]` without runtime bounds checks.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[inline(always)]
+fn split4_ref<T>(arr: &[T; 16]) -> (&[T; 4], &[T; 4], &[T; 4], &[T; 4]) {
+    let (a, rest) = arr.split_first_chunk::<4>().unwrap();
+    let rest: &[T; 12] = rest.try_into().unwrap();
+    let (b, rest) = rest.split_first_chunk::<4>().unwrap();
+    let rest: &[T; 8] = rest.try_into().unwrap();
+    let (c, d) = rest.split_first_chunk::<4>().unwrap();
+    let d: &[T; 4] = d.try_into().unwrap();
+    (a, b, c, d)
+}
+
+/// Split `&mut [T; 16]` into two `&mut [T; 8]` without runtime bounds checks.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[inline(always)]
+fn split2_mut<T>(arr: &mut [T; 16]) -> (&mut [T; 8], &mut [T; 8]) {
+    let (a, b) = arr.split_first_chunk_mut::<8>().unwrap();
+    let b: &mut [T; 8] = b.try_into().unwrap();
+    (a, b)
+}
+
 // SIMD imports for GetResidualCost optimization
 #[cfg(target_arch = "x86_64")]
 use archmage::intrinsics::x86_64 as simd_mem;
@@ -266,10 +291,11 @@ pub(crate) fn get_residual_cost_sse2(
         let k_cst67 = _mm_set1_epi8(MAX_VARIABLE_LEVEL as i8);
 
         // Load coefficients as i32 and pack to i16
-        let c0_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&res.coeffs[0..4]).unwrap());
-        let c1_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&res.coeffs[4..8]).unwrap());
-        let c2_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&res.coeffs[8..12]).unwrap());
-        let c3_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&res.coeffs[12..16]).unwrap());
+        let (c0_arr, c1_arr, c2_arr, c3_arr) = split4_ref(res.coeffs);
+        let c0_32 = simd_mem::_mm_loadu_si128(c0_arr);
+        let c1_32 = simd_mem::_mm_loadu_si128(c1_arr);
+        let c2_32 = simd_mem::_mm_loadu_si128(c2_arr);
+        let c3_32 = simd_mem::_mm_loadu_si128(c3_arr);
 
         // Pack i32 to i16 (signed saturation)
         let c0 = _mm_packs_epi32(c0_32, c1_32); // 8 x i16
@@ -295,14 +321,9 @@ pub(crate) fn get_residual_cost_sse2(
         simd_mem::_mm_storeu_si128(&mut levels, h);
 
         // Store 16-bit absolute values for fixed cost lookup
-        simd_mem::_mm_storeu_si128(
-            <&mut [u16; 8]>::try_from(&mut abs_levels[0..8]).unwrap(),
-            e0,
-        );
-        simd_mem::_mm_storeu_si128(
-            <&mut [u16; 8]>::try_from(&mut abs_levels[8..16]).unwrap(),
-            e1,
-        );
+        let (al0, al1) = split2_mut(&mut abs_levels);
+        simd_mem::_mm_storeu_si128(al0, e0);
+        simd_mem::_mm_storeu_si128(al1, e1);
     }
 
     // Pre-index the cost table by type (matches libwebp's CostArrayPtr pattern).
@@ -361,10 +382,11 @@ fn find_last_nonzero_simd(_token: X64V3Token, coeffs: &[i32; 16]) -> i32 {
     let zero = _mm_setzero_si128();
 
     // Load coefficients as i32 and pack to i16
-    let c0_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-    let c1_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-    let c2_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-    let c3_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+    let (c0_arr, c1_arr, c2_arr, c3_arr) = split4_ref(coeffs);
+    let c0_32 = simd_mem::_mm_loadu_si128(c0_arr);
+    let c1_32 = simd_mem::_mm_loadu_si128(c1_arr);
+    let c2_32 = simd_mem::_mm_loadu_si128(c2_arr);
+    let c3_32 = simd_mem::_mm_loadu_si128(c3_arr);
 
     // Pack i32 to i16 (signed saturation)
     let c0 = _mm_packs_epi32(c0_32, c1_32); // 8 x i16
@@ -448,10 +470,11 @@ pub(crate) fn get_residual_cost_neon(
         let k_cst67 = vdupq_n_u8(MAX_VARIABLE_LEVEL as u8);
 
         // Load coefficients as i32 and pack to i16 (signed saturation via vqmovn)
-        let c0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&res.coeffs[0..4]).unwrap());
-        let c1 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&res.coeffs[4..8]).unwrap());
-        let c2 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&res.coeffs[8..12]).unwrap());
-        let c3 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&res.coeffs[12..16]).unwrap());
+        let (c0_arr, c1_arr, c2_arr, c3_arr) = split4_ref(res.coeffs);
+        let c0 = simd_mem::vld1q_s32(c0_arr);
+        let c1 = simd_mem::vld1q_s32(c1_arr);
+        let c2 = simd_mem::vld1q_s32(c2_arr);
+        let c3 = simd_mem::vld1q_s32(c3_arr);
 
         // Pack i32 to i16 (signed saturation)
         let s0 = vcombine_s16(vqmovn_s32(c0), vqmovn_s32(c1)); // 8 x i16
@@ -475,14 +498,9 @@ pub(crate) fn get_residual_cost_neon(
         simd_mem::vst1q_u8(&mut levels, h);
 
         // Store 16-bit absolute values (reinterpret signed abs as unsigned)
-        simd_mem::vst1q_u16(
-            <&mut [u16; 8]>::try_from(&mut abs_levels[0..8]).unwrap(),
-            vreinterpretq_u16_s16(e0),
-        );
-        simd_mem::vst1q_u16(
-            <&mut [u16; 8]>::try_from(&mut abs_levels[8..16]).unwrap(),
-            vreinterpretq_u16_s16(e1),
-        );
+        let (al0, al1) = split2_mut(&mut abs_levels);
+        simd_mem::vst1q_u16(al0, vreinterpretq_u16_s16(e0));
+        simd_mem::vst1q_u16(al1, vreinterpretq_u16_s16(e1));
     }
 
     // Pre-index the cost table by type
@@ -537,10 +555,11 @@ fn find_last_nonzero_neon(_token: NeonToken, coeffs: &[i32; 16]) -> i32 {
     let zero = vdupq_n_s32(0);
 
     // Load coefficients as i32
-    let c0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-    let c1 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-    let c2 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-    let c3 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+    let (c0_arr, c1_arr, c2_arr, c3_arr) = split4_ref(coeffs);
+    let c0 = simd_mem::vld1q_s32(c0_arr);
+    let c1 = simd_mem::vld1q_s32(c1_arr);
+    let c2 = simd_mem::vld1q_s32(c2_arr);
+    let c3 = simd_mem::vld1q_s32(c3_arr);
 
     // Pack i32 to i16 (signed saturation)
     let s0 = vcombine_s16(vqmovn_s32(c0), vqmovn_s32(c1)); // 8 x i16
