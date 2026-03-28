@@ -654,7 +654,7 @@ impl<'a> LosslessDecoder<'a> {
 
                 // Copy block
                 if dist == 1 {
-                    let value: [u8; 4] = data[(index - dist) * 4..][..4].try_into().unwrap();
+                    let value: [u8; 4] = *data[(index - dist) * 4..].first_chunk::<4>().unwrap();
                     for i in 0..length {
                         data[index * 4 + i * 4..][..4].copy_from_slice(&value);
                     }
@@ -676,7 +676,7 @@ impl<'a> LosslessDecoder<'a> {
 
                     if let Some(cc) = huffman_info.color_cache.as_mut() {
                         for pixel in data[index * 4..][..length * 4].chunks_exact(4) {
-                            cc.insert(pixel.try_into().unwrap());
+                            cc.insert(*pixel.first_chunk::<4>().unwrap());
                         }
                     }
                 }
@@ -998,7 +998,7 @@ impl<'a> BitReader<'a> {
 
         let buf = self.reader.fill_buf();
         if buf.len() >= 8 {
-            let lookahead = u64::from_le_bytes(buf[..8].try_into().unwrap());
+            let lookahead = u64::from_le_bytes(*buf.first_chunk::<8>().unwrap());
             self.reader.consume(usize::from((63 - self.nbits) / 8));
             self.buffer |= lookahead << self.nbits;
             self.nbits |= 56;
