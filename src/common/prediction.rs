@@ -240,8 +240,8 @@ pub(crate) fn create_border_chroma(
 // Clippy suggests the clamp method, but it seems to optimize worse as of rustc 1.82.0 nightly.
 #[allow(clippy::manual_clamp)]
 #[inline(always)]
-pub(crate) fn add_residue(
-    pblock: &mut [u8],
+pub(crate) fn add_residue<const N: usize>(
+    pblock: &mut [u8; N],
     rblock: &[i32; 16],
     y0: usize,
     x0: usize,
@@ -251,7 +251,7 @@ pub(crate) fn add_residue(
     {
         use archmage::{SimdToken, X64V3Token};
         if let Some(token) = X64V3Token::summon() {
-            add_residue_sse2(token, pblock, rblock, y0, x0, stride);
+            add_residue_sse2(token, pblock.as_mut_slice(), rblock, y0, x0, stride);
             return;
         }
     }
@@ -259,7 +259,14 @@ pub(crate) fn add_residue(
     {
         use archmage::{NeonToken, SimdToken};
         if let Some(token) = NeonToken::summon() {
-            crate::common::transform::add_residue_neon(token, pblock, rblock, y0, x0, stride);
+            crate::common::transform::add_residue_neon(
+                token,
+                pblock.as_mut_slice(),
+                rblock,
+                y0,
+                x0,
+                stride,
+            );
             return;
         }
     }
@@ -268,7 +275,13 @@ pub(crate) fn add_residue(
 
 /// Scalar implementation of add_residue
 #[inline(always)]
-fn add_residue_scalar(pblock: &mut [u8], rblock: &[i32; 16], y0: usize, x0: usize, stride: usize) {
+fn add_residue_scalar<const N: usize>(
+    pblock: &mut [u8; N],
+    rblock: &[i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
     let mut pos = y0 * stride + x0;
     for row in rblock.chunks(4) {
         for (p, &a) in pblock[pos..][..4].iter_mut().zip(row.iter()) {
@@ -337,8 +350,8 @@ fn add_residue_sse2(
 /// Kept for potential encoder use or alternative decode paths.
 #[allow(dead_code)]
 #[inline(always)]
-pub(crate) fn add_residue_and_clear(
-    pblock: &mut [u8],
+pub(crate) fn add_residue_and_clear<const N: usize>(
+    pblock: &mut [u8; N],
     rblock: &mut [i32; 16],
     y0: usize,
     x0: usize,
@@ -348,7 +361,7 @@ pub(crate) fn add_residue_and_clear(
     {
         use archmage::{SimdToken, X64V3Token};
         if let Some(token) = X64V3Token::summon() {
-            add_residue_and_clear_sse2(token, pblock, rblock, y0, x0, stride);
+            add_residue_and_clear_sse2(token, pblock.as_mut_slice(), rblock, y0, x0, stride);
             return;
         }
     }
@@ -362,24 +375,24 @@ pub(crate) fn add_residue_and_clear(
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[allow(dead_code)]
 #[inline(always)]
-pub(crate) fn add_residue_and_clear_with_token(
+pub(crate) fn add_residue_and_clear_with_token<const N: usize>(
     token: archmage::X64V3Token,
-    pblock: &mut [u8],
+    pblock: &mut [u8; N],
     rblock: &mut [i32; 16],
     y0: usize,
     x0: usize,
     stride: usize,
 ) {
-    add_residue_and_clear_sse2(token, pblock, rblock, y0, x0, stride);
+    add_residue_and_clear_sse2(token, pblock.as_mut_slice(), rblock, y0, x0, stride);
 }
 
 /// Scalar fallback for add_residue_and_clear (used when no SIMD token available).
 #[cfg(not(any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")))]
 #[allow(dead_code)]
 #[inline(always)]
-pub(crate) fn add_residue_and_clear_with_token(
+pub(crate) fn add_residue_and_clear_with_token<const N: usize>(
     _token: (),
-    pblock: &mut [u8],
+    pblock: &mut [u8; N],
     rblock: &mut [i32; 16],
     y0: usize,
     x0: usize,
@@ -408,8 +421,8 @@ pub(crate) type SimdTokenType = Option<archmage::Wasm128Token>;
 pub(crate) type SimdTokenType = Option<()>;
 
 #[inline(always)]
-fn add_residue_and_clear_scalar(
-    pblock: &mut [u8],
+fn add_residue_and_clear_scalar<const N: usize>(
+    pblock: &mut [u8; N],
     rblock: &mut [i32; 16],
     y0: usize,
     x0: usize,
@@ -487,9 +500,18 @@ fn avg2(this: u8, right: u8) -> u8 {
     avg as u8
 }
 
-pub(crate) fn predict_vpred(a: &mut [u8], size: usize, x0: usize, y0: usize, stride: usize) {
+pub(crate) fn predict_vpred<const N: usize>(
+    a: &mut [u8; N],
+    size: usize,
+    x0: usize,
+    y0: usize,
+    stride: usize,
+) {
+    // Assert max access to enable bounds check elimination.
+    assert!((y0 + size - 1) * stride + x0 + size <= N);
+    assert!(y0 >= 1); // Need row y0-1 for the "above" row
     // This pass copies the top row to the rows below it.
-    let (above, curr) = a.split_at_mut(stride * y0);
+    let (above, curr) = a.as_mut_slice().split_at_mut(stride * y0);
     let above_slice = &above[x0..][..size];
 
     for curr_chunk in curr.chunks_exact_mut(stride).take(size) {
@@ -497,16 +519,37 @@ pub(crate) fn predict_vpred(a: &mut [u8], size: usize, x0: usize, y0: usize, str
     }
 }
 
-pub(crate) fn predict_hpred(a: &mut [u8], size: usize, x0: usize, y0: usize, stride: usize) {
+pub(crate) fn predict_hpred<const N: usize>(
+    a: &mut [u8; N],
+    size: usize,
+    x0: usize,
+    y0: usize,
+    stride: usize,
+) {
+    assert!((y0 + size - 1) * stride + x0 + size <= N);
+    assert!(x0 >= 1); // Need column x0-1 for left pixel
     // This pass copies the first value of a row to the values right of it.
-    for chunk in a.chunks_exact_mut(stride).skip(y0).take(size) {
+    for chunk in a
+        .as_mut_slice()
+        .chunks_exact_mut(stride)
+        .skip(y0)
+        .take(size)
+    {
         let left = chunk[x0 - 1];
         chunk[x0..][..size].fill(left);
     }
 }
 
 #[inline(always)]
-pub(crate) fn predict_dcpred(a: &mut [u8], size: usize, stride: usize, above: bool, left: bool) {
+pub(crate) fn predict_dcpred<const N: usize>(
+    a: &mut [u8; N],
+    size: usize,
+    stride: usize,
+    above: bool,
+    left: bool,
+) {
+    // Max access: 1 + stride * size + size - 1 = stride*size + size
+    assert!(stride * (size + 1) <= N);
     let mut sum = 0u32;
     let mut shf = if size == 8 { 2u32 } else { 3u32 };
 
@@ -540,7 +583,12 @@ pub(crate) fn predict_dcpred(a: &mut [u8], size: usize, stride: usize, above: bo
 /// `x0` and `y0` specify the top-left corner in the buffer (typically 1,1 for bordered blocks)
 #[inline]
 #[allow(dead_code)] // Available for potential future use
-pub(crate) fn predict_dc_16x16(a: &mut [u8], stride: usize, x0: usize, y0: usize) {
+pub(crate) fn predict_dc_16x16<const N: usize>(
+    a: &mut [u8; N],
+    stride: usize,
+    x0: usize,
+    y0: usize,
+) {
     let above = y0 > 0;
     let left = x0 > 0;
 
@@ -579,7 +627,7 @@ pub(crate) fn predict_dc_16x16(a: &mut [u8], stride: usize, x0: usize, y0: usize
 /// `x0` and `y0` specify the top-left corner in the buffer (typically 1,1 for bordered blocks)
 #[inline]
 #[allow(dead_code)] // Available for potential future use
-pub(crate) fn predict_dc_8x8(a: &mut [u8], stride: usize, x0: usize, y0: usize) {
+pub(crate) fn predict_dc_8x8<const N: usize>(a: &mut [u8; N], stride: usize, x0: usize, y0: usize) {
     let above = y0 > 0;
     let left = x0 > 0;
 
@@ -615,7 +663,14 @@ pub(crate) fn predict_dc_8x8(a: &mut [u8], stride: usize, x0: usize, y0: usize) 
 
 // Clippy suggests the clamp method, but it seems to optimize worse as of rustc 1.82.0 nightly.
 #[allow(clippy::manual_clamp)]
-pub(crate) fn predict_tmpred(a: &mut [u8], size: usize, x0: usize, y0: usize, stride: usize) {
+#[inline(always)]
+pub(crate) fn predict_tmpred<const N: usize>(
+    a: &mut [u8; N],
+    size: usize,
+    x0: usize,
+    y0: usize,
+    stride: usize,
+) {
     // The formula for tmpred is:
     // X_ij = L_i + A_j - P (i, j=0, 1, 2, 3)
     //
@@ -632,8 +687,12 @@ pub(crate) fn predict_tmpred(a: &mut [u8], size: usize, x0: usize, y0: usize, st
     // |-----|-----|-----|-----|-----|
     // Diagram from p. 52 of RFC 6386
 
+    // Assert max access for bounds check elimination.
+    assert!((y0 + size - 1) * stride + x0 + size <= N);
+    assert!(y0 >= 1 && x0 >= 1);
+
     // Split at L0
-    let (above, x_block) = a.split_at_mut(y0 * stride + (x0 - 1));
+    let (above, x_block) = a.as_mut_slice().split_at_mut(y0 * stride + (x0 - 1));
     let p = i32::from(above[(y0 - 1) * stride + x0 - 1]);
     let above_slice = &above[(y0 - 1) * stride + x0..];
 
@@ -648,7 +707,14 @@ pub(crate) fn predict_tmpred(a: &mut [u8], size: usize, x0: usize, y0: usize, st
     }
 }
 
-pub(crate) fn predict_bdcpred(a: &mut [u8], x0: usize, y0: usize, stride: usize) {
+pub(crate) fn predict_bdcpred(a: &mut [u8; LUMA_BLOCK_SIZE], x0: usize, y0: usize, stride: usize) {
+    // Assert max index to eliminate all interior bounds checks.
+    // Max read: (y0+3)*stride + x0 + 3 for the 4x4 block,
+    // plus (y0-1)*stride + x0+3 for the top border.
+    assert!((y0 + 3) * stride + x0 + 3 < LUMA_BLOCK_SIZE);
+    assert!(x0 >= 1); // left border pixel at x0-1
+    assert!(y0 >= 1); // top border row at y0-1
+
     let mut v = 4;
 
     a[(y0 - 1) * stride + x0..][..4]
@@ -660,33 +726,44 @@ pub(crate) fn predict_bdcpred(a: &mut [u8], x0: usize, y0: usize, stride: usize)
     }
 
     v >>= 3;
-    for chunk in a.chunks_exact_mut(stride).skip(y0).take(4) {
+    for chunk in a.as_mut_slice().chunks_exact_mut(stride).skip(y0).take(4) {
         for ch in &mut chunk[x0..][..4] {
             *ch = v as u8;
         }
     }
 }
 
-fn topleft_pixel(a: &[u8], x0: usize, y0: usize, stride: usize) -> u8 {
+fn topleft_pixel(a: &[u8; LUMA_BLOCK_SIZE], x0: usize, y0: usize, stride: usize) -> u8 {
     a[(y0 - 1) * stride + x0 - 1]
 }
 
-fn top_pixels(a: &[u8], x0: usize, y0: usize, stride: usize) -> (u8, u8, u8, u8, u8, u8, u8, u8) {
+#[inline(always)]
+fn top_pixels(
+    a: &[u8; LUMA_BLOCK_SIZE],
+    x0: usize,
+    y0: usize,
+    stride: usize,
+) -> (u8, u8, u8, u8, u8, u8, u8, u8) {
     let pos = (y0 - 1) * stride + x0;
-    let a_slice = &a[pos..pos + 8];
-    let a0 = a_slice[0];
-    let a1 = a_slice[1];
-    let a2 = a_slice[2];
-    let a3 = a_slice[3];
-    let a4 = a_slice[4];
-    let a5 = a_slice[5];
-    let a6 = a_slice[6];
-    let a7 = a_slice[7];
+    // Single bounds assertion: max access is pos+7, which must be < LUMA_BLOCK_SIZE.
+    assert!(pos + 7 < LUMA_BLOCK_SIZE);
+    let a0 = a[pos];
+    let a1 = a[pos + 1];
+    let a2 = a[pos + 2];
+    let a3 = a[pos + 3];
+    let a4 = a[pos + 4];
+    let a5 = a[pos + 5];
+    let a6 = a[pos + 6];
+    let a7 = a[pos + 7];
 
     (a0, a1, a2, a3, a4, a5, a6, a7)
 }
 
-fn left_pixels(a: &[u8], x0: usize, y0: usize, stride: usize) -> (u8, u8, u8, u8) {
+#[inline(always)]
+fn left_pixels(a: &[u8; LUMA_BLOCK_SIZE], x0: usize, y0: usize, stride: usize) -> (u8, u8, u8, u8) {
+    // Max access: (y0+3)*stride + x0 - 1
+    assert!((y0 + 3) * stride + x0 > 0);
+    assert!((y0 + 3) * stride + x0 - 1 < LUMA_BLOCK_SIZE);
     let l0 = a[y0 * stride + x0 - 1];
     let l1 = a[(y0 + 1) * stride + x0 - 1];
     let l2 = a[(y0 + 2) * stride + x0 - 1];
@@ -695,28 +772,33 @@ fn left_pixels(a: &[u8], x0: usize, y0: usize, stride: usize) -> (u8, u8, u8, u8
     (l0, l1, l2, l3)
 }
 
+#[inline(always)]
 fn edge_pixels(
-    a: &[u8],
+    a: &[u8; LUMA_BLOCK_SIZE],
     x0: usize,
     y0: usize,
     stride: usize,
 ) -> (u8, u8, u8, u8, u8, u8, u8, u8, u8) {
     let pos = (y0 - 1) * stride + x0 - 1;
-    let a_slice = &a[pos..=pos + 4];
+    // Max access: pos + 4*stride (for e0) and pos + 4 (for e8).
+    // Both must be < LUMA_BLOCK_SIZE.
+    assert!(pos + 4 * stride < LUMA_BLOCK_SIZE);
     let e0 = a[pos + 4 * stride];
     let e1 = a[pos + 3 * stride];
     let e2 = a[pos + 2 * stride];
     let e3 = a[pos + stride];
-    let e4 = a_slice[0];
-    let e5 = a_slice[1];
-    let e6 = a_slice[2];
-    let e7 = a_slice[3];
-    let e8 = a_slice[4];
+    let e4 = a[pos];
+    let e5 = a[pos + 1];
+    let e6 = a[pos + 2];
+    let e7 = a[pos + 3];
+    let e8 = a[pos + 4];
 
     (e0, e1, e2, e3, e4, e5, e6, e7, e8)
 }
 
-pub(crate) fn predict_bvepred(a: &mut [u8], x0: usize, y0: usize, stride: usize) {
+pub(crate) fn predict_bvepred(a: &mut [u8; LUMA_BLOCK_SIZE], x0: usize, y0: usize, stride: usize) {
+    // Assert max write: (y0+3)*stride + x0 + 3
+    assert!((y0 + 3) * stride + x0 + 3 < LUMA_BLOCK_SIZE);
     let p = topleft_pixel(a, x0, y0, stride);
     let (a0, a1, a2, a3, a4, ..) = top_pixels(a, x0, y0, stride);
     let avg_1 = avg3(p, a0, a1);
@@ -733,7 +815,8 @@ pub(crate) fn predict_bvepred(a: &mut [u8], x0: usize, y0: usize, stride: usize)
     }
 }
 
-pub(crate) fn predict_bhepred(a: &mut [u8], x0: usize, y0: usize, stride: usize) {
+pub(crate) fn predict_bhepred(a: &mut [u8; LUMA_BLOCK_SIZE], x0: usize, y0: usize, stride: usize) {
+    assert!((y0 + 3) * stride + x0 + 3 < LUMA_BLOCK_SIZE);
     let p = topleft_pixel(a, x0, y0, stride);
     let (l0, l1, l2, l3) = left_pixels(a, x0, y0, stride);
 
@@ -753,7 +836,8 @@ pub(crate) fn predict_bhepred(a: &mut [u8], x0: usize, y0: usize, stride: usize)
     }
 }
 
-pub(crate) fn predict_bldpred(a: &mut [u8], x0: usize, y0: usize, stride: usize) {
+pub(crate) fn predict_bldpred(a: &mut [u8; LUMA_BLOCK_SIZE], x0: usize, y0: usize, stride: usize) {
+    assert!((y0 + 3) * stride + x0 + 3 < LUMA_BLOCK_SIZE);
     let (a0, a1, a2, a3, a4, a5, a6, a7) = top_pixels(a, x0, y0, stride);
 
     let avgs = [
@@ -774,7 +858,8 @@ pub(crate) fn predict_bldpred(a: &mut [u8], x0: usize, y0: usize, stride: usize)
     }
 }
 
-pub(crate) fn predict_brdpred(a: &mut [u8], x0: usize, y0: usize, stride: usize) {
+pub(crate) fn predict_brdpred(a: &mut [u8; LUMA_BLOCK_SIZE], x0: usize, y0: usize, stride: usize) {
+    assert!((y0 + 3) * stride + x0 + 3 < LUMA_BLOCK_SIZE);
     let (e0, e1, e2, e3, e4, e5, e6, e7, e8) = edge_pixels(a, x0, y0, stride);
 
     let avgs = [
@@ -794,7 +879,8 @@ pub(crate) fn predict_brdpred(a: &mut [u8], x0: usize, y0: usize, stride: usize)
     }
 }
 
-pub(crate) fn predict_bvrpred(a: &mut [u8], x0: usize, y0: usize, stride: usize) {
+pub(crate) fn predict_bvrpred(a: &mut [u8; LUMA_BLOCK_SIZE], x0: usize, y0: usize, stride: usize) {
+    assert!((y0 + 3) * stride + x0 + 3 < LUMA_BLOCK_SIZE);
     let (_, e1, e2, e3, e4, e5, e6, e7, e8) = edge_pixels(a, x0, y0, stride);
 
     a[(y0 + 3) * stride + x0] = avg3(e1, e2, e3);
@@ -815,7 +901,8 @@ pub(crate) fn predict_bvrpred(a: &mut [u8], x0: usize, y0: usize, stride: usize)
     a[y0 * stride + x0 + 3] = avg2(e7, e8);
 }
 
-pub(crate) fn predict_bvlpred(a: &mut [u8], x0: usize, y0: usize, stride: usize) {
+pub(crate) fn predict_bvlpred(a: &mut [u8; LUMA_BLOCK_SIZE], x0: usize, y0: usize, stride: usize) {
+    assert!((y0 + 3) * stride + x0 + 3 < LUMA_BLOCK_SIZE);
     let (a0, a1, a2, a3, a4, a5, a6, a7) = top_pixels(a, x0, y0, stride);
 
     a[y0 * stride + x0] = avg2(a0, a1);
@@ -836,7 +923,8 @@ pub(crate) fn predict_bvlpred(a: &mut [u8], x0: usize, y0: usize, stride: usize)
     a[(y0 + 3) * stride + x0 + 3] = avg3(a5, a6, a7);
 }
 
-pub(crate) fn predict_bhdpred(a: &mut [u8], x0: usize, y0: usize, stride: usize) {
+pub(crate) fn predict_bhdpred(a: &mut [u8; LUMA_BLOCK_SIZE], x0: usize, y0: usize, stride: usize) {
+    assert!((y0 + 3) * stride + x0 + 3 < LUMA_BLOCK_SIZE);
     let (e0, e1, e2, e3, e4, e5, e6, e7, _) = edge_pixels(a, x0, y0, stride);
 
     a[(y0 + 3) * stride + x0] = avg2(e0, e1);
@@ -857,7 +945,8 @@ pub(crate) fn predict_bhdpred(a: &mut [u8], x0: usize, y0: usize, stride: usize)
     a[y0 * stride + x0 + 3] = avg3(e5, e6, e7);
 }
 
-pub(crate) fn predict_bhupred(a: &mut [u8], x0: usize, y0: usize, stride: usize) {
+pub(crate) fn predict_bhupred(a: &mut [u8; LUMA_BLOCK_SIZE], x0: usize, y0: usize, stride: usize) {
+    assert!((y0 + 3) * stride + x0 + 3 < LUMA_BLOCK_SIZE);
     let (l0, l1, l2, l3) = left_pixels(a, x0, y0, stride);
 
     a[y0 * stride + x0] = avg2(l0, l1);
@@ -890,7 +979,7 @@ impl I4Predictions {
     /// Pre-compute all 10 I4 prediction modes from the source block with borders
     /// `src` is the source block with borders, `x0` and `y0` are the prediction start coordinates
     #[inline]
-    pub fn compute(src: &[u8], x0: usize, y0: usize, stride: usize) -> Self {
+    pub fn compute(src: &[u8; LUMA_BLOCK_SIZE], x0: usize, y0: usize, stride: usize) -> Self {
         let mut data = [[0u8; 16]; 10];
 
         // Read all edge pixels once
@@ -1121,9 +1210,9 @@ impl I4Predictions {
 /// and clears the coefficient block.
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[inline(always)]
-pub(crate) fn idct_add_residue_and_clear_with_token(
+pub(crate) fn idct_add_residue_and_clear_with_token<const N: usize>(
     token: archmage::X64V3Token,
-    pblock: &mut [u8],
+    pblock: &mut [u8; N],
     rblock: &mut [i32; 16],
     y0: usize,
     x0: usize,
@@ -1135,15 +1224,23 @@ pub(crate) fn idct_add_residue_and_clear_with_token(
 
     // Use in-place fused IDCT + add residue
     use crate::common::transform;
-    transform::idct_add_residue_inplace_with_token(token, rblock, pblock, y0, x0, stride, dc_only);
+    transform::idct_add_residue_inplace_with_token(
+        token,
+        rblock,
+        pblock.as_mut_slice(),
+        y0,
+        x0,
+        stride,
+        dc_only,
+    );
 }
 
 /// NEON fused IDCT + add residue + clear.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-pub(crate) fn idct_add_residue_and_clear_with_token(
+pub(crate) fn idct_add_residue_and_clear_with_token<const N: usize>(
     token: archmage::NeonToken,
-    pblock: &mut [u8],
+    pblock: &mut [u8; N],
     rblock: &mut [i32; 16],
     y0: usize,
     x0: usize,
@@ -1151,16 +1248,22 @@ pub(crate) fn idct_add_residue_and_clear_with_token(
 ) {
     let dc_only = rblock[1..].iter().all(|&c| c == 0);
     crate::common::transform::idct_add_residue_inplace_neon(
-        token, rblock, pblock, y0, x0, stride, dc_only,
+        token,
+        rblock,
+        pblock.as_mut_slice(),
+        y0,
+        x0,
+        stride,
+        dc_only,
     );
 }
 
 /// WASM SIMD128 fused IDCT + add residue + clear.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
-pub(crate) fn idct_add_residue_and_clear_with_token(
+pub(crate) fn idct_add_residue_and_clear_with_token<const N: usize>(
     token: archmage::Wasm128Token,
-    pblock: &mut [u8],
+    pblock: &mut [u8; N],
     rblock: &mut [i32; 16],
     y0: usize,
     x0: usize,
@@ -1185,9 +1288,9 @@ pub(crate) fn idct_add_residue_and_clear_with_token(
     target_arch = "wasm32"
 )))]
 #[inline(always)]
-pub(crate) fn idct_add_residue_and_clear_with_token(
+pub(crate) fn idct_add_residue_and_clear_with_token<const N: usize>(
     _token: (),
-    pblock: &mut [u8],
+    pblock: &mut [u8; N],
     rblock: &mut [i32; 16],
     y0: usize,
     x0: usize,
@@ -1207,8 +1310,8 @@ pub(crate) fn idct_add_residue_and_clear_with_token(
 /// Fused IDCT + add residue + clear without pre-summoned token.
 /// Falls back to separate operations if SIMD unavailable.
 #[inline(always)]
-pub(crate) fn idct_add_residue_and_clear(
-    pblock: &mut [u8],
+pub(crate) fn idct_add_residue_and_clear<const N: usize>(
+    pblock: &mut [u8; N],
     rblock: &mut [i32; 16],
     y0: usize,
     x0: usize,
@@ -1255,73 +1358,59 @@ mod benches {
     use super::*;
     use test::{Bencher, black_box};
 
-    const W: usize = 256;
-    const H: usize = 256;
-
-    fn make_sample_image() -> Vec<u8> {
-        let mut v = Vec::with_capacity((W * H * 4) as usize);
-        for c in 0u8..=255 {
-            for k in 0u8..=255 {
-                v.push(c);
-                v.push(0);
-                v.push(0);
-                v.push(k);
-            }
+    fn make_luma_ws() -> [u8; LUMA_BLOCK_SIZE] {
+        let mut ws = [0u8; LUMA_BLOCK_SIZE];
+        for (i, b) in ws.iter_mut().enumerate() {
+            *b = (i % 256) as u8;
         }
-        v
+        ws
     }
 
     #[bench]
     fn bench_predict_bvepred(b: &mut Bencher) {
-        let mut v = make_sample_image();
-
+        let mut ws = make_luma_ws();
         b.iter(|| {
-            predict_bvepred(black_box(&mut v), 5, 5, W * 2);
+            predict_bvepred(black_box(&mut ws), 5, 5, LUMA_STRIDE);
         });
     }
 
     #[bench]
     fn bench_predict_bldpred(b: &mut Bencher) {
-        let mut v = black_box(make_sample_image());
-
+        let mut ws = make_luma_ws();
         b.iter(|| {
-            black_box(predict_bldpred(black_box(&mut v), 5, 5, W * 2));
+            black_box(predict_bldpred(black_box(&mut ws), 5, 5, LUMA_STRIDE));
         });
     }
 
     #[bench]
     fn bench_predict_brdpred(b: &mut Bencher) {
-        let mut v = black_box(make_sample_image());
-
+        let mut ws = make_luma_ws();
         b.iter(|| {
-            black_box(predict_brdpred(black_box(&mut v), 5, 5, W * 2));
+            black_box(predict_brdpred(black_box(&mut ws), 5, 5, LUMA_STRIDE));
         });
     }
 
     #[bench]
     fn bench_predict_bhepred(b: &mut Bencher) {
-        let mut v = black_box(make_sample_image());
-
+        let mut ws = make_luma_ws();
         b.iter(|| {
-            black_box(predict_bhepred(black_box(&mut v), 5, 5, W * 2));
+            black_box(predict_bhepred(black_box(&mut ws), 5, 5, LUMA_STRIDE));
         });
     }
 
     #[bench]
     fn bench_top_pixels(b: &mut Bencher) {
-        let v = black_box(make_sample_image());
-
+        let ws = make_luma_ws();
         b.iter(|| {
-            black_box(top_pixels(black_box(&v), 5, 5, W * 2));
+            black_box(top_pixels(black_box(&ws), 5, 5, LUMA_STRIDE));
         });
     }
 
     #[bench]
     fn bench_edge_pixels(b: &mut Bencher) {
-        let v = black_box(make_sample_image());
-
+        let ws = make_luma_ws();
         b.iter(|| {
-            black_box(edge_pixels(black_box(&v), 5, 5, W * 2));
+            black_box(edge_pixels(black_box(&ws), 5, 5, LUMA_STRIDE));
         });
     }
 }
@@ -1388,13 +1477,23 @@ mod tests {
 
     #[test]
     fn test_edge_pixels() {
-        #[rustfmt::skip]
-        let im = vec![5, 6, 7, 8, 9,
-                      4, 0, 0, 0, 0,
-                      3, 0, 0, 0, 0,
-                      2, 0, 0, 0, 0,
-                      1, 0, 0, 0, 0];
-        let (e0, e1, e2, e3, e4, e5, e6, e7, e8) = edge_pixels(&im, 1, 1, 5);
+        // Use LUMA_BLOCK_SIZE array with LUMA_STRIDE
+        // Layout: row 0 = top border, rows 1-16 = data, stride = LUMA_STRIDE
+        let mut im = [0u8; LUMA_BLOCK_SIZE];
+        let stride = LUMA_STRIDE;
+        // Set up edge pixels at x0=1, y0=1:
+        // top-left corner P at (0, 0) = row 0, col 0
+        im[0 * stride + 0] = 5; // P (e4)
+        im[0 * stride + 1] = 6; // A0 (e5)
+        im[0 * stride + 2] = 7; // A1 (e6)
+        im[0 * stride + 3] = 8; // A2 (e7)
+        im[0 * stride + 4] = 9; // A3 (e8)
+        im[1 * stride + 0] = 4; // L0 (e3)
+        im[2 * stride + 0] = 3; // L1 (e2)
+        im[3 * stride + 0] = 2; // L2 (e1)
+        im[4 * stride + 0] = 1; // L3 (e0)
+
+        let (e0, e1, e2, e3, e4, e5, e6, e7, e8) = edge_pixels(&im, 1, 1, stride);
         assert_eq!(e0, 1);
         assert_eq!(e1, 2);
         assert_eq!(e2, 3);
@@ -1408,16 +1507,20 @@ mod tests {
 
     #[test]
     fn test_top_pixels() {
-        #[rustfmt::skip]
-        let im = vec![1, 2, 3, 4, 5, 6, 7, 8,
-                                0, 0, 0, 0, 0, 0, 0, 0,
-                                0, 0, 0, 0, 0, 0, 0, 0,
-                                0, 0, 0, 0, 0, 0, 0, 0,
-                                0, 0, 0, 0, 0, 0, 0, 0,
-                                0, 0, 0, 0, 0, 0, 0, 0,
-                                0, 0, 0, 0, 0, 0, 0, 0,
-                                0, 0, 0, 0, 0, 0, 0, 0];
-        let (e0, e1, e2, e3, e4, e5, e6, e7) = top_pixels(&im, 0, 1, 8);
+        let mut im = [0u8; LUMA_BLOCK_SIZE];
+        let stride = LUMA_STRIDE;
+        // top_pixels reads from row (y0-1) starting at col x0
+        // With x0=1, y0=1: reads row 0, cols 1..=8
+        im[0 * stride + 1] = 1;
+        im[0 * stride + 2] = 2;
+        im[0 * stride + 3] = 3;
+        im[0 * stride + 4] = 4;
+        im[0 * stride + 5] = 5;
+        im[0 * stride + 6] = 6;
+        im[0 * stride + 7] = 7;
+        im[0 * stride + 8] = 8;
+
+        let (e0, e1, e2, e3, e4, e5, e6, e7) = top_pixels(&im, 1, 1, stride);
         assert_eq!(e0, 1);
         assert_eq!(e1, 2);
         assert_eq!(e2, 3);
@@ -1445,120 +1548,127 @@ mod tests {
 
     #[test]
     fn test_predict_bhepred() {
-        #[rustfmt::skip]
-        let expected: Vec<u8> = vec![5, 0, 0, 0, 0,
-              4, 4, 4, 4, 4,
-              3, 3, 3, 3, 3,
-              2, 2, 2, 2, 2,
-              1, 1, 1, 1, 1];
+        // Test bhepred using LUMA_BLOCK_SIZE buffer with LUMA_STRIDE
+        let stride = LUMA_STRIDE;
+        let mut im = [0u8; LUMA_BLOCK_SIZE];
+        // Set up: P at (0,0), left column at col 0
+        im[0 * stride + 0] = 5; // P
+        im[1 * stride + 0] = 4; // L0
+        im[2 * stride + 0] = 3; // L1
+        im[3 * stride + 0] = 2; // L2
+        im[4 * stride + 0] = 1; // L3
 
-        #[rustfmt::skip]
-        let mut im = vec![5, 0, 0, 0, 0,
-                      4, 0, 0, 0, 0,
-                      3, 0, 0, 0, 0,
-                      2, 0, 0, 0, 0,
-                      1, 0, 0, 0, 0];
-        predict_bhepred(&mut im, 1, 1, 5);
-        for (&e, i) in expected.iter().zip(im) {
-            assert_eq!(e, i);
-        }
+        predict_bhepred(&mut im, 1, 1, stride);
+
+        // avg3(P, L0, L1) = avg3(5, 4, 3) = (5 + 8 + 3 + 2)/4 = 4
+        assert_eq!(im[1 * stride + 1], 4);
+        assert_eq!(im[1 * stride + 2], 4);
+        assert_eq!(im[1 * stride + 3], 4);
+        assert_eq!(im[1 * stride + 4], 4);
+        // avg3(L0, L1, L2) = avg3(4, 3, 2) = 3
+        assert_eq!(im[2 * stride + 1], 3);
+        // avg3(L1, L2, L3) = avg3(3, 2, 1) = 2
+        assert_eq!(im[3 * stride + 1], 2);
+        // avg3(L2, L3, L3) = avg3(2, 1, 1) = 1
+        assert_eq!(im[4 * stride + 1], 1);
     }
 
     #[test]
     fn test_predict_brdpred() {
-        #[rustfmt::skip]
-        let expected: Vec<u8> = vec![5, 6, 7, 8, 9,
-              4, 5, 6, 7, 8,
-              3, 4, 5, 6, 7,
-              2, 3, 4, 5, 6,
-              1, 2, 3, 4, 5];
+        let stride = LUMA_STRIDE;
+        let mut im = [0u8; LUMA_BLOCK_SIZE];
+        // Set up edge pixels: e0..e8 = 1..9
+        // P at (0,0)=5, top row A0..A3=6,7,8,9, left col L0..L3=4,3,2,1
+        im[0 * stride + 0] = 5; // P (e4)
+        im[0 * stride + 1] = 6; // A0 (e5)
+        im[0 * stride + 2] = 7; // A1 (e6)
+        im[0 * stride + 3] = 8; // A2 (e7)
+        im[0 * stride + 4] = 9; // A3 (e8)
+        im[1 * stride + 0] = 4; // L0 (e3)
+        im[2 * stride + 0] = 3; // L1 (e2)
+        im[3 * stride + 0] = 2; // L2 (e1)
+        im[4 * stride + 0] = 1; // L3 (e0)
 
-        #[rustfmt::skip]
-        let mut im = vec![5, 6, 7, 8, 9,
-                      4, 0, 0, 0, 0,
-                      3, 0, 0, 0, 0,
-                      2, 0, 0, 0, 0,
-                      1, 0, 0, 0, 0];
-        predict_brdpred(&mut im, 1, 1, 5);
-        for (&e, i) in expected.iter().zip(im) {
-            assert_eq!(e, i);
-        }
+        predict_brdpred(&mut im, 1, 1, stride);
+
+        // avgs[i] = avg3(e_i, e_{i+1}, e_{i+2}) = i+2 for sequential values
+        // Row 0: avgs[3-0..7-0] = avgs[3..7] = [5, 6, 7, 8]
+        assert_eq!(im[1 * stride + 1], 5);
+        assert_eq!(im[1 * stride + 2], 6);
+        assert_eq!(im[1 * stride + 3], 7);
+        assert_eq!(im[1 * stride + 4], 8);
+        // Row 1: avgs[2..6] = [4, 5, 6, 7]
+        assert_eq!(im[2 * stride + 1], 4);
+        assert_eq!(im[2 * stride + 2], 5);
+        assert_eq!(im[2 * stride + 3], 6);
+        assert_eq!(im[2 * stride + 4], 7);
+        // Row 2: avgs[1..5] = [3, 4, 5, 6]
+        assert_eq!(im[3 * stride + 1], 3);
+        assert_eq!(im[3 * stride + 2], 4);
+        assert_eq!(im[3 * stride + 3], 5);
+        assert_eq!(im[3 * stride + 4], 6);
+        // Row 3: avgs[0..4] = [2, 3, 4, 5]
+        assert_eq!(im[4 * stride + 1], 2);
+        assert_eq!(im[4 * stride + 2], 3);
+        assert_eq!(im[4 * stride + 3], 4);
+        assert_eq!(im[4 * stride + 4], 5);
     }
 
     #[test]
     fn test_predict_bldpred() {
-        #[rustfmt::skip]
-        let mut im: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8,
-                                   0, 0, 0, 0, 0, 0, 0, 0,
-                                   0, 0, 0, 0, 0, 0, 0, 0,
-                                   0, 0, 0, 0, 0, 0, 0, 0,
-                                   0, 0, 0, 0, 0, 0, 0, 0,
-                                   0, 0, 0, 0, 0, 0, 0, 0,
-                                   0, 0, 0, 0, 0, 0, 0, 0,
-                                   0, 0, 0, 0, 0, 0, 0, 0,
-                                   0, 0, 0, 0, 0, 0, 0, 0];
-        let avg_1 = 2u8;
-        let avg_2 = 3u8;
-        let avg_3 = 4u8;
-        let avg_4 = 5u8;
-        let avg_5 = 6u8;
-        let avg_6 = 7u8;
-        let avg_7 = 8u8;
+        let stride = LUMA_STRIDE;
+        let mut im = [0u8; LUMA_BLOCK_SIZE];
+        // top_pixels reads row (y0-1), cols x0..x0+8
+        // With x0=1, y0=1: row 0, cols 1..=8
+        for i in 0..8 {
+            im[0 * stride + 1 + i] = (i + 1) as u8;
+        }
 
-        predict_bldpred(&mut im, 0, 1, 8);
+        predict_bldpred(&mut im, 1, 1, stride);
 
-        assert_eq!(im[8], avg_1);
-        assert_eq!(im[9], avg_2);
-        assert_eq!(im[10], avg_3);
-        assert_eq!(im[11], avg_4);
-        assert_eq!(im[16], avg_2);
-        assert_eq!(im[17], avg_3);
-        assert_eq!(im[18], avg_4);
-        assert_eq!(im[19], avg_5);
-        assert_eq!(im[24], avg_3);
-        assert_eq!(im[25], avg_4);
-        assert_eq!(im[26], avg_5);
-        assert_eq!(im[27], avg_6);
-        assert_eq!(im[32], avg_4);
-        assert_eq!(im[33], avg_5);
-        assert_eq!(im[34], avg_6);
-        assert_eq!(im[35], avg_7);
+        // avg3(1,2,3)=2, avg3(2,3,4)=3, avg3(3,4,5)=4, avg3(4,5,6)=5
+        assert_eq!(im[1 * stride + 1], 2);
+        assert_eq!(im[1 * stride + 2], 3);
+        assert_eq!(im[1 * stride + 3], 4);
+        assert_eq!(im[1 * stride + 4], 5);
+        // Row 1: shifted by 1
+        assert_eq!(im[2 * stride + 1], 3);
+        assert_eq!(im[2 * stride + 2], 4);
+        assert_eq!(im[2 * stride + 3], 5);
+        assert_eq!(im[2 * stride + 4], 6);
+        // Row 2
+        assert_eq!(im[3 * stride + 1], 4);
+        assert_eq!(im[3 * stride + 2], 5);
+        assert_eq!(im[3 * stride + 3], 6);
+        assert_eq!(im[3 * stride + 4], 7);
+        // Row 3
+        assert_eq!(im[4 * stride + 1], 5);
+        assert_eq!(im[4 * stride + 2], 6);
+        assert_eq!(im[4 * stride + 3], 7);
+        assert_eq!(im[4 * stride + 4], 8);
     }
 
     #[test]
     fn test_predict_bvepred() {
-        #[rustfmt::skip]
-        let mut im: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9,
-                                   0, 0, 0, 0, 0, 0, 0, 0, 0,
-                                   0, 0, 0, 0, 0, 0, 0, 0, 0,
-                                   0, 0, 0, 0, 0, 0, 0, 0, 0,
-                                   0, 0, 0, 0, 0, 0, 0, 0, 0,
-                                   0, 0, 0, 0, 0, 0, 0, 0, 0,
-                                   0, 0, 0, 0, 0, 0, 0, 0, 0,
-                                   0, 0, 0, 0, 0, 0, 0, 0, 0,
-                                   0, 0, 0, 0, 0, 0, 0, 0, 0];
-        let avg_1 = 2u8;
-        let avg_2 = 3u8;
-        let avg_3 = 4u8;
-        let avg_4 = 5u8;
+        let stride = LUMA_STRIDE;
+        let mut im = [0u8; LUMA_BLOCK_SIZE];
+        // P at (0,0), top row at (0, 1..=8)
+        // avg3(P, A0, A1), avg3(A0, A1, A2), avg3(A1, A2, A3), avg3(A2, A3, A4)
+        // With sequential values 1,2,3,4,5,6: avg3(1,2,3)=2, avg3(2,3,4)=3, etc.
+        im[0 * stride + 0] = 1; // P
+        for i in 0..8 {
+            im[0 * stride + 1 + i] = (i + 2) as u8;
+        }
 
-        predict_bvepred(&mut im, 1, 1, 9);
+        predict_bvepred(&mut im, 1, 1, stride);
 
-        assert_eq!(im[10], avg_1);
-        assert_eq!(im[11], avg_2);
-        assert_eq!(im[12], avg_3);
-        assert_eq!(im[13], avg_4);
-        assert_eq!(im[19], avg_1);
-        assert_eq!(im[20], avg_2);
-        assert_eq!(im[21], avg_3);
-        assert_eq!(im[22], avg_4);
-        assert_eq!(im[28], avg_1);
-        assert_eq!(im[29], avg_2);
-        assert_eq!(im[30], avg_3);
-        assert_eq!(im[31], avg_4);
-        assert_eq!(im[37], avg_1);
-        assert_eq!(im[38], avg_2);
-        assert_eq!(im[39], avg_3);
-        assert_eq!(im[40], avg_4);
+        // avg3(1,2,3)=2, avg3(2,3,4)=3, avg3(3,4,5)=4, avg3(4,5,6)=5
+        // All 4 rows should be identical
+        for row in 1..=4 {
+            assert_eq!(im[row * stride + 1], 2, "row {row} col 1");
+            assert_eq!(im[row * stride + 2], 3, "row {row} col 2");
+            assert_eq!(im[row * stride + 3], 4, "row {row} col 3");
+            assert_eq!(im[row * stride + 4], 5, "row {row} col 4");
+        }
     }
 }
