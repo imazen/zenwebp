@@ -3,39 +3,15 @@
 See global ~/.claude/CLAUDE.md for general instructions.
 Historical investigation notes and resolved bugs are in [LOG.md](LOG.md).
 
-## Performance Rules
+## Performance & Testing
 
-**Benchmark without `-C target-cpu=native`.** Runtime SIMD dispatch via archmage is what users get. native bakes in AVX-512 at compile time, giving misleading numbers.
+See `docs/PERFORMANCE.md` for benchmarks, `docs/CALL-TREE.md` for SIMD tiers, `docs/ARCHITECTURE-CLEANUP.md` for code organization.
 
-**Profile with callgrind** (build without native for valgrind compatibility). Compare side-by-side with libwebp C (build from vendored source with `-g`). Count instructions, not just wall-clock.
+**Decoder v2** (`src/decoder/vp8v2/`): bit-exact with libwebp, 1.09-1.15x speed, streaming cache→RGB (~100KB peak). Use for all new decode work.
 
-**Fixed-size array pattern** for bounds check elimination: one `try_into().unwrap()` at the boundary, zero interior checks. Applied to: loop filter (-33%), prediction (-46-64%), transform, quantize, YUV. Apply everywhere hot.
+**Pixel-exact gate**: `tests/v2_pixel_perfect.rs` (tolerance 0 vs libwebp). Lossless: `examples/lossless_rt_check.rs` (24/24 exact).
 
-**archmage usage**: `#[rite]` is the default. `#[arcane]` only at entry points. One `#[arcane]` per MB row, not per function call. Tokens are cheap (1.3ns bool read); the target_feature boundary is expensive (prevents LLVM cross-function optimization). Use `incant!` for dispatch.
-
-**`#[inline(never)]` on `read_coefficients`** — deliberate BTB aliasing fix (25x inlining caused 2.6x mispredicts). Do not change.
-
-**Decoder v2** (`src/decoder/vp8v2/`) is bit-exact with libwebp at 1.09-1.15x speed. Streaming cache→RGB, no full-frame Y/U/V buffers (~100KB vs ~4.5MB). Use for all new decode work.
-
-## Testing Rules
-
-**Always verify pixel-exact output against libwebp** via `webpx::decode_rgb()`. Tolerance 0 for lossy decode (our fancy upsample matches exactly). Use `tests/v2_pixel_perfect.rs` as the gate.
-
-**Lossless roundtrip**: `examples/lossless_rt_check.rs` — 24/24 pixel-exact across 6 images × 4 methods.
-
-**Benchmarks**: `benches/decode_compare.rs` (14 images, 4 decoders), `benches/decode_lossless_compare.rs`, `benches/compare_zenbench.rs` (lossless encode). All use zenbench 0.1.2+.
-
-**Disable dithering** (`with_dithering_strength(0)`) when comparing v1 vs v2 or vs libwebp. Default dithering adds random UV noise.
-
-## zen* Ecosystem
-
-zenwebp is part of the zen codec family. Key integration points:
-- **zencodec** (`src/codec.rs`): Implements `EncoderConfig`, `EncodeJob`, `Encoder`, `DecoderConfig` traits. Streaming decode via `decode_next_into_buf`.
-- **zenpipe**: zenwebp is a codec node in the streaming pixel pipeline. Decode outputs rows on demand.
-- **zenpixels**: Pixel format descriptors for type-safe buffer handling.
-- **archmage**: ALL SIMD goes through archmage. `simd` is no longer a feature — archmage/magetypes are mandatory deps.
-- **yuv crate**: Used for encode (RGB→YUV420). NOT used for decode (our own bit-exact fancy upsample).
-- **codec-corpus**: Test images. CID22, CLIC2025, gb82-sc, png-conformance, webp-conformance.
+**Benchmarks**: `benches/decode_compare.rs` (14 images), `benches/decode_lossless_compare.rs`. zenbench, no `-C target-cpu=native`.
 
 ## Key Files
 
