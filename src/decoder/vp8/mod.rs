@@ -707,12 +707,30 @@ impl<'a> Vp8Decoder<'a> {
     /// Main decode loop — uses `InternalDecodeError` to avoid String drop
     /// overhead on every `?` operator in the hot path.
     fn decode_mb_rows(&mut self, simd_token: SimdTokenType) -> Result<(), InternalDecodeError> {
+        let mbwidth = self.mbwidth as usize;
+        let dither_enabled = self.dither_enabled;
+
+        // Pre-size the filter params and dither buffers once.
+        if self.mb_filter_params.capacity() < mbwidth {
+            self.mb_filter_params
+                .reserve(mbwidth - self.mb_filter_params.capacity());
+        }
+        if dither_enabled && self.mb_dither_buf.capacity() < mbwidth {
+            self.mb_dither_buf
+                .reserve(mbwidth - self.mb_dither_buf.capacity());
+        }
+
         for mby in 0..self.mbheight as usize {
             let p = mby % self.num_partitions as usize;
             self.left = PreviousMacroBlock::default();
 
-            // Decode all macroblocks in this row (writes to cache)
-            for mbx in 0..self.mbwidth as usize {
+            // Clear per-row buffers (capacity already ensured above).
+            self.mb_filter_params.clear();
+            self.mb_dither_buf.clear();
+
+            // Single-pass: decode each MB, then immediately compute its
+            // filter params and dither amplitude — no second iteration needed.
+            for mbx in 0..mbwidth {
                 let mut mb = self.read_macroblock_header(mbx)?;
 
                 if !mb.coeffs_skipped {
@@ -737,27 +755,22 @@ impl<'a> Vp8Decoder<'a> {
                 self.intra_predict_luma(mbx, mby, &mb, simd_token);
                 self.intra_predict_chroma(mbx, mby, &mb, simd_token);
 
-                self.macroblocks.push(mb);
-            }
+                // Compute filter params from precomputed table (table lookup, no branches).
+                let is_b = mb.luma_mode == LumaMode::B;
+                let fp = &self.precomputed_filter[mb.segmentid as usize][is_b as usize];
+                let do_subblock_filtering =
+                    is_b || (!mb.coeffs_skipped && mb.non_zero_dct);
+                self.mb_filter_params.push(loop_filter::MbFilterParams {
+                    filter_level: fp.filter_level,
+                    interior_limit: fp.interior_limit,
+                    hev_threshold: fp.hev_threshold,
+                    mbedge_limit: fp.mbedge_limit,
+                    sub_bedge_limit: fp.sub_bedge_limit,
+                    do_subblock_filtering,
+                });
 
-            // Row complete: filter in cache, dither chroma, output to final buffer
-            self.filter_row_in_cache(mby, simd_token);
-
-            // Apply chroma dithering after filtering, before output.
-            // Per libwebp: only dither MBs with all-zero UV AC coefficients
-            // (smooth/flat blocks where banding is visible).
-            if self.dither_enabled {
-                let extra_uv_rows = self.extra_y_rows / 2;
-                let mbwidth = self.mbwidth as usize;
-                let mb_row_start = mby * mbwidth;
-                // Compute per-MB dither amplitude into reusable buffer.
-                self.mb_dither_buf.clear();
-                if self.mb_dither_buf.capacity() < mbwidth {
-                    self.mb_dither_buf
-                        .reserve(mbwidth - self.mb_dither_buf.capacity());
-                }
-                for mbx in 0..mbwidth {
-                    let mb = &self.macroblocks[mb_row_start + mbx];
+                // Compute dither amplitude inline.
+                if dither_enabled {
                     let amp = if mb.coeffs_skipped || mb.has_nonzero_uv_ac {
                         0
                     } else {
@@ -765,6 +778,16 @@ impl<'a> Vp8Decoder<'a> {
                     };
                     self.mb_dither_buf.push(amp);
                 }
+
+                self.macroblocks.push(mb);
+            }
+
+            // Row complete: filter in cache using pre-populated mb_filter_params.
+            self.filter_row_in_cache_precomputed(mby, simd_token);
+
+            // Apply chroma dithering after filtering, before output.
+            if dither_enabled {
+                let extra_uv_rows = self.extra_y_rows / 2;
                 let dither_buf = core::mem::take(&mut self.mb_dither_buf);
                 super::dither::dither_row(
                     &mut self.dither_rg,

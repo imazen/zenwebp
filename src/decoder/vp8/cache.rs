@@ -6,17 +6,12 @@
 use super::*;
 
 impl<'a> Vp8Decoder<'a> {
-    /// Filters a row of macroblocks in the cache
-    /// This operates on cache_y/u/v which have stride cache_y_stride/cache_uv_stride
+    /// Filters a row of macroblocks in the cache.
+    /// Used by the diagnostic path which populates filter params from the macroblocks vec.
     pub(super) fn filter_row_in_cache(&mut self, mby: usize, simd_token: SimdTokenType) {
         let mbwidth = self.mbwidth as usize;
-        let cache_y_stride = self.cache_y_stride;
-        let cache_uv_stride = self.cache_uv_stride;
-        let extra_y_rows = self.extra_y_rows;
 
-        // Build filter parameters for all macroblocks in this row using the
-        // precomputed per-(segment, is_b_mode) table. Only do_subblock_filtering
-        // still needs per-MB state (coeffs_skipped, non_zero_dct).
+        // Build filter parameters from the macroblocks vec (diagnostic path).
         self.mb_filter_params.clear();
         if self.mb_filter_params.capacity() < mbwidth {
             self.mb_filter_params
@@ -38,6 +33,22 @@ impl<'a> Vp8Decoder<'a> {
                 do_subblock_filtering,
             });
         }
+
+        self.filter_row_in_cache_precomputed(mby, simd_token);
+    }
+
+    /// Filters a row of macroblocks in the cache.
+    /// Assumes `self.mb_filter_params` is already populated for this row.
+    /// Used by the main decode path (single-pass: params computed during decode).
+    pub(super) fn filter_row_in_cache_precomputed(
+        &mut self,
+        mby: usize,
+        simd_token: SimdTokenType,
+    ) {
+        let mbwidth = self.mbwidth as usize;
+        let cache_y_stride = self.cache_y_stride;
+        let cache_uv_stride = self.cache_uv_stride;
+        let extra_y_rows = self.extra_y_rows;
 
         // Take ownership of mb_params to allow split borrows with cache buffers
         let mb_params = core::mem::take(&mut self.mb_filter_params);
