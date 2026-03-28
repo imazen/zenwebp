@@ -35,12 +35,7 @@ mod x86_fused {
     /// Produces two __m128i: diag1 and diag2. Each chroma sample becomes two luma-aligned values.
     /// a = near[0..N], b = near[1..N+1], c = far[0..N], d = far[1..N+1]
     #[rite(v3, import_intrinsics)]
-    fn fancy_upsample_16(
-        a: __m128i,
-        b: __m128i,
-        c: __m128i,
-        d: __m128i,
-    ) -> (__m128i, __m128i) {
+    fn fancy_upsample_16(a: __m128i, b: __m128i, c: __m128i, d: __m128i) -> (__m128i, __m128i) {
         let one = _mm_set1_epi8(1);
 
         // s = (a + d + 1) / 2
@@ -82,11 +77,7 @@ mod x86_fused {
 
     /// Convert 8 YUV444 pixels (16-bit, values in upper 8 bits) to R, G, B (16-bit).
     #[rite(v3, import_intrinsics)]
-    fn convert_yuv444_to_rgb(
-        y: __m128i,
-        u: __m128i,
-        v: __m128i,
-    ) -> (__m128i, __m128i, __m128i) {
+    fn convert_yuv444_to_rgb(y: __m128i, u: __m128i, v: __m128i) -> (__m128i, __m128i, __m128i) {
         let k19077 = _mm_set1_epi16(19077);
         let k26149 = _mm_set1_epi16(26149);
         let k14234 = _mm_set1_epi16(14234);
@@ -252,8 +243,7 @@ mod x86_fused {
         let b_1 = _mm_packus_epi16(b2, b3);
 
         // Interleave RGB
-        let (out0, out1, out2, out3, out4, out5) =
-            planar_to_24b(r_0, r_1, g_0, g_1, b_0, b_1);
+        let (out0, out1, out2, out3, out4, out5) = planar_to_24b(r_0, r_1, g_0, g_1, b_0, b_1);
 
         // Store 96 bytes
         let o = rgb_offset;
@@ -397,10 +387,8 @@ mod x86_fused {
         // Handle first pixel (edge: no left chroma neighbor)
         {
             let y_value = y_row[0];
-            let u_value =
-                get_fancy_chroma_value(u_row_1[0], u_row_1[0], u_row_2[0], u_row_2[0]);
-            let v_value =
-                get_fancy_chroma_value(v_row_1[0], v_row_1[0], v_row_2[0], v_row_2[0]);
+            let u_value = get_fancy_chroma_value(u_row_1[0], u_row_1[0], u_row_2[0], u_row_2[0]);
+            let v_value = get_fancy_chroma_value(v_row_1[0], v_row_1[0], v_row_2[0], v_row_2[0]);
             set_pixel(&mut rgb[0..3], y_value, u_value, v_value);
         }
 
@@ -411,8 +399,7 @@ mod x86_fused {
         // Process 32 Y pixels (16 chroma pairs) per iteration
         while y_offset + 32 <= width && uv_offset + 17 <= u_row_1.len() {
             process_32_pixels(
-                y_row, y_offset, u_row_1, u_row_2, v_row_1, v_row_2, uv_offset, rgb,
-                rgb_offset,
+                y_row, y_offset, u_row_1, u_row_2, v_row_1, v_row_2, uv_offset, rgb, rgb_offset,
             );
             y_offset += 32;
             uv_offset += 16;
@@ -422,8 +409,7 @@ mod x86_fused {
         // Process 16 Y pixels (8 chroma pairs)
         while y_offset + 16 <= width && uv_offset + 9 <= u_row_1.len() {
             process_16_pixels(
-                y_row, y_offset, u_row_1, u_row_2, v_row_1, v_row_2, uv_offset, rgb,
-                rgb_offset,
+                y_row, y_offset, u_row_1, u_row_2, v_row_1, v_row_2, uv_offset, rgb, rgb_offset,
             );
             y_offset += 16;
             uv_offset += 8;
@@ -446,7 +432,12 @@ mod x86_fused {
                     v_row_2[uv_offset],
                     v_row_2[uv_offset + 1],
                 );
-                set_pixel(&mut rgb[rgb_offset..rgb_offset + 3], y_value, u_value, v_value);
+                set_pixel(
+                    &mut rgb[rgb_offset..rgb_offset + 3],
+                    y_value,
+                    u_value,
+                    v_value,
+                );
             }
             {
                 let y_value = y_row[y_offset + 1];
@@ -656,10 +647,8 @@ mod neon_fused {
         // Handle first pixel (edge)
         {
             let y_value = y_row[0];
-            let u_value =
-                get_fancy_chroma_value(u_row_1[0], u_row_1[0], u_row_2[0], u_row_2[0]);
-            let v_value =
-                get_fancy_chroma_value(v_row_1[0], v_row_1[0], v_row_2[0], v_row_2[0]);
+            let u_value = get_fancy_chroma_value(u_row_1[0], u_row_1[0], u_row_2[0], u_row_2[0]);
+            let v_value = get_fancy_chroma_value(v_row_1[0], v_row_1[0], v_row_2[0], v_row_2[0]);
             set_pixel(&mut rgb[0..3], y_value, u_value, v_value);
         }
 
@@ -724,9 +713,8 @@ mod neon_fused {
             let v_up0 = upsample_16pixels_neon(_token, v_a0, v_b0, v_c0, v_d0);
             let v_up1 = upsample_16pixels_neon(_token, v_a1, v_b1, v_c1, v_d1);
 
-            let y0 = simd_mem::vld1q_u8(
-                <&[u8; 16]>::try_from(&y_row[y_offset..y_offset + 16]).unwrap(),
-            );
+            let y0 =
+                simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&y_row[y_offset..y_offset + 16]).unwrap());
             let y1 = simd_mem::vld1q_u8(
                 <&[u8; 16]>::try_from(&y_row[y_offset + 16..y_offset + 32]).unwrap(),
             );
@@ -781,9 +769,8 @@ mod neon_fused {
             let u_up = upsample_16pixels_neon(_token, u_a, u_b, u_c, u_d);
             let v_up = upsample_16pixels_neon(_token, v_a, v_b, v_c, v_d);
 
-            let y_vec = simd_mem::vld1q_u8(
-                <&[u8; 16]>::try_from(&y_row[y_offset..y_offset + 16]).unwrap(),
-            );
+            let y_vec =
+                simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&y_row[y_offset..y_offset + 16]).unwrap());
 
             convert_and_store_rgb16_neon(
                 _token,
@@ -814,7 +801,12 @@ mod neon_fused {
                     v_row_2[uv_offset],
                     v_row_2[uv_offset + 1],
                 );
-                set_pixel(&mut rgb[rgb_offset..rgb_offset + 3], y_value, u_value, v_value);
+                set_pixel(
+                    &mut rgb[rgb_offset..rgb_offset + 3],
+                    y_value,
+                    u_value,
+                    v_value,
+                );
             }
             {
                 let y_value = y_row[y_offset + 1];
@@ -895,10 +887,8 @@ mod wasm_fused {
         // Handle first pixel (edge)
         {
             let y_value = y_row[0];
-            let u_value =
-                get_fancy_chroma_value(u_row_1[0], u_row_1[0], u_row_2[0], u_row_2[0]);
-            let v_value =
-                get_fancy_chroma_value(v_row_1[0], v_row_1[0], v_row_2[0], v_row_2[0]);
+            let u_value = get_fancy_chroma_value(u_row_1[0], u_row_1[0], u_row_2[0], u_row_2[0]);
+            let v_value = get_fancy_chroma_value(v_row_1[0], v_row_1[0], v_row_2[0], v_row_2[0]);
             set_pixel(&mut rgb[0..3], y_value, u_value, v_value);
         }
 
@@ -952,9 +942,7 @@ mod wasm_fused {
             let diag1 = u8x16_avgr(a, m1);
             let diag2 = u8x16_avgr(b, m2);
 
-            i8x16_shuffle::<0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23>(
-                diag1, diag2,
-            )
+            i8x16_shuffle::<0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23>(diag1, diag2)
         }
 
         // Convert 16 YUV444 → 48 bytes RGB
@@ -972,13 +960,58 @@ mod wasm_fused {
 
                 // Widen to u16 in high byte position
                 let y16 = u16x8_extend_high_u8x16(i8x16_shuffle::<
-                    8, 0, 9, 1, 10, 2, 11, 3, 12, 4, 13, 5, 14, 6, 15, 7,
+                    8,
+                    0,
+                    9,
+                    1,
+                    10,
+                    2,
+                    11,
+                    3,
+                    12,
+                    4,
+                    13,
+                    5,
+                    14,
+                    6,
+                    15,
+                    7,
                 >(zero, y_half));
                 let u16v = u16x8_extend_high_u8x16(i8x16_shuffle::<
-                    8, 0, 9, 1, 10, 2, 11, 3, 12, 4, 13, 5, 14, 6, 15, 7,
+                    8,
+                    0,
+                    9,
+                    1,
+                    10,
+                    2,
+                    11,
+                    3,
+                    12,
+                    4,
+                    13,
+                    5,
+                    14,
+                    6,
+                    15,
+                    7,
                 >(zero, u_half));
                 let v16v = u16x8_extend_high_u8x16(i8x16_shuffle::<
-                    8, 0, 9, 1, 10, 2, 11, 3, 12, 4, 13, 5, 14, 6, 15, 7,
+                    8,
+                    0,
+                    9,
+                    1,
+                    10,
+                    2,
+                    11,
+                    3,
+                    12,
+                    4,
+                    13,
+                    5,
+                    14,
+                    6,
+                    15,
+                    7,
                 >(zero, v_half));
 
                 // mulhi_epu16 emulation: multiply wide, take high 16 bits
@@ -1032,21 +1065,18 @@ mod wasm_fused {
             let v_lo = v;
 
             // Process low 8 pixels
-            let y_lo_half =
-                i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 16, 16, 16, 16, 16, 16, 16>(
-                    y_lo,
-                    u8x16_splat(0),
-                );
-            let u_lo_half =
-                i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 16, 16, 16, 16, 16, 16, 16>(
-                    u_lo,
-                    u8x16_splat(0),
-                );
-            let v_lo_half =
-                i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 16, 16, 16, 16, 16, 16, 16>(
-                    v_lo,
-                    u8x16_splat(0),
-                );
+            let y_lo_half = i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 16, 16, 16, 16, 16, 16, 16>(
+                y_lo,
+                u8x16_splat(0),
+            );
+            let u_lo_half = i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 16, 16, 16, 16, 16, 16, 16>(
+                u_lo,
+                u8x16_splat(0),
+            );
+            let v_lo_half = i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 16, 16, 16, 16, 16, 16, 16>(
+                v_lo,
+                u8x16_splat(0),
+            );
             let (r0, g0, b0) = process_half(y_lo_half, u_lo_half, v_lo_half);
 
             // Process high 8 pixels
@@ -1074,10 +1104,8 @@ mod wasm_fused {
 
             // Interleave RGB manually (no vst3 on wasm)
             for i in 0..16 {
-                rgb[i * 3] = u8x16_extract_lane::<0>(u8x16_shr(
-                    i8x16_swizzle(r8, u8x16_splat(i as u8)),
-                    0,
-                ));
+                rgb[i * 3] =
+                    u8x16_extract_lane::<0>(u8x16_shr(i8x16_swizzle(r8, u8x16_splat(i as u8)), 0));
                 rgb[i * 3 + 1] = u8x16_extract_lane::<0>(i8x16_swizzle(g8, u8x16_splat(i as u8)));
                 rgb[i * 3 + 2] = u8x16_extract_lane::<0>(i8x16_swizzle(b8, u8x16_splat(i as u8)));
             }
@@ -1088,15 +1116,13 @@ mod wasm_fused {
         // The 32-pixel and 16-pixel loops inline the full upsample+convert pipeline
 
         while y_offset + 32 <= width && uv_offset + 17 <= u_row_1.len() {
-            let u_a0 = load_u8x8_low(
-                <&[u8; 8]>::try_from(&u_row_1[uv_offset..uv_offset + 8]).unwrap(),
-            );
+            let u_a0 =
+                load_u8x8_low(<&[u8; 8]>::try_from(&u_row_1[uv_offset..uv_offset + 8]).unwrap());
             let u_b0 = load_u8x8_low(
                 <&[u8; 8]>::try_from(&u_row_1[uv_offset + 1..uv_offset + 9]).unwrap(),
             );
-            let u_c0 = load_u8x8_low(
-                <&[u8; 8]>::try_from(&u_row_2[uv_offset..uv_offset + 8]).unwrap(),
-            );
+            let u_c0 =
+                load_u8x8_low(<&[u8; 8]>::try_from(&u_row_2[uv_offset..uv_offset + 8]).unwrap());
             let u_d0 = load_u8x8_low(
                 <&[u8; 8]>::try_from(&u_row_2[uv_offset + 1..uv_offset + 9]).unwrap(),
             );
@@ -1112,15 +1138,13 @@ mod wasm_fused {
             let u_d1 = load_u8x8_low(
                 <&[u8; 8]>::try_from(&u_row_2[uv_offset + 9..uv_offset + 17]).unwrap(),
             );
-            let v_a0 = load_u8x8_low(
-                <&[u8; 8]>::try_from(&v_row_1[uv_offset..uv_offset + 8]).unwrap(),
-            );
+            let v_a0 =
+                load_u8x8_low(<&[u8; 8]>::try_from(&v_row_1[uv_offset..uv_offset + 8]).unwrap());
             let v_b0 = load_u8x8_low(
                 <&[u8; 8]>::try_from(&v_row_1[uv_offset + 1..uv_offset + 9]).unwrap(),
             );
-            let v_c0 = load_u8x8_low(
-                <&[u8; 8]>::try_from(&v_row_2[uv_offset..uv_offset + 8]).unwrap(),
-            );
+            let v_c0 =
+                load_u8x8_low(<&[u8; 8]>::try_from(&v_row_2[uv_offset..uv_offset + 8]).unwrap());
             let v_d0 = load_u8x8_low(
                 <&[u8; 8]>::try_from(&v_row_2[uv_offset + 1..uv_offset + 9]).unwrap(),
             );
@@ -1142,12 +1166,9 @@ mod wasm_fused {
             let v_up0 = upsample_16pixels(v_a0, v_b0, v_c0, v_d0);
             let v_up1 = upsample_16pixels(v_a1, v_b1, v_c1, v_d1);
 
-            let y0 = load_u8x16(
-                <&[u8; 16]>::try_from(&y_row[y_offset..y_offset + 16]).unwrap(),
-            );
-            let y1 = load_u8x16(
-                <&[u8; 16]>::try_from(&y_row[y_offset + 16..y_offset + 32]).unwrap(),
-            );
+            let y0 = load_u8x16(<&[u8; 16]>::try_from(&y_row[y_offset..y_offset + 16]).unwrap());
+            let y1 =
+                load_u8x16(<&[u8; 16]>::try_from(&y_row[y_offset + 16..y_offset + 32]).unwrap());
 
             convert_and_store_rgb16(
                 y0,
@@ -1168,36 +1189,30 @@ mod wasm_fused {
         }
 
         while y_offset + 16 <= width && uv_offset + 9 <= u_row_1.len() {
-            let u_a = load_u8x8_low(
-                <&[u8; 8]>::try_from(&u_row_1[uv_offset..uv_offset + 8]).unwrap(),
-            );
+            let u_a =
+                load_u8x8_low(<&[u8; 8]>::try_from(&u_row_1[uv_offset..uv_offset + 8]).unwrap());
             let u_b = load_u8x8_low(
                 <&[u8; 8]>::try_from(&u_row_1[uv_offset + 1..uv_offset + 9]).unwrap(),
             );
-            let u_c = load_u8x8_low(
-                <&[u8; 8]>::try_from(&u_row_2[uv_offset..uv_offset + 8]).unwrap(),
-            );
+            let u_c =
+                load_u8x8_low(<&[u8; 8]>::try_from(&u_row_2[uv_offset..uv_offset + 8]).unwrap());
             let u_d = load_u8x8_low(
                 <&[u8; 8]>::try_from(&u_row_2[uv_offset + 1..uv_offset + 9]).unwrap(),
             );
-            let v_a = load_u8x8_low(
-                <&[u8; 8]>::try_from(&v_row_1[uv_offset..uv_offset + 8]).unwrap(),
-            );
+            let v_a =
+                load_u8x8_low(<&[u8; 8]>::try_from(&v_row_1[uv_offset..uv_offset + 8]).unwrap());
             let v_b = load_u8x8_low(
                 <&[u8; 8]>::try_from(&v_row_1[uv_offset + 1..uv_offset + 9]).unwrap(),
             );
-            let v_c = load_u8x8_low(
-                <&[u8; 8]>::try_from(&v_row_2[uv_offset..uv_offset + 8]).unwrap(),
-            );
+            let v_c =
+                load_u8x8_low(<&[u8; 8]>::try_from(&v_row_2[uv_offset..uv_offset + 8]).unwrap());
             let v_d = load_u8x8_low(
                 <&[u8; 8]>::try_from(&v_row_2[uv_offset + 1..uv_offset + 9]).unwrap(),
             );
 
             let u_up = upsample_16pixels(u_a, u_b, u_c, u_d);
             let v_up = upsample_16pixels(v_a, v_b, v_c, v_d);
-            let y_vec = load_u8x16(
-                <&[u8; 16]>::try_from(&y_row[y_offset..y_offset + 16]).unwrap(),
-            );
+            let y_vec = load_u8x16(<&[u8; 16]>::try_from(&y_row[y_offset..y_offset + 16]).unwrap());
 
             convert_and_store_rgb16(
                 y_vec,
@@ -1227,7 +1242,12 @@ mod wasm_fused {
                     v_row_2[uv_offset],
                     v_row_2[uv_offset + 1],
                 );
-                set_pixel(&mut rgb[rgb_offset..rgb_offset + 3], y_value, u_value, v_value);
+                set_pixel(
+                    &mut rgb[rgb_offset..rgb_offset + 3],
+                    y_value,
+                    u_value,
+                    v_value,
+                );
             }
             {
                 let y_value = y_row[y_offset + 1];
