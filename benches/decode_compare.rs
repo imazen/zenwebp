@@ -197,7 +197,7 @@ fn decode_compare(suite: &mut zenbench::Suite) {
                 b.with_input(move || d.clone()).run(|bytes| {
                     black_box(
                         zenwebp::DecodeRequest::new(&config, black_box(&bytes))
-                            .decode_rgb_v2()
+                            .decode_rgba_v2()
                             .unwrap(),
                     )
                 })

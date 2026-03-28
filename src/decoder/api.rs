@@ -518,11 +518,23 @@ impl<'a> DecodeRequest<'a> {
         decode_yuv420(self.data)
     }
 
-    /// Decode using the v2 decoder (experimental).
+    /// Decode using the v2 decoder (experimental), returning RGB.
     ///
     /// Returns `(pixels, width, height)` where pixels are RGB (3 bytes/pixel).
     /// Only supports simple lossy VP8 (no alpha, no lossless, no animation).
     pub fn decode_rgb_v2(self) -> DecodeResult<(Vec<u8>, u16, u16)> {
+        self.decode_v2_internal(3)
+    }
+
+    /// Decode using the v2 decoder (experimental), returning RGBA.
+    ///
+    /// Returns `(pixels, width, height)` where pixels are RGBA (4 bytes/pixel).
+    /// Only supports simple lossy VP8 (no alpha, no lossless, no animation).
+    pub fn decode_rgba_v2(self) -> DecodeResult<(Vec<u8>, u16, u16)> {
+        self.decode_v2_internal(4)
+    }
+
+    fn decode_v2_internal(self, bpp: usize) -> DecodeResult<(Vec<u8>, u16, u16)> {
         use super::vp8v2;
 
         let data = self.data;
@@ -558,7 +570,7 @@ impl<'a> DecodeRequest<'a> {
         let mut ctx = vp8v2::DecoderContext::new();
         let mut output = Vec::new();
         let (w, h) = ctx
-            .decode_to_rgb(vp8_data, &mut output, 3)
+            .decode_to_rgb(vp8_data, &mut output, bpp)
             .map_err(|e| whereat::at!(e))?;
         Ok((output, w, h))
     }
