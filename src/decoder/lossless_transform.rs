@@ -615,8 +615,9 @@ fn apply_color_indexing_transform_small_table<const W_BITS: u8, const EXP_ENTRY_
             .chunks_exact_mut(EXP_ENTRY_SIZE) // Uses const generic to avoid expensive memmove call
             .zip(packed_indices_for_row.iter())
         {
-            let output_chunk_array: &mut [u8; EXP_ENTRY_SIZE] =
-                output_chunk_slice.first_chunk_mut::<EXP_ENTRY_SIZE>().unwrap();
+            let output_chunk_array: &mut [u8; EXP_ENTRY_SIZE] = output_chunk_slice
+                .first_chunk_mut::<EXP_ENTRY_SIZE>()
+                .unwrap();
 
             let colors_data_array = &expanded_lookup_table_array[packed_index_byte as usize];
 
