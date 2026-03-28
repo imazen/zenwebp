@@ -924,8 +924,8 @@ mod tests {
             &mut cache_y,
             cache_y_stride,
             extra_y_rows,
-            1,   // mbx
-            1,   // mby
+            1, // mbx
+            1, // mby
             mbwidth,
             &mut top_border_y,
             &mut left_border_y,
@@ -978,8 +978,8 @@ mod tests {
             &mut cache_y,
             cache_y_stride,
             extra_y_rows,
-            0,   // mbx
-            1,   // mby (not 0, so it reads top border)
+            0, // mbx
+            1, // mby (not 0, so it reads top border)
             mbwidth,
             &mut top_border_y,
             &mut left_border_y,
@@ -1038,8 +1038,8 @@ mod tests {
             &mut cache_v,
             cache_uv_stride,
             extra_y_rows,
-            1,   // mbx
-            1,   // mby
+            1, // mbx
+            1, // mby
             &mut top_border_u,
             &mut left_border_u,
             &mut top_border_v,
@@ -1092,8 +1092,8 @@ mod tests {
             &mut cache_y,
             cache_y_stride,
             extra_y_rows,
-            1,   // mbx
-            1,   // mby
+            1, // mbx
+            1, // mby
             mbwidth,
             &mut top_border_y,
             &mut left_border_y,
