@@ -158,10 +158,21 @@ impl DecoderContext {
         let cache_y_size = cache_y_rows * self.cache_y_stride + FILTER_PADDING_Y;
         let cache_uv_size = cache_uv_rows * self.cache_uv_stride + FILTER_PADDING_UV;
 
-        // Resize cache buffers. Only zeroes new elements when growing.
+        // Cache buffers: resize, then reinitialize the extra_y_rows region.
+        // Only the top `extra_y_rows` of the cache carry filter context from
+        // row to row. Stale data from a previous frame in this region would
+        // corrupt the first MB row's loop filter output. The rest of the cache
+        // is overwritten during prediction before it is read.
         self.cache_y.resize(cache_y_size, 128);
         self.cache_u.resize(cache_uv_size, 128);
         self.cache_v.resize(cache_uv_size, 128);
+
+        // Zero the extra rows region (top of cache, used for filter context)
+        let extra_y_bytes = extra_y_rows * self.cache_y_stride;
+        self.cache_y[..extra_y_bytes].fill(128);
+        let extra_uv_bytes = extra_uv_rows * self.cache_uv_stride;
+        self.cache_u[..extra_uv_bytes].fill(128);
+        self.cache_v[..extra_uv_bytes].fill(128);
 
         // Per-row buffers
         self.mb_filter_params.resize(
@@ -178,20 +189,29 @@ impl DecoderContext {
         self.mb_dither_buf.resize(mbw, 0);
         self.mb_row_data.resize(mbw, MbRowEntry::default());
 
-        // Border buffers
+        // Border buffers: MUST be reinitialized for every frame.
+        // These carry per-row prediction context that is invalid across frames.
         let top_y_size = mbw * 16 + 4 + 16;
         self.top_border_y.resize(top_y_size, 127);
+        self.top_border_y.fill(127);
         self.top_border_u.resize(mbw * 8, 127);
+        self.top_border_u.fill(127);
         self.top_border_v.resize(mbw * 8, 127);
+        self.top_border_v.fill(127);
 
-        // Top MB context
+        // Top MB context: MUST be reinitialized for every frame.
+        // Contains complexity context from the previous frame's bottom row.
         self.top.resize(mbw, PreviousMacroBlock::default());
+        self.top.fill(PreviousMacroBlock::default());
 
-        // Reset left border to initial state
+        // Reset left border to initial state (always, not just on dim change)
         self.left_border_y = [129u8; 17];
         self.left_border_u = [129u8; 9];
         self.left_border_v = [129u8; 9];
         self.left = PreviousMacroBlock::default();
+
+        // Clear coefficient blocks and workspaces
+        self.coeff_blocks = [0i32; MB_COEFF_SIZE];
 
         self.last_mbwidth = mbwidth;
         self.last_mbheight = mbheight;
