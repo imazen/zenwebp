@@ -877,6 +877,52 @@ mod tests {
         );
     }
 
+    /// Quick decode speed comparison: v2 (yuv_exact) vs libwebp.
+    #[test]
+    fn bench_v2_vs_libwebp_512() {
+        let (w, h) = (512, 512);
+        let mut pixels = alloc::vec![0u8; w * h * 3];
+        for y in 0..h {
+            for x in 0..w {
+                let idx = (y * w + x) * 3;
+                pixels[idx] = ((x * 255) / w) as u8;
+                pixels[idx + 1] = ((y * 255) / h) as u8;
+                pixels[idx + 2] = 128;
+            }
+        }
+
+        let webp = encode_lossy(&pixels, w, h, 75.0);
+
+        let n = 50;
+        let config = DecodeConfig::default();
+
+        // Warm up
+        for _ in 0..3 {
+            let _ = DecodeRequest::new(&config, &webp).decode_rgb_v2().unwrap();
+            let _ = webpx::decode_rgb(&webp).unwrap();
+        }
+
+        let start = std::time::Instant::now();
+        for _ in 0..n {
+            let _ = DecodeRequest::new(&config, &webp).decode_rgb_v2().unwrap();
+        }
+        let v2_time = start.elapsed();
+
+        let start = std::time::Instant::now();
+        for _ in 0..n {
+            let _ = webpx::decode_rgb(&webp).unwrap();
+        }
+        let lib_time = start.elapsed();
+
+        let v2_us = v2_time.as_micros() as f64 / n as f64;
+        let lib_us = lib_time.as_micros() as f64 / n as f64;
+
+        eprintln!("512x512 Q75 RGB decode ({n} iters):");
+        eprintln!("  v2 (yuv_exact): {v2_us:.0} us");
+        eprintln!("  libwebp:        {lib_us:.0} us");
+        eprintln!("  ratio:          {:.2}x", v2_us / lib_us);
+    }
+
     /// Test odd dimensions to verify edge handling.
     #[test]
     fn bit_exact_vs_libwebp_odd_dimensions() {
