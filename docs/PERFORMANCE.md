@@ -26,15 +26,40 @@ Compression at parity (1.00-1.01x). 24/24 pixel-exact roundtrips verified.
 | codec_wiki 2560x1664 | 202 MPix/s | 495 MPix/s | 191 MPix/s | 2.45x → **1.31x** |
 | terminal 1646x1062 | 541 MPix/s | 779 MPix/s | 483 MPix/s | 1.44x → **1.23x** |
 
-### Lossy Decode
+### Lossy Decode (14-image corpus, diverse content)
 
-| Image | zenwebp | libwebp C | image-webp | zen/lib |
-|-------|---------|-----------|------------|---------|
-| codec_wiki 2560x1664 | 426 MPix/s | 707 MPix/s | 177 MPix/s | **1.66x** |
-| terminal 1646x1062 | 309 MPix/s | 438 MPix/s | 135 MPix/s | **1.42x** |
-| photo 512x512 | 220 MPix/s | 310 MPix/s | 89 MPix/s | **1.41x** |
+**Screenshots (UI, text, sharp edges):**
 
-zenwebp is 2-3x faster than image-webp on all decode paths.
+| Image | zenwebp | libwebp C | zen/lib |
+|-------|---------|-----------|---------|
+| sc_4k_wiki 3508x2480 | 223 MPix/s | 496 MPix/s | **2.22x** |
+| sc_3k_imac 2940x1912 | 266 MPix/s | 362 MPix/s | **1.36x** |
+| sc_2k_wiki 2560x1664 | 448 MPix/s | 720 MPix/s | **1.61x** |
+| sc_2k_ui 1920x1920 | 512 MPix/s | 828 MPix/s | **1.62x** |
+| sc_1k_term 1646x1062 | 319 MPix/s | 454 MPix/s | **1.42x** |
+
+**Photos (CLIC2025, professional):**
+
+| Image | zenwebp | libwebp C | zen/lib |
+|-------|---------|-----------|---------|
+| ph_2k_sq 2048x2048 | 245 MPix/s | 324 MPix/s | **1.32x** |
+| ph_2k_43 2048x1536 | 68.2 MPix/s | 77.7 MPix/s | **1.14x** |
+| ph_2k_32 2048x1360 | 175 MPix/s | 221 MPix/s | **1.26x** |
+| ph_2k_uw 2048x976 | 114 MPix/s | 136 MPix/s | **1.19x** |
+| ph_2k_pt 1360x2048 | 240 MPix/s | 313 MPix/s | **1.30x** |
+
+**Small photos (576px, 512px):**
+
+| Image | zenwebp | libwebp C | zen/lib |
+|-------|---------|-----------|---------|
+| ph_576_baby | 223 MPix/s | 302 MPix/s | **1.35x** |
+| ph_576_city | 123 MPix/s | 150 MPix/s | **1.22x** |
+| ph_576_flowers | 103 MPix/s | 125 MPix/s | **1.21x** |
+| ph_512_cid | 225 MPix/s | 301 MPix/s | **1.34x** |
+
+Photos: **1.14-1.35x** slower. Screenshots: **1.36-2.22x** (gap correlates with
+bits-per-pixel — low-bpp screenshots exercise loop filter/YUV more than bit reader).
+zenwebp is 2-2.5x faster than image-webp across all content types.
 
 ---
 
