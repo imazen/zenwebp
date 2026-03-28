@@ -185,6 +185,19 @@ pub(crate) const CHROMA_STRIDE: usize = 32;
 /// Chroma prediction block size: 9 rows (1 border + 8) × 32 byte stride
 pub(crate) const CHROMA_BLOCK_SIZE: usize = CHROMA_STRIDE * (8 + 1);
 
+/// Total coefficient storage per macroblock: 24 blocks × 16 coefficients each.
+/// 16 luma Y blocks + 4 chroma U blocks + 4 chroma V blocks = 24.
+pub(crate) const MB_COEFF_SIZE: usize = 24 * 16;
+
+/// Extract a mutable reference to a single 4×4 coefficient block from the
+/// macroblock coefficient array. With a `[i32; 384]` source, the compiler
+/// can prove `idx < 24` implies in-bounds, eliminating the bounds check.
+#[inline(always)]
+pub(crate) fn coeff_block(blocks: &mut [i32; MB_COEFF_SIZE], idx: usize) -> &mut [i32; 16] {
+    let start = idx * 16;
+    (&mut blocks[start..start + 16]).try_into().unwrap()
+}
+
 /// Creates a chroma block with border used for chroma prediction
 pub(crate) fn create_border_chroma(
     mbx: usize,

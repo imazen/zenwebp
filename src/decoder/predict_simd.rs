@@ -23,7 +23,7 @@ use crate::common::types::*;
 pub(super) fn process_luma_mb(
     _token: archmage::X64V3Token,
     ws: &mut [u8; LUMA_BLOCK_SIZE],
-    coeff_blocks: &mut [i32],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
     luma_mode: LumaMode,
     bpred: &[IntraMode; 16],
     nz: u32,
@@ -41,7 +41,7 @@ pub(super) fn process_chroma_mb(
     _token: archmage::X64V3Token,
     uws: &mut [u8; CHROMA_BLOCK_SIZE],
     vws: &mut [u8; CHROMA_BLOCK_SIZE],
-    coeff_blocks: &mut [i32],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
     chroma_mode: ChromaMode,
     nz: u32,
     mbx: usize,
@@ -57,7 +57,7 @@ pub(super) fn process_chroma_mb(
 fn process_luma_mb_idct_x86(
     _token: archmage::X64V3Token,
     ws: &mut [u8; LUMA_BLOCK_SIZE],
-    coeff_blocks: &mut [i32],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
     luma_mode: LumaMode,
     bpred: &[IntraMode; 16],
     nz: u32,
@@ -91,8 +91,7 @@ fn process_luma_mb_idct_x86(
                 }
 
                 if nz & (1u32 << i) != 0 {
-                    let rb: &mut [i32; 16] =
-                        (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
+                    let rb = coeff_block(coeff_blocks, i);
                     let dc_only = rb[1..].iter().all(|&c| c == 0);
                     crate::common::transform::idct_add_residue_inplace_sse2_inner(
                         _token, rb, ws, y0, x0, stride, dc_only,
@@ -109,8 +108,7 @@ fn process_luma_mb_idct_x86(
                     if nz & (1u32 << i) != 0 {
                         let y0 = 1 + y * 4;
                         let x0 = 1 + x * 4;
-                        let rb: &mut [i32; 16] =
-                            (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
+                        let rb = coeff_block(coeff_blocks, i);
                         let dc_only = rb[1..].iter().all(|&c| c == 0);
                         crate::common::transform::idct_add_residue_inplace_sse2_inner(
                             _token, rb, ws, y0, x0, stride, dc_only,
@@ -129,7 +127,7 @@ fn process_chroma_mb_idct_x86(
     _token: archmage::X64V3Token,
     uws: &mut [u8; CHROMA_BLOCK_SIZE],
     vws: &mut [u8; CHROMA_BLOCK_SIZE],
-    coeff_blocks: &mut [i32],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
     nz: u32,
 ) {
     let stride = CHROMA_STRIDE;
@@ -144,8 +142,7 @@ fn process_chroma_mb_idct_x86(
                 let x0 = 1 + x * 4;
 
                 if nz & (1u32 << u_idx) != 0 {
-                    let urb: &mut [i32; 16] =
-                        (&mut coeff_blocks[u_idx * 16..][..16]).try_into().unwrap();
+                    let urb = coeff_block(coeff_blocks, u_idx);
                     let dc_only = urb[1..].iter().all(|&c| c == 0);
                     crate::common::transform::idct_add_residue_inplace_sse2_inner(
                         _token, urb, uws, y0, x0, stride, dc_only,
@@ -153,8 +150,7 @@ fn process_chroma_mb_idct_x86(
                 }
 
                 if nz & (1u32 << v_idx) != 0 {
-                    let vrb: &mut [i32; 16] =
-                        (&mut coeff_blocks[v_idx * 16..][..16]).try_into().unwrap();
+                    let vrb = coeff_block(coeff_blocks, v_idx);
                     let dc_only = vrb[1..].iter().all(|&c| c == 0);
                     crate::common::transform::idct_add_residue_inplace_sse2_inner(
                         _token, vrb, vws, y0, x0, stride, dc_only,
@@ -175,7 +171,7 @@ fn process_chroma_mb_idct_x86(
 pub(super) fn process_luma_mb(
     _token: archmage::NeonToken,
     ws: &mut [u8; LUMA_BLOCK_SIZE],
-    coeff_blocks: &mut [i32],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
     luma_mode: LumaMode,
     bpred: &[IntraMode; 16],
     nz: u32,
@@ -193,7 +189,7 @@ pub(super) fn process_chroma_mb(
     _token: archmage::NeonToken,
     uws: &mut [u8; CHROMA_BLOCK_SIZE],
     vws: &mut [u8; CHROMA_BLOCK_SIZE],
-    coeff_blocks: &mut [i32],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
     chroma_mode: ChromaMode,
     nz: u32,
     mbx: usize,
@@ -209,7 +205,7 @@ pub(super) fn process_chroma_mb(
 fn process_luma_mb_idct_neon(
     _token: archmage::NeonToken,
     ws: &mut [u8; LUMA_BLOCK_SIZE],
-    coeff_blocks: &mut [i32],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
     luma_mode: LumaMode,
     bpred: &[IntraMode; 16],
     nz: u32,
@@ -237,8 +233,7 @@ fn process_luma_mb_idct_neon(
                 }
 
                 if nz & (1u32 << i) != 0 {
-                    let rb: &mut [i32; 16] =
-                        (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
+                    let rb = coeff_block(coeff_blocks, i);
                     let dc_only = rb[1..].iter().all(|&c| c == 0);
                     crate::common::transform::idct_add_residue_inplace_neon_inner(
                         _token, rb, ws, y0, x0, stride, dc_only,
@@ -254,8 +249,7 @@ fn process_luma_mb_idct_neon(
                     if nz & (1u32 << i) != 0 {
                         let y0 = 1 + y * 4;
                         let x0 = 1 + x * 4;
-                        let rb: &mut [i32; 16] =
-                            (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
+                        let rb = coeff_block(coeff_blocks, i);
                         let dc_only = rb[1..].iter().all(|&c| c == 0);
                         crate::common::transform::idct_add_residue_inplace_neon_inner(
                             _token, rb, ws, y0, x0, stride, dc_only,
@@ -274,7 +268,7 @@ fn process_chroma_mb_idct_neon(
     _token: archmage::NeonToken,
     uws: &mut [u8; CHROMA_BLOCK_SIZE],
     vws: &mut [u8; CHROMA_BLOCK_SIZE],
-    coeff_blocks: &mut [i32],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
     nz: u32,
 ) {
     let stride = CHROMA_STRIDE;
@@ -289,8 +283,7 @@ fn process_chroma_mb_idct_neon(
                 let x0 = 1 + x * 4;
 
                 if nz & (1u32 << u_idx) != 0 {
-                    let urb: &mut [i32; 16] =
-                        (&mut coeff_blocks[u_idx * 16..][..16]).try_into().unwrap();
+                    let urb = coeff_block(coeff_blocks, u_idx);
                     let dc_only = urb[1..].iter().all(|&c| c == 0);
                     crate::common::transform::idct_add_residue_inplace_neon_inner(
                         _token, urb, uws, y0, x0, stride, dc_only,
@@ -298,8 +291,7 @@ fn process_chroma_mb_idct_neon(
                 }
 
                 if nz & (1u32 << v_idx) != 0 {
-                    let vrb: &mut [i32; 16] =
-                        (&mut coeff_blocks[v_idx * 16..][..16]).try_into().unwrap();
+                    let vrb = coeff_block(coeff_blocks, v_idx);
                     let dc_only = vrb[1..].iter().all(|&c| c == 0);
                     crate::common::transform::idct_add_residue_inplace_neon_inner(
                         _token, vrb, vws, y0, x0, stride, dc_only,
@@ -320,7 +312,7 @@ fn process_chroma_mb_idct_neon(
 pub(super) fn process_luma_mb(
     _token: archmage::Wasm128Token,
     ws: &mut [u8; LUMA_BLOCK_SIZE],
-    coeff_blocks: &mut [i32],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
     luma_mode: LumaMode,
     bpred: &[IntraMode; 16],
     nz: u32,
@@ -338,7 +330,7 @@ pub(super) fn process_chroma_mb(
     _token: archmage::Wasm128Token,
     uws: &mut [u8; CHROMA_BLOCK_SIZE],
     vws: &mut [u8; CHROMA_BLOCK_SIZE],
-    coeff_blocks: &mut [i32],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
     chroma_mode: ChromaMode,
     nz: u32,
     mbx: usize,
@@ -419,7 +411,7 @@ fn process_chroma_mb_predict(
 #[inline(always)]
 fn process_luma_mb_idct_scalar(
     ws: &mut [u8; LUMA_BLOCK_SIZE],
-    coeff_blocks: &mut [i32],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
     luma_mode: LumaMode,
     bpred: &[IntraMode; 16],
     nz: u32,
@@ -447,8 +439,7 @@ fn process_luma_mb_idct_scalar(
                 }
 
                 if nz & (1u32 << i) != 0 {
-                    let rb: &mut [i32; 16] =
-                        (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
+                    let rb = coeff_block(coeff_blocks, i);
                     idct_add_residue_and_clear(ws, rb, y0, x0, stride);
                 }
             }
@@ -461,8 +452,7 @@ fn process_luma_mb_idct_scalar(
                     if nz & (1u32 << i) != 0 {
                         let y0 = 1 + y * 4;
                         let x0 = 1 + x * 4;
-                        let rb: &mut [i32; 16] =
-                            (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
+                        let rb = coeff_block(coeff_blocks, i);
                         idct_add_residue_and_clear(ws, rb, y0, x0, stride);
                     }
                 }
@@ -477,7 +467,7 @@ fn process_luma_mb_idct_scalar(
 fn process_chroma_mb_idct_scalar(
     uws: &mut [u8; CHROMA_BLOCK_SIZE],
     vws: &mut [u8; CHROMA_BLOCK_SIZE],
-    coeff_blocks: &mut [i32],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
     nz: u32,
 ) {
     let stride = CHROMA_STRIDE;
@@ -492,14 +482,12 @@ fn process_chroma_mb_idct_scalar(
                 let x0 = 1 + x * 4;
 
                 if nz & (1u32 << u_idx) != 0 {
-                    let urb: &mut [i32; 16] =
-                        (&mut coeff_blocks[u_idx * 16..][..16]).try_into().unwrap();
+                    let urb = coeff_block(coeff_blocks, u_idx);
                     idct_add_residue_and_clear(uws, urb, y0, x0, stride);
                 }
 
                 if nz & (1u32 << v_idx) != 0 {
-                    let vrb: &mut [i32; 16] =
-                        (&mut coeff_blocks[v_idx * 16..][..16]).try_into().unwrap();
+                    let vrb = coeff_block(coeff_blocks, v_idx);
                     idct_add_residue_and_clear(vws, vrb, y0, x0, stride);
                 }
             }

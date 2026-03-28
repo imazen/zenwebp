@@ -204,7 +204,7 @@ impl<'a> Vp8Decoder<'a> {
                 let i = x + y * 4;
                 let complexity = top.complexity[x + 1] + left_ctx;
 
-                let block: &mut [i32; 16] = (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
+                let block = coeff_block(coeff_blocks, i);
                 let n = read_coefficients(
                     &mut reader,
                     block,
@@ -239,8 +239,7 @@ impl<'a> Vp8Decoder<'a> {
                     let i = x + y * 2 + if j == 5 { 16 } else { 20 };
                     let complexity = top.complexity[x + j] + left_ctx;
 
-                    let block: &mut [i32; 16] =
-                        (&mut coeff_blocks[i * 16..][..16]).try_into().unwrap();
+                    let block = coeff_block(coeff_blocks, i);
                     let n = read_coefficients(
                         &mut reader,
                         block,
