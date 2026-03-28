@@ -1012,6 +1012,14 @@ pub(crate) fn idct_add_residue_sse2(
     out_y0: usize,
     out_x0: usize,
 ) {
+    // Region-based bounds checks: one per buffer at entry
+    let pred_base = pred_y0 * pred_stride + pred_x0;
+    let pred_region = &pred_block[pred_base..pred_base + 3 * pred_stride + 4];
+    let out_base = out_y0 * out_stride + out_x0;
+    let out_region = &mut out_block[out_base..out_base + 3 * out_stride + 4];
+    let ps = pred_stride;
+    let os = out_stride;
+
     // IDCT constants
     let k1k2 = _mm_set_epi16(-30068, -30068, -30068, -30068, 20091, 20091, 20091, 20091);
     let k2k1 = _mm_set_epi16(20091, 20091, 20091, 20091, -30068, -30068, -30068, -30068);
@@ -1034,44 +1042,28 @@ pub(crate) fn idct_add_residue_sse2(
     // Horizontal pass with rounding → residual in i16
     let (res01, res23) = itransform_pass2_sse2(_token, t01, t23, k1k2, k2k1, zero_four);
 
-    // res01 = row0[0-3] row1[0-3] as i16
-    // res23 = row2[0-3] row3[0-3] as i16
-
-    // Load 4 prediction bytes per row, extend to i16, add residual, pack to u8
+    // Process each row: load pred, add residual, store to output
     macro_rules! process_row {
-        ($res:expr, $row_idx:expr, $hi:expr) => {{
-            // Extract this row's residuals (4 x i16)
+        ($res:expr, $pred_off:expr, $out_off:expr, $hi:expr) => {{
             let residual = if $hi {
                 _mm_unpackhi_epi64($res, $res)
             } else {
                 $res
             };
-
-            // Load 4 prediction bytes
-            let pred_pos = (pred_y0 + $row_idx) * pred_stride + pred_x0;
-            let pred_bytes: [u8; 4] = pred_block[pred_pos..pred_pos + 4].try_into().unwrap();
-            let pred_i32 = i32::from_ne_bytes(pred_bytes);
-            let pred_vec = _mm_cvtsi32_si128(pred_i32);
-            // Extend u8 → i16 (zero extend, then treat as signed for addition)
+            let pred_bytes: [u8; 4] = pred_region[$pred_off..$pred_off + 4].try_into().unwrap();
+            let pred_vec = _mm_cvtsi32_si128(i32::from_ne_bytes(pred_bytes));
             let pred_i16 = _mm_unpacklo_epi8(pred_vec, zero);
-
-            // Add residual to prediction (i16 + i16 → i16)
             let sum = _mm_add_epi16(pred_i16, residual);
-
-            // Pack to u8 with saturation (clamp to 0-255)
             let packed = _mm_packus_epi16(sum, sum);
-
-            // Store 4 bytes to output
-            let out_pos = (out_y0 + $row_idx) * out_stride + out_x0;
             let result = _mm_cvtsi128_si32(packed) as u32;
-            out_block[out_pos..out_pos + 4].copy_from_slice(&result.to_ne_bytes());
+            out_region[$out_off..$out_off + 4].copy_from_slice(&result.to_ne_bytes());
         }};
     }
 
-    process_row!(res01, 0, false);
-    process_row!(res01, 1, true);
-    process_row!(res23, 2, false);
-    process_row!(res23, 3, true);
+    process_row!(res01, 0, 0, false);
+    process_row!(res01, ps, os, true);
+    process_row!(res23, ps * 2, os * 2, false);
+    process_row!(res23, ps * 3, os * 3, true);
 
     // Clear coefficient block
     let (c0, c1, c2, c3) = rows4_mut(coeffs);
@@ -1128,30 +1120,28 @@ pub(crate) fn idct_add_residue_dc_sse2(
     out_y0: usize,
     out_x0: usize,
 ) {
+    // Region-based bounds checks: one per buffer at entry
+    let pred_base = pred_y0 * pred_stride + pred_x0;
+    let pred_region = &pred_block[pred_base..pred_base + 3 * pred_stride + 4];
+    let out_base = out_y0 * out_stride + out_x0;
+    let out_region = &mut out_block[out_base..out_base + 3 * out_stride + 4];
+    let ps = pred_stride;
+    let os = out_stride;
+
     // DC-only: output = prediction + ((DC + 4) >> 3) for all 16 pixels
     let dc = coeffs[0];
     let dc_adj = ((dc + 4) >> 3) as i16;
     let dc_vec = _mm_set1_epi16(dc_adj);
     let zero = _mm_setzero_si128();
 
-    for row in 0..4 {
-        // Load 4 prediction bytes
-        let pred_pos = (pred_y0 + row) * pred_stride + pred_x0;
-        let pred_bytes: [u8; 4] = pred_block[pred_pos..pred_pos + 4].try_into().unwrap();
-        let pred_i32 = i32::from_ne_bytes(pred_bytes);
-        let pred_vec = _mm_cvtsi32_si128(pred_i32);
+    for (pred_off, out_off) in [(0, 0), (ps, os), (ps * 2, os * 2), (ps * 3, os * 3)] {
+        let pred_bytes: [u8; 4] = pred_region[pred_off..pred_off + 4].try_into().unwrap();
+        let pred_vec = _mm_cvtsi32_si128(i32::from_ne_bytes(pred_bytes));
         let pred_i16 = _mm_unpacklo_epi8(pred_vec, zero);
-
-        // Add DC to prediction
         let sum = _mm_add_epi16(pred_i16, dc_vec);
-
-        // Pack to u8 with saturation
         let packed = _mm_packus_epi16(sum, sum);
-
-        // Store 4 bytes
-        let out_pos = (out_y0 + row) * out_stride + out_x0;
         let result = _mm_cvtsi128_si32(packed) as u32;
-        out_block[out_pos..out_pos + 4].copy_from_slice(&result.to_ne_bytes());
+        out_region[out_off..out_off + 4].copy_from_slice(&result.to_ne_bytes());
     }
 
     // Clear coefficient block
@@ -2013,24 +2003,23 @@ mod neon_transform {
         x0: usize,
         stride: usize,
     ) {
+        // Region-based bounds check at entry
+        let base = y0 * stride + x0;
+        let region = &mut block[base..base + 3 * stride + 4];
+
         let dc = coeffs[0];
         let dc_adj = ((dc + 4) >> 3) as i16;
         let dc_vec = vdupq_n_s16(dc_adj);
 
-        for row in 0..4 {
-            let pos = (y0 + row) * stride + x0;
-            let pred_bytes: [u8; 4] = block[pos..pos + 4].try_into().unwrap();
-            // Load 4 prediction bytes, zero-extend to i16
+        for &off in &[0, stride, stride * 2, stride * 3] {
+            let pred_bytes: [u8; 4] = region[off..off + 4].try_into().unwrap();
             let pred_u32 = u32::from_ne_bytes(pred_bytes);
             let pred_v = vreinterpret_u8_u32(vmov_n_u32(pred_u32));
             let pred_i16 = vreinterpretq_s16_u16(vmovl_u8(pred_v));
-            // Add DC
             let sum = vaddq_s16(pred_i16, dc_vec);
-            // Saturate to u8
             let packed = vqmovun_s16(sum);
-            // Store 4 bytes
             let result_u32 = vget_lane_u32::<0>(vreinterpret_u32_u8(packed));
-            block[pos..pos + 4].copy_from_slice(&result_u32.to_ne_bytes());
+            region[off..off + 4].copy_from_slice(&result_u32.to_ne_bytes());
         }
     }
 
@@ -2045,6 +2034,10 @@ mod neon_transform {
         x0: usize,
         stride: usize,
     ) {
+        // Region-based bounds check at entry
+        let base = y0 * stride + x0;
+        let region = &mut block[base..base + 3 * stride + 4];
+
         // Load and pack coefficients to i16
         let (c0, c1, c2, c3) = rows4(coeffs);
         let r0 = simd_mem::vld1q_s32(c0);
@@ -2060,23 +2053,23 @@ mod neon_transform {
         let (res01, res23) = itransform_pass_neon(_token, t01, t23);
 
         // Process each row: load pred, add residual with rounding shift, saturate, store
-        // libwebp uses vrsraq_n_s16 for: pred + (residual + rounding) >> 3
         let res_rows: [(int16x8_t, bool); 4] = [
-            (res01, false), // row 0 = low half of res01
-            (res01, true),  // row 1 = high half of res01
-            (res23, false), // row 2 = low half of res23
-            (res23, true),  // row 3 = high half of res23
+            (res01, false),
+            (res01, true),
+            (res23, false),
+            (res23, true),
         ];
 
-        for (row_idx, &(res, use_high)) in res_rows.iter().enumerate() {
+        let offsets = [0, stride, stride * 2, stride * 3];
+        for (idx, &(res, use_high)) in res_rows.iter().enumerate() {
             let residual = if use_high {
                 vcombine_s16(vget_high_s16(res), vget_high_s16(res))
             } else {
                 vcombine_s16(vget_low_s16(res), vget_low_s16(res))
             };
 
-            let pos = (y0 + row_idx) * stride + x0;
-            let pred_bytes: [u8; 4] = block[pos..pos + 4].try_into().unwrap();
+            let off = offsets[idx];
+            let pred_bytes: [u8; 4] = region[off..off + 4].try_into().unwrap();
             let pred_u32 = u32::from_ne_bytes(pred_bytes);
             let pred_v = vreinterpret_u8_u32(vmov_n_u32(pred_u32));
             let pred_i16 = vreinterpretq_s16_u16(vmovl_u8(pred_v));
@@ -2085,7 +2078,7 @@ mod neon_transform {
             let out = vrsraq_n_s16::<3>(pred_i16, residual);
             let packed = vqmovun_s16(out);
             let result_u32 = vget_lane_u32::<0>(vreinterpret_u32_u8(packed));
-            block[pos..pos + 4].copy_from_slice(&result_u32.to_ne_bytes());
+            region[off..off + 4].copy_from_slice(&result_u32.to_ne_bytes());
         }
     }
 
