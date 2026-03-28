@@ -78,10 +78,17 @@ pub struct DecoderContext {
     // ---- Partitions ----
     pub(super) partitions: VP8Partitions,
 
-    // ---- Output Y/U/V frame buffers (allocated per decode) ----
+    // ---- Output Y/U/V frame buffers (allocated per decode_to_frame only) ----
     pub(super) ybuf: Vec<u8>,
     pub(super) ubuf: Vec<u8>,
     pub(super) vbuf: Vec<u8>,
+
+    // ---- Streaming RGB: boundary UV rows for fancy upsampling ----
+    // Saves the last visible UV row from the previous MB row's cache,
+    // needed by the first even Y row of the next MB row for the "far"
+    // chroma reference. One chroma row per channel (~mbwidth*8 bytes each).
+    pub(super) prev_last_u_row: Vec<u8>,
+    pub(super) prev_last_v_row: Vec<u8>,
 
     // ---- Reuse tracking ----
     pub(super) last_mbwidth: u16,
@@ -130,6 +137,9 @@ impl DecoderContext {
             ubuf: Vec::new(),
             vbuf: Vec::new(),
 
+            prev_last_u_row: Vec::new(),
+            prev_last_v_row: Vec::new(),
+
             last_mbwidth: 0,
             last_mbheight: 0,
         }
@@ -158,16 +168,15 @@ impl DecoderContext {
         let cache_y_size = cache_y_rows * self.cache_y_stride + FILTER_PADDING_Y;
         let cache_uv_size = cache_uv_rows * self.cache_uv_stride + FILTER_PADDING_UV;
 
-        // Cache buffers: resize, then reinitialize the extra_y_rows region.
-        // Only the top `extra_y_rows` of the cache carry filter context from
-        // row to row. Stale data from a previous frame in this region would
-        // corrupt the first MB row's loop filter output. The rest of the cache
-        // is overwritten during prediction before it is read.
-        self.cache_y.resize(cache_y_size, 128);
-        self.cache_u.resize(cache_uv_size, 128);
-        self.cache_v.resize(cache_uv_size, 128);
+        // Cache buffers: resize only grows (no fill needed — all data is
+        // overwritten during prediction before it is read). Only the extra
+        // rows region needs initialization for the first MB row's filter.
+        self.cache_y.resize(cache_y_size, 0);
+        self.cache_u.resize(cache_uv_size, 0);
+        self.cache_v.resize(cache_uv_size, 0);
 
-        // Zero the extra rows region (top of cache, used for filter context)
+        // Initialize extra rows region (filter context for first MB row).
+        // Only fills the small extra region, not the entire cache.
         let extra_y_bytes = extra_y_rows * self.cache_y_stride;
         self.cache_y[..extra_y_bytes].fill(128);
         let extra_uv_bytes = extra_uv_rows * self.cache_uv_stride;

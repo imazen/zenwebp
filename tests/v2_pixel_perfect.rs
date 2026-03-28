@@ -256,7 +256,7 @@ fn roundtrip_test(rgb: &[u8], w: u32, h: u32, quality: f32, label: &str) -> Roun
         report_diff(&format!("{label} v2-vs-v1"), &v2_v1_stats);
     }
 
-    // Measure v2 vs libwebp (informational, YUV->RGB differences dominate)
+    // Measure v2 vs libwebp — must be bit-exact (0 diffs)
     assert_eq!(
         lib_w, v2_w,
         "{label}: libwebp width={lib_w} != v2 width={v2_w}"
@@ -267,6 +267,11 @@ fn roundtrip_test(rgb: &[u8], w: u32, h: u32, quality: f32, label: &str) -> Roun
     );
     let v2_lib_stats = compute_diff(&v2_rgba, &lib_rgba, w, h);
     report_diff(&format!("{label} v2-vs-libwebp"), &v2_lib_stats);
+    assert!(
+        v2_lib_stats.max_diff <= V2_LIBWEBP_MAX_TOLERANCE,
+        "{label}: v2 vs libwebp max_diff={} exceeds tolerance {V2_LIBWEBP_MAX_TOLERANCE}",
+        v2_lib_stats.max_diff,
+    );
 
     RoundtripResult {
         v2_vs_v1_max: v2_v1_stats.max_diff,
@@ -274,9 +279,17 @@ fn roundtrip_test(rgb: &[u8], w: u32, h: u32, quality: f32, label: &str) -> Roun
     }
 }
 
-/// Maximum allowed v2-vs-v1 difference per byte. With dithering disabled,
-/// v2 and v1 produce identical YUV planes, so this should be 0.
-const V2_V1_MAX_TOLERANCE: u8 = 0;
+/// Maximum allowed v2-vs-v1 difference per byte.
+///
+/// v2 uses `yuv_exact` (libwebp-matching YUV->RGB conversion), while v1 uses
+/// a different formula. The YUV planes are identical, but the RGB output
+/// differs due to the conversion. This tolerance allows the expected
+/// YUV->RGB formula differences.
+const V2_V1_MAX_TOLERANCE: u8 = 255;
+
+/// Maximum allowed v2-vs-libwebp difference per byte.
+/// v2 must be bit-exact with libwebp (0 diffs).
+const V2_LIBWEBP_MAX_TOLERANCE: u8 = 0;
 
 #[test]
 fn cat1_roundtrip_gradient_quality_sweep() {

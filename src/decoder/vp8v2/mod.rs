@@ -59,7 +59,12 @@ impl DecoderContext {
     /// container, after the VP8 chunk header has been stripped).
     pub fn decode_to_frame(&mut self, data: &[u8]) -> Result<Frame, DecodeError> {
         self.read_frame_header(data)?;
-        self.decode_mb_rows().map_err(DecodeError::from)?;
+        self.decode_to_frame_internal().map_err(DecodeError::from)
+    }
+
+    /// Internal: decode MB rows to full-frame Y/U/V and build a Frame.
+    fn decode_to_frame_internal(&mut self) -> Result<Frame, InternalDecodeError> {
+        self.decode_mb_rows()?;
 
         let tables = &self.tables;
 
@@ -91,8 +96,9 @@ impl DecoderContext {
     /// `data` is the raw VP8 bitstream. `output` receives the pixel data.
     /// `bpp` is 3 for RGB or 4 for RGBA.
     ///
-    /// Uses the fused fancy-upsample + YUV→RGB kernel in `yuv_exact`,
-    /// which is bit-exact with libwebp regardless of the `fast-yuv` feature.
+    /// Uses streaming cache-to-RGB conversion: each MB row's filtered cache
+    /// is converted directly to the output buffer. No full-frame Y/U/V
+    /// buffers are allocated (~4 MB saved for 4K images).
     ///
     /// Returns `(width, height)` on success.
     pub fn decode_to_rgb(
@@ -107,37 +113,49 @@ impl DecoderContext {
             )));
         }
 
-        let frame = self.decode_to_frame(data)?;
-        let w = usize::from(frame.width);
-        let h = usize::from(frame.height);
-        // buffer_width = MB-aligned width (round up to multiple of 16)
-        let mbwidth = (w + 15) / 16;
-        let y_stride = mbwidth * 16;
-        let uv_stride = mbwidth * 8;
+        self.read_frame_header(data)?;
 
-        yuv_exact::yuv420_to_rgb_exact(
-            &frame.ybuf,
-            &frame.ubuf,
-            &frame.vbuf,
-            w,
-            h,
-            y_stride,
-            uv_stride,
-            output,
-            bpp,
-        );
+        let w = self.tables.width;
+        let h = self.tables.height;
+        let pixel_count = usize::from(w) * usize::from(h);
+        output.resize(pixel_count * bpp, 0);
 
-        Ok((frame.width, frame.height))
+        if self.tables.extra_y_rows >= 2 {
+            // Streaming path: convert cache rows directly to RGB.
+            // Requires extra_y_rows >= 2 so the cache has enough UV rows
+            // for the fancy upsampler at MB row boundaries.
+            self.decode_mb_rows_to_rgb(output, bpp)
+                .map_err(DecodeError::from)?;
+        } else {
+            // Fallback for no-filter case (extra_y_rows=0): use full-frame
+            // YUV buffers. This is rare (very high quality / filter disabled).
+            let frame = self.decode_to_frame_internal()?;
+            let fw = usize::from(frame.width);
+            let fh = usize::from(frame.height);
+            let mbwidth = (fw + 15) / 16;
+            let y_stride = mbwidth * 16;
+            let uv_stride = mbwidth * 8;
+            yuv_exact::yuv420_to_rgb_exact(
+                &frame.ybuf,
+                &frame.ubuf,
+                &frame.vbuf,
+                fw,
+                fh,
+                y_stride,
+                uv_stride,
+                output,
+                bpp,
+            );
+        }
+
+        Ok((w, h))
     }
 
-    /// Main decode loop. For each row: parse + predict/IDCT each MB
-    /// individually (so coefficients are consumed immediately), then
-    /// filter the whole row, then output.
+    /// Main decode loop for full-frame Y/U/V output. For each row: parse +
+    /// predict/IDCT each MB individually, filter the row, copy to ybuf/ubuf/vbuf.
     fn decode_mb_rows(&mut self) -> Result<(), InternalDecodeError> {
         let mbwidth = usize::from(self.tables.mbwidth);
         let mbheight = usize::from(self.tables.mbheight);
-        let extra_y_rows = self.tables.extra_y_rows;
-        let filter_type = self.tables.filter_type;
 
         // Allocate full-frame Y/U/V buffers
         let luma_w = mbwidth * 16;
@@ -151,108 +169,7 @@ impl DecoderContext {
         self.vbuf.resize(uvbuf_len, 0);
 
         for mby in 0..mbheight {
-            let p = mby % self.tables.num_partitions as usize;
-            self.left = PreviousMacroBlock::default();
-
-            // Parse + predict/IDCT each MB immediately (single pass).
-            // Coefficients in self.coeff_blocks are consumed and cleared
-            // per MB, matching the v1 decoder's semantics.
-            for mbx in 0..mbwidth {
-                let mb = &mut self.mb_row_data[mbx];
-                *mb = MbRowEntry::default();
-
-                coefficients::read_macroblock_header(
-                    &mut self.header_reader,
-                    &self.tables,
-                    &mut self.top[mbx],
-                    &mut self.left,
-                    mb,
-                )?;
-
-                if !mb.coeffs_skipped {
-                    {
-                        let mut reader = self.partitions.active_reader(p);
-                        coefficients::read_residual_data(
-                            &mut reader,
-                            mb,
-                            &mut self.coeff_blocks,
-                            &self.tables.probs_by_pos,
-                            &self.tables.dequant[mb.segmentid as usize],
-                            &mut self.top[mbx],
-                            &mut self.left,
-                        )?;
-                        // reader auto-saves state on drop
-                    }
-                } else {
-                    // Clear complexity context for skipped blocks
-                    let top_mb = &mut self.top[mbx];
-                    if mb.luma_mode != LumaMode::B {
-                        self.left.complexity[0] = 0;
-                        top_mb.complexity[0] = 0;
-                    }
-                    for i in 1usize..9 {
-                        self.left.complexity[i] = 0;
-                        top_mb.complexity[i] = 0;
-                    }
-                }
-
-                // Immediately predict+IDCT this MB (consumes coeff_blocks)
-                predict_fused::process_luma_mb(
-                    &mut self.luma_ws,
-                    &mut self.coeff_blocks,
-                    mb,
-                    &mut self.cache_y,
-                    self.cache_y_stride,
-                    extra_y_rows,
-                    mbx,
-                    mby,
-                    mbwidth,
-                    &mut self.top_border_y,
-                    &mut self.left_border_y,
-                );
-                predict_fused::process_chroma_mb(
-                    &mut self.chroma_u_ws,
-                    &mut self.chroma_v_ws,
-                    &mut self.coeff_blocks,
-                    mb,
-                    &mut self.cache_u,
-                    &mut self.cache_v,
-                    self.cache_uv_stride,
-                    extra_y_rows,
-                    mbx,
-                    mby,
-                    &mut self.top_border_u,
-                    &mut self.left_border_u,
-                    &mut self.top_border_v,
-                    &mut self.left_border_v,
-                );
-
-                // Compute filter params from precomputed table
-                let is_b = mb.luma_mode == LumaMode::B;
-                let fp = &self.tables.filter[mb.segmentid as usize][is_b as usize];
-                let do_subblock_filtering = is_b || (!mb.coeffs_skipped && mb.non_zero_dct);
-                self.mb_filter_params[mbx] = MbFilterParams {
-                    filter_level: fp.filter_level,
-                    interior_limit: fp.interior_limit,
-                    hev_threshold: fp.hev_threshold,
-                    mbedge_limit: fp.mbedge_limit,
-                    sub_bedge_limit: fp.sub_bedge_limit,
-                    do_subblock_filtering,
-                };
-            }
-
-            // Filter the entire row (single SIMD boundary)
-            pipeline::filter_mb_row(
-                &mut self.cache_y,
-                &mut self.cache_u,
-                &mut self.cache_v,
-                self.cache_y_stride,
-                self.cache_uv_stride,
-                extra_y_rows,
-                filter_type,
-                mby,
-                &self.mb_filter_params[..mbwidth],
-            );
+            self.process_mb_row(mby)?;
 
             // Output cache to Y/U/V frame buffers
             self.output_row_from_cache(mby, mbheight, mbwidth);
@@ -267,6 +184,180 @@ impl DecoderContext {
         Ok(())
     }
 
+    /// Streaming decode loop: converts cache rows directly to RGB/RGBA output.
+    /// No full-frame Y/U/V buffers are allocated.
+    fn decode_mb_rows_to_rgb(
+        &mut self,
+        output: &mut [u8],
+        bpp: usize,
+    ) -> Result<(), InternalDecodeError> {
+        let mbheight = usize::from(self.tables.mbheight);
+        let width = usize::from(self.tables.width);
+        let height = usize::from(self.tables.height);
+        let extra_y_rows = self.tables.extra_y_rows;
+        let chroma_width = (width + 1) / 2;
+
+        // Resize boundary UV row buffers (used for fancy upsampling at MB boundaries)
+        self.prev_last_u_row.resize(chroma_width, 128);
+        self.prev_last_v_row.resize(chroma_width, 128);
+
+        for mby in 0..mbheight {
+            self.process_mb_row(mby)?;
+
+            // Convert cache rows directly to RGB output
+            yuv_exact::convert_cache_rows_to_rgb(
+                &self.cache_y,
+                &self.cache_u,
+                &self.cache_v,
+                self.cache_y_stride,
+                self.cache_uv_stride,
+                extra_y_rows,
+                mby,
+                mbheight,
+                width,
+                height,
+                output,
+                bpp,
+                &self.prev_last_u_row,
+                &self.prev_last_v_row,
+            );
+
+            // Save the boundary UV row for the next iteration's fancy upsampling.
+            // Cache UV row 7 is the last UV row in the visible region that won't
+            // survive rotation. The next MB row's first even Y row needs it as
+            // the "far" chroma reference.
+            if mby + 1 < mbheight {
+                let boundary_cache_uv_row = 7;
+                let uv_start = boundary_cache_uv_row * self.cache_uv_stride;
+                self.prev_last_u_row[..chroma_width]
+                    .copy_from_slice(&self.cache_u[uv_start..uv_start + chroma_width]);
+                self.prev_last_v_row[..chroma_width]
+                    .copy_from_slice(&self.cache_v[uv_start..uv_start + chroma_width]);
+            }
+
+            self.rotate_extra_rows();
+
+            // Reset left borders for next row
+            self.left_border_y.fill(129u8);
+            self.left_border_u.fill(129u8);
+            self.left_border_v.fill(129u8);
+        }
+
+        Ok(())
+    }
+
+    /// Parse + predict/IDCT + filter one MB row. After this returns, the cache
+    /// contains filtered Y/U/V data ready for output (or direct conversion).
+    fn process_mb_row(&mut self, mby: usize) -> Result<(), InternalDecodeError> {
+        let mbwidth = usize::from(self.tables.mbwidth);
+        let extra_y_rows = self.tables.extra_y_rows;
+        let filter_type = self.tables.filter_type;
+        let p = mby % self.tables.num_partitions as usize;
+        self.left = PreviousMacroBlock::default();
+
+        // Parse + predict/IDCT each MB immediately (single pass).
+        // Coefficients in self.coeff_blocks are consumed and cleared
+        // per MB, matching the v1 decoder's semantics.
+        for mbx in 0..mbwidth {
+            let mb = &mut self.mb_row_data[mbx];
+            *mb = MbRowEntry::default();
+
+            coefficients::read_macroblock_header(
+                &mut self.header_reader,
+                &self.tables,
+                &mut self.top[mbx],
+                &mut self.left,
+                mb,
+            )?;
+
+            if !mb.coeffs_skipped {
+                {
+                    let mut reader = self.partitions.active_reader(p);
+                    coefficients::read_residual_data(
+                        &mut reader,
+                        mb,
+                        &mut self.coeff_blocks,
+                        &self.tables.probs_by_pos,
+                        &self.tables.dequant[mb.segmentid as usize],
+                        &mut self.top[mbx],
+                        &mut self.left,
+                    )?;
+                    // reader auto-saves state on drop
+                }
+            } else {
+                // Clear complexity context for skipped blocks
+                let top_mb = &mut self.top[mbx];
+                if mb.luma_mode != LumaMode::B {
+                    self.left.complexity[0] = 0;
+                    top_mb.complexity[0] = 0;
+                }
+                for i in 1usize..9 {
+                    self.left.complexity[i] = 0;
+                    top_mb.complexity[i] = 0;
+                }
+            }
+
+            // Immediately predict+IDCT this MB (consumes coeff_blocks)
+            predict_fused::process_luma_mb(
+                &mut self.luma_ws,
+                &mut self.coeff_blocks,
+                mb,
+                &mut self.cache_y,
+                self.cache_y_stride,
+                extra_y_rows,
+                mbx,
+                mby,
+                mbwidth,
+                &mut self.top_border_y,
+                &mut self.left_border_y,
+            );
+            predict_fused::process_chroma_mb(
+                &mut self.chroma_u_ws,
+                &mut self.chroma_v_ws,
+                &mut self.coeff_blocks,
+                mb,
+                &mut self.cache_u,
+                &mut self.cache_v,
+                self.cache_uv_stride,
+                extra_y_rows,
+                mbx,
+                mby,
+                &mut self.top_border_u,
+                &mut self.left_border_u,
+                &mut self.top_border_v,
+                &mut self.left_border_v,
+            );
+
+            // Compute filter params from precomputed table
+            let is_b = mb.luma_mode == LumaMode::B;
+            let fp = &self.tables.filter[mb.segmentid as usize][is_b as usize];
+            let do_subblock_filtering = is_b || (!mb.coeffs_skipped && mb.non_zero_dct);
+            self.mb_filter_params[mbx] = MbFilterParams {
+                filter_level: fp.filter_level,
+                interior_limit: fp.interior_limit,
+                hev_threshold: fp.hev_threshold,
+                mbedge_limit: fp.mbedge_limit,
+                sub_bedge_limit: fp.sub_bedge_limit,
+                do_subblock_filtering,
+            };
+        }
+
+        // Filter the entire row (single SIMD boundary)
+        pipeline::filter_mb_row(
+            &mut self.cache_y,
+            &mut self.cache_u,
+            &mut self.cache_v,
+            self.cache_y_stride,
+            self.cache_uv_stride,
+            extra_y_rows,
+            filter_type,
+            mby,
+            &self.mb_filter_params[..mbwidth],
+        );
+
+        Ok(())
+    }
+
     /// Copy the filtered row from cache to the final Y/U/V frame buffers.
     fn output_row_from_cache(&mut self, mby: usize, mbheight: usize, mbwidth: usize) {
         let luma_w = mbwidth * 16;
@@ -277,8 +368,7 @@ impl DecoderContext {
         let is_last_row = mby == mbheight - 1;
 
         let (src_start_row, num_y_rows, dst_start_y_row) = if is_first_row && is_last_row {
-            // Single MB row: output from extra_y_rows through the end of the MB
-            (extra_y_rows, 16, 0usize)
+            (extra_y_rows, 16usize, 0usize)
         } else if is_first_row {
             (extra_y_rows, 16 - extra_y_rows, 0usize)
         } else if is_last_row {
@@ -298,7 +388,7 @@ impl DecoderContext {
 
         // Copy U/V
         let (src_start_row_uv, num_uv_rows, dst_start_uv_row) = if is_first_row && is_last_row {
-            (extra_uv_rows, 8, 0usize)
+            (extra_uv_rows, 8usize, 0usize)
         } else if is_first_row {
             (extra_uv_rows, 8 - extra_uv_rows, 0usize)
         } else if is_last_row {

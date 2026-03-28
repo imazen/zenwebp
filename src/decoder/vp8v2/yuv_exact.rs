@@ -101,8 +101,10 @@ pub(crate) fn yuv420_to_rgb_exact(
             fill_2uv_row(
                 &mut output[rgb0_start..rgb0_start + width * bpp],
                 y_row_0,
-                u_near, u_far,
-                v_near, v_far,
+                u_near,
+                u_far,
+                v_near,
+                v_far,
                 bpp,
             ),
             [v3, neon, wasm128, scalar]
@@ -113,8 +115,10 @@ pub(crate) fn yuv420_to_rgb_exact(
             fill_2uv_row(
                 &mut output[rgb1_start..rgb1_start + width * bpp],
                 y_row_1,
-                u_far, u_near,
-                v_far, v_near,
+                u_far,
+                u_near,
+                v_far,
+                v_near,
                 bpp,
             ),
             [v3, neon, wasm128, scalar]
@@ -137,6 +141,167 @@ pub(crate) fn yuv420_to_rgb_exact(
             &vbuf[uv_start..uv_start + chroma_width],
             bpp,
         );
+    }
+}
+
+/// Convert visible cache rows from one MB row directly to RGB output.
+///
+/// This is the streaming alternative to `yuv420_to_rgb_exact`: instead of
+/// building full-frame Y/U/V buffers and converting at the end, each MB row's
+/// cache is converted immediately after filtering.
+///
+/// # Arguments
+/// - `cache_y/u/v`: the row cache buffers (with extra rows + 16/8 MB rows + padding)
+/// - `cache_y_stride / cache_uv_stride`: stride between rows in cache
+/// - `extra_y_rows`: number of extra Y rows at top of cache (filter context, typically 8)
+/// - `mby`: current macroblock row index (0-based)
+/// - `mbheight`: total number of macroblock rows
+/// - `width / height`: visible pixel dimensions
+/// - `output`: pre-allocated RGB/RGBA output buffer (`width * height * bpp` bytes)
+/// - `bpp`: 3 (RGB) or 4 (RGBA)
+/// - `prev_last_u_row / prev_last_v_row`: the last visible UV row from the
+///   previous MB row's cache, used as the "far" chroma reference for the first
+///   even Y row at the MB boundary
+#[allow(clippy::too_many_arguments)]
+pub(super) fn convert_cache_rows_to_rgb(
+    cache_y: &[u8],
+    cache_u: &[u8],
+    cache_v: &[u8],
+    cache_y_stride: usize,
+    cache_uv_stride: usize,
+    extra_y_rows: usize,
+    mby: usize,
+    mbheight: usize,
+    width: usize,
+    height: usize,
+    output: &mut [u8],
+    bpp: usize,
+    prev_last_u_row: &[u8],
+    prev_last_v_row: &[u8],
+) {
+    let extra_uv_rows = extra_y_rows / 2;
+    let is_first_row = mby == 0;
+    let is_last_row = mby == mbheight - 1;
+
+    // Determine which cache rows to output and their full-image Y row positions.
+    let (src_y_start, num_y_rows, dst_img_y_row) = if is_first_row && is_last_row {
+        (extra_y_rows, 16usize, 0usize)
+    } else if is_first_row {
+        (extra_y_rows, 16 - extra_y_rows, 0usize)
+    } else if is_last_row {
+        (0usize, extra_y_rows + 16, mby * 16 - extra_y_rows)
+    } else {
+        (0usize, 16usize, mby * 16 - extra_y_rows)
+    };
+
+    let chroma_width = (width + 1) / 2;
+
+    // Clamp num_y_rows to not exceed the image height
+    let num_y_rows = num_y_rows.min(height - dst_img_y_row);
+
+    // The first image UV row stored in the cache at row 0.
+    // For mby=0: the extra rows are 128-initialized (not real data), so
+    //   image UV row 0 starts at cache UV row extra_uv_rows.
+    //   Cache row 0 doesn't correspond to a real image UV row.
+    // For mby>0: after rotate_extra_rows, cache UV row 0 =
+    //   image UV row (mby * 8 - extra_uv_rows).
+    let first_cache_img_uv = if is_first_row {
+        // For first MB row, only rows starting at extra_uv_rows are real
+        // image data. Map cache_uv_row = extra_uv_rows -> image UV 0.
+        0isize - extra_uv_rows as isize
+    } else {
+        (mby * 8 - extra_uv_rows) as isize
+    };
+
+    // Process each visible Y row
+    for i in 0..num_y_rows {
+        let cache_y_row = src_y_start + i;
+        let img_y_row = dst_img_y_row + i;
+        let rgb_offset = img_y_row * width * bpp;
+
+        let y_start = cache_y_row * cache_y_stride;
+        let y_row = &cache_y[y_start..y_start + width];
+        let rgb_row = &mut output[rgb_offset..rgb_offset + width * bpp];
+
+        // Map image UV row to cache UV row:
+        // cache_uv_row = img_uv_row - first_cache_img_uv
+        let img_uv_row = (img_y_row / 2) as isize;
+        let cache_uv_row = (img_uv_row - first_cache_img_uv) as usize;
+
+        // The full-frame fancy upsampler uses 1-UV mode (mirror) for:
+        //   - Y row 0 (always)
+        //   - The last Y row only when height is even (the unpaired remainder)
+        // All other rows use 2-UV mode (fancy interpolation between adjacent chroma rows).
+        let use_1uv = img_y_row == 0 || (img_y_row == height - 1 && height % 2 == 0);
+
+        if use_1uv {
+            // Edge row: single chroma row (mirrored)
+            let uv_start = cache_uv_row * cache_uv_stride;
+            fill_1uv_row(
+                rgb_row,
+                y_row,
+                &cache_u[uv_start..uv_start + chroma_width],
+                &cache_v[uv_start..uv_start + chroma_width],
+                bpp,
+            );
+        } else if img_y_row % 2 == 1 {
+            // Odd Y row: near = UV[y/2], far = UV[y/2 + 1]
+            // Both are forward in the cache, always available.
+            let near_start = cache_uv_row * cache_uv_stride;
+            let far_start = (cache_uv_row + 1) * cache_uv_stride;
+
+            incant!(
+                fill_2uv_row(
+                    rgb_row,
+                    y_row,
+                    &cache_u[near_start..near_start + chroma_width],
+                    &cache_u[far_start..far_start + chroma_width],
+                    &cache_v[near_start..near_start + chroma_width],
+                    &cache_v[far_start..far_start + chroma_width],
+                    bpp,
+                ),
+                [v3, neon, wasm128, scalar]
+            );
+        } else {
+            // Even Y row (>0, not last): near = UV[y/2], far = UV[y/2 - 1]
+            let near_start = cache_uv_row * cache_uv_stride;
+
+            // Check if the "far" UV row is before the cache start.
+            // This happens at MB row boundaries where the previous MB row's
+            // last visible UV row has been rotated out.
+            let img_far_uv = img_uv_row - 1;
+            let cache_far_uv = img_far_uv - first_cache_img_uv;
+
+            if cache_far_uv < 0 {
+                // Far UV row is from the previous MB row — use saved boundary data
+                incant!(
+                    fill_2uv_row(
+                        rgb_row,
+                        y_row,
+                        &cache_u[near_start..near_start + chroma_width],
+                        &prev_last_u_row[..chroma_width],
+                        &cache_v[near_start..near_start + chroma_width],
+                        &prev_last_v_row[..chroma_width],
+                        bpp,
+                    ),
+                    [v3, neon, wasm128, scalar]
+                );
+            } else {
+                let far_start = cache_far_uv as usize * cache_uv_stride;
+                incant!(
+                    fill_2uv_row(
+                        rgb_row,
+                        y_row,
+                        &cache_u[near_start..near_start + chroma_width],
+                        &cache_u[far_start..far_start + chroma_width],
+                        &cache_v[near_start..near_start + chroma_width],
+                        &cache_v[far_start..far_start + chroma_width],
+                        bpp,
+                    ),
+                    [v3, neon, wasm128, scalar]
+                );
+            }
+        }
     }
 }
 
@@ -237,17 +402,13 @@ fn fill_2uv_row_generic(
     let mut cx = 0;
     while yx + 1 < width && cx + 1 < chroma_width {
         {
-            let u =
-                get_fancy_chroma_value(u_near[cx], u_near[cx + 1], u_far[cx], u_far[cx + 1]);
-            let v =
-                get_fancy_chroma_value(v_near[cx], v_near[cx + 1], v_far[cx], v_far[cx + 1]);
+            let u = get_fancy_chroma_value(u_near[cx], u_near[cx + 1], u_far[cx], u_far[cx + 1]);
+            let v = get_fancy_chroma_value(v_near[cx], v_near[cx + 1], v_far[cx], v_far[cx + 1]);
             write_pixel(&mut rgb[yx * bpp..(yx + 1) * bpp], y_row[yx], u, v);
         }
         {
-            let u =
-                get_fancy_chroma_value(u_near[cx + 1], u_near[cx], u_far[cx + 1], u_far[cx]);
-            let v =
-                get_fancy_chroma_value(v_near[cx + 1], v_near[cx], v_far[cx + 1], v_far[cx]);
+            let u = get_fancy_chroma_value(u_near[cx + 1], u_near[cx], u_far[cx + 1], u_far[cx]);
+            let v = get_fancy_chroma_value(v_near[cx + 1], v_near[cx], v_far[cx + 1], v_far[cx]);
             write_pixel(
                 &mut rgb[(yx + 1) * bpp..(yx + 2) * bpp],
                 y_row[yx + 1],
@@ -298,12 +459,7 @@ mod x86_impl {
     /// Fancy upsample 16 chroma samples: produces (diag1, diag2).
     /// Interleave diag1/diag2 to get 32 luma-aligned chroma values.
     #[rite(v3, import_intrinsics)]
-    fn fancy_upsample_16(
-        a: __m128i,
-        b: __m128i,
-        c: __m128i,
-        d: __m128i,
-    ) -> (__m128i, __m128i) {
+    fn fancy_upsample_16(a: __m128i, b: __m128i, c: __m128i, d: __m128i) -> (__m128i, __m128i) {
         let one = _mm_set1_epi8(1);
         let s = _mm_avg_epu8(a, d);
         let t = _mm_avg_epu8(b, c);
@@ -394,8 +550,12 @@ mod x86_impl {
 
     #[rite(v3, import_intrinsics)]
     fn planar_to_24b(
-        in0: __m128i, in1: __m128i, in2: __m128i,
-        in3: __m128i, in4: __m128i, in5: __m128i,
+        in0: __m128i,
+        in1: __m128i,
+        in2: __m128i,
+        in3: __m128i,
+        in4: __m128i,
+        in5: __m128i,
     ) -> (__m128i, __m128i, __m128i, __m128i, __m128i, __m128i) {
         let (mut t0, mut t1, mut t2, mut t3, mut t4, mut t5);
         let (mut o0, mut o1, mut o2, mut o3, mut o4, mut o5);
@@ -411,8 +571,10 @@ mod x86_impl {
     #[rite(v3, import_intrinsics)]
     fn process_32_rgb(
         y: &[u8; 32],
-        u_near: &[u8; 17], u_far: &[u8; 17],
-        v_near: &[u8; 17], v_far: &[u8; 17],
+        u_near: &[u8; 17],
+        u_far: &[u8; 17],
+        v_near: &[u8; 17],
+        v_far: &[u8; 17],
         rgb: &mut [u8; 96],
     ) {
         let u_a = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&u_near[0..16]).unwrap());
@@ -437,16 +599,24 @@ mod x86_impl {
         let zero = _mm_setzero_si128();
 
         let (r0, g0, b0) = yuv_to_rgb_8(
-            _mm_unpacklo_epi8(zero, y0), _mm_unpacklo_epi8(zero, u_lo), _mm_unpacklo_epi8(zero, v_lo),
+            _mm_unpacklo_epi8(zero, y0),
+            _mm_unpacklo_epi8(zero, u_lo),
+            _mm_unpacklo_epi8(zero, v_lo),
         );
         let (r1, g1, b1) = yuv_to_rgb_8(
-            _mm_unpackhi_epi8(zero, y0), _mm_unpackhi_epi8(zero, u_lo), _mm_unpackhi_epi8(zero, v_lo),
+            _mm_unpackhi_epi8(zero, y0),
+            _mm_unpackhi_epi8(zero, u_lo),
+            _mm_unpackhi_epi8(zero, v_lo),
         );
         let (r2, g2, b2) = yuv_to_rgb_8(
-            _mm_unpacklo_epi8(zero, y1), _mm_unpacklo_epi8(zero, u_hi), _mm_unpacklo_epi8(zero, v_hi),
+            _mm_unpacklo_epi8(zero, y1),
+            _mm_unpacklo_epi8(zero, u_hi),
+            _mm_unpacklo_epi8(zero, v_hi),
         );
         let (r3, g3, b3) = yuv_to_rgb_8(
-            _mm_unpackhi_epi8(zero, y1), _mm_unpackhi_epi8(zero, u_hi), _mm_unpackhi_epi8(zero, v_hi),
+            _mm_unpackhi_epi8(zero, y1),
+            _mm_unpackhi_epi8(zero, u_hi),
+            _mm_unpackhi_epi8(zero, v_hi),
         );
 
         let r_0 = _mm_packus_epi16(r0, r1);
@@ -475,25 +645,39 @@ mod x86_impl {
     #[rite(v3, import_intrinsics)]
     fn process_16_rgb(
         y: &[u8; 16],
-        u_near: &[u8; 9], u_far: &[u8; 9],
-        v_near: &[u8; 9], v_far: &[u8; 9],
+        u_near: &[u8; 9],
+        u_far: &[u8; 9],
+        v_near: &[u8; 9],
+        v_far: &[u8; 9],
         rgb: &mut [u8; 48],
     ) {
         macro_rules! load_8 {
             ($arr:expr, $off:expr) => {{
                 let bytes: [u8; 8] = [
-                    $arr[$off], $arr[$off+1], $arr[$off+2], $arr[$off+3],
-                    $arr[$off+4], $arr[$off+5], $arr[$off+6], $arr[$off+7],
+                    $arr[$off],
+                    $arr[$off + 1],
+                    $arr[$off + 2],
+                    $arr[$off + 3],
+                    $arr[$off + 4],
+                    $arr[$off + 5],
+                    $arr[$off + 6],
+                    $arr[$off + 7],
                 ];
                 _mm_cvtsi64_si128(i64::from_le_bytes(bytes))
             }};
         }
 
         let (u_d1, u_d2) = fancy_upsample_16(
-            load_8!(u_near, 0), load_8!(u_near, 1), load_8!(u_far, 0), load_8!(u_far, 1),
+            load_8!(u_near, 0),
+            load_8!(u_near, 1),
+            load_8!(u_far, 0),
+            load_8!(u_far, 1),
         );
         let (v_d1, v_d2) = fancy_upsample_16(
-            load_8!(v_near, 0), load_8!(v_near, 1), load_8!(v_far, 0), load_8!(v_far, 1),
+            load_8!(v_near, 0),
+            load_8!(v_near, 1),
+            load_8!(v_far, 0),
+            load_8!(v_far, 1),
         );
 
         let u_interleaved = _mm_unpacklo_epi8(u_d1, u_d2);
@@ -518,9 +702,12 @@ mod x86_impl {
         let b8 = _mm_packus_epi16(b0, b1);
 
         let (o0, o1, o2, _, _, _) = planar_to_24b(
-            r8, _mm_setzero_si128(),
-            g8, _mm_setzero_si128(),
-            b8, _mm_setzero_si128(),
+            r8,
+            _mm_setzero_si128(),
+            g8,
+            _mm_setzero_si128(),
+            b8,
+            _mm_setzero_si128(),
         );
 
         let (s0, rest) = rgb.split_at_mut(16);
@@ -534,8 +721,10 @@ mod x86_impl {
     #[rite(v3, import_intrinsics)]
     fn process_32_rgba(
         y: &[u8; 32],
-        u_near: &[u8; 17], u_far: &[u8; 17],
-        v_near: &[u8; 17], v_far: &[u8; 17],
+        u_near: &[u8; 17],
+        u_far: &[u8; 17],
+        v_near: &[u8; 17],
+        v_far: &[u8; 17],
         rgba: &mut [u8; 128],
     ) {
         let u_a = simd_mem::_mm_loadu_si128(<&[u8; 16]>::try_from(&u_near[0..16]).unwrap());
@@ -561,16 +750,24 @@ mod x86_impl {
         let alpha = _mm_set1_epi8(-1i8); // 0xFF
 
         let (r0, g0, b0) = yuv_to_rgb_8(
-            _mm_unpacklo_epi8(zero, y0), _mm_unpacklo_epi8(zero, u_lo), _mm_unpacklo_epi8(zero, v_lo),
+            _mm_unpacklo_epi8(zero, y0),
+            _mm_unpacklo_epi8(zero, u_lo),
+            _mm_unpacklo_epi8(zero, v_lo),
         );
         let (r1, g1, b1) = yuv_to_rgb_8(
-            _mm_unpackhi_epi8(zero, y0), _mm_unpackhi_epi8(zero, u_lo), _mm_unpackhi_epi8(zero, v_lo),
+            _mm_unpackhi_epi8(zero, y0),
+            _mm_unpackhi_epi8(zero, u_lo),
+            _mm_unpackhi_epi8(zero, v_lo),
         );
         let (r2, g2, b2) = yuv_to_rgb_8(
-            _mm_unpacklo_epi8(zero, y1), _mm_unpacklo_epi8(zero, u_hi), _mm_unpacklo_epi8(zero, v_hi),
+            _mm_unpacklo_epi8(zero, y1),
+            _mm_unpacklo_epi8(zero, u_hi),
+            _mm_unpacklo_epi8(zero, v_hi),
         );
         let (r3, g3, b3) = yuv_to_rgb_8(
-            _mm_unpackhi_epi8(zero, y1), _mm_unpackhi_epi8(zero, u_hi), _mm_unpackhi_epi8(zero, v_hi),
+            _mm_unpackhi_epi8(zero, y1),
+            _mm_unpackhi_epi8(zero, u_hi),
+            _mm_unpackhi_epi8(zero, v_hi),
         );
 
         let r_0 = _mm_packus_epi16(r0, r1);
@@ -683,22 +880,23 @@ mod x86_impl {
         // Scalar remainder: pairs
         while yx + 1 < width && cx + 1 < chroma_width {
             {
-                let u = get_fancy_chroma_value(
-                    u_near[cx], u_near[cx + 1], u_far[cx], u_far[cx + 1],
-                );
-                let v = get_fancy_chroma_value(
-                    v_near[cx], v_near[cx + 1], v_far[cx], v_far[cx + 1],
-                );
+                let u =
+                    get_fancy_chroma_value(u_near[cx], u_near[cx + 1], u_far[cx], u_far[cx + 1]);
+                let v =
+                    get_fancy_chroma_value(v_near[cx], v_near[cx + 1], v_far[cx], v_far[cx + 1]);
                 write_pixel(&mut rgb[rgb_off..rgb_off + bpp], y_row[yx], u, v);
             }
             {
-                let u = get_fancy_chroma_value(
-                    u_near[cx + 1], u_near[cx], u_far[cx + 1], u_far[cx],
+                let u =
+                    get_fancy_chroma_value(u_near[cx + 1], u_near[cx], u_far[cx + 1], u_far[cx]);
+                let v =
+                    get_fancy_chroma_value(v_near[cx + 1], v_near[cx], v_far[cx + 1], v_far[cx]);
+                write_pixel(
+                    &mut rgb[rgb_off + bpp..rgb_off + 2 * bpp],
+                    y_row[yx + 1],
+                    u,
+                    v,
                 );
-                let v = get_fancy_chroma_value(
-                    v_near[cx + 1], v_near[cx], v_far[cx + 1], v_far[cx],
-                );
-                write_pixel(&mut rgb[rgb_off + bpp..rgb_off + 2 * bpp], y_row[yx + 1], u, v);
             }
             yx += 2;
             cx += 1;
@@ -819,9 +1017,7 @@ mod tests {
                     max_diff = d;
                     let px = i / 3;
                     let ch = ["R", "G", "B"][i % 3];
-                    eprintln!(
-                        "diff at pixel {px} ({ch}): v2={a} libwebp={b} diff={d}"
-                    );
+                    eprintln!("diff at pixel {px} ({ch}): v2={a} libwebp={b} diff={d}");
                 }
             }
         }
@@ -959,9 +1155,84 @@ mod tests {
                 }
             }
 
+            assert_eq!(diff_count, 0, "{w}x{h}: {diff_count} diffs, max={max_diff}");
+        }
+    }
+
+    /// Compare streaming conversion vs full-frame conversion to isolate
+    /// streaming-specific bugs.
+    #[test]
+    fn streaming_matches_fullframe() {
+        for &(w, h, q) in &[
+            (64, 64, 75.0),
+            (64, 64, 99.0),
+            (64, 64, 100.0),
+            (15, 15, 75.0),
+            (3, 3, 75.0),
+            (128, 128, 75.0),
+            (256, 256, 75.0),
+        ] {
+            let mut pixels = alloc::vec![0u8; w * h * 3];
+            for y in 0..h {
+                for x in 0..w {
+                    let idx = (y * w + x) * 3;
+                    pixels[idx] = ((x * 255) / w.max(1)) as u8;
+                    pixels[idx + 1] = ((y * 255) / h.max(1)) as u8;
+                    pixels[idx + 2] = 128;
+                }
+            }
+
+            let webp = encode_lossy(&pixels, w, h, q as f32);
+
+            // Strip RIFF header to get raw VP8 data
+            let chunk_size = u32::from_le_bytes([webp[16], webp[17], webp[18], webp[19]]) as usize;
+            let vp8_data = &webp[20..20 + chunk_size.min(webp.len() - 20)];
+
+            // Full-frame: decode_to_frame + yuv420_to_rgb_exact
+            let mut ctx1 = super::super::DecoderContext::new();
+            let frame = ctx1.decode_to_frame(vp8_data).expect("frame decode failed");
+            let fw = usize::from(frame.width);
+            let fh = usize::from(frame.height);
+            let mbwidth = (fw + 15) / 16;
+            let y_stride = mbwidth * 16;
+            let uv_stride = mbwidth * 8;
+            let mut fullframe_rgb = alloc::vec::Vec::new();
+            super::yuv420_to_rgb_exact(
+                &frame.ybuf,
+                &frame.ubuf,
+                &frame.vbuf,
+                fw,
+                fh,
+                y_stride,
+                uv_stride,
+                &mut fullframe_rgb,
+                3,
+            );
+
+            // Streaming: decode_to_rgb
+            let mut ctx2 = super::super::DecoderContext::new();
+            let mut streaming_rgb = alloc::vec::Vec::new();
+            let (sw, sh) = ctx2
+                .decode_to_rgb(vp8_data, &mut streaming_rgb, 3)
+                .expect("streaming decode failed");
+
+            assert_eq!(fw, usize::from(sw));
+            assert_eq!(fh, usize::from(sh));
+            assert_eq!(fullframe_rgb.len(), streaming_rgb.len());
+
+            let mut max_diff = 0u8;
+            let mut diff_count = 0usize;
+            for (&a, &b) in fullframe_rgb.iter().zip(streaming_rgb.iter()) {
+                let d = a.abs_diff(b);
+                if d > 0 {
+                    diff_count += 1;
+                    max_diff = max_diff.max(d);
+                }
+            }
+
             assert_eq!(
                 diff_count, 0,
-                "{w}x{h}: {diff_count} diffs, max={max_diff}"
+                "{w}x{h} Q{q}: streaming differs from fullframe: {diff_count} diffs, max={max_diff}"
             );
         }
     }
