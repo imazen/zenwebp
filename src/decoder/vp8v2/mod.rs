@@ -3,6 +3,7 @@
 //! Key differences from v1 (`super::vp8`):
 //! - `DecoderContext` with buffer reuse (no memset per decode)
 //! - Streaming row pipeline (no full-frame Y/U/V buffers)
+//! - Single `#[arcane]` per MB row (predict+IDCT+filter in one region)
 //! - Precomputed filter/dequant tables in `FrameTables`
 //! - Flat u8 probability tables (no TreeNode indirection)
 //! - Fixed-size arrays for per-MB working storage
@@ -10,12 +11,21 @@
 mod coefficients;
 mod context;
 mod header;
+mod pipeline;
 pub(super) mod predict_fused;
 mod tables;
 
-pub(crate) use context::DecoderContext;
+pub use context::DecoderContext;
+
+use alloc::vec::Vec;
 
 use crate::common::types::{ChromaMode, IntraMode, LumaMode};
+use crate::decoder::api::DecodeError;
+use crate::decoder::internal_error::InternalDecodeError;
+use crate::decoder::loop_filter::MbFilterParams;
+use crate::decoder::vp8::Frame;
+
+use context::PreviousMacroBlock;
 
 /// Per-macroblock data from coefficient parsing, consumed by the
 /// prediction + reconstruction + filter pipeline.
@@ -39,4 +49,275 @@ pub(super) struct MbRowEntry {
     /// True if any UV sub-block has non-zero AC coefficients.
     /// Used to suppress dithering on blocks with actual chroma detail.
     pub has_nonzero_uv_ac: bool,
+}
+
+impl DecoderContext {
+    /// Decode a VP8 bitstream to a `Frame` (Y/U/V planes).
+    ///
+    /// The `data` must be the raw VP8 bitstream (inside the RIFF/WebP
+    /// container, after the VP8 chunk header has been stripped).
+    pub fn decode_to_frame(&mut self, data: &[u8]) -> Result<Frame, DecodeError> {
+        self.read_frame_header(data)?;
+        self.decode_mb_rows().map_err(DecodeError::from)?;
+
+        let tables = &self.tables;
+
+        // Build Frame from YUV plane buffers
+        let frame = Frame {
+            width: tables.width,
+            height: tables.height,
+            ybuf: core::mem::take(&mut self.ybuf),
+            ubuf: core::mem::take(&mut self.ubuf),
+            vbuf: core::mem::take(&mut self.vbuf),
+            version: tables.version,
+            for_display: tables.for_display,
+            pixel_type: tables.pixel_type,
+            filter_type: tables.filter_type,
+            filter_level: tables.filter_level,
+            sharpness_level: tables.sharpness_level,
+        };
+
+        // Reclaim empty vecs (will be reallocated on next decode if needed)
+        self.ybuf = Vec::new();
+        self.ubuf = Vec::new();
+        self.vbuf = Vec::new();
+
+        Ok(frame)
+    }
+
+    /// Decode a VP8 bitstream to RGB or RGBA pixels.
+    ///
+    /// `data` is the raw VP8 bitstream. `output` receives the pixel data.
+    /// `bpp` is 3 for RGB or 4 for RGBA.
+    ///
+    /// Returns `(width, height)` on success.
+    pub fn decode_to_rgb(
+        &mut self,
+        data: &[u8],
+        output: &mut Vec<u8>,
+        bpp: usize,
+    ) -> Result<(u16, u16), DecodeError> {
+        let frame = self.decode_to_frame(data)?;
+        let w = frame.width;
+        let h = frame.height;
+        let pixel_count = usize::from(w) * usize::from(h);
+        output.resize(pixel_count * bpp, 0);
+
+        match bpp {
+            3 => frame.fill_rgb(output, crate::decoder::api::UpsamplingMethod::Bilinear),
+            4 => frame.fill_rgba(output, crate::decoder::api::UpsamplingMethod::Bilinear),
+            _ => {
+                return Err(DecodeError::InvalidParameter(alloc::format!(
+                    "unsupported bpp: {bpp}"
+                )));
+            }
+        }
+
+        Ok((w, h))
+    }
+
+    /// Main decode loop. For each row: parse + predict/IDCT each MB
+    /// individually (so coefficients are consumed immediately), then
+    /// filter the whole row, then output.
+    fn decode_mb_rows(&mut self) -> Result<(), InternalDecodeError> {
+        let mbwidth = usize::from(self.tables.mbwidth);
+        let mbheight = usize::from(self.tables.mbheight);
+        let extra_y_rows = self.tables.extra_y_rows;
+        let filter_type = self.tables.filter_type;
+
+        // Allocate full-frame Y/U/V buffers
+        let luma_w = mbwidth * 16;
+        let chroma_w = mbwidth * 8;
+        let chroma_h = mbheight * 8 + 1; // +1 for bilinear interpolation
+        let ybuf_len = mbheight * 16 * luma_w;
+        let uvbuf_len = chroma_h * chroma_w;
+
+        self.ybuf.resize(ybuf_len, 0);
+        self.ubuf.resize(uvbuf_len, 0);
+        self.vbuf.resize(uvbuf_len, 0);
+
+        for mby in 0..mbheight {
+            let p = mby % self.tables.num_partitions as usize;
+            self.left = PreviousMacroBlock::default();
+
+            // Parse + predict/IDCT each MB immediately (single pass).
+            // Coefficients in self.coeff_blocks are consumed and cleared
+            // per MB, matching the v1 decoder's semantics.
+            for mbx in 0..mbwidth {
+                let mb = &mut self.mb_row_data[mbx];
+                *mb = MbRowEntry::default();
+
+                coefficients::read_macroblock_header(
+                    &mut self.header_reader,
+                    &self.tables,
+                    &mut self.top[mbx],
+                    &mut self.left,
+                    mb,
+                )?;
+
+                if !mb.coeffs_skipped {
+                    {
+                        let mut reader = self.partitions.active_reader(p);
+                        coefficients::read_residual_data(
+                            &mut reader,
+                            mb,
+                            &mut self.coeff_blocks,
+                            &self.tables.probs_by_pos,
+                            &self.tables.dequant[mb.segmentid as usize],
+                            &mut self.top[mbx],
+                            &mut self.left,
+                        )?;
+                        // reader auto-saves state on drop
+                    }
+                } else {
+                    // Clear complexity context for skipped blocks
+                    let top_mb = &mut self.top[mbx];
+                    if mb.luma_mode != LumaMode::B {
+                        self.left.complexity[0] = 0;
+                        top_mb.complexity[0] = 0;
+                    }
+                    for i in 1usize..9 {
+                        self.left.complexity[i] = 0;
+                        top_mb.complexity[i] = 0;
+                    }
+                }
+
+                // Immediately predict+IDCT this MB (consumes coeff_blocks)
+                predict_fused::process_luma_mb(
+                    &mut self.luma_ws,
+                    &mut self.coeff_blocks,
+                    mb,
+                    &mut self.cache_y,
+                    self.cache_y_stride,
+                    extra_y_rows,
+                    mbx,
+                    mby,
+                    mbwidth,
+                    &mut self.top_border_y,
+                    &mut self.left_border_y,
+                );
+                predict_fused::process_chroma_mb(
+                    &mut self.chroma_u_ws,
+                    &mut self.chroma_v_ws,
+                    &mut self.coeff_blocks,
+                    mb,
+                    &mut self.cache_u,
+                    &mut self.cache_v,
+                    self.cache_uv_stride,
+                    extra_y_rows,
+                    mbx,
+                    mby,
+                    &mut self.top_border_u,
+                    &mut self.left_border_u,
+                    &mut self.top_border_v,
+                    &mut self.left_border_v,
+                );
+
+                // Compute filter params from precomputed table
+                let is_b = mb.luma_mode == LumaMode::B;
+                let fp = &self.tables.filter[mb.segmentid as usize][is_b as usize];
+                let do_subblock_filtering = is_b || (!mb.coeffs_skipped && mb.non_zero_dct);
+                self.mb_filter_params[mbx] = MbFilterParams {
+                    filter_level: fp.filter_level,
+                    interior_limit: fp.interior_limit,
+                    hev_threshold: fp.hev_threshold,
+                    mbedge_limit: fp.mbedge_limit,
+                    sub_bedge_limit: fp.sub_bedge_limit,
+                    do_subblock_filtering,
+                };
+            }
+
+            // Filter the entire row (single SIMD boundary)
+            pipeline::filter_mb_row(
+                &mut self.cache_y,
+                &mut self.cache_u,
+                &mut self.cache_v,
+                self.cache_y_stride,
+                self.cache_uv_stride,
+                extra_y_rows,
+                filter_type,
+                mby,
+                &self.mb_filter_params[..mbwidth],
+            );
+
+            // Output cache to Y/U/V frame buffers
+            self.output_row_from_cache(mby, mbheight, mbwidth);
+            self.rotate_extra_rows();
+
+            // Reset left borders for next row
+            self.left_border_y.fill(129u8);
+            self.left_border_u.fill(129u8);
+            self.left_border_v.fill(129u8);
+        }
+
+        Ok(())
+    }
+
+    /// Copy the filtered row from cache to the final Y/U/V frame buffers.
+    fn output_row_from_cache(&mut self, mby: usize, mbheight: usize, mbwidth: usize) {
+        let luma_w = mbwidth * 16;
+        let chroma_w = mbwidth * 8;
+        let extra_y_rows = self.tables.extra_y_rows;
+        let extra_uv_rows = extra_y_rows / 2;
+        let is_first_row = mby == 0;
+        let is_last_row = mby == mbheight - 1;
+
+        let (src_start_row, num_y_rows, dst_start_y_row) = if is_first_row {
+            (extra_y_rows, 16 - extra_y_rows, 0usize)
+        } else if is_last_row {
+            (0, extra_y_rows + 16, mby * 16 - extra_y_rows)
+        } else {
+            (0, 16, mby * 16 - extra_y_rows)
+        };
+
+        // Copy Y
+        {
+            let src_start = src_start_row * self.cache_y_stride;
+            let dst_start = dst_start_y_row * luma_w;
+            let total = num_y_rows * luma_w;
+            self.ybuf[dst_start..dst_start + total]
+                .copy_from_slice(&self.cache_y[src_start..src_start + total]);
+        }
+
+        // Copy U/V
+        let (src_start_row_uv, num_uv_rows, dst_start_uv_row) = if is_first_row {
+            (extra_uv_rows, 8 - extra_uv_rows, 0usize)
+        } else if is_last_row {
+            (0, extra_uv_rows + 8, mby * 8 - extra_uv_rows)
+        } else {
+            (0, 8, mby * 8 - extra_uv_rows)
+        };
+
+        {
+            let src_start = src_start_row_uv * self.cache_uv_stride;
+            let dst_start = dst_start_uv_row * chroma_w;
+            let total = num_uv_rows * chroma_w;
+            self.ubuf[dst_start..dst_start + total]
+                .copy_from_slice(&self.cache_u[src_start..src_start + total]);
+            self.vbuf[dst_start..dst_start + total]
+                .copy_from_slice(&self.cache_v[src_start..src_start + total]);
+        }
+    }
+
+    /// Copy bottom rows of current cache to extra area for next row's filtering.
+    fn rotate_extra_rows(&mut self) {
+        let extra_y_rows = self.tables.extra_y_rows;
+        let extra_uv_rows = extra_y_rows / 2;
+
+        if extra_y_rows == 0 {
+            return;
+        }
+
+        let src_start = 16 * self.cache_y_stride;
+        let copy_size = extra_y_rows * self.cache_y_stride;
+        self.cache_y
+            .copy_within(src_start..src_start + copy_size, 0);
+
+        let src_start_uv = 8 * self.cache_uv_stride;
+        let copy_size_uv = extra_uv_rows * self.cache_uv_stride;
+        self.cache_u
+            .copy_within(src_start_uv..src_start_uv + copy_size_uv, 0);
+        self.cache_v
+            .copy_within(src_start_uv..src_start_uv + copy_size_uv, 0);
+    }
 }

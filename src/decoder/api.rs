@@ -517,6 +517,51 @@ impl<'a> DecodeRequest<'a> {
     pub fn decode_yuv420(self) -> DecodeResult<YuvPlanes> {
         decode_yuv420(self.data)
     }
+
+    /// Decode using the v2 decoder (experimental).
+    ///
+    /// Returns `(pixels, width, height)` where pixels are RGB (3 bytes/pixel).
+    /// Only supports simple lossy VP8 (no alpha, no lossless, no animation).
+    pub fn decode_rgb_v2(self) -> DecodeResult<(Vec<u8>, u16, u16)> {
+        use super::vp8v2;
+
+        let data = self.data;
+        if data.len() < 20 {
+            return Err(whereat::at!(DecodeError::NotEnoughInitData));
+        }
+
+        // Parse RIFF/WebP container to find the VP8 chunk
+        if &data[..4] != b"RIFF" {
+            let mut sig = [0u8; 4];
+            sig.copy_from_slice(&data[..4]);
+            return Err(whereat::at!(DecodeError::RiffSignatureInvalid(sig)));
+        }
+        if &data[8..12] != b"WEBP" {
+            let mut sig = [0u8; 4];
+            sig.copy_from_slice(&data[8..12]);
+            return Err(whereat::at!(DecodeError::WebpSignatureInvalid(sig)));
+        }
+        if &data[12..16] != b"VP8 " {
+            return Err(whereat::at!(DecodeError::UnsupportedFeature(
+                alloc::format!(
+                    "v2 decoder only supports lossy VP8, got {:?}",
+                    &data[12..16]
+                )
+            )));
+        }
+
+        let chunk_size = u32::from_le_bytes([data[16], data[17], data[18], data[19]]) as usize;
+        let vp8_start = 20;
+        let vp8_end = (vp8_start + chunk_size).min(data.len());
+        let vp8_data = &data[vp8_start..vp8_end];
+
+        let mut ctx = vp8v2::DecoderContext::new();
+        let mut output = Vec::new();
+        let (w, h) = ctx
+            .decode_to_rgb(vp8_data, &mut output, 3)
+            .map_err(|e| whereat::at!(e))?;
+        Ok((output, w, h))
+    }
 }
 
 /// WebP decoder configuration options (internal, used by AnimationDecoder)

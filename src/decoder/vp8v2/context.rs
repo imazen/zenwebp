@@ -78,6 +78,11 @@ pub struct DecoderContext {
     // ---- Partitions ----
     pub(super) partitions: VP8Partitions,
 
+    // ---- Output Y/U/V frame buffers (allocated per decode) ----
+    pub(super) ybuf: Vec<u8>,
+    pub(super) ubuf: Vec<u8>,
+    pub(super) vbuf: Vec<u8>,
+
     // ---- Reuse tracking ----
     pub(super) last_mbwidth: u16,
     pub(super) last_mbheight: u16,
@@ -120,6 +125,10 @@ impl DecoderContext {
             header_reader: VP8HeaderBitReader::new(),
 
             partitions: VP8Partitions::new(),
+
+            ybuf: Vec::new(),
+            ubuf: Vec::new(),
+            vbuf: Vec::new(),
 
             last_mbwidth: 0,
             last_mbheight: 0,
