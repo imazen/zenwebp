@@ -78,10 +78,11 @@ fn sse4x4_with_residual_inner(
     let pred_hi = vreinterpretq_s16_u16(vmovl_u8(vget_high_u8(pred_vec)));
 
     // Load residuals and pack to i16
-    let r0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&residual[0..4]).unwrap());
-    let r1 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&residual[4..8]).unwrap());
-    let r2 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&residual[8..12]).unwrap());
-    let r3 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&residual[12..16]).unwrap());
+    let (rq0, rq1, rq2, rq3) = super::q16(residual);
+    let r0 = simd_mem::vld1q_s32(rq0);
+    let r1 = simd_mem::vld1q_s32(rq1);
+    let r2 = simd_mem::vld1q_s32(rq2);
+    let r3 = simd_mem::vld1q_s32(rq3);
     let res_lo = vcombine_s16(vmovn_s32(r0), vmovn_s32(r1));
     let res_hi = vcombine_s16(vmovn_s32(r2), vmovn_s32(r3));
 
@@ -297,8 +298,9 @@ pub(crate) fn tdisto_4x4_fused_inner(
     let b_abs_23 = vabsq_s16(b_23);
 
     // Load weights
-    let w_0 = simd_mem::vld1q_u16(<&[u16; 8]>::try_from(&w[0..8]).unwrap());
-    let w_8 = simd_mem::vld1q_u16(<&[u16; 8]>::try_from(&w[8..16]).unwrap());
+    let (w_lo, w_hi) = super::h16(w);
+    let w_0 = simd_mem::vld1q_u16(w_lo);
+    let w_8 = simd_mem::vld1q_u16(w_hi);
     let w_0s = vreinterpretq_s16_u16(w_0);
     let w_8s = vreinterpretq_s16_u16(w_8);
 
@@ -423,10 +425,11 @@ fn quantize_block_inner(
     let max_coeff = vdupq_n_s16(MAX_LEVEL as i16);
 
     // Pack i32 coefficients to i16
-    let c0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-    let c1 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-    let c2 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-    let c3 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+    let (cq0, cq1, cq2, cq3) = super::q16(coeffs);
+    let c0 = simd_mem::vld1q_s32(cq0);
+    let c1 = simd_mem::vld1q_s32(cq1);
+    let c2 = simd_mem::vld1q_s32(cq2);
+    let c3 = simd_mem::vld1q_s32(cq3);
 
     let in0 = vcombine_s16(vmovn_s32(c0), vmovn_s32(c1));
     let in8 = vcombine_s16(vmovn_s32(c2), vmovn_s32(c3));
@@ -439,8 +442,9 @@ fn quantize_block_inner(
 
     // Add sharpen
     if use_sharpen {
-        let sh0 = simd_mem::vld1q_u16(<&[u16; 8]>::try_from(&matrix.sharpen[0..8]).unwrap());
-        let sh8 = simd_mem::vld1q_u16(<&[u16; 8]>::try_from(&matrix.sharpen[8..16]).unwrap());
+        let (sh_lo, sh_hi) = super::h16(&matrix.sharpen);
+        let sh0 = simd_mem::vld1q_u16(sh_lo);
+        let sh8 = simd_mem::vld1q_u16(sh_hi);
         coeff0 = vaddq_s16(coeff0, vreinterpretq_s16_u16(sh0));
         coeff8 = vaddq_s16(coeff8, vreinterpretq_s16_u16(sh8));
     }
@@ -478,10 +482,11 @@ fn quantize_block_inner(
     let prod8_hi = vmull_u16(vget_high_u16(coeff8_u), vget_high_u16(iq8));
 
     // Load bias (u32[16])
-    let bias0 = simd_mem::vld1q_u32(<&[u32; 4]>::try_from(&matrix.bias[0..4]).unwrap());
-    let bias4 = simd_mem::vld1q_u32(<&[u32; 4]>::try_from(&matrix.bias[4..8]).unwrap());
-    let bias8 = simd_mem::vld1q_u32(<&[u32; 4]>::try_from(&matrix.bias[8..12]).unwrap());
-    let bias12 = simd_mem::vld1q_u32(<&[u32; 4]>::try_from(&matrix.bias[12..16]).unwrap());
+    let (bb0, bb1, bb2, bb3) = super::q16(&matrix.bias);
+    let bias0 = simd_mem::vld1q_u32(bb0);
+    let bias4 = simd_mem::vld1q_u32(bb1);
+    let bias8 = simd_mem::vld1q_u32(bb2);
+    let bias12 = simd_mem::vld1q_u32(bb3);
 
     // Add bias and shift
     let out0 = vshrq_n_u32::<{ QFIX as i32 as u32 as _ }>(vaddq_u32(prod0_lo, bias0));
@@ -513,10 +518,11 @@ fn quantize_block_inner(
     let s8 = vmovl_s16(vget_low_s16(qout8));
     let s12 = vmovl_s16(vget_high_s16(qout8));
 
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut coeffs[0..4]).unwrap(), s0);
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut coeffs[4..8]).unwrap(), s4);
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut coeffs[8..12]).unwrap(), s8);
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(), s12);
+    let (cm0, cm1, cm2, cm3) = super::q16_mut(coeffs);
+    simd_mem::vst1q_s32(cm0, s0);
+    simd_mem::vst1q_s32(cm1, s4);
+    simd_mem::vst1q_s32(cm2, s8);
+    simd_mem::vst1q_s32(cm3, s12);
 
     // Check if any coefficient is non-zero
     let or0 = vorrq_s16(qout0, qout8);
@@ -533,24 +539,20 @@ pub(crate) fn dequantize_block_neon(_token: NeonToken, q: &[u16; 16], coeffs: &m
 #[rite]
 fn dequantize_block_inner(_token: NeonToken, q: &[u16; 16], coeffs: &mut [i32; 16]) {
     // Load q as u16, zero-extend to u32
-    let q0 = vmovl_u16(vget_low_u16(simd_mem::vld1q_u16(
-        <&[u16; 8]>::try_from(&q[0..8]).unwrap(),
-    )));
-    let q4 = vmovl_u16(vget_high_u16(simd_mem::vld1q_u16(
-        <&[u16; 8]>::try_from(&q[0..8]).unwrap(),
-    )));
-    let q8 = vmovl_u16(vget_low_u16(simd_mem::vld1q_u16(
-        <&[u16; 8]>::try_from(&q[8..16]).unwrap(),
-    )));
-    let q12 = vmovl_u16(vget_high_u16(simd_mem::vld1q_u16(
-        <&[u16; 8]>::try_from(&q[8..16]).unwrap(),
-    )));
+    let (q_lo, q_hi) = super::h16(q);
+    let q_lo_vec = simd_mem::vld1q_u16(q_lo);
+    let q_hi_vec = simd_mem::vld1q_u16(q_hi);
+    let q0 = vmovl_u16(vget_low_u16(q_lo_vec));
+    let q4 = vmovl_u16(vget_high_u16(q_lo_vec));
+    let q8 = vmovl_u16(vget_low_u16(q_hi_vec));
+    let q12 = vmovl_u16(vget_high_u16(q_hi_vec));
 
     // Load coefficients
-    let c0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-    let c4 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-    let c8 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-    let c12 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+    let (cq0, cq1, cq2, cq3) = super::q16(coeffs);
+    let c0 = simd_mem::vld1q_s32(cq0);
+    let c4 = simd_mem::vld1q_s32(cq1);
+    let c8 = simd_mem::vld1q_s32(cq2);
+    let c12 = simd_mem::vld1q_s32(cq3);
 
     // Multiply: NEON has vmulq_s32 for i32*i32→i32 (unlike SSE2)
     let r0 = vmulq_s32(c0, vreinterpretq_s32_u32(q0));
@@ -558,10 +560,11 @@ fn dequantize_block_inner(_token: NeonToken, q: &[u16; 16], coeffs: &mut [i32; 1
     let r8 = vmulq_s32(c8, vreinterpretq_s32_u32(q8));
     let r12 = vmulq_s32(c12, vreinterpretq_s32_u32(q12));
 
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut coeffs[0..4]).unwrap(), r0);
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut coeffs[4..8]).unwrap(), r4);
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut coeffs[8..12]).unwrap(), r8);
-    simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(), r12);
+    let (cm0, cm1, cm2, cm3) = super::q16_mut(coeffs);
+    simd_mem::vst1q_s32(cm0, r0);
+    simd_mem::vst1q_s32(cm1, r4);
+    simd_mem::vst1q_s32(cm2, r8);
+    simd_mem::vst1q_s32(cm3, r12);
 }
 
 /// NEON fused quantize+dequantize: produces both quantized and dequantized values.
@@ -591,10 +594,11 @@ fn quantize_dequantize_block_inner(
     let max_coeff = vdupq_n_s16(MAX_LEVEL as i16);
 
     // Pack i32 to i16
-    let c0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-    let c1 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-    let c2 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-    let c3 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+    let (cq0, cq1, cq2, cq3) = super::q16(coeffs);
+    let c0 = simd_mem::vld1q_s32(cq0);
+    let c1 = simd_mem::vld1q_s32(cq1);
+    let c2 = simd_mem::vld1q_s32(cq2);
+    let c3 = simd_mem::vld1q_s32(cq3);
 
     let in0 = vcombine_s16(vmovn_s32(c0), vmovn_s32(c1));
     let in8 = vcombine_s16(vmovn_s32(c2), vmovn_s32(c3));
@@ -606,8 +610,9 @@ fn quantize_dequantize_block_inner(
     let mut coeff8 = vabsq_s16(in8);
 
     if use_sharpen {
-        let sh0 = simd_mem::vld1q_u16(<&[u16; 8]>::try_from(&matrix.sharpen[0..8]).unwrap());
-        let sh8 = simd_mem::vld1q_u16(<&[u16; 8]>::try_from(&matrix.sharpen[8..16]).unwrap());
+        let (sh_lo, sh_hi) = super::h16(&matrix.sharpen);
+        let sh0 = simd_mem::vld1q_u16(sh_lo);
+        let sh8 = simd_mem::vld1q_u16(sh_hi);
         coeff0 = vaddq_s16(coeff0, vreinterpretq_s16_u16(sh0));
         coeff8 = vaddq_s16(coeff8, vreinterpretq_s16_u16(sh8));
     }
@@ -643,10 +648,11 @@ fn quantize_dequantize_block_inner(
     let prod8_lo = vmull_u16(vget_low_u16(coeff8_u), vget_low_u16(iq8));
     let prod8_hi = vmull_u16(vget_high_u16(coeff8_u), vget_high_u16(iq8));
 
-    let bias0 = simd_mem::vld1q_u32(<&[u32; 4]>::try_from(&matrix.bias[0..4]).unwrap());
-    let bias4 = simd_mem::vld1q_u32(<&[u32; 4]>::try_from(&matrix.bias[4..8]).unwrap());
-    let bias8 = simd_mem::vld1q_u32(<&[u32; 4]>::try_from(&matrix.bias[8..12]).unwrap());
-    let bias12 = simd_mem::vld1q_u32(<&[u32; 4]>::try_from(&matrix.bias[12..16]).unwrap());
+    let (bb0, bb1, bb2, bb3) = super::q16(&matrix.bias);
+    let bias0 = simd_mem::vld1q_u32(bb0);
+    let bias4 = simd_mem::vld1q_u32(bb1);
+    let bias8 = simd_mem::vld1q_u32(bb2);
+    let bias12 = simd_mem::vld1q_u32(bb3);
 
     let out0 = vshrq_n_u32::<{ QFIX as i32 as u32 as _ }>(vaddq_u32(prod0_lo, bias0));
     let out4 = vshrq_n_u32::<{ QFIX as i32 as u32 as _ }>(vaddq_u32(prod0_hi, bias4));
@@ -670,47 +676,26 @@ fn quantize_dequantize_block_inner(
     qout8 = vsubq_s16(veorq_s16(qout8, sign8), sign8);
 
     // Store quantized (i16 → i32)
-    simd_mem::vst1q_s32(
-        <&mut [i32; 4]>::try_from(&mut quantized[0..4]).unwrap(),
-        vmovl_s16(vget_low_s16(qout0)),
-    );
-    simd_mem::vst1q_s32(
-        <&mut [i32; 4]>::try_from(&mut quantized[4..8]).unwrap(),
-        vmovl_s16(vget_high_s16(qout0)),
-    );
-    simd_mem::vst1q_s32(
-        <&mut [i32; 4]>::try_from(&mut quantized[8..12]).unwrap(),
-        vmovl_s16(vget_low_s16(qout8)),
-    );
-    simd_mem::vst1q_s32(
-        <&mut [i32; 4]>::try_from(&mut quantized[12..16]).unwrap(),
-        vmovl_s16(vget_high_s16(qout8)),
-    );
+    let (qm0, qm1, qm2, qm3) = super::q16_mut(quantized);
+    simd_mem::vst1q_s32(qm0, vmovl_s16(vget_low_s16(qout0)));
+    simd_mem::vst1q_s32(qm1, vmovl_s16(vget_high_s16(qout0)));
+    simd_mem::vst1q_s32(qm2, vmovl_s16(vget_low_s16(qout8)));
+    simd_mem::vst1q_s32(qm3, vmovl_s16(vget_high_s16(qout8)));
 
     // Dequantize: quantized * q
-    let q0 = simd_mem::vld1q_u16(<&[u16; 8]>::try_from(&matrix.q[0..8]).unwrap());
-    let q8_val = simd_mem::vld1q_u16(<&[u16; 8]>::try_from(&matrix.q[8..16]).unwrap());
+    let (mq_lo, mq_hi) = super::h16(&matrix.q);
+    let q0 = simd_mem::vld1q_u16(mq_lo);
+    let q8_val = simd_mem::vld1q_u16(mq_hi);
 
     let dq0 = vmulq_s16(qout0, vreinterpretq_s16_u16(q0));
     let dq8 = vmulq_s16(qout8, vreinterpretq_s16_u16(q8_val));
 
     // Store dequantized (i16 → i32)
-    simd_mem::vst1q_s32(
-        <&mut [i32; 4]>::try_from(&mut dequantized[0..4]).unwrap(),
-        vmovl_s16(vget_low_s16(dq0)),
-    );
-    simd_mem::vst1q_s32(
-        <&mut [i32; 4]>::try_from(&mut dequantized[4..8]).unwrap(),
-        vmovl_s16(vget_high_s16(dq0)),
-    );
-    simd_mem::vst1q_s32(
-        <&mut [i32; 4]>::try_from(&mut dequantized[8..12]).unwrap(),
-        vmovl_s16(vget_low_s16(dq8)),
-    );
-    simd_mem::vst1q_s32(
-        <&mut [i32; 4]>::try_from(&mut dequantized[12..16]).unwrap(),
-        vmovl_s16(vget_high_s16(dq8)),
-    );
+    let (dm0, dm1, dm2, dm3) = super::q16_mut(dequantized);
+    simd_mem::vst1q_s32(dm0, vmovl_s16(vget_low_s16(dq0)));
+    simd_mem::vst1q_s32(dm1, vmovl_s16(vget_high_s16(dq0)));
+    simd_mem::vst1q_s32(dm2, vmovl_s16(vget_low_s16(dq8)));
+    simd_mem::vst1q_s32(dm3, vmovl_s16(vget_high_s16(dq8)));
 
     // Non-zero check
     let or0 = vorrq_s16(qout0, qout8);

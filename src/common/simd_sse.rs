@@ -160,10 +160,11 @@ pub(crate) fn sse4x4_with_residual_sse2(
     let pred_hi = _mm_unpackhi_epi8(pred_bytes, zero);
 
     // Load residuals (4 i32 values at a time) and pack to i16
-    let res0 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&residual[0..4]).unwrap());
-    let res1 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&residual[4..8]).unwrap());
-    let res2 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&residual[8..12]).unwrap());
-    let res3 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&residual[12..16]).unwrap());
+    let (r0, r1, r2, r3) = super::q16(residual);
+    let res0 = simd_mem::_mm_loadu_si128(r0);
+    let res1 = simd_mem::_mm_loadu_si128(r1);
+    let res2 = simd_mem::_mm_loadu_si128(r2);
+    let res3 = simd_mem::_mm_loadu_si128(r3);
 
     // Pack i32 to i16 (saturating)
     let res_lo = _mm_packs_epi32(res0, res1);
@@ -732,8 +733,9 @@ pub(crate) fn tdisto_4x4_fused_sse2(
     let b_abs_23 = _mm_max_epi16(b_23, _mm_sub_epi16(zero, b_23));
 
     // Load weights
-    let w_0 = simd_mem::_mm_loadu_si128(<&[u16; 8]>::try_from(&w[0..8]).unwrap());
-    let w_8 = simd_mem::_mm_loadu_si128(<&[u16; 8]>::try_from(&w[8..16]).unwrap());
+    let (w_lo, w_hi) = super::h16(w);
+    let w_0 = simd_mem::_mm_loadu_si128(w_lo);
+    let w_8 = simd_mem::_mm_loadu_si128(w_hi);
 
     // Compute weighted sums using madd (multiply-add pairs)
     let a_prod_01 = _mm_madd_epi16(a_abs_01, w_0);
@@ -831,10 +833,11 @@ fn precompute_coeffs_sse2(_token: X64V3Token, coeffs: &[i32; 16]) -> Precomputed
 
     // Load coefficients as i32, convert to i16
     // libwebp works with i16 coefficients directly, we need to convert from i32
-    let c0_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-    let c1_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-    let c2_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-    let c3_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+    let (q0, q1, q2, q3) = super::q16(coeffs);
+    let c0_32 = simd_mem::_mm_loadu_si128(q0);
+    let c1_32 = simd_mem::_mm_loadu_si128(q1);
+    let c2_32 = simd_mem::_mm_loadu_si128(q2);
+    let c3_32 = simd_mem::_mm_loadu_si128(q3);
 
     // Pack i32 to i16 (saturating)
     let c0 = _mm_packs_epi32(c0_32, c1_32); // coeffs[0..8] as i16
@@ -862,14 +865,9 @@ fn precompute_coeffs_sse2(_token: X64V3Token, coeffs: &[i32; 16]) -> Precomputed
     simd_mem::_mm_storeu_si128(&mut result.levels, h);
 
     // Store absolute values as u16
-    simd_mem::_mm_storeu_si128(
-        <&mut [u16; 8]>::try_from(&mut result.abs_levels[0..8]).unwrap(),
-        e0,
-    );
-    simd_mem::_mm_storeu_si128(
-        <&mut [u16; 8]>::try_from(&mut result.abs_levels[8..16]).unwrap(),
-        e1,
-    );
+    let (abs_lo, abs_hi) = super::h16_mut(&mut result.abs_levels);
+    simd_mem::_mm_storeu_si128(abs_lo, e0);
+    simd_mem::_mm_storeu_si128(abs_hi, e1);
 
     result
 }
@@ -920,10 +918,11 @@ fn find_last_nonzero_sse2(_token: X64V3Token, coeffs: &[i32; 16], first: usize) 
     let zero = _mm_setzero_si128();
 
     // Load and pack coefficients to bytes for comparison
-    let c0_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-    let c1_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-    let c2_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-    let c3_32 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+    let (q0, q1, q2, q3) = super::q16(coeffs);
+    let c0_32 = simd_mem::_mm_loadu_si128(q0);
+    let c1_32 = simd_mem::_mm_loadu_si128(q1);
+    let c2_32 = simd_mem::_mm_loadu_si128(q2);
+    let c3_32 = simd_mem::_mm_loadu_si128(q3);
 
     let c0 = _mm_packs_epi32(c0_32, c1_32);
     let c1 = _mm_packs_epi32(c2_32, c3_32);

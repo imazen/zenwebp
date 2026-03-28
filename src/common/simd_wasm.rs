@@ -122,10 +122,11 @@ pub(crate) fn sse4x4_with_residual_wasm(
     let pred_hi = u16x8_extend_high_u8x16(pred_vec);
 
     // Load residuals as i32x4, narrow to i16x8
-    let r0 = load_i32x4(<&[i32; 4]>::try_from(&residual[0..4]).unwrap());
-    let r1 = load_i32x4(<&[i32; 4]>::try_from(&residual[4..8]).unwrap());
-    let r2 = load_i32x4(<&[i32; 4]>::try_from(&residual[8..12]).unwrap());
-    let r3 = load_i32x4(<&[i32; 4]>::try_from(&residual[12..16]).unwrap());
+    let (rq0, rq1, rq2, rq3) = super::q16(residual);
+    let r0 = load_i32x4(rq0);
+    let r1 = load_i32x4(rq1);
+    let r2 = load_i32x4(rq2);
+    let r3 = load_i32x4(rq3);
     let res_lo = i16x8_narrow_i32x4(r0, r1);
     let res_hi = i16x8_narrow_i32x4(r2, r3);
 
@@ -317,8 +318,9 @@ pub(crate) fn tdisto_4x4_fused_wasm(
     let b_abs_23 = i16x8_abs(b_23);
 
     // Load weights
-    let w_0 = load_u16x8(<&[u16; 8]>::try_from(&w[0..8]).unwrap());
-    let w_8 = load_u16x8(<&[u16; 8]>::try_from(&w[8..16]).unwrap());
+    let (w_lo, w_hi) = super::h16(w);
+    let w_0 = load_u16x8(w_lo);
+    let w_8 = load_u16x8(w_hi);
 
     // Weighted multiply-accumulate using extending multiply
     let a_prod_0 = i32x4_extmul_low_i16x8(a_abs_01, w_0);
@@ -468,10 +470,11 @@ pub(crate) fn quantize_block_wasm(
     let max_coeff = i16x8_splat(MAX_LEVEL as i16);
 
     // Pack i32 coefficients to i16
-    let c0 = load_i32x4(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-    let c1 = load_i32x4(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-    let c2 = load_i32x4(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-    let c3 = load_i32x4(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+    let (cq0, cq1, cq2, cq3) = super::q16(coeffs);
+    let c0 = load_i32x4(cq0);
+    let c1 = load_i32x4(cq1);
+    let c2 = load_i32x4(cq2);
+    let c3 = load_i32x4(cq3);
 
     let in0 = i16x8_narrow_i32x4(c0, c1);
     let in8 = i16x8_narrow_i32x4(c2, c3);
@@ -484,8 +487,9 @@ pub(crate) fn quantize_block_wasm(
 
     // Add sharpen
     if use_sharpen {
-        let sh0 = load_u16x8(<&[u16; 8]>::try_from(&matrix.sharpen[0..8]).unwrap());
-        let sh8 = load_u16x8(<&[u16; 8]>::try_from(&matrix.sharpen[8..16]).unwrap());
+        let (sh_lo, sh_hi) = super::h16(&matrix.sharpen);
+        let sh0 = load_u16x8(sh_lo);
+        let sh8 = load_u16x8(sh_hi);
         coeff0 = i16x8_add(coeff0, sh0);
         coeff8 = i16x8_add(coeff8, sh8);
     }
@@ -520,10 +524,11 @@ pub(crate) fn quantize_block_wasm(
     let prod8_hi = u32x4_extmul_high_u16x8(coeff8, iq8);
 
     // Load bias (u32[16])
-    let bias0 = load_u32x4(<&[u32; 4]>::try_from(&matrix.bias[0..4]).unwrap());
-    let bias4 = load_u32x4(<&[u32; 4]>::try_from(&matrix.bias[4..8]).unwrap());
-    let bias8 = load_u32x4(<&[u32; 4]>::try_from(&matrix.bias[8..12]).unwrap());
-    let bias12 = load_u32x4(<&[u32; 4]>::try_from(&matrix.bias[12..16]).unwrap());
+    let (bb0, bb1, bb2, bb3) = super::q16(&matrix.bias);
+    let bias0 = load_u32x4(bb0);
+    let bias4 = load_u32x4(bb1);
+    let bias8 = load_u32x4(bb2);
+    let bias12 = load_u32x4(bb3);
 
     // Add bias and shift
     let out0 = u32x4_shr(i32x4_add(prod0_lo, bias0), QFIX);
@@ -549,10 +554,11 @@ pub(crate) fn quantize_block_wasm(
     let s8 = i32x4_extend_low_i16x8(qout8);
     let s12 = i32x4_extend_high_i16x8(qout8);
 
-    store_i32x4(<&mut [i32; 4]>::try_from(&mut coeffs[0..4]).unwrap(), s0);
-    store_i32x4(<&mut [i32; 4]>::try_from(&mut coeffs[4..8]).unwrap(), s4);
-    store_i32x4(<&mut [i32; 4]>::try_from(&mut coeffs[8..12]).unwrap(), s8);
-    store_i32x4(<&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(), s12);
+    let (cm0, cm1, cm2, cm3) = super::q16_mut(coeffs);
+    store_i32x4(cm0, s0);
+    store_i32x4(cm1, s4);
+    store_i32x4(cm2, s8);
+    store_i32x4(cm3, s12);
 
     // Check if any coefficient is non-zero
     let or0 = v128_or(qout0, qout8);
@@ -574,18 +580,20 @@ pub(crate) fn quantize_block_wasm_entry(
 #[rite]
 pub(crate) fn dequantize_block_wasm(_token: Wasm128Token, q: &[u16; 16], coeffs: &mut [i32; 16]) {
     // Load q as u16, extend to i32
-    let q0_u16 = load_u16x8(<&[u16; 8]>::try_from(&q[0..8]).unwrap());
-    let q8_u16 = load_u16x8(<&[u16; 8]>::try_from(&q[8..16]).unwrap());
+    let (q_lo, q_hi) = super::h16(q);
+    let q0_u16 = load_u16x8(q_lo);
+    let q8_u16 = load_u16x8(q_hi);
     let q0_lo = u32x4_extend_low_u16x8(q0_u16);
     let q0_hi = u32x4_extend_high_u16x8(q0_u16);
     let q8_lo = u32x4_extend_low_u16x8(q8_u16);
     let q8_hi = u32x4_extend_high_u16x8(q8_u16);
 
     // Load coefficients
-    let c0 = load_i32x4(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-    let c4 = load_i32x4(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-    let c8 = load_i32x4(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-    let c12 = load_i32x4(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+    let (cq0, cq1, cq2, cq3) = super::q16(coeffs);
+    let c0 = load_i32x4(cq0);
+    let c4 = load_i32x4(cq1);
+    let c8 = load_i32x4(cq2);
+    let c12 = load_i32x4(cq3);
 
     // Multiply: WASM has i32x4_mul
     let r0 = i32x4_mul(c0, q0_lo);
@@ -593,10 +601,11 @@ pub(crate) fn dequantize_block_wasm(_token: Wasm128Token, q: &[u16; 16], coeffs:
     let r8 = i32x4_mul(c8, q8_lo);
     let r12 = i32x4_mul(c12, q8_hi);
 
-    store_i32x4(<&mut [i32; 4]>::try_from(&mut coeffs[0..4]).unwrap(), r0);
-    store_i32x4(<&mut [i32; 4]>::try_from(&mut coeffs[4..8]).unwrap(), r4);
-    store_i32x4(<&mut [i32; 4]>::try_from(&mut coeffs[8..12]).unwrap(), r8);
-    store_i32x4(<&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(), r12);
+    let (cm0, cm1, cm2, cm3) = super::q16_mut(coeffs);
+    store_i32x4(cm0, r0);
+    store_i32x4(cm1, r4);
+    store_i32x4(cm2, r8);
+    store_i32x4(cm3, r12);
 }
 
 /// Entry shim for dequantize_block_wasm
@@ -623,10 +632,11 @@ pub(crate) fn quantize_dequantize_block_wasm(
     let max_coeff = i16x8_splat(MAX_LEVEL as i16);
 
     // Pack i32 to i16
-    let c0 = load_i32x4(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-    let c1 = load_i32x4(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-    let c2 = load_i32x4(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-    let c3 = load_i32x4(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+    let (cq0, cq1, cq2, cq3) = super::q16(coeffs);
+    let c0 = load_i32x4(cq0);
+    let c1 = load_i32x4(cq1);
+    let c2 = load_i32x4(cq2);
+    let c3 = load_i32x4(cq3);
 
     let in0 = i16x8_narrow_i32x4(c0, c1);
     let in8 = i16x8_narrow_i32x4(c2, c3);
@@ -638,8 +648,9 @@ pub(crate) fn quantize_dequantize_block_wasm(
     let mut coeff8 = i16x8_abs(in8);
 
     if use_sharpen {
-        let sh0 = load_u16x8(<&[u16; 8]>::try_from(&matrix.sharpen[0..8]).unwrap());
-        let sh8 = load_u16x8(<&[u16; 8]>::try_from(&matrix.sharpen[8..16]).unwrap());
+        let (sh_lo, sh_hi) = super::h16(&matrix.sharpen);
+        let sh0 = load_u16x8(sh_lo);
+        let sh8 = load_u16x8(sh_hi);
         coeff0 = i16x8_add(coeff0, sh0);
         coeff8 = i16x8_add(coeff8, sh8);
     }
@@ -672,10 +683,11 @@ pub(crate) fn quantize_dequantize_block_wasm(
     let prod8_lo = u32x4_extmul_low_u16x8(coeff8, iq8);
     let prod8_hi = u32x4_extmul_high_u16x8(coeff8, iq8);
 
-    let bias0 = load_u32x4(<&[u32; 4]>::try_from(&matrix.bias[0..4]).unwrap());
-    let bias4 = load_u32x4(<&[u32; 4]>::try_from(&matrix.bias[4..8]).unwrap());
-    let bias8 = load_u32x4(<&[u32; 4]>::try_from(&matrix.bias[8..12]).unwrap());
-    let bias12 = load_u32x4(<&[u32; 4]>::try_from(&matrix.bias[12..16]).unwrap());
+    let (bb0, bb1, bb2, bb3) = super::q16(&matrix.bias);
+    let bias0 = load_u32x4(bb0);
+    let bias4 = load_u32x4(bb1);
+    let bias8 = load_u32x4(bb2);
+    let bias12 = load_u32x4(bb3);
 
     let out0 = u32x4_shr(i32x4_add(prod0_lo, bias0), QFIX);
     let out4 = u32x4_shr(i32x4_add(prod0_hi, bias4), QFIX);
@@ -693,47 +705,26 @@ pub(crate) fn quantize_dequantize_block_wasm(
     qout8 = i16x8_sub(v128_xor(qout8, sign8), sign8);
 
     // Store quantized (i16 → i32)
-    store_i32x4(
-        <&mut [i32; 4]>::try_from(&mut quantized[0..4]).unwrap(),
-        i32x4_extend_low_i16x8(qout0),
-    );
-    store_i32x4(
-        <&mut [i32; 4]>::try_from(&mut quantized[4..8]).unwrap(),
-        i32x4_extend_high_i16x8(qout0),
-    );
-    store_i32x4(
-        <&mut [i32; 4]>::try_from(&mut quantized[8..12]).unwrap(),
-        i32x4_extend_low_i16x8(qout8),
-    );
-    store_i32x4(
-        <&mut [i32; 4]>::try_from(&mut quantized[12..16]).unwrap(),
-        i32x4_extend_high_i16x8(qout8),
-    );
+    let (qm0, qm1, qm2, qm3) = super::q16_mut(quantized);
+    store_i32x4(qm0, i32x4_extend_low_i16x8(qout0));
+    store_i32x4(qm1, i32x4_extend_high_i16x8(qout0));
+    store_i32x4(qm2, i32x4_extend_low_i16x8(qout8));
+    store_i32x4(qm3, i32x4_extend_high_i16x8(qout8));
 
     // Dequantize: quantized * q
-    let q0 = load_u16x8(<&[u16; 8]>::try_from(&matrix.q[0..8]).unwrap());
-    let q8_val = load_u16x8(<&[u16; 8]>::try_from(&matrix.q[8..16]).unwrap());
+    let (mq_lo, mq_hi) = super::h16(&matrix.q);
+    let q0 = load_u16x8(mq_lo);
+    let q8_val = load_u16x8(mq_hi);
 
     let dq0 = i16x8_mul(qout0, q0);
     let dq8 = i16x8_mul(qout8, q8_val);
 
     // Store dequantized (i16 → i32)
-    store_i32x4(
-        <&mut [i32; 4]>::try_from(&mut dequantized[0..4]).unwrap(),
-        i32x4_extend_low_i16x8(dq0),
-    );
-    store_i32x4(
-        <&mut [i32; 4]>::try_from(&mut dequantized[4..8]).unwrap(),
-        i32x4_extend_high_i16x8(dq0),
-    );
-    store_i32x4(
-        <&mut [i32; 4]>::try_from(&mut dequantized[8..12]).unwrap(),
-        i32x4_extend_low_i16x8(dq8),
-    );
-    store_i32x4(
-        <&mut [i32; 4]>::try_from(&mut dequantized[12..16]).unwrap(),
-        i32x4_extend_high_i16x8(dq8),
-    );
+    let (dm0, dm1, dm2, dm3) = super::q16_mut(dequantized);
+    store_i32x4(dm0, i32x4_extend_low_i16x8(dq0));
+    store_i32x4(dm1, i32x4_extend_high_i16x8(dq0));
+    store_i32x4(dm2, i32x4_extend_low_i16x8(dq8));
+    store_i32x4(dm3, i32x4_extend_high_i16x8(dq8));
 
     // Non-zero check
     let or0 = v128_or(qout0, qout8);
