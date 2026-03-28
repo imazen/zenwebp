@@ -1234,6 +1234,14 @@ pub(crate) fn idct_add_residue_inplace_sse2_inner(
     stride: usize,
     dc_only: bool,
 ) {
+    // Subslice starting at first pixel row; single bounds check eliminates all interior checks.
+    // The region covers 3*stride+4 bytes (4 rows of 4 pixels at stride offsets).
+    let base = y0 * stride + x0;
+    let region = &mut block[base..base + 3 * stride + 4];
+    let s1 = stride;
+    let s2 = stride * 2;
+    let s3 = stride * 3;
+
     if dc_only {
         // DC-only fast path
         let dc = coeffs[0];
@@ -1241,16 +1249,14 @@ pub(crate) fn idct_add_residue_inplace_sse2_inner(
         let dc_vec = _mm_set1_epi16(dc_adj);
         let zero = _mm_setzero_si128();
 
-        for row in 0..4 {
-            let pos = (y0 + row) * stride + x0;
-            let pred_bytes: [u8; 4] = block[pos..pos + 4].try_into().unwrap();
-            let pred_i32 = i32::from_ne_bytes(pred_bytes);
-            let pred_vec = _mm_cvtsi32_si128(pred_i32);
+        for &off in &[0, s1, s2, s3] {
+            let pred_bytes: [u8; 4] = region[off..off + 4].try_into().unwrap();
+            let pred_vec = _mm_cvtsi32_si128(i32::from_ne_bytes(pred_bytes));
             let pred_i16 = _mm_unpacklo_epi8(pred_vec, zero);
             let sum = _mm_add_epi16(pred_i16, dc_vec);
             let packed = _mm_packus_epi16(sum, sum);
             let result = _mm_cvtsi128_si32(packed) as u32;
-            block[pos..pos + 4].copy_from_slice(&result.to_ne_bytes());
+            region[off..off + 4].copy_from_slice(&result.to_ne_bytes());
         }
     } else {
         // Full IDCT path
@@ -1275,28 +1281,26 @@ pub(crate) fn idct_add_residue_inplace_sse2_inner(
 
         // Process each row: load pred, add residual, store
         macro_rules! process_row {
-            ($res:expr, $row_idx:expr, $hi:expr) => {{
+            ($res:expr, $off:expr, $hi:expr) => {{
                 let residual = if $hi {
                     _mm_unpackhi_epi64($res, $res)
                 } else {
                     $res
                 };
-                let pos = (y0 + $row_idx) * stride + x0;
-                let pred_bytes: [u8; 4] = block[pos..pos + 4].try_into().unwrap();
-                let pred_i32 = i32::from_ne_bytes(pred_bytes);
-                let pred_vec = _mm_cvtsi32_si128(pred_i32);
+                let pred_bytes: [u8; 4] = region[$off..$off + 4].try_into().unwrap();
+                let pred_vec = _mm_cvtsi32_si128(i32::from_ne_bytes(pred_bytes));
                 let pred_i16 = _mm_unpacklo_epi8(pred_vec, zero);
                 let sum = _mm_add_epi16(pred_i16, residual);
                 let packed = _mm_packus_epi16(sum, sum);
                 let result = _mm_cvtsi128_si32(packed) as u32;
-                block[pos..pos + 4].copy_from_slice(&result.to_ne_bytes());
+                region[$off..$off + 4].copy_from_slice(&result.to_ne_bytes());
             }};
         }
 
         process_row!(res01, 0, false);
-        process_row!(res01, 1, true);
-        process_row!(res23, 2, false);
-        process_row!(res23, 3, true);
+        process_row!(res01, s1, true);
+        process_row!(res23, s2, false);
+        process_row!(res23, s3, true);
     }
 
     // Clear coefficient block
