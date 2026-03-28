@@ -223,12 +223,12 @@ fn fill_row_fancy_with_2_uv_rows<const BPP: usize>(
     simd_token: SimdTokenType,
 ) {
     // Fused kernel: single #[arcane] boundary per row (upsample + convert in one pass)
-    if BPP == 3 {
-        if super::yuv_fused::fused_fill_row_fancy_with_2_uv_rows(
+    if BPP == 3
+        && super::yuv_fused::fused_fill_row_fancy_with_2_uv_rows(
             row_buffer, y_row, u_row_1, u_row_2, v_row_1, v_row_2, simd_token,
-        ) {
-            return;
-        }
+        )
+    {
+        return;
     }
 
     fill_row_fancy_with_2_uv_rows_scalar::<BPP>(

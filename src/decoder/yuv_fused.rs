@@ -160,6 +160,7 @@ mod x86_fused {
 
     /// Process 32 Y pixels (16 chroma pairs) → 96 bytes RGB.
     /// All work happens in-register: upsample chroma, convert YUV→RGB, interleave, store.
+    #[allow(clippy::too_many_arguments)]
     #[rite(v3, import_intrinsics)]
     fn process_32_pixels(
         y_row: &[u8],
@@ -283,6 +284,7 @@ mod x86_fused {
     }
 
     /// Process 16 Y pixels (8 chroma pairs) → 48 bytes RGB.
+    #[allow(clippy::too_many_arguments)]
     #[rite(v3, import_intrinsics)]
     fn process_16_pixels(
         y_row: &[u8],
