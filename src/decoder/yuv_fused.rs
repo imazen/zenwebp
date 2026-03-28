@@ -1081,18 +1081,8 @@ mod wasm_fused {
             let rgb_arr: &mut [u8; 96] =
                 (&mut rgb[rgb_offset..rgb_offset + 96]).try_into().unwrap();
             let (rgb_0, rgb_1) = rgb_arr.split_at_mut(48);
-            convert_and_store_rgb16(
-                y0,
-                u_up0,
-                v_up0,
-                <&mut [u8; 48]>::try_from(rgb_0).unwrap(),
-            );
-            convert_and_store_rgb16(
-                y1,
-                u_up1,
-                v_up1,
-                <&mut [u8; 48]>::try_from(rgb_1).unwrap(),
-            );
+            convert_and_store_rgb16(y0, u_up0, v_up0, <&mut [u8; 48]>::try_from(rgb_0).unwrap());
+            convert_and_store_rgb16(y1, u_up1, v_up1, <&mut [u8; 48]>::try_from(rgb_1).unwrap());
 
             y_offset += 32;
             uv_offset += 16;
