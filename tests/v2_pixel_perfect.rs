@@ -1,7 +1,7 @@
 //! Pixel-perfect verification of the v2 VP8 decoder against libwebp (via webpx).
 //!
 //! Tests four categories:
-//! 1. Roundtrip: encode with zenwebp, decode with v2 and v1 (near-identical),
+//! 1. Roundtrip: encode with zenwebp, decode with v2 and v1 (pixel-identical),
 //!    then compare v2 output against libwebp (documenting diffs from YUV->RGB
 //!    conversion differences).
 //! 2. Corpus: decode pre-existing lossy WebP files from codec-corpus with both
@@ -9,13 +9,12 @@
 //! 3. Edge cases: odd dimensions, non-MB-aligned sizes, tiny images.
 //! 4. Quality sweep: one image at many quality levels.
 //!
-//! ## v2 vs v1 Differences
+//! ## v2 vs v1: Pixel-Perfect
 //!
-//! v2 and v1 both produce YUV planes from the VP8 bitstream, then convert to
-//! RGB via the same `fill_rgba` path. However, the v2 decoder has small
-//! numerical differences from v1 in prediction/IDCT/filter pipelines on some
-//! bitstreams (typically max_diff <= 7, concentrated at high quality levels
-//! and on externally-encoded files). These are documented, not masked.
+//! v2 and v1 produce identical YUV planes from the VP8 bitstream. The v1
+//! comparison uses dithering_strength=0 to match v2 (which does not implement
+//! chroma dithering). With dithering disabled, both decoders produce identical
+//! RGBA output on all tested bitstreams.
 //!
 //! ## YUV->RGB Conversion Differences
 //!
@@ -45,8 +44,12 @@ fn decode_with_v2(webp_data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
 }
 
 /// Decode WebP bytes with zenwebp v1 decoder, returning RGBA.
+///
+/// Uses dithering_strength=0 to match v2's behavior. The v2 decoder does
+/// not implement chroma dithering, so comparing with dithering enabled would
+/// produce false positives (up to max_diff=7 from dithering noise on UV planes).
 fn decode_with_v1(webp_data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
-    let config = DecodeConfig::default();
+    let config = DecodeConfig::default().with_dithering_strength(0);
     let (rgba, w, h) = DecodeRequest::new(&config, webp_data)
         .decode_rgba()
         .map_err(|e| format!("v1 decode failed: {e}"))?;
@@ -271,10 +274,9 @@ fn roundtrip_test(rgb: &[u8], w: u32, h: u32, quality: f32, label: &str) -> Roun
     }
 }
 
-/// Maximum allowed v2-vs-v1 difference per byte. Small differences arise from
-/// prediction/IDCT/filter pipeline numerical differences between the two
-/// implementations. These are documented here, not masked.
-const V2_V1_MAX_TOLERANCE: u8 = 7;
+/// Maximum allowed v2-vs-v1 difference per byte. With dithering disabled,
+/// v2 and v1 produce identical YUV planes, so this should be 0.
+const V2_V1_MAX_TOLERANCE: u8 = 0;
 
 #[test]
 fn cat1_roundtrip_gradient_quality_sweep() {
