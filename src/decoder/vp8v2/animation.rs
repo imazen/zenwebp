@@ -70,9 +70,7 @@ impl DecoderContext {
         let demuxer = WebPDemuxer::new(data).map_err(mux_to_decode)?;
 
         if !demuxer.is_animated() {
-            return Err(DecodeError::InvalidParameter(
-                "not an animated WebP".into(),
-            ));
+            return Err(DecodeError::InvalidParameter("not an animated WebP".into()));
         }
 
         let canvas_w = demuxer.canvas_width();
@@ -101,14 +99,19 @@ impl DecoderContext {
         for demux_frame in demuxer.frames() {
             // Dispose previous frame if needed
             if dispose_current {
-                clear_rect(&mut canvas, canvas_w, &bg_color, prev_x, prev_y, prev_w, prev_h);
+                clear_rect(
+                    &mut canvas,
+                    canvas_w,
+                    &bg_color,
+                    prev_x,
+                    prev_y,
+                    prev_w,
+                    prev_h,
+                );
             }
 
             // Decode this frame's pixels
-            let frame_has_alpha = self.decode_single_frame(
-                &demux_frame,
-                &mut frame_scratch,
-            )?;
+            let frame_has_alpha = self.decode_single_frame(&demux_frame, &mut frame_scratch)?;
 
             // Composite onto canvas
             crate::decoder::extended::composite_frame(
@@ -174,23 +177,15 @@ impl DecoderContext {
                 // Lossy with alpha: decode VP8 to RGBA, then apply alpha
                 let (_w, _h) = self.decode_to_rgb(frame.bitstream, scratch, 4)?;
 
-                let alpha_chunk = read_alpha_chunk(
-                    alpha_data,
-                    frame.width as u16,
-                    frame.height as u16,
-                )?;
+                let alpha_chunk =
+                    read_alpha_chunk(alpha_data, frame.width as u16, frame.height as u16)?;
 
                 let fw = frame.width as usize;
                 let fh = frame.height as usize;
                 for y in 0..fh {
                     for x in 0..fw {
-                        let predictor = get_alpha_predictor(
-                            x,
-                            y,
-                            fw,
-                            alpha_chunk.filtering_method,
-                            scratch,
-                        );
+                        let predictor =
+                            get_alpha_predictor(x, y, fw, alpha_chunk.filtering_method, scratch);
 
                         let alpha_index = y * fw + x;
                         let buffer_index = alpha_index * 4 + 3;

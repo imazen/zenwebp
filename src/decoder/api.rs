@@ -595,9 +595,9 @@ impl<'a> DecodeRequest<'a> {
                     )));
                 }
 
-                let frame = demuxer.frame(1).ok_or_else(|| {
-                    whereat::at!(DecodeError::ChunkMissing)
-                })?;
+                let frame = demuxer
+                    .frame(1)
+                    .ok_or_else(|| whereat::at!(DecodeError::ChunkMissing))?;
 
                 if !frame.is_lossy {
                     return Err(whereat::at!(DecodeError::UnsupportedFeature(
@@ -652,10 +652,7 @@ impl<'a> DecodeRequest<'a> {
                 }
             }
             _ => Err(whereat::at!(DecodeError::UnsupportedFeature(
-                alloc::format!(
-                    "v2 decoder only supports lossy VP8, got {:?}",
-                    first_chunk
-                )
+                alloc::format!("v2 decoder only supports lossy VP8, got {:?}", first_chunk)
             ))),
         }
     }
@@ -1215,8 +1212,7 @@ impl<'a> WebPDecoder<'a> {
                     .get(&WebPRiffChunk::ALPH)
                     .ok_or(DecodeError::ChunkMissing)?
                     .clone();
-                let alpha_slice =
-                    &data_buf[alpha_range.start as usize..alpha_range.end as usize];
+                let alpha_slice = &data_buf[alpha_range.start as usize..alpha_range.end as usize];
                 let alpha_chunk =
                     read_alpha_chunk(alpha_slice, self.width as u16, self.height as u16)?;
 
@@ -1224,13 +1220,8 @@ impl<'a> WebPDecoder<'a> {
                 let fh = usize::from(h);
                 for y in 0..fh {
                     for x in 0..fw {
-                        let predictor: u8 = get_alpha_predictor(
-                            x,
-                            y,
-                            fw,
-                            alpha_chunk.filtering_method,
-                            buf,
-                        );
+                        let predictor: u8 =
+                            get_alpha_predictor(x, y, fw, alpha_chunk.filtering_method, buf);
 
                         let alpha_index = y * fw + x;
                         let buffer_index = alpha_index * 4 + 3;
@@ -1305,10 +1296,11 @@ impl<'a> WebPDecoder<'a> {
                 // DecoderContext is reused from self.animation.v2_ctx, saving
                 // ~100KB of allocation per frame for coefficient/filter buffers.
                 let data_slice = self.r.take_slice(chunk_size as usize)?;
-                let (w, h) = self
-                    .animation
-                    .v2_ctx
-                    .decode_to_rgb(data_slice, &mut self.animation.frame_scratch, 3)?;
+                let (w, h) = self.animation.v2_ctx.decode_to_rgb(
+                    data_slice,
+                    &mut self.animation.frame_scratch,
+                    3,
+                )?;
                 if u32::from(w) != frame_width || u32::from(h) != frame_height {
                     return Err(DecodeError::InconsistentImageSizes);
                 }
@@ -1351,10 +1343,11 @@ impl<'a> WebPDecoder<'a> {
                 }
 
                 let vp8_slice = self.r.take_slice(next_chunk_size as usize)?;
-                let (w, h) = self
-                    .animation
-                    .v2_ctx
-                    .decode_to_rgb(vp8_slice, &mut self.animation.frame_scratch, 4)?;
+                let (w, h) = self.animation.v2_ctx.decode_to_rgb(
+                    vp8_slice,
+                    &mut self.animation.frame_scratch,
+                    4,
+                )?;
 
                 let fw = usize::from(w);
                 let fh = usize::from(h);

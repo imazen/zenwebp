@@ -8,8 +8,7 @@ use std::path::PathBuf;
 
 use zenwebp::{
     AnimationConfig, AnimationDecoder, AnimationEncoder, BlendMethod, DecodeConfig, DisposeMethod,
-    EncoderConfig, PixelLayout, WebPDecoder,
-    decoder::vp8v2::DecoderContext,
+    EncoderConfig, PixelLayout, WebPDecoder, decoder::vp8v2::DecoderContext,
 };
 
 /// Generate a gradient image with a unique pattern per frame index.
@@ -26,7 +25,6 @@ fn frame_rgb(w: u32, h: u32, frame_idx: u32) -> Vec<u8> {
     }
     rgb
 }
-
 
 /// Create a multi-frame lossy animation, decode all frames, and verify
 /// that each frame decodes without error and produces non-zero pixel data.
@@ -61,11 +59,7 @@ fn lossy_animation_decodes_all_frames() {
         assert_eq!(frame.height, h);
         // Verify frame has actual pixel data (not all zeros)
         let non_zero = frame.data.iter().filter(|&&b| b != 0).count();
-        assert!(
-            non_zero > 0,
-            "frame {} is all zeros",
-            frames_decoded + 1
-        );
+        assert!(non_zero > 0, "frame {} is all zeros", frames_decoded + 1);
         frames_decoded += 1;
     }
     assert_eq!(frames_decoded, num_frames);
@@ -92,9 +86,7 @@ fn animated_lossy_matches_reference() {
     decoder.read_image(&mut data).unwrap();
 
     // Check first frame against reference
-    let ref_path = PathBuf::from(format!(
-        "tests/reference/animated/random_lossy-1.png"
-    ));
+    let ref_path = PathBuf::from(format!("tests/reference/animated/random_lossy-1.png"));
     if ref_path.exists() {
         let ref_contents = std::fs::read(&ref_path).unwrap();
         let mut ref_decoder = png::Decoder::new(Cursor::new(ref_contents))
@@ -118,11 +110,13 @@ fn animated_lossy_matches_reference() {
     for i in 1..=num_frames {
         let mut frame_data = vec![0u8; width as usize * height as usize * bpp];
         let duration = decoder.read_frame(&mut frame_data).unwrap();
-        assert!(duration <= 10000, "suspicious frame duration: {}ms", duration);
+        assert!(
+            duration <= 10000,
+            "suspicious frame duration: {}ms",
+            duration
+        );
 
-        let ref_path = PathBuf::from(format!(
-            "tests/reference/animated/random_lossy-{i}.png"
-        ));
+        let ref_path = PathBuf::from(format!("tests/reference/animated/random_lossy-{i}.png"));
         if ref_path.exists() {
             let ref_contents = std::fs::read(&ref_path).unwrap();
             let mut ref_decoder = png::Decoder::new(Cursor::new(ref_contents))
@@ -165,9 +159,7 @@ fn animation_decoder_lossy_correctness() {
 
         // Verify against reference PNG
         let i = frames_decoded + 1;
-        let ref_path = PathBuf::from(format!(
-            "tests/reference/animated/random_lossy-{i}.png"
-        ));
+        let ref_path = PathBuf::from(format!("tests/reference/animated/random_lossy-{i}.png"));
         if ref_path.exists() {
             let ref_contents = std::fs::read(&ref_path).unwrap();
             let mut ref_decoder = png::Decoder::new(Cursor::new(ref_contents))
@@ -291,17 +283,28 @@ fn v2_animation_reset_produces_identical_output() {
     let mut decoder = AnimationDecoder::new(&webp_data).unwrap();
 
     // First pass: collect all frame data
-    let first_pass: Vec<Vec<u8>> = decoder.decode_all().unwrap().into_iter().map(|f| f.data).collect();
+    let first_pass: Vec<Vec<u8>> = decoder
+        .decode_all()
+        .unwrap()
+        .into_iter()
+        .map(|f| f.data)
+        .collect();
 
     // Reset and decode again
     decoder.reset().unwrap();
 
-    let second_pass: Vec<Vec<u8>> = decoder.decode_all().unwrap().into_iter().map(|f| f.data).collect();
+    let second_pass: Vec<Vec<u8>> = decoder
+        .decode_all()
+        .unwrap()
+        .into_iter()
+        .map(|f| f.data)
+        .collect();
 
     assert_eq!(first_pass.len(), second_pass.len());
     for (i, (a, b)) in first_pass.iter().zip(second_pass.iter()).enumerate() {
         assert_eq!(
-            a, b,
+            a,
+            b,
             "frame {} differs between first and second decode pass",
             i + 1
         );
@@ -328,9 +331,7 @@ fn animated_lossless_matches_reference() {
         let mut frame_data = vec![0u8; width as usize * height as usize * bpp];
         let _duration = decoder.read_frame(&mut frame_data).unwrap();
 
-        let ref_path = PathBuf::from(format!(
-            "tests/reference/animated/random_lossless-{i}.png"
-        ));
+        let ref_path = PathBuf::from(format!("tests/reference/animated/random_lossless-{i}.png"));
         if ref_path.exists() {
             let ref_contents = std::fs::read(&ref_path).unwrap();
             let mut ref_decoder = png::Decoder::new(Cursor::new(ref_contents))
@@ -391,7 +392,8 @@ fn lossy_animation_roundtrip_pixel_exact() {
             .filter(|(a, b)| a != b)
             .count();
         assert_eq!(
-            diff_count, 0,
+            diff_count,
+            0,
             "frame {} has {diff_count} differences between two decode passes",
             i + 1
         );
@@ -438,7 +440,11 @@ fn decode_animation_api_lossy() {
 
         // Canvas should have content
         let non_zero = frame.pixels.iter().filter(|&&b| b != 0).count();
-        assert!(non_zero > 0, "frame {} canvas is all zeros", frame.frame_num);
+        assert!(
+            non_zero > 0,
+            "frame {} canvas is all zeros",
+            frame.frame_num
+        );
 
         timestamps.push(frame.timestamp_ms);
         durations.push(frame.duration_ms);
@@ -512,11 +518,7 @@ fn decode_animation_api_matches_animation_decoder() {
     })
     .unwrap();
 
-    assert_eq!(
-        anim_frames.len(),
-        api_frames.len(),
-        "frame count mismatch"
-    );
+    assert_eq!(anim_frames.len(), api_frames.len(), "frame count mismatch");
 
     for (i, (anim, api)) in anim_frames.iter().zip(api_frames.iter()).enumerate() {
         // AnimationDecoder may return RGB (if no alpha) while decode_animation
@@ -529,7 +531,8 @@ fn decode_animation_api_matches_animation_decoder() {
                 .filter(|(a, b)| a != b)
                 .count();
             assert_eq!(
-                diff_count, 0,
+                diff_count,
+                0,
                 "frame {} has {diff_count} pixel differences",
                 i + 1
             );
@@ -537,7 +540,11 @@ fn decode_animation_api_matches_animation_decoder() {
             // AnimationDecoder returned RGB, decode_animation returned RGBA
             // Compare RGB channels only
             let rgb_len = (anim.width as usize) * (anim.height as usize) * 3;
-            assert_eq!(anim.data.len(), rgb_len, "unexpected AnimationDecoder format");
+            assert_eq!(
+                anim.data.len(),
+                rgb_len,
+                "unexpected AnimationDecoder format"
+            );
 
             for pixel_idx in 0..(anim.width as usize * anim.height as usize) {
                 let rgb_base = pixel_idx * 3;
