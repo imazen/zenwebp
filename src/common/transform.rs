@@ -30,6 +30,47 @@ use core::arch::wasm32::*;
 
 use core::convert::TryFrom;
 
+// ============================================================================
+// Array splitting helpers — zero-cost conversion from [T; 16] to [T; 4] rows
+// ============================================================================
+
+/// Split `&[T; 16]` into four `&[T; 4]` references (rows 0-3).
+/// Compiles to no-ops — just pointer arithmetic.
+#[inline(always)]
+fn rows4<T>(a: &[T; 16]) -> (&[T; 4], &[T; 4], &[T; 4], &[T; 4]) {
+    let (r0, rest) = a.split_first_chunk::<4>().unwrap();
+    let (r1, rest) = rest.split_first_chunk::<4>().unwrap();
+    let (r2, rest) = rest.split_first_chunk::<4>().unwrap();
+    let r3: &[T; 4] = rest.try_into().unwrap();
+    (r0, r1, r2, r3)
+}
+
+/// Split `&mut [T; 16]` into four `&mut [T; 4]` references (rows 0-3).
+#[inline(always)]
+fn rows4_mut<T>(a: &mut [T; 16]) -> (&mut [T; 4], &mut [T; 4], &mut [T; 4], &mut [T; 4]) {
+    let (r0, rest) = a.split_first_chunk_mut::<4>().unwrap();
+    let (r1, rest) = rest.split_first_chunk_mut::<4>().unwrap();
+    let (r2, rest) = rest.split_first_chunk_mut::<4>().unwrap();
+    let r3: &mut [T; 4] = rest.try_into().unwrap();
+    (r0, r1, r2, r3)
+}
+
+/// Split `&[T; 16]` into two `&[T; 8]` halves.
+#[inline(always)]
+fn halves8<T>(a: &[T; 16]) -> (&[T; 8], &[T; 8]) {
+    let (lo, rest) = a.split_first_chunk::<8>().unwrap();
+    let hi: &[T; 8] = rest.try_into().unwrap();
+    (lo, hi)
+}
+
+/// Split `&mut [T; 16]` into two `&mut [T; 8]` halves.
+#[inline(always)]
+fn halves8_mut<T>(a: &mut [T; 16]) -> (&mut [T; 8], &mut [T; 8]) {
+    let (lo, rest) = a.split_first_chunk_mut::<8>().unwrap();
+    let hi: &mut [T; 8] = rest.try_into().unwrap();
+    (lo, hi)
+}
+
 /// 16 bit fixed point version of cos(PI/8) * sqrt(2) - 1
 const CONST1: i64 = 20091;
 /// 16 bit fixed point version of sin(PI/8) * sqrt(2)
@@ -46,27 +87,27 @@ pub(crate) fn idct4x4_dc(block: &mut [i32; 16]) {
 
 // inverse discrete cosine transform, used in decoding
 #[inline(always)]
-pub(crate) fn idct4x4(block: &mut [i32]) {
+pub(crate) fn idct4x4(block: &mut [i32; 16]) {
     idct4x4_intrinsics(block);
 }
 
 /// Inverse DCT with pre-summoned SIMD token (avoids per-call token summoning)
 #[inline(always)]
 #[allow(dead_code)] // May be useful for alternative decode paths
-pub(crate) fn idct4x4_with_token(block: &mut [i32], simd_token: super::prediction::SimdTokenType) {
+pub(crate) fn idct4x4_with_token(
+    block: &mut [i32; 16],
+    simd_token: super::prediction::SimdTokenType,
+) {
     idct4x4_intrinsics_with_token(block, simd_token);
 }
 
 #[archmage::autoversion(cfg(simd))]
 #[allow(dead_code)]
-pub(crate) fn idct4x4_scalar(block: &mut [i32]) {
+pub(crate) fn idct4x4_scalar(block: &mut [i32; 16]) {
     // The intermediate results may overflow the types, so we stretch the type.
     fn fetch(block: &[i32], idx: usize) -> i64 {
         i64::from(block[idx])
     }
-
-    // Perform one length check up front to avoid subsequent bounds checks in this function
-    assert!(block.len() >= 16);
 
     for i in 0usize..4 {
         let a1 = fetch(block, i) + fetch(block, 8 + i);
@@ -107,9 +148,7 @@ pub(crate) fn idct4x4_scalar(block: &mut [i32]) {
 
 // 14.3 inverse walsh-hadamard transform, used in decoding
 #[archmage::autoversion(cfg(simd))]
-pub(crate) fn iwht4x4(block: &mut [i32]) {
-    // Perform one length check up front to avoid subsequent bounds checks in this function
-    assert!(block.len() >= 16);
+pub(crate) fn iwht4x4(block: &mut [i32; 16]) {
 
     for i in 0usize..4 {
         let a1 = block[i] + block[12 + i];
@@ -275,8 +314,7 @@ pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
 /// Inverse DCT with dynamic dispatch
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[inline(always)]
-pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
-    debug_assert!(block.len() >= 16);
+pub(crate) fn idct4x4_intrinsics(block: &mut [i32; 16]) {
     if let Some(token) = X64V3Token::summon() {
         idct4x4_entry(token, block);
     } else {
@@ -290,10 +328,9 @@ pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn idct4x4_intrinsics_with_token(
-    block: &mut [i32],
+    block: &mut [i32; 16],
     simd_token: crate::common::prediction::SimdTokenType,
 ) {
-    debug_assert!(block.len() >= 16);
     if let Some(token) = simd_token {
         idct4x4_entry(token, block);
     } else {
@@ -304,8 +341,7 @@ pub(crate) fn idct4x4_intrinsics_with_token(
 /// Inverse DCT - non-x86 fallback
 #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
 #[inline]
-pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
-    debug_assert!(block.len() >= 16);
+pub(crate) fn idct4x4_intrinsics(block: &mut [i32; 16]) {
     #[cfg(target_arch = "wasm32")]
     {
         use archmage::{SimdToken, Wasm128Token};
@@ -336,7 +372,7 @@ pub(crate) fn idct4x4_intrinsics(block: &mut [i32]) {
 #[allow(dead_code)]
 #[inline]
 pub(crate) fn idct4x4_intrinsics_with_token(
-    block: &mut [i32],
+    block: &mut [i32; 16],
     _simd_token: crate::common::prediction::SimdTokenType,
 ) {
     idct4x4_intrinsics(block);
@@ -438,8 +474,9 @@ fn dct4x4_sse2(_token: X64V3Token, block: &mut [i32; 16]) {
 
     // Convert i16 output back to i32 using SIMD sign extension
     let zero = _mm_setzero_si128();
-    let out01 = simd_mem::_mm_loadu_si128(<&[i16; 8]>::try_from(&out16[0..8]).unwrap());
-    let out23 = simd_mem::_mm_loadu_si128(<&[i16; 8]>::try_from(&out16[8..16]).unwrap());
+    let (out16_lo, out16_hi) = halves8(&out16);
+    let out01 = simd_mem::_mm_loadu_si128(out16_lo);
+    let out23 = simd_mem::_mm_loadu_si128(out16_hi);
 
     // Sign extend i16 to i32
     let sign01 = _mm_cmpgt_epi16(zero, out01);
@@ -450,13 +487,11 @@ fn dct4x4_sse2(_token: X64V3Token, block: &mut [i32; 16]) {
     let out_2 = _mm_unpacklo_epi16(out23, sign23);
     let out_3 = _mm_unpackhi_epi16(out23, sign23);
 
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(), out_0);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(), out_1);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(), out_2);
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(),
-        out_3,
-    );
+    let (r0, r1, r2, r3) = rows4_mut(block);
+    simd_mem::_mm_storeu_si128(r0, out_0);
+    simd_mem::_mm_storeu_si128(r1, out_1);
+    simd_mem::_mm_storeu_si128(r2, out_2);
+    simd_mem::_mm_storeu_si128(r3, out_3);
 }
 
 /// FTransform Pass 1 - matches libwebp FTransformPass1_SSE2 exactly
@@ -564,8 +599,9 @@ fn ftransform_pass2_i16(_token: X64V3Token, v01: &__m128i, v32: &__m128i, out: &
     let d0_g1 = _mm_unpacklo_epi64(d0, g1);
     let d2_f3 = _mm_unpacklo_epi64(d2, f3);
 
-    simd_mem::_mm_storeu_si128(<&mut [i16; 8]>::try_from(&mut out[0..8]).unwrap(), d0_g1);
-    simd_mem::_mm_storeu_si128(<&mut [i16; 8]>::try_from(&mut out[8..16]).unwrap(), d2_f3);
+    let (out_lo, out_hi) = halves8_mut(out);
+    simd_mem::_mm_storeu_si128(out_lo, d0_g1);
+    simd_mem::_mm_storeu_si128(out_hi, d2_f3);
 }
 
 /// Entry shim for dct4x4_two_sse2
@@ -625,10 +661,16 @@ pub(crate) fn ftransform2_sse2(
     ref_stride: usize,
     out: &mut [i16; 32],
 ) {
+    // One bounds check at entry eliminates all interior checks
+    let src_min = src_stride * 3 + 8;
+    let ref_min = ref_stride * 3 + 8;
+    assert!(src.len() >= src_min && ref_.len() >= ref_min);
+
     let zero = _mm_setzero_si128();
 
     // Load 8 bytes per row from src (2 blocks × 4 bytes)
-    let src0 = simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&src[..8]).unwrap());
+    let src0 =
+        simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&src[..8]).unwrap());
     let src1 =
         simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&src[src_stride..src_stride + 8]).unwrap());
     let src2 = simd_mem::_mm_loadu_si64(
@@ -639,7 +681,8 @@ pub(crate) fn ftransform2_sse2(
     );
 
     // Load 8 bytes per row from ref
-    let ref0 = simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&ref_[..8]).unwrap());
+    let ref0 =
+        simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&ref_[..8]).unwrap());
     let ref1 =
         simd_mem::_mm_loadu_si64(<&[u8; 8]>::try_from(&ref_[ref_stride..ref_stride + 8]).unwrap());
     let ref2 = simd_mem::_mm_loadu_si64(
@@ -763,14 +806,14 @@ fn ftransform2_scalar(
 /// Entry shim for idct4x4_sse2
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[arcane]
-pub(crate) fn idct4x4_entry(_token: X64V3Token, block: &mut [i32]) {
+pub(crate) fn idct4x4_entry(_token: X64V3Token, block: &mut [i32; 16]) {
     idct4x4_sse2(_token, block);
 }
 
 /// Inverse DCT using SSE2 - matches libwebp ITransform_One_SSE2
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[rite]
-pub(crate) fn idct4x4_sse2(_token: X64V3Token, block: &mut [i32]) {
+pub(crate) fn idct4x4_sse2(_token: X64V3Token, block: &mut [i32; 16]) {
     // libwebp IDCT constants:
     // K1 = sqrt(2) * cos(pi/8) * 65536 = 85627 => k1 = 85627 - 65536 = 20091
     // K2 = sqrt(2) * sin(pi/8) * 65536 = 35468 => k2 = 35468 - 65536 = -30068
@@ -779,10 +822,11 @@ pub(crate) fn idct4x4_sse2(_token: X64V3Token, block: &mut [i32]) {
     let zero_four = _mm_set_epi16(0, 0, 0, 0, 4, 4, 4, 4);
 
     // Load i32 values and pack to i16 using SIMD
-    let i32_0 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&block[0..4]).unwrap());
-    let i32_1 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&block[4..8]).unwrap());
-    let i32_2 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&block[8..12]).unwrap());
-    let i32_3 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&block[12..16]).unwrap());
+    let (r0, r1, r2, r3) = rows4(block);
+    let i32_0 = simd_mem::_mm_loadu_si128(r0);
+    let i32_1 = simd_mem::_mm_loadu_si128(r1);
+    let i32_2 = simd_mem::_mm_loadu_si128(r2);
+    let i32_3 = simd_mem::_mm_loadu_si128(r3);
 
     // Pack i32 to i16 with saturation (values should be small enough)
     let in01 = _mm_packs_epi32(i32_0, i32_1);
@@ -795,8 +839,6 @@ pub(crate) fn idct4x4_sse2(_token: X64V3Token, block: &mut [i32]) {
     let (out01, out23) = itransform_pass2_sse2(_token, t01, t23, k1k2, k2k1, zero_four);
 
     // Unpack i16 back to i32 using sign extension
-    // out01 contains 8 i16 values: [0,1,2,3,4,5,6,7]
-    // out23 contains 8 i16 values: [8,9,10,11,12,13,14,15]
     let zero = _mm_setzero_si128();
 
     // Sign extend low 4 i16 values to i32
@@ -809,13 +851,11 @@ pub(crate) fn idct4x4_sse2(_token: X64V3Token, block: &mut [i32]) {
     let out_3 = _mm_unpackhi_epi16(out23, sign23_lo);
 
     // Store results
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(), out_0);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(), out_1);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(), out_2);
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(),
-        out_3,
-    );
+    let (r0, r1, r2, r3) = rows4_mut(block);
+    simd_mem::_mm_storeu_si128(r0, out_0);
+    simd_mem::_mm_storeu_si128(r1, out_1);
+    simd_mem::_mm_storeu_si128(r2, out_2);
+    simd_mem::_mm_storeu_si128(r3, out_3);
 }
 
 /// ITransform vertical pass - matches libwebp
@@ -979,10 +1019,11 @@ pub(crate) fn idct_add_residue_sse2(
     let zero = _mm_setzero_si128();
 
     // Load i32 coefficients and pack to i16
-    let i32_0 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-    let i32_1 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-    let i32_2 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-    let i32_3 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+    let (c0, c1, c2, c3) = rows4(coeffs);
+    let i32_0 = simd_mem::_mm_loadu_si128(c0);
+    let i32_1 = simd_mem::_mm_loadu_si128(c1);
+    let i32_2 = simd_mem::_mm_loadu_si128(c2);
+    let i32_3 = simd_mem::_mm_loadu_si128(c3);
 
     let in01 = _mm_packs_epi32(i32_0, i32_1);
     let in23 = _mm_packs_epi32(i32_2, i32_3);
@@ -1033,13 +1074,11 @@ pub(crate) fn idct_add_residue_sse2(
     process_row!(res23, 3, true);
 
     // Clear coefficient block
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[0..4]).unwrap(), zero);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[4..8]).unwrap(), zero);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut coeffs[8..12]).unwrap(), zero);
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut coeffs[12..16]).unwrap(),
-        zero,
-    );
+    let (c0, c1, c2, c3) = rows4_mut(coeffs);
+    simd_mem::_mm_storeu_si128(c0, zero);
+    simd_mem::_mm_storeu_si128(c1, zero);
+    simd_mem::_mm_storeu_si128(c2, zero);
+    simd_mem::_mm_storeu_si128(c3, zero);
 }
 
 /// Entry shim for idct_add_residue_dc_sse2
@@ -1221,10 +1260,11 @@ pub(crate) fn idct_add_residue_inplace_sse2_inner(
         let zero = _mm_setzero_si128();
 
         // Load and pack coefficients
-        let i32_0 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-        let i32_1 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-        let i32_2 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-        let i32_3 = simd_mem::_mm_loadu_si128(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+        let (c0, c1, c2, c3) = rows4(coeffs);
+        let i32_0 = simd_mem::_mm_loadu_si128(c0);
+        let i32_1 = simd_mem::_mm_loadu_si128(c1);
+        let i32_2 = simd_mem::_mm_loadu_si128(c2);
+        let i32_3 = simd_mem::_mm_loadu_si128(c3);
 
         let in01 = _mm_packs_epi32(i32_0, i32_1);
         let in23 = _mm_packs_epi32(i32_2, i32_3);
@@ -1442,8 +1482,9 @@ pub(crate) fn ftransform_from_u8_4x4_sse2(
     ftransform_pass2_i16(_token, &v01, &v32, &mut out16);
 
     // Convert i16 output to i32 using SIMD sign extension
-    let out01 = simd_mem::_mm_loadu_si128(<&[i16; 8]>::try_from(&out16[0..8]).unwrap());
-    let out23 = simd_mem::_mm_loadu_si128(<&[i16; 8]>::try_from(&out16[8..16]).unwrap());
+    let (out16_lo, out16_hi) = halves8(&out16);
+    let out01 = simd_mem::_mm_loadu_si128(out16_lo);
+    let out23 = simd_mem::_mm_loadu_si128(out16_hi);
 
     let sign01 = _mm_cmpgt_epi16(zero, out01);
     let sign23 = _mm_cmpgt_epi16(zero, out23);
@@ -1454,16 +1495,11 @@ pub(crate) fn ftransform_from_u8_4x4_sse2(
     let out_3 = _mm_unpackhi_epi16(out23, sign23);
 
     let mut result = [0i32; 16];
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut result[0..4]).unwrap(), out_0);
-    simd_mem::_mm_storeu_si128(<&mut [i32; 4]>::try_from(&mut result[4..8]).unwrap(), out_1);
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut result[8..12]).unwrap(),
-        out_2,
-    );
-    simd_mem::_mm_storeu_si128(
-        <&mut [i32; 4]>::try_from(&mut result[12..16]).unwrap(),
-        out_3,
-    );
+    let (r0, r1, r2, r3) = rows4_mut(&mut result);
+    simd_mem::_mm_storeu_si128(r0, out_0);
+    simd_mem::_mm_storeu_si128(r1, out_1);
+    simd_mem::_mm_storeu_si128(r2, out_2);
+    simd_mem::_mm_storeu_si128(r3, out_3);
     result
 }
 
@@ -1718,10 +1754,11 @@ mod neon_transform {
     #[rite]
     fn dct4x4_neon_inner(_token: NeonToken, block: &mut [i32; 16]) {
         // Load i32[16] as 4 × i32x4, then narrow to i16x4
-        let r0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[0..4]).unwrap());
-        let r1 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[4..8]).unwrap());
-        let r2 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[8..12]).unwrap());
-        let r3 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[12..16]).unwrap());
+        let (b0, b1, b2, b3) = rows4(block);
+        let r0 = simd_mem::vld1q_s32(b0);
+        let r1 = simd_mem::vld1q_s32(b1);
+        let r2 = simd_mem::vld1q_s32(b2);
+        let r3 = simd_mem::vld1q_s32(b3);
 
         let d0 = vmovn_s32(r0);
         let d1 = vmovn_s32(r1);
@@ -1738,16 +1775,11 @@ mod neon_transform {
         // Data is already transposed by pass 1's internal transpose
         let out = forward_pass_2_neon(_token, p0p1, p3p2);
 
-        simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(), out[0]);
-        simd_mem::vst1q_s32(<&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(), out[1]);
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(),
-            out[2],
-        );
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(),
-            out[3],
-        );
+        let (b0, b1, b2, b3) = rows4_mut(block);
+        simd_mem::vst1q_s32(b0, out[0]);
+        simd_mem::vst1q_s32(b1, out[1]);
+        simd_mem::vst1q_s32(b2, out[2]);
+        simd_mem::vst1q_s32(b3, out[3]);
     }
 
     /// Transpose 4x4 i16 matrix (matches libwebp Transpose4x4_S16_NEON).
@@ -1855,18 +1887,18 @@ mod neon_transform {
     /// Input/output: i32[16+] in row-major order.
 
     #[arcane]
-    pub(crate) fn idct4x4_neon(_token: NeonToken, block: &mut [i32]) {
-        debug_assert!(block.len() >= 16);
+    pub(crate) fn idct4x4_neon(_token: NeonToken, block: &mut [i32; 16]) {
         idct4x4_neon_inner(_token, block);
     }
 
     #[rite]
-    fn idct4x4_neon_inner(_token: NeonToken, block: &mut [i32]) {
+    fn idct4x4_neon_inner(_token: NeonToken, block: &mut [i32; 16]) {
         // Load i32[16] and pack to i16x8 pairs
-        let r0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[0..4]).unwrap());
-        let r1 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[4..8]).unwrap());
-        let r2 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[8..12]).unwrap());
-        let r3 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&block[12..16]).unwrap());
+        let (b0, b1, b2, b3) = rows4(block);
+        let r0 = simd_mem::vld1q_s32(b0);
+        let r1 = simd_mem::vld1q_s32(b1);
+        let r2 = simd_mem::vld1q_s32(b2);
+        let r3 = simd_mem::vld1q_s32(b3);
 
         let in01 = vcombine_s16(vmovn_s32(r0), vmovn_s32(r1));
         let in23 = vcombine_s16(vmovn_s32(r2), vmovn_s32(r3));
@@ -1881,22 +1913,11 @@ mod neon_transform {
         let res23_r = vshrq_n_s16::<3>(vaddq_s16(res23, four));
 
         // Widen i16 → i32 and store
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut block[0..4]).unwrap(),
-            vmovl_s16(vget_low_s16(res01_r)),
-        );
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut block[4..8]).unwrap(),
-            vmovl_s16(vget_high_s16(res01_r)),
-        );
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut block[8..12]).unwrap(),
-            vmovl_s16(vget_low_s16(res23_r)),
-        );
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut block[12..16]).unwrap(),
-            vmovl_s16(vget_high_s16(res23_r)),
-        );
+        let (b0, b1, b2, b3) = rows4_mut(block);
+        simd_mem::vst1q_s32(b0, vmovl_s16(vget_low_s16(res01_r)));
+        simd_mem::vst1q_s32(b1, vmovl_s16(vget_high_s16(res01_r)));
+        simd_mem::vst1q_s32(b2, vmovl_s16(vget_low_s16(res23_r)));
+        simd_mem::vst1q_s32(b3, vmovl_s16(vget_high_s16(res23_r)));
     }
 
     /// IDCT TransformPass — matches libwebp's TransformPass_NEON.
@@ -2021,10 +2042,11 @@ mod neon_transform {
         stride: usize,
     ) {
         // Load and pack coefficients to i16
-        let r0 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[0..4]).unwrap());
-        let r1 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[4..8]).unwrap());
-        let r2 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[8..12]).unwrap());
-        let r3 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&coeffs[12..16]).unwrap());
+        let (c0, c1, c2, c3) = rows4(coeffs);
+        let r0 = simd_mem::vld1q_s32(c0);
+        let r1 = simd_mem::vld1q_s32(c1);
+        let r2 = simd_mem::vld1q_s32(c2);
+        let r3 = simd_mem::vld1q_s32(c3);
 
         let in01 = vcombine_s16(vmovn_s32(r0), vmovn_s32(r1));
         let in23 = vcombine_s16(vmovn_s32(r2), vmovn_s32(r3));
@@ -2108,22 +2130,11 @@ mod neon_transform {
         let out = forward_pass_2_neon(_token, p0p1, p3p2);
 
         let mut result = [0i32; 16];
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut result[0..4]).unwrap(),
-            out[0],
-        );
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut result[4..8]).unwrap(),
-            out[1],
-        );
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut result[8..12]).unwrap(),
-            out[2],
-        );
-        simd_mem::vst1q_s32(
-            <&mut [i32; 4]>::try_from(&mut result[12..16]).unwrap(),
-            out[3],
-        );
+        let (r0, r1, r2, r3) = rows4_mut(&mut result);
+        simd_mem::vst1q_s32(r0, out[0]);
+        simd_mem::vst1q_s32(r1, out[1]);
+        simd_mem::vst1q_s32(r2, out[2]);
+        simd_mem::vst1q_s32(r3, out[3]);
         result
     }
 
@@ -2183,10 +2194,11 @@ mod neon_transform {
         stride: usize,
     ) {
         // Load residuals as i32x4 and narrow to i16x4
-        let r0_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[0..4]).unwrap());
-        let r1_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[4..8]).unwrap());
-        let r2_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[8..12]).unwrap());
-        let r3_i32 = simd_mem::vld1q_s32(<&[i32; 4]>::try_from(&rblock[12..16]).unwrap());
+        let (b0, b1, b2, b3) = rows4(rblock);
+        let r0_i32 = simd_mem::vld1q_s32(b0);
+        let r1_i32 = simd_mem::vld1q_s32(b1);
+        let r2_i32 = simd_mem::vld1q_s32(b2);
+        let r3_i32 = simd_mem::vld1q_s32(b3);
 
         let r0_i16 = vmovn_s32(r0_i32); // int16x4
         let r1_i16 = vmovn_s32(r1_i32);
@@ -2234,8 +2246,7 @@ mod wasm_transform {
     /// Inverse DCT using WASM SIMD128 (entry shim)
     #[cfg(target_arch = "wasm32")]
     #[arcane]
-    pub(crate) fn idct4x4_wasm(_token: Wasm128Token, block: &mut [i32]) {
-        debug_assert!(block.len() >= 16);
+    pub(crate) fn idct4x4_wasm(_token: Wasm128Token, block: &mut [i32; 16]) {
         idct4x4_wasm_impl(_token, block);
     }
 
@@ -2347,7 +2358,7 @@ mod wasm_transform {
     /// For the row pass, we transpose so each vector holds a row's elements as lanes.
     #[cfg(target_arch = "wasm32")]
     #[rite]
-    pub(crate) fn idct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32]) {
+    pub(crate) fn idct4x4_wasm_impl(_token: Wasm128Token, block: &mut [i32; 16]) {
         // Load 4 rows
         let r0 = load_row(block, 0);
         let r1 = load_row(block, 1);

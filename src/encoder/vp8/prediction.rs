@@ -583,7 +583,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 *dequant_value = uv_matrix.dequantize(coeff, index);
             }
 
-            transform::idct4x4(dequant_block);
+            transform::idct4x4(dequant_block.try_into().unwrap());
         }
 
         dequantized_blocks
