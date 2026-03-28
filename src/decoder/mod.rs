@@ -23,6 +23,9 @@ mod predict_simd;
 // Public VP8 decoder module
 pub mod vp8;
 
+// V2 VP8 decoder (ground-up redesign targeting libwebp parity)
+pub mod vp8v2;
+
 // Re-export public API
 pub use api::{
     BitstreamFormat, DecodeConfig, DecodeError, DecodeRequest, DecodeResult, ImageInfo, LoopCount,
