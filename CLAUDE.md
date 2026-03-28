@@ -196,6 +196,34 @@ Main remaining opportunities:
   Remaining excess is bounds checks on `probs[n][ctx]` array indexing.
 - **Loop filter 7.3M excess**: SIMD dispatch overhead, bounds checks.
 - **YUV->RGB 7.6M excess**: Scalar edge handling, bounds checks.
+  Now addressable via `fast-yuv` feature (see below).
+
+### fast-yuv Feature (2026-03-27)
+
+The `fast-yuv` feature (default-on) replaces our hand-written YUV->RGB with
+the `yuv` crate (v0.8), which has AVX-512/AVX2/SSE4.1/NEON/WASM SIMD with
+runtime dispatch.
+
+**Benchmark (zenbench, Q75 m4 RGBA decode, no -C target-cpu=native):**
+
+| Image | fast-yuv ON | fast-yuv OFF | Speedup | vs libwebp |
+|-------|------------|-------------|---------|-----------|
+| sc_4k_wiki 8.7Mpx | 39.0ms | 51.1ms | **1.31x** | 2.20x |
+| sc_3k_imac 5.6Mpx | 19.6ms | 21.3ms | **1.09x** | 1.27x |
+| sc_2k_wiki 4.3Mpx | 8.4ms | 9.2ms | **1.10x** | 1.40x |
+| sc_2k_ui 3.7Mpx | 6.2ms | 7.1ms | **1.15x** | 1.41x |
+| ph_2k_sq 4.2Mpx | 15.6ms | 16.9ms | **1.08x** | 1.22x |
+| ph_2k_32 2.8Mpx | 15.1ms | 16.0ms | **1.06x** | 1.21x |
+| ph_576_baby 0.3Mpx | 1.4ms | 1.4ms | 1.00x | 1.27x |
+
+Largest gains on big images where YUV->RGB dominates total decode time.
+Small images show negligible difference (YUV->RGB is <20% of total).
+
+**Accuracy**: The `yuv` crate uses true bilinear chroma upsampling, which
+differs from libwebp's "fancy" `(3*near+far+2)>>2` weighted average. Output
+is not bit-identical. Mean absolute error vs dwebp is < 10 per channel.
+Lossy reftests use mean-error tolerance; webpx_regression tests gated on
+`not(fast-yuv)`.
 
 ### V2 Decoder vs v1 and libwebp (2026-03-27)
 
