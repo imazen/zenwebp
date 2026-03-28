@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use zenwebp::{
     AnimationConfig, AnimationDecoder, AnimationEncoder, BlendMethod, DecodeConfig, DisposeMethod,
     EncoderConfig, PixelLayout, WebPDecoder,
+    decoder::vp8v2::DecoderContext,
 };
 
 /// Generate a gradient image with a unique pattern per frame index.
@@ -400,5 +401,158 @@ fn lossy_animation_roundtrip_pixel_exact() {
     for (i, frame) in frames1.iter().enumerate() {
         let non_zero = frame.data.iter().filter(|&&b| b != 0).count();
         assert!(non_zero > 0, "frame {} is all zeros", i + 1);
+    }
+}
+
+/// Test the DecoderContext::decode_animation API directly.
+/// Encodes a multi-frame lossy animation and decodes it through the
+/// callback-based API, verifying frame metadata and pixel content.
+#[test]
+fn decode_animation_api_lossy() {
+    let w = 64u32;
+    let h = 64u32;
+    let num_frames = 4u32;
+
+    let config = AnimationConfig::default();
+    let mut anim = AnimationEncoder::new(w, h, config).unwrap();
+
+    let enc_config = EncoderConfig::new_lossy().with_quality(75.0).with_method(4);
+    for i in 0..num_frames {
+        let pixels = frame_rgb(w, h, i);
+        anim.add_frame(&pixels, PixelLayout::Rgb8, i * 100, &enc_config)
+            .unwrap();
+    }
+
+    let webp_data = anim.finalize(num_frames * 100).unwrap();
+
+    // Decode via DecoderContext::decode_animation
+    let mut ctx = DecoderContext::new();
+    let mut frame_count = 0u32;
+    let mut timestamps = Vec::new();
+    let mut durations = Vec::new();
+
+    ctx.decode_animation(&webp_data, |frame| {
+        assert_eq!(frame.width, w);
+        assert_eq!(frame.height, h);
+        assert_eq!(frame.frame_num, frame_count + 1);
+
+        // Canvas should have content
+        let non_zero = frame.pixels.iter().filter(|&&b| b != 0).count();
+        assert!(non_zero > 0, "frame {} canvas is all zeros", frame.frame_num);
+
+        timestamps.push(frame.timestamp_ms);
+        durations.push(frame.duration_ms);
+        frame_count += 1;
+        true // continue
+    })
+    .unwrap();
+
+    assert_eq!(frame_count, num_frames);
+
+    // Verify timestamps are monotonically increasing
+    for i in 1..timestamps.len() {
+        assert!(
+            timestamps[i] >= timestamps[i - 1],
+            "timestamps not monotonic: {} >= {} failed",
+            timestamps[i],
+            timestamps[i - 1]
+        );
+    }
+}
+
+/// Test early termination of decode_animation via callback returning false.
+#[test]
+fn decode_animation_api_early_stop() {
+    let w = 32u32;
+    let h = 32u32;
+
+    let config = AnimationConfig::default();
+    let mut anim = AnimationEncoder::new(w, h, config).unwrap();
+
+    let enc_config = EncoderConfig::new_lossy().with_quality(75.0).with_method(0);
+    for i in 0..5u32 {
+        let pixels = frame_rgb(w, h, i);
+        anim.add_frame(&pixels, PixelLayout::Rgb8, i * 50, &enc_config)
+            .unwrap();
+    }
+
+    let webp_data = anim.finalize(250).unwrap();
+
+    let mut ctx = DecoderContext::new();
+    let mut frame_count = 0u32;
+
+    ctx.decode_animation(&webp_data, |_frame| {
+        frame_count += 1;
+        frame_count < 3 // stop after 3 frames
+    })
+    .unwrap();
+
+    assert_eq!(frame_count, 3, "expected early stop after 3 frames");
+}
+
+/// Compare decode_animation output against AnimationDecoder output
+/// to verify both paths produce identical composited frames.
+#[test]
+fn decode_animation_api_matches_animation_decoder() {
+    let path = "tests/images/animated/random_lossy.webp";
+    let contents = std::fs::read(path).unwrap();
+
+    // Decode with AnimationDecoder
+    let config = DecodeConfig::default().with_dithering_strength(0);
+    let mut anim_decoder = AnimationDecoder::new_with_config(&contents, &config).unwrap();
+    let anim_frames = anim_decoder.decode_all().unwrap();
+
+    // Decode with DecoderContext::decode_animation
+    let mut ctx = DecoderContext::new();
+    let mut api_frames: Vec<Vec<u8>> = Vec::new();
+
+    ctx.decode_animation(&contents, |frame| {
+        api_frames.push(frame.pixels.to_vec());
+        true
+    })
+    .unwrap();
+
+    assert_eq!(
+        anim_frames.len(),
+        api_frames.len(),
+        "frame count mismatch"
+    );
+
+    for (i, (anim, api)) in anim_frames.iter().zip(api_frames.iter()).enumerate() {
+        // AnimationDecoder may return RGB (if no alpha) while decode_animation
+        // always returns RGBA canvas. Handle both cases.
+        if anim.data.len() == api.len() {
+            let diff_count = anim
+                .data
+                .iter()
+                .zip(api.iter())
+                .filter(|(a, b)| a != b)
+                .count();
+            assert_eq!(
+                diff_count, 0,
+                "frame {} has {diff_count} pixel differences",
+                i + 1
+            );
+        } else {
+            // AnimationDecoder returned RGB, decode_animation returned RGBA
+            // Compare RGB channels only
+            let rgb_len = (anim.width as usize) * (anim.height as usize) * 3;
+            assert_eq!(anim.data.len(), rgb_len, "unexpected AnimationDecoder format");
+
+            for pixel_idx in 0..(anim.width as usize * anim.height as usize) {
+                let rgb_base = pixel_idx * 3;
+                let rgba_base = pixel_idx * 4;
+                for c in 0..3 {
+                    assert_eq!(
+                        anim.data[rgb_base + c],
+                        api[rgba_base + c],
+                        "frame {} pixel {} channel {} differs",
+                        i + 1,
+                        pixel_idx,
+                        c,
+                    );
+                }
+            }
+        }
     }
 }
