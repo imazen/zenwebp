@@ -375,6 +375,17 @@ impl Frame {
     }
 }
 
+/// Precomputed filter parameters for a (segment, is_b_mode) combination.
+/// Computed once per frame; avoids re-deriving per macroblock.
+#[derive(Clone, Copy, Default)]
+struct PrecomputedFilterParams {
+    filter_level: u8,
+    interior_limit: u8,
+    hev_threshold: u8,
+    mbedge_limit: u8,
+    sub_bedge_limit: u8,
+}
+
 /// VP8 Decoder
 ///
 /// Only decodes keyframes
@@ -465,6 +476,11 @@ pub struct Vp8Decoder<'a> {
 
     // Reusable filter parameter buffer — avoids per-row heap allocation.
     mb_filter_params: Vec<MbFilterParams>,
+
+    // Precomputed filter parameters per segment+mode.
+    // Indexed by [segment_id][is_b_mode], where is_b_mode = (luma_mode == LumaMode::B).
+    // Computed once after reading frame header; eliminates per-MB calculation.
+    precomputed_filter: [[PrecomputedFilterParams; 2]; MAX_SEGMENTS],
 }
 
 impl<'a> Vp8Decoder<'a> {
@@ -541,6 +557,8 @@ impl<'a> Vp8Decoder<'a> {
             uv_quant_indices: [0; MAX_SEGMENTS],
 
             mb_filter_params: Vec::new(),
+
+            precomputed_filter: [[PrecomputedFilterParams::default(); 2]; MAX_SEGMENTS],
         }
     }
 

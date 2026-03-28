@@ -14,8 +14,9 @@ impl<'a> Vp8Decoder<'a> {
         let cache_uv_stride = self.cache_uv_stride;
         let extra_y_rows = self.extra_y_rows;
 
-        // Precompute filter parameters for all macroblocks in this row.
-        // Reuse persistent buffer to avoid per-row heap allocation.
+        // Build filter parameters for all macroblocks in this row using the
+        // precomputed per-(segment, is_b_mode) table. Only do_subblock_filtering
+        // still needs per-MB state (coeffs_skipped, non_zero_dct).
         self.mb_filter_params.clear();
         if self.mb_filter_params.capacity() < mbwidth {
             self.mb_filter_params
@@ -23,20 +24,17 @@ impl<'a> Vp8Decoder<'a> {
         }
         for mbx in 0..mbwidth {
             let mb = self.macroblocks[mby * mbwidth + mbx];
-            let (filter_level, interior_limit, hev_threshold) =
-                self.calculate_filter_parameters(&mb);
-
-            let mbedge_limit = (filter_level + 2) * 2 + interior_limit;
-            let sub_bedge_limit = (filter_level * 2) + interior_limit;
+            let is_b = mb.luma_mode == LumaMode::B;
+            let p = &self.precomputed_filter[mb.segmentid as usize][is_b as usize];
             let do_subblock_filtering =
-                mb.luma_mode == LumaMode::B || (!mb.coeffs_skipped && mb.non_zero_dct);
+                is_b || (!mb.coeffs_skipped && mb.non_zero_dct);
 
             self.mb_filter_params.push(loop_filter::MbFilterParams {
-                filter_level,
-                interior_limit,
-                hev_threshold,
-                mbedge_limit,
-                sub_bedge_limit,
+                filter_level: p.filter_level,
+                interior_limit: p.interior_limit,
+                hev_threshold: p.hev_threshold,
+                mbedge_limit: p.mbedge_limit,
+                sub_bedge_limit: p.sub_bedge_limit,
                 do_subblock_filtering,
             });
         }
@@ -339,59 +337,6 @@ impl<'a> Vp8Decoder<'a> {
             .copy_within(src_start_uv..src_start_uv + copy_size_uv, 0);
     }
 
-    //return values are the filter level, interior limit and hev threshold
-    pub(super) fn calculate_filter_parameters(&self, macroblock: &MacroBlock) -> (u8, u8, u8) {
-        let segment = &self.segment[macroblock.segmentid as usize];
-        let mut filter_level = i32::from(self.frame.filter_level);
-
-        // if frame level filter level is 0, we must skip loop filter
-        if filter_level == 0 {
-            return (0, 0, 0);
-        }
-
-        if self.segments_enabled {
-            if segment.delta_values {
-                filter_level += i32::from(segment.loopfilter_level);
-            } else {
-                filter_level = i32::from(segment.loopfilter_level);
-            }
-        }
-
-        filter_level = filter_level.clamp(0, 63);
-
-        if self.loop_filter_adjustments_enabled {
-            filter_level += self.ref_delta[0];
-            if macroblock.luma_mode == LumaMode::B {
-                filter_level += self.mode_delta[0];
-            }
-        }
-
-        let filter_level = filter_level.clamp(0, 63) as u8;
-
-        //interior limit
-        let mut interior_limit = filter_level;
-
-        if self.frame.sharpness_level > 0 {
-            interior_limit >>= if self.frame.sharpness_level > 4 { 2 } else { 1 };
-
-            if interior_limit > 9 - self.frame.sharpness_level {
-                interior_limit = 9 - self.frame.sharpness_level;
-            }
-        }
-
-        if interior_limit == 0 {
-            interior_limit = 1;
-        }
-
-        // high edge variance threshold
-        let hev_threshold = if filter_level >= 40 {
-            2
-        } else if filter_level >= 15 {
-            1
-        } else {
-            0
-        };
-
-        (filter_level, interior_limit, hev_threshold)
-    }
+    // calculate_filter_parameters removed — replaced by precomputed_filter table
+    // (populated once in precompute_filter_params after frame header parsing).
 }

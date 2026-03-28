@@ -310,7 +310,83 @@ impl<'a> Vp8Decoder<'a> {
             None
         };
         self.b.check(())?;
+
+        // Precompute filter parameters for all 8 (segment, is_b_mode) combinations.
+        // This eliminates per-MB calculate_filter_parameters calls in filter_row_in_cache.
+        self.precompute_filter_params();
+
         Ok(())
+    }
+
+    /// Precompute filter parameters for all (segment_id, is_b_mode) combinations.
+    /// Called once after reading the frame header; result is valid for the entire frame.
+    fn precompute_filter_params(&mut self) {
+        let base_filter_level = i32::from(self.frame.filter_level);
+
+        for seg_id in 0..MAX_SEGMENTS {
+            for is_b in 0..2u8 {
+                let mut filter_level = base_filter_level;
+
+                // If frame-level filter is 0, skip everything
+                if filter_level == 0 {
+                    self.precomputed_filter[seg_id][is_b as usize] =
+                        PrecomputedFilterParams::default();
+                    continue;
+                }
+
+                if self.segments_enabled {
+                    let segment = &self.segment[seg_id];
+                    if segment.delta_values {
+                        filter_level += i32::from(segment.loopfilter_level);
+                    } else {
+                        filter_level = i32::from(segment.loopfilter_level);
+                    }
+                }
+
+                filter_level = filter_level.clamp(0, 63);
+
+                if self.loop_filter_adjustments_enabled {
+                    filter_level += self.ref_delta[0];
+                    if is_b != 0 {
+                        filter_level += self.mode_delta[0];
+                    }
+                }
+
+                let filter_level = filter_level.clamp(0, 63) as u8;
+
+                // Interior limit
+                let mut interior_limit = filter_level;
+                if self.frame.sharpness_level > 0 {
+                    interior_limit >>= if self.frame.sharpness_level > 4 { 2 } else { 1 };
+                    if interior_limit > 9 - self.frame.sharpness_level {
+                        interior_limit = 9 - self.frame.sharpness_level;
+                    }
+                }
+                if interior_limit == 0 {
+                    interior_limit = 1;
+                }
+
+                // HEV threshold
+                let hev_threshold = if filter_level >= 40 {
+                    2
+                } else if filter_level >= 15 {
+                    1
+                } else {
+                    0
+                };
+
+                let mbedge_limit = (filter_level + 2) * 2 + interior_limit;
+                let sub_bedge_limit = (filter_level * 2) + interior_limit;
+
+                self.precomputed_filter[seg_id][is_b as usize] = PrecomputedFilterParams {
+                    filter_level,
+                    interior_limit,
+                    hev_threshold,
+                    mbedge_limit,
+                    sub_bedge_limit,
+                };
+            }
+        }
     }
 
     pub(super) fn read_macroblock_header(
