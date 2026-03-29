@@ -171,41 +171,73 @@ pub(super) fn sse_16x16_luma(
     mby: usize,
     pred: &[u8; LUMA_BLOCK_SIZE],
 ) -> u32 {
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        crate::common::simd_sse::sse_16x16_luma(src_y, src_width, mbx, mby, pred)
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::SimdToken;
-        let token = archmage::NeonToken::summon().unwrap();
-        crate::common::simd_neon::sse_16x16_luma_neon(token, src_y, src_width, mbx, mby, pred)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::Wasm128Token::summon() {
-            return crate::common::simd_wasm::sse_16x16_luma_wasm_entry(
-                token, src_y, src_width, mbx, mby, pred,
-            );
+    use archmage::prelude::*;
+    incant!(
+        sse_16x16_luma_dispatch(src_y, src_width, mbx, mby, pred),
+        [v3, neon, wasm128, scalar]
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse_16x16_luma_dispatch_v3(
+    _token: archmage::X64V3Token,
+    src_y: &[u8],
+    src_width: usize,
+    mbx: usize,
+    mby: usize,
+    pred: &[u8; LUMA_BLOCK_SIZE],
+) -> u32 {
+    crate::common::simd_sse::sse_16x16_luma(src_y, src_width, mbx, mby, pred)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn sse_16x16_luma_dispatch_neon(
+    token: archmage::NeonToken,
+    src_y: &[u8],
+    src_width: usize,
+    mbx: usize,
+    mby: usize,
+    pred: &[u8; LUMA_BLOCK_SIZE],
+) -> u32 {
+    crate::common::simd_neon::sse_16x16_luma_neon(token, src_y, src_width, mbx, mby, pred)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn sse_16x16_luma_dispatch_wasm128(
+    token: archmage::Wasm128Token,
+    src_y: &[u8],
+    src_width: usize,
+    mbx: usize,
+    mby: usize,
+    pred: &[u8; LUMA_BLOCK_SIZE],
+) -> u32 {
+    crate::common::simd_wasm::sse_16x16_luma_wasm_entry(token, src_y, src_width, mbx, mby, pred)
+}
+
+#[inline(always)]
+fn sse_16x16_luma_dispatch_scalar(
+    _token: archmage::ScalarToken,
+    src_y: &[u8],
+    src_width: usize,
+    mbx: usize,
+    mby: usize,
+    pred: &[u8; LUMA_BLOCK_SIZE],
+) -> u32 {
+    let mut sse = 0u32;
+    let src_base = mby * 16 * src_width + mbx * 16;
+    for y in 0..16 {
+        let src_row = src_base + y * src_width;
+        let pred_row = (y + 1) * LUMA_STRIDE + 1;
+        for x in 0..16 {
+            let diff = i32::from(src_y[src_row + x]) - i32::from(pred[pred_row + x]);
+            sse += (diff * diff) as u32;
         }
     }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64",)))]
-    {
-        let mut sse = 0u32;
-        let src_base = mby * 16 * src_width + mbx * 16;
-
-        for y in 0..16 {
-            let src_row = src_base + y * src_width;
-            let pred_row = (y + 1) * LUMA_STRIDE + 1; // +1 for border offset
-
-            for x in 0..16 {
-                let diff = i32::from(src_y[src_row + x]) - i32::from(pred[pred_row + x]);
-                sse += (diff * diff) as u32;
-            }
-        }
-        sse
-    }
+    sse
 }
 
 /// Compute SSE for an 8x8 chroma block within bordered prediction buffer
@@ -217,41 +249,73 @@ pub(super) fn sse_8x8_chroma(
     mby: usize,
     pred: &[u8; CHROMA_BLOCK_SIZE],
 ) -> u32 {
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        crate::common::simd_sse::sse_8x8_chroma(src_uv, src_width, mbx, mby, pred)
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::SimdToken;
-        let token = archmage::NeonToken::summon().unwrap();
-        crate::common::simd_neon::sse_8x8_chroma_neon(token, src_uv, src_width, mbx, mby, pred)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::Wasm128Token::summon() {
-            return crate::common::simd_wasm::sse_8x8_chroma_wasm_entry(
-                token, src_uv, src_width, mbx, mby, pred,
-            );
+    use archmage::prelude::*;
+    incant!(
+        sse_8x8_chroma_dispatch(src_uv, src_width, mbx, mby, pred),
+        [v3, neon, wasm128, scalar]
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse_8x8_chroma_dispatch_v3(
+    _token: archmage::X64V3Token,
+    src_uv: &[u8],
+    src_width: usize,
+    mbx: usize,
+    mby: usize,
+    pred: &[u8; CHROMA_BLOCK_SIZE],
+) -> u32 {
+    crate::common::simd_sse::sse_8x8_chroma(src_uv, src_width, mbx, mby, pred)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn sse_8x8_chroma_dispatch_neon(
+    token: archmage::NeonToken,
+    src_uv: &[u8],
+    src_width: usize,
+    mbx: usize,
+    mby: usize,
+    pred: &[u8; CHROMA_BLOCK_SIZE],
+) -> u32 {
+    crate::common::simd_neon::sse_8x8_chroma_neon(token, src_uv, src_width, mbx, mby, pred)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn sse_8x8_chroma_dispatch_wasm128(
+    token: archmage::Wasm128Token,
+    src_uv: &[u8],
+    src_width: usize,
+    mbx: usize,
+    mby: usize,
+    pred: &[u8; CHROMA_BLOCK_SIZE],
+) -> u32 {
+    crate::common::simd_wasm::sse_8x8_chroma_wasm_entry(token, src_uv, src_width, mbx, mby, pred)
+}
+
+#[inline(always)]
+fn sse_8x8_chroma_dispatch_scalar(
+    _token: archmage::ScalarToken,
+    src_uv: &[u8],
+    src_width: usize,
+    mbx: usize,
+    mby: usize,
+    pred: &[u8; CHROMA_BLOCK_SIZE],
+) -> u32 {
+    let mut sse = 0u32;
+    let src_base = mby * 8 * src_width + mbx * 8;
+    for y in 0..8 {
+        let src_row = src_base + y * src_width;
+        let pred_row = (y + 1) * CHROMA_STRIDE + 1;
+        for x in 0..8 {
+            let diff = i32::from(src_uv[src_row + x]) - i32::from(pred[pred_row + x]);
+            sse += (diff * diff) as u32;
         }
     }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64",)))]
-    {
-        let mut sse = 0u32;
-        let src_base = mby * 8 * src_width + mbx * 8;
-
-        for y in 0..8 {
-            let src_row = src_base + y * src_width;
-            let pred_row = (y + 1) * CHROMA_STRIDE + 1; // +1 for border offset
-
-            for x in 0..8 {
-                let diff = i32::from(src_uv[src_row + x]) - i32::from(pred[pred_row + x]);
-                sse += (diff * diff) as u32;
-            }
-        }
-        sse
-    }
+    sse
 }
 
 // currently in decoder it actually stores this information on the macroblock but that's confusing

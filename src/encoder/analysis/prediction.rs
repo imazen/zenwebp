@@ -107,18 +107,7 @@ pub fn pred_luma16_dc(dst: &mut [u8], left: Option<&[u8]>, top: Option<&[u8]>) {
 pub fn pred_luma16_tm(dst: &mut [u8], left_with_corner: Option<&[u8]>, top: Option<&[u8]>) {
     match (left_with_corner, top) {
         (Some(left), Some(top)) => {
-            #[cfg(target_arch = "x86_64")]
-            {
-                pred_luma16_tm_dispatch(dst, left, top);
-            }
-            #[cfg(target_arch = "aarch64")]
-            {
-                pred_luma16_tm_neon_dispatch(dst, left, top);
-            }
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            {
-                pred_luma16_tm_scalar(dst, left, top);
-            }
+            incant!(pred_luma16_tm_impl(dst, left, top), [v3, neon, scalar]);
         }
         (Some(left), None) => {
             horizontal_pred(dst, Some(&left[1..17]), 16);
@@ -130,6 +119,24 @@ pub fn pred_luma16_tm(dst: &mut [u8], left_with_corner: Option<&[u8]>, top: Opti
             fill_block(dst, 129, 16);
         }
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn pred_luma16_tm_impl_v3(token: X64V3Token, dst: &mut [u8], left: &[u8], top: &[u8]) {
+    pred_luma16_tm_sse2(token, dst, left, top);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn pred_luma16_tm_impl_neon(token: NeonToken, dst: &mut [u8], left: &[u8], top: &[u8]) {
+    pred_luma16_tm_neon(token, dst, left, top);
+}
+
+#[inline(always)]
+fn pred_luma16_tm_impl_scalar(_token: ScalarToken, dst: &mut [u8], left: &[u8], top: &[u8]) {
+    pred_luma16_tm_scalar(dst, left, top);
 }
 
 /// Scalar TrueMotion for 16x16 luma.
@@ -145,16 +152,7 @@ fn pred_luma16_tm_scalar(dst: &mut [u8], left: &[u8], top: &[u8]) {
     }
 }
 
-/// SIMD dispatch for TrueMotion 16x16.
-#[cfg(target_arch = "x86_64")]
-#[inline]
-fn pred_luma16_tm_dispatch(dst: &mut [u8], left: &[u8], top: &[u8]) {
-    if let Some(token) = X64V3Token::summon() {
-        pred_luma16_tm_sse2(token, dst, left, top);
-    } else {
-        pred_luma16_tm_scalar(dst, left, top);
-    }
-}
+// pred_luma16_tm_dispatch removed — replaced by incant! in pred_luma16_tm
 
 /// SSE2 TrueMotion: Process 16 pixels per row.
 /// Formula: dst[y][x] = clamp(left[y] + top[x] - tl, 0, 255)
@@ -265,18 +263,7 @@ pub fn pred_chroma8_dc(dst: &mut [u8], left: Option<&[u8]>, top: Option<&[u8]>) 
 pub fn pred_chroma8_tm(dst: &mut [u8], left_with_corner: Option<&[u8]>, top: Option<&[u8]>) {
     match (left_with_corner, top) {
         (Some(left), Some(top)) => {
-            #[cfg(target_arch = "x86_64")]
-            {
-                pred_chroma8_tm_dispatch(dst, left, top);
-            }
-            #[cfg(target_arch = "aarch64")]
-            {
-                pred_chroma8_tm_neon_dispatch(dst, left, top);
-            }
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            {
-                pred_chroma8_tm_scalar(dst, left, top);
-            }
+            incant!(pred_chroma8_tm_impl(dst, left, top), [v3, neon, scalar]);
         }
         (Some(left), None) => {
             horizontal_pred(dst, Some(&left[1..9]), 8);
@@ -303,15 +290,22 @@ fn pred_chroma8_tm_scalar(dst: &mut [u8], left: &[u8], top: &[u8]) {
     }
 }
 
-/// SIMD dispatch for TrueMotion 8x8.
 #[cfg(target_arch = "x86_64")]
-#[inline]
-fn pred_chroma8_tm_dispatch(dst: &mut [u8], left: &[u8], top: &[u8]) {
-    if let Some(token) = X64V3Token::summon() {
-        pred_chroma8_tm_sse2(token, dst, left, top);
-    } else {
-        pred_chroma8_tm_scalar(dst, left, top);
-    }
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn pred_chroma8_tm_impl_v3(token: X64V3Token, dst: &mut [u8], left: &[u8], top: &[u8]) {
+    pred_chroma8_tm_sse2(token, dst, left, top);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn pred_chroma8_tm_impl_neon(token: NeonToken, dst: &mut [u8], left: &[u8], top: &[u8]) {
+    pred_chroma8_tm_neon(token, dst, left, top);
+}
+
+#[inline(always)]
+fn pred_chroma8_tm_impl_scalar(_token: ScalarToken, dst: &mut [u8], left: &[u8], top: &[u8]) {
+    pred_chroma8_tm_scalar(dst, left, top);
 }
 
 /// SSE2 TrueMotion for 8x8 chroma: Process 8 pixels per row.
@@ -356,13 +350,7 @@ fn pred_chroma8_tm_sse2(_token: X64V3Token, dst: &mut [u8], left: &[u8], top: &[
 // NEON (aarch64) TrueMotion predictions
 // =============================================================================
 
-/// NEON dispatch for TrueMotion 16x16.
-#[cfg(target_arch = "aarch64")]
-#[inline]
-fn pred_luma16_tm_neon_dispatch(dst: &mut [u8], left: &[u8], top: &[u8]) {
-    let token = NeonToken::summon().unwrap();
-    pred_luma16_tm_neon(token, dst, left, top);
-}
+// pred_luma16_tm_neon_dispatch removed — replaced by incant! in pred_luma16_tm
 
 /// NEON TrueMotion: Process 16 pixels per row.
 /// Formula: dst[y][x] = clamp(left[y] + top[x] - tl, 0, 255)
@@ -398,13 +386,7 @@ fn pred_luma16_tm_neon(_token: NeonToken, dst: &mut [u8], left: &[u8], top: &[u8
     }
 }
 
-/// NEON dispatch for TrueMotion 8x8.
-#[cfg(target_arch = "aarch64")]
-#[inline]
-fn pred_chroma8_tm_neon_dispatch(dst: &mut [u8], left: &[u8], top: &[u8]) {
-    let token = NeonToken::summon().unwrap();
-    pred_chroma8_tm_neon(token, dst, left, top);
-}
+// pred_chroma8_tm_neon_dispatch removed — replaced by incant! in pred_chroma8_tm
 
 /// NEON TrueMotion for 8x8 chroma: Process 8 pixels per row.
 #[cfg(target_arch = "aarch64")]

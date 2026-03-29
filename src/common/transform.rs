@@ -262,149 +262,121 @@ pub(crate) fn dct4x4_scalar(block: &mut [i32; 16]) {
 // =============================================================================
 
 /// Forward DCT with dynamic dispatch to best available implementation
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[inline(always)]
 pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
-    if let Some(token) = X64V3Token::summon() {
-        dct4x4_entry(token, block);
-    } else {
-        dct4x4_scalar(block);
-    }
-}
-
-/// Forward DCT - non-x86 fallback
-#[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
-pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(token) = Wasm128Token::summon() {
-            dct4x4_wasm(token, block);
-        } else {
-            dct4x4_scalar(block);
-        }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        if let Some(token) = NeonToken::try_new() {
-            dct4x4_neon(token, block);
-        } else {
-            dct4x4_scalar(block);
-        }
-    }
-    #[cfg(not(any(target_arch = "wasm32", target_arch = "aarch64")))]
-    {
-        dct4x4_scalar(block);
-    }
+    incant!(dct4x4_dispatch(block), [v3, neon, wasm128, scalar]);
 }
 
 /// Inverse DCT with dynamic dispatch
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[inline(always)]
 pub(crate) fn idct4x4_intrinsics(block: &mut [i32; 16]) {
-    if let Some(token) = X64V3Token::summon() {
-        idct4x4_entry(token, block);
-    } else {
-        idct4x4_scalar(block);
-    }
+    incant!(idct4x4_dispatch(block), [v3, neon, wasm128, scalar]);
 }
 
 /// Inverse DCT with pre-summoned token (avoids per-call token summoning)
 /// Note: Currently unused - decoder uses fused IDCT+add_residue.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn idct4x4_intrinsics_with_token(
     block: &mut [i32; 16],
-    simd_token: crate::common::prediction::SimdTokenType,
-) {
-    if let Some(token) = simd_token {
-        idct4x4_entry(token, block);
-    } else {
-        idct4x4_scalar(block);
-    }
-}
-
-/// Inverse DCT - non-x86 fallback
-#[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
-#[inline]
-pub(crate) fn idct4x4_intrinsics(block: &mut [i32; 16]) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(token) = Wasm128Token::summon() {
-            idct4x4_wasm(token, block);
-        } else {
-            idct4x4_scalar(block);
-        }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        if let Some(token) = NeonToken::try_new() {
-            idct4x4_neon(token, block);
-        } else {
-            idct4x4_scalar(block);
-        }
-    }
-    #[cfg(not(any(target_arch = "wasm32", target_arch = "aarch64")))]
-    {
-        idct4x4_scalar(block);
-    }
-}
-
-/// Inverse DCT with pre-summoned token - non-x86 fallback (ignores token)
-/// Note: Currently unused - decoder uses fused IDCT+add_residue.
-#[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
-#[allow(dead_code)]
-#[inline]
-pub(crate) fn idct4x4_intrinsics_with_token(
-    block: &mut [i32; 16],
     _simd_token: crate::common::prediction::SimdTokenType,
 ) {
+    // Token is ignored — use incant! for fresh dispatch
     idct4x4_intrinsics(block);
 }
 
 /// Process two blocks at once
 #[allow(dead_code)]
 pub(crate) fn dct4x4_two_intrinsics(block1: &mut [i32; 16], block2: &mut [i32; 16]) {
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        // SSE4.1 implies SSE2; summon() is now fast (no env var check)
-        if let Some(token) = X64V3Token::summon() {
-            dct4x4_two_entry(token, block1, block2);
-        } else {
-            dct4x4_scalar(block1);
-            dct4x4_scalar(block2);
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(token) = Wasm128Token::summon() {
-            dct4x4_wasm(token, block1);
-            dct4x4_wasm(token, block2);
-        } else {
-            dct4x4_scalar(block1);
-            dct4x4_scalar(block2);
-        }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        if let Some(token) = NeonToken::try_new() {
-            dct4x4_neon(token, block1);
-            dct4x4_neon(token, block2);
-        } else {
-            dct4x4_scalar(block1);
-            dct4x4_scalar(block2);
-        }
-    }
-    #[cfg(not(any(
-        target_arch = "x86_64",
-        target_arch = "x86",
-        target_arch = "wasm32",
-        target_arch = "aarch64"
-    )))]
-    {
-        dct4x4_scalar(block1);
-        dct4x4_scalar(block2);
-    }
+    incant!(
+        dct4x4_two_dispatch(block1, block2),
+        [v3, neon, wasm128, scalar]
+    );
+}
+
+// -- incant! tier functions for dct4x4 --
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn dct4x4_dispatch_v3(token: X64V3Token, block: &mut [i32; 16]) {
+    dct4x4_entry(token, block);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn dct4x4_dispatch_neon(token: NeonToken, block: &mut [i32; 16]) {
+    dct4x4_neon(token, block);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn dct4x4_dispatch_wasm128(token: Wasm128Token, block: &mut [i32; 16]) {
+    dct4x4_wasm(token, block);
+}
+
+#[inline(always)]
+fn dct4x4_dispatch_scalar(_token: ScalarToken, block: &mut [i32; 16]) {
+    dct4x4_scalar(block);
+}
+
+// -- incant! tier functions for idct4x4 --
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn idct4x4_dispatch_v3(token: X64V3Token, block: &mut [i32; 16]) {
+    idct4x4_entry(token, block);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn idct4x4_dispatch_neon(token: NeonToken, block: &mut [i32; 16]) {
+    idct4x4_neon(token, block);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn idct4x4_dispatch_wasm128(token: Wasm128Token, block: &mut [i32; 16]) {
+    idct4x4_wasm(token, block);
+}
+
+#[inline(always)]
+fn idct4x4_dispatch_scalar(_token: ScalarToken, block: &mut [i32; 16]) {
+    idct4x4_scalar(block);
+}
+
+// -- incant! tier functions for dct4x4_two --
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn dct4x4_two_dispatch_v3(token: X64V3Token, block1: &mut [i32; 16], block2: &mut [i32; 16]) {
+    dct4x4_two_entry(token, block1, block2);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn dct4x4_two_dispatch_neon(token: NeonToken, block1: &mut [i32; 16], block2: &mut [i32; 16]) {
+    dct4x4_neon(token, block1);
+    dct4x4_neon(token, block2);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn dct4x4_two_dispatch_wasm128(
+    token: Wasm128Token,
+    block1: &mut [i32; 16],
+    block2: &mut [i32; 16],
+) {
+    dct4x4_wasm(token, block1);
+    dct4x4_wasm(token, block2);
+}
+
+#[inline(always)]
+fn dct4x4_two_dispatch_scalar(_token: ScalarToken, block1: &mut [i32; 16], block2: &mut [i32; 16]) {
+    dct4x4_scalar(block1);
+    dct4x4_scalar(block2);
 }
 
 // =============================================================================
@@ -412,7 +384,7 @@ pub(crate) fn dct4x4_two_intrinsics(block1: &mut [i32; 16], block2: &mut [i32; 1
 // =============================================================================
 
 /// Entry shim for dct4x4_sse2
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn dct4x4_entry(_token: X64V3Token, block: &mut [i32; 16]) {
     dct4x4_sse2(_token, block);
@@ -420,7 +392,7 @@ fn dct4x4_entry(_token: X64V3Token, block: &mut [i32; 16]) {
 
 /// Forward DCT using SSE2 with i16 layout matching libwebp's FTransform
 /// Uses _mm_madd_epi16 for efficient multiply-accumulate
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn dct4x4_sse2(_token: X64V3Token, block: &mut [i32; 16]) {
     // Convert i32 block to i16 and reorganize into libwebp's interleaved layout:
@@ -477,7 +449,7 @@ fn dct4x4_sse2(_token: X64V3Token, block: &mut [i32; 16]) {
 }
 
 /// FTransform Pass 1 - matches libwebp FTransformPass1_SSE2 exactly
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn ftransform_pass1_i16(_token: X64V3Token, in01: __m128i, in23: __m128i) -> (__m128i, __m128i) {
     // Constants matching libwebp exactly
@@ -537,7 +509,7 @@ fn ftransform_pass1_i16(_token: X64V3Token, in01: __m128i, in23: __m128i) -> (__
 }
 
 /// FTransform Pass 2 - matches libwebp FTransformPass2_SSE2 exactly
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn ftransform_pass2_i16(_token: X64V3Token, v01: &__m128i, v32: &__m128i, out: &mut [i16; 16]) {
     let zero = _mm_setzero_si128();
@@ -587,7 +559,7 @@ fn ftransform_pass2_i16(_token: X64V3Token, v01: &__m128i, v32: &__m128i, out: &
 }
 
 /// Entry shim for dct4x4_two_sse2
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 #[allow(dead_code)]
 fn dct4x4_two_entry(_token: X64V3Token, block1: &mut [i32; 16], block2: &mut [i32; 16]) {
@@ -595,7 +567,7 @@ fn dct4x4_two_entry(_token: X64V3Token, block1: &mut [i32; 16], block2: &mut [i3
 }
 
 /// Process two blocks at once
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 #[allow(dead_code)]
 fn dct4x4_two_sse2(_token: X64V3Token, block1: &mut [i32; 16], block2: &mut [i32; 16]) {
@@ -620,7 +592,7 @@ fn dct4x4_two_sse2(_token: X64V3Token, block1: &mut [i32; 16], block2: &mut [i32
 /// * `ref_stride` - Stride for reference rows
 /// * `out` - Output: 32 i16 coefficients (2 blocks × 16 coeffs)
 /// Entry shim for ftransform2_sse2
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn ftransform2_entry(
     _token: X64V3Token,
@@ -633,7 +605,7 @@ fn ftransform2_entry(
     ftransform2_sse2(_token, src, ref_, src_stride, ref_stride, out);
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 pub(crate) fn ftransform2_sse2(
     _token: X64V3Token,
@@ -722,50 +694,38 @@ pub(crate) fn ftransform2_from_u8(
     ref_stride: usize,
     out: &mut [i16; 32],
 ) {
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        if let Some(token) = X64V3Token::summon() {
-            ftransform2_entry(token, src, ref_, src_stride, ref_stride, out);
-            return;
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(token) = Wasm128Token::summon() {
-            // Process two blocks using single-block WASM DCT
-            for block in 0..2 {
-                let mut block_data = [0i32; 16];
-                for y in 0..4 {
-                    for x in 0..4 {
-                        let src_val = src[y * src_stride + block * 4 + x] as i32;
-                        let ref_val = ref_[y * ref_stride + block * 4 + x] as i32;
-                        block_data[y * 4 + x] = src_val - ref_val;
-                    }
-                }
-                dct4x4_wasm(token, &mut block_data);
-                for (i, &val) in block_data.iter().enumerate() {
-                    out[block * 16 + i] = val as i16;
-                }
-            }
-            return;
-        }
-    }
-    // Scalar fallback
-    ftransform2_scalar(src, ref_, src_stride, ref_stride, out);
+    incant!(
+        ftransform2_dispatch(src, ref_, src_stride, ref_stride, out),
+        [v3, wasm128, scalar]
+    );
 }
 
-/// Scalar fallback for fused residual + DCT
-fn ftransform2_scalar(
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn ftransform2_dispatch_v3(
+    token: X64V3Token,
     src: &[u8],
     ref_: &[u8],
     src_stride: usize,
     ref_stride: usize,
     out: &mut [i16; 32],
 ) {
-    // Process two blocks
+    ftransform2_entry(token, src, ref_, src_stride, ref_stride, out);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn ftransform2_dispatch_wasm128(
+    token: Wasm128Token,
+    src: &[u8],
+    ref_: &[u8],
+    src_stride: usize,
+    ref_stride: usize,
+    out: &mut [i16; 32],
+) {
     for block in 0..2 {
         let mut block_data = [0i32; 16];
-        // Compute residual for this 4x4 block
         for y in 0..4 {
             for x in 0..4 {
                 let src_val = src[y * src_stride + block * 4 + x] as i32;
@@ -773,9 +733,32 @@ fn ftransform2_scalar(
                 block_data[y * 4 + x] = src_val - ref_val;
             }
         }
-        // Apply DCT
+        dct4x4_wasm(token, &mut block_data);
+        for (i, &val) in block_data.iter().enumerate() {
+            out[block * 16 + i] = val as i16;
+        }
+    }
+}
+
+#[inline(always)]
+fn ftransform2_dispatch_scalar(
+    _token: ScalarToken,
+    src: &[u8],
+    ref_: &[u8],
+    src_stride: usize,
+    ref_stride: usize,
+    out: &mut [i16; 32],
+) {
+    for block in 0..2 {
+        let mut block_data = [0i32; 16];
+        for y in 0..4 {
+            for x in 0..4 {
+                let src_val = src[y * src_stride + block * 4 + x] as i32;
+                let ref_val = ref_[y * ref_stride + block * 4 + x] as i32;
+                block_data[y * 4 + x] = src_val - ref_val;
+            }
+        }
         dct4x4_scalar(&mut block_data);
-        // Convert to i16
         for (i, &val) in block_data.iter().enumerate() {
             out[block * 16 + i] = val as i16;
         }
@@ -783,14 +766,14 @@ fn ftransform2_scalar(
 }
 
 /// Entry shim for idct4x4_sse2
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 pub(crate) fn idct4x4_entry(_token: X64V3Token, block: &mut [i32; 16]) {
     idct4x4_sse2(_token, block);
 }
 
 /// Inverse DCT using SSE2 - matches libwebp ITransform_One_SSE2
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 pub(crate) fn idct4x4_sse2(_token: X64V3Token, block: &mut [i32; 16]) {
     // libwebp IDCT constants:
@@ -838,7 +821,7 @@ pub(crate) fn idct4x4_sse2(_token: X64V3Token, block: &mut [i32; 16]) {
 }
 
 /// ITransform vertical pass - matches libwebp
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn itransform_pass_sse2(
     _token: X64V3Token,
@@ -887,7 +870,7 @@ fn itransform_pass_sse2(
 }
 
 /// ITransform horizontal pass with final shift
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn itransform_pass2_sse2(
     _token: X64V3Token,
@@ -947,7 +930,7 @@ fn itransform_pass2_sse2(
 /// Does: IDCT(coeffs) + prediction → output (clamped to 0-255)
 /// Also clears the coefficient block to zeros.
 /// Entry shim for idct_add_residue_sse2
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[allow(clippy::too_many_arguments)]
 #[arcane]
 pub(crate) fn idct_add_residue_entry(
@@ -976,7 +959,7 @@ pub(crate) fn idct_add_residue_entry(
     );
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn idct_add_residue_sse2(
@@ -1053,7 +1036,7 @@ pub(crate) fn idct_add_residue_sse2(
 }
 
 /// Entry shim for idct_add_residue_dc_sse2
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[allow(clippy::too_many_arguments)]
 #[arcane]
 pub(crate) fn idct_add_residue_dc_entry(
@@ -1084,7 +1067,7 @@ pub(crate) fn idct_add_residue_dc_entry(
 
 /// DC-only fused IDCT + add residue - when only DC coefficient is non-zero.
 /// Much faster than full IDCT.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn idct_add_residue_dc_sse2(
@@ -1129,7 +1112,7 @@ pub(crate) fn idct_add_residue_dc_sse2(
 
 /// Wrapper with token type parameter for decoder use (separate pred/output)
 /// Note: Currently unused - decoder uses in-place version instead.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[allow(dead_code, clippy::too_many_arguments)]
 #[inline(always)]
 pub(crate) fn idct_add_residue_with_token(
@@ -1176,7 +1159,7 @@ pub(crate) fn idct_add_residue_with_token(
 
 /// In-place fused IDCT + add residue for decoder hot path (entry point).
 /// Wrapper for callers that don't have a target_feature context.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 pub(crate) fn idct_add_residue_inplace_sse2(
     _token: X64V3Token,
@@ -1192,7 +1175,7 @@ pub(crate) fn idct_add_residue_inplace_sse2(
 
 /// In-place fused IDCT + add residue — `#[rite]` version for inlining into
 /// `#[arcane]` callers (e.g., the prediction+IDCT pipeline).
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 pub(crate) fn idct_add_residue_inplace_sse2_inner(
     _token: X64V3Token,
@@ -1277,7 +1260,7 @@ pub(crate) fn idct_add_residue_inplace_sse2_inner(
 }
 
 /// Wrapper for in-place fused IDCT + add residue
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub(crate) fn idct_add_residue_inplace_with_token(
     token: X64V3Token,
@@ -1309,21 +1292,51 @@ pub(crate) fn idct_add_residue_inplace(
     stride: usize,
     dc_only: bool,
 ) {
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        if let Some(token) = X64V3Token::summon() {
-            idct_add_residue_inplace_sse2(token, coeffs, block, y0, x0, stride, dc_only);
-            return;
-        }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        if let Some(token) = NeonToken::summon() {
-            idct_add_residue_inplace_neon(token, coeffs, block, y0, x0, stride, dc_only);
-            return;
-        }
-    }
-    // Scalar fallback: IDCT then add
+    incant!(
+        idct_add_residue_inplace_dispatch(coeffs, block, y0, x0, stride, dc_only),
+        [v3, neon, scalar]
+    );
+}
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn idct_add_residue_inplace_dispatch_v3(
+    token: X64V3Token,
+    coeffs: &mut [i32; 16],
+    block: &mut [u8],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+    dc_only: bool,
+) {
+    idct_add_residue_inplace_sse2(token, coeffs, block, y0, x0, stride, dc_only);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn idct_add_residue_inplace_dispatch_neon(
+    token: NeonToken,
+    coeffs: &mut [i32; 16],
+    block: &mut [u8],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+    dc_only: bool,
+) {
+    idct_add_residue_inplace_neon(token, coeffs, block, y0, x0, stride, dc_only);
+}
+
+#[inline(always)]
+fn idct_add_residue_inplace_dispatch_scalar(
+    _token: ScalarToken,
+    coeffs: &mut [i32; 16],
+    block: &mut [u8],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+    dc_only: bool,
+) {
     if dc_only {
         let dc = coeffs[0];
         let dc_adj = (dc + 4) >> 3;
@@ -1356,32 +1369,51 @@ pub(crate) fn idct_add_residue_inplace(
 ///
 /// Replaces: manual residual loop + dct4x4() in I4 inner loop.
 /// Benefit: avoids i32 intermediate for residuals; computes directly in i16.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[inline(always)]
 pub(crate) fn ftransform_from_u8_4x4(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
-    if let Some(token) = X64V3Token::summon() {
-        ftransform_from_u8_4x4_entry(token, src, ref_)
-    } else {
-        ftransform_from_u8_4x4_scalar(src, ref_)
-    }
+    incant!(
+        ftransform_from_u8_4x4_dispatch(src, ref_),
+        [v3, neon, wasm128, scalar]
+    )
 }
 
-/// Non-x86 fallback: try NEON on aarch64, else scalar
-#[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
-pub(crate) fn ftransform_from_u8_4x4(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
-    #[cfg(target_arch = "aarch64")]
-    {
-        if let Some(token) = NeonToken::summon() {
-            return ftransform_from_u8_4x4_neon(token, src, ref_);
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(token) = Wasm128Token::summon() {
-            return ftransform_from_u8_4x4_wasm(token, src, ref_);
-        }
-    }
+fn ftransform_from_u8_4x4_dispatch_v3(
+    token: X64V3Token,
+    src: &[u8; 16],
+    ref_: &[u8; 16],
+) -> [i32; 16] {
+    ftransform_from_u8_4x4_entry(token, src, ref_)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn ftransform_from_u8_4x4_dispatch_neon(
+    token: NeonToken,
+    src: &[u8; 16],
+    ref_: &[u8; 16],
+) -> [i32; 16] {
+    ftransform_from_u8_4x4_neon(token, src, ref_)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn ftransform_from_u8_4x4_dispatch_wasm128(
+    token: Wasm128Token,
+    src: &[u8; 16],
+    ref_: &[u8; 16],
+) -> [i32; 16] {
+    ftransform_from_u8_4x4_wasm(token, src, ref_)
+}
+
+#[inline(always)]
+fn ftransform_from_u8_4x4_dispatch_scalar(
+    _token: ScalarToken,
+    src: &[u8; 16],
+    ref_: &[u8; 16],
+) -> [i32; 16] {
     ftransform_from_u8_4x4_scalar(src, ref_)
 }
 
@@ -1396,7 +1428,7 @@ pub(crate) fn ftransform_from_u8_4x4_scalar(src: &[u8; 16], ref_: &[u8; 16]) -> 
 }
 
 /// Entry shim for ftransform_from_u8_4x4_sse2
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn ftransform_from_u8_4x4_entry(_token: X64V3Token, src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
     ftransform_from_u8_4x4_sse2(_token, src, ref_)
@@ -1404,7 +1436,7 @@ fn ftransform_from_u8_4x4_entry(_token: X64V3Token, src: &[u8; 16], ref_: &[u8; 
 
 /// SSE2 fused residual+DCT for single 4x4 block from flat u8[16] arrays.
 /// Loads bytes, computes diff as i16, runs DCT pass1+pass2, outputs i32[16].
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 pub(crate) fn ftransform_from_u8_4x4_sse2(
     _token: X64V3Token,

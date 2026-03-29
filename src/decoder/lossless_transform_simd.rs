@@ -16,14 +16,14 @@ use archmage::intrinsics::x86 as simd_mem;
 use archmage::intrinsics::x86_64 as simd_mem;
 
 /// Helper: get a mutable reference to a 16-byte array from a slice.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn chunk16(data: &mut [u8], offset: usize) -> &mut [u8; 16] {
     data[offset..].first_chunk_mut::<16>().unwrap()
 }
 
 /// Helper: get an immutable reference to a 16-byte array from a slice.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn chunk16_ref(data: &[u8], offset: usize) -> &[u8; 16] {
     data[offset..].first_chunk::<16>().unwrap()
@@ -39,9 +39,9 @@ fn chunk16_ref(data: &[u8], offset: usize) -> &[u8; 16] {
 /// For each pixel: R += G, B += G (wrapping byte addition).
 ///
 /// Entry point with #[arcane] — called from scalar dispatch code.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
-pub(crate) fn add_green_to_blue_and_red_sse2_entry(_token: Sse2Token, image_data: &mut [u8]) {
+pub(crate) fn add_green_to_blue_and_red_sse2_entry(_token: X64V1Token, image_data: &mut [u8]) {
     add_green_to_blue_and_red_sse2(_token, image_data);
 }
 
@@ -55,9 +55,9 @@ pub(crate) fn add_green_to_blue_and_red_sse2_entry(_token: Sse2Token, image_data
 /// 1. Shift right 8 in u16: get green (and alpha) in low bytes
 /// 2. Shuffle to replicate green to both 16-bit halves of each pixel
 /// 3. Add as bytes: R += G, G += 0, B += G, A += 0
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
-fn add_green_to_blue_and_red_sse2(_token: Sse2Token, image_data: &mut [u8]) {
+fn add_green_to_blue_and_red_sse2(_token: X64V1Token, image_data: &mut [u8]) {
     let len = image_data.len();
     let simd_len = len & !15;
 
@@ -98,10 +98,10 @@ fn add_green_to_blue_and_red_sse2(_token: Sse2Token, image_data: &mut [u8]) {
 ///   B' = B + ColorTransformDelta(green_to_blue, G) + ColorTransformDelta(red_to_blue, R')
 ///
 /// where ColorTransformDelta(t, c) = (t * c) >> 5  (signed fixed-point)
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 pub(crate) fn transform_color_inverse_sse2_entry(
-    _token: Sse2Token,
+    _token: X64V1Token,
     image_data: &mut [u8],
     width: usize,
     size_bits: u8,
@@ -142,10 +142,10 @@ pub(crate) fn transform_color_inverse_sse2_entry(
 ///     _mm_mulhi_epi16(c << 8, cst) = ((c << 8) * (t << 3)) >> 16 = (c * t) >> 5
 ///
 ///   The result lands in the LOW byte of each u16 word — exactly where R and B live.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn transform_color_inverse_block_sse2(
-    _token: Sse2Token,
+    _token: X64V1Token,
     block: &mut [u8],
     green_to_red: u8,
     green_to_blue: u8,
@@ -256,10 +256,10 @@ fn transform_color_inverse_block_sse2(
 ///
 /// The trick is that wrapping byte addition is associative, so the prefix
 /// sum can be computed without serial dependency within the 4-pixel group.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn apply_predictor_1_sse2(
-    _token: Sse2Token,
+    _token: X64V1Token,
     image_data: &mut [u8],
     range: core::ops::Range<usize>,
     _width: usize,
@@ -308,10 +308,10 @@ fn apply_predictor_1_sse2(
 }
 
 /// SSE2 predictor 2 (top): out[i] += upper[i], 4 pixels at a time.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn apply_predictor_2_sse2(
-    _token: Sse2Token,
+    _token: X64V1Token,
     image_data: &mut [u8],
     range: core::ops::Range<usize>,
     width: usize,
@@ -337,10 +337,10 @@ fn apply_predictor_2_sse2(
 }
 
 /// SSE2 predictor 3 (top-right): out[i] += upper[i+1]
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn apply_predictor_3_sse2(
-    _token: Sse2Token,
+    _token: X64V1Token,
     image_data: &mut [u8],
     range: core::ops::Range<usize>,
     width: usize,
@@ -366,10 +366,10 @@ fn apply_predictor_3_sse2(
 }
 
 /// SSE2 predictor 4 (top-left): out[i] += upper[i-1]
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn apply_predictor_4_sse2(
-    _token: Sse2Token,
+    _token: X64V1Token,
     image_data: &mut [u8],
     range: core::ops::Range<usize>,
     width: usize,
@@ -397,10 +397,10 @@ fn apply_predictor_4_sse2(
 /// SSE2 predictor 8 (average TL, T): avg(upper[i-1], upper[i])
 ///
 /// Uses floor average: avg(a,b) = avg_epu8(a,b) - ((a^b)&1)
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn apply_predictor_8_sse2(
-    _token: Sse2Token,
+    _token: X64V1Token,
     image_data: &mut [u8],
     range: core::ops::Range<usize>,
     width: usize,
@@ -437,10 +437,10 @@ fn apply_predictor_8_sse2(
 }
 
 /// SSE2 predictor 9 (average T, TR): avg(upper[i], upper[i+1])
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn apply_predictor_9_sse2(
-    _token: Sse2Token,
+    _token: X64V1Token,
     image_data: &mut [u8],
     range: core::ops::Range<usize>,
     width: usize,
@@ -484,10 +484,10 @@ fn apply_predictor_9_sse2(
 ///
 /// Predictors 2, 3, 4, 8, 9 have batch SSE2 implementations (no data dependency
 /// on previous output pixel). The rest fall through to scalar.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 pub(crate) fn apply_predictor_transform_sse2_entry(
-    _token: Sse2Token,
+    _token: X64V1Token,
     image_data: &mut [u8],
     width: u16,
     height: u16,
@@ -570,14 +570,14 @@ pub(crate) fn apply_predictor_transform_sse2_entry(
 mod tests {
     extern crate std;
     use alloc::vec;
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    #[cfg(target_arch = "x86_64")]
     use archmage::prelude::*;
 
     /// Test that SSE2 subtract-green matches scalar.
     #[test]
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    #[cfg(target_arch = "x86_64")]
     fn test_add_green_sse2_matches_scalar() {
-        let Some(token) = Sse2Token::summon() else {
+        let Some(token) = X64V1Token::summon() else {
             std::eprintln!("SSE2 not available, skipping test");
             return;
         };
@@ -601,9 +601,9 @@ mod tests {
 
     /// Test subtract-green with non-aligned length (not multiple of 16).
     #[test]
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    #[cfg(target_arch = "x86_64")]
     fn test_add_green_sse2_odd_length() {
-        let Some(token) = Sse2Token::summon() else {
+        let Some(token) = X64V1Token::summon() else {
             return;
         };
 
@@ -623,9 +623,9 @@ mod tests {
 
     /// Test color transform inverse SSE2 matches scalar.
     #[test]
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    #[cfg(target_arch = "x86_64")]
     fn test_color_transform_sse2_matches_scalar() {
-        let Some(token) = Sse2Token::summon() else {
+        let Some(token) = X64V1Token::summon() else {
             return;
         };
 
@@ -672,9 +672,9 @@ mod tests {
 
     /// Test color transform with varied multiplier signs.
     #[test]
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    #[cfg(target_arch = "x86_64")]
     fn test_color_transform_sse2_all_multiplier_signs() {
-        let Some(token) = Sse2Token::summon() else {
+        let Some(token) = X64V1Token::summon() else {
             return;
         };
 
@@ -732,9 +732,9 @@ mod tests {
 
     /// Test predictor 1 (left) SSE2 matches scalar via full roundtrip.
     #[test]
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    #[cfg(target_arch = "x86_64")]
     fn test_predictor_1_sse2_matches_scalar() {
-        let Some(token) = Sse2Token::summon() else {
+        let Some(token) = X64V1Token::summon() else {
             return;
         };
 
@@ -795,9 +795,9 @@ mod tests {
 
     /// Test predictor 2 (top) SSE2 matches scalar.
     #[test]
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    #[cfg(target_arch = "x86_64")]
     fn test_predictor_2_sse2_matches_scalar() {
-        let Some(token) = Sse2Token::summon() else {
+        let Some(token) = X64V1Token::summon() else {
             return;
         };
 

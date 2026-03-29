@@ -5,6 +5,8 @@
 // Allow dead code when std is disabled - some functions are encoder-only
 #![cfg_attr(not(feature = "std"), allow(dead_code))]
 
+use archmage::prelude::*;
+
 /// Luma prediction block stride - 32 bytes for cache alignment (matches libwebp BPS)
 /// Layout: 1 border pixel + 16 luma pixels + 4 top-right + padding to 32
 pub(crate) const LUMA_STRIDE: usize = 32;
@@ -260,36 +262,43 @@ pub(crate) fn add_residue<const N: usize>(
     x0: usize,
     stride: usize,
 ) {
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        use archmage::{SimdToken, X64V3Token};
-        if let Some(token) = X64V3Token::summon() {
-            add_residue_sse2(token, pblock.as_mut_slice(), rblock, y0, x0, stride);
-            return;
-        }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::{NeonToken, SimdToken};
-        if let Some(token) = NeonToken::summon() {
-            crate::common::transform::add_residue_neon(
-                token,
-                pblock.as_mut_slice(),
-                rblock,
-                y0,
-                x0,
-                stride,
-            );
-            return;
-        }
-    }
-    add_residue_scalar(pblock, rblock, y0, x0, stride);
+    incant!(
+        add_residue_dispatch(pblock.as_mut_slice(), rblock, y0, x0, stride),
+        [v3, neon, scalar]
+    );
 }
 
-/// Scalar implementation of add_residue
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
-fn add_residue_scalar<const N: usize>(
-    pblock: &mut [u8; N],
+fn add_residue_dispatch_v3(
+    token: X64V3Token,
+    pblock: &mut [u8],
+    rblock: &[i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    add_residue_sse2(token, pblock, rblock, y0, x0, stride);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn add_residue_dispatch_neon(
+    token: NeonToken,
+    pblock: &mut [u8],
+    rblock: &[i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    crate::common::transform::add_residue_neon(token, pblock, rblock, y0, x0, stride);
+}
+
+#[inline(always)]
+fn add_residue_dispatch_scalar(
+    _token: ScalarToken,
+    pblock: &mut [u8],
     rblock: &[i32; 16],
     y0: usize,
     x0: usize,
@@ -370,22 +379,52 @@ pub(crate) fn add_residue_and_clear<const N: usize>(
     x0: usize,
     stride: usize,
 ) {
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        use archmage::{SimdToken, X64V3Token};
-        if let Some(token) = X64V3Token::summon() {
-            add_residue_and_clear_sse2(token, pblock.as_mut_slice(), rblock, y0, x0, stride);
-            return;
+    incant!(
+        add_residue_and_clear_dispatch(pblock.as_mut_slice(), rblock, y0, x0, stride),
+        [v3, scalar]
+    );
+}
+
+#[cfg(target_arch = "x86_64")]
+#[allow(dead_code)]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn add_residue_and_clear_dispatch_v3(
+    token: X64V3Token,
+    pblock: &mut [u8],
+    rblock: &mut [i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    add_residue_and_clear_sse2(token, pblock, rblock, y0, x0, stride);
+}
+
+#[allow(dead_code)]
+#[inline(always)]
+fn add_residue_and_clear_dispatch_scalar(
+    _token: ScalarToken,
+    pblock: &mut [u8],
+    rblock: &mut [i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    let mut pos = y0 * stride + x0;
+    for row in rblock.chunks_mut(4) {
+        for (p, coeff) in pblock[pos..][..4].iter_mut().zip(row.iter_mut()) {
+            *p = (*coeff + i32::from(*p)).clamp(0, 255) as u8;
+            *coeff = 0;
         }
+        pos += stride;
     }
-    add_residue_and_clear_scalar(pblock, rblock, y0, x0, stride);
 }
 
 /// SIMD-accelerated add_residue_and_clear with a pre-summoned token.
 /// Eliminates per-call token summoning overhead (~1.1B instructions saved over a full decode).
 ///
 /// Note: Currently unused - decoder now uses fused IDCT+add_residue.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn add_residue_and_clear_with_token<const N: usize>(
@@ -400,7 +439,7 @@ pub(crate) fn add_residue_and_clear_with_token<const N: usize>(
 }
 
 /// Scalar fallback for add_residue_and_clear (used when no SIMD token available).
-#[cfg(not(any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn add_residue_and_clear_with_token<const N: usize>(
@@ -415,7 +454,7 @@ pub(crate) fn add_residue_and_clear_with_token<const N: usize>(
 }
 
 /// Type alias for the SIMD token used in the decoder hot path.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 pub(crate) type SimdTokenType = Option<archmage::X64V3Token>;
 
 #[cfg(target_arch = "aarch64")]
@@ -426,13 +465,13 @@ pub(crate) type SimdTokenType = Option<archmage::Wasm128Token>;
 
 #[cfg(not(any(
     target_arch = "x86_64",
-    target_arch = "x86",
     target_arch = "aarch64",
     target_arch = "wasm32"
 )))]
-
+#[allow(dead_code)]
 pub(crate) type SimdTokenType = Option<()>;
 
+#[allow(dead_code)]
 #[inline(always)]
 fn add_residue_and_clear_scalar<const N: usize>(
     pblock: &mut [u8; N],
@@ -1221,7 +1260,8 @@ impl I4Predictions {
 ///
 /// Takes raw DCT coefficients (NOT already IDCT'd), performs IDCT, adds to prediction,
 /// and clears the coefficient block.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn idct_add_residue_and_clear_with_token<const N: usize>(
     token: archmage::X64V3Token,
@@ -1330,32 +1370,73 @@ pub(crate) fn idct_add_residue_and_clear<const N: usize>(
     x0: usize,
     stride: usize,
 ) {
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        use archmage::{SimdToken, X64V3Token};
-        if let Some(token) = X64V3Token::summon() {
-            idct_add_residue_and_clear_with_token(token, pblock, rblock, y0, x0, stride);
-            return;
-        }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::{NeonToken, SimdToken};
-        if let Some(token) = NeonToken::summon() {
-            idct_add_residue_and_clear_with_token(token, pblock, rblock, y0, x0, stride);
-            return;
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        use archmage::{SimdToken, Wasm128Token};
-        if let Some(token) = Wasm128Token::summon() {
-            idct_add_residue_and_clear_with_token(token, pblock, rblock, y0, x0, stride);
-            return;
-        }
-    }
+    incant!(
+        idct_add_residue_and_clear_dispatch(pblock.as_mut_slice(), rblock, y0, x0, stride),
+        [v3, neon, wasm128, scalar]
+    );
+}
 
-    // Scalar fallback
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn idct_add_residue_and_clear_dispatch_v3(
+    token: X64V3Token,
+    pblock: &mut [u8],
+    rblock: &mut [i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    use crate::common::transform;
+    let dc_only = rblock[1..].iter().all(|&c| c == 0);
+    transform::idct_add_residue_inplace_with_token(token, rblock, pblock, y0, x0, stride, dc_only);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn idct_add_residue_and_clear_dispatch_neon(
+    token: NeonToken,
+    pblock: &mut [u8],
+    rblock: &mut [i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    let dc_only = rblock[1..].iter().all(|&c| c == 0);
+    crate::common::transform::idct_add_residue_inplace_neon(
+        token, rblock, pblock, y0, x0, stride, dc_only,
+    );
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn idct_add_residue_and_clear_dispatch_wasm128(
+    _token: Wasm128Token,
+    pblock: &mut [u8],
+    rblock: &mut [i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    use crate::common::transform;
+    let dc_only = rblock[1..].iter().all(|&c| c == 0);
+    if dc_only {
+        transform::idct4x4_dc(rblock);
+    } else {
+        crate::common::transform::idct4x4_wasm(_token, rblock);
+    }
+    add_residue_and_clear_scalar_inner(pblock, rblock, y0, x0, stride);
+}
+
+#[inline(always)]
+fn idct_add_residue_and_clear_dispatch_scalar(
+    _token: ScalarToken,
+    pblock: &mut [u8],
+    rblock: &mut [i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
     use crate::common::transform;
     let dc_only = rblock[1..].iter().all(|&c| c == 0);
     if dc_only {
@@ -1363,7 +1444,26 @@ pub(crate) fn idct_add_residue_and_clear<const N: usize>(
     } else {
         transform::idct4x4(rblock);
     }
-    add_residue_and_clear_scalar(pblock, rblock, y0, x0, stride);
+    add_residue_and_clear_scalar_inner(pblock, rblock, y0, x0, stride);
+}
+
+/// Scalar add_residue_and_clear implementation for slice (non-generic).
+#[inline(always)]
+fn add_residue_and_clear_scalar_inner(
+    pblock: &mut [u8],
+    rblock: &mut [i32; 16],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+) {
+    let mut pos = y0 * stride + x0;
+    for row in rblock.chunks_mut(4) {
+        for (p, coeff) in pblock[pos..][..4].iter_mut().zip(row.iter_mut()) {
+            *p = (*coeff + i32::from(*p)).clamp(0, 255) as u8;
+            *coeff = 0;
+        }
+        pos += stride;
+    }
 }
 
 #[cfg(all(test, feature = "_benchmarks"))]

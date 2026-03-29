@@ -17,7 +17,107 @@ use crate::encoder::cost::{
 
 use crate::encoder::psy;
 
+use archmage::prelude::*;
+
 use super::{MacroblockInfo, sse_8x8_chroma, sse_16x16_luma};
+
+// =============================================================================
+// Helper dispatch functions for inline SSE computation
+// =============================================================================
+
+/// Dispatch SSE4x4 computation to best available SIMD path.
+#[inline(always)]
+fn sse4x4_dispatch(src: &[u8; 16], pred: &[u8; 16]) -> u32 {
+    incant!(sse4x4_impl(src, pred), [v3, neon, wasm128, scalar])
+}
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse4x4_impl_v3(_token: X64V3Token, src: &[u8; 16], pred: &[u8; 16]) -> u32 {
+    crate::common::simd_sse::sse4x4(src, pred)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn sse4x4_impl_neon(token: NeonToken, src: &[u8; 16], pred: &[u8; 16]) -> u32 {
+    crate::common::simd_neon::sse4x4_neon(token, src, pred)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn sse4x4_impl_wasm128(token: Wasm128Token, src: &[u8; 16], pred: &[u8; 16]) -> u32 {
+    crate::common::simd_wasm::sse4x4_wasm_entry(token, src, pred)
+}
+
+#[inline(always)]
+fn sse4x4_impl_scalar(_token: ScalarToken, src: &[u8; 16], pred: &[u8; 16]) -> u32 {
+    let mut sum = 0u32;
+    for k in 0..16 {
+        let diff = i32::from(src[k]) - i32::from(pred[k]);
+        sum += (diff * diff) as u32;
+    }
+    sum
+}
+
+/// Dispatch SSE4x4 with residual computation to best available SIMD path.
+#[inline(always)]
+fn sse4x4_with_residual_dispatch(src: &[u8; 16], pred: &[u8; 16], dequantized: &[i32; 16]) -> u32 {
+    incant!(
+        sse4x4_with_residual_impl(src, pred, dequantized),
+        [v3, neon, wasm128, scalar]
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse4x4_with_residual_impl_v3(
+    _token: X64V3Token,
+    src: &[u8; 16],
+    pred: &[u8; 16],
+    dequantized: &[i32; 16],
+) -> u32 {
+    crate::common::simd_sse::sse4x4_with_residual(src, pred, dequantized)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn sse4x4_with_residual_impl_neon(
+    token: NeonToken,
+    src: &[u8; 16],
+    pred: &[u8; 16],
+    dequantized: &[i32; 16],
+) -> u32 {
+    crate::common::simd_neon::sse4x4_with_residual_neon(token, src, pred, dequantized)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn sse4x4_with_residual_impl_wasm128(
+    token: Wasm128Token,
+    src: &[u8; 16],
+    pred: &[u8; 16],
+    dequantized: &[i32; 16],
+) -> u32 {
+    crate::common::simd_wasm::sse4x4_with_residual_wasm_entry(token, src, pred, dequantized)
+}
+
+#[inline(always)]
+fn sse4x4_with_residual_impl_scalar(
+    _token: ScalarToken,
+    src: &[u8; 16],
+    pred: &[u8; 16],
+    dequantized: &[i32; 16],
+) -> u32 {
+    let mut sum = 0u32;
+    for i in 0..16 {
+        let reconstructed = (i32::from(pred[i]) + dequantized[i]).clamp(0, 255) as u8;
+        let diff = i32::from(src[i]) - i32::from(reconstructed);
+        sum += (diff * diff) as u32;
+    }
+    sum
+}
 
 // =============================================================================
 // Arcane (SIMD-hoisted) inner functions for I4 mode selection
@@ -1732,43 +1832,7 @@ impl<'a> super::Vp8Encoder<'a> {
         let mut mode_sse: [(u32, usize); 10] = [(0, 0); 10];
         for (mode_idx, _) in MODES.iter().enumerate() {
             let pred = preds.get(mode_idx);
-            #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-            let sse = crate::common::simd_sse::sse4x4(src_block, pred);
-            #[cfg(target_arch = "aarch64")]
-            let sse = {
-                use archmage::SimdToken;
-                // NEON is always available on aarch64
-                let token = archmage::NeonToken::summon().unwrap();
-                crate::common::simd_neon::sse4x4_neon(token, src_block, pred)
-            };
-            #[cfg(target_arch = "wasm32")]
-            let sse = {
-                use archmage::SimdToken;
-                if let Some(token) = archmage::Wasm128Token::summon() {
-                    crate::common::simd_wasm::sse4x4_wasm_entry(token, src_block, pred)
-                } else {
-                    let mut sum = 0u32;
-                    for k in 0..16 {
-                        let diff = i32::from(src_block[k]) - i32::from(pred[k]);
-                        sum += (diff * diff) as u32;
-                    }
-                    sum
-                }
-            };
-            #[cfg(not(any(
-                target_arch = "x86_64",
-                target_arch = "x86",
-                target_arch = "aarch64",
-                target_arch = "wasm32"
-            )))]
-            let sse = {
-                let mut sum = 0u32;
-                for k in 0..16 {
-                    let diff = i32::from(src_block[k]) - i32::from(pred[k]);
-                    sum += (diff * diff) as u32;
-                }
-                sum
-            };
+            let sse = sse4x4_dispatch(src_block, pred);
             mode_sse[mode_idx] = (sse, mode_idx);
         }
         mode_sse.sort_unstable_by_key(|&(sse, _)| sse);
@@ -1822,55 +1886,7 @@ impl<'a> super::Vp8Encoder<'a> {
             };
 
             // Compute SSE (cheap, needed for early exit)
-            #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-            let sse = crate::common::simd_sse::sse4x4_with_residual(src_block, pred, &dequantized);
-            #[cfg(target_arch = "aarch64")]
-            let sse = {
-                use archmage::SimdToken;
-                let token = archmage::NeonToken::summon().unwrap();
-                crate::common::simd_neon::sse4x4_with_residual_neon(
-                    token,
-                    src_block,
-                    pred,
-                    &dequantized,
-                )
-            };
-            #[cfg(target_arch = "wasm32")]
-            let sse = {
-                use archmage::SimdToken;
-                if let Some(token) = archmage::Wasm128Token::summon() {
-                    crate::common::simd_wasm::sse4x4_with_residual_wasm_entry(
-                        token,
-                        src_block,
-                        pred,
-                        &dequantized,
-                    )
-                } else {
-                    let mut sum = 0u32;
-                    for i in 0..16 {
-                        let reconstructed =
-                            (i32::from(pred[i]) + dequantized[i]).clamp(0, 255) as u8;
-                        let diff = i32::from(src_block[i]) - i32::from(reconstructed);
-                        sum += (diff * diff) as u32;
-                    }
-                    sum
-                }
-            };
-            #[cfg(not(any(
-                target_arch = "x86_64",
-                target_arch = "x86",
-                target_arch = "aarch64",
-                target_arch = "wasm32"
-            )))]
-            let sse = {
-                let mut sum = 0u32;
-                for i in 0..16 {
-                    let reconstructed = (i32::from(pred[i]) + dequantized[i]).clamp(0, 255) as u8;
-                    let diff = i32::from(src_block[i]) - i32::from(reconstructed);
-                    sum += (diff * diff) as u32;
-                }
-                sum
-            };
+            let sse = sse4x4_with_residual_dispatch(src_block, pred, &dequantized);
 
             // Flatness penalty for non-DC modes (cheap check)
             let flatness_penalty: u32 = if mode_idx > 0 {

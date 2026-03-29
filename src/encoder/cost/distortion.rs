@@ -35,7 +35,7 @@ use archmage::intrinsics::x86_64 as simd_mem;
 /// * `w` - 16 weights for frequency weighting (CSF table)
 #[inline]
 pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    #[cfg(target_arch = "x86_64")]
     {
         crate::common::simd_sse::t_transform(input, stride, w)
     }
@@ -45,7 +45,7 @@ pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
         // The fused version below is the hot path and uses NEON.
         t_transform_scalar(input, stride, w)
     }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
         t_transform_scalar(input, stride, w)
     }
@@ -55,7 +55,7 @@ pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 ///
 /// This can be optimized with SIMD (AVX2/NEON) for significant speedup.
 #[inline]
-#[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(not(target_arch = "x86_64"))]
 pub fn t_transform_scalar(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     let mut tmp = [0i32; 16];
 
@@ -109,27 +109,60 @@ pub fn t_transform_scalar(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 /// * `w` - 16 weights for frequency weighting (CSF table)
 #[inline]
 pub fn tdisto_4x4(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        crate::common::simd_sse::tdisto_4x4_fused(a, b, stride, w)
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        let token = NeonToken::summon().unwrap();
-        crate::common::simd_neon::tdisto_4x4_fused_neon(token, a, b, stride, w)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(token) = Wasm128Token::summon() {
-            return crate::common::simd_wasm::tdisto_4x4_fused_wasm_entry(token, a, b, stride, w);
-        }
-    }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64",)))]
-    {
-        let sum1 = t_transform(a, stride, w);
-        let sum2 = t_transform(b, stride, w);
-        (sum2 - sum1).abs() >> 5
-    }
+    incant!(
+        tdisto_4x4_dispatch(a, b, stride, w),
+        [v3, neon, wasm128, scalar]
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn tdisto_4x4_dispatch_v3(
+    _token: X64V3Token,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    crate::common::simd_sse::tdisto_4x4_fused(a, b, stride, w)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn tdisto_4x4_dispatch_neon(
+    token: NeonToken,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    crate::common::simd_neon::tdisto_4x4_fused_neon(token, a, b, stride, w)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn tdisto_4x4_dispatch_wasm128(
+    token: Wasm128Token,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    crate::common::simd_wasm::tdisto_4x4_fused_wasm_entry(token, a, b, stride, w)
+}
+
+#[inline(always)]
+fn tdisto_4x4_dispatch_scalar(
+    _token: ScalarToken,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    let sum1 = t_transform(a, stride, w);
+    let sum2 = t_transform(b, stride, w);
+    (sum2 - sum1).abs() >> 5
 }
 
 /// Compute spectral distortion between two 16x16 blocks.
@@ -144,35 +177,65 @@ pub fn tdisto_4x4(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 /// * `w` - 16 weights for frequency weighting (CSF table)
 #[inline]
 pub fn tdisto_16x16(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if let Some(token) = X64V3Token::summon() {
-            return tdisto_16x16_sse2(token, a, b, stride, w);
+    incant!(
+        tdisto_16x16_dispatch(a, b, stride, w),
+        [v3, neon, wasm128, scalar]
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn tdisto_16x16_dispatch_v3(
+    token: X64V3Token,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    tdisto_16x16_sse2(token, a, b, stride, w)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn tdisto_16x16_dispatch_neon(
+    token: NeonToken,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    tdisto_16x16_neon(token, a, b, stride, w)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn tdisto_16x16_dispatch_wasm128(
+    token: Wasm128Token,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    tdisto_16x16_wasm(token, a, b, stride, w)
+}
+
+#[inline(always)]
+fn tdisto_16x16_dispatch_scalar(
+    _token: ScalarToken,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    let mut d = 0i32;
+    for y in 0..4 {
+        for x in 0..4 {
+            let offset = y * 4 * stride + x * 4;
+            d += tdisto_4x4(&a[offset..], &b[offset..], stride, w);
         }
     }
-    #[cfg(target_arch = "aarch64")]
-    {
-        let token = NeonToken::summon().unwrap();
-        return tdisto_16x16_neon(token, a, b, stride, w);
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(token) = Wasm128Token::summon() {
-            return tdisto_16x16_wasm(token, a, b, stride, w);
-        }
-    }
-    // Scalar fallback (x86 without SIMD support, or non-SIMD platforms)
-    #[allow(unreachable_code)]
-    {
-        let mut d = 0i32;
-        for y in 0..4 {
-            for x in 0..4 {
-                let offset = y * 4 * stride + x * 4;
-                d += tdisto_4x4(&a[offset..], &b[offset..], stride, w);
-            }
-        }
-        d
-    }
+    d
 }
 
 /// SSE2 variant: single dispatch for all 16 sub-blocks
@@ -200,34 +263,65 @@ fn tdisto_16x16_sse2(_token: X64V3Token, a: &[u8], b: &[u8], stride: usize, w: &
 /// On x86_64 with SIMD, dispatches once and calls SSE2 variant directly.
 #[inline]
 pub fn tdisto_8x8(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if let Some(token) = X64V3Token::summon() {
-            return tdisto_8x8_sse2(token, a, b, stride, w);
+    incant!(
+        tdisto_8x8_dispatch(a, b, stride, w),
+        [v3, neon, wasm128, scalar]
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn tdisto_8x8_dispatch_v3(
+    token: X64V3Token,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    tdisto_8x8_sse2(token, a, b, stride, w)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn tdisto_8x8_dispatch_neon(
+    token: NeonToken,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    tdisto_8x8_neon(token, a, b, stride, w)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn tdisto_8x8_dispatch_wasm128(
+    token: Wasm128Token,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    tdisto_8x8_wasm(token, a, b, stride, w)
+}
+
+#[inline(always)]
+fn tdisto_8x8_dispatch_scalar(
+    _token: ScalarToken,
+    a: &[u8],
+    b: &[u8],
+    stride: usize,
+    w: &[u16; 16],
+) -> i32 {
+    let mut d = 0i32;
+    for y in 0..2 {
+        for x in 0..2 {
+            let offset = y * 4 * stride + x * 4;
+            d += tdisto_4x4(&a[offset..], &b[offset..], stride, w);
         }
     }
-    #[cfg(target_arch = "aarch64")]
-    {
-        let token = NeonToken::summon().unwrap();
-        return tdisto_8x8_neon(token, a, b, stride, w);
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(token) = Wasm128Token::summon() {
-            return tdisto_8x8_wasm(token, a, b, stride, w);
-        }
-    }
-    #[allow(unreachable_code)]
-    {
-        let mut d = 0i32;
-        for y in 0..2 {
-            for x in 0..2 {
-                let offset = y * 4 * stride + x * 4;
-                d += tdisto_4x4(&a[offset..], &b[offset..], stride, w);
-            }
-        }
-        d
-    }
+    d
 }
 
 /// NEON variant: single dispatch for all 16 sub-blocks
@@ -348,25 +442,34 @@ fn tdisto_8x8_sse2(_token: X64V3Token, a: &[u8], b: &[u8], stride: usize, w: &[u
 /// * `stride` - Row stride of source buffer
 #[inline]
 pub fn is_flat_source_16(src: &[u8], stride: usize) -> bool {
-    #[cfg(target_arch = "x86_64")]
-    {
-        is_flat_source_16_dispatch(src, stride)
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        let token = NeonToken::summon().unwrap();
-        crate::common::simd_neon::is_flat_source_16_neon(token, src, stride)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(token) = Wasm128Token::summon() {
-            return crate::common::simd_wasm::is_flat_source_16_wasm_entry(token, src, stride);
-        }
-    }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64",)))]
-    {
-        is_flat_source_16_scalar(src, stride)
-    }
+    incant!(
+        is_flat_source_16_impl(src, stride),
+        [v3, neon, wasm128, scalar]
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn is_flat_source_16_impl_v3(token: X64V3Token, src: &[u8], stride: usize) -> bool {
+    is_flat_source_16_entry(token, src, stride)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn is_flat_source_16_impl_neon(token: NeonToken, src: &[u8], stride: usize) -> bool {
+    crate::common::simd_neon::is_flat_source_16_neon(token, src, stride)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn is_flat_source_16_impl_wasm128(token: Wasm128Token, src: &[u8], stride: usize) -> bool {
+    crate::common::simd_wasm::is_flat_source_16_wasm_entry(token, src, stride)
+}
+
+#[inline(always)]
+fn is_flat_source_16_impl_scalar(_token: ScalarToken, src: &[u8], stride: usize) -> bool {
+    is_flat_source_16_scalar(src, stride)
 }
 
 /// Scalar implementation of is_flat_source_16.
@@ -384,16 +487,7 @@ pub fn is_flat_source_16_scalar(src: &[u8], stride: usize) -> bool {
     true
 }
 
-/// SIMD dispatch for is_flat_source_16.
-#[cfg(target_arch = "x86_64")]
-#[inline]
-fn is_flat_source_16_dispatch(src: &[u8], stride: usize) -> bool {
-    if let Some(token) = X64V3Token::summon() {
-        is_flat_source_16_entry(token, src, stride)
-    } else {
-        is_flat_source_16_scalar(src, stride)
-    }
-}
+// is_flat_source_16_dispatch removed — replaced by incant!
 
 /// Entry shim for is_flat_source_16_sse2.
 #[arcane]
@@ -436,22 +530,55 @@ pub(crate) fn is_flat_source_16_sse2(_token: X64V3Token, src: &[u8], stride: usi
 /// Check if coefficients are "flat" (few non-zero AC coefficients).
 /// Returns true if total non-zero AC count <= thresh.
 #[inline]
-#[cfg(target_arch = "x86_64")]
 pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
-    if let Some(token) = X64V3Token::summon() {
-        is_flat_coeffs_entry(token, levels, num_blocks, thresh)
-    } else {
-        is_flat_coeffs_scalar(levels, num_blocks, thresh)
-    }
+    incant!(
+        is_flat_coeffs_dispatch(levels, num_blocks, thresh),
+        [v3, neon, wasm128, scalar]
+    )
 }
 
-/// Check if coefficients are "flat" (few non-zero AC coefficients).
-/// Returns true if total non-zero AC count <= thresh.
-#[inline]
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn is_flat_coeffs_dispatch_v3(
+    token: X64V3Token,
+    levels: &[i16],
+    num_blocks: usize,
+    thresh: i32,
+) -> bool {
+    is_flat_coeffs_entry(token, levels, num_blocks, thresh)
+}
+
 #[cfg(target_arch = "aarch64")]
-pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
-    let token = NeonToken::summon().unwrap();
+#[inline(always)]
+fn is_flat_coeffs_dispatch_neon(
+    token: NeonToken,
+    levels: &[i16],
+    num_blocks: usize,
+    thresh: i32,
+) -> bool {
     crate::common::simd_neon::is_flat_coeffs_neon(token, levels, num_blocks, thresh)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn is_flat_coeffs_dispatch_wasm128(
+    token: Wasm128Token,
+    levels: &[i16],
+    num_blocks: usize,
+    thresh: i32,
+) -> bool {
+    crate::common::simd_wasm::is_flat_coeffs_wasm_entry(token, levels, num_blocks, thresh)
+}
+
+#[inline(always)]
+fn is_flat_coeffs_dispatch_scalar(
+    _token: ScalarToken,
+    levels: &[i16],
+    num_blocks: usize,
+    thresh: i32,
+) -> bool {
+    is_flat_coeffs_scalar(levels, num_blocks, thresh)
 }
 
 /// Entry shim for is_flat_coeffs_sse2.
@@ -524,30 +651,7 @@ fn is_flat_coeffs_scalar(levels: &[i16], num_blocks: usize, thresh: i32) -> bool
     true
 }
 
-/// Check if coefficients are "flat" (few non-zero AC coefficients).
-/// Returns true if total non-zero AC count <= thresh.
-#[inline]
-#[cfg(target_arch = "wasm32")]
-pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
-    if let Some(token) = Wasm128Token::summon() {
-        return crate::common::simd_wasm::is_flat_coeffs_wasm_entry(
-            token, levels, num_blocks, thresh,
-        );
-    }
-    is_flat_coeffs_scalar(levels, num_blocks, thresh)
-}
-
-/// Check if coefficients are "flat" (few non-zero AC coefficients).
-/// Returns true if total non-zero AC count <= thresh.
-#[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "wasm32"
-)))]
-
-pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
-    is_flat_coeffs_scalar(levels, num_blocks, thresh)
-}
+// Platform-specific is_flat_coeffs removed — replaced by unified incant! dispatch above
 
 /// Flatness threshold for I16 mode (FLATNESS_LIMIT_I16 in libwebp)
 /// libwebp uses 0, which means "always check for flatness" in I16 mode

@@ -140,29 +140,62 @@ fn fill_rgba_row_simple<const BPP: usize>(
     rgba: &mut [u8],
 ) {
     // Use SIMD for RGB (BPP=3) if available and row is wide enough
-    #[cfg(target_arch = "x86_64")]
-    if BPP == 3 && y_vec.len() >= 8 && X64V3Token::summon().is_some() {
-        fill_rgba_row_simple_simd::<BPP>(y_vec, u_vec, v_vec, rgba);
+    if BPP == 3 && y_vec.len() >= 8 {
+        incant!(
+            fill_rgba_row_simple_dispatch(y_vec, u_vec, v_vec, rgba),
+            [v3, neon, wasm128, scalar]
+        );
         return;
     }
-
-    #[cfg(target_arch = "aarch64")]
-    if BPP == 3 && y_vec.len() >= 16 {
-        if let Some(token) = NeonToken::summon() {
-            yuv420_to_rgb_row_neon(token, y_vec, u_vec, v_vec, rgba);
-            return;
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    if BPP == 3 && y_vec.len() >= 16 {
-        if let Some(token) = Wasm128Token::summon() {
-            yuv420_to_rgb_row_wasm(token, y_vec, u_vec, v_vec, rgba);
-            return;
-        }
-    }
-
     fill_rgba_row_simple_scalar::<BPP>(y_vec, u_vec, v_vec, rgba);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn fill_rgba_row_simple_dispatch_v3(
+    _token: X64V3Token,
+    y_vec: &[u8],
+    u_vec: &[u8],
+    v_vec: &[u8],
+    rgba: &mut [u8],
+) {
+    fill_rgba_row_simple_simd::<3>(y_vec, u_vec, v_vec, rgba);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn fill_rgba_row_simple_dispatch_neon(
+    token: NeonToken,
+    y_vec: &[u8],
+    u_vec: &[u8],
+    v_vec: &[u8],
+    rgba: &mut [u8],
+) {
+    yuv420_to_rgb_row_neon(token, y_vec, u_vec, v_vec, rgba);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn fill_rgba_row_simple_dispatch_wasm128(
+    token: Wasm128Token,
+    y_vec: &[u8],
+    u_vec: &[u8],
+    v_vec: &[u8],
+    rgba: &mut [u8],
+) {
+    yuv420_to_rgb_row_wasm(token, y_vec, u_vec, v_vec, rgba);
+}
+
+#[inline(always)]
+fn fill_rgba_row_simple_dispatch_scalar(
+    _token: ScalarToken,
+    y_vec: &[u8],
+    u_vec: &[u8],
+    v_vec: &[u8],
+    rgba: &mut [u8],
+) {
+    fill_rgba_row_simple_scalar::<3>(y_vec, u_vec, v_vec, rgba);
 }
 
 #[cfg(target_arch = "x86_64")]

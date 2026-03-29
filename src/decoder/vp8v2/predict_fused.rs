@@ -19,6 +19,8 @@
 
 #![allow(clippy::too_many_arguments)]
 
+use archmage::prelude::*;
+
 use super::MbRowEntry;
 use crate::common::prediction::*;
 use crate::common::types::*;
@@ -50,90 +52,19 @@ pub(super) fn process_luma_mb(
 
     let nz = mb_entry.non_zero_blocks;
 
-    // Dispatch to SIMD pipeline when available
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        use archmage::{SimdToken, X64V3Token};
-        if let Some(token) = X64V3Token::summon() {
-            process_luma_mb_v3(
-                token,
-                ws,
-                coeff_blocks,
-                mb_entry.luma_mode,
-                &mb_entry.bpred,
-                nz,
-                mbx,
-                mby,
-            );
-            extract_luma_borders_and_copy_to_cache(
-                ws,
-                cache_y,
-                cache_y_stride,
-                extra_y_rows,
-                mbx,
-                top_border_y,
-                left_border_y,
-            );
-            return;
-        }
-    }
+    incant!(
+        process_luma_mb_dispatch(
+            ws,
+            coeff_blocks,
+            mb_entry.luma_mode,
+            &mb_entry.bpred,
+            nz,
+            mbx,
+            mby
+        ),
+        [v3, neon, wasm128, scalar]
+    );
 
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::{NeonToken, SimdToken};
-        if let Some(token) = NeonToken::summon() {
-            process_luma_mb_neon(
-                token,
-                ws,
-                coeff_blocks,
-                mb_entry.luma_mode,
-                &mb_entry.bpred,
-                nz,
-                mbx,
-                mby,
-            );
-            extract_luma_borders_and_copy_to_cache(
-                ws,
-                cache_y,
-                cache_y_stride,
-                extra_y_rows,
-                mbx,
-                top_border_y,
-                left_border_y,
-            );
-            return;
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        use archmage::{SimdToken, Wasm128Token};
-        if let Some(token) = Wasm128Token::summon() {
-            process_luma_mb_wasm(
-                token,
-                ws,
-                coeff_blocks,
-                mb_entry.luma_mode,
-                &mb_entry.bpred,
-                nz,
-                mbx,
-                mby,
-            );
-            extract_luma_borders_and_copy_to_cache(
-                ws,
-                cache_y,
-                cache_y_stride,
-                extra_y_rows,
-                mbx,
-                top_border_y,
-                left_border_y,
-            );
-            return;
-        }
-    }
-
-    // Scalar fallback
-    process_luma_mb_scalar(ws, coeff_blocks, mb_entry, nz, mbx, mby);
     extract_luma_borders_and_copy_to_cache(
         ws,
         cache_y,
@@ -172,117 +103,11 @@ pub(super) fn process_chroma_mb(
 
     let nz = mb_entry.non_zero_blocks;
 
-    // Dispatch to SIMD pipeline when available
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        use archmage::{SimdToken, X64V3Token};
-        if let Some(token) = X64V3Token::summon() {
-            process_chroma_predict_and_idct_v3(
-                token,
-                uws,
-                vws,
-                coeff_blocks,
-                mb_entry.chroma_mode,
-                nz,
-                mbx,
-                mby,
-            );
-            extract_chroma_borders_and_copy_to_cache(
-                uws,
-                cache_u,
-                cache_uv_stride,
-                extra_y_rows,
-                mbx,
-                top_border_u,
-                left_border_u,
-            );
-            extract_chroma_borders_and_copy_to_cache(
-                vws,
-                cache_v,
-                cache_uv_stride,
-                extra_y_rows,
-                mbx,
-                top_border_v,
-                left_border_v,
-            );
-            return;
-        }
-    }
+    incant!(
+        process_chroma_dispatch(uws, vws, coeff_blocks, mb_entry.chroma_mode, nz, mbx, mby),
+        [v3, neon, wasm128, scalar]
+    );
 
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::{NeonToken, SimdToken};
-        if let Some(token) = NeonToken::summon() {
-            process_chroma_predict_and_idct_neon(
-                token,
-                uws,
-                vws,
-                coeff_blocks,
-                mb_entry.chroma_mode,
-                nz,
-                mbx,
-                mby,
-            );
-            extract_chroma_borders_and_copy_to_cache(
-                uws,
-                cache_u,
-                cache_uv_stride,
-                extra_y_rows,
-                mbx,
-                top_border_u,
-                left_border_u,
-            );
-            extract_chroma_borders_and_copy_to_cache(
-                vws,
-                cache_v,
-                cache_uv_stride,
-                extra_y_rows,
-                mbx,
-                top_border_v,
-                left_border_v,
-            );
-            return;
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        use archmage::{SimdToken, Wasm128Token};
-        if let Some(token) = Wasm128Token::summon() {
-            process_chroma_predict_and_idct_wasm(
-                token,
-                uws,
-                vws,
-                coeff_blocks,
-                mb_entry.chroma_mode,
-                nz,
-                mbx,
-                mby,
-            );
-            extract_chroma_borders_and_copy_to_cache(
-                uws,
-                cache_u,
-                cache_uv_stride,
-                extra_y_rows,
-                mbx,
-                top_border_u,
-                left_border_u,
-            );
-            extract_chroma_borders_and_copy_to_cache(
-                vws,
-                cache_v,
-                cache_uv_stride,
-                extra_y_rows,
-                mbx,
-                top_border_v,
-                left_border_v,
-            );
-            return;
-        }
-    }
-
-    // Scalar fallback
-    process_chroma_mb_scalar(uws, vws, coeff_blocks, mb_entry, nz, mbx, mby);
     extract_chroma_borders_and_copy_to_cache(
         uws,
         cache_u,
@@ -304,11 +129,132 @@ pub(super) fn process_chroma_mb(
 }
 
 // =============================================================================
+// incant! dispatch wrappers
+// =============================================================================
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn process_luma_mb_dispatch_v3(
+    token: X64V3Token,
+    ws: &mut [u8; LUMA_BLOCK_SIZE],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
+    luma_mode: LumaMode,
+    bpred: &[IntraMode; 16],
+    nz: u32,
+    mbx: usize,
+    mby: usize,
+) {
+    process_luma_mb_v3(token, ws, coeff_blocks, luma_mode, bpred, nz, mbx, mby);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn process_luma_mb_dispatch_neon(
+    token: NeonToken,
+    ws: &mut [u8; LUMA_BLOCK_SIZE],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
+    luma_mode: LumaMode,
+    bpred: &[IntraMode; 16],
+    nz: u32,
+    mbx: usize,
+    mby: usize,
+) {
+    process_luma_mb_neon(token, ws, coeff_blocks, luma_mode, bpred, nz, mbx, mby);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn process_luma_mb_dispatch_wasm128(
+    token: Wasm128Token,
+    ws: &mut [u8; LUMA_BLOCK_SIZE],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
+    luma_mode: LumaMode,
+    bpred: &[IntraMode; 16],
+    nz: u32,
+    mbx: usize,
+    mby: usize,
+) {
+    process_luma_mb_wasm128(token, ws, coeff_blocks, luma_mode, bpred, nz, mbx, mby);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn process_chroma_dispatch_v3(
+    token: X64V3Token,
+    uws: &mut [u8; CHROMA_BLOCK_SIZE],
+    vws: &mut [u8; CHROMA_BLOCK_SIZE],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
+    chroma_mode: ChromaMode,
+    nz: u32,
+    mbx: usize,
+    mby: usize,
+) {
+    process_chroma_predict_and_idct_v3(token, uws, vws, coeff_blocks, chroma_mode, nz, mbx, mby);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn process_chroma_dispatch_neon(
+    token: NeonToken,
+    uws: &mut [u8; CHROMA_BLOCK_SIZE],
+    vws: &mut [u8; CHROMA_BLOCK_SIZE],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
+    chroma_mode: ChromaMode,
+    nz: u32,
+    mbx: usize,
+    mby: usize,
+) {
+    process_chroma_predict_and_idct_neon(token, uws, vws, coeff_blocks, chroma_mode, nz, mbx, mby);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn process_chroma_dispatch_wasm128(
+    token: Wasm128Token,
+    uws: &mut [u8; CHROMA_BLOCK_SIZE],
+    vws: &mut [u8; CHROMA_BLOCK_SIZE],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
+    chroma_mode: ChromaMode,
+    nz: u32,
+    mbx: usize,
+    mby: usize,
+) {
+    process_chroma_predict_and_idct_wasm128(
+        token,
+        uws,
+        vws,
+        coeff_blocks,
+        chroma_mode,
+        nz,
+        mbx,
+        mby,
+    );
+}
+
+#[cold]
+#[inline(never)]
+fn process_chroma_dispatch_scalar(
+    _token: ScalarToken,
+    uws: &mut [u8; CHROMA_BLOCK_SIZE],
+    vws: &mut [u8; CHROMA_BLOCK_SIZE],
+    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
+    chroma_mode: ChromaMode,
+    nz: u32,
+    mbx: usize,
+    mby: usize,
+) {
+    chroma_predict(uws, vws, chroma_mode, mbx, mby);
+    chroma_idct_scalar(uws, vws, coeff_blocks, nz);
+}
+
+// =============================================================================
 // x86_64 / x86: V3 (AVX2+FMA) pipeline
 // =============================================================================
 
 /// Luma prediction + IDCT within a single AVX2+FMA target_feature region.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
 fn process_luma_mb_v3(
     _token: archmage::X64V3Token,
@@ -325,7 +271,7 @@ fn process_luma_mb_v3(
 }
 
 /// Chroma prediction + IDCT within a single AVX2+FMA target_feature region.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
 fn process_chroma_predict_and_idct_v3(
     _token: archmage::X64V3Token,
@@ -342,7 +288,7 @@ fn process_chroma_predict_and_idct_v3(
 }
 
 /// Luma IDCT for x86 (rite — inlines into arcane callers).
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[archmage::rite]
 fn luma_idct_x86(
     _token: archmage::X64V3Token,
@@ -397,7 +343,7 @@ fn luma_idct_x86(
 }
 
 /// Chroma IDCT for x86 (rite).
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[archmage::rite]
 fn chroma_idct_x86(
     _token: archmage::X64V3Token,
@@ -569,7 +515,7 @@ fn chroma_idct_neon(
 
 #[cfg(target_arch = "wasm32")]
 #[archmage::arcane]
-fn process_luma_mb_wasm(
+fn process_luma_mb_wasm128(
     _token: archmage::Wasm128Token,
     ws: &mut [u8; LUMA_BLOCK_SIZE],
     coeff_blocks: &mut [i32; MB_COEFF_SIZE],
@@ -585,7 +531,7 @@ fn process_luma_mb_wasm(
 
 #[cfg(target_arch = "wasm32")]
 #[archmage::arcane]
-fn process_chroma_predict_and_idct_wasm(
+fn process_chroma_predict_and_idct_wasm128(
     _token: archmage::Wasm128Token,
     uws: &mut [u8; CHROMA_BLOCK_SIZE],
     vws: &mut [u8; CHROMA_BLOCK_SIZE],
@@ -768,36 +714,24 @@ fn chroma_idct_scalar(
 // Scalar fallback (no SIMD at all)
 // =============================================================================
 
-/// Full scalar luma path: predict + IDCT.
+/// Scalar dispatch wrapper for luma predict + IDCT.
 #[cold]
 #[inline(never)]
-fn process_luma_mb_scalar(
+fn process_luma_mb_dispatch_scalar(
+    _token: ScalarToken,
     ws: &mut [u8; LUMA_BLOCK_SIZE],
     coeff_blocks: &mut [i32; MB_COEFF_SIZE],
-    mb_entry: &MbRowEntry,
+    luma_mode: LumaMode,
+    bpred: &[IntraMode; 16],
     nz: u32,
     mbx: usize,
     mby: usize,
 ) {
-    luma_predict(ws, mb_entry.luma_mode, &mb_entry.bpred, mbx, mby);
-    luma_idct_scalar(ws, coeff_blocks, mb_entry.luma_mode, &mb_entry.bpred, nz);
+    luma_predict(ws, luma_mode, bpred, mbx, mby);
+    luma_idct_scalar(ws, coeff_blocks, luma_mode, bpred, nz);
 }
 
-/// Full scalar chroma path: predict + IDCT.
-#[cold]
-#[inline(never)]
-fn process_chroma_mb_scalar(
-    uws: &mut [u8; CHROMA_BLOCK_SIZE],
-    vws: &mut [u8; CHROMA_BLOCK_SIZE],
-    coeff_blocks: &mut [i32; MB_COEFF_SIZE],
-    mb_entry: &MbRowEntry,
-    nz: u32,
-    mbx: usize,
-    mby: usize,
-) {
-    chroma_predict(uws, vws, mb_entry.chroma_mode, mbx, mby);
-    chroma_idct_scalar(uws, vws, coeff_blocks, nz);
-}
+// process_chroma_mb_scalar removed — replaced by process_chroma_dispatch_scalar above
 
 // =============================================================================
 // Border extraction + cache copy

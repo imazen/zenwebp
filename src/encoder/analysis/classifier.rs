@@ -141,18 +141,46 @@ pub fn classify_image_type_diag(
 /// Compute edge density by scanning the Y plane for sharp horizontal transitions.
 /// Returns fraction of sampled pixels that are sharp edges (0.0 to 1.0).
 fn compute_edge_density(y_src: &[u8], width: usize, height: usize, y_stride: usize) -> f32 {
-    #[cfg(target_arch = "x86_64")]
-    {
-        compute_edge_density_dispatch(y_src, width, height, y_stride)
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        compute_edge_density_neon_dispatch(y_src, width, height, y_stride)
-    }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    {
-        compute_edge_density_scalar(y_src, width, height, y_stride)
-    }
+    incant!(
+        compute_edge_density_impl(y_src, width, height, y_stride),
+        [v3, neon, scalar]
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn compute_edge_density_impl_v3(
+    token: X64V3Token,
+    y_src: &[u8],
+    width: usize,
+    height: usize,
+    y_stride: usize,
+) -> f32 {
+    compute_edge_density_sse2(token, y_src, width, height, y_stride)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn compute_edge_density_impl_neon(
+    token: NeonToken,
+    y_src: &[u8],
+    width: usize,
+    height: usize,
+    y_stride: usize,
+) -> f32 {
+    compute_edge_density_neon(token, y_src, width, height, y_stride)
+}
+
+#[inline(always)]
+fn compute_edge_density_impl_scalar(
+    _token: ScalarToken,
+    y_src: &[u8],
+    width: usize,
+    height: usize,
+    y_stride: usize,
+) -> f32 {
+    compute_edge_density_scalar(y_src, width, height, y_stride)
 }
 
 /// Scalar implementation of edge density computation.
@@ -184,21 +212,7 @@ fn compute_edge_density_scalar(y_src: &[u8], width: usize, height: usize, y_stri
     edge_count as f32 / sample_count as f32
 }
 
-/// SIMD dispatch for edge density.
-#[cfg(target_arch = "x86_64")]
-#[inline]
-fn compute_edge_density_dispatch(
-    y_src: &[u8],
-    width: usize,
-    height: usize,
-    y_stride: usize,
-) -> f32 {
-    if let Some(token) = X64V3Token::summon() {
-        compute_edge_density_sse2(token, y_src, width, height, y_stride)
-    } else {
-        compute_edge_density_scalar(y_src, width, height, y_stride)
-    }
-}
+// compute_edge_density_dispatch removed — replaced by incant! in compute_edge_density
 
 /// SSE2 edge density: Process 16 pixels at a time.
 #[cfg(target_arch = "x86_64")]
@@ -276,18 +290,7 @@ fn compute_edge_density_sse2(
 // NEON (aarch64) edge density
 // =============================================================================
 
-/// NEON dispatch for edge density.
-#[cfg(target_arch = "aarch64")]
-#[inline]
-fn compute_edge_density_neon_dispatch(
-    y_src: &[u8],
-    width: usize,
-    height: usize,
-    y_stride: usize,
-) -> f32 {
-    let token = NeonToken::summon().unwrap();
-    compute_edge_density_neon(token, y_src, width, height, y_stride)
-}
+// compute_edge_density_neon_dispatch removed — replaced by incant! in compute_edge_density
 
 /// NEON edge density: Process 16 pixels at a time.
 #[cfg(target_arch = "aarch64")]

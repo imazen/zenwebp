@@ -114,37 +114,75 @@ pub fn collect_histogram_with_offset(
     start_block: usize,
     end_block: usize,
 ) -> DctHistogram {
-    #[cfg(target_arch = "x86_64")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::X64V3Token::summon() {
-            return collect_histogram_with_offset_sse2(
-                token,
-                src_buf,
-                src_base,
-                pred_buf,
-                pred_base,
-                start_block,
-                end_block,
-            );
-        }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::NeonToken::summon() {
-            return collect_histogram_with_offset_neon(
-                token,
-                src_buf,
-                src_base,
-                pred_buf,
-                pred_base,
-                start_block,
-                end_block,
-            );
-        }
-    }
-    #[allow(unreachable_code)]
+    use archmage::prelude::*;
+    incant!(
+        collect_histogram_dispatch(
+            src_buf,
+            src_base,
+            pred_buf,
+            pred_base,
+            start_block,
+            end_block
+        ),
+        [v3, neon, scalar]
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn collect_histogram_dispatch_v3(
+    token: archmage::X64V3Token,
+    src_buf: &[u8],
+    src_base: usize,
+    pred_buf: &[u8],
+    pred_base: usize,
+    start_block: usize,
+    end_block: usize,
+) -> DctHistogram {
+    collect_histogram_with_offset_sse2(
+        token,
+        src_buf,
+        src_base,
+        pred_buf,
+        pred_base,
+        start_block,
+        end_block,
+    )
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn collect_histogram_dispatch_neon(
+    token: archmage::NeonToken,
+    src_buf: &[u8],
+    src_base: usize,
+    pred_buf: &[u8],
+    pred_base: usize,
+    start_block: usize,
+    end_block: usize,
+) -> DctHistogram {
+    collect_histogram_with_offset_neon(
+        token,
+        src_buf,
+        src_base,
+        pred_buf,
+        pred_base,
+        start_block,
+        end_block,
+    )
+}
+
+#[inline(always)]
+fn collect_histogram_dispatch_scalar(
+    _token: archmage::ScalarToken,
+    src_buf: &[u8],
+    src_base: usize,
+    pred_buf: &[u8],
+    pred_base: usize,
+    start_block: usize,
+    end_block: usize,
+) -> DctHistogram {
     collect_histogram_with_offset_scalar(
         src_buf,
         src_base,

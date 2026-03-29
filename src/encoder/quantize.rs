@@ -20,7 +20,7 @@ use super::tables::{MAX_LEVEL, VP8_FREQ_SHARPENING};
 // Fixed-size array splitting helpers (zero-cost, all checks elided at compile time)
 
 /// Split `&[T; 16]` into four `&[T; 4]` without runtime bounds checks.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn split4_ref<T>(arr: &[T; 16]) -> (&[T; 4], &[T; 4], &[T; 4], &[T; 4]) {
     let (a, rest) = arr.split_first_chunk::<4>().unwrap();
@@ -33,7 +33,7 @@ fn split4_ref<T>(arr: &[T; 16]) -> (&[T; 4], &[T; 4], &[T; 4], &[T; 4]) {
 }
 
 /// Split `&mut [T; 16]` into four `&mut [T; 4]` without runtime bounds checks.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn split4_mut<T>(arr: &mut [T; 16]) -> (&mut [T; 4], &mut [T; 4], &mut [T; 4], &mut [T; 4]) {
     let (a, rest) = arr.split_first_chunk_mut::<4>().unwrap();
@@ -46,7 +46,7 @@ fn split4_mut<T>(arr: &mut [T; 16]) -> (&mut [T; 4], &mut [T; 4], &mut [T; 4], &
 }
 
 /// Split `&[T; 16]` into two `&[T; 8]` without runtime bounds checks.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn split2_ref<T>(arr: &[T; 16]) -> (&[T; 8], &[T; 8]) {
     let (a, b) = arr.split_first_chunk::<8>().unwrap();
@@ -216,30 +216,10 @@ impl VP8Matrix {
     /// Dequantize an entire 4x4 block of coefficients in place
     #[inline(always)]
     pub fn dequantize_block(&self, coeffs: &mut [i32; 16]) {
-        #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-        {
-            if let Some(token) = X64V3Token::summon() {
-                dequantize_block_entry(token, &self.q, coeffs);
-                return;
-            }
-        }
-        #[cfg(target_arch = "aarch64")]
-        {
-            let token = NeonToken::summon().unwrap();
-            crate::common::simd_neon::dequantize_block_neon(token, &self.q, coeffs);
-            return;
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            if let Some(token) = Wasm128Token::summon() {
-                crate::common::simd_wasm::dequantize_block_wasm_entry(token, &self.q, coeffs);
-                return;
-            }
-        }
-        #[allow(unreachable_code)]
-        for (pos, coeff) in coeffs.iter_mut().enumerate() {
-            *coeff *= self.q[pos] as i32;
-        }
+        incant!(
+            dequantize_block_dispatch(&self.q, coeffs),
+            [v3, neon, wasm128, scalar]
+        );
     }
 
     /// Dequantize only AC coefficients (positions 1-15) in place
@@ -251,16 +231,38 @@ impl VP8Matrix {
     }
 }
 
-/// Entry shim for dequantize_block_sse2
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+/// V3 tier for dequantize_block dispatch.
+#[cfg(target_arch = "x86_64")]
 #[arcane]
-fn dequantize_block_entry(_token: X64V3Token, q: &[u16; 16], coeffs: &mut [i32; 16]) {
+fn dequantize_block_dispatch_v3(_token: X64V3Token, q: &[u16; 16], coeffs: &mut [i32; 16]) {
     dequantize_block_sse2(_token, q, coeffs);
+}
+
+/// NEON tier for dequantize_block dispatch.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn dequantize_block_dispatch_neon(token: NeonToken, q: &[u16; 16], coeffs: &mut [i32; 16]) {
+    crate::common::simd_neon::dequantize_block_neon(token, q, coeffs);
+}
+
+/// WASM tier for dequantize_block dispatch.
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn dequantize_block_dispatch_wasm128(token: Wasm128Token, q: &[u16; 16], coeffs: &mut [i32; 16]) {
+    crate::common::simd_wasm::dequantize_block_wasm_entry(token, q, coeffs);
+}
+
+/// Scalar tier for dequantize_block dispatch.
+#[inline(always)]
+fn dequantize_block_dispatch_scalar(_token: ScalarToken, q: &[u16; 16], coeffs: &mut [i32; 16]) {
+    for (pos, coeff) in coeffs.iter_mut().enumerate() {
+        *coeff *= q[pos] as i32;
+    }
 }
 
 /// SIMD dequantization using SSE2
 /// Multiplies each coefficient by its quantizer step.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 pub(crate) fn dequantize_block_sse2(_token: X64V3Token, q: &[u16; 16], coeffs: &mut [i32; 16]) {
     // Load quantizers as u16, zero-extend to i32
@@ -331,55 +333,16 @@ pub enum MatrixType {
 
 /// SIMD-optimized quantization of a 4x4 block.
 /// Returns true if any coefficient is non-zero.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, use_sharpen: bool) -> bool {
-    if let Some(token) = X64V3Token::summon() {
-        quantize_block_entry(token, coeffs, matrix, use_sharpen)
-    } else {
-        matrix.quantize(coeffs);
-        coeffs.iter().any(|&c| c != 0)
-    }
+    incant!(
+        quantize_block_dispatch(coeffs, matrix, use_sharpen),
+        [v3, neon, wasm128, scalar]
+    )
 }
 
-/// NEON-optimized quantization
-#[cfg(target_arch = "aarch64")]
-pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, use_sharpen: bool) -> bool {
-    let token = NeonToken::summon().unwrap();
-    crate::common::simd_neon::quantize_block_neon(token, coeffs, matrix, use_sharpen)
-}
-
-/// WASM SIMD128-optimized quantization
-#[cfg(target_arch = "wasm32")]
-pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, use_sharpen: bool) -> bool {
-    if let Some(token) = Wasm128Token::summon() {
-        return crate::common::simd_wasm::quantize_block_wasm_entry(
-            token,
-            coeffs,
-            matrix,
-            use_sharpen,
-        );
-    }
-    matrix.quantize(coeffs);
-    coeffs.iter().any(|&c| c != 0)
-}
-
-/// Scalar fallback for non-SIMD platforms
-#[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "x86",
-    target_arch = "aarch64",
-    target_arch = "wasm32"
-)))]
-
-pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, _use_sharpen: bool) -> bool {
-    matrix.quantize(coeffs);
-    coeffs.iter().any(|&c| c != 0)
-}
-
-/// Entry shim for quantize_block_sse2
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
-fn quantize_block_entry(
+fn quantize_block_dispatch_v3(
     _token: X64V3Token,
     coeffs: &mut [i32; 16],
     matrix: &VP8Matrix,
@@ -388,9 +351,42 @@ fn quantize_block_entry(
     quantize_block_sse2(_token, coeffs, matrix, use_sharpen)
 }
 
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn quantize_block_dispatch_neon(
+    token: NeonToken,
+    coeffs: &mut [i32; 16],
+    matrix: &VP8Matrix,
+    use_sharpen: bool,
+) -> bool {
+    crate::common::simd_neon::quantize_block_neon(token, coeffs, matrix, use_sharpen)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn quantize_block_dispatch_wasm128(
+    token: Wasm128Token,
+    coeffs: &mut [i32; 16],
+    matrix: &VP8Matrix,
+    use_sharpen: bool,
+) -> bool {
+    crate::common::simd_wasm::quantize_block_wasm_entry(token, coeffs, matrix, use_sharpen)
+}
+
+#[inline(always)]
+fn quantize_block_dispatch_scalar(
+    _token: ScalarToken,
+    coeffs: &mut [i32; 16],
+    matrix: &VP8Matrix,
+    _use_sharpen: bool,
+) -> bool {
+    matrix.quantize(coeffs);
+    coeffs.iter().any(|&c| c != 0)
+}
+
 /// SSE2 implementation of block quantization.
 /// Matches libwebp's DoQuantizeBlock_SSE2 algorithm.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 pub(crate) fn quantize_block_sse2(
     _token: X64V3Token,
@@ -533,7 +529,7 @@ pub(crate) fn quantize_block_sse2(
 
 /// SIMD-optimized AC-only quantization of a 4x4 block (DC at pos 0 unchanged).
 /// Returns true if any AC coefficient is non-zero.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 pub fn quantize_ac_only_simd(
     coeffs: &mut [i32; 16],
     matrix: &VP8Matrix,
@@ -572,14 +568,12 @@ pub fn quantize_ac_only_simd(
     coeffs[1..].iter().any(|&c| c != 0) || has_nz
 }
 
-/// Scalar fallback for non-SIMD platforms
+/// Scalar fallback for non-SIMD platforms (including i686)
 #[cfg(not(any(
     target_arch = "x86_64",
-    target_arch = "x86",
     target_arch = "aarch64",
     target_arch = "wasm32"
 )))]
-
 pub fn quantize_ac_only_simd(
     coeffs: &mut [i32; 16],
     matrix: &VP8Matrix,
@@ -599,7 +593,6 @@ pub fn quantize_ac_only_simd(
 ///
 /// This matches libwebp's DoQuantizeBlock_SSE2 dual-output pattern where
 /// dequantized values are computed immediately after quantization.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 pub fn quantize_dequantize_block_simd(
     coeffs: &[i32; 16],
     matrix: &VP8Matrix,
@@ -607,71 +600,10 @@ pub fn quantize_dequantize_block_simd(
     quantized: &mut [i32; 16],
     dequantized: &mut [i32; 16],
 ) -> bool {
-    if let Some(token) = X64V3Token::summon() {
-        quantize_dequantize_block_entry(token, coeffs, matrix, use_sharpen, quantized, dequantized)
-    } else {
-        quantize_dequantize_block_scalar(coeffs, matrix, quantized, dequantized)
-    }
-}
-
-/// NEON fused quantize+dequantize
-#[cfg(target_arch = "aarch64")]
-pub fn quantize_dequantize_block_simd(
-    coeffs: &[i32; 16],
-    matrix: &VP8Matrix,
-    use_sharpen: bool,
-    quantized: &mut [i32; 16],
-    dequantized: &mut [i32; 16],
-) -> bool {
-    let token = NeonToken::summon().unwrap();
-    crate::common::simd_neon::quantize_dequantize_block_neon(
-        token,
-        coeffs,
-        matrix,
-        use_sharpen,
-        quantized,
-        dequantized,
+    incant!(
+        quantize_dequantize_block_dispatch(coeffs, matrix, use_sharpen, quantized, dequantized),
+        [v3, neon, wasm128, scalar]
     )
-}
-
-/// WASM SIMD128 fused quantize+dequantize
-#[cfg(target_arch = "wasm32")]
-pub fn quantize_dequantize_block_simd(
-    coeffs: &[i32; 16],
-    matrix: &VP8Matrix,
-    use_sharpen: bool,
-    quantized: &mut [i32; 16],
-    dequantized: &mut [i32; 16],
-) -> bool {
-    if let Some(token) = Wasm128Token::summon() {
-        return crate::common::simd_wasm::quantize_dequantize_block_wasm_entry(
-            token,
-            coeffs,
-            matrix,
-            use_sharpen,
-            quantized,
-            dequantized,
-        );
-    }
-    quantize_dequantize_block_scalar(coeffs, matrix, quantized, dequantized)
-}
-
-/// Scalar fallback for non-SIMD platforms
-#[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "x86",
-    target_arch = "aarch64",
-    target_arch = "wasm32"
-)))]
-
-pub fn quantize_dequantize_block_simd(
-    coeffs: &[i32; 16],
-    matrix: &VP8Matrix,
-    _use_sharpen: bool,
-    quantized: &mut [i32; 16],
-    dequantized: &mut [i32; 16],
-) -> bool {
-    quantize_dequantize_block_scalar(coeffs, matrix, quantized, dequantized)
 }
 
 /// Scalar implementation of fused quantize+dequantize
@@ -692,10 +624,10 @@ pub(crate) fn quantize_dequantize_block_scalar(
     has_nz
 }
 
-/// Entry shim for quantize_dequantize_block_sse2
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+/// V3 tier for quantize_dequantize_block dispatch.
+#[cfg(target_arch = "x86_64")]
 #[arcane]
-fn quantize_dequantize_block_entry(
+fn quantize_dequantize_block_dispatch_v3(
     _token: X64V3Token,
     coeffs: &[i32; 16],
     matrix: &VP8Matrix,
@@ -706,9 +638,64 @@ fn quantize_dequantize_block_entry(
     quantize_dequantize_block_sse2(_token, coeffs, matrix, use_sharpen, quantized, dequantized)
 }
 
+/// NEON tier for quantize_dequantize_block dispatch.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn quantize_dequantize_block_dispatch_neon(
+    token: NeonToken,
+    coeffs: &[i32; 16],
+    matrix: &VP8Matrix,
+    use_sharpen: bool,
+    quantized: &mut [i32; 16],
+    dequantized: &mut [i32; 16],
+) -> bool {
+    crate::common::simd_neon::quantize_dequantize_block_neon(
+        token,
+        coeffs,
+        matrix,
+        use_sharpen,
+        quantized,
+        dequantized,
+    )
+}
+
+/// WASM tier for quantize_dequantize_block dispatch.
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn quantize_dequantize_block_dispatch_wasm128(
+    token: Wasm128Token,
+    coeffs: &[i32; 16],
+    matrix: &VP8Matrix,
+    use_sharpen: bool,
+    quantized: &mut [i32; 16],
+    dequantized: &mut [i32; 16],
+) -> bool {
+    crate::common::simd_wasm::quantize_dequantize_block_wasm_entry(
+        token,
+        coeffs,
+        matrix,
+        use_sharpen,
+        quantized,
+        dequantized,
+    )
+}
+
+/// Scalar tier for quantize_dequantize_block dispatch.
+#[inline(always)]
+fn quantize_dequantize_block_dispatch_scalar(
+    _token: ScalarToken,
+    coeffs: &[i32; 16],
+    matrix: &VP8Matrix,
+    _use_sharpen: bool,
+    quantized: &mut [i32; 16],
+    dequantized: &mut [i32; 16],
+) -> bool {
+    quantize_dequantize_block_scalar(coeffs, matrix, quantized, dequantized)
+}
+
 /// SSE2 fused quantize+dequantize.
 /// Quantizes coefficients, then immediately multiplies by q to get dequantized values.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 pub(crate) fn quantize_dequantize_block_sse2(
     _token: X64V3Token,
@@ -856,7 +843,7 @@ pub(crate) fn quantize_dequantize_block_sse2(
 
 /// Fused quantize+dequantize for AC-only (preserves DC at position 0).
 /// Used for Y1 blocks in I16 mode where DC goes to Y2 block.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 pub fn quantize_dequantize_ac_only_simd(
     coeffs: &[i32; 16],
     matrix: &VP8Matrix,

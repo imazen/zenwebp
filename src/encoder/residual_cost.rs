@@ -88,58 +88,58 @@ impl<'a> Residual<'a> {
 ///
 /// # Returns
 /// Cost in 1/256 bit units
+#[inline]
+pub fn get_residual_cost(
+    ctx0: usize,
+    res: &Residual,
+    costs: &LevelCosts,
+    probs: &TokenProbTables,
+) -> u32 {
+    incant!(
+        get_residual_cost_dispatch(ctx0, res, costs, probs),
+        [v3, neon, wasm128, scalar]
+    )
+}
+
 #[cfg(target_arch = "x86_64")]
-#[inline]
-pub fn get_residual_cost(
+#[inline(always)]
+fn get_residual_cost_dispatch_v3(
+    token: X64V3Token,
     ctx0: usize,
     res: &Residual,
     costs: &LevelCosts,
     probs: &TokenProbTables,
 ) -> u32 {
-    if let Some(token) = X64V3Token::summon() {
-        get_residual_cost_entry(token, ctx0, res, costs, probs)
-    } else {
-        get_residual_cost_scalar(ctx0, res, costs, probs)
-    }
+    get_residual_cost_entry(token, ctx0, res, costs, probs)
 }
 
-/// WASM SIMD128 dispatch for residual cost calculation.
-#[cfg(target_arch = "wasm32")]
-#[inline]
-pub fn get_residual_cost(
-    ctx0: usize,
-    res: &Residual,
-    costs: &LevelCosts,
-    probs: &TokenProbTables,
-) -> u32 {
-    if let Some(token) = Wasm128Token::summon() {
-        return get_residual_cost_wasm_entry(token, ctx0, res, costs, probs);
-    }
-    get_residual_cost_scalar(ctx0, res, costs, probs)
-}
-
-/// NEON dispatch for residual cost calculation.
 #[cfg(target_arch = "aarch64")]
-#[inline]
-pub fn get_residual_cost(
+#[inline(always)]
+fn get_residual_cost_dispatch_neon(
+    token: NeonToken,
     ctx0: usize,
     res: &Residual,
     costs: &LevelCosts,
     probs: &TokenProbTables,
 ) -> u32 {
-    let token = NeonToken::summon().unwrap();
     get_residual_cost_neon_entry(token, ctx0, res, costs, probs)
 }
 
-/// Calculate the cost of encoding a residual block using probability-based costs.
-/// Scalar fallback for non-SIMD platforms.
-#[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "wasm32",
-    target_arch = "aarch64"
-)))]
-#[inline]
-pub fn get_residual_cost(
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn get_residual_cost_dispatch_wasm128(
+    token: Wasm128Token,
+    ctx0: usize,
+    res: &Residual,
+    costs: &LevelCosts,
+    probs: &TokenProbTables,
+) -> u32 {
+    get_residual_cost_wasm_entry(token, ctx0, res, costs, probs)
+}
+
+#[inline(always)]
+fn get_residual_cost_dispatch_scalar(
+    _token: ScalarToken,
     ctx0: usize,
     res: &Residual,
     costs: &LevelCosts,

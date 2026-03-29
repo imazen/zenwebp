@@ -10,6 +10,8 @@
 
 #![allow(clippy::too_many_arguments)]
 
+use archmage::prelude::*;
+
 use super::MbRowEntry;
 use crate::common::prediction::*;
 use crate::common::types::*;
@@ -34,67 +36,120 @@ pub(super) fn filter_mb_row(
     mby: usize,
     mb_filter_params: &[MbFilterParams],
 ) {
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        use archmage::{SimdToken, X64V3Token};
-        if let Some(token) = X64V3Token::summon() {
-            loop_filter::filter_row_simd(
-                token,
-                cache_y,
-                cache_u,
-                cache_v,
-                cache_y_stride,
-                cache_uv_stride,
-                extra_y_rows,
-                filter_type,
-                mby,
-                mb_filter_params,
-            );
-            return;
-        }
-    }
+    incant!(
+        filter_mb_row_dispatch(
+            cache_y,
+            cache_u,
+            cache_v,
+            cache_y_stride,
+            cache_uv_stride,
+            extra_y_rows,
+            filter_type,
+            mby,
+            mb_filter_params
+        ),
+        [v3, neon, wasm128, scalar]
+    );
+}
 
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::{NeonToken, SimdToken};
-        if let Some(token) = NeonToken::summon() {
-            loop_filter::filter_row_simd(
-                token,
-                cache_y,
-                cache_u,
-                cache_v,
-                cache_y_stride,
-                cache_uv_stride,
-                extra_y_rows,
-                filter_type,
-                mby,
-                mb_filter_params,
-            );
-            return;
-        }
-    }
+#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn filter_mb_row_dispatch_v3(
+    token: X64V3Token,
+    cache_y: &mut [u8],
+    cache_u: &mut [u8],
+    cache_v: &mut [u8],
+    cache_y_stride: usize,
+    cache_uv_stride: usize,
+    extra_y_rows: usize,
+    filter_type: bool,
+    mby: usize,
+    mb_filter_params: &[MbFilterParams],
+) {
+    loop_filter::filter_row_simd(
+        token,
+        cache_y,
+        cache_u,
+        cache_v,
+        cache_y_stride,
+        cache_uv_stride,
+        extra_y_rows,
+        filter_type,
+        mby,
+        mb_filter_params,
+    );
+}
 
-    #[cfg(target_arch = "wasm32")]
-    {
-        use archmage::{SimdToken, Wasm128Token};
-        if let Some(token) = Wasm128Token::summon() {
-            loop_filter::filter_row_simd(
-                token,
-                cache_y,
-                cache_u,
-                cache_v,
-                cache_y_stride,
-                cache_uv_stride,
-                extra_y_rows,
-                filter_type,
-                mby,
-                mb_filter_params,
-            );
-            return;
-        }
-    }
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn filter_mb_row_dispatch_neon(
+    token: NeonToken,
+    cache_y: &mut [u8],
+    cache_u: &mut [u8],
+    cache_v: &mut [u8],
+    cache_y_stride: usize,
+    cache_uv_stride: usize,
+    extra_y_rows: usize,
+    filter_type: bool,
+    mby: usize,
+    mb_filter_params: &[MbFilterParams],
+) {
+    loop_filter::filter_row_simd(
+        token,
+        cache_y,
+        cache_u,
+        cache_v,
+        cache_y_stride,
+        cache_uv_stride,
+        extra_y_rows,
+        filter_type,
+        mby,
+        mb_filter_params,
+    );
+}
 
-    // Scalar fallback
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn filter_mb_row_dispatch_wasm128(
+    token: Wasm128Token,
+    cache_y: &mut [u8],
+    cache_u: &mut [u8],
+    cache_v: &mut [u8],
+    cache_y_stride: usize,
+    cache_uv_stride: usize,
+    extra_y_rows: usize,
+    filter_type: bool,
+    mby: usize,
+    mb_filter_params: &[MbFilterParams],
+) {
+    loop_filter::filter_row_simd(
+        token,
+        cache_y,
+        cache_u,
+        cache_v,
+        cache_y_stride,
+        cache_uv_stride,
+        extra_y_rows,
+        filter_type,
+        mby,
+        mb_filter_params,
+    );
+}
+
+#[inline(always)]
+fn filter_mb_row_dispatch_scalar(
+    _token: ScalarToken,
+    cache_y: &mut [u8],
+    cache_u: &mut [u8],
+    cache_v: &mut [u8],
+    cache_y_stride: usize,
+    cache_uv_stride: usize,
+    extra_y_rows: usize,
+    filter_type: bool,
+    mby: usize,
+    mb_filter_params: &[MbFilterParams],
+) {
     filter_row_scalar(
         cache_y,
         cache_u,
@@ -142,7 +197,7 @@ fn process_mb_row(
     mbwidth: usize,
     filter_type: bool,
 ) {
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    #[cfg(target_arch = "x86_64")]
     {
         use archmage::{SimdToken, X64V3Token};
         if let Some(token) = X64V3Token::summon() {
@@ -277,7 +332,7 @@ fn process_mb_row(
 // x86_64: AVX2+FMA pipeline — single #[arcane] for predict+IDCT
 // =============================================================================
 
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
 fn process_mb_row_v3(
     _token: archmage::X64V3Token,
@@ -722,7 +777,7 @@ fn bpred_dispatch_inner(
 // IDCT functions (architecture-specific)
 // =============================================================================
 
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[archmage::rite]
 fn luma_idct_x86(
     _token: archmage::X64V3Token,
@@ -767,7 +822,7 @@ fn luma_idct_x86(
     }
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[archmage::rite]
 fn chroma_idct_x86(
     _token: archmage::X64V3Token,

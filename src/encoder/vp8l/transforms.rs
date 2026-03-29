@@ -94,18 +94,11 @@ impl PredictorMode {
 /// On x86/x86_64 with SIMD, processes 4 pixels at a time with SSE2,
 /// matching libwebp's SubtractGreenFromBlueAndRed_SSE2.
 pub fn apply_subtract_green(pixels: &mut [u32]) {
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        if let Some(token) = Sse2Token::summon() {
-            apply_subtract_green_sse2_entry(token, pixels);
-            return;
-        }
-    }
-    apply_subtract_green_scalar(pixels);
+    incant!(apply_subtract_green_impl(pixels), [v1, scalar]);
 }
 
 /// Scalar fallback for subtract green.
-fn apply_subtract_green_scalar(pixels: &mut [u32]) {
+fn apply_subtract_green_impl_scalar(_token: ScalarToken, pixels: &mut [u32]) {
     for pixel in pixels.iter_mut() {
         let a = argb_alpha(*pixel);
         let r = argb_red(*pixel);
@@ -120,9 +113,9 @@ fn apply_subtract_green_scalar(pixels: &mut [u32]) {
 }
 
 /// Entry point for SSE2 subtract green.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
-fn apply_subtract_green_sse2_entry(_token: Sse2Token, pixels: &mut [u32]) {
+fn apply_subtract_green_impl_v1(_token: X64V1Token, pixels: &mut [u32]) {
     apply_subtract_green_sse2(_token, pixels);
 }
 
@@ -131,9 +124,9 @@ fn apply_subtract_green_sse2_entry(_token: Sse2Token, pixels: &mut [u32]) {
 /// For each pixel (ARGB packed as u32):
 ///   R -= G (wrapping), B -= G (wrapping), A and G unchanged.
 /// Processes 4 pixels per SSE2 iteration.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
-fn apply_subtract_green_sse2(_token: Sse2Token, pixels: &mut [u32]) {
+fn apply_subtract_green_sse2(_token: X64V1Token, pixels: &mut [u32]) {
     let len = pixels.len();
     let simd_len = len & !3; // Round down to multiple of 4
 
@@ -607,17 +600,15 @@ fn fast_slog2(v: u32) -> u64 {
 /// entries in bulk (16 at a time via pack+movemask), matching libwebp's
 /// CombinedShannonEntropy_SSE2.
 fn combined_shannon_entropy(x: &[u32; 256], y: &[u32; 256]) -> u64 {
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        if let Some(token) = Sse2Token::summon() {
-            return combined_shannon_entropy_entry(token, x, y);
-        }
-    }
-    combined_shannon_entropy_scalar(x, y)
+    incant!(combined_shannon_entropy_impl(x, y), [v1, scalar])
 }
 
 /// Scalar fallback for combined_shannon_entropy.
-fn combined_shannon_entropy_scalar(x: &[u32; 256], y: &[u32; 256]) -> u64 {
+fn combined_shannon_entropy_impl_scalar(
+    _token: ScalarToken,
+    x: &[u32; 256],
+    y: &[u32; 256],
+) -> u64 {
     let mut retval: u64 = 0;
     let mut sum_x: u32 = 0;
     let mut sum_xy: u32 = 0;
@@ -638,9 +629,9 @@ fn combined_shannon_entropy_scalar(x: &[u32; 256], y: &[u32; 256]) -> u64 {
 }
 
 /// Entry point for SSE2 combined Shannon entropy (adds #[target_feature]).
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
-fn combined_shannon_entropy_entry(_token: Sse2Token, x: &[u32; 256], y: &[u32; 256]) -> u64 {
+fn combined_shannon_entropy_impl_v1(_token: X64V1Token, x: &[u32; 256], y: &[u32; 256]) -> u64 {
     combined_shannon_entropy_sse2(_token, x, y)
 }
 
@@ -650,9 +641,9 @@ fn combined_shannon_entropy_entry(_token: Sse2Token, x: &[u32; 256], y: &[u32; 2
 /// (i32->i16->i8), then uses cmpgt+movemask to create a bitmask of nonzero
 /// positions. Iterates only nonzero entries using trailing_zeros().
 /// For sparse histograms (90%+ zeros), this skips most entries entirely.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
-fn combined_shannon_entropy_sse2(_token: Sse2Token, x: &[u32; 256], y: &[u32; 256]) -> u64 {
+fn combined_shannon_entropy_sse2(_token: X64V1Token, x: &[u32; 256], y: &[u32; 256]) -> u64 {
     let mut retval: u64 = 0;
     let mut sum_x: u32 = 0;
     let mut sum_xy: u32 = 0;
@@ -1179,20 +1170,15 @@ fn apply_cross_color_tile(
     end_y: usize,
     m: &CrossColorMultipliers,
 ) {
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        if let Some(token) = Sse2Token::summon() {
-            apply_cross_color_tile_sse2_entry(
-                token, pixels, width, start_x, start_y, end_x, end_y, m,
-            );
-            return;
-        }
-    }
-    apply_cross_color_tile_scalar(pixels, width, start_x, start_y, end_x, end_y, m);
+    incant!(
+        apply_cross_color_tile_impl(pixels, width, start_x, start_y, end_x, end_y, m),
+        [v1, scalar]
+    );
 }
 
 /// Scalar cross-color tile transform.
-fn apply_cross_color_tile_scalar(
+fn apply_cross_color_tile_impl_scalar(
+    _token: ScalarToken,
     pixels: &mut [u32],
     width: usize,
     start_x: usize,
@@ -1226,7 +1212,7 @@ fn apply_cross_color_tile_scalar(
 /// Pre-shift multiplier to 16-bit for mulhi_epi16 (matching libwebp's CST_5b macro).
 /// The multiplier is treated as a signed 3.5 fixed-point value, pre-shifted so that
 /// mulhi_epi16 produces (color * multiplier) >> 5.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[inline]
 fn cst_5b(x: u8) -> i16 {
     // Equivalent to C's: (((int16_t)((uint16_t)(X) << 8)) >> 5)
@@ -1234,10 +1220,10 @@ fn cst_5b(x: u8) -> i16 {
 }
 
 /// Entry point for SSE2 cross-color tile transform.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
-fn apply_cross_color_tile_sse2_entry(
-    _token: Sse2Token,
+fn apply_cross_color_tile_impl_v1(
+    _token: X64V1Token,
     pixels: &mut [u32],
     width: usize,
     start_x: usize,
@@ -1255,10 +1241,10 @@ fn apply_cross_color_tile_sse2_entry(
 ///   new_R = R - (green_to_red * G_signed) >> 5
 ///   new_B = B - (green_to_blue * G_signed) >> 5 - (red_to_blue * R_orig_signed) >> 5
 /// A and G channels are preserved.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn apply_cross_color_tile_sse2(
-    _token: Sse2Token,
+    _token: X64V1Token,
     pixels: &mut [u32],
     width: usize,
     start_x: usize,

@@ -2,6 +2,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Range;
 
+use archmage::prelude::*;
+
 use super::internal_error::InternalDecodeError;
 
 use super::lossless::subsample_size;
@@ -30,27 +32,54 @@ pub(crate) fn apply_predictor_transform(
     size_bits: u8,
     predictor_data: &[u8],
 ) -> Result<(), InternalDecodeError> {
-    // SSE2 fast path: single #[arcane] entry with #[rite] inner functions
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::Sse2Token::summon() {
-            super::lossless_transform_simd::apply_predictor_transform_sse2_entry(
-                token,
-                image_data,
-                width,
-                height,
-                size_bits,
-                predictor_data,
-            );
-            return Ok(());
-        }
-    }
-
-    apply_predictor_transform_scalar(image_data, width, height, size_bits, predictor_data)
+    incant!(
+        apply_predictor_transform_impl(image_data, width, height, size_bits, predictor_data),
+        [v1, scalar]
+    )
 }
 
+/// SSE2 predictor transform wrapper.
+#[cfg(target_arch = "x86_64")]
+fn apply_predictor_transform_impl_v1(
+    token: X64V1Token,
+    image_data: &mut [u8],
+    width: u16,
+    height: u16,
+    size_bits: u8,
+    predictor_data: &[u8],
+) -> Result<(), InternalDecodeError> {
+    super::lossless_transform_simd::apply_predictor_transform_sse2_entry(
+        token,
+        image_data,
+        width,
+        height,
+        size_bits,
+        predictor_data,
+    );
+    Ok(())
+}
+
+/// Scalar predictor transform (public for test use).
+#[cfg(test)]
 pub(crate) fn apply_predictor_transform_scalar(
+    image_data: &mut [u8],
+    width: u16,
+    height: u16,
+    size_bits: u8,
+    predictor_data: &[u8],
+) -> Result<(), InternalDecodeError> {
+    apply_predictor_transform_impl_scalar(
+        ScalarToken,
+        image_data,
+        width,
+        height,
+        size_bits,
+        predictor_data,
+    )
+}
+
+fn apply_predictor_transform_impl_scalar(
+    _token: ScalarToken,
     image_data: &mut [u8],
     width: u16,
     height: u16,
@@ -385,26 +414,32 @@ pub(crate) fn apply_color_transform(
     size_bits: u8,
     transform_data: &[u8],
 ) {
-    // SSE2 fast path
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::Sse2Token::summon() {
-            super::lossless_transform_simd::transform_color_inverse_sse2_entry(
-                token,
-                image_data,
-                usize::from(width),
-                size_bits,
-                transform_data,
-            );
-            return;
-        }
-    }
-
-    apply_color_transform_scalar(image_data, width, size_bits, transform_data);
+    incant!(
+        apply_color_transform_impl(image_data, width, size_bits, transform_data),
+        [v1, scalar]
+    );
 }
 
-fn apply_color_transform_scalar(
+/// SSE2 color transform wrapper.
+#[cfg(target_arch = "x86_64")]
+fn apply_color_transform_impl_v1(
+    token: X64V1Token,
+    image_data: &mut [u8],
+    width: u16,
+    size_bits: u8,
+    transform_data: &[u8],
+) {
+    super::lossless_transform_simd::transform_color_inverse_sse2_entry(
+        token,
+        image_data,
+        usize::from(width),
+        size_bits,
+        transform_data,
+    );
+}
+
+fn apply_color_transform_impl_scalar(
+    _token: ScalarToken,
     image_data: &mut [u8],
     width: u16,
     size_bits: u8,
@@ -442,20 +477,16 @@ fn apply_color_transform_scalar(
 }
 
 pub(crate) fn apply_subtract_green_transform(image_data: &mut [u8]) {
-    // SSE2 fast path
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::Sse2Token::summon() {
-            super::lossless_transform_simd::add_green_to_blue_and_red_sse2_entry(token, image_data);
-            return;
-        }
-    }
-
-    apply_subtract_green_transform_scalar(image_data);
+    incant!(apply_subtract_green_impl(image_data), [v1, scalar]);
 }
 
-fn apply_subtract_green_transform_scalar(image_data: &mut [u8]) {
+/// SSE2 subtract green wrapper.
+#[cfg(target_arch = "x86_64")]
+fn apply_subtract_green_impl_v1(token: X64V1Token, image_data: &mut [u8]) {
+    super::lossless_transform_simd::add_green_to_blue_and_red_sse2_entry(token, image_data);
+}
+
+fn apply_subtract_green_impl_scalar(_token: ScalarToken, image_data: &mut [u8]) {
     for pixel in image_data.chunks_exact_mut(4) {
         pixel[0] = pixel[0].wrapping_add(pixel[1]);
         pixel[2] = pixel[2].wrapping_add(pixel[1]);
