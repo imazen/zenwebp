@@ -198,6 +198,7 @@ pub(crate) fn get_alpha_predictor(
 
 /// Same as [`get_alpha_predictor`] but reads from a standalone alpha plane
 /// (one byte per pixel) instead of an RGBA interleaved buffer.
+#[allow(dead_code)]
 pub(crate) fn get_alpha_predictor_from_alpha(
     x: usize,
     y: usize,

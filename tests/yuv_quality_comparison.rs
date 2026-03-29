@@ -36,28 +36,27 @@ fn generate_photo_image(width: usize, height: usize) -> Vec<u8> {
     data
 }
 
+#[allow(dead_code)]
 /// Load a real PNG test image from codec-corpus if available, else generate synthetic.
 fn load_or_generate_image(width: usize, height: usize) -> (Vec<u8>, usize, usize) {
     // Try to load a real image from codec-corpus
     let corpus_path =
         std::path::Path::new(env!("HOME")).join("codec-corpus/webp-conformance/valid/lossy");
-    if corpus_path.exists() {
-        if let Some(entry) = std::fs::read_dir(&corpus_path)
+    if corpus_path.exists()
+        && let Some(entry) = std::fs::read_dir(&corpus_path)
             .ok()
             .and_then(|mut d| d.next())
-        {
-            if let Ok(entry) = entry {
-                let webp_data = std::fs::read(entry.path()).unwrap();
-                let decoded = webp::Decoder::new(&webp_data).decode();
-                if let Some(img) = decoded {
-                    let w = img.width() as usize;
-                    let h = img.height() as usize;
-                    // Convert to RGB if needed
-                    let rgb = img.to_vec();
-                    if rgb.len() == w * h * 3 {
-                        return (rgb, w, h);
-                    }
-                }
+        && let Ok(entry) = entry
+    {
+        let webp_data = std::fs::read(entry.path()).unwrap();
+        let decoded = webp::Decoder::new(&webp_data).decode();
+        if let Some(img) = decoded {
+            let w = img.width() as usize;
+            let h = img.height() as usize;
+            // Convert to RGB if needed
+            let rgb = img.to_vec();
+            if rgb.len() == w * h * 3 {
+                return (rgb, w, h);
             }
         }
     }
@@ -459,6 +458,7 @@ fn yuv_conversion_speed_comparison() {
 ///   Y  = (R*yr + G*yg + B*yb + bias_y*(1<<13) + 4095) >> 13
 ///   Cb = (R*cb_r + G*cb_g + B*cb_b + bias_uv*(1<<13) + 4095) >> 13
 #[test]
+#[allow(dead_code)]
 fn coefficient_analysis() {
     // libwebp coefficients (16-bit precision)
     const LIB_YR: i32 = 16839;
@@ -678,6 +678,7 @@ fn gamma_downsampling_effect() {
 /// Recomputes the forward and inverse tables using the same formula
 /// (kGamma=0.80, GAMMA_FIX=12, GAMMA_TAB_FIX=7) and checks every entry.
 #[test]
+#[allow(clippy::needless_range_loop)]
 fn gamma_table_verification() {
     use zenwebp::test_helpers::{gamma_to_linear_tab, linear_to_gamma_tab};
 

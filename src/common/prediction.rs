@@ -1429,11 +1429,9 @@ mod benches {
 }
 
 #[cfg(test)]
-#[allow(clippy::erasing_op)]
+#[allow(clippy::erasing_op, clippy::identity_op)]
 mod tests {
     use super::*;
-    use alloc::vec;
-    use alloc::vec::Vec;
 
     #[test]
     fn test_avg2() {

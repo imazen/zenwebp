@@ -163,26 +163,31 @@ impl DecoderContext {
     }
 
     /// Pixel width after header parse.
+    #[allow(dead_code)]
     pub fn width(&self) -> u16 {
         self.tables.width
     }
 
     /// Pixel height after header parse.
+    #[allow(dead_code)]
     pub fn height(&self) -> u16 {
         self.tables.height
     }
 
     /// Macroblock width (columns) after header parse.
+    #[allow(dead_code)]
     pub fn mbwidth(&self) -> u16 {
         self.tables.mbwidth
     }
 
     /// Macroblock height (rows) after header parse.
+    #[allow(dead_code)]
     pub fn mbheight(&self) -> u16 {
         self.tables.mbheight
     }
 
     /// Extra Y rows in the cache for filter context (8/2/0).
+    #[allow(dead_code)]
     pub fn extra_y_rows(&self) -> usize {
         self.tables.extra_y_rows
     }
@@ -191,6 +196,7 @@ impl DecoderContext {
     ///
     /// Adds random noise to U/V chroma planes after loop filtering to hide
     /// banding artifacts from coarse chroma quantization at low quality settings.
+    #[allow(dead_code)]
     #[must_use]
     pub fn with_dithering_strength(mut self, strength: u8) -> Self {
         self.dither_strength = strength;

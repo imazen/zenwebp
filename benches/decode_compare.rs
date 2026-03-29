@@ -164,7 +164,7 @@ fn decode_compare(suite: &mut zenbench::Suite) {
             webp_data.len()
         );
 
-        suite.compare(&format!("decode_{}", img.name), |group| {
+        suite.compare(format!("decode_{}", img.name), |group| {
             group.throughput(Throughput::Elements(pixels));
             group.throughput_unit("pixels");
 

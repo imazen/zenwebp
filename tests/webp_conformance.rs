@@ -385,7 +385,7 @@ fn test_scraped_webp_corpus() {
             }
         }
 
-        if tested % 1000 == 0 {
+        if tested.is_multiple_of(1000) {
             println!(
                 "  progress: {}/{} (exact={}, mismatch={}, zen_fail={}, panic={}) [{:.1}s]",
                 tested,

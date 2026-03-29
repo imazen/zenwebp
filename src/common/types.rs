@@ -101,6 +101,7 @@ pub enum LumaMode {
 }
 
 impl LumaMode {
+    #[allow(dead_code)]
     pub(crate) const fn from_i8(val: i8) -> Option<Self> {
         Some(match val {
             DC_PRED => Self::DC,
@@ -143,6 +144,7 @@ pub enum ChromaMode {
 }
 
 impl ChromaMode {
+    #[allow(dead_code)]
     pub(crate) const fn from_i8(val: i8) -> Option<Self> {
         Some(match val {
             DC_PRED => Self::DC,
@@ -183,6 +185,7 @@ pub enum IntraMode {
 }
 
 impl IntraMode {
+    #[allow(dead_code)]
     pub(crate) const fn from_i8(val: i8) -> Option<Self> {
         Some(match val {
             B_DC_PRED => Self::DC,
@@ -784,6 +787,7 @@ pub(crate) struct Segment {
     pub(crate) uvdc: i16,
     pub(crate) uvac: i16,
 
+    #[allow(dead_code)]
     pub(crate) delta_values: bool,
 
     pub(crate) quantizer_level: i8,

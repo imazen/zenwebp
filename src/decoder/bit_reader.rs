@@ -186,6 +186,7 @@ impl VP8HeaderBitReader {
 
     /// Read from a probability tree
     #[inline]
+    #[allow(dead_code)]
     pub fn read_with_tree<const N: usize>(&mut self, tree: &[super::vp8::TreeNode; N]) -> i8 {
         let mut node = tree[0];
         loop {

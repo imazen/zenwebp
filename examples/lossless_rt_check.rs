@@ -67,17 +67,17 @@ fn main() {
 
     let mut images: Vec<(String, Vec<u8>, u32, u32)> = Vec::new();
     for f in &photos {
-        if let Some(path) = corpus_path("CID22/CID22-512/validation", f) {
-            if let Some((rgba, w, h)) = load_png_rgba(&path) {
-                images.push((f.to_string(), rgba, w, h));
-            }
+        if let Some(path) = corpus_path("CID22/CID22-512/validation", f)
+            && let Some((rgba, w, h)) = load_png_rgba(&path)
+        {
+            images.push((f.to_string(), rgba, w, h));
         }
     }
     for f in &screenshots {
-        if let Some(path) = corpus_path("gb82-sc", f) {
-            if let Some((rgba, w, h)) = load_png_rgba(&path) {
-                images.push((f.to_string(), rgba, w, h));
-            }
+        if let Some(path) = corpus_path("gb82-sc", f)
+            && let Some((rgba, w, h)) = load_png_rgba(&path)
+        {
+            images.push((f.to_string(), rgba, w, h));
         }
     }
 

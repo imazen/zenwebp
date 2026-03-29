@@ -24,10 +24,13 @@ pub(crate) enum InternalDecodeError {
     /// Invalid color cache bits
     InvalidColorCacheBits = 3,
     /// Luma prediction mode invalid
+    #[allow(dead_code)]
     LumaPredictionModeInvalid = 4,
     /// Intra prediction mode invalid
+    #[allow(dead_code)]
     IntraPredictionModeInvalid = 5,
     /// Chroma prediction mode invalid
+    #[allow(dead_code)]
     ChromaPredictionModeInvalid = 6,
     /// Decoding was cancelled via a cooperative stop token
     Cancelled = 7,

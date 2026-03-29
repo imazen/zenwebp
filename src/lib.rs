@@ -114,6 +114,14 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
+// Clippy style lints — intentional patterns throughout the codebase.
+#![allow(
+    clippy::needless_range_loop,   // explicit `for i in 0..n { arr[i] }` is clearer in codec code
+    clippy::too_many_arguments,    // codec functions pass many buffers/params
+    clippy::manual_div_ceil,       // `(x + y - 1) / y` is the standard idiom
+    clippy::manual_is_multiple_of, // `x % y == 0` is clearer than `.is_multiple_of()`
+    clippy::manual_repeat_n,       // `repeat().take()` vs `repeat_n` — not available on MSRV
+)]
 // Enable nightly benchmark functionality if "_benchmarks" feature is enabled.
 #![cfg_attr(all(test, feature = "_benchmarks"), feature(test))]
 

@@ -91,91 +91,9 @@ pub struct TreeNode {
 }
 
 impl TreeNode {
-    const UNINIT: TreeNode = TreeNode {
-        left: 0,
-        right: 0,
-        prob: 0,
-        index: 0,
-    };
-
-    const fn prepare_branch(t: i8) -> u8 {
-        if t > 0 {
-            (t as u8) / 2
-        } else {
-            let value = -t;
-            0x80 | (value as u8)
-        }
-    }
-
     pub(crate) const fn value_from_branch(t: u8) -> i8 {
         (t & !0x80) as i8
     }
 }
 
-const fn tree_nodes_from<const N: usize, const M: usize>(
-    tree: [i8; N],
-    probs: [Prob; M],
-) -> [TreeNode; M] {
-    if N != 2 * M {
-        panic!("invalid tree with probs");
-    }
-    let mut nodes = [TreeNode::UNINIT; M];
-    let mut i = 0;
-    while i < M {
-        nodes[i].left = TreeNode::prepare_branch(tree[2 * i]);
-        nodes[i].right = TreeNode::prepare_branch(tree[2 * i + 1]);
-        nodes[i].prob = probs[i];
-        nodes[i].index = i as u8;
-        i += 1;
-    }
-    nodes
-}
-
-const SEGMENT_TREE_NODE_DEFAULTS: [TreeNode; 3] = tree_nodes_from(SEGMENT_ID_TREE, [255; 3]);
-
-const KEYFRAME_YMODE_NODES: [TreeNode; 4] =
-    tree_nodes_from(KEYFRAME_YMODE_TREE, KEYFRAME_YMODE_PROBS);
-
-const KEYFRAME_BPRED_MODE_NODES: [[[TreeNode; 9]; 10]; 10] = {
-    let mut output = [[[TreeNode::UNINIT; 9]; 10]; 10];
-    let mut i = 0;
-    while i < output.len() {
-        let mut j = 0;
-        while j < output[i].len() {
-            output[i][j] =
-                tree_nodes_from(KEYFRAME_BPRED_MODE_TREE, KEYFRAME_BPRED_MODE_PROBS[i][j]);
-            j += 1;
-        }
-        i += 1;
-    }
-    output
-};
-
-const KEYFRAME_UV_MODE_NODES: [TreeNode; 3] =
-    tree_nodes_from(KEYFRAME_UV_MODE_TREE, KEYFRAME_UV_MODE_PROBS);
-
 type TokenProbTreeNodes = [[[[TreeNode; NUM_DCT_TOKENS - 1]; 3]; 8]; 4];
-
-/// Position-indexed probability table for faster coefficient reading.
-/// Indexed by [plane][coeff_position][context] instead of [plane][band][context].
-/// This eliminates the COEFF_BANDS lookup in the hot path.
-/// Position 16 is a sentinel (copies band 7) for n+1 lookahead.
-type TokenProbsByPosition = [[[[TreeNode; NUM_DCT_TOKENS - 1]; 3]; 17]; 4];
-
-const COEFF_PROB_NODES: TokenProbTreeNodes = {
-    let mut output = [[[[TreeNode::UNINIT; 11]; 3]; 8]; 4];
-    let mut i = 0;
-    while i < output.len() {
-        let mut j = 0;
-        while j < output[i].len() {
-            let mut k = 0;
-            while k < output[i][j].len() {
-                output[i][j][k] = tree_nodes_from(DCT_TOKEN_TREE, COEFF_PROBS[i][j][k]);
-                k += 1;
-            }
-            j += 1;
-        }
-        i += 1;
-    }
-    output
-};

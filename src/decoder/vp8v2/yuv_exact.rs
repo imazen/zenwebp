@@ -318,6 +318,7 @@ pub(super) fn convert_cache_rows_to_rgb(
 /// Returns `(y_start, num_rows)` — the absolute Y row in the image where this
 /// strip begins and how many rows were written.
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub(crate) fn convert_cache_rows_to_strip(
     cache_y: &[u8],
     cache_u: &[u8],

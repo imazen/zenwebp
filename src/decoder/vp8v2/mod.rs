@@ -273,6 +273,7 @@ impl DecoderContext {
     /// After the last MB row (returns `num_rows > 0` for the final call),
     /// the caller should stop. This method handles all internal state
     /// (rotate_extra_rows, left border resets, boundary UV saves).
+    #[allow(dead_code)]
     pub(crate) fn decode_strip_mb_row(
         &mut self,
         mby: usize,
@@ -326,6 +327,7 @@ impl DecoderContext {
 
     /// Initialize boundary UV row buffers for streaming decode.
     /// Must be called after `read_frame_header` and before `decode_strip_mb_row`.
+    #[allow(dead_code)]
     pub(crate) fn init_streaming_uv_buffers(&mut self) {
         let width = usize::from(self.tables.width);
         let chroma_width = (width + 1) / 2;

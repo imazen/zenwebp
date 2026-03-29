@@ -86,7 +86,7 @@ fn animated_lossy_matches_reference() {
     decoder.read_image(&mut data).unwrap();
 
     // Check first frame against reference
-    let ref_path = PathBuf::from(format!("tests/reference/animated/random_lossy-1.png"));
+    let ref_path = PathBuf::from("tests/reference/animated/random_lossy-1.png");
     if ref_path.exists() {
         let ref_contents = std::fs::read(&ref_path).unwrap();
         let mut ref_decoder = png::Decoder::new(Cursor::new(ref_contents))

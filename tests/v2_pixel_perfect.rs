@@ -216,9 +216,9 @@ fn roundtrip_test(rgb: &[u8], w: u32, h: u32, quality: f32, label: &str) -> Roun
     );
 
     let (zen_rgba, zen_w, zen_h) =
-        decode_with_zenwebp(&webp).expect(&format!("{label}: zenwebp failed"));
+        decode_with_zenwebp(&webp).unwrap_or_else(|e| panic!("{label}: zenwebp failed: {e}"));
     let (lib_rgba, lib_w, lib_h) =
-        decode_with_libwebp(&webp).expect(&format!("{label}: libwebp failed"));
+        decode_with_libwebp(&webp).unwrap_or_else(|e| panic!("{label}: libwebp failed: {e}"));
 
     assert_eq!(zen_w, w, "{label}: decoded width {zen_w} != source {w}");
     assert_eq!(zen_h, h, "{label}: decoded height {zen_h} != source {h}");

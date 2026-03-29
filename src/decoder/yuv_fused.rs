@@ -450,6 +450,7 @@ mod x86_fused {
 }
 
 #[cfg(target_arch = "x86_64")]
+#[allow(unused_imports)]
 pub(crate) use x86_fused::fused_row_2uv_x86;
 
 // ============================================================================
@@ -785,6 +786,7 @@ mod neon_fused {
 }
 
 #[cfg(target_arch = "aarch64")]
+#[allow(unused_imports)]
 pub(crate) use neon_fused::fused_row_2uv_neon;
 
 // ============================================================================
@@ -1190,49 +1192,5 @@ mod wasm_fused {
 }
 
 #[cfg(target_arch = "wasm32")]
+#[allow(unused_imports)]
 pub(crate) use wasm_fused::fused_row_2uv_wasm;
-
-// ============================================================================
-// Dispatch: pick the best tier at runtime
-// ============================================================================
-
-use crate::common::prediction::SimdTokenType;
-
-/// Fused fancy-upsample + YUV→RGB for a row with two chroma rows (interior rows).
-/// Dispatches to the best available SIMD tier; falls back to scalar.
-/// BPP must be 3 (RGB). For RGBA (BPP=4), falls back to the old path.
-#[allow(unused_variables)]
-pub(crate) fn fused_fill_row_fancy_with_2_uv_rows(
-    row_buffer: &mut [u8],
-    y_row: &[u8],
-    u_row_1: &[u8],
-    u_row_2: &[u8],
-    v_row_1: &[u8],
-    v_row_2: &[u8],
-    simd_token: SimdTokenType,
-) -> bool {
-    // Only for RGB (BPP=3) and rows wide enough for SIMD
-    if y_row.len() < 17 {
-        return false;
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    if let Some(token) = simd_token {
-        fused_row_2uv_x86(token, row_buffer, y_row, u_row_1, u_row_2, v_row_1, v_row_2);
-        return true;
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    if let Some(token) = simd_token {
-        fused_row_2uv_neon(token, row_buffer, y_row, u_row_1, u_row_2, v_row_1, v_row_2);
-        return true;
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    if let Some(token) = simd_token {
-        fused_row_2uv_wasm(token, row_buffer, y_row, u_row_1, u_row_2, v_row_1, v_row_2);
-        return true;
-    }
-
-    false
-}

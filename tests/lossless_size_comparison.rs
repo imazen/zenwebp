@@ -26,8 +26,10 @@ fn generate_photo_like(width: u32, height: u32, seed: u32) -> Vec<u8> {
 }
 
 fn zenwebp_lossless(rgb: &[u8], width: u32, height: u32, quality: u8, method: u8) -> Vec<u8> {
-    let mut config = Vp8lConfig::default();
-    config.quality = Vp8lQuality { quality, method };
+    let config = Vp8lConfig {
+        quality: Vp8lQuality { quality, method },
+        ..Vp8lConfig::default()
+    };
     encode_vp8l(rgb, width, height, false, &config, &enough::Unstoppable).expect("encode failed")
 }
 
@@ -37,7 +39,7 @@ fn libwebp_lossless(rgb: &[u8], width: u32, height: u32, quality: f32, method: u
         .quality(quality)
         .method(method);
     config
-        .encode_rgb(rgb, width, height, &webpx::Unstoppable)
+        .encode_rgb(rgb, width, height, webpx::Unstoppable)
         .expect("encode failed")
 }
 
@@ -142,7 +144,7 @@ fn lossless_roundtrip_all_methods() {
         webp.extend_from_slice(b"VP8L");
         webp.extend_from_slice(&(vp8l.len() as u32).to_le_bytes());
         webp.extend_from_slice(&vp8l);
-        if vp8l.len() % 2 != 0 {
+        if !vp8l.len().is_multiple_of(2) {
             webp.push(0);
         }
 

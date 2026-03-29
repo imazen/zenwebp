@@ -524,11 +524,13 @@ impl<'a> DecodeRequest<'a> {
     }
 
     /// Decode lossy VP8 to RGB.
+    #[allow(dead_code)]
     pub(crate) fn decode_rgb_lossy(self) -> DecodeResult<(Vec<u8>, u16, u16)> {
         self.decode_lossy_internal(3)
     }
 
     /// Decode lossy VP8 to RGBA.
+    #[allow(dead_code)]
     pub(crate) fn decode_rgba_lossy(self) -> DecodeResult<(Vec<u8>, u16, u16)> {
         self.decode_lossy_internal(4)
     }
