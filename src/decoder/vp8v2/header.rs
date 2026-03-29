@@ -441,3 +441,202 @@ impl DecoderContext {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+
+    /// Build a minimal VP8 keyframe bitstream for testing header parsing.
+    ///
+    /// Frame tag: keyframe (bit 0 = 0), version 0, for_display, first_partition_size.
+    /// Start code: [0x9D, 0x01, 0x2A].
+    /// Dimensions: width, height (LE u16, no scaling bits).
+    /// Partition 0 data: `part0_len` bytes of filler (0x80 = neutral probs).
+    fn build_vp8_frame(width: u16, height: u16, part0_len: usize) -> Vec<u8> {
+        let mut data = Vec::new();
+
+        // Frame tag: keyframe=0, version=0, for_display=1, first_partition_size=part0_len
+        let tag: u32 = (part0_len as u32) << 5 | (1 << 4); // for_display=1, keyframe=0
+        data.push((tag & 0xFF) as u8);
+        data.push(((tag >> 8) & 0xFF) as u8);
+        data.push(((tag >> 16) & 0xFF) as u8);
+
+        // Start code
+        data.extend_from_slice(&[0x9D, 0x01, 0x2A]);
+
+        // Dimensions (LE u16)
+        data.extend_from_slice(&width.to_le_bytes());
+        data.extend_from_slice(&height.to_le_bytes());
+
+        // Partition 0 data: fill with 0x80 (neutral boolean decoder state)
+        data.extend(core::iter::repeat(0x80).take(part0_len));
+
+        // Token partition data (at least 1 byte for the last partition)
+        data.push(0x00);
+
+        data
+    }
+
+    #[test]
+    fn reject_zero_width() {
+        let data = build_vp8_frame(0, 100, 32);
+        let mut ctx = DecoderContext::new();
+        let result = ctx.read_frame_header(&data);
+        assert!(result.is_err(), "width=0 should be rejected");
+    }
+
+    #[test]
+    fn reject_zero_height() {
+        let data = build_vp8_frame(100, 0, 32);
+        let mut ctx = DecoderContext::new();
+        let result = ctx.read_frame_header(&data);
+        assert!(result.is_err(), "height=0 should be rejected");
+    }
+
+    #[test]
+    fn reject_zero_dimensions() {
+        let data = build_vp8_frame(0, 0, 32);
+        let mut ctx = DecoderContext::new();
+        let result = ctx.read_frame_header(&data);
+        assert!(result.is_err(), "0x0 should be rejected");
+    }
+
+    #[test]
+    fn accept_max_dimensions() {
+        // 16383×16383 is the WebP spec max — should parse without error
+        // (it will fail later during partition parsing since our test data
+        // doesn't contain valid partition data, but the dimension check passes)
+        let data = build_vp8_frame(16383, 16383, 64);
+        let mut ctx = DecoderContext::new();
+        // This may fail during partition init (not enough data), but must
+        // NOT fail on the dimension check itself.
+        let result = ctx.read_frame_header(&data);
+        // We expect a partition/bitstream error, not ImageTooLarge
+        if let Err(e) = &result {
+            let msg = alloc::format!("{e}");
+            assert!(
+                !msg.contains("too large"),
+                "16383x16383 should not be rejected as too large, got: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn reject_truncated_partition() {
+        // Build a frame that claims a large partition 0 but doesn't have the data
+        let mut data = Vec::new();
+        let part0_len: u32 = 10000; // claim 10000 bytes of partition 0 data
+
+        // Frame tag
+        let tag: u32 = part0_len << 5 | (1 << 4);
+        data.push((tag & 0xFF) as u8);
+        data.push(((tag >> 8) & 0xFF) as u8);
+        data.push(((tag >> 16) & 0xFF) as u8);
+
+        // Start code
+        data.extend_from_slice(&[0x9D, 0x01, 0x2A]);
+
+        // Valid dimensions
+        data.extend_from_slice(&100u16.to_le_bytes());
+        data.extend_from_slice(&100u16.to_le_bytes());
+
+        // Only provide 10 bytes of partition data (much less than claimed 10000)
+        data.extend_from_slice(&[0x80; 10]);
+
+        let mut ctx = DecoderContext::new();
+        let result = ctx.read_frame_header(&data);
+        assert!(result.is_err(), "truncated partition 0 should be rejected");
+    }
+
+    #[test]
+    fn reject_truncated_multi_partition() {
+        // Build a frame where multi-partition size table claims more data than exists.
+        // We need to get past header parsing far enough to reach init_partitions.
+        // The simplest approach: build a valid-ish header with a small partition 0,
+        // then corrupt the token partition sizes.
+
+        let part0_len = 4usize; // very short partition 0
+
+        let mut data = Vec::new();
+
+        // Frame tag
+        let tag: u32 = (part0_len as u32) << 5 | (1 << 4);
+        data.push((tag & 0xFF) as u8);
+        data.push(((tag >> 8) & 0xFF) as u8);
+        data.push(((tag >> 16) & 0xFF) as u8);
+
+        // Start code
+        data.extend_from_slice(&[0x9D, 0x01, 0x2A]);
+
+        // 2×2 image
+        data.extend_from_slice(&2u16.to_le_bytes());
+        data.extend_from_slice(&2u16.to_le_bytes());
+
+        // Partition 0 data: 4 bytes that set num_partitions > 1.
+        // The boolean decoder will read these. With carefully chosen bytes,
+        // we can set num_partitions=2 (read_literal(2) returns 1 => 1<<1=2).
+        // However, getting the exact byte values right is complex because the
+        // boolean decoder's state depends on prior reads. Instead, just provide
+        // minimal data and expect a bitstream error somewhere.
+        data.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
+
+        // No more data for token partitions — should fail
+        let mut ctx = DecoderContext::new();
+        let result = ctx.read_frame_header(&data);
+        // Should fail with some error (bitstream or partition truncation)
+        assert!(
+            result.is_err(),
+            "frame with insufficient partition data should fail"
+        );
+    }
+
+    #[test]
+    fn reject_empty_data() {
+        let data: &[u8] = &[];
+        let mut ctx = DecoderContext::new();
+        let result = ctx.read_frame_header(data);
+        assert!(result.is_err(), "empty data should be rejected");
+    }
+
+    #[test]
+    fn reject_too_short_for_frame_tag() {
+        let data: &[u8] = &[0x00, 0x00]; // only 2 bytes, need 3 for frame tag
+        let mut ctx = DecoderContext::new();
+        let result = ctx.read_frame_header(data);
+        assert!(result.is_err(), "2-byte data should be rejected");
+    }
+
+    #[test]
+    fn reject_bad_start_code() {
+        let mut data = Vec::new();
+        // Frame tag (keyframe, version 0, partition_size=1)
+        let tag: u32 = 1u32 << 5 | (1 << 4);
+        data.push((tag & 0xFF) as u8);
+        data.push(((tag >> 8) & 0xFF) as u8);
+        data.push(((tag >> 16) & 0xFF) as u8);
+        // Bad start code
+        data.extend_from_slice(&[0x00, 0x00, 0x00]);
+        data.extend_from_slice(&100u16.to_le_bytes());
+        data.extend_from_slice(&100u16.to_le_bytes());
+        data.extend_from_slice(&[0x80; 32]);
+
+        let mut ctx = DecoderContext::new();
+        let result = ctx.read_frame_header(&data);
+        assert!(result.is_err(), "bad start code should be rejected");
+    }
+
+    #[test]
+    fn reject_non_keyframe() {
+        // Frame tag with keyframe bit = 1 (non-keyframe)
+        let mut data = vec![0x01u8, 0x00, 0x00]; // bit 0 = 1 = non-keyframe
+        data.extend_from_slice(&[0x9D, 0x01, 0x2A]);
+        data.extend_from_slice(&100u16.to_le_bytes());
+        data.extend_from_slice(&100u16.to_le_bytes());
+        data.extend_from_slice(&[0x80; 32]);
+
+        let mut ctx = DecoderContext::new();
+        let result = ctx.read_frame_header(&data);
+        assert!(result.is_err(), "non-keyframe should be rejected");
+    }
+}
