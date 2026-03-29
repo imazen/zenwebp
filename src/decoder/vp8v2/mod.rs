@@ -8,6 +8,7 @@
 //! - Flat u8 probability tables (no TreeNode indirection)
 //! - Fixed-size arrays for per-MB working storage
 
+#[allow(dead_code)]
 mod animation;
 mod coefficients;
 mod context;
@@ -17,8 +18,7 @@ pub(super) mod predict_fused;
 mod tables;
 pub(crate) mod yuv_exact;
 
-pub use animation::AnimationFrame;
-pub use context::DecoderContext;
+pub(crate) use context::DecoderContext;
 
 use alloc::vec::Vec;
 
