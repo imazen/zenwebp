@@ -1,5 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
-//! Three-way interleaved benchmark: zenwebp vs libwebp (C) vs image-webp (pure Rust).
+//! Interleaved benchmark: zenwebp vs libwebp (C).
 //!
 //! Run with: RUSTFLAGS="-C target-cpu=native" cargo bench --bench compare_zenbench
 
@@ -115,19 +115,6 @@ fn decode_compare(suite: &mut zenbench::Suite) {
                 })
             });
 
-            let data = webp_data.clone();
-            group.bench("image-webp", move |b| {
-                let d = data.clone();
-                b.with_input(move || d.clone()).run(|bytes| {
-                    let mut decoder =
-                        image_webp::WebPDecoder::new(std::io::Cursor::new(black_box(&bytes)))
-                            .unwrap();
-                    let size = decoder.output_buffer_size().unwrap();
-                    let mut out = vec![0u8; size];
-                    decoder.read_image(&mut out).unwrap();
-                    black_box(out)
-                })
-            });
         });
     }
 }
@@ -188,21 +175,6 @@ fn encode_compare(suite: &mut zenbench::Suite) {
                 })
             });
 
-            if method <= 4 {
-                let data = rgb.clone();
-                group.bench("image-webp", move |b| {
-                    let d = data.clone();
-                    b.iter(move || {
-                        let mut out = Vec::new();
-                        let mut encoder = image_webp::WebPEncoder::new(&mut out);
-                        encoder.set_params(image_webp::EncoderParams::default());
-                        encoder
-                            .encode(black_box(&d), w, h, image_webp::ColorType::Rgb8)
-                            .unwrap();
-                        black_box(out)
-                    })
-                });
-            }
         });
     }
 }
@@ -261,19 +233,6 @@ fn lossless_compare(suite: &mut zenbench::Suite) {
             })
         });
 
-        let data = rgba.clone();
-        group.bench("image-webp", move |b| {
-            let d = data.clone();
-            b.iter(move || {
-                let mut out = Vec::new();
-                let mut encoder = image_webp::WebPEncoder::new(&mut out);
-                // image-webp 0.2 is lossless-only (VP8L), no params needed
-                encoder
-                    .encode(black_box(&d), w, h, image_webp::ColorType::Rgba8)
-                    .unwrap();
-                black_box(out)
-            })
-        });
     });
 
     // Fast lossless (method 0) — speed-focused comparison

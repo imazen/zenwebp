@@ -1,5 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
-//! Lossy decode benchmark: zenwebp vs libwebp (C) vs image-webp (pure Rust).
+//! Lossy decode benchmark: zenwebp vs libwebp (C).
 //!
 //! Encodes test images as lossy WebP Q75 m4, then benchmarks decoding the
 //! same bytes with all three decoders. Reports throughput in Mpixels/s.
@@ -190,32 +190,6 @@ fn decode_compare(suite: &mut zenbench::Suite) {
                 })
             });
 
-            let data = webp_data.clone();
-            group.bench("zenwebp-v2", move |b| {
-                let d = data.clone();
-                let config = zenwebp::DecodeConfig::default();
-                b.with_input(move || d.clone()).run(|bytes| {
-                    black_box(
-                        zenwebp::DecodeRequest::new(&config, black_box(&bytes))
-                            .decode_rgba_v2()
-                            .unwrap(),
-                    )
-                })
-            });
-
-            let data = webp_data.clone();
-            group.bench("image-webp", move |b| {
-                let d = data.clone();
-                b.with_input(move || d.clone()).run(|bytes| {
-                    let mut decoder =
-                        image_webp::WebPDecoder::new(std::io::Cursor::new(black_box(&bytes)))
-                            .unwrap();
-                    let size = decoder.output_buffer_size().unwrap();
-                    let mut out = vec![0u8; size];
-                    decoder.read_image(&mut out).unwrap();
-                    black_box(out)
-                })
-            });
         });
     }
 }

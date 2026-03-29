@@ -1,5 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
-//! Lossless decode three-way benchmark: zenwebp vs libwebp (C) vs image-webp.
+//! Lossless decode benchmark: zenwebp vs libwebp (C).
 //! Decodes the SAME lossless WebP bytes through all three decoders.
 
 use std::path::PathBuf;
@@ -125,20 +125,6 @@ fn decode_lossless(suite: &mut zenbench::Suite) {
                 })
             });
 
-            // image-webp decoding zenwebp-encoded data
-            let data = zen_webp.clone();
-            group.bench("image-webp", move |b| {
-                let d = data.clone();
-                b.with_input(move || d.clone()).run(|bytes| {
-                    let mut decoder =
-                        image_webp::WebPDecoder::new(std::io::Cursor::new(black_box(&bytes)))
-                            .unwrap();
-                    let size = decoder.output_buffer_size().unwrap();
-                    let mut out = vec![0u8; size];
-                    decoder.read_image(&mut out).unwrap();
-                    black_box(out)
-                })
-            });
         });
     }
 }
