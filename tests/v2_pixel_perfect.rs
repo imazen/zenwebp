@@ -235,17 +235,13 @@ fn roundtrip_test(rgb: &[u8], w: u32, h: u32, quality: f32, label: &str) -> Roun
     let vs_lib_stats = compute_diff(&zen_rgba, &lib_rgba, w, h);
     report_diff(&format!("{label} zenwebp-vs-libwebp"), &vs_lib_stats);
     assert!(
-        vs_lib_stats.max_diff <= LIBWEBP_MAX_TOLERANCE,
-        "{label}: zenwebp vs libwebp max_diff={} exceeds tolerance {LIBWEBP_MAX_TOLERANCE}",
+        vs_lib_stats.max_diff == 0,
+        "{label}: zenwebp vs libwebp max_diff={} (must be pixel-exact)",
         vs_lib_stats.max_diff,
     );
 
     RoundtripResult { vs_lib_stats }
 }
-
-/// Maximum allowed zenwebp-vs-libwebp difference per byte.
-/// zenwebp must be bit-exact with libwebp (0 diffs).
-const LIBWEBP_MAX_TOLERANCE: u8 = 0;
 
 #[test]
 fn cat1_roundtrip_gradient_quality_sweep() {

@@ -603,6 +603,7 @@ mod tests {
 
     /// Test that DequantPair is correctly used by read_coefficients.
     #[test]
+    #[allow(clippy::absurd_extreme_comparisons)]
     fn dequant_pair_dc_ac_indexing() {
         let dq = DequantPair { dc: 7, ac: 13 };
         let pair = [i32::from(dq.dc), i32::from(dq.ac)];

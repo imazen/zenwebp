@@ -1429,6 +1429,7 @@ mod benches {
 }
 
 #[cfg(test)]
+#[allow(clippy::erasing_op)]
 mod tests {
     use super::*;
     use alloc::vec;
