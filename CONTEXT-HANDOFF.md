@@ -436,3 +436,10 @@ docs/ARCHITECTURE-CLEANUP.md          -- Code organization plan
 docs/LOSSLESS-DECODER-PLAN.md         -- Plan to reach <1.10x
 docs/LOSSY-ENCODER-PLAN.md            -- Plan to reach <1.10x
 ```
+
+
+## Encoder Optimization (2026-03-28)
+
+Three fixes: I4 early exit, residual cost loop, encode loop cleanup.
+Results: 1.47x → **1.32-1.39x** of libwebp C.
+
