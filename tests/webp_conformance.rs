@@ -252,18 +252,19 @@ fn decode_webp(data: &[u8]) -> Result<(u32, u32), Box<dyn std::error::Error>> {
     Ok((width, height))
 }
 
-/// Decode every .webp in the full scraped corpus (12,825+ files from 8 sources).
+/// Decode every .webp in the full scraped corpus and diff against libwebp.
 ///
-/// Walks all subdirectories of the scraped corpus and decodes each file.
-/// Any panic or unhandled decode error is a failure.
+/// Walks /mnt/v/output/corpus-builder/webp/ (12,825+ files from 8 sources).
+/// Decodes each file with both zenwebp and libwebp (via webpx), then
+/// compares RGBA output byte-for-byte. Any pixel mismatch or panic is a failure.
 ///
 /// Run with: `cargo test --release --test webp_conformance test_scraped_webp_corpus -- --ignored --nocapture`
 #[test]
 #[ignore]
 fn test_scraped_webp_corpus() {
     use std::path::Path;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Instant;
+    use zenwebp::{DecodeConfig, DecodeRequest};
 
     let corpus_dir = Path::new("/mnt/v/output/corpus-builder/webp");
     if !corpus_dir.exists() {
@@ -271,14 +272,6 @@ fn test_scraped_webp_corpus() {
         eprintln!("  Expected: /mnt/v/output/corpus-builder/webp/{{google-native,pexels,unsplash,...}}");
         return;
     }
-
-    let tested = AtomicUsize::new(0);
-    let passed = AtomicUsize::new(0);
-    let failed = AtomicUsize::new(0);
-    let panicked = AtomicUsize::new(0);
-
-    let start = Instant::now();
-    let mut files: Vec<_> = Vec::new();
 
     // Collect all .webp files recursively
     fn collect_webp(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
@@ -292,73 +285,131 @@ fn test_scraped_webp_corpus() {
             }
         }
     }
+    let mut files = Vec::new();
     collect_webp(corpus_dir, &mut files);
     files.sort();
 
     println!("Found {} .webp files in scraped corpus", files.len());
 
+    let start = Instant::now();
+    let mut tested = 0usize;
+    let mut exact_match = 0usize;
+    let mut zen_only_fail = 0usize;
+    let mut lib_only_fail = 0usize;
+    let mut both_fail = 0usize;
+    let mut mismatch = 0usize;
+    let mut panicked = 0usize;
+    let mut mismatch_files: Vec<(String, u8, usize)> = Vec::new(); // (path, max_diff, count)
+
+    let config = DecodeConfig::default().with_dithering_strength(0);
+
     for path in &files {
-        tested.fetch_add(1, Ordering::Relaxed);
+        tested += 1;
 
         let data = match fs::read(path) {
             Ok(d) => d,
-            Err(e) => {
-                eprintln!("  SKIP (read error): {} — {}", path.display(), e);
-                continue;
+            Err(_) => continue,
+        };
+
+        // zenwebp decode (catch panics)
+        let zen_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            DecodeRequest::new(&config, &data).decode_rgba()
+        }));
+
+        let zen = match zen_result {
+            Ok(r) => r.ok(),
+            Err(_) => {
+                panicked += 1;
+                eprintln!("  PANIC: {}", path.display());
+                None
             }
         };
 
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            decode_webp(&data)
-        }));
+        // libwebp decode
+        let lib = webpx::decode_rgba(&data).ok();
 
-        match result {
-            Ok(Ok(_)) => {
-                passed.fetch_add(1, Ordering::Relaxed);
+        match (&zen, &lib) {
+            (Some((z_px, z_w, z_h)), Some((l_px, l_w, l_h))) => {
+                if z_w != l_w || z_h != l_h {
+                    mismatch += 1;
+                    eprintln!(
+                        "  DIM MISMATCH: {} — zen {}x{} vs lib {}x{}",
+                        path.display(), z_w, z_h, l_w, l_h
+                    );
+                } else if z_px == l_px {
+                    exact_match += 1;
+                } else {
+                    // Pixel diff
+                    let mut max_diff = 0u8;
+                    let mut diff_count = 0usize;
+                    for (&a, &b) in z_px.iter().zip(l_px.iter()) {
+                        let d = a.abs_diff(b);
+                        if d > max_diff {
+                            max_diff = d;
+                        }
+                        if d > 0 {
+                            diff_count += 1;
+                        }
+                    }
+                    mismatch += 1;
+                    let short = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    mismatch_files.push((short, max_diff, diff_count));
+                }
             }
-            Ok(Err(e)) => {
-                failed.fetch_add(1, Ordering::Relaxed);
-                eprintln!("  FAIL: {} — {}", path.display(), e);
+            (None, None) => both_fail += 1,
+            (None, Some(_)) => {
+                zen_only_fail += 1;
+                eprintln!("  ZEN FAIL: {}", path.display());
             }
-            Err(_) => {
-                panicked.fetch_add(1, Ordering::Relaxed);
-                eprintln!("  PANIC: {}", path.display());
+            (Some(_), None) => {
+                lib_only_fail += 1;
+                // zenwebp decoded something libwebp couldn't — interesting but not an error
             }
         }
 
-        let count = tested.load(Ordering::Relaxed);
-        if count % 1000 == 0 {
+        if tested % 1000 == 0 {
             println!(
-                "  progress: {}/{} ({} passed, {} failed, {} panicked) [{:.1}s]",
-                count,
+                "  progress: {}/{} (exact={}, mismatch={}, zen_fail={}, panic={}) [{:.1}s]",
+                tested,
                 files.len(),
-                passed.load(Ordering::Relaxed),
-                failed.load(Ordering::Relaxed),
-                panicked.load(Ordering::Relaxed),
+                exact_match,
+                mismatch,
+                zen_only_fail,
+                panicked,
                 start.elapsed().as_secs_f64(),
             );
         }
     }
 
-    let total = tested.load(Ordering::Relaxed);
-    let pass = passed.load(Ordering::Relaxed);
-    let fail = failed.load(Ordering::Relaxed);
-    let panic = panicked.load(Ordering::Relaxed);
     let elapsed = start.elapsed();
 
-    println!("\n=== Scraped WebP Corpus Results ===");
-    println!("  Total:    {}", total);
-    println!("  Passed:   {}", pass);
-    println!("  Failed:   {}", fail);
-    println!("  Panicked: {}", panic);
-    println!("  Time:     {:.1}s ({:.0} files/sec)", elapsed.as_secs_f64(), total as f64 / elapsed.as_secs_f64());
+    println!("\n=== Scraped WebP Corpus vs libwebp ===");
+    println!("  Total:       {tested}");
+    println!("  Exact match: {exact_match}");
+    println!("  Mismatch:    {mismatch}");
+    println!("  zen fail:    {zen_only_fail}");
+    println!("  lib fail:    {lib_only_fail}");
+    println!("  Both fail:   {both_fail}");
+    println!("  Panicked:    {panicked}");
+    println!(
+        "  Time:        {:.1}s ({:.0} files/sec)",
+        elapsed.as_secs_f64(),
+        tested as f64 / elapsed.as_secs_f64()
+    );
 
-    assert_eq!(panic, 0, "Decoder panicked on {} files — this is a bug", panic);
-    // Note: decode failures are expected for some scraped files (truncated, unusual features).
-    // We assert zero panics but only warn on decode errors.
-    if fail > 0 {
-        eprintln!("\nWARNING: {} files failed to decode (see above). Review for missing format support.", fail);
+    if !mismatch_files.is_empty() {
+        println!("\n  Pixel mismatches (first 50):");
+        mismatch_files.sort_by(|a, b| b.1.cmp(&a.1));
+        for (name, max_diff, count) in mismatch_files.iter().take(50) {
+            println!("    max_diff={max_diff:3} diff_bytes={count:8} {name}");
+        }
     }
+
+    assert_eq!(panicked, 0, "Decoder panicked on {panicked} files");
+    assert_eq!(
+        mismatch, 0,
+        "{mismatch} files had pixel differences vs libwebp"
+    );
 }
 
 /// Get the codec-corpus path for a specific subdirectory.
