@@ -159,3 +159,11 @@ version = "0.2"
 [[bench]]
 name = "decode_lossless_compare"
 harness = false
+
+# Codec code is unusably slow in debug mode (10-50x). Always optimize,
+# even for `cargo test`. This matches libwebp which is always -O2.
+[profile.dev]
+opt-level = 2
+
+[profile.test]
+opt-level = 2
