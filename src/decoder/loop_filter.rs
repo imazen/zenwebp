@@ -4750,45 +4750,26 @@ fn load_4x16_neon(
     y_start: usize,
     stride: usize,
 ) -> (uint8x16_t, uint8x16_t, uint8x16_t, uint8x16_t) {
-    // Load 4 bytes per row for 16 rows, pack into u32, then transpose
+    // Build column vectors directly: byte[i] = column value for row i.
+    // This matches store_4x16_neon which writes byte[i] → row i.
     let base = y_start * stride + x0 - 2;
-    let mut rows: [u32; 16] = [0; 16];
+    let mut col0 = [0u8; 16];
+    let mut col1 = [0u8; 16];
+    let mut col2 = [0u8; 16];
+    let mut col3 = [0u8; 16];
+
     for i in 0..16 {
         let offset = base + i * stride;
-        rows[i] = u32::from_le_bytes([
-            buf[offset],
-            buf[offset + 1],
-            buf[offset + 2],
-            buf[offset + 3],
-        ]);
+        col0[i] = buf[offset];
+        col1[i] = buf[offset + 1];
+        col2[i] = buf[offset + 2];
+        col3[i] = buf[offset + 3];
     }
 
-    // Pack into 4 uint32x4_t (each holds 4 rows)
-    let in0 = vreinterpretq_u8_u32(simd_mem_neon::vld1q_u32(
-        <&[u32; 4]>::try_from(&rows[0..4]).unwrap(),
-    ));
-    let in1 = vreinterpretq_u8_u32(simd_mem_neon::vld1q_u32(
-        <&[u32; 4]>::try_from(&rows[4..8]).unwrap(),
-    ));
-    let in2 = vreinterpretq_u8_u32(simd_mem_neon::vld1q_u32(
-        <&[u32; 4]>::try_from(&rows[8..12]).unwrap(),
-    ));
-    let in3 = vreinterpretq_u8_u32(simd_mem_neon::vld1q_u32(
-        <&[u32; 4]>::try_from(&rows[12..16]).unwrap(),
-    ));
-
-    // Transpose four 4x4 blocks to get columns:
-    // in0: row0[c0 c1 c2 c3] row1[c0 c1 c2 c3] row2[...] row3[...]
-    // After transpose: col0[r0 r1 r2 r3 | r4 r5 ... r15]
-    let row01 = vtrnq_u8(in0, in1);
-    let row23 = vtrnq_u8(in2, in3);
-    let row02 = vtrnq_u16(vreinterpretq_u16_u8(row01.0), vreinterpretq_u16_u8(row23.0));
-    let row13 = vtrnq_u16(vreinterpretq_u16_u8(row01.1), vreinterpretq_u16_u8(row23.1));
-
-    let p1 = vreinterpretq_u8_u16(row02.0);
-    let p0 = vreinterpretq_u8_u16(row13.0);
-    let q0 = vreinterpretq_u8_u16(row02.1);
-    let q1 = vreinterpretq_u8_u16(row13.1);
+    let p1 = simd_mem_neon::vld1q_u8(&col0);
+    let p0 = simd_mem_neon::vld1q_u8(&col1);
+    let q0 = simd_mem_neon::vld1q_u8(&col2);
+    let q1 = simd_mem_neon::vld1q_u8(&col3);
 
     (p1, p0, q0, q1)
 }
@@ -4940,52 +4921,32 @@ fn load_4x8x2_neon(
     y_start: usize,
     stride: usize,
 ) -> (uint8x16_t, uint8x16_t, uint8x16_t, uint8x16_t) {
-    // Load 4 bytes per row for 8 U rows + 8 V rows
+    // Build column vectors directly: bytes 0-7 = U rows 0-7, bytes 8-15 = V rows 0-7.
+    // This matches store_4x8x2_neon which writes bytes[0..8] → U, bytes[8..16] → V.
     let base_u = y_start * stride + x0 - 2;
     let base_v = y_start * stride + x0 - 2;
-    let mut rows: [u32; 16] = [0; 16];
+    let mut col0 = [0u8; 16];
+    let mut col1 = [0u8; 16];
+    let mut col2 = [0u8; 16];
+    let mut col3 = [0u8; 16];
 
     for i in 0..8 {
-        let offset = base_u + i * stride;
-        rows[i] = u32::from_le_bytes([
-            u_buf[offset],
-            u_buf[offset + 1],
-            u_buf[offset + 2],
-            u_buf[offset + 3],
-        ]);
-    }
-    for i in 0..8 {
-        let offset = base_v + i * stride;
-        rows[8 + i] = u32::from_le_bytes([
-            v_buf[offset],
-            v_buf[offset + 1],
-            v_buf[offset + 2],
-            v_buf[offset + 3],
-        ]);
+        let u_off = base_u + i * stride;
+        let v_off = base_v + i * stride;
+        col0[i] = u_buf[u_off];
+        col1[i] = u_buf[u_off + 1];
+        col2[i] = u_buf[u_off + 2];
+        col3[i] = u_buf[u_off + 3];
+        col0[8 + i] = v_buf[v_off];
+        col1[8 + i] = v_buf[v_off + 1];
+        col2[8 + i] = v_buf[v_off + 2];
+        col3[8 + i] = v_buf[v_off + 3];
     }
 
-    let in0 = vreinterpretq_u8_u32(simd_mem_neon::vld1q_u32(
-        <&[u32; 4]>::try_from(&rows[0..4]).unwrap(),
-    ));
-    let in1 = vreinterpretq_u8_u32(simd_mem_neon::vld1q_u32(
-        <&[u32; 4]>::try_from(&rows[4..8]).unwrap(),
-    ));
-    let in2 = vreinterpretq_u8_u32(simd_mem_neon::vld1q_u32(
-        <&[u32; 4]>::try_from(&rows[8..12]).unwrap(),
-    ));
-    let in3 = vreinterpretq_u8_u32(simd_mem_neon::vld1q_u32(
-        <&[u32; 4]>::try_from(&rows[12..16]).unwrap(),
-    ));
-
-    let row01 = vtrnq_u8(in0, in1);
-    let row23 = vtrnq_u8(in2, in3);
-    let row02 = vtrnq_u16(vreinterpretq_u16_u8(row01.0), vreinterpretq_u16_u8(row23.0));
-    let row13 = vtrnq_u16(vreinterpretq_u16_u8(row01.1), vreinterpretq_u16_u8(row23.1));
-
-    let p1 = vreinterpretq_u8_u16(row02.0);
-    let p0 = vreinterpretq_u8_u16(row13.0);
-    let q0 = vreinterpretq_u8_u16(row02.1);
-    let q1 = vreinterpretq_u8_u16(row13.1);
+    let p1 = simd_mem_neon::vld1q_u8(&col0);
+    let p0 = simd_mem_neon::vld1q_u8(&col1);
+    let q0 = simd_mem_neon::vld1q_u8(&col2);
+    let q1 = simd_mem_neon::vld1q_u8(&col3);
 
     (p1, p0, q0, q1)
 }

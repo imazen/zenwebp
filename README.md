@@ -74,7 +74,7 @@ let webp = EncodeRequest::lossless(&config, rgba_pixels, PixelLayout::Rgba8, wid
 - **Pure Rust** - no C dependencies, builds anywhere Rust does
 - **`#![forbid(unsafe_code)]`** - memory safety guaranteed
 - **no_std compatible** - works with just `alloc`, no standard library needed
-- **SIMD accelerated** - SSE2/SSE4.1/AVX2 on x86, SIMD128 on WASM
+- **SIMD accelerated** - SSE2/SSE4.1/AVX2 on x86, NEON on ARM64, SIMD128 on WASM
 - **Full format support** - lossy, lossless, alpha, animation (encode + decode), ICC/EXIF/XMP metadata, EXIF orientation parsing, mux/demux, chroma dithering
 - **Metadata module** - `zenwebp::metadata` for extracting/embedding ICC, EXIF, and XMP in encoded WebP bytes without decoding pixels
 - **zencodec integration** - optional `zencodec` feature for unified codec trait implementations

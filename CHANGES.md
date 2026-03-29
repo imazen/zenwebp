@@ -66,6 +66,19 @@ use enough::Stop;
 - **12,825-file corpus validation** — pixel-exact match against libwebp
   on the full scraped WebP corpus.
 
+#### NEON (ARM64) SIMD
+
+- **NEON YUV→RGB conversion** — fused upsample + color conversion for decode,
+  supporting both RGB and RGBA output. Uses `vst3q_u8`/`vst4q_u8` for
+  hardware-accelerated pixel interleaving.
+- **Fixed NEON loop filter transpose bug** — horizontal filter load functions
+  (`load_4x16_neon`, `load_4x8x2_neon`) used a `vtrnq_u8`/`vtrnq_u16`
+  byte-level transpose that produced scrambled element ordering, while the
+  corresponding stores wrote sequentially. This caused incorrect loop filter
+  results on aarch64 (max_diff=138 vs libwebp).
+- Decoder is now **bit-exact with libwebp on aarch64** (verified via QEMU
+  cross-testing against webpx).
+
 #### Internal Improvements
 
 - `common`, `vp8`, `vp8v2` modules now `pub(crate)`

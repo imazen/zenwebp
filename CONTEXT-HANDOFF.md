@@ -282,8 +282,8 @@ Ported libwebp's `VectorMismatch_SSE2` which compares 4 u32 values at a time. Ne
 - **Check cache/branch effects** separately with cachegrind when instruction ratio doesn't explain wall-clock ratio.
 
 ### The libwebp C source:
-Vendored at `/home/lilith/.cargo/registry/src/index.crates.io-*/libwebp-sys-0.14.2/vendor/src/`
-Key files: `enc/vp8l_enc.c`, `enc/histogram_enc.c`, `enc/backward_references_enc.c`, `dsp/lossless_enc.c`, `dsp/lossless_enc_sse2.c`, `dec/vp8_dec.c`, `dec/vp8l_dec.c`
+Use `cargo read libwebp-sys` to fetch the latest source. Key files under `vendor/src/`:
+`enc/vp8l_enc.c`, `enc/histogram_enc.c`, `enc/backward_references_enc.c`, `dsp/lossless_enc.c`, `dsp/lossless_enc_sse2.c`, `dec/vp8_dec.c`, `dec/vp8l_dec.c`
 
 ---
 

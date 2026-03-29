@@ -1048,12 +1048,12 @@ mod x86_impl {
 }
 
 // ============================================================================
-// aarch64 NEON — delegates to scalar for now (NEON kernel in yuv_fused.rs)
+// aarch64 NEON — fused upsample + YUV→RGB, matching x86 V3 structure
 // ============================================================================
 
 #[cfg(target_arch = "aarch64")]
 fn fill_2uv_row_neon(
-    _token: archmage::NeonToken,
+    token: archmage::NeonToken,
     rgb: &mut [u8],
     y_row: &[u8],
     u_near: &[u8],
@@ -1062,7 +1062,375 @@ fn fill_2uv_row_neon(
     v_far: &[u8],
     bpp: usize,
 ) {
-    fill_2uv_row_generic(rgb, y_row, u_near, u_far, v_near, v_far, bpp);
+    neon_impl::fill_2uv_row_arcane(token, rgb, y_row, u_near, u_far, v_near, v_far, bpp);
+}
+
+#[cfg(target_arch = "aarch64")]
+mod neon_impl {
+    use archmage::intrinsics::aarch64 as simd_mem;
+    use archmage::prelude::*;
+
+    use super::write_pixel;
+    use crate::decoder::yuv::get_fancy_chroma_value;
+
+    // YUV→RGB constants matching libwebp's upsampling_neon.c
+    // vqdmulh computes (2*a*b) >> 16, so with a = val<<7:
+    //   result = (2 * val * 128 * coeff) >> 16 = (val * coeff) >> 8
+    // This matches the x86 mulhi_epu16(val<<8, coeff) = (val*coeff) >> 8.
+    const K_COEFFS1: [i16; 4] = [19077, 26149, 6419, 13320];
+    const R_ROUNDER: i16 = -14234;
+    const G_ROUNDER: i16 = 8708;
+    const B_ROUNDER: i16 = -17685;
+    // 33050 = 32768 + 282; split because 33050 > i16::MAX
+    const B_MULT_EXTRA: i16 = 282;
+
+    /// Fancy upsample 8 chroma pairs → 16 luma-aligned chroma values.
+    /// Matches libwebp UPSAMPLE_16PIXELS macro (NEON variant).
+    /// Input: 8-element halves (near[cx..cx+8], near[cx+1..cx+9], far[..], far[..+1])
+    /// Output: 16-element interleaved result.
+    #[rite]
+    fn upsample_16pixels_neon(
+        _token: NeonToken,
+        a: uint8x8_t,
+        b: uint8x8_t,
+        c: uint8x8_t,
+        d: uint8x8_t,
+    ) -> uint8x16_t {
+        let one = vdup_n_u8(1);
+
+        let s = vrhadd_u8(a, d); // (a+d+1)/2
+        let t = vrhadd_u8(b, c); // (b+c+1)/2
+        let st = veor_u8(s, t);
+        let ad = veor_u8(a, d);
+        let bc = veor_u8(b, c);
+
+        let t1 = vorr_u8(ad, bc);
+        let t2 = vorr_u8(t1, st);
+        let t3 = vand_u8(t2, one);
+        let t4 = vrhadd_u8(s, t);
+        let k = vsub_u8(t4, t3);
+
+        // m1 = (k + t + 1) / 2 - (((b^c) & (s^t)) | (k^t)) & 1
+        let tmp1 = vrhadd_u8(k, t);
+        let tmp2 = vand_u8(bc, st);
+        let tmp3 = veor_u8(k, t);
+        let tmp4 = vorr_u8(tmp2, tmp3);
+        let tmp5 = vand_u8(tmp4, one);
+        let m1 = vsub_u8(tmp1, tmp5);
+
+        // m2 = (k + s + 1) / 2 - (((a^d) & (s^t)) | (k^s)) & 1
+        let tmp1 = vrhadd_u8(k, s);
+        let tmp2 = vand_u8(ad, st);
+        let tmp3 = veor_u8(k, s);
+        let tmp4 = vorr_u8(tmp2, tmp3);
+        let tmp5 = vand_u8(tmp4, one);
+        let m2 = vsub_u8(tmp1, tmp5);
+
+        let diag1 = vrhadd_u8(a, m1);
+        let diag2 = vrhadd_u8(b, m2);
+
+        let zip = vzip_u8(diag1, diag2);
+        vcombine_u8(zip.0, zip.1)
+    }
+
+    /// Convert 16 YUV444 pixels to interleaved RGB and store 48 bytes.
+    /// Uses vst3q_u8 for hardware-accelerated RGB interleaving.
+    #[rite]
+    fn convert_and_store_rgb16_neon(
+        _token: NeonToken,
+        y_vals: uint8x16_t,
+        u_vals: uint8x16_t,
+        v_vals: uint8x16_t,
+        rgb: &mut [u8; 48],
+    ) {
+        let (r, g, b) = yuv_to_rgb_16_neon(_token, y_vals, u_vals, v_vals);
+
+        let rgb_array = uint8x16x3_t(r, g, b);
+        simd_mem::vst3q_u8(rgb, rgb_array);
+    }
+
+    /// Convert 16 YUV444 pixels to interleaved RGBA and store 64 bytes.
+    /// Uses vst4q_u8 for hardware-accelerated RGBA interleaving.
+    #[rite]
+    fn convert_and_store_rgba16_neon(
+        _token: NeonToken,
+        y_vals: uint8x16_t,
+        u_vals: uint8x16_t,
+        v_vals: uint8x16_t,
+        rgba: &mut [u8; 64],
+    ) {
+        let (r, g, b) = yuv_to_rgb_16_neon(_token, y_vals, u_vals, v_vals);
+        let a = vdupq_n_u8(0xFF);
+
+        let rgba_array = uint8x16x4_t(r, g, b, a);
+        simd_mem::vst4q_u8(rgba, rgba_array);
+    }
+
+    /// Core YUV→RGB conversion for 16 pixels. Returns (R, G, B) as uint8x16_t.
+    /// Math matches libwebp upsampling_neon.c exactly.
+    #[rite]
+    fn yuv_to_rgb_16_neon(
+        _token: NeonToken,
+        y_vals: uint8x16_t,
+        u_vals: uint8x16_t,
+        v_vals: uint8x16_t,
+    ) -> (uint8x16_t, uint8x16_t, uint8x16_t) {
+        let coeffs1 = simd_mem::vld1_s16(&K_COEFFS1);
+
+        let y_lo = vget_low_u8(y_vals);
+        let y_hi = vget_high_u8(y_vals);
+        let u_lo = vget_low_u8(u_vals);
+        let u_hi = vget_high_u8(u_vals);
+        let v_lo = vget_low_u8(v_vals);
+        let v_hi = vget_high_u8(v_vals);
+
+        // Widen to i16 and shift left by 7 (multiply by 128)
+        let y_lo16 = vreinterpretq_s16_u16(vshll_n_u8::<7>(y_lo));
+        let y_hi16 = vreinterpretq_s16_u16(vshll_n_u8::<7>(y_hi));
+        let u_lo16 = vreinterpretq_s16_u16(vshll_n_u8::<7>(u_lo));
+        let u_hi16 = vreinterpretq_s16_u16(vshll_n_u8::<7>(u_hi));
+        let v_lo16 = vreinterpretq_s16_u16(vshll_n_u8::<7>(v_lo));
+        let v_hi16 = vreinterpretq_s16_u16(vshll_n_u8::<7>(v_hi));
+
+        // Y * 19077
+        let y1_lo = vqdmulhq_lane_s16::<0>(y_lo16, coeffs1);
+        let y1_hi = vqdmulhq_lane_s16::<0>(y_hi16, coeffs1);
+
+        // R = Y1 + V*26149 - 14234
+        let r_rounder = vdupq_n_s16(R_ROUNDER);
+        let r0_lo = vqdmulhq_lane_s16::<1>(v_lo16, coeffs1);
+        let r0_hi = vqdmulhq_lane_s16::<1>(v_hi16, coeffs1);
+        let r1_lo = vaddq_s16(y1_lo, r_rounder);
+        let r1_hi = vaddq_s16(y1_hi, r_rounder);
+        let r2_lo = vaddq_s16(r1_lo, r0_lo);
+        let r2_hi = vaddq_s16(r1_hi, r0_hi);
+
+        // G = Y1 - U*6419 - V*13320 + 8708
+        let g_rounder = vdupq_n_s16(G_ROUNDER);
+        let g0_lo = vqdmulhq_lane_s16::<2>(u_lo16, coeffs1);
+        let g0_hi = vqdmulhq_lane_s16::<2>(u_hi16, coeffs1);
+        let g1_lo = vqdmulhq_lane_s16::<3>(v_lo16, coeffs1);
+        let g1_hi = vqdmulhq_lane_s16::<3>(v_hi16, coeffs1);
+        let g2_lo = vaddq_s16(y1_lo, g_rounder);
+        let g2_hi = vaddq_s16(y1_hi, g_rounder);
+        let g3_lo = vaddq_s16(g0_lo, g1_lo);
+        let g3_hi = vaddq_s16(g0_hi, g1_hi);
+        let g4_lo = vsubq_s16(g2_lo, g3_lo);
+        let g4_hi = vsubq_s16(g2_hi, g3_hi);
+
+        // B = Y1 + U*33050 - 17685
+        // 33050 = 32768 + 282, split: vqdmulh(U, 282) + U
+        let b_rounder = vdupq_n_s16(B_ROUNDER);
+        let b0_lo = vqdmulhq_n_s16(u_lo16, B_MULT_EXTRA);
+        let b0_hi = vqdmulhq_n_s16(u_hi16, B_MULT_EXTRA);
+        let b1_lo = vaddq_s16(b0_lo, vreinterpretq_s16_u16(vshll_n_u8::<7>(u_lo)));
+        let b1_hi = vaddq_s16(b0_hi, vreinterpretq_s16_u16(vshll_n_u8::<7>(u_hi)));
+        let b2_lo = vaddq_s16(y1_lo, b_rounder);
+        let b2_hi = vaddq_s16(y1_hi, b_rounder);
+        let b3_lo = vaddq_s16(b2_lo, b1_lo);
+        let b3_hi = vaddq_s16(b2_hi, b1_hi);
+
+        // Shift right by 6, clamp to 0..255
+        let r_lo = vqshrun_n_s16::<6>(r2_lo);
+        let r_hi = vqshrun_n_s16::<6>(r2_hi);
+        let g_lo = vqshrun_n_s16::<6>(g4_lo);
+        let g_hi = vqshrun_n_s16::<6>(g4_hi);
+        let b_lo = vqshrun_n_s16::<6>(b3_lo);
+        let b_hi = vqshrun_n_s16::<6>(b3_hi);
+
+        let r = vcombine_u8(r_lo, r_hi);
+        let g = vcombine_u8(g_lo, g_hi);
+        let b = vcombine_u8(b_lo, b_hi);
+
+        (r, g, b)
+    }
+
+    /// Single `#[arcane]` entry point for one interior row.
+    /// Handles both RGB (bpp=3) and RGBA (bpp=4).
+    #[arcane]
+    pub(super) fn fill_2uv_row_arcane(
+        _token: NeonToken,
+        rgb: &mut [u8],
+        y_row: &[u8],
+        u_near: &[u8],
+        u_far: &[u8],
+        v_near: &[u8],
+        v_far: &[u8],
+        bpp: usize,
+    ) {
+        let width = y_row.len();
+        let chroma_width = u_near.len();
+
+        if width == 0 {
+            return;
+        }
+
+        // First pixel (mirror left edge)
+        {
+            let u = get_fancy_chroma_value(u_near[0], u_near[0], u_far[0], u_far[0]);
+            let v = get_fancy_chroma_value(v_near[0], v_near[0], v_far[0], v_far[0]);
+            write_pixel(&mut rgb[..bpp], y_row[0], u, v);
+        }
+
+        let mut yx: usize = 1;
+        let mut cx: usize = 0;
+        let mut rgb_off: usize = bpp;
+
+        // 32 Y pixels (16 chroma pairs) per SIMD iteration
+        while yx + 32 <= width && cx + 17 <= chroma_width {
+            let un: &[u8; 17] = u_near[cx..cx + 17].try_into().unwrap();
+            let uf: &[u8; 17] = u_far[cx..cx + 17].try_into().unwrap();
+            let vn: &[u8; 17] = v_near[cx..cx + 17].try_into().unwrap();
+            let vf: &[u8; 17] = v_far[cx..cx + 17].try_into().unwrap();
+
+            // Load chroma halves (8 samples each) and upsample to 16
+            let u_a0 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&un[0..8]).unwrap());
+            let u_b0 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&un[1..9]).unwrap());
+            let u_c0 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&uf[0..8]).unwrap());
+            let u_d0 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&uf[1..9]).unwrap());
+            let u_a1 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&un[8..16]).unwrap());
+            let u_b1 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&un[9..17]).unwrap());
+            let u_c1 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&uf[8..16]).unwrap());
+            let u_d1 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&uf[9..17]).unwrap());
+
+            let v_a0 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&vn[0..8]).unwrap());
+            let v_b0 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&vn[1..9]).unwrap());
+            let v_c0 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&vf[0..8]).unwrap());
+            let v_d0 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&vf[1..9]).unwrap());
+            let v_a1 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&vn[8..16]).unwrap());
+            let v_b1 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&vn[9..17]).unwrap());
+            let v_c1 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&vf[8..16]).unwrap());
+            let v_d1 = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&vf[9..17]).unwrap());
+
+            let u_up0 = upsample_16pixels_neon(_token, u_a0, u_b0, u_c0, u_d0);
+            let u_up1 = upsample_16pixels_neon(_token, u_a1, u_b1, u_c1, u_d1);
+            let v_up0 = upsample_16pixels_neon(_token, v_a0, v_b0, v_c0, v_d0);
+            let v_up1 = upsample_16pixels_neon(_token, v_a1, v_b1, v_c1, v_d1);
+
+            let ya: &[u8; 32] = y_row[yx..yx + 32].try_into().unwrap();
+            let y0 = simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&ya[0..16]).unwrap());
+            let y1 = simd_mem::vld1q_u8(<&[u8; 16]>::try_from(&ya[16..32]).unwrap());
+
+            if bpp == 3 {
+                let out: &mut [u8; 96] = (&mut rgb[rgb_off..rgb_off + 96]).try_into().unwrap();
+                let (rgb_0, rgb_1) = out.split_at_mut(48);
+                convert_and_store_rgb16_neon(
+                    _token,
+                    y0,
+                    u_up0,
+                    v_up0,
+                    <&mut [u8; 48]>::try_from(rgb_0).unwrap(),
+                );
+                convert_and_store_rgb16_neon(
+                    _token,
+                    y1,
+                    u_up1,
+                    v_up1,
+                    <&mut [u8; 48]>::try_from(rgb_1).unwrap(),
+                );
+            } else {
+                let out: &mut [u8; 128] = (&mut rgb[rgb_off..rgb_off + 128]).try_into().unwrap();
+                let (rgba_0, rgba_1) = out.split_at_mut(64);
+                convert_and_store_rgba16_neon(
+                    _token,
+                    y0,
+                    u_up0,
+                    v_up0,
+                    <&mut [u8; 64]>::try_from(rgba_0).unwrap(),
+                );
+                convert_and_store_rgba16_neon(
+                    _token,
+                    y1,
+                    u_up1,
+                    v_up1,
+                    <&mut [u8; 64]>::try_from(rgba_1).unwrap(),
+                );
+            }
+
+            yx += 32;
+            cx += 16;
+            rgb_off += 32 * bpp;
+        }
+
+        // 16 Y pixels (8 chroma pairs) per iteration
+        while yx + 16 <= width && cx + 9 <= chroma_width {
+            let un: &[u8; 9] = u_near[cx..cx + 9].try_into().unwrap();
+            let uf: &[u8; 9] = u_far[cx..cx + 9].try_into().unwrap();
+            let vn: &[u8; 9] = v_near[cx..cx + 9].try_into().unwrap();
+            let vf: &[u8; 9] = v_far[cx..cx + 9].try_into().unwrap();
+
+            let u_a = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&un[0..8]).unwrap());
+            let u_b = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&un[1..9]).unwrap());
+            let u_c = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&uf[0..8]).unwrap());
+            let u_d = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&uf[1..9]).unwrap());
+            let v_a = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&vn[0..8]).unwrap());
+            let v_b = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&vn[1..9]).unwrap());
+            let v_c = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&vf[0..8]).unwrap());
+            let v_d = simd_mem::vld1_u8(<&[u8; 8]>::try_from(&vf[1..9]).unwrap());
+
+            let u_up = upsample_16pixels_neon(_token, u_a, u_b, u_c, u_d);
+            let v_up = upsample_16pixels_neon(_token, v_a, v_b, v_c, v_d);
+
+            let ya: &[u8; 16] = y_row[yx..yx + 16].try_into().unwrap();
+            let y_vec = simd_mem::vld1q_u8(ya);
+
+            if bpp == 3 {
+                convert_and_store_rgb16_neon(
+                    _token,
+                    y_vec,
+                    u_up,
+                    v_up,
+                    <&mut [u8; 48]>::try_from(&mut rgb[rgb_off..rgb_off + 48]).unwrap(),
+                );
+            } else {
+                convert_and_store_rgba16_neon(
+                    _token,
+                    y_vec,
+                    u_up,
+                    v_up,
+                    <&mut [u8; 64]>::try_from(&mut rgb[rgb_off..rgb_off + 64]).unwrap(),
+                );
+            }
+
+            yx += 16;
+            cx += 8;
+            rgb_off += 16 * bpp;
+        }
+
+        // Scalar remainder: pairs
+        while yx + 1 < width && cx + 1 < chroma_width {
+            {
+                let u =
+                    get_fancy_chroma_value(u_near[cx], u_near[cx + 1], u_far[cx], u_far[cx + 1]);
+                let v =
+                    get_fancy_chroma_value(v_near[cx], v_near[cx + 1], v_far[cx], v_far[cx + 1]);
+                write_pixel(&mut rgb[rgb_off..rgb_off + bpp], y_row[yx], u, v);
+            }
+            {
+                let u =
+                    get_fancy_chroma_value(u_near[cx + 1], u_near[cx], u_far[cx + 1], u_far[cx]);
+                let v =
+                    get_fancy_chroma_value(v_near[cx + 1], v_near[cx], v_far[cx + 1], v_far[cx]);
+                write_pixel(
+                    &mut rgb[rgb_off + bpp..rgb_off + 2 * bpp],
+                    y_row[yx + 1],
+                    u,
+                    v,
+                );
+            }
+            yx += 2;
+            cx += 1;
+            rgb_off += 2 * bpp;
+        }
+
+        // Last pixel (mirror right edge)
+        if yx < width {
+            let lc = chroma_width - 1;
+            let u = get_fancy_chroma_value(u_near[lc], u_near[lc], u_far[lc], u_far[lc]);
+            let v = get_fancy_chroma_value(v_near[lc], v_near[lc], v_far[lc], v_far[lc]);
+            write_pixel(&mut rgb[rgb_off..rgb_off + bpp], y_row[yx], u, v);
+        }
+    }
 }
 
 // ============================================================================
@@ -1104,6 +1472,7 @@ mod tests {
     use crate::{DecodeConfig, DecodeRequest, EncodeRequest, EncoderConfig, PixelLayout};
     #[allow(unused_imports)]
     use alloc::{vec, vec::Vec};
+    use archmage::incant;
 
     fn encode_lossy(rgb: &[u8], w: usize, h: usize, quality: f32) -> alloc::vec::Vec<u8> {
         let config = EncoderConfig::new_lossy()
@@ -1375,6 +1744,104 @@ mod tests {
                 diff_count, 0,
                 "{w}x{h} Q{q}: streaming differs from fullframe: {diff_count} diffs, max={max_diff}"
             );
+        }
+    }
+
+    /// Verify all SIMD tiers produce identical output for fill_2uv_row.
+    /// On x86: tests V3 vs scalar. On aarch64: tests NEON vs scalar.
+    #[test]
+    fn simd_tiers_produce_identical_output() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        // Generate test data: 128 Y pixels, 65 chroma samples
+        let width = 128usize;
+        let chroma_width = (width + 1) / 2;
+        let y_row: Vec<u8> = (0..width).map(|i| (i * 2) as u8).collect();
+        let u_near: Vec<u8> = (0..chroma_width).map(|i| (i * 3 + 10) as u8).collect();
+        let u_far: Vec<u8> = (0..chroma_width).map(|i| (i * 3 + 20) as u8).collect();
+        let v_near: Vec<u8> = (0..chroma_width).map(|i| (i * 3 + 30) as u8).collect();
+        let v_far: Vec<u8> = (0..chroma_width).map(|i| (i * 3 + 40) as u8).collect();
+
+        for bpp in [3, 4] {
+            // Compute reference output with all tokens enabled (best SIMD)
+            let mut reference = vec![0u8; width * bpp];
+            super::fill_2uv_row_generic(
+                &mut reference,
+                &y_row,
+                &u_near,
+                &u_far,
+                &v_near,
+                &v_far,
+                bpp,
+            );
+
+            let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+                let mut output = vec![0u8; width * bpp];
+                incant!(
+                    super::fill_2uv_row(&mut output, &y_row, &u_near, &u_far, &v_near, &v_far, bpp,),
+                    [v3, neon, wasm128, scalar]
+                );
+
+                assert_eq!(
+                    output, reference,
+                    "bpp={bpp}, tier '{perm}' differs from scalar reference"
+                );
+            });
+
+            std::eprintln!("fill_2uv_row bpp={bpp}: {report}");
+        }
+    }
+
+    /// Same permutation test but with odd widths to exercise scalar tails.
+    #[test]
+    fn simd_tiers_identical_odd_widths() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        for width in [1, 3, 15, 17, 31, 33, 63, 65] {
+            let chroma_width = (width + 1) / 2;
+            let y_row: Vec<u8> = (0..width).map(|i| (i * 7 + 50) as u8).collect();
+            let u_near: Vec<u8> = (0..chroma_width).map(|i| (i * 5 + 100) as u8).collect();
+            let u_far: Vec<u8> = (0..chroma_width).map(|i| (i * 5 + 110) as u8).collect();
+            let v_near: Vec<u8> = (0..chroma_width).map(|i| (i * 5 + 120) as u8).collect();
+            let v_far: Vec<u8> = (0..chroma_width).map(|i| (i * 5 + 130) as u8).collect();
+
+            for bpp in [3, 4] {
+                let mut reference = vec![0u8; width * bpp];
+                super::fill_2uv_row_generic(
+                    &mut reference,
+                    &y_row,
+                    &u_near,
+                    &u_far,
+                    &v_near,
+                    &v_far,
+                    bpp,
+                );
+
+                let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+                    let mut output = vec![0u8; width * bpp];
+                    incant!(
+                        super::fill_2uv_row(
+                            &mut output,
+                            &y_row,
+                            &u_near,
+                            &u_far,
+                            &v_near,
+                            &v_far,
+                            bpp,
+                        ),
+                        [v3, neon, wasm128, scalar]
+                    );
+
+                    assert_eq!(
+                        output, reference,
+                        "w={width} bpp={bpp}, tier '{perm}' differs from scalar"
+                    );
+                });
+
+                if width == 128 {
+                    std::eprintln!("w={width} bpp={bpp}: {report}");
+                }
+            }
         }
     }
 }

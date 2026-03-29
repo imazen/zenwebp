@@ -2593,6 +2593,7 @@ pub(crate) use wasm_transform::*;
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
 
     #[test]
@@ -2608,5 +2609,139 @@ mod tests {
         let mut inverse_dct_block = dct_block;
         idct4x4(&mut inverse_dct_block);
         assert_eq!(BLOCK, inverse_dct_block);
+    }
+
+    /// Pure-Rust reference IDCT (no SIMD, no dispatch, just math).
+    /// Matches the scalar i64-based implementation exactly.
+    fn reference_idct4x4(block: &mut [i32; 16]) {
+        const C1: i64 = 20091;
+        const C2: i64 = 35468;
+
+        fn fetch(block: &[i32], idx: usize) -> i64 {
+            i64::from(block[idx])
+        }
+
+        for i in 0usize..4 {
+            let a1 = fetch(block, i) + fetch(block, 8 + i);
+            let b1 = fetch(block, i) - fetch(block, 8 + i);
+            let t1 = (fetch(block, 4 + i) * C2) >> 16;
+            let t2 = fetch(block, 12 + i) + ((fetch(block, 12 + i) * C1) >> 16);
+            let c1 = t1 - t2;
+            let t1 = fetch(block, 4 + i) + ((fetch(block, 4 + i) * C1) >> 16);
+            let t2 = (fetch(block, 12 + i) * C2) >> 16;
+            let d1 = t1 + t2;
+
+            block[i] = (a1 + d1) as i32;
+            block[4 + i] = (b1 + c1) as i32;
+            block[12 + i] = (a1 - d1) as i32;
+            block[8 + i] = (b1 - c1) as i32;
+        }
+
+        for i in 0usize..4 {
+            let a1 = fetch(block, 4 * i) + fetch(block, 4 * i + 2);
+            let b1 = fetch(block, 4 * i) - fetch(block, 4 * i + 2);
+            let t1 = (fetch(block, 4 * i + 1) * C2) >> 16;
+            let t2 = fetch(block, 4 * i + 3) + ((fetch(block, 4 * i + 3) * C1) >> 16);
+            let c1 = t1 - t2;
+            let t1 = fetch(block, 4 * i + 1) + ((fetch(block, 4 * i + 1) * C1) >> 16);
+            let t2 = (fetch(block, 4 * i + 3) * C2) >> 16;
+            let d1 = t1 + t2;
+
+            block[4 * i] = ((a1 + d1 + 4) >> 3) as i32;
+            block[4 * i + 3] = ((a1 - d1 + 4) >> 3) as i32;
+            block[4 * i + 1] = ((b1 + c1 + 4) >> 3) as i32;
+            block[4 * i + 2] = ((b1 - c1 + 4) >> 3) as i32;
+        }
+    }
+
+    /// Reference add_residue: add i32 IDCT output to u8 prediction, clamp.
+    fn reference_add_residue(
+        block: &mut [u8],
+        coeffs: &[i32; 16],
+        y0: usize,
+        x0: usize,
+        stride: usize,
+    ) {
+        for row in 0..4 {
+            for col in 0..4 {
+                let pos = (y0 + row) * stride + x0 + col;
+                let val = i32::from(block[pos]) + coeffs[row * 4 + col];
+                block[pos] = val.clamp(0, 255) as u8;
+            }
+        }
+    }
+
+    /// Test that the dispatched idct_add_residue matches pure-Rust reference.
+    /// On aarch64, this exercises the NEON fused IDCT path.
+    #[test]
+    fn idct_add_residue_matches_reference() {
+        let test_cases: &[[i32; 16]] = &[
+            // DC only
+            [100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            // Mixed coefficients
+            [
+                200, 50, -30, 20, 40, -20, 10, -5, -10, 5, -3, 2, 8, -4, 2, -1,
+            ],
+            // Larger values
+            [
+                500, -300, 200, -100, 150, -80, 60, -40, -50, 30, -20, 10, 25, -15, 10, -5,
+            ],
+            // All zeros
+            [0; 16],
+            // Single AC coefficient
+            [0, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            // Near-max values (VP8 coefficients are 12-bit)
+            [
+                2047, -2048, 1000, -1000, 500, -500, 250, -250, 125, -125, 63, -63, 31, -31, 15,
+                -15,
+            ],
+        ];
+
+        let stride = 12; // Chroma stride
+        let y0 = 1;
+        let x0 = 1;
+        let _block_size = stride * 6; // enough room
+
+        for (case_idx, &coeffs_orig) in test_cases.iter().enumerate() {
+            // Reference: scalar IDCT then add residue
+            let mut ref_coeffs = coeffs_orig;
+            reference_idct4x4(&mut ref_coeffs);
+            let mut ref_block = [128u8; 72]; // stride*6
+            reference_add_residue(&mut ref_block, &ref_coeffs, y0, x0, stride);
+
+            // Dispatched: calls NEON on aarch64, SSE on x86
+            let mut disp_coeffs = coeffs_orig;
+            let mut disp_block = [128u8; 72];
+            // Use the incant! dispatch path (same as decoder uses)
+            crate::common::prediction::idct_add_residue_and_clear::<72>(
+                &mut disp_block,
+                &mut disp_coeffs,
+                y0,
+                x0,
+                stride,
+            );
+
+            // Compare
+            if ref_block != disp_block {
+                std::eprintln!("MISMATCH in test case {case_idx}: coeffs = {coeffs_orig:?}");
+                for row in 0..4 {
+                    for col in 0..4 {
+                        let pos = (y0 + row) * stride + x0 + col;
+                        let r = ref_block[pos];
+                        let d = disp_block[pos];
+                        if r != d {
+                            std::eprintln!(
+                                "  [{row},{col}] (pos {pos}): ref={r} dispatched={d} diff={}",
+                                r as i32 - d as i32
+                            );
+                        }
+                    }
+                }
+            }
+            assert_eq!(
+                ref_block, disp_block,
+                "test case {case_idx}: dispatched IDCT+add_residue differs from reference"
+            );
+        }
     }
 }
