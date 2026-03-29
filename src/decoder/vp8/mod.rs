@@ -14,6 +14,7 @@
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::collapsible_else_if)]
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::default::Default;
 

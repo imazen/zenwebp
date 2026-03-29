@@ -2258,7 +2258,7 @@ fn to_image_info(native: &crate::ImageInfo, loop_count: Option<Option<u32>>) -> 
         // Extract orientation from EXIF before storing the raw blob.
         // WebP EXIF is raw TIFF bytes (no Exif\0\0 prefix).
         if let Some(orient_val) = crate::exif_orientation::parse_orientation(exif) {
-            info = info.with_orientation(Orientation::from_exif(orient_val as u16));
+            info = info.with_orientation(Orientation::from_exif(orient_val).unwrap_or_default());
         }
         info = info.with_exif(exif.clone());
     }

@@ -4,6 +4,8 @@
 //! probability parameters are flattened into `FrameTables`. This avoids
 //! per-macroblock re-derivation during decode.
 
+use alloc::boxed::Box;
+
 use crate::common::types::MAX_SEGMENTS;
 
 /// DC + AC dequantization pair for one coefficient plane within one segment.

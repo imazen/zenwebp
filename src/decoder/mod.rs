@@ -36,9 +36,6 @@ pub use api::{
 pub use limits::Limits;
 pub use streaming::{StreamStatus, StreamingDecoder};
 
-// AnimationFrame is used in the DecoderContext callback API (internal)
-pub(crate) use vp8v2::{AnimationFrame, DecoderContext};
-
 // Re-export diagnostic types for tests (hidden from public docs)
 #[doc(hidden)]
 pub use vp8::{BlockDiagnostic, DiagnosticFrame, MacroblockDiagnostic, TreeNode};
