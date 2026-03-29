@@ -189,7 +189,6 @@ fn decode_compare(suite: &mut zenbench::Suite) {
                     black_box(decoder.decode().unwrap())
                 })
             });
-
         });
     }
 }

@@ -124,7 +124,6 @@ fn decode_lossless(suite: &mut zenbench::Suite) {
                     black_box(decoder.decode().unwrap())
                 })
             });
-
         });
     }
 }

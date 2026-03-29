@@ -67,9 +67,7 @@ fn main() {
 
         total_rows += rows;
 
-        eprintln!(
-            "  batch {batch_count}: y={y_start}, rows={rows} (total: {total_rows}/{height})"
-        );
+        eprintln!("  batch {batch_count}: y={y_start}, rows={rows} (total: {total_rows}/{height})");
     }
 
     eprintln!();
@@ -77,5 +75,8 @@ fn main() {
     eprintln!("Checksum: {checksum:#018x}");
     eprintln!();
     eprintln!("Memory note: peak RSS should be ~300 KB for row cache + strip buffer,");
-    eprintln!("not ~{} MB for full-frame RGB.", width as u64 * height as u64 * 3 / (1024 * 1024));
+    eprintln!(
+        "not ~{} MB for full-frame RGB.",
+        width as u64 * height as u64 * 3 / (1024 * 1024)
+    );
 }

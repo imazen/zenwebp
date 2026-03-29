@@ -18,7 +18,6 @@ mod streaming;
 pub(crate) mod yuv;
 mod yuv_fused;
 
-
 // Public VP8 decoder module
 pub mod vp8;
 

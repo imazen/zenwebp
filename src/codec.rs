@@ -1410,9 +1410,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                     let native_info = crate::ImageInfo::from_webp(data_ref)?;
                     let w = native_info.width as u16;
                     let h = native_info.height as u16;
-                    let alpha_chunk =
-                        crate::decoder::extended::read_alpha_chunk(alpha_data, w, h)
-                            .map_err(|e| at!(e))?;
+                    let alpha_chunk = crate::decoder::extended::read_alpha_chunk(alpha_data, w, h)
+                        .map_err(|e| at!(e))?;
 
                     // Apply alpha filtering to produce final alpha plane
                     let fw = usize::from(w);
@@ -1444,7 +1443,11 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                     ImageInfo::new(0, 0, ImageFormat::WebP)
                 };
 
-                let bpp = if alpha_plane.is_some() { 4 } else { default_bpp };
+                let bpp = if alpha_plane.is_some() {
+                    4
+                } else {
+                    default_bpp
+                };
 
                 WebpStreamingDecoder::new(
                     frame.bitstream,
@@ -2858,8 +2861,7 @@ mod tests {
             .streaming_decoder(Cow::Borrowed(data), &[])
             .unwrap();
 
-        let mut assembled =
-            alloc::vec![0u8; oneshot_width as usize * oneshot_rows as usize * bpp];
+        let mut assembled = alloc::vec![0u8; oneshot_width as usize * oneshot_rows as usize * bpp];
         while let Some((y, strip)) = stream.next_batch().unwrap() {
             let y = y as usize;
             let row_bytes = oneshot_width as usize * bpp;
@@ -2877,7 +2879,10 @@ mod tests {
             reference.len(),
             "buffer sizes should match"
         );
-        assert_eq!(assembled, reference, "streaming and oneshot should produce identical pixels");
+        assert_eq!(
+            assembled, reference,
+            "streaming and oneshot should produce identical pixels"
+        );
     }
 
     #[test]
@@ -2936,10 +2941,7 @@ mod tests {
             let dec = WebpDecoderConfig::new();
             let mut stream = dec
                 .job()
-                .streaming_decoder(
-                    Cow::Borrowed(output.data()),
-                    &[PixelDescriptor::RGBA8_SRGB],
-                )
+                .streaming_decoder(Cow::Borrowed(output.data()), &[PixelDescriptor::RGBA8_SRGB])
                 .unwrap();
 
             let info = stream.info();

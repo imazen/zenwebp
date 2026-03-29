@@ -456,12 +456,10 @@ impl DecodeWebp {
         if let Some(ref method) = self.upsampling {
             match method.to_ascii_lowercase().as_str() {
                 "simple" | "nearest" => {
-                    config =
-                        config.with_upsampling(crate::UpsamplingMethod::Simple);
+                    config = config.with_upsampling(crate::UpsamplingMethod::Simple);
                 }
                 "bilinear" | "fancy" => {
-                    config =
-                        config.with_upsampling(crate::UpsamplingMethod::Bilinear);
+                    config = config.with_upsampling(crate::UpsamplingMethod::Bilinear);
                 }
                 _ => {}
             }
@@ -619,8 +617,7 @@ mod tests {
 
     #[test]
     fn lossy_from_kv_advanced() {
-        let mut kv =
-            KvPairs::from_querystring("webp.sns=50&webp.filter=30&webp.sharpness=3");
+        let mut kv = KvPairs::from_querystring("webp.sns=50&webp.filter=30&webp.sharpness=3");
         let node = ENCODE_WEBP_LOSSY_NODE.from_kv(&mut kv).unwrap().unwrap();
         assert_eq!(node.get_param("sns_strength"), Some(ParamValue::U32(50)));
         assert_eq!(node.get_param("filter_strength"), Some(ParamValue::U32(30)));
@@ -657,10 +654,7 @@ mod tests {
             node.get_param("preset"),
             Some(ParamValue::Str("photo".into()))
         );
-        assert_eq!(
-            node.get_param("target_size"),
-            Some(ParamValue::U32(50000))
-        );
+        assert_eq!(node.get_param("target_size"), Some(ParamValue::U32(50000)));
         assert_eq!(node.get_param("segments"), Some(ParamValue::U32(3)));
 
         // Round-trip
@@ -690,9 +684,7 @@ mod tests {
         let config = node.to_encoder_config();
         match config {
             EncoderConfig::Lossy(cfg) => {
-                assert!(
-                    (cfg.quality - EncodeWebpLossy::DEFAULT_QUALITY).abs() < f32::EPSILON
-                );
+                assert!((cfg.quality - EncodeWebpLossy::DEFAULT_QUALITY).abs() < f32::EPSILON);
                 assert_eq!(cfg.sharp_yuv, EncodeWebpLossy::DEFAULT_SHARP_YUV);
                 assert!(!cfg.sharp_yuv, "default sharp_yuv should be false");
                 // effort 70 -> method round(70/100*6) = round(4.2) = 4
@@ -835,10 +827,7 @@ mod tests {
     #[test]
     fn lossless_from_kv_effort() {
         let mut kv = KvPairs::from_querystring("webp.effort=50");
-        let node = ENCODE_WEBP_LOSSLESS_NODE
-            .from_kv(&mut kv)
-            .unwrap()
-            .unwrap();
+        let node = ENCODE_WEBP_LOSSLESS_NODE.from_kv(&mut kv).unwrap().unwrap();
         assert_eq!(node.get_param("effort"), Some(ParamValue::F32(50.0)));
         assert_eq!(kv.unconsumed().count(), 0);
     }
@@ -846,10 +835,7 @@ mod tests {
     #[test]
     fn lossless_from_kv_near_lossless() {
         let mut kv = KvPairs::from_querystring("webp.nl=60");
-        let node = ENCODE_WEBP_LOSSLESS_NODE
-            .from_kv(&mut kv)
-            .unwrap()
-            .unwrap();
+        let node = ENCODE_WEBP_LOSSLESS_NODE.from_kv(&mut kv).unwrap().unwrap();
         assert_eq!(node.get_param("near_lossless"), Some(ParamValue::U32(60)));
     }
 
@@ -873,14 +859,8 @@ mod tests {
         assert_eq!(node.get_param("effort"), Some(ParamValue::F32(50.0)));
         assert_eq!(node.get_param("near_lossless"), Some(ParamValue::U32(80)));
         assert_eq!(node.get_param("exact"), Some(ParamValue::Bool(true)));
-        assert_eq!(
-            node.get_param("alpha_quality"),
-            Some(ParamValue::U32(90))
-        );
-        assert_eq!(
-            node.get_param("target_size"),
-            Some(ParamValue::U32(100000))
-        );
+        assert_eq!(node.get_param("alpha_quality"), Some(ParamValue::U32(90)));
+        assert_eq!(node.get_param("target_size"), Some(ParamValue::U32(100000)));
 
         let exported = node.to_params();
         let node2 = ENCODE_WEBP_LOSSLESS_NODE.create(&exported).unwrap();
@@ -906,9 +886,7 @@ mod tests {
             EncoderConfig::Lossless(cfg) => {
                 // effort 75 -> method round(75/100*6) = round(4.5) = 5
                 assert_eq!(cfg.method, 5);
-                assert!(
-                    (cfg.quality - EncodeWebpLossless::DEFAULT_EFFORT).abs() < f32::EPSILON
-                );
+                assert!((cfg.quality - EncodeWebpLossless::DEFAULT_EFFORT).abs() < f32::EPSILON);
                 assert_eq!(
                     cfg.near_lossless,
                     EncodeWebpLossless::DEFAULT_NEAR_LOSSLESS as u8
@@ -995,10 +973,7 @@ mod tests {
     fn decode_defaults() {
         let node = DECODE_WEBP_NODE.create_default().unwrap();
         assert_eq!(node.get_param("upsampling"), Some(ParamValue::None));
-        assert_eq!(
-            node.get_param("dithering_strength"),
-            Some(ParamValue::None)
-        );
+        assert_eq!(node.get_param("dithering_strength"), Some(ParamValue::None));
     }
 
     #[test]
@@ -1037,10 +1012,7 @@ mod tests {
     fn decode_to_config_defaults() {
         let node = DecodeWebp::default();
         let config = node.to_decode_config();
-        assert_eq!(
-            config.upsampling,
-            crate::UpsamplingMethod::Bilinear
-        );
+        assert_eq!(config.upsampling, crate::UpsamplingMethod::Bilinear);
         assert_eq!(config.dithering_strength, 50);
     }
 
@@ -1062,10 +1034,7 @@ mod tests {
             dithering_strength: Some(100),
         };
         let config = node.to_decode_config();
-        assert_eq!(
-            config.upsampling,
-            crate::UpsamplingMethod::Bilinear
-        );
+        assert_eq!(config.upsampling, crate::UpsamplingMethod::Bilinear);
         assert_eq!(config.dithering_strength, 100);
     }
 
@@ -1187,10 +1156,7 @@ mod tests {
         let config = node.apply(base);
         // Defaults preserved
         let inner = config.inner();
-        assert_eq!(
-            inner.upsampling,
-            crate::UpsamplingMethod::Bilinear
-        );
+        assert_eq!(inner.upsampling, crate::UpsamplingMethod::Bilinear);
     }
 
     // ── Registry integration ──

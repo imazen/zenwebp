@@ -14,15 +14,11 @@
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::collapsible_else_if)]
 
-
 use alloc::vec::Vec;
 use core::array;
 use core::default::Default;
 
-
 use crate::common::types::*;
-
-
 
 // ============================================================================
 // Diagnostic Types for I4 Encoding Efficiency Analysis
@@ -183,4 +179,3 @@ const COEFF_PROB_NODES: TokenProbTreeNodes = {
     }
     output
 };
-
