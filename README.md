@@ -8,7 +8,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-zenwebp = "0.3"
+zenwebp = "0.4"
 ```
 
 **New to zenwebp?** Check out the [API guide](examples/api_guide.rs) that demonstrates 100% of the public API with runnable examples.
@@ -283,7 +283,7 @@ At the same quality setting, zenwebp produces files within 1-5% of libwebp's siz
 
 ```toml
 [dependencies]
-zenwebp = { version = "0.3", default-features = false }
+zenwebp = { version = "0.4", default-features = false }
 ```
 
 Both encoder and decoder work without std. The decoder takes `&[u8]` slices and the encoder writes to `Vec<u8>`. Only `encode_to_writer()` requires the `std` feature.

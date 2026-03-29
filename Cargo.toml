@@ -1,6 +1,6 @@
 [package]
 name = "zenwebp"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2024"
 license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
 rust-version = "1.89"

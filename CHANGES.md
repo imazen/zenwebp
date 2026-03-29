@@ -2,21 +2,77 @@
 
 ### Version 0.4.0
 
-**BREAKING CHANGE - License Change**
+**BREAKING CHANGES — API reorganization, new features**
 
-zenwebp is now licensed under **AGPL-3.0-or-later** (was MIT OR Apache-2.0).
+#### API Reorganization
 
-**Why AGPL?**
-- Ensures improvements benefit the community, especially for server-side/SaaS deployments
-- Aligns with the project's goal of providing professional-grade WebP processing
-- Commercial licenses available for closed-source use: support@imazen.io
+The crate root is now lean — types live in their natural namespaces.
 
-**Migration:**
-- If you're using zenwebp in open-source software: No action needed (AGPL compatible)
-- If you're using zenwebp in closed-source/proprietary software: Contact us for commercial licensing
-- If you need to stay on MIT/Apache-2.0: Use version 0.3.x (maintenance only)
+**Moved to `zenwebp::oneshot::`:**
+- All 16 `decode_*` convenience functions (`decode_rgba`, `decode_rgb`, etc.)
 
-No API changes in this release - purely a licensing update.
+**Moved to `zenwebp::mux::`** (no longer re-exported at root):
+- `AnimationConfig`, `AnimationEncoder`, `AnimationDecoder`, `WebPDemuxer`,
+  `WebPMux`, `BlendMethod`, `DisposeMethod`, `MuxError`, `MuxResult`,
+  `AnimFrame`, `DemuxFrame`, `MuxFrame`, `AnimationInfo`
+
+**Moved to `zenwebp::encoder::`** (no longer re-exported at root):
+- `EncodeStats`, `EncodeProgress`, `NoProgress`, `ClassifierDiag`,
+  `ImageContentType` (renamed from `ContentType`)
+
+**Moved to `zenwebp::decoder::`** (no longer re-exported at root):
+- `BitstreamFormat`, `LoopCount`, `StreamStatus`, `UpsamplingMethod`,
+  `YuvPlanes`, `AnimationFrame`
+
+**Moved to `zenwebp::zencodec::`** (feature-gated):
+- All `Webp*` zencodec trait adapters
+
+**Removed from root** (import from `enough` directly):
+- `Stop`, `StopReason`, `Unstoppable`
+
+**Removed from public API:**
+- `DecoderContext` — now `pub(crate)`, buffer reuse happens internally
+
+**Renamed:**
+- `ContentType` → `ImageContentType`
+
+**Stays at root:**
+- `DecodeConfig`, `DecodeError`, `DecodeRequest`, `DecodeResult`, `ImageInfo`,
+  `Limits`, `StreamingDecoder`, `WebPDecoder`
+- `EncodeError`, `EncodeRequest`, `EncodeResult`, `EncoderConfig`,
+  `LossyConfig`, `LosslessConfig`, `ImageMetadata`, `PixelLayout`, `Preset`
+- `Orientation` (re-exported from `zenpixels`)
+
+#### Migration
+
+```rust
+// 0.3.x
+use zenwebp::{decode_rgba, AnimationDecoder, MuxError, Stop};
+
+// 0.4.0
+use zenwebp::oneshot::decode_rgba;
+use zenwebp::mux::{AnimationDecoder, MuxError};
+use enough::Stop;
+```
+
+#### New Features
+
+- **EXIF orientation parsing** — `ImageInfo.orientation` is automatically
+  extracted from the EXIF chunk. Returns `Option<zenpixels::Orientation>`.
+- **`zenwebp::Orientation`** re-exported from `zenpixels` (canonical D4
+  dihedral group type for the zen ecosystem).
+- **ICC profile documentation** — crate-level docs explain the full ICC
+  pipeline (extract, embed, post-hoc via `metadata` module).
+- **12,825-file corpus validation** — pixel-exact match against libwebp
+  on the full scraped WebP corpus.
+
+#### Internal Improvements
+
+- `common`, `vp8`, `vp8v2` modules now `pub(crate)`
+- Encoder sub-modules `#[doc(hidden)]` (still accessible, hidden from docs)
+- All v1/v2 naming artifacts removed (the v1 decoder was deleted previously)
+- `MbRowEntry` fields narrowed to `pub(super)`
+- `zenpixels` is now a required (non-optional) dependency
 
 ### Version 0.3.0
 

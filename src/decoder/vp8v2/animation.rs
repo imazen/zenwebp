@@ -49,16 +49,12 @@ impl DecoderContext {
     /// The callback receives an [`AnimationFrame`] with the composited RGBA
     /// canvas. Return `true` to continue decoding, `false` to stop early.
     ///
-    /// # Example
+    /// # Example (internal API)
     ///
-    /// ```rust,no_run
-    /// use zenwebp::DecoderContext;
-    ///
-    /// let webp_data: &[u8] = &[]; // animated WebP data
+    /// ```rust,ignore
     /// let mut ctx = DecoderContext::new();
     /// ctx.decode_animation(webp_data, |frame| {
-    ///     println!("frame {} at {}ms: {}x{}",
-    ///         frame.frame_num, frame.timestamp_ms, frame.width, frame.height);
+    ///     println!("frame {} at {}ms", frame.frame_num, frame.timestamp_ms);
     ///     true // continue
     /// }).unwrap();
     /// ```
