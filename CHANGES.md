@@ -79,6 +79,13 @@ use enough::Stop;
 - Decoder is now **bit-exact with libwebp on aarch64** (verified via QEMU
   cross-testing against webpx).
 
+#### Bug Fixes
+
+- **Default dithering strength changed from 50 to 0** — libwebp defaults to
+  0 in both simple and advanced APIs. Our default of 50 caused spurious
+  chroma diffs (max=4) in every comparison against libwebp/webpx, masked by
+  pixel-perfect tests explicitly overriding to 0.
+
 #### Internal Improvements
 
 - `common`, `vp8`, `vp8v2` modules now `pub(crate)`
