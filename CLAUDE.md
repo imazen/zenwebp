@@ -379,13 +379,14 @@ instruction count, not cache efficiency.
 
 ## Profiler Hot Spots
 
-### Encoder (method 4, 2026-03-28, plasma 512x512 Q75 SNS=0 seg=1, 203M total)
+### Encoder (method 4, 2026-03-28, plasma 512x512 Q75 SNS=0 seg=1, 200M total)
 | Function | % | M instr | Notes |
 |----------|---|---------|-------|
-| evaluate_i4_modes_sse2 | 26.7% | 54.3M | I4 inner loop (inlines quant/dequant/SSE) |
-| choose_macroblock_info | 13.4% | 27.2M | I16/UV mode selection |
-| encode_image | 11.3% | 22.9M | Main encoding loop |
-| get_residual_cost_sse2 | 9.9% | 20.2M | Coefficient cost estimation |
+| evaluate_i4_modes_sse2 | 27.1% | 54.3M | I4 inner loop (inlines quant/dequant/SSE) |
+| choose_macroblock_info | 13.6% | 27.2M | I16/UV mode selection |
+| encode_image (incl. write_bool) | 12.3% | 24.7M | Main encoding loop + token emission |
+| get_residual_cost_sse2 | 10.1% | 20.2M | Coefficient cost estimation |
+| record_coeff_tokens | 4.1% | 8.2M | Token recording |
 
 **get_residual_cost optimization history (2026-03-28):**
 30.5M -> 24.1M (remapped cost table, padded LevelCostArray) -> 20.2M (direct
@@ -590,6 +591,48 @@ predict well. The excess branch COUNT (69.5M vs 21.3M when inlined 25x)
 came from BTB aliasing, not from inherently unpredictable branches.
 Making the function out-of-line was the only approach that addressed
 the root cause.
+
+### Arithmetic encoder optimization (2026-03-28)
+
+Rewrote `ArithmeticEncoder::write_bool` to match libwebp's `VP8PutBit`:
+
+**What worked:**
+- **Lookup-table normalization (kNorm/kNewRange):** Eliminates while-loop
+  that iterated 1-7 times per bit. One table lookup gives shift count and
+  final range. Matches libwebp's bit_writer_utils.c tables exactly.
+- **Run-length carry handling:** Tracks pending 0xFF byte count instead of
+  walking backwards through the output buffer on carry. O(1) vs O(n).
+- **Batched bit shift:** Shifts value by full shift count at once, checks
+  flush once per normalization instead of per-bit.
+- **Result:** callgrind 203.1M -> 200.2M (-1.4%, -2.9M). write_bool fully
+  inlined into encode_image (was 5.6M standalone at m4 SNS=0 seg=1).
+
+**What did NOT work for record_coeff_tokens:**
+- **Stack-local token buffer + extend_from_slice:** Eliminated 44 `grow_one`
+  cold paths in assembly (1453->930 asm lines, -36%). But the 640-byte memset
+  per call for the `[u16; 320]` buffer added 1.4M instructions to memset,
+  cancelling the 0.55M savings on the function itself. Net regression.
+- **Pre-reserve(320) per call:** Added 3M instructions from the reserve
+  comparison on every call (all no-ops since buffer is pre-allocated).
+  Vec::push capacity checks are effectively free — branch predictor handles
+  the always-taken fast path with zero mispredicts.
+
+**Key insight:** Vec::push in hot loops generates `grow_one` cold paths that
+bloat the function's assembly (code size), but the branch predictor handles
+the capacity check perfectly. The per-push overhead is ~1 compare + ~1 branch
+(always predicted taken), which is negligible. Attempts to eliminate these
+checks by staging in stack buffers add memset/memcpy overhead that exceeds
+the savings. The `#![forbid(unsafe_code)]` ceiling for per-token recording
+is essentially the current implementation.
+
+**Production profile (default settings, 5x encode, 512x512 Q75 m4):**
+| Function | M instr | % |
+|----------|---------|---|
+| get_residual_cost_sse2 | 564M | 25.4% |
+| encode_image (incl. write_bool) | 472M | 21.2% |
+| evaluate_i4_modes_sse2 | 296M | 13.3% |
+| record_coeff_tokens | 291M | 13.1% |
+| choose_macroblock_info | 119M | 5.4% |
 
 ## Known Bugs
 
