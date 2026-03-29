@@ -342,6 +342,7 @@ impl DecoderContext {
 
             // Compute filter params from precomputed table
             let is_b = mb.luma_mode == LumaMode::B;
+            // segmentid is 0..=3 (from read_segment_id), is_b is bool.
             let fp = &self.tables.filter[mb.segmentid as usize][is_b as usize];
             let do_subblock_filtering = is_b || (!mb.coeffs_skipped && mb.non_zero_dct);
             self.mb_filter_params[mbx] = MbFilterParams {

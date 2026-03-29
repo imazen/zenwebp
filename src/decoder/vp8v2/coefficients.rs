@@ -146,7 +146,8 @@ fn read_coefficients(
             next_ctx = 2;
         }
 
-        // Branchless sign reading (VP8GetSigned) + dequantize
+        // Branchless sign reading (VP8GetSigned) + dequantize.
+        // ZIGZAG[n] is 0..=15 (n < 16 guaranteed by loop), (n > 0) is bool.
         output[ZIGZAG[n] as usize] = reader.get_signed(v) * dq_pair[(n > 0) as usize];
 
         n += 1;

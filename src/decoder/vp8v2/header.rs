@@ -186,10 +186,12 @@ impl DecoderContext {
             }
 
             for i in 0..MAX_SEGMENTS {
+                // 7-bit signed value: -127..=127, fits i8.
                 self.tables.segment_quantizer_level[i] = b.read_optional_signed_value(7) as i8;
             }
 
             for i in 0..MAX_SEGMENTS {
+                // 6-bit signed value: -63..=63, fits i8.
                 self.tables.segment_loopfilter_level[i] = b.read_optional_signed_value(6) as i8;
             }
         }
@@ -237,6 +239,7 @@ impl DecoderContext {
             r.read_exact(sizes.as_mut_slice())?;
 
             for s in sizes.chunks(3) {
+                // u24 max is 16_777_215, always fits usize.
                 let size = LittleEndian::read_u24(s) as usize;
                 // Validate partition size against remaining data
                 if size > r.remaining() {
