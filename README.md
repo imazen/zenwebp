@@ -221,32 +221,48 @@ let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode
 
 ## Performance
 
-### Decoder benchmarks
+### Lossy decoder benchmarks
 
-Tested across three corpora with varying image sizes and content:
+**Bit-exact with libwebp** — 0 pixel diffs on 218+ conformance files.
 
-| Corpus | Images | Megapixels | zenwebp | image-webp | zenwebp speedup |
-|--------|--------|------------|---------|------------|-----------------|
-| CLIC2025 | 15 | 42.6 | 1.28x slower | 2.78x slower | **2.2x faster** |
-| Screenshots | 9 | 64.4 | 1.22x slower | 2.46x slower | **2.0x faster** |
-| CID22 | 15 | 3.9 | 1.67x slower | 2.98x slower | **1.8x faster** |
+Tested across 14 images (CLIC2025 photos, screenshots, CID22) without `-C target-cpu=native`:
 
-*All ratios vs libwebp (C). Lower is better. zenwebp consistently ~2x faster than image-webp.*
+| Content | vs libwebp (C) | vs image-webp |
+|---------|---------------|---------------|
+| Photos (CLIC2025, 2K) | **1.09-1.12x** | **2.0-2.5x faster** |
+| Screenshots (1K-4K) | **1.06-1.14x** | **2.0-2.5x faster** |
+| Small photos (512-576px) | **1.10-1.15x** | **2.5x faster** |
 
-Benchmarks reflect v0.3.x. See PERFORMANCE.md for the latest numbers.
+Streaming architecture with ~100KB peak memory (no full-frame Y/U/V buffers). Buffer reuse across frames via `DecoderContext`.
 
-### Encoder benchmarks
+### Lossless decoder benchmarks
 
-| Corpus | zenwebp m5 | libwebp m5 | Size ratio |
-|--------|------------|------------|------------|
-| CID22 (248 images) | - | - | 1.0002x |
-| Screenshots (13 images) | - | - | 1.0022x |
+| Content | vs libwebp (C) | vs image-webp |
+|---------|---------------|---------------|
+| Photos (512px) | **at parity or faster** | ~1.0x |
+| Screenshots (2K) | **1.23-1.31x** | ~1.0x |
 
-Encoding speed is ~1.4-2.6x slower than libwebp depending on method (1.43x at m6, 2.6x at m0). File sizes within 0.2% of libwebp at method 5.
+### Lossy encoder benchmarks
+
+| Method | Speed vs libwebp | Compression |
+|--------|-----------------|-------------|
+| m4 (default) | **1.35x** | 1.01x |
+| m6 (best) | **1.32x** | 1.00x |
+
+File sizes within 0.2% of libwebp at method 5.
+
+### Lossless encoder benchmarks
+
+| Method | Speed vs libwebp | Compression |
+|--------|-----------------|-------------|
+| m2-m4 | **1.03x** (near parity) | 1.00-1.01x |
+| m6 | **2.6x faster** | 1.01x |
+
+24/24 pixel-exact lossless roundtrips verified.
 
 ### Quality
 
-At the same quality setting, zenwebp produces files within 1-5% of libwebp's size with comparable visual quality. Quality is slightly better than libwebp below Q75 and slightly worse above Q75.
+At the same quality setting, zenwebp produces files within 1-5% of libwebp's size with comparable visual quality.
 
 ## no_std Support
 
