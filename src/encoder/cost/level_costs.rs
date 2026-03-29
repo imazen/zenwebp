@@ -15,8 +15,15 @@ use crate::common::types::TokenProbTables;
 
 use super::super::tables::{MAX_LEVEL, MAX_VARIABLE_LEVEL, VP8_ENC_BANDS, VP8_LEVEL_CODES};
 
-/// Type alias for level cost array: cost for each level 0..=MAX_VARIABLE_LEVEL
-pub type LevelCostArray = [u16; MAX_VARIABLE_LEVEL + 1];
+/// Padded size for level cost arrays: 128 entries to allow bounds-check-free
+/// indexing with `& 0x7F` in the hot inner loop. Only entries 0..=67 are
+/// populated with real costs; entries 68..127 duplicate entry 67.
+pub const LEVEL_COST_ARRAY_SIZE: usize = 128;
+
+/// Type alias for level cost array: entries 0..=MAX_VARIABLE_LEVEL hold real
+/// costs, entries MAX_VARIABLE_LEVEL+1..127 are padded with the max-level cost.
+/// The padding allows `t[level & 0x7F]` without bounds checks.
+pub type LevelCostArray = [u16; LEVEL_COST_ARRAY_SIZE];
 
 /// Level costs indexed by \[type\]\[band\]\[context\]
 /// Each entry is an array of costs for levels 0..=MAX_VARIABLE_LEVEL
@@ -84,7 +91,7 @@ impl LevelCosts {
     /// Create new level cost tables
     pub fn new() -> Self {
         Self {
-            level_cost: [[[[0u16; MAX_VARIABLE_LEVEL + 1]; NUM_CTX]; NUM_BANDS]; NUM_TYPES],
+            level_cost: [[[[0u16; LEVEL_COST_ARRAY_SIZE]; NUM_CTX]; NUM_BANDS]; NUM_TYPES],
             remapped: [[[0usize; NUM_CTX]; 16]; NUM_TYPES],
             eob_cost: [[[0u16; NUM_CTX]; NUM_BANDS]; NUM_TYPES],
             init_cost: [[[0u16; NUM_CTX]; NUM_BANDS]; NUM_TYPES],
@@ -129,6 +136,13 @@ impl LevelCosts {
                     for v in 1..=MAX_VARIABLE_LEVEL {
                         self.level_cost[ctype][band][ctx][v] =
                             cost_base + variable_level_cost(v, p);
+                    }
+
+                    // Pad entries MAX_VARIABLE_LEVEL+1..127 with the max-level cost.
+                    // This allows bounds-check-free indexing with `& 0x7F` in hot loops.
+                    let max_cost = self.level_cost[ctype][band][ctx][MAX_VARIABLE_LEVEL];
+                    for v in (MAX_VARIABLE_LEVEL + 1)..LEVEL_COST_ARRAY_SIZE {
+                        self.level_cost[ctype][band][ctx][v] = max_cost;
                     }
 
                     // EOB cost: signaling "no more coefficients" after this position
@@ -196,5 +210,23 @@ impl LevelCosts {
     pub fn get_init_cost(&self, ctype: usize, first: usize, ctx: usize) -> u16 {
         let band = VP8_ENC_BANDS[first] as usize;
         self.init_cost[ctype][band][ctx]
+    }
+
+    /// Get the remapped cost table for a given coefficient type.
+    ///
+    /// Returns a `[16][3]` array of references into the level_cost tables,
+    /// mapping `[position][context]` directly to the cost array for that
+    /// position's band. This matches libwebp's `CostArrayMap` pattern
+    /// and eliminates VP8_ENC_BANDS lookups and bounds checks in the
+    /// inner cost calculation loop.
+    #[inline]
+    pub fn get_remapped_costs(&self, ctype: usize) -> [[&LevelCostArray; NUM_CTX]; 16] {
+        let lc = &self.level_cost[ctype];
+        // VP8_ENC_BANDS maps position -> band: [0,1,2,3,6,4,5,6,6,6,6,6,6,6,6,7]
+        // Build the [16][3] reference table, one entry per (position, context)
+        core::array::from_fn(|n| {
+            let band = VP8_ENC_BANDS[n] as usize;
+            core::array::from_fn(|ctx| &lc[band][ctx])
+        })
     }
 }
