@@ -23,27 +23,36 @@
 //! - arithmetic: Arithmetic/range coding
 //! - residual_cost: SIMD-optimized residual cost estimation
 
-/// Image analysis and auto-detection
+/// Image analysis and auto-detection.
+#[doc(hidden)]
 pub mod analysis;
 mod api;
 mod arithmetic;
-/// Type-safe encoder configuration
+/// Type-safe encoder configuration.
+#[doc(hidden)]
 pub mod config;
+/// Rate-distortion cost estimation.
+#[doc(hidden)]
 pub mod cost;
 pub(crate) mod fast_math;
 /// Perceptual distortion model (CSF tables, psy-rd, psy-trellis)
 pub(crate) mod psy;
-/// Quantization matrix and coefficient quantization
+/// Quantization matrix and coefficient quantization.
+#[doc(hidden)]
 pub mod quantize;
 /// Residual cost estimation (SIMD-optimized)
 mod residual_cost;
+/// Codec lookup tables.
+#[doc(hidden)]
 pub mod tables;
 /// Trellis quantization for RD-optimized coefficient selection
 mod trellis;
 mod vec_writer;
-/// VP8 encoder implementation
+/// VP8 lossy encoder implementation.
+#[doc(hidden)]
 pub mod vp8;
-/// VP8L (lossless) encoder implementation
+/// VP8L lossless encoder implementation.
+#[doc(hidden)]
 pub mod vp8l;
 
 // Re-export public API
@@ -54,6 +63,7 @@ pub use api::{
     NoProgress, PixelLayout, Preset,
 };
 pub use config::{EncoderConfig, LosslessConfig, LossyConfig};
+#[doc(hidden)]
 pub use vp8l::{Vp8lConfig, Vp8lQuality, encode_vp8l};
 
 // Crate-internal re-exports for mux module

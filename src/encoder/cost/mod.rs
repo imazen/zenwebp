@@ -1,20 +1,7 @@
 //! Cost estimation for VP8 encoding.
 //!
-//! This module provides rate-distortion (RD) cost calculation for mode selection,
-//! based on libwebp's cost estimation approach.
-//!
-//! The key insight is that encoding cost depends on:
-//! 1. Mode signaling cost (fixed per mode type)
-//! 2. Coefficient encoding cost (depends on coefficient values and probabilities)
-//!
-//! For mode selection, we use: score = Distortion + lambda * Rate
-//!
-//! ## Module organization
-//!
-//! - [`distortion`]: Hadamard transform and TDisto functions (SIMD candidates)
-//! - [`lambda`]: Rate-distortion lambda calculations
-//! - [`level_costs`]: Precomputed level cost tables
-//! - [`stats`]: Token statistics for probability adaptation
+//! Rate-distortion (RD) cost calculation for mode selection:
+//! distortion, lambda, level costs, and token statistics.
 
 #![allow(dead_code)]
 #![allow(clippy::needless_range_loop)]
