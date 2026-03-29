@@ -170,6 +170,43 @@ impl WebpEncoderConfig {
         self
     }
 
+    /// Set target file size in bytes (lossy/lossless). 0 = disabled.
+    #[must_use]
+    pub fn with_target_size(mut self, bytes: u32) -> Self {
+        self.inner = self.inner.with_target_size(bytes);
+        self
+    }
+
+    /// Set target PSNR in dB (lossy only). 0.0 = disabled.
+    #[must_use]
+    pub fn with_target_psnr(mut self, psnr: f32) -> Self {
+        self.inner = self.inner.with_target_psnr(psnr);
+        self
+    }
+
+    /// Set number of segments (lossy only, 1-4).
+    #[must_use]
+    pub fn with_segments(mut self, segments: u8) -> Self {
+        self.inner = self.inner.with_segments(segments);
+        self
+    }
+
+    /// Set content-aware preset (lossy only).
+    #[must_use]
+    pub fn with_preset_value(mut self, preset: crate::Preset) -> Self {
+        if let crate::encoder::config::EncoderConfig::Lossy(ref mut cfg) = self.inner {
+            *cfg = cfg.clone().with_preset_value(preset);
+        }
+        self
+    }
+
+    /// Set encoding method directly (0-6). Prefer `with_effort_u32` for normalized 0-100 input.
+    #[must_use]
+    pub fn with_method(mut self, method: u8) -> Self {
+        self.inner = self.inner.with_method(method);
+        self
+    }
+
     /// Access the underlying [`EncoderConfig`].
     #[must_use]
     pub fn inner(&self) -> &EncoderConfig {
@@ -1029,6 +1066,13 @@ impl WebpDecoderConfig {
     #[must_use]
     pub fn with_upsampling(mut self, method: crate::UpsamplingMethod) -> Self {
         self.inner = self.inner.upsampling(method);
+        self
+    }
+
+    /// Set chroma dithering strength (0=off, 100=max). Default: 50.
+    #[must_use]
+    pub fn with_dithering_strength(mut self, strength: u8) -> Self {
+        self.inner = self.inner.with_dithering_strength(strength);
         self
     }
 
