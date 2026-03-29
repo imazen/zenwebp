@@ -67,8 +67,9 @@ jobs:
       - name: Check (--features avx512)
         run: cargo check --features avx512
 
-  # i686 disabled: archmage X64V*Token maps to x86_64 only.
-  # 32-bit x86 would need X86V* tiers in archmage which don't exist yet.
+  # i686 disabled: archmage #[arcane] generates cfg(target_arch = "x86_64"),
+  # so SIMD functions don't exist on i686. Needs incant!-based dispatch at
+  # all call sites, or archmage macro changes to emit cfg(any(x86_64, x86)).
   # i686:
   #   name: Test (Linux i686)
   #   runs-on: ubuntu-latest
