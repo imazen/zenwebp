@@ -161,3 +161,21 @@ pub use codec::{
 /// For embedding metadata during encoding, use
 /// [`EncodeRequest::with_metadata`] instead.
 pub mod metadata;
+
+/// Test-only helpers exposed for integration tests.
+///
+/// Not part of the public API; do not use in production code.
+#[doc(hidden)]
+pub mod test_helpers {
+    /// Scalar RGB->YUV420 conversion (same path the encoder uses).
+    ///
+    /// Returns (y, u, v) planes with macroblock-aligned dimensions.
+    pub fn convert_image_yuv_rgb(
+        image_data: &[u8],
+        width: u16,
+        height: u16,
+        stride: usize,
+    ) -> (alloc::vec::Vec<u8>, alloc::vec::Vec<u8>, alloc::vec::Vec<u8>) {
+        crate::decoder::yuv::convert_image_yuv::<3>(image_data, width, height, stride)
+    }
+}
