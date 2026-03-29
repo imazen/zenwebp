@@ -63,14 +63,14 @@ See `docs/PERFORMANCE.md` for benchmarks, `docs/CALL-TREE.md` for SIMD tiers, `d
 **Production settings (SNS=50, filter=60):**
 - CID22 Q75: **1.0149x** | Q90: **1.0060x** (near parity)
 
-**Speed (criterion, 792079.png 512x512, Q75, 2026-02-05):**
+**Speed (zenbench, 792079.png 512x512, Q75, 2026-03-28):**
 | Method | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| 0 | 7.0ms | 2.7ms | 2.6x |
-| 4 | 15.0ms | 10.2ms | **1.47x** |
-| 6 | 22.2ms | 15.5ms | **1.43x** |
+| 0 | 6.4ms | 2.8ms | 2.3x |
+| 4 | 13.5ms | 9.9ms | **1.36x** |
+| 6 | 21.0ms | 15.7ms | **1.34x** |
 
-*Instruction ratio is 1.12x (179M vs ~161M) but wall-clock is ~1.47x — gap is memory access patterns.*
+*Instruction ratio ~1.12x but wall-clock ~1.36x — gap is memory access patterns.*
 
 ### Encoder (Lossless) vs libwebp
 
@@ -379,19 +379,24 @@ instruction count, not cache efficiency.
 
 ## Profiler Hot Spots
 
-### Encoder (method 4, 2026-02-05, 179M total)
+### Encoder (method 4, 2026-03-28, plasma 512x512 Q75 SNS=0 seg=1, 203M total)
 | Function | % | M instr | Notes |
 |----------|---|---------|-------|
-| evaluate_i4_modes_sse2 | 20.8% | 37.2M | I4 inner loop (inlines quant/dequant/SSE) |
-| get_residual_cost_sse2 | 12.1% | 21.6M | Coefficient cost estimation |
-| encode_image | 12.1% | 21.6M | Main encoding loop |
-| choose_macroblock_info | 10.6% | 18.9M | I16/UV mode selection |
+| evaluate_i4_modes_sse2 | 26.7% | 54.3M | I4 inner loop (inlines quant/dequant/SSE) |
+| choose_macroblock_info | 13.4% | 27.2M | I16/UV mode selection |
+| encode_image | 11.3% | 22.9M | Main encoding loop |
+| get_residual_cost_sse2 | 9.9% | 20.2M | Coefficient cost estimation |
+
+**get_residual_cost optimization history (2026-03-28):**
+30.5M -> 24.1M (remapped cost table, padded LevelCostArray) -> 20.2M (direct
+indexing with `& 7`/`& 0x7F` bounds proofs). Inner loop: 25 instr (5 branches)
+-> 18 instr (0 branches, all cmov). -34% total, -7.6% whole encoder.
 
 **vs libwebp function-level (2026-02-05):**
 | zenwebp | M instr | libwebp | M instr | Ratio |
 |---------|---------|---------|---------|-------|
 | evaluate_i4 + choose_mb + pick_i4 | 61.7M | PickBestIntra4 + quant_enc | 18.3M | 3.4x |
-| get_residual_cost_sse2 | 22.9M | GetResidualCost_SSE2 | 9.7M | 2.4x |
+| get_residual_cost_sse2 | 20.2M | GetResidualCost_SSE2 | 9.7M | **2.1x** |
 | idct_add_residue + idct4x4 | 8.6M | ITransform_SSE2 | 15.9M | **0.54x** |
 | ftransform2 + ftransform_from_u8 | 9.6M | FTransform_SSE2 | 9.8M | **0.98x** |
 | quantize_block (standalone) | 4.3M | QuantizeBlock_SSE41 | 6.0M | **0.72x** |
@@ -424,8 +429,10 @@ bounds checks in loop filter / YUV->RGB conversion.
 
 ### Encoder
 1. **Mode selection 3.4x vs libwebp** — I4 inner loop orchestration overhead
-2. **Residual cost 2.4x** — tighter inner loop possible
-3. **Wall-clock 1.47x despite 1.12x instructions** — memory access patterns
+2. **Residual cost 2.1x (was 2.4x)** — inner loop now branchless, remaining
+   gap is Rust overhead (cmov for ctx/level clamping, SIMD abs precompute
+   setup, dispatch wrapper ~1.9M per encode)
+3. **Wall-clock 1.36x (was 1.47x)** — memory access patterns still dominant
 4. **Defer I16 reconstruction** — only IDCT winning mode (saves ~48 IDCT/MB)
 
 ### Decoder
