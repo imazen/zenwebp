@@ -67,20 +67,22 @@ jobs:
       - name: Check (--features avx512)
         run: cargo check --features avx512
 
-  i686:
-    name: Test (Linux i686)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: i686-unknown-linux-gnu
-      - uses: taiki-e/install-action@cross
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: cross-i686
-      - name: Run tests (i686)
-        run: cross test --target i686-unknown-linux-gnu
+  # i686 disabled: archmage X64V*Token maps to x86_64 only.
+  # 32-bit x86 would need X86V* tiers in archmage which don't exist yet.
+  # i686:
+  #   name: Test (Linux i686)
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         targets: i686-unknown-linux-gnu
+  #     - uses: taiki-e/install-action@cross
+  #     - uses: Swatinem/rust-cache@v2
+  #       with:
+  #         key: cross-i686
+  #     - name: Run tests (i686)
+  #       run: cross test --target i686-unknown-linux-gnu
 
   wasm:
     name: WASM check
