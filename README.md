@@ -247,9 +247,10 @@ Streaming architecture with ~100KB peak memory (no full-frame Y/U/V buffers). Bu
 | Method | Speed vs libwebp | Compression |
 |--------|-----------------|-------------|
 | m4 (default) | **1.35x** | 1.01x |
-| m6 (best) | **1.32x** | 1.00x |
+| m5 | **1.34x** | **1.0002x** |
+| m6 (best) | **1.32x** | 1.002x |
 
-File sizes within 0.2% of libwebp at method 5.
+File sizes within 0.02% of libwebp at method 5.
 
 ### Lossless encoder benchmarks
 
