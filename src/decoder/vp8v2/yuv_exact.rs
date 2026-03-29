@@ -1127,22 +1127,22 @@ mod tests {
 
         let webp = encode_lossy(&pixels, w, h, 75.0);
 
-        // Decode with our yuv_exact kernel (via v2 decoder)
+        // Decode with our yuv_exact kernel
         let config = DecodeConfig::default();
-        let (v2_rgb, v2_w, v2_h) = DecodeRequest::new(&config, &webp)
-            .decode_rgb_v2()
-            .expect("v2 decode failed");
+        let (zen_rgb, zen_w, zen_h) = DecodeRequest::new(&config, &webp)
+            .decode_rgb_lossy()
+            .expect("decode failed");
 
         // Decode with libwebp (via webpx)
         let (lib_rgb, lib_w, lib_h) = webpx::decode_rgb(&webp).expect("webpx decode failed");
 
-        assert_eq!(v2_w as u32, lib_w, "width mismatch");
-        assert_eq!(v2_h as u32, lib_h, "height mismatch");
-        assert_eq!(v2_rgb.len(), lib_rgb.len(), "buffer size mismatch");
+        assert_eq!(zen_w as u32, lib_w, "width mismatch");
+        assert_eq!(zen_h as u32, lib_h, "height mismatch");
+        assert_eq!(zen_rgb.len(), lib_rgb.len(), "buffer size mismatch");
 
         let mut max_diff = 0u8;
         let mut diff_count = 0usize;
-        for (i, (&a, &b)) in v2_rgb.iter().zip(lib_rgb.iter()).enumerate() {
+        for (i, (&a, &b)) in zen_rgb.iter().zip(lib_rgb.iter()).enumerate() {
             let d = a.abs_diff(b);
             if d > 0 {
                 diff_count += 1;
@@ -1150,7 +1150,7 @@ mod tests {
                     max_diff = d;
                     let px = i / 3;
                     let ch = ["R", "G", "B"][i % 3];
-                    eprintln!("diff at pixel {px} ({ch}): v2={a} libwebp={b} diff={d}");
+                    eprintln!("diff at pixel {px} ({ch}): zen={a} libwebp={b} diff={d}");
                 }
             }
         }
@@ -1177,22 +1177,22 @@ mod tests {
 
         let webp = encode_lossy(&pixels, w, h, 75.0);
 
-        // Decode with v2 RGBA
+        // Decode with RGBA
         let config = DecodeConfig::default();
-        let (v2_rgba, v2_w, v2_h) = DecodeRequest::new(&config, &webp)
-            .decode_rgba_v2()
-            .expect("v2 decode failed");
+        let (zen_rgba, zen_w, zen_h) = DecodeRequest::new(&config, &webp)
+            .decode_rgba_lossy()
+            .expect("decode failed");
 
         // Decode with libwebp RGBA
         let (lib_rgba, lib_w, lib_h) = webpx::decode_rgba(&webp).expect("webpx decode failed");
 
-        assert_eq!(v2_w as u32, lib_w);
-        assert_eq!(v2_h as u32, lib_h);
-        assert_eq!(v2_rgba.len(), lib_rgba.len());
+        assert_eq!(zen_w as u32, lib_w);
+        assert_eq!(zen_h as u32, lib_h);
+        assert_eq!(zen_rgba.len(), lib_rgba.len());
 
         let mut max_diff = 0u8;
         let mut diff_count = 0usize;
-        for (&a, &b) in v2_rgba.iter().zip(lib_rgba.iter()) {
+        for (&a, &b) in zen_rgba.iter().zip(lib_rgba.iter()) {
             let d = a.abs_diff(b);
             if d > 0 {
                 diff_count += 1;
@@ -1206,9 +1206,9 @@ mod tests {
         );
     }
 
-    /// Quick decode speed comparison: v2 (yuv_exact) vs libwebp.
+    /// Quick decode speed comparison: zenwebp (yuv_exact) vs libwebp.
     #[test]
-    fn bench_v2_vs_libwebp_512() {
+    fn bench_vs_libwebp_512() {
         let (w, h) = (512, 512);
         let mut pixels = alloc::vec![0u8; w * h * 3];
         for y in 0..h {
@@ -1227,15 +1227,19 @@ mod tests {
 
         // Warm up
         for _ in 0..3 {
-            let _ = DecodeRequest::new(&config, &webp).decode_rgb_v2().unwrap();
+            let _ = DecodeRequest::new(&config, &webp)
+                .decode_rgb_lossy()
+                .unwrap();
             let _ = webpx::decode_rgb(&webp).unwrap();
         }
 
         let start = std::time::Instant::now();
         for _ in 0..n {
-            let _ = DecodeRequest::new(&config, &webp).decode_rgb_v2().unwrap();
+            let _ = DecodeRequest::new(&config, &webp)
+                .decode_rgb_lossy()
+                .unwrap();
         }
-        let v2_time = start.elapsed();
+        let zen_time = start.elapsed();
 
         let start = std::time::Instant::now();
         for _ in 0..n {
@@ -1243,13 +1247,13 @@ mod tests {
         }
         let lib_time = start.elapsed();
 
-        let v2_us = v2_time.as_micros() as f64 / n as f64;
+        let zen_us = zen_time.as_micros() as f64 / n as f64;
         let lib_us = lib_time.as_micros() as f64 / n as f64;
 
         eprintln!("512x512 Q75 RGB decode ({n} iters):");
-        eprintln!("  v2 (yuv_exact): {v2_us:.0} us");
-        eprintln!("  libwebp:        {lib_us:.0} us");
-        eprintln!("  ratio:          {:.2}x", v2_us / lib_us);
+        eprintln!("  zenwebp (yuv_exact): {zen_us:.0} us");
+        eprintln!("  libwebp:             {lib_us:.0} us");
+        eprintln!("  ratio:               {:.2}x", zen_us / lib_us);
     }
 
     /// Test odd dimensions to verify edge handling.
@@ -1269,18 +1273,18 @@ mod tests {
             let webp = encode_lossy(&pixels, w, h, 75.0);
 
             let config = DecodeConfig::default();
-            let (v2_rgb, v2_w, v2_h) = DecodeRequest::new(&config, &webp)
-                .decode_rgb_v2()
-                .expect("v2 decode failed");
+            let (zen_rgb, zen_w, zen_h) = DecodeRequest::new(&config, &webp)
+                .decode_rgb_lossy()
+                .expect("decode failed");
 
             let (lib_rgb, lib_w, lib_h) = webpx::decode_rgb(&webp).expect("webpx decode failed");
 
-            assert_eq!(v2_w as u32, lib_w, "{w}x{h}: width mismatch");
-            assert_eq!(v2_h as u32, lib_h, "{w}x{h}: height mismatch");
+            assert_eq!(zen_w as u32, lib_w, "{w}x{h}: width mismatch");
+            assert_eq!(zen_h as u32, lib_h, "{w}x{h}: height mismatch");
 
             let mut max_diff = 0u8;
             let mut diff_count = 0usize;
-            for (&a, &b) in v2_rgb.iter().zip(lib_rgb.iter()) {
+            for (&a, &b) in zen_rgb.iter().zip(lib_rgb.iter()) {
                 let d = a.abs_diff(b);
                 if d > 0 {
                     diff_count += 1;

@@ -1,6 +1,6 @@
-//! Tests for v2 decoder animation support.
+//! Tests for decoder animation support.
 //!
-//! Verifies that the v2 DecoderContext produces correct output when
+//! Verifies that the DecoderContext produces correct output when
 //! decoding animated WebP files, both for lossy and mixed-codec animations.
 
 use std::io::Cursor;
@@ -46,7 +46,7 @@ fn lossy_animation_decodes_all_frames() {
 
     let webp_data = anim.finalize(num_frames * 100).unwrap();
 
-    // Decode all frames using AnimationDecoder (which now uses v2 internally)
+    // Decode all frames using AnimationDecoder
     let mut decoder = AnimationDecoder::new(&webp_data).unwrap();
     let info = decoder.info();
     assert_eq!(info.canvas_width, w);
@@ -66,7 +66,7 @@ fn lossy_animation_decodes_all_frames() {
 }
 
 /// Decode the test animated lossy file and compare against reference PNGs.
-/// This exercises the full v2 pipeline through the WebPDecoder::read_frame path.
+/// This exercises the full pipeline through the WebPDecoder::read_frame path.
 #[test]
 fn animated_lossy_matches_reference() {
     let path = "tests/images/animated/random_lossy.webp";
@@ -188,10 +188,10 @@ fn animation_decoder_lossy_correctness() {
     assert!(frames_decoded > 0, "no frames decoded");
 }
 
-/// Encode a lossy animation with varying frame sizes, then decode with v2.
+/// Encode a lossy animation with varying frame sizes, then decode.
 /// This tests DecoderContext buffer reuse across differently-sized frames.
 #[test]
-fn v2_reuse_across_different_frame_sizes() {
+fn reuse_across_different_frame_sizes() {
     let canvas_w = 128u32;
     let canvas_h = 128u32;
 
@@ -246,7 +246,7 @@ fn v2_reuse_across_different_frame_sizes() {
 
     let webp_data = anim.finalize(300).unwrap();
 
-    // Decode all frames — exercises v2 DecoderContext buffer reuse
+    // Decode all frames — exercises DecoderContext buffer reuse
     let mut decoder = AnimationDecoder::new(&webp_data).unwrap();
     let info = decoder.info();
     assert_eq!(info.frame_count, 3);
@@ -264,7 +264,7 @@ fn v2_reuse_across_different_frame_sizes() {
 /// Verifies that frame-by-frame output is identical across reset cycles,
 /// confirming proper DecoderContext state cleanup.
 #[test]
-fn v2_animation_reset_produces_identical_output() {
+fn animation_reset_produces_identical_output() {
     let w = 48u32;
     let h = 48u32;
 
@@ -312,7 +312,7 @@ fn v2_animation_reset_produces_identical_output() {
 }
 
 /// Decode the test animated lossless file and compare against reference PNGs.
-/// Lossless frames use VP8L, not v2, but this verifies the mixed pipeline works.
+/// Lossless frames use VP8L; this verifies the mixed pipeline works.
 #[test]
 fn animated_lossless_matches_reference() {
     let path = "tests/images/animated/random_lossless.webp";
@@ -350,7 +350,7 @@ fn animated_lossless_matches_reference() {
 
 /// Encode a lossy animation with the AnimationEncoder, decode with
 /// AnimationDecoder twice, verify the frames are identical both times.
-/// This confirms v2 DecoderContext reuse produces consistent results.
+/// This confirms DecoderContext reuse produces consistent results.
 #[test]
 fn lossy_animation_roundtrip_pixel_exact() {
     let w = 32u32;
@@ -368,7 +368,7 @@ fn lossy_animation_roundtrip_pixel_exact() {
 
     let webp_data = anim.finalize(200).unwrap();
 
-    // Decode all frames with AnimationDecoder (uses v2 for VP8 frames)
+    // Decode all frames with AnimationDecoder
     let mut decoder1 = AnimationDecoder::new(&webp_data).unwrap();
     let frames1 = decoder1.decode_all().unwrap();
     assert_eq!(frames1.len(), 4);

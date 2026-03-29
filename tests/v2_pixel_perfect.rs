@@ -1,20 +1,11 @@
-//! Pixel-perfect verification of the v2 VP8 decoder against libwebp (via webpx).
+//! Pixel-exact conformance tests for the zenwebp VP8 decoder against libwebp (via webpx).
 //!
 //! Tests four categories:
-//! 1. Roundtrip: encode with zenwebp, decode with v2 and v1 (pixel-identical),
-//!    then compare v2 output against libwebp (documenting diffs from YUV->RGB
-//!    conversion differences).
+//! 1. Roundtrip: encode with zenwebp, decode with zenwebp and libwebp, compare output.
 //! 2. Corpus: decode pre-existing lossy WebP files from codec-corpus with both
-//!    v2 and libwebp, comparing output.
+//!    zenwebp and libwebp, comparing output.
 //! 3. Edge cases: odd dimensions, non-MB-aligned sizes, tiny images.
 //! 4. Quality sweep: one image at many quality levels.
-//!
-//! ## v2 vs v1: Pixel-Perfect
-//!
-//! v2 and v1 produce identical YUV planes from the VP8 bitstream. The v1
-//! comparison uses dithering_strength=0 to match v2 (which does not implement
-//! chroma dithering). With dithering disabled, both decoders produce identical
-//! RGBA output on all tested bitstreams.
 //!
 //! ## YUV->RGB Conversion Differences
 //!
@@ -42,14 +33,6 @@ fn decode_with_zenwebp(webp_data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> 
         .decode_rgba()
         .map_err(|e| format!("zenwebp decode failed: {e}"))?;
     Ok((rgba, w, h))
-}
-
-// Legacy aliases — these all go through the same v2 decoder now.
-fn decode_with_v2(webp_data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
-    decode_with_zenwebp(webp_data)
-}
-fn decode_with_v1(webp_data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
-    decode_with_zenwebp(webp_data)
 }
 
 /// Decode WebP bytes with libwebp (via webpx), returning RGBA.
@@ -217,17 +200,14 @@ fn is_lossy_vp8(data: &[u8]) -> bool {
 // ---------------------------------------------------------------------------
 // Category 1: Roundtrip with zenwebp encoder
 //
-// Primary assertion: v2 == v1 (pixel-identical).
-// Secondary: measure v2 vs libwebp diff (YUV->RGB differences, not decoder bugs).
+// Encode with zenwebp, decode with both zenwebp and libwebp, verify match.
 // ---------------------------------------------------------------------------
 
 struct RoundtripResult {
-    v2_vs_v1_max: u8,
-    v2_vs_lib_stats: DiffStats,
+    vs_lib_stats: DiffStats,
 }
 
-/// Encode with zenwebp, decode with v1, v2, and libwebp.
-/// Document v2-vs-v1 differences, measure v2 vs libwebp.
+/// Encode with zenwebp, decode with zenwebp and libwebp, compare output.
 fn roundtrip_test(rgb: &[u8], w: u32, h: u32, quality: f32, label: &str) -> RoundtripResult {
     let webp = encode_lossy(rgb, w, h, quality);
     assert!(
@@ -235,57 +215,37 @@ fn roundtrip_test(rgb: &[u8], w: u32, h: u32, quality: f32, label: &str) -> Roun
         "{label}: encoder produced non-lossy format"
     );
 
-    let (v1_rgba, v1_w, v1_h) = decode_with_v1(&webp).expect(&format!("{label}: v1 failed"));
-    let (v2_rgba, v2_w, v2_h) = decode_with_v2(&webp).expect(&format!("{label}: v2 failed"));
+    let (zen_rgba, zen_w, zen_h) =
+        decode_with_zenwebp(&webp).expect(&format!("{label}: zenwebp failed"));
     let (lib_rgba, lib_w, lib_h) =
         decode_with_libwebp(&webp).expect(&format!("{label}: libwebp failed"));
 
-    // v2 must match v1 dimensions
-    assert_eq!(v1_w, v2_w, "{label}: v1 width={v1_w} != v2 width={v2_w}");
-    assert_eq!(v1_h, v2_h, "{label}: v1 height={v1_h} != v2 height={v2_h}");
-    assert_eq!(v2_w, w, "{label}: decoded width {v2_w} != source {w}");
-    assert_eq!(v2_h, h, "{label}: decoded height {v2_h} != source {h}");
+    assert_eq!(zen_w, w, "{label}: decoded width {zen_w} != source {w}");
+    assert_eq!(zen_h, h, "{label}: decoded height {zen_h} != source {h}");
 
-    // Compare v2 vs v1 — document differences
-    let v2_v1_stats = compute_diff(&v2_rgba, &v1_rgba, w, h);
-    if v2_v1_stats.max_diff > 0 {
-        report_diff(&format!("{label} v2-vs-v1"), &v2_v1_stats);
-    }
-
-    // Measure v2 vs libwebp — must be bit-exact (0 diffs)
+    // Measure zenwebp vs libwebp — must be bit-exact (0 diffs)
     assert_eq!(
-        lib_w, v2_w,
-        "{label}: libwebp width={lib_w} != v2 width={v2_w}"
+        lib_w, zen_w,
+        "{label}: libwebp width={lib_w} != zenwebp width={zen_w}"
     );
     assert_eq!(
-        lib_h, v2_h,
-        "{label}: libwebp height={lib_h} != v2 height={v2_h}"
+        lib_h, zen_h,
+        "{label}: libwebp height={lib_h} != zenwebp height={zen_h}"
     );
-    let v2_lib_stats = compute_diff(&v2_rgba, &lib_rgba, w, h);
-    report_diff(&format!("{label} v2-vs-libwebp"), &v2_lib_stats);
+    let vs_lib_stats = compute_diff(&zen_rgba, &lib_rgba, w, h);
+    report_diff(&format!("{label} zenwebp-vs-libwebp"), &vs_lib_stats);
     assert!(
-        v2_lib_stats.max_diff <= V2_LIBWEBP_MAX_TOLERANCE,
-        "{label}: v2 vs libwebp max_diff={} exceeds tolerance {V2_LIBWEBP_MAX_TOLERANCE}",
-        v2_lib_stats.max_diff,
+        vs_lib_stats.max_diff <= LIBWEBP_MAX_TOLERANCE,
+        "{label}: zenwebp vs libwebp max_diff={} exceeds tolerance {LIBWEBP_MAX_TOLERANCE}",
+        vs_lib_stats.max_diff,
     );
 
-    RoundtripResult {
-        v2_vs_v1_max: v2_v1_stats.max_diff,
-        v2_vs_lib_stats: v2_lib_stats,
-    }
+    RoundtripResult { vs_lib_stats }
 }
 
-/// Maximum allowed v2-vs-v1 difference per byte.
-///
-/// v2 uses `yuv_exact` (libwebp-matching YUV->RGB conversion), while v1 uses
-/// a different formula. The YUV planes are identical, but the RGB output
-/// differs due to the conversion. This tolerance allows the expected
-/// YUV->RGB formula differences.
-const V2_V1_MAX_TOLERANCE: u8 = 255;
-
-/// Maximum allowed v2-vs-libwebp difference per byte.
-/// v2 must be bit-exact with libwebp (0 diffs).
-const V2_LIBWEBP_MAX_TOLERANCE: u8 = 0;
+/// Maximum allowed zenwebp-vs-libwebp difference per byte.
+/// zenwebp must be bit-exact with libwebp (0 diffs).
+const LIBWEBP_MAX_TOLERANCE: u8 = 0;
 
 #[test]
 fn cat1_roundtrip_gradient_quality_sweep() {
@@ -293,16 +253,10 @@ fn cat1_roundtrip_gradient_quality_sweep() {
     let w = 256;
     let h = 256;
     let rgb = gradient_rgb(w, h);
-    let mut worst = 0u8;
 
     for &q in &[50.0, 75.0, 90.0] {
-        let r = roundtrip_test(&rgb, w, h, q, &format!("gradient_{w}x{h}_q{q}"));
-        worst = worst.max(r.v2_vs_v1_max);
+        roundtrip_test(&rgb, w, h, q, &format!("gradient_{w}x{h}_q{q}"));
     }
-    assert!(
-        worst <= V2_V1_MAX_TOLERANCE,
-        "v2 vs v1 max diff {worst} exceeds tolerance {V2_V1_MAX_TOLERANCE} for gradient"
-    );
 }
 
 #[test]
@@ -311,16 +265,10 @@ fn cat1_roundtrip_noise_quality_sweep() {
     let w = 256;
     let h = 256;
     let rgb = noise_rgb(w, h, 42);
-    let mut worst = 0u8;
 
     for &q in &[50.0, 75.0, 90.0] {
-        let r = roundtrip_test(&rgb, w, h, q, &format!("noise_{w}x{h}_q{q}"));
-        worst = worst.max(r.v2_vs_v1_max);
+        roundtrip_test(&rgb, w, h, q, &format!("noise_{w}x{h}_q{q}"));
     }
-    assert!(
-        worst <= V2_V1_MAX_TOLERANCE,
-        "v2 vs v1 max diff {worst} exceeds tolerance {V2_V1_MAX_TOLERANCE} for noise"
-    );
 }
 
 #[test]
@@ -329,12 +277,7 @@ fn cat1_roundtrip_uniform() {
     let w = 128;
     let h = 128;
     let rgb = uniform_rgb(w, h, 128);
-    let r = roundtrip_test(&rgb, w, h, 75.0, "uniform_128x128_q75");
-    assert!(
-        r.v2_vs_v1_max <= V2_V1_MAX_TOLERANCE,
-        "v2 vs v1 max diff {} exceeds tolerance {V2_V1_MAX_TOLERANCE} for uniform",
-        r.v2_vs_v1_max
-    );
+    roundtrip_test(&rgb, w, h, 75.0, "uniform_128x128_q75");
 }
 
 // ---------------------------------------------------------------------------
@@ -425,13 +368,8 @@ fn cat1_roundtrip_corpus_kodak() {
         let fname = path.file_name().unwrap().to_string_lossy();
         for &q in &[50.0, 75.0, 90.0] {
             let r = roundtrip_test(&rgb, w, h, q, &format!("{fname}_q{q}"));
-            assert!(
-                r.v2_vs_v1_max <= V2_V1_MAX_TOLERANCE,
-                "v2 vs v1 max diff {} exceeds tolerance {V2_V1_MAX_TOLERANCE} for {fname} Q{q}",
-                r.v2_vs_v1_max
-            );
-            if r.v2_vs_lib_stats.max_diff_rgb > worst_lib_rgb {
-                worst_lib_rgb = r.v2_vs_lib_stats.max_diff_rgb;
+            if r.vs_lib_stats.max_diff_rgb > worst_lib_rgb {
+                worst_lib_rgb = r.vs_lib_stats.max_diff_rgb;
                 worst_file = format!("{fname}_q{q}");
             }
             tested += 1;
@@ -439,7 +377,7 @@ fn cat1_roundtrip_corpus_kodak() {
     }
 
     println!(
-        "  Tested {tested} roundtrips, worst v2-vs-libwebp RGB diff: {worst_lib_rgb} ({worst_file})"
+        "  Tested {tested} roundtrips, worst zenwebp-vs-libwebp RGB diff: {worst_lib_rgb} ({worst_file})"
     );
     assert!(tested > 0, "No kodak images found");
 }
@@ -447,21 +385,19 @@ fn cat1_roundtrip_corpus_kodak() {
 // ---------------------------------------------------------------------------
 // Category 2: Decode pre-existing WebP files from codec-corpus
 //
-// Primary assertion: v2 == v1 on the same bitstream.
-// Secondary: measure and document v2 vs libwebp diffs.
+// Decode with zenwebp and libwebp, verify match.
 // ---------------------------------------------------------------------------
 
 struct CorpusDecodeResult {
-    v2_vs_v1_max: u8,
-    v2_vs_lib_stats: DiffStats,
+    vs_lib_stats: DiffStats,
 }
 
-/// Decode a pre-existing WebP file with v1, v2, and libwebp. Compare.
+/// Decode a pre-existing WebP file with zenwebp and libwebp. Compare.
 fn corpus_decode_compare(path: &Path) -> Result<CorpusDecodeResult, String> {
     let data = std::fs::read(path).map_err(|e| format!("read failed: {e}"))?;
     let fname = path.file_name().unwrap().to_string_lossy();
 
-    // Only test lossy VP8 (v2 doesn't support lossless or extended)
+    // Only test lossy VP8
     if !is_lossy_vp8(&data) {
         return Err(format!(
             "{fname}: not lossy VP8 ({fmt}), skipped",
@@ -469,30 +405,21 @@ fn corpus_decode_compare(path: &Path) -> Result<CorpusDecodeResult, String> {
         ));
     }
 
-    let (v1_rgba, v1_w, v1_h) = decode_with_v1(&data).map_err(|e| format!("{fname} v1: {e}"))?;
-    let (v2_rgba, v2_w, v2_h) = decode_with_v2(&data).map_err(|e| format!("{fname} v2: {e}"))?;
+    let (zen_rgba, zen_w, zen_h) =
+        decode_with_zenwebp(&data).map_err(|e| format!("{fname} zenwebp: {e}"))?;
     let (lib_rgba, lib_w, lib_h) =
         decode_with_libwebp(&data).map_err(|e| format!("{fname} libwebp: {e}"))?;
 
     // Dimension checks
-    if v1_w != v2_w || v1_h != v2_h {
+    if lib_w != zen_w || lib_h != zen_h {
         return Err(format!(
-            "{fname}: v1={v1_w}x{v1_h} v2={v2_w}x{v2_h} dimension mismatch"
-        ));
-    }
-    if lib_w != v2_w || lib_h != v2_h {
-        return Err(format!(
-            "{fname}: libwebp={lib_w}x{lib_h} v2={v2_w}x{v2_h} dimension mismatch"
+            "{fname}: libwebp={lib_w}x{lib_h} zenwebp={zen_w}x{zen_h} dimension mismatch"
         ));
     }
 
-    let v2_v1_stats = compute_diff(&v2_rgba, &v1_rgba, v2_w, v2_h);
-    let v2_lib_stats = compute_diff(&v2_rgba, &lib_rgba, v2_w, v2_h);
+    let vs_lib_stats = compute_diff(&zen_rgba, &lib_rgba, zen_w, zen_h);
 
-    Ok(CorpusDecodeResult {
-        v2_vs_v1_max: v2_v1_stats.max_diff,
-        v2_vs_lib_stats: v2_lib_stats,
-    })
+    Ok(CorpusDecodeResult { vs_lib_stats })
 }
 
 #[test]
@@ -515,9 +442,6 @@ fn cat2_decode_webp_conformance() {
     println!("\n=== Category 2: Decode webp-conformance/valid ===");
     let mut tested = 0u32;
     let mut skipped = 0u32;
-    let mut worst_v1_max = 0u8;
-    let mut worst_v1_file = String::new();
-    let mut v1_diff_count = 0u32;
     let mut worst_lib_rgb = 0u8;
     let mut worst_file = String::new();
     let mut failures: Vec<String> = Vec::new();
@@ -538,23 +462,10 @@ fn cat2_decode_webp_conformance() {
         match corpus_decode_compare(&path) {
             Ok(result) => {
                 tested += 1;
-                report_diff(&fname, &result.v2_vs_lib_stats);
+                report_diff(&fname, &result.vs_lib_stats);
 
-                if result.v2_vs_v1_max > 0 {
-                    v1_diff_count += 1;
-                    if result.v2_vs_v1_max > worst_v1_max {
-                        worst_v1_max = result.v2_vs_v1_max;
-                        worst_v1_file = fname.clone();
-                    }
-                }
-                if result.v2_vs_v1_max > V2_V1_MAX_TOLERANCE {
-                    failures.push(format!(
-                        "{fname}: v2 vs v1 max_diff={} exceeds tolerance {V2_V1_MAX_TOLERANCE}",
-                        result.v2_vs_v1_max
-                    ));
-                }
-                if result.v2_vs_lib_stats.max_diff_rgb > worst_lib_rgb {
-                    worst_lib_rgb = result.v2_vs_lib_stats.max_diff_rgb;
+                if result.vs_lib_stats.max_diff_rgb > worst_lib_rgb {
+                    worst_lib_rgb = result.vs_lib_stats.max_diff_rgb;
                     worst_file = fname;
                 }
             }
@@ -570,12 +481,8 @@ fn cat2_decode_webp_conformance() {
     }
 
     println!("\n  Summary: {tested} tested, {skipped} skipped (non-lossy)");
-    println!(
-        "  v2 vs v1: {v1_diff_count} files with differences, \
-         worst max_diff={worst_v1_max} ({worst_v1_file})"
-    );
     if tested > 0 {
-        println!("  Worst v2-vs-libwebp RGB diff: {worst_lib_rgb} ({worst_file})");
+        println!("  Worst zenwebp-vs-libwebp RGB diff: {worst_lib_rgb} ({worst_file})");
     }
 
     for f in &failures {
@@ -586,11 +493,7 @@ fn cat2_decode_webp_conformance() {
         tested > 0,
         "No lossy WebP files found in conformance corpus"
     );
-    assert!(
-        failures.is_empty(),
-        "{} files exceeded v2-vs-v1 tolerance of {V2_V1_MAX_TOLERANCE}",
-        failures.len()
-    );
+    assert!(failures.is_empty(), "{} decode failures", failures.len());
 }
 
 #[test]
@@ -616,8 +519,6 @@ fn cat2_decode_all_corpus_webp() {
     let mut skipped_lossless = 0u32;
     let mut skipped_extended = 0u32;
     let mut skipped_animated = 0u32;
-    let mut v1_diff_count = 0u32;
-    let mut worst_v1_max = 0u8;
     let mut worst_lib_rgb = 0u8;
     let mut failures: Vec<String> = Vec::new();
 
@@ -649,21 +550,16 @@ fn cat2_decode_all_corpus_webp() {
             match fmt {
                 "lossy" => {}
                 "lossless" => {
-                    println!("  {fname}: lossless, skipped (v2 is lossy-only)");
+                    println!("  {fname}: lossless, skipped (lossy-only test)");
                     skipped_lossless += 1;
                     continue;
                 }
                 "extended" => {
                     if fname.contains("anim") {
-                        println!(
-                            "  {fname}: animated WebP, skipped (v2 is keyframe-only, \
-                             animation support not yet implemented)"
-                        );
+                        println!("  {fname}: animated WebP, skipped (keyframe-only test)");
                         skipped_animated += 1;
                     } else {
-                        println!(
-                            "  {fname}: extended format, skipped (v2 supports simple VP8 only)"
-                        );
+                        println!("  {fname}: extended format, skipped (simple VP8 only)");
                         skipped_extended += 1;
                     }
                     continue;
@@ -677,37 +573,26 @@ fn cat2_decode_all_corpus_webp() {
             match corpus_decode_compare(&path) {
                 Ok(result) => {
                     tested += 1;
-                    report_diff(&format!("{subdir}/{fname}"), &result.v2_vs_lib_stats);
-                    if result.v2_vs_v1_max > 0 {
-                        v1_diff_count += 1;
-                        worst_v1_max = worst_v1_max.max(result.v2_vs_v1_max);
-                    }
-                    if result.v2_vs_v1_max > V2_V1_MAX_TOLERANCE {
-                        failures.push(format!(
-                            "{subdir}/{fname}: v2 vs v1 max_diff={}",
-                            result.v2_vs_v1_max
-                        ));
-                    }
-                    worst_lib_rgb = worst_lib_rgb.max(result.v2_vs_lib_stats.max_diff_rgb);
+                    report_diff(&format!("{subdir}/{fname}"), &result.vs_lib_stats);
+                    worst_lib_rgb = worst_lib_rgb.max(result.vs_lib_stats.max_diff_rgb);
                 }
                 Err(msg) => {
                     if !msg.contains("skipped") {
                         eprintln!("  ERROR: {msg}");
+                        failures.push(msg);
                     }
                 }
             }
         }
     }
 
-    println!(
-        "\n  Summary: {tested} lossy tested, {v1_diff_count} with v2-vs-v1 diffs (worst={worst_v1_max})"
-    );
+    println!("\n  Summary: {tested} lossy tested");
     println!(
         "  Skipped: {skipped_lossless} lossless, {skipped_extended} extended, \
          {skipped_animated} animated"
     );
     if tested > 0 {
-        println!("  Worst v2-vs-libwebp RGB diff: {worst_lib_rgb}");
+        println!("  Worst zenwebp-vs-libwebp RGB diff: {worst_lib_rgb}");
     }
 
     for f in &failures {
@@ -715,11 +600,7 @@ fn cat2_decode_all_corpus_webp() {
     }
 
     if tested > 0 {
-        assert!(
-            failures.is_empty(),
-            "{} files exceeded v2-vs-v1 tolerance of {V2_V1_MAX_TOLERANCE}",
-            failures.len()
-        );
+        assert!(failures.is_empty(), "{} decode failures", failures.len());
     }
 }
 
@@ -727,31 +608,23 @@ fn cat2_decode_all_corpus_webp() {
 // Category 3: Edge cases — odd dimensions
 // ---------------------------------------------------------------------------
 
-fn edge_case_test(w: u32, h: u32, quality: f32) -> RoundtripResult {
+fn edge_case_test(w: u32, h: u32, quality: f32) {
     let rgb = gradient_rgb(w, h);
-    roundtrip_test(&rgb, w, h, quality, &format!("{w}x{h}_q{quality}"))
+    roundtrip_test(&rgb, w, h, quality, &format!("{w}x{h}_q{quality}"));
 }
 
 #[test]
 fn cat3_edge_cases_tiny() {
     println!("\n=== Category 3: Edge cases — tiny images ===");
-    let mut worst = 0u8;
 
     for &(w, h) in &[(1, 1), (2, 2), (3, 3), (2, 1), (1, 2)] {
-        let r = edge_case_test(w, h, 75.0);
-        worst = worst.max(r.v2_vs_v1_max);
+        edge_case_test(w, h, 75.0);
     }
-    assert!(
-        worst <= V2_V1_MAX_TOLERANCE,
-        "v2 vs v1 max diff {worst} exceeds tolerance {V2_V1_MAX_TOLERANCE} for tiny images"
-    );
 }
 
 #[test]
 fn cat3_edge_cases_non_mb_aligned() {
     println!("\n=== Category 3: Edge cases — non-MB-aligned ===");
-    let mut worst = 0u8;
-    let mut worst_size = String::new();
 
     let sizes: &[(u32, u32)] = &[
         (15, 15),
@@ -770,17 +643,8 @@ fn cat3_edge_cases_non_mb_aligned() {
     ];
 
     for &(w, h) in sizes {
-        let r = edge_case_test(w, h, 75.0);
-        if r.v2_vs_v1_max > worst {
-            worst = r.v2_vs_v1_max;
-            worst_size = format!("{w}x{h}");
-        }
+        edge_case_test(w, h, 75.0);
     }
-    println!("  Worst v2-vs-v1: {worst} ({worst_size})");
-    assert!(
-        worst <= V2_V1_MAX_TOLERANCE,
-        "v2 vs v1 max diff {worst} at {worst_size} exceeds tolerance {V2_V1_MAX_TOLERANCE}"
-    );
 }
 
 #[test]
@@ -789,41 +653,27 @@ fn cat3_edge_cases_extreme_quality() {
     let w = 64;
     let h = 64;
     let rgb = gradient_rgb(w, h);
-    let mut worst = 0u8;
 
     // Very low quality (heavy quantization, more filtering)
     for &q in &[1.0, 5.0, 10.0] {
-        let r = roundtrip_test(&rgb, w, h, q, &format!("gradient_64x64_q{q}"));
-        worst = worst.max(r.v2_vs_v1_max);
+        roundtrip_test(&rgb, w, h, q, &format!("gradient_64x64_q{q}"));
     }
 
     // Very high quality (minimal quantization)
     for &q in &[95.0, 99.0, 100.0] {
-        let r = roundtrip_test(&rgb, w, h, q, &format!("gradient_64x64_q{q}"));
-        worst = worst.max(r.v2_vs_v1_max);
+        roundtrip_test(&rgb, w, h, q, &format!("gradient_64x64_q{q}"));
     }
-    println!("  Worst v2-vs-v1 at extreme quality: {worst}");
-    assert!(
-        worst <= V2_V1_MAX_TOLERANCE,
-        "v2 vs v1 max diff {worst} exceeds tolerance {V2_V1_MAX_TOLERANCE} at extreme quality"
-    );
 }
 
 #[test]
 fn cat3_edge_cases_noise_content() {
     println!("\n=== Category 3: Edge cases — noise content at edge sizes ===");
-    let mut worst = 0u8;
 
     // Non-MB-aligned with noisy content (tests all prediction modes)
     for &(w, h) in &[(15, 15), (17, 17), (33, 33)] {
         let rgb = noise_rgb(w, h, 123);
-        let r = roundtrip_test(&rgb, w, h, 75.0, &format!("noise_{w}x{h}_q75"));
-        worst = worst.max(r.v2_vs_v1_max);
+        roundtrip_test(&rgb, w, h, 75.0, &format!("noise_{w}x{h}_q75"));
     }
-    assert!(
-        worst <= V2_V1_MAX_TOLERANCE,
-        "v2 vs v1 max diff {worst} exceeds tolerance {V2_V1_MAX_TOLERANCE} for noise edge cases"
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -841,29 +691,18 @@ fn cat4_quality_sweep() {
         10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 95.0, 99.0,
     ];
 
-    let mut worst_v1 = 0u8;
-    let mut worst_v1_q = 0.0f32;
     let mut worst_lib_rgb = 0u8;
     let mut worst_lib_q = 0.0f32;
 
     for &q in &qualities {
         let r = roundtrip_test(&rgb, w, h, q, &format!("gradient_256x256_q{q}"));
-        if r.v2_vs_v1_max > worst_v1 {
-            worst_v1 = r.v2_vs_v1_max;
-            worst_v1_q = q;
-        }
-        if r.v2_vs_lib_stats.max_diff_rgb > worst_lib_rgb {
-            worst_lib_rgb = r.v2_vs_lib_stats.max_diff_rgb;
+        if r.vs_lib_stats.max_diff_rgb > worst_lib_rgb {
+            worst_lib_rgb = r.vs_lib_stats.max_diff_rgb;
             worst_lib_q = q;
         }
     }
 
-    println!("\n  Worst v2-vs-v1: {worst_v1} (at Q{worst_v1_q})");
-    println!("  Worst v2-vs-libwebp RGB: {worst_lib_rgb} (at Q{worst_lib_q})");
-    assert!(
-        worst_v1 <= V2_V1_MAX_TOLERANCE,
-        "v2 vs v1 max diff {worst_v1} at Q{worst_v1_q} exceeds tolerance {V2_V1_MAX_TOLERANCE}"
-    );
+    println!("\n  Worst zenwebp-vs-libwebp RGB: {worst_lib_rgb} (at Q{worst_lib_q})");
 }
 
 #[test]
@@ -877,29 +716,18 @@ fn cat4_quality_sweep_noise() {
         10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 95.0, 99.0,
     ];
 
-    let mut worst_v1 = 0u8;
-    let mut worst_v1_q = 0.0f32;
     let mut worst_lib_rgb = 0u8;
     let mut worst_lib_q = 0.0f32;
 
     for &q in &qualities {
         let r = roundtrip_test(&rgb, w, h, q, &format!("noise_256x256_q{q}"));
-        if r.v2_vs_v1_max > worst_v1 {
-            worst_v1 = r.v2_vs_v1_max;
-            worst_v1_q = q;
-        }
-        if r.v2_vs_lib_stats.max_diff_rgb > worst_lib_rgb {
-            worst_lib_rgb = r.v2_vs_lib_stats.max_diff_rgb;
+        if r.vs_lib_stats.max_diff_rgb > worst_lib_rgb {
+            worst_lib_rgb = r.vs_lib_stats.max_diff_rgb;
             worst_lib_q = q;
         }
     }
 
-    println!("\n  Worst v2-vs-v1: {worst_v1} (at Q{worst_v1_q})");
-    println!("  Worst v2-vs-libwebp RGB: {worst_lib_rgb} (at Q{worst_lib_q})");
-    assert!(
-        worst_v1 <= V2_V1_MAX_TOLERANCE,
-        "v2 vs v1 max diff {worst_v1} at Q{worst_v1_q} exceeds tolerance {V2_V1_MAX_TOLERANCE}"
-    );
+    println!("\n  Worst zenwebp-vs-libwebp RGB: {worst_lib_rgb} (at Q{worst_lib_q})");
 }
 
 // ---------------------------------------------------------------------------
@@ -1070,15 +898,15 @@ fn bench_context_reuse_vs_fresh() {
     let libwebp_us = libwebp_elapsed.as_micros() as f64 / iterations as f64;
 
     println!("  Image: {w}x{h} gradient Q75, {iterations} iterations");
-    println!("  v2 fresh context:  {fresh_us:.0} us/decode");
-    println!("  v2 reused context: {reuse_us:.0} us/decode");
-    println!("  libwebp (webpx):   {libwebp_us:.0} us/decode");
+    println!("  zenwebp fresh context:  {fresh_us:.0} us/decode");
+    println!("  zenwebp reused context: {reuse_us:.0} us/decode");
+    println!("  libwebp (webpx):        {libwebp_us:.0} us/decode");
     if reuse_us > 0.0 {
         println!("  Context reuse speedup: {:.2}x", fresh_us / reuse_us);
     }
     if libwebp_us > 0.0 {
-        println!("  v2 fresh vs libwebp: {:.2}x", fresh_us / libwebp_us);
-        println!("  v2 reused vs libwebp: {:.2}x", reuse_us / libwebp_us);
+        println!("  zenwebp fresh vs libwebp: {:.2}x", fresh_us / libwebp_us);
+        println!("  zenwebp reused vs libwebp: {:.2}x", reuse_us / libwebp_us);
     }
 }
 
@@ -1089,7 +917,7 @@ fn bench_context_reuse_vs_fresh() {
 #[test]
 fn document_yuv_conversion_differences() {
     println!("\n=== YUV->RGB conversion difference analysis ===");
-    println!("  zenwebp v2 uses: fill_rgba with Bilinear upsampling");
+    println!("  zenwebp uses: fill_rgba with Bilinear upsampling");
     #[cfg(feature = "fast-yuv")]
     println!("  fast-yuv feature: ON (yuv crate bilinear, differs from libwebp)");
     #[cfg(not(feature = "fast-yuv"))]
@@ -1102,15 +930,15 @@ fn document_yuv_conversion_differences() {
         let rgb = gradient_rgb(w, h);
         let webp = encode_lossy(&rgb, w, h, 75.0);
 
-        let (v2_rgba, _, _) = decode_with_v2(&webp).unwrap();
+        let (zen_rgba, _, _) = decode_with_zenwebp(&webp).unwrap();
         let (lib_rgba, _, _) = decode_with_libwebp(&webp).unwrap();
 
-        let stats = compute_diff(&v2_rgba, &lib_rgba, w, h);
+        let stats = compute_diff(&zen_rgba, &lib_rgba, w, h);
         report_diff(&format!("{w}x{h} gradient Q75"), &stats);
     }
 
     println!();
     println!("  Note: Diffs are from YUV->RGB chroma upsampling differences,");
-    println!("  NOT from the VP8 decode pipeline. v2 and v1 produce identical");
-    println!("  YUV output; only the final RGB conversion differs from libwebp.");
+    println!("  NOT from the VP8 decode pipeline. Only the final RGB conversion");
+    println!("  may differ from libwebp when using the fast-yuv feature.");
 }

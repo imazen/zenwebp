@@ -1636,26 +1636,26 @@ impl WebpDecoder<'_> {
                 .map_err(|e| DecodeError::InvalidParameter(alloc::format!("{e}")))?;
         }
 
-        // Try v2 decoder for lossy content (faster, streaming cache)
-        if let Ok(result) = self.do_decode_v2(data) {
+        // Try lossy VP8 direct path (faster, streaming cache)
+        if let Ok(result) = self.do_decode_lossy(data) {
             return Ok(result);
         }
 
-        // Fallback to v1 for lossless, animation, or other unsupported formats
-        self.do_decode_v1(data)
+        // General path (lossless, animation, etc)
+        self.do_decode_general(data)
     }
 
-    /// Decode using the v2 decoder (lossy VP8 only, with alpha support).
-    fn do_decode_v2(&self, data: &[u8]) -> Result<DecodeOutput, DecodeError> {
+    /// Decode lossy VP8 direct path (with alpha support).
+    fn do_decode_lossy(&self, data: &[u8]) -> Result<DecodeOutput, DecodeError> {
         let dither_strength = self.config.dithering_strength;
 
-        // Use DecodeRequest's v2 path which handles container parsing
+        // Use DecodeRequest's lossy path which handles container parsing
         let req = DecodeRequest::new(&self.config, data);
-        let (pixels, w, h) = req.decode_rgba_v2().map_err(|e| e.decompose().0)?;
+        let (pixels, w, h) = req.decode_rgba_lossy().map_err(|e| e.decompose().0)?;
 
         let w = u32::from(w);
         let h = u32::from(h);
-        let _ = dither_strength; // already applied inside decode_rgba_v2
+        let _ = dither_strength; // already applied inside decode_rgba_lossy
 
         let has_alpha = {
             let native_info = crate::ImageInfo::from_webp(data).ok();
@@ -1666,8 +1666,8 @@ impl WebpDecoder<'_> {
             PixelBuffer::from_vec(pixels, w, h, PixelDescriptor::RGBA8_SRGB)
                 .map_err(|_| DecodeError::InvalidParameter("pixel count mismatch".into()))?
         } else {
-            // Strip alpha channel — v2 always decodes to RGBA when alpha is present,
-            // but for no-alpha images decode_rgba_v2 returns RGBA with alpha=255.
+            // Strip alpha channel — lossy path always decodes to RGBA when alpha is present,
+            // but for no-alpha images decode_rgba_lossy returns RGBA with alpha=255.
             // Convert to RGB to save memory.
             let pixel_count = (w as usize) * (h as usize);
             let mut rgb = alloc::vec![0u8; pixel_count * 3];
@@ -1695,8 +1695,8 @@ impl WebpDecoder<'_> {
         Ok(output)
     }
 
-    /// Fallback decode via v1 decoder (handles lossless, animation frames, etc.).
-    fn do_decode_v1(&self, data: &[u8]) -> Result<DecodeOutput, DecodeError> {
+    /// General decode path (handles lossless, animation frames, etc.).
+    fn do_decode_general(&self, data: &[u8]) -> Result<DecodeOutput, DecodeError> {
         let mut req = DecodeRequest::new(&self.config, data);
         if let Some(ref stop) = self.stop {
             req = req.stop(stop);

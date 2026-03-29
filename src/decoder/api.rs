@@ -237,10 +237,10 @@ struct AnimationState {
     /// Reusable scratch buffer for per-frame decode data.
     /// Avoids allocating a fresh Vec<u8> for every animation frame.
     frame_scratch: Vec<u8>,
-    /// Reusable v2 decoder context for lossy VP8 frames in animations.
+    /// Reusable decoder context for lossy VP8 frames in animations.
     /// Shared across all lossy frames to avoid per-frame allocation
     /// of coefficient/prediction/filter buffers (~100KB savings per frame).
-    v2_ctx: DecoderContext,
+    ctx: DecoderContext,
 }
 impl Default for AnimationState {
     fn default() -> Self {
@@ -254,7 +254,7 @@ impl Default for AnimationState {
             previous_frame_y_offset: 0,
             canvas: None,
             frame_scratch: Vec::new(),
-            v2_ctx: DecoderContext::new(),
+            ctx: DecoderContext::new(),
         }
     }
 }
@@ -523,17 +523,17 @@ impl<'a> DecodeRequest<'a> {
         decode_yuv420(self.data)
     }
 
-    /// Decode using the v2 decoder, returning RGB (lossy VP8 only).
-    pub(crate) fn decode_rgb_v2(self) -> DecodeResult<(Vec<u8>, u16, u16)> {
-        self.decode_v2_internal(3)
+    /// Decode lossy VP8 to RGB.
+    pub(crate) fn decode_rgb_lossy(self) -> DecodeResult<(Vec<u8>, u16, u16)> {
+        self.decode_lossy_internal(3)
     }
 
-    /// Decode using the v2 decoder, returning RGBA (lossy VP8 only).
-    pub(crate) fn decode_rgba_v2(self) -> DecodeResult<(Vec<u8>, u16, u16)> {
-        self.decode_v2_internal(4)
+    /// Decode lossy VP8 to RGBA.
+    pub(crate) fn decode_rgba_lossy(self) -> DecodeResult<(Vec<u8>, u16, u16)> {
+        self.decode_lossy_internal(4)
     }
 
-    fn decode_v2_internal(self, bpp: usize) -> DecodeResult<(Vec<u8>, u16, u16)> {
+    fn decode_lossy_internal(self, bpp: usize) -> DecodeResult<(Vec<u8>, u16, u16)> {
         let data = self.data;
         let dither_strength = self.config.dithering_strength;
         if data.len() < 20 {
@@ -582,7 +582,7 @@ impl<'a> DecodeRequest<'a> {
 
                 if demuxer.is_animated() {
                     return Err(whereat::at!(DecodeError::UnsupportedFeature(
-                        "v2 single-frame decode does not support animation; use AnimationDecoder"
+                        "lossy single-frame decode does not support animation; use AnimationDecoder"
                             .into()
                     )));
                 }
@@ -593,7 +593,7 @@ impl<'a> DecodeRequest<'a> {
 
                 if !frame.is_lossy {
                     return Err(whereat::at!(DecodeError::UnsupportedFeature(
-                        "v2 decoder only supports lossy VP8, got VP8L".into()
+                        "lossy decoder only supports VP8, got VP8L".into()
                     )));
                 }
 
@@ -644,7 +644,7 @@ impl<'a> DecodeRequest<'a> {
                 }
             }
             _ => Err(whereat::at!(DecodeError::UnsupportedFeature(
-                alloc::format!("v2 decoder only supports lossy VP8, got {:?}", first_chunk)
+                alloc::format!("lossy decoder only supports VP8, got {:?}", first_chunk)
             ))),
         }
     }
@@ -1190,15 +1190,15 @@ impl<'a> WebPDecoder<'a> {
             let data_buf = self.r.get_ref();
             let vp8_data = &data_buf[range.start as usize..range.end as usize];
 
-            // Use v2 decoder for lossy VP8 frames
+            // Lossy VP8 direct decode path
             let bpp = if self.has_alpha() { 4 } else { 3 };
             self.animation
-                .v2_ctx
+                .ctx
                 .set_dithering_strength(self.webp_decode_options.dithering_strength);
             let mut output = Vec::new();
             let (w, h) = self
                 .animation
-                .v2_ctx
+                .ctx
                 .decode_to_rgb(vp8_data, &mut output, bpp)?;
             if u32::from(w) != self.width || u32::from(h) != self.height {
                 return Err(DecodeError::InconsistentImageSizes);
@@ -1284,9 +1284,9 @@ impl<'a> WebPDecoder<'a> {
         let use_alpha_blending = frame_info & 0b00000010 == 0;
         let dispose = frame_info & 0b00000001 != 0;
 
-        // Propagate dithering strength to the reusable v2 context.
+        // Propagate dithering strength to the reusable decoder context.
         self.animation
-            .v2_ctx
+            .ctx
             .set_dithering_strength(self.webp_decode_options.dithering_strength);
 
         // Read normal bitstream now
@@ -1297,11 +1297,11 @@ impl<'a> WebPDecoder<'a> {
 
         let frame_has_alpha: bool = match chunk {
             WebPRiffChunk::VP8 => {
-                // Use v2 decoder with buffer reuse across animation frames.
-                // DecoderContext is reused from self.animation.v2_ctx, saving
+                // Lossy VP8 decode with buffer reuse across animation frames.
+                // DecoderContext is reused from self.animation.ctx, saving
                 // ~100KB of allocation per frame for coefficient/filter buffers.
                 let data_slice = self.r.take_slice(chunk_size as usize)?;
-                let (w, h) = self.animation.v2_ctx.decode_to_rgb(
+                let (w, h) = self.animation.ctx.decode_to_rgb(
                     data_slice,
                     &mut self.animation.frame_scratch,
                     3,
@@ -1341,14 +1341,14 @@ impl<'a> WebPDecoder<'a> {
                 let alpha_chunk =
                     read_alpha_chunk(alpha_slice, frame_width as u16, frame_height as u16)?;
 
-                // read opaque — use v2 decoder with buffer reuse
+                // read opaque — lossy decode with buffer reuse
                 let (next_chunk, next_chunk_size, _) = read_chunk_header(&mut self.r)?;
                 if chunk_size + next_chunk_size + 32 > anmf_size {
                     return Err(DecodeError::ChunkHeaderInvalid(next_chunk.to_fourcc()));
                 }
 
                 let vp8_slice = self.r.take_slice(next_chunk_size as usize)?;
-                let (w, h) = self.animation.v2_ctx.decode_to_rgb(
+                let (w, h) = self.animation.ctx.decode_to_rgb(
                     vp8_slice,
                     &mut self.animation.frame_scratch,
                     4,

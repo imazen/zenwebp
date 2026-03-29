@@ -1,6 +1,6 @@
-//! VP8v2 lossy decoder — ground-up redesign targeting libwebp C parity.
+//! Lossy VP8 decoder targeting libwebp C parity.
 //!
-//! Key differences from v1 (`super::vp8`):
+//! Key design points:
 //! - `DecoderContext` with buffer reuse (no memset per decode)
 //! - Streaming row pipeline (no full-frame Y/U/V buffers)
 //! - Single `#[arcane]` per MB row (predict+IDCT+filter in one region)
@@ -346,7 +346,7 @@ impl DecoderContext {
 
         // Parse + predict/IDCT each MB immediately (single pass).
         // Coefficients in self.coeff_blocks are consumed and cleared
-        // per MB, matching the v1 decoder's semantics.
+        // per MB, matching the expected decoder semantics.
         for mbx in 0..mbwidth {
             let mb = &mut self.mb_row_data[mbx];
             *mb = MbRowEntry::default();
@@ -432,7 +432,7 @@ impl DecoderContext {
                 do_subblock_filtering,
             };
 
-            // Compute dither amplitude inline (matching v1).
+            // Compute dither amplitude inline.
             // Dithering is suppressed for skipped MBs and MBs with UV AC content.
             if dither_enabled {
                 self.mb_dither_buf[mbx] = if mb.coeffs_skipped || mb.has_nonzero_uv_ac {
