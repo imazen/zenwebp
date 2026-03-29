@@ -300,7 +300,8 @@ pub(super) fn read_residual_data(
                 }
 
                 // Check for non-zero UV AC coefficients (any coeff at index > 0).
-                // libwebp suppresses dithering on MBs with UV AC content.
+                // libwebp suppresses dithering on MBs with UV AC content
+                // (NzCodeBits nz>1 check, where nz is last-non-zero-index+1).
                 if !mb.has_nonzero_uv_ac {
                     for &coeff in block[1..].iter() {
                         if coeff != 0 {
