@@ -9,30 +9,14 @@
 #![allow(clippy::identity_op)]
 #![allow(dead_code)]
 
-use archmage::rite;
+use archmage::prelude::*;
 use core::convert::TryFrom;
 
-// x86_64 SSE2/AVX2 types and safe memory ops
-#[cfg(target_arch = "x86_64")]
-use archmage::X64V3Token;
-#[cfg(target_arch = "x86_64")]
-use archmage::intrinsics::x86_64 as simd_mem_x86;
-#[cfg(target_arch = "x86_64")]
-use core::arch::x86_64::*;
-
-// AArch64 NEON types and safe memory ops
-#[cfg(target_arch = "aarch64")]
-use archmage::NeonToken;
+// Safe memory ops aliases (platform-specific, needed for load/store helpers)
 #[cfg(target_arch = "aarch64")]
 use archmage::intrinsics::aarch64 as simd_mem_neon;
-#[cfg(target_arch = "aarch64")]
-use core::arch::aarch64::*;
-
-// WASM SIMD128 types
-#[cfg(target_arch = "wasm32")]
-use archmage::Wasm128Token;
-#[cfg(target_arch = "wasm32")]
-use core::arch::wasm32::*;
+#[cfg(target_arch = "x86_64")]
+use archmage::intrinsics::x86_64 as simd_mem_x86;
 
 // ============================================================================
 // Scalar filter implementations
@@ -3232,8 +3216,6 @@ pub(crate) fn normal_v_filter_uv_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(target_arch = "x86_64")]
-    use archmage::SimdToken;
 
     // #[arcane] wrappers for calling #[rite] filter functions from tests.
     // These are needed because #[rite] functions have #[target_feature] and

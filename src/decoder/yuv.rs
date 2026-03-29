@@ -32,27 +32,12 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-// SIMD imports for platform-specific YUV->RGB conversion
-use archmage::arcane;
-
-#[cfg(target_arch = "x86_64")]
-use archmage::intrinsics::x86_64 as simd_mem;
-#[cfg(target_arch = "x86_64")]
-use archmage::{SimdToken, X64V3Token};
-#[cfg(target_arch = "x86_64")]
-use core::arch::x86_64::*;
+use archmage::prelude::*;
 
 #[cfg(target_arch = "aarch64")]
 use archmage::intrinsics::aarch64 as simd_mem;
-#[cfg(target_arch = "aarch64")]
-use archmage::{NeonToken, rite};
-#[cfg(target_arch = "aarch64")]
-use core::arch::aarch64::*;
-
-#[cfg(target_arch = "wasm32")]
-use archmage::Wasm128Token;
-#[cfg(target_arch = "wasm32")]
-use core::arch::wasm32::*;
+#[cfg(target_arch = "x86_64")]
+use archmage::intrinsics::x86_64 as simd_mem;
 
 /// `_mm_mulhi_epu16` emulation
 fn mulhi(v: u8, coeff: u16) -> i32 {
@@ -155,16 +140,15 @@ fn fill_rgba_row_simple<const BPP: usize>(
     rgba: &mut [u8],
 ) {
     // Use SIMD for RGB (BPP=3) if available and row is wide enough
-    #[cfg(all(feature = "std", target_arch = "x86_64"))]
-    if BPP == 3 && y_vec.len() >= 8 && is_x86_feature_detected!("sse2") {
+    #[cfg(target_arch = "x86_64")]
+    if BPP == 3 && y_vec.len() >= 8 && X64V3Token::summon().is_some() {
         fill_rgba_row_simple_simd::<BPP>(y_vec, u_vec, v_vec, rgba);
         return;
     }
 
     #[cfg(target_arch = "aarch64")]
     if BPP == 3 && y_vec.len() >= 16 {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::NeonToken::summon() {
+        if let Some(token) = NeonToken::summon() {
             yuv420_to_rgb_row_neon(token, y_vec, u_vec, v_vec, rgba);
             return;
         }
@@ -172,8 +156,7 @@ fn fill_rgba_row_simple<const BPP: usize>(
 
     #[cfg(target_arch = "wasm32")]
     if BPP == 3 && y_vec.len() >= 16 {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::Wasm128Token::summon() {
+        if let Some(token) = Wasm128Token::summon() {
             yuv420_to_rgb_row_wasm(token, y_vec, u_vec, v_vec, rgba);
             return;
         }
@@ -1630,6 +1613,7 @@ fn upsample_32_pixels(_token: X64V3Token, r1: &[u8; 17], r2: &[u8; 17], out: &mu
 #[cfg(target_arch = "x86_64")]
 /// Process 8 pixel pairs with fancy upsampling and YUV->RGB conversion.
 /// This version accepts a pre-summoned token to avoid repeated summon() calls in loops.
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 #[allow(dead_code)]
 pub fn fancy_upsample_8_pairs_with_token(
@@ -1644,6 +1628,7 @@ pub fn fancy_upsample_8_pairs_with_token(
     fancy_upsample_8_pairs_inner(token, y_row, u_row_1, u_row_2, v_row_1, v_row_2, rgb);
 }
 
+#[cfg(target_arch = "x86_64")]
 #[allow(dead_code)] // Used in tests
 pub fn fancy_upsample_8_pairs(
     y_row: &[u8],
@@ -1911,7 +1896,7 @@ mod tests_simd {
 
     #[test]
     fn test_yuv_to_rgb_matches_scalar() {
-        if !is_x86_feature_detected!("sse2") {
+        if X64V3Token::summon().is_none() {
             return;
         }
 
@@ -1950,7 +1935,7 @@ mod tests_simd {
 
     #[test]
     fn test_yuv_to_rgb_32_pixels() {
-        if !is_x86_feature_detected!("sse2") {
+        if X64V3Token::summon().is_none() {
             return;
         }
 
@@ -1983,7 +1968,7 @@ mod tests_simd {
 
     #[test]
     fn test_fancy_upsample_8_pairs() {
-        if !is_x86_feature_detected!("sse2") {
+        if X64V3Token::summon().is_none() {
             return;
         }
 

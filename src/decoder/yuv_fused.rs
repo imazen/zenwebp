@@ -23,9 +23,9 @@ use super::yuv::{get_fancy_chroma_value, set_pixel};
 
 #[cfg(target_arch = "x86_64")]
 mod x86_fused {
+    use archmage::prelude::*;
+
     use archmage::intrinsics::x86_64 as simd_mem;
-    use archmage::{X64V3Token, arcane, rite};
-    use core::arch::x86_64::*;
 
     use super::{get_fancy_chroma_value, set_pixel};
 
@@ -459,9 +459,9 @@ pub(crate) use x86_fused::fused_row_2uv_x86;
 
 #[cfg(target_arch = "aarch64")]
 mod neon_fused {
+    use archmage::prelude::*;
+
     use archmage::intrinsics::aarch64 as simd_mem;
-    use archmage::{NeonToken, arcane, rite};
-    use core::arch::aarch64::*;
 
     use super::{get_fancy_chroma_value, set_pixel};
 
@@ -795,8 +795,7 @@ pub(crate) use neon_fused::fused_row_2uv_neon;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm_fused {
-    use archmage::{Wasm128Token, arcane};
-    use core::arch::wasm32::*;
+    use archmage::prelude::*;
 
     use super::{get_fancy_chroma_value, set_pixel};
 
@@ -836,11 +835,11 @@ mod wasm_fused {
         }
 
         fn load_u8x16(src: &[u8; 16]) -> v128 {
-            v128_load(src.as_ptr() as *const v128)
+            v128_load(src)
         }
 
         fn store_u8x16(dst: &mut [u8; 16], v: v128) {
-            v128_store(dst.as_mut_ptr() as *mut v128, v);
+            v128_store(dst, v);
         }
 
         // Upsample 8 chroma → 16 pixels

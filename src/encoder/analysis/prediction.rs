@@ -13,19 +13,12 @@
 
 use super::{BPS, C8DC8, C8TM8, I16DC16, I16TM16};
 
-#[cfg(target_arch = "x86_64")]
-use archmage::intrinsics::x86_64 as simd_mem;
-#[cfg(target_arch = "x86_64")]
-use archmage::{SimdToken, X64V3Token, arcane};
-#[cfg(target_arch = "x86_64")]
-use core::arch::x86_64::*;
+use archmage::prelude::*;
 
 #[cfg(target_arch = "aarch64")]
 use archmage::intrinsics::aarch64 as simd_mem;
-#[cfg(target_arch = "aarch64")]
-use archmage::{NeonToken, SimdToken, arcane};
-#[cfg(target_arch = "aarch64")]
-use core::arch::aarch64::*;
+#[cfg(target_arch = "x86_64")]
+use archmage::intrinsics::x86_64 as simd_mem;
 
 //------------------------------------------------------------------------------
 // Block fill helpers

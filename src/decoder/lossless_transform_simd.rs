@@ -8,14 +8,12 @@
 
 #![allow(clippy::too_many_arguments)]
 
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-use archmage::{Sse2Token, arcane, rite};
+use archmage::prelude::*;
 
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_arch = "x86")]
+use archmage::intrinsics::x86 as simd_mem;
+#[cfg(target_arch = "x86_64")]
 use archmage::intrinsics::x86_64 as simd_mem;
-
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-use core::arch::x86_64::*;
 
 /// Helper: get a mutable reference to a 16-byte array from a slice.
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
@@ -571,13 +569,13 @@ pub(crate) fn apply_predictor_transform_sse2_entry(
 #[cfg(test)]
 mod tests {
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    use archmage::SimdToken;
+    use archmage::prelude::*;
 
     /// Test that SSE2 subtract-green matches scalar.
     #[test]
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     fn test_add_green_sse2_matches_scalar() {
-        let Some(token) = archmage::Sse2Token::summon() else {
+        let Some(token) = Sse2Token::summon() else {
             eprintln!("SSE2 not available, skipping test");
             return;
         };
@@ -603,7 +601,7 @@ mod tests {
     #[test]
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     fn test_add_green_sse2_odd_length() {
-        let Some(token) = archmage::Sse2Token::summon() else {
+        let Some(token) = Sse2Token::summon() else {
             return;
         };
 
@@ -625,7 +623,7 @@ mod tests {
     #[test]
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     fn test_color_transform_sse2_matches_scalar() {
-        let Some(token) = archmage::Sse2Token::summon() else {
+        let Some(token) = Sse2Token::summon() else {
             return;
         };
 
@@ -674,7 +672,7 @@ mod tests {
     #[test]
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     fn test_color_transform_sse2_all_multiplier_signs() {
-        let Some(token) = archmage::Sse2Token::summon() else {
+        let Some(token) = Sse2Token::summon() else {
             return;
         };
 
@@ -734,7 +732,7 @@ mod tests {
     #[test]
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     fn test_predictor_1_sse2_matches_scalar() {
-        let Some(token) = archmage::Sse2Token::summon() else {
+        let Some(token) = Sse2Token::summon() else {
             return;
         };
 
@@ -797,7 +795,7 @@ mod tests {
     #[test]
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     fn test_predictor_2_sse2_matches_scalar() {
-        let Some(token) = archmage::Sse2Token::summon() else {
+        let Some(token) = Sse2Token::summon() else {
             return;
         };
 

@@ -7,12 +7,10 @@
 
 #![allow(clippy::needless_range_loop)]
 
+use archmage::prelude::*;
+
 #[cfg(target_arch = "x86_64")]
 use archmage::intrinsics::x86_64 as simd_mem;
-#[cfg(target_arch = "x86_64")]
-use archmage::{SimdToken, X64V3Token, arcane, rite};
-#[cfg(target_arch = "x86_64")]
-use core::arch::x86_64::*;
 
 /// Compute Sum of Squared Errors between two 4x4 blocks
 ///

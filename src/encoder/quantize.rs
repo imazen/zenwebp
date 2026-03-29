@@ -7,12 +7,12 @@
 #![allow(clippy::needless_range_loop)]
 #![allow(dead_code)]
 
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+use archmage::prelude::*;
+
+#[cfg(target_arch = "x86")]
+use archmage::intrinsics::x86 as simd_mem;
+#[cfg(target_arch = "x86_64")]
 use archmage::intrinsics::x86_64 as simd_mem;
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-use archmage::{SimdToken, X64V3Token, arcane, rite};
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-use core::arch::x86_64::*;
 
 use super::tables::{MAX_LEVEL, VP8_FREQ_SHARPENING};
 
@@ -225,15 +225,13 @@ impl VP8Matrix {
         }
         #[cfg(target_arch = "aarch64")]
         {
-            use archmage::SimdToken;
-            let token = archmage::NeonToken::summon().unwrap();
+            let token = NeonToken::summon().unwrap();
             crate::common::simd_neon::dequantize_block_neon(token, &self.q, coeffs);
             return;
         }
         #[cfg(target_arch = "wasm32")]
         {
-            use archmage::SimdToken;
-            if let Some(token) = archmage::Wasm128Token::summon() {
+            if let Some(token) = Wasm128Token::summon() {
                 crate::common::simd_wasm::dequantize_block_wasm_entry(token, &self.q, coeffs);
                 return;
             }
@@ -346,16 +344,14 @@ pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, use_sharp
 /// NEON-optimized quantization
 #[cfg(target_arch = "aarch64")]
 pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, use_sharpen: bool) -> bool {
-    use archmage::SimdToken;
-    let token = archmage::NeonToken::summon().unwrap();
+    let token = NeonToken::summon().unwrap();
     crate::common::simd_neon::quantize_block_neon(token, coeffs, matrix, use_sharpen)
 }
 
 /// WASM SIMD128-optimized quantization
 #[cfg(target_arch = "wasm32")]
 pub fn quantize_block_simd(coeffs: &mut [i32; 16], matrix: &VP8Matrix, use_sharpen: bool) -> bool {
-    use archmage::SimdToken;
-    if let Some(token) = archmage::Wasm128Token::summon() {
+    if let Some(token) = Wasm128Token::summon() {
         return crate::common::simd_wasm::quantize_block_wasm_entry(
             token,
             coeffs,
@@ -627,8 +623,7 @@ pub fn quantize_dequantize_block_simd(
     quantized: &mut [i32; 16],
     dequantized: &mut [i32; 16],
 ) -> bool {
-    use archmage::SimdToken;
-    let token = archmage::NeonToken::summon().unwrap();
+    let token = NeonToken::summon().unwrap();
     crate::common::simd_neon::quantize_dequantize_block_neon(
         token,
         coeffs,
@@ -648,8 +643,7 @@ pub fn quantize_dequantize_block_simd(
     quantized: &mut [i32; 16],
     dequantized: &mut [i32; 16],
 ) -> bool {
-    use archmage::SimdToken;
-    if let Some(token) = archmage::Wasm128Token::summon() {
+    if let Some(token) = Wasm128Token::summon() {
         return crate::common::simd_wasm::quantize_dequantize_block_wasm_entry(
             token,
             coeffs,

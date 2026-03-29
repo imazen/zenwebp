@@ -9,19 +9,12 @@
 
 #![allow(dead_code)]
 
-#[cfg(target_arch = "x86_64")]
-use archmage::intrinsics::x86_64 as simd_mem;
-#[cfg(target_arch = "x86_64")]
-use archmage::{SimdToken, X64V3Token, arcane};
-#[cfg(target_arch = "x86_64")]
-use core::arch::x86_64::*;
+use archmage::prelude::*;
 
 #[cfg(target_arch = "aarch64")]
 use archmage::intrinsics::aarch64 as simd_mem;
-#[cfg(target_arch = "aarch64")]
-use archmage::{NeonToken, SimdToken, arcane};
-#[cfg(target_arch = "aarch64")]
-use core::arch::aarch64::*;
+#[cfg(target_arch = "x86_64")]
+use archmage::intrinsics::x86_64 as simd_mem;
 
 /// Detected content type for auto-preset selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

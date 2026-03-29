@@ -7,12 +7,12 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+use archmage::prelude::*;
+
+#[cfg(target_arch = "x86")]
+use archmage::intrinsics::x86 as simd_mem;
+#[cfg(target_arch = "x86_64")]
 use archmage::intrinsics::x86_64 as simd_mem;
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-use archmage::{Sse2Token, arcane, rite};
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-use core::arch::x86_64::*;
 
 use super::types::{argb_alpha, argb_blue, argb_green, argb_red, make_argb, subsample_size};
 
@@ -96,7 +96,6 @@ impl PredictorMode {
 pub fn apply_subtract_green(pixels: &mut [u32]) {
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
-        use archmage::SimdToken;
         if let Some(token) = Sse2Token::summon() {
             apply_subtract_green_sse2_entry(token, pixels);
             return;
@@ -610,7 +609,6 @@ fn fast_slog2(v: u32) -> u64 {
 fn combined_shannon_entropy(x: &[u32; 256], y: &[u32; 256]) -> u64 {
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
-        use archmage::SimdToken;
         if let Some(token) = Sse2Token::summon() {
             return combined_shannon_entropy_entry(token, x, y);
         }
@@ -1183,7 +1181,6 @@ fn apply_cross_color_tile(
 ) {
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
-        use archmage::SimdToken;
         if let Some(token) = Sse2Token::summon() {
             apply_cross_color_tile_sse2_entry(
                 token, pixels, width, start_x, start_y, end_x, end_y, m,

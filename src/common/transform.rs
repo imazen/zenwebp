@@ -8,25 +8,14 @@
 // Allow dead code when std is disabled - some functions are encoder-only
 #![cfg_attr(not(feature = "std"), allow(dead_code))]
 
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-use core::arch::x86_64::*;
-
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-use archmage::intrinsics::x86_64 as simd_mem;
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-use archmage::{SimdToken, X64V3Token, arcane, rite};
+use archmage::prelude::*;
 
 #[cfg(target_arch = "aarch64")]
 use archmage::intrinsics::aarch64 as simd_mem;
-#[cfg(target_arch = "aarch64")]
-use archmage::{NeonToken, arcane, rite};
-#[cfg(target_arch = "aarch64")]
-use core::arch::aarch64::*;
-
-#[cfg(target_arch = "wasm32")]
-use archmage::{Wasm128Token, arcane};
-#[cfg(target_arch = "wasm32")]
-use core::arch::wasm32::*;
+#[cfg(target_arch = "x86")]
+use archmage::intrinsics::x86 as simd_mem;
+#[cfg(target_arch = "x86_64")]
+use archmage::intrinsics::x86_64 as simd_mem;
 
 use core::convert::TryFrom;
 
@@ -288,7 +277,6 @@ pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
 pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
     #[cfg(target_arch = "wasm32")]
     {
-        use archmage::{SimdToken, Wasm128Token};
         if let Some(token) = Wasm128Token::summon() {
             dct4x4_wasm(token, block);
         } else {
@@ -297,7 +285,6 @@ pub(crate) fn dct4x4_intrinsics(block: &mut [i32; 16]) {
     }
     #[cfg(target_arch = "aarch64")]
     {
-        use archmage::{NeonToken, SimdToken};
         if let Some(token) = NeonToken::try_new() {
             dct4x4_neon(token, block);
         } else {
@@ -343,7 +330,6 @@ pub(crate) fn idct4x4_intrinsics_with_token(
 pub(crate) fn idct4x4_intrinsics(block: &mut [i32; 16]) {
     #[cfg(target_arch = "wasm32")]
     {
-        use archmage::{SimdToken, Wasm128Token};
         if let Some(token) = Wasm128Token::summon() {
             idct4x4_wasm(token, block);
         } else {
@@ -352,7 +338,6 @@ pub(crate) fn idct4x4_intrinsics(block: &mut [i32; 16]) {
     }
     #[cfg(target_arch = "aarch64")]
     {
-        use archmage::{NeonToken, SimdToken};
         if let Some(token) = NeonToken::try_new() {
             idct4x4_neon(token, block);
         } else {
@@ -392,7 +377,6 @@ pub(crate) fn dct4x4_two_intrinsics(block1: &mut [i32; 16], block2: &mut [i32; 1
     }
     #[cfg(target_arch = "wasm32")]
     {
-        use archmage::{SimdToken, Wasm128Token};
         if let Some(token) = Wasm128Token::summon() {
             dct4x4_wasm(token, block1);
             dct4x4_wasm(token, block2);
@@ -403,7 +387,6 @@ pub(crate) fn dct4x4_two_intrinsics(block1: &mut [i32; 16], block2: &mut [i32; 1
     }
     #[cfg(target_arch = "aarch64")]
     {
-        use archmage::{NeonToken, SimdToken};
         if let Some(token) = NeonToken::try_new() {
             dct4x4_neon(token, block1);
             dct4x4_neon(token, block2);
@@ -748,7 +731,6 @@ pub(crate) fn ftransform2_from_u8(
     }
     #[cfg(target_arch = "wasm32")]
     {
-        use archmage::{SimdToken, Wasm128Token};
         if let Some(token) = Wasm128Token::summon() {
             // Process two blocks using single-block WASM DCT
             for block in 0..2 {
@@ -1336,7 +1318,6 @@ pub(crate) fn idct_add_residue_inplace(
     }
     #[cfg(target_arch = "aarch64")]
     {
-        use archmage::{NeonToken, SimdToken};
         if let Some(token) = NeonToken::summon() {
             idct_add_residue_inplace_neon(token, coeffs, block, y0, x0, stride, dc_only);
             return;
@@ -1391,14 +1372,12 @@ pub(crate) fn ftransform_from_u8_4x4(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 1
 pub(crate) fn ftransform_from_u8_4x4(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
     #[cfg(target_arch = "aarch64")]
     {
-        use archmage::{NeonToken, SimdToken};
         if let Some(token) = NeonToken::summon() {
             return ftransform_from_u8_4x4_neon(token, src, ref_);
         }
     }
     #[cfg(target_arch = "wasm32")]
     {
-        use archmage::{SimdToken, Wasm128Token};
         if let Some(token) = Wasm128Token::summon() {
             return ftransform_from_u8_4x4_wasm(token, src, ref_);
         }

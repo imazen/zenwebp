@@ -2,9 +2,7 @@
 //!
 //! Ported from the NEON versions in simd_neon.rs using core::arch::wasm32 intrinsics.
 
-use archmage::{Wasm128Token, arcane, rite};
-
-use core::arch::wasm32::*;
+use archmage::prelude::*;
 
 use super::prediction::{CHROMA_BLOCK_SIZE, CHROMA_STRIDE, LUMA_BLOCK_SIZE, LUMA_STRIDE};
 

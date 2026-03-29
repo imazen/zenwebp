@@ -31,25 +31,12 @@ fn split2_mut<T>(arr: &mut [T; 16]) -> (&mut [T; 8], &mut [T; 8]) {
     (a, b)
 }
 
-// SIMD imports for GetResidualCost optimization
-#[cfg(target_arch = "x86_64")]
-use archmage::intrinsics::x86_64 as simd_mem;
-#[cfg(target_arch = "x86_64")]
-use archmage::{SimdToken, X64V3Token, arcane, rite};
-#[cfg(target_arch = "x86_64")]
-use core::arch::x86_64::*;
-
-#[cfg(target_arch = "wasm32")]
-use archmage::{Wasm128Token, arcane, rite};
-#[cfg(target_arch = "wasm32")]
-use core::arch::wasm32::*;
+use archmage::prelude::*;
 
 #[cfg(target_arch = "aarch64")]
 use archmage::intrinsics::aarch64 as simd_mem;
-#[cfg(target_arch = "aarch64")]
-use archmage::{NeonToken, SimdToken, arcane, rite};
-#[cfg(target_arch = "aarch64")]
-use core::arch::aarch64::*;
+#[cfg(target_arch = "x86_64")]
+use archmage::intrinsics::x86_64 as simd_mem;
 
 use super::cost::{LevelCosts, vp8_bit_cost};
 use super::tables::{MAX_LEVEL, MAX_VARIABLE_LEVEL, VP8_ENC_BANDS, VP8_LEVEL_FIXED_COSTS};
@@ -125,7 +112,6 @@ pub fn get_residual_cost(
     costs: &LevelCosts,
     probs: &TokenProbTables,
 ) -> u32 {
-    use archmage::SimdToken;
     if let Some(token) = Wasm128Token::summon() {
         return get_residual_cost_wasm_entry(token, ctx0, res, costs, probs);
     }

@@ -21,7 +21,7 @@
 //! ```
 
 use alloc::vec::Vec;
-use archmage::incant;
+use archmage::prelude::*;
 
 use crate::decoder::yuv::{get_fancy_chroma_value, yuv_to_b, yuv_to_g, yuv_to_r};
 
@@ -583,9 +583,9 @@ fn fill_2uv_row_v3(
 
 #[cfg(target_arch = "x86_64")]
 mod x86_impl {
+    use archmage::prelude::*;
+
     use archmage::intrinsics::x86_64 as simd_mem;
-    use archmage::{X64V3Token, arcane, rite};
-    use core::arch::x86_64::*;
 
     use super::write_pixel;
     use crate::decoder::yuv::get_fancy_chroma_value;

@@ -40,8 +40,10 @@ fn generate_photo_image(width: usize, height: usize) -> Vec<u8> {
 /// Load a real PNG test image from codec-corpus if available, else generate synthetic.
 fn load_or_generate_image(width: usize, height: usize) -> (Vec<u8>, usize, usize) {
     // Try to load a real image from codec-corpus
-    let corpus_path =
-        std::path::Path::new(env!("HOME")).join("codec-corpus/webp-conformance/valid/lossy");
+    let home = option_env!("HOME")
+        .or(option_env!("USERPROFILE"))
+        .unwrap_or("/nonexistent");
+    let corpus_path = std::path::Path::new(home).join("codec-corpus/webp-conformance/valid/lossy");
     if corpus_path.exists()
         && let Some(entry) = std::fs::read_dir(&corpus_path)
             .ok()

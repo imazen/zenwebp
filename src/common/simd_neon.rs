@@ -2,11 +2,10 @@
 //!
 //! Ported from the x86 SSE2 versions in simd_sse.rs.
 
-use archmage::{NeonToken, arcane, rite};
+use archmage::prelude::*;
 
+#[cfg(target_arch = "aarch64")]
 use archmage::intrinsics::aarch64 as simd_mem;
-
-use core::arch::aarch64::*;
 
 use super::prediction::{CHROMA_BLOCK_SIZE, CHROMA_STRIDE, LUMA_BLOCK_SIZE, LUMA_STRIDE};
 
