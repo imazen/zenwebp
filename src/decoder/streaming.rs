@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use zenwebp::{StreamingDecoder, StreamStatus};
+//! use zenwebp::decoder::{StreamingDecoder, StreamStatus};
 //!
 //! let mut decoder = StreamingDecoder::new();
 //!

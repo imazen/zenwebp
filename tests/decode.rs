@@ -207,7 +207,7 @@ macro_rules! reftest_nofancy {
             #[test]
             fn [<reftest_nofancy_ $basename _ $name>]() {
                 let mut options = zenwebp::DecodeConfig::default();
-                options.upsampling = zenwebp::UpsamplingMethod::Simple;
+                options.upsampling = zenwebp::decoder::UpsamplingMethod::Simple;
                 reference_test_with_options(
                     concat!(stringify!($basename), "/", stringify!($name)),
                     options,

@@ -2,11 +2,11 @@
 //!
 //! This module provides three capabilities:
 //!
-//! - **Demux** ([`WebPDemuxer`]): Parse WebP files at the chunk level, iterate
+//! - **Demux** ([`WebPDemuxer`](crate::mux::WebPDemuxer)): Parse WebP files at the chunk level, iterate
 //!   frames and access raw bitstream data without decoding pixels.
-//! - **Mux** ([`WebPMux`]): Assemble WebP containers from pre-encoded chunks
+//! - **Mux** ([`WebPMux`](crate::mux::WebPMux)): Assemble WebP containers from pre-encoded chunks
 //!   and metadata (ICC, EXIF, XMP).
-//! - **Animation** ([`AnimationEncoder`]): Encode animated WebP files
+//! - **Animation** ([`AnimationEncoder`](crate::mux::AnimationEncoder)): Encode animated WebP files
 //!   frame-by-frame using the existing VP8/VP8L encoder.
 //!
 //! All types work in `no_std + alloc` environments.

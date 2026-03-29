@@ -6,10 +6,10 @@
 use std::io::Cursor;
 use std::path::PathBuf;
 
-use zenwebp::{
-    AnimationConfig, AnimationDecoder, AnimationEncoder, BlendMethod, DecodeConfig, DecoderContext,
-    DisposeMethod, EncoderConfig, PixelLayout, WebPDecoder,
+use zenwebp::mux::{
+    AnimationConfig, AnimationDecoder, AnimationEncoder, BlendMethod, DisposeMethod,
 };
+use zenwebp::{DecodeConfig, DecoderContext, EncoderConfig, PixelLayout, WebPDecoder};
 
 /// Generate a gradient image with a unique pattern per frame index.
 fn frame_rgb(w: u32, h: u32, frame_idx: u32) -> Vec<u8> {

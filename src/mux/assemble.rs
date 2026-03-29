@@ -6,7 +6,7 @@
 //!
 //! ```rust,no_run
 //! use zenwebp::mux::{WebPMux, MuxFrame, BlendMethod, DisposeMethod};
-//! use zenwebp::LoopCount;
+//! use zenwebp::decoder::LoopCount;
 //!
 //! let mut mux = WebPMux::new(320, 240);
 //! mux.set_animation([0, 0, 0, 0], LoopCount::Forever);

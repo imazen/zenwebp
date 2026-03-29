@@ -43,11 +43,11 @@
 //!
 //! # Decoding
 //!
-//! Use the convenience functions:
+//! Use the [`oneshot`] convenience functions:
 //!
 //! ```rust,no_run
 //! let webp_data: &[u8] = &[]; // your WebP data
-//! let (pixels, width, height) = zenwebp::decode_rgba(webp_data)?;
+//! let (pixels, width, height) = zenwebp::oneshot::decode_rgba(webp_data)?;
 //! # Ok::<(), whereat::At<zenwebp::DecodeError>>(())
 //! ```
 //!
@@ -108,42 +108,34 @@ pub mod pixel;
 /// Resource estimation heuristics for encoding and decoding operations.
 pub mod heuristics;
 
-// Re-export decoder public API
+/// One-shot decode convenience functions (`decode_rgba`, `decode_rgb`, etc.).
+pub mod oneshot;
+
+// Re-export core decoder types
 pub use decoder::{
-    BitstreamFormat, DecodeConfig, DecodeError, DecodeRequest, DecodeResult, DecoderContext,
-    ImageInfo, Limits, LoopCount, StreamStatus, StreamingDecoder, UpsamplingMethod, WebPDecoder,
-    YuvPlanes, decode_argb, decode_argb_into, decode_argb_premultiplied, decode_bgr,
-    decode_bgr_into, decode_bgra, decode_bgra_into, decode_bgra_premultiplied, decode_rgb,
-    decode_rgb_into, decode_rgb565, decode_rgba, decode_rgba_into, decode_rgba_premultiplied,
-    decode_rgba4444, decode_yuv420,
+    DecodeConfig, DecodeError, DecodeRequest, DecodeResult, DecoderContext, ImageInfo, WebPDecoder,
 };
 
-// Re-export encoder public API
+// Re-export core encoder types
 pub use encoder::{
-    ClassifierDiag, ContentType, EncodeError, EncodeProgress, EncodeRequest, EncodeResult,
-    EncodeStats, EncoderConfig, ImageMetadata, LosslessConfig, LossyConfig, NoProgress,
-    PixelLayout, Preset,
+    EncodeError, EncodeRequest, EncodeResult, EncoderConfig, ImageMetadata, LosslessConfig,
+    LossyConfig, PixelLayout, Preset,
 };
-
-// Re-export mux/demux public API
-pub use mux::{
-    AnimFrame, AnimationConfig, AnimationDecoder, AnimationEncoder, AnimationInfo, BlendMethod,
-    DemuxFrame, DisposeMethod, MuxError, MuxFrame, MuxResult, WebPDemuxer, WebPMux,
-};
-
-// Re-export cooperative cancellation types
-pub use enough::{Stop, StopReason, Unstoppable};
 
 #[cfg(feature = "zennode")]
 pub mod zennode_defs;
 
 #[cfg(feature = "zencodec")]
 mod codec;
+
+/// zencodec trait implementations for WebP encoding and decoding.
 #[cfg(feature = "zencodec")]
-pub use codec::{
-    WebpAnimationFrameDecoder, WebpAnimationFrameEncoder, WebpDecodeJob, WebpDecoder,
-    WebpDecoderConfig, WebpEncodeJob, WebpEncoder, WebpEncoderConfig, WebpStreamingDecoder,
-};
+pub mod zencodec {
+    pub use crate::codec::{
+        WebpAnimationFrameDecoder, WebpAnimationFrameEncoder, WebpDecodeJob, WebpDecoder,
+        WebpDecoderConfig, WebpEncodeJob, WebpEncoder, WebpEncoderConfig, WebpStreamingDecoder,
+    };
+}
 
 /// Standalone metadata convenience functions for already-encoded WebP data.
 ///

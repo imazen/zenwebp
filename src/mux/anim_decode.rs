@@ -5,7 +5,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use zenwebp::AnimationDecoder;
+//! use zenwebp::mux::AnimationDecoder;
 //!
 //! let webp_data: &[u8] = &[]; // your animated WebP data
 //! let mut decoder = AnimationDecoder::new(webp_data)?;

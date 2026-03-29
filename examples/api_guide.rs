@@ -5,11 +5,15 @@
 //!
 //! Run with: cargo run --example api_guide --all-features
 
+use enough::{Stop, Unstoppable};
 use std::{io::Cursor, num::NonZeroU16};
+use zenwebp::decoder::{Limits, LoopCount};
+use zenwebp::mux::{
+    AnimationConfig, AnimationEncoder, BlendMethod, DisposeMethod, MuxError, WebPDemuxer, WebPMux,
+};
 use zenwebp::{
-    AnimationConfig, AnimationEncoder, BlendMethod, DecodeError, DisposeMethod, EncodeError,
-    EncodeRequest, EncoderConfig, Limits, LoopCount, LosslessConfig, LossyConfig, MuxError,
-    PixelLayout, Preset, Stop, Unstoppable, WebPDemuxer, WebPMux,
+    DecodeError, EncodeError, EncodeRequest, EncoderConfig, LosslessConfig, LossyConfig,
+    PixelLayout, Preset,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -261,16 +265,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 3.1 Convenience functions (simplest API)
     println!("3.1 Convenience functions");
-    let (pixels, w, h) = zenwebp::decode_rgb(&test_webp)?;
+    let (pixels, w, h) = zenwebp::oneshot::decode_rgb(&test_webp)?;
     println!("  ✓ decode_rgb() → {}x{}, {} bytes", w, h, pixels.len());
 
-    let (pixels, w, h) = zenwebp::decode_rgba(&test_webp)?;
+    let (pixels, w, h) = zenwebp::oneshot::decode_rgba(&test_webp)?;
     println!("  ✓ decode_rgba() → {}x{}, {} bytes", w, h, pixels.len());
 
-    let (pixels, w, h) = zenwebp::decode_bgr(&test_webp)?;
+    let (pixels, w, h) = zenwebp::oneshot::decode_bgr(&test_webp)?;
     println!("  ✓ decode_bgr() → {}x{}, {} bytes", w, h, pixels.len());
 
-    let (pixels, w, h) = zenwebp::decode_bgra(&test_webp)?;
+    let (pixels, w, h) = zenwebp::oneshot::decode_bgra(&test_webp)?;
     println!("  ✓ decode_bgra() → {}x{}, {} bytes\n", w, h, pixels.len());
 
     // 3.2 WebPDecoder (full control)
@@ -289,7 +293,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 3.3 Decode into pre-allocated buffer
     println!("3.3 Decode into buffer");
     let mut buffer = vec![0u8; width as usize * height as usize * 4];
-    zenwebp::decode_rgba_into(&test_webp, &mut buffer, width)?;
+    zenwebp::oneshot::decode_rgba_into(&test_webp, &mut buffer, width)?;
     println!("  ✓ Decoded into buffer → {} bytes\n", buffer.len());
 
     // 3.4 Metadata extraction
@@ -547,7 +551,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Invalid data
     let result: Result<(Vec<u8>, u32, u32), whereat::At<DecodeError>> =
-        zenwebp::decode_rgba(b"not a webp");
+        zenwebp::oneshot::decode_rgba(b"not a webp");
     if let Err(e) = result {
         println!("  ✓ Invalid data: {}", e);
     }

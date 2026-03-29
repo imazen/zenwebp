@@ -1568,7 +1568,7 @@ fn convert_to_output(
 ///
 /// ```rust,no_run
 /// let webp_data: &[u8] = &[]; // your WebP data
-/// let (pixels, width, height) = zenwebp::decode_rgba(webp_data)?;
+/// let (pixels, width, height) = zenwebp::oneshot::decode_rgba(webp_data)?;
 /// # Ok::<(), whereat::At<zenwebp::DecodeError>>(())
 /// ```
 #[track_caller]
@@ -1584,7 +1584,7 @@ pub fn decode_rgba(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
 ///
 /// ```rust,no_run
 /// let webp_data: &[u8] = &[]; // your WebP data
-/// let (pixels, width, height) = zenwebp::decode_rgb(webp_data)?;
+/// let (pixels, width, height) = zenwebp::oneshot::decode_rgb(webp_data)?;
 /// # Ok::<(), whereat::At<zenwebp::DecodeError>>(())
 /// ```
 #[track_caller]
@@ -1689,7 +1689,7 @@ impl ImageInfo {
     ///
     /// Extracts dimensions, format info, and metadata (ICC, EXIF, XMP) in a single
     /// pass. This replaces the need to use both [`WebPDecoder`] and
-    /// [`WebPDemuxer`](crate::WebPDemuxer) for probing.
+    /// [`WebPDemuxer`](crate::mux::WebPDemuxer) for probing.
     #[track_caller]
     pub fn from_webp(data: &[u8]) -> DecodeResult<Self> {
         let mut decoder = WebPDecoder::new(data).map_err(|e| at!(e))?;

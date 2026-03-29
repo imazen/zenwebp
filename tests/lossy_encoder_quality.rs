@@ -442,7 +442,7 @@ fn roundtrip_avg_delta(
         .encode()
         .expect("encode failed");
 
-    let (dec, dec_w, dec_h) = zenwebp::decode_bgra(&webp).expect("decode failed");
+    let (dec, dec_w, dec_h) = zenwebp::oneshot::decode_bgra(&webp).expect("decode failed");
     assert_eq!(dec_w, w);
     assert_eq!(dec_h, h);
 
@@ -1213,9 +1213,9 @@ mod corpus_tests {
                 let m6_time = start.elapsed();
 
                 // Verify all outputs decode correctly
-                zenwebp::decode_rgba(&m4_output).expect("m4 should decode");
-                zenwebp::decode_rgba(&m5_output).expect("m5 should decode");
-                zenwebp::decode_rgba(&m6_output).expect("m6 should decode");
+                zenwebp::oneshot::decode_rgba(&m4_output).expect("m4 should decode");
+                zenwebp::oneshot::decode_rgba(&m5_output).expect("m5 should decode");
+                zenwebp::oneshot::decode_rgba(&m6_output).expect("m6 should decode");
 
                 // Also compare to libwebp with multiple passes
                 use webpx::Unstoppable;

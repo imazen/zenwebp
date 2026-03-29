@@ -14,7 +14,7 @@ use std::env;
 use std::fs;
 
 use zencodec::decode::{DecodeJob, DecoderConfig, StreamingDecode};
-use zenwebp::WebpDecoderConfig;
+use zenwebp::zencodec::WebpDecoderConfig;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

@@ -22,7 +22,7 @@
 //!
 //! // Remove
 //! let stripped = metadata::remove_icc(webp_data)?;
-//! # Ok::<(), whereat::At<zenwebp::MuxError>>(())
+//! # Ok::<(), whereat::At<zenwebp::mux::MuxError>>(())
 //! ```
 
 use alloc::vec::Vec;

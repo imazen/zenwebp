@@ -36,7 +36,8 @@
 //! }
 //! ```
 
-use crate::{Limits, Preset};
+use crate::Preset;
+use crate::decoder::Limits;
 
 /// Configuration for lossy (VP8) encoding.
 ///

@@ -10,7 +10,7 @@
 //! [`EncoderConfig`](crate::EncoderConfig) used by zenwebp's encoder.
 //!
 //! When the `zencodec` feature is also enabled, `apply()` and
-//! `to_webp_encoder_config()` produce a [`WebpEncoderConfig`](crate::WebpEncoderConfig)
+//! `to_webp_encoder_config()` produce a [`WebpEncoderConfig`](crate::zencodec::WebpEncoderConfig)
 //! that integrates with the zencodec trait system.
 //!
 //! Feature-gated behind `feature = "zennode"`.
@@ -207,10 +207,13 @@ impl EncodeWebpLossy {
 #[cfg(feature = "zencodec")]
 impl EncodeWebpLossy {
     /// Apply this node's explicitly-set params on top of an existing
-    /// [`WebpEncoderConfig`](crate::WebpEncoderConfig).
+    /// [`WebpEncoderConfig`](crate::zencodec::WebpEncoderConfig).
     ///
     /// `None` fields are skipped so that the base config's values are preserved.
-    pub fn apply(&self, mut config: crate::WebpEncoderConfig) -> crate::WebpEncoderConfig {
+    pub fn apply(
+        &self,
+        mut config: crate::zencodec::WebpEncoderConfig,
+    ) -> crate::zencodec::WebpEncoderConfig {
         if let Some(q) = self.quality {
             config = config.with_quality(q.clamp(0.0, 100.0));
         }
@@ -249,11 +252,11 @@ impl EncodeWebpLossy {
         config
     }
 
-    /// Build a [`WebpEncoderConfig`](crate::WebpEncoderConfig) from scratch
+    /// Build a [`WebpEncoderConfig`](crate::zencodec::WebpEncoderConfig) from scratch
     /// using this node's params.
     #[must_use]
-    pub fn to_webp_encoder_config(&self) -> crate::WebpEncoderConfig {
-        self.apply(crate::WebpEncoderConfig::lossy())
+    pub fn to_webp_encoder_config(&self) -> crate::zencodec::WebpEncoderConfig {
+        self.apply(crate::zencodec::WebpEncoderConfig::lossy())
     }
 }
 
@@ -356,10 +359,13 @@ impl EncodeWebpLossless {
 #[cfg(feature = "zencodec")]
 impl EncodeWebpLossless {
     /// Apply this node's explicitly-set params on top of an existing
-    /// [`WebpEncoderConfig`](crate::WebpEncoderConfig).
+    /// [`WebpEncoderConfig`](crate::zencodec::WebpEncoderConfig).
     ///
     /// `None` fields are skipped so that the base config's values are preserved.
-    pub fn apply(&self, mut config: crate::WebpEncoderConfig) -> crate::WebpEncoderConfig {
+    pub fn apply(
+        &self,
+        mut config: crate::zencodec::WebpEncoderConfig,
+    ) -> crate::zencodec::WebpEncoderConfig {
         if let Some(effort) = self.effort {
             let effort = effort.clamp(0.0, 100.0);
             let method = effort_to_method(effort);
@@ -382,11 +388,11 @@ impl EncodeWebpLossless {
         config
     }
 
-    /// Build a [`WebpEncoderConfig`](crate::WebpEncoderConfig) from scratch
+    /// Build a [`WebpEncoderConfig`](crate::zencodec::WebpEncoderConfig) from scratch
     /// using this node's params.
     #[must_use]
-    pub fn to_webp_encoder_config(&self) -> crate::WebpEncoderConfig {
-        self.apply(crate::WebpEncoderConfig::lossless())
+    pub fn to_webp_encoder_config(&self) -> crate::zencodec::WebpEncoderConfig {
+        self.apply(crate::zencodec::WebpEncoderConfig::lossless())
     }
 }
 
@@ -449,17 +455,20 @@ impl DecodeWebp {
 #[cfg(feature = "zencodec")]
 impl DecodeWebp {
     /// Apply this node's explicitly-set params on top of an existing
-    /// [`WebpDecoderConfig`](crate::WebpDecoderConfig).
+    /// [`WebpDecoderConfig`](crate::zencodec::WebpDecoderConfig).
     ///
     /// `None` fields are skipped so that the base config's values are preserved.
-    pub fn apply(&self, mut config: crate::WebpDecoderConfig) -> crate::WebpDecoderConfig {
+    pub fn apply(
+        &self,
+        mut config: crate::zencodec::WebpDecoderConfig,
+    ) -> crate::zencodec::WebpDecoderConfig {
         if let Some(ref method) = self.upsampling {
             match method.to_ascii_lowercase().as_str() {
                 "simple" | "nearest" => {
-                    config = config.with_upsampling(crate::UpsamplingMethod::Simple);
+                    config = config.with_upsampling(crate::decoder::UpsamplingMethod::Simple);
                 }
                 "bilinear" | "fancy" => {
-                    config = config.with_upsampling(crate::UpsamplingMethod::Bilinear);
+                    config = config.with_upsampling(crate::decoder::UpsamplingMethod::Bilinear);
                 }
                 _ => {}
             }
@@ -470,11 +479,11 @@ impl DecodeWebp {
         config
     }
 
-    /// Build a [`WebpDecoderConfig`](crate::WebpDecoderConfig) from scratch
+    /// Build a [`WebpDecoderConfig`](crate::zencodec::WebpDecoderConfig) from scratch
     /// using this node's params.
     #[must_use]
-    pub fn to_webp_decoder_config(&self) -> crate::WebpDecoderConfig {
-        self.apply(crate::WebpDecoderConfig::new())
+    pub fn to_webp_decoder_config(&self) -> crate::zencodec::WebpDecoderConfig {
+        self.apply(crate::zencodec::WebpDecoderConfig::new())
     }
 }
 
@@ -1012,7 +1021,10 @@ mod tests {
     fn decode_to_config_defaults() {
         let node = DecodeWebp::default();
         let config = node.to_decode_config();
-        assert_eq!(config.upsampling, crate::UpsamplingMethod::Bilinear);
+        assert_eq!(
+            config.upsampling,
+            crate::decoder::UpsamplingMethod::Bilinear
+        );
         assert_eq!(config.dithering_strength, 50);
     }
 
@@ -1023,7 +1035,7 @@ mod tests {
             dithering_strength: Some(0),
         };
         let config = node.to_decode_config();
-        assert_eq!(config.upsampling, crate::UpsamplingMethod::Simple);
+        assert_eq!(config.upsampling, crate::decoder::UpsamplingMethod::Simple);
         assert_eq!(config.dithering_strength, 0);
     }
 
@@ -1034,7 +1046,10 @@ mod tests {
             dithering_strength: Some(100),
         };
         let config = node.to_decode_config();
-        assert_eq!(config.upsampling, crate::UpsamplingMethod::Bilinear);
+        assert_eq!(
+            config.upsampling,
+            crate::decoder::UpsamplingMethod::Bilinear
+        );
         assert_eq!(config.dithering_strength, 100);
     }
 
@@ -1058,7 +1073,7 @@ mod tests {
     #[cfg(feature = "zencodec")]
     #[test]
     fn lossy_apply_preserves_existing() {
-        let base = crate::WebpEncoderConfig::lossy().with_sharp_yuv(true);
+        let base = crate::zencodec::WebpEncoderConfig::lossy().with_sharp_yuv(true);
         let node = EncodeWebpLossy::default();
         let config = node.apply(base);
         // sharp_yuv was set on base, node doesn't override -> preserved
@@ -1116,7 +1131,7 @@ mod tests {
     #[cfg(feature = "zencodec")]
     #[test]
     fn lossless_apply_preserves_existing() {
-        let base = crate::WebpEncoderConfig::lossless();
+        let base = crate::zencodec::WebpEncoderConfig::lossless();
         let node = EncodeWebpLossless::default();
         let _config = node.apply(base);
     }
@@ -1144,19 +1159,19 @@ mod tests {
         };
         let config = node.to_webp_decoder_config();
         let inner = config.inner();
-        assert_eq!(inner.upsampling, crate::UpsamplingMethod::Simple);
+        assert_eq!(inner.upsampling, crate::decoder::UpsamplingMethod::Simple);
         assert_eq!(inner.dithering_strength, 0);
     }
 
     #[cfg(feature = "zencodec")]
     #[test]
     fn decode_apply_preserves_existing() {
-        let base = crate::WebpDecoderConfig::new();
+        let base = crate::zencodec::WebpDecoderConfig::new();
         let node = DecodeWebp::default();
         let config = node.apply(base);
         // Defaults preserved
         let inner = config.inner();
-        assert_eq!(inner.upsampling, crate::UpsamplingMethod::Bilinear);
+        assert_eq!(inner.upsampling, crate::decoder::UpsamplingMethod::Bilinear);
     }
 
     // ── Registry integration ──

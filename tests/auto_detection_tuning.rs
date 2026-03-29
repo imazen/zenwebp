@@ -70,7 +70,7 @@ fn rgb8_to_linear(rgb: &[u8]) -> Vec<[f32; 3]> {
 }
 
 fn ssim2(original_rgb: &[u8], webp_bytes: &[u8], w: u32, h: u32) -> f64 {
-    let (decoded, dw, dh) = zenwebp::decode_rgb(webp_bytes).unwrap();
+    let (decoded, dw, dh) = zenwebp::oneshot::decode_rgb(webp_bytes).unwrap();
     assert_eq!((dw, dh), (w, h));
 
     let orig_linear = rgb8_to_linear(original_rgb);
@@ -100,7 +100,7 @@ fn butteraugli_score(original_rgb: &[u8], webp_bytes: &[u8], w: u32, h: u32) -> 
     use butteraugli::{ButteraugliParams, RGB8, butteraugli};
     use imgref::Img;
 
-    let (decoded, dw, dh) = zenwebp::decode_rgb(webp_bytes).unwrap();
+    let (decoded, dw, dh) = zenwebp::oneshot::decode_rgb(webp_bytes).unwrap();
     assert_eq!((dw, dh), (w, h));
 
     // Convert to RGB8 pixel slices
@@ -123,7 +123,7 @@ fn butteraugli_score(original_rgb: &[u8], webp_bytes: &[u8], w: u32, h: u32) -> 
 }
 
 /// Get classifier diagnostics for an RGB image by converting to YUV and running analysis.
-fn classify_rgb(rgb: &[u8], w: u32, h: u32) -> zenwebp::ClassifierDiag {
+fn classify_rgb(rgb: &[u8], w: u32, h: u32) -> zenwebp::encoder::ClassifierDiag {
     let width = w as usize;
     let height = h as usize;
     let mb_w = width.div_ceil(16);

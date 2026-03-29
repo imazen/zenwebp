@@ -1,9 +1,10 @@
 //! Tests for the mux/demux/animation APIs.
 
+use zenwebp::decoder::LoopCount;
 use zenwebp::mux::{
     AnimationConfig, AnimationEncoder, BlendMethod, DisposeMethod, MuxFrame, WebPDemuxer, WebPMux,
 };
-use zenwebp::{EncodeRequest, EncoderConfig, LoopCount, PixelLayout, WebPDecoder};
+use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, WebPDecoder};
 
 /// Create a solid-color RGBA frame.
 fn solid_rgba(width: u32, height: u32, r: u8, g: u8, b: u8, a: u8) -> Vec<u8> {

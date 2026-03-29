@@ -52,7 +52,7 @@ fn zen_encode_decode(rgba: &[u8], w: u32, h: u32, config: &LossyConfig) -> (Vec<
     let webp = EncodeRequest::lossy(config, rgba, PixelLayout::Rgba8, w, h)
         .encode()
         .expect("zenwebp encode failed");
-    let (decoded, dw, dh) = zenwebp::decode_rgba(&webp).expect("zenwebp decode failed");
+    let (decoded, dw, dh) = zenwebp::oneshot::decode_rgba(&webp).expect("zenwebp decode failed");
     assert_eq!((dw, dh), (w, h));
     (webp, decoded)
 }
@@ -537,7 +537,8 @@ fn cross_decode_zen_to_wpx() {
         assert_eq!((dw, dh), (W, H));
 
         // Decode with zenwebp
-        let (zen_decoded, _, _) = zenwebp::decode_rgba(&webp).expect("zenwebp decode failed");
+        let (zen_decoded, _, _) =
+            zenwebp::oneshot::decode_rgba(&webp).expect("zenwebp decode failed");
 
         // Compare the two decoders' outputs of the same bitstream
         let z = Zensim::new(ZensimProfile::latest());
@@ -572,7 +573,7 @@ fn cross_decode_wpx_to_zen() {
 
         // Decode with zenwebp
         let (zen_decoded, dw, dh) =
-            zenwebp::decode_rgba(&webp).expect("zenwebp failed to decode webpx output");
+            zenwebp::oneshot::decode_rgba(&webp).expect("zenwebp failed to decode webpx output");
         assert_eq!((dw, dh), (W, H));
 
         // Decode with webpx

@@ -25,7 +25,7 @@ fn assert_lossless_roundtrip(rgb: &[u8], w: u32, h: u32, config: &Vp8lConfig) {
     let vp8l =
         encode_vp8l(rgb, w, h, false, config, &enough::Unstoppable).expect("VP8L encoding failed");
     let webp = wrap_vp8l_in_riff(&vp8l);
-    let (decoded, dw, dh) = zenwebp::decode_rgba(&webp).expect("decode failed");
+    let (decoded, dw, dh) = zenwebp::oneshot::decode_rgba(&webp).expect("decode failed");
     assert_eq!(dw, w);
     assert_eq!(dh, h);
     let total = (w * h) as usize;
@@ -47,7 +47,7 @@ fn assert_lossless_roundtrip_highlevel(rgb: &[u8], w: u32, h: u32) {
     let webp = zenwebp::EncodeRequest::new(&cfg, rgb, zenwebp::PixelLayout::Rgb8, w, h)
         .encode()
         .expect("high-level encode failed");
-    let (decoded, dw, dh) = zenwebp::decode_rgba(&webp).expect("decode failed");
+    let (decoded, dw, dh) = zenwebp::oneshot::decode_rgba(&webp).expect("decode failed");
     assert_eq!(dw, w);
     assert_eq!(dh, h);
     let total = (w * h) as usize;

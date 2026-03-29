@@ -6,7 +6,8 @@
 //!
 //! ```rust,no_run
 //! use zenwebp::mux::{AnimationEncoder, AnimationConfig};
-//! use zenwebp::{EncoderConfig, PixelLayout, LoopCount};
+//! use zenwebp::{EncoderConfig, PixelLayout};
+//! use zenwebp::decoder::LoopCount;
 //!
 //! let config = AnimationConfig {
 //!     background_color: [0, 0, 0, 0],

@@ -146,7 +146,7 @@ fn lossless_roundtrip_all_methods() {
             webp.push(0);
         }
 
-        let (decoded, dw, dh) = zenwebp::decode_rgba(&webp).expect("decode failed");
+        let (decoded, dw, dh) = zenwebp::oneshot::decode_rgba(&webp).expect("decode failed");
         assert_eq!(dw, width);
         assert_eq!(dh, height);
 

@@ -42,7 +42,7 @@ pub struct AnimationFrame<'a> {
 impl DecoderContext {
     /// Decode an animated WebP file, calling the callback for each composited frame.
     ///
-    /// Uses the [`WebPDemuxer`] to parse the container and decodes each frame
+    /// Uses the [`WebPDemuxer`](crate::mux::WebPDemuxer) to parse the container and decodes each frame
     /// through this `DecoderContext` (reusing buffers across lossy frames).
     /// Lossless VP8L frames are decoded via `LosslessDecoder`.
     ///

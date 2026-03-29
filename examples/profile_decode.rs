@@ -46,11 +46,11 @@ fn main() {
     };
 
     // Warm up
-    std::hint::black_box(zenwebp::decode_rgb(&webp).unwrap());
+    std::hint::black_box(zenwebp::oneshot::decode_rgb(&webp).unwrap());
 
     let start = std::time::Instant::now();
     for _ in 0..iterations {
-        std::hint::black_box(zenwebp::decode_rgb(&webp).unwrap());
+        std::hint::black_box(zenwebp::oneshot::decode_rgb(&webp).unwrap());
     }
     let elapsed = start.elapsed();
     let per_decode = elapsed / iterations;

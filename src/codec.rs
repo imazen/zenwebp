@@ -45,7 +45,7 @@ use crate::{DecodeConfig, DecodeError, DecodeRequest, EncodeError, EncodeRequest
 ///
 /// ```rust,ignore
 /// use zencodec::encode::EncoderConfig;
-/// use zenwebp::WebpEncoderConfig;
+/// use zenwebp::zencodec::WebpEncoderConfig;
 ///
 /// let enc = WebpEncoderConfig::lossy()
 ///     .with_quality(85.0)
@@ -412,7 +412,7 @@ pub struct WebpEncodeJob {
 impl WebpEncodeJob {
     fn build_inner_config(&self) -> EncoderConfig {
         let mut inner = self.config.inner.clone();
-        let mut limits = crate::Limits::none();
+        let mut limits = crate::decoder::Limits::none();
         if let Some(px) = self.limits.max_pixels {
             limits = limits.max_total_pixels(px);
         }
@@ -515,11 +515,11 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
     fn animation_frame_encoder(self) -> Result<WebpAnimationFrameEncoder, At<EncodeError>> {
         let inner_config = self.build_inner_config();
         let loop_count = match self.loop_count {
-            Some(Some(0)) | None => crate::LoopCount::Forever,
-            Some(None) => crate::LoopCount::Forever,
+            Some(Some(0)) | None => crate::decoder::LoopCount::Forever,
+            Some(None) => crate::decoder::LoopCount::Forever,
             Some(Some(n)) => {
                 let n16 = (n.min(u16::MAX as u32)) as u16;
-                crate::LoopCount::Times(
+                crate::decoder::LoopCount::Times(
                     core::num::NonZeroU16::new(n16)
                         .unwrap_or(core::num::NonZeroU16::new(1).unwrap()),
                 )
@@ -968,7 +968,7 @@ pub struct WebpAnimationFrameEncoder {
     cumulative_ms: u32,
     last_frame_duration_ms: u32,
     canvas_size: Option<(u32, u32)>,
-    loop_count: crate::LoopCount,
+    loop_count: crate::decoder::LoopCount,
     limits: ResourceLimits,
 }
 
@@ -1064,7 +1064,7 @@ impl WebpDecoderConfig {
 
     /// Set the chroma upsampling method.
     #[must_use]
-    pub fn with_upsampling(mut self, method: crate::UpsamplingMethod) -> Self {
+    pub fn with_upsampling(mut self, method: crate::decoder::UpsamplingMethod) -> Self {
         self.inner = self.inner.upsampling(method);
         self
     }
@@ -1514,8 +1514,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         let anim_info = probe_anim.info();
         let total_frames = anim_info.frame_count;
         let anim_loop_count = match anim_info.loop_count {
-            crate::LoopCount::Forever => Some(0),
-            crate::LoopCount::Times(n) => Some(n.get() as u32),
+            crate::decoder::LoopCount::Forever => Some(0),
+            crate::decoder::LoopCount::Times(n) => Some(n.get() as u32),
         };
         let base_info = if let Some(ref ni) = native_info {
             to_image_info(ni, Some(anim_loop_count))

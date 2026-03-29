@@ -149,10 +149,10 @@ where
     [u8]: AsPixels<P>,
 {
     let (bytes, w, h) = match (P::IS_BGR, P::HAS_ALPHA) {
-        (false, false) => crate::decode_rgb(data)?,
-        (false, true) => crate::decode_rgba(data)?,
-        (true, false) => crate::decode_bgr(data)?,
-        (true, true) => crate::decode_bgra(data)?,
+        (false, false) => crate::oneshot::decode_rgb(data)?,
+        (false, true) => crate::oneshot::decode_rgba(data)?,
+        (true, false) => crate::oneshot::decode_bgr(data)?,
+        (true, true) => crate::oneshot::decode_bgra(data)?,
     };
     let pixels: &[P] = bytes.as_pixels();
     Ok((pixels.to_vec(), w, h))
@@ -171,10 +171,10 @@ where
 {
     let buf: &mut [u8] = output.as_bytes_mut();
     match (P::IS_BGR, P::HAS_ALPHA) {
-        (false, false) => crate::decode_rgb_into(data, buf, stride_pixels),
-        (false, true) => crate::decode_rgba_into(data, buf, stride_pixels),
-        (true, false) => crate::decode_bgr_into(data, buf, stride_pixels),
-        (true, true) => crate::decode_bgra_into(data, buf, stride_pixels),
+        (false, false) => crate::oneshot::decode_rgb_into(data, buf, stride_pixels),
+        (false, true) => crate::oneshot::decode_rgba_into(data, buf, stride_pixels),
+        (true, false) => crate::oneshot::decode_bgr_into(data, buf, stride_pixels),
+        (true, true) => crate::oneshot::decode_bgra_into(data, buf, stride_pixels),
     }
 }
 
@@ -189,10 +189,10 @@ where
     [u8]: AsPixels<P>,
 {
     let (bytes, w, h) = match (P::IS_BGR, P::HAS_ALPHA) {
-        (false, false) => crate::decode_rgb(data)?,
-        (false, true) => crate::decode_rgba(data)?,
-        (true, false) => crate::decode_bgr(data)?,
-        (true, true) => crate::decode_bgra(data)?,
+        (false, false) => crate::oneshot::decode_rgb(data)?,
+        (false, true) => crate::oneshot::decode_rgba(data)?,
+        (true, false) => crate::oneshot::decode_bgr(data)?,
+        (true, true) => crate::oneshot::decode_bgra(data)?,
     };
     let pixels: &[P] = bytes.as_pixels();
     output.extend_from_slice(pixels);
