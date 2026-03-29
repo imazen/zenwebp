@@ -109,10 +109,10 @@ jobs:
         run: cargo test --features zencodec
       - name: zencodec + imgref
         run: cargo test --features "zencodec,imgref"
-      - name: simd + avx512
-        run: cargo check --features "simd,avx512"
+      - name: avx512
+        run: cargo check --features avx512
       - name: All public features
-        run: cargo test --features "std,fast-yuv,simd,pixel-types,imgref,avx512,zencodec"
+        run: cargo test --features "std,fast-yuv,pixel-types,imgref,avx512,zencodec"
 
   clippy:
     name: Clippy
