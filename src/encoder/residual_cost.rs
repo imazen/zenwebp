@@ -193,9 +193,10 @@ pub(crate) fn get_residual_cost_scalar(
         return vp8_bit_cost(false, p0) as u32;
     }
 
-    // Build remapped cost table to eliminate per-iteration band lookups
-    let remapped = costs.get_remapped_costs(ctype);
-    let mut t = remapped[n][ctx];
+    // Pre-index by ctype once for the inner loop
+    let costs_for_type = &costs.level_cost[ctype];
+    let band = VP8_ENC_BANDS[n] as usize;
+    let mut t = &costs_for_type[band][ctx];
 
     // Process coefficients from first to last-1
     let last = res.last as usize;
@@ -210,7 +211,8 @@ pub(crate) fn get_residual_cost_scalar(
         ctx = if v >= 2 { 2 } else { v };
 
         n += 1;
-        t = remapped[n][ctx];
+        let next_band = (VP8_ENC_BANDS[n] as usize) & 7;
+        t = &costs_for_type[next_band][ctx.min(2)];
     }
 
     // Last coefficient is always non-zero
@@ -238,11 +240,11 @@ use super::cost::level_costs::LevelCostArray;
 /// Shared inner loop for residual cost calculation.
 ///
 /// Processes coefficients from position `first` through `last` (inclusive),
-/// accumulating level costs. Uses precomputed remapped cost tables
-/// (matching libwebp's CostArrayMap) to avoid per-iteration band lookups.
+/// accumulating level costs. Uses the padded LevelCostArray (128 entries)
+/// with `& 0x7F` to eliminate bounds checks on level indexing.
 ///
-/// `initial_ctx` is the context (0/1/2) for the first coefficient position,
-/// derived from the caller's ctx0 parameter.
+/// `initial_ctx` is the context (0/1/2) for the first coefficient position.
+/// `costs_for_type` is `&level_cost[ctype]` -- the [8][3] cost table for one type.
 ///
 /// Returns the accumulated cost for all coefficients first..=last.
 #[inline(always)]
@@ -253,17 +255,20 @@ fn residual_cost_loop(
     levels: &[u8; 16],
     abs_levels: &[u16; 16],
     ctxs: &[u8; 16],
-    remapped: &[[&LevelCostArray; 3]; 16],
+    costs_for_type: &[[LevelCostArray; 3]; 8],
 ) -> u32 {
     let mut cost = 0u32;
     let mut n = first;
-    // t points to the cost table for position n, context from previous coeff.
-    // For the first coefficient, context comes from the caller.
-    let mut t: &LevelCostArray = remapped[n][initial_ctx.min(2)];
+
+    // Get cost table pointer for position n, context from previous coefficient.
+    // VP8_ENC_BANDS is a const [u8; 17] with values in 0..8.
+    let mut band = VP8_ENC_BANDS[n] as usize;
+    let mut t: &LevelCostArray = &costs_for_type[band][initial_ctx.min(2)];
 
     // Process first..last-1: each iteration reads coeff at n, updates context.
     // `level & 0x7F` eliminates the bounds check on t[] (padded to 128 entries).
-    // `ctx.min(2)` clamps to [0,2] for the 3-element remapped[n] arrays.
+    // `ctx.min(2)` clamps to [0,2] for the 3-element cost arrays.
+    // `band & 7` proves band < 8 for the 8-element costs_for_type.
     while n < last {
         let level = (levels[n] as usize) & 0x7F;
         let flevel = abs_levels[n] as usize;
@@ -272,7 +277,8 @@ fn residual_cost_loop(
 
         let ctx = (ctxs[n] as usize).min(2);
         n += 1;
-        t = remapped[n][ctx];
+        band = (VP8_ENC_BANDS[n] as usize) & 7;
+        t = &costs_for_type[band][ctx];
     }
 
     // Last coefficient (always non-zero)
@@ -379,14 +385,12 @@ pub(crate) fn get_residual_cost_sse2(
         simd_mem::_mm_storeu_si128(al1, e1);
     }
 
-    // Build remapped cost table: [position][context] -> &[u16; 68]
-    // This matches libwebp's CostArrayMap pattern, eliminating VP8_ENC_BANDS
-    // lookups and band/ctx bounds checks from the inner loop.
-    let remapped = costs.get_remapped_costs(ctype);
+    // Pre-index by ctype once, then use VP8_ENC_BANDS for band lookup in the loop.
+    let costs_for_type = &costs.level_cost[ctype];
     let last = res.last as usize;
 
     // Delegate to the shared inner loop (main loop + last coefficient).
-    cost += residual_cost_loop(n, last, ctx, &levels, &abs_levels, &ctxs, &remapped);
+    cost += residual_cost_loop(n, last, ctx, &levels, &abs_levels, &ctxs, costs_for_type);
 
     // Add EOB cost for the position after the last coefficient
     if last < 15 {
@@ -539,11 +543,11 @@ pub(crate) fn get_residual_cost_neon(
         simd_mem::vst1q_u16(al1, vreinterpretq_u16_s16(e1));
     }
 
-    // Build remapped cost table and delegate to shared inner loop.
-    let remapped = costs.get_remapped_costs(ctype);
+    // Pre-index by ctype once, delegate to shared inner loop.
+    let costs_for_type = &costs.level_cost[ctype];
     let last = res.last as usize;
 
-    cost += residual_cost_loop(n, last, ctx, &levels, &abs_levels, &ctxs, &remapped);
+    cost += residual_cost_loop(n, last, ctx, &levels, &abs_levels, &ctxs, costs_for_type);
 
     // Add EOB cost for the position after the last coefficient
     if last < 15 {
@@ -758,11 +762,11 @@ pub(crate) fn get_residual_cost_wasm(
         abs_levels[15] = u16x8_extract_lane::<7>(e1);
     }
 
-    // Build remapped cost table and delegate to shared inner loop.
-    let remapped = costs.get_remapped_costs(ctype);
+    // Pre-index by ctype once, delegate to shared inner loop.
+    let costs_for_type = &costs.level_cost[ctype];
     let last = res.last as usize;
 
-    cost += residual_cost_loop(n, last, ctx, &levels, &abs_levels, &ctxs, &remapped);
+    cost += residual_cost_loop(n, last, ctx, &levels, &abs_levels, &ctxs, costs_for_type);
 
     // Add EOB cost for the position after the last coefficient
     if last < 15 {

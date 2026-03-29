@@ -177,9 +177,13 @@ impl DecoderContext {
                 // Lossy with alpha: decode VP8 to RGBA, then apply alpha
                 let (_w, _h) = self.decode_to_rgb(frame.bitstream, scratch, 4)?;
 
-                let alpha_w: u16 = frame.width.try_into()
+                let alpha_w: u16 = frame
+                    .width
+                    .try_into()
                     .map_err(|_| DecodeError::ImageTooLarge)?;
-                let alpha_h: u16 = frame.height.try_into()
+                let alpha_h: u16 = frame
+                    .height
+                    .try_into()
                     .map_err(|_| DecodeError::ImageTooLarge)?;
                 let alpha_chunk = read_alpha_chunk(alpha_data, alpha_w, alpha_h)?;
 

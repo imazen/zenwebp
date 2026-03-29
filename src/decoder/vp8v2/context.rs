@@ -187,16 +187,19 @@ impl DecoderContext {
     /// (8 for normal filter, 2 for simple, 0 for no filter).
     ///
     /// Returns `Err` if buffer sizes overflow (malicious dimensions).
-    pub(super) fn ensure_capacity(&mut self, mbwidth: u16, mbheight: u16, extra_y_rows: usize) -> Result<(), crate::decoder::api::DecodeError> {
+    pub(super) fn ensure_capacity(
+        &mut self,
+        mbwidth: u16,
+        mbheight: u16,
+        extra_y_rows: usize,
+    ) -> Result<(), crate::decoder::api::DecodeError> {
         use crate::decoder::api::DecodeError;
         let mbw = usize::from(mbwidth);
         let _mbh = usize::from(mbheight);
 
         // Cache strides — checked to reject overflow from malicious dimensions
-        self.cache_y_stride = mbw.checked_mul(16)
-            .ok_or(DecodeError::ImageTooLarge)?;
-        self.cache_uv_stride = mbw.checked_mul(8)
-            .ok_or(DecodeError::ImageTooLarge)?;
+        self.cache_y_stride = mbw.checked_mul(16).ok_or(DecodeError::ImageTooLarge)?;
+        self.cache_uv_stride = mbw.checked_mul(8).ok_or(DecodeError::ImageTooLarge)?;
 
         let extra_uv_rows = extra_y_rows / 2;
         let cache_y_rows = extra_y_rows + 16;

@@ -15,6 +15,10 @@ use crate::encoder::cost::{
     trellis_quantize_block,
 };
 
+// Known lengths of PROB_DCT_CAT extra-value probability tables (Cat1-Cat6).
+// Eliminates sentinel `prob == 0` branch per iteration in the hot loop.
+const DCT_CAT_LENGTHS: [usize; 6] = [1, 2, 3, 4, 5, 11];
+
 // -----------------------------------------------------------------------
 // Token buffer for deferred coefficient encoding
 // -----------------------------------------------------------------------
@@ -104,17 +108,20 @@ impl TokenBuffer {
         // This eliminates 5 integer divisions per dynamic token in the hot loop.
         let flat_probas = Self::flatten_probas(probas);
 
+        // Split loop: process dynamic tokens (majority) with minimal branching.
+        // FIXED_PROBA_BIT tokens (sign bits, category extra bits) are ~30% of tokens.
         for &token in &self.tokens {
             let bit = (token >> 15) != 0;
-            if (token & FIXED_PROBA_BIT) != 0 {
-                // Constant probability embedded in token
-                let proba = (token & 0xff) as u8;
-                encoder.write_bool(bit, proba);
+            let raw_idx = token & 0x3FFF;
+            // For fixed-proba tokens, bit 14 is set and bits 0-7 hold the probability.
+            // For dynamic tokens, bits 0-13 hold the flat index.
+            // Branchless: use the fixed proba when FIXED_PROBA_BIT is set, else lookup.
+            let proba = if (token & FIXED_PROBA_BIT) != 0 {
+                raw_idx as u8
             } else {
-                // Dynamic probability: direct flat index lookup (no decomposition needed)
-                let idx = (token & 0x3fff) as usize;
-                encoder.write_bool(bit, flat_probas[idx]);
-            }
+                flat_probas[raw_idx as usize]
+            };
+            encoder.write_bool(bit, proba);
         }
     }
 
@@ -235,11 +242,11 @@ impl TokenBuffer {
                             self.add_token(false, base_id + 9);
                             record_stat(&mut s[9], false);
                             let r = residue - 8;
-                            for (i, &prob) in PROB_DCT_CAT[2].iter().enumerate() {
-                                if prob == 0 {
-                                    break;
-                                }
-                                self.add_constant_token((r & (1 << (2 - i))) != 0, prob);
+                            for i in 0..DCT_CAT_LENGTHS[2] {
+                                self.add_constant_token(
+                                    (r & (1 << (2 - i))) != 0,
+                                    PROB_DCT_CAT[2][i],
+                                );
                             }
                         } else if residue < (8 << 2) {
                             // Cat4
@@ -248,11 +255,11 @@ impl TokenBuffer {
                             self.add_token(true, base_id + 9);
                             record_stat(&mut s[9], true);
                             let r = residue - (8 << 1);
-                            for (i, &prob) in PROB_DCT_CAT[3].iter().enumerate() {
-                                if prob == 0 {
-                                    break;
-                                }
-                                self.add_constant_token((r & (1 << (3 - i))) != 0, prob);
+                            for i in 0..DCT_CAT_LENGTHS[3] {
+                                self.add_constant_token(
+                                    (r & (1 << (3 - i))) != 0,
+                                    PROB_DCT_CAT[3][i],
+                                );
                             }
                         } else if residue < (8 << 3) {
                             // Cat5
@@ -261,11 +268,11 @@ impl TokenBuffer {
                             self.add_token(false, base_id + 10);
                             record_stat(&mut s[10], false);
                             let r = residue - (8 << 2);
-                            for (i, &prob) in PROB_DCT_CAT[4].iter().enumerate() {
-                                if prob == 0 {
-                                    break;
-                                }
-                                self.add_constant_token((r & (1 << (4 - i))) != 0, prob);
+                            for i in 0..DCT_CAT_LENGTHS[4] {
+                                self.add_constant_token(
+                                    (r & (1 << (4 - i))) != 0,
+                                    PROB_DCT_CAT[4][i],
+                                );
                             }
                         } else {
                             // Cat6
@@ -274,11 +281,11 @@ impl TokenBuffer {
                             self.add_token(true, base_id + 10);
                             record_stat(&mut s[10], true);
                             let r = residue - (8 << 3);
-                            for (i, &prob) in PROB_DCT_CAT[5].iter().enumerate() {
-                                if prob == 0 {
-                                    break;
-                                }
-                                self.add_constant_token((r & (1 << (10 - i))) != 0, prob);
+                            for i in 0..DCT_CAT_LENGTHS[5] {
+                                self.add_constant_token(
+                                    (r & (1 << (10 - i))) != 0,
+                                    PROB_DCT_CAT[5][i],
+                                );
                             }
                         }
                     }
@@ -1163,6 +1170,88 @@ impl<'a> super::Vp8Encoder<'a> {
         self.token_buffer = Some(token_buf);
     }
 
+    /// Quantize a macroblock's coefficients without recording tokens.
+    ///
+    /// Separates quantization from token recording so skip detection can check
+    /// the quantized result before committing to token recording. Eliminates
+    /// redundant quantization in `check_all_coeffs_zero`.
+    ///
+    /// For non-trellis methods (0-4), quantization doesn't depend on complexity
+    /// context, so this produces identical results to the integrated path.
+    /// For trellis methods (5-6), use `record_residual_tokens_storing` instead.
+    #[allow(clippy::needless_range_loop)]
+    pub(super) fn quantize_mb_coeffs(
+        &self,
+        macroblock_info: &MacroblockInfo,
+        y_block_data: &[i32; 16 * 16],
+        u_block_data: &[i32; 16 * 4],
+        v_block_data: &[i32; 16 * 4],
+    ) -> QuantizedMbCoeffs {
+        let segment = &self.segments[macroblock_info.segment_id.unwrap_or(0)];
+        let y1_matrix = segment.y1_matrix.as_ref().unwrap();
+        let y2_matrix = segment.y2_matrix.as_ref().unwrap();
+        let uv_matrix = segment.uv_matrix.as_ref().unwrap();
+
+        let is_i4 = macroblock_info.luma_mode == LumaMode::B;
+        let first_coeff_y1 = if is_i4 { 0usize } else { 1 };
+
+        let mut stored = QuantizedMbCoeffs {
+            y2_zigzag: [0; 16],
+            y1_zigzag: [[0; 16]; 16],
+            u_zigzag: [[0; 16]; 4],
+            v_zigzag: [[0; 16]; 4],
+        };
+
+        // Y2 (DC transform) - only for I16 mode
+        if !is_i4 {
+            let mut coeffs0 = get_coeffs0_from_block(y_block_data);
+            transform::wht4x4(&mut coeffs0);
+
+            for i in 0..16 {
+                let zi = usize::from(ZIGZAG[i]);
+                stored.y2_zigzag[i] = y2_matrix.quantize_coeff(coeffs0[zi], zi);
+            }
+        }
+
+        // Y1 blocks (simple quantization only — no trellis)
+        for y in 0usize..4 {
+            for x in 0..4 {
+                let block_idx = y * 4 + x;
+                let block: &[i32; 16] = y_block_data[block_idx * 16..][..16].try_into().unwrap();
+                for i in first_coeff_y1..16 {
+                    let zi = usize::from(ZIGZAG[i]);
+                    stored.y1_zigzag[block_idx][i] = y1_matrix.quantize_coeff(block[zi], zi);
+                }
+            }
+        }
+
+        // U blocks
+        for y in 0usize..2 {
+            for x in 0usize..2 {
+                let block_idx = y * 2 + x;
+                let block: &[i32; 16] = u_block_data[block_idx * 16..][..16].try_into().unwrap();
+                for i in 0..16 {
+                    let zi = usize::from(ZIGZAG[i]);
+                    stored.u_zigzag[block_idx][i] = uv_matrix.quantize_coeff(block[zi], zi);
+                }
+            }
+        }
+
+        // V blocks
+        for y in 0usize..2 {
+            for x in 0usize..2 {
+                let block_idx = y * 2 + x;
+                let block: &[i32; 16] = v_block_data[block_idx * 16..][..16].try_into().unwrap();
+                for i in 0..16 {
+                    let zi = usize::from(ZIGZAG[i]);
+                    stored.v_zigzag[block_idx][i] = uv_matrix.quantize_coeff(block[zi], zi);
+                }
+            }
+        }
+
+        stored
+    }
+
     /// Record tokens for a macroblock's residual data and return the quantized coefficients.
     /// Used in multi-pass encoding: pass 1 calls this to get coefficients for storage.
     #[allow(clippy::needless_range_loop)] // i is used to index both ZIGZAG and output arrays
@@ -1174,18 +1263,15 @@ impl<'a> super::Vp8Encoder<'a> {
         u_block_data: &[i32; 16 * 4],
         v_block_data: &[i32; 16 * 4],
     ) -> QuantizedMbCoeffs {
-        let segment = &self.segments[macroblock_info.segment_id.unwrap_or(0)];
-        let y1_matrix = segment.y1_matrix.clone().unwrap();
-        let y2_matrix = segment.y2_matrix.clone().unwrap();
-        let uv_matrix = segment.uv_matrix.clone().unwrap();
-        let psy_config = segment.psy_config.clone();
-
+        // Extract segment data by value/copy to avoid borrow conflicts with proba_stats.
+        // Only copies small scalar values (lambdas, flags), not the large matrices.
+        let segment_id = macroblock_info.segment_id.unwrap_or(0);
         let is_i4 = macroblock_info.luma_mode == LumaMode::B;
         let y1_trellis_lambda = if self.do_trellis {
             Some(if is_i4 {
-                segment.lambda_trellis_i4
+                self.segments[segment_id].lambda_trellis_i4
             } else {
-                segment.lambda_trellis_i16
+                self.segments[segment_id].lambda_trellis_i16
             })
         } else {
             None
@@ -1213,6 +1299,7 @@ impl<'a> super::Vp8Encoder<'a> {
 
         // Y2 (DC transform) - only for I16 mode
         if !is_i4 {
+            let y2_matrix = self.segments[segment_id].y2_matrix.as_ref().unwrap();
             let mut coeffs0 = get_coeffs0_from_block(y_block_data);
             transform::wht4x4(&mut coeffs0);
 
@@ -1246,18 +1333,22 @@ impl<'a> super::Vp8Encoder<'a> {
 
                 if let Some(lambda) = y1_trellis_lambda {
                     let mut coeffs = *block;
+                    // Borrow segment fields individually to avoid conflict with proba_stats
+                    let y1_matrix = self.segments[segment_id].y1_matrix.as_ref().unwrap();
+                    let psy_config = &self.segments[segment_id].psy_config;
                     trellis_quantize_block(
                         &mut coeffs,
                         &mut stored.y1_zigzag[block_idx],
-                        &y1_matrix,
+                        y1_matrix,
                         lambda,
                         first_coeff_y1,
                         &self.level_costs,
                         token_type_y1 as usize,
                         ctx0,
-                        &psy_config,
+                        psy_config,
                     );
                 } else {
+                    let y1_matrix = self.segments[segment_id].y1_matrix.as_ref().unwrap();
                     for i in first_coeff_y1..16 {
                         let zi = usize::from(ZIGZAG[i]);
                         stored.y1_zigzag[block_idx][i] = y1_matrix.quantize_coeff(block[zi], zi);
@@ -1285,9 +1376,12 @@ impl<'a> super::Vp8Encoder<'a> {
                 let block_idx = y * 2 + x;
                 let block: &[i32; 16] = u_block_data[block_idx * 16..][..16].try_into().unwrap();
 
-                for i in 0..16 {
-                    let zi = usize::from(ZIGZAG[i]);
-                    stored.u_zigzag[block_idx][i] = uv_matrix.quantize_coeff(block[zi], zi);
+                {
+                    let uv_matrix = self.segments[segment_id].uv_matrix.as_ref().unwrap();
+                    for i in 0..16 {
+                        let zi = usize::from(ZIGZAG[i]);
+                        stored.u_zigzag[block_idx][i] = uv_matrix.quantize_coeff(block[zi], zi);
+                    }
                 }
 
                 let top = self.top_complexity[mbx].u[x];
@@ -1314,9 +1408,12 @@ impl<'a> super::Vp8Encoder<'a> {
                 let block_idx = y * 2 + x;
                 let block: &[i32; 16] = v_block_data[block_idx * 16..][..16].try_into().unwrap();
 
-                for i in 0..16 {
-                    let zi = usize::from(ZIGZAG[i]);
-                    stored.v_zigzag[block_idx][i] = uv_matrix.quantize_coeff(block[zi], zi);
+                {
+                    let uv_matrix = self.segments[segment_id].uv_matrix.as_ref().unwrap();
+                    for i in 0..16 {
+                        let zi = usize::from(ZIGZAG[i]);
+                        stored.v_zigzag[block_idx][i] = uv_matrix.quantize_coeff(block[zi], zi);
+                    }
                 }
 
                 let top = self.top_complexity[mbx].v[x];
@@ -1341,8 +1438,7 @@ impl<'a> super::Vp8Encoder<'a> {
     }
 
     /// Record tokens from pre-quantized coefficients (no re-quantization).
-    /// Kept as fallback for comparison - true multi-pass uses `requantize_and_record`.
-    #[allow(dead_code)]
+    /// Used in the two-phase encode path for non-trellis methods.
     pub(super) fn record_from_stored_coeffs(
         &mut self,
         macroblock_info: &MacroblockInfo,

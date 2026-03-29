@@ -320,6 +320,49 @@ struct QuantizedMbCoeffs {
     v_zigzag: [[i32; 16]; 4],
 }
 
+impl QuantizedMbCoeffs {
+    /// Pre-allocated zero coefficients for skipped macroblocks.
+    const ZERO: Self = Self {
+        y2_zigzag: [0; 16],
+        y1_zigzag: [[0; 16]; 16],
+        u_zigzag: [[0; 16]; 4],
+        v_zigzag: [[0; 16]; 4],
+    };
+
+    /// Check if all coefficients are zero (for skip detection).
+    /// Uses bitwise OR accumulator — faster than iterating with early-exit
+    /// because it avoids branch mispredictions on the common non-zero case.
+    #[inline]
+    fn is_all_zero(&self, is_i4: bool, first_coeff_y1: usize) -> bool {
+        let mut acc: u32 = 0;
+        // Check Y2 (only for I16 mode)
+        if !is_i4 {
+            for &c in &self.y2_zigzag {
+                acc |= c as u32;
+            }
+        }
+        // Check Y1 blocks
+        for block in &self.y1_zigzag {
+            for &c in &block[first_coeff_y1..] {
+                acc |= c as u32;
+            }
+        }
+        // Check U blocks
+        for block in &self.u_zigzag {
+            for &c in block {
+                acc |= c as u32;
+            }
+        }
+        // Check V blocks
+        for block in &self.v_zigzag {
+            for &c in block {
+                acc |= c as u32;
+            }
+        }
+        acc == 0
+    }
+}
+
 struct Vp8Encoder<'a> {
     writer: &'a mut Vec<u8>,
     frame: Frame,
@@ -759,8 +802,12 @@ impl<'a> Vp8Encoder<'a> {
             // Clear stored info - we only keep the last pass's results
             self.stored_mb_info.clear();
             self.stored_mb_info.reserve(num_mb);
-            self.stored_mb_coeffs.clear();
-            self.stored_mb_coeffs.reserve(num_mb);
+            // stored_mb_coeffs is only needed for multi-pass re-encoding.
+            // Since num_passes == 1, skip the 1.6MB allocation entirely.
+            if num_passes > 1 {
+                self.stored_mb_coeffs.clear();
+                self.stored_mb_coeffs.reserve(num_mb);
+            }
 
             if pass > 0 {
                 // Pass 1+: Apply updated probabilities from previous pass
@@ -890,41 +937,78 @@ impl<'a> Vp8Encoder<'a> {
                         block_count_i16 += 1;
                     }
 
-                    // Check if all coefficients are zero (skip detection)
+                    // Quantize and record tokens.
+                    //
+                    // For non-trellis methods (0-4): quantize once, check for skip,
+                    // then record tokens only if non-zero. Saves redundant quantization
+                    // that check_all_coeffs_zero would have done separately.
+                    //
+                    // For trellis methods (5-6): use integrated path since trellis
+                    // quantization depends on complexity context updated per-block.
                     total_mb += 1;
-                    let all_zero = self.check_all_coeffs_zero(
-                        &macroblock_info,
-                        &y_block_data.coeffs,
-                        &u_block_data.coeffs,
-                        &v_block_data.coeffs,
-                    );
+                    let is_i4 = macroblock_info.luma_mode == LumaMode::B;
+                    let first_coeff_y1 = if is_i4 { 0usize } else { 1 };
 
                     let mut mb_info = macroblock_info;
-                    if all_zero {
-                        skip_mb += 1;
-                        mb_info.coeffs_skipped = true;
-                        // Reset complexity for skipped blocks
-                        self.left_complexity
-                            .clear(macroblock_info.luma_mode != LumaMode::B);
-                        self.top_complexity[usize::from(mbx)]
-                            .clear(macroblock_info.luma_mode != LumaMode::B);
-                        // Store empty coefficients for skipped blocks
-                        self.stored_mb_coeffs.push(QuantizedMbCoeffs {
-                            y2_zigzag: [0; 16],
-                            y1_zigzag: [[0; 16]; 16],
-                            u_zigzag: [[0; 16]; 4],
-                            v_zigzag: [[0; 16]; 4],
-                        });
-                    } else {
-                        // Record tokens, quantize, and store quantized coefficients
-                        let stored_coeffs = self.record_residual_tokens_storing(
+                    let store_coeffs = num_passes > 1;
+                    if self.do_trellis {
+                        // Trellis path: integrated quantize + record (old behavior)
+                        let all_zero = self.check_all_coeffs_zero(
                             &macroblock_info,
-                            mbx as usize,
                             &y_block_data.coeffs,
                             &u_block_data.coeffs,
                             &v_block_data.coeffs,
                         );
-                        self.stored_mb_coeffs.push(stored_coeffs);
+                        if all_zero {
+                            skip_mb += 1;
+                            mb_info.coeffs_skipped = true;
+                            self.left_complexity
+                                .clear(macroblock_info.luma_mode != LumaMode::B);
+                            self.top_complexity[usize::from(mbx)]
+                                .clear(macroblock_info.luma_mode != LumaMode::B);
+                            if store_coeffs {
+                                self.stored_mb_coeffs.push(QuantizedMbCoeffs::ZERO);
+                            }
+                        } else {
+                            let stored_coeffs = self.record_residual_tokens_storing(
+                                &macroblock_info,
+                                mbx as usize,
+                                &y_block_data.coeffs,
+                                &u_block_data.coeffs,
+                                &v_block_data.coeffs,
+                            );
+                            if store_coeffs {
+                                self.stored_mb_coeffs.push(stored_coeffs);
+                            }
+                        }
+                    } else {
+                        // Non-trellis path: quantize once, skip-check, record from stored.
+                        // Avoids the redundant quantization in check_all_coeffs_zero.
+                        let stored_coeffs = self.quantize_mb_coeffs(
+                            &macroblock_info,
+                            &y_block_data.coeffs,
+                            &u_block_data.coeffs,
+                            &v_block_data.coeffs,
+                        );
+                        let all_zero = stored_coeffs.is_all_zero(is_i4, first_coeff_y1);
+                        if all_zero {
+                            skip_mb += 1;
+                            mb_info.coeffs_skipped = true;
+                            self.left_complexity
+                                .clear(macroblock_info.luma_mode != LumaMode::B);
+                            self.top_complexity[usize::from(mbx)]
+                                .clear(macroblock_info.luma_mode != LumaMode::B);
+                        } else {
+                            self.record_from_stored_coeffs(
+                                &macroblock_info,
+                                mbx as usize,
+                                &stored_coeffs,
+                            );
+                        }
+                        // Only store quantized coefficients when multi-pass needs them
+                        if store_coeffs {
+                            self.stored_mb_coeffs.push(stored_coeffs);
+                        }
                     }
 
                     // Store macroblock info for header writing
