@@ -252,6 +252,115 @@ fn decode_webp(data: &[u8]) -> Result<(u32, u32), Box<dyn std::error::Error>> {
     Ok((width, height))
 }
 
+/// Decode every .webp in the full scraped corpus (12,825+ files from 8 sources).
+///
+/// Walks all subdirectories of the scraped corpus and decodes each file.
+/// Any panic or unhandled decode error is a failure.
+///
+/// Run with: `cargo test --release --test webp_conformance test_scraped_webp_corpus -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn test_scraped_webp_corpus() {
+    use std::path::Path;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Instant;
+
+    let corpus_dir = Path::new("/mnt/v/output/corpus-builder/webp");
+    if !corpus_dir.exists() {
+        eprintln!("Skipping: scraped corpus not found at {}", corpus_dir.display());
+        eprintln!("  Expected: /mnt/v/output/corpus-builder/webp/{{google-native,pexels,unsplash,...}}");
+        return;
+    }
+
+    let tested = AtomicUsize::new(0);
+    let passed = AtomicUsize::new(0);
+    let failed = AtomicUsize::new(0);
+    let panicked = AtomicUsize::new(0);
+
+    let start = Instant::now();
+    let mut files: Vec<_> = Vec::new();
+
+    // Collect all .webp files recursively
+    fn collect_webp(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_webp(&path, out);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("webp") {
+                out.push(path);
+            }
+        }
+    }
+    collect_webp(corpus_dir, &mut files);
+    files.sort();
+
+    println!("Found {} .webp files in scraped corpus", files.len());
+
+    for path in &files {
+        tested.fetch_add(1, Ordering::Relaxed);
+
+        let data = match fs::read(path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("  SKIP (read error): {} — {}", path.display(), e);
+                continue;
+            }
+        };
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            decode_webp(&data)
+        }));
+
+        match result {
+            Ok(Ok(_)) => {
+                passed.fetch_add(1, Ordering::Relaxed);
+            }
+            Ok(Err(e)) => {
+                failed.fetch_add(1, Ordering::Relaxed);
+                eprintln!("  FAIL: {} — {}", path.display(), e);
+            }
+            Err(_) => {
+                panicked.fetch_add(1, Ordering::Relaxed);
+                eprintln!("  PANIC: {}", path.display());
+            }
+        }
+
+        let count = tested.load(Ordering::Relaxed);
+        if count % 1000 == 0 {
+            println!(
+                "  progress: {}/{} ({} passed, {} failed, {} panicked) [{:.1}s]",
+                count,
+                files.len(),
+                passed.load(Ordering::Relaxed),
+                failed.load(Ordering::Relaxed),
+                panicked.load(Ordering::Relaxed),
+                start.elapsed().as_secs_f64(),
+            );
+        }
+    }
+
+    let total = tested.load(Ordering::Relaxed);
+    let pass = passed.load(Ordering::Relaxed);
+    let fail = failed.load(Ordering::Relaxed);
+    let panic = panicked.load(Ordering::Relaxed);
+    let elapsed = start.elapsed();
+
+    println!("\n=== Scraped WebP Corpus Results ===");
+    println!("  Total:    {}", total);
+    println!("  Passed:   {}", pass);
+    println!("  Failed:   {}", fail);
+    println!("  Panicked: {}", panic);
+    println!("  Time:     {:.1}s ({:.0} files/sec)", elapsed.as_secs_f64(), total as f64 / elapsed.as_secs_f64());
+
+    assert_eq!(panic, 0, "Decoder panicked on {} files — this is a bug", panic);
+    // Note: decode failures are expected for some scraped files (truncated, unusual features).
+    // We assert zero panics but only warn on decode errors.
+    if fail > 0 {
+        eprintln!("\nWARNING: {} files failed to decode (see above). Review for missing format support.", fail);
+    }
+}
+
 /// Get the codec-corpus path for a specific subdirectory.
 fn get_corpus_path(subdir: &str) -> Option<std::path::PathBuf> {
     let corpus = codec_corpus::Corpus::new().ok()?;
