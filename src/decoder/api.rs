@@ -152,7 +152,6 @@ use hashbrown::HashMap;
 
 use super::extended::{self, WebPExtendedInfo, get_alpha_predictor, read_alpha_chunk};
 use super::lossless::LosslessDecoder;
-use super::vp8::Vp8Decoder;
 use super::vp8v2::DecoderContext;
 use crate::slice_reader::SliceReader;
 
@@ -1924,7 +1923,8 @@ pub fn decode_yuv420(data: &[u8]) -> DecodeResult<YuvPlanes> {
         // For lossy images, extract the native YUV planes from the VP8 frame
         if let Some(range) = decoder.chunks.get(&WebPRiffChunk::VP8) {
             let data_slice = decoder.chunk_slice(range).map_err(|e| at!(e))?;
-            let frame = Vp8Decoder::decode_frame(data_slice).map_err(|e| at!(e))?;
+            let mut ctx = super::vp8v2::DecoderContext::new();
+            let frame = ctx.decode_to_frame(data_slice).map_err(|e| at!(e))?;
 
             let w = u32::from(frame.width);
             let h = u32::from(frame.height);
