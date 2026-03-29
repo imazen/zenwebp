@@ -66,6 +66,41 @@
 //! # Ok::<(), zenwebp::DecodeError>(())
 //! ```
 //!
+//! # ICC Color Profiles
+//!
+//! WebP supports embedded ICC profiles via the ICCP chunk (VP8X extended format).
+//! zenwebp preserves ICC profiles through encode and decode but does **not** apply
+//! color management — pixels are returned in whatever color space they were encoded
+//! in. This matches libwebp's behavior.
+//!
+//! **Decoding:** Use [`ImageInfo::icc_profile`] to extract the ICC profile after
+//! probing headers. Pass it to your color management library (e.g., `lcms2`) to
+//! convert pixels to your target color space.
+//!
+//! ```rust,no_run
+//! let webp_data: &[u8] = &[];
+//! let info = zenwebp::ImageInfo::from_webp(webp_data)?;
+//! if let Some(icc) = &info.icc_profile {
+//!     // Pass icc bytes to your CMS for color conversion
+//! }
+//! # Ok::<(), whereat::At<zenwebp::DecodeError>>(())
+//! ```
+//!
+//! **Encoding:** Embed an ICC profile with [`EncodeRequest::with_icc_profile()`]:
+//!
+//! ```rust,no_run
+//! # let icc_bytes: &[u8] = &[];
+//! # let rgba_data = vec![255u8; 4 * 4 * 4];
+//! use zenwebp::{EncodeRequest, LossyConfig, PixelLayout};
+//! let webp = EncodeRequest::lossy(&LossyConfig::new(), &rgba_data, PixelLayout::Rgba8, 4, 4)
+//!     .with_icc_profile(icc_bytes)
+//!     .encode()?;
+//! # Ok::<(), whereat::At<zenwebp::EncodeError>>(())
+//! ```
+//!
+//! **Post-hoc:** The [`metadata`] module can extract, embed, or remove ICC profiles
+//! from already-encoded WebP data without re-encoding pixels.
+//!
 //! # Safety
 //!
 //! This crate uses `#![forbid(unsafe_code)]` to prevent direct unsafe usage in source.
