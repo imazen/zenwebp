@@ -811,6 +811,88 @@ fn fill_rgba_row_simple_scalar<const BPP: usize>(
 const YUV_FIX: i32 = 16;
 const YUV_HALF: i32 = 1 << (YUV_FIX - 1);
 
+// ---------------------------------------------------------------------------
+// Gamma-corrected chroma downsampling tables (from libwebp picture_csp_enc.c)
+//
+// libwebp uses gamma = 0.80 (not sRGB) to compensate for resolution loss
+// during 4:2:0 chroma subsampling. Each RGB channel is converted to a
+// linearish space before averaging, then converted back.
+//
+// GAMMA_FIX=12 => kGammaScale = 4095, GAMMA_TAB_FIX=7, GAMMA_TAB_SIZE=32.
+// Forward: GammaToLinear[v] = round(pow(v/255, 0.80) * 4095)
+// Inverse: LinearToGamma[i] = round(255 * pow(i * 128/4095, 1.25))
+
+/// sRGB byte -> linear^0.80 (scale 0..4095). 256 entries.
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+const GAMMA_TO_LINEAR_TAB: [u16; 256] = [
+    0, 49, 85, 117, 147, 176, 204, 231, 257, 282, 307, 331, 355, 379, 402, 425,
+    447, 469, 491, 513, 534, 556, 577, 598, 618, 639, 659, 679, 699, 719, 739, 759,
+    778, 798, 817, 836, 855, 874, 893, 912, 930, 949, 967, 986, 1004, 1022, 1040, 1059,
+    1077, 1094, 1112, 1130, 1148, 1165, 1183, 1200, 1218, 1235, 1252, 1270, 1287, 1304, 1321, 1338,
+    1355, 1372, 1389, 1406, 1422, 1439, 1456, 1472, 1489, 1505, 1522, 1538, 1555, 1571, 1587, 1604,
+    1620, 1636, 1652, 1668, 1684, 1700, 1716, 1732, 1748, 1764, 1780, 1796, 1812, 1827, 1843, 1859,
+    1874, 1890, 1905, 1921, 1937, 1952, 1967, 1983, 1998, 2014, 2029, 2044, 2059, 2075, 2090, 2105,
+    2120, 2135, 2151, 2166, 2181, 2196, 2211, 2226, 2241, 2256, 2270, 2285, 2300, 2315, 2330, 2345,
+    2359, 2374, 2389, 2403, 2418, 2433, 2447, 2462, 2477, 2491, 2506, 2520, 2535, 2549, 2564, 2578,
+    2592, 2607, 2621, 2636, 2650, 2664, 2679, 2693, 2707, 2721, 2736, 2750, 2764, 2778, 2792, 2806,
+    2820, 2835, 2849, 2863, 2877, 2891, 2905, 2919, 2933, 2947, 2961, 2975, 2988, 3002, 3016, 3030,
+    3044, 3058, 3072, 3085, 3099, 3113, 3127, 3140, 3154, 3168, 3182, 3195, 3209, 3222, 3236, 3250,
+    3263, 3277, 3291, 3304, 3318, 3331, 3345, 3358, 3372, 3385, 3399, 3412, 3426, 3439, 3452, 3466,
+    3479, 3493, 3506, 3519, 3533, 3546, 3559, 3573, 3586, 3599, 3612, 3626, 3639, 3652, 3665, 3678,
+    3692, 3705, 3718, 3731, 3744, 3757, 3771, 3784, 3797, 3810, 3823, 3836, 3849, 3862, 3875, 3888,
+    3901, 3914, 3927, 3940, 3953, 3966, 3979, 3992, 4005, 4018, 4031, 4044, 4056, 4069, 4082, 4095,
+];
+
+/// Linear^0.80 -> gamma-space byte. 33 entries (GAMMA_TAB_SIZE + 1).
+/// Indexed at steps of 128 across the [0..4095] linear range.
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+const LINEAR_TO_GAMMA_TAB: [u8; 33] = [
+    0, 3, 8, 13, 19, 25, 31, 38, 45, 52, 60, 67, 75, 83, 91, 99,
+    107, 116, 124, 133, 142, 151, 160, 169, 178, 187, 197, 206, 216, 226, 235, 245,
+    255,
+];
+
+/// Convert an sRGB byte to linear^0.80 fixed-point (0..4095).
+#[inline(always)]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+fn gamma_to_linear(v: u8) -> u32 {
+    GAMMA_TO_LINEAR_TAB[v as usize] as u32
+}
+
+/// Convert a linear^0.80 value (0..4095) back to an sRGB byte (0..255)
+/// using interpolation in the inverse table.
+///
+/// The table has 33 entries at steps of 128. We interpolate between adjacent
+/// entries using the 7-bit fractional part.
+#[inline(always)]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+fn linear_to_gamma(v: u32) -> u8 {
+    let tab_idx = (v >> 7) as usize; // 0..32
+    let frac = v & 0x7F; // 7-bit fraction
+    let v0 = LINEAR_TO_GAMMA_TAB[tab_idx] as u32;
+    let v1 = LINEAR_TO_GAMMA_TAB[tab_idx + 1] as u32;
+    ((v0 * (128 - frac) + v1 * frac + 64) >> 7) as u8
+}
+
+/// Average 4 byte values in gamma-corrected (linear^0.80) space.
+/// Converts to linear, averages, converts back to sRGB byte.
+#[inline(always)]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+fn gamma_avg_4(a: u8, b: u8, c: u8, d: u8) -> u8 {
+    let sum = gamma_to_linear(a) + gamma_to_linear(b)
+            + gamma_to_linear(c) + gamma_to_linear(d);
+    // Integer division by 4 with rounding
+    linear_to_gamma((sum + 2) >> 2)
+}
+
+/// Average 2 byte values in gamma-corrected (linear^0.80) space.
+#[inline(always)]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+fn gamma_avg_2(a: u8, b: u8) -> u8 {
+    let sum = gamma_to_linear(a) + gamma_to_linear(b);
+    linear_to_gamma((sum + 1) >> 1)
+}
+
 /// SIMD-accelerated RGB to YUV 4:2:0 conversion using the `yuv` crate.
 ///
 /// This provides 10-150× speedup over scalar conversion using AVX2/SSE/NEON SIMD.
@@ -991,9 +1073,10 @@ pub(crate) fn convert_image_yuv<const BPP: usize>(
             y_bytes[src_row2 * luma_width + src_col1] = rgb_to_y(rgb3);
             y_bytes[src_row2 * luma_width + src_col2] = rgb_to_y(rgb4);
 
-            // Convert to U/V (averaged)
-            u_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_u_avg(rgb1, rgb2, rgb3, rgb4);
-            v_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_v_avg(rgb1, rgb2, rgb3, rgb4);
+            // Convert to U/V with gamma-corrected chroma downsampling
+            let (u, v) = gamma_downsample_uv_4(rgb1, rgb2, rgb3, rgb4);
+            u_bytes[chroma_row * chroma_width + chroma_col] = u;
+            v_bytes[chroma_row * chroma_width + chroma_col] = v;
         }
 
         // Handle last column if width is odd
@@ -1001,7 +1084,7 @@ pub(crate) fn convert_image_yuv<const BPP: usize>(
             let src_col = width - 1;
             let chroma_col = col_pairs;
 
-            // Get 2 RGB pixels (duplicate horizontally for chroma)
+            // Get 2 RGB pixels (vertical pair for odd-width edge)
             let rgb1 = &image_data[(src_row1 * stride + src_col) * BPP..][..BPP];
             let rgb3 = &image_data[(src_row2 * stride + src_col) * BPP..][..BPP];
 
@@ -1009,9 +1092,10 @@ pub(crate) fn convert_image_yuv<const BPP: usize>(
             y_bytes[src_row1 * luma_width + src_col] = rgb_to_y(rgb1);
             y_bytes[src_row2 * luma_width + src_col] = rgb_to_y(rgb3);
 
-            // Convert to U/V (use same pixel twice horizontally)
-            u_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_u_avg(rgb1, rgb1, rgb3, rgb3);
-            v_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_v_avg(rgb1, rgb1, rgb3, rgb3);
+            // Convert to U/V with gamma-corrected averaging of 2 pixels
+            let (u, v) = gamma_downsample_uv_2(rgb1, rgb3);
+            u_bytes[chroma_row * chroma_width + chroma_col] = u;
+            v_bytes[chroma_row * chroma_width + chroma_col] = v;
         }
     }
 
@@ -1026,7 +1110,7 @@ pub(crate) fn convert_image_yuv<const BPP: usize>(
             let src_col2 = src_col1 + 1;
             let chroma_col = col_pair;
 
-            // Get 2 RGB pixels (duplicate vertically for chroma)
+            // Get 2 RGB pixels (horizontal pair for odd-height edge)
             let rgb1 = &image_data[(src_row * stride + src_col1) * BPP..][..BPP];
             let rgb2 = &image_data[(src_row * stride + src_col2) * BPP..][..BPP];
 
@@ -1034,9 +1118,10 @@ pub(crate) fn convert_image_yuv<const BPP: usize>(
             y_bytes[src_row * luma_width + src_col1] = rgb_to_y(rgb1);
             y_bytes[src_row * luma_width + src_col2] = rgb_to_y(rgb2);
 
-            // Convert to U/V (use same row twice vertically)
-            u_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_u_avg(rgb1, rgb2, rgb1, rgb2);
-            v_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_v_avg(rgb1, rgb2, rgb1, rgb2);
+            // Convert to U/V with gamma-corrected averaging of 2 pixels
+            let (u, v) = gamma_downsample_uv_2(rgb1, rgb2);
+            u_bytes[chroma_row * chroma_width + chroma_col] = u;
+            v_bytes[chroma_row * chroma_width + chroma_col] = v;
         }
 
         // Handle corner case: both width and height are odd
@@ -1044,15 +1129,15 @@ pub(crate) fn convert_image_yuv<const BPP: usize>(
             let src_col = width - 1;
             let chroma_col = col_pairs;
 
-            // Get single RGB pixel (duplicate in all directions for chroma)
+            // Single pixel — no averaging needed, just convert directly
             let rgb = &image_data[(src_row * stride + src_col) * BPP..][..BPP];
 
             // Convert to Y
             y_bytes[src_row * luma_width + src_col] = rgb_to_y(rgb);
 
-            // Convert to U/V (use same pixel 4 times)
-            u_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_u_avg(rgb, rgb, rgb, rgb);
-            v_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_v_avg(rgb, rgb, rgb, rgb);
+            // Convert to U/V (single pixel, no downsampling needed)
+            u_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_u_single(rgb[0], rgb[1], rgb[2]);
+            v_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_v_single(rgb[0], rgb[1], rgb[2]);
         }
     }
 
@@ -1154,41 +1239,67 @@ pub(crate) fn rgb_to_y(rgb: &[u8]) -> u8 {
     ((luma + YUV_HALF + (16 << YUV_FIX)) >> YUV_FIX) as u8
 }
 
-// get the average of the four surrounding pixels
+/// Compute U from a single pixel (no averaging).
+#[inline(always)]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+pub(crate) fn rgb_to_u_single(r: u8, g: u8, b: u8) -> u8 {
+    let u = -9719 * i32::from(r) - 19081 * i32::from(g) + 28800 * i32::from(b)
+        + (128 << YUV_FIX);
+    ((u + YUV_HALF) >> YUV_FIX) as u8
+}
+
+/// Compute V from a single pixel (no averaging).
+#[inline(always)]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+pub(crate) fn rgb_to_v_single(r: u8, g: u8, b: u8) -> u8 {
+    let v = 28800 * i32::from(r) - 24116 * i32::from(g) - 4684 * i32::from(b)
+        + (128 << YUV_FIX);
+    ((v + YUV_HALF) >> YUV_FIX) as u8
+}
+
+/// Get the chroma-downsampled U value for a 2x2 pixel block using
+/// gamma-corrected averaging (gamma=0.80, matching libwebp).
+///
+/// Each R/G/B channel is averaged in linear^0.80 space before the YUV
+/// matrix is applied to the averaged RGB values.
 #[cfg_attr(not(feature = "std"), allow(dead_code))]
 pub(crate) fn rgb_to_u_avg(rgb1: &[u8], rgb2: &[u8], rgb3: &[u8], rgb4: &[u8]) -> u8 {
-    let u1 = rgb_to_u_raw(rgb1);
-    let u2 = rgb_to_u_raw(rgb2);
-    let u3 = rgb_to_u_raw(rgb3);
-    let u4 = rgb_to_u_raw(rgb4);
-
-    // Add rounding before shift (matches libwebp's VP8ClipUV with YUV_HALF << 2)
-    ((u1 + u2 + u3 + u4 + (YUV_HALF << 2)) >> (YUV_FIX + 2)) as u8
+    let r = gamma_avg_4(rgb1[0], rgb2[0], rgb3[0], rgb4[0]);
+    let g = gamma_avg_4(rgb1[1], rgb2[1], rgb3[1], rgb4[1]);
+    let b = gamma_avg_4(rgb1[2], rgb2[2], rgb3[2], rgb4[2]);
+    rgb_to_u_single(r, g, b)
 }
 
-// get the average of the four surrounding pixels
+/// Get the chroma-downsampled V value for a 2x2 pixel block using
+/// gamma-corrected averaging (gamma=0.80, matching libwebp).
 #[cfg_attr(not(feature = "std"), allow(dead_code))]
 pub(crate) fn rgb_to_v_avg(rgb1: &[u8], rgb2: &[u8], rgb3: &[u8], rgb4: &[u8]) -> u8 {
-    let v1 = rgb_to_v_raw(rgb1);
-    let v2 = rgb_to_v_raw(rgb2);
-    let v3 = rgb_to_v_raw(rgb3);
-    let v4 = rgb_to_v_raw(rgb4);
-
-    // Add rounding before shift (matches libwebp's VP8ClipUV with YUV_HALF << 2)
-    ((v1 + v2 + v3 + v4 + (YUV_HALF << 2)) >> (YUV_FIX + 2)) as u8
+    let r = gamma_avg_4(rgb1[0], rgb2[0], rgb3[0], rgb4[0]);
+    let g = gamma_avg_4(rgb1[1], rgb2[1], rgb3[1], rgb4[1]);
+    let b = gamma_avg_4(rgb1[2], rgb2[2], rgb3[2], rgb4[2]);
+    rgb_to_v_single(r, g, b)
 }
 
+/// Compute gamma-corrected U/V for a 2x2 pixel block (4 pixels).
+/// Returns (u, v) with each R/G/B channel averaged in linear^0.80 space.
+#[inline(always)]
 #[cfg_attr(not(feature = "std"), allow(dead_code))]
-fn rgb_to_u_raw(rgb: &[u8]) -> i32 {
-    -9719 * i32::from(rgb[0]) - 19081 * i32::from(rgb[1])
-        + 28800 * i32::from(rgb[2])
-        + (128 << YUV_FIX)
+fn gamma_downsample_uv_4(p1: &[u8], p2: &[u8], p3: &[u8], p4: &[u8]) -> (u8, u8) {
+    let r = gamma_avg_4(p1[0], p2[0], p3[0], p4[0]);
+    let g = gamma_avg_4(p1[1], p2[1], p3[1], p4[1]);
+    let b = gamma_avg_4(p1[2], p2[2], p3[2], p4[2]);
+    (rgb_to_u_single(r, g, b), rgb_to_v_single(r, g, b))
 }
 
+/// Compute gamma-corrected U/V for a 1x2 or 2x1 pixel pair.
+/// Returns (u, v) with each R/G/B channel averaged in linear^0.80 space.
+#[inline(always)]
 #[cfg_attr(not(feature = "std"), allow(dead_code))]
-fn rgb_to_v_raw(rgb: &[u8]) -> i32 {
-    28800 * i32::from(rgb[0]) - 24116 * i32::from(rgb[1]) - 4684 * i32::from(rgb[2])
-        + (128 << YUV_FIX)
+fn gamma_downsample_uv_2(p1: &[u8], p2: &[u8]) -> (u8, u8) {
+    let r = gamma_avg_2(p1[0], p2[0]);
+    let g = gamma_avg_2(p1[1], p2[1]);
+    let b = gamma_avg_2(p1[2], p2[2]);
+    (rgb_to_u_single(r, g, b), rgb_to_v_single(r, g, b))
 }
 
 /// Convert image to YUV420 using sharp (iterative) chroma downsampling.
