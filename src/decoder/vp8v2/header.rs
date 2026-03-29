@@ -35,6 +35,7 @@ impl DecoderContext {
             ));
         }
 
+        // (tag >> 1) & 7 is 0..=7, always fits u8.
         self.tables.version = ((tag >> 1) & 7) as u8;
         self.tables.for_display = (tag >> 4) & 1 != 0;
         let first_partition_size = tag >> 5;
@@ -51,10 +52,32 @@ impl DecoderContext {
         let h = r.read_u16_le()?;
         self.tables.width = w & 0x3FFF;
         self.tables.height = h & 0x3FFF;
+
+        // Reject zero dimensions (no valid WebP has 0×0 or 0×N pixels)
+        if self.tables.width == 0 || self.tables.height == 0 {
+            return Err(DecodeError::ImageTooLarge);
+        }
+
+        // WebP spec limit: 16383×16383
+        if self.tables.width > 16383 || self.tables.height > 16383 {
+            return Err(DecodeError::ImageTooLarge);
+        }
+
         self.tables.mbwidth = self.tables.width.div_ceil(16);
         self.tables.mbheight = self.tables.height.div_ceil(16);
 
+        // Overflow-safe macroblock count check.
+        // Max valid: ceil(16383/16) * ceil(16383/16) = 1024 * 1024 = 1_048_576
+        let mb_count = u32::from(self.tables.mbwidth)
+            .checked_mul(u32::from(self.tables.mbheight))
+            .ok_or(DecodeError::ImageTooLarge)?;
+        // Sanity bound: ~1M macroblocks for 16383×16383
+        if mb_count > 1024 * 1024 {
+            return Err(DecodeError::ImageTooLarge);
+        }
+
         // ---- Read partition 0 data into the boolean decoder ----
+        // first_partition_size is at most 19 bits (u24 >> 5), always fits usize.
         let size = first_partition_size as usize;
         let mut part0_data = vec![0u8; size];
         r.read_exact(&mut part0_data)?;
@@ -84,8 +107,10 @@ impl DecoderContext {
         }
 
         // ---- Partitions ----
+        // read_literal(2) returns 0..=3, so num_partitions is 1, 2, 4, or 8.
         let num_partitions = 1usize << (b.read_literal(2) as usize);
         b.check(())?;
+        debug_assert!(num_partitions <= 8);
         self.tables.num_partitions = num_partitions as u8;
 
         // Determine extra cache rows from filter settings
@@ -198,15 +223,25 @@ impl DecoderContext {
     fn init_partitions(&mut self, r: &mut SliceReader<'_>, n: usize) -> Result<(), DecodeError> {
         use byteorder_lite::{ByteOrder, LittleEndian};
 
+        let remaining = r.remaining();
         let mut all_data = Vec::new();
         let mut boundaries = Vec::with_capacity(n);
 
         if n > 1 {
-            let mut sizes = vec![0u8; 3 * n - 3];
+            // Partition size table: 3 bytes per partition for n-1 partitions
+            let size_table_bytes = 3 * (n - 1);
+            if size_table_bytes > remaining {
+                return Err(DecodeError::BitStreamError);
+            }
+            let mut sizes = vec![0u8; size_table_bytes];
             r.read_exact(sizes.as_mut_slice())?;
 
             for s in sizes.chunks(3) {
                 let size = LittleEndian::read_u24(s) as usize;
+                // Validate partition size against remaining data
+                if size > r.remaining() {
+                    return Err(DecodeError::BitStreamError);
+                }
                 let start = all_data.len();
                 all_data.resize(start + size, 0);
                 r.read_exact(&mut all_data[start..start + size])?;
@@ -218,6 +253,9 @@ impl DecoderContext {
         let start = all_data.len();
         r.read_to_end(&mut all_data)?;
         let size = all_data.len() - start;
+        if size == 0 {
+            return Err(DecodeError::BitStreamError);
+        }
         boundaries.push((start, size));
 
         self.partitions.init(all_data, &boundaries);
@@ -261,7 +299,9 @@ impl DecoderContext {
             let yac = ac_quant(base);
 
             let y2dc = dc_quant(base + y2dc_delta) * 2;
-            let mut y2ac = (i32::from(ac_quant(base + y2ac_delta)) * 155 / 100) as i16;
+            // ac_quant max is 1172, so 1172 * 155 / 100 = 1817, fits i16.
+            let y2ac_i32 = i32::from(ac_quant(base + y2ac_delta)) * 155 / 100;
+            let mut y2ac = y2ac_i32.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
             if y2ac < 8 {
                 y2ac = 8;
             }
@@ -310,6 +350,7 @@ impl DecoderContext {
         for (plane_idx, plane_probs) in probs.iter().enumerate() {
             for pos in 0..17 {
                 let band = if pos < 16 {
+                    // COEFF_BANDS values are 0..=7, always fits usize.
                     COEFF_BANDS[pos] as usize
                 } else {
                     7
@@ -358,6 +399,7 @@ impl DecoderContext {
                     }
                 }
 
+                // Clamped to 0..=63, always fits u8.
                 let filter_level = filter_level.clamp(0, 63) as u8;
 
                 // Interior limit

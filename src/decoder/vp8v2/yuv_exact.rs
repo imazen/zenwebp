@@ -225,8 +225,11 @@ pub(super) fn convert_cache_rows_to_rgb(
 
         // Map image UV row to cache UV row:
         // cache_uv_row = img_uv_row - first_cache_img_uv
+        // img_y_row fits in isize (max 16383, well below isize::MAX).
         let img_uv_row = (img_y_row / 2) as isize;
-        let cache_uv_row = (img_uv_row - first_cache_img_uv) as usize;
+        let cache_uv_row_signed = img_uv_row - first_cache_img_uv;
+        debug_assert!(cache_uv_row_signed >= 0, "cache UV row underflow");
+        let cache_uv_row = cache_uv_row_signed as usize;
 
         // The full-frame fancy upsampler uses 1-UV mode (mirror) for:
         //   - Y row 0 (always)
@@ -287,6 +290,8 @@ pub(super) fn convert_cache_rows_to_rgb(
                     [v3, neon, wasm128, scalar]
                 );
             } else {
+                // cache_far_uv >= 0 is guaranteed by the if/else above.
+                debug_assert!(cache_far_uv >= 0);
                 let far_start = cache_far_uv as usize * cache_uv_stride;
                 incant!(
                     fill_2uv_row(

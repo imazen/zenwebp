@@ -177,8 +177,11 @@ impl DecoderContext {
                 // Lossy with alpha: decode VP8 to RGBA, then apply alpha
                 let (_w, _h) = self.decode_to_rgb(frame.bitstream, scratch, 4)?;
 
-                let alpha_chunk =
-                    read_alpha_chunk(alpha_data, frame.width as u16, frame.height as u16)?;
+                let alpha_w: u16 = frame.width.try_into()
+                    .map_err(|_| DecodeError::ImageTooLarge)?;
+                let alpha_h: u16 = frame.height.try_into()
+                    .map_err(|_| DecodeError::ImageTooLarge)?;
+                let alpha_chunk = read_alpha_chunk(alpha_data, alpha_w, alpha_h)?;
 
                 let fw = frame.width as usize;
                 let fh = frame.height as usize;
@@ -202,7 +205,10 @@ impl DecoderContext {
             }
         } else {
             // Lossless VP8L
-            let alloc_size = frame.width as usize * frame.height as usize * 4;
+            let alloc_size = (frame.width as usize)
+                .checked_mul(frame.height as usize)
+                .and_then(|n| n.checked_mul(4))
+                .ok_or(DecodeError::ImageTooLarge)?;
             scratch.resize(alloc_size, 0);
             let mut decoder = LosslessDecoder::new(frame.bitstream);
             decoder.decode_frame(frame.width, frame.height, false, scratch)?;
@@ -221,12 +227,15 @@ fn clear_rect(
     w: u32,
     h: u32,
 ) {
+    // canvas_w is at most 16383, so stride fits usize on all platforms.
     let stride = canvas_w as usize * 4;
-    for row in y..(y + h) {
+    for row in y..y.saturating_add(h) {
         let row_start = row as usize * stride + x as usize * 4;
         for px in 0..w as usize {
             let offset = row_start + px * 4;
-            canvas[offset..offset + 4].copy_from_slice(bg_color);
+            if offset + 4 <= canvas.len() {
+                canvas[offset..offset + 4].copy_from_slice(bg_color);
+            }
         }
     }
 }

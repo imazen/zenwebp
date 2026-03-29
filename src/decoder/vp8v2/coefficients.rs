@@ -56,7 +56,9 @@ fn get_large_value(reader: &mut ActivePartitionReader<'_>, prob: &[u8; 11]) -> i
     } else {
         // Categories 3-6
         let bit1 = reader.get_bit(prob[8]);
+        // bit1 is 0 or 1 from get_bit, index 9+bit1 is 9 or 10, in bounds.
         let bit0 = reader.get_bit(prob[9 + bit1 as usize]);
+        // cat is 0..=3, always a valid PROB_DCT_CAT index offset.
         let cat = (2 * bit1 + bit0) as usize;
 
         let cat_probs = &PROB_DCT_CAT[2 + cat];

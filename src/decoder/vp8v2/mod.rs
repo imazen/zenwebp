@@ -119,8 +119,13 @@ impl DecoderContext {
 
         let w = self.tables.width;
         let h = self.tables.height;
-        let pixel_count = usize::from(w) * usize::from(h);
-        output.resize(pixel_count * bpp, 0);
+        let pixel_count = usize::from(w)
+            .checked_mul(usize::from(h))
+            .ok_or(DecodeError::ImageTooLarge)?;
+        let output_size = pixel_count
+            .checked_mul(bpp)
+            .ok_or(DecodeError::ImageTooLarge)?;
+        output.resize(output_size, 0);
 
         if self.tables.extra_y_rows >= 2 {
             // Streaming path: convert cache rows directly to RGB.
@@ -159,12 +164,14 @@ impl DecoderContext {
         let mbwidth = usize::from(self.tables.mbwidth);
         let mbheight = usize::from(self.tables.mbheight);
 
-        // Allocate full-frame Y/U/V buffers
-        let luma_w = mbwidth * 16;
-        let chroma_w = mbwidth * 8;
-        let chroma_h = mbheight * 8 + 1; // +1 for bilinear interpolation
-        let ybuf_len = mbheight * 16 * luma_w;
-        let uvbuf_len = chroma_h * chroma_w;
+        // Allocate full-frame Y/U/V buffers (overflow-safe)
+        let luma_w = mbwidth.checked_mul(16).expect("luma_w overflow");
+        let chroma_w = mbwidth.checked_mul(8).expect("chroma_w overflow");
+        let chroma_h = mbheight.checked_mul(8).and_then(|n| n.checked_add(1))
+            .expect("chroma_h overflow"); // +1 for bilinear interpolation
+        let ybuf_len = mbheight.checked_mul(16).and_then(|n| n.checked_mul(luma_w))
+            .expect("ybuf_len overflow");
+        let uvbuf_len = chroma_h.checked_mul(chroma_w).expect("uvbuf_len overflow");
 
         self.ybuf.resize(ybuf_len, 0);
         self.ubuf.resize(uvbuf_len, 0);
@@ -255,6 +262,7 @@ impl DecoderContext {
         let extra_y_rows = self.tables.extra_y_rows;
         let filter_type = self.tables.filter_type;
         let dither_enabled = self.dither_enabled;
+        // num_partitions is 1, 2, 4, or 8 — always fits usize.
         let p = mby % self.tables.num_partitions as usize;
         self.left = PreviousMacroBlock::default();
 
@@ -281,6 +289,7 @@ impl DecoderContext {
                         mb,
                         &mut self.coeff_blocks,
                         &self.tables.probs_by_pos,
+                        // segmentid is 0..=3, always a valid index.
                         &self.tables.dequant[mb.segmentid as usize],
                         &mut self.top[mbx],
                         &mut self.left,

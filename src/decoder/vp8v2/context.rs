@@ -185,20 +185,32 @@ impl DecoderContext {
     ///
     /// `extra_y_rows`: number of extra rows in the Y cache for filter context
     /// (8 for normal filter, 2 for simple, 0 for no filter).
+    ///
+    /// # Panics
+    ///
+    /// Panics if buffer sizes overflow `usize`. This cannot happen for valid
+    /// WebP dimensions (max 16383x16383 = ~1024 MBs per axis) but is checked
+    /// as a defense-in-depth measure.
     pub(super) fn ensure_capacity(&mut self, mbwidth: u16, mbheight: u16, extra_y_rows: usize) {
         let mbw = usize::from(mbwidth);
         let _mbh = usize::from(mbheight);
 
         // Cache strides
-        self.cache_y_stride = mbw * 16;
-        self.cache_uv_stride = mbw * 8;
+        self.cache_y_stride = mbw.checked_mul(16).expect("Y stride overflow");
+        self.cache_uv_stride = mbw.checked_mul(8).expect("UV stride overflow");
 
         let extra_uv_rows = extra_y_rows / 2;
         let cache_y_rows = extra_y_rows + 16;
         let cache_uv_rows = extra_uv_rows + 8;
 
-        let cache_y_size = cache_y_rows * self.cache_y_stride + FILTER_PADDING_Y;
-        let cache_uv_size = cache_uv_rows * self.cache_uv_stride + FILTER_PADDING_UV;
+        let cache_y_size = cache_y_rows
+            .checked_mul(self.cache_y_stride)
+            .and_then(|n| n.checked_add(FILTER_PADDING_Y))
+            .expect("Y cache size overflow");
+        let cache_uv_size = cache_uv_rows
+            .checked_mul(self.cache_uv_stride)
+            .and_then(|n| n.checked_add(FILTER_PADDING_UV))
+            .expect("UV cache size overflow");
 
         // Cache buffers: resize only grows (no fill needed — all data is
         // overwritten during prediction before it is read). Only the extra
