@@ -36,8 +36,8 @@ pub use api::{
 pub use limits::Limits;
 pub use streaming::{StreamStatus, StreamingDecoder};
 
-// Re-export DecoderContext for animation and buffer-reuse workflows
-pub use vp8v2::{AnimationFrame, DecoderContext};
+// AnimationFrame is used in the DecoderContext callback API (internal)
+pub(crate) use vp8v2::{AnimationFrame, DecoderContext};
 
 // Re-export diagnostic types for tests (hidden from public docs)
 #[doc(hidden)]

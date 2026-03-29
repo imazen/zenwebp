@@ -149,8 +149,8 @@ pub mod oneshot;
 
 // Re-export core decoder types
 pub use decoder::{
-    DecodeConfig, DecodeError, DecodeRequest, DecodeResult, DecoderContext, ImageInfo, Limits,
-    StreamingDecoder, WebPDecoder,
+    DecodeConfig, DecodeError, DecodeRequest, DecodeResult, ImageInfo, Limits, StreamingDecoder,
+    WebPDecoder,
 };
 
 // Re-export Orientation from zenpixels (canonical EXIF orientation for the zen ecosystem)

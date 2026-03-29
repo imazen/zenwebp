@@ -3,15 +3,14 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|input: &[u8]| {
-    // Try v2 lossy decode — should never panic on any input
-    let mut ctx = zenwebp::DecoderContext::new();
-    ctx.set_dithering_strength(0);
-    let mut output = Vec::new();
-    let _ = ctx.decode_to_rgb(input, &mut output, 3);
+    // Try oneshot RGBA decode — should never panic on any input
+    let _ = zenwebp::oneshot::decode_rgba(input);
 
-    // Also try RGBA path
-    let _ = ctx.decode_to_rgb(input, &mut output, 4);
+    // Also try RGB path
+    let _ = zenwebp::oneshot::decode_rgb(input);
 
     // Try animation decode
-    let _ = ctx.decode_animation(input, |_frame| true);
+    if let Ok(mut decoder) = zenwebp::mux::AnimationDecoder::new(input) {
+        while let Ok(Some(_frame)) = decoder.next_frame() {}
+    }
 });

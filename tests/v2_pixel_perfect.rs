@@ -731,15 +731,14 @@ fn cat4_quality_sweep_noise() {
 }
 
 // ---------------------------------------------------------------------------
-// Context reuse: verify that reusing DecoderContext produces identical output
+// Varied-size decode: verify WebPDecoder handles different image sizes
 // ---------------------------------------------------------------------------
 
 #[test]
-fn context_reuse_produces_identical_output() {
-    println!("\n=== Context reuse: identical output across decodes ===");
-    let mut ctx = zenwebp::DecoderContext::new();
+fn varied_size_decode_produces_correct_output() {
+    println!("\n=== Varied-size decode: correct output for different dimensions ===");
 
-    // Encode several different images
+    // Encode several different-sized images
     let images: Vec<(u32, u32, Vec<u8>)> = vec![
         (64, 64, gradient_rgb(64, 64)),
         (33, 17, noise_rgb(33, 17, 42)),
@@ -753,160 +752,31 @@ fn context_reuse_produces_identical_output() {
         .map(|(w, h, rgb)| encode_lossy(rgb, *w, *h, 75.0))
         .collect();
 
-    // Decode all images once with fresh contexts
-    let fresh_results: Vec<(Vec<u8>, u32, u32)> = webp_files
-        .iter()
-        .map(|webp| {
-            let config = DecodeConfig::default();
-            let (rgba, w, h) = DecodeRequest::new(&config, webp)
-                .decode_rgba()
-                .expect("fresh decode failed");
-            (rgba, w, h)
-        })
-        .collect();
+    for (i, webp) in webp_files.iter().enumerate() {
+        let (iw, ih, _) = &images[i];
+        let config = DecodeConfig::default();
+        let (rgba, w, h) = DecodeRequest::new(&config, webp)
+            .decode_rgba()
+            .unwrap_or_else(|e| panic!("image {i} ({iw}x{ih}): decode failed: {e}"));
 
-    // Decode all images reusing the same context, twice in different orders
-    let mut reuse_failures: Vec<String> = Vec::new();
+        assert_eq!(w, *iw, "image {i}: width mismatch");
+        assert_eq!(h, *ih, "image {i}: height mismatch");
 
-    for pass in 0..2 {
-        let mut pass_ok = true;
-        for (i, webp) in webp_files.iter().enumerate() {
-            // Strip RIFF header to get raw VP8 data
-            let chunk_size = u32::from_le_bytes([webp[16], webp[17], webp[18], webp[19]]) as usize;
-            let vp8_data = &webp[20..20 + chunk_size.min(webp.len() - 20)];
+        let expected_len = (w as usize) * (h as usize) * 4;
+        assert_eq!(
+            rgba.len(),
+            expected_len,
+            "image {i} ({w}x{h}): buffer length mismatch"
+        );
 
-            let mut output = Vec::new();
-            let decode_result = ctx.decode_to_rgb(vp8_data, &mut output, 4);
+        // Verify output has actual content (not all zeros)
+        let non_zero = rgba.iter().filter(|&&b| b != 0).count();
+        assert!(
+            non_zero > 0,
+            "image {i} ({w}x{h}): decoded output is all zeros"
+        );
 
-            let (ref fresh_rgba, fw, fh) = fresh_results[i];
-            let (iw, ih) = (images[i].0, images[i].1);
-
-            match decode_result {
-                Err(e) => {
-                    let msg = format!("pass {pass} image {i} ({iw}x{ih}): decode error: {e}");
-                    eprintln!("  FAIL: {msg}");
-                    reuse_failures.push(msg);
-                    pass_ok = false;
-                    continue;
-                }
-                Ok((w, h)) => {
-                    assert_eq!(
-                        u32::from(w),
-                        fw,
-                        "width mismatch on reuse pass {pass} image {i}"
-                    );
-                    assert_eq!(
-                        u32::from(h),
-                        fh,
-                        "height mismatch on reuse pass {pass} image {i}"
-                    );
-
-                    if output.len() != fresh_rgba.len() {
-                        let msg = format!(
-                            "pass {pass} image {i} ({w}x{h}): buffer len mismatch {} vs {}",
-                            output.len(),
-                            fresh_rgba.len()
-                        );
-                        eprintln!("  FAIL: {msg}");
-                        reuse_failures.push(msg);
-                        pass_ok = false;
-                        continue;
-                    }
-
-                    // Compare pixel-by-pixel
-                    let stats = compute_diff(&output, fresh_rgba, u32::from(w), u32::from(h));
-                    if stats.max_diff > 0 {
-                        let msg = format!(
-                            "pass {pass} image {i} ({w}x{h}): max_diff={}, {} bytes differ",
-                            stats.max_diff, stats.diff_count
-                        );
-                        eprintln!("  FAIL: {msg}");
-                        reuse_failures.push(msg);
-                        pass_ok = false;
-                    }
-                }
-            }
-        }
-        if pass_ok {
-            println!(
-                "  Pass {pass}: all {n} images match fresh decode",
-                n = webp_files.len()
-            );
-        }
-    }
-
-    assert!(
-        reuse_failures.is_empty(),
-        "Context reuse produced different output in {} cases:\n  {}",
-        reuse_failures.len(),
-        reuse_failures.join("\n  ")
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Benchmark: context reuse vs fresh decode vs libwebp
-// ---------------------------------------------------------------------------
-
-#[test]
-fn bench_context_reuse_vs_fresh() {
-    println!("\n=== Benchmark: context reuse vs fresh decode ===");
-
-    let w = 512;
-    let h = 512;
-    let rgb = gradient_rgb(w, h);
-    let webp = encode_lossy(&rgb, w, h, 75.0);
-    let iterations = 50;
-
-    // Strip RIFF header
-    let chunk_size = u32::from_le_bytes([webp[16], webp[17], webp[18], webp[19]]) as usize;
-    let vp8_data = &webp[20..20 + chunk_size.min(webp.len() - 20)];
-
-    // Warmup
-    {
-        let mut ctx = zenwebp::DecoderContext::new();
-        let mut output = Vec::new();
-        let _ = ctx.decode_to_rgb(vp8_data, &mut output, 4);
-    }
-
-    // Fresh context per decode
-    let start = std::time::Instant::now();
-    for _ in 0..iterations {
-        let mut ctx = zenwebp::DecoderContext::new();
-        let mut output = Vec::new();
-        let _ = ctx.decode_to_rgb(vp8_data, &mut output, 4);
-    }
-    let fresh_elapsed = start.elapsed();
-
-    // Reused context
-    let mut ctx = zenwebp::DecoderContext::new();
-    let mut output = Vec::new();
-    let start = std::time::Instant::now();
-    for _ in 0..iterations {
-        let _ = ctx.decode_to_rgb(vp8_data, &mut output, 4);
-    }
-    let reuse_elapsed = start.elapsed();
-
-    // webpx (always fresh)
-    let start = std::time::Instant::now();
-    for _ in 0..iterations {
-        let _ = webpx::decode_rgba(&webp);
-    }
-    let libwebp_elapsed = start.elapsed();
-
-    let fresh_us = fresh_elapsed.as_micros() as f64 / iterations as f64;
-    let reuse_us = reuse_elapsed.as_micros() as f64 / iterations as f64;
-    let libwebp_us = libwebp_elapsed.as_micros() as f64 / iterations as f64;
-
-    println!("  Image: {w}x{h} gradient Q75, {iterations} iterations");
-    println!("  zenwebp fresh context:  {fresh_us:.0} us/decode");
-    println!("  zenwebp reused context: {reuse_us:.0} us/decode");
-    println!("  libwebp (webpx):        {libwebp_us:.0} us/decode");
-    if reuse_us > 0.0 {
-        println!("  Context reuse speedup: {:.2}x", fresh_us / reuse_us);
-    }
-    if libwebp_us > 0.0 {
-        println!("  zenwebp fresh vs libwebp: {:.2}x", fresh_us / libwebp_us);
-        println!("  zenwebp reused vs libwebp: {:.2}x", reuse_us / libwebp_us);
+        println!("  image {i} ({w}x{h}): OK, {non_zero} non-zero bytes");
     }
 }
 
