@@ -1957,7 +1957,7 @@ mod tests {
         let enc = WebpEncoderConfig::lossy();
         let output = enc
             .job()
-            .with_stop(&enough::Unstoppable)
+            .with_stop(zencodec::StopToken::new(enough::Unstoppable))
             .encoder()
             .unwrap()
             .encode(buf.as_slice())
@@ -2328,6 +2328,7 @@ mod tests {
 
         // One-shot
         let oneshot_output = config
+            .clone()
             .job()
             .encoder()
             .unwrap()
