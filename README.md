@@ -16,16 +16,21 @@ zenwebp = "0.3"
 ### Decode a WebP image
 
 ```rust
+// One-shot decode
+let (pixels, width, height) = zenwebp::oneshot::decode_rgba(webp_bytes)?;
+```
+
+Or use [`WebPDecoder`] for two-phase decoding (inspect headers before allocating):
+
+```rust
 use zenwebp::WebPDecoder;
 
 let webp_bytes: &[u8] = /* your WebP data */;
-
-// Two-phase decoding: parse headers first
 let mut decoder = WebPDecoder::build(webp_bytes)?;
 let info = decoder.info();
-println!("{}x{}, alpha={}", info.width, info.height, info.has_alpha);
+println!("{}x{}, alpha={}, orientation={:?}",
+    info.width, info.height, info.has_alpha, info.orientation);
 
-// Then decode into a pre-allocated buffer
 let mut output = vec![0u8; decoder.output_buffer_size().unwrap()];
 decoder.read_image(&mut output)?;
 ```
@@ -70,8 +75,9 @@ let webp = EncodeRequest::lossless(&config, rgba_pixels, PixelLayout::Rgba8, wid
 - **`#![forbid(unsafe_code)]`** - memory safety guaranteed
 - **no_std compatible** - works with just `alloc`, no standard library needed
 - **SIMD accelerated** - SSE2/SSE4.1/AVX2 on x86, SIMD128 on WASM
-- **Full format support** - lossy, lossless, alpha, animation (encode + decode), ICC/EXIF/XMP metadata, mux/demux, chroma dithering
+- **Full format support** - lossy, lossless, alpha, animation (encode + decode), ICC/EXIF/XMP metadata, EXIF orientation parsing, mux/demux, chroma dithering
 - **Metadata module** - `zenwebp::metadata` for extracting/embedding ICC, EXIF, and XMP in encoded WebP bytes without decoding pixels
+- **zencodec integration** - optional `zencodec` feature for unified codec trait implementations
 
 ### Safe SIMD
 
@@ -223,7 +229,7 @@ let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode
 
 ### Lossy decoder benchmarks
 
-**Bit-exact with libwebp** — 0 pixel diffs on 218+ conformance files.
+**Bit-exact with libwebp** — 0 pixel diffs on 12,825 scraped WebP files and 218 conformance files.
 
 Tested across 14 images (CLIC2025 photos, screenshots, CID22) without `-C target-cpu=native`:
 
@@ -233,7 +239,7 @@ Tested across 14 images (CLIC2025 photos, screenshots, CID22) without `-C target
 | Screenshots (1K-4K) | **1.06-1.14x** |
 | Small photos (512-576px) | **1.10-1.15x** |
 
-Streaming architecture via zencodec's `StreamingDecode` trait. The full decoded image never needs to exist in memory:
+Streaming architecture via zencodec's `StreamingDecode` trait (feature `zencodec`). The full decoded image never needs to exist in memory:
 
 | Decode mode | Peak memory (2940×1912) |
 |------------|------------------------|
@@ -290,7 +296,7 @@ decoder and lossless encoder formed the foundation on which zenwebp was built. W
 to the image-rs maintainers for their well-structured, battle-tested codebase.
 
 From that foundation, zenwebp was substantially rewritten to achieve libwebp feature and
-performance parity: a ground-up lossy encoder, a redesigned streaming decoder (v2), SIMD
+performance parity: a ground-up lossy encoder, a redesigned streaming decoder, SIMD
 acceleration via [archmage](https://crates.io/crates/archmage), and extensive optimization
 work across all pipelines. The lossless decoder retains the most shared DNA with image-webp.
 

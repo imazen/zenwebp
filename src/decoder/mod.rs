@@ -18,10 +18,10 @@ mod streaming;
 pub(crate) mod yuv;
 mod yuv_fused;
 
-// VP8 v1 decoder (kept for lossless, diagnostics, and reference)
+// VP8 diagnostic types and tree nodes (used by lossless decoder and tests)
 pub(crate) mod vp8;
 
-// VP8 v2 decoder (ground-up redesign, the active lossy decoder)
+// VP8 lossy decoder (streaming cache→RGB architecture)
 pub(crate) mod vp8v2;
 
 // Re-export public API
@@ -36,7 +36,7 @@ pub use api::{
 pub use limits::Limits;
 pub use streaming::{StreamStatus, StreamingDecoder};
 
-// Re-export v2 DecoderContext for animation and buffer-reuse workflows
+// Re-export DecoderContext for animation and buffer-reuse workflows
 pub use vp8v2::{AnimationFrame, DecoderContext};
 
 // Re-export diagnostic types for tests (hidden from public docs)
