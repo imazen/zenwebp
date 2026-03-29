@@ -1927,6 +1927,7 @@ fn fancy_upsample_16_pairs_inner_opt(
 mod tests_simd {
     use super::*;
 
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_yuv_to_rgb_matches_scalar() {
         if X64V3Token::summon().is_none() {
@@ -1967,6 +1968,7 @@ mod tests_simd {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_yuv_to_rgb_32_pixels() {
         if X64V3Token::summon().is_none() {
             return;
@@ -2000,6 +2002,7 @@ mod tests_simd {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_fancy_upsample_8_pairs() {
         if X64V3Token::summon().is_none() {
             return;
