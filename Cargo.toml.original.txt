@@ -1,0 +1,150 @@
+[package]
+name = "zenwebp"
+version = "0.3.2"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+rust-version = "1.89"
+
+description = "High-performance WebP encoding and decoding in pure Rust"
+homepage = "https://github.com/imazen/zenwebp"
+repository = "https://github.com/imazen/zenwebp"
+documentation = "https://docs.rs/zenwebp"
+categories = ["multimedia::images", "multimedia::encoding", "encoding"]
+keywords = ["webp", "image", "encoder", "decoder", "codec"]
+readme = "README.md"
+autobenches = false
+
+include = ["/src", "LICENSE-AGPL", "README.md", "CHANGES.md"]
+
+[dependencies]
+# Core dependencies - all no_std compatible
+byteorder-lite = { version = "0.1.0", default-features = false }
+enough = { version = "0.4", default-features = false, features = ["alloc"] }
+hashbrown = { version = "0.16", default-features = false, features = ["default-hasher"] }
+thiserror = { version = "2.0.18", default-features = false }
+whereat = { version = "0.1.4", default-features = false }
+libm = "0.2.16"
+zencodec = { path = "../zencodec", optional = true }
+zennode = { path = "../zennode/zennode", default-features = false, features = ["derive"], optional = true }
+zenpixels = { path = "../zenpixels/zenpixels", default-features = false, optional = true }
+self_cell = { version = "1.2", optional = true }
+bytemuck = { version = "1", default-features = false, features = ["extern_crate_alloc"] }
+garb = { version = "0.2.3", default-features = false, features = ["experimental"] }
+linear-srgb = "0.6"
+yuv = { version = "0.8", optional = true }
+png = { version = "0.18", optional = true }
+webp = { version = "0.3.0", optional = true }
+archmage = { version = "0.9.9", optional = true, features = ["macros"] }
+magetypes = { version = "0.9.9", optional = true }
+rgb = { version = "0.8", optional = true, default-features = false, features = ["as-bytes"] }
+imgref = { version = "1.12", optional = true, default-features = false }
+
+[dev-dependencies]
+archmage = { version = "0.9.9", features = ["std", "macros"] }
+paste = "1.0.14"
+png = "0.18"
+rand = "0.8.5"
+rgb = "0.8"
+
+# Native-only dev-deps (C bindings, threading, or native-only features)
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+butteraugli = "0.8"
+codec-corpus = "1"
+criterion = { version = "0.8.1", features = ["html_reports"] }
+dssim-core = "3.4"
+fast-ssim2 = "0.6.5"
+imgref = "1.12"
+libwebp-sys = "0.14"
+webp = "0.3.1"
+webpx = "0.1.4"
+yuv = "0.8"
+# serde_json = "1"
+# zenbench = { path = "../zenbench" }
+zensim = "0.1"
+zensim-regress = "0.1"
+
+[features]
+default = ["std", "fast-yuv", "simd", "pixel-types"]
+# Enable std library. Required only for Encoder.encode_to_writer().
+# Without std, use slice-based decoder and Vec-based encoder APIs.
+std = ["thiserror/std", "whereat/std", "byteorder-lite/std"]
+fast-yuv = ["dep:yuv"]
+# Enable SIMD intrinsics via archmage (safe API with token-based feature verification).
+# Provides best performance on x86-64 with runtime CPU detection.
+# On wasm32, uses core::arch::wasm32 SIMD128 intrinsics.
+simd = ["dep:archmage", "dep:magetypes"]
+# Type-safe pixel format support via the `rgb` crate.
+pixel-types = ["dep:rgb"]
+# imgref integration for Img<Vec<P>> / Img<&[P]> decode/encode.
+imgref = ["dep:imgref", "pixel-types"]
+# Enable AVX-512 autoversion variants (passthrough to archmage).
+avx512 = ["archmage/avx512"]
+# --- Internal features (not for public use, underscore prefix = private) ---
+# Nightly-only: enables #[bench] micro-benchmarks. Requires `cargo +nightly test`.
+_benchmarks = []
+# Run corpus-based integration tests (requires codec-corpus data).
+_corpus_tests = []
+# Debug mode selection for encoder (set MB_DEBUG=x,y env var to debug specific macroblock).
+mode_debug = ["std"]
+# Enable PNG/WebP deps for profiling binaries.
+_profiling = ["dep:png", "dep:webp"]
+# WASM profiling - minimal deps for wasm32 benchmarking.
+_wasm_profiling = ["std"]
+# Enable zencodec trait integration
+zencodec = ["dep:zencodec", "dep:zenpixels", "dep:self_cell"]
+# Self-documenting node definitions for pipeline integration
+zennode = ["dep:zennode"]
+
+[[example]]
+name = "hrtb_test"
+required-features = ["zencodec"]
+
+[[bin]]
+name = "zenwebp-encode"
+path = "src/bin/zenwebp_encode.rs"
+required-features = ["_profiling"]
+
+[[bin]]
+name = "profile_encode"
+path = "benches/profile_encode.rs"
+required-features = ["_profiling"]
+
+[[bin]]
+name = "profile_libwebp"
+path = "benches/profile_libwebp.rs"
+required-features = ["_profiling"]
+
+[[bin]]
+name = "profile_decode"
+path = "benches/profile_decode.rs"
+required-features = ["_profiling"]
+
+[[bin]]
+name = "profile_wasm"
+path = "benches/profile_wasm.rs"
+required-features = ["_wasm_profiling"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+# Criterion benchmarks
+[[bench]]
+name = "encode_benchmark"
+harness = false
+
+[[bench]]
+name = "encode_vs_libwebp"
+harness = false
+
+[[bench]]
+name = "decode_benchmark"
+harness = false
+
+[[bench]]
+name = "decode_zenbench"
+harness = false
+
+[dev-dependencies.image-webp]
+version = "0.2"
+
