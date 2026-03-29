@@ -241,7 +241,7 @@ Streaming architecture via zencodec's `StreamingDecode` trait. The full decoded 
 | `decode_rgb()` (full frame) | 35 MB |
 | libwebp `WebPDecodeRGB` | 34 MB |
 
-The streaming decoder yields 16-row RGB strips, enabling strip-based pipelines (decode → resize → encode) with constant memory regardless of image size. Buffer reuse across frames via `DecoderContext`.
+The streaming decoder yields 16-row RGB strips via zencodec's `StreamingDecode` trait, enabling strip-based pipelines (decode → resize → encode) with constant memory regardless of image size.
 
 ### Lossless decoder benchmarks
 
