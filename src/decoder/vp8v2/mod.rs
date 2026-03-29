@@ -26,7 +26,7 @@ use crate::common::types::{ChromaMode, IntraMode, LumaMode};
 use crate::decoder::api::DecodeError;
 use crate::decoder::internal_error::InternalDecodeError;
 use crate::decoder::loop_filter::MbFilterParams;
-use crate::decoder::vp8::Frame;
+use crate::common::types::Frame;
 
 use context::PreviousMacroBlock;
 
