@@ -1803,8 +1803,6 @@ pub struct WebpStreamingDecoder {
     bpp: usize,
     /// Pixel descriptor for the output.
     descriptor: PixelDescriptor,
-    /// Maximum rows per strip (up to 16 + extra_y_rows for the last MB row).
-    max_strip_rows: usize,
     /// Image info for the trait.
     info: Arc<ImageInfo>,
     /// Decoded alpha plane (if VP8X with alpha). Applied per-strip.
@@ -1878,7 +1876,6 @@ impl WebpStreamingDecoder {
             height: u32::from(height),
             bpp: effective_bpp,
             descriptor,
-            max_strip_rows,
             info: Arc::new(info),
             alpha_plane,
         })
