@@ -1921,9 +1921,9 @@ dependencies = [
 
 [[package]]
 name = "zensim"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad794404240ff513a30da7f7fd9c7f038995ba979d44a11b63a564cdef765c73"
+checksum = "1c2cfe0d24afe29012b75eb79cb151a10e7ce6460232682422ec92751985cb1b"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -1937,9 +1937,9 @@ dependencies = [
 
 [[package]]
 name = "zensim-regress"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8399524bda397f76a8b10f6be0ebf70fe9753536a265417e9785938ec6a799d"
+checksum = "a069038e58016d4ead73eeeb9e7aeebbf2878f9531f6de2f9e34c09e979727bb"
 dependencies = [
  "base64",
  "fs2",
