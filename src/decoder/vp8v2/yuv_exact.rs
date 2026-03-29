@@ -1100,7 +1100,10 @@ fn write_pixel(dst: &mut [u8], y: u8, u: u8, v: u8) {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use crate::{DecodeConfig, DecodeRequest, EncodeRequest, EncoderConfig, PixelLayout};
+    #[allow(unused_imports)]
+    use alloc::{vec, vec::Vec};
 
     fn encode_lossy(rgb: &[u8], w: usize, h: usize, quality: f32) -> alloc::vec::Vec<u8> {
         let config = EncoderConfig::new_lossy()
@@ -1151,7 +1154,7 @@ mod tests {
                     max_diff = d;
                     let px = i / 3;
                     let ch = ["R", "G", "B"][i % 3];
-                    eprintln!("diff at pixel {px} ({ch}): zen={a} libwebp={b} diff={d}");
+                    std::eprintln!("diff at pixel {px} ({ch}): zen={a} libwebp={b} diff={d}");
                 }
             }
         }
@@ -1251,10 +1254,10 @@ mod tests {
         let zen_us = zen_time.as_micros() as f64 / n as f64;
         let lib_us = lib_time.as_micros() as f64 / n as f64;
 
-        eprintln!("512x512 Q75 RGB decode ({n} iters):");
-        eprintln!("  zenwebp (yuv_exact): {zen_us:.0} us");
-        eprintln!("  libwebp:             {lib_us:.0} us");
-        eprintln!("  ratio:               {:.2}x", zen_us / lib_us);
+        std::eprintln!("512x512 Q75 RGB decode ({n} iters):");
+        std::eprintln!("  zenwebp (yuv_exact): {zen_us:.0} us");
+        std::eprintln!("  libwebp:             {lib_us:.0} us");
+        std::eprintln!("  ratio:               {:.2}x", zen_us / lib_us);
     }
 
     /// Test odd dimensions to verify edge handling.

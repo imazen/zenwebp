@@ -102,9 +102,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: no_std + alloc (no default features)
-        run: cargo test --no-default-features
+        run: cargo test --no-default-features --lib
       - name: std only
-        run: cargo test --no-default-features --features std
+        run: cargo test --no-default-features --features std --lib
       - name: zencodec
         run: cargo test --features zencodec
       - name: zencodec + imgref

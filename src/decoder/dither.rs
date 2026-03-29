@@ -170,6 +170,7 @@ pub(crate) fn dither_row(rg: &mut VP8Random, params: DitherRowParams<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_random_deterministic() {

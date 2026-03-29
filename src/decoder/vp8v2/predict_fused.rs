@@ -888,6 +888,7 @@ fn extract_chroma_borders_and_copy_to_cache(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     /// Verify that a simple DC prediction + zero IDCT produces uniform output.
     #[test]

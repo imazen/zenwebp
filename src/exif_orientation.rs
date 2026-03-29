@@ -103,6 +103,8 @@ fn read_u32(data: &[u8], offset: usize, big_endian: bool) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use alloc::{vec, vec::Vec};
 
     fn make_tiff_with_orientation(orientation: u16, big_endian: bool) -> Vec<u8> {
         let mut buf = Vec::new();

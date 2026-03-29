@@ -3215,7 +3215,9 @@ pub(crate) fn normal_v_filter_uv_inner(
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
+    use alloc::vec;
 
     // #[arcane] wrappers for calling #[rite] filter functions from tests.
     // These are needed because #[rite] functions have #[target_feature] and
@@ -4034,7 +4036,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     fn test_normal_h_filter32_inner_matches_two_16() {
         let Some(token) = X64V3Token::summon() else {
-            eprintln!("AVX2 not available, skipping test");
+            std::eprintln!("AVX2 not available, skipping test");
             return;
         };
 
@@ -4109,7 +4111,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     fn test_normal_h_filter32_edge_matches_two_16() {
         let Some(token) = X64V3Token::summon() else {
-            eprintln!("AVX2 not available, skipping test");
+            std::eprintln!("AVX2 not available, skipping test");
             return;
         };
 

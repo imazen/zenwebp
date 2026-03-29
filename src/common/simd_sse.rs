@@ -763,6 +763,7 @@ pub(crate) fn tdisto_4x4_fused_sse2(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_sse4x4_scalar() {

@@ -568,6 +568,8 @@ pub(crate) fn apply_predictor_transform_sse2_entry(
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+    use alloc::vec;
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     use archmage::prelude::*;
 
@@ -576,7 +578,7 @@ mod tests {
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     fn test_add_green_sse2_matches_scalar() {
         let Some(token) = Sse2Token::summon() else {
-            eprintln!("SSE2 not available, skipping test");
+            std::eprintln!("SSE2 not available, skipping test");
             return;
         };
 
