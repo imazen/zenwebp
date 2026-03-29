@@ -59,8 +59,8 @@ webpx = "0.1.4"
 yuv = "0.8"
 # serde_json = "1"
 zenbench = { version = "0.1.2", features = ["criterion-compat"] }
-zensim = "0.1"
-zensim-regress = "0.1"
+zensim = "0.2"
+zensim-regress = "0.2"
 
 [features]
 default = ["std", "fast-yuv", "pixel-types"]
