@@ -1910,22 +1910,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zennode"
-version = "0.1.0"
-dependencies = [
- "zennode-derive",
-]
-
-[[package]]
-name = "zennode-derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "zenpixels"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1997,7 +1981,6 @@ dependencies = [
  "yuv",
  "zenbench",
  "zencodec",
- "zennode",
  "zenpixels",
  "zensim",
  "zensim-regress",

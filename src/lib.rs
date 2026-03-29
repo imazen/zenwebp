@@ -130,6 +130,7 @@ pub mod decoder;
 /// Encoder detection and quality estimation from WebP file headers.
 pub mod detect;
 pub mod encoder;
+mod exif_orientation;
 /// WebP mux/demux and animation encoding.
 pub mod mux;
 
@@ -152,14 +153,17 @@ pub use decoder::{
     StreamingDecoder, WebPDecoder,
 };
 
+// Re-export Orientation from zenpixels (canonical EXIF orientation for the zen ecosystem)
+pub use zenpixels::Orientation;
+
 // Re-export core encoder types
 pub use encoder::{
     EncodeError, EncodeRequest, EncodeResult, EncoderConfig, ImageMetadata, LosslessConfig,
     LossyConfig, PixelLayout, Preset,
 };
 
-#[cfg(feature = "zennode")]
-pub mod zennode_defs;
+// #[cfg(feature = "zennode")]
+// pub mod zennode_defs;
 
 #[cfg(feature = "zencodec")]
 mod codec;

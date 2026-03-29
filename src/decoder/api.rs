@@ -772,6 +772,10 @@ impl<'a> WebPDecoder<'a> {
         let xmp = self
             .read_chunk_direct(WebPRiffChunk::XMP, self.memory_limit)
             .unwrap_or(None);
+        let orientation = exif
+            .as_deref()
+            .and_then(crate::exif_orientation::parse_orientation)
+            .and_then(zenpixels::Orientation::from_exif);
         ImageInfo {
             width: self.width,
             height: self.height,
@@ -784,6 +788,7 @@ impl<'a> WebPDecoder<'a> {
             } else {
                 BitstreamFormat::Lossless
             },
+            orientation,
             icc_profile,
             exif,
             xmp,
@@ -1649,6 +1654,12 @@ pub struct ImageInfo {
     pub frame_count: u32,
     /// Bitstream format (lossy or lossless).
     pub format: BitstreamFormat,
+    /// EXIF orientation (1-8), parsed from the EXIF chunk if present.
+    ///
+    /// WebP does not apply orientation during decode — pixels are returned
+    /// in stored order. Use this value to transform for display.
+    /// `None` if no EXIF data or no orientation tag.
+    pub orientation: Option<zenpixels::Orientation>,
     /// ICC color profile, if present.
     pub icc_profile: Option<Vec<u8>>,
     /// EXIF metadata, if present.
@@ -1705,6 +1716,10 @@ impl ImageInfo {
         let icc_profile = decoder.icc_profile().unwrap_or(None);
         let exif = decoder.exif_metadata().unwrap_or(None);
         let xmp = decoder.xmp_metadata().unwrap_or(None);
+        let orientation = exif
+            .as_deref()
+            .and_then(crate::exif_orientation::parse_orientation)
+            .and_then(zenpixels::Orientation::from_exif);
         Ok(Self {
             width,
             height,
@@ -1713,6 +1728,7 @@ impl ImageInfo {
             has_animation: is_animated,
             frame_count,
             format,
+            orientation,
             icc_profile,
             exif,
             xmp,

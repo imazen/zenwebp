@@ -425,7 +425,7 @@ pub fn content_type_to_tuning(content_type: ImageContentType) -> (u8, u8, u8, u8
     match content_type {
         ImageContentType::Photo => (80, 30, 3, 4), // Photo preset: high SNS for uniform regions
         ImageContentType::Drawing => (50, 60, 0, 4), // Default tuning: moderate SNS, strong filter
-        ImageContentType::Text => (50, 60, 0, 4),  // Default tuning (Text preset was counterproductive)
-        ImageContentType::Icon => (0, 0, 0, 4),    // Icon preset: no SNS, no filter
+        ImageContentType::Text => (50, 60, 0, 4), // Default tuning (Text preset was counterproductive)
+        ImageContentType::Icon => (0, 0, 0, 4),   // Icon preset: no SNS, no filter
     }
 }

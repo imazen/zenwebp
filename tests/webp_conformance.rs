@@ -268,14 +268,21 @@ fn test_scraped_webp_corpus() {
 
     let corpus_dir = Path::new("/mnt/v/output/corpus-builder/webp");
     if !corpus_dir.exists() {
-        eprintln!("Skipping: scraped corpus not found at {}", corpus_dir.display());
-        eprintln!("  Expected: /mnt/v/output/corpus-builder/webp/{{google-native,pexels,unsplash,...}}");
+        eprintln!(
+            "Skipping: scraped corpus not found at {}",
+            corpus_dir.display()
+        );
+        eprintln!(
+            "  Expected: /mnt/v/output/corpus-builder/webp/{{google-native,pexels,unsplash,...}}"
+        );
         return;
     }
 
     // Collect all .webp files recursively
     fn collect_webp(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
-        let Ok(entries) = fs::read_dir(dir) else { return };
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
@@ -334,7 +341,11 @@ fn test_scraped_webp_corpus() {
                     mismatch += 1;
                     eprintln!(
                         "  DIM MISMATCH: {} — zen {}x{} vs lib {}x{}",
-                        path.display(), z_w, z_h, l_w, l_h
+                        path.display(),
+                        z_w,
+                        z_h,
+                        l_w,
+                        l_h
                     );
                 } else if z_px == l_px {
                     exact_match += 1;
@@ -352,7 +363,11 @@ fn test_scraped_webp_corpus() {
                         }
                     }
                     mismatch += 1;
-                    let short = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    let short = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
                     mismatch_files.push((short, max_diff, diff_count));
                 }
             }
