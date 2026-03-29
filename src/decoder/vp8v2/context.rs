@@ -162,6 +162,31 @@ impl DecoderContext {
         }
     }
 
+    /// Pixel width after header parse.
+    pub fn width(&self) -> u16 {
+        self.tables.width
+    }
+
+    /// Pixel height after header parse.
+    pub fn height(&self) -> u16 {
+        self.tables.height
+    }
+
+    /// Macroblock width (columns) after header parse.
+    pub fn mbwidth(&self) -> u16 {
+        self.tables.mbwidth
+    }
+
+    /// Macroblock height (rows) after header parse.
+    pub fn mbheight(&self) -> u16 {
+        self.tables.mbheight
+    }
+
+    /// Extra Y rows in the cache for filter context (8/2/0).
+    pub fn extra_y_rows(&self) -> usize {
+        self.tables.extra_y_rows
+    }
+
     /// Set chroma dithering strength (0=off, 100=max). Default: 50.
     ///
     /// Adds random noise to U/V chroma planes after loop filtering to hide

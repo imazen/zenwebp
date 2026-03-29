@@ -265,6 +265,74 @@ impl DecoderContext {
         Ok(())
     }
 
+    /// Decode one MB row and convert to RGB/RGBA in a strip buffer.
+    ///
+    /// The strip buffer must be at least `width * max_strip_rows * bpp` bytes.
+    /// Returns `(y_start, num_rows)` — the absolute Y row and row count written.
+    ///
+    /// After the last MB row (returns `num_rows > 0` for the final call),
+    /// the caller should stop. This method handles all internal state
+    /// (rotate_extra_rows, left border resets, boundary UV saves).
+    pub(crate) fn decode_strip_mb_row(
+        &mut self,
+        mby: usize,
+        strip: &mut [u8],
+        bpp: usize,
+    ) -> Result<(usize, usize), InternalDecodeError> {
+        let mbheight = usize::from(self.tables.mbheight);
+        let width = usize::from(self.tables.width);
+        let height = usize::from(self.tables.height);
+        let extra_y_rows = self.tables.extra_y_rows;
+        let chroma_width = (width + 1) / 2;
+
+        self.process_mb_row(mby)?;
+
+        let (y_start, num_rows) = yuv_exact::convert_cache_rows_to_strip(
+            &self.cache_y,
+            &self.cache_u,
+            &self.cache_v,
+            self.cache_y_stride,
+            self.cache_uv_stride,
+            extra_y_rows,
+            mby,
+            mbheight,
+            width,
+            height,
+            strip,
+            bpp,
+            &self.prev_last_u_row,
+            &self.prev_last_v_row,
+        );
+
+        // Save boundary UV row for next MB row's fancy upsampling
+        if mby + 1 < mbheight {
+            let boundary_cache_uv_row = 7;
+            let uv_start = boundary_cache_uv_row * self.cache_uv_stride;
+            self.prev_last_u_row[..chroma_width]
+                .copy_from_slice(&self.cache_u[uv_start..uv_start + chroma_width]);
+            self.prev_last_v_row[..chroma_width]
+                .copy_from_slice(&self.cache_v[uv_start..uv_start + chroma_width]);
+        }
+
+        self.rotate_extra_rows();
+
+        // Reset left borders for next row
+        self.left_border_y.fill(129u8);
+        self.left_border_u.fill(129u8);
+        self.left_border_v.fill(129u8);
+
+        Ok((y_start, num_rows))
+    }
+
+    /// Initialize boundary UV row buffers for streaming decode.
+    /// Must be called after `read_frame_header` and before `decode_strip_mb_row`.
+    pub(crate) fn init_streaming_uv_buffers(&mut self) {
+        let width = usize::from(self.tables.width);
+        let chroma_width = (width + 1) / 2;
+        self.prev_last_u_row.resize(chroma_width, 128);
+        self.prev_last_v_row.resize(chroma_width, 128);
+    }
+
     /// Parse + predict/IDCT + filter one MB row. After this returns, the cache
     /// contains filtered Y/U/V data ready for output (or direct conversion).
     fn process_mb_row(&mut self, mby: usize) -> Result<(), InternalDecodeError> {

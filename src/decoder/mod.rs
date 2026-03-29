@@ -5,7 +5,7 @@ mod api;
 pub(crate) mod arithmetic;
 mod bit_reader;
 mod dither;
-mod extended;
+pub(crate) mod extended;
 mod huffman;
 mod internal_error;
 mod limits;

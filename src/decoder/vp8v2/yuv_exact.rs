@@ -310,6 +310,134 @@ pub(super) fn convert_cache_rows_to_rgb(
     }
 }
 
+/// Convert visible cache rows from one MB row to a strip buffer (relative offset 0).
+///
+/// Same logic as `convert_cache_rows_to_rgb`, but writes to a strip buffer
+/// starting at byte 0 instead of an absolute position in a full-frame buffer.
+///
+/// Returns `(y_start, num_rows)` — the absolute Y row in the image where this
+/// strip begins and how many rows were written.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn convert_cache_rows_to_strip(
+    cache_y: &[u8],
+    cache_u: &[u8],
+    cache_v: &[u8],
+    cache_y_stride: usize,
+    cache_uv_stride: usize,
+    extra_y_rows: usize,
+    mby: usize,
+    mbheight: usize,
+    width: usize,
+    height: usize,
+    strip: &mut [u8],
+    bpp: usize,
+    prev_last_u_row: &[u8],
+    prev_last_v_row: &[u8],
+) -> (usize, usize) {
+    let extra_uv_rows = extra_y_rows / 2;
+    let is_first_row = mby == 0;
+    let is_last_row = mby == mbheight - 1;
+
+    let (src_y_start, num_y_rows, dst_img_y_row) = if is_first_row && is_last_row {
+        (extra_y_rows, 16usize, 0usize)
+    } else if is_first_row {
+        (extra_y_rows, 16 - extra_y_rows, 0usize)
+    } else if is_last_row {
+        (0usize, extra_y_rows + 16, mby * 16 - extra_y_rows)
+    } else {
+        (0usize, 16usize, mby * 16 - extra_y_rows)
+    };
+
+    let chroma_width = (width + 1) / 2;
+    let num_y_rows = num_y_rows.min(height - dst_img_y_row);
+
+    let first_cache_img_uv = if is_first_row {
+        0isize - extra_uv_rows as isize
+    } else {
+        (mby * 8 - extra_uv_rows) as isize
+    };
+
+    for i in 0..num_y_rows {
+        let cache_y_row = src_y_start + i;
+        let img_y_row = dst_img_y_row + i;
+        // Write to strip at relative offset instead of absolute
+        let rgb_offset = i * width * bpp;
+
+        let y_start = cache_y_row * cache_y_stride;
+        let y_row = &cache_y[y_start..y_start + width];
+        let rgb_row = &mut strip[rgb_offset..rgb_offset + width * bpp];
+
+        let img_uv_row = (img_y_row / 2) as isize;
+        let cache_uv_row_signed = img_uv_row - first_cache_img_uv;
+        debug_assert!(cache_uv_row_signed >= 0, "cache UV row underflow");
+        let cache_uv_row = cache_uv_row_signed as usize;
+
+        let use_1uv = img_y_row == 0 || (img_y_row == height - 1 && height % 2 == 0);
+
+        if use_1uv {
+            let uv_start = cache_uv_row * cache_uv_stride;
+            fill_1uv_row(
+                rgb_row,
+                y_row,
+                &cache_u[uv_start..uv_start + chroma_width],
+                &cache_v[uv_start..uv_start + chroma_width],
+                bpp,
+            );
+        } else if img_y_row % 2 == 1 {
+            let near_start = cache_uv_row * cache_uv_stride;
+            let far_start = (cache_uv_row + 1) * cache_uv_stride;
+            incant!(
+                fill_2uv_row(
+                    rgb_row,
+                    y_row,
+                    &cache_u[near_start..near_start + chroma_width],
+                    &cache_u[far_start..far_start + chroma_width],
+                    &cache_v[near_start..near_start + chroma_width],
+                    &cache_v[far_start..far_start + chroma_width],
+                    bpp,
+                ),
+                [v3, neon, wasm128, scalar]
+            );
+        } else {
+            let near_start = cache_uv_row * cache_uv_stride;
+            let img_far_uv = img_uv_row - 1;
+            let cache_far_uv = img_far_uv - first_cache_img_uv;
+
+            if cache_far_uv < 0 {
+                incant!(
+                    fill_2uv_row(
+                        rgb_row,
+                        y_row,
+                        &cache_u[near_start..near_start + chroma_width],
+                        &prev_last_u_row[..chroma_width],
+                        &cache_v[near_start..near_start + chroma_width],
+                        &prev_last_v_row[..chroma_width],
+                        bpp,
+                    ),
+                    [v3, neon, wasm128, scalar]
+                );
+            } else {
+                debug_assert!(cache_far_uv >= 0);
+                let far_start = cache_far_uv as usize * cache_uv_stride;
+                incant!(
+                    fill_2uv_row(
+                        rgb_row,
+                        y_row,
+                        &cache_u[near_start..near_start + chroma_width],
+                        &cache_u[far_start..far_start + chroma_width],
+                        &cache_v[near_start..near_start + chroma_width],
+                        &cache_v[far_start..far_start + chroma_width],
+                        bpp,
+                    ),
+                    [v3, neon, wasm128, scalar]
+                );
+            }
+        }
+    }
+
+    (dst_img_y_row, num_y_rows)
+}
+
 // ============================================================================
 // Edge row (1 chroma row — first/last row of image)
 // ============================================================================

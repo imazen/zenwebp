@@ -1142,6 +1142,7 @@ static DECODE_CAPABILITIES: zencodec::decode::DecodeCapabilities =
         .with_animation(true)
         .with_cheap_probe(true)
         .with_native_alpha(true)
+        .with_streaming(true)
         .with_enforces_max_pixels(true)
         .with_enforces_max_memory(true)
         .with_enforces_max_input_bytes(true);
@@ -1244,7 +1245,7 @@ impl WebpDecodeJob {
 impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
     type Error = At<DecodeError>;
     type Dec = WebpDecoder<'a>;
-    type StreamDec = zencodec::Unsupported<At<DecodeError>>;
+    type StreamDec = WebpStreamingDecoder;
     type AnimationFrameDec = WebpAnimationFrameDecoder;
 
     fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
@@ -1313,12 +1314,156 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
 
     fn streaming_decoder(
         self,
-        _data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
-    ) -> Result<zencodec::Unsupported<At<DecodeError>>, At<DecodeError>> {
-        Err(At::from(DecodeError::from(
-            UnsupportedOperation::RowLevelDecode,
-        )))
+        data: Cow<'a, [u8]>,
+        preferred: &[PixelDescriptor],
+    ) -> Result<WebpStreamingDecoder, At<DecodeError>> {
+        if let Some(max) = self.effective_input_size_limit()
+            && data.len() as u64 > max
+        {
+            return Err(at!(DecodeError::InvalidParameter(alloc::format!(
+                "input size {} exceeds limit {}",
+                data.len(),
+                max
+            ))));
+        }
+
+        let cfg = self.build_config();
+        let dither_strength = cfg.dithering_strength;
+
+        // Determine bpp from preferred list
+        let has_alpha_preferred = preferred.contains(&PixelDescriptor::RGBA8_SRGB)
+            || preferred.contains(&PixelDescriptor::BGRA8_SRGB);
+        let default_bpp: usize = if has_alpha_preferred { 4 } else { 3 };
+
+        // Parse RIFF/WebP container
+        let data_ref: &[u8] = &data;
+        if data_ref.len() < 20 {
+            return Err(at!(DecodeError::NotEnoughInitData));
+        }
+        if &data_ref[..4] != b"RIFF" {
+            let mut sig = [0u8; 4];
+            sig.copy_from_slice(&data_ref[..4]);
+            return Err(at!(DecodeError::RiffSignatureInvalid(sig)));
+        }
+        if &data_ref[8..12] != b"WEBP" {
+            let mut sig = [0u8; 4];
+            sig.copy_from_slice(&data_ref[8..12]);
+            return Err(at!(DecodeError::WebpSignatureInvalid(sig)));
+        }
+
+        let first_chunk = &data_ref[12..16];
+
+        match first_chunk {
+            b"VP8 " => {
+                let chunk_size =
+                    u32::from_le_bytes([data_ref[16], data_ref[17], data_ref[18], data_ref[19]])
+                        as usize;
+                let vp8_start = 20;
+                let vp8_end = (vp8_start + chunk_size).min(data_ref.len());
+                let vp8_data = &data_ref[vp8_start..vp8_end];
+
+                // Probe info for the trait
+                let native_info = crate::ImageInfo::from_webp(data_ref).ok();
+                let info = if let Some(ref ni) = native_info {
+                    to_image_info(ni, None)
+                } else {
+                    // Fallback: will be populated after header parse
+                    ImageInfo::new(0, 0, ImageFormat::WebP)
+                };
+
+                WebpStreamingDecoder::new(
+                    vp8_data,
+                    None,
+                    default_bpp,
+                    preferred,
+                    info,
+                    dither_strength,
+                )
+                .map_err(|e| at!(e))
+            }
+            b"VP8X" => {
+                use crate::mux::WebPDemuxer;
+                let demuxer = WebPDemuxer::new(data_ref).map_err(|e| {
+                    at!(DecodeError::InvalidParameter(alloc::format!(
+                        "demux error: {e}"
+                    )))
+                })?;
+
+                if demuxer.is_animated() {
+                    return Err(at!(DecodeError::UnsupportedFeature(
+                        "streaming decode does not support animation".into()
+                    )));
+                }
+
+                let frame = demuxer
+                    .frame(1)
+                    .ok_or_else(|| at!(DecodeError::ChunkMissing))?;
+
+                if !frame.is_lossy {
+                    return Err(at!(DecodeError::UnsupportedFeature(
+                        "streaming decode only supports lossy VP8, got VP8L".into()
+                    )));
+                }
+
+                // Decode alpha plane up front (it's small: width*height bytes)
+                let alpha_plane = if let Some(alpha_data) = frame.alpha_data {
+                    let native_info = crate::ImageInfo::from_webp(data_ref)?;
+                    let w = native_info.width as u16;
+                    let h = native_info.height as u16;
+                    let alpha_chunk =
+                        crate::decoder::extended::read_alpha_chunk(alpha_data, w, h)
+                            .map_err(|e| at!(e))?;
+
+                    // Apply alpha filtering to produce final alpha plane
+                    let fw = usize::from(w);
+                    let fh = usize::from(h);
+                    let mut alpha_out = alloc::vec![0u8; fw * fh];
+                    for y in 0..fh {
+                        for x in 0..fw {
+                            let predictor =
+                                crate::decoder::extended::get_alpha_predictor_from_alpha(
+                                    x,
+                                    y,
+                                    fw,
+                                    alpha_chunk.filtering_method,
+                                    &alpha_out,
+                                );
+                            let idx = y * fw + x;
+                            alpha_out[idx] = predictor.wrapping_add(alpha_chunk.data[idx]);
+                        }
+                    }
+                    Some(alpha_out)
+                } else {
+                    None
+                };
+
+                let native_info = crate::ImageInfo::from_webp(data_ref).ok();
+                let info = if let Some(ref ni) = native_info {
+                    to_image_info(ni, None)
+                } else {
+                    ImageInfo::new(0, 0, ImageFormat::WebP)
+                };
+
+                let bpp = if alpha_plane.is_some() { 4 } else { default_bpp };
+
+                WebpStreamingDecoder::new(
+                    frame.bitstream,
+                    alpha_plane,
+                    bpp,
+                    preferred,
+                    info,
+                    dither_strength,
+                )
+                .map_err(|e| at!(e))
+            }
+            b"VP8L" => Err(at!(DecodeError::UnsupportedFeature(
+                "streaming decode does not support lossless VP8L".into()
+            ))),
+            _ => Err(at!(DecodeError::UnsupportedFeature(alloc::format!(
+                "streaming decode: unsupported chunk type {:?}",
+                first_chunk
+            )))),
+        }
     }
 
     fn push_decoder(
@@ -1565,6 +1710,184 @@ impl zencodec::decode::Decode for WebpDecoder<'_> {
         let info = output.info().clone();
         let pixels = negotiate_format(output.into_buffer(), &self.preferred);
         Ok(DecodeOutput::new(pixels, info))
+    }
+}
+
+// ── Streaming Decoder ─────────────────────────────────────────────────────
+
+/// Streaming WebP decoder yielding RGB/RGBA strips per MB row.
+///
+/// Each [`next_batch()`](zencodec::decode::StreamingDecode::next_batch) call
+/// decodes one macroblock row (up to 16 Y rows) and returns the visible
+/// pixel rows as a [`PixelSlice`]. Peak memory is bounded by the input data
+/// plus the row cache (~100 KB for 4K) plus the strip buffer (~150 KB for
+/// 4K RGBA), instead of the full-frame RGB allocation.
+///
+/// Only supports lossy VP8 (simple and VP8X extended, with alpha). Lossless
+/// VP8L and animation are not supported via streaming decode.
+pub struct WebpStreamingDecoder {
+    /// VP8 decoder context (owns row cache and decode state).
+    ctx: crate::decoder::vp8v2::DecoderContext,
+    /// Reusable strip buffer for RGB/RGBA output.
+    strip_buf: Vec<u8>,
+    /// Current MB row index (0-based, incremented after each next_batch).
+    current_mby: usize,
+    /// Total MB row count.
+    mbheight: usize,
+    /// Visible pixel width.
+    width: u32,
+    /// Visible pixel height.
+    height: u32,
+    /// Bytes per pixel (3 for RGB, 4 for RGBA).
+    bpp: usize,
+    /// Pixel descriptor for the output.
+    descriptor: PixelDescriptor,
+    /// Maximum rows per strip (up to 16 + extra_y_rows for the last MB row).
+    max_strip_rows: usize,
+    /// Image info for the trait.
+    info: Arc<ImageInfo>,
+    /// Decoded alpha plane (if VP8X with alpha). Applied per-strip.
+    alpha_plane: Option<Vec<u8>>,
+}
+
+impl WebpStreamingDecoder {
+    /// Construct a streaming decoder from parsed VP8 data.
+    ///
+    /// `vp8_data` is the raw VP8 bitstream (after container parsing).
+    /// `alpha_data` is the optional alpha chunk (already decompressed into a plane).
+    fn new(
+        vp8_data: &[u8],
+        alpha_plane: Option<Vec<u8>>,
+        bpp: usize,
+        preferred: &[PixelDescriptor],
+        info: ImageInfo,
+        dither_strength: u8,
+    ) -> Result<Self, DecodeError> {
+        let mut ctx =
+            crate::decoder::vp8v2::DecoderContext::new().with_dithering_strength(dither_strength);
+        ctx.read_frame_header(vp8_data)?;
+
+        let width = ctx.width();
+        let height = ctx.height();
+        let mbheight = usize::from(ctx.mbheight());
+        let extra_y_rows = ctx.extra_y_rows();
+
+        // Check that extra_y_rows >= 2 for streaming (fancy upsampling)
+        if extra_y_rows < 2 {
+            // Fallback: for no-filter case, streaming is not supported.
+            // This is extremely rare (very high quality / filter disabled).
+            return Err(DecodeError::UnsupportedFeature(
+                "streaming decode requires filter (extra_y_rows >= 2)".into(),
+            ));
+        }
+
+        ctx.init_streaming_uv_buffers();
+
+        // Determine output format
+        let has_alpha = alpha_plane.is_some();
+        let effective_bpp = if has_alpha { 4 } else { bpp };
+        let mut descriptor = if has_alpha {
+            PixelDescriptor::RGBA8_SRGB
+        } else if effective_bpp == 4 {
+            PixelDescriptor::RGBA8_SRGB
+        } else {
+            PixelDescriptor::RGB8_SRGB
+        };
+
+        // Apply BGRA negotiation
+        if !preferred.is_empty()
+            && preferred.contains(&PixelDescriptor::BGRA8_SRGB)
+            && descriptor == PixelDescriptor::RGBA8_SRGB
+        {
+            descriptor = PixelDescriptor::BGRA8_SRGB;
+        }
+
+        // Max strip rows: last MB row may emit extra_y_rows + 16 rows.
+        // For the first row of a single-row image, it's 16.
+        let max_strip_rows = if mbheight == 1 { 16 } else { extra_y_rows + 16 };
+        let strip_buf_size = usize::from(width) * max_strip_rows * effective_bpp;
+        let strip_buf = alloc::vec![0u8; strip_buf_size];
+
+        Ok(Self {
+            ctx,
+            strip_buf,
+            current_mby: 0,
+            mbheight,
+            width: u32::from(width),
+            height: u32::from(height),
+            bpp: effective_bpp,
+            descriptor,
+            max_strip_rows,
+            info: Arc::new(info),
+            alpha_plane,
+        })
+    }
+}
+
+impl zencodec::decode::StreamingDecode for WebpStreamingDecoder {
+    type Error = At<DecodeError>;
+
+    fn next_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, At<DecodeError>> {
+        if self.current_mby >= self.mbheight {
+            return Ok(None);
+        }
+
+        let mby = self.current_mby;
+        let (y_start, num_rows) = self
+            .ctx
+            .decode_strip_mb_row(mby, &mut self.strip_buf, self.bpp)
+            .map_err(|e| at!(DecodeError::from(e)))?;
+
+        self.current_mby += 1;
+
+        if num_rows == 0 {
+            return Ok(None);
+        }
+
+        let width = self.width as usize;
+        let row_bytes = width * self.bpp;
+        let strip_bytes = num_rows * row_bytes;
+
+        // Apply alpha plane if present
+        if let Some(ref alpha) = self.alpha_plane {
+            if self.bpp == 4 {
+                let fw = width;
+                for row in 0..num_rows {
+                    let img_y = y_start + row;
+                    if img_y >= self.height as usize {
+                        break;
+                    }
+                    for x in 0..fw {
+                        let alpha_index = img_y * fw + x;
+                        let strip_index = row * row_bytes + x * 4 + 3;
+                        if alpha_index < alpha.len() && strip_index < self.strip_buf.len() {
+                            self.strip_buf[strip_index] = alpha[alpha_index];
+                        }
+                    }
+                }
+            }
+        }
+
+        // Apply RGBA→BGRA swizzle if negotiated
+        if self.descriptor == PixelDescriptor::BGRA8_SRGB {
+            let strip_data = &mut self.strip_buf[..strip_bytes];
+            let _ = garb::bytes::rgba_to_bgra_inplace(strip_data);
+        }
+
+        let slice = PixelSlice::new(
+            &self.strip_buf[..strip_bytes],
+            self.width,
+            num_rows as u32,
+            row_bytes,
+            self.descriptor,
+        )
+        .map_err(|_| at!(DecodeError::InvalidParameter("strip slice mismatch".into())))?;
+
+        Ok(Some((y_start as u32, slice)))
+    }
+
+    fn info(&self) -> &ImageInfo {
+        &self.info
     }
 }
 
@@ -2147,7 +2470,7 @@ mod tests {
         assert!(!caps.hdr());
         assert!(!caps.native_16bit());
         assert!(!caps.decode_into());
-        assert!(!caps.streaming());
+        assert!(caps.streaming());
     }
 
     #[test]
@@ -2405,5 +2728,177 @@ mod tests {
             caps.enforces_max_input_bytes(),
             "decode capabilities should report enforces_max_input_bytes since effective_input_size_limit is checked"
         );
+    }
+
+    #[test]
+    fn streaming_decode_basic() {
+        use zencodec::decode::StreamingDecode;
+
+        // Encode a small test image
+        let buf = make_rgb8_pixels(64, 64);
+        let enc = WebpEncoderConfig::lossy().with_quality(90.0);
+        let output = enc.job().encoder().unwrap().encode(buf.as_slice()).unwrap();
+
+        // Stream decode
+        let dec = WebpDecoderConfig::new();
+        let mut stream = dec
+            .job()
+            .streaming_decoder(Cow::Borrowed(output.data()), &[])
+            .unwrap();
+
+        let info = stream.info();
+        assert_eq!(info.width, 64);
+        assert_eq!(info.height, 64);
+
+        let mut total_rows = 0u32;
+        let mut last_y = 0u32;
+        while let Some((y, strip)) = stream.next_batch().unwrap() {
+            assert!(strip.rows() > 0, "strip should have rows");
+            assert_eq!(strip.width(), 64);
+            if total_rows > 0 {
+                assert!(
+                    y > last_y,
+                    "y offsets should increase: got {y} after {last_y}"
+                );
+            }
+            last_y = y;
+            total_rows += strip.rows();
+        }
+        assert_eq!(total_rows, 64, "should have decoded all 64 rows");
+
+        // Should return None when done
+        assert!(stream.next_batch().unwrap().is_none());
+    }
+
+    #[test]
+    fn streaming_decode_matches_oneshot() {
+        use zencodec::decode::{Decode, StreamingDecode};
+
+        // Encode a test image
+        let buf = make_rgb8_pixels(48, 48);
+        let enc = WebpEncoderConfig::lossy().with_quality(75.0);
+        let output = enc.job().encoder().unwrap().encode(buf.as_slice()).unwrap();
+        let data = output.data();
+
+        // One-shot decode (reference)
+        let dec = WebpDecoderConfig::new();
+        let oneshot = dec
+            .clone()
+            .job()
+            .decoder(Cow::Borrowed(data), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+        let oneshot_buf = oneshot.into_buffer();
+        let oneshot_rows = oneshot_buf.height();
+        let oneshot_width = oneshot_buf.width();
+        let bpp = oneshot_buf.descriptor().bytes_per_pixel();
+
+        // Streaming decode — request the same format as oneshot
+        let mut stream = dec
+            .job()
+            .streaming_decoder(Cow::Borrowed(data), &[])
+            .unwrap();
+
+        let mut assembled =
+            alloc::vec![0u8; oneshot_width as usize * oneshot_rows as usize * bpp];
+        while let Some((y, strip)) = stream.next_batch().unwrap() {
+            let y = y as usize;
+            let row_bytes = oneshot_width as usize * bpp;
+            for row in 0..strip.rows() as usize {
+                let src = strip.row(row as u32);
+                let dst_start = (y + row) * row_bytes;
+                assembled[dst_start..dst_start + row_bytes].copy_from_slice(src);
+            }
+        }
+
+        // Compare pixel-by-pixel
+        let reference = oneshot_buf.into_vec();
+        assert_eq!(
+            assembled.len(),
+            reference.len(),
+            "buffer sizes should match"
+        );
+        assert_eq!(assembled, reference, "streaming and oneshot should produce identical pixels");
+    }
+
+    #[test]
+    fn streaming_decode_large_image() {
+        use zencodec::decode::StreamingDecode;
+
+        // Encode a larger image to exercise multiple MB rows
+        let buf = make_rgb8_pixels(128, 96);
+        let enc = WebpEncoderConfig::lossy().with_quality(80.0);
+        let output = enc.job().encoder().unwrap().encode(buf.as_slice()).unwrap();
+
+        let dec = WebpDecoderConfig::new();
+        let mut stream = dec
+            .job()
+            .streaming_decoder(Cow::Borrowed(output.data()), &[])
+            .unwrap();
+
+        let mut total_rows = 0u32;
+        let mut batch_count = 0u32;
+        while let Some((_y, strip)) = stream.next_batch().unwrap() {
+            total_rows += strip.rows();
+            batch_count += 1;
+        }
+        assert_eq!(total_rows, 96);
+        // 96 / 16 = 6 MB rows, but delayed output means different batch count
+        assert!(batch_count >= 1, "should have at least one batch");
+    }
+
+    #[test]
+    fn streaming_decode_rejects_lossless() {
+        // Encode a lossless image
+        let buf = make_rgba8_pixels(8, 8);
+        let enc = WebpEncoderConfig::lossless();
+        let output = enc.job().encoder().unwrap().encode(buf.as_slice()).unwrap();
+
+        let dec = WebpDecoderConfig::new();
+        let result = dec
+            .job()
+            .streaming_decoder(Cow::Borrowed(output.data()), &[]);
+        assert!(result.is_err(), "lossless should be rejected for streaming");
+    }
+
+    #[test]
+    fn streaming_decode_with_alpha() {
+        use zencodec::decode::StreamingDecode;
+
+        // Encode RGBA image
+        let buf = make_rgba8_pixels(32, 32);
+        let enc = WebpEncoderConfig::lossy().with_quality(90.0);
+        let output = enc.job().encoder().unwrap().encode(buf.as_slice()).unwrap();
+
+        // Check if it has alpha
+        let native_info = crate::ImageInfo::from_webp(output.data()).unwrap();
+
+        if native_info.has_alpha {
+            let dec = WebpDecoderConfig::new();
+            let mut stream = dec
+                .job()
+                .streaming_decoder(
+                    Cow::Borrowed(output.data()),
+                    &[PixelDescriptor::RGBA8_SRGB],
+                )
+                .unwrap();
+
+            let info = stream.info();
+            assert_eq!(info.width, 32);
+
+            let mut total_rows = 0u32;
+            while let Some((_y, strip)) = stream.next_batch().unwrap() {
+                // RGBA: 4 bytes per pixel
+                let expected_row_bytes = 32 * 4;
+                assert_eq!(
+                    strip.row(0).len(),
+                    expected_row_bytes,
+                    "should be 4bpp RGBA"
+                );
+                total_rows += strip.rows();
+            }
+            assert_eq!(total_rows, 32);
+        }
     }
 }

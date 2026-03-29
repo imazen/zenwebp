@@ -153,7 +153,7 @@ mod codec;
 #[cfg(feature = "zencodec")]
 pub use codec::{
     WebpAnimationFrameDecoder, WebpAnimationFrameEncoder, WebpDecodeJob, WebpDecoder,
-    WebpDecoderConfig, WebpEncodeJob, WebpEncoder, WebpEncoderConfig,
+    WebpDecoderConfig, WebpEncodeJob, WebpEncoder, WebpEncoderConfig, WebpStreamingDecoder,
 };
 
 // zennode node definitions

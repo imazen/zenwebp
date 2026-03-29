@@ -196,6 +196,60 @@ pub(crate) fn get_alpha_predictor(
     }
 }
 
+/// Same as [`get_alpha_predictor`] but reads from a standalone alpha plane
+/// (one byte per pixel) instead of an RGBA interleaved buffer.
+pub(crate) fn get_alpha_predictor_from_alpha(
+    x: usize,
+    y: usize,
+    width: usize,
+    filtering_method: FilteringMethod,
+    alpha_plane: &[u8],
+) -> u8 {
+    match filtering_method {
+        FilteringMethod::None => 0,
+        FilteringMethod::Horizontal => {
+            if x == 0 && y == 0 {
+                0
+            } else if x == 0 {
+                alpha_plane[(y - 1) * width + x]
+            } else {
+                alpha_plane[y * width + x - 1]
+            }
+        }
+        FilteringMethod::Vertical => {
+            if x == 0 && y == 0 {
+                0
+            } else if y == 0 {
+                alpha_plane[y * width + x - 1]
+            } else {
+                alpha_plane[(y - 1) * width + x]
+            }
+        }
+        FilteringMethod::Gradient => {
+            let (left, top, top_left) = match (x, y) {
+                (0, 0) => (0, 0, 0),
+                (0, y) => {
+                    let val = alpha_plane[(y - 1) * width + x];
+                    (val, val, val)
+                }
+                (x, 0) => {
+                    let val = alpha_plane[y * width + x - 1];
+                    (val, val, val)
+                }
+                (x, y) => {
+                    let left = alpha_plane[y * width + x - 1];
+                    let top = alpha_plane[(y - 1) * width + x];
+                    let top_left = alpha_plane[(y - 1) * width + x - 1];
+                    (left, top, top_left)
+                }
+            };
+
+            let combination = i16::from(left) + i16::from(top) - i16::from(top_left);
+            i16::clamp(combination, 0, 255).try_into().unwrap()
+        }
+    }
+}
+
 pub(crate) fn read_extended_header(
     reader: &mut SliceReader,
 ) -> Result<WebPExtendedInfo, DecodeError> {
