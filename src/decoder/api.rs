@@ -295,8 +295,9 @@ pub struct DecodeConfig {
     /// Decode limits for dimensions, memory, frame count, etc.
     pub limits: super::limits::Limits,
 
-    /// Chroma dithering strength for lossy decoding (0-100, 0=off). Default: 50.
+    /// Chroma dithering strength for lossy decoding (0-100, 0=off). Default: 0.
     /// Adds noise to U/V planes to hide banding at low quality settings.
+    /// libwebp defaults to 0 in both simple and advanced APIs.
     pub dithering_strength: u8,
 }
 
@@ -305,7 +306,7 @@ impl Default for DecodeConfig {
         Self {
             upsampling: UpsamplingMethod::Bilinear,
             limits: super::limits::Limits::default(),
-            dithering_strength: 50,
+            dithering_strength: 0,
         }
     }
 }
@@ -346,7 +347,7 @@ impl DecodeConfig {
         self
     }
 
-    /// Set chroma dithering strength (0=off, 100=max). Default: 50.
+    /// Set chroma dithering strength (0=off, 100=max). Default: 0.
     ///
     /// Adds random noise to U/V chroma planes after loop filtering to hide
     /// banding artifacts from coarse chroma quantization at low quality settings.
@@ -658,7 +659,7 @@ impl<'a> DecodeRequest<'a> {
 pub(crate) struct WebPDecodeOptions {
     /// The upsampling method used in conversion from lossy yuv to rgb
     pub lossy_upsampling: UpsamplingMethod,
-    /// Chroma dithering strength (0=off, 100=max). Default: 50.
+    /// Chroma dithering strength (0=off, 100=max). Default: 0.
     pub dithering_strength: u8,
 }
 
@@ -666,7 +667,7 @@ impl Default for WebPDecodeOptions {
     fn default() -> Self {
         Self {
             lossy_upsampling: UpsamplingMethod::Bilinear,
-            dithering_strength: 50,
+            dithering_strength: 0,
         }
     }
 }

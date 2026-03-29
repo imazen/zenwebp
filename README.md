@@ -137,7 +137,7 @@ let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode
 | Crop during decode | :x: | :white_check_mark: |
 | Scale during decode | :x: | :white_check_mark: |
 | 2-thread decode pipeline (reconstruct + filter overlap) | :x: | :white_check_mark: width >= 512 |
-| Chroma dithering (hides banding at high Q) | :white_check_mark: default 50 | :white_check_mark: default 50 |
+| Chroma dithering (hides banding at high Q) | :white_check_mark: default off | :white_check_mark: default off |
 | Memory limits | :white_check_mark: | :x: |
 
 ### Encoder (Lossy VP8)

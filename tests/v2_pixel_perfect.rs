@@ -26,9 +26,8 @@ use zenwebp::{DecodeConfig, DecodeRequest, EncodeRequest, EncoderConfig, PixelLa
 // ---------------------------------------------------------------------------
 
 /// Decode WebP bytes with zenwebp decoder, returning RGBA.
-/// Disables dithering for pixel-perfect comparison against libwebp.
 fn decode_with_zenwebp(webp_data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
-    let config = DecodeConfig::default().with_dithering_strength(0);
+    let config = DecodeConfig::default();
     let (rgba, w, h) = DecodeRequest::new(&config, webp_data)
         .decode_rgba()
         .map_err(|e| format!("zenwebp decode failed: {e}"))?;

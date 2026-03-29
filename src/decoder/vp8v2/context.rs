@@ -152,7 +152,7 @@ impl DecoderContext {
             prev_last_u_row: Vec::new(),
             prev_last_v_row: Vec::new(),
 
-            dither_strength: 50,
+            dither_strength: 0,
             dither_enabled: false,
             dither_rg: VP8Random::new(),
             dither_amp: [0; MAX_SEGMENTS],
