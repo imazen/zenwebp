@@ -356,14 +356,17 @@ fn test_scraped_webp_corpus() {
                     mismatch_files.push((short, max_diff, diff_count));
                 }
             }
-            (None, None) => both_fail += 1,
+            (None, None) => {
+                both_fail += 1;
+                eprintln!("  BOTH FAIL: {}", path.display());
+            }
             (None, Some(_)) => {
                 zen_only_fail += 1;
                 eprintln!("  ZEN FAIL: {}", path.display());
             }
             (Some(_), None) => {
                 lib_only_fail += 1;
-                // zenwebp decoded something libwebp couldn't — interesting but not an error
+                eprintln!("  LIB FAIL: {}", path.display());
             }
         }
 
