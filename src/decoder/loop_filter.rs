@@ -4031,6 +4031,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_normal_h_filter32_inner_matches_two_16() {
         let Some(token) = X64V3Token::summon() else {
             eprintln!("AVX2 not available, skipping test");
@@ -4105,6 +4106,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_normal_h_filter32_edge_matches_two_16() {
         let Some(token) = X64V3Token::summon() else {
             eprintln!("AVX2 not available, skipping test");
