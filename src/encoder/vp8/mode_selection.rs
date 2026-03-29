@@ -128,7 +128,7 @@ fn evaluate_i4_modes_sse2(
             for (idx, val) in dq.iter_mut().enumerate() {
                 *val = y1_matrix.dequantize(*val, idx);
             }
-            transform::idct4x4(&mut dq);
+            crate::common::transform::idct4x4_sse2(_token, &mut dq);
             (nz, dq)
         } else {
             // Fused quantize+dequantize using direct SIMD call
@@ -146,23 +146,12 @@ fn evaluate_i4_modes_sse2(
                 let j = ZIGZAG[n] as usize;
                 quantized_zigzag[n] = quantized_natural[j];
             }
-            // IDCT the dequantized values
-            transform::idct4x4(&mut dequant_natural);
+            // IDCT the dequantized values (direct sse2, skip token re-summon)
+            crate::common::transform::idct4x4_sse2(_token, &mut dequant_natural);
             (nz, dequant_natural)
         };
 
-        // Get coefficient cost using direct SIMD call
-        let ctx0 = (nz_top as usize) + (nz_left as usize);
-        let res = Residual::new(&quantized_zigzag, 3, 0); // CTYPE_I4_AC=3, first=0
-        let coeff_cost = crate::encoder::residual_cost::get_residual_cost_sse2(
-            _token,
-            ctx0,
-            &res,
-            level_costs,
-            probs,
-        );
-
-        // Compute SSE using direct SIMD call
+        // Compute SSE using direct SIMD call (cheap, needed for early exit)
         let sse = crate::common::simd_sse::sse4x4_with_residual_sse2(
             _token,
             src_block,
@@ -170,16 +159,8 @@ fn evaluate_i4_modes_sse2(
             &dequantized,
         );
 
-        // Early exit: if base RD score already exceeds best, skip extras
-        let mode_cost = mode_costs[mode_idx];
-        let base_rd_score =
-            crate::encoder::cost::rd_score_full(sse, 0, mode_cost, coeff_cost, lambda_i4) as u64;
-        if base_rd_score >= best_block_score {
-            continue;
-        }
-
-        // Flatness penalty for non-DC modes
-        let flatness_penalty = if mode_idx > 0 {
+        // Flatness penalty for non-DC modes (cheap SIMD check)
+        let flatness_penalty: u32 = if mode_idx > 0 {
             let levels_i16: [i16; 16] = core::array::from_fn(|k| quantized_zigzag[k] as i16);
             if crate::encoder::cost::distortion::is_flat_coeffs_sse2(
                 _token,
@@ -194,6 +175,38 @@ fn evaluate_i4_modes_sse2(
         } else {
             0
         };
+
+        // Early exit #1 (libwebp-style): check score WITHOUT coefficient cost.
+        // Since coeff_cost >= 0 and spectral_disto >= 0, the actual score can
+        // only be >= this lower bound. Skip expensive residual_cost if hopeless.
+        let mode_cost = mode_costs[mode_idx];
+        let lower_bound =
+            crate::encoder::cost::rd_score_full(sse, 0, mode_cost, flatness_penalty, lambda_i4)
+                as u64;
+        if lower_bound >= best_block_score {
+            continue;
+        }
+
+        // Get coefficient cost using direct SIMD call (expensive)
+        let ctx0 = (nz_top as usize) + (nz_left as usize);
+        let res = Residual::new(&quantized_zigzag, 3, 0); // CTYPE_I4_AC=3, first=0
+        let coeff_cost = crate::encoder::residual_cost::get_residual_cost_sse2(
+            _token,
+            ctx0,
+            &res,
+            level_costs,
+            probs,
+        );
+
+        // Early exit #2: check with coefficient cost but without spectral/psy.
+        // Skip spectral distortion and psy-rd computation if already losing.
+        let total_rate_cost = coeff_cost + flatness_penalty;
+        let base_rd_score =
+            crate::encoder::cost::rd_score_full(sse, 0, mode_cost, total_rate_cost, lambda_i4)
+                as u64;
+        if base_rd_score >= best_block_score {
+            continue;
+        }
 
         // Spectral distortion + psy-rd
         let (spectral_disto, psy_cost) = if tlambda > 0 || psy_config.psy_rd_strength > 0 {
@@ -226,7 +239,6 @@ fn evaluate_i4_modes_sse2(
         };
 
         // Final RD score
-        let total_rate_cost = coeff_cost + flatness_penalty as u32;
         let rd_score = crate::encoder::cost::rd_score_full(
             sse,
             spectral_disto + psy_cost,
@@ -361,18 +373,7 @@ fn evaluate_i4_modes_wasm(
             (nz, dequant_natural)
         };
 
-        // Get coefficient cost using direct SIMD call
-        let ctx0 = (nz_top as usize) + (nz_left as usize);
-        let res = Residual::new(&quantized_zigzag, 3, 0); // CTYPE_I4_AC=3, first=0
-        let coeff_cost = crate::encoder::residual_cost::get_residual_cost_wasm(
-            _token,
-            ctx0,
-            &res,
-            level_costs,
-            probs,
-        );
-
-        // Compute SSE using direct SIMD call
+        // Compute SSE using direct SIMD call (cheap, needed for early exit)
         let sse = crate::common::simd_wasm::sse4x4_with_residual_wasm(
             _token,
             src_block,
@@ -380,16 +381,8 @@ fn evaluate_i4_modes_wasm(
             &dequantized,
         );
 
-        // Early exit: if base RD score already exceeds best, skip extras
-        let mode_cost = mode_costs[mode_idx];
-        let base_rd_score =
-            crate::encoder::cost::rd_score_full(sse, 0, mode_cost, coeff_cost, lambda_i4) as u64;
-        if base_rd_score >= best_block_score {
-            continue;
-        }
-
-        // Flatness penalty for non-DC modes
-        let flatness_penalty = if mode_idx > 0 {
+        // Flatness penalty for non-DC modes (cheap SIMD check)
+        let flatness_penalty: u32 = if mode_idx > 0 {
             let levels_i16: [i16; 16] = core::array::from_fn(|k| quantized_zigzag[k] as i16);
             if crate::common::simd_wasm::is_flat_coeffs_wasm(
                 _token,
@@ -404,6 +397,38 @@ fn evaluate_i4_modes_wasm(
         } else {
             0
         };
+
+        // Early exit #1 (libwebp-style): check score WITHOUT coefficient cost.
+        // Since coeff_cost >= 0 and spectral_disto >= 0, the actual score can
+        // only be >= this lower bound. Skip expensive residual_cost if hopeless.
+        let mode_cost = mode_costs[mode_idx];
+        let lower_bound =
+            crate::encoder::cost::rd_score_full(sse, 0, mode_cost, flatness_penalty, lambda_i4)
+                as u64;
+        if lower_bound >= best_block_score {
+            continue;
+        }
+
+        // Get coefficient cost using direct SIMD call (expensive)
+        let ctx0 = (nz_top as usize) + (nz_left as usize);
+        let res = Residual::new(&quantized_zigzag, 3, 0); // CTYPE_I4_AC=3, first=0
+        let coeff_cost = crate::encoder::residual_cost::get_residual_cost_wasm(
+            _token,
+            ctx0,
+            &res,
+            level_costs,
+            probs,
+        );
+
+        // Early exit #2: check with coefficient cost but without spectral/psy.
+        // Skip spectral distortion and psy-rd computation if already losing.
+        let total_rate_cost = coeff_cost + flatness_penalty;
+        let base_rd_score =
+            crate::encoder::cost::rd_score_full(sse, 0, mode_cost, total_rate_cost, lambda_i4)
+                as u64;
+        if base_rd_score >= best_block_score {
+            continue;
+        }
 
         // Spectral distortion + psy-rd
         let (spectral_disto, psy_cost) = if tlambda > 0 || psy_config.psy_rd_strength > 0 {
@@ -436,7 +461,6 @@ fn evaluate_i4_modes_wasm(
         };
 
         // Final RD score
-        let total_rate_cost = coeff_cost + flatness_penalty as u32;
         let rd_score = crate::encoder::cost::rd_score_full(
             sse,
             spectral_disto + psy_cost,
@@ -1797,9 +1821,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 (nz, dequant_natural)
             };
 
-            let (coeff_cost_val, _) =
-                get_cost_luma4(&quantized_zigzag, nz_top, nz_left, &self.level_costs, probs);
-
+            // Compute SSE (cheap, needed for early exit)
             #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
             let sse = crate::common::simd_sse::sse4x4_with_residual(src_block, pred, &dequantized);
             #[cfg(target_arch = "aarch64")]
@@ -1850,15 +1872,8 @@ impl<'a> super::Vp8Encoder<'a> {
                 sum
             };
 
-            let mode_cost = mode_costs[mode_idx];
-            let base_rd_score =
-                crate::encoder::cost::rd_score_full(sse, 0, mode_cost, coeff_cost_val, lambda_i4)
-                    as u64;
-            if base_rd_score >= *best_block_score {
-                continue;
-            }
-
-            let flatness_penalty = if mode_idx > 0 {
+            // Flatness penalty for non-DC modes (cheap check)
+            let flatness_penalty: u32 = if mode_idx > 0 {
                 let levels_i16: [i16; 16] = core::array::from_fn(|k| quantized_zigzag[k] as i16);
                 if is_flat_coeffs(&levels_i16, 1, FLATNESS_LIMIT_I4) {
                     FLATNESS_PENALTY
@@ -1868,6 +1883,30 @@ impl<'a> super::Vp8Encoder<'a> {
             } else {
                 0
             };
+
+            // Early exit #1 (libwebp-style): check score WITHOUT coefficient cost.
+            // Since coeff_cost >= 0 and spectral_disto >= 0, the actual score can
+            // only be >= this lower bound. Skip expensive residual_cost if hopeless.
+            let mode_cost = mode_costs[mode_idx];
+            let lower_bound =
+                crate::encoder::cost::rd_score_full(sse, 0, mode_cost, flatness_penalty, lambda_i4)
+                    as u64;
+            if lower_bound >= *best_block_score {
+                continue;
+            }
+
+            // Compute coefficient cost (expensive)
+            let (coeff_cost_val, _) =
+                get_cost_luma4(&quantized_zigzag, nz_top, nz_left, &self.level_costs, probs);
+
+            // Early exit #2: check with coefficient cost but without spectral/psy.
+            let total_rate_cost = coeff_cost_val + flatness_penalty;
+            let base_rd_score =
+                crate::encoder::cost::rd_score_full(sse, 0, mode_cost, total_rate_cost, lambda_i4)
+                    as u64;
+            if base_rd_score >= *best_block_score {
+                continue;
+            }
 
             let (spectral_disto, psy_cost_val) = if tlambda > 0
                 || segment.psy_config.psy_rd_strength > 0
@@ -1894,7 +1933,6 @@ impl<'a> super::Vp8Encoder<'a> {
                 (0, 0)
             };
 
-            let total_rate_cost = coeff_cost_val + flatness_penalty as u32;
             let rd_score = crate::encoder::cost::rd_score_full(
                 sse,
                 spectral_disto + psy_cost_val,
