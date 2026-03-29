@@ -1,6 +1,6 @@
 # zenwebp Performance Analysis
 
-Comprehensive performance comparison against libwebp (C) and image-webp (pure Rust).
+Performance comparison against libwebp (C reference implementation).
 All benchmarks use runtime SIMD dispatch (no `-C target-cpu=native`).
 
 Last updated: 2026-03-26.
@@ -20,11 +20,11 @@ Compression at parity (1.00-1.01x). 24/24 pixel-exact roundtrips verified.
 
 ### Lossless Decode
 
-| Image | zenwebp | libwebp C | image-webp | zen/lib |
-|-------|---------|-----------|------------|---------|
-| photo 512x512 | 101 MPix/s | 107 MPix/s | 104 MPix/s | **0.94x (faster)** |
-| codec_wiki 2560x1664 | 202 MPix/s | 495 MPix/s | 191 MPix/s | 2.45x → **1.31x** |
-| terminal 1646x1062 | 541 MPix/s | 779 MPix/s | 483 MPix/s | 1.44x → **1.23x** |
+| Image | zenwebp | libwebp C | zen/lib |
+|-------|---------|-----------|---------|
+| photo 512x512 | 101 MPix/s | 107 MPix/s | **0.94x (faster)** |
+| codec_wiki 2560x1664 | 202 MPix/s | 495 MPix/s | **1.31x** |
+| terminal 1646x1062 | 541 MPix/s | 779 MPix/s | **1.23x** |
 
 ### Lossy Decode (14-image corpus, diverse content)
 
@@ -59,7 +59,6 @@ Compression at parity (1.00-1.01x). 24/24 pixel-exact roundtrips verified.
 
 Photos: **1.14-1.35x** slower. Screenshots: **1.36-2.22x** (gap correlates with
 bits-per-pixel — low-bpp screenshots exercise loop filter/YUV more than bit reader).
-zenwebp is 2-2.5x faster than image-webp across all content types.
 
 ---
 
