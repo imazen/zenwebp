@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 
-[dependencies.image-webp]
+[dependencies.zenwebp]
 path = ".."
 
 # Prevent this from interfering with workspaces
@@ -26,9 +26,14 @@ path = "fuzz_targets/decode_still.rs"
 test = false
 doc = false
 
-
 [[bin]]
 name = "decode_animated"
 path = "fuzz_targets/decode_animated.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "decode_v2"
+path = "fuzz_targets/decode_v2.rs"
 test = false
 doc = false

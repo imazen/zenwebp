@@ -164,14 +164,17 @@ impl DecoderContext {
         let mbwidth = usize::from(self.tables.mbwidth);
         let mbheight = usize::from(self.tables.mbheight);
 
-        // Allocate full-frame Y/U/V buffers (overflow-safe)
-        let luma_w = mbwidth.checked_mul(16).expect("luma_w overflow");
-        let chroma_w = mbwidth.checked_mul(8).expect("chroma_w overflow");
+        // Allocate full-frame Y/U/V buffers (overflow → error, not panic)
+        let luma_w = mbwidth.checked_mul(16)
+            .ok_or(InternalDecodeError::BitStreamError)?;
+        let chroma_w = mbwidth.checked_mul(8)
+            .ok_or(InternalDecodeError::BitStreamError)?;
         let chroma_h = mbheight.checked_mul(8).and_then(|n| n.checked_add(1))
-            .expect("chroma_h overflow"); // +1 for bilinear interpolation
+            .ok_or(InternalDecodeError::BitStreamError)?;
         let ybuf_len = mbheight.checked_mul(16).and_then(|n| n.checked_mul(luma_w))
-            .expect("ybuf_len overflow");
-        let uvbuf_len = chroma_h.checked_mul(chroma_w).expect("uvbuf_len overflow");
+            .ok_or(InternalDecodeError::BitStreamError)?;
+        let uvbuf_len = chroma_h.checked_mul(chroma_w)
+            .ok_or(InternalDecodeError::BitStreamError)?;
 
         self.ybuf.resize(ybuf_len, 0);
         self.ubuf.resize(uvbuf_len, 0);

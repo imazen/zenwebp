@@ -186,18 +186,17 @@ impl DecoderContext {
     /// `extra_y_rows`: number of extra rows in the Y cache for filter context
     /// (8 for normal filter, 2 for simple, 0 for no filter).
     ///
-    /// # Panics
-    ///
-    /// Panics if buffer sizes overflow `usize`. This cannot happen for valid
-    /// WebP dimensions (max 16383x16383 = ~1024 MBs per axis) but is checked
-    /// as a defense-in-depth measure.
-    pub(super) fn ensure_capacity(&mut self, mbwidth: u16, mbheight: u16, extra_y_rows: usize) {
+    /// Returns `Err` if buffer sizes overflow (malicious dimensions).
+    pub(super) fn ensure_capacity(&mut self, mbwidth: u16, mbheight: u16, extra_y_rows: usize) -> Result<(), crate::decoder::api::DecodeError> {
+        use crate::decoder::api::DecodeError;
         let mbw = usize::from(mbwidth);
         let _mbh = usize::from(mbheight);
 
-        // Cache strides
-        self.cache_y_stride = mbw.checked_mul(16).expect("Y stride overflow");
-        self.cache_uv_stride = mbw.checked_mul(8).expect("UV stride overflow");
+        // Cache strides — checked to reject overflow from malicious dimensions
+        self.cache_y_stride = mbw.checked_mul(16)
+            .ok_or(DecodeError::ImageTooLarge)?;
+        self.cache_uv_stride = mbw.checked_mul(8)
+            .ok_or(DecodeError::ImageTooLarge)?;
 
         let extra_uv_rows = extra_y_rows / 2;
         let cache_y_rows = extra_y_rows + 16;
@@ -206,11 +205,11 @@ impl DecoderContext {
         let cache_y_size = cache_y_rows
             .checked_mul(self.cache_y_stride)
             .and_then(|n| n.checked_add(FILTER_PADDING_Y))
-            .expect("Y cache size overflow");
+            .ok_or(DecodeError::ImageTooLarge)?;
         let cache_uv_size = cache_uv_rows
             .checked_mul(self.cache_uv_stride)
             .and_then(|n| n.checked_add(FILTER_PADDING_UV))
-            .expect("UV cache size overflow");
+            .ok_or(DecodeError::ImageTooLarge)?;
 
         // Cache buffers: resize only grows (no fill needed — all data is
         // overwritten during prediction before it is read). Only the extra
@@ -268,6 +267,7 @@ impl DecoderContext {
 
         self.last_mbwidth = mbwidth;
         self.last_mbheight = mbheight;
+        Ok(())
     }
 }
 
@@ -294,7 +294,7 @@ mod tests {
     #[test]
     fn test_ensure_capacity_allocates() {
         let mut ctx = DecoderContext::new();
-        ctx.ensure_capacity(10, 10, 8);
+        ctx.ensure_capacity(10, 10, 8).unwrap();
 
         assert_eq!(ctx.cache_y_stride, 160);
         assert_eq!(ctx.cache_uv_stride, 80);
@@ -311,12 +311,12 @@ mod tests {
     #[test]
     fn test_ensure_capacity_reuses_allocation() {
         let mut ctx = DecoderContext::new();
-        ctx.ensure_capacity(10, 10, 8);
+        ctx.ensure_capacity(10, 10, 8).unwrap();
         let y_ptr = ctx.cache_y.as_ptr();
         let y_cap = ctx.cache_y.capacity();
 
         // Same dimensions: should reuse allocation
-        ctx.ensure_capacity(10, 10, 8);
+        ctx.ensure_capacity(10, 10, 8).unwrap();
         assert_eq!(ctx.cache_y.as_ptr(), y_ptr);
         assert_eq!(ctx.cache_y.capacity(), y_cap);
     }
@@ -324,10 +324,10 @@ mod tests {
     #[test]
     fn test_ensure_capacity_grows() {
         let mut ctx = DecoderContext::new();
-        ctx.ensure_capacity(10, 10, 8);
+        ctx.ensure_capacity(10, 10, 8).unwrap();
         let small_len = ctx.cache_y.len();
 
-        ctx.ensure_capacity(20, 20, 8);
+        ctx.ensure_capacity(20, 20, 8).unwrap();
         assert!(ctx.cache_y.len() > small_len);
         assert_eq!(ctx.cache_y_stride, 320);
     }
@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn test_ensure_capacity_no_filter() {
         let mut ctx = DecoderContext::new();
-        ctx.ensure_capacity(10, 10, 0);
+        ctx.ensure_capacity(10, 10, 0).unwrap();
 
         // With extra_y_rows=0: cache is just 16 rows + padding
         let expected_y = 16 * 160 + FILTER_PADDING_Y;

@@ -127,7 +127,7 @@ impl DecoderContext {
             self.tables.mbwidth,
             self.tables.mbheight,
             self.tables.extra_y_rows,
-        );
+        )?;
 
         // ---- Initialize token partitions ----
         self.init_partitions(&mut r, num_partitions)?;
