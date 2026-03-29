@@ -443,3 +443,16 @@ docs/LOSSY-ENCODER-PLAN.md            -- Plan to reach <1.10x
 Three fixes: I4 early exit, residual cost loop, encode loop cleanup.
 Results: 1.47x → **1.32-1.39x** of libwebp C.
 
+
+## API Surface Audit (needs cleanup)
+
+1. `DecoderContext` is `pub` — make `pub(crate)`, it's internal
+2. `decode_rgb_v2()` / `decode_rgba_v2()` on DecodeRequest — remove, v2 is the default via `decode_rgb()`
+3. `pub use decoder::vp8` in lib.rs — only needed for TreeNode + diagnostics, not the whole module
+4. `pub mod common` — leaks internal types. Only expose what's needed.
+5. `pub mod heuristics` — likely internal
+6. `test_helpers` gamma LUT accessors — gate behind `#[cfg(test)]`
+7. MbRowEntry fields — `pub(super)` not `pub`
+8. Remove `image-webp` from dev-dependencies if no benchmarks use it anymore
+9. `AnimationFrame` from vp8v2 — should use zencodec's AnimationFrame type
+10. Consider: should `pub mod decoder` be `pub(crate) mod decoder` with only re-exports at crate root?
