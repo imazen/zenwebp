@@ -56,7 +56,7 @@ pub mod vp8;
 pub mod vp8l;
 
 // Re-export public API
-pub use analysis::{ClassifierDiag, ContentType};
+pub use analysis::{ClassifierDiag, ImageContentType};
 pub(crate) use api::EncoderParams;
 pub use api::{
     EncodeError, EncodeProgress, EncodeRequest, EncodeResult, EncodeStats, ImageMetadata,

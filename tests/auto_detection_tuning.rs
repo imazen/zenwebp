@@ -7,7 +7,7 @@
 use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
 use std::fs;
 use std::io::BufReader;
-use zenwebp::encoder::analysis::{ContentType, analyze_image, classify_image_type_diag};
+use zenwebp::encoder::analysis::{ImageContentType, analyze_image, classify_image_type_diag};
 
 fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32)> {
     let file = fs::File::open(path).ok()?;
@@ -153,12 +153,12 @@ fn classify_rgb(rgb: &[u8], w: u32, h: u32) -> zenwebp::encoder::ClassifierDiag 
     classify_image_type_diag(&y_buf, width, height, y_stride, &analysis.alpha_histogram)
 }
 
-fn ct_label(ct: ContentType) -> &'static str {
+fn ct_label(ct: ImageContentType) -> &'static str {
     match ct {
-        ContentType::Photo => "Photo",
-        ContentType::Drawing => "Draw",
-        ContentType::Text => "Text",
-        ContentType::Icon => "Icon",
+        ImageContentType::Photo => "Photo",
+        ImageContentType::Drawing => "Draw",
+        ImageContentType::Text => "Text",
+        ImageContentType::Icon => "Icon",
         _ => "Unknown",
     }
 }
@@ -167,7 +167,7 @@ fn ct_label(ct: ContentType) -> &'static str {
 #[allow(dead_code)]
 struct ImageResult {
     name: String,
-    det: ContentType,
+    det: ImageContentType,
     // zenwebp
     zen_auto_size: usize,
     zen_default_size: usize,
@@ -366,7 +366,7 @@ fn auto_detection_cid22() {
         "Image", "zen Δsz%", "zen Δss", "zen Δba", "wpx Δsz%", "wpx Δss", "wpx Δba"
     );
     for r in &results {
-        if r.det != ContentType::Photo {
+        if r.det != ImageContentType::Photo {
             continue;
         }
         let zen_size_delta = (r.zen_photo_size as f64 / r.zen_default_size as f64 - 1.0) * 100.0;

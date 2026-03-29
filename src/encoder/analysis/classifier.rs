@@ -26,7 +26,7 @@ use core::arch::aarch64::*;
 /// Detected content type for auto-preset selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum ContentType {
+pub enum ImageContentType {
     /// Natural photograph or complex texture.
     Photo,
     /// Hand or line drawing, screenshot, UI.
@@ -41,7 +41,7 @@ pub enum ContentType {
 #[derive(Debug, Clone, Copy)]
 pub struct ClassifierDiag {
     /// Detected content type.
-    pub content_type: ContentType,
+    pub content_type: ImageContentType,
     /// Fraction of alpha histogram in low quarter (0-63).
     pub low_frac: f32,
     /// Fraction of alpha histogram in high quarter (192-255).
@@ -70,7 +70,7 @@ pub fn classify_image_type(
     height: usize,
     y_stride: usize,
     alpha_histogram: &[u32; 256],
-) -> ContentType {
+) -> ImageContentType {
     classify_image_type_diag(y_src, width, height, y_stride, alpha_histogram).content_type
 }
 
@@ -85,7 +85,7 @@ pub fn classify_image_type_diag(
     // 1. Small images → Icon
     if width <= 128 && height <= 128 {
         return ClassifierDiag {
-            content_type: ContentType::Icon,
+            content_type: ImageContentType::Icon,
             low_frac: 0.0,
             high_frac: 0.0,
             is_bimodal: false,
@@ -98,7 +98,7 @@ pub fn classify_image_type_diag(
     let total: u32 = alpha_histogram.iter().sum();
     if total == 0 {
         return ClassifierDiag {
-            content_type: ContentType::Photo,
+            content_type: ImageContentType::Photo,
             low_frac: 0.0,
             high_frac: 0.0,
             is_bimodal: false,
@@ -130,9 +130,9 @@ pub fn classify_image_type_diag(
     // tested corpora (CID22, gb82-sc screenshots). Photo preset benefits images
     // with large uniform regions (screenshots, graphics, and clean photos).
     let content_type = if uniformity >= 0.45 {
-        ContentType::Photo
+        ImageContentType::Photo
     } else {
-        ContentType::Drawing // "complex content" — uses Default tuning values
+        ImageContentType::Drawing // "complex content" — uses Default tuning values
     };
 
     ClassifierDiag {
@@ -421,11 +421,11 @@ fn compute_color_uniformity(y_src: &[u8], width: usize, height: usize, y_stride:
 
 /// Get tuning parameters for a detected content type.
 /// Returns (sns_strength, filter_strength, filter_sharpness, num_segments).
-pub fn content_type_to_tuning(content_type: ContentType) -> (u8, u8, u8, u8) {
+pub fn content_type_to_tuning(content_type: ImageContentType) -> (u8, u8, u8, u8) {
     match content_type {
-        ContentType::Photo => (80, 30, 3, 4), // Photo preset: high SNS for uniform regions
-        ContentType::Drawing => (50, 60, 0, 4), // Default tuning: moderate SNS, strong filter
-        ContentType::Text => (50, 60, 0, 4),  // Default tuning (Text preset was counterproductive)
-        ContentType::Icon => (0, 0, 0, 4),    // Icon preset: no SNS, no filter
+        ImageContentType::Photo => (80, 30, 3, 4), // Photo preset: high SNS for uniform regions
+        ImageContentType::Drawing => (50, 60, 0, 4), // Default tuning: moderate SNS, strong filter
+        ImageContentType::Text => (50, 60, 0, 4),  // Default tuning (Text preset was counterproductive)
+        ImageContentType::Icon => (0, 0, 0, 4),    // Icon preset: no SNS, no filter
     }
 }

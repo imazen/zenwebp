@@ -34,7 +34,7 @@ use alloc::vec::Vec;
 
 // Re-exports
 pub use classifier::{
-    ClassifierDiag, ContentType, classify_image_type, classify_image_type_diag,
+    ClassifierDiag, ImageContentType, classify_image_type, classify_image_type_diag,
     content_type_to_tuning,
 };
 pub use histogram::{collect_histogram_bps, forward_dct_4x4};
