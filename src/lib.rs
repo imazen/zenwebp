@@ -158,7 +158,6 @@ pub use codec::{
 
 // zennode node definitions
 #[cfg(feature = "zennode")]
-pub mod zenode_defs;
 
 /// Standalone metadata convenience functions for already-encoded WebP data.
 ///
