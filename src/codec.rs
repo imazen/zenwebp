@@ -1632,6 +1632,67 @@ impl WebpDecoder<'_> {
                 .map_err(|e| DecodeError::InvalidParameter(alloc::format!("{e}")))?;
         }
 
+        // Try v2 decoder for lossy content (faster, streaming cache)
+        if let Ok(result) = self.do_decode_v2(data) {
+            return Ok(result);
+        }
+
+        // Fallback to v1 for lossless, animation, or other unsupported formats
+        self.do_decode_v1(data)
+    }
+
+    /// Decode using the v2 decoder (lossy VP8 only, with alpha support).
+    fn do_decode_v2(&self, data: &[u8]) -> Result<DecodeOutput, DecodeError> {
+        let dither_strength = self.config.dithering_strength;
+
+        // Use DecodeRequest's v2 path which handles container parsing
+        let req = DecodeRequest::new(&self.config, data);
+        let (pixels, w, h) = req.decode_rgba_v2().map_err(|e| e.decompose().0)?;
+
+        let w = u32::from(w);
+        let h = u32::from(h);
+        let _ = dither_strength; // already applied inside decode_rgba_v2
+
+        let has_alpha = {
+            let native_info = crate::ImageInfo::from_webp(data).ok();
+            native_info.as_ref().is_some_and(|i| i.has_alpha)
+        };
+
+        let buf = if has_alpha {
+            PixelBuffer::from_vec(pixels, w, h, PixelDescriptor::RGBA8_SRGB)
+                .map_err(|_| DecodeError::InvalidParameter("pixel count mismatch".into()))?
+        } else {
+            // Strip alpha channel — v2 always decodes to RGBA when alpha is present,
+            // but for no-alpha images decode_rgba_v2 returns RGBA with alpha=255.
+            // Convert to RGB to save memory.
+            let pixel_count = (w as usize) * (h as usize);
+            let mut rgb = alloc::vec![0u8; pixel_count * 3];
+            garb::bytes::rgba_to_rgb(&pixels, &mut rgb)
+                .map_err(|e| DecodeError::InvalidParameter(alloc::format!("{e}")))?;
+            PixelBuffer::from_vec(rgb, w, h, PixelDescriptor::RGB8_SRGB)
+                .map_err(|_| DecodeError::InvalidParameter("pixel count mismatch".into()))?
+        };
+
+        let native_info = crate::ImageInfo::from_webp(data).ok();
+        let info = if let Some(ref ni) = native_info {
+            to_image_info(ni, None)
+        } else {
+            ImageInfo::new(w, h, ImageFormat::WebP)
+                .with_alpha(has_alpha)
+                .with_bit_depth(8)
+                .with_channel_count(if has_alpha { 4 } else { 3 })
+        };
+        let info = self.apply_policy_to_info(info);
+
+        let mut output = DecodeOutput::new(buf, info);
+        if let Ok(probe) = crate::detect::probe(data) {
+            output = output.with_source_encoding_details(probe);
+        }
+        Ok(output)
+    }
+
+    /// Fallback decode via v1 decoder (handles lossless, animation frames, etc.).
+    fn do_decode_v1(&self, data: &[u8]) -> Result<DecodeOutput, DecodeError> {
         let mut req = DecodeRequest::new(&self.config, data);
         if let Some(ref stop) = self.stop {
             req = req.stop(stop);
