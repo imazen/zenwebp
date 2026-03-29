@@ -36,8 +36,7 @@
 //! }
 //! ```
 
-use crate::Preset;
-use crate::decoder::Limits;
+use crate::{Limits, Preset};
 
 /// Configuration for lossy (VP8) encoding.
 ///
@@ -526,7 +525,7 @@ impl EncoderConfig {
     ///
     /// Works for both lossy and lossless configurations.
     #[must_use]
-    pub fn limits(mut self, limits: crate::decoder::Limits) -> Self {
+    pub fn limits(mut self, limits: crate::Limits) -> Self {
         match &mut self {
             Self::Lossy(cfg) => cfg.limits = limits,
             Self::Lossless(cfg) => cfg.limits = limits,

@@ -12,7 +12,7 @@ use super::api::DecodeError;
 /// # Example
 ///
 /// ```rust
-/// use zenwebp::decoder::Limits;
+/// use zenwebp::Limits;
 ///
 /// // Start with defaults and customize
 /// let limits = Limits::default()

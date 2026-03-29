@@ -677,7 +677,7 @@ pub struct EncoderConfig {
     /// Number of segments override (1-4). `None` = use preset default.
     pub segments: Option<u8>,
     /// Encode limits for dimensions and memory validation.
-    pub limits: crate::decoder::Limits,
+    pub limits: crate::Limits,
 }
 
 impl Default for EncoderConfig {
@@ -697,7 +697,7 @@ impl Default for EncoderConfig {
             filter_strength: None,
             filter_sharpness: None,
             segments: None,
-            limits: crate::decoder::Limits::none(), // No limits by default
+            limits: crate::Limits::none(), // No limits by default
         }
     }
 }
@@ -833,7 +833,7 @@ impl EncoderConfig {
 
     /// Set encode limits for validation.
     #[must_use]
-    pub fn limits(mut self, limits: crate::decoder::Limits) -> Self {
+    pub fn limits(mut self, limits: crate::Limits) -> Self {
         self.limits = limits;
         self
     }
@@ -990,7 +990,7 @@ impl<'a> ConfigKind<'a> {
     }
 
     /// Get the limits from the configuration.
-    fn get_limits(&self) -> &crate::decoder::Limits {
+    fn get_limits(&self) -> &crate::Limits {
         match self {
             Self::Lossy(cfg) => &cfg.limits,
             Self::Lossless(cfg) => &cfg.limits,

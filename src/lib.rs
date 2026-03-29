@@ -113,7 +113,8 @@ pub mod oneshot;
 
 // Re-export core decoder types
 pub use decoder::{
-    DecodeConfig, DecodeError, DecodeRequest, DecodeResult, DecoderContext, ImageInfo, WebPDecoder,
+    DecodeConfig, DecodeError, DecodeRequest, DecodeResult, DecoderContext, ImageInfo, Limits,
+    StreamingDecoder, WebPDecoder,
 };
 
 // Re-export core encoder types

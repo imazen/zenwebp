@@ -412,7 +412,7 @@ pub struct WebpEncodeJob {
 impl WebpEncodeJob {
     fn build_inner_config(&self) -> EncoderConfig {
         let mut inner = self.config.inner.clone();
-        let mut limits = crate::decoder::Limits::none();
+        let mut limits = crate::Limits::none();
         if let Some(px) = self.limits.max_pixels {
             limits = limits.max_total_pixels(px);
         }
