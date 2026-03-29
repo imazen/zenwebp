@@ -52,7 +52,7 @@ impl DecoderContext {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use zenwebp::decoder::vp8v2::DecoderContext;
+    /// use zenwebp::DecoderContext;
     ///
     /// let webp_data: &[u8] = &[]; // animated WebP data
     /// let mut ctx = DecoderContext::new();

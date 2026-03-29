@@ -523,21 +523,13 @@ impl<'a> DecodeRequest<'a> {
         decode_yuv420(self.data)
     }
 
-    /// Decode using the v2 decoder, returning RGB.
-    ///
-    /// Returns `(pixels, width, height)` where pixels are RGB (3 bytes/pixel).
-    /// Supports simple lossy VP8 and VP8X extended format (with lossy VP8 content).
-    /// Does not support lossless VP8L or animation.
-    pub fn decode_rgb_v2(self) -> DecodeResult<(Vec<u8>, u16, u16)> {
+    /// Decode using the v2 decoder, returning RGB (lossy VP8 only).
+    pub(crate) fn decode_rgb_v2(self) -> DecodeResult<(Vec<u8>, u16, u16)> {
         self.decode_v2_internal(3)
     }
 
-    /// Decode using the v2 decoder, returning RGBA.
-    ///
-    /// Returns `(pixels, width, height)` where pixels are RGBA (4 bytes/pixel).
-    /// Supports simple lossy VP8 and VP8X extended format (with lossy VP8 content).
-    /// Does not support lossless VP8L or animation.
-    pub fn decode_rgba_v2(self) -> DecodeResult<(Vec<u8>, u16, u16)> {
+    /// Decode using the v2 decoder, returning RGBA (lossy VP8 only).
+    pub(crate) fn decode_rgba_v2(self) -> DecodeResult<(Vec<u8>, u16, u16)> {
         self.decode_v2_internal(4)
     }
 

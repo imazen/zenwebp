@@ -523,13 +523,13 @@ fn v2_dithering_modifies_chroma_at_high_quality() {
     // Decode with default dithering (strength=50)
     let config_dithered = DecodeConfig::default();
     let (pixels_dithered, w, h) = DecodeRequest::new(&config_dithered, &webp_data)
-        .decode_rgba_v2()
+        .decode_rgba()
         .expect("v2 decode failed");
 
     // Decode with dithering disabled
     let config_none = DecodeConfig::default().with_dithering_strength(0);
     let (pixels_none, w2, h2) = DecodeRequest::new(&config_none, &webp_data)
-        .decode_rgba_v2()
+        .decode_rgba()
         .expect("v2 decode failed");
 
     assert_eq!((w, h), (w2, h2));
@@ -592,11 +592,11 @@ fn v2_dithering_is_deterministic() {
 
     let config = DecodeConfig::default().with_dithering_strength(50);
     let (pixels_a, _, _) = DecodeRequest::new(&config, &webp_data)
-        .decode_rgba_v2()
+        .decode_rgba()
         .expect("v2 decode failed");
 
     let (pixels_b, _, _) = DecodeRequest::new(&config, &webp_data)
-        .decode_rgba_v2()
+        .decode_rgba()
         .expect("v2 decode failed");
 
     assert_eq!(
@@ -612,17 +612,17 @@ fn v2_higher_strength_produces_more_dithering() {
 
     let config_none = DecodeConfig::default().with_dithering_strength(0);
     let (pixels_none, _, _) = DecodeRequest::new(&config_none, &webp_data)
-        .decode_rgba_v2()
+        .decode_rgba()
         .expect("v2 decode failed");
 
     let config_low = DecodeConfig::default().with_dithering_strength(25);
     let (pixels_low, _, _) = DecodeRequest::new(&config_low, &webp_data)
-        .decode_rgba_v2()
+        .decode_rgba()
         .expect("v2 decode failed");
 
     let config_high = DecodeConfig::default().with_dithering_strength(100);
     let (pixels_high, _, _) = DecodeRequest::new(&config_high, &webp_data)
-        .decode_rgba_v2()
+        .decode_rgba()
         .expect("v2 decode failed");
 
     let diff_sum = |a: &[u8], b: &[u8]| -> u64 {
@@ -657,7 +657,7 @@ fn v2_dithering_matches_v1() {
             .unwrap_or_else(|e| panic!("v1 decode s{strength} failed: {e}"));
 
         let (v2_pixels, w2, h2) = DecodeRequest::new(&config, &webp_data)
-            .decode_rgba_v2()
+            .decode_rgba()
             .unwrap_or_else(|e| panic!("v2 decode s{strength} failed: {e}"));
 
         assert_eq!(
@@ -712,7 +712,7 @@ fn v2_dithered_matches_libwebp_across_quality_levels() {
         for strength in [0u8, 50, 100] {
             let dc = DecodeConfig::default().with_dithering_strength(strength);
             let (v2_pixels, _, _) = DecodeRequest::new(&dc, &webp_data)
-                .decode_rgba_v2()
+                .decode_rgba()
                 .unwrap_or_else(|e| panic!("v2 Q{quality} s{strength} failed: {e}"));
 
             let lib_pixels = decode_with_libwebp(&webp_data, i32::from(strength));
@@ -748,7 +748,7 @@ fn v2_dithered_matches_libwebp_odd_dimensions() {
         for strength in [0u8, 50, 100] {
             let dc = DecodeConfig::default().with_dithering_strength(strength);
             let (v2_pixels, _, _) = DecodeRequest::new(&dc, &webp_data)
-                .decode_rgba_v2()
+                .decode_rgba()
                 .unwrap_or_else(|e| {
                     panic!("v2 decode {width}x{height} Q{quality} s{strength}: {e}")
                 });

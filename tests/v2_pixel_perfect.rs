@@ -34,24 +34,22 @@ use zenwebp::{DecodeConfig, DecodeRequest, EncodeRequest, EncoderConfig, PixelLa
 // Decode helpers
 // ---------------------------------------------------------------------------
 
-/// Decode WebP bytes with zenwebp v2 decoder, returning RGBA.
+/// Decode WebP bytes with zenwebp decoder, returning RGBA.
 /// Disables dithering for pixel-perfect comparison against libwebp.
-fn decode_with_v2(webp_data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
-    let config = DecodeConfig::default().with_dithering_strength(0);
-    let (rgba, w, h) = DecodeRequest::new(&config, webp_data)
-        .decode_rgba_v2()
-        .map_err(|e| format!("v2 decode failed: {e}"))?;
-    Ok((rgba, u32::from(w), u32::from(h)))
-}
-
-/// Decode WebP bytes with zenwebp v1 decoder, returning RGBA.
-/// Disables dithering for pixel-perfect comparison against libwebp.
-fn decode_with_v1(webp_data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
+fn decode_with_zenwebp(webp_data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
     let config = DecodeConfig::default().with_dithering_strength(0);
     let (rgba, w, h) = DecodeRequest::new(&config, webp_data)
         .decode_rgba()
-        .map_err(|e| format!("v1 decode failed: {e}"))?;
+        .map_err(|e| format!("zenwebp decode failed: {e}"))?;
     Ok((rgba, w, h))
+}
+
+// Legacy aliases — these all go through the same v2 decoder now.
+fn decode_with_v2(webp_data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
+    decode_with_zenwebp(webp_data)
+}
+fn decode_with_v1(webp_data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
+    decode_with_zenwebp(webp_data)
 }
 
 /// Decode WebP bytes with libwebp (via webpx), returning RGBA.
@@ -911,7 +909,7 @@ fn cat4_quality_sweep_noise() {
 #[test]
 fn context_reuse_produces_identical_output() {
     println!("\n=== Context reuse: identical output across decodes ===");
-    let mut ctx = zenwebp::decoder::vp8v2::DecoderContext::new();
+    let mut ctx = zenwebp::DecoderContext::new();
 
     // Encode several different images
     let images: Vec<(u32, u32, Vec<u8>)> = vec![
@@ -928,12 +926,12 @@ fn context_reuse_produces_identical_output() {
         .collect();
 
     // Decode all images once with fresh contexts
-    let fresh_results: Vec<(Vec<u8>, u16, u16)> = webp_files
+    let fresh_results: Vec<(Vec<u8>, u32, u32)> = webp_files
         .iter()
         .map(|webp| {
             let config = DecodeConfig::default();
             let (rgba, w, h) = DecodeRequest::new(&config, webp)
-                .decode_rgba_v2()
+                .decode_rgba()
                 .expect("fresh decode failed");
             (rgba, w, h)
         })
@@ -964,8 +962,16 @@ fn context_reuse_produces_identical_output() {
                     continue;
                 }
                 Ok((w, h)) => {
-                    assert_eq!(w, fw, "width mismatch on reuse pass {pass} image {i}");
-                    assert_eq!(h, fh, "height mismatch on reuse pass {pass} image {i}");
+                    assert_eq!(
+                        u32::from(w),
+                        fw,
+                        "width mismatch on reuse pass {pass} image {i}"
+                    );
+                    assert_eq!(
+                        u32::from(h),
+                        fh,
+                        "height mismatch on reuse pass {pass} image {i}"
+                    );
 
                     if output.len() != fresh_rgba.len() {
                         let msg = format!(
@@ -1029,7 +1035,7 @@ fn bench_context_reuse_vs_fresh() {
 
     // Warmup
     {
-        let mut ctx = zenwebp::decoder::vp8v2::DecoderContext::new();
+        let mut ctx = zenwebp::DecoderContext::new();
         let mut output = Vec::new();
         let _ = ctx.decode_to_rgb(vp8_data, &mut output, 4);
     }
@@ -1037,14 +1043,14 @@ fn bench_context_reuse_vs_fresh() {
     // Fresh context per decode
     let start = std::time::Instant::now();
     for _ in 0..iterations {
-        let mut ctx = zenwebp::decoder::vp8v2::DecoderContext::new();
+        let mut ctx = zenwebp::DecoderContext::new();
         let mut output = Vec::new();
         let _ = ctx.decode_to_rgb(vp8_data, &mut output, 4);
     }
     let fresh_elapsed = start.elapsed();
 
     // Reused context
-    let mut ctx = zenwebp::decoder::vp8v2::DecoderContext::new();
+    let mut ctx = zenwebp::DecoderContext::new();
     let mut output = Vec::new();
     let start = std::time::Instant::now();
     for _ in 0..iterations {

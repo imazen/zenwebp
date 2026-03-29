@@ -15,7 +15,6 @@
 #![allow(clippy::collapsible_else_if)]
 
 use alloc::vec::Vec;
-use core::array;
 use core::default::Default;
 
 use crate::common::types::*;

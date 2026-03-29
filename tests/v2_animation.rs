@@ -7,8 +7,8 @@ use std::io::Cursor;
 use std::path::PathBuf;
 
 use zenwebp::{
-    AnimationConfig, AnimationDecoder, AnimationEncoder, BlendMethod, DecodeConfig, DisposeMethod,
-    EncoderConfig, PixelLayout, WebPDecoder, decoder::vp8v2::DecoderContext,
+    AnimationConfig, AnimationDecoder, AnimationEncoder, BlendMethod, DecodeConfig, DecoderContext,
+    DisposeMethod, EncoderConfig, PixelLayout, WebPDecoder,
 };
 
 /// Generate a gradient image with a unique pattern per frame index.

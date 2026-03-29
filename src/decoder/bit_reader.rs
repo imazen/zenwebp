@@ -186,14 +186,14 @@ impl VP8HeaderBitReader {
 
     /// Read from a probability tree
     #[inline]
-    pub fn read_with_tree<const N: usize>(&mut self, tree: &[crate::vp8::TreeNode; N]) -> i8 {
+    pub fn read_with_tree<const N: usize>(&mut self, tree: &[super::vp8::TreeNode; N]) -> i8 {
         let mut node = tree[0];
         loop {
             let prob = node.prob;
             let b = self.read_bool(prob);
             let i = if b { node.right } else { node.left };
             let Some(next_node) = tree.get(usize::from(i)) else {
-                return crate::vp8::TreeNode::value_from_branch(i);
+                return super::vp8::TreeNode::value_from_branch(i);
             };
             node = *next_node;
         }

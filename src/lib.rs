@@ -14,7 +14,6 @@
 //! # Features
 //!
 //! - `std` (default): Enables `encode_to_writer()`. Everything else works without it.
-//! - `simd` (default): SIMD optimizations (SSE2/SSE4.1/AVX2 on x86, SIMD128 on WASM).
 //! - `fast-yuv` (default): Optimized YUV conversion via the `yuv` crate.
 //! - `pixel-types`: Type-safe pixel formats via the `rgb` crate.
 //!
@@ -70,12 +69,10 @@
 //! # Safety
 //!
 //! This crate uses `#![forbid(unsafe_code)]` to prevent direct unsafe usage in source.
-//! However, when the `simd` feature is enabled, we rely on the [`archmage`] crate for
-//! safe SIMD intrinsics. The `#[arcane]` proc macro generates unsafe blocks internally
-//! (which bypass the `forbid` lint due to proc-macro span handling). The soundness of
-//! our SIMD code depends on archmage's token-based safety model being correct.
-//!
-//! Without the `simd` feature, this crate contains no unsafe code whatsoever.
+//! We rely on the [`archmage`] crate for safe SIMD intrinsics. The `#[arcane]` proc
+//! macro generates unsafe blocks internally (which bypass the `forbid` lint due to
+//! proc-macro span handling). The soundness of our SIMD code depends on archmage's
+//! token-based safety model being correct.
 //!
 //! [`archmage`]: https://docs.rs/archmage
 
@@ -92,13 +89,8 @@ whereat::define_at_crate_info!();
 #[cfg(all(test, feature = "_benchmarks"))]
 extern crate test;
 
-// SIMD dispatch: use `#[archmage::autoversion(cfg(simd))]` directly on functions.
-// The function must take `_token: archmage::SimdToken` as its first parameter.
-// Under cfg(simd), autoversion generates dispatched variants; otherwise, a plain
-// function without the token parameter.
-
-// Core modules
-pub mod common;
+// Core modules (internal — public API is re-exported at crate root)
+pub(crate) mod common;
 pub mod decoder;
 /// Encoder detection and quality estimation from WebP file headers.
 pub mod detect;
@@ -118,12 +110,12 @@ pub mod heuristics;
 
 // Re-export decoder public API
 pub use decoder::{
-    BitstreamFormat, DecodeConfig, DecodeError, DecodeRequest, DecodeResult, ImageInfo, Limits,
-    LoopCount, StreamStatus, StreamingDecoder, UpsamplingMethod, WebPDecoder, YuvPlanes,
-    decode_argb, decode_argb_into, decode_argb_premultiplied, decode_bgr, decode_bgr_into,
-    decode_bgra, decode_bgra_into, decode_bgra_premultiplied, decode_rgb, decode_rgb_into,
-    decode_rgb565, decode_rgba, decode_rgba_into, decode_rgba_premultiplied, decode_rgba4444,
-    decode_yuv420,
+    BitstreamFormat, DecodeConfig, DecodeError, DecodeRequest, DecodeResult, DecoderContext,
+    ImageInfo, Limits, LoopCount, StreamStatus, StreamingDecoder, UpsamplingMethod, WebPDecoder,
+    YuvPlanes, decode_argb, decode_argb_into, decode_argb_premultiplied, decode_bgr,
+    decode_bgr_into, decode_bgra, decode_bgra_into, decode_bgra_premultiplied, decode_rgb,
+    decode_rgb_into, decode_rgb565, decode_rgba, decode_rgba_into, decode_rgba_premultiplied,
+    decode_rgba4444, decode_yuv420,
 };
 
 // Re-export encoder public API
@@ -142,9 +134,6 @@ pub use mux::{
 // Re-export cooperative cancellation types
 pub use enough::{Stop, StopReason, Unstoppable};
 
-// Re-export VP8 decoder (public module)
-pub use decoder::vp8;
-
 #[cfg(feature = "zennode")]
 pub mod zennode_defs;
 
@@ -155,9 +144,6 @@ pub use codec::{
     WebpAnimationFrameDecoder, WebpAnimationFrameEncoder, WebpDecodeJob, WebpDecoder,
     WebpDecoderConfig, WebpEncodeJob, WebpEncoder, WebpEncoderConfig, WebpStreamingDecoder,
 };
-
-// zennode node definitions
-#[cfg(feature = "zennode")]
 
 /// Standalone metadata convenience functions for already-encoded WebP data.
 ///

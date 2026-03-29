@@ -444,15 +444,20 @@ Three fixes: I4 early exit, residual cost loop, encode loop cleanup.
 Results: 1.47x → **1.32-1.39x** of libwebp C.
 
 
-## API Surface Audit (needs cleanup)
+## API Surface Cleanup (DONE 2026-03-29)
 
-1. `DecoderContext` is `pub` — make `pub(crate)`, it's internal
-2. `decode_rgb_v2()` / `decode_rgba_v2()` on DecodeRequest — remove, v2 is the default via `decode_rgb()`
-3. `pub use decoder::vp8` in lib.rs — only needed for TreeNode + diagnostics, not the whole module
-4. `pub mod common` — leaks internal types. Only expose what's needed.
-5. `pub mod heuristics` — likely internal
-6. `test_helpers` gamma LUT accessors — gate behind `#[cfg(test)]`
-7. MbRowEntry fields — `pub(super)` not `pub`
-8. Remove `image-webp` from dev-dependencies if no benchmarks use it anymore
-9. `AnimationFrame` from vp8v2 — should use zencodec's AnimationFrame type
-10. Consider: should `pub mod decoder` be `pub(crate) mod decoder` with only re-exports at crate root?
+1. **DecoderContext** — re-exported at `zenwebp::DecoderContext` and `zenwebp::decoder::DecoderContext`. `vp8v2` module is now `pub(crate)`.
+2. **decode_rgb_v2 / decode_rgba_v2** — made `pub(crate)`. External tests switched to `decode_rgb`/`decode_rgba`.
+3. **pub use decoder::vp8** — removed from lib.rs. `vp8` module is `pub(crate)`. Diagnostic types re-exported as `#[doc(hidden)]` from `decoder`.
+4. **pub mod common** — now `pub(crate)`.
+5. **heuristics** — kept `pub` (genuinely public API: `estimate_encode`, `estimate_decode`).
+6. **test_helpers** — kept `#[doc(hidden)]` (integration tests need external crate access; `#[cfg(test)]` won't work).
+7. **MbRowEntry fields** — changed from `pub` to `pub(super)`.
+8. **image-webp** — already removed (commit bc6ad2e).
+9. **AnimationFrame** — re-exported at `decoder` level alongside `DecoderContext`. zencodec alignment is a future task.
+10. **decoder module** — kept `pub` (integration tests reference `decoder::LumaMode`, `decoder::decode_rgb` etc.)
+
+### Remaining cleanup opportunities
+- `tests/i4_diagnostic_harness.rs` references deleted `Vp8Decoder` (behind `_corpus_tests` feature gate — doesn't affect CI)
+- Dead code from v1 decoder removal (25 warnings) — should be cleaned up in a separate pass
+- `encoder` and `mux` modules stay `pub` because integration tests access deep internals
