@@ -233,7 +233,15 @@ Tested across 14 images (CLIC2025 photos, screenshots, CID22) without `-C target
 | Screenshots (1K-4K) | **1.06-1.14x** |
 | Small photos (512-576px) | **1.10-1.15x** |
 
-Streaming architecture with ~100KB peak memory (no full-frame Y/U/V buffers). Buffer reuse across frames via `DecoderContext`.
+Streaming architecture via zencodec's `StreamingDecode` trait. The full decoded image never needs to exist in memory:
+
+| Decode mode | Peak memory (2940×1912) |
+|------------|------------------------|
+| `StreamingDecode::next_batch()` | **1.5 MB** |
+| `decode_rgb()` (full frame) | 35 MB |
+| libwebp `WebPDecodeRGB` | 34 MB |
+
+The streaming decoder yields 16-row RGB strips, enabling strip-based pipelines (decode → resize → encode) with constant memory regardless of image size. Buffer reuse across frames via `DecoderContext`.
 
 ### Lossless decoder benchmarks
 
