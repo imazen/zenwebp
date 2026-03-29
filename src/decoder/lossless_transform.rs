@@ -144,7 +144,7 @@ pub fn apply_predictor_transform_4(image_data: &mut [u8], range: Range<usize>, w
 pub fn apply_predictor_transform_5(image_data: &mut [u8], range: Range<usize>, width: usize) {
     let (old, current) = image_data[..range.end].split_at_mut(range.start);
 
-    let mut prev: [u8; 4] = old[range.start - 4..][..4].try_into().unwrap();
+    let mut prev: [u8; 4] = *old.last_chunk::<4>().unwrap();
     let top_right = &old[range.start - width * 4 + 4..];
     let top = &old[range.start - width * 4..];
 
@@ -174,7 +174,7 @@ pub fn apply_predictor_transform_6(image_data: &mut [u8], range: Range<usize>, w
 pub fn apply_predictor_transform_7(image_data: &mut [u8], range: Range<usize>, width: usize) {
     let (old, current) = image_data[..range.end].split_at_mut(range.start);
 
-    let mut prev: [u8; 4] = old[range.start - 4..][..4].try_into().unwrap();
+    let mut prev: [u8; 4] = *old.last_chunk::<4>().unwrap();
     let top = &old[range.start - width * 4..][..(range.end - range.start)];
 
     let mut current_chunks = current.chunks_exact_mut(64);
@@ -229,7 +229,7 @@ pub fn apply_predictor_transform_9(image_data: &mut [u8], range: Range<usize>, w
 }
 pub fn apply_predictor_transform_10(image_data: &mut [u8], range: Range<usize>, width: usize) {
     let (old, current) = image_data[..range.end].split_at_mut(range.start);
-    let mut prev: [u8; 4] = old[range.start - 4..][..4].try_into().unwrap();
+    let mut prev: [u8; 4] = *old.last_chunk::<4>().unwrap();
 
     let top_left = &old[range.start - width * 4 - 4..];
     let top = &old[range.start - width * 4..];
@@ -310,7 +310,7 @@ pub fn apply_predictor_transform_11(image_data: &mut [u8], range: Range<usize>, 
 }
 pub fn apply_predictor_transform_12(image_data: &mut [u8], range: Range<usize>, width: usize) {
     let (old, current) = image_data[..range.end].split_at_mut(range.start);
-    let mut prev: [u8; 4] = old[range.start - 4..][..4].try_into().unwrap();
+    let mut prev: [u8; 4] = *old.last_chunk::<4>().unwrap();
 
     let top_left = &old[range.start - width * 4 - 4..];
     let top = &old[range.start - width * 4..];
@@ -347,7 +347,7 @@ pub fn apply_predictor_transform_12(image_data: &mut [u8], range: Range<usize>, 
 }
 pub fn apply_predictor_transform_13(image_data: &mut [u8], range: Range<usize>, width: usize) {
     let (old, current) = image_data[..range.end].split_at_mut(range.start);
-    let mut prev: [u8; 4] = old[range.start - 4..][..4].try_into().unwrap();
+    let mut prev: [u8; 4] = *old.last_chunk::<4>().unwrap();
 
     let top_left = &old[range.start - width * 4 - 4..][..(range.end - range.start)];
     let top = &old[range.start - width * 4..][..(range.end - range.start)];
@@ -472,11 +472,8 @@ pub(crate) fn apply_color_indexing_transform(
     assert!(table_size > 0);
     if table_size > 16 {
         // convert the table of colors into a Vec of color values that can be directly indexed
-        let mut table: Vec<[u8; 4]> = table_data
-            .chunks_exact(4)
-            // convince the compiler that each chunk is 4 bytes long, important for optimizations in the loop below
-            .map(|c| TryInto::<[u8; 4]>::try_into(c).unwrap())
-            .collect();
+        let (chunks, _) = table_data.as_chunks::<4>();
+        let mut table: Vec<[u8; 4]> = chunks.to_vec();
         // pad the table to 256 values if it's smaller than that so we could index into it by u8 without bounds checks
         // also required for correctness: WebP spec requires out-of-bounds indices to be treated as [0,0,0,0]
         table.resize(256, [0; 4]);
@@ -561,9 +558,7 @@ fn apply_color_indexing_transform_small_table<const W_BITS: u8, const EXP_ENTRY_
 
                 let color_source_array: [u8; 4] = if k < table_size {
                     let color_data_offset = usize::from(k) * 4;
-                    table_data[color_data_offset..color_data_offset + 4]
-                        .try_into()
-                        .unwrap()
+                    *table_data[color_data_offset..].first_chunk::<4>().unwrap()
                 } else {
                     [0u8; 4] // WebP spec: out-of-bounds indices are [0,0,0,0]
                 };
@@ -620,8 +615,9 @@ fn apply_color_indexing_transform_small_table<const W_BITS: u8, const EXP_ENTRY_
             .chunks_exact_mut(EXP_ENTRY_SIZE) // Uses const generic to avoid expensive memmove call
             .zip(packed_indices_for_row.iter())
         {
-            let output_chunk_array: &mut [u8; EXP_ENTRY_SIZE] =
-                output_chunk_slice.try_into().unwrap();
+            let output_chunk_array: &mut [u8; EXP_ENTRY_SIZE] = output_chunk_slice
+                .first_chunk_mut::<EXP_ENTRY_SIZE>()
+                .unwrap();
 
             let colors_data_array = &expanded_lookup_table_array[packed_index_byte as usize];
 

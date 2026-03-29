@@ -538,7 +538,7 @@ pub struct Vp8Decoder<'a> {
     // Reusable coefficient buffer for macroblock decoding.
     // Initialized to zeros and maintained as zeros between macroblocks.
     // Each 16-element block is cleared after use in intra_predict_*.
-    coeff_blocks: [i32; 384],
+    coeff_blocks: [i32; MB_COEFF_SIZE],
 
     // Reusable prediction workspaces — avoids re-zeroing 544+288+288=1120 bytes per macroblock.
     // update_border_* writes all border pixels; prediction functions write all interior pixels
@@ -631,7 +631,7 @@ impl<'a> Vp8Decoder<'a> {
             cache_uv_stride: 0,
             extra_y_rows: 0,
 
-            coeff_blocks: [0i32; 384],
+            coeff_blocks: [0i32; MB_COEFF_SIZE],
 
             luma_ws: [0u8; LUMA_BLOCK_SIZE],
             chroma_u_ws: [0u8; CHROMA_BLOCK_SIZE],

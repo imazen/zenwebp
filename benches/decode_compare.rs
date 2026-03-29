@@ -191,6 +191,19 @@ fn decode_compare(suite: &mut zenbench::Suite) {
             });
 
             let data = webp_data.clone();
+            group.bench("zenwebp-v2", move |b| {
+                let d = data.clone();
+                let config = zenwebp::DecodeConfig::default();
+                b.with_input(move || d.clone()).run(|bytes| {
+                    black_box(
+                        zenwebp::DecodeRequest::new(&config, black_box(&bytes))
+                            .decode_rgba_v2()
+                            .unwrap(),
+                    )
+                })
+            });
+
+            let data = webp_data.clone();
             group.bench("image-webp", move |b| {
                 let d = data.clone();
                 b.with_input(move || d.clone()).run(|bytes| {

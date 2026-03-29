@@ -21,14 +21,14 @@ use core::arch::x86_64::*;
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[inline(always)]
 fn chunk16(data: &mut [u8], offset: usize) -> &mut [u8; 16] {
-    <&mut [u8; 16]>::try_from(&mut data[offset..offset + 16]).unwrap()
+    data[offset..].first_chunk_mut::<16>().unwrap()
 }
 
 /// Helper: get an immutable reference to a 16-byte array from a slice.
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 #[inline(always)]
 fn chunk16_ref(data: &[u8], offset: usize) -> &[u8; 16] {
-    <&[u8; 16]>::try_from(&data[offset..offset + 16]).unwrap()
+    data[offset..].first_chunk::<16>().unwrap()
 }
 
 // =============================================================================
@@ -272,7 +272,7 @@ fn apply_predictor_1_sse2(
 
     // Load previous pixel (the left neighbor of the first pixel in range).
     // Broadcast to all 4 pixel positions.
-    let prev_bytes = <&[u8; 4]>::try_from(&image_data[start - 4..start]).unwrap();
+    let prev_bytes = image_data[start - 4..].first_chunk::<4>().unwrap();
     let prev_pixel = _mm_cvtsi32_si128(i32::from_le_bytes(*prev_bytes));
     let mut prev = _mm_shuffle_epi32(prev_pixel, 0x00); // broadcast lane 0 to all 4 lanes
 

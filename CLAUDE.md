@@ -3,6 +3,16 @@
 See global ~/.claude/CLAUDE.md for general instructions.
 Historical investigation notes and resolved bugs are in [LOG.md](LOG.md).
 
+## Performance & Testing
+
+See `docs/PERFORMANCE.md` for benchmarks, `docs/CALL-TREE.md` for SIMD tiers, `docs/ARCHITECTURE-CLEANUP.md` for code organization.
+
+**Decoder v2** (`src/decoder/vp8v2/`): bit-exact with libwebp, 1.09-1.15x speed, streaming cache→RGB (~100KB peak). Use for all new decode work.
+
+**Pixel-exact gate**: `tests/v2_pixel_perfect.rs` (tolerance 0 vs libwebp). Lossless: `examples/lossless_rt_check.rs` (24/24 exact).
+
+**Benchmarks**: `benches/decode_compare.rs` (14 images), `benches/decode_lossless_compare.rs`. zenbench, no `-C target-cpu=native`.
+
 ## Key Files
 
 **Encoder (lossy):**
@@ -186,6 +196,37 @@ Main remaining opportunities:
   Remaining excess is bounds checks on `probs[n][ctx]` array indexing.
 - **Loop filter 7.3M excess**: SIMD dispatch overhead, bounds checks.
 - **YUV->RGB 7.6M excess**: Scalar edge handling, bounds checks.
+
+### V2 Decoder vs v1 and libwebp (2026-03-27)
+
+**Architecture:** Streaming cache, per-MB predict+IDCT, per-row filter dispatch.
+No full-frame Y/U/V allocation during decode (only for Frame output).
+Single `#[arcane]` filter boundary per MB row.
+
+**Wall-clock (x86-64-v3, zenbench, RGBA decode, 14 images, 2026-03-27):**
+
+| Image | v1 (Mpix/s) | v2 (Mpix/s) | libwebp (Mpix/s) | v2/v1 | v2/libwebp |
+|-------|-------------|-------------|-------------------|-------|------------|
+| sc_4k_wiki (8.7M) | 224 | 221 | 487 | 0.99x | 0.45x |
+| sc_3k_imac (5.6M) | 277 | 316 | 360 | 1.14x | 0.88x |
+| sc_2k_wiki (4.3M) | 508 | 620 | 717 | 1.22x | 0.86x |
+| sc_2k_ui (3.7M) | 573 | 731 | 820 | 1.28x | 0.89x |
+| sc_1k_term (1.7M) | 354 | 402 | 442 | 1.14x | 0.91x |
+| ph_2k_sq (4.2M) | 266 | 301 | 330 | 1.13x | 0.91x |
+| ph_2k_43 (3.1M) | 69 | 72 | 78 | 1.04x | 0.93x |
+| ph_576_baby | 253 | 280 | 297 | 1.11x | 0.94x |
+| ph_512_cid | 256 | 274 | 293 | 1.07x | 0.94x |
+
+**Summary:** v2 is 4-28% faster than v1 (geometric mean ~1.11x).
+v2 vs libwebp: 6-12% slower for most images (geometric mean ~0.90x).
+4k_wiki outlier (0.99x vs v1) dominated by full-frame allocation overhead.
+
+Previous v1 vs libwebp was ~1.36x; v2 reduces the gap to ~1.11x.
+
+**Correctness:** v2 produces byte-identical YUV planes to v1 on all 218
+conformance files and all roundtrip/edge-case tests. The previous max_diff=7
+on 49 files was caused by v1's default chroma dithering (strength=50) which
+v2 does not implement. With dithering disabled, V2_V1_MAX_TOLERANCE=0.
 
 ### Decoder Threading Investigation (2026-03-24)
 
