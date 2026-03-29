@@ -175,7 +175,23 @@ pub mod test_helpers {
         width: u16,
         height: u16,
         stride: usize,
-    ) -> (alloc::vec::Vec<u8>, alloc::vec::Vec<u8>, alloc::vec::Vec<u8>) {
+    ) -> (
+        alloc::vec::Vec<u8>,
+        alloc::vec::Vec<u8>,
+        alloc::vec::Vec<u8>,
+    ) {
         crate::decoder::yuv::convert_image_yuv::<3>(image_data, width, height, stride)
+    }
+
+    /// Expose the forward gamma LUT for verification tests.
+    /// sRGB byte -> linear^0.80 (scale 0..4095), 256 entries.
+    pub fn gamma_to_linear_tab() -> &'static [u16; 256] {
+        &crate::decoder::yuv::GAMMA_TO_LINEAR_TAB
+    }
+
+    /// Expose the inverse gamma LUT for verification tests.
+    /// Linear^0.80 -> gamma-space byte, 33 entries.
+    pub fn linear_to_gamma_tab() -> &'static [u8; 33] {
+        &crate::decoder::yuv::LINEAR_TO_GAMMA_TAB
     }
 }

@@ -39,10 +39,13 @@ fn generate_photo_image(width: usize, height: usize) -> Vec<u8> {
 /// Load a real PNG test image from codec-corpus if available, else generate synthetic.
 fn load_or_generate_image(width: usize, height: usize) -> (Vec<u8>, usize, usize) {
     // Try to load a real image from codec-corpus
-    let corpus_path = std::path::Path::new(env!("HOME"))
-        .join("codec-corpus/webp-conformance/valid/lossy");
+    let corpus_path =
+        std::path::Path::new(env!("HOME")).join("codec-corpus/webp-conformance/valid/lossy");
     if corpus_path.exists() {
-        if let Some(entry) = std::fs::read_dir(&corpus_path).ok().and_then(|mut d| d.next()) {
+        if let Some(entry) = std::fs::read_dir(&corpus_path)
+            .ok()
+            .and_then(|mut d| d.next())
+        {
             if let Ok(entry) = entry {
                 let webp_data = std::fs::read(entry.path()).unwrap();
                 let decoded = webp::Decoder::new(&webp_data).decode();
@@ -91,17 +94,41 @@ fn ssimulacra2(a: &[u8], b: &[u8], w: usize, h: usize) -> f64 {
     }
     let a_rgb: Vec<[f32; 3]> = a
         .chunks_exact(3)
-        .map(|p| [srgb_to_linear(p[0]), srgb_to_linear(p[1]), srgb_to_linear(p[2])])
+        .map(|p| {
+            [
+                srgb_to_linear(p[0]),
+                srgb_to_linear(p[1]),
+                srgb_to_linear(p[2]),
+            ]
+        })
         .collect();
     let b_rgb: Vec<[f32; 3]> = b
         .chunks_exact(3)
-        .map(|p| [srgb_to_linear(p[0]), srgb_to_linear(p[1]), srgb_to_linear(p[2])])
+        .map(|p| {
+            [
+                srgb_to_linear(p[0]),
+                srgb_to_linear(p[1]),
+                srgb_to_linear(p[2]),
+            ]
+        })
         .collect();
 
-    let a_img = Rgb::new(a_rgb, w, h, TransferCharacteristic::Linear, ColorPrimaries::BT709)
-        .unwrap();
-    let b_img = Rgb::new(b_rgb, w, h, TransferCharacteristic::Linear, ColorPrimaries::BT709)
-        .unwrap();
+    let a_img = Rgb::new(
+        a_rgb,
+        w,
+        h,
+        TransferCharacteristic::Linear,
+        ColorPrimaries::BT709,
+    )
+    .unwrap();
+    let b_img = Rgb::new(
+        b_rgb,
+        w,
+        h,
+        TransferCharacteristic::Linear,
+        ColorPrimaries::BT709,
+    )
+    .unwrap();
 
     compute_frame_ssimulacra2(a_img, b_img).unwrap()
 }
@@ -147,11 +174,8 @@ fn yuv_plane_level_comparison() {
         zenwebp::test_helpers::convert_image_yuv_rgb(&image, width, height, width as usize);
 
     // 2. yuv crate SIMD conversion (BT.601 Limited, Balanced = 13-bit precision)
-    let mut yuv_image = YuvPlanarImageMut::<u8>::alloc(
-        width as u32,
-        height as u32,
-        YuvChromaSubsampling::Yuv420,
-    );
+    let mut yuv_image =
+        YuvPlanarImageMut::<u8>::alloc(width as u32, height as u32, YuvChromaSubsampling::Yuv420);
     rgb_to_yuv420(
         &mut yuv_image,
         &image,
@@ -226,9 +250,21 @@ fn yuv_plane_level_comparison() {
     // The yuv crate with Balanced mode uses 13-bit precision, which introduces
     // rounding differences up to +-1 compared to the 16-bit precision used by
     // both zenwebp and libwebp. This is documented and expected.
-    assert!(y_max_diff <= 2, "Y plane max_diff {} exceeds tolerance 2", y_max_diff);
-    assert!(u_max_diff <= 2, "U plane max_diff {} exceeds tolerance 2", u_max_diff);
-    assert!(v_max_diff <= 2, "V plane max_diff {} exceeds tolerance 2", v_max_diff);
+    assert!(
+        y_max_diff <= 2,
+        "Y plane max_diff {} exceeds tolerance 2",
+        y_max_diff
+    );
+    assert!(
+        u_max_diff <= 2,
+        "U plane max_diff {} exceeds tolerance 2",
+        u_max_diff
+    );
+    assert!(
+        v_max_diff <= 2,
+        "V plane max_diff {} exceeds tolerance 2",
+        v_max_diff
+    );
 }
 
 /// Core quality comparison: encode same image with three paths, decode all with libwebp,
@@ -301,12 +337,8 @@ fn quality_across_q_levels() {
     println!("\n=== Quality Across Q Levels ===");
     println!("Image: {}x{} synthetic photo", width, height);
     println!();
-    println!(
-        "  Q  | zen size | lib size | ratio  | zen PSNR | lib PSNR | delta PSNR |"
-    );
-    println!(
-        "-----|----------|----------|--------|----------|----------|------------|"
-    );
+    println!("  Q  | zen size | lib size | ratio  | zen PSNR | lib PSNR | delta PSNR |");
+    println!("-----|----------|----------|--------|----------|----------|------------|");
 
     for q in [25.0, 50.0, 75.0, 90.0] {
         let zen_encoded = encode_zenwebp(&image, width, height, q);
@@ -339,10 +371,7 @@ fn yuv_conversion_speed_comparison() {
         rgb_to_yuv420,
     };
 
-    let sizes: &[(usize, usize, &str)] = &[
-        (512, 512, "512x512"),
-        (1920, 1080, "1080p"),
-    ];
+    let sizes: &[(usize, usize, &str)] = &[(512, 512, "512x512"), (1920, 1080, "1080p")];
 
     println!("\n=== RGB->YUV420 Conversion Speed ===");
     println!();
@@ -469,11 +498,17 @@ fn coefficient_analysis() {
     println!("\n=== Coefficient Comparison ===");
     println!();
     println!("libwebp (16-bit FP, full-range Y with +16 bias):");
-    println!("  Y = {:.6}*R + {:.6}*G + {:.6}*B + 16", lib_yr_f, lib_yg_f, lib_yb_f);
+    println!(
+        "  Y = {:.6}*R + {:.6}*G + {:.6}*B + 16",
+        lib_yr_f, lib_yg_f, lib_yb_f
+    );
     println!("  Coeffs: yr={}, yg={}, yb={}", LIB_YR, LIB_YG, LIB_YB);
     println!();
     println!("yuv crate (13-bit FP, BT.601 Limited range):");
-    println!("  Y = {:.6}*R + {:.6}*G + {:.6}*B + 16 (after range scaling)", yuv_yr_f, yuv_yg_f, yuv_yb_f);
+    println!(
+        "  Y = {:.6}*R + {:.6}*G + {:.6}*B + 16 (after range scaling)",
+        yuv_yr_f, yuv_yg_f, yuv_yb_f
+    );
     println!("  Coeffs: yr={}, yg={}, yb={}", YUV_YR, YUV_YG, YUV_YB);
     println!();
 
@@ -492,13 +527,19 @@ fn coefficient_analysis() {
 
     let y_at_white = ((LIB_YR + LIB_YG + LIB_YB) * 255 + YUV_HALF + (16 << YUV_FIX)) >> YUV_FIX;
     let y_at_black = (YUV_HALF + (16 << YUV_FIX)) >> YUV_FIX;
-    println!("libwebp: Y(0,0,0)={}, Y(255,255,255)={}", y_at_black, y_at_white);
+    println!(
+        "libwebp: Y(0,0,0)={}, Y(255,255,255)={}",
+        y_at_black, y_at_white
+    );
 
     // yuv crate limited range: Y range [16, 235]
     let yuv_y_at_white =
         ((YUV_YR + YUV_YG + YUV_YB) * 255 + 16 * (1 << YUV_PREC) + YUV_BIAS) >> YUV_PREC;
     let yuv_y_at_black = (16 * (1 << YUV_PREC) + YUV_BIAS) >> YUV_PREC;
-    println!("yuv crate: Y(0,0,0)={}, Y(255,255,255)={}", yuv_y_at_black, yuv_y_at_white);
+    println!(
+        "yuv crate: Y(0,0,0)={}, Y(255,255,255)={}",
+        yuv_y_at_black, yuv_y_at_white
+    );
     println!();
 
     // Compare per-pixel Y values (both use limited range [16,235], same offset).
@@ -537,7 +578,11 @@ fn coefficient_analysis() {
 
     println!("Per-pixel Y coefficient comparison:");
     println!("  {} samples", count);
-    println!("  Y: max_diff={}, MAD={:.4}", max_y_diff, sum_y_diff as f64 / count as f64);
+    println!(
+        "  Y: max_diff={}, MAD={:.4}",
+        max_y_diff,
+        sum_y_diff as f64 / count as f64
+    );
     println!();
 
     // For U/V, the formulas structurally differ: libwebp uses full-range U/V
@@ -610,12 +655,129 @@ fn gamma_downsampling_effect() {
 
     println!("\n=== Gamma Downsampling Effect (high-contrast checkerboard) ===");
     println!("Image: {}x{} bright/dark checkerboard (Q90)", width, height);
-    println!("zenwebp PSNR: {:.2} dB (size: {} B)", zen_psnr, zen_encoded.len());
-    println!("libwebp PSNR: {:.2} dB (size: {} B)", lib_psnr, lib_encoded.len());
+    println!(
+        "zenwebp PSNR: {:.2} dB (size: {} B)",
+        zen_psnr,
+        zen_encoded.len()
+    );
+    println!(
+        "libwebp PSNR: {:.2} dB (size: {} B)",
+        lib_psnr,
+        lib_encoded.len()
+    );
     println!("PSNR delta: {:.3} dB", zen_psnr - lib_psnr);
     println!();
     println!("NOTE: Gamma-corrected averaging should help most on");
     println!("high-contrast boundaries. If delta is positive, zenwebp");
     println!("is actually better (perhaps due to different file size).");
     println!("If negative, libwebp's gamma correction helps.");
+}
+
+/// Verify gamma tables match libwebp's InitGammaTables() exactly.
+///
+/// Recomputes the forward and inverse tables using the same formula
+/// (kGamma=0.80, GAMMA_FIX=12, GAMMA_TAB_FIX=7) and checks every entry.
+#[test]
+fn gamma_table_verification() {
+    use zenwebp::test_helpers::{gamma_to_linear_tab, linear_to_gamma_tab};
+
+    let forward = gamma_to_linear_tab();
+    let inverse = linear_to_gamma_tab();
+
+    const GAMMA_FIX: u32 = 12;
+    const GAMMA_TAB_FIX: u32 = 7;
+    const GAMMA_TAB_SIZE: usize = 1 << (GAMMA_FIX - GAMMA_TAB_FIX); // 32
+    let k_gamma: f64 = 0.80;
+    let k_gamma_scale: f64 = ((1u32 << GAMMA_FIX) - 1) as f64; // 4095
+
+    // Verify forward table: GammaToLinear[v] = round(pow(v/255, 0.80) * 4095)
+    let norm = 1.0 / 255.0;
+    for v in 0..=255u16 {
+        let expected = ((norm * v as f64).powf(k_gamma) * k_gamma_scale + 0.5) as u16;
+        assert_eq!(
+            forward[v as usize], expected,
+            "GammaToLinear[{}]: got {}, expected {}",
+            v, forward[v as usize], expected
+        );
+    }
+
+    // Verify inverse table: LinearToGamma[i] = round(255 * pow(scale * i, 1/0.80))
+    let scale = (1u32 << GAMMA_TAB_FIX) as f64 / k_gamma_scale;
+    for i in 0..=GAMMA_TAB_SIZE {
+        let expected = (255.0 * (scale * i as f64).powf(1.0 / k_gamma) + 0.5) as u8;
+        assert_eq!(
+            inverse[i], expected,
+            "LinearToGamma[{}]: got {}, expected {}",
+            i, inverse[i], expected
+        );
+    }
+
+    // Verify round-trip: every sRGB byte maps to linear and back to the same byte
+    for v in 0..=255u8 {
+        let lin = forward[v as usize] as u32;
+        let tab_idx = (lin >> 7) as usize;
+        let frac = lin & 0x7F;
+        let v0 = inverse[tab_idx] as u32;
+        let v1 = inverse[tab_idx + 1] as u32;
+        let roundtrip = ((v0 * (128 - frac) + v1 * frac + 64) >> 7) as u8;
+        assert_eq!(v, roundtrip, "round-trip failed for v={}", v);
+    }
+
+    println!("\n=== Gamma Table Verification ===");
+    println!("Forward table (256 entries): all match libwebp's InitGammaTables");
+    println!("Inverse table (33 entries): all match libwebp's InitGammaTables");
+    println!("Round-trip: all 256 byte values map back exactly");
+}
+
+/// Test gamma-corrected chroma on a colored checkerboard where gamma
+/// correction actually matters (unlike the gray checkerboard above).
+///
+/// A red/cyan checkerboard has maximum chroma difference between adjacent
+/// pixels, so box-filter averaging in sRGB space loses significant
+/// chroma resolution that gamma correction preserves.
+#[test]
+fn gamma_chroma_colored_checkerboard() {
+    // Red/Cyan checkerboard: R=(255,0,0), C=(0,255,255)
+    let width = 128u32;
+    let height = 128u32;
+    let mut image = vec![0u8; (width * height * 3) as usize];
+
+    for y in 0..height {
+        for x in 0..width {
+            let idx = ((y * width + x) * 3) as usize;
+            if (x + y) % 2 == 0 {
+                image[idx] = 255; // R
+                image[idx + 1] = 0;
+                image[idx + 2] = 0;
+            } else {
+                image[idx] = 0;
+                image[idx + 1] = 255; // G
+                image[idx + 2] = 255; // B (cyan)
+            }
+        }
+    }
+
+    let zen_encoded = encode_zenwebp(&image, width, height, 90.0);
+    let lib_encoded = encode_libwebp(&image, width, height, 90.0);
+    let zen_decoded = decode_libwebp_rgb(&zen_encoded);
+    let lib_decoded = decode_libwebp_rgb(&lib_encoded);
+
+    let zen_psnr = psnr(&image, &zen_decoded);
+    let lib_psnr = psnr(&image, &lib_decoded);
+
+    println!("\n=== Gamma Chroma: Red/Cyan Checkerboard (Q90) ===");
+    println!(
+        "zenwebp PSNR: {:.2} dB (size: {} B)",
+        zen_psnr,
+        zen_encoded.len()
+    );
+    println!(
+        "libwebp PSNR: {:.2} dB (size: {} B)",
+        lib_psnr,
+        lib_encoded.len()
+    );
+    println!(
+        "PSNR delta: {:.3} dB (positive = zenwebp better)",
+        zen_psnr - lib_psnr
+    );
 }

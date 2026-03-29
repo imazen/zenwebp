@@ -264,7 +264,11 @@ mod tests {
         encoder.write_literal(8, 185);
         let bytes = encoder.flush_and_get_buffer();
         // Meaningful content is the first 4 bytes; trailing padding may vary
-        assert!(bytes.len() >= 4, "expected at least 4 bytes, got {}", bytes.len());
+        assert!(
+            bytes.len() >= 4,
+            "expected at least 4 bytes, got {}",
+            bytes.len()
+        );
         assert_eq!(&[104, 101, 107, 128], &bytes[..4]);
     }
 
@@ -317,7 +321,11 @@ mod tests {
         encoder.write_with_tree(&KEYFRAME_YMODE_TREE, &KEYFRAME_YMODE_PROBS, TM_PRED);
         let write_buffer = encoder.flush_and_get_buffer();
         // Meaningful content is the first 3 bytes; trailing padding may vary
-        assert!(write_buffer.len() >= 3, "expected at least 3 bytes, got {}", write_buffer.len());
+        assert!(
+            write_buffer.len() >= 3,
+            "expected at least 3 bytes, got {}",
+            write_buffer.len()
+        );
         assert_eq!(&[233, 64, 0], &write_buffer[..3]);
     }
 }
