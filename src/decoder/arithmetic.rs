@@ -1,6 +1,9 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+#[allow(unused_imports)]
+use whereat::at;
+
 use super::api::DecodeError;
 
 use super::vp8::TreeNode;
@@ -111,14 +114,18 @@ impl ArithmeticDecoder {
         }
     }
 
-    pub(crate) fn init(&mut self, mut buf: Vec<[u8; 4]>, len: usize) -> Result<(), DecodeError> {
+    pub(crate) fn init(
+        &mut self,
+        mut buf: Vec<[u8; 4]>,
+        len: usize,
+    ) -> Result<(), whereat::At<DecodeError>> {
         let mut final_bytes = [0; 3];
         let final_bytes_remaining = if len == 4 * buf.len() {
             0
         } else {
             // Pop the last chunk (which is partial), then get length.
             let Some(last_chunk) = buf.pop() else {
-                return Err(DecodeError::NotEnoughInitData);
+                return Err(at!(DecodeError::NotEnoughInitData));
             };
             let len_rounded_down = 4 * buf.len();
             let num_bytes_popped = len - len_rounded_down;
@@ -165,7 +172,7 @@ impl ArithmeticDecoder {
         &self,
         acc: BitResultAccumulator,
         value_if_not_past_eof: T,
-    ) -> Result<T, DecodeError> {
+    ) -> Result<T, whereat::At<DecodeError>> {
         // The accumulator does not store any state because doing so is
         // too computationally expensive. Passing it around is a bit of
         // formality (that is optimized out) to ensure we call `check` .
@@ -173,7 +180,7 @@ impl ArithmeticDecoder {
         let BitResultAccumulator = acc;
 
         if self.is_past_eof() {
-            Err(DecodeError::BitStreamError)
+            Err(at!(DecodeError::BitStreamError))
         } else {
             Ok(value_if_not_past_eof)
         }

@@ -24,6 +24,9 @@ use alloc::vec::Vec;
 
 use crate::common::types::Frame;
 use crate::common::types::{ChromaMode, IntraMode, LumaMode};
+#[allow(unused_imports)]
+use whereat::at;
+
 use crate::decoder::api::DecodeError;
 use crate::decoder::internal_error::InternalDecodeError;
 use crate::decoder::loop_filter::MbFilterParams;
@@ -59,9 +62,10 @@ impl DecoderContext {
     ///
     /// The `data` must be the raw VP8 bitstream (inside the RIFF/WebP
     /// container, after the VP8 chunk header has been stripped).
-    pub fn decode_to_frame(&mut self, data: &[u8]) -> Result<Frame, DecodeError> {
+    pub fn decode_to_frame(&mut self, data: &[u8]) -> Result<Frame, whereat::At<DecodeError>> {
         self.read_frame_header(data)?;
-        self.decode_to_frame_internal().map_err(DecodeError::from)
+        self.decode_to_frame_internal()
+            .map_err(|e| at!(DecodeError::from(e)))
     }
 
     /// Internal: decode MB rows to full-frame Y/U/V and build a Frame.
@@ -108,11 +112,11 @@ impl DecoderContext {
         data: &[u8],
         output: &mut Vec<u8>,
         bpp: usize,
-    ) -> Result<(u16, u16), DecodeError> {
+    ) -> Result<(u16, u16), whereat::At<DecodeError>> {
         if bpp != 3 && bpp != 4 {
-            return Err(DecodeError::InvalidParameter(alloc::format!(
+            return Err(at!(DecodeError::InvalidParameter(alloc::format!(
                 "unsupported bpp: {bpp}"
-            )));
+            ))));
         }
 
         self.read_frame_header(data)?;
@@ -121,10 +125,10 @@ impl DecoderContext {
         let h = self.tables.height;
         let pixel_count = usize::from(w)
             .checked_mul(usize::from(h))
-            .ok_or(DecodeError::ImageTooLarge)?;
+            .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
         let output_size = pixel_count
             .checked_mul(bpp)
-            .ok_or(DecodeError::ImageTooLarge)?;
+            .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
         output.resize(output_size, 0);
 
         if self.tables.extra_y_rows >= 2 {
@@ -132,11 +136,13 @@ impl DecoderContext {
             // Requires extra_y_rows >= 2 so the cache has enough UV rows
             // for the fancy upsampler at MB row boundaries.
             self.decode_mb_rows_to_rgb(output, bpp)
-                .map_err(DecodeError::from)?;
+                .map_err(|e| at!(DecodeError::from(e)))?;
         } else {
             // Fallback for no-filter case (extra_y_rows=0): use full-frame
             // YUV buffers. This is rare (very high quality / filter disabled).
-            let frame = self.decode_to_frame_internal()?;
+            let frame = self
+                .decode_to_frame_internal()
+                .map_err(|e| at!(DecodeError::from(e)))?;
             let fw = usize::from(frame.width);
             let fh = usize::from(frame.height);
             let mbwidth = (fw + 15) / 16;

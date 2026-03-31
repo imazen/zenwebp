@@ -641,7 +641,7 @@ fn as_f32_slice(data: &[u8]) -> Cow<'_, [f32]> {
 #[allow(clippy::type_complexity)]
 fn pixels_to_webp_input<'a>(
     pixels: &'a PixelSlice<'a>,
-) -> Result<(alloc::borrow::Cow<'a, [u8]>, PixelLayout, u32, u32, usize), EncodeError> {
+) -> Result<(alloc::borrow::Cow<'a, [u8]>, PixelLayout, u32, u32, usize), At<EncodeError>> {
     use alloc::borrow::Cow;
 
     let desc = pixels.descriptor();
@@ -702,10 +702,10 @@ fn pixels_to_webp_input<'a>(
         }
         Ok((Cow::Owned(rgb), PixelLayout::Rgb8, w, h, w as usize))
     } else {
-        Err(EncodeError::InvalidBufferSize(alloc::format!(
+        Err(at!(EncodeError::InvalidBufferSize(alloc::format!(
             "unsupported pixel format for WebP encode: {:?}",
             desc
-        )))
+        ))))
     }
 }
 
@@ -788,7 +788,7 @@ impl zencodec::encode::Encoder for WebpEncoder {
     }
 
     fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<EncodeError>> {
-        let (buf, layout, w, h, stride) = pixels_to_webp_input(&pixels).map_err(|e| at!(e))?;
+        let (buf, layout, w, h, stride) = pixels_to_webp_input(&pixels)?;
         self.do_encode(&buf, layout, w, h, stride)
             .map_err(|e| at!(e))
     }
@@ -827,7 +827,7 @@ impl zencodec::encode::Encoder for WebpEncoder {
                 });
             } else {
                 // Generic path: convert per-strip, accumulate bytes
-                let (_, layout, _, _, _) = pixels_to_webp_input(&rows).map_err(|e| at!(e))?;
+                let (_, layout, _, _, _) = pixels_to_webp_input(&rows)?;
                 let (cw, ch) = self.canvas_size.unwrap_or((strip_w, 0));
                 let bpp = layout.bytes_per_pixel();
                 let cap = cw as usize * ch as usize * bpp;
@@ -843,7 +843,7 @@ impl zencodec::encode::Encoder for WebpEncoder {
                     pixels, total_rows, ..
                 } = stream
                 {
-                    let (buf, _, _, _, _) = pixels_to_webp_input(&rows).map_err(|e| at!(e))?;
+                    let (buf, _, _, _, _) = pixels_to_webp_input(&rows)?;
                     pixels.extend_from_slice(&buf);
                     *total_rows += strip_h;
                 }
@@ -895,7 +895,7 @@ impl zencodec::encode::Encoder for WebpEncoder {
             StreamAccum::Raw {
                 pixels, total_rows, ..
             } => {
-                let (buf, _, _, _, _) = pixels_to_webp_input(&rows).map_err(|e| at!(e))?;
+                let (buf, _, _, _, _) = pixels_to_webp_input(&rows)?;
                 pixels.extend_from_slice(&buf);
                 *total_rows += strip_h;
             }
@@ -1015,7 +1015,7 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
         if let Some(s) = stop {
             s.check().map_err(|e| at!(EncodeError::from(e)))?;
         }
-        let (buf, layout, w, h, _stride) = pixels_to_webp_input(&pixels).map_err(|e| at!(e))?;
+        let (buf, layout, w, h, _stride) = pixels_to_webp_input(&pixels)?;
         self.ensure_encoder(w, h)?;
         let timestamp_ms = self.cumulative_ms;
         let enc = self.anim_enc.as_mut().unwrap();
@@ -1380,7 +1380,6 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                     info,
                     dither_strength,
                 )
-                .map_err(|e| at!(e))
             }
             b"VP8X" => {
                 use crate::mux::WebPDemuxer;
@@ -1411,8 +1410,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                     let native_info = crate::ImageInfo::from_webp(data_ref)?;
                     let w = native_info.width as u16;
                     let h = native_info.height as u16;
-                    let alpha_chunk = crate::decoder::extended::read_alpha_chunk(alpha_data, w, h)
-                        .map_err(|e| at!(e))?;
+                    let alpha_chunk = crate::decoder::extended::read_alpha_chunk(alpha_data, w, h)?;
 
                     // Apply alpha filtering to produce final alpha plane
                     let fw = usize::from(w);
@@ -1458,7 +1456,6 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                     info,
                     dither_strength,
                 )
-                .map_err(|e| at!(e))
             }
             b"VP8L" => Err(at!(DecodeError::UnsupportedFeature(
                 "streaming decode does not support lossless VP8L".into()
@@ -1511,7 +1508,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         let native_info = crate::ImageInfo::from_webp(&data).ok();
 
         // Probe animation metadata with a temporary decoder.
-        let probe_anim = AnimationDecoder::new_with_config(&data, &cfg).map_err(|e| at!(e))?;
+        let probe_anim = AnimationDecoder::new_with_config(&data, &cfg)?;
         let anim_info = probe_anim.info();
         let total_frames = anim_info.frame_count;
         let anim_loop_count = match anim_info.loop_count {
@@ -1549,8 +1546,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                 config: cfg,
             },
             |owner| AnimationDecoder::new_with_config(&owner.data, &owner.config),
-        )
-        .map_err(|e| at!(e))?;
+        )?;
 
         let has_alpha = anim_info.has_alpha;
         let canvas_width = anim_info.canvas_width;
@@ -1614,15 +1610,15 @@ impl WebpDecoder<'_> {
         info
     }
 
-    fn check_input_size(&self, data: &[u8]) -> Result<(), DecodeError> {
+    fn check_input_size(&self, data: &[u8]) -> Result<(), At<DecodeError>> {
         if let Some(max) = self.input_size_limit
             && data.len() as u64 > max
         {
-            return Err(DecodeError::InvalidParameter(alloc::format!(
+            return Err(at!(DecodeError::InvalidParameter(alloc::format!(
                 "input size {} exceeds limit {}",
                 data.len(),
                 max
-            )));
+            ))));
         }
         Ok(())
     }
@@ -1825,7 +1821,7 @@ impl WebpStreamingDecoder {
         preferred: &[PixelDescriptor],
         info: ImageInfo,
         dither_strength: u8,
-    ) -> Result<Self, DecodeError> {
+    ) -> Result<Self, At<DecodeError>> {
         let mut ctx =
             crate::decoder::vp8v2::DecoderContext::new().with_dithering_strength(dither_strength);
         ctx.read_frame_header(vp8_data)?;
@@ -1839,9 +1835,9 @@ impl WebpStreamingDecoder {
         if extra_y_rows < 2 {
             // Fallback: for no-filter case, streaming is not supported.
             // This is extremely rare (very high quality / filter disabled).
-            return Err(DecodeError::UnsupportedFeature(
+            return Err(at!(DecodeError::UnsupportedFeature(
                 "streaming decode requires filter (extra_y_rows >= 2)".into(),
-            ));
+            )));
         }
 
         ctx.init_streaming_uv_buffers();

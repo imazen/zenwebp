@@ -1,6 +1,9 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+#[allow(unused_imports)]
+use whereat::at;
+
 use super::alpha_blending::do_alpha_blending;
 use super::api::DecodeError;
 use super::lossless::LosslessDecoder;
@@ -44,16 +47,16 @@ pub(crate) fn composite_frame(
     previous_frame_height: u32,
     previous_frame_offset_x: u32,
     previous_frame_offset_y: u32,
-) -> Result<(), DecodeError> {
+) -> Result<(), whereat::At<DecodeError>> {
     // Validate canvas size with checked arithmetic
     let canvas_stride = (canvas_width as usize)
         .checked_mul(4)
-        .ok_or(DecodeError::ImageTooLarge)?;
+        .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
     let expected_canvas_size = canvas_stride
         .checked_mul(canvas_height as usize)
-        .ok_or(DecodeError::ImageTooLarge)?;
+        .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
     if canvas.len() < expected_canvas_size {
-        return Err(DecodeError::ImageTooLarge);
+        return Err(at!(DecodeError::ImageTooLarge));
     }
 
     let frame_is_full_size = frame_offset_x == 0
@@ -66,7 +69,9 @@ pub(crate) fn composite_frame(
             canvas.copy_from_slice(frame);
         } else {
             garb::bytes::rgb_to_rgba(frame, canvas).map_err(|e| {
-                DecodeError::InvalidParameter(alloc::format!("pixel conversion: {e}"))
+                at!(DecodeError::InvalidParameter(alloc::format!(
+                    "pixel conversion: {e}"
+                )))
             })?;
         }
         return Ok(());
@@ -128,7 +133,11 @@ pub(crate) fn composite_frame(
             frame_width as usize * 3,
             canvas_stride,
         )
-        .map_err(|e| DecodeError::InvalidParameter(alloc::format!("pixel conversion: {e}")))?;
+        .map_err(|e| {
+            at!(DecodeError::InvalidParameter(alloc::format!(
+                "pixel conversion: {e}"
+            )))
+        })?;
     }
 
     Ok(())
@@ -253,7 +262,7 @@ pub(crate) fn get_alpha_predictor_from_alpha(
 
 pub(crate) fn read_extended_header(
     reader: &mut SliceReader,
-) -> Result<WebPExtendedInfo, DecodeError> {
+) -> Result<WebPExtendedInfo, whereat::At<DecodeError>> {
     let chunk_flags = reader.read_u8()?;
 
     let icc_profile = chunk_flags & 0b00100000 != 0;
@@ -270,7 +279,7 @@ pub(crate) fn read_extended_header(
 
     //product of canvas dimensions cannot be larger than u32 max
     if u32::checked_mul(canvas_width, canvas_height).is_none() {
-        return Err(DecodeError::ImageTooLarge);
+        return Err(at!(DecodeError::ImageTooLarge));
     }
 
     let info = WebPExtendedInfo {
@@ -315,9 +324,9 @@ pub(crate) fn read_alpha_chunk(
     data: &[u8],
     width: u16,
     height: u16,
-) -> Result<AlphaChunk, DecodeError> {
+) -> Result<AlphaChunk, whereat::At<DecodeError>> {
     if data.is_empty() {
-        return Err(DecodeError::BitStreamError);
+        return Err(at!(DecodeError::BitStreamError));
     }
     let info_byte = data[0];
 
@@ -328,7 +337,7 @@ pub(crate) fn read_alpha_chunk(
     let preprocessing = match preprocessing {
         0 => false,
         1 => true,
-        _ => return Err(DecodeError::InvalidAlphaPreprocessing),
+        _ => return Err(at!(DecodeError::InvalidAlphaPreprocessing)),
     };
 
     let filtering_method = match filtering {
@@ -342,7 +351,7 @@ pub(crate) fn read_alpha_chunk(
     let lossless_compression = match compression {
         0 => false,
         1 => true,
-        _ => return Err(DecodeError::InvalidCompressionMethod),
+        _ => return Err(at!(DecodeError::InvalidCompressionMethod)),
     };
 
     let alpha_data = &data[1..];
@@ -360,7 +369,7 @@ pub(crate) fn read_alpha_chunk(
     } else {
         let required = width as usize * height as usize;
         if alpha_data.len() < required {
-            return Err(DecodeError::BitStreamError);
+            return Err(at!(DecodeError::BitStreamError));
         }
         alpha_data[..required].to_vec()
     };

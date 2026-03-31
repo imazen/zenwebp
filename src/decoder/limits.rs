@@ -3,6 +3,9 @@
 //! These limits protect against malicious or malformed inputs that could
 //! cause excessive memory usage or processing time.
 
+#[allow(unused_imports)]
+use whereat::at;
+
 use super::api::DecodeError;
 
 /// Configuration for decode limits.
@@ -118,75 +121,79 @@ impl Limits {
     }
 
     /// Check if dimensions are within limits.
-    pub fn check_dimensions(&self, width: u32, height: u32) -> Result<(), DecodeError> {
+    pub fn check_dimensions(
+        &self,
+        width: u32,
+        height: u32,
+    ) -> Result<(), whereat::At<DecodeError>> {
         if let Some(max_w) = self.max_width
             && width > max_w
         {
-            return Err(DecodeError::InvalidParameter(alloc::format!(
+            return Err(at!(DecodeError::InvalidParameter(alloc::format!(
                 "width {} exceeds limit {}",
                 width,
                 max_w
-            )));
+            ))));
         }
 
         if let Some(max_h) = self.max_height
             && height > max_h
         {
-            return Err(DecodeError::InvalidParameter(alloc::format!(
+            return Err(at!(DecodeError::InvalidParameter(alloc::format!(
                 "height {} exceeds limit {}",
                 height,
                 max_h
-            )));
+            ))));
         }
 
         let total_pixels = width as u64 * height as u64;
         if let Some(max_pixels) = self.max_total_pixels
             && total_pixels > max_pixels
         {
-            return Err(DecodeError::InvalidParameter(alloc::format!(
+            return Err(at!(DecodeError::InvalidParameter(alloc::format!(
                 "total pixels {} exceeds limit {}",
                 total_pixels,
                 max_pixels
-            )));
+            ))));
         }
 
         Ok(())
     }
 
     /// Check if frame count is within limits.
-    pub fn check_frame_count(&self, count: usize) -> Result<(), DecodeError> {
+    pub fn check_frame_count(&self, count: usize) -> Result<(), whereat::At<DecodeError>> {
         if let Some(max) = self.max_frame_count
             && count as u64 >= max
         {
-            return Err(DecodeError::InvalidParameter(alloc::format!(
+            return Err(at!(DecodeError::InvalidParameter(alloc::format!(
                 "frame count {} exceeds limit {}",
                 count,
                 max
-            )));
+            ))));
         }
         Ok(())
     }
 
     /// Check if file size is within limits.
-    pub fn check_file_size(&self, size: u64) -> Result<(), DecodeError> {
+    pub fn check_file_size(&self, size: u64) -> Result<(), whereat::At<DecodeError>> {
         if let Some(max) = self.max_file_size
             && size > max
         {
-            return Err(DecodeError::InvalidParameter(alloc::format!(
+            return Err(at!(DecodeError::InvalidParameter(alloc::format!(
                 "file size {} bytes exceeds limit {} bytes",
                 size,
                 max
-            )));
+            ))));
         }
         Ok(())
     }
 
     /// Check if memory usage is within limits.
-    pub fn check_memory(&self, bytes: usize) -> Result<(), DecodeError> {
+    pub fn check_memory(&self, bytes: usize) -> Result<(), whereat::At<DecodeError>> {
         if let Some(max) = self.max_memory
             && bytes as u64 > max
         {
-            return Err(DecodeError::MemoryLimitExceeded);
+            return Err(at!(DecodeError::MemoryLimitExceeded));
         }
         Ok(())
     }

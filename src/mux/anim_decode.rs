@@ -21,6 +21,9 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+#[allow(unused_imports)]
+use whereat::at;
+
 use crate::decoder::{DecodeConfig, DecodeError, LoopCount, UpsamplingMethod, WebPDecoder};
 
 /// Frame metadata without pixel data (returned by [`AnimationDecoder::decode_next`]).
@@ -86,24 +89,27 @@ impl<'a> AnimationDecoder<'a> {
     ///
     /// Returns an error if the data is not a valid animated WebP.
     pub fn new(data: &'a [u8]) -> Result<Self, DecodeError> {
-        Self::new_with_config(data, &DecodeConfig::default())
+        Ok(Self::new_with_config(data, &DecodeConfig::default())?)
     }
 
     /// Create a new animation decoder with custom decode configuration.
     ///
     /// Returns an error if the data is not a valid animated WebP.
-    pub fn new_with_config(data: &'a [u8], config: &DecodeConfig) -> Result<Self, DecodeError> {
+    pub fn new_with_config(
+        data: &'a [u8],
+        config: &DecodeConfig,
+    ) -> Result<Self, whereat::At<DecodeError>> {
         let mut decoder = WebPDecoder::new_with_options(data, config.to_options())?;
         decoder.set_limits(config.limits.clone());
         if !decoder.is_animated() {
-            return Err(DecodeError::InvalidParameter(alloc::string::String::from(
-                "not an animated WebP",
+            return Err(at!(DecodeError::InvalidParameter(
+                alloc::string::String::from("not an animated WebP"),
             )));
         }
         let total_frames = decoder.num_frames();
         let buf_size = decoder
             .output_buffer_size()
-            .ok_or(DecodeError::ImageTooLarge)?;
+            .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
         let buf = vec![0u8; buf_size];
         Ok(Self {
             decoder,
@@ -145,7 +151,7 @@ impl<'a> AnimationDecoder<'a> {
 
     /// Set background color for compositing.
     pub fn set_background_color(&mut self, color: [u8; 4]) -> Result<(), DecodeError> {
-        self.decoder.set_background_color(color)
+        Ok(self.decoder.set_background_color(color)?)
     }
 
     /// Set a cooperative cancellation token.
@@ -161,17 +167,17 @@ impl<'a> AnimationDecoder<'a> {
 
     /// Read the embedded ICC profile, if any.
     pub fn icc_profile(&mut self) -> Result<Option<Vec<u8>>, DecodeError> {
-        self.decoder.icc_profile()
+        Ok(self.decoder.icc_profile()?)
     }
 
     /// Read the embedded EXIF metadata, if any.
     pub fn exif_metadata(&mut self) -> Result<Option<Vec<u8>>, DecodeError> {
-        self.decoder.exif_metadata()
+        Ok(self.decoder.exif_metadata()?)
     }
 
     /// Read the embedded XMP metadata, if any.
     pub fn xmp_metadata(&mut self) -> Result<Option<Vec<u8>>, DecodeError> {
-        self.decoder.xmp_metadata()
+        Ok(self.decoder.xmp_metadata()?)
     }
 
     /// Total duration of all frames in milliseconds.
@@ -219,8 +225,8 @@ impl<'a> AnimationDecoder<'a> {
                     duration_ms,
                 }))
             }
-            Err(DecodeError::NoMoreFrames) => Ok(None),
-            Err(e) => Err(e),
+            Err(ref e) if matches!(e.error(), DecodeError::NoMoreFrames) => Ok(None),
+            Err(e) => Err(e.into()),
         }
     }
 

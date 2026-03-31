@@ -22,6 +22,9 @@
 
 use alloc::vec::Vec;
 
+#[allow(unused_imports)]
+use whereat::at;
+
 use super::error::{MuxError, MuxResult};
 use crate::decoder::LoopCount;
 use crate::slice_reader::SliceReader;
@@ -118,43 +121,48 @@ impl<'a> WebPDemuxer<'a> {
     /// No pixel decoding is performed.
     #[track_caller]
     pub fn new(data: &'a [u8]) -> MuxResult<Self> {
-        Self::new_inner(data).map_err(|e| whereat::at!(e))
+        Self::new_inner(data)
     }
 
-    fn new_inner(data: &'a [u8]) -> Result<Self, MuxError> {
+    fn new_inner(data: &'a [u8]) -> MuxResult<Self> {
         if data.len() < 12 {
-            return Err(MuxError::InvalidFormat("File too small".into()));
+            return Err(at!(MuxError::InvalidFormat("File too small".into())));
         }
 
         let mut r = SliceReader::new(data);
 
         // Read RIFF header
         let mut sig = [0u8; 4];
-        r.read_exact(&mut sig)?;
+        r.read_exact(&mut sig).map_err(|e| at!(MuxError::from(e)))?;
         if &sig != b"RIFF" {
-            return Err(MuxError::InvalidFormat("Missing RIFF signature".into()));
+            return Err(at!(MuxError::InvalidFormat(
+                "Missing RIFF signature".into()
+            )));
         }
 
-        let riff_size = r.read_u32_le()? as usize;
+        let riff_size = r.read_u32_le().map_err(|e| at!(MuxError::from(e)))? as usize;
 
-        r.read_exact(&mut sig)?;
+        r.read_exact(&mut sig).map_err(|e| at!(MuxError::from(e)))?;
         if &sig != b"WEBP" {
-            return Err(MuxError::InvalidFormat("Missing WEBP signature".into()));
+            return Err(at!(MuxError::InvalidFormat(
+                "Missing WEBP signature".into()
+            )));
         }
 
         // Read first chunk fourcc
         let mut fourcc = [0u8; 4];
-        r.read_exact(&mut fourcc)?;
-        let chunk_size = r.read_u32_le()? as usize;
+        r.read_exact(&mut fourcc)
+            .map_err(|e| at!(MuxError::from(e)))?;
+        let chunk_size = r.read_u32_le().map_err(|e| at!(MuxError::from(e)))? as usize;
 
         match &fourcc {
             b"VP8 " => Self::parse_simple_lossy(data, r, chunk_size),
             b"VP8L" => Self::parse_simple_lossless(data, r, chunk_size),
             b"VP8X" => Self::parse_extended(data, r, chunk_size, riff_size),
-            _ => Err(MuxError::InvalidFormat(alloc::format!(
+            _ => Err(at!(MuxError::InvalidFormat(alloc::format!(
                 "Unknown first chunk: {:?}",
                 fourcc
-            ))),
+            )))),
         }
     }
 
@@ -162,29 +170,30 @@ impl<'a> WebPDemuxer<'a> {
         data: &'a [u8],
         mut r: SliceReader<'a>,
         chunk_size: usize,
-    ) -> Result<Self, MuxError> {
+    ) -> MuxResult<Self> {
         let bitstream_start = r.position() as usize;
 
         // Parse VP8 frame header to get dimensions
         if chunk_size < 10 {
-            return Err(MuxError::InvalidFormat("VP8 chunk too small".into()));
+            return Err(at!(MuxError::InvalidFormat("VP8 chunk too small".into())));
         }
 
-        let frame_tag = r.read_u24_le()?;
+        let frame_tag = r.read_u24_le().map_err(|e| at!(MuxError::from(e)))?;
         let is_keyframe = frame_tag & 1 == 0;
         if !is_keyframe {
-            return Err(MuxError::InvalidFormat("Not a keyframe".into()));
+            return Err(at!(MuxError::InvalidFormat("Not a keyframe".into())));
         }
 
         // Skip to magic bytes
         let mut magic = [0u8; 3];
-        r.read_exact(&mut magic)?;
+        r.read_exact(&mut magic)
+            .map_err(|e| at!(MuxError::from(e)))?;
         if magic != [0x9D, 0x01, 0x2A] {
-            return Err(MuxError::InvalidFormat("Invalid VP8 magic".into()));
+            return Err(at!(MuxError::InvalidFormat("Invalid VP8 magic".into())));
         }
 
-        let w = r.read_u16_le()?;
-        let h = r.read_u16_le()?;
+        let w = r.read_u16_le().map_err(|e| at!(MuxError::from(e)))?;
+        let h = r.read_u16_le().map_err(|e| at!(MuxError::from(e)))?;
         let width = u32::from(w & 0x3FFF);
         let height = u32::from(h & 0x3FFF);
 
@@ -212,20 +221,22 @@ impl<'a> WebPDemuxer<'a> {
         data: &'a [u8],
         mut r: SliceReader<'a>,
         chunk_size: usize,
-    ) -> Result<Self, MuxError> {
+    ) -> MuxResult<Self> {
         let bitstream_start = r.position() as usize;
 
         // Parse VP8L header to get dimensions
         if chunk_size < 5 {
-            return Err(MuxError::InvalidFormat("VP8L chunk too small".into()));
+            return Err(at!(MuxError::InvalidFormat("VP8L chunk too small".into())));
         }
 
-        let signature = r.read_u8()?;
+        let signature = r.read_u8().map_err(|e| at!(MuxError::from(e)))?;
         if signature != 0x2f {
-            return Err(MuxError::InvalidFormat("Invalid VP8L signature".into()));
+            return Err(at!(MuxError::InvalidFormat(
+                "Invalid VP8L signature".into()
+            )));
         }
 
-        let header = r.read_u32_le()?;
+        let header = r.read_u32_le().map_err(|e| at!(MuxError::from(e)))?;
         let width = (1 + header) & 0x3FFF;
         let height = (1 + (header >> 14)) & 0x3FFF;
         let has_alpha = (header >> 28) & 1 != 0;
@@ -255,12 +266,12 @@ impl<'a> WebPDemuxer<'a> {
         mut r: SliceReader<'a>,
         vp8x_size: usize,
         riff_size: usize,
-    ) -> Result<Self, MuxError> {
+    ) -> MuxResult<Self> {
         if vp8x_size < 10 {
-            return Err(MuxError::InvalidFormat("VP8X chunk too small".into()));
+            return Err(at!(MuxError::InvalidFormat("VP8X chunk too small".into())));
         }
 
-        let flags = r.read_u8()?;
+        let flags = r.read_u8().map_err(|e| at!(MuxError::from(e)))?;
         let has_icc = flags & 0b00100000 != 0;
         let has_alpha = flags & 0b00010000 != 0;
         let has_exif = flags & 0b00001000 != 0;
@@ -268,11 +279,11 @@ impl<'a> WebPDemuxer<'a> {
         let is_animated = flags & 0b00000010 != 0;
 
         // Skip 3 reserved bytes
-        r.seek_relative(3)?;
+        r.seek_relative(3).map_err(|e| at!(MuxError::from(e)))?;
 
         // Canvas dimensions (24-bit LE, stored as value-1)
-        let canvas_width = r.read_u24_le()? + 1;
-        let canvas_height = r.read_u24_le()? + 1;
+        let canvas_width = r.read_u24_le().map_err(|e| at!(MuxError::from(e)))? + 1;
+        let canvas_height = r.read_u24_le().map_err(|e| at!(MuxError::from(e)))? + 1;
 
         let mut demuxer = Self {
             data,
@@ -295,7 +306,8 @@ impl<'a> WebPDemuxer<'a> {
 
         // Skip any remaining VP8X payload padding
         let vp8x_rounded = vp8x_size + (vp8x_size & 1);
-        r.seek_from_start(12 + 8 + vp8x_rounded as u64)?;
+        r.seek_from_start(12 + 8 + vp8x_rounded as u64)
+            .map_err(|e| at!(MuxError::from(e)))?;
 
         let max_pos = 8 + riff_size; // RIFF header (8 bytes) + declared size
 

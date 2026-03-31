@@ -32,6 +32,9 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
 
+#[allow(unused_imports)]
+use whereat::at;
+
 use super::api::EncodeError;
 use super::api::PixelLayout;
 use super::arithmetic::ArithmeticEncoder;
@@ -1144,10 +1147,11 @@ impl<'a> Vp8Encoder<'a> {
         const VP8_MAX_PARTITION0_SIZE: u32 = (1 << 19) - 1;
         let partition0_size = compressed_header_bytes.len() as u32;
         if partition0_size > VP8_MAX_PARTITION0_SIZE {
-            return Err(EncodeError::Partition0Overflow {
+            return Err(at!(EncodeError::Partition0Overflow {
                 size: partition0_size,
                 max: VP8_MAX_PARTITION0_SIZE,
-            });
+            })
+            .into());
         }
 
         self.write_uncompressed_frame_header(partition0_size);
@@ -1628,27 +1632,27 @@ pub(crate) fn encode_frame_lossy(
     params: &super::api::EncoderParams,
     stop: &dyn enough::Stop,
     progress: &dyn super::api::EncodeProgress,
-) -> Result<super::api::EncodeStats, EncodeError> {
+) -> super::api::EncodeResult<super::api::EncodeStats> {
     let width = width
         .try_into()
-        .map_err(|_| EncodeError::InvalidDimensions)?;
+        .map_err(|_| at!(EncodeError::InvalidDimensions))?;
     let height = height
         .try_into()
-        .map_err(|_| EncodeError::InvalidDimensions)?;
+        .map_err(|_| at!(EncodeError::InvalidDimensions))?;
 
     // Quality search: if target_size or target_psnr is set, iterate quality to converge
     if params.target_size > 0 {
-        encode_with_quality_search(
+        Ok(encode_with_quality_search(
             writer, data, width, height, stride, color, params, stop, progress,
-        )
+        )?)
     } else if params.target_psnr > 0.0 {
-        encode_with_psnr_search(
+        Ok(encode_with_psnr_search(
             writer, data, width, height, stride, color, params, stop, progress,
-        )
+        )?)
     } else {
         // Single encoding at specified quality
         let mut vp8_encoder = Vp8Encoder::new(writer);
-        vp8_encoder.encode_image(data, color, width, height, stride, params, stop, progress)
+        Ok(vp8_encoder.encode_image(data, color, width, height, stride, params, stop, progress)?)
     }
 }
 

@@ -1,6 +1,9 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+#[allow(unused_imports)]
+use whereat::at;
+
 use super::api::DecodeError;
 use super::internal_error::InternalDecodeError;
 use super::lossless::BitReader;
@@ -45,7 +48,7 @@ impl HuffmanTree {
 
     /// Builds a tree implicitly, just from code lengths
     #[allow(clippy::needless_range_loop)]
-    pub(crate) fn build_implicit(code_lengths: Vec<u16>) -> Result<Self, DecodeError> {
+    pub(crate) fn build_implicit(code_lengths: Vec<u16>) -> Result<Self, whereat::At<DecodeError>> {
         // Count symbols and build histogram
         let mut num_symbols = 0;
         let mut histogram = [0; MAX_ALLOWED_CODE_LENGTH + 1];
@@ -63,7 +66,7 @@ impl HuffmanTree {
                 "HuffmanError: num_symbols == 0, code_lengths.len()={}",
                 code_lengths.len()
             );
-            return Err(DecodeError::HuffmanError);
+            return Err(at!(DecodeError::HuffmanError));
         } else if num_symbols == 1 {
             let root_symbol = code_lengths.iter().position(|&x| x != 0).unwrap() as u16;
             return Ok(Self::build_single_node(root_symbol));
@@ -96,7 +99,7 @@ impl HuffmanTree {
                 max_length,
                 &histogram[..max_length + 1]
             );
-            return Err(DecodeError::HuffmanError);
+            return Err(at!(DecodeError::HuffmanError));
         }
 
         // Calculate table/tree parameters

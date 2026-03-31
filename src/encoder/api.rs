@@ -84,6 +84,12 @@ impl From<enough::StopReason> for EncodeError {
     }
 }
 
+impl From<whereat::At<EncodeError>> for EncodeError {
+    fn from(at: whereat::At<EncodeError>) -> Self {
+        at.decompose().0
+    }
+}
+
 /// Content-aware encoding presets.
 ///
 /// These presets configure the encoder for different types of content,
@@ -1274,8 +1280,7 @@ impl<'a> EncodeRequest<'a> {
                 self.height,
                 stride,
                 bpp as u32,
-            )
-            .map_err(|e| at!(e))?;
+            )?;
         }
 
         let mut output = Vec::new();
@@ -1315,7 +1320,7 @@ fn validate_buffer_size(
     height: u32,
     stride: usize,
     bpp: u32,
-) -> Result<(), EncodeError> {
+) -> EncodeResult<()> {
     let w = width as usize;
     let h = height as usize;
     let bpp = bpp as usize;
@@ -1326,10 +1331,10 @@ fn validate_buffer_size(
     };
 
     if size < expected {
-        return Err(EncodeError::InvalidBufferSize(format!(
+        return Err(at!(EncodeError::InvalidBufferSize(format!(
             "buffer too small: got {}, expected at least {} ({}x{}, stride={}, bpp={})",
             size, expected, w, h, stride, bpp
-        )));
+        ))));
     }
     Ok(())
 }
@@ -1358,16 +1363,16 @@ pub(crate) fn encode_frame_lossless(
     params: EncoderParams,
     implicit_dimensions: bool,
     stop: &dyn enough::Stop,
-) -> Result<(), EncodeError> {
+) -> EncodeResult<()> {
     let (is_color, is_alpha, bytes_per_pixel) = match color {
         PixelLayout::L8 => (false, false, 1),
         PixelLayout::La8 => (false, true, 2),
         PixelLayout::Rgb8 | PixelLayout::Bgr8 => (true, false, 3),
         PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => (true, true, 4),
         PixelLayout::Yuv420 => {
-            return Err(EncodeError::InvalidBufferSize(
+            return Err(at!(EncodeError::InvalidBufferSize(
                 "YUV 4:2:0 input only supports lossy encoding".into(),
-            ));
+            )));
         }
     };
 
@@ -1392,7 +1397,7 @@ pub(crate) fn encode_frame_lossless(
     );
 
     if width == 0 || width > 16384 || height == 0 || height > 16384 {
-        return Err(EncodeError::InvalidDimensions);
+        return Err(at!(EncodeError::InvalidDimensions));
     }
 
     // For main image encoding (not alpha plane), use the full VP8L pipeline.
@@ -1552,7 +1557,7 @@ pub(crate) fn encode_frame_lossless(
         pixels[3] = pixels[3].wrapping_sub(255);
     }
 
-    stop.check()?;
+    stop.check().map_err(|e| at!(EncodeError::from(e)))?;
 
     // compute frequencies
     let mut frequencies0 = [0u32; 256];
@@ -1908,7 +1913,7 @@ pub(crate) fn encode_alpha_lossless(
     color: PixelLayout,
     alpha_quality: u8,
     stop: &dyn enough::Stop,
-) -> Result<(), EncodeError> {
+) -> EncodeResult<()> {
     let bytes_per_pixel = match color {
         PixelLayout::La8 => 2usize,
         PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => 4,
@@ -1920,7 +1925,7 @@ pub(crate) fn encode_alpha_lossless(
         _ => bytes_per_pixel - 1,
     };
     if width == 0 || width > 16384 || height == 0 || height > 16384 {
-        return Err(EncodeError::InvalidDimensions);
+        return Err(at!(EncodeError::InvalidDimensions));
     }
 
     let filtering_method = 0u8;

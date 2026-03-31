@@ -14,6 +14,9 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+#[allow(unused_imports)]
+use whereat::at;
+
 use super::api::DecodeError;
 use super::internal_error::InternalDecodeError;
 
@@ -59,9 +62,9 @@ impl VP8HeaderBitReader {
     }
 
     /// Initialize the reader with data
-    pub fn init(&mut self, data: Vec<u8>) -> Result<(), DecodeError> {
+    pub fn init(&mut self, data: Vec<u8>) -> Result<(), whereat::At<DecodeError>> {
         if data.is_empty() {
-            return Err(DecodeError::NotEnoughInitData);
+            return Err(at!(DecodeError::NotEnoughInitData));
         }
         self.data = data.into_boxed_slice();
         self.pos = 0;
@@ -344,10 +347,10 @@ impl VP8Partitions {
 
     /// Check if any partition hit EOF.
     #[allow(dead_code)]
-    pub fn check(&self) -> Result<(), DecodeError> {
+    pub fn check(&self) -> Result<(), whereat::At<DecodeError>> {
         for i in 0..self.num_partitions {
             if self.states[i].eof {
-                return Err(DecodeError::BitStreamError);
+                return Err(at!(DecodeError::BitStreamError));
             }
         }
         Ok(())

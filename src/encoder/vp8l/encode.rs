@@ -27,7 +27,9 @@ use super::types::{
 };
 
 use super::entropy::vp8l_bits_entropy;
-use crate::encoder::api::EncodeError;
+use crate::encoder::api::{EncodeError, EncodeResult};
+#[allow(unused_imports)]
+use whereat::at;
 
 /// Encode an image using VP8L lossless compression.
 pub fn encode_vp8l(
@@ -37,20 +39,20 @@ pub fn encode_vp8l(
     has_alpha: bool,
     config: &Vp8lConfig,
     stop: &dyn enough::Stop,
-) -> Result<Vec<u8>, EncodeError> {
+) -> EncodeResult<Vec<u8>> {
     if width == 0 || width > 16384 || height == 0 || height > 16384 {
-        return Err(EncodeError::InvalidDimensions);
+        return Err(at!(EncodeError::InvalidDimensions));
     }
 
     let w = width as usize;
     let h = height as usize;
     let expected_len = w * h * if has_alpha { 4 } else { 3 };
     if pixels.len() != expected_len {
-        return Err(EncodeError::InvalidBufferSize(alloc::format!(
+        return Err(at!(EncodeError::InvalidBufferSize(alloc::format!(
             "expected {} bytes, got {}",
             expected_len,
             pixels.len()
-        )));
+        ))));
     }
 
     // Convert RGBA/RGB bytes to packed ARGB u32 array.
@@ -85,7 +87,7 @@ pub fn encode_vp8l(
     // The encoder API handles this in the pixel expansion step.
 
     // Encode with the full pipeline
-    encode_argb(&mut argb, w, h, has_alpha, config, stop)
+    Ok(encode_argb(&mut argb, w, h, has_alpha, config, stop)?)
 }
 
 /// Result of entropy analysis for transform selection.
@@ -469,7 +471,7 @@ pub(crate) fn encode_argb(
         let mut best_output: Option<Vec<u8>> = None;
 
         for crunch_config in &configs {
-            stop.check()?;
+            stop.check().map_err(|e| at!(EncodeError::from(e)))?;
             argb.copy_from_slice(&original);
             match encode_argb_single_config(
                 argb,
@@ -689,7 +691,7 @@ fn encode_argb_single_config(
         .as_ref()
         .map(|pt| pt.palette.len())
         .unwrap_or(0);
-    stop.check()?;
+    stop.check().map_err(|e| at!(EncodeError::from(e)))?;
 
     let (refs, cache_bits) = if enc_palette_size > 0 {
         get_backward_references_with_palette(
@@ -729,7 +731,7 @@ fn encode_argb_single_config(
         strip_cache_from_refs(enc_argb, &mut base_refs);
 
         // Trial 1: no color cache (cache_bits = 0)
-        stop.check()?;
+        stop.check().map_err(|e| at!(EncodeError::from(e)))?;
         let output_no_cache = encode_image_data(
             writer.clone(),
             &base_refs,
@@ -742,7 +744,7 @@ fn encode_argb_single_config(
         );
 
         // Trial 2: entropy-selected cache_bits
-        stop.check()?;
+        stop.check().map_err(|e| at!(EncodeError::from(e)))?;
         let mut cached_refs = base_refs;
         apply_cache_to_refs(enc_argb, cache_bits, &mut cached_refs);
         let output_with_cache = encode_image_data(

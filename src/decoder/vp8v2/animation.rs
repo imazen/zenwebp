@@ -8,6 +8,9 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+#[allow(unused_imports)]
+use whereat::at;
+
 use crate::decoder::api::DecodeError;
 use crate::decoder::extended::{get_alpha_predictor, read_alpha_chunk};
 use crate::decoder::lossless::LosslessDecoder;
@@ -62,11 +65,13 @@ impl DecoderContext {
         &mut self,
         data: &[u8],
         mut callback: impl FnMut(AnimationFrame<'_>) -> bool,
-    ) -> Result<(), DecodeError> {
-        let demuxer = WebPDemuxer::new(data).map_err(mux_to_decode)?;
+    ) -> Result<(), whereat::At<DecodeError>> {
+        let demuxer = WebPDemuxer::new(data).map_err(|e| at!(mux_to_decode(e)))?;
 
         if !demuxer.is_animated() {
-            return Err(DecodeError::InvalidParameter("not an animated WebP".into()));
+            return Err(at!(DecodeError::InvalidParameter(
+                "not an animated WebP".into()
+            )));
         }
 
         let canvas_w = demuxer.canvas_width();
@@ -76,7 +81,7 @@ impl DecoderContext {
         let canvas_size: usize = (canvas_w as usize)
             .checked_mul(canvas_h as usize)
             .and_then(|n| n.checked_mul(4))
-            .ok_or(DecodeError::ImageTooLarge)?;
+            .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
 
         let mut canvas = vec![0u8; canvas_size];
         // Initialize canvas with background color
@@ -167,7 +172,7 @@ impl DecoderContext {
         &mut self,
         frame: &DemuxFrame<'_>,
         scratch: &mut Vec<u8>,
-    ) -> Result<bool, DecodeError> {
+    ) -> Result<bool, whereat::At<DecodeError>> {
         if frame.is_lossy {
             if let Some(alpha_data) = frame.alpha_data {
                 // Lossy with alpha: decode VP8 to RGBA, then apply alpha
@@ -176,11 +181,11 @@ impl DecoderContext {
                 let alpha_w: u16 = frame
                     .width
                     .try_into()
-                    .map_err(|_| DecodeError::ImageTooLarge)?;
+                    .map_err(|_| at!(DecodeError::ImageTooLarge))?;
                 let alpha_h: u16 = frame
                     .height
                     .try_into()
-                    .map_err(|_| DecodeError::ImageTooLarge)?;
+                    .map_err(|_| at!(DecodeError::ImageTooLarge))?;
                 let alpha_chunk = read_alpha_chunk(alpha_data, alpha_w, alpha_h)?;
 
                 let fw = frame.width as usize;
@@ -208,7 +213,7 @@ impl DecoderContext {
             let alloc_size = (frame.width as usize)
                 .checked_mul(frame.height as usize)
                 .and_then(|n| n.checked_mul(4))
-                .ok_or(DecodeError::ImageTooLarge)?;
+                .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
             scratch.resize(alloc_size, 0);
             let mut decoder = LosslessDecoder::new(frame.bitstream);
             decoder.decode_frame(frame.width, frame.height, false, scratch)?;

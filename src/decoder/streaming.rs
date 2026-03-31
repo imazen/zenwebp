@@ -31,6 +31,9 @@
 
 use alloc::vec::Vec;
 
+#[allow(unused_imports)]
+use whereat::at;
+
 use super::api::{DecodeConfig, DecodeError, DecodeResult, ImageInfo, WebPDecoder};
 
 /// Status returned from [`StreamingDecoder::append`].
@@ -85,21 +88,21 @@ impl StreamingDecoder {
     /// Append data to the internal buffer and check progress.
     ///
     /// Returns the current status after incorporating the new data.
-    pub fn append(&mut self, data: &[u8]) -> Result<StreamStatus, DecodeError> {
+    pub fn append(&mut self, data: &[u8]) -> Result<StreamStatus, whereat::At<DecodeError>> {
         self.buf.extend_from_slice(data);
 
         // Try to parse RIFF header (12 bytes minimum)
         if self.riff_size.is_none() && self.buf.len() >= 12 {
             if &self.buf[0..4] != b"RIFF" {
-                return Err(DecodeError::RiffSignatureInvalid(
+                return Err(at!(DecodeError::RiffSignatureInvalid(
                     self.buf[0..4].try_into().unwrap(),
-                ));
+                )));
             }
             let size = u32::from_le_bytes(self.buf[4..8].try_into().unwrap());
             if &self.buf[8..12] != b"WEBP" {
-                return Err(DecodeError::WebpSignatureInvalid(
+                return Err(at!(DecodeError::WebpSignatureInvalid(
                     self.buf[8..12].try_into().unwrap(),
-                ));
+                )));
             }
             self.riff_size = Some(size);
         }
@@ -160,7 +163,7 @@ impl StreamingDecoder {
     ///
     /// Returns an error if data is incomplete.
     pub fn finish_rgba(self) -> DecodeResult<(Vec<u8>, u32, u32)> {
-        self.ensure_complete().map_err(|e| whereat::at!(e))?;
+        self.ensure_complete()?;
         super::api::DecodeRequest::new(&self.config, &self.buf).decode_rgba()
     }
 
@@ -168,7 +171,7 @@ impl StreamingDecoder {
     ///
     /// Returns an error if data is incomplete.
     pub fn finish_rgb(self) -> DecodeResult<(Vec<u8>, u32, u32)> {
-        self.ensure_complete().map_err(|e| whereat::at!(e))?;
+        self.ensure_complete()?;
         super::api::DecodeRequest::new(&self.config, &self.buf).decode_rgb()
     }
 
@@ -176,7 +179,7 @@ impl StreamingDecoder {
     ///
     /// Returns an error if data is incomplete.
     pub fn finish_rgba_into(self, output: &mut [u8]) -> DecodeResult<(u32, u32)> {
-        self.ensure_complete().map_err(|e| whereat::at!(e))?;
+        self.ensure_complete()?;
         super::api::DecodeRequest::new(&self.config, &self.buf).decode_rgba_into(output)
     }
 
@@ -188,10 +191,10 @@ impl StreamingDecoder {
         self.buf
     }
 
-    fn ensure_complete(&self) -> Result<(), DecodeError> {
+    fn ensure_complete(&self) -> Result<(), whereat::At<DecodeError>> {
         if !self.is_complete() {
-            return Err(DecodeError::InvalidParameter(alloc::string::String::from(
-                "data incomplete",
+            return Err(at!(DecodeError::InvalidParameter(
+                alloc::string::String::from("data incomplete"),
             )));
         }
         Ok(())

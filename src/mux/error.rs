@@ -9,6 +9,24 @@ use crate::encoder::EncodeError;
 /// Result type alias using `At<MuxError>` for automatic location tracking.
 pub type MuxResult<T> = core::result::Result<T, whereat::At<MuxError>>;
 
+impl From<whereat::At<MuxError>> for MuxError {
+    fn from(at: whereat::At<MuxError>) -> Self {
+        at.decompose().0
+    }
+}
+
+impl From<whereat::At<EncodeError>> for MuxError {
+    fn from(at: whereat::At<EncodeError>) -> Self {
+        Self::EncodeError(at.decompose().0)
+    }
+}
+
+impl From<whereat::At<DecodeError>> for MuxError {
+    fn from(at: whereat::At<DecodeError>) -> Self {
+        Self::DecodeError(at.decompose().0)
+    }
+}
+
 /// Errors that can occur during mux/demux operations.
 #[derive(Debug, Error)]
 #[non_exhaustive]

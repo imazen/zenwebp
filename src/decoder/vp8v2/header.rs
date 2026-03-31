@@ -7,6 +7,9 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+#[allow(unused_imports)]
+use whereat::at;
+
 use super::context::DecoderContext;
 use super::tables::{DequantPair, PrecomputedFilterParams};
 use crate::common::types::*;
@@ -21,7 +24,10 @@ impl DecoderContext {
     /// parameters, quantization indices, filter settings, and token
     /// probabilities. On success, all buffers are sized for the frame
     /// and `self.tables` is fully populated.
-    pub(crate) fn read_frame_header(&mut self, data: &[u8]) -> Result<(), DecodeError> {
+    pub(crate) fn read_frame_header(
+        &mut self,
+        data: &[u8],
+    ) -> Result<(), whereat::At<DecodeError>> {
         let mut r = SliceReader::new(data);
         let mut b = VP8HeaderBitReader::new();
 
@@ -30,9 +36,9 @@ impl DecoderContext {
 
         let keyframe = tag & 1 == 0;
         if !keyframe {
-            return Err(DecodeError::UnsupportedFeature(
+            return Err(at!(DecodeError::UnsupportedFeature(
                 "Non-keyframe frames".into(),
-            ));
+            )));
         }
 
         // (tag >> 1) & 7 is 0..=7, always fits u8.
@@ -44,7 +50,7 @@ impl DecoderContext {
         let mut start_code = [0u8; 3];
         r.read_exact(&mut start_code)?;
         if start_code != [0x9d, 0x01, 0x2a] {
-            return Err(DecodeError::Vp8MagicInvalid(start_code));
+            return Err(at!(DecodeError::Vp8MagicInvalid(start_code)));
         }
 
         // ---- Dimensions ----
@@ -55,12 +61,12 @@ impl DecoderContext {
 
         // Reject zero dimensions (no valid WebP has 0×0 or 0×N pixels)
         if self.tables.width == 0 || self.tables.height == 0 {
-            return Err(DecodeError::ImageTooLarge);
+            return Err(at!(DecodeError::ImageTooLarge));
         }
 
         // WebP spec limit: 16383×16383
         if self.tables.width > 16383 || self.tables.height > 16383 {
-            return Err(DecodeError::ImageTooLarge);
+            return Err(at!(DecodeError::ImageTooLarge));
         }
 
         self.tables.mbwidth = self.tables.width.div_ceil(16);
@@ -70,10 +76,10 @@ impl DecoderContext {
         // Max valid: ceil(16383/16) * ceil(16383/16) = 1024 * 1024 = 1_048_576
         let mb_count = u32::from(self.tables.mbwidth)
             .checked_mul(u32::from(self.tables.mbheight))
-            .ok_or(DecodeError::ImageTooLarge)?;
+            .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
         // Sanity bound: ~1M macroblocks for 16383×16383
         if mb_count > 1024 * 1024 {
-            return Err(DecodeError::ImageTooLarge);
+            return Err(at!(DecodeError::ImageTooLarge));
         }
 
         // ---- Read partition 0 data into the boolean decoder ----
@@ -87,7 +93,7 @@ impl DecoderContext {
         let color_space = b.read_literal(1);
         self.tables.pixel_type = b.read_literal(1);
         if color_space != 0 {
-            return Err(DecodeError::ColorSpaceInvalid(color_space));
+            return Err(at!(DecodeError::ColorSpaceInvalid(color_space)));
         }
 
         // ---- Segments ----
@@ -109,7 +115,7 @@ impl DecoderContext {
         // ---- Partitions ----
         // read_literal(2) returns 0..=3, so num_partitions is 1, 2, 4, or 8.
         let num_partitions = 1usize << (b.read_literal(2) as usize);
-        b.check(())?;
+        b.check(()).map_err(|e| at!(DecodeError::from(e)))?;
         debug_assert!(num_partitions <= 8);
         self.tables.num_partitions = num_partitions as u8;
 
@@ -149,7 +155,7 @@ impl DecoderContext {
         } else {
             None
         };
-        b.check(())?;
+        b.check(()).map_err(|e| at!(DecodeError::from(e)))?;
 
         // ---- Precompute filter parameters ----
         self.precompute_filter_params();
@@ -174,7 +180,10 @@ impl DecoderContext {
         Ok(())
     }
 
-    fn read_segment_updates(&mut self, b: &mut VP8HeaderBitReader) -> Result<(), DecodeError> {
+    fn read_segment_updates(
+        &mut self,
+        b: &mut VP8HeaderBitReader,
+    ) -> Result<(), whereat::At<DecodeError>> {
         self.tables.segments_update_map = b.read_flag();
         let update_segment_feature_data = b.read_flag();
 
@@ -203,13 +212,13 @@ impl DecoderContext {
             }
         }
 
-        Ok(b.check(())?)
+        b.check(()).map_err(|e| at!(DecodeError::from(e)))
     }
 
     fn read_loop_filter_adjustments(
         &mut self,
         b: &mut VP8HeaderBitReader,
-    ) -> Result<(), DecodeError> {
+    ) -> Result<(), whereat::At<DecodeError>> {
         if b.read_flag() {
             for i in 0..4 {
                 self.tables.ref_delta[i] = b.read_optional_signed_value(6);
@@ -219,10 +228,14 @@ impl DecoderContext {
             }
         }
 
-        Ok(b.check(())?)
+        b.check(()).map_err(|e| at!(DecodeError::from(e)))
     }
 
-    fn init_partitions(&mut self, r: &mut SliceReader<'_>, n: usize) -> Result<(), DecodeError> {
+    fn init_partitions(
+        &mut self,
+        r: &mut SliceReader<'_>,
+        n: usize,
+    ) -> Result<(), whereat::At<DecodeError>> {
         use byteorder_lite::{ByteOrder, LittleEndian};
 
         let remaining = r.remaining();
@@ -233,7 +246,7 @@ impl DecoderContext {
             // Partition size table: 3 bytes per partition for n-1 partitions
             let size_table_bytes = 3 * (n - 1);
             if size_table_bytes > remaining {
-                return Err(DecodeError::BitStreamError);
+                return Err(at!(DecodeError::BitStreamError));
             }
             let mut sizes = vec![0u8; size_table_bytes];
             r.read_exact(sizes.as_mut_slice())?;
@@ -243,7 +256,7 @@ impl DecoderContext {
                 let size = LittleEndian::read_u24(s) as usize;
                 // Validate partition size against remaining data
                 if size > r.remaining() {
-                    return Err(DecodeError::BitStreamError);
+                    return Err(at!(DecodeError::BitStreamError));
                 }
                 let start = all_data.len();
                 all_data.resize(start + size, 0);
@@ -257,7 +270,7 @@ impl DecoderContext {
         r.read_to_end(&mut all_data)?;
         let size = all_data.len() - start;
         if size == 0 {
-            return Err(DecodeError::BitStreamError);
+            return Err(at!(DecodeError::BitStreamError));
         }
         boundaries.push((start, size));
 
@@ -266,7 +279,10 @@ impl DecoderContext {
         Ok(())
     }
 
-    fn read_quantization_indices(&mut self, b: &mut VP8HeaderBitReader) -> Result<(), DecodeError> {
+    fn read_quantization_indices(
+        &mut self,
+        b: &mut VP8HeaderBitReader,
+    ) -> Result<(), whereat::At<DecodeError>> {
         fn dc_quant(index: i32) -> i16 {
             DC_QUANT[index.clamp(0, 127) as usize]
         }
@@ -324,13 +340,13 @@ impl DecoderContext {
             self.tables.uv_quant_indices[i] = base + uvac_delta;
         }
 
-        Ok(b.check(())?)
+        b.check(()).map_err(|e| at!(DecodeError::from(e)))
     }
 
     fn update_token_probabilities(
         &mut self,
         b: &mut VP8HeaderBitReader,
-    ) -> Result<(), DecodeError> {
+    ) -> Result<(), whereat::At<DecodeError>> {
         // Start from the default probabilities on each frame
         // (matching v1 which initializes from COEFF_PROBS at construction)
         let mut probs = COEFF_PROBS;
@@ -364,7 +380,7 @@ impl DecoderContext {
             }
         }
 
-        Ok(b.check(())?)
+        b.check(()).map_err(|e| at!(DecodeError::from(e)))
     }
 
     fn populate_probs_by_position(&mut self) {

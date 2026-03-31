@@ -31,6 +31,9 @@
 
 use alloc::vec::Vec;
 
+#[allow(unused_imports)]
+use whereat::at;
+
 use super::demux::{BlendMethod, DisposeMethod, WebPDemuxer};
 use super::error::{MuxError, MuxResult};
 use crate::decoder::LoopCount;
@@ -259,14 +262,17 @@ impl WebPMux {
     #[track_caller]
     pub fn assemble(&self) -> MuxResult<Vec<u8>> {
         if self.animation.is_some() {
-            self.assemble_animated().map_err(|e| whereat::at!(e))
+            self.assemble_animated()
         } else {
-            self.assemble_single().map_err(|e| whereat::at!(e))
+            self.assemble_single()
         }
     }
 
-    fn assemble_single(&self) -> Result<Vec<u8>, MuxError> {
-        let frame = self.single_image.as_ref().ok_or(MuxError::NoFrames)?;
+    fn assemble_single(&self) -> MuxResult<Vec<u8>> {
+        let frame = self
+            .single_image
+            .as_ref()
+            .ok_or_else(|| at!(MuxError::NoFrames))?;
 
         let frame_chunk = if frame.is_lossless { b"VP8L" } else { b"VP8 " };
         let has_alpha = frame.alpha_data.is_some() || frame.is_lossless;
@@ -347,9 +353,9 @@ impl WebPMux {
         Ok(out)
     }
 
-    fn assemble_animated(&self) -> Result<Vec<u8>, MuxError> {
+    fn assemble_animated(&self) -> MuxResult<Vec<u8>> {
         if self.frames.is_empty() {
-            return Err(MuxError::NoFrames);
+            return Err(at!(MuxError::NoFrames));
         }
 
         let anim = self.animation.as_ref().unwrap();
