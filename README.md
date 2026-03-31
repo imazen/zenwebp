@@ -350,11 +350,6 @@ See [LICENSE-COMMERCIAL](LICENSE-COMMERCIAL) for details.
 Upstream code from [image-rs/image-webp](https://github.com/image-rs/image-webp) is licensed under MIT OR Apache-2.0.
 Our additions and improvements are dual-licensed (AGPL-3.0 or commercial) as above.
 
-### Upstream Contribution
-
-We are willing to release our improvements under the original MIT OR Apache-2.0
-license if upstream takes over maintenance of those improvements. We'd rather
-contribute back than maintain a parallel codebase. Open an issue or reach out.
 ## Contributing
 
 Contributions welcome! Please feel free to open issues or pull requests.
