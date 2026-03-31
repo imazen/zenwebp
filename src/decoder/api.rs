@@ -1192,7 +1192,9 @@ impl<'a> WebPDecoder<'a> {
                 .ok_or(DecodeError::ChunkMissing)?
                 .clone();
             let data_buf = self.r.get_ref();
-            let vp8_data = &data_buf[range.start as usize..range.end as usize];
+            let vp8_data = data_buf
+                .get(range.start as usize..range.end as usize)
+                .ok_or(at!(DecodeError::InvalidChunkSize))?;
 
             // Lossy VP8 direct decode path
             let bpp = if self.has_alpha() { 4 } else { 3 };
