@@ -2193,14 +2193,14 @@ impl<'a> WebPEncoder<'a> {
 
 #[cfg(all(test, feature = "std", not(target_arch = "wasm32")))]
 mod tests {
-    use rand::RngCore;
+    use rand::Rng;
 
     use super::*;
 
     #[test]
     fn write_webp() {
         let mut img = vec![0; 256 * 256 * 4];
-        rand::thread_rng().fill_bytes(&mut img);
+        rand::rng().fill_bytes(&mut img);
 
         let mut output = Vec::new();
         WebPEncoder::new(&mut output)
@@ -2216,10 +2216,10 @@ mod tests {
     #[test]
     fn write_webp_exif() {
         let mut img = vec![0; 256 * 256 * 3];
-        rand::thread_rng().fill_bytes(&mut img);
+        rand::rng().fill_bytes(&mut img);
 
         let mut exif = vec![0; 10];
-        rand::thread_rng().fill_bytes(&mut exif);
+        rand::rng().fill_bytes(&mut exif);
 
         let mut output = Vec::new();
         let mut encoder = WebPEncoder::new(&mut output);
@@ -2251,7 +2251,7 @@ mod tests {
         println!("Testing {params:?}");
 
         let mut img = vec![0; 256 * 256 * 4];
-        rand::thread_rng().fill_bytes(&mut img);
+        rand::rng().fill_bytes(&mut img);
 
         let mut output = Vec::new();
         let mut encoder = WebPEncoder::new(&mut output);

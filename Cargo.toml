@@ -43,15 +43,15 @@ imgref = { version = "1.12", optional = true, default-features = false }
 archmage = { version = "0.9.15", features = ["std", "macros"] }
 paste = "1.0.14"
 png = "0.18"
-rand = "0.8.5"
+rand = "0.10.0"
 rgb = "0.8"
 
 # Native-only dev-deps (C bindings, threading, or native-only features)
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-butteraugli = "0.8"
+butteraugli = "0.9.0"
 codec-corpus = "1"
 dssim-core = "3.4"
-fast-ssim2 = "0.6.5"
+fast-ssim2 = "0.7.1"
 imgref = "1.12"
 libwebp-sys = "0.14"
 webp = "0.3.1"

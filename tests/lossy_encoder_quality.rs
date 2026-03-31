@@ -410,9 +410,9 @@ fn create_checkerboard_image(w: u32, h: u32) -> Vec<u8> {
 }
 
 fn create_noise_image(w: u32, h: u32) -> Vec<u8> {
-    use rand::RngCore;
+    use rand::Rng;
     let mut img = vec![0u8; (w * h * 3) as usize];
-    rand::thread_rng().fill_bytes(&mut img);
+    rand::rng().fill_bytes(&mut img);
     img
 }
 

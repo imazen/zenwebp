@@ -713,7 +713,7 @@ mod benches {
     fn measure_predictor(b: &mut Bencher, predictor: fn(&mut [u8], std::ops::Range<usize>, usize)) {
         let width = 256;
         let mut data = vec![0u8; width * 8];
-        rand::thread_rng().fill(&mut data[..]);
+        rand::rng().fill(&mut data[..]);
         b.bytes = 4 * width as u64 - 4;
         b.iter(|| {
             predictor(
@@ -788,8 +788,8 @@ mod benches {
         let size_bits = 3;
         let mut data = vec![0u8; width * height * 4];
         let mut transform_data = vec![0u8; (width * height * 4) >> (size_bits * 2)];
-        rand::thread_rng().fill(&mut data[..]);
-        rand::thread_rng().fill(&mut transform_data[..]);
+        rand::rng().fill(&mut data[..]);
+        rand::rng().fill(&mut transform_data[..]);
         b.bytes = 4 * width as u64 * height as u64;
         b.iter(|| {
             super::apply_color_transform(
@@ -804,7 +804,7 @@ mod benches {
     #[bench]
     fn subtract_green(b: &mut Bencher) {
         let mut data = vec![0u8; 1024 * 4];
-        rand::thread_rng().fill(&mut data[..]);
+        rand::rng().fill(&mut data[..]);
         b.bytes = data.len() as u64;
         b.iter(|| {
             super::apply_subtract_green_transform(black_box(&mut data));
