@@ -60,7 +60,7 @@ yuv = "0.8"
 # serde_json = "1"
 zenbench = { version = "0.1.2", features = ["criterion-compat"] }
 zensim = "0.2"
-zensim-regress = "0.2"
+zensim-regress = "0.3.0"
 
 [features]
 default = ["std", "fast-yuv", "pixel-types"]

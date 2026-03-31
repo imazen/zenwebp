@@ -1937,9 +1937,9 @@ dependencies = [
 
 [[package]]
 name = "zensim-regress"
-version = "0.2.3"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a069038e58016d4ead73eeeb9e7aeebbf2878f9531f6de2f9e34c09e979727bb"
+checksum = "da3df8ad6bff6f483e16194a49a3d4b7dfae44309d69b7bee2f6739c811c15f0"
 dependencies = [
  "base64",
  "fs2",
