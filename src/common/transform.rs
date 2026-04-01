@@ -696,7 +696,7 @@ pub(crate) fn ftransform2_from_u8(
 ) {
     incant!(
         ftransform2_dispatch(src, ref_, src_stride, ref_stride, out),
-        [v3, wasm128, scalar]
+        [v3, neon, wasm128, scalar]
     );
 }
 
@@ -712,6 +712,32 @@ fn ftransform2_dispatch_v3(
     out: &mut [i16; 32],
 ) {
     ftransform2_entry(token, src, ref_, src_stride, ref_stride, out);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn ftransform2_dispatch_neon(
+    token: NeonToken,
+    src: &[u8],
+    ref_: &[u8],
+    src_stride: usize,
+    ref_stride: usize,
+    out: &mut [i16; 32],
+) {
+    for block in 0..2 {
+        let mut block_data = [0i32; 16];
+        for y in 0..4 {
+            for x in 0..4 {
+                let src_val = src[y * src_stride + block * 4 + x] as i32;
+                let ref_val = ref_[y * ref_stride + block * 4 + x] as i32;
+                block_data[y * 4 + x] = src_val - ref_val;
+            }
+        }
+        neon_transform::dct4x4_neon(token, &mut block_data);
+        for (i, &val) in block_data.iter().enumerate() {
+            out[block * 16 + i] = val as i16;
+        }
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1294,7 +1320,7 @@ pub(crate) fn idct_add_residue_inplace(
 ) {
     incant!(
         idct_add_residue_inplace_dispatch(coeffs, block, y0, x0, stride, dc_only),
-        [v3, neon, scalar]
+        [v3, neon, wasm128, scalar]
     );
 }
 
@@ -1325,6 +1351,21 @@ fn idct_add_residue_inplace_dispatch_neon(
     dc_only: bool,
 ) {
     idct_add_residue_inplace_neon(token, coeffs, block, y0, x0, stride, dc_only);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn idct_add_residue_inplace_dispatch_wasm128(
+    _token: Wasm128Token,
+    coeffs: &mut [i32; 16],
+    block: &mut [u8],
+    y0: usize,
+    x0: usize,
+    stride: usize,
+    dc_only: bool,
+) {
+    // TODO: WASM128 IDCT implementation — delegate to scalar for now
+    idct_add_residue_inplace_dispatch_scalar(ScalarToken, coeffs, block, y0, x0, stride, dc_only);
 }
 
 #[inline(always)]
