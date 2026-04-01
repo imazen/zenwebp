@@ -5,7 +5,9 @@
 
 fn main() {
     let args: Vec<_> = std::env::args().collect();
-    let png_path = args.get(1).expect("usage: callgrind_lossless <png> [iterations]");
+    let png_path = args
+        .get(1)
+        .expect("usage: callgrind_lossless <png> [iterations]");
     let iterations: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
 
     // Load PNG

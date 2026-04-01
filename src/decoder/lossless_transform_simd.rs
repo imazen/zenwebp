@@ -860,49 +860,11 @@ fn apply_predictor_9_v3(
     predictor_avg_body_wide(token, image_data, &range, width * 4, width * 4 - 4);
 }
 
-// --- x86_64 V3 dispatch ---
-
-#[cfg(target_arch = "x86_64")]
-#[rite]
-fn dispatch_predictor_v3(
-    _token: X64V3Token,
-    predictor: u8,
-    image_data: &mut [u8],
-    start: usize,
-    end: usize,
-    width: usize,
-) {
-    let range = start..end;
-    if range.is_empty() {
-        return;
-    }
-    match predictor {
-        0 => {
-            let _ =
-                super::lossless_transform::apply_predictor_transform_0(image_data, range, width);
-        }
-        // Predictor 1 uses existing SSE2 prefix-sum (serial dependency limits AVX2 benefit)
-        1 => apply_predictor_1_sse2(_token.v1(), image_data, range, width),
-        2 => apply_predictor_2_v3(_token, image_data, range, width),
-        3 => apply_predictor_3_v3(_token, image_data, range, width),
-        4 => apply_predictor_4_v3(_token, image_data, range, width),
-        5 => super::lossless_transform::apply_predictor_transform_5(image_data, range, width),
-        6 => {
-            let _ =
-                super::lossless_transform::apply_predictor_transform_6(image_data, range, width);
-        }
-        7 => super::lossless_transform::apply_predictor_transform_7(image_data, range, width),
-        8 => apply_predictor_8_v3(_token, image_data, range, width),
-        9 => apply_predictor_9_v3(_token, image_data, range, width),
-        10 => super::lossless_transform::apply_predictor_transform_10(image_data, range, width),
-        11 => super::lossless_transform::apply_predictor_transform_11(image_data, range, width),
-        12 => super::lossless_transform::apply_predictor_transform_12(image_data, range, width),
-        13 => super::lossless_transform::apply_predictor_transform_13(image_data, range, width),
-        _ => {}
-    }
-}
-
 /// AVX2 predictor transform entry point — 32-byte processing for predictors 2-4, 8-9.
+///
+/// The dispatch match is inlined directly into the coalescing loop rather than
+/// factored into a separate function. This lets LLVM optimize the match+loop
+/// together, avoiding the 84M instruction overhead from a non-inlined dispatch fn.
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 pub(crate) fn apply_predictor_transform_v3_entry(
@@ -934,15 +896,90 @@ pub(crate) fn apply_predictor_transform_v3_entry(
                 run_end = end_index;
             } else {
                 if run_start < run_end {
-                    dispatch_predictor_v3(_token, run_pred, image_data, run_start, run_end, width);
+                    let range = run_start..run_end;
+                    match run_pred {
+                        0 => {
+                            let _ = super::lossless_transform::apply_predictor_transform_0(
+                                image_data, range, width,
+                            );
+                        }
+                        1 => apply_predictor_1_sse2(_token.v1(), image_data, range, width),
+                        2 => apply_predictor_2_v3(_token, image_data, range, width),
+                        3 => apply_predictor_3_v3(_token, image_data, range, width),
+                        4 => apply_predictor_4_v3(_token, image_data, range, width),
+                        5 => super::lossless_transform::apply_predictor_transform_5(
+                            image_data, range, width,
+                        ),
+                        6 => {
+                            let _ = super::lossless_transform::apply_predictor_transform_6(
+                                image_data, range, width,
+                            );
+                        }
+                        7 => super::lossless_transform::apply_predictor_transform_7(
+                            image_data, range, width,
+                        ),
+                        8 => apply_predictor_8_v3(_token, image_data, range, width),
+                        9 => apply_predictor_9_v3(_token, image_data, range, width),
+                        10 => super::lossless_transform::apply_predictor_transform_10(
+                            image_data, range, width,
+                        ),
+                        11 => super::lossless_transform::apply_predictor_transform_11(
+                            image_data, range, width,
+                        ),
+                        12 => super::lossless_transform::apply_predictor_transform_12(
+                            image_data, range, width,
+                        ),
+                        13 => super::lossless_transform::apply_predictor_transform_13(
+                            image_data, range, width,
+                        ),
+                        _ => {}
+                    }
                 }
                 run_pred = predictor;
                 run_start = start_index;
                 run_end = end_index;
             }
         }
+        // Flush final run
         if run_start < run_end {
-            dispatch_predictor_v3(_token, run_pred, image_data, run_start, run_end, width);
+            let range = run_start..run_end;
+            match run_pred {
+                0 => {
+                    let _ = super::lossless_transform::apply_predictor_transform_0(
+                        image_data, range, width,
+                    );
+                }
+                1 => apply_predictor_1_sse2(_token.v1(), image_data, range, width),
+                2 => apply_predictor_2_v3(_token, image_data, range, width),
+                3 => apply_predictor_3_v3(_token, image_data, range, width),
+                4 => apply_predictor_4_v3(_token, image_data, range, width),
+                5 => {
+                    super::lossless_transform::apply_predictor_transform_5(image_data, range, width)
+                }
+                6 => {
+                    let _ = super::lossless_transform::apply_predictor_transform_6(
+                        image_data, range, width,
+                    );
+                }
+                7 => {
+                    super::lossless_transform::apply_predictor_transform_7(image_data, range, width)
+                }
+                8 => apply_predictor_8_v3(_token, image_data, range, width),
+                9 => apply_predictor_9_v3(_token, image_data, range, width),
+                10 => super::lossless_transform::apply_predictor_transform_10(
+                    image_data, range, width,
+                ),
+                11 => super::lossless_transform::apply_predictor_transform_11(
+                    image_data, range, width,
+                ),
+                12 => super::lossless_transform::apply_predictor_transform_12(
+                    image_data, range, width,
+                ),
+                13 => super::lossless_transform::apply_predictor_transform_13(
+                    image_data, range, width,
+                ),
+                _ => {}
+            }
         }
     }
 }
