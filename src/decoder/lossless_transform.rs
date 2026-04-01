@@ -93,7 +93,7 @@ fn apply_predictor_transform_impl_scalar(
     // Handle top and left borders specially. This involves ignoring mode and using specific
     // predictors for each.
     image_data[3] = image_data[3].wrapping_add(255);
-    apply_predictor_transform_1(image_data, 4..width * 4, width);
+    apply_predictor_transform_1(image_data, 4..width * 4, width)?;
     for y in 1..height {
         for i in 0..4 {
             image_data[y * width * 4 + i] =
@@ -109,16 +109,16 @@ fn apply_predictor_transform_impl_scalar(
             let end_index = (y * width + ((block_x + 1) << size_bits).min(width)) * 4;
 
             match predictor {
-                0 => apply_predictor_transform_0(image_data, start_index..end_index, width),
-                1 => apply_predictor_transform_1(image_data, start_index..end_index, width),
-                2 => apply_predictor_transform_2(image_data, start_index..end_index, width),
-                3 => apply_predictor_transform_3(image_data, start_index..end_index, width),
-                4 => apply_predictor_transform_4(image_data, start_index..end_index, width),
+                0 => apply_predictor_transform_0(image_data, start_index..end_index, width)?,
+                1 => apply_predictor_transform_1(image_data, start_index..end_index, width)?,
+                2 => apply_predictor_transform_2(image_data, start_index..end_index, width)?,
+                3 => apply_predictor_transform_3(image_data, start_index..end_index, width)?,
+                4 => apply_predictor_transform_4(image_data, start_index..end_index, width)?,
                 5 => apply_predictor_transform_5(image_data, start_index..end_index, width),
-                6 => apply_predictor_transform_6(image_data, start_index..end_index, width),
+                6 => apply_predictor_transform_6(image_data, start_index..end_index, width)?,
                 7 => apply_predictor_transform_7(image_data, start_index..end_index, width),
-                8 => apply_predictor_transform_8(image_data, start_index..end_index, width),
-                9 => apply_predictor_transform_9(image_data, start_index..end_index, width),
+                8 => apply_predictor_transform_8(image_data, start_index..end_index, width)?,
+                9 => apply_predictor_transform_9(image_data, start_index..end_index, width)?,
                 10 => apply_predictor_transform_10(image_data, start_index..end_index, width),
                 11 => apply_predictor_transform_11(image_data, start_index..end_index, width),
                 12 => apply_predictor_transform_12(image_data, start_index..end_index, width),
@@ -130,45 +130,80 @@ fn apply_predictor_transform_impl_scalar(
 
     Ok(())
 }
-pub fn apply_predictor_transform_0(image_data: &mut [u8], range: Range<usize>, _width: usize) {
-    assert!(range.end <= image_data.len());
+pub fn apply_predictor_transform_0(
+    image_data: &mut [u8],
+    range: Range<usize>,
+    _width: usize,
+) -> Result<(), InternalDecodeError> {
+    if range.end > image_data.len() {
+        return Err(InternalDecodeError::TransformError);
+    }
     let mut i = range.start + 3;
     while i < range.end {
         image_data[i] = image_data[i].wrapping_add(0xff);
         i += 4;
     }
+    Ok(())
 }
-pub fn apply_predictor_transform_1(image_data: &mut [u8], range: Range<usize>, _width: usize) {
-    assert!(range.end <= image_data.len());
+pub fn apply_predictor_transform_1(
+    image_data: &mut [u8],
+    range: Range<usize>,
+    _width: usize,
+) -> Result<(), InternalDecodeError> {
+    if range.end > image_data.len() {
+        return Err(InternalDecodeError::TransformError);
+    }
     let mut i = range.start;
     while i < range.end {
         image_data[i] = image_data[i].wrapping_add(image_data[i - 4]);
         i += 1;
     }
+    Ok(())
 }
-pub fn apply_predictor_transform_2(image_data: &mut [u8], range: Range<usize>, width: usize) {
-    assert!(range.end <= image_data.len());
+pub fn apply_predictor_transform_2(
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) -> Result<(), InternalDecodeError> {
+    if range.end > image_data.len() {
+        return Err(InternalDecodeError::TransformError);
+    }
     let mut i = range.start;
     while i < range.end {
         image_data[i] = image_data[i].wrapping_add(image_data[i - width * 4]);
         i += 1;
     }
+    Ok(())
 }
-pub fn apply_predictor_transform_3(image_data: &mut [u8], range: Range<usize>, width: usize) {
-    assert!(range.end <= image_data.len());
+pub fn apply_predictor_transform_3(
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) -> Result<(), InternalDecodeError> {
+    if range.end > image_data.len() {
+        return Err(InternalDecodeError::TransformError);
+    }
     let mut i = range.start;
     while i < range.end {
         image_data[i] = image_data[i].wrapping_add(image_data[i - width * 4 + 4]);
         i += 1;
     }
+    Ok(())
 }
-pub fn apply_predictor_transform_4(image_data: &mut [u8], range: Range<usize>, width: usize) {
-    assert!(range.end <= image_data.len());
+pub fn apply_predictor_transform_4(
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) -> Result<(), InternalDecodeError> {
+    if range.end > image_data.len() {
+        return Err(InternalDecodeError::TransformError);
+    }
     let mut i = range.start;
     while i < range.end {
         image_data[i] = image_data[i].wrapping_add(image_data[i - width * 4 - 4]);
         i += 1;
     }
+    Ok(())
 }
 pub fn apply_predictor_transform_5(image_data: &mut [u8], range: Range<usize>, width: usize) {
     let (old, current) = image_data[..range.end].split_at_mut(range.start);
@@ -191,14 +226,21 @@ pub fn apply_predictor_transform_5(image_data: &mut [u8], range: Range<usize>, w
         chunk.copy_from_slice(&prev);
     }
 }
-pub fn apply_predictor_transform_6(image_data: &mut [u8], range: Range<usize>, width: usize) {
-    assert!(range.end <= image_data.len());
+pub fn apply_predictor_transform_6(
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) -> Result<(), InternalDecodeError> {
+    if range.end > image_data.len() {
+        return Err(InternalDecodeError::TransformError);
+    }
     let mut i = range.start;
     while i < range.end {
         image_data[i] =
             image_data[i].wrapping_add(average2(image_data[i - 4], image_data[i - width * 4 - 4]));
         i += 1;
     }
+    Ok(())
 }
 pub fn apply_predictor_transform_7(image_data: &mut [u8], range: Range<usize>, width: usize) {
     let (old, current) = image_data[..range.end].split_at_mut(range.start);
@@ -234,8 +276,14 @@ pub fn apply_predictor_transform_7(image_data: &mut [u8], range: Range<usize>, w
         chunk.copy_from_slice(&prev);
     }
 }
-pub fn apply_predictor_transform_8(image_data: &mut [u8], range: Range<usize>, width: usize) {
-    assert!(range.end <= image_data.len());
+pub fn apply_predictor_transform_8(
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) -> Result<(), InternalDecodeError> {
+    if range.end > image_data.len() {
+        return Err(InternalDecodeError::TransformError);
+    }
     let mut i = range.start;
     while i < range.end {
         image_data[i] = image_data[i].wrapping_add(average2(
@@ -244,9 +292,16 @@ pub fn apply_predictor_transform_8(image_data: &mut [u8], range: Range<usize>, w
         ));
         i += 1;
     }
+    Ok(())
 }
-pub fn apply_predictor_transform_9(image_data: &mut [u8], range: Range<usize>, width: usize) {
-    assert!(range.end <= image_data.len());
+pub fn apply_predictor_transform_9(
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) -> Result<(), InternalDecodeError> {
+    if range.end > image_data.len() {
+        return Err(InternalDecodeError::TransformError);
+    }
     let mut i = range.start;
     while i < range.end {
         image_data[i] = image_data[i].wrapping_add(average2(
@@ -255,6 +310,7 @@ pub fn apply_predictor_transform_9(image_data: &mut [u8], range: Range<usize>, w
         ));
         i += 1;
     }
+    Ok(())
 }
 pub fn apply_predictor_transform_10(image_data: &mut [u8], range: Range<usize>, width: usize) {
     let (old, current) = image_data[..range.end].split_at_mut(range.start);
@@ -499,8 +555,10 @@ pub(crate) fn apply_color_indexing_transform(
     height: u16,
     table_size: u16,
     table_data: &[u8],
-) {
-    assert!(table_size > 0);
+) -> Result<(), InternalDecodeError> {
+    if table_size == 0 {
+        return Err(InternalDecodeError::TransformError);
+    }
     if table_size > 16 {
         // convert the table of colors into a Vec of color values that can be directly indexed
         let (chunks, _) = table_data.as_chunks::<4>();
@@ -548,6 +606,7 @@ pub(crate) fn apply_color_indexing_transform(
             );
         }
     }
+    Ok(())
 }
 
 // Helper function with const generics for W_BITS and EXP_ENTRY_SIZE
@@ -724,25 +783,47 @@ mod benches {
         });
     }
 
+    fn measure_predictor_result(
+        b: &mut Bencher,
+        predictor: fn(
+            &mut [u8],
+            std::ops::Range<usize>,
+            usize,
+        ) -> Result<(), super::InternalDecodeError>,
+    ) {
+        let width = 256;
+        let mut data = vec![0u8; width * 8];
+        rand::rng().fill(&mut data[..]);
+        b.bytes = 4 * width as u64 - 4;
+        b.iter(|| {
+            predictor(
+                black_box(&mut data),
+                black_box(width * 4 + 4..width * 8),
+                black_box(width),
+            )
+            .unwrap()
+        });
+    }
+
     #[bench]
     fn predictor00(b: &mut Bencher) {
-        measure_predictor(b, super::apply_predictor_transform_0);
+        measure_predictor_result(b, super::apply_predictor_transform_0);
     }
     #[bench]
     fn predictor01(b: &mut Bencher) {
-        measure_predictor(b, super::apply_predictor_transform_1);
+        measure_predictor_result(b, super::apply_predictor_transform_1);
     }
     #[bench]
     fn predictor02(b: &mut Bencher) {
-        measure_predictor(b, super::apply_predictor_transform_2);
+        measure_predictor_result(b, super::apply_predictor_transform_2);
     }
     #[bench]
     fn predictor03(b: &mut Bencher) {
-        measure_predictor(b, super::apply_predictor_transform_3);
+        measure_predictor_result(b, super::apply_predictor_transform_3);
     }
     #[bench]
     fn predictor04(b: &mut Bencher) {
-        measure_predictor(b, super::apply_predictor_transform_4);
+        measure_predictor_result(b, super::apply_predictor_transform_4);
     }
     #[bench]
     fn predictor05(b: &mut Bencher) {
@@ -750,7 +831,7 @@ mod benches {
     }
     #[bench]
     fn predictor06(b: &mut Bencher) {
-        measure_predictor(b, super::apply_predictor_transform_6);
+        measure_predictor_result(b, super::apply_predictor_transform_6);
     }
     #[bench]
     fn predictor07(b: &mut Bencher) {
@@ -758,11 +839,11 @@ mod benches {
     }
     #[bench]
     fn predictor08(b: &mut Bencher) {
-        measure_predictor(b, super::apply_predictor_transform_8);
+        measure_predictor_result(b, super::apply_predictor_transform_8);
     }
     #[bench]
     fn predictor09(b: &mut Bencher) {
-        measure_predictor(b, super::apply_predictor_transform_9);
+        measure_predictor_result(b, super::apply_predictor_transform_9);
     }
     #[bench]
     fn predictor10(b: &mut Bencher) {

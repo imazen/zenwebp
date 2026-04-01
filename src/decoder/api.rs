@@ -813,7 +813,7 @@ impl<'a> WebPDecoder<'a> {
             chunks: HashMap::new(),
             animation: Default::default(),
             memory_limit: usize::MAX,
-            limits: super::limits::Limits::none(), // No limits by default
+            limits: super::limits::Limits::default(),
             is_lossy: false,
             has_alpha: false,
             loop_count: LoopCount::Times(NonZeroU16::new(1).unwrap()),
@@ -913,6 +913,7 @@ impl<'a> WebPDecoder<'a> {
 
                             if chunk == WebPRiffChunk::ANMF {
                                 self.num_frames += 1;
+                                self.limits.check_frame_count(self.num_frames as usize)?;
                                 if chunk_size < 24 {
                                     return Err(at!(DecodeError::InvalidChunkSize));
                                 }
@@ -1192,7 +1193,9 @@ impl<'a> WebPDecoder<'a> {
                 .ok_or(DecodeError::ChunkMissing)?
                 .clone();
             let data_buf = self.r.get_ref();
-            let vp8_data = &data_buf[range.start as usize..range.end as usize];
+            let vp8_data = data_buf
+                .get(range.start as usize..range.end as usize)
+                .ok_or(at!(DecodeError::InvalidChunkSize))?;
 
             // Lossy VP8 direct decode path
             let bpp = if self.has_alpha() { 4 } else { 3 };
