@@ -186,7 +186,7 @@ impl<'a> LosslessDecoder<'a> {
                         self.height,
                         *table_size,
                         table_data,
-                    );
+                    )?;
                 }
             }
         }

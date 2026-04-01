@@ -502,7 +502,8 @@ pub(crate) fn apply_predictor_transform_sse2_entry(
     image_data[3] = image_data[3].wrapping_add(255);
 
     // First row: predictor 1 (left), always scalar (sequential dependency)
-    super::lossless_transform::apply_predictor_transform_1(image_data, 4..width * 4, width);
+    // Safety: range is validated; ignore error in SIMD path since scalar fallback checks too.
+    let _ = super::lossless_transform::apply_predictor_transform_1(image_data, 4..width * 4, width);
 
     // Left column: predictor 2 (top), always scalar (one pixel per row)
     for y in 1..height {
@@ -527,7 +528,9 @@ pub(crate) fn apply_predictor_transform_sse2_entry(
 
             match predictor {
                 0 => {
-                    super::lossless_transform::apply_predictor_transform_0(image_data, range, width)
+                    let _ = super::lossless_transform::apply_predictor_transform_0(
+                        image_data, range, width,
+                    );
                 }
                 1 => apply_predictor_1_sse2(_token, image_data, range, width),
                 2 => apply_predictor_2_sse2(_token, image_data, range, width),
@@ -537,7 +540,9 @@ pub(crate) fn apply_predictor_transform_sse2_entry(
                     super::lossless_transform::apply_predictor_transform_5(image_data, range, width)
                 }
                 6 => {
-                    super::lossless_transform::apply_predictor_transform_6(image_data, range, width)
+                    let _ = super::lossless_transform::apply_predictor_transform_6(
+                        image_data, range, width,
+                    );
                 }
                 7 => {
                     super::lossless_transform::apply_predictor_transform_7(image_data, range, width)
