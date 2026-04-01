@@ -253,17 +253,14 @@ pub(super) fn convert_cache_rows_to_rgb(
             let near_start = cache_uv_row * cache_uv_stride;
             let far_start = (cache_uv_row + 1) * cache_uv_stride;
 
-            incant!(
-                fill_2uv_row(
-                    rgb_row,
-                    y_row,
-                    &cache_u[near_start..near_start + chroma_width],
-                    &cache_u[far_start..far_start + chroma_width],
-                    &cache_v[near_start..near_start + chroma_width],
-                    &cache_v[far_start..far_start + chroma_width],
-                    bpp,
-                ),
-                [v3, neon, wasm128, scalar]
+            fill_2uv_dispatch(
+                rgb_row,
+                y_row,
+                &cache_u[near_start..near_start + chroma_width],
+                &cache_u[far_start..far_start + chroma_width],
+                &cache_v[near_start..near_start + chroma_width],
+                &cache_v[far_start..far_start + chroma_width],
+                bpp,
             );
         } else {
             // Even Y row (>0, not last): near = UV[y/2], far = UV[y/2 - 1]
@@ -277,36 +274,51 @@ pub(super) fn convert_cache_rows_to_rgb(
 
             if cache_far_uv < 0 {
                 // Far UV row is from the previous MB row — use saved boundary data
-                incant!(
-                    fill_2uv_row(
-                        rgb_row,
-                        y_row,
-                        &cache_u[near_start..near_start + chroma_width],
-                        &prev_last_u_row[..chroma_width],
-                        &cache_v[near_start..near_start + chroma_width],
-                        &prev_last_v_row[..chroma_width],
-                        bpp,
-                    ),
-                    [v3, neon, wasm128, scalar]
+                fill_2uv_dispatch(
+                    rgb_row,
+                    y_row,
+                    &cache_u[near_start..near_start + chroma_width],
+                    &prev_last_u_row[..chroma_width],
+                    &cache_v[near_start..near_start + chroma_width],
+                    &prev_last_v_row[..chroma_width],
+                    bpp,
                 );
             } else {
                 // cache_far_uv >= 0 is guaranteed by the if/else above.
                 debug_assert!(cache_far_uv >= 0);
                 let far_start = cache_far_uv as usize * cache_uv_stride;
-                incant!(
-                    fill_2uv_row(
-                        rgb_row,
-                        y_row,
-                        &cache_u[near_start..near_start + chroma_width],
-                        &cache_u[far_start..far_start + chroma_width],
-                        &cache_v[near_start..near_start + chroma_width],
-                        &cache_v[far_start..far_start + chroma_width],
-                        bpp,
-                    ),
-                    [v3, neon, wasm128, scalar]
+                fill_2uv_dispatch(
+                    rgb_row,
+                    y_row,
+                    &cache_u[near_start..near_start + chroma_width],
+                    &cache_u[far_start..far_start + chroma_width],
+                    &cache_v[near_start..near_start + chroma_width],
+                    &cache_v[far_start..far_start + chroma_width],
+                    bpp,
                 );
             }
         }
+    }
+}
+
+/// Dispatch 2-UV row conversion: use fused kernel for RGB (bpp=3), non-fused for RGBA.
+#[inline(always)]
+fn fill_2uv_dispatch(
+    rgb_row: &mut [u8],
+    y_row: &[u8],
+    u_near: &[u8],
+    u_far: &[u8],
+    v_near: &[u8],
+    v_far: &[u8],
+    bpp: usize,
+) {
+    if bpp == 3 {
+        crate::decoder::yuv_fused::fused_row_2uv(rgb_row, y_row, u_near, u_far, v_near, v_far);
+    } else {
+        incant!(
+            fill_2uv_row(rgb_row, y_row, u_near, u_far, v_near, v_far, bpp),
+            [v3, neon, wasm128, scalar]
+        );
     }
 }
 

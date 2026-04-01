@@ -16,6 +16,7 @@
 //!   ```
 
 use super::yuv::{get_fancy_chroma_value, set_pixel};
+use archmage::incant;
 
 // ============================================================================
 // x86_64 V3 (AVX2+FMA) — single #[arcane] entry, #[rite] helpers
@@ -1193,3 +1194,92 @@ mod wasm_fused {
 #[cfg(target_arch = "wasm32")]
 #[allow(unused_imports)]
 pub(crate) use wasm_fused::fused_row_2uv_wasm;
+
+// ============================================================================
+// Dispatch: fused 2-UV row via incant!
+// ============================================================================
+
+/// Fused fancy-upsample + YUV→RGB for one Y row with two adjacent chroma rows.
+/// BPP=3 (RGB) only. Dispatches to the best SIMD tier available.
+pub(crate) fn fused_row_2uv(
+    rgb: &mut [u8],
+    y_row: &[u8],
+    u_near: &[u8],
+    u_far: &[u8],
+    v_near: &[u8],
+    v_far: &[u8],
+) {
+    incant!(
+        fused_row_2uv_dispatch(rgb, y_row, u_near, u_far, v_near, v_far),
+        [v3, neon, wasm128, scalar]
+    );
+}
+
+#[cfg(target_arch = "x86_64")]
+fn fused_row_2uv_dispatch_v3(
+    token: archmage::X64V3Token,
+    rgb: &mut [u8],
+    y_row: &[u8],
+    u_near: &[u8],
+    u_far: &[u8],
+    v_near: &[u8],
+    v_far: &[u8],
+) {
+    fused_row_2uv_x86(token, rgb, y_row, u_near, u_far, v_near, v_far);
+}
+
+#[cfg(target_arch = "aarch64")]
+fn fused_row_2uv_dispatch_neon(
+    token: archmage::NeonToken,
+    rgb: &mut [u8],
+    y_row: &[u8],
+    u_near: &[u8],
+    u_far: &[u8],
+    v_near: &[u8],
+    v_far: &[u8],
+) {
+    fused_row_2uv_neon(token, rgb, y_row, u_near, u_far, v_near, v_far);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn fused_row_2uv_dispatch_wasm128(
+    token: archmage::Wasm128Token,
+    rgb: &mut [u8],
+    y_row: &[u8],
+    u_near: &[u8],
+    u_far: &[u8],
+    v_near: &[u8],
+    v_far: &[u8],
+) {
+    fused_row_2uv_wasm(token, rgb, y_row, u_near, u_far, v_near, v_far);
+}
+
+fn fused_row_2uv_dispatch_scalar(
+    _token: archmage::ScalarToken,
+    rgb: &mut [u8],
+    y_row: &[u8],
+    u_near: &[u8],
+    u_far: &[u8],
+    v_near: &[u8],
+    v_far: &[u8],
+) {
+    // Scalar fallback: use the non-fused path
+    let width = y_row.len();
+    let chroma_width = u_near.len();
+    if width == 0 {
+        return;
+    }
+
+    // First pixel
+    let u_val = get_fancy_chroma_value(u_near[0], u_near[0], u_far[0], u_far[0]);
+    let v_val = get_fancy_chroma_value(v_near[0], v_near[0], v_far[0], v_far[0]);
+    set_pixel(&mut rgb[0..3], y_row[0], u_val, v_val);
+
+    for x in 1..width {
+        let cx = x / 2;
+        let cx_next = ((x + 1) / 2).min(chroma_width - 1);
+        let u_val = get_fancy_chroma_value(u_near[cx], u_near[cx_next], u_far[cx], u_far[cx_next]);
+        let v_val = get_fancy_chroma_value(v_near[cx], v_near[cx_next], v_far[cx], v_far[cx_next]);
+        set_pixel(&mut rgb[x * 3..x * 3 + 3], y_row[x], u_val, v_val);
+    }
+}
