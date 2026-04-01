@@ -480,6 +480,48 @@ fn apply_predictor_9_sse2(
 // Dispatch: single #[arcane] entry for all predictor transforms
 // =============================================================================
 
+/// Dispatch a single predictor over a byte range, using SSE2 where available.
+#[cfg(target_arch = "x86_64")]
+#[rite]
+fn dispatch_predictor_sse2(
+    _token: X64V1Token,
+    predictor: u8,
+    image_data: &mut [u8],
+    start: usize,
+    end: usize,
+    width: usize,
+) {
+    let range = start..end;
+    if range.is_empty() {
+        return;
+    }
+    match predictor {
+        0 => {
+            let _ = super::lossless_transform::apply_predictor_transform_0(
+                image_data, range, width,
+            );
+        }
+        1 => apply_predictor_1_sse2(_token, image_data, range, width),
+        2 => apply_predictor_2_sse2(_token, image_data, range, width),
+        3 => apply_predictor_3_sse2(_token, image_data, range, width),
+        4 => apply_predictor_4_sse2(_token, image_data, range, width),
+        5 => super::lossless_transform::apply_predictor_transform_5(image_data, range, width),
+        6 => {
+            let _ = super::lossless_transform::apply_predictor_transform_6(
+                image_data, range, width,
+            );
+        }
+        7 => super::lossless_transform::apply_predictor_transform_7(image_data, range, width),
+        8 => apply_predictor_8_sse2(_token, image_data, range, width),
+        9 => apply_predictor_9_sse2(_token, image_data, range, width),
+        10 => super::lossless_transform::apply_predictor_transform_10(image_data, range, width),
+        11 => super::lossless_transform::apply_predictor_transform_11(image_data, range, width),
+        12 => super::lossless_transform::apply_predictor_transform_12(image_data, range, width),
+        13 => super::lossless_transform::apply_predictor_transform_13(image_data, range, width),
+        _ => {}
+    }
+}
+
 /// Apply the predictor transform using SSE2 where beneficial.
 ///
 /// Predictors 2, 3, 4, 8, 9 have batch SSE2 implementations (no data dependency
@@ -498,71 +540,39 @@ pub(crate) fn apply_predictor_transform_sse2_entry(
     let width = usize::from(width);
     let height = usize::from(height);
 
-    // Top-left pixel: add 0xff to alpha
-    image_data[3] = image_data[3].wrapping_add(255);
+    let _ = super::lossless_transform::predictor_transform_borders(image_data, width, height);
 
-    // First row: predictor 1 (left), always scalar (sequential dependency)
-    // Safety: range is validated; ignore error in SIMD path since scalar fallback checks too.
-    let _ = super::lossless_transform::apply_predictor_transform_1(image_data, 4..width * 4, width);
-
-    // Left column: predictor 2 (top), always scalar (one pixel per row)
+    // Coalesce adjacent blocks with the same predictor mode into a single
+    // range, reducing per-block dispatch overhead and giving SIMD loops
+    // longer runs.
     for y in 1..height {
-        for i in 0..4 {
-            image_data[y * width * 4 + i] =
-                image_data[y * width * 4 + i].wrapping_add(image_data[(y - 1) * width * 4 + i]);
-        }
-    }
+        let row_block_base = (y >> size_bits) * block_xsize;
+        let mut run_start = 0usize;
+        let mut run_end = 0usize;
+        let mut run_pred = 255u8;
 
-    // Main body
-    for y in 1..height {
         for block_x in 0..block_xsize {
-            let block_index = (y >> size_bits) * block_xsize + block_x;
-            let predictor = predictor_data[block_index * 4 + 1];
+            let predictor = predictor_data[(row_block_base + block_x) * 4 + 1];
             let start_index = (y * width + (block_x << size_bits).max(1)) * 4;
             let end_index = (y * width + ((block_x + 1) << size_bits).min(width)) * 4;
-            let range = start_index..end_index;
 
-            if range.is_empty() {
-                continue;
-            }
-
-            match predictor {
-                0 => {
-                    let _ = super::lossless_transform::apply_predictor_transform_0(
-                        image_data, range, width,
+            if predictor == run_pred && start_index == run_end {
+                run_end = end_index;
+            } else {
+                if run_start < run_end {
+                    dispatch_predictor_sse2(
+                        _token, run_pred, image_data, run_start, run_end, width,
                     );
                 }
-                1 => apply_predictor_1_sse2(_token, image_data, range, width),
-                2 => apply_predictor_2_sse2(_token, image_data, range, width),
-                3 => apply_predictor_3_sse2(_token, image_data, range, width),
-                4 => apply_predictor_4_sse2(_token, image_data, range, width),
-                5 => {
-                    super::lossless_transform::apply_predictor_transform_5(image_data, range, width)
-                }
-                6 => {
-                    let _ = super::lossless_transform::apply_predictor_transform_6(
-                        image_data, range, width,
-                    );
-                }
-                7 => {
-                    super::lossless_transform::apply_predictor_transform_7(image_data, range, width)
-                }
-                8 => apply_predictor_8_sse2(_token, image_data, range, width),
-                9 => apply_predictor_9_sse2(_token, image_data, range, width),
-                10 => super::lossless_transform::apply_predictor_transform_10(
-                    image_data, range, width,
-                ),
-                11 => super::lossless_transform::apply_predictor_transform_11(
-                    image_data, range, width,
-                ),
-                12 => super::lossless_transform::apply_predictor_transform_12(
-                    image_data, range, width,
-                ),
-                13 => super::lossless_transform::apply_predictor_transform_13(
-                    image_data, range, width,
-                ),
-                _ => {}
+                run_pred = predictor;
+                run_start = start_index;
+                run_end = end_index;
             }
+        }
+        if run_start < run_end {
+            dispatch_predictor_sse2(
+                _token, run_pred, image_data, run_start, run_end, width,
+            );
         }
     }
 }

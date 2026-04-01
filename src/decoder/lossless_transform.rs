@@ -78,6 +78,53 @@ pub(crate) fn apply_predictor_transform_scalar(
     )
 }
 
+/// Dispatch a single predictor function over a byte range (scalar path).
+#[inline(always)]
+fn dispatch_predictor_scalar(
+    predictor: u8,
+    image_data: &mut [u8],
+    start: usize,
+    end: usize,
+    width: usize,
+) -> Result<(), InternalDecodeError> {
+    match predictor {
+        0 => apply_predictor_transform_0(image_data, start..end, width)?,
+        1 => apply_predictor_transform_1(image_data, start..end, width)?,
+        2 => apply_predictor_transform_2(image_data, start..end, width)?,
+        3 => apply_predictor_transform_3(image_data, start..end, width)?,
+        4 => apply_predictor_transform_4(image_data, start..end, width)?,
+        5 => apply_predictor_transform_5(image_data, start..end, width),
+        6 => apply_predictor_transform_6(image_data, start..end, width)?,
+        7 => apply_predictor_transform_7(image_data, start..end, width),
+        8 => apply_predictor_transform_8(image_data, start..end, width)?,
+        9 => apply_predictor_transform_9(image_data, start..end, width)?,
+        10 => apply_predictor_transform_10(image_data, start..end, width),
+        11 => apply_predictor_transform_11(image_data, start..end, width),
+        12 => apply_predictor_transform_12(image_data, start..end, width),
+        13 => apply_predictor_transform_13(image_data, start..end, width),
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Predictor transform preamble: top-left alpha, first row, left column.
+#[inline(always)]
+pub(crate) fn predictor_transform_borders(
+    image_data: &mut [u8],
+    width: usize,
+    height: usize,
+) -> Result<(), InternalDecodeError> {
+    image_data[3] = image_data[3].wrapping_add(255);
+    apply_predictor_transform_1(image_data, 4..width * 4, width)?;
+    for y in 1..height {
+        for i in 0..4 {
+            image_data[y * width * 4 + i] =
+                image_data[y * width * 4 + i].wrapping_add(image_data[(y - 1) * width * 4 + i]);
+        }
+    }
+    Ok(())
+}
+
 fn apply_predictor_transform_impl_scalar(
     _token: ScalarToken,
     image_data: &mut [u8],
@@ -90,41 +137,35 @@ fn apply_predictor_transform_impl_scalar(
     let width = usize::from(width);
     let height = usize::from(height);
 
-    // Handle top and left borders specially. This involves ignoring mode and using specific
-    // predictors for each.
-    image_data[3] = image_data[3].wrapping_add(255);
-    apply_predictor_transform_1(image_data, 4..width * 4, width)?;
-    for y in 1..height {
-        for i in 0..4 {
-            image_data[y * width * 4 + i] =
-                image_data[y * width * 4 + i].wrapping_add(image_data[(y - 1) * width * 4 + i]);
-        }
-    }
+    predictor_transform_borders(image_data, width, height)?;
 
+    // Coalesce adjacent blocks with the same predictor mode into a single
+    // range, reducing per-block dispatch overhead and giving SIMD loops
+    // longer runs.
     for y in 1..height {
+        let row_block_base = (y >> size_bits) * block_xsize;
+        let mut run_start = 0usize;
+        let mut run_end = 0usize;
+        let mut run_pred = 255u8; // invalid, forces first flush
+
         for block_x in 0..block_xsize {
-            let block_index = (y >> size_bits) * block_xsize + block_x;
-            let predictor = predictor_data[block_index * 4 + 1];
+            let predictor = predictor_data[(row_block_base + block_x) * 4 + 1];
             let start_index = (y * width + (block_x << size_bits).max(1)) * 4;
             let end_index = (y * width + ((block_x + 1) << size_bits).min(width)) * 4;
 
-            match predictor {
-                0 => apply_predictor_transform_0(image_data, start_index..end_index, width)?,
-                1 => apply_predictor_transform_1(image_data, start_index..end_index, width)?,
-                2 => apply_predictor_transform_2(image_data, start_index..end_index, width)?,
-                3 => apply_predictor_transform_3(image_data, start_index..end_index, width)?,
-                4 => apply_predictor_transform_4(image_data, start_index..end_index, width)?,
-                5 => apply_predictor_transform_5(image_data, start_index..end_index, width),
-                6 => apply_predictor_transform_6(image_data, start_index..end_index, width)?,
-                7 => apply_predictor_transform_7(image_data, start_index..end_index, width),
-                8 => apply_predictor_transform_8(image_data, start_index..end_index, width)?,
-                9 => apply_predictor_transform_9(image_data, start_index..end_index, width)?,
-                10 => apply_predictor_transform_10(image_data, start_index..end_index, width),
-                11 => apply_predictor_transform_11(image_data, start_index..end_index, width),
-                12 => apply_predictor_transform_12(image_data, start_index..end_index, width),
-                13 => apply_predictor_transform_13(image_data, start_index..end_index, width),
-                _ => {}
+            if predictor == run_pred && start_index == run_end {
+                run_end = end_index;
+            } else {
+                if run_start < run_end {
+                    dispatch_predictor_scalar(run_pred, image_data, run_start, run_end, width)?;
+                }
+                run_pred = predictor;
+                run_start = start_index;
+                run_end = end_index;
             }
+        }
+        if run_start < run_end {
+            dispatch_predictor_scalar(run_pred, image_data, run_start, run_end, width)?;
         }
     }
 
@@ -762,6 +803,134 @@ fn clamp_add_subtract_half(a: i16, b: i16) -> u8 {
 /// Does color transform on 2 numbers
 pub(crate) fn color_transform_delta(t: i8, c: i8) -> u32 {
     (i32::from(t) * i32::from(c)) as u32 >> 5
+}
+
+/// Per-block dispatch without coalescing (for correctness tests).
+#[cfg(test)]
+fn apply_predictor_body_per_block(
+    image_data: &mut [u8],
+    width: usize,
+    height: usize,
+    size_bits: u8,
+    predictor_data: &[u8],
+) {
+    let block_xsize = usize::from(subsample_size(width as u16, size_bits));
+    for y in 1..height {
+        for block_x in 0..block_xsize {
+            let block_index = (y >> size_bits) * block_xsize + block_x;
+            let predictor = predictor_data[block_index * 4 + 1];
+            let start_index = (y * width + (block_x << size_bits).max(1)) * 4;
+            let end_index = (y * width + ((block_x + 1) << size_bits).min(width)) * 4;
+            let _ = dispatch_predictor_scalar(predictor, image_data, start_index, end_index, width);
+        }
+    }
+}
+
+/// Coalesced dispatch (for correctness tests — matches the production path).
+#[cfg(test)]
+fn apply_predictor_body_coalesced(
+    image_data: &mut [u8],
+    width: usize,
+    height: usize,
+    size_bits: u8,
+    predictor_data: &[u8],
+) {
+    let block_xsize = usize::from(subsample_size(width as u16, size_bits));
+    for y in 1..height {
+        let row_block_base = (y >> size_bits) * block_xsize;
+        let mut run_start = 0usize;
+        let mut run_end = 0usize;
+        let mut run_pred = 255u8;
+
+        for block_x in 0..block_xsize {
+            let predictor = predictor_data[(row_block_base + block_x) * 4 + 1];
+            let start_index = (y * width + (block_x << size_bits).max(1)) * 4;
+            let end_index = (y * width + ((block_x + 1) << size_bits).min(width)) * 4;
+
+            if predictor == run_pred && start_index == run_end {
+                run_end = end_index;
+            } else {
+                if run_start < run_end {
+                    let _ = dispatch_predictor_scalar(
+                        run_pred, image_data, run_start, run_end, width,
+                    );
+                }
+                run_pred = predictor;
+                run_start = start_index;
+                run_end = end_index;
+            }
+        }
+        if run_start < run_end {
+            let _ = dispatch_predictor_scalar(run_pred, image_data, run_start, run_end, width);
+        }
+    }
+}
+
+#[cfg(test)]
+mod coalesce_tests {
+    extern crate alloc;
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    /// Verify coalesced dispatch produces identical output to per-block dispatch.
+    #[test]
+    fn coalesced_matches_per_block() {
+        let width: usize = 128;
+        let height: usize = 64;
+        let size_bits: u8 = 3;
+        let block_xsize = width >> size_bits;
+        let block_ysize = height >> size_bits;
+
+        let mut predictor_data = vec![0u8; block_xsize * block_ysize * 4];
+        let modes = [0, 1, 2, 3, 5, 7, 11, 12, 13, 2, 2, 2, 4, 8, 9, 10];
+        for by in 0..block_ysize {
+            for bx in 0..block_xsize {
+                predictor_data[(by * block_xsize + bx) * 4 + 1] =
+                    modes[(by * block_xsize + bx) % modes.len()];
+            }
+        }
+
+        let base: Vec<u8> = (0..width * height * 4).map(|i| (i * 37 + 13) as u8).collect();
+
+        let mut data_block = base.clone();
+        let _ = super::predictor_transform_borders(&mut data_block, width, height);
+        super::apply_predictor_body_per_block(&mut data_block, width, height, size_bits, &predictor_data);
+
+        let mut data_coal = base;
+        let _ = super::predictor_transform_borders(&mut data_coal, width, height);
+        super::apply_predictor_body_coalesced(&mut data_coal, width, height, size_bits, &predictor_data);
+
+        assert_eq!(data_block, data_coal, "coalesced output differs from per-block");
+    }
+
+    /// Same test but with uniform predictors (maximum coalescing).
+    #[test]
+    fn coalesced_matches_per_block_uniform() {
+        let width: usize = 256;
+        let height: usize = 32;
+        let size_bits: u8 = 4;
+        let block_xsize = width >> size_bits;
+        let block_ysize = height >> size_bits;
+
+        for mode in 0..14u8 {
+            let mut predictor_data = vec![0u8; block_xsize * block_ysize * 4];
+            for i in 0..block_xsize * block_ysize {
+                predictor_data[i * 4 + 1] = mode;
+            }
+
+            let base: Vec<u8> = (0..width * height * 4).map(|i| (i * 53 + 7) as u8).collect();
+
+            let mut data_block = base.clone();
+            let _ = super::predictor_transform_borders(&mut data_block, width, height);
+            super::apply_predictor_body_per_block(&mut data_block, width, height, size_bits, &predictor_data);
+
+            let mut data_coal = base;
+            let _ = super::predictor_transform_borders(&mut data_coal, width, height);
+            super::apply_predictor_body_coalesced(&mut data_coal, width, height, size_bits, &predictor_data);
+
+            assert_eq!(data_block, data_coal, "coalesced output differs for predictor mode {mode}");
+        }
+    }
 }
 
 #[cfg(all(test, feature = "_benchmarks"))]
