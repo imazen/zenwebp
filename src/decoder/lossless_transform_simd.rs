@@ -500,9 +500,8 @@ fn dispatch_predictor_sse2(
     }
     match predictor {
         0 => {
-            let _ = super::lossless_transform::apply_predictor_transform_0(
-                image_data, range, width,
-            );
+            let _ =
+                super::lossless_transform::apply_predictor_transform_0(image_data, range, width);
         }
         1 => apply_predictor_1_sse2(_token, image_data, range, width),
         2 => apply_predictor_2_sse2(_token, image_data, range, width),
@@ -510,9 +509,8 @@ fn dispatch_predictor_sse2(
         4 => apply_predictor_4_sse2(_token, image_data, range, width),
         5 => super::lossless_transform::apply_predictor_transform_5(image_data, range, width),
         6 => {
-            let _ = super::lossless_transform::apply_predictor_transform_6(
-                image_data, range, width,
-            );
+            let _ =
+                super::lossless_transform::apply_predictor_transform_6(image_data, range, width);
         }
         7 => super::lossless_transform::apply_predictor_transform_7(image_data, range, width),
         8 => apply_predictor_8_sse2(_token, image_data, range, width),
@@ -573,9 +571,7 @@ pub(crate) fn apply_predictor_transform_sse2_entry(
             }
         }
         if run_start < run_end {
-            dispatch_predictor_sse2(
-                _token, run_pred, image_data, run_start, run_end, width,
-            );
+            dispatch_predictor_sse2(_token, run_pred, image_data, run_start, run_end, width);
         }
     }
 }
@@ -591,8 +587,7 @@ fn color_inverse_scalar_fallback(
     size_bits: u8,
     transform_data: &[u8],
 ) {
-    let block_xsize =
-        usize::from(super::lossless::subsample_size(width as u16, size_bits));
+    let block_xsize = usize::from(super::lossless::subsample_size(width as u16, size_bits));
 
     for (y, row) in image_data.chunks_exact_mut(width * 4).enumerate() {
         let row_transform_data_start = (y >> size_bits) * block_xsize * 4;
@@ -611,8 +606,10 @@ fn color_inverse_scalar_fallback(
                 let mut temp_red = u32::from(pixel[0]);
                 let mut temp_blue = u32::from(pixel[2]);
 
-                temp_red +=
-                    super::lossless_transform::color_transform_delta(green_to_red as i8, green as i8);
+                temp_red += super::lossless_transform::color_transform_delta(
+                    green_to_red as i8,
+                    green as i8,
+                );
                 temp_blue += super::lossless_transform::color_transform_delta(
                     green_to_blue as i8,
                     green as i8,
@@ -731,27 +728,52 @@ fn predictor_avg_body<T: magetypes::simd::backends::U8x16Backend>(
 
 #[cfg(target_arch = "aarch64")]
 #[rite]
-fn apply_predictor_2_neon(token: NeonToken, image_data: &mut [u8], range: Range<usize>, width: usize) {
+fn apply_predictor_2_neon(
+    token: NeonToken,
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) {
     predictor_add_body(token, image_data, &range, width * 4);
 }
 #[cfg(target_arch = "aarch64")]
 #[rite]
-fn apply_predictor_3_neon(token: NeonToken, image_data: &mut [u8], range: Range<usize>, width: usize) {
+fn apply_predictor_3_neon(
+    token: NeonToken,
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) {
     predictor_add_body(token, image_data, &range, width * 4 - 4);
 }
 #[cfg(target_arch = "aarch64")]
 #[rite]
-fn apply_predictor_4_neon(token: NeonToken, image_data: &mut [u8], range: Range<usize>, width: usize) {
+fn apply_predictor_4_neon(
+    token: NeonToken,
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) {
     predictor_add_body(token, image_data, &range, width * 4 + 4);
 }
 #[cfg(target_arch = "aarch64")]
 #[rite]
-fn apply_predictor_8_neon(token: NeonToken, image_data: &mut [u8], range: Range<usize>, width: usize) {
+fn apply_predictor_8_neon(
+    token: NeonToken,
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) {
     predictor_avg_body(token, image_data, &range, width * 4 + 4, width * 4);
 }
 #[cfg(target_arch = "aarch64")]
 #[rite]
-fn apply_predictor_9_neon(token: NeonToken, image_data: &mut [u8], range: Range<usize>, width: usize) {
+fn apply_predictor_9_neon(
+    token: NeonToken,
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) {
     predictor_avg_body(token, image_data, &range, width * 4, width * 4 - 4);
 }
 
@@ -759,27 +781,52 @@ fn apply_predictor_9_neon(token: NeonToken, image_data: &mut [u8], range: Range<
 
 #[cfg(target_arch = "wasm32")]
 #[rite]
-fn apply_predictor_2_wasm128(token: Wasm128Token, image_data: &mut [u8], range: Range<usize>, width: usize) {
+fn apply_predictor_2_wasm128(
+    token: Wasm128Token,
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) {
     predictor_add_body(token, image_data, &range, width * 4);
 }
 #[cfg(target_arch = "wasm32")]
 #[rite]
-fn apply_predictor_3_wasm128(token: Wasm128Token, image_data: &mut [u8], range: Range<usize>, width: usize) {
+fn apply_predictor_3_wasm128(
+    token: Wasm128Token,
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) {
     predictor_add_body(token, image_data, &range, width * 4 - 4);
 }
 #[cfg(target_arch = "wasm32")]
 #[rite]
-fn apply_predictor_4_wasm128(token: Wasm128Token, image_data: &mut [u8], range: Range<usize>, width: usize) {
+fn apply_predictor_4_wasm128(
+    token: Wasm128Token,
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) {
     predictor_add_body(token, image_data, &range, width * 4 + 4);
 }
 #[cfg(target_arch = "wasm32")]
 #[rite]
-fn apply_predictor_8_wasm128(token: Wasm128Token, image_data: &mut [u8], range: Range<usize>, width: usize) {
+fn apply_predictor_8_wasm128(
+    token: Wasm128Token,
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) {
     predictor_avg_body(token, image_data, &range, width * 4 + 4, width * 4);
 }
 #[cfg(target_arch = "wasm32")]
 #[rite]
-fn apply_predictor_9_wasm128(token: Wasm128Token, image_data: &mut [u8], range: Range<usize>, width: usize) {
+fn apply_predictor_9_wasm128(
+    token: Wasm128Token,
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) {
     predictor_avg_body(token, image_data, &range, width * 4, width * 4 - 4);
 }
 
@@ -803,24 +850,21 @@ fn dispatch_predictor_neon(
     }
     match predictor {
         0 => {
-            let _ = super::lossless_transform::apply_predictor_transform_0(
-                image_data, range, width,
-            );
+            let _ =
+                super::lossless_transform::apply_predictor_transform_0(image_data, range, width);
         }
         // Predictor 1 (prefix-sum) falls back to scalar — serial dependency
         1 => {
-            let _ = super::lossless_transform::apply_predictor_transform_1(
-                image_data, range, width,
-            );
+            let _ =
+                super::lossless_transform::apply_predictor_transform_1(image_data, range, width);
         }
         2 => apply_predictor_2_neon(_token, image_data, range, width),
         3 => apply_predictor_3_neon(_token, image_data, range, width),
         4 => apply_predictor_4_neon(_token, image_data, range, width),
         5 => super::lossless_transform::apply_predictor_transform_5(image_data, range, width),
         6 => {
-            let _ = super::lossless_transform::apply_predictor_transform_6(
-                image_data, range, width,
-            );
+            let _ =
+                super::lossless_transform::apply_predictor_transform_6(image_data, range, width);
         }
         7 => super::lossless_transform::apply_predictor_transform_7(image_data, range, width),
         8 => apply_predictor_8_neon(_token, image_data, range, width),
@@ -874,9 +918,7 @@ pub(crate) fn apply_predictor_transform_neon_entry(
             }
         }
         if run_start < run_end {
-            dispatch_predictor_neon(
-                _token, run_pred, image_data, run_start, run_end, width,
-            );
+            dispatch_predictor_neon(_token, run_pred, image_data, run_start, run_end, width);
         }
     }
 }
@@ -928,23 +970,20 @@ fn dispatch_predictor_wasm128(
     }
     match predictor {
         0 => {
-            let _ = super::lossless_transform::apply_predictor_transform_0(
-                image_data, range, width,
-            );
+            let _ =
+                super::lossless_transform::apply_predictor_transform_0(image_data, range, width);
         }
         1 => {
-            let _ = super::lossless_transform::apply_predictor_transform_1(
-                image_data, range, width,
-            );
+            let _ =
+                super::lossless_transform::apply_predictor_transform_1(image_data, range, width);
         }
         2 => apply_predictor_2_wasm128(_token, image_data, range, width),
         3 => apply_predictor_3_wasm128(_token, image_data, range, width),
         4 => apply_predictor_4_wasm128(_token, image_data, range, width),
         5 => super::lossless_transform::apply_predictor_transform_5(image_data, range, width),
         6 => {
-            let _ = super::lossless_transform::apply_predictor_transform_6(
-                image_data, range, width,
-            );
+            let _ =
+                super::lossless_transform::apply_predictor_transform_6(image_data, range, width);
         }
         7 => super::lossless_transform::apply_predictor_transform_7(image_data, range, width),
         8 => apply_predictor_8_wasm128(_token, image_data, range, width),
@@ -998,19 +1037,14 @@ pub(crate) fn apply_predictor_transform_wasm128_entry(
             }
         }
         if run_start < run_end {
-            dispatch_predictor_wasm128(
-                _token, run_pred, image_data, run_start, run_end, width,
-            );
+            dispatch_predictor_wasm128(_token, run_pred, image_data, run_start, run_end, width);
         }
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 #[arcane]
-pub(crate) fn add_green_to_blue_and_red_wasm128_entry(
-    _token: Wasm128Token,
-    image_data: &mut [u8],
-) {
+pub(crate) fn add_green_to_blue_and_red_wasm128_entry(_token: Wasm128Token, image_data: &mut [u8]) {
     add_green_to_blue_and_red_wasm128(_token, image_data);
 }
 

@@ -652,7 +652,10 @@ fn apply_color_transform_impl_scalar(
 }
 
 pub(crate) fn apply_subtract_green_transform(image_data: &mut [u8]) {
-    incant!(apply_subtract_green_impl(image_data), [v1, neon, wasm128, scalar]);
+    incant!(
+        apply_subtract_green_impl(image_data),
+        [v1, neon, wasm128, scalar]
+    );
 }
 
 /// SSE2 subtract green wrapper.
@@ -941,9 +944,8 @@ fn apply_predictor_body_coalesced(
                 run_end = end_index;
             } else {
                 if run_start < run_end {
-                    let _ = dispatch_predictor_scalar(
-                        run_pred, image_data, run_start, run_end, width,
-                    );
+                    let _ =
+                        dispatch_predictor_scalar(run_pred, image_data, run_start, run_end, width);
                 }
                 run_pred = predictor;
                 run_start = start_index;
@@ -980,17 +982,34 @@ mod coalesce_tests {
             }
         }
 
-        let base: Vec<u8> = (0..width * height * 4).map(|i| (i * 37 + 13) as u8).collect();
+        let base: Vec<u8> = (0..width * height * 4)
+            .map(|i| (i * 37 + 13) as u8)
+            .collect();
 
         let mut data_block = base.clone();
         let _ = super::predictor_transform_borders(&mut data_block, width, height);
-        super::apply_predictor_body_per_block(&mut data_block, width, height, size_bits, &predictor_data);
+        super::apply_predictor_body_per_block(
+            &mut data_block,
+            width,
+            height,
+            size_bits,
+            &predictor_data,
+        );
 
         let mut data_coal = base;
         let _ = super::predictor_transform_borders(&mut data_coal, width, height);
-        super::apply_predictor_body_coalesced(&mut data_coal, width, height, size_bits, &predictor_data);
+        super::apply_predictor_body_coalesced(
+            &mut data_coal,
+            width,
+            height,
+            size_bits,
+            &predictor_data,
+        );
 
-        assert_eq!(data_block, data_coal, "coalesced output differs from per-block");
+        assert_eq!(
+            data_block, data_coal,
+            "coalesced output differs from per-block"
+        );
     }
 
     /// Same test but with uniform predictors (maximum coalescing).
@@ -1008,17 +1027,34 @@ mod coalesce_tests {
                 predictor_data[i * 4 + 1] = mode;
             }
 
-            let base: Vec<u8> = (0..width * height * 4).map(|i| (i * 53 + 7) as u8).collect();
+            let base: Vec<u8> = (0..width * height * 4)
+                .map(|i| (i * 53 + 7) as u8)
+                .collect();
 
             let mut data_block = base.clone();
             let _ = super::predictor_transform_borders(&mut data_block, width, height);
-            super::apply_predictor_body_per_block(&mut data_block, width, height, size_bits, &predictor_data);
+            super::apply_predictor_body_per_block(
+                &mut data_block,
+                width,
+                height,
+                size_bits,
+                &predictor_data,
+            );
 
             let mut data_coal = base;
             let _ = super::predictor_transform_borders(&mut data_coal, width, height);
-            super::apply_predictor_body_coalesced(&mut data_coal, width, height, size_bits, &predictor_data);
+            super::apply_predictor_body_coalesced(
+                &mut data_coal,
+                width,
+                height,
+                size_bits,
+                &predictor_data,
+            );
 
-            assert_eq!(data_block, data_coal, "coalesced output differs for predictor mode {mode}");
+            assert_eq!(
+                data_block, data_coal,
+                "coalesced output differs for predictor mode {mode}"
+            );
         }
     }
 }

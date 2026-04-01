@@ -115,7 +115,11 @@ fn lossless_decode(suite: &mut zenbench::Suite) {
 
         eprintln!(
             "{}: {}x{} ({:.1} MP), {} bytes",
-            img.name, w, h, pixels as f64 / 1e6, webp_data.len()
+            img.name,
+            w,
+            h,
+            pixels as f64 / 1e6,
+            webp_data.len()
         );
 
         let label = format!("ll_{}", img.name);

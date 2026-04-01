@@ -94,7 +94,10 @@ impl PredictorMode {
 /// On x86/x86_64 with SIMD, processes 4 pixels at a time with SSE2,
 /// matching libwebp's SubtractGreenFromBlueAndRed_SSE2.
 pub fn apply_subtract_green(pixels: &mut [u32]) {
-    incant!(apply_subtract_green_impl(pixels), [v1, neon, wasm128, scalar]);
+    incant!(
+        apply_subtract_green_impl(pixels),
+        [v1, neon, wasm128, scalar]
+    );
 }
 
 /// Scalar fallback for subtract green.
@@ -612,7 +615,10 @@ fn fast_slog2(v: u32) -> u64 {
 /// entries in bulk (16 at a time via pack+movemask), matching libwebp's
 /// CombinedShannonEntropy_SSE2.
 fn combined_shannon_entropy(x: &[u32; 256], y: &[u32; 256]) -> u64 {
-    incant!(combined_shannon_entropy_impl(x, y), [v1, neon, wasm128, scalar])
+    incant!(
+        combined_shannon_entropy_impl(x, y),
+        [v1, neon, wasm128, scalar]
+    )
 }
 
 /// Scalar fallback for combined_shannon_entropy.
@@ -648,11 +654,7 @@ fn combined_shannon_entropy_impl_v1(_token: X64V1Token, x: &[u32; 256], y: &[u32
 }
 
 #[cfg(target_arch = "aarch64")]
-fn combined_shannon_entropy_impl_neon(
-    _token: NeonToken,
-    x: &[u32; 256],
-    y: &[u32; 256],
-) -> u64 {
+fn combined_shannon_entropy_impl_neon(_token: NeonToken, x: &[u32; 256], y: &[u32; 256]) -> u64 {
     combined_shannon_entropy_impl_scalar(ScalarToken, x, y)
 }
 
@@ -1262,7 +1264,14 @@ fn apply_cross_color_tile_impl_neon(
     m: &CrossColorMultipliers,
 ) {
     apply_cross_color_tile_impl_scalar(
-        ScalarToken, pixels, width, start_x, start_y, end_x, end_y, m,
+        ScalarToken,
+        pixels,
+        width,
+        start_x,
+        start_y,
+        end_x,
+        end_y,
+        m,
     );
 }
 
@@ -1278,7 +1287,14 @@ fn apply_cross_color_tile_impl_wasm128(
     m: &CrossColorMultipliers,
 ) {
     apply_cross_color_tile_impl_scalar(
-        ScalarToken, pixels, width, start_x, start_y, end_x, end_y, m,
+        ScalarToken,
+        pixels,
+        width,
+        start_x,
+        start_y,
+        end_x,
+        end_y,
+        m,
     );
 }
 
