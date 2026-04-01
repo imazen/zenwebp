@@ -94,7 +94,7 @@ impl PredictorMode {
 /// On x86/x86_64 with SIMD, processes 4 pixels at a time with SSE2,
 /// matching libwebp's SubtractGreenFromBlueAndRed_SSE2.
 pub fn apply_subtract_green(pixels: &mut [u32]) {
-    incant!(apply_subtract_green_impl(pixels), [v1, scalar]);
+    incant!(apply_subtract_green_impl(pixels), [v1, neon, wasm128, scalar]);
 }
 
 /// Scalar fallback for subtract green.
@@ -117,6 +117,18 @@ fn apply_subtract_green_impl_scalar(_token: ScalarToken, pixels: &mut [u32]) {
 #[arcane]
 fn apply_subtract_green_impl_v1(_token: X64V1Token, pixels: &mut [u32]) {
     apply_subtract_green_sse2(_token, pixels);
+}
+
+/// NEON subtract green — delegates to scalar (encoder SIMD is lower priority).
+#[cfg(target_arch = "aarch64")]
+fn apply_subtract_green_impl_neon(_token: NeonToken, pixels: &mut [u32]) {
+    apply_subtract_green_impl_scalar(ScalarToken, pixels);
+}
+
+/// WASM128 subtract green — delegates to scalar.
+#[cfg(target_arch = "wasm32")]
+fn apply_subtract_green_impl_wasm128(_token: Wasm128Token, pixels: &mut [u32]) {
+    apply_subtract_green_impl_scalar(ScalarToken, pixels);
 }
 
 /// SSE2 subtract green matching libwebp's SubtractGreenFromBlueAndRed_SSE2.
@@ -600,7 +612,7 @@ fn fast_slog2(v: u32) -> u64 {
 /// entries in bulk (16 at a time via pack+movemask), matching libwebp's
 /// CombinedShannonEntropy_SSE2.
 fn combined_shannon_entropy(x: &[u32; 256], y: &[u32; 256]) -> u64 {
-    incant!(combined_shannon_entropy_impl(x, y), [v1, scalar])
+    incant!(combined_shannon_entropy_impl(x, y), [v1, neon, wasm128, scalar])
 }
 
 /// Scalar fallback for combined_shannon_entropy.
@@ -633,6 +645,24 @@ fn combined_shannon_entropy_impl_scalar(
 #[arcane]
 fn combined_shannon_entropy_impl_v1(_token: X64V1Token, x: &[u32; 256], y: &[u32; 256]) -> u64 {
     combined_shannon_entropy_sse2(_token, x, y)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn combined_shannon_entropy_impl_neon(
+    _token: NeonToken,
+    x: &[u32; 256],
+    y: &[u32; 256],
+) -> u64 {
+    combined_shannon_entropy_impl_scalar(ScalarToken, x, y)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn combined_shannon_entropy_impl_wasm128(
+    _token: Wasm128Token,
+    x: &[u32; 256],
+    y: &[u32; 256],
+) -> u64 {
+    combined_shannon_entropy_impl_scalar(ScalarToken, x, y)
 }
 
 /// SSE2 combined Shannon entropy matching libwebp's CombinedShannonEntropy_SSE2.
@@ -1172,7 +1202,7 @@ fn apply_cross_color_tile(
 ) {
     incant!(
         apply_cross_color_tile_impl(pixels, width, start_x, start_y, end_x, end_y, m),
-        [v1, scalar]
+        [v1, neon, wasm128, scalar]
     );
 }
 
@@ -1220,6 +1250,38 @@ fn cst_5b(x: u8) -> i16 {
 }
 
 /// Entry point for SSE2 cross-color tile transform.
+#[cfg(target_arch = "aarch64")]
+fn apply_cross_color_tile_impl_neon(
+    _token: NeonToken,
+    pixels: &mut [u32],
+    width: usize,
+    start_x: usize,
+    start_y: usize,
+    end_x: usize,
+    end_y: usize,
+    m: &CrossColorMultipliers,
+) {
+    apply_cross_color_tile_impl_scalar(
+        ScalarToken, pixels, width, start_x, start_y, end_x, end_y, m,
+    );
+}
+
+#[cfg(target_arch = "wasm32")]
+fn apply_cross_color_tile_impl_wasm128(
+    _token: Wasm128Token,
+    pixels: &mut [u32],
+    width: usize,
+    start_x: usize,
+    start_y: usize,
+    end_x: usize,
+    end_y: usize,
+    m: &CrossColorMultipliers,
+) {
+    apply_cross_color_tile_impl_scalar(
+        ScalarToken, pixels, width, start_x, start_y, end_x, end_y, m,
+    );
+}
+
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 fn apply_cross_color_tile_impl_v1(
