@@ -913,6 +913,7 @@ impl<'a> WebPDecoder<'a> {
 
                             if chunk == WebPRiffChunk::ANMF {
                                 self.num_frames += 1;
+                                self.limits.check_frame_count(self.num_frames as usize)?;
                                 if chunk_size < 24 {
                                     return Err(at!(DecodeError::InvalidChunkSize));
                                 }
