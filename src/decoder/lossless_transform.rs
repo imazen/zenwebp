@@ -32,34 +32,97 @@ pub(crate) fn apply_predictor_transform(
     size_bits: u8,
     predictor_data: &[u8],
 ) -> Result<(), InternalDecodeError> {
-    incant!(
-        apply_predictor_transform_impl(image_data, width, height, size_bits, predictor_data),
-        [v3, v1, neon, wasm128, scalar]
-    )
+    predictor_transform_borders(image_data, usize::from(width), usize::from(height))?;
+    apply_predictor_transform_body(image_data, width, height, size_bits, predictor_data);
+    Ok(())
 }
 
-/// AVX2 predictor transform wrapper — 32-byte processing for predictors 2-4, 8-9.
-#[cfg(target_arch = "x86_64")]
-fn apply_predictor_transform_impl_v3(
-    token: X64V3Token,
+/// The main predictor dispatch loop, compiled per-tier via `#[autoversion]`.
+///
+/// On AVX2 machines, LLVM autovectorizes the `#[inline(always)]` scalar predictor
+/// functions (5, 7, 10-13) with 256-bit registers. Predictors 2-4, 8-9 use explicit
+/// SIMD via `incant!()` to magetypes u8x32/u8x16 implementations.
+///
+/// This replaces the previous architecture of separate `#[arcane]` entry points per
+/// tier, which created target_feature boundaries that blocked inlining of scalar
+/// predictor functions from a different module.
+#[archmage::autoversion]
+fn apply_predictor_transform_body(
     image_data: &mut [u8],
     width: u16,
     height: u16,
     size_bits: u8,
     predictor_data: &[u8],
-) -> Result<(), InternalDecodeError> {
-    super::lossless_transform_simd::apply_predictor_transform_v3_entry(
-        token,
-        image_data,
-        width,
-        height,
-        size_bits,
-        predictor_data,
-    );
-    Ok(())
+) {
+    let block_xsize = usize::from(subsample_size(width, size_bits));
+    let width = usize::from(width);
+    let height = usize::from(height);
+
+    for y in 1..height {
+        for block_x in 0..block_xsize {
+            let block_index = (y >> size_bits) * block_xsize + block_x;
+            let predictor = predictor_data[block_index * 4 + 1];
+            let start_index = (y * width + (block_x << size_bits).max(1)) * 4;
+            let end_index = (y * width + ((block_x + 1) << size_bits).min(width)) * 4;
+            let range = start_index..end_index;
+
+            if range.is_empty() {
+                continue;
+            }
+
+            match predictor {
+                0 => {
+                    let _ = incant!(apply_predictor_transform_0(image_data, range, width));
+                }
+                1 => {
+                    let _ = incant!(apply_predictor_transform_1(image_data, range, width));
+                }
+                2 => {
+                    let _ = incant!(apply_predictor_transform_2(image_data, range, width));
+                }
+                3 => {
+                    let _ = incant!(apply_predictor_transform_3(image_data, range, width));
+                }
+                4 => {
+                    let _ = incant!(apply_predictor_transform_4(image_data, range, width));
+                }
+                5 => {
+                    incant!(apply_predictor_transform_5(image_data, range, width));
+                }
+                6 => {
+                    let _ = incant!(apply_predictor_transform_6(image_data, range, width));
+                }
+                7 => {
+                    incant!(apply_predictor_transform_7(image_data, range, width));
+                }
+                8 => {
+                    let _ = incant!(apply_predictor_transform_8(image_data, range, width));
+                }
+                9 => {
+                    let _ = incant!(apply_predictor_transform_9(image_data, range, width));
+                }
+                10 => {
+                    incant!(apply_predictor_transform_10(image_data, range, width));
+                }
+                11 => {
+                    incant!(apply_predictor_transform_11(image_data, range, width));
+                }
+                12 => {
+                    incant!(apply_predictor_transform_12(image_data, range, width));
+                }
+                13 => {
+                    incant!(apply_predictor_transform_13(image_data, range, width));
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
-/// SSE2 predictor transform wrapper.
+// Legacy per-arch wrappers kept for the SIMD module's #[arcane] entry points
+// (used by the SSE2 path which has hand-written intrinsics).
+
+/// SSE2 predictor transform wrapper (for backward compat with SIMD tests).
 #[cfg(target_arch = "x86_64")]
 fn apply_predictor_transform_impl_v1(
     token: X64V1Token,
@@ -80,8 +143,9 @@ fn apply_predictor_transform_impl_v1(
     Ok(())
 }
 
-/// NEON predictor transform wrapper.
+/// NEON predictor transform wrapper (for backward compat with SIMD tests).
 #[cfg(target_arch = "aarch64")]
+#[allow(dead_code)]
 fn apply_predictor_transform_impl_neon(
     token: NeonToken,
     image_data: &mut [u8],
@@ -101,8 +165,9 @@ fn apply_predictor_transform_impl_neon(
     Ok(())
 }
 
-/// WASM128 predictor transform wrapper.
+/// WASM128 predictor transform wrapper (for backward compat with SIMD tests).
 #[cfg(target_arch = "wasm32")]
+#[allow(dead_code)]
 fn apply_predictor_transform_impl_wasm128(
     token: Wasm128Token,
     image_data: &mut [u8],
@@ -279,6 +344,8 @@ fn apply_predictor_transform_impl_scalar(
 
     Ok(())
 }
+#[inline]
+#[archmage::autoversion]
 pub fn apply_predictor_transform_0(
     image_data: &mut [u8],
     range: Range<usize>,
@@ -294,6 +361,7 @@ pub fn apply_predictor_transform_0(
     }
     Ok(())
 }
+#[archmage::autoversion]
 pub fn apply_predictor_transform_1(
     image_data: &mut [u8],
     range: Range<usize>,
@@ -309,6 +377,7 @@ pub fn apply_predictor_transform_1(
     }
     Ok(())
 }
+#[archmage::autoversion]
 pub fn apply_predictor_transform_2(
     image_data: &mut [u8],
     range: Range<usize>,
@@ -324,6 +393,7 @@ pub fn apply_predictor_transform_2(
     }
     Ok(())
 }
+#[archmage::autoversion]
 pub fn apply_predictor_transform_3(
     image_data: &mut [u8],
     range: Range<usize>,
@@ -339,6 +409,7 @@ pub fn apply_predictor_transform_3(
     }
     Ok(())
 }
+#[archmage::autoversion]
 pub fn apply_predictor_transform_4(
     image_data: &mut [u8],
     range: Range<usize>,
@@ -354,6 +425,7 @@ pub fn apply_predictor_transform_4(
     }
     Ok(())
 }
+#[archmage::autoversion]
 pub fn apply_predictor_transform_5(image_data: &mut [u8], range: Range<usize>, width: usize) {
     let (old, current) = image_data[..range.end].split_at_mut(range.start);
 
@@ -375,6 +447,7 @@ pub fn apply_predictor_transform_5(image_data: &mut [u8], range: Range<usize>, w
         chunk.copy_from_slice(&prev);
     }
 }
+#[archmage::autoversion]
 pub fn apply_predictor_transform_6(
     image_data: &mut [u8],
     range: Range<usize>,
@@ -391,6 +464,7 @@ pub fn apply_predictor_transform_6(
     }
     Ok(())
 }
+#[archmage::autoversion]
 pub fn apply_predictor_transform_7(image_data: &mut [u8], range: Range<usize>, width: usize) {
     let (old, current) = image_data[..range.end].split_at_mut(range.start);
 
@@ -425,6 +499,7 @@ pub fn apply_predictor_transform_7(image_data: &mut [u8], range: Range<usize>, w
         chunk.copy_from_slice(&prev);
     }
 }
+#[archmage::autoversion]
 pub fn apply_predictor_transform_8(
     image_data: &mut [u8],
     range: Range<usize>,
@@ -443,6 +518,7 @@ pub fn apply_predictor_transform_8(
     }
     Ok(())
 }
+#[archmage::autoversion]
 pub fn apply_predictor_transform_9(
     image_data: &mut [u8],
     range: Range<usize>,
@@ -461,6 +537,7 @@ pub fn apply_predictor_transform_9(
     }
     Ok(())
 }
+#[archmage::autoversion]
 pub fn apply_predictor_transform_10(image_data: &mut [u8], range: Range<usize>, width: usize) {
     let (old, current) = image_data[..range.end].split_at_mut(range.start);
     let mut prev: [u8; 4] = *old.last_chunk::<4>().unwrap();
@@ -484,6 +561,7 @@ pub fn apply_predictor_transform_10(image_data: &mut [u8], range: Range<usize>, 
         chunk.copy_from_slice(&prev);
     }
 }
+#[archmage::autoversion]
 pub fn apply_predictor_transform_11(image_data: &mut [u8], range: Range<usize>, width: usize) {
     let (old, current) = image_data[..range.end].split_at_mut(range.start);
     let top = &old[range.start - width * 4..];
@@ -542,6 +620,7 @@ pub fn apply_predictor_transform_11(image_data: &mut [u8], range: Range<usize>, 
         ];
     }
 }
+#[archmage::autoversion]
 pub fn apply_predictor_transform_12(image_data: &mut [u8], range: Range<usize>, width: usize) {
     let (old, current) = image_data[..range.end].split_at_mut(range.start);
     let mut prev: [u8; 4] = *old.last_chunk::<4>().unwrap();
@@ -579,6 +658,7 @@ pub fn apply_predictor_transform_12(image_data: &mut [u8], range: Range<usize>, 
         chunk.copy_from_slice(&prev);
     }
 }
+#[archmage::autoversion]
 pub fn apply_predictor_transform_13(image_data: &mut [u8], range: Range<usize>, width: usize) {
     let (old, current) = image_data[..range.end].split_at_mut(range.start);
     let mut prev: [u8; 4] = *old.last_chunk::<4>().unwrap();
