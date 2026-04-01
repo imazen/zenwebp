@@ -645,6 +645,7 @@ fn color_inverse_scalar_fallback(
 /// Step 4: OR steps 2+3: [G0,0,G0,0, G1,0,G1,0, ...]. Add to input.
 /// Portable add-green using scalar 4-pixel unrolling.
 /// Simple and correct — the compiler autovectorizes this well on all architectures.
+#[cfg(any(target_arch = "aarch64", target_arch = "wasm32"))]
 fn add_green_portable<T: magetypes::simd::backends::U8x16Backend>(
     _token: T,
     image_data: &mut [u8],
@@ -870,7 +871,7 @@ macro_rules! v3_scalar_pred {
         #[cfg(target_arch = "x86_64")]
         #[rite]
         fn $name(_token: X64V3Token, image_data: &mut [u8], range: Range<usize>, width: usize) {
-            $pred_fn(image_data, range, width);
+            let _ = $pred_fn(image_data, range, width);
         }
     };
 }
@@ -878,10 +879,6 @@ macro_rules! v3_scalar_pred {
 v3_scalar_pred!(
     pred_0_v3,
     super::lossless_transform::apply_predictor_transform_0
-);
-v3_scalar_pred!(
-    pred_1_v3,
-    super::lossless_transform::apply_predictor_transform_1
 );
 v3_scalar_pred!(
     pred_5_v3,

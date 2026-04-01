@@ -282,7 +282,6 @@ fn apply_predictor_transform_impl_scalar(
 
     Ok(())
 }
-#[inline]
 #[inline(always)]
 pub fn apply_predictor_transform_0(
     image_data: &mut [u8],
