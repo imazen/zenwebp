@@ -908,9 +908,9 @@ dependencies = [
 
 [[package]]
 name = "linear-srgb"
-version = "0.6.6"
+version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc735204d942021e5f869a7fbe13593ccd480121131b2938efe410ad80aee984"
+checksum = "89fff1763e96ac82dbe8462fb1a9eff462477a87caaf8f14d808900486d72829"
 dependencies = [
  "archmage",
  "bytemuck",
