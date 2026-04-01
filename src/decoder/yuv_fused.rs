@@ -1275,11 +1275,36 @@ fn fused_row_2uv_dispatch_scalar(
     let v_val = get_fancy_chroma_value(v_near[0], v_near[0], v_far[0], v_far[0]);
     set_pixel(&mut rgb[0..3], y_row[0], u_val, v_val);
 
-    for x in 1..width {
-        let cx = x / 2;
-        let cx_next = ((x + 1) / 2).min(chroma_width - 1);
-        let u_val = get_fancy_chroma_value(u_near[cx], u_near[cx_next], u_far[cx], u_far[cx_next]);
-        let v_val = get_fancy_chroma_value(v_near[cx], v_near[cx_next], v_far[cx], v_far[cx_next]);
-        set_pixel(&mut rgb[x * 3..x * 3 + 3], y_row[x], u_val, v_val);
+    // Interior pixels: process in pairs matching the libwebp fancy upsampling pattern.
+    // Odd luma x (left of pair): main = chroma[cx], neighbor = chroma[cx+1]
+    // Even luma x (right of pair): main = chroma[cx+1], neighbor = chroma[cx]
+    let mut yx = 1;
+    let mut cx = 0;
+    while yx + 1 < width && cx + 1 < chroma_width {
+        // Left pixel of pair (odd luma x)
+        let u_val = get_fancy_chroma_value(u_near[cx], u_near[cx + 1], u_far[cx], u_far[cx + 1]);
+        let v_val = get_fancy_chroma_value(v_near[cx], v_near[cx + 1], v_far[cx], v_far[cx + 1]);
+        set_pixel(&mut rgb[yx * 3..yx * 3 + 3], y_row[yx], u_val, v_val);
+
+        // Right pixel of pair (even luma x)
+        let u_val = get_fancy_chroma_value(u_near[cx + 1], u_near[cx], u_far[cx + 1], u_far[cx]);
+        let v_val = get_fancy_chroma_value(v_near[cx + 1], v_near[cx], v_far[cx + 1], v_far[cx]);
+        set_pixel(
+            &mut rgb[(yx + 1) * 3..(yx + 2) * 3],
+            y_row[yx + 1],
+            u_val,
+            v_val,
+        );
+
+        yx += 2;
+        cx += 1;
+    }
+
+    // Last pixel (odd width — mirror right edge)
+    if yx < width {
+        let lc = chroma_width - 1;
+        let u_val = get_fancy_chroma_value(u_near[lc], u_near[lc], u_far[lc], u_far[lc]);
+        let v_val = get_fancy_chroma_value(v_near[lc], v_near[lc], v_far[lc], v_far[lc]);
+        set_pixel(&mut rgb[yx * 3..yx * 3 + 3], y_row[yx], u_val, v_val);
     }
 }
