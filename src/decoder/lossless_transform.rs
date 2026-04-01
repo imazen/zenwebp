@@ -34,7 +34,7 @@ pub(crate) fn apply_predictor_transform(
 ) -> Result<(), InternalDecodeError> {
     incant!(
         apply_predictor_transform_impl(image_data, width, height, size_bits, predictor_data),
-        [v1, scalar]
+        [v1, neon, wasm128, scalar]
     )
 }
 
@@ -49,6 +49,48 @@ fn apply_predictor_transform_impl_v1(
     predictor_data: &[u8],
 ) -> Result<(), InternalDecodeError> {
     super::lossless_transform_simd::apply_predictor_transform_sse2_entry(
+        token,
+        image_data,
+        width,
+        height,
+        size_bits,
+        predictor_data,
+    );
+    Ok(())
+}
+
+/// NEON predictor transform wrapper.
+#[cfg(target_arch = "aarch64")]
+fn apply_predictor_transform_impl_neon(
+    token: NeonToken,
+    image_data: &mut [u8],
+    width: u16,
+    height: u16,
+    size_bits: u8,
+    predictor_data: &[u8],
+) -> Result<(), InternalDecodeError> {
+    super::lossless_transform_simd::apply_predictor_transform_neon_entry(
+        token,
+        image_data,
+        width,
+        height,
+        size_bits,
+        predictor_data,
+    );
+    Ok(())
+}
+
+/// WASM128 predictor transform wrapper.
+#[cfg(target_arch = "wasm32")]
+fn apply_predictor_transform_impl_wasm128(
+    token: Wasm128Token,
+    image_data: &mut [u8],
+    width: u16,
+    height: u16,
+    size_bits: u8,
+    predictor_data: &[u8],
+) -> Result<(), InternalDecodeError> {
+    super::lossless_transform_simd::apply_predictor_transform_wasm128_entry(
         token,
         image_data,
         width,
@@ -513,7 +555,7 @@ pub(crate) fn apply_color_transform(
 ) {
     incant!(
         apply_color_transform_impl(image_data, width, size_bits, transform_data),
-        [v1, scalar]
+        [v1, neon, wasm128, scalar]
     );
 }
 
@@ -527,6 +569,42 @@ fn apply_color_transform_impl_v1(
     transform_data: &[u8],
 ) {
     super::lossless_transform_simd::transform_color_inverse_sse2_entry(
+        token,
+        image_data,
+        usize::from(width),
+        size_bits,
+        transform_data,
+    );
+}
+
+/// NEON color transform wrapper.
+#[cfg(target_arch = "aarch64")]
+fn apply_color_transform_impl_neon(
+    token: NeonToken,
+    image_data: &mut [u8],
+    width: u16,
+    size_bits: u8,
+    transform_data: &[u8],
+) {
+    super::lossless_transform_simd::transform_color_inverse_neon_entry(
+        token,
+        image_data,
+        usize::from(width),
+        size_bits,
+        transform_data,
+    );
+}
+
+/// WASM128 color transform wrapper.
+#[cfg(target_arch = "wasm32")]
+fn apply_color_transform_impl_wasm128(
+    token: Wasm128Token,
+    image_data: &mut [u8],
+    width: u16,
+    size_bits: u8,
+    transform_data: &[u8],
+) {
+    super::lossless_transform_simd::transform_color_inverse_wasm128_entry(
         token,
         image_data,
         usize::from(width),
@@ -574,13 +652,25 @@ fn apply_color_transform_impl_scalar(
 }
 
 pub(crate) fn apply_subtract_green_transform(image_data: &mut [u8]) {
-    incant!(apply_subtract_green_impl(image_data), [v1, scalar]);
+    incant!(apply_subtract_green_impl(image_data), [v1, neon, wasm128, scalar]);
 }
 
 /// SSE2 subtract green wrapper.
 #[cfg(target_arch = "x86_64")]
 fn apply_subtract_green_impl_v1(token: X64V1Token, image_data: &mut [u8]) {
     super::lossless_transform_simd::add_green_to_blue_and_red_sse2_entry(token, image_data);
+}
+
+/// NEON subtract green wrapper.
+#[cfg(target_arch = "aarch64")]
+fn apply_subtract_green_impl_neon(token: NeonToken, image_data: &mut [u8]) {
+    super::lossless_transform_simd::add_green_to_blue_and_red_neon_entry(token, image_data);
+}
+
+/// WASM128 subtract green wrapper.
+#[cfg(target_arch = "wasm32")]
+fn apply_subtract_green_impl_wasm128(token: Wasm128Token, image_data: &mut [u8]) {
+    super::lossless_transform_simd::add_green_to_blue_and_red_wasm128_entry(token, image_data);
 }
 
 fn apply_subtract_green_impl_scalar(_token: ScalarToken, image_data: &mut [u8]) {

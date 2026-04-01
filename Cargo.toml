@@ -22,25 +22,25 @@ byteorder-lite = { version = "0.1.0", default-features = false }
 enough = { version = "0.4.3", default-features = false, features = ["alloc"] }
 hashbrown = { version = "0.16", default-features = false, features = ["default-hasher"] }
 thiserror = { version = "2.0.18", default-features = false }
-whereat = { version = "0.1.5", default-features = false }
+whereat = { version = "0.1.5", default-features = false , path = "../whereat" }
 libm = "0.2.16"
-zencodec = { version = "0.1.11", optional = true }
+zencodec = { version = "0.1.11", optional = true , path = "../zencodec" }
 # zennode = { path = "../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
-zenpixels = { version = "0.2.2", default-features = false }
+zenpixels = { version = "0.2.2", default-features = false , path = "../zenpixels/zenpixels" }
 self_cell = { version = "1.2", optional = true }
 bytemuck = { version = "1", default-features = false, features = ["extern_crate_alloc"] }
 garb = { version = "0.2.5", default-features = false, features = ["experimental"] }
-linear-srgb = "0.6.6"
+linear-srgb = { version = "0.6.6", path = "../linear-srgb" }
 yuv = { version = "0.8", optional = true }
 png = { version = "0.18", optional = true }
 webp = { version = "0.3.0", optional = true }
-archmage = { version = "0.9.15", features = ["macros"] }
-magetypes = { version = "0.9.15" }
+archmage = { version = "0.9.15", features = ["macros"] , path = "../../archmage" }
+magetypes = { version = "0.9.15" , path = "../../archmage/magetypes" }
 rgb = { version = "0.8", optional = true, default-features = false, features = ["as-bytes"] }
 imgref = { version = "1.12", optional = true, default-features = false }
 
 [dev-dependencies]
-archmage = { version = "0.9.15", features = ["std", "macros"] }
+archmage = { version = "0.9.15", features = ["std", "macros"] , path = "../../archmage" }
 paste = "1.0.14"
 png = "0.18"
 rand = "0.10.0"

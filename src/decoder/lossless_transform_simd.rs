@@ -1,7 +1,10 @@
-//! SSE2 SIMD implementations of VP8L inverse transforms.
+//! SIMD implementations of VP8L inverse transforms.
 //!
-//! Ported from libwebp's `src/dsp/lossless_sse2.c`, adapted for our [R, G, B, A]
-//! byte layout (libwebp uses ARGB u32, which is [B, G, R, A] in little-endian bytes).
+//! SSE2 implementations ported from libwebp's `src/dsp/lossless_sse2.c`, adapted
+//! for our [R, G, B, A] byte layout (libwebp uses ARGB u32, which is [B, G, R, A]
+//! in little-endian bytes).
+//!
+//! Portable implementations use magetypes for cross-platform SIMD (SSE2/NEON/WASM128).
 //!
 //! Uses archmage's `#[rite]` for inner functions (inlined into the single `#[arcane]`
 //! entry point), eliminating per-call target_feature boundary overhead.
@@ -9,6 +12,8 @@
 #![allow(clippy::too_many_arguments)]
 
 use archmage::prelude::*;
+use core::ops::Range;
+use magetypes::simd::generic::u8x16;
 
 #[cfg(target_arch = "x86")]
 use archmage::intrinsics::x86 as simd_mem;
@@ -16,14 +21,12 @@ use archmage::intrinsics::x86 as simd_mem;
 use archmage::intrinsics::x86_64 as simd_mem;
 
 /// Helper: get a mutable reference to a 16-byte array from a slice.
-#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn chunk16(data: &mut [u8], offset: usize) -> &mut [u8; 16] {
     data[offset..].first_chunk_mut::<16>().unwrap()
 }
 
 /// Helper: get an immutable reference to a 16-byte array from a slice.
-#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn chunk16_ref(data: &[u8], offset: usize) -> &[u8; 16] {
     data[offset..].first_chunk::<16>().unwrap()
@@ -575,6 +578,413 @@ pub(crate) fn apply_predictor_transform_sse2_entry(
             );
         }
     }
+}
+
+// =============================================================================
+// Scalar fallbacks for color transforms (used by NEON/WASM stubs until SIMD is done)
+// =============================================================================
+
+#[cfg(any(target_arch = "aarch64", target_arch = "wasm32"))]
+fn color_inverse_scalar_fallback(
+    image_data: &mut [u8],
+    width: usize,
+    size_bits: u8,
+    transform_data: &[u8],
+) {
+    let block_xsize =
+        usize::from(super::lossless::subsample_size(width as u16, size_bits));
+
+    for (y, row) in image_data.chunks_exact_mut(width * 4).enumerate() {
+        let row_transform_data_start = (y >> size_bits) * block_xsize * 4;
+        let row_tf_data = &transform_data[row_transform_data_start..];
+
+        for (block, transform) in row
+            .chunks_mut(4 << size_bits)
+            .zip(row_tf_data.chunks_exact(4))
+        {
+            let red_to_blue = transform[0];
+            let green_to_blue = transform[1];
+            let green_to_red = transform[2];
+
+            for pixel in block.chunks_exact_mut(4) {
+                let green = u32::from(pixel[1]);
+                let mut temp_red = u32::from(pixel[0]);
+                let mut temp_blue = u32::from(pixel[2]);
+
+                temp_red +=
+                    super::lossless_transform::color_transform_delta(green_to_red as i8, green as i8);
+                temp_blue += super::lossless_transform::color_transform_delta(
+                    green_to_blue as i8,
+                    green as i8,
+                );
+                temp_blue += super::lossless_transform::color_transform_delta(
+                    red_to_blue as i8,
+                    temp_red as i8,
+                );
+
+                pixel[0] = (temp_red & 0xff) as u8;
+                pixel[2] = (temp_blue & 0xff) as u8;
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Portable SIMD predictor implementations (magetypes — works on all archs)
+// =============================================================================
+
+// --- Portable predictor helpers using magetypes ---
+
+/// Generic add-from-offset predictor body. Works with any token that supports u8x16.
+fn predictor_add_body<T: magetypes::simd::backends::U8x16Backend>(
+    token: T,
+    image_data: &mut [u8],
+    range: &Range<usize>,
+    offset: usize,
+) {
+    let len = range.end - range.start;
+    let simd_len = len & !15;
+    let mut i = range.start;
+    while i < range.start + simd_len {
+        let cur = u8x16::load(token, chunk16_ref(image_data, i));
+        let src = u8x16::load(token, chunk16_ref(image_data, i - offset));
+        (cur + src).store(chunk16(image_data, i));
+        i += 16;
+    }
+    while i < range.end {
+        image_data[i] = image_data[i].wrapping_add(image_data[i - offset]);
+        i += 1;
+    }
+}
+
+/// Generic floor-average predictor body: out[i] += floor_avg(a[i], b[i]).
+fn predictor_avg_body<T: magetypes::simd::backends::U8x16Backend>(
+    token: T,
+    image_data: &mut [u8],
+    range: &Range<usize>,
+    offset_a: usize,
+    offset_b: usize,
+) {
+    let len = range.end - range.start;
+    let simd_len = len & !15;
+    let mut i = range.start;
+    while i < range.start + simd_len {
+        let cur = u8x16::load(token, chunk16_ref(image_data, i));
+        let a = u8x16::load(token, chunk16_ref(image_data, i - offset_a));
+        let b = u8x16::load(token, chunk16_ref(image_data, i - offset_b));
+        // Floor average: (a & b) + ((a ^ b) >> 1)
+        let avg = (a & b) + u8x16::shr_logical_const::<1>(a ^ b);
+        (cur + avg).store(chunk16(image_data, i));
+        i += 16;
+    }
+    while i < range.end {
+        let a_val = image_data[i - offset_a];
+        let b_val = image_data[i - offset_b];
+        let avg = (a_val & b_val) + ((a_val ^ b_val) >> 1);
+        image_data[i] = image_data[i].wrapping_add(avg);
+        i += 1;
+    }
+}
+
+// --- aarch64 NEON predictor wrappers ---
+
+#[cfg(target_arch = "aarch64")]
+#[rite]
+fn apply_predictor_2_neon(token: NeonToken, image_data: &mut [u8], range: Range<usize>, width: usize) {
+    predictor_add_body(token, image_data, &range, width * 4);
+}
+#[cfg(target_arch = "aarch64")]
+#[rite]
+fn apply_predictor_3_neon(token: NeonToken, image_data: &mut [u8], range: Range<usize>, width: usize) {
+    predictor_add_body(token, image_data, &range, width * 4 - 4);
+}
+#[cfg(target_arch = "aarch64")]
+#[rite]
+fn apply_predictor_4_neon(token: NeonToken, image_data: &mut [u8], range: Range<usize>, width: usize) {
+    predictor_add_body(token, image_data, &range, width * 4 + 4);
+}
+#[cfg(target_arch = "aarch64")]
+#[rite]
+fn apply_predictor_8_neon(token: NeonToken, image_data: &mut [u8], range: Range<usize>, width: usize) {
+    predictor_avg_body(token, image_data, &range, width * 4 + 4, width * 4);
+}
+#[cfg(target_arch = "aarch64")]
+#[rite]
+fn apply_predictor_9_neon(token: NeonToken, image_data: &mut [u8], range: Range<usize>, width: usize) {
+    predictor_avg_body(token, image_data, &range, width * 4, width * 4 - 4);
+}
+
+// --- wasm32 SIMD128 predictor wrappers ---
+
+#[cfg(target_arch = "wasm32")]
+#[rite]
+fn apply_predictor_2_wasm128(token: Wasm128Token, image_data: &mut [u8], range: Range<usize>, width: usize) {
+    predictor_add_body(token, image_data, &range, width * 4);
+}
+#[cfg(target_arch = "wasm32")]
+#[rite]
+fn apply_predictor_3_wasm128(token: Wasm128Token, image_data: &mut [u8], range: Range<usize>, width: usize) {
+    predictor_add_body(token, image_data, &range, width * 4 - 4);
+}
+#[cfg(target_arch = "wasm32")]
+#[rite]
+fn apply_predictor_4_wasm128(token: Wasm128Token, image_data: &mut [u8], range: Range<usize>, width: usize) {
+    predictor_add_body(token, image_data, &range, width * 4 + 4);
+}
+#[cfg(target_arch = "wasm32")]
+#[rite]
+fn apply_predictor_8_wasm128(token: Wasm128Token, image_data: &mut [u8], range: Range<usize>, width: usize) {
+    predictor_avg_body(token, image_data, &range, width * 4 + 4, width * 4);
+}
+#[cfg(target_arch = "wasm32")]
+#[rite]
+fn apply_predictor_9_wasm128(token: Wasm128Token, image_data: &mut [u8], range: Range<usize>, width: usize) {
+    predictor_avg_body(token, image_data, &range, width * 4, width * 4 - 4);
+}
+
+// =============================================================================
+// NEON dispatch and entry point
+// =============================================================================
+
+#[cfg(target_arch = "aarch64")]
+#[rite]
+fn dispatch_predictor_neon(
+    _token: NeonToken,
+    predictor: u8,
+    image_data: &mut [u8],
+    start: usize,
+    end: usize,
+    width: usize,
+) {
+    let range = start..end;
+    if range.is_empty() {
+        return;
+    }
+    match predictor {
+        0 => {
+            let _ = super::lossless_transform::apply_predictor_transform_0(
+                image_data, range, width,
+            );
+        }
+        // Predictor 1 (prefix-sum) falls back to scalar — serial dependency
+        1 => {
+            let _ = super::lossless_transform::apply_predictor_transform_1(
+                image_data, range, width,
+            );
+        }
+        2 => apply_predictor_2_neon(_token, image_data, range, width),
+        3 => apply_predictor_3_neon(_token, image_data, range, width),
+        4 => apply_predictor_4_neon(_token, image_data, range, width),
+        5 => super::lossless_transform::apply_predictor_transform_5(image_data, range, width),
+        6 => {
+            let _ = super::lossless_transform::apply_predictor_transform_6(
+                image_data, range, width,
+            );
+        }
+        7 => super::lossless_transform::apply_predictor_transform_7(image_data, range, width),
+        8 => apply_predictor_8_neon(_token, image_data, range, width),
+        9 => apply_predictor_9_neon(_token, image_data, range, width),
+        10 => super::lossless_transform::apply_predictor_transform_10(image_data, range, width),
+        11 => super::lossless_transform::apply_predictor_transform_11(image_data, range, width),
+        12 => super::lossless_transform::apply_predictor_transform_12(image_data, range, width),
+        13 => super::lossless_transform::apply_predictor_transform_13(image_data, range, width),
+        _ => {}
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[arcane]
+pub(crate) fn apply_predictor_transform_neon_entry(
+    _token: NeonToken,
+    image_data: &mut [u8],
+    width: u16,
+    height: u16,
+    size_bits: u8,
+    predictor_data: &[u8],
+) {
+    let block_xsize = super::lossless_transform::block_xsize(width, size_bits);
+    let width = usize::from(width);
+    let height = usize::from(height);
+
+    let _ = super::lossless_transform::predictor_transform_borders(image_data, width, height);
+
+    for y in 1..height {
+        let row_block_base = (y >> size_bits) * block_xsize;
+        let mut run_start = 0usize;
+        let mut run_end = 0usize;
+        let mut run_pred = 255u8;
+
+        for block_x in 0..block_xsize {
+            let predictor = predictor_data[(row_block_base + block_x) * 4 + 1];
+            let start_index = (y * width + (block_x << size_bits).max(1)) * 4;
+            let end_index = (y * width + ((block_x + 1) << size_bits).min(width)) * 4;
+
+            if predictor == run_pred && start_index == run_end {
+                run_end = end_index;
+            } else {
+                if run_start < run_end {
+                    dispatch_predictor_neon(
+                        _token, run_pred, image_data, run_start, run_end, width,
+                    );
+                }
+                run_pred = predictor;
+                run_start = start_index;
+                run_end = end_index;
+            }
+        }
+        if run_start < run_end {
+            dispatch_predictor_neon(
+                _token, run_pred, image_data, run_start, run_end, width,
+            );
+        }
+    }
+}
+
+// Stub NEON entry points for color transforms (fall through to scalar for now)
+#[cfg(target_arch = "aarch64")]
+#[arcane]
+pub(crate) fn add_green_to_blue_and_red_neon_entry(_token: NeonToken, image_data: &mut [u8]) {
+    // TODO: NEON add_green implementation
+    for pixel in image_data.chunks_exact_mut(4) {
+        pixel[0] = pixel[0].wrapping_add(pixel[1]);
+        pixel[2] = pixel[2].wrapping_add(pixel[1]);
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[arcane]
+pub(crate) fn transform_color_inverse_neon_entry(
+    _token: NeonToken,
+    image_data: &mut [u8],
+    width: usize,
+    size_bits: u8,
+    transform_data: &[u8],
+) {
+    // TODO: NEON color_inverse SIMD implementation
+    color_inverse_scalar_fallback(image_data, width, size_bits, transform_data);
+}
+
+// =============================================================================
+// WASM128 dispatch and entry point
+// =============================================================================
+
+#[cfg(target_arch = "wasm32")]
+#[rite]
+fn dispatch_predictor_wasm128(
+    _token: Wasm128Token,
+    predictor: u8,
+    image_data: &mut [u8],
+    start: usize,
+    end: usize,
+    width: usize,
+) {
+    let range = start..end;
+    if range.is_empty() {
+        return;
+    }
+    match predictor {
+        0 => {
+            let _ = super::lossless_transform::apply_predictor_transform_0(
+                image_data, range, width,
+            );
+        }
+        1 => {
+            let _ = super::lossless_transform::apply_predictor_transform_1(
+                image_data, range, width,
+            );
+        }
+        2 => apply_predictor_2_wasm128(_token, image_data, range, width),
+        3 => apply_predictor_3_wasm128(_token, image_data, range, width),
+        4 => apply_predictor_4_wasm128(_token, image_data, range, width),
+        5 => super::lossless_transform::apply_predictor_transform_5(image_data, range, width),
+        6 => {
+            let _ = super::lossless_transform::apply_predictor_transform_6(
+                image_data, range, width,
+            );
+        }
+        7 => super::lossless_transform::apply_predictor_transform_7(image_data, range, width),
+        8 => apply_predictor_8_wasm128(_token, image_data, range, width),
+        9 => apply_predictor_9_wasm128(_token, image_data, range, width),
+        10 => super::lossless_transform::apply_predictor_transform_10(image_data, range, width),
+        11 => super::lossless_transform::apply_predictor_transform_11(image_data, range, width),
+        12 => super::lossless_transform::apply_predictor_transform_12(image_data, range, width),
+        13 => super::lossless_transform::apply_predictor_transform_13(image_data, range, width),
+        _ => {}
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[arcane]
+pub(crate) fn apply_predictor_transform_wasm128_entry(
+    _token: Wasm128Token,
+    image_data: &mut [u8],
+    width: u16,
+    height: u16,
+    size_bits: u8,
+    predictor_data: &[u8],
+) {
+    let block_xsize = super::lossless_transform::block_xsize(width, size_bits);
+    let width = usize::from(width);
+    let height = usize::from(height);
+
+    let _ = super::lossless_transform::predictor_transform_borders(image_data, width, height);
+
+    for y in 1..height {
+        let row_block_base = (y >> size_bits) * block_xsize;
+        let mut run_start = 0usize;
+        let mut run_end = 0usize;
+        let mut run_pred = 255u8;
+
+        for block_x in 0..block_xsize {
+            let predictor = predictor_data[(row_block_base + block_x) * 4 + 1];
+            let start_index = (y * width + (block_x << size_bits).max(1)) * 4;
+            let end_index = (y * width + ((block_x + 1) << size_bits).min(width)) * 4;
+
+            if predictor == run_pred && start_index == run_end {
+                run_end = end_index;
+            } else {
+                if run_start < run_end {
+                    dispatch_predictor_wasm128(
+                        _token, run_pred, image_data, run_start, run_end, width,
+                    );
+                }
+                run_pred = predictor;
+                run_start = start_index;
+                run_end = end_index;
+            }
+        }
+        if run_start < run_end {
+            dispatch_predictor_wasm128(
+                _token, run_pred, image_data, run_start, run_end, width,
+            );
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[arcane]
+pub(crate) fn add_green_to_blue_and_red_wasm128_entry(
+    _token: Wasm128Token,
+    image_data: &mut [u8],
+) {
+    // TODO: WASM128 add_green implementation
+    for pixel in image_data.chunks_exact_mut(4) {
+        pixel[0] = pixel[0].wrapping_add(pixel[1]);
+        pixel[2] = pixel[2].wrapping_add(pixel[1]);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[arcane]
+pub(crate) fn transform_color_inverse_wasm128_entry(
+    _token: Wasm128Token,
+    image_data: &mut [u8],
+    width: usize,
+    size_bits: u8,
+    transform_data: &[u8],
+) {
+    // TODO: WASM128 color_inverse SIMD implementation
+    color_inverse_scalar_fallback(image_data, width, size_bits, transform_data);
 }
 
 // =============================================================================
