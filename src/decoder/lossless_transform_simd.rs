@@ -13,7 +13,7 @@
 
 use archmage::prelude::*;
 use core::ops::Range;
-use magetypes::simd::generic::u8x16;
+use magetypes::simd::generic::{u8x16, u8x32};
 
 #[cfg(target_arch = "x86")]
 use archmage::intrinsics::x86 as simd_mem;
@@ -721,6 +721,229 @@ fn predictor_avg_body<T: magetypes::simd::backends::U8x16Backend>(
         let avg = (a_val & b_val) + ((a_val ^ b_val) >> 1);
         image_data[i] = image_data[i].wrapping_add(avg);
         i += 1;
+    }
+}
+
+/// Helper: get a mutable reference to a 32-byte array from a slice.
+#[inline(always)]
+fn chunk32(data: &mut [u8], offset: usize) -> &mut [u8; 32] {
+    data[offset..].first_chunk_mut::<32>().unwrap()
+}
+
+/// Helper: get an immutable reference to a 32-byte array from a slice.
+#[inline(always)]
+fn chunk32_ref(data: &[u8], offset: usize) -> &[u8; 32] {
+    data[offset..].first_chunk::<32>().unwrap()
+}
+
+/// Wide (32-byte) add-from-offset predictor body using u8x32.
+/// On AVX2 this uses native 256-bit ops; on NEON/WASM it decomposes to 2× 128-bit.
+fn predictor_add_body_wide<
+    T: magetypes::simd::backends::U8x32Backend + magetypes::simd::backends::U8x16Backend,
+>(
+    token: T,
+    image_data: &mut [u8],
+    range: &Range<usize>,
+    offset: usize,
+) {
+    let len = range.end - range.start;
+    let simd32_len = len & !31;
+    let mut i = range.start;
+    while i < range.start + simd32_len {
+        let cur = u8x32::load(token, chunk32_ref(image_data, i));
+        let src = u8x32::load(token, chunk32_ref(image_data, i - offset));
+        (cur + src).store(chunk32(image_data, i));
+        i += 32;
+    }
+    // 16-byte tail
+    while i + 16 <= range.end {
+        let cur = u8x16::load(token, chunk16_ref(image_data, i));
+        let src = u8x16::load(token, chunk16_ref(image_data, i - offset));
+        (cur + src).store(chunk16(image_data, i));
+        i += 16;
+    }
+    while i < range.end {
+        image_data[i] = image_data[i].wrapping_add(image_data[i - offset]);
+        i += 1;
+    }
+}
+
+/// Wide (32-byte) floor-average predictor body using u8x32.
+fn predictor_avg_body_wide<
+    T: magetypes::simd::backends::U8x32Backend + magetypes::simd::backends::U8x16Backend,
+>(
+    token: T,
+    image_data: &mut [u8],
+    range: &Range<usize>,
+    offset_a: usize,
+    offset_b: usize,
+) {
+    let len = range.end - range.start;
+    let simd32_len = len & !31;
+    let mut i = range.start;
+    while i < range.start + simd32_len {
+        let cur = u8x32::load(token, chunk32_ref(image_data, i));
+        let a = u8x32::load(token, chunk32_ref(image_data, i - offset_a));
+        let b = u8x32::load(token, chunk32_ref(image_data, i - offset_b));
+        let avg = (a & b) + u8x32::shr_logical_const::<1>(a ^ b);
+        (cur + avg).store(chunk32(image_data, i));
+        i += 32;
+    }
+    // 16-byte tail
+    while i + 16 <= range.end {
+        let cur = u8x16::load(token, chunk16_ref(image_data, i));
+        let a = u8x16::load(token, chunk16_ref(image_data, i - offset_a));
+        let b = u8x16::load(token, chunk16_ref(image_data, i - offset_b));
+        let avg = (a & b) + u8x16::shr_logical_const::<1>(a ^ b);
+        (cur + avg).store(chunk16(image_data, i));
+        i += 16;
+    }
+    while i < range.end {
+        let a_val = image_data[i - offset_a];
+        let b_val = image_data[i - offset_b];
+        let avg = (a_val & b_val) + ((a_val ^ b_val) >> 1);
+        image_data[i] = image_data[i].wrapping_add(avg);
+        i += 1;
+    }
+}
+
+// --- x86_64 V3 (AVX2) predictor wrappers using u8x32 ---
+
+#[cfg(target_arch = "x86_64")]
+#[rite]
+fn apply_predictor_2_v3(
+    token: X64V3Token,
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) {
+    predictor_add_body_wide(token, image_data, &range, width * 4);
+}
+#[cfg(target_arch = "x86_64")]
+#[rite]
+fn apply_predictor_3_v3(
+    token: X64V3Token,
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) {
+    predictor_add_body_wide(token, image_data, &range, width * 4 - 4);
+}
+#[cfg(target_arch = "x86_64")]
+#[rite]
+fn apply_predictor_4_v3(
+    token: X64V3Token,
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) {
+    predictor_add_body_wide(token, image_data, &range, width * 4 + 4);
+}
+#[cfg(target_arch = "x86_64")]
+#[rite]
+fn apply_predictor_8_v3(
+    token: X64V3Token,
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) {
+    predictor_avg_body_wide(token, image_data, &range, width * 4 + 4, width * 4);
+}
+#[cfg(target_arch = "x86_64")]
+#[rite]
+fn apply_predictor_9_v3(
+    token: X64V3Token,
+    image_data: &mut [u8],
+    range: Range<usize>,
+    width: usize,
+) {
+    predictor_avg_body_wide(token, image_data, &range, width * 4, width * 4 - 4);
+}
+
+// --- x86_64 V3 dispatch ---
+
+#[cfg(target_arch = "x86_64")]
+#[rite]
+fn dispatch_predictor_v3(
+    _token: X64V3Token,
+    predictor: u8,
+    image_data: &mut [u8],
+    start: usize,
+    end: usize,
+    width: usize,
+) {
+    let range = start..end;
+    if range.is_empty() {
+        return;
+    }
+    match predictor {
+        0 => {
+            let _ =
+                super::lossless_transform::apply_predictor_transform_0(image_data, range, width);
+        }
+        // Predictor 1 uses existing SSE2 prefix-sum (serial dependency limits AVX2 benefit)
+        1 => apply_predictor_1_sse2(_token.v1(), image_data, range, width),
+        2 => apply_predictor_2_v3(_token, image_data, range, width),
+        3 => apply_predictor_3_v3(_token, image_data, range, width),
+        4 => apply_predictor_4_v3(_token, image_data, range, width),
+        5 => super::lossless_transform::apply_predictor_transform_5(image_data, range, width),
+        6 => {
+            let _ =
+                super::lossless_transform::apply_predictor_transform_6(image_data, range, width);
+        }
+        7 => super::lossless_transform::apply_predictor_transform_7(image_data, range, width),
+        8 => apply_predictor_8_v3(_token, image_data, range, width),
+        9 => apply_predictor_9_v3(_token, image_data, range, width),
+        10 => super::lossless_transform::apply_predictor_transform_10(image_data, range, width),
+        11 => super::lossless_transform::apply_predictor_transform_11(image_data, range, width),
+        12 => super::lossless_transform::apply_predictor_transform_12(image_data, range, width),
+        13 => super::lossless_transform::apply_predictor_transform_13(image_data, range, width),
+        _ => {}
+    }
+}
+
+/// AVX2 predictor transform entry point — 32-byte processing for predictors 2-4, 8-9.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+pub(crate) fn apply_predictor_transform_v3_entry(
+    _token: X64V3Token,
+    image_data: &mut [u8],
+    width: u16,
+    height: u16,
+    size_bits: u8,
+    predictor_data: &[u8],
+) {
+    let block_xsize = super::lossless_transform::block_xsize(width, size_bits);
+    let width = usize::from(width);
+    let height = usize::from(height);
+
+    let _ = super::lossless_transform::predictor_transform_borders(image_data, width, height);
+
+    for y in 1..height {
+        let row_block_base = (y >> size_bits) * block_xsize;
+        let mut run_start = 0usize;
+        let mut run_end = 0usize;
+        let mut run_pred = 255u8;
+
+        for block_x in 0..block_xsize {
+            let predictor = predictor_data[(row_block_base + block_x) * 4 + 1];
+            let start_index = (y * width + (block_x << size_bits).max(1)) * 4;
+            let end_index = (y * width + ((block_x + 1) << size_bits).min(width)) * 4;
+
+            if predictor == run_pred && start_index == run_end {
+                run_end = end_index;
+            } else {
+                if run_start < run_end {
+                    dispatch_predictor_v3(_token, run_pred, image_data, run_start, run_end, width);
+                }
+                run_pred = predictor;
+                run_start = start_index;
+                run_end = end_index;
+            }
+        }
+        if run_start < run_end {
+            dispatch_predictor_v3(_token, run_pred, image_data, run_start, run_end, width);
+        }
     }
 }
 

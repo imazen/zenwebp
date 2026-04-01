@@ -34,8 +34,29 @@ pub(crate) fn apply_predictor_transform(
 ) -> Result<(), InternalDecodeError> {
     incant!(
         apply_predictor_transform_impl(image_data, width, height, size_bits, predictor_data),
-        [v1, neon, wasm128, scalar]
+        [v3, v1, neon, wasm128, scalar]
     )
+}
+
+/// AVX2 predictor transform wrapper — 32-byte processing for predictors 2-4, 8-9.
+#[cfg(target_arch = "x86_64")]
+fn apply_predictor_transform_impl_v3(
+    token: X64V3Token,
+    image_data: &mut [u8],
+    width: u16,
+    height: u16,
+    size_bits: u8,
+    predictor_data: &[u8],
+) -> Result<(), InternalDecodeError> {
+    super::lossless_transform_simd::apply_predictor_transform_v3_entry(
+        token,
+        image_data,
+        width,
+        height,
+        size_bits,
+        predictor_data,
+    );
+    Ok(())
 }
 
 /// SSE2 predictor transform wrapper.
@@ -555,7 +576,26 @@ pub(crate) fn apply_color_transform(
 ) {
     incant!(
         apply_color_transform_impl(image_data, width, size_bits, transform_data),
-        [v1, neon, wasm128, scalar]
+        [v3, v1, neon, wasm128, scalar]
+    );
+}
+
+/// AVX2 color transform wrapper — delegates to SSE2 intrinsics under AVX2 target_feature
+/// for VEX encoding benefits (3-operand, no transition penalties).
+#[cfg(target_arch = "x86_64")]
+fn apply_color_transform_impl_v3(
+    _token: X64V3Token,
+    image_data: &mut [u8],
+    width: u16,
+    size_bits: u8,
+    transform_data: &[u8],
+) {
+    super::lossless_transform_simd::transform_color_inverse_sse2_entry(
+        _token.v1(),
+        image_data,
+        usize::from(width),
+        size_bits,
+        transform_data,
     );
 }
 
@@ -654,8 +694,14 @@ fn apply_color_transform_impl_scalar(
 pub(crate) fn apply_subtract_green_transform(image_data: &mut [u8]) {
     incant!(
         apply_subtract_green_impl(image_data),
-        [v1, neon, wasm128, scalar]
+        [v3, v1, neon, wasm128, scalar]
     );
+}
+
+/// AVX2 subtract green wrapper — delegates to SSE2 entry under AVX2 target_feature.
+#[cfg(target_arch = "x86_64")]
+fn apply_subtract_green_impl_v3(_token: X64V3Token, image_data: &mut [u8]) {
+    super::lossless_transform_simd::add_green_to_blue_and_red_sse2_entry(_token.v1(), image_data);
 }
 
 /// SSE2 subtract green wrapper.
