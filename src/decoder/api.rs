@@ -813,7 +813,7 @@ impl<'a> WebPDecoder<'a> {
             chunks: HashMap::new(),
             animation: Default::default(),
             memory_limit: usize::MAX,
-            limits: super::limits::Limits::none(), // No limits by default
+            limits: super::limits::Limits::default(),
             is_lossy: false,
             has_alpha: false,
             loop_count: LoopCount::Times(NonZeroU16::new(1).unwrap()),
