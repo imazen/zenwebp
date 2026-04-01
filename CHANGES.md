@@ -1,5 +1,26 @@
 # Release Notes
 
+### Version 0.4.2
+
+**Security fixes, SIMD improvements, i686 correctness**
+
+#### Security Fixes (PR #4)
+- Default `WebPDecoder` to `Limits::default()` instead of `Limits::none()` — prevents unbounded memory use on adversarial input
+- Wire up frame count checking during ANMF chunk parsing
+- Cap `num_huff_groups` to prevent memory amplification from malformed lossless streams
+- Replace `assert!` panics with error returns in lossless transforms and Huffman table build
+- Bounds-check VP8 chunk range before slicing
+
+#### SIMD Additions
+- NEON and WASM128 dispatch for lossless predictor transforms and `add_green_to_blue_and_red`
+- NEON and WASM128 dispatch for encoder lossless transforms
+- Lossless inverse transforms upgraded to AVX2 (v3) via `u8x32` wide SIMD
+- Monolithic V3 `#[arcane]` entry with `#[rite]` wrappers for all predictors — enables LLVM to autovectorize scalar fallback loops with AVX2 target_feature
+- Fused chroma-upsample + YUV→RGB kernel wired into v2 decoder
+
+#### Bug Fixes
+- Fix chroma interpolation in scalar fallback for `fused_row_2uv` — 4-tap interpolation was collapsed to 2-tap for even luma positions, producing wrong pixel values on i686 (all YUV bit-exact tests now pass on 32-bit targets)
+
 ### Version 0.4.0
 
 **BREAKING CHANGES — API reorganization, new features**
