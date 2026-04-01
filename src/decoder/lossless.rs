@@ -344,6 +344,13 @@ impl<'a> LosslessDecoder<'a> {
                 .collect::<Vec<u16>>();
         }
 
+        // Cap the number of Huffman groups to prevent memory amplification attacks.
+        // Each group contains 5 Huffman trees, so 16384 groups is already very generous.
+        const MAX_HUFF_GROUPS: u32 = 16384;
+        if num_huff_groups > MAX_HUFF_GROUPS {
+            return Err(InternalDecodeError::HuffmanError);
+        }
+
         let mut hufftree_groups = Vec::new();
 
         for _i in 0..num_huff_groups {
