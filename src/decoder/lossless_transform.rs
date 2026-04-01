@@ -142,6 +142,9 @@ pub(crate) fn apply_predictor_transform_scalar(
 }
 
 /// Dispatch a single predictor function over a byte range (scalar path).
+///
+/// Predictors 2-4 and 8-9 use magetypes u8x16 polyfills (ScalarToken) which
+/// LLVM autovectorizes better than hand-written byte-at-a-time loops.
 #[inline(always)]
 fn dispatch_predictor_scalar(
     predictor: u8,
@@ -150,24 +153,66 @@ fn dispatch_predictor_scalar(
     end: usize,
     width: usize,
 ) -> Result<(), InternalDecodeError> {
-    match predictor {
-        0 => apply_predictor_transform_0(image_data, start..end, width)?,
-        1 => apply_predictor_transform_1(image_data, start..end, width)?,
-        2 => apply_predictor_transform_2(image_data, start..end, width)?,
-        3 => apply_predictor_transform_3(image_data, start..end, width)?,
-        4 => apply_predictor_transform_4(image_data, start..end, width)?,
-        5 => apply_predictor_transform_5(image_data, start..end, width),
-        6 => apply_predictor_transform_6(image_data, start..end, width)?,
-        7 => apply_predictor_transform_7(image_data, start..end, width),
-        8 => apply_predictor_transform_8(image_data, start..end, width)?,
-        9 => apply_predictor_transform_9(image_data, start..end, width)?,
-        10 => apply_predictor_transform_10(image_data, start..end, width),
-        11 => apply_predictor_transform_11(image_data, start..end, width),
-        12 => apply_predictor_transform_12(image_data, start..end, width),
-        13 => apply_predictor_transform_13(image_data, start..end, width),
-        _ => {}
+    #[cfg(any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "wasm32"
+    ))]
+    {
+        use super::lossless_transform_simd::{predictor_add_body, predictor_avg_body};
+        let range = start..end;
+        match predictor {
+            0 => apply_predictor_transform_0(image_data, range, width)?,
+            1 => apply_predictor_transform_1(image_data, range, width)?,
+            2 => {
+                predictor_add_body(ScalarToken, image_data, &range, width * 4);
+            }
+            3 => {
+                predictor_add_body(ScalarToken, image_data, &range, width * 4 - 4);
+            }
+            4 => {
+                predictor_add_body(ScalarToken, image_data, &range, width * 4 + 4);
+            }
+            5 => apply_predictor_transform_5(image_data, range, width),
+            6 => apply_predictor_transform_6(image_data, range, width)?,
+            7 => apply_predictor_transform_7(image_data, range, width),
+            8 => {
+                predictor_avg_body(ScalarToken, image_data, &range, width * 4 + 4, width * 4);
+            }
+            9 => {
+                predictor_avg_body(ScalarToken, image_data, &range, width * 4, width * 4 - 4);
+            }
+            10 => apply_predictor_transform_10(image_data, range, width),
+            11 => apply_predictor_transform_11(image_data, range, width),
+            12 => apply_predictor_transform_12(image_data, range, width),
+            13 => apply_predictor_transform_13(image_data, range, width),
+            _ => {}
+        }
+        return Ok(());
     }
-    Ok(())
+    // Fallback for architectures without the SIMD module
+    #[allow(unreachable_code)]
+    {
+        match predictor {
+            0 => apply_predictor_transform_0(image_data, start..end, width)?,
+            1 => apply_predictor_transform_1(image_data, start..end, width)?,
+            2 => apply_predictor_transform_2(image_data, start..end, width)?,
+            3 => apply_predictor_transform_3(image_data, start..end, width)?,
+            4 => apply_predictor_transform_4(image_data, start..end, width)?,
+            5 => apply_predictor_transform_5(image_data, start..end, width),
+            6 => apply_predictor_transform_6(image_data, start..end, width)?,
+            7 => apply_predictor_transform_7(image_data, start..end, width),
+            8 => apply_predictor_transform_8(image_data, start..end, width)?,
+            9 => apply_predictor_transform_9(image_data, start..end, width)?,
+            10 => apply_predictor_transform_10(image_data, start..end, width),
+            11 => apply_predictor_transform_11(image_data, start..end, width),
+            12 => apply_predictor_transform_12(image_data, start..end, width),
+            13 => apply_predictor_transform_13(image_data, start..end, width),
+            _ => {}
+        }
+        Ok(())
+    }
 }
 
 /// Predictor transform preamble: top-left alpha, first row, left column.

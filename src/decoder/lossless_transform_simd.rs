@@ -674,7 +674,7 @@ fn add_green_portable<T: magetypes::simd::backends::U8x16Backend>(
 // --- Portable predictor helpers using magetypes ---
 
 /// Generic add-from-offset predictor body. Works with any token that supports u8x16.
-fn predictor_add_body<T: magetypes::simd::backends::U8x16Backend>(
+pub(crate) fn predictor_add_body<T: magetypes::simd::backends::U8x16Backend>(
     token: T,
     image_data: &mut [u8],
     range: &Range<usize>,
@@ -696,7 +696,7 @@ fn predictor_add_body<T: magetypes::simd::backends::U8x16Backend>(
 }
 
 /// Generic floor-average predictor body: out[i] += floor_avg(a[i], b[i]).
-fn predictor_avg_body<T: magetypes::simd::backends::U8x16Backend>(
+pub(crate) fn predictor_avg_body<T: magetypes::simd::backends::U8x16Backend>(
     token: T,
     image_data: &mut [u8],
     range: &Range<usize>,
