@@ -101,6 +101,7 @@ pub fn apply_subtract_green(pixels: &mut [u32]) {
 }
 
 /// Scalar fallback for subtract green.
+#[inline(always)]
 fn apply_subtract_green_impl_scalar(_token: ScalarToken, pixels: &mut [u32]) {
     for pixel in pixels.iter_mut() {
         let a = argb_alpha(*pixel);
@@ -122,14 +123,16 @@ fn apply_subtract_green_impl_v1(_token: X64V1Token, pixels: &mut [u32]) {
     apply_subtract_green_sse2(_token, pixels);
 }
 
-/// NEON subtract green — delegates to scalar (encoder SIMD is lower priority).
+/// NEON subtract green — `#[arcane]` enables auto-vectorization under target_feature.
 #[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
 fn apply_subtract_green_impl_neon(_token: NeonToken, pixels: &mut [u32]) {
     apply_subtract_green_impl_scalar(ScalarToken, pixels);
 }
 
-/// WASM128 subtract green — delegates to scalar.
+/// WASM128 subtract green — `#[arcane]` enables auto-vectorization under target_feature.
 #[cfg(target_arch = "wasm32")]
+#[archmage::arcane]
 fn apply_subtract_green_impl_wasm128(_token: Wasm128Token, pixels: &mut [u32]) {
     apply_subtract_green_impl_scalar(ScalarToken, pixels);
 }
@@ -622,6 +625,7 @@ fn combined_shannon_entropy(x: &[u32; 256], y: &[u32; 256]) -> u64 {
 }
 
 /// Scalar fallback for combined_shannon_entropy.
+#[inline(always)]
 fn combined_shannon_entropy_impl_scalar(
     _token: ScalarToken,
     x: &[u32; 256],
@@ -654,11 +658,13 @@ fn combined_shannon_entropy_impl_v1(_token: X64V1Token, x: &[u32; 256], y: &[u32
 }
 
 #[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
 fn combined_shannon_entropy_impl_neon(_token: NeonToken, x: &[u32; 256], y: &[u32; 256]) -> u64 {
     combined_shannon_entropy_impl_scalar(ScalarToken, x, y)
 }
 
 #[cfg(target_arch = "wasm32")]
+#[archmage::arcane]
 fn combined_shannon_entropy_impl_wasm128(
     _token: Wasm128Token,
     x: &[u32; 256],

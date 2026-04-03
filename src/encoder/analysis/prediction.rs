@@ -107,7 +107,10 @@ pub fn pred_luma16_dc(dst: &mut [u8], left: Option<&[u8]>, top: Option<&[u8]>) {
 pub fn pred_luma16_tm(dst: &mut [u8], left_with_corner: Option<&[u8]>, top: Option<&[u8]>) {
     match (left_with_corner, top) {
         (Some(left), Some(top)) => {
-            incant!(pred_luma16_tm_impl(dst, left, top), [v3, neon, wasm128, scalar]);
+            incant!(
+                pred_luma16_tm_impl(dst, left, top),
+                [v3, neon, wasm128, scalar]
+            );
         }
         (Some(left), None) => {
             horizontal_pred(dst, Some(&left[1..17]), 16);
@@ -135,7 +138,7 @@ fn pred_luma16_tm_impl_neon(token: NeonToken, dst: &mut [u8], left: &[u8], top: 
 }
 
 #[cfg(target_arch = "wasm32")]
-#[inline(always)]
+#[archmage::arcane]
 fn pred_luma16_tm_impl_wasm128(_token: Wasm128Token, dst: &mut [u8], left: &[u8], top: &[u8]) {
     pred_luma16_tm_scalar(dst, left, top);
 }
@@ -146,7 +149,7 @@ fn pred_luma16_tm_impl_scalar(_token: ScalarToken, dst: &mut [u8], left: &[u8], 
 }
 
 /// Scalar TrueMotion for 16x16 luma.
-#[inline]
+#[inline(always)]
 fn pred_luma16_tm_scalar(dst: &mut [u8], left: &[u8], top: &[u8]) {
     let tl = i32::from(left[0]);
     for y in 0..16 {
@@ -269,7 +272,10 @@ pub fn pred_chroma8_dc(dst: &mut [u8], left: Option<&[u8]>, top: Option<&[u8]>) 
 pub fn pred_chroma8_tm(dst: &mut [u8], left_with_corner: Option<&[u8]>, top: Option<&[u8]>) {
     match (left_with_corner, top) {
         (Some(left), Some(top)) => {
-            incant!(pred_chroma8_tm_impl(dst, left, top), [v3, neon, wasm128, scalar]);
+            incant!(
+                pred_chroma8_tm_impl(dst, left, top),
+                [v3, neon, wasm128, scalar]
+            );
         }
         (Some(left), None) => {
             horizontal_pred(dst, Some(&left[1..9]), 8);
@@ -284,7 +290,7 @@ pub fn pred_chroma8_tm(dst: &mut [u8], left_with_corner: Option<&[u8]>, top: Opt
 }
 
 /// Scalar TrueMotion for 8x8 chroma.
-#[inline]
+#[inline(always)]
 fn pred_chroma8_tm_scalar(dst: &mut [u8], left: &[u8], top: &[u8]) {
     let tl = i32::from(left[0]);
     for y in 0..8 {
@@ -310,7 +316,7 @@ fn pred_chroma8_tm_impl_neon(token: NeonToken, dst: &mut [u8], left: &[u8], top:
 }
 
 #[cfg(target_arch = "wasm32")]
-#[inline(always)]
+#[archmage::arcane]
 fn pred_chroma8_tm_impl_wasm128(_token: Wasm128Token, dst: &mut [u8], left: &[u8], top: &[u8]) {
     pred_chroma8_tm_scalar(dst, left, top);
 }

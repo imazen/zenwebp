@@ -2281,6 +2281,9 @@ pub(crate) use neon_transform::*;
 mod wasm_transform {
     use super::*;
 
+    /// Forward DCT using WASM SIMD128 (entry shim)
+    #[cfg(target_arch = "wasm32")]
+    #[arcane]
     pub(crate) fn dct4x4_wasm(_token: Wasm128Token, block: &mut [i32; 16]) {
         dct4x4_wasm_impl(_token, block);
     }
