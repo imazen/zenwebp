@@ -124,7 +124,7 @@ pub fn collect_histogram_with_offset(
             start_block,
             end_block
         ),
-        [v3, neon, scalar]
+        [v3, neon, wasm128, scalar]
     )
 }
 
@@ -171,6 +171,20 @@ fn collect_histogram_dispatch_neon(
         start_block,
         end_block,
     )
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn collect_histogram_dispatch_wasm128(
+    _token: archmage::Wasm128Token,
+    src_buf: &[u8],
+    src_base: usize,
+    pred_buf: &[u8],
+    pred_base: usize,
+    start_block: usize,
+    end_block: usize,
+) -> DctHistogram {
+    collect_histogram_with_offset_scalar(src_buf, src_base, pred_buf, pred_base, start_block, end_block)
 }
 
 #[inline(always)]

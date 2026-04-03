@@ -143,7 +143,7 @@ pub fn classify_image_type_diag(
 fn compute_edge_density(y_src: &[u8], width: usize, height: usize, y_stride: usize) -> f32 {
     incant!(
         compute_edge_density_impl(y_src, width, height, y_stride),
-        [v3, neon, scalar]
+        [v3, neon, wasm128, scalar]
     )
 }
 
@@ -170,6 +170,18 @@ fn compute_edge_density_impl_neon(
     y_stride: usize,
 ) -> f32 {
     compute_edge_density_neon(token, y_src, width, height, y_stride)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn compute_edge_density_impl_wasm128(
+    _token: Wasm128Token,
+    y_src: &[u8],
+    width: usize,
+    height: usize,
+    y_stride: usize,
+) -> f32 {
+    compute_edge_density_scalar(y_src, width, height, y_stride)
 }
 
 #[inline(always)]
