@@ -122,16 +122,67 @@ fn apply_subtract_green_impl_v1(_token: X64V1Token, pixels: &mut [u32]) {
     apply_subtract_green_sse2(_token, pixels);
 }
 
-/// NEON subtract green — delegates to scalar (encoder SIMD is lower priority).
-#[cfg(target_arch = "aarch64")]
-fn apply_subtract_green_impl_neon(_token: NeonToken, pixels: &mut [u32]) {
-    apply_subtract_green_impl_scalar(ScalarToken, pixels);
+/// Generic subtract green using u8x16.
+///
+/// Processes 4 pixels (16 bytes) at a time. Builds a green mask via to_array/from_array,
+/// then performs a single u8x16 wrapping subtraction. The mask has green in the R and B
+/// byte positions and zero elsewhere, so: R -= G, B -= G, A -= 0, G -= 0.
+///
+/// Memory layout per pixel (little-endian u32): b(0) g(1) r(2) a(3).
+/// Green bytes are at indices 1, 5, 9, 13 within each 16-byte chunk.
+#[cfg(any(target_arch = "aarch64", target_arch = "wasm32"))]
+#[inline(always)]
+fn apply_subtract_green_generic<T: magetypes::simd::backends::U8x16Backend>(
+    token: T,
+    pixels: &mut [u32],
+) {
+    use magetypes::simd::generic::u8x16;
+
+    let pixel_bytes: &mut [u8] = bytemuck::cast_slice_mut(pixels);
+    let simd_len = pixel_bytes.len() & !15;
+    let mut i = 0;
+
+    while i < simd_len {
+        let chunk: &mut [u8; 16] = (&mut pixel_bytes[i..i + 16]).try_into().unwrap();
+        let inp = u8x16::load(token, chunk);
+        // Build green mask: [g0 0 g0 0 | g1 0 g1 0 | g2 0 g2 0 | g3 0 g3 0]
+        let arr = inp.to_array();
+        let g0 = arr[1];
+        let g1 = arr[5];
+        let g2 = arr[9];
+        let g3 = arr[13];
+        let mask = u8x16::from_array(
+            token,
+            [g0, 0, g0, 0, g1, 0, g1, 0, g2, 0, g2, 0, g3, 0, g3, 0],
+        );
+        let out = inp - mask;
+        out.store(chunk);
+        i += 16;
+    }
+
+    // Scalar remainder (0-3 pixels)
+    let remaining_pixels = &mut pixels[simd_len / 4..];
+    for pixel in remaining_pixels.iter_mut() {
+        let a = argb_alpha(*pixel);
+        let r = argb_red(*pixel);
+        let g = argb_green(*pixel);
+        let b = argb_blue(*pixel);
+        let new_r = r.wrapping_sub(g);
+        let new_b = b.wrapping_sub(g);
+        *pixel = make_argb(a, new_r, g, new_b);
+    }
 }
 
-/// WASM128 subtract green — delegates to scalar.
+/// NEON subtract green: real u8x16 SIMD via generic implementation.
+#[cfg(target_arch = "aarch64")]
+fn apply_subtract_green_impl_neon(token: NeonToken, pixels: &mut [u32]) {
+    apply_subtract_green_generic(token, pixels);
+}
+
+/// WASM128 subtract green: real u8x16 SIMD via generic implementation.
 #[cfg(target_arch = "wasm32")]
-fn apply_subtract_green_impl_wasm128(_token: Wasm128Token, pixels: &mut [u32]) {
-    apply_subtract_green_impl_scalar(ScalarToken, pixels);
+fn apply_subtract_green_impl_wasm128(token: Wasm128Token, pixels: &mut [u32]) {
+    apply_subtract_green_generic(token, pixels);
 }
 
 /// SSE2 subtract green matching libwebp's SubtractGreenFromBlueAndRed_SSE2.
