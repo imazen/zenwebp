@@ -122,7 +122,6 @@ pub fn pred_luma16_tm(dst: &mut [u8], left_with_corner: Option<&[u8]>, top: Opti
 }
 
 #[cfg(target_arch = "x86_64")]
-#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn pred_luma16_tm_impl_v3(token: X64V3Token, dst: &mut [u8], left: &[u8], top: &[u8]) {
     pred_luma16_tm_sse2(token, dst, left, top);
@@ -296,7 +295,6 @@ fn pred_chroma8_tm_scalar(dst: &mut [u8], left: &[u8], top: &[u8]) {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn pred_chroma8_tm_impl_v3(token: X64V3Token, dst: &mut [u8], left: &[u8], top: &[u8]) {
