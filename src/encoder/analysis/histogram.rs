@@ -184,7 +184,14 @@ fn collect_histogram_dispatch_wasm128(
     start_block: usize,
     end_block: usize,
 ) -> DctHistogram {
-    collect_histogram_with_offset_scalar(src_buf, src_base, pred_buf, pred_base, start_block, end_block)
+    collect_histogram_with_offset_scalar(
+        src_buf,
+        src_base,
+        pred_buf,
+        pred_base,
+        start_block,
+        end_block,
+    )
 }
 
 #[inline(always)]

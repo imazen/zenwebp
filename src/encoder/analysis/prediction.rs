@@ -107,7 +107,10 @@ pub fn pred_luma16_dc(dst: &mut [u8], left: Option<&[u8]>, top: Option<&[u8]>) {
 pub fn pred_luma16_tm(dst: &mut [u8], left_with_corner: Option<&[u8]>, top: Option<&[u8]>) {
     match (left_with_corner, top) {
         (Some(left), Some(top)) => {
-            incant!(pred_luma16_tm_impl(dst, left, top), [v3, neon, wasm128, scalar]);
+            incant!(
+                pred_luma16_tm_impl(dst, left, top),
+                [v3, neon, wasm128, scalar]
+            );
         }
         (Some(left), None) => {
             horizontal_pred(dst, Some(&left[1..17]), 16);
@@ -268,7 +271,10 @@ pub fn pred_chroma8_dc(dst: &mut [u8], left: Option<&[u8]>, top: Option<&[u8]>) 
 pub fn pred_chroma8_tm(dst: &mut [u8], left_with_corner: Option<&[u8]>, top: Option<&[u8]>) {
     match (left_with_corner, top) {
         (Some(left), Some(top)) => {
-            incant!(pred_chroma8_tm_impl(dst, left, top), [v3, neon, wasm128, scalar]);
+            incant!(
+                pred_chroma8_tm_impl(dst, left, top),
+                [v3, neon, wasm128, scalar]
+            );
         }
         (Some(left), None) => {
             horizontal_pred(dst, Some(&left[1..9]), 8);
