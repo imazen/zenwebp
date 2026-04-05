@@ -672,31 +672,6 @@ fn combined_shannon_entropy(x: &[u32; 256], y: &[u32; 256]) -> u64 {
     )
 }
 
-/// Scalar fallback for combined_shannon_entropy.
-fn combined_shannon_entropy_impl_scalar(
-    _token: ScalarToken,
-    x: &[u32; 256],
-    y: &[u32; 256],
-) -> u64 {
-    let mut retval: u64 = 0;
-    let mut sum_x: u32 = 0;
-    let mut sum_xy: u32 = 0;
-    for i in 0..256 {
-        let xi = x[i];
-        if xi != 0 {
-            let xy = xi + y[i];
-            sum_x += xi;
-            retval += fast_slog2(xi);
-            sum_xy += xy;
-            retval += fast_slog2(xy);
-        } else if y[i] != 0 {
-            sum_xy += y[i];
-            retval += fast_slog2(y[i]);
-        }
-    }
-    fast_slog2(sum_x) + fast_slog2(sum_xy) - retval
-}
-
 /// Entry point for SSE2 combined Shannon entropy (adds #[target_feature]).
 #[cfg(target_arch = "x86_64")]
 #[arcane]
@@ -704,18 +679,76 @@ fn combined_shannon_entropy_impl_v1(_token: X64V1Token, x: &[u32; 256], y: &[u32
     combined_shannon_entropy_sse2(_token, x, y)
 }
 
-#[cfg(target_arch = "aarch64")]
-fn combined_shannon_entropy_impl_neon(_token: NeonToken, x: &[u32; 256], y: &[u32; 256]) -> u64 {
-    combined_shannon_entropy_impl_scalar(ScalarToken, x, y)
-}
-
-#[cfg(target_arch = "wasm32")]
-fn combined_shannon_entropy_impl_wasm128(
-    _token: Wasm128Token,
+/// Generic SIMD combined Shannon entropy using magetypes u32x4 zero-detection.
+///
+/// Loads 16 u32 values at a time (4 × u32x4), creates a bitmask of nonzero
+/// positions via `simd_ne` + `bitmask()`, then iterates only nonzero entries.
+/// Same algorithm as the SSE2 path but using portable magetypes ops.
+/// On scalar, u32x4 degrades to 4 individual comparisons — still correct
+/// and better than the naive per-element loop for sparse histograms.
+#[magetypes(neon, wasm128, scalar)]
+#[inline(always)]
+fn combined_shannon_entropy_impl(
+    token: Token,
     x: &[u32; 256],
     y: &[u32; 256],
 ) -> u64 {
-    combined_shannon_entropy_impl_scalar(ScalarToken, x, y)
+    use magetypes::simd::generic::u32x4 as GenericU32x4;
+    #[allow(non_camel_case_types)]
+    type u32x4 = GenericU32x4<Token>;
+
+    let mut retval: u64 = 0;
+    let mut sum_x: u32 = 0;
+    let mut sum_xy: u32 = 0;
+    let zero = u32x4::zero(token);
+
+    let mut i = 0usize;
+    while i < 256 {
+        // Load 16 u32 values from X and Y (4 × u32x4 each)
+        let x0 = u32x4::from_array(token, *x[i..].first_chunk::<4>().unwrap());
+        let x1 = u32x4::from_array(token, *x[i + 4..].first_chunk::<4>().unwrap());
+        let x2 = u32x4::from_array(token, *x[i + 8..].first_chunk::<4>().unwrap());
+        let x3 = u32x4::from_array(token, *x[i + 12..].first_chunk::<4>().unwrap());
+
+        let y0 = u32x4::from_array(token, *y[i..].first_chunk::<4>().unwrap());
+        let y1 = u32x4::from_array(token, *y[i + 4..].first_chunk::<4>().unwrap());
+        let y2 = u32x4::from_array(token, *y[i + 8..].first_chunk::<4>().unwrap());
+        let y3 = u32x4::from_array(token, *y[i + 12..].first_chunk::<4>().unwrap());
+
+        // Build 16-bit bitmask: bit j set if x[i+j] != 0
+        let mx = (x0.simd_ne(zero).bitmask() & 0xF)
+            | ((x1.simd_ne(zero).bitmask() & 0xF) << 4)
+            | ((x2.simd_ne(zero).bitmask() & 0xF) << 8)
+            | ((x3.simd_ne(zero).bitmask() & 0xF) << 12);
+
+        // my = positions where EITHER x or y is nonzero
+        let mut my = mx
+            | (y0.simd_ne(zero).bitmask() & 0xF)
+            | ((y1.simd_ne(zero).bitmask() & 0xF) << 4)
+            | ((y2.simd_ne(zero).bitmask() & 0xF) << 8)
+            | ((y3.simd_ne(zero).bitmask() & 0xF) << 12);
+
+        // Iterate only nonzero positions using bit scanning
+        while my != 0 {
+            let j = my.trailing_zeros() as usize;
+
+            if (mx >> j) & 1 != 0 {
+                let xv = x[i + j];
+                sum_x += xv;
+                retval += fast_slog2(xv);
+            }
+
+            let xy = x[i + j] + y[i + j];
+            sum_xy += xy;
+            retval += fast_slog2(xy);
+
+            my &= my - 1; // Clear lowest set bit
+        }
+
+        i += 16;
+    }
+
+    fast_slog2(sum_x) + fast_slog2(sum_xy) - retval
 }
 
 /// SSE2 combined Shannon entropy matching libwebp's CombinedShannonEntropy_SSE2.
