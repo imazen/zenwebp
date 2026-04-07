@@ -1744,8 +1744,7 @@ impl<'a> super::Vp8Encoder<'a> {
             // partition_limit raises the skip threshold, making it harder for I4 to
             // qualify. At partition_limit=0 this is the base threshold (211).
             // At partition_limit=80, threshold is ~5x higher, skipping most I4 attempts.
-            let limit_boost =
-                211u64 + 211u64 * u64::from(self.partition_limit) * 5 / 100;
+            let limit_boost = 211u64 + 211u64 * u64::from(self.partition_limit) * 5 / 100;
             let skip_i4_threshold = limit_boost * u64::from(segment.lambda_mode);
 
             // Skip I4 for very flat DC blocks (method 2-4)
