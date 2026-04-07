@@ -316,8 +316,13 @@ impl HuffmanTree {
                 let v = bit_reader.peek_full() as u16;
                 let entry = primary_table[(v & table_mask) as usize];
                 if (entry >> 12) <= MAX_TABLE_BITS as u16 {
-                    // Use unchecked consume: fill() guarantees enough bits
-                    bit_reader.consume_unchecked((entry >> 12) as u8);
+                    let bits = (entry >> 12) as u8;
+                    // When the bitstream is exhausted, fill() may not load enough bits.
+                    // Check before the unchecked consume to avoid underflow.
+                    if bit_reader.available_bits() < bits {
+                        return Err(InternalDecodeError::BitStreamError);
+                    }
+                    bit_reader.consume_unchecked(bits);
                     return Ok(entry & 0xfff);
                 }
 

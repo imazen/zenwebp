@@ -1045,6 +1045,12 @@ impl<'a> BitReader<'a> {
         Ok(())
     }
 
+    /// Returns the number of bits currently available in the buffer.
+    #[inline(always)]
+    pub(crate) const fn available_bits(&self) -> u8 {
+        self.nbits
+    }
+
     /// Consume bits without checking if enough are available.
     /// Caller must ensure `self.nbits >= num` (e.g., after calling `fill()`).
     #[inline(always)]
