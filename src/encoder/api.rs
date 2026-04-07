@@ -537,6 +537,9 @@ pub struct EncoderParams {
     pub(crate) use_sharp_yuv: bool,
     /// Alpha channel quality (0-100). 100 = lossless alpha, <100 = quantize alpha levels.
     pub(crate) alpha_quality: u8,
+    /// Partition limit (0-100). Penalizes I4 mode to prevent partition 0 overflow.
+    /// None = automatic retry on overflow.
+    pub(crate) partition_limit: Option<u8>,
 }
 
 impl Default for EncoderParams {
@@ -555,6 +558,7 @@ impl Default for EncoderParams {
             target_psnr: 0.0,
             use_sharp_yuv: false,
             alpha_quality: 100,
+            partition_limit: None,
         }
     }
 }
@@ -682,6 +686,9 @@ pub struct EncoderConfig {
     pub filter_sharpness: Option<u8>,
     /// Number of segments override (1-4). `None` = use preset default.
     pub segments: Option<u8>,
+    /// Partition limit (0-100). Penalizes I4 mode to prevent partition 0 overflow.
+    /// `None` = automatic retry on overflow.
+    pub partition_limit: Option<u8>,
     /// Encode limits for dimensions and memory validation.
     pub limits: crate::Limits,
 }
@@ -703,6 +710,7 @@ impl Default for EncoderConfig {
             filter_strength: None,
             filter_sharpness: None,
             segments: None,
+            partition_limit: None,
             limits: crate::Limits::none(), // No limits by default
         }
     }
@@ -885,6 +893,7 @@ impl EncoderConfig {
             target_psnr: self.target_psnr,
             use_sharp_yuv: self.sharp_yuv,
             alpha_quality: self.alpha_quality,
+            partition_limit: self.partition_limit,
         }
     }
 

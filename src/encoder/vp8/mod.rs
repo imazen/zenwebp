@@ -471,6 +471,8 @@ struct Vp8Encoder<'a> {
     num_segments: u8,
     /// Selected preset (used for Auto detection)
     preset: super::api::Preset,
+    /// Partition limit (0-100): extra I4 penalty to prevent partition 0 overflow
+    partition_limit: u8,
 
     top_complexity: Vec<Complexity>,
     left_complexity: Complexity,
@@ -547,6 +549,7 @@ impl<'a> Vp8Encoder<'a> {
             filter_sharpness: 0,
             num_segments: 4,
             preset: super::api::Preset::Default,
+            partition_limit: 0,
 
             top_complexity: Vec::new(),
             left_complexity: Complexity::default(),
@@ -726,6 +729,7 @@ impl<'a> Vp8Encoder<'a> {
         self.filter_sharpness = params.filter_sharpness.min(7);
         self.num_segments = params.num_segments.clamp(1, 4);
         self.preset = params.preset;
+        self.partition_limit = params.partition_limit.unwrap_or(0).min(100);
         // For ARGB input, convert to RGBA so the standard RGBA code path handles it.
         let argb_converted;
         let (data, color) = if color == PixelLayout::Argb8 {
@@ -1650,10 +1654,77 @@ pub(crate) fn encode_frame_lossy(
             writer, data, width, height, stride, color, params, stop, progress,
         )?)
     } else {
-        // Single encoding at specified quality
-        let mut vp8_encoder = Vp8Encoder::new(writer);
-        Ok(vp8_encoder.encode_image(data, color, width, height, stride, params, stop, progress)?)
+        // Single encoding at specified quality, with automatic partition limit retry
+        encode_with_partition_retry(
+            writer, data, width, height, stride, color, params, stop, progress,
+        )
     }
+}
+
+/// Encode a single frame, automatically retrying with increasing partition_limit
+/// if partition 0 overflows and the user didn't set an explicit limit.
+#[allow(clippy::too_many_arguments)]
+fn encode_with_partition_retry(
+    writer: &mut Vec<u8>,
+    data: &[u8],
+    width: u16,
+    height: u16,
+    stride: usize,
+    color: PixelLayout,
+    params: &super::api::EncoderParams,
+    stop: &dyn enough::Stop,
+    progress: &dyn super::api::EncodeProgress,
+) -> super::api::EncodeResult<super::api::EncodeStats> {
+    // If the user set an explicit partition_limit, use it as-is (no retry).
+    if params.partition_limit.is_some() {
+        let mut vp8_encoder = Vp8Encoder::new(writer);
+        return Ok(
+            vp8_encoder.encode_image(data, color, width, height, stride, params, stop, progress)?
+        );
+    }
+
+    // Automatic mode: try encoding, retry with increasing partition_limit on overflow.
+    // Escalation steps chosen to quickly find a working limit without too many retries.
+    const RETRY_LIMITS: [u8; 4] = [0, 40, 70, 100];
+
+    let mut last_overflow = None;
+    for &limit in &RETRY_LIMITS {
+        stop.check().map_err(|e| at!(EncodeError::from(e)))?;
+
+        let mut trial_buf = Vec::new();
+        let mut trial_params = params.clone();
+        trial_params.partition_limit = Some(limit);
+
+        let mut vp8_encoder = Vp8Encoder::new(&mut trial_buf);
+        match vp8_encoder.encode_image(
+            data,
+            color,
+            width,
+            height,
+            stride,
+            &trial_params,
+            stop,
+            progress,
+        ) {
+            Ok(stats) => {
+                writer.extend_from_slice(&trial_buf);
+                return Ok(stats);
+            }
+            Err(e @ EncodeError::Partition0Overflow { .. }) if limit < 100 => {
+                last_overflow = Some(e);
+                continue;
+            }
+            Err(e) => return Err(at!(e)),
+        }
+    }
+
+    // All retry limits exhausted — return the last overflow error
+    Err(at!(last_overflow.unwrap_or(
+        EncodeError::Partition0Overflow {
+            size: 0,
+            max: (1 << 19) - 1,
+        }
+    )))
 }
 
 /// Encode with quality search to meet target file size.

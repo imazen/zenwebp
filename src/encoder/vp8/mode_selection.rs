@@ -1073,11 +1073,19 @@ impl<'a> super::Vp8Encoder<'a> {
         // Approach: Use a penalty proportional to lambda_mode (which is q²/128)
         // This gives: penalty ≈ SCALE * q² where SCALE is tuned empirically
         //
-        // For parity with our scoring, we use: 2200 * lambda_mode
-        // At q=30: lambda_mode=7, penalty = 15,400 (vs libwebp's 900,000)
-        // This ratio (58x smaller) matches the ratio of our lambdas to libwebp's
+        // For parity with our scoring, we use: 3000 * lambda_mode
+        // At q=30: lambda_mode=7, penalty = 21,000 (vs libwebp's 900,000)
+        // This ratio (43x smaller) matches the ratio of our lambdas to libwebp's
         // (lambda_i4 ≈ 21 vs lambda_d_i4 = 11 is 2x, and we include coeff costs)
-        let i4_penalty = 3000u64 * u64::from(lambda_mode);
+        //
+        // partition_limit (0-100) scales the penalty up to prevent partition 0
+        // overflow on very large images. At limit=50 the penalty is 8.5x base,
+        // at limit=80 it's 13.6x base, strongly favoring I16 mode which uses
+        // far fewer partition 0 bits. This combines with the raised skip threshold
+        // in choose_macroblock_info to effectively suppress I4 at high limits.
+        let base_penalty = 3000u64 * u64::from(lambda_mode);
+        let limit_scale = u64::from(self.partition_limit); // 0-100
+        let i4_penalty = base_penalty + base_penalty * limit_scale * limit_scale / 400;
         let mut running_score = i4_penalty;
 
         #[cfg(feature = "mode_debug")]
@@ -1726,18 +1734,25 @@ impl<'a> super::Vp8Encoder<'a> {
         // - method 0-1: Skip I4 entirely (fastest)
         // - method 2-4: Try I4 with fast filtering
         // - method 5-6: Full I4 search
-        let (luma_mode, luma_bpred) = if self.method <= 1 {
-            // Fastest: I16 only, no I4 evaluation
+        // partition_limit >= 100 forces I16-only to prevent partition 0 overflow.
+        let (luma_mode, luma_bpred) = if self.method <= 1 || self.partition_limit >= 100 {
+            // Fastest / partition overflow prevention: I16 only, no I4 evaluation
             (luma_mode, None)
         } else {
             // For method >= 2, try I4 with early exit optimizations
             let segment = self.get_segment_for_mb(mbx, mby);
-            let skip_i4_threshold = 211 * u64::from(segment.lambda_mode);
+            // partition_limit raises the skip threshold, making it harder for I4 to
+            // qualify. At partition_limit=0 this is the base threshold (211).
+            // At partition_limit=80, threshold is ~5x higher, skipping most I4 attempts.
+            let limit_boost =
+                211u64 + 211u64 * u64::from(self.partition_limit) * 5 / 100;
+            let skip_i4_threshold = limit_boost * u64::from(segment.lambda_mode);
 
             // Skip I4 for very flat DC blocks (method 2-4)
-            // For method 5-6, always try I4 for best quality
-            let should_try_i4 =
-                self.method >= 5 || i16_score > skip_i4_threshold || luma_mode != LumaMode::DC;
+            // For method 5-6, always try I4 for best quality (unless partition_limit overrides)
+            let should_try_i4 = (self.method >= 5 && self.partition_limit < 50)
+                || i16_score > skip_i4_threshold
+                || luma_mode != LumaMode::DC;
 
             if should_try_i4 {
                 match self.pick_best_intra4(mbx, mby, i16_score) {

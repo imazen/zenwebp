@@ -67,6 +67,11 @@ pub struct LossyConfig {
     pub filter_sharpness: Option<u8>,
     /// Number of segments (1-4). None = use preset default.
     pub segments: Option<u8>,
+    /// Partition limit (0-100). Controls how aggressively the encoder avoids
+    /// I4 prediction mode to prevent partition 0 overflow on very large images.
+    /// 0 = no limit (default), 100 = maximum I4 suppression.
+    /// None = automatic (encoder will retry with increasing limits on overflow).
+    pub partition_limit: Option<u8>,
     /// Resource limits for validation.
     pub limits: Limits,
 }
@@ -95,6 +100,7 @@ impl LossyConfig {
             filter_strength: None,
             filter_sharpness: None,
             segments: None,
+            partition_limit: None,
             limits: Limits::none(),
         }
     }
@@ -185,6 +191,24 @@ impl LossyConfig {
     #[must_use]
     pub fn with_segments(mut self, segments: u8) -> Self {
         self.segments = Some(segments.clamp(1, 4));
+        self
+    }
+
+    /// Set partition limit to prevent partition 0 overflow on very large images.
+    ///
+    /// Range 0-100. Higher values more aggressively suppress I4 prediction mode,
+    /// which uses more bits in partition 0. This trades quality for the ability to
+    /// encode very large images without hitting the VP8 512KB partition 0 limit.
+    ///
+    /// - `0`: No limit (default behavior — encoder errors on overflow)
+    /// - `30-70`: Recommended for moderately large images (25-60MP)
+    /// - `100`: Maximum suppression (nearly all I16 mode)
+    ///
+    /// When not set (`None`), the encoder automatically retries with increasing
+    /// limits if partition 0 overflows.
+    #[must_use]
+    pub fn with_partition_limit(mut self, limit: u8) -> Self {
+        self.partition_limit = Some(limit.min(100));
         self
     }
 
@@ -491,6 +515,17 @@ impl EncoderConfig {
         self
     }
 
+    /// Set partition limit (lossy only, 0-100). No effect on lossless.
+    ///
+    /// See [`LossyConfig::with_partition_limit`] for details.
+    #[must_use]
+    pub fn with_partition_limit(mut self, limit: u8) -> Self {
+        if let Self::Lossy(cfg) = &mut self {
+            cfg.partition_limit = Some(limit.min(100));
+        }
+        self
+    }
+
     /// Set near-lossless preprocessing (lossless only, 0-100). No effect on lossy.
     #[must_use]
     pub fn with_near_lossless(mut self, value: u8) -> Self {
@@ -640,6 +675,7 @@ impl core::fmt::Debug for LossyConfig {
             .field("filter_strength", &self.filter_strength)
             .field("filter_sharpness", &self.filter_sharpness)
             .field("segments", &self.segments)
+            .field("partition_limit", &self.partition_limit)
             .field("limits", &self.limits)
             .finish()
     }
@@ -699,6 +735,7 @@ impl LossyConfig {
             target_psnr: self.target_psnr,
             use_sharp_yuv: self.sharp_yuv,
             alpha_quality: self.alpha_quality,
+            partition_limit: self.partition_limit,
         }
     }
 }
@@ -719,6 +756,7 @@ impl LosslessConfig {
             target_psnr: 0.0,
             use_sharp_yuv: false,
             alpha_quality: self.alpha_quality,
+            partition_limit: None, // Not applicable to lossless
         }
     }
 }

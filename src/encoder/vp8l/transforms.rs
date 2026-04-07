@@ -688,11 +688,7 @@ fn combined_shannon_entropy_impl_v1(_token: X64V1Token, x: &[u32; 256], y: &[u32
 /// and better than the naive per-element loop for sparse histograms.
 #[magetypes(neon, wasm128, scalar)]
 #[inline(always)]
-fn combined_shannon_entropy_impl(
-    token: Token,
-    x: &[u32; 256],
-    y: &[u32; 256],
-) -> u64 {
+fn combined_shannon_entropy_impl(token: Token, x: &[u32; 256], y: &[u32; 256]) -> u64 {
     use magetypes::simd::generic::u32x4 as GenericU32x4;
     #[allow(non_camel_case_types)]
     type u32x4 = GenericU32x4<Token>;
