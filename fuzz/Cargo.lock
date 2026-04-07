@@ -163,9 +163,9 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "linear-srgb"
-version = "0.6.6"
+version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc735204d942021e5f869a7fbe13593ccd480121131b2938efe410ad80aee984"
+checksum = "89fff1763e96ac82dbe8462fb1a9eff462477a87caaf8f14d808900486d72829"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -320,9 +320,9 @@ dependencies = [
 
 [[package]]
 name = "zenpixels"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4705187b555bc476109a2113ca007282fdf327bcc9edb4c692ae1e4d489bc9b2"
+checksum = "e6671ce2ea4d3110e2aef9514cc48267291f50fab7b7eead43b36e7c887fb740"
 dependencies = [
  "bytemuck",
  "whereat",
@@ -330,7 +330,7 @@ dependencies = [
 
 [[package]]
 name = "zenwebp"
-version = "0.4.0"
+version = "0.4.2"
 dependencies = [
  "archmage",
  "bytemuck",
