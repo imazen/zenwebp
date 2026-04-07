@@ -1,0 +1,13 @@
+# WebP container and codec markers
+"RIFF"
+"WEBP"
+"VP8 "
+"VP8L"
+"VP8X"
+"ANIM"
+"ANMF"
+"ALPH"
+"ICCP"
+"EXIF"
+"XMP "
+"\x9D\x01\x2A"
