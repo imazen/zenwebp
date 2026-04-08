@@ -50,3 +50,4 @@ Thumbs.db
 .vscode/
 *.iml
 .claude/
+!fuzz/Cargo.lock
