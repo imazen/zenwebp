@@ -657,6 +657,7 @@ pub struct EncodeStats {
 /// ```
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct EncoderConfig {
     /// Encoding quality (0.0 = smallest, 100.0 = best). Default: 75.0.
     pub quality: f32,
