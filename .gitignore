@@ -51,3 +51,14 @@ Thumbs.db
 *.iml
 .claude/
 !fuzz/Cargo.lock
+
+# Tooling noise
+.superwork/
+copter-report/
+.zenbench/
+.external-cache/
+Cargo.toml.original.txt
+*.rs.local
+*.profraw
+*.profdata
+fuzz-*.log
