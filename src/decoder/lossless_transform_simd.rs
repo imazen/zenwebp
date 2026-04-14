@@ -1209,19 +1209,6 @@ fn add_green_to_blue_and_red_neon(_token: NeonToken, image_data: &mut [u8]) {
     add_green_portable(_token, image_data);
 }
 
-/// NEON color transform inverse — #[rite] wrapper for target_feature + inline.
-#[cfg(target_arch = "aarch64")]
-#[rite]
-fn transform_color_inverse_neon(
-    _token: NeonToken,
-    image_data: &mut [u8],
-    width: usize,
-    size_bits: u8,
-    transform_data: &[u8],
-) {
-    transform_color_inverse_generic(_token, image_data, width, size_bits, transform_data);
-}
-
 #[cfg(target_arch = "aarch64")]
 #[arcane]
 pub(crate) fn transform_color_inverse_neon_entry(
@@ -1231,7 +1218,7 @@ pub(crate) fn transform_color_inverse_neon_entry(
     size_bits: u8,
     transform_data: &[u8],
 ) {
-    transform_color_inverse_neon(_token, image_data, width, size_bits, transform_data);
+    transform_color_inverse_generic(_token, image_data, width, size_bits, transform_data);
 }
 
 // =============================================================================
@@ -1338,19 +1325,6 @@ fn add_green_to_blue_and_red_wasm128(_token: Wasm128Token, image_data: &mut [u8]
     add_green_portable(_token, image_data);
 }
 
-/// WASM128 color transform inverse — #[rite] wrapper for target_feature + inline.
-#[cfg(target_arch = "wasm32")]
-#[rite]
-fn transform_color_inverse_wasm128(
-    _token: Wasm128Token,
-    image_data: &mut [u8],
-    width: usize,
-    size_bits: u8,
-    transform_data: &[u8],
-) {
-    transform_color_inverse_generic(_token, image_data, width, size_bits, transform_data);
-}
-
 #[cfg(target_arch = "wasm32")]
 #[arcane]
 pub(crate) fn transform_color_inverse_wasm128_entry(
@@ -1360,7 +1334,7 @@ pub(crate) fn transform_color_inverse_wasm128_entry(
     size_bits: u8,
     transform_data: &[u8],
 ) {
-    transform_color_inverse_wasm128(_token, image_data, width, size_bits, transform_data);
+    transform_color_inverse_generic(_token, image_data, width, size_bits, transform_data);
 }
 
 // =============================================================================
