@@ -3117,4 +3117,267 @@ mod tests {
             assert_eq!(total_rows, 32);
         }
     }
+
+    // ── push_decoder tests ─────────────────────────────────────────────
+
+    /// A minimal sink that collects every strip into a single flat buffer,
+    /// then lets tests compare it byte-for-byte against a reference.
+    struct CollectSink {
+        buf: alloc::vec::Vec<u8>,
+        width: u32,
+        height: u32,
+        descriptor: Option<PixelDescriptor>,
+        began: bool,
+        finished: bool,
+        strips_received: u32,
+    }
+
+    impl CollectSink {
+        fn new() -> Self {
+            Self {
+                buf: alloc::vec::Vec::new(),
+                width: 0,
+                height: 0,
+                descriptor: None,
+                began: false,
+                finished: false,
+                strips_received: 0,
+            }
+        }
+    }
+
+    impl zencodec::decode::DecodeRowSink for CollectSink {
+        fn begin(
+            &mut self,
+            width: u32,
+            height: u32,
+            descriptor: PixelDescriptor,
+        ) -> Result<(), SinkError> {
+            self.width = width;
+            self.height = height;
+            self.descriptor = Some(descriptor);
+            let bpp = descriptor.bytes_per_pixel();
+            let total = (width as usize) * (height as usize) * bpp;
+            self.buf.clear();
+            self.buf.resize(total, 0);
+            self.began = true;
+            Ok(())
+        }
+
+        fn provide_next_buffer(
+            &mut self,
+            y: u32,
+            height: u32,
+            width: u32,
+            descriptor: PixelDescriptor,
+        ) -> Result<zenpixels::PixelSliceMut<'_>, SinkError> {
+            assert!(self.began, "provide_next_buffer before begin");
+            assert!(!self.finished, "provide_next_buffer after finish");
+            assert_eq!(width, self.width);
+            assert_eq!(Some(descriptor), self.descriptor);
+            let bpp = descriptor.bytes_per_pixel();
+            let row_bytes = (width as usize) * bpp;
+            let start = (y as usize) * row_bytes;
+            let end = start + (height as usize) * row_bytes;
+            assert!(end <= self.buf.len(), "strip exceeds buffer");
+            self.strips_received += 1;
+            let slice = zenpixels::PixelSliceMut::new(
+                &mut self.buf[start..end],
+                width,
+                height,
+                row_bytes,
+                descriptor,
+            )
+            .expect("valid slice");
+            Ok(slice)
+        }
+
+        fn finish(&mut self) -> Result<(), SinkError> {
+            self.finished = true;
+            Ok(())
+        }
+    }
+
+    fn push_decode(
+        data: &[u8],
+        preferred: &[PixelDescriptor],
+    ) -> (CollectSink, OutputInfo) {
+        use zencodec::decode::DecodeJob;
+        let mut sink = CollectSink::new();
+        let dec = WebpDecoderConfig::new();
+        let info = dec
+            .job()
+            .push_decoder(Cow::Borrowed(data), &mut sink, preferred)
+            .expect("push_decoder");
+        (sink, info)
+    }
+
+    fn full_decode(data: &[u8], preferred: &[PixelDescriptor]) -> (alloc::vec::Vec<u8>, u32, u32, PixelDescriptor) {
+        use zencodec::decode::DecodeJob;
+        let dec = WebpDecoderConfig::new();
+        let out = dec
+            .job()
+            .decoder(Cow::Borrowed(data), preferred)
+            .unwrap()
+            .decode()
+            .unwrap();
+        let buf = out.into_buffer();
+        let width = buf.width();
+        let height = buf.height();
+        let desc = buf.descriptor();
+        (buf.into_vec(), width, height, desc)
+    }
+
+    /// Exact byte-for-byte parity between `push_decoder` and the full-decode
+    /// path on a lossy-no-alpha VP8 stream (hits the native streaming path).
+    #[test]
+    fn push_decoder_parity_lossy_rgb() {
+        let rgb = make_rgb8_pixels(128, 96);
+        let enc = WebpEncoderConfig::lossy().with_quality(85.0);
+        let output = enc.job().encoder().unwrap().encode(rgb.as_slice()).unwrap();
+        let data = output.data();
+
+        let (sink, info) = push_decode(data, &[]);
+        let (reference, rw, rh, rdesc) = full_decode(data, &[]);
+
+        assert_eq!(sink.width, rw);
+        assert_eq!(sink.height, rh);
+        assert_eq!(sink.descriptor, Some(rdesc));
+        assert_eq!(info.native_format, rdesc);
+        assert!(sink.began && sink.finished);
+        assert!(sink.strips_received >= 1);
+        assert_eq!(sink.buf, reference, "streaming bytes must match oneshot");
+    }
+
+    /// Parity on a lossy VP8 + VP8X container with ALPH chunk. This uses
+    /// the same streaming path but `alpha_plane` is applied per-strip.
+    #[test]
+    fn push_decoder_parity_lossy_with_alpha() {
+        let rgba = make_rgba8_pixels(48, 48);
+        let enc = WebpEncoderConfig::lossy().with_quality(90.0);
+        let output = enc.job().encoder().unwrap().encode(rgba.as_slice()).unwrap();
+        let data = output.data();
+
+        // Only run the parity assertion if the encoder actually produced alpha.
+        let native_info = crate::ImageInfo::from_webp(data).unwrap();
+        if !native_info.has_alpha {
+            return;
+        }
+
+        let (sink, _info) = push_decode(data, &[PixelDescriptor::RGBA8_SRGB]);
+        let (reference, _, _, rdesc) = full_decode(data, &[PixelDescriptor::RGBA8_SRGB]);
+        assert_eq!(rdesc, PixelDescriptor::RGBA8_SRGB);
+        assert_eq!(sink.descriptor, Some(PixelDescriptor::RGBA8_SRGB));
+        assert_eq!(sink.buf, reference, "alpha strip must match full decode");
+    }
+
+    /// Lossless VP8L is **not** eligible for the native streaming path —
+    /// push_decoder must fall back to the helper and still produce a
+    /// correct image that matches the full-decode output byte-for-byte.
+    #[test]
+    fn push_decoder_fallback_lossless() {
+        let rgba = make_rgba8_pixels(32, 32);
+        let enc = WebpEncoderConfig::lossless();
+        let output = enc.job().encoder().unwrap().encode(rgba.as_slice()).unwrap();
+        let data = output.data();
+
+        // Sanity: the container must actually be VP8L or VP8X+VP8L for the
+        // fallback path to be exercised. If the encoder produced plain VP8
+        // (unlikely for lossless), this test degenerates into a lossy parity
+        // check, which is still valid.
+        let (sink, _info) = push_decode(data, &[]);
+        let (reference, _, _, _) = full_decode(data, &[]);
+        assert_eq!(sink.buf, reference, "lossless fallback must be exact");
+    }
+
+    /// `Cow::Owned` must work as well as `Cow::Borrowed` (the function
+    /// body owns `data` throughout, so both lifetimes are equivalent).
+    #[test]
+    fn push_decoder_cow_owned_works() {
+        use zencodec::decode::DecodeJob;
+        let rgb = make_rgb8_pixels(32, 32);
+        let enc = WebpEncoderConfig::lossy().with_quality(80.0);
+        let output = enc.job().encoder().unwrap().encode(rgb.as_slice()).unwrap();
+
+        let borrowed = {
+            let mut sink = CollectSink::new();
+            WebpDecoderConfig::new()
+                .job()
+                .push_decoder(Cow::Borrowed(output.data()), &mut sink, &[])
+                .unwrap();
+            sink.buf
+        };
+        let owned_bytes = output.data().to_vec();
+        let owned = {
+            let mut sink = CollectSink::new();
+            WebpDecoderConfig::new()
+                .job()
+                .push_decoder(Cow::Owned(owned_bytes), &mut sink, &[])
+                .unwrap();
+            sink.buf
+        };
+
+        assert_eq!(owned, borrowed, "Cow::Owned must match Cow::Borrowed");
+    }
+
+    /// BGRA negotiation: when the sink asks for BGRA, the streaming path
+    /// must swizzle and deliver BGRA, and the result must still match the
+    /// full-decode BGRA output.
+    #[test]
+    fn push_decoder_bgra_negotiation() {
+        let rgba = make_rgba8_pixels(16, 16);
+        let enc = WebpEncoderConfig::lossy().with_quality(90.0);
+        let output = enc.job().encoder().unwrap().encode(rgba.as_slice()).unwrap();
+        let data = output.data();
+
+        let native_info = crate::ImageInfo::from_webp(data).unwrap();
+        if !native_info.has_alpha {
+            return;
+        }
+
+        let (sink, _info) = push_decode(data, &[PixelDescriptor::BGRA8_SRGB]);
+        assert_eq!(sink.descriptor, Some(PixelDescriptor::BGRA8_SRGB));
+        let (reference, _, _, rdesc) = full_decode(data, &[PixelDescriptor::BGRA8_SRGB]);
+        assert_eq!(rdesc, PixelDescriptor::BGRA8_SRGB);
+        assert_eq!(sink.buf, reference);
+    }
+
+    /// Real corpus image: gallery1/1.webp is a plain lossy VP8 at 550x368.
+    /// This exercises a larger input than the synthetic gradients and
+    /// verifies parity on a real-world encoder's output.
+    #[test]
+    fn push_decoder_parity_corpus_gallery1() {
+        let data = include_bytes!("../tests/images/gallery1/1.webp");
+        let (sink, info) = push_decode(data, &[]);
+        let (reference, rw, rh, _) = full_decode(data, &[]);
+        assert_eq!(sink.width, rw);
+        assert_eq!(sink.height, rh);
+        assert_eq!(info.native_format, sink.descriptor.unwrap());
+        assert_eq!(sink.buf, reference, "gallery1/1.webp parity");
+    }
+
+    /// Real corpus image with alpha (VP8X + VP8 + ALPH).
+    #[test]
+    fn push_decoder_parity_corpus_alpha() {
+        let data = include_bytes!("../tests/images/gallery2/1_webp_a.webp");
+        let native = crate::ImageInfo::from_webp(data).unwrap();
+        if !native.has_alpha {
+            // Corpus layout guarantees _a files have alpha; assert for safety.
+            panic!("expected 1_webp_a.webp to have alpha");
+        }
+        let (sink, _info) = push_decode(data, &[PixelDescriptor::RGBA8_SRGB]);
+        let (reference, _, _, rdesc) = full_decode(data, &[PixelDescriptor::RGBA8_SRGB]);
+        assert_eq!(rdesc, PixelDescriptor::RGBA8_SRGB);
+        assert_eq!(sink.descriptor, Some(PixelDescriptor::RGBA8_SRGB));
+        assert_eq!(sink.buf, reference, "gallery2/1_webp_a.webp parity");
+    }
+
+    /// Real corpus lossless image — must go through the fallback path.
+    #[test]
+    fn push_decoder_parity_corpus_lossless() {
+        let data = include_bytes!("../tests/images/gallery2/1_webp_ll.webp");
+        let (sink, _info) = push_decode(data, &[]);
+        let (reference, _, _, _) = full_decode(data, &[]);
+        assert_eq!(sink.buf, reference, "lossless fallback parity");
+    }
 }
