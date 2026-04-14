@@ -1788,47 +1788,10 @@ impl zencodec::decode::Decode for WebpDecoder<'_> {
 /// * Anything else (VP8L as the first chunk, truncated, unknown) is not
 ///   eligible.
 fn is_lossy_streaming_candidate(data: &[u8]) -> bool {
-    if data.len() < 30 {
+    let Ok(info) = crate::detect::probe(data) else {
         return false;
-    }
-    if &data[..4] != b"RIFF" || &data[8..12] != b"WEBP" {
-        return false;
-    }
-    match &data[12..16] {
-        b"VP8 " => true,
-        b"VP8X" => {
-            // VP8X flags byte at offset 20 (after 4-byte chunk-size at 16..20).
-            // Bit 0x02 = animation, 0x20 = ICC, 0x10 = EXIF, etc.
-            let flags = data[20];
-            let is_animation = (flags & 0x02) != 0;
-            if is_animation {
-                return false;
-            }
-            // Walk chunks to find the image payload. Streaming is only
-            // eligible when the frame is a VP8 (lossy) chunk — not VP8L.
-            let mut off = 30usize; // VP8X chunk header (8) + VP8X payload (10) + RIFF header (12) = 30
-            while off + 8 <= data.len() {
-                let fourcc = &data[off..off + 4];
-                let size = u32::from_le_bytes([
-                    data[off + 4],
-                    data[off + 5],
-                    data[off + 6],
-                    data[off + 7],
-                ]) as usize;
-                match fourcc {
-                    b"VP8 " => return true,
-                    b"VP8L" => return false,
-                    _ => {
-                        // Advance past this chunk (size + pad to even).
-                        let advance = 8 + size + (size & 1);
-                        off = off.saturating_add(advance);
-                    }
-                }
-            }
-            false
-        }
-        _ => false,
-    }
+    };
+    !info.has_animation && matches!(info.bitstream, crate::detect::BitstreamType::Lossy { .. })
 }
 
 /// Native row-streaming `push_decoder` for lossy VP8.
