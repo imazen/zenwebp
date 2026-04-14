@@ -93,9 +93,7 @@ fn convert_yuv420_impl<const BPP: usize>(
         let config = zenyuv::SharpYuvConfig {
             ..Default::default()
         };
-        ctx.encode_sharp_420_u8(
-            rgb, &mut y_tight, &mut u_tight, &mut v_tight, w, h, &config,
-        );
+        ctx.encode_sharp_420_u8(rgb, &mut y_tight, &mut u_tight, &mut v_tight, w, h, &config);
     } else {
         let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Limited, zenyuv::Matrix::Bt601);
         ctx.encode_420_u8(rgb, &mut y_tight, &mut u_tight, &mut v_tight, w, h);

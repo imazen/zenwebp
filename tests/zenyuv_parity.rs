@@ -21,11 +21,14 @@ fn zenyuv_vs_zenwebp_scalar_limited_bt601() {
         for g in (0..=255u8).step_by(5) {
             for b in (0..=255u8).step_by(5) {
                 // zenwebp scalar (16-bit fixed-point, YUV_FIX=16)
-                let zy = ((16839 * r as i32 + 33059 * g as i32 + 6420 * b as i32
+                let zy = ((16839 * r as i32
+                    + 33059 * g as i32
+                    + 6420 * b as i32
                     + (16 << YUV_FIX)
                     + YUV_HALF)
                     >> YUV_FIX) as u8;
-                let zu = ((-9719 * r as i32 - 19081 * g as i32 + 28800 * b as i32
+                let zu = ((-9719 * r as i32 - 19081 * g as i32
+                    + 28800 * b as i32
                     + (128 << YUV_FIX)
                     + YUV_HALF)
                     >> YUV_FIX) as u8;
@@ -39,7 +42,8 @@ fn zenyuv_vs_zenwebp_scalar_limited_bt601() {
                 let mut y = [0u8; 1];
                 let mut cb = [0u8; 1];
                 let mut cr = [0u8; 1];
-                let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Limited, zenyuv::Matrix::Bt601);
+                let mut ctx =
+                    zenyuv::YuvContext::new(zenyuv::Range::Limited, zenyuv::Matrix::Bt601);
                 ctx.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, 1, 1);
 
                 let dy = zy.abs_diff(y[0]);

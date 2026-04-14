@@ -32,7 +32,7 @@ bytemuck = { version = "1", default-features = false, features = ["extern_crate_
 garb = { version = "0.2.5", default-features = false, features = ["experimental"] }
 linear-srgb = { version = "0.6.7"}
 yuv = { version = "0.8", optional = true }
-zenyuv = { path = "../zenjpeg-yuv-internal/zenyuv" }
+zenyuv = "0.1.0"
 png = { version = "0.18", optional = true }
 webp = { version = "0.3.0", optional = true }
 archmage = { version = "0.9.15", features = ["macros"] }
