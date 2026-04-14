@@ -182,7 +182,6 @@ pub(super) fn sse_16x16_luma(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn sse_16x16_luma_dispatch_v3(
     _token: archmage::X64V3Token,
@@ -259,7 +258,6 @@ pub(super) fn sse_8x8_chroma(
     )
 }
 
-#[cfg(target_arch = "x86_64")]
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn sse_8x8_chroma_dispatch_v3(

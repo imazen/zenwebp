@@ -116,8 +116,7 @@ pub fn tdisto_4x4(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 }
 
 #[cfg(target_arch = "x86_64")]
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
+#[arcane]
 fn tdisto_4x4_dispatch_v3(
     _token: X64V3Token,
     a: &[u8],
@@ -125,7 +124,7 @@ fn tdisto_4x4_dispatch_v3(
     stride: usize,
     w: &[u16; 16],
 ) -> i32 {
-    crate::common::simd_sse::tdisto_4x4_fused(a, b, stride, w)
+    crate::common::simd_sse::tdisto_4x4_fused_sse2(_token, a, b, stride, w)
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -183,7 +182,6 @@ pub fn tdisto_16x16(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     )
 }
 
-#[cfg(target_arch = "x86_64")]
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn tdisto_16x16_dispatch_v3(
@@ -269,7 +267,6 @@ pub fn tdisto_8x8(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     )
 }
 
-#[cfg(target_arch = "x86_64")]
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn tdisto_8x8_dispatch_v3(

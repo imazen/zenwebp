@@ -32,10 +32,9 @@ fn sse4x4_dispatch(src: &[u8; 16], pred: &[u8; 16]) -> u32 {
 }
 
 #[cfg(target_arch = "x86_64")]
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
+#[arcane]
 fn sse4x4_impl_v3(_token: X64V3Token, src: &[u8; 16], pred: &[u8; 16]) -> u32 {
-    crate::common::simd_sse::sse4x4(src, pred)
+    crate::common::simd_sse::sse4x4_sse2(_token, src, pred)
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -70,15 +69,14 @@ fn sse4x4_with_residual_dispatch(src: &[u8; 16], pred: &[u8; 16], dequantized: &
 }
 
 #[cfg(target_arch = "x86_64")]
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
+#[arcane]
 fn sse4x4_with_residual_impl_v3(
     _token: X64V3Token,
     src: &[u8; 16],
     pred: &[u8; 16],
     dequantized: &[i32; 16],
 ) -> u32 {
-    crate::common::simd_sse::sse4x4_with_residual(src, pred, dequantized)
+    crate::common::simd_sse::sse4x4_with_residual_sse2(_token, src, pred, dequantized)
 }
 
 #[cfg(target_arch = "aarch64")]
