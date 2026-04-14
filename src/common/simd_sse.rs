@@ -26,7 +26,7 @@ pub fn sse4x4_scalar(a: &[u8; 16], b: &[u8; 16]) -> u32 {
 
 /// SSE2 implementation of 4x4 block SSE
 #[cfg(target_arch = "x86_64")]
-#[arcane]
+#[rite]
 #[allow(dead_code)]
 pub(crate) fn sse4x4_sse2(_token: X64V3Token, a: &[u8; 16], b: &[u8; 16]) -> u32 {
     let zero = _mm_setzero_si128();
@@ -76,7 +76,7 @@ pub fn sse4x4_with_residual_scalar(src: &[u8; 16], pred: &[u8; 16], residual: &[
 
 /// SSE2 implementation of SSE with residual
 #[cfg(target_arch = "x86_64")]
-#[arcane]
+#[rite]
 #[allow(dead_code)]
 pub(crate) fn sse4x4_with_residual_sse2(
     _token: X64V3Token,
@@ -163,7 +163,7 @@ pub fn sse_16x16_luma_scalar(
 
 /// SSE2 implementation of 16x16 luma SSE
 #[cfg(target_arch = "x86_64")]
-#[arcane]
+#[rite]
 #[allow(dead_code)]
 pub(crate) fn sse_16x16_luma_sse2(
     _token: X64V3Token,
@@ -238,7 +238,7 @@ pub fn sse_8x8_chroma_scalar(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[arcane]
+#[rite]
 #[allow(dead_code)]
 pub(crate) fn sse_8x8_chroma_sse2(
     _token: X64V3Token,
@@ -328,7 +328,7 @@ pub fn t_transform_scalar(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
 }
 
 #[cfg(target_arch = "x86_64")]
-#[arcane]
+#[rite]
 #[allow(dead_code)]
 fn t_transform_sse2(_token: X64V3Token, input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     let zero = _mm_setzero_si128();
@@ -438,7 +438,7 @@ fn t_transform_sse2(_token: X64V3Token, input: &[u8], stride: usize, w: &[u16; 1
 /// SSE2 fused TDisto - processes both blocks in parallel like libwebp's TTransform_SSE2
 /// Based on libwebp's enc_sse2.c TTransform_SSE2 and Disto4x4_SSE2
 #[cfg(target_arch = "x86_64")]
-#[arcane]
+#[rite]
 pub(crate) fn tdisto_4x4_fused_sse2(
     _token: X64V3Token,
     a: &[u8],
@@ -564,6 +564,58 @@ mod tests {
     use super::*;
     use alloc::vec;
 
+    // #[arcane] test wrappers — safe to call from non-target_feature context.
+    // The actual implementations are #[rite] for inlining into #[arcane] callers.
+    #[cfg(target_arch = "x86_64")]
+    #[arcane]
+    fn call_sse4x4(t: X64V3Token, a: &[u8; 16], b: &[u8; 16]) -> u32 {
+        sse4x4_sse2(t, a, b)
+    }
+    #[cfg(target_arch = "x86_64")]
+    #[arcane]
+    fn call_sse4x4_with_residual(
+        t: X64V3Token,
+        src: &[u8; 16],
+        pred: &[u8; 16],
+        res: &[i32; 16],
+    ) -> u32 {
+        sse4x4_with_residual_sse2(t, src, pred, res)
+    }
+    #[cfg(target_arch = "x86_64")]
+    #[arcane]
+    fn call_sse_16x16_luma(
+        t: X64V3Token,
+        src: &[u8],
+        w: usize,
+        mx: usize,
+        my: usize,
+        p: &[u8; LUMA_BLOCK_SIZE],
+    ) -> u32 {
+        sse_16x16_luma_sse2(t, src, w, mx, my, p)
+    }
+    #[cfg(target_arch = "x86_64")]
+    #[arcane]
+    fn call_sse_8x8_chroma(
+        t: X64V3Token,
+        src: &[u8],
+        w: usize,
+        mx: usize,
+        my: usize,
+        p: &[u8; CHROMA_BLOCK_SIZE],
+    ) -> u32 {
+        sse_8x8_chroma_sse2(t, src, w, mx, my, p)
+    }
+    #[cfg(target_arch = "x86_64")]
+    #[arcane]
+    fn call_t_transform(t: X64V3Token, input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
+        t_transform_sse2(t, input, stride, w)
+    }
+    #[cfg(target_arch = "x86_64")]
+    #[arcane]
+    fn call_tdisto_fused(t: X64V3Token, a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
+        tdisto_4x4_fused_sse2(t, a, b, stride, w)
+    }
+
     #[test]
     fn test_sse4x4_scalar() {
         let a = [10u8; 16];
@@ -592,7 +644,7 @@ mod tests {
         ];
 
         let scalar = sse4x4_scalar(&a, &b);
-        let simd = sse4x4_sse2(token, &a, &b);
+        let simd = call_sse4x4(token, &a, &b);
         assert_eq!(scalar, simd);
     }
 
@@ -619,7 +671,7 @@ mod tests {
         let residual: [i32; 16] = [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 2, 1];
 
         let scalar = sse4x4_with_residual_scalar(&src, &pred, &residual);
-        let simd = sse4x4_with_residual_sse2(token, &src, &pred, &residual);
+        let simd = call_sse4x4_with_residual(token, &src, &pred, &residual);
         assert_eq!(scalar, simd);
     }
 
@@ -670,7 +722,7 @@ mod tests {
         }
 
         let scalar = sse_16x16_luma_scalar(&src_y, src_width, 0, 0, &pred);
-        let simd = sse_16x16_luma_sse2(token, &src_y, src_width, 0, 0, &pred);
+        let simd = call_sse_16x16_luma(token, &src_y, src_width, 0, 0, &pred);
         assert_eq!(scalar, simd);
     }
 
@@ -718,7 +770,7 @@ mod tests {
         let Some(token) = X64V3Token::summon() else {
             return;
         };
-        let simd = sse_8x8_chroma_sse2(token, &src_uv, src_width, 0, 0, &pred);
+        let simd = call_sse_8x8_chroma(token, &src_uv, src_width, 0, 0, &pred);
         assert_eq!(scalar, simd);
     }
 
@@ -777,7 +829,7 @@ mod tests {
         let weights: [u16; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 
         let scalar = t_transform_scalar(&input, 16, &weights);
-        let simd = t_transform_sse2(token, &input, 16, &weights);
+        let simd = call_t_transform(token, &input, 16, &weights);
         assert_eq!(scalar, simd);
     }
 
@@ -798,7 +850,7 @@ mod tests {
             let weights: [u16; 16] = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 5, 4, 3, 2, 1, 1];
 
             let scalar = t_transform_scalar(&input, stride, &weights);
-            let simd = t_transform_sse2(token, &input, stride, &weights);
+            let simd = call_t_transform(token, &input, stride, &weights);
             assert_eq!(scalar, simd, "Mismatch at stride {stride}");
         }
     }
@@ -831,12 +883,12 @@ mod tests {
             let sum_b = t_transform_scalar(&b, stride, &weights);
             let scalar_result = (sum_b - sum_a).abs() >> 5;
 
-            let fused_result = tdisto_4x4_fused_sse2(token, &a, &b, stride, &weights);
+            let fused_result = call_tdisto_fused(token, &a, &b, stride, &weights);
             assert_eq!(scalar_result, fused_result, "Mismatch at stride {stride}");
         }
 
         let same: [u8; 16] = [128; 16];
-        let result = tdisto_4x4_fused_sse2(token, &same, &same, 4, &weights);
+        let result = call_tdisto_fused(token, &same, &same, 4, &weights);
         assert_eq!(result, 0, "Identical blocks should have 0 distortion");
     }
 }
