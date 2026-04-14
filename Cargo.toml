@@ -43,7 +43,7 @@ imgref = { version = "1.12", optional = true, default-features = false }
 archmage = { version = "0.9.15", features = ["std", "macros"] }
 paste = "1.0.14"
 png = "0.18"
-rand = "0.10.0"
+rand = "0.10.1"
 rgb = "0.8"
 
 # Native-only dev-deps (C bindings, threading, or native-only features)
