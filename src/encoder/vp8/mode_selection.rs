@@ -47,7 +47,7 @@ fn sse4x4_impl_neon(token: NeonToken, src: &[u8; 16], pred: &[u8; 16]) -> u32 {
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 fn sse4x4_impl_wasm128(token: Wasm128Token, src: &[u8; 16], pred: &[u8; 16]) -> u32 {
-    crate::common::simd_wasm::sse4x4_wasm_entry(token, src, pred)
+    crate::common::simd_wasm::sse4x4_wasm(token, src, pred)
 }
 
 #[inline(always)]
@@ -100,7 +100,7 @@ fn sse4x4_with_residual_impl_wasm128(
     pred: &[u8; 16],
     dequantized: &[i32; 16],
 ) -> u32 {
-    crate::common::simd_wasm::sse4x4_with_residual_wasm_entry(token, src, pred, dequantized)
+    crate::common::simd_wasm::sse4x4_with_residual_wasm(token, src, pred, dequantized)
 }
 
 #[inline(always)]

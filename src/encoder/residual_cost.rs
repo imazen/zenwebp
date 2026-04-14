@@ -134,7 +134,7 @@ fn get_residual_cost_dispatch_wasm128(
     costs: &LevelCosts,
     probs: &TokenProbTables,
 ) -> u32 {
-    get_residual_cost_wasm_entry(token, ctx0, res, costs, probs)
+    get_residual_cost_wasm(token, ctx0, res, costs, probs)
 }
 
 #[inline(always)]
@@ -592,19 +592,6 @@ fn find_last_nonzero_neon(_token: NeonToken, coeffs: &[i32; 16]) -> i32 {
 // =============================================================================
 // WASM SIMD128 residual cost implementation
 // =============================================================================
-
-/// Entry shim for get_residual_cost_wasm
-#[cfg(target_arch = "wasm32")]
-#[arcane]
-fn get_residual_cost_wasm_entry(
-    _token: Wasm128Token,
-    ctx0: usize,
-    res: &Residual,
-    costs: &LevelCosts,
-    probs: &TokenProbTables,
-) -> u32 {
-    get_residual_cost_wasm(_token, ctx0, res, costs, probs)
-}
 
 /// WASM SIMD128 implementation of residual cost calculation.
 /// Precomputes abs values, contexts, and clamped levels with SIMD.

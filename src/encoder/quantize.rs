@@ -249,7 +249,7 @@ fn dequantize_block_dispatch_neon(token: NeonToken, q: &[u16; 16], coeffs: &mut 
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 fn dequantize_block_dispatch_wasm128(token: Wasm128Token, q: &[u16; 16], coeffs: &mut [i32; 16]) {
-    crate::common::simd_wasm::dequantize_block_wasm_entry(token, q, coeffs);
+    crate::common::simd_wasm::dequantize_block_wasm(token, q, coeffs);
 }
 
 /// Scalar tier for dequantize_block dispatch.
@@ -370,7 +370,7 @@ fn quantize_block_dispatch_wasm128(
     matrix: &VP8Matrix,
     use_sharpen: bool,
 ) -> bool {
-    crate::common::simd_wasm::quantize_block_wasm_entry(token, coeffs, matrix, use_sharpen)
+    crate::common::simd_wasm::quantize_block_wasm(token, coeffs, matrix, use_sharpen)
 }
 
 #[inline(always)]
@@ -670,7 +670,7 @@ fn quantize_dequantize_block_dispatch_wasm128(
     quantized: &mut [i32; 16],
     dequantized: &mut [i32; 16],
 ) -> bool {
-    crate::common::simd_wasm::quantize_dequantize_block_wasm_entry(
+    crate::common::simd_wasm::quantize_dequantize_block_wasm(
         token,
         coeffs,
         matrix,

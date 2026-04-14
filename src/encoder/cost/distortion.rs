@@ -149,7 +149,7 @@ fn tdisto_4x4_dispatch_wasm128(
     stride: usize,
     w: &[u16; 16],
 ) -> i32 {
-    crate::common::simd_wasm::tdisto_4x4_fused_wasm_entry(token, a, b, stride, w)
+    crate::common::simd_wasm::tdisto_4x4_fused_wasm(token, a, b, stride, w)
 }
 
 #[inline(always)]
@@ -461,7 +461,7 @@ fn is_flat_source_16_impl_neon(token: NeonToken, src: &[u8], stride: usize) -> b
 
 #[cfg(target_arch = "wasm32")]
 fn is_flat_source_16_impl_wasm128(token: Wasm128Token, src: &[u8], stride: usize) -> bool {
-    crate::common::simd_wasm::is_flat_source_16_wasm_entry(token, src, stride)
+    crate::common::simd_wasm::is_flat_source_16_wasm(token, src, stride)
 }
 
 fn is_flat_source_16_impl_scalar(_token: ScalarToken, src: &[u8], stride: usize) -> bool {
@@ -553,7 +553,7 @@ fn is_flat_coeffs_dispatch_wasm128(
     num_blocks: usize,
     thresh: i32,
 ) -> bool {
-    crate::common::simd_wasm::is_flat_coeffs_wasm_entry(token, levels, num_blocks, thresh)
+    crate::common::simd_wasm::is_flat_coeffs_wasm(token, levels, num_blocks, thresh)
 }
 
 fn is_flat_coeffs_dispatch_scalar(

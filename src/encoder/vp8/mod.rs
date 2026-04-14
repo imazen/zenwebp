@@ -218,7 +218,7 @@ fn sse_16x16_luma_dispatch_wasm128(
     mby: usize,
     pred: &[u8; LUMA_BLOCK_SIZE],
 ) -> u32 {
-    crate::common::simd_wasm::sse_16x16_luma_wasm_entry(token, src_y, src_width, mbx, mby, pred)
+    crate::common::simd_wasm::sse_16x16_luma_wasm(token, src_y, src_width, mbx, mby, pred)
 }
 
 #[inline(always)]
@@ -296,7 +296,7 @@ fn sse_8x8_chroma_dispatch_wasm128(
     mby: usize,
     pred: &[u8; CHROMA_BLOCK_SIZE],
 ) -> u32 {
-    crate::common::simd_wasm::sse_8x8_chroma_wasm_entry(token, src_uv, src_width, mbx, mby, pred)
+    crate::common::simd_wasm::sse_8x8_chroma_wasm(token, src_uv, src_width, mbx, mby, pred)
 }
 
 #[inline(always)]
