@@ -449,25 +449,21 @@ pub fn is_flat_source_16(src: &[u8], stride: usize) -> bool {
 }
 
 #[cfg(target_arch = "x86_64")]
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
-fn is_flat_source_16_impl_v3(token: X64V3Token, src: &[u8], stride: usize) -> bool {
-    is_flat_source_16_entry(token, src, stride)
+#[arcane]
+fn is_flat_source_16_impl_v3(_token: X64V3Token, src: &[u8], stride: usize) -> bool {
+    is_flat_source_16_sse2(_token, src, stride)
 }
 
 #[cfg(target_arch = "aarch64")]
-#[inline(always)]
 fn is_flat_source_16_impl_neon(token: NeonToken, src: &[u8], stride: usize) -> bool {
     crate::common::simd_neon::is_flat_source_16_neon(token, src, stride)
 }
 
 #[cfg(target_arch = "wasm32")]
-#[inline(always)]
 fn is_flat_source_16_impl_wasm128(token: Wasm128Token, src: &[u8], stride: usize) -> bool {
     crate::common::simd_wasm::is_flat_source_16_wasm_entry(token, src, stride)
 }
 
-#[inline(always)]
 fn is_flat_source_16_impl_scalar(_token: ScalarToken, src: &[u8], stride: usize) -> bool {
     is_flat_source_16_scalar(src, stride)
 }
@@ -485,14 +481,6 @@ pub fn is_flat_source_16_scalar(src: &[u8], stride: usize) -> bool {
         }
     }
     true
-}
-
-// is_flat_source_16_dispatch removed — replaced by incant!
-
-/// Entry shim for is_flat_source_16_sse2.
-#[arcane]
-fn is_flat_source_16_entry(_token: X64V3Token, src: &[u8], stride: usize) -> bool {
-    is_flat_source_16_sse2(_token, src, stride)
 }
 
 /// SSE2 implementation: broadcast first pixel, compare 16 bytes per row.
@@ -538,19 +526,17 @@ pub fn is_flat_coeffs(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
 }
 
 #[cfg(target_arch = "x86_64")]
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
+#[arcane]
 fn is_flat_coeffs_dispatch_v3(
-    token: X64V3Token,
+    _token: X64V3Token,
     levels: &[i16],
     num_blocks: usize,
     thresh: i32,
 ) -> bool {
-    is_flat_coeffs_entry(token, levels, num_blocks, thresh)
+    is_flat_coeffs_sse2(_token, levels, num_blocks, thresh)
 }
 
 #[cfg(target_arch = "aarch64")]
-#[inline(always)]
 fn is_flat_coeffs_dispatch_neon(
     token: NeonToken,
     levels: &[i16],
@@ -561,7 +547,6 @@ fn is_flat_coeffs_dispatch_neon(
 }
 
 #[cfg(target_arch = "wasm32")]
-#[inline(always)]
 fn is_flat_coeffs_dispatch_wasm128(
     token: Wasm128Token,
     levels: &[i16],
@@ -571,7 +556,6 @@ fn is_flat_coeffs_dispatch_wasm128(
     crate::common::simd_wasm::is_flat_coeffs_wasm_entry(token, levels, num_blocks, thresh)
 }
 
-#[inline(always)]
 fn is_flat_coeffs_dispatch_scalar(
     _token: ScalarToken,
     levels: &[i16],
@@ -579,17 +563,6 @@ fn is_flat_coeffs_dispatch_scalar(
     thresh: i32,
 ) -> bool {
     is_flat_coeffs_scalar(levels, num_blocks, thresh)
-}
-
-/// Entry shim for is_flat_coeffs_sse2.
-#[arcane]
-fn is_flat_coeffs_entry(
-    _token: X64V3Token,
-    levels: &[i16],
-    num_blocks: usize,
-    thresh: i32,
-) -> bool {
-    is_flat_coeffs_sse2(_token, levels, num_blocks, thresh)
 }
 
 /// SSE2 implementation using archmage

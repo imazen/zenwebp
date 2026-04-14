@@ -679,7 +679,7 @@ pub(crate) fn transform_color_inverse_generic<T: magetypes::simd::backends::U8x1
 /// Portable add-green using scalar 4-pixel unrolling.
 /// Simple and correct — the compiler autovectorizes this well on all architectures.
 #[cfg(any(target_arch = "aarch64", target_arch = "wasm32"))]
-fn add_green_portable<T: magetypes::simd::backends::U8x16Backend>(
+pub(crate) fn add_green_portable<T: magetypes::simd::backends::U8x16Backend>(
     _token: T,
     image_data: &mut [u8],
 ) {
@@ -1195,19 +1195,6 @@ pub(crate) fn apply_predictor_transform_neon_entry(
     }
 }
 
-// Stub NEON entry points for color transforms (fall through to scalar for now)
-#[cfg(target_arch = "aarch64")]
-#[arcane]
-pub(crate) fn add_green_to_blue_and_red_neon_entry(_token: NeonToken, image_data: &mut [u8]) {
-    add_green_to_blue_and_red_neon(_token, image_data);
-}
-
-/// NEON add-green inverse using portable magetypes with u16x8 shift trick.
-#[cfg(target_arch = "aarch64")]
-#[rite]
-fn add_green_to_blue_and_red_neon(_token: NeonToken, image_data: &mut [u8]) {
-    add_green_portable(_token, image_data);
-}
 
 
 // =============================================================================
@@ -1300,18 +1287,6 @@ pub(crate) fn apply_predictor_transform_wasm128_entry(
             dispatch_predictor_wasm128(_token, run_pred, image_data, run_start, run_end, width);
         }
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-#[arcane]
-pub(crate) fn add_green_to_blue_and_red_wasm128_entry(_token: Wasm128Token, image_data: &mut [u8]) {
-    add_green_to_blue_and_red_wasm128(_token, image_data);
-}
-
-#[cfg(target_arch = "wasm32")]
-#[rite]
-fn add_green_to_blue_and_red_wasm128(_token: Wasm128Token, image_data: &mut [u8]) {
-    add_green_portable(_token, image_data);
 }
 
 

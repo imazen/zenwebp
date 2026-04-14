@@ -772,16 +772,16 @@ fn apply_subtract_green_impl_v1(token: X64V1Token, image_data: &mut [u8]) {
     super::lossless_transform_simd::add_green_to_blue_and_red_sse2_entry(token, image_data);
 }
 
-/// NEON subtract green wrapper.
+/// NEON subtract green — calls portable 4-pixel unrolled implementation.
 #[cfg(target_arch = "aarch64")]
 fn apply_subtract_green_impl_neon(token: NeonToken, image_data: &mut [u8]) {
-    super::lossless_transform_simd::add_green_to_blue_and_red_neon_entry(token, image_data);
+    super::lossless_transform_simd::add_green_portable(token, image_data);
 }
 
-/// WASM128 subtract green wrapper.
+/// WASM128 subtract green — calls portable 4-pixel unrolled implementation.
 #[cfg(target_arch = "wasm32")]
 fn apply_subtract_green_impl_wasm128(token: Wasm128Token, image_data: &mut [u8]) {
-    super::lossless_transform_simd::add_green_to_blue_and_red_wasm128_entry(token, image_data);
+    super::lossless_transform_simd::add_green_portable(token, image_data);
 }
 
 fn apply_subtract_green_impl_scalar(_token: ScalarToken, image_data: &mut [u8]) {

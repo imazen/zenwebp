@@ -389,14 +389,6 @@ pub(crate) fn get_residual_cost_sse2(
     cost
 }
 
-/// Entry shim for find_last_nonzero_simd
-#[cfg(target_arch = "x86_64")]
-#[arcane]
-#[allow(dead_code)]
-fn find_last_nonzero_simd_entry(_token: X64V3Token, coeffs: &[i32; 16]) -> i32 {
-    find_last_nonzero_simd(_token, coeffs)
-}
-
 /// Find last non-zero coefficient using SIMD.
 /// Ported from libwebp's SetResidualCoeffs_SSE2.
 ///
@@ -544,14 +536,6 @@ pub(crate) fn get_residual_cost_neon(
     }
 
     cost
-}
-
-/// Entry shim for find_last_nonzero_neon
-#[cfg(target_arch = "aarch64")]
-#[arcane]
-#[allow(dead_code)]
-fn find_last_nonzero_neon_entry(_token: NeonToken, coeffs: &[i32; 16]) -> i32 {
-    find_last_nonzero_neon(_token, coeffs)
 }
 
 /// Find last non-zero coefficient using NEON.
