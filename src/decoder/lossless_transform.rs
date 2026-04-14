@@ -679,7 +679,7 @@ fn apply_color_transform_impl_v1(
     );
 }
 
-/// NEON color transform wrapper.
+/// NEON color transform — calls generic 4-pixel unrolled implementation.
 #[cfg(target_arch = "aarch64")]
 fn apply_color_transform_impl_neon(
     token: NeonToken,
@@ -688,7 +688,7 @@ fn apply_color_transform_impl_neon(
     size_bits: u8,
     transform_data: &[u8],
 ) {
-    super::lossless_transform_simd::transform_color_inverse_neon_entry(
+    super::lossless_transform_simd::transform_color_inverse_generic(
         token,
         image_data,
         usize::from(width),
@@ -697,7 +697,7 @@ fn apply_color_transform_impl_neon(
     );
 }
 
-/// WASM128 color transform wrapper.
+/// WASM128 color transform — calls generic 4-pixel unrolled implementation.
 #[cfg(target_arch = "wasm32")]
 fn apply_color_transform_impl_wasm128(
     token: Wasm128Token,
@@ -706,7 +706,7 @@ fn apply_color_transform_impl_wasm128(
     size_bits: u8,
     transform_data: &[u8],
 ) {
-    super::lossless_transform_simd::transform_color_inverse_wasm128_entry(
+    super::lossless_transform_simd::transform_color_inverse_generic(
         token,
         image_data,
         usize::from(width),

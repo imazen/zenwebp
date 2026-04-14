@@ -591,7 +591,7 @@ pub(crate) fn apply_predictor_transform_sse2_entry(
 /// lacks widening i8→i16 multiply needed for the mulhi trick).
 #[cfg(any(target_arch = "aarch64", target_arch = "wasm32"))]
 #[inline]
-fn transform_color_inverse_generic<T: magetypes::simd::backends::U8x16Backend>(
+pub(crate) fn transform_color_inverse_generic<T: magetypes::simd::backends::U8x16Backend>(
     _token: T,
     image_data: &mut [u8],
     width: usize,
@@ -1209,17 +1209,6 @@ fn add_green_to_blue_and_red_neon(_token: NeonToken, image_data: &mut [u8]) {
     add_green_portable(_token, image_data);
 }
 
-#[cfg(target_arch = "aarch64")]
-#[arcane]
-pub(crate) fn transform_color_inverse_neon_entry(
-    _token: NeonToken,
-    image_data: &mut [u8],
-    width: usize,
-    size_bits: u8,
-    transform_data: &[u8],
-) {
-    transform_color_inverse_generic(_token, image_data, width, size_bits, transform_data);
-}
 
 // =============================================================================
 // WASM128 dispatch and entry point
@@ -1325,17 +1314,6 @@ fn add_green_to_blue_and_red_wasm128(_token: Wasm128Token, image_data: &mut [u8]
     add_green_portable(_token, image_data);
 }
 
-#[cfg(target_arch = "wasm32")]
-#[arcane]
-pub(crate) fn transform_color_inverse_wasm128_entry(
-    _token: Wasm128Token,
-    image_data: &mut [u8],
-    width: usize,
-    size_bits: u8,
-    transform_data: &[u8],
-) {
-    transform_color_inverse_generic(_token, image_data, width, size_bits, transform_data);
-}
 
 // =============================================================================
 // Tests
