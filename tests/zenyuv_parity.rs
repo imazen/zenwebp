@@ -39,10 +39,8 @@ fn zenyuv_vs_zenwebp_scalar_limited_bt601() {
                 let mut y = [0u8; 1];
                 let mut cb = [0u8; 1];
                 let mut cr = [0u8; 1];
-                zenyuv::rgb_to_yuv444_with(
-                    &rgb, &mut y, &mut cb, &mut cr, 1, 1,
-                    zenyuv::Range::Limited, zenyuv::Matrix::Bt601,
-                );
+                let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Limited, zenyuv::Matrix::Bt601);
+                ctx.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, 1, 1);
 
                 let dy = zy.abs_diff(y[0]);
                 let du = zu.abs_diff(cb[0]);

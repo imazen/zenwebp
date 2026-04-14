@@ -91,18 +91,14 @@ fn convert_yuv420_impl<const BPP: usize>(
     if sharp {
         let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Limited, zenyuv::Matrix::Bt601);
         let config = zenyuv::SharpYuvConfig {
-            gamma_aware_init: false,
-            srgb_delinearize: true, // sRGB for WebP
             ..Default::default()
         };
         ctx.encode_sharp_420_u8(
             rgb, &mut y_tight, &mut u_tight, &mut v_tight, w, h, &config,
         );
     } else {
-        zenyuv::rgb_to_yuv420_with(
-            rgb, &mut y_tight, &mut u_tight, &mut v_tight, w, h,
-            zenyuv::Range::Limited, zenyuv::Matrix::Bt601,
-        );
+        let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Limited, zenyuv::Matrix::Bt601);
+        ctx.encode_420_u8(rgb, &mut y_tight, &mut u_tight, &mut v_tight, w, h);
     }
 
     // Copy into MB-aligned planes (zero-padded beyond image area).
