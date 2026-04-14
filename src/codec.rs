@@ -3198,10 +3198,7 @@ mod tests {
         }
     }
 
-    fn push_decode(
-        data: &[u8],
-        preferred: &[PixelDescriptor],
-    ) -> (CollectSink, OutputInfo) {
+    fn push_decode(data: &[u8], preferred: &[PixelDescriptor]) -> (CollectSink, OutputInfo) {
         use zencodec::decode::DecodeJob;
         let mut sink = CollectSink::new();
         let dec = WebpDecoderConfig::new();
@@ -3212,7 +3209,10 @@ mod tests {
         (sink, info)
     }
 
-    fn full_decode(data: &[u8], preferred: &[PixelDescriptor]) -> (alloc::vec::Vec<u8>, u32, u32, PixelDescriptor) {
+    fn full_decode(
+        data: &[u8],
+        preferred: &[PixelDescriptor],
+    ) -> (alloc::vec::Vec<u8>, u32, u32, PixelDescriptor) {
         use zencodec::decode::DecodeJob;
         let dec = WebpDecoderConfig::new();
         let out = dec
@@ -3255,7 +3255,12 @@ mod tests {
     fn push_decoder_parity_lossy_with_alpha() {
         let rgba = make_rgba8_pixels(48, 48);
         let enc = WebpEncoderConfig::lossy().with_quality(90.0);
-        let output = enc.job().encoder().unwrap().encode(rgba.as_slice()).unwrap();
+        let output = enc
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(rgba.as_slice())
+            .unwrap();
         let data = output.data();
 
         // Only run the parity assertion if the encoder actually produced alpha.
@@ -3278,7 +3283,12 @@ mod tests {
     fn push_decoder_fallback_lossless() {
         let rgba = make_rgba8_pixels(32, 32);
         let enc = WebpEncoderConfig::lossless();
-        let output = enc.job().encoder().unwrap().encode(rgba.as_slice()).unwrap();
+        let output = enc
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(rgba.as_slice())
+            .unwrap();
         let data = output.data();
 
         // Sanity: the container must actually be VP8L or VP8X+VP8L for the
@@ -3327,7 +3337,12 @@ mod tests {
     fn push_decoder_bgra_negotiation() {
         let rgba = make_rgba8_pixels(16, 16);
         let enc = WebpEncoderConfig::lossy().with_quality(90.0);
-        let output = enc.job().encoder().unwrap().encode(rgba.as_slice()).unwrap();
+        let output = enc
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(rgba.as_slice())
+            .unwrap();
         let data = output.data();
 
         let native_info = crate::ImageInfo::from_webp(data).unwrap();
