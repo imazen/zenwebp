@@ -98,8 +98,6 @@ pub(crate) fn sse4x4_wasm(_token: Wasm128Token, a: &[u8; 16], b: &[u8; 16]) -> u
     hsum_i32x4(sse_u8x16_acc(a_vec, b_vec)) as u32
 }
 
-
-
 /// SSE with fused prediction + residual reconstruction
 #[rite]
 pub(crate) fn sse4x4_with_residual_wasm(
@@ -133,8 +131,6 @@ pub(crate) fn sse4x4_with_residual_wasm(
     hsum_i32x4(sse_u8x16_acc(src_vec, rec)) as u32
 }
 
-
-
 /// SSE for 16x16 luma macroblock
 #[rite]
 pub(crate) fn sse_16x16_luma_wasm(
@@ -161,7 +157,6 @@ pub(crate) fn sse_16x16_luma_wasm(
 
     hsum_i32x4(acc) as u32
 }
-
 
 /// SSE for 8x8 chroma block
 #[rite]
@@ -198,7 +193,6 @@ pub(crate) fn sse_8x8_chroma_wasm(
 
     hsum_i32x4(acc) as u32
 }
-
 
 // =============================================================================
 // Spectral distortion (TDisto / Hadamard transform)
@@ -303,7 +297,6 @@ pub(crate) fn tdisto_4x4_fused_wasm(
     (sum_b - sum_a).abs() >> 5
 }
 
-
 // =============================================================================
 // Flatness check functions
 // =============================================================================
@@ -324,7 +317,6 @@ pub(crate) fn is_flat_source_16_wasm(_token: Wasm128Token, src: &[u8], stride: u
     // Check if all lanes are 0xFF using bitmask
     u8x16_bitmask(all_eq) == 0xFFFF
 }
-
 
 /// Check if coefficients are "flat" (few non-zero AC coefficients)
 #[rite]
@@ -380,7 +372,6 @@ pub(crate) fn is_flat_coeffs_wasm(
 
     count <= thresh
 }
-
 
 // =============================================================================
 // Quantization functions
@@ -496,7 +487,6 @@ pub(crate) fn quantize_block_wasm(
     hsum_abs_i16x8(or0) != 0
 }
 
-
 /// WASM dequantize block: multiply coefficients by quantizer steps
 #[rite]
 pub(crate) fn dequantize_block_wasm(_token: Wasm128Token, q: &[u16; 16], coeffs: &mut [i32; 16]) {
@@ -528,7 +518,6 @@ pub(crate) fn dequantize_block_wasm(_token: Wasm128Token, q: &[u16; 16], coeffs:
     store_i32x4(cm2, r8);
     store_i32x4(cm3, r12);
 }
-
 
 /// WASM fused quantize+dequantize: produces both quantized and dequantized values.
 /// Returns true if any coefficient is non-zero.
@@ -642,4 +631,3 @@ pub(crate) fn quantize_dequantize_block_wasm(
     let or0 = v128_or(qout0, qout8);
     hsum_abs_i16x8(or0) != 0
 }
-
