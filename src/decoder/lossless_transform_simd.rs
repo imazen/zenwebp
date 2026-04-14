@@ -577,11 +577,16 @@ pub(crate) fn apply_predictor_transform_sse2_entry(
 }
 
 // =============================================================================
-// Scalar fallbacks for color transforms (used by NEON/WASM stubs until SIMD is done)
+// Portable color transform inverse (NEON/WASM128 — autovectorization-friendly)
 // =============================================================================
 
+/// Portable color transform inverse with 4-pixel unrolling for autovectorization.
+///
+/// Two-phase approach per block enables cross-pixel SIMD:
+///   Phase 1: R += (green_to_red * G) >> 5  — all 4 pixels independent
+///   Phase 2: B += (green_to_blue * G + red_to_blue * R') >> 5  — uses corrected R
 #[cfg(any(target_arch = "aarch64", target_arch = "wasm32"))]
-fn color_inverse_scalar_fallback(
+fn transform_color_inverse_portable(
     image_data: &mut [u8],
     width: usize,
     size_bits: u8,
@@ -597,32 +602,72 @@ fn color_inverse_scalar_fallback(
             .chunks_mut(4 << size_bits)
             .zip(row_tf_data.chunks_exact(4))
         {
-            let red_to_blue = transform[0];
-            let green_to_blue = transform[1];
-            let green_to_red = transform[2];
-
-            for pixel in block.chunks_exact_mut(4) {
-                let green = u32::from(pixel[1]);
-                let mut temp_red = u32::from(pixel[0]);
-                let mut temp_blue = u32::from(pixel[2]);
-
-                temp_red += super::lossless_transform::color_transform_delta(
-                    green_to_red as i8,
-                    green as i8,
-                );
-                temp_blue += super::lossless_transform::color_transform_delta(
-                    green_to_blue as i8,
-                    green as i8,
-                );
-                temp_blue += super::lossless_transform::color_transform_delta(
-                    red_to_blue as i8,
-                    temp_red as i8,
-                );
-
-                pixel[0] = (temp_red & 0xff) as u8;
-                pixel[2] = (temp_blue & 0xff) as u8;
-            }
+            transform_color_inverse_block_portable(
+                block,
+                transform[2], // green_to_red
+                transform[1], // green_to_blue
+                transform[0], // red_to_blue
+            );
         }
+    }
+}
+
+/// Process a block of RGBA pixels: R += delta(G), B += delta(G) + delta(R').
+/// 4-pixel unrolling lets the compiler vectorize across independent pixels.
+#[cfg(any(target_arch = "aarch64", target_arch = "wasm32"))]
+#[inline]
+fn transform_color_inverse_block_portable(
+    block: &mut [u8],
+    green_to_red: u8,
+    green_to_blue: u8,
+    red_to_blue: u8,
+) {
+    let g2r = green_to_red as i8 as i32;
+    let g2b = green_to_blue as i8 as i32;
+    let r2b = red_to_blue as i8 as i32;
+
+    // Process 4 pixels (16 bytes) at a time for autovectorization
+    let (chunks, remainder) = block.as_chunks_mut::<16>();
+    for chunk in chunks {
+        // Phase 1: correct R channel for all 4 pixels (independent)
+        let g0 = chunk[1] as i8 as i32;
+        let g1 = chunk[5] as i8 as i32;
+        let g2 = chunk[9] as i8 as i32;
+        let g3 = chunk[13] as i8 as i32;
+
+        chunk[0] = chunk[0].wrapping_add(((g2r * g0) >> 5) as u8);
+        chunk[4] = chunk[4].wrapping_add(((g2r * g1) >> 5) as u8);
+        chunk[8] = chunk[8].wrapping_add(((g2r * g2) >> 5) as u8);
+        chunk[12] = chunk[12].wrapping_add(((g2r * g3) >> 5) as u8);
+
+        // Phase 2: correct B channel using green AND corrected R (independent across pixels)
+        let r0 = chunk[0] as i8 as i32;
+        let r1 = chunk[4] as i8 as i32;
+        let r2 = chunk[8] as i8 as i32;
+        let r3 = chunk[12] as i8 as i32;
+
+        chunk[2] = chunk[2]
+            .wrapping_add(((g2b * g0) >> 5) as u8)
+            .wrapping_add(((r2b * r0) >> 5) as u8);
+        chunk[6] = chunk[6]
+            .wrapping_add(((g2b * g1) >> 5) as u8)
+            .wrapping_add(((r2b * r1) >> 5) as u8);
+        chunk[10] = chunk[10]
+            .wrapping_add(((g2b * g2) >> 5) as u8)
+            .wrapping_add(((r2b * r2) >> 5) as u8);
+        chunk[14] = chunk[14]
+            .wrapping_add(((g2b * g3) >> 5) as u8)
+            .wrapping_add(((r2b * r3) >> 5) as u8);
+    }
+
+    // Scalar tail for remaining pixels
+    for pixel in remainder.chunks_exact_mut(4) {
+        let green = pixel[1] as i8 as i32;
+        pixel[0] = pixel[0].wrapping_add(((g2r * green) >> 5) as u8);
+        let red = pixel[0] as i8 as i32;
+        pixel[2] = pixel[2]
+            .wrapping_add(((g2b * green) >> 5) as u8)
+            .wrapping_add(((r2b * red) >> 5) as u8);
     }
 }
 
@@ -1185,8 +1230,7 @@ pub(crate) fn transform_color_inverse_neon_entry(
     size_bits: u8,
     transform_data: &[u8],
 ) {
-    // TODO: NEON color_inverse SIMD implementation
-    color_inverse_scalar_fallback(image_data, width, size_bits, transform_data);
+    transform_color_inverse_portable(image_data, width, size_bits, transform_data);
 }
 
 // =============================================================================
@@ -1302,8 +1346,7 @@ pub(crate) fn transform_color_inverse_wasm128_entry(
     size_bits: u8,
     transform_data: &[u8],
 ) {
-    // TODO: WASM128 color_inverse SIMD implementation
-    color_inverse_scalar_fallback(image_data, width, size_bits, transform_data);
+    transform_color_inverse_portable(image_data, width, size_bits, transform_data);
 }
 
 // =============================================================================

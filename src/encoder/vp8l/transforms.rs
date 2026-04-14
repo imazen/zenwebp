@@ -1331,7 +1331,57 @@ fn cst_5b(x: u8) -> i16 {
     (((x as u16) << 8) as i16) >> 5
 }
 
-/// Entry point for SSE2 cross-color tile transform.
+/// Portable cross-color tile transform with 4-pixel unrolling for autovectorization.
+///
+/// For each pixel: new_R = R - (g2r * G) >> 5, new_B = B - (g2b * G) >> 5 - (r2b * R_orig) >> 5.
+/// Note: encoder uses ORIGINAL red for blue correction (decoder uses corrected R').
+#[cfg(any(target_arch = "aarch64", target_arch = "wasm32"))]
+#[inline]
+fn apply_cross_color_tile_portable(
+    pixels: &mut [u32],
+    width: usize,
+    start_x: usize,
+    start_y: usize,
+    end_x: usize,
+    end_y: usize,
+    m: &CrossColorMultipliers,
+) {
+    let g2r = m.green_to_red as i8 as i32;
+    let g2b = m.green_to_blue as i8 as i32;
+    let r2b = m.red_to_blue as i8 as i32;
+    let tile_width = end_x - start_x;
+
+    for y in start_y..end_y {
+        let row_start = y * width + start_x;
+        let row = &mut pixels[row_start..row_start + tile_width];
+
+        // Process 4 pixels at a time for autovectorization
+        let (chunks, tail) = row.as_chunks_mut::<4>();
+        for chunk in chunks {
+            for px in chunk.iter_mut() {
+                let argb = *px;
+                let green = (argb >> 8) as u8 as i8 as i32;
+                let red = (argb >> 16) as u8 as i8 as i32;
+                let new_red = (((argb >> 16) as i32 & 0xff) - ((g2r * green) >> 5)) & 0xff;
+                let new_blue =
+                    ((argb as i32 & 0xff) - ((g2b * green) >> 5) - ((r2b * red) >> 5)) & 0xff;
+                *px = (argb & 0xff00ff00u32) | ((new_red as u32) << 16) | (new_blue as u32);
+            }
+        }
+
+        // Scalar tail
+        for px in tail {
+            let argb = *px;
+            let green = (argb >> 8) as u8 as i8 as i32;
+            let red = (argb >> 16) as u8 as i8 as i32;
+            let new_red = (((argb >> 16) as i32 & 0xff) - ((g2r * green) >> 5)) & 0xff;
+            let new_blue =
+                ((argb as i32 & 0xff) - ((g2b * green) >> 5) - ((r2b * red) >> 5)) & 0xff;
+            *px = (argb & 0xff00ff00u32) | ((new_red as u32) << 16) | (new_blue as u32);
+        }
+    }
+}
+
 #[cfg(target_arch = "aarch64")]
 fn apply_cross_color_tile_impl_neon(
     _token: NeonToken,
@@ -1343,16 +1393,7 @@ fn apply_cross_color_tile_impl_neon(
     end_y: usize,
     m: &CrossColorMultipliers,
 ) {
-    apply_cross_color_tile_impl_scalar(
-        ScalarToken,
-        pixels,
-        width,
-        start_x,
-        start_y,
-        end_x,
-        end_y,
-        m,
-    );
+    apply_cross_color_tile_portable(pixels, width, start_x, start_y, end_x, end_y, m);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1366,16 +1407,7 @@ fn apply_cross_color_tile_impl_wasm128(
     end_y: usize,
     m: &CrossColorMultipliers,
 ) {
-    apply_cross_color_tile_impl_scalar(
-        ScalarToken,
-        pixels,
-        width,
-        start_x,
-        start_y,
-        end_x,
-        end_y,
-        m,
-    );
+    apply_cross_color_tile_portable(pixels, width, start_x, start_y, end_x, end_y, m);
 }
 
 #[cfg(target_arch = "x86_64")]
