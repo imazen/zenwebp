@@ -764,11 +764,25 @@ impl<'a> Vp8Encoder<'a> {
 
             crate::decoder::yuv::import_yuv420_planes(y_plane, u_plane, v_plane, width, height)
         } else if params.use_sharp_yuv {
-            convert_image_sharp_yuv(data, color, width, height, stride)
+            match color {
+                PixelLayout::Rgb8 => {
+                    crate::decoder::yuv_zenyuv::convert_rgb_sharp_yuv420(data, width, height, stride)
+                }
+                PixelLayout::Rgba8 => {
+                    crate::decoder::yuv_zenyuv::convert_rgba_sharp_yuv420(data, width, height, stride)
+                }
+                // BGR/BGRA sharp: fall back to old path for now
+                _ => convert_image_sharp_yuv(data, color, width, height, stride),
+            }
         } else {
             match color {
-                PixelLayout::Rgb8 => convert_image_yuv::<3>(data, width, height, stride),
-                PixelLayout::Rgba8 => convert_image_yuv::<4>(data, width, height, stride),
+                PixelLayout::Rgb8 => {
+                    crate::decoder::yuv_zenyuv::convert_rgb_yuv420(data, width, height, stride)
+                }
+                PixelLayout::Rgba8 => {
+                    crate::decoder::yuv_zenyuv::convert_rgba_yuv420(data, width, height, stride)
+                }
+                // BGR/BGRA: fall back to old path for now
                 PixelLayout::Bgr8 => {
                     crate::decoder::yuv::convert_image_yuv_bgr::<3>(data, width, height, stride)
                 }

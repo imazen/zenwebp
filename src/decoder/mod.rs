@@ -22,6 +22,7 @@ mod lossless_transform_simd;
 mod streaming;
 pub(crate) mod yuv;
 mod yuv_fused;
+pub(crate) mod yuv_zenyuv;
 
 // VP8 diagnostic types and tree nodes (used by lossless decoder and tests)
 pub(crate) mod vp8;
