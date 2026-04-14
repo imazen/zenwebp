@@ -1179,6 +1179,7 @@ impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
 // ── Decode Job ──────────────────────────────────────────────────────────────
 
 /// Per-operation WebP decode job.
+#[derive(Clone)]
 pub struct WebpDecodeJob {
     config: WebpDecoderConfig,
     stop: Option<zencodec::StopToken>,
@@ -1473,9 +1474,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         sink: &mut dyn zencodec::decode::DecodeRowSink,
         preferred: &[PixelDescriptor],
     ) -> Result<OutputInfo, Self::Error> {
-        zencodec::helpers::copy_decode_to_sink(self, data, sink, preferred, |e| {
-            at!(DecodeError::InvalidParameter(alloc::format!("{e}")))
-        })
+        push_decoder_impl(self, data, sink, preferred)
     }
 
     fn animation_frame_decoder(
@@ -1772,6 +1771,161 @@ impl zencodec::decode::Decode for WebpDecoder<'_> {
         let pixels = negotiate_format(output.into_buffer(), &self.preferred);
         Ok(DecodeOutput::new(pixels, info))
     }
+}
+
+// ── push_decoder dispatch ─────────────────────────────────────────────────
+
+/// Return `true` iff the input is a lossy VP8 single image eligible for
+/// zero-copy streaming decode.
+///
+/// The check is intentionally quick — just enough to decide between the
+/// native streaming path and the full-decode fallback:
+///
+/// * `VP8 ` chunk after the RIFF/WEBP magic → lossy bitstream, eligible.
+/// * `VP8X` chunk → inspect VP8X flags. Animations, VP8L bitstreams, and
+///   truly unknown encodings disqualify; plain lossy (optionally with ALPH)
+///   qualifies.
+/// * Anything else (VP8L as the first chunk, truncated, unknown) is not
+///   eligible.
+fn is_lossy_streaming_candidate(data: &[u8]) -> bool {
+    if data.len() < 30 {
+        return false;
+    }
+    if &data[..4] != b"RIFF" || &data[8..12] != b"WEBP" {
+        return false;
+    }
+    match &data[12..16] {
+        b"VP8 " => true,
+        b"VP8X" => {
+            // VP8X flags byte at offset 20 (after 4-byte chunk-size at 16..20).
+            // Bit 0x02 = animation, 0x20 = ICC, 0x10 = EXIF, etc.
+            let flags = data[20];
+            let is_animation = (flags & 0x02) != 0;
+            if is_animation {
+                return false;
+            }
+            // Walk chunks to find the image payload. Streaming is only
+            // eligible when the frame is a VP8 (lossy) chunk — not VP8L.
+            let mut off = 30usize; // VP8X chunk header (8) + VP8X payload (10) + RIFF header (12) = 30
+            while off + 8 <= data.len() {
+                let fourcc = &data[off..off + 4];
+                let size = u32::from_le_bytes([
+                    data[off + 4],
+                    data[off + 5],
+                    data[off + 6],
+                    data[off + 7],
+                ]) as usize;
+                match fourcc {
+                    b"VP8 " => return true,
+                    b"VP8L" => return false,
+                    _ => {
+                        // Advance past this chunk (size + pad to even).
+                        let advance = 8 + size + (size & 1);
+                        off = off.saturating_add(advance);
+                    }
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Native row-streaming `push_decoder` for lossy VP8.
+///
+/// Feeds each macroblock-row strip directly to the sink, skipping the
+/// full-frame RGB/RGBA allocation that [`zencodec::helpers::copy_decode_to_sink`]
+/// requires. For lossless (VP8L), animations, or lossy streams where the
+/// internal streaming decoder cannot be constructed, transparently falls
+/// back to the full-decode helper so the caller still gets a correct image.
+fn push_decoder_impl<'a>(
+    job: WebpDecodeJob,
+    data: Cow<'a, [u8]>,
+    sink: &mut dyn zencodec::decode::DecodeRowSink,
+    preferred: &[PixelDescriptor],
+) -> Result<OutputInfo, At<DecodeError>> {
+    let wrap_sink = |e: SinkError| at!(DecodeError::InvalidParameter(alloc::format!("{e}")));
+
+    // Fast path only applies to lossy single-image VP8. For VP8L, animation,
+    // or anything the container scanner can't classify, fall back to the
+    // helper-driven full decode — it handles all the same cases `decode()` does.
+    if !is_lossy_streaming_candidate(&data) {
+        return zencodec::helpers::copy_decode_to_sink(job, data, sink, preferred, |e| {
+            at!(DecodeError::InvalidParameter(alloc::format!("{e}")))
+        });
+    }
+
+    // Dimension limit enforcement (matches `WebpDecoder::do_decode`).
+    if let Ok(info) = crate::ImageInfo::from_webp(&data) {
+        job.limits
+            .check_dimensions(info.width, info.height)
+            .map_err(|e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))?;
+    }
+
+    use zencodec::decode::{DecodeJob, StreamingDecode};
+
+    // Clone stop out of the job so we can still check cancellation after
+    // `streaming_decoder` consumes `job` below.
+    let stop = job.stop.clone();
+    let fallback_job = job.clone();
+
+    // Build the streaming decoder. If this rejects the input (e.g.
+    // extra_y_rows < 2 — filter disabled — or any other edge case we
+    // haven't pre-filtered), retry with the full-decode helper using a
+    // cloned job so `self` is not consumed.
+    let mut stream = match job.streaming_decoder(Cow::Borrowed(&data), preferred) {
+        Ok(s) => s,
+        Err(_) => {
+            return zencodec::helpers::copy_decode_to_sink(
+                fallback_job,
+                data,
+                sink,
+                preferred,
+                |e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))),
+            );
+        }
+    };
+
+    let width = stream.width;
+    let height = stream.height;
+    let descriptor = stream.descriptor;
+    let bpp = stream.bpp;
+
+    // Tell the sink what's coming. After this, any error path must not
+    // call `sink.finish()`.
+    sink.begin(width, height, descriptor).map_err(wrap_sink)?;
+
+    let row_bytes = width as usize * bpp;
+
+    while let Some((y_start, pixel_slice)) = stream.next_batch()? {
+        // Cooperative cancellation between strips.
+        if let Some(ref s) = stop {
+            use enough::Stop;
+            s.check().map_err(|e| at!(DecodeError::from(e)))?;
+        }
+
+        let num_rows: u32 = pixel_slice.rows();
+        if num_rows == 0 {
+            continue;
+        }
+
+        let mut dst = sink
+            .provide_next_buffer(y_start, num_rows, width, descriptor)
+            .map_err(wrap_sink)?;
+
+        for row in 0..num_rows {
+            let src = pixel_slice.row(row);
+            let dst_row = dst.row_mut(row);
+            // PixelSlice rows are width*bpp; sink buffers may be wider
+            // (stride padding). Copy only the pixel bytes.
+            dst_row[..row_bytes].copy_from_slice(&src[..row_bytes]);
+        }
+        drop(dst);
+    }
+
+    sink.finish().map_err(wrap_sink)?;
+
+    Ok(OutputInfo::full_decode(width, height, descriptor))
 }
 
 // ── Streaming Decoder ─────────────────────────────────────────────────────
