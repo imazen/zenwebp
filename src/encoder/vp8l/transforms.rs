@@ -1331,13 +1331,18 @@ fn cst_5b(x: u8) -> i16 {
     (((x as u16) << 8) as i16) >> 5
 }
 
-/// Portable cross-color tile transform with 4-pixel unrolling for autovectorization.
+/// Generic cross-color tile transform with 4-pixel unrolling for autovectorization.
 ///
 /// For each pixel: new_R = R - (g2r * G) >> 5, new_B = B - (g2b * G) >> 5 - (r2b * R_orig) >> 5.
 /// Note: encoder uses ORIGINAL red for blue correction (decoder uses corrected R').
+///
+/// Takes a `U8x16Backend` token for type consistency with the archmage dispatch
+/// pattern (matching `apply_subtract_green_generic`), though the implementation uses
+/// scalar 4-pixel unrolling since magetypes lacks widening i8→i16 multiply.
 #[cfg(any(target_arch = "aarch64", target_arch = "wasm32"))]
-#[inline]
-fn apply_cross_color_tile_portable(
+#[inline(always)]
+fn apply_cross_color_tile_generic<T: magetypes::simd::backends::U8x16Backend>(
+    _token: T,
     pixels: &mut [u32],
     width: usize,
     start_x: usize,
@@ -1382,9 +1387,10 @@ fn apply_cross_color_tile_portable(
     }
 }
 
+/// NEON cross-color tile: calls generic implementation (matching apply_subtract_green pattern).
 #[cfg(target_arch = "aarch64")]
 fn apply_cross_color_tile_impl_neon(
-    _token: NeonToken,
+    token: NeonToken,
     pixels: &mut [u32],
     width: usize,
     start_x: usize,
@@ -1393,12 +1399,13 @@ fn apply_cross_color_tile_impl_neon(
     end_y: usize,
     m: &CrossColorMultipliers,
 ) {
-    apply_cross_color_tile_portable(pixels, width, start_x, start_y, end_x, end_y, m);
+    apply_cross_color_tile_generic(token, pixels, width, start_x, start_y, end_x, end_y, m);
 }
 
+/// WASM128 cross-color tile: calls generic implementation.
 #[cfg(target_arch = "wasm32")]
 fn apply_cross_color_tile_impl_wasm128(
-    _token: Wasm128Token,
+    token: Wasm128Token,
     pixels: &mut [u32],
     width: usize,
     start_x: usize,
@@ -1407,7 +1414,7 @@ fn apply_cross_color_tile_impl_wasm128(
     end_y: usize,
     m: &CrossColorMultipliers,
 ) {
-    apply_cross_color_tile_portable(pixels, width, start_x, start_y, end_x, end_y, m);
+    apply_cross_color_tile_generic(token, pixels, width, start_x, start_y, end_x, end_y, m);
 }
 
 #[cfg(target_arch = "x86_64")]

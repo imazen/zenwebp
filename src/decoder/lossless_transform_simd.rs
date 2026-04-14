@@ -580,13 +580,19 @@ pub(crate) fn apply_predictor_transform_sse2_entry(
 // Portable color transform inverse (NEON/WASM128 — autovectorization-friendly)
 // =============================================================================
 
-/// Portable color transform inverse with 4-pixel unrolling for autovectorization.
+/// Generic color transform inverse with 4-pixel unrolling for autovectorization.
 ///
 /// Two-phase approach per block enables cross-pixel SIMD:
 ///   Phase 1: R += (green_to_red * G) >> 5  — all 4 pixels independent
 ///   Phase 2: B += (green_to_blue * G + red_to_blue * R') >> 5  — uses corrected R
+///
+/// Takes a `U8x16Backend` token for type consistency with the archmage dispatch
+/// pattern, though the implementation uses scalar 4-pixel unrolling (magetypes
+/// lacks widening i8→i16 multiply needed for the mulhi trick).
 #[cfg(any(target_arch = "aarch64", target_arch = "wasm32"))]
-fn transform_color_inverse_portable(
+#[inline]
+fn transform_color_inverse_generic<T: magetypes::simd::backends::U8x16Backend>(
+    _token: T,
     image_data: &mut [u8],
     width: usize,
     size_bits: u8,
@@ -602,72 +608,54 @@ fn transform_color_inverse_portable(
             .chunks_mut(4 << size_bits)
             .zip(row_tf_data.chunks_exact(4))
         {
-            transform_color_inverse_block_portable(
-                block,
-                transform[2], // green_to_red
-                transform[1], // green_to_blue
-                transform[0], // red_to_blue
-            );
+            let g2r = transform[2] as i8 as i32;
+            let g2b = transform[1] as i8 as i32;
+            let r2b = transform[0] as i8 as i32;
+
+            // Process 4 pixels (16 bytes) at a time for autovectorization
+            let (chunks, remainder) = block.as_chunks_mut::<16>();
+            for chunk in chunks {
+                // Phase 1: correct R channel for all 4 pixels (independent)
+                let g0 = chunk[1] as i8 as i32;
+                let g1 = chunk[5] as i8 as i32;
+                let g2 = chunk[9] as i8 as i32;
+                let g3 = chunk[13] as i8 as i32;
+
+                chunk[0] = chunk[0].wrapping_add(((g2r * g0) >> 5) as u8);
+                chunk[4] = chunk[4].wrapping_add(((g2r * g1) >> 5) as u8);
+                chunk[8] = chunk[8].wrapping_add(((g2r * g2) >> 5) as u8);
+                chunk[12] = chunk[12].wrapping_add(((g2r * g3) >> 5) as u8);
+
+                // Phase 2: correct B using green AND corrected R (independent across pixels)
+                let r0 = chunk[0] as i8 as i32;
+                let r1 = chunk[4] as i8 as i32;
+                let r2 = chunk[8] as i8 as i32;
+                let r3 = chunk[12] as i8 as i32;
+
+                chunk[2] = chunk[2]
+                    .wrapping_add(((g2b * g0) >> 5) as u8)
+                    .wrapping_add(((r2b * r0) >> 5) as u8);
+                chunk[6] = chunk[6]
+                    .wrapping_add(((g2b * g1) >> 5) as u8)
+                    .wrapping_add(((r2b * r1) >> 5) as u8);
+                chunk[10] = chunk[10]
+                    .wrapping_add(((g2b * g2) >> 5) as u8)
+                    .wrapping_add(((r2b * r2) >> 5) as u8);
+                chunk[14] = chunk[14]
+                    .wrapping_add(((g2b * g3) >> 5) as u8)
+                    .wrapping_add(((r2b * r3) >> 5) as u8);
+            }
+
+            // Scalar tail for remaining pixels
+            for pixel in remainder.chunks_exact_mut(4) {
+                let green = pixel[1] as i8 as i32;
+                pixel[0] = pixel[0].wrapping_add(((g2r * green) >> 5) as u8);
+                let red = pixel[0] as i8 as i32;
+                pixel[2] = pixel[2]
+                    .wrapping_add(((g2b * green) >> 5) as u8)
+                    .wrapping_add(((r2b * red) >> 5) as u8);
+            }
         }
-    }
-}
-
-/// Process a block of RGBA pixels: R += delta(G), B += delta(G) + delta(R').
-/// 4-pixel unrolling lets the compiler vectorize across independent pixels.
-#[cfg(any(target_arch = "aarch64", target_arch = "wasm32"))]
-#[inline]
-fn transform_color_inverse_block_portable(
-    block: &mut [u8],
-    green_to_red: u8,
-    green_to_blue: u8,
-    red_to_blue: u8,
-) {
-    let g2r = green_to_red as i8 as i32;
-    let g2b = green_to_blue as i8 as i32;
-    let r2b = red_to_blue as i8 as i32;
-
-    // Process 4 pixels (16 bytes) at a time for autovectorization
-    let (chunks, remainder) = block.as_chunks_mut::<16>();
-    for chunk in chunks {
-        // Phase 1: correct R channel for all 4 pixels (independent)
-        let g0 = chunk[1] as i8 as i32;
-        let g1 = chunk[5] as i8 as i32;
-        let g2 = chunk[9] as i8 as i32;
-        let g3 = chunk[13] as i8 as i32;
-
-        chunk[0] = chunk[0].wrapping_add(((g2r * g0) >> 5) as u8);
-        chunk[4] = chunk[4].wrapping_add(((g2r * g1) >> 5) as u8);
-        chunk[8] = chunk[8].wrapping_add(((g2r * g2) >> 5) as u8);
-        chunk[12] = chunk[12].wrapping_add(((g2r * g3) >> 5) as u8);
-
-        // Phase 2: correct B channel using green AND corrected R (independent across pixels)
-        let r0 = chunk[0] as i8 as i32;
-        let r1 = chunk[4] as i8 as i32;
-        let r2 = chunk[8] as i8 as i32;
-        let r3 = chunk[12] as i8 as i32;
-
-        chunk[2] = chunk[2]
-            .wrapping_add(((g2b * g0) >> 5) as u8)
-            .wrapping_add(((r2b * r0) >> 5) as u8);
-        chunk[6] = chunk[6]
-            .wrapping_add(((g2b * g1) >> 5) as u8)
-            .wrapping_add(((r2b * r1) >> 5) as u8);
-        chunk[10] = chunk[10]
-            .wrapping_add(((g2b * g2) >> 5) as u8)
-            .wrapping_add(((r2b * r2) >> 5) as u8);
-        chunk[14] = chunk[14]
-            .wrapping_add(((g2b * g3) >> 5) as u8)
-            .wrapping_add(((r2b * r3) >> 5) as u8);
-    }
-
-    // Scalar tail for remaining pixels
-    for pixel in remainder.chunks_exact_mut(4) {
-        let green = pixel[1] as i8 as i32;
-        pixel[0] = pixel[0].wrapping_add(((g2r * green) >> 5) as u8);
-        let red = pixel[0] as i8 as i32;
-        pixel[2] = pixel[2]
-            .wrapping_add(((g2b * green) >> 5) as u8)
-            .wrapping_add(((r2b * red) >> 5) as u8);
     }
 }
 
@@ -1221,6 +1209,19 @@ fn add_green_to_blue_and_red_neon(_token: NeonToken, image_data: &mut [u8]) {
     add_green_portable(_token, image_data);
 }
 
+/// NEON color transform inverse — #[rite] wrapper for target_feature + inline.
+#[cfg(target_arch = "aarch64")]
+#[rite]
+fn transform_color_inverse_neon(
+    _token: NeonToken,
+    image_data: &mut [u8],
+    width: usize,
+    size_bits: u8,
+    transform_data: &[u8],
+) {
+    transform_color_inverse_generic(_token, image_data, width, size_bits, transform_data);
+}
+
 #[cfg(target_arch = "aarch64")]
 #[arcane]
 pub(crate) fn transform_color_inverse_neon_entry(
@@ -1230,7 +1231,7 @@ pub(crate) fn transform_color_inverse_neon_entry(
     size_bits: u8,
     transform_data: &[u8],
 ) {
-    transform_color_inverse_portable(image_data, width, size_bits, transform_data);
+    transform_color_inverse_neon(_token, image_data, width, size_bits, transform_data);
 }
 
 // =============================================================================
@@ -1337,6 +1338,19 @@ fn add_green_to_blue_and_red_wasm128(_token: Wasm128Token, image_data: &mut [u8]
     add_green_portable(_token, image_data);
 }
 
+/// WASM128 color transform inverse — #[rite] wrapper for target_feature + inline.
+#[cfg(target_arch = "wasm32")]
+#[rite]
+fn transform_color_inverse_wasm128(
+    _token: Wasm128Token,
+    image_data: &mut [u8],
+    width: usize,
+    size_bits: u8,
+    transform_data: &[u8],
+) {
+    transform_color_inverse_generic(_token, image_data, width, size_bits, transform_data);
+}
+
 #[cfg(target_arch = "wasm32")]
 #[arcane]
 pub(crate) fn transform_color_inverse_wasm128_entry(
@@ -1346,7 +1360,7 @@ pub(crate) fn transform_color_inverse_wasm128_entry(
     size_bits: u8,
     transform_data: &[u8],
 ) {
-    transform_color_inverse_portable(image_data, width, size_bits, transform_data);
+    transform_color_inverse_wasm128(_token, image_data, width, size_bits, transform_data);
 }
 
 // =============================================================================
