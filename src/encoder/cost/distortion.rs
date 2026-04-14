@@ -35,28 +35,12 @@ use archmage::intrinsics::x86_64 as simd_mem;
 /// * `w` - 16 weights for frequency weighting (CSF table)
 #[inline]
 pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
-    #[cfg(target_arch = "x86_64")]
-    {
-        crate::common::simd_sse::t_transform(input, stride, w)
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        // t_transform is one half of tdisto_4x4_fused; use scalar here.
-        // The fused version below is the hot path and uses NEON.
-        t_transform_scalar(input, stride, w)
-    }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    {
-        t_transform_scalar(input, stride, w)
-    }
+    t_transform_scalar(input, stride, w)
 }
 
 /// Scalar implementation of t_transform.
-///
-/// This can be optimized with SIMD (AVX2/NEON) for significant speedup.
 #[inline]
-#[cfg(not(target_arch = "x86_64"))]
-pub fn t_transform_scalar(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
+fn t_transform_scalar(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     let mut tmp = [0i32; 16];
 
     // Horizontal pass

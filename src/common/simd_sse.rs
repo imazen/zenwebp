@@ -12,34 +12,6 @@ use archmage::prelude::*;
 #[cfg(target_arch = "x86_64")]
 use archmage::intrinsics::x86_64 as simd_mem;
 
-/// Compute Sum of Squared Errors between two 4x4 blocks
-///
-/// Both blocks are stored in row-major order as 16 bytes.
-#[inline]
-pub fn sse4x4(a: &[u8; 16], b: &[u8; 16]) -> u32 {
-    // Scalar fallback for non-x86 or when no SIMD available
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        sse4x4_scalar(a, b)
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    {
-        if let Some(token) = X64V3Token::summon() {
-            sse4x4_entry(token, a, b)
-        } else {
-            sse4x4_scalar(a, b)
-        }
-    }
-}
-
-/// Arcane entry point for sse4x4 dispatch (calls #[rite] inner)
-#[cfg(target_arch = "x86_64")]
-#[arcane]
-fn sse4x4_entry(_token: X64V3Token, a: &[u8; 16], b: &[u8; 16]) -> u32 {
-    sse4x4_sse2(_token, a, b)
-}
-
 /// Scalar SSE computation
 #[inline]
 #[allow(dead_code)]
@@ -54,7 +26,7 @@ pub fn sse4x4_scalar(a: &[u8; 16], b: &[u8; 16]) -> u32 {
 
 /// SSE2 implementation of 4x4 block SSE
 #[cfg(target_arch = "x86_64")]
-#[rite]
+#[arcane]
 #[allow(dead_code)]
 pub(crate) fn sse4x4_sse2(_token: X64V3Token, a: &[u8; 16], b: &[u8; 16]) -> u32 {
     let zero = _mm_setzero_si128();
@@ -89,26 +61,6 @@ pub(crate) fn sse4x4_sse2(_token: X64V3Token, a: &[u8; 16], b: &[u8; 16]) -> u32
     _mm_cvtsi128_si32(sum) as u32
 }
 
-/// Compute SSE between a source block and a reconstructed block (pred + residual)
-///
-/// This is used for RD scoring where we need SSE(src, pred + idct(quantized))
-#[inline]
-pub fn sse4x4_with_residual(src: &[u8; 16], pred: &[u8; 16], residual: &[i32; 16]) -> u32 {
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        sse4x4_with_residual_scalar(src, pred, residual)
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    {
-        if let Some(token) = X64V3Token::summon() {
-            sse4x4_with_residual_entry(token, src, pred, residual)
-        } else {
-            sse4x4_with_residual_scalar(src, pred, residual)
-        }
-    }
-}
-
 /// Scalar implementation of SSE with residual
 #[inline]
 #[allow(dead_code)]
@@ -122,21 +74,9 @@ pub fn sse4x4_with_residual_scalar(src: &[u8; 16], pred: &[u8; 16], residual: &[
     sum
 }
 
-/// Arcane entry point for dispatch
-#[cfg(target_arch = "x86_64")]
-#[arcane]
-fn sse4x4_with_residual_entry(
-    _token: X64V3Token,
-    src: &[u8; 16],
-    pred: &[u8; 16],
-    residual: &[i32; 16],
-) -> u32 {
-    sse4x4_with_residual_sse2(_token, src, pred, residual)
-}
-
 /// SSE2 implementation of SSE with residual
 #[cfg(target_arch = "x86_64")]
-#[rite]
+#[arcane]
 #[allow(dead_code)]
 pub(crate) fn sse4x4_with_residual_sse2(
     _token: X64V3Token,
@@ -196,33 +136,6 @@ pub(crate) fn sse4x4_with_residual_sse2(
 
 use super::prediction::{CHROMA_BLOCK_SIZE, CHROMA_STRIDE, LUMA_BLOCK_SIZE, LUMA_STRIDE};
 
-/// Compute SSE for a 16x16 luma block between source and bordered prediction buffer
-///
-/// Source is in a contiguous row-major array with `src_width` stride.
-/// Prediction is in a bordered buffer with LUMA_STRIDE stride and 1-pixel border.
-#[inline]
-pub fn sse_16x16_luma(
-    src_y: &[u8],
-    src_width: usize,
-    mbx: usize,
-    mby: usize,
-    pred: &[u8; LUMA_BLOCK_SIZE],
-) -> u32 {
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        sse_16x16_luma_scalar(src_y, src_width, mbx, mby, pred)
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    {
-        if let Some(token) = X64V3Token::summon() {
-            sse_16x16_luma_entry(token, src_y, src_width, mbx, mby, pred)
-        } else {
-            sse_16x16_luma_scalar(src_y, src_width, mbx, mby, pred)
-        }
-    }
-}
-
 /// Scalar implementation for 16x16 luma SSE
 #[inline]
 #[allow(dead_code)]
@@ -248,23 +161,9 @@ pub fn sse_16x16_luma_scalar(
     sse
 }
 
-/// Arcane entry point for dispatch
-#[cfg(target_arch = "x86_64")]
-#[arcane]
-fn sse_16x16_luma_entry(
-    _token: X64V3Token,
-    src_y: &[u8],
-    src_width: usize,
-    mbx: usize,
-    mby: usize,
-    pred: &[u8; LUMA_BLOCK_SIZE],
-) -> u32 {
-    sse_16x16_luma_sse2(_token, src_y, src_width, mbx, mby, pred)
-}
-
 /// SSE2 implementation of 16x16 luma SSE
 #[cfg(target_arch = "x86_64")]
-#[rite]
+#[arcane]
 #[allow(dead_code)]
 pub(crate) fn sse_16x16_luma_sse2(
     _token: X64V3Token,
@@ -313,30 +212,6 @@ pub(crate) fn sse_16x16_luma_sse2(
     _mm_cvtsi128_si32(sum) as u32
 }
 
-/// Compute SSE for an 8x8 chroma block between source and bordered prediction buffer
-#[inline]
-pub fn sse_8x8_chroma(
-    src_uv: &[u8],
-    src_width: usize,
-    mbx: usize,
-    mby: usize,
-    pred: &[u8; CHROMA_BLOCK_SIZE],
-) -> u32 {
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        sse_8x8_chroma_scalar(src_uv, src_width, mbx, mby, pred)
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    {
-        if let Some(token) = X64V3Token::summon() {
-            sse_8x8_chroma_entry(token, src_uv, src_width, mbx, mby, pred)
-        } else {
-            sse_8x8_chroma_scalar(src_uv, src_width, mbx, mby, pred)
-        }
-    }
-}
-
 /// Scalar implementation for 8x8 chroma SSE
 #[inline]
 #[allow(dead_code)]
@@ -362,22 +237,8 @@ pub fn sse_8x8_chroma_scalar(
     sse
 }
 
-/// SSE2 implementation of 8x8 chroma SSE
 #[cfg(target_arch = "x86_64")]
 #[arcane]
-fn sse_8x8_chroma_entry(
-    _token: X64V3Token,
-    src_uv: &[u8],
-    src_width: usize,
-    mbx: usize,
-    mby: usize,
-    pred: &[u8; CHROMA_BLOCK_SIZE],
-) -> u32 {
-    sse_8x8_chroma_sse2(_token, src_uv, src_width, mbx, mby, pred)
-}
-
-#[cfg(target_arch = "x86_64")]
-#[rite]
 #[allow(dead_code)]
 pub(crate) fn sse_8x8_chroma_sse2(
     _token: X64V3Token,
@@ -466,34 +327,8 @@ pub fn t_transform_scalar(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     sum
 }
 
-/// SIMD-accelerated TTransform using SSE2
-#[inline]
-pub fn t_transform(input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        t_transform_scalar(input, stride, w)
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    {
-        if let Some(token) = X64V3Token::summon() {
-            t_transform_entry(token, input, stride, w)
-        } else {
-            t_transform_scalar(input, stride, w)
-        }
-    }
-}
-
-/// SSE2 implementation of TTransform - Hadamard transform with weighted abs sum
-/// Horizontal pass done in SIMD, vertical pass extracted for simplicity
 #[cfg(target_arch = "x86_64")]
 #[arcane]
-fn t_transform_entry(_token: X64V3Token, input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
-    t_transform_sse2(_token, input, stride, w)
-}
-
-#[cfg(target_arch = "x86_64")]
-#[rite]
 #[allow(dead_code)]
 fn t_transform_sse2(_token: X64V3Token, input: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
     let zero = _mm_setzero_si128();
@@ -600,46 +435,10 @@ fn t_transform_sse2(_token: X64V3Token, input: &[u8], stride: usize, w: &[u16; 1
     sum
 }
 
-/// TDisto for two 4x4 blocks - computes |TTransform(a) - TTransform(b)| >> 5
-/// Uses fused SIMD implementation processing both blocks in parallel
-#[inline]
-pub fn tdisto_4x4_fused(a: &[u8], b: &[u8], stride: usize, w: &[u16; 16]) -> i32 {
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        let sum_a = t_transform_scalar(a, stride, w);
-        let sum_b = t_transform_scalar(b, stride, w);
-        (sum_b - sum_a).abs() >> 5
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    {
-        if let Some(token) = X64V3Token::summon() {
-            tdisto_4x4_fused_entry(token, a, b, stride, w)
-        } else {
-            let sum_a = t_transform_scalar(a, stride, w);
-            let sum_b = t_transform_scalar(b, stride, w);
-            (sum_b - sum_a).abs() >> 5
-        }
-    }
-}
-
-/// Arcane entry point for dispatch
-#[cfg(target_arch = "x86_64")]
-#[arcane]
-fn tdisto_4x4_fused_entry(
-    _token: X64V3Token,
-    a: &[u8],
-    b: &[u8],
-    stride: usize,
-    w: &[u16; 16],
-) -> i32 {
-    tdisto_4x4_fused_sse2(_token, a, b, stride, w)
-}
-
 /// SSE2 fused TDisto - processes both blocks in parallel like libwebp's TTransform_SSE2
 /// Based on libwebp's enc_sse2.c TTransform_SSE2 and Disto4x4_SSE2
 #[cfg(target_arch = "x86_64")]
-#[rite]
+#[arcane]
 pub(crate) fn tdisto_4x4_fused_sse2(
     _token: X64V3Token,
     a: &[u8],
@@ -780,7 +579,11 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_sse4x4_simd_matches_scalar() {
+        let Some(token) = X64V3Token::summon() else {
+            return;
+        };
         let a: [u8; 16] = [
             10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160,
         ];
@@ -789,7 +592,7 @@ mod tests {
         ];
 
         let scalar = sse4x4_scalar(&a, &b);
-        let simd = sse4x4(&a, &b);
+        let simd = sse4x4_sse2(token, &a, &b);
         assert_eq!(scalar, simd);
     }
 
@@ -802,7 +605,11 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_sse4x4_with_residual_simd_matches_scalar() {
+        let Some(token) = X64V3Token::summon() else {
+            return;
+        };
         let src: [u8; 16] = [
             100, 110, 120, 130, 90, 80, 70, 60, 50, 40, 30, 20, 10, 5, 3, 1,
         ];
@@ -812,7 +619,7 @@ mod tests {
         let residual: [i32; 16] = [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 2, 1];
 
         let scalar = sse4x4_with_residual_scalar(&src, &pred, &residual);
-        let simd = sse4x4_with_residual(&src, &pred, &residual);
+        let simd = sse4x4_with_residual_sse2(token, &src, &pred, &residual);
         assert_eq!(scalar, simd);
     }
 
@@ -842,10 +649,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_sse_16x16_luma_simd_matches_scalar() {
+        let Some(token) = X64V3Token::summon() else {
+            return;
+        };
         let src_width = 32;
         let mut src_y = vec![0u8; 32 * 32];
-        // Fill with varying values
         for y in 0..16 {
             for x in 0..16 {
                 src_y[y * src_width + x] = ((y * 16 + x) % 256) as u8;
@@ -860,7 +670,7 @@ mod tests {
         }
 
         let scalar = sse_16x16_luma_scalar(&src_y, src_width, 0, 0, &pred);
-        let simd = sse_16x16_luma(&src_y, src_width, 0, 0, &pred);
+        let simd = sse_16x16_luma_sse2(token, &src_y, src_width, 0, 0, &pred);
         assert_eq!(scalar, simd);
     }
 
@@ -887,6 +697,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_sse_8x8_chroma_simd_matches_scalar() {
         let src_width = 16;
         let mut src_uv = vec![0u8; 16 * 16];
@@ -904,7 +715,10 @@ mod tests {
         }
 
         let scalar = sse_8x8_chroma_scalar(&src_uv, src_width, 0, 0, &pred);
-        let simd = sse_8x8_chroma(&src_uv, src_width, 0, 0, &pred);
+        let Some(token) = X64V3Token::summon() else {
+            return;
+        };
+        let simd = sse_8x8_chroma_sse2(token, &src_uv, src_width, 0, 0, &pred);
         assert_eq!(scalar, simd);
     }
 
@@ -948,8 +762,11 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_t_transform_simd_matches_scalar() {
-        // Create a varied 4x4 block
+        let Some(token) = X64V3Token::summon() else {
+            return;
+        };
         let mut input = [0u8; 64];
         for y in 0..4 {
             for x in 0..4 {
@@ -957,21 +774,19 @@ mod tests {
             }
         }
 
-        // Varied weights
         let weights: [u16; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 
         let scalar = t_transform_scalar(&input, 16, &weights);
-        let simd = t_transform(&input, 16, &weights);
-        assert_eq!(
-            scalar, simd,
-            "SIMD t_transform should match scalar: scalar={}, simd={}",
-            scalar, simd
-        );
+        let simd = t_transform_sse2(token, &input, 16, &weights);
+        assert_eq!(scalar, simd);
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_t_transform_simd_matches_scalar_varied() {
-        // Test with different strides and values
+        let Some(token) = X64V3Token::summon() else {
+            return;
+        };
         for stride in [4, 8, 16, 32] {
             let mut input = vec![0u8; 4 * stride];
             for y in 0..4 {
@@ -983,19 +798,17 @@ mod tests {
             let weights: [u16; 16] = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 5, 4, 3, 2, 1, 1];
 
             let scalar = t_transform_scalar(&input, stride, &weights);
-            let simd = t_transform(&input, stride, &weights);
-            assert_eq!(
-                scalar, simd,
-                "Mismatch at stride {}: scalar={}, simd={}",
-                stride, scalar, simd
-            );
+            let simd = t_transform_sse2(token, &input, stride, &weights);
+            assert_eq!(scalar, simd, "Mismatch at stride {stride}");
         }
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_tdisto_4x4_fused_matches_scalar() {
-        // Use symmetric weights like VP8_WEIGHT_Y (required for vertical-first approach)
-        // Non-symmetric weights would give different results since we do vertical-first
+        let Some(token) = X64V3Token::summon() else {
+            return;
+        };
         #[rustfmt::skip]
         let weights: [u16; 16] = [
             38, 32, 20,  9,
@@ -1004,7 +817,6 @@ mod tests {
              9,  7,  4,  2,
         ];
 
-        // Test with different strides and values
         for stride in [4, 8, 16, 32] {
             let mut a = vec![0u8; 4 * stride];
             let mut b = vec![0u8; 4 * stride];
@@ -1015,24 +827,16 @@ mod tests {
                 }
             }
 
-            // Compute with two separate t_transforms (scalar reference)
             let sum_a = t_transform_scalar(&a, stride, &weights);
             let sum_b = t_transform_scalar(&b, stride, &weights);
             let scalar_result = (sum_b - sum_a).abs() >> 5;
 
-            // Compute with fused function
-            let fused_result = tdisto_4x4_fused(&a, &b, stride, &weights);
-
-            assert_eq!(
-                scalar_result, fused_result,
-                "Mismatch at stride {}: scalar={}, fused={}",
-                stride, scalar_result, fused_result
-            );
+            let fused_result = tdisto_4x4_fused_sse2(token, &a, &b, stride, &weights);
+            assert_eq!(scalar_result, fused_result, "Mismatch at stride {stride}");
         }
 
-        // Test identical blocks (should be 0)
         let same: [u8; 16] = [128; 16];
-        let result = tdisto_4x4_fused(&same, &same, 4, &weights);
+        let result = tdisto_4x4_fused_sse2(token, &same, &same, 4, &weights);
         assert_eq!(result, 0, "Identical blocks should have 0 distortion");
     }
 }

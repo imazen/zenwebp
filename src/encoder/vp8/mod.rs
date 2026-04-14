@@ -30,6 +30,7 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
+use archmage::prelude::*;
 use core::mem;
 
 #[allow(unused_imports)]
@@ -174,7 +175,6 @@ pub(super) fn sse_16x16_luma(
     mby: usize,
     pred: &[u8; LUMA_BLOCK_SIZE],
 ) -> u32 {
-    use archmage::prelude::*;
     incant!(
         sse_16x16_luma_dispatch(src_y, src_width, mbx, mby, pred),
         [v3, neon, wasm128, scalar]
@@ -182,22 +182,22 @@ pub(super) fn sse_16x16_luma(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[inline(always)]
+#[arcane]
 fn sse_16x16_luma_dispatch_v3(
-    _token: archmage::X64V3Token,
+    _token: X64V3Token,
     src_y: &[u8],
     src_width: usize,
     mbx: usize,
     mby: usize,
     pred: &[u8; LUMA_BLOCK_SIZE],
 ) -> u32 {
-    crate::common::simd_sse::sse_16x16_luma(src_y, src_width, mbx, mby, pred)
+    crate::common::simd_sse::sse_16x16_luma_sse2(_token, src_y, src_width, mbx, mby, pred)
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 fn sse_16x16_luma_dispatch_neon(
-    token: archmage::NeonToken,
+    token: NeonToken,
     src_y: &[u8],
     src_width: usize,
     mbx: usize,
@@ -210,7 +210,7 @@ fn sse_16x16_luma_dispatch_neon(
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 fn sse_16x16_luma_dispatch_wasm128(
-    token: archmage::Wasm128Token,
+    token: Wasm128Token,
     src_y: &[u8],
     src_width: usize,
     mbx: usize,
@@ -222,7 +222,7 @@ fn sse_16x16_luma_dispatch_wasm128(
 
 #[inline(always)]
 fn sse_16x16_luma_dispatch_scalar(
-    _token: archmage::ScalarToken,
+    _token: ScalarToken,
     src_y: &[u8],
     src_width: usize,
     mbx: usize,
@@ -251,7 +251,6 @@ pub(super) fn sse_8x8_chroma(
     mby: usize,
     pred: &[u8; CHROMA_BLOCK_SIZE],
 ) -> u32 {
-    use archmage::prelude::*;
     incant!(
         sse_8x8_chroma_dispatch(src_uv, src_width, mbx, mby, pred),
         [v3, neon, wasm128, scalar]
@@ -259,22 +258,22 @@ pub(super) fn sse_8x8_chroma(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[inline(always)]
+#[arcane]
 fn sse_8x8_chroma_dispatch_v3(
-    _token: archmage::X64V3Token,
+    _token: X64V3Token,
     src_uv: &[u8],
     src_width: usize,
     mbx: usize,
     mby: usize,
     pred: &[u8; CHROMA_BLOCK_SIZE],
 ) -> u32 {
-    crate::common::simd_sse::sse_8x8_chroma(src_uv, src_width, mbx, mby, pred)
+    crate::common::simd_sse::sse_8x8_chroma_sse2(_token, src_uv, src_width, mbx, mby, pred)
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 fn sse_8x8_chroma_dispatch_neon(
-    token: archmage::NeonToken,
+    token: NeonToken,
     src_uv: &[u8],
     src_width: usize,
     mbx: usize,
@@ -287,7 +286,7 @@ fn sse_8x8_chroma_dispatch_neon(
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 fn sse_8x8_chroma_dispatch_wasm128(
-    token: archmage::Wasm128Token,
+    token: Wasm128Token,
     src_uv: &[u8],
     src_width: usize,
     mbx: usize,
@@ -299,7 +298,7 @@ fn sse_8x8_chroma_dispatch_wasm128(
 
 #[inline(always)]
 fn sse_8x8_chroma_dispatch_scalar(
-    _token: archmage::ScalarToken,
+    _token: ScalarToken,
     src_uv: &[u8],
     src_width: usize,
     mbx: usize,
