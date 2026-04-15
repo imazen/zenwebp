@@ -130,7 +130,10 @@ fn assert_probe_matches_decode(
         probe_is_lossless, expect_lossless,
         "probe lossy/lossless mismatch"
     );
-    assert_eq!(info.is_lossy, !expect_lossless, "ImageInfo is_lossy mismatch");
+    assert_eq!(
+        info.is_lossy, !expect_lossless,
+        "ImageInfo is_lossy mismatch"
+    );
 
     // --- ICC profile ---
     assert_eq!(

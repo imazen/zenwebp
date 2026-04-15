@@ -24,7 +24,11 @@ fn deterministic_rgb(w: u32, h: u32, seed0: u64) -> Vec<u8> {
 #[test]
 fn chroma_simd_matches_scalar_exact() {
     // Use an mb-aligned size to exercise the bulk SIMD path heavily.
-    for (w, h, seed) in [(64u32, 48u32, 0xcafe), (160, 120, 0xbeef), (400, 300, 0xf00d)] {
+    for (w, h, seed) in [
+        (64u32, 48u32, 0xcafe),
+        (160, 120, 0xbeef),
+        (400, 300, 0xf00d),
+    ] {
         let rgb = deterministic_rgb(w, h, seed);
 
         let (_, u_scalar, v_scalar) =

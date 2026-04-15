@@ -668,7 +668,14 @@ pub(crate) fn convert_image_sharp_yuv(
             _ => {}
         }
 
-        zenyuv_encode_planes(image_data, color, width, height, stride, YuvEncodeMode::Sharp)
+        zenyuv_encode_planes(
+            image_data,
+            color,
+            width,
+            height,
+            stride,
+            YuvEncodeMode::Sharp,
+        )
     }
 
     #[cfg(not(feature = "fast-yuv"))]
@@ -739,8 +746,15 @@ fn to_tight_rgb<'a>(
             }
         }
         PixelLayout::Bgr8 => {
-            garb::bytes::bgr_to_rgb_strided(src, &mut rgb, w, h, src_stride_bytes, tight_rgb_stride)
-                .expect("validated sizes");
+            garb::bytes::bgr_to_rgb_strided(
+                src,
+                &mut rgb,
+                w,
+                h,
+                src_stride_bytes,
+                tight_rgb_stride,
+            )
+            .expect("validated sizes");
         }
         PixelLayout::Rgba8 => {
             garb::bytes::rgba_to_rgb_strided(
@@ -893,7 +907,13 @@ fn zenyuv_encode_planes(
                 let mut u_tight = alloc::vec![0u8; src_chroma_width * src_chroma_height];
                 let mut v_tight = alloc::vec![0u8; src_chroma_width * src_chroma_height];
                 ctx.encode_sharp_420_u8(
-                    rgb, &mut y_tight, &mut u_tight, &mut v_tight, w, h, &config,
+                    rgb,
+                    &mut y_tight,
+                    &mut u_tight,
+                    &mut v_tight,
+                    w,
+                    h,
+                    &config,
                 );
                 pad_plane(&y_tight, &mut y_bytes, w, h, luma_width, luma_height);
                 pad_plane(

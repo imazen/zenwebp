@@ -1,16 +1,18 @@
 use std::fs;
-use zencodec::encode::{AnimationFrameEncoder, DynEncoderConfig, DynEncodeJob};
+use zencodec::encode::{AnimationFrameEncoder, DynEncodeJob, DynEncoderConfig};
 use zenpixels::{PixelDescriptor, PixelSlice};
 
 fn dump_chunks(label: &str, d: &[u8]) {
     println!("--- {label} ({} bytes) ---", d.len());
     let mut i = 12usize;
     while i + 8 <= d.len() {
-        let cid = std::str::from_utf8(&d[i..i+4]).unwrap_or("???");
-        let sz = u32::from_le_bytes([d[i+4], d[i+5], d[i+6], d[i+7]]);
+        let cid = std::str::from_utf8(&d[i..i + 4]).unwrap_or("???");
+        let sz = u32::from_le_bytes([d[i + 4], d[i + 5], d[i + 6], d[i + 7]]);
         println!("  Chunk {cid:?} @ {i}, size={sz}");
         i += 8 + sz as usize;
-        if sz % 2 == 1 { i += 1; }
+        if sz % 2 == 1 {
+            i += 1;
+        }
     }
 }
 

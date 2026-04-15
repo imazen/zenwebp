@@ -48,11 +48,7 @@ fn histogram_per_channel(zen: &[u8], lib: &[u8]) {
             .filter(|(_, v)| *v > 0)
             .collect();
         bins.sort_by(|a, b| b.0.cmp(&a.0));
-        eprintln!(
-            "  {}: {:?}",
-            name,
-            bins.iter().take(16).collect::<Vec<_>>()
-        );
+        eprintln!("  {}: {:?}", name, bins.iter().take(16).collect::<Vec<_>>());
     }
     eprintln!("=== per-pixel-class max delta [R, G, B, A] ===");
     for (class, (count, maxd)) in &per_class {
@@ -156,8 +152,7 @@ fn zenwebp_bgra_dyn_dispatch_matches_libwebp_on_rose() {
         PixelDescriptor::GRAY8_SRGB,
     ];
 
-    let config: Box<dyn DynDecoderConfig> =
-        Box::new(zenwebp::zencodec::WebpDecoderConfig::new());
+    let config: Box<dyn DynDecoderConfig> = Box::new(zenwebp::zencodec::WebpDecoderConfig::new());
     let job = config.dyn_job();
     let decoder = job
         .into_decoder(std::borrow::Cow::Borrowed(&data), &preferred)

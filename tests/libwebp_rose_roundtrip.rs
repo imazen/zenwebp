@@ -16,7 +16,10 @@ fn libwebp_rose_lossless_bitexact_on_visible_pixels() {
 
     // Decode with libwebp too (the "c-only" baseline path).
     let (lib_pixels, lw, lh) = webpx::decode_rgba(&webp_bytes).expect("libwebp decode");
-    eprintln!("libwebp decode produced {} bytes ({lw}x{lh})", lib_pixels.len());
+    eprintln!(
+        "libwebp decode produced {} bytes ({lw}x{lh})",
+        lib_pixels.len()
+    );
     assert_eq!(lw, w);
     assert_eq!(lh, h);
 
@@ -42,5 +45,8 @@ fn libwebp_rose_lossless_bitexact_on_visible_pixels() {
         max_d[0], max_d[1], max_d[2], max_d[3]
     );
     // Expect 0 — libwebp lossless preserves visible pixels exactly too.
-    assert_eq!(mismatch, 0, "libwebp corrupts visible pixels?! maxΔ={max_d:?}");
+    assert_eq!(
+        mismatch, 0,
+        "libwebp corrupts visible pixels?! maxΔ={max_d:?}"
+    );
 }

@@ -24,7 +24,10 @@ fn reencode_rose_lossless_bgra_dispatch() {
     // portion. Pixel (200, 60) is in the petal region.
     let probe_ix = (60 * w as usize + 200) * 4;
     let probe = &rgba[probe_ix..probe_ix + 4];
-    eprintln!("RGBA[200,60] after decode: R={} G={} B={} A={}", probe[0], probe[1], probe[2], probe[3]);
+    eprintln!(
+        "RGBA[200,60] after decode: R={} G={} B={} A={}",
+        probe[0], probe[1], probe[2], probe[3]
+    );
 
     // Convert to BGRA in-place (the way imageflow's bitmaps store pixels).
     let mut bgra = rgba.clone();
@@ -132,5 +135,8 @@ fn reencode_rose_lossless_rgba_direct() {
             mismatch += 1;
         }
     }
-    assert_eq!(mismatch, 0, "RGBA direct rose roundtrip drifted ({mismatch} pixels)");
+    assert_eq!(
+        mismatch, 0,
+        "RGBA direct rose roundtrip drifted ({mismatch} pixels)"
+    );
 }
