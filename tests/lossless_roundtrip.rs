@@ -582,8 +582,14 @@ fn highlevel_lossless_noise() {
 // --- RGBA with semi-transparent pixels (issue #12) ---
 
 fn assert_rgba_lossless_roundtrip(rgba: &[u8], w: u32, h: u32, config: &Vp8lConfig) {
+    // Opt into exact=true: input has pixels with alpha=0, whose RGB the
+    // default (libwebp-compatible) encoder would zero.
+    let cfg = Vp8lConfig {
+        exact: true,
+        ..config.clone()
+    };
     let vp8l =
-        encode_vp8l(rgba, w, h, true, config, &enough::Unstoppable).expect("VP8L encoding failed");
+        encode_vp8l(rgba, w, h, true, &cfg, &enough::Unstoppable).expect("VP8L encoding failed");
     let webp = wrap_vp8l_in_riff(&vp8l);
     let (decoded, dw, dh) = zenwebp::oneshot::decode_rgba(&webp).expect("decode failed");
     assert_eq!(dw, w);
@@ -599,8 +605,9 @@ fn assert_rgba_lossless_roundtrip(rgba: &[u8], w: u32, h: u32, config: &Vp8lConf
 }
 
 fn assert_rgba_highlevel_roundtrip(rgba: &[u8], w: u32, h: u32) {
-    let cfg = zenwebp::EncoderConfig::new_lossless();
-    let webp = zenwebp::EncodeRequest::new(&cfg, rgba, zenwebp::PixelLayout::Rgba8, w, h)
+    // Opt into exact=true for the preservation-semantics test.
+    let cfg = zenwebp::LosslessConfig::new().with_exact(true);
+    let webp = zenwebp::EncodeRequest::lossless(&cfg, rgba, zenwebp::PixelLayout::Rgba8, w, h)
         .encode()
         .expect("high-level RGBA encode failed");
     let (decoded, dw, dh) = zenwebp::oneshot::decode_rgba(&webp).expect("decode failed");

@@ -10,12 +10,14 @@
 
 #![cfg(all(feature = "std", not(target_arch = "wasm32")))]
 
-use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
+use zenwebp::{EncodeRequest, PixelLayout};
 
-/// Encode → decode through zenwebp's lossless path.
+/// Encode → decode through zenwebp's lossless path with `exact=true`
+/// (preserve RGB under alpha=0). The default `exact=false` matches libwebp's
+/// cleanup behavior — we test the preservation contract here.
 fn zen_roundtrip(rgba: &[u8], w: u32, h: u32) -> Vec<u8> {
-    let cfg = EncoderConfig::new_lossless();
-    let webp = EncodeRequest::new(&cfg, rgba, PixelLayout::Rgba8, w, h)
+    let cfg = zenwebp::LosslessConfig::new().with_exact(true);
+    let webp = EncodeRequest::lossless(&cfg, rgba, PixelLayout::Rgba8, w, h)
         .encode()
         .expect("zen encode");
     let (out, dw, dh) = zenwebp::oneshot::decode_rgba(&webp).expect("zen decode");
@@ -125,6 +127,37 @@ fn rgba_alpha_fringe_64x64() {
 fn rgba_alpha_fringe_odd_dims() {
     let rgba = deterministic_alpha_fringe(73, 47, 0xf00d);
     assert_exact_lossless("alpha_fringe_73x47", &rgba, 73, 47);
+}
+
+#[test]
+fn default_lossless_zeroes_rgb_under_alpha_zero() {
+    // Default config (exact=false) should match libwebp's cleanup semantics:
+    // pixels with alpha=0 have their RGB zeroed. Verify: after encode+decode
+    // through zenwebp's default lossless, RGB=0 wherever the source had alpha=0.
+    let rgba = deterministic_alpha_fringe(64, 64, 0x999);
+    let cfg = zenwebp::LosslessConfig::new(); // default: exact=false
+    let webp = EncodeRequest::lossless(&cfg, &rgba, PixelLayout::Rgba8, 64, 64)
+        .encode()
+        .unwrap();
+    let (out, _, _) = zenwebp::oneshot::decode_rgba(&webp).unwrap();
+    for i in 0..(64 * 64) {
+        let src_a = rgba[i * 4 + 3];
+        let dec = &out[i * 4..i * 4 + 4];
+        if src_a == 0 {
+            assert_eq!(
+                &dec[..3],
+                &[0, 0, 0],
+                "pixel {i}: alpha=0 source should have RGB zeroed, got {dec:?}"
+            );
+        } else {
+            // Visible pixels must be byte-exact (lossless preserves visible data).
+            assert_eq!(
+                dec,
+                &rgba[i * 4..i * 4 + 4],
+                "pixel {i}: visible pixel drifted"
+            );
+        }
+    }
 }
 
 #[test]

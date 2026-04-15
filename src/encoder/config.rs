@@ -736,6 +736,7 @@ impl LossyConfig {
             use_sharp_yuv: self.sharp_yuv,
             alpha_quality: self.alpha_quality,
             partition_limit: self.partition_limit,
+            exact: false, // Not applicable to lossy (alpha plane is lossless separately)
         }
     }
 }
@@ -757,6 +758,7 @@ impl LosslessConfig {
             use_sharp_yuv: false,
             alpha_quality: self.alpha_quality,
             partition_limit: None, // Not applicable to lossless
+            exact: self.exact,
         }
     }
 }

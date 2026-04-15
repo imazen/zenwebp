@@ -540,6 +540,9 @@ pub struct EncoderParams {
     /// Partition limit (0-100). Penalizes I4 mode to prevent partition 0 overflow.
     /// None = automatic retry on overflow.
     pub(crate) partition_limit: Option<u8>,
+    /// Preserve RGB under fully-transparent pixels (alpha=0) in lossless mode.
+    /// `false` (default) matches libwebp: zero RGB for better compression.
+    pub(crate) exact: bool,
 }
 
 impl Default for EncoderParams {
@@ -559,6 +562,7 @@ impl Default for EncoderParams {
             use_sharp_yuv: false,
             alpha_quality: 100,
             partition_limit: None,
+            exact: false,
         }
     }
 }
@@ -895,6 +899,7 @@ impl EncoderConfig {
             use_sharp_yuv: self.sharp_yuv,
             alpha_quality: self.alpha_quality,
             partition_limit: self.partition_limit,
+            exact: self.exact,
         }
     }
 
@@ -1420,6 +1425,7 @@ pub(crate) fn encode_frame_lossless(
         let method = params.method;
         let vp8l_config = super::vp8l::Vp8lConfig {
             quality: super::vp8l::Vp8lQuality { quality, method },
+            exact: params.exact,
             ..super::vp8l::Vp8lConfig::default()
         };
 
@@ -2213,7 +2219,15 @@ mod tests {
         rand::rng().fill_bytes(&mut img);
 
         let mut output = Vec::new();
-        WebPEncoder::new(&mut output)
+        let mut encoder = WebPEncoder::new(&mut output);
+        // Random bytes include pixels with alpha=0; the default `exact=false`
+        // would zero their RGB and fail byte-exact roundtrip. Opt into
+        // exact preservation for this test.
+        encoder.set_params(EncoderParams {
+            exact: true,
+            ..EncoderParams::default()
+        });
+        encoder
             .encode(&img, 256, 256, 256, crate::PixelLayout::Rgba8)
             .unwrap();
 
@@ -2250,9 +2264,15 @@ mod tests {
 
     #[test]
     fn roundtrip_libwebp() {
-        roundtrip_libwebp_params(EncoderParams::default());
+        // Opt into exact=true: random RGBA input includes pixels with alpha=0,
+        // whose RGB the default (libwebp-compatible) lossless path would zero.
+        roundtrip_libwebp_params(EncoderParams {
+            exact: true,
+            ..EncoderParams::default()
+        });
         roundtrip_libwebp_params(EncoderParams {
             use_predictor_transform: false,
+            exact: true,
             ..Default::default()
         });
     }

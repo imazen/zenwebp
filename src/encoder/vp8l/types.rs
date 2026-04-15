@@ -92,6 +92,15 @@ pub struct Vp8lConfig {
     pub predictor_bits: u8,
     /// Cross-color transform block size bits (0 = auto-detect from method, 2-8 = explicit).
     pub cross_color_bits: u8,
+    /// Preserve RGB values under fully transparent pixels (alpha=0).
+    ///
+    /// - `false` (default, matches libwebp): zero RGB where alpha=0 for better
+    ///   compression. Pixels with alpha=0 are invisible, so their RGB is
+    ///   typically a don't-care.
+    /// - `true`: preserve original RGB under alpha=0 byte-exact. Needed for
+    ///   alpha-compositing workflows that still rely on the underlying RGB
+    ///   after transparency is removed/re-combined.
+    pub exact: bool,
 }
 
 impl Default for Vp8lConfig {
@@ -107,6 +116,7 @@ impl Default for Vp8lConfig {
             use_meta_huffman: true, // Enable meta-Huffman for spatially-varying codes
             predictor_bits: 0,      // Auto-detect from method (matching libwebp)
             cross_color_bits: 0,    // Auto-detect from method (matching libwebp)
+            exact: false,           // Match libwebp: drop RGB under alpha=0 by default
         }
     }
 }

@@ -86,8 +86,27 @@ pub fn encode_vp8l(
     // Note: BGR/BGRA callers must swap R↔B before calling encode_vp8l.
     // The encoder API handles this in the pixel expansion step.
 
+    // Match libwebp: zero RGB under fully-transparent pixels (alpha=0) for
+    // better compression. Caller opts out via `config.exact = true`.
+    if has_alpha && !config.exact {
+        cleanup_transparent_argb(&mut argb);
+    }
+
     // Encode with the full pipeline
     Ok(encode_argb(&mut argb, w, h, has_alpha, config, stop)?)
+}
+
+/// Mask off RGB bits of any pixel whose alpha byte is 0. The u32 ARGB layout
+/// has alpha in the high byte (little-endian: [B,G,R,A] in memory). Pixels
+/// with alpha=0 become `0x00_00_00_00`, freeing the encoder to represent
+/// them with a single palette/cache entry.
+#[inline]
+fn cleanup_transparent_argb(argb: &mut [u32]) {
+    for px in argb.iter_mut() {
+        if (*px >> 24) == 0 {
+            *px = 0;
+        }
+    }
 }
 
 /// Result of entropy analysis for transform selection.
