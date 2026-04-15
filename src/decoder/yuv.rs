@@ -355,7 +355,8 @@ fn gamma_avg_2(a: u8, b: u8) -> u8 {
 
 /// converts the whole image to yuv data and adds values on the end to make it match the macroblock sizes
 /// downscales the u/v data as well so it's half the width and height of the y data
-#[cfg_attr(feature = "fast-yuv", allow(dead_code))] // zenyuv path replaces this
+// zenyuv path replaces this in production; kept for test_helpers parity testing.
+#[allow(dead_code)]
 pub(crate) fn convert_image_yuv<const BPP: usize>(
     image_data: &[u8],
     width: u16,
@@ -636,9 +637,6 @@ fn gamma_downsample_uv_2(p1: &[u8], p2: &[u8]) -> (u8, u8) {
 ///
 /// This produces higher-quality chroma planes at the cost of being slower.
 /// Uses the `yuv` crate's sharp YUV implementation with BT.601 matrix and sRGB gamma.
-///
-/// Falls back to standard conversion when the `fast-yuv` feature is not enabled.
-#[cfg_attr(not(feature = "fast-yuv"), allow(unused_variables))]
 pub(crate) fn convert_image_sharp_yuv(
     image_data: &[u8],
     color: crate::encoder::PixelLayout,
@@ -650,60 +648,38 @@ pub(crate) fn convert_image_sharp_yuv(
     alloc::vec::Vec<u8>,
     alloc::vec::Vec<u8>,
 ) {
-    #[cfg(feature = "fast-yuv")]
-    {
-        use crate::encoder::PixelLayout;
+    use crate::encoder::PixelLayout;
 
-        // Sharp YUV only applies to RGB/RGBA/BGR/BGRA inputs (chroma subsampling matters).
-        // For grayscale, fall back to standard conversion.
-        match color {
-            PixelLayout::L8 => return convert_image_y::<1>(image_data, width, height, stride),
-            PixelLayout::La8 => return convert_image_y::<2>(image_data, width, height, stride),
-            PixelLayout::Yuv420 => {
-                unreachable!("sharp YUV should not be called with Yuv420 input");
-            }
-            PixelLayout::Argb8 => {
-                unreachable!("sharp YUV should not be called with Argb8 input");
-            }
-            _ => {}
+    // Sharp YUV only applies to RGB/RGBA/BGR/BGRA inputs (chroma subsampling matters).
+    // For grayscale, fall back to standard conversion.
+    match color {
+        PixelLayout::L8 => return convert_image_y::<1>(image_data, width, height, stride),
+        PixelLayout::La8 => return convert_image_y::<2>(image_data, width, height, stride),
+        PixelLayout::Yuv420 => {
+            unreachable!("sharp YUV should not be called with Yuv420 input");
         }
-
-        zenyuv_encode_planes(
-            image_data,
-            color,
-            width,
-            height,
-            stride,
-            YuvEncodeMode::Sharp,
-        )
+        PixelLayout::Argb8 => {
+            unreachable!("sharp YUV should not be called with Argb8 input");
+        }
+        _ => {}
     }
 
-    #[cfg(not(feature = "fast-yuv"))]
-    {
-        // Fall back to standard conversion without the fast-yuv feature
-        use crate::encoder::PixelLayout;
-        match color {
-            PixelLayout::Rgb8 => convert_image_yuv::<3>(image_data, width, height, stride),
-            PixelLayout::Rgba8 => convert_image_yuv::<4>(image_data, width, height, stride),
-            PixelLayout::Bgr8 => convert_image_yuv_bgr::<3>(image_data, width, height, stride),
-            PixelLayout::Bgra8 => convert_image_yuv_bgr::<4>(image_data, width, height, stride),
-            PixelLayout::L8 => convert_image_y::<1>(image_data, width, height, stride),
-            PixelLayout::La8 => convert_image_y::<2>(image_data, width, height, stride),
-            PixelLayout::Yuv420 | PixelLayout::Argb8 => {
-                unreachable!("sharp YUV should not be called with Yuv420 or Argb8 input")
-            }
-        }
-    }
+    zenyuv_encode_planes(
+        image_data,
+        color,
+        width,
+        height,
+        stride,
+        YuvEncodeMode::Sharp,
+    )
 }
 
 /// Fast non-sharp RGB/RGBA/BGR/BGRA → YUV420 conversion using zenyuv for Y
 /// (SIMD) and scalar gamma-corrected chroma downsampling for U/V.
 ///
-/// Only available with the `fast-yuv` feature. The Y plane is computed by
-/// zenyuv's SIMD kernel (AVX2/NEON/WASM SIMD128), which is ~2-3x faster than
-/// the pure scalar path. U/V use zenwebp's existing gamma-corrected formula
-/// to match libwebp's default chroma quality.
-#[cfg(feature = "fast-yuv")]
+/// The Y plane is computed by zenyuv's SIMD kernel (AVX2/NEON/WASM SIMD128),
+/// which is ~2-3x faster than the pure scalar path. U/V use zenwebp's existing
+/// gamma-corrected formula to match libwebp's default chroma quality.
 pub(crate) fn convert_image_yuv_fast(
     image_data: &[u8],
     color: crate::encoder::PixelLayout,
@@ -719,7 +695,6 @@ pub(crate) fn convert_image_yuv_fast(
 ///
 /// If the source is already tightly-packed Rgb8 (stride == width), returns a
 /// borrowed view and avoids the copy.
-#[cfg(feature = "fast-yuv")]
 fn to_tight_rgb<'a>(
     src: &'a [u8],
     color: crate::encoder::PixelLayout,
@@ -785,7 +760,6 @@ fn to_tight_rgb<'a>(
 
 /// Copy a tight `src_w x src_h` plane into a `dst_w x dst_h` buffer with edge replication
 /// on the right and bottom borders.
-#[cfg(feature = "fast-yuv")]
 fn pad_plane(src: &[u8], dst: &mut [u8], src_w: usize, src_h: usize, dst_w: usize, dst_h: usize) {
     for y in 0..src_h {
         let sr = &src[y * src_w..(y + 1) * src_w];
@@ -810,7 +784,6 @@ fn pad_plane(src: &[u8], dst: &mut [u8], src_w: usize, src_h: usize, dst_w: usiz
 
 /// Replicate rows [src_h..dst_h) by copying the last written row. Used when an
 /// image already has mb-aligned width but height < mb-aligned height.
-#[cfg(feature = "fast-yuv")]
 fn pad_plane_vertical(dst: &mut [u8], row_w: usize, src_h: usize, dst_h: usize) {
     if dst_h <= src_h {
         return;
@@ -822,7 +795,6 @@ fn pad_plane_vertical(dst: &mut [u8], row_w: usize, src_h: usize, dst_h: usize) 
     }
 }
 
-#[cfg(feature = "fast-yuv")]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum YuvEncodeMode {
     /// Non-sharp: zenyuv for Y (SIMD), gamma-corrected scalar for chroma.
@@ -841,7 +813,6 @@ enum YuvEncodeMode {
 ///   vertical padding needs a copy.
 /// - For [`YuvEncodeMode::Box`], overwrites zenyuv's linear-averaged chroma with
 ///   our gamma-corrected scalar computation for libwebp-parity perceptual quality.
-#[cfg(feature = "fast-yuv")]
 fn zenyuv_encode_planes(
     image_data: &[u8],
     color: crate::encoder::PixelLayout,
@@ -968,7 +939,7 @@ fn zenyuv_encode_planes(
 /// Build the dense 4096-entry inverse-gamma LUT. Computed lazily via `OnceLock`
 /// from the existing 33-entry interpolated formula; eliminates per-pixel
 /// interpolation arithmetic in the gamma-corrected chroma path.
-#[cfg(all(feature = "fast-yuv", feature = "std"))]
+#[cfg(feature = "std")]
 fn linear_to_gamma_dense() -> &'static [u8; 4096] {
     use std::sync::OnceLock;
     static LUT: OnceLock<alloc::boxed::Box<[u8; 4096]>> = OnceLock::new();
@@ -989,7 +960,7 @@ fn linear_to_gamma_dense() -> &'static [u8; 4096] {
 /// slower than zenyuv's maddubs-based Y kernel, so we keep them split.
 /// `#[magetypes]` generates `_v3`/`_neon`/`_wasm128`/`_scalar` variants;
 /// `incant!` at the call site dispatches to the best available.
-#[cfg(all(feature = "fast-yuv", feature = "std"))]
+#[cfg(feature = "std")]
 #[magetypes(v3, neon, wasm128, scalar)]
 #[inline(always)]
 fn gamma_chroma_rows_generic(
@@ -1129,7 +1100,6 @@ fn gamma_chroma_rows_generic(
 /// iteration but skips Y writes via a stride of 0 (its Y output is discarded
 /// below — cache-only, no effect on correctness since zenyuv already wrote
 /// the correct Y). Scalar fallback handles tail cols and odd rows.
-#[cfg(feature = "fast-yuv")]
 fn gamma_chroma_overwrite(
     rgb: &[u8],
     w: usize,
@@ -1148,7 +1118,7 @@ fn gamma_chroma_overwrite(
 
     let px = |x: usize, y: usize| -> &[u8] { &rgb[(y * w + x) * 3..(y * w + x) * 3 + 3] };
 
-    #[cfg(all(feature = "fast-yuv", feature = "std"))]
+    #[cfg(feature = "std")]
     let simd_col_pairs = {
         use archmage::incant;
         let bulk_col_pairs = col_pairs & !7;
@@ -1170,7 +1140,7 @@ fn gamma_chroma_overwrite(
         }
         bulk_col_pairs
     };
-    #[cfg(not(all(feature = "fast-yuv", feature = "std")))]
+    #[cfg(not(feature = "std"))]
     let simd_col_pairs = 0usize;
 
     // Scalar tail for UV only — Y is already correct from zenyuv.
@@ -1229,7 +1199,8 @@ fn gamma_chroma_overwrite(
 ///
 /// Same as `convert_image_yuv` but reads pixels as B,G,R(,A) instead of R,G,B(,A).
 /// BPP=3 for BGR, BPP=4 for BGRA.
-#[cfg_attr(feature = "fast-yuv", allow(dead_code))] // zenyuv path replaces this
+// zenyuv path replaces this in production; kept for symmetry with convert_image_yuv.
+#[allow(dead_code)]
 pub(crate) fn convert_image_yuv_bgr<const BPP: usize>(
     image_data: &[u8],
     width: u16,

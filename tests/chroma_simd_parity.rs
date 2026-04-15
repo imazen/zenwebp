@@ -6,8 +6,6 @@
 //! path produces **identical** u8 values to the scalar gamma-corrected path
 //! for the same RGB input.
 
-#![cfg(feature = "fast-yuv")]
-
 use zenwebp::test_helpers;
 
 fn deterministic_rgb(w: u32, h: u32, seed0: u64) -> Vec<u8> {

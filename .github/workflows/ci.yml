@@ -112,7 +112,7 @@ jobs:
       - name: avx512
         run: cargo check --features avx512
       - name: All public features
-        run: cargo test --features "std,fast-yuv,pixel-types,imgref,avx512,zencodec"
+        run: cargo test --features "std,pixel-types,imgref,avx512,zencodec"
 
   clippy:
     name: Clippy

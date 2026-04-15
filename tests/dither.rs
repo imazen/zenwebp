@@ -11,27 +11,23 @@ use zenwebp::{DecodeConfig, DecodeRequest, EncodeRequest, LossyConfig, PixelLayo
 
 /// Compare two pixel buffers with tolerance.
 ///
-/// With `fast-yuv`, the `yuv` crate uses true bilinear chroma upsampling and
-/// different coefficient precision than libwebp's "fancy" upsample, so exact
-/// match is not possible. We check mean absolute error instead.
+/// The yuv crate uses true bilinear chroma upsampling and different coefficient
+/// precision than libwebp's "fancy" upsample, so exact match is not possible.
+/// We check mean absolute error instead.
 fn assert_pixels_similar(zen: &[u8], lib: &[u8], context: &str) {
     assert_eq!(zen.len(), lib.len(), "{context}: buffer length mismatch");
-    if cfg!(feature = "fast-yuv") {
-        let (total_diff, max_diff) =
-            zen.iter()
-                .zip(lib.iter())
-                .fold((0u64, 0u8), |(sum, max_d), (a, b)| {
-                    let d = a.abs_diff(*b);
-                    (sum + d as u64, max_d.max(d))
-                });
-        let mean_diff = total_diff as f64 / zen.len() as f64;
-        assert!(
-            mean_diff < 10.0,
-            "{context}: mean channel diff {mean_diff:.3} vs libwebp too high (max {max_diff})",
-        );
-    } else {
-        assert_eq!(zen, lib, "{context}: pixel mismatch");
-    }
+    let (total_diff, max_diff) =
+        zen.iter()
+            .zip(lib.iter())
+            .fold((0u64, 0u8), |(sum, max_d), (a, b)| {
+                let d = a.abs_diff(*b);
+                (sum + d as u64, max_d.max(d))
+            });
+    let mean_diff = total_diff as f64 / zen.len() as f64;
+    assert!(
+        mean_diff < 10.0,
+        "{context}: mean channel diff {mean_diff:.3} vs libwebp too high (max {max_diff})",
+    );
 }
 
 /// Decode with libwebp's advanced API, optionally with dithering.
@@ -285,15 +281,14 @@ fn undithered_matches_libwebp() {
         }
     }
 
-    // Without dithering, both decoders should produce very similar output.
-    // With `fast-yuv`, the `yuv` crate uses true bilinear chroma upsampling
-    // which differs from libwebp's (3*near+far+2)>>2 "fancy" upsample, so
-    // per-channel diffs can be much larger.
+    // Without dithering, the yuv crate's bilinear chroma upsampling differs
+    // from libwebp's (3*near+far+2)>>2 "fancy" upsample, so per-channel diffs
+    // can be much larger.
     eprintln!(
         "undithered comparison: {diff_count}/{} channels differ, max_diff={max_diff}",
         npixels * 4
     );
-    let max_allowed = if cfg!(feature = "fast-yuv") { 200 } else { 2 };
+    let max_allowed = 200u8;
     assert!(
         max_diff <= max_allowed,
         "undithered decode differs from libwebp by up to {max_diff} — expected <= {max_allowed}"
@@ -348,9 +343,9 @@ fn dithered_output_similar_to_libwebp() {
     );
 
     // Our PRNG seed table, amplitude computation, and per-MB filtering all
-    // match libwebp exactly. Without `fast-yuv`, output is pixel-identical.
-    // With `fast-yuv`, YUV->RGB differences dominate.
-    let max_allowed = if cfg!(feature = "fast-yuv") { 200 } else { 0 };
+    // match libwebp exactly. The yuv crate's YUV->RGB differences dominate
+    // the observed diff.
+    let max_allowed = 200u8;
     assert!(
         max_diff <= max_allowed,
         "dithered decode differs from libwebp by up to {max_diff} — expected <= {max_allowed}"

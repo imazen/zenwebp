@@ -14,7 +14,6 @@
 //! # Features
 //!
 //! - `std` (default): Enables `encode_to_writer()`. Everything else works without it.
-//! - `fast-yuv` (default): Optimized YUV conversion via the `yuv` crate.
 //! - `pixel-types`: Type-safe pixel formats via the `rgb` crate.
 //!
 //! # no_std Support
@@ -213,8 +212,6 @@ pub mod test_helpers {
     }
 
     /// Fast RGB->YUV420 conversion (zenyuv SIMD Y + gamma-corrected scalar chroma).
-    /// Only available with the `fast-yuv` feature.
-    #[cfg(feature = "fast-yuv")]
     pub fn convert_image_yuv_rgb_fast(
         image_data: &[u8],
         width: u16,

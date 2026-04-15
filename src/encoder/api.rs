@@ -533,7 +533,6 @@ pub struct EncoderParams {
     /// Target PSNR in dB. When > 0.0, enables quality search to hit target PSNR.
     pub(crate) target_psnr: f32,
     /// Use sharp (iterative) YUV conversion for higher chroma fidelity.
-    /// Requires the `fast-yuv` feature. Falls back to standard conversion without it.
     pub(crate) use_sharp_yuv: bool,
     /// Alpha channel quality (0-100). 100 = lossless alpha, <100 = quantize alpha levels.
     pub(crate) alpha_quality: u8,

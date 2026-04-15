@@ -49,8 +49,6 @@ use crate::common::types::Frame;
 use crate::common::types::*;
 use crate::decoder::yuv::convert_image_sharp_yuv;
 use crate::decoder::yuv::convert_image_y;
-#[cfg(not(feature = "fast-yuv"))]
-use crate::decoder::yuv::convert_image_yuv;
 
 mod header;
 mod mode_selection;
@@ -768,23 +766,10 @@ impl<'a> Vp8Encoder<'a> {
             convert_image_sharp_yuv(data, color, width, height, stride)
         } else {
             match color {
-                // Fast path: zenyuv (SIMD Y) + gamma-corrected scalar chroma.
+                // zenyuv (SIMD Y) + gamma-corrected scalar chroma.
                 // Matches libwebp chroma quality; Y is within ±2 levels of scalar.
-                #[cfg(feature = "fast-yuv")]
                 PixelLayout::Rgb8 | PixelLayout::Rgba8 | PixelLayout::Bgr8 | PixelLayout::Bgra8 => {
                     crate::decoder::yuv::convert_image_yuv_fast(data, color, width, height, stride)
-                }
-                #[cfg(not(feature = "fast-yuv"))]
-                PixelLayout::Rgb8 => convert_image_yuv::<3>(data, width, height, stride),
-                #[cfg(not(feature = "fast-yuv"))]
-                PixelLayout::Rgba8 => convert_image_yuv::<4>(data, width, height, stride),
-                #[cfg(not(feature = "fast-yuv"))]
-                PixelLayout::Bgr8 => {
-                    crate::decoder::yuv::convert_image_yuv_bgr::<3>(data, width, height, stride)
-                }
-                #[cfg(not(feature = "fast-yuv"))]
-                PixelLayout::Bgra8 => {
-                    crate::decoder::yuv::convert_image_yuv_bgr::<4>(data, width, height, stride)
                 }
                 PixelLayout::L8 => convert_image_y::<1>(data, width, height, stride),
                 PixelLayout::La8 => convert_image_y::<2>(data, width, height, stride),

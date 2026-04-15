@@ -4,10 +4,7 @@
 //! pass/fail regression testing. Sweeps across quality levels, methods, presets,
 //! and encoder settings to ensure zenwebp produces comparable output to libwebp.
 //!
-//! These tests require bit-exact YUV->RGB matching with libwebp. The `fast-yuv`
-//! feature uses the `yuv` crate which has different bilinear chroma upsampling
-//! and coefficient precision, so these tests are skipped when `fast-yuv` is on.
-#![cfg(not(feature = "fast-yuv"))]
+//! These tests encode with zenwebp and compare against libwebp via webpx.
 
 use webpx::Unstoppable;
 use zensim::{RgbaSlice, Zensim, ZensimProfile};

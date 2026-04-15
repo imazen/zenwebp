@@ -9,10 +9,10 @@
 //!
 //! ## YUV->RGB Conversion Differences
 //!
-//! With the `fast-yuv` feature (on by default), zenwebp uses the `yuv` crate's
-//! bilinear upsampler, which produces different results than libwebp's fancy
-//! upsampling. These differences are NOT decoder bugs — they reflect different
-//! chroma upsampling implementations applied to identical YUV planes.
+//! zenwebp uses the `yuv` crate's bilinear upsampler, which produces different
+//! results than libwebp's fancy upsampling. These differences are NOT decoder
+//! bugs — they reflect different chroma upsampling implementations applied to
+//! identical YUV planes.
 //!
 //! Run: `cargo test --release --test v2_pixel_perfect -- --nocapture`
 #![forbid(unsafe_code)]
@@ -782,11 +782,7 @@ fn varied_size_decode_produces_correct_output() {
 #[test]
 fn document_yuv_conversion_differences() {
     println!("\n=== YUV->RGB conversion difference analysis ===");
-    println!("  zenwebp uses: fill_rgba with Bilinear upsampling");
-    #[cfg(feature = "fast-yuv")]
-    println!("  fast-yuv feature: ON (yuv crate bilinear, differs from libwebp)");
-    #[cfg(not(feature = "fast-yuv"))]
-    println!("  fast-yuv feature: OFF (internal bilinear, closer to libwebp)");
+    println!("  zenwebp uses: fill_rgba with Bilinear upsampling (yuv crate)");
     println!("  libwebp uses: WebPDecodeRGBA (fancy upsampling)");
     println!();
 
@@ -805,5 +801,5 @@ fn document_yuv_conversion_differences() {
     println!();
     println!("  Note: Diffs are from YUV->RGB chroma upsampling differences,");
     println!("  NOT from the VP8 decode pipeline. Only the final RGB conversion");
-    println!("  may differ from libwebp when using the fast-yuv feature.");
+    println!("  differs from libwebp.");
 }

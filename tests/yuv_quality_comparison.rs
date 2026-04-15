@@ -2,8 +2,8 @@
 //! RGB->YUV420 conversion quality comparison test.
 //!
 //! Compares three conversion paths:
-//! 1. zenwebp scalar (convert_image_yuv) - used by encoder today
-//! 2. yuv crate SIMD (convert_image_yuv_simd) - available via fast-yuv feature
+//! 1. zenwebp scalar (convert_image_yuv) - test-only parity reference
+//! 2. zenyuv SIMD (convert_image_yuv_fast) - used by encoder today
 //! 3. libwebp C (via encode+decode roundtrip) - baseline
 //!
 //! Measures: PSNR, SSIMULACRA2, file size, and per-pixel YUV plane differences.

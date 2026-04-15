@@ -69,11 +69,11 @@ diag:
 
 # Cross-test i686 (32-bit x86) via QEMU
 test-i686:
-    cross test --features "std,fast-yuv,simd,pixel-types" --target i686-unknown-linux-gnu
+    cross test --features "std,simd,pixel-types" --target i686-unknown-linux-gnu
 
 # Cross-test armv7 (32-bit ARM) via QEMU
 test-armv7:
-    cross test --features "std,fast-yuv,simd,pixel-types" --target armv7-unknown-linux-gnueabihf
+    cross test --features "std,simd,pixel-types" --target armv7-unknown-linux-gnueabihf
 
 # Cross-test all non-native targets
 test-cross: test-i686 test-armv7
@@ -82,7 +82,7 @@ test-cross: test-i686 test-armv7
 # Check all locally-resolvable feature permutations
 feature-check:
     cargo test --no-default-features
-    cargo test --features "std,fast-yuv,simd,pixel-types"
+    cargo test --features "std,simd,pixel-types"
     cargo test --features imgref
     cargo test --features mode_debug
     cargo check --features avx512
