@@ -1206,9 +1206,7 @@ fn single_frame_animation_produces_static_webp() {
 
     // Must not contain ANIM or ANMF chunks
     assert!(
-        !data
-            .windows(4)
-            .any(|w| w == b"ANIM" || w == b"ANMF"),
+        !data.windows(4).any(|w| w == b"ANIM" || w == b"ANMF"),
         "static WebP must not contain ANIM/ANMF chunks"
     );
 
@@ -1283,5 +1281,8 @@ fn single_frame_matches_static_encoder_output() {
     let (static_px, sw, sh) = zenwebp::oneshot::decode_rgba(&static_webp).unwrap();
     let (anim_px, aw, ah) = zenwebp::oneshot::decode_rgba(&anim_webp).unwrap();
     assert_eq!((sw, sh), (aw, ah));
-    assert_eq!(static_px, anim_px, "1-frame anim and static encode must decode identically");
+    assert_eq!(
+        static_px, anim_px,
+        "1-frame anim and static encode must decode identically"
+    );
 }
