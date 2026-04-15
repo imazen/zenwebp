@@ -578,3 +578,101 @@ fn highlevel_lossless_noise() {
     let rgb = deterministic_noise(128, 128);
     assert_lossless_roundtrip_highlevel(&rgb, 128, 128);
 }
+
+// --- RGBA with semi-transparent pixels (issue #12) ---
+
+fn assert_rgba_lossless_roundtrip(rgba: &[u8], w: u32, h: u32, config: &Vp8lConfig) {
+    let vp8l =
+        encode_vp8l(rgba, w, h, true, config, &enough::Unstoppable).expect("VP8L encoding failed");
+    let webp = wrap_vp8l_in_riff(&vp8l);
+    let (decoded, dw, dh) = zenwebp::oneshot::decode_rgba(&webp).expect("decode failed");
+    assert_eq!(dw, w);
+    assert_eq!(dh, h);
+    let total = (w * h) as usize;
+    let mut mismatches = 0;
+    for i in 0..total {
+        if decoded[i * 4..i * 4 + 4] != rgba[i * 4..i * 4 + 4] {
+            mismatches += 1;
+        }
+    }
+    assert_eq!(mismatches, 0, "{mismatches}/{total} RGBA pixel mismatches");
+}
+
+fn assert_rgba_highlevel_roundtrip(rgba: &[u8], w: u32, h: u32) {
+    let cfg = zenwebp::EncoderConfig::new_lossless();
+    let webp = zenwebp::EncodeRequest::new(&cfg, rgba, zenwebp::PixelLayout::Rgba8, w, h)
+        .encode()
+        .expect("high-level RGBA encode failed");
+    let (decoded, dw, dh) = zenwebp::oneshot::decode_rgba(&webp).expect("decode failed");
+    assert_eq!(dw, w);
+    assert_eq!(dh, h);
+    let total = (w * h) as usize;
+    let mut mismatches = 0;
+    for i in 0..total {
+        if decoded[i * 4..i * 4 + 4] != rgba[i * 4..i * 4 + 4] {
+            mismatches += 1;
+        }
+    }
+    assert_eq!(mismatches, 0, "{mismatches}/{total} RGBA pixel mismatches");
+}
+
+fn radial_alpha_image(w: u32, h: u32) -> Vec<u8> {
+    let cx = w as f32 / 2.0;
+    let cy = h as f32 / 2.0;
+    let r = (w.min(h) as f32) / 2.0;
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+    let mut seed: u64 = 42;
+    for y in 0..h {
+        for x in 0..w {
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            let d = (dx * dx + dy * dy).sqrt();
+            let alpha = ((r - d).clamp(0.0, 1.0) * 255.0) as u8;
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let rv = ((seed >> 33) & 0xff) as u8;
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let gv = ((seed >> 33) & 0xff) as u8;
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let bv = ((seed >> 33) & 0xff) as u8;
+            rgba.extend_from_slice(&[rv, gv, bv, alpha]);
+        }
+    }
+    rgba
+}
+
+#[test]
+fn rgba_semitransparent_all_methods() {
+    let rgba = radial_alpha_image(100, 100);
+    for method in 0..=6u8 {
+        let config = Vp8lConfig {
+            quality: zenwebp::encoder::vp8l::Vp8lQuality {
+                quality: 75,
+                method,
+            },
+            ..Default::default()
+        };
+        assert_rgba_lossless_roundtrip(&rgba, 100, 100, &config);
+    }
+}
+
+#[test]
+fn rgba_semitransparent_highlevel() {
+    let rgba = radial_alpha_image(100, 100);
+    assert_rgba_highlevel_roundtrip(&rgba, 100, 100);
+}
+
+#[test]
+fn rgba_gallery_images_roundtrip() {
+    let paths = [
+        "tests/images/gallery2/1_webp_a.webp",
+        "tests/images/gallery2/2_webp_a.webp",
+        "tests/images/gallery2/5_webp_a.webp",
+    ];
+    for path in &paths {
+        let Ok(data) = std::fs::read(path) else {
+            continue;
+        };
+        let (rgba, w, h) = zenwebp::oneshot::decode_rgba(&data).expect("decode failed");
+        assert_rgba_highlevel_roundtrip(&rgba, w, h);
+    }
+}
