@@ -1015,7 +1015,27 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
         if let Some(s) = stop {
             s.check().map_err(|e| at!(EncodeError::from(e)))?;
         }
-        let (buf, layout, w, h, _stride) = pixels_to_webp_input(&pixels)?;
+        let (buf, layout, w, h, stride_pixels) = pixels_to_webp_input(&pixels)?;
+        // AnimationEncoder::add_frame assumes tightly-packed rows
+        // (stride == width). Pack to contiguous if the caller's PixelSlice has
+        // padded rows — e.g. imageflow's SIMD-aligned bitmaps, where the t_stride
+        // may be larger than width * bytes_per_pixel.
+        let bpp = layout.bytes_per_pixel();
+        let tight_stride = w as usize;
+        let buf: alloc::borrow::Cow<'_, [u8]> = if stride_pixels == tight_stride {
+            buf
+        } else {
+            let src_stride_bytes = stride_pixels * bpp;
+            let dst_stride_bytes = tight_stride * bpp;
+            let mut packed = alloc::vec![0u8; dst_stride_bytes * h as usize];
+            for row in 0..h as usize {
+                let src_off = row * src_stride_bytes;
+                let dst_off = row * dst_stride_bytes;
+                packed[dst_off..dst_off + dst_stride_bytes]
+                    .copy_from_slice(&buf[src_off..src_off + dst_stride_bytes]);
+            }
+            alloc::borrow::Cow::Owned(packed)
+        };
         self.ensure_encoder(w, h)?;
         let timestamp_ms = self.cumulative_ms;
         let enc = self.anim_enc.as_mut().unwrap();
