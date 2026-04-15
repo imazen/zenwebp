@@ -212,6 +212,28 @@ pub mod test_helpers {
         crate::decoder::yuv::convert_image_yuv::<3>(image_data, width, height, stride)
     }
 
+    /// Fast RGB->YUV420 conversion (zenyuv SIMD Y + gamma-corrected scalar chroma).
+    /// Only available with the `fast-yuv` feature.
+    #[cfg(feature = "fast-yuv")]
+    pub fn convert_image_yuv_rgb_fast(
+        image_data: &[u8],
+        width: u16,
+        height: u16,
+        stride: usize,
+    ) -> (
+        alloc::vec::Vec<u8>,
+        alloc::vec::Vec<u8>,
+        alloc::vec::Vec<u8>,
+    ) {
+        crate::decoder::yuv::convert_image_yuv_fast(
+            image_data,
+            crate::encoder::PixelLayout::Rgb8,
+            width,
+            height,
+            stride,
+        )
+    }
+
     /// Expose the forward gamma LUT for verification tests.
     /// sRGB byte -> linear^0.80 (scale 0..4095), 256 entries.
     pub fn gamma_to_linear_tab() -> &'static [u16; 256] {

@@ -960,6 +960,173 @@ fn zenyuv_encode_planes(
     (y_bytes, u_bytes, v_bytes)
 }
 
+/// Build the dense 4096-entry inverse-gamma LUT. Computed lazily via `OnceLock`
+/// from the existing 33-entry interpolated formula; eliminates per-pixel
+/// interpolation arithmetic in the gamma-corrected chroma path.
+#[cfg(all(feature = "fast-yuv", feature = "std"))]
+fn linear_to_gamma_dense() -> &'static [u8; 4096] {
+    use std::sync::OnceLock;
+    static LUT: OnceLock<alloc::boxed::Box<[u8; 4096]>> = OnceLock::new();
+    LUT.get_or_init(|| {
+        let mut t = alloc::boxed::Box::new([0u8; 4096]);
+        for (i, slot) in t.iter_mut().enumerate() {
+            *slot = linear_to_gamma(i as u32);
+        }
+        t
+    })
+}
+
+/// SIMD kernel generic over archmage Token: process all full row-pairs and
+/// bulk col-pairs using the scalar-LUT-bookend pattern (see
+/// `~/work/claudehints/topics/rust-defaults.md`):
+///
+/// 1. Scalar gather: 16 src pixels/row × 2 rows → 32 u16 `gamma_to_linear`
+///    values per channel, deinterleaved into even/odd-column stack arrays.
+/// 2. SIMD u16x8 add: vertical+horizontal pair-sum → 8 u16 linear-sum-of-4
+///    per channel. `(sum + 2) >> 2` → 8 u16 linear averages.
+/// 3. SIMD → scalar bridge: `.store()` the averages.
+/// 4. Scalar gather out: 8 u8 gamma-averaged R/G/B from dense LUT.
+/// 5. SIMD YCbCr matrix (i32x8 fixed-point) → 8 U + 8 V i32 values.
+/// 6. SIMD → scalar bridge + clamp+cast to u8.
+///
+/// `#[magetypes]` generates `_v3`/`_neon`/`_wasm128`/`_scalar` variants;
+/// `incant!` at the call site dispatches to the best available.
+#[cfg(all(feature = "fast-yuv", feature = "std"))]
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn gamma_chroma_rows_generic(
+    token: Token,
+    rgb: &[u8],
+    w: usize,
+    row_pairs: usize,
+    bulk_col_pairs: usize,
+    u_bytes: &mut [u8],
+    v_bytes: &mut [u8],
+    chroma_width: usize,
+    gamma_lut: &[u16; 256],
+    inv_gamma_dense: &[u8; 4096],
+) {
+    #[allow(non_camel_case_types)]
+    type u16x8 = magetypes::simd::generic::u16x8<Token>;
+    #[allow(non_camel_case_types)]
+    type i32x8 = magetypes::simd::generic::i32x8<Token>;
+
+    let two = u16x8::splat(token, 2);
+    let uv_bias = (128i32 << YUV_FIX) + YUV_HALF;
+    let u_r = i32x8::splat(token, -9719);
+    let u_g = i32x8::splat(token, -19081);
+    let u_b = i32x8::splat(token, 28800);
+    let v_r = i32x8::splat(token, 28800);
+    let v_g = i32x8::splat(token, -24116);
+    let v_b = i32x8::splat(token, -4684);
+    let uv_bias_v = i32x8::splat(token, uv_bias);
+
+    for row_pair in 0..row_pairs {
+        let r1 = row_pair * 2;
+        let r2 = r1 + 1;
+        let top_row_off = r1 * w * 3;
+        let bot_row_off = r2 * w * 3;
+        let mut cp = 0;
+        while cp < bulk_col_pairs {
+            let col0 = cp * 2;
+            let top: &[u8; 48] = (&rgb[top_row_off + col0 * 3..top_row_off + col0 * 3 + 48])
+                .try_into()
+                .unwrap();
+            let bot: &[u8; 48] = (&rgb[bot_row_off + col0 * 3..bot_row_off + col0 * 3 + 48])
+                .try_into()
+                .unwrap();
+
+            // ── Stage 1: scalar gather in ──
+            let mut r_te = [0u16; 8];
+            let mut r_to = [0u16; 8];
+            let mut r_be = [0u16; 8];
+            let mut r_bo = [0u16; 8];
+            let mut g_te = [0u16; 8];
+            let mut g_to = [0u16; 8];
+            let mut g_be = [0u16; 8];
+            let mut g_bo = [0u16; 8];
+            let mut b_te = [0u16; 8];
+            let mut b_to = [0u16; 8];
+            let mut b_be = [0u16; 8];
+            let mut b_bo = [0u16; 8];
+            for i in 0..8 {
+                let ei = 2 * i;
+                let oi = ei + 1;
+                r_te[i] = gamma_lut[top[ei * 3] as usize];
+                r_to[i] = gamma_lut[top[oi * 3] as usize];
+                r_be[i] = gamma_lut[bot[ei * 3] as usize];
+                r_bo[i] = gamma_lut[bot[oi * 3] as usize];
+                g_te[i] = gamma_lut[top[ei * 3 + 1] as usize];
+                g_to[i] = gamma_lut[top[oi * 3 + 1] as usize];
+                g_be[i] = gamma_lut[bot[ei * 3 + 1] as usize];
+                g_bo[i] = gamma_lut[bot[oi * 3 + 1] as usize];
+                b_te[i] = gamma_lut[top[ei * 3 + 2] as usize];
+                b_to[i] = gamma_lut[top[oi * 3 + 2] as usize];
+                b_be[i] = gamma_lut[bot[ei * 3 + 2] as usize];
+                b_bo[i] = gamma_lut[bot[oi * 3 + 2] as usize];
+            }
+
+            // ── Stage 2: SIMD average ── (max sum = 4*4095 fits in u16)
+            let r_sum = u16x8::from_array(token, r_te)
+                + u16x8::from_array(token, r_to)
+                + u16x8::from_array(token, r_be)
+                + u16x8::from_array(token, r_bo);
+            let g_sum = u16x8::from_array(token, g_te)
+                + u16x8::from_array(token, g_to)
+                + u16x8::from_array(token, g_be)
+                + u16x8::from_array(token, g_bo);
+            let b_sum = u16x8::from_array(token, b_te)
+                + u16x8::from_array(token, b_to)
+                + u16x8::from_array(token, b_be)
+                + u16x8::from_array(token, b_bo);
+            let r_avg_v = (r_sum + two).shr_logical_const::<2>();
+            let g_avg_v = (g_sum + two).shr_logical_const::<2>();
+            let b_avg_v = (b_sum + two).shr_logical_const::<2>();
+
+            // ── Stage 3: SIMD → scalar bridge ──
+            let mut r_avg = [0u16; 8];
+            let mut g_avg = [0u16; 8];
+            let mut b_avg = [0u16; 8];
+            r_avg_v.store(&mut r_avg);
+            g_avg_v.store(&mut g_avg);
+            b_avg_v.store(&mut b_avg);
+
+            // ── Stage 4: scalar gather out (dense LUT, no interpolation) ──
+            let mut r_u8 = [0i32; 8];
+            let mut g_u8 = [0i32; 8];
+            let mut b_u8 = [0i32; 8];
+            for i in 0..8 {
+                r_u8[i] = inv_gamma_dense[(r_avg[i] as usize) & 0xFFF] as i32;
+                g_u8[i] = inv_gamma_dense[(g_avg[i] as usize) & 0xFFF] as i32;
+                b_u8[i] = inv_gamma_dense[(b_avg[i] as usize) & 0xFFF] as i32;
+            }
+
+            // ── Stage 5: SIMD YCbCr matrix (i32 fixed-point, YUV_FIX=16) ──
+            // rgb_to_u_single: u = -9719*r - 19081*g + 28800*b + (128 << 16) + YUV_HALF
+            // rgb_to_v_single: v = 28800*r - 24116*g - 4684*b + (128 << 16) + YUV_HALF
+            let r_v = i32x8::from_array(token, r_u8);
+            let g_v = i32x8::from_array(token, g_u8);
+            let b_v = i32x8::from_array(token, b_u8);
+            let u_vals = uv_bias_v + r_v * u_r + g_v * u_g + b_v * u_b;
+            let v_vals = uv_bias_v + r_v * v_r + g_v * v_g + b_v * v_b;
+
+            // ── Stage 6: SIMD → scalar bridge + clamp ──
+            let mut u_i32 = [0i32; 8];
+            let mut v_i32 = [0i32; 8];
+            u_vals.shr_arithmetic_const::<16>().store(&mut u_i32);
+            v_vals.shr_arithmetic_const::<16>().store(&mut v_i32);
+
+            let idx = row_pair * chroma_width + cp;
+            for i in 0..8 {
+                u_bytes[idx + i] = u_i32[i].clamp(0, 255) as u8;
+                v_bytes[idx + i] = v_i32[i].clamp(0, 255) as u8;
+            }
+
+            cp += 8;
+        }
+    }
+}
+
 /// Compute gamma-corrected U/V chroma planes from tightly-packed RGB and write
 /// them directly into mb-aligned output buffers (with edge replication).
 ///
@@ -984,10 +1151,38 @@ fn gamma_chroma_into_mb(
 
     let px = |x: usize, y: usize| -> &[u8] { &rgb[(y * w + x) * 3..(y * w + x) * 3 + 3] };
 
+    // SIMD fast path via `#[magetypes]` generic + `incant!` dispatch:
+    // process full row pairs at 16 src cols (8 chroma outputs) per iteration.
+    // Fall back to scalar for the tail cols and odd rows below.
+    #[cfg(all(feature = "fast-yuv", feature = "std"))]
+    let simd_col_pairs = {
+        use archmage::incant;
+        let bulk_col_pairs = col_pairs & !7;
+        if bulk_col_pairs > 0 {
+            incant!(
+                gamma_chroma_rows_generic(
+                    rgb,
+                    w,
+                    row_pairs,
+                    bulk_col_pairs,
+                    u_bytes,
+                    v_bytes,
+                    chroma_width,
+                    &GAMMA_TO_LINEAR_TAB,
+                    linear_to_gamma_dense(),
+                ),
+                [v3, neon, wasm128, scalar]
+            );
+        }
+        bulk_col_pairs
+    };
+    #[cfg(not(all(feature = "fast-yuv", feature = "std")))]
+    let simd_col_pairs = 0usize;
+
     for row_pair in 0..row_pairs {
         let r1 = row_pair * 2;
         let r2 = r1 + 1;
-        for col_pair in 0..col_pairs {
+        for col_pair in simd_col_pairs..col_pairs {
             let c1 = col_pair * 2;
             let c2 = c1 + 1;
             let (u, v) = gamma_downsample_uv_4(px(c1, r1), px(c2, r1), px(c1, r2), px(c2, r2));
