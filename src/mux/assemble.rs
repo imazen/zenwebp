@@ -258,6 +258,19 @@ impl WebPMux {
         self.frames.len() as u32
     }
 
+    /// Convert a 1-frame animation to a static image.
+    ///
+    /// Moves the single frame from the animation frames list to the
+    /// static `single_image` slot and clears the animation flag.
+    /// No-op if there isn't exactly 1 animation frame.
+    pub fn downgrade_single_frame_to_static(&mut self) {
+        if self.animation.is_some() && self.frames.len() == 1 {
+            let frame = self.frames.pop().unwrap();
+            self.animation = None;
+            self.single_image = Some(frame);
+        }
+    }
+
     /// Assemble the final WebP file.
     #[track_caller]
     pub fn assemble(&self) -> MuxResult<Vec<u8>> {

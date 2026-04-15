@@ -1180,3 +1180,109 @@ fn metadata_embed_and_remove() {
     let decoder = WebPDecoder::new(&with_all).unwrap();
     assert_eq!(decoder.dimensions(), (8, 8));
 }
+
+// ============================================================================
+// Single-frame animation → static downgrade (issue #11)
+// ============================================================================
+
+#[test]
+fn single_frame_animation_produces_static_webp() {
+    let rgba = solid_rgba(16, 16, 200, 100, 50, 255);
+    let config = AnimationConfig::default();
+    let mut enc = AnimationEncoder::new(16, 16, config).unwrap();
+    let lossy_config = EncoderConfig::new_lossy().with_quality(75.0);
+    enc.add_frame(&rgba, PixelLayout::Rgba8, 0, &lossy_config)
+        .unwrap();
+    let data = enc.finalize(100).unwrap();
+
+    // Must decode as static (not animated)
+    let demuxer = WebPDemuxer::new(&data).unwrap();
+    assert!(
+        !demuxer.is_animated(),
+        "1-frame animation should produce a static WebP, not animated"
+    );
+    assert_eq!(demuxer.canvas_width(), 16);
+    assert_eq!(demuxer.canvas_height(), 16);
+
+    // Must not contain ANIM or ANMF chunks
+    assert!(
+        !data.windows(4).any(|w| w == b"ANIM" || w == b"ANMF"),
+        "static WebP must not contain ANIM/ANMF chunks"
+    );
+
+    // Must decode correctly
+    let decoder = WebPDecoder::new(&data).unwrap();
+    assert_eq!(decoder.dimensions(), (16, 16));
+}
+
+#[test]
+fn single_frame_lossless_animation_produces_static_vp8l() {
+    let rgba = solid_rgba(8, 8, 50, 100, 200, 128);
+    let config = AnimationConfig::default();
+    let mut enc = AnimationEncoder::new(8, 8, config).unwrap();
+    let ll_config = EncoderConfig::new_lossless();
+    enc.add_frame(&rgba, PixelLayout::Rgba8, 0, &ll_config)
+        .unwrap();
+    let data = enc.finalize(100).unwrap();
+
+    let demuxer = WebPDemuxer::new(&data).unwrap();
+    assert!(!demuxer.is_animated());
+
+    // VP8L chunk should be present (lossless)
+    assert!(data.windows(4).any(|w| w == b"VP8L"));
+    assert!(!data.windows(4).any(|w| w == b"ANIM"));
+
+    // Lossless round-trip: pixels must match exactly
+    let (decoded, dw, dh) = zenwebp::oneshot::decode_rgba(&data).unwrap();
+    assert_eq!((dw, dh), (8, 8));
+    assert_eq!(decoded, rgba);
+}
+
+#[test]
+fn two_frame_animation_stays_animated() {
+    let red = solid_rgba(16, 16, 255, 0, 0, 255);
+    let blue = solid_rgba(16, 16, 0, 0, 255, 255);
+    let config = AnimationConfig::default();
+    let mut enc = AnimationEncoder::new(16, 16, config).unwrap();
+    let lossy_config = EncoderConfig::new_lossy().with_quality(75.0);
+    enc.add_frame(&red, PixelLayout::Rgba8, 0, &lossy_config)
+        .unwrap();
+    enc.add_frame(&blue, PixelLayout::Rgba8, 100, &lossy_config)
+        .unwrap();
+    let data = enc.finalize(100).unwrap();
+
+    let demuxer = WebPDemuxer::new(&data).unwrap();
+    assert!(
+        demuxer.is_animated(),
+        "2-frame animation must remain animated"
+    );
+    assert_eq!(demuxer.num_frames(), 2);
+    assert!(data.windows(4).any(|w| w == b"ANIM"));
+}
+
+#[test]
+fn single_frame_matches_static_encoder_output() {
+    let rgba = solid_rgba(8, 8, 100, 150, 200, 255);
+    let config_ll = EncoderConfig::new_lossless();
+
+    // Static encoder
+    let static_webp = EncodeRequest::new(&config_ll, &rgba, PixelLayout::Rgba8, 8, 8)
+        .encode()
+        .unwrap();
+
+    // Animation encoder with 1 frame
+    let anim_config = AnimationConfig::default();
+    let mut enc = AnimationEncoder::new(8, 8, anim_config).unwrap();
+    enc.add_frame(&rgba, PixelLayout::Rgba8, 0, &config_ll)
+        .unwrap();
+    let anim_webp = enc.finalize(100).unwrap();
+
+    // Both must decode to the same pixels
+    let (static_px, sw, sh) = zenwebp::oneshot::decode_rgba(&static_webp).unwrap();
+    let (anim_px, aw, ah) = zenwebp::oneshot::decode_rgba(&anim_webp).unwrap();
+    assert_eq!((sw, sh), (aw, ah));
+    assert_eq!(
+        static_px, anim_px,
+        "1-frame anim and static encode must decode identically"
+    );
+}

@@ -315,6 +315,12 @@ impl AnimationEncoder {
             self.mux.push_frame(frame)?;
         }
 
+        // If only one frame was pushed, downgrade to a static WebP.
+        // This avoids producing a 1-frame animated container (with ANIM/ANMF
+        // chunks) when the caller used the animation encoder optimistically
+        // without knowing the frame count in advance.
+        self.mux.downgrade_single_frame_to_static();
+
         self.mux.assemble()
     }
 
