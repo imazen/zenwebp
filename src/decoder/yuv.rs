@@ -353,137 +353,6 @@ fn gamma_avg_2(a: u8, b: u8) -> u8 {
     linear_to_gamma((sum + 1) >> 1)
 }
 
-/// SIMD-accelerated RGB to YUV 4:2:0 conversion using the `yuv` crate.
-///
-/// This provides 10-150× speedup over scalar conversion using AVX2/SSE/NEON SIMD.
-/// The output is compatible with VP8 encoding (BT.601 matrix, full range).
-///
-/// Returns (y_bytes, u_bytes, v_bytes) with macroblock-aligned dimensions.
-#[cfg(feature = "fast-yuv")]
-#[allow(dead_code)] // Alternative YUV conversion implementation
-pub(crate) fn convert_image_yuv_simd<const BPP: usize>(
-    image_data: &[u8],
-    width: u16,
-    height: u16,
-    stride: usize,
-) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    use yuv::{
-        YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
-        rgb_to_yuv420, rgba_to_yuv420,
-    };
-
-    let width_usize = usize::from(width);
-    let height_usize = usize::from(height);
-    let mb_width = width_usize.div_ceil(16);
-    let mb_height = height_usize.div_ceil(16);
-    let luma_width = 16 * mb_width;
-    let chroma_width = 8 * mb_width;
-    let y_size = 16 * mb_width * 16 * mb_height;
-    let chroma_size = 8 * mb_width * 8 * mb_height;
-
-    // Use yuv crate for fast SIMD conversion
-    let mut yuv_image =
-        YuvPlanarImageMut::<u8>::alloc(width as u32, height as u32, YuvChromaSubsampling::Yuv420);
-
-    // Convert using appropriate function based on BPP
-    let result = if BPP == 4 {
-        rgba_to_yuv420(
-            &mut yuv_image,
-            image_data,
-            (stride * BPP) as u32,
-            YuvRange::Limited,
-            YuvStandardMatrix::Bt601,
-            YuvConversionMode::Balanced,
-        )
-    } else {
-        rgb_to_yuv420(
-            &mut yuv_image,
-            image_data,
-            (stride * BPP) as u32,
-            YuvRange::Limited,
-            YuvStandardMatrix::Bt601,
-            YuvConversionMode::Balanced,
-        )
-    };
-
-    if result.is_err() {
-        // Fall back to scalar implementation on error
-        return convert_image_yuv::<BPP>(image_data, width, height, stride);
-    }
-
-    // Extract planes from yuv crate output
-    let y_src = yuv_image.y_plane.borrow();
-    let u_src = yuv_image.u_plane.borrow();
-    let v_src = yuv_image.v_plane.borrow();
-
-    let src_chroma_width = width_usize.div_ceil(2);
-    let src_chroma_height = height_usize.div_ceil(2);
-
-    // Allocate output buffers with macroblock alignment
-    let mut y_bytes = vec![0u8; y_size];
-    let mut u_bytes = vec![0u8; chroma_size];
-    let mut v_bytes = vec![0u8; chroma_size];
-
-    // Copy Y plane with padding
-    for y in 0..height_usize {
-        let src_start = y * width_usize;
-        let dst_start = y * luma_width;
-        y_bytes[dst_start..dst_start + width_usize]
-            .copy_from_slice(&y_src[src_start..src_start + width_usize]);
-
-        // Horizontal padding
-        let last_y = y_bytes[dst_start + width_usize - 1];
-        for x in width_usize..luma_width {
-            y_bytes[dst_start + x] = last_y;
-        }
-    }
-
-    // Vertical padding for Y - copy the last row repeatedly
-    if height_usize < mb_height * 16 {
-        let last_row: Vec<u8> =
-            y_bytes[(height_usize - 1) * luma_width..height_usize * luma_width].to_vec();
-        for y in height_usize..(mb_height * 16) {
-            let dst_row = y * luma_width;
-            y_bytes[dst_row..dst_row + luma_width].copy_from_slice(&last_row);
-        }
-    }
-
-    // Copy U/V planes with padding
-    for y in 0..src_chroma_height {
-        let src_start = y * src_chroma_width;
-        let dst_start = y * chroma_width;
-        u_bytes[dst_start..dst_start + src_chroma_width]
-            .copy_from_slice(&u_src[src_start..src_start + src_chroma_width]);
-        v_bytes[dst_start..dst_start + src_chroma_width]
-            .copy_from_slice(&v_src[src_start..src_start + src_chroma_width]);
-
-        // Horizontal padding
-        let last_u = u_bytes[dst_start + src_chroma_width - 1];
-        let last_v = v_bytes[dst_start + src_chroma_width - 1];
-        for x in src_chroma_width..chroma_width {
-            u_bytes[dst_start + x] = last_u;
-            v_bytes[dst_start + x] = last_v;
-        }
-    }
-
-    // Vertical padding for U/V - copy the last row repeatedly
-    if src_chroma_height < mb_height * 8 {
-        let last_u_row: Vec<u8> = u_bytes
-            [(src_chroma_height - 1) * chroma_width..src_chroma_height * chroma_width]
-            .to_vec();
-        let last_v_row: Vec<u8> = v_bytes
-            [(src_chroma_height - 1) * chroma_width..src_chroma_height * chroma_width]
-            .to_vec();
-        for y in src_chroma_height..(mb_height * 8) {
-            let dst_row = y * chroma_width;
-            u_bytes[dst_row..dst_row + chroma_width].copy_from_slice(&last_u_row);
-            v_bytes[dst_row..dst_row + chroma_width].copy_from_slice(&last_v_row);
-        }
-    }
-
-    (y_bytes, u_bytes, v_bytes)
-}
-
 /// converts the whole image to yuv data and adds values on the end to make it match the macroblock sizes
 /// downscales the u/v data as well so it's half the width and height of the y data
 pub(crate) fn convert_image_yuv<const BPP: usize>(
@@ -783,6 +652,7 @@ pub(crate) fn convert_image_sharp_yuv(
     #[cfg(feature = "fast-yuv")]
     {
         use crate::encoder::PixelLayout;
+        use zenyuv::{Matrix, Range, SharpYuvConfig, YuvContext};
 
         // Sharp YUV only applies to RGB/RGBA/BGR/BGRA inputs (chroma subsampling matters).
         // For grayscale, fall back to standard conversion.
@@ -790,8 +660,10 @@ pub(crate) fn convert_image_sharp_yuv(
             PixelLayout::L8 => return convert_image_y::<1>(image_data, width, height, stride),
             PixelLayout::La8 => return convert_image_y::<2>(image_data, width, height, stride),
             PixelLayout::Yuv420 => {
-                // Sharp YUV doesn't apply to already-subsampled data
                 unreachable!("sharp YUV should not be called with Yuv420 input");
+            }
+            PixelLayout::Argb8 => {
+                unreachable!("sharp YUV should not be called with Argb8 input");
             }
             _ => {}
         }
@@ -801,80 +673,61 @@ pub(crate) fn convert_image_sharp_yuv(
         let mb_width = w.div_ceil(16);
         let mb_height = h.div_ceil(16);
         let luma_width = 16 * mb_width;
-        let luma_height = 16 * mb_height;
         let chroma_width = 8 * mb_width;
-        let chroma_height = 8 * mb_height;
+        let y_size = luma_width * 16 * mb_height;
+        let chroma_size = chroma_width * 8 * mb_height;
+        let src_chroma_width = w.div_ceil(2);
+        let src_chroma_height = h.div_ceil(2);
 
-        // Allocate planar buffers at macroblock-aligned sizes
-        let mut y_bytes = alloc::vec![0u8; luma_width * luma_height];
-        let mut u_bytes = alloc::vec![0u8; chroma_width * chroma_height];
-        let mut v_bytes = alloc::vec![0u8; chroma_width * chroma_height];
-
-        // Create a YuvPlanarImageMut for the yuv crate
-        let mut planar = yuv::YuvPlanarImageMut {
-            y_plane: yuv::BufferStoreMut::Borrowed(&mut y_bytes),
-            y_stride: luma_width as u32,
-            u_plane: yuv::BufferStoreMut::Borrowed(&mut u_bytes),
-            u_stride: chroma_width as u32,
-            v_plane: yuv::BufferStoreMut::Borrowed(&mut v_bytes),
-            v_stride: chroma_width as u32,
-            width: w as u32,
-            height: h as u32,
-        };
-
-        let bpp = match color {
+        // Build a tightly-packed RGB buffer (no source stride, no alpha).
+        // zenyuv takes only RGB input; garb does the swizzle/strip with SIMD.
+        let src_bpp: usize = match color {
             PixelLayout::Rgb8 | PixelLayout::Bgr8 => 3,
             PixelLayout::Rgba8 | PixelLayout::Bgra8 => 4,
             _ => unreachable!(),
         };
-        let src_stride = (stride * bpp) as u32;
+        let src_stride_bytes = stride * src_bpp;
+        let rgb = to_tight_rgb(image_data, color, w, h, src_stride_bytes);
+        let rgb: &[u8] = &rgb;
 
-        let result = match color {
-            PixelLayout::Rgb8 => yuv::rgb_to_sharp_yuv420(
-                &mut planar,
-                image_data,
-                src_stride,
-                yuv::YuvRange::Limited,
-                yuv::YuvStandardMatrix::Bt601,
-                yuv::SharpYuvGammaTransfer::Srgb,
-            ),
-            PixelLayout::Rgba8 => yuv::rgba_to_sharp_yuv420(
-                &mut planar,
-                image_data,
-                src_stride,
-                yuv::YuvRange::Limited,
-                yuv::YuvStandardMatrix::Bt601,
-                yuv::SharpYuvGammaTransfer::Srgb,
-            ),
-            PixelLayout::Bgr8 => yuv::bgr_to_sharp_yuv420(
-                &mut planar,
-                image_data,
-                src_stride,
-                yuv::YuvRange::Limited,
-                yuv::YuvStandardMatrix::Bt601,
-                yuv::SharpYuvGammaTransfer::Srgb,
-            ),
-            PixelLayout::Bgra8 => yuv::bgra_to_sharp_yuv420(
-                &mut planar,
-                image_data,
-                src_stride,
-                yuv::YuvRange::Limited,
-                yuv::YuvStandardMatrix::Bt601,
-                yuv::SharpYuvGammaTransfer::Srgb,
-            ),
-            _ => unreachable!(),
-        };
+        // Allocate tight Y/Cb/Cr output for zenyuv.
+        let mut y_tight = alloc::vec![0u8; w * h];
+        let mut u_tight = alloc::vec![0u8; src_chroma_width * src_chroma_height];
+        let mut v_tight = alloc::vec![0u8; src_chroma_width * src_chroma_height];
 
-        if result.is_err() {
-            // Fall back to standard conversion if sharp YUV fails
-            return match color {
-                PixelLayout::Rgb8 => convert_image_yuv::<3>(image_data, width, height, stride),
-                PixelLayout::Rgba8 => convert_image_yuv::<4>(image_data, width, height, stride),
-                PixelLayout::Bgr8 => convert_image_yuv_bgr::<3>(image_data, width, height, stride),
-                PixelLayout::Bgra8 => convert_image_yuv_bgr::<4>(image_data, width, height, stride),
-                _ => unreachable!(),
-            };
-        }
+        let mut ctx = YuvContext::new(Range::Limited, Matrix::Bt601);
+        let config = SharpYuvConfig::default();
+        ctx.encode_sharp_420_u8(
+            rgb,
+            &mut y_tight,
+            &mut u_tight,
+            &mut v_tight,
+            w,
+            h,
+            &config,
+        );
+
+        // Copy to macroblock-aligned buffers with edge replication.
+        let mut y_bytes = alloc::vec![0u8; y_size];
+        let mut u_bytes = alloc::vec![0u8; chroma_size];
+        let mut v_bytes = alloc::vec![0u8; chroma_size];
+        pad_plane(&y_tight, &mut y_bytes, w, h, luma_width, 16 * mb_height);
+        pad_plane(
+            &u_tight,
+            &mut u_bytes,
+            src_chroma_width,
+            src_chroma_height,
+            chroma_width,
+            8 * mb_height,
+        );
+        pad_plane(
+            &v_tight,
+            &mut v_bytes,
+            src_chroma_width,
+            src_chroma_height,
+            chroma_width,
+            8 * mb_height,
+        );
 
         (y_bytes, u_bytes, v_bytes)
     }
@@ -893,6 +746,93 @@ pub(crate) fn convert_image_sharp_yuv(
             PixelLayout::Yuv420 | PixelLayout::Argb8 => {
                 unreachable!("sharp YUV should not be called with Yuv420 or Argb8 input")
             }
+        }
+    }
+}
+
+/// Return a tightly-packed RGB buffer (`width * height * 3` bytes). Uses garb's
+/// strided variants, which process the whole frame in a single SIMD pass.
+///
+/// If the source is already tightly-packed Rgb8 (stride == width), returns a
+/// borrowed view and avoids the copy.
+#[cfg(feature = "fast-yuv")]
+fn to_tight_rgb<'a>(
+    src: &'a [u8],
+    color: crate::encoder::PixelLayout,
+    w: usize,
+    h: usize,
+    src_stride_bytes: usize,
+) -> alloc::borrow::Cow<'a, [u8]> {
+    use alloc::borrow::Cow;
+
+    use crate::encoder::PixelLayout;
+    let tight_rgb_stride = w * 3;
+    if color == PixelLayout::Rgb8 && src_stride_bytes == tight_rgb_stride {
+        return Cow::Borrowed(&src[..tight_rgb_stride * h]);
+    }
+
+    let mut rgb = alloc::vec![0u8; w * h * 3];
+    match color {
+        PixelLayout::Rgb8 => {
+            // Strided RGB → tight RGB: row copies.
+            for y in 0..h {
+                rgb[y * tight_rgb_stride..(y + 1) * tight_rgb_stride].copy_from_slice(
+                    &src[y * src_stride_bytes..y * src_stride_bytes + tight_rgb_stride],
+                );
+            }
+        }
+        PixelLayout::Bgr8 => {
+            garb::bytes::bgr_to_rgb_strided(src, &mut rgb, w, h, src_stride_bytes, tight_rgb_stride)
+                .expect("validated sizes");
+        }
+        PixelLayout::Rgba8 => {
+            garb::bytes::rgba_to_rgb_strided(
+                src,
+                &mut rgb,
+                w,
+                h,
+                src_stride_bytes,
+                tight_rgb_stride,
+            )
+            .expect("validated sizes");
+        }
+        PixelLayout::Bgra8 => {
+            garb::bytes::bgra_to_rgb_strided(
+                src,
+                &mut rgb,
+                w,
+                h,
+                src_stride_bytes,
+                tight_rgb_stride,
+            )
+            .expect("validated sizes");
+        }
+        _ => unreachable!(),
+    }
+    Cow::Owned(rgb)
+}
+
+/// Copy a tight `src_w x src_h` plane into a `dst_w x dst_h` buffer with edge replication
+/// on the right and bottom borders.
+#[cfg(feature = "fast-yuv")]
+fn pad_plane(src: &[u8], dst: &mut [u8], src_w: usize, src_h: usize, dst_w: usize, dst_h: usize) {
+    for y in 0..src_h {
+        let sr = &src[y * src_w..(y + 1) * src_w];
+        let dr = &mut dst[y * dst_w..(y + 1) * dst_w];
+        dr[..src_w].copy_from_slice(sr);
+        if dst_w > src_w {
+            let last = sr[src_w - 1];
+            for x in src_w..dst_w {
+                dr[x] = last;
+            }
+        }
+    }
+    if dst_h > src_h {
+        // Replicate the last written row
+        let (filled, rest) = dst.split_at_mut(src_h * dst_w);
+        let last_row = &filled[(src_h - 1) * dst_w..];
+        for chunk in rest.chunks_exact_mut(dst_w) {
+            chunk.copy_from_slice(last_row);
         }
     }
 }

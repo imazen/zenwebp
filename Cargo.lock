@@ -99,9 +99,9 @@ checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 
 [[package]]
 name = "archmage"
-version = "0.9.16"
+version = "0.9.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "906d90739870dc217c19bac4b3d11541817679e875bc3ae03e66458f44ccac6b"
+checksum = "365fca647ae78782eb112df49d25a3c6891c95f8a118eb942ea52a562e20d3df"
 dependencies = [
  "archmage-macros",
  "safe_unaligned_simd",
@@ -109,9 +109,9 @@ dependencies = [
 
 [[package]]
 name = "archmage-macros"
-version = "0.9.16"
+version = "0.9.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2377968d27d15b6e6117b60026a12a76de7e79a40e1ac664158e2bc562d6d95"
+checksum = "f06d01d56dbc8b94d5d78f1dd71fcefaa131e2ab4daf6ffede59e28757dc6ff2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -941,9 +941,9 @@ dependencies = [
 
 [[package]]
 name = "magetypes"
-version = "0.9.16"
+version = "0.9.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "397ac3d7c230570d454406a00bcb74e7b21551eadfa44242463030581631877e"
+checksum = "7b4ad2b56915b91b742a3bdd060ba4435ee92d60d4fc2087c4e6066bd4004434"
 dependencies = [
  "archmage",
 ]
@@ -2156,6 +2156,20 @@ dependencies = [
  "zenpixels",
  "zensim",
  "zensim-regress",
+ "zenyuv",
+]
+
+[[package]]
+name = "zenyuv"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "313985b41811e10894b23dbd4e836753d60e1f857fb0635c3a620173f904c089"
+dependencies = [
+ "archmage",
+ "libm",
+ "linear-srgb",
+ "magetypes",
+ "safe_unaligned_simd",
 ]
 
 [[package]]
