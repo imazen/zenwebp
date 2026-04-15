@@ -246,6 +246,8 @@ static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGB8_SRGB,
     PixelDescriptor::RGBA8_SRGB,
     PixelDescriptor::BGRA8_SRGB,
+    PixelDescriptor::RGBX8_SRGB,
+    PixelDescriptor::BGRX8_SRGB,
 ];
 
 static ENCODE_CAPABILITIES: zencodec::encode::EncodeCapabilities =
@@ -672,6 +674,20 @@ fn pixels_to_webp_input<'a>(
         garb::bytes::bgra_to_rgba(&raw, &mut rgba)
             .map_err(|e| EncodeError::InvalidBufferSize(alloc::format!("pixel conversion: {e}")))?;
         Ok((Cow::Owned(rgba), PixelLayout::Rgba8, w, h, w as usize))
+    } else if desc == PixelDescriptor::RGBX8_SRGB {
+        // Byte 3 is padding — strip to 3-channel RGB.
+        let raw = pixels.contiguous_bytes();
+        let mut rgb = alloc::vec![0u8; (w as usize) * (h as usize) * 3];
+        garb::bytes::rgba_to_rgb(&raw, &mut rgb)
+            .map_err(|e| EncodeError::InvalidBufferSize(alloc::format!("pixel conversion: {e}")))?;
+        Ok((Cow::Owned(rgb), PixelLayout::Rgb8, w, h, w as usize))
+    } else if desc == PixelDescriptor::BGRX8_SRGB {
+        // BGRA layout with padding byte — strip to 3-channel RGB via swap.
+        let raw = pixels.contiguous_bytes();
+        let mut rgb = alloc::vec![0u8; (w as usize) * (h as usize) * 3];
+        garb::bytes::bgra_to_rgb(&raw, &mut rgb)
+            .map_err(|e| EncodeError::InvalidBufferSize(alloc::format!("pixel conversion: {e}")))?;
+        Ok((Cow::Owned(rgb), PixelLayout::Rgb8, w, h, w as usize))
     } else if desc == PixelDescriptor::GRAY8_SRGB {
         let raw = pixels.contiguous_bytes();
         let rgb: Vec<u8> = raw.iter().flat_map(|&g| [g, g, g]).collect();
