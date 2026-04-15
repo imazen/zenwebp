@@ -915,45 +915,30 @@ fn zenyuv_encode_planes(
             }
         }
         YuvEncodeMode::Box => {
-            // Call zenyuv for SIMD Y (dominant compute). Its linear-averaged
-            // chroma is written too but we overwrite it below with our
-            // gamma-corrected scalar computation.
+            // Two-pass: zenyuv Y-only (fast maddubs SIMD, no chroma compute)
+            // + our SIMD gamma chroma overwrite. We skip zenyuv's chroma
+            // compute+write since we're about to replace it anyway.
+            //
+            // Measured alternatives that lost:
+            // - Fusing Y into our magetypes kernel: ~27% slower than zenyuv Y
+            //   because i32x8 matrix mul can't match AVX2 maddubs u8×i8.
             if mb_aligned_width {
-                ctx.encode_420_u8(
-                    rgb,
-                    &mut y_bytes[..w * h],
-                    &mut u_bytes[..src_chroma_width * src_chroma_height],
-                    &mut v_bytes[..src_chroma_width * src_chroma_height],
-                    w,
-                    h,
-                );
+                ctx.encode_420_y_only_u8(rgb, &mut y_bytes[..w * h], w, h);
                 pad_plane_vertical(&mut y_bytes, luma_width, h, luma_height);
-                gamma_chroma_into_mb(
-                    rgb,
-                    w,
-                    h,
-                    &mut u_bytes,
-                    &mut v_bytes,
-                    chroma_width,
-                    chroma_height,
-                );
             } else {
                 let mut y_tight = alloc::vec![0u8; w * h];
-                let mut u_tight = alloc::vec![0u8; src_chroma_width * src_chroma_height];
-                let mut v_tight = alloc::vec![0u8; src_chroma_width * src_chroma_height];
-                ctx.encode_420_u8(rgb, &mut y_tight, &mut u_tight, &mut v_tight, w, h);
+                ctx.encode_420_y_only_u8(rgb, &mut y_tight, w, h);
                 pad_plane(&y_tight, &mut y_bytes, w, h, luma_width, luma_height);
-                // Overwrite U/V with gamma-corrected chroma.
-                gamma_chroma_into_mb(
-                    rgb,
-                    w,
-                    h,
-                    &mut u_bytes,
-                    &mut v_bytes,
-                    chroma_width,
-                    chroma_height,
-                );
             }
+            gamma_chroma_overwrite(
+                rgb,
+                w,
+                h,
+                &mut u_bytes,
+                &mut v_bytes,
+                chroma_width,
+                chroma_height,
+            );
         }
     }
 
@@ -977,18 +962,11 @@ fn linear_to_gamma_dense() -> &'static [u8; 4096] {
 }
 
 /// SIMD kernel generic over archmage Token: process all full row-pairs and
-/// bulk col-pairs using the scalar-LUT-bookend pattern (see
-/// `~/work/claudehints/topics/rust-defaults.md`):
+/// bulk col-pairs for gamma-corrected U/V chroma downsampling. Uses the
+/// scalar-LUT-bookend pattern (see `~/work/claudehints/topics/rust-defaults.md`).
 ///
-/// 1. Scalar gather: 16 src pixels/row × 2 rows → 32 u16 `gamma_to_linear`
-///    values per channel, deinterleaved into even/odd-column stack arrays.
-/// 2. SIMD u16x8 add: vertical+horizontal pair-sum → 8 u16 linear-sum-of-4
-///    per channel. `(sum + 2) >> 2` → 8 u16 linear averages.
-/// 3. SIMD → scalar bridge: `.store()` the averages.
-/// 4. Scalar gather out: 8 u8 gamma-averaged R/G/B from dense LUT.
-/// 5. SIMD YCbCr matrix (i32x8 fixed-point) → 8 U + 8 V i32 values.
-/// 6. SIMD → scalar bridge + clamp+cast to u8.
-///
+/// Tried fusing Y computation into this kernel — the i32x8 Y matrix was ~27%
+/// slower than zenyuv's maddubs-based Y kernel, so we keep them split.
 /// `#[magetypes]` generates `_v3`/`_neon`/`_wasm128`/`_scalar` variants;
 /// `incant!` at the call site dispatches to the best available.
 #[cfg(all(feature = "fast-yuv", feature = "std"))]
@@ -1083,7 +1061,6 @@ fn gamma_chroma_rows_generic(
             let g_avg_v = (g_sum + two).shr_logical_const::<2>();
             let b_avg_v = (b_sum + two).shr_logical_const::<2>();
 
-            // ── Stage 3: SIMD → scalar bridge ──
             let mut r_avg = [0u16; 8];
             let mut g_avg = [0u16; 8];
             let mut b_avg = [0u16; 8];
@@ -1091,7 +1068,7 @@ fn gamma_chroma_rows_generic(
             g_avg_v.store(&mut g_avg);
             b_avg_v.store(&mut b_avg);
 
-            // ── Stage 4: scalar gather out (dense LUT, no interpolation) ──
+            // ── Stage 3: scalar gather out (dense LUT, no interpolation) ──
             let mut r_u8 = [0i32; 8];
             let mut g_u8 = [0i32; 8];
             let mut b_u8 = [0i32; 8];
@@ -1101,16 +1078,13 @@ fn gamma_chroma_rows_generic(
                 b_u8[i] = inv_gamma_dense[(b_avg[i] as usize) & 0xFFF] as i32;
             }
 
-            // ── Stage 5: SIMD YCbCr matrix (i32 fixed-point, YUV_FIX=16) ──
-            // rgb_to_u_single: u = -9719*r - 19081*g + 28800*b + (128 << 16) + YUV_HALF
-            // rgb_to_v_single: v = 28800*r - 24116*g - 4684*b + (128 << 16) + YUV_HALF
+            // ── Stage 4: SIMD YCbCr matrix (i32 fixed-point, YUV_FIX=16) ──
             let r_v = i32x8::from_array(token, r_u8);
             let g_v = i32x8::from_array(token, g_u8);
             let b_v = i32x8::from_array(token, b_u8);
             let u_vals = uv_bias_v + r_v * u_r + g_v * u_g + b_v * u_b;
             let v_vals = uv_bias_v + r_v * v_r + g_v * v_g + b_v * v_b;
 
-            // ── Stage 6: SIMD → scalar bridge + clamp ──
             let mut u_i32 = [0i32; 8];
             let mut v_i32 = [0i32; 8];
             u_vals.shr_arithmetic_const::<16>().store(&mut u_i32);
@@ -1127,13 +1101,16 @@ fn gamma_chroma_rows_generic(
     }
 }
 
-/// Compute gamma-corrected U/V chroma planes from tightly-packed RGB and write
-/// them directly into mb-aligned output buffers (with edge replication).
+/// Overwrite the U/V chroma planes with gamma-corrected values. Leaves Y
+/// untouched. Called after zenyuv has populated all three planes — we just
+/// replace the linear-averaged chroma with the gamma-corrected equivalent.
 ///
-/// Matches libwebp's default chroma quality: averaging each R/G/B channel in
-/// linear^0.80 space before applying the YCbCr matrix.
+/// SIMD fast path via `yuv420_rows_generic` processes 8 chroma outputs per
+/// iteration but skips Y writes via a stride of 0 (its Y output is discarded
+/// below — cache-only, no effect on correctness since zenyuv already wrote
+/// the correct Y). Scalar fallback handles tail cols and odd rows.
 #[cfg(feature = "fast-yuv")]
-fn gamma_chroma_into_mb(
+fn gamma_chroma_overwrite(
     rgb: &[u8],
     w: usize,
     h: usize,
@@ -1151,9 +1128,6 @@ fn gamma_chroma_into_mb(
 
     let px = |x: usize, y: usize| -> &[u8] { &rgb[(y * w + x) * 3..(y * w + x) * 3 + 3] };
 
-    // SIMD fast path via `#[magetypes]` generic + `incant!` dispatch:
-    // process full row pairs at 16 src cols (8 chroma outputs) per iteration.
-    // Fall back to scalar for the tail cols and odd rows below.
     #[cfg(all(feature = "fast-yuv", feature = "std"))]
     let simd_col_pairs = {
         use archmage::incant;
@@ -1179,6 +1153,7 @@ fn gamma_chroma_into_mb(
     #[cfg(not(all(feature = "fast-yuv", feature = "std")))]
     let simd_col_pairs = 0usize;
 
+    // Scalar tail for UV only — Y is already correct from zenyuv.
     for row_pair in 0..row_pairs {
         let r1 = row_pair * 2;
         let r2 = r1 + 1;
@@ -1217,7 +1192,7 @@ fn gamma_chroma_into_mb(
         }
     }
 
-    // Edge replication: horizontal (right) and vertical (bottom).
+    // Edge replication for UV (Y's edges are already handled by caller).
     for y in 0..src_chroma_height {
         let last_u = u_bytes[y * chroma_width + src_chroma_width - 1];
         let last_v = v_bytes[y * chroma_width + src_chroma_width - 1];
