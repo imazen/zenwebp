@@ -355,6 +355,7 @@ fn gamma_avg_2(a: u8, b: u8) -> u8 {
 
 /// converts the whole image to yuv data and adds values on the end to make it match the macroblock sizes
 /// downscales the u/v data as well so it's half the width and height of the y data
+#[cfg_attr(feature = "fast-yuv", allow(dead_code))] // zenyuv path replaces this
 pub(crate) fn convert_image_yuv<const BPP: usize>(
     image_data: &[u8],
     width: u16,
@@ -591,7 +592,7 @@ pub(crate) fn rgb_to_v_single(r: u8, g: u8, b: u8) -> u8 {
 ///
 /// Each R/G/B channel is averaged in linear^0.80 space before the YUV
 /// matrix is applied to the averaged RGB values.
-#[cfg_attr(not(feature = "std"), allow(dead_code))]
+#[allow(dead_code)] // Used by codec.rs (behind `zencodec` feature)
 pub(crate) fn rgb_to_u_avg(rgb1: &[u8], rgb2: &[u8], rgb3: &[u8], rgb4: &[u8]) -> u8 {
     let r = gamma_avg_4(rgb1[0], rgb2[0], rgb3[0], rgb4[0]);
     let g = gamma_avg_4(rgb1[1], rgb2[1], rgb3[1], rgb4[1]);
@@ -601,7 +602,7 @@ pub(crate) fn rgb_to_u_avg(rgb1: &[u8], rgb2: &[u8], rgb3: &[u8], rgb4: &[u8]) -
 
 /// Get the chroma-downsampled V value for a 2x2 pixel block using
 /// gamma-corrected averaging (gamma=0.80, matching libwebp).
-#[cfg_attr(not(feature = "std"), allow(dead_code))]
+#[allow(dead_code)] // Used by codec.rs (behind `zencodec` feature)
 pub(crate) fn rgb_to_v_avg(rgb1: &[u8], rgb2: &[u8], rgb3: &[u8], rgb4: &[u8]) -> u8 {
     let r = gamma_avg_4(rgb1[0], rgb2[0], rgb3[0], rgb4[0]);
     let g = gamma_avg_4(rgb1[1], rgb2[1], rgb3[1], rgb4[1]);
@@ -652,7 +653,6 @@ pub(crate) fn convert_image_sharp_yuv(
     #[cfg(feature = "fast-yuv")]
     {
         use crate::encoder::PixelLayout;
-        use zenyuv::{Matrix, Range, SharpYuvConfig, YuvContext};
 
         // Sharp YUV only applies to RGB/RGBA/BGR/BGRA inputs (chroma subsampling matters).
         // For grayscale, fall back to standard conversion.
@@ -668,68 +668,7 @@ pub(crate) fn convert_image_sharp_yuv(
             _ => {}
         }
 
-        let w = usize::from(width);
-        let h = usize::from(height);
-        let mb_width = w.div_ceil(16);
-        let mb_height = h.div_ceil(16);
-        let luma_width = 16 * mb_width;
-        let chroma_width = 8 * mb_width;
-        let y_size = luma_width * 16 * mb_height;
-        let chroma_size = chroma_width * 8 * mb_height;
-        let src_chroma_width = w.div_ceil(2);
-        let src_chroma_height = h.div_ceil(2);
-
-        // Build a tightly-packed RGB buffer (no source stride, no alpha).
-        // zenyuv takes only RGB input; garb does the swizzle/strip with SIMD.
-        let src_bpp: usize = match color {
-            PixelLayout::Rgb8 | PixelLayout::Bgr8 => 3,
-            PixelLayout::Rgba8 | PixelLayout::Bgra8 => 4,
-            _ => unreachable!(),
-        };
-        let src_stride_bytes = stride * src_bpp;
-        let rgb = to_tight_rgb(image_data, color, w, h, src_stride_bytes);
-        let rgb: &[u8] = &rgb;
-
-        // Allocate tight Y/Cb/Cr output for zenyuv.
-        let mut y_tight = alloc::vec![0u8; w * h];
-        let mut u_tight = alloc::vec![0u8; src_chroma_width * src_chroma_height];
-        let mut v_tight = alloc::vec![0u8; src_chroma_width * src_chroma_height];
-
-        let mut ctx = YuvContext::new(Range::Limited, Matrix::Bt601);
-        let config = SharpYuvConfig::default();
-        ctx.encode_sharp_420_u8(
-            rgb,
-            &mut y_tight,
-            &mut u_tight,
-            &mut v_tight,
-            w,
-            h,
-            &config,
-        );
-
-        // Copy to macroblock-aligned buffers with edge replication.
-        let mut y_bytes = alloc::vec![0u8; y_size];
-        let mut u_bytes = alloc::vec![0u8; chroma_size];
-        let mut v_bytes = alloc::vec![0u8; chroma_size];
-        pad_plane(&y_tight, &mut y_bytes, w, h, luma_width, 16 * mb_height);
-        pad_plane(
-            &u_tight,
-            &mut u_bytes,
-            src_chroma_width,
-            src_chroma_height,
-            chroma_width,
-            8 * mb_height,
-        );
-        pad_plane(
-            &v_tight,
-            &mut v_bytes,
-            src_chroma_width,
-            src_chroma_height,
-            chroma_width,
-            8 * mb_height,
-        );
-
-        (y_bytes, u_bytes, v_bytes)
+        zenyuv_encode_planes(image_data, color, width, height, stride, YuvEncodeMode::Sharp)
     }
 
     #[cfg(not(feature = "fast-yuv"))]
@@ -748,6 +687,24 @@ pub(crate) fn convert_image_sharp_yuv(
             }
         }
     }
+}
+
+/// Fast non-sharp RGB/RGBA/BGR/BGRA → YUV420 conversion using zenyuv for Y
+/// (SIMD) and scalar gamma-corrected chroma downsampling for U/V.
+///
+/// Only available with the `fast-yuv` feature. The Y plane is computed by
+/// zenyuv's SIMD kernel (AVX2/NEON/WASM SIMD128), which is ~2-3x faster than
+/// the pure scalar path. U/V use zenwebp's existing gamma-corrected formula
+/// to match libwebp's default chroma quality.
+#[cfg(feature = "fast-yuv")]
+pub(crate) fn convert_image_yuv_fast(
+    image_data: &[u8],
+    color: crate::encoder::PixelLayout,
+    width: u16,
+    height: u16,
+    stride: usize,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    zenyuv_encode_planes(image_data, color, width, height, stride, YuvEncodeMode::Box)
 }
 
 /// Return a tightly-packed RGB buffer (`width * height * 3` bytes). Uses garb's
@@ -837,11 +794,252 @@ fn pad_plane(src: &[u8], dst: &mut [u8], src_w: usize, src_h: usize, dst_w: usiz
     }
 }
 
+/// Replicate rows [src_h..dst_h) by copying the last written row. Used when an
+/// image already has mb-aligned width but height < mb-aligned height.
+#[cfg(feature = "fast-yuv")]
+fn pad_plane_vertical(dst: &mut [u8], row_w: usize, src_h: usize, dst_h: usize) {
+    if dst_h <= src_h {
+        return;
+    }
+    let (filled, rest) = dst.split_at_mut(src_h * row_w);
+    let last_row = &filled[(src_h - 1) * row_w..src_h * row_w];
+    for chunk in rest.chunks_exact_mut(row_w) {
+        chunk.copy_from_slice(last_row);
+    }
+}
+
+#[cfg(feature = "fast-yuv")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum YuvEncodeMode {
+    /// Non-sharp: zenyuv for Y (SIMD), gamma-corrected scalar for chroma.
+    /// Matches libwebp's default chroma quality.
+    Box,
+    /// Sharp YUV: zenyuv's iterative chroma optimization.
+    Sharp,
+}
+
+/// Unified zenyuv-backed encoder for RGB/RGBA/BGR/BGRA → YUV420 (mb-aligned).
+///
+/// Optimizations over the naive path:
+/// - For Rgb8 with tight stride, avoids the RGB intermediate copy entirely.
+/// - When the image width is already a multiple of 16 (mb-aligned), writes Y/U/V
+///   directly into the mb-aligned output buffers (no tight intermediate). Only
+///   vertical padding needs a copy.
+/// - For [`YuvEncodeMode::Box`], overwrites zenyuv's linear-averaged chroma with
+///   our gamma-corrected scalar computation for libwebp-parity perceptual quality.
+#[cfg(feature = "fast-yuv")]
+fn zenyuv_encode_planes(
+    image_data: &[u8],
+    color: crate::encoder::PixelLayout,
+    width: u16,
+    height: u16,
+    stride: usize,
+    mode: YuvEncodeMode,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    use crate::encoder::PixelLayout;
+    use zenyuv::{Matrix, Range, SharpYuvConfig, YuvContext};
+
+    let w = usize::from(width);
+    let h = usize::from(height);
+    let mb_width = w.div_ceil(16);
+    let mb_height = h.div_ceil(16);
+    let luma_width = 16 * mb_width;
+    let chroma_width = 8 * mb_width;
+    let luma_height = 16 * mb_height;
+    let chroma_height = 8 * mb_height;
+    let y_size = luma_width * luma_height;
+    let chroma_size = chroma_width * chroma_height;
+    let src_chroma_width = w.div_ceil(2);
+    let src_chroma_height = h.div_ceil(2);
+
+    let src_bpp: usize = match color {
+        PixelLayout::Rgb8 | PixelLayout::Bgr8 => 3,
+        PixelLayout::Rgba8 | PixelLayout::Bgra8 => 4,
+        _ => unreachable!("zenyuv_encode_planes: unsupported layout {:?}", color),
+    };
+    let src_stride_bytes = stride * src_bpp;
+    let rgb = to_tight_rgb(image_data, color, w, h, src_stride_bytes);
+    let rgb: &[u8] = &rgb;
+
+    // Allocate mb-aligned output buffers up-front.
+    let mut y_bytes = alloc::vec![0u8; y_size];
+    let mut u_bytes = alloc::vec![0u8; chroma_size];
+    let mut v_bytes = alloc::vec![0u8; chroma_size];
+
+    // Fast path: when w is already mb-aligned, luma rows match and chroma rows
+    // match (cw = w/2 = chroma_width). We can write directly into the mb-aligned
+    // buffers and only need vertical padding.
+    let mb_aligned_width = w == luma_width;
+
+    let mut ctx = YuvContext::new(Range::Limited, Matrix::Bt601);
+    match mode {
+        YuvEncodeMode::Sharp => {
+            let config = SharpYuvConfig::default();
+            if mb_aligned_width {
+                ctx.encode_sharp_420_u8(
+                    rgb,
+                    &mut y_bytes[..w * h],
+                    &mut u_bytes[..src_chroma_width * src_chroma_height],
+                    &mut v_bytes[..src_chroma_width * src_chroma_height],
+                    w,
+                    h,
+                    &config,
+                );
+                pad_plane_vertical(&mut y_bytes, luma_width, h, luma_height);
+                pad_plane_vertical(&mut u_bytes, chroma_width, src_chroma_height, chroma_height);
+                pad_plane_vertical(&mut v_bytes, chroma_width, src_chroma_height, chroma_height);
+            } else {
+                let mut y_tight = alloc::vec![0u8; w * h];
+                let mut u_tight = alloc::vec![0u8; src_chroma_width * src_chroma_height];
+                let mut v_tight = alloc::vec![0u8; src_chroma_width * src_chroma_height];
+                ctx.encode_sharp_420_u8(
+                    rgb, &mut y_tight, &mut u_tight, &mut v_tight, w, h, &config,
+                );
+                pad_plane(&y_tight, &mut y_bytes, w, h, luma_width, luma_height);
+                pad_plane(
+                    &u_tight,
+                    &mut u_bytes,
+                    src_chroma_width,
+                    src_chroma_height,
+                    chroma_width,
+                    chroma_height,
+                );
+                pad_plane(
+                    &v_tight,
+                    &mut v_bytes,
+                    src_chroma_width,
+                    src_chroma_height,
+                    chroma_width,
+                    chroma_height,
+                );
+            }
+        }
+        YuvEncodeMode::Box => {
+            // Call zenyuv for SIMD Y (dominant compute). Its linear-averaged
+            // chroma is written too but we overwrite it below with our
+            // gamma-corrected scalar computation.
+            if mb_aligned_width {
+                ctx.encode_420_u8(
+                    rgb,
+                    &mut y_bytes[..w * h],
+                    &mut u_bytes[..src_chroma_width * src_chroma_height],
+                    &mut v_bytes[..src_chroma_width * src_chroma_height],
+                    w,
+                    h,
+                );
+                pad_plane_vertical(&mut y_bytes, luma_width, h, luma_height);
+                gamma_chroma_into_mb(
+                    rgb,
+                    w,
+                    h,
+                    &mut u_bytes,
+                    &mut v_bytes,
+                    chroma_width,
+                    chroma_height,
+                );
+            } else {
+                let mut y_tight = alloc::vec![0u8; w * h];
+                let mut u_tight = alloc::vec![0u8; src_chroma_width * src_chroma_height];
+                let mut v_tight = alloc::vec![0u8; src_chroma_width * src_chroma_height];
+                ctx.encode_420_u8(rgb, &mut y_tight, &mut u_tight, &mut v_tight, w, h);
+                pad_plane(&y_tight, &mut y_bytes, w, h, luma_width, luma_height);
+                // Overwrite U/V with gamma-corrected chroma.
+                gamma_chroma_into_mb(
+                    rgb,
+                    w,
+                    h,
+                    &mut u_bytes,
+                    &mut v_bytes,
+                    chroma_width,
+                    chroma_height,
+                );
+            }
+        }
+    }
+
+    (y_bytes, u_bytes, v_bytes)
+}
+
+/// Compute gamma-corrected U/V chroma planes from tightly-packed RGB and write
+/// them directly into mb-aligned output buffers (with edge replication).
+///
+/// Matches libwebp's default chroma quality: averaging each R/G/B channel in
+/// linear^0.80 space before applying the YCbCr matrix.
+#[cfg(feature = "fast-yuv")]
+fn gamma_chroma_into_mb(
+    rgb: &[u8],
+    w: usize,
+    h: usize,
+    u_bytes: &mut [u8],
+    v_bytes: &mut [u8],
+    chroma_width: usize,
+    chroma_height_mb: usize,
+) {
+    let src_chroma_width = w.div_ceil(2);
+    let src_chroma_height = h.div_ceil(2);
+    let row_pairs = h / 2;
+    let odd_height = h & 1 != 0;
+    let col_pairs = w / 2;
+    let odd_width = w & 1 != 0;
+
+    let px = |x: usize, y: usize| -> &[u8] { &rgb[(y * w + x) * 3..(y * w + x) * 3 + 3] };
+
+    for row_pair in 0..row_pairs {
+        let r1 = row_pair * 2;
+        let r2 = r1 + 1;
+        for col_pair in 0..col_pairs {
+            let c1 = col_pair * 2;
+            let c2 = c1 + 1;
+            let (u, v) = gamma_downsample_uv_4(px(c1, r1), px(c2, r1), px(c1, r2), px(c2, r2));
+            let idx = row_pair * chroma_width + col_pair;
+            u_bytes[idx] = u;
+            v_bytes[idx] = v;
+        }
+        if odd_width {
+            let c = w - 1;
+            let (u, v) = gamma_downsample_uv_2(px(c, r1), px(c, r2));
+            let idx = row_pair * chroma_width + col_pairs;
+            u_bytes[idx] = u;
+            v_bytes[idx] = v;
+        }
+    }
+    if odd_height {
+        let r = h - 1;
+        for col_pair in 0..col_pairs {
+            let c1 = col_pair * 2;
+            let c2 = c1 + 1;
+            let (u, v) = gamma_downsample_uv_2(px(c1, r), px(c2, r));
+            let idx = row_pairs * chroma_width + col_pair;
+            u_bytes[idx] = u;
+            v_bytes[idx] = v;
+        }
+        if odd_width {
+            let c = w - 1;
+            let p = px(c, r);
+            let idx = row_pairs * chroma_width + col_pairs;
+            u_bytes[idx] = rgb_to_u_single(p[0], p[1], p[2]);
+            v_bytes[idx] = rgb_to_v_single(p[0], p[1], p[2]);
+        }
+    }
+
+    // Edge replication: horizontal (right) and vertical (bottom).
+    for y in 0..src_chroma_height {
+        let last_u = u_bytes[y * chroma_width + src_chroma_width - 1];
+        let last_v = v_bytes[y * chroma_width + src_chroma_width - 1];
+        for x in src_chroma_width..chroma_width {
+            u_bytes[y * chroma_width + x] = last_u;
+            v_bytes[y * chroma_width + x] = last_v;
+        }
+    }
+    pad_plane_vertical(u_bytes, chroma_width, src_chroma_height, chroma_height_mb);
+    pad_plane_vertical(v_bytes, chroma_width, src_chroma_height, chroma_height_mb);
+}
+
 /// Convert BGR/BGRA image data to YUV420 with macroblock alignment.
 ///
 /// Same as `convert_image_yuv` but reads pixels as B,G,R(,A) instead of R,G,B(,A).
 /// BPP=3 for BGR, BPP=4 for BGRA.
-#[cfg_attr(not(feature = "std"), allow(dead_code))]
+#[cfg_attr(feature = "fast-yuv", allow(dead_code))] // zenyuv path replaces this
 pub(crate) fn convert_image_yuv_bgr<const BPP: usize>(
     image_data: &[u8],
     width: u16,
