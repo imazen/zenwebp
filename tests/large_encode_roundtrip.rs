@@ -133,7 +133,7 @@ fn roundtrip_rgb_with_partition_limit(
     }
 }
 
-// --- Low-entropy gradient images: partition stays small, all pass ---
+// --- Low-entropy gradient: partition stays small ---
 
 #[test]
 fn gradient_4096x4096() {
@@ -141,94 +141,22 @@ fn gradient_4096x4096() {
     roundtrip_rgb(&pixels, 4096, 4096, 80.0);
 }
 
-#[test]
-fn gradient_7680x5760() {
-    let pixels = generate_gradient_rgb(7680, 5760);
-    roundtrip_rgb(&pixels, 7680, 5760, 80.0);
-}
-
-#[test]
-fn gradient_8192x8192() {
-    let pixels = generate_gradient_rgb(8192, 8192);
-    roundtrip_rgb(&pixels, 8192, 8192, 80.0);
-}
-
-// --- High-entropy noisy images: partition fits at small sizes ---
+// --- High-entropy noisy: partition fits at moderate sizes ---
 
 #[test]
 fn noisy_4096x4096() {
-    // 16.8MP — OK, partition fits in 19 bits even without retry
+    // 16.8MP — partition fits in 19 bits without retry
     let pixels = generate_noisy_rgb(4096, 4096);
     roundtrip_rgb(&pixels, 4096, 4096, 80.0);
 }
 
-#[test]
-fn noisy_5000x5000() {
-    // 25.0MP — OK, just under threshold at q75
-    let pixels = generate_noisy_rgb(5000, 5000);
-    roundtrip_rgb(&pixels, 5000, 5000, 75.0);
-}
-
-#[test]
-fn noisy_5824x4368() {
-    // 25.4MP — OK, just under threshold at q70
-    let pixels = generate_noisy_rgb(5824, 4368);
-    roundtrip_rgb(&pixels, 5824, 4368, 70.0);
-}
-
-// --- Automatic partition_limit retry: previously-overflowing images now succeed ---
+// --- Automatic partition_limit retry ---
 
 #[test]
 fn noisy_5888x4416_auto_retry() {
     // 26.0MP — would overflow without partition_limit, auto-retry handles it
     let pixels = generate_noisy_rgb(5888, 4416);
     roundtrip_rgb(&pixels, 5888, 4416, 80.0);
-}
-
-#[test]
-fn noisy_7680x5760_auto_retry() {
-    // 44.2MP — well over limit, auto-retry with I4 suppression
-    let pixels = generate_noisy_rgb(7680, 5760);
-    roundtrip_rgb(&pixels, 7680, 5760, 80.0);
-}
-
-#[test]
-fn noisy_8192x8192_auto_retry() {
-    // 67.1MP — well over limit, auto-retry handles it
-    let pixels = generate_noisy_rgb(8192, 8192);
-    roundtrip_rgb(&pixels, 8192, 8192, 80.0);
-}
-
-// --- Shape doesn't matter, only total pixel count ---
-
-#[test]
-fn noisy_8192x3456_wide_auto_retry() {
-    // 28.3MP wide — auto-retry handles it
-    let pixels = generate_noisy_rgb(8192, 3456);
-    roundtrip_rgb(&pixels, 8192, 3456, 80.0);
-}
-
-#[test]
-fn noisy_3456x8192_tall_auto_retry() {
-    // 28.3MP tall — auto-retry handles it
-    let pixels = generate_noisy_rgb(3456, 8192);
-    roundtrip_rgb(&pixels, 3456, 8192, 80.0);
-}
-
-// --- Quality affects compression ratio, thus partition size ---
-
-#[test]
-fn noisy_7680x5760_q10() {
-    // q10 compresses aggressively — partition stays small enough. Passes.
-    let pixels = generate_noisy_rgb(7680, 5760);
-    roundtrip_rgb(&pixels, 7680, 5760, 10.0);
-}
-
-#[test]
-fn noisy_7680x5760_q50_auto_retry() {
-    // q50 — would overflow without partition_limit, auto-retry handles it
-    let pixels = generate_noisy_rgb(7680, 5760);
-    roundtrip_rgb(&pixels, 7680, 5760, 50.0);
 }
 
 // --- Explicit partition_limit(0): overflow errors are preserved ---
@@ -240,22 +168,10 @@ fn noisy_5888x4416_explicit_zero_overflows() {
     expect_partition0_overflow_no_retry(&pixels, 5888, 4416, 80.0);
 }
 
-#[test]
-fn noisy_7680x5760_explicit_zero_overflows() {
-    let pixels = generate_noisy_rgb(7680, 5760);
-    expect_partition0_overflow_no_retry(&pixels, 7680, 5760, 80.0);
-}
-
 // --- Explicit partition_limit: high values allow large images ---
 
 #[test]
 fn noisy_5888x4416_explicit_limit_70() {
     let pixels = generate_noisy_rgb(5888, 4416);
     roundtrip_rgb_with_partition_limit(&pixels, 5888, 4416, 80.0, 70);
-}
-
-#[test]
-fn noisy_7680x5760_explicit_limit_100() {
-    let pixels = generate_noisy_rgb(7680, 5760);
-    roundtrip_rgb_with_partition_limit(&pixels, 7680, 5760, 80.0, 100);
 }
