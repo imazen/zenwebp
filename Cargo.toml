@@ -147,6 +147,9 @@ harness = false
 name = "decode_zenbench"
 harness = false
 
+[patch.crates-io]
+zenyuv = { path = "../zenjpeg/zenyuv" }
+
 [[bench]]
 name = "decode_compare"
 harness = false
