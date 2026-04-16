@@ -819,7 +819,7 @@ fn zenyuv_encode_planes(
     width: u16,
     height: u16,
     stride: usize,
-    _mode: YuvEncodeMode,
+    mode: YuvEncodeMode,
 ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     use crate::encoder::PixelLayout;
     use zenyuv::{Matrix, Range, YuvContext};
@@ -834,6 +834,8 @@ fn zenyuv_encode_planes(
     let chroma_height = 8 * mb_height;
     let y_size = luma_width * luma_height;
     let chroma_size = chroma_width * chroma_height;
+    let cw = w.div_ceil(2);
+    let ch = h.div_ceil(2);
 
     let src_bpp: usize = match color {
         PixelLayout::Rgb8 | PixelLayout::Bgr8 => 3,
@@ -855,12 +857,7 @@ fn zenyuv_encode_planes(
     let mb_aligned_width = w == luma_width;
 
     let mut ctx = YuvContext::new(Range::Limited, Matrix::Bt601);
-    // Sharp and Box both use the same two-pass approach: zenyuv Y-only SIMD +
-    // gamma-corrected chroma. The sharp iteration is disabled for now because
-    // its BT.601-Limited forward model doesn't match the libwebp gamma-corrected
-    // chroma model, causing a systematic green shift (see imazen/zenwebp#17).
-    // TODO: re-enable sharp iteration with a model that matches the encoder's
-    // gamma-corrected chroma computation.
+
     // Two-pass: zenyuv Y-only (fast maddubs SIMD, no chroma compute)
     // + our SIMD gamma chroma overwrite.
     if mb_aligned_width {
@@ -880,6 +877,77 @@ fn zenyuv_encode_planes(
         chroma_width,
         chroma_height,
     );
+
+    // Sharp path: refine the gamma-corrected chroma via Newton-step iteration.
+    // The gamma chroma matches the decoder's model, so the iteration starts from
+    // a correct baseline and can only improve. The iteration minimizes
+    // ||RGB_original - RGB_reconstructed|| using the BT.601-Limited inverse matrix.
+    if mode == YuvEncodeMode::Sharp {
+        let config = zenyuv::SharpYuvConfig::default();
+        if mb_aligned_width {
+            // Tight Y is the first w*h bytes of the mb-aligned buffer.
+            // Tight chroma is cw-strided, which equals chroma_width when aligned.
+            zenyuv::sharp::refine_chroma_420_u8(
+                rgb,
+                &y_bytes[..w * h],
+                &mut u_bytes[..cw * ch],
+                &mut v_bytes[..cw * ch],
+                w,
+                h,
+                Range::Limited,
+                Matrix::Bt601,
+                &config,
+            );
+            // Re-pad chroma vertically (refine only wrote to the cw*ch region).
+            pad_plane_vertical(&mut u_bytes, chroma_width, ch, chroma_height);
+            pad_plane_vertical(&mut v_bytes, chroma_width, ch, chroma_height);
+        } else {
+            // Need tight Y and tight chroma for the refine function.
+            // y_bytes is mb-aligned (luma_width stride), extract tight (w stride).
+            let mut y_tight = alloc::vec![0u8; w * h];
+            for row in 0..h {
+                y_tight[row * w..(row + 1) * w]
+                    .copy_from_slice(&y_bytes[row * luma_width..row * luma_width + w]);
+            }
+            let mut u_tight = alloc::vec![0u8; cw * ch];
+            let mut v_tight = alloc::vec![0u8; cw * ch];
+            for row in 0..ch {
+                u_tight[row * cw..(row + 1) * cw]
+                    .copy_from_slice(&u_bytes[row * chroma_width..row * chroma_width + cw]);
+                v_tight[row * cw..(row + 1) * cw]
+                    .copy_from_slice(&v_bytes[row * chroma_width..row * chroma_width + cw]);
+            }
+            zenyuv::sharp::refine_chroma_420_u8(
+                rgb,
+                &y_tight,
+                &mut u_tight,
+                &mut v_tight,
+                w,
+                h,
+                Range::Limited,
+                Matrix::Bt601,
+                &config,
+            );
+            // Copy refined chroma back to mb-aligned buffers with padding.
+            for row in 0..ch {
+                u_bytes[row * chroma_width..row * chroma_width + cw]
+                    .copy_from_slice(&u_tight[row * cw..(row + 1) * cw]);
+                v_bytes[row * chroma_width..row * chroma_width + cw]
+                    .copy_from_slice(&v_tight[row * cw..(row + 1) * cw]);
+            }
+            // Horizontal + vertical padding for chroma.
+            for row in 0..ch {
+                let last_u = u_bytes[row * chroma_width + cw - 1];
+                let last_v = v_bytes[row * chroma_width + cw - 1];
+                for x in cw..chroma_width {
+                    u_bytes[row * chroma_width + x] = last_u;
+                    v_bytes[row * chroma_width + x] = last_v;
+                }
+            }
+            pad_plane_vertical(&mut u_bytes, chroma_width, ch, chroma_height);
+            pad_plane_vertical(&mut v_bytes, chroma_width, ch, chroma_height);
+        }
+    }
 
     (y_bytes, u_bytes, v_bytes)
 }
