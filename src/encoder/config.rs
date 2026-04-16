@@ -57,8 +57,9 @@ pub struct LossyConfig {
     pub target_psnr: f32,
     /// Content-aware preset (affects SNS, filter, sharpness). Default: None.
     pub preset: Option<Preset>,
-    /// Use sharp (iterative) YUV conversion. Default: false.
-    pub sharp_yuv: bool,
+    /// Sharp YUV configuration. `None` = disabled (standard chroma downsampling).
+    /// `Some(config)` = iterative chroma refinement with given parameters.
+    pub sharp_yuv: Option<zenyuv::SharpYuvConfig>,
     /// Spatial noise shaping strength (0-100). None = use preset default.
     pub sns_strength: Option<u8>,
     /// Loop filter strength (0-100). None = use preset default.
@@ -95,7 +96,7 @@ impl LossyConfig {
             target_size: 0,
             target_psnr: 0.0,
             preset: None,
-            sharp_yuv: false,
+            sharp_yuv: None,
             sns_strength: None,
             filter_strength: None,
             filter_sharpness: None,
@@ -157,10 +158,22 @@ impl LossyConfig {
         self
     }
 
-    /// Enable sharp (iterative) YUV conversion for better quality.
+    /// Enable or disable sharp YUV conversion.
+    /// `true` enables with default config, `false` disables.
     #[must_use]
     pub fn with_sharp_yuv(mut self, enable: bool) -> Self {
-        self.sharp_yuv = enable;
+        self.sharp_yuv = if enable {
+            Some(zenyuv::SharpYuvConfig::default())
+        } else {
+            None
+        };
+        self
+    }
+
+    /// Enable sharp YUV with a custom configuration.
+    #[must_use]
+    pub fn with_sharp_yuv_config(mut self, config: zenyuv::SharpYuvConfig) -> Self {
+        self.sharp_yuv = Some(config);
         self
     }
 
@@ -572,7 +585,11 @@ impl EncoderConfig {
     #[must_use]
     pub fn with_sharp_yuv(mut self, enable: bool) -> Self {
         if let Self::Lossy(cfg) = &mut self {
-            cfg.sharp_yuv = enable;
+            cfg.sharp_yuv = if enable {
+                Some(zenyuv::SharpYuvConfig::default())
+            } else {
+                None
+            };
         }
         self
     }
@@ -733,7 +750,7 @@ impl LossyConfig {
             preset: self.preset.unwrap_or(Preset::Default),
             target_size: self.target_size,
             target_psnr: self.target_psnr,
-            use_sharp_yuv: self.sharp_yuv,
+            sharp_yuv: self.sharp_yuv.clone(),
             alpha_quality: self.alpha_quality,
             partition_limit: self.partition_limit,
             exact: false, // Not applicable to lossy (alpha plane is lossless separately)
@@ -755,7 +772,7 @@ impl LosslessConfig {
             preset: Preset::Default, // Preset not used for lossless encoding
             target_size: self.target_size,
             target_psnr: 0.0,
-            use_sharp_yuv: false,
+            sharp_yuv: None,
             alpha_quality: self.alpha_quality,
             partition_limit: None, // Not applicable to lossless
             exact: self.exact,

@@ -169,6 +169,9 @@ pub use encoder::{
     LossyConfig, PixelLayout, Preset,
 };
 
+/// Re-export sharp YUV configuration from zenyuv.
+pub use zenyuv::SharpYuvConfig;
+
 // #[cfg(feature = "zennode")]
 // pub mod zennode_defs;
 

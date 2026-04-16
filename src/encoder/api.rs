@@ -532,8 +532,9 @@ pub struct EncoderParams {
     pub(crate) target_size: u32,
     /// Target PSNR in dB. When > 0.0, enables quality search to hit target PSNR.
     pub(crate) target_psnr: f32,
-    /// Use sharp (iterative) YUV conversion for higher chroma fidelity.
-    pub(crate) use_sharp_yuv: bool,
+    /// Sharp YUV configuration. `None` = disabled (standard chroma downsampling).
+    /// `Some(config)` = iterative chroma refinement with given parameters.
+    pub(crate) sharp_yuv: Option<zenyuv::SharpYuvConfig>,
     /// Alpha channel quality (0-100). 100 = lossless alpha, <100 = quantize alpha levels.
     pub(crate) alpha_quality: u8,
     /// Partition limit (0-100). Penalizes I4 mode to prevent partition 0 overflow.
@@ -558,7 +559,7 @@ impl Default for EncoderParams {
             preset: Preset::Default,
             target_size: 0,
             target_psnr: 0.0,
-            use_sharp_yuv: false,
+            sharp_yuv: None,
             alpha_quality: 100,
             partition_limit: None,
             exact: false,
@@ -680,8 +681,10 @@ pub struct EncoderConfig {
     pub target_size: u32,
     /// Target PSNR in dB (0.0 = disabled). Default: 0.0.
     pub target_psnr: f32,
-    /// Use sharp (iterative) YUV conversion. Default: `false`.
-    pub sharp_yuv: bool,
+    /// Sharp YUV configuration. `None` = disabled (standard chroma downsampling).
+    /// `Some(config)` = iterative chroma refinement with given parameters.
+    /// Use `.sharp_yuv(true)` for default config, `.sharp_yuv_config(cfg)` for custom.
+    pub sharp_yuv: Option<zenyuv::SharpYuvConfig>,
     /// Spatial noise shaping strength override (0-100). `None` = use preset default.
     pub sns_strength: Option<u8>,
     /// Loop filter strength override (0-100). `None` = use preset default.
@@ -709,7 +712,7 @@ impl Default for EncoderConfig {
             exact: false,
             target_size: 0,
             target_psnr: 0.0,
-            sharp_yuv: false,
+            sharp_yuv: None,
             sns_strength: None,
             filter_strength: None,
             filter_sharpness: None,
@@ -814,10 +817,23 @@ impl EncoderConfig {
         self
     }
 
-    /// Use sharp YUV conversion (slower but better quality).
+    /// Enable or disable sharp YUV conversion.
+    /// `true` enables with default config, `false` disables.
     #[must_use]
     pub fn sharp_yuv(mut self, enable: bool) -> Self {
-        self.sharp_yuv = enable;
+        self.sharp_yuv = if enable {
+            Some(zenyuv::SharpYuvConfig::default())
+        } else {
+            None
+        };
+        self
+    }
+
+    /// Enable sharp YUV with a custom configuration.
+    /// Implicitly enables sharp YUV.
+    #[must_use]
+    pub fn sharp_yuv_config(mut self, config: zenyuv::SharpYuvConfig) -> Self {
+        self.sharp_yuv = Some(config);
         self
     }
 
@@ -895,7 +911,7 @@ impl EncoderConfig {
             preset: self.preset,
             target_size: self.target_size,
             target_psnr: self.target_psnr,
-            use_sharp_yuv: self.sharp_yuv,
+            sharp_yuv: self.sharp_yuv.clone(),
             alpha_quality: self.alpha_quality,
             partition_limit: self.partition_limit,
             exact: self.exact,

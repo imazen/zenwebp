@@ -47,7 +47,7 @@ use super::vec_writer::VecWriter;
 use crate::common::prediction::*;
 use crate::common::types::Frame;
 use crate::common::types::*;
-use crate::decoder::yuv::convert_image_sharp_yuv;
+// convert_image_sharp_yuv_with_config is called via full path below
 use crate::decoder::yuv::convert_image_y;
 
 mod header;
@@ -762,8 +762,10 @@ impl<'a> Vp8Encoder<'a> {
             let v_plane = &data[y_size + uv_size..y_size + uv_size * 2];
 
             crate::decoder::yuv::import_yuv420_planes(y_plane, u_plane, v_plane, width, height)
-        } else if params.use_sharp_yuv {
-            convert_image_sharp_yuv(data, color, width, height, stride)
+        } else if let Some(sharp_cfg) = &params.sharp_yuv {
+            crate::decoder::yuv::convert_image_sharp_yuv_with_config(
+                data, color, width, height, stride, sharp_cfg.clone(),
+            )
         } else {
             match color {
                 // zenyuv (SIMD Y) + gamma-corrected scalar chroma.

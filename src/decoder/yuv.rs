@@ -648,6 +648,30 @@ pub(crate) fn convert_image_sharp_yuv(
     alloc::vec::Vec<u8>,
     alloc::vec::Vec<u8>,
 ) {
+    convert_image_sharp_yuv_with_config(
+        image_data,
+        color,
+        width,
+        height,
+        stride,
+        zenyuv::SharpYuvConfig::default(),
+    )
+}
+
+/// Convert image to YUV420 using sharp (iterative) chroma downsampling
+/// with an explicit [`SharpYuvConfig`](zenyuv::SharpYuvConfig).
+pub(crate) fn convert_image_sharp_yuv_with_config(
+    image_data: &[u8],
+    color: crate::encoder::PixelLayout,
+    width: u16,
+    height: u16,
+    stride: usize,
+    config: zenyuv::SharpYuvConfig,
+) -> (
+    alloc::vec::Vec<u8>,
+    alloc::vec::Vec<u8>,
+    alloc::vec::Vec<u8>,
+) {
     use crate::encoder::PixelLayout;
 
     // Sharp YUV only applies to RGB/RGBA/BGR/BGRA inputs (chroma subsampling matters).
@@ -670,7 +694,7 @@ pub(crate) fn convert_image_sharp_yuv(
         width,
         height,
         stride,
-        YuvEncodeMode::Sharp,
+        YuvEncodeMode::SharpWith(config),
     )
 }
 
@@ -795,13 +819,13 @@ fn pad_plane_vertical(dst: &mut [u8], row_w: usize, src_h: usize, dst_h: usize) 
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq)]
 enum YuvEncodeMode {
     /// Non-sharp: zenyuv for Y (SIMD), gamma-corrected scalar for chroma.
     /// Matches libwebp's default chroma quality.
     Box,
-    /// Sharp YUV: zenyuv's iterative chroma optimization.
-    Sharp,
+    /// Sharp YUV: zenyuv's iterative chroma optimization with explicit config.
+    SharpWith(zenyuv::SharpYuvConfig),
 }
 
 /// Unified zenyuv-backed encoder for RGB/RGBA/BGR/BGRA → YUV420 (mb-aligned).
@@ -882,8 +906,7 @@ fn zenyuv_encode_planes(
     // The gamma chroma matches the decoder's model, so the iteration starts from
     // a correct baseline and can only improve. The iteration minimizes
     // ||RGB_original - RGB_reconstructed|| using the BT.601-Limited inverse matrix.
-    if mode == YuvEncodeMode::Sharp {
-        let config = zenyuv::SharpYuvConfig::default();
+    if let YuvEncodeMode::SharpWith(config) = mode {
         if mb_aligned_width {
             // Tight Y is the first w*h bytes of the mb-aligned buffer.
             // Tight chroma is cw-strided, which equals chroma_width when aligned.
