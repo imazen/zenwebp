@@ -819,10 +819,10 @@ fn zenyuv_encode_planes(
     width: u16,
     height: u16,
     stride: usize,
-    mode: YuvEncodeMode,
+    _mode: YuvEncodeMode,
 ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     use crate::encoder::PixelLayout;
-    use zenyuv::{Matrix, Range, SharpYuvConfig, YuvContext};
+    use zenyuv::{Matrix, Range, YuvContext};
 
     let w = usize::from(width);
     let h = usize::from(height);
@@ -834,8 +834,6 @@ fn zenyuv_encode_planes(
     let chroma_height = 8 * mb_height;
     let y_size = luma_width * luma_height;
     let chroma_size = chroma_width * chroma_height;
-    let src_chroma_width = w.div_ceil(2);
-    let src_chroma_height = h.div_ceil(2);
 
     let src_bpp: usize = match color {
         PixelLayout::Rgb8 | PixelLayout::Bgr8 => 3,
@@ -857,81 +855,31 @@ fn zenyuv_encode_planes(
     let mb_aligned_width = w == luma_width;
 
     let mut ctx = YuvContext::new(Range::Limited, Matrix::Bt601);
-    match mode {
-        YuvEncodeMode::Sharp => {
-            let config = SharpYuvConfig::default();
-            if mb_aligned_width {
-                ctx.encode_sharp_420_u8(
-                    rgb,
-                    &mut y_bytes[..w * h],
-                    &mut u_bytes[..src_chroma_width * src_chroma_height],
-                    &mut v_bytes[..src_chroma_width * src_chroma_height],
-                    w,
-                    h,
-                    &config,
-                );
-                pad_plane_vertical(&mut y_bytes, luma_width, h, luma_height);
-                pad_plane_vertical(&mut u_bytes, chroma_width, src_chroma_height, chroma_height);
-                pad_plane_vertical(&mut v_bytes, chroma_width, src_chroma_height, chroma_height);
-            } else {
-                let mut y_tight = alloc::vec![0u8; w * h];
-                let mut u_tight = alloc::vec![0u8; src_chroma_width * src_chroma_height];
-                let mut v_tight = alloc::vec![0u8; src_chroma_width * src_chroma_height];
-                ctx.encode_sharp_420_u8(
-                    rgb,
-                    &mut y_tight,
-                    &mut u_tight,
-                    &mut v_tight,
-                    w,
-                    h,
-                    &config,
-                );
-                pad_plane(&y_tight, &mut y_bytes, w, h, luma_width, luma_height);
-                pad_plane(
-                    &u_tight,
-                    &mut u_bytes,
-                    src_chroma_width,
-                    src_chroma_height,
-                    chroma_width,
-                    chroma_height,
-                );
-                pad_plane(
-                    &v_tight,
-                    &mut v_bytes,
-                    src_chroma_width,
-                    src_chroma_height,
-                    chroma_width,
-                    chroma_height,
-                );
-            }
-        }
-        YuvEncodeMode::Box => {
-            // Two-pass: zenyuv Y-only (fast maddubs SIMD, no chroma compute)
-            // + our SIMD gamma chroma overwrite. We skip zenyuv's chroma
-            // compute+write since we're about to replace it anyway.
-            //
-            // Measured alternatives that lost:
-            // - Fusing Y into our magetypes kernel: ~27% slower than zenyuv Y
-            //   because i32x8 matrix mul can't match AVX2 maddubs u8×i8.
-            if mb_aligned_width {
-                ctx.encode_420_y_only_u8(rgb, &mut y_bytes[..w * h], w, h);
-                pad_plane_vertical(&mut y_bytes, luma_width, h, luma_height);
-            } else {
-                let mut y_tight = alloc::vec![0u8; w * h];
-                ctx.encode_420_y_only_u8(rgb, &mut y_tight, w, h);
-                pad_plane(&y_tight, &mut y_bytes, w, h, luma_width, luma_height);
-            }
-            gamma_chroma_overwrite(
-                rgb,
-                w,
-                h,
-                &mut u_bytes,
-                &mut v_bytes,
-                chroma_width,
-                chroma_height,
-            );
-        }
+    // Sharp and Box both use the same two-pass approach: zenyuv Y-only SIMD +
+    // gamma-corrected chroma. The sharp iteration is disabled for now because
+    // its BT.601-Limited forward model doesn't match the libwebp gamma-corrected
+    // chroma model, causing a systematic green shift (see imazen/zenwebp#17).
+    // TODO: re-enable sharp iteration with a model that matches the encoder's
+    // gamma-corrected chroma computation.
+    // Two-pass: zenyuv Y-only (fast maddubs SIMD, no chroma compute)
+    // + our SIMD gamma chroma overwrite.
+    if mb_aligned_width {
+        ctx.encode_420_y_only_u8(rgb, &mut y_bytes[..w * h], w, h);
+        pad_plane_vertical(&mut y_bytes, luma_width, h, luma_height);
+    } else {
+        let mut y_tight = alloc::vec![0u8; w * h];
+        ctx.encode_420_y_only_u8(rgb, &mut y_tight, w, h);
+        pad_plane(&y_tight, &mut y_bytes, w, h, luma_width, luma_height);
     }
+    gamma_chroma_overwrite(
+        rgb,
+        w,
+        h,
+        &mut u_bytes,
+        &mut v_bytes,
+        chroma_width,
+        chroma_height,
+    );
 
     (y_bytes, u_bytes, v_bytes)
 }
