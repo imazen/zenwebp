@@ -1,5 +1,44 @@
 # Release Notes
 
+### [Unreleased]
+
+**Sharp YUV re-enabled, zenyuv integration, streaming push decoder, security fix**
+
+#### Added
+- Row-streaming push decoder for lossy VP8 — `WebPPushDecoder` emits rows as they decode (f4993a1)
+- NEON and WASM128 SIMD for lossless color transforms, both decoder and encoder paths (cff6c14)
+- Sharp YUV re-enabled with gamma-corrected chroma seeding and Y refinement, configurable via `Option<SharpYuvConfig>` (5e1cf9f, 558c41f, 0990023)
+- `RGBX8` / `BGRX8` pixel descriptors accepted in encode dispatch (23b89b8)
+- `SHARP-YUV.md` documentation covering the three sharp YUV modes and evaluation data (920e344)
+
+#### Changed
+- Swapped the `yuv` crate for `zenyuv` with `garb` strided preprocessing; `zenyuv` is now an unconditional dependency and the `fast-yuv` feature has been dropped (6e248aa, 29c0b79)
+- Single-frame animation inputs now downgrade to a static WebP to match libwebp behavior (3f1f08a)
+- In lossless encode, RGB channels are zeroed where alpha is 0 by default, matching libwebp (f5744d1)
+
+#### Fixed
+- `WebpAnimationFrameEncoder::push_frame` now honors `PixelSlice` stride instead of assuming tightly-packed rows (d8cbbec)
+- Eliminated green shift that appeared when sharp YUV was enabled (7a23ffa)
+- Restored `#[rite]` attributes on SSE2 encoder functions and wrapped tests with `#[arcane]` (1f066f1)
+
+#### Performance
+- Non-sharp YUV path accelerated via `zenyuv`, including a Y-only kernel for luma-first passes; sharp path allocation reuse (4f6960f, 91b84af)
+- Gamma-corrected chroma seeding uses the magetypes scalar-LUT-bookend SIMD pattern (4089ddf)
+- Removed double SIMD dispatch in SSE encoder hot paths and dropped dead SSE wrapper functions (85a14c5, ee31003)
+- Removed `#[arcane]` entry shims on WASM and unnecessary `#[rite]` wrappers for color transforms, letting archmage conventions handle dispatch directly (93506eb, 170831a, 1a15fa5, 93431cf, bc8358c)
+- `is_lossy_streaming_candidate` reuses `detect::probe()` instead of re-parsing headers (7284ba9)
+
+#### Security
+- `rand` updated 0.9.2 → 0.9.3 to pick up GHSA-cq8v-f236-94qc; added RGBA lossless roundtrip regression tests alongside the update (cafaee6)
+- Also bumped `rand` 0.10.0 → 0.10.1 (06ed69e)
+
+#### Tests
+- libwebp-golden RGBA lossless regression suite (#15) (6e3e5f6)
+- `zenyuv` parity and `probe` parity tests ported from #9 (09c219d)
+- Streaming push decoder parity tests (8c13c95)
+- Trimmed `large_encode_roundtrip` from 18 to 5 cases to keep CI responsive (d187459)
+- Reproducers for imageflow RGBA-vs-BGRA lossless routing and byte-exact-vs-libwebp rose decode (62e9400, 0262745, b248b61)
+
 ### Version 0.4.2
 
 **Security fixes, SIMD improvements, i686 correctness**
