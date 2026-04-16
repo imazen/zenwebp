@@ -898,7 +898,21 @@ fn zenyuv_encode_planes(
                 Matrix::Bt601,
                 &config,
             );
-            // Re-pad chroma vertically (refine only wrote to the cw*ch region).
+            // Step 4: Refine Y to compensate for chroma-induced luma error.
+            if config.refine_y {
+                zenyuv::sharp::refine_y_420_u8(
+                    rgb,
+                    &mut y_bytes[..w * h],
+                    &u_bytes[..cw * ch],
+                    &v_bytes[..cw * ch],
+                    w,
+                    h,
+                    Range::Limited,
+                    Matrix::Bt601,
+                );
+            }
+            // Re-pad luma and chroma vertically after refinement.
+            pad_plane_vertical(&mut y_bytes, luma_width, h, luma_height);
             pad_plane_vertical(&mut u_bytes, chroma_width, ch, chroma_height);
             pad_plane_vertical(&mut v_bytes, chroma_width, ch, chroma_height);
         } else {
@@ -928,6 +942,24 @@ fn zenyuv_encode_planes(
                 Matrix::Bt601,
                 &config,
             );
+            // Step 4: Refine Y to compensate for chroma-induced luma error.
+            if config.refine_y {
+                zenyuv::sharp::refine_y_420_u8(
+                    rgb,
+                    &mut y_tight,
+                    &u_tight,
+                    &v_tight,
+                    w,
+                    h,
+                    Range::Limited,
+                    Matrix::Bt601,
+                );
+            }
+            // Copy refined Y back to mb-aligned buffer with padding.
+            for row in 0..h {
+                y_bytes[row * luma_width..row * luma_width + w]
+                    .copy_from_slice(&y_tight[row * w..(row + 1) * w]);
+            }
             // Copy refined chroma back to mb-aligned buffers with padding.
             for row in 0..ch {
                 u_bytes[row * chroma_width..row * chroma_width + cw]
@@ -944,6 +976,14 @@ fn zenyuv_encode_planes(
                     v_bytes[row * chroma_width + x] = last_v;
                 }
             }
+            // Horizontal padding for luma.
+            for row in 0..h {
+                let last_y = y_bytes[row * luma_width + w - 1];
+                for x in w..luma_width {
+                    y_bytes[row * luma_width + x] = last_y;
+                }
+            }
+            pad_plane_vertical(&mut y_bytes, luma_width, h, luma_height);
             pad_plane_vertical(&mut u_bytes, chroma_width, ch, chroma_height);
             pad_plane_vertical(&mut v_bytes, chroma_width, ch, chroma_height);
         }
