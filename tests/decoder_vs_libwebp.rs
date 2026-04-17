@@ -47,7 +47,7 @@ fn histogram_per_channel(zen: &[u8], lib: &[u8]) {
             .enumerate()
             .filter(|(_, v)| *v > 0)
             .collect();
-        bins.sort_by(|a, b| b.0.cmp(&a.0));
+        bins.sort_by_key(|b| std::cmp::Reverse(b.0));
         eprintln!("  {}: {:?}", name, bins.iter().take(16).collect::<Vec<_>>());
     }
     eprintln!("=== per-pixel-class max delta [R, G, B, A] ===");

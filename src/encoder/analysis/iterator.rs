@@ -56,7 +56,7 @@ fn import_line(src: &[u8], src_stride: usize, dst: &mut [u8], len: usize, total_
         dst[i] = src[i * src_stride];
     }
     // Replicate last value
-    let last = dst[len.saturating_sub(1).max(0)];
+    let last = dst[len.saturating_sub(1)];
     for i in len..total_len {
         dst[i] = last;
     }

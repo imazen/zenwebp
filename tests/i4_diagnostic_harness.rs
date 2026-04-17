@@ -8,13 +8,15 @@
 //!
 //! Run with: cargo test --release --features _corpus_tests --test i4_diagnostic_harness -- --nocapture
 
+// Disabled: Vp8Decoder::decode_diagnostic API was removed; needs porting to new diagnostic API
 #![cfg(feature = "_corpus_tests")]
+#![cfg(feature = "_diagnostics")]
 
 use std::fs;
 use std::io::BufReader;
 use webpx::Unstoppable;
 use zenwebp::decoder::LumaMode;
-use zenwebp::decoder::vp8::{DiagnosticFrame, Vp8Decoder};
+use zenwebp::decoder::{DiagnosticFrame, Vp8Decoder};
 use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout, Preset};
 
 // ============================================================================

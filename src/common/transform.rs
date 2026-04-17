@@ -1749,7 +1749,8 @@ mod benchmarks {
         b.iter(|| {
             for input in &TEST_BLOCKS {
                 let mut block = *input;
-                test::black_box(dct4x4_intrinsics(&mut block));
+                dct4x4_intrinsics(&mut block);
+                test::black_box(());
             }
         });
     }
@@ -1764,7 +1765,8 @@ mod benchmarks {
         b.iter(|| {
             for input in &dct_blocks {
                 let mut block = *input;
-                test::black_box(idct4x4_intrinsics(&mut block));
+                idct4x4_intrinsics(&mut block);
+                test::black_box(());
             }
         });
     }
@@ -1774,10 +1776,12 @@ mod benchmarks {
         b.iter(|| {
             let mut block1 = TEST_BLOCKS[0];
             let mut block2 = TEST_BLOCKS[1];
-            test::black_box(dct4x4_two_intrinsics(&mut block1, &mut block2));
+            dct4x4_two_intrinsics(&mut block1, &mut block2);
+            test::black_box(());
             let mut block3 = TEST_BLOCKS[2];
             let mut block4 = TEST_BLOCKS[3];
-            test::black_box(dct4x4_two_intrinsics(&mut block3, &mut block4));
+            dct4x4_two_intrinsics(&mut block3, &mut block4);
+            test::black_box(());
         });
     }
 }

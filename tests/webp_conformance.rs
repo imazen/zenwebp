@@ -417,7 +417,7 @@ fn test_scraped_webp_corpus() {
 
     if !mismatch_files.is_empty() {
         println!("\n  Pixel mismatches (first 50):");
-        mismatch_files.sort_by(|a, b| b.1.cmp(&a.1));
+        mismatch_files.sort_by_key(|b| std::cmp::Reverse(b.1));
         for (name, max_diff, count) in mismatch_files.iter().take(50) {
             println!("    max_diff={max_diff:3} diff_bytes={count:8} {name}");
         }

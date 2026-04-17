@@ -1491,7 +1491,8 @@ mod benches {
     fn bench_predict_bldpred(b: &mut Bencher) {
         let mut ws = make_luma_ws();
         b.iter(|| {
-            black_box(predict_bldpred(black_box(&mut ws), 5, 5, LUMA_STRIDE));
+            predict_bldpred(black_box(&mut ws), 5, 5, LUMA_STRIDE);
+            black_box(());
         });
     }
 
@@ -1499,7 +1500,8 @@ mod benches {
     fn bench_predict_brdpred(b: &mut Bencher) {
         let mut ws = make_luma_ws();
         b.iter(|| {
-            black_box(predict_brdpred(black_box(&mut ws), 5, 5, LUMA_STRIDE));
+            predict_brdpred(black_box(&mut ws), 5, 5, LUMA_STRIDE);
+            black_box(());
         });
     }
 
@@ -1507,7 +1509,8 @@ mod benches {
     fn bench_predict_bhepred(b: &mut Bencher) {
         let mut ws = make_luma_ws();
         b.iter(|| {
-            black_box(predict_bhepred(black_box(&mut ws), 5, 5, LUMA_STRIDE));
+            predict_bhepred(black_box(&mut ws), 5, 5, LUMA_STRIDE);
+            black_box(());
         });
     }
 

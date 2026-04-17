@@ -824,10 +824,10 @@ impl zencodec::encode::Encoder for WebpEncoder {
             let is_rgb8 = desc == PixelDescriptor::RGB8_SRGB;
             let sharp_yuv = match &self.inner_config {
                 EncoderConfig::Lossy(cfg) => cfg.sharp_yuv,
-                EncoderConfig::Lossless(_) => false,
+                EncoderConfig::Lossless(_) => None,
             };
 
-            if is_lossy && is_rgb8 && !sharp_yuv {
+            if is_lossy && is_rgb8 && sharp_yuv.is_none() {
                 // YUV conversion path: lower peak memory
                 let (cw, ch) = self.canvas_size.unwrap_or((strip_w, 0));
                 let y_cap = cw as usize * ch as usize;
@@ -1998,9 +1998,7 @@ impl WebpStreamingDecoder {
         // Determine output format
         let has_alpha = alpha_plane.is_some();
         let effective_bpp = if has_alpha { 4 } else { bpp };
-        let mut descriptor = if has_alpha {
-            PixelDescriptor::RGBA8_SRGB
-        } else if effective_bpp == 4 {
+        let mut descriptor = if has_alpha || effective_bpp == 4 {
             PixelDescriptor::RGBA8_SRGB
         } else {
             PixelDescriptor::RGB8_SRGB
@@ -2060,20 +2058,20 @@ impl zencodec::decode::StreamingDecode for WebpStreamingDecoder {
         let strip_bytes = num_rows * row_bytes;
 
         // Apply alpha plane if present
-        if let Some(ref alpha) = self.alpha_plane {
-            if self.bpp == 4 {
-                let fw = width;
-                for row in 0..num_rows {
-                    let img_y = y_start + row;
-                    if img_y >= self.height as usize {
-                        break;
-                    }
-                    for x in 0..fw {
-                        let alpha_index = img_y * fw + x;
-                        let strip_index = row * row_bytes + x * 4 + 3;
-                        if alpha_index < alpha.len() && strip_index < self.strip_buf.len() {
-                            self.strip_buf[strip_index] = alpha[alpha_index];
-                        }
+        if let Some(ref alpha) = self.alpha_plane
+            && self.bpp == 4
+        {
+            let fw = width;
+            for row in 0..num_rows {
+                let img_y = y_start + row;
+                if img_y >= self.height as usize {
+                    break;
+                }
+                for x in 0..fw {
+                    let alpha_index = img_y * fw + x;
+                    let strip_index = row * row_bytes + x * 4 + 3;
+                    if alpha_index < alpha.len() && strip_index < self.strip_buf.len() {
+                        self.strip_buf[strip_index] = alpha[alpha_index];
                     }
                 }
             }

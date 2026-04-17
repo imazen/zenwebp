@@ -100,6 +100,7 @@ pub fn assign_segments_kmeans(
         weighted_average = 0;
         total_weight = 0;
         for n in 0..num_segments {
+            #[allow(clippy::manual_checked_ops)]
             if accum[n] > 0 {
                 let new_center = ((dist_accum[n] + accum[n] / 2) / accum[n]) as u8;
                 displaced += (centers[n] as i32 - new_center as i32).abs();

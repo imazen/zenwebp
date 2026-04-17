@@ -329,9 +329,9 @@ impl<'a> WebPDemuxer<'a> {
                 b"ICCP" if has_icc => {
                     demuxer.icc_range = Some((payload_start, payload_start + size));
                 }
-                b"ANIM" if is_animated => {
+                b"ANIM" if is_animated
                     // ANIM: 4 bytes background color + 2 bytes loop count
-                    if size >= 6 {
+                    && size >= 6 => {
                         let bg_start = payload_start;
                         demuxer.background_color = [
                             data[bg_start],
@@ -345,7 +345,6 @@ impl<'a> WebPDemuxer<'a> {
                             n => LoopCount::Times(core::num::NonZeroU16::new(n).unwrap()),
                         };
                     }
-                }
                 b"ANMF" if is_animated => {
                     demuxer.frames.push(FrameRecord {
                         anmf_payload_start: payload_start,

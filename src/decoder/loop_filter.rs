@@ -339,17 +339,18 @@ mod benches {
         let interior_limit = 15;
         let edge_limit = 15;
 
-        let mut data = TEST_DATA.clone();
+        let mut data = TEST_DATA;
         let stride = 8;
 
         b.iter(|| {
             for y in 0..8 {
-                black_box(macroblock_filter_horizontal(
+                macroblock_filter_horizontal(
                     hev_threshold,
                     interior_limit,
                     edge_limit,
                     &mut data[y * stride..][..8],
-                ));
+                );
+                black_box(());
             }
         });
     }
@@ -360,19 +361,20 @@ mod benches {
         let interior_limit = 15;
         let edge_limit = 15;
 
-        let mut data = TEST_DATA.clone();
+        let mut data = TEST_DATA;
         let stride = 8;
 
         b.iter(|| {
             for x in 0..8 {
-                black_box(macroblock_filter_vertical(
+                macroblock_filter_vertical(
                     hev_threshold,
                     interior_limit,
                     edge_limit,
                     &mut data,
                     4 * stride + x,
                     stride,
-                ));
+                );
+                black_box(());
             }
         });
     }
@@ -383,17 +385,18 @@ mod benches {
         let interior_limit = 15;
         let edge_limit = 15;
 
-        let mut data = TEST_DATA.clone();
+        let mut data = TEST_DATA;
         let stride = 8;
 
         b.iter(|| {
             for y in 0usize..8 {
-                black_box(subblock_filter_horizontal(
+                subblock_filter_horizontal(
                     hev_threshold,
                     interior_limit,
                     edge_limit,
                     &mut data[y * stride..][..8],
-                ))
+                );
+                black_box(());
             }
         });
     }
@@ -404,19 +407,20 @@ mod benches {
         let interior_limit = 15;
         let edge_limit = 15;
 
-        let mut data = TEST_DATA.clone();
+        let mut data = TEST_DATA;
         let stride = 8;
 
         b.iter(|| {
             for x in 0..8 {
-                black_box(subblock_filter_vertical(
+                subblock_filter_vertical(
                     hev_threshold,
                     interior_limit,
                     edge_limit,
                     &mut data,
                     4 * stride + x,
                     stride,
-                ))
+                );
+                black_box(());
             }
         });
     }
@@ -425,15 +429,16 @@ mod benches {
     fn measure_simple_segment_horizontal_filter(b: &mut Bencher) {
         let edge_limit = 15;
 
-        let mut data = TEST_DATA.clone();
+        let mut data = TEST_DATA;
         let stride = 8;
 
         b.iter(|| {
             for y in 0usize..8 {
-                black_box(simple_segment_horizontal(
+                simple_segment_horizontal(
                     edge_limit,
                     &mut data[y * stride..][..8],
-                ))
+                );
+                black_box(());
             }
         });
     }
@@ -442,17 +447,18 @@ mod benches {
     fn measure_simple_segment_vertical_filter(b: &mut Bencher) {
         let edge_limit = 15;
 
-        let mut data = TEST_DATA.clone();
+        let mut data = TEST_DATA;
         let stride = 8;
 
         b.iter(|| {
             for x in 0usize..16 {
-                black_box(simple_segment_vertical(
+                simple_segment_vertical(
                     edge_limit,
                     &mut data,
                     4 * stride + x,
                     stride,
-                ))
+                );
+                black_box(());
             }
         });
     }

@@ -764,7 +764,7 @@ impl<'a> Vp8Encoder<'a> {
             crate::decoder::yuv::import_yuv420_planes(y_plane, u_plane, v_plane, width, height)
         } else if let Some(sharp_cfg) = &params.sharp_yuv {
             crate::decoder::yuv::convert_image_sharp_yuv_with_config(
-                data, color, width, height, stride, sharp_cfg.clone(),
+                data, color, width, height, stride, *sharp_cfg,
             )
         } else {
             match color {
@@ -1449,6 +1449,7 @@ impl<'a> Vp8Encoder<'a> {
         // Segment tree uses 3 probabilities for binary splits:
         // prob[0] = P(segment < 2), prob[1] = P(segment == 0 | segment < 2)
         // prob[2] = P(segment == 2 | segment >= 2)
+        #[allow(clippy::manual_checked_ops)]
         let get_proba = |a: u32, b: u32| -> u8 {
             let total = a + b;
             if total == 0 {

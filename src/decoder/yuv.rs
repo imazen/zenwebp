@@ -637,6 +637,7 @@ fn gamma_downsample_uv_2(p1: &[u8], p2: &[u8]) -> (u8, u8) {
 ///
 /// This produces higher-quality chroma planes at the cost of being slower.
 /// Uses the `yuv` crate's sharp YUV implementation with BT.601 matrix and sRGB gamma.
+#[allow(dead_code)]
 pub(crate) fn convert_image_sharp_yuv(
     image_data: &[u8],
     color: crate::encoder::PixelLayout,

@@ -138,15 +138,14 @@ pub fn probe(data: &[u8]) -> Result<WebPProbe, ProbeError> {
         let payload_end = (payload_start + chunk_size).min(data.len());
 
         match fourcc {
-            b"VP8 " => {
+            b"VP8 "
                 // Lossy bitstream — parse frame header for quantizer
-                if bitstream_result.is_none() {
+                if bitstream_result.is_none() => {
                     bitstream_result = Some(parse_vp8_header(&data[payload_start..payload_end])?);
                 }
-            }
-            b"VP8L" => {
+            b"VP8L"
                 // Lossless bitstream
-                if bitstream_result.is_none() {
+                if bitstream_result.is_none() => {
                     // Parse VP8L header for dimensions
                     if payload_end - payload_start >= 5 {
                         let signature = data[payload_start];
@@ -166,7 +165,6 @@ pub fn probe(data: &[u8]) -> Result<WebPProbe, ProbeError> {
                     }
                     bitstream_result = Some(ParsedBitstream::Lossless);
                 }
-            }
             b"VP8X" => {
                 // Extended format header
                 is_extended = true;
@@ -193,9 +191,9 @@ pub fn probe(data: &[u8]) -> Result<WebPProbe, ProbeError> {
             b"ANIM" => {
                 // Animation global parameters — frame count comes from ANMF chunks
             }
-            b"ANMF" => {
+            b"ANMF"
                 // Animation frame — count them and parse the first one's bitstream
-                if has_animation {
+                if has_animation => {
                     frame_count = frame_count.max(1);
                     // Each ANMF has a sub-bitstream; parse the first one for quality
                     if bitstream_result.is_none() && payload_end - payload_start >= 24 {
@@ -225,12 +223,10 @@ pub fn probe(data: &[u8]) -> Result<WebPProbe, ProbeError> {
                         }
                     }
                 }
-            }
-            b"ICCP" => {
-                if payload_end > payload_start {
+            b"ICCP"
+                if payload_end > payload_start => {
                     icc_profile = Some(data[payload_start..payload_end].to_vec());
                 }
-            }
             _ => {}
         }
 

@@ -4,7 +4,7 @@
 //! zencodec dyn-dispatch path with BGRA8_SRGB, and decode back for comparison.
 #![cfg(all(feature = "std", not(target_arch = "wasm32")))]
 
-use zencodec::encode::{DynEncodeJob as _, DynEncoder as _, DynEncoderConfig as _};
+use zencodec::encode::DynEncoderConfig as _;
 use zenpixels::{PixelDescriptor, PixelSlice};
 
 fn rgba_to_bgra_inplace(bytes: &mut [u8]) {
@@ -16,7 +16,7 @@ fn rgba_to_bgra_inplace(bytes: &mut [u8]) {
 #[test]
 fn reencode_rose_lossless_bgra_dispatch() {
     let data = std::fs::read("tests/images/gallery2/1_webp_ll.webp").expect("read rose");
-    let (mut rgba, w, h) = zenwebp::oneshot::decode_rgba(&data).expect("decode rose");
+    let (rgba, w, h) = zenwebp::oneshot::decode_rgba(&data).expect("decode rose");
     eprintln!("decoded rose: {w}x{h}, {} bytes", rgba.len());
 
     // Sample: what does the decoded image look like? Pick a pixel we expect

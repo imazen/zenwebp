@@ -1,5 +1,5 @@
 use std::fs;
-use zencodec::encode::{AnimationFrameEncoder, DynEncodeJob, DynEncoderConfig};
+use zencodec::encode::DynEncoderConfig;
 use zenpixels::{PixelDescriptor, PixelSlice};
 
 fn dump_chunks(label: &str, d: &[u8]) {

@@ -750,7 +750,7 @@ impl LossyConfig {
             preset: self.preset.unwrap_or(Preset::Default),
             target_size: self.target_size,
             target_psnr: self.target_psnr,
-            sharp_yuv: self.sharp_yuv.clone(),
+            sharp_yuv: self.sharp_yuv,
             alpha_quality: self.alpha_quality,
             partition_limit: self.partition_limit,
             exact: false, // Not applicable to lossy (alpha plane is lossless separately)

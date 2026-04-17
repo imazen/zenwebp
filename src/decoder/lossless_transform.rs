@@ -1169,7 +1169,7 @@ mod coalesce_tests {
 
 #[cfg(all(test, feature = "_benchmarks"))]
 mod benches {
-    use rand::Rng;
+    use rand::RngExt;
     use test::{Bencher, black_box};
 
     fn measure_predictor(b: &mut Bencher, predictor: fn(&mut [u8], std::ops::Range<usize>, usize)) {
@@ -1186,14 +1186,10 @@ mod benches {
         });
     }
 
-    fn measure_predictor_result(
-        b: &mut Bencher,
-        predictor: fn(
-            &mut [u8],
-            std::ops::Range<usize>,
-            usize,
-        ) -> Result<(), super::InternalDecodeError>,
-    ) {
+    type PredictorResultFn =
+        fn(&mut [u8], std::ops::Range<usize>, usize) -> Result<(), super::InternalDecodeError>;
+
+    fn measure_predictor_result(b: &mut Bencher, predictor: PredictorResultFn) {
         let width = 256;
         let mut data = vec![0u8; width * 8];
         rand::rng().fill(&mut data[..]);

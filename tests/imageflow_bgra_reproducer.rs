@@ -9,7 +9,7 @@
 //! golden-regression tests don't exercise (because they pass RGBA directly).
 #![cfg(all(feature = "std", not(target_arch = "wasm32")))]
 
-use zencodec::encode::{DynEncodeJob as _, DynEncoder as _, DynEncoderConfig as _};
+use zencodec::encode::DynEncoderConfig as _;
 use zenpixels::{PixelDescriptor, PixelSlice};
 
 fn deterministic_rose(w: u32, h: u32) -> Vec<u8> {
