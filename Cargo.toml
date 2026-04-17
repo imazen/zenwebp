@@ -1,6 +1,6 @@
 [package]
 name = "zenwebp"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2024"
 license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
 rust-version = "1.93"
@@ -63,7 +63,7 @@ zensim = "0.2"
 zensim-regress = "0.3.0"
 
 [features]
-default = ["std", "pixel-types"]
+default = ["std", "fast-yuv", "pixel-types"]
 # Enable std library. Required only for Encoder.encode_to_writer().
 # Without std, use slice-based decoder and Vec-based encoder APIs.
 std = ["thiserror/std", "whereat/std", "byteorder-lite/std"]
@@ -84,6 +84,10 @@ mode_debug = ["std"]
 _profiling = ["dep:png", "dep:webp"]
 # WASM profiling - minimal deps for wasm32 benchmarking.
 _wasm_profiling = ["std"]
+# Deprecated no-op: YUV conversion now always uses zenyuv.
+# Kept for backwards compatibility so existing Cargo.toml entries
+# with `features = ["fast-yuv"]` don't break.
+fast-yuv = []
 # Enable zencodec trait integration
 zencodec = ["dep:zencodec", "dep:self_cell"]
 # Enable zennode pipeline node definitions

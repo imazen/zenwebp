@@ -2,6 +2,8 @@
 
 ### [Unreleased]
 
+### Version 0.4.4 (2026-04-17)
+
 **Sharp YUV re-enabled, zenyuv integration, streaming push decoder, security fix**
 
 #### Added
