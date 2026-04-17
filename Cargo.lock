@@ -2162,6 +2162,8 @@ dependencies = [
 [[package]]
 name = "zenyuv"
 version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3a8b66ab719bd430a45bb454c0bec2921d282f702474ace7d68512ee87671bc"
 dependencies = [
  "archmage",
  "libm",
