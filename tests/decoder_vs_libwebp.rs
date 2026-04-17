@@ -131,6 +131,7 @@ fn zenwebp_decoder_matches_libwebp_on_rose_rgba() {
 /// Reproduce imageflow's exact decode path: zencodec dyn-dispatch with
 /// `preferred=[BGRA8_SRGB, RGBA8_SRGB, ...]`, then compare the BGRA output
 /// (after swizzling to RGBA for comparison) against libwebp's RGBA decode.
+#[cfg(feature = "zencodec")]
 #[test]
 fn zenwebp_bgra_dyn_dispatch_matches_libwebp_on_rose() {
     use zencodec::decode::DynDecoderConfig;

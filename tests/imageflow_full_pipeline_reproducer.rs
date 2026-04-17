@@ -2,7 +2,7 @@
 //! mimicking the full pipeline: decode 1_webp_ll.webp, (no resize — the
 //! `_native` variant of the failing imageflow test), re-encode via the
 //! zencodec dyn-dispatch path with BGRA8_SRGB, and decode back for comparison.
-#![cfg(all(feature = "std", not(target_arch = "wasm32")))]
+#![cfg(all(feature = "std", feature = "zencodec", not(target_arch = "wasm32")))]
 
 use zencodec::encode::DynEncoderConfig as _;
 use zenpixels::{PixelDescriptor, PixelSlice};

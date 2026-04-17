@@ -7,7 +7,7 @@
 //! with `PixelDescriptor::BGRA8_SRGB`. This test mimics that exact call
 //! chain to surface bugs that the `EncodeRequest::lossless(... PixelLayout::Rgba8 ...)`
 //! golden-regression tests don't exercise (because they pass RGBA directly).
-#![cfg(all(feature = "std", not(target_arch = "wasm32")))]
+#![cfg(all(feature = "std", feature = "zencodec", not(target_arch = "wasm32")))]
 
 use zencodec::encode::DynEncoderConfig as _;
 use zenpixels::{PixelDescriptor, PixelSlice};

@@ -329,22 +329,24 @@ impl<'a> WebPDemuxer<'a> {
                 b"ICCP" if has_icc => {
                     demuxer.icc_range = Some((payload_start, payload_start + size));
                 }
-                b"ANIM" if is_animated
+                b"ANIM"
+                    if is_animated
                     // ANIM: 4 bytes background color + 2 bytes loop count
-                    && size >= 6 => {
-                        let bg_start = payload_start;
-                        demuxer.background_color = [
-                            data[bg_start],
-                            data[bg_start + 1],
-                            data[bg_start + 2],
-                            data[bg_start + 3],
-                        ];
-                        let lc = u16::from_le_bytes([data[bg_start + 4], data[bg_start + 5]]);
-                        demuxer.loop_count = match lc {
-                            0 => LoopCount::Forever,
-                            n => LoopCount::Times(core::num::NonZeroU16::new(n).unwrap()),
-                        };
-                    }
+                    && size >= 6 =>
+                {
+                    let bg_start = payload_start;
+                    demuxer.background_color = [
+                        data[bg_start],
+                        data[bg_start + 1],
+                        data[bg_start + 2],
+                        data[bg_start + 3],
+                    ];
+                    let lc = u16::from_le_bytes([data[bg_start + 4], data[bg_start + 5]]);
+                    demuxer.loop_count = match lc {
+                        0 => LoopCount::Forever,
+                        n => LoopCount::Times(core::num::NonZeroU16::new(n).unwrap()),
+                    };
+                }
                 b"ANMF" if is_animated => {
                     demuxer.frames.push(FrameRecord {
                         anmf_payload_start: payload_start,

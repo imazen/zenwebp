@@ -94,6 +94,10 @@ name = "hrtb_test"
 required-features = ["zencodec"]
 
 [[example]]
+name = "lossless_anim_path_test"
+required-features = ["zencodec", "std"]
+
+[[example]]
 name = "heap_strip_pipeline"
 required-features = ["zencodec", "std"]
 

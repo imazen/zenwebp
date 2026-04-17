@@ -434,10 +434,7 @@ mod benches {
 
         b.iter(|| {
             for y in 0usize..8 {
-                simple_segment_horizontal(
-                    edge_limit,
-                    &mut data[y * stride..][..8],
-                );
+                simple_segment_horizontal(edge_limit, &mut data[y * stride..][..8]);
                 black_box(());
             }
         });
@@ -452,12 +449,7 @@ mod benches {
 
         b.iter(|| {
             for x in 0usize..16 {
-                simple_segment_vertical(
-                    edge_limit,
-                    &mut data,
-                    4 * stride + x,
-                    stride,
-                );
+                simple_segment_vertical(edge_limit, &mut data, 4 * stride + x, stride);
                 black_box(());
             }
         });

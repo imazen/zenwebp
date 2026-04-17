@@ -4,7 +4,7 @@
 //! must take the RGB fast path and ignore the padding byte. Confirms that
 //! descriptor dispatch accepts these formats and that the padding byte does
 //! not leak into encoded output.
-#![cfg(all(feature = "std", not(target_arch = "wasm32")))]
+#![cfg(all(feature = "std", feature = "zencodec", not(target_arch = "wasm32")))]
 
 use zencodec::encode::{DynEncoderConfig, EncoderConfig};
 use zenpixels::{PixelDescriptor, PixelSlice};
@@ -31,8 +31,7 @@ fn solid_pattern_4bpp(w: u32, h: u32, rgb_order: bool) -> Vec<u8> {
 
 #[test]
 fn supported_descriptors_includes_rgbx_and_bgrx() {
-    let desc =
-        <zenwebp::zencodec::WebpEncoderConfig as EncoderConfig>::supported_descriptors();
+    let desc = <zenwebp::zencodec::WebpEncoderConfig as EncoderConfig>::supported_descriptors();
     assert!(
         desc.contains(&PixelDescriptor::RGBX8_SRGB),
         "RGBX8_SRGB must be in supported_descriptors"
