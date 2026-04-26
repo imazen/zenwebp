@@ -73,6 +73,12 @@ pixel-types = ["dep:rgb"]
 imgref = ["dep:imgref", "pixel-types"]
 # Enable AVX-512 autoversion variants (passthrough to archmage).
 avx512 = ["archmage/avx512"]
+# Test-only: cause the SIMD tier parity tests to PANIC if any token is
+# compile-time guaranteed (and therefore cannot be disabled at runtime).
+# Used in CI to ensure full tier coverage. Do NOT combine with
+# `-Ctarget-cpu=native` — that bakes features in at compile time and
+# defeats runtime disabling, which is exactly what this feature catches.
+testable_dispatch = []
 # --- Internal features (not for public use, underscore prefix = private) ---
 # Nightly-only: enables #[bench] micro-benchmarks. Requires `cargo +nightly test`.
 _benchmarks = []

@@ -114,6 +114,48 @@ jobs:
       - name: All public features
         run: cargo test --features "std,pixel-types,imgref,avx512,zencodec"
 
+  simd-tier-parity:
+    name: SIMD tier parity (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            os: ubuntu-latest
+          - name: Linux aarch64
+            os: ubuntu-24.04-arm
+          - name: macOS arm64
+            os: macos-latest
+          - name: macOS x64
+            os: macos-26-intel
+          - name: Windows x64
+            os: windows-latest
+          - name: Windows arm64
+            os: windows-11-arm
+    # IMPORTANT: do NOT set RUSTFLAGS=-Ctarget-cpu=native here — that bakes
+    # SIMD features in at compile time and defeats runtime token disabling,
+    # which is the entire point of this test. The `testable_dispatch` feature
+    # makes any compile-time-guaranteed token panic the test loudly.
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run SIMD tier parity tests
+        run: cargo test --release --test simd_tier_parity --features testable_dispatch -- --nocapture --test-threads=1
+
+  simd-tier-parity-avx512:
+    name: SIMD tier parity (Linux x64, AVX-512)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run SIMD tier parity tests with AVX-512 dispatch enabled
+        # If the runner CPU doesn't expose AVX-512, archmage skips those
+        # permutations with a stderr warning — it does NOT silently pass.
+        run: cargo test --release --test simd_tier_parity --features "avx512,testable_dispatch" -- --nocapture --test-threads=1
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
