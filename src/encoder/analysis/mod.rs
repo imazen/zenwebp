@@ -214,9 +214,15 @@ fn final_alpha_value(alpha: i32) -> u8 {
 /// - mixed alpha: finalized alpha value combining luma and chroma (for segment assignment)
 /// - raw uv_alpha: unfinalized chroma alpha (for UV quant delta computation)
 ///
-/// When `method >= 4` and `sns_strength > 0`, blends in a masking-based alpha
-/// from local variance to improve adaptive quantization for textured regions.
-pub fn analyze_macroblock(it: &mut AnalysisIterator, method: u8, sns_strength: u8) -> (u8, i32) {
+/// When `method >= 4`, `sns_strength > 0`, and `cost_model = ZenwebpDefault`,
+/// blends in a masking-based alpha from local variance to improve adaptive
+/// quantization for textured regions. Disabled under `StrictLibwebpParity`.
+pub fn analyze_macroblock(
+    it: &mut AnalysisIterator,
+    method: u8,
+    sns_strength: u8,
+    cost_model: crate::encoder::api::CostModel,
+) -> (u8, i32) {
     let (best_alpha, _best_mode) = it.analyze_best_intra16_mode();
     let (best_uv_alpha, _uv_mode) = it.analyze_best_uv_mode();
 
@@ -224,8 +230,12 @@ pub fn analyze_macroblock(it: &mut AnalysisIterator, method: u8, sns_strength: u
     let alpha = (3 * best_alpha + best_uv_alpha + 2) >> 2;
 
     // Blend with masking alpha for perceptual adaptive quantization.
-    // Only when method >= 4 AND sns_strength > 0 (user hasn't disabled SNS).
-    let alpha = if method >= 4 && sns_strength > 0 {
+    // Only when method >= 4 AND sns_strength > 0 (user hasn't disabled SNS)
+    // AND cost_model is ZenwebpDefault (libwebp parity disables this blend).
+    let alpha = if method >= 4
+        && sns_strength > 0
+        && cost_model == crate::encoder::api::CostModel::ZenwebpDefault
+    {
         let masking = crate::encoder::psy::compute_masking_alpha(&it.yuv_in[Y_OFF_ENC..], BPS);
         crate::encoder::psy::blend_masking_alpha(alpha, masking, method)
     } else {
@@ -251,6 +261,9 @@ pub struct AnalysisResult {
 /// Ported from libwebp's VP8EncAnalyze / DoSegmentsJob
 ///
 /// `method` controls whether perceptual masking is blended into alpha values.
+/// `cost_model` selects between zenwebp's perceptual extensions
+/// (`ZenwebpDefault`) and strict libwebp parity (`StrictLibwebpParity`,
+/// which disables the SATD masking-alpha blend).
 #[allow(clippy::too_many_arguments)]
 pub fn analyze_image(
     y_src: &[u8],
@@ -262,6 +275,7 @@ pub fn analyze_image(
     uv_stride: usize,
     method: u8,
     sns_strength: u8,
+    cost_model: crate::encoder::api::CostModel,
 ) -> AnalysisResult {
     let mut it = AnalysisIterator::new(width, height);
     it.reset();
@@ -274,7 +288,7 @@ pub fn analyze_image(
     loop {
         it.import(y_src, u_src, v_src, y_stride, uv_stride);
 
-        let (alpha, uv_alpha) = analyze_macroblock(&mut it, method, sns_strength);
+        let (alpha, uv_alpha) = analyze_macroblock(&mut it, method, sns_strength, cost_model);
         mb_alphas.push(alpha);
         alpha_histogram[alpha as usize] += 1;
         uv_alpha_sum += uv_alpha as i64;

@@ -425,6 +425,30 @@ impl QuantizedMbCoeffs {
         }
         acc == 0
     }
+
+    /// Returns true if this MB matches libwebp's "blocky I16" gating
+    /// condition for `StoreMaxDelta` (`quant_enc.c:1111`):
+    /// Y2 has any nonzero AND all 16 Y1 AC coefficients are zero.
+    /// In libwebp's `nz` mask this is `(nz & 0x100ffff) == 0x1000000`.
+    /// Caller must already know the MB is I16 (Y2 only exists then).
+    #[inline]
+    fn is_blocky_i16(&self) -> bool {
+        // Y1 AC = positions 1..16 of every Y1 block (DC is position 0).
+        let mut y1_ac_acc: u32 = 0;
+        for block in &self.y1_zigzag {
+            for &c in &block[1..16] {
+                y1_ac_acc |= c as u32;
+            }
+        }
+        if y1_ac_acc != 0 {
+            return false;
+        }
+        let mut y2_acc: u32 = 0;
+        for &c in &self.y2_zigzag {
+            y2_acc |= c as u32;
+        }
+        y2_acc != 0
+    }
 }
 
 struct Vp8Encoder<'a> {
@@ -590,6 +614,7 @@ impl<'a> Vp8Encoder<'a> {
             token_buffer: None,
             stored_mb_info: Vec::new(),
             stored_mb_coeffs: Vec::new(),
+            max_edge_per_segment: [0; MAX_SEGMENTS],
         }
     }
 
@@ -714,6 +739,104 @@ impl<'a> Vp8Encoder<'a> {
 
         // Reset encoder (header is small, ~1KB is plenty)
         self.encoder = ArithmeticEncoder::with_capacity(1024);
+
+        // Reset per-segment max edge tracking for this encode (#34).
+        self.max_edge_per_segment = [0; MAX_SEGMENTS];
+    }
+
+    /// Update `max_edge_per_segment` for a "blocky" I16 macroblock.
+    ///
+    /// Port of libwebp's `StoreMaxDelta` (`quant_enc.c:1031-1040`). Looks at
+    /// the first three AC coefficients of the Y2 (WHT) block — these encode
+    /// the average DC differences between adjacent Y1 sub-blocks, so a large
+    /// magnitude here corresponds to visible inter-block edges that the loop
+    /// filter should attenuate.
+    ///
+    /// `y2_zigzag` is in zigzag order, matching libwebp's `y_dc_levels`
+    /// (which is the output of `VP8EncQuantizeBlockWHT`, also zigzag-ordered).
+    /// Indices 1, 2, 4 correspond to natural-order positions 1, 4, 2.
+    #[inline]
+    fn store_max_delta(&mut self, segment_id: usize, y2_zigzag: &[i32; 16]) {
+        let v0 = y2_zigzag[1].unsigned_abs();
+        let v1 = y2_zigzag[2].unsigned_abs();
+        let v2 = y2_zigzag[4].unsigned_abs();
+        let max_v = v0.max(v1).max(v2) as i32;
+        if max_v > self.max_edge_per_segment[segment_id] {
+            self.max_edge_per_segment[segment_id] = max_v;
+        }
+    }
+
+    /// Post-encode adjustment of per-segment loop-filter strengths based on
+    /// observed edge magnitudes (port of libwebp's `VP8AdjustFilterStrength`,
+    /// `filter_enc.c:198-237`, called from `PostLoopFinalize` in
+    /// `frame_enc.c:730`).
+    ///
+    /// For each segment, computes a target filter strength from the maximum
+    /// observed Y2 edge magnitude scaled by the Y2 AC quantizer:
+    /// `delta = (max_edge * y2.q[1]) >> 3` (the `>> 3` accounts for inverse
+    /// WHT scaling). This delta is mapped to a filter level via
+    /// `filter_strength_from_delta`, and the per-segment level is bumped
+    /// upward only — never lowered. Finally the frame-level
+    /// `filter_level` is raised to the maximum per-segment fstrength.
+    ///
+    /// Effect: edge-rich segments (text/charts) get stronger filtering than
+    /// the analysis-time estimate, reducing blocking artifacts.
+    ///
+    /// Note: zenwebp stores `loopfilter_level` as a signed delta from
+    /// `frame.filter_level`, while libwebp stores it as an absolute
+    /// `dqm.fstrength`. We convert to absolute, bump, then recompute the
+    /// delta against the (possibly raised) frame-level filter.
+    ///
+    /// Note vs libwebp: we do not gate on `D > min_disto` (the per-MB
+    /// distortion check from `quant_enc.c:1111`). zenwebp's encoder does
+    /// not currently thread that distortion through to this path. Skipping
+    /// it is conservative — it lets a few extra blocky MBs contribute,
+    /// which can only bump the strength upward, matching libwebp's
+    /// "monotone-up" behavior.
+    fn adjust_filter_strength(&mut self) {
+        if self.filter_strength == 0 {
+            return;
+        }
+
+        let mut absolute = [0i32; MAX_SEGMENTS];
+        let frame_level = i32::from(self.frame.filter_level);
+        for s in 0..MAX_SEGMENTS {
+            absolute[s] = frame_level + i32::from(self.segments[s].loopfilter_level);
+        }
+
+        let mut max_level = 0i32;
+        for s in 0..MAX_SEGMENTS {
+            let max_edge = self.max_edge_per_segment[s];
+            // y2.q[1] is the Y2 AC quantizer in libwebp's expanded matrix.
+            // zenwebp stores it directly on Segment as `y2ac` (i16).
+            let y2_q1 = i32::from(self.segments[s].y2ac);
+            let delta_raw = max_edge.saturating_mul(y2_q1) >> 3;
+            // Clamp to u8 for the table lookup (table saturates at 63 well
+            // before MAX_DELTA_SIZE=64; libwebp clamps inside the function).
+            let delta_u8 = delta_raw.clamp(0, 255) as u8;
+            let edge_strength =
+                i32::from(super::cost::filter_strength_from_delta(self.filter_sharpness, delta_u8));
+            if edge_strength > absolute[s] {
+                absolute[s] = edge_strength;
+            }
+            if absolute[s] > max_level {
+                max_level = absolute[s];
+            }
+        }
+
+        // Raise frame filter_level to the max per-segment fstrength
+        // (matches libwebp `enc->filter_hdr.level = max_level`).
+        let new_frame_level = max_level.clamp(0, 63) as u8;
+        self.frame.filter_level = new_frame_level;
+
+        // Recompute per-segment deltas against the new frame level. The
+        // signed-6-bit field in the bitstream covers [-63, 63], which is
+        // sufficient since both operands are in [0, 63].
+        let new_frame_i32 = i32::from(new_frame_level);
+        for s in 0..MAX_SEGMENTS {
+            let delta = absolute[s] - new_frame_i32;
+            self.segments[s].loopfilter_level = delta.clamp(-63, 63) as i8;
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1053,6 +1176,9 @@ impl<'a> Vp8Encoder<'a> {
 
                     let mut mb_info = macroblock_info;
                     let store_coeffs = num_passes > 1;
+                    // Segment id resolved here so both trellis/non-trellis paths
+                    // can update `max_edge_per_segment` (#34).
+                    let mb_segment_id = macroblock_info.segment_id.unwrap_or(0);
                     if self.do_trellis {
                         // Trellis path: integrated quantize + record (old behavior)
                         let all_zero = self.check_all_coeffs_zero(
@@ -1079,6 +1205,10 @@ impl<'a> Vp8Encoder<'a> {
                                 &u_block_data.coeffs,
                                 &v_block_data.coeffs,
                             );
+                            // Track edge magnitude for I16 "blocky" MBs (#34).
+                            if !is_i4 && stored_coeffs.is_blocky_i16() {
+                                self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
+                            }
                             if store_coeffs {
                                 self.stored_mb_coeffs.push(stored_coeffs);
                             }
@@ -1101,6 +1231,10 @@ impl<'a> Vp8Encoder<'a> {
                             self.top_complexity[usize::from(mbx)]
                                 .clear(macroblock_info.luma_mode != LumaMode::B);
                         } else {
+                            // Track edge magnitude for I16 "blocky" MBs (#34).
+                            if !is_i4 && stored_coeffs.is_blocky_i16() {
+                                self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
+                            }
                             self.record_from_stored_coeffs(
                                 &macroblock_info,
                                 mbx as usize,
@@ -1166,6 +1300,13 @@ impl<'a> Vp8Encoder<'a> {
         }
 
         // ===== FINALIZE: write bitstream =====
+
+        // Bump per-segment loop-filter strength based on observed edge
+        // magnitudes (port of libwebp's `VP8AdjustFilterStrength`, called
+        // from `PostLoopFinalize` in `frame_enc.c:730`). Must run before
+        // the header writer reads `frame.filter_level` and per-segment
+        // `loopfilter_level` deltas. #34
+        self.adjust_filter_strength();
 
         // Write compressed frame header (includes probability updates)
         self.encode_compressed_frame_header();
