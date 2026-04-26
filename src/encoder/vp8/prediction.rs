@@ -21,6 +21,13 @@ pub(super) struct LumaBlockResult {
     /// The bordered prediction/reconstruction buffer.
     /// After transform, contains reconstructed pixels (prediction + IDCT).
     pub pred_block: [u8; LUMA_BLOCK_SIZE],
+    /// Trellis-quantized zigzag levels for each of the 16 Y1 sub-blocks,
+    /// produced during reconstruction when trellis is enabled. Used by
+    /// `record_residual_tokens_storing` to avoid running trellis twice on
+    /// the same data — once here for reconstruction, once again for token
+    /// emission. `None` when trellis is disabled (non-trellis methods 0-4
+    /// take a different code path entirely). (#35-#8)
+    pub trellis_y1_zigzag: Option<[[i32; 16]; 16]>,
 }
 
 /// Result from chroma block transform, containing quantized coefficients
@@ -228,8 +235,16 @@ impl<'a> super::Vp8Encoder<'a> {
         }
         transform::iwht4x4(&mut y2_dequant);
 
-        // Process each Y1 block
+        // Process each Y1 block.
+        // When trellis is enabled, capture the zigzag levels per sub-block so
+        // record_residual_tokens_storing can reuse them instead of re-running
+        // trellis on the exact same DCT input. (#35-#8)
         let mut dequantized_blocks = [0i32; 16 * 16];
+        let mut trellis_y1_zigzag: Option<[[i32; 16]; 16]> = if trellis_lambda.is_some() {
+            Some([[0i32; 16]; 16])
+        } else {
+            None
+        };
         for y in 0usize..4 {
             for x in 0usize..4 {
                 let i = y * 4 + x;
@@ -239,10 +254,10 @@ impl<'a> super::Vp8Encoder<'a> {
                 let dequant_block = if let Some(lambda) = trellis_lambda {
                     // Trellis quantization for better RD trade-off
                     let ctx0 = (u8::from(left_nz[y]) + u8::from(top_nz[x])).min(2) as usize;
-                    let mut zigzag_out = [0i32; 16];
+                    let zigzag_slot = &mut trellis_y1_zigzag.as_mut().unwrap()[i];
                     let has_nz = trellis_quantize_block(
                         &mut block,
-                        &mut zigzag_out,
+                        zigzag_slot,
                         y1_matrix,
                         lambda,
                         1, // first=1 for I16_AC (AC only)
@@ -306,6 +321,7 @@ impl<'a> super::Vp8Encoder<'a> {
         LumaBlockResult {
             coeffs: luma_blocks,
             pred_block: y_with_border,
+            trellis_y1_zigzag,
         }
     }
 
@@ -334,6 +350,14 @@ impl<'a> super::Vp8Encoder<'a> {
         let segment = self.get_segment_for_mb(mbx, mby);
         let trellis_lambda = if self.do_trellis {
             Some(segment.lambda_trellis_i4)
+        } else {
+            None
+        };
+
+        // Capture per-sub-block trellis zigzag levels so the recorder can skip
+        // re-trellising the same DCT input. (#35-#8)
+        let mut trellis_y1_zigzag: Option<[[i32; 16]; 16]> = if trellis_lambda.is_some() {
+            Some([[0i32; 16]; 16])
         } else {
             None
         };
@@ -402,10 +426,12 @@ impl<'a> super::Vp8Encoder<'a> {
                     // trellis_quantize_block modifies current_subblock to contain
                     // the dequantized values (level * q)
                     let ctx0 = (u8::from(left_nz[sby]) + u8::from(top_nz[sbx])).min(2) as usize;
-                    let mut zigzag_out = [0i32; 16];
+                    // Capture zigzag levels into the LumaBlockResult slot so the
+                    // recorder doesn't re-run trellis on the same input. (#35-#8)
+                    let zigzag_slot = &mut trellis_y1_zigzag.as_mut().unwrap()[i];
                     trellis_quantize_block(
                         &mut current_subblock,
-                        &mut zigzag_out,
+                        zigzag_slot,
                         y1_matrix,
                         lambda,
                         0, // first=0 for I4 (DC+AC)
@@ -446,6 +472,7 @@ impl<'a> super::Vp8Encoder<'a> {
         LumaBlockResult {
             coeffs: luma_blocks,
             pred_block: y_with_border,
+            trellis_y1_zigzag,
         }
     }
 
