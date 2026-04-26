@@ -20,8 +20,13 @@ use super::tables::{
     MAX_LEVEL, MAX_VARIABLE_LEVEL, VP8_LEVEL_FIXED_COSTS, VP8_WEIGHT_TRELLIS, VP8_ZIGZAG,
 };
 
-/// Maximum cost value for RD optimization
-const MAX_COST: i64 = i64::MAX / 2;
+/// Maximum cost value for RD optimization.
+///
+/// Matches libwebp's `MAX_COST` (`cost_enc.h:32`): `0x7fffffffffffff` ≈ 3.6e16.
+/// Either value is fine in practice — the sentinel is never reached during
+/// trellis traversal — but harmonizing makes byte-comparison sweeps trivial
+/// and matches the reference implementation. (#35-#9)
+const MAX_COST: i64 = 0x7fffffffffffff;
 
 /// Trellis node for dynamic programming
 #[derive(Clone, Copy, Default)]
