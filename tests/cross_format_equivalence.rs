@@ -246,19 +246,13 @@ const QUALITIES: &[f32] = &[25.0, 50.0, 75.0, 90.0];
 /// differently across SIMD codepaths.
 const LOSSY_PAIR_MIN_SCORE_TIGHT: f64 = 95.0;
 
-/// Lower bound for L8/La8 lossy pairs against an RGB-replicated reference.
-///
-/// The L8 lossy path uses a scalar sRGB→Y formula (matching `rgb_to_y` for
-/// R=G=B input), while the color path uses zenyuv's SIMD Y. The two
-/// implementations agree to within ±2 LSB on Y (documented in
-/// `src/decoder/yuv.rs` near `convert_image_yuv_fast`). Tiny Y-plane
-/// divergence amplifies through the encoder's mode/quant decisions into
-/// visible scoring differences — particularly at low q where small
-/// coefficient changes flip skip/non-skip decisions.
-///
-/// Tracking issue: align L8 Y with zenyuv to bring this back up to
-/// `_TIGHT` levels.
-const LOSSY_PAIR_MIN_SCORE_GRAY_LOSSY: f64 = 70.0;
+/// Lower bound for L8/La8 lossy pairs. Matches `_TIGHT` because
+/// `convert_image_y` now routes through the same zenyuv kernel the RGB
+/// path uses (gray-replicated to RGB transient → zenyuv → take Y). The
+/// two paths produce a bit-identical Y plane and the chroma fill is the
+/// same constant 128, so the encoder makes identical decisions and the
+/// decoded outputs match within chroma-subsampling rounding.
+const LOSSY_PAIR_MIN_SCORE_GRAY_LOSSY: f64 = LOSSY_PAIR_MIN_SCORE_TIGHT;
 
 // ---------------------------------------------------------------------------
 // Pair runners

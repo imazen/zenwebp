@@ -519,60 +519,51 @@ pub(crate) fn convert_image_y<const BPP: usize>(
     height: u16,
     stride: usize,
 ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    let width = usize::from(width);
-    let height = usize::from(height);
-    let mb_width = width.div_ceil(16);
-    let mb_height = height.div_ceil(16);
-    let y_size = 16 * mb_width * 16 * mb_height;
-    let luma_width = 16 * mb_width;
-    let chroma_size = 8 * mb_width * 8 * mb_height;
-    let mut y_bytes = vec![0u8; y_size];
-    // Neutral chroma for grayscale input. The standard rec601-style RGB→YUV
-    // transform produces U = V = 128 for R = G = B (the (R-G) and (B-G)
-    // contributions cancel, leaving only the +128 offset). Using 128 lets
-    // intra-prediction and adjacent macroblocks see the same neutral value
-    // they would synthesize from `(128 << YUV_FIX) + YUV_HALF` (see
-    // `uv_bias` below), so chroma DC residual stays at zero through the
-    // whole encode and no bits are spent coding a constant offset.
-    let u_bytes = vec![128u8; chroma_size];
-    let v_bytes = vec![128u8; chroma_size];
-
-    // The L8/La8 input byte is sRGB grayscale (matching the lossless L8
-    // path's `gray_to_rgba` expansion to R=G=B=byte). Apply the same
-    // sRGB-RGB→Y transform that `rgb_to_y` would compute for R=G=B=g, so
-    // an L8 lossy encode produces the same Y plane as feeding the same
-    // image through the RGB→YUV path. That keeps decoded output identical
-    // between the two entry points and stops the L8 path from baking the
-    // [0,255] PC-luma range straight into Y where the decoder would then
-    // re-stretch it via the YUV→RGB inverse.
+    // Route the L8/La8 path through the same `convert_image_yuv_fast`
+    // (zenyuv) kernel that the RGB encoder uses, so encoding the same
+    // image as L8 vs RGBA(g, g, g, 255) produces a bit-identical Y
+    // plane. Without this, scalar Y rounding in this function would
+    // diverge from zenyuv's SIMD Y by ±1 LSB on a small fraction of
+    // pixels, which the encoder's mode/quant decisions amplified into
+    // visibly different decoded output.
     //
-    // Coefficients match `rgb_to_y` (lines ~577): 16839 + 33059 + 6420.
-    const Y_GRAY_COEFF: i32 = 16839 + 33059 + 6420;
-    const Y_OFFSET: i32 = (16 << YUV_FIX) + YUV_HALF;
-    for y in 0..height {
-        let src_row = &image_data[y * stride * BPP..y * stride * BPP + width * BPP];
-        for x in 0..width {
-            let g = i32::from(src_row[x * BPP]);
-            let luma = ((Y_GRAY_COEFF * g + Y_OFFSET) >> YUV_FIX).clamp(0, 255) as u8;
-            y_bytes[y * luma_width + x] = luma;
-        }
-    }
+    // Cost: a transient `width × height × 3` byte gray-replicated RGB
+    // buffer during YUV setup. Dropped before the encoder allocates its
+    // own state. For typical web sizes (≤2560 wide) this is < 10 MB and
+    // dominated by the encoder's own working memory; even for 4K it's
+    // ~24 MB transient that lives for microseconds.
+    //
+    // Chroma is filled with 128 directly rather than running zenyuv's
+    // chroma kernel — for R = G = B input the transform produces exactly
+    // U = V = 128 mathematically (the `(R-G)` and `(B-G)` contributions
+    // cancel, leaving only the +128 offset), so the kernel would just
+    // burn cycles confirming a constant. The +128 fill matches the
+    // decoder's `(128 << YUV_FIX) + YUV_HALF` chroma bias so DC residual
+    // stays at zero and no bits are spent coding a constant offset.
+    let w = usize::from(width);
+    let h = usize::from(height);
+    let mb_width = w.div_ceil(16);
+    let mb_height = h.div_ceil(16);
+    let chroma_size = 8 * mb_width * 8 * mb_height;
 
-    // Replicate edge pixels to fill macroblock padding
-    // Horizontal padding for Y
-    for y in 0..height {
-        let last_y = y_bytes[y * luma_width + width - 1];
-        for x in width..luma_width {
-            y_bytes[y * luma_width + x] = last_y;
+    let mut gray_rgb = alloc::vec::Vec::with_capacity(w * h * 3);
+    for y in 0..h {
+        let row_start = y * stride * BPP;
+        for x in 0..w {
+            let g = image_data[row_start + x * BPP];
+            gray_rgb.extend_from_slice(&[g, g, g]);
         }
     }
+    let (y_bytes, _, _) = convert_image_yuv_fast(
+        &gray_rgb,
+        crate::encoder::PixelLayout::Rgb8,
+        width,
+        height,
+        w,
+    );
 
-    // Vertical padding for Y (including horizontal padding area)
-    for y in height..(mb_height * 16) {
-        for x in 0..luma_width {
-            y_bytes[y * luma_width + x] = y_bytes[(height - 1) * luma_width + x];
-        }
-    }
+    let u_bytes = alloc::vec![128u8; chroma_size];
+    let v_bytes = alloc::vec![128u8; chroma_size];
 
     (y_bytes, u_bytes, v_bytes)
 }
