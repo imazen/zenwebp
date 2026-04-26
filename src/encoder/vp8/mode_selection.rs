@@ -1105,17 +1105,27 @@ impl<'a> super::Vp8Encoder<'a> {
         // Approach: Use a penalty proportional to lambda_mode (which is q²/128)
         // This gives: penalty ≈ SCALE * q² where SCALE is tuned empirically
         //
-        // For parity with our scoring, we use: 3000 * lambda_mode
-        // At q=30: lambda_mode=7, penalty = 21,000 (vs libwebp's 900,000)
-        // This ratio (43x smaller) matches the ratio of our lambdas to libwebp's
-        // (lambda_i4 ≈ 21 vs lambda_d_i4 = 11 is 2x, and we include coeff costs)
+        // libwebp's PickBestIntra4 (`quant_enc.c:1144-1145`) initializes the
+        // running score with just `H = 211` (the bit-cost of the is_intra4 flag,
+        // i.e. `VP8BitCost(0, 145) = 211`) — no separate i4_penalty:
         //
-        // partition_limit (0-100) scales the penalty up to prevent partition 0
-        // overflow on very large images. At limit=50 the penalty is 8.5x base,
-        // at limit=80 it's 13.6x base, strongly favoring I16 mode which uses
-        // far fewer partition 0 bits. This combines with the raised skip threshold
-        // in choose_macroblock_info to effectively suppress I4 at high limits.
-        let base_penalty = 3000u64 * u64::from(lambda_mode);
+        //     rd_best.H = 211;  // 211 = VP8BitCost(0, 145)
+        //     SetRDScore(dqm->lambda_mode, &rd_best);  // running_score = 211 * lambda_mode
+        //
+        // (The `1000 * q²` `i4_penalty` in `quant_enc.c:267` is only used by
+        // `RefineUsingDistortion` at m0/m1, not by `PickBestIntra4` at m2+.)
+        //
+        // zenwebp previously used `3000 * lambda_mode` which is ~14× larger
+        // than libwebp's value, biasing strongly away from I4 and triggering
+        // the early-exit `running_score >= i16_score` even when I4 would
+        // actually win. Fixed in #22.
+        //
+        // partition_limit (0-100) still scales the penalty up to prevent
+        // partition-0 overflow on very large images at high limits — that
+        // mechanism is orthogonal to the libwebp default and remains in
+        // place; only the base constant changes from 3000 to 211.
+        const H_INTRA4_BIT_COST: u64 = 211;
+        let base_penalty = H_INTRA4_BIT_COST * u64::from(lambda_mode);
         let limit_scale = u64::from(self.partition_limit); // 0-100
         let i4_penalty = base_penalty + base_penalty * limit_scale * limit_scale / 400;
         let mut running_score = i4_penalty;
