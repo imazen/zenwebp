@@ -513,57 +513,98 @@ pub(crate) fn convert_image_yuv<const BPP: usize>(
     (y_bytes, u_bytes, v_bytes)
 }
 
+/// libwebp `kWebpMatrix` Y-from-gray lookup table.
+///
+/// For R = G = B input the entire RGB→Y transform collapses to a
+/// function of one byte:
+///
+/// ```text
+/// Y = ((Y_R + Y_G + Y_B) * g + (16 << YUV_FIX) + YUV_HALF) >> YUV_FIX
+///   = ((16839 + 33059 + 6420) * g + 1081344) >> 16
+/// ```
+///
+/// Pre-baked at compile time as a 256-byte `.rodata` table. The inner
+/// loop over input pixels auto-vectorizes to `pshufb`-style table
+/// lookups — faster than any explicit SIMD multiply because there's
+/// no arithmetic, just byte-load-byte-store.
+///
+/// Coefficients match libwebp's `kWebpMatrix` exactly
+/// (`libwebp/sharpyuv/sharpyuv_csp.c`). Byte-identical to what
+/// zenyuv's `Matrix::WebpEncoder + Range::Limited` produces for
+/// grayscale RGB input — verified by zenyuv's own
+/// `webp_encoder_matches_libwebp_kwebp_matrix` test.
+const KWEBP_GRAY_TO_Y: [u8; 256] = {
+    let mut t = [0u8; 256];
+    let mut g = 0;
+    while g < 256 {
+        let coeff: i32 = 16839 + 33059 + 6420;
+        let offset: i32 = (16 << YUV_FIX) + YUV_HALF;
+        let y = (coeff * g as i32 + offset) >> YUV_FIX;
+        t[g] = if y < 0 {
+            0
+        } else if y > 255 {
+            255
+        } else {
+            y as u8
+        };
+        g += 1;
+    }
+    t
+};
+
 pub(crate) fn convert_image_y<const BPP: usize>(
     image_data: &[u8],
     width: u16,
     height: u16,
     stride: usize,
 ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    // Route the L8/La8 path through the same `convert_image_yuv_fast`
-    // (zenyuv) kernel that the RGB encoder uses, so encoding the same
-    // image as L8 vs RGBA(g, g, g, 255) produces a bit-identical Y
-    // plane. Without this, scalar Y rounding in this function would
-    // diverge from zenyuv's SIMD Y by ±1 LSB on a small fraction of
-    // pixels, which the encoder's mode/quant decisions amplified into
-    // visibly different decoded output.
+    // L8/La8 sRGB-grayscale → libwebp-parity YUV via a const LUT.
     //
-    // Cost: a transient `width × height × 3` byte gray-replicated RGB
-    // buffer during YUV setup. Dropped before the encoder allocates its
-    // own state. For typical web sizes (≤2560 wide) this is < 10 MB and
-    // dominated by the encoder's own working memory; even for 4K it's
-    // ~24 MB transient that lives for microseconds.
+    // Per-pixel gray-to-Y for libwebp's kWebpMatrix is a function of
+    // one byte (see `KWEBP_GRAY_TO_Y` docs above), so a 256-byte LUT
+    // lookup replaces the entire SIMD pipeline. No transient buffer,
+    // no zenyuv kernel call, no arithmetic in the hot loop. Output Y
+    // matches libwebp's PREC=16 Y bytewise.
     //
-    // Chroma is filled with 128 directly rather than running zenyuv's
-    // chroma kernel — for R = G = B input the transform produces exactly
-    // U = V = 128 mathematically (the `(R-G)` and `(B-G)` contributions
-    // cancel, leaving only the +128 offset), so the kernel would just
-    // burn cycles confirming a constant. The +128 fill matches the
-    // decoder's `(128 << YUV_FIX) + YUV_HALF` chroma bias so DC residual
-    // stays at zero and no bits are spent coding a constant offset.
-    let w = usize::from(width);
-    let h = usize::from(height);
-    let mb_width = w.div_ceil(16);
-    let mb_height = h.div_ceil(16);
+    // Chroma is constant 128: R = G = B mathematically produces
+    // U = V = 128 (the (R-G) and (B-G) contributions cancel). The +128
+    // fill matches the decoder's `(128 << YUV_FIX) + YUV_HALF` chroma
+    // bias so DC residual stays at zero and no bits are spent coding
+    // a constant offset.
+    let width = usize::from(width);
+    let height = usize::from(height);
+    let mb_width = width.div_ceil(16);
+    let mb_height = height.div_ceil(16);
+    let y_size = 16 * mb_width * 16 * mb_height;
+    let luma_width = 16 * mb_width;
     let chroma_size = 8 * mb_width * 8 * mb_height;
-
-    let mut gray_rgb = alloc::vec::Vec::with_capacity(w * h * 3);
-    for y in 0..h {
-        let row_start = y * stride * BPP;
-        for x in 0..w {
-            let g = image_data[row_start + x * BPP];
-            gray_rgb.extend_from_slice(&[g, g, g]);
-        }
-    }
-    let (y_bytes, _, _) = convert_image_yuv_fast(
-        &gray_rgb,
-        crate::encoder::PixelLayout::Rgb8,
-        width,
-        height,
-        w,
-    );
-
+    let mut y_bytes = alloc::vec![0u8; y_size];
     let u_bytes = alloc::vec![128u8; chroma_size];
     let v_bytes = alloc::vec![128u8; chroma_size];
+
+    // LUT scan over input rows. For BPP=2 (La8) we read byte 0 of each
+    // pair (the gray byte); the alpha byte is handled separately by
+    // the encoder's alpha-plane path.
+    for y in 0..height {
+        let src_row = &image_data[y * stride * BPP..y * stride * BPP + width * BPP];
+        for x in 0..width {
+            y_bytes[y * luma_width + x] = KWEBP_GRAY_TO_Y[src_row[x * BPP] as usize];
+        }
+    }
+
+    // Edge replication for macroblock padding (Y plane only — chroma
+    // is already constant).
+    for y in 0..height {
+        let last_y = y_bytes[y * luma_width + width - 1];
+        for x in width..luma_width {
+            y_bytes[y * luma_width + x] = last_y;
+        }
+    }
+    for y in height..(mb_height * 16) {
+        for x in 0..luma_width {
+            y_bytes[y * luma_width + x] = y_bytes[(height - 1) * luma_width + x];
+        }
+    }
 
     (y_bytes, u_bytes, v_bytes)
 }
@@ -892,7 +933,7 @@ fn zenyuv_encode_planes(
     // buffers and only need vertical padding.
     let mb_aligned_width = w == luma_width;
 
-    let mut ctx = YuvContext::new(Range::Limited, Matrix::Bt601);
+    let mut ctx = YuvContext::new(Range::Limited, Matrix::WebpEncoder);
 
     // Two-pass: zenyuv Y-only (fast maddubs SIMD, no chroma compute)
     // + our SIMD gamma chroma overwrite.
@@ -930,7 +971,7 @@ fn zenyuv_encode_planes(
                 w,
                 h,
                 Range::Limited,
-                Matrix::Bt601,
+                Matrix::WebpEncoder,
                 &config,
             );
             // Step 4: Refine Y to compensate for chroma-induced luma error.
@@ -943,7 +984,7 @@ fn zenyuv_encode_planes(
                     w,
                     h,
                     Range::Limited,
-                    Matrix::Bt601,
+                    Matrix::WebpEncoder,
                 );
             }
             // Re-pad luma and chroma vertically after refinement.
@@ -974,7 +1015,7 @@ fn zenyuv_encode_planes(
                 w,
                 h,
                 Range::Limited,
-                Matrix::Bt601,
+                Matrix::WebpEncoder,
                 &config,
             );
             // Step 4: Refine Y to compensate for chroma-induced luma error.
@@ -987,7 +1028,7 @@ fn zenyuv_encode_planes(
                     w,
                     h,
                     Range::Limited,
-                    Matrix::Bt601,
+                    Matrix::WebpEncoder,
                 );
             }
             // Copy refined Y back to mb-aligned buffer with padding.

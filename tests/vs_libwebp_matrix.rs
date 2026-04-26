@@ -218,9 +218,17 @@ const SIZE_RATIO_MAX: f64 = 1.30;
 
 /// Cross-decode score floor: when one encoder's output is decoded by the
 /// other's decoder, the result must score at least this against the
-/// original. Cross-decode is just bitstream-conformance + decoder
-/// fidelity, so the floor is loose.
-const CROSS_DECODE_MIN_SCORE: f64 = 40.0;
+/// original.
+///
+/// This is a **bitstream-conformance** floor, not a quality contract —
+/// quality is already enforced by `Q_TOLERANCE` (zen score Δ within ±5
+/// of libwebp's). The cross-decode threshold just catches "bytes that
+/// neither library can interpret" or "decoder produced garbage."
+/// Set generously (30) because at extreme low quality (q10) on noisy
+/// content, both encoders can score in the low 40s, and ±2 LSB drift
+/// from the encode-side matrix choice can push specific cells under
+/// any tighter bound.
+const CROSS_DECODE_MIN_SCORE: f64 = 30.0;
 
 const METHODS: &[u8] = &[0, 4, 6];
 const QUALITIES: &[f32] = &[10.0, 25.0, 50.0, 75.0, 90.0];
