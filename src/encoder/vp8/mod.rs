@@ -47,6 +47,7 @@ use super::vec_writer::VecWriter;
 use crate::common::prediction::*;
 use crate::common::types::Frame;
 use crate::common::types::*;
+use crate::encoder::tables::VP8_AC_TABLE2;
 // convert_image_sharp_yuv_with_config is called via full path below
 use crate::decoder::yuv::convert_image_y;
 
@@ -1451,7 +1452,11 @@ impl<'a> Vp8Encoder<'a> {
                 ydc: DC_QUANT[seg_quant_usize],
                 yac: AC_QUANT[seg_quant_usize],
                 y2dc: DC_QUANT[seg_quant_usize] * 2,
-                y2ac: ((i32::from(AC_QUANT[seg_quant_usize]) * 155 / 100) as i16).max(8),
+                // Y2 AC uses libwebp's dedicated `kAcTable2` lookup (`quant_enc.c:236`,
+                // verified byte-identical to our `VP8_AC_TABLE2`). Previously we
+                // synthesized the value as `kAcTable * 155/100` which deviates by up
+                // to ~10% at mid-quantizer. Decoder side updated to match (#24).
+                y2ac: VP8_AC_TABLE2[seg_quant_usize] as i16,
                 uvdc: DC_QUANT[uv_dc_idx],
                 uvac: AC_QUANT[uv_ac_idx],
                 quantizer_level: delta,
@@ -1582,7 +1587,7 @@ impl<'a> Vp8Encoder<'a> {
                 ydc: DC_QUANT[quant_index_usize],
                 yac: AC_QUANT[quant_index_usize],
                 y2dc: DC_QUANT[quant_index_usize] * 2,
-                y2ac: ((i32::from(AC_QUANT[quant_index_usize]) * 155 / 100) as i16).max(8),
+                y2ac: VP8_AC_TABLE2[quant_index_usize] as i16,
                 uvdc: DC_QUANT[quant_index_usize],
                 uvac: AC_QUANT[quant_index_usize],
                 quantizer_level: 0, // No delta for base segment
