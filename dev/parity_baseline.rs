@@ -33,7 +33,9 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use butteraugli::{ButteraugliParams, butteraugli};
-use fast_ssim2::{ColorPrimaries, Rgb as SsimRgb, TransferCharacteristic, compute_frame_ssimulacra2};
+use fast_ssim2::{
+    ColorPrimaries, Rgb as SsimRgb, TransferCharacteristic, compute_frame_ssimulacra2,
+};
 use imgref::Img;
 use rgb::RGB8;
 
@@ -192,11 +194,23 @@ fn compute_ssim2(orig: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {
     let h = height as usize;
     let orig_rgb: Vec<[f32; 3]> = orig
         .chunks_exact(3)
-        .map(|p| [srgb_to_linear(p[0]), srgb_to_linear(p[1]), srgb_to_linear(p[2])])
+        .map(|p| {
+            [
+                srgb_to_linear(p[0]),
+                srgb_to_linear(p[1]),
+                srgb_to_linear(p[2]),
+            ]
+        })
         .collect();
     let dec_rgb: Vec<[f32; 3]> = decoded
         .chunks_exact(3)
-        .map(|p| [srgb_to_linear(p[0]), srgb_to_linear(p[1]), srgb_to_linear(p[2])])
+        .map(|p| {
+            [
+                srgb_to_linear(p[0]),
+                srgb_to_linear(p[1]),
+                srgb_to_linear(p[2]),
+            ]
+        })
         .collect();
     let orig_img = match SsimRgb::new(
         orig_rgb,
@@ -225,7 +239,10 @@ fn compute_ssim2(orig: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {
 fn compute_butter(orig: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {
     let w = width as usize;
     let h = height as usize;
-    let src: Vec<RGB8> = orig.chunks_exact(3).map(|c| RGB8::new(c[0], c[1], c[2])).collect();
+    let src: Vec<RGB8> = orig
+        .chunks_exact(3)
+        .map(|c| RGB8::new(c[0], c[1], c[2]))
+        .collect();
     let dst: Vec<RGB8> = decoded
         .chunks_exact(3)
         .map(|c| RGB8::new(c[0], c[1], c[2]))
@@ -234,7 +251,11 @@ fn compute_butter(orig: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {
         return f64::NAN;
     }
     let params = ButteraugliParams::default();
-    match butteraugli(Img::new(src, w, h).as_ref(), Img::new(dst, w, h).as_ref(), &params) {
+    match butteraugli(
+        Img::new(src, w, h).as_ref(),
+        Img::new(dst, w, h).as_ref(),
+        &params,
+    ) {
         Ok(r) => r.score as f64,
         Err(_) => f64::NAN,
     }
@@ -296,18 +317,18 @@ fn main() {
                 });
             }
         }
-        eprintln!(
-            "  {} -> {} images loaded",
-            label,
-            images.len() - before
-        );
+        eprintln!("  {} -> {} images loaded", label, images.len() - before);
     }
     eprintln!("Total images loaded: {}", images.len());
 
     // Speed-tier discipline: median-of-3 for small images, single run for
     // larger ones to keep total wall-clock reasonable. Threshold 1MP.
     fn runs_for(w: u32, h: u32) -> usize {
-        if (w as u64) * (h as u64) <= 1_000_000 { 3 } else { 1 }
+        if (w as u64) * (h as u64) <= 1_000_000 {
+            3
+        } else {
+            1
+        }
     }
 
     let total_cells = presets.len() * qualities.len() * methods.len();
@@ -397,10 +418,7 @@ fn main() {
                     let zen_dec = match decode_rgb(&zen_bytes) {
                         Ok((d, _, _)) => d,
                         Err(_) => {
-                            eprintln!(
-                                "skip zen-decode {} {} q{} m{}",
-                                img.corpus, img.name, q, m
-                            );
+                            eprintln!("skip zen-decode {} {} q{} m{}", img.corpus, img.name, q, m);
                             cell_skipped += 1;
                             skipped += 1;
                             continue;
@@ -409,10 +427,7 @@ fn main() {
                     let lib_dec = match decode_rgb(&lib_bytes) {
                         Ok((d, _, _)) => d,
                         Err(_) => {
-                            eprintln!(
-                                "skip lib-decode {} {} q{} m{}",
-                                img.corpus, img.name, q, m
-                            );
+                            eprintln!("skip lib-decode {} {} q{} m{}", img.corpus, img.name, q, m);
                             cell_skipped += 1;
                             skipped += 1;
                             continue;
@@ -505,7 +520,11 @@ fn main() {
         }
     }
 
-    eprintln!("Done in {:.1}s. Wrote {}", start.elapsed().as_secs_f64(), out_path.display());
+    eprintln!(
+        "Done in {:.1}s. Wrote {}",
+        start.elapsed().as_secs_f64(),
+        out_path.display()
+    );
     eprintln!("Skipped cells: {}", skipped);
     for (corpus, a) in &agg {
         if a.n == 0 {

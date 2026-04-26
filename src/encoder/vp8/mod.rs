@@ -814,8 +814,10 @@ impl<'a> Vp8Encoder<'a> {
             // Clamp to u8 for the table lookup (table saturates at 63 well
             // before MAX_DELTA_SIZE=64; libwebp clamps inside the function).
             let delta_u8 = delta_raw.clamp(0, 255) as u8;
-            let edge_strength =
-                i32::from(super::cost::filter_strength_from_delta(self.filter_sharpness, delta_u8));
+            let edge_strength = i32::from(super::cost::filter_strength_from_delta(
+                self.filter_sharpness,
+                delta_u8,
+            ));
             if edge_strength > absolute[s] {
                 absolute[s] = edge_strength;
             }
@@ -1786,7 +1788,7 @@ impl<'a> Vp8Encoder<'a> {
         //
         // Only enable for images large enough to benefit (overhead vs gain tradeoff).
         // libwebp uses segments for images with method > 0 and multiple segments configured.
-        let total_mbs = usize::from(mb_width) * usize::from(mb_height);
+        let _total_mbs = usize::from(mb_width) * usize::from(mb_height);
         // libwebp gates segmentation on `config->emulate_jpeg_size || num_segments > 1
         // || method <= 1` (`analysis_enc.c:434-436`) — no min-MB threshold. zenwebp
         // previously skipped segmentation entirely below 256 MBs (~256x256 images),

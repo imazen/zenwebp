@@ -416,8 +416,8 @@ const fn permute_i4_table(
         while j < NUM_BMODES {
             let mut k = 0;
             while k < NUM_BMODES {
-                out[i][j][k] = src[PERM_LIBWEBP_TO_ZEN[i]][PERM_LIBWEBP_TO_ZEN[j]]
-                    [PERM_LIBWEBP_TO_ZEN[k]];
+                out[i][j][k] =
+                    src[PERM_LIBWEBP_TO_ZEN[i]][PERM_LIBWEBP_TO_ZEN[j]][PERM_LIBWEBP_TO_ZEN[k]];
                 k += 1;
             }
             j += 1;

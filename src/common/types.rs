@@ -883,7 +883,11 @@ impl Segment {
         //   const int tlambda_scale = (enc->method >= 4) ? enc->config->sns_strength : 0;
         //   m->tlambda = (tlambda_scale * q_i4) >> 5;
         // At m0-m3 the spectral-distortion penalty is OFF in libwebp; we now match.
-        let tlambda_scale = if method >= 4 { u32::from(sns_strength) } else { 0 };
+        let tlambda_scale = if method >= 4 {
+            u32::from(sns_strength)
+        } else {
+            0
+        };
         self.tlambda = (tlambda_scale * q_i4) >> 5;
 
         // Initialize perceptual config

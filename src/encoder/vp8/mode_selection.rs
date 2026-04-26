@@ -745,8 +745,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         .try_into()
                         .unwrap();
                     coeffs[0] = 0; // DC handled by Y2
-                    let ctx0 =
-                        (u8::from(top_nz_t[bx]) + u8::from(left_nz_t[by])).min(2) as usize;
+                    let ctx0 = (u8::from(top_nz_t[bx]) + u8::from(left_nz_t[by])).min(2) as usize;
                     let mut zigzag_levels = [0i32; 16];
                     let has_nz = trellis_quantize_block(
                         &mut coeffs,
@@ -1671,12 +1670,18 @@ impl<'a> super::Vp8Encoder<'a> {
                 self.top_complexity[mbx].u[0] != 0,
                 self.top_complexity[mbx].u[1] != 0,
             ];
-            let left_u_nz = [self.left_complexity.u[0] != 0, self.left_complexity.u[1] != 0];
+            let left_u_nz = [
+                self.left_complexity.u[0] != 0,
+                self.left_complexity.u[1] != 0,
+            ];
             let top_v_nz = [
                 self.top_complexity[mbx].v[0] != 0,
                 self.top_complexity[mbx].v[1] != 0,
             ];
-            let left_v_nz = [self.left_complexity.v[0] != 0, self.left_complexity.v[1] != 0];
+            let left_v_nz = [
+                self.left_complexity.v[0] != 0,
+                self.left_complexity.v[1] != 0,
+            ];
             let coeff_cost = get_cost_uv(
                 &uv_quant,
                 top_u_nz,

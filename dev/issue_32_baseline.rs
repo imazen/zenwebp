@@ -23,10 +23,7 @@ fn decode_png_rgb(path: &str) -> (u32, u32, Vec<u8>) {
             .chunks_exact(4)
             .flat_map(|p| [p[0], p[1], p[2]])
             .collect(),
-        png::ColorType::Grayscale => bytes
-            .iter()
-            .flat_map(|&g| [g, g, g])
-            .collect(),
+        png::ColorType::Grayscale => bytes.iter().flat_map(|&g| [g, g, g]).collect(),
         png::ColorType::GrayscaleAlpha => bytes
             .chunks_exact(2)
             .flat_map(|p| [p[0], p[0], p[0]])
@@ -82,8 +79,10 @@ fn main() {
     println!("Image: {} ({}x{}, {} pixels)", png_path, w, h, w * h);
 
     println!();
-    println!("{:>8} {:>3} {:>2} | {:>6} | {:>6} | {:>6}",
-             "preset", "q", "m", "zen", "lib", "ratio");
+    println!(
+        "{:>8} {:>3} {:>2} | {:>6} | {:>6} | {:>6}",
+        "preset", "q", "m", "zen", "lib", "ratio"
+    );
     for &(preset, name) in &[
         (Preset::Photo, "Photo"),
         (Preset::Default, "Default"),
@@ -109,7 +108,12 @@ fn main() {
                 };
                 println!(
                     "{:>8} {:>3} {:>2} | {:>6} | {:>6} | {:>6.3}",
-                    name, q as i32, m, zen.len(), lib_len, ratio
+                    name,
+                    q as i32,
+                    m,
+                    zen.len(),
+                    lib_len,
+                    ratio
                 );
                 // Dump worst case for analysis.
                 if matches!(preset, Preset::Photo) && q == 95.0 && m == 0 {
