@@ -73,6 +73,10 @@ pub struct LossyConfig {
     /// 0 = no limit (default), 100 = maximum I4 suppression.
     /// None = automatic (encoder will retry with increasing limits on overflow).
     pub partition_limit: Option<u8>,
+    /// Preprocessing flags (bitfield, matches libwebp's `WebPConfig::preprocessing`).
+    /// Bit 0 (`0x1`): segment-map smoothing (3x3 majority filter on the segment map).
+    /// Default: 0 (no preprocessing), matching libwebp.
+    pub preprocessing: u8,
     /// Resource limits for validation.
     pub limits: Limits,
 }
@@ -102,6 +106,7 @@ impl LossyConfig {
             filter_sharpness: None,
             segments: None,
             partition_limit: None,
+            preprocessing: 0,
             limits: Limits::none(),
         }
     }
@@ -754,6 +759,7 @@ impl LossyConfig {
             alpha_quality: self.alpha_quality,
             partition_limit: self.partition_limit,
             exact: false, // Not applicable to lossy (alpha plane is lossless separately)
+            preprocessing: self.preprocessing,
         }
     }
 }
@@ -776,6 +782,7 @@ impl LosslessConfig {
             alpha_quality: self.alpha_quality,
             partition_limit: None, // Not applicable to lossless
             exact: self.exact,
+            preprocessing: 0, // Not applicable to lossless
         }
     }
 }

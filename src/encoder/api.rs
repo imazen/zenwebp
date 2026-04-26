@@ -543,6 +543,10 @@ pub struct EncoderParams {
     /// Preserve RGB under fully-transparent pixels (alpha=0) in lossless mode.
     /// `false` (default) matches libwebp: zero RGB for better compression.
     pub(crate) exact: bool,
+    /// Preprocessing flags (bitfield, matches libwebp's `WebPConfig::preprocessing`).
+    /// Bit 0 (`0x1`): segment-map smoothing (3x3 majority filter on the segment map).
+    /// Default: 0 (no preprocessing), matching libwebp.
+    pub(crate) preprocessing: u8,
 }
 
 impl Default for EncoderParams {
@@ -563,6 +567,7 @@ impl Default for EncoderParams {
             alpha_quality: 100,
             partition_limit: None,
             exact: false,
+            preprocessing: 0,
         }
     }
 }
@@ -696,6 +701,10 @@ pub struct EncoderConfig {
     /// Partition limit (0-100). Penalizes I4 mode to prevent partition 0 overflow.
     /// `None` = automatic retry on overflow.
     pub partition_limit: Option<u8>,
+    /// Preprocessing flags (bitfield, matches libwebp's `WebPConfig::preprocessing`).
+    /// Bit 0 (`0x1`): segment-map smoothing (3x3 majority filter on the segment map).
+    /// Default: 0 (no preprocessing), matching libwebp's default.
+    pub preprocessing: u8,
     /// Encode limits for dimensions and memory validation.
     pub limits: crate::Limits,
 }
@@ -718,6 +727,7 @@ impl Default for EncoderConfig {
             filter_sharpness: None,
             segments: None,
             partition_limit: None,
+            preprocessing: 0,
             limits: crate::Limits::none(), // No limits by default
         }
     }
@@ -865,6 +875,18 @@ impl EncoderConfig {
         self
     }
 
+    /// Set preprocessing flags (bitfield, matches libwebp's `WebPConfig::preprocessing`).
+    ///
+    /// - Bit 0 (`0x1`): segment-map smoothing (3x3 majority filter applied to the
+    ///   segment map after k-means assignment). Default: 0 (off), matching libwebp.
+    ///
+    /// libwebp's `cwebp -pre 1` enables this flag; the encoder default is 0.
+    #[must_use]
+    pub fn preprocessing(mut self, flags: u8) -> Self {
+        self.preprocessing = flags;
+        self
+    }
+
     /// Set encode limits for validation.
     #[must_use]
     pub fn limits(mut self, limits: crate::Limits) -> Self {
@@ -915,6 +937,7 @@ impl EncoderConfig {
             alpha_quality: self.alpha_quality,
             partition_limit: self.partition_limit,
             exact: self.exact,
+            preprocessing: self.preprocessing,
         }
     }
 

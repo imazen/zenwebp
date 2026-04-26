@@ -459,6 +459,9 @@ struct Vp8Encoder<'a> {
     method: u8,
     /// Spatial noise shaping strength (0-100)
     sns_strength: u8,
+    /// Preprocessing flags (bit 0 = segment-map smoothing). Matches libwebp's
+    /// `WebPConfig::preprocessing`. Default 0 (off), matching libwebp's default.
+    preprocessing: u8,
     /// Loop filter strength (0-100)
     filter_strength: u8,
     /// Loop filter sharpness (0-7)
@@ -541,6 +544,7 @@ impl<'a> Vp8Encoder<'a> {
             // Default to balanced method
             method: 4,
             sns_strength: 50,
+            preprocessing: 0,
             filter_strength: 60,
             filter_sharpness: 0,
             num_segments: 4,
@@ -721,6 +725,7 @@ impl<'a> Vp8Encoder<'a> {
         self.do_trellis_i4_mode = self.method >= 6;
         // Store tuning parameters
         self.sns_strength = params.sns_strength.min(100);
+        self.preprocessing = params.preprocessing;
         self.filter_strength = params.filter_strength.min(100);
         self.filter_sharpness = params.filter_sharpness.min(7);
         self.num_segments = params.num_segments.clamp(1, 4);
@@ -1352,9 +1357,13 @@ impl<'a> Vp8Encoder<'a> {
             .map(|&alpha| alpha_to_segment[alpha as usize])
             .collect();
 
-        // Smooth segment map to reduce noisy boundaries
-        // Only smooth if we have multiple segments
-        if self.num_segments > 1 {
+        // Smooth segment map (3x3 majority filter) only when the preprocessing
+        // flag explicitly opts in. libwebp gates this on `config->preprocessing & 1`
+        // (`analysis_enc.c:217-218`), default OFF (`config_enc.c:48`); we match.
+        // zenwebp previously smoothed unconditionally whenever multi-segment, which
+        // could collapse 4 segments into 2 after `simplify_segments` and lose
+        // differential-quantization savings (#26).
+        if self.num_segments > 1 && (self.preprocessing & 1) != 0 {
             super::cost::smooth_segment_map(
                 &mut self.segment_map,
                 usize::from(self.macroblock_width),
