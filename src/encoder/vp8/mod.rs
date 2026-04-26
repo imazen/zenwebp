@@ -1405,8 +1405,7 @@ impl<'a> Vp8Encoder<'a> {
         let token_buf = self.token_buffer.take().unwrap();
         if self.macroblock_no_skip_coeff.is_some() {
             // Build skip mask from stored MB info (already moved out into local `stored_mb_info`).
-            let skip_mask: Vec<bool> =
-                stored_mb_info.iter().map(|m| m.coeffs_skipped).collect();
+            let skip_mask: Vec<bool> = stored_mb_info.iter().map(|m| m.coeffs_skipped).collect();
             token_buf.emit_tokens_filtered(&mut self.partitions[0], final_probs, &skip_mask);
         } else {
             token_buf.emit_tokens(&mut self.partitions[0], final_probs);
