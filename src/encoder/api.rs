@@ -572,6 +572,14 @@ pub struct EncoderParams {
     /// `StrictLibwebpParity` disables PSY_WEIGHT_Y, SATD masking blend, and
     /// JND zeroing for byte-comparable output to libwebp.
     pub(crate) cost_model: CostModel,
+    /// Run a stat-collection encoder pass before the emit pass to refresh
+    /// `level_costs` from the observed token distribution. Roughly doubles
+    /// encode time at m4 in exchange for ~0.1% size win on photo content.
+    /// libwebp does this by default; zenwebp keeps it OFF to optimize the
+    /// speed/size tradeoff on the m4 default. Worth enabling for
+    /// `target_size` / `target_zensim` search loops, or under
+    /// `CostModel::StrictLibwebpParity`. Default `false`.
+    pub(crate) multi_pass_stats: bool,
 }
 
 impl Default for EncoderParams {
@@ -594,6 +602,7 @@ impl Default for EncoderParams {
             exact: false,
             smooth_segment_map: false,
             cost_model: CostModel::ZenwebpDefault,
+            multi_pass_stats: false,
         }
     }
 }
@@ -736,6 +745,11 @@ pub struct EncoderConfig {
     /// PSY_WEIGHT_Y, SATD masking blend, and JND zeroing for byte-comparable
     /// output to libwebp at matching `(quality, method, sns, filter, segments)`.
     pub cost_model: CostModel,
+    /// Run a stat-collection encoder pass before the emit pass. Roughly
+    /// doubles encode time at m4 in exchange for ~0.1% size win on photo
+    /// content. Default `false`. Currently only m4 honors this — m5/m6
+    /// already saturate per-pass and multi-pass at those tiers regresses size.
+    pub multi_pass_stats: bool,
     /// Encode limits for dimensions and memory validation.
     pub limits: crate::Limits,
 }
@@ -760,6 +774,7 @@ impl Default for EncoderConfig {
             partition_limit: None,
             smooth_segment_map: false,
             cost_model: CostModel::ZenwebpDefault,
+            multi_pass_stats: false,
             limits: crate::Limits::none(), // No limits by default
         }
     }
@@ -918,6 +933,16 @@ impl EncoderConfig {
         self
     }
 
+    /// Enable a stat-collection encoder pass before the emit pass to refresh
+    /// `level_costs` from the observed token distribution. Roughly **doubles**
+    /// encode time at m4 in exchange for ~0.1% size win on photo content.
+    /// Default off; opt-in for `target_size` / `target_zensim` searches.
+    #[must_use]
+    pub fn multi_pass_stats(mut self, on: bool) -> Self {
+        self.multi_pass_stats = on;
+        self
+    }
+
     /// Set the cost model used during mode selection and trellis quantization.
     ///
     /// - `CostModel::ZenwebpDefault` (default): perceptual extensions enabled
@@ -985,6 +1010,7 @@ impl EncoderConfig {
             exact: self.exact,
             smooth_segment_map: self.smooth_segment_map,
             cost_model: self.cost_model,
+            multi_pass_stats: self.multi_pass_stats,
         }
     }
 

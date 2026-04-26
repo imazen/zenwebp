@@ -491,6 +491,9 @@ struct Vp8Encoder<'a> {
     /// `ZenwebpDefault` enables perceptual extensions per method level;
     /// `StrictLibwebpParity` disables them.
     cost_model: super::api::CostModel,
+    /// Run a stat-collection pre-pass (m4 only — m5/m6 already saturate).
+    /// Default `false`. Set via `LossyConfig::with_multi_pass_stats(true)`.
+    multi_pass_stats: bool,
     /// Loop filter strength (0-100)
     filter_strength: u8,
     /// Loop filter sharpness (0-7)
@@ -583,6 +586,7 @@ impl<'a> Vp8Encoder<'a> {
             sns_strength: 50,
             smooth_segment_map: false,
             cost_model: super::api::CostModel::ZenwebpDefault,
+            multi_pass_stats: false,
             filter_strength: 60,
             filter_sharpness: 0,
             num_segments: 4,
@@ -866,6 +870,7 @@ impl<'a> Vp8Encoder<'a> {
         self.sns_strength = params.sns_strength.min(100);
         self.smooth_segment_map = params.smooth_segment_map;
         self.cost_model = params.cost_model;
+        self.multi_pass_stats = params.multi_pass_stats;
         self.filter_strength = params.filter_strength.min(100);
         self.filter_sharpness = params.filter_sharpness.min(7);
         self.num_segments = params.num_segments.clamp(1, 4);
@@ -1003,7 +1008,16 @@ impl<'a> Vp8Encoder<'a> {
         // CID22 — see `differences/baselines/post-batch2-27.tsv`). At m4 the
         // second pass net-helps (-0.1 to -0.4%) because the simple-quant
         // m4 path doesn't have a per-MB feedback mechanism otherwise.
-        let num_passes: usize = if self.method == 4 { 2 } else { 1 };
+        // Multi-pass stat collection is opt-in via `LossyConfig::with_multi_pass_stats(true)`
+        // (default OFF, gated only at m4). m5/m6 already image-adapt via per-pass
+        // `proba_stats` in trellis; adding a second pass at those tiers regresses size
+        // (see #27 investigation). Multi-pass at m4 doubles encode time for ~0.1% size
+        // win on photos — useful inside `target_size`/`target_zensim` search loops.
+        let num_passes: usize = if self.multi_pass_stats && self.method == 4 {
+            2
+        } else {
+            1
+        };
 
         // Stats accumulators (populated during last pass)
         let mut final_sse_y: u64 = 0;
