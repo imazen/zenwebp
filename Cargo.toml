@@ -94,6 +94,10 @@ zencodec = ["dep:zencodec", "dep:self_cell"]
 # zennode = ["dep:zennode"]
 
 [[example]]
+name = "empirical_sweep"
+path = "dev/empirical_sweep.rs"
+
+[[example]]
 name = "hrtb_test"
 required-features = ["zencodec"]
 
