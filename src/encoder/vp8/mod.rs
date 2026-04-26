@@ -1089,11 +1089,32 @@ impl<'a> Vp8Encoder<'a> {
                 }
             }
 
-            // Compute skip probability from actual data
+            // Compute skip probability from actual data.
+            // libwebp gates per-MB skip-bit emission on `skip_proba < SKIP_PROBA_THRESHOLD (250)`
+            // (libwebp `src/enc/frame_enc.c:118-132` `FinalizeSkipProba` / `use_skip_proba`).
+            // When fewer than ~2% of MBs are skip-eligible, the per-MB skip bit costs more than
+            // it saves, so libwebp signals `use_skip_proba=0` in the frame header and omits the
+            // per-MB skip bits entirely — the decoder then assumes every MB has residual data.
+            //
+            // libwebp can do this because its token-loop architecture emits residual tokens
+            // for every MB unconditionally (an empty MB is just an EOB-at-0 per block, ~1 bit).
+            // zenwebp's current architecture suppresses residual emission entirely for skipped
+            // MBs, so we can only safely set `use_skip_proba=0` when **no** MB was skipped
+            // (else the decoder would expect residual data we did not write).
+            //
+            // Conservative gate: omit the per-MB skip bit only when `prob >= 250 && skip_mb == 0`.
+            // A more complete fix (force-encode the few skipped MBs as non-skip with EOB tokens
+            // when prob crosses the threshold) is tracked at #25. This conservative version
+            // already saves bits whenever the encoder happened to produce zero skipped MBs.
             if total_mb > 0 {
                 let non_skip_mb = total_mb - skip_mb;
                 let prob = ((255 * non_skip_mb + total_mb / 2) / total_mb).min(255) as u8;
-                self.macroblock_no_skip_coeff = Some(prob.clamp(1, 254));
+                const SKIP_PROBA_THRESHOLD: u8 = 250;
+                if prob >= SKIP_PROBA_THRESHOLD && skip_mb == 0 {
+                    self.macroblock_no_skip_coeff = None;
+                } else {
+                    self.macroblock_no_skip_coeff = Some(prob.clamp(1, 254));
+                }
             }
 
             // Finalize probabilities from this pass (used by next pass or final emission)
