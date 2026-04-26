@@ -104,6 +104,10 @@ name = "empirical_sweep"
 path = "dev/empirical_sweep.rs"
 
 [[example]]
+name = "issue_32_baseline"
+path = "dev/issue_32_baseline.rs"
+
+[[example]]
 name = "parity_baseline"
 path = "dev/parity_baseline.rs"
 
