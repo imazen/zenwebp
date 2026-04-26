@@ -44,10 +44,12 @@ impl<'a> super::Vp8Encoder<'a> {
         self.encoder.write_literal(6, self.frame.filter_level);
         self.encoder.write_literal(3, self.frame.sharpness_level);
 
-        self.encoder.write_flag(self.loop_filter_adjustments);
-        if self.loop_filter_adjustments {
-            self.encode_loop_filter_adjustments();
-        }
+        // loop_filter_adjustments_flag — always disabled (#35-#5).
+        // libwebp emits per-segment loop-filter level deltas via
+        // `update_segment_feature_data` (see encode_segment_updates above);
+        // it does not use this older `mb_lf_delta` mechanism. Hard-code to
+        // false to avoid carrying half-ported scaffolding.
+        self.encoder.write_flag(false);
 
         // partitions length must be 1, 2, 4 or 8, so value will be 0, 1, 2 or 3
         let partitions_value: u8 = self.partitions.len().ilog2().try_into().unwrap();
@@ -141,12 +143,6 @@ impl<'a> super::Vp8Encoder<'a> {
                 }
             }
         }
-    }
-
-    fn encode_loop_filter_adjustments(&mut self) {
-        // Whether the deltas are being updated this frame
-        self.encoder.write_flag(false);
-        // If false, no more data needed - use defaults or previous values
     }
 
     fn encode_quantization_indices(&mut self) {
