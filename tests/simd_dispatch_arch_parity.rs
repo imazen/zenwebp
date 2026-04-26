@@ -21,11 +21,11 @@ use zenwebp::encoder::cost::distortion::{
 };
 
 // Re-exported test_helpers for cross-arch parity checks.
-use zenwebp::test_helpers::{
-    CHROMA_BLOCK_SIZE, LUMA_BLOCK_SIZE, dct4x4_dispatch, dct4x4_scalar,
-    dequantize_block_dispatch, dequantize_block_scalar, ftransform_from_u8_4x4_dispatch,
-    ftransform_from_u8_4x4_scalar, idct4x4_dispatch, idct4x4_scalar, is_flat_coeffs_dispatch,
-    is_flat_coeffs_scalar, make_test_matrix, quantize_block_dispatch, quantize_block_scalar,
+use zenwebp::__test_helpers::{
+    CHROMA_BLOCK_SIZE, LUMA_BLOCK_SIZE, dct4x4_dispatch, dct4x4_scalar, dequantize_block_dispatch,
+    dequantize_block_scalar, ftransform_from_u8_4x4_dispatch, ftransform_from_u8_4x4_scalar,
+    idct4x4_dispatch, idct4x4_scalar, is_flat_coeffs_dispatch, is_flat_coeffs_scalar,
+    make_test_matrix, quantize_block_dispatch, quantize_block_scalar,
     quantize_dequantize_block_dispatch, quantize_dequantize_block_scalar, sse_8x8_chroma_dispatch,
     sse_8x8_chroma_scalar, sse_16x16_luma_dispatch, sse_16x16_luma_scalar, sse4x4_dispatch,
     sse4x4_with_residual_dispatch, sse4x4_with_residual_scalar,

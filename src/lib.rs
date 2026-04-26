@@ -197,7 +197,7 @@ pub mod metadata;
 ///
 /// Not part of the public API; do not use in production code.
 #[doc(hidden)]
-pub mod test_helpers {
+pub mod __test_helpers {
     /// Scalar RGB->YUV420 conversion (same path the encoder uses).
     ///
     /// Returns (y, u, v) planes with macroblock-aligned dimensions.
@@ -251,7 +251,7 @@ pub mod test_helpers {
     /// SSE (sum-of-squared-errors) for a 4x4 luma block.
     /// Dispatches to the same SIMD kernel the encoder uses.
     pub fn sse4x4_dispatch(src: &[u8; 16], pred: &[u8; 16]) -> u32 {
-        crate::encoder::vp8::mode_selection::test_only_sse4x4_dispatch(src, pred)
+        crate::encoder::vp8::mode_selection::__test_only_sse4x4_dispatch(src, pred)
     }
 
     /// Forward DCT used by the encoder; dispatched (SSE2 / NEON / etc).
@@ -397,7 +397,7 @@ pub mod test_helpers {
         pred: &[u8; 16],
         dequantized: &[i32; 16],
     ) -> u32 {
-        crate::encoder::vp8::mode_selection::test_only_sse4x4_with_residual_dispatch(
+        crate::encoder::vp8::mode_selection::__test_only_sse4x4_with_residual_dispatch(
             src,
             pred,
             dequantized,

@@ -172,7 +172,7 @@ fn yuv_plane_level_comparison() {
 
     // 1. zenwebp scalar conversion
     let (y_scalar, u_scalar, v_scalar) =
-        zenwebp::test_helpers::convert_image_yuv_rgb(&image, width, height, width as usize);
+        zenwebp::__test_helpers::convert_image_yuv_rgb(&image, width, height, width as usize);
 
     // 2. yuv crate SIMD conversion (BT.601 Limited, Balanced = 13-bit precision)
     let mut yuv_image =
@@ -385,7 +385,7 @@ fn yuv_conversion_speed_comparison() {
         let iterations = if pixels > 1_000_000 { 20 } else { 50 };
 
         // Warm up
-        let _ = zenwebp::test_helpers::convert_image_yuv_rgb(
+        let _ = zenwebp::__test_helpers::convert_image_yuv_rgb(
             &image,
             width as u16,
             height as u16,
@@ -395,7 +395,7 @@ fn yuv_conversion_speed_comparison() {
         // Benchmark zenwebp scalar
         let start = Instant::now();
         for _ in 0..iterations {
-            let _ = zenwebp::test_helpers::convert_image_yuv_rgb(
+            let _ = zenwebp::__test_helpers::convert_image_yuv_rgb(
                 &image,
                 width as u16,
                 height as u16,
@@ -682,7 +682,7 @@ fn gamma_downsampling_effect() {
 #[test]
 #[allow(clippy::needless_range_loop)]
 fn gamma_table_verification() {
-    use zenwebp::test_helpers::{gamma_to_linear_tab, linear_to_gamma_tab};
+    use zenwebp::__test_helpers::{gamma_to_linear_tab, linear_to_gamma_tab};
 
     let forward = gamma_to_linear_tab();
     let inverse = linear_to_gamma_tab();

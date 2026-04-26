@@ -6,7 +6,7 @@
 //! path produces **identical** u8 values to the scalar gamma-corrected path
 //! for the same RGB input.
 
-use zenwebp::test_helpers;
+use zenwebp::__test_helpers;
 
 fn deterministic_rgb(w: u32, h: u32, seed0: u64) -> Vec<u8> {
     let n = (w * h * 3) as usize;
@@ -30,9 +30,9 @@ fn chroma_simd_matches_scalar_exact() {
         let rgb = deterministic_rgb(w, h, seed);
 
         let (_, u_scalar, v_scalar) =
-            test_helpers::convert_image_yuv_rgb(&rgb, w as u16, h as u16, w as usize);
+            __test_helpers::convert_image_yuv_rgb(&rgb, w as u16, h as u16, w as usize);
         let (_, u_fast, v_fast) =
-            test_helpers::convert_image_yuv_rgb_fast(&rgb, w as u16, h as u16, w as usize);
+            __test_helpers::convert_image_yuv_rgb_fast(&rgb, w as u16, h as u16, w as usize);
 
         assert_eq!(
             u_scalar.len(),
@@ -62,9 +62,9 @@ fn chroma_simd_odd_dimensions() {
         let rgb = deterministic_rgb(w, h, seed);
 
         let (_, u_scalar, v_scalar) =
-            test_helpers::convert_image_yuv_rgb(&rgb, w as u16, h as u16, w as usize);
+            __test_helpers::convert_image_yuv_rgb(&rgb, w as u16, h as u16, w as usize);
         let (_, u_fast, v_fast) =
-            test_helpers::convert_image_yuv_rgb_fast(&rgb, w as u16, h as u16, w as usize);
+            __test_helpers::convert_image_yuv_rgb_fast(&rgb, w as u16, h as u16, w as usize);
 
         assert_eq!(u_scalar, u_fast, "{w}x{h}: U mismatch");
         assert_eq!(v_scalar, v_fast, "{w}x{h}: V mismatch");
@@ -77,9 +77,9 @@ fn chroma_simd_small_below_bulk_threshold() {
     for (w, h, seed) in [(7u32, 7u32, 0x01), (15, 15, 0x02)] {
         let rgb = deterministic_rgb(w, h, seed);
         let (_, u_scalar, v_scalar) =
-            test_helpers::convert_image_yuv_rgb(&rgb, w as u16, h as u16, w as usize);
+            __test_helpers::convert_image_yuv_rgb(&rgb, w as u16, h as u16, w as usize);
         let (_, u_fast, v_fast) =
-            test_helpers::convert_image_yuv_rgb_fast(&rgb, w as u16, h as u16, w as usize);
+            __test_helpers::convert_image_yuv_rgb_fast(&rgb, w as u16, h as u16, w as usize);
         assert_eq!(u_scalar, u_fast, "{w}x{h}: U mismatch");
         assert_eq!(v_scalar, v_fast, "{w}x{h}: V mismatch");
     }
