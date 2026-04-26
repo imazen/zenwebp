@@ -104,6 +104,10 @@ name = "empirical_sweep"
 path = "dev/empirical_sweep.rs"
 
 [[example]]
+name = "parity_baseline"
+path = "dev/parity_baseline.rs"
+
+[[example]]
 name = "hrtb_test"
 required-features = ["zencodec"]
 
