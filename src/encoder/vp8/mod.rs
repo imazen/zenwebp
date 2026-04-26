@@ -1575,44 +1575,53 @@ impl<'a> Vp8Encoder<'a> {
             self.quantization_indices.uvac_delta = Some(dq_uv_ac as i8);
         }
 
-        // Compute base filter level for delta computation (using beta=0 for base)
-        let base_filter = super::cost::compute_filter_level(
-            base_quant_index,
-            self.filter_sharpness,
-            self.filter_strength,
-        );
-
+        // libwebp uses segment 0's modulated quantizer + filter as the bitstream
+        // base (`enc->base_quant = enc->dqm[0].quant;` at `quant_enc.c:404`), so
+        // segment 0's delta is always 0 (saves ~9 bits per non-zero delta in the
+        // segment header). zenwebp previously used the unmodulated
+        // `quality_to_quant_index(quality)`, making segment 0 always carry a
+        // non-zero delta when SNS modulation was active. (#30 C)
+        //
+        // Two passes: pass 1 computes the per-segment (quant, filter) tuples;
+        // pass 2 picks segment 0's values as the bitstream base and writes
+        // deltas relative to that.
+        let mut seg_quant_indices = [0u8; 4];
+        let mut seg_filters = [0u8; 4];
         for (seg_idx, &center) in centers.iter().enumerate() {
             let center = center as i32;
-
-            // Transform center to libwebp's alpha scale [-127, 127]
-            // Formula from SetSegmentAlphas: alpha = 255 * (center - mid) / (max - min)
-            // Uses effective_range to prevent extreme deltas on uniform images.
             let transformed_alpha = (255 * (center - mid_alpha) / effective_range).clamp(-127, 127);
-
-            // Compute beta for per-segment filter modulation
-            // Formula from libwebp: beta = 255 * (center - min) / (max - min)
-            // Beta indicates segment complexity: 0 = simplest (closer to min), 255 = most complex
-            // Uses effective_range to prevent extreme filter deltas on uniform images.
             let beta = (255 * (center - min_center) / effective_range).clamp(0, 255) as u8;
-
-            // Compute adjusted quantizer for this segment
-            // Note: we pass quality (not base_quant_index) to match libwebp's QualityToCompression approach
             let seg_quant_index = compute_segment_quant(quality, transformed_alpha, sns_strength);
-            let seg_quant_usize = seg_quant_index as usize;
-
-            // Compute the delta from base quantizer
-            let delta = seg_quant_index as i8 - base_quant_index as i8;
-
-            // Compute per-segment loop filter with beta modulation
-            // Simpler segments (low beta) get less filtering
             let seg_filter = super::cost::compute_filter_level_with_beta(
                 seg_quant_index,
                 self.filter_sharpness,
                 self.filter_strength,
                 beta,
             );
-            let filter_delta = (seg_filter as i8) - (base_filter as i8);
+            seg_quant_indices[seg_idx] = seg_quant_index;
+            seg_filters[seg_idx] = seg_filter;
+        }
+
+        let base_quant_index_new = seg_quant_indices[0];
+        let base_filter_new = seg_filters[0];
+        self.quantization_indices.yac_abs = base_quant_index_new;
+
+        // Suppress unused-variable warning on the legacy unmodulated `base_quant_index`
+        // — kept in the function signature for analysis-pass API stability.
+        let _ = base_quant_index;
+
+        for (seg_idx, &center) in centers.iter().enumerate() {
+            let _ = center;
+            let seg_quant_index = seg_quant_indices[seg_idx];
+            let seg_quant_usize = seg_quant_index as usize;
+
+            // Compute the delta from segment 0's modulated quant.
+            let delta = seg_quant_index as i8 - base_quant_index_new as i8;
+
+            // Use the per-segment filter level computed in pass 1; delta is
+            // relative to segment 0's filter (the new bitstream base).
+            let seg_filter = seg_filters[seg_idx];
+            let filter_delta = (seg_filter as i8) - (base_filter_new as i8);
 
             // Apply UV quant deltas (from libwebp's SetupMatrices)
             // UV DC quant uses dq_uv_dc offset, clamped to [0, 117]
