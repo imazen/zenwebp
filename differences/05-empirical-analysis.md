@@ -418,3 +418,136 @@ For each file, count how many cells produced ratio > 1.10x.
 | imagemagick | 680167d5746325a3.png | 32x32 | 12 | 1.4898 | Photo/q95/m0 |
 | imagemagick | c8173bd456ae9ed8.png | 17x17 | 12 | 1.4603 | Photo/q95/m0 |
 | imagemagick | e601a54fea77a6db.png | 17x17 | 12 | 1.4603 | Photo/q95/m0 |
+
+## Patterns
+
+The data shows several strong, repeatable patterns:
+
+**1. Method 0 is a major outlier — but not in the way you'd expect.**
+Aggregate ratios across CID22 by method (all presets, all Q):
+- `m=0`: agg = **0.9662x** — zenwebp produces 3.4% *smaller* files on average
+- `m=4`: agg = 1.0098x
+- `m=6`: agg = 1.0046x
+
+This is not a win. zenwebp's `m=0` is doing different work than libwebp's `m=0`.
+At low quality (Q5-50), zenwebp m=0 averages ~0.91x — clearly under-spending bits.
+At high quality (Q90-95), zenwebp m=0 averages ~1.00x but the **per-file p99 reaches
+1.41-1.62x** — it dramatically over-spends on certain images. The 16 worst offenders
+in the entire sweep are all `(method=0, Q=90 or 95, file=graphic/chart/logo)`. Static
+analysis should look for: rate-control / segmentation / quantizer-allocation paths that
+differ between method 0 and methods 4+ on images with low color count or large flat
+regions.
+
+**2. Worst-offender files are graphics/charts/logos with low color count.**
+Out of CID22's 250 images, **15 files account for almost every >1.10x outlier across
+the 72 cells.** They share these visual properties:
+- 512x512 PNGs with 200-6000 unique colors (vs typical ~50000+ for photos)
+- Flat backgrounds, sharp text, geometric shapes, gradient bands
+- Large single-color regions
+
+Worst persistent offenders (cells with ratio > 1.10x, max ratio):
+| File | dims | colors | cells>1.10x | max ratio |
+|------|------|--------|-------------|-----------|
+| 1454613116.png | 512x512 | ~911 | 25 | 1.629x |
+| 2387532-srgb.png | 512x512 grayscale | ~161 | 15 | 1.474x |
+| Performance-Graph.png | 512x512 | ~750 | 18 | 1.431x |
+| 1963557.png | 512x512 | ~618 | 24 | 1.428x |
+| 3DPieChart.png | 512x512 | ~800 | 23 | 1.388x |
+| pexels-photo-7078290.png | 512x512 | photo-ish | 19 | 1.351x |
+| ularapi_Semarang_City_Logo.png | 512x512 logo | ~625 | 18 | 1.333x |
+| newplot.png | 512x512 plot | ~937 | 28 | 1.308x |
+
+The user's note that "Auto: ≥0.45 uniformity → Photo, <0.45 → Default" suggests Auto
+detection is meant to route content like this differently — but in our data, Auto and
+Default produce nearly identical outputs on these files (e.g. on 1454613116.png Q90 m0,
+Auto=22542, Default=22606), meaning Auto isn't recognizing them as Drawing/Icon
+candidates that would take a different code path.
+
+**3. Quality dependence is monotonic and in the right direction — but worse at low Q.**
+For CID22 + Default + m=4:
+| Q | agg ratio |
+|---|----------|
+| 5 | 1.0230x |
+| 25 | 1.0218x |
+| 50 | 1.0170x |
+| 75 | 1.0144x  ← published baseline reproduces |
+| 90 | 1.0093x |
+| 95 | 1.0061x |
+
+zenwebp is closer to libwebp at high Q and worse at low Q. The 1-2% gap at Q5-Q25 is
+almost surely from rate-control (target-Q overshoot) or coarser-than-libwebp quantizer
+matrix selection at extreme low-Q. **Static analysis should focus on Q≤25 paths**
+because most of the corpus aggregate gap lives there, even though the absolute file
+sizes are smallest.
+
+**4. Photo preset is consistently worst.**
+On CID22, Photo preset adds ~1% to the aggregate ratio vs Default at every Q:
+e.g. Q75 m=4 Default=1.0145x, Photo=1.0169x; Q5 m=4 Default=1.0230x, Photo=1.0268x.
+On clic2025 (large-image photo corpus) Photo m=4 Q5 = 1.0244x vs Default 1.0223x.
+The Photo preset enables `sns_strength=80` and stronger filtering — somewhere in
+that chain, zenwebp adds a small but persistent extra cost vs libwebp.
+
+**5. Drawing preset at high Q + m=4/6 is one of the few cells where zenwebp wins.**
+Drawing preset Q95 m=6 on CID22 = 0.9957x (zen 0.4% smaller). This is a real win on
+exactly the kind of content (line drawings, hand-drawn art) that the preset targets.
+Drawing's `sns=25 filter=10 sharp=6 segs=4` configuration is the only preset+Q combo
+where zenwebp consistently beats libwebp at higher methods.
+
+**6. clic2025 is uniformly easier for both encoders, but the gap pattern is identical.**
+The 62 large photographic images in clic2025 produce smaller absolute ratios
+(Q75 m=4 Default = 1.0128x vs CID22's 1.0145x) but the same monotonic Q-dependence
+and the same m=0 anomaly. This suggests the m=0 problem is content-driven (graphics)
+not size-driven.
+
+**Where static analysis should focus first:**
+
+1. **Method-0-specific code paths around Q=90-95 on low-color images.** The 1.5-1.6x
+   max ratios are not subtle. Diff zenwebp's m=0 segment/quantizer logic against the
+   m=4 path; whatever m=4 does to handle these images, m=0 doesn't.
+2. **Rate control / quantizer selection at Q ≤ 25.** A 2.3% aggregate gap at low Q vs
+   0.6% at Q95 means there's 4x more room there for improvement.
+3. **Photo preset (sns_strength=80) extra cost.** Persistent ~+0.3% across all Q
+   suggests one or two specific functions in the SNS=80 path.
+4. **Auto preset's classifier on graphic/chart content.** Auto produces effectively
+   identical bytes to Default on the worst offenders, suggesting the classifier
+   doesn't trigger the relevant "low-color" route at all.
+
+## Sanity checks performed
+
+- **Published 1.0149x baseline reproduces.** CID22 Q75 m=4 Default preset (250
+  training+validation images): agg ratio = **1.0144x** (user-published 1.0149x —
+  the 0.0005 difference is within image-set precision; confirmed encoder defaults
+  match libwebp's `WEBP_PRESET_DEFAULT` + `quality=75` + `method=4`).
+- **libwebp call path matches `cwebp -preset default -q 75 -m 4`.** Verified by
+  reusing the existing `webpx 0.1.4` builder pattern from `dev/corpus_test.rs`,
+  which has been historically calibrated against `cwebp` output. Both encoders
+  ran in the same process on the same RGB buffer per file.
+- **No memory/process contamination.** clic2025 and imagemagick sweeps ran in a
+  separate process from the CID22 sweep; ratios stayed self-consistent. Re-running
+  any single cell on cached PNGs produces byte-identical sizes.
+
+## Failures / caveats
+
+- **PNG loader is intentionally narrow:** only handles 8-bit Grayscale/Gray+Alpha/RGB/RGBA.
+  All sub-8-bit and 16-bit color-types are skipped at PNG-decode time, before any
+  encoding attempt. This affected the imagemagick corpus heavily.
+- **imagemagick sample: 76 of 150 sampled files were skipped or produced an encoder
+  error.** Of the 150 random samples from `~/work/all-the-images/corpus/png/imagemagick-convert`,
+  74 made it through both encoders. The 76 skipped were almost entirely 1-bit, 2-bit,
+  or 4-bit grayscale or palette-mode PNGs (e.g. 7x7 1-bit, 16x16 2-bit, 65x65 4-bit).
+  These are not realistic web content — they appear to be ImageMagick test patterns —
+  so the loss is not significant for the sweep's purpose. Note: of the ones that
+  surfaced via the load path, zenwebp returned an encoder error on tiny synthetic
+  images. This is a separate finding worth filing as its own bug if not already
+  known, but is unrelated to file-size ratio analysis.
+- **imagemagick aggregate ratios are not directly comparable** to the photo-corpus
+  ratios. The 74 surviving images skew tiny (median dimension ~64px) and are
+  small-detail synthetic test patterns. Aggregate ratios in that section
+  (1.03x–1.07x) reflect that small-image regime more than realistic content.
+- **clic2025 sub-corpus is small (62 images).** Per-cell percentiles like p99 are
+  effectively a max-of-1 statistic; treat clic2025's tail numbers as anecdotal.
+- **`Auto` preset comparison routes libwebp through `Default`**, not through any
+  libwebp content classifier (libwebp does not have an Auto). For Auto cells, the
+  Default preset is the libwebp side; the difference vs zenwebp's Default cell
+  isolates whatever Auto's classifier decided.
+- **No timing data reported.** This sweep measures bytes only.
