@@ -256,7 +256,7 @@ fn compute_butter(orig: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {
         Img::new(dst, w, h).as_ref(),
         &params,
     ) {
-        Ok(r) => r.score as f64,
+        Ok(r) => r.score,
         Err(_) => f64::NAN,
     }
 }
