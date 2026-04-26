@@ -296,7 +296,13 @@ pub fn trellis_quantize_block(
             // Check if this is the best terminal node
             if level != 0 && best_cur_score < best_score {
                 // Add end-of-block cost: signaling "no more coefficients"
-                // Uses the context resulting from this level
+                // Uses the context resulting from this level.
+                //
+                // libwebp computes the EOB cost via a band-indexed lookup
+                // (`VP8EncBands[n + 1]` then `costs[band][ctx][0]`) inside
+                // TrellisQuantizeBlock; zenwebp factors the band lookup into
+                // `LevelCosts::get_eob_cost`. Different surface, same value
+                // for every (ctype, n, ctx) triple. (#35-#10)
                 let eob_cost = if n < 15 {
                     level_costs.get_eob_cost(ctype, n, ctx) as i64
                 } else {
