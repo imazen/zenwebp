@@ -798,11 +798,16 @@ fn scalar_tier_explicitly_exercised() {
         }
     });
 
-    if report.permutations_run == 0 {
-        // No tokens available on this CPU — we're already running scalar.
+    if report.permutations_run == 0 || max_disabled == 0 {
+        // Either no permutations ran (no slots registered for this arch — e.g.
+        // i686, wasm32) OR every permutation was the empty subset (the only
+        // option when archmage's slot table is empty for this target). Either
+        // way the baseline IS the scalar tier and we've already exercised it
+        // via the encode/decode calls above.
         eprintln!(
             "[scalar_tier_explicitly_exercised] no SIMD tokens available on this CPU; \
-             baseline IS the scalar tier"
+             baseline IS the scalar tier (permutations_run={}, max_disabled={})",
+            report.permutations_run, max_disabled
         );
         hit_scalar = true;
     } else {
