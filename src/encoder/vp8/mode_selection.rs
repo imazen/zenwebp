@@ -720,19 +720,69 @@ impl<'a> super::Vp8Encoder<'a> {
             let mut y2_quant = y2_coeffs;
             crate::encoder::quantize::quantize_block_simd(&mut y2_quant, y2_matrix, true);
 
-            // 4. Quantize Y1 (AC) coefficients using SIMD
-            // Extract each 4x4 block from luma_blocks and quantize AC coefficients
+            // 4. Quantize Y1 (AC) coefficients
+            // At m6 (RD_OPT_TRELLIS_ALL) the I16 mode-selection path also runs
+            // trellis quantization — see libwebp's ReconstructIntra16
+            // (`quant_enc.c:830-879`), which switches on `DO_TRELLIS_I16` and
+            // calls `TrellisQuantizeBlock` instead of `VP8EncQuantizeBlock`.
+            // The resulting levels feed both the cost estimate (step 5) and the
+            // distortion measurement (step 7) so both halves of the RD score
+            // see the trellis-optimized coefficients.
             // (y1_quant hoisted outside mode loop to avoid redundant zero-init)
-            #[allow(clippy::needless_range_loop)]
-            for block_idx in 0..16 {
-                // Copy block from luma_blocks (DC will be zeroed by quantize_ac_only)
-                let block_start = block_idx * 16;
-                let mut block: [i32; 16] = luma_blocks[block_start..block_start + 16]
-                    .try_into()
-                    .unwrap();
-                block[0] = 0; // DC is handled by Y2
-                crate::encoder::quantize::quantize_ac_only_simd(&mut block, y1_matrix, true);
-                y1_quant[block_idx] = block;
+            if self.do_trellis_i4_mode {
+                // m6 RD_OPT_TRELLIS_ALL: use trellis quantization for I16 AC blocks.
+                // Track per-block has_nz context locally — `get_cost_luma16` itself
+                // resets these to all-false at function entry, so the ctx0 we feed
+                // into the trellis call needs to mirror that ordering exactly.
+                let mut top_nz_t = [false; 4];
+                let mut left_nz_t = [false; 4];
+                #[allow(clippy::needless_range_loop)]
+                for block_idx in 0..16 {
+                    let bx = block_idx % 4;
+                    let by = block_idx / 4;
+                    let block_start = block_idx * 16;
+                    let mut coeffs: [i32; 16] = luma_blocks[block_start..block_start + 16]
+                        .try_into()
+                        .unwrap();
+                    coeffs[0] = 0; // DC handled by Y2
+                    let ctx0 =
+                        (u8::from(top_nz_t[bx]) + u8::from(left_nz_t[by])).min(2) as usize;
+                    let mut zigzag_levels = [0i32; 16];
+                    let has_nz = trellis_quantize_block(
+                        &mut coeffs,
+                        &mut zigzag_levels,
+                        y1_matrix,
+                        segment.lambda_trellis_i16,
+                        1, // first=1 for I16_AC (DC lives in Y2)
+                        &self.level_costs,
+                        0, // ctype=0 for I16_AC
+                        ctx0,
+                        &segment.psy_config,
+                    );
+                    top_nz_t[bx] = has_nz;
+                    left_nz_t[by] = has_nz;
+                    // Convert zigzag-ordered levels back to natural index so the
+                    // downstream `y1_matrix.dequantize(level, i)` and cost paths
+                    // see the same storage convention as the simple-quant branch.
+                    let mut natural = [0i32; 16];
+                    for n in 1..16 {
+                        natural[crate::encoder::tables::VP8_ZIGZAG[n]] = zigzag_levels[n];
+                    }
+                    y1_quant[block_idx] = natural;
+                }
+            } else {
+                // m0..m5: simple SIMD quantization (no trellis during mode selection)
+                #[allow(clippy::needless_range_loop)]
+                for block_idx in 0..16 {
+                    // Copy block from luma_blocks (DC will be zeroed by quantize_ac_only)
+                    let block_start = block_idx * 16;
+                    let mut block: [i32; 16] = luma_blocks[block_start..block_start + 16]
+                        .try_into()
+                        .unwrap();
+                    block[0] = 0; // DC is handled by Y2
+                    crate::encoder::quantize::quantize_ac_only_simd(&mut block, y1_matrix, true);
+                    y1_quant[block_idx] = block;
+                }
             }
 
             // 5. Compute coefficient cost using probability-dependent tables.
