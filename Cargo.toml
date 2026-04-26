@@ -112,6 +112,10 @@ name = "parity_baseline"
 path = "dev/parity_baseline.rs"
 
 [[example]]
+name = "cost_model_sweep"
+path = "dev/cost_model_sweep.rs"
+
+[[example]]
 name = "hrtb_test"
 required-features = ["zencodec"]
 
