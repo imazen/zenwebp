@@ -13,6 +13,8 @@
 //!     → `WebpEncoderConfig::lossless().encode(PixelSlice)`
 //!     → decode again, compare pixel-for-pixel.
 
+#![cfg(all(feature = "std", feature = "zencodec", not(target_arch = "wasm32")))]
+
 use std::borrow::Cow;
 
 use zencodec::decode::{DecodeJob, DecoderConfig as _};
@@ -43,8 +45,11 @@ fn make_rgba_image(w: u32, h: u32) -> Vec<u8> {
 }
 
 /// Encode RGBA bytes as a lossless WebP with alpha (reference input).
+///
+/// Uses `with_exact(true)` so RGB under α=0 is preserved — these tests verify
+/// byte-exact roundtrip and the input contains α=0 pixels with nonzero RGB.
 fn rgba_to_lossless_webp(rgba: &[u8], w: u32, h: u32) -> Vec<u8> {
-    let cfg = WebpEncoderConfig::lossless();
+    let cfg = WebpEncoderConfig::lossless().with_exact(true);
     let input_slice =
         PixelSlice::new(rgba, w, h, (w as usize) * 4, PixelDescriptor::RGBA8_SRGB).expect("slice");
     cfg.job()
@@ -195,7 +200,9 @@ fn end_to_end(w: u32, h: u32, padding_bytes: usize) -> (Vec<u8>, Vec<u8>) {
     )
     .expect("input slice");
     // Use the same quality imageflow passes (85.0) to exercise that code path.
-    let cfg = WebpEncoderConfig::lossless().with_quality(85.0);
+    let cfg = WebpEncoderConfig::lossless()
+        .with_exact(true)
+        .with_quality(85.0);
     let reencoded = cfg
         .job()
         .encoder()
@@ -281,7 +288,9 @@ fn lossless_alpha_imageflow_pattern_inplace_swizzle() {
     // Encode as lossless with RGBA8_SRGB descriptor.
     let slice = PixelSlice::new(&padded, w, h, stride_bytes, PixelDescriptor::RGBA8_SRGB)
         .expect("input slice");
-    let cfg = WebpEncoderConfig::lossless().with_quality(85.0);
+    let cfg = WebpEncoderConfig::lossless()
+        .with_exact(true)
+        .with_quality(85.0);
     let reencoded = cfg
         .job()
         .encoder()
