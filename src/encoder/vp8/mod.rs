@@ -1235,12 +1235,17 @@ impl<'a> Vp8Encoder<'a> {
                                 self.stored_mb_coeffs.push(QuantizedMbCoeffs::ZERO);
                             }
                         } else {
+                            // Reuse trellis output from transform_luma_block to
+                            // skip the second trellis pass inside the recorder
+                            // (#35-#8). Always Some() on this branch because
+                            // do_trellis is true.
                             let stored_coeffs = self.record_residual_tokens_storing(
                                 &macroblock_info,
                                 mbx as usize,
                                 &y_block_data.coeffs,
                                 &u_block_data.coeffs,
                                 &v_block_data.coeffs,
+                                y_block_data.trellis_y1_zigzag.as_ref(),
                             );
                             // Track edge magnitude for I16 "blocky" MBs (#34).
                             if !is_i4 && stored_coeffs.is_blocky_i16() {
