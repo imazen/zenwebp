@@ -518,7 +518,13 @@ struct Vp8Encoder<'a> {
     macroblock_width: u16,
     macroblock_height: u16,
 
-    /// Partitions of encoders for the macroblock coefficient data
+    /// Coefficient-data partitions. The VP8 bitstream supports 1, 2, 4, or 8
+    /// partitions (interleaved by MB row mod num_parts), but zenwebp currently
+    /// always emits exactly one. Implementing multi-partition output would
+    /// require routing token emission through `partitions[r % num_parts]` and
+    /// growing this Vec — there is no public knob to request that today.
+    /// Kept as a Vec to avoid churning the header-emission code (which already
+    /// computes `partitions.len().ilog2()`) when multi-partition is added. (#35-#3)
     partitions: Vec<ArithmeticEncoder>,
 
     // the left borders used in prediction
