@@ -202,7 +202,7 @@ const FLOORS: &[(&str, &[(f32, f64)])] = &[
         // Smooth diagonal gradient — easy for VP8 to compress, high scores.
         &[
             (10.0, 67.0),
-            (25.0, 71.0),  // 75 → 71 (m6 q25 = 73 post-audit; floor includes margin)
+            (25.0, 71.0), // 75 → 71 (m6 q25 = 73 post-audit; floor includes margin)
             (50.0, 71.0),
             (75.0, 79.0),
             (90.0, 83.0),
@@ -213,7 +213,7 @@ const FLOORS: &[(&str, &[(f32, f64)])] = &[
         // Value noise — moderate frequency, scores climb steadily with q.
         &[
             (10.0, 39.0),
-            (25.0, 54.0),  // 56 → 54 (m4 q25 = 55.55 post-audit; tight margin)
+            (25.0, 54.0), // 56 → 54 (m4 q25 = 55.55 post-audit; tight margin)
             (50.0, 66.0),
             (75.0, 73.0),
             (90.0, 84.0),
@@ -226,11 +226,11 @@ const FLOORS: &[(&str, &[(f32, f64)])] = &[
         // picks I16 more often than the buggy pre-audit version did, which
         // shifts scores down by ~10 points on this synthetic input.
         &[
-            (10.0, 30.0),  // 40 → 30 (post-audit min ≈ 31.42)
-            (25.0, 32.0),  // 43 → 32 (post-audit min ≈ 33.55)
-            (50.0, 33.0),  // 46 → 33 (post-audit min ≈ 34.99)
-            (75.0, 34.0),  // 47 → 34 (post-audit min ≈ 36.06)
-            (90.0, 34.0),  // 47 → 34 (post-audit min ≈ 35.69)
+            (10.0, 30.0), // 40 → 30 (post-audit min ≈ 31.42)
+            (25.0, 32.0), // 43 → 32 (post-audit min ≈ 33.55)
+            (50.0, 33.0), // 46 → 33 (post-audit min ≈ 34.99)
+            (75.0, 34.0), // 47 → 34 (post-audit min ≈ 36.06)
+            (90.0, 34.0), // 47 → 34 (post-audit min ≈ 35.69)
         ],
     ),
     (
@@ -238,7 +238,7 @@ const FLOORS: &[(&str, &[(f32, f64)])] = &[
         // High-frequency fractal detail with smooth interior.
         &[
             (10.0, 40.0),
-            (25.0, 49.0),  // 52 → 49 (post-audit min ≈ 50.93)
+            (25.0, 49.0), // 52 → 49 (post-audit min ≈ 50.93)
             (50.0, 58.0),
             (75.0, 64.0),
             (90.0, 68.0),
