@@ -1822,10 +1822,7 @@ impl<'a> super::Vp8Encoder<'a> {
         // Chroma still goes through `pick_best_uv` here (zenwebp's path
         // matches libwebp m1's `refine_uv_mode=1`; m0 differs but UV mode
         // experiments showed zero size change on the worst offender).
-        if self.method <= 1
-            && self.partition_limit < 100
-            && !self.fast_mb_hints.is_empty()
-        {
+        if self.method <= 1 && self.partition_limit < 100 && !self.fast_mb_hints.is_empty() {
             let mb_idx = mby * usize::from(self.macroblock_width) + mbx;
             if let Some(&hint) = self.fast_mb_hints.get(mb_idx) {
                 use crate::encoder::analysis::MbModeHint;
