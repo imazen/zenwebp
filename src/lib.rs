@@ -234,6 +234,20 @@ pub mod test_helpers {
         )
     }
 
+    /// L8 → YUV path used by the encoder for grayscale input.
+    pub fn convert_image_y_l8(
+        image_data: &[u8],
+        width: u16,
+        height: u16,
+        stride: usize,
+    ) -> (
+        alloc::vec::Vec<u8>,
+        alloc::vec::Vec<u8>,
+        alloc::vec::Vec<u8>,
+    ) {
+        crate::decoder::yuv::convert_image_y::<1>(image_data, width, height, stride)
+    }
+
     /// Expose the forward gamma LUT for verification tests.
     /// sRGB byte -> linear^0.80 (scale 0..4095), 256 entries.
     pub fn gamma_to_linear_tab() -> &'static [u16; 256] {
