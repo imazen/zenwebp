@@ -161,9 +161,17 @@ fn main() {
             for &q in &qs {
                 for &m in &ms {
                     done += 1;
-                    let zen_def = encode(&img.rgb, img.w, img.h, p, q, m, CostModel::ZenwebpDefault);
-                    let zen_strict =
-                        encode(&img.rgb, img.w, img.h, p, q, m, CostModel::StrictLibwebpParity);
+                    let zen_def =
+                        encode(&img.rgb, img.w, img.h, p, q, m, CostModel::ZenwebpDefault);
+                    let zen_strict = encode(
+                        &img.rgb,
+                        img.w,
+                        img.h,
+                        p,
+                        q,
+                        m,
+                        CostModel::StrictLibwebpParity,
+                    );
                     // libwebp baseline via webpx
                     let lib_preset = match p {
                         Preset::Photo => webpx::Preset::Photo,
@@ -214,5 +222,9 @@ fn main() {
             done as f64 / elapsed
         );
     }
-    eprintln!("Done in {:.1}s -> {}", start.elapsed().as_secs_f64(), out_path);
+    eprintln!(
+        "Done in {:.1}s -> {}",
+        start.elapsed().as_secs_f64(),
+        out_path
+    );
 }
