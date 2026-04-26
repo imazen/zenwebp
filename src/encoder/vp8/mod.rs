@@ -1110,9 +1110,20 @@ impl<'a> Vp8Encoder<'a> {
                         stop.check()?;
                     }
 
-                    // Mid-stream probability refresh (like libwebp's VP8EncTokenLoop)
-                    // We update probabilities mid-stream (helps compression: 1.0111x → 1.0101x)
-                    // but don't recalculate level_costs (hurts compression: 1.0101x → 1.0114x)
+                    // Mid-stream probability refresh (like libwebp's VP8EncTokenLoop).
+                    //
+                    // We refresh `updated_probs` periodically so the eventual emission
+                    // pass picks up evolving statistics, but we deliberately do NOT
+                    // rebuild `self.level_costs` at the same time. Empirically:
+                    // refreshing probs alone helps slightly (1.0111x → 1.0101x);
+                    // also rebuilding level_costs mid-row hurts (1.0101x → 1.0114x).
+                    //
+                    // Effect on this pass is therefore weak: cost-driven mode
+                    // selection inside the row continues to use the level_costs
+                    // computed at pass start. The real per-pass cost refresh happens
+                    // through the multi-pass loop (see #27 / two-pass at m4 path).
+                    // This call is mostly bookkeeping so the final probability
+                    // emission reflects accumulated stats. (#35-#6)
                     refresh_countdown -= 1;
                     if refresh_countdown < 0 {
                         self.compute_updated_probabilities();
