@@ -73,10 +73,9 @@ pub struct LossyConfig {
     /// 0 = no limit (default), 100 = maximum I4 suppression.
     /// None = automatic (encoder will retry with increasing limits on overflow).
     pub partition_limit: Option<u8>,
-    /// Preprocessing flags (bitfield, matches libwebp's `WebPConfig::preprocessing`).
-    /// Bit 0 (`0x1`): segment-map smoothing (3x3 majority filter on the segment map).
-    /// Default: 0 (no preprocessing), matching libwebp.
-    pub preprocessing: u8,
+    /// Preprocessing options. Default: all off (matches libwebp's
+    /// `config->preprocessing = 0`).
+    pub smooth_segment_map: bool,
     /// Cost model selection. Default: `ZenwebpDefault` (perceptual extensions
     /// enabled per method level). Set to `StrictLibwebpParity` for libwebp
     /// algorithm parity (disables PSY_WEIGHT_Y, SATD masking blend, JND zeroing).
@@ -110,7 +109,7 @@ impl LossyConfig {
             filter_sharpness: None,
             segments: None,
             partition_limit: None,
-            preprocessing: 0,
+            smooth_segment_map: false,
             cost_model: super::api::CostModel::ZenwebpDefault,
             limits: Limits::none(),
         }
@@ -251,14 +250,13 @@ impl LossyConfig {
         self
     }
 
-    /// Set preprocessing flags (bitfield, matches libwebp's `WebPConfig::preprocessing`).
-    ///
-    /// Bit 0 (`0x1`): segment-map smoothing (3x3 majority filter applied to
-    /// the segment map after k-means assignment). Default: 0 (off), matching
-    /// libwebp's default. libwebp's `cwebp -pre 1` enables this flag.
+    /// Enable segment-map smoothing (3×3 majority filter on the per-MB
+    /// segment map before per-segment quantizer setup). Equivalent to
+    /// libwebp's `cwebp -pre 1` (`config->preprocessing & 1`,
+    /// `analysis_enc.c:217-218`). Default off, matching libwebp.
     #[must_use]
-    pub fn with_preprocessing(mut self, flags: u8) -> Self {
-        self.preprocessing = flags;
+    pub fn with_smooth_segment_map(mut self, on: bool) -> Self {
+        self.smooth_segment_map = on;
         self
     }
 
@@ -791,7 +789,7 @@ impl LossyConfig {
             alpha_quality: self.alpha_quality,
             partition_limit: self.partition_limit,
             exact: false, // Not applicable to lossy (alpha plane is lossless separately)
-            preprocessing: self.preprocessing,
+            smooth_segment_map: self.smooth_segment_map,
             cost_model: self.cost_model,
         }
     }
@@ -815,7 +813,7 @@ impl LosslessConfig {
             alpha_quality: self.alpha_quality,
             partition_limit: None, // Not applicable to lossless
             exact: self.exact,
-            preprocessing: 0, // Not applicable to lossless
+            smooth_segment_map: false, // Not applicable to lossless
             cost_model: super::api::CostModel::ZenwebpDefault, // Not applicable to lossless
         }
     }

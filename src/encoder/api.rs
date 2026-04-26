@@ -564,10 +564,9 @@ pub struct EncoderParams {
     /// Preserve RGB under fully-transparent pixels (alpha=0) in lossless mode.
     /// `false` (default) matches libwebp: zero RGB for better compression.
     pub(crate) exact: bool,
-    /// Preprocessing flags (bitfield, matches libwebp's `WebPConfig::preprocessing`).
-    /// Bit 0 (`0x1`): segment-map smoothing (3x3 majority filter on the segment map).
-    /// Default: 0 (no preprocessing), matching libwebp.
-    pub(crate) preprocessing: u8,
+    /// Preprocessing options. Default: all off (matching libwebp's
+    /// `config->preprocessing = 0`).
+    pub(crate) smooth_segment_map: bool,
     /// Cost model selection for mode selection and trellis. Default:
     /// `ZenwebpDefault` (perceptual extensions enabled per method level).
     /// `StrictLibwebpParity` disables PSY_WEIGHT_Y, SATD masking blend, and
@@ -593,7 +592,7 @@ impl Default for EncoderParams {
             alpha_quality: 100,
             partition_limit: None,
             exact: false,
-            preprocessing: 0,
+            smooth_segment_map: false,
             cost_model: CostModel::ZenwebpDefault,
         }
     }
@@ -728,10 +727,10 @@ pub struct EncoderConfig {
     /// Partition limit (0-100). Penalizes I4 mode to prevent partition 0 overflow.
     /// `None` = automatic retry on overflow.
     pub partition_limit: Option<u8>,
-    /// Preprocessing flags (bitfield, matches libwebp's `WebPConfig::preprocessing`).
-    /// Bit 0 (`0x1`): segment-map smoothing (3x3 majority filter on the segment map).
-    /// Default: 0 (no preprocessing), matching libwebp's default.
-    pub preprocessing: u8,
+    /// Enable segment-map smoothing (3×3 majority filter on the per-MB segment
+    /// map before per-segment quantizer setup). Equivalent to libwebp's
+    /// `config->preprocessing & 1`. Default `false`, matching libwebp.
+    pub smooth_segment_map: bool,
     /// Cost model selection. Default: `ZenwebpDefault` (perceptual extensions
     /// enabled per method level). Set to `StrictLibwebpParity` to disable
     /// PSY_WEIGHT_Y, SATD masking blend, and JND zeroing for byte-comparable
@@ -759,7 +758,7 @@ impl Default for EncoderConfig {
             filter_sharpness: None,
             segments: None,
             partition_limit: None,
-            preprocessing: 0,
+            smooth_segment_map: false,
             cost_model: CostModel::ZenwebpDefault,
             limits: crate::Limits::none(), // No limits by default
         }
@@ -910,13 +909,12 @@ impl EncoderConfig {
 
     /// Set preprocessing flags (bitfield, matches libwebp's `WebPConfig::preprocessing`).
     ///
-    /// - Bit 0 (`0x1`): segment-map smoothing (3x3 majority filter applied to the
-    ///   segment map after k-means assignment). Default: 0 (off), matching libwebp.
-    ///
-    /// libwebp's `cwebp -pre 1` enables this flag; the encoder default is 0.
+    /// Enable segment-map smoothing (3×3 majority filter on the per-MB
+    /// segment map before per-segment quantizer setup). Equivalent to
+    /// libwebp's `cwebp -pre 1`. Default off.
     #[must_use]
-    pub fn preprocessing(mut self, flags: u8) -> Self {
-        self.preprocessing = flags;
+    pub fn smooth_segment_map(mut self, on: bool) -> Self {
+        self.smooth_segment_map = on;
         self
     }
 
@@ -985,7 +983,7 @@ impl EncoderConfig {
             alpha_quality: self.alpha_quality,
             partition_limit: self.partition_limit,
             exact: self.exact,
-            preprocessing: self.preprocessing,
+            smooth_segment_map: self.smooth_segment_map,
             cost_model: self.cost_model,
         }
     }
