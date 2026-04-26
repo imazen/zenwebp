@@ -1808,6 +1808,59 @@ impl<'a> super::Vp8Encoder<'a> {
     }
 
     pub(super) fn choose_macroblock_info(&self, mbx: usize, mby: usize) -> MacroblockInfo {
+        // FastMBAnalyze fast path (libwebp `RefineUsingDistortion(try_both_modes=0,
+        // refine_uv_mode=method>=1)` at m0/m1, quant_enc.c:1447). The analysis
+        // pass already chose I16 vs I4 via the DC-variance test in
+        // `FastMBAnalyze`. Consume that hint directly:
+        //   - I16Dc  => LumaMode::DC (matches `pick_intra16_fast_dc`)
+        //   - I4AllDc => run `pick_best_intra4` to refine the per-sub-block
+        //     modes. libwebp uses an SSE-only loop here; we reuse our
+        //     existing RD path which is more accurate but slower. This
+        //     resolves #32 (4× size blowup on tiny low-color images at m0):
+        //     the previous code unconditionally picked I16-DC at m0/m1
+        //     regardless of source variance, missing the I4 case entirely.
+        // Chroma still goes through `pick_best_uv` here (zenwebp's path
+        // matches libwebp m1's `refine_uv_mode=1`; m0 differs but UV mode
+        // experiments showed zero size change on the worst offender).
+        if self.method <= 1
+            && self.partition_limit < 100
+            && !self.fast_mb_hints.is_empty()
+        {
+            let mb_idx = mby * usize::from(self.macroblock_width) + mbx;
+            if let Some(&hint) = self.fast_mb_hints.get(mb_idx) {
+                use crate::encoder::analysis::MbModeHint;
+                // For the I16 hint, use the fast DC scorer (current behavior);
+                // for I4, run `pick_best_intra4` so each sub-block's mode is
+                // chosen rather than left at all-DC (libwebp does the same,
+                // just via SSE rather than RD).
+                let (luma_mode, luma_bpred) = match hint {
+                    MbModeHint::I16Dc => (LumaMode::DC, None),
+                    MbModeHint::I4AllDc => {
+                        // Need a baseline I16 score to compare against I4. Use
+                        // the fast DC scorer (matches what we'd report for
+                        // an I16-DC mode at m0/m1).
+                        let (_, i16_score) = self.pick_intra16_fast_dc(mbx, mby);
+                        match self.pick_best_intra4(mbx, mby, i16_score) {
+                            Some((modes, _)) => (LumaMode::B, Some(modes)),
+                            // I4 didn't beat I16 — fall back to I16-DC (the
+                            // hint was advisory, libwebp's I4 path can also
+                            // bail out via `score_i4 >= best_score`).
+                            None => (LumaMode::DC, None),
+                        }
+                    }
+                };
+                let chroma_mode = self.pick_best_uv(mbx, mby);
+                let segment_id = self.get_segment_id_for_mb(mbx, mby);
+                return MacroblockInfo {
+                    luma_mode,
+                    luma_bpred,
+                    chroma_mode,
+                    segment_id,
+                    coeffs_skipped: false,
+                };
+            }
+        }
+
         // Pick the best 16x16 luma mode using RD cost selection
         let (luma_mode, i16_score) = self.pick_best_intra16(mbx, mby);
 

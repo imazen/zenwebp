@@ -246,6 +246,23 @@ pub fn analyze_macroblock(
     (final_alpha_value(alpha), best_uv_alpha)
 }
 
+/// Per-macroblock mode hint from the analysis pass.
+///
+/// Populated only when `method <= 1`, mirroring libwebp's `FastMBAnalyze`
+/// which writes per-MB intra16/intra4 decisions during analysis that the
+/// encode pass then consumes via `RefineUsingDistortion(refine_uv_mode=0)`.
+///
+/// At higher methods (m>=2) the encode pass re-evaluates everything and
+/// these hints are irrelevant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MbModeHint {
+    /// Use Intra16 with DC prediction (libwebp `VP8SetIntra16Mode(it, 0)`).
+    I16Dc,
+    /// Use Intra4 with all sub-blocks DC-predicted
+    /// (libwebp `VP8SetIntra4Mode(it, all_zeros)`).
+    I4AllDc,
+}
+
 /// Analysis result containing per-MB alphas and global statistics.
 pub struct AnalysisResult {
     /// Per-macroblock alpha values (finalized, for segment assignment)
@@ -255,6 +272,59 @@ pub struct AnalysisResult {
     /// Average UV alpha across all macroblocks (raw, for UV quant delta)
     /// Range is typically ~30 (bad) to ~100 (ok to decimate UV more).
     pub uv_alpha_avg: i32,
+    /// Per-macroblock mode hints (only populated when `method <= 1`).
+    ///
+    /// `None` means the encoder should run its normal mode-selection path.
+    /// `Some(hints)` means the encoder should consume the hints directly,
+    /// matching libwebp's `RefineUsingDistortion(try_both_modes=0)` flow.
+    pub mb_mode_hints: Option<Vec<MbModeHint>>,
+}
+
+/// Compute the FastMBAnalyze decision for a single macroblock.
+///
+/// Ported from libwebp's `FastMBAnalyze` (analysis_enc.c:260). Splits the
+/// 16×16 luma block into 16 4×4 sub-blocks, computes per-sub-block DC mean,
+/// and uses the variance ratio to pick between Intra16-DC (low variance,
+/// flat block) and Intra4-all-DC (high variance, more sub-block detail).
+///
+/// `quality` is the user-facing 0-100 quality (libwebp `config->quality`).
+/// `y_in` is the 16×16 luma source plane in BPS-strided layout
+/// (`yuv_in + Y_OFF_ENC` in libwebp).
+fn fast_mb_analyze(y_in: &[u8], stride: usize, quality: i32) -> MbModeHint {
+    // libwebp threshold: 8 + (17-8)*q/100, ranging from 8 (lowest q) to 17 (highest q).
+    // Higher q => higher threshold => more likely to pick I4 (more local detail preserved).
+    let q = quality.clamp(0, 100);
+    let k_threshold: u64 = 8 + (17 - 8) * q as u64 / 100;
+
+    // Compute 16 per-4×4-block DC sums (each is the sum of all 16 pixels in the 4×4 block).
+    // libwebp's `VP8Mean16x4` writes 4 DC values per call (one per 4×4 column in a 4-row strip),
+    // and is called 4 times to fill all 16. We compute the same 16 sums directly.
+    let mut dc = [0u32; 16];
+    for row_blk in 0..4 {
+        for col_blk in 0..4 {
+            let mut sum: u32 = 0;
+            for r in 0..4 {
+                let row_base = (row_blk * 4 + r) * stride + col_blk * 4;
+                for c in 0..4 {
+                    sum += y_in[row_base + c] as u32;
+                }
+            }
+            dc[row_blk * 4 + col_blk] = sum;
+        }
+    }
+
+    let (mut m, mut m2): (u64, u64) = (0, 0);
+    for &d in &dc {
+        m += d as u64;
+        m2 += (d as u64) * (d as u64);
+    }
+
+    // libwebp: `if (kThreshold * m2 < m * m) -> I16-DC, else -> I4-all-DC`
+    if k_threshold.saturating_mul(m2) < m.saturating_mul(m) {
+        MbModeHint::I16Dc
+    } else {
+        MbModeHint::I4AllDc
+    }
 }
 
 /// Run full analysis pass on image and return alpha histogram + per-MB alphas
@@ -264,6 +334,9 @@ pub struct AnalysisResult {
 /// `cost_model` selects between zenwebp's perceptual extensions
 /// (`ZenwebpDefault`) and strict libwebp parity (`StrictLibwebpParity`,
 /// which disables the SATD masking-alpha blend).
+///
+/// `quality` is the user-facing 0-100 quality, used by `FastMBAnalyze`
+/// when `method <= 1` to populate per-MB mode hints.
 #[allow(clippy::too_many_arguments)]
 pub fn analyze_image(
     y_src: &[u8],
@@ -276,6 +349,7 @@ pub fn analyze_image(
     method: u8,
     sns_strength: u8,
     cost_model: crate::encoder::api::CostModel,
+    quality: i32,
 ) -> AnalysisResult {
     let mut it = AnalysisIterator::new(width, height);
     it.reset();
@@ -285,8 +359,21 @@ pub fn analyze_image(
     let mut alpha_histogram = [0u32; 256];
     let mut uv_alpha_sum: i64 = 0;
 
+    // FastMBAnalyze is only used at method <= 1 in libwebp (analysis_enc.c:326-330).
+    let collect_mode_hints = method <= 1;
+    let mut mb_mode_hints: Vec<MbModeHint> = if collect_mode_hints {
+        Vec::with_capacity(total_mbs)
+    } else {
+        Vec::new()
+    };
+
     loop {
         it.import(y_src, u_src, v_src, y_stride, uv_stride);
+
+        if collect_mode_hints {
+            let hint = fast_mb_analyze(&it.yuv_in[Y_OFF_ENC..], BPS, quality);
+            mb_mode_hints.push(hint);
+        }
 
         let (alpha, uv_alpha) = analyze_macroblock(&mut it, method, sns_strength, cost_model);
         mb_alphas.push(alpha);
@@ -309,5 +396,10 @@ pub fn analyze_image(
         mb_alphas,
         alpha_histogram,
         uv_alpha_avg,
+        mb_mode_hints: if collect_mode_hints {
+            Some(mb_mode_hints)
+        } else {
+            None
+        },
     }
 }

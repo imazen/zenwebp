@@ -462,6 +462,11 @@ struct Vp8Encoder<'a> {
     segment_tree_probs: [Prob; 3],
     /// Segment ID for each macroblock (mb_width * mb_height)
     segment_map: Vec<u8>,
+    /// Per-MB FastMBAnalyze hints (only populated when `method <= 1`).
+    /// When `Some`, `choose_macroblock_info` consumes hints directly to skip
+    /// full RD mode evaluation, mirroring libwebp's `RefineUsingDistortion`
+    /// flow at m0/m1. Empty for higher methods.
+    fast_mb_hints: Vec<crate::encoder::analysis::MbModeHint>,
 
     loop_filter_adjustments: bool,
     macroblock_no_skip_coeff: Option<u8>,
@@ -565,6 +570,7 @@ impl<'a> Vp8Encoder<'a> {
             segments_update_map: false,
             segment_tree_probs: [255, 255, 255], // Default probs
             segment_map: Vec::new(),
+            fast_mb_hints: Vec::new(),
 
             loop_filter_adjustments: false,
             macroblock_no_skip_coeff: None,
@@ -1497,6 +1503,7 @@ impl<'a> Vp8Encoder<'a> {
             self.method,
             self.sns_strength,
             self.cost_model,
+            i32::from(quality),
         );
 
         // Auto-detect content type when Preset::Auto is selected.
@@ -1545,6 +1552,11 @@ impl<'a> Vp8Encoder<'a> {
             .iter()
             .map(|&alpha| alpha_to_segment[alpha as usize])
             .collect();
+
+        // Store FastMBAnalyze mode hints from the analysis pass. These are only
+        // populated at method <= 1 — the encode pass uses them to skip RD mode
+        // selection (mirroring libwebp's `RefineUsingDistortion(try_both_modes=0)`).
+        self.fast_mb_hints = analysis.mb_mode_hints.unwrap_or_default();
 
         // Smooth segment map (3x3 majority filter) only when the preprocessing
         // smooth_segment_map flag explicitly opts in. libwebp gates this on `config->preprocessing & 1`
@@ -1827,7 +1839,9 @@ impl<'a> Vp8Encoder<'a> {
                 self.frame.sharpness_level = self.filter_sharpness;
             }
         } else {
-            // Disable segments for small images (overhead not worth it)
+            // Disable segments for small images (overhead not worth it).
+            // Note: keep `fast_mb_hints` populated — they're independent of
+            // segmentation and still drive m0/m1 mode selection.
             self.segments_enabled = false;
             self.segments_update_map = false;
             self.segment_map = Vec::new();
