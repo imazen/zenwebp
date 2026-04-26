@@ -468,7 +468,6 @@ struct Vp8Encoder<'a> {
     /// flow at m0/m1. Empty for higher methods.
     fast_mb_hints: Vec<crate::encoder::analysis::MbModeHint>,
 
-    loop_filter_adjustments: bool,
     macroblock_no_skip_coeff: Option<u8>,
     quantization_indices: QuantizationIndices,
 
@@ -569,7 +568,6 @@ impl<'a> Vp8Encoder<'a> {
             segment_map: Vec::new(),
             fast_mb_hints: Vec::new(),
 
-            loop_filter_adjustments: false,
             macroblock_no_skip_coeff: None,
             quantization_indices: QuantizationIndices::default(),
 
