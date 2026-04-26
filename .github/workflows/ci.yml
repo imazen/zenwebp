@@ -4,7 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # Trigger on PRs targeting `main` (the usual flow) AND on PRs targeting
+    # the long-lived `fixall/*` consolidation branch or any `stack/*` branch
+    # used for stacked-PR campaigns. Without this, stacked PRs that target
+    # their parent stack branch never run CI.
+    branches: [main, "fixall/**", "stack/**"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
