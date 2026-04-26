@@ -845,10 +845,26 @@ impl<'a> Vp8Encoder<'a> {
 
         let num_mb = usize::from(self.macroblock_width) * usize::from(self.macroblock_height);
 
-        // Number of passes based on method.
-        // Multi-pass without quality search provides no benefit (tested),
-        // so we use 1 pass for all methods.
-        let num_passes = 1;
+        // Number of passes based on method (mirrors libwebp's `StatLoop` behavior).
+        // libwebp runs `config->pass` stat-collection passes before the final emit
+        // pass, refreshing both `proba` and `level_costs` between iterations
+        // (`frame_enc.c:626-684, 795-906, 840-844`). The first pass uses default
+        // costs; the second pass benefits from image-tuned probabilities, which
+        // makes mode selection and trellis pick options that are actually cheap
+        // under the real distribution.
+        //
+        // Earlier in zenwebp's history multi-pass was tested without refreshing
+        // `level_costs` mid-pass and reportedly hurt compression — but the
+        // existing infrastructure here (lines 884-895) DOES rebuild level_costs
+        // between passes, so the prior negative result no longer applies. #27.
+        //
+        // 2 passes at m4 only. m5/m6 already use trellis quantization, which is
+        // image-adapted via the per-pass `proba_stats` accumulation; adding a
+        // second pass at m5/m6 measurably regresses size (+0.6 to +0.9% on
+        // CID22 — see `differences/baselines/post-batch2-27.tsv`). At m4 the
+        // second pass net-helps (-0.1 to -0.4%) because the simple-quant
+        // m4 path doesn't have a per-MB feedback mechanism otherwise.
+        let num_passes: usize = if self.method == 4 { 2 } else { 1 };
 
         // Stats accumulators (populated during last pass)
         let mut final_sse_y: u64 = 0;
