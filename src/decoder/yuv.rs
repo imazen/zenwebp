@@ -527,14 +527,34 @@ pub(crate) fn convert_image_y<const BPP: usize>(
     let luma_width = 16 * mb_width;
     let chroma_size = 8 * mb_width * 8 * mb_height;
     let mut y_bytes = vec![0u8; y_size];
-    let u_bytes = vec![127u8; chroma_size];
-    let v_bytes = vec![127u8; chroma_size];
+    // Neutral chroma for grayscale input. The standard rec601-style RGB→YUV
+    // transform produces U = V = 128 for R = G = B (the (R-G) and (B-G)
+    // contributions cancel, leaving only the +128 offset). Using 128 lets
+    // intra-prediction and adjacent macroblocks see the same neutral value
+    // they would synthesize from `(128 << YUV_FIX) + YUV_HALF` (see
+    // `uv_bias` below), so chroma DC residual stays at zero through the
+    // whole encode and no bits are spent coding a constant offset.
+    let u_bytes = vec![128u8; chroma_size];
+    let v_bytes = vec![128u8; chroma_size];
 
-    // Process all source rows
+    // The L8/La8 input byte is sRGB grayscale (matching the lossless L8
+    // path's `gray_to_rgba` expansion to R=G=B=byte). Apply the same
+    // sRGB-RGB→Y transform that `rgb_to_y` would compute for R=G=B=g, so
+    // an L8 lossy encode produces the same Y plane as feeding the same
+    // image through the RGB→YUV path. That keeps decoded output identical
+    // between the two entry points and stops the L8 path from baking the
+    // [0,255] PC-luma range straight into Y where the decoder would then
+    // re-stretch it via the YUV→RGB inverse.
+    //
+    // Coefficients match `rgb_to_y` (lines ~577): 16839 + 33059 + 6420.
+    const Y_GRAY_COEFF: i32 = 16839 + 33059 + 6420;
+    const Y_OFFSET: i32 = (16 << YUV_FIX) + YUV_HALF;
     for y in 0..height {
         let src_row = &image_data[y * stride * BPP..y * stride * BPP + width * BPP];
         for x in 0..width {
-            y_bytes[y * luma_width + x] = src_row[x * BPP];
+            let g = i32::from(src_row[x * BPP]);
+            let luma = ((Y_GRAY_COEFF * g + Y_OFFSET) >> YUV_FIX).clamp(0, 255) as u8;
+            y_bytes[y * luma_width + x] = luma;
         }
     }
 
