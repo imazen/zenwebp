@@ -28,16 +28,37 @@ struct PresetPair {
 }
 
 const ALL_PRESETS: &[PresetPair] = &[
-    PresetPair { name: "Default", zen: Preset::Default, lib: Some(webpx::Preset::Default) },
-    PresetPair { name: "Photo",   zen: Preset::Photo,   lib: Some(webpx::Preset::Photo) },
-    PresetPair { name: "Drawing", zen: Preset::Drawing, lib: Some(webpx::Preset::Drawing) },
-    PresetPair { name: "Auto",    zen: Preset::Auto,    lib: None },
+    PresetPair {
+        name: "Default",
+        zen: Preset::Default,
+        lib: Some(webpx::Preset::Default),
+    },
+    PresetPair {
+        name: "Photo",
+        zen: Preset::Photo,
+        lib: Some(webpx::Preset::Photo),
+    },
+    PresetPair {
+        name: "Drawing",
+        zen: Preset::Drawing,
+        lib: Some(webpx::Preset::Drawing),
+    },
+    PresetPair {
+        name: "Auto",
+        zen: Preset::Auto,
+        lib: None,
+    },
 ];
 
 fn pick_presets(names: &str) -> Vec<PresetPair> {
     let want: Vec<&str> = names.split(',').collect();
     want.iter()
-        .filter_map(|n| ALL_PRESETS.iter().find(|p| p.name.eq_ignore_ascii_case(n.trim())).copied())
+        .filter_map(|n| {
+            ALL_PRESETS
+                .iter()
+                .find(|p| p.name.eq_ignore_ascii_case(n.trim()))
+                .copied()
+        })
         .collect()
 }
 
@@ -87,12 +108,20 @@ fn load_png(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
 fn main() {
     let args: Vec<_> = env::args().collect();
     if args.len() < 7 {
-        eprintln!("usage: empirical_sweep <out_tsv> <Q_LIST> <M_LIST> <P_LIST> <SAMPLE> <label:dir>...");
+        eprintln!(
+            "usage: empirical_sweep <out_tsv> <Q_LIST> <M_LIST> <P_LIST> <SAMPLE> <label:dir>..."
+        );
         std::process::exit(2);
     }
     let out_path = PathBuf::from(&args[1]);
-    let qualities: Vec<f32> = args[2].split(',').map(|s| s.trim().parse().unwrap()).collect();
-    let methods: Vec<u8> = args[3].split(',').map(|s| s.trim().parse().unwrap()).collect();
+    let qualities: Vec<f32> = args[2]
+        .split(',')
+        .map(|s| s.trim().parse().unwrap())
+        .collect();
+    let methods: Vec<u8> = args[3]
+        .split(',')
+        .map(|s| s.trim().parse().unwrap())
+        .collect();
     let presets = pick_presets(&args[4]);
     let sample: usize = args[5].trim().parse().unwrap();
     let mut corpora: Vec<(String, PathBuf)> = Vec::new();
@@ -176,15 +205,16 @@ fn main() {
 
                 for img in &images {
                     let cfg = EncoderConfig::with_preset(pp.zen, q).with_method(m);
-                    let zen = match EncodeRequest::new(&cfg, &img.rgb, PixelLayout::Rgb8, img.w, img.h)
-                        .encode()
-                    {
-                        Ok(v) => v,
-                        Err(_) => {
-                            zen_failures += 1;
-                            continue;
-                        }
-                    };
+                    let zen =
+                        match EncodeRequest::new(&cfg, &img.rgb, PixelLayout::Rgb8, img.w, img.h)
+                            .encode()
+                        {
+                            Ok(v) => v,
+                            Err(_) => {
+                                zen_failures += 1;
+                                continue;
+                            }
+                        };
                     let lib_preset = pp.lib.unwrap_or(webpx::Preset::Default);
                     let lib = match webpx::EncoderConfig::with_preset(lib_preset, q)
                         .method(m)
@@ -224,13 +254,26 @@ fn main() {
                 let est_total = total_elapsed * (total_cells as f64 / done_cells as f64);
                 eprintln!(
                     "[{:>3}/{:>3}] {:>7} q={:>4.0} m={} -> agg ratio={:.4}x  ({} ok, zen_fail={}, lib_fail={})  cell={:.1}s  total={:.1}s/{:.1}s",
-                    done_cells, total_cells, pp.name, q, m, agg,
-                    rows.len(), zen_failures, lib_failures,
-                    elapsed, total_elapsed, est_total
+                    done_cells,
+                    total_cells,
+                    pp.name,
+                    q,
+                    m,
+                    agg,
+                    rows.len(),
+                    zen_failures,
+                    lib_failures,
+                    elapsed,
+                    total_elapsed,
+                    est_total
                 );
             }
         }
     }
 
-    eprintln!("Done in {:.1}s. Wrote {}", start.elapsed().as_secs_f64(), out_path.display());
+    eprintln!(
+        "Done in {:.1}s. Wrote {}",
+        start.elapsed().as_secs_f64(),
+        out_path.display()
+    );
 }
