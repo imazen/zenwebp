@@ -31,6 +31,13 @@ fn sse4x4_dispatch(src: &[u8; 16], pred: &[u8; 16]) -> u32 {
     incant!(sse4x4_impl(src, pred), [v3, neon, wasm128, scalar])
 }
 
+/// Test-only re-export of `sse4x4_dispatch` for cross-arch SIMD parity
+/// tests in `tests/simd_dispatch_arch_parity.rs`.
+#[doc(hidden)]
+pub fn __test_only_sse4x4_dispatch(src: &[u8; 16], pred: &[u8; 16]) -> u32 {
+    sse4x4_dispatch(src, pred)
+}
+
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 fn sse4x4_impl_v3(_token: X64V3Token, src: &[u8; 16], pred: &[u8; 16]) -> u32 {
@@ -66,6 +73,16 @@ fn sse4x4_with_residual_dispatch(src: &[u8; 16], pred: &[u8; 16], dequantized: &
         sse4x4_with_residual_impl(src, pred, dequantized),
         [v3, neon, wasm128, scalar]
     )
+}
+
+/// Test-only re-export for cross-arch SIMD parity tests.
+#[doc(hidden)]
+pub fn __test_only_sse4x4_with_residual_dispatch(
+    src: &[u8; 16],
+    pred: &[u8; 16],
+    dequantized: &[i32; 16],
+) -> u32 {
+    sse4x4_with_residual_dispatch(src, pred, dequantized)
 }
 
 #[cfg(target_arch = "x86_64")]

@@ -248,6 +248,7 @@ static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::BGRA8_SRGB,
     PixelDescriptor::RGBX8_SRGB,
     PixelDescriptor::BGRX8_SRGB,
+    PixelDescriptor::GRAY8_SRGB,
 ];
 
 static ENCODE_CAPABILITIES: zencodec::encode::EncodeCapabilities =
@@ -689,9 +690,17 @@ fn pixels_to_webp_input<'a>(
             .map_err(|e| EncodeError::InvalidBufferSize(alloc::format!("pixel conversion: {e}")))?;
         Ok((Cow::Owned(rgb), PixelLayout::Rgb8, w, h, w as usize))
     } else if desc == PixelDescriptor::GRAY8_SRGB {
-        let raw = pixels.contiguous_bytes();
-        let rgb: Vec<u8> = raw.iter().flat_map(|&g| [g, g, g]).collect();
-        Ok((Cow::Owned(rgb), PixelLayout::Rgb8, w, h, w as usize))
+        // Pass through as L8 — encoder accepts grayscale natively in both
+        // lossy (constant U=V=128 chroma plane) and lossless (gray→RGBA
+        // happens inside encode_lossless_full) paths. Avoids the 3× alloc
+        // that gray→RGB expansion required.
+        Ok((
+            Cow::Borrowed(pixels.as_strided_bytes()),
+            PixelLayout::L8,
+            w,
+            h,
+            stride_pixels,
+        ))
     } else if desc == PixelDescriptor::RGBF32_LINEAR {
         let raw = pixels.contiguous_bytes();
         let floats = as_f32_slice(&raw);
