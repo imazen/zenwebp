@@ -249,6 +249,9 @@ static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGBX8_SRGB,
     PixelDescriptor::BGRX8_SRGB,
     PixelDescriptor::GRAY8_SRGB,
+    PixelDescriptor::RGBF32_LINEAR,
+    PixelDescriptor::RGBAF32_LINEAR,
+    PixelDescriptor::GRAYF32_LINEAR,
 ];
 
 static ENCODE_CAPABILITIES: zencodec::encode::EncodeCapabilities =
