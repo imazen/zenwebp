@@ -1343,13 +1343,13 @@ impl<'a> Vp8Encoder<'a> {
             max_center - min_center
         };
 
-        // Minimum effective range for alpha normalization.
-        // The formula `255 * (center - mid) / range` normalizes centers to ±127,
-        // but when all MBs have similar alpha (gradients, flat images), the range
-        // is tiny (2-10) and this amplifies noise into extreme quantizer deltas.
-        // Using a floor prevents degenerate over-quantization of uniform regions.
-        const MIN_ALPHA_RANGE: i32 = 64;
-        let effective_range = range.max(MIN_ALPHA_RANGE);
+        // libwebp's `SetSegmentAlphas` (`analysis_enc.c:92`) only handles the
+        // degenerate `min == max` case (`if (max == min) max = min + 1;`) — no
+        // additional floor. The previous `MIN_ALPHA_RANGE = 64` floor in
+        // zenwebp dampened the SNS modulation by up to 6.4× on flat content
+        // (gradients, skies), losing most of the per-segment quantizer spread
+        // that makes the larger segments compress better. Removed in #30.
+        let effective_range = range; // already >= 1 above
 
         // Assign segment IDs to macroblocks
         self.segment_map = analysis
@@ -1606,7 +1606,12 @@ impl<'a> Vp8Encoder<'a> {
         // Only enable for images large enough to benefit (overhead vs gain tradeoff).
         // libwebp uses segments for images with method > 0 and multiple segments configured.
         let total_mbs = usize::from(mb_width) * usize::from(mb_height);
-        let use_segments = self.num_segments > 1 && total_mbs >= 256;
+        // libwebp gates segmentation on `config->emulate_jpeg_size || num_segments > 1
+        // || method <= 1` (`analysis_enc.c:434-436`) — no min-MB threshold. zenwebp
+        // previously skipped segmentation entirely below 256 MBs (~256x256 images),
+        // losing alpha-driven quantizer differentiation on icons/thumbnails. Removed
+        // the `>= 256` gate in #30.
+        let use_segments = self.num_segments > 1;
 
         if use_segments {
             // DCT-based segment analysis and assignment.
