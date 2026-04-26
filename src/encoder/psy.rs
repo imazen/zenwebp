@@ -139,13 +139,28 @@ impl Default for PsyConfig {
 impl PsyConfig {
     /// Create a PsyConfig for the given encoding parameters.
     ///
-    /// Method gating:
+    /// Method gating (when `cost_model = ZenwebpDefault`):
     /// - method 0-2: all features disabled (bit-identical to baseline)
     /// - method >= 3: enhanced CSF tables for luma and chroma TDisto
     /// - method >= 4: reserved (psy-rd disabled after butteraugli testing)
     /// - method >= 5: psy-trellis + JND thresholds enabled
-    pub(crate) fn new(method: u8, quant_index: u8, _sns_strength: u8) -> Self {
+    ///
+    /// When `cost_model = StrictLibwebpParity`, all perceptual extensions
+    /// are disabled regardless of method: CSF stays at `VP8_WEIGHT_Y` (matches
+    /// libwebp's `kWeightY`), JND thresholds stay at zero, and
+    /// `psy_trellis_strength` stays at zero — matching libwebp's algorithm.
+    pub(crate) fn new(
+        method: u8,
+        quant_index: u8,
+        _sns_strength: u8,
+        cost_model: crate::encoder::api::CostModel,
+    ) -> Self {
         let mut config = Self::default();
+
+        // Strict libwebp parity: skip all perceptual extensions.
+        if cost_model == crate::encoder::api::CostModel::StrictLibwebpParity {
+            return config;
+        }
 
         if method >= 3 {
             // Enhanced CSF tables: steeper HF rolloff for better perceptual coding

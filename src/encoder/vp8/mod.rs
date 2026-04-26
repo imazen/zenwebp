@@ -463,6 +463,10 @@ struct Vp8Encoder<'a> {
     /// Preprocessing flags (bit 0 = segment-map smoothing). Matches libwebp's
     /// `WebPConfig::preprocessing`. Default 0 (off), matching libwebp's default.
     preprocessing: u8,
+    /// Cost model selection (mode selection + trellis). Default
+    /// `ZenwebpDefault` enables perceptual extensions per method level;
+    /// `StrictLibwebpParity` disables them.
+    cost_model: super::api::CostModel,
     /// Loop filter strength (0-100)
     filter_strength: u8,
     /// Loop filter sharpness (0-7)
@@ -513,6 +517,14 @@ struct Vp8Encoder<'a> {
     /// Stored quantized coefficients for token buffer approach.
     /// Mode decisions + quantized zigzag coefficients stored during encoding.
     stored_mb_coeffs: Vec<QuantizedMbCoeffs>,
+    /// Maximum observed edge magnitude per segment (port of libwebp's
+    /// `VP8SegmentInfo::max_edge`, `vp8i_enc.h:199`). Updated per-MB by
+    /// `store_max_delta` when a "blocky" I16 macroblock is detected (Y2
+    /// nonzero, all Y1 AC zero), then consumed by `adjust_filter_strength`
+    /// after the encode loop to bump per-segment loop-filter levels for
+    /// edge-rich segments. See libwebp `quant_enc.c:1031-1040, 1108-1113`
+    /// and `filter_enc.c:198-237` (`VP8AdjustFilterStrength`). #34
+    max_edge_per_segment: [i32; MAX_SEGMENTS],
 }
 
 impl<'a> Vp8Encoder<'a> {
@@ -546,6 +558,7 @@ impl<'a> Vp8Encoder<'a> {
             method: 4,
             sns_strength: 50,
             preprocessing: 0,
+            cost_model: super::api::CostModel::ZenwebpDefault,
             filter_strength: 60,
             filter_sharpness: 0,
             num_segments: 4,
@@ -727,6 +740,7 @@ impl<'a> Vp8Encoder<'a> {
         // Store tuning parameters
         self.sns_strength = params.sns_strength.min(100);
         self.preprocessing = params.preprocessing;
+        self.cost_model = params.cost_model;
         self.filter_strength = params.filter_strength.min(100);
         self.filter_sharpness = params.filter_sharpness.min(7);
         self.num_segments = params.num_segments.clamp(1, 4);
@@ -1325,6 +1339,7 @@ impl<'a> Vp8Encoder<'a> {
             uv_stride,
             self.method,
             self.sns_strength,
+            self.cost_model,
         );
 
         // Auto-detect content type when Preset::Auto is selected.
@@ -1480,7 +1495,7 @@ impl<'a> Vp8Encoder<'a> {
                 quant_index: seg_quant_index,
                 ..Default::default()
             };
-            segment.init_matrices(self.sns_strength, self.method);
+            segment.init_matrices(self.sns_strength, self.method, self.cost_model);
             self.segments[seg_idx] = segment;
         }
 
@@ -1610,7 +1625,7 @@ impl<'a> Vp8Encoder<'a> {
                 quant_index,
                 ..Default::default()
             };
-            segment.init_matrices(self.sns_strength, self.method);
+            segment.init_matrices(self.sns_strength, self.method, self.cost_model);
             self.segments[seg_idx] = segment;
         }
 

@@ -59,8 +59,8 @@ pub mod vp8l;
 pub use analysis::{ClassifierDiag, ImageContentType};
 pub(crate) use api::EncoderParams;
 pub use api::{
-    EncodeError, EncodeProgress, EncodeRequest, EncodeResult, EncodeStats, ImageMetadata,
-    NoProgress, PixelLayout, Preset,
+    CostModel, EncodeError, EncodeProgress, EncodeRequest, EncodeResult, EncodeStats,
+    ImageMetadata, NoProgress, PixelLayout, Preset,
 };
 pub use config::{EncoderConfig, LosslessConfig, LossyConfig};
 #[doc(hidden)]

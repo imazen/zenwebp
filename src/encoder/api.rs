@@ -120,6 +120,27 @@ pub enum Preset {
     Auto,
 }
 
+/// Cost model used during mode selection and trellis quantization.
+///
+/// zenwebp's default cost model includes perceptual extensions (PSY_WEIGHT_Y
+/// CSF table at m3+, SATD masking-alpha blend at m4+, JND coefficient
+/// zeroing at m5+) tuned for butteraugli/SSIMULACRA2 rather than strict
+/// size parity with libwebp.
+///
+/// Use `StrictLibwebpParity` when bit-comparing against libwebp output, or
+/// when libwebp's size-quality tradeoff is desired.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CostModel {
+    /// zenwebp's default — perceptual extensions enabled per method level.
+    #[default]
+    ZenwebpDefault,
+    /// Strict libwebp parity — disables zenwebp's perceptual extensions
+    /// (PSY_WEIGHT_Y, SATD masking blend, JND zeroing) so the encoder
+    /// matches libwebp's algorithm at the same `(quality, method, sns,
+    /// filter, segments)` settings.
+    StrictLibwebpParity,
+}
+
 impl fmt::Display for Preset {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -547,6 +568,11 @@ pub struct EncoderParams {
     /// Bit 0 (`0x1`): segment-map smoothing (3x3 majority filter on the segment map).
     /// Default: 0 (no preprocessing), matching libwebp.
     pub(crate) preprocessing: u8,
+    /// Cost model selection for mode selection and trellis. Default:
+    /// `ZenwebpDefault` (perceptual extensions enabled per method level).
+    /// `StrictLibwebpParity` disables PSY_WEIGHT_Y, SATD masking blend, and
+    /// JND zeroing for byte-comparable output to libwebp.
+    pub(crate) cost_model: CostModel,
 }
 
 impl Default for EncoderParams {
@@ -568,6 +594,7 @@ impl Default for EncoderParams {
             partition_limit: None,
             exact: false,
             preprocessing: 0,
+            cost_model: CostModel::ZenwebpDefault,
         }
     }
 }
@@ -705,6 +732,11 @@ pub struct EncoderConfig {
     /// Bit 0 (`0x1`): segment-map smoothing (3x3 majority filter on the segment map).
     /// Default: 0 (no preprocessing), matching libwebp's default.
     pub preprocessing: u8,
+    /// Cost model selection. Default: `ZenwebpDefault` (perceptual extensions
+    /// enabled per method level). Set to `StrictLibwebpParity` to disable
+    /// PSY_WEIGHT_Y, SATD masking blend, and JND zeroing for byte-comparable
+    /// output to libwebp at matching `(quality, method, sns, filter, segments)`.
+    pub cost_model: CostModel,
     /// Encode limits for dimensions and memory validation.
     pub limits: crate::Limits,
 }
@@ -728,6 +760,7 @@ impl Default for EncoderConfig {
             segments: None,
             partition_limit: None,
             preprocessing: 0,
+            cost_model: CostModel::ZenwebpDefault,
             limits: crate::Limits::none(), // No limits by default
         }
     }
@@ -887,6 +920,21 @@ impl EncoderConfig {
         self
     }
 
+    /// Set the cost model used during mode selection and trellis quantization.
+    ///
+    /// - `CostModel::ZenwebpDefault` (default): perceptual extensions enabled
+    ///   per method level — PSY_WEIGHT_Y CSF table at m3+, SATD masking-alpha
+    ///   blend at m4+, JND coefficient zeroing at m5+. Tuned for perceptual
+    ///   metrics (butteraugli/SSIMULACRA2).
+    /// - `CostModel::StrictLibwebpParity`: disables those extensions so the
+    ///   encoder matches libwebp's algorithm at the same `(quality, method,
+    ///   sns, filter, segments)`. Use this when bit-comparing against libwebp.
+    #[must_use]
+    pub fn cost_model(mut self, model: CostModel) -> Self {
+        self.cost_model = model;
+        self
+    }
+
     /// Set encode limits for validation.
     #[must_use]
     pub fn limits(mut self, limits: crate::Limits) -> Self {
@@ -938,6 +986,7 @@ impl EncoderConfig {
             partition_limit: self.partition_limit,
             exact: self.exact,
             preprocessing: self.preprocessing,
+            cost_model: self.cost_model,
         }
     }
 

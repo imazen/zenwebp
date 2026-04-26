@@ -828,7 +828,14 @@ impl Segment {
     /// Initialize quantization matrices and trellis lambdas from the quantizer values.
     /// `sns_strength` controls spectral distortion weight (0-100, from preset).
     /// `method` is the encoding method level (0-6) used to gate perceptual features.
-    pub(crate) fn init_matrices(&mut self, sns_strength: u8, method: u8) {
+    /// `cost_model` selects between zenwebp's perceptual extensions and strict
+    /// libwebp parity (disables PSY_WEIGHT_Y/JND/psy-trellis in `PsyConfig`).
+    pub(crate) fn init_matrices(
+        &mut self,
+        sns_strength: u8,
+        method: u8,
+        cost_model: crate::encoder::CostModel,
+    ) {
         self.y1_matrix = Some(VP8Matrix::new(
             self.ydc as u16,
             self.yac as u16,
@@ -880,6 +887,6 @@ impl Segment {
         self.tlambda = (tlambda_scale * q_i4) >> 5;
 
         // Initialize perceptual config
-        self.psy_config = PsyConfig::new(method, self.quant_index, sns_strength);
+        self.psy_config = PsyConfig::new(method, self.quant_index, sns_strength, cost_model);
     }
 }
