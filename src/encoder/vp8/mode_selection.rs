@@ -693,22 +693,13 @@ impl<'a> super::Vp8Encoder<'a> {
         let mut all_levels = [0i16; 256];
 
         for (mode_idx, &mode) in MODES.iter().enumerate() {
-            // Skip V mode if no top row available (first row of macroblocks)
-            // Note: V prediction requires real top pixels, border value 127 gives poor results
-            if mode == LumaMode::V && mby == 0 {
-                continue;
-            }
-            // Skip H mode if no left column available (first column of macroblocks)
-            // Note: H prediction requires real left pixels, border value 129 gives poor results
-            if mode == LumaMode::H && mbx == 0 {
-                continue;
-            }
-            // TM mode requires both top and left pixels, but can use border values (127/129)
-            // At edges, TM degenerates to H (if mby=0) or V (if mbx=0), so skip only at corner
-            // where both borders are synthetic
-            if mode == LumaMode::TM && mbx == 0 && mby == 0 {
-                continue;
-            }
+            // All four I16 modes (DC, V, H, TM) are evaluated at every position,
+            // including MB borders. `create_border_luma` substitutes 127 above and
+            // 129 left when the neighbour is out of frame; RD scoring picks the
+            // winner. Matches libwebp's PickBestIntra16 (`quant_enc.c:1072-1100`),
+            // which never skips a mode based on position. Removed in #28 to allow
+            // the border-value-padded prediction to compete on top-row, left-column,
+            // and corner MBs (small images and frame edges).
 
             // Generate prediction for this mode
             let pred = self.get_predicted_luma_block_16x16(mode, mbx, mby);
