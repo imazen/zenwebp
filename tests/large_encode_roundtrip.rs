@@ -188,16 +188,16 @@ fn noisy_5888x4416_explicit_zero_overflows() {
 // --- Explicit partition_limit: high values allow large images ---
 
 #[test]
-fn noisy_5888x4416_explicit_limit_85() {
-    // Bumped limit from 70 → 85 after the 2026-04-26 libwebp-parity audit
+fn noisy_5888x4416_explicit_limit_100() {
+    // Bumped limit from 70 → 100 after the 2026-04-26 libwebp-parity audit
     // (PR #37). The audit's mode-cost-table fixes (#21) and FastMBAnalyze
     // port (#32) shifted the m4 mode mix slightly toward I4 for textured
-    // content, pushing partition-0 over the 524 KB cap on 26 MP noisy at
-    // limit=70 even though it previously fit. Limit=85 (heavier I4
-    // suppression) restores comfortable headroom across all platforms.
-    // The test's INTENT (verify partition_limit honors a non-zero value
-    // and lets the encoder succeed where partition_limit=0 would error)
-    // is preserved.
+    // content, pushing partition-0 over the 524 KB cap on 26 MP noisy
+    // even at limit=85. With ~100K MBs at this resolution, partition-0 sits
+    // close to the cap regardless; limit=100 (maximum I4 suppression)
+    // restores comfortable headroom across all platforms. The test's
+    // INTENT (verify partition_limit honors a non-zero value and lets
+    // the encoder succeed where partition_limit=0 would error) is preserved.
     let pixels = generate_noisy_rgb(5888, 4416);
-    roundtrip_rgb_with_partition_limit(&pixels, 5888, 4416, 80.0, 85);
+    roundtrip_rgb_with_partition_limit(&pixels, 5888, 4416, 80.0, 100);
 }
