@@ -51,7 +51,7 @@ use crate::common::types::*;
 use crate::decoder::yuv::convert_image_y;
 
 mod header;
-mod mode_selection;
+pub(crate) mod mode_selection;
 mod prediction;
 mod residuals;
 
@@ -167,7 +167,7 @@ impl PassStats {
 /// Compute SSE for a 16x16 luma block within bordered prediction buffer
 /// Compares source YUV data against predicted block with border
 #[inline]
-pub(super) fn sse_16x16_luma(
+pub(crate) fn sse_16x16_luma(
     src_y: &[u8],
     src_width: usize,
     mbx: usize,
@@ -243,7 +243,7 @@ fn sse_16x16_luma_dispatch_scalar(
 
 /// Compute SSE for an 8x8 chroma block within bordered prediction buffer
 #[inline]
-pub(super) fn sse_8x8_chroma(
+pub(crate) fn sse_8x8_chroma(
     src_uv: &[u8],
     src_width: usize,
     mbx: usize,

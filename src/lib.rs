@@ -248,6 +248,32 @@ pub mod test_helpers {
         crate::decoder::yuv::convert_image_y::<1>(image_data, width, height, stride)
     }
 
+    /// SSE (sum-of-squared-errors) for a 4x4 luma block.
+    /// Dispatches to the same SIMD kernel the encoder uses.
+    pub fn sse4x4_dispatch(src: &[u8; 16], pred: &[u8; 16]) -> u32 {
+        crate::encoder::vp8::mode_selection::test_only_sse4x4_dispatch(src, pred)
+    }
+
+    /// Forward DCT used by the encoder; dispatched (SSE2 / NEON / etc).
+    pub fn ftransform_from_u8_4x4_dispatch(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
+        crate::common::transform::ftransform_from_u8_4x4(src, ref_)
+    }
+
+    /// Scalar reference forward DCT.
+    pub fn ftransform_from_u8_4x4_scalar(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
+        crate::common::transform::ftransform_from_u8_4x4_scalar(src, ref_)
+    }
+
+    /// Inverse DCT used by the encoder; dispatched.
+    pub fn idct4x4_dispatch(block: &mut [i32; 16]) {
+        crate::common::transform::idct4x4(block);
+    }
+
+    /// Scalar reference inverse DCT.
+    pub fn idct4x4_scalar(block: &mut [i32; 16]) {
+        crate::common::transform::idct4x4_scalar(block);
+    }
+
     /// Expose the forward gamma LUT for verification tests.
     /// sRGB byte -> linear^0.80 (scale 0..4095), 256 entries.
     pub fn gamma_to_linear_tab() -> &'static [u16; 256] {

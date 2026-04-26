@@ -263,16 +263,37 @@ pub(crate) fn tdisto_4x4_fused_inner(
         let vb2 = vsubq_s16(va3, va2);
         let vb3 = vsubq_s16(va0, va1);
 
-        // Transpose both 4x4 blocks using NEON zip operations
-        // vzipq returns x2 tuple types; destructure before reinterpret
+        // Transpose both 4x4 blocks while keeping block A in lanes 0..3
+        // and block B in lanes 4..7 of each output (so the horizontal
+        // Hadamard below can process both blocks in parallel without
+        // them corrupting each other).
+        //
+        // Mirrors libwebp's `VP8Transpose_2_4x4_16b` /
+        // `simd_sse::tdisto_4x4_fused_sse2`'s three-layer pattern
+        // (unpack16 → unpack32 → unpack64). The previous version stopped
+        // at two layers (zip16 → zip32), which transposed each 8-element
+        // vector as one block and ended up interleaving block A's
+        // columns 0/1 into a single output register instead of pairing
+        // block A col0 with block B col0. That cascaded into the wrong
+        // horizontal Hadamard inputs and a systematic ~5× underestimate
+        // of distortion on aarch64 — visible in the encoder picking
+        // worse I4 modes and producing ~1.5× libwebp output size on
+        // ARM where x86 was ~1.18×.
         let t01 = vzipq_s16(vb0, vb1);
         let t23 = vzipq_s16(vb2, vb3);
         let r0 = vzipq_s32(vreinterpretq_s32_s16(t01.0), vreinterpretq_s32_s16(t23.0));
         let r1 = vzipq_s32(vreinterpretq_s32_s16(t01.1), vreinterpretq_s32_s16(t23.1));
-        tmp0 = vreinterpretq_s16_s32(r0.0);
-        tmp1 = vreinterpretq_s16_s32(r0.1);
-        tmp2 = vreinterpretq_s16_s32(r1.0);
-        tmp3 = vreinterpretq_s16_s32(r1.1);
+        // After two zip layers, r0.0/r0.1 hold block-A columns and
+        // r1.0/r1.1 hold block-B columns. Recombine 64-bit halves so
+        // each tmp ends up [A_col_i | B_col_i].
+        let r00 = vreinterpretq_s16_s32(r0.0);
+        let r01 = vreinterpretq_s16_s32(r0.1);
+        let r10 = vreinterpretq_s16_s32(r1.0);
+        let r11 = vreinterpretq_s16_s32(r1.1);
+        tmp0 = vcombine_s16(vget_low_s16(r00), vget_low_s16(r10));
+        tmp1 = vcombine_s16(vget_high_s16(r00), vget_high_s16(r10));
+        tmp2 = vcombine_s16(vget_low_s16(r01), vget_low_s16(r11));
+        tmp3 = vcombine_s16(vget_high_s16(r01), vget_high_s16(r11));
     }
 
     // Horizontal Hadamard
