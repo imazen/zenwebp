@@ -841,8 +841,13 @@ pub(crate) fn quantize_dequantize_block_sse2(
     _mm_movemask_epi8(_mm_cmpeq_epi8(packed, zero)) != 0xffff
 }
 
-/// Fused quantize+dequantize for AC-only (preserves DC at position 0).
-/// Used for Y1 blocks in I16 mode where DC goes to Y2 block.
+/// Fused quantize+dequantize for AC-only (zeroes DC at position 0).
+///
+/// Used for Y1 blocks in I16 mode where DC goes to the Y2 block. The DC slot
+/// is zeroed (matching libwebp's `QuantizeBlock_SSE2` behavior at `enc_sse2.c`)
+/// rather than left holding the original input value. Both produce identical
+/// final pixels because the WHT path overwrites slot 0 later — zeroing is just
+/// the clearer expression of intent. (#35-#11)
 #[cfg(target_arch = "x86_64")]
 pub fn quantize_dequantize_ac_only_simd(
     coeffs: &[i32; 16],
@@ -853,13 +858,13 @@ pub fn quantize_dequantize_ac_only_simd(
 ) -> bool {
     let has_nz =
         quantize_dequantize_block_simd(coeffs, matrix, use_sharpen, quantized, dequantized);
-    // Restore DC from input
-    quantized[0] = coeffs[0];
-    dequantized[0] = coeffs[0]; // DC will be handled by Y2 path
+    // Zero DC; Y2 path will overwrite slot 0 with the WHT result later.
+    quantized[0] = 0;
+    dequantized[0] = 0;
     has_nz || quantized[1..].iter().any(|&c| c != 0)
 }
 
-/// NEON fused quantize+dequantize for AC-only
+/// NEON fused quantize+dequantize for AC-only. See x86_64 variant for semantics.
 #[cfg(target_arch = "aarch64")]
 pub fn quantize_dequantize_ac_only_simd(
     coeffs: &[i32; 16],
@@ -870,12 +875,12 @@ pub fn quantize_dequantize_ac_only_simd(
 ) -> bool {
     let has_nz =
         quantize_dequantize_block_simd(coeffs, matrix, use_sharpen, quantized, dequantized);
-    quantized[0] = coeffs[0];
-    dequantized[0] = coeffs[0];
+    quantized[0] = 0;
+    dequantized[0] = 0;
     has_nz || quantized[1..].iter().any(|&c| c != 0)
 }
 
-/// WASM SIMD128 fused quantize+dequantize for AC-only
+/// WASM SIMD128 fused quantize+dequantize for AC-only. See x86_64 variant for semantics.
 #[cfg(target_arch = "wasm32")]
 pub fn quantize_dequantize_ac_only_simd(
     coeffs: &[i32; 16],
@@ -886,8 +891,8 @@ pub fn quantize_dequantize_ac_only_simd(
 ) -> bool {
     let has_nz =
         quantize_dequantize_block_simd(coeffs, matrix, use_sharpen, quantized, dequantized);
-    quantized[0] = coeffs[0];
-    dequantized[0] = coeffs[0];
+    quantized[0] = 0;
+    dequantized[0] = 0;
     has_nz || quantized[1..].iter().any(|&c| c != 0)
 }
 
@@ -907,8 +912,8 @@ pub fn quantize_dequantize_ac_only_simd(
     dequantized: &mut [i32; 16],
 ) -> bool {
     let has_nz = quantize_dequantize_block_scalar(coeffs, matrix, quantized, dequantized);
-    quantized[0] = coeffs[0];
-    dequantized[0] = coeffs[0];
+    quantized[0] = 0;
+    dequantized[0] = 0;
     has_nz || quantized[1..].iter().any(|&c| c != 0)
 }
 
