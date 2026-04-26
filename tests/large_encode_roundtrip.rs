@@ -161,6 +161,13 @@ fn noisy_5888x4416_auto_retry() {
 
 // --- Explicit partition_limit(0): overflow errors are preserved ---
 
+// 64-bit only — the 9216×6912 noisy image needs ~191 MB of pixel data plus
+// encoder working buffers (~1 GB total), exceeding 32-bit address space.
+// The smaller 5888×4416 image used previously no longer reliably overflows
+// post-libwebp-parity-audit (PR #37) on any platform. The test's intent —
+// verify partition_limit(0) disables auto-retry and returns
+// Partition0Overflow — does not depend on pointer width.
+#[cfg(target_pointer_width = "64")]
 #[test]
 fn noisy_5888x4416_explicit_zero_overflows() {
     // partition_limit(0) disables auto-retry — overflow is returned.
@@ -171,10 +178,6 @@ fn noisy_5888x4416_explicit_zero_overflows() {
     // limit at q80 and q95. Bumping dimensions to 9216x6912 (~64 MPix, ~250K
     // MBs) reliably overflows partition 0 again and exercises the same
     // error-emission path the test was designed to verify.
-    //
-    // The test's INTENT (verify partition_limit(0) disables auto-retry and
-    // returns the Partition0Overflow error) is preserved; only the threshold
-    // image size changes.
     let pixels = generate_noisy_rgb(9216, 6912);
     expect_partition0_overflow_no_retry(&pixels, 9216, 6912, 95.0);
 }
