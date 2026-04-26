@@ -1,4 +1,5 @@
 //! Per-function SIMD-vs-scalar parity check, intended to be run on x86
+#![allow(clippy::needless_range_loop)]
 //! and aarch64 (via QEMU) so we can spot which encoder SIMD entry point
 //! diverges across architectures.
 //!
@@ -21,8 +22,13 @@ use zenwebp::encoder::cost::distortion::{
 
 // Re-exported test_helpers for cross-arch parity checks.
 use zenwebp::test_helpers::{
-    ftransform_from_u8_4x4_dispatch, ftransform_from_u8_4x4_scalar, idct4x4_dispatch,
-    idct4x4_scalar, sse4x4_dispatch,
+    CHROMA_BLOCK_SIZE, LUMA_BLOCK_SIZE, dct4x4_dispatch, dct4x4_scalar,
+    dequantize_block_dispatch, dequantize_block_scalar, ftransform_from_u8_4x4_dispatch,
+    ftransform_from_u8_4x4_scalar, idct4x4_dispatch, idct4x4_scalar, is_flat_coeffs_dispatch,
+    is_flat_coeffs_scalar, make_test_matrix, quantize_block_dispatch, quantize_block_scalar,
+    quantize_dequantize_block_dispatch, quantize_dequantize_block_scalar, sse_8x8_chroma_dispatch,
+    sse_8x8_chroma_scalar, sse_16x16_luma_dispatch, sse_16x16_luma_scalar, sse4x4_dispatch,
+    sse4x4_with_residual_dispatch, sse4x4_with_residual_scalar,
 };
 
 const W_FAVOR_HIGH_FREQ: [u16; 16] = [
@@ -259,6 +265,268 @@ fn idct4x4_dispatch_matches_scalar() {
         mismatches.is_empty(),
         "idct4x4 dispatched != scalar on {} of 256 seeds",
         mismatches.len()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// dct4x4: dispatched vs scalar
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dct4x4_dispatch_matches_scalar() {
+    let mut mismatches = Vec::new();
+    for seed in 0..=255u8 {
+        let mut block_disp = [0i32; 16];
+        let mut block_scal = [0i32; 16];
+        for i in 0..16 {
+            let v = seed.wrapping_add((i as u8).wrapping_mul(13));
+            block_disp[i] = (v as i32) - 128;
+            block_scal[i] = block_disp[i];
+        }
+        dct4x4_dispatch(&mut block_disp);
+        dct4x4_scalar(&mut block_scal);
+        if block_disp != block_scal {
+            mismatches.push(seed);
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "dct4x4 dispatched != scalar on {} of 256 seeds",
+        mismatches.len()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// quantize_dequantize_block: dispatched vs scalar (use_sharpen=false)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn quantize_dequantize_block_dispatch_matches_scalar() {
+    let matrix = make_test_matrix(8, 12);
+    let mut mismatches = Vec::new();
+    for seed in 0..=255u8 {
+        let mut coeffs = [0i32; 16];
+        for i in 0..16 {
+            let v = seed.wrapping_add((i as u8).wrapping_mul(13));
+            coeffs[i] = (v as i32) - 128;
+        }
+        let mut q_disp = [0i32; 16];
+        let mut dq_disp = [0i32; 16];
+        let any_disp =
+            quantize_dequantize_block_dispatch(&coeffs, &matrix, false, &mut q_disp, &mut dq_disp);
+
+        let mut q_scal = [0i32; 16];
+        let mut dq_scal = [0i32; 16];
+        let any_scal =
+            quantize_dequantize_block_scalar(&coeffs, &matrix, &mut q_scal, &mut dq_scal);
+
+        if any_disp != any_scal || q_disp != q_scal || dq_disp != dq_scal {
+            mismatches.push((seed, q_disp, q_scal, dq_disp, dq_scal));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "quantize_dequantize_block dispatched != scalar on {} of 256 seeds (first: seed={} q_disp={:?} q_scal={:?})",
+        mismatches.len(),
+        mismatches[0].0,
+        &mismatches[0].1[..4],
+        &mismatches[0].2[..4],
+    );
+}
+
+// ---------------------------------------------------------------------------
+// quantize_block (in-place): dispatched vs scalar (use_sharpen=false)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn quantize_block_dispatch_matches_scalar() {
+    let matrix = make_test_matrix(8, 12);
+    let mut mismatches = Vec::new();
+    for seed in 0..=255u8 {
+        let mut coeffs_disp = [0i32; 16];
+        let mut coeffs_scal = [0i32; 16];
+        for i in 0..16 {
+            let v = seed.wrapping_add((i as u8).wrapping_mul(13));
+            coeffs_disp[i] = (v as i32) - 128;
+            coeffs_scal[i] = coeffs_disp[i];
+        }
+        let any_disp = quantize_block_dispatch(&mut coeffs_disp, &matrix, false);
+        let any_scal = quantize_block_scalar(&mut coeffs_scal, &matrix);
+
+        if any_disp != any_scal || coeffs_disp != coeffs_scal {
+            mismatches.push((seed, coeffs_disp, coeffs_scal));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "quantize_block dispatched != scalar on {} of 256 seeds (first: seed={} disp={:?} scal={:?})",
+        mismatches.len(),
+        mismatches[0].0,
+        &mismatches[0].1[..4],
+        &mismatches[0].2[..4],
+    );
+}
+
+// ---------------------------------------------------------------------------
+// dequantize_block: dispatched vs scalar
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dequantize_block_dispatch_matches_scalar() {
+    let matrix = make_test_matrix(8, 12);
+    let mut mismatches = Vec::new();
+    for seed in 0..=255u8 {
+        let mut coeffs_disp = [0i32; 16];
+        let mut coeffs_scal = [0i32; 16];
+        for i in 0..16 {
+            let v = seed.wrapping_add((i as u8).wrapping_mul(7));
+            coeffs_disp[i] = (v as i32) - 128;
+            coeffs_scal[i] = coeffs_disp[i];
+        }
+        dequantize_block_dispatch(&matrix, &mut coeffs_disp);
+        dequantize_block_scalar(&matrix, &mut coeffs_scal);
+        if coeffs_disp != coeffs_scal {
+            mismatches.push((seed, coeffs_disp, coeffs_scal));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "dequantize_block dispatched != scalar on {} of 256 seeds (first: seed={})",
+        mismatches.len(),
+        mismatches[0].0,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// sse4x4_with_residual: dispatched vs scalar
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sse4x4_with_residual_dispatch_matches_scalar() {
+    let mut mismatches = Vec::new();
+    for seed in 0..=255u8 {
+        let mut src = [0u8; 16];
+        let mut pred = [0u8; 16];
+        let mut res = [0i32; 16];
+        for i in 0..16 {
+            src[i] = seed.wrapping_add((i as u8).wrapping_mul(7));
+            pred[i] = seed
+                .wrapping_add((i as u8).wrapping_mul(11))
+                .wrapping_add(3);
+            res[i] = (seed.wrapping_add((i as u8).wrapping_mul(13)) as i32) - 128;
+        }
+        let dispatched = sse4x4_with_residual_dispatch(&src, &pred, &res);
+        let scalar = sse4x4_with_residual_scalar(&src, &pred, &res);
+        if dispatched != scalar {
+            mismatches.push((seed, dispatched, scalar));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "sse4x4_with_residual dispatched != scalar on {} of 256 seeds (first: {:?})",
+        mismatches.len(),
+        mismatches.first()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// is_flat_coeffs: dispatched vs scalar
+// ---------------------------------------------------------------------------
+
+#[test]
+fn is_flat_coeffs_dispatch_matches_scalar() {
+    let mut mismatches = Vec::new();
+    for seed in 0..=255u8 {
+        let mut levels = [0i16; 16];
+        for i in 0..16 {
+            let v = seed.wrapping_add((i as u8).wrapping_mul(13));
+            levels[i] = (v as i16) - 128;
+        }
+        for &thresh in &[0i32, 1, 5, 50, 200] {
+            let dispatched = is_flat_coeffs_dispatch(&levels, 1, thresh);
+            let scalar = is_flat_coeffs_scalar(&levels, 1, thresh);
+            if dispatched != scalar {
+                mismatches.push((seed, thresh, dispatched, scalar));
+            }
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "is_flat_coeffs dispatched != scalar on {} cases (first: {:?})",
+        mismatches.len(),
+        mismatches.first()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// sse_16x16_luma: dispatched vs scalar (uses bordered prediction buffer)
+// ---------------------------------------------------------------------------
+
+fn make_bordered_luma_pred(seed: u8) -> [u8; LUMA_BLOCK_SIZE] {
+    let mut pred = [0u8; LUMA_BLOCK_SIZE];
+    for i in 0..LUMA_BLOCK_SIZE {
+        pred[i] = seed
+            .wrapping_add((i as u8).wrapping_mul(11))
+            .wrapping_add(3);
+    }
+    pred
+}
+
+#[test]
+fn sse_16x16_luma_dispatch_matches_scalar() {
+    let mut mismatches = Vec::new();
+    for seed in 0..=255u8 {
+        let mut src = [0u8; 16 * 16];
+        for i in 0..256 {
+            src[i] = seed.wrapping_add((i as u8).wrapping_mul(13));
+        }
+        let pred = make_bordered_luma_pred(seed);
+        let dispatched = sse_16x16_luma_dispatch(&src, 16, 0, 0, &pred);
+        let scalar = sse_16x16_luma_scalar(&src, 16, 0, 0, &pred);
+        if dispatched != scalar {
+            mismatches.push((seed, dispatched, scalar));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "sse_16x16_luma dispatched != scalar on {} of 256 seeds (first: {:?})",
+        mismatches.len(),
+        mismatches.first()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// sse_8x8_chroma: dispatched vs scalar (bordered prediction buffer)
+// ---------------------------------------------------------------------------
+
+fn make_bordered_chroma_pred(seed: u8) -> [u8; CHROMA_BLOCK_SIZE] {
+    let mut pred = [0u8; CHROMA_BLOCK_SIZE];
+    for i in 0..CHROMA_BLOCK_SIZE {
+        pred[i] = seed.wrapping_add((i as u8).wrapping_mul(7)).wrapping_add(5);
+    }
+    pred
+}
+
+#[test]
+fn sse_8x8_chroma_dispatch_matches_scalar() {
+    let mut mismatches = Vec::new();
+    for seed in 0..=255u8 {
+        let mut src = [0u8; 8 * 8];
+        for i in 0..64 {
+            src[i] = seed.wrapping_add((i as u8).wrapping_mul(13));
+        }
+        let pred = make_bordered_chroma_pred(seed);
+        let dispatched = sse_8x8_chroma_dispatch(&src, 8, 0, 0, &pred);
+        let scalar = sse_8x8_chroma_scalar(&src, 8, 0, 0, &pred);
+        if dispatched != scalar {
+            mismatches.push((seed, dispatched, scalar));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "sse_8x8_chroma dispatched != scalar on {} of 256 seeds (first: {:?})",
+        mismatches.len(),
+        mismatches.first()
     );
 }
 

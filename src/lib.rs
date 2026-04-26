@@ -274,6 +274,226 @@ pub mod test_helpers {
         crate::common::transform::idct4x4_scalar(block);
     }
 
+    /// Forward DCT used by the encoder; dispatched.
+    pub fn dct4x4_dispatch(block: &mut [i32; 16]) {
+        crate::common::transform::dct4x4(block);
+    }
+
+    /// Scalar reference forward DCT.
+    pub fn dct4x4_scalar(block: &mut [i32; 16]) {
+        crate::common::transform::dct4x4_scalar(block);
+    }
+
+    /// VP8 quantization matrix constructor for tests.
+    pub fn make_test_matrix(q_dc: u16, q_ac: u16) -> crate::encoder::quantize::VP8Matrix {
+        crate::encoder::quantize::VP8Matrix::new(
+            q_dc,
+            q_ac,
+            crate::encoder::quantize::MatrixType::Y1,
+        )
+    }
+
+    /// Dispatched fused quantize+dequantize used by the encoder.
+    pub fn quantize_dequantize_block_dispatch(
+        coeffs: &[i32; 16],
+        matrix: &crate::encoder::quantize::VP8Matrix,
+        use_sharpen: bool,
+        quantized: &mut [i32; 16],
+        dequantized: &mut [i32; 16],
+    ) -> bool {
+        crate::encoder::quantize::quantize_dequantize_block_simd(
+            coeffs,
+            matrix,
+            use_sharpen,
+            quantized,
+            dequantized,
+        )
+    }
+
+    /// Scalar reference fused quantize+dequantize (does NOT use sharpen,
+    /// matching the scalar dispatch tier's behavior).
+    pub fn quantize_dequantize_block_scalar(
+        coeffs: &[i32; 16],
+        matrix: &crate::encoder::quantize::VP8Matrix,
+        quantized: &mut [i32; 16],
+        dequantized: &mut [i32; 16],
+    ) -> bool {
+        crate::encoder::quantize::quantize_dequantize_block_scalar(
+            coeffs,
+            matrix,
+            quantized,
+            dequantized,
+        )
+    }
+
+    /// Dispatched standalone quantize.
+    pub fn quantize_block_dispatch(
+        coeffs: &mut [i32; 16],
+        matrix: &crate::encoder::quantize::VP8Matrix,
+        use_sharpen: bool,
+    ) -> bool {
+        crate::encoder::quantize::quantize_block_simd(coeffs, matrix, use_sharpen)
+    }
+
+    /// Scalar reference standalone quantize.
+    pub fn quantize_block_scalar(
+        coeffs: &mut [i32; 16],
+        matrix: &crate::encoder::quantize::VP8Matrix,
+    ) -> bool {
+        let mut has_nz = false;
+        for pos in 0..16 {
+            coeffs[pos] = matrix.quantize_coeff(coeffs[pos], pos);
+            if coeffs[pos] != 0 {
+                has_nz = true;
+            }
+        }
+        has_nz
+    }
+
+    /// Dispatched dequantize-only via VP8Matrix::dequantize_block.
+    pub fn dequantize_block_dispatch(
+        matrix: &crate::encoder::quantize::VP8Matrix,
+        coeffs: &mut [i32; 16],
+    ) {
+        matrix.dequantize_block(coeffs);
+    }
+
+    /// Scalar reference dequantize.
+    pub fn dequantize_block_scalar(
+        matrix: &crate::encoder::quantize::VP8Matrix,
+        coeffs: &mut [i32; 16],
+    ) {
+        for i in 0..16 {
+            coeffs[i] *= matrix.q[i] as i32;
+        }
+    }
+
+    /// Dispatched is_flat_coeffs.
+    pub fn is_flat_coeffs_dispatch(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
+        crate::encoder::cost::distortion::is_flat_coeffs(levels, num_blocks, thresh)
+    }
+
+    /// Scalar reference is_flat_coeffs (matches the canonical scalar
+    /// dispatch tier: counts nonzero AC coefficients, returns true if
+    /// the count stays at or below `thresh`).
+    pub fn is_flat_coeffs_scalar(levels: &[i16], num_blocks: usize, thresh: i32) -> bool {
+        let mut score = 0i32;
+        for block in 0..num_blocks {
+            for i in 1..16 {
+                if levels[block * 16 + i] != 0 {
+                    score += 1;
+                    if score > thresh {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// Dispatched sse4x4_with_residual.
+    pub fn sse4x4_with_residual_dispatch(
+        src: &[u8; 16],
+        pred: &[u8; 16],
+        dequantized: &[i32; 16],
+    ) -> u32 {
+        crate::encoder::vp8::mode_selection::test_only_sse4x4_with_residual_dispatch(
+            src,
+            pred,
+            dequantized,
+        )
+    }
+
+    /// Scalar reference sse4x4_with_residual: SSE between src and (pred+dequantized).
+    pub fn sse4x4_with_residual_scalar(
+        src: &[u8; 16],
+        pred: &[u8; 16],
+        dequantized: &[i32; 16],
+    ) -> u32 {
+        let mut sum = 0u32;
+        for i in 0..16 {
+            let rec = (i32::from(pred[i]) + dequantized[i]).clamp(0, 255) as u8;
+            let d = (src[i] as i32 - rec as i32).unsigned_abs();
+            sum += d * d;
+        }
+        sum
+    }
+
+    /// Luma block layout constant for prediction buffers.
+    pub const LUMA_BLOCK_SIZE: usize = crate::common::prediction::LUMA_BLOCK_SIZE;
+    /// Chroma block layout constant for prediction buffers.
+    pub const CHROMA_BLOCK_SIZE: usize = crate::common::prediction::CHROMA_BLOCK_SIZE;
+    /// Stride of a luma prediction block (bytes per row).
+    pub const LUMA_STRIDE: usize = crate::common::prediction::LUMA_STRIDE;
+    /// Stride of a chroma prediction block (bytes per row).
+    pub const CHROMA_STRIDE: usize = crate::common::prediction::CHROMA_STRIDE;
+
+    /// Dispatched sse_16x16_luma. The `pred` buffer has the bordered
+    /// layout: pred[(y+1)*LUMA_STRIDE + 1 + x] is luma block pixel (y,x).
+    pub fn sse_16x16_luma_dispatch(
+        src_y: &[u8],
+        src_width: usize,
+        mbx: usize,
+        mby: usize,
+        pred: &[u8; LUMA_BLOCK_SIZE],
+    ) -> u32 {
+        crate::encoder::vp8::sse_16x16_luma(src_y, src_width, mbx, mby, pred)
+    }
+
+    /// Scalar reference sse_16x16_luma.
+    pub fn sse_16x16_luma_scalar(
+        src_y: &[u8],
+        src_width: usize,
+        mbx: usize,
+        mby: usize,
+        pred: &[u8; LUMA_BLOCK_SIZE],
+    ) -> u32 {
+        let mut sse = 0u32;
+        let src_base = mby * 16 * src_width + mbx * 16;
+        for y in 0..16 {
+            let src_row = src_base + y * src_width;
+            let pred_row = (y + 1) * LUMA_STRIDE + 1;
+            for x in 0..16 {
+                let diff = i32::from(src_y[src_row + x]) - i32::from(pred[pred_row + x]);
+                sse += (diff * diff) as u32;
+            }
+        }
+        sse
+    }
+
+    /// Dispatched sse_8x8_chroma. Same bordered layout as luma but with
+    /// CHROMA_STRIDE.
+    pub fn sse_8x8_chroma_dispatch(
+        src_uv: &[u8],
+        src_width: usize,
+        mbx: usize,
+        mby: usize,
+        pred: &[u8; CHROMA_BLOCK_SIZE],
+    ) -> u32 {
+        crate::encoder::vp8::sse_8x8_chroma(src_uv, src_width, mbx, mby, pred)
+    }
+
+    /// Scalar reference sse_8x8_chroma.
+    pub fn sse_8x8_chroma_scalar(
+        src_uv: &[u8],
+        src_width: usize,
+        mbx: usize,
+        mby: usize,
+        pred: &[u8; CHROMA_BLOCK_SIZE],
+    ) -> u32 {
+        let mut sse = 0u32;
+        let src_base = mby * 8 * src_width + mbx * 8;
+        for y in 0..8 {
+            let src_row = src_base + y * src_width;
+            let pred_row = (y + 1) * CHROMA_STRIDE + 1;
+            for x in 0..8 {
+                let diff = i32::from(src_uv[src_row + x]) - i32::from(pred[pred_row + x]);
+                sse += (diff * diff) as u32;
+            }
+        }
+        sse
+    }
+
     /// Expose the forward gamma LUT for verification tests.
     /// sRGB byte -> linear^0.80 (scale 0..4095), 256 entries.
     pub fn gamma_to_linear_tab() -> &'static [u16; 256] {

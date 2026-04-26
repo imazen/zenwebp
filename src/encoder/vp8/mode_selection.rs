@@ -75,6 +75,16 @@ fn sse4x4_with_residual_dispatch(src: &[u8; 16], pred: &[u8; 16], dequantized: &
     )
 }
 
+/// Test-only re-export for cross-arch SIMD parity tests.
+#[doc(hidden)]
+pub fn test_only_sse4x4_with_residual_dispatch(
+    src: &[u8; 16],
+    pred: &[u8; 16],
+    dequantized: &[i32; 16],
+) -> u32 {
+    sse4x4_with_residual_dispatch(src, pred, dequantized)
+}
+
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 fn sse4x4_with_residual_impl_v3(

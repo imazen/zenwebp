@@ -174,12 +174,18 @@ fn sse_8x8_chroma_inner(
     mby: usize,
     pred: &[u8; CHROMA_BLOCK_SIZE],
 ) -> u32 {
-    let chroma_width = src_width / 2;
+    // `src_width` is the chroma plane width (matching `sse_16x16_luma_neon`
+    // and the SSE2 / scalar implementations which all use the parameter
+    // directly). The previous version computed `chroma_width = src_width /
+    // 2` here, on the false assumption that `src_width` was the *luma*
+    // width — that mis-strode every row read by 50%, returning ~83% of
+    // the true SSE on average and feeding wrong cost values into the
+    // encoder's chroma mode selection on aarch64.
     let mut acc = vdupq_n_u32(0);
-    let src_base = mby * 8 * chroma_width + mbx * 8;
+    let src_base = mby * 8 * src_width + mbx * 8;
 
     for row in 0..8 {
-        let src_off = src_base + row * chroma_width;
+        let src_off = src_base + row * src_width;
         let pred_off = (1 + row) * CHROMA_STRIDE + 1;
 
         let src_row = <&[u8; 8]>::try_from(&src_uv[src_off..src_off + 8]).unwrap();
