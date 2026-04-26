@@ -871,10 +871,13 @@ impl Segment {
         self.lambda_uv = ((3 * q_uv * q_uv) >> 6).max(1);
         self.lambda_mode = ((q_i4 * q_i4) >> 7).max(1);
 
-        // Compute tlambda for spectral distortion weight
-        // tlambda = (sns_strength * q) >> 5
-        // This enables TDisto in mode selection
-        self.tlambda = (u32::from(sns_strength) * q_i4) >> 5;
+        // Compute tlambda for spectral distortion weight.
+        // libwebp gates this on method >= 4 (`quant_enc.c:226`):
+        //   const int tlambda_scale = (enc->method >= 4) ? enc->config->sns_strength : 0;
+        //   m->tlambda = (tlambda_scale * q_i4) >> 5;
+        // At m0-m3 the spectral-distortion penalty is OFF in libwebp; we now match.
+        let tlambda_scale = if method >= 4 { u32::from(sns_strength) } else { 0 };
+        self.tlambda = (tlambda_scale * q_i4) >> 5;
 
         // Initialize perceptual config
         self.psy_config = PsyConfig::new(method, self.quant_index, sns_strength);
