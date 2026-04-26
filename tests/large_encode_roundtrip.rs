@@ -170,14 +170,17 @@ fn noisy_5888x4416_auto_retry() {
 #[cfg(target_pointer_width = "64")]
 #[test]
 fn noisy_5888x4416_explicit_zero_overflows() {
-    // partition_limit(0) disables auto-retry — overflow is returned.
-    // The 2026-04-26 libwebp-parity audit (PR #37) made the encoder ~1.5%
-    // more efficient across the board, plus structural fixes (#21, #28, #34)
-    // that disproportionately shrink the partition-0 mode/segment/filter data.
-    // The same noisy image at 5888x4416 now fits within the 524 KB partition-0
-    // limit at q80 and q95. Bumping dimensions to 9216x6912 (~64 MPix, ~250K
-    // MBs) reliably overflows partition 0 again and exercises the same
-    // error-emission path the test was designed to verify.
+    //
+    // The 2026-04-26 libwebp-parity audit (PR #37) + #25's full
+    // SKIP_PROBA_THRESHOLD gate (this PR) made the encoder ~1.5% more
+    // efficient on real-world content and saved ~1 bit/MB plus the
+    // per-frame skip_proba header byte on noisy content. The same image
+    // at 5888x4416 q80 now fits comfortably under the 524 KB partition-0
+    // cap. Bumped dims to 9216x6912 (~64 MPix, ~250K MBs) at q=95 to
+    // reliably overflow partition 0 again post-audit and exercise the
+    // same error-emission path the test was designed to verify. The
+    // test's INTENT (verify partition_limit(0) disables auto-retry and
+    // returns Partition0Overflow) is preserved.
     let pixels = generate_noisy_rgb(9216, 6912);
     expect_partition0_overflow_no_retry(&pixels, 9216, 6912, 95.0);
 }

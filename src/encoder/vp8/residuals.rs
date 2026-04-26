@@ -48,23 +48,45 @@ fn token_id(coeff_type: usize, band: usize, ctx: usize) -> u16 {
 /// probability table, while constant tokens use their embedded probability.
 pub(crate) struct TokenBuffer {
     tokens: Vec<u16>,
+    /// Per-MB start offsets into `tokens` (one entry per recorded MB).
+    /// Used by `emit_tokens_filtered` to selectively skip a MB's tokens.
+    /// Only populated when `begin_mb()` is called per MB; otherwise stays empty
+    /// and `emit_tokens` emits the whole stream.
+    mb_token_starts: Vec<u32>,
 }
 
 #[allow(dead_code)]
 impl TokenBuffer {
     pub fn new() -> Self {
-        Self { tokens: Vec::new() }
+        Self {
+            tokens: Vec::new(),
+            mb_token_starts: Vec::new(),
+        }
     }
 
     pub fn with_estimated_capacity(num_macroblocks: usize) -> Self {
         // libwebp uses 2 * 16 * 24 = 768 tokens per macroblock
         Self {
             tokens: Vec::with_capacity(num_macroblocks * 768),
+            mb_token_starts: Vec::with_capacity(num_macroblocks + 1),
         }
     }
 
     pub fn clear(&mut self) {
         self.tokens.clear();
+        self.mb_token_starts.clear();
+    }
+
+    /// Mark the start of a new macroblock's tokens. Must be called once per MB
+    /// before any `record_coeff_tokens` calls for that MB. Pushes the current
+    /// `tokens.len()` so `emit_tokens_filtered` can locate the MB's span.
+    #[inline]
+    pub fn begin_mb(&mut self) {
+        debug_assert!(
+            self.tokens.len() <= u32::MAX as usize,
+            "token buffer length overflows u32"
+        );
+        self.mb_token_starts.push(self.tokens.len() as u32);
     }
 
     /// Record a dynamic-probability bit decision.
@@ -122,6 +144,55 @@ impl TokenBuffer {
                 flat_probas[raw_idx as usize]
             };
             encoder.write_bool(bit, proba);
+        }
+    }
+
+    /// Emit tokens to the encoder, suppressing entire MB spans whose
+    /// `skipped[mb_idx]` flag is true.
+    ///
+    /// Used when `use_skip_proba=1` (per-MB skip flag is signaled): the decoder
+    /// reads no residuals for skipped MBs, so we must not emit them either.
+    /// When `use_skip_proba=0` (`macroblock_no_skip_coeff = None`), use the
+    /// plain `emit_tokens` instead — every MB's residuals must be emitted.
+    ///
+    /// Requires `begin_mb()` to have been called once per MB during recording.
+    /// `skipped.len()` must equal the number of recorded MBs.
+    pub fn emit_tokens_filtered(
+        &self,
+        encoder: &mut crate::encoder::arithmetic::ArithmeticEncoder,
+        probas: &TokenProbTables,
+        skipped: &[bool],
+    ) {
+        debug_assert_eq!(
+            self.mb_token_starts.len(),
+            skipped.len(),
+            "begin_mb() count must match skipped.len()"
+        );
+
+        let flat_probas = Self::flatten_probas(probas);
+
+        let num_mbs = self.mb_token_starts.len();
+        for (mb_idx, &is_skipped) in skipped.iter().enumerate() {
+            if is_skipped {
+                continue;
+            }
+            let start = self.mb_token_starts[mb_idx] as usize;
+            let end = if mb_idx + 1 < num_mbs {
+                self.mb_token_starts[mb_idx + 1] as usize
+            } else {
+                self.tokens.len()
+            };
+
+            for &token in &self.tokens[start..end] {
+                let bit = (token >> 15) != 0;
+                let raw_idx = token & 0x3FFF;
+                let proba = if (token & FIXED_PROBA_BIT) != 0 {
+                    raw_idx as u8
+                } else {
+                    flat_probas[raw_idx as usize]
+                };
+                encoder.write_bool(bit, proba);
+            }
         }
     }
 

@@ -330,6 +330,7 @@ struct Complexity {
 }
 
 impl Complexity {
+    #[allow(dead_code)] // Was used by old skip path; kept in case needed.
     fn clear(&mut self, include_y2: bool) {
         self.y = [0; 4];
         self.u = [0; 2];
@@ -1202,6 +1203,18 @@ impl<'a> Vp8Encoder<'a> {
                     // Segment id resolved here so both trellis/non-trellis paths
                     // can update `max_edge_per_segment` (#34).
                     let mb_segment_id = macroblock_info.segment_id.unwrap_or(0);
+
+                    // Mark the start of this MB's tokens so we can selectively
+                    // suppress them at emit time when the per-MB skip flag is in
+                    // play (`macroblock_no_skip_coeff = Some`). When the flag is
+                    // omitted (`= None`), every MB's tokens are emitted, so the
+                    // EOB tokens we record below for skipped MBs are exactly what
+                    // the decoder expects (matches libwebp #25).
+                    self.token_buffer
+                        .as_mut()
+                        .expect("token buffer not initialized")
+                        .begin_mb();
+
                     if self.do_trellis {
                         // Trellis path: integrated quantize + record (old behavior)
                         let all_zero = self.check_all_coeffs_zero(
@@ -1213,10 +1226,17 @@ impl<'a> Vp8Encoder<'a> {
                         if all_zero {
                             skip_mb += 1;
                             mb_info.coeffs_skipped = true;
-                            self.left_complexity
-                                .clear(macroblock_info.luma_mode != LumaMode::B);
-                            self.top_complexity[usize::from(mbx)]
-                                .clear(macroblock_info.luma_mode != LumaMode::B);
+                            // Record EOB-at-0 tokens for every block. This emits
+                            // ~25 bits/MB into the token buffer; if `use_skip_proba=1`
+                            // wins they get filtered out at emit time, otherwise the
+                            // decoder reads them as the empty residuals it expects.
+                            // record_from_stored_coeffs also clears top/left
+                            // complexity correctly (has_coeffs=false for every block).
+                            self.record_from_stored_coeffs(
+                                &macroblock_info,
+                                mbx as usize,
+                                &QuantizedMbCoeffs::ZERO,
+                            );
                             if store_coeffs {
                                 self.stored_mb_coeffs.push(QuantizedMbCoeffs::ZERO);
                             }
@@ -1254,10 +1274,12 @@ impl<'a> Vp8Encoder<'a> {
                         if all_zero {
                             skip_mb += 1;
                             mb_info.coeffs_skipped = true;
-                            self.left_complexity
-                                .clear(macroblock_info.luma_mode != LumaMode::B);
-                            self.top_complexity[usize::from(mbx)]
-                                .clear(macroblock_info.luma_mode != LumaMode::B);
+                            // Same EOB-token recording as the trellis path above.
+                            self.record_from_stored_coeffs(
+                                &macroblock_info,
+                                mbx as usize,
+                                &QuantizedMbCoeffs::ZERO,
+                            );
                         } else {
                             // Track edge magnitude for I16 "blocky" MBs (#34).
                             if !is_i4 && stored_coeffs.is_blocky_i16() {
@@ -1294,21 +1316,22 @@ impl<'a> Vp8Encoder<'a> {
             // it saves, so libwebp signals `use_skip_proba=0` in the frame header and omits the
             // per-MB skip bits entirely — the decoder then assumes every MB has residual data.
             //
-            // libwebp can do this because its token-loop architecture emits residual tokens
-            // for every MB unconditionally (an empty MB is just an EOB-at-0 per block, ~1 bit).
-            // zenwebp's current architecture suppresses residual emission entirely for skipped
-            // MBs, so we can only safely set `use_skip_proba=0` when **no** MB was skipped
-            // (else the decoder would expect residual data we did not write).
-            //
-            // Conservative gate: omit the per-MB skip bit only when `prob >= 250 && skip_mb == 0`.
-            // A more complete fix (force-encode the few skipped MBs as non-skip with EOB tokens
-            // when prob crosses the threshold) is tracked at #25. This conservative version
-            // already saves bits whenever the encoder happened to produce zero skipped MBs.
+            // We now record EOB-at-0 tokens for every skipped MB during the encode loop (matches
+            // libwebp's `RecordTokens` behavior — `frame_enc.c:415`), and the token buffer tracks
+            // per-MB span offsets via `begin_mb()`. At emit time:
+            //   - `use_skip_proba=0` (`macroblock_no_skip_coeff = None`): emit ALL tokens — the
+            //     decoder reads residuals for every MB, so the EOB tokens for skipped MBs are
+            //     exactly what it expects.
+            //   - `use_skip_proba=1` (`Some(prob)`): the per-MB skip flag tells the decoder which
+            //     MBs to skip; we filter those MBs' tokens out of the emission stream so the
+            //     decoder sees the residuals exactly where it expects them.
+            // This is the full #25 fix — the gate now fires whenever `prob >= 250`, not only
+            // when `skip_mb == 0`.
             if total_mb > 0 {
                 let non_skip_mb = total_mb - skip_mb;
                 let prob = ((255 * non_skip_mb + total_mb / 2) / total_mb).min(255) as u8;
                 const SKIP_PROBA_THRESHOLD: u8 = 250;
-                if prob >= SKIP_PROBA_THRESHOLD && skip_mb == 0 {
+                if prob >= SKIP_PROBA_THRESHOLD {
                     self.macroblock_no_skip_coeff = None;
                 } else {
                     self.macroblock_no_skip_coeff = Some(prob.clamp(1, 254));
@@ -1358,10 +1381,22 @@ impl<'a> Vp8Encoder<'a> {
             self.write_macroblock_header(mb_info, mbx);
         }
 
-        // Emit tokens to partition using final probabilities
+        // Emit tokens to partition using final probabilities.
+        // When the per-MB skip flag is in use (`macroblock_no_skip_coeff = Some`),
+        // skip the recorded EOB tokens for MBs whose `coeffs_skipped=true` flag was
+        // already written into the header — the decoder reads no residuals for them.
+        // When the gate fires (`= None`), every MB's tokens are emitted unconditionally,
+        // matching libwebp's `use_skip_proba=0` path. (#25)
         let final_probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
         let token_buf = self.token_buffer.take().unwrap();
-        token_buf.emit_tokens(&mut self.partitions[0], final_probs);
+        if self.macroblock_no_skip_coeff.is_some() {
+            // Build skip mask from stored MB info (already moved out into local `stored_mb_info`).
+            let skip_mask: Vec<bool> =
+                stored_mb_info.iter().map(|m| m.coeffs_skipped).collect();
+            token_buf.emit_tokens_filtered(&mut self.partitions[0], final_probs, &skip_mask);
+        } else {
+            token_buf.emit_tokens(&mut self.partitions[0], final_probs);
+        }
 
         // Assemble output
         let compressed_header_encoder = mem::take(&mut self.encoder);
