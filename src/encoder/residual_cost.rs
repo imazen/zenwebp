@@ -770,31 +770,46 @@ pub fn get_cost_luma4(
 /// Calculate the cost of encoding all 16 luma blocks in I16 mode.
 /// Includes DC block (Y2) and 16 AC blocks (Y1).
 ///
+/// Matches libwebp's `VP8GetCostLuma16` (`cost_enc.c:237-261`): imports the
+/// live cross-MB non-zero context for the Y2 DC block and the 4×4 luma AC grid,
+/// then walks each AC block updating the local `top_nz`/`left_nz` state.
+///
 /// # Arguments
 /// * `dc_levels` - DC coefficients from WHT (16 values)
 /// * `ac_levels` - AC coefficients for each 4x4 block (16 blocks × 16 coeffs)
+/// * `top_y` - cross-MB context for the 4 top-row luma 4x4 blocks (1 if neighbor MB above had non-zero coeffs in that column, else 0)
+/// * `left_y` - cross-MB context for the 4 left-column luma 4x4 blocks
+/// * `top_y2` - cross-MB context for the Y2 DC block from MB above (1/0)
+/// * `left_y2` - cross-MB context for the Y2 DC block from MB to the left (1/0)
 /// * `costs` - Precomputed level cost tables
 /// * `probs` - Probability tables
 ///
 /// # Returns
 /// Total cost in 1/256 bits
+#[allow(clippy::too_many_arguments)]
 pub fn get_cost_luma16(
     dc_levels: &[i32; 16],
     ac_levels: &[[i32; 16]; 16],
+    top_y: [bool; 4],
+    left_y: [bool; 4],
+    top_y2: bool,
+    left_y2: bool,
     costs: &LevelCosts,
     probs: &TokenProbTables,
 ) -> u32 {
     let mut total_cost = 0u32;
 
-    // DC block (type 1 = I16DC, also known as Y2)
-    // Context is typically from neighboring DC blocks, but for simplicity use 0
+    // DC block (type 1 = I16DC, also known as Y2). libwebp uses
+    // `it->top_nz[8] + it->left_nz[8]` — slot 8 is reserved for Y2 DC carry.
+    let dc_ctx = (top_y2 as usize) + (left_y2 as usize);
     let dc_res = Residual::new(dc_levels, 1, 0);
-    total_cost += get_residual_cost(0, &dc_res, costs, probs);
+    total_cost += get_residual_cost(dc_ctx, &dc_res, costs, probs);
 
-    // AC blocks (type 0 = I16AC, skipping DC coefficient which is in Y2)
-    // Track non-zero context like libwebp's VP8GetCostLuma16
-    let mut top_nz = [false; 4];
-    let mut left_nz = [false; 4];
+    // AC blocks (type 0 = I16AC, skipping DC coefficient which is in Y2).
+    // Initialize from cross-MB context, then update locally per block —
+    // mirrors libwebp's `it->top_nz[]` / `it->left_nz[]` walk.
+    let mut top_nz = top_y;
+    let mut left_nz = left_y;
 
     for y in 0..4 {
         for x in 0..4 {
@@ -813,23 +828,48 @@ pub fn get_cost_luma16(
 
 /// Compute accurate coefficient cost for UV blocks using probability-dependent tables.
 ///
-/// Port of libwebp's VP8GetCostUV.
+/// Port of libwebp's `VP8GetCostUV` (`cost_enc.c:263-283`): imports the live
+/// cross-MB non-zero context for the 2×2 U and V grids, then walks each block
+/// updating the local `top_nz`/`left_nz` state.
 ///
 /// # Arguments
-/// * `uv_levels` - 8 blocks of quantized coefficients (4 U blocks + 4 V blocks)
+/// * `uv_levels` - 8 blocks of quantized coefficients (4 U blocks + 4 V blocks),
+///   stored U[0..4] then V[4..8] in 2×2 raster order: `[U(0,0), U(1,0), U(0,1), U(1,1), V(0,0), ...]`
+/// * `top_u` / `left_u` - cross-MB context for the 2 U positions per direction
+/// * `top_v` / `left_v` - cross-MB context for the 2 V positions per direction
 /// * `costs` - Precomputed level cost tables
 /// * `probs` - Probability tables
 ///
 /// # Returns
 /// Total cost in 1/256 bits
-pub fn get_cost_uv(uv_levels: &[[i32; 16]; 8], costs: &LevelCosts, probs: &TokenProbTables) -> u32 {
+pub fn get_cost_uv(
+    uv_levels: &[[i32; 16]; 8],
+    top_u: [bool; 2],
+    left_u: [bool; 2],
+    top_v: [bool; 2],
+    left_v: [bool; 2],
+    costs: &LevelCosts,
+    probs: &TokenProbTables,
+) -> u32 {
     let mut total_cost = 0u32;
 
-    // UV blocks use coeff_type=2 (TYPE_CHROMA_A)
-    // All coefficients including DC (first=0)
-    for block in uv_levels.iter() {
-        let res = Residual::new(block, 2, 0); // ctype=2 for UV, first=0 (include DC)
-        total_cost += get_residual_cost(0, &res, costs, probs);
+    // UV blocks use coeff_type=2 (TYPE_CHROMA_A). All coefficients including DC (first=0).
+    // libwebp iterates `ch ∈ {0, 2}` (U then V channel offsets) then a 2x2 grid;
+    // we follow the same order. Block storage: U[0..4], V[4..8] each in raster 2x2.
+    for ch_idx in 0..2 {
+        let mut top_nz = if ch_idx == 0 { top_u } else { top_v };
+        let mut left_nz = if ch_idx == 0 { left_u } else { left_v };
+        for y in 0..2 {
+            for x in 0..2 {
+                let block_idx = ch_idx * 4 + y * 2 + x;
+                let ctx = (top_nz[x] as usize) + (left_nz[y] as usize);
+                let res = Residual::new(&uv_levels[block_idx], 2, 0);
+                total_cost += get_residual_cost(ctx, &res, costs, probs);
+                let has_nz = res.last >= 0;
+                top_nz[x] = has_nz;
+                left_nz[y] = has_nz;
+            }
+        }
     }
 
     total_cost

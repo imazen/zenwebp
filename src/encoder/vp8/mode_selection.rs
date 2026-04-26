@@ -735,9 +735,35 @@ impl<'a> super::Vp8Encoder<'a> {
                 y1_quant[block_idx] = block;
             }
 
-            // 5. Compute coefficient cost using probability-dependent tables
-            // This matches libwebp's VP8GetCostLuma16 which uses proper token probabilities
-            let coeff_cost = get_cost_luma16(&y2_quant, &y1_quant, &self.level_costs, probs);
+            // 5. Compute coefficient cost using probability-dependent tables.
+            // libwebp's VP8GetCostLuma16 imports cross-MB non-zero context from
+            // `it->top_nz[]`/`it->left_nz[]` (slot 8 reserved for Y2 DC) and walks
+            // each AC block updating local state. Mirrored here using zenwebp's
+            // top_complexity/left_complexity (#23).
+            let top_y_nz = [
+                self.top_complexity[mbx].y[0] != 0,
+                self.top_complexity[mbx].y[1] != 0,
+                self.top_complexity[mbx].y[2] != 0,
+                self.top_complexity[mbx].y[3] != 0,
+            ];
+            let left_y_nz = [
+                self.left_complexity.y[0] != 0,
+                self.left_complexity.y[1] != 0,
+                self.left_complexity.y[2] != 0,
+                self.left_complexity.y[3] != 0,
+            ];
+            let top_y2_nz = self.top_complexity[mbx].y2 != 0;
+            let left_y2_nz = self.left_complexity.y2 != 0;
+            let coeff_cost = get_cost_luma16(
+                &y2_quant,
+                &y1_quant,
+                top_y_nz,
+                left_y_nz,
+                top_y2_nz,
+                left_y2_nz,
+                &self.level_costs,
+                probs,
+            );
 
             // 6. Dequantize Y2 and do inverse WHT using SIMD
             let mut y2_dequant = y2_quant;
@@ -1577,8 +1603,29 @@ impl<'a> super::Vp8Encoder<'a> {
                 );
             }
 
-            // 3. Compute coefficient cost using probability-dependent tables
-            let coeff_cost = get_cost_uv(&uv_quant, &self.level_costs, probs);
+            // 3. Compute coefficient cost using probability-dependent tables.
+            // libwebp's VP8GetCostUV walks U then V channels (`ch ∈ {0,2}`) over a 2x2 grid
+            // updating `it->top_nz[4+ch+x]`/`it->left_nz[4+ch+y]`. Import the live
+            // cross-MB context from zenwebp's complexity tracker (#23).
+            let top_u_nz = [
+                self.top_complexity[mbx].u[0] != 0,
+                self.top_complexity[mbx].u[1] != 0,
+            ];
+            let left_u_nz = [self.left_complexity.u[0] != 0, self.left_complexity.u[1] != 0];
+            let top_v_nz = [
+                self.top_complexity[mbx].v[0] != 0,
+                self.top_complexity[mbx].v[1] != 0,
+            ];
+            let left_v_nz = [self.left_complexity.v[0] != 0, self.left_complexity.v[1] != 0];
+            let coeff_cost = get_cost_uv(
+                &uv_quant,
+                top_u_nz,
+                left_u_nz,
+                top_v_nz,
+                left_v_nz,
+                &self.level_costs,
+                probs,
+            );
 
             // 4. Fused inverse DCT + add residue for reconstruction
             let mut reconstructed_u = pred_u;
