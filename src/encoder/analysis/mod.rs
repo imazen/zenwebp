@@ -37,6 +37,10 @@ pub use classifier::{
     ClassifierDiag, ImageContentType, classify_image_type, classify_image_type_diag,
     content_type_to_tuning,
 };
+#[cfg(feature = "analyzer")]
+pub use classifier::{
+    ZenanalyzeDiag, classify_image_type_rgb8, classify_image_type_rgb8_diag, rgba8_to_rgb8,
+};
 pub use histogram::{collect_histogram_bps, forward_dct_4x4};
 pub use iterator::AnalysisIterator;
 pub use segment::{assign_segments_kmeans, compute_segment_quant, smooth_segment_map};

@@ -1541,32 +1541,60 @@ pub(crate) mod iteration {
         if w < 8 || h < 8 || pixels.len() < w * h * bpp {
             return None;
         }
-        // BT.601 Y = 0.299R + 0.587G + 0.114B.
-        let mut y_plane: Vec<u8> = Vec::with_capacity(w * h);
-        let mut alpha_hist = [0u32; 256];
-        match layout {
-            PixelLayout::Rgb8 => {
-                for px in pixels.chunks_exact(3).take(w * h) {
-                    let y =
-                        ((u32::from(px[0]) * 76 + u32::from(px[1]) * 150 + u32::from(px[2]) * 30)
-                            >> 8) as u8;
-                    y_plane.push(y);
-                    alpha_hist[y as usize] += 1;
+
+        // When the `analyzer` feature is on, route through zenanalyze
+        // so the bucket decision uses the same shared signal source as
+        // the encoder's Auto-preset path. See `classify_image_type_rgb8`.
+        #[cfg(feature = "analyzer")]
+        {
+            let bucket = match layout {
+                PixelLayout::Rgb8 => crate::encoder::analysis::classify_image_type_rgb8(
+                    &pixels[..w * h * 3],
+                    width,
+                    height,
+                ),
+                PixelLayout::Rgba8 => {
+                    let rgb = crate::encoder::analysis::rgba8_to_rgb8(&pixels[..w * h * 4]);
+                    crate::encoder::analysis::classify_image_type_rgb8(&rgb, width, height)
                 }
-            }
-            PixelLayout::Rgba8 => {
-                for px in pixels.chunks_exact(4).take(w * h) {
-                    let y =
-                        ((u32::from(px[0]) * 76 + u32::from(px[1]) * 150 + u32::from(px[2]) * 30)
-                            >> 8) as u8;
-                    y_plane.push(y);
-                    alpha_hist[px[3] as usize] += 1;
-                }
-            }
-            _ => return None,
+                _ => return None,
+            };
+            return Some(bucket);
         }
-        let bucket = crate::encoder::analysis::classify_image_type(&y_plane, w, h, w, &alpha_hist);
-        Some(bucket)
+
+        // Fallback (no `analyzer` feature): the original Y-plane +
+        // alpha-histogram heuristic. BT.601 Y = 0.299R + 0.587G + 0.114B.
+        #[cfg(not(feature = "analyzer"))]
+        {
+            let mut y_plane: Vec<u8> = Vec::with_capacity(w * h);
+            let mut alpha_hist = [0u32; 256];
+            match layout {
+                PixelLayout::Rgb8 => {
+                    for px in pixels.chunks_exact(3).take(w * h) {
+                        let y = ((u32::from(px[0]) * 76
+                            + u32::from(px[1]) * 150
+                            + u32::from(px[2]) * 30)
+                            >> 8) as u8;
+                        y_plane.push(y);
+                        alpha_hist[y as usize] += 1;
+                    }
+                }
+                PixelLayout::Rgba8 => {
+                    for px in pixels.chunks_exact(4).take(w * h) {
+                        let y = ((u32::from(px[0]) * 76
+                            + u32::from(px[1]) * 150
+                            + u32::from(px[2]) * 30)
+                            >> 8) as u8;
+                        y_plane.push(y);
+                        alpha_hist[px[3] as usize] += 1;
+                    }
+                }
+                _ => return None,
+            }
+            let bucket =
+                crate::encoder::analysis::classify_image_type(&y_plane, w, h, w, &alpha_hist);
+            Some(bucket)
+        }
     }
 }
 

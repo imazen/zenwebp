@@ -2057,28 +2057,115 @@ pub(crate) fn encode_frame_lossy(
     stop: &dyn enough::Stop,
     progress: &dyn super::api::EncodeProgress,
 ) -> super::api::EncodeResult<super::api::EncodeStats> {
-    let width = width
+    let width_u16: u16 = width
         .try_into()
         .map_err(|_| at!(EncodeError::InvalidDimensions))?;
-    let height = height
+    let height_u16: u16 = height
         .try_into()
         .map_err(|_| at!(EncodeError::InvalidDimensions))?;
 
+    // When the `analyzer` feature is on and the user picked Auto, run
+    // the shared zenanalyze scanner up front and bake the resolved
+    // tuning into params. This lets the inner encoder skip its homegrown
+    // alpha-histogram heuristic. With `analyzer` off, this is a no-op
+    // and the inner heuristic runs unchanged.
+    let resolved_params = resolve_auto_preset_via_analyzer(params, data, width, height, stride, color);
+    let params_eff = resolved_params.as_ref().unwrap_or(params);
+
     // Quality search: if target_size or target_psnr is set, iterate quality to converge
-    if params.target_size > 0 {
+    if params_eff.target_size > 0 {
         Ok(encode_with_quality_search(
-            writer, data, width, height, stride, color, params, stop, progress,
+            writer, data, width_u16, height_u16, stride, color, params_eff, stop, progress,
         )?)
-    } else if params.target_psnr > 0.0 {
+    } else if params_eff.target_psnr > 0.0 {
         Ok(encode_with_psnr_search(
-            writer, data, width, height, stride, color, params, stop, progress,
+            writer, data, width_u16, height_u16, stride, color, params_eff, stop, progress,
         )?)
     } else {
         // Single encoding at specified quality, with automatic partition limit retry
         encode_with_partition_retry(
-            writer, data, width, height, stride, color, params, stop, progress,
+            writer, data, width_u16, height_u16, stride, color, params_eff, stop, progress,
         )
     }
+}
+
+/// When the `analyzer` feature is on and `params.preset == Auto`,
+/// run zenanalyze on the source RGB(A)8 buffer, derive the bucket and
+/// tuning, and return a clone of `params` with `(sns_strength,
+/// filter_strength, filter_sharpness, num_segments)` overridden and
+/// `preset` set to a concrete (non-Auto) value so the inner encoder's
+/// own classifier short-circuits. Returns `None` when no override is
+/// needed (analyzer off, preset != Auto, layout unsupported, etc.).
+#[cfg(feature = "analyzer")]
+fn resolve_auto_preset_via_analyzer(
+    params: &super::api::EncoderParams,
+    data: &[u8],
+    width: u32,
+    height: u32,
+    stride: usize,
+    color: PixelLayout,
+) -> Option<super::api::EncoderParams> {
+    use crate::encoder::analysis::{
+        classifier::classify_image_type_rgb8, classifier::rgba8_to_rgb8, content_type_to_tuning,
+    };
+    if params.preset != super::api::Preset::Auto {
+        return None;
+    }
+    // Only apply when the user did NOT explicitly override these knobs;
+    // their config_to_params lowering doesn't preserve "explicit vs
+    // preset-default", so this is best-effort: we always set the four
+    // tuning fields when running on an Auto preset.
+    let bucket = match color {
+        PixelLayout::Rgb8 if stride == width as usize => {
+            let n = (width as usize) * (height as usize) * 3;
+            if data.len() >= n {
+                classify_image_type_rgb8(&data[..n], width, height)
+            } else {
+                return None;
+            }
+        }
+        PixelLayout::Rgba8 if stride == width as usize => {
+            let n = (width as usize) * (height as usize) * 4;
+            if data.len() < n {
+                return None;
+            }
+            // zenanalyze accepts RGBA8 via PixelSlice, but the rgb8
+            // convenience entry wants RGB. Strip alpha into a transient
+            // RGB buffer (one extra pass over the source).
+            let rgb = rgba8_to_rgb8(&data[..n]);
+            classify_image_type_rgb8(&rgb, width, height)
+        }
+        _ => return None,
+    };
+    let (sns, filter, sharp, segs) = content_type_to_tuning(bucket);
+    let mut p = params.clone();
+    p.sns_strength = sns;
+    p.filter_strength = filter;
+    p.filter_sharpness = sharp;
+    p.num_segments = segs;
+    // Map the bucket back to a concrete preset so the inner classifier
+    // path short-circuits. Photo bucket -> Preset::Photo, Drawing/Text
+    // -> Default (Drawing/Text presets compress worse — see the inner
+    // classifier's notes), Icon -> Preset::Icon.
+    p.preset = match bucket {
+        crate::encoder::analysis::ImageContentType::Photo => super::api::Preset::Photo,
+        crate::encoder::analysis::ImageContentType::Drawing
+        | crate::encoder::analysis::ImageContentType::Text => super::api::Preset::Default,
+        crate::encoder::analysis::ImageContentType::Icon => super::api::Preset::Icon,
+    };
+    Some(p)
+}
+
+#[cfg(not(feature = "analyzer"))]
+fn resolve_auto_preset_via_analyzer(
+    _params: &super::api::EncoderParams,
+    _data: &[u8],
+    _width: u32,
+    _height: u32,
+    _stride: usize,
+    _color: PixelLayout,
+) -> Option<super::api::EncoderParams> {
+    None
 }
 
 /// Encode a single frame, automatically retrying with increasing partition_limit
@@ -2172,20 +2259,27 @@ pub(crate) fn encode_frame_lossy_with_diagnostics(
     stop: &dyn enough::Stop,
     progress: &dyn super::api::EncodeProgress,
 ) -> super::api::EncodeResult<(super::api::EncodeStats, super::api::EncodeDiagnostics)> {
-    let width = width
+    let width_u16: u16 = width
         .try_into()
         .map_err(|_| at!(EncodeError::InvalidDimensions))?;
-    let height = height
+    let height_u16: u16 = height
         .try_into()
         .map_err(|_| at!(EncodeError::InvalidDimensions))?;
+
+    // Pre-resolve Auto preset via zenanalyze when the `analyzer`
+    // feature is on. See `resolve_auto_preset_via_analyzer`.
+    let resolved_params =
+        resolve_auto_preset_via_analyzer(params, data, width, height, stride, color);
+    let params = resolved_params.as_ref().unwrap_or(params);
 
     // Same partition-retry semantics as `encode_with_partition_retry`,
     // but we hold onto the Vp8Encoder so we can take its segment_map out
     // after a successful encode.
     if params.partition_limit.is_some() {
         let mut vp8_encoder = Vp8Encoder::new(writer);
-        let stats =
-            vp8_encoder.encode_image(data, color, width, height, stride, params, stop, progress)?;
+        let stats = vp8_encoder.encode_image(
+            data, color, width_u16, height_u16, stride, params, stop, progress,
+        )?;
         let diag = vp8_encoder.into_diagnostics();
         return Ok((stats, diag));
     }
@@ -2203,8 +2297,8 @@ pub(crate) fn encode_frame_lossy_with_diagnostics(
         match vp8_encoder.encode_image(
             data,
             color,
-            width,
-            height,
+            width_u16,
+            height_u16,
             stride,
             &trial_params,
             stop,

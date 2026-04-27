@@ -39,6 +39,10 @@ magetypes = { version = "0.9.15" }
 rgb = { version = "0.8", optional = true, default-features = false, features = ["as-bytes"] }
 imgref = { version = "1.12", optional = true, default-features = false }
 zensim = { version = "0.2", optional = true }
+# zenanalyze is the shared streaming feature scanner used by zen* codecs.
+# Path-pinned because zenanalyze is not yet on crates.io (verified 2026-04-27).
+# Update to a published version once 0.1.0 lands on crates.io.
+zenanalyze = { path = "../zenjpeg--zenanalyze/zenanalyze", optional = true }
 
 [dev-dependencies]
 archmage = { version = "0.9.15", features = ["std", "macros"] }
@@ -102,6 +106,11 @@ zencodec = ["dep:zencodec", "dep:self_cell"]
 # decodes → measures → adjusts global VP8 quality until it lands in
 # the target band. See `LossyConfig::with_target_zensim`.
 target-zensim = ["dep:zensim", "std"]
+# Use zenanalyze for content classification (auto-preset detection,
+# target_zensim bucket detection, target_zensim starting-q calibration).
+# When off, falls back to zenwebp's homegrown alpha-histogram classifier.
+# Opt-in for now; may become default once the threshold contract stabilises.
+analyzer = ["dep:zenanalyze"]
 # dev-only — enables runtime ablation toggles read from environment
 # variables for `dev/zensim_*.rs` measurement binaries. Production
 # builds should leave this off so the iteration hot path makes no

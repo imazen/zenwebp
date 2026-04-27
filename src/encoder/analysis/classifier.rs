@@ -427,6 +427,169 @@ fn compute_color_uniformity(y_src: &[u8], width: usize, height: usize, y_stride:
     uniform_count as f32 / total_blocks as f32
 }
 
+/// Classify image content type via the `zenanalyze` shared scanner.
+///
+/// One streaming pass over the RGB(A)8 source extracts the soft
+/// content-class likelihoods (`ScreenContentLikelihood`,
+/// `TextLikelihood`, `NaturalLikelihood`) plus the cheap palette /
+/// flat-colour signals that distinguish "screenshot or UI graphic"
+/// from "natural photograph". This replaces the homegrown
+/// `classify_image_type` heuristic (alpha histogram + Y-plane edge /
+/// uniformity scan) with a single shared signal source, so the same
+/// thresholds drive zenwebp / zenjpeg / zenavif preset selection.
+///
+/// Threshold rationale (ScreenContent ≥ 0.6, Text ≥ 0.5,
+/// FlatColorBlockRatio ≥ 0.20): these are starting points distilled
+/// from zenanalyze's documented behaviour (photos cluster
+/// `ScreenContentLikelihood` below 0.05, screen content above 0.7;
+/// ROC-AUC 0.978 at the default budget). Tune against the
+/// `auto_detection_tuning` corpus; do not relax thresholds without
+/// confirming the test floors still hold.
+///
+/// `width` and `height` ≤ 128 still routes to `Icon` (preserves
+/// the existing small-image carve-out).
+#[cfg(feature = "analyzer")]
+pub fn classify_image_type_rgb8(rgb: &[u8], width: u32, height: u32) -> ImageContentType {
+    if width <= 128 && height <= 128 {
+        return ImageContentType::Icon;
+    }
+    if rgb.len() != (width as usize) * (height as usize) * 3 {
+        // Defensive — caller should have validated, but never panic
+        // inside the classifier. Falls back to Photo (the default
+        // bucket libwebp uses absent any signal).
+        return ImageContentType::Photo;
+    }
+    use zenanalyze::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
+    const FEATURES: FeatureSet = FeatureSet::new()
+        .with(AnalysisFeature::ScreenContentLikelihood)
+        .with(AnalysisFeature::TextLikelihood)
+        .with(AnalysisFeature::NaturalLikelihood)
+        .with(AnalysisFeature::FlatColorBlockRatio)
+        .with(AnalysisFeature::DistinctColorBins);
+    let q = AnalysisQuery::new(FEATURES);
+    let r = match zenanalyze::try_analyze_features_rgb8(rgb, width, height, &q) {
+        Ok(r) => r,
+        Err(_) => return ImageContentType::Photo,
+    };
+    let screen = r.get_f32(AnalysisFeature::ScreenContentLikelihood).unwrap_or(0.0);
+    let text = r.get_f32(AnalysisFeature::TextLikelihood).unwrap_or(0.0);
+    let _natural = r.get_f32(AnalysisFeature::NaturalLikelihood).unwrap_or(0.0);
+    let flat_blocks = r.get_f32(AnalysisFeature::FlatColorBlockRatio).unwrap_or(0.0);
+    let distinct_bins = r
+        .get(AnalysisFeature::DistinctColorBins)
+        .and_then(|v| v.as_u32())
+        .unwrap_or(u32::MAX);
+
+    // Screen content / text / palette-friendly content -> Drawing bucket.
+    // Drawing in zenwebp uses Default tuning (SNS=50, filter=60), which
+    // empirically beats Photo tuning (SNS=80) on screenshots and UI.
+    let is_screen = screen > 0.6 || text > 0.5;
+    let is_palettey = flat_blocks > 0.20 && distinct_bins < 4096;
+    if is_screen || is_palettey {
+        ImageContentType::Drawing
+    } else {
+        ImageContentType::Photo
+    }
+}
+
+/// Diagnostic variant of [`classify_image_type_rgb8`] returning the
+/// raw zenanalyze signals alongside the bucket decision. Used by the
+/// classifier-comparison harness in `dev/`.
+#[cfg(feature = "analyzer")]
+pub fn classify_image_type_rgb8_diag(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+) -> (ImageContentType, ZenanalyzeDiag) {
+    if width <= 128 && height <= 128 {
+        return (ImageContentType::Icon, ZenanalyzeDiag::default());
+    }
+    if rgb.len() != (width as usize) * (height as usize) * 3 {
+        return (ImageContentType::Photo, ZenanalyzeDiag::default());
+    }
+    use zenanalyze::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
+    const FEATURES: FeatureSet = FeatureSet::new()
+        .with(AnalysisFeature::ScreenContentLikelihood)
+        .with(AnalysisFeature::TextLikelihood)
+        .with(AnalysisFeature::NaturalLikelihood)
+        .with(AnalysisFeature::FlatColorBlockRatio)
+        .with(AnalysisFeature::DistinctColorBins)
+        .with(AnalysisFeature::Variance)
+        .with(AnalysisFeature::EdgeDensity)
+        .with(AnalysisFeature::Uniformity)
+        .with(AnalysisFeature::HighFreqEnergyRatio);
+    let q = AnalysisQuery::new(FEATURES);
+    let r = match zenanalyze::try_analyze_features_rgb8(rgb, width, height, &q) {
+        Ok(r) => r,
+        Err(_) => return (ImageContentType::Photo, ZenanalyzeDiag::default()),
+    };
+    let diag = ZenanalyzeDiag {
+        screen_content: r.get_f32(AnalysisFeature::ScreenContentLikelihood).unwrap_or(0.0),
+        text_likelihood: r.get_f32(AnalysisFeature::TextLikelihood).unwrap_or(0.0),
+        natural_likelihood: r.get_f32(AnalysisFeature::NaturalLikelihood).unwrap_or(0.0),
+        flat_color_block_ratio: r.get_f32(AnalysisFeature::FlatColorBlockRatio).unwrap_or(0.0),
+        distinct_color_bins: r
+            .get(AnalysisFeature::DistinctColorBins)
+            .and_then(|v| v.as_u32())
+            .unwrap_or(0),
+        variance: r.get_f32(AnalysisFeature::Variance).unwrap_or(0.0),
+        edge_density: r.get_f32(AnalysisFeature::EdgeDensity).unwrap_or(0.0),
+        uniformity: r.get_f32(AnalysisFeature::Uniformity).unwrap_or(0.0),
+        high_freq_energy_ratio: r.get_f32(AnalysisFeature::HighFreqEnergyRatio).unwrap_or(0.0),
+    };
+    let is_screen = diag.screen_content > 0.6 || diag.text_likelihood > 0.5;
+    let is_palettey = diag.flat_color_block_ratio > 0.20 && diag.distinct_color_bins < 4096;
+    let bucket = if is_screen || is_palettey {
+        ImageContentType::Drawing
+    } else {
+        ImageContentType::Photo
+    };
+    (bucket, diag)
+}
+
+/// Streaming-analyzer signals for diagnostic and calibration use.
+///
+/// All fields are zenanalyze stable (non-experimental) features so the
+/// numeric scale is governed by the crate's threshold contract.
+#[cfg(feature = "analyzer")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ZenanalyzeDiag {
+    /// `[0, 1]` soft score: UI / chart / synthetic content.
+    pub screen_content: f32,
+    /// `[0, 1]` soft score: rendered text / document content.
+    pub text_likelihood: f32,
+    /// `[0, 1]` soft score: natural photographic content.
+    pub natural_likelihood: f32,
+    /// Fraction of 8×8 blocks with R/G/B ranges all ≤ 4.
+    pub flat_color_block_ratio: f32,
+    /// Distinct 5-bit-per-channel RGB bins observed.
+    pub distinct_color_bins: u32,
+    /// Luma variance on BT.601 [0, 255] scale.
+    pub variance: f32,
+    /// Fraction of sampled interior pixels with `|∇L| > 20`.
+    pub edge_density: f32,
+    /// Fraction of 8×8 blocks with luma variance < 25.
+    pub uniformity: f32,
+    /// `Σ AC[k≥16] / Σ AC[k∈1..16]` over sampled luma blocks.
+    pub high_freq_energy_ratio: f32,
+}
+
+/// Convert RGBA8 to RGB8 (drops the alpha channel) for the classifier.
+/// `analyze_features` could ingest RGBA8 directly via PixelSlice; this
+/// helper exists because the classifier entry deliberately stays
+/// rgb8-only to keep the API surface small.
+#[cfg(feature = "analyzer")]
+pub fn rgba8_to_rgb8(rgba: &[u8]) -> alloc::vec::Vec<u8> {
+    use alloc::vec::Vec;
+    let mut out = Vec::with_capacity(rgba.len() / 4 * 3);
+    for px in rgba.chunks_exact(4) {
+        out.push(px[0]);
+        out.push(px[1]);
+        out.push(px[2]);
+    }
+    out
+}
+
 /// Get tuning parameters for a detected content type.
 /// Returns (sns_strength, filter_strength, filter_sharpness, num_segments).
 pub fn content_type_to_tuning(content_type: ImageContentType) -> (u8, u8, u8, u8) {
