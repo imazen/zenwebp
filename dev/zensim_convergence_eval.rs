@@ -7,7 +7,7 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-use zenwebp::{LossyConfig, ZensimTarget};
+use zenwebp::{EncodeRequest, LossyConfig, PixelLayout, ZensimTarget};
 
 fn main() {
     let corpus_dir = env::args().nth(1).unwrap_or_else(|| {
@@ -63,7 +63,8 @@ fn main() {
                 .with_max_overshoot(Some(1.5))
                 .with_max_passes(max_passes),
         );
-        let result = cfg.encode_rgb_with_metrics(&rgb, w, h);
+        let result =
+            EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h).encode_with_metrics();
         match result {
             Ok((b, m)) => {
                 eprintln!(

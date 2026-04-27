@@ -1388,8 +1388,19 @@ impl<'a> EncodeRequest<'a> {
     }
 
     /// Encode to WebP bytes.
+    ///
+    /// When the lossy config has `target_zensim` set and the
+    /// `target-zensim` crate feature is enabled, the encoder runs a
+    /// closed-loop iteration (encode → decode → measure → adjust)
+    /// transparently and returns the converged bytes. Use
+    /// [`Self::encode_with_metrics`] if you also need the
+    /// [`ZensimEncodeMetrics`] (achieved score, passes used,
+    /// targets-met flag).
     #[track_caller]
     pub fn encode(self) -> EncodeResult<Vec<u8>> {
+        if let Some(bytes) = self.try_encode_target_zensim_bytes()? {
+            return Ok(bytes);
+        }
         let (output, _stats) = self.encode_inner()?;
         Ok(output)
     }
@@ -1406,6 +1417,89 @@ impl<'a> EncodeRequest<'a> {
     #[track_caller]
     pub fn encode_with_stats(self) -> EncodeResult<(Vec<u8>, EncodeStats)> {
         self.encode_inner()
+    }
+
+    /// Encode to WebP bytes alongside [`ZensimEncodeMetrics`].
+    ///
+    /// When the lossy config has `target_zensim` set and the
+    /// `target-zensim` crate feature is enabled (with RGB8 input), the
+    /// encoder runs a closed-loop iteration and reports the achieved
+    /// zensim score, passes used, and `targets_met` flag in the
+    /// returned metrics. In every other case (no target, feature
+    /// disabled, lossless, non-RGB8 layout), the metrics are filled
+    /// via [`ZensimEncodeMetrics::no_target`] — score `NaN`,
+    /// `passes_used=1`, `targets_met=true`.
+    ///
+    /// Mirrors the shape of zenjpeg's
+    /// `BytesEncoder::finish_with_metrics()`.
+    #[track_caller]
+    pub fn encode_with_metrics(
+        self,
+    ) -> EncodeResult<(Vec<u8>, super::zensim_target::ZensimEncodeMetrics)> {
+        if let Some(pair) = self.try_encode_target_zensim_with_metrics()? {
+            return Ok(pair);
+        }
+        let (output, _stats) = self.encode_inner()?;
+        let len = output.len();
+        Ok((
+            output,
+            super::zensim_target::ZensimEncodeMetrics::no_target(len),
+        ))
+    }
+
+    /// If this request targets a lossy config with `target_zensim`
+    /// set, RGB8 input, no stride override, and the `target-zensim`
+    /// feature is on, run the iteration loop and return the converged
+    /// bytes. Otherwise returns `Ok(None)` so the caller can fall
+    /// back to the normal single-pass path.
+    fn try_encode_target_zensim_bytes(&self) -> EncodeResult<Option<Vec<u8>>> {
+        match self.try_encode_target_zensim_with_metrics()? {
+            Some((bytes, _m)) => Ok(Some(bytes)),
+            None => Ok(None),
+        }
+    }
+
+    /// Same as [`Self::try_encode_target_zensim_bytes`] but also
+    /// returns the metrics. The iteration loop is always RGB8-only,
+    /// no stride, lossy config; the metadata fields (icc/exif/xmp) are
+    /// not currently honored on the iteration path — if any are set
+    /// we fall back to a single-pass encode and return `None` so the
+    /// caller can take the normal path. (TODO: thread metadata
+    /// through iteration once a user needs it.)
+    #[allow(clippy::unnecessary_wraps)] // signature aligns with feature-on counterpart
+    fn try_encode_target_zensim_with_metrics(
+        &self,
+    ) -> EncodeResult<Option<(Vec<u8>, super::zensim_target::ZensimEncodeMetrics)>> {
+        // Only RGB8 lossy configs with target_zensim set and no
+        // metadata/stride trigger the iteration path. Everything else
+        // returns None so the caller falls back to encode_inner.
+        let lossy = match &self.config {
+            ConfigKind::Lossy(cfg) => *cfg,
+            ConfigKind::Lossless(_) => return Ok(None),
+            ConfigKind::Enum(config::EncoderConfig::Lossy(cfg)) => cfg,
+            ConfigKind::Enum(config::EncoderConfig::Lossless(_)) => return Ok(None),
+        };
+        if lossy.target_zensim.is_none() {
+            return Ok(None);
+        }
+        if self.color_type != PixelLayout::Rgb8 {
+            return Ok(None);
+        }
+        if self.stride_pixels.is_some() {
+            return Ok(None);
+        }
+        if self.icc_profile.is_some()
+            || self.exif_metadata.is_some()
+            || self.xmp_metadata.is_some()
+        {
+            // Iteration loop currently doesn't thread metadata
+            // through. Take the safe path.
+            return Ok(None);
+        }
+        let pair = lossy
+            .encode_rgb_with_metrics(self.pixels, self.width, self.height)
+            .map_err(|e| at!(e))?;
+        Ok(Some(pair))
     }
 
     /// Encode to WebP, writing to an [`io::Write`](std::io::Write) implementor.

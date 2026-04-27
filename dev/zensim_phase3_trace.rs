@@ -20,7 +20,9 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+use zenwebp::EncodeRequest;
 use zenwebp::LossyConfig;
+use zenwebp::PixelLayout;
 use zenwebp::ZensimTarget;
 
 mod env_set {
@@ -170,7 +172,9 @@ fn main() {
                         .with_max_overshoot(Some(max_overshoot))
                         .with_max_passes(max_passes),
                 );
-            let (b, m) = cfg.encode_rgb_with_metrics(&rgb, w, h).expect("encode");
+            let (b, m) = EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h)
+                .encode_with_metrics()
+                .expect("encode");
             eprintln!(
                 "===RESULT=== variant={variant} img={} achieved={:.4} bytes={} passes={} met={}",
                 img_path.display(),

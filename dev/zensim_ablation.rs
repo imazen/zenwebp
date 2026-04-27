@@ -43,7 +43,9 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
+use zenwebp::EncodeRequest;
 use zenwebp::LossyConfig;
+use zenwebp::PixelLayout;
 use zenwebp::ZensimTarget;
 
 #[derive(Clone)]
@@ -529,8 +531,8 @@ fn run(
                 .with_max_overshoot(Some(max_overshoot))
                 .with_max_passes(max_passes),
         );
-    let (b, m) = cfg
-        .encode_rgb_with_metrics(rgb, w, h)
+    let (b, m) = EncodeRequest::lossy(&cfg, rgb, PixelLayout::Rgb8, w, h)
+        .encode_with_metrics()
         .expect("encode failed");
     Outcome {
         score: m.achieved_score,

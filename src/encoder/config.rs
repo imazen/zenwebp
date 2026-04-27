@@ -374,13 +374,19 @@ impl LossyConfig {
         .peak_memory_bytes_max
     }
 
-    /// Encode an interleaved RGB8 buffer (`width * height * 3` bytes) and
-    /// return both the WebP bytes and any [`ZensimEncodeMetrics`] from a
-    /// `target_zensim` iteration. For non-target-zensim configs the
-    /// metrics struct is filled with the
+    /// Crate-internal: encode an interleaved RGB8 buffer
+    /// (`width * height * 3` bytes) and return both the WebP bytes and
+    /// any [`ZensimEncodeMetrics`] from a `target_zensim` iteration.
+    /// For non-target-zensim configs the metrics struct is filled with
+    /// the
     /// [`ZensimEncodeMetrics::no_target`](super::zensim_target::ZensimEncodeMetrics::no_target)
     /// variant — `targets_met=true`, `passes_used=1`, score `NaN`.
-    pub fn encode_rgb_with_metrics(
+    ///
+    /// This is the iteration loop's internal entry. Public callers
+    /// reach the same machinery via
+    /// [`EncodeRequest::encode_with_metrics`](super::api::EncodeRequest::encode_with_metrics)
+    /// or [`EncodeRequest::encode`](super::api::EncodeRequest::encode).
+    pub(crate) fn encode_rgb_with_metrics(
         &self,
         rgb: &[u8],
         width: u32,
@@ -395,17 +401,6 @@ impl LossyConfig {
         encode_rgb_with_metrics_impl(self, rgb, width, height)
     }
 
-    /// Encode an interleaved RGB8 buffer using `target_zensim` if set,
-    /// returning just the bytes. Convenience over
-    /// [`encode_rgb_with_metrics`](Self::encode_rgb_with_metrics).
-    pub fn encode_rgb(
-        &self,
-        rgb: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<alloc::vec::Vec<u8>, super::api::EncodeError> {
-        Ok(self.encode_rgb_with_metrics(rgb, width, height)?.0)
-    }
 }
 
 /// Configuration for lossless (VP8L) encoding.

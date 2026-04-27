@@ -8,7 +8,7 @@
 
 #![cfg(feature = "target-zensim")]
 
-use zenwebp::{LossyConfig, ZensimEncodeMetrics, ZensimTarget};
+use zenwebp::{EncodeRequest, LossyConfig, PixelLayout, ZensimEncodeMetrics, ZensimTarget};
 
 /// Build a 256×256 RGB8 mixed-content image: smooth gradient + low-
 /// amplitude band-limited "natural" texture. Designed to give the
@@ -63,8 +63,8 @@ fn converges_to_target_80_within_two_passes() {
     let (rgb, w, h) = mixed_content_256();
     let cfg = LossyConfig::new().with_method(4).with_target_zensim(80.0);
 
-    let (bytes, metrics) = cfg
-        .encode_rgb_with_metrics(&rgb, w, h)
+    let (bytes, metrics) = EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h)
+        .encode_with_metrics()
         .expect("encode failed");
 
     assert!(!bytes.is_empty(), "encoder produced no bytes");
@@ -88,8 +88,8 @@ fn converges_to_target_80_within_two_passes() {
 fn metrics_no_target_when_disabled() {
     let (rgb, w, h) = smooth_gradient_256();
     let cfg = LossyConfig::new().with_method(4).with_quality(75.0);
-    let (bytes, metrics) = cfg
-        .encode_rgb_with_metrics(&rgb, w, h)
+    let (bytes, metrics) = EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h)
+        .encode_with_metrics()
         .expect("encode failed");
     assert!(!bytes.is_empty());
     assert!(metrics.achieved_score.is_nan(), "no_target should be NaN");
@@ -122,7 +122,7 @@ fn strict_undershoot_errors_on_unreachable_target() {
         .with_method(4)
         .with_target_zensim_target(target2);
     let _ = cfg; // suppress unused
-    let result = cfg2.encode_rgb_with_metrics(&rgb, w, h);
+    let result = EncodeRequest::lossy(&cfg2, &rgb, PixelLayout::Rgb8, w, h).encode_with_metrics();
     assert!(
         result.is_err(),
         "expected strict-mode error for unreachable target 99 on mixed content; got Ok"
@@ -139,9 +139,10 @@ fn bytes_recovery_drops_size_when_overshooting() {
             .with_max_overshoot(Some(0.5))
             .with_max_passes(2),
     );
-    let (bytes_two_pass, metrics) = cfg_low_target
-        .encode_rgb_with_metrics(&rgb, w, h)
-        .expect("encode failed");
+    let (bytes_two_pass, metrics) =
+        EncodeRequest::lossy(&cfg_low_target, &rgb, PixelLayout::Rgb8, w, h)
+            .encode_with_metrics()
+            .expect("encode failed");
 
     // For comparison: single-pass (max_passes=1) just ships the
     // calibrated start, no claw-back.
@@ -150,8 +151,8 @@ fn bytes_recovery_drops_size_when_overshooting() {
             .with_max_overshoot(Some(0.5))
             .with_max_passes(1),
     );
-    let (bytes_one_pass, _m1) = cfg_one_pass
-        .encode_rgb_with_metrics(&rgb, w, h)
+    let (bytes_one_pass, _m1) = EncodeRequest::lossy(&cfg_one_pass, &rgb, PixelLayout::Rgb8, w, h)
+        .encode_with_metrics()
         .expect("encode failed");
 
     // If pass 1 was already in band, claw-back doesn't run. Skip the
@@ -232,8 +233,8 @@ fn per_segment_correction_converges_on_color_blocks() {
                 .with_max_overshoot(Some(2.0))
                 .with_max_passes(3),
         );
-    let (bytes, metrics) = cfg
-        .encode_rgb_with_metrics(&rgb, w, h)
+    let (bytes, metrics) = EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h)
+        .encode_with_metrics()
         .expect("encode failed");
     assert!(!bytes.is_empty());
     assert!(metrics.passes_used <= 3);
@@ -270,8 +271,8 @@ fn per_segment_disabled_when_one_segment() {
                 .with_max_overshoot(Some(2.0))
                 .with_max_passes(3),
         );
-    let (bytes, metrics) = cfg
-        .encode_rgb_with_metrics(&rgb, w, h)
+    let (bytes, metrics) = EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h)
+        .encode_with_metrics()
         .expect("encode failed");
     assert!(!bytes.is_empty());
     assert!(
@@ -285,11 +286,11 @@ fn per_segment_disabled_when_one_segment() {
 fn metrics_no_target_helper_exists() {
     // ZensimEncodeMetrics is in the public API; smoke-test the no-target
     // path. The struct itself is `#[non_exhaustive]` so callers don't
-    // construct it directly — they observe it from encode_rgb_with_metrics.
+    // construct it directly — they observe it from encode_with_metrics.
     let cfg = LossyConfig::new();
     let (rgb, w, h) = smooth_gradient_256();
-    let (_bytes, m) = cfg
-        .encode_rgb_with_metrics(&rgb, w, h)
+    let (_bytes, m) = EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h)
+        .encode_with_metrics()
         .expect("encode failed");
     assert!(m.bytes > 0);
     assert!(m.targets_met);
