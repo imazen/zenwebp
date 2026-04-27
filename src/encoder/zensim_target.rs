@@ -257,7 +257,7 @@ fn interpolate_anchors(target: f32, anchors: &[(f32, f32)]) -> f32 {
 pub(crate) mod iteration {
     use super::*;
     use crate::PixelLayout;
-    use crate::encoder::api::EncodeError;
+    use crate::encoder::api::{EncodeDiagnostics, EncodeError};
     use crate::encoder::config::LossyConfig;
     use alloc::format;
     use alloc::vec::Vec;
@@ -297,8 +297,11 @@ pub(crate) mod iteration {
         };
         q = q.clamp(0.0, 100.0);
 
-        // 3. Encode pass 0 (global-q, no per-segment overrides).
-        let bytes0 = encode_at(cfg, q, false, None, rgb, width, height)?;
+        // 3. Encode pass 0 (global-q, no per-segment overrides). Pass 0
+        // also captures the encoder's per-MB segment_map via the internal
+        // `EncodeDiagnostics` struct so Phase 3 can aggregate the diffmap
+        // per real k-means segment instead of a 2x2 spatial proxy.
+        let (bytes0, diag0) = encode_at_with_diagnostics(cfg, q, false, None, rgb, width, height)?;
         let max_passes = target.max_passes.max(1);
 
         if max_passes <= 1 {
@@ -335,18 +338,24 @@ pub(crate) mod iteration {
             return finalize(best, 1, &target);
         }
 
-        // Per-segment correction setup. We use a 2x2 spatial-quadrant
-        // PROXY for the encoder's segment_map rather than exposing it
-        // through the public API (would require a `#[non_exhaustive]`
-        // SemVer break on `EncodeStats`). For most natural images the
-        // k-means-on-alpha segment assignment correlates strongly with
-        // spatial regions, so the proxy gets us the same shape of
-        // adjustment without piercing public API. For images where it
-        // doesn't (deeply intermixed textures), the global-q fallback
-        // still kicks in via the secant once one quadrant adjustment
-        // doesn't move the dial.
-        let num_segments = cfg.segments.unwrap_or(4) as usize;
-        let per_segment_enabled = num_segments > 1 && width >= 32 && height >= 32;
+        // Per-segment correction setup. Phase 3 uses the encoder's actual
+        // k-means `segment_map` (one segment_id per macroblock, threaded
+        // through via `pub(crate) EncodeDiagnostics` — see
+        // `encode_inner_with_diagnostics`). When the encoder reported
+        // `num_segments == 1` (segmentation disabled or simplified down
+        // to a single segment) or the segment_map is empty, we fall back
+        // to global-q correction.
+        let per_segment_enabled = diag0.num_segments > 1
+            && !diag0.segment_map.is_empty()
+            && diag0.mb_width > 0
+            && diag0.mb_height > 0;
+        let num_segments = diag0.num_segments as usize;
+        // The active diagnostics — segment_map and grid — used for
+        // per-segment aggregation. Updated each pass with the most recent
+        // probe's actual segment assignment (which can shift slightly
+        // across passes since segments depend on quality-affected
+        // segmentation thresholds).
+        let mut last_diag = diag0;
 
         // prev_probe holds the SECOND-most-recent (q, score) so the
         // secant fits a slope between it and the current (q, last_score).
@@ -364,17 +373,18 @@ pub(crate) mod iteration {
             let use_per_segment = per_segment_enabled;
 
             let (next_q, next_overrides) = if use_per_segment {
-                // Phase 3: aggregate diffmap into 4 spatial quadrants;
-                // tighten the worst quadrant or loosen the best when in
-                // claw-back.
+                // Phase 3: aggregate the per-pixel diffmap into per-MB
+                // means, then accumulate per real k-means segment using
+                // `last_diag.segment_map`. Tighten the worst-mean segment
+                // or loosen the best-mean segment in the claw-back case.
                 let new_overrides = next_segment_overrides(
                     cum_overrides,
                     &last_dm,
                     width,
                     height,
+                    &last_diag,
                     last_score,
                     &target,
-                    num_segments.min(4),
                 );
                 // Keep q the same when doing per-segment correction.
                 (last_q, Some(new_overrides))
@@ -395,7 +405,8 @@ pub(crate) mod iteration {
 
             // multi_pass_stats=true on probe encodes — small size win
             // amortizes across passes.
-            let bytes_n = encode_at(cfg, next_q, true, next_overrides, rgb, width, height)?;
+            let (bytes_n, diag_n) =
+                encode_at_with_diagnostics(cfg, next_q, true, next_overrides, rgb, width, height)?;
             let (score_n, dm_n) = measure_score_and_diffmap(&z, &pre, &bytes_n, width, height)?;
             let passes_used = pass + 1;
 
@@ -422,6 +433,16 @@ pub(crate) mod iteration {
             last_q = next_q;
             last_score = score_n;
             last_dm = dm_n;
+            // The encoder may re-segment differently when overrides shift
+            // the per-segment quants — refresh from the latest probe.
+            // (Only meaningful for the diffmap aggregation loop; if the
+            // new diag has fewer segments we just operate on the smaller
+            // index range, no re-init needed.)
+            // Discard the old diag so the next aggregation uses the
+            // assignment that produced `dm_n`.
+            // (Per-segment fallback flag stays whatever pass 0 decided.)
+            let _ = num_segments; // keep the per-segment count from pass 0
+            last_diag = diag_n;
         }
 
         finalize(best, max_passes, &target)
@@ -538,9 +559,15 @@ pub(crate) mod iteration {
     }
 
     /// Encode RGB pixels at the given quality with optional per-segment
-    /// quant-index overrides. `enable_multi_pass` toggles
-    /// `multi_pass_stats` for inside-the-loop probes.
-    fn encode_at(
+    /// quant-index overrides, returning the WebP bytes alongside the
+    /// encoder's per-MB `segment_map` (via the internal
+    /// [`EncodeDiagnostics`] companion struct). On-wire bytes are
+    /// byte-identical to the regular [`crate::EncodeRequest::encode`]
+    /// path for the same inputs.
+    ///
+    /// `enable_multi_pass` toggles `multi_pass_stats` on the probe — a
+    /// small size-saving option that amortizes across passes.
+    fn encode_at_with_diagnostics(
         cfg: &LossyConfig,
         q: f32,
         enable_multi_pass: bool,
@@ -548,7 +575,7 @@ pub(crate) mod iteration {
         rgb: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<Vec<u8>, EncodeError> {
+    ) -> Result<(Vec<u8>, EncodeDiagnostics), EncodeError> {
         let mut probe_cfg = cfg.clone();
         probe_cfg.quality = q.clamp(0.0, 100.0);
         probe_cfg.multi_pass_stats = enable_multi_pass;
@@ -566,8 +593,8 @@ pub(crate) mod iteration {
             width,
             height,
         );
-        match req.encode() {
-            Ok(bytes) => Ok(bytes),
+        match req.encode_inner_with_diagnostics() {
+            Ok((bytes, _stats, diag)) => Ok((bytes, diag)),
             Err(at_err) => Err(at_err.decompose().0),
         }
     }
@@ -631,58 +658,103 @@ pub(crate) mod iteration {
         Ok((score, dm.diffmap().to_vec()))
     }
 
-    /// Aggregate the per-pixel diffmap into 4 spatial quadrants
-    /// (top-left, top-right, bottom-left, bottom-right) → per-quadrant
-    /// mean → tighten the worst quadrant or loosen the best.
+    /// Aggregate the per-pixel diffmap into per-macroblock means, then
+    /// accumulate those into per-segment sums using the encoder's actual
+    /// k-means `segment_map`. Tightens the worst-mean segment or loosens
+    /// the best-mean segment in the claw-back case.
     ///
-    /// Why quadrants and not exact segments: the encoder's k-means
-    /// segment_map isn't exposed through the public API (adding it to
-    /// `EncodeStats` is a SemVer break). For most natural images,
-    /// k-means-on-alpha buckets correlate with spatial regions, so this
-    /// proxy gives roughly the same correction shape without piercing
-    /// public API.
+    /// Phase 3 used to do this against a 2x2 spatial quadrant proxy
+    /// because exposing the segment_map on `EncodeStats` would have been
+    /// a SemVer break. The real assignment is now threaded through the
+    /// `pub(crate) EncodeDiagnostics` companion struct
+    /// (`encode_inner_with_diagnostics`), so we operate on the encoder's
+    /// actual per-MB clustering — important because zenwebp's segments
+    /// are k-means in alpha-space, NOT spatial: an MB in the top-left
+    /// can share a segment with a same-alpha MB in the bottom-right and
+    /// the quadrant proxy would have lumped it elsewhere.
     ///
     /// Returns the NEW cumulative overrides (not deltas). Bounded to
-    /// `[-16, 16]` cumulatively to leave room for future passes and stay
-    /// in sensible VP8 quantizer range.
+    /// `[-16, 16]` cumulatively to stay in sensible VP8 quantizer range.
+    ///
+    /// MB-level aggregation: we walk the diffmap one MB at a time (16x16
+    /// pixel block) and add its mean to the appropriate segment's
+    /// accumulator. Edge MBs that overlap the right/bottom image border
+    /// are handled by clipping the read region.
     fn next_segment_overrides(
         cum: [i8; 4],
         diffmap: &[f32],
         width: u32,
         height: u32,
+        diag: &EncodeDiagnostics,
         score: f32,
         target: &ZensimTarget,
-        num_segments: usize,
     ) -> [i8; 4] {
-        let n = num_segments.clamp(2, 4);
-        let mut sum = [0.0f64; 4];
-        let mut count = [0u64; 4];
+        // A/B testing hatch: when the env var ZENWEBP_PHASE3_QUADRANT=1
+        // is set, fall back to the previous 2x2 spatial-quadrant proxy.
+        // Used by `dev/zensim_ab_quadrant_vs_segmap.rs` to compare the
+        // two aggregators side-by-side. Production never sets this.
+        // std-only since core::env doesn't expose `var`.
+        #[cfg(feature = "std")]
+        let use_quadrant = std::env::var("ZENWEBP_PHASE3_QUADRANT")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        #[cfg(not(feature = "std"))]
+        let use_quadrant = false;
+        if use_quadrant {
+            return next_segment_overrides_quadrant_proxy(
+                cum, diffmap, width, height, score, target,
+            );
+        }
+
+        let n = (diag.num_segments as usize).clamp(2, 4);
         let w = width as usize;
         let h = height as usize;
-        // Quadrant layout for n=4: TL=0, TR=1, BL=2, BR=3. For n=2,
-        // halve horizontally: L=0, R=1. For n=3, drop BR (treat it as
-        // BL).
-        let half_w = w / 2;
-        let half_h = h / 2;
-        for y in 0..h {
-            let row = &diffmap[y * w..y * w + w];
-            for (x, &v) in row.iter().enumerate() {
-                let q = match n {
-                    2 => usize::from(x >= half_w),
-                    _ => {
-                        let qx = usize::from(x >= half_w);
-                        let qy = usize::from(y >= half_h);
-                        let q4 = qy * 2 + qx;
-                        // For n=3, treat quadrant 3 as 2 (merge BL+BR).
-                        if n == 3 && q4 == 3 { 2 } else { q4 }
+        let mb_w = diag.mb_width as usize;
+        let mb_h = diag.mb_height as usize;
+        let expected = mb_w.saturating_mul(mb_h);
+        // Defensive: if the segment_map shape doesn't match the encoder
+        // grid (shouldn't happen, but the diag is plumbed through enough
+        // layers that it's worth guarding), fall back to no-op overrides.
+        if diag.segment_map.len() != expected || expected == 0 {
+            return cum;
+        }
+
+        let mut sum = [0.0f64; 4];
+        let mut count = [0u64; 4];
+
+        // Per-MB diffmap mean → accumulate into the MB's segment.
+        for mb_y in 0..mb_h {
+            let py0 = mb_y * 16;
+            let py1 = (py0 + 16).min(h);
+            if py0 >= h {
+                break;
+            }
+            for mb_x in 0..mb_w {
+                let px0 = mb_x * 16;
+                let px1 = (px0 + 16).min(w);
+                if px0 >= w {
+                    continue;
+                }
+                let seg = diag.segment_map[mb_y * mb_w + mb_x] as usize;
+                if seg >= n {
+                    continue;
+                }
+                let mut block_sum = 0.0f64;
+                let mut block_count = 0u64;
+                for py in py0..py1 {
+                    let row = &diffmap[py * w + px0..py * w + px1];
+                    for &v in row {
+                        block_sum += v as f64;
+                        block_count += 1;
                     }
-                };
-                if q < 4 {
-                    sum[q] += v as f64;
-                    count[q] += 1;
+                }
+                if block_count > 0 {
+                    sum[seg] += block_sum;
+                    count[seg] += block_count;
                 }
             }
         }
+
         let mut means = [0.0f32; 4];
         for s in 0..n {
             if count[s] > 0 {
@@ -690,7 +762,9 @@ pub(crate) mod iteration {
             }
         }
 
-        // Find worst (highest mean) and best (lowest mean) quadrants.
+        // Find worst (highest mean diffmap = most distorted) and best
+        // (lowest mean diffmap = highest fidelity headroom) segments,
+        // ignoring segments with no MB assignments.
         let mut worst = 0usize;
         let mut best = 0usize;
         let mut found_worst = false;
@@ -708,7 +782,86 @@ pub(crate) mod iteration {
                 found_best = true;
             }
         }
+        if !found_worst {
+            return cum;
+        }
 
+        let mut out = cum;
+        let gap = target.target - score;
+        if gap > 0.0 {
+            let step = if gap > 4.0 {
+                -3
+            } else if gap > 2.0 {
+                -2
+            } else {
+                -1
+            };
+            out[worst] = (i32::from(out[worst]) + step).clamp(-16, 16) as i8;
+        } else if let Some(t) = target.max_overshoot
+            && (score - target.target) > t
+        {
+            let overshoot = score - target.target - t;
+            let step = if overshoot > 4.0 {
+                3
+            } else if overshoot > 2.0 {
+                2
+            } else {
+                1
+            };
+            out[best] = (i32::from(out[best]) + step).clamp(-16, 16) as i8;
+        }
+        out
+    }
+
+    /// Pre-deviation aggregation: 2x2 spatial-quadrant proxy. Kept for
+    /// A/B comparison via `ZENWEBP_PHASE3_QUADRANT=1`. Production code
+    /// uses the real `segment_map` via [`next_segment_overrides`].
+    fn next_segment_overrides_quadrant_proxy(
+        cum: [i8; 4],
+        diffmap: &[f32],
+        width: u32,
+        height: u32,
+        score: f32,
+        target: &ZensimTarget,
+    ) -> [i8; 4] {
+        let n: usize = 4;
+        let mut sum = [0.0f64; 4];
+        let mut count = [0u64; 4];
+        let w = width as usize;
+        let h = height as usize;
+        let half_w = w / 2;
+        let half_h = h / 2;
+        for y in 0..h {
+            let row = &diffmap[y * w..y * w + w];
+            for (x, &v) in row.iter().enumerate() {
+                let qx = usize::from(x >= half_w);
+                let qy = usize::from(y >= half_h);
+                let q = qy * 2 + qx;
+                sum[q] += v as f64;
+                count[q] += 1;
+            }
+        }
+        let mut means = [0.0f32; 4];
+        for s in 0..n {
+            if count[s] > 0 {
+                means[s] = (sum[s] / count[s] as f64) as f32;
+            }
+        }
+        let mut worst = 0usize;
+        let mut best = 0usize;
+        let mut found = false;
+        for s in 0..n {
+            if count[s] == 0 {
+                continue;
+            }
+            if !found || means[s] > means[worst] {
+                worst = s;
+            }
+            if !found || means[s] < means[best] {
+                best = s;
+            }
+            found = true;
+        }
         let mut out = cum;
         let gap = target.target - score;
         if gap > 0.0 {

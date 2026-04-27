@@ -640,6 +640,21 @@ impl<'a> Vp8Encoder<'a> {
         }
     }
 
+    /// Take the encoder's segment_map and grid dimensions for diagnostics.
+    /// Used by the `target-zensim` closed-loop iteration to drive
+    /// per-segment correction from the encoder's actual k-means assignment
+    /// rather than a spatial proxy. Empty `segment_map` means segments
+    /// were disabled (`num_segments == 1`) or the analysis pass didn't run.
+    #[cfg(feature = "target-zensim")]
+    fn into_diagnostics(self) -> super::api::EncodeDiagnostics {
+        super::api::EncodeDiagnostics {
+            segment_map: self.segment_map,
+            mb_width: self.macroblock_width,
+            mb_height: self.macroblock_height,
+            num_segments: self.num_segments,
+        }
+    }
+
     /// Get the segment for a macroblock at (mbx, mby).
     ///
     /// When segments are enabled, looks up the segment ID from the segment map.
@@ -2085,6 +2100,90 @@ fn encode_with_partition_retry(
     }
 
     // All retry limits exhausted — return the last overflow error
+    Err(at!(last_overflow.unwrap_or(
+        EncodeError::Partition0Overflow {
+            size: 0,
+            max: (1 << 19) - 1,
+        }
+    )))
+}
+
+/// Encode a single lossy frame and return the resulting bytes alongside
+/// the encoder's per-MB segment_map and grid dimensions. Used by the
+/// `target-zensim` closed-loop iteration to make per-segment correction
+/// decisions against the encoder's real k-means assignment.
+///
+/// Mirrors [`encode_frame_lossy`] (with partition-retry) but routes through
+/// a path that retains access to the [`Vp8Encoder`] after `encode_image` so
+/// the segment_map can be taken out. The on-wire bytes are byte-identical
+/// to `encode_frame_lossy` for the same inputs.
+///
+/// Caller is responsible for skipping target_size / target_psnr / target_zensim
+/// recursion on the params (the iteration loop already does this).
+#[cfg(feature = "target-zensim")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_frame_lossy_with_diagnostics(
+    writer: &mut Vec<u8>,
+    data: &[u8],
+    width: u32,
+    height: u32,
+    stride: usize,
+    color: PixelLayout,
+    params: &super::api::EncoderParams,
+    stop: &dyn enough::Stop,
+    progress: &dyn super::api::EncodeProgress,
+) -> super::api::EncodeResult<(super::api::EncodeStats, super::api::EncodeDiagnostics)> {
+    let width = width
+        .try_into()
+        .map_err(|_| at!(EncodeError::InvalidDimensions))?;
+    let height = height
+        .try_into()
+        .map_err(|_| at!(EncodeError::InvalidDimensions))?;
+
+    // Same partition-retry semantics as `encode_with_partition_retry`,
+    // but we hold onto the Vp8Encoder so we can take its segment_map out
+    // after a successful encode.
+    if params.partition_limit.is_some() {
+        let mut vp8_encoder = Vp8Encoder::new(writer);
+        let stats =
+            vp8_encoder.encode_image(data, color, width, height, stride, params, stop, progress)?;
+        let diag = vp8_encoder.into_diagnostics();
+        return Ok((stats, diag));
+    }
+
+    const RETRY_LIMITS: [u8; 4] = [0, 40, 70, 100];
+    let mut last_overflow = None;
+    for &limit in &RETRY_LIMITS {
+        stop.check().map_err(|e| at!(EncodeError::from(e)))?;
+
+        let mut trial_buf = Vec::new();
+        let mut trial_params = params.clone();
+        trial_params.partition_limit = Some(limit);
+
+        let mut vp8_encoder = Vp8Encoder::new(&mut trial_buf);
+        match vp8_encoder.encode_image(
+            data,
+            color,
+            width,
+            height,
+            stride,
+            &trial_params,
+            stop,
+            progress,
+        ) {
+            Ok(stats) => {
+                let diag = vp8_encoder.into_diagnostics();
+                writer.extend_from_slice(&trial_buf);
+                return Ok((stats, diag));
+            }
+            Err(e @ EncodeError::Partition0Overflow { .. }) if limit < 100 => {
+                last_overflow = Some(e);
+                continue;
+            }
+            Err(e) => return Err(at!(e)),
+        }
+    }
+
     Err(at!(last_overflow.unwrap_or(
         EncodeError::Partition0Overflow {
             size: 0,

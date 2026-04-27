@@ -120,6 +120,11 @@ path = "dev/zensim_convergence_eval.rs"
 required-features = ["target-zensim"]
 
 [[example]]
+name = "zensim_ab_quadrant_vs_segmap"
+path = "dev/zensim_ab_quadrant_vs_segmap.rs"
+required-features = ["target-zensim"]
+
+[[example]]
 name = "empirical_sweep"
 path = "dev/empirical_sweep.rs"
 
