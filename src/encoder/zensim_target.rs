@@ -689,10 +689,31 @@ pub(crate) mod iteration {
         score: f32,
         target: &ZensimTarget,
     ) -> [i8; 4] {
-        // A/B testing hatch: when the env var ZENWEBP_PHASE3_QUADRANT=1
-        // is set, fall back to the previous 2x2 spatial-quadrant proxy.
-        // Used by `dev/zensim_ab_quadrant_vs_segmap.rs` to compare the
-        // two aggregators side-by-side. Production never sets this.
+        // Content-type-dependent fallback hatch: when the env var
+        // ZENWEBP_PHASE3_QUADRANT=1 is set, fall back to the 2x2
+        // spatial-quadrant proxy that this code shipped with originally.
+        //
+        // A/B run (CID22 + gb82 + gb82-sc, 76 images x 3 targets =
+        // 228 cells, target ∈ {75, 80, 85}, max_overshoot=1.5,
+        // max_passes=3, m4) shows mixed behavior:
+        //   - gb82-sc (screen content): real segment_map slightly
+        //     tighter (avg |achieved-target| 5.678 vs 5.754 for quad
+        //     across all 30 cells; -0.134 across the 17 divergent
+        //     cells). Hypothesis directionally validated.
+        //   - CID22 + gb82 (photos): quadrant proxy slightly tighter
+        //     (avg |achieved-target| +0.02 to +0.04 for seg across
+        //     ~114 divergent photo cells).
+        // Both legs hit targets_met = 228/228; seg has 6 fewer
+        // undershoots overall (54 vs 60). Median bytes within ~2% of
+        // each other.
+        //
+        // The default (real `segment_map`) is correct in spirit —
+        // it operates on the encoder's actual k-means assignment —
+        // but on photo content the quadrant proxy occasionally lands
+        // closer to target. Callers running large photo-only batches
+        // who care about |achieved - target| may want to set this env
+        // var. Used by `dev/zensim_ab_quadrant_vs_segmap.rs` to
+        // re-run the comparison.
         // std-only since core::env doesn't expose `var`.
         #[cfg(feature = "std")]
         let use_quadrant = std::env::var("ZENWEBP_PHASE3_QUADRANT")
