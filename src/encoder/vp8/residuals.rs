@@ -19,6 +19,16 @@ use crate::encoder::cost::{
 // Eliminates sentinel `prob == 0` branch per iteration in the hot loop.
 const DCT_CAT_LENGTHS: [usize; 6] = [1, 2, 3, 4, 5, 11];
 
+#[cfg(all(test, debug_assertions))]
+thread_local! {
+    /// Counts how many times the trellis-reuse cache assertion path runs.
+    /// Read by `trellis_reuse_assertion_is_actually_exercised_at_m6` to
+    /// verify the assertion isn't silently dormant. Test-only — gated on
+    /// `cfg(test)` so production builds carry no overhead.
+    pub(crate) static TRELLIS_REUSE_HITS: core::cell::Cell<u64> =
+        const { core::cell::Cell::new(0) };
+}
+
 // -----------------------------------------------------------------------
 // Token buffer for deferred coefficient encoding
 // -----------------------------------------------------------------------
@@ -1429,6 +1439,12 @@ impl<'a> super::Vp8Encoder<'a> {
                         // someone changes one of the inputs in only one place.
                         #[cfg(debug_assertions)]
                         {
+                            // Bump a thread-local counter so the verification test
+                            // (`trellis_reuse_assertion_is_actually_exercised_at_m6`)
+                            // can prove this path runs and the assertion isn't
+                            // silently dormant.
+                            #[cfg(test)]
+                            TRELLIS_REUSE_HITS.with(|c| c.set(c.get() + 1));
                             let mut coeffs_check = *block;
                             let mut zigzag_check = [0i32; 16];
                             let y1_matrix = self.segments[segment_id].y1_matrix.as_ref().unwrap();
@@ -1833,6 +1849,45 @@ mod token_buffer_tests {
         buf.begin_mb();
         let after_second = buf.tokens.len() as u32;
         assert_eq!(buf.mb_token_starts, vec![0, after_first, after_second]);
+    }
+
+    /// Verify that the trellis-reuse cache assertion in
+    /// record_residual_tokens_storing is actually reached by a debug-mode
+    /// m6 encode. Without this, the assertion could be silently dormant
+    /// (e.g. if do_trellis or pre_trellised_y1 plumbing breaks), giving
+    /// a false sense of protection. Counts cache-reuse hits via the
+    /// thread-local set inside the assert path; must be > 0.
+    #[test]
+    #[cfg(all(debug_assertions, feature = "std"))]
+    fn trellis_reuse_assertion_is_actually_exercised_at_m6() {
+        use crate::encoder::config::LossyConfig;
+        use crate::{EncodeRequest, PixelLayout};
+
+        TRELLIS_REUSE_HITS.with(|c| c.set(0));
+
+        // 64x64 structured-noise RGB. Picks varied modes; quality 75 keeps
+        // Y2 nonzero so trellis_quantize_block actually runs.
+        let mut img = Vec::with_capacity(64 * 64 * 3);
+        for y in 0u32..64 {
+            for x in 0u32..64 {
+                img.push((x * 7 ^ y * 11) as u8);
+                img.push((x * 13 ^ y * 17) as u8);
+                img.push((x * 19 ^ y * 23) as u8);
+            }
+        }
+        let cfg = LossyConfig::new().with_quality(75.0).with_method(6);
+        EncodeRequest::lossy(&cfg, &img, PixelLayout::Rgb8, 64, 64)
+            .encode()
+            .expect("m6 encode failed");
+
+        let hits = TRELLIS_REUSE_HITS.with(|c| c.get());
+        assert!(
+            hits > 0,
+            "trellis-reuse assertion path was never reached during m6 encode \
+             — the debug_assert provides no protection. \
+             do_trellis or pre_trellised_y1 plumbing may be broken."
+        );
+        eprintln!("[trellis-reuse instrumentation] m6 encode hit cache-reuse path {hits} times");
     }
 
     #[test]
