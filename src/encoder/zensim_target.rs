@@ -591,10 +591,22 @@ pub(crate) mod iteration {
                         cum_before=[{},{},{},{}] cum_after=[{},{},{},{}] picked_seg={:?} dir={}",
                         pass,
                         target.target - last_score,
-                        dec.means[0], dec.means[1], dec.means[2], dec.means[3],
-                        dec.counts[0], dec.counts[1], dec.counts[2], dec.counts[3],
-                        cum_overrides[0], cum_overrides[1], cum_overrides[2], cum_overrides[3],
-                        dec.overrides[0], dec.overrides[1], dec.overrides[2], dec.overrides[3],
+                        dec.means[0],
+                        dec.means[1],
+                        dec.means[2],
+                        dec.means[3],
+                        dec.counts[0],
+                        dec.counts[1],
+                        dec.counts[2],
+                        dec.counts[3],
+                        cum_overrides[0],
+                        cum_overrides[1],
+                        cum_overrides[2],
+                        cum_overrides[3],
+                        dec.overrides[0],
+                        dec.overrides[1],
+                        dec.overrides[2],
+                        dec.overrides[3],
                         dec.picked_seg,
                         dec.direction,
                     );
@@ -984,9 +996,8 @@ pub(crate) mod iteration {
         #[cfg(not(feature = "std"))]
         let use_quadrant = false;
         if use_quadrant {
-            let q_overrides = next_segment_overrides_quadrant_proxy(
-                cum, diffmap, width, height, score, target,
-            );
+            let q_overrides =
+                next_segment_overrides_quadrant_proxy(cum, diffmap, width, height, score, target);
             return OverrideDecision {
                 overrides: q_overrides,
                 means: [0.0; 4],

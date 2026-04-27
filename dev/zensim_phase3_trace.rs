@@ -129,16 +129,25 @@ fn main() {
             "--max-passes" => max_passes = args.next().unwrap().parse().unwrap(),
             "--method" => method = args.next().unwrap().parse().unwrap(),
             "--variants" => {
-                variants = args.next().unwrap().split(',').map(|s| s.to_string()).collect();
+                variants = args
+                    .next()
+                    .unwrap()
+                    .split(',')
+                    .map(|s| s.to_string())
+                    .collect();
             }
             other => panic!("unknown arg: {other}"),
         }
     }
     if images.is_empty() {
-        eprintln!("usage: --image <path> [--image ...] [--target 80] [--max-passes 3] [--variants baseline,noA]");
+        eprintln!(
+            "usage: --image <path> [--image ...] [--target 80] [--max-passes 3] [--variants baseline,noA]"
+        );
         std::process::exit(2);
     }
-    eprintln!("zensim_phase3_trace: target={target} max_overshoot={max_overshoot} max_passes={max_passes} method={method}");
+    eprintln!(
+        "zensim_phase3_trace: target={target} max_overshoot={max_overshoot} max_passes={max_passes} method={method}"
+    );
     eprintln!("variants: {:?}", variants);
 
     for variant in &variants {
