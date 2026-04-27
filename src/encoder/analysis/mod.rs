@@ -351,6 +351,48 @@ pub fn analyze_image(
     cost_model: crate::encoder::api::CostModel,
     quality: i32,
 ) -> AnalysisResult {
+    // Default behavior: collect FastMBAnalyze hints whenever libwebp would
+    // (method <= 1). Internal callers that already know the hints will be
+    // discarded (e.g. partition_limit will force I16-only) should call
+    // `analyze_image_with_hint_gate` directly to skip the per-MB DC sums.
+    analyze_image_with_hint_gate(
+        y_src,
+        u_src,
+        v_src,
+        width,
+        height,
+        y_stride,
+        uv_stride,
+        method,
+        sns_strength,
+        cost_model,
+        quality,
+        method <= 1,
+    )
+}
+
+/// Internal variant of [`analyze_image`] that lets the caller force-disable
+/// FastMBAnalyze hint collection.
+///
+/// `collect_mode_hints` overrides the default `method <= 1` decision. Setting
+/// it to `false` skips the per-MB 4×4-block DC sums that feed `fast_mb_analyze`.
+/// Useful when `partition_limit >= 100` will force I16-only mode selection
+/// regardless of the hint, so collecting it would be wasted work.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn analyze_image_with_hint_gate(
+    y_src: &[u8],
+    u_src: &[u8],
+    v_src: &[u8],
+    width: usize,
+    height: usize,
+    y_stride: usize,
+    uv_stride: usize,
+    method: u8,
+    sns_strength: u8,
+    cost_model: crate::encoder::api::CostModel,
+    quality: i32,
+    collect_mode_hints: bool,
+) -> AnalysisResult {
     let mut it = AnalysisIterator::new(width, height);
     it.reset();
 
@@ -359,8 +401,6 @@ pub fn analyze_image(
     let mut alpha_histogram = [0u32; 256];
     let mut uv_alpha_sum: i64 = 0;
 
-    // FastMBAnalyze is only used at method <= 1 in libwebp (analysis_enc.c:326-330).
-    let collect_mode_hints = method <= 1;
     let mut mb_mode_hints: Vec<MbModeHint> = if collect_mode_hints {
         Vec::with_capacity(total_mbs)
     } else {

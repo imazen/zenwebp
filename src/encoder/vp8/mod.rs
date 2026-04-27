@@ -36,12 +36,13 @@ use core::mem;
 #[allow(unused_imports)]
 use whereat::at;
 
+use super::analysis::analyze_image_with_hint_gate;
 use super::api::EncodeError;
 use super::api::PixelLayout;
 use super::arithmetic::ArithmeticEncoder;
 use super::cost::{
-    LevelCosts, ProbaStats, analyze_image, assign_segments_kmeans, classify_image_type,
-    compute_segment_quant, content_type_to_tuning,
+    LevelCosts, ProbaStats, assign_segments_kmeans, classify_image_type, compute_segment_quant,
+    content_type_to_tuning,
 };
 use super::vec_writer::VecWriter;
 use crate::common::prediction::*;
@@ -1573,8 +1574,16 @@ impl<'a> Vp8Encoder<'a> {
 
         // Run full DCT-based analysis pass using libwebp-compatible algorithm
         // This tests DC and TM modes for I16 and UV, computes per-MB alpha,
-        // and builds the alpha histogram
-        let analysis = analyze_image(
+        // and builds the alpha histogram.
+        //
+        // Gate FastMBAnalyze hint collection: libwebp populates hints whenever
+        // method <= 1, but the consumer (`choose_macroblock_info`) discards
+        // them when `partition_limit >= 100` because that mode forces I16-only
+        // anyway. Skipping the per-MB DC sums when we already know they'll be
+        // unused saves ~16 sums per MB on large noisy images that hit the
+        // partition_limit retry path.
+        let collect_mode_hints = self.method <= 1 && self.partition_limit < 100;
+        let analysis = analyze_image_with_hint_gate(
             &self.frame.ybuf,
             &self.frame.ubuf,
             &self.frame.vbuf,
@@ -1586,6 +1595,7 @@ impl<'a> Vp8Encoder<'a> {
             self.sns_strength,
             self.cost_model,
             i32::from(quality),
+            collect_mode_hints,
         );
 
         // Auto-detect content type when Preset::Auto is selected.
