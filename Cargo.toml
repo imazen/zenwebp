@@ -38,6 +38,7 @@ archmage = { version = "0.9.15", features = ["macros"] }
 magetypes = { version = "0.9.15" }
 rgb = { version = "0.8", optional = true, default-features = false, features = ["as-bytes"] }
 imgref = { version = "1.12", optional = true, default-features = false }
+zensim = { version = "0.2", optional = true }
 
 [dev-dependencies]
 archmage = { version = "0.9.15", features = ["std", "macros"] }
@@ -96,8 +97,48 @@ _wasm_profiling = ["std"]
 fast-yuv = []
 # Enable zencodec trait integration
 zencodec = ["dep:zencodec", "dep:self_cell"]
+# Enable target_zensim closed-loop adaptive encoder.
+# Pulls in zensim for perceptual measurement; iteration loop encodes →
+# decodes → measures → adjusts global VP8 quality until it lands in
+# the target band. See `LossyConfig::with_target_zensim`.
+target-zensim = ["dep:zensim", "std"]
+# dev-only — enables runtime ablation toggles read from environment
+# variables for `dev/zensim_*.rs` measurement binaries. Production
+# builds should leave this off so the iteration hot path makes no
+# `std::env::var` calls. See `src/encoder/zensim_target.rs` for the
+# list of toggles.
+ablation = ["target-zensim"]
 # Enable zennode pipeline node definitions
 # zennode = ["dep:zennode"]
+
+[[example]]
+name = "debug_zensim"
+path = "dev/debug_zensim.rs"
+
+[[example]]
+name = "zensim_calibrate"
+path = "dev/zensim_calibrate.rs"
+required-features = ["target-zensim"]
+
+[[example]]
+name = "zensim_convergence_eval"
+path = "dev/zensim_convergence_eval.rs"
+required-features = ["target-zensim"]
+
+[[example]]
+name = "zensim_ab_quadrant_vs_segmap"
+path = "dev/zensim_ab_quadrant_vs_segmap.rs"
+required-features = ["target-zensim", "ablation"]
+
+[[example]]
+name = "zensim_ablation"
+path = "dev/zensim_ablation.rs"
+required-features = ["target-zensim", "ablation"]
+
+[[example]]
+name = "zensim_phase3_trace"
+path = "dev/zensim_phase3_trace.rs"
+required-features = ["target-zensim", "ablation"]
 
 [[example]]
 name = "empirical_sweep"

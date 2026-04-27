@@ -580,6 +580,13 @@ pub struct EncoderParams {
     /// `target_size` / `target_zensim` search loops, or under
     /// `CostModel::StrictLibwebpParity`. Default `false`.
     pub(crate) multi_pass_stats: bool,
+    /// Per-segment additive offsets to the post-modulation quant_index
+    /// (applied AFTER `compute_segment_quant`'s SNS modulation). Crate-
+    /// internal hook for the `target_zensim` per-segment correction
+    /// pass. `None` (default) leaves segments untouched. Each delta is
+    /// applied per-segment via `(seg_quant_index as i32 + delta).clamp(0,
+    /// 127)` before `init_matrices`.
+    pub(crate) segment_quant_overrides: Option<[i8; 4]>,
 }
 
 impl Default for EncoderParams {
@@ -603,6 +610,7 @@ impl Default for EncoderParams {
             smooth_segment_map: false,
             cost_model: CostModel::ZenwebpDefault,
             multi_pass_stats: false,
+            segment_quant_overrides: None,
         }
     }
 }
@@ -673,6 +681,34 @@ pub struct EncodeStats {
     pub lossless_hdr_size: u32,
     /// Lossless image data size in bytes.
     pub lossless_data_size: u32,
+}
+
+/// Internal-only encoder diagnostics, used by the closed-loop iteration in
+/// `zensim_target` to drive per-segment correction decisions from the real
+/// k-means `segment_map` rather than a spatial proxy.
+///
+/// **Not part of the public API.** Exposing the segment_map on
+/// [`EncodeStats`] would be a SemVer break (existing callers may have done
+/// `EncodeStats { ..fields }` literal construction); routing the data
+/// through this `pub(crate)` companion struct keeps the surface clean while
+/// giving the iteration loop the full per-MB segmentation it needs.
+///
+/// Populated only by [`encode_frame_lossy_with_diagnostics`](super::vp8::encode_frame_lossy_with_diagnostics).
+#[cfg(feature = "target-zensim")]
+#[derive(Debug, Clone, Default)]
+pub(crate) struct EncodeDiagnostics {
+    /// Per-macroblock segment id (0..num_segments). Length is
+    /// `mb_width * mb_height`, raster order. Empty when segmentation is
+    /// disabled (`num_segments == 1` or the encoder skipped the analysis
+    /// pass).
+    pub segment_map: alloc::vec::Vec<u8>,
+    /// Macroblock grid width (image_width rounded up by 16, divided by 16).
+    pub mb_width: u16,
+    /// Macroblock grid height.
+    pub mb_height: u16,
+    /// Effective number of segments after `simplify_segments` may have
+    /// merged duplicates. `1..=4`.
+    pub num_segments: u8,
 }
 
 // ============================================================================
@@ -1011,6 +1047,7 @@ impl EncoderConfig {
             smooth_segment_map: self.smooth_segment_map,
             cost_model: self.cost_model,
             multi_pass_stats: self.multi_pass_stats,
+            segment_quant_overrides: None,
         }
     }
 
@@ -1351,8 +1388,19 @@ impl<'a> EncodeRequest<'a> {
     }
 
     /// Encode to WebP bytes.
+    ///
+    /// When the lossy config has `target_zensim` set and the
+    /// `target-zensim` crate feature is enabled, the encoder runs a
+    /// closed-loop iteration (encode → decode → measure → adjust)
+    /// transparently and returns the converged bytes. Use
+    /// [`Self::encode_with_metrics`] if you also need the
+    /// [`ZensimEncodeMetrics`] (achieved score, passes used,
+    /// targets-met flag).
     #[track_caller]
     pub fn encode(self) -> EncodeResult<Vec<u8>> {
+        if let Some(bytes) = self.try_encode_target_zensim_bytes()? {
+            return Ok(bytes);
+        }
         let (output, _stats) = self.encode_inner()?;
         Ok(output)
     }
@@ -1371,6 +1419,87 @@ impl<'a> EncodeRequest<'a> {
         self.encode_inner()
     }
 
+    /// Encode to WebP bytes alongside [`ZensimEncodeMetrics`].
+    ///
+    /// When the lossy config has `target_zensim` set and the
+    /// `target-zensim` crate feature is enabled (with RGB8 input), the
+    /// encoder runs a closed-loop iteration and reports the achieved
+    /// zensim score, passes used, and `targets_met` flag in the
+    /// returned metrics. In every other case (no target, feature
+    /// disabled, lossless, non-RGB8 layout), the metrics are filled
+    /// via [`ZensimEncodeMetrics::no_target`] — score `NaN`,
+    /// `passes_used=1`, `targets_met=true`.
+    ///
+    /// Mirrors the shape of zenjpeg's
+    /// `BytesEncoder::finish_with_metrics()`.
+    #[track_caller]
+    pub fn encode_with_metrics(
+        self,
+    ) -> EncodeResult<(Vec<u8>, super::zensim_target::ZensimEncodeMetrics)> {
+        if let Some(pair) = self.try_encode_target_zensim_with_metrics()? {
+            return Ok(pair);
+        }
+        let (output, _stats) = self.encode_inner()?;
+        let len = output.len();
+        Ok((
+            output,
+            super::zensim_target::ZensimEncodeMetrics::no_target(len),
+        ))
+    }
+
+    /// If this request targets a lossy config with `target_zensim`
+    /// set, RGB8 input, no stride override, and the `target-zensim`
+    /// feature is on, run the iteration loop and return the converged
+    /// bytes. Otherwise returns `Ok(None)` so the caller can fall
+    /// back to the normal single-pass path.
+    fn try_encode_target_zensim_bytes(&self) -> EncodeResult<Option<Vec<u8>>> {
+        match self.try_encode_target_zensim_with_metrics()? {
+            Some((bytes, _m)) => Ok(Some(bytes)),
+            None => Ok(None),
+        }
+    }
+
+    /// Same as [`Self::try_encode_target_zensim_bytes`] but also
+    /// returns the metrics. The iteration loop is always RGB8-only,
+    /// no stride, lossy config; the metadata fields (icc/exif/xmp) are
+    /// not currently honored on the iteration path — if any are set
+    /// we fall back to a single-pass encode and return `None` so the
+    /// caller can take the normal path. (TODO: thread metadata
+    /// through iteration once a user needs it.)
+    #[allow(clippy::unnecessary_wraps)] // signature aligns with feature-on counterpart
+    fn try_encode_target_zensim_with_metrics(
+        &self,
+    ) -> EncodeResult<Option<(Vec<u8>, super::zensim_target::ZensimEncodeMetrics)>> {
+        // Only RGB8 lossy configs with target_zensim set and no
+        // metadata/stride trigger the iteration path. Everything else
+        // returns None so the caller falls back to encode_inner.
+        let lossy = match &self.config {
+            ConfigKind::Lossy(cfg) => *cfg,
+            ConfigKind::Lossless(_) => return Ok(None),
+            ConfigKind::Enum(config::EncoderConfig::Lossy(cfg)) => cfg,
+            ConfigKind::Enum(config::EncoderConfig::Lossless(_)) => return Ok(None),
+        };
+        if lossy.target_zensim.is_none() {
+            return Ok(None);
+        }
+        if self.color_type != PixelLayout::Rgb8 {
+            return Ok(None);
+        }
+        if self.stride_pixels.is_some() {
+            return Ok(None);
+        }
+        if self.icc_profile.is_some() || self.exif_metadata.is_some() || self.xmp_metadata.is_some()
+        {
+            // Iteration loop currently doesn't thread metadata
+            // through. Take the safe path.
+            return Ok(None);
+        }
+        let pair = lossy
+            .encode_rgb_with_metrics(self.pixels, self.width, self.height)
+            .map_err(|e| at!(e))?;
+        Ok(Some(pair))
+    }
+
     /// Encode to WebP, writing to an [`io::Write`](std::io::Write) implementor.
     #[cfg(feature = "std")]
     #[track_caller]
@@ -1380,6 +1509,71 @@ impl<'a> EncodeRequest<'a> {
             .write_all(&encoded)
             .map_err(|e| at!(EncodeError::IoError(e)))?;
         Ok(())
+    }
+
+    /// Internal-only: encode and also return the encoder's `segment_map`
+    /// + grid dimensions for the closed-loop `target-zensim` iteration.
+    ///
+    /// On-wire bytes are identical to [`Self::encode`].
+    #[cfg(feature = "target-zensim")]
+    pub(crate) fn encode_inner_with_diagnostics(
+        self,
+    ) -> EncodeResult<(Vec<u8>, EncodeStats, EncodeDiagnostics)> {
+        self.config
+            .get_limits()
+            .check_dimensions(self.width, self.height)
+            .map_err(|e| at!(EncodeError::InvalidBufferSize(format!("{}", e))))?;
+
+        let bpp = self.color_type.bytes_per_pixel();
+        let stride = self.stride_pixels.unwrap_or(self.width as usize);
+
+        if stride < self.width as usize {
+            return Err(at!(EncodeError::InvalidBufferSize(format!(
+                "stride_pixels {} < width {}",
+                stride, self.width
+            ))));
+        }
+
+        if self.color_type != PixelLayout::Yuv420 {
+            validate_buffer_size(
+                self.pixels.len(),
+                self.width,
+                self.height,
+                stride,
+                bpp as u32,
+            )?;
+        }
+
+        let mut output = Vec::new();
+        let stats;
+        let diag;
+        {
+            let mut encoder = WebPEncoder::new(&mut output);
+            encoder.set_params(self.config.to_params());
+            encoder.set_stop(self.stop);
+            encoder.set_progress(self.progress);
+            if let Some(icc) = self.icc_profile {
+                encoder.set_icc_profile(icc.to_vec());
+            }
+            if let Some(exif) = self.exif_metadata {
+                encoder.set_exif_metadata(exif.to_vec());
+            }
+            if let Some(xmp) = self.xmp_metadata {
+                encoder.set_xmp_metadata(xmp.to_vec());
+            }
+            let (s, d) = encoder
+                .encode_with_diagnostics(
+                    self.pixels,
+                    self.width,
+                    self.height,
+                    stride,
+                    self.color_type,
+                )
+                .map_err(|e| at!(e))?;
+            stats = s;
+            diag = d;
+        }
+        Ok((output, stats, diag))
     }
 
     fn encode_inner(self) -> EncodeResult<(Vec<u8>, EncodeStats)> {
@@ -2315,6 +2509,149 @@ impl<'a> WebPEncoder<'a> {
 
         stats.coded_size = self.writer.len() as u32;
         Ok(stats)
+    }
+
+    /// Same as [`Self::encode`], but routes through the lossy-with-
+    /// diagnostics path so the caller receives the encoder's per-MB
+    /// `segment_map` and grid dimensions alongside the standard
+    /// [`EncodeStats`]. The on-wire bytes are byte-identical to
+    /// `encode`'s output for the same inputs.
+    ///
+    /// This is the internal entry the `target-zensim` closed-loop
+    /// iteration uses for pass 1+ probes when per-segment correction is
+    /// active. Lossless and target_size/target_psnr search paths take the
+    /// regular `encode` route — the diagnostics are only meaningful for
+    /// single-pass lossy encodes.
+    ///
+    /// `target-zensim`-only — see [`EncodeDiagnostics`].
+    #[cfg(feature = "target-zensim")]
+    pub(crate) fn encode_with_diagnostics(
+        self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        stride: usize,
+        color: PixelLayout,
+    ) -> Result<(EncodeStats, EncodeDiagnostics), EncodeError> {
+        // Lossless and the no-target-zensim diagnostic path don't have
+        // segment_map. Emit an empty diagnostics struct in those cases —
+        // the iteration loop will fall back to global-q.
+        if !self.params.use_lossy {
+            let stats = self.encode(data, width, height, stride, color)?;
+            return Ok((stats, EncodeDiagnostics::default()));
+        }
+
+        let mut frame = Vec::new();
+        let lossy_with_alpha = self.params.use_lossy && color.has_alpha();
+        let alpha_quality = self.params.alpha_quality;
+        let mut stats;
+        let diagnostics;
+
+        // Diagnostics-collecting lossy frame encode.
+        let frame_chunk: &[u8; 4] = b"VP8 ";
+        {
+            let (s, d) = super::vp8::encode_frame_lossy_with_diagnostics(
+                &mut frame,
+                data,
+                width,
+                height,
+                stride,
+                color,
+                &self.params,
+                self.stop,
+                self.progress,
+            )?;
+            stats = s;
+            diagnostics = d;
+        }
+
+        // Identical container assembly to `Self::encode`.
+        let use_simple_container = self.icc_profile.is_empty()
+            && self.exif_metadata.is_empty()
+            && self.xmp_metadata.is_empty()
+            && !lossy_with_alpha;
+
+        if use_simple_container {
+            self.writer.write_all(b"RIFF");
+            self.writer.write_u32_le(chunk_size(frame.len()) + 4);
+            self.writer.write_all(b"WEBP");
+            write_chunk(self.writer, frame_chunk, &frame);
+        } else {
+            let mut total_bytes = 22 + chunk_size(frame.len());
+            if !self.icc_profile.is_empty() {
+                total_bytes += chunk_size(self.icc_profile.len());
+            }
+            if !self.exif_metadata.is_empty() {
+                total_bytes += chunk_size(self.exif_metadata.len());
+            }
+            if !self.xmp_metadata.is_empty() {
+                total_bytes += chunk_size(self.xmp_metadata.len());
+            }
+
+            let alpha_chunk_data = if lossy_with_alpha {
+                let mut alpha_chunk = Vec::new();
+                encode_alpha_lossless(
+                    &mut alpha_chunk,
+                    data,
+                    width,
+                    height,
+                    stride,
+                    color,
+                    alpha_quality,
+                    self.stop,
+                )?;
+                total_bytes += chunk_size(alpha_chunk.len());
+                Some(alpha_chunk)
+            } else {
+                None
+            };
+
+            let mut flags = 0u8;
+            if !self.xmp_metadata.is_empty() {
+                flags |= 1 << 2;
+            }
+            if !self.exif_metadata.is_empty() {
+                flags |= 1 << 3;
+            }
+            if color.has_alpha() {
+                flags |= 1 << 4;
+            }
+            if !self.icc_profile.is_empty() {
+                flags |= 1 << 5;
+            }
+
+            self.writer.write_all(b"RIFF");
+            self.writer.write_u32_le(total_bytes);
+            self.writer.write_all(b"WEBP");
+
+            let mut vp8x = Vec::new();
+            vp8x.push(flags);
+            vp8x.write_all(&[0; 3]);
+            vp8x.write_all(&(width - 1).to_le_bytes()[..3]);
+            vp8x.write_all(&(height - 1).to_le_bytes()[..3]);
+            write_chunk(self.writer, b"VP8X", &vp8x);
+
+            if !self.icc_profile.is_empty() {
+                write_chunk(self.writer, b"ICCP", &self.icc_profile);
+            }
+
+            if let Some(alpha_chunk) = alpha_chunk_data {
+                write_chunk(self.writer, b"ALPH", &alpha_chunk);
+            }
+
+            write_chunk(self.writer, frame_chunk, &frame);
+
+            if !self.exif_metadata.is_empty() {
+                write_chunk(self.writer, b"EXIF", &self.exif_metadata);
+            }
+
+            if !self.xmp_metadata.is_empty() {
+                write_chunk(self.writer, b"XMP ", &self.xmp_metadata);
+            }
+        }
+
+        stats.coded_size = self.writer.len() as u32;
+        Ok((stats, diagnostics))
     }
 }
 

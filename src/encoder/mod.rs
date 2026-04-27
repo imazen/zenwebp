@@ -54,6 +54,9 @@ pub mod vp8;
 /// VP8L lossless encoder implementation.
 #[doc(hidden)]
 pub mod vp8l;
+/// Closed-loop target-zensim adaptive encoder (perceptual quality search).
+#[doc(hidden)]
+pub mod zensim_target;
 
 // Re-export public API
 pub use analysis::{ClassifierDiag, ImageContentType};
@@ -65,6 +68,7 @@ pub use api::{
 pub use config::{EncoderConfig, LosslessConfig, LossyConfig};
 #[doc(hidden)]
 pub use vp8l::{Vp8lConfig, Vp8lQuality, encode_vp8l};
+pub use zensim_target::{ZensimEncodeMetrics, ZensimTarget};
 
 // Crate-internal re-exports for mux module
 pub(crate) use api::{chunk_size, encode_alpha_lossless, encode_frame_lossless, write_chunk};
