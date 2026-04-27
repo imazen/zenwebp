@@ -193,6 +193,7 @@ fn reset_env() {
         "ZENWEBP_ABLATE_NO_MULTI_PASS_STATS",
         "ZENWEBP_ABLATE_PRE_PHASE2_ANCHORS",
         "ZENWEBP_ABLATE_NO_SECANT",
+        "ZENWEBP_PHASE3_FINE_GAP",
     ];
     for k in &keys {
         env_set::set(k, None);
@@ -211,7 +212,12 @@ fn apply_variant(name: &str) {
             "noD" => env_set::set("ZENWEBP_ABLATE_NO_MULTI_PASS_STATS", Some("1")),
             "noE" => env_set::set("ZENWEBP_ABLATE_PRE_PHASE2_ANCHORS", Some("1")),
             "noF" => env_set::set("ZENWEBP_ABLATE_NO_SECANT", Some("1")),
-            other => panic!("unknown variant token: {other} (valid: baseline,noA..noF)"),
+            // `alwaysOn` recovers the pre-fix net-negative always-on Phase 3
+            // (per-segment correction takes precedence over global-q secant
+            // even at large gaps). Used to A/B against the post-fix
+            // baseline.
+            "alwaysOn" => env_set::set("ZENWEBP_PHASE3_FINE_GAP", Some("1000")),
+            other => panic!("unknown variant token: {other} (valid: baseline,noA..noF,alwaysOn)"),
         }
     }
 }

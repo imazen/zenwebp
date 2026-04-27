@@ -292,6 +292,18 @@ pub(crate) mod iteration {
             .unwrap_or(false)
     }
 
+    /// Emit a per-pass investigation trace to stderr when set. Format
+    /// (one line per pass, prefix `PHASE3_TRACE`):
+    ///   PHASE3_TRACE pass=<n> target=<t> q=<q> mps=<bool>
+    ///     achieved=<f> bytes=<u> num_segs=<n>
+    ///     means=[s0,s1,s2,s3] counts=[n0,n1,n2,n3]
+    ///     cum_overrides=[d0,d1,d2,d3] decision=<reason>
+    fn trace_phase3() -> bool {
+        std::env::var("ZENWEBP_PHASE3_TRACE")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
     /// Skip the bucket classifier and use a single naive starting-q anchor
     /// table for all images regardless of content type. Disables Phase 1's
     /// per-bucket calibration AND Phase 2's refit (since both Photo and
@@ -439,6 +451,18 @@ pub(crate) mod iteration {
         let (bytes0, diag0) = encode_at_with_diagnostics(cfg, q, false, None, rgb, width, height)?;
         let max_passes = target.max_passes.max(1);
 
+        if trace_phase3() {
+            eprintln!(
+                "PHASE3_TRACE pass=0 target={:.3} q={:.3} mps=false bytes={} num_segs={} mb={}x{}",
+                target.target,
+                q,
+                bytes0.len(),
+                diag0.num_segments,
+                diag0.mb_width,
+                diag0.mb_height
+            );
+        }
+
         if max_passes <= 1 {
             return Ok((
                 bytes0.clone(),
@@ -460,6 +484,17 @@ pub(crate) mod iteration {
             )
         })?;
         let (score0, dm0) = measure_score_and_diffmap(&z, &pre, &bytes0, width, height)?;
+
+        if trace_phase3() {
+            eprintln!(
+                "PHASE3_TRACE pass=0_measured target={:.3} q={:.3} achieved={:.4} bytes={} gap={:.4}",
+                target.target,
+                q,
+                score0,
+                bytes0.len(),
+                target.target - score0
+            );
+        }
 
         let mut best = Candidate {
             bytes: bytes0,
@@ -506,17 +541,41 @@ pub(crate) mod iteration {
         let mut cum_overrides: [i8; 4] = [0; 4];
 
         // 5. Iterate.
+        //
+        // Phase 3 dispatch policy (fix for the previously net-negative
+        // always-on per-segment correction; see traces in
+        // `/mnt/v/output/zenwebp/zensim-investigate/`):
+        //
+        // Per-segment override moves global zensim by ~0.1-0.4 per pass
+        // (one segment, small MB fraction). The global-q secant moves it
+        // by 2-4 per pass. When `|gap| > PHASE3_FINE_GAP`, the global-q
+        // secant is the right tool; per-segment only fires when:
+        //   (a) we're already close to band ("final mile"), AND
+        //   (b) we haven't started a global-q secant trajectory yet
+        //       (`prev_probe.is_none()`).
+        // Once a secant has two anchor points it converges faster than
+        // per-segment ever could; switching mid-trajectory throws away
+        // that information and tends to produce out-of-band finals.
+        //
+        // The `ZENWEBP_PHASE3_FINE_GAP` env var (float, default 0.5)
+        // overrides the threshold for tuning experiments. Set it to a
+        // very large value (e.g. 1000) to recover the pre-fix always-on
+        // Phase 3 behavior for A/B testing.
+        let phase3_fine_gap: f32 = std::env::var("ZENWEBP_PHASE3_FINE_GAP")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or(0.5);
         for pass in 1..max_passes {
-            // Decide whether this pass uses per-segment correction or
-            // a global-q step. Per-segment is preferred when active.
-            let use_per_segment = per_segment_enabled;
+            let abs_gap = (target.target - last_score).abs();
+            let use_per_segment =
+                per_segment_enabled && abs_gap <= phase3_fine_gap && prev_probe.is_none();
 
             let (next_q, next_overrides) = if use_per_segment {
                 // Phase 3: aggregate the per-pixel diffmap into per-MB
                 // means, then accumulate per real k-means segment using
                 // `last_diag.segment_map`. Tighten the worst-mean segment
                 // or loosen the best-mean segment in the claw-back case.
-                let new_overrides = next_segment_overrides(
+                let dec = next_segment_overrides(
                     cum_overrides,
                     &last_dm,
                     width,
@@ -525,10 +584,36 @@ pub(crate) mod iteration {
                     last_score,
                     &target,
                 );
+                if trace_phase3() {
+                    eprintln!(
+                        "PHASE3_TRACE pass={}_decide use_per_segment=true gap={:.4} \
+                        means=[{:.4},{:.4},{:.4},{:.4}] counts=[{},{},{},{}] \
+                        cum_before=[{},{},{},{}] cum_after=[{},{},{},{}] picked_seg={:?} dir={}",
+                        pass,
+                        target.target - last_score,
+                        dec.means[0], dec.means[1], dec.means[2], dec.means[3],
+                        dec.counts[0], dec.counts[1], dec.counts[2], dec.counts[3],
+                        cum_overrides[0], cum_overrides[1], cum_overrides[2], cum_overrides[3],
+                        dec.overrides[0], dec.overrides[1], dec.overrides[2], dec.overrides[3],
+                        dec.picked_seg,
+                        dec.direction,
+                    );
+                }
                 // Keep q the same when doing per-segment correction.
-                (last_q, Some(new_overrides))
+                (last_q, Some(dec.overrides))
             } else {
                 let nq = compute_next_q(last_q, last_score, prev_probe, &target);
+                if trace_phase3() {
+                    eprintln!(
+                        "PHASE3_TRACE pass={}_decide use_per_segment=false gap={:.4} \
+                        last_q={:.3} next_q={:.3} prev_probe={:?}",
+                        pass,
+                        target.target - last_score,
+                        last_q,
+                        nq.clamp(0.0, 100.0),
+                        prev_probe,
+                    );
+                }
                 (nq.clamp(0.0, 100.0), None)
             };
 
@@ -550,6 +635,21 @@ pub(crate) mod iteration {
                 encode_at_with_diagnostics(cfg, next_q, mps, next_overrides, rgb, width, height)?;
             let (score_n, dm_n) = measure_score_and_diffmap(&z, &pre, &bytes_n, width, height)?;
             let passes_used = pass + 1;
+
+            if trace_phase3() {
+                eprintln!(
+                    "PHASE3_TRACE pass={}_measured target={:.3} q={:.3} achieved={:.4} bytes={} \
+                    overrides={:?} num_segs={} delta_score={:.4}",
+                    pass,
+                    target.target,
+                    next_q,
+                    score_n,
+                    bytes_n.len(),
+                    next_overrides,
+                    diag_n.num_segments,
+                    score_n - last_score,
+                );
+            }
 
             best = pick_best(
                 best,
@@ -830,6 +930,18 @@ pub(crate) mod iteration {
     /// pixel block) and add its mean to the appropriate segment's
     /// accumulator. Edge MBs that overlap the right/bottom image border
     /// are handled by clipping the read region.
+    /// Return value carries the new cumulative override AND the per-segment
+    /// diagnostic stats (mean diffmap + MB count per segment) so the trace
+    /// can show what the policy saw. `picked_seg` is the segment index that
+    /// was tightened/loosened (or `None` if nothing was changed).
+    pub(crate) struct OverrideDecision {
+        pub overrides: [i8; 4],
+        pub means: [f32; 4],
+        pub counts: [u64; 4],
+        pub picked_seg: Option<usize>,
+        pub direction: i8, // -1 tightened worst, +1 loosened best, 0 no-op
+    }
+
     fn next_segment_overrides(
         cum: [i8; 4],
         diffmap: &[f32],
@@ -838,7 +950,7 @@ pub(crate) mod iteration {
         diag: &EncodeDiagnostics,
         score: f32,
         target: &ZensimTarget,
-    ) -> [i8; 4] {
+    ) -> OverrideDecision {
         // Content-type-dependent fallback hatch: when the env var
         // ZENWEBP_PHASE3_QUADRANT=1 is set, fall back to the 2x2
         // spatial-quadrant proxy that this code shipped with originally.
@@ -872,9 +984,16 @@ pub(crate) mod iteration {
         #[cfg(not(feature = "std"))]
         let use_quadrant = false;
         if use_quadrant {
-            return next_segment_overrides_quadrant_proxy(
+            let q_overrides = next_segment_overrides_quadrant_proxy(
                 cum, diffmap, width, height, score, target,
             );
+            return OverrideDecision {
+                overrides: q_overrides,
+                means: [0.0; 4],
+                counts: [0; 4],
+                picked_seg: None,
+                direction: 0,
+            };
         }
 
         let n = (diag.num_segments as usize).clamp(2, 4);
@@ -887,11 +1006,17 @@ pub(crate) mod iteration {
         // grid (shouldn't happen, but the diag is plumbed through enough
         // layers that it's worth guarding), fall back to no-op overrides.
         if diag.segment_map.len() != expected || expected == 0 {
-            return cum;
+            return OverrideDecision {
+                overrides: cum,
+                means: [0.0; 4],
+                counts: [0; 4],
+                picked_seg: None,
+                direction: 0,
+            };
         }
 
         let mut sum = [0.0f64; 4];
-        let mut count = [0u64; 4];
+        let mut counts = [0u64; 4];
 
         // Per-MB diffmap mean → accumulate into the MB's segment.
         for mb_y in 0..mb_h {
@@ -921,15 +1046,15 @@ pub(crate) mod iteration {
                 }
                 if block_count > 0 {
                     sum[seg] += block_sum;
-                    count[seg] += block_count;
+                    counts[seg] += block_count;
                 }
             }
         }
 
         let mut means = [0.0f32; 4];
         for s in 0..n {
-            if count[s] > 0 {
-                means[s] = (sum[s] / count[s] as f64) as f32;
+            if counts[s] > 0 {
+                means[s] = (sum[s] / counts[s] as f64) as f32;
             }
         }
 
@@ -941,7 +1066,7 @@ pub(crate) mod iteration {
         let mut found_worst = false;
         let mut found_best = false;
         for s in 0..n {
-            if count[s] == 0 {
+            if counts[s] == 0 {
                 continue;
             }
             if !found_worst || means[s] > means[worst] {
@@ -954,11 +1079,19 @@ pub(crate) mod iteration {
             }
         }
         if !found_worst {
-            return cum;
+            return OverrideDecision {
+                overrides: cum,
+                means,
+                counts,
+                picked_seg: None,
+                direction: 0,
+            };
         }
 
         let mut out = cum;
         let gap = target.target - score;
+        let mut picked: Option<usize> = None;
+        let mut direction: i8 = 0;
         if gap > 0.0 {
             let step = if gap > 4.0 {
                 -3
@@ -968,6 +1101,8 @@ pub(crate) mod iteration {
                 -1
             };
             out[worst] = (i32::from(out[worst]) + step).clamp(-16, 16) as i8;
+            picked = Some(worst);
+            direction = -1;
         } else if let Some(t) = target.max_overshoot
             && (score - target.target) > t
         {
@@ -980,8 +1115,16 @@ pub(crate) mod iteration {
                 1
             };
             out[best] = (i32::from(out[best]) + step).clamp(-16, 16) as i8;
+            picked = Some(best);
+            direction = 1;
         }
-        out
+        OverrideDecision {
+            overrides: out,
+            means,
+            counts,
+            picked_seg: picked,
+            direction,
+        }
     }
 
     /// Pre-deviation aggregation: 2x2 spatial-quadrant proxy. Kept for
