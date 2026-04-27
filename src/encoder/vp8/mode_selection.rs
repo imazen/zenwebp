@@ -616,8 +616,15 @@ impl<'a> super::Vp8Encoder<'a> {
     /// RD formula: score = (R + H) * lambda + RD_DISTO_MULT * (D + SD)
     /// Where: R = coeff cost, H = mode cost, D = SSE, SD = spectral distortion
     ///
-    /// Returns (best_mode, distortion_score) for comparison against Intra4x4.
-    fn pick_best_intra16(&self, mbx: usize, mby: usize) -> (LumaMode, u64) {
+    /// Returns `(best_mode, rd_score, d_raw)`:
+    ///   - `rd_score` — combined RD score for comparison against Intra4x4.
+    ///   - `d_raw` — winning-mode raw source-vs-reconstruction SSE before
+    ///     the flat-source doubling. Matches libwebp's `rd->D` (the value
+    ///     fed into `dqm->min_disto` gating of `StoreMaxDelta`,
+    ///     `quant_enc.c:1111`). Threaded into `MacroblockInfo` so the
+    ///     `store_max_delta` call site can apply the `D > min_disto` gate
+    ///     (issue #44).
+    fn pick_best_intra16(&self, mbx: usize, mby: usize) -> (LumaMode, u64, u32) {
         // Check for debug mode
         #[cfg(feature = "mode_debug")]
         let debug_i16 = std::env::var("MB_DEBUG")
@@ -683,6 +690,11 @@ impl<'a> super::Vp8Encoder<'a> {
         let mut best_sse = 0u32;
         let mut best_spectral_disto = 0i32;
         let mut best_psy_cost = 0i32;
+        // Raw winning-mode source-vs-reconstruction SSE *before* the flat-source
+        // doubling. This is the `D` libwebp's `quant_enc.c:1111` per-MB gate
+        // compares against `dqm->min_disto`. Threaded through MacroblockInfo
+        // so `store_max_delta` can apply the gate (issue #44).
+        let mut best_d_raw = 0u32;
 
         // Pre-allocate scratch buffers outside mode loop to avoid redundant zero-init.
         // All elements are written before read in each iteration.
@@ -924,6 +936,8 @@ impl<'a> super::Vp8Encoder<'a> {
                 best_sse = d_final;
                 best_spectral_disto = sd_final;
                 best_psy_cost = psy_cost;
+                // Raw SSE (pre flat-source doubling) for the #44 gate.
+                best_d_raw = sse;
             }
         }
 
@@ -954,14 +968,21 @@ impl<'a> super::Vp8Encoder<'a> {
         }
 
         // Convert to u64 for interface compatibility (score should be positive)
-        (best_mode, final_score.max(0) as u64)
+        (best_mode, final_score.max(0) as u64, best_d_raw)
     }
 
     /// Fast DC-only mode selection for method 0.
     ///
     /// Uses simplified scoring (SSE + fixed mode cost) without full reconstruction.
     /// This is much faster than the full RD path but may not find the optimal mode.
-    fn pick_intra16_fast_dc(&self, mbx: usize, mby: usize) -> (LumaMode, u64) {
+    ///
+    /// Returns `(mode, score, d_raw)`. `d_raw` is the prediction-vs-source SSE,
+    /// reused as the `D` proxy for the #44 `D > min_disto` gate (the fast path
+    /// has no quantize+reconstruct step). At m0/m1, residue energy approximates
+    /// reconstruction error closely enough for the gate to be sound — flat
+    /// regions still produce small `D` and stay below `min_disto`, while
+    /// real-edge MBs produce large `D` and pass through.
+    fn pick_intra16_fast_dc(&self, mbx: usize, mby: usize) -> (LumaMode, u64, u32) {
         let mbw = usize::from(self.macroblock_width);
         let src_width = mbw * 16;
         let segment = self.get_segment_for_mb(mbx, mby);
@@ -976,7 +997,7 @@ impl<'a> super::Vp8Encoder<'a> {
         let mode_cost = FIXED_COSTS_I16[0] as u32;
         let score = u64::from(sse) + u64::from(lambda) * u64::from(mode_cost);
 
-        (LumaMode::DC, score)
+        (LumaMode::DC, score, sse)
     }
 
     /// Estimate coefficient cost for a 16x16 luma macroblock (I16 mode).
@@ -1830,19 +1851,30 @@ impl<'a> super::Vp8Encoder<'a> {
                 // for I4, run `pick_best_intra4` so each sub-block's mode is
                 // chosen rather than left at all-DC (libwebp does the same,
                 // just via SSE rather than RD).
+                // Track winning-mode D for the #44 `D > min_disto` gate.
+                // For the I4AllDc branch we run the fast-DC scorer to obtain
+                // an I16 baseline; we keep that D in case I4 doesn't beat it.
+                let mut intra16_d: Option<u32> = None;
                 let (luma_mode, luma_bpred) = match hint {
-                    MbModeHint::I16Dc => (LumaMode::DC, None),
+                    MbModeHint::I16Dc => {
+                        let (_, _, d) = self.pick_intra16_fast_dc(mbx, mby);
+                        intra16_d = Some(d);
+                        (LumaMode::DC, None)
+                    }
                     MbModeHint::I4AllDc => {
                         // Need a baseline I16 score to compare against I4. Use
                         // the fast DC scorer (matches what we'd report for
                         // an I16-DC mode at m0/m1).
-                        let (_, i16_score) = self.pick_intra16_fast_dc(mbx, mby);
+                        let (_, i16_score, i16_d) = self.pick_intra16_fast_dc(mbx, mby);
                         match self.pick_best_intra4(mbx, mby, i16_score) {
                             Some((modes, _)) => (LumaMode::B, Some(modes)),
                             // I4 didn't beat I16 — fall back to I16-DC (the
                             // hint was advisory, libwebp's I4 path can also
                             // bail out via `score_i4 >= best_score`).
-                            None => (LumaMode::DC, None),
+                            None => {
+                                intra16_d = Some(i16_d);
+                                (LumaMode::DC, None)
+                            }
                         }
                     }
                 };
@@ -1854,12 +1886,13 @@ impl<'a> super::Vp8Encoder<'a> {
                     chroma_mode,
                     segment_id,
                     coeffs_skipped: false,
+                    intra16_d,
                 };
             }
         }
 
         // Pick the best 16x16 luma mode using RD cost selection
-        let (luma_mode, i16_score) = self.pick_best_intra16(mbx, mby);
+        let (luma_mode, i16_score, i16_d) = self.pick_best_intra16(mbx, mby);
 
         // Debug output for specific macroblock (check MB_DEBUG env var)
         // Set MB_DEBUG=x,y to debug mode selection for that macroblock
@@ -1961,12 +1994,24 @@ impl<'a> super::Vp8Encoder<'a> {
         // Get segment ID from segment map if enabled
         let segment_id = self.get_segment_id_for_mb(mbx, mby);
 
+        // Only carry I16's D forward when I16 actually wins (#44 gate).
+        // I4 winners use a different reconstruction path; libwebp's
+        // `StoreMaxDelta` is gated on `(nz & 0x100ffff) == 0x1000000` —
+        // i.e. an I16 MB with non-zero Y2 and zero Y1 AC — so I4 MBs
+        // never reach that call site anyway.
+        let intra16_d = if luma_bpred.is_some() {
+            None
+        } else {
+            Some(i16_d)
+        };
+
         MacroblockInfo {
             luma_mode,
             luma_bpred,
             chroma_mode,
             segment_id,
             coeffs_skipped: false,
+            intra16_d,
         }
     }
 
