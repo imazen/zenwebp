@@ -97,7 +97,18 @@ impl ZensimTarget {
             ..Default::default()
         }
     }
+}
 
+impl From<f32> for ZensimTarget {
+    /// Build a `ZensimTarget` from a bare target value, using default
+    /// tolerances / passes. Lets [`LossyConfig::with_target_zensim`]
+    /// accept either an `f32` or a fully-built `ZensimTarget`.
+    fn from(target: f32) -> Self {
+        Self::new(target)
+    }
+}
+
+impl ZensimTarget {
     /// Builder-style override of [`Self::max_overshoot`].
     #[must_use]
     pub fn with_max_overshoot(mut self, v: Option<f32>) -> Self {
@@ -121,7 +132,7 @@ impl ZensimTarget {
 }
 
 /// Outcome of a target-zensim encode, returned alongside the WebP bytes
-/// from `LossyConfig::encode_rgb_with_metrics` and friends.
+/// from [`EncodeRequest::encode_with_metrics`](super::api::EncodeRequest::encode_with_metrics).
 ///
 /// `targets_met` is `false` when:
 /// - the iteration ran (target_zensim was set with the feature enabled), AND

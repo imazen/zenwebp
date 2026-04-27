@@ -107,9 +107,7 @@ fn strict_undershoot_errors_on_unreachable_target() {
     let target = ZensimTarget::new(99.0)
         .with_max_undershoot(Some(0.5))
         .with_max_passes(1);
-    let cfg = LossyConfig::new()
-        .with_method(4)
-        .with_target_zensim_target(target);
+    let cfg = LossyConfig::new().with_method(4).with_target_zensim(target);
 
     // Single-pass strict mode bypasses iteration entirely (max_passes=1
     // ships the calibrated encode without measuring). To make strict-mode
@@ -120,7 +118,7 @@ fn strict_undershoot_errors_on_unreachable_target() {
         .with_max_passes(2);
     let cfg2 = LossyConfig::new()
         .with_method(4)
-        .with_target_zensim_target(target2);
+        .with_target_zensim(target2);
     let _ = cfg; // suppress unused
     let result = EncodeRequest::lossy(&cfg2, &rgb, PixelLayout::Rgb8, w, h).encode_with_metrics();
     assert!(
@@ -134,7 +132,7 @@ fn bytes_recovery_drops_size_when_overshooting() {
     // Smooth gradient at target=70: calibrated start at q≈65 likely
     // overshoots into the 80s. Pass 2 should claw back bytes.
     let (rgb, w, h) = smooth_gradient_256();
-    let cfg_low_target = LossyConfig::new().with_method(4).with_target_zensim_target(
+    let cfg_low_target = LossyConfig::new().with_method(4).with_target_zensim(
         ZensimTarget::new(70.0)
             .with_max_overshoot(Some(0.5))
             .with_max_passes(2),
@@ -146,7 +144,7 @@ fn bytes_recovery_drops_size_when_overshooting() {
 
     // For comparison: single-pass (max_passes=1) just ships the
     // calibrated start, no claw-back.
-    let cfg_one_pass = LossyConfig::new().with_method(4).with_target_zensim_target(
+    let cfg_one_pass = LossyConfig::new().with_method(4).with_target_zensim(
         ZensimTarget::new(70.0)
             .with_max_overshoot(Some(0.5))
             .with_max_passes(1),
@@ -228,7 +226,7 @@ fn per_segment_correction_converges_on_color_blocks() {
     let cfg = LossyConfig::new()
         .with_method(4)
         .with_segments(4)
-        .with_target_zensim_target(
+        .with_target_zensim(
             ZensimTarget::new(82.0)
                 .with_max_overshoot(Some(2.0))
                 .with_max_passes(3),
@@ -266,7 +264,7 @@ fn per_segment_disabled_when_one_segment() {
     let cfg = LossyConfig::new()
         .with_method(4)
         .with_segments(1)
-        .with_target_zensim_target(
+        .with_target_zensim(
             ZensimTarget::new(82.0)
                 .with_max_overshoot(Some(2.0))
                 .with_max_passes(3),

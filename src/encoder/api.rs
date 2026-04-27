@@ -1488,9 +1488,7 @@ impl<'a> EncodeRequest<'a> {
         if self.stride_pixels.is_some() {
             return Ok(None);
         }
-        if self.icc_profile.is_some()
-            || self.exif_metadata.is_some()
-            || self.xmp_metadata.is_some()
+        if self.icc_profile.is_some() || self.exif_metadata.is_some() || self.xmp_metadata.is_some()
         {
             // Iteration loop currently doesn't thread metadata
             // through. Take the safe path.

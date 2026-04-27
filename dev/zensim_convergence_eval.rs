@@ -58,7 +58,7 @@ fn main() {
         if w < 32 || h < 32 {
             continue;
         }
-        let cfg = LossyConfig::new().with_method(4).with_target_zensim_target(
+        let cfg = LossyConfig::new().with_method(4).with_target_zensim(
             ZensimTarget::new(target_v)
                 .with_max_overshoot(Some(1.5))
                 .with_max_passes(max_passes),

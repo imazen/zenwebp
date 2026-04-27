@@ -421,7 +421,7 @@ fn run(
     let cfg = LossyConfig::new()
         .with_method(method)
         .with_segments(4)
-        .with_target_zensim_target(
+        .with_target_zensim(
             ZensimTarget::new(target)
                 .with_max_overshoot(Some(max_overshoot))
                 .with_max_passes(max_passes),

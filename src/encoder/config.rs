@@ -57,9 +57,10 @@ pub struct LossyConfig {
     pub target_psnr: f32,
     /// Target perceptual zensim score. `None` = disabled (default).
     /// `Some(t)` enables a closed-loop encode → decode → measure → adjust
-    /// iteration that converges on `t`. See [`super::ZensimTarget`] for the
-    /// full knob set and `with_target_zensim` / `with_target_zensim_target`
-    /// for the builder methods.
+    /// iteration that converges on `t`. See [`super::ZensimTarget`] for
+    /// the full knob set and [`Self::with_target_zensim`] for the
+    /// builder method (it accepts either a bare `f32` or a fully-built
+    /// [`ZensimTarget`](super::ZensimTarget) via `Into`).
     ///
     /// Requires the `target-zensim` crate feature to actually iterate;
     /// otherwise the encoder falls back to the calibrated starting-q
@@ -190,24 +191,30 @@ impl LossyConfig {
 
     /// Target a perceptual zensim score (closed-loop adaptive encode).
     ///
-    /// Sets `target_zensim` to `ZensimTarget::new(target)` (default
-    /// tolerances and pass budget). For full control over overshoot /
-    /// undershoot / passes, use [`with_target_zensim_target`](Self::with_target_zensim_target).
+    /// Accepts either a bare `f32` (uses
+    /// [`ZensimTarget::new`](super::zensim_target::ZensimTarget::new)
+    /// defaults — overshoot=1.5, undershoot=None, max_passes=2) or a
+    /// fully-built [`ZensimTarget`](super::zensim_target::ZensimTarget)
+    /// via `Into`:
+    ///
+    /// ```ignore
+    /// use zenwebp::{LossyConfig, ZensimTarget};
+    /// // Bare f32 — default tolerances / passes:
+    /// let c = LossyConfig::new().with_target_zensim(80.0);
+    /// // Full struct — custom max_passes:
+    /// let c = LossyConfig::new()
+    ///     .with_target_zensim(ZensimTarget::new(80.0).with_max_passes(3));
+    /// ```
     ///
     /// Requires the `target-zensim` crate feature for the iteration to
     /// actually run; without it, the encoder ships the calibrated
     /// starting-q estimate as a single pass.
     #[must_use]
-    pub fn with_target_zensim(mut self, target: f32) -> Self {
-        self.target_zensim = Some(super::zensim_target::ZensimTarget::new(target));
-        self
-    }
-
-    /// Set the full [`ZensimTarget`](super::zensim_target::ZensimTarget)
-    /// (target value plus tolerances and pass budget).
-    #[must_use]
-    pub fn with_target_zensim_target(mut self, target: super::zensim_target::ZensimTarget) -> Self {
-        self.target_zensim = Some(target);
+    pub fn with_target_zensim<T: Into<super::zensim_target::ZensimTarget>>(
+        mut self,
+        target: T,
+    ) -> Self {
+        self.target_zensim = Some(target.into());
         self
     }
 
@@ -400,7 +407,6 @@ impl LossyConfig {
     > {
         encode_rgb_with_metrics_impl(self, rgb, width, height)
     }
-
 }
 
 /// Configuration for lossless (VP8L) encoding.
