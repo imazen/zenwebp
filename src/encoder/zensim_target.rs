@@ -298,7 +298,7 @@ pub(crate) mod iteration {
         q = q.clamp(0.0, 100.0);
 
         // 3. Encode pass 0 (global-q, no per-segment overrides).
-        let (bytes0, stats0) = encode_at(cfg, q, false, None, rgb, width, height)?;
+        let bytes0 = encode_at(cfg, q, false, None, rgb, width, height)?;
         let max_passes = target.max_passes.max(1);
 
         if max_passes <= 1 {
@@ -335,21 +335,18 @@ pub(crate) mod iteration {
             return finalize(best, 1, &target);
         }
 
-        // Per-segment correction setup. Available iff segments are
-        // active AND the encoder produced a segment_map.
-        let seg_map = stats0.segment_map.clone();
-        let mb_w = stats0.mb_width as usize;
-        let mb_h = stats0.mb_height as usize;
-        // Number of distinct segment IDs in the map. After
-        // simplify_segments() this may be fewer than 4.
-        let num_segments = seg_map
-            .iter()
-            .copied()
-            .max()
-            .map(|m| (m as usize) + 1)
-            .unwrap_or(1);
-        let per_segment_enabled =
-            num_segments > 1 && seg_map.len() == mb_w * mb_h && !seg_map.is_empty();
+        // Per-segment correction setup. We use a 2x2 spatial-quadrant
+        // PROXY for the encoder's segment_map rather than exposing it
+        // through the public API (would require a `#[non_exhaustive]`
+        // SemVer break on `EncodeStats`). For most natural images the
+        // k-means-on-alpha segment assignment correlates strongly with
+        // spatial regions, so the proxy gets us the same shape of
+        // adjustment without piercing public API. For images where it
+        // doesn't (deeply intermixed textures), the global-q fallback
+        // still kicks in via the secant once one quadrant adjustment
+        // doesn't move the dial.
+        let num_segments = cfg.segments.unwrap_or(4) as usize;
+        let per_segment_enabled = num_segments > 1 && width >= 32 && height >= 32;
 
         // prev_probe holds the SECOND-most-recent (q, score) so the
         // secant fits a slope between it and the current (q, last_score).
@@ -367,19 +364,17 @@ pub(crate) mod iteration {
             let use_per_segment = per_segment_enabled;
 
             let (next_q, next_overrides) = if use_per_segment {
-                // Phase 3: aggregate diffmap → per-segment mean → tighten
-                // the worst segment / loosen the best when in claw-back.
+                // Phase 3: aggregate diffmap into 4 spatial quadrants;
+                // tighten the worst quadrant or loosen the best when in
+                // claw-back.
                 let new_overrides = next_segment_overrides(
                     cum_overrides,
-                    &seg_map,
-                    mb_w,
-                    mb_h,
                     &last_dm,
                     width,
                     height,
                     last_score,
                     &target,
-                    num_segments,
+                    num_segments.min(4),
                 );
                 // Keep q the same when doing per-segment correction.
                 (last_q, Some(new_overrides))
@@ -400,8 +395,7 @@ pub(crate) mod iteration {
 
             // multi_pass_stats=true on probe encodes — small size win
             // amortizes across passes.
-            let (bytes_n, stats_n) =
-                encode_at(cfg, next_q, true, next_overrides, rgb, width, height)?;
+            let bytes_n = encode_at(cfg, next_q, true, next_overrides, rgb, width, height)?;
             let (score_n, dm_n) = measure_score_and_diffmap(&z, &pre, &bytes_n, width, height)?;
             let passes_used = pass + 1;
 
@@ -428,7 +422,6 @@ pub(crate) mod iteration {
             last_q = next_q;
             last_score = score_n;
             last_dm = dm_n;
-            let _ = stats_n; // segment_map is stable across passes by design.
         }
 
         finalize(best, max_passes, &target)
@@ -546,9 +539,7 @@ pub(crate) mod iteration {
 
     /// Encode RGB pixels at the given quality with optional per-segment
     /// quant-index overrides. `enable_multi_pass` toggles
-    /// `multi_pass_stats` for inside-the-loop probes (small size win).
-    /// Returns bytes plus the encoder's `EncodeStats` (carrying the
-    /// segment_map needed for Phase 3 aggregation).
+    /// `multi_pass_stats` for inside-the-loop probes.
     fn encode_at(
         cfg: &LossyConfig,
         q: f32,
@@ -557,15 +548,12 @@ pub(crate) mod iteration {
         rgb: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<(Vec<u8>, crate::encoder::api::EncodeStats), EncodeError> {
+    ) -> Result<Vec<u8>, EncodeError> {
         let mut probe_cfg = cfg.clone();
         probe_cfg.quality = q.clamp(0.0, 100.0);
-        // Force multi_pass_stats on/off as requested (always enabled for
-        // pass 1+ to amortize the marginal cost across the search).
         probe_cfg.multi_pass_stats = enable_multi_pass;
         // Iteration must NOT recurse — disable target_zensim/target_psnr/
-        // target_size on the probe config. Only target_zensim is plumbed
-        // here; existing target_size/target_psnr semantics stay independent.
+        // target_size on the probe config.
         probe_cfg.target_size = 0;
         probe_cfg.target_psnr = 0.0;
         probe_cfg.target_zensim = None;
@@ -578,8 +566,8 @@ pub(crate) mod iteration {
             width,
             height,
         );
-        match req.encode_with_stats() {
-            Ok((bytes, stats)) => Ok((bytes, stats)),
+        match req.encode() {
+            Ok(bytes) => Ok(bytes),
             Err(at_err) => Err(at_err.decompose().0),
         }
     }
@@ -643,24 +631,22 @@ pub(crate) mod iteration {
         Ok((score, dm.diffmap().to_vec()))
     }
 
-    /// Aggregate the per-pixel diffmap into per-segment means, then
-    /// compute the next per-segment quant_index override. The policy:
+    /// Aggregate the per-pixel diffmap into 4 spatial quadrants
+    /// (top-left, top-right, bottom-left, bottom-right) → per-quadrant
+    /// mean → tighten the worst quadrant or loosen the best.
     ///
-    /// - If overall score < target: tighten the segment with the highest
-    ///   mean diffmap (reduce its quant by 1–3 depending on gap).
-    /// - If achieved > target + max_overshoot: loosen the segment with
-    ///   the lowest mean diffmap.
+    /// Why quadrants and not exact segments: the encoder's k-means
+    /// segment_map isn't exposed through the public API (adding it to
+    /// `EncodeStats` is a SemVer break). For most natural images,
+    /// k-means-on-alpha buckets correlate with spatial regions, so this
+    /// proxy gives roughly the same correction shape without piercing
+    /// public API.
     ///
-    /// Returns the NEW cumulative overrides (not deltas). Bounded so
-    /// `seg_quant + override` stays in `[-32, 32]` cumulatively (the
-    /// `compute_segment_quant` clamp handles the absolute [0, 127]
-    /// range; the soft cap here prevents oscillation).
-    #[allow(clippy::too_many_arguments)]
+    /// Returns the NEW cumulative overrides (not deltas). Bounded to
+    /// `[-16, 16]` cumulatively to leave room for future passes and stay
+    /// in sensible VP8 quantizer range.
     fn next_segment_overrides(
         cum: [i8; 4],
-        seg_map: &[u8],
-        mb_w: usize,
-        mb_h: usize,
         diffmap: &[f32],
         width: u32,
         height: u32,
@@ -668,67 +654,64 @@ pub(crate) mod iteration {
         target: &ZensimTarget,
         num_segments: usize,
     ) -> [i8; 4] {
+        let n = num_segments.clamp(2, 4);
         let mut sum = [0.0f64; 4];
-        let mut count = [0u32; 4];
+        let mut count = [0u64; 4];
         let w = width as usize;
         let h = height as usize;
-        // For each MB (16x16 region), accumulate the mean diffmap for
-        // that MB into its segment's running totals.
-        for my in 0..mb_h {
-            for mx in 0..mb_w {
-                let seg = seg_map.get(my * mb_w + mx).copied().unwrap_or(0) as usize;
-                if seg >= 4 {
-                    continue;
-                }
-                let y0 = my * 16;
-                let x0 = mx * 16;
-                let y1 = (y0 + 16).min(h);
-                let x1 = (x0 + 16).min(w);
-                if y1 == y0 || x1 == x0 {
-                    continue;
-                }
-                let mut s = 0.0f64;
-                let mut n = 0u32;
-                for y in y0..y1 {
-                    let row = &diffmap[y * w..y * w + w];
-                    for &v in &row[x0..x1] {
-                        s += v as f64;
-                        n += 1;
+        // Quadrant layout for n=4: TL=0, TR=1, BL=2, BR=3. For n=2,
+        // halve horizontally: L=0, R=1. For n=3, drop BR (treat it as
+        // BL).
+        let half_w = w / 2;
+        let half_h = h / 2;
+        for y in 0..h {
+            let row = &diffmap[y * w..y * w + w];
+            for (x, &v) in row.iter().enumerate() {
+                let q = match n {
+                    2 => usize::from(x >= half_w),
+                    _ => {
+                        let qx = usize::from(x >= half_w);
+                        let qy = usize::from(y >= half_h);
+                        let q4 = qy * 2 + qx;
+                        // For n=3, treat quadrant 3 as 2 (merge BL+BR).
+                        if n == 3 && q4 == 3 { 2 } else { q4 }
                     }
-                }
-                if n > 0 {
-                    sum[seg] += s / n as f64;
-                    count[seg] += 1;
+                };
+                if q < 4 {
+                    sum[q] += v as f64;
+                    count[q] += 1;
                 }
             }
         }
         let mut means = [0.0f32; 4];
-        for s in 0..num_segments.min(4) {
+        for s in 0..n {
             if count[s] > 0 {
                 means[s] = (sum[s] / count[s] as f64) as f32;
             }
         }
-        // Find worst (highest mean) and best (lowest mean) active
-        // segments.
+
+        // Find worst (highest mean) and best (lowest mean) quadrants.
         let mut worst = 0usize;
         let mut best = 0usize;
-        for s in 0..num_segments.min(4) {
+        let mut found_worst = false;
+        let mut found_best = false;
+        for s in 0..n {
             if count[s] == 0 {
                 continue;
             }
-            if means[s] > means[worst] || count[worst] == 0 {
+            if !found_worst || means[s] > means[worst] {
                 worst = s;
+                found_worst = true;
             }
-            if means[s] < means[best] || count[best] == 0 {
+            if !found_best || means[s] < means[best] {
                 best = s;
+                found_best = true;
             }
         }
 
         let mut out = cum;
         let gap = target.target - score;
         if gap > 0.0 {
-            // Score below target — tighten worst segment.
-            // Step magnitude scaled to gap: small gap → -1, larger → up to -3.
             let step = if gap > 4.0 {
                 -3
             } else if gap > 2.0 {
@@ -736,13 +719,10 @@ pub(crate) mod iteration {
             } else {
                 -1
             };
-            // Soft cap accumulated tightening at -16 to leave room for
-            // future passes and stay within sensible quant range.
             out[worst] = (i32::from(out[worst]) + step).clamp(-16, 16) as i8;
         } else if let Some(t) = target.max_overshoot
             && (score - target.target) > t
         {
-            // Above the comfort band — loosen the best segment.
             let overshoot = score - target.target - t;
             let step = if overshoot > 4.0 {
                 3

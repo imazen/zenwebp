@@ -661,16 +661,6 @@ pub struct EncodeStats {
     pub segment_quant: [u8; 4],
     /// Per-segment loop filter level.
     pub segment_level: [u8; 4],
-    /// Per-MB segment IDs (row-major, length = mb_w * mb_h). Empty when
-    /// segments are disabled (num_segments == 1) or for lossless
-    /// encodes. Surfaced for closed-loop callers (`target_zensim` per-
-    /// segment correction).
-    pub segment_map: alloc::vec::Vec<u8>,
-    /// Number of macroblock columns (width in MBs). Useful alongside
-    /// [`segment_map`](Self::segment_map) for spatial aggregation.
-    pub mb_width: u16,
-    /// Number of macroblock rows (height in MBs).
-    pub mb_height: u16,
     /// Size of alpha plane data in bytes.
     pub alpha_data_size: u32,
 

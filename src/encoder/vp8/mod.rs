@@ -1507,9 +1507,6 @@ impl<'a> Vp8Encoder<'a> {
             block_count_i4: final_block_count_i4,
             block_count_i16: final_block_count_i16,
             block_count_skip: final_skip_mb,
-            segment_map: self.segment_map.clone(),
-            mb_width: self.macroblock_width,
-            mb_height: self.macroblock_height,
             ..Default::default()
         };
 
