@@ -166,7 +166,7 @@ pub use zenpixels::Orientation;
 // Re-export core encoder types
 pub use encoder::{
     CostModel, EncodeError, EncodeRequest, EncodeResult, EncoderConfig, ImageMetadata,
-    LosslessConfig, LossyConfig, PixelLayout, Preset,
+    LosslessConfig, LossyConfig, PixelLayout, Preset, ZensimEncodeMetrics, ZensimTarget,
 };
 
 /// Re-export sharp YUV configuration from zenyuv.

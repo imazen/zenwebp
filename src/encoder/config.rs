@@ -55,6 +55,16 @@ pub struct LossyConfig {
     pub target_size: u32,
     /// Target PSNR in dB (0.0 = disabled). Default: 0.0.
     pub target_psnr: f32,
+    /// Target perceptual zensim score. `None` = disabled (default).
+    /// `Some(t)` enables a closed-loop encode → decode → measure → adjust
+    /// iteration that converges on `t`. See [`super::ZensimTarget`] for the
+    /// full knob set and `with_target_zensim` / `with_target_zensim_target`
+    /// for the builder methods.
+    ///
+    /// Requires the `target-zensim` crate feature to actually iterate;
+    /// otherwise the encoder falls back to the calibrated starting-q
+    /// estimate for the bucket and ships that single pass.
+    pub target_zensim: Option<super::zensim_target::ZensimTarget>,
     /// Content-aware preset (affects SNS, filter, sharpness). Default: None.
     pub preset: Option<Preset>,
     /// Sharp YUV configuration. `None` = disabled (standard chroma downsampling).
@@ -111,6 +121,7 @@ impl LossyConfig {
             alpha_quality: 100,
             target_size: 0,
             target_psnr: 0.0,
+            target_zensim: None,
             preset: None,
             sharp_yuv: None,
             sns_strength: None,
@@ -167,6 +178,32 @@ impl LossyConfig {
     #[must_use]
     pub fn with_target_psnr(mut self, psnr: f32) -> Self {
         self.target_psnr = psnr;
+        self
+    }
+
+    /// Target a perceptual zensim score (closed-loop adaptive encode).
+    ///
+    /// Sets `target_zensim` to `ZensimTarget::new(target)` (default
+    /// tolerances and pass budget). For full control over overshoot /
+    /// undershoot / passes, use [`with_target_zensim_target`](Self::with_target_zensim_target).
+    ///
+    /// Requires the `target-zensim` crate feature for the iteration to
+    /// actually run; without it, the encoder ships the calibrated
+    /// starting-q estimate as a single pass.
+    #[must_use]
+    pub fn with_target_zensim(mut self, target: f32) -> Self {
+        self.target_zensim = Some(super::zensim_target::ZensimTarget::new(target));
+        self
+    }
+
+    /// Set the full [`ZensimTarget`](super::zensim_target::ZensimTarget)
+    /// (target value plus tolerances and pass budget).
+    #[must_use]
+    pub fn with_target_zensim_target(
+        mut self,
+        target: super::zensim_target::ZensimTarget,
+    ) -> Self {
+        self.target_zensim = Some(target);
         self
     }
 
@@ -331,6 +368,34 @@ impl LossyConfig {
             &crate::EncoderConfig::Lossy(self.clone()),
         )
         .peak_memory_bytes_max
+    }
+
+    /// Encode an interleaved RGB8 buffer (`width * height * 3` bytes) and
+    /// return both the WebP bytes and any [`ZensimEncodeMetrics`] from a
+    /// `target_zensim` iteration. For non-target-zensim configs the
+    /// metrics struct is filled with the
+    /// [`ZensimEncodeMetrics::no_target`](super::zensim_target::ZensimEncodeMetrics::no_target)
+    /// variant — `targets_met=true`, `passes_used=1`, score `NaN`.
+    pub fn encode_rgb_with_metrics(
+        &self,
+        rgb: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<(alloc::vec::Vec<u8>, super::zensim_target::ZensimEncodeMetrics), super::api::EncodeError>
+    {
+        encode_rgb_with_metrics_impl(self, rgb, width, height)
+    }
+
+    /// Encode an interleaved RGB8 buffer using `target_zensim` if set,
+    /// returning just the bytes. Convenience over
+    /// [`encode_rgb_with_metrics`](Self::encode_rgb_with_metrics).
+    pub fn encode_rgb(
+        &self,
+        rgb: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<alloc::vec::Vec<u8>, super::api::EncodeError> {
+        Ok(self.encode_rgb_with_metrics(rgb, width, height)?.0)
     }
 }
 
@@ -875,5 +940,78 @@ impl EncoderConfig {
             Self::Lossy(cfg) => &cfg.limits,
             Self::Lossless(cfg) => &cfg.limits,
         }
+    }
+}
+
+// ============================================================================
+// target_zensim integration: convenience encoders on LossyConfig.
+// ============================================================================
+
+#[cfg(feature = "target-zensim")]
+fn encode_rgb_with_metrics_impl(
+    cfg: &LossyConfig,
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<
+    (alloc::vec::Vec<u8>, super::zensim_target::ZensimEncodeMetrics),
+    super::api::EncodeError,
+> {
+    if let Some(t) = cfg.target_zensim {
+        return super::zensim_target::iteration::run(cfg, t, rgb, width, height);
+    }
+    // No target_zensim → straight single-pass encode.
+    encode_rgb_single_pass(cfg, rgb, width, height)
+}
+
+#[cfg(not(feature = "target-zensim"))]
+fn encode_rgb_with_metrics_impl(
+    cfg: &LossyConfig,
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<
+    (alloc::vec::Vec<u8>, super::zensim_target::ZensimEncodeMetrics),
+    super::api::EncodeError,
+> {
+    // Feature disabled — if target_zensim was set, fall back to a single
+    // encode at the calibrated starting q for the (Photo) bucket. Match
+    // zenjpeg's behavior: don't error, just behave like a normal encode.
+    if let Some(t) = cfg.target_zensim {
+        let mut probe = cfg.clone();
+        probe.target_zensim = None;
+        probe.quality = super::zensim_target::zensim_to_starting_q_for_bucket(
+            t.target,
+            super::analysis::ImageContentType::Photo,
+        )
+        .clamp(0.0, 100.0);
+        return encode_rgb_single_pass(&probe, rgb, width, height);
+    }
+    encode_rgb_single_pass(cfg, rgb, width, height)
+}
+
+/// Single-pass RGB8 encode, no metrics. Plumb through `EncodeRequest`
+/// to reuse the existing entry point.
+fn encode_rgb_single_pass(
+    cfg: &LossyConfig,
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<
+    (alloc::vec::Vec<u8>, super::zensim_target::ZensimEncodeMetrics),
+    super::api::EncodeError,
+> {
+    let req = super::api::EncodeRequest::lossy(
+        cfg, rgb, super::api::PixelLayout::Rgb8, width, height,
+    );
+    match req.encode() {
+        Ok(bytes) => {
+            let len = bytes.len();
+            Ok((
+                bytes,
+                super::zensim_target::ZensimEncodeMetrics::no_target(len),
+            ))
+        }
+        Err(at_err) => Err(at_err.decompose().0),
     }
 }

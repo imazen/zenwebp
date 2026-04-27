@@ -38,6 +38,7 @@ archmage = { version = "0.9.15", features = ["macros"] }
 magetypes = { version = "0.9.15" }
 rgb = { version = "0.8", optional = true, default-features = false, features = ["as-bytes"] }
 imgref = { version = "1.12", optional = true, default-features = false }
+zensim = { version = "0.2", optional = true }
 
 [dev-dependencies]
 archmage = { version = "0.9.15", features = ["std", "macros"] }
@@ -96,8 +97,17 @@ _wasm_profiling = ["std"]
 fast-yuv = []
 # Enable zencodec trait integration
 zencodec = ["dep:zencodec", "dep:self_cell"]
+# Enable target_zensim closed-loop adaptive encoder.
+# Pulls in zensim for perceptual measurement; iteration loop encodes →
+# decodes → measures → adjusts global VP8 quality until it lands in
+# the target band. See `LossyConfig::with_target_zensim`.
+target-zensim = ["dep:zensim", "std"]
 # Enable zennode pipeline node definitions
 # zennode = ["dep:zennode"]
+
+[[example]]
+name = "debug_zensim"
+path = "dev/debug_zensim.rs"
 
 [[example]]
 name = "empirical_sweep"
