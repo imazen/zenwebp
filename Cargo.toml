@@ -126,6 +126,11 @@ path = "dev/zensim_convergence_eval.rs"
 required-features = ["target-zensim"]
 
 [[example]]
+name = "zensim_extended_eval"
+path = "dev/zensim_extended_eval.rs"
+required-features = ["target-zensim"]
+
+[[example]]
 name = "zensim_ab_quadrant_vs_segmap"
 path = "dev/zensim_ab_quadrant_vs_segmap.rs"
 required-features = ["target-zensim", "ablation"]

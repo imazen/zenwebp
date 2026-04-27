@@ -1460,18 +1460,21 @@ impl<'a> EncodeRequest<'a> {
     }
 
     /// Same as [`Self::try_encode_target_zensim_bytes`] but also
-    /// returns the metrics. The iteration loop is always RGB8-only,
-    /// no stride, lossy config; the metadata fields (icc/exif/xmp) are
-    /// not currently honored on the iteration path — if any are set
-    /// we fall back to a single-pass encode and return `None` so the
-    /// caller can take the normal path. (TODO: thread metadata
-    /// through iteration once a user needs it.)
+    /// returns the metrics. The iteration loop accepts RGB8 / RGBA8 /
+    /// BGR8 / BGRA8 inputs (alpha and BGR channels are stripped /
+    /// reordered to a transient RGB buffer used for iteration probes;
+    /// the final on-wire bytes are still RGB-only). No stride override,
+    /// lossy config; the metadata fields (icc/exif/xmp) are not
+    /// currently honored on the iteration path — if any are set we
+    /// fall back to a single-pass encode and return `None` so the
+    /// caller can take the normal path. (TODO: thread metadata and
+    /// preserve alpha through iteration once a user needs it.)
     #[allow(clippy::unnecessary_wraps)] // signature aligns with feature-on counterpart
     fn try_encode_target_zensim_with_metrics(
         &self,
     ) -> EncodeResult<Option<(Vec<u8>, super::zensim_target::ZensimEncodeMetrics)>> {
-        // Only RGB8 lossy configs with target_zensim set and no
-        // metadata/stride trigger the iteration path. Everything else
+        // Only lossy configs with target_zensim set and no stride/
+        // metadata trigger the iteration path. Everything else
         // returns None so the caller falls back to encode_inner.
         let lossy = match &self.config {
             ConfigKind::Lossy(cfg) => *cfg,
@@ -1480,9 +1483,6 @@ impl<'a> EncodeRequest<'a> {
             ConfigKind::Enum(config::EncoderConfig::Lossless(_)) => return Ok(None),
         };
         if lossy.target_zensim.is_none() {
-            return Ok(None);
-        }
-        if self.color_type != PixelLayout::Rgb8 {
             return Ok(None);
         }
         if self.stride_pixels.is_some() {
@@ -1494,8 +1494,71 @@ impl<'a> EncodeRequest<'a> {
             // through. Take the safe path.
             return Ok(None);
         }
+        // Convert input to a transient RGB buffer for the iteration
+        // probes. The iteration loop's encoder calls always use
+        // PixelLayout::Rgb8 internally (see
+        // `encode_at_with_diagnostics`), so the resulting on-wire
+        // bytes are RGB-only — alpha is dropped. RGBA / BGRA / BGR
+        // inputs are accepted to make the iteration loop fire on
+        // those formats, but callers who need alpha preserved should
+        // run the iteration on an RGB projection and then re-encode
+        // RGBA at the converged quality outside the loop.
+        let rgb_owned: alloc::vec::Vec<u8>;
+        let rgb_slice: &[u8] = match self.color_type {
+            PixelLayout::Rgb8 => self.pixels,
+            PixelLayout::Rgba8 => {
+                let n = (self.width as usize) * (self.height as usize);
+                if self.pixels.len() < n * 4 {
+                    return Ok(None);
+                }
+                rgb_owned = self
+                    .pixels
+                    .chunks_exact(4)
+                    .flat_map(|p| [p[0], p[1], p[2]])
+                    .collect();
+                &rgb_owned[..]
+            }
+            PixelLayout::Bgr8 => {
+                let n = (self.width as usize) * (self.height as usize);
+                if self.pixels.len() < n * 3 {
+                    return Ok(None);
+                }
+                rgb_owned = self
+                    .pixels
+                    .chunks_exact(3)
+                    .flat_map(|p| [p[2], p[1], p[0]])
+                    .collect();
+                &rgb_owned[..]
+            }
+            PixelLayout::Bgra8 => {
+                let n = (self.width as usize) * (self.height as usize);
+                if self.pixels.len() < n * 4 {
+                    return Ok(None);
+                }
+                rgb_owned = self
+                    .pixels
+                    .chunks_exact(4)
+                    .flat_map(|p| [p[2], p[1], p[0]])
+                    .collect();
+                &rgb_owned[..]
+            }
+            PixelLayout::Argb8 => {
+                let n = (self.width as usize) * (self.height as usize);
+                if self.pixels.len() < n * 4 {
+                    return Ok(None);
+                }
+                rgb_owned = self
+                    .pixels
+                    .chunks_exact(4)
+                    .flat_map(|p| [p[1], p[2], p[3]])
+                    .collect();
+                &rgb_owned[..]
+            }
+            // Other layouts (L8, LA8, YUV420) — fall back to single-pass.
+            _ => return Ok(None),
+        };
         let pair = lossy
-            .encode_rgb_with_metrics(self.pixels, self.width, self.height)
+            .encode_rgb_with_metrics(rgb_slice, self.width, self.height)
             .map_err(|e| at!(e))?;
         Ok(Some(pair))
     }
