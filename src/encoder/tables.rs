@@ -278,18 +278,8 @@ pub const VP8_AC_TABLE: [u16; 128] = [
     213, 217, 221, 225, 229, 234, 239, 245, 249, 254, 259, 264, 269, 274, 279, 284,
 ];
 
-/// AC2 quantizer lookup table for Y2 block (index 0-127 -> quantizer step)
-#[rustfmt::skip]
-pub const VP8_AC_TABLE2: [u16; 128] = [
-    8, 8, 9, 10, 12, 13, 15, 17, 18, 20, 21, 23, 24, 26, 27, 29,
-    31, 32, 34, 35, 37, 38, 40, 41, 43, 44, 46, 48, 49, 51, 52, 54,
-    55, 57, 58, 60, 62, 63, 65, 66, 68, 69, 71, 72, 74, 75, 77, 79,
-    80, 82, 83, 85, 86, 88, 89, 93, 96, 99, 102, 105, 108, 111, 114, 117,
-    120, 124, 127, 130, 133, 136, 139, 142, 145, 148, 151, 155, 158, 161, 164, 167,
-    170, 173, 176, 179, 184, 189, 193, 198, 203, 207, 212, 217, 221, 226, 230, 235,
-    240, 244, 249, 254, 258, 263, 268, 274, 280, 286, 292, 299, 305, 311, 317, 323,
-    330, 336, 342, 348, 354, 362, 370, 379, 385, 393, 401, 409, 416, 424, 432, 440,
-];
+// VP8_AC_TABLE2 (Y2 AC quantizer) lives in `crate::common::types` so the
+// decoder can use it without reaching into the encoder module.
 
 /// Zig-zag scan order for 4x4 block
 pub const VP8_ZIGZAG: [usize; 16] = [0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15];
@@ -379,24 +369,72 @@ pub(crate) const LEVELS_FROM_DELTA: [[u8; MAX_DELTA_SIZE]; 8] = [
 //------------------------------------------------------------------------------
 // Mode costs
 
-/// Fixed mode costs for Intra16 modes (DC, V, H, TM)
-/// These are pre-calculated bit costs from the VP8 coding tree.
-/// Values from libwebp's VP8FixedCostsI16.
-/// Note: these include the fixed VP8BitCost(1, 145) mode selection cost.
-pub const FIXED_COSTS_I16: [u16; 4] = [663, 919, 872, 919];
+/// Fixed mode costs for Intra16 modes, indexed in zenwebp's `LumaMode` order
+/// `[DC, V, H, TM]` (i.e., `MODES` in `pick_best_intra16`).
+///
+/// libwebp's `VP8FixedCostsI16` (`cost_enc.c:105`) is `[663, 919, 872, 919]` in
+/// libwebp's enum order `[DC=0, TM=1, V=2, H=3]`. Re-permuted here to zenwebp's
+/// enum: DC=663, V=872, H=919, TM=919. Includes the fixed `VP8BitCost(1, 145)`
+/// mode-selection cost.
+pub const FIXED_COSTS_I16: [u16; 4] = [663, 872, 919, 919];
 
-/// Fixed mode costs for chroma modes (DC, V, H, TM)
-/// Values from libwebp's VP8FixedCostsUV.
-pub const FIXED_COSTS_UV: [u16; 4] = [302, 984, 439, 642];
+/// Fixed mode costs for chroma modes, indexed in zenwebp's `ChromaMode` order
+/// `[DC, V, H, TM]` (i.e., `MODES` in `pick_best_uv`).
+///
+/// libwebp's `VP8FixedCostsUV` (`cost_enc.c:103`) is `[302, 984, 439, 642]` in
+/// libwebp's enum order `[DC=0, TM=1, V=2, H=3]`. Re-permuted here to zenwebp's
+/// enum: DC=302, V=439, H=642, TM=984.
+pub const FIXED_COSTS_UV: [u16; 4] = [302, 439, 642, 984];
 
 /// Number of Intra4 prediction modes
 pub const NUM_BMODES: usize = 10;
 
-/// Context-dependent Intra4 mode costs.
-/// Indexed as VP8_FIXED_COSTS_I4\[top_mode\]\[left_mode\]\[mode\].
-/// From libwebp's VP8FixedCostsI4.
+/// Permutation mapping zenwebp's `B_*_PRED` enum to libwebp's. zenwebp has
+/// `B_LD=4, B_RD=5, B_VR=6, B_VL=7`; libwebp has `B_RD=4, B_VR=5, B_LD=6, B_VL=7`.
+/// `PERM_LIBWEBP_TO_ZEN[zen_idx] = libwebp_idx_for_same_mode`.
+const PERM_LIBWEBP_TO_ZEN: [usize; NUM_BMODES] = [0, 1, 2, 3, 6, 4, 5, 7, 8, 9];
+
+/// Apply the libwebp→zenwebp enum permutation to all three dimensions of the I4
+/// cost table (top_ctx, left_ctx, mode). `out[i][j][k] = src[perm[i]][perm[j]][perm[k]]`.
+const fn permute_i4_table(
+    src: &[[[u16; NUM_BMODES]; NUM_BMODES]; NUM_BMODES],
+) -> [[[u16; NUM_BMODES]; NUM_BMODES]; NUM_BMODES] {
+    let mut out = [[[0u16; NUM_BMODES]; NUM_BMODES]; NUM_BMODES];
+    let mut i = 0;
+    while i < NUM_BMODES {
+        let mut j = 0;
+        while j < NUM_BMODES {
+            let mut k = 0;
+            while k < NUM_BMODES {
+                out[i][j][k] =
+                    src[PERM_LIBWEBP_TO_ZEN[i]][PERM_LIBWEBP_TO_ZEN[j]][PERM_LIBWEBP_TO_ZEN[k]];
+                k += 1;
+            }
+            j += 1;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Context-dependent Intra4 mode costs. The values come from libwebp's
+/// `VP8FixedCostsI4` (`cost_enc.c:106-206`), which is indexed in libwebp's
+/// `B_*_PRED` enum order. zenwebp's `B_*_PRED` enum permutes positions 4/5/6,
+/// so the table is re-permuted at compile time to be indexed in zenwebp's
+/// order: `VP8_FIXED_COSTS_I4[top_zen][left_zen][mode_zen]`.
+///
+/// Companion probability table `KEYFRAME_BPRED_MODE_PROBS` is hand-permuted in
+/// `src/common/types.rs`; the cost table now uses const-fn permutation so the
+/// raw libwebp data is preserved verbatim for future audits.
+pub const VP8_FIXED_COSTS_I4: [[[u16; NUM_BMODES]; NUM_BMODES]; NUM_BMODES] =
+    permute_i4_table(&VP8_FIXED_COSTS_I4_LIBWEBP_ORDER);
+
+/// Raw libwebp `VP8FixedCostsI4` table, indexed in libwebp's `B_*_PRED` order
+/// (`B_DC=0, B_TM=1, B_VE=2, B_HE=3, B_RD=4, B_VR=5, B_LD=6, B_VL=7, B_HD=8,
+/// B_HU=9`). Do NOT use directly — use `VP8_FIXED_COSTS_I4` (the permuted
+/// version indexed in zenwebp's enum order).
 #[rustfmt::skip]
-pub const VP8_FIXED_COSTS_I4: [[[u16; NUM_BMODES]; NUM_BMODES]; NUM_BMODES] = [
+const VP8_FIXED_COSTS_I4_LIBWEBP_ORDER: [[[u16; NUM_BMODES]; NUM_BMODES]; NUM_BMODES] = [
     [[40, 1151, 1723, 1874, 2103, 2019, 1628, 1777, 2226, 2137],
      [192, 469, 1296, 1308, 1849, 1794, 1781, 1703, 1713, 1522],
      [142, 910, 762, 1684, 1849, 1576, 1460, 1305, 1801, 1657],
@@ -498,3 +536,44 @@ pub const VP8_FIXED_COSTS_I4: [[[u16; NUM_BMODES]; NUM_BMODES]; NUM_BMODES] = [
      [768, 724, 1058, 636, 991, 1075, 1319, 1324, 616, 825],
      [305, 1167, 1358, 899, 1587, 1587, 987, 1988, 1332, 501]],
 ];
+
+#[cfg(test)]
+mod fixed_costs_i4_perm_tests {
+    use super::*;
+
+    /// The const-fn permutation must produce the same values as a manual
+    /// permutation (zen[i][j][k] = libwebp[perm[i]][perm[j]][perm[k]]).
+    #[test]
+    fn permutation_matches_manual_lookup() {
+        for i in 0..NUM_BMODES {
+            for j in 0..NUM_BMODES {
+                for k in 0..NUM_BMODES {
+                    let zen = VP8_FIXED_COSTS_I4[i][j][k];
+                    let manual = VP8_FIXED_COSTS_I4_LIBWEBP_ORDER[PERM_LIBWEBP_TO_ZEN[i]]
+                        [PERM_LIBWEBP_TO_ZEN[j]][PERM_LIBWEBP_TO_ZEN[k]];
+                    assert_eq!(zen, manual, "mismatch at zen[{i}][{j}][{k}]");
+                }
+            }
+        }
+    }
+
+    /// Spot-checks predicted by the audit (`differences/01-mode-selection.md` #1).
+    /// zen[i][j][k] reads the libwebp value at position `perm[i],perm[j],perm[k]`.
+    /// At zen [0][0][4] (B_LD) we should now get the libwebp value at [0][0][6]
+    /// (libwebp's B_LD), which is 1628. Likewise the other two slots rotate.
+    #[test]
+    fn audit_spot_checks() {
+        // From the original libwebp-ordered table, [0][0] row is:
+        //   [40, 1151, 1723, 1874, 2103, 2019, 1628, 1777, 2226, 2137]
+        //                          ^RD=4 ^VR=5 ^LD=6
+        // After permutation to zen order, slots 4/5/6 become:
+        //   [...,  LD=1628, RD=2103, VR=2019, ...]
+        assert_eq!(VP8_FIXED_COSTS_I4[0][0][4], 1628, "zen LD"); // was libwebp[0][0][6]
+        assert_eq!(VP8_FIXED_COSTS_I4[0][0][5], 2103, "zen RD"); // was libwebp[0][0][4]
+        assert_eq!(VP8_FIXED_COSTS_I4[0][0][6], 2019, "zen VR"); // was libwebp[0][0][5]
+        // Slots 0,1,2,3,7,8,9 are unchanged (perm is identity there).
+        assert_eq!(VP8_FIXED_COSTS_I4[0][0][0], 40);
+        assert_eq!(VP8_FIXED_COSTS_I4[0][0][7], 1777);
+        assert_eq!(VP8_FIXED_COSTS_I4[0][0][9], 2137);
+    }
+}

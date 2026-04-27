@@ -120,6 +120,27 @@ pub enum Preset {
     Auto,
 }
 
+/// Cost model used during mode selection and trellis quantization.
+///
+/// zenwebp's default cost model includes perceptual extensions (PSY_WEIGHT_Y
+/// CSF table at m3+, SATD masking-alpha blend at m4+, JND coefficient
+/// zeroing at m5+) tuned for butteraugli/SSIMULACRA2 rather than strict
+/// size parity with libwebp.
+///
+/// Use `StrictLibwebpParity` when bit-comparing against libwebp output, or
+/// when libwebp's size-quality tradeoff is desired.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CostModel {
+    /// zenwebp's default — perceptual extensions enabled per method level.
+    #[default]
+    ZenwebpDefault,
+    /// Strict libwebp parity — disables zenwebp's perceptual extensions
+    /// (PSY_WEIGHT_Y, SATD masking blend, JND zeroing) so the encoder
+    /// matches libwebp's algorithm at the same `(quality, method, sns,
+    /// filter, segments)` settings.
+    StrictLibwebpParity,
+}
+
 impl fmt::Display for Preset {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -543,6 +564,22 @@ pub struct EncoderParams {
     /// Preserve RGB under fully-transparent pixels (alpha=0) in lossless mode.
     /// `false` (default) matches libwebp: zero RGB for better compression.
     pub(crate) exact: bool,
+    /// Preprocessing options. Default: all off (matching libwebp's
+    /// `config->preprocessing = 0`).
+    pub(crate) smooth_segment_map: bool,
+    /// Cost model selection for mode selection and trellis. Default:
+    /// `ZenwebpDefault` (perceptual extensions enabled per method level).
+    /// `StrictLibwebpParity` disables PSY_WEIGHT_Y, SATD masking blend, and
+    /// JND zeroing for byte-comparable output to libwebp.
+    pub(crate) cost_model: CostModel,
+    /// Run a stat-collection encoder pass before the emit pass to refresh
+    /// `level_costs` from the observed token distribution. Roughly doubles
+    /// encode time at m4 in exchange for ~0.1% size win on photo content.
+    /// libwebp does this by default; zenwebp keeps it OFF to optimize the
+    /// speed/size tradeoff on the m4 default. Worth enabling for
+    /// `target_size` / `target_zensim` search loops, or under
+    /// `CostModel::StrictLibwebpParity`. Default `false`.
+    pub(crate) multi_pass_stats: bool,
 }
 
 impl Default for EncoderParams {
@@ -563,6 +600,9 @@ impl Default for EncoderParams {
             alpha_quality: 100,
             partition_limit: None,
             exact: false,
+            smooth_segment_map: false,
+            cost_model: CostModel::ZenwebpDefault,
+            multi_pass_stats: false,
         }
     }
 }
@@ -696,6 +736,20 @@ pub struct EncoderConfig {
     /// Partition limit (0-100). Penalizes I4 mode to prevent partition 0 overflow.
     /// `None` = automatic retry on overflow.
     pub partition_limit: Option<u8>,
+    /// Enable segment-map smoothing (3×3 majority filter on the per-MB segment
+    /// map before per-segment quantizer setup). Equivalent to libwebp's
+    /// `config->preprocessing & 1`. Default `false`, matching libwebp.
+    pub smooth_segment_map: bool,
+    /// Cost model selection. Default: `ZenwebpDefault` (perceptual extensions
+    /// enabled per method level). Set to `StrictLibwebpParity` to disable
+    /// PSY_WEIGHT_Y, SATD masking blend, and JND zeroing for byte-comparable
+    /// output to libwebp at matching `(quality, method, sns, filter, segments)`.
+    pub cost_model: CostModel,
+    /// Run a stat-collection encoder pass before the emit pass. Roughly
+    /// doubles encode time at m4 in exchange for ~0.1% size win on photo
+    /// content. Default `false`. Currently only m4 honors this — m5/m6
+    /// already saturate per-pass and multi-pass at those tiers regresses size.
+    pub multi_pass_stats: bool,
     /// Encode limits for dimensions and memory validation.
     pub limits: crate::Limits,
 }
@@ -718,6 +772,9 @@ impl Default for EncoderConfig {
             filter_sharpness: None,
             segments: None,
             partition_limit: None,
+            smooth_segment_map: false,
+            cost_model: CostModel::ZenwebpDefault,
+            multi_pass_stats: false,
             limits: crate::Limits::none(), // No limits by default
         }
     }
@@ -865,6 +922,42 @@ impl EncoderConfig {
         self
     }
 
+    /// Set preprocessing flags (bitfield, matches libwebp's `WebPConfig::preprocessing`).
+    ///
+    /// Enable segment-map smoothing (3×3 majority filter on the per-MB
+    /// segment map before per-segment quantizer setup). Equivalent to
+    /// libwebp's `cwebp -pre 1`. Default off.
+    #[must_use]
+    pub fn smooth_segment_map(mut self, on: bool) -> Self {
+        self.smooth_segment_map = on;
+        self
+    }
+
+    /// Enable a stat-collection encoder pass before the emit pass to refresh
+    /// `level_costs` from the observed token distribution. Roughly **doubles**
+    /// encode time at m4 in exchange for ~0.1% size win on photo content.
+    /// Default off; opt-in for `target_size` / `target_zensim` searches.
+    #[must_use]
+    pub fn multi_pass_stats(mut self, on: bool) -> Self {
+        self.multi_pass_stats = on;
+        self
+    }
+
+    /// Set the cost model used during mode selection and trellis quantization.
+    ///
+    /// - `CostModel::ZenwebpDefault` (default): perceptual extensions enabled
+    ///   per method level — PSY_WEIGHT_Y CSF table at m3+, SATD masking-alpha
+    ///   blend at m4+, JND coefficient zeroing at m5+. Tuned for perceptual
+    ///   metrics (butteraugli/SSIMULACRA2).
+    /// - `CostModel::StrictLibwebpParity`: disables those extensions so the
+    ///   encoder matches libwebp's algorithm at the same `(quality, method,
+    ///   sns, filter, segments)`. Use this when bit-comparing against libwebp.
+    #[must_use]
+    pub fn cost_model(mut self, model: CostModel) -> Self {
+        self.cost_model = model;
+        self
+    }
+
     /// Set encode limits for validation.
     #[must_use]
     pub fn limits(mut self, limits: crate::Limits) -> Self {
@@ -915,6 +1008,9 @@ impl EncoderConfig {
             alpha_quality: self.alpha_quality,
             partition_limit: self.partition_limit,
             exact: self.exact,
+            smooth_segment_map: self.smooth_segment_map,
+            cost_model: self.cost_model,
+            multi_pass_stats: self.multi_pass_stats,
         }
     }
 
@@ -2353,5 +2449,73 @@ mod tests {
             .unwrap();
         let decoded = webp::Decoder::new(&output).decode().unwrap();
         assert_eq!(img, *decoded);
+    }
+
+    /// Builder-chain test for the three new lossy knobs added in PR #37
+    /// (`cost_model`, `smooth_segment_map`, `multi_pass_stats`). Verifies the
+    /// fluent setters land the right values on both EncoderConfig and the
+    /// LossyConfig variants, and that defaults match libwebp behavior.
+    #[test]
+    fn lossy_config_builder_threads_review_pr37_knobs() {
+        use crate::encoder::config::LossyConfig;
+
+        // Defaults match libwebp:
+        //   cost_model = ZenwebpDefault (perceptual extensions enabled)
+        //   smooth_segment_map = false (libwebp `preprocessing & 1` default off)
+        //   multi_pass_stats = false (zenwebp keeps stat-pass off; opt-in for target_size)
+        let default_lc = LossyConfig::new();
+        assert_eq!(default_lc.cost_model, CostModel::ZenwebpDefault);
+        assert!(!default_lc.smooth_segment_map);
+        assert!(!default_lc.multi_pass_stats);
+
+        // Fluent chain — each setter consumes self and returns Self, so all
+        // three must be settable in one expression.
+        let lc = LossyConfig::new()
+            .with_cost_model(CostModel::StrictLibwebpParity)
+            .with_smooth_segment_map(true)
+            .with_multi_pass_stats(true);
+        assert_eq!(lc.cost_model, CostModel::StrictLibwebpParity);
+        assert!(lc.smooth_segment_map);
+        assert!(lc.multi_pass_stats);
+
+        // Same knobs on EncoderConfig.
+        let ec = EncoderConfig::default()
+            .cost_model(CostModel::StrictLibwebpParity)
+            .smooth_segment_map(true)
+            .multi_pass_stats(true);
+        assert_eq!(ec.cost_model, CostModel::StrictLibwebpParity);
+        assert!(ec.smooth_segment_map);
+        assert!(ec.multi_pass_stats);
+
+        // Round-trip through to_params: the EncoderParams the encoder sees
+        // must reflect the configured knobs.
+        let params = ec.to_params();
+        assert_eq!(params.cost_model, CostModel::StrictLibwebpParity);
+        assert!(params.smooth_segment_map);
+        assert!(params.multi_pass_stats);
+    }
+
+    /// Encoding under each `CostModel` must complete and produce a valid
+    /// (decodable) WebP. This catches accidental panics in the cost-model
+    /// gating threading without needing a libwebp comparison.
+    #[test]
+    fn cost_model_variants_encode_and_decode() {
+        let img = vec![128u8; 64 * 64 * 3];
+        for &model in &[CostModel::ZenwebpDefault, CostModel::StrictLibwebpParity] {
+            let mut output = Vec::new();
+            let mut encoder = WebPEncoder::new(&mut output);
+            encoder.set_params(EncoderParams {
+                cost_model: model,
+                ..EncoderParams::default()
+            });
+            encoder
+                .encode(&img, 64, 64, 64, crate::PixelLayout::Rgb8)
+                .expect("encode under cost model variant");
+            assert!(!output.is_empty(), "{model:?} produced empty output");
+            // Decode round-trip — confirms the file is well-formed.
+            let mut decoder = crate::WebPDecoder::new(&output).unwrap();
+            let mut img2 = vec![0u8; 64 * 64 * 3];
+            decoder.read_image(&mut img2).unwrap();
+        }
     }
 }

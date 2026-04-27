@@ -318,12 +318,12 @@ impl DecoderContext {
             let yac = ac_quant(base);
 
             let y2dc = dc_quant(base + y2dc_delta) * 2;
-            // ac_quant max is 1172, so 1172 * 155 / 100 = 1817, fits i16.
-            let y2ac_i32 = i32::from(ac_quant(base + y2ac_delta)) * 155 / 100;
-            let mut y2ac = y2ac_i32.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
-            if y2ac < 8 {
-                y2ac = 8;
-            }
+            // Y2 AC uses libwebp's dedicated `kAcTable2` lookup, not `kAcTable * 155/100`.
+            // Encoder side updated in #24; both must move together to keep the
+            // round-trip bit-exact (and to produce libwebp-compatible files).
+            // Table lives in `common::types` (already glob-imported at line 15).
+            let y2ac_idx = (base + y2ac_delta).clamp(0, 127) as usize;
+            let y2ac = VP8_AC_TABLE2[y2ac_idx] as i16;
 
             let mut uvdc = dc_quant(base + uvdc_delta);
             if uvdc > 132 {

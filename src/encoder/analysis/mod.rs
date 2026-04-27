@@ -214,9 +214,15 @@ fn final_alpha_value(alpha: i32) -> u8 {
 /// - mixed alpha: finalized alpha value combining luma and chroma (for segment assignment)
 /// - raw uv_alpha: unfinalized chroma alpha (for UV quant delta computation)
 ///
-/// When `method >= 4` and `sns_strength > 0`, blends in a masking-based alpha
-/// from local variance to improve adaptive quantization for textured regions.
-pub fn analyze_macroblock(it: &mut AnalysisIterator, method: u8, sns_strength: u8) -> (u8, i32) {
+/// When `method >= 4`, `sns_strength > 0`, and `cost_model = ZenwebpDefault`,
+/// blends in a masking-based alpha from local variance to improve adaptive
+/// quantization for textured regions. Disabled under `StrictLibwebpParity`.
+pub fn analyze_macroblock(
+    it: &mut AnalysisIterator,
+    method: u8,
+    sns_strength: u8,
+    cost_model: crate::encoder::api::CostModel,
+) -> (u8, i32) {
     let (best_alpha, _best_mode) = it.analyze_best_intra16_mode();
     let (best_uv_alpha, _uv_mode) = it.analyze_best_uv_mode();
 
@@ -224,8 +230,12 @@ pub fn analyze_macroblock(it: &mut AnalysisIterator, method: u8, sns_strength: u
     let alpha = (3 * best_alpha + best_uv_alpha + 2) >> 2;
 
     // Blend with masking alpha for perceptual adaptive quantization.
-    // Only when method >= 4 AND sns_strength > 0 (user hasn't disabled SNS).
-    let alpha = if method >= 4 && sns_strength > 0 {
+    // Only when method >= 4 AND sns_strength > 0 (user hasn't disabled SNS)
+    // AND cost_model is ZenwebpDefault (libwebp parity disables this blend).
+    let alpha = if method >= 4
+        && sns_strength > 0
+        && cost_model == crate::encoder::api::CostModel::ZenwebpDefault
+    {
         let masking = crate::encoder::psy::compute_masking_alpha(&it.yuv_in[Y_OFF_ENC..], BPS);
         crate::encoder::psy::blend_masking_alpha(alpha, masking, method)
     } else {
@@ -234,6 +244,23 @@ pub fn analyze_macroblock(it: &mut AnalysisIterator, method: u8, sns_strength: u
 
     // Finalize: invert and clip
     (final_alpha_value(alpha), best_uv_alpha)
+}
+
+/// Per-macroblock mode hint from the analysis pass.
+///
+/// Populated only when `method <= 1`, mirroring libwebp's `FastMBAnalyze`
+/// which writes per-MB intra16/intra4 decisions during analysis that the
+/// encode pass then consumes via `RefineUsingDistortion(refine_uv_mode=0)`.
+///
+/// At higher methods (m>=2) the encode pass re-evaluates everything and
+/// these hints are irrelevant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MbModeHint {
+    /// Use Intra16 with DC prediction (libwebp `VP8SetIntra16Mode(it, 0)`).
+    I16Dc,
+    /// Use Intra4 with all sub-blocks DC-predicted
+    /// (libwebp `VP8SetIntra4Mode(it, all_zeros)`).
+    I4AllDc,
 }
 
 /// Analysis result containing per-MB alphas and global statistics.
@@ -245,12 +272,71 @@ pub struct AnalysisResult {
     /// Average UV alpha across all macroblocks (raw, for UV quant delta)
     /// Range is typically ~30 (bad) to ~100 (ok to decimate UV more).
     pub uv_alpha_avg: i32,
+    /// Per-macroblock mode hints (only populated when `method <= 1`).
+    ///
+    /// `None` means the encoder should run its normal mode-selection path.
+    /// `Some(hints)` means the encoder should consume the hints directly,
+    /// matching libwebp's `RefineUsingDistortion(try_both_modes=0)` flow.
+    pub mb_mode_hints: Option<Vec<MbModeHint>>,
+}
+
+/// Compute the FastMBAnalyze decision for a single macroblock.
+///
+/// Ported from libwebp's `FastMBAnalyze` (analysis_enc.c:260). Splits the
+/// 16×16 luma block into 16 4×4 sub-blocks, computes per-sub-block DC mean,
+/// and uses the variance ratio to pick between Intra16-DC (low variance,
+/// flat block) and Intra4-all-DC (high variance, more sub-block detail).
+///
+/// `quality` is the user-facing 0-100 quality (libwebp `config->quality`).
+/// `y_in` is the 16×16 luma source plane in BPS-strided layout
+/// (`yuv_in + Y_OFF_ENC` in libwebp).
+fn fast_mb_analyze(y_in: &[u8], stride: usize, quality: i32) -> MbModeHint {
+    // libwebp threshold: 8 + (17-8)*q/100, ranging from 8 (lowest q) to 17 (highest q).
+    // Higher q => higher threshold => more likely to pick I4 (more local detail preserved).
+    let q = quality.clamp(0, 100);
+    let k_threshold: u64 = 8 + (17 - 8) * q as u64 / 100;
+
+    // Compute 16 per-4×4-block DC sums (each is the sum of all 16 pixels in the 4×4 block).
+    // libwebp's `VP8Mean16x4` writes 4 DC values per call (one per 4×4 column in a 4-row strip),
+    // and is called 4 times to fill all 16. We compute the same 16 sums directly.
+    let mut dc = [0u32; 16];
+    for row_blk in 0..4 {
+        for col_blk in 0..4 {
+            let mut sum: u32 = 0;
+            for r in 0..4 {
+                let row_base = (row_blk * 4 + r) * stride + col_blk * 4;
+                for c in 0..4 {
+                    sum += y_in[row_base + c] as u32;
+                }
+            }
+            dc[row_blk * 4 + col_blk] = sum;
+        }
+    }
+
+    let (mut m, mut m2): (u64, u64) = (0, 0);
+    for &d in &dc {
+        m += d as u64;
+        m2 += (d as u64) * (d as u64);
+    }
+
+    // libwebp: `if (kThreshold * m2 < m * m) -> I16-DC, else -> I4-all-DC`
+    if k_threshold.saturating_mul(m2) < m.saturating_mul(m) {
+        MbModeHint::I16Dc
+    } else {
+        MbModeHint::I4AllDc
+    }
 }
 
 /// Run full analysis pass on image and return alpha histogram + per-MB alphas
 /// Ported from libwebp's VP8EncAnalyze / DoSegmentsJob
 ///
 /// `method` controls whether perceptual masking is blended into alpha values.
+/// `cost_model` selects between zenwebp's perceptual extensions
+/// (`ZenwebpDefault`) and strict libwebp parity (`StrictLibwebpParity`,
+/// which disables the SATD masking-alpha blend).
+///
+/// `quality` is the user-facing 0-100 quality, used by `FastMBAnalyze`
+/// when `method <= 1` to populate per-MB mode hints.
 #[allow(clippy::too_many_arguments)]
 pub fn analyze_image(
     y_src: &[u8],
@@ -262,6 +348,50 @@ pub fn analyze_image(
     uv_stride: usize,
     method: u8,
     sns_strength: u8,
+    cost_model: crate::encoder::api::CostModel,
+    quality: i32,
+) -> AnalysisResult {
+    // Default behavior: collect FastMBAnalyze hints whenever libwebp would
+    // (method <= 1). Internal callers that already know the hints will be
+    // discarded (e.g. partition_limit will force I16-only) should call
+    // `analyze_image_with_hint_gate` directly to skip the per-MB DC sums.
+    analyze_image_with_hint_gate(
+        y_src,
+        u_src,
+        v_src,
+        width,
+        height,
+        y_stride,
+        uv_stride,
+        method,
+        sns_strength,
+        cost_model,
+        quality,
+        method <= 1,
+    )
+}
+
+/// Internal variant of [`analyze_image`] that lets the caller force-disable
+/// FastMBAnalyze hint collection.
+///
+/// `collect_mode_hints` overrides the default `method <= 1` decision. Setting
+/// it to `false` skips the per-MB 4×4-block DC sums that feed `fast_mb_analyze`.
+/// Useful when `partition_limit >= 100` will force I16-only mode selection
+/// regardless of the hint, so collecting it would be wasted work.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn analyze_image_with_hint_gate(
+    y_src: &[u8],
+    u_src: &[u8],
+    v_src: &[u8],
+    width: usize,
+    height: usize,
+    y_stride: usize,
+    uv_stride: usize,
+    method: u8,
+    sns_strength: u8,
+    cost_model: crate::encoder::api::CostModel,
+    quality: i32,
+    collect_mode_hints: bool,
 ) -> AnalysisResult {
     let mut it = AnalysisIterator::new(width, height);
     it.reset();
@@ -271,10 +401,21 @@ pub fn analyze_image(
     let mut alpha_histogram = [0u32; 256];
     let mut uv_alpha_sum: i64 = 0;
 
+    let mut mb_mode_hints: Vec<MbModeHint> = if collect_mode_hints {
+        Vec::with_capacity(total_mbs)
+    } else {
+        Vec::new()
+    };
+
     loop {
         it.import(y_src, u_src, v_src, y_stride, uv_stride);
 
-        let (alpha, uv_alpha) = analyze_macroblock(&mut it, method, sns_strength);
+        if collect_mode_hints {
+            let hint = fast_mb_analyze(&it.yuv_in[Y_OFF_ENC..], BPS, quality);
+            mb_mode_hints.push(hint);
+        }
+
+        let (alpha, uv_alpha) = analyze_macroblock(&mut it, method, sns_strength, cost_model);
         mb_alphas.push(alpha);
         alpha_histogram[alpha as usize] += 1;
         uv_alpha_sum += uv_alpha as i64;
@@ -295,5 +436,10 @@ pub fn analyze_image(
         mb_alphas,
         alpha_histogram,
         uv_alpha_avg,
+        mb_mode_hints: if collect_mode_hints {
+            Some(mb_mode_hints)
+        } else {
+            None
+        },
     }
 }

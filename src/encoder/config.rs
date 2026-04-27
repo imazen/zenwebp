@@ -73,6 +73,22 @@ pub struct LossyConfig {
     /// 0 = no limit (default), 100 = maximum I4 suppression.
     /// None = automatic (encoder will retry with increasing limits on overflow).
     pub partition_limit: Option<u8>,
+    /// Preprocessing options. Default: all off (matches libwebp's
+    /// `config->preprocessing = 0`).
+    pub smooth_segment_map: bool,
+    /// Cost model selection. Default: `ZenwebpDefault` (perceptual extensions
+    /// enabled per method level). Set to `StrictLibwebpParity` for libwebp
+    /// algorithm parity (disables PSY_WEIGHT_Y, SATD masking blend, JND zeroing).
+    pub cost_model: super::api::CostModel,
+    /// Run a stat-collection encoder pass before the emit pass to refresh
+    /// `level_costs` from the observed token distribution. Roughly **doubles**
+    /// encode time at m4 in exchange for ~0.1% size win on photo content.
+    /// libwebp does this by default; zenwebp keeps it OFF to optimize the
+    /// speed/size tradeoff. Worth enabling for `target_size` / `target_zensim`
+    /// search loops, or under `CostModel::StrictLibwebpParity`.
+    /// Default `false`. Currently only m4 honors this flag — m5/m6 already
+    /// saturate per-pass and multi-pass at those tiers regresses size.
+    pub multi_pass_stats: bool,
     /// Resource limits for validation.
     pub limits: Limits,
 }
@@ -102,6 +118,9 @@ impl LossyConfig {
             filter_sharpness: None,
             segments: None,
             partition_limit: None,
+            smooth_segment_map: false,
+            cost_model: super::api::CostModel::ZenwebpDefault,
+            multi_pass_stats: false,
             limits: Limits::none(),
         }
     }
@@ -222,6 +241,46 @@ impl LossyConfig {
     #[must_use]
     pub fn with_partition_limit(mut self, limit: u8) -> Self {
         self.partition_limit = Some(limit.min(100));
+        self
+    }
+
+    /// Set the cost model used during mode selection and trellis quantization.
+    ///
+    /// - [`CostModel::ZenwebpDefault`](super::api::CostModel::ZenwebpDefault)
+    ///   (default): perceptual extensions enabled per method level —
+    ///   PSY_WEIGHT_Y CSF table at m3+, SATD masking-alpha blend at m4+,
+    ///   JND coefficient zeroing at m5+. Tuned for butteraugli/SSIMULACRA2.
+    /// - [`CostModel::StrictLibwebpParity`](super::api::CostModel::StrictLibwebpParity):
+    ///   disables those extensions so the encoder matches libwebp's algorithm
+    ///   at the same `(quality, method, sns, filter, segments)`. Use this
+    ///   when bit-comparing against libwebp output.
+    #[must_use]
+    pub fn with_cost_model(mut self, model: super::api::CostModel) -> Self {
+        self.cost_model = model;
+        self
+    }
+
+    /// Enable segment-map smoothing (3×3 majority filter on the per-MB
+    /// segment map before per-segment quantizer setup). Equivalent to
+    /// libwebp's `cwebp -pre 1` (`config->preprocessing & 1`,
+    /// `analysis_enc.c:217-218`). Default off, matching libwebp.
+    #[must_use]
+    pub fn with_smooth_segment_map(mut self, on: bool) -> Self {
+        self.smooth_segment_map = on;
+        self
+    }
+
+    /// Enable a stat-collection encoder pass before the emit pass to refresh
+    /// `level_costs` from the observed token distribution. Roughly **doubles**
+    /// encode time at m4 in exchange for ~0.1% size win on photo content.
+    /// libwebp does this by default; zenwebp keeps it OFF. Worth enabling
+    /// inside `target_size` / `target_zensim` search loops where the marginal
+    /// size win amortizes across multiple probes. Currently only m4 honors
+    /// this — m5/m6 already saturate per-pass and multi-pass at those tiers
+    /// regresses size.
+    #[must_use]
+    pub fn with_multi_pass_stats(mut self, on: bool) -> Self {
+        self.multi_pass_stats = on;
         self
     }
 
@@ -754,6 +813,9 @@ impl LossyConfig {
             alpha_quality: self.alpha_quality,
             partition_limit: self.partition_limit,
             exact: false, // Not applicable to lossy (alpha plane is lossless separately)
+            smooth_segment_map: self.smooth_segment_map,
+            cost_model: self.cost_model,
+            multi_pass_stats: self.multi_pass_stats,
         }
     }
 }
@@ -776,6 +838,9 @@ impl LosslessConfig {
             alpha_quality: self.alpha_quality,
             partition_limit: None, // Not applicable to lossless
             exact: self.exact,
+            smooth_segment_map: false, // Not applicable to lossless
+            cost_model: super::api::CostModel::ZenwebpDefault,
+            multi_pass_stats: false, // Not applicable to lossless
         }
     }
 }

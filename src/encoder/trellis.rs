@@ -20,8 +20,13 @@ use super::tables::{
     MAX_LEVEL, MAX_VARIABLE_LEVEL, VP8_LEVEL_FIXED_COSTS, VP8_WEIGHT_TRELLIS, VP8_ZIGZAG,
 };
 
-/// Maximum cost value for RD optimization
-const MAX_COST: i64 = i64::MAX / 2;
+/// Maximum cost value for RD optimization.
+///
+/// Matches libwebp's `MAX_COST` (`cost_enc.h:32`): `0x7fffffffffffff` ≈ 3.6e16.
+/// Either value is fine in practice — the sentinel is never reached during
+/// trellis traversal — but harmonizing makes byte-comparison sweeps trivial
+/// and matches the reference implementation. (#35-#9)
+const MAX_COST: i64 = 0x7fffffffffffff;
 
 /// Trellis node for dynamic programming
 #[derive(Clone, Copy, Default)]
@@ -291,7 +296,13 @@ pub fn trellis_quantize_block(
             // Check if this is the best terminal node
             if level != 0 && best_cur_score < best_score {
                 // Add end-of-block cost: signaling "no more coefficients"
-                // Uses the context resulting from this level
+                // Uses the context resulting from this level.
+                //
+                // libwebp computes the EOB cost via a band-indexed lookup
+                // (`VP8EncBands[n + 1]` then `costs[band][ctx][0]`) inside
+                // TrellisQuantizeBlock; zenwebp factors the band lookup into
+                // `LevelCosts::get_eob_cost`. Different surface, same value
+                // for every (ctype, n, ctx) triple. (#35-#10)
                 let eob_cost = if n < 15 {
                     level_costs.get_eob_cost(ctype, n, ctx) as i64
                 } else {

@@ -19,6 +19,19 @@ use crate::encoder::cost::{
 // Eliminates sentinel `prob == 0` branch per iteration in the hot loop.
 const DCT_CAT_LENGTHS: [usize; 6] = [1, 2, 3, 4, 5, 11];
 
+// Test-only counter for `trellis_reuse_assertion_is_actually_exercised_at_m6`.
+// Gated on `feature = "std"` because `thread_local!` requires `std::thread`;
+// no_std builds (cargo test --no-default-features) skip both this declaration
+// and its reference site below.
+#[cfg(all(test, debug_assertions, feature = "std"))]
+thread_local! {
+    /// Counts how many times the trellis-reuse cache assertion path runs.
+    /// Read by `trellis_reuse_assertion_is_actually_exercised_at_m6` to
+    /// verify the assertion isn't silently dormant.
+    pub(crate) static TRELLIS_REUSE_HITS: core::cell::Cell<u64> =
+        const { core::cell::Cell::new(0) };
+}
+
 // -----------------------------------------------------------------------
 // Token buffer for deferred coefficient encoding
 // -----------------------------------------------------------------------
@@ -48,23 +61,45 @@ fn token_id(coeff_type: usize, band: usize, ctx: usize) -> u16 {
 /// probability table, while constant tokens use their embedded probability.
 pub(crate) struct TokenBuffer {
     tokens: Vec<u16>,
+    /// Per-MB start offsets into `tokens` (one entry per recorded MB).
+    /// Used by `emit_tokens_filtered` to selectively skip a MB's tokens.
+    /// Only populated when `begin_mb()` is called per MB; otherwise stays empty
+    /// and `emit_tokens` emits the whole stream.
+    mb_token_starts: Vec<u32>,
 }
 
 #[allow(dead_code)]
 impl TokenBuffer {
     pub fn new() -> Self {
-        Self { tokens: Vec::new() }
+        Self {
+            tokens: Vec::new(),
+            mb_token_starts: Vec::new(),
+        }
     }
 
     pub fn with_estimated_capacity(num_macroblocks: usize) -> Self {
         // libwebp uses 2 * 16 * 24 = 768 tokens per macroblock
         Self {
             tokens: Vec::with_capacity(num_macroblocks * 768),
+            mb_token_starts: Vec::with_capacity(num_macroblocks + 1),
         }
     }
 
     pub fn clear(&mut self) {
         self.tokens.clear();
+        self.mb_token_starts.clear();
+    }
+
+    /// Mark the start of a new macroblock's tokens. Must be called once per MB
+    /// before any `record_coeff_tokens` calls for that MB. Pushes the current
+    /// `tokens.len()` so `emit_tokens_filtered` can locate the MB's span.
+    #[inline]
+    pub fn begin_mb(&mut self) {
+        debug_assert!(
+            self.tokens.len() <= u32::MAX as usize,
+            "token buffer length overflows u32"
+        );
+        self.mb_token_starts.push(self.tokens.len() as u32);
     }
 
     /// Record a dynamic-probability bit decision.
@@ -122,6 +157,55 @@ impl TokenBuffer {
                 flat_probas[raw_idx as usize]
             };
             encoder.write_bool(bit, proba);
+        }
+    }
+
+    /// Emit tokens to the encoder, suppressing entire MB spans whose
+    /// `skipped[mb_idx]` flag is true.
+    ///
+    /// Used when `use_skip_proba=1` (per-MB skip flag is signaled): the decoder
+    /// reads no residuals for skipped MBs, so we must not emit them either.
+    /// When `use_skip_proba=0` (`macroblock_no_skip_coeff = None`), use the
+    /// plain `emit_tokens` instead — every MB's residuals must be emitted.
+    ///
+    /// Requires `begin_mb()` to have been called once per MB during recording.
+    /// `skipped.len()` must equal the number of recorded MBs.
+    pub fn emit_tokens_filtered(
+        &self,
+        encoder: &mut crate::encoder::arithmetic::ArithmeticEncoder,
+        probas: &TokenProbTables,
+        skipped: &[bool],
+    ) {
+        debug_assert_eq!(
+            self.mb_token_starts.len(),
+            skipped.len(),
+            "begin_mb() count must match skipped.len()"
+        );
+
+        let flat_probas = Self::flatten_probas(probas);
+
+        let num_mbs = self.mb_token_starts.len();
+        for (mb_idx, &is_skipped) in skipped.iter().enumerate() {
+            if is_skipped {
+                continue;
+            }
+            let start = self.mb_token_starts[mb_idx] as usize;
+            let end = if mb_idx + 1 < num_mbs {
+                self.mb_token_starts[mb_idx + 1] as usize
+            } else {
+                self.tokens.len()
+            };
+
+            for &token in &self.tokens[start..end] {
+                let bit = (token >> 15) != 0;
+                let raw_idx = token & 0x3FFF;
+                let proba = if (token & FIXED_PROBA_BIT) != 0 {
+                    raw_idx as u8
+                } else {
+                    flat_probas[raw_idx as usize]
+                };
+                encoder.write_bool(bit, proba);
+            }
         }
     }
 
@@ -1254,6 +1338,14 @@ impl<'a> super::Vp8Encoder<'a> {
 
     /// Record tokens for a macroblock's residual data and return the quantized coefficients.
     /// Used in multi-pass encoding: pass 1 calls this to get coefficients for storage.
+    ///
+    /// `pre_trellised_y1` is an optional set of trellis-quantized zigzag levels
+    /// for the 16 Y1 sub-blocks. When provided, the recorder reuses them
+    /// instead of running trellis a second time on the same DCT input — this
+    /// is what `transform_luma_block` already produced for reconstruction.
+    /// Pass `None` from contexts that did not run trellis (e.g. older code
+    /// paths or calls where the caller didn't capture trellis output).
+    /// (#35-#8)
     #[allow(clippy::needless_range_loop)] // i is used to index both ZIGZAG and output arrays
     pub(super) fn record_residual_tokens_storing(
         &mut self,
@@ -1262,6 +1354,7 @@ impl<'a> super::Vp8Encoder<'a> {
         y_block_data: &[i32; 16 * 16],
         u_block_data: &[i32; 16 * 4],
         v_block_data: &[i32; 16 * 4],
+        pre_trellised_y1: Option<&[[i32; 16]; 16]>,
     ) -> QuantizedMbCoeffs {
         // Extract segment data by value/copy to avoid borrow conflicts with proba_stats.
         // Only copies small scalar values (lambdas, flags), not the large matrices.
@@ -1332,21 +1425,87 @@ impl<'a> super::Vp8Encoder<'a> {
                 let ctx0 = (left + top).min(2) as usize;
 
                 if let Some(lambda) = y1_trellis_lambda {
-                    let mut coeffs = *block;
-                    // Borrow segment fields individually to avoid conflict with proba_stats
-                    let y1_matrix = self.segments[segment_id].y1_matrix.as_ref().unwrap();
-                    let psy_config = &self.segments[segment_id].psy_config;
-                    trellis_quantize_block(
-                        &mut coeffs,
-                        &mut stored.y1_zigzag[block_idx],
-                        y1_matrix,
-                        lambda,
-                        first_coeff_y1,
-                        &self.level_costs,
-                        token_type_y1 as usize,
-                        ctx0,
-                        psy_config,
-                    );
+                    if let Some(pre) = pre_trellised_y1 {
+                        // Reuse the trellis output captured during reconstruction
+                        // in transform_luma_block / transform_luma_blocks_4x4.
+                        // Saves running trellis_quantize_block twice on the same
+                        // DCT input (~10-15% encoder speedup at m5/m6). (#35-#8)
+                        //
+                        // Correctness contract: the recorder's
+                        // (lambda, matrix, level_costs, ctype, ctx0, psy_config,
+                        //  first_coeff, DCT input)
+                        // tuple must match the reconstructor's. If anything
+                        // diverges, the cached zigzag is stale and emitting it
+                        // would produce wrong tokens.
+                        //
+                        // In debug builds, re-run trellis on the FIRST sub-block
+                        // we encounter each encode and assert the result matches.
+                        // A regression that decouples the inputs would fire on
+                        // the very next test run — but we don't pay the 16×/MB
+                        // verification cost across the whole image (which roughly
+                        // doubled debug-mode m5/m6 encode time). The byte-level
+                        // tier-parity tests catch any divergence that escapes
+                        // the first-block check.
+                        #[cfg(debug_assertions)]
+                        {
+                            // Bump a thread-local counter so the verification test
+                            // (`trellis_reuse_assertion_is_actually_exercised_at_m6`)
+                            // can prove this path runs and the assertion isn't
+                            // silently dormant. Cheap; outside the per-encode gate
+                            // so the test can still see hits at every block.
+                            // Gated on `feature = "std"` because `thread_local!` is
+                            // a std macro — no_std test builds simply skip this hit
+                            // counter (the verification test is also std-only).
+                            #[cfg(all(test, feature = "std"))]
+                            TRELLIS_REUSE_HITS.with(|c| c.set(c.get() + 1));
+                            if !self.verified_trellis_reuse {
+                                let mut coeffs_check = *block;
+                                let mut zigzag_check = [0i32; 16];
+                                let y1_matrix =
+                                    self.segments[segment_id].y1_matrix.as_ref().unwrap();
+                                let psy_config = &self.segments[segment_id].psy_config;
+                                trellis_quantize_block(
+                                    &mut coeffs_check,
+                                    &mut zigzag_check,
+                                    y1_matrix,
+                                    lambda,
+                                    first_coeff_y1,
+                                    &self.level_costs,
+                                    token_type_y1 as usize,
+                                    ctx0,
+                                    psy_config,
+                                );
+                                debug_assert_eq!(
+                                    zigzag_check, pre[block_idx],
+                                    "pre_trellised_y1 cache diverged from a fresh trellis run \
+                                     at block {block_idx} — one of (lambda, y1_matrix, level_costs, \
+                                     ctype, ctx0, psy_config, DCT input) changed between \
+                                     reconstruction and recording. Cached emission would produce \
+                                     wrong tokens."
+                                );
+                                self.verified_trellis_reuse = true;
+                            }
+                        }
+                        #[cfg(not(debug_assertions))]
+                        let _ = lambda;
+                        stored.y1_zigzag[block_idx] = pre[block_idx];
+                    } else {
+                        let mut coeffs = *block;
+                        // Borrow segment fields individually to avoid conflict with proba_stats
+                        let y1_matrix = self.segments[segment_id].y1_matrix.as_ref().unwrap();
+                        let psy_config = &self.segments[segment_id].psy_config;
+                        trellis_quantize_block(
+                            &mut coeffs,
+                            &mut stored.y1_zigzag[block_idx],
+                            y1_matrix,
+                            lambda,
+                            first_coeff_y1,
+                            &self.level_costs,
+                            token_type_y1 as usize,
+                            ctx0,
+                            psy_config,
+                        );
+                    }
                 } else {
                     let y1_matrix = self.segments[segment_id].y1_matrix.as_ref().unwrap();
                     for i in first_coeff_y1..16 {
@@ -1550,4 +1709,229 @@ pub(super) fn get_coeffs0_from_block(blocks: &[i32; 16 * 16]) -> [i32; 16] {
         *coeff = *first_coeff_value;
     }
     coeffs0
+}
+
+#[cfg(test)]
+mod token_buffer_tests {
+    //! Unit tests for `TokenBuffer::emit_tokens_filtered`.
+    //!
+    //! The full-#25 fix (per-MB skip-bit gating) records EOB tokens for skipped
+    //! MBs into the token buffer and filters them at emit time when
+    //! `use_skip_proba=1` wins. This is path-agnostic — the tests below build
+    //! a buffer with synthetic tokens, then verify that the filtered emission
+    //! produces byte-identical output to a hand-built buffer that omits the
+    //! skipped MBs entirely. End-to-end coverage of the skip-proba flow lives
+    //! in `simd_tier_parity.rs` (which exercises every encode and rejects
+    //! divergent bytes).
+
+    use alloc::vec;
+
+    use super::*;
+    use crate::common::types::COEFF_PROBS;
+    use crate::encoder::arithmetic::ArithmeticEncoder;
+
+    /// Push a few dynamic + constant tokens that resolve to a deterministic
+    /// byte stream for a given MB. The exact tokens don't matter — we only
+    /// need a non-trivial mix so the comparison is meaningful.
+    fn push_mb_tokens(buf: &mut TokenBuffer, mb_marker: u8) {
+        buf.add_token(false, 0); // dynamic, proba_idx=0, bit=0
+        buf.add_token(true, 7); // dynamic, proba_idx=7, bit=1
+        buf.add_constant_token(false, 128); // constant proba=128, bit=0
+        buf.add_constant_token(true, 64 + (mb_marker & 0x3f)); // varies per MB so silent merging would diverge
+    }
+
+    fn emit_to_bytes<F: FnOnce(&mut ArithmeticEncoder)>(emit: F) -> Vec<u8> {
+        let mut enc = ArithmeticEncoder::new();
+        emit(&mut enc);
+        enc.flush_and_get_buffer()
+    }
+
+    #[test]
+    fn emit_tokens_filtered_skip_mask_all_kept_matches_full_emit() {
+        // skipped = [false; N] should produce the same bytes as `emit_tokens`.
+        let mut buf = TokenBuffer::new();
+        for mb in 0..3 {
+            buf.begin_mb();
+            push_mb_tokens(&mut buf, mb as u8);
+        }
+
+        let baseline = emit_to_bytes(|e| buf.emit_tokens(e, &COEFF_PROBS));
+        let filtered = emit_to_bytes(|e| {
+            buf.emit_tokens_filtered(e, &COEFF_PROBS, &[false, false, false]);
+        });
+        assert_eq!(
+            baseline, filtered,
+            "all-kept skip mask must produce byte-identical output to emit_tokens"
+        );
+    }
+
+    #[test]
+    fn emit_tokens_filtered_drops_middle_mb() {
+        // skipped = [false, true, false] should drop MB 1's tokens entirely.
+        let mut buf = TokenBuffer::new();
+        for mb in 0..3 {
+            buf.begin_mb();
+            push_mb_tokens(&mut buf, mb as u8);
+        }
+
+        // Reference: hand-build a buffer with only MB 0 and MB 2.
+        let mut reference = TokenBuffer::new();
+        reference.begin_mb();
+        push_mb_tokens(&mut reference, 0);
+        reference.begin_mb();
+        push_mb_tokens(&mut reference, 2);
+
+        let actual = emit_to_bytes(|e| {
+            buf.emit_tokens_filtered(e, &COEFF_PROBS, &[false, true, false]);
+        });
+        let expected = emit_to_bytes(|e| reference.emit_tokens(e, &COEFF_PROBS));
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn emit_tokens_filtered_all_skipped_emits_nothing() {
+        // skipped = [true; N] should produce only the trailing flush bytes
+        // (no per-token writes), which equals an empty TokenBuffer's emit.
+        let mut buf = TokenBuffer::new();
+        for mb in 0..3 {
+            buf.begin_mb();
+            push_mb_tokens(&mut buf, mb as u8);
+        }
+
+        let actual = emit_to_bytes(|e| {
+            buf.emit_tokens_filtered(e, &COEFF_PROBS, &[true, true, true]);
+        });
+        let empty = emit_to_bytes(|e| TokenBuffer::new().emit_tokens(e, &COEFF_PROBS));
+        assert_eq!(actual, empty);
+    }
+
+    #[test]
+    fn emit_tokens_filtered_handles_last_mb_skip() {
+        // Edge case: skip the LAST MB. The end-of-span computation uses
+        // `tokens.len()` for the final entry; a bug here would emit garbage
+        // past the start of the skipped MB.
+        let mut buf = TokenBuffer::new();
+        for mb in 0..3 {
+            buf.begin_mb();
+            push_mb_tokens(&mut buf, mb as u8);
+        }
+
+        let mut reference = TokenBuffer::new();
+        reference.begin_mb();
+        push_mb_tokens(&mut reference, 0);
+        reference.begin_mb();
+        push_mb_tokens(&mut reference, 1);
+
+        let actual = emit_to_bytes(|e| {
+            buf.emit_tokens_filtered(e, &COEFF_PROBS, &[false, false, true]);
+        });
+        let expected = emit_to_bytes(|e| reference.emit_tokens(e, &COEFF_PROBS));
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn emit_tokens_filtered_first_mb_skip() {
+        // Edge case: skip the FIRST MB. The `mb_idx == 0` start offset is 0.
+        let mut buf = TokenBuffer::new();
+        for mb in 0..3 {
+            buf.begin_mb();
+            push_mb_tokens(&mut buf, mb as u8);
+        }
+
+        let mut reference = TokenBuffer::new();
+        reference.begin_mb();
+        push_mb_tokens(&mut reference, 1);
+        reference.begin_mb();
+        push_mb_tokens(&mut reference, 2);
+
+        let actual = emit_to_bytes(|e| {
+            buf.emit_tokens_filtered(e, &COEFF_PROBS, &[true, false, false]);
+        });
+        let expected = emit_to_bytes(|e| reference.emit_tokens(e, &COEFF_PROBS));
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn begin_mb_records_offsets_in_order() {
+        // Sanity check: each begin_mb pushes the current tokens.len() so the
+        // starts vector is monotone non-decreasing.
+        let mut buf = TokenBuffer::new();
+        buf.begin_mb();
+        assert_eq!(buf.mb_token_starts, vec![0]);
+
+        push_mb_tokens(&mut buf, 0);
+        let after_first = buf.tokens.len() as u32;
+        buf.begin_mb();
+        assert_eq!(buf.mb_token_starts, vec![0, after_first]);
+
+        push_mb_tokens(&mut buf, 1);
+        buf.begin_mb();
+        let after_second = buf.tokens.len() as u32;
+        assert_eq!(buf.mb_token_starts, vec![0, after_first, after_second]);
+    }
+
+    /// Verify that the trellis-reuse cache assertion in
+    /// record_residual_tokens_storing is actually reached by a debug-mode
+    /// m6 encode. Without this, the assertion could be silently dormant
+    /// (e.g. if do_trellis or pre_trellised_y1 plumbing breaks), giving
+    /// a false sense of protection. Counts cache-reuse hits via the
+    /// thread-local set inside the assert path; must be > 0.
+    #[test]
+    #[cfg(all(debug_assertions, feature = "std"))]
+    fn trellis_reuse_assertion_is_actually_exercised_at_m6() {
+        use crate::encoder::config::LossyConfig;
+        use crate::{EncodeRequest, PixelLayout};
+
+        TRELLIS_REUSE_HITS.with(|c| c.set(0));
+
+        // 64x64 structured-noise RGB. Picks varied modes; quality 75 keeps
+        // Y2 nonzero so trellis_quantize_block actually runs.
+        let mut img = Vec::with_capacity(64 * 64 * 3);
+        for y in 0u32..64 {
+            for x in 0u32..64 {
+                img.push(((x * 7) ^ (y * 11)) as u8);
+                img.push(((x * 13) ^ (y * 17)) as u8);
+                img.push(((x * 19) ^ (y * 23)) as u8);
+            }
+        }
+        let cfg = LossyConfig::new().with_quality(75.0).with_method(6);
+        EncodeRequest::lossy(&cfg, &img, PixelLayout::Rgb8, 64, 64)
+            .encode()
+            .expect("m6 encode failed");
+
+        let hits = TRELLIS_REUSE_HITS.with(|c| c.get());
+        assert!(
+            hits > 0,
+            "trellis-reuse assertion path was never reached during m6 encode \
+             — the debug_assert provides no protection. \
+             do_trellis or pre_trellised_y1 plumbing may be broken."
+        );
+        eprintln!("[trellis-reuse instrumentation] m6 encode hit cache-reuse path {hits} times");
+    }
+
+    #[test]
+    fn empty_mb_span_is_handled() {
+        // A begin_mb with no tokens between it and the next is a valid
+        // (empty-residuals) MB. Filtering should still align spans correctly.
+        let mut buf = TokenBuffer::new();
+        buf.begin_mb(); // MB 0
+        push_mb_tokens(&mut buf, 0);
+        buf.begin_mb(); // MB 1 — no tokens
+        buf.begin_mb(); // MB 2
+        push_mb_tokens(&mut buf, 2);
+
+        let mut reference = TokenBuffer::new();
+        reference.begin_mb();
+        push_mb_tokens(&mut reference, 0);
+        reference.begin_mb();
+        // empty MB 1
+        reference.begin_mb();
+        push_mb_tokens(&mut reference, 2);
+
+        let baseline = emit_to_bytes(|e| reference.emit_tokens(e, &COEFF_PROBS));
+        let filtered = emit_to_bytes(|e| {
+            buf.emit_tokens_filtered(e, &COEFF_PROBS, &[false, false, false]);
+        });
+        assert_eq!(filtered, baseline);
+    }
 }

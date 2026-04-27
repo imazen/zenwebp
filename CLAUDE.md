@@ -60,7 +60,19 @@ See `docs/PERFORMANCE.md` for benchmarks, `docs/CALL-TREE.md` for SIMD tiers, `d
 | 5 | **1.0002x** |
 | 6 | 1.0022x |
 
-**Production settings (SNS=50, filter=60):**
+**Production settings (SNS=50, filter=60), 2026-04-26 post-libwebp-parity-audit:**
+- CID22 Q75 m4: **1.0028x** (was 1.0149x pre-audit; closed via #21–#34 in PR #37)
+- CID22 Q75 m6: **0.9948x** (now beats libwebp on bytes)
+- CID22 Q90 m4: 1.0118x | Q90 m6: **1.0009x**
+- Mean across 36 cells (3 presets × 4 q × 3 m): **−1.58%** vs pre-audit baseline
+- Best: Photo Q25 m4: 1.0072x (was 1.0422x, −3.50%)
+
+CostModel enum (#33) lets users switch to `StrictLibwebpParity` to disable
+zenwebp's perceptual extensions (PSY_WEIGHT_Y CSF, SATD masking blend, JND
+zeroing) for libwebp algorithm parity. Bit-exact-libwebp follow-up tracked
+in a separate north-star issue.
+
+**Pre-audit numbers (kept for reference — 2026-03-28 measurement):**
 - CID22 Q75: **1.0149x** | Q90: **1.0060x** (near parity)
 
 **Speed (zenbench, 792079.png 512x512, Q75, 2026-03-28):**

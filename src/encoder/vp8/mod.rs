@@ -36,17 +36,20 @@ use core::mem;
 #[allow(unused_imports)]
 use whereat::at;
 
+use super::analysis::analyze_image_with_hint_gate;
 use super::api::EncodeError;
 use super::api::PixelLayout;
 use super::arithmetic::ArithmeticEncoder;
 use super::cost::{
-    LevelCosts, ProbaStats, analyze_image, assign_segments_kmeans, classify_image_type,
-    compute_segment_quant, content_type_to_tuning,
+    LevelCosts, ProbaStats, assign_segments_kmeans, classify_image_type, compute_segment_quant,
+    content_type_to_tuning,
 };
 use super::vec_writer::VecWriter;
 use crate::common::prediction::*;
 use crate::common::types::Frame;
 use crate::common::types::*;
+// VP8_AC_TABLE2 is pulled in via the `common::types::*` glob above so the
+// decoder can share the same definition without depending on the encoder.
 // convert_image_sharp_yuv_with_config is called via full path below
 use crate::decoder::yuv::convert_image_y;
 
@@ -328,17 +331,6 @@ struct Complexity {
     v: [u8; 2],
 }
 
-impl Complexity {
-    fn clear(&mut self, include_y2: bool) {
-        self.y = [0; 4];
-        self.u = [0; 2];
-        self.v = [0; 2];
-        if include_y2 {
-            self.y2 = 0;
-        }
-    }
-}
-
 #[derive(Default)]
 struct QuantizationIndices {
     yac_abs: u8,
@@ -424,6 +416,30 @@ impl QuantizedMbCoeffs {
         }
         acc == 0
     }
+
+    /// Returns true if this MB matches libwebp's "blocky I16" gating
+    /// condition for `StoreMaxDelta` (`quant_enc.c:1111`):
+    /// Y2 has any nonzero AND all 16 Y1 AC coefficients are zero.
+    /// In libwebp's `nz` mask this is `(nz & 0x100ffff) == 0x1000000`.
+    /// Caller must already know the MB is I16 (Y2 only exists then).
+    #[inline]
+    fn is_blocky_i16(&self) -> bool {
+        // Y1 AC = positions 1..16 of every Y1 block (DC is position 0).
+        let mut y1_ac_acc: u32 = 0;
+        for block in &self.y1_zigzag {
+            for &c in &block[1..16] {
+                y1_ac_acc |= c as u32;
+            }
+        }
+        if y1_ac_acc != 0 {
+            return false;
+        }
+        let mut y2_acc: u32 = 0;
+        for &c in &self.y2_zigzag {
+            y2_acc |= c as u32;
+        }
+        y2_acc != 0
+    }
 }
 
 struct Vp8Encoder<'a> {
@@ -437,8 +453,12 @@ struct Vp8Encoder<'a> {
     segment_tree_probs: [Prob; 3],
     /// Segment ID for each macroblock (mb_width * mb_height)
     segment_map: Vec<u8>,
+    /// Per-MB FastMBAnalyze hints (only populated when `method <= 1`).
+    /// When `Some`, `choose_macroblock_info` consumes hints directly to skip
+    /// full RD mode evaluation, mirroring libwebp's `RefineUsingDistortion`
+    /// flow at m0/m1. Empty for higher methods.
+    fast_mb_hints: Vec<crate::encoder::analysis::MbModeHint>,
 
-    loop_filter_adjustments: bool,
     macroblock_no_skip_coeff: Option<u8>,
     quantization_indices: QuantizationIndices,
 
@@ -459,6 +479,16 @@ struct Vp8Encoder<'a> {
     method: u8,
     /// Spatial noise shaping strength (0-100)
     sns_strength: u8,
+    /// Preprocessing options. Matches libwebp's `WebPConfig::preprocessing`.
+    /// Default `Preprocessing::none()` (off), matching libwebp's default.
+    smooth_segment_map: bool,
+    /// Cost model selection (mode selection + trellis). Default
+    /// `ZenwebpDefault` enables perceptual extensions per method level;
+    /// `StrictLibwebpParity` disables them.
+    cost_model: super::api::CostModel,
+    /// Run a stat-collection pre-pass (m4 only — m5/m6 already saturate).
+    /// Default `false`. Set via `LossyConfig::with_multi_pass_stats(true)`.
+    multi_pass_stats: bool,
     /// Loop filter strength (0-100)
     filter_strength: u8,
     /// Loop filter sharpness (0-7)
@@ -479,7 +509,13 @@ struct Vp8Encoder<'a> {
     macroblock_width: u16,
     macroblock_height: u16,
 
-    /// Partitions of encoders for the macroblock coefficient data
+    /// Coefficient-data partitions. The VP8 bitstream supports 1, 2, 4, or 8
+    /// partitions (interleaved by MB row mod num_parts), but zenwebp currently
+    /// always emits exactly one. Implementing multi-partition output would
+    /// require routing token emission through `partitions[r % num_parts]` and
+    /// growing this Vec — there is no public knob to request that today.
+    /// Kept as a Vec to avoid churning the header-emission code (which already
+    /// computes `partitions.len().ilog2()`) when multi-partition is added. (#35-#3)
     partitions: Vec<ArithmeticEncoder>,
 
     // the left borders used in prediction
@@ -509,6 +545,24 @@ struct Vp8Encoder<'a> {
     /// Stored quantized coefficients for token buffer approach.
     /// Mode decisions + quantized zigzag coefficients stored during encoding.
     stored_mb_coeffs: Vec<QuantizedMbCoeffs>,
+    /// Maximum observed edge magnitude per segment (port of libwebp's
+    /// `VP8SegmentInfo::max_edge`, `vp8i_enc.h:199`). Updated per-MB by
+    /// `store_max_delta` when a "blocky" I16 macroblock is detected (Y2
+    /// nonzero, all Y1 AC zero), then consumed by `adjust_filter_strength`
+    /// after the encode loop to bump per-segment loop-filter levels for
+    /// edge-rich segments. See libwebp `quant_enc.c:1031-1040, 1108-1113`
+    /// and `filter_enc.c:198-237` (`VP8AdjustFilterStrength`). #34
+    max_edge_per_segment: [i32; MAX_SEGMENTS],
+    /// Set to `true` after the trellis-reuse cache verification has run
+    /// once during the current encode. Used by the `cfg(debug_assertions)`
+    /// guard in `record_residual_tokens_storing` to bound the cost of
+    /// re-running `trellis_quantize_block` for verification — once per
+    /// encode is enough to detect a regression at the moment it's
+    /// introduced, and avoids 16× per-MB debug-build overhead at m5/m6.
+    /// Reset to `false` per encode in `init_for_encode`. Used only under
+    /// `cfg(debug_assertions)` but kept on the struct unconditionally so
+    /// the field offsets match between debug and release builds.
+    verified_trellis_reuse: bool,
 }
 
 impl<'a> Vp8Encoder<'a> {
@@ -522,8 +576,8 @@ impl<'a> Vp8Encoder<'a> {
             segments_update_map: false,
             segment_tree_probs: [255, 255, 255], // Default probs
             segment_map: Vec::new(),
+            fast_mb_hints: Vec::new(),
 
-            loop_filter_adjustments: false,
             macroblock_no_skip_coeff: None,
             quantization_indices: QuantizationIndices::default(),
 
@@ -541,6 +595,9 @@ impl<'a> Vp8Encoder<'a> {
             // Default to balanced method
             method: 4,
             sns_strength: 50,
+            smooth_segment_map: false,
+            cost_model: super::api::CostModel::ZenwebpDefault,
+            multi_pass_stats: false,
             filter_strength: 60,
             filter_sharpness: 0,
             num_segments: 4,
@@ -572,6 +629,8 @@ impl<'a> Vp8Encoder<'a> {
             token_buffer: None,
             stored_mb_info: Vec::new(),
             stored_mb_coeffs: Vec::new(),
+            max_edge_per_segment: [0; MAX_SEGMENTS],
+            verified_trellis_reuse: false,
         }
     }
 
@@ -696,6 +755,151 @@ impl<'a> Vp8Encoder<'a> {
 
         // Reset encoder (header is small, ~1KB is plenty)
         self.encoder = ArithmeticEncoder::with_capacity(1024);
+
+        // Reset per-segment max edge tracking for this encode (#34).
+        self.max_edge_per_segment = [0; MAX_SEGMENTS];
+
+        // Reset the trellis-reuse verification flag so the
+        // `cfg(debug_assertions)` guard in `record_residual_tokens_storing`
+        // re-verifies the cache once per new encode (catches drift on the
+        // first block, then stays out of the per-MB hot path).
+        self.verified_trellis_reuse = false;
+    }
+
+    /// Update `max_edge_per_segment` for a "blocky" I16 macroblock.
+    ///
+    /// Port of libwebp's `StoreMaxDelta` (`quant_enc.c:1031-1040`). Looks at
+    /// the first three AC coefficients of the Y2 (WHT) block — these encode
+    /// the average DC differences between adjacent Y1 sub-blocks, so a large
+    /// magnitude here corresponds to visible inter-block edges that the loop
+    /// filter should attenuate.
+    ///
+    /// `y2_zigzag` is in zigzag order, matching libwebp's `y_dc_levels`
+    /// (which is the output of `VP8EncQuantizeBlockWHT`, also zigzag-ordered).
+    /// Indices 1, 2, 4 correspond to natural-order positions 1, 4, 2.
+    #[inline]
+    fn store_max_delta(&mut self, segment_id: usize, y2_zigzag: &[i32; 16]) {
+        let v0 = y2_zigzag[1].unsigned_abs();
+        let v1 = y2_zigzag[2].unsigned_abs();
+        let v2 = y2_zigzag[4].unsigned_abs();
+        let max_v = v0.max(v1).max(v2) as i32;
+        if max_v > self.max_edge_per_segment[segment_id] {
+            self.max_edge_per_segment[segment_id] = max_v;
+        }
+    }
+
+    /// Post-encode adjustment of per-segment loop-filter strengths based on
+    /// observed edge magnitudes (port of libwebp's `VP8AdjustFilterStrength`,
+    /// `filter_enc.c:198-237`, called from `PostLoopFinalize` in
+    /// `frame_enc.c:730`).
+    ///
+    /// For each segment, computes a target filter strength from the maximum
+    /// observed Y2 edge magnitude scaled by the Y2 AC quantizer:
+    /// `delta = (max_edge * y2.q[1]) >> 3` (the `>> 3` accounts for inverse
+    /// WHT scaling). This delta is mapped to a filter level via
+    /// `filter_strength_from_delta`, and the per-segment level is bumped
+    /// upward only — never lowered. Finally the frame-level
+    /// `filter_level` is raised to the maximum per-segment fstrength.
+    ///
+    /// Effect: edge-rich segments (text/charts) get stronger filtering than
+    /// the analysis-time estimate, reducing blocking artifacts.
+    ///
+    /// Note: zenwebp stores `loopfilter_level` as a signed delta from
+    /// `frame.filter_level`, while libwebp stores it as an absolute
+    /// `dqm.fstrength`. We convert to absolute, bump, then recompute the
+    /// delta against the (possibly raised) frame-level filter.
+    ///
+    /// Note vs libwebp: we do not gate on `D > min_disto` (the per-MB
+    /// distortion check from `quant_enc.c:1111`). zenwebp's encoder does
+    /// not currently thread that distortion through to this path. Skipping
+    /// it is conservative — it lets a few extra blocky MBs contribute,
+    /// which can only bump the strength upward, matching libwebp's
+    /// "monotone-up" behavior. The proper fix (thread mode-selection D
+    /// through `MacroblockInfo` and gate `store_max_delta` on
+    /// `mb_D > segment.min_disto`) is tracked in #44 — without it,
+    /// `color_blocks`-style content with sharp color edges over-bumps the
+    /// filter and loses ~10–13 zensim points vs libwebp.
+    ///
+    /// When `max_edge_per_segment` is all-zero (no blocky-I16 MBs were
+    /// observed), the body still runs and may raise `frame.filter_level`
+    /// to the maximum existing per-segment absolute fstrength
+    /// (`frame_level + loopfilter_level`). This matches libwebp: the
+    /// function unconditionally assigns `enc->filter_hdr.level = max_level`
+    /// at `filter_enc.c:236`.
+    fn adjust_filter_strength(&mut self) {
+        if self.filter_strength == 0 {
+            return;
+        }
+
+        // Bounds reference for the asserts and clamps below:
+        //   frame_level       ∈ [0, 63]   — u8 set by `compute_filter_level`
+        //                                   (≤ 63 by construction) or by an
+        //                                   earlier call to this function.
+        //   loopfilter_level  ∈ [-63, 63] — i8, signed-6-bit bitstream field;
+        //                                   clamped at write time.
+        //   absolute[s]       ∈ [-63, 126] in worst case (frame=63 + loop=63
+        //                                   or frame=0 + loop=-63).
+        //   edge_strength     ∈ [0, 63]   — `LEVELS_FROM_DELTA` saturates
+        //                                   at 63 (loop filter is 6-bit).
+        let mut absolute = [0i32; MAX_SEGMENTS];
+        let frame_level = i32::from(self.frame.filter_level);
+        debug_assert!(
+            (0..=63).contains(&frame_level),
+            "frame.filter_level={frame_level} outside [0, 63]"
+        );
+        for s in 0..MAX_SEGMENTS {
+            absolute[s] = frame_level + i32::from(self.segments[s].loopfilter_level);
+        }
+
+        let mut max_level = 0i32;
+        for s in 0..MAX_SEGMENTS {
+            let max_edge = self.max_edge_per_segment[s];
+            // y2.q[1] is the Y2 AC quantizer in libwebp's expanded matrix.
+            // zenwebp stores it directly on Segment as `y2ac` (i16).
+            let y2_q1 = i32::from(self.segments[s].y2ac);
+            let delta_raw = max_edge.saturating_mul(y2_q1) >> 3;
+            // Clamp to u8 for the table lookup (table saturates at 63 well
+            // before MAX_DELTA_SIZE=64; libwebp clamps inside the function).
+            let delta_u8 = delta_raw.clamp(0, 255) as u8;
+            let edge_strength = i32::from(super::cost::filter_strength_from_delta(
+                self.filter_sharpness,
+                delta_u8,
+            ));
+            if edge_strength > absolute[s] {
+                absolute[s] = edge_strength;
+            }
+            if absolute[s] > max_level {
+                max_level = absolute[s];
+            }
+        }
+
+        // Raise frame filter_level to the max per-segment fstrength
+        // (matches libwebp `enc->filter_hdr.level = max_level`). `max_level`
+        // can theoretically reach 126 (= max possible absolute[s]) so the
+        // clamp can fire; the bitstream field is 6-bit unsigned (0–63).
+        let new_frame_level = max_level.clamp(0, 63) as u8;
+        self.frame.filter_level = new_frame_level;
+
+        // Recompute per-segment deltas against the (possibly raised) frame
+        // level. With absolute[s] ∈ [-63, 126] and new_frame ∈ [0, 63], the
+        // delta is in [-126, 126]; the bitstream signed-6-bit field is
+        // [-63, 63], so the clamp can fire at extremes. In well-formed
+        // pre-state where frame_level ≈ analysis-time `compute_filter_level`
+        // and loopfilter_level deltas are small, the clamp is a no-op.
+        let new_frame_i32 = i32::from(new_frame_level);
+        for s in 0..MAX_SEGMENTS {
+            let raw_delta = absolute[s] - new_frame_i32;
+            let clamped = raw_delta.clamp(-63, 63);
+            debug_assert!(
+                raw_delta == clamped,
+                "loopfilter_level delta clamp fired: seg={s} absolute={} \
+                 new_frame={new_frame_level} raw_delta={raw_delta} → clamped={clamped} — \
+                 either the per-segment fstrength range exceeded expectation or \
+                 frame_level was set outside [0, 63] before this call",
+                absolute[s],
+            );
+            self.segments[s].loopfilter_level = clamped as i8;
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -721,6 +925,9 @@ impl<'a> Vp8Encoder<'a> {
         self.do_trellis_i4_mode = self.method >= 6;
         // Store tuning parameters
         self.sns_strength = params.sns_strength.min(100);
+        self.smooth_segment_map = params.smooth_segment_map;
+        self.cost_model = params.cost_model;
+        self.multi_pass_stats = params.multi_pass_stats;
         self.filter_strength = params.filter_strength.min(100);
         self.filter_sharpness = params.filter_sharpness.min(7);
         self.num_segments = params.num_segments.clamp(1, 4);
@@ -839,10 +1046,35 @@ impl<'a> Vp8Encoder<'a> {
 
         let num_mb = usize::from(self.macroblock_width) * usize::from(self.macroblock_height);
 
-        // Number of passes based on method.
-        // Multi-pass without quality search provides no benefit (tested),
-        // so we use 1 pass for all methods.
-        let num_passes = 1;
+        // Number of passes based on method (mirrors libwebp's `StatLoop` behavior).
+        // libwebp runs `config->pass` stat-collection passes before the final emit
+        // pass, refreshing both `proba` and `level_costs` between iterations
+        // (`frame_enc.c:626-684, 795-906, 840-844`). The first pass uses default
+        // costs; the second pass benefits from image-tuned probabilities, which
+        // makes mode selection and trellis pick options that are actually cheap
+        // under the real distribution.
+        //
+        // Earlier in zenwebp's history multi-pass was tested without refreshing
+        // `level_costs` mid-pass and reportedly hurt compression — but the
+        // existing infrastructure here (lines 884-895) DOES rebuild level_costs
+        // between passes, so the prior negative result no longer applies. #27.
+        //
+        // 2 passes at m4 only. m5/m6 already use trellis quantization, which is
+        // image-adapted via the per-pass `proba_stats` accumulation; adding a
+        // second pass at m5/m6 measurably regresses size (+0.6 to +0.9% on
+        // CID22 — see `differences/baselines/post-batch2-27.tsv`). At m4 the
+        // second pass net-helps (-0.1 to -0.4%) because the simple-quant
+        // m4 path doesn't have a per-MB feedback mechanism otherwise.
+        // Multi-pass stat collection is opt-in via `LossyConfig::with_multi_pass_stats(true)`
+        // (default OFF, gated only at m4). m5/m6 already image-adapt via per-pass
+        // `proba_stats` in trellis; adding a second pass at those tiers regresses size
+        // (see #27 investigation). Multi-pass at m4 doubles encode time for ~0.1% size
+        // win on photos — useful inside `target_size`/`target_zensim` search loops.
+        let num_passes: usize = if self.multi_pass_stats && self.method == 4 {
+            2
+        } else {
+            1
+        };
 
         // Stats accumulators (populated during last pass)
         let mut final_sse_y: u64 = 0;
@@ -925,9 +1157,20 @@ impl<'a> Vp8Encoder<'a> {
                         stop.check()?;
                     }
 
-                    // Mid-stream probability refresh (like libwebp's VP8EncTokenLoop)
-                    // We update probabilities mid-stream (helps compression: 1.0111x → 1.0101x)
-                    // but don't recalculate level_costs (hurts compression: 1.0101x → 1.0114x)
+                    // Mid-stream probability refresh (like libwebp's VP8EncTokenLoop).
+                    //
+                    // We refresh `updated_probs` periodically so the eventual emission
+                    // pass picks up evolving statistics, but we deliberately do NOT
+                    // rebuild `self.level_costs` at the same time. Empirically:
+                    // refreshing probs alone helps slightly (1.0111x → 1.0101x);
+                    // also rebuilding level_costs mid-row hurts (1.0101x → 1.0114x).
+                    //
+                    // Effect on this pass is therefore weak: cost-driven mode
+                    // selection inside the row continues to use the level_costs
+                    // computed at pass start. The real per-pass cost refresh happens
+                    // through the multi-pass loop (see #27 / two-pass at m4 path).
+                    // This call is mostly bookkeeping so the final probability
+                    // emission reflects accumulated stats. (#35-#6)
                     refresh_countdown -= 1;
                     if refresh_countdown < 0 {
                         self.compute_updated_probabilities();
@@ -1017,6 +1260,21 @@ impl<'a> Vp8Encoder<'a> {
 
                     let mut mb_info = macroblock_info;
                     let store_coeffs = num_passes > 1;
+                    // Segment id resolved here so both trellis/non-trellis paths
+                    // can update `max_edge_per_segment` (#34).
+                    let mb_segment_id = macroblock_info.segment_id.unwrap_or(0);
+
+                    // Mark the start of this MB's tokens so we can selectively
+                    // suppress them at emit time when the per-MB skip flag is in
+                    // play (`macroblock_no_skip_coeff = Some`). When the flag is
+                    // omitted (`= None`), every MB's tokens are emitted, so the
+                    // EOB tokens we record below for skipped MBs are exactly what
+                    // the decoder expects (matches libwebp #25).
+                    self.token_buffer
+                        .as_mut()
+                        .expect("token buffer not initialized")
+                        .begin_mb();
+
                     if self.do_trellis {
                         // Trellis path: integrated quantize + record (old behavior)
                         let all_zero = self.check_all_coeffs_zero(
@@ -1028,21 +1286,37 @@ impl<'a> Vp8Encoder<'a> {
                         if all_zero {
                             skip_mb += 1;
                             mb_info.coeffs_skipped = true;
-                            self.left_complexity
-                                .clear(macroblock_info.luma_mode != LumaMode::B);
-                            self.top_complexity[usize::from(mbx)]
-                                .clear(macroblock_info.luma_mode != LumaMode::B);
+                            // Record EOB-at-0 tokens for every block. This emits
+                            // ~25 bits/MB into the token buffer; if `use_skip_proba=1`
+                            // wins they get filtered out at emit time, otherwise the
+                            // decoder reads them as the empty residuals it expects.
+                            // record_from_stored_coeffs also clears top/left
+                            // complexity correctly (has_coeffs=false for every block).
+                            self.record_from_stored_coeffs(
+                                &macroblock_info,
+                                mbx as usize,
+                                &QuantizedMbCoeffs::ZERO,
+                            );
                             if store_coeffs {
                                 self.stored_mb_coeffs.push(QuantizedMbCoeffs::ZERO);
                             }
                         } else {
+                            // Reuse trellis output from transform_luma_block to
+                            // skip the second trellis pass inside the recorder
+                            // (#35-#8). Always Some() on this branch because
+                            // do_trellis is true.
                             let stored_coeffs = self.record_residual_tokens_storing(
                                 &macroblock_info,
                                 mbx as usize,
                                 &y_block_data.coeffs,
                                 &u_block_data.coeffs,
                                 &v_block_data.coeffs,
+                                y_block_data.trellis_y1_zigzag.as_ref(),
                             );
+                            // Track edge magnitude for I16 "blocky" MBs (#34).
+                            if !is_i4 && stored_coeffs.is_blocky_i16() {
+                                self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
+                            }
                             if store_coeffs {
                                 self.stored_mb_coeffs.push(stored_coeffs);
                             }
@@ -1060,11 +1334,17 @@ impl<'a> Vp8Encoder<'a> {
                         if all_zero {
                             skip_mb += 1;
                             mb_info.coeffs_skipped = true;
-                            self.left_complexity
-                                .clear(macroblock_info.luma_mode != LumaMode::B);
-                            self.top_complexity[usize::from(mbx)]
-                                .clear(macroblock_info.luma_mode != LumaMode::B);
+                            // Same EOB-token recording as the trellis path above.
+                            self.record_from_stored_coeffs(
+                                &macroblock_info,
+                                mbx as usize,
+                                &QuantizedMbCoeffs::ZERO,
+                            );
                         } else {
+                            // Track edge magnitude for I16 "blocky" MBs (#34).
+                            if !is_i4 && stored_coeffs.is_blocky_i16() {
+                                self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
+                            }
                             self.record_from_stored_coeffs(
                                 &macroblock_info,
                                 mbx as usize,
@@ -1089,11 +1369,33 @@ impl<'a> Vp8Encoder<'a> {
                 }
             }
 
-            // Compute skip probability from actual data
+            // Compute skip probability from actual data.
+            // libwebp gates per-MB skip-bit emission on `skip_proba < SKIP_PROBA_THRESHOLD (250)`
+            // (libwebp `src/enc/frame_enc.c:118-132` `FinalizeSkipProba` / `use_skip_proba`).
+            // When fewer than ~2% of MBs are skip-eligible, the per-MB skip bit costs more than
+            // it saves, so libwebp signals `use_skip_proba=0` in the frame header and omits the
+            // per-MB skip bits entirely — the decoder then assumes every MB has residual data.
+            //
+            // We now record EOB-at-0 tokens for every skipped MB during the encode loop (matches
+            // libwebp's `RecordTokens` behavior — `frame_enc.c:415`), and the token buffer tracks
+            // per-MB span offsets via `begin_mb()`. At emit time:
+            //   - `use_skip_proba=0` (`macroblock_no_skip_coeff = None`): emit ALL tokens — the
+            //     decoder reads residuals for every MB, so the EOB tokens for skipped MBs are
+            //     exactly what it expects.
+            //   - `use_skip_proba=1` (`Some(prob)`): the per-MB skip flag tells the decoder which
+            //     MBs to skip; we filter those MBs' tokens out of the emission stream so the
+            //     decoder sees the residuals exactly where it expects them.
+            // This is the full #25 fix — the gate now fires whenever `prob >= 250`, not only
+            // when `skip_mb == 0`.
             if total_mb > 0 {
                 let non_skip_mb = total_mb - skip_mb;
                 let prob = ((255 * non_skip_mb + total_mb / 2) / total_mb).min(255) as u8;
-                self.macroblock_no_skip_coeff = Some(prob.clamp(1, 254));
+                const SKIP_PROBA_THRESHOLD: u8 = 250;
+                if prob >= SKIP_PROBA_THRESHOLD {
+                    self.macroblock_no_skip_coeff = None;
+                } else {
+                    self.macroblock_no_skip_coeff = Some(prob.clamp(1, 254));
+                }
             }
 
             // Finalize probabilities from this pass (used by next pass or final emission)
@@ -1109,6 +1411,13 @@ impl<'a> Vp8Encoder<'a> {
         }
 
         // ===== FINALIZE: write bitstream =====
+
+        // Bump per-segment loop-filter strength based on observed edge
+        // magnitudes (port of libwebp's `VP8AdjustFilterStrength`, called
+        // from `PostLoopFinalize` in `frame_enc.c:730`). Must run before
+        // the header writer reads `frame.filter_level` and per-segment
+        // `loopfilter_level` deltas. #34
+        self.adjust_filter_strength();
 
         // Write compressed frame header (includes probability updates)
         self.encode_compressed_frame_header();
@@ -1132,10 +1441,21 @@ impl<'a> Vp8Encoder<'a> {
             self.write_macroblock_header(mb_info, mbx);
         }
 
-        // Emit tokens to partition using final probabilities
+        // Emit tokens to partition using final probabilities.
+        // When the per-MB skip flag is in use (`macroblock_no_skip_coeff = Some`),
+        // skip the recorded EOB tokens for MBs whose `coeffs_skipped=true` flag was
+        // already written into the header — the decoder reads no residuals for them.
+        // When the gate fires (`= None`), every MB's tokens are emitted unconditionally,
+        // matching libwebp's `use_skip_proba=0` path. (#25)
         let final_probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
         let token_buf = self.token_buffer.take().unwrap();
-        token_buf.emit_tokens(&mut self.partitions[0], final_probs);
+        if self.macroblock_no_skip_coeff.is_some() {
+            // Build skip mask from stored MB info (already moved out into local `stored_mb_info`).
+            let skip_mask: Vec<bool> = stored_mb_info.iter().map(|m| m.coeffs_skipped).collect();
+            token_buf.emit_tokens_filtered(&mut self.partitions[0], final_probs, &skip_mask);
+        } else {
+            token_buf.emit_tokens(&mut self.partitions[0], final_probs);
+        }
 
         // Assemble output
         let compressed_header_encoder = mem::take(&mut self.encoder);
@@ -1263,7 +1583,7 @@ impl<'a> Vp8Encoder<'a> {
     /// - Textured areas (low alpha) need finer quantization to preserve detail
     ///
     /// Ported from libwebp's VP8EncAnalyze / MBAnalyze.
-    fn analyze_and_assign_segments(&mut self, base_quant_index: u8, quality: u8) {
+    fn analyze_and_assign_segments(&mut self, quality: u8) {
         let y_stride = usize::from(self.macroblock_width * 16);
         let uv_stride = usize::from(self.macroblock_width * 8);
         let width = usize::from(self.frame.width);
@@ -1271,8 +1591,16 @@ impl<'a> Vp8Encoder<'a> {
 
         // Run full DCT-based analysis pass using libwebp-compatible algorithm
         // This tests DC and TM modes for I16 and UV, computes per-MB alpha,
-        // and builds the alpha histogram
-        let analysis = analyze_image(
+        // and builds the alpha histogram.
+        //
+        // Gate FastMBAnalyze hint collection: libwebp populates hints whenever
+        // method <= 1, but the consumer (`choose_macroblock_info`) discards
+        // them when `partition_limit >= 100` because that mode forces I16-only
+        // anyway. Skipping the per-MB DC sums when we already know they'll be
+        // unused saves ~16 sums per MB on large noisy images that hit the
+        // partition_limit retry path.
+        let collect_mode_hints = self.method <= 1 && self.partition_limit < 100;
+        let analysis = analyze_image_with_hint_gate(
             &self.frame.ybuf,
             &self.frame.ubuf,
             &self.frame.vbuf,
@@ -1282,6 +1610,9 @@ impl<'a> Vp8Encoder<'a> {
             uv_stride,
             self.method,
             self.sns_strength,
+            self.cost_model,
+            i32::from(quality),
+            collect_mode_hints,
         );
 
         // Auto-detect content type when Preset::Auto is selected.
@@ -1316,13 +1647,13 @@ impl<'a> Vp8Encoder<'a> {
             max_center - min_center
         };
 
-        // Minimum effective range for alpha normalization.
-        // The formula `255 * (center - mid) / range` normalizes centers to ±127,
-        // but when all MBs have similar alpha (gradients, flat images), the range
-        // is tiny (2-10) and this amplifies noise into extreme quantizer deltas.
-        // Using a floor prevents degenerate over-quantization of uniform regions.
-        const MIN_ALPHA_RANGE: i32 = 64;
-        let effective_range = range.max(MIN_ALPHA_RANGE);
+        // libwebp's `SetSegmentAlphas` (`analysis_enc.c:92`) only handles the
+        // degenerate `min == max` case (`if (max == min) max = min + 1;`) — no
+        // additional floor. The previous `MIN_ALPHA_RANGE = 64` floor in
+        // zenwebp dampened the SNS modulation by up to 6.4× on flat content
+        // (gradients, skies), losing most of the per-segment quantizer spread
+        // that makes the larger segments compress better. Removed in #30.
+        let effective_range = range; // already >= 1 above
 
         // Assign segment IDs to macroblocks
         self.segment_map = analysis
@@ -1331,9 +1662,18 @@ impl<'a> Vp8Encoder<'a> {
             .map(|&alpha| alpha_to_segment[alpha as usize])
             .collect();
 
-        // Smooth segment map to reduce noisy boundaries
-        // Only smooth if we have multiple segments
-        if self.num_segments > 1 {
+        // Store FastMBAnalyze mode hints from the analysis pass. These are only
+        // populated at method <= 1 — the encode pass uses them to skip RD mode
+        // selection (mirroring libwebp's `RefineUsingDistortion(try_both_modes=0)`).
+        self.fast_mb_hints = analysis.mb_mode_hints.unwrap_or_default();
+
+        // Smooth segment map (3x3 majority filter) only when the preprocessing
+        // smooth_segment_map flag explicitly opts in. libwebp gates this on `config->preprocessing & 1`
+        // (`analysis_enc.c:217-218`), default OFF (`config_enc.c:48`); we match.
+        // zenwebp previously smoothed unconditionally whenever multi-segment, which
+        // could collapse 4 segments into 2 after `simplify_segments` and lose
+        // differential-quantization savings (#26).
+        if self.num_segments > 1 && self.smooth_segment_map {
             super::cost::smooth_segment_map(
                 &mut self.segment_map,
                 usize::from(self.macroblock_width),
@@ -1372,44 +1712,48 @@ impl<'a> Vp8Encoder<'a> {
             self.quantization_indices.uvac_delta = Some(dq_uv_ac as i8);
         }
 
-        // Compute base filter level for delta computation (using beta=0 for base)
-        let base_filter = super::cost::compute_filter_level(
-            base_quant_index,
-            self.filter_sharpness,
-            self.filter_strength,
-        );
-
+        // libwebp uses segment 0's modulated quantizer + filter as the bitstream
+        // base (`enc->base_quant = enc->dqm[0].quant;` at `quant_enc.c:404`), so
+        // segment 0's delta is always 0 (saves ~9 bits per non-zero delta in the
+        // segment header). zenwebp previously used the unmodulated
+        // `quality_to_quant_index(quality)`, making segment 0 always carry a
+        // non-zero delta when SNS modulation was active. (#30 C)
+        //
+        // Pass 1 computes the per-segment (quant, filter) tuples; segment 0's
+        // values then become the bitstream base, and pass 2 (the matrix-init
+        // loop below) writes deltas relative to that.
+        let mut seg_quant_indices = [0u8; 4];
+        let mut seg_filters = [0u8; 4];
         for (seg_idx, &center) in centers.iter().enumerate() {
             let center = center as i32;
-
-            // Transform center to libwebp's alpha scale [-127, 127]
-            // Formula from SetSegmentAlphas: alpha = 255 * (center - mid) / (max - min)
-            // Uses effective_range to prevent extreme deltas on uniform images.
             let transformed_alpha = (255 * (center - mid_alpha) / effective_range).clamp(-127, 127);
-
-            // Compute beta for per-segment filter modulation
-            // Formula from libwebp: beta = 255 * (center - min) / (max - min)
-            // Beta indicates segment complexity: 0 = simplest (closer to min), 255 = most complex
-            // Uses effective_range to prevent extreme filter deltas on uniform images.
             let beta = (255 * (center - min_center) / effective_range).clamp(0, 255) as u8;
-
-            // Compute adjusted quantizer for this segment
-            // Note: we pass quality (not base_quant_index) to match libwebp's QualityToCompression approach
             let seg_quant_index = compute_segment_quant(quality, transformed_alpha, sns_strength);
-            let seg_quant_usize = seg_quant_index as usize;
-
-            // Compute the delta from base quantizer
-            let delta = seg_quant_index as i8 - base_quant_index as i8;
-
-            // Compute per-segment loop filter with beta modulation
-            // Simpler segments (low beta) get less filtering
             let seg_filter = super::cost::compute_filter_level_with_beta(
                 seg_quant_index,
                 self.filter_sharpness,
                 self.filter_strength,
                 beta,
             );
-            let filter_delta = (seg_filter as i8) - (base_filter as i8);
+            seg_quant_indices[seg_idx] = seg_quant_index;
+            seg_filters[seg_idx] = seg_filter;
+        }
+
+        let base_quant_index_new = seg_quant_indices[0];
+        let base_filter_new = seg_filters[0];
+        self.quantization_indices.yac_abs = base_quant_index_new;
+
+        for seg_idx in 0..centers.len() {
+            let seg_quant_index = seg_quant_indices[seg_idx];
+            let seg_quant_usize = seg_quant_index as usize;
+
+            // Compute the delta from segment 0's modulated quant.
+            let delta = seg_quant_index as i8 - base_quant_index_new as i8;
+
+            // Use the per-segment filter level computed in pass 1; delta is
+            // relative to segment 0's filter (the new bitstream base).
+            let seg_filter = seg_filters[seg_idx];
+            let filter_delta = (seg_filter as i8) - (base_filter_new as i8);
 
             // Apply UV quant deltas (from libwebp's SetupMatrices)
             // UV DC quant uses dq_uv_dc offset, clamped to [0, 117]
@@ -1421,7 +1765,11 @@ impl<'a> Vp8Encoder<'a> {
                 ydc: DC_QUANT[seg_quant_usize],
                 yac: AC_QUANT[seg_quant_usize],
                 y2dc: DC_QUANT[seg_quant_usize] * 2,
-                y2ac: ((i32::from(AC_QUANT[seg_quant_usize]) * 155 / 100) as i16).max(8),
+                // Y2 AC uses libwebp's dedicated `kAcTable2` lookup (`quant_enc.c:236`,
+                // verified byte-identical to our `VP8_AC_TABLE2`). Previously we
+                // synthesized the value as `kAcTable * 155/100` which deviates by up
+                // to ~10% at mid-quantizer. Decoder side updated to match (#24).
+                y2ac: VP8_AC_TABLE2[seg_quant_usize] as i16,
                 uvdc: DC_QUANT[uv_dc_idx],
                 uvac: AC_QUANT[uv_ac_idx],
                 quantizer_level: delta,
@@ -1429,7 +1777,7 @@ impl<'a> Vp8Encoder<'a> {
                 quant_index: seg_quant_index,
                 ..Default::default()
             };
-            segment.init_matrices(self.sns_strength, self.method);
+            segment.init_matrices(self.sns_strength, self.method, self.cost_model);
             self.segments[seg_idx] = segment;
         }
 
@@ -1552,14 +1900,14 @@ impl<'a> Vp8Encoder<'a> {
                 ydc: DC_QUANT[quant_index_usize],
                 yac: AC_QUANT[quant_index_usize],
                 y2dc: DC_QUANT[quant_index_usize] * 2,
-                y2ac: ((i32::from(AC_QUANT[quant_index_usize]) * 155 / 100) as i16).max(8),
+                y2ac: VP8_AC_TABLE2[quant_index_usize] as i16,
                 uvdc: DC_QUANT[quant_index_usize],
                 uvac: AC_QUANT[quant_index_usize],
                 quantizer_level: 0, // No delta for base segment
                 quant_index,
                 ..Default::default()
             };
-            segment.init_matrices(self.sns_strength, self.method);
+            segment.init_matrices(self.sns_strength, self.method, self.cost_model);
             self.segments[seg_idx] = segment;
         }
 
@@ -1570,14 +1918,18 @@ impl<'a> Vp8Encoder<'a> {
         //
         // Only enable for images large enough to benefit (overhead vs gain tradeoff).
         // libwebp uses segments for images with method > 0 and multiple segments configured.
-        let total_mbs = usize::from(mb_width) * usize::from(mb_height);
-        let use_segments = self.num_segments > 1 && total_mbs >= 256;
+        // libwebp gates segmentation on `config->emulate_jpeg_size || num_segments > 1
+        // || method <= 1` (`analysis_enc.c:434-436`) — no min-MB threshold. zenwebp
+        // previously skipped segmentation entirely below 256 MBs (~256x256 images),
+        // losing alpha-driven quantizer differentiation on icons/thumbnails. Removed
+        // the `>= 256` gate in #30.
+        let use_segments = self.num_segments > 1;
 
         if use_segments {
             // DCT-based segment analysis and assignment.
             // For Preset::Auto, this also runs content detection and may override
             // sns_strength, filter_strength, filter_sharpness, and num_segments.
-            self.analyze_and_assign_segments(quant_index, lossy_quality);
+            self.analyze_and_assign_segments(lossy_quality);
 
             // If Auto detection changed filter params, recompute frame filter level
             if self.preset == super::api::Preset::Auto {
@@ -1590,7 +1942,9 @@ impl<'a> Vp8Encoder<'a> {
                 self.frame.sharpness_level = self.filter_sharpness;
             }
         } else {
-            // Disable segments for small images (overhead not worth it)
+            // Disable segments for small images (overhead not worth it).
+            // Note: keep `fast_mb_hints` populated — they're independent of
+            // segmentation and still drive m0/m1 mode selection.
             self.segments_enabled = false;
             self.segments_update_map = false;
             self.segment_map = Vec::new();

@@ -1,0 +1,560 @@
+# Empirical Size Comparison vs libwebp
+
+> **Raw data location:** the per-file TSVs this analysis derives from
+> (`05-empirical-raw.tsv`, `05-empirical-cid22.tsv`, `05-empirical-clic.tsv`,
+> `05-empirical-imagemagick.tsv`) live on block storage at
+> `/mnt/v/output/zenwebp/audit/` — not in git. They're regeneratable via
+> `cargo run --release --example empirical_sweep`. The conclusions in this
+> file are the audit's actual record.
+
+## Methodology
+
+- **zenwebp**: this branch (feat/advertise-float-descriptors). RGB8 input.
+- **libwebp**: via `webpx 0.1.4` -> `libwebp-sys 0.14`. RGB input.
+- For each (preset, quality, method) cell, both encoders use the same preset+quality+method, all other settings at preset defaults.
+  - For preset Auto (zen-only), libwebp uses Default.
+- Both encoders called via Rust APIs in the same process. PNG decoded once per file.
+- Configurations swept: presets {Default, Photo, Drawing, Auto}, qualities {5,25,50,75,90,95}, methods {0,4,6}.
+- Total per-file comparisons recorded: 24240.
+
+## Aggregate ratios
+
+Aggregate ratio = sum(zen_bytes) / sum(lib_bytes) across all images in the cell.
+`mean` = mean of per-image ratios. `p50/p90/p99/max` = percentiles of per-image ratios.
+
+### CID22-train (209 images per cell)
+
+| preset | q | m | n | agg | mean | p50 | p90 | p99 | max |
+|--------|---|---|---|-----|------|-----|-----|-----|-----|
+| Auto | 5 | 0 | 209 | 0.9032 | 0.9044 | 0.9060 | 1.0109 | 1.2383 | 1.4140 |
+| Auto | 5 | 4 | 209 | 1.0125 | 1.0146 | 1.0187 | 1.0390 | 1.0882 | 1.1014 |
+| Auto | 5 | 6 | 209 | 1.0130 | 1.0197 | 1.0240 | 1.0495 | 1.0888 | 1.1458 |
+| Auto | 25 | 0 | 209 | 0.8812 | 0.8819 | 0.8906 | 0.9838 | 1.1900 | 1.3271 |
+| Auto | 25 | 4 | 209 | 1.0080 | 1.0103 | 1.0144 | 1.0413 | 1.1127 | 1.1264 |
+| Auto | 25 | 6 | 209 | 0.9997 | 1.0079 | 1.0104 | 1.0452 | 1.1254 | 1.1857 |
+| Auto | 50 | 0 | 209 | 0.9083 | 0.9085 | 0.9244 | 0.9919 | 1.1568 | 1.3451 |
+| Auto | 50 | 4 | 209 | 1.0047 | 1.0053 | 1.0103 | 1.0337 | 1.0991 | 1.1108 |
+| Auto | 50 | 6 | 209 | 0.9944 | 0.9997 | 1.0035 | 1.0317 | 1.0852 | 1.1256 |
+| Auto | 75 | 0 | 209 | 0.9200 | 0.9245 | 0.9357 | 1.0123 | 1.1964 | 1.4171 |
+| Auto | 75 | 4 | 209 | 1.0082 | 1.0102 | 1.0114 | 1.0324 | 1.0827 | 1.0925 |
+| Auto | 75 | 6 | 209 | 0.9990 | 1.0038 | 1.0040 | 1.0279 | 1.0851 | 1.1207 |
+| Auto | 90 | 0 | 209 | 1.0026 | 1.0234 | 1.0295 | 1.1241 | 1.4145 | 1.6051 |
+| Auto | 90 | 4 | 209 | 1.0122 | 1.0191 | 1.0120 | 1.0608 | 1.1316 | 1.2371 |
+| Auto | 90 | 6 | 209 | 1.0055 | 1.0129 | 1.0097 | 1.0498 | 1.1257 | 1.1693 |
+| Auto | 95 | 0 | 209 | 1.0001 | 1.0273 | 1.0214 | 1.1569 | 1.3909 | 1.5520 |
+| Auto | 95 | 4 | 209 | 1.0050 | 1.0093 | 1.0054 | 1.0419 | 1.1241 | 1.1948 |
+| Auto | 95 | 6 | 209 | 1.0030 | 1.0090 | 1.0032 | 1.0390 | 1.0996 | 1.1820 |
+| Default | 5 | 0 | 209 | 0.9147 | 0.9186 | 0.9134 | 1.0116 | 1.2394 | 1.4140 |
+| Default | 5 | 4 | 209 | 1.0230 | 1.0276 | 1.0251 | 1.0489 | 1.0707 | 1.1257 |
+| Default | 5 | 6 | 209 | 1.0224 | 1.0311 | 1.0318 | 1.0554 | 1.0939 | 1.1550 |
+| Default | 25 | 0 | 209 | 0.8942 | 0.8996 | 0.8990 | 0.9920 | 1.1928 | 1.3285 |
+| Default | 25 | 4 | 209 | 1.0218 | 1.0294 | 1.0246 | 1.0539 | 1.1264 | 1.1879 |
+| Default | 25 | 6 | 209 | 1.0128 | 1.0258 | 1.0240 | 1.0620 | 1.1346 | 1.2240 |
+| Default | 50 | 0 | 209 | 0.9186 | 0.9220 | 0.9311 | 0.9972 | 1.1841 | 1.3675 |
+| Default | 50 | 4 | 209 | 1.0170 | 1.0225 | 1.0214 | 1.0378 | 1.0821 | 1.0992 |
+| Default | 50 | 6 | 209 | 1.0066 | 1.0164 | 1.0158 | 1.0422 | 1.0868 | 1.1595 |
+| Default | 75 | 0 | 209 | 0.9261 | 0.9330 | 0.9374 | 1.0204 | 1.1969 | 1.4351 |
+| Default | 75 | 4 | 209 | 1.0145 | 1.0197 | 1.0191 | 1.0351 | 1.0851 | 1.1108 |
+| Default | 75 | 6 | 209 | 1.0059 | 1.0136 | 1.0121 | 1.0359 | 1.0853 | 1.1405 |
+| Default | 90 | 0 | 209 | 1.0003 | 1.0205 | 1.0252 | 1.1179 | 1.4230 | 1.6097 |
+| Default | 90 | 4 | 209 | 1.0092 | 1.0149 | 1.0136 | 1.0347 | 1.0668 | 1.1661 |
+| Default | 90 | 6 | 209 | 1.0042 | 1.0105 | 1.0097 | 1.0322 | 1.0722 | 1.0843 |
+| Default | 95 | 0 | 209 | 1.0019 | 1.0288 | 1.0235 | 1.1550 | 1.3870 | 1.5853 |
+| Default | 95 | 4 | 209 | 1.0060 | 1.0094 | 1.0075 | 1.0280 | 1.0610 | 1.1045 |
+| Default | 95 | 6 | 209 | 1.0015 | 1.0054 | 1.0044 | 1.0241 | 1.0615 | 1.0703 |
+| Drawing | 5 | 0 | 209 | 0.9335 | 0.9369 | 0.9278 | 1.0189 | 1.2053 | 1.3797 |
+| Drawing | 5 | 4 | 209 | 1.0207 | 1.0229 | 1.0209 | 1.0389 | 1.0643 | 1.0800 |
+| Drawing | 5 | 6 | 209 | 1.0178 | 1.0238 | 1.0230 | 1.0444 | 1.0745 | 1.1053 |
+| Drawing | 25 | 0 | 209 | 0.9199 | 0.9249 | 0.9209 | 0.9969 | 1.1691 | 1.3608 |
+| Drawing | 25 | 4 | 209 | 1.0179 | 1.0226 | 1.0210 | 1.0387 | 1.0759 | 1.0987 |
+| Drawing | 25 | 6 | 209 | 1.0091 | 1.0182 | 1.0175 | 1.0418 | 1.0856 | 1.1210 |
+| Drawing | 50 | 0 | 209 | 0.9325 | 0.9366 | 0.9454 | 1.0117 | 1.1959 | 1.3755 |
+| Drawing | 50 | 4 | 209 | 1.0150 | 1.0183 | 1.0174 | 1.0299 | 1.0506 | 1.0671 |
+| Drawing | 50 | 6 | 209 | 1.0048 | 1.0110 | 1.0131 | 1.0265 | 1.0513 | 1.0783 |
+| Drawing | 75 | 0 | 209 | 0.9379 | 0.9447 | 0.9549 | 1.0278 | 1.2167 | 1.4477 |
+| Drawing | 75 | 4 | 209 | 1.0127 | 1.0159 | 1.0151 | 1.0298 | 1.0482 | 1.0499 |
+| Drawing | 75 | 6 | 209 | 1.0039 | 1.0096 | 1.0089 | 1.0278 | 1.0525 | 1.0623 |
+| Drawing | 90 | 0 | 209 | 0.9991 | 1.0248 | 1.0304 | 1.1337 | 1.4119 | 1.6286 |
+| Drawing | 90 | 4 | 209 | 1.0082 | 1.0120 | 1.0110 | 1.0252 | 1.0532 | 1.0643 |
+| Drawing | 90 | 6 | 209 | 1.0022 | 1.0071 | 1.0067 | 1.0267 | 1.0449 | 1.0650 |
+| Drawing | 95 | 0 | 209 | 1.0148 | 1.0347 | 1.0381 | 1.1255 | 1.3734 | 1.5688 |
+| Drawing | 95 | 4 | 209 | 0.9989 | 1.0021 | 1.0021 | 1.0183 | 1.0487 | 1.0545 |
+| Drawing | 95 | 6 | 209 | 0.9957 | 0.9993 | 0.9980 | 1.0146 | 1.0390 | 1.0566 |
+| Photo | 5 | 0 | 209 | 0.9139 | 0.9166 | 0.9080 | 1.0194 | 1.3460 | 1.4494 |
+| Photo | 5 | 4 | 209 | 1.0268 | 1.0355 | 1.0347 | 1.0685 | 1.1132 | 1.2085 |
+| Photo | 5 | 6 | 209 | 1.0289 | 1.0418 | 1.0399 | 1.0745 | 1.1658 | 1.2661 |
+| Photo | 25 | 0 | 209 | 0.8862 | 0.8876 | 0.8844 | 0.9993 | 1.2327 | 1.3111 |
+| Photo | 25 | 4 | 209 | 1.0247 | 1.0366 | 1.0325 | 1.0738 | 1.1710 | 1.1967 |
+| Photo | 25 | 6 | 209 | 1.0182 | 1.0354 | 1.0309 | 1.0782 | 1.1892 | 1.3079 |
+| Photo | 50 | 0 | 209 | 0.9110 | 0.9130 | 0.9205 | 1.0033 | 1.2041 | 1.3451 |
+| Photo | 50 | 4 | 209 | 1.0203 | 1.0285 | 1.0255 | 1.0535 | 1.1181 | 1.1559 |
+| Photo | 50 | 6 | 209 | 1.0119 | 1.0240 | 1.0224 | 1.0539 | 1.1311 | 1.2377 |
+| Photo | 75 | 0 | 209 | 0.9260 | 0.9292 | 0.9405 | 1.0225 | 1.1937 | 1.4171 |
+| Photo | 75 | 4 | 209 | 1.0165 | 1.0245 | 1.0209 | 1.0492 | 1.1079 | 1.1211 |
+| Photo | 75 | 6 | 209 | 1.0084 | 1.0195 | 1.0177 | 1.0527 | 1.1322 | 1.1894 |
+| Photo | 90 | 0 | 209 | 1.0080 | 1.0288 | 1.0310 | 1.1294 | 1.4185 | 1.6051 |
+| Photo | 90 | 4 | 209 | 1.0107 | 1.0186 | 1.0165 | 1.0475 | 1.1288 | 1.1622 |
+| Photo | 90 | 6 | 209 | 1.0057 | 1.0149 | 1.0128 | 1.0441 | 1.1488 | 1.1739 |
+| Photo | 95 | 0 | 209 | 0.9868 | 1.0087 | 1.0092 | 1.1137 | 1.3754 | 1.5522 |
+| Photo | 95 | 4 | 209 | 1.0064 | 1.0118 | 1.0106 | 1.0376 | 1.0857 | 1.1113 |
+| Photo | 95 | 6 | 209 | 1.0034 | 1.0105 | 1.0085 | 1.0388 | 1.0972 | 1.1188 |
+
+### CID22-val (41 images per cell)
+
+| preset | q | m | n | agg | mean | p50 | p90 | p99 | max |
+|--------|---|---|---|-----|------|-----|-----|-----|-----|
+| Auto | 5 | 0 | 41 | 0.8929 | 0.8904 | 0.8979 | 0.9755 | 1.0274 | 1.0337 |
+| Auto | 5 | 4 | 41 | 1.0113 | 1.0130 | 1.0111 | 1.0350 | 1.0900 | 1.0912 |
+| Auto | 5 | 6 | 41 | 1.0155 | 1.0204 | 1.0214 | 1.0452 | 1.1114 | 1.1214 |
+| Auto | 25 | 0 | 41 | 0.8708 | 0.8662 | 0.8666 | 0.9646 | 1.0075 | 1.0196 |
+| Auto | 25 | 4 | 41 | 1.0056 | 1.0083 | 1.0072 | 1.0350 | 1.0895 | 1.0898 |
+| Auto | 25 | 6 | 41 | 1.0014 | 1.0089 | 1.0090 | 1.0347 | 1.1332 | 1.1482 |
+| Auto | 50 | 0 | 41 | 0.8939 | 0.8905 | 0.9076 | 0.9761 | 1.0194 | 1.0209 |
+| Auto | 50 | 4 | 41 | 1.0016 | 1.0035 | 1.0081 | 1.0326 | 1.0666 | 1.0685 |
+| Auto | 50 | 6 | 41 | 0.9974 | 1.0031 | 1.0040 | 1.0291 | 1.0817 | 1.0952 |
+| Auto | 75 | 0 | 41 | 0.9097 | 0.9074 | 0.9318 | 0.9979 | 1.0421 | 1.0495 |
+| Auto | 75 | 4 | 41 | 1.0063 | 1.0093 | 1.0111 | 1.0284 | 1.0706 | 1.0797 |
+| Auto | 75 | 6 | 41 | 1.0011 | 1.0070 | 1.0085 | 1.0355 | 1.0875 | 1.1019 |
+| Auto | 90 | 0 | 41 | 1.0004 | 1.0133 | 1.0258 | 1.1406 | 1.1677 | 1.1692 |
+| Auto | 90 | 4 | 41 | 1.0130 | 1.0185 | 1.0106 | 1.0578 | 1.0782 | 1.0839 |
+| Auto | 90 | 6 | 41 | 1.0080 | 1.0132 | 1.0089 | 1.0464 | 1.0848 | 1.0889 |
+| Auto | 95 | 0 | 41 | 0.9877 | 1.0039 | 1.0159 | 1.1452 | 1.2068 | 1.2135 |
+| Auto | 95 | 4 | 41 | 1.0107 | 1.0159 | 1.0114 | 1.0464 | 1.0974 | 1.1186 |
+| Auto | 95 | 6 | 41 | 1.0096 | 1.0174 | 1.0125 | 1.0496 | 1.1232 | 1.1552 |
+| Default | 5 | 0 | 41 | 0.9032 | 0.9024 | 0.9095 | 0.9751 | 1.0282 | 1.0337 |
+| Default | 5 | 4 | 41 | 1.0227 | 1.0260 | 1.0241 | 1.0431 | 1.0911 | 1.0975 |
+| Default | 5 | 6 | 41 | 1.0241 | 1.0299 | 1.0264 | 1.0504 | 1.0983 | 1.1025 |
+| Default | 25 | 0 | 41 | 0.8847 | 0.8829 | 0.8959 | 0.9646 | 1.0160 | 1.0196 |
+| Default | 25 | 4 | 41 | 1.0218 | 1.0284 | 1.0253 | 1.0431 | 1.1181 | 1.1323 |
+| Default | 25 | 6 | 41 | 1.0165 | 1.0261 | 1.0251 | 1.0452 | 1.1116 | 1.1187 |
+| Default | 50 | 0 | 41 | 0.9058 | 0.9042 | 0.9237 | 0.9958 | 1.0244 | 1.0267 |
+| Default | 50 | 4 | 41 | 1.0169 | 1.0216 | 1.0178 | 1.0326 | 1.0861 | 1.0977 |
+| Default | 50 | 6 | 41 | 1.0114 | 1.0188 | 1.0186 | 1.0347 | 1.0758 | 1.0856 |
+| Default | 75 | 0 | 41 | 0.9159 | 0.9137 | 0.9506 | 0.9943 | 1.0414 | 1.0483 |
+| Default | 75 | 4 | 41 | 1.0136 | 1.0173 | 1.0158 | 1.0326 | 1.0518 | 1.0558 |
+| Default | 75 | 6 | 41 | 1.0081 | 1.0146 | 1.0125 | 1.0279 | 1.0734 | 1.0751 |
+| Default | 90 | 0 | 41 | 0.9953 | 1.0056 | 1.0255 | 1.1041 | 1.1646 | 1.1692 |
+| Default | 90 | 4 | 41 | 1.0098 | 1.0131 | 1.0106 | 1.0253 | 1.0661 | 1.0791 |
+| Default | 90 | 6 | 41 | 1.0076 | 1.0111 | 1.0106 | 1.0265 | 1.0493 | 1.0564 |
+| Default | 95 | 0 | 41 | 0.9834 | 0.9984 | 1.0138 | 1.1420 | 1.1937 | 1.2023 |
+| Default | 95 | 4 | 41 | 1.0062 | 1.0095 | 1.0064 | 1.0191 | 1.0625 | 1.0661 |
+| Default | 95 | 6 | 41 | 1.0047 | 1.0097 | 1.0077 | 1.0229 | 1.0642 | 1.0645 |
+| Drawing | 5 | 0 | 41 | 0.9216 | 0.9215 | 0.9246 | 0.9951 | 1.0374 | 1.0484 |
+| Drawing | 5 | 4 | 41 | 1.0199 | 1.0222 | 1.0210 | 1.0324 | 1.0737 | 1.0763 |
+| Drawing | 5 | 6 | 41 | 1.0207 | 1.0250 | 1.0260 | 1.0376 | 1.0786 | 1.0788 |
+| Drawing | 25 | 0 | 41 | 0.9095 | 0.9082 | 0.9112 | 0.9864 | 1.0271 | 1.0303 |
+| Drawing | 25 | 4 | 41 | 1.0176 | 1.0215 | 1.0204 | 1.0352 | 1.0673 | 1.0738 |
+| Drawing | 25 | 6 | 41 | 1.0127 | 1.0197 | 1.0165 | 1.0399 | 1.0919 | 1.0960 |
+| Drawing | 50 | 0 | 41 | 0.9182 | 0.9168 | 0.9417 | 0.9945 | 1.0265 | 1.0288 |
+| Drawing | 50 | 4 | 41 | 1.0134 | 1.0164 | 1.0153 | 1.0256 | 1.0565 | 1.0687 |
+| Drawing | 50 | 6 | 41 | 1.0087 | 1.0129 | 1.0125 | 1.0232 | 1.0489 | 1.0589 |
+| Drawing | 75 | 0 | 41 | 0.9223 | 0.9220 | 0.9524 | 1.0041 | 1.0523 | 1.0654 |
+| Drawing | 75 | 4 | 41 | 1.0129 | 1.0153 | 1.0133 | 1.0256 | 1.0448 | 1.0526 |
+| Drawing | 75 | 6 | 41 | 1.0084 | 1.0126 | 1.0125 | 1.0274 | 1.0492 | 1.0576 |
+| Drawing | 90 | 0 | 41 | 0.9946 | 1.0051 | 1.0366 | 1.1237 | 1.1445 | 1.1454 |
+| Drawing | 90 | 4 | 41 | 1.0071 | 1.0101 | 1.0095 | 1.0192 | 1.0421 | 1.0430 |
+| Drawing | 90 | 6 | 41 | 1.0039 | 1.0078 | 1.0081 | 1.0208 | 1.0341 | 1.0370 |
+| Drawing | 95 | 0 | 41 | 1.0070 | 1.0149 | 1.0415 | 1.1132 | 1.1739 | 1.1882 |
+| Drawing | 95 | 4 | 41 | 1.0037 | 1.0059 | 1.0020 | 1.0161 | 1.0532 | 1.0535 |
+| Drawing | 95 | 6 | 41 | 1.0008 | 1.0023 | 1.0020 | 1.0139 | 1.0326 | 1.0361 |
+| Photo | 5 | 0 | 41 | 0.9066 | 0.9014 | 0.8976 | 1.0037 | 1.0950 | 1.0971 |
+| Photo | 5 | 4 | 41 | 1.0291 | 1.0327 | 1.0289 | 1.0494 | 1.1153 | 1.1221 |
+| Photo | 5 | 6 | 41 | 1.0299 | 1.0393 | 1.0367 | 1.0691 | 1.1441 | 1.1457 |
+| Photo | 25 | 0 | 41 | 0.8772 | 0.8721 | 0.8769 | 0.9763 | 1.0235 | 1.0269 |
+| Photo | 25 | 4 | 41 | 1.0263 | 1.0322 | 1.0269 | 1.0542 | 1.1291 | 1.1383 |
+| Photo | 25 | 6 | 41 | 1.0210 | 1.0334 | 1.0307 | 1.0556 | 1.1645 | 1.1713 |
+| Photo | 50 | 0 | 41 | 0.8981 | 0.8934 | 0.9100 | 1.0075 | 1.0242 | 1.0254 |
+| Photo | 50 | 4 | 41 | 1.0221 | 1.0269 | 1.0239 | 1.0450 | 1.1023 | 1.1143 |
+| Photo | 50 | 6 | 41 | 1.0163 | 1.0260 | 1.0258 | 1.0487 | 1.1192 | 1.1214 |
+| Photo | 75 | 0 | 41 | 0.9126 | 0.9077 | 0.9381 | 1.0041 | 1.0370 | 1.0435 |
+| Photo | 75 | 4 | 41 | 1.0189 | 1.0225 | 1.0194 | 1.0407 | 1.0841 | 1.1010 |
+| Photo | 75 | 6 | 41 | 1.0118 | 1.0200 | 1.0162 | 1.0377 | 1.0959 | 1.1006 |
+| Photo | 90 | 0 | 41 | 1.0039 | 1.0143 | 1.0290 | 1.1288 | 1.1733 | 1.1866 |
+| Photo | 90 | 4 | 41 | 1.0106 | 1.0145 | 1.0143 | 1.0339 | 1.0627 | 1.0714 |
+| Photo | 90 | 6 | 41 | 1.0085 | 1.0124 | 1.0113 | 1.0443 | 1.0830 | 1.0920 |
+| Photo | 95 | 0 | 41 | 0.9805 | 0.9923 | 1.0255 | 1.1052 | 1.1736 | 1.1957 |
+| Photo | 95 | 4 | 41 | 1.0086 | 1.0138 | 1.0150 | 1.0299 | 1.0673 | 1.0735 |
+| Photo | 95 | 6 | 41 | 1.0066 | 1.0135 | 1.0146 | 1.0326 | 1.0916 | 1.0996 |
+
+### clic2025 (62 images per cell)
+
+| preset | q | m | n | agg | mean | p50 | p90 | p99 | max |
+|--------|---|---|---|-----|------|-----|-----|-----|-----|
+| Auto | 5 | 0 | 62 | 0.8931 | 0.8839 | 0.8941 | 0.9729 | 1.0337 | 1.0592 |
+| Auto | 5 | 4 | 62 | 1.0110 | 1.0079 | 1.0155 | 1.0335 | 1.0399 | 1.0406 |
+| Auto | 5 | 6 | 62 | 1.0090 | 1.0157 | 1.0224 | 1.0476 | 1.0579 | 1.0614 |
+| Auto | 25 | 0 | 62 | 0.8767 | 0.8633 | 0.8862 | 0.9575 | 1.0107 | 1.0307 |
+| Auto | 25 | 4 | 62 | 1.0066 | 1.0042 | 1.0115 | 1.0321 | 1.0511 | 1.0622 |
+| Auto | 25 | 6 | 62 | 0.9982 | 1.0040 | 1.0079 | 1.0484 | 1.0677 | 1.0725 |
+| Auto | 50 | 0 | 62 | 0.9035 | 0.8966 | 0.9151 | 0.9819 | 1.0379 | 1.0412 |
+| Auto | 50 | 4 | 62 | 1.0038 | 1.0013 | 1.0090 | 1.0287 | 1.0443 | 1.0546 |
+| Auto | 50 | 6 | 62 | 0.9928 | 0.9934 | 0.9997 | 1.0350 | 1.0476 | 1.0494 |
+| Auto | 75 | 0 | 62 | 0.9135 | 0.9153 | 0.9364 | 0.9922 | 1.0368 | 1.0716 |
+| Auto | 75 | 4 | 62 | 1.0059 | 1.0069 | 1.0072 | 1.0282 | 1.0413 | 1.0452 |
+| Auto | 75 | 6 | 62 | 0.9972 | 1.0019 | 0.9999 | 1.0340 | 1.0635 | 1.0750 |
+| Auto | 90 | 0 | 62 | 0.9825 | 0.9934 | 1.0128 | 1.0979 | 1.1814 | 1.1865 |
+| Auto | 90 | 4 | 62 | 1.0126 | 1.0186 | 1.0097 | 1.0695 | 1.1049 | 1.1103 |
+| Auto | 90 | 6 | 62 | 1.0021 | 1.0081 | 1.0034 | 1.0440 | 1.0977 | 1.1088 |
+| Auto | 95 | 0 | 62 | 0.9969 | 1.0289 | 1.0254 | 1.1549 | 1.1911 | 1.1945 |
+| Auto | 95 | 4 | 62 | 1.0037 | 1.0106 | 1.0033 | 1.0496 | 1.0896 | 1.1043 |
+| Auto | 95 | 6 | 62 | 0.9994 | 1.0079 | 0.9982 | 1.0580 | 1.0788 | 1.0881 |
+| Default | 5 | 0 | 62 | 0.9045 | 0.9036 | 0.9194 | 0.9847 | 1.0685 | 1.1012 |
+| Default | 5 | 4 | 62 | 1.0225 | 1.0285 | 1.0277 | 1.0485 | 1.0665 | 1.0668 |
+| Default | 5 | 6 | 62 | 1.0189 | 1.0331 | 1.0366 | 1.0650 | 1.0748 | 1.0753 |
+| Default | 25 | 0 | 62 | 0.8910 | 0.8894 | 0.9050 | 0.9717 | 1.0444 | 1.0826 |
+| Default | 25 | 4 | 62 | 1.0214 | 1.0324 | 1.0276 | 1.0646 | 1.0965 | 1.1080 |
+| Default | 25 | 6 | 62 | 1.0120 | 1.0288 | 1.0274 | 1.0678 | 1.1023 | 1.1049 |
+| Default | 50 | 0 | 62 | 0.9164 | 0.9200 | 0.9361 | 0.9837 | 1.0693 | 1.0699 |
+| Default | 50 | 4 | 62 | 1.0179 | 1.0267 | 1.0241 | 1.0514 | 1.0801 | 1.0888 |
+| Default | 50 | 6 | 62 | 1.0074 | 1.0189 | 1.0166 | 1.0494 | 1.0883 | 1.0934 |
+| Default | 75 | 0 | 62 | 0.9199 | 0.9272 | 0.9400 | 0.9966 | 1.0579 | 1.1051 |
+| Default | 75 | 4 | 62 | 1.0128 | 1.0208 | 1.0171 | 1.0432 | 1.0672 | 1.0691 |
+| Default | 75 | 6 | 62 | 1.0035 | 1.0132 | 1.0090 | 1.0383 | 1.0730 | 1.0772 |
+| Default | 90 | 0 | 62 | 0.9786 | 0.9921 | 1.0012 | 1.1048 | 1.1787 | 1.1795 |
+| Default | 90 | 4 | 62 | 1.0070 | 1.0142 | 1.0128 | 1.0369 | 1.0562 | 1.0616 |
+| Default | 90 | 6 | 62 | 0.9989 | 1.0071 | 1.0049 | 1.0341 | 1.0579 | 1.0693 |
+| Default | 95 | 0 | 62 | 0.9986 | 1.0288 | 1.0334 | 1.1594 | 1.1840 | 1.1935 |
+| Default | 95 | 4 | 62 | 1.0019 | 1.0029 | 1.0061 | 1.0272 | 1.0573 | 1.0694 |
+| Default | 95 | 6 | 62 | 0.9965 | 1.0002 | 0.9981 | 1.0194 | 1.0647 | 1.0830 |
+| Drawing | 5 | 0 | 62 | 0.9305 | 0.9319 | 0.9404 | 0.9953 | 1.0922 | 1.1241 |
+| Drawing | 5 | 4 | 62 | 1.0201 | 1.0242 | 1.0236 | 1.0375 | 1.0592 | 1.0606 |
+| Drawing | 5 | 6 | 62 | 1.0154 | 1.0254 | 1.0269 | 1.0484 | 1.0574 | 1.0658 |
+| Drawing | 25 | 0 | 62 | 0.9186 | 0.9230 | 0.9377 | 0.9914 | 1.0640 | 1.1113 |
+| Drawing | 25 | 4 | 62 | 1.0184 | 1.0268 | 1.0223 | 1.0497 | 1.0721 | 1.0786 |
+| Drawing | 25 | 6 | 62 | 1.0085 | 1.0210 | 1.0177 | 1.0502 | 1.0766 | 1.0769 |
+| Drawing | 50 | 0 | 62 | 0.9295 | 0.9382 | 0.9521 | 0.9927 | 1.0889 | 1.0898 |
+| Drawing | 50 | 4 | 62 | 1.0153 | 1.0216 | 1.0186 | 1.0400 | 1.0565 | 1.0575 |
+| Drawing | 50 | 6 | 62 | 1.0047 | 1.0129 | 1.0102 | 1.0402 | 1.0554 | 1.0577 |
+| Drawing | 75 | 0 | 62 | 0.9292 | 0.9426 | 0.9592 | 1.0073 | 1.0869 | 1.1110 |
+| Drawing | 75 | 4 | 62 | 1.0118 | 1.0177 | 1.0170 | 1.0329 | 1.0486 | 1.0549 |
+| Drawing | 75 | 6 | 62 | 1.0023 | 1.0097 | 1.0089 | 1.0288 | 1.0535 | 1.0565 |
+| Drawing | 90 | 0 | 62 | 0.9775 | 1.0001 | 1.0090 | 1.1074 | 1.1897 | 1.2172 |
+| Drawing | 90 | 4 | 62 | 1.0051 | 1.0093 | 1.0089 | 1.0234 | 1.0300 | 1.0346 |
+| Drawing | 90 | 6 | 62 | 0.9963 | 1.0021 | 1.0015 | 1.0202 | 1.0261 | 1.0268 |
+| Drawing | 95 | 0 | 62 | 1.0021 | 1.0188 | 1.0375 | 1.0963 | 1.1721 | 1.1959 |
+| Drawing | 95 | 4 | 62 | 0.9982 | 1.0014 | 1.0007 | 1.0167 | 1.0283 | 1.0332 |
+| Drawing | 95 | 6 | 62 | 0.9917 | 0.9954 | 0.9958 | 1.0112 | 1.0256 | 1.0304 |
+| Photo | 5 | 0 | 62 | 0.8898 | 0.8887 | 0.9063 | 0.9924 | 1.0405 | 1.0687 |
+| Photo | 5 | 4 | 62 | 1.0278 | 1.0359 | 1.0357 | 1.0593 | 1.0790 | 1.0936 |
+| Photo | 5 | 6 | 62 | 1.0246 | 1.0419 | 1.0439 | 1.0733 | 1.0860 | 1.0888 |
+| Photo | 25 | 0 | 62 | 0.8791 | 0.8690 | 0.8925 | 0.9698 | 1.0192 | 1.0421 |
+| Photo | 25 | 4 | 62 | 1.0239 | 1.0399 | 1.0362 | 1.0823 | 1.1198 | 1.1356 |
+| Photo | 25 | 6 | 62 | 1.0166 | 1.0393 | 1.0327 | 1.0955 | 1.1264 | 1.1346 |
+| Photo | 50 | 0 | 62 | 0.9021 | 0.9006 | 0.9153 | 0.9894 | 1.0690 | 1.0693 |
+| Photo | 50 | 4 | 62 | 1.0201 | 1.0320 | 1.0273 | 1.0664 | 1.1115 | 1.1146 |
+| Photo | 50 | 6 | 62 | 1.0100 | 1.0241 | 1.0193 | 1.0644 | 1.1138 | 1.1228 |
+| Photo | 75 | 0 | 62 | 0.9212 | 0.9203 | 0.9344 | 1.0070 | 1.0619 | 1.0905 |
+| Photo | 75 | 4 | 62 | 1.0150 | 1.0240 | 1.0217 | 1.0556 | 1.0703 | 1.0736 |
+| Photo | 75 | 6 | 62 | 1.0043 | 1.0180 | 1.0176 | 1.0591 | 1.0804 | 1.0897 |
+| Photo | 90 | 0 | 62 | 0.9930 | 1.0015 | 1.0281 | 1.0917 | 1.1330 | 1.1450 |
+| Photo | 90 | 4 | 62 | 1.0091 | 1.0175 | 1.0180 | 1.0454 | 1.0719 | 1.0776 |
+| Photo | 90 | 6 | 62 | 0.9996 | 1.0069 | 1.0037 | 1.0442 | 1.0758 | 1.0863 |
+| Photo | 95 | 0 | 62 | 0.9889 | 1.0101 | 1.0229 | 1.1110 | 1.1813 | 1.1851 |
+| Photo | 95 | 4 | 62 | 1.0048 | 1.0091 | 1.0081 | 1.0504 | 1.0708 | 1.0784 |
+| Photo | 95 | 6 | 62 | 0.9987 | 1.0061 | 1.0031 | 1.0518 | 1.0752 | 1.0755 |
+
+### imagemagick (74 images per cell)
+
+| preset | q | m | n | agg | mean | p50 | p90 | p99 | max |
+|--------|---|---|---|-----|------|-----|-----|-----|-----|
+| Default | 5 | 0 | 74 | 1.0398 | 1.1268 | 0.9862 | 1.6250 | 2.9915 | 2.9915 |
+| Default | 5 | 4 | 74 | 1.0359 | 0.9670 | 1.0000 | 1.0690 | 1.0956 | 1.1180 |
+| Default | 25 | 0 | 74 | 1.0466 | 1.1631 | 0.9899 | 1.7419 | 3.5758 | 3.5758 |
+| Default | 25 | 4 | 74 | 1.0473 | 0.9776 | 1.0000 | 1.1131 | 1.1377 | 1.1557 |
+| Default | 75 | 0 | 74 | 1.0293 | 1.1412 | 0.9990 | 1.8421 | 3.9560 | 3.9560 |
+| Default | 75 | 4 | 74 | 1.0389 | 0.9723 | 1.0000 | 1.0884 | 1.1624 | 1.1831 |
+| Default | 95 | 0 | 74 | 1.0610 | 1.1929 | 1.0888 | 2.0000 | 3.9626 | 3.9626 |
+| Default | 95 | 4 | 74 | 1.0521 | 1.0025 | 1.0225 | 1.0975 | 1.1222 | 1.1452 |
+| Drawing | 5 | 0 | 74 | 1.0676 | 1.1364 | 0.9915 | 1.6250 | 2.9915 | 2.9915 |
+| Drawing | 5 | 4 | 74 | 1.0308 | 0.9670 | 1.0000 | 1.0639 | 1.0870 | 1.0933 |
+| Drawing | 25 | 0 | 74 | 1.0574 | 1.1686 | 0.9939 | 1.7419 | 3.5758 | 3.5758 |
+| Drawing | 25 | 4 | 74 | 1.0357 | 0.9741 | 1.0000 | 1.0535 | 1.1029 | 1.1053 |
+| Drawing | 75 | 0 | 74 | 1.0345 | 1.1535 | 1.0058 | 1.8750 | 3.9810 | 3.9810 |
+| Drawing | 75 | 4 | 74 | 1.0347 | 0.9888 | 1.0000 | 1.0600 | 1.1347 | 1.1507 |
+| Drawing | 95 | 0 | 74 | 1.0579 | 1.1987 | 1.0868 | 2.0150 | 4.0000 | 4.0000 |
+| Drawing | 95 | 4 | 74 | 1.0539 | 1.0106 | 1.0070 | 1.0945 | 1.1190 | 1.1369 |
+| Photo | 5 | 0 | 74 | 0.9690 | 1.1037 | 0.9583 | 1.6250 | 2.9915 | 2.9915 |
+| Photo | 5 | 4 | 74 | 1.0312 | 0.9531 | 1.0000 | 1.0706 | 1.1009 | 1.1034 |
+| Photo | 25 | 0 | 74 | 1.0129 | 1.1534 | 0.9826 | 1.7419 | 3.5758 | 3.5758 |
+| Photo | 25 | 4 | 74 | 1.0478 | 0.9809 | 1.0000 | 1.1457 | 1.1821 | 1.1846 |
+| Photo | 75 | 0 | 74 | 1.0065 | 1.1353 | 0.9871 | 1.8421 | 3.9560 | 3.9560 |
+| Photo | 75 | 4 | 74 | 1.0389 | 0.9730 | 1.0000 | 1.0931 | 1.1723 | 1.2000 |
+| Photo | 95 | 0 | 74 | 1.0546 | 1.1996 | 1.0907 | 2.0150 | 4.0000 | 4.0000 |
+| Photo | 95 | 4 | 74 | 1.0575 | 1.0211 | 1.0320 | 1.1043 | 1.1478 | 1.1611 |
+
+## Worst offenders (top 50 by ratio)
+
+Each row is one (file, preset, q, m) configuration where zen produced a larger output.
+
+| corpus | file | dims | preset | q | m | zen | lib | ratio |
+|--------|------|------|--------|---|---|-----|-----|-------|
+| imagemagick | d88de4b9e6efe211.png | 128x128 | Photo | 95 | 0 | 1696 | 424 | 4.0000 |
+| imagemagick | ebc20af6b4e8df81.png | 128x128 | Photo | 95 | 0 | 1696 | 424 | 4.0000 |
+| imagemagick | d88de4b9e6efe211.png | 128x128 | Drawing | 95 | 0 | 1696 | 424 | 4.0000 |
+| imagemagick | ebc20af6b4e8df81.png | 128x128 | Drawing | 95 | 0 | 1696 | 424 | 4.0000 |
+| imagemagick | d88de4b9e6efe211.png | 128x128 | Drawing | 75 | 0 | 1258 | 316 | 3.9810 |
+| imagemagick | ebc20af6b4e8df81.png | 128x128 | Drawing | 75 | 0 | 1258 | 316 | 3.9810 |
+| imagemagick | d88de4b9e6efe211.png | 128x128 | Default | 95 | 0 | 1696 | 428 | 3.9626 |
+| imagemagick | ebc20af6b4e8df81.png | 128x128 | Default | 95 | 0 | 1696 | 428 | 3.9626 |
+| imagemagick | d88de4b9e6efe211.png | 128x128 | Default | 75 | 0 | 1258 | 318 | 3.9560 |
+| imagemagick | ebc20af6b4e8df81.png | 128x128 | Default | 75 | 0 | 1258 | 318 | 3.9560 |
+| imagemagick | d88de4b9e6efe211.png | 128x128 | Photo | 75 | 0 | 1258 | 318 | 3.9560 |
+| imagemagick | ebc20af6b4e8df81.png | 128x128 | Photo | 75 | 0 | 1258 | 318 | 3.9560 |
+| imagemagick | d8c6a79bbf189a24.png | 128x128 | Photo | 95 | 0 | 1460 | 408 | 3.5784 |
+| imagemagick | d8c6a79bbf189a24.png | 128x128 | Drawing | 95 | 0 | 1460 | 408 | 3.5784 |
+| imagemagick | d88de4b9e6efe211.png | 128x128 | Default | 25 | 0 | 944 | 264 | 3.5758 |
+| imagemagick | ebc20af6b4e8df81.png | 128x128 | Default | 25 | 0 | 944 | 264 | 3.5758 |
+| imagemagick | d88de4b9e6efe211.png | 128x128 | Photo | 25 | 0 | 944 | 264 | 3.5758 |
+| imagemagick | ebc20af6b4e8df81.png | 128x128 | Photo | 25 | 0 | 944 | 264 | 3.5758 |
+| imagemagick | d88de4b9e6efe211.png | 128x128 | Drawing | 25 | 0 | 944 | 264 | 3.5758 |
+| imagemagick | ebc20af6b4e8df81.png | 128x128 | Drawing | 25 | 0 | 944 | 264 | 3.5758 |
+| imagemagick | d8c6a79bbf189a24.png | 128x128 | Default | 95 | 0 | 1460 | 412 | 3.5437 |
+| imagemagick | d8c6a79bbf189a24.png | 128x128 | Drawing | 75 | 0 | 1022 | 290 | 3.5241 |
+| imagemagick | d8c6a79bbf189a24.png | 128x128 | Default | 75 | 0 | 1022 | 294 | 3.4762 |
+| imagemagick | d8c6a79bbf189a24.png | 128x128 | Photo | 75 | 0 | 1022 | 294 | 3.4762 |
+| imagemagick | d88de4b9e6efe211.png | 128x128 | Default | 5 | 0 | 700 | 234 | 2.9915 |
+| imagemagick | ebc20af6b4e8df81.png | 128x128 | Default | 5 | 0 | 700 | 234 | 2.9915 |
+| imagemagick | d88de4b9e6efe211.png | 128x128 | Photo | 5 | 0 | 700 | 234 | 2.9915 |
+| imagemagick | ebc20af6b4e8df81.png | 128x128 | Photo | 5 | 0 | 700 | 234 | 2.9915 |
+| imagemagick | d88de4b9e6efe211.png | 128x128 | Drawing | 5 | 0 | 700 | 234 | 2.9915 |
+| imagemagick | ebc20af6b4e8df81.png | 128x128 | Drawing | 5 | 0 | 700 | 234 | 2.9915 |
+| imagemagick | d8c6a79bbf189a24.png | 128x128 | Default | 25 | 0 | 706 | 238 | 2.9664 |
+| imagemagick | d8c6a79bbf189a24.png | 128x128 | Photo | 25 | 0 | 706 | 238 | 2.9664 |
+| imagemagick | d8c6a79bbf189a24.png | 128x128 | Drawing | 25 | 0 | 706 | 238 | 2.9664 |
+| imagemagick | 23ab90d19206c7c8.png | 65x65 | Photo | 95 | 0 | 856 | 308 | 2.7792 |
+| imagemagick | 23ab90d19206c7c8.png | 65x65 | Drawing | 95 | 0 | 856 | 308 | 2.7792 |
+| imagemagick | 23ab90d19206c7c8.png | 65x65 | Drawing | 75 | 0 | 658 | 238 | 2.7647 |
+| imagemagick | 23ab90d19206c7c8.png | 65x65 | Default | 95 | 0 | 856 | 312 | 2.7436 |
+| imagemagick | 23ab90d19206c7c8.png | 65x65 | Default | 75 | 0 | 658 | 242 | 2.7190 |
+| imagemagick | 23ab90d19206c7c8.png | 65x65 | Photo | 75 | 0 | 658 | 242 | 2.7190 |
+| imagemagick | d8c6a79bbf189a24.png | 128x128 | Default | 5 | 0 | 560 | 206 | 2.7184 |
+| imagemagick | d8c6a79bbf189a24.png | 128x128 | Photo | 5 | 0 | 560 | 206 | 2.7184 |
+| imagemagick | d8c6a79bbf189a24.png | 128x128 | Drawing | 5 | 0 | 560 | 206 | 2.7184 |
+| imagemagick | 23ab90d19206c7c8.png | 65x65 | Default | 25 | 0 | 500 | 200 | 2.5000 |
+| imagemagick | 23ab90d19206c7c8.png | 65x65 | Photo | 25 | 0 | 500 | 200 | 2.5000 |
+| imagemagick | 23ab90d19206c7c8.png | 65x65 | Drawing | 25 | 0 | 500 | 200 | 2.5000 |
+| imagemagick | a0a55e44ae4f8001.png | 64x64 | Photo | 95 | 0 | 622 | 276 | 2.2536 |
+| imagemagick | a0a55e44ae4f8001.png | 64x64 | Drawing | 95 | 0 | 622 | 276 | 2.2536 |
+| imagemagick | 23ab90d19206c7c8.png | 65x65 | Default | 5 | 0 | 386 | 172 | 2.2442 |
+| imagemagick | 23ab90d19206c7c8.png | 65x65 | Photo | 5 | 0 | 386 | 172 | 2.2442 |
+| imagemagick | 23ab90d19206c7c8.png | 65x65 | Drawing | 5 | 0 | 386 | 172 | 2.2442 |
+
+## Worst aggregate cells
+
+| corpus | preset | q | m | n | agg | mean | p90 | max |
+|--------|--------|---|---|---|-----|------|-----|-----|
+| imagemagick | Drawing | 5 | 0 | 74 | 1.0676 | 1.1364 | 1.6250 | 2.9915 |
+| imagemagick | Default | 95 | 0 | 74 | 1.0610 | 1.1929 | 2.0000 | 3.9626 |
+| imagemagick | Drawing | 95 | 0 | 74 | 1.0579 | 1.1987 | 2.0150 | 4.0000 |
+| imagemagick | Photo | 95 | 4 | 74 | 1.0575 | 1.0211 | 1.1043 | 1.1611 |
+| imagemagick | Drawing | 25 | 0 | 74 | 1.0574 | 1.1686 | 1.7419 | 3.5758 |
+| imagemagick | Photo | 95 | 0 | 74 | 1.0546 | 1.1996 | 2.0150 | 4.0000 |
+| imagemagick | Drawing | 95 | 4 | 74 | 1.0539 | 1.0106 | 1.0945 | 1.1369 |
+| imagemagick | Default | 95 | 4 | 74 | 1.0521 | 1.0025 | 1.0975 | 1.1452 |
+| imagemagick | Photo | 25 | 4 | 74 | 1.0478 | 0.9809 | 1.1457 | 1.1846 |
+| imagemagick | Default | 25 | 4 | 74 | 1.0473 | 0.9776 | 1.1131 | 1.1557 |
+| imagemagick | Default | 25 | 0 | 74 | 1.0466 | 1.1631 | 1.7419 | 3.5758 |
+| imagemagick | Default | 5 | 0 | 74 | 1.0398 | 1.1268 | 1.6250 | 2.9915 |
+| imagemagick | Default | 75 | 4 | 74 | 1.0389 | 0.9723 | 1.0884 | 1.1831 |
+| imagemagick | Photo | 75 | 4 | 74 | 1.0389 | 0.9730 | 1.0931 | 1.2000 |
+| imagemagick | Default | 5 | 4 | 74 | 1.0359 | 0.9670 | 1.0690 | 1.1180 |
+| imagemagick | Drawing | 25 | 4 | 74 | 1.0357 | 0.9741 | 1.0535 | 1.1053 |
+| imagemagick | Drawing | 75 | 4 | 74 | 1.0347 | 0.9888 | 1.0600 | 1.1507 |
+| imagemagick | Drawing | 75 | 0 | 74 | 1.0345 | 1.1535 | 1.8750 | 3.9810 |
+| imagemagick | Photo | 5 | 4 | 74 | 1.0312 | 0.9531 | 1.0706 | 1.1034 |
+| imagemagick | Drawing | 5 | 4 | 74 | 1.0308 | 0.9670 | 1.0639 | 1.0933 |
+
+## Best aggregate cells (zen <= lib)
+
+| corpus | preset | q | m | n | agg | mean | p10 | p50 |
+|--------|--------|---|---|---|-----|------|-----|-----|
+| CID22-val | Auto | 25 | 0 | 41 | 0.8708 | 0.8662 | 0.7555 | 0.8666 |
+| clic2025 | Auto | 25 | 0 | 62 | 0.8767 | 0.8633 | 0.7111 | 0.8862 |
+| CID22-val | Photo | 25 | 0 | 41 | 0.8772 | 0.8721 | 0.7726 | 0.8769 |
+| clic2025 | Photo | 25 | 0 | 62 | 0.8791 | 0.8690 | 0.7094 | 0.8925 |
+| CID22-train | Auto | 25 | 0 | 209 | 0.8812 | 0.8819 | 0.7580 | 0.8906 |
+| CID22-val | Default | 25 | 0 | 41 | 0.8847 | 0.8829 | 0.7981 | 0.8959 |
+| CID22-train | Photo | 25 | 0 | 209 | 0.8862 | 0.8876 | 0.7714 | 0.8844 |
+| clic2025 | Photo | 5 | 0 | 62 | 0.8898 | 0.8887 | 0.7594 | 0.9063 |
+| clic2025 | Default | 25 | 0 | 62 | 0.8910 | 0.8894 | 0.7839 | 0.9050 |
+| CID22-val | Auto | 5 | 0 | 41 | 0.8929 | 0.8904 | 0.7947 | 0.8979 |
+| clic2025 | Auto | 5 | 0 | 62 | 0.8931 | 0.8839 | 0.7540 | 0.8941 |
+| CID22-val | Auto | 50 | 0 | 41 | 0.8939 | 0.8905 | 0.7656 | 0.9076 |
+| CID22-train | Default | 25 | 0 | 209 | 0.8942 | 0.8996 | 0.8059 | 0.8990 |
+| CID22-val | Photo | 50 | 0 | 41 | 0.8981 | 0.8934 | 0.7791 | 0.9100 |
+| clic2025 | Photo | 50 | 0 | 62 | 0.9021 | 0.9006 | 0.7836 | 0.9153 |
+| CID22-train | Auto | 5 | 0 | 209 | 0.9032 | 0.9044 | 0.7898 | 0.9060 |
+| CID22-val | Default | 5 | 0 | 41 | 0.9032 | 0.9024 | 0.8082 | 0.9095 |
+| clic2025 | Auto | 50 | 0 | 62 | 0.9035 | 0.8966 | 0.7724 | 0.9151 |
+| clic2025 | Default | 5 | 0 | 62 | 0.9045 | 0.9036 | 0.8024 | 0.9194 |
+| CID22-val | Default | 50 | 0 | 41 | 0.9058 | 0.9042 | 0.7930 | 0.9237 |
+
+## Files most often blowing up across cells
+
+For each file, count how many cells produced ratio > 1.10x.
+
+| corpus | file | dims | cells>1.10x | worst_ratio | worst_cell |
+|--------|------|------|-------------|-------------|------------|
+| CID22-train | newplot.png | 512x512 | 28 | 1.3079 | Photo/q25/m6 |
+| CID22-train | 1454613116.png | 512x512 | 25 | 1.6286 | Drawing/q90/m0 |
+| CID22-train | 1963557.png | 512x512 | 24 | 1.4282 | Photo/q5/m0 |
+| CID22-train | 3DPieChart.png | 512x512 | 23 | 1.3882 | Default/q95/m0 |
+| CID22-train | nicubunu_Game_baddie_Policeman.png | 512x512 | 20 | 1.2075 | Drawing/q95/m0 |
+| CID22-train | pexels-photo-7078290.png | 512x512 | 19 | 1.3513 | Photo/q5/m0 |
+| CID22-train | Abstract-Art-1.png | 512x512 | 19 | 1.2405 | Auto/q95/m0 |
+| CID22-train | Performance-Graph.png | 512x512 | 18 | 1.4305 | Default/q90/m0 |
+| CID22-train | ularapi_Semarang_City_Logo.png | 512x512 | 18 | 1.3328 | Default/q95/m0 |
+| CID22-train | 3315291.png | 512x512 | 18 | 1.1914 | Drawing/q5/m0 |
+| CID22-train | pexels-photo-2908983.png | 512x512 | 16 | 1.2498 | Auto/q95/m0 |
+| CID22-train | AgilityCourseElements.png | 512x512 | 16 | 1.2300 | Photo/q25/m6 |
+| CID22-train | 2387532-srgb.png | 512x512 | 15 | 1.4736 | Drawing/q90/m0 |
+| CID22-val | 7552578.png | 512x512 | 15 | 1.1866 | Photo/q90/m0 |
+| CID22-val | 1025469.png | 512x512 | 14 | 1.1713 | Photo/q25/m6 |
+| imagemagick | d88de4b9e6efe211.png | 128x128 | 13 | 4.0000 | Photo/q95/m0 |
+| imagemagick | ebc20af6b4e8df81.png | 128x128 | 13 | 4.0000 | Photo/q95/m0 |
+| CID22-train | Beam-Space-Processing.png | 512x512 | 13 | 1.2177 | Photo/q90/m0 |
+| imagemagick | d8c6a79bbf189a24.png | 128x128 | 12 | 3.5784 | Photo/q95/m0 |
+| imagemagick | 23ab90d19206c7c8.png | 65x65 | 12 | 2.7792 | Photo/q95/m0 |
+| imagemagick | a0a55e44ae4f8001.png | 64x64 | 12 | 2.2536 | Photo/q95/m0 |
+| imagemagick | c29b85f8953aa33e.png | 47x63 | 12 | 2.2035 | Photo/q95/m0 |
+| imagemagick | 57c71e40854e6032.png | 96x96 | 12 | 2.1122 | Photo/q95/m0 |
+| imagemagick | 05f9a4950f55e2b5.png | 47x63 | 12 | 2.0150 | Photo/q95/m0 |
+| imagemagick | 5e0c70aa8fd63b8f.png | 47x63 | 12 | 2.0150 | Photo/q95/m0 |
+| imagemagick | 7e8bbc31c6b7d052.png | 47x63 | 12 | 2.0150 | Photo/q95/m0 |
+| imagemagick | 3e0f92d9c81c539b.png | 33x33 | 12 | 1.8785 | Photo/q95/m0 |
+| imagemagick | 680167d5746325a3.png | 32x32 | 12 | 1.4898 | Photo/q95/m0 |
+| imagemagick | c8173bd456ae9ed8.png | 17x17 | 12 | 1.4603 | Photo/q95/m0 |
+| imagemagick | e601a54fea77a6db.png | 17x17 | 12 | 1.4603 | Photo/q95/m0 |
+
+## Patterns
+
+The data shows several strong, repeatable patterns:
+
+**1. Method 0 is a major outlier — but not in the way you'd expect.**
+Aggregate ratios across CID22 by method (all presets, all Q):
+- `m=0`: agg = **0.9662x** — zenwebp produces 3.4% *smaller* files on average
+- `m=4`: agg = 1.0098x
+- `m=6`: agg = 1.0046x
+
+This is not a win. zenwebp's `m=0` is doing different work than libwebp's `m=0`.
+At low quality (Q5-50), zenwebp m=0 averages ~0.91x — clearly under-spending bits.
+At high quality (Q90-95), zenwebp m=0 averages ~1.00x but the **per-file p99 reaches
+1.41-1.62x** — it dramatically over-spends on certain images. The 16 worst offenders
+in the entire sweep are all `(method=0, Q=90 or 95, file=graphic/chart/logo)`. Static
+analysis should look for: rate-control / segmentation / quantizer-allocation paths that
+differ between method 0 and methods 4+ on images with low color count or large flat
+regions.
+
+**2. Worst-offender files are graphics/charts/logos with low color count.**
+Out of CID22's 250 images, **15 files account for almost every >1.10x outlier across
+the 72 cells.** They share these visual properties:
+- 512x512 PNGs with 200-6000 unique colors (vs typical ~50000+ for photos)
+- Flat backgrounds, sharp text, geometric shapes, gradient bands
+- Large single-color regions
+
+Worst persistent offenders (cells with ratio > 1.10x, max ratio):
+| File | dims | colors | cells>1.10x | max ratio |
+|------|------|--------|-------------|-----------|
+| 1454613116.png | 512x512 | ~911 | 25 | 1.629x |
+| 2387532-srgb.png | 512x512 grayscale | ~161 | 15 | 1.474x |
+| Performance-Graph.png | 512x512 | ~750 | 18 | 1.431x |
+| 1963557.png | 512x512 | ~618 | 24 | 1.428x |
+| 3DPieChart.png | 512x512 | ~800 | 23 | 1.388x |
+| pexels-photo-7078290.png | 512x512 | photo-ish | 19 | 1.351x |
+| ularapi_Semarang_City_Logo.png | 512x512 logo | ~625 | 18 | 1.333x |
+| newplot.png | 512x512 plot | ~937 | 28 | 1.308x |
+
+The user's note that "Auto: ≥0.45 uniformity → Photo, <0.45 → Default" suggests Auto
+detection is meant to route content like this differently — but in our data, Auto and
+Default produce nearly identical outputs on these files (e.g. on 1454613116.png Q90 m0,
+Auto=22542, Default=22606), meaning Auto isn't recognizing them as Drawing/Icon
+candidates that would take a different code path.
+
+**3. Quality dependence is monotonic and in the right direction — but worse at low Q.**
+For CID22 + Default + m=4:
+| Q | agg ratio |
+|---|----------|
+| 5 | 1.0230x |
+| 25 | 1.0218x |
+| 50 | 1.0170x |
+| 75 | 1.0144x  ← published baseline reproduces |
+| 90 | 1.0093x |
+| 95 | 1.0061x |
+
+zenwebp is closer to libwebp at high Q and worse at low Q. The 1-2% gap at Q5-Q25 is
+almost surely from rate-control (target-Q overshoot) or coarser-than-libwebp quantizer
+matrix selection at extreme low-Q. **Static analysis should focus on Q≤25 paths**
+because most of the corpus aggregate gap lives there, even though the absolute file
+sizes are smallest.
+
+**4. Photo preset is consistently worst.**
+On CID22, Photo preset adds ~1% to the aggregate ratio vs Default at every Q:
+e.g. Q75 m=4 Default=1.0145x, Photo=1.0169x; Q5 m=4 Default=1.0230x, Photo=1.0268x.
+On clic2025 (large-image photo corpus) Photo m=4 Q5 = 1.0244x vs Default 1.0223x.
+The Photo preset enables `sns_strength=80` and stronger filtering — somewhere in
+that chain, zenwebp adds a small but persistent extra cost vs libwebp.
+
+**5. Drawing preset at high Q + m=4/6 is one of the few cells where zenwebp wins.**
+Drawing preset Q95 m=6 on CID22 = 0.9957x (zen 0.4% smaller). This is a real win on
+exactly the kind of content (line drawings, hand-drawn art) that the preset targets.
+Drawing's `sns=25 filter=10 sharp=6 segs=4` configuration is the only preset+Q combo
+where zenwebp consistently beats libwebp at higher methods.
+
+**6. clic2025 is uniformly easier for both encoders, but the gap pattern is identical.**
+The 62 large photographic images in clic2025 produce smaller absolute ratios
+(Q75 m=4 Default = 1.0128x vs CID22's 1.0145x) but the same monotonic Q-dependence
+and the same m=0 anomaly. This suggests the m=0 problem is content-driven (graphics)
+not size-driven.
+
+**Where static analysis should focus first:**
+
+1. **Method-0-specific code paths around Q=90-95 on low-color images.** The 1.5-1.6x
+   max ratios are not subtle. Diff zenwebp's m=0 segment/quantizer logic against the
+   m=4 path; whatever m=4 does to handle these images, m=0 doesn't.
+2. **Rate control / quantizer selection at Q ≤ 25.** A 2.3% aggregate gap at low Q vs
+   0.6% at Q95 means there's 4x more room there for improvement.
+3. **Photo preset (sns_strength=80) extra cost.** Persistent ~+0.3% across all Q
+   suggests one or two specific functions in the SNS=80 path.
+4. **Auto preset's classifier on graphic/chart content.** Auto produces effectively
+   identical bytes to Default on the worst offenders, suggesting the classifier
+   doesn't trigger the relevant "low-color" route at all.
+
+## Sanity checks performed
+
+- **Published 1.0149x baseline reproduces.** CID22 Q75 m=4 Default preset (250
+  training+validation images): agg ratio = **1.0144x** (user-published 1.0149x —
+  the 0.0005 difference is within image-set precision; confirmed encoder defaults
+  match libwebp's `WEBP_PRESET_DEFAULT` + `quality=75` + `method=4`).
+- **libwebp call path matches `cwebp -preset default -q 75 -m 4`.** Verified by
+  reusing the existing `webpx 0.1.4` builder pattern from `dev/corpus_test.rs`,
+  which has been historically calibrated against `cwebp` output. Both encoders
+  ran in the same process on the same RGB buffer per file.
+- **No memory/process contamination.** clic2025 and imagemagick sweeps ran in a
+  separate process from the CID22 sweep; ratios stayed self-consistent. Re-running
+  any single cell on cached PNGs produces byte-identical sizes.
+
+## Failures / caveats
+
+- **PNG loader is intentionally narrow:** only handles 8-bit Grayscale/Gray+Alpha/RGB/RGBA.
+  All sub-8-bit and 16-bit color-types are skipped at PNG-decode time, before any
+  encoding attempt. This affected the imagemagick corpus heavily.
+- **imagemagick sample: 76 of 150 sampled files were skipped or produced an encoder
+  error.** Of the 150 random samples from `~/work/all-the-images/corpus/png/imagemagick-convert`,
+  74 made it through both encoders. The 76 skipped were almost entirely 1-bit, 2-bit,
+  or 4-bit grayscale or palette-mode PNGs (e.g. 7x7 1-bit, 16x16 2-bit, 65x65 4-bit).
+  These are not realistic web content — they appear to be ImageMagick test patterns —
+  so the loss is not significant for the sweep's purpose. Note: of the ones that
+  surfaced via the load path, zenwebp returned an encoder error on tiny synthetic
+  images. This is a separate finding worth filing as its own bug if not already
+  known, but is unrelated to file-size ratio analysis.
+- **imagemagick aggregate ratios are not directly comparable** to the photo-corpus
+  ratios. The 74 surviving images skew tiny (median dimension ~64px) and are
+  small-detail synthetic test patterns. Aggregate ratios in that section
+  (1.03x–1.07x) reflect that small-image regime more than realistic content.
+- **clic2025 sub-corpus is small (62 images).** Per-cell percentiles like p99 are
+  effectively a max-of-1 statistic; treat clic2025's tail numbers as anecdotal.
+- **`Auto` preset comparison routes libwebp through `Default`**, not through any
+  libwebp content classifier (libwebp does not have an Auto). For Auto cells, the
+  Default preset is the libwebp side; the difference vs zenwebp's Default cell
+  isolates whatever Auto's classifier decided.
+- **No timing data reported.** This sweep measures bytes only.

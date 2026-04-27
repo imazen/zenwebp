@@ -693,22 +693,13 @@ impl<'a> super::Vp8Encoder<'a> {
         let mut all_levels = [0i16; 256];
 
         for (mode_idx, &mode) in MODES.iter().enumerate() {
-            // Skip V mode if no top row available (first row of macroblocks)
-            // Note: V prediction requires real top pixels, border value 127 gives poor results
-            if mode == LumaMode::V && mby == 0 {
-                continue;
-            }
-            // Skip H mode if no left column available (first column of macroblocks)
-            // Note: H prediction requires real left pixels, border value 129 gives poor results
-            if mode == LumaMode::H && mbx == 0 {
-                continue;
-            }
-            // TM mode requires both top and left pixels, but can use border values (127/129)
-            // At edges, TM degenerates to H (if mby=0) or V (if mbx=0), so skip only at corner
-            // where both borders are synthetic
-            if mode == LumaMode::TM && mbx == 0 && mby == 0 {
-                continue;
-            }
+            // All four I16 modes (DC, V, H, TM) are evaluated at every position,
+            // including MB borders. `create_border_luma` substitutes 127 above and
+            // 129 left when the neighbour is out of frame; RD scoring picks the
+            // winner. Matches libwebp's PickBestIntra16 (`quant_enc.c:1072-1100`),
+            // which never skips a mode based on position. Removed in #28 to allow
+            // the border-value-padded prediction to compete on top-row, left-column,
+            // and corner MBs (small images and frame edges).
 
             // Generate prediction for this mode
             let pred = self.get_predicted_luma_block_16x16(mode, mbx, mby);
@@ -729,24 +720,99 @@ impl<'a> super::Vp8Encoder<'a> {
             let mut y2_quant = y2_coeffs;
             crate::encoder::quantize::quantize_block_simd(&mut y2_quant, y2_matrix, true);
 
-            // 4. Quantize Y1 (AC) coefficients using SIMD
-            // Extract each 4x4 block from luma_blocks and quantize AC coefficients
+            // 4. Quantize Y1 (AC) coefficients
+            // At m6 (RD_OPT_TRELLIS_ALL) the I16 mode-selection path also runs
+            // trellis quantization — see libwebp's ReconstructIntra16
+            // (`quant_enc.c:830-879`), which switches on `DO_TRELLIS_I16` and
+            // calls `TrellisQuantizeBlock` instead of `VP8EncQuantizeBlock`.
+            // The resulting levels feed both the cost estimate (step 5) and the
+            // distortion measurement (step 7) so both halves of the RD score
+            // see the trellis-optimized coefficients.
             // (y1_quant hoisted outside mode loop to avoid redundant zero-init)
-            #[allow(clippy::needless_range_loop)]
-            for block_idx in 0..16 {
-                // Copy block from luma_blocks (DC will be zeroed by quantize_ac_only)
-                let block_start = block_idx * 16;
-                let mut block: [i32; 16] = luma_blocks[block_start..block_start + 16]
-                    .try_into()
-                    .unwrap();
-                block[0] = 0; // DC is handled by Y2
-                crate::encoder::quantize::quantize_ac_only_simd(&mut block, y1_matrix, true);
-                y1_quant[block_idx] = block;
+            if self.do_trellis_i4_mode {
+                // m6 RD_OPT_TRELLIS_ALL: use trellis quantization for I16 AC blocks.
+                // Track per-block has_nz context locally — `get_cost_luma16` itself
+                // resets these to all-false at function entry, so the ctx0 we feed
+                // into the trellis call needs to mirror that ordering exactly.
+                let mut top_nz_t = [false; 4];
+                let mut left_nz_t = [false; 4];
+                #[allow(clippy::needless_range_loop)]
+                for block_idx in 0..16 {
+                    let bx = block_idx % 4;
+                    let by = block_idx / 4;
+                    let block_start = block_idx * 16;
+                    let mut coeffs: [i32; 16] = luma_blocks[block_start..block_start + 16]
+                        .try_into()
+                        .unwrap();
+                    coeffs[0] = 0; // DC handled by Y2
+                    let ctx0 = (u8::from(top_nz_t[bx]) + u8::from(left_nz_t[by])).min(2) as usize;
+                    let mut zigzag_levels = [0i32; 16];
+                    let has_nz = trellis_quantize_block(
+                        &mut coeffs,
+                        &mut zigzag_levels,
+                        y1_matrix,
+                        segment.lambda_trellis_i16,
+                        1, // first=1 for I16_AC (DC lives in Y2)
+                        &self.level_costs,
+                        0, // ctype=0 for I16_AC
+                        ctx0,
+                        &segment.psy_config,
+                    );
+                    top_nz_t[bx] = has_nz;
+                    left_nz_t[by] = has_nz;
+                    // Convert zigzag-ordered levels back to natural index so the
+                    // downstream `y1_matrix.dequantize(level, i)` and cost paths
+                    // see the same storage convention as the simple-quant branch.
+                    let mut natural = [0i32; 16];
+                    for n in 1..16 {
+                        natural[crate::encoder::tables::VP8_ZIGZAG[n]] = zigzag_levels[n];
+                    }
+                    y1_quant[block_idx] = natural;
+                }
+            } else {
+                // m0..m5: simple SIMD quantization (no trellis during mode selection)
+                #[allow(clippy::needless_range_loop)]
+                for block_idx in 0..16 {
+                    // Copy block from luma_blocks (DC will be zeroed by quantize_ac_only)
+                    let block_start = block_idx * 16;
+                    let mut block: [i32; 16] = luma_blocks[block_start..block_start + 16]
+                        .try_into()
+                        .unwrap();
+                    block[0] = 0; // DC is handled by Y2
+                    crate::encoder::quantize::quantize_ac_only_simd(&mut block, y1_matrix, true);
+                    y1_quant[block_idx] = block;
+                }
             }
 
-            // 5. Compute coefficient cost using probability-dependent tables
-            // This matches libwebp's VP8GetCostLuma16 which uses proper token probabilities
-            let coeff_cost = get_cost_luma16(&y2_quant, &y1_quant, &self.level_costs, probs);
+            // 5. Compute coefficient cost using probability-dependent tables.
+            // libwebp's VP8GetCostLuma16 imports cross-MB non-zero context from
+            // `it->top_nz[]`/`it->left_nz[]` (slot 8 reserved for Y2 DC) and walks
+            // each AC block updating local state. Mirrored here using zenwebp's
+            // top_complexity/left_complexity (#23).
+            let top_y_nz = [
+                self.top_complexity[mbx].y[0] != 0,
+                self.top_complexity[mbx].y[1] != 0,
+                self.top_complexity[mbx].y[2] != 0,
+                self.top_complexity[mbx].y[3] != 0,
+            ];
+            let left_y_nz = [
+                self.left_complexity.y[0] != 0,
+                self.left_complexity.y[1] != 0,
+                self.left_complexity.y[2] != 0,
+                self.left_complexity.y[3] != 0,
+            ];
+            let top_y2_nz = self.top_complexity[mbx].y2 != 0;
+            let left_y2_nz = self.left_complexity.y2 != 0;
+            let coeff_cost = get_cost_luma16(
+                &y2_quant,
+                &y1_quant,
+                top_y_nz,
+                left_y_nz,
+                top_y2_nz,
+                left_y2_nz,
+                &self.level_costs,
+                probs,
+            );
 
             // 6. Dequantize Y2 and do inverse WHT using SIMD
             let mut y2_dequant = y2_quant;
@@ -1088,17 +1154,27 @@ impl<'a> super::Vp8Encoder<'a> {
         // Approach: Use a penalty proportional to lambda_mode (which is q²/128)
         // This gives: penalty ≈ SCALE * q² where SCALE is tuned empirically
         //
-        // For parity with our scoring, we use: 3000 * lambda_mode
-        // At q=30: lambda_mode=7, penalty = 21,000 (vs libwebp's 900,000)
-        // This ratio (43x smaller) matches the ratio of our lambdas to libwebp's
-        // (lambda_i4 ≈ 21 vs lambda_d_i4 = 11 is 2x, and we include coeff costs)
+        // libwebp's PickBestIntra4 (`quant_enc.c:1144-1145`) initializes the
+        // running score with just `H = 211` (the bit-cost of the is_intra4 flag,
+        // i.e. `VP8BitCost(0, 145) = 211`) — no separate i4_penalty:
         //
-        // partition_limit (0-100) scales the penalty up to prevent partition 0
-        // overflow on very large images. At limit=50 the penalty is 8.5x base,
-        // at limit=80 it's 13.6x base, strongly favoring I16 mode which uses
-        // far fewer partition 0 bits. This combines with the raised skip threshold
-        // in choose_macroblock_info to effectively suppress I4 at high limits.
-        let base_penalty = 3000u64 * u64::from(lambda_mode);
+        //     rd_best.H = 211;  // 211 = VP8BitCost(0, 145)
+        //     SetRDScore(dqm->lambda_mode, &rd_best);  // running_score = 211 * lambda_mode
+        //
+        // (The `1000 * q²` `i4_penalty` in `quant_enc.c:267` is only used by
+        // `RefineUsingDistortion` at m0/m1, not by `PickBestIntra4` at m2+.)
+        //
+        // zenwebp previously used `3000 * lambda_mode` which is ~14× larger
+        // than libwebp's value, biasing strongly away from I4 and triggering
+        // the early-exit `running_score >= i16_score` even when I4 would
+        // actually win. Fixed in #22.
+        //
+        // partition_limit (0-100) still scales the penalty up to prevent
+        // partition-0 overflow on very large images at high limits — that
+        // mechanism is orthogonal to the libwebp default and remains in
+        // place; only the base constant changes from 3000 to 211.
+        const H_INTRA4_BIT_COST: u64 = 211;
+        let base_penalty = H_INTRA4_BIT_COST * u64::from(lambda_mode);
         let limit_scale = u64::from(self.partition_limit); // 0-100
         let i4_penalty = base_penalty + base_penalty * limit_scale * limit_scale / 400;
         let mut running_score = i4_penalty;
@@ -1586,8 +1662,35 @@ impl<'a> super::Vp8Encoder<'a> {
                 );
             }
 
-            // 3. Compute coefficient cost using probability-dependent tables
-            let coeff_cost = get_cost_uv(&uv_quant, &self.level_costs, probs);
+            // 3. Compute coefficient cost using probability-dependent tables.
+            // libwebp's VP8GetCostUV walks U then V channels (`ch ∈ {0,2}`) over a 2x2 grid
+            // updating `it->top_nz[4+ch+x]`/`it->left_nz[4+ch+y]`. Import the live
+            // cross-MB context from zenwebp's complexity tracker (#23).
+            let top_u_nz = [
+                self.top_complexity[mbx].u[0] != 0,
+                self.top_complexity[mbx].u[1] != 0,
+            ];
+            let left_u_nz = [
+                self.left_complexity.u[0] != 0,
+                self.left_complexity.u[1] != 0,
+            ];
+            let top_v_nz = [
+                self.top_complexity[mbx].v[0] != 0,
+                self.top_complexity[mbx].v[1] != 0,
+            ];
+            let left_v_nz = [
+                self.left_complexity.v[0] != 0,
+                self.left_complexity.v[1] != 0,
+            ];
+            let coeff_cost = get_cost_uv(
+                &uv_quant,
+                top_u_nz,
+                left_u_nz,
+                top_v_nz,
+                left_v_nz,
+                &self.level_costs,
+                probs,
+            );
 
             // 4. Fused inverse DCT + add residue for reconstruction
             let mut reconstructed_u = pred_u;
@@ -1705,6 +1808,56 @@ impl<'a> super::Vp8Encoder<'a> {
     }
 
     pub(super) fn choose_macroblock_info(&self, mbx: usize, mby: usize) -> MacroblockInfo {
+        // FastMBAnalyze fast path (libwebp `RefineUsingDistortion(try_both_modes=0,
+        // refine_uv_mode=method>=1)` at m0/m1, quant_enc.c:1447). The analysis
+        // pass already chose I16 vs I4 via the DC-variance test in
+        // `FastMBAnalyze`. Consume that hint directly:
+        //   - I16Dc  => LumaMode::DC (matches `pick_intra16_fast_dc`)
+        //   - I4AllDc => run `pick_best_intra4` to refine the per-sub-block
+        //     modes. libwebp uses an SSE-only loop here; we reuse our
+        //     existing RD path which is more accurate but slower. This
+        //     resolves #32 (4× size blowup on tiny low-color images at m0):
+        //     the previous code unconditionally picked I16-DC at m0/m1
+        //     regardless of source variance, missing the I4 case entirely.
+        // Chroma still goes through `pick_best_uv` here (zenwebp's path
+        // matches libwebp m1's `refine_uv_mode=1`; m0 differs but UV mode
+        // experiments showed zero size change on the worst offender).
+        if self.method <= 1 && self.partition_limit < 100 && !self.fast_mb_hints.is_empty() {
+            let mb_idx = mby * usize::from(self.macroblock_width) + mbx;
+            if let Some(&hint) = self.fast_mb_hints.get(mb_idx) {
+                use crate::encoder::analysis::MbModeHint;
+                // For the I16 hint, use the fast DC scorer (current behavior);
+                // for I4, run `pick_best_intra4` so each sub-block's mode is
+                // chosen rather than left at all-DC (libwebp does the same,
+                // just via SSE rather than RD).
+                let (luma_mode, luma_bpred) = match hint {
+                    MbModeHint::I16Dc => (LumaMode::DC, None),
+                    MbModeHint::I4AllDc => {
+                        // Need a baseline I16 score to compare against I4. Use
+                        // the fast DC scorer (matches what we'd report for
+                        // an I16-DC mode at m0/m1).
+                        let (_, i16_score) = self.pick_intra16_fast_dc(mbx, mby);
+                        match self.pick_best_intra4(mbx, mby, i16_score) {
+                            Some((modes, _)) => (LumaMode::B, Some(modes)),
+                            // I4 didn't beat I16 — fall back to I16-DC (the
+                            // hint was advisory, libwebp's I4 path can also
+                            // bail out via `score_i4 >= best_score`).
+                            None => (LumaMode::DC, None),
+                        }
+                    }
+                };
+                let chroma_mode = self.pick_best_uv(mbx, mby);
+                let segment_id = self.get_segment_id_for_mb(mbx, mby);
+                return MacroblockInfo {
+                    luma_mode,
+                    luma_bpred,
+                    chroma_mode,
+                    segment_id,
+                    coeffs_skipped: false,
+                };
+            }
+        }
+
         // Pick the best 16x16 luma mode using RD cost selection
         let (luma_mode, i16_score) = self.pick_best_intra16(mbx, mby);
 

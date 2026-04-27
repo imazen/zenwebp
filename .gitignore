@@ -64,3 +64,13 @@ Cargo.toml.original.txt
 fuzz-*.log
 
 .workongoing
+
+# Bulk empirical sweep TSVs from the libwebp parity audit (PR #37).
+# Regeneratable via `dev/empirical_sweep.rs` against a CID22 / CLIC /
+# ImageMagick corpus. Kept on block storage at /mnt/v/output/zenwebp/audit/
+# rather than in git — they add ~720 KB of compressed pack churn for data
+# that's a single command away. The summary in
+# `differences/05-empirical-analysis.md` is what callers actually consume;
+# the per-batch baselines under `differences/baselines/` are the audit
+# progression.
+differences/05-empirical-*.tsv
