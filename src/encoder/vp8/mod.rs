@@ -796,14 +796,39 @@ impl<'a> Vp8Encoder<'a> {
     /// not currently thread that distortion through to this path. Skipping
     /// it is conservative — it lets a few extra blocky MBs contribute,
     /// which can only bump the strength upward, matching libwebp's
-    /// "monotone-up" behavior.
+    /// "monotone-up" behavior. The proper fix (thread mode-selection D
+    /// through `MacroblockInfo` and gate `store_max_delta` on
+    /// `mb_D > segment.min_disto`) is tracked in #44 — without it,
+    /// `color_blocks`-style content with sharp color edges over-bumps the
+    /// filter and loses ~10–13 zensim points vs libwebp.
+    ///
+    /// When `max_edge_per_segment` is all-zero (no blocky-I16 MBs were
+    /// observed), the body still runs and may raise `frame.filter_level`
+    /// to the maximum existing per-segment absolute fstrength
+    /// (`frame_level + loopfilter_level`). This matches libwebp: the
+    /// function unconditionally assigns `enc->filter_hdr.level = max_level`
+    /// at `filter_enc.c:236`.
     fn adjust_filter_strength(&mut self) {
         if self.filter_strength == 0 {
             return;
         }
 
+        // Bounds reference for the asserts and clamps below:
+        //   frame_level       ∈ [0, 63]   — u8 set by `compute_filter_level`
+        //                                   (≤ 63 by construction) or by an
+        //                                   earlier call to this function.
+        //   loopfilter_level  ∈ [-63, 63] — i8, signed-6-bit bitstream field;
+        //                                   clamped at write time.
+        //   absolute[s]       ∈ [-63, 126] in worst case (frame=63 + loop=63
+        //                                   or frame=0 + loop=-63).
+        //   edge_strength     ∈ [0, 63]   — `LEVELS_FROM_DELTA` saturates
+        //                                   at 63 (loop filter is 6-bit).
         let mut absolute = [0i32; MAX_SEGMENTS];
         let frame_level = i32::from(self.frame.filter_level);
+        debug_assert!(
+            (0..=63).contains(&frame_level),
+            "frame.filter_level={frame_level} outside [0, 63]"
+        );
         for s in 0..MAX_SEGMENTS {
             absolute[s] = frame_level + i32::from(self.segments[s].loopfilter_level);
         }
@@ -831,17 +856,31 @@ impl<'a> Vp8Encoder<'a> {
         }
 
         // Raise frame filter_level to the max per-segment fstrength
-        // (matches libwebp `enc->filter_hdr.level = max_level`).
+        // (matches libwebp `enc->filter_hdr.level = max_level`). `max_level`
+        // can theoretically reach 126 (= max possible absolute[s]) so the
+        // clamp can fire; the bitstream field is 6-bit unsigned (0–63).
         let new_frame_level = max_level.clamp(0, 63) as u8;
         self.frame.filter_level = new_frame_level;
 
-        // Recompute per-segment deltas against the new frame level. The
-        // signed-6-bit field in the bitstream covers [-63, 63], which is
-        // sufficient since both operands are in [0, 63].
+        // Recompute per-segment deltas against the (possibly raised) frame
+        // level. With absolute[s] ∈ [-63, 126] and new_frame ∈ [0, 63], the
+        // delta is in [-126, 126]; the bitstream signed-6-bit field is
+        // [-63, 63], so the clamp can fire at extremes. In well-formed
+        // pre-state where frame_level ≈ analysis-time `compute_filter_level`
+        // and loopfilter_level deltas are small, the clamp is a no-op.
         let new_frame_i32 = i32::from(new_frame_level);
         for s in 0..MAX_SEGMENTS {
-            let delta = absolute[s] - new_frame_i32;
-            self.segments[s].loopfilter_level = delta.clamp(-63, 63) as i8;
+            let raw_delta = absolute[s] - new_frame_i32;
+            let clamped = raw_delta.clamp(-63, 63);
+            debug_assert!(
+                raw_delta == clamped,
+                "loopfilter_level delta clamp fired: seg={s} absolute={} \
+                 new_frame={new_frame_level} raw_delta={raw_delta} → clamped={clamped} — \
+                 either the per-segment fstrength range exceeded expectation or \
+                 frame_level was set outside [0, 63] before this call",
+                absolute[s],
+            );
+            self.segments[s].loopfilter_level = clamped as i8;
         }
     }
 
