@@ -1,5 +1,12 @@
 # Empirical Size Comparison vs libwebp
 
+> **Raw data location:** the per-file TSVs this analysis derives from
+> (`05-empirical-raw.tsv`, `05-empirical-cid22.tsv`, `05-empirical-clic.tsv`,
+> `05-empirical-imagemagick.tsv`) live on block storage at
+> `/mnt/v/output/zenwebp/audit/` — not in git. They're regeneratable via
+> `cargo run --release --example empirical_sweep`. The conclusions in this
+> file are the audit's actual record.
+
 ## Methodology
 
 - **zenwebp**: this branch (feat/advertise-float-descriptors). RGB8 input.
