@@ -125,6 +125,11 @@ path = "dev/zensim_ab_quadrant_vs_segmap.rs"
 required-features = ["target-zensim"]
 
 [[example]]
+name = "zensim_ablation"
+path = "dev/zensim_ablation.rs"
+required-features = ["target-zensim"]
+
+[[example]]
 name = "empirical_sweep"
 path = "dev/empirical_sweep.rs"
 

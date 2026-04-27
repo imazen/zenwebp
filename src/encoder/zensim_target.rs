@@ -266,6 +266,125 @@ pub(crate) mod iteration {
     /// an error if a hard constraint was violated.
     pub(crate) type IterationResult = Result<(Vec<u8>, ZensimEncodeMetrics), EncodeError>;
 
+    // ============================================================================
+    // Ablation toggles (dev-only)
+    // ============================================================================
+    //
+    // The PR shipping target_zensim (Phases 1/2/3) is a stack of distinct
+    // mechanisms. We need to measure each chunk's individual contribution to
+    // convergence quality before un-drafting; this section wires per-chunk
+    // disable toggles read from environment variables. All toggles default
+    // to FALSE/OFF, so the production code path is unchanged when nothing
+    // is set.
+    //
+    // The `dev/zensim_ablation.rs` binary flips these between sweep legs.
+    // None of them touches the encoded bytestream — they only change the
+    // iteration loop's decisions (which q to start at, whether to take a
+    // per-segment vs global-q correction step, etc.).
+
+    /// Disable Phase 3 per-segment correction. When set, every pass after
+    /// pass 0 takes the global-q secant step (or fallback step) instead of
+    /// computing per-segment quant overrides from the diffmap. Equivalent
+    /// to "Phase 1 (+ Phase 2 anchors) only".
+    fn ablate_disable_phase3() -> bool {
+        std::env::var("ZENWEBP_ABLATE_NO_PHASE3")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
+    /// Skip the bucket classifier and use a single naive starting-q anchor
+    /// table for all images regardless of content type. Disables Phase 1's
+    /// per-bucket calibration AND Phase 2's refit (since both Photo and
+    /// Drawing get replaced with the naive identity-ish ramp).
+    fn ablate_naive_starting_q() -> bool {
+        std::env::var("ZENWEBP_ABLATE_NAIVE_Q")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
+    /// Don't force `multi_pass_stats=true` inside the iteration loop on
+    /// pass 1+. Leaves the user's `LossyConfig.multi_pass_stats` value
+    /// (typically `false`).
+    fn ablate_no_multi_pass_stats() -> bool {
+        std::env::var("ZENWEBP_ABLATE_NO_MULTI_PASS_STATS")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
+    /// Restore the pre-Phase-2 hand-distilled anchors for Photo/Drawing
+    /// (Icon was hand-distilled in both versions and is unchanged). Tests
+    /// whether the Phase 2 calibration tool's refit is actually pulling
+    /// its weight vs the original judgement-based table.
+    fn ablate_pre_phase2_anchors() -> bool {
+        std::env::var("ZENWEBP_ABLATE_PRE_PHASE2_ANCHORS")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
+    /// Use a fixed proportional Δq instead of the secant. Only meaningful
+    /// when Phase 3 is also disabled (the global-q fallback path).
+    fn ablate_no_secant() -> bool {
+        std::env::var("ZENWEBP_ABLATE_NO_SECANT")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
+    /// Naive starting-q anchor table — single linear ramp (target, q) used
+    /// when the bucket classifier is bypassed. Shape mirrors zenjpeg's
+    /// `zq_to_starting_jpegli_q`: a gentle ramp that crosses target=q at
+    /// the high end and starts conservatively at the low end.
+    fn naive_starting_q(target: f32) -> f32 {
+        const NAIVE: &[(f32, f32)] = &[
+            (60.0, 50.0),
+            (70.0, 65.0),
+            (75.0, 75.0),
+            (80.0, 82.0),
+            (85.0, 90.0),
+            (90.0, 96.0),
+            (95.0, 100.0),
+        ];
+        interpolate_anchors(target, NAIVE)
+    }
+
+    /// Pre-Phase-2 hand-distilled Photo / Drawing anchors. Recovered from
+    /// commit `17b9c9a^:src/encoder/zensim_target.rs`. Used only when
+    /// `ZENWEBP_ABLATE_PRE_PHASE2_ANCHORS=1` is set (chunk E ablation).
+    fn pre_phase2_starting_q(target: f32, bucket: ImageContentType) -> f32 {
+        const PHOTO_HAND: &[(f32, f32)] = &[
+            (60.0, 50.0),
+            (70.0, 65.0),
+            (75.0, 72.0),
+            (80.0, 80.0),
+            (85.0, 88.0),
+            (90.0, 94.0),
+            (95.0, 98.0),
+        ];
+        const DRAWING_HAND: &[(f32, f32)] = &[
+            (60.0, 55.0),
+            (70.0, 70.0),
+            (75.0, 78.0),
+            (80.0, 84.0),
+            (85.0, 90.0),
+            (90.0, 96.0),
+            (95.0, 100.0),
+        ];
+        const ICON_HAND: &[(f32, f32)] = &[
+            (60.0, 65.0),
+            (70.0, 78.0),
+            (75.0, 85.0),
+            (80.0, 90.0),
+            (85.0, 95.0),
+            (90.0, 98.0),
+            (95.0, 100.0),
+        ];
+        let anchors = match bucket {
+            ImageContentType::Photo => PHOTO_HAND,
+            ImageContentType::Drawing | ImageContentType::Text => DRAWING_HAND,
+            ImageContentType::Icon => ICON_HAND,
+        };
+        interpolate_anchors(target, anchors)
+    }
+
     /// Maximum |Δq| applied per secant step. Prevents oscillation when
     /// the metric is locally non-linear.
     const MAX_DELTA_Q: f32 = 10.0;
@@ -288,12 +407,28 @@ pub(crate) mod iteration {
         height: u32,
     ) -> IterationResult {
         // 1. Detect bucket from a quick classifier pass on the source.
-        let bucket = detect_bucket(rgb, width, height);
+        // Skipped entirely when the naive-starting-q ablation is on.
+        let bucket = if ablate_naive_starting_q() {
+            None
+        } else {
+            detect_bucket(rgb, width, height)
+        };
 
         // 2. Resolve the starting q.
-        let mut q = match bucket {
-            Some(b) => zensim_to_starting_q_for_bucket(target.target, b),
-            None => zensim_to_starting_q_for_bucket(target.target, ImageContentType::Photo),
+        let mut q = if ablate_naive_starting_q() {
+            // Chunk C ablation: skip per-bucket lookup, use a single ramp.
+            naive_starting_q(target.target)
+        } else if ablate_pre_phase2_anchors() {
+            // Chunk E ablation: pre-Phase-2 hand-distilled anchors.
+            match bucket {
+                Some(b) => pre_phase2_starting_q(target.target, b),
+                None => pre_phase2_starting_q(target.target, ImageContentType::Photo),
+            }
+        } else {
+            match bucket {
+                Some(b) => zensim_to_starting_q_for_bucket(target.target, b),
+                None => zensim_to_starting_q_for_bucket(target.target, ImageContentType::Photo),
+            }
         };
         q = q.clamp(0.0, 100.0);
 
@@ -345,7 +480,11 @@ pub(crate) mod iteration {
         // `num_segments == 1` (segmentation disabled or simplified down
         // to a single segment) or the segment_map is empty, we fall back
         // to global-q correction.
-        let per_segment_enabled = diag0.num_segments > 1
+        //
+        // Chunk A ablation: when ZENWEBP_ABLATE_NO_PHASE3=1, force the
+        // global-q fallback path even when segments are active.
+        let per_segment_enabled = !ablate_disable_phase3()
+            && diag0.num_segments > 1
             && !diag0.segment_map.is_empty()
             && diag0.mb_width > 0
             && diag0.mb_height > 0;
@@ -404,9 +543,11 @@ pub(crate) mod iteration {
             }
 
             // multi_pass_stats=true on probe encodes — small size win
-            // amortizes across passes.
+            // amortizes across passes. Chunk D ablation: leave it at the
+            // user's LossyConfig value when ZENWEBP_ABLATE_NO_MULTI_PASS_STATS=1.
+            let mps = !ablate_no_multi_pass_stats();
             let (bytes_n, diag_n) =
-                encode_at_with_diagnostics(cfg, next_q, true, next_overrides, rgb, width, height)?;
+                encode_at_with_diagnostics(cfg, next_q, mps, next_overrides, rgb, width, height)?;
             let (score_n, dm_n) = measure_score_and_diffmap(&z, &pre, &bytes_n, width, height)?;
             let passes_used = pass + 1;
 
@@ -490,7 +631,8 @@ pub(crate) mod iteration {
     }
 
     /// Compute next q via secant when we have a previous probe, fixed-
-    /// step otherwise.
+    /// step otherwise. Chunk F ablation: when ZENWEBP_ABLATE_NO_SECANT=1,
+    /// always use a fixed proportional step `(target - achieved) * 0.5`.
     fn compute_next_q(
         q: f32,
         last_score: f32,
@@ -498,6 +640,14 @@ pub(crate) mod iteration {
         target: &ZensimTarget,
     ) -> f32 {
         let gap = target.target - last_score;
+        if ablate_no_secant() {
+            let mut step = gap * 0.5;
+            step = step.clamp(-MAX_DELTA_Q, MAX_DELTA_Q);
+            if step.abs() < MIN_DELTA_Q {
+                step = MIN_DELTA_Q.copysign(if gap == 0.0 { 1.0 } else { gap });
+            }
+            return q + step;
+        }
         // Secant: estimate dscore/dq from the two most recent probes.
         // (Note: `q` and `last_score` are the SAME probe as the latest
         // one in `prev_probe` until we update. So the secant fits
