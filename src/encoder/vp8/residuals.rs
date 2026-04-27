@@ -1433,41 +1433,52 @@ impl<'a> super::Vp8Encoder<'a> {
                         //  first_coeff, DCT input)
                         // tuple must match the reconstructor's. If anything
                         // diverges, the cached zigzag is stale and emitting it
-                        // would produce wrong tokens. In debug builds, re-run
-                        // trellis on this block and assert the result matches
-                        // the cached output — catches silent drift the moment
-                        // someone changes one of the inputs in only one place.
+                        // would produce wrong tokens.
+                        //
+                        // In debug builds, re-run trellis on the FIRST sub-block
+                        // we encounter each encode and assert the result matches.
+                        // A regression that decouples the inputs would fire on
+                        // the very next test run — but we don't pay the 16×/MB
+                        // verification cost across the whole image (which roughly
+                        // doubled debug-mode m5/m6 encode time). The byte-level
+                        // tier-parity tests catch any divergence that escapes
+                        // the first-block check.
                         #[cfg(debug_assertions)]
                         {
                             // Bump a thread-local counter so the verification test
                             // (`trellis_reuse_assertion_is_actually_exercised_at_m6`)
                             // can prove this path runs and the assertion isn't
-                            // silently dormant.
+                            // silently dormant. Cheap; outside the per-encode gate
+                            // so the test can still see hits at every block.
                             #[cfg(test)]
                             TRELLIS_REUSE_HITS.with(|c| c.set(c.get() + 1));
-                            let mut coeffs_check = *block;
-                            let mut zigzag_check = [0i32; 16];
-                            let y1_matrix = self.segments[segment_id].y1_matrix.as_ref().unwrap();
-                            let psy_config = &self.segments[segment_id].psy_config;
-                            trellis_quantize_block(
-                                &mut coeffs_check,
-                                &mut zigzag_check,
-                                y1_matrix,
-                                lambda,
-                                first_coeff_y1,
-                                &self.level_costs,
-                                token_type_y1 as usize,
-                                ctx0,
-                                psy_config,
-                            );
-                            debug_assert_eq!(
-                                zigzag_check, pre[block_idx],
-                                "pre_trellised_y1 cache diverged from a fresh trellis run \
-                                 at block {block_idx} — one of (lambda, y1_matrix, level_costs, \
-                                 ctype, ctx0, psy_config, DCT input) changed between \
-                                 reconstruction and recording. Cached emission would produce \
-                                 wrong tokens."
-                            );
+                            if !self.verified_trellis_reuse {
+                                let mut coeffs_check = *block;
+                                let mut zigzag_check = [0i32; 16];
+                                let y1_matrix =
+                                    self.segments[segment_id].y1_matrix.as_ref().unwrap();
+                                let psy_config = &self.segments[segment_id].psy_config;
+                                trellis_quantize_block(
+                                    &mut coeffs_check,
+                                    &mut zigzag_check,
+                                    y1_matrix,
+                                    lambda,
+                                    first_coeff_y1,
+                                    &self.level_costs,
+                                    token_type_y1 as usize,
+                                    ctx0,
+                                    psy_config,
+                                );
+                                debug_assert_eq!(
+                                    zigzag_check, pre[block_idx],
+                                    "pre_trellised_y1 cache diverged from a fresh trellis run \
+                                     at block {block_idx} — one of (lambda, y1_matrix, level_costs, \
+                                     ctype, ctx0, psy_config, DCT input) changed between \
+                                     reconstruction and recording. Cached emission would produce \
+                                     wrong tokens."
+                                );
+                                self.verified_trellis_reuse = true;
+                            }
                         }
                         #[cfg(not(debug_assertions))]
                         let _ = lambda;

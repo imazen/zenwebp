@@ -553,6 +553,16 @@ struct Vp8Encoder<'a> {
     /// edge-rich segments. See libwebp `quant_enc.c:1031-1040, 1108-1113`
     /// and `filter_enc.c:198-237` (`VP8AdjustFilterStrength`). #34
     max_edge_per_segment: [i32; MAX_SEGMENTS],
+    /// Set to `true` after the trellis-reuse cache verification has run
+    /// once during the current encode. Used by the `cfg(debug_assertions)`
+    /// guard in `record_residual_tokens_storing` to bound the cost of
+    /// re-running `trellis_quantize_block` for verification — once per
+    /// encode is enough to detect a regression at the moment it's
+    /// introduced, and avoids 16× per-MB debug-build overhead at m5/m6.
+    /// Reset to `false` per encode in `init_for_encode`. Used only under
+    /// `cfg(debug_assertions)` but kept on the struct unconditionally so
+    /// the field offsets match between debug and release builds.
+    verified_trellis_reuse: bool,
 }
 
 impl<'a> Vp8Encoder<'a> {
@@ -620,6 +630,7 @@ impl<'a> Vp8Encoder<'a> {
             stored_mb_info: Vec::new(),
             stored_mb_coeffs: Vec::new(),
             max_edge_per_segment: [0; MAX_SEGMENTS],
+            verified_trellis_reuse: false,
         }
     }
 
@@ -747,6 +758,12 @@ impl<'a> Vp8Encoder<'a> {
 
         // Reset per-segment max edge tracking for this encode (#34).
         self.max_edge_per_segment = [0; MAX_SEGMENTS];
+
+        // Reset the trellis-reuse verification flag so the
+        // `cfg(debug_assertions)` guard in `record_residual_tokens_storing`
+        // re-verifies the cache once per new encode (catches drift on the
+        // first block, then stays out of the per-MB hot path).
+        self.verified_trellis_reuse = false;
     }
 
     /// Update `max_edge_per_segment` for a "blocky" I16 macroblock.
