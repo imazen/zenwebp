@@ -450,46 +450,7 @@ fn compute_color_uniformity(y_src: &[u8], width: usize, height: usize, y_stride:
 /// the existing small-image carve-out).
 #[cfg(feature = "analyzer")]
 pub fn classify_image_type_rgb8(rgb: &[u8], width: u32, height: u32) -> ImageContentType {
-    if width <= 128 && height <= 128 {
-        return ImageContentType::Icon;
-    }
-    if rgb.len() != (width as usize) * (height as usize) * 3 {
-        // Defensive — caller should have validated, but never panic
-        // inside the classifier. Falls back to Photo (the default
-        // bucket libwebp uses absent any signal).
-        return ImageContentType::Photo;
-    }
-    use zenanalyze::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
-    const FEATURES: FeatureSet = FeatureSet::new()
-        .with(AnalysisFeature::ScreenContentLikelihood)
-        .with(AnalysisFeature::TextLikelihood)
-        .with(AnalysisFeature::NaturalLikelihood)
-        .with(AnalysisFeature::FlatColorBlockRatio)
-        .with(AnalysisFeature::DistinctColorBins);
-    let q = AnalysisQuery::new(FEATURES);
-    let r = match zenanalyze::try_analyze_features_rgb8(rgb, width, height, &q) {
-        Ok(r) => r,
-        Err(_) => return ImageContentType::Photo,
-    };
-    let screen = r.get_f32(AnalysisFeature::ScreenContentLikelihood).unwrap_or(0.0);
-    let text = r.get_f32(AnalysisFeature::TextLikelihood).unwrap_or(0.0);
-    let _natural = r.get_f32(AnalysisFeature::NaturalLikelihood).unwrap_or(0.0);
-    let flat_blocks = r.get_f32(AnalysisFeature::FlatColorBlockRatio).unwrap_or(0.0);
-    let distinct_bins = r
-        .get(AnalysisFeature::DistinctColorBins)
-        .and_then(|v| v.as_u32())
-        .unwrap_or(u32::MAX);
-
-    // Screen content / text / palette-friendly content -> Drawing bucket.
-    // Drawing in zenwebp uses Default tuning (SNS=50, filter=60), which
-    // empirically beats Photo tuning (SNS=80) on screenshots and UI.
-    let is_screen = screen > 0.6 || text > 0.5;
-    let is_palettey = flat_blocks > 0.20 && distinct_bins < 4096;
-    if is_screen || is_palettey {
-        ImageContentType::Drawing
-    } else {
-        ImageContentType::Photo
-    }
+    classify_image_type_rgb8_diag(rgb, width, height).0
 }
 
 /// Diagnostic variant of [`classify_image_type_rgb8`] returning the
@@ -517,7 +478,15 @@ pub fn classify_image_type_rgb8_diag(
         .with(AnalysisFeature::Variance)
         .with(AnalysisFeature::EdgeDensity)
         .with(AnalysisFeature::Uniformity)
-        .with(AnalysisFeature::HighFreqEnergyRatio);
+        .with(AnalysisFeature::HighFreqEnergyRatio)
+        // Experimental signals (gated on zenanalyze's `experimental`
+        // feature). PaletteFitsIn256 / IndexedPaletteWidth catch
+        // graphics with a small palette; LineArtScore catches line
+        // drawings / engineering diagrams that don't trigger
+        // ScreenContentLikelihood (which is palette+HF driven).
+        .with(AnalysisFeature::PaletteFitsIn256)
+        .with(AnalysisFeature::IndexedPaletteWidth)
+        .with(AnalysisFeature::LineArtScore);
     let q = AnalysisQuery::new(FEATURES);
     let r = match zenanalyze::try_analyze_features_rgb8(rgb, width, height, &q) {
         Ok(r) => r,
@@ -536,15 +505,63 @@ pub fn classify_image_type_rgb8_diag(
         edge_density: r.get_f32(AnalysisFeature::EdgeDensity).unwrap_or(0.0),
         uniformity: r.get_f32(AnalysisFeature::Uniformity).unwrap_or(0.0),
         high_freq_energy_ratio: r.get_f32(AnalysisFeature::HighFreqEnergyRatio).unwrap_or(0.0),
+        palette_fits_in_256: r
+            .get(AnalysisFeature::PaletteFitsIn256)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        indexed_palette_width: r
+            .get(AnalysisFeature::IndexedPaletteWidth)
+            .and_then(|v| v.as_u32())
+            .unwrap_or(0),
+        line_art_score: r.get_f32(AnalysisFeature::LineArtScore).unwrap_or(0.0),
     };
-    let is_screen = diag.screen_content > 0.6 || diag.text_likelihood > 0.5;
-    let is_palettey = diag.flat_color_block_ratio > 0.20 && diag.distinct_color_bins < 4096;
-    let bucket = if is_screen || is_palettey {
-        ImageContentType::Drawing
-    } else {
-        ImageContentType::Photo
-    };
+    let bucket = decide_bucket_from_diag(&diag);
     (bucket, diag)
+}
+
+/// Threshold-only decision over the zenanalyze signals using only
+/// the *stable* (non-experimental) features. Used as the "default
+/// signals" tier in the validation harness so we can isolate the
+/// improvement from `palette_fits_in_256` / `line_art_score`.
+#[cfg(feature = "analyzer")]
+pub fn decide_bucket_stable(diag: &ZenanalyzeDiag) -> ImageContentType {
+    if diag.screen_content > 0.6 || diag.text_likelihood > 0.5 {
+        return ImageContentType::Drawing;
+    }
+    if diag.flat_color_block_ratio > 0.20 && diag.distinct_color_bins < 4096 {
+        return ImageContentType::Drawing;
+    }
+    ImageContentType::Photo
+}
+
+/// Threshold-only decision over the zenanalyze signals. Pulled out
+/// so the validation harness in `dev/zenanalyze_validate_vs_gpt.rs`
+/// can replay the decision against pre-recorded signals when tuning.
+///
+/// Order of tests matters — strong "drawing" signals (palette-fits +
+/// line-art) take precedence over softer ones (screen-content /
+/// text), and only after we've ruled both of those out do we fall
+/// through to the photo bucket.
+#[cfg(feature = "analyzer")]
+pub fn decide_bucket_from_diag(diag: &ZenanalyzeDiag) -> ImageContentType {
+    // Strong "drawing" — small palette or high line-art score.
+    // Tuned against 219 GPT-labeled images: see
+    // `dev/zenanalyze_validate_vs_gpt.rs`.
+    if diag.palette_fits_in_256 || diag.line_art_score > 0.5 {
+        return ImageContentType::Drawing;
+    }
+    // Soft screen-content / text.
+    if diag.screen_content > 0.6 || diag.text_likelihood > 0.5 {
+        return ImageContentType::Drawing;
+    }
+    // Palette-friendly fallback: many flat blocks + few distinct
+    // colour bins. Catches anti-aliased UI mocks where the palette
+    // doesn't quite fit in 256 (e.g., 384 colours) but the texture
+    // pattern is still graphics-like.
+    if diag.flat_color_block_ratio > 0.20 && diag.distinct_color_bins < 4096 {
+        return ImageContentType::Drawing;
+    }
+    ImageContentType::Photo
 }
 
 /// Streaming-analyzer signals for diagnostic and calibration use.
@@ -572,6 +589,16 @@ pub struct ZenanalyzeDiag {
     pub uniformity: f32,
     /// `Σ AC[k≥16] / Σ AC[k∈1..16]` over sampled luma blocks.
     pub high_freq_energy_ratio: f32,
+    /// `true` iff the source RGB fits in a 256-colour palette (no
+    /// quantization required). Experimental signal — strong "graphics
+    /// with limited palette" indicator.
+    pub palette_fits_in_256: bool,
+    /// Indexed palette width estimate. `0` if more than 256 colours.
+    /// Experimental.
+    pub indexed_palette_width: u32,
+    /// `[0, 1]` line-art / engineering-drawing score from Otsu
+    /// bimodality + low-entropy gate. Experimental.
+    pub line_art_score: f32,
 }
 
 /// Convert RGBA8 to RGB8 (drops the alpha channel) for the classifier.

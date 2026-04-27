@@ -42,7 +42,7 @@ zensim = { version = "0.2", optional = true }
 # zenanalyze is the shared streaming feature scanner used by zen* codecs.
 # Path-pinned because zenanalyze is not yet on crates.io (verified 2026-04-27).
 # Update to a published version once 0.1.0 lands on crates.io.
-zenanalyze = { path = "../zenjpeg--zenanalyze/zenanalyze", optional = true }
+zenanalyze = { path = "../zenjpeg--zenanalyze/zenanalyze", optional = true, features = ["experimental"] }
 
 [dev-dependencies]
 archmage = { version = "0.9.15", features = ["std", "macros"] }

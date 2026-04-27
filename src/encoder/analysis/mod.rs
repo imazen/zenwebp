@@ -39,7 +39,8 @@ pub use classifier::{
 };
 #[cfg(feature = "analyzer")]
 pub use classifier::{
-    ZenanalyzeDiag, classify_image_type_rgb8, classify_image_type_rgb8_diag, rgba8_to_rgb8,
+    ZenanalyzeDiag, classify_image_type_rgb8, classify_image_type_rgb8_diag,
+    decide_bucket_from_diag, decide_bucket_stable, rgba8_to_rgb8,
 };
 pub use histogram::{collect_histogram_bps, forward_dct_4x4};
 pub use iterator::AnalysisIterator;
