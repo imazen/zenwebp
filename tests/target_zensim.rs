@@ -106,6 +106,7 @@ fn strict_undershoot_errors_on_unreachable_target() {
     // ship.
     let target = ZensimTarget::new(99.0)
         .with_max_undershoot(Some(0.5))
+        .with_max_undershoot_ship(None) // disable lenient ship-band undershoot
         .with_max_passes(1);
     let cfg = LossyConfig::new().with_method(4).with_target_zensim(target);
 
@@ -115,6 +116,7 @@ fn strict_undershoot_errors_on_unreachable_target() {
     // check the floor. Use a 2-pass strict run instead.
     let target2 = ZensimTarget::new(99.0)
         .with_max_undershoot(Some(0.5))
+        .with_max_undershoot_ship(None) // disable lenient ship-band undershoot
         .with_max_passes(2);
     let cfg2 = LossyConfig::new()
         .with_method(4)

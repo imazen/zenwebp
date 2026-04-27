@@ -38,9 +38,34 @@ use super::analysis::ImageContentType;
 
 /// Explicit target-perceptual-quality specification.
 ///
-/// Default: target=80, max_overshoot=Some(1.5), max_undershoot=None,
-/// max_passes=2 — best-effort behavior tuned to land in band on pass 1
-/// for typical photo content and never iterate more than once.
+/// Default: target=80, max_overshoot=Some(1.5),
+/// max_undershoot_ship=Some(0.5), max_undershoot=None, max_passes=2 —
+/// best-effort behavior tuned to land in band on pass 1 for typical
+/// photo content and never iterate more than once.
+///
+/// # Tolerance bands
+///
+/// The encoder uses an asymmetric tolerance band built from three
+/// fields:
+///
+/// - **Ship band** — the range of `achieved_score` values that count
+///   as "close enough" to ship without iterating further. After any
+///   pass, if the result is in `[target - max_undershoot_ship,
+///   target + max_overshoot]`, the encoder ships immediately and the
+///   loop exits. With the defaults above, that's `[79.5, 81.5]` for
+///   `target = 80`.
+/// - **Fail band** — the range of `achieved_score` values below
+///   `target - max_undershoot` (when `max_undershoot.is_some()`). On
+///   the final pass, if the result lands in this band the encoder
+///   returns `Err` instead of shipping. With `max_undershoot = None`
+///   (the default), the encoder never errors on undershoot — it
+///   always ships its best attempt.
+///
+/// `max_undershoot_ship` (the SHIP threshold) is intentionally
+/// distinct from `max_undershoot` (the FAILURE threshold). The ship
+/// threshold says "calibration was good enough — don't risk
+/// overshooting on the next pass"; the failure threshold says "this
+/// undershoot is too big to ship at all".
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ZensimTarget {
@@ -56,6 +81,21 @@ pub struct ZensimTarget {
     /// Default: `Some(1.5)`.
     pub max_overshoot: Option<f32>,
 
+    /// Distance BELOW target the encoder will accept as a successful
+    /// pass-0 ship, without iterating. Asymmetric with
+    /// [`Self::max_overshoot`]: undershoot up to this much is treated
+    /// as "close enough — calibration was already good, don't risk
+    /// overshooting on the next pass". `None` (or `Some(0.0)`) =
+    /// strict at-or-above-target behavior; any undershoot triggers
+    /// another pass when budget allows.
+    ///
+    /// Distinct from [`Self::max_undershoot`]: that field is the
+    /// FAILURE threshold (final-pass error), this is the SHIP
+    /// threshold (early-exit acceptance).
+    ///
+    /// Default: `Some(0.5)`.
+    pub max_undershoot_ship: Option<f32>,
+
     /// Distance BELOW target the encoder will accept as a SUCCESSFUL
     /// encode. `None` = best-effort, never error (default; encoder ships
     /// whatever it managed within `max_passes`). `Some(t)` = if final
@@ -65,6 +105,10 @@ pub struct ZensimTarget {
     /// Set this when you NEED a strictness guarantee (archival, SLA-bound
     /// serving). Permissive callers leave it `None` and inspect
     /// [`ZensimEncodeMetrics::achieved_score`] themselves.
+    ///
+    /// Distinct from [`Self::max_undershoot_ship`]: that field is the
+    /// SHIP threshold (early-exit acceptance), this is the FAILURE
+    /// threshold (final-pass error).
     ///
     /// Default: `None`.
     pub max_undershoot: Option<f32>,
@@ -80,6 +124,7 @@ impl Default for ZensimTarget {
         Self {
             target: 80.0,
             max_overshoot: Some(1.5),
+            max_undershoot_ship: Some(0.5),
             max_undershoot: None,
             max_passes: 2,
         }
@@ -120,6 +165,16 @@ impl ZensimTarget {
     #[must_use]
     pub fn with_max_undershoot(mut self, v: Option<f32>) -> Self {
         self.max_undershoot = v;
+        self
+    }
+
+    /// Builder-style override of [`Self::max_undershoot_ship`].
+    ///
+    /// Ship-threshold (early-exit) — distinct from
+    /// [`Self::with_max_undershoot`] (final-pass error threshold).
+    #[must_use]
+    pub fn with_max_undershoot_ship(mut self, v: Option<f32>) -> Self {
+        self.max_undershoot_ship = v;
         self
     }
 
@@ -862,16 +917,18 @@ pub(crate) mod iteration {
         }
     }
 
-    /// Returns true if `score` is in the comfort band — i.e. >= target
-    /// AND (no overshoot configured OR overshoot within budget).
+    /// Returns true if `score` is in the asymmetric ship band:
+    ///   `[target - max_undershoot_ship.unwrap_or(0.0),
+    ///     target + max_overshoot.unwrap_or(∞)]`.
+    ///
+    /// `max_undershoot_ship` lets callers accept a small undershoot as
+    /// "close enough" without triggering another pass — useful when the
+    /// calibrator landed near the band on pass 0 and a correction pass
+    /// would risk swinging into overshoot.
     fn in_band(score: f32, target: &ZensimTarget) -> bool {
-        if score < target.target {
-            return false;
-        }
-        match target.max_overshoot {
-            Some(t) => (score - target.target) <= t,
-            None => true, // No claw-back wanted; first feasible ships.
-        }
+        let lower = target.target - target.max_undershoot_ship.unwrap_or(0.0);
+        let upper = target.target + target.max_overshoot.unwrap_or(f32::INFINITY);
+        score >= lower && score <= upper
     }
 
     /// Compute next q via secant when we have a previous probe, fixed-
@@ -1384,6 +1441,7 @@ mod tests {
         let t = ZensimTarget::default();
         assert_eq!(t.target, 80.0);
         assert_eq!(t.max_overshoot, Some(1.5));
+        assert_eq!(t.max_undershoot_ship, Some(0.5));
         assert_eq!(t.max_undershoot, None);
         assert_eq!(t.max_passes, 2);
     }
@@ -1392,10 +1450,12 @@ mod tests {
     fn target_builder() {
         let t = ZensimTarget::new(85.0)
             .with_max_overshoot(Some(0.5))
+            .with_max_undershoot_ship(Some(0.25))
             .with_max_undershoot(Some(2.0))
             .with_max_passes(3);
         assert_eq!(t.target, 85.0);
         assert_eq!(t.max_overshoot, Some(0.5));
+        assert_eq!(t.max_undershoot_ship, Some(0.25));
         assert_eq!(t.max_undershoot, Some(2.0));
         assert_eq!(t.max_passes, 3);
     }
