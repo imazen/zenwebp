@@ -55,6 +55,17 @@ pub struct LossyConfig {
     pub target_size: u32,
     /// Target PSNR in dB (0.0 = disabled). Default: 0.0.
     pub target_psnr: f32,
+    /// Target perceptual zensim score. `None` = disabled (default).
+    /// `Some(t)` enables a closed-loop encode → decode → measure → adjust
+    /// iteration that converges on `t`. See [`super::ZensimTarget`] for
+    /// the full knob set and [`Self::with_target_zensim`] for the
+    /// builder method (it accepts either a bare `f32` or a fully-built
+    /// [`ZensimTarget`](super::ZensimTarget) via `Into`).
+    ///
+    /// Requires the `target-zensim` crate feature to actually iterate;
+    /// otherwise the encoder falls back to the calibrated starting-q
+    /// estimate for the bucket and ships that single pass.
+    pub target_zensim: Option<super::zensim_target::ZensimTarget>,
     /// Content-aware preset (affects SNS, filter, sharpness). Default: None.
     pub preset: Option<Preset>,
     /// Sharp YUV configuration. `None` = disabled (standard chroma downsampling).
@@ -91,6 +102,12 @@ pub struct LossyConfig {
     pub multi_pass_stats: bool,
     /// Resource limits for validation.
     pub limits: Limits,
+    /// Crate-internal: per-segment additive quant_index offsets applied
+    /// AFTER SNS modulation. Used by the `target_zensim` per-segment
+    /// correction pass. `None` (default) leaves segments untouched, so
+    /// public-API encodes never trigger this path.
+    #[doc(hidden)]
+    pub(crate) segment_quant_overrides: Option<[i8; 4]>,
 }
 
 impl Default for LossyConfig {
@@ -111,6 +128,7 @@ impl LossyConfig {
             alpha_quality: 100,
             target_size: 0,
             target_psnr: 0.0,
+            target_zensim: None,
             preset: None,
             sharp_yuv: None,
             sns_strength: None,
@@ -122,6 +140,7 @@ impl LossyConfig {
             cost_model: super::api::CostModel::ZenwebpDefault,
             multi_pass_stats: false,
             limits: Limits::none(),
+            segment_quant_overrides: None,
         }
     }
 
@@ -167,6 +186,44 @@ impl LossyConfig {
     #[must_use]
     pub fn with_target_psnr(mut self, psnr: f32) -> Self {
         self.target_psnr = psnr;
+        self
+    }
+
+    /// Target a perceptual zensim score (closed-loop adaptive encode).
+    ///
+    /// Accepts either a bare `f32` (uses
+    /// [`ZensimTarget::new`](super::zensim_target::ZensimTarget::new)
+    /// defaults — overshoot=1.5, undershoot=None, max_passes=2) or a
+    /// fully-built [`ZensimTarget`](super::zensim_target::ZensimTarget)
+    /// via `Into`:
+    ///
+    /// ```ignore
+    /// use zenwebp::{LossyConfig, ZensimTarget};
+    /// // Bare f32 — default tolerances / passes:
+    /// let c = LossyConfig::new().with_target_zensim(80.0);
+    /// // Full struct — custom max_passes:
+    /// let c = LossyConfig::new()
+    ///     .with_target_zensim(ZensimTarget::new(80.0).with_max_passes(3));
+    /// ```
+    ///
+    /// Requires the `target-zensim` crate feature for the iteration to
+    /// actually run; without it, the encoder ships the calibrated
+    /// starting-q estimate as a single pass.
+    ///
+    /// **Supported pixel layouts:** `PixelLayout::Rgb8` and
+    /// `PixelLayout::Rgba8`. RGBA inputs are encoded as alpha-bearing
+    /// WebP and measured against the source via zensim's
+    /// deterministic-noise compositing — the same composite is applied
+    /// to source and reconstruction, so alpha quality is well-defined.
+    /// Other layouts (BGR, BGRA, ARGB, L8, LA8, YUV420) with
+    /// `target_zensim` set return
+    /// [`EncodeError::TargetZensimUnsupportedLayout`](super::api::EncodeError::TargetZensimUnsupportedLayout).
+    #[must_use]
+    pub fn with_target_zensim<T: Into<super::zensim_target::ZensimTarget>>(
+        mut self,
+        target: T,
+    ) -> Self {
+        self.target_zensim = Some(target.into());
         self
     }
 
@@ -331,6 +388,39 @@ impl LossyConfig {
             &crate::EncoderConfig::Lossy(self.clone()),
         )
         .peak_memory_bytes_max
+    }
+
+    /// Crate-internal: encode an interleaved RGB8 or RGBA8 buffer
+    /// (`width * height * bpp` bytes, where `bpp` is 3 for RGB8 and
+    /// 4 for RGBA8) and return both the WebP bytes and any
+    /// [`ZensimEncodeMetrics`] from a `target_zensim` iteration. For
+    /// non-target-zensim configs the metrics struct is filled with the
+    /// [`ZensimEncodeMetrics::no_target`](super::zensim_target::ZensimEncodeMetrics::no_target)
+    /// variant — `targets_met=true`, `passes_used=1`, score `NaN`.
+    ///
+    /// `layout` must be either [`PixelLayout::Rgb8`] or
+    /// [`PixelLayout::Rgba8`]; the gate in
+    /// [`EncodeRequest::try_encode_target_zensim_with_metrics`] guards
+    /// other layouts before they reach this entry.
+    ///
+    /// This is the iteration loop's internal entry. Public callers
+    /// reach the same machinery via
+    /// [`EncodeRequest::encode_with_metrics`](super::api::EncodeRequest::encode_with_metrics)
+    /// or [`EncodeRequest::encode`](super::api::EncodeRequest::encode).
+    pub(crate) fn encode_pixels_with_metrics(
+        &self,
+        pixels: &[u8],
+        layout: super::api::PixelLayout,
+        width: u32,
+        height: u32,
+    ) -> Result<
+        (
+            alloc::vec::Vec<u8>,
+            super::zensim_target::ZensimEncodeMetrics,
+        ),
+        super::api::EncodeError,
+    > {
+        encode_pixels_with_metrics_impl(self, pixels, layout, width, height)
     }
 }
 
@@ -816,6 +906,7 @@ impl LossyConfig {
             smooth_segment_map: self.smooth_segment_map,
             cost_model: self.cost_model,
             multi_pass_stats: self.multi_pass_stats,
+            segment_quant_overrides: self.segment_quant_overrides,
         }
     }
 }
@@ -841,6 +932,7 @@ impl LosslessConfig {
             smooth_segment_map: false, // Not applicable to lossless
             cost_model: super::api::CostModel::ZenwebpDefault,
             multi_pass_stats: false, // Not applicable to lossless
+            segment_quant_overrides: None,
         }
     }
 }
@@ -875,5 +967,88 @@ impl EncoderConfig {
             Self::Lossy(cfg) => &cfg.limits,
             Self::Lossless(cfg) => &cfg.limits,
         }
+    }
+}
+
+// ============================================================================
+// target_zensim integration: convenience encoders on LossyConfig.
+// ============================================================================
+
+#[cfg(feature = "target-zensim")]
+fn encode_pixels_with_metrics_impl(
+    cfg: &LossyConfig,
+    pixels: &[u8],
+    layout: super::api::PixelLayout,
+    width: u32,
+    height: u32,
+) -> Result<
+    (
+        alloc::vec::Vec<u8>,
+        super::zensim_target::ZensimEncodeMetrics,
+    ),
+    super::api::EncodeError,
+> {
+    if let Some(t) = cfg.target_zensim {
+        return super::zensim_target::iteration::run(cfg, t, pixels, layout, width, height);
+    }
+    // No target_zensim → straight single-pass encode.
+    encode_single_pass(cfg, pixels, layout, width, height)
+}
+
+#[cfg(not(feature = "target-zensim"))]
+fn encode_pixels_with_metrics_impl(
+    cfg: &LossyConfig,
+    pixels: &[u8],
+    layout: super::api::PixelLayout,
+    width: u32,
+    height: u32,
+) -> Result<
+    (
+        alloc::vec::Vec<u8>,
+        super::zensim_target::ZensimEncodeMetrics,
+    ),
+    super::api::EncodeError,
+> {
+    // Feature disabled — if target_zensim was set, fall back to a single
+    // encode at the calibrated starting q for the (Photo) bucket. Match
+    // zenjpeg's behavior: don't error, just behave like a normal encode.
+    if let Some(t) = cfg.target_zensim {
+        let mut probe = cfg.clone();
+        probe.target_zensim = None;
+        probe.quality = super::zensim_target::zensim_to_starting_q_for_bucket(
+            t.target,
+            super::analysis::ImageContentType::Photo,
+        )
+        .clamp(0.0, 100.0);
+        return encode_single_pass(&probe, pixels, layout, width, height);
+    }
+    encode_single_pass(cfg, pixels, layout, width, height)
+}
+
+/// Single-pass encode (Rgb8 or Rgba8), no metrics. Plumb through
+/// `EncodeRequest` to reuse the existing entry point.
+fn encode_single_pass(
+    cfg: &LossyConfig,
+    pixels: &[u8],
+    layout: super::api::PixelLayout,
+    width: u32,
+    height: u32,
+) -> Result<
+    (
+        alloc::vec::Vec<u8>,
+        super::zensim_target::ZensimEncodeMetrics,
+    ),
+    super::api::EncodeError,
+> {
+    let req = super::api::EncodeRequest::lossy(cfg, pixels, layout, width, height);
+    match req.encode() {
+        Ok(bytes) => {
+            let len = bytes.len();
+            Ok((
+                bytes,
+                super::zensim_target::ZensimEncodeMetrics::no_target(len),
+            ))
+        }
+        Err(at_err) => Err(at_err.decompose().0),
     }
 }
