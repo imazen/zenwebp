@@ -196,52 +196,62 @@ const LOSSY_QUALITIES: &[f32] = &[10.0, 25.0, 50.0, 75.0, 90.0];
 /// reason — every reduction is a documented regression.
 ///
 /// Floor table layout: `(image_name, [(q, min_score), ...])`.
+///
+/// **2026-04-27 recalibration after issue #44 fix.** The libwebp `D > min_disto`
+/// per-MB gate (`quant_enc.c:1111`) is now in (closes #44), and a related
+/// `frame.filter_level = seg_filters[0]` baseline fix lifted the analysis-time
+/// loop-filter strength to match libwebp (was masked by #34's unfiltered
+/// `store_max_delta`). Net effect on synthetic content:
+/// - `color_blocks` recovers ~7-13 zensim across m4/m6 (full libwebp parity).
+/// - `gradient`, `noise`, `mandelbrot` mostly improve at low/mid q via the
+///   correct loop-filter baseline.
 const FLOORS: &[(&str, &[(f32, f64)])] = &[
     (
         "gradient",
         // Smooth diagonal gradient — easy for VP8 to compress, high scores.
         &[
-            (10.0, 67.0),
-            (25.0, 71.0), // 75 → 71 (m6 q25 = 73 post-audit; floor includes margin)
-            (50.0, 71.0),
-            (75.0, 79.0),
-            (90.0, 83.0),
+            (10.0, 70.0), // restored from 67 after #44; observed min ~70.76
+            (25.0, 73.0), // restored from 71; observed min ~74.03 (post-#44)
+            (50.0, 77.0), // restored from 71; observed min ~78.25 (post-#44)
+            (75.0, 80.0), // restored from 79; observed min ~81.71 (post-#44)
+            (90.0, 86.0), // restored from 83; observed min ~87.37 (post-#44)
         ],
     ),
     (
         "noise",
         // Value noise — moderate frequency, scores climb steadily with q.
         &[
-            (10.0, 39.0),
-            (25.0, 54.0), // 56 → 54 (m4 q25 = 55.55 post-audit; tight margin)
-            (50.0, 66.0),
-            (75.0, 73.0),
+            (10.0, 42.0), // restored from 39; observed min ~43.37 (post-#44)
+            (25.0, 56.0), // restored from 54; observed min ~58.01 (post-#44)
+            (50.0, 68.0), // restored from 66; observed min ~69.78 (post-#44)
+            (75.0, 75.0), // restored from 73; observed min ~76.91 (post-#44)
             (90.0, 84.0),
         ],
     ),
     (
         "color_blocks",
-        // Sharp color edges between flat regions — hard for VP8 lossy:
-        // chroma quant blurs edges. The post-audit encoder (matching libwebp)
-        // picks I16 more often than the buggy pre-audit version did, which
-        // shifts scores down by ~10 points on this synthetic input.
+        // Sharp color edges between flat regions — hard for VP8 lossy.
+        // Restored to near libwebp parity after #44 (D > min_disto gate
+        // + frame.filter_level baseline fix). m0 still uses the
+        // FastMBAnalyze SSE path (no RD-D plumbing), so its scores stay
+        // closer to the pre-#44 floor.
         &[
-            (10.0, 30.0), // 40 → 30 (post-audit min ≈ 31.42)
-            (25.0, 32.0), // 43 → 32 (post-audit min ≈ 33.55)
-            (50.0, 33.0), // 46 → 33 (post-audit min ≈ 34.99)
-            (75.0, 34.0), // 47 → 34 (post-audit min ≈ 36.06)
-            (90.0, 34.0), // 47 → 34 (post-audit min ≈ 35.69)
+            (10.0, 31.0), // m0 q10 ≈ 31.91; m4/m6 q10 ≈ 45–46 post-#44
+            (25.0, 32.0), // m0 q25 ≈ 33.71; m4/m6 q25 ≈ 46–47 post-#44
+            (50.0, 33.0), // m0 q50 ≈ 34.92; m4/m6 q50 ≈ 49 post-#44
+            (75.0, 34.0), // m0 q75 ≈ 36.12; m4/m6 q75 ≈ 50 post-#44
+            (90.0, 49.0), // restored from 34; all-method q90 min ≈ 50.46
         ],
     ),
     (
         "mandelbrot",
         // High-frequency fractal detail with smooth interior.
         &[
-            (10.0, 40.0),
-            (25.0, 49.0), // 52 → 49 (post-audit min ≈ 50.93)
-            (50.0, 58.0),
-            (75.0, 64.0),
-            (90.0, 68.0),
+            (10.0, 42.0), // restored from 40; observed min ~42.59 (post-#44)
+            (25.0, 51.0), // restored from 49; observed min ~52.32 (post-#44)
+            (50.0, 60.0), // restored from 58; observed min ~61.73 (post-#44)
+            (75.0, 65.0), // restored from 64; observed min ~66.19 (post-#44)
+            (90.0, 70.0), // restored from 68; observed min ~71.88 (post-#44)
         ],
     ),
     (
