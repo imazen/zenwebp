@@ -438,6 +438,15 @@ impl<'a> DecodeRequest<'a> {
     }
 
     /// Decode to RGBA pixels. If the image has no alpha channel, alpha is set to 255.
+    ///
+    /// RGB bytes underneath fully transparent pixels (alpha=0) are returned
+    /// exactly as the bitstream encodes them — the decoder never zeros, clamps,
+    /// or otherwise rewrites RGB based on the alpha value. Encoders may decide
+    /// at compression time to discard those bytes (libwebp's `exact=false` is
+    /// the canonical example), but that is an encode-side trade-off; the
+    /// decoder's contract is byte-for-byte preservation of whatever the bitstream
+    /// contains. See issue #46 for the test gate that enforces this against
+    /// libwebp on lossless and VP8X+ALPH inputs.
     pub fn decode_rgba(self) -> DecodeResult<(Vec<u8>, u32, u32)> {
         let (rgba, w, h) = decode_to_rgba_internal(
             self.data,

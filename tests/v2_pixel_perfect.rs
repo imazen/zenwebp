@@ -388,33 +388,53 @@ struct CorpusDecodeResult {
 }
 
 /// Decode a pre-existing WebP file with zenwebp and libwebp. Compare.
+///
+/// Accepts any RIFF/WEBP container that both decoders understand: simple VP8
+/// (lossy), VP8L (lossless), and VP8X+ALPH (lossy with alpha plane). We let
+/// the decoders themselves filter what they don't support; animated/extended
+/// containers that decode successfully through both go through the same
+/// byte-exact comparison path. Per issue #46, this gate previously skipped
+/// every non-lossy file silently — leaving the alpha and lossless decode
+/// paths uncovered by `cargo test`.
 fn corpus_decode_compare(path: &Path) -> Result<CorpusDecodeResult, String> {
     let data = std::fs::read(path).map_err(|e| format!("read failed: {e}"))?;
     let fname = path.file_name().unwrap().to_string_lossy();
 
-    // Only test lossy VP8
-    if !is_lossy_vp8(&data) {
-        return Err(format!(
-            "{fname}: not lossy VP8 ({fmt}), skipped",
-            fmt = webp_format(&data)
-        ));
+    let zen = decode_with_zenwebp(&data);
+    let lib = decode_with_libwebp(&data);
+
+    match (zen, lib) {
+        (Ok((zen_rgba, zen_w, zen_h)), Ok((lib_rgba, lib_w, lib_h))) => {
+            if lib_w != zen_w || lib_h != zen_h {
+                return Err(format!(
+                    "{fname}: libwebp={lib_w}x{lib_h} zenwebp={zen_w}x{zen_h} dimension mismatch"
+                ));
+            }
+            let vs_lib_stats = compute_diff(&zen_rgba, &lib_rgba, zen_w, zen_h);
+            Ok(CorpusDecodeResult { vs_lib_stats })
+        }
+        (Err(zen_err), Err(lib_err)) => {
+            // Both decoders rejected the file — same outcome, not a regression.
+            // Common for malformed conformance edge cases (truncated, invalid
+            // headers, etc.) and animated WebP that both treat as undecodable
+            // through the still-image API.
+            Err(format!(
+                "{fname}: both decoders rejected (skipped) — zenwebp: {zen_err}, libwebp: {lib_err}"
+            ))
+        }
+        (Ok(_), Err(lib_err)) => {
+            // zenwebp accepted what libwebp rejected. Not a zenwebp regression
+            // by definition (no divergence in output to compare), but flag for
+            // visibility — could be a leniency difference worth reviewing later.
+            Err(format!(
+                "{fname}: libwebp rejected but zenwebp accepted (skipped) — libwebp: {lib_err}"
+            ))
+        }
+        (Err(zen_err), Ok(_)) => {
+            // libwebp succeeded; we failed. This IS a real regression.
+            Err(format!("{fname} zenwebp: {zen_err}"))
+        }
     }
-
-    let (zen_rgba, zen_w, zen_h) =
-        decode_with_zenwebp(&data).map_err(|e| format!("{fname} zenwebp: {e}"))?;
-    let (lib_rgba, lib_w, lib_h) =
-        decode_with_libwebp(&data).map_err(|e| format!("{fname} libwebp: {e}"))?;
-
-    // Dimension checks
-    if lib_w != zen_w || lib_h != zen_h {
-        return Err(format!(
-            "{fname}: libwebp={lib_w}x{lib_h} zenwebp={zen_w}x{zen_h} dimension mismatch"
-        ));
-    }
-
-    let vs_lib_stats = compute_diff(&zen_rgba, &lib_rgba, zen_w, zen_h);
-
-    Ok(CorpusDecodeResult { vs_lib_stats })
 }
 
 #[test]
@@ -475,7 +495,7 @@ fn cat2_decode_webp_conformance() {
         }
     }
 
-    println!("\n  Summary: {tested} tested, {skipped} skipped (non-lossy)");
+    println!("\n  Summary: {tested} tested, {skipped} skipped");
     if tested > 0 {
         println!("  Worst zenwebp-vs-libwebp RGB diff: {worst_lib_rgb} ({worst_file})");
     }
@@ -484,10 +504,7 @@ fn cat2_decode_webp_conformance() {
         eprintln!("  FAIL: {f}");
     }
 
-    assert!(
-        tested > 0,
-        "No lossy WebP files found in conformance corpus"
-    );
+    assert!(tested > 0, "No WebP files found in conformance corpus");
     assert!(failures.is_empty(), "{} decode failures", failures.len());
 }
 
@@ -511,8 +528,9 @@ fn cat2_decode_all_corpus_webp() {
 
     println!("\n=== Category 2: Decode all corpus WebP files ===");
     let mut tested = 0u32;
-    let mut skipped_lossless = 0u32;
-    let mut skipped_extended = 0u32;
+    let mut tested_lossy = 0u32;
+    let mut tested_lossless = 0u32;
+    let mut tested_extended = 0u32;
     let mut skipped_animated = 0u32;
     let mut worst_lib_rgb = 0u8;
     let mut failures: Vec<String> = Vec::new();
@@ -542,32 +560,30 @@ fn cat2_decode_all_corpus_webp() {
             };
 
             let fmt = webp_format(&data);
-            match fmt {
-                "lossy" => {}
-                "lossless" => {
-                    println!("  {fname}: lossless, skipped (lossy-only test)");
-                    skipped_lossless += 1;
-                    continue;
-                }
-                "extended" => {
-                    if fname.contains("anim") {
-                        println!("  {fname}: animated WebP, skipped (keyframe-only test)");
-                        skipped_animated += 1;
-                    } else {
-                        println!("  {fname}: extended format, skipped (simple VP8 only)");
-                        skipped_extended += 1;
-                    }
-                    continue;
-                }
-                _ => {
-                    println!("  {fname}: unknown format {fmt}, skipped");
-                    continue;
-                }
+            // Animated WebP is the one shape this comparison can't handle: both
+            // decoders return the first keyframe, but with potentially different
+            // ANIM/ANMF semantics (background fill, loop count, blending). Skip.
+            // Everything else — VP8 (lossy), VP8L (lossless), VP8X+ALPH (lossy
+            // with alpha) — goes through the byte-exact gate. See issue #46.
+            if fmt == "extended" && fname.contains("anim") {
+                println!("  {fname}: animated WebP, skipped (keyframe-only test)");
+                skipped_animated += 1;
+                continue;
+            }
+            if fmt != "lossy" && fmt != "lossless" && fmt != "extended" {
+                println!("  {fname}: unknown format {fmt}, skipped");
+                continue;
             }
 
             match corpus_decode_compare(&path) {
                 Ok(result) => {
                     tested += 1;
+                    match fmt {
+                        "lossy" => tested_lossy += 1,
+                        "lossless" => tested_lossless += 1,
+                        "extended" => tested_extended += 1,
+                        _ => {}
+                    }
                     report_diff(&format!("{subdir}/{fname}"), &result.vs_lib_stats);
                     worst_lib_rgb = worst_lib_rgb.max(result.vs_lib_stats.max_diff_rgb);
                 }
@@ -581,11 +597,11 @@ fn cat2_decode_all_corpus_webp() {
         }
     }
 
-    println!("\n  Summary: {tested} lossy tested");
     println!(
-        "  Skipped: {skipped_lossless} lossless, {skipped_extended} extended, \
-         {skipped_animated} animated"
+        "\n  Summary: {tested} tested ({tested_lossy} lossy, {tested_lossless} lossless, \
+         {tested_extended} extended)"
     );
+    println!("  Skipped: {skipped_animated} animated");
     if tested > 0 {
         println!("  Worst zenwebp-vs-libwebp RGB diff: {worst_lib_rgb}");
     }
