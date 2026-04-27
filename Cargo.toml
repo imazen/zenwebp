@@ -175,6 +175,11 @@ name = "issue44_dump_scores"
 path = "dev/issue44_dump_scores.rs"
 
 [[example]]
+name = "zenanalyze_classify_diff"
+path = "dev/zenanalyze_classify_diff.rs"
+required-features = ["analyzer"]
+
+[[example]]
 name = "hrtb_test"
 required-features = ["zencodec"]
 
