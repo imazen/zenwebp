@@ -1,15 +1,15 @@
-//! Extended convergence evaluation: CLIC2025 corpus + per-frame
-//! convergence on an animated WebP. Companion to
-//! `dev/zensim_convergence_eval.rs` — that one stays focused on the
+//! Extended convergence evaluation: CLIC2025 corpus + synthetic RGBA
+//! convergence + per-frame convergence on an animated WebP. Companion
+//! to `dev/zensim_convergence_eval.rs` — that one stays focused on the
 //! standard 76-image RGB sweep; this one adds the broader sanity
-//! checks the user wants for PR #48 Task 3.
+//! checks for PR #48 Task 3.
 //!
-//! Plus an RGBA "unsupported-layout" smoke test that asserts the
-//! encoder cleanly refuses RGBA + target_zensim with the typed
-//! [`zenwebp::EncodeError::TargetZensimUnsupportedLayout`] error
-//! (rather than silently dropping alpha to make iteration fire). This
-//! documents the current limitation in code; proper RGBA support is
-//! tracked separately.
+//! Phase 3b is a real synthetic RGBA convergence sweep: 8 images
+//! (smooth gradient + alpha gradient, photo-like, screen content,
+//! checkerboard alpha, semi-transparent overlay, radial alpha, noisy
+//! photo, alpha-fade banner) crossed with the requested targets. The
+//! encoder uses zensim's deterministic-noise compositing path; targets
+//! are expected to converge in 1–3 passes per cell.
 //!
 //! Usage:
 //!   zensim_extended_eval [--clic /path/to/clic2025-1024]
@@ -18,6 +18,7 @@
 //!     [--max-passes 2]
 //!     [--max-overshoot 1.5]
 //!     [--clic-limit 30]
+//!     [--rgba-out-dir /tmp/rgba-synth]
 //!
 //! Defaults (when flags omitted):
 //!   --clic   $HOME/work/codec-corpus/clic2025-1024
@@ -35,7 +36,7 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
-use zenwebp::{EncodeError, EncodeRequest, LossyConfig, PixelLayout, ZensimTarget};
+use zenwebp::{EncodeRequest, LossyConfig, PixelLayout, ZensimTarget};
 
 #[derive(Clone)]
 struct Cli {
@@ -46,6 +47,7 @@ struct Cli {
     max_overshoot: f32,
     method: u8,
     clic_limit: usize,
+    rgba_out_dir: Option<PathBuf>,
 }
 
 fn parse_args() -> Cli {
@@ -60,6 +62,7 @@ fn parse_args() -> Cli {
         max_overshoot: 1.5,
         method: 4,
         clic_limit: 30,
+        rgba_out_dir: None,
     };
     let argv: Vec<String> = env::args().skip(1).collect();
     let mut i = 0;
@@ -96,6 +99,10 @@ fn parse_args() -> Cli {
             }
             "--clic-limit" => {
                 cli.clic_limit = next().parse().unwrap();
+                i += 2;
+            }
+            "--rgba-out-dir" => {
+                cli.rgba_out_dir = Some(PathBuf::from(next()));
                 i += 2;
             }
             other => panic!("unknown arg: {other}"),
@@ -191,12 +198,12 @@ fn main() {
     run_clic_phase(&cli);
 
     // ============================================================
-    // 3b — RGBA "unsupported-layout" smoke test
+    // 3b — Synthetic RGBA convergence
     // ============================================================
     println!("\n==============================================");
-    println!("=== Phase 3b: RGBA unsupported-layout smoke ===");
+    println!("=== Phase 3b: synthetic RGBA convergence    ===");
     println!("==============================================");
-    run_rgba_unsupported_smoke();
+    run_rgba_phase(&cli);
 
     // ============================================================
     // 3c — Animation per-frame convergence
@@ -316,71 +323,264 @@ fn run_clic_phase(cli: &Cli) {
 }
 
 // --------------------------------------------------------------------
-// 3b: RGBA "unsupported-layout" smoke test
+// 3b: Synthetic RGBA convergence
 // --------------------------------------------------------------------
 
-/// Confirm the encoder cleanly refuses RGBA + target_zensim with the
-/// typed [`EncodeError::TargetZensimUnsupportedLayout`] error. This
-/// documents the current limitation in code: an earlier iteration of
-/// PR #48 silently dropped alpha into a transient RGB buffer for the
-/// iteration probes — that hid the unhonored-target footgun. The gate
-/// now refuses non-RGB8 inputs whenever target_zensim is set, leaving
-/// proper RGBA support as a separate follow-up.
-///
-/// Synthetic 32x32 RGBA image, single target. We're checking the
-/// gate, not convergence quality — a tiny image keeps the test fast
-/// even though it never actually reaches the iteration loop.
-fn run_rgba_unsupported_smoke() {
-    let w: u32 = 32;
-    let h: u32 = 32;
-    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
-    for y in 0..h {
-        for x in 0..w {
-            let r = ((x * 255) / w) as u8;
-            let g = ((y * 255) / h) as u8;
-            let b = (((x + y) * 255) / (w + h)) as u8;
-            let a = if (x + y) & 1 == 0 { 255 } else { 128 };
-            rgba.extend_from_slice(&[r, g, b, a]);
-        }
-    }
-    let cfg = LossyConfig::new()
-        .with_method(4)
-        .with_target_zensim(ZensimTarget::new(80.0));
-    let r = EncodeRequest::lossy(&cfg, &rgba, PixelLayout::Rgba8, w, h).encode_with_metrics();
-    match r {
-        Ok((bytes, m)) => {
-            panic!(
-                "expected TargetZensimUnsupportedLayout error for RGBA + target_zensim, \
-                 got Ok({} bytes, achieved={:.2}, passes={})",
-                bytes.len(),
-                m.achieved_score,
-                m.passes_used,
+/// Build the canonical synthetic RGBA test set (8 images, 256x256):
+/// smooth gradient + alpha gradient, photo-like (mixed sin), screen
+/// content (sharp blocks), checkerboard alpha, semi-transparent
+/// overlay, translucent radial-alpha corners, noisy-photo facsimile,
+/// and a horizontal alpha-fade banner. Covers the alpha-shape space
+/// the encoder will see in real-world RGBA traffic.
+fn synthetic_rgba_set() -> Vec<(String, Vec<u8>, u32, u32)> {
+    let w: u32 = 256;
+    let h: u32 = 256;
+    let mut out = Vec::new();
+
+    // 1. smooth gradient + alpha gradient
+    out.push((
+        "smooth_grad_alpha_grad".into(),
+        {
+            let mut buf = Vec::with_capacity((w * h * 4) as usize);
+            for y in 0..h {
+                for x in 0..w {
+                    let r = ((x * 255) / w) as u8;
+                    let g = ((y * 255) / h) as u8;
+                    let b = (((x + y) * 255) / (w + h)) as u8;
+                    let a = ((x * 255) / w) as u8;
+                    buf.extend_from_slice(&[r, g, b, a]);
+                }
+            }
+            buf
+        },
+        w,
+        h,
+    ));
+
+    // 2. photo-like mixed content (full alpha)
+    out.push((
+        "photo_mixed_full_alpha".into(),
+        {
+            let mut buf = Vec::with_capacity((w * h * 4) as usize);
+            for y in 0..h {
+                for x in 0..w {
+                    let fx = x as f32 / w as f32;
+                    let fy = y as f32 / h as f32;
+                    let base_r = 80.0 + 100.0 * fx;
+                    let base_g = 100.0 + 80.0 * fy;
+                    let base_b = 90.0 + 80.0 * (1.0 - fx);
+                    let tex = 18.0
+                        * ((fx * 9.0).sin() * (fy * 7.0).cos()
+                            + 0.6 * (fx * 17.0 + fy * 11.0).sin());
+                    let r = (base_r + tex).clamp(0.0, 255.0) as u8;
+                    let g = (base_g + tex * 0.7).clamp(0.0, 255.0) as u8;
+                    let b = (base_b - tex * 0.5).clamp(0.0, 255.0) as u8;
+                    buf.extend_from_slice(&[r, g, b, 255]);
+                }
+            }
+            buf
+        },
+        w,
+        h,
+    ));
+
+    // 3. screen-content sharp blocks (alpha=255)
+    out.push((
+        "screen_content_blocks".into(),
+        {
+            let mut buf = Vec::with_capacity((w * h * 4) as usize);
+            for y in 0..h {
+                for x in 0..w {
+                    let qy = (y / 32) as u8;
+                    let qx = (x / 32) as u8;
+                    let id = (qy ^ qx) % 4;
+                    let (r, g, b) = match id {
+                        0 => (240, 240, 240),
+                        1 => (50, 50, 60),
+                        2 => (210, 60, 60),
+                        _ => (60, 130, 220),
+                    };
+                    buf.extend_from_slice(&[r, g, b, 255]);
+                }
+            }
+            buf
+        },
+        w,
+        h,
+    ));
+
+    // 4. checkerboard alpha (sharp transparency edges)
+    out.push((
+        "checkerboard_alpha".into(),
+        {
+            let mut buf = Vec::with_capacity((w * h * 4) as usize);
+            for y in 0..h {
+                for x in 0..w {
+                    let cell = ((x / 16) ^ (y / 16)) & 1;
+                    let a = if cell == 0 { 255u8 } else { 0u8 };
+                    buf.extend_from_slice(&[200, 80, 100, a]);
+                }
+            }
+            buf
+        },
+        w,
+        h,
+    ));
+
+    // 5. semi-transparent overlay (constant 128 alpha)
+    out.push((
+        "semi_transparent".into(),
+        {
+            let mut buf = Vec::with_capacity((w * h * 4) as usize);
+            for y in 0..h {
+                for x in 0..w {
+                    let r = ((x * 200) / w) as u8;
+                    let g = ((y * 200) / h) as u8;
+                    buf.extend_from_slice(&[r, g, 100, 128]);
+                }
+            }
+            buf
+        },
+        w,
+        h,
+    ));
+
+    // 6. translucent corners (radial alpha)
+    out.push((
+        "radial_alpha".into(),
+        {
+            let mut buf = Vec::with_capacity((w * h * 4) as usize);
+            let cx = (w / 2) as f32;
+            let cy = (h / 2) as f32;
+            let max_d = (cx.powi(2) + cy.powi(2)).sqrt();
+            for y in 0..h {
+                for x in 0..w {
+                    let dx = x as f32 - cx;
+                    let dy = y as f32 - cy;
+                    let d = (dx * dx + dy * dy).sqrt();
+                    let a = (255.0 * (1.0 - (d / max_d))).clamp(0.0, 255.0) as u8;
+                    buf.extend_from_slice(&[180, 90, 220, a]);
+                }
+            }
+            buf
+        },
+        w,
+        h,
+    ));
+
+    // 7. noisy-photo facsimile (small spatial noise added to a texture)
+    out.push((
+        "noisy_photo".into(),
+        {
+            let mut buf = Vec::with_capacity((w * h * 4) as usize);
+            for y in 0..h {
+                for x in 0..w {
+                    let fx = x as f32 / w as f32;
+                    let fy = y as f32 / h as f32;
+                    let base = 90.0 + 60.0 * fx + 40.0 * fy;
+                    let h = ((x.wrapping_mul(2654435761)) ^ y.wrapping_mul(40503)) as u8;
+                    let n = (h as i32 - 128) / 6;
+                    let r = (base + n as f32).clamp(0.0, 255.0) as u8;
+                    let g = (base * 0.95 + n as f32).clamp(0.0, 255.0) as u8;
+                    let b = (base * 0.85 + n as f32).clamp(0.0, 255.0) as u8;
+                    buf.extend_from_slice(&[r, g, b, 255]);
+                }
+            }
+            buf
+        },
+        w,
+        h,
+    ));
+
+    // 8. horizontal alpha-fade banner
+    out.push((
+        "alpha_fade_banner".into(),
+        {
+            let mut buf = Vec::with_capacity((w * h * 4) as usize);
+            for y in 0..h {
+                for x in 0..w {
+                    let band = (y as i32 - 128).abs();
+                    let a = if band > 32 {
+                        0u8
+                    } else {
+                        ((32 - band) * 8).clamp(0, 255) as u8
+                    };
+                    let r = ((x * 200) / w) as u8;
+                    buf.extend_from_slice(&[r, 60, 240 - r, a]);
+                }
+            }
+            buf
+        },
+        w,
+        h,
+    ));
+
+    out
+}
+
+/// Run the synthetic RGBA convergence sweep. Each (image, target)
+/// cell goes through the full closed loop with the encoder's
+/// alpha-bearing path; targets are matched against the achieved score
+/// from zensim's deterministic-noise composite.
+fn run_rgba_phase(cli: &Cli) {
+    let images = synthetic_rgba_set();
+    eprintln!("RGBA: synthesized {} images (256x256)", images.len());
+
+    if let Some(out_dir) = &cli.rgba_out_dir {
+        let _ = fs::create_dir_all(out_dir);
+        for (name, _, _, _) in &images {
+            // Names only — no PNG re-encoding, just so the operator can
+            // grep for the sweep in the directory listing.
+            let _ = std::fs::write(
+                out_dir.join(format!("{name}.txt")),
+                b"synth-rgba placeholder",
             );
         }
-        Err(at) => {
-            // Decompose to inspect the inner variant. Other variants
-            // would mean the gate is misbehaving.
-            let inner: EncodeError = at.into();
-            match inner {
-                EncodeError::TargetZensimUnsupportedLayout(layout) => {
+    }
+
+    use std::collections::BTreeMap;
+    let mut by_target: BTreeMap<u32, Agg> = BTreeMap::new();
+    let mut by_image: BTreeMap<String, Agg> = BTreeMap::new();
+    let mut overall = Agg::default();
+
+    for (name, rgba, w, h) in &images {
+        for &target in &cli.targets {
+            let cfg = LossyConfig::new()
+                .with_method(cli.method)
+                .with_target_zensim(
+                    ZensimTarget::new(target)
+                        .with_max_overshoot(Some(cli.max_overshoot))
+                        .with_max_passes(cli.max_passes.max(3)),
+                );
+            let r =
+                EncodeRequest::lossy(&cfg, rgba, PixelLayout::Rgba8, *w, *h).encode_with_metrics();
+            match r {
+                Ok((b, m)) => {
+                    let a = agg_one(target, cli.max_overshoot, m, b.len());
+                    fold(&mut overall, &a);
+                    fold(by_target.entry((target * 100.0) as u32).or_default(), &a);
+                    fold(by_image.entry(name.clone()).or_default(), &a);
                     eprintln!(
-                        "  ok: RGBA + target_zensim -> TargetZensimUnsupportedLayout({:?})",
-                        layout,
-                    );
-                    println!(
-                        "RGBA-smoke: PASS — target_zensim cleanly rejects PixelLayout::{:?}",
-                        layout,
-                    );
-                }
-                other => {
-                    panic!(
-                        "expected TargetZensimUnsupportedLayout, got: {:?} ({})",
-                        other, other,
+                        "  rgba {name} target={target} achieved={:.2} passes={} bytes={} met={}",
+                        m.achieved_score,
+                        m.passes_used,
+                        b.len(),
+                        m.targets_met,
                     );
                 }
+                Err(e) => eprintln!("RGBA ERROR {name} target={target}: {:?}", e),
             }
         }
     }
+    println!("--- RGBA by target ---");
+    for (t100, a) in &by_target {
+        print_summary("RGBA-synth", Some(*t100 as f32 / 100.0), a);
+    }
+    println!("--- RGBA by image (across all targets) ---");
+    for (name, a) in &by_image {
+        print_summary(name, None, a);
+    }
+    print_summary("RGBA-synth ALL", None, &overall);
 }
 
 // --------------------------------------------------------------------
@@ -432,15 +632,9 @@ fn run_anim_phase(cli: &Cli) {
             }
         };
         let (rgba_buf, w, h) = rgba;
-        // target_zensim is RGB8-only; explicitly drop alpha here at
-        // the test driver so the encoder gate doesn't refuse the
-        // input. Alpha-preserving target_zensim is a tracked
-        // follow-up; this test is purely about per-frame iteration
-        // convergence on the underlying RGB content.
-        let mut rgb_buf = Vec::with_capacity(rgba_buf.len() / 4 * 3);
-        for px in rgba_buf.chunks_exact(4) {
-            rgb_buf.extend_from_slice(&[px[0], px[1], px[2]]);
-        }
+        // target_zensim now accepts RGBA inputs directly: the encoder
+        // emits alpha-bearing WebP and zensim's deterministic-noise
+        // composite measures the pair consistently.
         let cfg = LossyConfig::new()
             .with_method(cli.method)
             .with_target_zensim(
@@ -448,7 +642,8 @@ fn run_anim_phase(cli: &Cli) {
                     .with_max_overshoot(Some(cli.max_overshoot))
                     .with_max_passes(max_passes),
             );
-        let r = EncodeRequest::lossy(&cfg, &rgb_buf, PixelLayout::Rgb8, w, h).encode_with_metrics();
+        let r =
+            EncodeRequest::lossy(&cfg, &rgba_buf, PixelLayout::Rgba8, w, h).encode_with_metrics();
         match r {
             Ok((b, m)) => {
                 let a = agg_one(target, cli.max_overshoot, m, b.len());
