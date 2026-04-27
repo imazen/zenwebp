@@ -2450,4 +2450,72 @@ mod tests {
         let decoded = webp::Decoder::new(&output).decode().unwrap();
         assert_eq!(img, *decoded);
     }
+
+    /// Builder-chain test for the three new lossy knobs added in PR #37
+    /// (`cost_model`, `smooth_segment_map`, `multi_pass_stats`). Verifies the
+    /// fluent setters land the right values on both EncoderConfig and the
+    /// LossyConfig variants, and that defaults match libwebp behavior.
+    #[test]
+    fn lossy_config_builder_threads_review_pr37_knobs() {
+        use crate::encoder::config::LossyConfig;
+
+        // Defaults match libwebp:
+        //   cost_model = ZenwebpDefault (perceptual extensions enabled)
+        //   smooth_segment_map = false (libwebp `preprocessing & 1` default off)
+        //   multi_pass_stats = false (zenwebp keeps stat-pass off; opt-in for target_size)
+        let default_lc = LossyConfig::new();
+        assert_eq!(default_lc.cost_model, CostModel::ZenwebpDefault);
+        assert!(!default_lc.smooth_segment_map);
+        assert!(!default_lc.multi_pass_stats);
+
+        // Fluent chain — each setter consumes self and returns Self, so all
+        // three must be settable in one expression.
+        let lc = LossyConfig::new()
+            .with_cost_model(CostModel::StrictLibwebpParity)
+            .with_smooth_segment_map(true)
+            .with_multi_pass_stats(true);
+        assert_eq!(lc.cost_model, CostModel::StrictLibwebpParity);
+        assert!(lc.smooth_segment_map);
+        assert!(lc.multi_pass_stats);
+
+        // Same knobs on EncoderConfig.
+        let ec = EncoderConfig::default()
+            .cost_model(CostModel::StrictLibwebpParity)
+            .smooth_segment_map(true)
+            .multi_pass_stats(true);
+        assert_eq!(ec.cost_model, CostModel::StrictLibwebpParity);
+        assert!(ec.smooth_segment_map);
+        assert!(ec.multi_pass_stats);
+
+        // Round-trip through to_params: the EncoderParams the encoder sees
+        // must reflect the configured knobs.
+        let params = ec.to_params();
+        assert_eq!(params.cost_model, CostModel::StrictLibwebpParity);
+        assert!(params.smooth_segment_map);
+        assert!(params.multi_pass_stats);
+    }
+
+    /// Encoding under each `CostModel` must complete and produce a valid
+    /// (decodable) WebP. This catches accidental panics in the cost-model
+    /// gating threading without needing a libwebp comparison.
+    #[test]
+    fn cost_model_variants_encode_and_decode() {
+        let img = vec![128u8; 64 * 64 * 3];
+        for &model in &[CostModel::ZenwebpDefault, CostModel::StrictLibwebpParity] {
+            let mut output = Vec::new();
+            let mut encoder = WebPEncoder::new(&mut output);
+            encoder.set_params(EncoderParams {
+                cost_model: model,
+                ..EncoderParams::default()
+            });
+            encoder
+                .encode(&img, 64, 64, 64, crate::PixelLayout::Rgb8)
+                .expect("encode under cost model variant");
+            assert!(!output.is_empty(), "{model:?} produced empty output");
+            // Decode round-trip — confirms the file is well-formed.
+            let mut decoder = crate::WebPDecoder::new(&output).unwrap();
+            let mut img2 = vec![0u8; 64 * 64 * 3];
+            decoder.read_image(&mut img2).unwrap();
+        }
+    }
 }

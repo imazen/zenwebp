@@ -1677,3 +1677,187 @@ pub(super) fn get_coeffs0_from_block(blocks: &[i32; 16 * 16]) -> [i32; 16] {
     }
     coeffs0
 }
+
+#[cfg(test)]
+mod token_buffer_tests {
+    //! Unit tests for `TokenBuffer::emit_tokens_filtered`.
+    //!
+    //! The full-#25 fix (per-MB skip-bit gating) records EOB tokens for skipped
+    //! MBs into the token buffer and filters them at emit time when
+    //! `use_skip_proba=1` wins. This is path-agnostic — the tests below build
+    //! a buffer with synthetic tokens, then verify that the filtered emission
+    //! produces byte-identical output to a hand-built buffer that omits the
+    //! skipped MBs entirely. End-to-end coverage of the skip-proba flow lives
+    //! in `simd_tier_parity.rs` (which exercises every encode and rejects
+    //! divergent bytes).
+
+    use super::*;
+    use crate::common::types::COEFF_PROBS;
+    use crate::encoder::arithmetic::ArithmeticEncoder;
+
+    /// Push a few dynamic + constant tokens that resolve to a deterministic
+    /// byte stream for a given MB. The exact tokens don't matter — we only
+    /// need a non-trivial mix so the comparison is meaningful.
+    fn push_mb_tokens(buf: &mut TokenBuffer, mb_marker: u8) {
+        buf.add_token(false, 0); // dynamic, proba_idx=0, bit=0
+        buf.add_token(true, 7); // dynamic, proba_idx=7, bit=1
+        buf.add_constant_token(false, 128); // constant proba=128, bit=0
+        buf.add_constant_token(true, 64 + (mb_marker & 0x3f)); // varies per MB so silent merging would diverge
+    }
+
+    fn emit_to_bytes<F: FnOnce(&mut ArithmeticEncoder)>(emit: F) -> Vec<u8> {
+        let mut enc = ArithmeticEncoder::new();
+        emit(&mut enc);
+        enc.flush_and_get_buffer()
+    }
+
+    #[test]
+    fn emit_tokens_filtered_skip_mask_all_kept_matches_full_emit() {
+        // skipped = [false; N] should produce the same bytes as `emit_tokens`.
+        let mut buf = TokenBuffer::new();
+        for mb in 0..3 {
+            buf.begin_mb();
+            push_mb_tokens(&mut buf, mb as u8);
+        }
+
+        let baseline = emit_to_bytes(|e| buf.emit_tokens(e, &COEFF_PROBS));
+        let filtered = emit_to_bytes(|e| {
+            buf.emit_tokens_filtered(e, &COEFF_PROBS, &[false, false, false]);
+        });
+        assert_eq!(
+            baseline, filtered,
+            "all-kept skip mask must produce byte-identical output to emit_tokens"
+        );
+    }
+
+    #[test]
+    fn emit_tokens_filtered_drops_middle_mb() {
+        // skipped = [false, true, false] should drop MB 1's tokens entirely.
+        let mut buf = TokenBuffer::new();
+        for mb in 0..3 {
+            buf.begin_mb();
+            push_mb_tokens(&mut buf, mb as u8);
+        }
+
+        // Reference: hand-build a buffer with only MB 0 and MB 2.
+        let mut reference = TokenBuffer::new();
+        reference.begin_mb();
+        push_mb_tokens(&mut reference, 0);
+        reference.begin_mb();
+        push_mb_tokens(&mut reference, 2);
+
+        let actual = emit_to_bytes(|e| {
+            buf.emit_tokens_filtered(e, &COEFF_PROBS, &[false, true, false]);
+        });
+        let expected = emit_to_bytes(|e| reference.emit_tokens(e, &COEFF_PROBS));
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn emit_tokens_filtered_all_skipped_emits_nothing() {
+        // skipped = [true; N] should produce only the trailing flush bytes
+        // (no per-token writes), which equals an empty TokenBuffer's emit.
+        let mut buf = TokenBuffer::new();
+        for mb in 0..3 {
+            buf.begin_mb();
+            push_mb_tokens(&mut buf, mb as u8);
+        }
+
+        let actual = emit_to_bytes(|e| {
+            buf.emit_tokens_filtered(e, &COEFF_PROBS, &[true, true, true]);
+        });
+        let empty = emit_to_bytes(|e| TokenBuffer::new().emit_tokens(e, &COEFF_PROBS));
+        assert_eq!(actual, empty);
+    }
+
+    #[test]
+    fn emit_tokens_filtered_handles_last_mb_skip() {
+        // Edge case: skip the LAST MB. The end-of-span computation uses
+        // `tokens.len()` for the final entry; a bug here would emit garbage
+        // past the start of the skipped MB.
+        let mut buf = TokenBuffer::new();
+        for mb in 0..3 {
+            buf.begin_mb();
+            push_mb_tokens(&mut buf, mb as u8);
+        }
+
+        let mut reference = TokenBuffer::new();
+        reference.begin_mb();
+        push_mb_tokens(&mut reference, 0);
+        reference.begin_mb();
+        push_mb_tokens(&mut reference, 1);
+
+        let actual = emit_to_bytes(|e| {
+            buf.emit_tokens_filtered(e, &COEFF_PROBS, &[false, false, true]);
+        });
+        let expected = emit_to_bytes(|e| reference.emit_tokens(e, &COEFF_PROBS));
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn emit_tokens_filtered_first_mb_skip() {
+        // Edge case: skip the FIRST MB. The `mb_idx == 0` start offset is 0.
+        let mut buf = TokenBuffer::new();
+        for mb in 0..3 {
+            buf.begin_mb();
+            push_mb_tokens(&mut buf, mb as u8);
+        }
+
+        let mut reference = TokenBuffer::new();
+        reference.begin_mb();
+        push_mb_tokens(&mut reference, 1);
+        reference.begin_mb();
+        push_mb_tokens(&mut reference, 2);
+
+        let actual = emit_to_bytes(|e| {
+            buf.emit_tokens_filtered(e, &COEFF_PROBS, &[true, false, false]);
+        });
+        let expected = emit_to_bytes(|e| reference.emit_tokens(e, &COEFF_PROBS));
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn begin_mb_records_offsets_in_order() {
+        // Sanity check: each begin_mb pushes the current tokens.len() so the
+        // starts vector is monotone non-decreasing.
+        let mut buf = TokenBuffer::new();
+        buf.begin_mb();
+        assert_eq!(buf.mb_token_starts, vec![0]);
+
+        push_mb_tokens(&mut buf, 0);
+        let after_first = buf.tokens.len() as u32;
+        buf.begin_mb();
+        assert_eq!(buf.mb_token_starts, vec![0, after_first]);
+
+        push_mb_tokens(&mut buf, 1);
+        buf.begin_mb();
+        let after_second = buf.tokens.len() as u32;
+        assert_eq!(buf.mb_token_starts, vec![0, after_first, after_second]);
+    }
+
+    #[test]
+    fn empty_mb_span_is_handled() {
+        // A begin_mb with no tokens between it and the next is a valid
+        // (empty-residuals) MB. Filtering should still align spans correctly.
+        let mut buf = TokenBuffer::new();
+        buf.begin_mb(); // MB 0
+        push_mb_tokens(&mut buf, 0);
+        buf.begin_mb(); // MB 1 — no tokens
+        buf.begin_mb(); // MB 2
+        push_mb_tokens(&mut buf, 2);
+
+        let mut reference = TokenBuffer::new();
+        reference.begin_mb();
+        push_mb_tokens(&mut reference, 0);
+        reference.begin_mb();
+        // empty MB 1
+        reference.begin_mb();
+        push_mb_tokens(&mut reference, 2);
+
+        let baseline = emit_to_bytes(|e| reference.emit_tokens(e, &COEFF_PROBS));
+        let filtered = emit_to_bytes(|e| {
+            buf.emit_tokens_filtered(e, &COEFF_PROBS, &[false, false, false]);
+        });
+        assert_eq!(filtered, baseline);
+    }
+}
