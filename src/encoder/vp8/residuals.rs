@@ -19,12 +19,15 @@ use crate::encoder::cost::{
 // Eliminates sentinel `prob == 0` branch per iteration in the hot loop.
 const DCT_CAT_LENGTHS: [usize; 6] = [1, 2, 3, 4, 5, 11];
 
-#[cfg(all(test, debug_assertions))]
+// Test-only counter for `trellis_reuse_assertion_is_actually_exercised_at_m6`.
+// Gated on `feature = "std"` because `thread_local!` requires `std::thread`;
+// no_std builds (cargo test --no-default-features) skip both this declaration
+// and its reference site below.
+#[cfg(all(test, debug_assertions, feature = "std"))]
 thread_local! {
     /// Counts how many times the trellis-reuse cache assertion path runs.
     /// Read by `trellis_reuse_assertion_is_actually_exercised_at_m6` to
-    /// verify the assertion isn't silently dormant. Test-only — gated on
-    /// `cfg(test)` so production builds carry no overhead.
+    /// verify the assertion isn't silently dormant.
     pub(crate) static TRELLIS_REUSE_HITS: core::cell::Cell<u64> =
         const { core::cell::Cell::new(0) };
 }
@@ -1450,7 +1453,10 @@ impl<'a> super::Vp8Encoder<'a> {
                             // can prove this path runs and the assertion isn't
                             // silently dormant. Cheap; outside the per-encode gate
                             // so the test can still see hits at every block.
-                            #[cfg(test)]
+                            // Gated on `feature = "std"` because `thread_local!` is
+                            // a std macro — no_std test builds simply skip this hit
+                            // counter (the verification test is also std-only).
+                            #[cfg(all(test, feature = "std"))]
                             TRELLIS_REUSE_HITS.with(|c| c.set(c.get() + 1));
                             if !self.verified_trellis_reuse {
                                 let mut coeffs_check = *block;
@@ -1718,6 +1724,8 @@ mod token_buffer_tests {
     //! in `simd_tier_parity.rs` (which exercises every encode and rejects
     //! divergent bytes).
 
+    use alloc::vec;
+
     use super::*;
     use crate::common::types::COEFF_PROBS;
     use crate::encoder::arithmetic::ArithmeticEncoder;
@@ -1881,9 +1889,9 @@ mod token_buffer_tests {
         let mut img = Vec::with_capacity(64 * 64 * 3);
         for y in 0u32..64 {
             for x in 0u32..64 {
-                img.push((x * 7 ^ y * 11) as u8);
-                img.push((x * 13 ^ y * 17) as u8);
-                img.push((x * 19 ^ y * 23) as u8);
+                img.push(((x * 7) ^ (y * 11)) as u8);
+                img.push(((x * 13) ^ (y * 17)) as u8);
+                img.push(((x * 19) ^ (y * 23)) as u8);
             }
         }
         let cfg = LossyConfig::new().with_quality(75.0).with_method(6);
