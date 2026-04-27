@@ -115,6 +115,11 @@ path = "dev/zensim_calibrate.rs"
 required-features = ["target-zensim"]
 
 [[example]]
+name = "zensim_convergence_eval"
+path = "dev/zensim_convergence_eval.rs"
+required-features = ["target-zensim"]
+
+[[example]]
 name = "empirical_sweep"
 path = "dev/empirical_sweep.rs"
 
