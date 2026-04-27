@@ -321,8 +321,9 @@ impl DecoderContext {
             // Y2 AC uses libwebp's dedicated `kAcTable2` lookup, not `kAcTable * 155/100`.
             // Encoder side updated in #24; both must move together to keep the
             // round-trip bit-exact (and to produce libwebp-compatible files).
+            // Table lives in `common::types` (already glob-imported at line 15).
             let y2ac_idx = (base + y2ac_delta).clamp(0, 127) as usize;
-            let y2ac = crate::encoder::tables::VP8_AC_TABLE2[y2ac_idx] as i16;
+            let y2ac = VP8_AC_TABLE2[y2ac_idx] as i16;
 
             let mut uvdc = dc_quant(base + uvdc_delta);
             if uvdc > 132 {

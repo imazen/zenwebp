@@ -47,7 +47,8 @@ use super::vec_writer::VecWriter;
 use crate::common::prediction::*;
 use crate::common::types::Frame;
 use crate::common::types::*;
-use crate::encoder::tables::VP8_AC_TABLE2;
+// VP8_AC_TABLE2 is pulled in via the `common::types::*` glob above so the
+// decoder can share the same definition without depending on the encoder.
 // convert_image_sharp_yuv_with_config is called via full path below
 use crate::decoder::yuv::convert_image_y;
 
@@ -327,18 +328,6 @@ struct Complexity {
     y: [u8; 4],
     u: [u8; 2],
     v: [u8; 2],
-}
-
-impl Complexity {
-    #[allow(dead_code)] // Was used by old skip path; kept in case needed.
-    fn clear(&mut self, include_y2: bool) {
-        self.y = [0; 4];
-        self.u = [0; 2];
-        self.v = [0; 2];
-        if include_y2 {
-            self.y2 = 0;
-        }
-    }
 }
 
 #[derive(Default)]
@@ -1537,7 +1526,7 @@ impl<'a> Vp8Encoder<'a> {
     /// - Textured areas (low alpha) need finer quantization to preserve detail
     ///
     /// Ported from libwebp's VP8EncAnalyze / MBAnalyze.
-    fn analyze_and_assign_segments(&mut self, base_quant_index: u8, quality: u8) {
+    fn analyze_and_assign_segments(&mut self, quality: u8) {
         let y_stride = usize::from(self.macroblock_width * 16);
         let uv_stride = usize::from(self.macroblock_width * 8);
         let width = usize::from(self.frame.width);
@@ -1664,9 +1653,9 @@ impl<'a> Vp8Encoder<'a> {
         // `quality_to_quant_index(quality)`, making segment 0 always carry a
         // non-zero delta when SNS modulation was active. (#30 C)
         //
-        // Two passes: pass 1 computes the per-segment (quant, filter) tuples;
-        // pass 2 picks segment 0's values as the bitstream base and writes
-        // deltas relative to that.
+        // Pass 1 computes the per-segment (quant, filter) tuples; segment 0's
+        // values then become the bitstream base, and pass 2 (the matrix-init
+        // loop below) writes deltas relative to that.
         let mut seg_quant_indices = [0u8; 4];
         let mut seg_filters = [0u8; 4];
         for (seg_idx, &center) in centers.iter().enumerate() {
@@ -1688,12 +1677,7 @@ impl<'a> Vp8Encoder<'a> {
         let base_filter_new = seg_filters[0];
         self.quantization_indices.yac_abs = base_quant_index_new;
 
-        // Suppress unused-variable warning on the legacy unmodulated `base_quant_index`
-        // — kept in the function signature for analysis-pass API stability.
-        let _ = base_quant_index;
-
-        for (seg_idx, &center) in centers.iter().enumerate() {
-            let _ = center;
+        for seg_idx in 0..centers.len() {
             let seg_quant_index = seg_quant_indices[seg_idx];
             let seg_quant_usize = seg_quant_index as usize;
 
@@ -1868,7 +1852,6 @@ impl<'a> Vp8Encoder<'a> {
         //
         // Only enable for images large enough to benefit (overhead vs gain tradeoff).
         // libwebp uses segments for images with method > 0 and multiple segments configured.
-        let _total_mbs = usize::from(mb_width) * usize::from(mb_height);
         // libwebp gates segmentation on `config->emulate_jpeg_size || num_segments > 1
         // || method <= 1` (`analysis_enc.c:434-436`) — no min-MB threshold. zenwebp
         // previously skipped segmentation entirely below 256 MBs (~256x256 images),
@@ -1880,7 +1863,7 @@ impl<'a> Vp8Encoder<'a> {
             // DCT-based segment analysis and assignment.
             // For Preset::Auto, this also runs content detection and may override
             // sns_strength, filter_strength, filter_sharpness, and num_segments.
-            self.analyze_and_assign_segments(quant_index, lossy_quality);
+            self.analyze_and_assign_segments(lossy_quality);
 
             // If Auto detection changed filter params, recompute frame filter level
             if self.preset == super::api::Preset::Auto {

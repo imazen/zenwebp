@@ -771,6 +771,25 @@ pub(crate) const AC_QUANT: [i16; 128] = [
      249, 254, 259, 264, 269, 274, 279, 284,
 ];
 
+/// Y2 (WHT) AC quantizer lookup, indexed by quant_index 0..=127.
+///
+/// libwebp's `kAcTable2` (`quant.c`) — the dedicated Y2 AC quantizer table.
+/// Used by both the encoder (segment matrix init) and the decoder (Y2
+/// dequantizer reconstruction); lives in `common` so the decoder doesn't
+/// reach into encoder-only modules. Replaces the legacy `kAcTable * 155/100`
+/// approximation, which deviated by up to ~10% at mid-quantizer.
+#[rustfmt::skip]
+pub(crate) const VP8_AC_TABLE2: [u16; 128] = [
+    8, 8, 9, 10, 12, 13, 15, 17, 18, 20, 21, 23, 24, 26, 27, 29,
+    31, 32, 34, 35, 37, 38, 40, 41, 43, 44, 46, 48, 49, 51, 52, 54,
+    55, 57, 58, 60, 62, 63, 65, 66, 68, 69, 71, 72, 74, 75, 77, 79,
+    80, 82, 83, 85, 86, 88, 89, 93, 96, 99, 102, 105, 108, 111, 114, 117,
+    120, 124, 127, 130, 133, 136, 139, 142, 145, 148, 151, 155, 158, 161, 164, 167,
+    170, 173, 176, 179, 184, 189, 193, 198, 203, 207, 212, 217, 221, 226, 230, 235,
+    240, 244, 249, 254, 258, 263, 268, 274, 280, 286, 292, 299, 305, 311, 317, 323,
+    330, 336, 342, 348, 354, 362, 370, 379, 385, 393, 401, 409, 416, 424, 432, 440,
+];
+
 pub(crate) const ZIGZAG: [u8; 16] = [0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15];
 
 use crate::encoder::cost::{MatrixType, VP8Matrix};
