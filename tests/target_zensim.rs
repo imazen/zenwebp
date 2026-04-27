@@ -43,6 +43,37 @@ fn mixed_content_256() -> (Vec<u8>, u32, u32) {
     (buf, w, h)
 }
 
+/// 256x256 RGBA "photo + alpha" sibling of [`mixed_content_256`]. The
+/// RGB channels are the same band-limited photo facsimile; alpha is a
+/// horizontal gradient (0 at the left edge, 255 at the right edge) so
+/// the encoder has real alpha-channel work to do, but the image still
+/// has plenty of opaque area for the deterministic-noise composite to
+/// land at expected zensim scores.
+fn mixed_content_rgba_256() -> (Vec<u8>, u32, u32) {
+    let w: u32 = 256;
+    let h: u32 = 256;
+    let mut buf = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let fx = x as f32 / w as f32;
+            let fy = y as f32 / h as f32;
+            let base_r = 80.0 + 100.0 * fx;
+            let base_g = 100.0 + 80.0 * fy;
+            let base_b = 90.0 + 80.0 * (1.0 - fx);
+            let tex =
+                18.0 * ((fx * 9.0).sin() * (fy * 7.0).cos() + 0.6 * (fx * 17.0 + fy * 11.0).sin());
+            let r = (base_r + tex).clamp(0.0, 255.0) as u8;
+            let g = (base_g + tex * 0.7).clamp(0.0, 255.0) as u8;
+            let b = (base_b - tex * 0.5).clamp(0.0, 255.0) as u8;
+            // Alpha gradient: 64..=255 left-to-right (fully transparent
+            // pixels would defeat the zensim measurement on those pixels).
+            let a = (64.0 + 191.0 * fx).clamp(0.0, 255.0) as u8;
+            buf.extend_from_slice(&[r, g, b, a]);
+        }
+    }
+    (buf, w, h)
+}
+
 /// Smooth gradient — easy content where pass 1 at calibrated q tends to
 /// overshoot the target. Used to exercise the bytes-recovery path.
 fn smooth_gradient_256() -> (Vec<u8>, u32, u32) {
@@ -299,42 +330,47 @@ fn metrics_no_target_helper_exists() {
     let _: ZensimEncodeMetrics = m;
 }
 
-/// `target_zensim` currently requires `PixelLayout::Rgb8`. Setting it
-/// on the config and then submitting a non-RGB8 input must return the
-/// typed [`EncodeError::TargetZensimUnsupportedLayout`] error rather
-/// than silently dropping alpha (or otherwise mutating the input) to
-/// make iteration fire. RGBA support is tracked as a follow-up.
+/// `target_zensim` accepts `PixelLayout::Rgba8` directly: the iteration
+/// loop encodes alpha-bearing WebP and measures via zensim's
+/// deterministic-noise compositing path. Confirms the loop fires,
+/// converges, and emits a non-empty WebP that decodes back as RGBA.
 #[test]
-fn target_zensim_rejects_rgba_input_with_typed_error() {
-    let w: u32 = 32;
-    let h: u32 = 32;
-    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
-    for y in 0..h {
-        for x in 0..w {
-            let r = ((x * 255) / w) as u8;
-            let g = ((y * 255) / h) as u8;
-            rgba.extend_from_slice(&[r, g, 100, 200]);
-        }
-    }
+fn target_zensim_accepts_rgba_input() {
+    use zenwebp::oneshot::decode_rgba;
+
+    let (rgba, w, h) = mixed_content_rgba_256();
     let cfg = LossyConfig::new()
         .with_method(4)
-        .with_target_zensim(ZensimTarget::new(80.0));
-    let result = EncodeRequest::lossy(&cfg, &rgba, PixelLayout::Rgba8, w, h).encode_with_metrics();
-    let at = result.expect_err("expected error for RGBA + target_zensim");
-    let inner: EncodeError = at.into();
-    match inner {
-        EncodeError::TargetZensimUnsupportedLayout(layout) => {
-            assert_eq!(layout, PixelLayout::Rgba8);
-        }
-        other => panic!("expected TargetZensimUnsupportedLayout, got {other:?}"),
-    }
+        .with_target_zensim(ZensimTarget::new(80.0).with_max_passes(3));
+    let (bytes, m) = EncodeRequest::lossy(&cfg, &rgba, PixelLayout::Rgba8, w, h)
+        .encode_with_metrics()
+        .expect("RGBA target_zensim encode should succeed");
+    assert!(!bytes.is_empty(), "encoded bytes should be non-empty");
+    assert!(
+        m.targets_met,
+        "target_zensim should converge for the synthetic photo+alpha image (achieved={}, passes={})",
+        m.achieved_score, m.passes_used,
+    );
+    assert!(
+        m.achieved_score.is_finite(),
+        "achieved_score should be finite once iteration runs",
+    );
+    // Round-trip: the converged bytes must decode back as RGBA at the
+    // original dimensions. This proves the encoder produced an
+    // alpha-bearing WebP, not RGB-only output.
+    let (decoded_rgba, dw, dh) = decode_rgba(&bytes).expect("decode_rgba on converged bytes");
+    assert_eq!((dw, dh), (w, h));
+    assert_eq!(decoded_rgba.len(), (w * h * 4) as usize);
+    let _: ZensimEncodeMetrics = m;
 }
 
-/// Same gate, also verified via the bytes-only entry point. Confirms
-/// the error fires through `EncodeRequest::encode()` (not just
-/// `encode_with_metrics`).
+/// `target_zensim` only accepts `PixelLayout::Rgb8` and `Rgba8`.
+/// Other layouts (BGR / BGRA / ARGB / L8 / LA8 / YUV420) with
+/// `target_zensim` set must surface as the typed
+/// [`EncodeError::TargetZensimUnsupportedLayout`] error, both via the
+/// metrics entry and the bytes-only `encode()` path.
 #[test]
-fn target_zensim_rejects_bgr_input_via_encode_bytes() {
+fn target_zensim_rejects_unsupported_layouts_via_encode_bytes() {
     let w: u32 = 16;
     let h: u32 = 16;
     let bgr = vec![64u8; (w * h * 3) as usize];
@@ -347,6 +383,22 @@ fn target_zensim_rejects_bgr_input_via_encode_bytes() {
     match inner {
         EncodeError::TargetZensimUnsupportedLayout(layout) => {
             assert_eq!(layout, PixelLayout::Bgr8);
+        }
+        other => panic!("expected TargetZensimUnsupportedLayout, got {other:?}"),
+    }
+
+    // Same gate, also verified via the metrics entry on a different
+    // unsupported layout (BGRA).
+    let bgra = vec![64u8; (w * h * 4) as usize];
+    let cfg = LossyConfig::new()
+        .with_method(4)
+        .with_target_zensim(ZensimTarget::new(80.0));
+    let result = EncodeRequest::lossy(&cfg, &bgra, PixelLayout::Bgra8, w, h).encode_with_metrics();
+    let at = result.expect_err("expected error for BGRA + target_zensim");
+    let inner: EncodeError = at.into();
+    match inner {
+        EncodeError::TargetZensimUnsupportedLayout(layout) => {
+            assert_eq!(layout, PixelLayout::Bgra8);
         }
         other => panic!("expected TargetZensimUnsupportedLayout, got {other:?}"),
     }

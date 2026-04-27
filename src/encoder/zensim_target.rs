@@ -43,17 +43,16 @@ use super::analysis::ImageContentType;
 /// best-effort behavior tuned to land in band on pass 1 for typical
 /// photo content and never iterate more than once.
 ///
-/// # Pixel layout: RGB8-only
+/// # Pixel layout
 ///
-/// `target_zensim` currently only supports `PixelLayout::Rgb8`
-/// inputs. Setting it on a config and then submitting any other
-/// layout (RGBA / BGRA / BGR / ARGB / L8 / LA8 / YUV420) returns
+/// `target_zensim` supports `PixelLayout::Rgb8` and
+/// `PixelLayout::Rgba8`. RGBA inputs are encoded as alpha-bearing
+/// WebP and measured against the source via zensim's
+/// deterministic-noise compositing — the same composite is applied to
+/// source and reconstruction, so alpha quality is fully defined.
+/// Other layouts (BGR, BGRA, ARGB, L8, LA8, YUV420) with
+/// `target_zensim` set return
 /// [`EncodeError::TargetZensimUnsupportedLayout`](super::api::EncodeError::TargetZensimUnsupportedLayout).
-/// The iteration's decode-and-measure step needs RGB pixels and we
-/// refuse to silently strip alpha. RGBA support is tracked as a
-/// follow-up; for alpha-preserving target_zensim today, run iteration
-/// on an RGB projection and re-encode RGBA at the converged quality
-/// outside the loop.
 ///
 /// # Tolerance bands
 ///
@@ -597,16 +596,27 @@ pub(crate) mod iteration {
     pub(crate) fn run(
         cfg: &LossyConfig,
         target: ZensimTarget,
-        rgb: &[u8],
+        pixels: &[u8],
+        layout: PixelLayout,
         width: u32,
         height: u32,
     ) -> IterationResult {
+        // Layout gate: Rgb8 / Rgba8 only. The public API gate
+        // (`EncodeRequest::try_encode_target_zensim_with_metrics`) already
+        // enforces this; the redundant check here keeps the iteration
+        // entry honest if an internal caller ever skips that gate.
+        match layout {
+            PixelLayout::Rgb8 | PixelLayout::Rgba8 => {}
+            other => {
+                return Err(EncodeError::TargetZensimUnsupportedLayout(other));
+            }
+        }
         // 1. Detect bucket from a quick classifier pass on the source.
         // Skipped entirely when the naive-starting-q ablation is on.
         let bucket = if ablate_naive_starting_q() {
             None
         } else {
-            detect_bucket(rgb, width, height)
+            detect_bucket(pixels, layout, width, height)
         };
 
         // 2. Resolve the starting q.
@@ -631,7 +641,8 @@ pub(crate) mod iteration {
         // also captures the encoder's per-MB segment_map via the internal
         // `EncodeDiagnostics` struct so Phase 3 can aggregate the diffmap
         // per real k-means segment instead of a 2x2 spatial proxy.
-        let (bytes0, diag0) = encode_at_with_diagnostics(cfg, q, false, None, rgb, width, height)?;
+        let (bytes0, diag0) =
+            encode_at_with_diagnostics(cfg, q, false, None, pixels, layout, width, height)?;
         let max_passes = target.max_passes.max(1);
 
         if trace_phase3() {
@@ -659,14 +670,17 @@ pub(crate) mod iteration {
         }
 
         // 4. Measure pass 0 with per-pixel diffmap (used by Phase 3 if
-        // segments are active).
+        // segments are active). The reference and the decoded probe
+        // both go through the same layout-aware path so the pair is
+        // measured consistently (RGB→RGB, RGBA→RGBA with deterministic
+        // noise compositing).
         let z = zensim::Zensim::new(zensim::ZensimProfile::latest());
-        let pre = build_source_reference(&z, rgb, width, height).ok_or_else(|| {
+        let pre = build_source_reference(&z, pixels, layout, width, height).ok_or_else(|| {
             EncodeError::InvalidBufferSize(
                 "zensim precompute_reference failed (image too small?)".into(),
             )
         })?;
-        let (score0, dm0) = measure_score_and_diffmap(&z, &pre, &bytes0, width, height)?;
+        let (score0, dm0) = measure_score_and_diffmap(&z, &pre, &bytes0, layout, width, height)?;
 
         if trace_phase3() {
             eprintln!(
@@ -837,9 +851,18 @@ pub(crate) mod iteration {
             // user's LossyConfig value when
             // [`AblationToggles::no_multi_pass_stats`] is set.
             let mps = !ablate_no_multi_pass_stats();
-            let (bytes_n, diag_n) =
-                encode_at_with_diagnostics(cfg, next_q, mps, next_overrides, rgb, width, height)?;
-            let (score_n, dm_n) = measure_score_and_diffmap(&z, &pre, &bytes_n, width, height)?;
+            let (bytes_n, diag_n) = encode_at_with_diagnostics(
+                cfg,
+                next_q,
+                mps,
+                next_overrides,
+                pixels,
+                layout,
+                width,
+                height,
+            )?;
+            let (score_n, dm_n) =
+                measure_score_and_diffmap(&z, &pre, &bytes_n, layout, width, height)?;
             let passes_used = pass + 1;
 
             if trace_phase3() {
@@ -1022,21 +1045,27 @@ pub(crate) mod iteration {
         ))
     }
 
-    /// Encode RGB pixels at the given quality with optional per-segment
-    /// quant-index overrides, returning the WebP bytes alongside the
-    /// encoder's per-MB `segment_map` (via the internal
+    /// Encode RGB or RGBA pixels at the given quality with optional
+    /// per-segment quant-index overrides, returning the WebP bytes
+    /// alongside the encoder's per-MB `segment_map` (via the internal
     /// [`EncodeDiagnostics`] companion struct). On-wire bytes are
     /// byte-identical to the regular [`crate::EncodeRequest::encode`]
     /// path for the same inputs.
     ///
     /// `enable_multi_pass` toggles `multi_pass_stats` on the probe — a
     /// small size-saving option that amortizes across passes.
+    ///
+    /// `layout` is propagated through to the encoder; for `Rgba8` the
+    /// resulting WebP is alpha-bearing (VP8 + VP8L alpha), and the
+    /// closed loop's measurement decodes back to the same layout to
+    /// keep the comparison consistent.
     fn encode_at_with_diagnostics(
         cfg: &LossyConfig,
         q: f32,
         enable_multi_pass: bool,
         seg_overrides: Option<[i8; 4]>,
-        rgb: &[u8],
+        pixels: &[u8],
+        layout: PixelLayout,
         width: u32,
         height: u32,
     ) -> Result<(Vec<u8>, EncodeDiagnostics), EncodeError> {
@@ -1050,40 +1079,72 @@ pub(crate) mod iteration {
         probe_cfg.target_zensim = None;
         probe_cfg.segment_quant_overrides = seg_overrides;
 
-        let req = crate::encoder::api::EncodeRequest::lossy(
-            &probe_cfg,
-            rgb,
-            PixelLayout::Rgb8,
-            width,
-            height,
-        );
+        let req =
+            crate::encoder::api::EncodeRequest::lossy(&probe_cfg, pixels, layout, width, height);
         match req.encode_inner_with_diagnostics() {
             Ok((bytes, _stats, diag)) => Ok((bytes, diag)),
             Err(at_err) => Err(at_err.decompose().0),
         }
     }
 
-    /// Build a precomputed zensim reference from RGB bytes.
+    /// Build a precomputed zensim reference from interleaved RGB or
+    /// RGBA bytes. RGBA goes through `zensim::RgbaSlice` which composites
+    /// over a deterministic noise background internally — the same
+    /// composite is applied to source and to the decoded probe so the
+    /// pair is comparable.
     fn build_source_reference(
         z: &zensim::Zensim,
-        rgb: &[u8],
+        pixels: &[u8],
+        layout: PixelLayout,
         width: u32,
         height: u32,
     ) -> Option<zensim::PrecomputedReference> {
         let w = width as usize;
         let h = height as usize;
-        if rgb.len() < w * h * 3 {
-            return None;
+        match layout {
+            PixelLayout::Rgb8 => {
+                if pixels.len() < w * h * 3 {
+                    return None;
+                }
+                let chunks: &[[u8; 3]] = bytemuck::cast_slice(&pixels[..w * h * 3]);
+                let slice = zensim::RgbSlice::new(chunks, w, h);
+                z.precompute_reference(&slice).ok()
+            }
+            PixelLayout::Rgba8 => {
+                if pixels.len() < w * h * 4 {
+                    return None;
+                }
+                let chunks: &[[u8; 4]] = bytemuck::cast_slice(&pixels[..w * h * 4]);
+                let slice = zensim::RgbaSlice::new(chunks, w, h);
+                z.precompute_reference(&slice).ok()
+            }
+            // Unreachable: the gate in iteration::run rejects everything else.
+            _ => None,
         }
-        let pixels: &[[u8; 3]] = bytemuck::cast_slice(&rgb[..w * h * 3]);
-        let slice = zensim::RgbSlice::new(pixels, w, h);
-        z.precompute_reference(&slice).ok()
     }
 
-    /// Decode `webp` and compute zensim score + per-pixel diffmap. The
+    /// Decode `webp` and compute zensim score + per-pixel diffmap.
+    /// The decode is layout-aware (RGB→`decode_rgb`, RGBA→`decode_rgba`)
+    /// so the distorted side is fed into zensim with the same
+    /// composite-vs-RGB shape as the precomputed reference. The
     /// diffmap is `Vec<f32>` of length `width * height` in row-major
     /// order — used by Phase 3 per-segment aggregation.
     fn measure_score_and_diffmap(
+        z: &zensim::Zensim,
+        pre: &zensim::PrecomputedReference,
+        webp: &[u8],
+        layout: PixelLayout,
+        width: u32,
+        height: u32,
+    ) -> Result<(f32, Vec<f32>), EncodeError> {
+        match layout {
+            PixelLayout::Rgb8 => measure_rgb(z, pre, webp, width, height),
+            PixelLayout::Rgba8 => measure_rgba(z, pre, webp, width, height),
+            other => Err(EncodeError::TargetZensimUnsupportedLayout(other)),
+        }
+    }
+
+    fn measure_rgb(
         z: &zensim::Zensim,
         pre: &zensim::PrecomputedReference,
         webp: &[u8],
@@ -1110,6 +1171,45 @@ pub(crate) mod iteration {
         }
         let chunks: &[[u8; 3]] = bytemuck::cast_slice(&rgb[..n]);
         let slice = zensim::RgbSlice::new(chunks, w as usize, h as usize);
+        let dm = z
+            .compute_with_ref_and_diffmap(pre, &slice, zensim::DiffmapWeighting::Trained)
+            .map_err(|e| {
+                EncodeError::InvalidBufferSize(format!(
+                    "zensim compute_with_ref_and_diffmap failed: {:?}",
+                    e
+                ))
+            })?;
+        let score = dm.score() as f32;
+        Ok((score, dm.diffmap().to_vec()))
+    }
+
+    fn measure_rgba(
+        z: &zensim::Zensim,
+        pre: &zensim::PrecomputedReference,
+        webp: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<(f32, Vec<f32>), EncodeError> {
+        let (rgba, w, h) = crate::oneshot::decode_rgba(webp).map_err(|e| {
+            EncodeError::InvalidBufferSize(format!(
+                "target_zensim: rgba decode for measurement failed: {:?}",
+                e.decompose().0,
+            ))
+        })?;
+        if w != width || h != height {
+            return Err(EncodeError::InvalidBufferSize(format!(
+                "target_zensim: decoded dims {}x{} != source {}x{}",
+                w, h, width, height,
+            )));
+        }
+        let n = (w as usize) * (h as usize) * 4;
+        if rgba.len() < n {
+            return Err(EncodeError::InvalidBufferSize(
+                "target_zensim: short decoded rgba buffer".into(),
+            ));
+        }
+        let chunks: &[[u8; 4]] = bytemuck::cast_slice(&rgba[..n]);
+        let slice = zensim::RgbaSlice::new(chunks, w as usize, h as usize);
         let dm = z
             .compute_with_ref_and_diffmap(pre, &slice, zensim::DiffmapWeighting::Trained)
             .map_err(|e| {
@@ -1416,28 +1516,54 @@ pub(crate) mod iteration {
         out
     }
 
-    /// Run the bucket classifier on the RGB source. We need a Y plane —
-    /// derive a quick luma approximation from RGB rather than running the
-    /// full encoder analyzer (which would re-encode an extra time).
-    fn detect_bucket(rgb: &[u8], width: u32, height: u32) -> Option<ImageContentType> {
+    /// Run the bucket classifier on the RGB or RGBA source. We need a
+    /// Y plane — derive a quick luma approximation from RGB rather than
+    /// running the full encoder analyzer (which would re-encode an
+    /// extra time). For RGBA inputs the alpha channel is fed into the
+    /// classifier's alpha histogram (its primary signal for the Icon
+    /// bucket); for RGB the histogram falls back to Y values
+    /// themselves — the classifier primarily uses bimodality + edge
+    /// density + uniformity, all of which are tolerant of histogram
+    /// shape.
+    fn detect_bucket(
+        pixels: &[u8],
+        layout: PixelLayout,
+        width: u32,
+        height: u32,
+    ) -> Option<ImageContentType> {
         let w = width as usize;
         let h = height as usize;
-        if w < 8 || h < 8 || rgb.len() < w * h * 3 {
+        let bpp = match layout {
+            PixelLayout::Rgb8 => 3usize,
+            PixelLayout::Rgba8 => 4usize,
+            _ => return None,
+        };
+        if w < 8 || h < 8 || pixels.len() < w * h * bpp {
             return None;
         }
         // BT.601 Y = 0.299R + 0.587G + 0.114B.
         let mut y_plane: Vec<u8> = Vec::with_capacity(w * h);
         let mut alpha_hist = [0u32; 256];
-        // Use the high-byte of (Y-difference between neighbors) as a stand-in
-        // for the encoder's alpha histogram. We don't have a real alpha plane
-        // here so populate it with Y values themselves — the classifier
-        // primarily uses bimodality + edge density + uniformity, all of
-        // which are tolerant of histogram shape.
-        for px in rgb.chunks_exact(3) {
-            let y = ((u32::from(px[0]) * 76 + u32::from(px[1]) * 150 + u32::from(px[2]) * 30) >> 8)
-                as u8;
-            y_plane.push(y);
-            alpha_hist[y as usize] += 1;
+        match layout {
+            PixelLayout::Rgb8 => {
+                for px in pixels.chunks_exact(3).take(w * h) {
+                    let y =
+                        ((u32::from(px[0]) * 76 + u32::from(px[1]) * 150 + u32::from(px[2]) * 30)
+                            >> 8) as u8;
+                    y_plane.push(y);
+                    alpha_hist[y as usize] += 1;
+                }
+            }
+            PixelLayout::Rgba8 => {
+                for px in pixels.chunks_exact(4).take(w * h) {
+                    let y =
+                        ((u32::from(px[0]) * 76 + u32::from(px[1]) * 150 + u32::from(px[2]) * 30)
+                            >> 8) as u8;
+                    y_plane.push(y);
+                    alpha_hist[px[3] as usize] += 1;
+                }
+            }
+            _ => return None,
         }
         let bucket = crate::encoder::analysis::classify_image_type(&y_plane, w, h, w, &alpha_hist);
         Some(bucket)

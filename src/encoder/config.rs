@@ -210,17 +210,14 @@ impl LossyConfig {
     /// actually run; without it, the encoder ships the calibrated
     /// starting-q estimate as a single pass.
     ///
-    /// **Pixel layout: RGB8-only.** The closed-loop iteration only
-    /// supports `PixelLayout::Rgb8` inputs — encoding RGBA / BGRA /
-    /// BGR / ARGB / L8 / LA8 / YUV420 with `target_zensim` set returns
-    /// [`EncodeError::TargetZensimUnsupportedLayout`](super::api::EncodeError::TargetZensimUnsupportedLayout)
-    /// from the encoder. The iteration's decode-and-measure step
-    /// requires RGB pixels, and we deliberately refuse to silently
-    /// strip alpha to make iteration fire. RGBA support is tracked as
-    /// a follow-up; until then, callers who need alpha-preserving
-    /// `target_zensim` should iterate on an RGB projection of the
-    /// image and re-encode RGBA at the converged quality outside the
-    /// loop.
+    /// **Supported pixel layouts:** `PixelLayout::Rgb8` and
+    /// `PixelLayout::Rgba8`. RGBA inputs are encoded as alpha-bearing
+    /// WebP and measured against the source via zensim's
+    /// deterministic-noise compositing — the same composite is applied
+    /// to source and reconstruction, so alpha quality is well-defined.
+    /// Other layouts (BGR, BGRA, ARGB, L8, LA8, YUV420) with
+    /// `target_zensim` set return
+    /// [`EncodeError::TargetZensimUnsupportedLayout`](super::api::EncodeError::TargetZensimUnsupportedLayout).
     #[must_use]
     pub fn with_target_zensim<T: Into<super::zensim_target::ZensimTarget>>(
         mut self,
@@ -393,21 +390,27 @@ impl LossyConfig {
         .peak_memory_bytes_max
     }
 
-    /// Crate-internal: encode an interleaved RGB8 buffer
-    /// (`width * height * 3` bytes) and return both the WebP bytes and
-    /// any [`ZensimEncodeMetrics`] from a `target_zensim` iteration.
-    /// For non-target-zensim configs the metrics struct is filled with
-    /// the
+    /// Crate-internal: encode an interleaved RGB8 or RGBA8 buffer
+    /// (`width * height * bpp` bytes, where `bpp` is 3 for RGB8 and
+    /// 4 for RGBA8) and return both the WebP bytes and any
+    /// [`ZensimEncodeMetrics`] from a `target_zensim` iteration. For
+    /// non-target-zensim configs the metrics struct is filled with the
     /// [`ZensimEncodeMetrics::no_target`](super::zensim_target::ZensimEncodeMetrics::no_target)
     /// variant — `targets_met=true`, `passes_used=1`, score `NaN`.
+    ///
+    /// `layout` must be either [`PixelLayout::Rgb8`] or
+    /// [`PixelLayout::Rgba8`]; the gate in
+    /// [`EncodeRequest::try_encode_target_zensim_with_metrics`] guards
+    /// other layouts before they reach this entry.
     ///
     /// This is the iteration loop's internal entry. Public callers
     /// reach the same machinery via
     /// [`EncodeRequest::encode_with_metrics`](super::api::EncodeRequest::encode_with_metrics)
     /// or [`EncodeRequest::encode`](super::api::EncodeRequest::encode).
-    pub(crate) fn encode_rgb_with_metrics(
+    pub(crate) fn encode_pixels_with_metrics(
         &self,
-        rgb: &[u8],
+        pixels: &[u8],
+        layout: super::api::PixelLayout,
         width: u32,
         height: u32,
     ) -> Result<
@@ -417,7 +420,7 @@ impl LossyConfig {
         ),
         super::api::EncodeError,
     > {
-        encode_rgb_with_metrics_impl(self, rgb, width, height)
+        encode_pixels_with_metrics_impl(self, pixels, layout, width, height)
     }
 }
 
@@ -972,9 +975,10 @@ impl EncoderConfig {
 // ============================================================================
 
 #[cfg(feature = "target-zensim")]
-fn encode_rgb_with_metrics_impl(
+fn encode_pixels_with_metrics_impl(
     cfg: &LossyConfig,
-    rgb: &[u8],
+    pixels: &[u8],
+    layout: super::api::PixelLayout,
     width: u32,
     height: u32,
 ) -> Result<
@@ -985,16 +989,17 @@ fn encode_rgb_with_metrics_impl(
     super::api::EncodeError,
 > {
     if let Some(t) = cfg.target_zensim {
-        return super::zensim_target::iteration::run(cfg, t, rgb, width, height);
+        return super::zensim_target::iteration::run(cfg, t, pixels, layout, width, height);
     }
     // No target_zensim → straight single-pass encode.
-    encode_rgb_single_pass(cfg, rgb, width, height)
+    encode_single_pass(cfg, pixels, layout, width, height)
 }
 
 #[cfg(not(feature = "target-zensim"))]
-fn encode_rgb_with_metrics_impl(
+fn encode_pixels_with_metrics_impl(
     cfg: &LossyConfig,
-    rgb: &[u8],
+    pixels: &[u8],
+    layout: super::api::PixelLayout,
     width: u32,
     height: u32,
 ) -> Result<
@@ -1015,16 +1020,17 @@ fn encode_rgb_with_metrics_impl(
             super::analysis::ImageContentType::Photo,
         )
         .clamp(0.0, 100.0);
-        return encode_rgb_single_pass(&probe, rgb, width, height);
+        return encode_single_pass(&probe, pixels, layout, width, height);
     }
-    encode_rgb_single_pass(cfg, rgb, width, height)
+    encode_single_pass(cfg, pixels, layout, width, height)
 }
 
-/// Single-pass RGB8 encode, no metrics. Plumb through `EncodeRequest`
-/// to reuse the existing entry point.
-fn encode_rgb_single_pass(
+/// Single-pass encode (Rgb8 or Rgba8), no metrics. Plumb through
+/// `EncodeRequest` to reuse the existing entry point.
+fn encode_single_pass(
     cfg: &LossyConfig,
-    rgb: &[u8],
+    pixels: &[u8],
+    layout: super::api::PixelLayout,
     width: u32,
     height: u32,
 ) -> Result<
@@ -1034,8 +1040,7 @@ fn encode_rgb_single_pass(
     ),
     super::api::EncodeError,
 > {
-    let req =
-        super::api::EncodeRequest::lossy(cfg, rgb, super::api::PixelLayout::Rgb8, width, height);
+    let req = super::api::EncodeRequest::lossy(cfg, pixels, layout, width, height);
     match req.encode() {
         Ok(bytes) => {
             let len = bytes.len();
