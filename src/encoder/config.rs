@@ -209,6 +209,18 @@ impl LossyConfig {
     /// Requires the `target-zensim` crate feature for the iteration to
     /// actually run; without it, the encoder ships the calibrated
     /// starting-q estimate as a single pass.
+    ///
+    /// **Pixel layout: RGB8-only.** The closed-loop iteration only
+    /// supports `PixelLayout::Rgb8` inputs — encoding RGBA / BGRA /
+    /// BGR / ARGB / L8 / LA8 / YUV420 with `target_zensim` set returns
+    /// [`EncodeError::TargetZensimUnsupportedLayout`](super::api::EncodeError::TargetZensimUnsupportedLayout)
+    /// from the encoder. The iteration's decode-and-measure step
+    /// requires RGB pixels, and we deliberately refuse to silently
+    /// strip alpha to make iteration fire. RGBA support is tracked as
+    /// a follow-up; until then, callers who need alpha-preserving
+    /// `target_zensim` should iterate on an RGB projection of the
+    /// image and re-encode RGBA at the converged quality outside the
+    /// loop.
     #[must_use]
     pub fn with_target_zensim<T: Into<super::zensim_target::ZensimTarget>>(
         mut self,

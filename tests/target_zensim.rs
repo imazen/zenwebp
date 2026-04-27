@@ -8,7 +8,9 @@
 
 #![cfg(feature = "target-zensim")]
 
-use zenwebp::{EncodeRequest, LossyConfig, PixelLayout, ZensimEncodeMetrics, ZensimTarget};
+use zenwebp::{
+    EncodeError, EncodeRequest, LossyConfig, PixelLayout, ZensimEncodeMetrics, ZensimTarget,
+};
 
 /// Build a 256×256 RGB8 mixed-content image: smooth gradient + low-
 /// amplitude band-limited "natural" texture. Designed to give the
@@ -295,4 +297,73 @@ fn metrics_no_target_helper_exists() {
     assert!(m.bytes > 0);
     assert!(m.targets_met);
     let _: ZensimEncodeMetrics = m;
+}
+
+/// `target_zensim` currently requires `PixelLayout::Rgb8`. Setting it
+/// on the config and then submitting a non-RGB8 input must return the
+/// typed [`EncodeError::TargetZensimUnsupportedLayout`] error rather
+/// than silently dropping alpha (or otherwise mutating the input) to
+/// make iteration fire. RGBA support is tracked as a follow-up.
+#[test]
+fn target_zensim_rejects_rgba_input_with_typed_error() {
+    let w: u32 = 32;
+    let h: u32 = 32;
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let r = ((x * 255) / w) as u8;
+            let g = ((y * 255) / h) as u8;
+            rgba.extend_from_slice(&[r, g, 100, 200]);
+        }
+    }
+    let cfg = LossyConfig::new()
+        .with_method(4)
+        .with_target_zensim(ZensimTarget::new(80.0));
+    let result = EncodeRequest::lossy(&cfg, &rgba, PixelLayout::Rgba8, w, h).encode_with_metrics();
+    let at = result.expect_err("expected error for RGBA + target_zensim");
+    let inner: EncodeError = at.into();
+    match inner {
+        EncodeError::TargetZensimUnsupportedLayout(layout) => {
+            assert_eq!(layout, PixelLayout::Rgba8);
+        }
+        other => panic!("expected TargetZensimUnsupportedLayout, got {other:?}"),
+    }
+}
+
+/// Same gate, also verified via the bytes-only entry point. Confirms
+/// the error fires through `EncodeRequest::encode()` (not just
+/// `encode_with_metrics`).
+#[test]
+fn target_zensim_rejects_bgr_input_via_encode_bytes() {
+    let w: u32 = 16;
+    let h: u32 = 16;
+    let bgr = vec![64u8; (w * h * 3) as usize];
+    let cfg = LossyConfig::new()
+        .with_method(4)
+        .with_target_zensim(ZensimTarget::new(80.0));
+    let result = EncodeRequest::lossy(&cfg, &bgr, PixelLayout::Bgr8, w, h).encode();
+    let at = result.expect_err("expected error for BGR + target_zensim");
+    let inner: EncodeError = at.into();
+    match inner {
+        EncodeError::TargetZensimUnsupportedLayout(layout) => {
+            assert_eq!(layout, PixelLayout::Bgr8);
+        }
+        other => panic!("expected TargetZensimUnsupportedLayout, got {other:?}"),
+    }
+}
+
+/// Without `target_zensim` set, non-RGB8 inputs continue to work
+/// normally — the new gate must only fire when the user actually
+/// asked for closed-loop iteration. This guards against a regression
+/// where the gate accidentally rejects every non-RGB8 encode.
+#[test]
+fn non_rgb8_works_when_target_zensim_unset() {
+    let w: u32 = 16;
+    let h: u32 = 16;
+    let rgba = vec![128u8; (w * h * 4) as usize];
+    let cfg = LossyConfig::new().with_method(4);
+    let bytes = EncodeRequest::lossy(&cfg, &rgba, PixelLayout::Rgba8, w, h)
+        .encode()
+        .expect("RGBA encode without target_zensim should succeed");
+    assert!(!bytes.is_empty());
 }

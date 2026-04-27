@@ -43,6 +43,18 @@ use super::analysis::ImageContentType;
 /// best-effort behavior tuned to land in band on pass 1 for typical
 /// photo content and never iterate more than once.
 ///
+/// # Pixel layout: RGB8-only
+///
+/// `target_zensim` currently only supports `PixelLayout::Rgb8`
+/// inputs. Setting it on a config and then submitting any other
+/// layout (RGBA / BGRA / BGR / ARGB / L8 / LA8 / YUV420) returns
+/// [`EncodeError::TargetZensimUnsupportedLayout`](super::api::EncodeError::TargetZensimUnsupportedLayout).
+/// The iteration's decode-and-measure step needs RGB pixels and we
+/// refuse to silently strip alpha. RGBA support is tracked as a
+/// follow-up; for alpha-preserving target_zensim today, run iteration
+/// on an RGB projection and re-encode RGBA at the converged quality
+/// outside the loop.
+///
 /// # Tolerance bands
 ///
 /// The encoder uses an asymmetric tolerance band built from three

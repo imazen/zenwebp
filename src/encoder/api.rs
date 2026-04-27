@@ -70,6 +70,25 @@ pub enum EncodeError {
     #[cfg(feature = "zencodec")]
     #[error(transparent)]
     UnsupportedOperation(#[from] zencodec::UnsupportedOperation),
+
+    /// `target_zensim` was set on the lossy config, but the input
+    /// pixel layout is not supported by the iteration loop.
+    ///
+    /// The closed-loop `target-zensim` encoder currently only supports
+    /// `PixelLayout::Rgb8` inputs — the iteration's decode-and-measure
+    /// step requires RGB pixels, and we deliberately refuse to silently
+    /// strip alpha or otherwise mutate the caller's input.
+    ///
+    /// To fix: convert the input to `PixelLayout::Rgb8` before calling
+    /// the encoder, or remove `target_zensim` from the config and use
+    /// the standard single-pass path. Tracked for follow-up RGBA
+    /// support (composite over a known background or use an
+    /// alpha-aware quality metric).
+    #[error(
+        "target_zensim does not yet support pixel layout {0:?}; convert to PixelLayout::Rgb8 \
+         first or remove target_zensim from the config"
+    )]
+    TargetZensimUnsupportedLayout(PixelLayout),
 }
 
 /// Result type alias using `At<EncodeError>` for automatic location tracking.
@@ -1425,10 +1444,18 @@ impl<'a> EncodeRequest<'a> {
     /// `target-zensim` crate feature is enabled (with RGB8 input), the
     /// encoder runs a closed-loop iteration and reports the achieved
     /// zensim score, passes used, and `targets_met` flag in the
-    /// returned metrics. In every other case (no target, feature
-    /// disabled, lossless, non-RGB8 layout), the metrics are filled
-    /// via [`ZensimEncodeMetrics::no_target`] — score `NaN`,
+    /// returned metrics. In every other case where iteration does not
+    /// run (no target, feature disabled, lossless), the metrics are
+    /// filled via [`ZensimEncodeMetrics::no_target`] — score `NaN`,
     /// `passes_used=1`, `targets_met=true`.
+    ///
+    /// Pixel layout: `target_zensim` currently requires
+    /// [`PixelLayout::Rgb8`]. If `target_zensim` is set on the lossy
+    /// config but a different layout (RGBA, BGR, BGRA, ARGB, L8, LA8,
+    /// YUV420) is supplied, this method returns
+    /// [`EncodeError::TargetZensimUnsupportedLayout`]. RGBA support is
+    /// a tracked follow-up; until then convert to RGB or drop
+    /// `target_zensim` from the config.
     ///
     /// Mirrors the shape of zenjpeg's
     /// `BytesEncoder::finish_with_metrics()`.
@@ -1450,8 +1477,11 @@ impl<'a> EncodeRequest<'a> {
     /// If this request targets a lossy config with `target_zensim`
     /// set, RGB8 input, no stride override, and the `target-zensim`
     /// feature is on, run the iteration loop and return the converged
-    /// bytes. Otherwise returns `Ok(None)` so the caller can fall
-    /// back to the normal single-pass path.
+    /// bytes. Returns
+    /// [`EncodeError::TargetZensimUnsupportedLayout`] when
+    /// `target_zensim` is set but the input layout is not `Rgb8`.
+    /// Otherwise returns `Ok(None)` so the caller can fall back to
+    /// the normal single-pass path.
     fn try_encode_target_zensim_bytes(&self) -> EncodeResult<Option<Vec<u8>>> {
         match self.try_encode_target_zensim_with_metrics()? {
             Some((bytes, _m)) => Ok(Some(bytes)),
@@ -1460,22 +1490,36 @@ impl<'a> EncodeRequest<'a> {
     }
 
     /// Same as [`Self::try_encode_target_zensim_bytes`] but also
-    /// returns the metrics. The iteration loop accepts RGB8 / RGBA8 /
-    /// BGR8 / BGRA8 inputs (alpha and BGR channels are stripped /
-    /// reordered to a transient RGB buffer used for iteration probes;
-    /// the final on-wire bytes are still RGB-only). No stride override,
-    /// lossy config; the metadata fields (icc/exif/xmp) are not
+    /// returns the metrics.
+    ///
+    /// `target_zensim` currently only supports `PixelLayout::Rgb8`
+    /// inputs. The iteration loop encodes, decodes, and measures the
+    /// resulting bytes against the source — that decode-and-measure
+    /// step needs RGB pixels, and we refuse to silently strip alpha
+    /// (or otherwise mutate the caller's input) just to make iteration
+    /// fire. Non-RGB8 inputs with `target_zensim` set return
+    /// [`EncodeError::TargetZensimUnsupportedLayout`]. RGBA support is
+    /// tracked as a follow-up; until then, callers who need
+    /// alpha-preserving target_zensim encoding should iterate on an
+    /// RGB projection and re-encode RGBA at the converged quality
+    /// outside the loop, or drop `target_zensim` and pick a fixed
+    /// quality.
+    ///
+    /// No stride override; the metadata fields (icc/exif/xmp) are not
     /// currently honored on the iteration path — if any are set we
     /// fall back to a single-pass encode and return `None` so the
-    /// caller can take the normal path. (TODO: thread metadata and
-    /// preserve alpha through iteration once a user needs it.)
+    /// caller can take the normal path. (TODO: thread metadata
+    /// through iteration once a user needs it.)
     #[allow(clippy::unnecessary_wraps)] // signature aligns with feature-on counterpart
     fn try_encode_target_zensim_with_metrics(
         &self,
     ) -> EncodeResult<Option<(Vec<u8>, super::zensim_target::ZensimEncodeMetrics)>> {
-        // Only lossy configs with target_zensim set and no stride/
-        // metadata trigger the iteration path. Everything else
-        // returns None so the caller falls back to encode_inner.
+        // Only RGB8 lossy configs with target_zensim set and no
+        // metadata/stride trigger the iteration path. Non-RGB8 with
+        // target_zensim set returns a typed error (no silent fallback
+        // to single-pass — that would hide the unhonored target).
+        // Everything else returns Ok(None) so the caller falls back to
+        // encode_inner.
         let lossy = match &self.config {
             ConfigKind::Lossy(cfg) => *cfg,
             ConfigKind::Lossless(_) => return Ok(None),
@@ -1484,6 +1528,11 @@ impl<'a> EncodeRequest<'a> {
         };
         if lossy.target_zensim.is_none() {
             return Ok(None);
+        }
+        if self.color_type != PixelLayout::Rgb8 {
+            return Err(at!(EncodeError::TargetZensimUnsupportedLayout(
+                self.color_type
+            )));
         }
         if self.stride_pixels.is_some() {
             return Ok(None);
@@ -1494,71 +1543,8 @@ impl<'a> EncodeRequest<'a> {
             // through. Take the safe path.
             return Ok(None);
         }
-        // Convert input to a transient RGB buffer for the iteration
-        // probes. The iteration loop's encoder calls always use
-        // PixelLayout::Rgb8 internally (see
-        // `encode_at_with_diagnostics`), so the resulting on-wire
-        // bytes are RGB-only — alpha is dropped. RGBA / BGRA / BGR
-        // inputs are accepted to make the iteration loop fire on
-        // those formats, but callers who need alpha preserved should
-        // run the iteration on an RGB projection and then re-encode
-        // RGBA at the converged quality outside the loop.
-        let rgb_owned: alloc::vec::Vec<u8>;
-        let rgb_slice: &[u8] = match self.color_type {
-            PixelLayout::Rgb8 => self.pixels,
-            PixelLayout::Rgba8 => {
-                let n = (self.width as usize) * (self.height as usize);
-                if self.pixels.len() < n * 4 {
-                    return Ok(None);
-                }
-                rgb_owned = self
-                    .pixels
-                    .chunks_exact(4)
-                    .flat_map(|p| [p[0], p[1], p[2]])
-                    .collect();
-                &rgb_owned[..]
-            }
-            PixelLayout::Bgr8 => {
-                let n = (self.width as usize) * (self.height as usize);
-                if self.pixels.len() < n * 3 {
-                    return Ok(None);
-                }
-                rgb_owned = self
-                    .pixels
-                    .chunks_exact(3)
-                    .flat_map(|p| [p[2], p[1], p[0]])
-                    .collect();
-                &rgb_owned[..]
-            }
-            PixelLayout::Bgra8 => {
-                let n = (self.width as usize) * (self.height as usize);
-                if self.pixels.len() < n * 4 {
-                    return Ok(None);
-                }
-                rgb_owned = self
-                    .pixels
-                    .chunks_exact(4)
-                    .flat_map(|p| [p[2], p[1], p[0]])
-                    .collect();
-                &rgb_owned[..]
-            }
-            PixelLayout::Argb8 => {
-                let n = (self.width as usize) * (self.height as usize);
-                if self.pixels.len() < n * 4 {
-                    return Ok(None);
-                }
-                rgb_owned = self
-                    .pixels
-                    .chunks_exact(4)
-                    .flat_map(|p| [p[1], p[2], p[3]])
-                    .collect();
-                &rgb_owned[..]
-            }
-            // Other layouts (L8, LA8, YUV420) — fall back to single-pass.
-            _ => return Ok(None),
-        };
         let pair = lossy
-            .encode_rgb_with_metrics(rgb_slice, self.width, self.height)
+            .encode_rgb_with_metrics(self.pixels, self.width, self.height)
             .map_err(|e| at!(e))?;
         Ok(Some(pair))
     }
