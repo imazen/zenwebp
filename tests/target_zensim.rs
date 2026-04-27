@@ -30,9 +30,8 @@ fn mixed_content_256() -> (Vec<u8>, u32, u32) {
             let base_b = 90.0 + 80.0 * (1.0 - fx);
             // Low-amplitude band-limited "texture" — sin waves at modest
             // frequencies. Stays well within VP8's coding capability.
-            let tex = 18.0
-                * ((fx * 9.0).sin() * (fy * 7.0).cos()
-                    + 0.6 * (fx * 17.0 + fy * 11.0).sin());
+            let tex =
+                18.0 * ((fx * 9.0).sin() * (fy * 7.0).cos() + 0.6 * (fx * 17.0 + fy * 11.0).sin());
             let r = (base_r + tex).clamp(0.0, 255.0) as u8;
             let g = (base_g + tex * 0.7).clamp(0.0, 255.0) as u8;
             let b = (base_b - tex * 0.5).clamp(0.0, 255.0) as u8;
@@ -62,16 +61,18 @@ fn smooth_gradient_256() -> (Vec<u8>, u32, u32) {
 #[test]
 fn converges_to_target_80_within_two_passes() {
     let (rgb, w, h) = mixed_content_256();
-    let cfg = LossyConfig::new()
-        .with_method(4)
-        .with_target_zensim(80.0);
+    let cfg = LossyConfig::new().with_method(4).with_target_zensim(80.0);
 
     let (bytes, metrics) = cfg
         .encode_rgb_with_metrics(&rgb, w, h)
         .expect("encode failed");
 
     assert!(!bytes.is_empty(), "encoder produced no bytes");
-    assert!(metrics.passes_used <= 2, "used {} passes (>2)", metrics.passes_used);
+    assert!(
+        metrics.passes_used <= 2,
+        "used {} passes (>2)",
+        metrics.passes_used
+    );
     // Generous band — calibration is approximate. The tighter band
     // [78.5, 81.5] is the spec target but is sensitive to encoder/zensim
     // version drift. We test the looser band that catches gross bugs.
@@ -133,26 +134,22 @@ fn bytes_recovery_drops_size_when_overshooting() {
     // Smooth gradient at target=70: calibrated start at q≈65 likely
     // overshoots into the 80s. Pass 2 should claw back bytes.
     let (rgb, w, h) = smooth_gradient_256();
-    let cfg_low_target = LossyConfig::new()
-        .with_method(4)
-        .with_target_zensim_target(
-            ZensimTarget::new(70.0)
-                .with_max_overshoot(Some(0.5))
-                .with_max_passes(2),
-        );
+    let cfg_low_target = LossyConfig::new().with_method(4).with_target_zensim_target(
+        ZensimTarget::new(70.0)
+            .with_max_overshoot(Some(0.5))
+            .with_max_passes(2),
+    );
     let (bytes_two_pass, metrics) = cfg_low_target
         .encode_rgb_with_metrics(&rgb, w, h)
         .expect("encode failed");
 
     // For comparison: single-pass (max_passes=1) just ships the
     // calibrated start, no claw-back.
-    let cfg_one_pass = LossyConfig::new()
-        .with_method(4)
-        .with_target_zensim_target(
-            ZensimTarget::new(70.0)
-                .with_max_overshoot(Some(0.5))
-                .with_max_passes(1),
-        );
+    let cfg_one_pass = LossyConfig::new().with_method(4).with_target_zensim_target(
+        ZensimTarget::new(70.0)
+            .with_max_overshoot(Some(0.5))
+            .with_max_passes(1),
+    );
     let (bytes_one_pass, _m1) = cfg_one_pass
         .encode_rgb_with_metrics(&rgb, w, h)
         .expect("encode failed");
@@ -193,6 +190,95 @@ fn zensim_target_default_constructor() {
     let t2 = ZensimTarget::new(85.0);
     assert_eq!(t2.target, 85.0);
     assert_eq!(t2.max_passes, 2);
+}
+
+/// Build a synthetic "color_blocks"-style image with 4 sharp-edged flat
+/// regions of distinct colors. This exercises Phase 3 — per-segment
+/// quantization gives the encoder a tool the global-q step doesn't
+/// have, so the per-segment correction path should converge within the
+/// pass budget on content like this.
+fn color_blocks_256() -> (Vec<u8>, u32, u32) {
+    let w: u32 = 256;
+    let h: u32 = 256;
+    let mut buf = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let q = (y < h / 2, x < w / 2);
+            let (r, g, b) = match q {
+                (true, true) => (220, 50, 50),    // top-left red
+                (true, false) => (60, 200, 80),   // top-right green
+                (false, true) => (50, 80, 220),   // bottom-left blue
+                (false, false) => (200, 200, 60), // bottom-right yellow
+            };
+            buf.extend_from_slice(&[r, g, b]);
+        }
+    }
+    (buf, w, h)
+}
+
+#[test]
+fn per_segment_correction_converges_on_color_blocks() {
+    // Phase 3: color_blocks content (4 flat regions) has segment-able
+    // structure. The default 4-segment config should converge within
+    // the pass budget. We don't assert "fewer bytes than global-q"
+    // because per-segment correction trades off bytes for spatial
+    // accuracy — it's a correctness test, not a parsimony test.
+    let (rgb, w, h) = color_blocks_256();
+    let cfg = LossyConfig::new()
+        .with_method(4)
+        .with_segments(4)
+        .with_target_zensim_target(
+            ZensimTarget::new(82.0)
+                .with_max_overshoot(Some(2.0))
+                .with_max_passes(3),
+        );
+    let (bytes, metrics) = cfg
+        .encode_rgb_with_metrics(&rgb, w, h)
+        .expect("encode failed");
+    assert!(!bytes.is_empty());
+    assert!(metrics.passes_used <= 3);
+    assert!(
+        metrics.achieved_score.is_finite(),
+        "score non-finite: {}",
+        metrics.achieved_score
+    );
+    // Generous band.
+    assert!(
+        metrics.achieved_score >= 75.0,
+        "achieved {} < 75 for target 82 on color_blocks (passes={})",
+        metrics.achieved_score,
+        metrics.passes_used
+    );
+    eprintln!(
+        "color_blocks per-segment: target=82 achieved={:.2} passes={} bytes={}",
+        metrics.achieved_score,
+        metrics.passes_used,
+        bytes.len()
+    );
+}
+
+#[test]
+fn per_segment_disabled_when_one_segment() {
+    // num_segments=1 disables Phase 3 → global-q step takes over.
+    // Convergence should still work; just via a different path.
+    let (rgb, w, h) = color_blocks_256();
+    let cfg = LossyConfig::new()
+        .with_method(4)
+        .with_segments(1)
+        .with_target_zensim_target(
+            ZensimTarget::new(82.0)
+                .with_max_overshoot(Some(2.0))
+                .with_max_passes(3),
+        );
+    let (bytes, metrics) = cfg
+        .encode_rgb_with_metrics(&rgb, w, h)
+        .expect("encode failed");
+    assert!(!bytes.is_empty());
+    assert!(
+        metrics.achieved_score >= 75.0,
+        "achieved {} < 75 for target 82 with segments=1",
+        metrics.achieved_score
+    );
 }
 
 #[test]

@@ -580,6 +580,13 @@ pub struct EncoderParams {
     /// `target_size` / `target_zensim` search loops, or under
     /// `CostModel::StrictLibwebpParity`. Default `false`.
     pub(crate) multi_pass_stats: bool,
+    /// Per-segment additive offsets to the post-modulation quant_index
+    /// (applied AFTER `compute_segment_quant`'s SNS modulation). Crate-
+    /// internal hook for the `target_zensim` per-segment correction
+    /// pass. `None` (default) leaves segments untouched. Each delta is
+    /// applied per-segment via `(seg_quant_index as i32 + delta).clamp(0,
+    /// 127)` before `init_matrices`.
+    pub(crate) segment_quant_overrides: Option<[i8; 4]>,
 }
 
 impl Default for EncoderParams {
@@ -603,6 +610,7 @@ impl Default for EncoderParams {
             smooth_segment_map: false,
             cost_model: CostModel::ZenwebpDefault,
             multi_pass_stats: false,
+            segment_quant_overrides: None,
         }
     }
 }
@@ -653,6 +661,16 @@ pub struct EncodeStats {
     pub segment_quant: [u8; 4],
     /// Per-segment loop filter level.
     pub segment_level: [u8; 4],
+    /// Per-MB segment IDs (row-major, length = mb_w * mb_h). Empty when
+    /// segments are disabled (num_segments == 1) or for lossless
+    /// encodes. Surfaced for closed-loop callers (`target_zensim` per-
+    /// segment correction).
+    pub segment_map: alloc::vec::Vec<u8>,
+    /// Number of macroblock columns (width in MBs). Useful alongside
+    /// [`segment_map`](Self::segment_map) for spatial aggregation.
+    pub mb_width: u16,
+    /// Number of macroblock rows (height in MBs).
+    pub mb_height: u16,
     /// Size of alpha plane data in bytes.
     pub alpha_data_size: u32,
 
@@ -1011,6 +1029,7 @@ impl EncoderConfig {
             smooth_segment_map: self.smooth_segment_map,
             cost_model: self.cost_model,
             multi_pass_stats: self.multi_pass_stats,
+            segment_quant_overrides: None,
         }
     }
 

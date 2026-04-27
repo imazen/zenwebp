@@ -110,6 +110,11 @@ name = "debug_zensim"
 path = "dev/debug_zensim.rs"
 
 [[example]]
+name = "zensim_calibrate"
+path = "dev/zensim_calibrate.rs"
+required-features = ["target-zensim"]
+
+[[example]]
 name = "empirical_sweep"
 path = "dev/empirical_sweep.rs"
 

@@ -26,7 +26,9 @@
 //! The per-bucket anchors below come from `dev/zensim_calibrate.rs`. To
 //! re-fit (e.g. after touching the encoder's RD path or upgrading zensim):
 //!
-//!     cargo run --release --features target-zensim --example zensim_calibrate -- <corpus>
+//! ```text
+//! cargo run --release --features target-zensim --example zensim_calibrate -- <corpus>
+//! ```
 //!
 //! The tool emits a TSV plus a Rust-formatted const block. Replace the
 //! `PHOTO`, `DRAWING`, `ICON` arrays below with the harness output. Anchors
@@ -172,37 +174,40 @@ impl ZensimEncodeMetrics {
 ///
 /// # Anchor table source
 ///
-/// Initial values were hand-distilled from a CID22 sweep at q ∈ {30, 50,
-/// 70, 80, 85, 90, 95}. They were then refit by `dev/zensim_calibrate.rs`
-/// against a 20-image subset of CID22 validation; the fit results are
-/// pasted in below. To re-fit, see this module's top-level comment.
+/// PHOTO and DRAWING are fitted by `dev/zensim_calibrate.rs` against
+/// 20 images of CID22 validation (median smallest-q-meeting-target per
+/// content bucket). ICON is hand-distilled and conservative — re-fit
+/// when an icon corpus is added (the CID22 subset has no ≤128px
+/// images). To re-fit, see this module's top-level comment.
+///
+/// Fit data (CID22 validation, 20 images, 2026-04-26):
+///   Photo   n=12, p25/p75 spread ≤ 7q across all 7 anchors.
+///   Drawing n=8,  p25/p75 spread ≤ 5q across all 7 anchors.
 #[must_use]
 pub(crate) fn zensim_to_starting_q_for_bucket(target: f32, bucket: ImageContentType) -> f32 {
-    // Photo bucket: natural photographs. Calibrated against CID22
-    // validation images that classify as Photo. Streaming CSF is most
-    // forgiving here — q ≈ target in the photo range.
+    // Photo bucket: natural photographs from CID22.
     const PHOTO: &[(f32, f32)] = &[
-        (60.0, 50.0),
-        (70.0, 65.0),
-        (75.0, 72.0),
-        (80.0, 80.0),
-        (85.0, 88.0),
-        (90.0, 94.0),
-        (95.0, 98.0),
-    ];
-    // Drawing bucket: screenshots, line art, mixed UI. Sharper edges, less
-    // headroom — same target needs slightly higher q than photos.
-    const DRAWING: &[(f32, f32)] = &[
-        (60.0, 55.0),
-        (70.0, 70.0),
-        (75.0, 78.0),
-        (80.0, 84.0),
+        (60.0, 30.0),
+        (70.0, 60.0),
+        (75.0, 75.0),
+        (80.0, 85.0),
         (85.0, 90.0),
-        (90.0, 96.0),
+        (90.0, 98.0),
+        (95.0, 100.0),
+    ];
+    // Drawing bucket: low-uniformity / complex texture content from
+    // CID22 (the classifier puts mixed photo+UI here).
+    const DRAWING: &[(f32, f32)] = &[
+        (60.0, 30.0),
+        (70.0, 60.0),
+        (75.0, 72.5),
+        (80.0, 85.0),
+        (85.0, 90.0),
+        (90.0, 100.0),
         (95.0, 100.0),
     ];
     // Icon bucket: ≤128px. Tiny images — every coefficient counts. Push
-    // q higher to preserve detail.
+    // q higher to preserve detail. Hand-distilled (no fit corpus yet).
     const ICON: &[(f32, f32)] = &[
         (60.0, 65.0),
         (70.0, 78.0),
@@ -251,9 +256,9 @@ fn interpolate_anchors(target: f32, anchors: &[(f32, f32)]) -> f32 {
 #[cfg(feature = "target-zensim")]
 pub(crate) mod iteration {
     use super::*;
+    use crate::PixelLayout;
     use crate::encoder::api::EncodeError;
     use crate::encoder::config::LossyConfig;
-    use crate::PixelLayout;
     use alloc::format;
     use alloc::vec::Vec;
 
@@ -271,8 +276,10 @@ pub(crate) mod iteration {
     /// gap rounds to ~0).
     const MIN_DELTA_Q: f32 = 0.5;
 
-    /// Run the global-q closed loop. Returns either the final bytes +
-    /// metrics or a strict-mode `EncodeError`.
+    /// Run the closed loop. Pass 0 is global-q at the calibrated start;
+    /// pass 1+ uses per-segment diffmap-driven correction when segments
+    /// are active (Phase 3), falling back to a global-q secant step when
+    /// segments are disabled (`num_segments == 1`) or unavailable.
     pub(crate) fn run(
         cfg: &LossyConfig,
         target: ZensimTarget,
@@ -290,8 +297,8 @@ pub(crate) mod iteration {
         };
         q = q.clamp(0.0, 100.0);
 
-        // 3. Encode pass 0.
-        let bytes0 = encode_at(cfg, q, false, rgb, width, height)?;
+        // 3. Encode pass 0 (global-q, no per-segment overrides).
+        let (bytes0, stats0) = encode_at(cfg, q, false, None, rgb, width, height)?;
         let max_passes = target.max_passes.max(1);
 
         if max_passes <= 1 {
@@ -306,21 +313,21 @@ pub(crate) mod iteration {
             ));
         }
 
-        // 4. Measure pass 0.
+        // 4. Measure pass 0 with per-pixel diffmap (used by Phase 3 if
+        // segments are active).
         let z = zensim::Zensim::new(zensim::ZensimProfile::latest());
-        let pre = build_source_reference(&z, rgb, width, height)
-            .ok_or_else(|| EncodeError::InvalidBufferSize(
+        let pre = build_source_reference(&z, rgb, width, height).ok_or_else(|| {
+            EncodeError::InvalidBufferSize(
                 "zensim precompute_reference failed (image too small?)".into(),
-            ))?;
-        let score0 = match measure_score(&z, &pre, &bytes0, width, height) {
-            Ok(s) => s,
-            Err(e) => return Err(e),
-        };
+            )
+        })?;
+        let (score0, dm0) = measure_score_and_diffmap(&z, &pre, &bytes0, width, height)?;
 
         let mut best = Candidate {
             bytes: bytes0,
             score: score0,
             q,
+            seg_overrides: None,
         };
 
         // Already in band? Ship pass 0.
@@ -328,33 +335,84 @@ pub(crate) mod iteration {
             return finalize(best, 1, &target);
         }
 
+        // Per-segment correction setup. Available iff segments are
+        // active AND the encoder produced a segment_map.
+        let seg_map = stats0.segment_map.clone();
+        let mb_w = stats0.mb_width as usize;
+        let mb_h = stats0.mb_height as usize;
+        // Number of distinct segment IDs in the map. After
+        // simplify_segments() this may be fewer than 4.
+        let num_segments = seg_map
+            .iter()
+            .copied()
+            .max()
+            .map(|m| (m as usize) + 1)
+            .unwrap_or(1);
+        let per_segment_enabled =
+            num_segments > 1 && seg_map.len() == mb_w * mb_h && !seg_map.is_empty();
+
         // prev_probe holds the SECOND-most-recent (q, score) so the
         // secant fits a slope between it and the current (q, last_score).
         let mut prev_probe: Option<(f32, f32)> = None;
         let mut last_q = q;
         let mut last_score = score0;
+        let mut last_dm = dm0;
+        // Cumulative per-segment overrides (applied across passes).
+        let mut cum_overrides: [i8; 4] = [0; 4];
 
         // 5. Iterate.
         for pass in 1..max_passes {
-            let next_q = compute_next_q(last_q, last_score, prev_probe, &target);
-            let q_clamped = next_q.clamp(0.0, 100.0);
-            // If clamping made it equal-ish to the previous q, bail (we'd
-            // just probe the same point).
-            if (q_clamped - last_q).abs() < 0.05 {
+            // Decide whether this pass uses per-segment correction or
+            // a global-q step. Per-segment is preferred when active.
+            let use_per_segment = per_segment_enabled;
+
+            let (next_q, next_overrides) = if use_per_segment {
+                // Phase 3: aggregate diffmap → per-segment mean → tighten
+                // the worst segment / loosen the best when in claw-back.
+                let new_overrides = next_segment_overrides(
+                    cum_overrides,
+                    &seg_map,
+                    mb_w,
+                    mb_h,
+                    &last_dm,
+                    width,
+                    height,
+                    last_score,
+                    &target,
+                    num_segments,
+                );
+                // Keep q the same when doing per-segment correction.
+                (last_q, Some(new_overrides))
+            } else {
+                let nq = compute_next_q(last_q, last_score, prev_probe, &target);
+                (nq.clamp(0.0, 100.0), None)
+            };
+
+            // If neither q changed nor overrides moved, bail.
+            let q_moved = (next_q - last_q).abs() >= 0.05;
+            let overrides_moved = match next_overrides {
+                Some(o) => o != cum_overrides,
+                None => false,
+            };
+            if !q_moved && !overrides_moved {
                 break;
             }
 
             // multi_pass_stats=true on probe encodes — small size win
             // amortizes across passes.
-            let bytes_n = encode_at(cfg, q_clamped, true, rgb, width, height)?;
-            let score_n = measure_score(&z, &pre, &bytes_n, width, height)?;
+            let (bytes_n, stats_n) =
+                encode_at(cfg, next_q, true, next_overrides, rgb, width, height)?;
+            let (score_n, dm_n) = measure_score_and_diffmap(&z, &pre, &bytes_n, width, height)?;
             let passes_used = pass + 1;
 
-            // Track the best candidate that is "feasible" (>= target) by
-            // smallest bytes; otherwise the highest-score one.
             best = pick_best(
                 best,
-                Candidate { bytes: bytes_n, score: score_n, q: q_clamped },
+                Candidate {
+                    bytes: bytes_n,
+                    score: score_n,
+                    q: next_q,
+                    seg_overrides: next_overrides,
+                },
                 &target,
             );
 
@@ -362,9 +420,15 @@ pub(crate) mod iteration {
                 return finalize(best, passes_used, &target);
             }
 
+            // Update state for next iteration.
+            if let Some(ov) = next_overrides {
+                cum_overrides = ov;
+            }
             prev_probe = Some((last_q, last_score));
-            last_q = q_clamped;
+            last_q = next_q;
             last_score = score_n;
+            last_dm = dm_n;
+            let _ = stats_n; // segment_map is stable across passes by design.
         }
 
         finalize(best, max_passes, &target)
@@ -374,6 +438,7 @@ pub(crate) mod iteration {
         bytes: Vec<u8>,
         score: f32,
         q: f32,
+        seg_overrides: Option<[i8; 4]>,
     }
 
     fn pick_best(prev: Candidate, cand: Candidate, target: &ZensimTarget) -> Candidate {
@@ -385,7 +450,11 @@ pub(crate) mod iteration {
             (true, true) => {
                 // Both meet target → pick the one with fewer bytes (best
                 // bytes-recovery outcome).
-                if cand.bytes.len() < prev.bytes.len() { cand } else { prev }
+                if cand.bytes.len() < prev.bytes.len() {
+                    cand
+                } else {
+                    prev
+                }
             }
             (false, false) => {
                 // Neither meets target → pick the higher score.
@@ -448,28 +517,21 @@ pub(crate) mod iteration {
         step
     }
 
-    fn finalize(
-        best: Candidate,
-        passes_used: u8,
-        target: &ZensimTarget,
-    ) -> IterationResult {
+    fn finalize(best: Candidate, passes_used: u8, target: &ZensimTarget) -> IterationResult {
         // Strict-mode failure check: if max_undershoot is set and we
         // missed by more than that, return an error.
-        if let Some(slack) = target.max_undershoot {
-            if best.score < target.target - slack {
-                return Err(EncodeError::InvalidBufferSize(format!(
-                    "target_zensim: achieved {:.3} below floor {:.3} (max_undershoot {:.3}) after {} passes",
-                    best.score,
-                    target.target,
-                    slack,
-                    passes_used,
-                )));
-            }
+        if let Some(slack) = target.max_undershoot
+            && best.score < target.target - slack
+        {
+            return Err(EncodeError::InvalidBufferSize(format!(
+                "target_zensim: achieved {:.3} below floor {:.3} (max_undershoot {:.3}) after {} passes",
+                best.score, target.target, slack, passes_used,
+            )));
         }
         let targets_met = best.score >= target.target
-            || target.max_undershoot.map_or(true, |t| {
-                (target.target - best.score) <= t
-            });
+            || target
+                .max_undershoot
+                .is_none_or(|t| (target.target - best.score) <= t);
         let bytes_len = best.bytes.len();
         Ok((
             best.bytes,
@@ -482,16 +544,20 @@ pub(crate) mod iteration {
         ))
     }
 
-    /// Encode RGB pixels at the given quality. `enable_multi_pass` toggles
+    /// Encode RGB pixels at the given quality with optional per-segment
+    /// quant-index overrides. `enable_multi_pass` toggles
     /// `multi_pass_stats` for inside-the-loop probes (small size win).
+    /// Returns bytes plus the encoder's `EncodeStats` (carrying the
+    /// segment_map needed for Phase 3 aggregation).
     fn encode_at(
         cfg: &LossyConfig,
         q: f32,
         enable_multi_pass: bool,
+        seg_overrides: Option<[i8; 4]>,
         rgb: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<Vec<u8>, EncodeError> {
+    ) -> Result<(Vec<u8>, crate::encoder::api::EncodeStats), EncodeError> {
         let mut probe_cfg = cfg.clone();
         probe_cfg.quality = q.clamp(0.0, 100.0);
         // Force multi_pass_stats on/off as requested (always enabled for
@@ -503,12 +569,17 @@ pub(crate) mod iteration {
         probe_cfg.target_size = 0;
         probe_cfg.target_psnr = 0.0;
         probe_cfg.target_zensim = None;
+        probe_cfg.segment_quant_overrides = seg_overrides;
 
         let req = crate::encoder::api::EncodeRequest::lossy(
-            &probe_cfg, rgb, PixelLayout::Rgb8, width, height,
+            &probe_cfg,
+            rgb,
+            PixelLayout::Rgb8,
+            width,
+            height,
         );
-        match req.encode() {
-            Ok(bytes) => Ok(bytes),
+        match req.encode_with_stats() {
+            Ok((bytes, stats)) => Ok((bytes, stats)),
             Err(at_err) => Err(at_err.decompose().0),
         }
     }
@@ -530,19 +601,22 @@ pub(crate) mod iteration {
         z.precompute_reference(&slice).ok()
     }
 
-    /// Decode `webp` bytes back to RGB and compute the zensim score.
-    fn measure_score(
+    /// Decode `webp` and compute zensim score + per-pixel diffmap. The
+    /// diffmap is `Vec<f32>` of length `width * height` in row-major
+    /// order — used by Phase 3 per-segment aggregation.
+    fn measure_score_and_diffmap(
         z: &zensim::Zensim,
         pre: &zensim::PrecomputedReference,
         webp: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<f32, EncodeError> {
-        let (rgb, w, h) = crate::oneshot::decode_rgb(webp)
-            .map_err(|e| EncodeError::InvalidBufferSize(format!(
+    ) -> Result<(f32, Vec<f32>), EncodeError> {
+        let (rgb, w, h) = crate::oneshot::decode_rgb(webp).map_err(|e| {
+            EncodeError::InvalidBufferSize(format!(
                 "target_zensim: decode for measurement failed: {:?}",
                 e.decompose().0,
-            )))?;
+            ))
+        })?;
         if w != width || h != height {
             return Err(EncodeError::InvalidBufferSize(format!(
                 "target_zensim: decoded dims {}x{} != source {}x{}",
@@ -557,10 +631,129 @@ pub(crate) mod iteration {
         }
         let chunks: &[[u8; 3]] = bytemuck::cast_slice(&rgb[..n]);
         let slice = zensim::RgbSlice::new(chunks, w as usize, h as usize);
-        let res = z.compute_with_ref(pre, &slice).map_err(|e| {
-            EncodeError::InvalidBufferSize(format!("zensim compute_with_ref failed: {:?}", e))
-        })?;
-        Ok(res.score() as f32)
+        let dm = z
+            .compute_with_ref_and_diffmap(pre, &slice, zensim::DiffmapWeighting::Trained)
+            .map_err(|e| {
+                EncodeError::InvalidBufferSize(format!(
+                    "zensim compute_with_ref_and_diffmap failed: {:?}",
+                    e
+                ))
+            })?;
+        let score = dm.score() as f32;
+        Ok((score, dm.diffmap().to_vec()))
+    }
+
+    /// Aggregate the per-pixel diffmap into per-segment means, then
+    /// compute the next per-segment quant_index override. The policy:
+    ///
+    /// - If overall score < target: tighten the segment with the highest
+    ///   mean diffmap (reduce its quant by 1–3 depending on gap).
+    /// - If achieved > target + max_overshoot: loosen the segment with
+    ///   the lowest mean diffmap.
+    ///
+    /// Returns the NEW cumulative overrides (not deltas). Bounded so
+    /// `seg_quant + override` stays in `[-32, 32]` cumulatively (the
+    /// `compute_segment_quant` clamp handles the absolute [0, 127]
+    /// range; the soft cap here prevents oscillation).
+    #[allow(clippy::too_many_arguments)]
+    fn next_segment_overrides(
+        cum: [i8; 4],
+        seg_map: &[u8],
+        mb_w: usize,
+        mb_h: usize,
+        diffmap: &[f32],
+        width: u32,
+        height: u32,
+        score: f32,
+        target: &ZensimTarget,
+        num_segments: usize,
+    ) -> [i8; 4] {
+        let mut sum = [0.0f64; 4];
+        let mut count = [0u32; 4];
+        let w = width as usize;
+        let h = height as usize;
+        // For each MB (16x16 region), accumulate the mean diffmap for
+        // that MB into its segment's running totals.
+        for my in 0..mb_h {
+            for mx in 0..mb_w {
+                let seg = seg_map.get(my * mb_w + mx).copied().unwrap_or(0) as usize;
+                if seg >= 4 {
+                    continue;
+                }
+                let y0 = my * 16;
+                let x0 = mx * 16;
+                let y1 = (y0 + 16).min(h);
+                let x1 = (x0 + 16).min(w);
+                if y1 == y0 || x1 == x0 {
+                    continue;
+                }
+                let mut s = 0.0f64;
+                let mut n = 0u32;
+                for y in y0..y1 {
+                    let row = &diffmap[y * w..y * w + w];
+                    for &v in &row[x0..x1] {
+                        s += v as f64;
+                        n += 1;
+                    }
+                }
+                if n > 0 {
+                    sum[seg] += s / n as f64;
+                    count[seg] += 1;
+                }
+            }
+        }
+        let mut means = [0.0f32; 4];
+        for s in 0..num_segments.min(4) {
+            if count[s] > 0 {
+                means[s] = (sum[s] / count[s] as f64) as f32;
+            }
+        }
+        // Find worst (highest mean) and best (lowest mean) active
+        // segments.
+        let mut worst = 0usize;
+        let mut best = 0usize;
+        for s in 0..num_segments.min(4) {
+            if count[s] == 0 {
+                continue;
+            }
+            if means[s] > means[worst] || count[worst] == 0 {
+                worst = s;
+            }
+            if means[s] < means[best] || count[best] == 0 {
+                best = s;
+            }
+        }
+
+        let mut out = cum;
+        let gap = target.target - score;
+        if gap > 0.0 {
+            // Score below target — tighten worst segment.
+            // Step magnitude scaled to gap: small gap → -1, larger → up to -3.
+            let step = if gap > 4.0 {
+                -3
+            } else if gap > 2.0 {
+                -2
+            } else {
+                -1
+            };
+            // Soft cap accumulated tightening at -16 to leave room for
+            // future passes and stay within sensible quant range.
+            out[worst] = (i32::from(out[worst]) + step).clamp(-16, 16) as i8;
+        } else if let Some(t) = target.max_overshoot
+            && (score - target.target) > t
+        {
+            // Above the comfort band — loosen the best segment.
+            let overshoot = score - target.target - t;
+            let step = if overshoot > 4.0 {
+                3
+            } else if overshoot > 2.0 {
+                2
+            } else {
+                1
+            };
+            out[best] = (i32::from(out[best]) + step).clamp(-16, 16) as i8;
+        }
+        out
     }
 
     /// Run the bucket classifier on the RGB source. We need a Y plane —
@@ -581,14 +774,12 @@ pub(crate) mod iteration {
         // primarily uses bimodality + edge density + uniformity, all of
         // which are tolerant of histogram shape.
         for px in rgb.chunks_exact(3) {
-            let y = ((u32::from(px[0]) * 76 + u32::from(px[1]) * 150 + u32::from(px[2]) * 30)
-                >> 8) as u8;
+            let y = ((u32::from(px[0]) * 76 + u32::from(px[1]) * 150 + u32::from(px[2]) * 30) >> 8)
+                as u8;
             y_plane.push(y);
             alpha_hist[y as usize] += 1;
         }
-        let bucket = crate::encoder::analysis::classify_image_type(
-            &y_plane, w, h, w, &alpha_hist,
-        );
+        let bucket = crate::encoder::analysis::classify_image_type(&y_plane, w, h, w, &alpha_hist);
         Some(bucket)
     }
 }
@@ -637,7 +828,10 @@ mod tests {
             let mut prev = 0.0f32;
             for t in (60..=95).step_by(5) {
                 let q = zensim_to_starting_q_for_bucket(t as f32, b);
-                assert!(q >= prev, "non-monotonic at {b:?} target {t}: {prev} -> {q}");
+                assert!(
+                    q >= prev,
+                    "non-monotonic at {b:?} target {t}: {prev} -> {q}"
+                );
                 assert!((1.0..=100.0).contains(&q), "{b:?} target {t} q={q}");
                 prev = q;
             }
@@ -648,9 +842,9 @@ mod tests {
     fn calibration_clamps_at_endpoints() {
         // Below the lowest anchor: clamp to lowest q.
         let q_low = zensim_to_starting_q_for_bucket(40.0, ImageContentType::Photo);
-        assert_eq!(q_low, 50.0);
+        assert_eq!(q_low, 30.0);
         // Above the highest anchor: clamp to highest q.
         let q_high = zensim_to_starting_q_for_bucket(99.0, ImageContentType::Photo);
-        assert_eq!(q_high, 98.0);
+        assert_eq!(q_high, 100.0);
     }
 }

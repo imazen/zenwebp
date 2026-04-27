@@ -101,6 +101,12 @@ pub struct LossyConfig {
     pub multi_pass_stats: bool,
     /// Resource limits for validation.
     pub limits: Limits,
+    /// Crate-internal: per-segment additive quant_index offsets applied
+    /// AFTER SNS modulation. Used by the `target_zensim` per-segment
+    /// correction pass. `None` (default) leaves segments untouched, so
+    /// public-API encodes never trigger this path.
+    #[doc(hidden)]
+    pub(crate) segment_quant_overrides: Option<[i8; 4]>,
 }
 
 impl Default for LossyConfig {
@@ -133,6 +139,7 @@ impl LossyConfig {
             cost_model: super::api::CostModel::ZenwebpDefault,
             multi_pass_stats: false,
             limits: Limits::none(),
+            segment_quant_overrides: None,
         }
     }
 
@@ -199,10 +206,7 @@ impl LossyConfig {
     /// Set the full [`ZensimTarget`](super::zensim_target::ZensimTarget)
     /// (target value plus tolerances and pass budget).
     #[must_use]
-    pub fn with_target_zensim_target(
-        mut self,
-        target: super::zensim_target::ZensimTarget,
-    ) -> Self {
+    pub fn with_target_zensim_target(mut self, target: super::zensim_target::ZensimTarget) -> Self {
         self.target_zensim = Some(target);
         self
     }
@@ -381,8 +385,13 @@ impl LossyConfig {
         rgb: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<(alloc::vec::Vec<u8>, super::zensim_target::ZensimEncodeMetrics), super::api::EncodeError>
-    {
+    ) -> Result<
+        (
+            alloc::vec::Vec<u8>,
+            super::zensim_target::ZensimEncodeMetrics,
+        ),
+        super::api::EncodeError,
+    > {
         encode_rgb_with_metrics_impl(self, rgb, width, height)
     }
 
@@ -881,6 +890,7 @@ impl LossyConfig {
             smooth_segment_map: self.smooth_segment_map,
             cost_model: self.cost_model,
             multi_pass_stats: self.multi_pass_stats,
+            segment_quant_overrides: self.segment_quant_overrides,
         }
     }
 }
@@ -906,6 +916,7 @@ impl LosslessConfig {
             smooth_segment_map: false, // Not applicable to lossless
             cost_model: super::api::CostModel::ZenwebpDefault,
             multi_pass_stats: false, // Not applicable to lossless
+            segment_quant_overrides: None,
         }
     }
 }
@@ -954,7 +965,10 @@ fn encode_rgb_with_metrics_impl(
     width: u32,
     height: u32,
 ) -> Result<
-    (alloc::vec::Vec<u8>, super::zensim_target::ZensimEncodeMetrics),
+    (
+        alloc::vec::Vec<u8>,
+        super::zensim_target::ZensimEncodeMetrics,
+    ),
     super::api::EncodeError,
 > {
     if let Some(t) = cfg.target_zensim {
@@ -971,7 +985,10 @@ fn encode_rgb_with_metrics_impl(
     width: u32,
     height: u32,
 ) -> Result<
-    (alloc::vec::Vec<u8>, super::zensim_target::ZensimEncodeMetrics),
+    (
+        alloc::vec::Vec<u8>,
+        super::zensim_target::ZensimEncodeMetrics,
+    ),
     super::api::EncodeError,
 > {
     // Feature disabled — if target_zensim was set, fall back to a single
@@ -998,12 +1015,14 @@ fn encode_rgb_single_pass(
     width: u32,
     height: u32,
 ) -> Result<
-    (alloc::vec::Vec<u8>, super::zensim_target::ZensimEncodeMetrics),
+    (
+        alloc::vec::Vec<u8>,
+        super::zensim_target::ZensimEncodeMetrics,
+    ),
     super::api::EncodeError,
 > {
-    let req = super::api::EncodeRequest::lossy(
-        cfg, rgb, super::api::PixelLayout::Rgb8, width, height,
-    );
+    let req =
+        super::api::EncodeRequest::lossy(cfg, rgb, super::api::PixelLayout::Rgb8, width, height);
     match req.encode() {
         Ok(bytes) => {
             let len = bytes.len();

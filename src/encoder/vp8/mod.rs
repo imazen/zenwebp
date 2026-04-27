@@ -489,6 +489,11 @@ struct Vp8Encoder<'a> {
     /// Run a stat-collection pre-pass (m4 only — m5/m6 already saturate).
     /// Default `false`. Set via `LossyConfig::with_multi_pass_stats(true)`.
     multi_pass_stats: bool,
+    /// Per-segment additive quant_index offsets applied AFTER
+    /// `compute_segment_quant`'s SNS modulation. `None` (default) leaves
+    /// segments untouched. Crate-internal hook for `target_zensim`'s
+    /// per-segment correction pass.
+    segment_quant_overrides: Option<[i8; 4]>,
     /// Loop filter strength (0-100)
     filter_strength: u8,
     /// Loop filter sharpness (0-7)
@@ -598,6 +603,7 @@ impl<'a> Vp8Encoder<'a> {
             smooth_segment_map: false,
             cost_model: super::api::CostModel::ZenwebpDefault,
             multi_pass_stats: false,
+            segment_quant_overrides: None,
             filter_strength: 60,
             filter_sharpness: 0,
             num_segments: 4,
@@ -928,6 +934,7 @@ impl<'a> Vp8Encoder<'a> {
         self.smooth_segment_map = params.smooth_segment_map;
         self.cost_model = params.cost_model;
         self.multi_pass_stats = params.multi_pass_stats;
+        self.segment_quant_overrides = params.segment_quant_overrides;
         self.filter_strength = params.filter_strength.min(100);
         self.filter_sharpness = params.filter_sharpness.min(7);
         self.num_segments = params.num_segments.clamp(1, 4);
@@ -1500,6 +1507,9 @@ impl<'a> Vp8Encoder<'a> {
             block_count_i4: final_block_count_i4,
             block_count_i16: final_block_count_i16,
             block_count_skip: final_skip_mb,
+            segment_map: self.segment_map.clone(),
+            mb_width: self.macroblock_width,
+            mb_height: self.macroblock_height,
             ..Default::default()
         };
 
@@ -1728,7 +1738,16 @@ impl<'a> Vp8Encoder<'a> {
             let center = center as i32;
             let transformed_alpha = (255 * (center - mid_alpha) / effective_range).clamp(-127, 127);
             let beta = (255 * (center - min_center) / effective_range).clamp(0, 255) as u8;
-            let seg_quant_index = compute_segment_quant(quality, transformed_alpha, sns_strength);
+            let mut seg_quant_index =
+                compute_segment_quant(quality, transformed_alpha, sns_strength);
+            // target_zensim per-segment correction: apply additive
+            // override (clamped) AFTER SNS modulation. `None` (default)
+            // leaves the value untouched, so non-target-zensim encodes
+            // are bit-identical to before.
+            if let Some(deltas) = self.segment_quant_overrides {
+                let delta = deltas.get(seg_idx).copied().unwrap_or(0) as i32;
+                seg_quant_index = (i32::from(seg_quant_index) + delta).clamp(0, 127) as u8;
+            }
             let seg_filter = super::cost::compute_filter_level_with_beta(
                 seg_quant_index,
                 self.filter_sharpness,
