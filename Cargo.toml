@@ -162,6 +162,10 @@ name = "cost_model_sweep"
 path = "dev/cost_model_sweep.rs"
 
 [[example]]
+name = "issue44_dump_scores"
+path = "dev/issue44_dump_scores.rs"
+
+[[example]]
 name = "hrtb_test"
 required-features = ["zencodec"]
 

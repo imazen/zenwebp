@@ -839,6 +839,23 @@ pub(crate) struct Segment {
     // Controls how much TDisto affects mode selection
     pub(crate) tlambda: u32,
 
+    /// Per-segment minimum-distortion threshold for the
+    /// `VP8AdjustFilterStrength` per-MB gate. Port of libwebp's
+    /// `dqm->min_disto` (`quant_enc.c:264`):
+    ///
+    /// ```c
+    /// m->min_disto = 20 * y1.q[0];     // quantization-skipped threshold
+    /// ```
+    ///
+    /// `y1.q[0]` is the first entry of the expanded Y1 quant matrix, which
+    /// in libwebp's `ExpandMatrix(MatrixType::Y1)` is the Y1 DC quantizer —
+    /// `Segment::ydc` in zenwebp. Used at the `store_max_delta` call site
+    /// (#44): only "blocky I16" MBs whose winning-mode distortion `D`
+    /// exceeds `min_disto` contribute to `max_edge_per_segment`. This
+    /// avoids over-bumping the loop filter on flat-region MBs whose Y2
+    /// AC just encodes faint cross-MB DC drift.
+    pub(crate) min_disto: u32,
+
     // Perceptual encoding config (CSF tables, psy-rd/trellis strengths)
     pub(crate) psy_config: PsyConfig,
 }
@@ -908,6 +925,12 @@ impl Segment {
             0
         };
         self.tlambda = (tlambda_scale * q_i4) >> 5;
+
+        // Per-MB distortion threshold for VP8AdjustFilterStrength's
+        // StoreMaxDelta gate (libwebp `quant_enc.c:264`):
+        //   m->min_disto = 20 * y1.q[0];
+        // `y1.q[0]` is the Y1 DC quantizer = `ydc` in zenwebp.
+        self.min_disto = 20u32 * (self.ydc as u32);
 
         // Initialize perceptual config
         self.psy_config = PsyConfig::new(method, self.quant_index, sns_strength, cost_model);

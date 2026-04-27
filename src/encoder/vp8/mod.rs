@@ -355,6 +355,15 @@ struct MacroblockInfo {
     segment_id: Option<usize>,
 
     coeffs_skipped: bool,
+
+    /// Winning-mode distortion `D` (source-vs-reconstruction SSE) for I16
+    /// macroblocks. `None` for I4 mode (LumaMode::B). Threaded from
+    /// `pick_best_intra16` / `pick_intra16_fast_dc` via
+    /// `choose_macroblock_info`. Consumed by the `store_max_delta` call
+    /// site to gate `max_edge_per_segment` updates on `D > segment.min_disto`,
+    /// matching libwebp's `quant_enc.c:1111` per-MB filter-strength gate
+    /// (issue #44).
+    intra16_d: Option<u32>,
 }
 
 pub(super) type ChromaCoeffs = [i32; 16 * 4];
@@ -830,16 +839,15 @@ impl<'a> Vp8Encoder<'a> {
     /// `dqm.fstrength`. We convert to absolute, bump, then recompute the
     /// delta against the (possibly raised) frame-level filter.
     ///
-    /// Note vs libwebp: we do not gate on `D > min_disto` (the per-MB
-    /// distortion check from `quant_enc.c:1111`). zenwebp's encoder does
-    /// not currently thread that distortion through to this path. Skipping
-    /// it is conservative — it lets a few extra blocky MBs contribute,
-    /// which can only bump the strength upward, matching libwebp's
-    /// "monotone-up" behavior. The proper fix (thread mode-selection D
-    /// through `MacroblockInfo` and gate `store_max_delta` on
-    /// `mb_D > segment.min_disto`) is tracked in #44 — without it,
-    /// `color_blocks`-style content with sharp color edges over-bumps the
-    /// filter and loses ~10–13 zensim points vs libwebp.
+    /// Per-MB `D > min_disto` gate: applied at the `store_max_delta` call
+    /// site (issue #44). `MacroblockInfo::intra16_d` carries the winning
+    /// I16 mode's raw source-vs-reconstruction SSE through from
+    /// `pick_best_intra16` / `pick_intra16_fast_dc`; only MBs whose `D`
+    /// exceeds `Segment::min_disto` (= `20 * y1.q[0]` per
+    /// `quant_enc.c:264`) contribute to `max_edge_per_segment`. This
+    /// matches libwebp's gate at `quant_enc.c:1111` and prevents
+    /// flat-region MBs (whose Y2 AC may encode faint cross-MB DC drift)
+    /// from over-bumping the filter on `color_blocks`-style content.
     ///
     /// When `max_edge_per_segment` is all-zero (no blocky-I16 MBs were
     /// observed), the body still runs and may raise `frame.filter_level`
@@ -1336,8 +1344,17 @@ impl<'a> Vp8Encoder<'a> {
                                 y_block_data.trellis_y1_zigzag.as_ref(),
                             );
                             // Track edge magnitude for I16 "blocky" MBs (#34).
+                            // Gate on `D > min_disto` per libwebp `quant_enc.c:1111`
+                            // (issue #44). `intra16_d` is the I16 winning-mode raw
+                            // SSE captured during mode selection; flat-region MBs
+                            // produce small D and are filtered out, preventing the
+                            // loop filter from over-bumping on synthetic
+                            // color-block content.
                             if !is_i4 && stored_coeffs.is_blocky_i16() {
-                                self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
+                                let d = macroblock_info.intra16_d.unwrap_or(0);
+                                if d > self.segments[mb_segment_id].min_disto {
+                                    self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
+                                }
                             }
                             if store_coeffs {
                                 self.stored_mb_coeffs.push(stored_coeffs);
@@ -1364,8 +1381,13 @@ impl<'a> Vp8Encoder<'a> {
                             );
                         } else {
                             // Track edge magnitude for I16 "blocky" MBs (#34).
+                            // See trellis branch above for the `D > min_disto`
+                            // rationale (issue #44).
                             if !is_i4 && stored_coeffs.is_blocky_i16() {
-                                self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
+                                let d = macroblock_info.intra16_d.unwrap_or(0);
+                                if d > self.segments[mb_segment_id].min_disto {
+                                    self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
+                                }
                             }
                             self.record_from_stored_coeffs(
                                 &macroblock_info,
@@ -1773,6 +1795,23 @@ impl<'a> Vp8Encoder<'a> {
         let base_quant_index_new = seg_quant_indices[0];
         let base_filter_new = seg_filters[0];
         self.quantization_indices.yac_abs = base_quant_index_new;
+
+        // Update the frame-level filter strength to match segment 0's
+        // SNS-modulated value. libwebp's `SetupFilterStrength` does this
+        // unconditionally (`quant_enc.c:293`):
+        //   `enc->filter_hdr.level = enc->dqm[0].fstrength;`
+        //
+        // Without this, `frame.filter_level` is left at the value
+        // `setup_encoding` computed from the *un-modulated* base quant
+        // index, which is much lower than segment 0's post-SNS quant.
+        // Per-segment `loopfilter_level` deltas are then computed against
+        // the wrong base, leaving every segment's absolute filter level
+        // ~10–12 below libwebp's. This was previously masked by #34's
+        // unfiltered `store_max_delta` bumping the strength back up, but
+        // once the proper `D > min_disto` gate (#44) prunes flat-region
+        // contributions, the under-filtering became visible as a 5–18
+        // zensim regression on smooth gradients at low quality.
+        self.frame.filter_level = base_filter_new;
 
         for seg_idx in 0..centers.len() {
             let seg_quant_index = seg_quant_indices[seg_idx];
