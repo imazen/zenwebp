@@ -51,7 +51,7 @@ rgb = "0.8"
 butteraugli = "0.9.0"
 codec-corpus = "1"
 dssim-core = "3.4"
-fast-ssim2 = "0.7.1"
+fast-ssim2 = { version = "0.7.1", features = ["imgref"] }
 imgref = "1.12"
 libwebp-sys = "0.14"
 webp = "0.3.1"
@@ -114,6 +114,21 @@ path = "dev/parity_baseline.rs"
 [[example]]
 name = "cost_model_sweep"
 path = "dev/cost_model_sweep.rs"
+
+[[example]]
+name = "issue50_repro"
+path = "dev/issue50_repro.rs"
+required-features = ["target-zensim"]
+
+[[example]]
+name = "issue50_diff_disk"
+path = "dev/issue50_diff_disk.rs"
+required-features = ["target-zensim"]
+
+[[example]]
+name = "issue50_xdecode"
+path = "dev/issue50_xdecode.rs"
+required-features = ["target-zensim"]
 
 [[example]]
 name = "hrtb_test"

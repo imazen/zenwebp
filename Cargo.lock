@@ -548,6 +548,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57b14f283599922955989d328a7f8f805e03146fe96616aa60639a16cd478b7e"
 dependencies = [
  "archmage",
+ "imgref",
  "magetypes",
  "num-traits",
  "thiserror",
