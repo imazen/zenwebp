@@ -259,6 +259,106 @@ fn interpolate_anchors(target: f32, anchors: &[(f32, f32)]) -> f32 {
 }
 
 // ============================================================================
+// Ablation toggles (dev-only, gated on `ablation` feature)
+// ============================================================================
+//
+// The PR shipping target_zensim (Phases 1/2/3) is a stack of distinct
+// mechanisms. The `ablation` feature exposes per-chunk disable toggles
+// via thread-local cells set explicitly by `dev/zensim_*.rs` measurement
+// binaries. Production builds (the `target-zensim` feature alone, no
+// `ablation`) get const `false` for every toggle — the compiler folds
+// them away entirely. **No environment variables are read in either
+// configuration**: ablation is off-by-default, and turning it on requires
+// a typed call to [`ablation::set_toggles`].
+//
+// None of these toggles touches the encoded bytestream — they only
+// change the iteration loop's decisions (which q to start at, whether
+// to take a per-segment vs global-q correction step, etc.).
+
+/// Dev-only ablation toggles for the closed-loop `target_zensim`
+/// iteration. **Gated on the unstable `ablation` Cargo feature** —
+/// production callers do not see this type and the iteration loop uses
+/// constant defaults.
+///
+/// All fields are off by default (matching production behavior).
+/// Set them via [`set_toggles`] to disable individual phases of the
+/// adaptive encoder for measurement binaries (`dev/zensim_*.rs`).
+///
+/// This API is **not** part of the stable zenwebp surface — it is
+/// dev-only by design and may change without a major-version bump.
+#[cfg(feature = "ablation")]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct AblationToggles {
+    /// Force the global-q fallback path even when segments are active
+    /// (Phase 3 disabled).
+    pub disable_phase3: bool,
+    /// Emit `PHASE3_TRACE` lines to stderr per pass.
+    pub trace_phase3: bool,
+    /// Skip the bucket classifier and use a single linear ramp.
+    pub naive_starting_q: bool,
+    /// Don't force `multi_pass_stats=true` inside the iteration loop.
+    pub no_multi_pass_stats: bool,
+    /// Restore the pre-Phase-2 hand-distilled anchors.
+    pub pre_phase2_anchors: bool,
+    /// Use a fixed proportional Δq instead of the secant.
+    pub no_secant: bool,
+    /// Phase 3 aggregator: use the 2x2 spatial-quadrant proxy instead of
+    /// the encoder's real k-means `segment_map`.
+    pub use_quadrant_proxy: bool,
+    /// Threshold (`|target - achieved|`) below which Phase 3 per-segment
+    /// correction is preferred over the global-q secant. `None` keeps
+    /// the production default (0.5).
+    pub phase3_fine_gap: Option<f32>,
+}
+
+#[cfg(feature = "ablation")]
+mod ablation_runtime {
+    use core::cell::Cell;
+    use std::thread_local;
+
+    thread_local! {
+        pub(crate) static DISABLE_PHASE3: Cell<bool> = const { Cell::new(false) };
+        pub(crate) static TRACE_PHASE3: Cell<bool> = const { Cell::new(false) };
+        pub(crate) static NAIVE_STARTING_Q: Cell<bool> = const { Cell::new(false) };
+        pub(crate) static NO_MULTI_PASS_STATS: Cell<bool> = const { Cell::new(false) };
+        pub(crate) static PRE_PHASE2_ANCHORS: Cell<bool> = const { Cell::new(false) };
+        pub(crate) static NO_SECANT: Cell<bool> = const { Cell::new(false) };
+        pub(crate) static USE_QUADRANT_PROXY: Cell<bool> = const { Cell::new(false) };
+        // f32::NAN means "use the production default (0.5)".
+        pub(crate) static PHASE3_FINE_GAP: Cell<f32> = const { Cell::new(f32::NAN) };
+    }
+}
+
+/// Set ablation toggles for the **current thread**. Dev-only — exposed
+/// only when the `ablation` Cargo feature is enabled.
+///
+/// Each call replaces the entire toggle state (any field not set in
+/// `t` reverts to its default value). Effects are scoped to the calling
+/// thread; toggles do NOT propagate to threads spawned afterwards.
+///
+/// The `target_zensim` iteration loop reads these values once at the
+/// start of each phase decision; toggling mid-encode is allowed but the
+/// loop won't observe the change until its next polling point.
+#[cfg(feature = "ablation")]
+pub fn set_toggles(t: AblationToggles) {
+    use ablation_runtime::*;
+    DISABLE_PHASE3.with(|c| c.set(t.disable_phase3));
+    TRACE_PHASE3.with(|c| c.set(t.trace_phase3));
+    NAIVE_STARTING_Q.with(|c| c.set(t.naive_starting_q));
+    NO_MULTI_PASS_STATS.with(|c| c.set(t.no_multi_pass_stats));
+    PRE_PHASE2_ANCHORS.with(|c| c.set(t.pre_phase2_anchors));
+    NO_SECANT.with(|c| c.set(t.no_secant));
+    USE_QUADRANT_PROXY.with(|c| c.set(t.use_quadrant_proxy));
+    // None → NaN sentinel, meaning "use production default 0.5".
+    PHASE3_FINE_GAP.with(|c| c.set(t.phase3_fine_gap.unwrap_or(f32::NAN)));
+}
+
+/// Production default for the Phase 3 fine-gap threshold. See the
+/// long-form comment on the iteration loop for why 0.5.
+#[cfg(feature = "target-zensim")]
+const PHASE3_FINE_GAP_DEFAULT: f32 = 0.5;
+
+// ============================================================================
 // Iteration loop (gated on the `target-zensim` feature)
 // ============================================================================
 
@@ -275,31 +375,13 @@ pub(crate) mod iteration {
     /// an error if a hard constraint was violated.
     pub(crate) type IterationResult = Result<(Vec<u8>, ZensimEncodeMetrics), EncodeError>;
 
-    // ============================================================================
-    // Ablation toggles (dev-only, gated on `ablation` feature)
-    // ============================================================================
-    //
-    // The PR shipping target_zensim (Phases 1/2/3) is a stack of distinct
-    // mechanisms. The `ablation` feature wires per-chunk disable toggles
-    // read from environment variables so `dev/zensim_*.rs` measurement
-    // binaries can re-run leg-by-leg comparisons. Production builds (the
-    // `target-zensim` feature alone, no `ablation`) get const `false` for
-    // every toggle and the compiler elides them entirely — zero
-    // `std::env::var` calls on the iteration hot path.
-    //
-    // None of these toggles touches the encoded bytestream — they only
-    // change the iteration loop's decisions (which q to start at, whether
-    // to take a per-segment vs global-q correction step, etc.).
-
     /// Disable Phase 3 per-segment correction. When set, every pass after
     /// pass 0 takes the global-q secant step (or fallback step) instead of
     /// computing per-segment quant overrides from the diffmap. Equivalent
     /// to "Phase 1 (+ Phase 2 anchors) only".
     #[cfg(feature = "ablation")]
     fn ablate_disable_phase3() -> bool {
-        std::env::var("ZENWEBP_ABLATE_NO_PHASE3")
-            .map(|v| v == "1")
-            .unwrap_or(false)
+        super::ablation_runtime::DISABLE_PHASE3.with(|c| c.get())
     }
     #[cfg(not(feature = "ablation"))]
     const fn ablate_disable_phase3() -> bool {
@@ -314,9 +396,7 @@ pub(crate) mod iteration {
     ///     cum_overrides=[d0,d1,d2,d3] decision=<reason>
     #[cfg(feature = "ablation")]
     fn trace_phase3() -> bool {
-        std::env::var("ZENWEBP_PHASE3_TRACE")
-            .map(|v| v == "1")
-            .unwrap_or(false)
+        super::ablation_runtime::TRACE_PHASE3.with(|c| c.get())
     }
     #[cfg(not(feature = "ablation"))]
     const fn trace_phase3() -> bool {
@@ -329,9 +409,7 @@ pub(crate) mod iteration {
     /// Drawing get replaced with the naive identity-ish ramp).
     #[cfg(feature = "ablation")]
     fn ablate_naive_starting_q() -> bool {
-        std::env::var("ZENWEBP_ABLATE_NAIVE_Q")
-            .map(|v| v == "1")
-            .unwrap_or(false)
+        super::ablation_runtime::NAIVE_STARTING_Q.with(|c| c.get())
     }
     #[cfg(not(feature = "ablation"))]
     const fn ablate_naive_starting_q() -> bool {
@@ -343,9 +421,7 @@ pub(crate) mod iteration {
     /// (typically `false`).
     #[cfg(feature = "ablation")]
     fn ablate_no_multi_pass_stats() -> bool {
-        std::env::var("ZENWEBP_ABLATE_NO_MULTI_PASS_STATS")
-            .map(|v| v == "1")
-            .unwrap_or(false)
+        super::ablation_runtime::NO_MULTI_PASS_STATS.with(|c| c.get())
     }
     #[cfg(not(feature = "ablation"))]
     const fn ablate_no_multi_pass_stats() -> bool {
@@ -358,9 +434,7 @@ pub(crate) mod iteration {
     /// its weight vs the original judgement-based table.
     #[cfg(feature = "ablation")]
     fn ablate_pre_phase2_anchors() -> bool {
-        std::env::var("ZENWEBP_ABLATE_PRE_PHASE2_ANCHORS")
-            .map(|v| v == "1")
-            .unwrap_or(false)
+        super::ablation_runtime::PRE_PHASE2_ANCHORS.with(|c| c.get())
     }
     #[cfg(not(feature = "ablation"))]
     const fn ablate_pre_phase2_anchors() -> bool {
@@ -371,9 +445,7 @@ pub(crate) mod iteration {
     /// when Phase 3 is also disabled (the global-q fallback path).
     #[cfg(feature = "ablation")]
     fn ablate_no_secant() -> bool {
-        std::env::var("ZENWEBP_ABLATE_NO_SECANT")
-            .map(|v| v == "1")
-            .unwrap_or(false)
+        super::ablation_runtime::NO_SECANT.with(|c| c.get())
     }
     #[cfg(not(feature = "ablation"))]
     const fn ablate_no_secant() -> bool {
@@ -384,7 +456,8 @@ pub(crate) mod iteration {
     /// when the bucket classifier is bypassed. Shape mirrors zenjpeg's
     /// `zq_to_starting_jpegli_q`: a gentle ramp that crosses target=q at
     /// the high end and starts conservatively at the low end. Only reached
-    /// under the `ablation` feature when `ZENWEBP_ABLATE_NAIVE_Q=1`.
+    /// under the `ablation` feature when
+    /// [`AblationToggles::naive_starting_q`] is set.
     #[cfg_attr(not(feature = "ablation"), allow(dead_code))]
     fn naive_starting_q(target: f32) -> f32 {
         const NAIVE: &[(f32, f32)] = &[
@@ -401,8 +474,8 @@ pub(crate) mod iteration {
 
     /// Pre-Phase-2 hand-distilled Photo / Drawing anchors. Recovered from
     /// commit `17b9c9a^:src/encoder/zensim_target.rs`. Used only when
-    /// the `ablation` feature is on AND `ZENWEBP_ABLATE_PRE_PHASE2_ANCHORS=1`
-    /// is set (chunk E ablation).
+    /// the `ablation` feature is on AND
+    /// [`AblationToggles::pre_phase2_anchors`] is set (chunk E ablation).
     #[cfg_attr(not(feature = "ablation"), allow(dead_code))]
     fn pre_phase2_starting_q(target: f32, bucket: ImageContentType) -> f32 {
         const PHOTO_HAND: &[(f32, f32)] = &[
@@ -559,8 +632,9 @@ pub(crate) mod iteration {
         // to a single segment) or the segment_map is empty, we fall back
         // to global-q correction.
         //
-        // Chunk A ablation: when ZENWEBP_ABLATE_NO_PHASE3=1, force the
-        // global-q fallback path even when segments are active.
+        // Chunk A ablation: when [`AblationToggles::disable_phase3`] is
+        // set, force the global-q fallback path even when segments are
+        // active.
         let per_segment_enabled = !ablate_disable_phase3()
             && diag0.num_segments > 1
             && !diag0.segment_map.is_empty()
@@ -600,18 +674,23 @@ pub(crate) mod iteration {
         // per-segment ever could; switching mid-trajectory throws away
         // that information and tends to produce out-of-band finals.
         //
-        // Under the `ablation` feature the `ZENWEBP_PHASE3_FINE_GAP` env
-        // var (float, default 0.5) overrides the threshold for tuning
-        // experiments. Set it to a very large value (e.g. 1000) to
-        // recover the pre-fix always-on Phase 3 behavior for A/B testing.
-        // Production builds use the constant 0.5.
+        // Under the `ablation` feature the
+        // [`AblationToggles::phase3_fine_gap`] field (float, default 0.5)
+        // overrides the threshold for tuning experiments. Set it to a
+        // very large value (e.g. 1000) to recover the pre-fix always-on
+        // Phase 3 behavior for A/B testing. Production builds use the
+        // constant default.
         #[cfg(feature = "ablation")]
-        let phase3_fine_gap: f32 = std::env::var("ZENWEBP_PHASE3_FINE_GAP")
-            .ok()
-            .and_then(|s| s.parse::<f32>().ok())
-            .unwrap_or(0.5);
+        let phase3_fine_gap: f32 = {
+            let v = super::ablation_runtime::PHASE3_FINE_GAP.with(|c| c.get());
+            if v.is_nan() {
+                super::PHASE3_FINE_GAP_DEFAULT
+            } else {
+                v
+            }
+        };
         #[cfg(not(feature = "ablation"))]
-        let phase3_fine_gap: f32 = 0.5;
+        let phase3_fine_gap: f32 = super::PHASE3_FINE_GAP_DEFAULT;
         for pass in 1..max_passes {
             let abs_gap = (target.target - last_score).abs();
             let use_per_segment =
@@ -688,7 +767,8 @@ pub(crate) mod iteration {
 
             // multi_pass_stats=true on probe encodes — small size win
             // amortizes across passes. Chunk D ablation: leave it at the
-            // user's LossyConfig value when ZENWEBP_ABLATE_NO_MULTI_PASS_STATS=1.
+            // user's LossyConfig value when
+            // [`AblationToggles::no_multi_pass_stats`] is set.
             let mps = !ablate_no_multi_pass_stats();
             let (bytes_n, diag_n) =
                 encode_at_with_diagnostics(cfg, next_q, mps, next_overrides, rgb, width, height)?;
@@ -795,8 +875,9 @@ pub(crate) mod iteration {
     }
 
     /// Compute next q via secant when we have a previous probe, fixed-
-    /// step otherwise. Chunk F ablation: when ZENWEBP_ABLATE_NO_SECANT=1,
-    /// always use a fixed proportional step `(target - achieved) * 0.5`.
+    /// step otherwise. Chunk F ablation: when
+    /// [`AblationToggles::no_secant`] is set, always use a fixed
+    /// proportional step `(target - achieved) * 0.5`.
     fn compute_next_q(
         q: f32,
         last_score: f32,
@@ -1015,9 +1096,10 @@ pub(crate) mod iteration {
         score: f32,
         target: &ZensimTarget,
     ) -> OverrideDecision {
-        // Content-type-dependent fallback hatch: when the env var
-        // ZENWEBP_PHASE3_QUADRANT=1 is set, fall back to the 2x2
-        // spatial-quadrant proxy that this code shipped with originally.
+        // Content-type-dependent fallback hatch: when the
+        // [`AblationToggles::use_quadrant_proxy`] flag is set on the
+        // current thread, fall back to the 2x2 spatial-quadrant proxy
+        // that this code shipped with originally.
         //
         // A/B run (CID22 + gb82 + gb82-sc, 76 images x 3 targets =
         // 228 cells, target ∈ {75, 80, 85}, max_overshoot=1.5,
@@ -1038,12 +1120,10 @@ pub(crate) mod iteration {
         // but on photo content the quadrant proxy occasionally lands
         // closer to target. Under the `ablation` feature the
         // `dev/zensim_ab_quadrant_vs_segmap.rs` binary toggles this
-        // var to re-run the comparison. Production builds always use
-        // the real segment_map.
+        // via [`AblationToggles::use_quadrant_proxy`] to re-run the
+        // comparison. Production builds always use the real segment_map.
         #[cfg(feature = "ablation")]
-        let use_quadrant = std::env::var("ZENWEBP_PHASE3_QUADRANT")
-            .map(|v| v == "1")
-            .unwrap_or(false);
+        let use_quadrant = super::ablation_runtime::USE_QUADRANT_PROXY.with(|c| c.get());
         #[cfg(not(feature = "ablation"))]
         let use_quadrant = false;
         if use_quadrant {
@@ -1191,8 +1271,8 @@ pub(crate) mod iteration {
 
     /// Pre-deviation aggregation: 2x2 spatial-quadrant proxy. Kept for
     /// A/B comparison under the `ablation` feature via
-    /// `ZENWEBP_PHASE3_QUADRANT=1`. Production code uses the real
-    /// `segment_map` via [`next_segment_overrides`].
+    /// [`AblationToggles::use_quadrant_proxy`]. Production code uses
+    /// the real `segment_map` via [`next_segment_overrides`].
     #[cfg_attr(not(feature = "ablation"), allow(dead_code))]
     fn next_segment_overrides_quadrant_proxy(
         cum: [i8; 4],

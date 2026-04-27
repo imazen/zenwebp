@@ -1,10 +1,10 @@
 //! Single-image Phase 3 tracer. Runs target_zensim on one (or a few)
 //! PNG files at a chosen target/max_overshoot/max_passes and prints the
 //! `PHASE3_TRACE` lines to stderr (the iteration-loop instrumentation
-//! is already gated by `ZENWEBP_PHASE3_TRACE=1`).
+//! is enabled here via [`zenwebp::AblationToggles::trace_phase3`]).
 //!
 //! Usage:
-//!   ZENWEBP_PHASE3_TRACE=1 zensim_phase3_trace --target 80 \
+//!   zensim_phase3_trace --target 80 \
 //!     --max-passes 3 --max-overshoot 1.5 \
 //!     --variants baseline,noA \
 //!     --image /path/to/foo.png \
@@ -20,53 +20,33 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+use zenwebp::AblationToggles;
 use zenwebp::EncodeRequest;
 use zenwebp::LossyConfig;
 use zenwebp::PixelLayout;
 use zenwebp::ZensimTarget;
-
-mod env_set {
-    pub fn set(key: &str, val: Option<&str>) {
-        // SAFETY: dev binary, single-threaded. Same pattern as zensim_ablation.
-        unsafe {
-            match val {
-                Some(v) => std::env::set_var(key, v),
-                None => std::env::remove_var(key),
-            }
-        }
-    }
-}
-
-fn reset_env() {
-    let keys = [
-        "ZENWEBP_PHASE3_QUADRANT",
-        "ZENWEBP_ABLATE_NO_PHASE3",
-        "ZENWEBP_ABLATE_NAIVE_Q",
-        "ZENWEBP_ABLATE_NO_MULTI_PASS_STATS",
-        "ZENWEBP_ABLATE_PRE_PHASE2_ANCHORS",
-        "ZENWEBP_ABLATE_NO_SECANT",
-        "ZENWEBP_PHASE3_FINE_GAP",
-    ];
-    for k in &keys {
-        env_set::set(k, None);
-    }
-}
+use zenwebp::set_ablation_toggles;
 
 fn apply_variant(name: &str) {
-    reset_env();
+    // Always force trace_phase3=true for this binary's purpose.
+    let mut t = AblationToggles {
+        trace_phase3: true,
+        ..AblationToggles::default()
+    };
     for tok in name.split('_') {
         match tok {
             "baseline" => {}
-            "noA" => env_set::set("ZENWEBP_ABLATE_NO_PHASE3", Some("1")),
-            "noB" => env_set::set("ZENWEBP_PHASE3_QUADRANT", Some("1")),
-            "noC" => env_set::set("ZENWEBP_ABLATE_NAIVE_Q", Some("1")),
-            "noD" => env_set::set("ZENWEBP_ABLATE_NO_MULTI_PASS_STATS", Some("1")),
-            "noE" => env_set::set("ZENWEBP_ABLATE_PRE_PHASE2_ANCHORS", Some("1")),
-            "noF" => env_set::set("ZENWEBP_ABLATE_NO_SECANT", Some("1")),
-            "alwaysOn" => env_set::set("ZENWEBP_PHASE3_FINE_GAP", Some("1000")),
+            "noA" => t.disable_phase3 = true,
+            "noB" => t.use_quadrant_proxy = true,
+            "noC" => t.naive_starting_q = true,
+            "noD" => t.no_multi_pass_stats = true,
+            "noE" => t.pre_phase2_anchors = true,
+            "noF" => t.no_secant = true,
+            "alwaysOn" => t.phase3_fine_gap = Some(1000.0),
             other => panic!("unknown variant token: {other}"),
         }
     }
+    set_ablation_toggles(t);
 }
 
 fn decode_png_rgb(path: &PathBuf) -> Option<(Vec<u8>, u32, u32)> {

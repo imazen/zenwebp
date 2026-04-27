@@ -68,6 +68,8 @@ pub use api::{
 pub use config::{EncoderConfig, LosslessConfig, LossyConfig};
 #[doc(hidden)]
 pub use vp8l::{Vp8lConfig, Vp8lQuality, encode_vp8l};
+#[cfg(feature = "ablation")]
+pub use zensim_target::{AblationToggles, set_toggles as set_ablation_toggles};
 pub use zensim_target::{ZensimEncodeMetrics, ZensimTarget};
 
 // Crate-internal re-exports for mux module

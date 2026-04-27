@@ -1,9 +1,10 @@
 //! A/B comparison: Phase 3 per-segment correction using the 2x2
 //! spatial-quadrant proxy vs the encoder's real k-means `segment_map`.
 //!
-//! Toggles `ZENWEBP_PHASE3_QUADRANT=1` for the A leg (proxy) and unsets
-//! it for the B leg (real segment_map). Everything else — starting q,
-//! pass-0 encode, score band, max_overshoot, max_passes — is identical.
+//! Toggles [`AblationToggles::use_quadrant_proxy`] for the A leg
+//! (proxy) and unsets it for the B leg (real segment_map). Everything
+//! else — starting q, pass-0 encode, score band, max_overshoot,
+//! max_passes — is identical.
 //!
 //! Reads corpus PNG files from the filesystem (CLI args), runs both
 //! aggregators at multiple zensim targets, writes a per-image TSV plus
@@ -20,10 +21,8 @@
 //!     --max-passes 3 \
 //!     --out /mnt/v/output/zenwebp/zensim-ab/ab_2026-04-26.tsv
 //!
-//! NOTE: this binary uses `std::env::set_var` to toggle the
-//! `ZENWEBP_PHASE3_QUADRANT` env var between A and B legs. That call is
-//! `unsafe` in Rust 2024 (POSIX getenv races); this binary is
-//! single-threaded so it's sound. Confined to dev/ tooling.
+//! No environment variables are read or written: the toggle is a
+//! thread-local cell flipped via [`zenwebp::set_ablation_toggles`].
 
 use std::collections::BTreeMap;
 use std::env;
@@ -31,10 +30,12 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
+use zenwebp::AblationToggles;
 use zenwebp::EncodeRequest;
 use zenwebp::LossyConfig;
 use zenwebp::PixelLayout;
 use zenwebp::ZensimTarget;
+use zenwebp::set_ablation_toggles;
 
 #[derive(Clone)]
 struct Cli {
@@ -412,11 +413,10 @@ fn run(
     method: u8,
     quadrant: bool,
 ) -> Outcome {
-    if quadrant {
-        env_set::set("ZENWEBP_PHASE3_QUADRANT", Some("1"));
-    } else {
-        env_set::set("ZENWEBP_PHASE3_QUADRANT", None);
-    }
+    set_ablation_toggles(AblationToggles {
+        use_quadrant_proxy: quadrant,
+        ..AblationToggles::default()
+    });
 
     let cfg = LossyConfig::new()
         .with_method(method)
@@ -434,19 +434,6 @@ fn run(
         passes: m.passes_used,
         bytes: b.len(),
         met: m.targets_met,
-    }
-}
-
-mod env_set {
-    pub fn set(key: &str, val: Option<&str>) {
-        // SAFETY: single-threaded driver binary; no other threads can
-        // observe stale env pointers. Only used by `dev/` tooling.
-        unsafe {
-            match val {
-                Some(v) => std::env::set_var(key, v),
-                None => std::env::remove_var(key),
-            }
-        }
     }
 }
 
