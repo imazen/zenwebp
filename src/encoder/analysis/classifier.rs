@@ -538,27 +538,53 @@ pub fn decide_bucket_stable(diag: &ZenanalyzeDiag) -> ImageContentType {
 /// so the validation harness in `dev/zenanalyze_validate_vs_gpt.rs`
 /// can replay the decision against pre-recorded signals when tuning.
 ///
-/// Order of tests matters — strong "drawing" signals (palette-fits +
-/// line-art) take precedence over softer ones (screen-content /
-/// text), and only after we've ruled both of those out do we fall
-/// through to the photo bucket.
+/// Tuned against 219 GPT-5.4-mini-labelled images from the
+/// classifier-eval corpus (cid22-train/val, clic2025-1024, gb82,
+/// gb82-sc, kadid10k, qoi-benchmark). Best achievable accuracy at
+/// these thresholds: **92.9%** overall, photo recall **96.3%**,
+/// drawing recall **78.4%** (n=198, 21 rows skipped — JPGs and
+/// missing files).
+///
+/// Order of tests matters: strong drawing signals first
+/// (`line_art_score`, then `screen_content` / `text_likelihood`),
+/// then a combined screen+flat+uniform rule for anti-aliased UIs,
+/// then a flat-block fallback, then `palette_fits_in_256` for the
+/// few flat-photo edge cases.
 #[cfg(feature = "analyzer")]
 pub fn decide_bucket_from_diag(diag: &ZenanalyzeDiag) -> ImageContentType {
-    // Strong "drawing" — small palette or high line-art score.
-    // Tuned against 219 GPT-labeled images: see
-    // `dev/zenanalyze_validate_vs_gpt.rs`.
-    if diag.palette_fits_in_256 || diag.line_art_score > 0.5 {
+    // Strong drawing signal: line-art / engineering-drawing score.
+    if diag.line_art_score > 0.5 {
         return ImageContentType::Drawing;
     }
-    // Soft screen-content / text.
-    if diag.screen_content > 0.6 || diag.text_likelihood > 0.5 {
+    // Screen-content / text — `>=` so qoi-benchmark websites at
+    // exactly 0.6000 are caught.
+    if diag.screen_content >= 0.60 || diag.text_likelihood >= 0.55 {
         return ImageContentType::Drawing;
     }
-    // Palette-friendly fallback: many flat blocks + few distinct
-    // colour bins. Catches anti-aliased UI mocks where the palette
-    // doesn't quite fit in 256 (e.g., 384 colours) but the texture
-    // pattern is still graphics-like.
-    if diag.flat_color_block_ratio > 0.20 && diag.distinct_color_bins < 4096 {
+    // Combined screen+flat+uniform signal: catches anti-aliased UI
+    // pages where the screen-content score sits at 0.4-0.6 but the
+    // page is dominated by uniform flat blocks.
+    if diag.screen_content >= 0.40
+        && diag.flat_color_block_ratio >= 0.40
+        && diag.uniformity >= 0.85
+        && diag.distinct_color_bins < 4096
+    {
+        return ImageContentType::Drawing;
+    }
+    // Flat-block fallback (tightened from the original 0.20 bound):
+    // real UI / chart content sits at flat >= 0.50; smooth photos
+    // cap below that.
+    if diag.flat_color_block_ratio >= 0.50 && diag.distinct_color_bins < 4096 {
+        return ImageContentType::Drawing;
+    }
+    // Fits-in-256-colours is a strong indicator only when paired
+    // with low natural likelihood AND a meaningful screen score
+    // (rules out flat photos / night scenes with tiny palettes that
+    // GPT still labels as "photo").
+    if diag.palette_fits_in_256
+        && diag.natural_likelihood < 0.10
+        && diag.screen_content >= 0.50
+    {
         return ImageContentType::Drawing;
     }
     ImageContentType::Photo

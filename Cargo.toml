@@ -180,6 +180,11 @@ path = "dev/zenanalyze_classify_diff.rs"
 required-features = ["analyzer"]
 
 [[example]]
+name = "zenanalyze_validate_vs_gpt"
+path = "dev/zenanalyze_validate_vs_gpt.rs"
+required-features = ["analyzer"]
+
+[[example]]
 name = "hrtb_test"
 required-features = ["zencodec"]
 
