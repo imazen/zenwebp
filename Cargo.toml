@@ -40,9 +40,11 @@ rgb = { version = "0.8", optional = true, default-features = false, features = [
 imgref = { version = "1.12", optional = true, default-features = false }
 zensim = { version = "0.2", optional = true }
 # zenanalyze is the shared streaming feature scanner used by zen* codecs.
-# Path-pinned because zenanalyze is not yet on crates.io (verified 2026-04-27).
-# Update to a published version once 0.1.0 lands on crates.io.
-zenanalyze = { path = "../zenjpeg--zenanalyze/zenanalyze", optional = true, features = ["experimental"] }
+# Pinned to the published version on crates.io (0.1.0, 2026-04-28). The
+# `experimental` feature gates the research-stage signals
+# (PaletteFitsIn256, IndexedPaletteWidth, LineArtScore, SkinToneFraction,
+# EdgeSlopeStdev) that this classifier consumes.
+zenanalyze = { version = "0.1.0", optional = true, features = ["experimental", "composites"] }
 
 [dev-dependencies]
 archmage = { version = "0.9.15", features = ["std", "macros"] }
