@@ -15,10 +15,10 @@ use std::fs;
 use std::io::BufReader;
 use std::path::PathBuf;
 
+use zenwebp::encoder::analysis::analyze_image;
 use zenwebp::encoder::analysis::{
     ImageContentType, classify_image_type, classify_image_type_rgb8_diag,
 };
-use zenwebp::encoder::analysis::analyze_image;
 
 fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32, bool)> {
     let file = fs::File::open(path).ok()?;
@@ -28,7 +28,10 @@ fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32, bool)> {
     let info = reader.next_frame(&mut buf).ok()?;
     let width = info.width;
     let height = info.height;
-    let has_alpha = matches!(info.color_type, png::ColorType::Rgba | png::ColorType::GrayscaleAlpha);
+    let has_alpha = matches!(
+        info.color_type,
+        png::ColorType::Rgba | png::ColorType::GrayscaleAlpha
+    );
 
     let rgb = match info.color_type {
         png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
@@ -67,9 +70,7 @@ fn alpha_hist_from_y(y: &[u8]) -> [u32; 256] {
 fn main() {
     let argv: Vec<String> = env::args().skip(1).collect();
     if argv.is_empty() {
-        eprintln!(
-            "usage: zenanalyze_classify_diff <corpus_dir> [<corpus_dir>...]\n"
-        );
+        eprintln!("usage: zenanalyze_classify_diff <corpus_dir> [<corpus_dir>...]\n");
         std::process::exit(2);
     }
     let corpora: Vec<PathBuf> = argv.into_iter().map(PathBuf::from).collect();
@@ -110,13 +111,8 @@ fn main() {
             // detect_bucket uses Y as both: feed Y as alpha_hist source.
             let y_plane = rgb_to_yuv420_y_only(&rgb, w as usize, h as usize);
             let alpha_hist = alpha_hist_from_y(&y_plane);
-            let orig = classify_image_type(
-                &y_plane,
-                w as usize,
-                h as usize,
-                w as usize,
-                &alpha_hist,
-            );
+            let orig =
+                classify_image_type(&y_plane, w as usize, h as usize, w as usize, &alpha_hist);
             let (zen, diag) = classify_image_type_rgb8_diag(&rgb, w, h);
             total += 1;
             if orig == zen {
@@ -162,13 +158,7 @@ fn main() {
 
     eprintln!("=== summary ===");
     eprintln!("total={total} same={same} changed={changed}");
-    eprintln!(
-        "  P->D={photo_to_drawing}  D->P={drawing_to_photo}  other={other_changes}"
-    );
-    eprintln!(
-        "  orig: photo={orig_photo} drawing={orig_drawing} icon={orig_icon}"
-    );
-    eprintln!(
-        "  zen:  photo={zen_photo}  drawing={zen_drawing}  icon={zen_icon}"
-    );
+    eprintln!("  P->D={photo_to_drawing}  D->P={drawing_to_photo}  other={other_changes}");
+    eprintln!("  orig: photo={orig_photo} drawing={orig_drawing} icon={orig_icon}");
+    eprintln!("  zen:  photo={zen_photo}  drawing={zen_drawing}  icon={zen_icon}");
 }

@@ -2069,7 +2069,8 @@ pub(crate) fn encode_frame_lossy(
     // tuning into params. This lets the inner encoder skip its homegrown
     // alpha-histogram heuristic. With `analyzer` off, this is a no-op
     // and the inner heuristic runs unchanged.
-    let resolved_params = resolve_auto_preset_via_analyzer(params, data, width, height, stride, color);
+    let resolved_params =
+        resolve_auto_preset_via_analyzer(params, data, width, height, stride, color);
     let params_eff = resolved_params.as_ref().unwrap_or(params);
 
     // Quality search: if target_size or target_psnr is set, iterate quality to converge

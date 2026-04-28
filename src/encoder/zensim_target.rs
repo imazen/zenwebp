@@ -334,9 +334,7 @@ fn starting_q_via_likelihoods(
 ) -> Option<f32> {
     use crate::PixelLayout;
     use crate::encoder::analysis::ZenanalyzeDiag;
-    use crate::encoder::analysis::classifier::{
-        classify_image_type_rgb8_diag, rgba8_to_rgb8,
-    };
+    use crate::encoder::analysis::classifier::{classify_image_type_rgb8_diag, rgba8_to_rgb8};
     let w = width as usize;
     let h = height as usize;
     if w < 8 || h < 8 {
@@ -721,10 +719,9 @@ pub(crate) mod iteration {
                     Some(q) => q,
                     None => match bucket {
                         Some(b) => zensim_to_starting_q_for_bucket(target.target, b),
-                        None => zensim_to_starting_q_for_bucket(
-                            target.target,
-                            ImageContentType::Photo,
-                        ),
+                        None => {
+                            zensim_to_starting_q_for_bucket(target.target, ImageContentType::Photo)
+                        }
                     },
                 }
             }
