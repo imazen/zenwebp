@@ -38,12 +38,30 @@ use zenwebp::encoder::analysis::{
 };
 
 /// Tuned experimental threshold rule (matches `decide_bucket_from_diag`
-/// after Task-2 calibration but kept in the harness so we can iterate
-/// on it without rebuilding the lib). When this rule converges, copy
-/// it back into `classifier.rs`.
+/// after the SkinToneFraction + EdgeSlopeStdev wire-up). Kept in the
+/// harness so we can iterate on it without rebuilding the lib.
+///
+/// Rule order:
+///   0. Icon size carve-out
+///   0.5 Photo rescue: `skin_tone >= 0.15 AND edge_slope_stdev < 35`
+///       (photographic edge cluster + visible skin = portrait).
+///   1. line_art > 0.5 → Drawing
+///   2. screen_content >= 0.6 OR text_likelihood >= 0.55 → Drawing
+///   3. Anti-aliased UI: screen >= 0.4 AND flat >= 0.4 AND
+///      uniformity >= 0.85 AND distinct < 4096 → Drawing
+///   4. Flat-block fallback: flat >= 0.5 AND distinct < 4096
+///   5. Palette-fits-256 with very low natural_likelihood and
+///      meaningful screen score
 fn decide_tuned(diag: &ZenanalyzeDiag, w: u32, h: u32) -> ImageContentType {
     if w <= 128 && h <= 128 {
         return ImageContentType::Icon;
+    }
+    // Photo rescue: skin-tone fraction + photographic edge stddev →
+    // pull out of any subsequent Drawing rule. Threshold pair
+    // (skin>=0.15, slpSD<35) rescues kadid10k/I29.png portrait
+    // without breaking any drawings in the validation corpus.
+    if diag.skin_tone_fraction >= 0.15 && diag.edge_slope_stdev < 35.0 {
+        return ImageContentType::Photo;
     }
     // Strong drawing signals first.
     if diag.line_art_score > 0.5 {
@@ -111,7 +129,10 @@ fn corpus_root(corpus: &str) -> Option<&'static str> {
 }
 
 fn load_image(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
-    let ext = path.extension().and_then(|s| s.to_str()).map(str::to_ascii_lowercase);
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(str::to_ascii_lowercase);
     match ext.as_deref() {
         Some("png") => load_png(path),
         Some("jpg") | Some("jpeg") => load_jpeg(path),
@@ -133,9 +154,10 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
             .chunks_exact(4)
             .flat_map(|p| [p[0], p[1], p[2]])
             .collect(),
-        png::ColorType::Grayscale => {
-            buf[..info.buffer_size()].iter().flat_map(|&g| [g, g, g]).collect()
-        }
+        png::ColorType::Grayscale => buf[..info.buffer_size()]
+            .iter()
+            .flat_map(|&g| [g, g, g])
+            .collect(),
         png::ColorType::GrayscaleAlpha => buf[..info.buffer_size()]
             .chunks_exact(2)
             .flat_map(|p| [p[0], p[0], p[0]])
@@ -228,7 +250,11 @@ impl Confusion {
         }
     }
     fn print(&self, name: &str) {
-        println!("\n=== {name} (n={}, accuracy={:.3}) ===", self.total, self.accuracy());
+        println!(
+            "\n=== {name} (n={}, accuracy={:.3}) ===",
+            self.total,
+            self.accuracy()
+        );
         let truths = [Truth::Photo, Truth::Drawing, Truth::Icon];
         print!("            ");
         for t in &truths {
@@ -245,8 +271,10 @@ impl Confusion {
         }
         // Recall per truth
         for t in &truths {
-            let total_t: u32 =
-                truths.iter().map(|p| self.counts.get(&(*p, *t)).copied().unwrap_or(0)).sum();
+            let total_t: u32 = truths
+                .iter()
+                .map(|p| self.counts.get(&(*p, *t)).copied().unwrap_or(0))
+                .sum();
             let correct_t = self.counts.get(&(*t, *t)).copied().unwrap_or(0);
             if total_t > 0 {
                 println!(
@@ -267,7 +295,10 @@ struct PerCorpus {
 }
 impl PerCorpus {
     fn record(&mut self, corpus: &str, pred: Truth, truth: Truth) {
-        self.by_corpus.entry(corpus.to_string()).or_default().record(pred, truth);
+        self.by_corpus
+            .entry(corpus.to_string())
+            .or_default()
+            .record(pred, truth);
     }
     fn print(&self, name: &str) {
         println!("\n--- {name}: per-corpus accuracy ---");
@@ -322,7 +353,10 @@ fn main() {
     };
     eprintln!("loaded {} rows from {}", rows.len(), labels_path.display());
 
-    let ts = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+    let ts = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     let out_dir = PathBuf::from("/mnt/v/output/zenwebp/zenanalyze-validate");
     let _ = fs::create_dir_all(&out_dir);
     let out_tsv = out_dir.join(format!("run_{ts}.tsv"));
@@ -378,11 +412,7 @@ fn main() {
         let y = rgb_to_y(&rgb);
         let yh = y_histogram(&y);
         let old = bucket_to_truth(classify_image_type(
-            &y,
-            w as usize,
-            h as usize,
-            w as usize,
-            &yh,
+            &y, w as usize, h as usize, w as usize, &yh,
         ));
 
         // New (with experimental + stable diag)
@@ -474,11 +504,12 @@ fn main() {
             .partial_cmp(&a.3.line_art_score)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    d_to_p.sort_by(|a, b| {
-        b.3.distinct_color_bins.cmp(&a.3.distinct_color_bins)
-    });
+    d_to_p.sort_by(|a, b| b.3.distinct_color_bins.cmp(&a.3.distinct_color_bins));
 
-    println!("\n--- TUNED: photo->drawing misclassifications ({}) ---", p_to_d.len());
+    println!(
+        "\n--- TUNED: photo->drawing misclassifications ({}) ---",
+        p_to_d.len()
+    );
     println!("       (sorted by line_art_score desc; truth=Photo, predicted Drawing)");
     println!(
         "{:<14} {:<40} {:<18} screen text natural flat dist line_art skin slopeSD pal256",
@@ -502,7 +533,10 @@ fn main() {
         );
     }
 
-    println!("\n--- TUNED: drawing->photo misclassifications ({}) ---", d_to_p.len());
+    println!(
+        "\n--- TUNED: drawing->photo misclassifications ({}) ---",
+        d_to_p.len()
+    );
     println!("       (sorted by distinct_color_bins desc; truth=Drawing, predicted Photo)");
     println!(
         "{:<14} {:<40} {:<18} screen text natural flat dist line_art skin slopeSD pal256",

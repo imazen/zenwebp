@@ -504,10 +504,14 @@ pub fn classify_image_type_rgb8_diag(
         Err(_) => return (ImageContentType::Photo, ZenanalyzeDiag::default()),
     };
     let diag = ZenanalyzeDiag {
-        screen_content: r.get_f32(AnalysisFeature::ScreenContentLikelihood).unwrap_or(0.0),
+        screen_content: r
+            .get_f32(AnalysisFeature::ScreenContentLikelihood)
+            .unwrap_or(0.0),
         text_likelihood: r.get_f32(AnalysisFeature::TextLikelihood).unwrap_or(0.0),
         natural_likelihood: r.get_f32(AnalysisFeature::NaturalLikelihood).unwrap_or(0.0),
-        flat_color_block_ratio: r.get_f32(AnalysisFeature::FlatColorBlockRatio).unwrap_or(0.0),
+        flat_color_block_ratio: r
+            .get_f32(AnalysisFeature::FlatColorBlockRatio)
+            .unwrap_or(0.0),
         distinct_color_bins: r
             .get(AnalysisFeature::DistinctColorBins)
             .and_then(|v| v.as_u32())
@@ -515,7 +519,9 @@ pub fn classify_image_type_rgb8_diag(
         variance: r.get_f32(AnalysisFeature::Variance).unwrap_or(0.0),
         edge_density: r.get_f32(AnalysisFeature::EdgeDensity).unwrap_or(0.0),
         uniformity: r.get_f32(AnalysisFeature::Uniformity).unwrap_or(0.0),
-        high_freq_energy_ratio: r.get_f32(AnalysisFeature::HighFreqEnergyRatio).unwrap_or(0.0),
+        high_freq_energy_ratio: r
+            .get_f32(AnalysisFeature::HighFreqEnergyRatio)
+            .unwrap_or(0.0),
         palette_fits_in_256: r
             .get(AnalysisFeature::PaletteFitsIn256)
             .and_then(|v| v.as_bool())
@@ -553,18 +559,49 @@ pub fn decide_bucket_stable(diag: &ZenanalyzeDiag) -> ImageContentType {
 ///
 /// Tuned against 219 GPT-5.4-mini-labelled images from the
 /// classifier-eval corpus (cid22-train/val, clic2025-1024, gb82,
-/// gb82-sc, kadid10k, qoi-benchmark). Best achievable accuracy at
-/// these thresholds: **92.9%** overall, photo recall **96.3%**,
-/// drawing recall **78.4%** (n=198, 21 rows skipped — JPGs and
-/// missing files).
+/// gb82-sc, kadid10k, qoi-benchmark). With `SkinToneFraction` /
+/// `EdgeSlopeStdev` (zenanalyze 0.1.0) wired in as a portrait-
+/// rescue rule: **93.4%** overall, photo recall **96.9%**, drawing
+/// recall **78.4%** (n=198, 21 rows skipped — JPGs and missing
+/// files). Up from 92.9% / 96.3% / 78.4% pre-rescue.
 ///
-/// Order of tests matters: strong drawing signals first
-/// (`line_art_score`, then `screen_content` / `text_likelihood`),
-/// then a combined screen+flat+uniform rule for anti-aliased UIs,
-/// then a flat-block fallback, then `palette_fits_in_256` for the
-/// few flat-photo edge cases.
+/// Order of tests matters:
+///
+/// 0. **Photo rescue (new):** `skin_tone_fraction >= 0.15` AND
+///    `edge_slope_stdev < 35.0` → Photo. Catches portraits whose
+///    smooth backgrounds confused `screen_content_likelihood` /
+///    `flat_color_block_ratio`. Photographic edge stddev (lens-MTF
+///    cluster ~15–32) plus visible skin is a strong "natural
+///    photo" pair. Rescues `kadid10k/I29.png` (photo_portrait at
+///    `skin=0.239, slpSD=16.97, screen=0.61`); does not rescue any
+///    actual drawings in the corpus.
+/// 1. `line_art_score > 0.5` → Drawing (engineering / line art)
+/// 2. `screen_content >= 0.60` or `text_likelihood >= 0.55` →
+///    Drawing (qoi-benchmark websites clamp at exactly 0.6000)
+/// 3. `screen >= 0.40` AND `flat >= 0.40` AND `uniformity >= 0.85`
+///    AND `distinct < 4096` → Drawing (anti-aliased UI fallback)
+/// 4. `flat >= 0.50` AND `distinct < 4096` → Drawing (charts / UI
+///    overflow)
+/// 5. `palette_fits_in_256` AND `natural < 0.10` AND
+///    `screen >= 0.50` → Drawing (tiny-palette photo edge case)
+///
+/// **Why the new features alone don't rescue more drawing FNs:**
+/// the 8 remaining drawing→photo errors are paintings and
+/// illustrations whose `skin_tone_fraction` and `edge_slope_stdev`
+/// fall inside the photographic ranges (skin ≤ 0.42, slpSD 4–28).
+/// With only these two physics-based signals, the corpus-wide
+/// AUC for "artwork vs natural" stays around 0.80; the noise-
+/// spectrum / JPEG-roundtrip signals proposed in zenjpeg#123 are
+/// the next discriminator and aren't in 0.1.0.
 #[cfg(feature = "analyzer")]
 pub fn decide_bucket_from_diag(diag: &ZenanalyzeDiag) -> ImageContentType {
+    // Photo rescue: meaningful skin-tone fraction and a
+    // photographic edge-stddev cluster. Runs before any drawing
+    // rule so portraits with smooth studio backgrounds aren't
+    // dragged into Drawing by `screen_content` / `flat`.
+    if diag.skin_tone_fraction >= 0.15 && diag.edge_slope_stdev < 35.0 {
+        return ImageContentType::Photo;
+    }
     // Strong drawing signal: line-art / engineering-drawing score.
     if diag.line_art_score > 0.5 {
         return ImageContentType::Drawing;
@@ -594,10 +631,7 @@ pub fn decide_bucket_from_diag(diag: &ZenanalyzeDiag) -> ImageContentType {
     // with low natural likelihood AND a meaningful screen score
     // (rules out flat photos / night scenes with tiny palettes that
     // GPT still labels as "photo").
-    if diag.palette_fits_in_256
-        && diag.natural_likelihood < 0.10
-        && diag.screen_content >= 0.50
-    {
+    if diag.palette_fits_in_256 && diag.natural_likelihood < 0.10 && diag.screen_content >= 0.50 {
         return ImageContentType::Drawing;
     }
     ImageContentType::Photo
