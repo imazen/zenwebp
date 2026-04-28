@@ -166,6 +166,10 @@ name = "issue44_dump_scores"
 path = "dev/issue44_dump_scores.rs"
 
 [[example]]
+name = "chroma_entropy_spike"
+path = "dev/chroma_entropy_spike.rs"
+
+[[example]]
 name = "hrtb_test"
 required-features = ["zencodec"]
 
