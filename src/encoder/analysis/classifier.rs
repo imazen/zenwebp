@@ -486,7 +486,18 @@ pub fn classify_image_type_rgb8_diag(
         // ScreenContentLikelihood (which is palette+HF driven).
         .with(AnalysisFeature::PaletteFitsIn256)
         .with(AnalysisFeature::IndexedPaletteWidth)
-        .with(AnalysisFeature::LineArtScore);
+        .with(AnalysisFeature::LineArtScore)
+        // Physics-based photo-vs-artwork discriminators shipped in
+        // zenanalyze 0.1.0 per zenjpeg#123. SkinToneFraction is a
+        // "presence of human content" cue (LAB-space skin-region
+        // pixel fraction); EdgeSlopeStdev measures the spread of
+        // luma gradient magnitudes across the edge subset and
+        // separates photographic anti-aliased edges (tight stddev
+        // around the lens MTF cutoff, ~15–32) from screen / chart
+        // content (>35) and from smooth illustrations / line art
+        // (<15).
+        .with(AnalysisFeature::SkinToneFraction)
+        .with(AnalysisFeature::EdgeSlopeStdev);
     let q = AnalysisQuery::new(FEATURES);
     let r = match zenanalyze::try_analyze_features_rgb8(rgb, width, height, &q) {
         Ok(r) => r,
@@ -514,6 +525,8 @@ pub fn classify_image_type_rgb8_diag(
             .and_then(|v| v.as_u32())
             .unwrap_or(0),
         line_art_score: r.get_f32(AnalysisFeature::LineArtScore).unwrap_or(0.0),
+        skin_tone_fraction: r.get_f32(AnalysisFeature::SkinToneFraction).unwrap_or(0.0),
+        edge_slope_stdev: r.get_f32(AnalysisFeature::EdgeSlopeStdev).unwrap_or(0.0),
     };
     let bucket = decide_bucket_from_diag(&diag);
     (bucket, diag)
@@ -625,6 +638,26 @@ pub struct ZenanalyzeDiag {
     /// `[0, 1]` line-art / engineering-drawing score from Otsu
     /// bimodality + low-entropy gate. Experimental.
     pub line_art_score: f32,
+    /// Fraction of pixels whose RGB falls inside a canonical LAB
+    /// skin-tone region (Chai & Ngan / Vezhnevets). Tier 1 streaming.
+    /// One-direction signal: non-zero → likely natural photo, zero →
+    /// ambiguous (could be landscape / artwork / nature). Experimental.
+    ///
+    /// Empirical p50s (per `AnalysisFeature::SkinToneFraction` docs):
+    /// `photo_portrait` 0.21, `photo_natural` 0.04, `illustration`
+    /// 0.08, `screen_*` ≤ 0.03.
+    pub skin_tone_fraction: f32,
+    /// Standard deviation of luma gradient magnitudes across pixels
+    /// crossing the `EdgeDensity` threshold (`|∇L| > 20` on 0–255).
+    /// Tier 1 — accumulated piggyback on the same SIMD edge sweep.
+    /// Experimental.
+    ///
+    /// Empirical p50s: `photo_*` 20–24, `illustration` ~21,
+    /// `screen_document` ~55, `screen_ui` ~42. So **high** (> ~32)
+    /// reads as screen content; **low–mid** (15–32) reads as
+    /// photographic; very low (<15) reads as smooth content
+    /// (illustrations or low-detail photos overlap here).
+    pub edge_slope_stdev: f32,
 }
 
 /// Convert RGBA8 to RGB8 (drops the alpha channel) for the classifier.

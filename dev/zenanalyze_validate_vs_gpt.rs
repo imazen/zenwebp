@@ -331,7 +331,7 @@ fn main() {
         tsv,
         "corpus\timage\tw\th\ttruth\told\tstable\texperimental\ttuned\t\
          screen\ttext\tnatural\tflat\tdistinct\tvariance\tedge\tunif\thfreq\t\
-         palette_fits_256\tpalette_width\tline_art\tprimary_category"
+         palette_fits_256\tpalette_width\tline_art\tskin_tone\tedge_slope_stdev\tprimary_category"
     )
     .unwrap();
 
@@ -412,7 +412,7 @@ fn main() {
             tsv,
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t\
              {:.4}\t{:.4}\t{:.4}\t{:.4}\t{}\t{:.2}\t{:.4}\t{:.4}\t{:.4}\t\
-             {}\t{}\t{:.4}\t{}",
+             {}\t{}\t{:.4}\t{:.4}\t{:.2}\t{}",
             row.corpus,
             row.image,
             w,
@@ -434,6 +434,8 @@ fn main() {
             diag.palette_fits_in_256,
             diag.indexed_palette_width,
             diag.line_art_score,
+            diag.skin_tone_fraction,
+            diag.edge_slope_stdev,
             row.primary_category,
         )
         .unwrap();
@@ -479,12 +481,12 @@ fn main() {
     println!("\n--- TUNED: photo->drawing misclassifications ({}) ---", p_to_d.len());
     println!("       (sorted by line_art_score desc; truth=Photo, predicted Drawing)");
     println!(
-        "{:<14} {:<40} {:<18} screen text natural flat dist line_art pal_256 pal_w",
+        "{:<14} {:<40} {:<18} screen text natural flat dist line_art skin slopeSD pal256",
         "corpus", "image", "category"
     );
     for (r, _p, _t, d) in p_to_d.iter().take(40) {
         println!(
-            "{:<14} {:<40} {:<18} {:.2} {:.2} {:.2}    {:.2} {:>5} {:.2}     {}      {}",
+            "{:<14} {:<40} {:<18} {:.2} {:.2} {:.2}    {:.2} {:>5} {:.2}     {:.3} {:>6.2}  {}",
             r.corpus,
             r.image,
             r.primary_category,
@@ -494,20 +496,21 @@ fn main() {
             d.flat_color_block_ratio,
             d.distinct_color_bins,
             d.line_art_score,
+            d.skin_tone_fraction,
+            d.edge_slope_stdev,
             d.palette_fits_in_256 as u8,
-            d.indexed_palette_width,
         );
     }
 
     println!("\n--- TUNED: drawing->photo misclassifications ({}) ---", d_to_p.len());
     println!("       (sorted by distinct_color_bins desc; truth=Drawing, predicted Photo)");
     println!(
-        "{:<14} {:<40} {:<18} screen text natural flat dist line_art pal_256",
+        "{:<14} {:<40} {:<18} screen text natural flat dist line_art skin slopeSD pal256",
         "corpus", "image", "category"
     );
     for (r, _p, _t, d) in d_to_p.iter().take(40) {
         println!(
-            "{:<14} {:<40} {:<18} {:.2} {:.2} {:.2}    {:.2} {:>5} {:.2}     {}",
+            "{:<14} {:<40} {:<18} {:.2} {:.2} {:.2}    {:.2} {:>5} {:.2}     {:.3} {:>6.2}  {}",
             r.corpus,
             r.image,
             r.primary_category,
@@ -517,6 +520,8 @@ fn main() {
             d.flat_color_block_ratio,
             d.distinct_color_bins,
             d.line_art_score,
+            d.skin_tone_fraction,
+            d.edge_slope_stdev,
             d.palette_fits_in_256 as u8,
         );
     }
