@@ -39,6 +39,12 @@ magetypes = { version = "0.9.15" }
 rgb = { version = "0.8", optional = true, default-features = false, features = ["as-bytes"] }
 imgref = { version = "1.12", optional = true, default-features = false }
 zensim = { version = "0.2", optional = true }
+# zenanalyze is the shared streaming feature scanner used by zen* codecs.
+# Pinned to the published version on crates.io (0.1.0, 2026-04-28). The
+# `experimental` feature gates the research-stage signals
+# (PaletteFitsIn256, IndexedPaletteWidth, LineArtScore, SkinToneFraction,
+# EdgeSlopeStdev) that this classifier consumes.
+zenanalyze = { version = "0.1.0", optional = true, features = ["experimental", "composites"] }
 
 [dev-dependencies]
 archmage = { version = "0.9.15", features = ["std", "macros"] }
@@ -102,6 +108,11 @@ zencodec = ["dep:zencodec", "dep:self_cell"]
 # decodes → measures → adjusts global VP8 quality until it lands in
 # the target band. See `LossyConfig::with_target_zensim`.
 target-zensim = ["dep:zensim", "std"]
+# Use zenanalyze for content classification (auto-preset detection,
+# target_zensim bucket detection, target_zensim starting-q calibration).
+# When off, falls back to zenwebp's homegrown alpha-histogram classifier.
+# Opt-in for now; may become default once the threshold contract stabilises.
+analyzer = ["dep:zenanalyze"]
 # dev-only — enables runtime ablation toggles read from environment
 # variables for `dev/zensim_*.rs` measurement binaries. Production
 # builds should leave this off so the iteration hot path makes no
@@ -164,6 +175,16 @@ path = "dev/cost_model_sweep.rs"
 [[example]]
 name = "issue44_dump_scores"
 path = "dev/issue44_dump_scores.rs"
+
+[[example]]
+name = "zenanalyze_classify_diff"
+path = "dev/zenanalyze_classify_diff.rs"
+required-features = ["analyzer"]
+
+[[example]]
+name = "zenanalyze_validate_vs_gpt"
+path = "dev/zenanalyze_validate_vs_gpt.rs"
+required-features = ["analyzer"]
 
 [[example]]
 name = "hrtb_test"

@@ -300,6 +300,85 @@ pub(crate) fn zensim_to_starting_q_for_bucket(target: f32, bucket: ImageContentT
     interpolate_anchors(target, anchors)
 }
 
+/// Continuous-blend starting-q calibration via zenanalyze likelihoods.
+///
+/// Replaces the discrete 3-bucket lookup with a soft mix of the Photo
+/// and Drawing anchor tables, weighted by `NaturalLikelihood` and
+/// `ScreenContentLikelihood + TextLikelihood`. The Icon path is
+/// unchanged: small images (≤128 px on either side) still snap to the
+/// `ICON` anchor table without running the analyzer.
+///
+/// Falls back to `None` (caller uses the discrete bucket table) when
+/// the analyzer can't run (unsupported layout, length mismatch, RGBA
+/// edge case). The blend formula:
+///
+/// ```text
+/// w_screen = clamp01(screen + text)
+/// w_photo  = clamp01(natural)
+/// total    = w_screen + w_photo
+/// q        = (w_screen * q_drawing + w_photo * q_photo) / total
+/// ```
+///
+/// `total > 0` is guaranteed in practice because zenanalyze normalises
+/// the three soft scores so they don't all collapse to zero on real
+/// content. If `total == 0` (degenerate / 1×1 input), we fall back to
+/// the Photo anchor — same default as the discrete-bucket path.
+#[cfg(feature = "analyzer")]
+#[allow(clippy::needless_pass_by_value, dead_code)]
+fn starting_q_via_likelihoods(
+    target: f32,
+    pixels: &[u8],
+    layout: crate::PixelLayout,
+    width: u32,
+    height: u32,
+) -> Option<f32> {
+    use crate::PixelLayout;
+    use crate::encoder::analysis::ZenanalyzeDiag;
+    use crate::encoder::analysis::classifier::{classify_image_type_rgb8_diag, rgba8_to_rgb8};
+    let w = width as usize;
+    let h = height as usize;
+    if w < 8 || h < 8 {
+        return None;
+    }
+    if width <= 128 && height <= 128 {
+        // Tiny — keep the hand-distilled ICON ramp. The analyzer's
+        // likelihoods are noisy on sub-128px input.
+        return Some(zensim_to_starting_q_for_bucket(
+            target,
+            ImageContentType::Icon,
+        ));
+    }
+    let (_bucket, diag): (ImageContentType, ZenanalyzeDiag) = match layout {
+        PixelLayout::Rgb8 => {
+            let n = w * h * 3;
+            if pixels.len() < n {
+                return None;
+            }
+            classify_image_type_rgb8_diag(&pixels[..n], width, height)
+        }
+        PixelLayout::Rgba8 => {
+            let n = w * h * 4;
+            if pixels.len() < n {
+                return None;
+            }
+            let rgb = rgba8_to_rgb8(&pixels[..n]);
+            classify_image_type_rgb8_diag(&rgb, width, height)
+        }
+        _ => return None,
+    };
+
+    let q_photo = zensim_to_starting_q_for_bucket(target, ImageContentType::Photo);
+    let q_drawing = zensim_to_starting_q_for_bucket(target, ImageContentType::Drawing);
+
+    let w_screen = (diag.screen_content + diag.text_likelihood).clamp(0.0, 1.0);
+    let w_photo = diag.natural_likelihood.clamp(0.0, 1.0);
+    let total = w_screen + w_photo;
+    if total <= f32::EPSILON {
+        return Some(q_photo);
+    }
+    Some((w_screen * q_drawing + w_photo * q_photo) / total)
+}
+
 /// Linear interpolation over a sorted (target, q) anchor table. Clamps
 /// to the endpoints' q values outside the bracketed range. Returns
 /// `target` itself if the table is empty.
@@ -630,9 +709,28 @@ pub(crate) mod iteration {
                 None => pre_phase2_starting_q(target.target, ImageContentType::Photo),
             }
         } else {
-            match bucket {
-                Some(b) => zensim_to_starting_q_for_bucket(target.target, b),
-                None => zensim_to_starting_q_for_bucket(target.target, ImageContentType::Photo),
+            // With the `analyzer` feature on: try the continuous blend
+            // first, falling back to the discrete bucket-anchor table
+            // when the analyzer signals are unavailable. With the
+            // feature off, this reduces to the original lookup.
+            #[cfg(feature = "analyzer")]
+            {
+                match starting_q_via_likelihoods(target.target, pixels, layout, width, height) {
+                    Some(q) => q,
+                    None => match bucket {
+                        Some(b) => zensim_to_starting_q_for_bucket(target.target, b),
+                        None => {
+                            zensim_to_starting_q_for_bucket(target.target, ImageContentType::Photo)
+                        }
+                    },
+                }
+            }
+            #[cfg(not(feature = "analyzer"))]
+            {
+                match bucket {
+                    Some(b) => zensim_to_starting_q_for_bucket(target.target, b),
+                    None => zensim_to_starting_q_for_bucket(target.target, ImageContentType::Photo),
+                }
             }
         };
         q = q.clamp(0.0, 100.0);
@@ -1541,32 +1639,60 @@ pub(crate) mod iteration {
         if w < 8 || h < 8 || pixels.len() < w * h * bpp {
             return None;
         }
-        // BT.601 Y = 0.299R + 0.587G + 0.114B.
-        let mut y_plane: Vec<u8> = Vec::with_capacity(w * h);
-        let mut alpha_hist = [0u32; 256];
-        match layout {
-            PixelLayout::Rgb8 => {
-                for px in pixels.chunks_exact(3).take(w * h) {
-                    let y =
-                        ((u32::from(px[0]) * 76 + u32::from(px[1]) * 150 + u32::from(px[2]) * 30)
-                            >> 8) as u8;
-                    y_plane.push(y);
-                    alpha_hist[y as usize] += 1;
+
+        // When the `analyzer` feature is on, route through zenanalyze
+        // so the bucket decision uses the same shared signal source as
+        // the encoder's Auto-preset path. See `classify_image_type_rgb8`.
+        #[cfg(feature = "analyzer")]
+        {
+            let bucket = match layout {
+                PixelLayout::Rgb8 => crate::encoder::analysis::classify_image_type_rgb8(
+                    &pixels[..w * h * 3],
+                    width,
+                    height,
+                ),
+                PixelLayout::Rgba8 => {
+                    let rgb = crate::encoder::analysis::rgba8_to_rgb8(&pixels[..w * h * 4]);
+                    crate::encoder::analysis::classify_image_type_rgb8(&rgb, width, height)
                 }
-            }
-            PixelLayout::Rgba8 => {
-                for px in pixels.chunks_exact(4).take(w * h) {
-                    let y =
-                        ((u32::from(px[0]) * 76 + u32::from(px[1]) * 150 + u32::from(px[2]) * 30)
-                            >> 8) as u8;
-                    y_plane.push(y);
-                    alpha_hist[px[3] as usize] += 1;
-                }
-            }
-            _ => return None,
+                _ => return None,
+            };
+            Some(bucket)
         }
-        let bucket = crate::encoder::analysis::classify_image_type(&y_plane, w, h, w, &alpha_hist);
-        Some(bucket)
+
+        // Fallback (no `analyzer` feature): the original Y-plane +
+        // alpha-histogram heuristic. BT.601 Y = 0.299R + 0.587G + 0.114B.
+        #[cfg(not(feature = "analyzer"))]
+        {
+            let mut y_plane: Vec<u8> = Vec::with_capacity(w * h);
+            let mut alpha_hist = [0u32; 256];
+            match layout {
+                PixelLayout::Rgb8 => {
+                    for px in pixels.chunks_exact(3).take(w * h) {
+                        let y = ((u32::from(px[0]) * 76
+                            + u32::from(px[1]) * 150
+                            + u32::from(px[2]) * 30)
+                            >> 8) as u8;
+                        y_plane.push(y);
+                        alpha_hist[y as usize] += 1;
+                    }
+                }
+                PixelLayout::Rgba8 => {
+                    for px in pixels.chunks_exact(4).take(w * h) {
+                        let y = ((u32::from(px[0]) * 76
+                            + u32::from(px[1]) * 150
+                            + u32::from(px[2]) * 30)
+                            >> 8) as u8;
+                        y_plane.push(y);
+                        alpha_hist[px[3] as usize] += 1;
+                    }
+                }
+                _ => return None,
+            }
+            let bucket =
+                crate::encoder::analysis::classify_image_type(&y_plane, w, h, w, &alpha_hist);
+            Some(bucket)
+        }
     }
 }
 

@@ -427,6 +427,289 @@ fn compute_color_uniformity(y_src: &[u8], width: usize, height: usize, y_stride:
     uniform_count as f32 / total_blocks as f32
 }
 
+/// Classify image content type via the `zenanalyze` shared scanner.
+///
+/// One streaming pass over the RGB(A)8 source extracts the soft
+/// content-class likelihoods (`ScreenContentLikelihood`,
+/// `TextLikelihood`, `NaturalLikelihood`) plus the cheap palette /
+/// flat-colour signals that distinguish "screenshot or UI graphic"
+/// from "natural photograph". This replaces the homegrown
+/// `classify_image_type` heuristic (alpha histogram + Y-plane edge /
+/// uniformity scan) with a single shared signal source, so the same
+/// thresholds drive zenwebp / zenjpeg / zenavif preset selection.
+///
+/// Threshold rationale (ScreenContent ≥ 0.6, Text ≥ 0.5,
+/// FlatColorBlockRatio ≥ 0.20): these are starting points distilled
+/// from zenanalyze's documented behaviour (photos cluster
+/// `ScreenContentLikelihood` below 0.05, screen content above 0.7;
+/// ROC-AUC 0.978 at the default budget). Tune against the
+/// `auto_detection_tuning` corpus; do not relax thresholds without
+/// confirming the test floors still hold.
+///
+/// `width` and `height` ≤ 128 still routes to `Icon` (preserves
+/// the existing small-image carve-out).
+#[cfg(feature = "analyzer")]
+pub fn classify_image_type_rgb8(rgb: &[u8], width: u32, height: u32) -> ImageContentType {
+    classify_image_type_rgb8_diag(rgb, width, height).0
+}
+
+/// Diagnostic variant of [`classify_image_type_rgb8`] returning the
+/// raw zenanalyze signals alongside the bucket decision. Used by the
+/// classifier-comparison harness in `dev/`.
+#[cfg(feature = "analyzer")]
+pub fn classify_image_type_rgb8_diag(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+) -> (ImageContentType, ZenanalyzeDiag) {
+    if width <= 128 && height <= 128 {
+        return (ImageContentType::Icon, ZenanalyzeDiag::default());
+    }
+    if rgb.len() != (width as usize) * (height as usize) * 3 {
+        return (ImageContentType::Photo, ZenanalyzeDiag::default());
+    }
+    use zenanalyze::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
+    const FEATURES: FeatureSet = FeatureSet::new()
+        .with(AnalysisFeature::ScreenContentLikelihood)
+        .with(AnalysisFeature::TextLikelihood)
+        .with(AnalysisFeature::NaturalLikelihood)
+        .with(AnalysisFeature::FlatColorBlockRatio)
+        .with(AnalysisFeature::DistinctColorBins)
+        .with(AnalysisFeature::Variance)
+        .with(AnalysisFeature::EdgeDensity)
+        .with(AnalysisFeature::Uniformity)
+        .with(AnalysisFeature::HighFreqEnergyRatio)
+        // Experimental signals (gated on zenanalyze's `experimental`
+        // feature). PaletteFitsIn256 / IndexedPaletteWidth catch
+        // graphics with a small palette; LineArtScore catches line
+        // drawings / engineering diagrams that don't trigger
+        // ScreenContentLikelihood (which is palette+HF driven).
+        .with(AnalysisFeature::PaletteFitsIn256)
+        .with(AnalysisFeature::IndexedPaletteWidth)
+        .with(AnalysisFeature::LineArtScore)
+        // Physics-based photo-vs-artwork discriminators shipped in
+        // zenanalyze 0.1.0 per zenjpeg#123. SkinToneFraction is a
+        // "presence of human content" cue (LAB-space skin-region
+        // pixel fraction); EdgeSlopeStdev measures the spread of
+        // luma gradient magnitudes across the edge subset and
+        // separates photographic anti-aliased edges (tight stddev
+        // around the lens MTF cutoff, ~15–32) from screen / chart
+        // content (>35) and from smooth illustrations / line art
+        // (<15).
+        .with(AnalysisFeature::SkinToneFraction)
+        .with(AnalysisFeature::EdgeSlopeStdev);
+    let q = AnalysisQuery::new(FEATURES);
+    let r = match zenanalyze::try_analyze_features_rgb8(rgb, width, height, &q) {
+        Ok(r) => r,
+        Err(_) => return (ImageContentType::Photo, ZenanalyzeDiag::default()),
+    };
+    let diag = ZenanalyzeDiag {
+        screen_content: r
+            .get_f32(AnalysisFeature::ScreenContentLikelihood)
+            .unwrap_or(0.0),
+        text_likelihood: r.get_f32(AnalysisFeature::TextLikelihood).unwrap_or(0.0),
+        natural_likelihood: r.get_f32(AnalysisFeature::NaturalLikelihood).unwrap_or(0.0),
+        flat_color_block_ratio: r
+            .get_f32(AnalysisFeature::FlatColorBlockRatio)
+            .unwrap_or(0.0),
+        distinct_color_bins: r
+            .get(AnalysisFeature::DistinctColorBins)
+            .and_then(|v| v.as_u32())
+            .unwrap_or(0),
+        variance: r.get_f32(AnalysisFeature::Variance).unwrap_or(0.0),
+        edge_density: r.get_f32(AnalysisFeature::EdgeDensity).unwrap_or(0.0),
+        uniformity: r.get_f32(AnalysisFeature::Uniformity).unwrap_or(0.0),
+        high_freq_energy_ratio: r
+            .get_f32(AnalysisFeature::HighFreqEnergyRatio)
+            .unwrap_or(0.0),
+        palette_fits_in_256: r
+            .get(AnalysisFeature::PaletteFitsIn256)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        indexed_palette_width: r
+            .get(AnalysisFeature::IndexedPaletteWidth)
+            .and_then(|v| v.as_u32())
+            .unwrap_or(0),
+        line_art_score: r.get_f32(AnalysisFeature::LineArtScore).unwrap_or(0.0),
+        skin_tone_fraction: r.get_f32(AnalysisFeature::SkinToneFraction).unwrap_or(0.0),
+        edge_slope_stdev: r.get_f32(AnalysisFeature::EdgeSlopeStdev).unwrap_or(0.0),
+    };
+    let bucket = decide_bucket_from_diag(&diag);
+    (bucket, diag)
+}
+
+/// Threshold-only decision over the zenanalyze signals using only
+/// the *stable* (non-experimental) features. Used as the "default
+/// signals" tier in the validation harness so we can isolate the
+/// improvement from `palette_fits_in_256` / `line_art_score`.
+#[cfg(feature = "analyzer")]
+pub fn decide_bucket_stable(diag: &ZenanalyzeDiag) -> ImageContentType {
+    if diag.screen_content > 0.6 || diag.text_likelihood > 0.5 {
+        return ImageContentType::Drawing;
+    }
+    if diag.flat_color_block_ratio > 0.20 && diag.distinct_color_bins < 4096 {
+        return ImageContentType::Drawing;
+    }
+    ImageContentType::Photo
+}
+
+/// Threshold-only decision over the zenanalyze signals. Pulled out
+/// so the validation harness in `dev/zenanalyze_validate_vs_gpt.rs`
+/// can replay the decision against pre-recorded signals when tuning.
+///
+/// Tuned against 219 GPT-5.4-mini-labelled images from the
+/// classifier-eval corpus (cid22-train/val, clic2025-1024, gb82,
+/// gb82-sc, kadid10k, qoi-benchmark). With `SkinToneFraction` /
+/// `EdgeSlopeStdev` (zenanalyze 0.1.0) wired in as a portrait-
+/// rescue rule: **93.4%** overall, photo recall **96.9%**, drawing
+/// recall **78.4%** (n=198, 21 rows skipped — JPGs and missing
+/// files). Up from 92.9% / 96.3% / 78.4% pre-rescue.
+///
+/// Order of tests matters:
+///
+/// 0. **Photo rescue (new):** `skin_tone_fraction >= 0.15` AND
+///    `edge_slope_stdev < 35.0` → Photo. Catches portraits whose
+///    smooth backgrounds confused `screen_content_likelihood` /
+///    `flat_color_block_ratio`. Photographic edge stddev (lens-MTF
+///    cluster ~15–32) plus visible skin is a strong "natural
+///    photo" pair. Rescues `kadid10k/I29.png` (photo_portrait at
+///    `skin=0.239, slpSD=16.97, screen=0.61`); does not rescue any
+///    actual drawings in the corpus.
+/// 1. `line_art_score > 0.5` → Drawing (engineering / line art)
+/// 2. `screen_content >= 0.60` or `text_likelihood >= 0.55` →
+///    Drawing (qoi-benchmark websites clamp at exactly 0.6000)
+/// 3. `screen >= 0.40` AND `flat >= 0.40` AND `uniformity >= 0.85`
+///    AND `distinct < 4096` → Drawing (anti-aliased UI fallback)
+/// 4. `flat >= 0.50` AND `distinct < 4096` → Drawing (charts / UI
+///    overflow)
+/// 5. `palette_fits_in_256` AND `natural < 0.10` AND
+///    `screen >= 0.50` → Drawing (tiny-palette photo edge case)
+///
+/// **Why the new features alone don't rescue more drawing FNs:**
+/// the 8 remaining drawing→photo errors are paintings and
+/// illustrations whose `skin_tone_fraction` and `edge_slope_stdev`
+/// fall inside the photographic ranges (skin ≤ 0.42, slpSD 4–28).
+/// With only these two physics-based signals, the corpus-wide
+/// AUC for "artwork vs natural" stays around 0.80; the noise-
+/// spectrum / JPEG-roundtrip signals proposed in zenjpeg#123 are
+/// the next discriminator and aren't in 0.1.0.
+#[cfg(feature = "analyzer")]
+pub fn decide_bucket_from_diag(diag: &ZenanalyzeDiag) -> ImageContentType {
+    // Photo rescue: meaningful skin-tone fraction and a
+    // photographic edge-stddev cluster. Runs before any drawing
+    // rule so portraits with smooth studio backgrounds aren't
+    // dragged into Drawing by `screen_content` / `flat`.
+    if diag.skin_tone_fraction >= 0.15 && diag.edge_slope_stdev < 35.0 {
+        return ImageContentType::Photo;
+    }
+    // Strong drawing signal: line-art / engineering-drawing score.
+    if diag.line_art_score > 0.5 {
+        return ImageContentType::Drawing;
+    }
+    // Screen-content / text — `>=` so qoi-benchmark websites at
+    // exactly 0.6000 are caught.
+    if diag.screen_content >= 0.60 || diag.text_likelihood >= 0.55 {
+        return ImageContentType::Drawing;
+    }
+    // Combined screen+flat+uniform signal: catches anti-aliased UI
+    // pages where the screen-content score sits at 0.4-0.6 but the
+    // page is dominated by uniform flat blocks.
+    if diag.screen_content >= 0.40
+        && diag.flat_color_block_ratio >= 0.40
+        && diag.uniformity >= 0.85
+        && diag.distinct_color_bins < 4096
+    {
+        return ImageContentType::Drawing;
+    }
+    // Flat-block fallback (tightened from the original 0.20 bound):
+    // real UI / chart content sits at flat >= 0.50; smooth photos
+    // cap below that.
+    if diag.flat_color_block_ratio >= 0.50 && diag.distinct_color_bins < 4096 {
+        return ImageContentType::Drawing;
+    }
+    // Fits-in-256-colours is a strong indicator only when paired
+    // with low natural likelihood AND a meaningful screen score
+    // (rules out flat photos / night scenes with tiny palettes that
+    // GPT still labels as "photo").
+    if diag.palette_fits_in_256 && diag.natural_likelihood < 0.10 && diag.screen_content >= 0.50 {
+        return ImageContentType::Drawing;
+    }
+    ImageContentType::Photo
+}
+
+/// Streaming-analyzer signals for diagnostic and calibration use.
+///
+/// All fields are zenanalyze stable (non-experimental) features so the
+/// numeric scale is governed by the crate's threshold contract.
+#[cfg(feature = "analyzer")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ZenanalyzeDiag {
+    /// `[0, 1]` soft score: UI / chart / synthetic content.
+    pub screen_content: f32,
+    /// `[0, 1]` soft score: rendered text / document content.
+    pub text_likelihood: f32,
+    /// `[0, 1]` soft score: natural photographic content.
+    pub natural_likelihood: f32,
+    /// Fraction of 8×8 blocks with R/G/B ranges all ≤ 4.
+    pub flat_color_block_ratio: f32,
+    /// Distinct 5-bit-per-channel RGB bins observed.
+    pub distinct_color_bins: u32,
+    /// Luma variance on BT.601 [0, 255] scale.
+    pub variance: f32,
+    /// Fraction of sampled interior pixels with `|∇L| > 20`.
+    pub edge_density: f32,
+    /// Fraction of 8×8 blocks with luma variance < 25.
+    pub uniformity: f32,
+    /// `Σ AC[k≥16] / Σ AC[k∈1..16]` over sampled luma blocks.
+    pub high_freq_energy_ratio: f32,
+    /// `true` iff the source RGB fits in a 256-colour palette (no
+    /// quantization required). Experimental signal — strong "graphics
+    /// with limited palette" indicator.
+    pub palette_fits_in_256: bool,
+    /// Indexed palette width estimate. `0` if more than 256 colours.
+    /// Experimental.
+    pub indexed_palette_width: u32,
+    /// `[0, 1]` line-art / engineering-drawing score from Otsu
+    /// bimodality + low-entropy gate. Experimental.
+    pub line_art_score: f32,
+    /// Fraction of pixels whose RGB falls inside a canonical LAB
+    /// skin-tone region (Chai & Ngan / Vezhnevets). Tier 1 streaming.
+    /// One-direction signal: non-zero → likely natural photo, zero →
+    /// ambiguous (could be landscape / artwork / nature). Experimental.
+    ///
+    /// Empirical p50s (per `AnalysisFeature::SkinToneFraction` docs):
+    /// `photo_portrait` 0.21, `photo_natural` 0.04, `illustration`
+    /// 0.08, `screen_*` ≤ 0.03.
+    pub skin_tone_fraction: f32,
+    /// Standard deviation of luma gradient magnitudes across pixels
+    /// crossing the `EdgeDensity` threshold (`|∇L| > 20` on 0–255).
+    /// Tier 1 — accumulated piggyback on the same SIMD edge sweep.
+    /// Experimental.
+    ///
+    /// Empirical p50s: `photo_*` 20–24, `illustration` ~21,
+    /// `screen_document` ~55, `screen_ui` ~42. So **high** (> ~32)
+    /// reads as screen content; **low–mid** (15–32) reads as
+    /// photographic; very low (<15) reads as smooth content
+    /// (illustrations or low-detail photos overlap here).
+    pub edge_slope_stdev: f32,
+}
+
+/// Convert RGBA8 to RGB8 (drops the alpha channel) for the classifier.
+/// `analyze_features` could ingest RGBA8 directly via PixelSlice; this
+/// helper exists because the classifier entry deliberately stays
+/// rgb8-only to keep the API surface small.
+#[cfg(feature = "analyzer")]
+pub fn rgba8_to_rgb8(rgba: &[u8]) -> alloc::vec::Vec<u8> {
+    use alloc::vec::Vec;
+    let mut out = Vec::with_capacity(rgba.len() / 4 * 3);
+    for px in rgba.chunks_exact(4) {
+        out.push(px[0]);
+        out.push(px[1]);
+        out.push(px[2]);
+    }
+    out
+}
+
 /// Get tuning parameters for a detected content type.
 /// Returns (sns_strength, filter_strength, filter_sharpness, num_segments).
 pub fn content_type_to_tuning(content_type: ImageContentType) -> (u8, u8, u8, u8) {

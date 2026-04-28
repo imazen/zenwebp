@@ -1,0 +1,7 @@
+    Finished `release` profile [optimized] target(s) in 0.07s
+     Running `target/release/examples/zenanalyze_classify_diff /home/lilith/work/codec-corpus/CID22/CID22-512/validation /home/lilith/work/codec-corpus/gb82 /home/lilith/work/codec-corpus/gb82-sc`
+=== summary ===
+total=75 same=23 changed=52
+  P->D=19  D->P=33  other=0
+  orig: photo=39 drawing=36 icon=0
+  zen:  photo=53  drawing=22  icon=0

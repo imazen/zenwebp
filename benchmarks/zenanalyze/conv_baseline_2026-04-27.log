@@ -1,0 +1,37 @@
+    Finished `release` profile [optimized] target(s) in 0.07s
+     Running `target/release/examples/zensim_convergence_eval --corpus CID22=/home/lilith/work/codec-corpus/CID22/CID22-512/validation --corpus gb82=/home/lilith/work/codec-corpus/gb82 --corpus gb82-sc=/home/lilith/work/codec-corpus/gb82-sc --targets 75,80,85 --max-passes 3`
+convergence-eval: max_passes=3 max_overshoot=1.5 method=4 ship_override=None
+corpora:
+  CID22 = /home/lilith/work/codec-corpus/CID22/CID22-512/validation
+  gb82 = /home/lilith/work/codec-corpus/gb82
+  gb82-sc = /home/lilith/work/codec-corpus/gb82-sc
+targets: [75.0, 80.0, 85.0]
+  CID22: 41 images
+  gb82: 25 images
+  gb82-sc: 10 images
+loaded 76 images
+............................................................................
+
+=== by target (across all corpora) ===
+(all)                    target= 75.0 n=  76  passes_avg=2.18  pass1_share=25%  achieved_avg=76.33  met=76/76  und=13 ovs=19  med_bytes=26225
+(all)                    target= 80.0 n=  76  passes_avg=2.11  pass1_share=12%  achieved_avg=80.59  met=76/76  und=9 ovs=12  med_bytes=34355
+(all)                    target= 85.0 n=  76  passes_avg=1.66  pass1_share=54%  achieved_avg=84.94  met=76/76  und=18 ovs=7  med_bytes=54125
+
+=== by corpus (across all targets) ===
+CID22                    target=  ALL n= 123  passes_avg=1.89  pass1_share=33%  achieved_avg=80.24  met=123/123  und=23 ovs=9  med_bytes=33938
+gb82                     target=  ALL n=  75  passes_avg=1.80  pass1_share=35%  achieved_avg=80.88  met=75/75  und=12 ovs=12  med_bytes=37190
+gb82-sc                  target=  ALL n=  30  passes_avg=2.83  pass1_share=7%  achieved_avg=81.51  met=30/30  und=5 ovs=17  med_bytes=73186
+
+=== by (corpus, target) ===
+CID22                    target= 75.0 n=  41  passes_avg=2.00  pass1_share=32%  achieved_avg=75.84  met=41/41  und=5 ovs=6  med_bytes=23894
+CID22                    target= 80.0 n=  41  passes_avg=2.10  pass1_share=7%  achieved_avg=80.24  met=41/41  und=7 ovs=2  med_bytes=33234
+CID22                    target= 85.0 n=  41  passes_avg=1.56  pass1_share=61%  achieved_avg=84.65  met=41/41  und=11 ovs=1  med_bytes=51662
+gb82                     target= 75.0 n=  25  passes_avg=2.16  pass1_share=24%  achieved_avg=76.10  met=25/25  und=7 ovs=5  med_bytes=27928
+gb82                     target= 80.0 n=  25  passes_avg=1.84  pass1_share=20%  achieved_avg=80.88  met=25/25  und=1 ovs=5  med_bytes=35240
+gb82                     target= 85.0 n=  25  passes_avg=1.40  pass1_share=60%  achieved_avg=85.67  met=25/25  und=4 ovs=2  med_bytes=55534
+gb82-sc                  target= 75.0 n=  10  passes_avg=3.00  pass1_share=0%  achieved_avg=78.91  met=10/10  und=1 ovs=8  med_bytes=61861
+gb82-sc                  target= 80.0 n=  10  passes_avg=2.80  pass1_share=10%  achieved_avg=81.32  met=10/10  und=1 ovs=5  med_bytes=73434
+gb82-sc                  target= 85.0 n=  10  passes_avg=2.70  pass1_share=10%  achieved_avg=84.30  met=10/10  und=3 ovs=4  med_bytes=96790
+
+=== overall ===
+ALL                      target=  ALL n= 228  passes_avg=1.98  pass1_share=30%  achieved_avg=80.62  met=228/228  und=40 ovs=38  med_bytes=37268
