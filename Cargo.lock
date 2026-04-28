@@ -645,9 +645,9 @@ dependencies = [
 
 [[package]]
 name = "garb"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61ee8d8f5e43a45183480ea077c4e046e43ab9604928c87d6ad2080e666dc519"
+checksum = "96bf7a00ed7fc01dae4e581831996672b2824746af4c0a658ee28ca3cbb823dc"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -2062,6 +2062,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9711cf1c3363003dd436f5b5dc113f7881f9b377613eecbf41f91b6b85626442"
 dependencies = [
  "archmage",
+ "garb",
  "linear-srgb",
  "magetypes",
  "zenpixels",
