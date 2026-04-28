@@ -504,7 +504,7 @@ fn main() {
             .partial_cmp(&a.3.line_art_score)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    d_to_p.sort_by(|a, b| b.3.distinct_color_bins.cmp(&a.3.distinct_color_bins));
+    d_to_p.sort_by_key(|b| std::cmp::Reverse(b.3.distinct_color_bins));
 
     println!(
         "\n--- TUNED: photo->drawing misclassifications ({}) ---",
