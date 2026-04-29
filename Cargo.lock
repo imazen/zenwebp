@@ -28,9 +28,9 @@ dependencies = [
 
 [[package]]
 name = "almost-enough"
-version = "0.4.3"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c8f3e651142e773f3eab1b8314ade013d5a3eef6dc2cd2af6dad9b0ede58f23"
+checksum = "a2040cad221332dbe816267e6f2b55032f53a297ceb4d97f8e612df471aa6dbc"
 dependencies = [
  "enough",
 ]
@@ -486,9 +486,9 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
 name = "enough"
-version = "0.4.3"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "521236efef7dcf4a95af2976e34b5b10780e8747eb78fa4742aa65b2ee189222"
+checksum = "f8e1bd41ecce82c300d0c84fa35b080fa6db50a5398b18f1abf0357bb067549e"
 
 [[package]]
 name = "equator"
@@ -2084,15 +2084,37 @@ dependencies = [
 ]
 
 [[package]]
-name = "zencodec"
-version = "0.1.13"
+name = "zenblend"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "882aeed23dcf360faded3a50b468b3bc6226da46b2d62e39d72f98f68bb6835b"
+checksum = "d66daf1f95f9f3a3c7c4529ea1f993069e2691cc89a4f8b0f4002ced96179f68"
+dependencies = [
+ "archmage",
+ "magetypes",
+ "safe_unaligned_simd",
+]
+
+[[package]]
+name = "zencodec"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb719d8324f653b14e4aa8c3870e5c48c91a4f46c68981de5b4194df442e4c69"
 dependencies = [
  "almost-enough",
  "enough",
  "whereat",
  "zenpixels",
+]
+
+[[package]]
+name = "zenflate"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8409543ad469f954834da58409f0d9c463156f01cfaf8a8a03fe277c73b1e0f5"
+dependencies = [
+ "archmage",
+ "enough",
+ "libm",
 ]
 
 [[package]]
@@ -2129,7 +2151,65 @@ dependencies = [
  "magetypes",
  "once_cell",
  "paste",
+ "rgb",
  "whereat",
+ "zenpixels",
+]
+
+[[package]]
+name = "zenpng"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34ef0ff0cfac28ce74a9241dbe8ba3abe60f385819d55675c4daced1ac8ac4bd"
+dependencies = [
+ "almost-enough",
+ "archmage",
+ "bytemuck",
+ "enough",
+ "imgref",
+ "linear-srgb",
+ "memchr",
+ "rgb",
+ "safe_unaligned_simd",
+ "thiserror",
+ "whereat",
+ "zencodec",
+ "zenflate",
+ "zenpixels",
+ "zenpixels-convert",
+ "zenquant",
+]
+
+[[package]]
+name = "zenquant"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "440257260e03abacc233712332cd164f59afb98e8385e49ca5a0581ef0c7269d"
+dependencies = [
+ "archmage",
+ "imgref",
+ "linear-srgb",
+ "magetypes",
+ "num-traits",
+ "rgb",
+ "thiserror",
+]
+
+[[package]]
+name = "zenresize"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0703679da7af627f10429532d0633b3d32fa0fd10d2b48ca94b5fcd0dbfd6e5a"
+dependencies = [
+ "archmage",
+ "imgref",
+ "libm",
+ "linear-srgb",
+ "magetypes",
+ "rgb",
+ "safe_unaligned_simd",
+ "whereat",
+ "zenblend",
  "zenpixels",
 ]
 
@@ -2186,6 +2266,7 @@ dependencies = [
  "paste",
  "png",
  "rand 0.10.1",
+ "rayon",
  "rgb",
  "self_cell",
  "thiserror",
@@ -2198,6 +2279,9 @@ dependencies = [
  "zencodec",
  "zenpicker",
  "zenpixels",
+ "zenpixels-convert",
+ "zenpng",
+ "zenresize",
  "zensim",
  "zensim-regress",
  "zenyuv",
