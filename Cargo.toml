@@ -45,6 +45,10 @@ zensim = { version = "0.2", optional = true }
 # (PaletteFitsIn256, IndexedPaletteWidth, LineArtScore, SkinToneFraction,
 # EdgeSlopeStdev) that this classifier consumes.
 zenanalyze = { version = "0.1.0", optional = true, features = ["experimental", "composites"] }
+# zenpicker is not yet on crates.io; path-pin for the spike. See
+# https://github.com/imazen/zenanalyze/pull/14 (draft, v0.1.0). Gated
+# behind the `picker` cargo feature so default builds don't pull it.
+zenpicker = { path = "../zenanalyze/zenpicker", optional = true }
 
 [dev-dependencies]
 archmage = { version = "0.9.15", features = ["std", "macros"] }
@@ -119,6 +123,12 @@ analyzer = ["dep:zenanalyze"]
 # `std::env::var` calls. See `src/encoder/zensim_target.rs` for the
 # list of toggles.
 ablation = ["target-zensim"]
+# Spike (research): zenpicker-driven encoder-knob picker. Replaces the
+# 3-row `content_type_to_tuning` lookup at the `Preset::Auto` site
+# with a baked MLP that argmins over a 16-cell `(sns, filter,
+# segments)` grid. Off by default — production builds use the
+# bucket-table path. See `src/encoder/picker/`.
+picker = ["dep:zenpicker", "analyzer"]
 # Enable zennode pipeline node definitions
 # zennode = ["dep:zennode"]
 
@@ -180,6 +190,11 @@ path = "dev/issue44_dump_scores.rs"
 name = "zenanalyze_classify_diff"
 path = "dev/zenanalyze_classify_diff.rs"
 required-features = ["analyzer"]
+
+[[example]]
+name = "zenwebp_picker_sweep"
+path = "dev/zenwebp_picker_sweep.rs"
+required-features = ["picker", "target-zensim", "analyzer"]
 
 [[example]]
 name = "zenanalyze_validate_vs_gpt"

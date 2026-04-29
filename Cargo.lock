@@ -2096,6 +2096,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenpicker"
+version = "0.1.0"
+dependencies = [
+ "archmage",
+ "bytemuck",
+ "magetypes",
+]
+
+[[package]]
 name = "zenpixels"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2187,6 +2196,7 @@ dependencies = [
  "zenanalyze",
  "zenbench",
  "zencodec",
+ "zenpicker",
  "zenpixels",
  "zensim",
  "zensim-regress",
