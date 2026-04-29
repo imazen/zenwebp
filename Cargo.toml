@@ -196,6 +196,15 @@ name = "zenwebp_picker_sweep"
 path = "dev/zenwebp_picker_sweep.rs"
 required-features = ["picker", "target-zensim", "analyzer"]
 
+# A/B evaluator: build twice, once with `--features "target-zensim
+# analyzer"` (bucket-table baseline), once with `--features
+# "target-zensim picker"` (picker), pair the two `--out-tsv` files
+# to read off the lift on the 76-image corpus.
+[[example]]
+name = "picker_ab_eval"
+path = "dev/picker_ab_eval.rs"
+required-features = ["target-zensim", "analyzer"]
+
 [[example]]
 name = "zenanalyze_validate_vs_gpt"
 path = "dev/zenanalyze_validate_vs_gpt.rs"
