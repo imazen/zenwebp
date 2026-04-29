@@ -58,6 +58,11 @@ pub mod vp8l;
 #[doc(hidden)]
 pub mod zensim_target;
 
+/// zenpicker-driven encoder-knob picker (research spike, gated on
+/// the `picker` cargo feature). See `picker::spec` for the cell grid.
+#[doc(hidden)]
+pub mod picker;
+
 // Re-export public API
 pub use analysis::{ClassifierDiag, ImageContentType};
 pub(crate) use api::EncoderParams;
