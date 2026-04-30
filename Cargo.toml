@@ -39,16 +39,19 @@ magetypes = { version = "0.9.15" }
 rgb = { version = "0.8", optional = true, default-features = false, features = ["as-bytes"] }
 imgref = { version = "1.12", optional = true, default-features = false }
 zensim = { version = "0.2", optional = true }
-# zenanalyze is the shared streaming feature scanner used by zen* codecs.
-# Pinned to the published version on crates.io (0.1.0, 2026-04-28). The
-# `experimental` feature gates the research-stage signals
-# (PaletteFitsIn256, IndexedPaletteWidth, LineArtScore, SkinToneFraction,
-# EdgeSlopeStdev) that this classifier consumes.
-zenanalyze = { version = "0.1.0", optional = true, features = ["experimental", "composites"] }
-# zenpicker is not yet on crates.io; path-pin for the spike. See
-# https://github.com/imazen/zenanalyze/pull/14 (draft, v0.1.0). Gated
-# behind the `picker` cargo feature so default builds don't pull it.
-zenpicker = { path = "../zenanalyze/zenpicker", optional = true }
+# zenanalyze: path-pinned to local main (post-0.1.0) so we pick up
+# IsGrayscale, PatchFractionFast, QuantSurvivalY/Uv that were added
+# after the 0.1.0 release. The `experimental` feature gates the
+# research-stage signals (PaletteFitsIn256, IndexedPaletteWidth,
+# LineArtScore, SkinToneFraction, EdgeSlopeStdev). Path-pin until the
+# next zenanalyze release lands these on crates.io.
+zenanalyze = { path = "../zenanalyze", optional = true, features = ["experimental", "composites"] }
+# zenpredict — Rust ZNPR v2 inference runtime. Path-pinned to the
+# zenanalyze workspace until 0.2.0 lands on crates.io. Gated behind
+# the `picker` cargo feature so default builds don't pull it.
+# Companion Python tooling lives at zenanalyze/zentrain/. See
+# zenanalyze/MIGRATION.md for the rename + format-change context.
+zenpredict = { path = "../zenanalyze/zenpredict", optional = true, default-features = false, features = ["std"] }
 
 [dev-dependencies]
 archmage = { version = "0.9.15", features = ["std", "macros"] }
@@ -129,12 +132,25 @@ analyzer = ["dep:zenanalyze"]
 # `std::env::var` calls. See `src/encoder/zensim_target.rs` for the
 # list of toggles.
 ablation = ["target-zensim"]
-# Spike (research): zenpicker-driven encoder-knob picker. Replaces the
-# 3-row `content_type_to_tuning` lookup at the `Preset::Auto` site
-# with a baked MLP that argmins over a 16-cell `(sns, filter,
-# segments)` grid. Off by default — production builds use the
-# bucket-table path. See `src/encoder/picker/`.
-picker = ["dep:zenpicker", "analyzer"]
+# Expose advanced encoder tuning knobs (partition_limit, multi_pass_stats,
+# smooth_segment_map, sharp_yuv, cost_model). Gated because the default
+# public API surface keeps the codec's user contract minimal — Quality
+# + Method + a few SNS/filter knobs — and these axes are mostly for
+# corpus calibration sweeps and the picker training pipeline. Build
+# with `--features expert` for picker training, codec calibration, or
+# any harness varying these axes. Production codec consumers don't
+# need this.
+expert = []
+# zenpredict-driven encoder-knob picker. Replaces the bucket-table
+# `content_type_to_tuning` lookup at the `Preset::Auto` site with a
+# baked MLP (ZNPR v2) that argmins over the 6-cell (method × segments)
+# hybrid-heads grid trained on the 2026-04-30 sweep. Implies `expert`
+# because the picker's per-cell scalar heads include the expert axes
+# (partition_limit etc.) when v0.2+ schemas land.
+# Off by default — production builds use the bucket-table path until
+# A/B vs bucket on held-out corpus shows the picker wins. See
+# src/encoder/picker/.
+picker = ["dep:zenpredict", "analyzer", "expert"]
 # Enable zennode pipeline node definitions
 # zennode = ["dep:zennode"]
 
@@ -187,6 +203,7 @@ path = "dev/parity_baseline.rs"
 [[example]]
 name = "cost_model_sweep"
 path = "dev/cost_model_sweep.rs"
+required-features = ["expert"]
 
 [[example]]
 name = "issue44_dump_scores"
@@ -210,6 +227,21 @@ required-features = ["picker", "target-zensim", "analyzer"]
 name = "zenwebp_pareto"
 path = "dev/zenwebp_pareto.rs"
 required-features = ["analyzer"]
+
+# One-shot empirical probe: do tiny zenwebp-encoded images have an
+# intrinsic ceiling on achievable zensim score? See dev/zensim_ceiling_probe.rs.
+[[example]]
+name = "zensim_ceiling_probe"
+path = "dev/zensim_ceiling_probe.rs"
+required-features = ["analyzer"]
+
+# Build size-dense corpus: 20 representative source images resampled
+# (Mitchell-Netravali) to log-spaced sizes 32..4096 for picker
+# size-axis training coverage. Output PNGs feed zenwebp_pareto via
+# --corpus.
+[[example]]
+name = "build_size_dense_corpus"
+path = "dev/build_size_dense_corpus.rs"
 
 # A/B evaluator: build twice, once with `--features "target-zensim
 # analyzer"` (bucket-table baseline), once with `--features

@@ -71,6 +71,8 @@ pub use api::{
     ImageMetadata, NoProgress, PixelLayout, Preset,
 };
 pub use config::{EncoderConfig, LosslessConfig, LossyConfig};
+#[cfg(feature = "expert")]
+pub use config::{ExpertKnobs, SharpYuvSetting};
 #[doc(hidden)]
 pub use vp8l::{Vp8lConfig, Vp8lQuality, encode_vp8l};
 #[cfg(feature = "ablation")]

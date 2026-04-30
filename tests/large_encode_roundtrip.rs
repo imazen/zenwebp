@@ -8,6 +8,11 @@
 //!
 //! VP8 frame tag: partition_0_size is 19 bits (max 524,287 bytes).
 //! See VP8 RFC 6386 Section 9.2 for the frame tag format.
+//!
+//! Requires the `expert` cargo feature — `with_partition_limit` is
+//! gated there.
+
+#![cfg(feature = "expert")]
 
 use zenwebp::{DecodeRequest, EncodeError, EncodeRequest, LossyConfig, PixelLayout};
 

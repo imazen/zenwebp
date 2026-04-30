@@ -125,7 +125,9 @@ impl WebpEncoderConfig {
         self
     }
 
-    /// Enable sharp YUV conversion (lossy only).
+    /// Enable sharp YUV conversion (lossy only). Expert-only — see
+    /// [`crate::ExpertKnobs`].
+    #[cfg(feature = "expert")]
     #[must_use]
     pub fn with_sharp_yuv(mut self, enable: bool) -> Self {
         self.inner = self.inner.with_sharp_yuv(enable);

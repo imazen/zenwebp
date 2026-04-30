@@ -2122,72 +2122,66 @@ fn resolve_auto_preset_via_analyzer(
     // We always go through the `_diag` entry so the picker has access
     // to the raw zenanalyze feature vector when the `picker` feature
     // is enabled — the bucket-table path only needs the
-    // `ImageContentType`, but the picker needs the full diagnostic.
-    let (bucket, diag) = match color {
+    // `ImageContentType`, but the picker (when enabled) re-runs
+    // analyze_features over its own 32-feature schema.
+    //
+    // `rgb_for_picker` carries the RGB8 buffer the picker needs;
+    // for RGBA8 sources we strip alpha into a transient owned Vec
+    // and the picker borrows that.
+    let (bucket, diag, rgb_for_picker): (_, _, alloc::vec::Vec<u8>) = match color {
         PixelLayout::Rgb8 if stride == width as usize => {
             let n = (width as usize) * (height as usize) * 3;
-            if data.len() >= n {
-                classify_image_type_rgb8_diag(&data[..n], width, height)
-            } else {
+            if data.len() < n {
                 return None;
             }
+            let (b, d) = classify_image_type_rgb8_diag(&data[..n], width, height);
+            (b, d, data[..n].to_vec())
         }
         PixelLayout::Rgba8 if stride == width as usize => {
             let n = (width as usize) * (height as usize) * 4;
             if data.len() < n {
                 return None;
             }
-            // zenanalyze accepts RGBA8 via PixelSlice, but the rgb8
-            // convenience entry wants RGB. Strip alpha into a transient
-            // RGB buffer (one extra pass over the source).
             let rgb = rgba8_to_rgb8(&data[..n]);
-            classify_image_type_rgb8_diag(&rgb, width, height)
+            let (b, d) = classify_image_type_rgb8_diag(&rgb, width, height);
+            (b, d, rgb)
         }
         _ => return None,
     };
-    // Suppress the unused-variable warning when the `picker` feature
-    // is off — `diag` only feeds the picker call.
-    let _ = (decide_bucket_from_diag, &diag);
+    // Suppress unused-variable warnings when the `picker` feature is
+    // off — `diag` and `rgb_for_picker` only feed the picker call.
+    let _ = (decide_bucket_from_diag, &diag, &rgb_for_picker);
 
     // Picker path (when `picker` feature is on): override the
     // (sns, filter, sharpness, segments) tuple with the picker's
-    // argmin pick instead of the bucket-table lookup. Cells not
-    // exercised by the picker grid (filter_sharpness != 0, etc.)
-    // can still be reached via the bucket table on Photo content,
-    // so the picker only handles the Drawing/Text/Default branches
-    // implicitly; Photo still uses content_type_to_tuning(Photo).
+    // argmin pick. On any picker error (schema mismatch, unallowed
+    // cell, parse fail) the codec falls back to the bucket-table
+    // lookup transparently.
     //
-    // The picker takes target_zensim ∈ [0,100] but at this site we
-    // only see EncoderParams, which carries `lossy_quality` — for
-    // the spike we use `lossy_quality` as a proxy for the user's
-    // perceptual target. The encoder's outer target_zensim loop
-    // adjusts `lossy_quality` per-pass anyway, so this proxy
-    // tracks the iteration well enough for measurement purposes.
+    // `lossy_quality` is the user's quality dial; we feed it as the
+    // picker's `target_zensim` proxy. The outer target_zensim loop
+    // (when active) updates `lossy_quality` per pass, so this proxy
+    // tracks the iteration.
     let (sns, filter, sharp, segs) = {
         #[cfg(feature = "picker")]
         {
-            // Only let the picker override on the Drawing/Default/Text
-            // branch where the bucket table is uniform — the Photo and
-            // Icon branches genuinely need filter_sharpness != 0 or
-            // method-specific behavior outside the picker grid.
-            let raw = [
-                diag.screen_content,
-                diag.text_likelihood,
-                diag.natural_likelihood,
-                diag.flat_color_block_ratio,
-                diag.distinct_color_bins as f32,
-                diag.variance,
-                diag.edge_density,
-                diag.uniformity,
-                diag.high_freq_energy_ratio,
-                if diag.palette_fits_in_256 { 1.0 } else { 0.0 },
-                diag.indexed_palette_width as f32,
-                diag.line_art_score,
-                diag.skin_tone_fraction,
-                diag.edge_slope_stdev,
-            ];
             let target_proxy = f32::from(params.lossy_quality);
-            super::picker::pick_tuning(&raw, width, height, target_proxy)
+            let constraints = super::picker::spec::PickerConstraints::default();
+            match super::picker::pick_tuning(
+                &rgb_for_picker,
+                width,
+                height,
+                target_proxy,
+                &constraints,
+            ) {
+                Ok(tp) => (
+                    tp.sns_strength,
+                    tp.filter_strength,
+                    tp.filter_sharpness,
+                    tp.segments,
+                ),
+                Err(_) => content_type_to_tuning(bucket),
+            }
         }
         #[cfg(not(feature = "picker"))]
         {

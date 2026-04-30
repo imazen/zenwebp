@@ -645,9 +645,9 @@ dependencies = [
 
 [[package]]
 name = "garb"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96bf7a00ed7fc01dae4e581831996672b2824746af4c0a658ee28ca3cbb823dc"
+checksum = "ae3f56f280a24621bef5778559c4502d10136565311efa37a7b4ca257dce00ed"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -2058,8 +2058,6 @@ checksum = "00f1f60154ad4ef9871d606765c3ea037cde93bbd77536327b594de8f82df1cb"
 [[package]]
 name = "zenanalyze"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9711cf1c3363003dd436f5b5dc113f7881f9b377613eecbf41f91b6b85626442"
 dependencies = [
  "archmage",
  "garb",
@@ -2118,15 +2116,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zenpicker"
-version = "0.1.0"
-dependencies = [
- "archmage",
- "bytemuck",
- "magetypes",
-]
-
-[[package]]
 name = "zenpixels"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2178,6 +2167,13 @@ dependencies = [
  "zenpixels",
  "zenpixels-convert",
  "zenquant",
+]
+
+[[package]]
+name = "zenpredict"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
 ]
 
 [[package]]
@@ -2277,10 +2273,10 @@ dependencies = [
  "zenanalyze",
  "zenbench",
  "zencodec",
- "zenpicker",
  "zenpixels",
  "zenpixels-convert",
  "zenpng",
+ "zenpredict",
  "zenresize",
  "zensim",
  "zensim-regress",

@@ -2839,6 +2839,7 @@ mod tests {
     /// (`cost_model`, `smooth_segment_map`, `multi_pass_stats`). Verifies the
     /// fluent setters land the right values on both EncoderConfig and the
     /// LossyConfig variants, and that defaults match libwebp behavior.
+    #[cfg(feature = "expert")]
     #[test]
     fn lossy_config_builder_threads_review_pr37_knobs() {
         use crate::encoder::config::LossyConfig;

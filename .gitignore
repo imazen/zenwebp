@@ -74,3 +74,12 @@ fuzz-*.log
 # the per-batch baselines under `differences/baselines/` are the audit
 # progression.
 differences/05-empirical-*.tsv
+
+# Large picker training artifacts — committed only as small JSON manifests; raw weights + sweep TSVs live ephemerally
+benchmarks/zenwebp_pareto_*.tsv
+benchmarks/zenwebp_pareto_features_*.tsv
+benchmarks/zenwebp_hybrid_*.json
+benchmarks/zenwebp_hybrid_*.log
+benchmarks/zenwebp_pareto_features_2026-04-29_v0.1.0.tsv.bak
+benchmarks/zenwebp_pareto_features_2026-04-29.tsv.bak
+benchmarks/picker_ab_*.tsv

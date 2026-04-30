@@ -1,0 +1,118 @@
+
+# Feature ablation — Pareto controller HistGB
+Train rows: 14524, val rows: 3612
+HistGB: {'max_iter': 100, 'max_depth': 4, 'learning_rate': 0.1, 'l2_regularization': 0.5, 'random_state': 51966}
+
+## Baseline (all 103 features)
+mean overhead: 6.88%  argmin_acc: 5.9%
+
+## Leave-one-out (sorted by Δ vs baseline, largest hurt first)
+feature                                    overhead  Δ vs base
+-----------------------------------------------------------------
+feat_laplacian_variance_p50                   8.17%     +1.28pp
+feat_laplacian_variance_p75                   7.62%     +0.74pp
+feat_laplacian_variance                       7.29%     +0.40pp
+feat_quant_survival_y                         7.22%     +0.34pp
+feat_cb_sharpness                             7.22%     +0.34pp
+feat_pixel_count                              7.22%     +0.33pp
+feat_uniformity                               7.20%     +0.31pp
+feat_distinct_color_bins                      7.17%     +0.28pp
+feat_cr_sharpness                             7.16%     +0.28pp
+feat_edge_density                             7.14%     +0.25pp
+feat_noise_floor_y_p50                        7.11%     +0.23pp
+feat_luma_histogram_entropy                   7.08%     +0.20pp
+feat_natural_likelihood                       7.06%     +0.18pp
+feat_quant_survival_y_p50                     7.04%     +0.16pp
+feat_noise_floor_uv_p50                       7.04%     +0.15pp
+feat_aq_map_mean                              7.03%     +0.15pp
+feat_cr_horiz_sharpness                       7.02%     +0.14pp
+feat_min_dim                                  7.02%     +0.14pp
+feat_edge_slope_stdev                         7.00%     +0.12pp
+feat_laplacian_variance_p90                   6.99%     +0.11pp
+feat_patch_fraction                           6.98%     +0.10pp
+feat_max_dim                                  6.98%     +0.10pp
+feat_aspect_min_over_max                      6.98%     +0.10pp
+feat_aq_map_p75                               6.98%     +0.10pp
+feat_cb_horiz_sharpness                       6.96%     +0.08pp
+feat_noise_floor_y_p25                        6.96%     +0.08pp
+feat_noise_floor_uv                           6.96%     +0.07pp
+feat_chroma_complexity                        6.96%     +0.07pp
+feat_quant_survival_y_p75                     6.95%     +0.07pp
+feat_aq_map_std                               6.95%     +0.07pp
+feat_gradient_fraction                        6.95%     +0.07pp
+feat_noise_floor_y_p75                        6.95%     +0.06pp
+feat_screen_content_likelihood                6.94%     +0.05pp
+feat_high_freq_energy_ratio                   6.93%     +0.05pp
+feat_colourfulness                            6.93%     +0.05pp
+feat_quant_survival_uv                        6.93%     +0.05pp
+feat_grayscale_score                          6.93%     +0.04pp
+feat_palette_density                          6.92%     +0.03pp
+feat_aq_map_p99                               6.91%     +0.03pp
+feat_block_misalignment_64                    6.90%     +0.02pp
+feat_cr_peak_sharpness                        6.90%     +0.02pp
+feat_noise_floor_uv_p75                       6.90%     +0.02pp
+feat_log_padded_pixels_8                      6.90%     +0.01pp
+feat_line_art_score                           6.89%     +0.01pp
+feat_noise_floor_uv_p90                       6.89%     +0.01pp
+feat_block_misalignment_16                    6.89%     +0.01pp
+feat_dct_compressibility_y                    6.89%     +0.01pp
+feat_block_misalignment_8                     6.89%     +0.01pp
+feat_aq_map_p50                               6.89%     +0.00pp
+feat_text_likelihood                          6.89%     +0.00pp
+feat_noise_floor_y                            6.89%     +0.00pp
+feat_indexed_palette_width                    6.89%     +0.00pp
+feat_quant_survival_uv_p75                    6.89%     +0.00pp
+feat_quant_survival_uv_p10                    6.88%     +0.00pp
+feat_alpha_present                            6.88%     +0.00pp
+feat_alpha_used_fraction                      6.88%     +0.00pp
+feat_alpha_bimodal_score                      6.88%     +0.00pp
+feat_palette_fits_in_256                      6.88%     +0.00pp
+feat_peak_luminance_nits                      6.88%     +0.00pp
+feat_p99_luminance_nits                       6.88%     +0.00pp
+feat_hdr_headroom_stops                       6.88%     +0.00pp
+feat_hdr_pixel_fraction                       6.88%     +0.00pp
+feat_wide_gamut_peak                          6.88%     +0.00pp
+feat_wide_gamut_fraction                      6.88%     +0.00pp
+feat_effective_bit_depth                      6.88%     +0.00pp
+feat_hdr_present                              6.88%     +0.00pp
+feat_gamut_coverage_srgb                      6.88%     +0.00pp
+feat_gamut_coverage_p3                        6.88%     +0.00pp
+feat_is_grayscale                             6.88%     +0.00pp
+feat_log_pixels                               6.88%     +0.00pp
+feat_bitmap_bytes                             6.88%     +0.00pp
+feat_channel_count                            6.88%     +0.00pp
+feat_noise_floor_y_p90                        6.88%     +0.00pp
+feat_log2_pixels                              6.88%     +0.00pp
+feat_log10_pixels                             6.88%     +0.00pp
+feat_log_pixels_rounded                       6.88%     +0.00pp
+feat_sqrt_pixels                              6.88%     +0.00pp
+feat_log_bitmap_bytes                         6.88%     +0.00pp
+feat_log_min_dim                              6.88%     +0.00pp
+feat_log_max_dim                              6.88%     +0.00pp
+feat_log_padded_pixels_16                     6.88%     +0.00pp
+feat_quant_survival_uv_p25                    6.88%     -0.00pp
+feat_quant_survival_y_p25                     6.88%     -0.00pp
+feat_laplacian_variance_peak                  6.88%     -0.00pp
+feat_flat_color_block_ratio                   6.88%     -0.00pp
+feat_quant_survival_uv_p50                    6.88%     -0.00pp
+feat_cr_vert_sharpness                        6.88%     -0.01pp
+feat_log_padded_pixels_64                     6.88%     -0.01pp
+feat_variance_spread                          6.88%     -0.01pp
+feat_log_padded_pixels_32                     6.87%     -0.01pp
+feat_quant_survival_y_p10                     6.87%     -0.02pp
+feat_log_aspect_abs                           6.86%     -0.02pp
+feat_noise_floor_uv_p25                       6.85%     -0.03pp
+feat_cb_vert_sharpness                        6.85%     -0.03pp
+feat_dct_compressibility_uv                   6.85%     -0.04pp
+feat_laplacian_variance_p99                   6.84%     -0.04pp
+feat_patch_fraction_fast                      6.84%     -0.04pp
+feat_aq_map_p95                               6.83%     -0.05pp
+feat_aq_map_p90                               6.83%     -0.05pp
+feat_block_misalignment_32                    6.83%     -0.06pp
+feat_cb_peak_sharpness                        6.82%     -0.06pp
+feat_skin_tone_fraction                       6.79%     -0.10pp
+feat_variance                                 6.74%     -0.14pp
+
+## Forward greedy curve (cumulative best feature subsets)
+  K   overhead  argmin_acc  added
+-----------------------------------------------------------------

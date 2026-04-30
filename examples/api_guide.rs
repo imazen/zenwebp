@@ -50,8 +50,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_filter_strength(60)
         .with_filter_sharpness(0)
         .with_target_size(0)
-        .with_target_psnr(0.0)
-        .with_sharp_yuv(false);
+        .with_target_psnr(0.0);
+    // sharp_yuv is gated behind the `expert` cargo feature — build
+    // with `--features expert` to call this knob directly, or use
+    // `LossyConfig::with_expert(ExpertKnobs { sharp_yuv: ..., .. })`.
+    #[cfg(feature = "expert")]
+    let config = config.with_sharp_yuv(false);
 
     let webp_data =
         EncodeRequest::lossy(&config, &rgba_img, PixelLayout::Rgba8, width, height).encode()?;

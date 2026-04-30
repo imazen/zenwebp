@@ -244,20 +244,26 @@ fn resize_to(rgb: &[u8], w: u32, h: u32, target_max: u32) -> (Vec<u8>, u32, u32)
     let new_h = ((h as f32 * scale).round() as u32).max(1);
     let cfg = zenresize::ResizeConfig::builder(w, h, new_w, new_h)
         .format(zenresize::PixelDescriptor::RGB8_SRGB)
-        .filter(zenresize::Filter::Lanczos)
+        .filter(zenresize::Filter::Mitchell)
         .srgb()
         .build();
     let resized = zenresize::Resizer::new(&cfg).resize(rgb);
     (resized, new_w, new_h)
 }
 
-fn size_class_label(target_size: u32) -> &'static str {
-    match target_size {
-        64 => "tiny",
-        256 => "small",
-        1024 => "medium",
-        0 => "large",
-        _ => "custom",
+/// Derive size_class from actual pixel count rather than the resize
+/// target. This makes the harness correct for corpora where the source
+/// PNG is already at the desired size (e.g. the size-dense corpus).
+fn size_class_label_from_pixels(w: u32, h: u32) -> &'static str {
+    let n = (w as u64) * (h as u64);
+    if n < 64 * 64 {
+        "tiny"
+    } else if n < 256 * 256 {
+        "small"
+    } else if n < 1024 * 1024 {
+        "medium"
+    } else {
+        "large"
     }
 }
 
@@ -453,7 +459,7 @@ fn main() {
             }
         };
         let (rgb, w, h) = resize_to(&rgb_native, w_native, h_native, target_size);
-        let size_class = size_class_label(target_size);
+        let size_class = size_class_label_from_pixels(w, h);
 
         // Per-image features (analyzed once at this size).
         let analysis = analyze_features_rgb8(&rgb, w, h, &query);

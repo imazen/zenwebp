@@ -1,0 +1,28 @@
+
+# Hybrid-heads picker — categorical bytes + scalar (sns_strength, filter_strength, filter_sharpness)
+Safety profile: size_optimal
+  bytes head: mean (squared error)
+  reach gate: none — any reachable cell allowed at inference
+Train rows: 10642, val rows: 2718
+n_cells: 6, output_dim: 24
+Student: MLP 82 -> 128 -> 128 -> 128 -> 24, 46744 params (~91.3 KB f16)
+
+## Categorical cells
+   0: method4_segments1               (12 member configs)
+   1: method4_segments4               (12 member configs)
+   2: method5_segments1               (12 member configs)
+   3: method5_segments4               (12 member configs)
+   4: method6_segments1               (12 member configs)
+   5: method6_segments4               (12 member configs)
+
+## Argmin (categorical) — vs reachable per-row optimal
+  Teacher: mean 2.99%  argmin_acc 36.7%
+  Student: mean 3.07%  argmin_acc 35.1%
+
+## Scalar regression RMSE
+  Teacher sns_strength RMSE: 33.2484  (MAE 27.1784, range 0..100)
+  Student sns_strength RMSE: 33.4948  (MAE 27.3254)
+  Teacher filter_strength RMSE: 22.7691  (MAE 17.7929, range 0..100)
+  Student filter_strength RMSE: 22.6971  (MAE 17.5742)
+  Teacher filter_sharpness RMSE: 2.0302  (MAE 1.3647, range 0..7)
+  Student filter_sharpness RMSE: 2.0359  (MAE 1.3952)

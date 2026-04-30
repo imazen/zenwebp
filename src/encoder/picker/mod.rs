@@ -1,29 +1,30 @@
-//! zenpicker-driven encoder-knob picker for zenwebp (research spike).
+//! zenpredict-driven encoder-knob picker for zenwebp (v0.1).
 //!
 //! Replaces the 3-row [`crate::encoder::analysis::content_type_to_tuning`]
-//! lookup table with a baked MLP that predicts log-bytes per
-//! `(sns_strength, filter_strength, segments)` cell from zenanalyze
-//! features + `(target_zensim, log_pixels)`. Argmin of the predicted
-//! bytes under a constraint mask gives the encoder tuple to use.
+//! lookup table with a baked hybrid-heads MLP (ZNPR v2) that predicts
+//! `log_bytes + (sns, filter_strength, filter_sharpness)` per cell
+//! over a 6-cell `(method × segments)` Cartesian grid. Argmin over
+//! the bytes_log block under a constraint mask gives the cell; the
+//! scalar heads at that cell index give the per-cell scalar tuning.
 //!
-//! Status: **spike**. Gated on the `picker` cargo feature so the
-//! production build is unaffected. v0.1 pure-categorical model — no
-//! continuous heads. `filter_sharpness` is fixed at 0 and `method`
-//! at 4 for this spike (continuous axes belong in v0.2 hybrid heads;
-//! out of scope for this measurement).
+//! Status: experimental. Gated on the `picker` cargo feature so
+//! production builds are unaffected. The `analyzer` feature is also
+//! required (the picker consumes 32 zenanalyze features).
 //!
-//! ## Cell grid (16 cells)
+//! ## Cell grid (6 cells)
 //!
-//! | axis             | values                |
-//! |------------------|------------------------|
-//! | `sns_strength`   | {0, 25, 50, 80}       |
-//! | `filter_strength`| {30, 60}              |
-//! | `segments`       | {1, 4}                |
+//! | axis       | values    |
+//! |------------|-----------|
+//! | `method`   | {4, 5, 6} |
+//! | `segments` | {1, 4}    |
 //!
-//! `filter_sharpness = 0` and the encoder method are fixed by the
-//! caller — the picker only chooses the four-tuple
-//! `(sns, filter_strength, filter_sharpness, segments)` returned to
-//! the existing `content_type_to_tuning` callsite.
+//! Scalar heads predicted per-cell:
+//!
+//! | head              | range  |
+//! |-------------------|--------|
+//! | `sns_strength`    | 0..100 |
+//! | `filter_strength` | 0..100 |
+//! | `filter_sharpness`| 0..7   |
 
 pub mod spec;
 
@@ -31,4 +32,4 @@ pub mod spec;
 pub mod runtime;
 
 #[cfg(feature = "picker")]
-pub use runtime::pick_tuning;
+pub use runtime::{PickError, TuningPick, pick_tuning, pick_tuning_from_features};

@@ -38,6 +38,64 @@
 
 use crate::{Limits, Preset};
 
+/// How `ExpertKnobs::sharp_yuv` should be applied. Expert-only.
+///
+/// `Off` / `On` mirror the boolean form; `Custom(_)` lets the caller
+/// pass a tuned `zenyuv::SharpYuvConfig` (e.g., a non-default chroma
+/// downsample matrix). `None` on `ExpertKnobs::sharp_yuv` means the
+/// default `LossyConfig::sharp_yuv` is unchanged.
+#[cfg(feature = "expert")]
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum SharpYuvSetting {
+    Off,
+    On,
+    Custom(zenyuv::SharpYuvConfig),
+}
+
+/// Bundle of advanced encoder tuning knobs. Expert-only.
+///
+/// Intended for codec calibration sweeps and the picker training
+/// pipeline — production codec consumers should rely on `Preset` +
+/// `Quality` + `Method` and let zenwebp pick reasonable defaults for
+/// the rest. Only build with the `expert` cargo feature when you
+/// actually need to vary these axes.
+///
+/// Every field is optional; `None` means "leave the
+/// `LossyConfig`'s existing value alone." Call
+/// [`LossyConfig::with_expert`] to apply the bundle.
+///
+/// ```ignore
+/// use zenwebp::{LossyConfig, ExpertKnobs};
+/// let cfg = LossyConfig::new()
+///     .with_quality(75.0)
+///     .with_expert(ExpertKnobs {
+///         partition_limit: Some(50),
+///         multi_pass_stats: Some(true),
+///         ..Default::default()
+///     });
+/// ```
+#[cfg(feature = "expert")]
+#[derive(Clone, Debug, Default)]
+#[non_exhaustive]
+pub struct ExpertKnobs {
+    /// VP8 partition exploration cap, `0..=100`. `None` keeps the
+    /// existing value; `Some(0)` = full search; `Some(100)` =
+    /// aggressive trim. See [`LossyConfig::with_partition_limit`].
+    pub partition_limit: Option<u8>,
+    /// Toggle the stat-collection extra pass. `None` keeps existing.
+    /// See [`LossyConfig::with_multi_pass_stats`].
+    pub multi_pass_stats: Option<bool>,
+    /// Toggle 3×3 majority smoothing on the segment map. `None`
+    /// keeps existing. See [`LossyConfig::with_smooth_segment_map`].
+    pub smooth_segment_map: Option<bool>,
+    /// Sharp YUV setting. `None` keeps existing.
+    pub sharp_yuv: Option<SharpYuvSetting>,
+    /// Cost model selection. `None` keeps existing. See
+    /// [`LossyConfig::with_cost_model`].
+    pub cost_model: Option<super::api::CostModel>,
+}
+
 /// Configuration for lossy (VP8) encoding.
 ///
 /// Lossy encoding uses DCT-based compression similar to JPEG, with additional
@@ -234,8 +292,15 @@ impl LossyConfig {
         self
     }
 
-    /// Enable or disable sharp YUV conversion.
+    /// Enable or disable sharp YUV conversion. Expert-only.
     /// `true` enables with default config, `false` disables.
+    ///
+    /// **Gated behind the `expert` cargo feature.** Default consumers
+    /// should use [`Preset::Photo`] (which enables sharp YUV via the
+    /// preset's internal config); this setter is for codec calibration
+    /// sweeps + the picker training pipeline. See
+    /// [`LossyConfig::with_expert`].
+    #[cfg(feature = "expert")]
     #[must_use]
     pub fn with_sharp_yuv(mut self, enable: bool) -> Self {
         self.sharp_yuv = if enable {
@@ -246,7 +311,9 @@ impl LossyConfig {
         self
     }
 
-    /// Enable sharp YUV with a custom configuration.
+    /// Enable sharp YUV with a custom configuration. Expert-only —
+    /// see [`LossyConfig::with_expert`].
+    #[cfg(feature = "expert")]
     #[must_use]
     pub fn with_sharp_yuv_config(mut self, config: zenyuv::SharpYuvConfig) -> Self {
         self.sharp_yuv = Some(config);
@@ -284,6 +351,7 @@ impl LossyConfig {
     }
 
     /// Set partition limit to prevent partition 0 overflow on very large images.
+    /// Expert-only — see [`LossyConfig::with_expert`].
     ///
     /// Range 0-100. Higher values more aggressively suppress I4 prediction mode,
     /// which uses more bits in partition 0. This trades quality for the ability to
@@ -295,6 +363,7 @@ impl LossyConfig {
     ///
     /// When not set (`None`), the encoder automatically retries with increasing
     /// limits if partition 0 overflows.
+    #[cfg(feature = "expert")]
     #[must_use]
     pub fn with_partition_limit(mut self, limit: u8) -> Self {
         self.partition_limit = Some(limit.min(100));
@@ -302,6 +371,7 @@ impl LossyConfig {
     }
 
     /// Set the cost model used during mode selection and trellis quantization.
+    /// Expert-only — see [`LossyConfig::with_expert`].
     ///
     /// - [`CostModel::ZenwebpDefault`](super::api::CostModel::ZenwebpDefault)
     ///   (default): perceptual extensions enabled per method level —
@@ -311,6 +381,7 @@ impl LossyConfig {
     ///   disables those extensions so the encoder matches libwebp's algorithm
     ///   at the same `(quality, method, sns, filter, segments)`. Use this
     ///   when bit-comparing against libwebp output.
+    #[cfg(feature = "expert")]
     #[must_use]
     pub fn with_cost_model(mut self, model: super::api::CostModel) -> Self {
         self.cost_model = model;
@@ -318,9 +389,12 @@ impl LossyConfig {
     }
 
     /// Enable segment-map smoothing (3×3 majority filter on the per-MB
-    /// segment map before per-segment quantizer setup). Equivalent to
-    /// libwebp's `cwebp -pre 1` (`config->preprocessing & 1`,
+    /// segment map before per-segment quantizer setup). Expert-only —
+    /// see [`LossyConfig::with_expert`].
+    ///
+    /// Equivalent to libwebp's `cwebp -pre 1` (`config->preprocessing & 1`,
     /// `analysis_enc.c:217-218`). Default off, matching libwebp.
+    #[cfg(feature = "expert")]
     #[must_use]
     pub fn with_smooth_segment_map(mut self, on: bool) -> Self {
         self.smooth_segment_map = on;
@@ -328,16 +402,62 @@ impl LossyConfig {
     }
 
     /// Enable a stat-collection encoder pass before the emit pass to refresh
-    /// `level_costs` from the observed token distribution. Roughly **doubles**
-    /// encode time at m4 in exchange for ~0.1% size win on photo content.
-    /// libwebp does this by default; zenwebp keeps it OFF. Worth enabling
-    /// inside `target_size` / `target_zensim` search loops where the marginal
-    /// size win amortizes across multiple probes. Currently only m4 honors
-    /// this — m5/m6 already saturate per-pass and multi-pass at those tiers
-    /// regresses size.
+    /// `level_costs` from the observed token distribution. Expert-only —
+    /// see [`LossyConfig::with_expert`].
+    ///
+    /// Roughly **doubles** encode time at m4 in exchange for ~0.1% size
+    /// win on photo content. libwebp does this by default; zenwebp keeps
+    /// it OFF. Worth enabling inside `target_size` / `target_zensim` search
+    /// loops where the marginal size win amortizes across multiple probes.
+    /// Currently only m4 honors this — m5/m6 already saturate per-pass
+    /// and multi-pass at those tiers regresses size.
+    #[cfg(feature = "expert")]
     #[must_use]
     pub fn with_multi_pass_stats(mut self, on: bool) -> Self {
         self.multi_pass_stats = on;
+        self
+    }
+
+    /// Apply a bundle of expert encoder knobs at once. Expert-only.
+    ///
+    /// `ExpertKnobs` collects the advanced calibration axes that
+    /// codec consumers don't usually need to set directly:
+    /// `partition_limit`, `multi_pass_stats`, `smooth_segment_map`,
+    /// `sharp_yuv`, `cost_model`. Each is `Option<_>` so caller only
+    /// overrides the ones they care about; `None` keeps the existing
+    /// (default) value.
+    ///
+    /// This is the recommended entry point when building grids for
+    /// the picker training pipeline or for codec-calibration sweeps —
+    /// pass an `ExpertKnobs` produced by the picker runtime instead
+    /// of chaining individual `with_*_expert` setters.
+    #[cfg(feature = "expert")]
+    #[must_use]
+    pub fn with_expert(mut self, knobs: ExpertKnobs) -> Self {
+        if let Some(pl) = knobs.partition_limit {
+            self = self.with_partition_limit(pl);
+        }
+        if let Some(b) = knobs.multi_pass_stats {
+            self = self.with_multi_pass_stats(b);
+        }
+        if let Some(b) = knobs.smooth_segment_map {
+            self = self.with_smooth_segment_map(b);
+        }
+        match knobs.sharp_yuv {
+            Some(SharpYuvSetting::Off) => {
+                self = self.with_sharp_yuv(false);
+            }
+            Some(SharpYuvSetting::On) => {
+                self = self.with_sharp_yuv(true);
+            }
+            Some(SharpYuvSetting::Custom(cfg)) => {
+                self = self.with_sharp_yuv_config(cfg);
+            }
+            None => {}
+        }
+        if let Some(cm) = knobs.cost_model {
+            self = self.with_cost_model(cm);
+        }
         self
     }
 
@@ -678,8 +798,9 @@ impl EncoderConfig {
     }
 
     /// Set partition limit (lossy only, 0-100). No effect on lossless.
-    ///
-    /// See [`LossyConfig::with_partition_limit`] for details.
+    /// Expert-only — see [`LossyConfig::with_partition_limit`] for
+    /// details.
+    #[cfg(feature = "expert")]
     #[must_use]
     pub fn with_partition_limit(mut self, limit: u8) -> Self {
         if let Self::Lossy(cfg) = &mut self {
@@ -730,7 +851,9 @@ impl EncoderConfig {
         self
     }
 
-    /// Enable/disable sharp YUV conversion (lossy only). No effect on lossless.
+    /// Enable/disable sharp YUV conversion (lossy only). No effect on
+    /// lossless. Expert-only — see [`LossyConfig::with_expert`].
+    #[cfg(feature = "expert")]
     #[must_use]
     pub fn with_sharp_yuv(mut self, enable: bool) -> Self {
         if let Self::Lossy(cfg) = &mut self {

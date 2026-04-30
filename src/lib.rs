@@ -169,6 +169,15 @@ pub use encoder::{
     LosslessConfig, LossyConfig, PixelLayout, Preset, ZensimEncodeMetrics, ZensimTarget,
 };
 
+/// Advanced encoder tuning knobs surface (`partition_limit`,
+/// `multi_pass_stats`, `smooth_segment_map`, `sharp_yuv`,
+/// `cost_model`). Gated behind the `expert` cargo feature; default
+/// codec consumers don't see these. Used by the picker training
+/// pipeline + codec calibration sweeps. Build with
+/// `--features expert` to opt in.
+#[cfg(feature = "expert")]
+pub use encoder::{ExpertKnobs, SharpYuvSetting};
+
 /// Dev-only ablation toggles (gated on the unstable `ablation` feature).
 /// See [`encoder::AblationToggles`].
 #[cfg(feature = "ablation")]
