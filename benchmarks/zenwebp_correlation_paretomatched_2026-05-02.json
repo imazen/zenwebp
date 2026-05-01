@@ -1,0 +1,169 @@
+{
+  "source": "/home/lilith/work/zen/zenwebp--ablate-overnight-2026-05-02/benchmarks/zenwebp_features_expanded_2026-05-02.tsv",
+  "threshold": 0.95,
+  "n_rows": 1140,
+  "n_features_in": 89,
+  "n_features_dropped": 18,
+  "n_constant": 4,
+  "n_low_variance": 4,
+  "constant_columns": [
+    {
+      "name": "feat_alpha_present",
+      "n_unique": 1,
+      "value": 0.0
+    },
+    {
+      "name": "feat_alpha_used_fraction",
+      "n_unique": 1,
+      "value": 0.0
+    },
+    {
+      "name": "feat_alpha_bimodal_score",
+      "n_unique": 1,
+      "value": 0.0
+    },
+    {
+      "name": "feat_channel_count",
+      "n_unique": 1,
+      "value": 3.0
+    }
+  ],
+  "low_variance_columns": [
+    {
+      "name": "feat_indexed_palette_width",
+      "n_unique": 4
+    },
+    {
+      "name": "feat_palette_fits_in_256",
+      "n_unique": 2
+    },
+    {
+      "name": "feat_is_grayscale",
+      "n_unique": 2
+    },
+    {
+      "name": "feat_laplacian_variance_p1",
+      "n_unique": 2
+    }
+  ],
+  "clusters": [
+    {
+      "anchor": "feat_aq_map_p50",
+      "anchor_n_unique": 733,
+      "dropped": [
+        "feat_noise_floor_y_p50",
+        "feat_quant_survival_y_p50"
+      ],
+      "cluster_size": 3,
+      "min_abs_corr_in_cluster": 0.9605429788241158
+    },
+    {
+      "anchor": "feat_aq_map_p90",
+      "anchor_n_unique": 789,
+      "dropped": [
+        "feat_aq_map_p95"
+      ],
+      "cluster_size": 2,
+      "min_abs_corr_in_cluster": 0.9591332808286086
+    },
+    {
+      "anchor": "feat_chroma_complexity",
+      "anchor_n_unique": 766,
+      "dropped": [
+        "feat_colourfulness"
+      ],
+      "cluster_size": 2,
+      "min_abs_corr_in_cluster": 0.959544800479144
+    },
+    {
+      "anchor": "feat_distinct_color_bins",
+      "anchor_n_unique": 712,
+      "dropped": [
+        "feat_palette_density"
+      ],
+      "cluster_size": 2,
+      "min_abs_corr_in_cluster": 0.9613974610224907
+    },
+    {
+      "anchor": "feat_noise_floor_y",
+      "anchor_n_unique": 641,
+      "dropped": [
+        "feat_aq_map_p10",
+        "feat_aq_map_p5",
+        "feat_noise_floor_y_p10",
+        "feat_noise_floor_y_p5"
+      ],
+      "cluster_size": 5,
+      "min_abs_corr_in_cluster": 0.9487655807676063
+    },
+    {
+      "anchor": "feat_palette_fits_in_256",
+      "anchor_n_unique": 2,
+      "dropped": [
+        "feat_indexed_palette_width"
+      ],
+      "cluster_size": 2,
+      "min_abs_corr_in_cluster": 0.9989662803275228
+    },
+    {
+      "anchor": "feat_pixel_count",
+      "anchor_n_unique": 124,
+      "dropped": [
+        "feat_bitmap_bytes",
+        "feat_log_pixels",
+        "feat_max_dim",
+        "feat_min_dim"
+      ],
+      "cluster_size": 5,
+      "min_abs_corr_in_cluster": 0.9220595616113325
+    },
+    {
+      "anchor": "feat_quant_survival_uv",
+      "anchor_n_unique": 718,
+      "dropped": [
+        "feat_dct_compressibility_uv",
+        "feat_noise_floor_uv_p90"
+      ],
+      "cluster_size": 3,
+      "min_abs_corr_in_cluster": 0.9328483794252161
+    },
+    {
+      "anchor": "feat_quant_survival_y",
+      "anchor_n_unique": 778,
+      "dropped": [
+        "feat_quant_survival_y_p75"
+      ],
+      "cluster_size": 2,
+      "min_abs_corr_in_cluster": 0.9658205338723718
+    },
+    {
+      "anchor": "feat_uniformity",
+      "anchor_n_unique": 703,
+      "dropped": [
+        "feat_aq_map_mean"
+      ],
+      "cluster_size": 2,
+      "min_abs_corr_in_cluster": 0.959955064681693
+    }
+  ],
+  "drop_list": [
+    "feat_aq_map_mean",
+    "feat_aq_map_p10",
+    "feat_aq_map_p5",
+    "feat_aq_map_p95",
+    "feat_bitmap_bytes",
+    "feat_colourfulness",
+    "feat_dct_compressibility_uv",
+    "feat_indexed_palette_width",
+    "feat_log_pixels",
+    "feat_max_dim",
+    "feat_min_dim",
+    "feat_noise_floor_uv_p90",
+    "feat_noise_floor_y_p10",
+    "feat_noise_floor_y_p5",
+    "feat_noise_floor_y_p50",
+    "feat_palette_density",
+    "feat_quant_survival_y_p50",
+    "feat_quant_survival_y_p75"
+  ]
+}
