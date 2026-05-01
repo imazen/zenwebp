@@ -1,0 +1,173 @@
+{
+  "source": "/home/lilith/work/zen/zenwebp--ablate-overnight-2026-05-02/benchmarks/zenwebp_features_expanded_2026-05-02.tsv",
+  "threshold": 0.95,
+  "n_rows": 1348,
+  "n_features_in": 89,
+  "n_features_dropped": 16,
+  "n_constant": 4,
+  "n_low_variance": 4,
+  "constant_columns": [
+    {
+      "name": "feat_alpha_present",
+      "n_unique": 1,
+      "value": 0.0
+    },
+    {
+      "name": "feat_alpha_used_fraction",
+      "n_unique": 1,
+      "value": 0.0
+    },
+    {
+      "name": "feat_alpha_bimodal_score",
+      "n_unique": 1,
+      "value": 0.0
+    },
+    {
+      "name": "feat_channel_count",
+      "n_unique": 1,
+      "value": 3.0
+    }
+  ],
+  "low_variance_columns": [
+    {
+      "name": "feat_indexed_palette_width",
+      "n_unique": 4
+    },
+    {
+      "name": "feat_palette_fits_in_256",
+      "n_unique": 2
+    },
+    {
+      "name": "feat_is_grayscale",
+      "n_unique": 2
+    },
+    {
+      "name": "feat_laplacian_variance_p1",
+      "n_unique": 2
+    }
+  ],
+  "clusters": [
+    {
+      "anchor": "feat_aq_map_p5",
+      "anchor_n_unique": 708,
+      "dropped": [
+        "feat_noise_floor_y_p5"
+      ],
+      "cluster_size": 2,
+      "min_abs_corr_in_cluster": 0.9804658640198229
+    },
+    {
+      "anchor": "feat_aq_map_p50",
+      "anchor_n_unique": 967,
+      "dropped": [
+        "feat_noise_floor_y_p50",
+        "feat_quant_survival_y_p50"
+      ],
+      "cluster_size": 3,
+      "min_abs_corr_in_cluster": 0.9585881943288437
+    },
+    {
+      "anchor": "feat_chroma_complexity",
+      "anchor_n_unique": 1017,
+      "dropped": [
+        "feat_colourfulness"
+      ],
+      "cluster_size": 2,
+      "min_abs_corr_in_cluster": 0.9675298411012474
+    },
+    {
+      "anchor": "feat_cr_vert_sharpness",
+      "anchor_n_unique": 943,
+      "dropped": [
+        "feat_cr_horiz_sharpness"
+      ],
+      "cluster_size": 2,
+      "min_abs_corr_in_cluster": 0.9531278168767905
+    },
+    {
+      "anchor": "feat_distinct_color_bins",
+      "anchor_n_unique": 888,
+      "dropped": [
+        "feat_palette_density"
+      ],
+      "cluster_size": 2,
+      "min_abs_corr_in_cluster": 0.9670572984034972
+    },
+    {
+      "anchor": "feat_noise_floor_y",
+      "anchor_n_unique": 786,
+      "dropped": [
+        "feat_aq_map_p10",
+        "feat_noise_floor_y_p10"
+      ],
+      "cluster_size": 3,
+      "min_abs_corr_in_cluster": 0.9882776136615321
+    },
+    {
+      "anchor": "feat_palette_fits_in_256",
+      "anchor_n_unique": 2,
+      "dropped": [
+        "feat_indexed_palette_width"
+      ],
+      "cluster_size": 2,
+      "min_abs_corr_in_cluster": 0.9972144887599327
+    },
+    {
+      "anchor": "feat_pixel_count",
+      "anchor_n_unique": 235,
+      "dropped": [
+        "feat_bitmap_bytes",
+        "feat_log_pixels",
+        "feat_min_dim"
+      ],
+      "cluster_size": 4,
+      "min_abs_corr_in_cluster": 0.9656348986362453
+    },
+    {
+      "anchor": "feat_quant_survival_uv",
+      "anchor_n_unique": 940,
+      "dropped": [
+        "feat_dct_compressibility_uv",
+        "feat_noise_floor_uv_p90"
+      ],
+      "cluster_size": 3,
+      "min_abs_corr_in_cluster": 0.9353244268258086
+    },
+    {
+      "anchor": "feat_quant_survival_y",
+      "anchor_n_unique": 1072,
+      "dropped": [
+        "feat_quant_survival_y_p75"
+      ],
+      "cluster_size": 2,
+      "min_abs_corr_in_cluster": 0.9622550151408304
+    },
+    {
+      "anchor": "feat_uniformity",
+      "anchor_n_unique": 968,
+      "dropped": [
+        "feat_aq_map_mean"
+      ],
+      "cluster_size": 2,
+      "min_abs_corr_in_cluster": 0.9566345318591227
+    }
+  ],
+  "drop_list": [
+    "feat_aq_map_mean",
+    "feat_aq_map_p10",
+    "feat_bitmap_bytes",
+    "feat_colourfulness",
+    "feat_cr_horiz_sharpness",
+    "feat_dct_compressibility_uv",
+    "feat_indexed_palette_width",
+    "feat_log_pixels",
+    "feat_min_dim",
+    "feat_noise_floor_uv_p90",
+    "feat_noise_floor_y_p10",
+    "feat_noise_floor_y_p5",
+    "feat_noise_floor_y_p50",
+    "feat_palette_density",
+    "feat_quant_survival_y_p50",
+    "feat_quant_survival_y_p75"
+  ]
+}

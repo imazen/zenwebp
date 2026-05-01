@@ -469,10 +469,12 @@ pub fn classify_image_type_rgb8_diag(
         return (ImageContentType::Photo, ZenanalyzeDiag::default());
     }
     use zenanalyze::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
+    // NOTE: ScreenContentLikelihood / TextLikelihood / NaturalLikelihood /
+    // LineArtScore were culled from zenanalyze in the post-cull 0.1.0
+    // schema; they are filled with 0.0 below for backward compat with
+    // the diag struct. Downstream callers should migrate to direct
+    // signals (palette, HF energy, edge slope, etc.).
     const FEATURES: FeatureSet = FeatureSet::new()
-        .with(AnalysisFeature::ScreenContentLikelihood)
-        .with(AnalysisFeature::TextLikelihood)
-        .with(AnalysisFeature::NaturalLikelihood)
         .with(AnalysisFeature::FlatColorBlockRatio)
         .with(AnalysisFeature::DistinctColorBins)
         .with(AnalysisFeature::Variance)
@@ -481,12 +483,9 @@ pub fn classify_image_type_rgb8_diag(
         .with(AnalysisFeature::HighFreqEnergyRatio)
         // Experimental signals (gated on zenanalyze's `experimental`
         // feature). PaletteFitsIn256 / IndexedPaletteWidth catch
-        // graphics with a small palette; LineArtScore catches line
-        // drawings / engineering diagrams that don't trigger
-        // ScreenContentLikelihood (which is palette+HF driven).
+        // graphics with a small palette.
         .with(AnalysisFeature::PaletteFitsIn256)
         .with(AnalysisFeature::IndexedPaletteWidth)
-        .with(AnalysisFeature::LineArtScore)
         // Physics-based photo-vs-artwork discriminators shipped in
         // zenanalyze 0.1.0 per zenjpeg#123. SkinToneFraction is a
         // "presence of human content" cue (LAB-space skin-region
@@ -504,11 +503,10 @@ pub fn classify_image_type_rgb8_diag(
         Err(_) => return (ImageContentType::Photo, ZenanalyzeDiag::default()),
     };
     let diag = ZenanalyzeDiag {
-        screen_content: r
-            .get_f32(AnalysisFeature::ScreenContentLikelihood)
-            .unwrap_or(0.0),
-        text_likelihood: r.get_f32(AnalysisFeature::TextLikelihood).unwrap_or(0.0),
-        natural_likelihood: r.get_f32(AnalysisFeature::NaturalLikelihood).unwrap_or(0.0),
+        // Culled from zenanalyze 0.1.0 post-cull; defaulted to 0.0.
+        screen_content: 0.0,
+        text_likelihood: 0.0,
+        natural_likelihood: 0.0,
         flat_color_block_ratio: r
             .get_f32(AnalysisFeature::FlatColorBlockRatio)
             .unwrap_or(0.0),
@@ -530,7 +528,7 @@ pub fn classify_image_type_rgb8_diag(
             .get(AnalysisFeature::IndexedPaletteWidth)
             .and_then(|v| v.as_u32())
             .unwrap_or(0),
-        line_art_score: r.get_f32(AnalysisFeature::LineArtScore).unwrap_or(0.0),
+        line_art_score: 0.0, // culled in zenanalyze 0.1.0 post-cull
         skin_tone_fraction: r.get_f32(AnalysisFeature::SkinToneFraction).unwrap_or(0.0),
         edge_slope_stdev: r.get_f32(AnalysisFeature::EdgeSlopeStdev).unwrap_or(0.0),
     };

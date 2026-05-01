@@ -45,7 +45,7 @@ zensim = { version = "0.2", optional = true }
 # research-stage signals (PaletteFitsIn256, IndexedPaletteWidth,
 # LineArtScore, SkinToneFraction, EdgeSlopeStdev). Path-pin until the
 # next zenanalyze release lands these on crates.io.
-zenanalyze = { path = "../zenanalyze", optional = true, features = ["experimental", "composites"] }
+zenanalyze = { path = "../zenanalyze", optional = true, features = ["experimental"] }
 # zenpredict — Rust ZNPR v2 inference runtime. Path-pinned to the
 # zenanalyze workspace until 0.2.0 lands on crates.io. Gated behind
 # the `picker` cargo feature so default builds don't pull it.
@@ -62,6 +62,7 @@ rayon = "1.10"
 rgb = "0.8"
 zenpng = "0.1.4"
 zenpixels-convert = { version = "0.2.11", features = ["rgb"] }
+jpeg-decoder = "0.3"
 
 # Native-only dev-deps (C bindings, threading, or native-only features)
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
@@ -226,6 +227,14 @@ required-features = ["picker", "target-zensim", "analyzer"]
 [[example]]
 name = "zenwebp_pareto"
 path = "dev/zenwebp_pareto.rs"
+required-features = ["analyzer"]
+
+# Replays features against an existing pareto features TSV — used to
+# regenerate the feature columns when the analyzer schema has moved
+# but the encode TSV is reused as-is. See dev/zenwebp_features_replay.rs.
+[[example]]
+name = "zenwebp_features_replay"
+path = "dev/zenwebp_features_replay.rs"
 required-features = ["analyzer"]
 
 # One-shot empirical probe: do tiny zenwebp-encoded images have an
