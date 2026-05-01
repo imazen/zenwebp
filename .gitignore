@@ -83,3 +83,6 @@ benchmarks/zenwebp_hybrid_*.log
 benchmarks/zenwebp_pareto_features_2026-04-29_v0.1.0.tsv.bak
 benchmarks/zenwebp_pareto_features_2026-04-29.tsv.bak
 benchmarks/picker_ab_*.tsv
+
+# Pareto sweep parquets — large oracle artifacts, live in /mnt/v + tower
+benchmarks/*.parquet
