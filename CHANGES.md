@@ -12,6 +12,29 @@
   deprecation cycle. The `picker` feature now depends on `__expert`
   (was `expert`).
 
+#### Documentation
+- Expanded per-field theory-of-operation docs on every
+  `InternalParams` field (`partition_limit`, `multi_pass_stats`,
+  `smooth_segment_map`, `sharp_yuv`, `cost_model`): pipeline stage,
+  override rationale, mechanism, and default-derivation. Sourced
+  from VP8 mode-decision, segmentation, sharp-YUV, and cost-model
+  module reads — no new claims that weren't traceable to source.
+
+#### Tests
+- New `encoder::config_expert_tests` module (gated `#[cfg(all(test,
+  feature = "__expert"))]`): per-field permutation tests for all
+  five `InternalParams` knobs, idempotency under repeated apply,
+  combined-knob valid-encode + decode, `Default::default()` =
+  baseline byte-equality, and partial-merge (NOT reset) semantics
+  of `with_internal_params`. 9 new tests covering the bundle's
+  contract.
+
+#### Fixed
+- Cleaned up a `single_match` clippy lint in
+  `dev/build_size_dense_corpus.rs` that was preventing a clean
+  `cargo clippy --all-targets --features __expert -- -D warnings`
+  release-prep run.
+
 ### Version 0.4.4 (2026-04-17)
 
 **Sharp YUV re-enabled, zenyuv integration, streaming push decoder, security fix**
