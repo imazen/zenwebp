@@ -79,20 +79,164 @@ pub enum SharpYuvSetting {
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct InternalParams {
-    /// VP8 partition exploration cap, `0..=100`. `None` keeps the
-    /// existing value; `Some(0)` = full search; `Some(100)` =
-    /// aggressive trim. See [`LossyConfig::with_partition_limit`].
+    /// **Pipeline stage:** intra mode decision (luma 16×16 vs 4×4 selection),
+    /// `vp8/mode_selection.rs:1846,1939–1953`.
+    ///
+    /// **Why override:** the default `None` lets the encoder retry-with-bump
+    /// on partition-0 overflow (large images at high quality where I4 metadata
+    /// blows past VP8's 512 KB partition-0 ceiling). Two cases want an explicit
+    /// value: (a) calibration sweeps that need a fixed mode-decision regime so
+    /// results are reproducible across runs, and (b) very large images where
+    /// you'd rather pre-commit to I16-only than pay the retry cost.
+    ///
+    /// **Mechanism:** the encoder turns `partition_limit` into an additive
+    /// skip-threshold boost in mode selection — at `0` (default) the I4 vs
+    /// I16 decision uses the base distortion threshold (≈211); at `80` the
+    /// threshold is roughly 5× higher, suppressing most I4 attempts; at
+    /// `>=100` the encoder forces I16-only and skips intra-4×4 entirely.
+    /// I4 carries fully-coded sub-block prediction modes in partition 0,
+    /// so suppressing it shrinks partition 0 at a cost in coding efficiency.
+    /// Range clamped to `0..=100` by [`LossyConfig::with_partition_limit`].
+    ///
+    /// **Default-derivation:** `None` ⇒ the encoder runs in **automatic
+    /// retry mode** — first attempt at limit 0, then 30, 60, 100 on
+    /// partition-0 overflow (`vp8/mod.rs:2237–2255`). `Some(v)` disables
+    /// the retry loop and pins the limit at `v`.
+    ///
+    /// See [`LossyConfig::with_partition_limit`].
     pub partition_limit: Option<u8>,
-    /// Toggle the stat-collection extra pass. `None` keeps existing.
+    /// **Pipeline stage:** outer encode driver — wraps the full mode
+    /// decision + transform + quantize + token-record pass
+    /// (`vp8/mod.rs:1080–1152`).
+    ///
+    /// **Why override:** zenwebp's default of one pass is tuned for
+    /// single-shot encodes where ~0.1 % size is not worth doubling
+    /// encode time. Override `Some(true)` when (a) running a
+    /// `target_size` / `target_zensim` search loop where the marginal
+    /// size win amortizes across multiple inner probes, or (b) bench-
+    /// matching libwebp at `cost_model = StrictLibwebpParity` (libwebp
+    /// runs `config->pass = 1` extra pass by default).
+    ///
+    /// **Mechanism:** when set and `method == 4`, the encoder runs the
+    /// full encode twice. The first pass collects token statistics into
+    /// `proba_stats`; between passes it rebuilds `level_costs` from the
+    /// observed token distribution so the second pass's mode selection
+    /// and (m4) trellis use empirical, image-tuned costs rather than
+    /// the static prior. The second pass emits the actual bitstream.
+    /// At m5/m6 trellis already image-adapts via per-pass `proba_stats`
+    /// accumulation, so the second pass measurably regresses size on
+    /// CID22 — the flag is gated to m4 only (`vp8/mod.rs:1103`) and
+    /// silently ignored at other tiers.
+    ///
+    /// **Default-derivation:** `None` ⇒ `false` (single pass — zenwebp's
+    /// speed/size default). Roughly **doubles** encode time at m4 in
+    /// exchange for ~0.1 % size win on photo content.
+    ///
     /// See [`LossyConfig::with_multi_pass_stats`].
     pub multi_pass_stats: Option<bool>,
-    /// Toggle 3×3 majority smoothing on the segment map. `None`
-    /// keeps existing. See [`LossyConfig::with_smooth_segment_map`].
+    /// **Pipeline stage:** segmentation analysis, between k-means
+    /// segment assignment and per-segment quantizer setup
+    /// (`vp8/mod.rs:1715–1721`, `analysis/segment.rs:194`).
+    ///
+    /// **Why override:** k-means on per-MB activity produces a noisy
+    /// segment map for images with fine-grained texture variation
+    /// (line art, foliage, screen content with mixed regions). The
+    /// noise wastes bits on segment-id changes between neighbors and
+    /// can cause visible quantizer-boundary banding. Two override
+    /// cases: (a) preprocessing-equivalence runs vs `cwebp -pre 1`,
+    /// and (b) noisy-segmentation content where the per-MB segment-id
+    /// signaling cost outweighs the per-segment quantizer fit.
+    ///
+    /// **Mechanism:** when on, the encoder applies a 3×3 majority
+    /// filter to the per-MB segment map after assignment: any block
+    /// where ≥5 of 8 neighbors share a segment id is reassigned to
+    /// that majority segment. Borders are not modified. This produces
+    /// fewer but larger contiguous segment regions, which both reduces
+    /// the entropy cost of the segment-id stream and avoids
+    /// quantizer-step artifacts at noisy boundaries.
+    ///
+    /// **Default-derivation:** `None` ⇒ `false` — matches libwebp's
+    /// `config->preprocessing & 1` default (off). Equivalent to
+    /// `cwebp -pre 1` when on. The smoothing only applies when
+    /// `num_segments > 1`; with one segment there's nothing to smooth.
+    ///
+    /// See [`LossyConfig::with_smooth_segment_map`].
     pub smooth_segment_map: Option<bool>,
-    /// Sharp YUV setting. `None` keeps existing.
+    /// **Pipeline stage:** RGB → YUV 4:2:0 conversion, before any VP8
+    /// encoding work (`vp8/mod.rs:1002`,
+    /// `decoder/yuv.rs:716` `convert_image_sharp_yuv_with_config`).
+    ///
+    /// **Why override:** standard 4:2:0 chroma downsampling
+    /// (`AverageBoxFilter`) is fast but loses high-frequency chroma
+    /// detail visible on saturated edges (red text on white, sharp
+    /// color transitions in graphics). Override cases: (a) photos
+    /// with saturated detail where the default produces visible
+    /// chroma bleed, and (b) calibration grids that compare baseline
+    /// vs sharp-yuv to measure the perceptual win. `Custom(_)` is
+    /// for sweeping non-default chroma matrices in the picker
+    /// training pipeline.
+    ///
+    /// **Mechanism:** sharp-YUV iteratively refines the downsampled
+    /// chroma planes by minimizing the error between the upsampled
+    /// reconstruction and the source's true chroma. `Off` uses the
+    /// LossyConfig default (no sharp-yuv). `On` enables iterative
+    /// refinement with `zenyuv::SharpYuvConfig::default()` (BT.709
+    /// matrix, default iteration count). `Custom(cfg)` substitutes a
+    /// caller-supplied config — for example, a non-default
+    /// chroma-downsample kernel or different colorimetry.
+    ///
+    /// **Default-derivation:** `None` on `InternalParams::sharp_yuv`
+    /// leaves `LossyConfig::sharp_yuv` unchanged. The
+    /// `LossyConfig::new()` default is `None` (standard chroma
+    /// downsampling). `Preset::Photo` does **not** auto-enable sharp
+    /// YUV in `LossyConfig::to_params` — it must be set explicitly.
     pub sharp_yuv: Option<SharpYuvSetting>,
-    /// Cost model selection. `None` keeps existing. See
-    /// [`LossyConfig::with_cost_model`].
+    /// **Pipeline stage:** mode selection rate-distortion costs and
+    /// (at m5+) trellis quantization (`encoder/psy.rs:152–206`,
+    /// `analysis/mod.rs:222–243`).
+    ///
+    /// **Why override:** zenwebp's default cost model layers three
+    /// perceptual extensions on top of libwebp's algorithm, tuned
+    /// against butteraugli / SSIMULACRA2. Two cases want
+    /// `StrictLibwebpParity`: (a) bit-comparing zenwebp's output
+    /// against libwebp at the same `(quality, method, sns, filter,
+    /// segments)` tuple to isolate algorithmic-parity bugs from
+    /// perceptual-extension behavior, and (b) workloads where
+    /// libwebp's size/PSNR tradeoff is the explicit target (legacy
+    /// pipelines, regression baselines).
+    ///
+    /// **Mechanism — what each extension changes** (when
+    /// `ZenwebpDefault`, gated by method):
+    ///
+    /// - **PSY_WEIGHT_Y CSF table** (m3+): replaces libwebp's
+    ///   `kWeightY` with an enhanced contrast-sensitivity-function
+    ///   table that has a steeper high-frequency rolloff. The table
+    ///   feeds into TDisto (transformed distortion), so the cost of
+    ///   keeping high-freq luma coefficients goes up — mode selection
+    ///   prefers smoother reconstructions where the eye won't notice.
+    /// - **SATD masking-alpha blend** (m4+, gated by `sns_strength > 0`):
+    ///   blends the per-MB DCT alpha with a SATD-derived
+    ///   masking-alpha so segmentation places highly-textured blocks
+    ///   into segments with coarser quantizers (texture masks
+    ///   quantization noise). `analysis/mod.rs:239–243` skips the
+    ///   blend under `StrictLibwebpParity`.
+    /// - **JND coefficient zeroing** (m5+): scales per-position
+    ///   just-noticeable-difference thresholds by quantizer and zeros
+    ///   any DCT coefficient below threshold during trellis. Saves
+    ///   bits on perceptually-invisible coefficients without harming
+    ///   reconstruction quality. Under `StrictLibwebpParity`
+    ///   `jnd_threshold_y/uv` stay at zero so no coefficients get
+    ///   zeroed by this path.
+    ///
+    /// `StrictLibwebpParity` returns the default `PsyConfig` early
+    /// (`psy.rs:161–163`), which means **all three extensions are
+    /// disabled regardless of method**.
+    ///
+    /// **Default-derivation:** `None` on `InternalParams::cost_model`
+    /// leaves `LossyConfig::cost_model` unchanged. The
+    /// `LossyConfig::new()` default is `CostModel::ZenwebpDefault`.
+    ///
+    /// See [`LossyConfig::with_cost_model`].
     pub cost_model: Option<super::api::CostModel>,
 }
 
