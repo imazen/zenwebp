@@ -31,6 +31,8 @@ mod arithmetic;
 /// Type-safe encoder configuration.
 #[doc(hidden)]
 pub mod config;
+#[cfg(all(test, feature = "__expert"))]
+mod config_expert_tests;
 /// Rate-distortion cost estimation.
 #[doc(hidden)]
 pub mod cost;
