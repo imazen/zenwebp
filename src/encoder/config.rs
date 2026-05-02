@@ -1324,10 +1324,12 @@ fn encode_single_pass(
 // validate() — opt-in fail-fast checks. Encode paths still clamp.
 // ============================================================================
 
+#[cfg(feature = "target-zensim")]
+use super::validation::TARGET_ZENSIM_RANGE;
 use super::validation::{
     self as v, ALPHA_QUALITY_RANGE, FILTER_SHARPNESS_RANGE, FILTER_STRENGTH_RANGE, METHOD_RANGE,
     NEAR_LOSSLESS_RANGE, PARTITION_LIMIT_RANGE, SEGMENTS_RANGE, SNS_STRENGTH_RANGE,
-    TARGET_ZENSIM_RANGE, ValidationError,
+    ValidationError,
 };
 
 impl LossyConfig {
@@ -1335,9 +1337,10 @@ impl LossyConfig {
     /// this config without encoding anything.
     ///
     /// Returns `Ok(())` if every field is in range and the
-    /// `target_size` / `target_psnr` / `target_zensim` exclusivity rule
-    /// is honoured; otherwise returns the first offending
-    /// [`ValidationError`].
+    /// target-mode exclusivity rule (at most one of `target_size`,
+    /// `target_psnr`, and — when the unstable `target-zensim` cargo
+    /// feature is enabled — `target_zensim`) is honoured; otherwise
+    /// returns the first offending [`ValidationError`].
     ///
     /// Existing encode entry points (`EncodeRequest::encode` etc.)
     /// continue to clamp out-of-range values for backwards
@@ -1402,6 +1405,7 @@ impl LossyConfig {
             });
         }
 
+        #[cfg(feature = "target-zensim")]
         if let Some(t) = self.target_zensim {
             if !t.target.is_finite() || !TARGET_ZENSIM_RANGE.contains(&t.target) {
                 return Err(ValidationError::TargetZensimOutOfRange {
@@ -1438,31 +1442,33 @@ impl LossyConfig {
             });
         }
 
-        // Cross-param: at most one target mode active. `target_size==0`,
-        // `target_psnr==0.0`, and `target_zensim==None` all mean "disabled".
+        // Cross-param: at most one target mode active. `target_size==0`
+        // and `target_psnr==0.0` mean "disabled". When the
+        // `target-zensim` cargo feature is enabled, `target_zensim`
+        // joins the same exclusivity rule (`None` = disabled).
         let size_set = self.target_size != 0;
         let psnr_set = self.target_psnr != 0.0;
-        let zensim_set = self.target_zensim.is_some();
-        match (size_set, psnr_set, zensim_set) {
-            (true, true, _) => {
-                return Err(ValidationError::TargetMutuallyExclusive {
-                    first: "target_size",
-                    second: "target_psnr",
-                });
-            }
-            (true, _, true) => {
+        if size_set && psnr_set {
+            return Err(ValidationError::TargetMutuallyExclusive {
+                first: "target_size",
+                second: "target_psnr",
+            });
+        }
+        #[cfg(feature = "target-zensim")]
+        {
+            let zensim_set = self.target_zensim.is_some();
+            if size_set && zensim_set {
                 return Err(ValidationError::TargetMutuallyExclusive {
                     first: "target_size",
                     second: "target_zensim",
                 });
             }
-            (_, true, true) => {
+            if psnr_set && zensim_set {
                 return Err(ValidationError::TargetMutuallyExclusive {
                     first: "target_psnr",
                     second: "target_zensim",
                 });
             }
-            _ => {}
         }
 
         Ok(())

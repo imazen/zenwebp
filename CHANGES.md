@@ -29,6 +29,18 @@
   of `with_internal_params`. 9 new tests covering the bundle's
   contract.
 
+#### Changed (validation surface)
+- Validation for `target_zensim` (the `TargetZensimOutOfRange`,
+  `TargetZensimMaxPassesZero`, `TargetZensimToleranceInvalid`
+  variants, the `TARGET_ZENSIM_RANGE` const, and `target_zensim`'s
+  participation in the `TargetMutuallyExclusive` rule) is now gated
+  behind the `target-zensim` cargo feature. The feature is unstable
+  ML-driven targeting and is not part of published 0.4.4. Once it
+  stabilizes and ships in a published release, `target_zensim`
+  validation will become unconditional. With the feature off,
+  `LossyConfig::validate()` only checks the (`target_size`,
+  `target_psnr`) pair for target-mode exclusivity.
+
 #### Fixed
 - Cleaned up a `single_match` clippy lint in
   `dev/build_size_dense_corpus.rs` that was preventing a clean

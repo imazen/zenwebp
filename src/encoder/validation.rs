@@ -21,9 +21,11 @@
 //! plus a small number of cross-parameter invariants that the encoder
 //! cannot represent in its types:
 //!
-//! - **`LossyConfig`**: at most one of `target_size`, `target_psnr`, and
-//!   `target_zensim` may be set (the encoder picks one path; combining
-//!   them is undefined). Validated in [`LossyConfig::validate`].
+//! - **`LossyConfig`**: `target_size` and `target_psnr` are mutually
+//!   exclusive (the encoder picks one path; combining them is
+//!   undefined). When the unstable `target-zensim` cargo feature is
+//!   enabled, `target_zensim` joins the same exclusivity rule.
+//!   Validated in [`LossyConfig::validate`].
 //! - **`SharpYuvConfig`** (when set on `LossyConfig`): `convergence_threshold`
 //!   must be finite and non-negative.
 //! - **`LosslessConfig`**: simple range checks; no cross-param invariants.
@@ -136,6 +138,10 @@ pub enum ValidationError {
     },
 
     /// `target_zensim.target` is outside the valid range or non-finite.
+    ///
+    /// Only emitted when the unstable `target-zensim` cargo feature is
+    /// enabled.
+    #[cfg(feature = "target-zensim")]
     #[error("target_zensim.target {value} out of valid range {valid:?}")]
     TargetZensimOutOfRange {
         /// The invalid value.
@@ -145,6 +151,10 @@ pub enum ValidationError {
     },
 
     /// `target_zensim.max_passes` is zero (must run at least one pass).
+    ///
+    /// Only emitted when the unstable `target-zensim` cargo feature is
+    /// enabled.
+    #[cfg(feature = "target-zensim")]
     #[error("target_zensim.max_passes must be >= 1, got {value}")]
     TargetZensimMaxPassesZero {
         /// The invalid value.
@@ -152,6 +162,10 @@ pub enum ValidationError {
     },
 
     /// A tolerance field on `target_zensim` is non-finite or negative.
+    ///
+    /// Only emitted when the unstable `target-zensim` cargo feature is
+    /// enabled.
+    #[cfg(feature = "target-zensim")]
     #[error("target_zensim.{field} must be finite and >= 0.0, got {value}")]
     TargetZensimToleranceInvalid {
         /// Which tolerance field (`max_overshoot`, `max_undershoot`,
@@ -161,9 +175,12 @@ pub enum ValidationError {
         value: f32,
     },
 
-    /// More than one of `target_size`, `target_psnr`, and
-    /// `target_zensim` was set non-default. Only one target mode may be
-    /// active per encode.
+    /// More than one mutually exclusive target was set. Only one target
+    /// mode may be active per encode.
+    ///
+    /// Without the `target-zensim` cargo feature this only covers the
+    /// (`target_size`, `target_psnr`) pair. With the feature enabled,
+    /// `target_zensim` joins the same exclusivity rule.
     #[error("targets {first} and {second} are mutually exclusive")]
     TargetMutuallyExclusive {
         /// First target field that was set.
@@ -215,6 +232,10 @@ pub const PARTITION_LIMIT_RANGE: RangeInclusive<u8> = 0..=100;
 pub const TARGET_PSNR_RANGE: RangeInclusive<f32> = 0.0..=80.0;
 /// Valid range for `target_zensim.target` (zensim score; same scale as
 /// the metric's own 0..=100 output).
+///
+/// Only available when the unstable `target-zensim` cargo feature is
+/// enabled.
+#[cfg(feature = "target-zensim")]
 pub const TARGET_ZENSIM_RANGE: RangeInclusive<f32> = 0.0..=100.0;
 /// Valid range for `near_lossless`. 100 = off, 0 = max preprocessing
 /// (libwebp's `WebPConfig.near_lossless`).
