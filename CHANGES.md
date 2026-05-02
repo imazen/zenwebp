@@ -2,6 +2,10 @@
 
 ### [Unreleased]
 
+### Version 0.4.5 (2026-05-02)
+
+**Expert API rename + ValidationError + theory docs.**
+
 #### Changed
 - Renamed `expert` cargo feature → `__expert`, `ExpertKnobs` →
   `InternalParams`, `LossyConfig::with_expert` →
