@@ -131,16 +131,14 @@ fn main() {
             let stem = src.file_stem().unwrap().to_string_lossy().to_string();
             let mut written = 0;
             for &target in SIZES {
-                match resize_to(&rgb, w, h, target) {
-                    Some((rgb_r, w_r, h_r)) => {
-                        let dst = out_dir.join(format!("{stem}__sz{target}.png"));
-                        if let Err(e) = save_png_rgb8(&dst, &rgb_r, w_r, h_r) {
-                            eprintln!("  save failed {}: {e}", dst.display());
-                        } else {
-                            written += 1;
-                        }
+                // None case is upscale skipped — no action required.
+                if let Some((rgb_r, w_r, h_r)) = resize_to(&rgb, w, h, target) {
+                    let dst = out_dir.join(format!("{stem}__sz{target}.png"));
+                    if let Err(e) = save_png_rgb8(&dst, &rgb_r, w_r, h_r) {
+                        eprintln!("  save failed {}: {e}", dst.display());
+                    } else {
+                        written += 1;
                     }
-                    None => {} // upscale skipped
                 }
             }
             eprintln!(
