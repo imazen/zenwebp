@@ -45,13 +45,13 @@ zensim = { version = "0.2", optional = true }
 # research-stage signals (PaletteFitsIn256, IndexedPaletteWidth,
 # LineArtScore, SkinToneFraction, EdgeSlopeStdev). Path-pin until the
 # next zenanalyze release lands these on crates.io.
-zenanalyze = { path = "../zenanalyze", optional = true, features = ["experimental"] }
+zenanalyze = { version = "0.1.0", path = "../zenanalyze", optional = true, features = ["experimental"] }
 # zenpredict — Rust ZNPR v2 inference runtime. Path-pinned to the
 # zenanalyze workspace until 0.2.0 lands on crates.io. Gated behind
 # the `picker` cargo feature so default builds don't pull it.
 # Companion Python tooling lives at zenanalyze/zentrain/. See
 # zenanalyze/MIGRATION.md for the rename + format-change context.
-zenpredict = { path = "../zenanalyze/zenpredict", optional = true, default-features = false, features = ["std"] }
+zenpredict = { version = "0.1.0", path = "../zenanalyze/zenpredict", optional = true, default-features = false, features = ["std"] }
 
 [dev-dependencies]
 archmage = { version = "0.9.15", features = ["std", "macros"] }
