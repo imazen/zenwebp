@@ -166,7 +166,8 @@ pub use zenpixels::Orientation;
 // Re-export core encoder types
 pub use encoder::{
     CostModel, EncodeError, EncodeRequest, EncodeResult, EncoderConfig, ImageMetadata,
-    LosslessConfig, LossyConfig, PixelLayout, Preset, ZensimEncodeMetrics, ZensimTarget,
+    LosslessConfig, LossyConfig, PixelLayout, Preset, ValidationError, ZensimEncodeMetrics,
+    ZensimTarget,
 };
 
 /// Advanced encoder tuning knobs surface (`partition_limit`,

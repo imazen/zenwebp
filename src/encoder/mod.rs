@@ -49,6 +49,8 @@ mod residual_cost;
 pub mod tables;
 /// Trellis quantization for RD-optimized coefficient selection
 mod trellis;
+/// Configuration validation (opt-in fail-fast checks).
+pub mod validation;
 mod vec_writer;
 /// VP8 lossy encoder implementation.
 #[doc(hidden)]
@@ -75,6 +77,7 @@ pub use api::{
 pub use config::{EncoderConfig, LosslessConfig, LossyConfig};
 #[cfg(feature = "__expert")]
 pub use config::{InternalParams, SharpYuvSetting};
+pub use validation::ValidationError;
 #[doc(hidden)]
 pub use vp8l::{Vp8lConfig, Vp8lQuality, encode_vp8l};
 #[cfg(feature = "ablation")]

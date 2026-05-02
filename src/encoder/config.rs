@@ -1319,3 +1319,218 @@ fn encode_single_pass(
         Err(at_err) => Err(at_err.decompose().0),
     }
 }
+
+// ============================================================================
+// validate() — opt-in fail-fast checks. Encode paths still clamp.
+// ============================================================================
+
+use super::validation::{
+    self as v, ALPHA_QUALITY_RANGE, FILTER_SHARPNESS_RANGE, FILTER_STRENGTH_RANGE, METHOD_RANGE,
+    NEAR_LOSSLESS_RANGE, PARTITION_LIMIT_RANGE, SEGMENTS_RANGE, SNS_STRENGTH_RANGE,
+    TARGET_ZENSIM_RANGE, ValidationError,
+};
+
+impl LossyConfig {
+    /// Check every documented range and cross-parameter invariant on
+    /// this config without encoding anything.
+    ///
+    /// Returns `Ok(())` if every field is in range and the
+    /// `target_size` / `target_psnr` / `target_zensim` exclusivity rule
+    /// is honoured; otherwise returns the first offending
+    /// [`ValidationError`].
+    ///
+    /// Existing encode entry points (`EncodeRequest::encode` etc.)
+    /// continue to clamp out-of-range values for backwards
+    /// compatibility — `validate()` is opt-in for callers that want a
+    /// fail-fast signal. Typical usage:
+    ///
+    /// ```
+    /// use zenwebp::LossyConfig;
+    /// let cfg = LossyConfig::new().with_quality(80.0);
+    /// cfg.validate().unwrap();
+    /// ```
+    ///
+    /// Note that `with_*` setters already clamp, so a
+    /// builder-constructed config will pass validation. The interesting
+    /// failure cases are direct struct construction (allowed by the
+    /// public fields) and the cross-parameter target-exclusivity
+    /// invariant, which no setter can catch.
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        v::check_quality(self.quality)?;
+        v::check_method(self.method)?;
+        v::check_alpha_quality(self.alpha_quality)?;
+        v::check_target_psnr(self.target_psnr)?;
+
+        if let Some(s) = self.sns_strength
+            && !SNS_STRENGTH_RANGE.contains(&s)
+        {
+            return Err(ValidationError::SnsStrengthOutOfRange {
+                value: s,
+                valid: SNS_STRENGTH_RANGE,
+            });
+        }
+        if let Some(s) = self.filter_strength
+            && !FILTER_STRENGTH_RANGE.contains(&s)
+        {
+            return Err(ValidationError::FilterStrengthOutOfRange {
+                value: s,
+                valid: FILTER_STRENGTH_RANGE,
+            });
+        }
+        if let Some(s) = self.filter_sharpness
+            && !FILTER_SHARPNESS_RANGE.contains(&s)
+        {
+            return Err(ValidationError::FilterSharpnessOutOfRange {
+                value: s,
+                valid: FILTER_SHARPNESS_RANGE,
+            });
+        }
+        if let Some(s) = self.segments
+            && !SEGMENTS_RANGE.contains(&s)
+        {
+            return Err(ValidationError::SegmentsOutOfRange {
+                value: s,
+                valid: SEGMENTS_RANGE,
+            });
+        }
+        if let Some(p) = self.partition_limit
+            && !PARTITION_LIMIT_RANGE.contains(&p)
+        {
+            return Err(ValidationError::PartitionLimitOutOfRange {
+                value: p,
+                valid: PARTITION_LIMIT_RANGE,
+            });
+        }
+
+        if let Some(t) = self.target_zensim {
+            if !t.target.is_finite() || !TARGET_ZENSIM_RANGE.contains(&t.target) {
+                return Err(ValidationError::TargetZensimOutOfRange {
+                    value: t.target,
+                    valid: TARGET_ZENSIM_RANGE,
+                });
+            }
+            if t.max_passes == 0 {
+                return Err(ValidationError::TargetZensimMaxPassesZero {
+                    value: t.max_passes,
+                });
+            }
+            for (field, opt) in [
+                ("max_overshoot", t.max_overshoot),
+                ("max_undershoot", t.max_undershoot),
+                ("max_undershoot_ship", t.max_undershoot_ship),
+            ] {
+                if let Some(val) = opt
+                    && (!val.is_finite() || val < 0.0)
+                {
+                    return Err(ValidationError::TargetZensimToleranceInvalid {
+                        field,
+                        value: val,
+                    });
+                }
+            }
+        }
+
+        if let Some(cfg) = self.sharp_yuv
+            && (!cfg.convergence_threshold.is_finite() || cfg.convergence_threshold < 0.0)
+        {
+            return Err(ValidationError::SharpYuvConvergenceThresholdInvalid {
+                value: cfg.convergence_threshold,
+            });
+        }
+
+        // Cross-param: at most one target mode active. `target_size==0`,
+        // `target_psnr==0.0`, and `target_zensim==None` all mean "disabled".
+        let size_set = self.target_size != 0;
+        let psnr_set = self.target_psnr != 0.0;
+        let zensim_set = self.target_zensim.is_some();
+        match (size_set, psnr_set, zensim_set) {
+            (true, true, _) => {
+                return Err(ValidationError::TargetMutuallyExclusive {
+                    first: "target_size",
+                    second: "target_psnr",
+                });
+            }
+            (true, _, true) => {
+                return Err(ValidationError::TargetMutuallyExclusive {
+                    first: "target_size",
+                    second: "target_zensim",
+                });
+            }
+            (_, true, true) => {
+                return Err(ValidationError::TargetMutuallyExclusive {
+                    first: "target_psnr",
+                    second: "target_zensim",
+                });
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+}
+
+impl LosslessConfig {
+    /// Check every documented range on this config without encoding.
+    ///
+    /// See [`LossyConfig::validate`] for the rationale and contract;
+    /// the lossless variant has no cross-parameter invariants.
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        v::check_quality(self.quality)?;
+        v::check_method(self.method)?;
+        v::check_alpha_quality(self.alpha_quality)?;
+        if !NEAR_LOSSLESS_RANGE.contains(&self.near_lossless) {
+            return Err(ValidationError::NearLosslessOutOfRange {
+                value: self.near_lossless,
+                valid: NEAR_LOSSLESS_RANGE,
+            });
+        }
+        let _ = ALPHA_QUALITY_RANGE; // keep import live across cfg combinations
+        let _ = METHOD_RANGE;
+        Ok(())
+    }
+}
+
+impl EncoderConfig {
+    /// Validate the underlying [`LossyConfig`] or [`LosslessConfig`].
+    ///
+    /// See [`LossyConfig::validate`] / [`LosslessConfig::validate`] for
+    /// the field-by-field contract.
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        match self {
+            Self::Lossy(c) => c.validate(),
+            Self::Lossless(c) => c.validate(),
+        }
+    }
+}
+
+#[cfg(feature = "__expert")]
+impl InternalParams {
+    /// Validate every field that's `Some` on this expert-knob bundle.
+    ///
+    /// Returns `Ok(())` for an all-`None` bundle. For each set field,
+    /// applies the same range check that
+    /// [`LossyConfig::validate`] would after the bundle is folded in
+    /// via [`LossyConfig::with_internal_params`]. The `cost_model` and
+    /// `sharp_yuv` enum variants are well-formed by construction
+    /// (Rust's type system guarantees it); only their numeric
+    /// payloads (e.g., `SharpYuvConfig::convergence_threshold`) need
+    /// runtime checks.
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(p) = self.partition_limit
+            && !PARTITION_LIMIT_RANGE.contains(&p)
+        {
+            return Err(ValidationError::PartitionLimitOutOfRange {
+                value: p,
+                valid: PARTITION_LIMIT_RANGE,
+            });
+        }
+        if let Some(SharpYuvSetting::Custom(cfg)) = &self.sharp_yuv
+            && (!cfg.convergence_threshold.is_finite() || cfg.convergence_threshold < 0.0)
+        {
+            return Err(ValidationError::SharpYuvConvergenceThresholdInvalid {
+                value: cfg.convergence_threshold,
+            });
+        }
+        Ok(())
+    }
+}
