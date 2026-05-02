@@ -1,0 +1,27 @@
+name: Checkout sibling repos
+description: |
+  Checks out sibling repositories required by zenwebp's optional path
+  dependencies (zenanalyze, zenpredict). Even though these deps are
+  feature-gated, cargo still parses the manifest and tries to resolve
+  the path entries, so a fresh CI clone fails without the siblings on
+  disk. Pinning the sibling to a known-good ref keeps CI deterministic.
+inputs:
+  zenanalyze-ref:
+    description: Git ref to check out for imazen/zenanalyze.
+    required: false
+    default: main
+runs:
+  using: composite
+  steps:
+    - name: Checkout imazen/zenanalyze
+      uses: actions/checkout@v6
+      with:
+        repository: imazen/zenanalyze
+        ref: ${{ inputs.zenanalyze-ref }}
+        path: __siblings/zenanalyze
+    - name: Move sibling to parent of GITHUB_WORKSPACE
+      shell: bash
+      run: |
+        set -euo pipefail
+        mv __siblings/zenanalyze ../zenanalyze
+        rmdir __siblings || true
