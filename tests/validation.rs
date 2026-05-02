@@ -5,7 +5,9 @@
 //! unmodified. The happy-path test exercises the public builder
 //! constructor.
 
-use zenwebp::{EncoderConfig, LosslessConfig, LossyConfig, Preset, ValidationError, ZensimTarget};
+#[cfg(feature = "target-zensim")]
+use zenwebp::ZensimTarget;
+use zenwebp::{EncoderConfig, LosslessConfig, LossyConfig, Preset, ValidationError};
 
 // ---------------------------------------------------------------------------
 // Happy path — defaults validate.
@@ -181,6 +183,7 @@ fn target_psnr_zero_is_disabled_ok() {
     cfg.validate().expect("0.0 = disabled, must pass");
 }
 
+#[cfg(feature = "target-zensim")]
 #[test]
 fn target_zensim_out_of_range() {
     let mut cfg = LossyConfig::new();
@@ -191,6 +194,7 @@ fn target_zensim_out_of_range() {
     ));
 }
 
+#[cfg(feature = "target-zensim")]
 #[test]
 fn target_zensim_max_passes_zero_rejected() {
     let mut cfg = LossyConfig::new();
@@ -201,6 +205,7 @@ fn target_zensim_max_passes_zero_rejected() {
     ));
 }
 
+#[cfg(feature = "target-zensim")]
 #[test]
 fn target_zensim_negative_overshoot_rejected() {
     let mut cfg = LossyConfig::new();
@@ -209,6 +214,34 @@ fn target_zensim_negative_overshoot_rejected() {
         ValidationError::TargetZensimToleranceInvalid { field, value } => {
             assert_eq!(field, "max_overshoot");
             assert_eq!(value, -1.0);
+        }
+        e => panic!("unexpected variant: {e:?}"),
+    }
+}
+
+/// Without the `target-zensim` cargo feature, setting `target_zensim`
+/// alongside another target must NOT trigger a `TargetMutuallyExclusive`
+/// error — the feature-gated validation block is compiled out, so the
+/// surface stays a 2-way (`target_size`, `target_psnr`) check. Setting
+/// `target_zensim` together with `target_size` should validate cleanly
+/// in that configuration. (When the feature IS on, the dedicated 3-way
+/// tests above cover the positive case.)
+#[cfg(not(feature = "target-zensim"))]
+#[test]
+fn target_zensim_validation_inactive_without_feature() {
+    let mut cfg = LossyConfig::new();
+    cfg.target_size = 50_000;
+    // Setting the field directly is fine — the field is `pub` even
+    // without the feature, only its validation surface is gated.
+    // We purposely do NOT touch `target_zensim` here because constructing
+    // a `ZensimTarget` requires the feature-gated re-export. The point
+    // of this test is: with the feature off, the only target-exclusivity
+    // pair that fires is (target_size, target_psnr).
+    cfg.target_psnr = 40.0;
+    match cfg.validate().unwrap_err() {
+        ValidationError::TargetMutuallyExclusive { first, second } => {
+            assert_eq!(first, "target_size");
+            assert_eq!(second, "target_psnr");
         }
         e => panic!("unexpected variant: {e:?}"),
     }
@@ -247,6 +280,7 @@ fn target_size_and_psnr_mutually_exclusive() {
     }
 }
 
+#[cfg(feature = "target-zensim")]
 #[test]
 fn target_size_and_zensim_mutually_exclusive() {
     let mut cfg = LossyConfig::new();
@@ -261,6 +295,7 @@ fn target_size_and_zensim_mutually_exclusive() {
     }
 }
 
+#[cfg(feature = "target-zensim")]
 #[test]
 fn target_psnr_and_zensim_mutually_exclusive() {
     let mut cfg = LossyConfig::new();
@@ -275,6 +310,7 @@ fn target_psnr_and_zensim_mutually_exclusive() {
     }
 }
 
+#[cfg(feature = "target-zensim")]
 #[test]
 fn all_three_targets_set_rejected() {
     let mut cfg = LossyConfig::new();
@@ -298,9 +334,12 @@ fn single_target_ok() {
     cfg.target_psnr = 40.0;
     cfg.validate().expect("single target ok");
 
-    let mut cfg = LossyConfig::new();
-    cfg.target_zensim = Some(ZensimTarget::new(80.0));
-    cfg.validate().expect("single target ok");
+    #[cfg(feature = "target-zensim")]
+    {
+        let mut cfg = LossyConfig::new();
+        cfg.target_zensim = Some(ZensimTarget::new(80.0));
+        cfg.validate().expect("single target ok");
+    }
 }
 
 // ---------------------------------------------------------------------------
