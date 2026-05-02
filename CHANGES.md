@@ -2,6 +2,16 @@
 
 ### [Unreleased]
 
+#### Changed
+- Renamed `expert` cargo feature → `__expert`, `ExpertKnobs` →
+  `InternalParams`, `LossyConfig::with_expert` →
+  `with_internal_params`. Pure rename; structure (`Option<T>` fields,
+  `#[non_exhaustive]`, `Default`) is unchanged. The double-underscore
+  prefix signals "private — do not depend on this in production code."
+  None of these symbols were in the 0.4.4 published surface, so no
+  deprecation cycle. The `picker` feature now depends on `__expert`
+  (was `expert`).
+
 ### Version 0.4.4 (2026-04-17)
 
 **Sharp YUV re-enabled, zenyuv integration, streaming push decoder, security fix**

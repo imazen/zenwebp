@@ -87,8 +87,7 @@ const _: () = {
 #[repr(C, align(16))]
 struct AlignedModel<const N: usize>([u8; N]);
 
-const MODEL_BYTES_RAW: &[u8] =
-    &AlignedModel(*include_bytes!("zenwebp_picker_v0.1.bin")).0;
+const MODEL_BYTES_RAW: &[u8] = &AlignedModel(*include_bytes!("zenwebp_picker_v0.1.bin")).0;
 
 /// What the codec gets back when the picker succeeds. The four-tuple
 /// matches the existing `content_type_to_tuning` shape, plus the
@@ -128,12 +127,7 @@ pub enum PickError {
 ///   = `2 * N_FEAT_COLS + 10` floats.
 /// Order MUST match the Python `train_hybrid.py` builder. Drift is
 /// caught at load time via `from_bytes_with_schema`.
-fn engineered_features(
-    raw_feats: &[f32],
-    width: u32,
-    height: u32,
-    target_zensim: f32,
-) -> Vec<f32> {
+fn engineered_features(raw_feats: &[f32], width: u32, height: u32, target_zensim: f32) -> Vec<f32> {
     debug_assert_eq!(
         raw_feats.len(),
         FEAT_COLS.len(),
@@ -145,10 +139,10 @@ fn engineered_features(
 
     // size_class one-hot — must match Python `SIZE_INDEX` ordering.
     let size_oh = match (width as u64) * (height as u64) {
-        n if n < 64 * 64 => [1.0_f32, 0.0, 0.0, 0.0],     // tiny
-        n if n < 256 * 256 => [0.0, 1.0, 0.0, 0.0],       // small
-        n if n < 1024 * 1024 => [0.0, 0.0, 1.0, 0.0],     // medium
-        _ => [0.0, 0.0, 0.0, 1.0],                         // large
+        n if n < 64 * 64 => [1.0_f32, 0.0, 0.0, 0.0], // tiny
+        n if n < 256 * 256 => [0.0, 1.0, 0.0, 0.0],   // small
+        n if n < 1024 * 1024 => [0.0, 0.0, 1.0, 0.0], // medium
+        _ => [0.0, 0.0, 0.0, 1.0],                    // large
     };
 
     let n_feat = raw_feats.len();
@@ -221,17 +215,16 @@ pub fn pick_tuning_from_features(
         return Err(PickError::NoBakedModel);
     }
 
-    let model =
-        Model::from_bytes_with_schema(MODEL_BYTES_RAW, SCHEMA_HASH).map_err(|e| {
-            // Map the zenpredict typed error back to ours. Two cases
-            // we care about: schema mismatch (drift) vs anything else.
-            match e {
-                zenpredict::PredictError::SchemaHashMismatch { expected, got } => {
-                    PickError::SchemaMismatch { expected, got }
-                }
-                _ => PickError::Parse,
+    let model = Model::from_bytes_with_schema(MODEL_BYTES_RAW, SCHEMA_HASH).map_err(|e| {
+        // Map the zenpredict typed error back to ours. Two cases
+        // we care about: schema mismatch (drift) vs anything else.
+        match e {
+            zenpredict::PredictError::SchemaHashMismatch { expected, got } => {
+                PickError::SchemaMismatch { expected, got }
             }
-        })?;
+            _ => PickError::Parse,
+        }
+    })?;
 
     let mut predictor = Predictor::new(model);
     let feats = engineered_features(raw_feats, width, height, target_zensim);
@@ -261,16 +254,8 @@ pub fn pick_tuning_from_features(
     // so an out-of-distribution input vector can't hand the codec a
     // negative sns or a sharpness of 99.
     let sns = clamp_to_u8(output[RANGE_SNS.start + cell_idx], 0.0, 100.0);
-    let filter_strength = clamp_to_u8(
-        output[RANGE_FILTER_STRENGTH.start + cell_idx],
-        0.0,
-        100.0,
-    );
-    let filter_sharpness = clamp_to_u8(
-        output[RANGE_FILTER_SHARPNESS.start + cell_idx],
-        0.0,
-        7.0,
-    );
+    let filter_strength = clamp_to_u8(output[RANGE_FILTER_STRENGTH.start + cell_idx], 0.0, 100.0);
+    let filter_sharpness = clamp_to_u8(output[RANGE_FILTER_SHARPNESS.start + cell_idx], 0.0, 7.0);
 
     let cell = CELLS[cell_idx];
     Ok(TuningPick {
@@ -284,11 +269,7 @@ pub fn pick_tuning_from_features(
 }
 
 fn clamp_to_u8(v: f32, lo: f32, hi: f32) -> u8 {
-    let clamped = if v.is_nan() {
-        lo
-    } else {
-        v.max(lo).min(hi)
-    };
+    let clamped = if v.is_nan() { lo } else { v.max(lo).min(hi) };
     libm::roundf(clamped) as u8
 }
 
@@ -328,13 +309,7 @@ mod tests {
         // Smoke: feed a synthetic raw vector through the lower-level
         // entry point; default mask allows everything.
         let raw = [0.5_f32; FEAT_COLS.len()];
-        let pick = pick_tuning_from_features(
-            &raw,
-            512,
-            512,
-            80.0,
-            &PickerConstraints::default(),
-        );
+        let pick = pick_tuning_from_features(&raw, 512, 512, 80.0, &PickerConstraints::default());
         assert!(pick.is_ok(), "pick_tuning failed: {:?}", pick);
         let p = pick.unwrap();
         assert!(p.cell_idx < N_CELLS);

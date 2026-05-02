@@ -208,8 +208,8 @@ fn parse_args() -> Args {
 
 #[derive(Clone, Debug)]
 struct Cell {
-    image_path: PathBuf,    // resolved on disk
-    label_path: String,     // logical label written to TSV
+    image_path: PathBuf, // resolved on disk
+    label_path: String,  // logical label written to TSV
     size_class: String,
     width: u32,
     height: u32,
@@ -311,7 +311,10 @@ fn main() {
     eprintln!("[features_replay] output: {}", output.display());
 
     let cells = if let Some(input) = &args.input {
-        eprintln!("[features_replay] mode: features-tsv input={}", input.display());
+        eprintln!(
+            "[features_replay] mode: features-tsv input={}",
+            input.display()
+        );
         read_cells_from_features_tsv(input)
     } else {
         let manifest = args.manifest.as_ref().unwrap();

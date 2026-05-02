@@ -26,8 +26,8 @@ use zenpng::PngDecodeConfig;
 
 // 20 log-spaced sizes covering tiny → large.
 const SIZES: &[u32] = &[
-    32, 40, 48, 64, 80, 96, 128, 160, 192, 256,
-    320, 384, 512, 640, 768, 1024, 1280, 1536, 2048, 4096,
+    32, 40, 48, 64, 80, 96, 128, 160, 192, 256, 320, 384, 512, 640, 768, 1024, 1280, 1536, 2048,
+    4096,
 ];
 
 fn parse_args() -> (PathBuf, PathBuf) {
@@ -90,8 +90,12 @@ fn save_png_rgb8(path: &PathBuf, rgb: &[u8], w: u32, h: u32) -> Result<(), Strin
     let mut encoder = png::Encoder::new(buf, w, h);
     encoder.set_color(png::ColorType::Rgb);
     encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder.write_header().map_err(|e| format!("png header: {e}"))?;
-    writer.write_image_data(rgb).map_err(|e| format!("png write: {e}"))?;
+    let mut writer = encoder
+        .write_header()
+        .map_err(|e| format!("png header: {e}"))?;
+    writer
+        .write_image_data(rgb)
+        .map_err(|e| format!("png write: {e}"))?;
     Ok(())
 }
 
@@ -114,36 +118,41 @@ fn main() {
     eprintln!("[size_dense] out: {}", out_dir.display());
 
     let started = Instant::now();
-    let total_written: usize = paths.par_iter().map(|src| {
-        let (rgb, w, h) = match load_png_rgb8(src) {
-            Some(t) => t,
-            None => {
-                eprintln!("  load failed: {}", src.display());
-                return 0;
-            }
-        };
-        let stem = src.file_stem().unwrap().to_string_lossy().to_string();
-        let mut written = 0;
-        for &target in SIZES {
-            match resize_to(&rgb, w, h, target) {
-                Some((rgb_r, w_r, h_r)) => {
-                    let dst = out_dir.join(format!("{stem}__sz{target}.png"));
-                    if let Err(e) = save_png_rgb8(&dst, &rgb_r, w_r, h_r) {
-                        eprintln!("  save failed {}: {e}", dst.display());
-                    } else {
-                        written += 1;
-                    }
+    let total_written: usize = paths
+        .par_iter()
+        .map(|src| {
+            let (rgb, w, h) = match load_png_rgb8(src) {
+                Some(t) => t,
+                None => {
+                    eprintln!("  load failed: {}", src.display());
+                    return 0;
                 }
-                None => {} // upscale skipped
+            };
+            let stem = src.file_stem().unwrap().to_string_lossy().to_string();
+            let mut written = 0;
+            for &target in SIZES {
+                match resize_to(&rgb, w, h, target) {
+                    Some((rgb_r, w_r, h_r)) => {
+                        let dst = out_dir.join(format!("{stem}__sz{target}.png"));
+                        if let Err(e) = save_png_rgb8(&dst, &rgb_r, w_r, h_r) {
+                            eprintln!("  save failed {}: {e}", dst.display());
+                        } else {
+                            written += 1;
+                        }
+                    }
+                    None => {} // upscale skipped
+                }
             }
-        }
-        eprintln!(
-            "  {} ({}x{}) → {} variants",
-            src.file_name().unwrap().to_string_lossy(),
-            w, h, written
-        );
-        written
-    }).sum();
+            eprintln!(
+                "  {} ({}x{}) → {} variants",
+                src.file_name().unwrap().to_string_lossy(),
+                w,
+                h,
+                written
+            );
+            written
+        })
+        .sum();
 
     eprintln!(
         "[size_dense] wrote {} variants in {:.1}s",

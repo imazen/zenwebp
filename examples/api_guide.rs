@@ -53,8 +53,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_target_psnr(0.0);
     // sharp_yuv is gated behind the `expert` cargo feature — build
     // with `--features expert` to call this knob directly, or use
-    // `LossyConfig::with_expert(ExpertKnobs { sharp_yuv: ..., .. })`.
-    #[cfg(feature = "expert")]
+    // `LossyConfig::with_internal_params(InternalParams { sharp_yuv: ..., .. })`.
+    #[cfg(feature = "__expert")]
     let config = config.with_sharp_yuv(false);
 
     let webp_data =

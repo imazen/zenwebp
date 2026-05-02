@@ -175,8 +175,8 @@ pub use encoder::{
 /// codec consumers don't see these. Used by the picker training
 /// pipeline + codec calibration sweeps. Build with
 /// `--features expert` to opt in.
-#[cfg(feature = "expert")]
-pub use encoder::{ExpertKnobs, SharpYuvSetting};
+#[cfg(feature = "__expert")]
+pub use encoder::{InternalParams, SharpYuvSetting};
 
 /// Dev-only ablation toggles (gated on the unstable `ablation` feature).
 /// See [`encoder::AblationToggles`].

@@ -317,9 +317,8 @@ fn main() {
                             .with_max_passes(2),
                     );
                 let t0 = Instant::now();
-                let r =
-                    EncodeRequest::lossy(&cfg, &img.rgb, PixelLayout::Rgb8, img.w, img.h)
-                        .encode_with_metrics();
+                let r = EncodeRequest::lossy(&cfg, &img.rgb, PixelLayout::Rgb8, img.w, img.h)
+                    .encode_with_metrics();
                 let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
                 match r {
                     Ok((bytes, m)) => {

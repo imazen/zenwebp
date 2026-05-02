@@ -136,7 +136,8 @@ fn parse_args() -> Args {
     let mut features_only = false;
     let date = ymd_today();
     let mut output = PathBuf::from(format!("benchmarks/zenwebp_pareto_{date}.tsv"));
-    let mut features_output = PathBuf::from(format!("benchmarks/zenwebp_pareto_features_{date}.tsv"));
+    let mut features_output =
+        PathBuf::from(format!("benchmarks/zenwebp_pareto_features_{date}.tsv"));
 
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
