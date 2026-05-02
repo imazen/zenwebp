@@ -178,6 +178,7 @@ pub const fn cell_to_method_segments(idx: usize) -> (u8, u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
 
     #[test]
     fn cells_are_unique() {
