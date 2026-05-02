@@ -2,6 +2,51 @@
 
 ### [Unreleased]
 
+#### Changed
+- Renamed `expert` cargo feature → `__expert`, `ExpertKnobs` →
+  `InternalParams`, `LossyConfig::with_expert` →
+  `with_internal_params`. Pure rename; structure (`Option<T>` fields,
+  `#[non_exhaustive]`, `Default`) is unchanged. The double-underscore
+  prefix signals "private — do not depend on this in production code."
+  None of these symbols were in the 0.4.4 published surface, so no
+  deprecation cycle. The `picker` feature now depends on `__expert`
+  (was `expert`).
+
+#### Documentation
+- Expanded per-field theory-of-operation docs on every
+  `InternalParams` field (`partition_limit`, `multi_pass_stats`,
+  `smooth_segment_map`, `sharp_yuv`, `cost_model`): pipeline stage,
+  override rationale, mechanism, and default-derivation. Sourced
+  from VP8 mode-decision, segmentation, sharp-YUV, and cost-model
+  module reads — no new claims that weren't traceable to source.
+
+#### Tests
+- New `encoder::config_expert_tests` module (gated `#[cfg(all(test,
+  feature = "__expert"))]`): per-field permutation tests for all
+  five `InternalParams` knobs, idempotency under repeated apply,
+  combined-knob valid-encode + decode, `Default::default()` =
+  baseline byte-equality, and partial-merge (NOT reset) semantics
+  of `with_internal_params`. 9 new tests covering the bundle's
+  contract.
+
+#### Changed (validation surface)
+- Validation for `target_zensim` (the `TargetZensimOutOfRange`,
+  `TargetZensimMaxPassesZero`, `TargetZensimToleranceInvalid`
+  variants, the `TARGET_ZENSIM_RANGE` const, and `target_zensim`'s
+  participation in the `TargetMutuallyExclusive` rule) is now gated
+  behind the `target-zensim` cargo feature. The feature is unstable
+  ML-driven targeting and is not part of published 0.4.4. Once it
+  stabilizes and ships in a published release, `target_zensim`
+  validation will become unconditional. With the feature off,
+  `LossyConfig::validate()` only checks the (`target_size`,
+  `target_psnr`) pair for target-mode exclusivity.
+
+#### Fixed
+- Cleaned up a `single_match` clippy lint in
+  `dev/build_size_dense_corpus.rs` that was preventing a clean
+  `cargo clippy --all-targets --features __expert -- -D warnings`
+  release-prep run.
+
 ### Version 0.4.4 (2026-04-17)
 
 **Sharp YUV re-enabled, zenyuv integration, streaming push decoder, security fix**

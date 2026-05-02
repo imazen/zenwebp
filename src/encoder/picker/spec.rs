@@ -34,12 +34,30 @@ pub struct CellSpec {
 /// produces after sorting tuples lexicographically:
 /// `(method, segments)` over `[(4,1),(4,4),(5,1),(5,4),(6,1),(6,4)]`.
 pub const CELLS: [CellSpec; N_CELLS] = [
-    CellSpec { method: 4, segments: 1 },
-    CellSpec { method: 4, segments: 4 },
-    CellSpec { method: 5, segments: 1 },
-    CellSpec { method: 5, segments: 4 },
-    CellSpec { method: 6, segments: 1 },
-    CellSpec { method: 6, segments: 4 },
+    CellSpec {
+        method: 4,
+        segments: 1,
+    },
+    CellSpec {
+        method: 4,
+        segments: 4,
+    },
+    CellSpec {
+        method: 5,
+        segments: 1,
+    },
+    CellSpec {
+        method: 5,
+        segments: 4,
+    },
+    CellSpec {
+        method: 6,
+        segments: 1,
+    },
+    CellSpec {
+        method: 6,
+        segments: 4,
+    },
 ];
 
 /// Hybrid-heads output layout. Each block is a sub-range of the
@@ -160,6 +178,7 @@ pub const fn cell_to_method_segments(idx: usize) -> (u8, u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
 
     #[test]
     fn cells_are_unique() {
@@ -192,8 +211,14 @@ mod tests {
     fn output_layout_partitions_correctly() {
         assert_eq!(RANGE_BYTES_LOG.end - RANGE_BYTES_LOG.start, N_CELLS);
         assert_eq!(RANGE_SNS.end - RANGE_SNS.start, N_CELLS);
-        assert_eq!(RANGE_FILTER_STRENGTH.end - RANGE_FILTER_STRENGTH.start, N_CELLS);
-        assert_eq!(RANGE_FILTER_SHARPNESS.end - RANGE_FILTER_SHARPNESS.start, N_CELLS);
+        assert_eq!(
+            RANGE_FILTER_STRENGTH.end - RANGE_FILTER_STRENGTH.start,
+            N_CELLS
+        );
+        assert_eq!(
+            RANGE_FILTER_SHARPNESS.end - RANGE_FILTER_SHARPNESS.start,
+            N_CELLS
+        );
         assert_eq!(RANGE_FILTER_SHARPNESS.end, N_OUTPUTS);
     }
 

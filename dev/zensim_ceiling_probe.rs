@@ -22,11 +22,11 @@ const CORPUS: &str = "/mnt/v/output/zenwebp/picker-corpus-size-dense";
 // 5 representative source IDs — mix of numeric-named photos, screenshot,
 // drawing, and special-purpose chart images present in the corpus.
 const IMAGES: &[&str] = &[
-    "1129482",                                  // photo (numeric ID)
-    "pexels-photo-3568544",                     // pexels photo
-    "Beam-Space-Processing",                    // technical/diagram
+    "1129482",                                    // photo (numeric ID)
+    "pexels-photo-3568544",                       // pexels photo
+    "Beam-Space-Processing",                      // technical/diagram
     "Temperament-pie-chart-according-to-Eysenck", // chart / line-art
-    "26103251787_d8635e260d_o",                 // flickr photo
+    "26103251787_d8635e260d_o",                   // flickr photo
 ];
 
 const SIZES: &[u32] = &[32, 48, 64, 96, 128];
@@ -119,10 +119,7 @@ fn main() {
                             );
                         }
                         None => {
-                            eprintln!(
-                                "[fail] {} sz{} q{} m{}",
-                                img_id, size, q, m
-                            );
+                            eprintln!("[fail] {} sz{} q{} m{}", img_id, size, q, m);
                         }
                     }
                 }

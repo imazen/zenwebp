@@ -40,6 +40,7 @@ jobs:
             os: windows-11-arm
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/checkout-siblings
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run tests (default features)
@@ -66,6 +67,7 @@ jobs:
             os: windows-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/checkout-siblings
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Check (--features avx512)
@@ -76,6 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/checkout-siblings
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: i686-unknown-linux-gnu
@@ -84,6 +87,12 @@ jobs:
         with:
           key: cross-i686
       - name: Run tests (i686)
+        # Mount the zenanalyze sibling at /zenanalyze inside the cross
+        # container, since cross sets WORKDIR=/project and `../zenanalyze`
+        # in the manifest resolves to /zenanalyze. Cross 0.2.5 doesn't
+        # auto-mount path deps that live outside the repo dir.
+        env:
+          CROSS_CONTAINER_OPTS: "-v ${{ github.workspace }}/../zenanalyze:/zenanalyze"
         run: cross test --target i686-unknown-linux-gnu
 
   wasm:
@@ -91,6 +100,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/checkout-siblings
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip1
@@ -103,6 +113,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/checkout-siblings
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: no_std + alloc (no default features)
@@ -143,6 +154,7 @@ jobs:
     # makes any compile-time-guaranteed token panic the test loudly.
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/checkout-siblings
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run SIMD tier parity tests
@@ -153,6 +165,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/checkout-siblings
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run SIMD tier parity tests with AVX-512 dispatch enabled
@@ -165,6 +178,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/checkout-siblings
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -188,6 +202,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/checkout-siblings
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-hack
       - uses: Swatinem/rust-cache@v2
@@ -199,6 +214,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/checkout-siblings
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2

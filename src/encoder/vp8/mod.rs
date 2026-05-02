@@ -2106,11 +2106,12 @@ fn resolve_auto_preset_via_analyzer(
     stride: usize,
     color: PixelLayout,
 ) -> Option<super::api::EncoderParams> {
-    use crate::encoder::analysis::{
-        classifier::classify_image_type_rgb8_diag, classifier::rgba8_to_rgb8, decide_bucket_from_diag,
-    };
     #[cfg(not(feature = "picker"))]
     use crate::encoder::analysis::content_type_to_tuning;
+    use crate::encoder::analysis::{
+        classifier::classify_image_type_rgb8_diag, classifier::rgba8_to_rgb8,
+        decide_bucket_from_diag,
+    };
     if params.preset != super::api::Preset::Auto {
         return None;
     }

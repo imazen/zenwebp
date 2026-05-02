@@ -141,7 +141,7 @@ ablation = ["target-zensim"]
 # with `--features expert` for picker training, codec calibration, or
 # any harness varying these axes. Production codec consumers don't
 # need this.
-expert = []
+__expert = []
 # zenpredict-driven encoder-knob picker. Replaces the bucket-table
 # `content_type_to_tuning` lookup at the `Preset::Auto` site with a
 # baked MLP (ZNPR v2) that argmins over the 6-cell (method × segments)
@@ -151,7 +151,7 @@ expert = []
 # Off by default — production builds use the bucket-table path until
 # A/B vs bucket on held-out corpus shows the picker wins. See
 # src/encoder/picker/.
-picker = ["dep:zenpredict", "analyzer", "expert"]
+picker = ["dep:zenpredict", "analyzer", "__expert"]
 # Enable zennode pipeline node definitions
 # zennode = ["dep:zennode"]
 
@@ -204,7 +204,7 @@ path = "dev/parity_baseline.rs"
 [[example]]
 name = "cost_model_sweep"
 path = "dev/cost_model_sweep.rs"
-required-features = ["expert"]
+required-features = ["__expert"]
 
 [[example]]
 name = "issue44_dump_scores"

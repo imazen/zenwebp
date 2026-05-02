@@ -12,7 +12,7 @@
 //! Requires the `expert` cargo feature — `with_partition_limit` is
 //! gated there.
 
-#![cfg(feature = "expert")]
+#![cfg(feature = "__expert")]
 
 use zenwebp::{DecodeRequest, EncodeError, EncodeRequest, LossyConfig, PixelLayout};
 

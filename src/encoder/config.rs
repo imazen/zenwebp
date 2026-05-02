@@ -38,13 +38,13 @@
 
 use crate::{Limits, Preset};
 
-/// How `ExpertKnobs::sharp_yuv` should be applied. Expert-only.
+/// How `InternalParams::sharp_yuv` should be applied. Expert-only.
 ///
 /// `Off` / `On` mirror the boolean form; `Custom(_)` lets the caller
 /// pass a tuned `zenyuv::SharpYuvConfig` (e.g., a non-default chroma
-/// downsample matrix). `None` on `ExpertKnobs::sharp_yuv` means the
+/// downsample matrix). `None` on `InternalParams::sharp_yuv` means the
 /// default `LossyConfig::sharp_yuv` is unchanged.
-#[cfg(feature = "expert")]
+#[cfg(feature = "__expert")]
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum SharpYuvSetting {
@@ -63,36 +63,180 @@ pub enum SharpYuvSetting {
 ///
 /// Every field is optional; `None` means "leave the
 /// `LossyConfig`'s existing value alone." Call
-/// [`LossyConfig::with_expert`] to apply the bundle.
+/// [`LossyConfig::with_internal_params`] to apply the bundle.
 ///
 /// ```ignore
-/// use zenwebp::{LossyConfig, ExpertKnobs};
+/// use zenwebp::{LossyConfig, InternalParams};
 /// let cfg = LossyConfig::new()
 ///     .with_quality(75.0)
-///     .with_expert(ExpertKnobs {
+///     .with_internal_params(InternalParams {
 ///         partition_limit: Some(50),
 ///         multi_pass_stats: Some(true),
 ///         ..Default::default()
 ///     });
 /// ```
-#[cfg(feature = "expert")]
+#[cfg(feature = "__expert")]
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
-pub struct ExpertKnobs {
-    /// VP8 partition exploration cap, `0..=100`. `None` keeps the
-    /// existing value; `Some(0)` = full search; `Some(100)` =
-    /// aggressive trim. See [`LossyConfig::with_partition_limit`].
+pub struct InternalParams {
+    /// **Pipeline stage:** intra mode decision (luma 16×16 vs 4×4 selection),
+    /// `vp8/mode_selection.rs:1846,1939–1953`.
+    ///
+    /// **Why override:** the default `None` lets the encoder retry-with-bump
+    /// on partition-0 overflow (large images at high quality where I4 metadata
+    /// blows past VP8's 512 KB partition-0 ceiling). Two cases want an explicit
+    /// value: (a) calibration sweeps that need a fixed mode-decision regime so
+    /// results are reproducible across runs, and (b) very large images where
+    /// you'd rather pre-commit to I16-only than pay the retry cost.
+    ///
+    /// **Mechanism:** the encoder turns `partition_limit` into an additive
+    /// skip-threshold boost in mode selection — at `0` (default) the I4 vs
+    /// I16 decision uses the base distortion threshold (≈211); at `80` the
+    /// threshold is roughly 5× higher, suppressing most I4 attempts; at
+    /// `>=100` the encoder forces I16-only and skips intra-4×4 entirely.
+    /// I4 carries fully-coded sub-block prediction modes in partition 0,
+    /// so suppressing it shrinks partition 0 at a cost in coding efficiency.
+    /// Range clamped to `0..=100` by [`LossyConfig::with_partition_limit`].
+    ///
+    /// **Default-derivation:** `None` ⇒ the encoder runs in **automatic
+    /// retry mode** — first attempt at limit 0, then 30, 60, 100 on
+    /// partition-0 overflow (`vp8/mod.rs:2237–2255`). `Some(v)` disables
+    /// the retry loop and pins the limit at `v`.
+    ///
+    /// See [`LossyConfig::with_partition_limit`].
     pub partition_limit: Option<u8>,
-    /// Toggle the stat-collection extra pass. `None` keeps existing.
+    /// **Pipeline stage:** outer encode driver — wraps the full mode
+    /// decision + transform + quantize + token-record pass
+    /// (`vp8/mod.rs:1080–1152`).
+    ///
+    /// **Why override:** zenwebp's default of one pass is tuned for
+    /// single-shot encodes where ~0.1 % size is not worth doubling
+    /// encode time. Override `Some(true)` when (a) running a
+    /// `target_size` / `target_zensim` search loop where the marginal
+    /// size win amortizes across multiple inner probes, or (b) bench-
+    /// matching libwebp at `cost_model = StrictLibwebpParity` (libwebp
+    /// runs `config->pass = 1` extra pass by default).
+    ///
+    /// **Mechanism:** when set and `method == 4`, the encoder runs the
+    /// full encode twice. The first pass collects token statistics into
+    /// `proba_stats`; between passes it rebuilds `level_costs` from the
+    /// observed token distribution so the second pass's mode selection
+    /// and (m4) trellis use empirical, image-tuned costs rather than
+    /// the static prior. The second pass emits the actual bitstream.
+    /// At m5/m6 trellis already image-adapts via per-pass `proba_stats`
+    /// accumulation, so the second pass measurably regresses size on
+    /// CID22 — the flag is gated to m4 only (`vp8/mod.rs:1103`) and
+    /// silently ignored at other tiers.
+    ///
+    /// **Default-derivation:** `None` ⇒ `false` (single pass — zenwebp's
+    /// speed/size default). Roughly **doubles** encode time at m4 in
+    /// exchange for ~0.1 % size win on photo content.
+    ///
     /// See [`LossyConfig::with_multi_pass_stats`].
     pub multi_pass_stats: Option<bool>,
-    /// Toggle 3×3 majority smoothing on the segment map. `None`
-    /// keeps existing. See [`LossyConfig::with_smooth_segment_map`].
+    /// **Pipeline stage:** segmentation analysis, between k-means
+    /// segment assignment and per-segment quantizer setup
+    /// (`vp8/mod.rs:1715–1721`, `analysis/segment.rs:194`).
+    ///
+    /// **Why override:** k-means on per-MB activity produces a noisy
+    /// segment map for images with fine-grained texture variation
+    /// (line art, foliage, screen content with mixed regions). The
+    /// noise wastes bits on segment-id changes between neighbors and
+    /// can cause visible quantizer-boundary banding. Two override
+    /// cases: (a) preprocessing-equivalence runs vs `cwebp -pre 1`,
+    /// and (b) noisy-segmentation content where the per-MB segment-id
+    /// signaling cost outweighs the per-segment quantizer fit.
+    ///
+    /// **Mechanism:** when on, the encoder applies a 3×3 majority
+    /// filter to the per-MB segment map after assignment: any block
+    /// where ≥5 of 8 neighbors share a segment id is reassigned to
+    /// that majority segment. Borders are not modified. This produces
+    /// fewer but larger contiguous segment regions, which both reduces
+    /// the entropy cost of the segment-id stream and avoids
+    /// quantizer-step artifacts at noisy boundaries.
+    ///
+    /// **Default-derivation:** `None` ⇒ `false` — matches libwebp's
+    /// `config->preprocessing & 1` default (off). Equivalent to
+    /// `cwebp -pre 1` when on. The smoothing only applies when
+    /// `num_segments > 1`; with one segment there's nothing to smooth.
+    ///
+    /// See [`LossyConfig::with_smooth_segment_map`].
     pub smooth_segment_map: Option<bool>,
-    /// Sharp YUV setting. `None` keeps existing.
+    /// **Pipeline stage:** RGB → YUV 4:2:0 conversion, before any VP8
+    /// encoding work (`vp8/mod.rs:1002`,
+    /// `decoder/yuv.rs:716` `convert_image_sharp_yuv_with_config`).
+    ///
+    /// **Why override:** standard 4:2:0 chroma downsampling
+    /// (`AverageBoxFilter`) is fast but loses high-frequency chroma
+    /// detail visible on saturated edges (red text on white, sharp
+    /// color transitions in graphics). Override cases: (a) photos
+    /// with saturated detail where the default produces visible
+    /// chroma bleed, and (b) calibration grids that compare baseline
+    /// vs sharp-yuv to measure the perceptual win. `Custom(_)` is
+    /// for sweeping non-default chroma matrices in the picker
+    /// training pipeline.
+    ///
+    /// **Mechanism:** sharp-YUV iteratively refines the downsampled
+    /// chroma planes by minimizing the error between the upsampled
+    /// reconstruction and the source's true chroma. `Off` uses the
+    /// LossyConfig default (no sharp-yuv). `On` enables iterative
+    /// refinement with `zenyuv::SharpYuvConfig::default()` (BT.709
+    /// matrix, default iteration count). `Custom(cfg)` substitutes a
+    /// caller-supplied config — for example, a non-default
+    /// chroma-downsample kernel or different colorimetry.
+    ///
+    /// **Default-derivation:** `None` on `InternalParams::sharp_yuv`
+    /// leaves `LossyConfig::sharp_yuv` unchanged. The
+    /// `LossyConfig::new()` default is `None` (standard chroma
+    /// downsampling). `Preset::Photo` does **not** auto-enable sharp
+    /// YUV in `LossyConfig::to_params` — it must be set explicitly.
     pub sharp_yuv: Option<SharpYuvSetting>,
-    /// Cost model selection. `None` keeps existing. See
-    /// [`LossyConfig::with_cost_model`].
+    /// **Pipeline stage:** mode selection rate-distortion costs and
+    /// (at m5+) trellis quantization (`encoder/psy.rs:152–206`,
+    /// `analysis/mod.rs:222–243`).
+    ///
+    /// **Why override:** zenwebp's default cost model layers three
+    /// perceptual extensions on top of libwebp's algorithm, tuned
+    /// against butteraugli / SSIMULACRA2. Two cases want
+    /// `StrictLibwebpParity`: (a) bit-comparing zenwebp's output
+    /// against libwebp at the same `(quality, method, sns, filter,
+    /// segments)` tuple to isolate algorithmic-parity bugs from
+    /// perceptual-extension behavior, and (b) workloads where
+    /// libwebp's size/PSNR tradeoff is the explicit target (legacy
+    /// pipelines, regression baselines).
+    ///
+    /// **Mechanism — what each extension changes** (when
+    /// `ZenwebpDefault`, gated by method):
+    ///
+    /// - **PSY_WEIGHT_Y CSF table** (m3+): replaces libwebp's
+    ///   `kWeightY` with an enhanced contrast-sensitivity-function
+    ///   table that has a steeper high-frequency rolloff. The table
+    ///   feeds into TDisto (transformed distortion), so the cost of
+    ///   keeping high-freq luma coefficients goes up — mode selection
+    ///   prefers smoother reconstructions where the eye won't notice.
+    /// - **SATD masking-alpha blend** (m4+, gated by `sns_strength > 0`):
+    ///   blends the per-MB DCT alpha with a SATD-derived
+    ///   masking-alpha so segmentation places highly-textured blocks
+    ///   into segments with coarser quantizers (texture masks
+    ///   quantization noise). `analysis/mod.rs:239–243` skips the
+    ///   blend under `StrictLibwebpParity`.
+    /// - **JND coefficient zeroing** (m5+): scales per-position
+    ///   just-noticeable-difference thresholds by quantizer and zeros
+    ///   any DCT coefficient below threshold during trellis. Saves
+    ///   bits on perceptually-invisible coefficients without harming
+    ///   reconstruction quality. Under `StrictLibwebpParity`
+    ///   `jnd_threshold_y/uv` stay at zero so no coefficients get
+    ///   zeroed by this path.
+    ///
+    /// `StrictLibwebpParity` returns the default `PsyConfig` early
+    /// (`psy.rs:161–163`), which means **all three extensions are
+    /// disabled regardless of method**.
+    ///
+    /// **Default-derivation:** `None` on `InternalParams::cost_model`
+    /// leaves `LossyConfig::cost_model` unchanged. The
+    /// `LossyConfig::new()` default is `CostModel::ZenwebpDefault`.
+    ///
+    /// See [`LossyConfig::with_cost_model`].
     pub cost_model: Option<super::api::CostModel>,
 }
 
@@ -299,8 +443,8 @@ impl LossyConfig {
     /// should use [`Preset::Photo`] (which enables sharp YUV via the
     /// preset's internal config); this setter is for codec calibration
     /// sweeps + the picker training pipeline. See
-    /// [`LossyConfig::with_expert`].
-    #[cfg(feature = "expert")]
+    /// [`LossyConfig::with_internal_params`].
+    #[cfg(feature = "__expert")]
     #[must_use]
     pub fn with_sharp_yuv(mut self, enable: bool) -> Self {
         self.sharp_yuv = if enable {
@@ -312,8 +456,8 @@ impl LossyConfig {
     }
 
     /// Enable sharp YUV with a custom configuration. Expert-only —
-    /// see [`LossyConfig::with_expert`].
-    #[cfg(feature = "expert")]
+    /// see [`LossyConfig::with_internal_params`].
+    #[cfg(feature = "__expert")]
     #[must_use]
     pub fn with_sharp_yuv_config(mut self, config: zenyuv::SharpYuvConfig) -> Self {
         self.sharp_yuv = Some(config);
@@ -351,7 +495,7 @@ impl LossyConfig {
     }
 
     /// Set partition limit to prevent partition 0 overflow on very large images.
-    /// Expert-only — see [`LossyConfig::with_expert`].
+    /// Expert-only — see [`LossyConfig::with_internal_params`].
     ///
     /// Range 0-100. Higher values more aggressively suppress I4 prediction mode,
     /// which uses more bits in partition 0. This trades quality for the ability to
@@ -363,7 +507,7 @@ impl LossyConfig {
     ///
     /// When not set (`None`), the encoder automatically retries with increasing
     /// limits if partition 0 overflows.
-    #[cfg(feature = "expert")]
+    #[cfg(feature = "__expert")]
     #[must_use]
     pub fn with_partition_limit(mut self, limit: u8) -> Self {
         self.partition_limit = Some(limit.min(100));
@@ -371,7 +515,7 @@ impl LossyConfig {
     }
 
     /// Set the cost model used during mode selection and trellis quantization.
-    /// Expert-only — see [`LossyConfig::with_expert`].
+    /// Expert-only — see [`LossyConfig::with_internal_params`].
     ///
     /// - [`CostModel::ZenwebpDefault`](super::api::CostModel::ZenwebpDefault)
     ///   (default): perceptual extensions enabled per method level —
@@ -381,7 +525,7 @@ impl LossyConfig {
     ///   disables those extensions so the encoder matches libwebp's algorithm
     ///   at the same `(quality, method, sns, filter, segments)`. Use this
     ///   when bit-comparing against libwebp output.
-    #[cfg(feature = "expert")]
+    #[cfg(feature = "__expert")]
     #[must_use]
     pub fn with_cost_model(mut self, model: super::api::CostModel) -> Self {
         self.cost_model = model;
@@ -390,11 +534,11 @@ impl LossyConfig {
 
     /// Enable segment-map smoothing (3×3 majority filter on the per-MB
     /// segment map before per-segment quantizer setup). Expert-only —
-    /// see [`LossyConfig::with_expert`].
+    /// see [`LossyConfig::with_internal_params`].
     ///
     /// Equivalent to libwebp's `cwebp -pre 1` (`config->preprocessing & 1`,
     /// `analysis_enc.c:217-218`). Default off, matching libwebp.
-    #[cfg(feature = "expert")]
+    #[cfg(feature = "__expert")]
     #[must_use]
     pub fn with_smooth_segment_map(mut self, on: bool) -> Self {
         self.smooth_segment_map = on;
@@ -403,7 +547,7 @@ impl LossyConfig {
 
     /// Enable a stat-collection encoder pass before the emit pass to refresh
     /// `level_costs` from the observed token distribution. Expert-only —
-    /// see [`LossyConfig::with_expert`].
+    /// see [`LossyConfig::with_internal_params`].
     ///
     /// Roughly **doubles** encode time at m4 in exchange for ~0.1% size
     /// win on photo content. libwebp does this by default; zenwebp keeps
@@ -411,7 +555,7 @@ impl LossyConfig {
     /// loops where the marginal size win amortizes across multiple probes.
     /// Currently only m4 honors this — m5/m6 already saturate per-pass
     /// and multi-pass at those tiers regresses size.
-    #[cfg(feature = "expert")]
+    #[cfg(feature = "__expert")]
     #[must_use]
     pub fn with_multi_pass_stats(mut self, on: bool) -> Self {
         self.multi_pass_stats = on;
@@ -420,7 +564,7 @@ impl LossyConfig {
 
     /// Apply a bundle of expert encoder knobs at once. Expert-only.
     ///
-    /// `ExpertKnobs` collects the advanced calibration axes that
+    /// `InternalParams` collects the advanced calibration axes that
     /// codec consumers don't usually need to set directly:
     /// `partition_limit`, `multi_pass_stats`, `smooth_segment_map`,
     /// `sharp_yuv`, `cost_model`. Each is `Option<_>` so caller only
@@ -429,11 +573,11 @@ impl LossyConfig {
     ///
     /// This is the recommended entry point when building grids for
     /// the picker training pipeline or for codec-calibration sweeps —
-    /// pass an `ExpertKnobs` produced by the picker runtime instead
+    /// pass an `InternalParams` produced by the picker runtime instead
     /// of chaining individual `with_*_expert` setters.
-    #[cfg(feature = "expert")]
+    #[cfg(feature = "__expert")]
     #[must_use]
-    pub fn with_expert(mut self, knobs: ExpertKnobs) -> Self {
+    pub fn with_internal_params(mut self, knobs: InternalParams) -> Self {
         if let Some(pl) = knobs.partition_limit {
             self = self.with_partition_limit(pl);
         }
@@ -800,7 +944,7 @@ impl EncoderConfig {
     /// Set partition limit (lossy only, 0-100). No effect on lossless.
     /// Expert-only — see [`LossyConfig::with_partition_limit`] for
     /// details.
-    #[cfg(feature = "expert")]
+    #[cfg(feature = "__expert")]
     #[must_use]
     pub fn with_partition_limit(mut self, limit: u8) -> Self {
         if let Self::Lossy(cfg) = &mut self {
@@ -852,8 +996,8 @@ impl EncoderConfig {
     }
 
     /// Enable/disable sharp YUV conversion (lossy only). No effect on
-    /// lossless. Expert-only — see [`LossyConfig::with_expert`].
-    #[cfg(feature = "expert")]
+    /// lossless. Expert-only — see [`LossyConfig::with_internal_params`].
+    #[cfg(feature = "__expert")]
     #[must_use]
     pub fn with_sharp_yuv(mut self, enable: bool) -> Self {
         if let Self::Lossy(cfg) = &mut self {
@@ -1173,5 +1317,226 @@ fn encode_single_pass(
             ))
         }
         Err(at_err) => Err(at_err.decompose().0),
+    }
+}
+
+// ============================================================================
+// validate() — opt-in fail-fast checks. Encode paths still clamp.
+// ============================================================================
+
+#[cfg(feature = "target-zensim")]
+use super::validation::TARGET_ZENSIM_RANGE;
+use super::validation::{
+    self as v, ALPHA_QUALITY_RANGE, FILTER_SHARPNESS_RANGE, FILTER_STRENGTH_RANGE, METHOD_RANGE,
+    NEAR_LOSSLESS_RANGE, PARTITION_LIMIT_RANGE, SEGMENTS_RANGE, SNS_STRENGTH_RANGE,
+    ValidationError,
+};
+
+impl LossyConfig {
+    /// Check every documented range and cross-parameter invariant on
+    /// this config without encoding anything.
+    ///
+    /// Returns `Ok(())` if every field is in range and the
+    /// target-mode exclusivity rule (at most one of `target_size`,
+    /// `target_psnr`, and — when the unstable `target-zensim` cargo
+    /// feature is enabled — `target_zensim`) is honoured; otherwise
+    /// returns the first offending [`ValidationError`].
+    ///
+    /// Existing encode entry points (`EncodeRequest::encode` etc.)
+    /// continue to clamp out-of-range values for backwards
+    /// compatibility — `validate()` is opt-in for callers that want a
+    /// fail-fast signal. Typical usage:
+    ///
+    /// ```
+    /// use zenwebp::LossyConfig;
+    /// let cfg = LossyConfig::new().with_quality(80.0);
+    /// cfg.validate().unwrap();
+    /// ```
+    ///
+    /// Note that `with_*` setters already clamp, so a
+    /// builder-constructed config will pass validation. The interesting
+    /// failure cases are direct struct construction (allowed by the
+    /// public fields) and the cross-parameter target-exclusivity
+    /// invariant, which no setter can catch.
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        v::check_quality(self.quality)?;
+        v::check_method(self.method)?;
+        v::check_alpha_quality(self.alpha_quality)?;
+        v::check_target_psnr(self.target_psnr)?;
+
+        if let Some(s) = self.sns_strength
+            && !SNS_STRENGTH_RANGE.contains(&s)
+        {
+            return Err(ValidationError::SnsStrengthOutOfRange {
+                value: s,
+                valid: SNS_STRENGTH_RANGE,
+            });
+        }
+        if let Some(s) = self.filter_strength
+            && !FILTER_STRENGTH_RANGE.contains(&s)
+        {
+            return Err(ValidationError::FilterStrengthOutOfRange {
+                value: s,
+                valid: FILTER_STRENGTH_RANGE,
+            });
+        }
+        if let Some(s) = self.filter_sharpness
+            && !FILTER_SHARPNESS_RANGE.contains(&s)
+        {
+            return Err(ValidationError::FilterSharpnessOutOfRange {
+                value: s,
+                valid: FILTER_SHARPNESS_RANGE,
+            });
+        }
+        if let Some(s) = self.segments
+            && !SEGMENTS_RANGE.contains(&s)
+        {
+            return Err(ValidationError::SegmentsOutOfRange {
+                value: s,
+                valid: SEGMENTS_RANGE,
+            });
+        }
+        if let Some(p) = self.partition_limit
+            && !PARTITION_LIMIT_RANGE.contains(&p)
+        {
+            return Err(ValidationError::PartitionLimitOutOfRange {
+                value: p,
+                valid: PARTITION_LIMIT_RANGE,
+            });
+        }
+
+        #[cfg(feature = "target-zensim")]
+        if let Some(t) = self.target_zensim {
+            if !t.target.is_finite() || !TARGET_ZENSIM_RANGE.contains(&t.target) {
+                return Err(ValidationError::TargetZensimOutOfRange {
+                    value: t.target,
+                    valid: TARGET_ZENSIM_RANGE,
+                });
+            }
+            if t.max_passes == 0 {
+                return Err(ValidationError::TargetZensimMaxPassesZero {
+                    value: t.max_passes,
+                });
+            }
+            for (field, opt) in [
+                ("max_overshoot", t.max_overshoot),
+                ("max_undershoot", t.max_undershoot),
+                ("max_undershoot_ship", t.max_undershoot_ship),
+            ] {
+                if let Some(val) = opt
+                    && (!val.is_finite() || val < 0.0)
+                {
+                    return Err(ValidationError::TargetZensimToleranceInvalid {
+                        field,
+                        value: val,
+                    });
+                }
+            }
+        }
+
+        if let Some(cfg) = self.sharp_yuv
+            && (!cfg.convergence_threshold.is_finite() || cfg.convergence_threshold < 0.0)
+        {
+            return Err(ValidationError::SharpYuvConvergenceThresholdInvalid {
+                value: cfg.convergence_threshold,
+            });
+        }
+
+        // Cross-param: at most one target mode active. `target_size==0`
+        // and `target_psnr==0.0` mean "disabled". When the
+        // `target-zensim` cargo feature is enabled, `target_zensim`
+        // joins the same exclusivity rule (`None` = disabled).
+        let size_set = self.target_size != 0;
+        let psnr_set = self.target_psnr != 0.0;
+        if size_set && psnr_set {
+            return Err(ValidationError::TargetMutuallyExclusive {
+                first: "target_size",
+                second: "target_psnr",
+            });
+        }
+        #[cfg(feature = "target-zensim")]
+        {
+            let zensim_set = self.target_zensim.is_some();
+            if size_set && zensim_set {
+                return Err(ValidationError::TargetMutuallyExclusive {
+                    first: "target_size",
+                    second: "target_zensim",
+                });
+            }
+            if psnr_set && zensim_set {
+                return Err(ValidationError::TargetMutuallyExclusive {
+                    first: "target_psnr",
+                    second: "target_zensim",
+                });
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl LosslessConfig {
+    /// Check every documented range on this config without encoding.
+    ///
+    /// See [`LossyConfig::validate`] for the rationale and contract;
+    /// the lossless variant has no cross-parameter invariants.
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        v::check_quality(self.quality)?;
+        v::check_method(self.method)?;
+        v::check_alpha_quality(self.alpha_quality)?;
+        if !NEAR_LOSSLESS_RANGE.contains(&self.near_lossless) {
+            return Err(ValidationError::NearLosslessOutOfRange {
+                value: self.near_lossless,
+                valid: NEAR_LOSSLESS_RANGE,
+            });
+        }
+        let _ = ALPHA_QUALITY_RANGE; // keep import live across cfg combinations
+        let _ = METHOD_RANGE;
+        Ok(())
+    }
+}
+
+impl EncoderConfig {
+    /// Validate the underlying [`LossyConfig`] or [`LosslessConfig`].
+    ///
+    /// See [`LossyConfig::validate`] / [`LosslessConfig::validate`] for
+    /// the field-by-field contract.
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        match self {
+            Self::Lossy(c) => c.validate(),
+            Self::Lossless(c) => c.validate(),
+        }
+    }
+}
+
+#[cfg(feature = "__expert")]
+impl InternalParams {
+    /// Validate every field that's `Some` on this expert-knob bundle.
+    ///
+    /// Returns `Ok(())` for an all-`None` bundle. For each set field,
+    /// applies the same range check that
+    /// [`LossyConfig::validate`] would after the bundle is folded in
+    /// via [`LossyConfig::with_internal_params`]. The `cost_model` and
+    /// `sharp_yuv` enum variants are well-formed by construction
+    /// (Rust's type system guarantees it); only their numeric
+    /// payloads (e.g., `SharpYuvConfig::convergence_threshold`) need
+    /// runtime checks.
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(p) = self.partition_limit
+            && !PARTITION_LIMIT_RANGE.contains(&p)
+        {
+            return Err(ValidationError::PartitionLimitOutOfRange {
+                value: p,
+                valid: PARTITION_LIMIT_RANGE,
+            });
+        }
+        if let Some(SharpYuvSetting::Custom(cfg)) = &self.sharp_yuv
+            && (!cfg.convergence_threshold.is_finite() || cfg.convergence_threshold < 0.0)
+        {
+            return Err(ValidationError::SharpYuvConvergenceThresholdInvalid {
+                value: cfg.convergence_threshold,
+            });
+        }
+        Ok(())
     }
 }
