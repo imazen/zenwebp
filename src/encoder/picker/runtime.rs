@@ -232,7 +232,16 @@ pub fn pick_tuning_from_features(
     let mask = AllowedMask::new(&mask_arr);
 
     // Run forward pass once; argmin + scalar reads share the output.
-    let output = predictor.predict(&feats).map_err(|_| PickError::Forward)?;
+    // `predict_transformed` applies the bake's
+    // `zentrain.feature_transforms` (issue #52) — required for any
+    // bake that declared non-identity per-feature log/log1p transforms;
+    // a no-op (no copy, same memory profile) when the bake omitted
+    // the key. Calling plain `predict` here on a transformed bake
+    // would feed the network features whose distribution doesn't
+    // match what its scaler stats encode, giving silently-wrong picks.
+    let output = predictor
+        .predict_transformed(&feats)
+        .map_err(|_| PickError::Forward)?;
 
     // Argmin over the bytes_log sub-range in linear-bytes space
     // (ScoreTransform::Exp converts log-bytes to bytes monotonically).
