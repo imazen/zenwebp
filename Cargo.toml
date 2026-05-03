@@ -63,6 +63,12 @@ rgb = "0.8"
 zenpng = "0.1.4"
 zenpixels-convert = { version = "0.2.11", features = ["rgb"] }
 jpeg-decoder = "0.3"
+# Path-pinned so dev/picker_v0_3_holdout_ab.rs can load v0.3+ baked
+# pickers externally without enabling the in-runtime `picker` feature
+# (which embeds a different .bin and requires zenanalyze enum names
+# we don't necessarily depend on here).
+zenpredict = { path = "../zenanalyze/zenpredict", default-features = false, features = ["std"] }
+zenanalyze = { path = "../zenanalyze", features = ["experimental"] }
 
 # Native-only dev-deps (C bindings, threading, or native-only features)
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
@@ -259,6 +265,17 @@ path = "dev/build_size_dense_corpus.rs"
 [[example]]
 name = "picker_ab_eval"
 path = "dev/picker_ab_eval.rs"
+required-features = ["target-zensim", "analyzer"]
+
+# Held-out re-encode A/B for the v0.3 zenwebp picker. Loads the v0.3
+# .bin externally via zenpredict (its schema_hash diverges from the
+# embedded v0.1 const, so it cannot ride the in-runtime pick_tuning
+# path) and compares against the bucket-table baseline at matched
+# target_zensim. See dev/picker_v0_3_holdout_ab.rs for the full
+# methodology block.
+[[example]]
+name = "picker_v0_3_holdout_ab"
+path = "dev/picker_v0_3_holdout_ab.rs"
 required-features = ["target-zensim", "analyzer"]
 
 [[example]]
