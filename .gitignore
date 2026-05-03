@@ -83,6 +83,13 @@ benchmarks/zenwebp_hybrid_*.log
 benchmarks/zenwebp_pareto_features_2026-04-29_v0.1.0.tsv.bak
 benchmarks/zenwebp_pareto_features_2026-04-29.tsv.bak
 benchmarks/picker_ab_*.tsv
+benchmarks/zenwebp_picker_v0.*.bin
+benchmarks/zenwebp_picker_v0.*.manifest.json
+benchmarks/zenwebp_bake_*.log
 
 # Pareto sweep parquets — large oracle artifacts, live in /mnt/v + tower
 benchmarks/*.parquet
+
+# Cloudflare Workers / Wrangler local state — picked up if `wrangler dev`
+# is ever run inside the repo. Never commit.
+.wrangler/

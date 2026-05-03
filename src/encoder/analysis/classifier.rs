@@ -482,10 +482,13 @@ pub fn classify_image_type_rgb8_diag(
         .with(AnalysisFeature::Uniformity)
         .with(AnalysisFeature::HighFreqEnergyRatio)
         // Experimental signals (gated on zenanalyze's `experimental`
-        // feature). PaletteFitsIn256 / IndexedPaletteWidth catch
-        // graphics with a small palette.
+        // feature). PaletteFitsIn256 / PaletteLog2Size catch graphics
+        // with a small palette. (`PaletteLog2Size` replaced
+        // `IndexedPaletteWidth` in zenanalyze post-2026-05-02 — same
+        // signal, wider codomain {1..15, 24} that includes the 1-BPP
+        // case.)
         .with(AnalysisFeature::PaletteFitsIn256)
-        .with(AnalysisFeature::IndexedPaletteWidth)
+        .with(AnalysisFeature::PaletteLog2Size)
         // Physics-based photo-vs-artwork discriminators shipped in
         // zenanalyze 0.1.0 per zenjpeg#123. SkinToneFraction is a
         // "presence of human content" cue (LAB-space skin-region
@@ -524,8 +527,13 @@ pub fn classify_image_type_rgb8_diag(
             .get(AnalysisFeature::PaletteFitsIn256)
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        // ZenanalyzeDiag.indexed_palette_width keeps the legacy struct
+        // field name for compatibility with dev tooling that reads
+        // ZenanalyzeDiag printouts; the value now comes from the
+        // wider-codomain `PaletteLog2Size` (id 121, codomain
+        // `{1..15, 24}`).
         indexed_palette_width: r
-            .get(AnalysisFeature::IndexedPaletteWidth)
+            .get(AnalysisFeature::PaletteLog2Size)
             .and_then(|v| v.as_u32())
             .unwrap_or(0),
         line_art_score: 0.0, // culled in zenanalyze 0.1.0 post-cull
