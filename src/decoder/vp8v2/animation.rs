@@ -11,10 +11,10 @@ use alloc::vec::Vec;
 #[allow(unused_imports)]
 use whereat::at;
 
+use crate::decoder::Limits;
 use crate::decoder::api::DecodeError;
 use crate::decoder::extended::{get_alpha_predictor, read_alpha_chunk};
 use crate::decoder::lossless::LosslessDecoder;
-use crate::decoder::Limits;
 use crate::mux::{BlendMethod, DemuxFrame, DisposeMethod, MuxError, WebPDemuxer};
 
 use super::DecoderContext;

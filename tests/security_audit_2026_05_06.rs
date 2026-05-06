@@ -72,8 +72,8 @@ fn build_amplifying_vp8l(width: u32, height: u32) -> Vec<u8> {
     w.write(1, 1); // transform present
     w.write(0, 2); // type = 0 (predictor)
     w.write(0, 3); // size_bits - 2 = 0 → size_bits = 2 (block_xsize = ceil(W/4))
-                   // Stop here. Anything we add after won't be read because the allocation
-                   // check should reject before decode_image_stream is reached.
+    // Stop here. Anything we add after won't be read because the allocation
+    // check should reject before decode_image_stream is reached.
     w.finish()
 }
 
