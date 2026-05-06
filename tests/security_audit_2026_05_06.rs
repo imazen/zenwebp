@@ -3,10 +3,10 @@
 //! Covers:
 //! * H1 — lossless transform sub-image allocations bypass `Limits::check_memory`
 //! * H2 — `WebPDemuxer` slice-indexing on attacker-controlled chunk sizes
-//!         (truncated ANMF / VP8 / VP8L)
+//!   (truncated ANMF / VP8 / VP8L)
 
-use zenwebp::{DecodeError, Limits, WebPDecoder};
 use zenwebp::mux::WebPDemuxer;
+use zenwebp::{DecodeError, Limits, WebPDecoder};
 
 /// Helper: bit-stream writer (LSB-first, matching VP8L's bitstream layout).
 struct BitWriter {
@@ -60,8 +60,8 @@ impl BitWriter {
 /// sub-image allocation happens *before* decode_image_stream is called on it.
 /// The test asserts that the limits check fires before any real decode work.
 fn build_amplifying_vp8l(width: u32, height: u32) -> Vec<u8> {
-    assert!(width >= 1 && width <= 16384);
-    assert!(height >= 1 && height <= 16384);
+    assert!((1..=16384).contains(&width));
+    assert!((1..=16384).contains(&height));
 
     let mut w = BitWriter::new();
     w.write(0x2f, 8);
@@ -72,8 +72,8 @@ fn build_amplifying_vp8l(width: u32, height: u32) -> Vec<u8> {
     w.write(1, 1); // transform present
     w.write(0, 2); // type = 0 (predictor)
     w.write(0, 3); // size_bits - 2 = 0 → size_bits = 2 (block_xsize = ceil(W/4))
-    // Stop here. Anything we add after won't be read because the allocation
-    // check should reject before decode_image_stream is reached.
+                   // Stop here. Anything we add after won't be read because the allocation
+                   // check should reject before decode_image_stream is reached.
     w.finish()
 }
 
@@ -213,7 +213,11 @@ fn h2_truncated_anmf_does_not_panic() {
             // Iterating must not panic.
             for f in d.frames() {
                 // Just touch fields to force any lazy panics.
-                let _ = (f.frame_num, f.bitstream.len(), f.alpha_data.map(|s| s.len()));
+                let _ = (
+                    f.frame_num,
+                    f.bitstream.len(),
+                    f.alpha_data.map(|s| s.len()),
+                );
             }
             // For truncated input we expect no usable frames.
             assert_eq!(
@@ -247,16 +251,11 @@ fn h2_truncated_simple_vp8l_does_not_panic() {
     let riff_size = (out.len() - 8) as u32;
     out[4..8].copy_from_slice(&riff_size.to_le_bytes());
 
-    match WebPDemuxer::new(&out) {
-        Ok(d) => {
-            // Calling frame(1) must not panic.
-            if let Some(frame) = d.frame(1) {
-                let _ = frame.bitstream.len();
-            }
-        }
-        Err(_) => {
-            // Returning an error is also fine.
-        }
+    // Calling frame(1) must not panic.
+    if let Ok(d) = WebPDemuxer::new(&out)
+        && let Some(frame) = d.frame(1)
+    {
+        let _ = frame.bitstream.len();
     }
 }
 
@@ -280,12 +279,9 @@ fn h2_truncated_simple_vp8_does_not_panic() {
     let riff_size = (out.len() - 8) as u32;
     out[4..8].copy_from_slice(&riff_size.to_le_bytes());
 
-    match WebPDemuxer::new(&out) {
-        Ok(d) => {
-            if let Some(frame) = d.frame(1) {
-                let _ = frame.bitstream.len();
-            }
-        }
-        Err(_) => {}
+    if let Ok(d) = WebPDemuxer::new(&out)
+        && let Some(frame) = d.frame(1)
+    {
+        let _ = frame.bitstream.len();
     }
 }

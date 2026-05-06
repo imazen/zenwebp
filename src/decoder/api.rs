@@ -156,7 +156,7 @@ use core::ops::Range;
 
 use hashbrown::HashMap;
 
-use super::extended::{self, WebPExtendedInfo, get_alpha_predictor, read_alpha_chunk};
+use super::extended::{self, get_alpha_predictor, read_alpha_chunk, WebPExtendedInfo};
 use super::lossless::LosslessDecoder;
 use super::vp8v2::DecoderContext;
 use crate::slice_reader::SliceReader;
