@@ -343,7 +343,11 @@ impl<'a> WebPDemuxer<'a> {
 
             match &fourcc {
                 b"ICCP" if has_icc => {
-                    demuxer.icc_range = Some((payload_start, payload_start + size));
+                    let end = payload_start
+                        .checked_add(size)
+                        .map(|e| e.min(data.len()))
+                        .unwrap_or(data.len());
+                    demuxer.icc_range = Some((payload_start, end));
                 }
                 b"ANIM"
                     if is_animated
