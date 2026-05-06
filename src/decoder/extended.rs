@@ -324,6 +324,7 @@ pub(crate) fn read_alpha_chunk(
     data: &[u8],
     width: u16,
     height: u16,
+    limits: &super::limits::Limits,
 ) -> Result<AlphaChunk, whereat::At<DecodeError>> {
     if data.is_empty() {
         return Err(at!(DecodeError::BitStreamError));
@@ -356,12 +357,18 @@ pub(crate) fn read_alpha_chunk(
 
     let alpha_data = &data[1..];
     let decoded_data = if lossless_compression {
-        let mut decoder = LosslessDecoder::new(alpha_data);
+        let rgba_size = usize::from(width) * usize::from(height) * 4;
+        limits.check_memory(rgba_size)?;
 
-        let mut rgba_data = vec![0; usize::from(width) * usize::from(height) * 4];
+        let mut decoder = LosslessDecoder::new(alpha_data);
+        decoder.set_limits(Some(limits));
+
+        let mut rgba_data = vec![0; rgba_size];
         decoder.decode_frame(u32::from(width), u32::from(height), true, &mut rgba_data)?;
 
-        let mut green = vec![0; usize::from(width) * usize::from(height)];
+        let green_size = usize::from(width) * usize::from(height);
+        limits.check_memory(green_size)?;
+        let mut green = vec![0; green_size];
         for (rgba_val, green_val) in rgba_data.chunks_exact(4).zip(green.iter_mut()) {
             *green_val = rgba_val[1];
         }

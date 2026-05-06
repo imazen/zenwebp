@@ -622,7 +622,7 @@ impl<'a> DecodeRequest<'a> {
 
                 // Apply alpha channel if present
                 if let Some(alpha_data) = frame.alpha_data {
-                    let alpha_chunk = read_alpha_chunk(alpha_data, w, h)?;
+                    let alpha_chunk = read_alpha_chunk(alpha_data, w, h, &self.config.limits)?;
 
                     let fw = usize::from(w);
                     let fh = usize::from(h);
@@ -1185,6 +1185,7 @@ impl<'a> WebPDecoder<'a> {
             let data_slice = self.chunk_slice(range)?;
             let mut decoder = LosslessDecoder::new(data_slice);
             decoder.set_stop(self.stop);
+            decoder.set_limits(Some(&self.limits));
 
             if self.has_alpha {
                 decoder.decode_frame(self.width, self.height, false, buf)?;
@@ -1229,8 +1230,12 @@ impl<'a> WebPDecoder<'a> {
                     .ok_or_else(|| at!(DecodeError::ChunkMissing))?
                     .clone();
                 let alpha_slice = &data_buf[alpha_range.start as usize..alpha_range.end as usize];
-                let alpha_chunk =
-                    read_alpha_chunk(alpha_slice, self.width as u16, self.height as u16)?;
+                let alpha_chunk = read_alpha_chunk(
+                    alpha_slice,
+                    self.width as u16,
+                    self.height as u16,
+                    &self.limits,
+                )?;
 
                 let fw = usize::from(w);
                 let fh = usize::from(h);
@@ -1331,6 +1336,7 @@ impl<'a> WebPDecoder<'a> {
                 let data_slice = self.r.take_slice(chunk_size as usize)?;
                 let mut lossless_decoder = LosslessDecoder::new(data_slice);
                 lossless_decoder.set_stop(self.stop);
+                lossless_decoder.set_limits(Some(&self.limits));
                 let frame_alloc = frame_width as usize * frame_height as usize * 4;
                 self.limits.check_memory(frame_alloc)?;
                 self.animation.frame_scratch.resize(frame_alloc, 0);
@@ -1354,8 +1360,12 @@ impl<'a> WebPDecoder<'a> {
                     self.r
                         .seek_relative((chunk_size_rounded - chunk_size) as i64)?;
                 }
-                let alpha_chunk =
-                    read_alpha_chunk(alpha_slice, frame_width as u16, frame_height as u16)?;
+                let alpha_chunk = read_alpha_chunk(
+                    alpha_slice,
+                    frame_width as u16,
+                    frame_height as u16,
+                    &self.limits,
+                )?;
 
                 // read opaque — lossy decode with buffer reuse
                 let (next_chunk, next_chunk_size, _) = read_chunk_header(&mut self.r)?;

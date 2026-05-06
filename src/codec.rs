@@ -1461,7 +1461,12 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                     let native_info = crate::ImageInfo::from_webp(data_ref)?;
                     let w = native_info.width as u16;
                     let h = native_info.height as u16;
-                    let alpha_chunk = crate::decoder::extended::read_alpha_chunk(alpha_data, w, h)?;
+                    let alpha_chunk = crate::decoder::extended::read_alpha_chunk(
+                        alpha_data,
+                        w,
+                        h,
+                        &cfg.limits,
+                    )?;
 
                     // Apply alpha filtering to produce final alpha plane
                     let fw = usize::from(w);

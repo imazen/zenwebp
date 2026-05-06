@@ -13,6 +13,7 @@ use whereat::at;
 
 use crate::decoder::api::DecodeError;
 use crate::decoder::extended::{get_alpha_predictor, read_alpha_chunk};
+use crate::decoder::Limits;
 use crate::decoder::lossless::LosslessDecoder;
 use crate::mux::{BlendMethod, DemuxFrame, DisposeMethod, MuxError, WebPDemuxer};
 
@@ -66,6 +67,7 @@ impl DecoderContext {
         data: &[u8],
         mut callback: impl FnMut(AnimationFrame<'_>) -> bool,
     ) -> Result<(), whereat::At<DecodeError>> {
+        let limits = Limits::default();
         let demuxer = WebPDemuxer::new(data).map_err(|e| at!(mux_to_decode(e)))?;
 
         if !demuxer.is_animated() {
@@ -112,7 +114,8 @@ impl DecoderContext {
             }
 
             // Decode this frame's pixels
-            let frame_has_alpha = self.decode_single_frame(&demux_frame, &mut frame_scratch)?;
+            let frame_has_alpha =
+                self.decode_single_frame(&demux_frame, &mut frame_scratch, &limits)?;
 
             // Composite onto canvas
             crate::decoder::extended::composite_frame(
@@ -172,6 +175,7 @@ impl DecoderContext {
         &mut self,
         frame: &DemuxFrame<'_>,
         scratch: &mut Vec<u8>,
+        limits: &Limits,
     ) -> Result<bool, whereat::At<DecodeError>> {
         if frame.is_lossy {
             if let Some(alpha_data) = frame.alpha_data {
@@ -186,7 +190,7 @@ impl DecoderContext {
                     .height
                     .try_into()
                     .map_err(|_| at!(DecodeError::ImageTooLarge))?;
-                let alpha_chunk = read_alpha_chunk(alpha_data, alpha_w, alpha_h)?;
+                let alpha_chunk = read_alpha_chunk(alpha_data, alpha_w, alpha_h, limits)?;
 
                 let fw = frame.width as usize;
                 let fh = frame.height as usize;
@@ -214,8 +218,10 @@ impl DecoderContext {
                 .checked_mul(frame.height as usize)
                 .and_then(|n| n.checked_mul(4))
                 .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
+            limits.check_memory(alloc_size)?;
             scratch.resize(alloc_size, 0);
             let mut decoder = LosslessDecoder::new(frame.bitstream);
+            decoder.set_limits(Some(limits));
             decoder.decode_frame(frame.width, frame.height, false, scratch)?;
             Ok(true) // VP8L can always carry alpha
         }
