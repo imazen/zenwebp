@@ -113,7 +113,9 @@ const RAW_TRANSFORMS_V0_3: &[RawTransform] = &[
     RawTransform::Identity, // 34 feat_colourfulness
     RawTransform::Identity, // 35 feat_quant_survival_uv
 ];
-use zenwebp::encoder::analysis::{ImageContentType, classify_image_type_rgb8, content_type_to_tuning};
+use zenwebp::encoder::analysis::{
+    ImageContentType, classify_image_type_rgb8, content_type_to_tuning,
+};
 use zenwebp::{EncodeRequest, LossyConfig, PixelLayout, ZensimTarget};
 
 // -----------------------------------------------------------------------
@@ -355,11 +357,7 @@ fn list_pngs(dir: &Path) -> Vec<PathBuf> {
         .into_iter()
         .flatten()
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.is_file()
-                && p.extension()
-                    .is_some_and(|e| e == "png" || e == "PNG")
-        })
+        .filter(|p| p.is_file() && p.extension().is_some_and(|e| e == "png" || e == "PNG"))
         .collect();
     v.sort();
     v
@@ -459,8 +457,9 @@ fn pick_knobs(predictor: &mut Predictor<'_>, feats82: &[f32]) -> PickerKnobs {
     let output = predictor.predict(feats82).expect("predict");
     let mask_arr = [true; N_CELLS];
     let mask = AllowedMask::new(&mask_arr);
-    let cell_idx = argmin_masked_in_range(output, RANGE_BYTES_LOG, &mask, ScoreTransform::Exp, None)
-        .expect("argmin");
+    let cell_idx =
+        argmin_masked_in_range(output, RANGE_BYTES_LOG, &mask, ScoreTransform::Exp, None)
+            .expect("argmin");
     assert!(cell_idx < N_CELLS);
     let (method, segments) = CELLS[cell_idx];
     let sns = clamp_to_u8(output[OFF_SNS + cell_idx], 0.0, 100.0);
@@ -800,7 +799,11 @@ fn main() {
 
     let bp = picker_total.bytes_sum as f64;
     let bb = bucket_total.bytes_sum as f64;
-    let total_delta_pct = if bb > 0.0 { (bp - bb) / bb * 100.0 } else { 0.0 };
+    let total_delta_pct = if bb > 0.0 {
+        (bp - bb) / bb * 100.0
+    } else {
+        0.0
+    };
     md.push_str(&format!(
         "\n## Total\n\n* Picker total bytes: **{}** (mean achieved zensim {:.2})\n* Bucket total bytes: **{}** (mean achieved zensim {:.2})\n* Δ bytes: **{:+.2}%** (picker − bucket)\n* Δ achieved zensim: **{:+.3}** pp\n",
         fmt_bytes(picker_total.bytes_sum),
