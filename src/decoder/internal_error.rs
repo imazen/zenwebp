@@ -34,6 +34,8 @@ pub(crate) enum InternalDecodeError {
     ChromaPredictionModeInvalid = 6,
     /// Decoding was cancelled via a cooperative stop token
     Cancelled = 7,
+    /// An intermediate allocation would exceed `Limits::max_memory`
+    MemoryLimitExceeded = 8,
 }
 
 impl From<InternalDecodeError> for DecodeError {
@@ -58,6 +60,7 @@ impl From<InternalDecodeError> for DecodeError {
                 DecodeError::ChromaPredictionModeInvalid(0)
             }
             InternalDecodeError::Cancelled => DecodeError::Cancelled(enough::StopReason::Cancelled),
+            InternalDecodeError::MemoryLimitExceeded => DecodeError::MemoryLimitExceeded,
         }
     }
 }
