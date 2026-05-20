@@ -1,0 +1,26 @@
+[package]
+name = "zenwebp-libwebp-shim"
+version = "0.0.1"
+edition = "2024"
+license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
+rust-version = "1.93"
+description = "Prototype: exposes the libwebp 1.6 C ABI subset that libwebp-net depends on, backed by zenwebp."
+publish = false
+
+[lib]
+# Produces libwebp.{so,dylib,dll} that libwebp-net can DllImport in place
+# of upstream libwebp. The crate name in the artifact filename is the
+# default; consumers will rename / symlink to libwebp.{so,dll,dylib} at
+# packaging time.
+name = "webp"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Use the path checkout so we can iterate on zenwebp's surface during the
+# prototype; switch to a versioned crates.io dep before shipping.
+zenwebp = { path = "../zenwebp" }
+
+[features]
+default = []
+# Tracing of shim calls for debugging the C ABI surface.
+trace = []
