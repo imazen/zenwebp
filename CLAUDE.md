@@ -3,6 +3,21 @@
 See global ~/.claude/CLAUDE.md for general instructions.
 Historical investigation notes and resolved bugs are in [LOG.md](LOG.md).
 
+## Canonical training data + indexes (added 2026-05-20)
+
+**The canonical index for all ML data lives at `~/work/zen/DATA_PROVENANCE.md`.**
+
+Quick paths:
+- Trainer input: `/mnt/v/zen/zensim-training/canonical-2026-05-21/`
+- Master inventory: `~/work/zen/_ml-inventory-2026-05-20/00-MASTER-SYNTHESIS.md`
+- Per-codec picker audit: `~/work/zen/_ml-inventory-2026-05-20/05-per-codec-pickers.md`
+
+## ML/picker status (2026-05-20)
+
+zenwebp's 2026-04-29 to 2026-05-03 picker spike at `src/encoder/picker/` is currently in tree but **never wired into the public API** per the 2026-05-20 per-codec audit. Considered dead code; removal pending separate cleanup.
+
+For working picker reference: `~/work/zen/zenavif/src/auto_tune.rs` + `EncoderConfig::auto_tune()` is the only production-shipped zen-codec picker today.
+
 ## Performance & Testing
 
 See `docs/PERFORMANCE.md` for benchmarks, `docs/CALL-TREE.md` for SIMD tiers, `docs/ARCHITECTURE-CLEANUP.md` for code organization.
