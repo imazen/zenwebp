@@ -339,114 +339,25 @@ struct Vp8HeaderInfo {
 /// This reads the uncompressed frame header (10 bytes) and then decodes
 /// just enough of the boolean-coded header to reach the quantizer fields.
 fn parse_vp8_header(data: &[u8]) -> Result<ParsedBitstream, ProbeError> {
-    if data.len() < 10 {
-        return Err(ProbeError::Truncated);
-    }
-
-    // Uncompressed data chunk (3 bytes)
-    let tag = u32::from(data[0]) | (u32::from(data[1]) << 8) | (u32::from(data[2]) << 16);
-    let keyframe = tag & 1 == 0;
-    if !keyframe {
-        // Non-keyframe — can't reliably extract quantizer
-        return Err(ProbeError::Truncated);
-    }
-    let first_partition_size = (tag >> 5) as usize;
-
-    // VP8 magic
-    if data[3..6] != [0x9d, 0x01, 0x2a] {
-        return Err(ProbeError::InvalidVP8Magic);
-    }
-
-    // Dimensions
-    let w = u16::from_le_bytes([data[6], data[7]]) & 0x3FFF;
-    let h = u16::from_le_bytes([data[8], data[9]]) & 0x3FFF;
-
-    // Boolean decoder for the first partition
-    let part_start = 10;
-    let part_end = (part_start + first_partition_size).min(data.len());
-    if part_end <= part_start {
-        return Err(ProbeError::Truncated);
-    }
-    let part_data = &data[part_start..part_end];
-
-    // Minimal boolean decoder — just enough to reach quantizer fields
+    let (w, h, part_data) = parse_uncompressed_header(data)?;
     let mut reader = MiniBoolReader::new(part_data)?;
 
     // color_space (1 bit) + pixel_type (1 bit)
     reader.read_literal(1)?;
     reader.read_literal(1)?;
 
-    // Segment updates
-    let segments_enabled = reader.read_flag()?;
-    let mut has_segment_quant = false;
-    if segments_enabled {
-        let update_map = reader.read_flag()?;
-        let update_data = reader.read_flag()?;
+    let has_segment_quant = skip_segment_updates(&mut reader)?;
 
-        if update_data {
-            has_segment_quant = true;
-            let absolute_delta = reader.read_flag()?;
-            let _ = absolute_delta;
-
-            // 4 segments × (quantizer_level + loopfilter_level)
-            for _ in 0..4 {
-                let present = reader.read_flag()?;
-                if present {
-                    reader.read_literal(7)?; // quantizer value
-                    reader.read_literal(1)?; // sign
-                }
-            }
-            for _ in 0..4 {
-                let present = reader.read_flag()?;
-                if present {
-                    reader.read_literal(6)?; // loopfilter value
-                    reader.read_literal(1)?; // sign
-                }
-            }
-        }
-
-        if update_map {
-            for _ in 0..3 {
-                let present = reader.read_flag()?;
-                if present {
-                    reader.read_literal(8)?;
-                }
-            }
-        }
-    }
-
-    // Filter parameters
     let _filter_type = reader.read_flag()?;
     let filter_level = reader.read_literal(6)?;
     let sharpness_level = reader.read_literal(3)?;
 
-    // Loop filter adjustments
-    let lf_adj_enabled = reader.read_flag()?;
-    if lf_adj_enabled {
-        let lf_adj_update = reader.read_flag()?;
-        if lf_adj_update {
-            // 4 ref_deltas + 4 mode_deltas
-            for _ in 0..4 {
-                let present = reader.read_flag()?;
-                if present {
-                    reader.read_literal(6)?;
-                    reader.read_literal(1)?;
-                }
-            }
-            for _ in 0..4 {
-                let present = reader.read_flag()?;
-                if present {
-                    reader.read_literal(6)?;
-                    reader.read_literal(1)?;
-                }
-            }
-        }
-    }
+    skip_loop_filter_adjustments(&mut reader)?;
 
     // Number of partitions (2 bits → 1 << value)
     reader.read_literal(2)?;
 
-    // QUANTIZER INDICES — this is what we came for
+    // QUANTIZER INDICES — what we came for.
     let yac_abs = reader.read_literal(7)?;
 
     Ok(ParsedBitstream::Lossy(Vp8HeaderInfo {
@@ -457,6 +368,91 @@ fn parse_vp8_header(data: &[u8]) -> Result<ParsedBitstream, ProbeError> {
         filter_level,
         sharpness_level,
     }))
+}
+
+/// Returns `(width_low14, height_low14, first_partition_slice)`. Validates the keyframe
+/// marker bit and the VP8 start-code magic.
+fn parse_uncompressed_header(data: &[u8]) -> Result<(u16, u16, &[u8]), ProbeError> {
+    if data.len() < 10 {
+        return Err(ProbeError::Truncated);
+    }
+    let tag = u32::from(data[0]) | (u32::from(data[1]) << 8) | (u32::from(data[2]) << 16);
+    let keyframe = tag & 1 == 0;
+    if !keyframe {
+        // Non-keyframe — can't reliably extract quantizer
+        return Err(ProbeError::Truncated);
+    }
+    let first_partition_size = (tag >> 5) as usize;
+
+    if data[3..6] != [0x9d, 0x01, 0x2a] {
+        return Err(ProbeError::InvalidVP8Magic);
+    }
+
+    let w = u16::from_le_bytes([data[6], data[7]]) & 0x3FFF;
+    let h = u16::from_le_bytes([data[8], data[9]]) & 0x3FFF;
+
+    let part_start = 10;
+    let part_end = (part_start + first_partition_size).min(data.len());
+    if part_end <= part_start {
+        return Err(ProbeError::Truncated);
+    }
+    Ok((w, h, &data[part_start..part_end]))
+}
+
+/// Walk the segmentation block. Returns whether per-segment quantizer updates were declared.
+/// We don't need the segment values themselves — only whether they exist.
+fn skip_segment_updates(reader: &mut MiniBoolReader<'_>) -> Result<bool, ProbeError> {
+    if !reader.read_flag()? {
+        return Ok(false);
+    }
+    let update_map = reader.read_flag()?;
+    let update_data = reader.read_flag()?;
+    if update_data {
+        let _absolute_delta = reader.read_flag()?;
+        // 4 segments × (quantizer 7-bit signed, then loopfilter 6-bit signed)
+        skip_optional_signed_array(reader, 4, 7)?;
+        skip_optional_signed_array(reader, 4, 6)?;
+    }
+    if update_map {
+        for _ in 0..3 {
+            if reader.read_flag()? {
+                reader.read_literal(8)?;
+            }
+        }
+    }
+    Ok(update_data)
+}
+
+/// Walk the loop-filter-adjustment block. We don't need any of the values; this just
+/// advances `reader` to the partition-count field.
+fn skip_loop_filter_adjustments(reader: &mut MiniBoolReader<'_>) -> Result<(), ProbeError> {
+    if !reader.read_flag()? {
+        return Ok(());
+    }
+    if !reader.read_flag()? {
+        return Ok(());
+    }
+    // 4 ref_deltas + 4 mode_deltas, each 6-bit signed.
+    skip_optional_signed_array(reader, 4, 6)?;
+    skip_optional_signed_array(reader, 4, 6)?;
+    Ok(())
+}
+
+/// Read `count` (present-flag, optional `n_bits` magnitude + 1 sign-bit) pairs and discard.
+/// The VP8 stream uses this pattern for segment quantizers, loop-filter deltas, and
+/// loop-filter adjustments.
+fn skip_optional_signed_array(
+    reader: &mut MiniBoolReader<'_>,
+    count: usize,
+    n_bits: u8,
+) -> Result<(), ProbeError> {
+    for _ in 0..count {
+        if reader.read_flag()? {
+            reader.read_literal(n_bits)?;
+            reader.read_literal(1)?;
+        }
+    }
+    Ok(())
 }
 
 /// Reverse the libwebp quality-to-quantizer mapping.
