@@ -451,6 +451,441 @@ impl HistoQueue {
     }
 }
 
+/// Mutable state shared across clustering phases.
+struct ClusterState {
+    histos: Vec<Histogram>,
+    costs: Vec<HistogramCosts>,
+    active: Vec<bool>,
+    mapping: Vec<usize>,
+}
+
+impl ClusterState {
+    fn from_tiles(tile_histos: &[Histogram]) -> Self {
+        let n = tile_histos.len();
+        Self {
+            histos: tile_histos.to_vec(),
+            costs: tile_histos.iter().map(compute_histogram_cost).collect(),
+            active: vec![true; n],
+            mapping: (0..n).collect(),
+        }
+    }
+
+    fn count_active(&self) -> usize {
+        self.active.iter().filter(|&&a| a).count()
+    }
+
+    fn active_indices(&self) -> Vec<usize> {
+        (0..self.active.len()).filter(|&i| self.active[i]).collect()
+    }
+
+    /// Merge histogram `src` into `dst`, using the precomputed combined cost.
+    /// Marks `src` inactive and remaps any tile pointing to `src` → `dst`.
+    /// This is the common merge primitive used by all three combining phases.
+    fn merge_pair(&mut self, dst: usize, src: usize, combined_cost: u64, per_type: [u64; 5]) {
+        debug_assert!(dst != src);
+        let dst_costs = self.costs[dst].clone();
+        let src_costs = self.costs[src].clone();
+        let src_histo = self.histos[src].clone();
+        self.histos[dst].add(&src_histo);
+        self.costs[dst] = costs_from_merge(combined_cost, per_type, &dst_costs, &src_costs);
+        self.active[src] = false;
+        for m in self.mapping.iter_mut() {
+            if *m == src {
+                *m = dst;
+            }
+        }
+    }
+}
+
+/// Combine cost factor (matching libwebp's GetCombineCostFactor).
+fn combine_cost_factor(num_active: usize, quality: u8) -> i64 {
+    let mut factor = 16i64;
+    if quality < 90 {
+        if num_active > 256 {
+            factor /= 2;
+        }
+        if num_active > 512 {
+            factor /= 2;
+        }
+        if num_active > 1024 {
+            factor /= 2;
+        }
+        if quality <= 50 {
+            factor /= 2;
+        }
+    }
+    factor
+}
+
+/// Target cluster count after stochastic combining.
+/// Matches libwebp's q^3 scaling: t = 1 + round(q^3 * (MAX-1) / 100^3).
+fn stochastic_target_size(quality: u8) -> usize {
+    let q3 = (quality as u64) * (quality as u64) * (quality as u64);
+    let t = 1 + div_round_u64(q3 * (MAX_HISTO_GREEDY as u64 - 1), 100u64 * 100 * 100);
+    t.min(MAX_HISTO_GREEDY as u64) as usize
+}
+
+/// Phase 1: Compute per-tile entropy bin IDs from literal/red/blue costs.
+fn compute_entropy_bins(state: &ClusterState) -> Vec<usize> {
+    let mut lit_min = u64::MAX;
+    let mut lit_max = 0u64;
+    let mut red_min = u64::MAX;
+    let mut red_max = 0u64;
+    let mut blue_min = u64::MAX;
+    let mut blue_max = 0u64;
+
+    for (i, cost) in state.costs.iter().enumerate() {
+        if !state.active[i] {
+            continue;
+        }
+        lit_min = lit_min.min(cost.per_type[0]);
+        lit_max = lit_max.max(cost.per_type[0]);
+        red_min = red_min.min(cost.per_type[1]);
+        red_max = red_max.max(cost.per_type[1]);
+        blue_min = blue_min.min(cost.per_type[2]);
+        blue_max = blue_max.max(cost.per_type[2]);
+    }
+
+    let mut bin_ids: Vec<usize> = Vec::with_capacity(state.costs.len());
+    for cost in &state.costs {
+        let lit_bin = get_bin_id_for_entropy(lit_min, lit_max, cost.per_type[0]);
+        let red_bin = get_bin_id_for_entropy(red_min, red_max, cost.per_type[1]);
+        let blue_bin = get_bin_id_for_entropy(blue_min, blue_max, cost.per_type[2]);
+        bin_ids
+            .push(lit_bin * NUM_PARTITIONS * NUM_PARTITIONS + red_bin * NUM_PARTITIONS + blue_bin);
+    }
+    bin_ids
+}
+
+/// Phase 2: Merge histograms within each entropy bin (matching libwebp's
+/// HistogramCombineEntropyBin). Uses the incoming histogram's cost for the
+/// threshold, not the accumulator's.
+fn entropy_bin_combine_phase(state: &mut ClusterState, quality: u8, bin_ids: &[usize]) {
+    let n = state.histos.len();
+    let factor = combine_cost_factor(state.count_active(), quality);
+    let mut bin_first: Vec<Option<usize>> = vec![None; BIN_SIZE];
+
+    for i in 0..n {
+        if !state.active[i] {
+            continue;
+        }
+        let bin_id = bin_ids[i];
+        let Some(first) = bin_first[bin_id] else {
+            bin_first[bin_id] = Some(i);
+            continue;
+        };
+
+        // libwebp uses the incoming histogram's cost for the threshold
+        // (not the accumulator's), matching HistogramCombineEntropyBin.
+        let bit_cost_incoming = state.costs[i].total;
+        let threshold = state.costs[first].total + bit_cost_incoming;
+        let cost_thresh_val =
+            threshold.saturating_sub(div_round_i64(bit_cost_incoming as i64 * factor, 100) as u64);
+
+        if let Some((combined_cost, per_type)) = get_combined_histogram_cost_with_detail(
+            &state.histos[first],
+            &state.costs[first],
+            &state.histos[i],
+            &state.costs[i],
+            cost_thresh_val,
+        ) {
+            cluster_trace::inc_entropy_bin_merges();
+            state.merge_pair(first, i, combined_cost, per_type);
+        }
+    }
+}
+
+/// Phase 2b: Stochastic combining via size-9 priority queue with Lehmer RNG
+/// (matching libwebp's HistogramCombineStochastic). Returns true if the greedy
+/// phase should run (i.e., active count reached target_size).
+fn stochastic_combine_phase(state: &mut ClusterState, target_size: usize) -> bool {
+    const HISTO_QUEUE_SIZE: usize = 9;
+    let mut histo_queue = HistoQueue::new(HISTO_QUEUE_SIZE);
+
+    // Build a compact index: position -> original index. This matches libwebp's
+    // approach where histograms are stored in a compact array and
+    // HistogramSetRemoveHistogram swaps in the last element.
+    let mut compact: Vec<usize> = state.active_indices();
+    let mut compact_size = compact.len();
+
+    let outer_iters = compact_size;
+    let num_tries_no_success = outer_iters / 2;
+    let mut tries_with_no_success = 0usize;
+    let mut seed: u32 = 1;
+
+    for _iter in 0..outer_iters {
+        if compact_size < 2 || compact_size <= target_size {
+            break;
+        }
+        tries_with_no_success += 1;
+        if tries_with_no_success >= num_tries_no_success {
+            break;
+        }
+        cluster_trace::inc_stochastic_outer_iters();
+
+        let best_cost = if histo_queue.queue.is_empty() {
+            0i64
+        } else {
+            histo_queue.queue[0].cost_diff
+        };
+        let rand_range = (compact_size as u64) * (compact_size as u64 - 1);
+        let num_tries = compact_size / 2;
+
+        // Pick random samples (matching libwebp's inner loop)
+        let mut pair_evals_this_iter = 0u64;
+        for _ in 0..num_tries {
+            if compact_size < 2 {
+                break;
+            }
+            // Lehmer RNG
+            seed = ((seed as u64 * 48271u64) % 2147483647u64) as u32;
+            let tmp = (seed as u64) % rand_range;
+            let ci1 = (tmp / (compact_size as u64 - 1)) as usize;
+            let mut ci2 = (tmp % (compact_size as u64 - 1)) as usize;
+            if ci2 >= ci1 {
+                ci2 += 1;
+            }
+
+            let idx1 = compact[ci1];
+            let idx2 = compact[ci2];
+
+            pair_evals_this_iter += 1;
+            let curr_cost =
+                histo_queue.push(&state.histos, &state.costs, idx1, idx2, best_cost.min(0));
+            if curr_cost < 0 && histo_queue.queue.len() >= histo_queue.max_size {
+                break;
+            }
+        }
+        cluster_trace::add_stochastic_pair_evals(pair_evals_this_iter);
+
+        if histo_queue.queue.is_empty() {
+            continue;
+        }
+
+        // Get the best pair from the queue head and merge using its precomputed costs.
+        let best_idx1 = histo_queue.queue[0].idx1;
+        let merge_idx2 = histo_queue.queue[0].idx2;
+        let combined_cost = histo_queue.queue[0].cost_combo;
+        let per_type = histo_queue.queue[0].per_type_costs;
+        cluster_trace::inc_stochastic_merges();
+        state.merge_pair(best_idx1, merge_idx2, combined_cost, per_type);
+
+        // Remove merge_idx2 from compact array (swap with last, like libwebp)
+        if let Some(pos) = compact.iter().position(|&x| x == merge_idx2) {
+            compact.swap(pos, compact_size - 1);
+            compact_size -= 1;
+            compact.truncate(compact_size);
+        }
+
+        // Update queue: remove pairs involving the merged indices,
+        // re-evaluate pairs that reference either idx.
+        update_queue_after_stochastic_merge(
+            &mut histo_queue,
+            &state.histos,
+            &state.costs,
+            best_idx1,
+            merge_idx2,
+        );
+
+        tries_with_no_success = 0;
+    }
+
+    compact_size <= target_size
+}
+
+/// After a stochastic merge, prune/repair the priority queue: drop the pair
+/// that was merged, fix dangling references to merge_idx2, and re-evaluate
+/// pairs that now touch the accumulator.
+fn update_queue_after_stochastic_merge(
+    histo_queue: &mut HistoQueue,
+    histos: &[Histogram],
+    costs: &[HistogramCosts],
+    best_idx1: usize,
+    merge_idx2: usize,
+) {
+    let mut j = 0usize;
+    while j < histo_queue.queue.len() {
+        let p = &histo_queue.queue[j];
+        let is_idx1_best = p.idx1 == best_idx1 || p.idx1 == merge_idx2;
+        let is_idx2_best = p.idx2 == best_idx1 || p.idx2 == merge_idx2;
+
+        if is_idx1_best && is_idx2_best {
+            // This is the pair we just merged (or a duplicate)
+            histo_queue.pop_at(j);
+            continue;
+        }
+
+        if is_idx1_best || is_idx2_best {
+            // Fix index references
+            HistoQueue::fix_pair_idx(&mut histo_queue.queue[j], merge_idx2, best_idx1);
+            // Re-evaluate cost
+            cluster_trace::inc_stochastic_queue_updates();
+            if !HistoQueue::update_pair(histos, costs, &mut histo_queue.queue[j]) {
+                histo_queue.pop_at(j);
+                continue;
+            }
+        }
+
+        // (In libwebp, HistogramSetRemoveHistogram moves the last histo
+        // into the removed slot. We don't compact our histos array, so we
+        // only need to fix the merge_idx2 reference above.)
+        histo_queue.update_head(j);
+        j += 1;
+    }
+}
+
+/// Phase 3: Greedy combining via O(n^2)-initialized priority queue
+/// (matching libwebp's HistogramCombineGreedy). Only runs when the active count
+/// is small enough (typically after stochastic has reached target_size).
+fn greedy_combine_phase(state: &mut ClusterState) {
+    let n = state.histos.len();
+    let active_indices = state.active_indices();
+    let active_n = active_indices.len();
+
+    let mut histo_queue = HistoQueue::new(active_n * active_n);
+    let greedy_init_pairs = (active_n * (active_n - 1)) / 2;
+    cluster_trace::add_greedy_initial_pairs(greedy_init_pairs as u64);
+
+    for ai in 0..active_n {
+        for aj in (ai + 1)..active_n {
+            histo_queue.push_greedy(
+                &state.histos,
+                &state.costs,
+                active_indices[ai],
+                active_indices[aj],
+            );
+        }
+    }
+
+    // Greedily merge the best pair until no beneficial pair remains.
+    while !histo_queue.queue.is_empty() {
+        let best_idx1 = histo_queue.queue[0].idx1;
+        let best_idx2 = histo_queue.queue[0].idx2;
+        let combined_cost = histo_queue.queue[0].cost_combo;
+        let per_type = histo_queue.queue[0].per_type_costs;
+        cluster_trace::inc_greedy_merges();
+        state.merge_pair(best_idx1, best_idx2, combined_cost, per_type);
+
+        // Remove stale pairs involving merged indices (no index fixup needed
+        // because we never compact our histos array).
+        let mut j = 0usize;
+        while j < histo_queue.queue.len() {
+            let p = &histo_queue.queue[j];
+            if p.idx1 == best_idx1
+                || p.idx2 == best_idx1
+                || p.idx1 == best_idx2
+                || p.idx2 == best_idx2
+            {
+                histo_queue.pop_at(j);
+            } else {
+                histo_queue.update_head(j);
+                j += 1;
+            }
+        }
+
+        // Add new pairs involving the merged accumulator (best_idx1).
+        let mut new_pairs = 0u64;
+        for i in 0..n {
+            if !state.active[i] || i == best_idx1 {
+                continue;
+            }
+            new_pairs += 1;
+            histo_queue.push_greedy(&state.histos, &state.costs, best_idx1, i);
+        }
+        cluster_trace::add_greedy_new_pairs(new_pairs);
+    }
+}
+
+/// Phase 4: For each original tile, search active clusters for the one that
+/// gives the smallest added cost (matching libwebp's HistogramRemap with
+/// progressive threshold tightening).
+fn remap_tiles_to_clusters(
+    state: &mut ClusterState,
+    tile_histos: &[Histogram],
+    active_indices: &[usize],
+) {
+    let n = tile_histos.len();
+    if active_indices.len() == 1 {
+        for m in state.mapping.iter_mut() {
+            *m = active_indices[0];
+        }
+        return;
+    }
+
+    // Cache tile histogram costs to avoid recomputation
+    let tile_costs: Vec<HistogramCosts> = tile_histos.iter().map(compute_histogram_cost).collect();
+
+    let remap_total = n as u64 * active_indices.len() as u64;
+    cluster_trace::add_remap_evals(remap_total);
+
+    for tile_idx in 0..n {
+        let mut best_cluster = state.mapping[tile_idx];
+        let mut best_bits = i64::MAX;
+
+        for &cluster_idx in active_indices {
+            // Threshold: cluster.cost + best_bits (matching libwebp's
+            // HistogramAddThresh which does SaturateAdd(a->bit_cost, &cost_threshold))
+            let cost_threshold = if best_bits == i64::MAX {
+                u64::MAX
+            } else {
+                let thresh = state.costs[cluster_idx].total as i64 + best_bits;
+                if thresh <= 0 {
+                    continue;
+                }
+                thresh as u64
+            };
+
+            if let Some(combined_cost) = get_combined_histogram_cost(
+                &state.histos[cluster_idx],
+                &state.costs[cluster_idx],
+                &tile_histos[tile_idx],
+                &tile_costs[tile_idx],
+                cost_threshold,
+            ) {
+                // Cost = C(cluster + tile) - C(cluster), matching HistogramAddThresh
+                let cost = combined_cost as i64 - state.costs[cluster_idx].total as i64;
+                if cost < best_bits {
+                    best_bits = cost;
+                    best_cluster = cluster_idx;
+                }
+            }
+        }
+
+        state.mapping[tile_idx] = best_cluster;
+    }
+}
+
+/// Phase 5: Project active clusters into a dense [0, K) index space and rebuild
+/// final histograms by summing the original tile histograms.
+fn build_final_histograms(
+    tile_histos: &[Histogram],
+    mapping: &[usize],
+    active_indices: &[usize],
+    cache_bits: u8,
+) -> (Vec<Histogram>, Vec<u16>) {
+    let n = tile_histos.len();
+    let mut final_histos: Vec<Histogram> = active_indices
+        .iter()
+        .map(|_| Histogram::new(cache_bits))
+        .collect();
+
+    // Index mapping from cluster_idx → final histogram index
+    let mut cluster_to_final: Vec<Option<u16>> = vec![None; n];
+    for (final_idx, &cluster_idx) in active_indices.iter().enumerate() {
+        cluster_to_final[cluster_idx] = Some(final_idx as u16);
+    }
+
+    let mut symbols: Vec<u16> = Vec::with_capacity(n);
+    for tile_idx in 0..n {
+        let cluster = mapping[tile_idx];
+        let final_idx = cluster_to_final[cluster].unwrap_or(0);
+        symbols.push(final_idx);
+        final_histos[final_idx as usize].add(&tile_histos[tile_idx]);
+    }
+
+    (final_histos, symbols)
+}
+
 /// Cluster histograms using entropy binning + stochastic + greedy combining.
 /// Matches libwebp's HistogramCombineEntropyBin + HistogramCombineStochastic
 /// + HistogramCombineGreedy + HistogramRemap.
@@ -464,7 +899,6 @@ fn cluster_histograms(
     cluster_trace::add_initial_histograms(n as u64);
     #[cfg(feature = "std")]
     if std::env::var("ZENWEBP_TRACE").is_ok() {
-        // Count empty histograms (no symbols in any type)
         let empty_count = tile_histos
             .iter()
             .filter(|h| {
@@ -488,420 +922,42 @@ fn cluster_histograms(
         return (Vec::new(), Vec::new());
     }
 
-    // Compute initial costs for all histograms
-    let mut costs: Vec<HistogramCosts> = tile_histos.iter().map(compute_histogram_cost).collect();
+    let mut state = ClusterState::from_tiles(tile_histos);
 
-    // Track which histograms are active and their mapping
-    let mut active: Vec<bool> = vec![true; n];
-    let mut mapping: Vec<usize> = (0..n).collect(); // tile -> cluster index
-    let mut histos: Vec<Histogram> = tile_histos.to_vec();
-
-    // Phase 1: Entropy binning - assign each histogram to an entropy bin
-    // Find min/max costs for literal, red, blue types
-    let mut lit_min = u64::MAX;
-    let mut lit_max = 0u64;
-    let mut red_min = u64::MAX;
-    let mut red_max = 0u64;
-    let mut blue_min = u64::MAX;
-    let mut blue_max = 0u64;
-
-    for (i, cost) in costs.iter().enumerate() {
-        if !active[i] {
-            continue;
-        }
-        lit_min = lit_min.min(cost.per_type[0]);
-        lit_max = lit_max.max(cost.per_type[0]);
-        red_min = red_min.min(cost.per_type[1]);
-        red_max = red_max.max(cost.per_type[1]);
-        blue_min = blue_min.min(cost.per_type[2]);
-        blue_max = blue_max.max(cost.per_type[2]);
-    }
-
-    // Assign bin IDs (3D: literal × red × blue)
-    let mut bin_ids: Vec<usize> = Vec::with_capacity(n);
-    for cost in &costs {
-        let lit_bin = get_bin_id_for_entropy(lit_min, lit_max, cost.per_type[0]);
-        let red_bin = get_bin_id_for_entropy(red_min, red_max, cost.per_type[1]);
-        let blue_bin = get_bin_id_for_entropy(blue_min, blue_max, cost.per_type[2]);
-        bin_ids
-            .push(lit_bin * NUM_PARTITIONS * NUM_PARTITIONS + red_bin * NUM_PARTITIONS + blue_bin);
-    }
-
-    // Phase 2: Merge within entropy bins (HistogramCombineEntropyBin)
-    let num_active = active.iter().filter(|&&a| a).count();
+    // Phase 1+2: Entropy binning + bin-internal merging
+    let bin_ids = compute_entropy_bins(&state);
+    let num_active = state.count_active();
     let num_bins = BIN_SIZE.min(num_active);
-    let do_entropy_combine = num_active > num_bins * 2 && quality < 100;
-
-    if do_entropy_combine {
-        // Track first histogram per bin
-        let mut bin_first: Vec<Option<usize>> = vec![None; BIN_SIZE];
-
-        // Combine cost factor (matching libwebp's GetCombineCostFactor)
-        let mut combine_cost_factor = 16i64;
-        if quality < 90 {
-            if num_active > 256 {
-                combine_cost_factor /= 2;
-            }
-            if num_active > 512 {
-                combine_cost_factor /= 2;
-            }
-            if num_active > 1024 {
-                combine_cost_factor /= 2;
-            }
-            if quality <= 50 {
-                combine_cost_factor /= 2;
-            }
-        }
-
-        for i in 0..n {
-            if !active[i] {
-                continue;
-            }
-
-            let bin_id = bin_ids[i];
-            if let Some(first) = bin_first[bin_id] {
-                // Try to merge with first histogram in bin.
-                // libwebp uses the incoming histogram's cost for the threshold
-                // (not the accumulator's), matching HistogramCombineEntropyBin.
-                let bit_cost_incoming = costs[i].total;
-                let threshold = costs[first].total + bit_cost_incoming;
-                let cost_thresh_val = threshold.saturating_sub(div_round_i64(
-                    bit_cost_incoming as i64 * combine_cost_factor,
-                    100,
-                ) as u64);
-
-                if let Some((combined_cost, per_type)) = get_combined_histogram_cost_with_detail(
-                    &histos[first],
-                    &costs[first],
-                    &histos[i],
-                    &costs[i],
-                    cost_thresh_val,
-                ) {
-                    // Merge i into first — use precomputed costs instead of recomputing
-                    cluster_trace::inc_entropy_bin_merges();
-                    let first_costs = costs[first].clone();
-                    let i_costs = costs[i].clone();
-                    let i_histo = histos[i].clone();
-                    histos[first].add(&i_histo);
-                    costs[first] =
-                        costs_from_merge(combined_cost, per_type, &first_costs, &i_costs);
-                    active[i] = false;
-
-                    // Remap all tiles pointing to i → first
-                    for m in mapping.iter_mut() {
-                        if *m == i {
-                            *m = first;
-                        }
-                    }
-                }
-            } else {
-                bin_first[bin_id] = Some(i);
-            }
-        }
+    if num_active > num_bins * 2 && quality < 100 {
+        entropy_bin_combine_phase(&mut state, quality, &bin_ids);
     }
 
-    // Phase 2b: Stochastic combining (matching libwebp's HistogramCombineStochastic).
-    // Uses priority queue of size 9 with Lehmer RNG, matching libwebp exactly.
-    let target_size = {
-        let q3 = (quality as u64) * (quality as u64) * (quality as u64);
-        let t = 1 + div_round_u64(q3 * (MAX_HISTO_GREEDY as u64 - 1), 100u64 * 100 * 100);
-        t.min(MAX_HISTO_GREEDY as u64) as usize
-    };
-
-    let num_active_pre_stochastic = active.iter().filter(|&&a| a).count();
+    // Phase 2b: Stochastic combining
+    let target_size = stochastic_target_size(quality);
+    let num_active_pre_stochastic = state.count_active();
     cluster_trace::set_post_entropy_bin_count(num_active_pre_stochastic as u64);
 
-    // do_greedy tracks whether we should run the greedy phase after stochastic
-    let mut do_greedy = num_active_pre_stochastic <= target_size;
+    let do_greedy = if num_active_pre_stochastic > target_size {
+        stochastic_combine_phase(&mut state, target_size)
+    } else {
+        true
+    };
 
-    if num_active_pre_stochastic > target_size {
-        const HISTO_QUEUE_SIZE: usize = 9;
-        let mut histo_queue = HistoQueue::new(HISTO_QUEUE_SIZE);
-
-        // Build a compact index: position -> original index
-        // This matches libwebp's approach where histograms are stored in a
-        // compact array and HistogramSetRemoveHistogram swaps in the last element.
-        let mut compact: Vec<usize> = (0..n).filter(|&i| active[i]).collect();
-        let mut compact_size = compact.len();
-
-        let outer_iters = compact_size;
-        let num_tries_no_success = outer_iters / 2;
-        let mut tries_with_no_success = 0usize;
-        let mut seed: u32 = 1;
-
-        for _iter in 0..outer_iters {
-            if compact_size < 2 || compact_size <= target_size {
-                break;
-            }
-            tries_with_no_success += 1;
-            if tries_with_no_success >= num_tries_no_success {
-                break;
-            }
-            cluster_trace::inc_stochastic_outer_iters();
-
-            let best_cost = if histo_queue.queue.is_empty() {
-                0i64
-            } else {
-                histo_queue.queue[0].cost_diff
-            };
-            let rand_range = (compact_size as u64) * (compact_size as u64 - 1);
-            let num_tries = compact_size / 2;
-
-            // Pick random samples (matching libwebp's inner loop)
-            let mut pair_evals_this_iter = 0u64;
-            for _ in 0..num_tries {
-                if compact_size < 2 {
-                    break;
-                }
-                // Lehmer RNG
-                seed = ((seed as u64 * 48271u64) % 2147483647u64) as u32;
-                let tmp = (seed as u64) % rand_range;
-                let ci1 = (tmp / (compact_size as u64 - 1)) as usize;
-                let mut ci2 = (tmp % (compact_size as u64 - 1)) as usize;
-                if ci2 >= ci1 {
-                    ci2 += 1;
-                }
-
-                let idx1 = compact[ci1];
-                let idx2 = compact[ci2];
-
-                pair_evals_this_iter += 1;
-                let curr_cost = histo_queue.push(&histos, &costs, idx1, idx2, best_cost.min(0));
-                if curr_cost < 0 {
-                    // Break if queue reached full capacity
-                    if histo_queue.queue.len() >= histo_queue.max_size {
-                        break;
-                    }
-                }
-            }
-            cluster_trace::add_stochastic_pair_evals(pair_evals_this_iter);
-
-            if histo_queue.queue.is_empty() {
-                continue;
-            }
-
-            // Get the best pair from the queue head
-            let best_idx1 = histo_queue.queue[0].idx1;
-            let merge_idx2 = histo_queue.queue[0].idx2;
-            cluster_trace::inc_stochastic_merges();
-
-            // Merge idx2 into idx1 — use precomputed costs from queue
-            let best_pair = &histo_queue.queue[0];
-            let combined_cost = best_pair.cost_combo;
-            let per_type = best_pair.per_type_costs;
-            let c1 = costs[best_idx1].clone();
-            let c2 = costs[merge_idx2].clone();
-            let j_histo = histos[merge_idx2].clone();
-            histos[best_idx1].add(&j_histo);
-            costs[best_idx1] = costs_from_merge(combined_cost, per_type, &c1, &c2);
-
-            active[merge_idx2] = false;
-
-            // Remap all tiles pointing to merge_idx2 → best_idx1
-            for m in mapping.iter_mut() {
-                if *m == merge_idx2 {
-                    *m = best_idx1;
-                }
-            }
-
-            // Remove merge_idx2 from compact array (swap with last, like libwebp)
-            if let Some(pos) = compact.iter().position(|&x| x == merge_idx2) {
-                compact.swap(pos, compact_size - 1);
-                compact_size -= 1;
-                compact.truncate(compact_size);
-            }
-
-            // Update queue: remove pairs involving the merged indices,
-            // re-evaluate pairs that reference either idx
-            let mut j = 0usize;
-            while j < histo_queue.queue.len() {
-                let p = &histo_queue.queue[j];
-                let is_idx1_best = p.idx1 == best_idx1 || p.idx1 == merge_idx2;
-                let is_idx2_best = p.idx2 == best_idx1 || p.idx2 == merge_idx2;
-
-                if is_idx1_best && is_idx2_best {
-                    // This is the pair we just merged (or a duplicate)
-                    histo_queue.pop_at(j);
-                    continue;
-                }
-
-                if is_idx1_best || is_idx2_best {
-                    // Fix index references
-                    HistoQueue::fix_pair_idx(&mut histo_queue.queue[j], merge_idx2, best_idx1);
-                    // Re-evaluate cost
-                    cluster_trace::inc_stochastic_queue_updates();
-                    if !HistoQueue::update_pair(&histos, &costs, &mut histo_queue.queue[j]) {
-                        histo_queue.pop_at(j);
-                        continue;
-                    }
-                }
-
-                // Also fix if either index matches the "swapped-in last" index
-                // (In libwebp, HistogramSetRemoveHistogram moves the last histo
-                // into the removed slot. We don't compact our histos array, so we
-                // only need to fix the merge_idx2 reference.)
-
-                // Update head if this pair is now better
-                histo_queue.update_head(j);
-                j += 1;
-            }
-
-            tries_with_no_success = 0;
-        }
-
-        do_greedy = compact_size <= target_size;
+    // Phase 3: Greedy combining (only when stochastic reached target)
+    cluster_trace::set_post_stochastic_count(state.count_active() as u64);
+    if do_greedy && state.count_active() > 1 {
+        greedy_combine_phase(&mut state);
     }
 
-    // Phase 3: Greedy combining using priority queue (matching libwebp's
-    // HistogramCombineGreedy). O(n^2) initial pair evaluation + O(n) per merge.
-    // Only runs when stochastic brought count <= target_size (matching libwebp).
-    let num_active = active.iter().filter(|&&a| a).count();
-    cluster_trace::set_post_stochastic_count(num_active as u64);
-
-    if do_greedy && num_active > 1 {
-        let active_indices: Vec<usize> = (0..n).filter(|&i| active[i]).collect();
-        let active_n = active_indices.len();
-
-        // Initialize priority queue with all pairs
-        let mut histo_queue = HistoQueue::new(active_n * active_n);
-        let greedy_init_pairs = (active_n * (active_n - 1)) / 2;
-        cluster_trace::add_greedy_initial_pairs(greedy_init_pairs as u64);
-
-        for ai in 0..active_n {
-            for aj in (ai + 1)..active_n {
-                histo_queue.push_greedy(&histos, &costs, active_indices[ai], active_indices[aj]);
-            }
-        }
-
-        // Greedily merge the best pair until no beneficial pair remains
-        while !histo_queue.queue.is_empty() {
-            let best_idx1 = histo_queue.queue[0].idx1;
-            let best_idx2 = histo_queue.queue[0].idx2;
-            cluster_trace::inc_greedy_merges();
-
-            // Merge idx2 into idx1 — use precomputed costs from queue
-            let combined_cost = histo_queue.queue[0].cost_combo;
-            let per_type = histo_queue.queue[0].per_type_costs;
-            let c1 = costs[best_idx1].clone();
-            let c2 = costs[best_idx2].clone();
-            let j_histo = histos[best_idx2].clone();
-            histos[best_idx1].add(&j_histo);
-            costs[best_idx1] = costs_from_merge(combined_cost, per_type, &c1, &c2);
-            active[best_idx2] = false;
-
-            for m in mapping.iter_mut() {
-                if *m == best_idx2 {
-                    *m = best_idx1;
-                }
-            }
-
-            // Remove stale pairs and update pairs involving merged indices
-            let mut j = 0usize;
-            while j < histo_queue.queue.len() {
-                let p = &histo_queue.queue[j];
-                if p.idx1 == best_idx1
-                    || p.idx2 == best_idx1
-                    || p.idx1 == best_idx2
-                    || p.idx2 == best_idx2
-                {
-                    histo_queue.pop_at(j);
-                } else {
-                    // No need to fix indices — we don't compact the array
-                    histo_queue.update_head(j);
-                    j += 1;
-                }
-            }
-
-            // Add new pairs involving the merged histogram (best_idx1)
-            let mut new_pairs = 0u64;
-            for i in 0..n {
-                if !active[i] || i == best_idx1 {
-                    continue;
-                }
-                new_pairs += 1;
-                histo_queue.push_greedy(&histos, &costs, best_idx1, i);
-            }
-            cluster_trace::add_greedy_new_pairs(new_pairs);
-        }
-    }
-
-    // Phase 4: Remap - find best cluster for each original tile histogram
-    // Matches libwebp's HistogramRemap with progressive threshold tightening.
-    let active_indices: Vec<usize> = (0..n).filter(|&i| active[i]).collect();
+    // Phase 4: Remap tiles to best cluster
+    let active_indices = state.active_indices();
     cluster_trace::set_post_greedy_count(active_indices.len() as u64);
-
-    if active_indices.len() > 1 {
-        // Cache tile histogram costs to avoid recomputation
-        let tile_costs: Vec<HistogramCosts> =
-            tile_histos.iter().map(compute_histogram_cost).collect();
-
-        let remap_total = n as u64 * active_indices.len() as u64;
-        cluster_trace::add_remap_evals(remap_total);
-
-        for tile_idx in 0..n {
-            let mut best_cluster = mapping[tile_idx];
-            let mut best_bits = i64::MAX;
-
-            for &cluster_idx in &active_indices {
-                // Threshold: cluster.cost + best_bits (matching libwebp's
-                // HistogramAddThresh which does SaturateAdd(a->bit_cost, &cost_threshold))
-                let cost_threshold = if best_bits == i64::MAX {
-                    u64::MAX
-                } else {
-                    let thresh = costs[cluster_idx].total as i64 + best_bits;
-                    if thresh <= 0 {
-                        continue;
-                    }
-                    thresh as u64
-                };
-
-                if let Some(combined_cost) = get_combined_histogram_cost(
-                    &histos[cluster_idx],
-                    &costs[cluster_idx],
-                    &tile_histos[tile_idx],
-                    &tile_costs[tile_idx],
-                    cost_threshold,
-                ) {
-                    // Cost = C(cluster + tile) - C(cluster), matching HistogramAddThresh
-                    let cost = combined_cost as i64 - costs[cluster_idx].total as i64;
-                    if cost < best_bits {
-                        best_bits = cost;
-                        best_cluster = cluster_idx;
-                    }
-                }
-            }
-
-            mapping[tile_idx] = best_cluster;
-        }
-    } else if active_indices.len() == 1 {
-        // Single cluster: all tiles map to it
-        for m in mapping.iter_mut() {
-            *m = active_indices[0];
-        }
+    if !active_indices.is_empty() {
+        remap_tiles_to_clusters(&mut state, tile_histos, &active_indices);
     }
 
-    // Phase 5: Rebuild final histograms from remapped tiles
-    let mut final_histos: Vec<Histogram> = active_indices
-        .iter()
-        .map(|_| Histogram::new(cache_bits))
-        .collect();
-
-    // Create index mapping from cluster_idx → final histogram index
-    let mut cluster_to_final: Vec<Option<u16>> = vec![None; n];
-    for (final_idx, &cluster_idx) in active_indices.iter().enumerate() {
-        cluster_to_final[cluster_idx] = Some(final_idx as u16);
-    }
-
-    // Build final symbols and accumulate histograms
-    let mut symbols: Vec<u16> = Vec::with_capacity(n);
-    for tile_idx in 0..n {
-        let cluster = mapping[tile_idx];
-        let final_idx = cluster_to_final[cluster].unwrap_or(0);
-        symbols.push(final_idx);
-        final_histos[final_idx as usize].add(&tile_histos[tile_idx]);
-    }
-
-    (final_histos, symbols)
+    // Phase 5: Build final histogram outputs
+    build_final_histograms(tile_histos, &state.mapping, &active_indices, cache_bits)
 }
 
 #[inline]
