@@ -74,6 +74,28 @@ use super::fast_math::quality_to_quant_index;
 /// Quality search is considered converged when |dq| < DQ_LIMIT.
 const DQ_LIMIT: f32 = 0.4;
 
+/// Running totals threaded through a single encoding-pass row loop.
+///
+/// Kept on the stack of [`Vp8Encoder::encode_image`] so the per-row helper
+/// ([`Vp8Encoder::encode_mb_row`]) and per-MB helper
+/// ([`Vp8Encoder::encode_macroblock`]) can mutate the same accumulators
+/// without threading 8 distinct `&mut` references.
+///
+/// The fields mirror the per-pass locals that used to live inline in
+/// `encode_image` (`total_mb`, `skip_mb`, `block_count_i4`, `block_count_i16`,
+/// `sse_y/u/v`, `refresh_countdown`); after each pass the orchestrator copies
+/// them back out so the existing post-pass code path keeps the same shape.
+struct MbRowState {
+    total_mb: u32,
+    skip_mb: u32,
+    block_count_i4: u32,
+    block_count_i16: u32,
+    sse_y: u64,
+    sse_u: u64,
+    sse_v: u64,
+    refresh_countdown: i32,
+}
+
 /// State for quality search convergence (target size or PSNR).
 /// Uses secant method to interpolate toward target value.
 /// Ported from libwebp's PassStats struct.
@@ -931,8 +953,13 @@ impl<'a> Vp8Encoder<'a> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn encode_image(
+    /// Convert input pixels to YUV420 planes and prime the encoder frame buffers.
+    ///
+    /// Handles ARGB→RGBA fixup, planar YUV import, sharp-YUV / fast-YUV / luma-only
+    /// dispatch, and a strided-buffer-size sanity check, then forwards into
+    /// [`Self::setup_encoding`] which fills `self.frame.{ybuf,ubuf,vbuf}` and
+    /// initialises per-segment quant / filter state.
+    fn prepare_input_for_encoding(
         &mut self,
         data: &[u8],
         color: PixelLayout,
@@ -940,29 +967,7 @@ impl<'a> Vp8Encoder<'a> {
         height: u16,
         stride: usize,
         params: &super::api::EncoderParams,
-        stop: &dyn enough::Stop,
-        progress: &dyn super::api::EncodeProgress,
-    ) -> Result<super::api::EncodeStats, EncodeError> {
-        // Store method and configure features based on it
-        self.method = params.method.min(6); // Clamp to 0-6
-        // Method feature mapping (aligned with libwebp):
-        //   m0-2: RD_OPT_NONE - fast mode, no RD optimization
-        //   m3-4: RD_OPT_BASIC - RD scoring for mode selection, no trellis
-        //   m5:   RD_OPT_TRELLIS - trellis quantization during encoding
-        //   m6:   RD_OPT_TRELLIS_ALL - trellis during I4 mode selection
-        self.do_trellis = self.method >= 5;
-        self.do_trellis_i4_mode = self.method >= 6;
-        // Store tuning parameters
-        self.sns_strength = params.sns_strength.min(100);
-        self.smooth_segment_map = params.smooth_segment_map;
-        self.cost_model = params.cost_model;
-        self.multi_pass_stats = params.multi_pass_stats;
-        self.segment_quant_overrides = params.segment_quant_overrides;
-        self.filter_strength = params.filter_strength.min(100);
-        self.filter_sharpness = params.filter_sharpness.min(7);
-        self.num_segments = params.num_segments.clamp(1, 4);
-        self.preset = params.preset;
-        self.partition_limit = params.partition_limit.unwrap_or(0).min(100);
+    ) {
         // For ARGB input, convert to RGBA so the standard RGBA code path handles it.
         let argb_converted;
         let (data, color) = if color == PixelLayout::Argb8 {
@@ -1051,6 +1056,41 @@ impl<'a> Vp8Encoder<'a> {
             u_bytes,
             v_bytes,
         );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn encode_image(
+        &mut self,
+        data: &[u8],
+        color: PixelLayout,
+        width: u16,
+        height: u16,
+        stride: usize,
+        params: &super::api::EncoderParams,
+        stop: &dyn enough::Stop,
+        progress: &dyn super::api::EncodeProgress,
+    ) -> Result<super::api::EncodeStats, EncodeError> {
+        // Store method and configure features based on it
+        self.method = params.method.min(6); // Clamp to 0-6
+        // Method feature mapping (aligned with libwebp):
+        //   m0-2: RD_OPT_NONE - fast mode, no RD optimization
+        //   m3-4: RD_OPT_BASIC - RD scoring for mode selection, no trellis
+        //   m5:   RD_OPT_TRELLIS - trellis quantization during encoding
+        //   m6:   RD_OPT_TRELLIS_ALL - trellis during I4 mode selection
+        self.do_trellis = self.method >= 5;
+        self.do_trellis_i4_mode = self.method >= 6;
+        // Store tuning parameters
+        self.sns_strength = params.sns_strength.min(100);
+        self.smooth_segment_map = params.smooth_segment_map;
+        self.cost_model = params.cost_model;
+        self.multi_pass_stats = params.multi_pass_stats;
+        self.segment_quant_overrides = params.segment_quant_overrides;
+        self.filter_strength = params.filter_strength.min(100);
+        self.filter_sharpness = params.filter_sharpness.min(7);
+        self.num_segments = params.num_segments.clamp(1, 4);
+        self.preset = params.preset;
+        self.partition_limit = params.partition_limit.unwrap_or(0).min(100);
+        self.prepare_input_for_encoding(data, color, width, height, stride, params);
 
         // Calculate initial level costs for mode selection and trellis
         if self.level_costs.is_dirty() {
@@ -1172,238 +1212,26 @@ impl<'a> Vp8Encoder<'a> {
 
             // ===== ENCODING PASS =====
             // Each pass does full encoding: mode selection + transform + quantize + record
+            let mut row_state = MbRowState {
+                total_mb,
+                skip_mb,
+                block_count_i4,
+                block_count_i16,
+                sse_y,
+                sse_u,
+                sse_v,
+                refresh_countdown,
+            };
             for mby in 0..self.macroblock_height {
-                // Reset left state for start of row
-                self.left_complexity = Complexity::default();
-                self.left_b_pred = [IntraMode::default(); 4];
-                self.left_derr = [[0; 2]; 2]; // reset chroma error diffusion for row start
-                self.left_border_y = [129u8; 16 + 1];
-                self.left_border_u = [129u8; 8 + 1];
-                self.left_border_v = [129u8; 8 + 1];
-
-                for mbx in 0..self.macroblock_width {
-                    // Check for cancellation every 16 macroblocks
-                    if total_mb & 15 == 0 {
-                        stop.check()?;
-                    }
-
-                    // Mid-stream probability refresh (like libwebp's VP8EncTokenLoop).
-                    //
-                    // We refresh `updated_probs` periodically so the eventual emission
-                    // pass picks up evolving statistics, but we deliberately do NOT
-                    // rebuild `self.level_costs` at the same time. Empirically:
-                    // refreshing probs alone helps slightly (1.0111x → 1.0101x);
-                    // also rebuilding level_costs mid-row hurts (1.0101x → 1.0114x).
-                    //
-                    // Effect on this pass is therefore weak: cost-driven mode
-                    // selection inside the row continues to use the level_costs
-                    // computed at pass start. The real per-pass cost refresh happens
-                    // through the multi-pass loop (see #27 / two-pass at m4 path).
-                    // This call is mostly bookkeeping so the final probability
-                    // emission reflects accumulated stats. (#35-#6)
-                    refresh_countdown -= 1;
-                    if refresh_countdown < 0 {
-                        self.compute_updated_probabilities();
-                        refresh_countdown = max_count;
-                    }
-
-                    let macroblock_info = self.choose_macroblock_info(mbx.into(), mby.into());
-
-                    // Update b_pred context for next macroblock's mode selection
-                    // This must happen during encoding pass, not just header writing
-                    let mbx_usize = usize::from(mbx);
-                    if let Some(bpred) = macroblock_info.luma_bpred {
-                        // I4 mode: update with per-block modes
-                        // top_b_pred gets the bottom row (row 3)
-                        for x in 0..4 {
-                            self.top_b_pred[mbx_usize * 4 + x] = bpred[3 * 4 + x];
-                        }
-                        // left_b_pred gets the rightmost column (column 3)
-                        for y in 0..4 {
-                            self.left_b_pred[y] = bpred[y * 4 + 3];
-                        }
-                    } else {
-                        // I16 mode: all context slots get the derived intra mode
-                        let intra_mode = macroblock_info
-                            .luma_mode
-                            .into_intra()
-                            .unwrap_or(IntraMode::DC);
-                        for x in 0..4 {
-                            self.top_b_pred[mbx_usize * 4 + x] = intra_mode;
-                        }
-                        for y in 0..4 {
-                            self.left_b_pred[y] = intra_mode;
-                        }
-                    }
-
-                    // Transform blocks (updates border state for next macroblock)
-                    let y_block_data =
-                        self.transform_luma_block(mbx.into(), mby.into(), &macroblock_info);
-
-                    let (u_block_data, v_block_data) = self.transform_chroma_blocks(
-                        mbx.into(),
-                        mby.into(),
-                        macroblock_info.chroma_mode,
-                    );
-
-                    // Accumulate SSE for PSNR computation (source vs reconstructed)
-                    sse_y += u64::from(sse_16x16_luma(
-                        &self.frame.ybuf,
-                        y_stride,
-                        usize::from(mbx),
-                        usize::from(mby),
-                        &y_block_data.pred_block,
-                    ));
-                    sse_u += u64::from(sse_8x8_chroma(
-                        &self.frame.ubuf,
-                        uv_stride,
-                        usize::from(mbx),
-                        usize::from(mby),
-                        &u_block_data.pred_block,
-                    ));
-                    sse_v += u64::from(sse_8x8_chroma(
-                        &self.frame.vbuf,
-                        uv_stride,
-                        usize::from(mbx),
-                        usize::from(mby),
-                        &v_block_data.pred_block,
-                    ));
-
-                    // Count block types
-                    if macroblock_info.luma_mode == LumaMode::B {
-                        block_count_i4 += 1;
-                    } else {
-                        block_count_i16 += 1;
-                    }
-
-                    // Quantize and record tokens.
-                    //
-                    // For non-trellis methods (0-4): quantize once, check for skip,
-                    // then record tokens only if non-zero. Saves redundant quantization
-                    // that check_all_coeffs_zero would have done separately.
-                    //
-                    // For trellis methods (5-6): use integrated path since trellis
-                    // quantization depends on complexity context updated per-block.
-                    total_mb += 1;
-                    let is_i4 = macroblock_info.luma_mode == LumaMode::B;
-                    let first_coeff_y1 = if is_i4 { 0usize } else { 1 };
-
-                    let mut mb_info = macroblock_info;
-                    let store_coeffs = num_passes > 1;
-                    // Segment id resolved here so both trellis/non-trellis paths
-                    // can update `max_edge_per_segment` (#34).
-                    let mb_segment_id = macroblock_info.segment_id.unwrap_or(0);
-
-                    // Mark the start of this MB's tokens so we can selectively
-                    // suppress them at emit time when the per-MB skip flag is in
-                    // play (`macroblock_no_skip_coeff = Some`). When the flag is
-                    // omitted (`= None`), every MB's tokens are emitted, so the
-                    // EOB tokens we record below for skipped MBs are exactly what
-                    // the decoder expects (matches libwebp #25).
-                    self.token_buffer
-                        .as_mut()
-                        .expect("token buffer not initialized")
-                        .begin_mb();
-
-                    if self.do_trellis {
-                        // Trellis path: integrated quantize + record (old behavior)
-                        let all_zero = self.check_all_coeffs_zero(
-                            &macroblock_info,
-                            &y_block_data.coeffs,
-                            &u_block_data.coeffs,
-                            &v_block_data.coeffs,
-                        );
-                        if all_zero {
-                            skip_mb += 1;
-                            mb_info.coeffs_skipped = true;
-                            // Record EOB-at-0 tokens for every block. This emits
-                            // ~25 bits/MB into the token buffer; if `use_skip_proba=1`
-                            // wins they get filtered out at emit time, otherwise the
-                            // decoder reads them as the empty residuals it expects.
-                            // record_from_stored_coeffs also clears top/left
-                            // complexity correctly (has_coeffs=false for every block).
-                            self.record_from_stored_coeffs(
-                                &macroblock_info,
-                                mbx as usize,
-                                &QuantizedMbCoeffs::ZERO,
-                            );
-                            if store_coeffs {
-                                self.stored_mb_coeffs.push(QuantizedMbCoeffs::ZERO);
-                            }
-                        } else {
-                            // Reuse trellis output from transform_luma_block to
-                            // skip the second trellis pass inside the recorder
-                            // (#35-#8). Always Some() on this branch because
-                            // do_trellis is true.
-                            let stored_coeffs = self.record_residual_tokens_storing(
-                                &macroblock_info,
-                                mbx as usize,
-                                &y_block_data.coeffs,
-                                &u_block_data.coeffs,
-                                &v_block_data.coeffs,
-                                y_block_data.trellis_y1_zigzag.as_ref(),
-                            );
-                            // Track edge magnitude for I16 "blocky" MBs (#34).
-                            // Gate on `D > min_disto` per libwebp `quant_enc.c:1111`
-                            // (issue #44). `intra16_d` is the I16 winning-mode raw
-                            // SSE captured during mode selection; flat-region MBs
-                            // produce small D and are filtered out, preventing the
-                            // loop filter from over-bumping on synthetic
-                            // color-block content.
-                            if !is_i4 && stored_coeffs.is_blocky_i16() {
-                                let d = macroblock_info.intra16_d.unwrap_or(0);
-                                if d > self.segments[mb_segment_id].min_disto {
-                                    self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
-                                }
-                            }
-                            if store_coeffs {
-                                self.stored_mb_coeffs.push(stored_coeffs);
-                            }
-                        }
-                    } else {
-                        // Non-trellis path: quantize once, skip-check, record from stored.
-                        // Avoids the redundant quantization in check_all_coeffs_zero.
-                        let stored_coeffs = self.quantize_mb_coeffs(
-                            &macroblock_info,
-                            &y_block_data.coeffs,
-                            &u_block_data.coeffs,
-                            &v_block_data.coeffs,
-                        );
-                        let all_zero = stored_coeffs.is_all_zero(is_i4, first_coeff_y1);
-                        if all_zero {
-                            skip_mb += 1;
-                            mb_info.coeffs_skipped = true;
-                            // Same EOB-token recording as the trellis path above.
-                            self.record_from_stored_coeffs(
-                                &macroblock_info,
-                                mbx as usize,
-                                &QuantizedMbCoeffs::ZERO,
-                            );
-                        } else {
-                            // Track edge magnitude for I16 "blocky" MBs (#34).
-                            // See trellis branch above for the `D > min_disto`
-                            // rationale (issue #44).
-                            if !is_i4 && stored_coeffs.is_blocky_i16() {
-                                let d = macroblock_info.intra16_d.unwrap_or(0);
-                                if d > self.segments[mb_segment_id].min_disto {
-                                    self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
-                                }
-                            }
-                            self.record_from_stored_coeffs(
-                                &macroblock_info,
-                                mbx as usize,
-                                &stored_coeffs,
-                            );
-                        }
-                        // Only store quantized coefficients when multi-pass needs them
-                        if store_coeffs {
-                            self.stored_mb_coeffs.push(stored_coeffs);
-                        }
-                    }
-
-                    // Store macroblock info for header writing
-                    self.stored_mb_info.push(mb_info);
-                }
+                self.encode_mb_row(
+                    mby,
+                    y_stride,
+                    uv_stride,
+                    num_passes,
+                    max_count,
+                    &mut row_state,
+                    stop,
+                )?;
 
                 // Report progress after each row
                 let pct = ((u32::from(mby) + 1) * 100 / u32::from(self.macroblock_height)) as u8;
@@ -1412,6 +1240,15 @@ impl<'a> Vp8Encoder<'a> {
                     progress.on_progress(pct.min(99))?; // cap at 99, report 100 after finalize
                 }
             }
+            total_mb = row_state.total_mb;
+            skip_mb = row_state.skip_mb;
+            block_count_i4 = row_state.block_count_i4;
+            block_count_i16 = row_state.block_count_i16;
+            sse_y = row_state.sse_y;
+            sse_u = row_state.sse_u;
+            sse_v = row_state.sse_v;
+            refresh_countdown = row_state.refresh_countdown;
+            let _ = refresh_countdown; // consumed when the pass ends
 
             // Compute skip probability from actual data.
             // libwebp gates per-MB skip-bit emission on `skip_proba < SKIP_PROBA_THRESHOLD (250)`
@@ -1556,6 +1393,273 @@ impl<'a> Vp8Encoder<'a> {
         progress.on_progress(100)?;
 
         Ok(stats)
+    }
+
+    /// Encode a single macroblock row.
+    ///
+    /// Resets per-row left state, walks every `mbx` in the row, and forwards
+    /// per-MB work into [`Self::encode_macroblock`]. Cancellation checks fire
+    /// every 16 MBs via `stop.check()` (driven from `row_state.total_mb`).
+    /// Mutates `row_state` and all per-row encoder state in `self`.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_mb_row(
+        &mut self,
+        mby: u16,
+        y_stride: usize,
+        uv_stride: usize,
+        num_passes: usize,
+        max_count: i32,
+        row_state: &mut MbRowState,
+        stop: &dyn enough::Stop,
+    ) -> Result<(), EncodeError> {
+        // Reset left state for start of row
+        self.left_complexity = Complexity::default();
+        self.left_b_pred = [IntraMode::default(); 4];
+        self.left_derr = [[0; 2]; 2]; // reset chroma error diffusion for row start
+        self.left_border_y = [129u8; 16 + 1];
+        self.left_border_u = [129u8; 8 + 1];
+        self.left_border_v = [129u8; 8 + 1];
+
+        for mbx in 0..self.macroblock_width {
+            // Check for cancellation every 16 macroblocks
+            if row_state.total_mb & 15 == 0 {
+                stop.check()?;
+            }
+
+            // Mid-stream probability refresh (like libwebp's VP8EncTokenLoop).
+            //
+            // We refresh `updated_probs` periodically so the eventual emission
+            // pass picks up evolving statistics, but we deliberately do NOT
+            // rebuild `self.level_costs` at the same time. Empirically:
+            // refreshing probs alone helps slightly (1.0111x → 1.0101x);
+            // also rebuilding level_costs mid-row hurts (1.0101x → 1.0114x).
+            //
+            // Effect on this pass is therefore weak: cost-driven mode
+            // selection inside the row continues to use the level_costs
+            // computed at pass start. The real per-pass cost refresh happens
+            // through the multi-pass loop (see #27 / two-pass at m4 path).
+            // This call is mostly bookkeeping so the final probability
+            // emission reflects accumulated stats. (#35-#6)
+            row_state.refresh_countdown -= 1;
+            if row_state.refresh_countdown < 0 {
+                self.compute_updated_probabilities();
+                row_state.refresh_countdown = max_count;
+            }
+
+            self.encode_macroblock(mbx, mby, y_stride, uv_stride, num_passes, row_state);
+        }
+
+        Ok(())
+    }
+
+    /// Encode a single macroblock: mode select, transform, quantize, record tokens.
+    ///
+    /// The orchestrator for one (mbx, mby) pair. Selects intra mode via
+    /// [`Self::choose_macroblock_info`], runs DCT/transform on luma + chroma,
+    /// accumulates per-MB SSE for PSNR, routes through the trellis / non-trellis
+    /// quantize+record path, then appends the per-MB info to `self.stored_mb_info`.
+    ///
+    /// `row_state` carries per-row sums that the caller integrates into per-pass
+    /// totals. Side effects on `self`: token buffer, complexity context, segment
+    /// edge tracking (`max_edge_per_segment`), and `stored_mb_info` /
+    /// `stored_mb_coeffs` vectors.
+    fn encode_macroblock(
+        &mut self,
+        mbx: u16,
+        mby: u16,
+        y_stride: usize,
+        uv_stride: usize,
+        num_passes: usize,
+        row_state: &mut MbRowState,
+    ) {
+        let macroblock_info = self.choose_macroblock_info(mbx.into(), mby.into());
+
+        // Update b_pred context for next macroblock's mode selection
+        // This must happen during encoding pass, not just header writing
+        let mbx_usize = usize::from(mbx);
+        if let Some(bpred) = macroblock_info.luma_bpred {
+            // I4 mode: update with per-block modes
+            // top_b_pred gets the bottom row (row 3)
+            for x in 0..4 {
+                self.top_b_pred[mbx_usize * 4 + x] = bpred[3 * 4 + x];
+            }
+            // left_b_pred gets the rightmost column (column 3)
+            for y in 0..4 {
+                self.left_b_pred[y] = bpred[y * 4 + 3];
+            }
+        } else {
+            // I16 mode: all context slots get the derived intra mode
+            let intra_mode = macroblock_info
+                .luma_mode
+                .into_intra()
+                .unwrap_or(IntraMode::DC);
+            for x in 0..4 {
+                self.top_b_pred[mbx_usize * 4 + x] = intra_mode;
+            }
+            for y in 0..4 {
+                self.left_b_pred[y] = intra_mode;
+            }
+        }
+
+        // Transform blocks (updates border state for next macroblock)
+        let y_block_data = self.transform_luma_block(mbx.into(), mby.into(), &macroblock_info);
+
+        let (u_block_data, v_block_data) =
+            self.transform_chroma_blocks(mbx.into(), mby.into(), macroblock_info.chroma_mode);
+
+        // Accumulate SSE for PSNR computation (source vs reconstructed)
+        row_state.sse_y += u64::from(sse_16x16_luma(
+            &self.frame.ybuf,
+            y_stride,
+            usize::from(mbx),
+            usize::from(mby),
+            &y_block_data.pred_block,
+        ));
+        row_state.sse_u += u64::from(sse_8x8_chroma(
+            &self.frame.ubuf,
+            uv_stride,
+            usize::from(mbx),
+            usize::from(mby),
+            &u_block_data.pred_block,
+        ));
+        row_state.sse_v += u64::from(sse_8x8_chroma(
+            &self.frame.vbuf,
+            uv_stride,
+            usize::from(mbx),
+            usize::from(mby),
+            &v_block_data.pred_block,
+        ));
+
+        // Count block types
+        if macroblock_info.luma_mode == LumaMode::B {
+            row_state.block_count_i4 += 1;
+        } else {
+            row_state.block_count_i16 += 1;
+        }
+
+        // Quantize and record tokens.
+        //
+        // For non-trellis methods (0-4): quantize once, check for skip,
+        // then record tokens only if non-zero. Saves redundant quantization
+        // that check_all_coeffs_zero would have done separately.
+        //
+        // For trellis methods (5-6): use integrated path since trellis
+        // quantization depends on complexity context updated per-block.
+        row_state.total_mb += 1;
+        let is_i4 = macroblock_info.luma_mode == LumaMode::B;
+        let first_coeff_y1 = if is_i4 { 0usize } else { 1 };
+
+        let mut mb_info = macroblock_info;
+        let store_coeffs = num_passes > 1;
+        // Segment id resolved here so both trellis/non-trellis paths
+        // can update `max_edge_per_segment` (#34).
+        let mb_segment_id = macroblock_info.segment_id.unwrap_or(0);
+
+        // Mark the start of this MB's tokens so we can selectively
+        // suppress them at emit time when the per-MB skip flag is in
+        // play (`macroblock_no_skip_coeff = Some`). When the flag is
+        // omitted (`= None`), every MB's tokens are emitted, so the
+        // EOB tokens we record below for skipped MBs are exactly what
+        // the decoder expects (matches libwebp #25).
+        self.token_buffer
+            .as_mut()
+            .expect("token buffer not initialized")
+            .begin_mb();
+
+        if self.do_trellis {
+            // Trellis path: integrated quantize + record (old behavior)
+            let all_zero = self.check_all_coeffs_zero(
+                &macroblock_info,
+                &y_block_data.coeffs,
+                &u_block_data.coeffs,
+                &v_block_data.coeffs,
+            );
+            if all_zero {
+                row_state.skip_mb += 1;
+                mb_info.coeffs_skipped = true;
+                // Record EOB-at-0 tokens for every block. This emits
+                // ~25 bits/MB into the token buffer; if `use_skip_proba=1`
+                // wins they get filtered out at emit time, otherwise the
+                // decoder reads them as the empty residuals it expects.
+                // record_from_stored_coeffs also clears top/left
+                // complexity correctly (has_coeffs=false for every block).
+                self.record_from_stored_coeffs(
+                    &macroblock_info,
+                    mbx as usize,
+                    &QuantizedMbCoeffs::ZERO,
+                );
+                if store_coeffs {
+                    self.stored_mb_coeffs.push(QuantizedMbCoeffs::ZERO);
+                }
+            } else {
+                // Reuse trellis output from transform_luma_block to
+                // skip the second trellis pass inside the recorder
+                // (#35-#8). Always Some() on this branch because
+                // do_trellis is true.
+                let stored_coeffs = self.record_residual_tokens_storing(
+                    &macroblock_info,
+                    mbx as usize,
+                    &y_block_data.coeffs,
+                    &u_block_data.coeffs,
+                    &v_block_data.coeffs,
+                    y_block_data.trellis_y1_zigzag.as_ref(),
+                );
+                // Track edge magnitude for I16 "blocky" MBs (#34).
+                // Gate on `D > min_disto` per libwebp `quant_enc.c:1111`
+                // (issue #44). `intra16_d` is the I16 winning-mode raw
+                // SSE captured during mode selection; flat-region MBs
+                // produce small D and are filtered out, preventing the
+                // loop filter from over-bumping on synthetic
+                // color-block content.
+                if !is_i4 && stored_coeffs.is_blocky_i16() {
+                    let d = macroblock_info.intra16_d.unwrap_or(0);
+                    if d > self.segments[mb_segment_id].min_disto {
+                        self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
+                    }
+                }
+                if store_coeffs {
+                    self.stored_mb_coeffs.push(stored_coeffs);
+                }
+            }
+        } else {
+            // Non-trellis path: quantize once, skip-check, record from stored.
+            // Avoids the redundant quantization in check_all_coeffs_zero.
+            let stored_coeffs = self.quantize_mb_coeffs(
+                &macroblock_info,
+                &y_block_data.coeffs,
+                &u_block_data.coeffs,
+                &v_block_data.coeffs,
+            );
+            let all_zero = stored_coeffs.is_all_zero(is_i4, first_coeff_y1);
+            if all_zero {
+                row_state.skip_mb += 1;
+                mb_info.coeffs_skipped = true;
+                // Same EOB-token recording as the trellis path above.
+                self.record_from_stored_coeffs(
+                    &macroblock_info,
+                    mbx as usize,
+                    &QuantizedMbCoeffs::ZERO,
+                );
+            } else {
+                // Track edge magnitude for I16 "blocky" MBs (#34).
+                // See trellis branch above for the `D > min_disto`
+                // rationale (issue #44).
+                if !is_i4 && stored_coeffs.is_blocky_i16() {
+                    let d = macroblock_info.intra16_d.unwrap_or(0);
+                    if d > self.segments[mb_segment_id].min_disto {
+                        self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
+                    }
+                }
+                self.record_from_stored_coeffs(&macroblock_info, mbx as usize, &stored_coeffs);
+            }
+            // Only store quantized coefficients when multi-pass needs them
+            if store_coeffs {
+                self.stored_mb_coeffs.push(stored_coeffs);
+            }
+        }
+
+        // Store macroblock info for header writing
+        self.stored_mb_info.push(mb_info);
     }
 
     /// Merge segments with identical quantizer and filter settings.
