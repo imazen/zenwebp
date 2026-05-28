@@ -37,9 +37,16 @@
   `quantizer_index` (encoder-independent), not the derived `source_q`
   estimate. Bound model: `cumulative = min(gen_loss, source_cum)`; bilinear
   interpolation between qi/target bins.
-- **`DeblockReencode` now runs a real filter**: gradient-gated 4-pixel
-  edge-preserving blur on decoded RGBA, strength keyed on qi (off below
-  qi 60, capped at qi 110+). Real edges preserved; block artifacts blended.
+- **`DeblockReencode` — implemented, measured, FALSIFIED, removed from
+  router.** The artifact-aware filter (`src/strategies/deblock.rs`,
+  H.264/VP8-style boundary-vs-interior gate) is correct and unit-tested,
+  but a paired sweep showed it is net-negative on every tested source
+  config (default-filtered −2.75 zensim/+3.9% size; weak-filtered −3.35;
+  worst-blocking qi≥90 −5.09, 0/60 wins) — VP8 already deblocks in-loop, so
+  a second pass moves the image away from the sharp original. The router
+  never selects it (with the unimplemented `CoeffEdit`); the filter stays
+  as `expert::deblock_rgba`. See
+  `benchmarks/deblock_experiment_2026-05-28.md`.
 - **`Budget::MaxIterations(N)` runs real secant search** on libwebp_q
   (initial anchor → fixed-direction step → one-pair secant), shipping when
   measured generation-loss lands in `[target − tolerance, target + 2.0]`,
@@ -59,7 +66,23 @@
   router accepts a slight target undershoot in exchange for real size
   savings when no strategy projects strictly at-or-above target.
 
+### Repo integration
+- Ships as a **self-contained nested workspace** at
+  `zenwebp/zenwebp-recompress/` (zwr-calibrate moved under it). zenwebp
+  itself is intentionally NOT a Cargo workspace — the sibling path deps
+  (`../zensim`, `../zenpixels`, `../zenanalyze`) would break zenwebp's core
+  CI, which doesn't check them out. Verified `cargo metadata` for zenwebp
+  shows only `zenwebp`.
+- Isolated `.github/workflows/recompress.yml` (Linux/Windows-arm/macOS-x64)
+  builds + tests + clippy(-D warnings) + fmt-checks the nested workspace,
+  checking out the three siblings itself. Triggers only on
+  `zenwebp-recompress/**` so sibling drift can't redden zenwebp core CI.
+
 ### Tests
-- 20 passing: 4 locked-API + 8 end-to-end smoke + 8 lib unit.
-- Sweep results: `benchmarks/paired_sweep_v2_deblock_2026-05-28.csv`
-  (6,400 cells, authoritative), `test_corpus_2026-05-28.csv` (630 cells).
+- 23 passing: 4 locked-API + 8 end-to-end smoke + 9 lib unit (incl. 4
+  deblock artifact-decision tests) + 2 quality-grid robustness (source
+  quality 20..=100 step 2 × zensim targets, no-growth / valid-WebP /
+  no-deselected-strategy invariants).
+- Authoritative sweep: `benchmarks/paired_sweep_v2_deblock_2026-05-28.csv`
+  (6,400 cells) + `deblock_weakfilter_2026-05-28.csv` (3,200 cells),
+  pointer-filed to `/mnt/v` (see `sweeps-2026-05-28.pointer.md`).

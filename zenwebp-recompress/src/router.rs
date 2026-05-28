@@ -242,11 +242,18 @@ pub fn dispatch(
                 1.0
             };
 
-            // Speculative strategies (LosslessReencode on a lossless source,
-            // dispatched without target gating) must only ship if they
-            // actually shrink the file. Otherwise fall back to a clean
-            // re-mux — the source bytes are already optimal.
-            if ratio >= 1.0 && matches!(strategy, StrategyKind::LosslessReencode) {
+            // GROUND-TRUTH SIZE GUARD. The router picks a strategy from
+            // *projected* size ratios, but projections are p50 estimates —
+            // a particular image can grow even when the cell median
+            // shrinks. The goal is explicit: "Sometimes reencoding with any
+            // strategy will make a file larger at the target zensim value,
+            // at which point only lossless optimization should be done." So
+            // whatever the projection said, if the ACTUAL output is not
+            // smaller than the source, ship a clean re-mux instead. Applies
+            // to every recompression strategy, not just the speculative
+            // lossless path. We already hold `bytes`, so the only extra cost
+            // is a metadata-only re-mux.
+            if ratio >= 1.0 {
                 let remux = strategies::lossless_remux::run_lossless_remux(webp_bytes, analysis)?;
                 return Ok(RecompressResult::LosslessOnly {
                     bytes: remux,

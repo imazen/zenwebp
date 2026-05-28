@@ -3,6 +3,33 @@
 See global ~/.claude/CLAUDE.md for general instructions.
 Historical investigation notes and resolved bugs are in [LOG.md](LOG.md).
 
+## zenwebp-recompress (nested workspace, added 2026-05-28)
+
+`zenwebp/zenwebp-recompress/` is a **self-contained nested Cargo workspace**
+(crate `zenwebp-recompress` + `zwr-calibrate` binary). It recompresses
+already-encoded WebPs to a target zensim Profile A score, picking the
+optimal strategy (LosslessRemux / Reencode / LosslessReencode; CoeffEdit +
+DeblockReencode are de-selected — see below). Public API: `recompress()` +
+`plan()`, with `Budget::{OneShot, MaxIterations, MaxTime}`.
+
+**zenwebp is deliberately NOT a Cargo workspace.** The recompress crate
+path-depends on `../zensim`, `../zenpixels`, `../zenanalyze`, which are not
+checked out on zenwebp's core CI runners; making it a workspace member would
+break zenwebp's `cargo build`/`test` (Cargo resolves the whole member graph
+upfront). Build it from its own directory: `cd zenwebp-recompress && cargo
+test`. Its own CI is `.github/workflows/recompress.yml` (isolated, path-
+filtered, checks out the three siblings).
+
+**DeblockReencode is FALSIFIED** (measured net-negative; VP8 already
+deblocks in-loop). The router never selects it; the artifact-aware filter
+survives as `expert::deblock_rgba`. Don't re-add it to the router without a
+source config where it measurably wins. See
+`zenwebp-recompress/benchmarks/deblock_experiment_2026-05-28.md`.
+
+Calibration constants in `src/calibration/data.rs` are fit from the paired
+sweep (provenance: `benchmarks/*.meta.md` + `sweeps-2026-05-28.pointer.md`,
+raw CSVs on `/mnt/v`).
+
 ## Canonical training data + indexes (added 2026-05-20)
 
 **The canonical index for all ML data lives at `~/work/zen/DATA_PROVENANCE.md`.**
