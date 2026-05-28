@@ -52,23 +52,27 @@ match recompress(&webp_bytes, &opts)? {
 
 ## How it picks
 
-Six strategies, each at a different point on the (generation-loss × bitrate
+Strategies, each at a different point on the (generation-loss × bitrate
 × CPU) surface:
 
-| Strategy             | Decodes? | Re-encodes? | Generation loss | When it wins                                   |
-|----------------------|----------|-------------|-----------------|-----------------------------------------------|
-| `NoOp`               | no       | no          | none            | source already at target                       |
-| `LosslessRemux`      | no       | no          | none            | container metadata strip, no recompression wins |
-| `CoeffEdit`          | partial  | partial     | none in IDCT    | per-segment Q tighten on VP8 only              |
-| `Reencode`           | yes      | yes         | one round       | medium-quality source, target close to source  |
-| `DeblockReencode`    | yes      | yes (deblock)| one round + deblock | source has visible artifacts, target much lower bpp |
-| `LosslessReencode`   | yes      | yes (VP8L)  | none after decode | graphics/screen content, lossless wins        |
+| Strategy             | Status | Decodes? | When it wins                                   |
+|----------------------|--------|----------|-----------------------------------------------|
+| `NoOp`               | shipped | no      | source already at target                       |
+| `LosslessRemux`      | shipped | no      | metadata strip; no recompression beats source  |
+| `Reencode`           | shipped | yes     | source has headroom above target → re-encode lower |
+| `LosslessReencode`   | shipped | yes     | graphics/screen, or a suboptimal lossless source |
+| `DeblockReencode`    | **de-selected** | — | measured net-negative (VP8 deblocks in-loop) — [details](./benchmarks/deblock_experiment_2026-05-28.md) |
+| `CoeffEdit`          | **deferred** | — | needs a VP8 token-stream API in zenwebp; not yet implemented |
 
-The router queries a calibration table indexed by
-`(encoder_family, source_q, content_class, target_zensim_a, strategy)` and
-picks the strategy with the smallest projected output size whose projected
-zensim-A is at-or-above target. When **no** strategy beats source size at
-target, it ships a `LosslessRemux` instead.
+The router keys a calibration table on the **decode-based effective
+quality** (`(eff_q, target_zensim_a, content_class, strategy)`) — header
+quality detection is unreliable for segmented WebP, so a re-compression
+self-consistency estimate is used instead (see
+[docs/QUALITY_DETECTION.md](./docs/QUALITY_DETECTION.md)). It picks the
+strategy with the smallest projected output size whose projected zensim-A
+is at-or-above target. A **ground-truth size guard** re-checks the actual
+output and falls back to `LosslessRemux` if it didn't shrink — so the
+result never grows the file, regardless of projection error.
 
 ## Design
 
