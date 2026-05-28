@@ -93,3 +93,9 @@ benchmarks/*.parquet
 # Cloudflare Workers / Wrangler local state — picked up if `wrangler dev`
 # is ever run inside the repo. Never commit.
 .wrangler/
+
+# zenwebp-recompress dev/ scratch area — fixtures copied from tests/images
+# during interactive development. Sweep artifacts live in benchmarks/ and
+# are tracked; raw WebP copies in dev/ are not.
+zenwebp-recompress/dev/
+

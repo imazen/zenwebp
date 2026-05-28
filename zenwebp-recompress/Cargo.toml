@@ -1,0 +1,55 @@
+[package]
+name = "zenwebp-recompress"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Recompress already-encoded WebPs to a target zensim Profile A score with minimal generation loss and no size regression."
+keywords = ["webp", "recompression", "transcode", "perceptual"]
+categories = ["multimedia::images", "encoding"]
+readme = "README.md"
+
+[lib]
+name = "zenwebp_recompress"
+
+[features]
+default = ["std"]
+
+## Std-only path. no_std is supported with `default-features = false` plus
+## `alloc`, but the calibration loader uses include_bytes! + bincode which is
+## std-friendly (no allocation drama).
+std = ["zenwebp/std", "enough/std", "thiserror/std", "zensim/threads"]
+
+## Multi-threaded internal work. (Pulls rayon — zenwebp itself doesn't gate
+## threading behind a feature today; this knob is for the calibration sweep
+## and any future internal parallelism in zenwebp-recompress.)
+parallel = ["dep:rayon"]
+
+## Expose expert internals: per-strategy entry points, calibration table
+## inspection, candidate enumeration, MLP feature dumps. Required by
+## `zwr-calibrate` and any caller that wants to override the router.
+##
+## **Stability:** Anything under `pub mod expert` may break between any two
+## releases. Default callers see a minimal frozen API.
+expert = []
+
+## Optional MLP-based content classifier. When enabled, the router queries
+## zenanalyze for per-image features and a tiny per-image MLP refines the
+## (content_class, strategy_choice) decision.
+analyzer = ["dep:zenanalyze", "dep:zenpixels"]
+
+[dependencies]
+zenwebp.workspace = true
+zensim.workspace = true
+enough.workspace = true
+thiserror.workspace = true
+bytemuck = { version = "1", default-features = false, features = ["extern_crate_alloc"] }
+rayon = { workspace = true, optional = true }
+zenanalyze = { workspace = true, optional = true }
+zenpixels = { workspace = true, optional = true }
+
+[dev-dependencies]
+# zenwebp test corpus + reference encoder for round-trip checks.
+zenwebp = { workspace = true, features = ["std"] }
