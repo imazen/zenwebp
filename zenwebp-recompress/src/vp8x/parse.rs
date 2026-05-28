@@ -338,6 +338,17 @@ fn split_token_partitions(data: &[u8], n: usize) -> Option<Vec<&[u8]>> {
     Some(parts)
 }
 
+/// Map a whole-MB luma mode to its B-mode equivalent for bpred context
+/// (VP8 `into_intra`: DC→B_DC, V→B_VE, H→B_HE, TM→B_TM).
+pub(super) fn ymode_to_bcontext(m: i8) -> i8 {
+    match m {
+        DC_PRED => B_DC_PRED,
+        V_PRED => B_VE_PRED,
+        H_PRED => B_HE_PRED,
+        _ => B_TM_PRED,
+    }
+}
+
 fn read_segment_id(b: &mut BoolDecoder, probs: &[u8; 3]) -> u8 {
     if b.get_bit(probs[0]) == 0 {
         if b.get_bit(probs[1]) == 0 { 0 } else { 1 }
@@ -428,7 +439,10 @@ fn parse_mb_header(
             }
         }
     } else {
-        let m = mb.luma_mode;
+        // Non-B MB: the bpred CONTEXT stores the B-mode equivalent of the
+        // whole-MB luma mode (DC→B_DC, V→B_VE, H→B_HE, TM→B_TM), matching
+        // VP8 `into_intra` — NOT the raw luma index.
+        let m = ymode_to_bcontext(mb.luma_mode);
         for i in 0..4 {
             mb.bpred[12 + i] = m;
             left.bpred[i] = m;

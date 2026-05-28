@@ -21,5 +21,6 @@
 #![allow(dead_code)]
 
 pub mod bool;
+pub mod emit;
 pub mod parse;
 pub mod tables;
