@@ -949,12 +949,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lz4_flex"
-version = "0.11.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
-
-[[package]]
 name = "magetypes"
 version = "0.9.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2073,6 +2067,8 @@ checksum = "00f1f60154ad4ef9871d606765c3ea037cde93bbd77536327b594de8f82df1cb"
 [[package]]
 name = "zenanalyze"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9711cf1c3363003dd436f5b5dc113f7881f9b377613eecbf41f91b6b85626442"
 dependencies = [
  "archmage",
  "garb",
@@ -2186,11 +2182,11 @@ dependencies = [
 
 [[package]]
 name = "zenpredict"
-version = "0.2.1"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da940aa02fa5dbb80e4cfe6883c82a7d39c814bc503e4c8c6f6d534e53a0a2ec"
 dependencies = [
  "bytemuck",
- "libm",
- "lz4_flex",
 ]
 
 [[package]]

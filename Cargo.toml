@@ -39,19 +39,27 @@ magetypes = { version = "0.9.15" }
 rgb = { version = "0.8", optional = true, default-features = false, features = ["as-bytes"] }
 imgref = { version = "1.12", optional = true, default-features = false }
 zensim = { version = "0.2", optional = true }
-# zenanalyze: path-pinned to local main (post-0.1.0) so we pick up
-# IsGrayscale, PatchFractionFast, QuantSurvivalY/Uv that were added
-# after the 0.1.0 release. The `experimental` feature gates the
-# research-stage signals (PaletteFitsIn256, IndexedPaletteWidth,
-# LineArtScore, SkinToneFraction, EdgeSlopeStdev). Path-pin until the
-# next zenanalyze release lands these on crates.io.
-zenanalyze = { version = "0.1.0", path = "../zenanalyze", optional = true, features = ["experimental"] }
-# zenpredict — Rust ZNPR v3 inference runtime. Path-pinned to the
-# zenanalyze workspace until 0.2.x lands on crates.io. Gated behind
-# the `picker` cargo feature so default builds don't pull it.
-# Companion Python tooling lives at zenanalyze/zentrain/. See
-# zenanalyze/MIGRATION.md for the rename + format-change context.
-zenpredict = { version = "0.2.1", path = "../zenanalyze/zenpredict", optional = true, default-features = false, features = ["std"] }
+# zenanalyze: registry-only (0.1.0). The sibling `../zenanalyze` is
+# NOT guaranteed to be checked out on CI, and Cargo doesn't fall
+# back from a missing path-dep to the registry — even when the
+# feature gating the dep is off — so a path declaration breaks
+# `cargo build` on the regression-test job entirely.
+#
+# Caveat: `src/encoder/analysis/classifier.rs` and the `picker`
+# runtime use post-0.1.0 symbols (`PaletteLog2Size`,
+# `QuantSurvivalY`, etc.). Building with `--features analyzer` or
+# `--features picker` against registry 0.1.0 will FAIL to compile.
+# Local devs that need those features must either checkout the
+# sibling and patch via a local `.cargo/config.toml` override, or
+# wait for the next zenanalyze registry release. CI never enables
+# these features.
+zenanalyze = { version = "0.1.0", optional = true, features = ["experimental"] }
+# zenpredict — registry-only (0.1.0). The 0.2.x branch on the
+# sibling provides ZNPR v3 with extra `output_specs` /
+# `discrete_sets` / `feature_transforms` features; zenwebp's
+# `picker` runtime only uses 0.1.x-compatible APIs. Path-only deps
+# don't work on CI for the same reason as zenanalyze (above).
+zenpredict = { version = "0.1.0", optional = true, default-features = false, features = ["std"] }
 
 [dev-dependencies]
 archmage = { version = "0.9.15", features = ["std", "macros"] }
@@ -63,12 +71,14 @@ rgb = "0.8"
 zenpng = "0.1.4"
 zenpixels-convert = { version = "0.2.11", features = ["rgb"] }
 jpeg-decoder = "0.3"
-# Path-pinned so dev/picker_v0_3_holdout_ab.rs can load v0.3+ baked
-# pickers externally without enabling the in-runtime `picker` feature
-# (which embeds a different .bin and requires zenanalyze enum names
-# we don't necessarily depend on here).
-zenpredict = { path = "../zenanalyze/zenpredict", default-features = false, features = ["std"] }
-zenanalyze = { path = "../zenanalyze", features = ["experimental"] }
+# zenanalyze / zenpredict as path-pinned dev-deps were removed: CI
+# regression-test runs (`cargo build` then `cargo test --test
+# fuzz_regression`) don't have the sibling repo checked out, and
+# unconditional path-only dev-deps break cargo's dependency
+# resolution. The dev/ binaries that consume these crates have
+# `required-features = ["analyzer"]` or `["picker"]`, which pull in
+# the same crates via the optional regular deps above when the
+# feature is enabled.
 
 # Native-only dev-deps (C bindings, threading, or native-only features)
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
