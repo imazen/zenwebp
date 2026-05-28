@@ -17,6 +17,7 @@ mod router;
 mod source;
 mod strategies;
 mod target;
+mod vp8x;
 
 pub use api::{
     Budget, LosslessReason, NoOpReason, Plan, RecompressOptions, RecompressResult, StrategyKind,
