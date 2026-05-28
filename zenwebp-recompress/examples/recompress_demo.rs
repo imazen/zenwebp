@@ -9,9 +9,9 @@
 //! This uses only the frozen public API (no `expert` feature). It
 //! synthesizes a lossy WebP source in memory, then shows:
 //!
-//! 1. `plan()` — preview the router's decision without running a strategy.
+//! 1. `plan()` — preview the router's decision without running the strategy.
 //! 2. `recompress()` with `Budget::OneShot` — one decode + encode.
-//! 3. `recompress()` with `Budget::MaxIterations` — measured secant search.
+//! 3. `recompress()` with `Budget::MaxIterations` — measured size search.
 //! 4. Inspecting every `RecompressResult` arm, including the
 //!    `better_handled_by_jxl` hint and the chosen `StrategyKind`.
 
@@ -36,7 +36,8 @@ fn main() {
     .expect("encode source");
     println!("source: {} bytes ({}x{}, lossy q90)\n", source.len(), w, h);
 
-    // --- 1. Preview the decision (no pixel work beyond a header probe). ---
+    // --- 1. Preview the decision (decodes + estimates, but does not run
+    //        the chosen strategy — cheaper than a full recompress). ---
     let target = 65.0;
     let opts = RecompressOptions {
         target_zensim_a: target,

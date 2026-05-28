@@ -322,16 +322,41 @@ accuracy is worth 3-5x CPU.
    table must be re-fit. Versioned tables ship with a CRC; loader rejects
    stale tables.
 
-## Roadmap
+## Status (2026-05-28)
 
-- **0.1.0** — `LosslessRemux`, `Reencode`, `LosslessReencode`. Hand-fit
-  calibration table for libwebp Q60–Q95 photo content. `OneShot` budget only.
-- **0.2.0** — `DeblockReencode` shipping with proper content classifier.
-  `MaxIterations` budget. zenwebp encoder family in calibration table.
-- **0.3.0** — `CoeffEdit` shipping. AQ block-decision table. Full 6-axis
-  calibration grid. `MaxTime` budget. JXL handoff hint.
-- **0.4.0** — MLP-refined classifier when the corpus is large enough; gated
-  behind `--features analyzer`.
+**Shipped and working:**
+- `LosslessRemux`, `Reencode`, `LosslessReencode` strategies. All three are
+  real and selected by the router.
+- `OneShot`, `MaxIterations`, `MaxTime` budgets. `OneShot` uses the
+  calibration's chosen quality; the measured budgets run `minimize_size`.
+- Decode-based effective-quality estimation (`src/estimate.rs`) — the
+  reliable calibration key, since header detection is unreliable (see
+  `docs/QUALITY_DETECTION.md`).
+- Monotonic, measured calibration (`src/calibration/data.rs`) from a clean
+  lossless-only sweep. Real photos recompress 13–20% at mid targets.
+- Heuristic content classifier (`src/classify.rs`); gates VP8L.
+- Ground-truth size guard — never ships a file that didn't shrink.
+- JXL handoff hint, `plan()` preview, full `expert` API.
+
+**Measured and de-selected:**
+- `DeblockReencode` — FALSIFIED (net-negative on every tested source
+  config; VP8 already deblocks in-loop). Filter kept as `expert::deblock_rgba`;
+  router never selects it. See `benchmarks/deblock_experiment_2026-05-28.md`.
+
+**Deferred (documented, not half-built):**
+- `CoeffEdit` (coefficient-domain preserve / minimal-edit) — requires
+  VP8 token-stream access that `zenwebp`'s decoder does not expose
+  (`pub(crate)` coefficient internals). A real implementation is a
+  multi-day effort that must first add a coefficient-access API to
+  zenwebp's decoder. Stubbed + router-excluded today.
+- Larger calibration corpus — current tables are fit from 3 photo refs
+  (preliminary, below the 50-per-class bar). Re-fit recipe in
+  `docs/QUALITY_DETECTION.md`. The size guard keeps the system correct
+  regardless of fit precision.
+- zenanalyze MLP content classifier (`--features analyzer`) — a final
+  optimization step once the corpus is large enough; the heuristic
+  classifier covers the common cases today.
+- zenwebp encoder-family calibration (currently libwebp-family only).
 
 ## File layout
 

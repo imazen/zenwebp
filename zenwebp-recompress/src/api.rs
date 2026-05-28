@@ -228,17 +228,26 @@ pub enum Plan {
     NoOp { reason: NoOpReason },
 }
 
-/// Preview the router decision **without** running any pixel-level work.
+/// Preview the router decision **without** running the chosen strategy.
 ///
-/// Pure analysis: probes the WebP header, consults the calibration table,
-/// and returns the [`Plan`] the router would dispatch. Useful for batch
-/// decisions, JXL-vs-WebP triage, and surfacing "what would happen" to
-/// callers before they commit CPU.
+/// Returns the [`Plan`] the router would dispatch — the strategy, projected
+/// score and size ratio, and the `better_handled_by_jxl` hint — so callers
+/// can do batch / JXL-vs-WebP triage before committing to a full recompress.
+///
+/// This decodes the source and runs the decode-based quality estimator (one
+/// decode + a few probe encodes), because header-only quality detection is
+/// unreliable for segmented WebP (see `docs/QUALITY_DETECTION.md`) and a
+/// wrong preview would defeat the purpose of triage. It does NOT run the
+/// chosen strategy itself, so it is still markedly cheaper than
+/// [`recompress`] — especially under a measured [`Budget`].
 pub fn plan(webp_bytes: &[u8], opts: &RecompressOptions) -> Result<Plan, Error> {
     if !(0.0..=100.0).contains(&opts.target_zensim_a) || opts.target_zensim_a.is_nan() {
         return Err(Error::TargetOutOfRange(opts.target_zensim_a));
     }
-    let analysis = crate::source::analyze_source(webp_bytes)?;
+    let mut analysis = crate::source::analyze_source(webp_bytes)?;
+    // Refine with the reliable decode-based estimate so the preview matches
+    // what `recompress` would actually decide.
+    crate::source::refine_from_decode(&mut analysis, webp_bytes);
     let decision = crate::router::decide_strategy(&analysis, opts);
     Ok(match decision.action {
         crate::router::Action::NoOp(reason) => Plan::NoOp { reason },
