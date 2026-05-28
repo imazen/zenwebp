@@ -32,9 +32,7 @@ fn encode_lossy_webp(w: u32, h: u32, q: f32) -> Vec<u8> {
 }
 
 fn is_valid_webp(bytes: &[u8]) -> bool {
-    bytes.len() > 12
-        && &bytes[0..4] == b"RIFF"
-        && &bytes[8..12] == b"WEBP"
+    bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP"
 }
 
 #[test]
@@ -69,8 +67,13 @@ fn target_at_85_dispatches_some_strategy() {
     };
     let res = recompress(&src, &opts).expect("recompress");
     match res {
-        RecompressResult::Recompressed { bytes, strategy, .. } => {
-            assert!(is_valid_webp(&bytes), "recompressed output not a valid WebP");
+        RecompressResult::Recompressed {
+            bytes, strategy, ..
+        } => {
+            assert!(
+                is_valid_webp(&bytes),
+                "recompressed output not a valid WebP"
+            );
             // Strategy must be one we recognize; CoeffEdit isn't shipped
             // yet so the router should never pick it.
             assert!(
@@ -79,7 +82,10 @@ fn target_at_85_dispatches_some_strategy() {
             );
         }
         RecompressResult::LosslessOnly { bytes, .. } => {
-            assert!(is_valid_webp(&bytes), "lossless-only output not a valid WebP");
+            assert!(
+                is_valid_webp(&bytes),
+                "lossless-only output not a valid WebP"
+            );
         }
         RecompressResult::NoOp { .. } => {}
         _ => {}
@@ -112,14 +118,18 @@ fn iteration_converges_closer_to_target() {
     // refine via secant and land closer to target than OneShot.
     let src = encode_lossy_webp(96, 96, 80.0);
 
-    let mut oneshot_opts = RecompressOptions::default();
-    oneshot_opts.target_zensim_a = 75.0;
-    oneshot_opts.budget = Budget::OneShot;
+    let oneshot_opts = RecompressOptions {
+        target_zensim_a: 75.0,
+        budget: Budget::OneShot,
+        ..Default::default()
+    };
     let oneshot = recompress(&src, &oneshot_opts).expect("oneshot");
 
-    let mut iter_opts = RecompressOptions::default();
-    iter_opts.target_zensim_a = 75.0;
-    iter_opts.budget = Budget::MaxIterations(8);
+    let iter_opts = RecompressOptions {
+        target_zensim_a: 75.0,
+        budget: Budget::MaxIterations(8),
+        ..Default::default()
+    };
     let iter = recompress(&src, &iter_opts).expect("iter");
 
     if let (
@@ -215,6 +225,71 @@ fn lossless_source_uses_lossless_remux() {
             );
         }
         RecompressResult::LosslessOnly { .. } | RecompressResult::NoOp { .. } => {}
+        _ => {}
+    }
+}
+
+#[test]
+fn suboptimal_lossless_source_shrinks_via_reencode() {
+    use zenwebp::encoder::LosslessConfig;
+
+    // Encode screen-like content (few colors, hard edges) at method 0
+    // (fast/suboptimal), then verify recompress re-encodes it smaller at
+    // method 4 with zero quality loss (LosslessReencode), OR falls back to
+    // remux if our encoder can't beat method 0 at this size.
+    let (w, h) = (320u32, 320u32);
+    let mut rgba = vec![255u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            let band = ((x / 12) + (y / 40)) % 4;
+            let (r, g, b) = match band {
+                0 => (20, 30, 40),
+                1 => (200, 50, 50),
+                2 => (50, 200, 50),
+                _ => (240, 240, 240),
+            };
+            rgba[i] = r;
+            rgba[i + 1] = g;
+            rgba[i + 2] = b;
+            rgba[i + 3] = 255;
+        }
+    }
+    let m0 = LosslessConfig::new().with_method(0);
+    let src = EncodeRequest::lossless(&m0, &rgba, PixelLayout::Rgba8, w, h)
+        .encode()
+        .expect("encode m0");
+
+    let opts = RecompressOptions {
+        target_zensim_a: 95.0,
+        budget: Budget::OneShot,
+        ..Default::default()
+    };
+    let res = recompress(&src, &opts).expect("recompress");
+    match res {
+        RecompressResult::Recompressed {
+            bytes,
+            strategy,
+            projected_zensim_a,
+            source_to_output_ratio,
+            ..
+        } => {
+            // If we shipped a recompression, it MUST be LosslessReencode
+            // (the only safe path for lossless input), MUST shrink, and
+            // MUST be lossless (projected 100).
+            assert_eq!(strategy, StrategyKind::LosslessReencode);
+            assert!(
+                source_to_output_ratio < 1.0,
+                "shipped recompression must shrink, got ratio {source_to_output_ratio}"
+            );
+            assert!(is_valid_webp(&bytes));
+            assert_eq!(projected_zensim_a, 100.0, "lossless reencode is lossless");
+        }
+        // If our encoder couldn't beat method 0 here, falling back to a
+        // remux is the correct conservative behavior.
+        RecompressResult::LosslessOnly { bytes, .. } => {
+            assert!(is_valid_webp(&bytes));
+        }
         _ => {}
     }
 }

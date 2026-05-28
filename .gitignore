@@ -99,3 +99,8 @@ benchmarks/*.parquet
 # are tracked; raw WebP copies in dev/ are not.
 zenwebp-recompress/dev/
 
+
+# zenwebp-recompress raw sweep CSVs — pointer-filed to /mnt/v (see *.pointer.md)
+zenwebp-recompress/benchmarks/paired_sweep_*.csv
+zenwebp-recompress/benchmarks/deblock_weakfilter_*.csv
+zenwebp-recompress/benchmarks/test_corpus_*.csv

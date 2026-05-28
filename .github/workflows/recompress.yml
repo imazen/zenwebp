@@ -1,0 +1,89 @@
+name: recompress
+
+# Isolated CI for the nested `zenwebp-recompress/` workspace. Kept separate
+# from the core `ci.yml` so that drift in the sibling path deps
+# (zensim / zenpixels / zenanalyze main) can only redden THIS workflow, never
+# zenwebp's core build. Triggers only on changes under zenwebp-recompress/.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "zenwebp-recompress/**"
+      - ".github/workflows/recompress.yml"
+  pull_request:
+    branches: [main, "fixall/**", "stack/**"]
+    paths:
+      - "zenwebp-recompress/**"
+      - ".github/workflows/recompress.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CI: true
+
+jobs:
+  test:
+    name: recompress (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            os: ubuntu-latest
+          - name: Windows arm64
+            os: windows-11-arm
+          - name: macOS x64
+            os: macos-26-intel
+    steps:
+      - name: Checkout zenwebp
+        uses: actions/checkout@v6
+      # The nested workspace path-depends on these siblings. Place each at
+      # the parent of the zenwebp checkout so ../../<sibling> resolves.
+      - name: Checkout sibling zensim
+        uses: actions/checkout@v6
+        with:
+          repository: imazen/zensim
+          ref: main
+          path: __siblings/zensim
+      - name: Checkout sibling zenpixels
+        uses: actions/checkout@v6
+        with:
+          repository: imazen/zenpixels
+          ref: main
+          path: __siblings/zenpixels
+      - name: Checkout sibling zenanalyze
+        uses: actions/checkout@v6
+        with:
+          repository: imazen/zenanalyze
+          ref: main
+          path: __siblings/zenanalyze
+      - name: Stage siblings beside zenwebp
+        shell: bash
+        run: |
+          set -euo pipefail
+          mv __siblings/zensim ../zensim
+          mv __siblings/zenpixels ../zenpixels
+          mv __siblings/zenanalyze ../zenanalyze
+          rmdir __siblings || true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: zenwebp-recompress
+      - name: Build (nested workspace)
+        working-directory: zenwebp-recompress
+        run: cargo build
+      - name: Test (nested workspace)
+        working-directory: zenwebp-recompress
+        run: cargo test
+      - name: Clippy
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: zenwebp-recompress
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Fmt
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: zenwebp-recompress
+        run: cargo fmt -- --check

@@ -14,7 +14,7 @@ name = "zwr-calibrate"
 path = "src/main.rs"
 
 [dependencies]
-zenwebp-recompress = { path = "../zenwebp-recompress", features = ["expert", "parallel"] }
+zenwebp-recompress = { path = "..", features = ["expert", "parallel"] }
 zenwebp.workspace = true
 zensim.workspace = true
 clap.workspace = true

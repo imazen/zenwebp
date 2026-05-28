@@ -65,6 +65,7 @@ impl CalibrationLookup {
         target_zensim_a: f32,
         strategy: StrategyKind,
     ) -> CellEstimate {
+        let is_lossless = matches!(analysis.kind, SourceKind::LosslessVp8L);
         let qi = if matches!(analysis.kind, SourceKind::LossyVp8) {
             analysis.vp8_quantizer_index
         } else {
@@ -75,41 +76,55 @@ impl CalibrationLookup {
         let source_zensim_a =
             source_q_to_zensim_a_estimate(analysis.encoder_family, analysis.source_q);
 
+        // Source's cumulative zensim-A vs the (unknown) reference. For a
+        // lossy source this is bounded by the encode quality (the qi-keyed
+        // table, interpolated across bins); for a genuinely lossless source
+        // the decoded pixels ARE the reference for any downstream
+        // comparison, so cumulative is ~100.
+        let source_cum = if is_lossless {
+            100.0
+        } else {
+            data::source_cum_for_qi(qi)
+        };
+
         match strategy {
-            StrategyKind::LosslessRemux => {
-                let cum = data::LOSSLESS_REMUX_CUM_PER_QI_BIN[qi_bin];
-                CellEstimate {
-                    projected_zensim_a: cum,
-                    projected_size_ratio: 1.0,
-                    ci_low_zensim_a: cum - 1.0,
-                    ci_high_zensim_a: cum,
-                }
-            }
+            StrategyKind::LosslessRemux => CellEstimate {
+                projected_zensim_a: source_cum,
+                projected_size_ratio: 1.0,
+                ci_low_zensim_a: source_cum - 1.0,
+                ci_high_zensim_a: source_cum,
+            },
             StrategyKind::LosslessReencode => {
                 // VP8L preserves the source pixels exactly; cumulative is
                 // identical to remux. Size cost varies by content class.
-                let cum = data::LOSSLESS_REMUX_CUM_PER_QI_BIN[qi_bin];
-                let ratio = match analysis.content_class {
-                    ContentClass::Screen | ContentClass::LineArt => 0.55,
-                    ContentClass::Photo => {
-                        data::LOSSLESS_REENCODE_RATIO_PER_QI_BIN[qi_bin]
-                    }
-                    ContentClass::Mixed => {
-                        data::LOSSLESS_REENCODE_RATIO_PER_QI_BIN[qi_bin]
+                // A lossless source re-encoded as VP8L is near-identity
+                // (~1.0); only lossy sources balloon when forced to VP8L.
+                let ratio = if is_lossless {
+                    // Re-encoding already-lossless content: our VP8L vs the
+                    // source encoder. Conservatively assume parity; the
+                    // measured pass corrects this.
+                    1.0
+                } else {
+                    match analysis.content_class {
+                        ContentClass::Screen | ContentClass::LineArt => 0.55,
+                        ContentClass::Photo | ContentClass::Mixed => {
+                            data::LOSSLESS_REENCODE_RATIO_PER_QI_BIN[qi_bin]
+                        }
                     }
                 };
                 CellEstimate {
-                    projected_zensim_a: cum,
+                    projected_zensim_a: source_cum,
                     projected_size_ratio: ratio,
-                    ci_low_zensim_a: cum - 0.5,
-                    ci_high_zensim_a: cum,
+                    ci_low_zensim_a: source_cum - 0.5,
+                    ci_high_zensim_a: source_cum,
                 }
             }
             StrategyKind::Reencode => {
                 let cell = data::interpolated_reencode(qi, target_zensim_a, &data::REENCODE);
                 // Use bound model: cumulative = min(gen_loss, source_cum).
+                // For lossless sources `source_cum` is ~100, so the bound is
+                // purely the encode gen_loss — exactly the right behavior.
                 let gen_loss = data::interpolated_gen_loss(qi, target_zensim_a);
-                let source_cum = data::source_cum_for_qi(qi);
                 let projected = gen_loss.min(source_cum);
                 CellEstimate {
                     projected_zensim_a: projected,
@@ -119,20 +134,35 @@ impl CalibrationLookup {
                 }
             }
             StrategyKind::DeblockReencode => {
-                let cell = data::interpolated_reencode(
-                    qi,
-                    target_zensim_a,
-                    &data::DEBLOCK_REENCODE,
-                );
+                let cell =
+                    data::interpolated_reencode(qi, target_zensim_a, &data::DEBLOCK_REENCODE);
                 let gen_loss = data::interpolated_gen_loss(qi, target_zensim_a);
-                let source_cum = data::source_cum_for_qi(qi);
-                // Deblock adds ~1-2 zensim points on heavily quantized
-                // sources (qi 60+) by removing artifacts before re-encode.
-                let bonus = if qi >= 60 { 1.5 } else { 0.0 };
-                let projected = (gen_loss + bonus).min(source_cum).min(100.0);
+                // MEASURED (2026-05-28): applying our deblock to
+                // already-loop-filtered VP8 output is net-negative
+                // (−2.75 zensim, +3.9% size over 150 qi≥60 cells). The
+                // strategy only fires its filter when the source loop
+                // filter was weak; for the common strongly-filtered case it
+                // equals Reencode. We project a small penalty so the router
+                // never prefers it over Reencode unless a future
+                // weak-filter-source calibration proves a win.
+                let penalty = if analysis.vp8_filter_level
+                    >= crate::strategies::deblock_reencode::FILTER_WEAK_THRESHOLD
+                {
+                    2.75
+                } else {
+                    0.0
+                };
+                let size_penalty = if analysis.vp8_filter_level
+                    >= crate::strategies::deblock_reencode::FILTER_WEAK_THRESHOLD
+                {
+                    1.039
+                } else {
+                    1.0
+                };
+                let projected = (gen_loss - penalty).min(source_cum).min(100.0);
                 CellEstimate {
                     projected_zensim_a: projected,
-                    projected_size_ratio: cell.p50_size_ratio,
+                    projected_size_ratio: cell.p50_size_ratio * size_penalty,
                     ci_low_zensim_a: projected - 4.0,
                     ci_high_zensim_a: projected + 3.0,
                 }

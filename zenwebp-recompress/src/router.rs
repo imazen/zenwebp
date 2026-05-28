@@ -67,6 +67,30 @@ pub fn decide_strategy(analysis: &SourceAnalysis, opts: &RecompressOptions) -> R
         };
     }
 
+    // 1b. Lossless source → re-encoding as VP8L is always quality-safe
+    //     (lossless → lossless). The only question is whether our encoder
+    //     beats the source's. We can't know without trying, and the
+    //     projection is conservatively 1.0, so dispatch LosslessReencode
+    //     speculatively: the dispatcher keeps the result only if it
+    //     actually shrinks, else falls back to LosslessRemux. No target
+    //     gating — quality is preserved by construction.
+    if matches!(analysis.kind, SourceKind::LosslessVp8L) {
+        let est = estimates.lossless_reencode.unwrap_or(CellEstimate {
+            projected_zensim_a: 100.0,
+            projected_size_ratio: 1.0,
+            ci_low_zensim_a: 100.0,
+            ci_high_zensim_a: 100.0,
+        });
+        return RouterDecision {
+            action: Action::Recompress {
+                strategy: StrategyKind::LosslessReencode,
+                estimate: est,
+            },
+            better_handled_by_jxl: false,
+            estimates,
+        };
+    }
+
     // 2. Source already at-or-above target with little slack? NoOp.
     let source_zensim_a = source_q_to_zensim_a_estimate(analysis.encoder_family, analysis.source_q);
     if source_zensim_a < opts.target_zensim_a + ZENSIM_A_NOOP_BAND
@@ -85,9 +109,7 @@ pub fn decide_strategy(analysis: &SourceAnalysis, opts: &RecompressOptions) -> R
     //    can accept a slight target undershoot in exchange for actual
     //    size savings.
     let strict = filter_candidates(&estimates, opts.target_zensim_a);
-    let strict_can_shrink = strict
-        .iter()
-        .any(|(_, e)| e.projected_size_ratio < 1.0);
+    let strict_can_shrink = strict.iter().any(|(_, e)| e.projected_size_ratio < 1.0);
     let candidates = if strict_can_shrink {
         strict
     } else {
@@ -166,6 +188,15 @@ fn filter_candidates(
         // CoeffEdit is not yet implemented; never let the router pick it.
         // When the implementation lands, drop this filter.
         .filter(|(k, _)| !matches!(k, StrategyKind::CoeffEdit))
+        // DeblockReencode is measured-dominated by Reencode in every tested
+        // source config (default-filtered: −2.75 zensim/+3.9% size;
+        // weak-filtered: −3.35; worst-blocking qi≥90: −5.09, wins 0/60
+        // cells). Post-decode spatial smoothing moves the image away from
+        // the sharp original reference. See
+        // benchmarks/deblock_experiment_2026-05-28.md. The filter remains a
+        // tested building block via expert::deblock_rgba; the router never
+        // selects the strategy until a config is found where it wins.
+        .filter(|(k, _)| !matches!(k, StrategyKind::DeblockReencode))
         .collect()
 }
 
@@ -198,28 +229,32 @@ pub fn dispatch(
                     let m = crate::measure::score_recompression(webp_bytes, &b).ok();
                     (b, m)
                 }
-                Budget::MaxIterations(n) => iterate_secant(
-                    strategy,
-                    webp_bytes,
-                    analysis,
-                    opts,
-                    n.min(8),
-                    &stopwatch,
-                )?,
-                Budget::MaxTime(_) => iterate_secant(
-                    strategy,
-                    webp_bytes,
-                    analysis,
-                    opts,
-                    8,
-                    &stopwatch,
-                )?,
+                Budget::MaxIterations(n) => {
+                    iterate_secant(strategy, webp_bytes, analysis, opts, n.min(8), &stopwatch)?
+                }
+                Budget::MaxTime(_) => {
+                    iterate_secant(strategy, webp_bytes, analysis, opts, 8, &stopwatch)?
+                }
             };
             let ratio = if !webp_bytes.is_empty() {
                 bytes.len() as f32 / webp_bytes.len() as f32
             } else {
                 1.0
             };
+
+            // Speculative strategies (LosslessReencode on a lossless source,
+            // dispatched without target gating) must only ship if they
+            // actually shrink the file. Otherwise fall back to a clean
+            // re-mux — the source bytes are already optimal.
+            if ratio >= 1.0 && matches!(strategy, StrategyKind::LosslessReencode) {
+                let remux = strategies::lossless_remux::run_lossless_remux(webp_bytes, analysis)?;
+                return Ok(RecompressResult::LosslessOnly {
+                    bytes: remux,
+                    reason: LosslessReason::NoStrategyShrinksFile,
+                    better_handled_by_jxl: decision.better_handled_by_jxl,
+                });
+            }
+
             Ok(RecompressResult::Recompressed {
                 bytes,
                 strategy,
@@ -345,8 +380,12 @@ fn run_strategy(
 ) -> Result<Vec<u8>, Error> {
     use crate::strategies;
     match strategy {
-        StrategyKind::LosslessRemux => strategies::lossless_remux::run_lossless_remux(webp_bytes, analysis),
-        StrategyKind::CoeffEdit => strategies::coeff_edit::run_coeff_edit(webp_bytes, analysis, opts),
+        StrategyKind::LosslessRemux => {
+            strategies::lossless_remux::run_lossless_remux(webp_bytes, analysis)
+        }
+        StrategyKind::CoeffEdit => {
+            strategies::coeff_edit::run_coeff_edit(webp_bytes, analysis, opts)
+        }
         StrategyKind::Reencode => strategies::reencode::run_reencode(webp_bytes, analysis, opts),
         StrategyKind::DeblockReencode => {
             strategies::deblock_reencode::run_deblock_reencode(webp_bytes, analysis, opts)

@@ -57,10 +57,8 @@ fn frozen_api_compiles() {
         better_handled_by_jxl: false,
     };
     // Entry point signature.
-    let _: fn(
-        &[u8],
-        &RecompressOptions,
-    ) -> Result<RecompressResult, zenwebp_recompress::Error> = recompress;
+    let _: fn(&[u8], &RecompressOptions) -> Result<RecompressResult, zenwebp_recompress::Error> =
+        recompress;
 }
 
 #[test]

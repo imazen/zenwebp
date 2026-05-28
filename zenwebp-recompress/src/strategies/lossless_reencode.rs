@@ -6,9 +6,9 @@
 
 use crate::error::Error;
 use crate::source::{SourceAnalysis, SourceKind};
+use zenwebp::PixelLayout;
 use zenwebp::encoder::{EncodeRequest, LosslessConfig};
 use zenwebp::oneshot::decode_rgba;
-use zenwebp::PixelLayout;
 
 pub fn run_lossless_reencode(
     webp_bytes: &[u8],

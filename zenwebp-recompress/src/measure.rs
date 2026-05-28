@@ -40,10 +40,7 @@ pub fn score_recompression(source_webp: &[u8], output_webp: &[u8]) -> Result<f32
 /// `zwr-calibrate` when both reference and recompressed-derived-from-source
 /// are in hand.
 #[allow(dead_code)] // Available via expert::score_against_reference for harnesses.
-pub fn score_against_reference(
-    reference_rgba: &[u8],
-    output_webp: &[u8],
-) -> Result<f32, Error> {
+pub fn score_against_reference(reference_rgba: &[u8], output_webp: &[u8]) -> Result<f32, Error> {
     let (out_rgba, w, h) =
         decode_rgba(output_webp).map_err(|e| Error::DecodeFailed(format!("{e:?}")))?;
     score_rgba(reference_rgba, &out_rgba, w, h)
@@ -52,10 +49,10 @@ pub fn score_against_reference(
 /// Direct RGBA-vs-RGBA scoring helper. Both buffers must be
 /// `width * height * 4` bytes of contiguous RGBA8 (straight alpha).
 pub fn score_rgba(ref_rgba: &[u8], dst_rgba: &[u8], width: u32, height: u32) -> Result<f32, Error> {
-    let ref_pixels: &[[u8; 4]] = try_cast_slice(ref_rgba)
-        .map_err(|e| Error::DecodeFailed(format!("ref cast: {e:?}")))?;
-    let dst_pixels: &[[u8; 4]] = try_cast_slice(dst_rgba)
-        .map_err(|e| Error::DecodeFailed(format!("dst cast: {e:?}")))?;
+    let ref_pixels: &[[u8; 4]] =
+        try_cast_slice(ref_rgba).map_err(|e| Error::DecodeFailed(format!("ref cast: {e:?}")))?;
+    let dst_pixels: &[[u8; 4]] =
+        try_cast_slice(dst_rgba).map_err(|e| Error::DecodeFailed(format!("dst cast: {e:?}")))?;
     let ref_src = RgbaSlice::try_new(ref_pixels, width as usize, height as usize)
         .map_err(|e| Error::DecodeFailed(format!("zensim ref: {e:?}")))?;
     let dst_src = RgbaSlice::try_new(dst_pixels, width as usize, height as usize)

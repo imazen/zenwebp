@@ -446,27 +446,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
-name = "csv"
-version = "1.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52cd9d68cf7efc6ddfaaee42e7288d3a99d613d4b50f76ce9827ae0c6e14f938"
-dependencies = [
- "csv-core",
- "itoa",
- "ryu",
- "serde_core",
-]
-
-[[package]]
-name = "csv-core"
-version = "0.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "704a3c26996a80471189265814dbc2c257598b96b8a7feae2d31ace646bb9782"
-dependencies = [
- "memchr",
-]
-
-[[package]]
 name = "dirs"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -970,12 +949,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lz4_flex"
-version = "0.11.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
-
-[[package]]
 name = "magetypes"
 version = "0.9.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1414,25 +1387,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
-name = "ryu"
-version = "1.0.23"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
-
-[[package]]
 name = "safe_unaligned_simd"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9c874fb993656d484725d58fbfddb39dfcf98ebcadc1a1d09568aa6b39bafba"
-
-[[package]]
-name = "same-file"
-version = "1.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
-dependencies = [
- "winapi-util",
-]
 
 [[package]]
 name = "seahash"
@@ -1633,16 +1591,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "walkdir"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
-dependencies = [
- "same-file",
- "winapi-util",
-]
-
-[[package]]
 name = "wasi"
 version = "0.11.1+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1795,15 +1743,6 @@ name = "winapi-i686-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
-
-[[package]]
-name = "winapi-util"
-version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
-dependencies = [
- "windows-sys 0.61.2",
-]
 
 [[package]]
 name = "winapi-x86_64-pc-windows-gnu"
@@ -2128,18 +2067,6 @@ checksum = "00f1f60154ad4ef9871d606765c3ea037cde93bbd77536327b594de8f82df1cb"
 [[package]]
 name = "zenanalyze"
 version = "0.1.0"
-dependencies = [
- "archmage",
- "garb",
- "linear-srgb",
- "magetypes",
- "zenpixels 0.2.11 (registry+https://github.com/rust-lang/crates.io-index)",
- "zenpixels-convert",
-]
-
-[[package]]
-name = "zenanalyze"
-version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9711cf1c3363003dd436f5b5dc113f7881f9b377613eecbf41f91b6b85626442"
 dependencies = [
@@ -2147,7 +2074,7 @@ dependencies = [
  "garb",
  "linear-srgb",
  "magetypes",
- "zenpixels 0.2.11 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zenpixels",
  "zenpixels-convert",
 ]
 
@@ -2185,7 +2112,7 @@ dependencies = [
  "almost-enough",
  "enough",
  "whereat",
- "zenpixels 0.2.11 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zenpixels",
 ]
 
 [[package]]
@@ -2197,14 +2124,6 @@ dependencies = [
  "archmage",
  "enough",
  "libm",
-]
-
-[[package]]
-name = "zenpixels"
-version = "0.2.11"
-dependencies = [
- "bytemuck",
- "whereat",
 ]
 
 [[package]]
@@ -2234,7 +2153,7 @@ dependencies = [
  "paste",
  "rgb",
  "whereat",
- "zenpixels 0.2.11 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zenpixels",
 ]
 
 [[package]]
@@ -2256,7 +2175,7 @@ dependencies = [
  "whereat",
  "zencodec",
  "zenflate",
- "zenpixels 0.2.11 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zenpixels",
  "zenpixels-convert",
  "zenquant",
 ]
@@ -2268,16 +2187,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da940aa02fa5dbb80e4cfe6883c82a7d39c814bc503e4c8c6f6d534e53a0a2ec"
 dependencies = [
  "bytemuck",
-]
-
-[[package]]
-name = "zenpredict"
-version = "0.2.1"
-source = "git+https://github.com/imazen/zenanalyze?rev=9a9be8200f26f643b45338711426cacae820f3a1#9a9be8200f26f643b45338711426cacae820f3a1"
-dependencies = [
- "bytemuck",
- "libm",
- "lz4_flex",
 ]
 
 [[package]]
@@ -2310,7 +2219,7 @@ dependencies = [
  "safe_unaligned_simd",
  "whereat",
  "zenblend",
- "zenpixels 0.2.11 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zenpixels",
 ]
 
 [[package]]
@@ -2330,19 +2239,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zensim"
-version = "0.3.0"
-dependencies = [
- "archmage",
- "bytemuck",
- "linear-srgb",
- "magetypes",
- "rayon",
- "thiserror",
- "zenpredict 0.2.1",
-]
-
-[[package]]
 name = "zensim-regress"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2353,7 +2249,7 @@ dependencies = [
  "image",
  "seahash",
  "thiserror",
- "zensim 0.2.4",
+ "zensim",
 ]
 
 [[package]]
@@ -2388,31 +2284,17 @@ dependencies = [
  "webpx",
  "whereat",
  "yuv",
- "zenanalyze 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zenanalyze",
  "zenbench",
  "zencodec",
- "zenpixels 0.2.11 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zenpixels",
  "zenpixels-convert",
  "zenpng",
- "zenpredict 0.1.0",
+ "zenpredict",
  "zenresize",
- "zensim 0.2.4",
+ "zensim",
  "zensim-regress",
  "zenyuv",
-]
-
-[[package]]
-name = "zenwebp-recompress"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "enough",
- "rayon",
- "thiserror",
- "zenanalyze 0.1.0",
- "zenpixels 0.2.11",
- "zensim 0.3.0",
- "zenwebp",
 ]
 
 [[package]]
@@ -2476,20 +2358,4 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core",
-]
-
-[[package]]
-name = "zwr-calibrate"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "csv",
- "rayon",
- "serde",
- "serde_json",
- "walkdir",
- "zensim 0.3.0",
- "zenwebp",
- "zenwebp-recompress",
 ]

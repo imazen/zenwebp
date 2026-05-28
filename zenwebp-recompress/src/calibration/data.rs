@@ -52,37 +52,67 @@ pub const TARGET_BINS: &[f32] = &[50.0, 55.0, 60.0, 65.0, 70.0, 75.0, 80.0, 85.0
 pub const REENCODE: [[Cell; 10]; 5] = [
     // qi 0-20 (very high quality source ~q90+)
     [
-        Cell::new(47.0, 0.948), Cell::new(49.5, 0.990), Cell::new(50.8, 1.018),
-        Cell::new(51.6, 1.042), Cell::new(52.8, 1.075), Cell::new(53.7, 1.112),
-        Cell::new(55.1, 1.149), Cell::new(57.7, 1.228), Cell::new(59.5, 1.375),
+        Cell::new(47.0, 0.948),
+        Cell::new(49.5, 0.990),
+        Cell::new(50.8, 1.018),
+        Cell::new(51.6, 1.042),
+        Cell::new(52.8, 1.075),
+        Cell::new(53.7, 1.112),
+        Cell::new(55.1, 1.149),
+        Cell::new(57.7, 1.228),
+        Cell::new(59.5, 1.375),
         Cell::new(62.2, 1.794),
     ],
     // qi 21-40 (high quality source ~q70-85)
     [
-        Cell::new(47.2, 0.882), Cell::new(50.4, 0.929), Cell::new(51.9, 0.962),
-        Cell::new(53.2, 0.993), Cell::new(54.5, 1.025), Cell::new(55.9, 1.060),
-        Cell::new(57.2, 1.098), Cell::new(60.3, 1.235), Cell::new(62.2, 1.431),
+        Cell::new(47.2, 0.882),
+        Cell::new(50.4, 0.929),
+        Cell::new(51.9, 0.962),
+        Cell::new(53.2, 0.993),
+        Cell::new(54.5, 1.025),
+        Cell::new(55.9, 1.060),
+        Cell::new(57.2, 1.098),
+        Cell::new(60.3, 1.235),
+        Cell::new(62.2, 1.431),
         Cell::new(63.4, 1.977),
     ],
     // qi 41-60 (medium-high source ~q50-70) — SWEET SPOT for recompression
     [
-        Cell::new(49.2, 0.638), Cell::new(54.1, 0.686), Cell::new(57.1, 0.725),
-        Cell::new(59.9, 0.764), Cell::new(61.9, 0.796), Cell::new(64.2, 0.829),
-        Cell::new(65.9, 0.859), Cell::new(69.6, 0.968), Cell::new(72.4, 1.094),
+        Cell::new(49.2, 0.638),
+        Cell::new(54.1, 0.686),
+        Cell::new(57.1, 0.725),
+        Cell::new(59.9, 0.764),
+        Cell::new(61.9, 0.796),
+        Cell::new(64.2, 0.829),
+        Cell::new(65.9, 0.859),
+        Cell::new(69.6, 0.968),
+        Cell::new(72.4, 1.094),
         Cell::new(74.9, 1.399),
     ],
     // qi 61-80 (medium source ~q35-50)
     [
-        Cell::new(44.9, 0.827), Cell::new(48.9, 0.892), Cell::new(52.0, 0.936),
-        Cell::new(54.3, 0.971), Cell::new(55.5, 1.000), Cell::new(56.8, 1.030),
-        Cell::new(57.9, 1.057), Cell::new(59.7, 1.180), Cell::new(62.2, 1.325),
+        Cell::new(44.9, 0.827),
+        Cell::new(48.9, 0.892),
+        Cell::new(52.0, 0.936),
+        Cell::new(54.3, 0.971),
+        Cell::new(55.5, 1.000),
+        Cell::new(56.8, 1.030),
+        Cell::new(57.9, 1.057),
+        Cell::new(59.7, 1.180),
+        Cell::new(62.2, 1.325),
         Cell::new(64.3, 1.774),
     ],
     // qi 81-127 (low source ~q<35) — recompression rarely wins
     [
-        Cell::new(44.0, 0.858), Cell::new(48.2, 0.917), Cell::new(51.6, 0.960),
-        Cell::new(53.3, 0.991), Cell::new(54.3, 1.020), Cell::new(55.1, 1.056),
-        Cell::new(55.6, 1.092), Cell::new(58.7, 1.199), Cell::new(61.3, 1.377),
+        Cell::new(44.0, 0.858),
+        Cell::new(48.2, 0.917),
+        Cell::new(51.6, 0.960),
+        Cell::new(53.3, 0.991),
+        Cell::new(54.3, 1.020),
+        Cell::new(55.1, 1.056),
+        Cell::new(55.6, 1.092),
+        Cell::new(58.7, 1.199),
+        Cell::new(61.3, 1.377),
         Cell::new(63.1, 1.868),
     ],
 ];
@@ -165,7 +195,10 @@ pub fn interpolated_reencode(qi: u8, target_zensim_a: f32, table: &[[Cell; 10]; 
     let ratio_lo = lerp(c00.p50_size_ratio, c01.p50_size_ratio, t_frac);
     let ratio_hi = lerp(c10.p50_size_ratio, c11.p50_size_ratio, t_frac);
 
-    Cell::new(lerp(cum_lo, cum_hi, q_frac), lerp(ratio_lo, ratio_hi, q_frac))
+    Cell::new(
+        lerp(cum_lo, cum_hi, q_frac),
+        lerp(ratio_lo, ratio_hi, q_frac),
+    )
 }
 
 fn bracket_qi(q: f32) -> (usize, usize, f32) {

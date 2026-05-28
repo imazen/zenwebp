@@ -145,6 +145,24 @@ fn synthesize(info: WebPProbe) -> SourceAnalysis {
     }
 }
 
+/// Decode the source and refine `content_class` from the actual pixels.
+///
+/// [`analyze_source`] is header-only (cheap, content_class defaults to
+/// `Mixed`). This second pass decodes to RGBA and runs the heuristic
+/// classifier so the router can gate VP8L for screen/line-art content.
+/// Used by [`crate::recompress`] (which decodes anyway), NOT by
+/// [`crate::plan`] (which stays header-only).
+///
+/// On decode failure the analysis is returned unchanged (still `Mixed`).
+pub fn refine_content_class(analysis: &mut SourceAnalysis, webp_bytes: &[u8]) {
+    if matches!(analysis.kind, SourceKind::Animated) {
+        return;
+    }
+    if let Ok((rgba, w, h)) = zenwebp::oneshot::decode_rgba(webp_bytes) {
+        analysis.content_class = crate::classify::classify(&rgba, w as usize, h as usize);
+    }
+}
+
 /// Heuristic encoder fingerprint. libwebp's default `cwebp -q` path
 /// produces a recognizable (quantizer, filter, sharpness, segments)
 /// signature; zenwebp's target-zensim path produces another. Unrecognized

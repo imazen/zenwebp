@@ -19,11 +19,12 @@ use crate::source;
 /// The default is [`Budget::OneShot`]: no measurements, no IQA loop. This is
 /// what production servers should use — it costs one decode + encode and
 /// returns deterministically.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum Budget {
     /// Pick a strategy from the calibration table, run it once, ship the
     /// result. No measurement loop.
+    #[default]
     OneShot,
 
     /// Run the chosen strategy, measure achieved zensim-A against source,
@@ -33,12 +34,6 @@ pub enum Budget {
 
     /// Same as [`MaxIterations`](Self::MaxIterations) but wall-clock bounded.
     MaxTime(std::time::Duration),
-}
-
-impl Default for Budget {
-    fn default() -> Self {
-        Self::OneShot
-    }
 }
 
 /// Options passed to [`recompress`].
@@ -282,7 +277,11 @@ pub fn recompress(webp_bytes: &[u8], opts: &RecompressOptions) -> Result<Recompr
         return Err(Error::TargetOutOfRange(opts.target_zensim_a));
     }
 
-    let analysis = source::analyze_source(webp_bytes)?;
+    let mut analysis = source::analyze_source(webp_bytes)?;
+    // Refine content_class from the actual pixels. recompress decodes
+    // anyway for any pixel-domain strategy, so this is the right place to
+    // pay the decode cost; plan() stays header-only and conservative.
+    source::refine_content_class(&mut analysis, webp_bytes);
     let decision = router::decide_strategy(&analysis, opts);
     router::dispatch(webp_bytes, &analysis, decision, opts)
 }

@@ -1,26 +1,29 @@
-//! `zwr` — minimal demo CLI for zenwebp-recompress.
+//! `zwr` — demo CLI for zenwebp-recompress.
 //!
 //! ```text
-//! zwr <INPUT.webp> [--target 80] [--out OUT.webp] [--plan]
+//! zwr <INPUT.webp> [--target 80] [--out OUT.webp] [--plan] [--analyze] [--iterations N]
 //! ```
 //!
-//! `--plan` skips the recompress and only prints what the router would do.
+//! - `--plan` prints the router decision without running any strategy.
+//! - `--analyze` prints a full source-analysis dump (dimensions, qi,
+//!   encoder family, content class, projected achievable target).
+//! - `--iterations N` runs measured budget with up to N secant passes.
 
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use zenwebp_recompress::{
-    Budget, Plan, RecompressOptions, RecompressResult, plan, recompress,
-};
+use zenwebp_recompress::expert::{analyze_source, classify};
+use zenwebp_recompress::{Budget, Plan, RecompressOptions, RecompressResult, plan, recompress};
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: zwr <INPUT.webp> [--target N] [--out OUT.webp] [--plan]\n\n\
+        "usage: zwr <INPUT.webp> [--target N] [--out OUT.webp] [--plan] [--analyze]\n\n\
          --target N      Target zensim Profile A score, 0..100. Default: 80.\n\
          --out PATH      Output WebP path. Default: <INPUT>.opt.webp.\n\
          --plan          Print router decision only; do not run any strategy.\n\
+         --analyze       Print full source analysis (no recompression).\n\
          --iterations N  Run measured budget with up to N iterations.\n"
     );
     ExitCode::from(2)
@@ -32,6 +35,7 @@ fn main() -> ExitCode {
     let mut out: Option<PathBuf> = None;
     let mut target: f32 = 80.0;
     let mut plan_only = false;
+    let mut analyze_only = false;
     let mut iterations: Option<u32> = None;
 
     while let Some(a) = args.next() {
@@ -46,6 +50,7 @@ fn main() -> ExitCode {
                 out = args.next().map(PathBuf::from);
             }
             "--plan" => plan_only = true,
+            "--analyze" => analyze_only = true,
             "--iterations" => {
                 iterations = args.next().and_then(|s| s.parse().ok());
             }
@@ -76,9 +81,45 @@ fn main() -> ExitCode {
 
     let opts = RecompressOptions {
         target_zensim_a: target,
-        budget: iterations.map(Budget::MaxIterations).unwrap_or(Budget::OneShot),
+        budget: iterations
+            .map(Budget::MaxIterations)
+            .unwrap_or(Budget::OneShot),
         ..Default::default()
     };
+
+    if analyze_only {
+        match analyze_source(&bytes) {
+            Ok(a) => {
+                println!("dimensions   = {}×{}", a.width, a.height);
+                println!("kind         = {:?}", a.kind);
+                println!(
+                    "source_q     = {:.2} (libwebp-equivalent estimate)",
+                    a.source_q
+                );
+                println!(
+                    "quantizer_idx= {} (VP8 base quantizer, 0-127 lower=better)",
+                    a.vp8_quantizer_index
+                );
+                println!("filter_level = {}", a.vp8_filter_level);
+                println!("sharpness    = {}", a.vp8_sharpness_level);
+                println!("has_segment_quant = {}", a.has_segment_quant);
+                println!("has_alpha    = {}", a.has_alpha);
+                println!("has_icc      = {}", a.has_icc);
+                println!("encoder      = {:?}", a.encoder_family);
+                println!("default content_class = {:?}", a.content_class);
+                // If we can decode quickly, run the heuristic classifier.
+                if let Ok((rgba, w, h)) = zenwebp::oneshot::decode_rgba(&bytes) {
+                    let cls = classify(&rgba, w as usize, h as usize);
+                    println!("decoded content_class = {:?}", cls);
+                }
+                return ExitCode::SUCCESS;
+            }
+            Err(e) => {
+                eprintln!("error: analyze: {e}");
+                return ExitCode::from(1);
+            }
+        }
+    }
 
     if plan_only {
         match plan(&bytes, &opts) {

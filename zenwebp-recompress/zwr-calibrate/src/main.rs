@@ -57,6 +57,13 @@ struct Cli {
     #[arg(long, default_value_t = 4)]
     method: u8,
 
+    /// Loop-filter strength for synthetic source encodes (`--refs` mode),
+    /// 0..100. `None` = encoder default. Set `0` to produce weakly-filtered
+    /// sources for testing the deblock strategy (see
+    /// `benchmarks/deblock_experiment_2026-05-28.md`).
+    #[arg(long)]
+    source_filter: Option<u8>,
+
     /// Target zensim-A grid, e.g. `0:100:5` (start:end:step).
     #[arg(long, default_value = "50:95:5")]
     targets: String,
@@ -249,7 +256,14 @@ fn sweep_existing_file(path: &Path, targets: &[f32], strategies: &[StrategyName]
     let bytes = match fs::read(path) {
         Ok(b) => b,
         Err(e) => {
-            rows.push(error_row(&path.display().to_string(), 0, 0, 0, "read", &e.to_string()));
+            rows.push(error_row(
+                &path.display().to_string(),
+                0,
+                0,
+                0,
+                "read",
+                &e.to_string(),
+            ));
             return rows;
         }
     };
@@ -268,7 +282,9 @@ fn sweep_existing_file(path: &Path, targets: &[f32], strategies: &[StrategyName]
         }
     };
     let label = path.display().to_string();
-    rows.extend(sweep_one_source(&label, &bytes, &analysis, None, targets, strategies));
+    rows.extend(sweep_one_source(
+        &label, &bytes, &analysis, None, targets, strategies,
+    ));
     rows
 }
 
@@ -276,6 +292,7 @@ fn sweep_one_reference(
     path: &Path,
     q_grid: &[f32],
     method: u8,
+    source_filter: Option<u8>,
     targets: &[f32],
     strategies: &[StrategyName],
 ) -> Vec<Row> {
@@ -283,7 +300,14 @@ fn sweep_one_reference(
     let bytes = match fs::read(path) {
         Ok(b) => b,
         Err(e) => {
-            rows.push(error_row(&path.display().to_string(), 0, 0, 0, "read", &e.to_string()));
+            rows.push(error_row(
+                &path.display().to_string(),
+                0,
+                0,
+                0,
+                "read",
+                &e.to_string(),
+            ));
             return rows;
         }
     };
@@ -303,23 +327,25 @@ fn sweep_one_reference(
     };
 
     for &q in q_grid {
-        let cfg = LossyConfig::new().with_quality(q).with_method(method);
-        let synthetic = match EncodeRequest::lossy(&cfg, &ref_rgba, PixelLayout::Rgba8, w, h)
-            .encode()
-        {
-            Ok(b) => b,
-            Err(e) => {
-                rows.push(error_row(
-                    &path.display().to_string(),
-                    bytes.len() as u64,
-                    w,
-                    h,
-                    "encode_synth",
-                    &format!("{e:?}"),
-                ));
-                continue;
-            }
-        };
+        let mut cfg = LossyConfig::new().with_quality(q).with_method(method);
+        if let Some(f) = source_filter {
+            cfg = cfg.with_filter_strength(f);
+        }
+        let synthetic =
+            match EncodeRequest::lossy(&cfg, &ref_rgba, PixelLayout::Rgba8, w, h).encode() {
+                Ok(b) => b,
+                Err(e) => {
+                    rows.push(error_row(
+                        &path.display().to_string(),
+                        bytes.len() as u64,
+                        w,
+                        h,
+                        "encode_synth",
+                        &format!("{e:?}"),
+                    ));
+                    continue;
+                }
+            };
         let analysis = match analyze_source(&synthetic) {
             Ok(a) => a,
             Err(e) => {
@@ -347,7 +373,14 @@ fn sweep_one_reference(
     rows
 }
 
-fn error_row(label: &str, input_bytes: u64, width: u32, height: u32, stage: &str, err: &str) -> Row {
+fn error_row(
+    label: &str,
+    input_bytes: u64,
+    width: u32,
+    height: u32,
+    stage: &str,
+    err: &str,
+) -> Row {
     Row {
         input_path: label.to_string(),
         input_bytes,
@@ -413,7 +446,14 @@ fn main() -> anyhow::Result<()> {
             paths.len() * q_grid.len() * targets.len() * strategies.len()
         );
         paths.par_iter().for_each(|p| {
-            let rows = sweep_one_reference(p, &q_grid, cli.method, &targets, &strategies);
+            let rows = sweep_one_reference(
+                p,
+                &q_grid,
+                cli.method,
+                cli.source_filter,
+                &targets,
+                &strategies,
+            );
             let mut w = writer.lock().unwrap();
             for r in rows {
                 let _ = w.serialize(&r);

@@ -335,44 +335,50 @@ accuracy is worth 3-5x CPU.
 
 ## File layout
 
+This crate lives inside the `zenwebp` repo as a **self-contained nested
+workspace** (`zenwebp/zenwebp-recompress/`). zenwebp itself is deliberately
+not a Cargo workspace — the sibling path deps below (`../../zensim`, …) would
+break zenwebp's CI, whose runners don't check out the siblings. Build from
+this directory.
+
 ```
-zenwebp-recompress/
-├── Cargo.toml                    # workspace root
+zenwebp-recompress/                # nested workspace root (this dir)
+├── Cargo.toml                      # [workspace] + library [package]
 ├── README.md
-├── DESIGN.md                     # this file
-├── LICENSE-{AGPL3,COMMERCIAL}
-├── zenwebp-recompress/           # library crate
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs                # re-exports the frozen API + expert mod
-│       ├── api.rs                # frozen public types
-│       ├── error.rs
-│       ├── source.rs             # WebPSourceAnalysis: probe + classification
-│       ├── budget.rs
-│       ├── target.rs             # target_zensim_a_to_libwebp_q + analog
-│       ├── router.rs             # decide_strategy
-│       ├── measure.rs            # zensim score helpers
-│       ├── aq.rs                 # CoeffEdit AQ mask
-│       ├── strategies/
-│       │   ├── mod.rs
-│       │   ├── lossless_remux.rs
-│       │   ├── coeff_edit.rs
-│       │   ├── reencode.rs
-│       │   ├── deblock_reencode.rs
-│       │   └── lossless_reencode.rs
-│       └── calibration/
-│           ├── mod.rs            # CalibrationLookup + EncoderClass
-│           ├── data.rs           # generated constants
-│           └── data.parquet      # include_bytes! source
-├── zwr-calibrate/                # corpus-sweep binary
+├── DESIGN.md                       # this file
+├── CHANGELOG.md
+├── src/
+│   ├── lib.rs                      # re-exports the frozen API + expert mod
+│   ├── api.rs                      # frozen public types (recompress, plan)
+│   ├── error.rs
+│   ├── source.rs                   # SourceAnalysis: probe + refine_content_class
+│   ├── classify.rs                 # heuristic Photo/Screen/LineArt/Mixed
+│   ├── budget.rs
+│   ├── target.rs                   # target_zensim_a → libwebp q anchors
+│   ├── router.rs                   # decide_strategy + dispatch + secant iter
+│   ├── measure.rs                  # zensim Profile A score helpers
+│   ├── aq.rs                       # CoeffEdit AQ mask (placeholder)
+│   ├── bin/zwr.rs                  # demo CLI (--plan / --analyze / --iterations)
+│   ├── strategies/
+│   │   ├── mod.rs
+│   │   ├── lossless_remux.rs
+│   │   ├── coeff_edit.rs           # stub (router skips)
+│   │   ├── reencode.rs             # run_reencode + run_reencode_at_q
+│   │   ├── deblock.rs              # artifact-aware filter (expert building block)
+│   │   ├── deblock_reencode.rs     # falsified strategy (router skips)
+│   │   └── lossless_reencode.rs
+│   └── calibration/
+│       ├── mod.rs                  # CalibrationLookup (qi × target × strategy)
+│       └── data.rs                 # empirical constants from the paired sweep
+├── zwr-calibrate/                  # corpus-sweep binary (workspace member)
 │   ├── Cargo.toml
 │   └── src/main.rs
 ├── tests/
 │   ├── locked_api.rs
-│   ├── recompress_smoke.rs
-│   └── images/
-├── benchmarks/                   # zenbench harnesses
-└── docs/
+│   └── recompress_smoke.rs
+├── benchmarks/                     # meta docs + small CSVs (large → /mnt/v)
+├── scripts/                        # build_paired_corpus.sh
+└── docs/                           # CALIBRATION_NOTES.md
 ```
 
 ## References

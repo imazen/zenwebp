@@ -9,6 +9,7 @@ extern crate alloc;
 mod api;
 mod budget;
 mod calibration;
+mod classify;
 mod error;
 mod measure;
 mod router;
@@ -30,6 +31,7 @@ pub use error::Error;
 #[cfg(feature = "expert")]
 pub mod expert {
     pub use crate::calibration::{CalibrationLookup, CellEstimate};
+    pub use crate::classify::classify;
     pub use crate::measure::{score_against_reference, score_recompression, score_rgba};
     pub use crate::router::{RouterDecision, decide_strategy, dispatch};
     pub use crate::source::{ContentClass, EncoderFamily, SourceAnalysis, analyze_source};
