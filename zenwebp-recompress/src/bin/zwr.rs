@@ -107,10 +107,21 @@ fn main() -> ExitCode {
                 println!("has_icc      = {}", a.has_icc);
                 println!("encoder      = {:?}", a.encoder_family);
                 println!("default content_class = {:?}", a.content_class);
-                // If we can decode quickly, run the heuristic classifier.
+                // Decode once for the heuristic classifier + the reliable
+                // recompression-self-consistency quality estimate.
                 if let Ok((rgba, w, h)) = zenwebp::oneshot::decode_rgba(&bytes) {
                     let cls = classify(&rgba, w as usize, h as usize);
                     println!("decoded content_class = {:?}", cls);
+                    if let Ok(eq) = zenwebp_recompress::expert::estimate_quality_by_recompression(
+                        &rgba,
+                        w,
+                        h,
+                        bytes.len(),
+                    ) {
+                        println!(
+                            "estimated_quality = {eq:.1} (decode-based; the reliable calibration key)"
+                        );
+                    }
                 }
                 return ExitCode::SUCCESS;
             }

@@ -278,10 +278,12 @@ pub fn recompress(webp_bytes: &[u8], opts: &RecompressOptions) -> Result<Recompr
     }
 
     let mut analysis = source::analyze_source(webp_bytes)?;
-    // Refine content_class from the actual pixels. recompress decodes
+    // Decode once to refine BOTH content_class and the reliable
+    // `estimated_quality` (header quality detection is unreliable for
+    // segmented WebP — see docs/QUALITY_DETECTION.md). recompress decodes
     // anyway for any pixel-domain strategy, so this is the right place to
-    // pay the decode cost; plan() stays header-only and conservative.
-    source::refine_content_class(&mut analysis, webp_bytes);
+    // pay the cost; plan() stays header-only and conservative.
+    source::refine_from_decode(&mut analysis, webp_bytes);
     let decision = router::decide_strategy(&analysis, opts);
     router::dispatch(webp_bytes, &analysis, decision, opts)
 }

@@ -15,11 +15,10 @@ use crate::api::{
     Budget, LosslessReason, NoOpReason, RecompressOptions, RecompressResult, StrategyKind,
 };
 use crate::budget::Stopwatch;
-use crate::calibration::{AllEstimates, CalibrationLookup, CellEstimate};
+use crate::calibration::{AllEstimates, CalibrationLookup, CellEstimate, data};
 use crate::error::Error;
 use crate::source::{SourceAnalysis, SourceKind};
 use crate::strategies;
-use crate::target::source_q_to_zensim_a_estimate;
 
 /// Band around target zensim-A where the source is considered "already
 /// good enough" so we ship a no-op rather than risking an undershoot.
@@ -80,6 +79,7 @@ pub fn decide_strategy(analysis: &SourceAnalysis, opts: &RecompressOptions) -> R
             projected_size_ratio: 1.0,
             ci_low_zensim_a: 100.0,
             ci_high_zensim_a: 100.0,
+            chosen_libwebp_q: None,
         });
         return RouterDecision {
             action: Action::Recompress {
@@ -92,7 +92,13 @@ pub fn decide_strategy(analysis: &SourceAnalysis, opts: &RecompressOptions) -> R
     }
 
     // 2. Source already at-or-above target with little slack? NoOp.
-    let source_zensim_a = source_q_to_zensim_a_estimate(analysis.encoder_family, analysis.source_q);
+    // `source_cum` is the source's own cumulative zensim-A vs the original,
+    // from the decode-based effective quality (NOT the header quantizer).
+    let source_zensim_a = if matches!(analysis.kind, SourceKind::LosslessVp8L) {
+        100.0
+    } else {
+        data::source_cum(analysis.estimated_quality)
+    };
     if source_zensim_a < opts.target_zensim_a + ZENSIM_A_NOOP_BAND
         && source_zensim_a >= opts.target_zensim_a - ZENSIM_A_NOOP_BAND
     {
@@ -136,8 +142,11 @@ pub fn decide_strategy(analysis: &SourceAnalysis, opts: &RecompressOptions) -> R
         } else {
             LosslessReason::NoStrategyMeetsTarget
         };
-        let jxl_hint = analysis.source_q <= 35.0
-            && matches!(analysis.kind, SourceKind::LossyVp8)
+        // JXL handoff hint: a low-quality lossy source where WebP re-encode
+        // can't shrink at target. Keyed on the decode-based effective
+        // quality (header quantizer is unreliable).
+        let jxl_hint = matches!(analysis.kind, SourceKind::LossyVp8)
+            && analysis.estimated_quality <= 45.0
             && estimates
                 .reencode
                 .map(|e| e.projected_size_ratio >= JXL_HANDOFF_GROWTH_THRESHOLD)
@@ -222,19 +231,29 @@ pub fn dispatch(
             })
         }
         Action::Recompress { strategy, estimate } => {
+            let chosen_q = estimate.chosen_libwebp_q;
             let (bytes, measured) = match opts.budget {
-                Budget::OneShot => (run_strategy(strategy, webp_bytes, analysis, opts)?, None),
+                Budget::OneShot => (
+                    run_strategy(strategy, webp_bytes, analysis, opts, chosen_q)?,
+                    None,
+                ),
                 Budget::MaxIterations(n) if n <= 1 => {
-                    let b = run_strategy(strategy, webp_bytes, analysis, opts)?;
+                    let b = run_strategy(strategy, webp_bytes, analysis, opts, chosen_q)?;
                     let m = crate::measure::score_recompression(webp_bytes, &b).ok();
                     (b, m)
                 }
-                Budget::MaxIterations(n) => {
-                    iterate_secant(strategy, webp_bytes, analysis, opts, n.min(8), &stopwatch)?
-                }
-                Budget::MaxTime(_) => {
-                    iterate_secant(strategy, webp_bytes, analysis, opts, 8, &stopwatch)?
-                }
+                Budget::MaxIterations(n) => minimize_size(
+                    strategy,
+                    webp_bytes,
+                    analysis,
+                    opts,
+                    chosen_q,
+                    n.min(8),
+                    &stopwatch,
+                )?,
+                Budget::MaxTime(_) => minimize_size(
+                    strategy, webp_bytes, analysis, opts, chosen_q, 8, &stopwatch,
+                )?,
             };
             let ratio = if !webp_bytes.is_empty() {
                 bytes.len() as f32 / webp_bytes.len() as f32
@@ -274,109 +293,118 @@ pub fn dispatch(
     }
 }
 
-/// Iterative secant search for a libwebp_q that achieves
-/// `target_zensim_a` generation-loss within the tolerance band. Returns
-/// the best `(bytes, measured_zensim_a)` seen.
+/// Real-size-minimizing local search for the measured budgets.
 ///
-/// The "measured" we have is `zensim_a_vs_source` — the generation-loss
-/// signal. Cumulative-vs-reference is bounded by `min(gen_loss,
-/// source_cum)`; since `source_cum` is fixed for a given source, hitting
-/// `gen_loss >= target_zensim_a` is the best we can do at runtime.
-fn iterate_secant(
+/// At runtime we CANNOT measure the cumulative-vs-original target (the
+/// reference is gone) — so we trust the calibration's `chosen_q` for which
+/// quality hits the cumulative target, and use the budget to minimize the
+/// ACTUAL output size, which we *can* measure. We try `chosen_q` and a few
+/// lower qualities (lower q ⇒ smaller, but the model cumulative drops), and
+/// keep the smallest real encode whose MODEL cumulative still meets the
+/// target. This corrects per-image size variance the p50 table misses
+/// without pretending to measure cumulative.
+///
+/// Returns `(bytes, measured_gen_loss_vs_source)`. The measured value is
+/// the generation-loss vs the source (the only measurable signal), exposed
+/// for transparency — it is NOT the cumulative target.
+fn minimize_size(
     strategy: StrategyKind,
     webp_bytes: &[u8],
     analysis: &SourceAnalysis,
     opts: &RecompressOptions,
+    chosen_q: Option<u8>,
     max_passes: u32,
     stopwatch: &Stopwatch,
 ) -> Result<(Vec<u8>, Option<f32>), Error> {
-    use crate::strategies;
-
-    // Strategies that don't have a q dial: one-shot + measure.
-    if !matches!(
+    // Strategies without a quality dial (remux, vp8l, coeff): single run.
+    let dialable = matches!(
         strategy,
         StrategyKind::Reencode | StrategyKind::DeblockReencode
-    ) {
-        let b = run_strategy(strategy, webp_bytes, analysis, opts)?;
+    );
+    let Some(start_q) = chosen_q.filter(|_| dialable) else {
+        let b = run_strategy(strategy, webp_bytes, analysis, opts, chosen_q)?;
         let m = crate::measure::score_recompression(webp_bytes, &b).ok();
         return Ok((b, m));
+    };
+
+    let target = opts.target_zensim_a;
+    let eff_q = analysis.estimated_quality;
+    // Candidate qualities: chosen_q, then step down by 3 (lower q ⇒ smaller
+    // file). Each candidate is gated by `model_cum_meets` inside the loop,
+    // so we never keep one whose modeled cumulative drops below target.
+    let mut candidates = vec![start_q];
+    let mut q = start_q as i32 - 3;
+    while candidates.len() < max_passes as usize && q >= 1 {
+        candidates.push(q as u8);
+        q -= 3;
     }
 
-    let target_t = opts.target_zensim_a;
-    let tol = opts.tolerance_below_target.max(0.5);
-    let ship_overshoot: f32 = 2.0;
-
-    // Initial q from anchor table.
-    let mut q_curr = crate::target::target_zensim_a_to_libwebp_q(target_t);
-    let mut q_prev: Option<i32> = None;
-    let mut m_prev: Option<f32> = None;
-    let mut best: Option<(Vec<u8>, f32)> = None;
-
-    for _ in 0..max_passes {
+    let mut best: Option<(Vec<u8>, u8)> = None;
+    for &cq in &candidates {
         if stopwatch.expired() {
             break;
         }
         let bytes = match strategy {
             StrategyKind::Reencode => {
-                strategies::reencode::run_reencode_at_q(webp_bytes, analysis, q_curr)?
+                strategies::reencode::run_reencode_at_q(webp_bytes, analysis, cq)?
             }
             StrategyKind::DeblockReencode => {
-                strategies::deblock_reencode::run_deblock_reencode_at_q(
-                    webp_bytes, analysis, q_curr,
-                )?
+                strategies::deblock_reencode::run_deblock_reencode_at_q(webp_bytes, analysis, cq)?
             }
             _ => unreachable!(),
         };
-        let m = match crate::measure::score_recompression(webp_bytes, &bytes) {
-            Ok(v) if v.is_finite() => v,
-            _ => {
-                // No measurement available; ship what we have.
-                return Ok((bytes, None));
-            }
-        };
-
-        // Track best — closer-to-target preferred, prefer smaller bytes on tie.
-        let better = match &best {
-            None => true,
-            Some((b, m_best)) => {
-                let d_curr = (m - target_t).abs();
-                let d_best = (*m_best - target_t).abs();
-                d_curr < d_best || ((d_curr - d_best).abs() < 0.25 && bytes.len() < b.len())
-            }
-        };
-        if better {
-            best = Some((bytes.clone(), m));
+        // Keep this candidate only if it actually shrinks AND its model
+        // cumulative (at the encode q, for this source) still meets target.
+        let shrinks = bytes.len() < webp_bytes.len();
+        let model_ok = model_cum_meets(eff_q, cq, target);
+        let take = shrinks
+            && model_ok
+            && match &best {
+                None => true,
+                Some((b, _)) => bytes.len() < b.len(),
+            };
+        if take {
+            best = Some((bytes, cq));
         }
-
-        // Ship if within band.
-        if m >= target_t - tol && m <= target_t + ship_overshoot {
-            return Ok((bytes, Some(m)));
-        }
-
-        // Secant step on q.
-        let q_next = match (q_prev, m_prev) {
-            (Some(qp), Some(mp)) if (m - mp).abs() > 0.5 => {
-                let dq_dm = (q_curr as f32 - qp as f32) / (m - mp);
-                let raw = q_curr as f32 + (target_t - m) * dq_dm;
-                raw.clamp(1.0, 100.0).round() as i32
-            }
-            _ => {
-                // First step: jump by fixed amount in the right direction.
-                let step: i32 = if m < target_t { 8 } else { -6 };
-                (q_curr as i32 + step).clamp(1, 100)
-            }
-        };
-        if q_next as u8 == q_curr {
-            // Step didn't move; ship best.
-            break;
-        }
-        q_prev = Some(q_curr as i32);
-        m_prev = Some(m);
-        q_curr = q_next as u8;
     }
 
-    let (bytes, m) = best.expect("at least one iteration ran");
-    Ok((bytes, Some(m)))
+    match best {
+        Some((bytes, _)) => {
+            let m = crate::measure::score_recompression(webp_bytes, &bytes).ok();
+            Ok((bytes, m))
+        }
+        // Nothing shrank while meeting target — run chosen_q once so the
+        // size guard can fall it back to a remux.
+        None => {
+            let b = strategies::reencode::run_reencode_at_q(webp_bytes, analysis, start_q)
+                .or_else(|_| run_strategy(strategy, webp_bytes, analysis, opts, chosen_q))?;
+            let m = crate::measure::score_recompression(webp_bytes, &b).ok();
+            Ok((b, m))
+        }
+    }
+}
+
+/// Does re-encoding a source of effective quality `eff_q` at libwebp `q`
+/// project a cumulative zensim-A at-or-above `target`? Uses the calibration
+/// table's cumulative column nearest `q`.
+fn model_cum_meets(eff_q: f32, q: u8, target: f32) -> bool {
+    // Find the table column for this q (nearest grid point) and read the
+    // interpolated cumulative for eff_q.
+    let grid = data::TARGET_Q_GRID;
+    let mut nearest = 0usize;
+    let mut bestd = i32::MAX;
+    for (i, &g) in grid.iter().enumerate() {
+        let d = (g as i32 - q as i32).abs();
+        if d < bestd {
+            bestd = d;
+            nearest = i;
+        }
+    }
+    // Interpolate cumulative over eff_q at that column via best_reencode's
+    // machinery: reconstruct by scanning. Simpler: use source_cum ceiling
+    // and the column cumulative.
+    let cum = data::reencode_cum_at(eff_q, nearest);
+    cum + 1e-3 >= target
 }
 
 fn run_strategy(
@@ -384,6 +412,7 @@ fn run_strategy(
     webp_bytes: &[u8],
     analysis: &SourceAnalysis,
     opts: &RecompressOptions,
+    chosen_q: Option<u8>,
 ) -> Result<Vec<u8>, Error> {
     use crate::strategies;
     match strategy {
@@ -393,10 +422,16 @@ fn run_strategy(
         StrategyKind::CoeffEdit => {
             strategies::coeff_edit::run_coeff_edit(webp_bytes, analysis, opts)
         }
-        StrategyKind::Reencode => strategies::reencode::run_reencode(webp_bytes, analysis, opts),
-        StrategyKind::DeblockReencode => {
-            strategies::deblock_reencode::run_deblock_reencode(webp_bytes, analysis, opts)
-        }
+        StrategyKind::Reencode => match chosen_q {
+            Some(q) => strategies::reencode::run_reencode_at_q(webp_bytes, analysis, q),
+            None => strategies::reencode::run_reencode(webp_bytes, analysis, opts),
+        },
+        StrategyKind::DeblockReencode => match chosen_q {
+            Some(q) => {
+                strategies::deblock_reencode::run_deblock_reencode_at_q(webp_bytes, analysis, q)
+            }
+            None => strategies::deblock_reencode::run_deblock_reencode(webp_bytes, analysis, opts),
+        },
         StrategyKind::LosslessReencode => {
             strategies::lossless_reencode::run_lossless_reencode(webp_bytes, analysis)
         }

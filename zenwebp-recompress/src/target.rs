@@ -72,20 +72,3 @@ fn interpolate(anchors: &[(f32, u8)], target: f32) -> u8 {
     }
     anchors[anchors.len() - 1].1
 }
-
-/// Estimate the cumulative zensim-A vs the unknown reference from an encoder
-/// family and source quality. This is the inverse of the table above plus a
-/// small bias for the round-trip generation loss already baked into the
-/// source.
-pub(crate) fn source_q_to_zensim_a_estimate(_family: EncoderFamily, source_q: f32) -> f32 {
-    // Linear bridge: source_q is roughly in 1:1 with the zensim-A score the
-    // encoder would have hit if its target had been our score. Subtract a
-    // small "generation loss" bias because the source's bits are already
-    // quantized — recompressing to the same nominal Q gives slightly lower
-    // zensim-A than encoding fresh from a clean reference.
-    let base = 50.0 + (source_q.clamp(1.0, 100.0) - 30.0) * 0.7;
-    (base - 1.5).clamp(0.0, 100.0)
-}
-
-// Re-export for source.rs convenience.
-pub(crate) use crate::source::EncoderFamily;

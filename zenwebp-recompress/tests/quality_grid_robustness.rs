@@ -53,7 +53,9 @@ fn is_valid_webp(bytes: &[u8]) -> bool {
 
 #[test]
 fn quality_20_to_100_step_2_all_targets_hold_invariants() {
-    let (w, h) = (128u32, 128u32);
+    // Small image keeps the 41-source-q × 8-target grid (each cell now
+    // decodes + probes + encodes) to a few seconds.
+    let (w, h) = (64u32, 64u32);
     let rgba = make_photo_rgba(w, h);
 
     let mut source_q = 20u32;

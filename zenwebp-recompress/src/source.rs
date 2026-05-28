@@ -54,9 +54,17 @@ pub struct SourceAnalysis {
     pub height: u32,
     /// Lossy / lossless / animated.
     pub kind: SourceKind,
-    /// Encoded source quality estimate in `[1.0, 100.0]`, libwebp-equivalent
-    /// scale. Synthesized for lossless input (returns `100.0`).
+    /// **Header-only** quality estimate in `[1.0, 100.0]` from the VP8 base
+    /// quantizer. UNRELIABLE for segmented WebP (see
+    /// `docs/QUALITY_DETECTION.md`) — kept for reporting / `plan()` only.
+    /// The router uses [`Self::estimated_quality`] instead.
     pub source_q: f32,
+    /// Decode-based effective quality estimate in `[1.0, 100.0]`, from
+    /// recompression self-consistency ([`crate::estimate`]). Equal to
+    /// [`Self::source_q`] until [`refine_from_decode`] runs (on the
+    /// `recompress()` path); `plan()` leaves it at the header estimate.
+    /// This is the reliable calibration key.
+    pub estimated_quality: f32,
     /// Lossy-only: VP8 base quantizer index `[0, 127]`. `0` for lossless.
     pub vp8_quantizer_index: u8,
     /// Lossy-only: VP8 loop filter level. `0` for lossless.
@@ -132,6 +140,9 @@ fn synthesize(info: WebPProbe) -> SourceAnalysis {
         height: info.height,
         kind,
         source_q,
+        // Until a decode refines it, the reliable estimate falls back to
+        // the (unreliable) header estimate.
+        estimated_quality: source_q,
         vp8_quantizer_index: qi,
         vp8_filter_level: fl,
         vp8_sharpness_level: sl,
@@ -139,21 +150,41 @@ fn synthesize(info: WebPProbe) -> SourceAnalysis {
         has_alpha: info.has_alpha,
         has_icc: info.icc_profile.is_some(),
         encoder_family: classify_encoder(qi, fl, sl, segs),
-        // Default classification — refined when `analyzer` feature is
-        // enabled and zenanalyze tier-2 features are extracted.
+        // Default classification — refined by `refine_from_decode`.
         content_class: ContentClass::Mixed,
     }
 }
 
-/// Decode the source and refine `content_class` from the actual pixels.
+/// Decode the source ONCE and refine both `content_class` (heuristic
+/// classifier) and `estimated_quality` (recompression self-consistency).
 ///
-/// [`analyze_source`] is header-only (cheap, content_class defaults to
-/// `Mixed`). This second pass decodes to RGBA and runs the heuristic
-/// classifier so the router can gate VP8L for screen/line-art content.
-/// Used by [`crate::recompress`] (which decodes anyway), NOT by
-/// [`crate::plan`] (which stays header-only).
+/// [`analyze_source`] is header-only (cheap; `content_class = Mixed`,
+/// `estimated_quality = ` the unreliable header estimate). This pass
+/// decodes to RGBA and replaces both with decode-derived values. Used by
+/// [`crate::recompress`] (which decodes anyway); NOT by [`crate::plan`].
 ///
-/// On decode failure the analysis is returned unchanged (still `Mixed`).
+/// On decode failure the analysis is returned unchanged.
+pub fn refine_from_decode(analysis: &mut SourceAnalysis, webp_bytes: &[u8]) {
+    if matches!(analysis.kind, SourceKind::Animated) {
+        return;
+    }
+    if let Ok((rgba, w, h)) = zenwebp::oneshot::decode_rgba(webp_bytes) {
+        analysis.content_class = crate::classify::classify(&rgba, w as usize, h as usize);
+        // Lossless sources have no lossy quality; leave estimated_quality
+        // at 100 (set via source_q=100 for lossless).
+        if matches!(analysis.kind, SourceKind::LossyVp8)
+            && let Ok(eq) =
+                crate::estimate::estimate_quality_by_recompression(&rgba, w, h, webp_bytes.len())
+        {
+            analysis.estimated_quality = eq;
+        }
+    }
+}
+
+/// Decode the source and refine `content_class` only. Retained for
+/// callers / tests that want classification without the extra encodes of
+/// quality estimation.
+#[allow(dead_code)]
 pub fn refine_content_class(analysis: &mut SourceAnalysis, webp_bytes: &[u8]) {
     if matches!(analysis.kind, SourceKind::Animated) {
         return;

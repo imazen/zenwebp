@@ -21,7 +21,6 @@ pub mod data;
 
 use crate::api::StrategyKind;
 use crate::source::{ContentClass, SourceAnalysis, SourceKind};
-use crate::target::source_q_to_zensim_a_estimate;
 
 /// Identifier for the calibration table version. Increments whenever the
 /// underlying corpus or fit changes.
@@ -59,6 +58,10 @@ impl CalibrationLookup {
     }
 
     /// Project a single strategy. See [`CellEstimate`].
+    ///
+    /// Keyed on `analysis.estimated_quality` — the decode-based effective
+    /// quality (header detection is unreliable; see
+    /// `docs/QUALITY_DETECTION.md`).
     pub fn project(
         &self,
         analysis: &SourceAnalysis,
@@ -66,25 +69,14 @@ impl CalibrationLookup {
         strategy: StrategyKind,
     ) -> CellEstimate {
         let is_lossless = matches!(analysis.kind, SourceKind::LosslessVp8L);
-        let qi = if matches!(analysis.kind, SourceKind::LossyVp8) {
-            analysis.vp8_quantizer_index
-        } else {
-            // Lossless source — treat as best possible (qi 0 bin).
-            0
-        };
-        let qi_bin = data::qi_to_bin(qi);
-        let source_zensim_a =
-            source_q_to_zensim_a_estimate(analysis.encoder_family, analysis.source_q);
+        let eff_q = analysis.estimated_quality;
 
-        // Source's cumulative zensim-A vs the (unknown) reference. For a
-        // lossy source this is bounded by the encode quality (the qi-keyed
-        // table, interpolated across bins); for a genuinely lossless source
-        // the decoded pixels ARE the reference for any downstream
-        // comparison, so cumulative is ~100.
+        // Source's own cumulative zensim-A vs the original. Lossless source
+        // → the decoded pixels ARE the reference, so ~100.
         let source_cum = if is_lossless {
             100.0
         } else {
-            data::source_cum_for_qi(qi)
+            data::source_cum(eff_q)
         };
 
         match strategy {
@@ -93,23 +85,19 @@ impl CalibrationLookup {
                 projected_size_ratio: 1.0,
                 ci_low_zensim_a: source_cum - 1.0,
                 ci_high_zensim_a: source_cum,
+                chosen_libwebp_q: None,
             },
             StrategyKind::LosslessReencode => {
-                // VP8L preserves the source pixels exactly; cumulative is
-                // identical to remux. Size cost varies by content class.
-                // A lossless source re-encoded as VP8L is near-identity
-                // (~1.0); only lossy sources balloon when forced to VP8L.
+                // VP8L preserves the source pixels exactly; cumulative ==
+                // source_cum. A lossless source re-encoded as VP8L is
+                // near-identity (~1.0, measured-corrected by the size
+                // guard); lossy photo balloons; screen/line-art shrinks.
                 let ratio = if is_lossless {
-                    // Re-encoding already-lossless content: our VP8L vs the
-                    // source encoder. Conservatively assume parity; the
-                    // measured pass corrects this.
                     1.0
                 } else {
                     match analysis.content_class {
                         ContentClass::Screen | ContentClass::LineArt => 0.55,
-                        ContentClass::Photo | ContentClass::Mixed => {
-                            data::LOSSLESS_REENCODE_RATIO_PER_QI_BIN[qi_bin]
-                        }
+                        ContentClass::Photo | ContentClass::Mixed => data::VP8L_PHOTO_RATIO,
                     }
                 };
                 CellEstimate {
@@ -117,74 +105,58 @@ impl CalibrationLookup {
                     projected_size_ratio: ratio,
                     ci_low_zensim_a: source_cum - 0.5,
                     ci_high_zensim_a: source_cum,
+                    chosen_libwebp_q: None,
                 }
             }
-            StrategyKind::Reencode => {
-                let cell = data::interpolated_reencode(qi, target_zensim_a, &data::REENCODE);
-                // Use bound model: cumulative = min(gen_loss, source_cum).
-                // For lossless sources `source_cum` is ~100, so the bound is
-                // purely the encode gen_loss — exactly the right behavior.
-                let gen_loss = data::interpolated_gen_loss(qi, target_zensim_a);
-                let projected = gen_loss.min(source_cum);
-                CellEstimate {
-                    projected_zensim_a: projected,
-                    projected_size_ratio: cell.p50_size_ratio,
-                    ci_low_zensim_a: projected - 4.0,
-                    ci_high_zensim_a: projected + 2.0,
-                }
-            }
+            StrategyKind::Reencode => match data::best_reencode(eff_q, target_zensim_a) {
+                Some(c) => CellEstimate {
+                    projected_zensim_a: c.cum,
+                    projected_size_ratio: c.size_ratio,
+                    ci_low_zensim_a: c.cum - 4.0,
+                    ci_high_zensim_a: c.cum + 2.0,
+                    chosen_libwebp_q: Some(c.target_q),
+                },
+                // No shrinking re-encode meets the target. Report the best
+                // achievable cumulative at ratio ≥ 1 so the router rejects
+                // it (and the size guard would too).
+                None => CellEstimate {
+                    projected_zensim_a: data::max_reencode_cum(eff_q).min(source_cum),
+                    projected_size_ratio: 1.5,
+                    ci_low_zensim_a: 0.0,
+                    ci_high_zensim_a: source_cum,
+                    chosen_libwebp_q: None,
+                },
+            },
             StrategyKind::DeblockReencode => {
-                let cell =
-                    data::interpolated_reencode(qi, target_zensim_a, &data::DEBLOCK_REENCODE);
-                let gen_loss = data::interpolated_gen_loss(qi, target_zensim_a);
-                // MEASURED (2026-05-28): applying our deblock to
-                // already-loop-filtered VP8 output is net-negative
-                // (−2.75 zensim, +3.9% size over 150 qi≥60 cells). The
-                // strategy only fires its filter when the source loop
-                // filter was weak; for the common strongly-filtered case it
-                // equals Reencode. We project a small penalty so the router
-                // never prefers it over Reencode unless a future
-                // weak-filter-source calibration proves a win.
-                let penalty = if analysis.vp8_filter_level
-                    >= crate::strategies::deblock_reencode::FILTER_WEAK_THRESHOLD
-                {
-                    2.75
-                } else {
-                    0.0
-                };
-                let size_penalty = if analysis.vp8_filter_level
-                    >= crate::strategies::deblock_reencode::FILTER_WEAK_THRESHOLD
-                {
-                    1.039
-                } else {
-                    1.0
-                };
-                let projected = (gen_loss - penalty).min(source_cum).min(100.0);
-                CellEstimate {
-                    projected_zensim_a: projected,
-                    projected_size_ratio: cell.p50_size_ratio * size_penalty,
-                    ci_low_zensim_a: projected - 4.0,
-                    ci_high_zensim_a: projected + 3.0,
+                // Measured net-negative (docs/deblock_experiment); the
+                // router de-selects it. Project worse than Reencode so it
+                // never wins even if the filter is re-enabled.
+                let base = data::best_reencode(eff_q, target_zensim_a);
+                match base {
+                    Some(c) => CellEstimate {
+                        projected_zensim_a: c.cum - 2.75,
+                        projected_size_ratio: c.size_ratio * 1.039,
+                        ci_low_zensim_a: c.cum - 6.0,
+                        ci_high_zensim_a: c.cum,
+                        chosen_libwebp_q: Some(c.target_q),
+                    },
+                    None => CellEstimate {
+                        projected_zensim_a: 0.0,
+                        projected_size_ratio: 1.6,
+                        ci_low_zensim_a: 0.0,
+                        ci_high_zensim_a: 0.0,
+                        chosen_libwebp_q: None,
+                    },
                 }
             }
             StrategyKind::CoeffEdit => {
-                // CoeffEdit only applies to lossy VP8 and is not yet
-                // implemented in the router. Project pessimistically so
-                // it never wins until the implementation ships.
-                if matches!(analysis.kind, SourceKind::LossyVp8) {
-                    CellEstimate {
-                        projected_zensim_a: source_zensim_a - 1.0,
-                        projected_size_ratio: 0.95,
-                        ci_low_zensim_a: source_zensim_a - 3.0,
-                        ci_high_zensim_a: source_zensim_a,
-                    }
-                } else {
-                    CellEstimate {
-                        projected_zensim_a: 0.0,
-                        projected_size_ratio: 1.5,
-                        ci_low_zensim_a: 0.0,
-                        ci_high_zensim_a: 0.0,
-                    }
+                // Not yet implemented; project so the router never picks it.
+                CellEstimate {
+                    projected_zensim_a: if is_lossless { 0.0 } else { source_cum - 1.0 },
+                    projected_size_ratio: 1.5,
+                    ci_low_zensim_a: 0.0,
+                    ci_high_zensim_a: source_cum,
+                    chosen_libwebp_q: None,
                 }
             }
         }
@@ -203,6 +175,11 @@ pub struct CellEstimate {
     pub ci_low_zensim_a: f32,
     /// 97.5th percentile bound on `projected_zensim_a`.
     pub ci_high_zensim_a: f32,
+    /// For re-encode strategies: the libwebp quality the projection chose
+    /// to hit the target at minimum size. The dispatcher encodes at this
+    /// `q` rather than re-deriving one from the target. `None` for
+    /// strategies without a quality dial (remux, vp8l).
+    pub chosen_libwebp_q: Option<u8>,
 }
 
 /// Bag of per-strategy estimates the router picks from.

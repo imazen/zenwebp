@@ -11,6 +11,7 @@ mod budget;
 mod calibration;
 mod classify;
 mod error;
+mod estimate;
 mod measure;
 mod router;
 mod source;
@@ -32,6 +33,7 @@ pub use error::Error;
 pub mod expert {
     pub use crate::calibration::{CalibrationLookup, CellEstimate};
     pub use crate::classify::classify;
+    pub use crate::estimate::estimate_quality_by_recompression;
     pub use crate::measure::{score_against_reference, score_recompression, score_rgba};
     pub use crate::router::{RouterDecision, decide_strategy, dispatch};
     pub use crate::source::{ContentClass, EncoderFamily, SourceAnalysis, analyze_source};

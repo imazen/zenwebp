@@ -6,6 +6,35 @@
 <!-- Breaking changes that will ship together before 0.1.0. -->
 (none yet)
 
+### Calibration overhaul — decode-based quality estimation (2026-05-28)
+- **KEY FINDING:** header-only quality detection (`zenwebp::detect`'s base
+  quantizer) is essentially uncorrelated with true encode quality for
+  segmented WebP — libwebp's per-segment quantizers leave the base
+  quantizer meaningless. trueq=40→detect 1, trueq=90→detect 52. This
+  produced the earlier non-monotonic calibration. Documented in
+  `docs/QUALITY_DETECTION.md`.
+- **`src/estimate.rs`** — decode-based effective-quality estimator via
+  recompression self-consistency (re-encode at 4 probe qualities, find the
+  size-match crossing, de-bias the 2nd-generation offset). Reliable and
+  monotonic where the header is not. `recompress()` uses it as the
+  calibration key (it decodes anyway); `plan()` stays header-only/rough.
+- **`src/calibration/data.rs` rebuilt** from a clean lossless-only sweep
+  keyed on TRUE source quality (the earlier sweep had mixed lossy files in
+  as references). Tables are now monotonic and sensible: `source_cum(q)`
+  (q50→73, q75→79, q90→86, measured), and `best_reencode(eff_q, target)`
+  which scans the target-quality grid and returns the cheapest q meeting
+  the target. Real-photo result: a q90 photo recompresses 20% at target 60,
+  13% at target 70, and correctly declines at target 75+.
+- **Measured budget** (`MaxIterations`/`MaxTime`) replaced the
+  generation-loss secant (which optimized the wrong quantity — cumulative
+  is unmeasurable at runtime) with `minimize_size`: trust the calibration's
+  `chosen_q` for the cumulative target, use the budget to minimize the
+  ACTUAL output size (measurable) gated by the model's cumulative.
+- `zwr --analyze` now reports the decode-based `estimated_quality`.
+- `zwr-calibrate` gains `--source-filter` (used for the deblock
+  experiment); the sweep harness keys aggregation on the true `synth_q`
+  label, never the unreliable detect estimate.
+
 ### Added
 - Initial workspace scaffold (zenwebp-recompress library + zwr-calibrate binary).
 - Frozen public API: `recompress(...)`, `plan(...)`, `RecompressOptions`,
