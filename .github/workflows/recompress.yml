@@ -73,16 +73,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: zenwebp-recompress
-      - name: Build (nested workspace)
+      # Default-feature build = the minimal external-consumer view (no
+      # expert, no zwr bin). Confirms the "minimal by default" contract.
+      - name: Build (default features — minimal)
         working-directory: zenwebp-recompress
         run: cargo build
-      - name: Test (nested workspace)
+      - name: Test (workspace, default features)
         working-directory: zenwebp-recompress
-        run: cargo test
-      - name: Clippy
+        run: cargo test --workspace
+      # All-features build exercises the expert API, the zwr CLI bin
+      # (required-features = ["expert"]), and the analyzer deps.
+      - name: Test (all features)
+        working-directory: zenwebp-recompress
+        run: cargo test --all-features
+      - name: Clippy (all targets, all features)
         if: matrix.os == 'ubuntu-latest'
         working-directory: zenwebp-recompress
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Fmt
         if: matrix.os == 'ubuntu-latest'
         working-directory: zenwebp-recompress

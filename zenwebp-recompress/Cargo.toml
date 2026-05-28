@@ -49,8 +49,16 @@ readme = "README.md"
 [lib]
 name = "zenwebp_recompress"
 
+# The `zwr` demo CLI uses the `expert` API (--analyze dumps source
+# analysis + the heuristic classifier), so it requires that feature. The
+# LIBRARY default stays minimal (`std` only) — expert internals are opt-in,
+# per the crate's "minimal except when expert is active" contract.
+[[bin]]
+name = "zwr"
+required-features = ["expert"]
+
 [features]
-default = ["std", "expert"]
+default = ["std"]
 
 ## Std-only path. no_std is supported with `default-features = false` plus
 ## `alloc`, but the calibration loader uses include_bytes! + bincode which is

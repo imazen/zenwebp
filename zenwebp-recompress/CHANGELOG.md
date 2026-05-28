@@ -66,6 +66,15 @@
   router accepts a slight target undershoot in exchange for real size
   savings when no strategy projects strictly at-or-above target.
 
+### API contract
+- **Default features are minimal** (`std` only). The `expert` module is
+  opt-in, per the crate's "minimal except when expert is active" contract.
+  The `zwr` demo CLI declares `required-features = ["expert"]` (it uses the
+  expert `--analyze` path), so building the bin pulls expert without
+  forcing it on library consumers. CI exercises both: a default-feature
+  build (minimal external-consumer view) and an `--all-features` build
+  (expert API + bin + analyzer deps).
+
 ### Repo integration
 - Ships as a **self-contained nested workspace** at
   `zenwebp/zenwebp-recompress/` (zwr-calibrate moved under it). zenwebp
