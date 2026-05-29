@@ -6,6 +6,28 @@
 <!-- Breaking changes that will ship together before 0.1.0. -->
 (none yet)
 
+### Real per-content-class calibration (2026-05-28)
+- **`src/calibration/calib_tables.rs`** (AUTO-GENERATED) replaces the
+  preliminary photo-only 3-ref fit with **per-content-class** tables
+  (photo/screen/line-art/mixed), each 7 source-q anchors × 16 reencode-q
+  columns for `RATIO` + `CUM`, plus a linear `SOURCE_CUM`. `data.rs` functions
+  (`source_cum`/`best_reencode`/`reencode_cum_at`/`max_reencode_cum`) now take
+  `ContentClass`; the router threads `analysis.content_class` through.
+- Fit from a disciplined sweep (`benchmarks/calibration_2026-05-28.md`):
+  50 refs/class × size variants (Mitchell, downscale-only) × q20–100 step 2
+  sources × raw reencode-q 20–95 step 5 = **248,501 cells, 0 errors**, 20%
+  held-out per class. Validation cumulative-zensim MAE: screen 3.56, mixed
+  3.98, photo 7.89, line-art 8.49 (photo/line-art tail = within-class content
+  variance; the size guard + `MaxIterations` budget cover residual error).
+- **`zwr-calibrate`** gains `--reencode-qs` (raw non-circular reencode-q
+  sweep), `--refine` (opt-in decode-based estimate for estimator validation),
+  and records `true_source_q` + `est_quality`. New `build_calib_corpus.sh`
+  (multi-class/multi-size corpus) + `fit_calibration.py` (per-class fitter,
+  size-dependence report, held-out validation, emits `calib_tables.rs`).
+- Estimator finding: the decode-based estimate is biased ~−5 vs true q
+  (MAE 6.5); tables are fit on true q (all anchors populated) and est-vs-true
+  keying measured equivalent (<0.5 MAE) — interpolation absorbs the bias.
+
 ### CoeffEdit — VP8 coefficient transcoder built, edits RD-falsified for WebP (2026-05-28)
 - **`src/vp8x/`** — a self-contained, validated VP8 keyframe coefficient
   transcoder: matched boolean coder (`bool.rs`), tables, `parse_vp8_keyframe`

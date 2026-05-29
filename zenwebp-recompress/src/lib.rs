@@ -37,7 +37,9 @@ pub mod expert {
     pub use crate::estimate::estimate_quality_by_recompression;
     pub use crate::measure::{score_against_reference, score_recompression, score_rgba};
     pub use crate::router::{RouterDecision, decide_strategy, dispatch};
-    pub use crate::source::{ContentClass, EncoderFamily, SourceAnalysis, analyze_source};
+    pub use crate::source::{
+        ContentClass, EncoderFamily, SourceAnalysis, analyze_source, refine_from_decode,
+    };
     pub use crate::strategies::{
         coeff_edit::{run_coeff_edit, run_coeff_edit_keep, run_coeff_edit_requant},
         deblock::deblock_rgba,

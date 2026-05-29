@@ -73,10 +73,11 @@ impl CalibrationLookup {
 
         // Source's own cumulative zensim-A vs the original. Lossless source
         // → the decoded pixels ARE the reference, so ~100.
+        let class = analysis.content_class;
         let source_cum = if is_lossless {
             100.0
         } else {
-            data::source_cum(eff_q)
+            data::source_cum(class, eff_q)
         };
 
         match strategy {
@@ -108,7 +109,7 @@ impl CalibrationLookup {
                     chosen_libwebp_q: None,
                 }
             }
-            StrategyKind::Reencode => match data::best_reencode(eff_q, target_zensim_a) {
+            StrategyKind::Reencode => match data::best_reencode(class, eff_q, target_zensim_a) {
                 Some(c) => CellEstimate {
                     projected_zensim_a: c.cum,
                     projected_size_ratio: c.size_ratio,
@@ -120,7 +121,7 @@ impl CalibrationLookup {
                 // achievable cumulative at ratio ≥ 1 so the router rejects
                 // it (and the size guard would too).
                 None => CellEstimate {
-                    projected_zensim_a: data::max_reencode_cum(eff_q).min(source_cum),
+                    projected_zensim_a: data::max_reencode_cum(class, eff_q).min(source_cum),
                     projected_size_ratio: 1.5,
                     ci_low_zensim_a: 0.0,
                     ci_high_zensim_a: source_cum,
@@ -131,7 +132,7 @@ impl CalibrationLookup {
                 // Measured net-negative (docs/deblock_experiment); the
                 // router de-selects it. Project worse than Reencode so it
                 // never wins even if the filter is re-enabled.
-                let base = data::best_reencode(eff_q, target_zensim_a);
+                let base = data::best_reencode(class, eff_q, target_zensim_a);
                 match base {
                     Some(c) => CellEstimate {
                         projected_zensim_a: c.cum - 2.75,

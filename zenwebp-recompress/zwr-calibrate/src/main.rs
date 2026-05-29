@@ -25,8 +25,9 @@ use zenwebp::PixelLayout;
 use zenwebp::encoder::{EncodeRequest, LossyConfig};
 use zenwebp::oneshot::decode_rgba;
 use zenwebp_recompress::expert::{
-    SourceAnalysis, analyze_source, run_deblock_reencode, run_lossless_reencode,
-    run_lossless_remux, run_reencode, run_reencode_at_q, score_recompression, score_rgba,
+    SourceAnalysis, analyze_source, refine_from_decode, run_deblock_reencode,
+    run_lossless_reencode, run_lossless_remux, run_reencode, run_reencode_at_q,
+    score_recompression, score_rgba,
 };
 use zenwebp_recompress::{Budget, RecompressOptions};
 
@@ -83,6 +84,14 @@ struct Cli {
     #[arg(long, default_value = "remux,reencode,deblock,vp8l")]
     strategies: String,
 
+    /// Run `refine_from_decode` per synthetic source so `est_quality` is the
+    /// decode-based estimate (matches runtime; costs 4 probe encodes/source).
+    /// Off by default — the fit keys on the TRUE q in the label, and est-vs-
+    /// true keying was measured equivalent (<0.5 MAE). Enable only to validate
+    /// the estimator.
+    #[arg(long)]
+    refine: bool,
+
     /// Output CSV path.
     #[arg(long)]
     output: PathBuf,
@@ -102,6 +111,14 @@ struct Row {
     /// detect-derived estimate; for `--refs` mode it's the exact q used
     /// to make the synthetic source.
     source_q: f32,
+    /// TRUE synthetic-source encode quality (`--refs` mode). `NaN` for
+    /// `--sources`. This is the clean calibration key — never the detect
+    /// estimate in `source_q`.
+    true_source_q: f32,
+    /// Decode-based effective-quality estimate (`refine_from_decode`) — what
+    /// the router actually keys the calibration on at runtime. Recorded so the
+    /// estimator can be validated against `true_source_q`.
+    est_quality: f32,
     source_quantizer_index: u32,
     encoder_family: String,
     source_kind: String,
@@ -190,6 +207,7 @@ fn dispatch_strategy(
     res.map_err(|e| format!("{e:?}"))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sweep_one_source(
     label: &str,
     bytes: &[u8],
@@ -197,6 +215,7 @@ fn sweep_one_source(
     reference_rgba: Option<(&[u8], u32, u32)>,
     targets: &[f32],
     strategies: &[StrategyName],
+    true_q: f32,
 ) -> Vec<Row> {
     let mut rows = Vec::new();
     for &target in targets {
@@ -224,6 +243,8 @@ fn sweep_one_source(
                         width: analysis.width,
                         height: analysis.height,
                         source_q: analysis.source_q,
+                        true_source_q: true_q,
+                        est_quality: analysis.estimated_quality,
                         source_quantizer_index: analysis.vp8_quantizer_index as u32,
                         encoder_family: format!("{:?}", analysis.encoder_family),
                         source_kind: format!("{:?}", analysis.kind),
@@ -245,6 +266,8 @@ fn sweep_one_source(
                     width: analysis.width,
                     height: analysis.height,
                     source_q: analysis.source_q,
+                    true_source_q: true_q,
+                    est_quality: analysis.estimated_quality,
                     source_quantizer_index: analysis.vp8_quantizer_index as u32,
                     encoder_family: format!("{:?}", analysis.encoder_family),
                     source_kind: format!("{:?}", analysis.kind),
@@ -276,6 +299,7 @@ fn sweep_one_source_raw(
     analysis: &SourceAnalysis,
     reference_rgba: (&[u8], u32, u32),
     reencode_qs: &[f32],
+    true_q: f32,
 ) -> Vec<Row> {
     let (ref_rgba, w, h) = reference_rgba;
     let cumulative = |out: &[u8]| -> f32 {
@@ -303,6 +327,8 @@ fn sweep_one_source_raw(
             width: analysis.width,
             height: analysis.height,
             source_q: analysis.source_q,
+            true_source_q: true_q,
+            est_quality: analysis.estimated_quality,
             source_quantizer_index: analysis.vp8_quantizer_index as u32,
             encoder_family: format!("{:?}", analysis.encoder_family),
             source_kind: format!("{:?}", analysis.kind),
@@ -319,7 +345,11 @@ fn sweep_one_source_raw(
         }
     };
 
-    let mut rows = Vec::with_capacity(reencode_qs.len() + 2);
+    let mut rows = Vec::with_capacity(reencode_qs.len() + 3);
+    // The source's OWN cumulative zensim-A vs the clean reference — i.e. what
+    // you keep by NOT recompressing. This is the `source_cum(eff_q)` curve and
+    // the ceiling no recompression can exceed. size_ratio = 1.0 by definition.
+    rows.push(base("source", f32::NAN, Some(bytes), String::new()));
     for &q in reencode_qs {
         let qi = q.clamp(1.0, 100.0).round() as u8;
         match run_reencode_at_q(bytes, analysis, qi) {
@@ -371,7 +401,13 @@ fn sweep_existing_file(path: &Path, targets: &[f32], strategies: &[StrategyName]
     };
     let label = path.display().to_string();
     rows.extend(sweep_one_source(
-        &label, &bytes, &analysis, None, targets, strategies,
+        &label,
+        &bytes,
+        &analysis,
+        None,
+        targets,
+        strategies,
+        f32::NAN,
     ));
     rows
 }
@@ -385,6 +421,7 @@ fn sweep_one_reference(
     targets: &[f32],
     strategies: &[StrategyName],
     reencode_qs: Option<&[f32]>,
+    refine: bool,
 ) -> Vec<Row> {
     let mut rows = Vec::new();
     let bytes = match fs::read(path) {
@@ -436,7 +473,7 @@ fn sweep_one_reference(
                     continue;
                 }
             };
-        let analysis = match analyze_source(&synthetic) {
+        let mut analysis = match analyze_source(&synthetic) {
             Ok(a) => a,
             Err(e) => {
                 rows.push(error_row(
@@ -450,6 +487,12 @@ fn sweep_one_reference(
                 continue;
             }
         };
+        // Optionally match runtime exactly: the router keys the calibration on
+        // the decode-based estimate. Off by default (the fit keys on true q in
+        // the label); enable to record est_quality for estimator validation.
+        if refine {
+            refine_from_decode(&mut analysis, &synthetic);
+        }
         let label = format!("{}_synth_q{}", path.display(), q.round() as u32);
         if let Some(rqs) = reencode_qs {
             rows.extend(sweep_one_source_raw(
@@ -458,6 +501,7 @@ fn sweep_one_reference(
                 &analysis,
                 (&ref_rgba, w, h),
                 rqs,
+                q,
             ));
         } else {
             rows.extend(sweep_one_source(
@@ -467,6 +511,7 @@ fn sweep_one_reference(
                 Some((&ref_rgba, w, h)),
                 targets,
                 strategies,
+                q,
             ));
         }
     }
@@ -487,6 +532,8 @@ fn error_row(
         width,
         height,
         source_q: f32::NAN,
+        true_source_q: f32::NAN,
+        est_quality: f32::NAN,
         source_quantizer_index: 0,
         encoder_family: String::new(),
         source_kind: String::new(),
@@ -572,6 +619,7 @@ fn main() -> anyhow::Result<()> {
                 &targets,
                 &strategies,
                 reencode_qs.as_deref(),
+                cli.refine,
             );
             let mut w = writer.lock().unwrap();
             for r in rows {

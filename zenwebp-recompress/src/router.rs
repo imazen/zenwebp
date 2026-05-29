@@ -17,7 +17,7 @@ use crate::api::{
 use crate::budget::Stopwatch;
 use crate::calibration::{AllEstimates, CalibrationLookup, CellEstimate, data};
 use crate::error::Error;
-use crate::source::{SourceAnalysis, SourceKind};
+use crate::source::{ContentClass, SourceAnalysis, SourceKind};
 use crate::strategies;
 
 /// Band around target zensim-A where the source is considered "already
@@ -97,7 +97,7 @@ pub fn decide_strategy(analysis: &SourceAnalysis, opts: &RecompressOptions) -> R
     let source_zensim_a = if matches!(analysis.kind, SourceKind::LosslessVp8L) {
         100.0
     } else {
-        data::source_cum(analysis.estimated_quality)
+        data::source_cum(analysis.content_class, analysis.estimated_quality)
     };
     if source_zensim_a < opts.target_zensim_a + ZENSIM_A_NOOP_BAND
         && source_zensim_a >= opts.target_zensim_a - ZENSIM_A_NOOP_BAND
@@ -362,7 +362,7 @@ fn minimize_size(
         // Keep this candidate only if it actually shrinks AND its model
         // cumulative (at the encode q, for this source) still meets target.
         let shrinks = bytes.len() < webp_bytes.len();
-        let model_ok = model_cum_meets(eff_q, cq, target);
+        let model_ok = model_cum_meets(analysis.content_class, eff_q, cq, target);
         let take = shrinks
             && model_ok
             && match &best {
@@ -393,9 +393,9 @@ fn minimize_size(
 /// Does re-encoding a source of effective quality `eff_q` at libwebp `q`
 /// project a cumulative zensim-A at-or-above `target`? Uses the calibration
 /// table's cumulative column nearest `q`.
-fn model_cum_meets(eff_q: f32, q: u8, target: f32) -> bool {
+fn model_cum_meets(class: ContentClass, eff_q: f32, q: u8, target: f32) -> bool {
     // Find the table column for this q (nearest grid point) and read the
-    // interpolated cumulative for eff_q.
+    // interpolated cumulative for eff_q in the class's table.
     let grid = data::TARGET_Q_GRID;
     let mut nearest = 0usize;
     let mut bestd = i32::MAX;
@@ -406,10 +406,7 @@ fn model_cum_meets(eff_q: f32, q: u8, target: f32) -> bool {
             nearest = i;
         }
     }
-    // Interpolate cumulative over eff_q at that column via best_reencode's
-    // machinery: reconstruct by scanning. Simpler: use source_cum ceiling
-    // and the column cumulative.
-    let cum = data::reencode_cum_at(eff_q, nearest);
+    let cum = data::reencode_cum_at(class, eff_q, nearest);
     cum + 1e-3 >= target
 }
 

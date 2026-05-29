@@ -337,9 +337,13 @@ accuracy is worth 3-5x CPU.
 - Decode-based effective-quality estimation (`src/estimate.rs`) — the
   reliable calibration key, since header detection is unreliable (see
   `docs/QUALITY_DETECTION.md`).
-- Monotonic, measured calibration (`src/calibration/data.rs`) from a clean
-  lossless-only sweep. Real photos recompress 13–20% at mid targets.
-- Heuristic content classifier (`src/classify.rs`); gates VP8L.
+- **Per-content-class** calibration (`src/calibration/calib_tables.rs`,
+  AUTO-GENERATED) — photo/screen/line-art/mixed tables fit from a disciplined
+  50-ref/class, multi-size, q20–100 sweep (248,501 cells). Held-out cumulative
+  MAE: screen 3.56, mixed 3.98, photo 7.89, line-art 8.49. See
+  `benchmarks/calibration_2026-05-28.md`. The router keys per `content_class`.
+- Heuristic content classifier (`src/classify.rs`); gates VP8L + selects the
+  calibration class.
 - Ground-truth size guard — never ships a file that didn't shrink.
 - JXL handoff hint, `plan()` preview, full `expert` API.
 
@@ -359,10 +363,14 @@ accuracy is worth 3-5x CPU.
   `benchmarks/coeff_edit_experiment_2026-05-28.md`.
 
 **Deferred (documented, not half-built):**
-- Larger calibration corpus — current tables are fit from 3 photo refs
-  (preliminary, below the 50-per-class bar). Re-fit recipe in
-  `docs/QUALITY_DETECTION.md`. The size guard keeps the system correct
-  regardless of fit precision.
+- Larger **mixed** corpus — only ~10 clean mixed-content source refs were
+  available locally, so the mixed table is the weakest (the other three
+  classes have 50). The size guard keeps it correct regardless. Re-fit recipe:
+  `zwr-calibrate/{build_calib_corpus.sh,fit_calibration.py}` +
+  `benchmarks/calibration_2026-05-28.md`.
+- Per-image (vs per-class-mean) calibration — photo/line-art validation has a
+  heavy p90 tail from within-class content variance. A content-feature-
+  conditioned model (the zenanalyze MLP below) would capture it.
 - zenanalyze MLP content classifier (`--features analyzer`) — a final
   optimization step once the corpus is large enough; the heuristic
   classifier covers the common cases today.

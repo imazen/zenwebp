@@ -44,9 +44,15 @@ point is verbatim = `LosslessRemux`). Don't re-attempt coefficient-domain size
 reduction for WebP — the prediction chain defeats it. See
 `zenwebp-recompress/benchmarks/coeff_edit_experiment_2026-05-28.md`.
 
-Calibration constants in `src/calibration/data.rs` are fit from the paired
-sweep (provenance: `benchmarks/*.meta.md` + `sweeps-2026-05-28.pointer.md`,
-raw CSVs on `/mnt/v`).
+Calibration is **per content class** (photo/screen/line-art/mixed) in
+`src/calibration/calib_tables.rs` (AUTO-GENERATED — regenerate via
+`zwr-calibrate/fit_calibration.py`, never hand-edit). Fit from a disciplined
+50-ref/class, multi-size (Mitchell, downscale-only), q20–100-step-2 sweep
+(248,501 cells; held-out MAE screen 3.56 / mixed 3.98 / photo 7.89 / line-art
+8.49). The `data.rs` functions take `ContentClass`; the router threads
+`analysis.content_class`. Provenance + re-fit recipe:
+`benchmarks/calibration_2026-05-28.md`; raw CSVs + corpus on `/mnt/v`. Mixed is
+thin (~10 source refs) — weakest table; the size guard keeps it correct.
 
 ## Canonical training data + indexes (added 2026-05-20)
 
