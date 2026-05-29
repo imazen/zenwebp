@@ -34,11 +34,15 @@ level requantization) is RD-dominated by `Reencode` at matched output size —
 because VP8 predicts each block from neighbours' reconstructed pixels, so
 editing coefficients drifts the whole frame, and there's no RD re-optimisation.
 Coefficient transcoding is the right tool for prediction-free codecs (baseline
-JPEG), not VP8. The transcoder + edits stay reachable via
-`expert::run_coeff_edit{,_keep,_requant}`; the router never selects CoeffEdit
-(its only loss-free point is verbatim = `LosslessRemux`). Don't re-attempt
-coefficient-domain size reduction for WebP without first beating the drift.
-See `zenwebp-recompress/benchmarks/coeff_edit_experiment_2026-05-28.md`.
+JPEG), not VP8. **Drift compensation was also tried and falsified**
+(`vp8x::compensate`, closed-loop DC trim): Jacobi-unstable on the prediction
+chain, recovers only ~10% of the drift, never closes the gap to Reencode —
+complete stable compensation just *is* re-encoding. The transcoder + edits +
+compensator stay reachable via `expert::run_coeff_edit{,_keep,_requant}` /
+`vp8x::compensate`; the router never selects CoeffEdit (its only loss-free
+point is verbatim = `LosslessRemux`). Don't re-attempt coefficient-domain size
+reduction for WebP — the prediction chain defeats it. See
+`zenwebp-recompress/benchmarks/coeff_edit_experiment_2026-05-28.md`.
 
 Calibration constants in `src/calibration/data.rs` are fit from the paired
 sweep (provenance: `benchmarks/*.meta.md` + `sweeps-2026-05-28.pointer.md`,

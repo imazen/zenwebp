@@ -21,6 +21,7 @@
 #![allow(dead_code)]
 
 pub mod bool;
+pub mod compensate;
 pub mod edit;
 pub mod emit;
 pub mod parse;

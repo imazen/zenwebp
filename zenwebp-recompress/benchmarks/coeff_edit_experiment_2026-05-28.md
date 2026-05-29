@@ -121,11 +121,54 @@ prediction is exactly the feature that defeats the same idea for WebP.
 
 ---
 
+## Result 3 — drift compensation does not rescue it either
+
+The natural objection: Reencode re-FDCTs *everything* (generation loss even on
+coefficients that didn't need changing), whereas a coefficient edit preserves
+untouched levels *exactly* (zero generation loss) — measured here as a 3–10.7
+zensim-A advantage of the source over a same-quality (q75→q75) re-encode. If
+the drift from editing a few coefficients could be *cancelled*, that advantage
+might survive.
+
+So a closed-loop **DC drift compensator** was built (`src/vp8x/compensate.rs`):
+decode the unedited source as the target, then after the edit iterate
+emit→decode→measure-per-MB-mean-error→nudge the DC level (Y2 DC for luma,
+UV DC for chroma) using the analytic level→pixel DC gain, to a fixed point.
+
+It does not help:
+
+- **Unstable.** VP8's prediction chain couples every block, so a simultaneous
+  (Jacobi) correction forms a traveling wave that overshoots toward the
+  bottom-right. At relax ≥ 0.5 it diverges into a limit cycle (luma mean-abs
+  drift 22 → 54). Only heavy under-relaxation (≤ 0.25) is stable.
+- **Insufficient.** Even stable, it removes only ~10 % of the drift (22.25 →
+  19.9 luma mean-abs on a synthetic): the bulk of the error is the *intended*
+  high-frequency loss plus *non-DC* structural drift, which DC nudging can't
+  touch. It also adds DC magnitude → larger files.
+- **RD still dominated.** zensim-A vs clean at matched size (source q75):
+
+  | ref | uncomp keep10 | DC-compensated keep10 | Reencode (matched) |
+  |-----|---------------|------------------------|--------------------|
+  | 1 | z=51.1@12304 | z=12.9@12896 (worse + bigger) | q75 z=69.0@12260 |
+  | 3 | z=66.8@53866 | z=63.0@54152 | q70 z=73.1@53360 |
+  | 4 | z=39.9@15788 | z=42.8@16054 (+2.9) | q75 z=80.5@16870 |
+
+  Compensation is inconsistent (tiny help on ref 4, catastrophic on ref 1) and
+  never closes the gap to Reencode.
+
+The structural reason, now empirically grounded: *complete, stable* drift
+compensation requires sequential (Gauss-Seidel) reconstruction in decode order
+with full-frequency residual re-derivation — which is exactly what re-encoding
+does. Partial (DC-only) compensation is both unstable on the prediction chain
+and far too weak. There is no coefficient-domain shortcut that beats Reencode
+for VP8.
+
 ## Decision
 
-- **Keep** the transcoder + both edits as validated infrastructure, reachable
-  via `expert::run_coeff_edit_keep` / `expert::run_coeff_edit_requant` /
-  `expert::run_coeff_edit` (research + reproduction).
+- **Keep** the transcoder + both edits + the DC compensator as validated
+  infrastructure, reachable via `expert::run_coeff_edit_keep` /
+  `expert::run_coeff_edit_requant` / `expert::run_coeff_edit` (research +
+  reproduction). The compensator lives in `vp8x::compensate` (crate-internal).
 - **Do not** let the router select CoeffEdit (`router::filter_candidates`
   excludes it, alongside the separately-falsified `DeblockReencode`).
 - CoeffEdit's only loss-free operating point is verbatim, already covered by

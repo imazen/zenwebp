@@ -29,6 +29,14 @@
 //! prediction (baseline JPEG, where requantization is drift-free and
 //! competitive) — VP8's intra prediction is exactly what defeats it.
 //!
+//! Closed-loop **drift compensation** ([`crate::vp8x::compensate`]) was built
+//! to test whether cancelling the drift recovers the (real, 3–10 zensim-A)
+//! advantage that preserving untouched coefficients has over `Reencode`'s
+//! re-FDCT. It doesn't: DC compensation is Jacobi-unstable on the prediction
+//! chain, removes only ~10 % of the drift when stable, and never closes the
+//! gap. Complete, stable compensation = sequential full-frequency
+//! reconstruction = re-encoding. So the conclusion holds.
+//!
 //! CoeffEdit's no-generation-loss advantage is therefore only realisable at
 //! the verbatim point (zero size change), which `LosslessRemux` already
 //! provides. **The router does not select CoeffEdit** (see

@@ -347,11 +347,14 @@ accuracy is worth 3-5x CPU.
 - `DeblockReencode` — FALSIFIED (net-negative on every tested source
   config; VP8 already deblocks in-loop). Filter kept as `expert::deblock_rgba`;
   router never selects it. See `benchmarks/deblock_experiment_2026-05-28.md`.
-- `CoeffEdit` — BUILT then RD-FALSIFIED. A complete, pixel-exact VP8
-  coefficient transcoder (`src/vp8x/`) with two edits (AC-drop, requantize);
-  the verbatim/no-op path is bit-exact (MAD 0). But every size-reducing edit
-  is RD-dominated by `Reencode` at matched size because VP8 intra-prediction
-  makes coefficient edits drift across the frame. Reachable via
+- `CoeffEdit` — BUILT then RD-FALSIFIED (incl. drift compensation). A
+  complete, pixel-exact VP8 coefficient transcoder (`src/vp8x/`) with two
+  edits (AC-drop, requantize) and a closed-loop DC drift compensator
+  (`vp8x::compensate`); the verbatim/no-op path is bit-exact (MAD 0). Every
+  size-reducing edit is RD-dominated by `Reencode` at matched size because VP8
+  intra-prediction makes coefficient edits drift across the frame; DC
+  compensation is unstable on the prediction chain and recovers only ~10 % of
+  the drift, never closing the gap. Reachable via
   `expert::run_coeff_edit{,_keep,_requant}`; router never selects it. See
   `benchmarks/coeff_edit_experiment_2026-05-28.md`.
 

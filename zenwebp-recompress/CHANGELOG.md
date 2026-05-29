@@ -21,10 +21,17 @@
   clean pixels with RD re-optimisation. Coefficient editing is the right
   tool for prediction-free codecs (baseline JPEG), not VP8/WebP. Full data +
   mechanism in `benchmarks/coeff_edit_experiment_2026-05-28.md`.
-- The transcoder + edits stay reachable as research tools via
-  `expert::run_coeff_edit{,_keep,_requant}`. **The router does not select
-  CoeffEdit** (`router::filter_candidates`); its only loss-free point
-  (verbatim) is already `LosslessRemux`.
+- **Drift compensation tried + falsified too.** `src/vp8x/compensate.rs` is a
+  closed-loop DC drift compensator (decode source as target; iterate
+  emit→decode→measure→nudge DC levels). It's Jacobi-unstable on the prediction
+  chain (diverges above relax≈0.25), removes only ~10 % of the drift when
+  stable, and never closes the gap to `Reencode` (e.g. ref-1 keep-10:
+  uncompensated z=51 → compensated z=13, both ≪ Reencode z=69). Complete,
+  stable compensation = sequential full-frequency reconstruction = re-encoding.
+- The transcoder + edits + compensator stay reachable as research tools via
+  `expert::run_coeff_edit{,_keep,_requant}` and `vp8x::compensate`. **The
+  router does not select CoeffEdit** (`router::filter_candidates`); its only
+  loss-free point (verbatim) is already `LosslessRemux`.
 
 ### Calibration overhaul — decode-based quality estimation (2026-05-28)
 - **KEY FINDING:** header-only quality detection (`zenwebp::detect`'s base
