@@ -39,8 +39,11 @@ pub mod expert {
     pub use crate::router::{RouterDecision, decide_strategy, dispatch};
     pub use crate::source::{ContentClass, EncoderFamily, SourceAnalysis, analyze_source};
     pub use crate::strategies::{
-        coeff_edit::run_coeff_edit, deblock::deblock_rgba, deblock_reencode::run_deblock_reencode,
-        lossless_reencode::run_lossless_reencode, lossless_remux::run_lossless_remux,
+        coeff_edit::{run_coeff_edit, run_coeff_edit_keep, run_coeff_edit_requant},
+        deblock::deblock_rgba,
+        deblock_reencode::run_deblock_reencode,
+        lossless_reencode::run_lossless_reencode,
+        lossless_remux::run_lossless_remux,
         reencode::run_reencode,
     };
     pub use crate::target::target_zensim_a_to_libwebp_q;

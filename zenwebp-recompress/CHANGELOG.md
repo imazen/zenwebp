@@ -6,6 +6,26 @@
 <!-- Breaking changes that will ship together before 0.1.0. -->
 (none yet)
 
+### CoeffEdit — VP8 coefficient transcoder built, edits RD-falsified for WebP (2026-05-28)
+- **`src/vp8x/`** — a self-contained, validated VP8 keyframe coefficient
+  transcoder: matched boolean coder (`bool.rs`), tables, `parse_vp8_keyframe`
+  (→ quantized levels, no IDCT), `emit_vp8_keyframe`, and two edits in
+  `edit.rs`: `drop_high_freq_ac` and `requantize` (level-grid coarsening).
+  The verbatim transcode and no-op requantize are **bit-for-bit pixel-exact**
+  with libwebp's decoder (MAD 0).
+- **KEY FINDING:** every size-reducing coefficient edit is RD-dominated by
+  `Reencode` at matched output size (AC-drop loses on 4/5 refs; requantize
+  loses by 35–52 zensim-A points). Cause: **VP8 spatial intra-prediction
+  drift** — editing coefficients breaks the prediction invariant and the
+  error compounds across the frame; `Reencode` re-derives residuals from
+  clean pixels with RD re-optimisation. Coefficient editing is the right
+  tool for prediction-free codecs (baseline JPEG), not VP8/WebP. Full data +
+  mechanism in `benchmarks/coeff_edit_experiment_2026-05-28.md`.
+- The transcoder + edits stay reachable as research tools via
+  `expert::run_coeff_edit{,_keep,_requant}`. **The router does not select
+  CoeffEdit** (`router::filter_candidates`); its only loss-free point
+  (verbatim) is already `LosslessRemux`.
+
 ### Calibration overhaul — decode-based quality estimation (2026-05-28)
 - **KEY FINDING:** header-only quality detection (`zenwebp::detect`'s base
   quantizer) is essentially uncorrelated with true encode quality for

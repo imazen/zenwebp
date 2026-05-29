@@ -106,21 +106,26 @@ Keep the VP8 / VP8L bitstream verbatim. Optionally:
 Zero generation loss. Wins when the source is too aggressively compressed for
 any standard re-encode to beat it.
 
-### `CoeffEdit` — VP8 coefficient-domain tighten
-Decode the VP8 partitions, but **stop before IDCT**. Per-segment quant scale,
-loop filter level, sharpness, and AC residual coefficients are addressable in
-the dequantized-coefficient domain. Optionally:
-- Increase the per-segment quantizer to bring the file closer to target Q (only
-  shrinks the file because higher quantizer = more zeros after re-quantization).
-- Zero out per-block AC subsets selected by an activity-quantization (AQ) mask.
-- Re-encode the VP8 token stream with the modified coefficients.
+### `CoeffEdit` — VP8 coefficient-domain tighten (built, RD-falsified for WebP)
+Parse the VP8 keyframe to quantized coefficient **levels** (stop before IDCT),
+edit the levels, and re-emit the token stream — **no IDCT/FDCT spatial
+round-trip**. Implemented as a self-contained transcoder in `src/vp8x/`
+(`parse_vp8_keyframe` → `edit` → `emit_vp8_keyframe`), whose verbatim path is
+pixel-exact with libwebp. Two edits exist: `drop_high_freq_ac` (zero AC scan
+positions ≥ keep) and `requantize` (coarsen the level grid).
 
-No IDCT/FDCT round-trip → zero generation loss from interpolation.
-
-This is the VP8 analog of zenjpeg-recompress's `Preserve` strategy. **Lossless
-VP8L sources don't participate in `CoeffEdit`** — for VP8L the equivalent is
-either `LosslessRemux` (trivial) or `Reencode` (full decode to RGBA, re-encode
-as lossy or lossless).
+**Measured 2026-05-28: this loses to `Reencode` for WebP and is not selected
+by the router.** Every size-reducing coefficient edit is RD-dominated at
+matched output size because VP8 predicts each block from its neighbours'
+reconstructed pixels — editing coefficients breaks that prediction invariant
+and the error drifts across the whole frame, while `Reencode` re-derives
+residuals from clean pixels and re-runs RD optimisation. The "zero generation
+loss" benefit is only real at the verbatim point (no size change), which
+`LosslessRemux` already provides. Coefficient transcoding is the right tool for
+prediction-free codecs (baseline JPEG) — VP8's intra prediction defeats it.
+Full data + mechanism: `benchmarks/coeff_edit_experiment_2026-05-28.md`. The
+transcoder + edits remain reachable via `expert::run_coeff_edit{,_keep,_requant}`
+as research tools. **Lossless VP8L sources never participated in `CoeffEdit`.**
 
 ### `Reencode` — full decode + re-encode at calibrated Q
 Decode through zenwebp's decoder to RGBA, re-encode at a calibrated quality.
@@ -342,13 +347,15 @@ accuracy is worth 3-5x CPU.
 - `DeblockReencode` — FALSIFIED (net-negative on every tested source
   config; VP8 already deblocks in-loop). Filter kept as `expert::deblock_rgba`;
   router never selects it. See `benchmarks/deblock_experiment_2026-05-28.md`.
+- `CoeffEdit` — BUILT then RD-FALSIFIED. A complete, pixel-exact VP8
+  coefficient transcoder (`src/vp8x/`) with two edits (AC-drop, requantize);
+  the verbatim/no-op path is bit-exact (MAD 0). But every size-reducing edit
+  is RD-dominated by `Reencode` at matched size because VP8 intra-prediction
+  makes coefficient edits drift across the frame. Reachable via
+  `expert::run_coeff_edit{,_keep,_requant}`; router never selects it. See
+  `benchmarks/coeff_edit_experiment_2026-05-28.md`.
 
 **Deferred (documented, not half-built):**
-- `CoeffEdit` (coefficient-domain preserve / minimal-edit) — requires
-  VP8 token-stream access that `zenwebp`'s decoder does not expose
-  (`pub(crate)` coefficient internals). A real implementation is a
-  multi-day effort that must first add a coefficient-access API to
-  zenwebp's decoder. Stubbed + router-excluded today.
 - Larger calibration corpus — current tables are fit from 3 photo refs
   (preliminary, below the 50-per-class bar). Re-fit recipe in
   `docs/QUALITY_DETECTION.md`. The size guard keeps the system correct

@@ -194,8 +194,14 @@ fn filter_candidates(
         // LosslessRemux is the fallback path — only consider it when no
         // recompression strategy beats it, handled separately below.
         .filter(|(k, _)| !matches!(k, StrategyKind::LosslessRemux))
-        // CoeffEdit is not yet implemented; never let the router pick it.
-        // When the implementation lands, drop this filter.
+        // CoeffEdit is implemented (a validated pixel-exact VP8 coefficient
+        // transcoder, src/vp8x/) but measured RD-dominated by Reencode at
+        // matched output size: VP8 spatial intra-prediction makes coefficient
+        // edits drift across the frame, and they get no RD re-optimisation.
+        // Its only loss-free point is verbatim (= LosslessRemux). The
+        // transcoder + edits stay reachable via expert::run_coeff_edit_*; the
+        // router never selects the strategy. See
+        // benchmarks/coeff_edit_experiment_2026-05-28.md.
         .filter(|(k, _)| !matches!(k, StrategyKind::CoeffEdit))
         // DeblockReencode is measured-dominated by Reencode in every tested
         // source config (default-filtered: −2.75 zensim/+3.9% size;

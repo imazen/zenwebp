@@ -14,13 +14,14 @@
 //! validation, falls back to `Reencode`. Partial coverage is therefore
 //! always safe.
 //!
-//! NOTE: this module is built bottom-up across milestones; lower layers
-//! (the bool coder) are validated by tests but not yet consumed by the
-//! not-yet-landed upper layers, so `dead_code` is allowed here until the
-//! `CoeffEdit` strategy wires the transcoder in (then this is removed).
+//! Some constants and helpers describe the full VP8 bitstream for clarity
+//! and future edits even though the shipped edits don't touch every field;
+//! `dead_code` is allowed so the structural completeness is documented in
+//! one place rather than whittled down to only what today's two edits read.
 #![allow(dead_code)]
 
 pub mod bool;
+pub mod edit;
 pub mod emit;
 pub mod parse;
 pub mod tables;
