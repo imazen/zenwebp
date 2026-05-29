@@ -26,7 +26,7 @@ use zenwebp::encoder::{EncodeRequest, LossyConfig};
 use zenwebp::oneshot::decode_rgba;
 use zenwebp_recompress::expert::{
     SourceAnalysis, analyze_source, run_deblock_reencode, run_lossless_reencode,
-    run_lossless_remux, run_reencode, score_recompression, score_rgba,
+    run_lossless_remux, run_reencode, run_reencode_at_q, score_recompression, score_rgba,
 };
 use zenwebp_recompress::{Budget, RecompressOptions};
 
@@ -64,9 +64,19 @@ struct Cli {
     #[arg(long)]
     source_filter: Option<u8>,
 
-    /// Target zensim-A grid, e.g. `0:100:5` (start:end:step).
+    /// Target zensim-A grid, e.g. `0:100:5` (start:end:step). Used by the
+    /// calibration-mediated strategy sweep (`--strategies`).
     #[arg(long, default_value = "50:95:5")]
     targets: String,
+
+    /// RAW reencode-q grid, e.g. `20:100:2`. When set (with `--refs`), the
+    /// harness sweeps `run_reencode_at_q` at each explicit q instead of the
+    /// calibration-mediated `--targets`/`--strategies` Reencode — this is the
+    /// non-circular data used to BUILD the calibration tables. Each row
+    /// records `reencode_q`, `size_ratio`, gen-loss and cumulative zensim-A.
+    /// `LosslessRemux` and `vp8l` are still measured once per source.
+    #[arg(long, requires = "refs")]
+    reencode_qs: Option<String>,
 
     /// Strategies to sweep. Comma-separated.
     /// Supported: `remux,reencode,deblock,vp8l`.
@@ -97,6 +107,9 @@ struct Row {
     source_kind: String,
     has_alpha: bool,
     target_zensim_a: f32,
+    /// Explicit reencode quality for raw-sweep rows (`--reencode-qs`).
+    /// `NaN` for calibration-mediated / remux / vp8l rows.
+    reencode_q: f32,
     strategy: String,
     output_bytes: u64,
     size_ratio: f32,
@@ -216,6 +229,7 @@ fn sweep_one_source(
                         source_kind: format!("{:?}", analysis.kind),
                         has_alpha: analysis.has_alpha,
                         target_zensim_a: target,
+                        reencode_q: f32::NAN,
                         strategy: s.label().to_string(),
                         output_bytes: out.len() as u64,
                         size_ratio: ratio,
@@ -236,6 +250,7 @@ fn sweep_one_source(
                     source_kind: format!("{:?}", analysis.kind),
                     has_alpha: analysis.has_alpha,
                     target_zensim_a: target,
+                    reencode_q: f32::NAN,
                     strategy: s.label().to_string(),
                     output_bytes: 0,
                     size_ratio: f32::NAN,
@@ -247,6 +262,79 @@ fn sweep_one_source(
             };
             rows.push(row);
         }
+    }
+    rows
+}
+
+/// Raw, non-circular calibration sweep for one synthetic source: sweep
+/// `run_reencode_at_q` at each explicit `reencode_q`, plus measure
+/// `LosslessRemux` and `vp8l` once. Records cumulative zensim-A vs the clean
+/// reference (the quantity the calibration must predict) and the size ratio.
+fn sweep_one_source_raw(
+    label: &str,
+    bytes: &[u8],
+    analysis: &SourceAnalysis,
+    reference_rgba: (&[u8], u32, u32),
+    reencode_qs: &[f32],
+) -> Vec<Row> {
+    let (ref_rgba, w, h) = reference_rgba;
+    let cumulative = |out: &[u8]| -> f32 {
+        match decode_rgba(out) {
+            Ok((out_rgba, ow, oh)) if ow == w && oh == h => {
+                score_rgba(ref_rgba, &out_rgba, w, h).unwrap_or(f32::NAN)
+            }
+            _ => f32::NAN,
+        }
+    };
+    let base = |strategy: &str, reencode_q: f32, out: Option<&[u8]>, err: String| -> Row {
+        let (output_bytes, size_ratio, gen_loss, cum, kind) = match out {
+            Some(o) => (
+                o.len() as u64,
+                o.len() as f32 / bytes.len().max(1) as f32,
+                score_recompression(bytes, o).unwrap_or(f32::NAN),
+                cumulative(o),
+                "ok",
+            ),
+            None => (0, f32::NAN, f32::NAN, f32::NAN, "Error"),
+        };
+        Row {
+            input_path: label.to_string(),
+            input_bytes: bytes.len() as u64,
+            width: analysis.width,
+            height: analysis.height,
+            source_q: analysis.source_q,
+            source_quantizer_index: analysis.vp8_quantizer_index as u32,
+            encoder_family: format!("{:?}", analysis.encoder_family),
+            source_kind: format!("{:?}", analysis.kind),
+            has_alpha: analysis.has_alpha,
+            target_zensim_a: f32::NAN,
+            reencode_q,
+            strategy: strategy.to_string(),
+            output_bytes,
+            size_ratio,
+            measured_zensim_a_vs_source: gen_loss,
+            measured_zensim_a_vs_reference: cum,
+            result_kind: kind.to_string(),
+            error: err,
+        }
+    };
+
+    let mut rows = Vec::with_capacity(reencode_qs.len() + 2);
+    for &q in reencode_qs {
+        let qi = q.clamp(1.0, 100.0).round() as u8;
+        match run_reencode_at_q(bytes, analysis, qi) {
+            Ok(out) => rows.push(base("reencode", q, Some(&out), String::new())),
+            Err(e) => rows.push(base("reencode", q, None, format!("{e:?}"))),
+        }
+    }
+    // Lossless paths are q-independent: measure once.
+    match run_lossless_remux(bytes, analysis) {
+        Ok(out) => rows.push(base("remux", f32::NAN, Some(&out), String::new())),
+        Err(e) => rows.push(base("remux", f32::NAN, None, format!("{e:?}"))),
+    }
+    match run_lossless_reencode(bytes, analysis) {
+        Ok(out) => rows.push(base("vp8l", f32::NAN, Some(&out), String::new())),
+        Err(e) => rows.push(base("vp8l", f32::NAN, None, format!("{e:?}"))),
     }
     rows
 }
@@ -288,6 +376,7 @@ fn sweep_existing_file(path: &Path, targets: &[f32], strategies: &[StrategyName]
     rows
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sweep_one_reference(
     path: &Path,
     q_grid: &[f32],
@@ -295,6 +384,7 @@ fn sweep_one_reference(
     source_filter: Option<u8>,
     targets: &[f32],
     strategies: &[StrategyName],
+    reencode_qs: Option<&[f32]>,
 ) -> Vec<Row> {
     let mut rows = Vec::new();
     let bytes = match fs::read(path) {
@@ -361,14 +451,24 @@ fn sweep_one_reference(
             }
         };
         let label = format!("{}_synth_q{}", path.display(), q.round() as u32);
-        rows.extend(sweep_one_source(
-            &label,
-            &synthetic,
-            &analysis,
-            Some((&ref_rgba, w, h)),
-            targets,
-            strategies,
-        ));
+        if let Some(rqs) = reencode_qs {
+            rows.extend(sweep_one_source_raw(
+                &label,
+                &synthetic,
+                &analysis,
+                (&ref_rgba, w, h),
+                rqs,
+            ));
+        } else {
+            rows.extend(sweep_one_source(
+                &label,
+                &synthetic,
+                &analysis,
+                Some((&ref_rgba, w, h)),
+                targets,
+                strategies,
+            ));
+        }
     }
     rows
 }
@@ -392,6 +492,7 @@ fn error_row(
         source_kind: String::new(),
         has_alpha: false,
         target_zensim_a: f32::NAN,
+        reencode_q: f32::NAN,
         strategy: stage.to_string(),
         output_bytes: 0,
         size_ratio: f32::NAN,
@@ -431,19 +532,36 @@ fn main() -> anyhow::Result<()> {
 
     let writer = Mutex::new(csv::Writer::from_path(&cli.output)?);
 
+    let reencode_qs = cli.reencode_qs.as_deref().map(parse_range).transpose()?;
+
     if let Some(refs_dir) = &cli.refs {
         let q_grid = parse_range(&cli.q_grid)?;
         let mut paths = collect_webps(refs_dir);
         if let Some(cap) = cli.max_files {
             paths.truncate(cap);
         }
+        let cells_per = match &reencode_qs {
+            Some(rqs) => rqs.len() + 2, // reencode-q grid + remux + vp8l
+            None => targets.len() * strategies.len(),
+        };
         eprintln!(
-            "zwr-calibrate: {} refs, {} q-source levels, {} targets, {} strategies = {} cells",
+            "zwr-calibrate: {} refs, {} q-source levels, {} = {} cells{}",
             paths.len(),
             q_grid.len(),
-            targets.len(),
-            strategies.len(),
-            paths.len() * q_grid.len() * targets.len() * strategies.len()
+            match &reencode_qs {
+                Some(rqs) => format!("{} raw reencode-qs (+remux+vp8l)", rqs.len()),
+                None => format!(
+                    "{} targets × {} strategies",
+                    targets.len(),
+                    strategies.len()
+                ),
+            },
+            paths.len() * q_grid.len() * cells_per,
+            if reencode_qs.is_some() {
+                " [RAW calibration-building mode]"
+            } else {
+                ""
+            },
         );
         paths.par_iter().for_each(|p| {
             let rows = sweep_one_reference(
@@ -453,6 +571,7 @@ fn main() -> anyhow::Result<()> {
                 cli.source_filter,
                 &targets,
                 &strategies,
+                reencode_qs.as_deref(),
             );
             let mut w = writer.lock().unwrap();
             for r in rows {

@@ -44,7 +44,7 @@ pub mod expert {
         deblock_reencode::run_deblock_reencode,
         lossless_reencode::run_lossless_reencode,
         lossless_remux::run_lossless_remux,
-        reencode::run_reencode,
+        reencode::{run_reencode, run_reencode_at_q},
     };
     pub use crate::target::target_zensim_a_to_libwebp_q;
 }
