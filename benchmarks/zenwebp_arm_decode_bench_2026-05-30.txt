@@ -1,5 +1,0 @@
-# zenwebp decode_benchmark on ARM (aarch64 Ampere/Neoverse-N1, Hetzner cax21) — 2026-05-30
-# base fe4102ab7cfb; RUSTFLAGS='' (honest runtime dispatch); CODEC_CORPUS_DIR=$HOME/.cache/codec-corpus/v1
-# bench: cargo bench --bench decode_benchmark (criterion-compat via zenbench); 0 images skipped (corpus fully resolved)
-# columns: criterion [low median high]. zenwebp is single-threaded; libwebp_1t/2t are the C reference.
-#

@@ -62,7 +62,11 @@ fn codec_corpus_dir() -> std::path::PathBuf {
     }
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
     if let Ok(cache) = std::env::var("CODEC_CORPUS_CACHE") {
-        candidates.push(std::path::PathBuf::from(cache).join("codec-corpus").join("v1"));
+        candidates.push(
+            std::path::PathBuf::from(cache)
+                .join("codec-corpus")
+                .join("v1"),
+        );
     }
     if let Ok(home) = std::env::var("HOME") {
         candidates.push(
