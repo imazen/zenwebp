@@ -314,6 +314,15 @@ required-features = ["zencodec", "std"]
 name = "heap_strip_pipeline"
 required-features = ["zencodec", "std"]
 
+# Standalone encode+decode hot-path profiling driver (perf-friendly tight
+# loops, no criterion warmup). Takes a PNG path from argv/ZENWEBP_PROF_IMG.
+# Used for the 2026-05-30 ARM (aarch64) hot-path profile in
+# benchmarks/zenwebp_arm_profile_2026-05-30.tsv.
+[[example]]
+name = "arm_profile"
+path = "dev/arm_profile.rs"
+required-features = ["_profiling"]
+
 [[bin]]
 name = "zenwebp-encode"
 path = "src/bin/zenwebp_encode.rs"

@@ -45,16 +45,44 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 fn codec_corpus_dir() -> std::path::PathBuf {
-    let dir = std::path::PathBuf::from(
-        std::env::var("CODEC_CORPUS_DIR")
-            .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".into()),
+    // Resolve the codec-corpus cache root. The previous hardcoded
+    // "/home/lilith/work/codec-corpus" exists on no CI/dev runner, so the bench
+    // panicked out-of-the-box. Resolution order matches the codec-corpus crate
+    // (which stores datasets at "{cache}/codec-corpus/v{MAJOR}"):
+    //   1. CODEC_CORPUS_DIR  — explicit override (points directly at the root)
+    //   2. CODEC_CORPUS_CACHE/codec-corpus/v1  — the crate's cache env var
+    //   3. $HOME/.cache/codec-corpus/v1        — the crate's default location
+    if let Ok(d) = std::env::var("CODEC_CORPUS_DIR") {
+        let dir = std::path::PathBuf::from(d);
+        assert!(
+            dir.is_dir(),
+            "Codec corpus not found: {}. Set CODEC_CORPUS_DIR.",
+            dir.display()
+        );
+        return dir;
+    }
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(cache) = std::env::var("CODEC_CORPUS_CACHE") {
+        candidates.push(std::path::PathBuf::from(cache).join("codec-corpus").join("v1"));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push(
+            std::path::PathBuf::from(home)
+                .join(".cache")
+                .join("codec-corpus")
+                .join("v1"),
+        );
+    }
+    candidates.push(std::path::PathBuf::from("/home/lilith/work/codec-corpus"));
+    for c in &candidates {
+        if c.is_dir() {
+            return c.clone();
+        }
+    }
+    panic!(
+        "Codec corpus not found. Set CODEC_CORPUS_DIR or populate the \
+         codec-corpus cache (~/.cache/codec-corpus/v1)."
     );
-    assert!(
-        dir.is_dir(),
-        "Codec corpus not found: {}. Set CODEC_CORPUS_DIR.",
-        dir.display()
-    );
-    dir
 }
 
 fn default_image() -> String {

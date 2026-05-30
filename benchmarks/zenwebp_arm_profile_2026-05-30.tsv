@@ -1,0 +1,34 @@
+# zenwebp ARM (aarch64 Ampere/Neoverse-N1, Hetzner cax21) hot-path profile
+# date	2026-05-30
+# host	arm-zen (167.233.19.242), aarch64, 4 cores, 7.5 GB RAM
+# base_commit	fe4102ab7cfb (zenwebp main@origin)
+# build_lib	RUSTFLAGS="" cargo build --release -j2   (honest runtime dispatch, NOT target-cpu=native)
+# build_prof	RUSTFLAGS="-C force-frame-pointers=yes" CARGO_PROFILE_RELEASE_DEBUG=1 cargo build --release --features _profiling --example arm_profile
+# tool	perf record -F 1999 -g (frame pointers); perf report --no-children + perf annotate
+# image	~/.cache/codec-corpus/v1/gb82-sc/codec_wiki.png (2560x1664 screenshot, 4.26 MP)
+# corpus	codec-corpus crate cache v1 (real images), CODEC_CORPUS_DIR=$HOME/.cache/codec-corpus/v1
+#
+# WALL-CLOCK (arm_profile driver, /usr/bin/time -v, codec_wiki 2560x1664)
+#   decode RGBA: 20.92 s / 600 iters = 34.9 ms/decode  (~122 Mpix/s)
+#   encode m4 q75: ~30 s / 80 iters = ~380 ms/encode  (4.26 MP screenshot)
+#   max RSS: 47 MB
+#
+# self_pct = exclusive % from perf report --no-children (single-thread sampling)
+phase	symbol	self_pct	simd	notes
+decode	decoder::vp8v2::upsample	23.84	NEON	YUV->RGB + bilinear upsample; annotate confirms ld1/st1/umull/umlal/ushll/uzp/zip/urhadd/uqxtn/sqrshrun/tbl (.16b/.8h)
+decode	decoder::vp8v2::loop_filter (V+H)	12.78	NEON	in-loop deblock; archmage #[arcane]/#[rite] (split V+H filters)
+decode	decoder::vp8v2::idct	8.43	NEON	inverse DCT + add-residue; archmage
+decode	decoder::vp8v2::bit_reader	7.62	scalar	VP8 boolean arith decoder; inherently serial, clz-based (documented branchless attempts net-negative)
+decode	decoder::vp8v2::tree	6.91	scalar	Huffman/tree symbol read; serial
+decode	decoder::vp8v2::residual	5.21	scalar	coefficient parse; serial table indexing
+decode	memcpy	5.08	-	cache->frame row copy
+decode	decoder::vp8v2::predict	4.30	NEON	intra prediction; archmage
+encode	encoder::cost::get_residual_cost	19.43	scalar	per-coeff context-indexed cost-table loop; annotate = ldr/cmp/csel/csinc/madd (serial, already branchless ceiling)
+encode	encoder::simd::evaluate_i4	14.21	NEON	I4 intra mode search (DCT+quant+SSD inlined); archmage #[rite]
+encode	encoder::vp8::encode_image (+write_bool)	11.08	scalar	token emission + arithmetic encoder; serial bitstream
+encode	encoder::vp8::record_coeff	9.34	scalar	token recording; serial (Vec::push, documented stack-buffer attempt net-negative)
+encode	encoder::cost (other)	7.82	mixed	cost model / SATD helpers
+encode	encoder::simd (other)	6.55	NEON	ftransform/quantize/idct fused kernels; archmage
+encode	memcpy	8.10	-	buffer copies
+encode	encoder::analysis	5.40	mixed	DCT analysis / classifier
+encode	encoder::psy	5.03	mixed	perceptual model (CSF/JND)

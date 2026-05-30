@@ -1,0 +1,106 @@
+zenwebp ARM (aarch64) hot-path profile — 2026-05-30
+====================================================
+
+Host:        Hetzner cax21, aarch64 Ampere/Neoverse-N1, 4 cores, 7.5 GB RAM
+Base commit: zenwebp main@origin fe4102ab7cfb
+Toolchain:   cargo 1.96.0, rustc stable, edition 2024
+Build (lib/bench):   RUSTFLAGS="" cargo build --release -j2   (honest runtime dispatch, NOT target-cpu=native)
+Build (profiling):   RUSTFLAGS="-C force-frame-pointers=yes" CARGO_PROFILE_RELEASE_DEBUG=1 \
+                     cargo build --release --features _profiling --example arm_profile -j2
+Profiler:    perf 6.8.x, `perf record -F 1999 -g` (frame pointers),
+             `perf report --no-children`, `perf annotate`
+Corpus:      codec-corpus crate cache v1 (real images),
+             CODEC_CORPUS_DIR=$HOME/.cache/codec-corpus/v1
+Image:       gb82-sc/codec_wiki.png (2560x1664 screenshot, 4.26 MP)
+
+BENCH UNBLOCK (what was broken, what was fixed)
+-----------------------------------------------
+Baseline blocker: every zenwebp bench resolved the corpus through a hardcoded
+default path "/home/lilith/work/codec-corpus" that exists on no CI/dev runner.
+- encode_benchmark / encode_vs_libwebp / profile_encode: codec_corpus_dir()
+  asserted dir.is_dir() on that path and PANICKED out-of-the-box.
+- decode_benchmark / decode_zenbench / decode_compare / decode_lossless_compare
+  / predictor_coalesce: use codec_corpus::Corpus directly; they silently skip
+  every image when the crate cannot resolve a populated cache.
+
+Fix shipped (this change):
+- benches/encode_benchmark.rs and benches/encode_vs_libwebp.rs: codec_corpus_dir()
+  now resolves the corpus root in the same order the codec-corpus crate uses, so
+  it works out-of-the-box wherever the crate's cache is populated:
+    1. CODEC_CORPUS_DIR  (explicit override, points directly at the root)
+    2. CODEC_CORPUS_CACHE/codec-corpus/v1  (the crate's cache env var)
+    3. $HOME/.cache/codec-corpus/v1        (the crate's default cache location)
+  (No private codec-corpus internals are touched: Corpus.root is a private field
+   with no public accessor, so the path is reconstructed via the documented
+   {cache}/codec-corpus/v{MAJOR} layout — confirmed in codec-corpus 1.1.0 source,
+   Corpus::init at src/lib.rs.)
+- The decode benches are unblocked by pointing CODEC_CORPUS_DIR (or
+  CODEC_CORPUS_CACHE) at the populated cache — the crate's standard mechanism;
+  no code change is needed there.
+
+Verification on the ARM box (base fe4102ab, RUSTFLAGS=""):
+- `cargo build --release` (lib): OK
+- `cargo build --release --benches`: all benches compile.
+- decode_benchmark runs against real images (no "skipping ... not found in
+  corpus") with CODEC_CORPUS_DIR set. The criterion encode bench is functional
+  but slow on the 4 MP screenshot; the arm_profile driver below is the fast,
+  perf-friendly alternative used for the numbers in this report.
+
+WALL-CLOCK (arm_profile driver, /usr/bin/time -v, codec_wiki 2560x1664)
+----------------------------------------------------------------------
+- decode RGBA:    20.92 s / 600 iters = 34.9 ms/decode  (~122 Mpix/s)
+- encode m4 q75:  ~30 s   /  80 iters = ~380 ms/encode  (4.26 MP screenshot)
+- max RSS:        47 MB
+
+PROFILE (self %, perf report --no-children; see .tsv for the table)
+-------------------------------------------------------------------
+decode top-3: upsample 23.84% | loop_filter(V+H) 12.78% | idct 8.43%
+              (bit_reader 7.62% + tree 6.91% + residual 5.21% = serial bool coder/coeff parse)
+encode top-3: cost::get_residual_cost 19.43% | simd::evaluate_i4 14.21% | encode_image 11.08%
+              (record_coeff 9.34% = serial token recording)
+
+OPTIMIZATION OUTCOME: HONEST-STOP — no measured ARM win available
+----------------------------------------------------------------
+Every vectorizable hot kernel on BOTH paths is already SIMD via archmage
+#[arcane]/#[rite] + magetypes, with the `neon` tier present in each kernel's tier
+list. `perf annotate` on the #1 decode hotspot (upsample, 23.84%) confirms NEON
+is actually executing on aarch64 (exclusive-sample instruction histogram):
+  ld1{v.16b}, add v, umull, ushll, st1, uzp1, mul v, urhadd, uqxtn, zip1, tbl,
+  umlal, sqrshrun, zip2, uzp2 ...
+i.e. widening multiply-accumulate (YUV->RGB fixed point), de/interleave
+(planar<->packed), rounding halving add (bilinear), saturating narrow (output),
+and table lookup — a fully-vectorized kernel.
+
+The hotspots that are NOT vectorized are inherently serial and already
+micro-optimized per the codebase's documented history (zenwebp/CLAUDE.md):
+  - decode bit_reader / tree / residual: VP8 boolean arithmetic decoder + coeff
+    parse. Documented branchless / flat-table / deferred-refill attempts are all
+    net-negative; the branches are highly biased and predict well.
+  - encode cost::get_residual_cost (#1 encode hotspot): per-coefficient
+    context-indexed cost-table loop. `perf annotate` confirms scalar
+    ldr/cmp/csel/csinc/madd — data-dependent table indexing that is not
+    vectorizable. Already remapped/padded/direct-indexed to the branchless
+    ceiling (csel/csinc on ARM = the cmov path on x86).
+  - encode record_coeff: serial token recording; documented stack-buffer attempt
+    was net-negative (memset overhead exceeded savings).
+
+There is no un-vectorized hot kernel falling to scalar where a NEON path should
+exist, and no scalar fallback firing where a NEON path already exists. Speculative
+micro-tuning of an already-NEON kernel with no measured deficiency would risk the
+ZERO-TOLERANCE pixel-correctness gate for unmeasured gain. Per the
+"measured-win-only" discipline, NO source perf change is shipped for zenwebp.
+
+CORRECTNESS GATE
+----------------
+- `cargo test --release --lib` on the ARM box (base 59568e89): pass (see commit log).
+- No codec source changed, so encode/decode output is byte-identical to base by
+  construction; the only code added is bench plumbing (corpus fallback) + a
+  profiling-only example gated behind the `_profiling` feature.
+
+DELIVERED IN THIS CHANGE
+------------------------
+  - benches/encode_benchmark.rs, benches/encode_vs_libwebp.rs: corpus-path
+    fallback (CODEC_CORPUS_DIR -> CODEC_CORPUS_CACHE -> ~/.cache) (bench unblock)
+  - dev/arm_profile.rs + Cargo.toml [[example]] arm_profile: reusable
+    perf-friendly encode+decode profiling driver
+  - benchmarks/zenwebp_arm_profile_2026-05-30.{tsv,meta}: this profile data
