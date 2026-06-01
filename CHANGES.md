@@ -2,6 +2,10 @@
 
 ### [Unreleased]
 
+#### Packaging
+- Fixed `include` list: `LICENSE-AGPL3` and `LICENSE-COMMERCIAL` were missing from the published tarball (typo `LICENSE-AGPL` did not match the actual filename). Both license files now ship correctly.
+- `zenwebp-recompress`: added `exclude` list to drop `benchmarks/`, `docs/`, `scripts/`, `tests/`, and `DESIGN.md` from the published tarball.
+
 ### Version 0.4.5 (2026-05-02)
 
 **Expert API rename + ValidationError + theory docs.**

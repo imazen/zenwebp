@@ -45,6 +45,13 @@ description = "Recompress already-encoded WebPs to a target zensim Profile A sco
 keywords = ["webp", "recompression", "transcode", "perceptual"]
 categories = ["multimedia::images", "encoding"]
 readme = "README.md"
+exclude = [
+    "benchmarks/",
+    "docs/",
+    "scripts/",
+    "tests/",
+    "DESIGN.md",
+]
 
 [lib]
 name = "zenwebp_recompress"
