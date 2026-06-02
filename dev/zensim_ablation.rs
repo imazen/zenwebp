@@ -10,10 +10,11 @@
 //!   - Chunk E: Phase 2 fitted anchors (replaced hand-distilled values)
 //!   - Chunk F: secant step in pass 2+ (~20 LOC of state)
 //!
-//! This binary toggles each chunk off by calling
-//! [`zenwebp::set_ablation_toggles`] (gated on the unstable `ablation`
-//! Cargo feature) — the toggles are thread-local and require no
-//! environment variables. It runs the same 76-image x 3-target sweep used in the
+//! This binary toggles each chunk off via env vars
+//! (`ZENWEBP_ABLATE_NO_PHASE3`, `ZENWEBP_ABLATE_NAIVE_Q`,
+//! `ZENWEBP_ABLATE_NO_MULTI_PASS_STATS`, `ZENWEBP_ABLATE_PRE_PHASE2_ANCHORS`,
+//! `ZENWEBP_ABLATE_NO_SECANT`) and the existing `ZENWEBP_PHASE3_QUADRANT`
+//! for chunk B. It runs the same 76-image x 3-target sweep used in the
 //! original A/B (CID22 + gb82 + gb82-sc, targets {75, 80, 85},
 //! max_overshoot=1.5, max_passes=3, m4) for the BASELINE plus each
 //! variant, writes a per-image TSV, and prints a per-variant summary
@@ -23,7 +24,7 @@
 //!   variant  corpus  image  width  height  target  passes  achieved
 //!   bytes  targets_met
 //!
-//! Single-threaded (toggles must be flipped between encodes).
+//! Single-threaded (env vars must be flipped between encodes).
 //!
 //! Usage:
 //!   zensim_ablation \
@@ -42,12 +43,10 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
-use zenwebp::AblationToggles;
 use zenwebp::EncodeRequest;
 use zenwebp::LossyConfig;
 use zenwebp::PixelLayout;
 use zenwebp::ZensimTarget;
-use zenwebp::set_ablation_toggles;
 
 #[derive(Clone)]
 struct Cli {
@@ -187,27 +186,42 @@ fn median_u64(v: &[u64]) -> u64 {
     }
 }
 
-/// Apply thread-local ablation state for a named variant.
+/// Reset all ablation env vars to off.
+fn reset_env() {
+    let keys = [
+        "ZENWEBP_PHASE3_QUADRANT",
+        "ZENWEBP_ABLATE_NO_PHASE3",
+        "ZENWEBP_ABLATE_NAIVE_Q",
+        "ZENWEBP_ABLATE_NO_MULTI_PASS_STATS",
+        "ZENWEBP_ABLATE_PRE_PHASE2_ANCHORS",
+        "ZENWEBP_ABLATE_NO_SECANT",
+        "ZENWEBP_PHASE3_FINE_GAP",
+    ];
+    for k in &keys {
+        env_set::set(k, None);
+    }
+}
+
+/// Apply env-var state for a named variant.
 fn apply_variant(name: &str) {
-    let mut t = AblationToggles::default();
+    reset_env();
     for tok in name.split('_') {
         match tok {
             "baseline" => {} // all defaults
-            "noA" => t.disable_phase3 = true,
-            "noB" => t.use_quadrant_proxy = true,
-            "noC" => t.naive_starting_q = true,
-            "noD" => t.no_multi_pass_stats = true,
-            "noE" => t.pre_phase2_anchors = true,
-            "noF" => t.no_secant = true,
+            "noA" => env_set::set("ZENWEBP_ABLATE_NO_PHASE3", Some("1")),
+            "noB" => env_set::set("ZENWEBP_PHASE3_QUADRANT", Some("1")),
+            "noC" => env_set::set("ZENWEBP_ABLATE_NAIVE_Q", Some("1")),
+            "noD" => env_set::set("ZENWEBP_ABLATE_NO_MULTI_PASS_STATS", Some("1")),
+            "noE" => env_set::set("ZENWEBP_ABLATE_PRE_PHASE2_ANCHORS", Some("1")),
+            "noF" => env_set::set("ZENWEBP_ABLATE_NO_SECANT", Some("1")),
             // `alwaysOn` recovers the pre-fix net-negative always-on Phase 3
             // (per-segment correction takes precedence over global-q secant
             // even at large gaps). Used to A/B against the post-fix
             // baseline.
-            "alwaysOn" => t.phase3_fine_gap = Some(1000.0),
+            "alwaysOn" => env_set::set("ZENWEBP_PHASE3_FINE_GAP", Some("1000")),
             other => panic!("unknown variant token: {other} (valid: baseline,noA..noF,alwaysOn)"),
         }
     }
-    set_ablation_toggles(t);
 }
 
 fn main() {
@@ -525,6 +539,19 @@ fn run(
         passes: m.passes_used,
         bytes: b.len(),
         met: m.targets_met,
+    }
+}
+
+mod env_set {
+    pub fn set(key: &str, val: Option<&str>) {
+        // SAFETY: single-threaded driver binary; no other threads can
+        // observe stale env pointers. Only used by `dev/` tooling.
+        unsafe {
+            match val {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
     }
 }
 

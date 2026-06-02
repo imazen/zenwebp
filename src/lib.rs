@@ -169,11 +169,6 @@ pub use encoder::{
     LosslessConfig, LossyConfig, PixelLayout, Preset, ZensimEncodeMetrics, ZensimTarget,
 };
 
-/// Dev-only ablation toggles (gated on the unstable `ablation` feature).
-/// See [`encoder::AblationToggles`].
-#[cfg(feature = "ablation")]
-pub use encoder::{AblationToggles, set_ablation_toggles};
-
 /// Re-export sharp YUV configuration from zenyuv.
 pub use zenyuv::SharpYuvConfig;
 
