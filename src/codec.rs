@@ -261,6 +261,12 @@ static ENCODE_CAPABILITIES: zencodec::encode::EncodeCapabilities =
         .with_icc(true)
         .with_exif(true)
         .with_xmp(true)
+        // WebP has no CICP carrier: color is signaled only via an embedded ICC
+        // profile. Declare this explicitly so `resolve_color_emit` knows a
+        // CICP-only source must synthesize an ICC rather than emit CICP. The two
+        // carrier flags (`cicp_is_valid_carrier` / `cicp_safe_sole_carrier`)
+        // stay at their `false` default for the same reason.
+        .with_cicp(false)
         .with_stop(true)
         .with_lossy(true)
         .with_lossless(true)
@@ -395,6 +401,7 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
             icc: None,
             exif: None,
             xmp: None,
+            cicp: None,
             limits: ResourceLimits::none(),
             canvas_size: None,
             loop_count: None,
@@ -412,6 +419,11 @@ pub struct WebpEncodeJob {
     icc: Option<Arc<[u8]>>,
     exif: Option<Arc<[u8]>>,
     xmp: Option<Arc<[u8]>>,
+    /// CICP from `Metadata::cicp`. WebP has no CICP carrier, so this never
+    /// reaches the bitstream directly; it feeds `resolve_color_emit`, which may
+    /// decide to synthesize an ICC profile from it (the only color carrier WebP
+    /// has) when the source had no ICC of its own.
+    cicp: Option<zencodec::Cicp>,
     limits: ResourceLimits,
     canvas_size: Option<(u32, u32)>,
     loop_count: Option<Option<u32>>,
@@ -472,10 +484,19 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
         self
     }
 
+    // Required by the trait (codecs must store the bytes). Callers should prefer
+    // the provided `with_metadata_policy`, which filters via `Metadata::filtered`
+    // (sub-field EXIF retention + orientation-tag reconciliation) before handing
+    // the result here. `#[allow(deprecated)]` because the trait method itself
+    // carries `#[deprecated]`.
+    #[allow(deprecated)]
     fn with_metadata(mut self, meta: Metadata) -> Self {
         self.icc = meta.icc_profile;
         self.exif = meta.exif;
         self.xmp = meta.xmp;
+        // Capture CICP so the color-emit resolver can synthesize an ICC from it
+        // when the source carries CICP but no ICC (WebP's only color carrier).
+        self.cicp = meta.cicp;
         self
     }
 
@@ -497,24 +518,24 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
     fn encoder(self) -> Result<WebpEncoder, At<EncodeError>> {
         let inner_config = self.build_inner_config();
         let policy = self.policy.unwrap_or_default();
+        // Metadata retention is no longer gated here with a coarse all-or-nothing
+        // `resolve_icc/exif/xmp` switch. The blessed path is
+        // `EncodeJob::with_metadata_policy`, whose provided default filters via
+        // `Metadata::filtered` (sub-field EXIF retention, ICC drop rules, and
+        // orientation-tag reconciliation) *before* the bytes reach this job — so
+        // by the time we get here, `self.icc/exif/xmp` already reflect the
+        // caller's retention choice. Pass them through verbatim.
+        //
+        // The color carrier (ICC vs synthesized-from-CICP) is resolved later in
+        // `do_encode` via `resolve_color_emit`, under this policy.
         Ok(WebpEncoder {
             inner_config,
             stop: self.stop,
-            icc: if policy.resolve_icc(true) {
-                self.icc
-            } else {
-                None
-            },
-            exif: if policy.resolve_exif(true) {
-                self.exif
-            } else {
-                None
-            },
-            xmp: if policy.resolve_xmp(true) {
-                self.xmp
-            } else {
-                None
-            },
+            icc: self.icc,
+            exif: self.exif,
+            xmp: self.xmp,
+            cicp: self.cicp,
+            color_policy: policy.resolve_color(zencodec::ColorEmitPolicy::Balanced),
             limits: self.limits,
             canvas_size: self.canvas_size,
             stream: None,
@@ -579,6 +600,12 @@ pub struct WebpEncoder {
     icc: Option<Arc<[u8]>>,
     exif: Option<Arc<[u8]>>,
     xmp: Option<Arc<[u8]>>,
+    /// CICP carried from the source metadata. Feeds `resolve_color_emit` in
+    /// `do_encode`; WebP has no CICP carrier so it is never emitted as-is.
+    cicp: Option<zencodec::Cicp>,
+    /// Resolved color-emission policy (from the job's `EncodePolicy`, defaulting
+    /// to `ColorEmitPolicy::Balanced`).
+    color_policy: zencodec::ColorEmitPolicy,
     limits: ResourceLimits,
     canvas_size: Option<(u32, u32)>,
     stream: Option<StreamAccum>,
@@ -607,10 +634,68 @@ impl WebpEncoder {
         if let Some(ref stop) = self.stop {
             req = req.with_stop(stop);
         }
+        // Holds any synthesized ICC bytes (bundled `&'static`, or a
+        // cms-moxcms-generated profile) alive until `req.encode()` below: `meta`
+        // borrows the bytes and is moved into `req`, so the holder must outlive
+        // the metadata block. Assigned unconditionally inside it.
+        let synth_holder;
         {
-            let mut meta = crate::ImageMetadata::new();
+            // Resolve which color description WebP should embed. WebP's only
+            // color carrier is an embedded ICC profile (no CICP carrier), so the
+            // plan's `cicp` field is intentionally ignored — the whole point of
+            // running the resolver is to turn a CICP-only source into a
+            // synthesized ICC instead of silently emitting an untagged
+            // (sRGB-assumed) WebP.
+            let channel_count: u8 = match layout {
+                PixelLayout::L8 => 1,
+                PixelLayout::La8 => 2,
+                PixelLayout::Rgb8 | PixelLayout::Bgr8 | PixelLayout::Yuv420 => 3,
+                PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => 4,
+            };
+            let mut src = zencodec::SourceColor::default().with_channel_count(channel_count);
+            if let Some(cicp) = self.cicp {
+                src = src
+                    .with_cicp(cicp)
+                    .with_color_authority(zencodec::ColorAuthority::Cicp);
+            }
             if let Some(ref icc) = self.icc {
-                meta = meta.with_icc_profile(icc.as_ref());
+                // ICC is WebP's authoritative carrier; if both are present prefer
+                // it (matches the decode-side authority).
+                src = src
+                    .with_icc_profile(icc.clone())
+                    .with_color_authority(zencodec::ColorAuthority::Icc);
+            }
+            let plan = zencodec::resolve_color_emit(&src, &ENCODE_CAPABILITIES, self.color_policy);
+
+            // Lower the ICC disposition to bytes that outlive the local `meta`.
+            // `SynthesizeFrom` lowers a full CICP via the transfer-aware
+            // `synthesize_icc_for_cicp` (so a BT.2020-PQ source never gets the
+            // SDR-TRC Rec.2020 profile). `Profile` → bundled `&'static` bytes, or
+            // a cms-moxcms-generated profile held alive in `synth_holder`;
+            // `NotNeeded`/`NeedsCms`/`CmsUnsupported` → embed no ICC (WebP's CICP
+            // carrier still conveys color; sRGB lands in `NotNeeded`).
+            synth_holder = match &plan.icc {
+                zencodec::IccDisposition::SynthesizeFrom(cicp) => {
+                    use zenpixels_convert::icc_profiles::SynthesizedIcc;
+                    match zenpixels_convert::icc_profiles::synthesize_icc_for_cicp(*cicp) {
+                        SynthesizedIcc::Profile(bytes) => Some(bytes),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            let icc_bytes: Option<&[u8]> = match plan.icc {
+                zencodec::IccDisposition::KeepSource => self.icc.as_deref(),
+                zencodec::IccDisposition::SynthesizeFrom(_) => synth_holder.as_deref(),
+                zencodec::IccDisposition::Drop => None,
+                // `IccDisposition` is #[non_exhaustive]; embed nothing for any
+                // future disposition we don't yet understand.
+                _ => None,
+            };
+
+            let mut meta = crate::ImageMetadata::new();
+            if let Some(icc) = icc_bytes {
+                meta = meta.with_icc_profile(icc);
             }
             if let Some(ref exif) = self.exif {
                 meta = meta.with_exif(exif.as_ref());
@@ -2414,7 +2499,12 @@ fn to_image_info(native: &crate::ImageInfo, loop_count: Option<Option<u32>>) -> 
             ImageSequence::Single
         });
     if let Some(ref icc) = native.icc_profile {
-        info = info.with_icc_profile(icc.clone());
+        // WebP signals color only via the ICCP chunk (no CICP carrier), so an
+        // embedded profile is authoritative. Set it explicitly rather than
+        // relying on `ColorAuthority`'s default.
+        info = info
+            .with_icc_profile(icc.clone())
+            .with_color_authority(zencodec::ColorAuthority::Icc);
     }
     if let Some(ref exif) = native.exif {
         // Extract orientation from EXIF before storing the raw blob.
@@ -3406,5 +3496,117 @@ mod tests {
         let (sink, _info) = push_decode(data, &[]);
         let (reference, _, _, _) = full_decode(data, &[]);
         assert_eq!(sink.buf, reference, "lossless fallback parity");
+    }
+
+    // ── Color-emit: CICP-only source synthesizes an ICC (the key 0.1.21 fix) ──
+
+    use zencodec::Metadata;
+    use zenpixels::Cicp;
+
+    /// Encode an RGB8 image whose `Metadata` carries ONLY a CICP (Display P3)
+    /// and no ICC. WebP has no CICP carrier, so before the fix this produced an
+    /// untagged (sRGB-assumed) WebP — silently dropping the wide gamut. The
+    /// resolver must now synthesize the bundled Display P3 ICC and embed it in
+    /// the ICCP chunk.
+    #[test]
+    fn cicp_only_source_synthesizes_icc() {
+        let buf = make_rgb8_pixels(32, 32);
+        let meta = Metadata::none().with_cicp(Cicp::DISPLAY_P3);
+        let out = WebpEncoderConfig::lossless()
+            .job()
+            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+            .encoder()
+            .unwrap()
+            .encode(buf.as_slice())
+            .unwrap();
+
+        let info = crate::ImageInfo::from_webp(out.data()).unwrap();
+        let embedded = info
+            .icc_profile
+            .as_deref()
+            .expect("CICP-only Display P3 source must produce an embedded (synthesized) ICC");
+        let expected = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+        assert_eq!(
+            embedded, expected,
+            "embedded ICC must be the bundled Display P3 profile synthesized from CICP"
+        );
+    }
+
+    /// A CICP-only sRGB source must NOT embed an ICC: sRGB is the universally
+    /// assumed default and the bundled table has no sRGB profile, so synthesizing
+    /// one would be redundant bytes. (Guards against over-eager synthesis.)
+    #[test]
+    fn cicp_only_srgb_source_embeds_no_icc() {
+        let buf = make_rgb8_pixels(32, 32);
+        let meta = Metadata::none().with_cicp(Cicp::SRGB);
+        let out = WebpEncoderConfig::lossless()
+            .job()
+            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+            .encoder()
+            .unwrap()
+            .encode(buf.as_slice())
+            .unwrap();
+
+        let info = crate::ImageInfo::from_webp(out.data()).unwrap();
+        assert!(
+            info.icc_profile.is_none(),
+            "sRGB is the assumed default — no ICC should be synthesized or embedded"
+        );
+    }
+
+    /// An explicit source ICC is embedded verbatim (KeepSource disposition),
+    /// confirming the resolver doesn't disturb the existing ICC path.
+    #[test]
+    fn source_icc_is_kept_verbatim() {
+        let buf = make_rgb8_pixels(32, 32);
+        // Use the bundled Display P3 profile as a stand-in for a real source ICC.
+        let src_icc: Arc<[u8]> = Arc::from(
+            zenpixels_convert::icc_profiles::DISPLAY_P3_V4
+                .to_vec()
+                .into_boxed_slice(),
+        );
+        let meta = Metadata::none().with_icc(src_icc.clone());
+        let out = WebpEncoderConfig::lossless()
+            .job()
+            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+            .encoder()
+            .unwrap()
+            .encode(buf.as_slice())
+            .unwrap();
+
+        let info = crate::ImageInfo::from_webp(out.data()).unwrap();
+        assert_eq!(
+            info.icc_profile.as_deref(),
+            Some(src_icc.as_ref()),
+            "an explicit source ICC must be embedded unchanged"
+        );
+    }
+
+    /// Decode-side authority: a WebP carrying an ICCP chunk must report
+    /// `ColorAuthority::Icc` on its `source_color` (WebP's only color carrier).
+    #[test]
+    fn decode_sets_icc_color_authority() {
+        let buf = make_rgb8_pixels(32, 32);
+        let src_icc: Arc<[u8]> = Arc::from(
+            zenpixels_convert::icc_profiles::DISPLAY_P3_V4
+                .to_vec()
+                .into_boxed_slice(),
+        );
+        let meta = Metadata::none().with_icc(src_icc);
+        let out = WebpEncoderConfig::lossless()
+            .job()
+            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+            .encoder()
+            .unwrap()
+            .encode(buf.as_slice())
+            .unwrap();
+
+        let native = crate::ImageInfo::from_webp(out.data()).unwrap();
+        let info = to_image_info(&native, None);
+        assert_eq!(
+            info.source_color.color_authority,
+            zencodec::ColorAuthority::Icc,
+            "an ICCP profile must mark ICC as the authoritative color carrier"
+        );
     }
 }

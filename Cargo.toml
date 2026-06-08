@@ -33,9 +33,15 @@ hashbrown = { version = "0.16", default-features = false, features = ["default-h
 thiserror = { version = "2.0.18", default-features = false }
 whereat = { version = "0.1.5", default-features = false }
 libm = "0.2.16"
-zencodec = { version = "0.1.13", optional = true }
+zencodec = { version = "0.1.21", optional = true }
 # zennode = { path = "../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
-zenpixels = { version = "0.2.10", default-features = false }
+zenpixels = { version = "0.2.11", default-features = false }
+# Used by the zencodec encode path to synthesize an ICC profile from a
+# CICP-only source (WebP has no CICP carrier, so an embedded ICC is the only
+# way to retain non-sRGB primaries). `synthesize_icc_for_cicp` is a transfer-
+# aware lookup — no CMS, no_std-safe. Gated on `zencodec`; `default-features
+# = false` keeps the wasm32 (no_std) build clean.
+zenpixels-convert = { version = "0.2.12", default-features = false, optional = true }
 self_cell = { version = "1.2", optional = true }
 bytemuck = { version = "1", default-features = false, features = ["extern_crate_alloc"] }
 garb = { version = "0.2.5", default-features = false, features = ["experimental"] }
@@ -78,7 +84,7 @@ rand = "0.10.1"
 rayon = "1.10"
 rgb = "0.8"
 zenpng = "0.1.4"
-zenpixels-convert = { version = "0.2.11", features = ["rgb"] }
+zenpixels-convert = { version = "0.2.12", features = ["rgb"] }
 jpeg-decoder = "0.3"
 # zenanalyze / zenpredict as path-pinned dev-deps were removed: CI
 # regression-test runs (`cargo build` then `cargo test --test
@@ -141,7 +147,7 @@ _wasm_profiling = ["std"]
 # with `features = ["fast-yuv"]` don't break.
 fast-yuv = []
 # Enable zencodec trait integration
-zencodec = ["dep:zencodec", "dep:self_cell"]
+zencodec = ["dep:zencodec", "dep:self_cell", "dep:zenpixels-convert"]
 # Enable target_zensim closed-loop adaptive encoder.
 # Pulls in zensim for perceptual measurement; iteration loop encodes →
 # decodes → measures → adjusts global VP8 quality until it lands in
