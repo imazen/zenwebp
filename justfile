@@ -12,9 +12,10 @@ test:
 clippy:
     cargo clippy --all-targets --all-features -- -D warnings
 
-# Format code
+# Format code + regenerate the public-API surface snapshots (docs/public-api/)
 fmt:
     cargo fmt
+    cargo test --test public_api_doc
 
 # Build for WASM target with SIMD128
 wasm-build:
@@ -90,3 +91,11 @@ feature-check:
 # Run all quality checks
 check: fmt clippy test
     @echo "All checks passed!"
+
+# Regenerate the public-API surface snapshots only
+api-doc:
+    cargo test --test public_api_doc
+
+# Verify the committed snapshots are current (what CI runs)
+api-doc-check:
+    ZEN_API_DOC=check cargo test --test public_api_doc
