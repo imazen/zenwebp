@@ -672,14 +672,28 @@ impl WebpEncoder {
             // `synthesize_icc_for_cicp` (so a BT.2020-PQ source never gets the
             // SDR-TRC Rec.2020 profile). `Profile` → bundled `&'static` bytes, or
             // a cms-moxcms-generated profile held alive in `synth_holder`;
-            // `NotNeeded`/`NeedsCms`/`CmsUnsupported` → embed no ICC (WebP's CICP
-            // carrier still conveys color; sRGB lands in `NotNeeded`).
+            // `NotNeeded` (sRGB default) → embed no ICC.
+            //
+            // Every other outcome is an ERROR, not a silent skip: WebP has NO
+            // CICP carrier, so an embedded ICC is the ONLY way this color
+            // survives — emitting without it would misrepresent the image as
+            // sRGB. The `cms` feature (moxcms-backed synthesis) covers PQ/HLG
+            // and anything else moxcms can express.
             synth_holder = match &plan.icc {
                 zencodec::IccDisposition::SynthesizeFrom(cicp) => {
                     use zenpixels_convert::icc_profiles::SynthesizedIcc;
                     match zenpixels_convert::icc_profiles::synthesize_icc_for_cicp(*cicp) {
                         SynthesizedIcc::Profile(bytes) => Some(bytes),
-                        _ => None,
+                        SynthesizedIcc::NotNeeded => None,
+                        outcome => {
+                            return Err(EncodeError::IccSynthesisUnavailable(alloc::format!(
+                                "CICP primaries {} / transfer {} ({outcome:?}); enable \
+                                 zenwebp's `cms` feature, supply an ICC profile, or drop \
+                                 the CICP",
+                                cicp.color_primaries,
+                                cicp.transfer_characteristics
+                            )));
+                        }
                     }
                 }
                 _ => None,
@@ -3530,6 +3544,51 @@ mod tests {
             embedded, expected,
             "embedded ICC must be the bundled Display P3 profile synthesized from CICP"
         );
+    }
+
+    /// A PQ (BT.2100) CICP-only source needs an ICC the bundled tables can't
+    /// produce. Without the `cms` feature that is an encode ERROR — WebP has no
+    /// CICP carrier, so emitting without the ICC would misrepresent the image
+    /// as sRGB. Refusing beats mislabeling.
+    #[cfg(not(feature = "cms"))]
+    #[test]
+    fn cicp_pq_without_cms_is_an_encode_error() {
+        let buf = make_rgb8_pixels(32, 32);
+        let meta = Metadata::none().with_cicp(Cicp::BT2100_PQ);
+        let err = WebpEncoderConfig::lossless()
+            .job()
+            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+            .encoder()
+            .unwrap()
+            .encode(buf.as_slice())
+            .expect_err("PQ CICP without cms must refuse, not mislabel");
+        let msg = alloc::format!("{err}");
+        assert!(
+            msg.contains("cms"),
+            "error must point at the `cms` feature: {msg}"
+        );
+    }
+
+    /// With the `cms` feature, the same PQ CICP-only source synthesizes a real
+    /// (moxcms-generated) ICC and the encode succeeds.
+    #[cfg(feature = "cms")]
+    #[test]
+    fn cicp_pq_with_cms_synthesizes_icc() {
+        let buf = make_rgb8_pixels(32, 32);
+        let meta = Metadata::none().with_cicp(Cicp::BT2100_PQ);
+        let out = WebpEncoderConfig::lossless()
+            .job()
+            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+            .encoder()
+            .unwrap()
+            .encode(buf.as_slice())
+            .expect("PQ CICP with cms must synthesize an ICC and succeed");
+        let info = crate::ImageInfo::from_webp(out.data()).unwrap();
+        let embedded = info
+            .icc_profile
+            .as_deref()
+            .expect("cms build must embed a synthesized PQ ICC");
+        assert!(!embedded.is_empty());
     }
 
     /// A CICP-only sRGB source must NOT embed an ICC: sRGB is the universally

@@ -148,6 +148,12 @@ _wasm_profiling = ["std"]
 fast-yuv = []
 # Enable zencodec trait integration
 zencodec = ["dep:zencodec", "dep:self_cell", "dep:zenpixels-convert"]
+# moxcms-backed ICC synthesis for the zencodec color-emit path: covers PQ/HLG
+# and any CICP moxcms can express. Without it only the bundled Display-P3 /
+# SDR BT.2020 / AdobeRGB profiles synthesize, and an unsynthesizable CICP is
+# an encode error (WebP has no CICP carrier — never a silently mislabeled
+# image). Weak passthrough: only takes effect with `zencodec` enabled.
+cms = ["zenpixels-convert?/cms-moxcms"]
 # Enable target_zensim closed-loop adaptive encoder.
 # Pulls in zensim for perceptual measurement; iteration loop encodes →
 # decodes → measures → adjusts global VP8 quality until it lands in

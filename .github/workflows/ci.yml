@@ -124,10 +124,12 @@ jobs:
         run: cargo test --features zencodec
       - name: zencodec + imgref
         run: cargo test --features "zencodec,imgref"
+      - name: zencodec + cms
+        run: cargo test --features "zencodec,cms"
       - name: avx512
         run: cargo check --features avx512
       - name: All public features
-        run: cargo test --features "std,pixel-types,imgref,avx512,zencodec"
+        run: cargo test --features "std,pixel-types,imgref,avx512,zencodec,cms"
 
   simd-tier-parity:
     name: SIMD tier parity (${{ matrix.name }})

@@ -53,6 +53,14 @@ pub enum EncodeError {
     #[error("Limit exceeded: {0}")]
     LimitExceeded(String),
 
+    /// The color-emit plan needs an ICC profile synthesized from the source
+    /// CICP and this build can't produce one. WebP has no CICP carrier, so
+    /// encoding without the ICC would misrepresent the image as sRGB. Enable
+    /// the `cms` feature (moxcms-backed synthesis), supply an ICC profile in
+    /// the metadata, or drop the CICP.
+    #[error("cannot synthesize the needed ICC profile: {0}")]
+    IccSynthesisUnavailable(String),
+
     /// The compressed header (partition 0) exceeds the VP8 19-bit size limit (524,287 bytes).
     ///
     /// This occurs with very large, high-entropy images where macroblock prediction

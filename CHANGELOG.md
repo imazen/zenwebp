@@ -6,6 +6,13 @@ earlier history lives in git log and LOG.md.)
 ## [Unreleased]
 
 ### Added
+- `cms` feature: moxcms-backed ICC synthesis (`zenpixels-convert/cms-moxcms`,
+  weak passthrough — takes effect with `zencodec`) covering PQ/HLG and any
+  CICP moxcms can express. Failing to synthesize a needed ICC is now an
+  encode **error** (`EncodeError::IccSynthesisUnavailable`), not a silent
+  skip: WebP has no CICP carrier, so an embedded ICC is the only way the
+  color survives. CI tests `--features zencodec,cms`; tests
+  `cicp_pq_without_cms_is_an_encode_error` / `cicp_pq_with_cms_synthesizes_icc`.
 - zencodec 0.1.21 color-emit integration: the encode path reconciles ICC vs
   CICP via `resolve_color_emit` under the caller's `ColorEmitPolicy`. WebP has
   no CICP carrier, so a CICP-only source synthesizes an embedded ICC (via
