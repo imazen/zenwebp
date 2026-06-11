@@ -26,7 +26,7 @@ use whereat::{At, ResultAtExt, at};
 use zencodec::decode::{AnimationFrame, DecodeOutput, OutputInfo, OwnedAnimationFrame, SinkError};
 use zencodec::encode::EncodeOutput;
 use zencodec::{
-    ImageFormat, ImageInfo, ImageSequence, Metadata, Orientation, ResourceLimits,
+    ImageFormat, ImageInfo, ImageSequence, Metadata, Orientation, OrientationHint, ResourceLimits,
     UnsupportedOperation,
 };
 use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice};
@@ -1321,6 +1321,7 @@ impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
             start_frame_index: 0,
             policy: None,
             preferred: Vec::new(),
+            orientation: OrientationHint::Preserve,
         }
     }
 }
@@ -1336,6 +1337,21 @@ pub struct WebpDecodeJob {
     start_frame_index: u32,
     policy: Option<zencodec::decode::DecodePolicy>,
     preferred: Vec<PixelDescriptor>,
+    /// How to handle the image's stored EXIF orientation.
+    ///
+    /// Default: [`OrientationHint::Preserve`] — the zencodec ecosystem default.
+    /// Under `Preserve` the decoder does **not** bake the orientation into the
+    /// pixels: [`decode`](zencodec::decode::Decode::decode) returns pixels in
+    /// stored orientation and [`ImageInfo`] reports the stored (coded)
+    /// dimensions plus the intrinsic EXIF [`Orientation`]. Under
+    /// [`Correct`](OrientationHint::Correct) the decoder applies the orientation
+    /// and reports display dimensions with [`Orientation::Identity`]. Either way
+    /// [`ImageInfo::display_width`]/[`display_height`](ImageInfo::display_height)
+    /// yield the upright dimensions.
+    ///
+    /// Set per-job via
+    /// [`DecodeJob::with_orientation`](zencodec::decode::DecodeJob::with_orientation).
+    orientation: OrientationHint,
 }
 
 impl WebpDecodeJob {
@@ -1414,6 +1430,11 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         self
     }
 
+    fn with_orientation(mut self, hint: OrientationHint) -> Self {
+        self.orientation = hint;
+        self
+    }
+
     fn with_start_frame_index(mut self, index: u32) -> Self {
         self.start_frame_index = index;
         self
@@ -1422,6 +1443,10 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
     fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<DecodeError>> {
         let native = crate::ImageInfo::from_webp(data)?;
         let mut info = to_image_info(&native, None);
+        // Report consistently with what `decode()` will produce. `Preserve`
+        // (default) keeps `to_image_info`'s stored dims + intrinsic EXIF tag.
+        // The bake hints report the display (post-orientation) dims + Identity.
+        info = report_probe_for_hint(info, self.orientation);
         if let Ok(probe) = crate::detect::probe(data) {
             info = info.with_source_encoding_details(probe);
         }
@@ -1442,7 +1467,22 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         {
             desc = PixelDescriptor::BGRA8_SRGB;
         }
-        Ok(OutputInfo::full_decode(native.width, native.height, desc))
+        // Report the post-orientation output geometry + the transform the
+        // decoder will apply. `Preserve` applies nothing (output = stored dims);
+        // a bake hint outputs the resolved orientation's dims and records it.
+        let intrinsic = native
+            .exif
+            .as_ref()
+            .and_then(|e| crate::exif_orientation::parse_orientation(e))
+            .and_then(Orientation::from_exif)
+            .unwrap_or(Orientation::Identity);
+        let resolved = if hint_bakes(self.orientation) {
+            resolve_orientation(self.orientation, intrinsic)
+        } else {
+            Orientation::Identity
+        };
+        let (ow, oh) = resolved.output_dimensions(native.width, native.height);
+        Ok(OutputInfo::full_decode(ow, oh, desc).with_orientation_applied(resolved))
     }
 
     fn decoder(
@@ -1460,6 +1500,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
             data,
             preferred: preferred.to_vec(),
             policy: self.policy,
+            orientation: self.orientation,
         })
     }
 
@@ -1740,6 +1781,9 @@ pub struct WebpDecoder<'a> {
     data: Cow<'a, [u8]>,
     preferred: Vec<PixelDescriptor>,
     policy: Option<zencodec::decode::DecodePolicy>,
+    /// How to handle the image's stored EXIF orientation. Inherited from the
+    /// [`WebpDecodeJob`]. Default [`OrientationHint::Preserve`].
+    orientation: OrientationHint,
 }
 
 impl WebpDecoder<'_> {
@@ -1914,12 +1958,19 @@ impl zencodec::decode::Decode for WebpDecoder<'_> {
 
     fn decode(self) -> Result<DecodeOutput, At<DecodeError>> {
         let output = self.do_decode(&self.data).map_err(|e| at!(e))?;
-        if self.preferred.is_empty() {
-            return Ok(output);
-        }
-        let info = output.info().clone();
-        let pixels = negotiate_format(output.into_buffer(), &self.preferred);
-        Ok(DecodeOutput::new(pixels, info))
+        let output = if self.preferred.is_empty() {
+            output
+        } else {
+            let info = output.info().clone();
+            let pixels = negotiate_format(output.into_buffer(), &self.preferred);
+            DecodeOutput::new(pixels, info)
+        };
+        // Honor the orientation hint. On the default `Preserve` path this is a
+        // no-op (`hint_bakes` is false): pixels stay stored-orientation and the
+        // info keeps the intrinsic EXIF tag. On `Correct`/`ExactTransform`/
+        // `CorrectAndTransform` the resolved orientation is baked into the
+        // pixels and the info reports display dims + `Identity`.
+        Ok(apply_orientation_to_output(output, self.orientation))
     }
 }
 
@@ -2532,6 +2583,111 @@ fn to_image_info(native: &crate::ImageInfo, loop_count: Option<Option<u32>>) -> 
         info = info.with_xmp(xmp.clone());
     }
     info
+}
+
+// ── Orientation baking ──────────────────────────────────────────────────────
+//
+// WebP carries orientation only as the EXIF `Orientation` tag (TIFF tag 274);
+// the bitstream dimensions are always the stored (coded) dimensions. So unlike
+// HEIC's container `irot`/`imir` (which the probe folds into display dims),
+// `to_image_info` always reports the coded dims + the intrinsic EXIF tag — which
+// is exactly the `Preserve` contract. The bake path below transforms the decoded
+// pixels and rewrites the reported dims/tag for the non-`Preserve` hints.
+
+/// Whether `hint` puts the decoder on the bake path (transform the pixels) vs.
+/// the preserve path (leave them stored-orientation).
+///
+/// This is the local equivalent of `OrientationHint::bakes()` — inlined so the
+/// adapter does not require an unreleased zencodec. [`Preserve`] is the only hint
+/// that leaves pixels untouched; every other hint bakes.
+///
+/// [`Preserve`]: OrientationHint::Preserve
+fn hint_bakes(hint: OrientationHint) -> bool {
+    !matches!(hint, OrientationHint::Preserve)
+}
+
+/// Resolve the net [`Orientation`] to bake into the *stored* pixels for a given
+/// hint, given the image's intrinsic EXIF `orientation`.
+///
+/// - [`Preserve`](OrientationHint::Preserve): nothing to bake — returns
+///   [`Identity`](Orientation::Identity) (callers gate on [`hint_bakes`] first,
+///   so this arm is only a defensive default).
+/// - [`Correct`](OrientationHint::Correct): the intrinsic orientation (applying
+///   it to stored pixels yields the upright image).
+/// - [`ExactTransform`](OrientationHint::ExactTransform): the literal transform,
+///   ignoring EXIF.
+/// - [`CorrectAndTransform`](OrientationHint::CorrectAndTransform): the intrinsic
+///   correction first, then the requested transform.
+fn resolve_orientation(hint: OrientationHint, intrinsic: Orientation) -> Orientation {
+    match hint {
+        OrientationHint::Preserve => Orientation::Identity,
+        OrientationHint::Correct => intrinsic,
+        OrientationHint::ExactTransform(t) => t,
+        OrientationHint::CorrectAndTransform(t) => intrinsic.then(t),
+        // `OrientationHint` is `#[non_exhaustive]`; treat any future variant as a
+        // no-op bake rather than guessing — the reported tag stays consistent.
+        _ => Orientation::Identity,
+    }
+}
+
+/// Bake `hint` into a decoded [`DecodeOutput`].
+///
+/// On the [`Preserve`](OrientationHint::Preserve) path ([`hint_bakes`] is
+/// `false`) the output is returned unchanged: pixels stay in stored orientation
+/// and `ImageInfo` keeps the stored dims + intrinsic EXIF tag that
+/// [`to_image_info`] already set.
+///
+/// Otherwise the resolved orientation (see [`resolve_orientation`]) is physically
+/// applied to the pixels via [`zenpixels_convert::orient::apply_orientation`],
+/// and the reported `ImageInfo` is rewritten to the baked buffer's dimensions
+/// with [`Orientation::Identity`] (the pixels are final — no orientation remains
+/// to apply). The intrinsic EXIF orientation is read from the `ImageInfo` the
+/// decode path already computed, so it matches what `probe()` reports.
+fn apply_orientation_to_output(output: DecodeOutput, hint: OrientationHint) -> DecodeOutput {
+    if !hint_bakes(hint) {
+        return output;
+    }
+    let mut info = output.info().clone();
+    let intrinsic = info.orientation;
+    let resolved = resolve_orientation(hint, intrinsic);
+
+    let buf = output.into_buffer();
+
+    // Even when the resolved transform is Identity (e.g. `Correct` on an
+    // upright image) we still rewrite the reported orientation to Identity so a
+    // consumer never double-applies the (now-stale) intrinsic tag. The pixel
+    // copy is skipped in that case.
+    let baked = if resolved.is_identity() {
+        buf
+    } else {
+        zenpixels_convert::orient::apply_orientation(buf.as_slice(), resolved)
+    };
+
+    // `ImageInfo` has no dimension setter; the fields are public. Report the
+    // baked buffer's geometry + Identity (pixels are now final).
+    info.width = baked.width();
+    info.height = baked.height();
+    info = info.with_orientation(Orientation::Identity);
+
+    DecodeOutput::new(baked, info)
+}
+
+/// Rewrite a probe [`ImageInfo`] (stored dims + intrinsic EXIF tag, as produced
+/// by [`to_image_info`]) to match what [`apply_orientation_to_output`] will
+/// report for `hint`.
+///
+/// On the [`Preserve`](OrientationHint::Preserve) path the info is returned
+/// unchanged. On a bake hint the dims are set to the resolved orientation's
+/// output geometry and the tag becomes [`Orientation::Identity`].
+fn report_probe_for_hint(mut info: ImageInfo, hint: OrientationHint) -> ImageInfo {
+    if !hint_bakes(hint) {
+        return info;
+    }
+    let resolved = resolve_orientation(hint, info.orientation);
+    let (ow, oh) = resolved.output_dimensions(info.width, info.height);
+    info.width = ow;
+    info.height = oh;
+    info.with_orientation(Orientation::Identity)
 }
 
 #[cfg(test)]

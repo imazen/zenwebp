@@ -6,6 +6,15 @@ earlier history lives in git log and LOG.md.)
 ## [Unreleased]
 
 ### Added
+- zencodec `OrientationHint` is now honored by the decode adapter. `Preserve`
+  (default, unchanged) returns stored-orientation pixels + reports the stored
+  (coded) dims and intrinsic EXIF `Orientation` tag; `Correct` /
+  `CorrectAndTransform` / `ExactTransform` bake the resolved orientation into the
+  decoded pixels (via `zenpixels-convert` `apply_orientation`) and report the
+  display dims + `Orientation::Identity`. `probe`/`output_info` report
+  consistently with `decode`. Native (non-zencodec) API unchanged; adapter-only,
+  mirroring the heic fix. Requires `zenpixels-convert` 0.2.13 (unreleased).
+  Tests: `tests/orientation.rs` (d7c54ec4).
 - `cms` feature: moxcms-backed ICC synthesis (`zenpixels-convert/cms-moxcms`,
   weak passthrough — takes effect with `zencodec`) covering PQ/HLG and any
   CICP moxcms can express. Failing to synthesize a needed ICC is now an
