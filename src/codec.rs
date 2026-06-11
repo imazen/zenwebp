@@ -2601,6 +2601,9 @@ fn to_image_info(native: &crate::ImageInfo, loop_count: Option<Option<u32>>) -> 
 /// adapter does not require an unreleased zencodec. [`Preserve`] is the only hint
 /// that leaves pixels untouched; every other hint bakes.
 ///
+/// `bakes()` is still in zencodec's unreleased changelog (post-0.1.21);
+/// delegate to it and delete this when zencodec ≥ 0.1.22 ships (zenwebp#58).
+///
 /// [`Preserve`]: OrientationHint::Preserve
 fn hint_bakes(hint: OrientationHint) -> bool {
     !matches!(hint, OrientationHint::Preserve)

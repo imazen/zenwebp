@@ -86,6 +86,9 @@ rgb = "0.8"
 serde_json = "1.0.150"
 zenpng = "0.1.4"
 zenpixels-convert = { version = "0.2.13", features = ["rgb"] }
+# Parity oracle for the deliberately-local EXIF orientation parser
+# (src/exif_orientation.rs, zenwebp#58) — dev-only, consumers pay nothing.
+zencodec = "0.1.21"
 jpeg-decoder = "0.3"
 # zenanalyze / zenpredict as path-pinned dev-deps were removed: CI
 # regression-test runs (`cargo build` then `cargo test --test

@@ -5,7 +5,15 @@
 //! (starts with `Exif\0\0` prefix).
 //!
 //! This is intentionally minimal — just orientation, nothing else.
-//! To be factored into zencodec: <https://github.com/imazen/zencodec/issues/5>
+//!
+//! **Deliberately local** (zenwebp#58, resolved 2026-06-11): the canonical
+//! home is `zencodec::helpers::parse_exif_orientation`, but this parser
+//! runs in the *core* decoder path, and zencodec is an optional feature —
+//! delegating would make zencodec (and its zenpixels+ICC-table baggage) a
+//! required dependency of every zenwebp build for ~80 lines of TIFF walk.
+//! Instead the implementations are pinned against each other by the
+//! `parity_with_zencodec_helper` differential test below (zencodec is a
+//! dev-dependency, costing consumers nothing).
 
 /// EXIF Orientation tag number (TIFF tag 274).
 const TAG_ORIENTATION: u16 = 0x0112;
@@ -209,5 +217,38 @@ mod tests {
         // Tag 0x0100 > 0x0112? No, 0x100 < 0x112, so it won't early-exit
         // But there's only 1 entry and it's not orientation
         assert_eq!(parse_orientation(&buf), None);
+    }
+
+    /// zenwebp#58: this parser is deliberately local (see module docs), so
+    /// it must never drift from the canonical
+    /// `zencodec::helpers::parse_exif_orientation`. Pin equivalence across
+    /// every orientation value, both byte orders, prefixed/raw forms, and
+    /// the degenerate inputs.
+    #[test]
+    fn parity_with_zencodec_helper() {
+        let assert_parity = |data: &[u8], label: &str| {
+            let local = parse_orientation(data).and_then(zencodec::Orientation::from_exif);
+            let canonical = zencodec::helpers::parse_exif_orientation(data);
+            assert_eq!(local, canonical, "divergence on {label}: {data:02X?}");
+        };
+
+        for big_endian in [false, true] {
+            for value in 0..=10u16 {
+                let tiff = make_tiff_with_orientation(value, big_endian);
+                assert_parity(&tiff, "raw tiff");
+                let mut prefixed = b"Exif\0\0".to_vec();
+                prefixed.extend_from_slice(&tiff);
+                assert_parity(&prefixed, "prefixed");
+                // Truncations at every length — both must agree on rejection.
+                for cut in [4usize, 8, 12, 16] {
+                    if cut < tiff.len() {
+                        assert_parity(&tiff[..cut], "truncated");
+                    }
+                }
+            }
+        }
+        assert_parity(&[], "empty");
+        assert_parity(b"II*\0", "short header");
+        assert_parity(b"XXxxxxxxxxxxxxxx", "bad byte order");
     }
 }

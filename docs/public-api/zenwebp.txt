@@ -1591,7 +1591,7 @@ impl<'a> !core::panic::unwind_safe::UnwindSafe for zenwebp::WebPDecoder<'a>
 pub type zenwebp::DecodeResult<T> = core::result::Result<T, whereat::at::At<zenwebp::DecodeError>>
 pub type zenwebp::EncodeResult<T> = core::result::Result<T, whereat::at::At<zenwebp::EncodeError>>
 
-## all features except _* (1831 items)
+## all features except _* (2035 items)
 
 pub mod zenwebp
 pub use zenwebp::AblationToggles
@@ -2790,6 +2790,209 @@ pub fn zenwebp::pixel::decode_into<P: zenwebp::pixel::DecodePixel>(&[u8], &mut [
 pub fn zenwebp::pixel::decode_to_img<P: zenwebp::pixel::DecodePixel>(&[u8]) -> zenwebp::DecodeResult<imgref::ImgVec<P>> where [u8]: rgb::legacy::internal::convert::AsPixels<P>
 pub fn zenwebp::pixel::encode<P: zenwebp::pixel::EncodePixel>(&[P], u32, u32) -> zenwebp::EncodeResult<alloc::vec::Vec<u8>> where [P]: rgb::legacy::internal::pixel::ComponentBytes<u8>
 pub fn zenwebp::pixel::encode_img<P: zenwebp::pixel::EncodePixel>(imgref::ImgRef<'_, P>) -> zenwebp::EncodeResult<alloc::vec::Vec<u8>> where [P]: rgb::legacy::internal::pixel::ComponentBytes<u8>
+pub mod zenwebp::sweep
+pub enum zenwebp::sweep::QualityGrid
+pub zenwebp::sweep::QualityGrid::Explicit(alloc::vec::Vec<f32>)
+pub zenwebp::sweep::QualityGrid::Step5
+pub zenwebp::sweep::QualityGrid::TrainingDense
+impl zenwebp::sweep::QualityGrid
+pub fn zenwebp::sweep::QualityGrid::points(&self) -> alloc::vec::Vec<f32>
+impl core::clone::Clone for zenwebp::sweep::QualityGrid
+pub fn zenwebp::sweep::QualityGrid::clone(&self) -> zenwebp::sweep::QualityGrid
+impl core::fmt::Debug for zenwebp::sweep::QualityGrid
+pub fn zenwebp::sweep::QualityGrid::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for zenwebp::sweep::QualityGrid
+impl core::marker::Send for zenwebp::sweep::QualityGrid
+impl core::marker::Sync for zenwebp::sweep::QualityGrid
+impl core::marker::Unpin for zenwebp::sweep::QualityGrid
+impl core::marker::UnsafeUnpin for zenwebp::sweep::QualityGrid
+impl core::panic::unwind_safe::RefUnwindSafe for zenwebp::sweep::QualityGrid
+impl core::panic::unwind_safe::UnwindSafe for zenwebp::sweep::QualityGrid
+pub enum zenwebp::sweep::SweepVariant
+pub zenwebp::sweep::SweepVariant::Lossless(zenwebp::sweep::LosslessVariant)
+pub zenwebp::sweep::SweepVariant::Lossy(zenwebp::sweep::LossyVariant)
+impl zenwebp::sweep::SweepVariant
+pub fn zenwebp::sweep::SweepVariant::build(&self) -> EncoderConfig
+impl core::clone::Clone for zenwebp::sweep::SweepVariant
+pub fn zenwebp::sweep::SweepVariant::clone(&self) -> zenwebp::sweep::SweepVariant
+impl core::fmt::Debug for zenwebp::sweep::SweepVariant
+pub fn zenwebp::sweep::SweepVariant::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for zenwebp::sweep::SweepVariant
+impl core::marker::Send for zenwebp::sweep::SweepVariant
+impl core::marker::Sync for zenwebp::sweep::SweepVariant
+impl core::marker::Unpin for zenwebp::sweep::SweepVariant
+impl core::marker::UnsafeUnpin for zenwebp::sweep::SweepVariant
+impl core::panic::unwind_safe::RefUnwindSafe for zenwebp::sweep::SweepVariant
+impl core::panic::unwind_safe::UnwindSafe for zenwebp::sweep::SweepVariant
+pub struct zenwebp::sweep::DroppedAxis
+pub zenwebp::sweep::DroppedAxis::axis: &'static str
+pub zenwebp::sweep::DroppedAxis::dropped: alloc::vec::Vec<alloc::string::String>
+pub zenwebp::sweep::DroppedAxis::kept: alloc::string::String
+impl core::clone::Clone for zenwebp::sweep::DroppedAxis
+pub fn zenwebp::sweep::DroppedAxis::clone(&self) -> zenwebp::sweep::DroppedAxis
+impl core::fmt::Debug for zenwebp::sweep::DroppedAxis
+pub fn zenwebp::sweep::DroppedAxis::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for zenwebp::sweep::DroppedAxis
+impl core::marker::Send for zenwebp::sweep::DroppedAxis
+impl core::marker::Sync for zenwebp::sweep::DroppedAxis
+impl core::marker::Unpin for zenwebp::sweep::DroppedAxis
+impl core::marker::UnsafeUnpin for zenwebp::sweep::DroppedAxis
+impl core::panic::unwind_safe::RefUnwindSafe for zenwebp::sweep::DroppedAxis
+impl core::panic::unwind_safe::UnwindSafe for zenwebp::sweep::DroppedAxis
+pub struct zenwebp::sweep::LosslessAxes
+pub zenwebp::sweep::LosslessAxes::methods: alloc::vec::Vec<u8>
+pub zenwebp::sweep::LosslessAxes::qualities: alloc::vec::Vec<f32>
+impl core::clone::Clone for zenwebp::sweep::LosslessAxes
+pub fn zenwebp::sweep::LosslessAxes::clone(&self) -> zenwebp::sweep::LosslessAxes
+impl core::fmt::Debug for zenwebp::sweep::LosslessAxes
+pub fn zenwebp::sweep::LosslessAxes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for zenwebp::sweep::LosslessAxes
+impl core::marker::Send for zenwebp::sweep::LosslessAxes
+impl core::marker::Sync for zenwebp::sweep::LosslessAxes
+impl core::marker::Unpin for zenwebp::sweep::LosslessAxes
+impl core::marker::UnsafeUnpin for zenwebp::sweep::LosslessAxes
+impl core::panic::unwind_safe::RefUnwindSafe for zenwebp::sweep::LosslessAxes
+impl core::panic::unwind_safe::UnwindSafe for zenwebp::sweep::LosslessAxes
+pub struct zenwebp::sweep::LosslessVariant
+pub zenwebp::sweep::LosslessVariant::method: u8
+pub zenwebp::sweep::LosslessVariant::quality: f32
+impl core::clone::Clone for zenwebp::sweep::LosslessVariant
+pub fn zenwebp::sweep::LosslessVariant::clone(&self) -> zenwebp::sweep::LosslessVariant
+impl core::fmt::Debug for zenwebp::sweep::LosslessVariant
+pub fn zenwebp::sweep::LosslessVariant::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for zenwebp::sweep::LosslessVariant
+impl core::marker::Send for zenwebp::sweep::LosslessVariant
+impl core::marker::Sync for zenwebp::sweep::LosslessVariant
+impl core::marker::Unpin for zenwebp::sweep::LosslessVariant
+impl core::marker::UnsafeUnpin for zenwebp::sweep::LosslessVariant
+impl core::panic::unwind_safe::RefUnwindSafe for zenwebp::sweep::LosslessVariant
+impl core::panic::unwind_safe::UnwindSafe for zenwebp::sweep::LosslessVariant
+pub struct zenwebp::sweep::LossyAxes
+pub zenwebp::sweep::LossyAxes::filter_strength: alloc::vec::Vec<core::option::Option<u8>>
+pub zenwebp::sweep::LossyAxes::internal: alloc::vec::Vec<zenwebp::sweep::NamedLossyProbe>
+pub zenwebp::sweep::LossyAxes::methods: alloc::vec::Vec<u8>
+pub zenwebp::sweep::LossyAxes::segments: alloc::vec::Vec<core::option::Option<u8>>
+pub zenwebp::sweep::LossyAxes::sharp_yuv: alloc::vec::Vec<bool>
+pub zenwebp::sweep::LossyAxes::sns_strength: alloc::vec::Vec<core::option::Option<u8>>
+impl core::clone::Clone for zenwebp::sweep::LossyAxes
+pub fn zenwebp::sweep::LossyAxes::clone(&self) -> zenwebp::sweep::LossyAxes
+impl core::fmt::Debug for zenwebp::sweep::LossyAxes
+pub fn zenwebp::sweep::LossyAxes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for zenwebp::sweep::LossyAxes
+impl core::marker::Send for zenwebp::sweep::LossyAxes
+impl core::marker::Sync for zenwebp::sweep::LossyAxes
+impl core::marker::Unpin for zenwebp::sweep::LossyAxes
+impl core::marker::UnsafeUnpin for zenwebp::sweep::LossyAxes
+impl core::panic::unwind_safe::RefUnwindSafe for zenwebp::sweep::LossyAxes
+impl core::panic::unwind_safe::UnwindSafe for zenwebp::sweep::LossyAxes
+pub struct zenwebp::sweep::LossyVariant
+pub zenwebp::sweep::LossyVariant::filter_strength: core::option::Option<u8>
+pub zenwebp::sweep::LossyVariant::internal: zenwebp::sweep::NamedLossyProbe
+pub zenwebp::sweep::LossyVariant::method: u8
+pub zenwebp::sweep::LossyVariant::quality: f32
+pub zenwebp::sweep::LossyVariant::segments: core::option::Option<u8>
+pub zenwebp::sweep::LossyVariant::sharp_yuv: bool
+pub zenwebp::sweep::LossyVariant::sns_strength: core::option::Option<u8>
+impl core::clone::Clone for zenwebp::sweep::LossyVariant
+pub fn zenwebp::sweep::LossyVariant::clone(&self) -> zenwebp::sweep::LossyVariant
+impl core::fmt::Debug for zenwebp::sweep::LossyVariant
+pub fn zenwebp::sweep::LossyVariant::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for zenwebp::sweep::LossyVariant
+impl core::marker::Send for zenwebp::sweep::LossyVariant
+impl core::marker::Sync for zenwebp::sweep::LossyVariant
+impl core::marker::Unpin for zenwebp::sweep::LossyVariant
+impl core::marker::UnsafeUnpin for zenwebp::sweep::LossyVariant
+impl core::panic::unwind_safe::RefUnwindSafe for zenwebp::sweep::LossyVariant
+impl core::panic::unwind_safe::UnwindSafe for zenwebp::sweep::LossyVariant
+pub struct zenwebp::sweep::NamedLossyProbe
+pub zenwebp::sweep::NamedLossyProbe::label: alloc::string::String
+pub zenwebp::sweep::NamedLossyProbe::params: crate::encoder::config::InternalParams
+impl zenwebp::sweep::NamedLossyProbe
+pub fn zenwebp::sweep::NamedLossyProbe::default_probe() -> Self
+impl core::clone::Clone for zenwebp::sweep::NamedLossyProbe
+pub fn zenwebp::sweep::NamedLossyProbe::clone(&self) -> zenwebp::sweep::NamedLossyProbe
+impl core::fmt::Debug for zenwebp::sweep::NamedLossyProbe
+pub fn zenwebp::sweep::NamedLossyProbe::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for zenwebp::sweep::NamedLossyProbe
+impl core::marker::Send for zenwebp::sweep::NamedLossyProbe
+impl core::marker::Sync for zenwebp::sweep::NamedLossyProbe
+impl core::marker::Unpin for zenwebp::sweep::NamedLossyProbe
+impl core::marker::UnsafeUnpin for zenwebp::sweep::NamedLossyProbe
+impl core::panic::unwind_safe::RefUnwindSafe for zenwebp::sweep::NamedLossyProbe
+impl core::panic::unwind_safe::UnwindSafe for zenwebp::sweep::NamedLossyProbe
+pub struct zenwebp::sweep::SweepAxes
+pub zenwebp::sweep::SweepAxes::lossless: core::option::Option<zenwebp::sweep::LosslessAxes>
+pub zenwebp::sweep::SweepAxes::lossy: core::option::Option<zenwebp::sweep::LossyAxes>
+impl zenwebp::sweep::SweepAxes
+pub fn zenwebp::sweep::SweepAxes::modes_full() -> Self
+pub fn zenwebp::sweep::SweepAxes::rd_core() -> Self
+impl core::clone::Clone for zenwebp::sweep::SweepAxes
+pub fn zenwebp::sweep::SweepAxes::clone(&self) -> zenwebp::sweep::SweepAxes
+impl core::fmt::Debug for zenwebp::sweep::SweepAxes
+pub fn zenwebp::sweep::SweepAxes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for zenwebp::sweep::SweepAxes
+impl core::marker::Send for zenwebp::sweep::SweepAxes
+impl core::marker::Sync for zenwebp::sweep::SweepAxes
+impl core::marker::Unpin for zenwebp::sweep::SweepAxes
+impl core::marker::UnsafeUnpin for zenwebp::sweep::SweepAxes
+impl core::panic::unwind_safe::RefUnwindSafe for zenwebp::sweep::SweepAxes
+impl core::panic::unwind_safe::UnwindSafe for zenwebp::sweep::SweepAxes
+pub struct zenwebp::sweep::SweepBuilder
+impl zenwebp::sweep::SweepBuilder
+pub fn zenwebp::sweep::SweepBuilder::new(zenwebp::sweep::SweepAxes, zenwebp::sweep::QualityGrid) -> Self
+pub fn zenwebp::sweep::SweepBuilder::plan(&self) -> zenwebp::sweep::SweepPlan
+pub fn zenwebp::sweep::SweepBuilder::with_budget(self, usize) -> Self
+impl core::clone::Clone for zenwebp::sweep::SweepBuilder
+pub fn zenwebp::sweep::SweepBuilder::clone(&self) -> zenwebp::sweep::SweepBuilder
+impl core::fmt::Debug for zenwebp::sweep::SweepBuilder
+pub fn zenwebp::sweep::SweepBuilder::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for zenwebp::sweep::SweepBuilder
+impl core::marker::Send for zenwebp::sweep::SweepBuilder
+impl core::marker::Sync for zenwebp::sweep::SweepBuilder
+impl core::marker::Unpin for zenwebp::sweep::SweepBuilder
+impl core::marker::UnsafeUnpin for zenwebp::sweep::SweepBuilder
+impl core::panic::unwind_safe::RefUnwindSafe for zenwebp::sweep::SweepBuilder
+impl core::panic::unwind_safe::UnwindSafe for zenwebp::sweep::SweepBuilder
+pub struct zenwebp::sweep::SweepCell
+pub zenwebp::sweep::SweepCell::aliases: alloc::vec::Vec<alloc::string::String>
+pub zenwebp::sweep::SweepCell::deviations: u8
+pub zenwebp::sweep::SweepCell::fingerprint: u64
+pub zenwebp::sweep::SweepCell::id: alloc::string::String
+pub zenwebp::sweep::SweepCell::quality: core::option::Option<f32>
+pub zenwebp::sweep::SweepCell::variant: zenwebp::sweep::SweepVariant
+impl core::clone::Clone for zenwebp::sweep::SweepCell
+pub fn zenwebp::sweep::SweepCell::clone(&self) -> zenwebp::sweep::SweepCell
+impl core::fmt::Debug for zenwebp::sweep::SweepCell
+pub fn zenwebp::sweep::SweepCell::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for zenwebp::sweep::SweepCell
+impl core::marker::Send for zenwebp::sweep::SweepCell
+impl core::marker::Sync for zenwebp::sweep::SweepCell
+impl core::marker::Unpin for zenwebp::sweep::SweepCell
+impl core::marker::UnsafeUnpin for zenwebp::sweep::SweepCell
+impl core::panic::unwind_safe::RefUnwindSafe for zenwebp::sweep::SweepCell
+impl core::panic::unwind_safe::UnwindSafe for zenwebp::sweep::SweepCell
+pub struct zenwebp::sweep::SweepPlan
+pub zenwebp::sweep::SweepPlan::cells: alloc::vec::Vec<zenwebp::sweep::SweepCell>
+pub zenwebp::sweep::SweepPlan::dropped: alloc::vec::Vec<zenwebp::sweep::DroppedAxis>
+pub zenwebp::sweep::SweepPlan::duplicates_merged: usize
+pub zenwebp::sweep::SweepPlan::invalid_skipped: alloc::vec::Vec<alloc::string::String>
+pub zenwebp::sweep::SweepPlan::over_budget: bool
+pub zenwebp::sweep::SweepPlan::q_coarsenings: u32
+impl core::clone::Clone for zenwebp::sweep::SweepPlan
+pub fn zenwebp::sweep::SweepPlan::clone(&self) -> zenwebp::sweep::SweepPlan
+impl core::fmt::Debug for zenwebp::sweep::SweepPlan
+pub fn zenwebp::sweep::SweepPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for zenwebp::sweep::SweepPlan
+impl core::marker::Send for zenwebp::sweep::SweepPlan
+impl core::marker::Sync for zenwebp::sweep::SweepPlan
+impl core::marker::Unpin for zenwebp::sweep::SweepPlan
+impl core::marker::UnsafeUnpin for zenwebp::sweep::SweepPlan
+impl core::panic::unwind_safe::RefUnwindSafe for zenwebp::sweep::SweepPlan
+impl core::panic::unwind_safe::UnwindSafe for zenwebp::sweep::SweepPlan
+pub fn zenwebp::sweep::fingerprint(&zenwebp::sweep::SweepVariant) -> u64
+pub fn zenwebp::sweep::lossy_internal_probes() -> alloc::vec::Vec<zenwebp::sweep::NamedLossyProbe>
+pub fn zenwebp::sweep::lossy_probe_by_label(&str) -> core::option::Option<zenwebp::sweep::NamedLossyProbe>
+pub fn zenwebp::sweep::variant_from_cell_id(&str) -> core::result::Result<zenwebp::sweep::SweepVariant, alloc::string::String>
 pub mod zenwebp::zencodec
 pub struct zenwebp::zencodec::WebpAnimationFrameDecoder
 impl zencodec::traits::decoder::AnimationFrameDecoder for zenwebp::zencodec::WebpAnimationFrameDecoder
@@ -2838,6 +3041,7 @@ pub fn zenwebp::zencodec::WebpDecodeJob::probe(&self, &[u8]) -> core::result::Re
 pub fn zenwebp::zencodec::WebpDecodeJob::push_decoder(self, alloc::borrow::Cow<'a, [u8]>, &mut dyn zencodec::sink::DecodeRowSink, &[zenpixels::descriptor::PixelDescriptor]) -> core::result::Result<zencodec::cost::OutputInfo, Self::Error>
 pub fn zenwebp::zencodec::WebpDecodeJob::streaming_decoder(self, alloc::borrow::Cow<'a, [u8]>, &[zenpixels::descriptor::PixelDescriptor]) -> core::result::Result<zenwebp::zencodec::WebpStreamingDecoder, whereat::at::At<zenwebp::DecodeError>>
 pub fn zenwebp::zencodec::WebpDecodeJob::with_limits(self, zencodec::limits::ResourceLimits) -> Self
+pub fn zenwebp::zencodec::WebpDecodeJob::with_orientation(self, zencodec::orientation::OrientationHint) -> Self
 pub fn zenwebp::zencodec::WebpDecodeJob::with_policy(self, zencodec::policy::DecodePolicy) -> Self
 pub fn zenwebp::zencodec::WebpDecodeJob::with_start_frame_index(self, u32) -> Self
 pub fn zenwebp::zencodec::WebpDecodeJob::with_stop(self, almost_enough::stop_token::StopToken) -> Self

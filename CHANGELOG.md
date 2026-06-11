@@ -7,6 +7,18 @@ earlier history lives in git log and LOG.md.)
 
 ### Added
 
+- **Parity differential test for the local EXIF-orientation parser** (#58):
+  `src/exif_orientation.rs` stays deliberately local — it runs in the core
+  decoder path and delegating to `zencodec::helpers::parse_exif_orientation`
+  would make zencodec (with its zenpixels/ICC-table weight) a required
+  dependency of every build. Drift protection instead:
+  `parity_with_zencodec_helper` pins the local parser against the canonical
+  helper across every orientation value × byte order × prefixed/raw ×
+  truncation, with zencodec added as a dev-dependency only. The module
+  header documents the retention rationale (the old comment pointed at the
+  long-closed zencodec#5); `hint_bakes` is annotated to delegate to
+  `OrientationHint::bakes()` once zencodec ≥ 0.1.22 ships it.
+
 - `sweep` module (`__expert`): variant-generation playbook adoption
   (patterns 1, 4, 5, 7) — mode-discriminated `SweepVariant`
   (lossy VP8 / lossless VP8L share no knob space structurally), labelled
