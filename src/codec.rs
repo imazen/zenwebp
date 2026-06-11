@@ -1817,6 +1817,12 @@ impl WebpDecoder<'_> {
     }
 
     fn do_decode(&self, data: &[u8]) -> Result<DecodeOutput, DecodeError> {
+        // Honor cancellation before any work, and never swallow a
+        // cancellation from the lossy fast path by retrying the general
+        // path — a pre-stopped token must fail the decode.
+        if let Some(ref stop) = self.stop {
+            enough::Stop::check(stop).map_err(DecodeError::Cancelled)?;
+        }
         self.check_input_size(data)?;
 
         if let Ok(info) = crate::ImageInfo::from_webp(data) {
@@ -1826,8 +1832,10 @@ impl WebpDecoder<'_> {
         }
 
         // Try lossy VP8 direct path (faster, streaming cache)
-        if let Ok(result) = self.do_decode_lossy(data) {
-            return Ok(result);
+        match self.do_decode_lossy(data) {
+            Ok(result) => return Ok(result),
+            Err(DecodeError::Cancelled(r)) => return Err(DecodeError::Cancelled(r)),
+            Err(_) => {}
         }
 
         // General path (lossless, animation, etc)
@@ -1838,8 +1846,13 @@ impl WebpDecoder<'_> {
     fn do_decode_lossy(&self, data: &[u8]) -> Result<DecodeOutput, DecodeError> {
         let dither_strength = self.config.dithering_strength;
 
-        // Use DecodeRequest's lossy path which handles container parsing
-        let req = DecodeRequest::new(&self.config, data);
+        // Use DecodeRequest's lossy path which handles container parsing.
+        // Wire the stop token like do_decode_general — without it the lossy
+        // fast path silently ignored cancellation.
+        let mut req = DecodeRequest::new(&self.config, data);
+        if let Some(ref stop) = self.stop {
+            req = req.stop(stop);
+        }
         let (pixels, w, h) = req.decode_rgba_lossy().map_err(|e| e.decompose().0)?;
 
         let w = u32::from(w);

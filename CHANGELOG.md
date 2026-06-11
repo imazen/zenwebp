@@ -5,6 +5,18 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+### Fixed
+
+- **Lossy one-shot decode ignored the stop token.** `do_decode_lossy` never
+  wired the job's stop into the native `DecodeRequest`, the native lossy
+  path (`decode_lossy_internal`) had no cancellation check, and `do_decode`
+  swallowed any lossy-path error by retrying the general path — so a
+  pre-stopped token decoded successfully instead of returning
+  `Cancelled`. Now: entry checks in `do_decode` and
+  `decode_lossy_internal`, stop wired through the lossy `DecodeRequest`,
+  and cancellation from the lossy path propagates instead of falling
+  through. Surfaced by zencodecs' `stop_decode_webp` (zenpipe#38 CI work).
+
 ### Added
 
 - **Parity differential test for the local EXIF-orientation parser** (#58):

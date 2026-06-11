@@ -552,6 +552,13 @@ impl<'a> DecodeRequest<'a> {
     }
 
     fn decode_lossy_internal(self, bpp: usize) -> DecodeResult<(Vec<u8>, u16, u16)> {
+        // Honor cancellation before doing any work — the one-shot lossy path
+        // has no mid-decode checkpoints (the VP8v2 context does not carry a
+        // stop token), so the entry check is the cancellation contract here.
+        if let Some(stop) = self.stop {
+            stop.check()
+                .map_err(|r| whereat::at!(DecodeError::Cancelled(r)))?;
+        }
         let data = self.data;
         let dither_strength = self.config.dithering_strength;
         if data.len() < 20 {
