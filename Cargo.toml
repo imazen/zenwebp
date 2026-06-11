@@ -197,6 +197,10 @@ picker = ["dep:zenpredict", "analyzer", "__expert"]
 # zennode = ["dep:zennode"]
 
 [[example]]
+name = "sweep_validate"
+required-features = ["__expert"]
+
+[[example]]
 name = "debug_zensim"
 path = "dev/debug_zensim.rs"
 

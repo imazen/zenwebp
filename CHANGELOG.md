@@ -17,6 +17,12 @@ earlier history lives in git log and LOG.md.)
   Curated-axes exclusions documented in module docs (closed-loop
   targets, preset macro-knob, alpha/exact class-conditional,
   near_lossless metric-class — the lossless space stays 100% trial-class).
+- `examples/sweep_validate.rs` (patterns 6/14/15): first run ALL HARD
+  CHECKS PASSED across 41 dev≤1 cells × 7 images — every curated step
+  live, every cell decode-verified, every lossless cell exact-roundtrip,
+  partial-macroblock 509×381 corpus leg. Results committed at
+  `benchmarks/sweep_validate_webp_2026-06-11.tsv`; adoption doc at
+  `docs/VARIANT_GENERATION.md`.
 
 ### Added
 - zencodec `OrientationHint` is now honored by the decode adapter. `Preserve`
