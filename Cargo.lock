@@ -950,6 +950,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "lz4_flex"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ef0d4ed8669f8f8826eb00dc878084aa8f253506c4fd5e8f58f5bce72ddb97e"
+
+[[package]]
 name = "magetypes"
 version = "0.9.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2136,9 +2142,9 @@ dependencies = [
 
 [[package]]
 name = "zenpixels"
-version = "0.2.11"
+version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37ca9800adc8a4f4c5f270deb961f92eefe9755196058e169a2301b333d2fd45"
+checksum = "7337f9cebf33aabd9bf27b8bd87f883a18d276b64a36b139c53eb077e1089b7f"
 dependencies = [
  "bytemuck",
  "imgref",
@@ -2148,16 +2154,16 @@ dependencies = [
 
 [[package]]
 name = "zenpixels-convert"
-version = "0.2.12"
+version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0782d10bc02dab53ee1eae285925c6f42ef0bd4e21c29543fdb591e99ad81513"
+checksum = "ab45d752d4211a62c95c3e8bf3a6959ccab1fa8c3ae47ea4ee6584d93614332f"
 dependencies = [
  "archmage",
  "bytemuck",
  "garb",
  "linear-srgb",
+ "lz4_flex",
  "magetypes",
- "moxcms",
  "once_cell",
  "paste",
  "rgb",

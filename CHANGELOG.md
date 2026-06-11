@@ -6,6 +6,19 @@ earlier history lives in git log and LOG.md.)
 ## [Unreleased]
 
 ### Added
+
+- `sweep` module (`__expert`): variant-generation playbook adoption
+  (patterns 1, 4, 5, 7) — mode-discriminated `SweepVariant`
+  (lossy VP8 / lossless VP8L share no knob space structurally), labelled
+  internal-params probe registry (def/parity/mpass/smooth/plim50),
+  budgeted main-effects-first planner with fingerprint dedup and the
+  one-value-at-a-time ladder, and the self-describing cell-id grammar +
+  `variant_from_cell_id` parser with grammar-totality roundtrip test.
+  Curated-axes exclusions documented in module docs (closed-loop
+  targets, preset macro-knob, alpha/exact class-conditional,
+  near_lossless metric-class — the lossless space stays 100% trial-class).
+
+### Added
 - zencodec `OrientationHint` is now honored by the decode adapter. `Preserve`
   (default, unchanged) returns stored-orientation pixels + reports the stored
   (coded) dims and intrinsic EXIF `Orientation` tag; `Correct` /

@@ -208,6 +208,12 @@ pub mod zencodec {
 /// [`EncodeRequest::with_metadata`] instead.
 pub mod metadata;
 
+/// Sweep-plan construction over the encoder knob space (`__expert`:
+/// drives the `InternalParams` escape hatch, no semver guarantees).
+/// See `zenjpeg/docs/VARIANT_GENERATION.md` for the playbook.
+#[cfg(feature = "__expert")]
+pub mod sweep;
+
 /// Test-only helpers exposed for integration tests.
 ///
 /// Not part of the public API; do not use in production code.
