@@ -2294,7 +2294,6 @@ dependencies = [
  "rayon",
  "rgb",
  "self_cell",
- "serde_json",
  "thiserror",
  "webp",
  "webpx",

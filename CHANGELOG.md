@@ -65,6 +65,15 @@ earlier history lives in git log and LOG.md.)
   published zencodec 0.1.21 / zenpixels 0.2.11 / zenpixels-convert 0.2.12
   (8bc51dbe).
 
+### Changed
+
+- Public-API snapshots migrated to the `zenutils-apidoc` 0.1.0 runner package
+  at `apidoc/` (self-contained, CI-free): three snapshot files under
+  `docs/public-api/`, regenerated via `just api-doc`. Replaces the in-crate
+  `tests/public_api_doc.rs` copy, its `serde_json` dev-dep, and every
+  `ZEN_API_DOC` / cargo-public-api trace in CI. The nested
+  `zenwebp-recompress/` workspace is unaffected.
+
 ### Known issues
 - dev-dependency `webpx = "0.1.4"` is yanked on crates.io. Builds resolve via
   the committed `Cargo.lock`; a fresh `cargo update` fails until the webpx dep

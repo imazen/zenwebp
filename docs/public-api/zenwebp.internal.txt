@@ -1,0 +1,980 @@
+# zenwebp public API — doc(hidden) items and excluded-feature surface
+# excluded features: __expert,_benchmarks,_corpus_tests,_profiling,_wasm_profiling
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   pub modules                                26
+#   pub types (struct/enum/trait/alias)        83
+#   pub consts/statics                         84
+#   free functions                            168
+#   inherent methods                          227
+#   struct fields                             373
+#   enum variants                              82
+#   trait roster entries (type × trait)       152
+#   auto-trait-complete types                  27
+#
+# per-module pub lines:
+#   (root)                           71
+#   __test_helpers                   31
+#   decoder                          75
+#   detect                            1
+#   encoder                         855
+#   heuristics                        2
+#   mux                               4
+#   sweep                             2
+#   zencodec                          2
+
+## items (894 lines)
+
+#[non_exhaustive] pub enum SharpYuvSetting [also: encoder, encoder::config]
+#[non_exhaustive] pub enum encoder::ImageContentType [also: encoder::analysis, encoder::analysis::classifier, encoder::cost, encoder::cost::classifier]
+#[non_exhaustive] pub struct InternalParams [also: encoder, encoder::config]
+#[non_exhaustive] pub struct LosslessConfig [also: encoder, encoder::config]
+#[non_exhaustive] pub struct LossyConfig [also: encoder, encoder::config]
+#[non_exhaustive] pub struct ZensimEncodeMetrics [also: encoder, encoder::zensim_target]
+#[non_exhaustive] pub struct ZensimTarget [also: encoder, encoder::zensim_target]
+#[repr(i8)] pub enum decoder::ChromaMode
+#[repr(i8)] pub enum decoder::IntraMode
+#[repr(i8)] pub enum decoder::LumaMode
+pub const fn encoder::cost::quantization_bias(u32) -> u32
+pub const fn encoder::picker::spec::cell_to_method_segments(usize) -> (u8, u8)
+pub const fn encoder::quantize::quantization_bias(u32) -> u32
+pub const __test_helpers::CHROMA_BLOCK_SIZE: usize
+pub const __test_helpers::CHROMA_STRIDE: usize
+pub const __test_helpers::LUMA_BLOCK_SIZE: usize
+pub const __test_helpers::LUMA_STRIDE: usize
+pub const encoder::cost::DEFAULT_SNS_STRENGTH: u32 [also: encoder::cost::lambda]
+pub const encoder::cost::FIXED_COSTS_I16: [u16; 4] [also: encoder::tables]
+pub const encoder::cost::FIXED_COSTS_UV: [u16; 4] [also: encoder::tables]
+pub const encoder::cost::FLATNESS_LIMIT_I16: i32 [also: encoder::cost::distortion]
+pub const encoder::cost::FLATNESS_LIMIT_I4: i32 [also: encoder::cost::distortion]
+pub const encoder::cost::FLATNESS_LIMIT_UV: i32 [also: encoder::cost::distortion]
+pub const encoder::cost::FLATNESS_PENALTY: u32 [also: encoder::cost::distortion]
+pub const encoder::cost::LAMBDA_I16: u32 [also: encoder::cost::lambda]
+pub const encoder::cost::LAMBDA_I4: u32 [also: encoder::cost::lambda]
+pub const encoder::cost::LAMBDA_UV: u32 [also: encoder::cost::lambda]
+pub const encoder::cost::MAX_ALPHA: u8 [also: encoder::analysis]
+pub const encoder::cost::MAX_LEVEL: usize [also: encoder::tables]
+pub const encoder::cost::MAX_VARIABLE_LEVEL: usize [also: encoder::tables]
+pub const encoder::cost::NUM_BANDS: usize [also: encoder::cost::stats]
+pub const encoder::cost::NUM_BMODES: usize [also: encoder::tables]
+pub const encoder::cost::NUM_CTX: usize [also: encoder::cost::stats]
+pub const encoder::cost::NUM_PROBAS: usize [also: encoder::cost::stats]
+pub const encoder::cost::NUM_SEGMENTS: usize [also: encoder::analysis]
+pub const encoder::cost::NUM_TYPES: usize [also: encoder::cost::stats]
+pub const encoder::cost::QFIX: u32 [also: encoder::quantize]
+pub const encoder::cost::RD_DISTO_MULT: u32
+pub const encoder::cost::VP8_AC_TABLE: [u16; 128] [also: encoder::tables]
+pub const encoder::cost::VP8_DC_TABLE: [u16; 128] [also: encoder::tables]
+pub const encoder::cost::VP8_ENC_BANDS: [u8; 17] [also: encoder::tables]
+pub const encoder::cost::VP8_ENTROPY_COST: [u16; 256] [also: encoder::tables]
+pub const encoder::cost::VP8_FIXED_COSTS_I4: [[[u16; 10]; 10]; 10] [also: encoder::tables]
+pub const encoder::cost::VP8_FREQ_SHARPENING: [u8; 16] [also: encoder::tables]
+pub const encoder::cost::VP8_LEVEL_CODES: [[u16; 2]; 67] [also: encoder::tables]
+pub const encoder::cost::VP8_LEVEL_FIXED_COSTS: [u16; 2048] [also: encoder::tables]
+pub const encoder::cost::VP8_WEIGHT_TRELLIS: [u16; 16] [also: encoder::tables]
+pub const encoder::cost::VP8_WEIGHT_UV: [u16; 16] [also: encoder::tables]
+pub const encoder::cost::VP8_WEIGHT_Y: [u16; 16] [also: encoder::tables]
+pub const encoder::cost::VP8_ZIGZAG: [usize; 16] [also: encoder::tables]
+pub const encoder::cost::level_costs::LEVEL_COST_ARRAY_SIZE: usize
+pub const encoder::picker::spec::CELLS: [encoder::picker::spec::CellSpec; 6]
+pub const encoder::picker::spec::FEAT_COLS: &[&str]
+pub const encoder::picker::spec::N_CELLS: usize
+pub const encoder::picker::spec::N_FEAT_COLS: usize
+pub const encoder::picker::spec::N_OUTPUTS: usize
+pub const encoder::picker::spec::RANGE_BYTES_LOG: core::ops::range::Range<usize>
+pub const encoder::picker::spec::RANGE_FILTER_SHARPNESS: core::ops::range::Range<usize>
+pub const encoder::picker::spec::RANGE_FILTER_STRENGTH: core::ops::range::Range<usize>
+pub const encoder::picker::spec::RANGE_SNS: core::ops::range::Range<usize>
+pub const encoder::picker::spec::SCHEMA_HASH: u64
+pub const encoder::picker::spec::SCHEMA_VERSION_TAG: &str
+pub enum EncoderConfig [also: encoder, encoder::config]
+pub enum encoder::cost::MatrixType [also: encoder::quantize]
+pub enum encoder::cost::MbModeHint [also: encoder::analysis]
+pub enum encoder::cost::TokenType [also: encoder::cost::stats]
+pub enum encoder::picker::PickError [also: encoder::picker::runtime]
+pub fn CostModel::assert_fields_are_eq(&self)
+pub fn EncodeRequest<'a>::encode_with_metrics(self) -> EncodeResult<(alloc::vec::Vec<u8>, encoder::zensim_target::ZensimEncodeMetrics)>
+pub fn EncodeRequest<'a>::lossless(&'a encoder::config::LosslessConfig, &'a [u8], PixelLayout, u32, u32) -> Self
+pub fn EncodeRequest<'a>::lossy(&'a encoder::config::LossyConfig, &'a [u8], PixelLayout, u32, u32) -> Self
+pub fn EncodeRequest<'a>::new(&'a encoder::config::EncoderConfig, &'a [u8], PixelLayout, u32, u32) -> Self
+pub fn PixelLayout::assert_fields_are_eq(&self)
+pub fn Preset::assert_fields_are_eq(&self)
+pub fn __test_helpers::convert_image_y_l8(&[u8], u16, u16, usize) -> (alloc::vec::Vec<u8>, alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)
+pub fn __test_helpers::convert_image_yuv_rgb(&[u8], u16, u16, usize) -> (alloc::vec::Vec<u8>, alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)
+pub fn __test_helpers::convert_image_yuv_rgb_fast(&[u8], u16, u16, usize) -> (alloc::vec::Vec<u8>, alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)
+pub fn __test_helpers::dct4x4_dispatch(&mut [i32; 16])
+pub fn __test_helpers::dct4x4_scalar(&mut [i32; 16])
+pub fn __test_helpers::dequantize_block_dispatch(&encoder::quantize::VP8Matrix, &mut [i32; 16])
+pub fn __test_helpers::dequantize_block_scalar(&encoder::quantize::VP8Matrix, &mut [i32; 16])
+pub fn __test_helpers::ftransform_from_u8_4x4_dispatch(&[u8; 16], &[u8; 16]) -> [i32; 16]
+pub fn __test_helpers::ftransform_from_u8_4x4_scalar(&[u8; 16], &[u8; 16]) -> [i32; 16]
+pub fn __test_helpers::gamma_to_linear_tab() -> &'static [u16; 256]
+pub fn __test_helpers::idct4x4_dispatch(&mut [i32; 16])
+pub fn __test_helpers::idct4x4_scalar(&mut [i32; 16])
+pub fn __test_helpers::is_flat_coeffs_dispatch(&[i16], usize, i32) -> bool
+pub fn __test_helpers::is_flat_coeffs_scalar(&[i16], usize, i32) -> bool
+pub fn __test_helpers::linear_to_gamma_tab() -> &'static [u8; 33]
+pub fn __test_helpers::make_test_matrix(u16, u16) -> encoder::quantize::VP8Matrix
+pub fn __test_helpers::quantize_block_dispatch(&mut [i32; 16], &encoder::quantize::VP8Matrix, bool) -> bool
+pub fn __test_helpers::quantize_block_scalar(&mut [i32; 16], &encoder::quantize::VP8Matrix) -> bool
+pub fn __test_helpers::quantize_dequantize_block_dispatch(&[i32; 16], &encoder::quantize::VP8Matrix, bool, &mut [i32; 16], &mut [i32; 16]) -> bool
+pub fn __test_helpers::quantize_dequantize_block_scalar(&[i32; 16], &encoder::quantize::VP8Matrix, &mut [i32; 16], &mut [i32; 16]) -> bool
+pub fn __test_helpers::sse4x4_dispatch(&[u8; 16], &[u8; 16]) -> u32
+pub fn __test_helpers::sse4x4_with_residual_dispatch(&[u8; 16], &[u8; 16], &[i32; 16]) -> u32
+pub fn __test_helpers::sse4x4_with_residual_scalar(&[u8; 16], &[u8; 16], &[i32; 16]) -> u32
+pub fn __test_helpers::sse_16x16_luma_dispatch(&[u8], usize, usize, usize, &[u8; 544]) -> u32
+pub fn __test_helpers::sse_16x16_luma_scalar(&[u8], usize, usize, usize, &[u8; 544]) -> u32
+pub fn __test_helpers::sse_8x8_chroma_dispatch(&[u8], usize, usize, usize, &[u8; 288]) -> u32
+pub fn __test_helpers::sse_8x8_chroma_scalar(&[u8], usize, usize, usize, &[u8; 288]) -> u32
+pub fn decoder::BitstreamFormat::assert_fields_are_eq(&self)
+pub fn decoder::BlockDiagnostic::clone(&self) -> decoder::BlockDiagnostic
+pub fn decoder::BlockDiagnostic::default() -> decoder::BlockDiagnostic
+pub fn decoder::BlockDiagnostic::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn decoder::ChromaMode::assert_fields_are_eq(&self)
+pub fn decoder::ChromaMode::clone(&self) -> decoder::ChromaMode
+pub fn decoder::ChromaMode::default() -> decoder::ChromaMode
+pub fn decoder::ChromaMode::eq(&self, &decoder::ChromaMode) -> bool
+pub fn decoder::ChromaMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn decoder::DiagnosticFrame::clone(&self) -> decoder::DiagnosticFrame
+pub fn decoder::DiagnosticFrame::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn decoder::IntraMode::assert_fields_are_eq(&self)
+pub fn decoder::IntraMode::clone(&self) -> decoder::IntraMode
+pub fn decoder::IntraMode::default() -> decoder::IntraMode
+pub fn decoder::IntraMode::eq(&self, &decoder::IntraMode) -> bool
+pub fn decoder::IntraMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn decoder::LoopCount::assert_fields_are_eq(&self)
+pub fn decoder::LumaMode::assert_fields_are_eq(&self)
+pub fn decoder::LumaMode::clone(&self) -> decoder::LumaMode
+pub fn decoder::LumaMode::default() -> decoder::LumaMode
+pub fn decoder::LumaMode::eq(&self, &decoder::LumaMode) -> bool
+pub fn decoder::LumaMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn decoder::MacroblockDiagnostic::clone(&self) -> decoder::MacroblockDiagnostic
+pub fn decoder::MacroblockDiagnostic::default() -> decoder::MacroblockDiagnostic
+pub fn decoder::MacroblockDiagnostic::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn decoder::StreamStatus::assert_fields_are_eq(&self)
+pub fn decoder::TreeNode::clone(&self) -> decoder::TreeNode
+pub fn decoder::TreeNode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn decoder::UpsamplingMethod::assert_fields_are_eq(&self)
+pub fn detect::ProbeError::assert_fields_are_eq(&self)
+pub fn encoder::Vp8lConfig::clone(&self) -> encoder::Vp8lConfig
+pub fn encoder::Vp8lConfig::default() -> Self
+pub fn encoder::Vp8lConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::Vp8lQuality::assert_fields_are_eq(&self)
+pub fn encoder::Vp8lQuality::clone(&self) -> encoder::Vp8lQuality
+pub fn encoder::Vp8lQuality::default() -> Self
+pub fn encoder::Vp8lQuality::eq(&self, &encoder::Vp8lQuality) -> bool
+pub fn encoder::Vp8lQuality::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::Vp8lQuality::max_iters(&self) -> usize
+pub fn encoder::Vp8lQuality::window_size(&self, usize) -> usize
+pub fn encoder::analysis::DctHistogram::clone(&self) -> encoder::analysis::DctHistogram
+pub fn encoder::analysis::DctHistogram::default() -> encoder::analysis::DctHistogram
+pub fn encoder::analysis::DctHistogram::from_distribution(&[u32; 32]) -> Self
+pub fn encoder::analysis::DctHistogram::get_alpha(&self) -> i32
+pub fn encoder::analysis::DctHistogram::new() -> Self
+pub fn encoder::analysis::MbModeHint::assert_fields_are_eq(&self)
+pub fn encoder::analysis::MbModeHint::clone(&self) -> encoder::analysis::MbModeHint
+pub fn encoder::analysis::MbModeHint::eq(&self, &encoder::analysis::MbModeHint) -> bool
+pub fn encoder::analysis::MbModeHint::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::analysis::classifier::ClassifierDiag::clone(&self) -> encoder::analysis::classifier::ClassifierDiag
+pub fn encoder::analysis::classifier::ClassifierDiag::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::analysis::classifier::ImageContentType::assert_fields_are_eq(&self)
+pub fn encoder::analysis::classifier::ImageContentType::clone(&self) -> encoder::analysis::classifier::ImageContentType
+pub fn encoder::analysis::classifier::ImageContentType::eq(&self, &encoder::analysis::classifier::ImageContentType) -> bool
+pub fn encoder::analysis::classifier::ImageContentType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::analysis::classifier::ZenanalyzeDiag::clone(&self) -> encoder::analysis::classifier::ZenanalyzeDiag
+pub fn encoder::analysis::classifier::ZenanalyzeDiag::default() -> encoder::analysis::classifier::ZenanalyzeDiag
+pub fn encoder::analysis::classifier::ZenanalyzeDiag::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::analysis::iterator::AnalysisIterator::analyze_best_intra16_mode(&mut self) -> (i32, usize)
+pub fn encoder::analysis::iterator::AnalysisIterator::analyze_best_uv_mode(&mut self) -> (i32, usize)
+pub fn encoder::analysis::iterator::AnalysisIterator::import(&mut self, &[u8], &[u8], &[u8], usize, usize)
+pub fn encoder::analysis::iterator::AnalysisIterator::is_done(&self) -> bool
+pub fn encoder::analysis::iterator::AnalysisIterator::new(usize, usize) -> Self
+pub fn encoder::analysis::iterator::AnalysisIterator::next(&mut self) -> bool
+pub fn encoder::analysis::iterator::AnalysisIterator::reset(&mut self)
+pub fn encoder::analysis::iterator::AnalysisIterator::set_row(&mut self, usize)
+pub fn encoder::config::EncoderConfig::as_lossless(&self) -> core::option::Option<&encoder::config::LosslessConfig>
+pub fn encoder::config::EncoderConfig::as_lossy(&self) -> core::option::Option<&encoder::config::LossyConfig>
+pub fn encoder::config::EncoderConfig::clone(&self) -> encoder::config::EncoderConfig
+pub fn encoder::config::EncoderConfig::encode_img<P: pixel::EncodePixel>(&self, imgref::ImgRef<'_, P>) -> EncodeResult<alloc::vec::Vec<u8>> where [P]: rgb::legacy::internal::pixel::ComponentBytes<u8>
+pub fn encoder::config::EncoderConfig::encode_pixels<P: pixel::EncodePixel>(&self, &[P], u32, u32) -> EncodeResult<alloc::vec::Vec<u8>> where [P]: rgb::legacy::internal::pixel::ComponentBytes<u8>
+pub fn encoder::config::EncoderConfig::estimate(&self, u32, u32, u8) -> heuristics::EncodeEstimate
+pub fn encoder::config::EncoderConfig::estimate_memory(&self, u32, u32, u8) -> u64
+pub fn encoder::config::EncoderConfig::estimate_memory_ceiling(&self, u32, u32, u8) -> u64
+pub fn encoder::config::EncoderConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::config::EncoderConfig::is_lossless(&self) -> bool
+pub fn encoder::config::EncoderConfig::limits(self, Limits) -> Self
+pub fn encoder::config::EncoderConfig::new_lossless() -> Self
+pub fn encoder::config::EncoderConfig::new_lossy() -> Self
+pub fn encoder::config::EncoderConfig::validate(&self) -> core::result::Result<(), encoder::validation::ValidationError>
+pub fn encoder::config::EncoderConfig::with_filter_sharpness(self, u8) -> Self
+pub fn encoder::config::EncoderConfig::with_filter_strength(self, u8) -> Self
+pub fn encoder::config::EncoderConfig::with_lossless(self, bool) -> Self
+pub fn encoder::config::EncoderConfig::with_method(self, u8) -> Self
+pub fn encoder::config::EncoderConfig::with_near_lossless(self, u8) -> Self
+pub fn encoder::config::EncoderConfig::with_partition_limit(self, u8) -> Self
+pub fn encoder::config::EncoderConfig::with_preset(Preset, f32) -> Self
+pub fn encoder::config::EncoderConfig::with_quality(self, f32) -> Self
+pub fn encoder::config::EncoderConfig::with_segments(self, u8) -> Self
+pub fn encoder::config::EncoderConfig::with_sharp_yuv(self, bool) -> Self
+pub fn encoder::config::EncoderConfig::with_sns_strength(self, u8) -> Self
+pub fn encoder::config::EncoderConfig::with_target_psnr(self, f32) -> Self
+pub fn encoder::config::EncoderConfig::with_target_size(self, u32) -> Self
+pub fn encoder::config::InternalParams::clone(&self) -> encoder::config::InternalParams
+pub fn encoder::config::InternalParams::default() -> encoder::config::InternalParams
+pub fn encoder::config::InternalParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::config::InternalParams::validate(&self) -> core::result::Result<(), encoder::validation::ValidationError>
+pub fn encoder::config::LosslessConfig::clone(&self) -> encoder::config::LosslessConfig
+pub fn encoder::config::LosslessConfig::default() -> Self
+pub fn encoder::config::LosslessConfig::estimate_memory(&self, u32, u32, u8) -> u64
+pub fn encoder::config::LosslessConfig::estimate_memory_ceiling(&self, u32, u32, u8) -> u64
+pub fn encoder::config::LosslessConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::config::LosslessConfig::new() -> Self
+pub fn encoder::config::LosslessConfig::validate(&self) -> core::result::Result<(), encoder::validation::ValidationError>
+pub fn encoder::config::LosslessConfig::with_alpha_quality(self, u8) -> Self
+pub fn encoder::config::LosslessConfig::with_exact(self, bool) -> Self
+pub fn encoder::config::LosslessConfig::with_limits(self, Limits) -> Self
+pub fn encoder::config::LosslessConfig::with_max_dimensions(self, u32, u32) -> Self
+pub fn encoder::config::LosslessConfig::with_max_memory(self, u64) -> Self
+pub fn encoder::config::LosslessConfig::with_method(self, u8) -> Self
+pub fn encoder::config::LosslessConfig::with_near_lossless(self, u8) -> Self
+pub fn encoder::config::LosslessConfig::with_quality(self, f32) -> Self
+pub fn encoder::config::LosslessConfig::with_target_size(self, u32) -> Self
+pub fn encoder::config::LossyConfig::clone(&self) -> encoder::config::LossyConfig
+pub fn encoder::config::LossyConfig::default() -> Self
+pub fn encoder::config::LossyConfig::estimate_memory(&self, u32, u32, u8) -> u64
+pub fn encoder::config::LossyConfig::estimate_memory_ceiling(&self, u32, u32, u8) -> u64
+pub fn encoder::config::LossyConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::config::LossyConfig::new() -> Self
+pub fn encoder::config::LossyConfig::validate(&self) -> core::result::Result<(), encoder::validation::ValidationError>
+pub fn encoder::config::LossyConfig::with_alpha_quality(self, u8) -> Self
+pub fn encoder::config::LossyConfig::with_cost_model(self, CostModel) -> Self
+pub fn encoder::config::LossyConfig::with_filter_sharpness(self, u8) -> Self
+pub fn encoder::config::LossyConfig::with_filter_strength(self, u8) -> Self
+pub fn encoder::config::LossyConfig::with_internal_params(self, encoder::config::InternalParams) -> Self
+pub fn encoder::config::LossyConfig::with_limits(self, Limits) -> Self
+pub fn encoder::config::LossyConfig::with_max_dimensions(self, u32, u32) -> Self
+pub fn encoder::config::LossyConfig::with_max_memory(self, u64) -> Self
+pub fn encoder::config::LossyConfig::with_method(self, u8) -> Self
+pub fn encoder::config::LossyConfig::with_multi_pass_stats(self, bool) -> Self
+pub fn encoder::config::LossyConfig::with_partition_limit(self, u8) -> Self
+pub fn encoder::config::LossyConfig::with_preset(Preset, f32) -> Self
+pub fn encoder::config::LossyConfig::with_preset_value(self, Preset) -> Self
+pub fn encoder::config::LossyConfig::with_quality(self, f32) -> Self
+pub fn encoder::config::LossyConfig::with_segments(self, u8) -> Self
+pub fn encoder::config::LossyConfig::with_sharp_yuv(self, bool) -> Self
+pub fn encoder::config::LossyConfig::with_sharp_yuv_config(self, zenyuv::sharp::SharpYuvConfig) -> Self
+pub fn encoder::config::LossyConfig::with_smooth_segment_map(self, bool) -> Self
+pub fn encoder::config::LossyConfig::with_sns_strength(self, u8) -> Self
+pub fn encoder::config::LossyConfig::with_target_psnr(self, f32) -> Self
+pub fn encoder::config::LossyConfig::with_target_size(self, u32) -> Self
+pub fn encoder::config::LossyConfig::with_target_zensim<T: core::convert::Into<encoder::zensim_target::ZensimTarget>>(self, T) -> Self
+pub fn encoder::config::SharpYuvSetting::clone(&self) -> encoder::config::SharpYuvSetting
+pub fn encoder::config::SharpYuvSetting::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::cost::PsyConfig::clone(&self) -> encoder::cost::PsyConfig
+pub fn encoder::cost::PsyConfig::default() -> Self
+pub fn encoder::cost::PsyConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::cost::Residual<'a>::new(&'a [i32; 16], usize, usize) -> Self
+pub fn encoder::cost::analyze_image(&[u8], &[u8], &[u8], usize, usize, usize, usize, u8, u8, CostModel, i32) -> encoder::analysis::AnalysisResult [also: encoder::analysis]
+pub fn encoder::cost::analyze_macroblock(&mut encoder::analysis::iterator::AnalysisIterator, u8, u8, CostModel) -> (u8, i32) [also: encoder::analysis]
+pub fn encoder::cost::assign_segments_kmeans(&[u32; 256], usize) -> ([u8; 4], [u8; 256], i32) [also: encoder::analysis, encoder::analysis::segment, encoder::cost::segment]
+pub fn encoder::cost::calc_i4_penalty(u32) -> u64 [also: encoder::cost::lambda]
+pub fn encoder::cost::calc_lambda_i16(u32) -> u32 [also: encoder::cost::lambda]
+pub fn encoder::cost::calc_lambda_i4(u32) -> u32 [also: encoder::cost::lambda]
+pub fn encoder::cost::calc_lambda_mode(u32) -> u32 [also: encoder::cost::lambda]
+pub fn encoder::cost::calc_lambda_trellis_i16(u32) -> u32 [also: encoder::cost::lambda]
+pub fn encoder::cost::calc_lambda_trellis_i4(u32) -> u32 [also: encoder::cost::lambda]
+pub fn encoder::cost::calc_lambda_trellis_uv(u32) -> u32 [also: encoder::cost::lambda]
+pub fn encoder::cost::calc_lambda_uv(u32) -> u32 [also: encoder::cost::lambda]
+pub fn encoder::cost::calc_tlambda(u32, u32) -> u32 [also: encoder::cost::lambda]
+pub fn encoder::cost::classify_image_type(&[u8], usize, usize, usize, &[u32; 256]) -> encoder::analysis::classifier::ImageContentType [also: encoder::analysis, encoder::analysis::classifier, encoder::cost::classifier]
+pub fn encoder::cost::classify_image_type_diag(&[u8], usize, usize, usize, &[u32; 256]) -> encoder::analysis::classifier::ClassifierDiag [also: encoder::analysis, encoder::analysis::classifier, encoder::cost::classifier]
+pub fn encoder::cost::classify_image_type_rgb8(&[u8], u32, u32) -> encoder::analysis::classifier::ImageContentType [also: encoder::analysis, encoder::analysis::classifier, encoder::cost::classifier]
+pub fn encoder::cost::classify_image_type_rgb8_diag(&[u8], u32, u32) -> (encoder::analysis::classifier::ImageContentType, encoder::analysis::classifier::ZenanalyzeDiag) [also: encoder::analysis, encoder::analysis::classifier, encoder::cost::classifier]
+pub fn encoder::cost::collect_histogram_bps(&[u8], &[u8], usize, usize) -> encoder::analysis::DctHistogram [also: encoder::analysis, encoder::analysis::histogram, encoder::cost::histogram]
+pub fn encoder::cost::compute_filter_level(u8, u8, u8) -> u8 [also: encoder::cost::lambda]
+pub fn encoder::cost::compute_filter_level_with_beta(u8, u8, u8, u8) -> u8 [also: encoder::cost::lambda]
+pub fn encoder::cost::compute_segment_quant(u8, i32, u8) -> u8 [also: encoder::analysis, encoder::analysis::segment, encoder::cost::segment]
+pub fn encoder::cost::content_type_to_tuning(encoder::analysis::classifier::ImageContentType) -> (u8, u8, u8, u8) [also: encoder::analysis, encoder::analysis::classifier, encoder::cost::classifier]
+pub fn encoder::cost::decide_bucket_from_diag(&encoder::analysis::classifier::ZenanalyzeDiag) -> encoder::analysis::classifier::ImageContentType [also: encoder::analysis, encoder::analysis::classifier, encoder::cost::classifier]
+pub fn encoder::cost::decide_bucket_stable(&encoder::analysis::classifier::ZenanalyzeDiag) -> encoder::analysis::classifier::ImageContentType [also: encoder::analysis, encoder::analysis::classifier, encoder::cost::classifier]
+pub fn encoder::cost::distortion::is_flat_source_16_scalar(&[u8], usize) -> bool
+pub fn encoder::cost::estimate_dc16_cost(&[i32; 16]) -> u32
+pub fn encoder::cost::estimate_luma16_cost(&[[i32; 16]; 16], bool) -> u32
+pub fn encoder::cost::estimate_residual_cost(&[i32; 16], usize) -> u32
+pub fn encoder::cost::filter_strength_from_delta(u8, u8) -> u8 [also: encoder::cost::lambda]
+pub fn encoder::cost::forward_dct_4x4(&[u8], &[u8], usize, usize) -> [i16; 16] [also: encoder::analysis, encoder::analysis::histogram, encoder::cost::histogram]
+pub fn encoder::cost::get_cost_luma16(&[i32; 16], &[[i32; 16]; 16], [bool; 4], [bool; 4], bool, bool, &encoder::cost::level_costs::LevelCosts, &[[[[u8; 11]; 3]; 8]; 4]) -> u32
+pub fn encoder::cost::get_cost_luma4(&[i32; 16], bool, bool, &encoder::cost::level_costs::LevelCosts, &[[[[u8; 11]; 3]; 8]; 4]) -> (u32, bool)
+pub fn encoder::cost::get_cost_uv(&[[i32; 16]; 8], [bool; 2], [bool; 2], [bool; 2], [bool; 2], &encoder::cost::level_costs::LevelCosts, &[[[[u8; 11]; 3]; 8]; 4]) -> u32
+pub fn encoder::cost::get_i4_mode_cost(usize, usize, usize) -> u16
+pub fn encoder::cost::get_residual_cost(usize, &encoder::cost::Residual<'_>, &encoder::cost::level_costs::LevelCosts, &[[[[u8; 11]; 3]; 8]; 4]) -> u32
+pub fn encoder::cost::histogram::collect_histogram_with_offset(&[u8], usize, &[u8], usize, usize, usize) -> encoder::analysis::DctHistogram [also: encoder::analysis::histogram]
+pub fn encoder::cost::is_flat_coeffs(&[i16], usize, i32) -> bool [also: encoder::cost::distortion]
+pub fn encoder::cost::is_flat_source_16(&[u8], usize) -> bool [also: encoder::cost::distortion]
+pub fn encoder::cost::level_costs::LevelCosts::calculate(&mut self, &[[[[u8; 11]; 3]; 8]; 4])
+pub fn encoder::cost::level_costs::LevelCosts::clone(&self) -> encoder::cost::level_costs::LevelCosts
+pub fn encoder::cost::level_costs::LevelCosts::default() -> Self
+pub fn encoder::cost::level_costs::LevelCosts::get_cost_table(&self, usize, usize, usize) -> &encoder::cost::level_costs::LevelCostArray
+pub fn encoder::cost::level_costs::LevelCosts::get_eob_cost(&self, usize, usize, usize) -> u16
+pub fn encoder::cost::level_costs::LevelCosts::get_init_cost(&self, usize, usize, usize) -> u16
+pub fn encoder::cost::level_costs::LevelCosts::get_level_cost(&self, usize, usize, usize, usize) -> u32
+pub fn encoder::cost::level_costs::LevelCosts::get_remapped_costs(&self, usize) -> [[&encoder::cost::level_costs::LevelCostArray; 3]; 16]
+pub fn encoder::cost::level_costs::LevelCosts::get_skip_eob_cost(&self, usize, usize, usize) -> u16
+pub fn encoder::cost::level_costs::LevelCosts::is_dirty(&self) -> bool
+pub fn encoder::cost::level_costs::LevelCosts::mark_dirty(&mut self)
+pub fn encoder::cost::level_costs::LevelCosts::new() -> Self
+pub fn encoder::cost::prediction::make_chroma8_preds(&mut [u8], core::option::Option<&[u8]>, core::option::Option<&[u8]>, core::option::Option<&[u8]>) [also: encoder::analysis::prediction]
+pub fn encoder::cost::prediction::make_luma16_preds(&mut [u8], core::option::Option<&[u8]>, core::option::Option<&[u8]>) [also: encoder::analysis::prediction]
+pub fn encoder::cost::prediction::pred_chroma8_dc(&mut [u8], core::option::Option<&[u8]>, core::option::Option<&[u8]>) [also: encoder::analysis::prediction]
+pub fn encoder::cost::prediction::pred_chroma8_tm(&mut [u8], core::option::Option<&[u8]>, core::option::Option<&[u8]>) [also: encoder::analysis::prediction]
+pub fn encoder::cost::prediction::pred_luma16_dc(&mut [u8], core::option::Option<&[u8]>, core::option::Option<&[u8]>) [also: encoder::analysis::prediction]
+pub fn encoder::cost::prediction::pred_luma16_tm(&mut [u8], core::option::Option<&[u8]>, core::option::Option<&[u8]>) [also: encoder::analysis::prediction]
+pub fn encoder::cost::quantdiv(u32, u32, u32) -> i32 [also: encoder::quantize]
+pub fn encoder::cost::rd_score(u32, u16, u32) -> u64
+pub fn encoder::cost::rd_score_full(u32, i32, u16, u32, u32) -> i64
+pub fn encoder::cost::rd_score_with_coeffs(u32, u16, u32, u32) -> u64
+pub fn encoder::cost::record_coeffs(&[i32], encoder::cost::stats::TokenType, usize, usize, &mut encoder::cost::stats::ProbaStats) [also: encoder::cost::stats]
+pub fn encoder::cost::rgba8_to_rgb8(&[u8]) -> alloc::vec::Vec<u8> [also: encoder::analysis, encoder::analysis::classifier, encoder::cost::classifier]
+pub fn encoder::cost::smooth_segment_map(&mut [u8], usize, usize) [also: encoder::analysis, encoder::analysis::segment, encoder::cost::segment]
+pub fn encoder::cost::stats::ProbaStats::calc_proba(&self, usize, usize, usize, usize) -> u8
+pub fn encoder::cost::stats::ProbaStats::clone(&self) -> encoder::cost::stats::ProbaStats
+pub fn encoder::cost::stats::ProbaStats::default() -> encoder::cost::stats::ProbaStats
+pub fn encoder::cost::stats::ProbaStats::new() -> Self
+pub fn encoder::cost::stats::ProbaStats::record(&mut self, usize, usize, usize, usize, bool)
+pub fn encoder::cost::stats::ProbaStats::reset(&mut self)
+pub fn encoder::cost::stats::ProbaStats::should_update(&self, usize, usize, usize, usize, u8, u8) -> (bool, u8, i32)
+pub fn encoder::cost::stats::TokenType::assert_fields_are_eq(&self)
+pub fn encoder::cost::stats::TokenType::clone(&self) -> encoder::cost::stats::TokenType
+pub fn encoder::cost::stats::TokenType::eq(&self, &encoder::cost::stats::TokenType) -> bool
+pub fn encoder::cost::stats::TokenType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::cost::t_transform(&[u8], usize, &[u16; 16]) -> i32 [also: encoder::cost::distortion]
+pub fn encoder::cost::tdisto_16x16(&[u8], &[u8], usize, &[u16; 16]) -> i32 [also: encoder::cost::distortion]
+pub fn encoder::cost::tdisto_4x4(&[u8], &[u8], usize, &[u16; 16]) -> i32 [also: encoder::cost::distortion]
+pub fn encoder::cost::tdisto_8x8(&[u8], &[u8], usize, &[u16; 16]) -> i32 [also: encoder::cost::distortion]
+pub fn encoder::cost::trellis_quantize_block(&mut [i32; 16], &mut [i32; 16], &encoder::quantize::VP8Matrix, u32, usize, &encoder::cost::level_costs::LevelCosts, usize, usize, &encoder::cost::PsyConfig) -> bool
+pub fn encoder::cost::vp8_bit_cost(bool, u8) -> u16
+pub fn encoder::encode_vp8l(&[u8], u32, u32, bool, &encoder::Vp8lConfig, &dyn enough::Stop) -> EncodeResult<alloc::vec::Vec<u8>> [also: encoder::vp8l]
+pub fn encoder::picker::pick_tuning(&[u8], u32, u32, f32, &encoder::picker::spec::PickerConstraints) -> core::result::Result<encoder::picker::runtime::TuningPick, encoder::picker::runtime::PickError> [also: encoder::picker::runtime]
+pub fn encoder::picker::pick_tuning_from_features(&[f32], u32, u32, f32, &encoder::picker::spec::PickerConstraints) -> core::result::Result<encoder::picker::runtime::TuningPick, encoder::picker::runtime::PickError> [also: encoder::picker::runtime]
+pub fn encoder::picker::runtime::PickError::clone(&self) -> encoder::picker::runtime::PickError
+pub fn encoder::picker::runtime::PickError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::picker::runtime::TuningPick::clone(&self) -> encoder::picker::runtime::TuningPick
+pub fn encoder::picker::runtime::TuningPick::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::picker::spec::CellSpec::assert_fields_are_eq(&self)
+pub fn encoder::picker::spec::CellSpec::clone(&self) -> encoder::picker::spec::CellSpec
+pub fn encoder::picker::spec::CellSpec::eq(&self, &encoder::picker::spec::CellSpec) -> bool
+pub fn encoder::picker::spec::CellSpec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::picker::spec::PickerConstraints::allowed_mask(&self) -> [bool; 6]
+pub fn encoder::picker::spec::PickerConstraints::clone(&self) -> encoder::picker::spec::PickerConstraints
+pub fn encoder::picker::spec::PickerConstraints::default() -> encoder::picker::spec::PickerConstraints
+pub fn encoder::picker::spec::PickerConstraints::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::quantize::MatrixType::clone(&self) -> encoder::quantize::MatrixType
+pub fn encoder::quantize::MatrixType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::quantize::VP8Matrix::average_q(&self) -> u32
+pub fn encoder::quantize::VP8Matrix::clone(&self) -> encoder::quantize::VP8Matrix
+pub fn encoder::quantize::VP8Matrix::dequantize(&self, i32, usize) -> i32
+pub fn encoder::quantize::VP8Matrix::dequantize_ac_only(&self, &mut [i32; 16])
+pub fn encoder::quantize::VP8Matrix::dequantize_block(&self, &mut [i32; 16])
+pub fn encoder::quantize::VP8Matrix::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::quantize::VP8Matrix::new(u16, u16, encoder::quantize::MatrixType) -> Self
+pub fn encoder::quantize::VP8Matrix::quantize(&self, &mut [i32; 16])
+pub fn encoder::quantize::VP8Matrix::quantize_ac_only(&self, &mut [i32; 16])
+pub fn encoder::quantize::VP8Matrix::quantize_coeff(&self, i32, usize) -> i32
+pub fn encoder::quantize::VP8Matrix::quantize_neutral(&self, i32, usize) -> i32
+pub fn encoder::quantize::quantize_ac_only_simd(&mut [i32; 16], &encoder::quantize::VP8Matrix, bool) -> bool
+pub fn encoder::quantize::quantize_block_simd(&mut [i32; 16], &encoder::quantize::VP8Matrix, bool) -> bool
+pub fn encoder::quantize::quantize_dequantize_ac_only_simd(&[i32; 16], &encoder::quantize::VP8Matrix, bool, &mut [i32; 16], &mut [i32; 16]) -> bool
+pub fn encoder::quantize::quantize_dequantize_block_simd(&[i32; 16], &encoder::quantize::VP8Matrix, bool, &mut [i32; 16], &mut [i32; 16]) -> bool
+pub fn encoder::vp8l::print_clustering_stats()
+pub fn encoder::vp8l::print_entropy_stats()
+pub fn encoder::zensim_target::AblationToggles::clone(&self) -> encoder::zensim_target::AblationToggles
+pub fn encoder::zensim_target::AblationToggles::default() -> encoder::zensim_target::AblationToggles
+pub fn encoder::zensim_target::AblationToggles::eq(&self, &encoder::zensim_target::AblationToggles) -> bool
+pub fn encoder::zensim_target::AblationToggles::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::zensim_target::ZensimEncodeMetrics::clone(&self) -> encoder::zensim_target::ZensimEncodeMetrics
+pub fn encoder::zensim_target::ZensimEncodeMetrics::eq(&self, &encoder::zensim_target::ZensimEncodeMetrics) -> bool
+pub fn encoder::zensim_target::ZensimEncodeMetrics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::zensim_target::ZensimTarget::clone(&self) -> encoder::zensim_target::ZensimTarget
+pub fn encoder::zensim_target::ZensimTarget::default() -> Self
+pub fn encoder::zensim_target::ZensimTarget::eq(&self, &encoder::zensim_target::ZensimTarget) -> bool
+pub fn encoder::zensim_target::ZensimTarget::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encoder::zensim_target::ZensimTarget::from(f32) -> Self
+pub fn encoder::zensim_target::ZensimTarget::new(f32) -> Self
+pub fn encoder::zensim_target::ZensimTarget::with_max_overshoot(self, core::option::Option<f32>) -> Self
+pub fn encoder::zensim_target::ZensimTarget::with_max_passes(self, u8) -> Self
+pub fn encoder::zensim_target::ZensimTarget::with_max_undershoot(self, core::option::Option<f32>) -> Self
+pub fn encoder::zensim_target::ZensimTarget::with_max_undershoot_ship(self, core::option::Option<f32>) -> Self
+pub fn encoder::zensim_target::set_toggles(encoder::zensim_target::AblationToggles)
+pub fn heuristics::estimate_animation_encode(u32, u32, u32, &encoder::config::EncoderConfig) -> heuristics::EncodeEstimate
+pub fn heuristics::estimate_encode(u32, u32, u8, &encoder::config::EncoderConfig) -> heuristics::EncodeEstimate
+pub fn mux::AnimationEncoder::add_frame(&mut self, &[u8], PixelLayout, u32, &encoder::config::EncoderConfig) -> mux::MuxResult<()>
+pub fn mux::AnimationEncoder::add_frame_advanced(&mut self, &[u8], PixelLayout, u32, u32, u32, u32, u32, &encoder::config::EncoderConfig, mux::DisposeMethod, mux::BlendMethod) -> mux::MuxResult<()>
+pub fn mux::BlendMethod::assert_fields_are_eq(&self)
+pub fn mux::DisposeMethod::assert_fields_are_eq(&self)
+pub fn set_ablation_toggles(encoder::zensim_target::AblationToggles) [also: encoder]
+pub fn sweep::SweepVariant::build(&self) -> encoder::config::EncoderConfig
+pub fn zencodec::WebpEncoderConfig::inner(&self) -> &encoder::config::EncoderConfig
+pub fn zencodec::WebpEncoderConfig::inner_mut(&mut self) -> &mut encoder::config::EncoderConfig
+pub mod __test_helpers
+pub mod encoder::analysis
+pub mod encoder::analysis::classifier
+pub mod encoder::analysis::histogram
+pub mod encoder::analysis::iterator
+pub mod encoder::analysis::prediction
+pub mod encoder::analysis::segment
+pub mod encoder::config
+pub mod encoder::cost
+pub mod encoder::cost::classifier
+pub mod encoder::cost::distortion
+pub mod encoder::cost::histogram
+pub mod encoder::cost::iterator
+pub mod encoder::cost::lambda
+pub mod encoder::cost::level_costs
+pub mod encoder::cost::prediction
+pub mod encoder::cost::segment
+pub mod encoder::cost::stats
+pub mod encoder::picker
+pub mod encoder::picker::runtime
+pub mod encoder::picker::spec
+pub mod encoder::quantize
+pub mod encoder::tables
+pub mod encoder::vp8
+pub mod encoder::vp8l
+pub mod encoder::zensim_target
+pub struct AblationToggles [also: encoder, encoder::zensim_target]
+pub struct decoder::BlockDiagnostic
+pub struct decoder::DiagnosticFrame
+pub struct decoder::MacroblockDiagnostic
+pub struct decoder::TreeNode
+pub struct encoder::ClassifierDiag [also: encoder::analysis, encoder::analysis::classifier, encoder::cost, encoder::cost::classifier]
+pub struct encoder::Vp8lConfig [also: encoder::vp8l]
+pub struct encoder::Vp8lQuality [also: encoder::vp8l]
+pub struct encoder::cost::AnalysisIterator [also: encoder::analysis, encoder::analysis::iterator, encoder::cost::iterator]
+pub struct encoder::cost::AnalysisResult [also: encoder::analysis]
+pub struct encoder::cost::DctHistogram [also: encoder::analysis]
+pub struct encoder::cost::LevelCosts [also: encoder::cost::level_costs]
+pub struct encoder::cost::ProbaStats [also: encoder::cost::stats]
+pub struct encoder::cost::PsyConfig
+pub struct encoder::cost::Residual<'a>
+pub struct encoder::cost::VP8Matrix [also: encoder::quantize]
+pub struct encoder::cost::ZenanalyzeDiag [also: encoder::analysis, encoder::analysis::classifier, encoder::cost::classifier]
+pub struct encoder::picker::TuningPick [also: encoder::picker::runtime]
+pub struct encoder::picker::spec::CellSpec
+pub struct encoder::picker::spec::PickerConstraints
+pub type encoder::cost::LevelCostArray = [u16; 128] [also: encoder::cost::level_costs]
+pub type encoder::cost::LevelCostTables = [[[encoder::cost::level_costs::LevelCostArray; 3]; 8]; 4] [also: encoder::cost::level_costs]
+pub type encoder::cost::RemappedCosts = [[usize; 3]; 16] [also: encoder::cost::level_costs]
+pub AblationToggles::disable_phase3: bool
+pub AblationToggles::naive_starting_q: bool
+pub AblationToggles::no_multi_pass_stats: bool
+pub AblationToggles::no_secant: bool
+pub AblationToggles::phase3_fine_gap: core::option::Option<f32>
+pub AblationToggles::pre_phase2_anchors: bool
+pub AblationToggles::trace_phase3: bool
+pub AblationToggles::use_quadrant_proxy: bool
+pub EncoderConfig::Lossless(encoder::config::LosslessConfig)
+pub EncoderConfig::Lossy(encoder::config::LossyConfig)
+pub InternalParams::cost_model: core::option::Option<CostModel>
+pub InternalParams::multi_pass_stats: core::option::Option<bool>
+pub InternalParams::partition_limit: core::option::Option<u8>
+pub InternalParams::sharp_yuv: core::option::Option<encoder::config::SharpYuvSetting>
+pub InternalParams::smooth_segment_map: core::option::Option<bool>
+pub LosslessConfig::alpha_quality: u8
+pub LosslessConfig::exact: bool
+pub LosslessConfig::limits: Limits
+pub LosslessConfig::method: u8
+pub LosslessConfig::near_lossless: u8
+pub LosslessConfig::quality: f32
+pub LosslessConfig::target_size: u32
+pub LossyConfig::alpha_quality: u8
+pub LossyConfig::cost_model: CostModel
+pub LossyConfig::filter_sharpness: core::option::Option<u8>
+pub LossyConfig::filter_strength: core::option::Option<u8>
+pub LossyConfig::limits: Limits
+pub LossyConfig::method: u8
+pub LossyConfig::multi_pass_stats: bool
+pub LossyConfig::partition_limit: core::option::Option<u8>
+pub LossyConfig::preset: core::option::Option<Preset>
+pub LossyConfig::quality: f32
+pub LossyConfig::segments: core::option::Option<u8>
+pub LossyConfig::sharp_yuv: core::option::Option<zenyuv::sharp::SharpYuvConfig>
+pub LossyConfig::smooth_segment_map: bool
+pub LossyConfig::sns_strength: core::option::Option<u8>
+pub LossyConfig::target_psnr: f32
+pub LossyConfig::target_size: u32
+pub LossyConfig::target_zensim: core::option::Option<encoder::zensim_target::ZensimTarget>
+pub SharpYuvSetting::Custom(zenyuv::sharp::SharpYuvConfig)
+pub SharpYuvSetting::Off
+pub SharpYuvSetting::On
+pub ZensimEncodeMetrics::achieved_score: f32
+pub ZensimEncodeMetrics::bytes: usize
+pub ZensimEncodeMetrics::passes_used: u8
+pub ZensimEncodeMetrics::targets_met: bool
+pub ZensimTarget::max_overshoot: core::option::Option<f32>
+pub ZensimTarget::max_passes: u8
+pub ZensimTarget::max_undershoot: core::option::Option<f32>
+pub ZensimTarget::max_undershoot_ship: core::option::Option<f32>
+pub ZensimTarget::target: f32
+pub decoder::BlockDiagnostic::eob_position: u8
+pub decoder::BlockDiagnostic::levels: [i32; 16]
+pub decoder::ChromaMode::DC = 0
+pub decoder::ChromaMode::H = 2
+pub decoder::ChromaMode::TM = 3
+pub decoder::ChromaMode::V = 1
+pub decoder::DiagnosticFrame::macroblocks: alloc::vec::Vec<decoder::MacroblockDiagnostic>
+pub decoder::DiagnosticFrame::mb_height: u16
+pub decoder::DiagnosticFrame::mb_width: u16
+pub decoder::DiagnosticFrame::partition0_size: u32
+pub decoder::DiagnosticFrame::segments: [(i16, i16, i16, i16, i16, i16); 4]
+pub decoder::DiagnosticFrame::token_probs: alloc::boxed::Box<[[[[decoder::TreeNode; 11]; 3]; 8]; 4]>
+pub decoder::IntraMode::DC = 0
+pub decoder::IntraMode::HD = 8
+pub decoder::IntraMode::HE = 3
+pub decoder::IntraMode::HU = 9
+pub decoder::IntraMode::LD = 4
+pub decoder::IntraMode::RD = 5
+pub decoder::IntraMode::TM = 1
+pub decoder::IntraMode::VE = 2
+pub decoder::IntraMode::VL = 7
+pub decoder::IntraMode::VR = 6
+pub decoder::LumaMode::B = 4
+pub decoder::LumaMode::DC = 0
+pub decoder::LumaMode::H = 2
+pub decoder::LumaMode::TM = 3
+pub decoder::LumaMode::V = 1
+pub decoder::MacroblockDiagnostic::bpred_modes: [decoder::IntraMode; 16]
+pub decoder::MacroblockDiagnostic::chroma_mode: decoder::ChromaMode
+pub decoder::MacroblockDiagnostic::coeffs_skipped: bool
+pub decoder::MacroblockDiagnostic::luma_mode: decoder::LumaMode
+pub decoder::MacroblockDiagnostic::segment_id: u8
+pub decoder::MacroblockDiagnostic::uv_blocks: [decoder::BlockDiagnostic; 8]
+pub decoder::MacroblockDiagnostic::y2_block: decoder::BlockDiagnostic
+pub decoder::MacroblockDiagnostic::y_blocks: [decoder::BlockDiagnostic; 16]
+pub decoder::TreeNode::index: u8
+pub decoder::TreeNode::left: u8
+pub decoder::TreeNode::prob: u8
+pub decoder::TreeNode::right: u8
+pub encoder::AblationToggles::disable_phase3: bool
+pub encoder::AblationToggles::naive_starting_q: bool
+pub encoder::AblationToggles::no_multi_pass_stats: bool
+pub encoder::AblationToggles::no_secant: bool
+pub encoder::AblationToggles::phase3_fine_gap: core::option::Option<f32>
+pub encoder::AblationToggles::pre_phase2_anchors: bool
+pub encoder::AblationToggles::trace_phase3: bool
+pub encoder::AblationToggles::use_quadrant_proxy: bool
+pub encoder::ClassifierDiag::content_type: encoder::analysis::classifier::ImageContentType
+pub encoder::ClassifierDiag::edge_density: f32
+pub encoder::ClassifierDiag::high_frac: f32
+pub encoder::ClassifierDiag::is_bimodal: bool
+pub encoder::ClassifierDiag::low_frac: f32
+pub encoder::ClassifierDiag::uniformity: f32
+pub encoder::EncoderConfig::Lossless(encoder::config::LosslessConfig)
+pub encoder::EncoderConfig::Lossy(encoder::config::LossyConfig)
+pub encoder::ImageContentType::Drawing
+pub encoder::ImageContentType::Icon
+pub encoder::ImageContentType::Photo
+pub encoder::ImageContentType::Text
+pub encoder::InternalParams::cost_model: core::option::Option<CostModel>
+pub encoder::InternalParams::multi_pass_stats: core::option::Option<bool>
+pub encoder::InternalParams::partition_limit: core::option::Option<u8>
+pub encoder::InternalParams::sharp_yuv: core::option::Option<encoder::config::SharpYuvSetting>
+pub encoder::InternalParams::smooth_segment_map: core::option::Option<bool>
+pub encoder::LosslessConfig::alpha_quality: u8
+pub encoder::LosslessConfig::exact: bool
+pub encoder::LosslessConfig::limits: Limits
+pub encoder::LosslessConfig::method: u8
+pub encoder::LosslessConfig::near_lossless: u8
+pub encoder::LosslessConfig::quality: f32
+pub encoder::LosslessConfig::target_size: u32
+pub encoder::LossyConfig::alpha_quality: u8
+pub encoder::LossyConfig::cost_model: CostModel
+pub encoder::LossyConfig::filter_sharpness: core::option::Option<u8>
+pub encoder::LossyConfig::filter_strength: core::option::Option<u8>
+pub encoder::LossyConfig::limits: Limits
+pub encoder::LossyConfig::method: u8
+pub encoder::LossyConfig::multi_pass_stats: bool
+pub encoder::LossyConfig::partition_limit: core::option::Option<u8>
+pub encoder::LossyConfig::preset: core::option::Option<Preset>
+pub encoder::LossyConfig::quality: f32
+pub encoder::LossyConfig::segments: core::option::Option<u8>
+pub encoder::LossyConfig::sharp_yuv: core::option::Option<zenyuv::sharp::SharpYuvConfig>
+pub encoder::LossyConfig::smooth_segment_map: bool
+pub encoder::LossyConfig::sns_strength: core::option::Option<u8>
+pub encoder::LossyConfig::target_psnr: f32
+pub encoder::LossyConfig::target_size: u32
+pub encoder::LossyConfig::target_zensim: core::option::Option<encoder::zensim_target::ZensimTarget>
+pub encoder::SharpYuvSetting::Custom(zenyuv::sharp::SharpYuvConfig)
+pub encoder::SharpYuvSetting::Off
+pub encoder::SharpYuvSetting::On
+pub encoder::Vp8lConfig::cache_bits: core::option::Option<u8>
+pub encoder::Vp8lConfig::cross_color_bits: u8
+pub encoder::Vp8lConfig::exact: bool
+pub encoder::Vp8lConfig::near_lossless: u8
+pub encoder::Vp8lConfig::predictor_bits: u8
+pub encoder::Vp8lConfig::quality: encoder::Vp8lQuality
+pub encoder::Vp8lConfig::use_cross_color: bool
+pub encoder::Vp8lConfig::use_meta_huffman: bool
+pub encoder::Vp8lConfig::use_palette: bool
+pub encoder::Vp8lConfig::use_predictor: bool
+pub encoder::Vp8lConfig::use_subtract_green: bool
+pub encoder::Vp8lQuality::method: u8
+pub encoder::Vp8lQuality::quality: u8
+pub encoder::ZensimEncodeMetrics::achieved_score: f32
+pub encoder::ZensimEncodeMetrics::bytes: usize
+pub encoder::ZensimEncodeMetrics::passes_used: u8
+pub encoder::ZensimEncodeMetrics::targets_met: bool
+pub encoder::ZensimTarget::max_overshoot: core::option::Option<f32>
+pub encoder::ZensimTarget::max_passes: u8
+pub encoder::ZensimTarget::max_undershoot: core::option::Option<f32>
+pub encoder::ZensimTarget::max_undershoot_ship: core::option::Option<f32>
+pub encoder::ZensimTarget::target: f32
+pub encoder::analysis::AnalysisIterator::height: usize
+pub encoder::analysis::AnalysisIterator::mb_h: usize
+pub encoder::analysis::AnalysisIterator::mb_w: usize
+pub encoder::analysis::AnalysisIterator::u_left: [u8; 9]
+pub encoder::analysis::AnalysisIterator::uv_top: alloc::vec::Vec<u8>
+pub encoder::analysis::AnalysisIterator::v_left: [u8; 9]
+pub encoder::analysis::AnalysisIterator::width: usize
+pub encoder::analysis::AnalysisIterator::x: usize
+pub encoder::analysis::AnalysisIterator::y: usize
+pub encoder::analysis::AnalysisIterator::y_left: [u8; 17]
+pub encoder::analysis::AnalysisIterator::y_top: alloc::vec::Vec<u8>
+pub encoder::analysis::AnalysisIterator::yuv_in: alloc::vec::Vec<u8>
+pub encoder::analysis::AnalysisIterator::yuv_p: alloc::vec::Vec<u8>
+pub encoder::analysis::AnalysisResult::alpha_histogram: [u32; 256]
+pub encoder::analysis::AnalysisResult::mb_alphas: alloc::vec::Vec<u8>
+pub encoder::analysis::AnalysisResult::mb_mode_hints: core::option::Option<alloc::vec::Vec<encoder::analysis::MbModeHint>>
+pub encoder::analysis::AnalysisResult::uv_alpha_avg: i32
+pub encoder::analysis::ClassifierDiag::content_type: encoder::analysis::classifier::ImageContentType
+pub encoder::analysis::ClassifierDiag::edge_density: f32
+pub encoder::analysis::ClassifierDiag::high_frac: f32
+pub encoder::analysis::ClassifierDiag::is_bimodal: bool
+pub encoder::analysis::ClassifierDiag::low_frac: f32
+pub encoder::analysis::ClassifierDiag::uniformity: f32
+pub encoder::analysis::DctHistogram::last_non_zero: usize
+pub encoder::analysis::DctHistogram::max_value: u32
+pub encoder::analysis::ImageContentType::Drawing
+pub encoder::analysis::ImageContentType::Icon
+pub encoder::analysis::ImageContentType::Photo
+pub encoder::analysis::ImageContentType::Text
+pub encoder::analysis::MbModeHint::I16Dc
+pub encoder::analysis::MbModeHint::I4AllDc
+pub encoder::analysis::ZenanalyzeDiag::distinct_color_bins: u32
+pub encoder::analysis::ZenanalyzeDiag::edge_density: f32
+pub encoder::analysis::ZenanalyzeDiag::edge_slope_stdev: f32
+pub encoder::analysis::ZenanalyzeDiag::flat_color_block_ratio: f32
+pub encoder::analysis::ZenanalyzeDiag::high_freq_energy_ratio: f32
+pub encoder::analysis::ZenanalyzeDiag::indexed_palette_width: u32
+pub encoder::analysis::ZenanalyzeDiag::line_art_score: f32
+pub encoder::analysis::ZenanalyzeDiag::natural_likelihood: f32
+pub encoder::analysis::ZenanalyzeDiag::palette_fits_in_256: bool
+pub encoder::analysis::ZenanalyzeDiag::screen_content: f32
+pub encoder::analysis::ZenanalyzeDiag::skin_tone_fraction: f32
+pub encoder::analysis::ZenanalyzeDiag::text_likelihood: f32
+pub encoder::analysis::ZenanalyzeDiag::uniformity: f32
+pub encoder::analysis::ZenanalyzeDiag::variance: f32
+pub encoder::analysis::classifier::ClassifierDiag::content_type: encoder::analysis::classifier::ImageContentType
+pub encoder::analysis::classifier::ClassifierDiag::edge_density: f32
+pub encoder::analysis::classifier::ClassifierDiag::high_frac: f32
+pub encoder::analysis::classifier::ClassifierDiag::is_bimodal: bool
+pub encoder::analysis::classifier::ClassifierDiag::low_frac: f32
+pub encoder::analysis::classifier::ClassifierDiag::uniformity: f32
+pub encoder::analysis::classifier::ImageContentType::Drawing
+pub encoder::analysis::classifier::ImageContentType::Icon
+pub encoder::analysis::classifier::ImageContentType::Photo
+pub encoder::analysis::classifier::ImageContentType::Text
+pub encoder::analysis::classifier::ZenanalyzeDiag::distinct_color_bins: u32
+pub encoder::analysis::classifier::ZenanalyzeDiag::edge_density: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::edge_slope_stdev: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::flat_color_block_ratio: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::high_freq_energy_ratio: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::indexed_palette_width: u32
+pub encoder::analysis::classifier::ZenanalyzeDiag::line_art_score: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::natural_likelihood: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::palette_fits_in_256: bool
+pub encoder::analysis::classifier::ZenanalyzeDiag::screen_content: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::skin_tone_fraction: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::text_likelihood: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::uniformity: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::variance: f32
+pub encoder::analysis::iterator::AnalysisIterator::height: usize
+pub encoder::analysis::iterator::AnalysisIterator::mb_h: usize
+pub encoder::analysis::iterator::AnalysisIterator::mb_w: usize
+pub encoder::analysis::iterator::AnalysisIterator::u_left: [u8; 9]
+pub encoder::analysis::iterator::AnalysisIterator::uv_top: alloc::vec::Vec<u8>
+pub encoder::analysis::iterator::AnalysisIterator::v_left: [u8; 9]
+pub encoder::analysis::iterator::AnalysisIterator::width: usize
+pub encoder::analysis::iterator::AnalysisIterator::x: usize
+pub encoder::analysis::iterator::AnalysisIterator::y: usize
+pub encoder::analysis::iterator::AnalysisIterator::y_left: [u8; 17]
+pub encoder::analysis::iterator::AnalysisIterator::y_top: alloc::vec::Vec<u8>
+pub encoder::analysis::iterator::AnalysisIterator::yuv_in: alloc::vec::Vec<u8>
+pub encoder::analysis::iterator::AnalysisIterator::yuv_p: alloc::vec::Vec<u8>
+pub encoder::config::EncoderConfig::Lossless(encoder::config::LosslessConfig)
+pub encoder::config::EncoderConfig::Lossy(encoder::config::LossyConfig)
+pub encoder::config::InternalParams::cost_model: core::option::Option<CostModel>
+pub encoder::config::InternalParams::multi_pass_stats: core::option::Option<bool>
+pub encoder::config::InternalParams::partition_limit: core::option::Option<u8>
+pub encoder::config::InternalParams::sharp_yuv: core::option::Option<encoder::config::SharpYuvSetting>
+pub encoder::config::InternalParams::smooth_segment_map: core::option::Option<bool>
+pub encoder::config::LosslessConfig::alpha_quality: u8
+pub encoder::config::LosslessConfig::exact: bool
+pub encoder::config::LosslessConfig::limits: Limits
+pub encoder::config::LosslessConfig::method: u8
+pub encoder::config::LosslessConfig::near_lossless: u8
+pub encoder::config::LosslessConfig::quality: f32
+pub encoder::config::LosslessConfig::target_size: u32
+pub encoder::config::LossyConfig::alpha_quality: u8
+pub encoder::config::LossyConfig::cost_model: CostModel
+pub encoder::config::LossyConfig::filter_sharpness: core::option::Option<u8>
+pub encoder::config::LossyConfig::filter_strength: core::option::Option<u8>
+pub encoder::config::LossyConfig::limits: Limits
+pub encoder::config::LossyConfig::method: u8
+pub encoder::config::LossyConfig::multi_pass_stats: bool
+pub encoder::config::LossyConfig::partition_limit: core::option::Option<u8>
+pub encoder::config::LossyConfig::preset: core::option::Option<Preset>
+pub encoder::config::LossyConfig::quality: f32
+pub encoder::config::LossyConfig::segments: core::option::Option<u8>
+pub encoder::config::LossyConfig::sharp_yuv: core::option::Option<zenyuv::sharp::SharpYuvConfig>
+pub encoder::config::LossyConfig::smooth_segment_map: bool
+pub encoder::config::LossyConfig::sns_strength: core::option::Option<u8>
+pub encoder::config::LossyConfig::target_psnr: f32
+pub encoder::config::LossyConfig::target_size: u32
+pub encoder::config::LossyConfig::target_zensim: core::option::Option<encoder::zensim_target::ZensimTarget>
+pub encoder::config::SharpYuvSetting::Custom(zenyuv::sharp::SharpYuvConfig)
+pub encoder::config::SharpYuvSetting::Off
+pub encoder::config::SharpYuvSetting::On
+pub encoder::cost::AnalysisIterator::height: usize
+pub encoder::cost::AnalysisIterator::mb_h: usize
+pub encoder::cost::AnalysisIterator::mb_w: usize
+pub encoder::cost::AnalysisIterator::u_left: [u8; 9]
+pub encoder::cost::AnalysisIterator::uv_top: alloc::vec::Vec<u8>
+pub encoder::cost::AnalysisIterator::v_left: [u8; 9]
+pub encoder::cost::AnalysisIterator::width: usize
+pub encoder::cost::AnalysisIterator::x: usize
+pub encoder::cost::AnalysisIterator::y: usize
+pub encoder::cost::AnalysisIterator::y_left: [u8; 17]
+pub encoder::cost::AnalysisIterator::y_top: alloc::vec::Vec<u8>
+pub encoder::cost::AnalysisIterator::yuv_in: alloc::vec::Vec<u8>
+pub encoder::cost::AnalysisIterator::yuv_p: alloc::vec::Vec<u8>
+pub encoder::cost::AnalysisResult::alpha_histogram: [u32; 256]
+pub encoder::cost::AnalysisResult::mb_alphas: alloc::vec::Vec<u8>
+pub encoder::cost::AnalysisResult::mb_mode_hints: core::option::Option<alloc::vec::Vec<encoder::analysis::MbModeHint>>
+pub encoder::cost::AnalysisResult::uv_alpha_avg: i32
+pub encoder::cost::ClassifierDiag::content_type: encoder::analysis::classifier::ImageContentType
+pub encoder::cost::ClassifierDiag::edge_density: f32
+pub encoder::cost::ClassifierDiag::high_frac: f32
+pub encoder::cost::ClassifierDiag::is_bimodal: bool
+pub encoder::cost::ClassifierDiag::low_frac: f32
+pub encoder::cost::ClassifierDiag::uniformity: f32
+pub encoder::cost::DctHistogram::last_non_zero: usize
+pub encoder::cost::DctHistogram::max_value: u32
+pub encoder::cost::ImageContentType::Drawing
+pub encoder::cost::ImageContentType::Icon
+pub encoder::cost::ImageContentType::Photo
+pub encoder::cost::ImageContentType::Text
+pub encoder::cost::LevelCosts::level_cost: encoder::cost::level_costs::LevelCostTables
+pub encoder::cost::MatrixType::UV
+pub encoder::cost::MatrixType::Y1
+pub encoder::cost::MatrixType::Y2
+pub encoder::cost::MbModeHint::I16Dc
+pub encoder::cost::MbModeHint::I4AllDc
+pub encoder::cost::ProbaStats::stats: [[[[u32; 11]; 3]; 8]; 4]
+pub encoder::cost::Residual::coeff_type: usize
+pub encoder::cost::Residual::coeffs: &'a [i32; 16]
+pub encoder::cost::Residual::first: usize
+pub encoder::cost::Residual::last: i32
+pub encoder::cost::TokenType::Chroma = 2
+pub encoder::cost::TokenType::I16AC = 0
+pub encoder::cost::TokenType::I16DC = 1
+pub encoder::cost::TokenType::I4 = 3
+pub encoder::cost::VP8Matrix::bias: [u32; 16]
+pub encoder::cost::VP8Matrix::iq: [u32; 16]
+pub encoder::cost::VP8Matrix::q: [u16; 16]
+pub encoder::cost::VP8Matrix::sharpen: [u16; 16]
+pub encoder::cost::VP8Matrix::zthresh: [u32; 16]
+pub encoder::cost::ZenanalyzeDiag::distinct_color_bins: u32
+pub encoder::cost::ZenanalyzeDiag::edge_density: f32
+pub encoder::cost::ZenanalyzeDiag::edge_slope_stdev: f32
+pub encoder::cost::ZenanalyzeDiag::flat_color_block_ratio: f32
+pub encoder::cost::ZenanalyzeDiag::high_freq_energy_ratio: f32
+pub encoder::cost::ZenanalyzeDiag::indexed_palette_width: u32
+pub encoder::cost::ZenanalyzeDiag::line_art_score: f32
+pub encoder::cost::ZenanalyzeDiag::natural_likelihood: f32
+pub encoder::cost::ZenanalyzeDiag::palette_fits_in_256: bool
+pub encoder::cost::ZenanalyzeDiag::screen_content: f32
+pub encoder::cost::ZenanalyzeDiag::skin_tone_fraction: f32
+pub encoder::cost::ZenanalyzeDiag::text_likelihood: f32
+pub encoder::cost::ZenanalyzeDiag::uniformity: f32
+pub encoder::cost::ZenanalyzeDiag::variance: f32
+pub encoder::cost::classifier::ClassifierDiag::content_type: encoder::analysis::classifier::ImageContentType
+pub encoder::cost::classifier::ClassifierDiag::edge_density: f32
+pub encoder::cost::classifier::ClassifierDiag::high_frac: f32
+pub encoder::cost::classifier::ClassifierDiag::is_bimodal: bool
+pub encoder::cost::classifier::ClassifierDiag::low_frac: f32
+pub encoder::cost::classifier::ClassifierDiag::uniformity: f32
+pub encoder::cost::classifier::ImageContentType::Drawing
+pub encoder::cost::classifier::ImageContentType::Icon
+pub encoder::cost::classifier::ImageContentType::Photo
+pub encoder::cost::classifier::ImageContentType::Text
+pub encoder::cost::classifier::ZenanalyzeDiag::distinct_color_bins: u32
+pub encoder::cost::classifier::ZenanalyzeDiag::edge_density: f32
+pub encoder::cost::classifier::ZenanalyzeDiag::edge_slope_stdev: f32
+pub encoder::cost::classifier::ZenanalyzeDiag::flat_color_block_ratio: f32
+pub encoder::cost::classifier::ZenanalyzeDiag::high_freq_energy_ratio: f32
+pub encoder::cost::classifier::ZenanalyzeDiag::indexed_palette_width: u32
+pub encoder::cost::classifier::ZenanalyzeDiag::line_art_score: f32
+pub encoder::cost::classifier::ZenanalyzeDiag::natural_likelihood: f32
+pub encoder::cost::classifier::ZenanalyzeDiag::palette_fits_in_256: bool
+pub encoder::cost::classifier::ZenanalyzeDiag::screen_content: f32
+pub encoder::cost::classifier::ZenanalyzeDiag::skin_tone_fraction: f32
+pub encoder::cost::classifier::ZenanalyzeDiag::text_likelihood: f32
+pub encoder::cost::classifier::ZenanalyzeDiag::uniformity: f32
+pub encoder::cost::classifier::ZenanalyzeDiag::variance: f32
+pub encoder::cost::iterator::AnalysisIterator::height: usize
+pub encoder::cost::iterator::AnalysisIterator::mb_h: usize
+pub encoder::cost::iterator::AnalysisIterator::mb_w: usize
+pub encoder::cost::iterator::AnalysisIterator::u_left: [u8; 9]
+pub encoder::cost::iterator::AnalysisIterator::uv_top: alloc::vec::Vec<u8>
+pub encoder::cost::iterator::AnalysisIterator::v_left: [u8; 9]
+pub encoder::cost::iterator::AnalysisIterator::width: usize
+pub encoder::cost::iterator::AnalysisIterator::x: usize
+pub encoder::cost::iterator::AnalysisIterator::y: usize
+pub encoder::cost::iterator::AnalysisIterator::y_left: [u8; 17]
+pub encoder::cost::iterator::AnalysisIterator::y_top: alloc::vec::Vec<u8>
+pub encoder::cost::iterator::AnalysisIterator::yuv_in: alloc::vec::Vec<u8>
+pub encoder::cost::iterator::AnalysisIterator::yuv_p: alloc::vec::Vec<u8>
+pub encoder::cost::level_costs::LevelCosts::level_cost: encoder::cost::level_costs::LevelCostTables
+pub encoder::cost::stats::ProbaStats::stats: [[[[u32; 11]; 3]; 8]; 4]
+pub encoder::cost::stats::TokenType::Chroma = 2
+pub encoder::cost::stats::TokenType::I16AC = 0
+pub encoder::cost::stats::TokenType::I16DC = 1
+pub encoder::cost::stats::TokenType::I4 = 3
+pub encoder::picker::PickError::Forward
+pub encoder::picker::PickError::NoAllowedCell
+pub encoder::picker::PickError::NoBakedModel
+pub encoder::picker::PickError::Parse
+pub encoder::picker::PickError::SchemaMismatch
+pub encoder::picker::PickError::SchemaMismatch::expected: u64
+pub encoder::picker::PickError::SchemaMismatch::got: u64
+pub encoder::picker::TuningPick::cell_idx: usize
+pub encoder::picker::TuningPick::filter_sharpness: u8
+pub encoder::picker::TuningPick::filter_strength: u8
+pub encoder::picker::TuningPick::method: u8
+pub encoder::picker::TuningPick::segments: u8
+pub encoder::picker::TuningPick::sns_strength: u8
+pub encoder::picker::runtime::PickError::Forward
+pub encoder::picker::runtime::PickError::NoAllowedCell
+pub encoder::picker::runtime::PickError::NoBakedModel
+pub encoder::picker::runtime::PickError::Parse
+pub encoder::picker::runtime::PickError::SchemaMismatch
+pub encoder::picker::runtime::PickError::SchemaMismatch::expected: u64
+pub encoder::picker::runtime::PickError::SchemaMismatch::got: u64
+pub encoder::picker::runtime::TuningPick::cell_idx: usize
+pub encoder::picker::runtime::TuningPick::filter_sharpness: u8
+pub encoder::picker::runtime::TuningPick::filter_strength: u8
+pub encoder::picker::runtime::TuningPick::method: u8
+pub encoder::picker::runtime::TuningPick::segments: u8
+pub encoder::picker::runtime::TuningPick::sns_strength: u8
+pub encoder::picker::spec::CellSpec::method: u8
+pub encoder::picker::spec::CellSpec::segments: u8
+pub encoder::picker::spec::PickerConstraints::allowed_methods: core::option::Option<&'static [u8]>
+pub encoder::picker::spec::PickerConstraints::allowed_segments: core::option::Option<&'static [u8]>
+pub encoder::quantize::MatrixType::UV
+pub encoder::quantize::MatrixType::Y1
+pub encoder::quantize::MatrixType::Y2
+pub encoder::quantize::VP8Matrix::bias: [u32; 16]
+pub encoder::quantize::VP8Matrix::iq: [u32; 16]
+pub encoder::quantize::VP8Matrix::q: [u16; 16]
+pub encoder::quantize::VP8Matrix::sharpen: [u16; 16]
+pub encoder::quantize::VP8Matrix::zthresh: [u32; 16]
+pub encoder::vp8l::Vp8lConfig::cache_bits: core::option::Option<u8>
+pub encoder::vp8l::Vp8lConfig::cross_color_bits: u8
+pub encoder::vp8l::Vp8lConfig::exact: bool
+pub encoder::vp8l::Vp8lConfig::near_lossless: u8
+pub encoder::vp8l::Vp8lConfig::predictor_bits: u8
+pub encoder::vp8l::Vp8lConfig::quality: encoder::Vp8lQuality
+pub encoder::vp8l::Vp8lConfig::use_cross_color: bool
+pub encoder::vp8l::Vp8lConfig::use_meta_huffman: bool
+pub encoder::vp8l::Vp8lConfig::use_palette: bool
+pub encoder::vp8l::Vp8lConfig::use_predictor: bool
+pub encoder::vp8l::Vp8lConfig::use_subtract_green: bool
+pub encoder::vp8l::Vp8lQuality::method: u8
+pub encoder::vp8l::Vp8lQuality::quality: u8
+pub encoder::zensim_target::AblationToggles::disable_phase3: bool
+pub encoder::zensim_target::AblationToggles::naive_starting_q: bool
+pub encoder::zensim_target::AblationToggles::no_multi_pass_stats: bool
+pub encoder::zensim_target::AblationToggles::no_secant: bool
+pub encoder::zensim_target::AblationToggles::phase3_fine_gap: core::option::Option<f32>
+pub encoder::zensim_target::AblationToggles::pre_phase2_anchors: bool
+pub encoder::zensim_target::AblationToggles::trace_phase3: bool
+pub encoder::zensim_target::AblationToggles::use_quadrant_proxy: bool
+pub encoder::zensim_target::ZensimEncodeMetrics::achieved_score: f32
+pub encoder::zensim_target::ZensimEncodeMetrics::bytes: usize
+pub encoder::zensim_target::ZensimEncodeMetrics::passes_used: u8
+pub encoder::zensim_target::ZensimEncodeMetrics::targets_met: bool
+pub encoder::zensim_target::ZensimTarget::max_overshoot: core::option::Option<f32>
+pub encoder::zensim_target::ZensimTarget::max_passes: u8
+pub encoder::zensim_target::ZensimTarget::max_undershoot: core::option::Option<f32>
+pub encoder::zensim_target::ZensimTarget::max_undershoot_ship: core::option::Option<f32>
+pub encoder::zensim_target::ZensimTarget::target: f32
+pub sweep::NamedLossyProbe::params: encoder::config::InternalParams
+
+## trait impls (45 types)
+
+CostModel: TrivialClone
+ImageMetadata<'a>: TrivialClone
+PixelLayout: TrivialClone
+Preset: TrivialClone
+decoder::BitstreamFormat: TrivialClone
+decoder::BlockDiagnostic: Clone, Copy, Debug, Default, TrivialClone
+decoder::ChromaMode: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
+decoder::DiagnosticFrame: Clone, Debug
+decoder::IntraMode: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
+decoder::LoopCount: TrivialClone
+decoder::LumaMode: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
+decoder::MacroblockDiagnostic: Clone, Debug, Default
+decoder::StreamStatus: TrivialClone
+decoder::TreeNode: Clone, Copy, Debug, TrivialClone
+decoder::UpsamplingMethod: TrivialClone
+encoder::Vp8lConfig: Clone, Debug, Default
+encoder::Vp8lQuality: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
+encoder::analysis::DctHistogram: Clone, Copy, Default, TrivialClone
+encoder::analysis::MbModeHint: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
+encoder::analysis::classifier::ClassifierDiag: Clone, Copy, Debug, TrivialClone
+encoder::analysis::classifier::ImageContentType: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
+encoder::analysis::classifier::ZenanalyzeDiag: Clone, Copy, Debug, Default, TrivialClone
+encoder::config::EncoderConfig: Clone, Debug
+encoder::config::InternalParams: Clone, Debug, Default
+encoder::config::LosslessConfig: Clone, Debug, Default
+encoder::config::LossyConfig: Clone, Debug, Default
+encoder::config::SharpYuvSetting: Clone, Debug
+encoder::cost::PsyConfig: Clone, Debug, Default
+encoder::cost::level_costs::LevelCosts: Clone, Default
+encoder::cost::stats::ProbaStats: Clone, Default
+encoder::cost::stats::TokenType: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
+encoder::picker::runtime::PickError: Clone, Copy, Debug, TrivialClone
+encoder::picker::runtime::TuningPick: Clone, Copy, Debug, TrivialClone
+encoder::picker::spec::CellSpec: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
+encoder::picker::spec::PickerConstraints: Clone, Copy, Debug, Default, TrivialClone
+encoder::quantize::MatrixType: Clone, Copy, Debug, TrivialClone
+encoder::quantize::VP8Matrix: Clone, Debug
+encoder::zensim_target::AblationToggles: Clone, Copy, Debug, Default, PartialEq, TrivialClone
+encoder::zensim_target::ZensimEncodeMetrics: Clone, Copy, Debug, PartialEq, TrivialClone
+encoder::zensim_target::ZensimTarget: Clone, Copy, Debug, Default, From<f32>, PartialEq, TrivialClone
+heuristics::DecodeEstimate: TrivialClone
+heuristics::EncodeEstimate: TrivialClone
+mux::BlendMethod: TrivialClone
+mux::DisposeMethod: TrivialClone
+mux::FrameInfo: TrivialClone
+
+## auto traits
+
+27 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
