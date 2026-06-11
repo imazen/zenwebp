@@ -677,8 +677,8 @@ impl WebpEncoder {
             // Every other outcome is an ERROR, not a silent skip: WebP has NO
             // CICP carrier, so an embedded ICC is the ONLY way this color
             // survives — emitting without it would misrepresent the image as
-            // sRGB. The `cms` feature (moxcms-backed synthesis) covers PQ/HLG
-            // and anything else moxcms can express.
+            // sRGB. The `cms` feature (icc-db blob synthesis) covers the full
+            // ITU-T H.273 grid incl PQ/HLG, with no moxcms dependency.
             synth_holder = match &plan.icc {
                 zencodec::IccDisposition::SynthesizeFrom(cicp) => {
                     use zenpixels_convert::icc_profiles::SynthesizedIcc;

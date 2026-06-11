@@ -15,12 +15,15 @@ earlier history lives in git log and LOG.md.)
   consistently with `decode`. Native (non-zencodec) API unchanged; adapter-only,
   mirroring the heic fix. Requires `zenpixels-convert` 0.2.13 (unreleased).
   Tests: `tests/orientation.rs` (d7c54ec4).
-- `cms` feature: moxcms-backed ICC synthesis (`zenpixels-convert/cms-moxcms`,
-  weak passthrough — takes effect with `zencodec`) covering PQ/HLG and any
-  CICP moxcms can express. Failing to synthesize a needed ICC is now an
-  encode **error** (`EncodeError::IccSynthesisUnavailable`), not a silent
-  skip: WebP has no CICP carrier, so an embedded ICC is the only way the
-  color survives. CI tests `--features zencodec,cms`; tests
+- `cms` feature: ICC synthesis for the zencodec color-emit path via
+  `zenpixels-convert/icc-db` (a bundled LZ4 profile blob + pure-Rust lz4_flex
+  decoder — **no moxcms**), weak passthrough — takes effect with `zencodec`,
+  covering the full ITU-T H.273 grid incl PQ/HLG. Failing to synthesize a
+  needed (off-grid) ICC is an encode **error**
+  (`EncodeError::IccSynthesisUnavailable`), not a silent skip: WebP has no
+  CICP carrier, so an embedded ICC is the only way the color survives.
+  Requires `zenpixels-convert` 0.2.13 (unreleased — adds the `icc-db`
+  feature). CI tests `--features zencodec,cms`; tests
   `cicp_pq_without_cms_is_an_encode_error` / `cicp_pq_with_cms_synthesizes_icc`.
 - zencodec 0.1.21 color-emit integration: the encode path reconciles ICC vs
   CICP via `resolve_color_emit` under the caller's `ColorEmitPolicy`. WebP has
