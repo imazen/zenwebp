@@ -105,7 +105,10 @@ fast-ssim2 = "0.7.1"
 imgref = "1.12"
 libwebp-sys = "0.14"
 webp = "0.3.1"
-webpx = "0.1.4"
+# 0.4.0: webpx free decode fns apply Limits::default() (64 MP / 64 MiB
+# caps) — fine here, the differential tests decode corpus images far
+# below the caps. 0.1.4 was yanked upstream.
+webpx = "0.4.0"
 yuv = "0.8"
 # Pareto sweep harness uses zenresize for size variants (Lanczos),
 # matching the project-wide resampling used elsewhere in zen* benches.

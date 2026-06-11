@@ -1713,9 +1713,9 @@ dependencies = [
 
 [[package]]
 name = "webpx"
-version = "0.1.4"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fe2460554c30f6b967be15515b25c4b4391f9deceaf1638462b4b8bfa039151"
+checksum = "8fdf16a15bf6251e368835a9b27372a90daba57eab09c2d98e4a7b824622fcbe"
 dependencies = [
  "enough",
  "imgref",
