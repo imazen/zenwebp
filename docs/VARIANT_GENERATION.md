@@ -39,10 +39,38 @@ Written 2026-06-11. Codec-neutral patterns:
    macroblock topology via a 509×381 crop (pattern 15). Notable data:
    m6 −3.2 % bytes, sns0 +4.9 %, seg1 +2.9 %, mpass live at m4 (−0.3 %),
    `vp8l-m6` only 14 % byte-diff vs m4 (weak but live).
-7. **Id grammar**: `vp8-m4_def[-syuv][-sns<v>][-flt<v>][-seg<n>]_q<q>` /
-   `vp8l-m<m>[-ql<v>]`; `variant_from_cell_id` + label registry
+7. **Id grammar**: `vp8-m4_def[-syuv][-sns<v>][-flt<v>][-shp<v>][-seg<n>]_q<q>`
+   / `vp8l-m<m>[-ql<v>]`; `variant_from_cell_id` + label registry
    (def/parity/mpass/smooth/plim50); grammar-totality roundtrip test.
-8. **Executor wiring**: zenmetrics plan-cell bridge — next commit.
+   (`-shp` added 2026-06-12 — additive evolution, absence = default.)
+8. **Executor wiring**: zenmetrics plan-cell bridge — landed (zenmetrics
+   96234317; plan-identity cells carry the grammar, so the 2026-06-12
+   token addition needs no bridge change).
+
+## SCALAR ladder densification (2026-06-12, dense-sweep program)
+
+Closes the zenmetrics `docs/PLAN_SWEEPS.md` §5 zenwebp gaps for
+`zenpicker-train --scalar-axes` heads:
+
+- **sns_strength** mid-ladder: + {25, 80} (Drawing / Photo preset
+  constants) → effective {0, 25, 50, 80, 100}.
+- **filter_strength** mid-ladder: + {30, 10, 100} (Photo / Drawing
+  presets + max bound) → effective {0, 10, 30, 60, 100}.
+- **filter_sharpness**: new axis (was missing entirely), {3, 6, 7}
+  (Photo / Drawing presets + clamp bound) → effective {0, 3, 6, 7}.
+  Live structurally: the level is written as 3 frame-header bits AND
+  feeds the in-loop filter thresholds (reconstruction → prediction).
+
+The no-preset defaults (sns 50, filter 60, sharpness 0) are deliberately
+not spelled as `Some(...)` — the fingerprint hashes the Option, so
+`Some(default)` would be a distinct-fingerprint byte-alias of the `None`
+stratum (the under-merge trap). Pinned by
+`scalar_ladders_pinned_distinct_and_roundtrip`. Harness re-run: ALL HARD
+CHECKS PASSED, 0 warnings; every new step diffs 100 % of its 21 cells
+(`benchmarks/sweep_validate_webp_2026-06-12.tsv`). Notable: sns25
++1.9 % bytes / sns80 −0.3 %, filter mid-steps ≤0.1 % size movement but
+fully live, sharpness near-size-neutral (header bits + threshold
+nudges).
 
 ## Known limits / open items
 

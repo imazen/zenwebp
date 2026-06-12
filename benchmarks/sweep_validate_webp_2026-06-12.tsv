@@ -1,0 +1,458 @@
+# zenwebp sweep_validate: modes_full dev<=1, q=[10.0, 50.0, 85.0]
+# git_commit: jj-vztokxvuznpx
+image	cell	label	deviations	bytes	ssim2
+cid_1025469	vp8-m4_def_q10		0	4232	20.425
+cid_1025469	vp8-m4_def_q50		0	9514	54.202
+cid_1025469	vp8-m4_def_q85		0	20108	73.107
+cid_1025469	vp8l-m4	vp8l-m4	0	248730	100.000
+cid_1025469	vp8-m4_def-seg1_q10	seg1	1	4400	19.382
+cid_1025469	vp8-m4_def-seg1_q50	seg1	1	9542	54.157
+cid_1025469	vp8-m4_def-seg1_q85	seg1	1	20326	74.347
+cid_1025469	vp8-m4_def-shp3_q10	shp3	1	4232	21.660
+cid_1025469	vp8-m4_def-shp3_q50	shp3	1	9514	55.191
+cid_1025469	vp8-m4_def-shp3_q85	shp3	1	20108	74.814
+cid_1025469	vp8-m4_def-flt0_q10	flt0	1	4218	16.097
+cid_1025469	vp8-m4_def-flt0_q50	flt0	1	9500	51.484
+cid_1025469	vp8-m4_def-flt0_q85	flt0	1	20094	74.060
+cid_1025469	vp8-m4_def-sns0_q10	sns0	1	4658	20.557
+cid_1025469	vp8-m4_def-sns0_q50	sns0	1	10026	54.836
+cid_1025469	vp8-m4_def-sns0_q85	sns0	1	20410	74.733
+cid_1025469	vp8-m4_def-syuv_q10	syuv	1	4198	21.384
+cid_1025469	vp8-m4_def-syuv_q50	syuv	1	9422	54.362
+cid_1025469	vp8-m4_def-syuv_q85	syuv	1	20100	73.706
+cid_1025469	vp8-m4_parity_q10	parity	1	4212	19.326
+cid_1025469	vp8-m4_parity_q50	parity	1	9466	54.105
+cid_1025469	vp8-m4_parity_q85	parity	1	19952	73.112
+cid_1025469	vp8-m6_def_q10	vp8-m6	1	4078	19.464
+cid_1025469	vp8-m6_def_q50	vp8-m6	1	8744	54.225
+cid_1025469	vp8-m6_def_q85	vp8-m6	1	19230	75.209
+cid_1025469	vp8-m4_def-shp6_q10	shp6	1	4232	21.820
+cid_1025469	vp8-m4_def-shp6_q50	shp6	1	9514	55.416
+cid_1025469	vp8-m4_def-shp6_q85	shp6	1	20108	75.127
+cid_1025469	vp8-m4_def-flt30_q10	flt30	1	4232	20.526
+cid_1025469	vp8-m4_def-flt30_q50	flt30	1	9514	54.122
+cid_1025469	vp8-m4_def-flt30_q85	flt30	1	20108	72.950
+cid_1025469	vp8-m4_def-sns100_q10	sns100	1	4172	17.935
+cid_1025469	vp8-m4_def-sns100_q50	sns100	1	9176	53.317
+cid_1025469	vp8-m4_def-sns100_q85	sns100	1	21424	75.923
+cid_1025469	vp8-m4_mpass_q10	mpass	1	4254	20.105
+cid_1025469	vp8-m4_mpass_q50	mpass	1	9442	54.378
+cid_1025469	vp8-m4_mpass_q85	mpass	1	20188	72.454
+cid_1025469	vp8-m2_def_q10	vp8-m2	1	4520	20.522
+cid_1025469	vp8-m2_def_q50	vp8-m2	1	9950	56.760
+cid_1025469	vp8-m2_def_q85	vp8-m2	1	20430	75.799
+cid_1025469	vp8-m4_def-shp7_q10	shp7	1	4232	21.881
+cid_1025469	vp8-m4_def-shp7_q50	shp7	1	9514	55.416
+cid_1025469	vp8-m4_def-shp7_q85	shp7	1	20108	75.169
+cid_1025469	vp8-m4_def-flt10_q10	flt10	1	4232	20.341
+cid_1025469	vp8-m4_def-flt10_q50	flt10	1	9504	53.734
+cid_1025469	vp8-m4_def-flt10_q85	flt10	1	20096	72.881
+cid_1025469	vp8-m4_def-sns25_q10	sns25	1	4426	22.068
+cid_1025469	vp8-m4_def-sns25_q50	sns25	1	9634	54.945
+cid_1025469	vp8-m4_def-sns25_q85	sns25	1	20620	73.504
+cid_1025469	vp8-m4_smooth_q10	smooth	1	4484	23.441
+cid_1025469	vp8-m4_smooth_q50	smooth	1	9896	55.537
+cid_1025469	vp8-m4_smooth_q85	smooth	1	20746	73.233
+cid_1025469	vp8-m4_def-flt100_q10	flt100	1	4232	19.485
+cid_1025469	vp8-m4_def-flt100_q50	flt100	1	9514	54.131
+cid_1025469	vp8-m4_def-flt100_q85	flt100	1	20108	73.213
+cid_1025469	vp8-m4_def-sns80_q10	sns80	1	4236	20.860
+cid_1025469	vp8-m4_def-sns80_q50	sns80	1	9160	53.355
+cid_1025469	vp8-m4_def-sns80_q85	sns80	1	20700	75.595
+cid_1025469	vp8-m4_plim50_q10	plim50	1	4244	20.206
+cid_1025469	vp8-m4_plim50_q50	plim50	1	9508	54.563
+cid_1025469	vp8-m4_plim50_q85	plim50	1	20132	73.457
+cid_1025469	vp8l-m4-ql100	vp8l-m4-ql100	1	247682	100.000
+cid_1025469	vp8l-m6	vp8l-m6	1	248730	100.000
+cid_1025469	vp8l-m4-ql25	vp8l-m4-ql25	1	249172	100.000
+cid_1025469	vp8l-m0	vp8l-m0	1	257030	100.000
+cid_1044329	vp8-m4_def_q10		0	21224	41.048
+cid_1044329	vp8-m4_def_q50		0	45662	64.139
+cid_1044329	vp8-m4_def_q85		0	80930	75.894
+cid_1044329	vp8l-m4	vp8l-m4	0	380830	100.000
+cid_1044329	vp8-m4_def-seg1_q10	seg1	1	22942	38.853
+cid_1044329	vp8-m4_def-seg1_q50	seg1	1	48530	63.343
+cid_1044329	vp8-m4_def-seg1_q85	seg1	1	86172	76.127
+cid_1044329	vp8-m4_def-shp3_q10	shp3	1	21224	41.235
+cid_1044329	vp8-m4_def-shp3_q50	shp3	1	45662	64.080
+cid_1044329	vp8-m4_def-shp3_q85	shp3	1	80930	75.855
+cid_1044329	vp8-m4_def-flt0_q10	flt0	1	21220	40.226
+cid_1044329	vp8-m4_def-flt0_q50	flt0	1	45660	63.463
+cid_1044329	vp8-m4_def-flt0_q85	flt0	1	80928	75.803
+cid_1044329	vp8-m4_def-sns0_q10	sns0	1	23636	39.717
+cid_1044329	vp8-m4_def-sns0_q50	sns0	1	49878	64.292
+cid_1044329	vp8-m4_def-sns0_q85	sns0	1	86418	76.127
+cid_1044329	vp8-m4_def-syuv_q10	syuv	1	21254	40.968
+cid_1044329	vp8-m4_def-syuv_q50	syuv	1	45630	64.909
+cid_1044329	vp8-m4_def-syuv_q85	syuv	1	80944	76.315
+cid_1044329	vp8-m4_parity_q10	parity	1	21400	40.814
+cid_1044329	vp8-m4_parity_q50	parity	1	45964	64.314
+cid_1044329	vp8-m4_parity_q85	parity	1	81140	75.779
+cid_1044329	vp8-m6_def_q10	vp8-m6	1	19456	39.951
+cid_1044329	vp8-m6_def_q50	vp8-m6	1	42658	63.515
+cid_1044329	vp8-m6_def_q85	vp8-m6	1	78690	75.880
+cid_1044329	vp8-m4_def-shp6_q10	shp6	1	21224	41.244
+cid_1044329	vp8-m4_def-shp6_q50	shp6	1	45662	64.041
+cid_1044329	vp8-m4_def-shp6_q85	shp6	1	80930	75.813
+cid_1044329	vp8-m4_def-flt30_q10	flt30	1	21224	41.591
+cid_1044329	vp8-m4_def-flt30_q50	flt30	1	45662	63.818
+cid_1044329	vp8-m4_def-flt30_q85	flt30	1	80930	75.795
+cid_1044329	vp8-m4_def-sns100_q10	sns100	1	23146	37.865
+cid_1044329	vp8-m4_def-sns100_q50	sns100	1	46766	62.098
+cid_1044329	vp8-m4_def-sns100_q85	sns100	1	82700	75.535
+cid_1044329	vp8-m4_mpass_q10	mpass	1	21218	41.059
+cid_1044329	vp8-m4_mpass_q50	mpass	1	45756	64.370
+cid_1044329	vp8-m4_mpass_q85	mpass	1	81280	75.835
+cid_1044329	vp8-m2_def_q10	vp8-m2	1	22354	41.695
+cid_1044329	vp8-m2_def_q50	vp8-m2	1	46744	64.461
+cid_1044329	vp8-m2_def_q85	vp8-m2	1	81912	75.841
+cid_1044329	vp8-m4_def-shp7_q10	shp7	1	21224	41.363
+cid_1044329	vp8-m4_def-shp7_q50	shp7	1	45662	64.034
+cid_1044329	vp8-m4_def-shp7_q85	shp7	1	80930	75.813
+cid_1044329	vp8-m4_def-flt10_q10	flt10	1	21224	41.275
+cid_1044329	vp8-m4_def-flt10_q50	flt10	1	45662	63.539
+cid_1044329	vp8-m4_def-flt10_q85	flt10	1	80928	75.803
+cid_1044329	vp8-m4_def-sns25_q10	sns25	1	22124	40.725
+cid_1044329	vp8-m4_def-sns25_q50	sns25	1	46926	64.234
+cid_1044329	vp8-m4_def-sns25_q85	sns25	1	83270	76.332
+cid_1044329	vp8-m4_smooth_q10	smooth	1	21088	40.475
+cid_1044329	vp8-m4_smooth_q50	smooth	1	45364	63.867
+cid_1044329	vp8-m4_smooth_q85	smooth	1	80592	75.657
+cid_1044329	vp8-m4_def-flt100_q10	flt100	1	21224	39.782
+cid_1044329	vp8-m4_def-flt100_q50	flt100	1	45662	63.863
+cid_1044329	vp8-m4_def-flt100_q85	flt100	1	80930	75.855
+cid_1044329	vp8-m4_def-sns80_q10	sns80	1	21572	39.506
+cid_1044329	vp8-m4_def-sns80_q50	sns80	1	44878	63.245
+cid_1044329	vp8-m4_def-sns80_q85	sns80	1	81150	75.503
+cid_1044329	vp8-m4_plim50_q10	plim50	1	21282	41.295
+cid_1044329	vp8-m4_plim50_q50	plim50	1	45698	64.167
+cid_1044329	vp8-m4_plim50_q85	plim50	1	80918	75.891
+cid_1044329	vp8l-m4-ql100	vp8l-m4-ql100	1	381936	100.000
+cid_1044329	vp8l-m6	vp8l-m6	1	379442	100.000
+cid_1044329	vp8l-m4-ql25	vp8l-m4-ql25	1	379868	100.000
+cid_1044329	vp8l-m0	vp8l-m0	1	414892	100.000
+cid_1189261	vp8-m4_def_q10		0	12256	29.683
+cid_1189261	vp8-m4_def_q50		0	26340	61.031
+cid_1189261	vp8-m4_def_q85		0	51450	73.239
+cid_1189261	vp8l-m4	vp8l-m4	0	343578	100.000
+cid_1189261	vp8-m4_def-seg1_q10	seg1	1	13204	31.279
+cid_1189261	vp8-m4_def-seg1_q50	seg1	1	27910	57.920
+cid_1189261	vp8-m4_def-seg1_q85	seg1	1	53554	72.611
+cid_1189261	vp8-m4_def-shp3_q10	shp3	1	12254	30.718
+cid_1189261	vp8-m4_def-shp3_q50	shp3	1	26340	61.004
+cid_1189261	vp8-m4_def-shp3_q85	shp3	1	51450	73.217
+cid_1189261	vp8-m4_def-flt0_q10	flt0	1	12252	30.149
+cid_1189261	vp8-m4_def-flt0_q50	flt0	1	26338	60.719
+cid_1189261	vp8-m4_def-flt0_q85	flt0	1	51448	73.287
+cid_1189261	vp8-m4_def-sns0_q10	sns0	1	13690	33.407
+cid_1189261	vp8-m4_def-sns0_q50	sns0	1	28894	60.457
+cid_1189261	vp8-m4_def-sns0_q85	sns0	1	53614	72.514
+cid_1189261	vp8-m4_def-syuv_q10	syuv	1	12238	30.453
+cid_1189261	vp8-m4_def-syuv_q50	syuv	1	26372	61.320
+cid_1189261	vp8-m4_def-syuv_q85	syuv	1	51682	74.219
+cid_1189261	vp8-m4_parity_q10	parity	1	12228	30.639
+cid_1189261	vp8-m4_parity_q50	parity	1	26314	59.171
+cid_1189261	vp8-m4_parity_q85	parity	1	51418	73.328
+cid_1189261	vp8-m6_def_q10	vp8-m6	1	11596	28.759
+cid_1189261	vp8-m6_def_q50	vp8-m6	1	25248	60.767
+cid_1189261	vp8-m6_def_q85	vp8-m6	1	49542	73.371
+cid_1189261	vp8-m4_def-shp6_q10	shp6	1	12254	31.301
+cid_1189261	vp8-m4_def-shp6_q50	shp6	1	26340	61.054
+cid_1189261	vp8-m4_def-shp6_q85	shp6	1	51450	73.239
+cid_1189261	vp8-m4_def-flt30_q10	flt30	1	12256	30.592
+cid_1189261	vp8-m4_def-flt30_q50	flt30	1	26340	61.024
+cid_1189261	vp8-m4_def-flt30_q85	flt30	1	51450	73.174
+cid_1189261	vp8-m4_def-sns100_q10	sns100	1	11684	26.363
+cid_1189261	vp8-m4_def-sns100_q50	sns100	1	25244	58.675
+cid_1189261	vp8-m4_def-sns100_q85	sns100	1	51136	73.700
+cid_1189261	vp8-m4_mpass_q10	mpass	1	12196	30.540
+cid_1189261	vp8-m4_mpass_q50	mpass	1	26312	61.057
+cid_1189261	vp8-m4_mpass_q85	mpass	1	51560	73.526
+cid_1189261	vp8-m2_def_q10	vp8-m2	1	12786	30.775
+cid_1189261	vp8-m2_def_q50	vp8-m2	1	26946	61.002
+cid_1189261	vp8-m2_def_q85	vp8-m2	1	52190	73.499
+cid_1189261	vp8-m4_def-shp7_q10	shp7	1	12254	31.692
+cid_1189261	vp8-m4_def-shp7_q50	shp7	1	26340	61.061
+cid_1189261	vp8-m4_def-shp7_q85	shp7	1	51450	73.239
+cid_1189261	vp8-m4_def-flt10_q10	flt10	1	12256	30.821
+cid_1189261	vp8-m4_def-flt10_q50	flt10	1	26340	60.716
+cid_1189261	vp8-m4_def-flt10_q85	flt10	1	51450	73.176
+cid_1189261	vp8-m4_def-sns25_q10	sns25	1	12896	32.966
+cid_1189261	vp8-m4_def-sns25_q50	sns25	1	27390	60.861
+cid_1189261	vp8-m4_def-sns25_q85	sns25	1	52698	73.047
+cid_1189261	vp8-m4_smooth_q10	smooth	1	12276	29.659
+cid_1189261	vp8-m4_smooth_q50	smooth	1	26428	60.337
+cid_1189261	vp8-m4_smooth_q85	smooth	1	51656	73.574
+cid_1189261	vp8-m4_def-flt100_q10	flt100	1	12256	28.924
+cid_1189261	vp8-m4_def-flt100_q50	flt100	1	26340	60.426
+cid_1189261	vp8-m4_def-flt100_q85	flt100	1	51450	73.256
+cid_1189261	vp8-m4_def-sns80_q10	sns80	1	11742	27.457
+cid_1189261	vp8-m4_def-sns80_q50	sns80	1	25480	59.613
+cid_1189261	vp8-m4_def-sns80_q85	sns80	1	51006	73.834
+cid_1189261	vp8-m4_plim50_q10	plim50	1	12222	29.537
+cid_1189261	vp8-m4_plim50_q50	plim50	1	26288	61.187
+cid_1189261	vp8-m4_plim50_q85	plim50	1	51462	73.186
+cid_1189261	vp8l-m4-ql100	vp8l-m4-ql100	1	339982	100.000
+cid_1189261	vp8l-m6	vp8l-m6	1	343578	100.000
+cid_1189261	vp8l-m4-ql25	vp8l-m4-ql25	1	343220	100.000
+cid_1189261	vp8l-m0	vp8l-m0	1	368548	100.000
+cid_odd509x381	vp8-m4_def_q10		0	3114	15.344
+cid_odd509x381	vp8-m4_def_q50		0	7138	52.243
+cid_odd509x381	vp8-m4_def_q85		0	15754	71.602
+cid_odd509x381	vp8l-m4	vp8l-m4	0	190870	100.000
+cid_odd509x381	vp8-m4_def-seg1_q10	seg1	1	3236	14.547
+cid_odd509x381	vp8-m4_def-seg1_q50	seg1	1	7284	50.761
+cid_odd509x381	vp8-m4_def-seg1_q85	seg1	1	15708	74.010
+cid_odd509x381	vp8-m4_def-shp3_q10	shp3	1	3114	16.382
+cid_odd509x381	vp8-m4_def-shp3_q50	shp3	1	7138	52.825
+cid_odd509x381	vp8-m4_def-shp3_q85	shp3	1	15754	73.654
+cid_odd509x381	vp8-m4_def-flt0_q10	flt0	1	3106	11.787
+cid_odd509x381	vp8-m4_def-flt0_q50	flt0	1	7128	49.166
+cid_odd509x381	vp8-m4_def-flt0_q85	flt0	1	15746	72.961
+cid_odd509x381	vp8-m4_def-sns0_q10	sns0	1	3412	16.321
+cid_odd509x381	vp8-m4_def-sns0_q50	sns0	1	7650	51.982
+cid_odd509x381	vp8-m4_def-sns0_q85	sns0	1	15754	73.495
+cid_odd509x381	vp8-m4_def-syuv_q10	syuv	1	3122	16.413
+cid_odd509x381	vp8-m4_def-syuv_q50	syuv	1	7158	51.695
+cid_odd509x381	vp8-m4_def-syuv_q85	syuv	1	15638	72.282
+cid_odd509x381	vp8-m4_parity_q10	parity	1	3146	15.330
+cid_odd509x381	vp8-m4_parity_q50	parity	1	7234	52.565
+cid_odd509x381	vp8-m4_parity_q85	parity	1	15644	73.925
+cid_odd509x381	vp8-m6_def_q10	vp8-m6	1	2994	15.401
+cid_odd509x381	vp8-m6_def_q50	vp8-m6	1	6676	52.299
+cid_odd509x381	vp8-m6_def_q85	vp8-m6	1	15010	73.956
+cid_odd509x381	vp8-m4_def-shp6_q10	shp6	1	3114	16.530
+cid_odd509x381	vp8-m4_def-shp6_q50	shp6	1	7138	53.073
+cid_odd509x381	vp8-m4_def-shp6_q85	shp6	1	15754	73.983
+cid_odd509x381	vp8-m4_def-flt30_q10	flt30	1	3114	15.657
+cid_odd509x381	vp8-m4_def-flt30_q50	flt30	1	7138	52.250
+cid_odd509x381	vp8-m4_def-flt30_q85	flt30	1	15754	71.448
+cid_odd509x381	vp8-m4_def-sns100_q10	sns100	1	3118	12.418
+cid_odd509x381	vp8-m4_def-sns100_q50	sns100	1	7064	51.914
+cid_odd509x381	vp8-m4_def-sns100_q85	sns100	1	15944	74.349
+cid_odd509x381	vp8-m4_mpass_q10	mpass	1	3106	15.817
+cid_odd509x381	vp8-m4_mpass_q50	mpass	1	7092	51.862
+cid_odd509x381	vp8-m4_mpass_q85	mpass	1	15744	71.704
+cid_odd509x381	vp8-m2_def_q10	vp8-m2	1	3388	17.434
+cid_odd509x381	vp8-m2_def_q50	vp8-m2	1	7708	55.378
+cid_odd509x381	vp8-m2_def_q85	vp8-m2	1	16120	74.807
+cid_odd509x381	vp8-m4_def-shp7_q10	shp7	1	3114	16.652
+cid_odd509x381	vp8-m4_def-shp7_q50	shp7	1	7138	53.071
+cid_odd509x381	vp8-m4_def-shp7_q85	shp7	1	15754	74.048
+cid_odd509x381	vp8-m4_def-flt10_q10	flt10	1	3114	15.534
+cid_odd509x381	vp8-m4_def-flt10_q50	flt10	1	7132	51.126
+cid_odd509x381	vp8-m4_def-flt10_q85	flt10	1	15748	71.369
+cid_odd509x381	vp8-m4_def-sns25_q10	sns25	1	3262	17.722
+cid_odd509x381	vp8-m4_def-sns25_q50	sns25	1	7264	50.845
+cid_odd509x381	vp8-m4_def-sns25_q85	sns25	1	16010	72.071
+cid_odd509x381	vp8-m4_smooth_q10	smooth	1	3282	18.093
+cid_odd509x381	vp8-m4_smooth_q50	smooth	1	7444	53.158
+cid_odd509x381	vp8-m4_smooth_q85	smooth	1	16278	71.584
+cid_odd509x381	vp8-m4_def-flt100_q10	flt100	1	3114	14.398
+cid_odd509x381	vp8-m4_def-flt100_q50	flt100	1	7138	52.248
+cid_odd509x381	vp8-m4_def-flt100_q85	flt100	1	15754	71.717
+cid_odd509x381	vp8-m4_def-sns80_q10	sns80	1	3132	15.719
+cid_odd509x381	vp8-m4_def-sns80_q50	sns80	1	6972	50.957
+cid_odd509x381	vp8-m4_def-sns80_q85	sns80	1	16264	74.388
+cid_odd509x381	vp8-m4_plim50_q10	plim50	1	3140	15.684
+cid_odd509x381	vp8-m4_plim50_q50	plim50	1	7126	52.531
+cid_odd509x381	vp8-m4_plim50_q85	plim50	1	15760	71.779
+cid_odd509x381	vp8l-m4-ql100	vp8l-m4-ql100	1	190722	100.000
+cid_odd509x381	vp8l-m6	vp8l-m6	1	190870	100.000
+cid_odd509x381	vp8l-m4-ql25	vp8l-m4-ql25	1	191076	100.000
+cid_odd509x381	vp8l-m0	vp8l-m0	1	196990	100.000
+noise512	vp8-m4_def_q10		0	81382	-6.336
+noise512	vp8-m4_def_q50		0	140492	20.658
+noise512	vp8-m4_def_q85		0	196172	27.619
+noise512	vp8l-m4	vp8l-m4	0	786512	100.000
+noise512	vp8-m4_def-seg1_q10	seg1	1	82496	-6.937
+noise512	vp8-m4_def-seg1_q50	seg1	1	141436	20.244
+noise512	vp8-m4_def-seg1_q85	seg1	1	202726	27.671
+noise512	vp8-m4_def-shp3_q10	shp3	1	81382	-5.984
+noise512	vp8-m4_def-shp3_q50	shp3	1	140492	20.667
+noise512	vp8-m4_def-shp3_q85	shp3	1	196172	27.619
+noise512	vp8-m4_def-flt0_q10	flt0	1	81382	-5.937
+noise512	vp8-m4_def-flt0_q50	flt0	1	140492	20.661
+noise512	vp8-m4_def-flt0_q85	flt0	1	196172	27.619
+noise512	vp8-m4_def-sns0_q10	sns0	1	83602	-5.700
+noise512	vp8-m4_def-sns0_q50	sns0	1	143048	19.949
+noise512	vp8-m4_def-sns0_q85	sns0	1	202654	27.597
+noise512	vp8-m4_def-syuv_q10	syuv	1	81592	-5.323
+noise512	vp8-m4_def-syuv_q50	syuv	1	140708	22.061
+noise512	vp8-m4_def-syuv_q85	syuv	1	196344	29.094
+noise512	vp8-m4_parity_q10	parity	1	81410	-6.790
+noise512	vp8-m4_parity_q50	parity	1	140458	20.182
+noise512	vp8-m4_parity_q85	parity	1	196084	27.549
+noise512	vp8-m6_def_q10	vp8-m6	1	79928	-5.269
+noise512	vp8-m6_def_q50	vp8-m6	1	139904	20.606
+noise512	vp8-m6_def_q85	vp8-m6	1	196146	27.360
+noise512	vp8-m4_def-shp6_q10	shp6	1	81382	-5.989
+noise512	vp8-m4_def-shp6_q50	shp6	1	140492	20.667
+noise512	vp8-m4_def-shp6_q85	shp6	1	196172	27.619
+noise512	vp8-m4_def-flt30_q10	flt30	1	81382	-5.990
+noise512	vp8-m4_def-flt30_q50	flt30	1	140492	20.661
+noise512	vp8-m4_def-flt30_q85	flt30	1	196172	27.619
+noise512	vp8-m4_def-sns100_q10	sns100	1	81566	-5.680
+noise512	vp8-m4_def-sns100_q50	sns100	1	140656	20.938
+noise512	vp8-m4_def-sns100_q85	sns100	1	196476	27.279
+noise512	vp8-m4_mpass_q10	mpass	1	80300	-5.704
+noise512	vp8-m4_mpass_q50	mpass	1	139126	21.081
+noise512	vp8-m4_mpass_q85	mpass	1	196900	27.505
+noise512	vp8-m2_def_q10	vp8-m2	1	81530	-7.768
+noise512	vp8-m2_def_q50	vp8-m2	1	139978	20.027
+noise512	vp8-m2_def_q85	vp8-m2	1	195374	27.286
+noise512	vp8-m4_def-shp7_q10	shp7	1	81382	-5.981
+noise512	vp8-m4_def-shp7_q50	shp7	1	140492	20.661
+noise512	vp8-m4_def-shp7_q85	shp7	1	196172	27.619
+noise512	vp8-m4_def-flt10_q10	flt10	1	81382	-5.940
+noise512	vp8-m4_def-flt10_q50	flt10	1	140492	20.661
+noise512	vp8-m4_def-flt10_q85	flt10	1	196172	27.619
+noise512	vp8-m4_def-sns25_q10	sns25	1	81352	-6.387
+noise512	vp8-m4_def-sns25_q50	sns25	1	140430	20.386
+noise512	vp8-m4_def-sns25_q85	sns25	1	195942	27.668
+noise512	vp8-m4_smooth_q10	smooth	1	81382	-6.336
+noise512	vp8-m4_smooth_q50	smooth	1	140492	20.658
+noise512	vp8-m4_smooth_q85	smooth	1	196172	27.619
+noise512	vp8-m4_def-flt100_q10	flt100	1	81382	-8.064
+noise512	vp8-m4_def-flt100_q50	flt100	1	140492	20.675
+noise512	vp8-m4_def-flt100_q85	flt100	1	196172	27.622
+noise512	vp8-m4_def-sns80_q10	sns80	1	81480	-5.638
+noise512	vp8-m4_def-sns80_q50	sns80	1	140566	20.308
+noise512	vp8-m4_def-sns80_q85	sns80	1	196282	27.580
+noise512	vp8-m4_plim50_q10	plim50	1	81382	-6.336
+noise512	vp8-m4_plim50_q50	plim50	1	140492	20.658
+noise512	vp8-m4_plim50_q85	plim50	1	196172	27.619
+noise512	vp8l-m4-ql100	vp8l-m4-ql100	1	786512	100.000
+noise512	vp8l-m6	vp8l-m6	1	786512	100.000
+noise512	vp8l-m4-ql25	vp8l-m4-ql25	1	786512	100.000
+noise512	vp8l-m0	vp8l-m0	1	786512	100.000
+checker512	vp8-m4_def_q10		0	1282	97.580
+checker512	vp8-m4_def_q50		0	1596	100.000
+checker512	vp8-m4_def_q85		0	2162	100.000
+checker512	vp8l-m4	vp8l-m4	0	80	100.000
+checker512	vp8-m4_def-seg1_q10	seg1	1	1276	97.519
+checker512	vp8-m4_def-seg1_q50	seg1	1	1574	97.580
+checker512	vp8-m4_def-seg1_q85	seg1	1	2154	100.000
+checker512	vp8-m4_def-shp3_q10	shp3	1	1282	97.580
+checker512	vp8-m4_def-shp3_q50	shp3	1	1596	100.000
+checker512	vp8-m4_def-shp3_q85	shp3	1	2162	100.000
+checker512	vp8-m4_def-flt0_q10	flt0	1	1280	97.580
+checker512	vp8-m4_def-flt0_q50	flt0	1	1596	100.000
+checker512	vp8-m4_def-flt0_q85	flt0	1	2160	100.000
+checker512	vp8-m4_def-sns0_q10	sns0	1	1278	97.580
+checker512	vp8-m4_def-sns0_q50	sns0	1	1592	100.000
+checker512	vp8-m4_def-sns0_q85	sns0	1	2156	100.000
+checker512	vp8-m4_def-syuv_q10	syuv	1	1282	97.580
+checker512	vp8-m4_def-syuv_q50	syuv	1	1596	100.000
+checker512	vp8-m4_def-syuv_q85	syuv	1	2162	100.000
+checker512	vp8-m4_parity_q10	parity	1	1282	97.580
+checker512	vp8-m4_parity_q50	parity	1	1596	100.000
+checker512	vp8-m4_parity_q85	parity	1	2162	100.000
+checker512	vp8-m6_def_q10	vp8-m6	1	1282	97.580
+checker512	vp8-m6_def_q50	vp8-m6	1	1596	100.000
+checker512	vp8-m6_def_q85	vp8-m6	1	2162	100.000
+checker512	vp8-m4_def-shp6_q10	shp6	1	1282	97.580
+checker512	vp8-m4_def-shp6_q50	shp6	1	1596	100.000
+checker512	vp8-m4_def-shp6_q85	shp6	1	2162	100.000
+checker512	vp8-m4_def-flt30_q10	flt30	1	1282	97.580
+checker512	vp8-m4_def-flt30_q50	flt30	1	1596	100.000
+checker512	vp8-m4_def-flt30_q85	flt30	1	2162	100.000
+checker512	vp8-m4_def-sns100_q10	sns100	1	1282	97.580
+checker512	vp8-m4_def-sns100_q50	sns100	1	1596	100.000
+checker512	vp8-m4_def-sns100_q85	sns100	1	2162	100.000
+checker512	vp8-m4_mpass_q10	mpass	1	1282	97.580
+checker512	vp8-m4_mpass_q50	mpass	1	1596	100.000
+checker512	vp8-m4_mpass_q85	mpass	1	2162	100.000
+checker512	vp8-m2_def_q10	vp8-m2	1	1282	97.580
+checker512	vp8-m2_def_q50	vp8-m2	1	1596	100.000
+checker512	vp8-m2_def_q85	vp8-m2	1	2162	100.000
+checker512	vp8-m4_def-shp7_q10	shp7	1	1282	97.580
+checker512	vp8-m4_def-shp7_q50	shp7	1	1596	100.000
+checker512	vp8-m4_def-shp7_q85	shp7	1	2162	100.000
+checker512	vp8-m4_def-flt10_q10	flt10	1	1282	97.580
+checker512	vp8-m4_def-flt10_q50	flt10	1	1596	100.000
+checker512	vp8-m4_def-flt10_q85	flt10	1	2160	100.000
+checker512	vp8-m4_def-sns25_q10	sns25	1	1282	97.580
+checker512	vp8-m4_def-sns25_q50	sns25	1	1596	100.000
+checker512	vp8-m4_def-sns25_q85	sns25	1	2162	100.000
+checker512	vp8-m4_smooth_q10	smooth	1	1282	97.580
+checker512	vp8-m4_smooth_q50	smooth	1	1596	100.000
+checker512	vp8-m4_smooth_q85	smooth	1	2162	100.000
+checker512	vp8-m4_def-flt100_q10	flt100	1	1282	97.580
+checker512	vp8-m4_def-flt100_q50	flt100	1	1596	100.000
+checker512	vp8-m4_def-flt100_q85	flt100	1	2162	100.000
+checker512	vp8-m4_def-sns80_q10	sns80	1	1282	97.580
+checker512	vp8-m4_def-sns80_q50	sns80	1	1596	100.000
+checker512	vp8-m4_def-sns80_q85	sns80	1	2162	100.000
+checker512	vp8-m4_plim50_q10	plim50	1	1282	97.580
+checker512	vp8-m4_plim50_q50	plim50	1	1596	100.000
+checker512	vp8-m4_plim50_q85	plim50	1	2162	100.000
+checker512	vp8l-m4-ql100	vp8l-m4-ql100	1	80	100.000
+checker512	vp8l-m6	vp8l-m6	1	80	100.000
+checker512	vp8l-m4-ql25	vp8l-m4-ql25	1	80	100.000
+checker512	vp8l-m0	vp8l-m0	1	84	100.000
+tiny48	vp8-m4_def_q10		0	836	
+tiny48	vp8-m4_def_q50		0	1406	
+tiny48	vp8-m4_def_q85		0	2168	
+tiny48	vp8l-m4	vp8l-m4	0	7046	
+tiny48	vp8-m4_def-seg1_q10	seg1	1	856	
+tiny48	vp8-m4_def-seg1_q50	seg1	1	1444	
+tiny48	vp8-m4_def-seg1_q85	seg1	1	2232	
+tiny48	vp8-m4_def-shp3_q10	shp3	1	836	
+tiny48	vp8-m4_def-shp3_q50	shp3	1	1406	
+tiny48	vp8-m4_def-shp3_q85	shp3	1	2168	
+tiny48	vp8-m4_def-flt0_q10	flt0	1	836	
+tiny48	vp8-m4_def-flt0_q50	flt0	1	1406	
+tiny48	vp8-m4_def-flt0_q85	flt0	1	2168	
+tiny48	vp8-m4_def-sns0_q10	sns0	1	862	
+tiny48	vp8-m4_def-sns0_q50	sns0	1	1450	
+tiny48	vp8-m4_def-sns0_q85	sns0	1	2232	
+tiny48	vp8-m4_def-syuv_q10	syuv	1	836	
+tiny48	vp8-m4_def-syuv_q50	syuv	1	1416	
+tiny48	vp8-m4_def-syuv_q85	syuv	1	2154	
+tiny48	vp8-m4_parity_q10	parity	1	836	
+tiny48	vp8-m4_parity_q50	parity	1	1408	
+tiny48	vp8-m4_parity_q85	parity	1	2168	
+tiny48	vp8-m6_def_q10	vp8-m6	1	812	
+tiny48	vp8-m6_def_q50	vp8-m6	1	1408	
+tiny48	vp8-m6_def_q85	vp8-m6	1	2186	
+tiny48	vp8-m4_def-shp6_q10	shp6	1	836	
+tiny48	vp8-m4_def-shp6_q50	shp6	1	1406	
+tiny48	vp8-m4_def-shp6_q85	shp6	1	2168	
+tiny48	vp8-m4_def-flt30_q10	flt30	1	836	
+tiny48	vp8-m4_def-flt30_q50	flt30	1	1406	
+tiny48	vp8-m4_def-flt30_q85	flt30	1	2168	
+tiny48	vp8-m4_def-sns100_q10	sns100	1	838	
+tiny48	vp8-m4_def-sns100_q50	sns100	1	1410	
+tiny48	vp8-m4_def-sns100_q85	sns100	1	2170	
+tiny48	vp8-m4_mpass_q10	mpass	1	830	
+tiny48	vp8-m4_mpass_q50	mpass	1	1452	
+tiny48	vp8-m4_mpass_q85	mpass	1	2022	
+tiny48	vp8-m2_def_q10	vp8-m2	1	852	
+tiny48	vp8-m2_def_q50	vp8-m2	1	1412	
+tiny48	vp8-m2_def_q85	vp8-m2	1	2170	
+tiny48	vp8-m4_def-shp7_q10	shp7	1	836	
+tiny48	vp8-m4_def-shp7_q50	shp7	1	1406	
+tiny48	vp8-m4_def-shp7_q85	shp7	1	2168	
+tiny48	vp8-m4_def-flt10_q10	flt10	1	836	
+tiny48	vp8-m4_def-flt10_q50	flt10	1	1406	
+tiny48	vp8-m4_def-flt10_q85	flt10	1	2168	
+tiny48	vp8-m4_def-sns25_q10	sns25	1	838	
+tiny48	vp8-m4_def-sns25_q50	sns25	1	1420	
+tiny48	vp8-m4_def-sns25_q85	sns25	1	2166	
+tiny48	vp8-m4_smooth_q10	smooth	1	836	
+tiny48	vp8-m4_smooth_q50	smooth	1	1406	
+tiny48	vp8-m4_smooth_q85	smooth	1	2168	
+tiny48	vp8-m4_def-flt100_q10	flt100	1	836	
+tiny48	vp8-m4_def-flt100_q50	flt100	1	1406	
+tiny48	vp8-m4_def-flt100_q85	flt100	1	2168	
+tiny48	vp8-m4_def-sns80_q10	sns80	1	836	
+tiny48	vp8-m4_def-sns80_q50	sns80	1	1406	
+tiny48	vp8-m4_def-sns80_q85	sns80	1	2170	
+tiny48	vp8-m4_plim50_q10	plim50	1	836	
+tiny48	vp8-m4_plim50_q50	plim50	1	1406	
+tiny48	vp8-m4_plim50_q85	plim50	1	2168	
+tiny48	vp8l-m4-ql100	vp8l-m4-ql100	1	7046	
+tiny48	vp8l-m6	vp8l-m6	1	7046	
+tiny48	vp8l-m4-ql25	vp8l-m4-ql25	1	7046	
+tiny48	vp8l-m0	vp8l-m0	1	7054	

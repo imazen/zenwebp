@@ -31,8 +31,9 @@
 //! | knob | bound | curated steps | provenance |
 //! |---|---|---|---|
 //! | method (lossy) | 0–6 | 4, 6, 2 | 4 = zenwebp/libwebp default; 6 = max effort; 2 = fast tier |
-//! | sns_strength | 0–100 | None, 0, 100 | encoder-derived default; off/max bounds |
-//! | filter_strength | 0–100 | None, 0 | encoder-derived default; off bound |
+//! | sns_strength (SCALAR) | 0–100 | None, 0, 100, 25, 80 | None resolves to 50 (no-preset default, libwebp `config_enc.c` parity — `Some(50)` would byte-alias it, so 50 is reachable only as the default); 0/100 = off/max bounds; 25 = Drawing preset, 80 = Photo/Picture preset (ship-derived mid-ladder, 2026-06-12 dense-sweep program). Effective ladder {0, 25, 50, 80, 100} |
+//! | filter_strength (SCALAR) | 0–100 | None, 0, 30, 10, 100 | None resolves to 60 (no-preset default — `Some(60)` would byte-alias it); 0 = off bound; 30 = Photo preset, 10 = Drawing preset, 100 = max bound (ship-derived mid-ladder, 2026-06-12). Effective ladder {0, 10, 30, 60, 100} |
+//! | filter_sharpness (SCALAR) | 0–7 | None, 3, 6, 7 | new axis 2026-06-12 (dense-sweep program — was missing entirely). None resolves to 0 (no-preset default — `Some(0)` would byte-alias it); 3 = Photo preset, 6 = Drawing preset, 7 = bound endpoint (`with_filter_sharpness` clamps to ≤7). Live: 3 header bits (`header.rs` `write_literal(3, sharpness_level)`) + in-loop filter thresholds feed reconstruction. Effective ladder {0, 3, 6, 7} |
 //! | segments | 1–4 | None, 1 | default auto; 1 = segmentation off |
 //! | sharp_yuv | off/on | off, on | `cwebp -sharp_yuv` |
 //! | method (lossless) | 0–6 | 4, 6, 0 | 4 = default; 6/0 effort bounds |
@@ -149,6 +150,8 @@ pub struct LossyVariant {
     pub sns_strength: Option<u8>,
     /// Filter strength override (`None` = encoder-derived default).
     pub filter_strength: Option<u8>,
+    /// Filter sharpness override 0–7 (`None` = encoder-derived default).
+    pub filter_sharpness: Option<u8>,
     /// Segment-count override (`None` = auto).
     pub segments: Option<u8>,
 }
@@ -192,6 +195,9 @@ impl SweepVariant {
                 if let Some(f) = v.filter_strength {
                     cfg = cfg.with_filter_strength(f);
                 }
+                if let Some(h) = v.filter_sharpness {
+                    cfg = cfg.with_filter_sharpness(h);
+                }
                 if let Some(n) = v.segments {
                     cfg = cfg.with_segments(n);
                 }
@@ -223,6 +229,8 @@ pub struct LossyAxes {
     pub sns_strength: Vec<Option<u8>>,
     /// Filter-strength overrides.
     pub filter_strength: Vec<Option<u8>>,
+    /// Filter-sharpness overrides (0–7).
+    pub filter_sharpness: Vec<Option<u8>>,
     /// Segment-count overrides.
     pub segments: Vec<Option<u8>>,
 }
@@ -257,6 +265,7 @@ impl SweepAxes {
                 sharp_yuv: vec![false],
                 sns_strength: vec![None],
                 filter_strength: vec![None],
+                filter_sharpness: vec![None],
                 segments: vec![None],
             }),
             lossless: Some(LosslessAxes {
@@ -277,6 +286,20 @@ impl SweepAxes {
         lossy.sns_strength.push(Some(0));
         lossy.sns_strength.push(Some(100));
         lossy.filter_strength.push(Some(0));
+        // SCALAR mid-ladders (2026-06-12, dense-sweep program) — appended
+        // after the established endpoint steps so the budget ladder
+        // (tail-shed) drops the newest values first. Values are
+        // ship-derived preset constants; the no-preset defaults
+        // (sns 50, filter 60, sharpness 0) are deliberately NOT spelled
+        // — Some(default) would byte-alias the None stratum.
+        lossy.sns_strength.push(Some(25)); // Drawing preset
+        lossy.sns_strength.push(Some(80)); // Photo/Picture preset
+        lossy.filter_strength.push(Some(30)); // Photo preset
+        lossy.filter_strength.push(Some(10)); // Drawing preset
+        lossy.filter_strength.push(Some(100)); // max bound
+        lossy.filter_sharpness.push(Some(3)); // Photo preset
+        lossy.filter_sharpness.push(Some(6)); // Drawing preset
+        lossy.filter_sharpness.push(Some(7)); // bound endpoint
         lossy.segments.push(Some(1));
         let lossless = axes.lossless.as_mut().expect("rd_core has lossless");
         lossless.methods.push(6);
@@ -338,7 +361,7 @@ impl QualityGrid {
 
 impl LossyVariant {
     /// Base id (no quality token):
-    /// `vp8-m<m>_<label>[-syuv][-sns<v>][-flt<v>][-seg<n>]`.
+    /// `vp8-m<m>_<label>[-syuv][-sns<v>][-flt<v>][-shp<v>][-seg<n>]`.
     fn base_id(&self) -> String {
         let mut s = format!("vp8-m{}_{}", self.method, self.internal.label);
         if self.sharp_yuv {
@@ -349,6 +372,9 @@ impl LossyVariant {
         }
         if let Some(v) = self.filter_strength {
             s.push_str(&format!("-flt{v}"));
+        }
+        if let Some(v) = self.filter_sharpness {
+            s.push_str(&format!("-shp{v}"));
         }
         if let Some(n) = self.segments {
             s.push_str(&format!("-seg{n}"));
@@ -408,6 +434,7 @@ pub fn variant_from_cell_id(id: &str) -> Result<SweepVariant, String> {
             sharp_yuv: false,
             sns_strength: None,
             filter_strength: None,
+            filter_sharpness: None,
             segments: None,
         };
         for f in parts {
@@ -425,6 +452,13 @@ pub fn variant_from_cell_id(id: &str) -> Result<SweepVariant, String> {
                         f[3..]
                             .parse()
                             .map_err(|e| format!("bad flt in {id:?}: {e}"))?,
+                    );
+                }
+                f if f.starts_with("shp") => {
+                    v.filter_sharpness = Some(
+                        f[3..]
+                            .parse()
+                            .map_err(|e| format!("bad shp in {id:?}: {e}"))?,
                     );
                 }
                 f if f.starts_with("seg") => {
@@ -534,6 +568,7 @@ pub fn fingerprint(variant: &SweepVariant) -> u64 {
             h.u8(u8::from(v.sharp_yuv));
             h.opt_u8(v.sns_strength);
             h.opt_u8(v.filter_strength);
+            h.opt_u8(v.filter_sharpness);
             h.opt_u8(v.segments);
         }
         SweepVariant::Lossless(v) => {
@@ -713,7 +748,8 @@ fn collapse_one_axis(axes: &mut SweepAxes) -> Option<DroppedAxis> {
             .map(|p| p.label.clone())
             .collect::<Vec<_>>();
         let _ = probes;
-        if let Some(d) = collapse("lossy.segments", &mut l.segments, 1)
+        if let Some(d) = collapse("lossy.filter_sharpness", &mut l.filter_sharpness, 1)
+            .or_else(|| collapse("lossy.segments", &mut l.segments, 1))
             .or_else(|| collapse("lossy.filter_strength", &mut l.filter_strength, 1))
             .or_else(|| collapse("lossy.sns_strength", &mut l.sns_strength, 1))
             .or_else(|| collapse("lossy.sharp_yuv", &mut l.sharp_yuv, 1))
@@ -768,24 +804,27 @@ fn cross(axes: &SweepAxes, q_points: &[f32]) -> (Vec<SweepCell>, usize) {
                 for (yi, &sharp) in l.sharp_yuv.iter().enumerate() {
                     for (si, &sns) in l.sns_strength.iter().enumerate() {
                         for (fi, &flt) in l.filter_strength.iter().enumerate() {
-                            for (gi, &seg) in l.segments.iter().enumerate() {
-                                let idxs = [mi, ii, yi, si, fi, gi];
-                                entries.push(Entry {
-                                    variant: SweepVariant::Lossy(LossyVariant {
-                                        quality: 0.0, // grid applies in pass 2
-                                        method,
-                                        internal: internal.clone(),
-                                        sharp_yuv: sharp,
-                                        sns_strength: sns,
-                                        filter_strength: flt,
-                                        segments: seg,
-                                    }),
-                                    deviations: idxs.iter().filter(|&&x| x != 0).count() as u8,
-                                    idx_sum: idxs.iter().sum(),
-                                    lossless: false,
-                                    seq,
-                                });
-                                seq += 1;
+                            for (hi, &shp) in l.filter_sharpness.iter().enumerate() {
+                                for (gi, &seg) in l.segments.iter().enumerate() {
+                                    let idxs = [mi, ii, yi, si, fi, hi, gi];
+                                    entries.push(Entry {
+                                        variant: SweepVariant::Lossy(LossyVariant {
+                                            quality: 0.0, // grid applies in pass 2
+                                            method,
+                                            internal: internal.clone(),
+                                            sharp_yuv: sharp,
+                                            sns_strength: sns,
+                                            filter_strength: flt,
+                                            filter_sharpness: shp,
+                                            segments: seg,
+                                        }),
+                                        deviations: idxs.iter().filter(|&&x| x != 0).count() as u8,
+                                        idx_sum: idxs.iter().sum(),
+                                        lossless: false,
+                                        seq,
+                                    });
+                                    seq += 1;
+                                }
                             }
                         }
                     }
@@ -906,6 +945,7 @@ mod tests {
             "vp8-m4_nolabel_q75",  // unknown registry label
             "vp8-m4_def",          // missing quality token
             "vp8-m4_def-warp_q75", // unknown flag
+            "vp8-m4_def-shpx_q75", // non-numeric sharpness
             "vp8l-m4-warp",        // unknown lossless flag
             "gif-m4_def_q75",      // unknown mode prefix
         ] {
@@ -938,6 +978,79 @@ mod tests {
                 assert!(seen.insert(id.clone()), "duplicate id {id}");
             }
         }
+    }
+
+    #[test]
+    fn scalar_ladders_pinned_distinct_and_roundtrip() {
+        // Dense-sweep program contract: the SCALAR ladders stay pinned
+        // (sns mid-ladder, filter mid-ladder, the new filter_sharpness
+        // axis), no curated value spells the no-preset default (it
+        // would byte-alias the None stratum), every value fingerprints
+        // distinctly at a fixed stratum, and ids round-trip.
+        let axes = SweepAxes::modes_full();
+        let lossy = axes.lossy.as_ref().unwrap();
+        assert_eq!(
+            lossy.sns_strength,
+            vec![None, Some(0), Some(100), Some(25), Some(80)],
+            "sns ladder drifted"
+        );
+        assert_eq!(
+            lossy.filter_strength,
+            vec![None, Some(0), Some(30), Some(10), Some(100)],
+            "filter ladder drifted"
+        );
+        assert_eq!(
+            lossy.filter_sharpness,
+            vec![None, Some(3), Some(6), Some(7)],
+            "sharpness ladder drifted"
+        );
+        // No-preset defaults must not be spelled (alias trap):
+        // sns 50, filter 60, sharpness 0 (config.rs to_params).
+        assert!(!lossy.sns_strength.contains(&Some(50)));
+        assert!(!lossy.filter_strength.contains(&Some(60)));
+        assert!(!lossy.filter_sharpness.contains(&Some(0)));
+
+        let base = LossyVariant {
+            quality: 75.0,
+            method: 4,
+            internal: NamedLossyProbe::default_probe(),
+            sharp_yuv: false,
+            sns_strength: None,
+            filter_strength: None,
+            filter_sharpness: None,
+            segments: None,
+        };
+        let mut fps = alloc::collections::BTreeMap::new();
+        fps.insert(
+            fingerprint(&SweepVariant::Lossy(base.clone())),
+            base.base_id(),
+        );
+        let probe = |v: LossyVariant, fps: &mut alloc::collections::BTreeMap<u64, String>| {
+            let id = format!("{}_q75", v.base_id());
+            let fp = fingerprint(&SweepVariant::Lossy(v));
+            if let Some(prev) = fps.insert(fp, id.clone()) {
+                panic!("fingerprint collision between {prev} and {id}");
+            }
+            let parsed = variant_from_cell_id(&id).unwrap();
+            assert_eq!(fingerprint(&parsed), fp, "parser drift for {id}");
+        };
+        for &sns in lossy.sns_strength.iter().flatten() {
+            let mut v = base.clone();
+            v.sns_strength = Some(sns);
+            probe(v, &mut fps);
+        }
+        for &flt in lossy.filter_strength.iter().flatten() {
+            let mut v = base.clone();
+            v.filter_strength = Some(flt);
+            probe(v, &mut fps);
+        }
+        for &shp in lossy.filter_sharpness.iter().flatten() {
+            let mut v = base.clone();
+            v.filter_sharpness = Some(shp);
+            probe(v, &mut fps);
+        }
+        // default + 4 sns + 4 filter + 3 sharpness.
+        assert_eq!(fps.len(), 12, "scalar ladder size drifted");
     }
 
     #[test]

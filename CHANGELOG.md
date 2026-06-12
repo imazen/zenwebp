@@ -5,6 +5,19 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+### Added
+
+- **SCALAR sweep-axis ladders** (`__expert` sweep planner; dense-sweep program
+  / `zenpicker-train --scalar-axes`, zenmetrics `docs/PLAN_SWEEPS.md` §5
+  gaps): sns_strength mid-ladder {25, 80} (Drawing/Photo preset constants;
+  effective {0, 25, 50, 80, 100}), filter_strength mid-ladder {30, 10, 100}
+  (effective {0, 10, 30, 60, 100}), and a NEW `filter_sharpness` axis
+  {3, 6, 7} via the additive `-shp<v>` id token (effective {0, 3, 6, 7};
+  fingerprint-hashed; ladder sheds it first). No-preset defaults stay
+  unspelled (Some(default) would byte-alias None). Harness re-run ALL HARD
+  CHECKS PASSED, every step live
+  (`benchmarks/sweep_validate_webp_2026-06-12.tsv`).
+
 ### Fixed
 
 - **Lossy one-shot decode ignored the stop token.** `do_decode_lossy` never
