@@ -3719,26 +3719,28 @@ mod tests {
     }
 
     /// A PQ (BT.2100) CICP-only source needs an ICC the bundled tables can't
-    /// produce. Without the `cms` feature that is an encode ERROR — WebP has no
-    /// CICP carrier, so emitting without the ICC would misrepresent the image
-    /// as sRGB. Refusing beats mislabeling.
+    /// produce. zenpixels-convert ships the Rec.2100-PQ profile among the
+    /// always-bundled consts, so even without the `cms` (icc-db) feature the
+    /// encode synthesizes a real ICC — the color is carried, nothing is
+    /// mislabeled. (Off-grid CICPs the bundle lacks still refuse loudly via
+    /// `IccSynthesisUnavailable`.)
     #[cfg(not(feature = "cms"))]
     #[test]
-    fn cicp_pq_without_cms_is_an_encode_error() {
+    fn cicp_pq_without_cms_embeds_bundled_icc() {
         let buf = make_rgb8_pixels(32, 32);
         let meta = Metadata::none().with_cicp(Cicp::BT2100_PQ);
-        let err = WebpEncoderConfig::lossless()
+        let out = WebpEncoderConfig::lossless()
             .job()
             .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
             .encoder()
             .unwrap()
             .encode(buf.as_slice())
-            .expect_err("PQ CICP without cms must refuse, not mislabel");
-        let msg = alloc::format!("{err}");
-        assert!(
-            msg.contains("cms"),
-            "error must point at the `cms` feature: {msg}"
-        );
+            .expect("PQ CICP without cms must synthesize the bundled ICC and succeed");
+        let embedded = crate::ImageInfo::from_webp(out.data())
+            .unwrap()
+            .icc_profile
+            .expect("no-cms build must embed the bundled PQ ICC, not emit untagged");
+        assert!(!embedded.is_empty());
     }
 
     /// With the `cms` feature, the same PQ CICP-only source synthesizes a real
