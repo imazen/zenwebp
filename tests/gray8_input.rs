@@ -175,6 +175,93 @@ fn zencodec_gray8_padded_stride_lossless_byte_exact() {
     }
 }
 
+/// gray+alpha → RGBA expansion (R=G=B, A passthrough) — the reference for the
+/// La8 lossless size guard below.
+fn gray_alpha_to_rgba(la: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(la.len() * 2);
+    for px in la.chunks_exact(2) {
+        out.push(px[0]);
+        out.push(px[0]);
+        out.push(px[0]);
+        out.push(px[1]);
+    }
+    out
+}
+
+#[test]
+fn lossless_l8_no_larger_than_gray_expanded_rgb() {
+    // Regression guard for the GRAY8 lossless compression cliff (#57): L8 input
+    // to a *lossless* encode used to fall to the literal-only encoder (no LZ77,
+    // palette, or transforms) while the identical content fed as RGB took the
+    // full VP8L pipeline. Honestly-declared grayscale paid a large size penalty.
+    // Routed through the full pipeline, L8 must never exceed the gray→RGB size.
+    let (w, h) = (128u32, 96u32);
+    let gray = make_gray_image(w, h);
+    let rgb = gray_to_rgb(&gray);
+
+    let config = LosslessConfig::new();
+    let l8_webp = EncodeRequest::lossless(&config, &gray, PixelLayout::L8, w, h)
+        .encode()
+        .expect("L8 lossless encode");
+    let rgb_webp = EncodeRequest::lossless(&config, &rgb, PixelLayout::Rgb8, w, h)
+        .encode()
+        .expect("RGB lossless encode");
+
+    assert!(
+        l8_webp.len() <= rgb_webp.len(),
+        "L8 lossless output ({}) must not exceed gray→RGB lossless ({}) — \
+         the literal-only fallback cliff (#57) has regressed",
+        l8_webp.len(),
+        rgb_webp.len()
+    );
+}
+
+#[test]
+fn lossless_la8_no_larger_than_gray_expanded_rgba() {
+    // La8 has the same root cause as L8 (is_color == false): both used to skip
+    // the full VP8L pipeline on lossless main-image encodes. Guard the alpha
+    // variant too — La8 must not exceed the equivalent gray→RGBA size.
+    let (w, h) = (128u32, 96u32);
+    let gray = make_gray_image(w, h);
+    // Build an La8 buffer: gray luma + a non-trivial alpha ramp so the alpha
+    // channel carries real entropy (a constant alpha would compress trivially
+    // either way and prove nothing).
+    let mut la = vec![0u8; (w as usize) * (h as usize) * 2];
+    for (i, px) in la.chunks_exact_mut(2).enumerate() {
+        px[0] = gray[i];
+        px[1] = ((i * 7) % 256) as u8;
+    }
+    let rgba = gray_alpha_to_rgba(&la);
+
+    let config = LosslessConfig::new().with_exact(true);
+    let la8_webp = EncodeRequest::lossless(&config, &la, PixelLayout::La8, w, h)
+        .encode()
+        .expect("La8 lossless encode");
+    let rgba_webp = EncodeRequest::lossless(&config, &rgba, PixelLayout::Rgba8, w, h)
+        .encode()
+        .expect("RGBA lossless encode");
+
+    assert!(
+        la8_webp.len() <= rgba_webp.len(),
+        "La8 lossless output ({}) must not exceed gray→RGBA lossless ({}) — \
+         the literal-only fallback cliff (#57) has regressed",
+        la8_webp.len(),
+        rgba_webp.len()
+    );
+
+    // And it must still round-trip byte-exactly (exact=true keeps RGB under
+    // transparent pixels).
+    let (decoded, dw, dh) = zenwebp::oneshot::decode_rgba(&la8_webp).expect("decode");
+    assert_eq!((dw, dh), (w, h));
+    for (i, px) in decoded.chunks_exact(4).enumerate() {
+        assert_eq!(
+            (px[0], px[1], px[2], px[3]),
+            (gray[i], gray[i], gray[i], ((i * 7) % 256) as u8),
+            "pixel {i} mismatch in La8 lossless roundtrip"
+        );
+    }
+}
+
 #[test]
 fn lossy_l8_no_larger_than_gray_expanded_rgb() {
     // The whole point of the GRAY8 fast path is that we save bits *and*

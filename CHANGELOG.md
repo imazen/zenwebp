@@ -20,6 +20,19 @@ earlier history lives in git log and LOG.md.)
 
 ### Fixed
 
+- **GRAY8/L8 lossless encode hit a literal-only compression cliff** (#57):
+  the full VP8L pipeline (LZ77 / palette / meta-huffman / transforms) was
+  gated on `is_color`, so `L8`/`La8` main-image lossless encodes fell to the
+  weak literal-only encoder while the identical content fed as RGB took the
+  full pipeline — honestly-declared grayscale was punished (a 128×96
+  gradient+checkerboard measured 2844 B as L8 vs 140 B as gray→RGB, ~20×).
+  The gate is now `!implicit_dimensions`; `convert_to_contiguous` already
+  widens `L8`→RGB and `La8`→RGBA, so grayscale gets the same treatment as
+  color. The literal-only fallback is now reached solely by the alpha plane
+  of a lossy+alpha encode (`implicit_dimensions`), where the explicit-
+  dimension VP8L header must be omitted. New `gray8_input` regression guards
+  pin `L8`/`La8` lossless size at-or-below the gray-expanded equivalent.
+
 - **Lossy one-shot decode ignored the stop token.** `do_decode_lossy` never
   wired the job's stop into the native `DecodeRequest`, the native lossy
   path (`decode_lossy_internal`) had no cancellation check, and `do_decode`

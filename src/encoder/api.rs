@@ -1776,7 +1776,12 @@ pub(crate) fn encode_frame_lossless(
     }
 
     // For main image encoding (not alpha plane), use the full VP8L pipeline.
-    if !implicit_dimensions && is_color {
+    // L8/La8 are widened to RGB/RGBA by convert_to_contiguous, so grayscale
+    // input gets the same LZ77 / palette / meta-huffman / transform treatment
+    // as color instead of falling to the literal-only encoder. Honestly-
+    // declared grayscale otherwise paid a large compression penalty vs the
+    // identical content fed as RGB (#57).
+    if !implicit_dimensions {
         // Convert to contiguous RGBA or RGB for encode_vp8l
         let (pixels, has_alpha) = convert_to_contiguous(data, width, height, stride, color);
 
@@ -1795,9 +1800,11 @@ pub(crate) fn encode_frame_lossless(
         return Ok(());
     }
 
-    // Fallback: simple literal-only encoder for alpha planes and grayscale.
-    // This is fast but produces larger files; used only for implicit_dimensions
-    // (alpha plane of lossy+alpha encoding) and non-color images (L8, La8).
+    // Fallback: simple literal-only encoder for alpha planes only. This is fast
+    // but produces larger files; it is reached solely via implicit_dimensions
+    // (the alpha plane of a lossy+alpha encode), where the VP8L header carrying
+    // explicit width/height must be omitted and encode_vp8l can't be used. Main
+    // images of every layout — including L8/La8 — take the full pipeline above.
     let w = &mut BitWriter::new(writer);
 
     if !implicit_dimensions {
