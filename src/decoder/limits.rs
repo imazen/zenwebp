@@ -52,7 +52,7 @@ impl Default for Limits {
     /// Default limits suitable for server-side use.
     ///
     /// - Max dimensions: 16384 x 16384 (WebP format max)
-    /// - Max total pixels: 100 megapixels
+    /// - Max total pixels: 120 megapixels
     /// - Max frames: 10,000
     /// - Max file size: 100 MB
     /// - Max memory: 1 GB
@@ -60,7 +60,7 @@ impl Default for Limits {
         Self {
             max_width: Some(16384),
             max_height: Some(16384),
-            max_total_pixels: Some(100_000_000),
+            max_total_pixels: Some(120_000_000),
             max_frame_count: Some(10_000),
             max_file_size: Some(100 * 1024 * 1024),
             max_memory: Some(1024 * 1024 * 1024),

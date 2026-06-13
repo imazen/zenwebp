@@ -5,6 +5,10 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+### Changed
+- Decoder `Limits::default()` raises `max_total_pixels` from 100 MP to 120 MP so
+  common ~108 MP camera photos decode under the default policy.
+
 ### Added
 
 - **SCALAR sweep-axis ladders** (`__expert` sweep planner; dense-sweep program
