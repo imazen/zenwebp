@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenwebp.txt 790 lines (supported surface) | zenwebp.features.txt 179 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,mode_debug,picker,pixel-types,std,target-zensim,testable_dispatch,zencodec) | zenwebp.internal.txt 940 lines (1408 hidden + 0 excluded-feature)
+# files: zenwebp.txt 790 lines (supported surface) | zenwebp.features.txt 181 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,mode_debug,picker,pixel-types,std,target-zensim,testable_dispatch,zencodec) | zenwebp.internal.txt 940 lines (1408 hidden + 0 excluded-feature)
 
 ## summary
 #
@@ -451,23 +451,23 @@ pub mux::AnimationConfig::loop_count: decoder::LoopCount
 pub mux::AnimationConfig::minimize_size: bool
 pub struct mux::AnimationDecoder<'a>
 pub fn mux::AnimationDecoder<'a>::current_frame_data(&self) -> &[u8]
-pub fn mux::AnimationDecoder<'a>::decode_all(&mut self) -> core::result::Result<alloc::vec::Vec<mux::AnimFrame>, DecodeError>
-pub fn mux::AnimationDecoder<'a>::decode_next(&mut self) -> core::result::Result<core::option::Option<mux::FrameInfo>, DecodeError>
-pub fn mux::AnimationDecoder<'a>::exif_metadata(&mut self) -> core::result::Result<core::option::Option<alloc::vec::Vec<u8>>, DecodeError>
+pub fn mux::AnimationDecoder<'a>::decode_all(&mut self) -> core::result::Result<alloc::vec::Vec<mux::AnimFrame>, whereat::at::At<DecodeError>>
+pub fn mux::AnimationDecoder<'a>::decode_next(&mut self) -> core::result::Result<core::option::Option<mux::FrameInfo>, whereat::at::At<DecodeError>>
+pub fn mux::AnimationDecoder<'a>::exif_metadata(&mut self) -> core::result::Result<core::option::Option<alloc::vec::Vec<u8>>, whereat::at::At<DecodeError>>
 pub fn mux::AnimationDecoder<'a>::frames_read(&self) -> u32
 pub fn mux::AnimationDecoder<'a>::has_more_frames(&self) -> bool
-pub fn mux::AnimationDecoder<'a>::icc_profile(&mut self) -> core::result::Result<core::option::Option<alloc::vec::Vec<u8>>, DecodeError>
+pub fn mux::AnimationDecoder<'a>::icc_profile(&mut self) -> core::result::Result<core::option::Option<alloc::vec::Vec<u8>>, whereat::at::At<DecodeError>>
 pub fn mux::AnimationDecoder<'a>::info(&self) -> mux::AnimationInfo
 pub fn mux::AnimationDecoder<'a>::loop_duration(&self) -> u64
-pub fn mux::AnimationDecoder<'a>::new(&'a [u8]) -> core::result::Result<Self, DecodeError>
+pub fn mux::AnimationDecoder<'a>::new(&'a [u8]) -> core::result::Result<Self, whereat::at::At<DecodeError>>
 pub fn mux::AnimationDecoder<'a>::new_with_config(&'a [u8], &DecodeConfig) -> core::result::Result<Self, whereat::at::At<DecodeError>>
-pub fn mux::AnimationDecoder<'a>::next_frame(&mut self) -> core::result::Result<core::option::Option<mux::AnimFrame>, DecodeError>
-pub fn mux::AnimationDecoder<'a>::reset(&mut self) -> core::result::Result<(), DecodeError>
-pub fn mux::AnimationDecoder<'a>::set_background_color(&mut self, [u8; 4]) -> core::result::Result<(), DecodeError>
+pub fn mux::AnimationDecoder<'a>::next_frame(&mut self) -> core::result::Result<core::option::Option<mux::AnimFrame>, whereat::at::At<DecodeError>>
+pub fn mux::AnimationDecoder<'a>::reset(&mut self) -> core::result::Result<(), whereat::at::At<DecodeError>>
+pub fn mux::AnimationDecoder<'a>::set_background_color(&mut self, [u8; 4]) -> core::result::Result<(), whereat::at::At<DecodeError>>
 pub fn mux::AnimationDecoder<'a>::set_lossy_upsampling(&mut self, decoder::UpsamplingMethod)
 pub fn mux::AnimationDecoder<'a>::set_memory_limit(&mut self, usize)
 pub fn mux::AnimationDecoder<'a>::set_stop(&mut self, &'a dyn enough::Stop)
-pub fn mux::AnimationDecoder<'a>::xmp_metadata(&mut self) -> core::result::Result<core::option::Option<alloc::vec::Vec<u8>>, DecodeError>
+pub fn mux::AnimationDecoder<'a>::xmp_metadata(&mut self) -> core::result::Result<core::option::Option<alloc::vec::Vec<u8>>, whereat::at::At<DecodeError>>
 pub struct mux::AnimationEncoder
 pub fn mux::AnimationEncoder::add_frame(&mut self, &[u8], PixelLayout, u32, &EncoderConfig) -> mux::MuxResult<()>
 pub fn mux::AnimationEncoder::add_frame_advanced(&mut self, &[u8], PixelLayout, u32, u32, u32, u32, u32, &EncoderConfig, mux::DisposeMethod, mux::BlendMethod) -> mux::MuxResult<()>
