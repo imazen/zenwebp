@@ -69,6 +69,44 @@ let webp = EncodeRequest::lossless(&config, rgba_pixels, PixelLayout::Rgba8, wid
     .encode()?;
 ```
 
+### Untrusted input: error handling & limits
+
+Decode/encode return `Result<_, whereat::At<E>>` (`At<DecodeError>` /
+`At<EncodeError>`). The `At<…>` wrapper records a build-time source location for
+your logs; get the underlying error with `err.error()` (borrow) or
+`err.into_inner()` (owned), then match the variant:
+
+```rust
+use zenwebp::DecodeError;
+
+match zenwebp::oneshot::decode_rgba(webp_bytes) {
+    Ok((pixels, w, h)) => { /* `pixels` is packed RGBA8: w*h*4 bytes, R,G,B,A */ }
+    Err(e) => match e.error() {
+        // pixel/dimension caps surface here; the message says which limit:
+        DecodeError::InvalidParameter(msg) => eprintln!("rejected: {msg}"),  // 400/413
+        DecodeError::MemoryLimitExceeded   => eprintln!("too large"),        // 413
+        other => eprintln!("decode failed: {other:?}"),                      // 400/500
+    },
+}
+```
+
+The one-shot helpers decode with `DecodeConfig::default()`, which already
+enforces a server-safe [`Limits`] (≤120 MP, 16384×16384, 1 GB memory). To
+tighten or relax them, set `DecodeConfig.limits` and drive it explicitly:
+`DecodeRequest::new(&config, bytes).decode_rgba()`.
+
+### Transcode (decode → re-encode)
+
+```rust
+use zenwebp::{LossyConfig, EncodeRequest, PixelLayout};
+
+let (rgba, w, h) = zenwebp::oneshot::decode_rgba(input_webp)?;
+let cfg = LossyConfig::new().with_quality(75.0);
+// Arg order: lossy(config, pixels, LAYOUT, width, height) — the pixel layout
+// comes BEFORE the dimensions. `decode_rgba` always yields `PixelLayout::Rgba8`.
+let out = EncodeRequest::lossy(&cfg, &rgba, PixelLayout::Rgba8, w, h).encode()?;
+```
+
 ## Features
 
 - **Pure Rust** - no C dependencies, builds anywhere Rust does
