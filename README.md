@@ -81,12 +81,19 @@ use zenwebp::DecodeError;
 
 match zenwebp::oneshot::decode_rgba(webp_bytes) {
     Ok((pixels, w, h)) => { /* `pixels` is packed RGBA8: w*h*4 bytes, R,G,B,A */ }
-    Err(e) => match e.error() {
-        // pixel/dimension caps surface here; the message says which limit:
-        DecodeError::InvalidParameter(msg) => eprintln!("rejected: {msg}"),  // 400/413
-        DecodeError::MemoryLimitExceeded   => eprintln!("too large"),        // 413
-        other => eprintln!("decode failed: {other:?}"),                      // 400/500
-    },
+    Err(e) => {
+        // `e.location()` is the whereat capture site (file:line) — log it for triage:
+        if let Some(loc) = e.location() {
+            eprintln!("decode failed at {}:{}", loc.file(), loc.line());
+        }
+        match e.error() {
+            DecodeError::Cancelled(_)          => eprintln!("cancelled / timed out"), // 499
+            // pixel/dimension caps surface here; the message says which limit:
+            DecodeError::InvalidParameter(msg) => eprintln!("rejected: {msg}"),  // 400/413
+            DecodeError::MemoryLimitExceeded   => eprintln!("too large"),        // 413
+            other => eprintln!("decode failed: {other:?}"),                      // 400/500
+        }
+    }
 }
 ```
 
@@ -94,6 +101,23 @@ The one-shot helpers decode with `DecodeConfig::default()`, which already
 enforces a server-safe [`Limits`] (≤120 MP, 16384×16384, 1 GB memory). To
 tighten or relax them, set `DecodeConfig.limits` and drive it explicitly:
 `DecodeRequest::new(&config, bytes).decode_rgba()`.
+
+**Cancellation.** `DecodeRequest::stop()` takes a `&dyn enough::Stop`. For a real,
+thread-safe cancel/deadline token use [`almost_enough::Stopper`](https://crates.io/crates/almost-enough)
+(`cargo add almost-enough`); a cancelled decode returns `DecodeError::Cancelled`:
+
+```rust
+use almost_enough::Stopper;
+use std::sync::Arc;
+use zenwebp::{DecodeConfig, DecodeRequest};
+
+let stop = Arc::new(Stopper::new());
+let watcher = Arc::clone(&stop);
+std::thread::spawn(move || watcher.cancel()); // e.g. on deadline / client disconnect
+
+let config = DecodeConfig::default();
+let (rgba, w, h) = DecodeRequest::new(&config, webp_bytes).stop(&*stop).decode_rgba()?;
+```
 
 ### Transcode (decode → re-encode)
 
