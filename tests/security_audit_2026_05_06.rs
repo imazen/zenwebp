@@ -105,7 +105,7 @@ fn h1_predictor_transform_allocation_rejected_when_over_memory_limit() {
     // = 2048^2 * 4 = 16 MB. We set max_memory to 4 MB so the predictor
     // allocation must be rejected before any real decode work.
     //
-    // 8192*8192 = 67 MP which fits within the default 100 MP total-pixels
+    // 8192*8192 = 67 MP which fits within the default 120 MP total-pixels
     // ceiling, so the constructor's dimension validation passes and we reach
     // the lossless transform allocation site that this test is targeting.
     let payload = build_amplifying_vp8l(8192, 8192);
