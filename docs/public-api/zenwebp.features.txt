@@ -14,7 +14,7 @@
 #   pub consts/statics                          1
 #   free functions                              6
 #   inherent methods                           41
-#   struct fields                              51
+#   struct fields                              53
 #   enum variants                              18
 #   re-exports                                  8
 #   trait roster entries (type × trait)        42
@@ -26,10 +26,10 @@
 #   decoder                           1
 #   encoder                          22
 #   pixel                             2
-#   sweep                            65
+#   sweep                            67
 #   zencodec                         42
 
-## items (148 lines)
+## items (150 lines)
 
 pub use AblationToggles
 pub use InternalParams
@@ -81,6 +81,7 @@ pub struct sweep::LosslessVariant
 pub sweep::LosslessVariant::method: u8
 pub sweep::LosslessVariant::quality: f32
 pub struct sweep::LossyAxes
+pub sweep::LossyAxes::filter_sharpness: alloc::vec::Vec<core::option::Option<u8>>
 pub sweep::LossyAxes::filter_strength: alloc::vec::Vec<core::option::Option<u8>>
 pub sweep::LossyAxes::internal: alloc::vec::Vec<sweep::NamedLossyProbe>
 pub sweep::LossyAxes::methods: alloc::vec::Vec<u8>
@@ -88,6 +89,7 @@ pub sweep::LossyAxes::segments: alloc::vec::Vec<core::option::Option<u8>>
 pub sweep::LossyAxes::sharp_yuv: alloc::vec::Vec<bool>
 pub sweep::LossyAxes::sns_strength: alloc::vec::Vec<core::option::Option<u8>>
 pub struct sweep::LossyVariant
+pub sweep::LossyVariant::filter_sharpness: core::option::Option<u8>
 pub sweep::LossyVariant::filter_strength: core::option::Option<u8>
 pub sweep::LossyVariant::internal: sweep::NamedLossyProbe
 pub sweep::LossyVariant::method: u8

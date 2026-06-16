@@ -5,6 +5,17 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES
+<!-- Batch into the next 0.x minor. -->
+- `mux::AnimationDecoder`'s fallible methods (`new`, `next_frame`, `decode_next`,
+  `decode_all`, `reset`, `set_background_color`, `icc_profile`, `exif_metadata`,
+  `xmp_metadata`) and its `Iterator::Item` now carry `whereat::At<DecodeError>`
+  instead of bare `DecodeError`, so animation-decode errors keep their `file:line`
+  source location (the one-shot decode path already returned `At<DecodeError>` —
+  this brings the animation API in line). The trace was previously stripped via
+  `From<At<DecodeError>> for DecodeError`. Get the inner error with `e.error()` /
+  `e.decompose().0`.
+
 ### Changed
 - Decoder `Limits::default()` raises `max_total_pixels` from 100 MP to 120 MP so
   common ~108 MP camera photos decode under the default policy.

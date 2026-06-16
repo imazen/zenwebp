@@ -88,8 +88,8 @@ impl<'a> AnimationDecoder<'a> {
     /// Create a new animation decoder from WebP data.
     ///
     /// Returns an error if the data is not a valid animated WebP.
-    pub fn new(data: &'a [u8]) -> Result<Self, DecodeError> {
-        Ok(Self::new_with_config(data, &DecodeConfig::default())?)
+    pub fn new(data: &'a [u8]) -> Result<Self, whereat::At<DecodeError>> {
+        Self::new_with_config(data, &DecodeConfig::default())
     }
 
     /// Create a new animation decoder with custom decode configuration.
@@ -150,8 +150,8 @@ impl<'a> AnimationDecoder<'a> {
     }
 
     /// Set background color for compositing.
-    pub fn set_background_color(&mut self, color: [u8; 4]) -> Result<(), DecodeError> {
-        Ok(self.decoder.set_background_color(color)?)
+    pub fn set_background_color(&mut self, color: [u8; 4]) -> Result<(), whereat::At<DecodeError>> {
+        self.decoder.set_background_color(color)
     }
 
     /// Set a cooperative cancellation token.
@@ -166,18 +166,18 @@ impl<'a> AnimationDecoder<'a> {
     }
 
     /// Read the embedded ICC profile, if any.
-    pub fn icc_profile(&mut self) -> Result<Option<Vec<u8>>, DecodeError> {
-        Ok(self.decoder.icc_profile()?)
+    pub fn icc_profile(&mut self) -> Result<Option<Vec<u8>>, whereat::At<DecodeError>> {
+        self.decoder.icc_profile()
     }
 
     /// Read the embedded EXIF metadata, if any.
-    pub fn exif_metadata(&mut self) -> Result<Option<Vec<u8>>, DecodeError> {
-        Ok(self.decoder.exif_metadata()?)
+    pub fn exif_metadata(&mut self) -> Result<Option<Vec<u8>>, whereat::At<DecodeError>> {
+        self.decoder.exif_metadata()
     }
 
     /// Read the embedded XMP metadata, if any.
-    pub fn xmp_metadata(&mut self) -> Result<Option<Vec<u8>>, DecodeError> {
-        Ok(self.decoder.xmp_metadata()?)
+    pub fn xmp_metadata(&mut self) -> Result<Option<Vec<u8>>, whereat::At<DecodeError>> {
+        self.decoder.xmp_metadata()
     }
 
     /// Total duration of all frames in milliseconds.
@@ -189,7 +189,7 @@ impl<'a> AnimationDecoder<'a> {
     }
 
     /// Decode the next frame, returning `None` when all frames have been read.
-    pub fn next_frame(&mut self) -> Result<Option<AnimFrame>, DecodeError> {
+    pub fn next_frame(&mut self) -> Result<Option<AnimFrame>, whereat::At<DecodeError>> {
         let info = match self.decode_next()? {
             Some(info) => info,
             None => return Ok(None),
@@ -208,9 +208,9 @@ impl<'a> AnimationDecoder<'a> {
     /// Returns frame metadata on success. The composited pixel data is
     /// available via [`current_frame_data()`](Self::current_frame_data)
     /// until the next call to `decode_next` or `next_frame`.
-    pub fn decode_next(&mut self) -> Result<Option<FrameInfo>, DecodeError> {
+    pub fn decode_next(&mut self) -> Result<Option<FrameInfo>, whereat::At<DecodeError>> {
         if let Some(stop) = self.stop {
-            stop.check()?;
+            stop.check().map_err(|e| at!(DecodeError::from(e)))?;
         }
         match self.decoder.read_frame(&mut self.buf) {
             Ok(duration_ms) => {
@@ -226,7 +226,7 @@ impl<'a> AnimationDecoder<'a> {
                 }))
             }
             Err(ref e) if matches!(e.error(), DecodeError::NoMoreFrames) => Ok(None),
-            Err(e) => Err(e.into()),
+            Err(e) => Err(e),
         }
     }
 
@@ -241,7 +241,7 @@ impl<'a> AnimationDecoder<'a> {
     }
 
     /// Reset the decoder to the first frame.
-    pub fn reset(&mut self) -> Result<(), DecodeError> {
+    pub fn reset(&mut self) -> Result<(), whereat::At<DecodeError>> {
         self.decoder.reset_animation()?;
         self.cumulative_ms = 0;
         self.frames_read = 0;
@@ -249,7 +249,7 @@ impl<'a> AnimationDecoder<'a> {
     }
 
     /// Decode all remaining frames at once.
-    pub fn decode_all(&mut self) -> Result<Vec<AnimFrame>, DecodeError> {
+    pub fn decode_all(&mut self) -> Result<Vec<AnimFrame>, whereat::At<DecodeError>> {
         self.reset()?;
         let mut frames = Vec::with_capacity(self.total_frames as usize);
         while let Some(frame) = self.next_frame()? {
@@ -260,7 +260,7 @@ impl<'a> AnimationDecoder<'a> {
 }
 
 impl Iterator for AnimationDecoder<'_> {
-    type Item = Result<AnimFrame, DecodeError>;
+    type Item = Result<AnimFrame, whereat::At<DecodeError>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.next_frame() {
