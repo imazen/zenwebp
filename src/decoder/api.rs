@@ -1,6 +1,6 @@
 use alloc::string::String;
 use thiserror::Error;
-use whereat::at;
+use whereat::{ResultAtExt, at};
 
 /// Errors that can occur when attempting to decode a WebP image
 #[derive(Debug, Error)]
@@ -597,10 +597,8 @@ impl<'a> DecodeRequest<'a> {
                 // Extended format — use the demuxer to find the VP8 bitstream
                 use crate::mux::WebPDemuxer;
 
-                let demuxer = WebPDemuxer::new(data).map_err(|e| {
-                    whereat::at!(DecodeError::InvalidParameter(alloc::format!(
-                        "demux error: {e}"
-                    )))
+                let demuxer = WebPDemuxer::new(data).map_err_at(|inner| {
+                    DecodeError::InvalidParameter(alloc::format!("demux error: {inner}"))
                 })?;
 
                 if demuxer.is_animated() {

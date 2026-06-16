@@ -8,6 +8,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+use whereat::ResultAtExt;
 #[allow(unused_imports)]
 use whereat::at;
 
@@ -68,7 +69,7 @@ impl DecoderContext {
         mut callback: impl FnMut(AnimationFrame<'_>) -> bool,
     ) -> Result<(), whereat::At<DecodeError>> {
         let limits = Limits::default();
-        let demuxer = WebPDemuxer::new(data).map_err(|e| at!(mux_to_decode(e)))?;
+        let demuxer = WebPDemuxer::new(data).map_err_at(mux_to_decode)?;
 
         if !demuxer.is_animated() {
             return Err(at!(DecodeError::InvalidParameter(
@@ -252,6 +253,6 @@ fn clear_rect(
 }
 
 /// Convert a `MuxError` to a `DecodeError`.
-fn mux_to_decode(e: whereat::At<MuxError>) -> DecodeError {
+fn mux_to_decode(e: MuxError) -> DecodeError {
     DecodeError::InvalidParameter(alloc::format!("demux error: {e}"))
 }
