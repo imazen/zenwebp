@@ -1120,8 +1120,7 @@ impl WebpAnimationFrameEncoder {
                 loop_count: self.loop_count,
                 ..AnimationConfig::default()
             };
-            let enc = AnimationEncoder::new(cw, ch, config)
-                .map_err(|e| at!(mux_to_encode_err(e.decompose().0)))?;
+            let enc = AnimationEncoder::new(cw, ch, config).map_err_at(mux_to_encode_err)?;
             self.anim_enc = Some(enc);
         }
         Ok(())
@@ -1169,7 +1168,7 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
         let timestamp_ms = self.cumulative_ms;
         let enc = self.anim_enc.as_mut().unwrap();
         enc.add_frame(&buf, layout, timestamp_ms, &self.inner_config)
-            .map_err(|e| at!(mux_to_encode_err(e.decompose().0)))?;
+            .map_err_at(mux_to_encode_err)?;
         self.cumulative_ms = self.cumulative_ms.saturating_add(duration_ms);
         self.last_frame_duration_ms = duration_ms;
         Ok(())
@@ -1185,7 +1184,7 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
             .map_err(|e| at!(e))?;
         let data = enc
             .finalize(self.last_frame_duration_ms)
-            .map_err(|e| at!(mux_to_encode_err(e.decompose().0)))?;
+            .map_err_at(mux_to_encode_err)?;
         self.limits
             .check_output_size(data.len() as u64)
             .map_err(|e| at!(EncodeError::LimitExceeded(alloc::format!("{e}"))))?;
@@ -1574,10 +1573,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
             }
             b"VP8X" => {
                 use crate::mux::WebPDemuxer;
-                let demuxer = WebPDemuxer::new(data_ref).map_err(|e| {
-                    at!(DecodeError::InvalidParameter(alloc::format!(
-                        "demux error: {e}"
-                    )))
+                let demuxer = WebPDemuxer::new(data_ref).map_err_at(|inner| {
+                    DecodeError::InvalidParameter(alloc::format!("demux error: {inner}"))
                 })?;
 
                 if demuxer.is_animated() {
@@ -2355,7 +2352,7 @@ impl WebpAnimationFrameDecoder {
                     Ok(None) => Ok(true),
                     Err(e) => Err(e),
                 })
-                .map_err(|e| at!(e))?;
+                .at()?;
             if done {
                 break;
             }
@@ -2388,7 +2385,7 @@ impl WebpAnimationFrameDecoder {
                     Err(e) => Err(e),
                 }
             })
-            .map_err(|e| at!(e))?;
+            .at()?;
 
         match result {
             Some(duration_ms) => {
