@@ -24,6 +24,21 @@ earlier history lives in git log and LOG.md.)
 
 ### Fixed
 
+- **docs(readme): document the memory-limits + cancellation APIs (advertised
+  but previously un-exampled) and `read_image` output format** — server-safety
+  gaps found by an insulated-developer usability test. The feature tables
+  advertised "Memory limits" and "Cancellation without thread killing" — the
+  exact knobs a server needs for untrusted input — but the README showed no
+  callable API for either. Added: a server-grade two-phase decode snippet using
+  `WebPDecoder::set_limits`/`DecodeConfig::default().limits(Limits { … })` with
+  real fields; a cancellation snippet wiring an `AtomicBool`-backed
+  `enough::Stop` token through `DecodeRequest::stop` and
+  `EncodeRequest::with_stop`; an explicit statement that `read_image` writes the
+  native format (packed RGBA8 when `has_alpha`, else packed RGB8, exactly
+  `output_buffer_size()` bytes); and the full list of `PixelLayout` variants
+  lossy encode accepts. The two advertised table rows now link to their
+  examples.
+
 - **GRAY8/L8 lossless encode hit a literal-only compression cliff** (#57):
   the full VP8L pipeline (LZ77 / palette / meta-huffman / transforms) was
   gated on `is_color`, so `L8`/`La8` main-image lossless encodes fell to the

@@ -35,6 +35,36 @@ let mut output = vec![0u8; decoder.output_buffer_size().unwrap()];
 decoder.read_image(&mut output)?;
 ```
 
+**`read_image` output format.** `read_image` writes the image's *native* format:
+packed **RGBA8** (4 bytes/pixel, `R,G,B,A`) when `info.has_alpha`, otherwise packed
+**RGB8** (3 bytes/pixel, `R,G,B`). It does not take a format parameter — the channel
+count follows the bitstream. The buffer must be **exactly** `output_buffer_size()`
+bytes (`width * height * {3 or 4}`); any other length returns
+`DecodeError::ImageTooLarge`. Branch on `info.has_alpha` (or
+[`WebPDecoder::has_alpha`]) before interpreting the bytes. If you always want
+4-channel output regardless of the source, use `oneshot::decode_rgba` /
+`DecodeRequest::decode_rgba` instead (alpha is set to 255 for opaque images).
+
+The two-phase `WebPDecoder` carries the same server-safety knobs as the one-shot
+path — set them on the decoder before `read_image`:
+
+```rust
+use zenwebp::{WebPDecoder, Limits};
+
+let webp_bytes: &[u8] = /* untrusted WebP data */;
+let mut decoder = WebPDecoder::build(webp_bytes)?;
+
+// Reject anything bigger than your budget *before* allocating the output buffer.
+decoder.set_limits(Limits {
+    max_total_pixels: Some(40_000_000),       // 40 MP
+    max_memory: Some(256 * 1024 * 1024),      // 256 MB
+    ..Limits::default()                        // keeps the other server-safe caps
+});
+
+let mut output = vec![0u8; decoder.output_buffer_size().unwrap()];
+decoder.read_image(&mut output)?; // errs if a limit is exceeded
+```
+
 ### Encode to WebP (Lossy)
 
 ```rust
@@ -52,6 +82,12 @@ let config = LossyConfig::new()
 let webp = EncodeRequest::lossy(&config, rgb_pixels, PixelLayout::Rgb8, width, height)
     .encode()?;
 ```
+
+Lossy encode accepts any interleaved or planar [`PixelLayout`]:
+`Rgb8`, `Rgba8`, `Bgr8`, `Bgra8`, `Argb8`, `L8`, `La8`, and `Yuv420` — pass the
+variant that matches your buffer (e.g. `PixelLayout::Rgba8` for 4-channel RGBA, no
+pre-conversion needed). Alpha-bearing layouts encode an alpha plane; the rest are
+opaque. (See [Encoder Input Formats](#encoder-input-formats) for the full matrix.)
 
 ### Encode to WebP (Lossless)
 
@@ -91,9 +127,75 @@ match zenwebp::oneshot::decode_rgba(webp_bytes) {
 ```
 
 The one-shot helpers decode with `DecodeConfig::default()`, which already
-enforces a server-safe [`Limits`] (≤120 MP, 16384×16384, 1 GB memory). To
-tighten or relax them, set `DecodeConfig.limits` and drive it explicitly:
-`DecodeRequest::new(&config, bytes).decode_rgba()`.
+enforces a server-safe [`Limits`] (≤120 MP, 16384×16384, 1 GB memory). To tighten
+or relax the caps, build a [`DecodeConfig`] with your own [`Limits`] and drive the
+decode explicitly with [`DecodeRequest`]:
+
+```rust
+use zenwebp::{DecodeConfig, DecodeRequest, Limits};
+
+// `Limits` is `#[non_exhaustive]`; spread `..Limits::default()` to keep the other
+// server-safe caps, then override the fields you care about. Fields are
+// `Option<…>`; `None` means "no cap on this dimension".
+let config = DecodeConfig::default().limits(Limits {
+    max_total_pixels: Some(40_000_000),       // 40 MP hard cap
+    max_memory: Some(256 * 1024 * 1024),      // 256 MB during decode
+    max_width: Some(8192),
+    max_height: Some(8192),
+    ..Limits::default()
+});
+
+let (rgba, w, h) = DecodeRequest::new(&config, webp_bytes).decode_rgba()?;
+```
+
+`DecodeConfig` also has builder shortcuts for the common caps —
+`DecodeConfig::default().max_dimensions(8192, 8192).max_memory(256 << 20)` — and
+`Limits::none()` removes every cap (only for fully trusted input).
+
+### Untrusted input: cancellation (no thread killing)
+
+Both decode and encode accept a cooperative [`enough::Stop`] token, so a
+long-running operation on a hostile input can be aborted from another thread
+without `kill`-ing it (which would leak the work-in-progress allocations). Wrap
+your own cancel flag — an `AtomicBool`, a deadline, a request-aborted handle —
+in a tiny `impl Stop`:
+
+```rust
+use core::sync::atomic::{AtomicBool, Ordering};
+use enough::{Stop, StopReason};                  // add `enough = "0.4.3"` to Cargo.toml
+use zenwebp::{DecodeConfig, DecodeRequest, EncodeRequest, LossyConfig, PixelLayout};
+
+struct CancelFlag<'a>(&'a AtomicBool);
+impl Stop for CancelFlag<'_> {
+    fn check(&self) -> Result<(), StopReason> {
+        if self.0.load(Ordering::Relaxed) {
+            Err(StopReason::Cancelled)   // also StopReason::TimedOut for deadlines
+        } else {
+            Ok(())
+        }
+    }
+}
+
+let cancelled = AtomicBool::new(false);
+let stop = CancelFlag(&cancelled);
+// (another thread / a timeout sets `cancelled` to true to abort)
+
+// Cancellable decode: pass the token via `.stop(...)`.
+let config = DecodeConfig::default();
+let decoded = DecodeRequest::new(&config, webp_bytes).stop(&stop).decode_rgba();
+
+// Cancellable encode: pass the token via `.with_stop(...)`.
+let cfg = LossyConfig::new().with_quality(75.0);
+let encoded = EncodeRequest::lossy(&cfg, &rgb_pixels, PixelLayout::Rgb8, w, h)
+    .with_stop(&stop)
+    .encode();
+```
+
+A cancelled operation returns `DecodeError::Cancelled(StopReason)` /
+`EncodeError::Cancelled(StopReason)`. The token is checked periodically inside the
+hot loops, so cancellation latency is bounded by a chunk of work, not the whole
+image. Default (`enough::Unstoppable`, used when you don't call `.stop(...)`) is
+zero-cost.
 
 ### Transcode (decode → re-encode)
 
@@ -176,7 +278,7 @@ let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode
 | Scale during decode | :x: | :white_check_mark: |
 | 2-thread decode pipeline (reconstruct + filter overlap) | :x: | :white_check_mark: width >= 512 |
 | Chroma dithering (hides banding at high Q) | :white_check_mark: default off | :white_check_mark: default off |
-| Memory limits | :white_check_mark: | :x: |
+| [Memory limits](#untrusted-input-error-handling--limits) | :white_check_mark: | :x: |
 
 ### Encoder (Lossy VP8)
 
@@ -203,7 +305,7 @@ let webp = EncodeRequest::lossy(&config, pixels, PixelLayout::Rgb8, w, h).encode
 | Near-lossless | :white_check_mark: | :white_check_mark: |
 | Encoding statistics | :white_check_mark: | :white_check_mark: |
 | Progress callback | :white_check_mark: | :white_check_mark: |
-| Cancellation without thread killing (key for untrusted input) | :white_check_mark: | :x: |
+| [Cancellation without thread killing](#untrusted-input-cancellation-no-thread-killing) (key for untrusted input) | :white_check_mark: | :x: |
 | Alpha encoded on 2nd thread | :x: | :white_check_mark: |
 
 ### Encoder (Lossless VP8L)
