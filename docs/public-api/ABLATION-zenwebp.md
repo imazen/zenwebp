@@ -155,6 +155,6 @@ The `encoder::picker` module is `#[doc(hidden)]`; `PickError`, `TuningPick`, and
 - `/home/lilith/work/zen/zenwebp/src/encoder/analysis/classifier.rs` — `ClassifierDiag`, `ImageContentType`
 - `/home/lilith/work/zen/zenwebp/src/encoder/validation.rs` — `TARGET_ZENSIM_RANGE`
 - `/home/lilith/work/zen/zenwebp/src/detect.rs` — `WebPProbe`, `BitstreamType`
-- `/home/lilith/work/zen/zenmetrics/crates/zen-metrics-cli/src/sweep/encode.rs` — confirmed `__expert` consumer
+- `/home/lilith/work/zen/zenmetrics/crates/zenmetrics-cli/src/sweep/encode.rs` — confirmed `__expert` consumer
 - `/home/lilith/work/zen/zenpipe/zencodecs/src/lib.rs`, `config.rs` — confirmed `zencodec` consumer
 - `/home/lilith/work/imageflow/imageflow_core/src/codecs/zen_encoder.rs` — confirmed `zencodec` consumer
