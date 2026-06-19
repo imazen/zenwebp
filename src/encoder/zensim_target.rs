@@ -515,10 +515,12 @@ pub(crate) mod iteration {
     use crate::encoder::config::LossyConfig;
     use alloc::format;
     use alloc::vec::Vec;
+    use whereat::{At, ResultAtExt, at};
 
     /// Result of running the closed-loop iteration: bytes + metrics, or
-    /// an error if a hard constraint was violated.
-    pub(crate) type IterationResult = Result<(Vec<u8>, ZensimEncodeMetrics), EncodeError>;
+    /// an error if a hard constraint was violated. Carries `At<EncodeError>`
+    /// so a failure inside the iteration keeps its `file:line` trace.
+    pub(crate) type IterationResult = Result<(Vec<u8>, ZensimEncodeMetrics), At<EncodeError>>;
 
     /// Disable Phase 3 per-segment correction. When set, every pass after
     /// pass 0 takes the global-q secant step (or fallback step) instead of
@@ -687,7 +689,7 @@ pub(crate) mod iteration {
         match layout {
             PixelLayout::Rgb8 | PixelLayout::Rgba8 => {}
             other => {
-                return Err(EncodeError::TargetZensimUnsupportedLayout(other));
+                return Err(at!(EncodeError::TargetZensimUnsupportedLayout(other)));
             }
         }
         // 1. Detect bucket from a quick classifier pass on the source.
@@ -774,9 +776,9 @@ pub(crate) mod iteration {
         // noise compositing).
         let z = zensim::Zensim::new(zensim::ZensimProfile::latest());
         let pre = build_source_reference(&z, pixels, layout, width, height).ok_or_else(|| {
-            EncodeError::InvalidBufferSize(
+            at!(EncodeError::InvalidBufferSize(
                 "zensim precompute_reference failed (image too small?)".into(),
-            )
+            ))
         })?;
         let (score0, dm0) = measure_score_and_diffmap(&z, &pre, &bytes0, layout, width, height)?;
 
@@ -1122,10 +1124,10 @@ pub(crate) mod iteration {
         if let Some(slack) = target.max_undershoot
             && best.score < target.target - slack
         {
-            return Err(EncodeError::InvalidBufferSize(format!(
+            return Err(at!(EncodeError::InvalidBufferSize(format!(
                 "target_zensim: achieved {:.3} below floor {:.3} (max_undershoot {:.3}) after {} passes",
                 best.score, target.target, slack, passes_used,
-            )));
+            ))));
         }
         let targets_met = best.score >= target.target
             || target
@@ -1166,7 +1168,7 @@ pub(crate) mod iteration {
         layout: PixelLayout,
         width: u32,
         height: u32,
-    ) -> Result<(Vec<u8>, EncodeDiagnostics), EncodeError> {
+    ) -> Result<(Vec<u8>, EncodeDiagnostics), At<EncodeError>> {
         let mut probe_cfg = cfg.clone();
         probe_cfg.quality = q.clamp(0.0, 100.0);
         probe_cfg.multi_pass_stats = enable_multi_pass;
@@ -1181,7 +1183,8 @@ pub(crate) mod iteration {
             crate::encoder::api::EncodeRequest::lossy(&probe_cfg, pixels, layout, width, height);
         match req.encode_inner_with_diagnostics() {
             Ok((bytes, _stats, diag)) => Ok((bytes, diag)),
-            Err(at_err) => Err(at_err.decompose().0),
+            // Preserve the encoder's whereat trace.
+            Err(at_err) => Err(at_err),
         }
     }
 
@@ -1234,11 +1237,11 @@ pub(crate) mod iteration {
         layout: PixelLayout,
         width: u32,
         height: u32,
-    ) -> Result<(f32, Vec<f32>), EncodeError> {
+    ) -> Result<(f32, Vec<f32>), At<EncodeError>> {
         match layout {
             PixelLayout::Rgb8 => measure_rgb(z, pre, webp, width, height),
             PixelLayout::Rgba8 => measure_rgba(z, pre, webp, width, height),
-            other => Err(EncodeError::TargetZensimUnsupportedLayout(other)),
+            other => Err(at!(EncodeError::TargetZensimUnsupportedLayout(other))),
         }
     }
 
@@ -1248,34 +1251,33 @@ pub(crate) mod iteration {
         webp: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<(f32, Vec<f32>), EncodeError> {
-        let (rgb, w, h) = crate::oneshot::decode_rgb(webp).map_err(|e| {
+    ) -> Result<(f32, Vec<f32>), At<EncodeError>> {
+        // Preserve the decode trace across the DecodeError → EncodeError boundary.
+        let (rgb, w, h) = crate::oneshot::decode_rgb(webp).map_err_at(|inner| {
             EncodeError::InvalidBufferSize(format!(
-                "target_zensim: decode for measurement failed: {:?}",
-                e.decompose().0,
+                "target_zensim: decode for measurement failed: {inner:?}",
             ))
         })?;
         if w != width || h != height {
-            return Err(EncodeError::InvalidBufferSize(format!(
+            return Err(at!(EncodeError::InvalidBufferSize(format!(
                 "target_zensim: decoded dims {}x{} != source {}x{}",
                 w, h, width, height,
-            )));
+            ))));
         }
         let n = (w as usize) * (h as usize) * 3;
         if rgb.len() < n {
-            return Err(EncodeError::InvalidBufferSize(
+            return Err(at!(EncodeError::InvalidBufferSize(
                 "target_zensim: short decoded buffer".into(),
-            ));
+            )));
         }
         let chunks: &[[u8; 3]] = bytemuck::cast_slice(&rgb[..n]);
         let slice = zensim::RgbSlice::new(chunks, w as usize, h as usize);
         let dm = z
             .compute_with_ref_and_diffmap(pre, &slice, zensim::DiffmapWeighting::Trained)
             .map_err(|e| {
-                EncodeError::InvalidBufferSize(format!(
-                    "zensim compute_with_ref_and_diffmap failed: {:?}",
-                    e
-                ))
+                at!(EncodeError::InvalidBufferSize(format!(
+                    "zensim compute_with_ref_and_diffmap failed: {e:?}",
+                )))
             })?;
         let score = dm.score() as f32;
         Ok((score, dm.diffmap().to_vec()))
@@ -1287,34 +1289,33 @@ pub(crate) mod iteration {
         webp: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<(f32, Vec<f32>), EncodeError> {
-        let (rgba, w, h) = crate::oneshot::decode_rgba(webp).map_err(|e| {
+    ) -> Result<(f32, Vec<f32>), At<EncodeError>> {
+        // Preserve the decode trace across the DecodeError → EncodeError boundary.
+        let (rgba, w, h) = crate::oneshot::decode_rgba(webp).map_err_at(|inner| {
             EncodeError::InvalidBufferSize(format!(
-                "target_zensim: rgba decode for measurement failed: {:?}",
-                e.decompose().0,
+                "target_zensim: rgba decode for measurement failed: {inner:?}",
             ))
         })?;
         if w != width || h != height {
-            return Err(EncodeError::InvalidBufferSize(format!(
+            return Err(at!(EncodeError::InvalidBufferSize(format!(
                 "target_zensim: decoded dims {}x{} != source {}x{}",
                 w, h, width, height,
-            )));
+            ))));
         }
         let n = (w as usize) * (h as usize) * 4;
         if rgba.len() < n {
-            return Err(EncodeError::InvalidBufferSize(
+            return Err(at!(EncodeError::InvalidBufferSize(
                 "target_zensim: short decoded rgba buffer".into(),
-            ));
+            )));
         }
         let chunks: &[[u8; 4]] = bytemuck::cast_slice(&rgba[..n]);
         let slice = zensim::RgbaSlice::new(chunks, w as usize, h as usize);
         let dm = z
             .compute_with_ref_and_diffmap(pre, &slice, zensim::DiffmapWeighting::Trained)
             .map_err(|e| {
-                EncodeError::InvalidBufferSize(format!(
-                    "zensim compute_with_ref_and_diffmap failed: {:?}",
-                    e
-                ))
+                at!(EncodeError::InvalidBufferSize(format!(
+                    "zensim compute_with_ref_and_diffmap failed: {e:?}",
+                )))
             })?;
         let score = dm.score() as f32;
         Ok((score, dm.diffmap().to_vec()))

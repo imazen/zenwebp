@@ -15,6 +15,12 @@ earlier history lives in git log and LOG.md.)
   this brings the animation API in line). The trace was previously stripped via
   `From<At<DecodeError>> for DecodeError`. Get the inner error with `e.error()` /
   `e.decompose().0`.
+- `WebPDecoder::build` now returns `Result<Self, whereat::At<DecodeError>>`
+  (previously `Result<Self, DecodeError>`), so two-phase-decode header-parse
+  errors keep their `file:line` trace — matching `WebPDecoder::new`, which
+  already returned `At<DecodeError>`. `build` no longer silently strips the trace
+  through the removed `From<At<DecodeError>> for DecodeError` dropper. Get the
+  inner error with `e.error()` / `e.decompose().0`.
 
 ### Changed
 - Decoder `Limits::default()` raises `max_total_pixels` from 100 MP to 120 MP so
@@ -56,6 +62,29 @@ earlier history lives in git log and LOG.md.)
   to their own `Cargo.toml` (#65).
 
 ### Fixed
+
+- **whereat error traces were silently dropped across zenwebp's internal
+  decode/encode/mux boundaries** (0ea292fc) — five `From<At<X>> for Y` impls (in
+  `decoder/api.rs`, `encoder/api.rs`, and `mux/error.rs`) plus several explicit
+  `.decompose().0` calls discarded the `file:line` trace on every error that
+  crossed an internal type boundary, so a decode/encode failure surfaced with an
+  empty trace (`frame_count() == 0`). Removed all five droppers and converted the
+  internal propagation functions to return `At<_>` so dependency traces propagate
+  through a plain `?`: decode side (`WebpDecoder::do_decode` / `do_decode_lossy` /
+  `do_decode_general` and the public `WebPDecoder::build`), encode side
+  (`WebPEncoder::encode` / `encode_with_diagnostics`, `do_encode`,
+  vp8l `encode_argb` / `encode_argb_single_config`, vp8 `encode_image` and the
+  quality/psnr/partition-retry search helpers), the `target-zensim` metrics chain
+  (`iteration::run`, `encode_at_with_diagnostics`, `measure_*`,
+  `encode_single_pass`, `encode_pixels_with_metrics`), and mux
+  (`encode_frame_data` / `push_encoded_frame` now use `.map_err_at(...)` at the
+  `EncodeError`/`MuxError` boundary). Cross-type boundaries preserve the trace via
+  `whereat::ResultAtExt::map_err_at`; variant matches inspect the inner error via
+  `At::error()` instead of consuming the `At`. Regression test
+  `tests/whereat_trace_propagation.rs` asserts a dependency-originated decode
+  error keeps `frame_count() >= 1` through the converted path. See the
+  `WebPDecoder::build` note under QUEUED BREAKING CHANGES for the one
+  externally-visible signature change.
 
 - **docs(readme): document the memory-limits + cancellation APIs (advertised
   but previously un-exampled) and `read_image` output format** — server-safety

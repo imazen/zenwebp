@@ -39,6 +39,7 @@ use crate::encoder::{
     encode_frame_lossless,
 };
 use enough::Unstoppable;
+use whereat::ResultAtExt;
 
 /// Configuration for an animated WebP.
 #[derive(Debug, Clone)]
@@ -116,13 +117,13 @@ impl AnimationEncoder {
         timestamp_ms: u32,
         dispose: DisposeMethod,
         blend: BlendMethod,
-    ) -> Result<(), MuxError> {
+    ) -> MuxResult<()> {
         // Flush previous pending frame
         if let Some(prev) = self.pending.take() {
             let duration = timestamp_ms.saturating_sub(prev.timestamp_ms);
             let mut frame = prev.mux_frame;
             frame.duration_ms = duration;
-            self.mux.push_frame(frame).map_err(|e| e.decompose().0)?;
+            self.mux.push_frame(frame)?;
         }
 
         let mux_frame = MuxFrame {
@@ -471,12 +472,14 @@ fn encode_frame_data(
     height: u32,
     color: PixelLayout,
     params: &EncoderParams,
-) -> Result<EncodedFrame, MuxError> {
+) -> Result<EncodedFrame, whereat::At<MuxError>> {
     let mut bitstream = Vec::new();
     let lossy_with_alpha = params.use_lossy && color.has_alpha();
 
     let stride = width as usize;
     if params.use_lossy {
+        // `EncodeError` → `MuxError`, preserving the whereat trace from the
+        // encoder so a frame-encode failure keeps its source location.
         encode_frame_lossy(
             &mut bitstream,
             pixels,
@@ -487,7 +490,8 @@ fn encode_frame_data(
             params,
             &Unstoppable,
             &NoProgress,
-        )?;
+        )
+        .map_err_at(MuxError::EncodeError)?;
 
         let alpha_data = if lossy_with_alpha {
             let mut alpha = Vec::new();
@@ -500,7 +504,8 @@ fn encode_frame_data(
                 color,
                 params.alpha_quality,
                 &Unstoppable,
-            )?;
+            )
+            .map_err_at(MuxError::EncodeError)?;
             Some(alpha)
         } else {
             None
@@ -522,7 +527,8 @@ fn encode_frame_data(
             params.clone(),
             false,
             &Unstoppable,
-        )?;
+        )
+        .map_err_at(MuxError::EncodeError)?;
         Ok(EncodedFrame {
             bitstream,
             alpha_data: None,

@@ -93,7 +93,7 @@ pub fn encode_vp8l(
     }
 
     // Encode with the full pipeline
-    Ok(encode_argb(&mut argb, w, h, has_alpha, config, stop)?)
+    encode_argb(&mut argb, w, h, has_alpha, config, stop)
 }
 
 /// Mask off RGB bits of any pixel whose alpha byte is 0. The u32 ARGB layout
@@ -435,7 +435,7 @@ pub(crate) fn encode_argb(
     has_alpha: bool,
     config: &Vp8lConfig,
     stop: &dyn enough::Stop,
-) -> Result<Vec<u8>, EncodeError> {
+) -> EncodeResult<Vec<u8>> {
     // Determine if palette is available (needed for config generation)
     let palette_candidate = if config.use_palette {
         can_use_palette(argb)
@@ -516,10 +516,12 @@ pub(crate) fn encode_argb(
             }
         }
 
-        best_output.ok_or(EncodeError::InvalidBufferSize(alloc::format!(
-            "all {} crunch configs failed",
-            configs.len()
-        )))
+        best_output.ok_or_else(|| {
+            at!(EncodeError::InvalidBufferSize(alloc::format!(
+                "all {} crunch configs failed",
+                configs.len()
+            )))
+        })
     };
 
     // Print instrumentation stats if ZENWEBP_TRACE is set
@@ -544,7 +546,7 @@ fn encode_argb_single_config(
     config: &Vp8lConfig,
     crunch: &CrunchConfig,
     stop: &dyn enough::Stop,
-) -> Result<Vec<u8>, EncodeError> {
+) -> EncodeResult<Vec<u8>> {
     let mut writer = BitWriter::with_capacity(width * height / 2);
 
     // Write VP8L signature

@@ -37,6 +37,7 @@
 //! ```
 
 use crate::{Limits, Preset};
+use whereat::At;
 
 /// How `InternalParams::sharp_yuv` should be applied. Expert-only.
 ///
@@ -682,7 +683,7 @@ impl LossyConfig {
             alloc::vec::Vec<u8>,
             super::zensim_target::ZensimEncodeMetrics,
         ),
-        super::api::EncodeError,
+        At<super::api::EncodeError>,
     > {
         encode_pixels_with_metrics_impl(self, pixels, layout, width, height)
     }
@@ -1253,7 +1254,7 @@ fn encode_pixels_with_metrics_impl(
         alloc::vec::Vec<u8>,
         super::zensim_target::ZensimEncodeMetrics,
     ),
-    super::api::EncodeError,
+    At<super::api::EncodeError>,
 > {
     if let Some(t) = cfg.target_zensim {
         return super::zensim_target::iteration::run(cfg, t, pixels, layout, width, height);
@@ -1274,7 +1275,7 @@ fn encode_pixels_with_metrics_impl(
         alloc::vec::Vec<u8>,
         super::zensim_target::ZensimEncodeMetrics,
     ),
-    super::api::EncodeError,
+    At<super::api::EncodeError>,
 > {
     // Feature disabled — if target_zensim was set, fall back to a single
     // encode at the calibrated starting q for the (Photo) bucket. Match
@@ -1305,7 +1306,7 @@ fn encode_single_pass(
         alloc::vec::Vec<u8>,
         super::zensim_target::ZensimEncodeMetrics,
     ),
-    super::api::EncodeError,
+    At<super::api::EncodeError>,
 > {
     let req = super::api::EncodeRequest::lossy(cfg, pixels, layout, width, height);
     match req.encode() {
@@ -1316,7 +1317,8 @@ fn encode_single_pass(
                 super::zensim_target::ZensimEncodeMetrics::no_target(len),
             ))
         }
-        Err(at_err) => Err(at_err.decompose().0),
+        // Preserve the encoder's whereat trace.
+        Err(at_err) => Err(at_err),
     }
 }
 

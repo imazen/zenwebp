@@ -109,12 +109,6 @@ impl From<enough::StopReason> for EncodeError {
     }
 }
 
-impl From<whereat::At<EncodeError>> for EncodeError {
-    fn from(at: whereat::At<EncodeError>) -> Self {
-        at.decompose().0
-    }
-}
-
 /// Content-aware encoding presets.
 ///
 /// These presets configure the encoder for different types of content,
@@ -1550,8 +1544,7 @@ impl<'a> EncodeRequest<'a> {
             return Ok(None);
         }
         let pair = lossy
-            .encode_pixels_with_metrics(self.pixels, self.color_type, self.width, self.height)
-            .map_err(|e| at!(e))?;
+            .encode_pixels_with_metrics(self.pixels, self.color_type, self.width, self.height)?;
         Ok(Some(pair))
     }
 
@@ -1616,15 +1609,13 @@ impl<'a> EncodeRequest<'a> {
             if let Some(xmp) = self.xmp_metadata {
                 encoder.set_xmp_metadata(xmp.to_vec());
             }
-            let (s, d) = encoder
-                .encode_with_diagnostics(
-                    self.pixels,
-                    self.width,
-                    self.height,
-                    stride,
-                    self.color_type,
-                )
-                .map_err(|e| at!(e))?;
+            let (s, d) = encoder.encode_with_diagnostics(
+                self.pixels,
+                self.width,
+                self.height,
+                stride,
+                self.color_type,
+            )?;
             stats = s;
             diag = d;
         }
@@ -1674,15 +1665,13 @@ impl<'a> EncodeRequest<'a> {
             if let Some(xmp) = self.xmp_metadata {
                 encoder.set_xmp_metadata(xmp.to_vec());
             }
-            stats = encoder
-                .encode(
-                    self.pixels,
-                    self.width,
-                    self.height,
-                    stride,
-                    self.color_type,
-                )
-                .map_err(|e| at!(e))?;
+            stats = encoder.encode(
+                self.pixels,
+                self.width,
+                self.height,
+                stride,
+                self.color_type,
+            )?;
         }
         Ok((output, stats))
     }
@@ -2446,7 +2435,7 @@ impl<'a> WebPEncoder<'a> {
         height: u32,
         stride: usize,
         color: PixelLayout,
-    ) -> Result<EncodeStats, EncodeError> {
+    ) -> EncodeResult<EncodeStats> {
         let mut frame = Vec::new();
 
         let lossy_with_alpha = self.params.use_lossy && color.has_alpha();
@@ -2594,7 +2583,7 @@ impl<'a> WebPEncoder<'a> {
         height: u32,
         stride: usize,
         color: PixelLayout,
-    ) -> Result<(EncodeStats, EncodeDiagnostics), EncodeError> {
+    ) -> EncodeResult<(EncodeStats, EncodeDiagnostics)> {
         // Lossless and the no-target-zensim diagnostic path don't have
         // segment_map. Emit an empty diagnostics struct in those cases —
         // the iteration loop will fall back to global-q.

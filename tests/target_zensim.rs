@@ -379,10 +379,10 @@ fn target_zensim_rejects_unsupported_layouts_via_encode_bytes() {
         .with_target_zensim(ZensimTarget::new(80.0));
     let result = EncodeRequest::lossy(&cfg, &bgr, PixelLayout::Bgr8, w, h).encode();
     let at = result.expect_err("expected error for BGR + target_zensim");
-    let inner: EncodeError = at.into();
-    match inner {
+    // Inspect the inner error via `error()` — preserves the whereat trace.
+    match at.error() {
         EncodeError::TargetZensimUnsupportedLayout(layout) => {
-            assert_eq!(layout, PixelLayout::Bgr8);
+            assert_eq!(*layout, PixelLayout::Bgr8);
         }
         other => panic!("expected TargetZensimUnsupportedLayout, got {other:?}"),
     }
@@ -395,10 +395,10 @@ fn target_zensim_rejects_unsupported_layouts_via_encode_bytes() {
         .with_target_zensim(ZensimTarget::new(80.0));
     let result = EncodeRequest::lossy(&cfg, &bgra, PixelLayout::Bgra8, w, h).encode_with_metrics();
     let at = result.expect_err("expected error for BGRA + target_zensim");
-    let inner: EncodeError = at.into();
-    match inner {
+    // Inspect the inner error via `error()` — preserves the whereat trace.
+    match at.error() {
         EncodeError::TargetZensimUnsupportedLayout(layout) => {
-            assert_eq!(layout, PixelLayout::Bgra8);
+            assert_eq!(*layout, PixelLayout::Bgra8);
         }
         other => panic!("expected TargetZensimUnsupportedLayout, got {other:?}"),
     }

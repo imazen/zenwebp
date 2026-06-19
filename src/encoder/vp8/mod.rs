@@ -1069,7 +1069,7 @@ impl<'a> Vp8Encoder<'a> {
         params: &super::api::EncoderParams,
         stop: &dyn enough::Stop,
         progress: &dyn super::api::EncodeProgress,
-    ) -> Result<super::api::EncodeStats, EncodeError> {
+    ) -> super::api::EncodeResult<super::api::EncodeStats> {
         // Store method and configure features based on it
         self.method = params.method.min(6); // Clamp to 0-6
         // Method feature mapping (aligned with libwebp):
@@ -1237,7 +1237,9 @@ impl<'a> Vp8Encoder<'a> {
                 let pct = ((u32::from(mby) + 1) * 100 / u32::from(self.macroblock_height)) as u8;
                 if pct > last_progress_pct {
                     last_progress_pct = pct;
-                    progress.on_progress(pct.min(99))?; // cap at 99, report 100 after finalize
+                    progress
+                        .on_progress(pct.min(99))
+                        .map_err(|e| at!(EncodeError::from(e)))?; // cap at 99, report 100 after finalize
                 }
             }
             total_mb = row_state.total_mb;
@@ -1350,8 +1352,7 @@ impl<'a> Vp8Encoder<'a> {
             return Err(at!(EncodeError::Partition0Overflow {
                 size: partition0_size,
                 max: VP8_MAX_PARTITION0_SIZE,
-            })
-            .into());
+            }));
         }
 
         self.write_uncompressed_frame_header(partition0_size);
@@ -1390,7 +1391,9 @@ impl<'a> Vp8Encoder<'a> {
             stats.segment_level[i] = self.frame.filter_level;
         }
 
-        progress.on_progress(100)?;
+        progress
+            .on_progress(100)
+            .map_err(|e| at!(EncodeError::from(e)))?;
 
         Ok(stats)
     }
@@ -1411,7 +1414,7 @@ impl<'a> Vp8Encoder<'a> {
         max_count: i32,
         row_state: &mut MbRowState,
         stop: &dyn enough::Stop,
-    ) -> Result<(), EncodeError> {
+    ) -> super::api::EncodeResult<()> {
         // Reset left state for start of row
         self.left_complexity = Complexity::default();
         self.left_b_pred = [IntraMode::default(); 4];
@@ -1423,7 +1426,7 @@ impl<'a> Vp8Encoder<'a> {
         for mbx in 0..self.macroblock_width {
             // Check for cancellation every 16 macroblocks
             if row_state.total_mb & 15 == 0 {
-                stop.check()?;
+                stop.check().map_err(|e| at!(EncodeError::from(e)))?;
             }
 
             // Mid-stream probability refresh (like libwebp's VP8EncTokenLoop).
@@ -2341,9 +2344,8 @@ fn encode_with_partition_retry(
     // If the user set an explicit partition_limit, use it as-is (no retry).
     if params.partition_limit.is_some() {
         let mut vp8_encoder = Vp8Encoder::new(writer);
-        return Ok(
-            vp8_encoder.encode_image(data, color, width, height, stride, params, stop, progress)?
-        );
+        return vp8_encoder
+            .encode_image(data, color, width, height, stride, params, stop, progress);
     }
 
     // Automatic mode: try encoding, retry with increasing partition_limit on overflow.
@@ -2373,21 +2375,21 @@ fn encode_with_partition_retry(
                 writer.extend_from_slice(&trial_buf);
                 return Ok(stats);
             }
-            Err(e @ EncodeError::Partition0Overflow { .. }) if limit < 100 => {
+            Err(e) if matches!(e.error(), EncodeError::Partition0Overflow { .. }) && limit < 100 => {
                 last_overflow = Some(e);
                 continue;
             }
-            Err(e) => return Err(at!(e)),
+            Err(e) => return Err(e),
         }
     }
 
-    // All retry limits exhausted — return the last overflow error
-    Err(at!(last_overflow.unwrap_or(
-        EncodeError::Partition0Overflow {
+    // All retry limits exhausted — return the last overflow error (trace preserved).
+    Err(last_overflow.unwrap_or_else(|| {
+        at!(EncodeError::Partition0Overflow {
             size: 0,
             max: (1 << 19) - 1,
-        }
-    )))
+        })
+    }))
 }
 
 /// Encode a single lossy frame and return the resulting bytes alongside
@@ -2465,20 +2467,21 @@ pub(crate) fn encode_frame_lossy_with_diagnostics(
                 writer.extend_from_slice(&trial_buf);
                 return Ok((stats, diag));
             }
-            Err(e @ EncodeError::Partition0Overflow { .. }) if limit < 100 => {
+            Err(e) if matches!(e.error(), EncodeError::Partition0Overflow { .. }) && limit < 100 => {
                 last_overflow = Some(e);
                 continue;
             }
-            Err(e) => return Err(at!(e)),
+            Err(e) => return Err(e),
         }
     }
 
-    Err(at!(last_overflow.unwrap_or(
-        EncodeError::Partition0Overflow {
+    // All retry limits exhausted — return the last overflow error (trace preserved).
+    Err(last_overflow.unwrap_or_else(|| {
+        at!(EncodeError::Partition0Overflow {
             size: 0,
             max: (1 << 19) - 1,
-        }
-    )))
+        })
+    }))
 }
 
 /// Encode with quality search to meet target file size.
@@ -2494,7 +2497,7 @@ fn encode_with_quality_search(
     params: &super::api::EncoderParams,
     stop: &dyn enough::Stop,
     progress: &dyn super::api::EncodeProgress,
-) -> Result<super::api::EncodeStats, EncodeError> {
+) -> super::api::EncodeResult<super::api::EncodeStats> {
     // Initialize quality search state
     // qmin=1, qmax=100 (full range) - libwebp uses config->qmin/qmax
     let mut pass_stats = PassStats::new_for_size(params.target_size, params.lossy_quality, 1, 100);
@@ -2506,7 +2509,7 @@ fn encode_with_quality_search(
     let mut best_diff = f64::MAX;
 
     for pass in 0..max_passes {
-        stop.check()?;
+        stop.check().map_err(|e| at!(EncodeError::from(e)))?;
 
         // Create temporary buffer for this trial encoding
         let mut trial_buffer = Vec::new();
@@ -2571,7 +2574,7 @@ fn encode_with_psnr_search(
     params: &super::api::EncoderParams,
     stop: &dyn enough::Stop,
     progress: &dyn super::api::EncodeProgress,
-) -> Result<super::api::EncodeStats, EncodeError> {
+) -> super::api::EncodeResult<super::api::EncodeStats> {
     let mut pass_stats = PassStats::new_for_psnr(params.target_psnr, params.lossy_quality, 1, 100);
 
     let max_passes = (params.method + 3).max(6) as usize;
@@ -2580,7 +2583,7 @@ fn encode_with_psnr_search(
     let mut best_diff = f64::MAX;
 
     for pass in 0..max_passes {
-        stop.check()?;
+        stop.check().map_err(|e| at!(EncodeError::from(e)))?;
 
         let mut trial_buffer = Vec::new();
         let mut trial_encoder = Vp8Encoder::new(&mut trial_buffer);

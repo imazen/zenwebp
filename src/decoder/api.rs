@@ -141,12 +141,6 @@ impl From<enough::StopReason> for DecodeError {
     }
 }
 
-impl From<whereat::At<DecodeError>> for DecodeError {
-    fn from(at: whereat::At<DecodeError>) -> Self {
-        at.decompose().0
-    }
-}
-
 // Core decoder implementation using SliceReader for no_std compatibility
 use alloc::format;
 use alloc::vec;
@@ -753,10 +747,10 @@ impl<'a> WebPDecoder<'a> {
     /// // Phase 3: Decode (no re-parsing)
     /// let mut output = vec![0u8; decoder.output_buffer_size().unwrap()];
     /// decoder.read_image(&mut output)?;
-    /// # Ok::<(), zenwebp::DecodeError>(())
+    /// # Ok::<(), whereat::At<zenwebp::DecodeError>>(())
     /// ```
-    pub fn build(data: &'a [u8]) -> Result<Self, DecodeError> {
-        Ok(Self::new(data)?)
+    pub fn build(data: &'a [u8]) -> DecodeResult<Self> {
+        Self::new(data)
     }
 
     /// Create a new `WebPDecoder` from the data slice.
@@ -778,7 +772,7 @@ impl<'a> WebPDecoder<'a> {
     /// let decoder = WebPDecoder::new(webp_data)?;
     /// let info = decoder.info();
     /// println!("Format: {:?}, {}x{}", info.format, info.width, info.height);
-    /// # Ok::<(), zenwebp::DecodeError>(())
+    /// # Ok::<(), whereat::At<zenwebp::DecodeError>>(())
     /// ```
     pub fn info(&self) -> ImageInfo {
         let icc_profile = self

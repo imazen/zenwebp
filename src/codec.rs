@@ -619,15 +619,15 @@ impl WebpEncoder {
         w: u32,
         h: u32,
         stride_pixels: usize,
-    ) -> Result<EncodeOutput, EncodeError> {
+    ) -> Result<EncodeOutput, At<EncodeError>> {
         self.limits
             .check_dimensions(w, h)
-            .map_err(|e| EncodeError::LimitExceeded(alloc::format!("{e}")))?;
+            .map_err(|e| at!(EncodeError::LimitExceeded(alloc::format!("{e}"))))?;
         let bpp = layout.bytes_per_pixel() as u64;
         let estimated_mem = w as u64 * h as u64 * bpp;
         self.limits
             .check_memory(estimated_mem)
-            .map_err(|e| EncodeError::LimitExceeded(alloc::format!("{e}")))?;
+            .map_err(|e| at!(EncodeError::LimitExceeded(alloc::format!("{e}"))))?;
 
         let mut req =
             EncodeRequest::new(&self.inner_config, pixels, layout, w, h).with_stride(stride_pixels);
@@ -686,13 +686,13 @@ impl WebpEncoder {
                         SynthesizedIcc::Profile(bytes) => Some(bytes),
                         SynthesizedIcc::NotNeeded => None,
                         outcome => {
-                            return Err(EncodeError::IccSynthesisUnavailable(alloc::format!(
+                            return Err(at!(EncodeError::IccSynthesisUnavailable(alloc::format!(
                                 "CICP primaries {} / transfer {} ({outcome:?}); enable \
                                  zenwebp's `cms` feature, supply an ICC profile, or drop \
                                  the CICP",
                                 cicp.color_primaries,
                                 cicp.transfer_characteristics
-                            )));
+                            ))));
                         }
                     }
                 }
@@ -719,10 +719,10 @@ impl WebpEncoder {
             }
             req = req.with_metadata(meta);
         }
-        let data = req.encode().map_err(|e| e.decompose().0)?;
+        let data = req.encode()?;
         self.limits
             .check_output_size(data.len() as u64)
-            .map_err(|e| EncodeError::LimitExceeded(alloc::format!("{e}")))?;
+            .map_err(|e| at!(EncodeError::LimitExceeded(alloc::format!("{e}"))))?;
         Ok(EncodeOutput::new(data, ImageFormat::WebP))
     }
 }
@@ -919,7 +919,6 @@ impl zencodec::encode::Encoder for WebpEncoder {
     fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<EncodeError>> {
         let (buf, layout, w, h, stride) = pixels_to_webp_input(&pixels)?;
         self.do_encode(&buf, layout, w, h, stride)
-            .map_err(|e| at!(e))
     }
 
     fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), At<EncodeError>> {
@@ -1072,16 +1071,13 @@ impl zencodec::encode::Encoder for WebpEncoder {
                     total_rows,
                     width as usize,
                 )
-                .map_err(|e| at!(e))
             }
             StreamAccum::Raw {
                 pixels,
                 layout,
                 width,
                 total_rows,
-            } => self
-                .do_encode(&pixels, layout, width, total_rows, width as usize)
-                .map_err(|e| at!(e)),
+            } => self.do_encode(&pixels, layout, width, total_rows, width as usize),
         }
     }
 }
@@ -1813,25 +1809,26 @@ impl WebpDecoder<'_> {
         Ok(())
     }
 
-    fn do_decode(&self, data: &[u8]) -> Result<DecodeOutput, DecodeError> {
+    fn do_decode(&self, data: &[u8]) -> Result<DecodeOutput, At<DecodeError>> {
         // Honor cancellation before any work, and never swallow a
         // cancellation from the lossy fast path by retrying the general
         // path — a pre-stopped token must fail the decode.
         if let Some(ref stop) = self.stop {
-            enough::Stop::check(stop).map_err(DecodeError::Cancelled)?;
+            enough::Stop::check(stop).map_err(|e| at!(DecodeError::Cancelled(e)))?;
         }
         self.check_input_size(data)?;
 
         if let Ok(info) = crate::ImageInfo::from_webp(data) {
             self.limits
                 .check_dimensions(info.width, info.height)
-                .map_err(|e| DecodeError::InvalidParameter(alloc::format!("{e}")))?;
+                .map_err(|e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))?;
         }
 
         // Try lossy VP8 direct path (faster, streaming cache)
         match self.do_decode_lossy(data) {
             Ok(result) => return Ok(result),
-            Err(DecodeError::Cancelled(r)) => return Err(DecodeError::Cancelled(r)),
+            // Preserve the cancellation trace — don't retry the general path.
+            Err(e) if matches!(e.error(), DecodeError::Cancelled(_)) => return Err(e),
             Err(_) => {}
         }
 
@@ -1840,7 +1837,7 @@ impl WebpDecoder<'_> {
     }
 
     /// Decode lossy VP8 direct path (with alpha support).
-    fn do_decode_lossy(&self, data: &[u8]) -> Result<DecodeOutput, DecodeError> {
+    fn do_decode_lossy(&self, data: &[u8]) -> Result<DecodeOutput, At<DecodeError>> {
         let dither_strength = self.config.dithering_strength;
 
         // Use DecodeRequest's lossy path which handles container parsing.
@@ -1850,7 +1847,7 @@ impl WebpDecoder<'_> {
         if let Some(ref stop) = self.stop {
             req = req.stop(stop);
         }
-        let (pixels, w, h) = req.decode_rgba_lossy().map_err(|e| e.decompose().0)?;
+        let (pixels, w, h) = req.decode_rgba_lossy()?;
 
         let w = u32::from(w);
         let h = u32::from(h);
@@ -1863,7 +1860,7 @@ impl WebpDecoder<'_> {
 
         let buf = if has_alpha {
             PixelBuffer::from_vec(pixels, w, h, PixelDescriptor::RGBA8_SRGB)
-                .map_err(|_| DecodeError::InvalidParameter("pixel count mismatch".into()))?
+                .map_err(|_| at!(DecodeError::InvalidParameter("pixel count mismatch".into())))?
         } else {
             // Strip alpha channel — lossy path always decodes to RGBA when alpha is present,
             // but for no-alpha images decode_rgba_lossy returns RGBA with alpha=255.
@@ -1871,9 +1868,9 @@ impl WebpDecoder<'_> {
             let pixel_count = (w as usize) * (h as usize);
             let mut rgb = alloc::vec![0u8; pixel_count * 3];
             garb::bytes::rgba_to_rgb(&pixels, &mut rgb)
-                .map_err(|e| DecodeError::InvalidParameter(alloc::format!("{e}")))?;
+                .map_err(|e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))?;
             PixelBuffer::from_vec(rgb, w, h, PixelDescriptor::RGB8_SRGB)
-                .map_err(|_| DecodeError::InvalidParameter("pixel count mismatch".into()))?
+                .map_err(|_| at!(DecodeError::InvalidParameter("pixel count mismatch".into())))?
         };
 
         let native_info = crate::ImageInfo::from_webp(data).ok();
@@ -1895,32 +1892,29 @@ impl WebpDecoder<'_> {
     }
 
     /// General decode path (handles lossless, animation frames, etc.).
-    fn do_decode_general(&self, data: &[u8]) -> Result<DecodeOutput, DecodeError> {
+    fn do_decode_general(&self, data: &[u8]) -> Result<DecodeOutput, At<DecodeError>> {
         let mut req = DecodeRequest::new(&self.config, data);
         if let Some(ref stop) = self.stop {
             req = req.stop(stop);
         }
 
-        let (pixels, w, h, layout) = req.decode().map_err(|e| e.decompose().0)?;
+        let (pixels, w, h, layout) = req.decode()?;
 
         let buf: PixelBuffer = match layout {
             PixelLayout::Rgb8 => PixelBuffer::from_vec(pixels, w, h, PixelDescriptor::RGB8_SRGB)
-                .map_err(|_| DecodeError::InvalidParameter("pixel count mismatch".into()))?,
+                .map_err(|_| at!(DecodeError::InvalidParameter("pixel count mismatch".into())))?,
             PixelLayout::Rgba8 => PixelBuffer::from_vec(pixels, w, h, PixelDescriptor::RGBA8_SRGB)
-                .map_err(|_| DecodeError::InvalidParameter("pixel count mismatch".into()))?,
+                .map_err(|_| at!(DecodeError::InvalidParameter("pixel count mismatch".into())))?,
             _ => {
                 // Fallback: decode as RGBA
                 let rgba_req = DecodeRequest::new(&self.config, data);
                 let (rgba_pixels, rw, rh) = if let Some(ref stop) = self.stop {
-                    rgba_req
-                        .stop(stop)
-                        .decode_rgba()
-                        .map_err(|e| e.decompose().0)?
+                    rgba_req.stop(stop).decode_rgba()?
                 } else {
-                    rgba_req.decode_rgba().map_err(|e| e.decompose().0)?
+                    rgba_req.decode_rgba()?
                 };
                 PixelBuffer::from_vec(rgba_pixels, rw, rh, PixelDescriptor::RGBA8_SRGB)
-                    .map_err(|_| DecodeError::InvalidParameter("pixel count mismatch".into()))?
+                    .map_err(|_| at!(DecodeError::InvalidParameter("pixel count mismatch".into())))?
             }
         };
 
@@ -1967,7 +1961,7 @@ impl zencodec::decode::Decode for WebpDecoder<'_> {
     type Error = At<DecodeError>;
 
     fn decode(self) -> Result<DecodeOutput, At<DecodeError>> {
-        let output = self.do_decode(&self.data).map_err(|e| at!(e))?;
+        let output = self.do_decode(&self.data)?;
         let output = if self.preferred.is_empty() {
             output
         } else {

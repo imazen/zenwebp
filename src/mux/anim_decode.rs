@@ -15,7 +15,7 @@
 //! while let Some(frame) = decoder.next_frame()? {
 //!     println!("frame at {}ms, duration {}ms", frame.timestamp_ms, frame.duration_ms);
 //! }
-//! # Ok::<(), zenwebp::DecodeError>(())
+//! # Ok::<(), whereat::At<zenwebp::DecodeError>>(())
 //! ```
 
 use alloc::vec;

@@ -62,7 +62,7 @@
 //!
 //! let mut output = vec![0u8; decoder.output_buffer_size().unwrap()];
 //! decoder.read_image(&mut output)?;
-//! # Ok::<(), zenwebp::DecodeError>(())
+//! # Ok::<(), whereat::At<zenwebp::DecodeError>>(())
 //! ```
 //!
 //! # ICC Color Profiles
