@@ -12,9 +12,9 @@
 #   pub modules                                 2
 #   pub types (struct/enum/trait/alias)        21
 #   pub consts/statics                          1
-#   free functions                              6
-#   inherent methods                           41
-#   struct fields                              53
+#   free functions                              7
+#   inherent methods                           46
+#   struct fields                              54
 #   enum variants                              18
 #   re-exports                                  8
 #   trait roster entries (type × trait)        42
@@ -26,10 +26,10 @@
 #   decoder                           1
 #   encoder                          22
 #   pixel                             2
-#   sweep                            67
+#   sweep                            74
 #   zencodec                         42
 
-## items (150 lines)
+## items (157 lines)
 
 pub use AblationToggles
 pub use InternalParams
@@ -77,6 +77,7 @@ pub sweep::DroppedAxis::kept: alloc::string::String
 pub struct sweep::LosslessAxes
 pub sweep::LosslessAxes::methods: alloc::vec::Vec<u8>
 pub sweep::LosslessAxes::qualities: alloc::vec::Vec<f32>
+pub fn sweep::LosslessAxes::scalar_dense() -> Self
 pub struct sweep::LosslessVariant
 pub sweep::LosslessVariant::method: u8
 pub sweep::LosslessVariant::quality: f32
@@ -88,6 +89,7 @@ pub sweep::LossyAxes::methods: alloc::vec::Vec<u8>
 pub sweep::LossyAxes::segments: alloc::vec::Vec<core::option::Option<u8>>
 pub sweep::LossyAxes::sharp_yuv: alloc::vec::Vec<bool>
 pub sweep::LossyAxes::sns_strength: alloc::vec::Vec<core::option::Option<u8>>
+pub fn sweep::LossyAxes::scalar_dense() -> Self
 pub struct sweep::LossyVariant
 pub sweep::LossyVariant::filter_sharpness: core::option::Option<u8>
 pub sweep::LossyVariant::filter_strength: core::option::Option<u8>
@@ -106,10 +108,13 @@ pub sweep::SweepAxes::lossless: core::option::Option<sweep::LosslessAxes>
 pub sweep::SweepAxes::lossy: core::option::Option<sweep::LossyAxes>
 pub fn sweep::SweepAxes::modes_full() -> Self
 pub fn sweep::SweepAxes::rd_core() -> Self
+pub fn sweep::SweepAxes::scalar_dense() -> Self
 pub struct sweep::SweepBuilder
 pub fn sweep::SweepBuilder::new(sweep::SweepAxes, sweep::QualityGrid) -> Self
 pub fn sweep::SweepBuilder::plan(&self) -> sweep::SweepPlan
 pub fn sweep::SweepBuilder::with_budget(self, usize) -> Self
+pub fn sweep::SweepBuilder::with_compute_limit(self, u8) -> Self
+pub fn sweep::SweepBuilder::with_max_deviations(self, u8) -> Self
 pub struct sweep::SweepCell
 pub sweep::SweepCell::aliases: alloc::vec::Vec<alloc::string::String>
 pub sweep::SweepCell::deviations: u8
@@ -119,11 +124,13 @@ pub sweep::SweepCell::quality: core::option::Option<f32>
 pub sweep::SweepCell::variant: sweep::SweepVariant
 pub struct sweep::SweepPlan
 pub sweep::SweepPlan::cells: alloc::vec::Vec<sweep::SweepCell>
+pub sweep::SweepPlan::compute_tier_skipped: alloc::vec::Vec<alloc::string::String>
 pub sweep::SweepPlan::dropped: alloc::vec::Vec<sweep::DroppedAxis>
 pub sweep::SweepPlan::duplicates_merged: usize
 pub sweep::SweepPlan::invalid_skipped: alloc::vec::Vec<alloc::string::String>
 pub sweep::SweepPlan::over_budget: bool
 pub sweep::SweepPlan::q_coarsenings: u32
+pub fn sweep::compute_tier(&sweep::SweepVariant) -> u8
 pub fn sweep::fingerprint(&sweep::SweepVariant) -> u64
 pub fn sweep::lossy_internal_probes() -> alloc::vec::Vec<sweep::NamedLossyProbe>
 pub fn sweep::lossy_probe_by_label(&str) -> core::option::Option<sweep::NamedLossyProbe>

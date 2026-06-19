@@ -22,6 +22,21 @@ earlier history lives in git log and LOG.md.)
 
 ### Added
 
+- **`scalar_dense` + compute-budget sweep controls** (`__expert` sweep
+  planner; VARIANT_GENERATION patterns 17–18 — trained-scalar-head &
+  compute-budget): `SweepAxes::scalar_dense()` (plus per-mode
+  `LossyAxes`/`LosslessAxes::scalar_dense()`) pins every categorical axis to
+  its production default and gives each CONTINUOUS knob a dense isolated
+  ladder — the full `method` 0–6 ladder (filling the m0/m1/m3/m5 that
+  `modes_full` skips), and 0,10,…,100 `sns_strength`/`filter_strength` plus
+  0–7 `filter_sharpness` (no-preset defaults left unspelled to avoid
+  byte-aliasing `None`). `compute_tier(&SweepVariant) -> u8` exposes the
+  per-encode CPU ordinal (the `method` level, for both VP8 and VP8L).
+  `SweepBuilder::with_compute_limit(max_tier)` drops cells above the tier
+  (reported in the new `SweepPlan::compute_tier_skipped`, never silently),
+  and `with_max_deviations(max)` keeps main-effects-only cells (1 = one
+  isolated ladder per knob). All additive, behind `__expert`; 3 new tests.
+
 - **SCALAR sweep-axis ladders** (`__expert` sweep planner; dense-sweep program
   / `zenpicker-train --scalar-axes`, zenmetrics `docs/PLAN_SWEEPS.md` §5
   gaps): sns_strength mid-ladder {25, 80} (Drawing/Photo preset constants;
