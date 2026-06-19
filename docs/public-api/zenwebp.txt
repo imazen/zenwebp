@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenwebp.txt 790 lines (supported surface) | zenwebp.features.txt 181 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,mode_debug,picker,pixel-types,std,target-zensim,testable_dispatch,zencodec) | zenwebp.internal.txt 940 lines (1408 hidden + 0 excluded-feature)
+# files: zenwebp.txt 793 lines (supported surface) | zenwebp.features.txt 181 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,mode_debug,picker,pixel-types,std,target-zensim,testable_dispatch,zencodec) | zenwebp.internal.txt 940 lines (1408 hidden + 0 excluded-feature)
 
 ## summary
 #
@@ -17,13 +17,13 @@
 #   inherent methods                          225
 #   struct fields                             220
 #   enum variants                             174
-#   re-exports                                 14
+#   re-exports                                 17
 #   trait roster entries (type × trait)       143
 #   auto-trait-complete types                  33
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                          314
+#   (root)                          317
 #   decoder                          94
 #   detect                           25
 #   encoder                         154
@@ -33,7 +33,7 @@
 #   oneshot                          16
 #   pixel                            11
 
-## items (740 lines)
+## items (743 lines)
 
 pub mod zenwebp
 pub use EncoderConfig
@@ -41,6 +41,9 @@ pub use LosslessConfig
 pub use LossyConfig
 pub use Orientation
 pub use SharpYuvConfig
+pub use Stop
+pub use StopReason
+pub use Unstoppable
 pub use ZensimEncodeMetrics
 pub use ZensimTarget
 pub mod decoder

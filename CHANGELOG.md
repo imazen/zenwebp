@@ -33,6 +33,13 @@ earlier history lives in git log and LOG.md.)
   CHECKS PASSED, every step live
   (`benchmarks/sweep_validate_webp_2026-06-12.tsv`).
 
+- Re-export the cancellation types from `enough` (`Stop`, `StopReason`,
+  `Unstoppable`) at the crate root so callers can reach them as
+  `zenwebp::Stop` / `zenwebp::StopReason` / `zenwebp::Unstoppable` — the token
+  named by `DecodeRequest::stop` / `EncodeRequest::with_stop` and the error in
+  `DecodeError::Cancelled` / `EncodeError::Cancelled` — without adding `enough`
+  to their own `Cargo.toml` (#65).
+
 ### Fixed
 
 - **docs(readme): document the memory-limits + cancellation APIs (advertised

@@ -187,6 +187,18 @@ pub use encoder::{AblationToggles, set_ablation_toggles};
 /// Re-export sharp YUV configuration from zenyuv.
 pub use zenyuv::SharpYuvConfig;
 
+/// Cooperative-cancellation types from the [`enough`] crate, re-exported so
+/// callers can reach them as `zenwebp::Stop` / `zenwebp::StopReason` /
+/// `zenwebp::Unstoppable` without adding `enough` to their own `Cargo.toml`.
+///
+/// These name the cancellation token used by the decode/encode builders
+/// ([`DecodeRequest::stop`], [`WebPDecoder::set_stop`],
+/// [`EncodeRequest::with_stop`]) and the cancellation error carried by
+/// [`DecodeError::Cancelled`] / [`EncodeError::Cancelled`]. Implement
+/// [`Stop`] for a custom cancellation source, or pass [`Unstoppable`] when no
+/// cancellation is needed.
+pub use enough::{Stop, StopReason, Unstoppable};
+
 // #[cfg(feature = "zennode")]
 // pub mod zennode_defs;
 
