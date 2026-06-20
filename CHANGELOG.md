@@ -63,6 +63,22 @@ earlier history lives in git log and LOG.md.)
 
 ### Fixed
 
+- **Fuzz timeout in the `decode_v2` target on a decompression-bomb input**
+  (closes #68) — a 104-byte WebP declaring a 12801×4097 (52 MP / 210 MB) VP8L
+  canvas decoded correctly but, under libFuzzer's sanitizer-coverage
+  instrumentation (~40× slower than release), the fully-bounded linear decode
+  (~0.5s on bare metal) crossed the 25s libFuzzer timeout (measured 21.6s). The
+  decoder is correct and bounded — the library's production `Limits::default()`
+  (120 MP / 1 GB) is intentionally unchanged, and a 52 MP image still decodes —
+  so the fix is in the harness, not the library: `decode_v2` now routes all three
+  decode paths (`decode_rgba`, `decode_rgb`, animation) through a `DecodeRequest`
+  /`AnimationDecoder::new_with_config` carrying restrictive fuzzing limits
+  (4 MP / 64 MB, mirroring zengif's `fuzz_decode` convention), so oversized
+  canvases are rejected at the dimension/memory check in ~26 ms under
+  instrumentation instead of looping over millions of pixels. Regression seed
+  `fuzz/regression/crash-…-issue68-bomb-52mp` + `bomb_seed_rejected_quickly`
+  test gate added.
+
 - **whereat error traces were silently dropped across zenwebp's internal
   decode/encode/mux boundaries** (0ea292fc) — five `From<At<X>> for Y` impls (in
   `decoder/api.rs`, `encoder/api.rs`, and `mux/error.rs`) plus several explicit
