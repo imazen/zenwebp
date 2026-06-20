@@ -21,12 +21,23 @@ earlier history lives in git log and LOG.md.)
   already returned `At<DecodeError>`. `build` no longer silently strips the trace
   through the removed `From<At<DecodeError>> for DecodeError` dropper. Get the
   inner error with `e.error()` / `e.decompose().0`.
+- Drop the `[patch.crates-io]` zencodec git pin and lower the `zencodec`
+  dependency requirement back from `0.1.24` once zencodec `0.1.24` (with the
+  `zencodec::estimate` unified resource-estimation API) publishes to crates.io.
 
 ### Changed
 - Decoder `Limits::default()` raises `max_total_pixels` from 100 MP to 120 MP so
   common ~108 MP camera photos decode under the default policy.
 
 ### Added
+
+- **`estimate_encode_resources` override on `WebpEncoderConfig`** (zencodec
+  feature): implements zencodec's unified `EncoderConfig::estimate_encode_resources`
+  via the existing `heuristics::estimate_encode` model, returning a
+  `zencodec::estimate::ResourceEstimate` (peak-memory range, time, output bytes).
+  WebP encode is single-threaded, so threading is reported as
+  `ThreadingInformation::SERIAL`. Requires zencodec `0.1.24` (git-pinned until it
+  publishes — see QUEUED BREAKING CHANGES).
 
 - **`scalar_dense` + compute-budget sweep controls** (`__expert` sweep
   planner; VARIANT_GENERATION patterns 17–18 — trained-scalar-head &

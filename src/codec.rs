@@ -382,6 +382,23 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
         Some(matches!(self.inner, EncoderConfig::Lossless(_)))
     }
 
+    fn estimate_encode_resources(
+        &self,
+        image: &zencodec::estimate::ImageCharacteristics,
+        compute: &zencodec::estimate::ComputeEnvironment,
+    ) -> zencodec::estimate::ResourceEstimate {
+        use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
+        let bpp = image.descriptor().bytes_per_pixel() as u8;
+        // zenwebp encode is single-threaded; model it as SERIAL.
+        let e =
+            crate::heuristics::estimate_encode(image.width(), image.height(), bpp, &self.inner);
+        ResourceEstimate::new(e.peak_memory_bytes, e.time_ms)
+            .with_peak_range(e.peak_memory_bytes_min, e.peak_memory_bytes_max)
+            .with_output_bytes(e.output_bytes)
+            .with_threading(ThreadingInformation::SERIAL)
+            .at_cores(compute.cores())
+    }
+
     fn with_alpha_quality(self, quality: f32) -> Self {
         self.with_alpha_quality_value(quality)
     }

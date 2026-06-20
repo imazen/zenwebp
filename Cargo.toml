@@ -33,7 +33,7 @@ hashbrown = { version = "0.16", default-features = false, features = ["default-h
 thiserror = { version = "2.0.18", default-features = false }
 whereat = { version = "0.1.5", default-features = false }
 libm = "0.2.16"
-zencodec = { version = "0.1.21", optional = true }
+zencodec = { version = "0.1.24", optional = true }
 # zennode = { path = "../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 zenpixels = { version = "0.2.11", default-features = false }
 # Used by the zencodec encode path to synthesize an ICC profile from a
@@ -87,7 +87,7 @@ zenpng = "0.1.4"
 zenpixels-convert = { version = "0.2.13", features = ["rgb"] }
 # Parity oracle for the deliberately-local EXIF orientation parser
 # (src/exif_orientation.rs, zenwebp#58) — dev-only, consumers pay nothing.
-zencodec = "0.1.21"
+zencodec = "0.1.24"
 jpeg-decoder = "0.3"
 # zenanalyze / zenpredict as path-pinned dev-deps were removed: CI
 # regression-test runs (`cargo build` then `cargo test --test
@@ -422,3 +422,9 @@ opt-level = 2
 
 [profile.test]
 opt-level = 2
+
+[patch.crates-io]
+# TEMPORARY: zencodec::estimate (unified resource-estimation API) is unpublished.
+# Pin to the git rev until zencodec 0.1.24 publishes, then drop this patch and
+# lower the req back.
+zencodec = { git = "https://github.com/imazen/zencodec.git", rev = "0f71295" }
