@@ -422,9 +422,3 @@ opt-level = 2
 
 [profile.test]
 opt-level = 2
-
-[patch.crates-io]
-# TEMPORARY: zencodec::estimate (unified resource-estimation API) is unpublished.
-# Pin to the git rev until zencodec 0.1.24 publishes, then drop this patch and
-# lower the req back.
-zencodec = { git = "https://github.com/imazen/zencodec.git", rev = "0f71295" }

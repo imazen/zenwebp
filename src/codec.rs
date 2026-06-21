@@ -390,11 +390,9 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
         use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
         let bpp = image.descriptor().bytes_per_pixel() as u8;
         // zenwebp encode is single-threaded; model it as SERIAL.
-        let e =
-            crate::heuristics::estimate_encode(image.width(), image.height(), bpp, &self.inner);
-        ResourceEstimate::new(e.peak_memory_bytes, e.time_ms)
-            .with_peak_range(e.peak_memory_bytes_min, e.peak_memory_bytes_max)
-            .with_output_bytes(e.output_bytes)
+        let e = crate::heuristics::estimate_encode(image.width(), image.height(), bpp, &self.inner);
+        ResourceEstimate::new(e.peak_memory_bytes, e.time_ms as u64)
+            .with_peak_max(e.peak_memory_bytes_max)
             .with_threading(ThreadingInformation::SERIAL)
             .at_cores(compute.cores())
     }
@@ -1930,8 +1928,9 @@ impl WebpDecoder<'_> {
                 } else {
                     rgba_req.decode_rgba()?
                 };
-                PixelBuffer::from_vec(rgba_pixels, rw, rh, PixelDescriptor::RGBA8_SRGB)
-                    .map_err(|_| at!(DecodeError::InvalidParameter("pixel count mismatch".into())))?
+                PixelBuffer::from_vec(rgba_pixels, rw, rh, PixelDescriptor::RGBA8_SRGB).map_err(
+                    |_| at!(DecodeError::InvalidParameter("pixel count mismatch".into())),
+                )?
             }
         };
 
