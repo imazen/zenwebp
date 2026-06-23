@@ -759,19 +759,29 @@ pub(crate) fn predictor_avg_body<T: magetypes::simd::backends::U8x16Backend>(
 }
 
 /// Helper: get a mutable reference to a 32-byte array from a slice.
+///
+/// Only the `u8x32` (256-bit) predictor bodies use these, and those run on the
+/// x86_64/AVX2 width path (aarch64/wasm use the native-128-bit `u8x16` bodies),
+/// so the helpers are gated to match their callers.
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn chunk32(data: &mut [u8], offset: usize) -> &mut [u8; 32] {
     data[offset..].first_chunk_mut::<32>().unwrap()
 }
 
 /// Helper: get an immutable reference to a 32-byte array from a slice.
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn chunk32_ref(data: &[u8], offset: usize) -> &[u8; 32] {
     data[offset..].first_chunk::<32>().unwrap()
 }
 
 /// Wide (32-byte) add-from-offset predictor body using u8x32.
-/// On AVX2 this uses native 256-bit ops; on NEON/WASM it decomposes to 2× 128-bit.
+///
+/// Only dispatched on x86_64 (AVX2-native 256-bit); aarch64/wasm use the
+/// native-128-bit `predictor_add_body` (`u8x16`) instead, so this is gated to
+/// match — otherwise it (and its `chunk32` helpers) are dead code there.
+#[cfg(target_arch = "x86_64")]
 fn predictor_add_body_wide<
     T: magetypes::simd::backends::U8x32Backend + magetypes::simd::backends::U8x16Backend,
 >(

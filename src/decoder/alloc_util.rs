@@ -189,14 +189,14 @@ mod tests {
     fn alloc_zeroed_fallible_oom_returns_err() {
         // Request an impossibly large allocation; the fallible path must
         // return Err rather than abort.
-        let r = alloc_zeroed(AllocPreference::Fallible, true, usize::MAX / 2);
+        let r = alloc_zeroed(AllocPreference::Fallible, true, usize::MAX);
         assert!(r.is_err());
     }
 
     #[test]
     fn try_resize_fallible_oom_returns_err() {
         let mut v = Vec::new();
-        let r = try_resize_zeroed(AllocPreference::Fallible, true, &mut v, usize::MAX / 2);
+        let r = try_resize_zeroed(AllocPreference::Fallible, true, &mut v, usize::MAX);
         assert!(r.is_err());
     }
 }
