@@ -431,7 +431,7 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
     /// fleet sweep, 2026-06-23) rather than a linear guess — `100 − 12·d` put
     /// `d = 2.41` at quality 71, but it measures quality 95; the old SSIM2
     /// pass-through over-shot (quality 70 lands near SSIM2 81, not 70). See
-    /// `zenmetrics/benchmarks/codec_metric_to_q_2026-06-23.md`.
+    /// `benchmarks/codec_metric_to_q_2026-06-23.md`.
     ///
     /// The lossy arms switch to VP8 first (`with_lossless(false)`, which
     /// preserves quality/method) so the request is honored and
