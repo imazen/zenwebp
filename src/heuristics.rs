@@ -59,17 +59,19 @@ use crate::encoder::EncoderConfig;
 /// Fixed overhead for lossy encoding (YUV planes, segment structs, token buffers); sized so
 /// `_EST` covers the concave 1-4MP hump (measured 2048² ≈ 19.3 MB; the asymptotic slope alone
 /// would under-predict it).
-const LOSSY_FIXED_OVERHEAD: u64 = 7_000_000;
+const LOSSY_FIXED_OVERHEAD: u64 = 8_500_000;
 /// Lossy bytes/pixel — `_EST` = safe-upper-bound slope (gating), `_MAX` = requested-heap ceiling.
-const LOSSY_BYTES_PER_PIXEL_EST: f64 = 3.2;
+/// `_EST` carries ~10-15% margin over measured (the gating value should be conservative).
+const LOSSY_BYTES_PER_PIXEL_EST: f64 = 3.4;
 const LOSSY_BYTES_PER_PIXEL_MAX: f64 = 8.0;
 
 /// Fixed overhead for lossless encoding (hash chains, histograms, huffman tables); sized so
 /// `_EST` covers the concave mid-range (measured 1024²/2048² need a ~15 MB intercept under the
 /// asymptotic slope).
-const LOSSLESS_FIXED_OVERHEAD: u64 = 16_000_000;
+const LOSSLESS_FIXED_OVERHEAD: u64 = 18_000_000;
 /// Lossless bytes/pixel — `_EST` = safe-upper-bound slope (gating), `_MAX` = requested-heap ceiling.
-const LOSSLESS_BYTES_PER_PIXEL_EST: f64 = 23.0;
+/// `_EST` carries ~10% margin over measured (the gating value should be conservative).
+const LOSSLESS_BYTES_PER_PIXEL_EST: f64 = 24.0;
 const LOSSLESS_BYTES_PER_PIXEL_MAX: f64 = 28.0;
 
 // =============================================================================
