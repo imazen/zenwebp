@@ -34,6 +34,28 @@ earlier history lives in git log and LOG.md.)
 
 ### Added
 
+- **Honor `zencodec::AllocPreference` (3-mode, per-site) at untrusted decode
+  allocations** (zencodec feature): the big buffers sized from decoded header
+  dimensions — the final RGB/RGBA output, the VP8 row cache, the streaming
+  strip buffer, the lossless ARGB plane / RGBA-expansion scratch, and the
+  animation canvas — now route through a per-site fallibility policy
+  (`src/decoder/alloc_util.rs`). The zencodec adapter sets it from
+  `ResourceLimits::prefer_fallible_allocations` at the decode boundary:
+  `CodecDefault` keeps each site's default (big header-sized sites fallible
+  `try_reserve` → graceful `MemoryLimitExceeded`; bounded per-row/scratch stay
+  infallible `vec!`); `Fallible`/`Infallible` force one path everywhere. The
+  native decode API is unchanged (always `CodecDefault`). Added `checked_mul`
+  guards on the streaming strip-buffer size. No public API change.
+
+- **`estimate_decode_resources` override on `WebpDecoderConfig`** (zencodec
+  feature): implements zencodec's unified
+  `DecoderConfig::estimate_decode_resources` via the existing
+  `heuristics::estimate_decode` model — peak = output buffer + VP8 working set
+  (decoder state + ~12 B/px for the row cache, reconstruction buffer and
+  loop-filter accumulator), reported as `ThreadingInformation::SERIAL`
+  (zenwebp decode is single-threaded). Returns a
+  `zencodec::estimate::ResourceEstimate`.
+
 - **`estimate_encode_resources` override on `WebpEncoderConfig`** (zencodec
   feature): implements zencodec's unified `EncoderConfig::estimate_encode_resources`
   via the existing `heuristics::estimate_encode` model, returning a

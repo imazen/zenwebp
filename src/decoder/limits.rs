@@ -46,6 +46,18 @@ pub struct Limits {
 
     /// Maximum memory usage in bytes during decoding.
     pub max_memory: Option<u64>,
+
+    /// Per-site allocation fallibility policy for untrusted decode buffers.
+    ///
+    /// Internal: not part of the public `Limits` surface (the struct is
+    /// `#[non_exhaustive]`, so external code can neither read nor construct
+    /// this field). The native decode API always leaves it at
+    /// [`CodecDefault`](super::alloc_util::AllocPreference::CodecDefault); the
+    /// `zencodec` adapter sets it from `ResourceLimits::prefer_fallible_allocations`
+    /// at the decode boundary so a caller can force the big untrusted-sized
+    /// allocations (output buffer, VP8 row cache, lossless plane) onto the
+    /// fallible `try_reserve` path.
+    pub(crate) alloc_pref: super::alloc_util::AllocPreference,
 }
 
 impl Default for Limits {
@@ -64,6 +76,7 @@ impl Default for Limits {
             max_frame_count: Some(10_000),
             max_file_size: Some(100 * 1024 * 1024),
             max_memory: Some(1024 * 1024 * 1024),
+            alloc_pref: super::alloc_util::AllocPreference::CodecDefault,
         }
     }
 }
@@ -81,7 +94,20 @@ impl Limits {
             max_frame_count: None,
             max_file_size: None,
             max_memory: None,
+            alloc_pref: super::alloc_util::AllocPreference::CodecDefault,
         }
+    }
+
+    /// Set the per-site allocation fallibility policy (internal).
+    ///
+    /// Used by the `zencodec` adapter to honor
+    /// `ResourceLimits::prefer_fallible_allocations`. Only the `zencodec` layer
+    /// sets a non-default policy, so this is dead code without that feature.
+    #[must_use]
+    #[cfg_attr(not(feature = "zencodec"), allow(dead_code))]
+    pub(crate) fn with_alloc_pref(mut self, pref: super::alloc_util::AllocPreference) -> Self {
+        self.alloc_pref = pref;
+        self
     }
 
     /// Set maximum dimensions.

@@ -129,7 +129,11 @@ impl DecoderContext {
         let output_size = pixel_count
             .checked_mul(bpp)
             .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
-        output.resize(output_size, 0);
+        // Full-image RGB/RGBA output sized from the decoded header dimensions →
+        // fallible by default (graceful OOM on a malicious header). A reused
+        // output buffer with enough capacity allocates nothing.
+        crate::decoder::alloc_util::try_resize_zeroed(self.alloc_pref, true, output, output_size)
+            .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
 
         if self.tables.extra_y_rows >= 2 {
             // Streaming path: convert cache rows directly to RGB.
@@ -189,9 +193,16 @@ impl DecoderContext {
             .checked_mul(chroma_w)
             .ok_or(InternalDecodeError::BitStreamError)?;
 
-        self.ybuf.resize(ybuf_len, 0);
-        self.ubuf.resize(uvbuf_len, 0);
-        self.vbuf.resize(uvbuf_len, 0);
+        // Full-frame Y/U/V buffers sized from the (untrusted) header macroblock
+        // dimensions → fallible by default (graceful OOM on a malicious
+        // header). Reused buffers with enough capacity allocate nothing.
+        use crate::decoder::alloc_util::try_resize_zeroed;
+        try_resize_zeroed(self.alloc_pref, true, &mut self.ybuf, ybuf_len)
+            .map_err(|_| InternalDecodeError::MemoryLimitExceeded)?;
+        try_resize_zeroed(self.alloc_pref, true, &mut self.ubuf, uvbuf_len)
+            .map_err(|_| InternalDecodeError::MemoryLimitExceeded)?;
+        try_resize_zeroed(self.alloc_pref, true, &mut self.vbuf, uvbuf_len)
+            .map_err(|_| InternalDecodeError::MemoryLimitExceeded)?;
 
         for mby in 0..mbheight {
             self.process_mb_row(mby)?;

@@ -1543,8 +1543,12 @@ impl<'a> EncodeRequest<'a> {
             // through. Take the safe path.
             return Ok(None);
         }
-        let pair = lossy
-            .encode_pixels_with_metrics(self.pixels, self.color_type, self.width, self.height)?;
+        let pair = lossy.encode_pixels_with_metrics(
+            self.pixels,
+            self.color_type,
+            self.width,
+            self.height,
+        )?;
         Ok(Some(pair))
     }
 

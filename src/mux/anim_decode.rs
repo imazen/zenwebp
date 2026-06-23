@@ -18,7 +18,6 @@
 //! # Ok::<(), whereat::At<zenwebp::DecodeError>>(())
 //! ```
 
-use alloc::vec;
 use alloc::vec::Vec;
 
 #[allow(unused_imports)]
@@ -110,7 +109,12 @@ impl<'a> AnimationDecoder<'a> {
         let buf_size = decoder
             .output_buffer_size()
             .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
-        let buf = vec![0u8; buf_size];
+        // Canvas-sized animation frame buffer (from the decoded header
+        // dimensions) → fallible by default (graceful OOM on a malicious
+        // header).
+        let buf =
+            crate::decoder::alloc_util::alloc_zeroed(config.limits.alloc_pref, true, buf_size)
+                .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
         Ok(Self {
             decoder,
             buf,

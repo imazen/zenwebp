@@ -108,12 +108,21 @@ impl<'a> LosslessDecoder<'a> {
     /// `Limits::check_memory`. Returns a `BitStreamError` mapped from the
     /// limits check failure if the allocation would exceed the budget.
     fn alloc_bytes_checked(&self, size: usize) -> Result<Vec<u8>, InternalDecodeError> {
+        // The lossless ARGB plane is sized from the decoded header dimensions
+        // (`width * height * 4`) → fallible by default. `try_reserve` gives a
+        // graceful `MemoryLimitExceeded` on a malicious header rather than an
+        // abort, on top of the explicit `max_memory` budget check below.
+        let pref = self.limits.map_or(
+            crate::decoder::alloc_util::AllocPreference::CodecDefault,
+            |l| l.alloc_pref,
+        );
         if let Some(limits) = self.limits {
             limits
                 .check_memory(size)
                 .map_err(|_| InternalDecodeError::MemoryLimitExceeded)?;
         }
-        Ok(vec![0; size])
+        crate::decoder::alloc_util::alloc_zeroed(pref, true, size)
+            .map_err(|_| InternalDecodeError::MemoryLimitExceeded)
     }
 
     /// Decodes a frame.

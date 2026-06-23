@@ -2375,7 +2375,9 @@ fn encode_with_partition_retry(
                 writer.extend_from_slice(&trial_buf);
                 return Ok(stats);
             }
-            Err(e) if matches!(e.error(), EncodeError::Partition0Overflow { .. }) && limit < 100 => {
+            Err(e)
+                if matches!(e.error(), EncodeError::Partition0Overflow { .. }) && limit < 100 =>
+            {
                 last_overflow = Some(e);
                 continue;
             }
@@ -2467,7 +2469,9 @@ pub(crate) fn encode_frame_lossy_with_diagnostics(
                 writer.extend_from_slice(&trial_buf);
                 return Ok((stats, diag));
             }
-            Err(e) if matches!(e.error(), EncodeError::Partition0Overflow { .. }) && limit < 100 => {
+            Err(e)
+                if matches!(e.error(), EncodeError::Partition0Overflow { .. }) && limit < 100 =>
+            {
                 last_overflow = Some(e);
                 continue;
             }

@@ -583,6 +583,7 @@ impl<'a> DecodeRequest<'a> {
                 let vp8_data = &data[vp8_start..vp8_end];
 
                 let mut ctx = DecoderContext::new().with_dithering_strength(dither_strength);
+                ctx.set_alloc_pref(self.config.limits.alloc_pref);
                 let mut output = Vec::new();
                 let (w, h) = ctx.decode_to_rgb(vp8_data, &mut output, bpp)?;
                 Ok((output, w, h))
@@ -613,6 +614,7 @@ impl<'a> DecodeRequest<'a> {
                 }
 
                 let mut ctx = DecoderContext::new().with_dithering_strength(dither_strength);
+                ctx.set_alloc_pref(self.config.limits.alloc_pref);
                 let mut output = Vec::new();
 
                 // Decode lossy bitstream, requesting RGBA if alpha is present
@@ -1191,7 +1193,12 @@ impl<'a> WebPDecoder<'a> {
             } else {
                 let alloc_size = self.width as usize * self.height as usize * 4;
                 self.limits.check_memory(alloc_size)?;
-                let mut data = vec![0; alloc_size];
+                // Full-image RGBA scratch sized from the decoded header
+                // dimensions → fallible by default (graceful OOM on a
+                // malicious header).
+                let mut data =
+                    super::alloc_util::alloc_zeroed(self.limits.alloc_pref, true, alloc_size)
+                        .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
                 decoder.decode_frame(self.width, self.height, false, &mut data)?;
                 garb::bytes::rgba_to_rgb(&data, buf).map_err(garb_err)?;
             }
@@ -1211,6 +1218,10 @@ impl<'a> WebPDecoder<'a> {
             self.animation
                 .ctx
                 .set_dithering_strength(self.webp_decode_options.dithering_strength);
+            // Honor the allocation-fallibility policy for the row cache and the
+            // RGB output buffer (set from the zencodec boundary; CodecDefault
+            // on the native API → behavior unchanged).
+            self.animation.ctx.set_alloc_pref(self.limits.alloc_pref);
             let mut output = Vec::new();
             let (w, h) = self
                 .animation
@@ -1308,6 +1319,8 @@ impl<'a> WebPDecoder<'a> {
         self.animation
             .ctx
             .set_dithering_strength(self.webp_decode_options.dithering_strength);
+        // Propagate the allocation-fallibility policy to the reusable context.
+        self.animation.ctx.set_alloc_pref(self.limits.alloc_pref);
 
         // Read normal bitstream now
         let (chunk, chunk_size, chunk_size_rounded) = read_chunk_header(&mut self.r)?;
@@ -1338,7 +1351,15 @@ impl<'a> WebPDecoder<'a> {
                 lossless_decoder.set_limits(Some(&self.limits));
                 let frame_alloc = frame_width as usize * frame_height as usize * 4;
                 self.limits.check_memory(frame_alloc)?;
-                self.animation.frame_scratch.resize(frame_alloc, 0);
+                // Per-frame RGBA scratch sized from the frame header dimensions
+                // → fallible by default (graceful OOM on a malicious header).
+                super::alloc_util::try_resize_zeroed(
+                    self.limits.alloc_pref,
+                    true,
+                    &mut self.animation.frame_scratch,
+                    frame_alloc,
+                )
+                .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
                 lossless_decoder.decode_frame(
                     frame_width,
                     frame_height,
@@ -1525,7 +1546,10 @@ fn decode_native_internal(
     let output_size = decoder
         .output_buffer_size()
         .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
-    let mut pixels = alloc::vec![0u8; output_size];
+    // Final decoded output buffer sized from the decoded header dimensions →
+    // fallible by default (graceful OOM on a malicious header).
+    let mut pixels = super::alloc_util::alloc_zeroed(limits.alloc_pref, true, output_size)
+        .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
     decoder.read_image(&mut pixels)?;
     Ok((pixels, w, h, decoder.has_alpha()))
 }

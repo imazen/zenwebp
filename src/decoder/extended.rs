@@ -1,4 +1,3 @@
-use alloc::vec;
 use alloc::vec::Vec;
 
 #[allow(unused_imports)]
@@ -363,12 +362,18 @@ pub(crate) fn read_alpha_chunk(
         let mut decoder = LosslessDecoder::new(alpha_data);
         decoder.set_limits(Some(limits));
 
-        let mut rgba_data = vec![0; rgba_size];
+        // Alpha-as-VP8L scratch + extracted green plane are sized from the
+        // (untrusted) header dimensions → fallible by default.
+        let mut rgba_data =
+            crate::decoder::alloc_util::alloc_zeroed(limits.alloc_pref, true, rgba_size)
+                .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
         decoder.decode_frame(u32::from(width), u32::from(height), true, &mut rgba_data)?;
 
         let green_size = usize::from(width) * usize::from(height);
         limits.check_memory(green_size)?;
-        let mut green = vec![0; green_size];
+        let mut green =
+            crate::decoder::alloc_util::alloc_zeroed(limits.alloc_pref, true, green_size)
+                .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
         for (rgba_val, green_val) in rgba_data.chunks_exact(4).zip(green.iter_mut()) {
             *green_val = rgba_val[1];
         }

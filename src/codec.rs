@@ -35,6 +35,26 @@ use crate::encoder::config::EncoderConfig;
 use crate::mux::{AnimationConfig, AnimationDecoder, AnimationEncoder, MuxError};
 use crate::{DecodeConfig, DecodeError, DecodeRequest, EncodeError, EncodeRequest, PixelLayout};
 
+/// Convert the public [`zencodec::AllocPreference`] into the decoder-internal
+/// [`crate::decoder::alloc_util::AllocPreference`] mirror.
+///
+/// This is the single boundary where the optional `zencodec` policy crosses
+/// into the codec-agnostic decoder. The native decode API never reaches here,
+/// so it always sees [`CodecDefault`](crate::decoder::alloc_util::AllocPreference::CodecDefault).
+#[inline]
+fn alloc_pref_from_zencodec(
+    pref: zencodec::AllocPreference,
+) -> crate::decoder::alloc_util::AllocPreference {
+    use crate::decoder::alloc_util::AllocPreference as Internal;
+    match pref {
+        zencodec::AllocPreference::Fallible => Internal::Fallible,
+        zencodec::AllocPreference::Infallible => Internal::Infallible,
+        // CodecDefault and any future #[non_exhaustive] variant → defer to the
+        // per-site default.
+        _ => Internal::CodecDefault,
+    }
+}
+
 // ── Encoding ────────────────────────────────────────────────────────────────
 
 /// WebP encoder configuration implementing [`zencodec::encode::EncoderConfig`].
@@ -1323,6 +1343,25 @@ impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
         &DECODE_CAPABILITIES
     }
 
+    fn estimate_decode_resources(
+        &self,
+        image: &zencodec::estimate::ImageCharacteristics,
+        compute: &zencodec::estimate::ComputeEnvironment,
+    ) -> zencodec::estimate::ResourceEstimate {
+        use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
+        let bpp = image.descriptor().bytes_per_pixel() as u8;
+        // `estimate_decode` returns the VP8 working set (fixed decoder state +
+        // ~12 B/px for the row cache, reconstruction buffer and loop-filter
+        // accumulator) separately from the output buffer; peak holds both at
+        // once. zenwebp decode is single-threaded (the 2-thread pipeline was
+        // measured net-negative — see CLAUDE.md), so model it as SERIAL.
+        let d = crate::heuristics::estimate_decode(image.width(), image.height(), bpp);
+        let peak = d.peak_memory_bytes.saturating_add(d.output_bytes);
+        ResourceEstimate::new(peak, d.time_ms as u64)
+            .with_threading(ThreadingInformation::SERIAL)
+            .at_cores(compute.cores())
+    }
+
     fn job<'a>(self) -> Self::Job<'a> {
         WebpDecodeJob {
             config: self,
@@ -1409,6 +1448,12 @@ impl WebpDecodeJob {
         if let Some(max_frames) = self.limits.max_frames {
             cfg.limits = cfg.limits.max_frame_count(max_frames as u64);
         }
+        // Honor the allocation-fallibility preference for the big
+        // untrusted-sized decode buffers (output, VP8 row cache, lossless
+        // plane). The native decode API leaves this at CodecDefault.
+        cfg.limits = cfg.limits.with_alloc_pref(alloc_pref_from_zencodec(
+            self.limits.prefer_fallible_allocations,
+        ));
         cfg
     }
 
@@ -1580,6 +1625,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                     preferred,
                     info,
                     dither_strength,
+                    cfg.limits.alloc_pref,
                 )
             }
             b"VP8X" => {
@@ -1655,6 +1701,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                     preferred,
                     info,
                     dither_strength,
+                    cfg.limits.alloc_pref,
                 )
             }
             b"VP8L" => Err(at!(DecodeError::UnsupportedFeature(
@@ -2159,9 +2206,13 @@ impl WebpStreamingDecoder {
         preferred: &[PixelDescriptor],
         info: ImageInfo,
         dither_strength: u8,
+        alloc_pref: crate::decoder::alloc_util::AllocPreference,
     ) -> Result<Self, At<DecodeError>> {
         let mut ctx =
             crate::decoder::vp8v2::DecoderContext::new().with_dithering_strength(dither_strength);
+        // Set the allocation-fallibility policy BEFORE `read_frame_header`,
+        // which triggers `ensure_capacity` (the untrusted-sized VP8 row cache).
+        ctx.set_alloc_pref(alloc_pref);
         ctx.read_frame_header(vp8_data)?;
 
         let width = ctx.width();
@@ -2200,8 +2251,15 @@ impl WebpStreamingDecoder {
         // Max strip rows: last MB row may emit extra_y_rows + 16 rows.
         // For the first row of a single-row image, it's 16.
         let max_strip_rows = if mbheight == 1 { 16 } else { extra_y_rows + 16 };
-        let strip_buf_size = usize::from(width) * max_strip_rows * effective_bpp;
-        let strip_buf = alloc::vec![0u8; strip_buf_size];
+        // One strip's worth of output, sized from the (untrusted) header width →
+        // fallible by default. Guard the size against overflow from malicious
+        // dimensions before allocating.
+        let strip_buf_size = usize::from(width)
+            .checked_mul(max_strip_rows)
+            .and_then(|n| n.checked_mul(effective_bpp))
+            .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
+        let strip_buf = crate::decoder::alloc_util::alloc_zeroed(alloc_pref, true, strip_buf_size)
+            .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
 
         Ok(Self {
             ctx,
@@ -3521,6 +3579,116 @@ mod tests {
         let height = buf.height();
         let desc = buf.descriptor();
         (buf.into_vec(), width, height, desc)
+    }
+
+    /// Decode `data` under the given [`AllocPreference`] (via the zencodec
+    /// `ResourceLimits` boundary) and return the raw decoded bytes.
+    fn decode_with_alloc_pref(
+        data: &[u8],
+        pref: Option<zencodec::AllocPreference>,
+    ) -> alloc::vec::Vec<u8> {
+        use zencodec::ResourceLimits;
+        use zencodec::decode::DecodeJob;
+        let job = WebpDecoderConfig::new().job();
+        let job = match pref {
+            Some(p) => job.with_limits(ResourceLimits::none().with_prefer_fallible_allocations(p)),
+            None => job,
+        };
+        job.decoder(Cow::Borrowed(data), &[])
+            .unwrap()
+            .decode()
+            .unwrap()
+            .into_buffer()
+            .into_vec()
+    }
+
+    /// Decoding with `AllocPreference::Fallible` (the `try_reserve` path) and
+    /// `Infallible` (the `vec!` path) must each produce byte-identical pixels
+    /// to the default (`CodecDefault`) decode, for every decode path that has
+    /// an untrusted-sized allocation (lossy VP8, lossy+alpha VP8X, lossless
+    /// VP8L). The allocation policy must change *how* memory is obtained, never
+    /// *what* is decoded.
+    #[test]
+    fn fallible_alloc_decode_matches_default() {
+        let assert_all_modes_agree = |data: &[u8], label: &str| {
+            let default = decode_with_alloc_pref(data, None);
+            let fallible = decode_with_alloc_pref(data, Some(zencodec::AllocPreference::Fallible));
+            let infallible =
+                decode_with_alloc_pref(data, Some(zencodec::AllocPreference::Infallible));
+            assert!(!default.is_empty(), "{label}: decode produced no bytes");
+            assert_eq!(
+                default, fallible,
+                "{label}: Fallible decode must be byte-identical to the default"
+            );
+            assert_eq!(
+                default, infallible,
+                "{label}: Infallible decode must be byte-identical to the default"
+            );
+        };
+
+        // (1) Lossy VP8, no alpha → streaming cache + RGB output buffer.
+        let rgb = make_rgb8_pixels(96, 64);
+        let lossy = WebpEncoderConfig::lossy()
+            .with_quality(85.0)
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(rgb.as_slice())
+            .unwrap();
+        assert_all_modes_agree(lossy.data(), "lossy-rgb");
+
+        // (2) Lossy VP8 + ALPH → adds the alpha plane to the streaming path.
+        let rgba = make_rgba8_pixels(48, 48);
+        let lossy_alpha = WebpEncoderConfig::lossy()
+            .with_quality(90.0)
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(rgba.as_slice())
+            .unwrap();
+        assert_all_modes_agree(lossy_alpha.data(), "lossy-rgba");
+
+        // (3) Lossless VP8L → the ARGB plane + RGBA expansion buffers.
+        let lossless = WebpEncoderConfig::lossless()
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(rgba.as_slice())
+            .unwrap();
+        assert_all_modes_agree(lossless.data(), "lossless-rgba");
+    }
+
+    /// `estimate_decode_resources` must report a non-trivial peak (output
+    /// buffer + VP8 working set), a SERIAL thread plan, and scale its peak with
+    /// image area.
+    #[test]
+    fn estimate_decode_resources_reports_peak_and_serial() {
+        use zencodec::decode::DecoderConfig;
+        use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics};
+
+        let cfg = WebpDecoderConfig::new();
+        let compute = ComputeEnvironment::default();
+
+        let small = ImageCharacteristics::new(256, 256, PixelDescriptor::RGBA8_SRGB);
+        let large = ImageCharacteristics::new(2048, 2048, PixelDescriptor::RGBA8_SRGB);
+
+        let es = cfg.estimate_decode_resources(&small, &compute);
+        let el = cfg.estimate_decode_resources(&large, &compute);
+
+        // Peak must at least cover the output buffer (256*256*4 = 262_144).
+        assert!(
+            es.peak_memory_bytes_est().unwrap() >= 256 * 256 * 4,
+            "peak must cover the output buffer"
+        );
+        // Peak scales with area (64x the pixels → strictly larger peak).
+        assert!(
+            el.peak_memory_bytes_est().unwrap() > es.peak_memory_bytes_est().unwrap(),
+            "peak must grow with image area"
+        );
+        // zenwebp decode is single-threaded.
+        let threading = es.threading().expect("decode estimate declares threading");
+        assert!(!threading.is_parallel());
+        assert_eq!(threading.max_efficient_threads(), Some(1));
     }
 
     /// Exact byte-for-byte parity between `push_decoder` and the full-decode

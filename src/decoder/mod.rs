@@ -1,5 +1,6 @@
 //! WebP decoder implementation
 
+pub(crate) mod alloc_util;
 mod alpha_blending;
 mod api;
 pub(crate) mod arithmetic;

@@ -105,6 +105,14 @@ pub struct DecoderContext {
     // ---- Reuse tracking ----
     pub(super) last_mbwidth: u16,
     pub(super) last_mbheight: u16,
+
+    /// Per-site allocation fallibility policy for the header-dimension-sized
+    /// row cache and RGB output buffer. Default
+    /// [`CodecDefault`](crate::decoder::alloc_util::AllocPreference::CodecDefault);
+    /// the `zencodec` adapter sets it from
+    /// `ResourceLimits::prefer_fallible_allocations` so a caller can force the
+    /// untrusted-sized cache/output allocations onto the fallible path.
+    pub(super) alloc_pref: crate::decoder::alloc_util::AllocPreference,
 }
 
 impl DecoderContext {
@@ -159,7 +167,15 @@ impl DecoderContext {
 
             last_mbwidth: 0,
             last_mbheight: 0,
+
+            alloc_pref: crate::decoder::alloc_util::AllocPreference::CodecDefault,
         }
+    }
+
+    /// Set the per-site allocation fallibility policy for the row cache and
+    /// RGB output buffer (used by the `zencodec` adapter).
+    pub(crate) fn set_alloc_pref(&mut self, pref: crate::decoder::alloc_util::AllocPreference) {
+        self.alloc_pref = pref;
     }
 
     /// Pixel width after header parse.
@@ -248,9 +264,18 @@ impl DecoderContext {
         // Cache buffers: resize only grows (no fill needed — all data is
         // overwritten during prediction before it is read). Only the extra
         // rows region needs initialization for the first MB row's filter.
-        self.cache_y.resize(cache_y_size, 0);
-        self.cache_u.resize(cache_uv_size, 0);
-        self.cache_v.resize(cache_uv_size, 0);
+        //
+        // These are sized from the (untrusted) header macroblock dimensions →
+        // fallible by default: a malicious header yields a graceful
+        // `MemoryLimitExceeded` rather than an allocation abort. Reused buffers
+        // that already have the capacity allocate nothing on either path.
+        use crate::decoder::alloc_util::try_resize_zeroed;
+        try_resize_zeroed(self.alloc_pref, true, &mut self.cache_y, cache_y_size)
+            .map_err(|_| DecodeError::MemoryLimitExceeded)?;
+        try_resize_zeroed(self.alloc_pref, true, &mut self.cache_u, cache_uv_size)
+            .map_err(|_| DecodeError::MemoryLimitExceeded)?;
+        try_resize_zeroed(self.alloc_pref, true, &mut self.cache_v, cache_uv_size)
+            .map_err(|_| DecodeError::MemoryLimitExceeded)?;
 
         // Initialize extra rows region (filter context for first MB row).
         // Only fills the small extra region, not the entire cache.
