@@ -334,6 +334,19 @@ fn calibrated_webp_quality(generic_q: f32) -> f32 {
     interp_quality(TABLE, generic_q)
 }
 
+/// Set the **native** VP8 quality dial directly, bypassing the generic→native
+/// [`calibrated_webp_quality`] remap. The Fidelity metric tables were swept
+/// against the native dial (`LossyConfig::with_quality`, the same entry point
+/// the zenmetrics omni fleet sweep used), so a table value must reach the
+/// encoder un-recalibrated; routing it through `with_generic_quality` would
+/// re-apply the calibration and encode at the wrong quality.
+fn set_native_quality(mut cfg: WebpEncoderConfig, q: f32) -> WebpEncoderConfig {
+    let clamped = q.clamp(0.0, 100.0);
+    cfg.trait_quality = Some(clamped);
+    cfg.inner = cfg.inner.with_quality(clamped);
+    cfg
+}
+
 /// Piecewise linear interpolation with clamping at table bounds.
 fn interp_quality(table: &[(f32, f32)], x: f32) -> f32 {
     if x <= table[0].0 {
@@ -472,11 +485,11 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
             }
             Fidelity::Lossy(LossyTarget::ApproxSsim2(s)) => {
                 let q = interp_quality(SSIM2_TO_Q, s).clamp(0.0, 100.0);
-                self.with_lossless(false).with_generic_quality(q)
+                set_native_quality(self.with_lossless(false), q)
             }
             Fidelity::Lossy(LossyTarget::ApproxButteraugli(d)) => {
                 let q = interp_quality(BUTTER_MAX_TO_Q, d).clamp(0.0, 100.0);
-                self.with_lossless(false).with_generic_quality(q)
+                set_native_quality(self.with_lossless(false), q)
             }
             // `Fidelity` / `LossyTarget` are `#[non_exhaustive]`.
             _ => self.with_lossless(false),
