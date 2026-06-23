@@ -45,22 +45,25 @@ use crate::encoder::EncoderConfig;
 // no C malloc. Measurements are from callgrind + heaptrack runs.
 // =============================================================================
 
-/// Fixed overhead for lossy encoding (~200KB for segment structs, token buffer init, etc.)
-const LOSSY_FIXED_OVERHEAD: u64 = 200_000;
+// Heaptrack/VmHWM-calibrated 2026-06-23 (benchmarks/zenwebp_encode_mem_2026-06-23.tsv,
+// bike.png 256²..4096² × lossy/lossless × method{0,2,4,6} × q{50,85}, R²≥0.986).
+// Encode memory is ~METHOD-INDEPENDENT (the method knob changes CPU time, not the
+// working set — measured slope is flat across methods). Two tiers: _EST = touched RSS
+// (VmHWM marginal, the typical physical cost); _MAX = requested heap (heaptrack peak,
+// the conservative ceiling). Lossy reserves ~2.7× what it touches (3.1 vs 8.0 B/px),
+// lossless ~1.3× (22 vs 28 B/px), so the tiers need separate slopes, not a flat mult.
 
-/// Bytes per pixel for lossy encoding.
-/// Includes: YUV planes (1.5x), prediction buffers, token storage, reconstruction.
-/// Methods 0-2 use slightly less (no trellis), methods 3+ use more.
-const LOSSY_BYTES_PER_PIXEL_LOW: f64 = 12.0;
-const LOSSY_BYTES_PER_PIXEL_HIGH: f64 = 16.0;
+/// Fixed overhead for lossy encoding (YUV planes setup, segment structs, token buffers).
+const LOSSY_FIXED_OVERHEAD: u64 = 2_700_000;
+/// Lossy bytes/pixel — `_EST` = touched RSS (typical), `_MAX` = requested heap (ceiling).
+const LOSSY_BYTES_PER_PIXEL_EST: f64 = 3.1;
+const LOSSY_BYTES_PER_PIXEL_MAX: f64 = 8.0;
 
-/// Fixed overhead for lossless encoding (~500KB for hash chains, huffman tables).
-const LOSSLESS_FIXED_OVERHEAD: u64 = 500_000;
-
-/// Bytes per pixel for lossless encoding.
-/// Method 0 uses less (simpler LZ77), higher methods use more (histogram clustering).
-const LOSSLESS_BYTES_PER_PIXEL_LOW: f64 = 20.0;
-const LOSSLESS_BYTES_PER_PIXEL_HIGH: f64 = 32.0;
+/// Fixed overhead for lossless encoding (hash chains, histograms, huffman tables).
+const LOSSLESS_FIXED_OVERHEAD: u64 = 8_000_000;
+/// Lossless bytes/pixel — `_EST` = touched RSS (typical), `_MAX` = requested heap (ceiling).
+const LOSSLESS_BYTES_PER_PIXEL_EST: f64 = 22.0;
+const LOSSLESS_BYTES_PER_PIXEL_MAX: f64 = 28.0;
 
 // =============================================================================
 // Decoder constants
@@ -132,30 +135,25 @@ pub fn estimate_encode(width: u32, height: u32, bpp: u8, config: &EncoderConfig)
     let method = config.get_method();
     let is_lossless = config.is_lossless();
 
-    let (fixed, bpp_low, bpp_high) = if is_lossless {
+    // Method-independent working set; two measured tiers. `method` still drives the
+    // time estimate below, just not memory.
+    let (fixed, bpp_est, bpp_max) = if is_lossless {
         (
             LOSSLESS_FIXED_OVERHEAD,
-            LOSSLESS_BYTES_PER_PIXEL_LOW,
-            LOSSLESS_BYTES_PER_PIXEL_HIGH,
+            LOSSLESS_BYTES_PER_PIXEL_EST,
+            LOSSLESS_BYTES_PER_PIXEL_MAX,
         )
     } else {
         (
             LOSSY_FIXED_OVERHEAD,
-            LOSSY_BYTES_PER_PIXEL_LOW,
-            LOSSY_BYTES_PER_PIXEL_HIGH,
+            LOSSY_BYTES_PER_PIXEL_EST,
+            LOSSY_BYTES_PER_PIXEL_MAX,
         )
     };
 
-    // Interpolate bytes/pixel based on method (0=low, 6=high)
-    let t = (method as f64) / 6.0;
-    let bpp_base = bpp_low + t * (bpp_high - bpp_low);
-
-    let base_memory = fixed + (pixels as f64 * bpp_base) as u64;
-
-    // Content-dependent multipliers
-    let peak_memory_bytes_min = (base_memory as f64 * 0.8) as u64;
-    let peak_memory_bytes = base_memory;
-    let peak_memory_bytes_max = (base_memory as f64 * 1.8) as u64;
+    let peak_memory_bytes = fixed + (pixels as f64 * bpp_est) as u64;
+    let peak_memory_bytes_max = fixed + (pixels as f64 * bpp_max) as u64;
+    let peak_memory_bytes_min = (peak_memory_bytes as f64 * 0.85) as u64;
 
     // Output estimate
     let output_ratio = if is_lossless {
