@@ -46,23 +46,30 @@ use crate::encoder::EncoderConfig;
 // =============================================================================
 
 // Heaptrack/VmHWM-calibrated 2026-06-23 (benchmarks/zenwebp_encode_mem_2026-06-23.tsv,
-// bike.png 256²..4096² × lossy/lossless × method{0,2,4,6} × q{50,85}, R²≥0.986).
-// Encode memory is ~METHOD-INDEPENDENT (the method knob changes CPU time, not the
-// working set — measured slope is flat across methods). Two tiers: _EST = touched RSS
-// (VmHWM marginal, the typical physical cost); _MAX = requested heap (heaptrack peak,
-// the conservative ceiling). Lossy reserves ~2.7× what it touches (3.1 vs 8.0 B/px),
-// lossless ~1.3× (22 vs 28 B/px), so the tiers need separate slopes, not a flat mult.
+// bike.png 256²..4096² × lossy/lossless × method{0,2,4,6} × q{50,85}). Method-INDEPENDENT
+// (the method knob changes CPU time, not the working set). Admission control gates on
+// `_EST`, so `_EST` is fit as a SAFE UPPER BOUND: it clears every measured cell — including
+// the concave 1-4MP working-set hump that a least-squares line under-fits (webp memory vs
+// size is sub-linear: lossy 14.7→3.0 B/px over 256²→4096²) — so it never under-predicts the
+// gating value. It is intentionally loose at small sizes: the raised intercept that covers
+// the mid-range concavity over-predicts tiny images, which is harmless (cheap to over-reserve)
+// and per the gating semantics the est need not be tight, only safe. `_MAX` = requested heap
+// (heaptrack peak) — a loose ceiling, NOT the gate, so it need not be close.
 
-/// Fixed overhead for lossy encoding (YUV planes setup, segment structs, token buffers).
-const LOSSY_FIXED_OVERHEAD: u64 = 2_700_000;
-/// Lossy bytes/pixel — `_EST` = touched RSS (typical), `_MAX` = requested heap (ceiling).
-const LOSSY_BYTES_PER_PIXEL_EST: f64 = 3.1;
+/// Fixed overhead for lossy encoding (YUV planes, segment structs, token buffers); sized so
+/// `_EST` covers the concave 1-4MP hump (measured 2048² ≈ 19.3 MB; the asymptotic slope alone
+/// would under-predict it).
+const LOSSY_FIXED_OVERHEAD: u64 = 7_000_000;
+/// Lossy bytes/pixel — `_EST` = safe-upper-bound slope (gating), `_MAX` = requested-heap ceiling.
+const LOSSY_BYTES_PER_PIXEL_EST: f64 = 3.2;
 const LOSSY_BYTES_PER_PIXEL_MAX: f64 = 8.0;
 
-/// Fixed overhead for lossless encoding (hash chains, histograms, huffman tables).
-const LOSSLESS_FIXED_OVERHEAD: u64 = 8_000_000;
-/// Lossless bytes/pixel — `_EST` = touched RSS (typical), `_MAX` = requested heap (ceiling).
-const LOSSLESS_BYTES_PER_PIXEL_EST: f64 = 22.0;
+/// Fixed overhead for lossless encoding (hash chains, histograms, huffman tables); sized so
+/// `_EST` covers the concave mid-range (measured 1024²/2048² need a ~15 MB intercept under the
+/// asymptotic slope).
+const LOSSLESS_FIXED_OVERHEAD: u64 = 16_000_000;
+/// Lossless bytes/pixel — `_EST` = safe-upper-bound slope (gating), `_MAX` = requested-heap ceiling.
+const LOSSLESS_BYTES_PER_PIXEL_EST: f64 = 23.0;
 const LOSSLESS_BYTES_PER_PIXEL_MAX: f64 = 28.0;
 
 // =============================================================================
