@@ -407,9 +407,18 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
     ///
     /// - `Lossless` → VP8L lossless.
     /// - `Lossy(CodecSpecificQuality(q))` → the VP8 quality dial.
-    /// - `Lossy(ApproxSsim2(s))` → mapped onto the quality dial (WebP has no
-    ///   native SSIM2 loop here; reported as `codec_quality`).
-    /// - `Lossy(ApproxButteraugli(d))` → coarse-mapped onto the quality dial.
+    /// - `Lossy(ApproxSsim2(s))` → the VP8 quality that *measured* SSIM2 `s` on
+    ///   the omni fleet sweep (WebP has no native SSIM2 loop; reported as
+    ///   `codec_quality`).
+    /// - `Lossy(ApproxButteraugli(d))` → the VP8 quality that measured
+    ///   butteraugli max-norm `d`.
+    ///
+    /// The two metric arms interpolate a measured inverse table (median over
+    /// 600 images × 3 knobs × 15 q from the cvvdp-v15rc / multi-codec omni
+    /// fleet sweep, 2026-06-23) rather than a linear guess — `100 − 12·d` put
+    /// `d = 2.41` at quality 71, but it measures quality 95; the old SSIM2
+    /// pass-through over-shot (quality 70 lands near SSIM2 81, not 70). See
+    /// `zenmetrics/benchmarks/codec_metric_to_q_2026-06-23.md`.
     ///
     /// The lossy arms switch to VP8 first (`with_lossless(false)`, which
     /// preserves quality/method) so the request is honored and
@@ -417,16 +426,56 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
     /// lossless-configured start.
     fn with_fidelity(self, fidelity: zencodec::encode::Fidelity) -> Self {
         use zencodec::encode::{Fidelity, LossyTarget};
+
+        // Measured metric → VP8-quality inverse tables, sorted ascending by the
+        // metric. `BUTTER_MAX_TO_Q` is keyed on butteraugli max-norm distance
+        // (lower = better, so quality descends); `SSIM2_TO_Q` on SSIM2 (higher =
+        // better, quality ascends). Provenance above.
+        const BUTTER_MAX_TO_Q: &[(f32, f32)] = &[
+            (2.41, 95.0),
+            (2.57, 90.0),
+            (2.86, 85.0),
+            (2.93, 80.0),
+            (3.39, 75.0),
+            (3.51, 65.0),
+            (3.72, 60.0),
+            (3.80, 55.0),
+            (4.00, 45.0),
+            (4.90, 35.0),
+            (5.57, 25.0),
+            (6.55, 15.0),
+            (7.47, 10.0),
+            (9.07, 5.0),
+        ];
+        const SSIM2_TO_Q: &[(f32, f32)] = &[
+            (53.1, 5.0),
+            (58.3, 10.0),
+            (62.6, 15.0),
+            (69.0, 25.0),
+            (71.1, 30.0),
+            (73.2, 35.0),
+            (76.6, 45.0),
+            (78.8, 55.0),
+            (79.7, 60.0),
+            (80.5, 65.0),
+            (82.1, 75.0),
+            (84.0, 80.0),
+            (85.3, 85.0),
+            (86.8, 90.0),
+            (87.8, 95.0),
+        ];
+
         match fidelity {
             Fidelity::Lossless => self.with_lossless(true),
             Fidelity::Lossy(LossyTarget::CodecSpecificQuality(q)) => {
                 self.with_lossless(false).with_generic_quality(q)
             }
             Fidelity::Lossy(LossyTarget::ApproxSsim2(s)) => {
-                self.with_lossless(false).with_generic_quality(s)
+                let q = interp_quality(SSIM2_TO_Q, s).clamp(0.0, 100.0);
+                self.with_lossless(false).with_generic_quality(q)
             }
             Fidelity::Lossy(LossyTarget::ApproxButteraugli(d)) => {
-                let q = (100.0 - 12.0 * d).clamp(0.0, 100.0);
+                let q = interp_quality(BUTTER_MAX_TO_Q, d).clamp(0.0, 100.0);
                 self.with_lossless(false).with_generic_quality(q)
             }
             // `Fidelity` / `LossyTarget` are `#[non_exhaustive]`.
@@ -2980,17 +3029,40 @@ mod tests {
         );
         assert_eq!(ZEncoderConfig::is_lossless(&cq), Some(false));
 
-        // SSIM2 + butteraugli map onto the quality dial, reported as codec_quality.
-        let s2 = WebpEncoderConfig::lossy().with_fidelity(Fidelity::ssim2(90.0));
+        // SSIM2 + butteraugli map through the measured inverse tables (omni
+        // fleet sweep 2026-06-23), reported as codec_quality. Check the clamped
+        // extremes (robust, no interpolation) and the mapping direction.
+        use zencodec::encode::LossyTarget;
+        let q_of = |c: &WebpEncoderConfig| match c.resolved_target_fidelity() {
+            Some(Fidelity::Lossy(LossyTarget::CodecSpecificQuality(q))) => q,
+            other => panic!("expected codec_quality, got {other:?}"),
+        };
+        // Excellent target → top of the dial; poor target → bottom.
         assert_eq!(
-            s2.resolved_target_fidelity(),
-            Some(Fidelity::codec_quality(90.0))
+            q_of(&WebpEncoderConfig::lossy().with_fidelity(Fidelity::ssim2(95.0))),
+            95.0
         );
-
-        let bt = WebpEncoderConfig::lossy().with_fidelity(Fidelity::butteraugli(2.0));
         assert_eq!(
-            bt.resolved_target_fidelity(),
-            Some(Fidelity::codec_quality(76.0))
+            q_of(&WebpEncoderConfig::lossy().with_fidelity(Fidelity::ssim2(50.0))),
+            5.0
+        );
+        assert_eq!(
+            q_of(&WebpEncoderConfig::lossy().with_fidelity(Fidelity::butteraugli(1.0))),
+            95.0
+        );
+        assert_eq!(
+            q_of(&WebpEncoderConfig::lossy().with_fidelity(Fidelity::butteraugli(10.0))),
+            5.0
+        );
+        // Monotone interior: higher SSIM2 → higher quality; larger butteraugli
+        // distance (worse) → lower quality.
+        assert!(
+            q_of(&WebpEncoderConfig::lossy().with_fidelity(Fidelity::ssim2(70.0)))
+                < q_of(&WebpEncoderConfig::lossy().with_fidelity(Fidelity::ssim2(85.0)))
+        );
+        assert!(
+            q_of(&WebpEncoderConfig::lossy().with_fidelity(Fidelity::butteraugli(5.0)))
+                < q_of(&WebpEncoderConfig::lossy().with_fidelity(Fidelity::butteraugli(3.0)))
         );
     }
 
