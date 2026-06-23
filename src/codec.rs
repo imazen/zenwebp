@@ -452,8 +452,12 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
         let bpp = image.descriptor().bytes_per_pixel() as u8;
         // zenwebp encode is single-threaded; model it as SERIAL.
         let e = crate::heuristics::estimate_encode(image.width(), image.height(), bpp, &self.inner);
-        ResourceEstimate::new(e.peak_memory_bytes, e.time_ms as u64)
-            .with_peak_max(e.peak_memory_bytes_max)
+        // heuristics models the encoder's working set (VmHWM marginal); the zencodec
+        // convention (ResourceEstimate::conservative) is total peak = input buffer
+        // (held by the caller during encode) + working, so add the input buffer.
+        let input = image.input_bytes();
+        ResourceEstimate::new(e.peak_memory_bytes.saturating_add(input), e.time_ms as u64)
+            .with_peak_max(e.peak_memory_bytes_max.saturating_add(input))
             .with_threading(ThreadingInformation::SERIAL)
             .at_cores(compute.cores())
     }
