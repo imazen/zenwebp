@@ -942,7 +942,11 @@ fn collapse_one_axis(axes: &mut SweepAxes) -> Option<DroppedAxis> {
             .or_else(|| collapse("lossy.segments", &mut l.segments, 1))
             .or_else(|| collapse("lossy.filter_strength", &mut l.filter_strength, 1))
             .or_else(|| collapse("lossy.sns_strength", &mut l.sns_strength, 1))
-            .or_else(|| collapse("lossy.sharp_yuv", &mut l.sharp_yuv, 1))
+            // lossy.sharp_yuv (chroma / subsampling-class) and lossy.methods (all
+            // sub-30s effort tiers) are MANDATORY — never budget-shed. They were
+            // floor=1 / floor=2, so a budgeted modes_full dropped sharp_yuv + the
+            // fast method tier and crippled the picker. See zenmetrics
+            // docs/MANDATORY_SWEEP_AXES.md.
             .or_else(|| {
                 if l.internal.len() > 1 {
                     let last = l.internal.pop().expect("len > 1");
@@ -960,7 +964,6 @@ fn collapse_one_axis(axes: &mut SweepAxes) -> Option<DroppedAxis> {
                     None
                 }
             })
-            .or_else(|| collapse("lossy.methods", &mut l.methods, 2))
         {
             return Some(d);
         }
@@ -1256,6 +1259,30 @@ mod tests {
             assert!(!d.dropped.is_empty());
         }
         assert!(!plan.over_budget);
+    }
+
+    #[test]
+    fn budget_never_sheds_mandatory_sharp_yuv_or_methods() {
+        // sharp_yuv (chroma / subsampling-class) and the sub-30s method tiers are
+        // MANDATORY (zenmetrics docs/MANDATORY_SWEEP_AXES.md). Pre-2026-06-27 a
+        // budgeted modes_full shed sharp_yuv + the fast method, crippling the picker.
+        let axes = SweepAxes::modes_full();
+        let unbudgeted = SweepBuilder::new(axes.clone(), QualityGrid::Explicit(vec![50.0])).plan();
+        let plan = SweepBuilder::new(axes, QualityGrid::Explicit(vec![50.0]))
+            .with_budget((unbudgeted.cells.len() / 16).max(1))
+            .plan();
+        assert!(
+            !plan
+                .dropped
+                .iter()
+                .any(|d| d.axis == "lossy.sharp_yuv" || d.axis == "lossy.methods"),
+            "sharp_yuv + methods are mandatory; must never be shed. dropped: {:?}",
+            plan.dropped.iter().map(|d| d.axis).collect::<Vec<_>>()
+        );
+        assert!(
+            plan.cells.iter().any(|c| c.id.contains("syuv")),
+            "sharp_yuv must survive a budgeted modes_full"
+        );
     }
 
     #[test]
