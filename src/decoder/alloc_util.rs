@@ -44,8 +44,14 @@ pub(crate) enum AllocPreference {
     #[default]
     CodecDefault,
     /// Force every site onto the fallible (`try_reserve`) path.
+    //
+    // Only ever *constructed* via the `zencodec::AllocPreference` adapter
+    // (`src/codec.rs`); without the optional `zencodec` feature nothing builds
+    // this variant, so suppress the unused-variant lint in that configuration.
+    #[cfg_attr(not(feature = "zencodec"), allow(dead_code))]
     Fallible,
     /// Force every site onto the infallible (`vec!`) path.
+    #[cfg_attr(not(feature = "zencodec"), allow(dead_code))]
     Infallible,
 }
 

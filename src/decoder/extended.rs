@@ -398,6 +398,9 @@ pub(crate) fn read_alpha_chunk(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // `vec!` is not in the `no_std` prelude; the glob above re-imports `Vec`
+    // (a type) but not the macro, so bring it in explicitly for the test bodies.
+    use alloc::vec;
 
     /// Before the fix, clearing the canvas for a non-alpha frame used 3-byte
     /// stride on the always-RGBA canvas, corrupting pixel alignment.

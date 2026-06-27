@@ -813,6 +813,13 @@ fn predictor_add_body_wide<
 }
 
 /// Wide (32-byte) floor-average predictor body using u8x32.
+///
+/// Only dispatched on x86_64 (AVX2-native 256-bit); aarch64/wasm use the
+/// native-128-bit `predictor_avg_body` (`u8x16`) instead, so this is gated to
+/// match its `apply_predictor_*_v3` callers — otherwise it (and its `chunk32`
+/// helpers) are out of scope on non-x86_64 targets. Mirrors the gate on the
+/// sibling `predictor_add_body_wide`.
+#[cfg(target_arch = "x86_64")]
 fn predictor_avg_body_wide<
     T: magetypes::simd::backends::U8x32Backend + magetypes::simd::backends::U8x16Backend,
 >(
