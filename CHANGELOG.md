@@ -21,6 +21,13 @@ earlier history lives in git log and LOG.md.)
   already returned `At<DecodeError>`. `build` no longer silently strips the trace
   through the removed `From<At<DecodeError>> for DecodeError` dropper. Get the
   inner error with `e.error()` / `e.decompose().0`.
+- `EncodeError::LimitExceeded(String)` would become a kind-carrying variant
+  (e.g. `LimitExceeded { kind: LimitKind, message: String }`) so its
+  `CategorizedError::category()` can report the exact `LimitKind` instead of the
+  representative `Memory` it returns today. Deferred — changing the tuple
+  variant's shape is a breaking change; its construction sites
+  (`src/codec.rs`) already hold the typed `Limits`-check error, so the rewire is
+  mechanical once the break is approved.
 
 ### Changed
 - **deps: migrate to published `zencodec 0.1.24` estimate API; drop the temporary
@@ -40,6 +47,31 @@ earlier history lives in git log and LOG.md.)
   fair-benchmark methodology and exact repro. No code or public-API change.
 
 ### Added
+
+- **Adopt the `zencodec` `CategorizedError` taxonomy (PR #103).** The public
+  encode/decode error types — `DecodeError`, `EncodeError`, `mux::MuxError`,
+  `ValidationError`, and `detect::ProbeError` — now `impl
+  zencodec::CategorizedError` (gated on the `zencodec` feature) with
+  `codec_name() = Some("zenwebp")` and a `category()` mapping every variant to one
+  coarse `ErrorCategory`, so consumers route on the category (HTTP status,
+  retry policy, logging) without naming the concrete enum. Bitstream errors map
+  to `MalformedImage`; `NotEnoughInitData`/`NoMoreFrames`→`UnexpectedEof`;
+  `UnsupportedFeature`→`UnsupportedImageFeature`;
+  `IccSynthesisUnavailable`→`CmsRequired`; `InvalidBufferSize`→`InvalidBuffer`;
+  validation/dimension/layout errors→`InvalidParameters`. Limit variants map to
+  the closest `LimitKind` (`ImageTooLarge`→`Pixels`,
+  `MemoryLimitExceeded`→`Memory`, `Partition0Overflow`→`OutputSize`); the
+  `Cancelled`/`UnsupportedOperation` arms delegate to the zencodec cause types
+  (`StopReason`/`UnsupportedOperation`), preserving timeout-vs-cancel; `MuxError`
+  delegates its wrapped `EncodeError`/`DecodeError`. The `At<E>` blanket impl
+  forwards both category and codec name. Additive (opt-in trait on
+  `#[non_exhaustive]` enums; no public-API break). Behind a **temporary
+  `[patch.crates-io]` pin** to the unreleased `cancellation-classification-99`
+  branch — remove the patch and bump the `zencodec` dependency once
+  `zencodec 0.1.26` ships. `EncodeError::LimitExceeded(String)` is stringly and
+  can't carry the exact `LimitKind` (its construction sites collapse the
+  dimensions/memory/output-size limit checks into a message), so it maps to a
+  representative `Memory` kind (see QUEUED BREAKING CHANGES).
 
 - **Honor `zencodec::AllocPreference` (3-mode, per-site) at untrusted decode
   allocations** (zencodec feature): the big buffers sized from decoded header
@@ -104,6 +136,21 @@ earlier history lives in git log and LOG.md.)
   to their own `Cargo.toml` (#65).
 
 ### Fixed
+
+- **Restore the `wasm32`/`i686`, `no_std`-test, and default-feature clippy
+  builds** (pre-existing on `main`, unrelated to the taxonomy work; CI red since
+  2026-06-23, run `28284349117`). Three independent breakages, fixed as one
+  clearly-labeled fix-forward commit so this PR's CI can be green: (1)
+  `predictor_avg_body_wide` in `src/decoder/lossless_transform_simd.rs` was
+  missing the `#[cfg(target_arch = "x86_64")]` gate its sibling
+  `predictor_add_body_wide` carries, so its x86_64-only `chunk32`/`chunk32_ref`
+  helpers fell out of scope on `wasm32`/`i686` (`E0425 cannot find function
+  chunk32_ref`); (2) the `src/decoder/extended.rs` `#[cfg(test)]` module used the
+  `vec!` macro without `use alloc::vec;`, breaking
+  `cargo test --no-default-features --lib`; (3) `AllocPreference::{Fallible,
+  Infallible}` (`src/decoder/alloc_util.rs`) are only constructed via the
+  `zencodec` adapter, so the default-feature clippy build flagged them
+  `dead_code` under `-D warnings` — now `allow`ed only when `zencodec` is off.
 
 - **Fuzz timeout in the `decode_v2` target on a decompression-bomb input**
   (closes #68) — a 104-byte WebP declaring a 12801×4097 (52 MP / 210 MB) VP8L

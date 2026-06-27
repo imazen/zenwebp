@@ -75,3 +75,104 @@ pub enum MuxError {
         canvas_height: u32,
     },
 }
+
+// Codec-agnostic error taxonomy (zencodec PR #103). Maps every `MuxError`
+// variant to exactly one coarse `ErrorCategory` so consumers can route on the
+// category (HTTP status, retry policy, logging) without naming this enum. The
+// wrapped `EncodeError`/`DecodeError` arms delegate to their own mappings.
+#[cfg(feature = "zencodec")]
+impl zencodec::CategorizedError for MuxError {
+    fn codec_name(&self) -> Option<&'static str> {
+        Some("zenwebp")
+    }
+
+    fn category(&self) -> zencodec::ErrorCategory {
+        use zencodec::ErrorCategory as C;
+        match self {
+            // Demux/parse failure: the bytes are not a valid WebP container.
+            MuxError::InvalidFormat(_) => C::MalformedImage,
+
+            // Assembly-side caller parameters: the caller-supplied frame
+            // geometry/offsets violate the WebP spec when building an animation.
+            MuxError::InvalidDimensions { .. }
+            | MuxError::OddFrameOffset { .. }
+            | MuxError::FrameOutsideCanvas { .. }
+            // Caller asked for a frame index past the end of the sequence.
+            | MuxError::FrameOutOfBounds { .. } => C::InvalidParameters,
+
+            // API-protocol violation: assembly requested before any frame added.
+            MuxError::NoFrames => C::InvalidState,
+
+            // Delegate to the wrapped codec error's own mapping.
+            MuxError::EncodeError(e) => e.category(),
+            MuxError::DecodeError(e) => e.category(),
+        }
+    }
+}
+
+#[cfg(all(test, feature = "zencodec"))]
+mod mux_category_tests {
+    use super::MuxError;
+    use crate::decoder::DecodeError;
+    use crate::encoder::EncodeError;
+    use zencodec::{CategorizedError, ErrorCategory as C};
+
+    #[test]
+    fn mux_error_category_mapping() {
+        assert_eq!(MuxError::NoFrames.codec_name(), Some("zenwebp"));
+
+        // Demux parse failure.
+        assert_eq!(
+            MuxError::InvalidFormat("bad".into()).category(),
+            C::MalformedImage
+        );
+
+        // Assembly-side caller parameters.
+        assert_eq!(
+            MuxError::InvalidDimensions {
+                width: 0,
+                height: 0
+            }
+            .category(),
+            C::InvalidParameters
+        );
+        assert_eq!(
+            MuxError::OddFrameOffset { x: 1, y: 1 }.category(),
+            C::InvalidParameters
+        );
+        assert_eq!(
+            MuxError::FrameOutsideCanvas {
+                x: 0,
+                y: 0,
+                width: 9,
+                height: 9,
+                canvas_width: 4,
+                canvas_height: 4,
+            }
+            .category(),
+            C::InvalidParameters
+        );
+        assert_eq!(
+            MuxError::FrameOutOfBounds { index: 9, total: 2 }.category(),
+            C::InvalidParameters
+        );
+
+        // API-protocol violation.
+        assert_eq!(MuxError::NoFrames.category(), C::InvalidState);
+
+        // Delegation to the wrapped codec error's own mapping.
+        assert_eq!(
+            MuxError::EncodeError(EncodeError::InvalidDimensions).category(),
+            C::InvalidParameters
+        );
+        assert_eq!(
+            MuxError::DecodeError(DecodeError::HuffmanError).category(),
+            C::MalformedImage
+        );
+
+        // The At<E> blanket impl forwards both category and codec name.
+        let traced = whereat::at!(MuxError::NoFrames);
+        assert_eq!(traced.category(), C::InvalidState);
+        assert_eq!(traced.codec_name(), Some("zenwebp"));
+    }
+}

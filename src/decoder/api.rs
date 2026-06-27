@@ -141,6 +141,152 @@ impl From<enough::StopReason> for DecodeError {
     }
 }
 
+// Codec-agnostic error taxonomy (zencodec PR #103). Maps every `DecodeError`
+// variant to exactly one coarse `ErrorCategory` so consumers can route on the
+// category (HTTP status, retry policy, logging) without naming this enum.
+#[cfg(feature = "zencodec")]
+impl zencodec::CategorizedError for DecodeError {
+    fn codec_name(&self) -> Option<&'static str> {
+        Some("zenwebp")
+    }
+
+    fn category(&self) -> zencodec::ErrorCategory {
+        use zencodec::ErrorCategory as C;
+        use zencodec::LimitKind as L;
+        match self {
+            // === I/O ===
+            #[cfg(feature = "std")]
+            DecodeError::IoError(_) => C::Io(zencodec::CodecIoKind::opaque()),
+
+            // === Malformed / corrupt bitstream content ===
+            DecodeError::RiffSignatureInvalid(_)
+            | DecodeError::WebpSignatureInvalid(_)
+            | DecodeError::ChunkMissing
+            | DecodeError::ChunkHeaderInvalid(_)
+            | DecodeError::InvalidAlphaPreprocessing
+            | DecodeError::InvalidCompressionMethod
+            | DecodeError::AlphaChunkSizeMismatch
+            | DecodeError::FrameOutsideImage
+            | DecodeError::LosslessSignatureInvalid(_)
+            | DecodeError::VersionNumberInvalid(_)
+            | DecodeError::InvalidColorCacheBits(_)
+            | DecodeError::HuffmanError
+            | DecodeError::BitStreamError
+            | DecodeError::TransformError
+            | DecodeError::Vp8MagicInvalid(_)
+            | DecodeError::ColorSpaceInvalid(_)
+            | DecodeError::LumaPredictionModeInvalid(_)
+            | DecodeError::IntraPredictionModeInvalid(_)
+            | DecodeError::ChromaPredictionModeInvalid(_)
+            | DecodeError::InconsistentImageSizes
+            | DecodeError::InvalidChunkSize => C::MalformedImage,
+
+            // === Truncated / insufficient input ===
+            DecodeError::NotEnoughInitData => C::UnexpectedEof,
+            // Animation-iteration end: a control-flow signal that no further
+            // frame exists, surfaced as end-of-input rather than its own category.
+            DecodeError::NoMoreFrames => C::UnexpectedEof,
+
+            // === Format handled, but the bitstream uses an unimplemented feature ===
+            DecodeError::UnsupportedFeature(_) => C::UnsupportedImageFeature,
+
+            // === Caller-supplied parameter invalid (not the image's fault) ===
+            DecodeError::InvalidParameter(_) => C::InvalidParameters,
+
+            // === Resource limits (closest LimitKind) ===
+            // "Image too large" caps total image extent, so Pixels is the fit.
+            DecodeError::ImageTooLarge => C::LimitsExceeded(L::Pixels),
+            DecodeError::MemoryLimitExceeded => C::LimitsExceeded(L::Memory),
+
+            // === Cancellation — delegate to the StopReason cause type ===
+            // (TimedOut vs Cancelled is preserved through the delegation.)
+            DecodeError::Cancelled(reason) => reason.category(),
+
+            // === Unsupported codec operation — delegate to the zencodec cause type ===
+            DecodeError::UnsupportedOperation(op) => op.category(),
+        }
+    }
+}
+
+#[cfg(all(test, feature = "zencodec"))]
+mod decode_category_tests {
+    use super::DecodeError;
+    use zencodec::{CategorizedError, ErrorCategory as C, LimitKind as L};
+
+    #[test]
+    fn decode_error_category_mapping() {
+        assert_eq!(DecodeError::HuffmanError.codec_name(), Some("zenwebp"));
+
+        // Malformed bitstream content.
+        assert_eq!(
+            DecodeError::RiffSignatureInvalid([0; 4]).category(),
+            C::MalformedImage
+        );
+        assert_eq!(DecodeError::HuffmanError.category(), C::MalformedImage);
+        assert_eq!(DecodeError::BitStreamError.category(), C::MalformedImage);
+        assert_eq!(DecodeError::InvalidChunkSize.category(), C::MalformedImage);
+        assert_eq!(
+            DecodeError::ChromaPredictionModeInvalid(9).category(),
+            C::MalformedImage
+        );
+
+        // Truncated / end-of-input.
+        assert_eq!(DecodeError::NotEnoughInitData.category(), C::UnexpectedEof);
+        assert_eq!(DecodeError::NoMoreFrames.category(), C::UnexpectedEof);
+
+        // Unimplemented feature / caller params.
+        assert_eq!(
+            DecodeError::UnsupportedFeature("x".into()).category(),
+            C::UnsupportedImageFeature
+        );
+        assert_eq!(
+            DecodeError::InvalidParameter("x".into()).category(),
+            C::InvalidParameters
+        );
+
+        // Resource limits.
+        assert_eq!(
+            DecodeError::ImageTooLarge.category(),
+            C::LimitsExceeded(L::Pixels)
+        );
+        assert_eq!(
+            DecodeError::MemoryLimitExceeded.category(),
+            C::LimitsExceeded(L::Memory)
+        );
+
+        // Cancellation delegates to StopReason (cancel vs timeout preserved).
+        assert_eq!(
+            DecodeError::Cancelled(enough::StopReason::Cancelled).category(),
+            C::Cancelled
+        );
+        assert_eq!(
+            DecodeError::Cancelled(enough::StopReason::TimedOut).category(),
+            C::TimedOut
+        );
+
+        // Unsupported operation delegates to the zencodec cause type.
+        assert_eq!(
+            DecodeError::UnsupportedOperation(zencodec::UnsupportedOperation::AnimationDecode)
+                .category(),
+            C::UnsupportedOperation
+        );
+
+        // The At<E> blanket impl forwards both category and codec name.
+        let traced = whereat::at!(DecodeError::HuffmanError);
+        assert_eq!(traced.category(), C::MalformedImage);
+        assert_eq!(traced.codec_name(), Some("zenwebp"));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn decode_io_error_is_io() {
+        assert_eq!(
+            DecodeError::IoError(std::io::Error::other("boom")).category(),
+            C::Io(zencodec::CodecIoKind::opaque())
+        );
+    }
+}
+
 // Core decoder implementation using SliceReader for no_std compatibility
 use alloc::format;
 use alloc::vec;
