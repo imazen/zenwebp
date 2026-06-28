@@ -55,6 +55,62 @@ fn alloc_pref_from_zencodec(
     }
 }
 
+// ── Error envelope bridges (Pattern B) ───────────────────────────────────────
+//
+// The zencodec trait impls below surface `At<zencodec::CodecError>` — the
+// codec-agnostic envelope — so a generic consumer recovers the
+// [`ErrorCategory`](zencodec::ErrorCategory) **and** the codec name *through
+// `Dyn*` dispatch*. Once a result is erased to a `BoxedError`
+// (`Box<dyn Error + Send + Sync>`), the concrete native error is no longer
+// downcastable, so a native `type Error` would lose its category; the envelope
+// is a single concrete type a consumer can recover after any erasure.
+//
+// The native [`EncodeError`] / [`DecodeError`] stay as the *detail* and the
+// *category source*: [`CodecError::of`](zencodec::CodecError::of) reads both the
+// category and `codec_name()` (`Some("zenwebp")`) from the value and keeps the
+// `At` location trace on the outside.
+//
+// Only `EncodeError` and `DecodeError` flow out of a zencodec trait method, so
+// only they need a bridge: `MuxError` is mapped to `EncodeError` before it exits,
+// `ValidationError` is config-only (not on any trait path), and `ProbeError` is
+// discarded on the `source_encoding_details` probe.
+//
+// Two conversion shapes appear below:
+// - A **bare** native value (`EncodeError::from(op)`) → these `From` impls give a
+//   plain `.into()` / `?` (used by the `reject` / policy-decline stubs).
+// - An **already-located** `At<native>` (the common case: every `at!(...)` site
+//   and every helper that returns `At<native>`) → converted explicitly with
+//   [`CodecError::of`](zencodec::CodecError::of), which keeps the existing `at!`
+//   location trace on the *outside* as `At<CodecError>`. `At` is a foreign,
+//   non-`#[fundamental]` type, so `From<At<native>> for At<CodecError>` is
+//   forbidden by the orphan rule — hence the explicit `.map_err(CodecError::of)`
+//   rather than a blanket `?`.
+
+impl From<EncodeError> for At<zencodec::CodecError> {
+    #[track_caller]
+    fn from(e: EncodeError) -> Self {
+        use whereat::ErrorAtExt;
+        zencodec::CodecError::of(e.start_at())
+    }
+}
+
+impl From<DecodeError> for At<zencodec::CodecError> {
+    #[track_caller]
+    fn from(e: DecodeError) -> Self {
+        use whereat::ErrorAtExt;
+        zencodec::CodecError::of(e.start_at())
+    }
+}
+
+/// Bridge a decode-sink error into the envelope. [`copy_decode_to_sink`] wants a
+/// `fn(SinkError) -> J::Error` pointer, so this is a named function rather than a
+/// closure.
+///
+/// [`copy_decode_to_sink`]: zencodec::helpers::copy_decode_to_sink
+fn wrap_sink_to_codec(e: SinkError) -> At<zencodec::CodecError> {
+    zencodec::CodecError::of(at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))
+}
+
 // ── Encoding ────────────────────────────────────────────────────────────────
 
 /// WebP encoder configuration implementing [`zencodec::encode::EncoderConfig`].
@@ -367,7 +423,7 @@ fn interp_quality(table: &[(f32, f32)], x: f32) -> f32 {
 }
 
 impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
-    type Error = At<EncodeError>;
+    type Error = At<zencodec::CodecError>;
     type Job = WebpEncodeJob;
 
     fn format() -> ImageFormat {
@@ -612,7 +668,7 @@ impl WebpEncodeJob {
 }
 
 impl zencodec::encode::EncodeJob for WebpEncodeJob {
-    type Error = At<EncodeError>;
+    type Error = At<zencodec::CodecError>;
     type Enc = WebpEncoder;
     type AnimationFrameEnc = WebpAnimationFrameEncoder;
 
@@ -657,7 +713,7 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
         self
     }
 
-    fn encoder(self) -> Result<WebpEncoder, At<EncodeError>> {
+    fn encoder(self) -> Result<WebpEncoder, At<zencodec::CodecError>> {
         let inner_config = self.build_inner_config();
         let policy = self.policy.unwrap_or_default();
         // Metadata retention is no longer gated here with a coarse all-or-nothing
@@ -684,7 +740,9 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
         })
     }
 
-    fn animation_frame_encoder(self) -> Result<WebpAnimationFrameEncoder, At<EncodeError>> {
+    fn animation_frame_encoder(
+        self,
+    ) -> Result<WebpAnimationFrameEncoder, At<zencodec::CodecError>> {
         let inner_config = self.build_inner_config();
         let loop_count = match self.loop_count {
             Some(Some(0)) | None => crate::decoder::LoopCount::Forever,
@@ -1043,10 +1101,10 @@ fn convert_single_row_to_yuv(
 }
 
 impl zencodec::encode::Encoder for WebpEncoder {
-    type Error = At<EncodeError>;
+    type Error = At<zencodec::CodecError>;
 
-    fn reject(op: UnsupportedOperation) -> At<EncodeError> {
-        At::from(EncodeError::from(op))
+    fn reject(op: UnsupportedOperation) -> At<zencodec::CodecError> {
+        EncodeError::from(op).into()
     }
 
     fn preferred_strip_height(&self) -> u32 {
@@ -1058,12 +1116,14 @@ impl zencodec::encode::Encoder for WebpEncoder {
         }
     }
 
-    fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<EncodeError>> {
-        let (buf, layout, w, h, stride) = pixels_to_webp_input(&pixels)?;
+    fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<zencodec::CodecError>> {
+        let (buf, layout, w, h, stride) =
+            pixels_to_webp_input(&pixels).map_err(zencodec::CodecError::of)?;
         self.do_encode(&buf, layout, w, h, stride)
+            .map_err(zencodec::CodecError::of)
     }
 
-    fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), At<EncodeError>> {
+    fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), At<zencodec::CodecError>> {
         let desc = rows.descriptor();
         let strip_w = rows.width();
         let strip_h = rows.rows();
@@ -1097,7 +1157,8 @@ impl zencodec::encode::Encoder for WebpEncoder {
                 });
             } else {
                 // Generic path: convert per-strip, accumulate bytes
-                let (_, layout, _, _, _) = pixels_to_webp_input(&rows)?;
+                let (_, layout, _, _, _) =
+                    pixels_to_webp_input(&rows).map_err(zencodec::CodecError::of)?;
                 let (cw, ch) = self.canvas_size.unwrap_or((strip_w, 0));
                 let bpp = layout.bytes_per_pixel();
                 let cap = cw as usize * ch as usize * bpp;
@@ -1113,7 +1174,8 @@ impl zencodec::encode::Encoder for WebpEncoder {
                     pixels, total_rows, ..
                 } = stream
                 {
-                    let (buf, _, _, _, _) = pixels_to_webp_input(&rows)?;
+                    let (buf, _, _, _, _) =
+                        pixels_to_webp_input(&rows).map_err(zencodec::CodecError::of)?;
                     pixels.extend_from_slice(&buf);
                     *total_rows += strip_h;
                 }
@@ -1165,7 +1227,8 @@ impl zencodec::encode::Encoder for WebpEncoder {
             StreamAccum::Raw {
                 pixels, total_rows, ..
             } => {
-                let (buf, _, _, _, _) = pixels_to_webp_input(&rows)?;
+                let (buf, _, _, _, _) =
+                    pixels_to_webp_input(&rows).map_err(zencodec::CodecError::of)?;
                 pixels.extend_from_slice(&buf);
                 *total_rows += strip_h;
             }
@@ -1174,11 +1237,10 @@ impl zencodec::encode::Encoder for WebpEncoder {
         Ok(())
     }
 
-    fn finish(mut self) -> Result<EncodeOutput, At<EncodeError>> {
-        let stream = self
-            .stream
-            .take()
-            .ok_or_else(|| at!(EncodeError::InvalidBufferSize("no rows pushed".into())))?;
+    fn finish(mut self) -> Result<EncodeOutput, At<zencodec::CodecError>> {
+        let stream = self.stream.take().ok_or_else(|| {
+            zencodec::CodecError::of(at!(EncodeError::InvalidBufferSize("no rows pushed".into())))
+        })?;
 
         match stream {
             StreamAccum::Yuv {
@@ -1213,13 +1275,16 @@ impl zencodec::encode::Encoder for WebpEncoder {
                     total_rows,
                     width as usize,
                 )
+                .map_err(zencodec::CodecError::of)
             }
             StreamAccum::Raw {
                 pixels,
                 layout,
                 width,
                 total_rows,
-            } => self.do_encode(&pixels, layout, width, total_rows, width as usize),
+            } => self
+                .do_encode(&pixels, layout, width, total_rows, width as usize)
+                .map_err(zencodec::CodecError::of),
         }
     }
 }
@@ -1266,10 +1331,10 @@ impl WebpAnimationFrameEncoder {
 }
 
 impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
-    type Error = At<EncodeError>;
+    type Error = At<zencodec::CodecError>;
 
-    fn reject(op: UnsupportedOperation) -> At<EncodeError> {
-        At::from(EncodeError::from(op))
+    fn reject(op: UnsupportedOperation) -> At<zencodec::CodecError> {
+        EncodeError::from(op).into()
     }
 
     fn push_frame(
@@ -1277,11 +1342,13 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
         pixels: PixelSlice<'_>,
         duration_ms: u32,
         stop: Option<&dyn enough::Stop>,
-    ) -> Result<(), At<EncodeError>> {
+    ) -> Result<(), At<zencodec::CodecError>> {
         if let Some(s) = stop {
-            s.check().map_err(|e| at!(EncodeError::from(e)))?;
+            s.check()
+                .map_err(|e| zencodec::CodecError::of(at!(EncodeError::from(e))))?;
         }
-        let (buf, layout, w, h, stride_pixels) = pixels_to_webp_input(&pixels)?;
+        let (buf, layout, w, h, stride_pixels) =
+            pixels_to_webp_input(&pixels).map_err(zencodec::CodecError::of)?;
         // AnimationEncoder::add_frame assumes tightly-packed rows
         // (stride == width). Pack to contiguous if the caller's PixelSlice has
         // padded rows — e.g. imageflow's SIMD-aligned bitmaps, where the t_stride
@@ -1302,30 +1369,39 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
             }
             alloc::borrow::Cow::Owned(packed)
         };
-        self.ensure_encoder(w, h)?;
+        self.ensure_encoder(w, h)
+            .map_err(zencodec::CodecError::of)?;
         let timestamp_ms = self.cumulative_ms;
         let enc = self.anim_enc.as_mut().unwrap();
         enc.add_frame(&buf, layout, timestamp_ms, &self.inner_config)
-            .map_err_at(mux_to_encode_err)?;
+            .map_err_at(mux_to_encode_err)
+            .map_err(zencodec::CodecError::of)?;
         self.cumulative_ms = self.cumulative_ms.saturating_add(duration_ms);
         self.last_frame_duration_ms = duration_ms;
         Ok(())
     }
 
-    fn finish(self, stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, At<EncodeError>> {
+    fn finish(
+        self,
+        stop: Option<&dyn enough::Stop>,
+    ) -> Result<EncodeOutput, At<zencodec::CodecError>> {
         if let Some(s) = stop {
-            s.check().map_err(|e| at!(EncodeError::from(e)))?;
+            s.check()
+                .map_err(|e| zencodec::CodecError::of(at!(EncodeError::from(e))))?;
         }
         let enc = self
             .anim_enc
             .ok_or_else(|| EncodeError::InvalidBufferSize("no frames added".into()))
-            .map_err(|e| at!(e))?;
+            .map_err(|e| zencodec::CodecError::of(at!(e)))?;
         let data = enc
             .finalize(self.last_frame_duration_ms)
-            .map_err_at(mux_to_encode_err)?;
+            .map_err_at(mux_to_encode_err)
+            .map_err(zencodec::CodecError::of)?;
         self.limits
             .check_output_size(data.len() as u64)
-            .map_err(|e| at!(EncodeError::LimitExceeded(alloc::format!("{e}"))))?;
+            .map_err(|e| {
+                zencodec::CodecError::of(at!(EncodeError::LimitExceeded(alloc::format!("{e}"))))
+            })?;
         Ok(EncodeOutput::new(data, ImageFormat::WebP))
     }
 }
@@ -1393,13 +1469,13 @@ impl WebpDecoderConfig {
     }
 
     /// Convenience: probe image header.
-    pub fn probe_header(&self, data: &[u8]) -> Result<ImageInfo, At<DecodeError>> {
+    pub fn probe_header(&self, data: &[u8]) -> Result<ImageInfo, At<zencodec::CodecError>> {
         use zencodec::decode::{DecodeJob, DecoderConfig};
         <Self as DecoderConfig>::job(self.clone()).probe(data)
     }
 
     /// Convenience: decode image with this config.
-    pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, At<DecodeError>> {
+    pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, At<zencodec::CodecError>> {
         use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
         <Self as DecoderConfig>::job(self.clone())
             .decoder(Cow::Borrowed(data), &[])
@@ -1435,7 +1511,7 @@ static DECODE_CAPABILITIES: zencodec::decode::DecodeCapabilities =
         .with_enforces_max_input_bytes(true);
 
 impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
-    type Error = At<DecodeError>;
+    type Error = At<zencodec::CodecError>;
     type Job<'a> = WebpDecodeJob;
 
     fn formats() -> &'static [ImageFormat] {
@@ -1572,7 +1648,7 @@ impl WebpDecodeJob {
 }
 
 impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
-    type Error = At<DecodeError>;
+    type Error = At<zencodec::CodecError>;
     type Dec = WebpDecoder<'a>;
     type StreamDec = WebpStreamingDecoder;
     type AnimationFrameDec = WebpAnimationFrameDecoder;
@@ -1602,8 +1678,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         self
     }
 
-    fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<DecodeError>> {
-        let native = crate::ImageInfo::from_webp(data)?;
+    fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<zencodec::CodecError>> {
+        let native = crate::ImageInfo::from_webp(data).map_err(zencodec::CodecError::of)?;
         let mut info = to_image_info(&native, None);
         // Report consistently with what `decode()` will produce. `Preserve`
         // (default) keeps `to_image_info`'s stored dims + intrinsic EXIF tag.
@@ -1615,8 +1691,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         Ok(self.apply_policy_to_info(info))
     }
 
-    fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<DecodeError>> {
-        let native = crate::ImageInfo::from_webp(data)?;
+    fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<zencodec::CodecError>> {
+        let native = crate::ImageInfo::from_webp(data).map_err(zencodec::CodecError::of)?;
         let mut desc = if native.has_alpha {
             PixelDescriptor::RGBA8_SRGB
         } else {
@@ -1651,7 +1727,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         mut self,
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
-    ) -> Result<WebpDecoder<'a>, At<DecodeError>> {
+    ) -> Result<WebpDecoder<'a>, At<zencodec::CodecError>> {
         let cfg = self.build_config();
         let stop = self.stop.take();
         Ok(WebpDecoder {
@@ -1670,15 +1746,17 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         self,
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
-    ) -> Result<WebpStreamingDecoder, At<DecodeError>> {
+    ) -> Result<WebpStreamingDecoder, At<zencodec::CodecError>> {
         if let Some(max) = self.effective_input_size_limit()
             && data.len() as u64 > max
         {
-            return Err(at!(DecodeError::InvalidParameter(alloc::format!(
-                "input size {} exceeds limit {}",
-                data.len(),
-                max
-            ))));
+            return Err(zencodec::CodecError::of(at!(
+                DecodeError::InvalidParameter(alloc::format!(
+                    "input size {} exceeds limit {}",
+                    data.len(),
+                    max
+                ))
+            )));
         }
 
         let cfg = self.build_config();
@@ -1692,17 +1770,23 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         // Parse RIFF/WebP container
         let data_ref: &[u8] = &data;
         if data_ref.len() < 20 {
-            return Err(at!(DecodeError::NotEnoughInitData));
+            return Err(zencodec::CodecError::of(at!(
+                DecodeError::NotEnoughInitData
+            )));
         }
         if &data_ref[..4] != b"RIFF" {
             let mut sig = [0u8; 4];
             sig.copy_from_slice(&data_ref[..4]);
-            return Err(at!(DecodeError::RiffSignatureInvalid(sig)));
+            return Err(zencodec::CodecError::of(at!(
+                DecodeError::RiffSignatureInvalid(sig)
+            )));
         }
         if &data_ref[8..12] != b"WEBP" {
             let mut sig = [0u8; 4];
             sig.copy_from_slice(&data_ref[8..12]);
-            return Err(at!(DecodeError::WebpSignatureInvalid(sig)));
+            return Err(zencodec::CodecError::of(at!(
+                DecodeError::WebpSignatureInvalid(sig)
+            )));
         }
 
         let first_chunk = &data_ref[12..16];
@@ -1734,36 +1818,45 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                     dither_strength,
                     cfg.limits.alloc_pref,
                 )
+                .map_err(zencodec::CodecError::of)
             }
             b"VP8X" => {
                 use crate::mux::WebPDemuxer;
-                let demuxer = WebPDemuxer::new(data_ref).map_err_at(|inner| {
-                    DecodeError::InvalidParameter(alloc::format!("demux error: {inner}"))
-                })?;
+                let demuxer = WebPDemuxer::new(data_ref)
+                    .map_err_at(|inner| {
+                        DecodeError::InvalidParameter(alloc::format!("demux error: {inner}"))
+                    })
+                    .map_err(zencodec::CodecError::of)?;
 
                 if demuxer.is_animated() {
-                    return Err(at!(DecodeError::UnsupportedFeature(
-                        "streaming decode does not support animation".into()
+                    return Err(zencodec::CodecError::of(at!(
+                        DecodeError::UnsupportedFeature(
+                            "streaming decode does not support animation".into()
+                        )
                     )));
                 }
 
                 let frame = demuxer
                     .frame(1)
-                    .ok_or_else(|| at!(DecodeError::ChunkMissing))?;
+                    .ok_or_else(|| zencodec::CodecError::of(at!(DecodeError::ChunkMissing)))?;
 
                 if !frame.is_lossy {
-                    return Err(at!(DecodeError::UnsupportedFeature(
-                        "streaming decode only supports lossy VP8, got VP8L".into()
+                    return Err(zencodec::CodecError::of(at!(
+                        DecodeError::UnsupportedFeature(
+                            "streaming decode only supports lossy VP8, got VP8L".into()
+                        )
                     )));
                 }
 
                 // Decode alpha plane up front (it's small: width*height bytes)
                 let alpha_plane = if let Some(alpha_data) = frame.alpha_data {
-                    let native_info = crate::ImageInfo::from_webp(data_ref)?;
+                    let native_info =
+                        crate::ImageInfo::from_webp(data_ref).map_err(zencodec::CodecError::of)?;
                     let w = native_info.width as u16;
                     let h = native_info.height as u16;
                     let alpha_chunk =
-                        crate::decoder::extended::read_alpha_chunk(alpha_data, w, h, &cfg.limits)?;
+                        crate::decoder::extended::read_alpha_chunk(alpha_data, w, h, &cfg.limits)
+                            .map_err(zencodec::CodecError::of)?;
 
                     // Apply alpha filtering to produce final alpha plane
                     let fw = usize::from(w);
@@ -1810,14 +1903,18 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                     dither_strength,
                     cfg.limits.alloc_pref,
                 )
+                .map_err(zencodec::CodecError::of)
             }
-            b"VP8L" => Err(at!(DecodeError::UnsupportedFeature(
-                "streaming decode does not support lossless VP8L".into()
+            b"VP8L" => Err(zencodec::CodecError::of(at!(
+                DecodeError::UnsupportedFeature(
+                    "streaming decode does not support lossless VP8L".into()
+                )
             ))),
-            _ => Err(at!(DecodeError::UnsupportedFeature(alloc::format!(
-                "streaming decode: unsupported chunk type {:?}",
-                first_chunk
-            )))),
+            _ => Err(zencodec::CodecError::of(at!(
+                DecodeError::UnsupportedFeature(alloc::format!(
+                    "streaming decode: unsupported chunk type {first_chunk:?}"
+                ))
+            ))),
         }
     }
 
@@ -1834,24 +1931,24 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         self,
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
-    ) -> Result<WebpAnimationFrameDecoder, At<DecodeError>> {
+    ) -> Result<WebpAnimationFrameDecoder, At<zencodec::CodecError>> {
         // Block animation if policy denies it.
         if let Some(ref policy) = self.policy
             && !policy.resolve_animation(true)
         {
-            return Err(At::from(DecodeError::from(
-                UnsupportedOperation::AnimationDecode,
-            )));
+            return Err(DecodeError::from(UnsupportedOperation::AnimationDecode).into());
         }
 
         if let Some(max) = self.effective_input_size_limit()
             && data.len() as u64 > max
         {
-            return Err(at!(DecodeError::InvalidParameter(alloc::format!(
-                "input size {} exceeds limit {}",
-                data.len(),
-                max
-            ))));
+            return Err(zencodec::CodecError::of(at!(
+                DecodeError::InvalidParameter(alloc::format!(
+                    "input size {} exceeds limit {}",
+                    data.len(),
+                    max
+                ))
+            )));
         }
 
         let cfg = self.build_config();
@@ -1860,7 +1957,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         let native_info = crate::ImageInfo::from_webp(&data).ok();
 
         // Probe animation metadata with a temporary decoder.
-        let probe_anim = AnimationDecoder::new_with_config(&data, &cfg)?;
+        let probe_anim =
+            AnimationDecoder::new_with_config(&data, &cfg).map_err(zencodec::CodecError::of)?;
         let anim_info = probe_anim.info();
         let total_frames = anim_info.frame_count;
         let anim_loop_count = match anim_info.loop_count {
@@ -1898,7 +1996,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                 config: cfg,
             },
             |owner| AnimationDecoder::new_with_config(&owner.data, &owner.config),
-        )?;
+        )
+        .map_err(zencodec::CodecError::of)?;
 
         let has_alpha = anim_info.has_alpha;
         let canvas_width = anim_info.canvas_width;
@@ -2128,10 +2227,12 @@ fn negotiate_format(pixels: PixelBuffer, preferred: &[PixelDescriptor]) -> Pixel
 }
 
 impl zencodec::decode::Decode for WebpDecoder<'_> {
-    type Error = At<DecodeError>;
+    type Error = At<zencodec::CodecError>;
 
-    fn decode(self) -> Result<DecodeOutput, At<DecodeError>> {
-        let output = self.do_decode(&self.data)?;
+    fn decode(self) -> Result<DecodeOutput, At<zencodec::CodecError>> {
+        let output = self
+            .do_decode(&self.data)
+            .map_err(zencodec::CodecError::of)?;
         let output = if self.preferred.is_empty() {
             output
         } else {
@@ -2181,23 +2282,27 @@ fn push_decoder_impl<'a>(
     data: Cow<'a, [u8]>,
     sink: &mut dyn zencodec::decode::DecodeRowSink,
     preferred: &[PixelDescriptor],
-) -> Result<OutputInfo, At<DecodeError>> {
-    let wrap_sink = |e: SinkError| at!(DecodeError::InvalidParameter(alloc::format!("{e}")));
-
+) -> Result<OutputInfo, At<zencodec::CodecError>> {
     // Fast path only applies to lossy single-image VP8. For VP8L, animation,
     // or anything the container scanner can't classify, fall back to the
     // helper-driven full decode — it handles all the same cases `decode()` does.
     if !is_lossy_streaming_candidate(&data) {
-        return zencodec::helpers::copy_decode_to_sink(job, data, sink, preferred, |e| {
-            at!(DecodeError::InvalidParameter(alloc::format!("{e}")))
-        });
+        return zencodec::helpers::copy_decode_to_sink(
+            job,
+            data,
+            sink,
+            preferred,
+            wrap_sink_to_codec,
+        );
     }
 
     // Dimension limit enforcement (matches `WebpDecoder::do_decode`).
     if let Ok(info) = crate::ImageInfo::from_webp(&data) {
         job.limits
             .check_dimensions(info.width, info.height)
-            .map_err(|e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))?;
+            .map_err(|e| {
+                zencodec::CodecError::of(at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))
+            })?;
     }
 
     use zencodec::decode::{DecodeJob, StreamingDecode};
@@ -2219,7 +2324,7 @@ fn push_decoder_impl<'a>(
                 data,
                 sink,
                 preferred,
-                |e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))),
+                wrap_sink_to_codec,
             );
         }
     };
@@ -2231,7 +2336,8 @@ fn push_decoder_impl<'a>(
 
     // Tell the sink what's coming. After this, any error path must not
     // call `sink.finish()`.
-    sink.begin(width, height, descriptor).map_err(wrap_sink)?;
+    sink.begin(width, height, descriptor)
+        .map_err(wrap_sink_to_codec)?;
 
     let row_bytes = width as usize * bpp;
 
@@ -2239,7 +2345,8 @@ fn push_decoder_impl<'a>(
         // Cooperative cancellation between strips.
         if let Some(ref s) = stop {
             use enough::Stop;
-            s.check().map_err(|e| at!(DecodeError::from(e)))?;
+            s.check()
+                .map_err(|e| zencodec::CodecError::of(at!(DecodeError::from(e))))?;
         }
 
         let num_rows: u32 = pixel_slice.rows();
@@ -2249,7 +2356,7 @@ fn push_decoder_impl<'a>(
 
         let mut dst = sink
             .provide_next_buffer(y_start, num_rows, width, descriptor)
-            .map_err(wrap_sink)?;
+            .map_err(wrap_sink_to_codec)?;
 
         for row in 0..num_rows {
             let src = pixel_slice.row(row);
@@ -2261,7 +2368,7 @@ fn push_decoder_impl<'a>(
         drop(dst);
     }
 
-    sink.finish().map_err(wrap_sink)?;
+    sink.finish().map_err(wrap_sink_to_codec)?;
 
     Ok(OutputInfo::full_decode(width, height, descriptor))
 }
@@ -2384,9 +2491,9 @@ impl WebpStreamingDecoder {
 }
 
 impl zencodec::decode::StreamingDecode for WebpStreamingDecoder {
-    type Error = At<DecodeError>;
+    type Error = At<zencodec::CodecError>;
 
-    fn next_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, At<DecodeError>> {
+    fn next_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, At<zencodec::CodecError>> {
         if self.current_mby >= self.mbheight {
             return Ok(None);
         }
@@ -2395,7 +2502,7 @@ impl zencodec::decode::StreamingDecode for WebpStreamingDecoder {
         let (y_start, num_rows) = self
             .ctx
             .decode_strip_mb_row(mby, &mut self.strip_buf, self.bpp)
-            .map_err(|e| at!(DecodeError::from(e)))?;
+            .map_err(|e| zencodec::CodecError::of(at!(DecodeError::from(e))))?;
 
         self.current_mby += 1;
 
@@ -2440,7 +2547,11 @@ impl zencodec::decode::StreamingDecode for WebpStreamingDecoder {
             row_bytes,
             self.descriptor,
         )
-        .map_err(|_| at!(DecodeError::InvalidParameter("strip slice mismatch".into())))?;
+        .map_err(|_| {
+            zencodec::CodecError::of(at!(DecodeError::InvalidParameter(
+                "strip slice mismatch".into()
+            )))
+        })?;
 
         Ok(Some((y_start as u32, slice)))
     }
@@ -2605,10 +2716,10 @@ fn negotiate_format_inplace(
 }
 
 impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
-    type Error = At<DecodeError>;
+    type Error = At<zencodec::CodecError>;
 
-    fn wrap_sink_error(err: SinkError) -> At<DecodeError> {
-        at!(DecodeError::InvalidParameter(alloc::format!("{err}")))
+    fn wrap_sink_error(err: SinkError) -> At<zencodec::CodecError> {
+        zencodec::CodecError::of(at!(DecodeError::InvalidParameter(alloc::format!("{err}"))))
     }
 
     fn info(&self) -> &ImageInfo {
@@ -2626,13 +2737,17 @@ impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
     fn render_next_frame(
         &mut self,
         stop: Option<&dyn enough::Stop>,
-    ) -> Result<Option<AnimationFrame<'_>>, At<DecodeError>> {
+    ) -> Result<Option<AnimationFrame<'_>>, At<zencodec::CodecError>> {
         if let Some(s) = stop {
-            s.check().map_err(|e| at!(DecodeError::from(e)))?;
+            s.check()
+                .map_err(|e| zencodec::CodecError::of(at!(DecodeError::from(e))))?;
         }
-        self.skip_to_start()?;
+        self.skip_to_start().map_err(zencodec::CodecError::of)?;
 
-        if !self.decode_next_into_buf()? {
+        if !self
+            .decode_next_into_buf()
+            .map_err(zencodec::CodecError::of)?
+        {
             return Ok(None);
         }
         let idx = self.next_frame_index;
@@ -2641,7 +2756,9 @@ impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
         // Enforce max_frames limit.
         self.limits
             .check_frames(self.next_frame_index)
-            .map_err(|e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))?;
+            .map_err(|e| {
+                zencodec::CodecError::of(at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))
+            })?;
 
         // Enforce max_animation_ms limit.
         self.accumulated_duration_ms = self
@@ -2649,7 +2766,9 @@ impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
             .saturating_add(self.current_duration_ms as u64);
         self.limits
             .check_animation_ms(self.accumulated_duration_ms)
-            .map_err(|e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))?;
+            .map_err(|e| {
+                zencodec::CodecError::of(at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))
+            })?;
 
         // Zero-alloc: create PixelSlice directly from the reusable frame_buf.
         let stride = self.stride();
@@ -2661,9 +2780,9 @@ impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
             self.current_descriptor,
         )
         .map_err(|_| {
-            at!(DecodeError::InvalidParameter(
+            zencodec::CodecError::of(at!(DecodeError::InvalidParameter(
                 "frame buffer mismatch".into(),
-            ))
+            )))
         })?;
         Ok(Some(AnimationFrame::new(
             slice,
@@ -2675,13 +2794,17 @@ impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
     fn render_next_frame_owned(
         &mut self,
         stop: Option<&dyn enough::Stop>,
-    ) -> Result<Option<OwnedAnimationFrame>, At<DecodeError>> {
+    ) -> Result<Option<OwnedAnimationFrame>, At<zencodec::CodecError>> {
         if let Some(s) = stop {
-            s.check().map_err(|e| at!(DecodeError::from(e)))?;
+            s.check()
+                .map_err(|e| zencodec::CodecError::of(at!(DecodeError::from(e))))?;
         }
-        self.skip_to_start()?;
+        self.skip_to_start().map_err(zencodec::CodecError::of)?;
 
-        if !self.decode_next_into_buf()? {
+        if !self
+            .decode_next_into_buf()
+            .map_err(zencodec::CodecError::of)?
+        {
             return Ok(None);
         }
         let idx = self.next_frame_index;
@@ -2690,7 +2813,9 @@ impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
         // Enforce max_frames limit.
         self.limits
             .check_frames(self.next_frame_index)
-            .map_err(|e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))?;
+            .map_err(|e| {
+                zencodec::CodecError::of(at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))
+            })?;
 
         // Enforce max_animation_ms limit.
         self.accumulated_duration_ms = self
@@ -2698,7 +2823,9 @@ impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
             .saturating_add(self.current_duration_ms as u64);
         self.limits
             .check_animation_ms(self.accumulated_duration_ms)
-            .map_err(|e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))?;
+            .map_err(|e| {
+                zencodec::CodecError::of(at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))
+            })?;
 
         // Take the frame_buf for the owned PixelBuffer. A fresh buffer will
         // be allocated on the next call (unavoidable for owned output).
@@ -2709,7 +2836,11 @@ impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
             self.canvas_height,
             self.current_descriptor,
         )
-        .map_err(|_| at!(DecodeError::InvalidParameter("frame size mismatch".into())))?;
+        .map_err(|_| {
+            zencodec::CodecError::of(at!(DecodeError::InvalidParameter(
+                "frame size mismatch".into()
+            )))
+        })?;
         Ok(Some(OwnedAnimationFrame::new(
             buf,
             self.current_duration_ms,
@@ -3142,6 +3273,62 @@ mod tests {
         let output = dyn_enc.encode(buf.as_slice()).unwrap();
         assert!(!output.is_empty());
         assert_eq!(output.format(), ImageFormat::WebP);
+    }
+
+    // ── Error envelope (Pattern B): category + codec name survive Dyn erasure ──
+
+    /// The forcing test for Pattern B. Drive the decoder through **`Dyn`**
+    /// dispatch, where the error is erased to a `BoxedError`
+    /// (`Box<dyn Error + Send + Sync>`). Under Pattern A (a native `type Error`)
+    /// the concrete error is no longer downcastable, so both lookups return
+    /// `None`; under Pattern B the single concrete `At<CodecError>` envelope
+    /// survives the erasure and a generic consumer recovers the category and the
+    /// originating codec name. Models the testkit's
+    /// `minimal_envelope_category_survives_dyn_erasure`.
+    #[test]
+    fn envelope_category_survives_dyn_erasure() {
+        use zencodec::decode::DynDecoderConfig;
+        use zencodec::{CodecError, CodecErrorExt, ErrorCategory};
+
+        let cfg = WebpDecoderConfig::new();
+        let dyn_cfg: &dyn DynDecoderConfig = &cfg;
+        // A non-RIFF buffer past the 20-byte length guard fails the RIFF
+        // signature check → `DecodeError::RiffSignatureInvalid` → `MalformedImage`.
+        let erased = dyn_cfg
+            .dyn_job()
+            .probe(b"not a valid webp file")
+            .expect_err("malformed input must fail to probe");
+
+        assert_eq!(erased.error_category(), Some(ErrorCategory::MalformedImage));
+        assert_eq!(
+            erased.codec_error().and_then(CodecError::codec),
+            Some("zenwebp")
+        );
+    }
+
+    /// On the typed (non-erased) path the `At<CodecError>` answers the category
+    /// and codec name directly, and the native `DecodeError` is still reachable
+    /// as the envelope's detail via the source chain.
+    #[test]
+    fn envelope_on_typed_decode_path() {
+        use zencodec::decode::{DecodeJob, DecoderConfig};
+        use zencodec::{CodecError, CodecErrorExt, ErrorCategory};
+
+        let err = <WebpDecoderConfig as DecoderConfig>::job(WebpDecoderConfig::new())
+            .probe(b"not a valid webp file")
+            .expect_err("malformed input must fail to probe");
+
+        // The concrete envelope answers both axes without any downcast.
+        assert_eq!(err.error().category(), ErrorCategory::MalformedImage);
+        assert_eq!(err.error().codec(), Some("zenwebp"));
+        // ...and the extension trait recovers them by walking the chain too.
+        assert_eq!(err.error_category(), Some(ErrorCategory::MalformedImage));
+        assert_eq!(
+            err.codec_error().and_then(CodecError::codec),
+            Some("zenwebp")
+        );
+        // The native DecodeError detail is still reachable for its message.
+        assert!(err.find_cause::<DecodeError>().is_some());
     }
 
     #[test]

@@ -7,6 +7,22 @@ earlier history lives in git log and LOG.md.)
 
 ### QUEUED BREAKING CHANGES
 <!-- Batch into the next 0.x minor. -->
+- **zencodec trait impls now return `At<zencodec::CodecError>` (the envelope,
+  Pattern B) instead of the native `At<EncodeError>` / `At<DecodeError>`** (#69).
+  Every `zencodec::{encode,decode}` trait `type Error` on the WebP adapters
+  (`WebpEncoderConfig`/`WebpEncodeJob`/`WebpEncoder`/`WebpAnimationFrameEncoder`,
+  `WebpDecoderConfig`/`WebpDecodeJob`/`WebpDecoder`/`WebpStreamingDecoder`/
+  `WebpAnimationFrameDecoder`) plus the inherent `WebpDecoderConfig::probe_header`
+  / `decode` convenience methods now surface `At<zencodec::CodecError>`. This lets
+  a generic consumer recover the `ErrorCategory` **and** the codec name
+  (`Some("zenwebp")`) **through `Dyn*` dispatch** — once a result is erased to a
+  `BoxedError` the native error is no longer downcastable, so Pattern A lost both.
+  The five native error types (`DecodeError`, `EncodeError`, `MuxError`,
+  `ValidationError`, `ProbeError`) keep their `CategorizedError` impls and remain
+  the envelope's *detail* + category source (reachable via
+  `CodecErrorExt`/`find_cause::<DecodeError>()`); the native `EncodeRequest` /
+  `DecodeRequest` / `oneshot` APIs are unchanged. Corrects a prior Pattern A
+  surfacing (the envelope was always the intent).
 - `mux::AnimationDecoder`'s fallible methods (`new`, `next_frame`, `decode_next`,
   `decode_all`, `reset`, `set_background_color`, `icc_profile`, `exif_metadata`,
   `xmp_metadata`) and its `Iterator::Item` now carry `whereat::At<DecodeError>`
