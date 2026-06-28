@@ -33,16 +33,19 @@ hashbrown = { version = "0.16", default-features = false, features = ["default-h
 thiserror = { version = "2.0.18", default-features = false }
 whereat = { version = "0.1.5", default-features = false }
 libm = "0.2.16"
-zencodec = { version = "0.1.25", optional = true }
+zencodec = { version = "0.1.25" }
 # zennode = { path = "../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 zenpixels = { version = "0.2.11", default-features = false }
 # Used by the zencodec encode path to synthesize an ICC profile from a
 # CICP-only source (WebP has no CICP carrier, so an embedded ICC is the only
 # way to retain non-sRGB primaries). `synthesize_icc_for_cicp` is a transfer-
-# aware lookup — no CMS, no_std-safe. Gated on `zencodec`; `default-features
-# = false` keeps the wasm32 (no_std) build clean.
-zenpixels-convert = { version = "0.2.13", default-features = false, optional = true }
-self_cell = { version = "1.2", optional = true }
+# aware lookup — no CMS, no_std-safe. Unconditional (the zencodec integration
+# is always-on); `default-features = false` keeps the wasm32 (no_std) build
+# clean.
+zenpixels-convert = { version = "0.2.13", default-features = false }
+# self_cell backs the owned-data animation decoder in the zencodec adapter
+# (codec.rs). no_std-clean, so it rides the always-on integration.
+self_cell = { version = "1.2" }
 bytemuck = { version = "1", default-features = false, features = ["extern_crate_alloc"] }
 garb = { version = "0.2.5", default-features = false, features = ["experimental"] }
 linear-srgb = { version = "0.6.7"}
@@ -85,9 +88,6 @@ rayon = "1.10"
 rgb = "0.8"
 zenpng = "0.1.4"
 zenpixels-convert = { version = "0.2.13", features = ["rgb"] }
-# Parity oracle for the deliberately-local EXIF orientation parser
-# (src/exif_orientation.rs, zenwebp#58) — dev-only, consumers pay nothing.
-zencodec = "0.1.25"
 jpeg-decoder = "0.3"
 # zenanalyze / zenpredict as path-pinned dev-deps were removed: CI
 # regression-test runs (`cargo build` then `cargo test --test
@@ -152,17 +152,19 @@ _wasm_profiling = ["std"]
 # Kept for backwards compatibility so existing Cargo.toml entries
 # with `features = ["fast-yuv"]` don't break.
 fast-yuv = []
-# Enable zencodec trait integration
-zencodec = ["dep:zencodec", "dep:self_cell", "dep:zenpixels-convert"]
+# NOTE: `zencodec` is no longer an optional feature — the codec-trait
+# integration is now an always-on hard dependency (zencodec is
+# `#![no_std] + alloc`, so it builds on wasm32/no_std). `self_cell` and
+# `zenpixels-convert` are likewise unconditional deps now. See the
+# `[dependencies]` section above.
 # ICC synthesis for the zencodec color-emit path, via zenpixels-convert's
 # `icc-db` feature: a bundled LZ4 profile blob + the pure-Rust lz4_flex
 # decoder — far lighter than pulling moxcms (which is no longer involved in
 # synthesis). Covers the full ITU-T H.273 grid incl PQ/HLG. Without it only
 # the bundled Display-P3 / SDR BT.2020 / AdobeRGB consts synthesize, and an
 # unsynthesizable (off-grid) CICP is an encode error (WebP has no CICP
-# carrier — never a silently mislabeled image). Weak passthrough: only takes
-# effect with `zencodec` enabled.
-cms = ["zenpixels-convert?/icc-db"]
+# carrier — never a silently mislabeled image).
+cms = ["zenpixels-convert/icc-db"]
 # Enable target_zensim closed-loop adaptive encoder.
 # Pulls in zensim for perceptual measurement; iteration loop encodes →
 # decodes → measures → adjusts global VP8 quality until it lands in
@@ -329,15 +331,14 @@ required-features = ["analyzer"]
 
 [[example]]
 name = "hrtb_test"
-required-features = ["zencodec"]
 
 [[example]]
 name = "lossless_anim_path_test"
-required-features = ["zencodec", "std"]
+required-features = ["std"]
 
 [[example]]
 name = "heap_strip_pipeline"
-required-features = ["zencodec", "std"]
+required-features = ["std"]
 
 # Standalone encode+decode hot-path profiling driver (perf-friendly tight
 # loops, no criterion warmup). Takes a PNG path from argv/ZENWEBP_PROF_IMG.

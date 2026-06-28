@@ -254,7 +254,7 @@ zero-cost. For a ready-made, thread-safe cancel/deadline token see
 - **Metadata module** — `zenwebp::metadata` extracts/embeds/removes ICC, EXIF, and
   XMP in encoded WebP bytes without decoding pixels
 - **Server-safe** — memory/pixel limits and cooperative cancellation for untrusted input
-- **zencodec integration** — optional `zencodec` feature for unified codec traits,
+- **zencodec integration** — always-available unified codec traits (no feature flag),
   streaming decode, color/metadata policy, and resource estimation
 
 ### Safe SIMD
@@ -434,7 +434,7 @@ Tested across 14 images (CLIC2025 photos, screenshots, CID22):
 | Screenshots (1K–4K) | 1.06–1.14x |
 | Small photos (512–576px) | 1.10–1.15x |
 
-Streaming via zencodec's `StreamingDecode` trait (feature `zencodec`) yields 16-row
+Streaming via zencodec's `StreamingDecode` trait yields 16-row
 RGB strips — the full decoded image never needs to exist in memory:
 
 | Decode mode | Peak memory (2940×1912) |

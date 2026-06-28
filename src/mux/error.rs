@@ -80,7 +80,6 @@ pub enum MuxError {
 // variant to exactly one coarse `ErrorCategory` so consumers can route on the
 // category (HTTP status, retry policy, logging) without naming this enum. The
 // wrapped `EncodeError`/`DecodeError` arms delegate to their own mappings.
-#[cfg(feature = "zencodec")]
 impl zencodec::CategorizedError for MuxError {
     fn codec_name(&self) -> Option<&'static str> {
         Some("zenwebp")
@@ -110,7 +109,7 @@ impl zencodec::CategorizedError for MuxError {
     }
 }
 
-#[cfg(all(test, feature = "zencodec"))]
+#[cfg(test)]
 mod mux_category_tests {
     use super::MuxError;
     use crate::decoder::DecodeError;

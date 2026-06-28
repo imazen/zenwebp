@@ -30,6 +30,20 @@ earlier history lives in git log and LOG.md.)
   mechanical once the break is approved.
 
 ### Changed
+- **`zencodec` is now a required, always-on dependency — the codec-trait
+  integration is no longer behind the optional `zencodec` cargo feature**
+  (#69). `zencodec` is `#![no_std] + alloc`, so the `EncoderConfig` /
+  `DecoderConfig` adapters, the `StreamingDecode` / animation-frame jobs, the
+  color-emit (ICC-synthesis) path, and the `CategorizedError` impls on
+  `DecodeError` / `EncodeError` / `mux::MuxError` / `ValidationError` /
+  `detect::ProbeError` now build unconditionally. Removed the `zencodec` cargo
+  feature; `self_cell` and `zenpixels-convert` (kept `default-features = false`)
+  became unconditional dependencies. `cms` now enables
+  `zenpixels-convert/icc-db` directly (was the weak `zenpixels-convert?/icc-db`
+  passthrough). no_std and wasm32 builds are unaffected — the integration is
+  no_std-clean; the only `std`-genuine arm (`DecodeError::IoError`) stays gated
+  on `feature = "std"`. Also dropped the now-redundant `zencodec` dev-dependency
+  (the EXIF-parity unit test reaches it through the regular dep).
 - **deps: migrate to published `zencodec 0.1.24` estimate API; drop the temporary
   git-rev patch.** Removed the `[patch.crates-io]` zencodec git-rev pin (0f71295)
   now that `zencodec 0.1.24` is on crates.io. Updated the
@@ -51,7 +65,7 @@ earlier history lives in git log and LOG.md.)
 - **Adopt the `zencodec` `CategorizedError` taxonomy (PR #103).** The public
   encode/decode error types — `DecodeError`, `EncodeError`, `mux::MuxError`,
   `ValidationError`, and `detect::ProbeError` — now `impl
-  zencodec::CategorizedError` (gated on the `zencodec` feature) with
+  zencodec::CategorizedError` with
   `codec_name() = Some("zenwebp")` and a `category()` mapping every variant to one
   coarse `ErrorCategory`, so consumers route on the category (HTTP status,
   retry policy, logging) without naming the concrete enum. Bitstream errors map
@@ -74,7 +88,7 @@ earlier history lives in git log and LOG.md.)
   representative `Memory` kind (see QUEUED BREAKING CHANGES).
 
 - **Honor `zencodec::AllocPreference` (3-mode, per-site) at untrusted decode
-  allocations** (zencodec feature): the big buffers sized from decoded header
+  allocations**: the big buffers sized from decoded header
   dimensions — the final RGB/RGBA output, the VP8 row cache, the streaming
   strip buffer, the lossless ARGB plane / RGBA-expansion scratch, and the
   animation canvas — now route through a per-site fallibility policy
@@ -86,8 +100,8 @@ earlier history lives in git log and LOG.md.)
   native decode API is unchanged (always `CodecDefault`). Added `checked_mul`
   guards on the streaming strip-buffer size. No public API change.
 
-- **`estimate_decode_resources` override on `WebpDecoderConfig`** (zencodec
-  feature): implements zencodec's unified
+- **`estimate_decode_resources` override on `WebpDecoderConfig`**: implements
+  zencodec's unified
   `DecoderConfig::estimate_decode_resources` via the existing
   `heuristics::estimate_decode` model — peak = output buffer + VP8 working set
   (decoder state + ~12 B/px for the row cache, reconstruction buffer and
@@ -95,8 +109,8 @@ earlier history lives in git log and LOG.md.)
   (zenwebp decode is single-threaded). Returns a
   `zencodec::estimate::ResourceEstimate`.
 
-- **`estimate_encode_resources` override on `WebpEncoderConfig`** (zencodec
-  feature): implements zencodec's unified `EncoderConfig::estimate_encode_resources`
+- **`estimate_encode_resources` override on `WebpEncoderConfig`**: implements
+  zencodec's unified `EncoderConfig::estimate_encode_resources`
   via the existing `heuristics::estimate_encode` model, returning a
   `zencodec::estimate::ResourceEstimate` (typical/max peak memory, wall time).
   WebP encode is single-threaded, so threading is reported as

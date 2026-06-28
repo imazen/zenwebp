@@ -2880,6 +2880,8 @@ fn report_probe_for_hint(mut info: ImageInfo, hint: OrientationHint) -> ImageInf
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
     use super::*;
     use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};

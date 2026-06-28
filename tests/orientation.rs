@@ -11,7 +11,7 @@
 //!     display dims + `Orientation::Identity`, and the pixels are physically
 //!     rotated.
 
-#![cfg(feature = "zencodec")]
+#![cfg(all(feature = "std", not(target_arch = "wasm32")))]
 
 use std::borrow::Cow;
 

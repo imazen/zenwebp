@@ -13,7 +13,7 @@
 //!    input (within lossless tolerance for lossless / lossy quant
 //!    tolerance for lossy).
 
-#![cfg(all(feature = "std", feature = "zencodec", not(target_arch = "wasm32")))]
+#![cfg(all(feature = "std", not(target_arch = "wasm32")))]
 
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig as _};
 use zenpixels::{PixelDescriptor, PixelSlice};

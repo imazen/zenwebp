@@ -208,7 +208,6 @@ pub enum ValidationError {
 
 // Codec-agnostic error taxonomy (zencodec PR #103) so consumers can route on the
 // coarse category without naming this enum.
-#[cfg(feature = "zencodec")]
 impl zencodec::CategorizedError for ValidationError {
     fn codec_name(&self) -> Option<&'static str> {
         Some("zenwebp")
@@ -221,41 +220,6 @@ impl zencodec::CategorizedError for ValidationError {
         // maps to `InvalidParameters` (future variants are validation failures by
         // construction and share this mapping).
         zencodec::ErrorCategory::InvalidParameters
-    }
-}
-
-#[cfg(all(test, feature = "zencodec"))]
-mod validation_category_tests {
-    use super::ValidationError;
-    use zencodec::{CategorizedError, ErrorCategory as C};
-
-    #[test]
-    fn validation_error_category_is_invalid_parameters() {
-        assert_eq!(
-            ValidationError::QualityNotFinite { value: f32::NAN }.codec_name(),
-            Some("zenwebp")
-        );
-        assert_eq!(
-            ValidationError::QualityOutOfRange {
-                value: 150.0,
-                valid: 0.0..=100.0,
-            }
-            .category(),
-            C::InvalidParameters
-        );
-        assert_eq!(
-            ValidationError::TargetMutuallyExclusive {
-                first: "target_size",
-                second: "target_psnr",
-            }
-            .category(),
-            C::InvalidParameters
-        );
-
-        // The At<E> blanket impl forwards both category and codec name.
-        let traced = whereat::at!(ValidationError::QualityNotFinite { value: f32::NAN });
-        assert_eq!(traced.category(), C::InvalidParameters);
-        assert_eq!(traced.codec_name(), Some("zenwebp"));
     }
 }
 
@@ -347,4 +311,39 @@ pub(super) fn check_target_psnr(p: f32) -> Result<(), ValidationError> {
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod validation_category_tests {
+    use super::ValidationError;
+    use zencodec::{CategorizedError, ErrorCategory as C};
+
+    #[test]
+    fn validation_error_category_is_invalid_parameters() {
+        assert_eq!(
+            ValidationError::QualityNotFinite { value: f32::NAN }.codec_name(),
+            Some("zenwebp")
+        );
+        assert_eq!(
+            ValidationError::QualityOutOfRange {
+                value: 150.0,
+                valid: 0.0..=100.0,
+            }
+            .category(),
+            C::InvalidParameters
+        );
+        assert_eq!(
+            ValidationError::TargetMutuallyExclusive {
+                first: "target_size",
+                second: "target_psnr",
+            }
+            .category(),
+            C::InvalidParameters
+        );
+
+        // The At<E> blanket impl forwards both category and codec name.
+        let traced = whereat::at!(ValidationError::QualityNotFinite { value: f32::NAN });
+        assert_eq!(traced.category(), C::InvalidParameters);
+        assert_eq!(traced.codec_name(), Some("zenwebp"));
+    }
 }

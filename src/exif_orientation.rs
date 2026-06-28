@@ -7,13 +7,11 @@
 //! This is intentionally minimal — just orientation, nothing else.
 //!
 //! **Deliberately local** (zenwebp#58, resolved 2026-06-11): the canonical
-//! home is `zencodec::helpers::parse_exif_orientation`, but this parser
-//! runs in the *core* decoder path, and zencodec is an optional feature —
-//! delegating would make zencodec (and its zenpixels+ICC-table baggage) a
-//! required dependency of every zenwebp build for ~80 lines of TIFF walk.
-//! Instead the implementations are pinned against each other by the
-//! `parity_with_zencodec_helper` differential test below (zencodec is a
-//! dev-dependency, costing consumers nothing).
+//! home is `zencodec::helpers::parse_exif_orientation`, but this parser runs
+//! in the *core* decoder path and is kept as a small standalone TIFF walk
+//! (~80 lines) rather than reaching into the `zencodec` adapter module. The
+//! two implementations are pinned against each other by the
+//! `parity_with_zencodec_helper` differential test below.
 
 /// EXIF Orientation tag number (TIFF tag 274).
 const TAG_ORIENTATION: u16 = 0x0112;

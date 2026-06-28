@@ -101,10 +101,10 @@ impl Limits {
     /// Set the per-site allocation fallibility policy (internal).
     ///
     /// Used by the `zencodec` adapter to honor
-    /// `ResourceLimits::prefer_fallible_allocations`. Only the `zencodec` layer
-    /// sets a non-default policy, so this is dead code without that feature.
+    /// `ResourceLimits::prefer_fallible_allocations`. Only the zencodec
+    /// adapter sets a non-default policy (native decode is always
+    /// `CodecDefault`).
     #[must_use]
-    #[cfg_attr(not(feature = "zencodec"), allow(dead_code))]
     pub(crate) fn with_alloc_pref(mut self, pref: super::alloc_util::AllocPreference) -> Self {
         self.alloc_pref = pref;
         self

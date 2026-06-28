@@ -124,7 +124,6 @@ pub enum DecodeError {
     Cancelled(enough::StopReason),
 
     /// Unsupported codec operation.
-    #[cfg(feature = "zencodec")]
     #[error(transparent)]
     UnsupportedOperation(#[from] zencodec::UnsupportedOperation),
 }
@@ -144,7 +143,6 @@ impl From<enough::StopReason> for DecodeError {
 // Codec-agnostic error taxonomy (zencodec PR #103). Maps every `DecodeError`
 // variant to exactly one coarse `ErrorCategory` so consumers can route on the
 // category (HTTP status, retry policy, logging) without naming this enum.
-#[cfg(feature = "zencodec")]
 impl zencodec::CategorizedError for DecodeError {
     fn codec_name(&self) -> Option<&'static str> {
         Some("zenwebp")
@@ -205,85 +203,6 @@ impl zencodec::CategorizedError for DecodeError {
             // === Unsupported codec operation — delegate to the zencodec cause type ===
             DecodeError::UnsupportedOperation(op) => op.category(),
         }
-    }
-}
-
-#[cfg(all(test, feature = "zencodec"))]
-mod decode_category_tests {
-    use super::DecodeError;
-    use zencodec::{CategorizedError, ErrorCategory as C, LimitKind as L};
-
-    #[test]
-    fn decode_error_category_mapping() {
-        assert_eq!(DecodeError::HuffmanError.codec_name(), Some("zenwebp"));
-
-        // Malformed bitstream content.
-        assert_eq!(
-            DecodeError::RiffSignatureInvalid([0; 4]).category(),
-            C::MalformedImage
-        );
-        assert_eq!(DecodeError::HuffmanError.category(), C::MalformedImage);
-        assert_eq!(DecodeError::BitStreamError.category(), C::MalformedImage);
-        assert_eq!(DecodeError::InvalidChunkSize.category(), C::MalformedImage);
-        assert_eq!(
-            DecodeError::ChromaPredictionModeInvalid(9).category(),
-            C::MalformedImage
-        );
-
-        // Truncated / end-of-input.
-        assert_eq!(DecodeError::NotEnoughInitData.category(), C::UnexpectedEof);
-        assert_eq!(DecodeError::NoMoreFrames.category(), C::UnexpectedEof);
-
-        // Unimplemented feature / caller params.
-        assert_eq!(
-            DecodeError::UnsupportedFeature("x".into()).category(),
-            C::UnsupportedImageFeature
-        );
-        assert_eq!(
-            DecodeError::InvalidParameter("x".into()).category(),
-            C::InvalidParameters
-        );
-
-        // Resource limits.
-        assert_eq!(
-            DecodeError::ImageTooLarge.category(),
-            C::LimitsExceeded(L::Pixels)
-        );
-        assert_eq!(
-            DecodeError::MemoryLimitExceeded.category(),
-            C::LimitsExceeded(L::Memory)
-        );
-
-        // Cancellation delegates to StopReason (cancel vs timeout preserved).
-        assert_eq!(
-            DecodeError::Cancelled(enough::StopReason::Cancelled).category(),
-            C::Cancelled
-        );
-        assert_eq!(
-            DecodeError::Cancelled(enough::StopReason::TimedOut).category(),
-            C::TimedOut
-        );
-
-        // Unsupported operation delegates to the zencodec cause type.
-        assert_eq!(
-            DecodeError::UnsupportedOperation(zencodec::UnsupportedOperation::AnimationDecode)
-                .category(),
-            C::UnsupportedOperation
-        );
-
-        // The At<E> blanket impl forwards both category and codec name.
-        let traced = whereat::at!(DecodeError::HuffmanError);
-        assert_eq!(traced.category(), C::MalformedImage);
-        assert_eq!(traced.codec_name(), Some("zenwebp"));
-    }
-
-    #[cfg(feature = "std")]
-    #[test]
-    fn decode_io_error_is_io() {
-        assert_eq!(
-            DecodeError::IoError(std::io::Error::other("boom")).category(),
-            C::Io(zencodec::CodecIoKind::opaque())
-        );
     }
 }
 
@@ -2348,5 +2267,84 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod decode_category_tests {
+    use super::DecodeError;
+    use zencodec::{CategorizedError, ErrorCategory as C, LimitKind as L};
+
+    #[test]
+    fn decode_error_category_mapping() {
+        assert_eq!(DecodeError::HuffmanError.codec_name(), Some("zenwebp"));
+
+        // Malformed bitstream content.
+        assert_eq!(
+            DecodeError::RiffSignatureInvalid([0; 4]).category(),
+            C::MalformedImage
+        );
+        assert_eq!(DecodeError::HuffmanError.category(), C::MalformedImage);
+        assert_eq!(DecodeError::BitStreamError.category(), C::MalformedImage);
+        assert_eq!(DecodeError::InvalidChunkSize.category(), C::MalformedImage);
+        assert_eq!(
+            DecodeError::ChromaPredictionModeInvalid(9).category(),
+            C::MalformedImage
+        );
+
+        // Truncated / end-of-input.
+        assert_eq!(DecodeError::NotEnoughInitData.category(), C::UnexpectedEof);
+        assert_eq!(DecodeError::NoMoreFrames.category(), C::UnexpectedEof);
+
+        // Unimplemented feature / caller params.
+        assert_eq!(
+            DecodeError::UnsupportedFeature("x".into()).category(),
+            C::UnsupportedImageFeature
+        );
+        assert_eq!(
+            DecodeError::InvalidParameter("x".into()).category(),
+            C::InvalidParameters
+        );
+
+        // Resource limits.
+        assert_eq!(
+            DecodeError::ImageTooLarge.category(),
+            C::LimitsExceeded(L::Pixels)
+        );
+        assert_eq!(
+            DecodeError::MemoryLimitExceeded.category(),
+            C::LimitsExceeded(L::Memory)
+        );
+
+        // Cancellation delegates to StopReason (cancel vs timeout preserved).
+        assert_eq!(
+            DecodeError::Cancelled(enough::StopReason::Cancelled).category(),
+            C::Cancelled
+        );
+        assert_eq!(
+            DecodeError::Cancelled(enough::StopReason::TimedOut).category(),
+            C::TimedOut
+        );
+
+        // Unsupported operation delegates to the zencodec cause type.
+        assert_eq!(
+            DecodeError::UnsupportedOperation(zencodec::UnsupportedOperation::AnimationDecode)
+                .category(),
+            C::UnsupportedOperation
+        );
+
+        // The At<E> blanket impl forwards both category and codec name.
+        let traced = whereat::at!(DecodeError::HuffmanError);
+        assert_eq!(traced.category(), C::MalformedImage);
+        assert_eq!(traced.codec_name(), Some("zenwebp"));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn decode_io_error_is_io() {
+        assert_eq!(
+            DecodeError::IoError(std::io::Error::other("boom")).category(),
+            C::Io(zencodec::CodecIoKind::opaque())
+        );
     }
 }
