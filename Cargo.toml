@@ -20,10 +20,10 @@ repository = "https://github.com/imazen/zenwebp"
 documentation = "https://docs.rs/zenwebp"
 categories = ["multimedia::images", "multimedia::encoding", "encoding"]
 keywords = ["webp", "image", "encoder", "decoder", "codec"]
-readme = "README.md"
+readme = "README.crates.md"
 autobenches = false
 
-include = ["/src", "LICENSE-AGPL3", "LICENSE-COMMERCIAL", "README.md", "CHANGES.md"]
+include = ["/src", "LICENSE-AGPL3", "LICENSE-COMMERCIAL", "README.crates.md", "CHANGES.md"]
 
 [dependencies]
 # Core dependencies - all no_std compatible

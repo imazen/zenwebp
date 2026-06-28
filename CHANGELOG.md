@@ -31,6 +31,13 @@ earlier history lives in git log and LOG.md.)
   gone), and dropped the removed `with_output_bytes`.
 - Decoder `Limits::default()` raises `max_total_pixels` from 100 MP to 120 MP so
   common ~108 MP camera photos decode under the default policy.
+- **docs: README overhaul + split crates.io README.** Refreshed the README
+  (focused Quick start, current decode/encode/limits/cancellation API, libwebp
+  feature comparison + performance tables wrapped behind `crates.io:skip`),
+  re-rendered the crosslink footer, and split a badge-free `README.crates.md`
+  for crates.io (`readme = "README.crates.md"`; the full badge row stays on the
+  GitHub `README.md`). Added `benchmarks/README.md` documenting the
+  fair-benchmark methodology and exact repro. No code or public-API change.
 
 ### Added
 
