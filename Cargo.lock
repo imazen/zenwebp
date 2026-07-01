@@ -99,9 +99,9 @@ checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 
 [[package]]
 name = "archmage"
-version = "0.9.26"
+version = "0.9.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae97b09d24389cf3f3a9db9fcc373bfe1cefdabef0d14fb253044a71c0427066"
+checksum = "ddf7537a9d3cb715fedef7cacfef7735d7005704301dd3d4cade35fb06fc37bc"
 dependencies = [
  "archmage-macros",
  "safe_unaligned_simd",
@@ -110,9 +110,9 @@ dependencies = [
 
 [[package]]
 name = "archmage-macros"
-version = "0.9.26"
+version = "0.9.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6ab70b5e2a0c0290d9b8a294378f8a8053e407387a17d8a7b113c7a0b8a2eac"
+checksum = "562827c72b3c65ebc7beabc710ffae5b991c0e9e60f7f71374c219107d22f335"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -942,9 +942,9 @@ checksum = "7ef0d4ed8669f8f8826eb00dc878084aa8f253506c4fd5e8f58f5bce72ddb97e"
 
 [[package]]
 name = "magetypes"
-version = "0.9.26"
+version = "0.9.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4d045ccf3f9d697e15f0b438f73b812ef93eb5e9d29cf5f5cb48dcf09f12e10"
+checksum = "485f61f9642a1445f4fc561a1462c003574b6cdcbfef62c3ebc6b24be568b103"
 dependencies = [
  "archmage",
  "rustversion",
@@ -2161,9 +2161,9 @@ dependencies = [
 
 [[package]]
 name = "zenpixels-convert"
-version = "0.2.13"
+version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab45d752d4211a62c95c3e8bf3a6959ccab1fa8c3ae47ea4ee6584d93614332f"
+checksum = "c49c5c25ca3577cef11f12f594a9966297d949c1a801f3a79ca9f5df74a09fa2"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -2200,15 +2200,6 @@ dependencies = [
  "zenpixels",
  "zenpixels-convert",
  "zenquant",
-]
-
-[[package]]
-name = "zenpredict"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da940aa02fa5dbb80e4cfe6883c82a7d39c814bc503e4c8c6f6d534e53a0a2ec"
-dependencies = [
- "bytemuck",
 ]
 
 [[package]]
@@ -2312,7 +2303,6 @@ dependencies = [
  "zenpixels",
  "zenpixels-convert",
  "zenpng",
- "zenpredict",
  "zenresize",
  "zensim",
  "zensim-regress",

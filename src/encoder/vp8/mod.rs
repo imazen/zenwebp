@@ -2213,7 +2213,6 @@ fn resolve_auto_preset_via_analyzer(
     stride: usize,
     color: PixelLayout,
 ) -> Option<super::api::EncoderParams> {
-    #[cfg(not(feature = "picker"))]
     use crate::encoder::analysis::content_type_to_tuning;
     use crate::encoder::analysis::{
         classifier::classify_image_type_rgb8_diag, classifier::rgba8_to_rgb8,
@@ -2227,23 +2226,16 @@ fn resolve_auto_preset_via_analyzer(
     // preset-default", so this is best-effort: we always set the four
     // tuning fields when running on an Auto preset.
     //
-    // We always go through the `_diag` entry so the picker has access
-    // to the raw zenanalyze feature vector when the `picker` feature
-    // is enabled — the bucket-table path only needs the
-    // `ImageContentType`, but the picker (when enabled) re-runs
-    // analyze_features over its own 32-feature schema.
-    //
-    // `rgb_for_picker` carries the RGB8 buffer the picker needs;
-    // for RGBA8 sources we strip alpha into a transient owned Vec
-    // and the picker borrows that.
-    let (bucket, diag, rgb_for_picker): (_, _, alloc::vec::Vec<u8>) = match color {
+    // Go through the `_diag` classifier entry (the bucket-table path
+    // needs the `ImageContentType`; the `_diag` variant also surfaces the
+    // classifier's diagnostics for `decide_bucket_from_diag`).
+    let (bucket, diag) = match color {
         PixelLayout::Rgb8 if stride == width as usize => {
             let n = (width as usize) * (height as usize) * 3;
             if data.len() < n {
                 return None;
             }
-            let (b, d) = classify_image_type_rgb8_diag(&data[..n], width, height);
-            (b, d, data[..n].to_vec())
+            classify_image_type_rgb8_diag(&data[..n], width, height)
         }
         PixelLayout::Rgba8 if stride == width as usize => {
             let n = (width as usize) * (height as usize) * 4;
@@ -2251,51 +2243,17 @@ fn resolve_auto_preset_via_analyzer(
                 return None;
             }
             let rgb = rgba8_to_rgb8(&data[..n]);
-            let (b, d) = classify_image_type_rgb8_diag(&rgb, width, height);
-            (b, d, rgb)
+            classify_image_type_rgb8_diag(&rgb, width, height)
         }
         _ => return None,
     };
-    // Suppress unused-variable warnings when the `picker` feature is
-    // off — `diag` and `rgb_for_picker` only feed the picker call.
-    let _ = (decide_bucket_from_diag, &diag, &rgb_for_picker);
+    let _ = (decide_bucket_from_diag, &diag);
 
-    // Picker path (when `picker` feature is on): override the
-    // (sns, filter, sharpness, segments) tuple with the picker's
-    // argmin pick. On any picker error (schema mismatch, unallowed
-    // cell, parse fail) the codec falls back to the bucket-table
-    // lookup transparently.
-    //
-    // `lossy_quality` is the user's quality dial; we feed it as the
-    // picker's `target_zensim` proxy. The outer target_zensim loop
-    // (when active) updates `lossy_quality` per pass, so this proxy
-    // tracks the iteration.
-    let (sns, filter, sharp, segs) = {
-        #[cfg(feature = "picker")]
-        {
-            let target_proxy = f32::from(params.lossy_quality);
-            let constraints = super::picker::spec::PickerConstraints::default();
-            match super::picker::pick_tuning(
-                &rgb_for_picker,
-                width,
-                height,
-                target_proxy,
-                &constraints,
-            ) {
-                Ok(tp) => (
-                    tp.sns_strength,
-                    tp.filter_strength,
-                    tp.filter_sharpness,
-                    tp.segments,
-                ),
-                Err(_) => content_type_to_tuning(bucket),
-            }
-        }
-        #[cfg(not(feature = "picker"))]
-        {
-            content_type_to_tuning(bucket)
-        }
-    };
+    // Bucket-table tuning: map the `ImageContentType` to the
+    // (sns, filter, sharpness, segments) tuple. (The former feature-gated
+    // v0.1 MLP picker override that sat here was removed — it was a
+    // pre-A research spike with no A-era retrain.)
+    let (sns, filter, sharp, segs) = content_type_to_tuning(bucket);
 
     let mut p = params.clone();
     p.sns_strength = sns;
