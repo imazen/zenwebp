@@ -4,7 +4,7 @@
 //! must take the RGB fast path and ignore the padding byte. Confirms that
 //! descriptor dispatch accepts these formats and that the padding byte does
 //! not leak into encoded output.
-#![cfg(all(feature = "std", feature = "zencodec", not(target_arch = "wasm32")))]
+#![cfg(all(feature = "std", not(target_arch = "wasm32")))]
 
 use zencodec::encode::{DynEncoderConfig, EncoderConfig};
 use zenpixels::{PixelDescriptor, PixelSlice};

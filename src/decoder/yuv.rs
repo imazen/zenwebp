@@ -645,7 +645,6 @@ pub(crate) fn rgb_to_v_single(r: u8, g: u8, b: u8) -> u8 {
 ///
 /// Each R/G/B channel is averaged in linear^0.80 space before the YUV
 /// matrix is applied to the averaged RGB values.
-#[allow(dead_code)] // Used by codec.rs (behind `zencodec` feature)
 pub(crate) fn rgb_to_u_avg(rgb1: &[u8], rgb2: &[u8], rgb3: &[u8], rgb4: &[u8]) -> u8 {
     let r = gamma_avg_4(rgb1[0], rgb2[0], rgb3[0], rgb4[0]);
     let g = gamma_avg_4(rgb1[1], rgb2[1], rgb3[1], rgb4[1]);
@@ -655,7 +654,6 @@ pub(crate) fn rgb_to_u_avg(rgb1: &[u8], rgb2: &[u8], rgb3: &[u8], rgb4: &[u8]) -
 
 /// Get the chroma-downsampled V value for a 2x2 pixel block using
 /// gamma-corrected averaging (gamma=0.80, matching libwebp).
-#[allow(dead_code)] // Used by codec.rs (behind `zencodec` feature)
 pub(crate) fn rgb_to_v_avg(rgb1: &[u8], rgb2: &[u8], rgb3: &[u8], rgb4: &[u8]) -> u8 {
     let r = gamma_avg_4(rgb1[0], rgb2[0], rgb3[0], rgb4[0]);
     let g = gamma_avg_4(rgb1[1], rgb2[1], rgb3[1], rgb4[1]);

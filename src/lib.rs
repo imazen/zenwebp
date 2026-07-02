@@ -202,11 +202,9 @@ pub use enough::{Stop, StopReason, Unstoppable};
 // #[cfg(feature = "zennode")]
 // pub mod zennode_defs;
 
-#[cfg(feature = "zencodec")]
 mod codec;
 
 /// zencodec trait implementations for WebP encoding and decoding.
-#[cfg(feature = "zencodec")]
 pub mod zencodec {
     pub use crate::codec::{
         WebpAnimationFrameDecoder, WebpAnimationFrameEncoder, WebpDecodeJob, WebpDecoder,

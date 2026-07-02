@@ -13,7 +13,7 @@
 //!     → `WebpEncoderConfig::lossless().encode(PixelSlice)`
 //!     → decode again, compare pixel-for-pixel.
 
-#![cfg(all(feature = "std", feature = "zencodec", not(target_arch = "wasm32")))]
+#![cfg(all(feature = "std", not(target_arch = "wasm32")))]
 
 use std::borrow::Cow;
 

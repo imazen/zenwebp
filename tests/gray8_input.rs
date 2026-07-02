@@ -18,7 +18,7 @@
 //!   gray→RGB-expanded — guards against the `convert_image_y` chroma plane
 //!   regressing back to a non-neutral fill that would cost extra DC bits.
 
-#![cfg(all(feature = "std", feature = "zencodec", not(target_arch = "wasm32")))]
+#![cfg(all(feature = "std", not(target_arch = "wasm32")))]
 
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig as _};
 use zenpixels::{PixelDescriptor, PixelSlice};

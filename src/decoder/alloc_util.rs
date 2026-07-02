@@ -44,6 +44,9 @@ pub(crate) enum AllocPreference {
     #[default]
     CodecDefault,
     /// Force every site onto the fallible (`try_reserve`) path.
+    //
+    // Constructed via the `zencodec::AllocPreference` adapter (`src/codec.rs`),
+    // which is now an always-on integration.
     Fallible,
     /// Force every site onto the infallible (`vec!`) path.
     Infallible,

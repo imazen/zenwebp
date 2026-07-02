@@ -7,6 +7,22 @@ earlier history lives in git log and LOG.md.)
 
 ### QUEUED BREAKING CHANGES
 <!-- Batch into the next 0.x minor. -->
+- **zencodec trait impls now return `At<zencodec::CodecError>` (the envelope,
+  Pattern B) instead of the native `At<EncodeError>` / `At<DecodeError>`** (#69).
+  Every `zencodec::{encode,decode}` trait `type Error` on the WebP adapters
+  (`WebpEncoderConfig`/`WebpEncodeJob`/`WebpEncoder`/`WebpAnimationFrameEncoder`,
+  `WebpDecoderConfig`/`WebpDecodeJob`/`WebpDecoder`/`WebpStreamingDecoder`/
+  `WebpAnimationFrameDecoder`) plus the inherent `WebpDecoderConfig::probe_header`
+  / `decode` convenience methods now surface `At<zencodec::CodecError>`. This lets
+  a generic consumer recover the `ErrorCategory` **and** the codec name
+  (`Some("zenwebp")`) **through `Dyn*` dispatch** — once a result is erased to a
+  `BoxedError` the native error is no longer downcastable, so Pattern A lost both.
+  The five native error types (`DecodeError`, `EncodeError`, `MuxError`,
+  `ValidationError`, `ProbeError`) keep their `CategorizedError` impls and remain
+  the envelope's *detail* + category source (reachable via
+  `CodecErrorExt`/`find_cause::<DecodeError>()`); the native `EncodeRequest` /
+  `DecodeRequest` / `oneshot` APIs are unchanged. Corrects a prior Pattern A
+  surfacing (the envelope was always the intent).
 - `mux::AnimationDecoder`'s fallible methods (`new`, `next_frame`, `decode_next`,
   `decode_all`, `reset`, `set_background_color`, `icc_profile`, `exif_metadata`,
   `xmp_metadata`) and its `Iterator::Item` now carry `whereat::At<DecodeError>`
@@ -21,8 +37,29 @@ earlier history lives in git log and LOG.md.)
   already returned `At<DecodeError>`. `build` no longer silently strips the trace
   through the removed `From<At<DecodeError>> for DecodeError` dropper. Get the
   inner error with `e.error()` / `e.decompose().0`.
+- `EncodeError::LimitExceeded(String)` would become a kind-carrying variant
+  (e.g. `LimitExceeded { kind: LimitKind, message: String }`) so its
+  `CategorizedError::category()` can report the exact `LimitKind` instead of the
+  representative `Memory` it returns today. Deferred — changing the tuple
+  variant's shape is a breaking change; its construction sites
+  (`src/codec.rs`) already hold the typed `Limits`-check error, so the rewire is
+  mechanical once the break is approved.
 
 ### Changed
+- **`zencodec` is now a required, always-on dependency — the codec-trait
+  integration is no longer behind the optional `zencodec` cargo feature**
+  (#69). `zencodec` is `#![no_std] + alloc`, so the `EncoderConfig` /
+  `DecoderConfig` adapters, the `StreamingDecode` / animation-frame jobs, the
+  color-emit (ICC-synthesis) path, and the `CategorizedError` impls on
+  `DecodeError` / `EncodeError` / `mux::MuxError` / `ValidationError` /
+  `detect::ProbeError` now build unconditionally. Removed the `zencodec` cargo
+  feature; `self_cell` and `zenpixels-convert` (kept `default-features = false`)
+  became unconditional dependencies. `cms` now enables
+  `zenpixels-convert/icc-db` directly (was the weak `zenpixels-convert?/icc-db`
+  passthrough). no_std and wasm32 builds are unaffected — the integration is
+  no_std-clean; the only `std`-genuine arm (`DecodeError::IoError`) stays gated
+  on `feature = "std"`. Also dropped the now-redundant `zencodec` dev-dependency
+  (the EXIF-parity unit test reaches it through the regular dep).
 - **deps: migrate to published `zencodec 0.1.24` estimate API; drop the temporary
   git-rev patch.** Removed the `[patch.crates-io]` zencodec git-rev pin (0f71295)
   now that `zencodec 0.1.24` is on crates.io. Updated the
@@ -41,8 +78,33 @@ earlier history lives in git log and LOG.md.)
 
 ### Added
 
+- **Adopt the `zencodec` `CategorizedError` taxonomy (PR #103).** The public
+  encode/decode error types — `DecodeError`, `EncodeError`, `mux::MuxError`,
+  `ValidationError`, and `detect::ProbeError` — now `impl
+  zencodec::CategorizedError` with
+  `codec_name() = Some("zenwebp")` and a `category()` mapping every variant to one
+  coarse `ErrorCategory`, so consumers route on the category (HTTP status,
+  retry policy, logging) without naming the concrete enum. Bitstream errors map
+  to `MalformedImage`; `NotEnoughInitData`/`NoMoreFrames`→`UnexpectedEof`;
+  `UnsupportedFeature`→`UnsupportedImageFeature`;
+  `IccSynthesisUnavailable`→`CmsRequired`; `InvalidBufferSize`→`InvalidBuffer`;
+  validation/dimension/layout errors→`InvalidParameters`. Limit variants map to
+  the closest `LimitKind` (`ImageTooLarge`→`Pixels`,
+  `MemoryLimitExceeded`→`Memory`, `Partition0Overflow`→`OutputSize`); the
+  `Cancelled`/`UnsupportedOperation` arms delegate to the zencodec cause types
+  (`StopReason`/`UnsupportedOperation`), preserving timeout-vs-cancel; `MuxError`
+  delegates its wrapped `EncodeError`/`DecodeError`. The `At<E>` blanket impl
+  forwards both category and codec name. Additive (opt-in trait on
+  `#[non_exhaustive]` enums; no public-API break). Behind a **temporary
+  `[patch.crates-io]` pin** to the unreleased `cancellation-classification-99`
+  branch — remove the patch and bump the `zencodec` dependency once
+  `zencodec 0.1.26` ships. `EncodeError::LimitExceeded(String)` is stringly and
+  can't carry the exact `LimitKind` (its construction sites collapse the
+  dimensions/memory/output-size limit checks into a message), so it maps to a
+  representative `Memory` kind (see QUEUED BREAKING CHANGES).
+
 - **Honor `zencodec::AllocPreference` (3-mode, per-site) at untrusted decode
-  allocations** (zencodec feature): the big buffers sized from decoded header
+  allocations**: the big buffers sized from decoded header
   dimensions — the final RGB/RGBA output, the VP8 row cache, the streaming
   strip buffer, the lossless ARGB plane / RGBA-expansion scratch, and the
   animation canvas — now route through a per-site fallibility policy
@@ -54,8 +116,8 @@ earlier history lives in git log and LOG.md.)
   native decode API is unchanged (always `CodecDefault`). Added `checked_mul`
   guards on the streaming strip-buffer size. No public API change.
 
-- **`estimate_decode_resources` override on `WebpDecoderConfig`** (zencodec
-  feature): implements zencodec's unified
+- **`estimate_decode_resources` override on `WebpDecoderConfig`**: implements
+  zencodec's unified
   `DecoderConfig::estimate_decode_resources` via the existing
   `heuristics::estimate_decode` model — peak = output buffer + VP8 working set
   (decoder state + ~12 B/px for the row cache, reconstruction buffer and
@@ -63,8 +125,8 @@ earlier history lives in git log and LOG.md.)
   (zenwebp decode is single-threaded). Returns a
   `zencodec::estimate::ResourceEstimate`.
 
-- **`estimate_encode_resources` override on `WebpEncoderConfig`** (zencodec
-  feature): implements zencodec's unified `EncoderConfig::estimate_encode_resources`
+- **`estimate_encode_resources` override on `WebpEncoderConfig`**: implements
+  zencodec's unified `EncoderConfig::estimate_encode_resources`
   via the existing `heuristics::estimate_encode` model, returning a
   `zencodec::estimate::ResourceEstimate` (typical/max peak memory, wall time).
   WebP encode is single-threaded, so threading is reported as
@@ -104,6 +166,21 @@ earlier history lives in git log and LOG.md.)
   to their own `Cargo.toml` (#65).
 
 ### Fixed
+
+- **Restore the `wasm32`/`i686`, `no_std`-test, and default-feature clippy
+  builds** (pre-existing on `main`, unrelated to the taxonomy work; CI red since
+  2026-06-23, run `28284349117`). Three independent breakages, fixed as one
+  clearly-labeled fix-forward commit so this PR's CI can be green: (1)
+  `predictor_avg_body_wide` in `src/decoder/lossless_transform_simd.rs` was
+  missing the `#[cfg(target_arch = "x86_64")]` gate its sibling
+  `predictor_add_body_wide` carries, so its x86_64-only `chunk32`/`chunk32_ref`
+  helpers fell out of scope on `wasm32`/`i686` (`E0425 cannot find function
+  chunk32_ref`); (2) the `src/decoder/extended.rs` `#[cfg(test)]` module used the
+  `vec!` macro without `use alloc::vec;`, breaking
+  `cargo test --no-default-features --lib`; (3) `AllocPreference::{Fallible,
+  Infallible}` (`src/decoder/alloc_util.rs`) are only constructed via the
+  `zencodec` adapter, so the default-feature clippy build flagged them
+  `dead_code` under `-D warnings` — now `allow`ed only when `zencodec` is off.
 
 - **Fuzz timeout in the `decode_v2` target on a decompression-bomb input**
   (closes #68) — a 104-byte WebP declaring a 12801×4097 (52 MP / 210 MB) VP8L

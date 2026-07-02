@@ -120,16 +120,15 @@ jobs:
         run: cargo test --no-default-features --lib
       - name: std only
         run: cargo test --no-default-features --features std --lib
-      - name: zencodec
-        run: cargo test --features zencodec
-      - name: zencodec + imgref
-        run: cargo test --features "zencodec,imgref"
-      - name: zencodec + cms
-        run: cargo test --features "zencodec,cms"
+      # zencodec is now an always-on hard dep (no longer a feature), so the
+      # default `cargo test` / `cargo test --features imgref` in the main Test
+      # job already cover it. Only the cms (icc-db) permutation is unique here.
+      - name: cms
+        run: cargo test --features cms
       - name: avx512
         run: cargo check --features avx512
       - name: All public features
-        run: cargo test --features "std,pixel-types,imgref,avx512,zencodec,cms"
+        run: cargo test --features "std,pixel-types,imgref,avx512,cms"
 
   simd-tier-parity:
     name: SIMD tier parity (${{ matrix.name }})

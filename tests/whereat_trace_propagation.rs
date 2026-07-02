@@ -14,7 +14,7 @@
 //! `err.frame_count() >= 1`. If a future change reintroduces a trace-dropping
 //! boundary on this path, the frame count collapses to 0 and this test fails.
 
-#![cfg(all(feature = "std", feature = "zencodec", not(target_arch = "wasm32")))]
+#![cfg(all(feature = "std", not(target_arch = "wasm32")))]
 
 use zenwebp::zencodec::WebpDecoderConfig;
 

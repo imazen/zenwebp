@@ -102,6 +102,27 @@ impl core::fmt::Display for ProbeError {
 #[cfg(feature = "std")]
 impl std::error::Error for ProbeError {}
 
+// Codec-agnostic error taxonomy (zencodec PR #103). Maps every `ProbeError`
+// variant to exactly one coarse `ErrorCategory` so consumers can route on the
+// category without naming this enum.
+impl zencodec::CategorizedError for ProbeError {
+    fn codec_name(&self) -> Option<&'static str> {
+        Some("zenwebp")
+    }
+
+    fn category(&self) -> zencodec::ErrorCategory {
+        use zencodec::ErrorCategory as C;
+        match self {
+            // Not enough bytes / truncated header — the input ended early.
+            ProbeError::TooShort | ProbeError::Truncated => C::UnexpectedEof,
+            // Missing RIFF/WEBP signature: this isn't a WebP file at all.
+            ProbeError::NotWebP => C::UnsupportedImageType,
+            // Container is WebP-shaped but the VP8 magic is wrong — corrupt.
+            ProbeError::InvalidVP8Magic => C::MalformedImage,
+        }
+    }
+}
+
 /// Probe a WebP file from its raw bytes.
 ///
 /// Reads only container and bitstream headers. No pixel decoding is performed.
@@ -566,7 +587,6 @@ impl<'a> MiniBoolReader<'a> {
     }
 }
 
-#[cfg(feature = "zencodec")]
 impl zencodec::SourceEncodingDetails for WebPProbe {
     fn source_generic_quality(&self) -> Option<f32> {
         self.estimated_quality()
@@ -617,5 +637,25 @@ mod tests {
     fn test_probe_not_webp() {
         let bad = b"RIFF\x00\x00\x00\x00NOPE";
         assert_eq!(probe(bad).unwrap_err(), ProbeError::NotWebP);
+    }
+}
+
+#[cfg(test)]
+mod probe_category_tests {
+    use super::ProbeError;
+    use zencodec::{CategorizedError, ErrorCategory as C};
+
+    #[test]
+    fn probe_error_category_mapping() {
+        assert_eq!(ProbeError::NotWebP.codec_name(), Some("zenwebp"));
+        assert_eq!(ProbeError::TooShort.category(), C::UnexpectedEof);
+        assert_eq!(ProbeError::Truncated.category(), C::UnexpectedEof);
+        assert_eq!(ProbeError::NotWebP.category(), C::UnsupportedImageType);
+        assert_eq!(ProbeError::InvalidVP8Magic.category(), C::MalformedImage);
+
+        // The At<E> blanket impl forwards both category and codec name.
+        let traced = whereat::at!(ProbeError::NotWebP);
+        assert_eq!(traced.category(), C::UnsupportedImageType);
+        assert_eq!(traced.codec_name(), Some("zenwebp"));
     }
 }
