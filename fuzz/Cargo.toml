@@ -17,6 +17,13 @@ path = ".."
 [workspace]
 members = ["."]
 
+# TEMP mirror of the workspace-root [patch.crates-io]: the fuzz crate is its own
+# workspace, so it does NOT inherit the parent patch. Drop both together when
+# zencodec 0.1.26 (PR #103 taxonomy) is published — see the root Cargo.toml's
+# matching comment. Keep the branch name in sync with the root.
+[patch.crates-io]
+zencodec = { git = "https://github.com/imazen/zencodec", branch = "cancellation-classification-99" }
+
 [profile.release]
 debug = 1
 
