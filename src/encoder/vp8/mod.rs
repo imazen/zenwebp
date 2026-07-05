@@ -2215,8 +2215,7 @@ fn resolve_auto_preset_via_analyzer(
 ) -> Option<super::api::EncoderParams> {
     use crate::encoder::analysis::content_type_to_tuning;
     use crate::encoder::analysis::{
-        classifier::classify_image_type_rgb8_diag, classifier::rgba8_to_rgb8,
-        decide_bucket_from_diag,
+        classifier::classify_image_type_rgb8, classifier::rgba8_to_rgb8,
     };
     if params.preset != super::api::Preset::Auto {
         return None;
@@ -2226,16 +2225,16 @@ fn resolve_auto_preset_via_analyzer(
     // preset-default", so this is best-effort: we always set the four
     // tuning fields when running on an Auto preset.
     //
-    // Go through the `_diag` classifier entry (the bucket-table path
-    // needs the `ImageContentType`; the `_diag` variant also surfaces the
-    // classifier's diagnostics for `decide_bucket_from_diag`).
-    let (bucket, diag) = match color {
+    // The bucket-table path only needs the `ImageContentType`, so use the
+    // plain classifier entry (the `_diag` variant's raw zenanalyze signals
+    // were only consumed by the removed feature-gated v0.1 MLP picker).
+    let bucket = match color {
         PixelLayout::Rgb8 if stride == width as usize => {
             let n = (width as usize) * (height as usize) * 3;
             if data.len() < n {
                 return None;
             }
-            classify_image_type_rgb8_diag(&data[..n], width, height)
+            classify_image_type_rgb8(&data[..n], width, height)
         }
         PixelLayout::Rgba8 if stride == width as usize => {
             let n = (width as usize) * (height as usize) * 4;
@@ -2243,11 +2242,10 @@ fn resolve_auto_preset_via_analyzer(
                 return None;
             }
             let rgb = rgba8_to_rgb8(&data[..n]);
-            classify_image_type_rgb8_diag(&rgb, width, height)
+            classify_image_type_rgb8(&rgb, width, height)
         }
         _ => return None,
     };
-    let _ = (decide_bucket_from_diag, &diag);
 
     // Bucket-table tuning: map the `ImageContentType` to the
     // (sns, filter, sharpness, segments) tuple. (The former feature-gated
