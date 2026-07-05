@@ -5,8 +5,50 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+**Next release from main is 0.5.0** — the picker removal (5d6df59) and the
+`At<zencodec::CodecError>` Pattern-B migration (#69) below are already on
+main; the manifest is pre-bumped so a publish from head cannot ship them
+under a reused/lower version. **0.4.5 was published 2026-05-02 (`6e337c2`)
+and then yanked** (bundled a `zenpredict`-baked model via `include_bytes!`
+for the picker feature — see `docs/RECOVERY_REGISTER_2026-05-08.md`); the
+last currently-installable version is **0.4.4**. crates.io/cargo permanently
+reserve a version number once published even if yanked, so 0.4.5 cannot be
+reused — main has been accumulating unreleased changes on top of the yanked
+0.4.5 point ever since, including the picker's full removal (this yank's
+root cause) and multiple breaking changes. 0.5.0 covers all of it, matching
+the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
+("Tag as 0.5.0 (minor bump for API; 0.4.5 yanked)").
+
 ### QUEUED BREAKING CHANGES
-<!-- Batch into the next 0.x minor. -->
+<!-- Not yet landed. Batch into a future 0.x minor once approved. -->
+- `EncodeError::LimitExceeded(String)` would become a kind-carrying variant
+  (e.g. `LimitExceeded { kind: LimitKind, message: String }`) so its
+  `CategorizedError::category()` can report the exact `LimitKind` instead of the
+  representative `Memory` it returns today. Deferred — changing the tuple
+  variant's shape is a breaking change; its construction sites
+  (`src/codec.rs`) already hold the typed `Limits`-check error, so the rewire is
+  mechanical once the break is approved.
+
+### Removed (BREAKING)
+- **Removed the feature-gated v0.1 zenwebp picker** (5d6df59): the `picker`
+  cargo feature and the `pub mod encoder::picker` surface
+  (`PickError`/`TuningPick`/`pick_tuning`/`pick_tuning_from_features`/
+  `encoder::picker::spec::{CellSpec, PickerConstraints, CELLS, FEAT_COLS,
+  N_CELLS, N_FEAT_COLS, N_OUTPUTS, SCHEMA_HASH, SCHEMA_VERSION_TAG,
+  cell_to_method_segments, ...}`). This was an off-by-default research spike —
+  a zenpredict-baked MLP (ZNPR v2, `zenwebp_picker_v0.1.bin`) trained pre-A on
+  the 2026-04-30 sweep that overrode the `Preset::Auto` (sns, filter,
+  sharpness, segments) tuple. The A-era picker re-train refused zenwebp at the
+  feature ceiling, so there is no A replacement; production encodes already
+  fell back to the heuristic bucket table (`analysis::content_type_to_tuning`)
+  on any picker error, and default builds never enabled the feature. Also
+  dropped the now-unused `zenpredict` optional dependency and the 3 picker
+  research dev examples (`zenwebp_picker_sweep`/`picker_ab_eval`/
+  `picker_v0_3_holdout_ab`) plus their baked models. `analyzer`/`__expert` are
+  unaffected. `docs/public-api/` snapshots regenerated to drop the removed
+  symbols.
+
+### Changed (BREAKING)
 - **zencodec trait impls now return `At<zencodec::CodecError>` (the envelope,
   Pattern B) instead of the native `At<EncodeError>` / `At<DecodeError>`** (#69).
   Every `zencodec::{encode,decode}` trait `type Error` on the WebP adapters
@@ -37,13 +79,15 @@ earlier history lives in git log and LOG.md.)
   already returned `At<DecodeError>`. `build` no longer silently strips the trace
   through the removed `From<At<DecodeError>> for DecodeError` dropper. Get the
   inner error with `e.error()` / `e.decompose().0`.
-- `EncodeError::LimitExceeded(String)` would become a kind-carrying variant
-  (e.g. `LimitExceeded { kind: LimitKind, message: String }`) so its
-  `CategorizedError::category()` can report the exact `LimitKind` instead of the
-  representative `Memory` it returns today. Deferred — changing the tuple
-  variant's shape is a breaking change; its construction sites
-  (`src/codec.rs`) already hold the typed `Limits`-check error, so the rewire is
-  mechanical once the break is approved.
+- **`WebpEncoderConfig::with_sharp_yuv` is gated behind the `__expert` cargo
+  feature** (ebb30bf, 2026-05-02 — part of the `expert`→`__expert` rename
+  bundled into the never-published 0.4.5 manifest bump, `6e337c2`). It was
+  unconditionally public in the last actually-published release (0.4.4).
+  Confirmed via `cargo semver-checks check-release` against a locally-built
+  0.4.4 rustdoc-JSON baseline (`inherent_method_missing`: `with_sharp_yuv` no
+  longer reachable under the crate's default+all-additive-feature set — the
+  one real failure out of 196 checks). Enable `--features __expert` to keep
+  calling it directly, or use `LossyConfig`/`InternalParams`.
 
 ### Changed
 - **`zencodec` is now a required, always-on dependency — the codec-trait
