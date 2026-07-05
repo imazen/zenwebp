@@ -9,28 +9,29 @@
 
 ## summary
 #
-#   pub modules                                26
-#   pub types (struct/enum/trait/alias)        83
-#   pub consts/statics                         84
-#   free functions                            168
-#   inherent methods                          227
-#   struct fields                             373
-#   enum variants                              82
-#   trait roster entries (type × trait)       152
-#   auto-trait-complete types                  27
+#   pub modules                                24
+#   pub types (struct/enum/trait/alias)        89
+#   pub consts/statics                         72
+#   free functions                            169
+#   inherent methods                          253
+#   struct fields                             392
+#   enum variants                              77
+#   re-exports                                  4
+#   trait roster entries (type × trait)       157
+#   auto-trait-complete types                  35
 #
 # per-module pub lines:
-#   (root)                           71
+#   (root)                           73
 #   __test_helpers                   31
 #   decoder                          75
 #   detect                            1
-#   encoder                         855
+#   encoder                         791
 #   heuristics                        2
 #   mux                               4
-#   sweep                             2
-#   zencodec                          2
+#   sweep                           100
+#   zencodec                          3
 
-## items (894 lines)
+## items (935 lines)
 
 #[non_exhaustive] pub enum SharpYuvSetting [also: encoder, encoder::config]
 #[non_exhaustive] pub enum encoder::ImageContentType [also: encoder::analysis, encoder::analysis::classifier, encoder::cost, encoder::cost::classifier]
@@ -43,7 +44,6 @@
 #[repr(i8)] pub enum decoder::IntraMode
 #[repr(i8)] pub enum decoder::LumaMode
 pub const fn encoder::cost::quantization_bias(u32) -> u32
-pub const fn encoder::picker::spec::cell_to_method_segments(usize) -> (u8, u8)
 pub const fn encoder::quantize::quantization_bias(u32) -> u32
 pub const __test_helpers::CHROMA_BLOCK_SIZE: usize
 pub const __test_helpers::CHROMA_STRIDE: usize
@@ -83,22 +83,12 @@ pub const encoder::cost::VP8_WEIGHT_UV: [u16; 16] [also: encoder::tables]
 pub const encoder::cost::VP8_WEIGHT_Y: [u16; 16] [also: encoder::tables]
 pub const encoder::cost::VP8_ZIGZAG: [usize; 16] [also: encoder::tables]
 pub const encoder::cost::level_costs::LEVEL_COST_ARRAY_SIZE: usize
-pub const encoder::picker::spec::CELLS: [encoder::picker::spec::CellSpec; 6]
-pub const encoder::picker::spec::FEAT_COLS: &[&str]
-pub const encoder::picker::spec::N_CELLS: usize
-pub const encoder::picker::spec::N_FEAT_COLS: usize
-pub const encoder::picker::spec::N_OUTPUTS: usize
-pub const encoder::picker::spec::RANGE_BYTES_LOG: core::ops::range::Range<usize>
-pub const encoder::picker::spec::RANGE_FILTER_SHARPNESS: core::ops::range::Range<usize>
-pub const encoder::picker::spec::RANGE_FILTER_STRENGTH: core::ops::range::Range<usize>
-pub const encoder::picker::spec::RANGE_SNS: core::ops::range::Range<usize>
-pub const encoder::picker::spec::SCHEMA_HASH: u64
-pub const encoder::picker::spec::SCHEMA_VERSION_TAG: &str
 pub enum EncoderConfig [also: encoder, encoder::config]
 pub enum encoder::cost::MatrixType [also: encoder::quantize]
 pub enum encoder::cost::MbModeHint [also: encoder::analysis]
 pub enum encoder::cost::TokenType [also: encoder::cost::stats]
-pub enum encoder::picker::PickError [also: encoder::picker::runtime]
+pub enum sweep::QualityGrid
+pub enum sweep::SweepVariant
 pub fn CostModel::assert_fields_are_eq(&self)
 pub fn EncodeRequest<'a>::encode_with_metrics(self) -> EncodeResult<(alloc::vec::Vec<u8>, encoder::zensim_target::ZensimEncodeMetrics)>
 pub fn EncodeRequest<'a>::lossless(&'a encoder::config::LosslessConfig, &'a [u8], PixelLayout, u32, u32) -> Self
@@ -361,20 +351,6 @@ pub fn encoder::cost::tdisto_8x8(&[u8], &[u8], usize, &[u16; 16]) -> i32 [also: 
 pub fn encoder::cost::trellis_quantize_block(&mut [i32; 16], &mut [i32; 16], &encoder::quantize::VP8Matrix, u32, usize, &encoder::cost::level_costs::LevelCosts, usize, usize, &encoder::cost::PsyConfig) -> bool
 pub fn encoder::cost::vp8_bit_cost(bool, u8) -> u16
 pub fn encoder::encode_vp8l(&[u8], u32, u32, bool, &encoder::Vp8lConfig, &dyn enough::Stop) -> EncodeResult<alloc::vec::Vec<u8>> [also: encoder::vp8l]
-pub fn encoder::picker::pick_tuning(&[u8], u32, u32, f32, &encoder::picker::spec::PickerConstraints) -> core::result::Result<encoder::picker::runtime::TuningPick, encoder::picker::runtime::PickError> [also: encoder::picker::runtime]
-pub fn encoder::picker::pick_tuning_from_features(&[f32], u32, u32, f32, &encoder::picker::spec::PickerConstraints) -> core::result::Result<encoder::picker::runtime::TuningPick, encoder::picker::runtime::PickError> [also: encoder::picker::runtime]
-pub fn encoder::picker::runtime::PickError::clone(&self) -> encoder::picker::runtime::PickError
-pub fn encoder::picker::runtime::PickError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encoder::picker::runtime::TuningPick::clone(&self) -> encoder::picker::runtime::TuningPick
-pub fn encoder::picker::runtime::TuningPick::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encoder::picker::spec::CellSpec::assert_fields_are_eq(&self)
-pub fn encoder::picker::spec::CellSpec::clone(&self) -> encoder::picker::spec::CellSpec
-pub fn encoder::picker::spec::CellSpec::eq(&self, &encoder::picker::spec::CellSpec) -> bool
-pub fn encoder::picker::spec::CellSpec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encoder::picker::spec::PickerConstraints::allowed_mask(&self) -> [bool; 6]
-pub fn encoder::picker::spec::PickerConstraints::clone(&self) -> encoder::picker::spec::PickerConstraints
-pub fn encoder::picker::spec::PickerConstraints::default() -> encoder::picker::spec::PickerConstraints
-pub fn encoder::picker::spec::PickerConstraints::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encoder::quantize::MatrixType::clone(&self) -> encoder::quantize::MatrixType
 pub fn encoder::quantize::MatrixType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encoder::quantize::VP8Matrix::average_q(&self) -> u32
@@ -419,9 +395,52 @@ pub fn mux::AnimationEncoder::add_frame_advanced(&mut self, &[u8], PixelLayout, 
 pub fn mux::BlendMethod::assert_fields_are_eq(&self)
 pub fn mux::DisposeMethod::assert_fields_are_eq(&self)
 pub fn set_ablation_toggles(encoder::zensim_target::AblationToggles) [also: encoder]
+pub fn sweep::DroppedAxis::clone(&self) -> sweep::DroppedAxis
+pub fn sweep::DroppedAxis::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn sweep::LosslessAxes::clone(&self) -> sweep::LosslessAxes
+pub fn sweep::LosslessAxes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn sweep::LosslessAxes::scalar_dense() -> Self
+pub fn sweep::LosslessVariant::clone(&self) -> sweep::LosslessVariant
+pub fn sweep::LosslessVariant::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn sweep::LossyAxes::clone(&self) -> sweep::LossyAxes
+pub fn sweep::LossyAxes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn sweep::LossyAxes::scalar_dense() -> Self
+pub fn sweep::LossyVariant::clone(&self) -> sweep::LossyVariant
+pub fn sweep::LossyVariant::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn sweep::NamedLossyProbe::clone(&self) -> sweep::NamedLossyProbe
+pub fn sweep::NamedLossyProbe::default_probe() -> Self
+pub fn sweep::NamedLossyProbe::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn sweep::QualityGrid::clone(&self) -> sweep::QualityGrid
+pub fn sweep::QualityGrid::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn sweep::QualityGrid::points(&self) -> alloc::vec::Vec<f32>
+pub fn sweep::SweepAxes::clone(&self) -> sweep::SweepAxes
+pub fn sweep::SweepAxes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn sweep::SweepAxes::modes_full() -> Self
+pub fn sweep::SweepAxes::rd_core() -> Self
+pub fn sweep::SweepAxes::scalar_dense() -> Self
+pub fn sweep::SweepBuilder::clone(&self) -> sweep::SweepBuilder
+pub fn sweep::SweepBuilder::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn sweep::SweepBuilder::new(sweep::SweepAxes, sweep::QualityGrid) -> Self
+pub fn sweep::SweepBuilder::plan(&self) -> sweep::SweepPlan
+pub fn sweep::SweepBuilder::with_budget(self, usize) -> Self
+pub fn sweep::SweepBuilder::with_compute_limit(self, u8) -> Self
+pub fn sweep::SweepBuilder::with_max_deviations(self, u8) -> Self
+pub fn sweep::SweepCell::clone(&self) -> sweep::SweepCell
+pub fn sweep::SweepCell::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn sweep::SweepPlan::clone(&self) -> sweep::SweepPlan
+pub fn sweep::SweepPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn sweep::SweepVariant::build(&self) -> EncoderConfig
 pub fn sweep::SweepVariant::build(&self) -> encoder::config::EncoderConfig
+pub fn sweep::SweepVariant::clone(&self) -> sweep::SweepVariant
+pub fn sweep::SweepVariant::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn sweep::compute_tier(&sweep::SweepVariant) -> u8
+pub fn sweep::fingerprint(&sweep::SweepVariant) -> u64
+pub fn sweep::lossy_internal_probes() -> alloc::vec::Vec<sweep::NamedLossyProbe>
+pub fn sweep::lossy_probe_by_label(&str) -> core::option::Option<sweep::NamedLossyProbe>
+pub fn sweep::variant_from_cell_id(&str) -> core::result::Result<sweep::SweepVariant, alloc::string::String>
 pub fn zencodec::WebpEncoderConfig::inner(&self) -> &encoder::config::EncoderConfig
 pub fn zencodec::WebpEncoderConfig::inner_mut(&mut self) -> &mut encoder::config::EncoderConfig
+pub fn zencodec::WebpEncoderConfig::with_sharp_yuv(self, bool) -> Self
 pub mod __test_helpers
 pub mod encoder::analysis
 pub mod encoder::analysis::classifier
@@ -440,14 +459,12 @@ pub mod encoder::cost::level_costs
 pub mod encoder::cost::prediction
 pub mod encoder::cost::segment
 pub mod encoder::cost::stats
-pub mod encoder::picker
-pub mod encoder::picker::runtime
-pub mod encoder::picker::spec
 pub mod encoder::quantize
 pub mod encoder::tables
 pub mod encoder::vp8
 pub mod encoder::vp8l
 pub mod encoder::zensim_target
+pub mod sweep
 pub struct AblationToggles [also: encoder, encoder::zensim_target]
 pub struct decoder::BlockDiagnostic
 pub struct decoder::DiagnosticFrame
@@ -465,12 +482,23 @@ pub struct encoder::cost::PsyConfig
 pub struct encoder::cost::Residual<'a>
 pub struct encoder::cost::VP8Matrix [also: encoder::quantize]
 pub struct encoder::cost::ZenanalyzeDiag [also: encoder::analysis, encoder::analysis::classifier, encoder::cost::classifier]
-pub struct encoder::picker::TuningPick [also: encoder::picker::runtime]
-pub struct encoder::picker::spec::CellSpec
-pub struct encoder::picker::spec::PickerConstraints
+pub struct sweep::DroppedAxis
+pub struct sweep::LosslessAxes
+pub struct sweep::LosslessVariant
+pub struct sweep::LossyAxes
+pub struct sweep::LossyVariant
+pub struct sweep::NamedLossyProbe
+pub struct sweep::SweepAxes
+pub struct sweep::SweepBuilder
+pub struct sweep::SweepCell
+pub struct sweep::SweepPlan
 pub type encoder::cost::LevelCostArray = [u16; 128] [also: encoder::cost::level_costs]
 pub type encoder::cost::LevelCostTables = [[[encoder::cost::level_costs::LevelCostArray; 3]; 8]; 4] [also: encoder::cost::level_costs]
 pub type encoder::cost::RemappedCosts = [[usize; 3]; 16] [also: encoder::cost::level_costs]
+pub use InternalParams
+pub use SharpYuvSetting
+pub use encoder::InternalParams
+pub use encoder::SharpYuvSetting
 pub AblationToggles::disable_phase3: bool
 pub AblationToggles::naive_starting_q: bool
 pub AblationToggles::no_multi_pass_stats: bool
@@ -857,36 +885,6 @@ pub encoder::cost::stats::TokenType::Chroma = 2
 pub encoder::cost::stats::TokenType::I16AC = 0
 pub encoder::cost::stats::TokenType::I16DC = 1
 pub encoder::cost::stats::TokenType::I4 = 3
-pub encoder::picker::PickError::Forward
-pub encoder::picker::PickError::NoAllowedCell
-pub encoder::picker::PickError::NoBakedModel
-pub encoder::picker::PickError::Parse
-pub encoder::picker::PickError::SchemaMismatch
-pub encoder::picker::PickError::SchemaMismatch::expected: u64
-pub encoder::picker::PickError::SchemaMismatch::got: u64
-pub encoder::picker::TuningPick::cell_idx: usize
-pub encoder::picker::TuningPick::filter_sharpness: u8
-pub encoder::picker::TuningPick::filter_strength: u8
-pub encoder::picker::TuningPick::method: u8
-pub encoder::picker::TuningPick::segments: u8
-pub encoder::picker::TuningPick::sns_strength: u8
-pub encoder::picker::runtime::PickError::Forward
-pub encoder::picker::runtime::PickError::NoAllowedCell
-pub encoder::picker::runtime::PickError::NoBakedModel
-pub encoder::picker::runtime::PickError::Parse
-pub encoder::picker::runtime::PickError::SchemaMismatch
-pub encoder::picker::runtime::PickError::SchemaMismatch::expected: u64
-pub encoder::picker::runtime::PickError::SchemaMismatch::got: u64
-pub encoder::picker::runtime::TuningPick::cell_idx: usize
-pub encoder::picker::runtime::TuningPick::filter_sharpness: u8
-pub encoder::picker::runtime::TuningPick::filter_strength: u8
-pub encoder::picker::runtime::TuningPick::method: u8
-pub encoder::picker::runtime::TuningPick::segments: u8
-pub encoder::picker::runtime::TuningPick::sns_strength: u8
-pub encoder::picker::spec::CellSpec::method: u8
-pub encoder::picker::spec::CellSpec::segments: u8
-pub encoder::picker::spec::PickerConstraints::allowed_methods: core::option::Option<&'static [u8]>
-pub encoder::picker::spec::PickerConstraints::allowed_segments: core::option::Option<&'static [u8]>
 pub encoder::quantize::MatrixType::UV
 pub encoder::quantize::MatrixType::Y1
 pub encoder::quantize::MatrixType::Y2
@@ -925,9 +923,53 @@ pub encoder::zensim_target::ZensimTarget::max_passes: u8
 pub encoder::zensim_target::ZensimTarget::max_undershoot: core::option::Option<f32>
 pub encoder::zensim_target::ZensimTarget::max_undershoot_ship: core::option::Option<f32>
 pub encoder::zensim_target::ZensimTarget::target: f32
+pub sweep::DroppedAxis::axis: &'static str
+pub sweep::DroppedAxis::dropped: alloc::vec::Vec<alloc::string::String>
+pub sweep::DroppedAxis::kept: alloc::string::String
+pub sweep::LosslessAxes::methods: alloc::vec::Vec<u8>
+pub sweep::LosslessAxes::qualities: alloc::vec::Vec<f32>
+pub sweep::LosslessVariant::method: u8
+pub sweep::LosslessVariant::quality: f32
+pub sweep::LossyAxes::filter_sharpness: alloc::vec::Vec<core::option::Option<u8>>
+pub sweep::LossyAxes::filter_strength: alloc::vec::Vec<core::option::Option<u8>>
+pub sweep::LossyAxes::internal: alloc::vec::Vec<sweep::NamedLossyProbe>
+pub sweep::LossyAxes::methods: alloc::vec::Vec<u8>
+pub sweep::LossyAxes::segments: alloc::vec::Vec<core::option::Option<u8>>
+pub sweep::LossyAxes::sharp_yuv: alloc::vec::Vec<bool>
+pub sweep::LossyAxes::sns_strength: alloc::vec::Vec<core::option::Option<u8>>
+pub sweep::LossyVariant::filter_sharpness: core::option::Option<u8>
+pub sweep::LossyVariant::filter_strength: core::option::Option<u8>
+pub sweep::LossyVariant::internal: sweep::NamedLossyProbe
+pub sweep::LossyVariant::method: u8
+pub sweep::LossyVariant::quality: f32
+pub sweep::LossyVariant::segments: core::option::Option<u8>
+pub sweep::LossyVariant::sharp_yuv: bool
+pub sweep::LossyVariant::sns_strength: core::option::Option<u8>
+pub sweep::NamedLossyProbe::label: alloc::string::String
+pub sweep::NamedLossyProbe::params: crate::encoder::config::InternalParams
 pub sweep::NamedLossyProbe::params: encoder::config::InternalParams
+pub sweep::QualityGrid::Explicit(alloc::vec::Vec<f32>)
+pub sweep::QualityGrid::Step5
+pub sweep::QualityGrid::TrainingDense
+pub sweep::SweepAxes::lossless: core::option::Option<sweep::LosslessAxes>
+pub sweep::SweepAxes::lossy: core::option::Option<sweep::LossyAxes>
+pub sweep::SweepCell::aliases: alloc::vec::Vec<alloc::string::String>
+pub sweep::SweepCell::deviations: u8
+pub sweep::SweepCell::fingerprint: u64
+pub sweep::SweepCell::id: alloc::string::String
+pub sweep::SweepCell::quality: core::option::Option<f32>
+pub sweep::SweepCell::variant: sweep::SweepVariant
+pub sweep::SweepPlan::cells: alloc::vec::Vec<sweep::SweepCell>
+pub sweep::SweepPlan::compute_tier_skipped: alloc::vec::Vec<alloc::string::String>
+pub sweep::SweepPlan::dropped: alloc::vec::Vec<sweep::DroppedAxis>
+pub sweep::SweepPlan::duplicates_merged: usize
+pub sweep::SweepPlan::invalid_skipped: alloc::vec::Vec<alloc::string::String>
+pub sweep::SweepPlan::over_budget: bool
+pub sweep::SweepPlan::q_coarsenings: u32
+pub sweep::SweepVariant::Lossless(sweep::LosslessVariant)
+pub sweep::SweepVariant::Lossy(sweep::LossyVariant)
 
-## trait impls (45 types)
+## trait impls (53 types)
 
 CostModel: TrivialClone
 ImageMetadata<'a>: TrivialClone
@@ -960,10 +1002,6 @@ encoder::cost::PsyConfig: Clone, Debug, Default
 encoder::cost::level_costs::LevelCosts: Clone, Default
 encoder::cost::stats::ProbaStats: Clone, Default
 encoder::cost::stats::TokenType: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
-encoder::picker::runtime::PickError: Clone, Copy, Debug, TrivialClone
-encoder::picker::runtime::TuningPick: Clone, Copy, Debug, TrivialClone
-encoder::picker::spec::CellSpec: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
-encoder::picker::spec::PickerConstraints: Clone, Copy, Debug, Default, TrivialClone
 encoder::quantize::MatrixType: Clone, Copy, Debug, TrivialClone
 encoder::quantize::VP8Matrix: Clone, Debug
 encoder::zensim_target::AblationToggles: Clone, Copy, Debug, Default, PartialEq, TrivialClone
@@ -974,7 +1012,19 @@ heuristics::EncodeEstimate: TrivialClone
 mux::BlendMethod: TrivialClone
 mux::DisposeMethod: TrivialClone
 mux::FrameInfo: TrivialClone
+sweep::DroppedAxis: Clone, Debug
+sweep::LosslessAxes: Clone, Debug
+sweep::LosslessVariant: Clone, Debug
+sweep::LossyAxes: Clone, Debug
+sweep::LossyVariant: Clone, Debug
+sweep::NamedLossyProbe: Clone, Debug
+sweep::QualityGrid: Clone, Debug
+sweep::SweepAxes: Clone, Debug
+sweep::SweepBuilder: Clone, Debug
+sweep::SweepCell: Clone, Debug
+sweep::SweepPlan: Clone, Debug
+sweep::SweepVariant: Clone, Debug
 
 ## auto traits
 
-27 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+35 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe

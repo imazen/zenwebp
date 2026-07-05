@@ -6,34 +6,35 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenwebp.txt 793 lines (supported surface) | zenwebp.features.txt 188 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,mode_debug,picker,pixel-types,std,target-zensim,testable_dispatch,zencodec) | zenwebp.internal.txt 940 lines (1408 hidden + 0 excluded-feature)
+# files: zenwebp.txt 855 lines (supported surface) | zenwebp.features.txt 31 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,mode_debug,pixel-types,std,target-zensim,testable_dispatch) | zenwebp.internal.txt 989 lines (1292 hidden + 219 excluded-feature)
 
 ## summary
 #
-#   pub modules                                10
-#   pub types (struct/enum/trait/alias)        63
+#   pub modules                                11
+#   pub types (struct/enum/trait/alias)        72
 #   pub consts/statics                         16
 #   free functions                             51
-#   inherent methods                          225
+#   inherent methods                          257
 #   struct fields                             220
-#   enum variants                             174
+#   enum variants                             178
 #   re-exports                                 17
-#   trait roster entries (type × trait)       143
-#   auto-trait-complete types                  33
-#   auto-trait exceptions                       7
+#   trait roster entries (type × trait)       163
+#   auto-trait-complete types                  36
+#   auto-trait exceptions                      13
 #
 # per-module pub lines:
-#   (root)                          317
-#   decoder                          94
+#   (root)                          320
+#   decoder                          95
 #   detect                           25
-#   encoder                         154
+#   encoder                         155
 #   heuristics                       14
 #   metadata                         10
 #   mux                             135
 #   oneshot                          16
 #   pixel                            11
+#   zencodec                         41
 
-## items (743 lines)
+## items (789 lines)
 
 pub mod zenwebp
 pub use EncoderConfig
@@ -76,6 +77,7 @@ pub decoder::DecodeError::NotEnoughInitData
 pub decoder::DecodeError::RiffSignatureInvalid([u8; 4])
 pub decoder::DecodeError::TransformError
 pub decoder::DecodeError::UnsupportedFeature(alloc::string::String)
+pub decoder::DecodeError::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
 pub decoder::DecodeError::VersionNumberInvalid(u8)
 pub decoder::DecodeError::Vp8MagicInvalid([u8; 3])
 pub decoder::DecodeError::WebpSignatureInvalid([u8; 4])
@@ -151,7 +153,7 @@ pub fn StreamingDecoder::new() -> Self
 pub fn StreamingDecoder::total_size(&self) -> core::option::Option<usize>
 pub fn StreamingDecoder::with_config(DecodeConfig) -> Self
 pub fn WebPDecoder<'a>::background_color_hint(&self) -> core::option::Option<[u8; 4]>
-pub fn WebPDecoder<'a>::build(&'a [u8]) -> core::result::Result<Self, DecodeError>
+pub fn WebPDecoder<'a>::build(&'a [u8]) -> DecodeResult<Self>
 pub fn WebPDecoder<'a>::dimensions(&self) -> (u32, u32)
 pub fn WebPDecoder<'a>::exif_metadata(&mut self) -> DecodeResult<core::option::Option<alloc::vec::Vec<u8>>>
 pub fn WebPDecoder<'a>::has_alpha(&self) -> bool
@@ -291,6 +293,7 @@ pub encoder::EncodeError::Partition0Overflow
 pub encoder::EncodeError::Partition0Overflow::max: u32
 pub encoder::EncodeError::Partition0Overflow::size: u32
 pub encoder::EncodeError::TargetZensimUnsupportedLayout(PixelLayout)
+pub encoder::EncodeError::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
 pub encoder::PixelLayout::Argb8
 pub encoder::PixelLayout::Bgr8
 pub encoder::PixelLayout::Bgra8
@@ -563,6 +566,48 @@ pub fn pixel::decode<P: pixel::DecodePixel>(&[u8]) -> DecodeResult<(alloc::vec::
 pub fn pixel::decode_append<P: pixel::DecodePixel>(&[u8], &mut alloc::vec::Vec<P>) -> DecodeResult<(u32, u32)> where [u8]: rgb::legacy::internal::convert::AsPixels<P>
 pub fn pixel::decode_into<P: pixel::DecodePixel>(&[u8], &mut [P], u32) -> DecodeResult<(u32, u32)> where [P]: rgb::legacy::internal::pixel::ComponentBytes<u8>
 pub fn pixel::encode<P: pixel::EncodePixel>(&[P], u32, u32) -> EncodeResult<alloc::vec::Vec<u8>> where [P]: rgb::legacy::internal::pixel::ComponentBytes<u8>
+pub mod zencodec
+pub struct zencodec::WebpAnimationFrameDecoder
+pub struct zencodec::WebpAnimationFrameEncoder
+pub struct zencodec::WebpDecodeJob
+pub fn zencodec::WebpDecodeJob::with_preferred(self, &[zenpixels::descriptor::PixelDescriptor]) -> Self
+pub struct zencodec::WebpDecoder<'a>
+pub struct zencodec::WebpDecoderConfig
+pub fn zencodec::WebpDecoderConfig::decode(&self, &[u8]) -> core::result::Result<zencodec::output::DecodeOutput, whereat::at::At<zencodec::error::CodecError>>
+pub fn zencodec::WebpDecoderConfig::inner(&self) -> &DecodeConfig
+pub fn zencodec::WebpDecoderConfig::inner_mut(&mut self) -> &mut DecodeConfig
+pub fn zencodec::WebpDecoderConfig::new() -> Self
+pub fn zencodec::WebpDecoderConfig::probe_header(&self, &[u8]) -> core::result::Result<zencodec::info::ImageInfo, whereat::at::At<zencodec::error::CodecError>>
+pub fn zencodec::WebpDecoderConfig::with_dithering_strength(self, u8) -> Self
+pub fn zencodec::WebpDecoderConfig::with_limits(self, zencodec::limits::ResourceLimits) -> Self
+pub fn zencodec::WebpDecoderConfig::with_upsampling(self, decoder::UpsamplingMethod) -> Self
+pub struct zencodec::WebpEncodeJob
+pub struct zencodec::WebpEncoder
+pub struct zencodec::WebpEncoderConfig
+pub fn zencodec::WebpEncoderConfig::calibrated_quality(&self) -> core::option::Option<f32>
+pub fn zencodec::WebpEncoderConfig::effort(&self) -> core::option::Option<i32>
+pub fn zencodec::WebpEncoderConfig::inner(&self) -> &EncoderConfig
+pub fn zencodec::WebpEncoderConfig::inner_mut(&mut self) -> &mut EncoderConfig
+pub fn zencodec::WebpEncoderConfig::lossless() -> Self
+pub fn zencodec::WebpEncoderConfig::lossy() -> Self
+pub fn zencodec::WebpEncoderConfig::with_alpha_quality_value(self, f32) -> Self
+pub fn zencodec::WebpEncoderConfig::with_calibrated_quality(self, f32) -> Self
+pub fn zencodec::WebpEncoderConfig::with_effort(self, i32) -> Self
+pub fn zencodec::WebpEncoderConfig::with_effort_u32(self, u32) -> Self
+pub fn zencodec::WebpEncoderConfig::with_exact(self, bool) -> Self
+pub fn zencodec::WebpEncoderConfig::with_filter_sharpness(self, u8) -> Self
+pub fn zencodec::WebpEncoderConfig::with_filter_strength(self, u8) -> Self
+pub fn zencodec::WebpEncoderConfig::with_lossless_mode(self, bool) -> Self
+pub fn zencodec::WebpEncoderConfig::with_method(self, u8) -> Self
+pub fn zencodec::WebpEncoderConfig::with_near_lossless(self, u8) -> Self
+pub fn zencodec::WebpEncoderConfig::with_preset(Preset, f32) -> Self
+pub fn zencodec::WebpEncoderConfig::with_preset_value(self, Preset) -> Self
+pub fn zencodec::WebpEncoderConfig::with_quality(self, f32) -> Self
+pub fn zencodec::WebpEncoderConfig::with_segments(self, u8) -> Self
+pub fn zencodec::WebpEncoderConfig::with_sns_strength(self, u8) -> Self
+pub fn zencodec::WebpEncoderConfig::with_target_psnr(self, f32) -> Self
+pub fn zencodec::WebpEncoderConfig::with_target_size(self, u32) -> Self
+pub struct zencodec::WebpStreamingDecoder
 pub enum CostModel [also: encoder]
 pub CostModel::StrictLibwebpParity
 pub CostModel::ZenwebpDefault
@@ -593,6 +638,7 @@ pub DecodeError::NotEnoughInitData
 pub DecodeError::RiffSignatureInvalid([u8; 4])
 pub DecodeError::TransformError
 pub DecodeError::UnsupportedFeature(alloc::string::String)
+pub DecodeError::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
 pub DecodeError::VersionNumberInvalid(u8)
 pub DecodeError::Vp8MagicInvalid([u8; 3])
 pub DecodeError::WebpSignatureInvalid([u8; 4])
@@ -607,6 +653,7 @@ pub EncodeError::Partition0Overflow
 pub EncodeError::Partition0Overflow::max: u32
 pub EncodeError::Partition0Overflow::size: u32
 pub EncodeError::TargetZensimUnsupportedLayout(PixelLayout)
+pub EncodeError::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
 pub enum PixelLayout [also: encoder]
 pub PixelLayout::Argb8
 pub PixelLayout::Bgr8
@@ -754,7 +801,7 @@ pub fn StreamingDecoder::total_size(&self) -> core::option::Option<usize>
 pub fn StreamingDecoder::with_config(DecodeConfig) -> Self
 pub struct WebPDecoder<'a> [also: decoder]
 pub fn WebPDecoder<'a>::background_color_hint(&self) -> core::option::Option<[u8; 4]>
-pub fn WebPDecoder<'a>::build(&'a [u8]) -> core::result::Result<Self, DecodeError>
+pub fn WebPDecoder<'a>::build(&'a [u8]) -> DecodeResult<Self>
 pub fn WebPDecoder<'a>::dimensions(&self) -> (u32, u32)
 pub fn WebPDecoder<'a>::exif_metadata(&mut self) -> DecodeResult<core::option::Option<alloc::vec::Vec<u8>>>
 pub fn WebPDecoder<'a>::has_alpha(&self) -> bool
@@ -779,12 +826,12 @@ pub fn WebPDecoder<'a>::xmp_metadata(&mut self) -> DecodeResult<core::option::Op
 pub type DecodeResult<T> = core::result::Result<T, whereat::at::At<DecodeError>> [also: decoder]
 pub type EncodeResult<T> = core::result::Result<T, whereat::at::At<EncodeError>> [also: encoder]
 
-## trait impls (42 types)
+## trait impls (52 types)
 
 CostModel: Clone, Copy, Debug, Default, Eq, PartialEq
 DecodeConfig: Clone, Debug, Default, PartialEq
-DecodeError: Debug, Display, Error, From<enough::reason::StopReason>, From<std::io::error::Error>, From<whereat::at::At<DecodeError>>
-EncodeError: Debug, Display, Error, From<enough::reason::StopReason>, From<std::io::error::Error>, From<whereat::at::At<EncodeError>>
+DecodeError: Debug, Display, Error, From<enough::reason::StopReason>, From<std::io::error::Error>, From<zencodec::capabilities::UnsupportedOperation>, zencodec::error::CategorizedError
+EncodeError: Debug, Display, Error, From<enough::reason::StopReason>, From<std::io::error::Error>, From<zencodec::capabilities::UnsupportedOperation>, zencodec::error::CategorizedError
 ImageInfo: Clone, Debug
 ImageMetadata<'a>: Clone, Copy, Debug, Default
 Limits: Clone, Debug, Default, PartialEq
@@ -797,11 +844,11 @@ decoder::StreamStatus: Clone, Copy, Debug, Eq, PartialEq
 decoder::UpsamplingMethod: Clone, Copy, Debug, Default, Eq, PartialEq
 decoder::YuvPlanes: Clone, Debug
 detect::BitstreamType: Clone, Debug
-detect::ProbeError: Clone, Debug, Display, Eq, Error, PartialEq
-detect::WebPProbe: Clone, Debug
+detect::ProbeError: Clone, Debug, Display, Eq, Error, PartialEq, zencodec::error::CategorizedError
+detect::WebPProbe: Clone, Debug, zencodec::detect::SourceEncodingDetails
 encoder::EncodeStats: Clone, Debug, Default
 encoder::NoProgress: encoder::EncodeProgress
-encoder::validation::ValidationError: Clone, Debug, Display, Error
+encoder::validation::ValidationError: Clone, Debug, Display, Error, zencodec::error::CategorizedError
 heuristics::DecodeEstimate: Clone, Copy, Debug
 heuristics::EncodeEstimate: Clone, Copy, Debug
 mux::AnimFrame: Clone, Debug
@@ -814,7 +861,7 @@ mux::DemuxFrameIter<'_, '_>: ExactSizeIterator
 mux::DemuxFrameIter<'a, 'b>: Iterator
 mux::DisposeMethod: Clone, Copy, Debug, Eq, PartialEq
 mux::FrameInfo: Clone, Copy, Debug
-mux::MuxError: Debug, Display, Error, From<DecodeError>, From<EncodeError>, From<whereat::at::At<DecodeError>>, From<whereat::at::At<EncodeError>>, From<whereat::at::At<mux::MuxError>>
+mux::MuxError: Debug, Display, Error, From<DecodeError>, From<EncodeError>, zencodec::error::CategorizedError
 mux::MuxFrame: Clone, Debug
 rgb::formats::argb::Argb<u8>: pixel::EncodePixel
 rgb::formats::bgr::Bgr<u8>: pixel::DecodePixel, pixel::EncodePixel
@@ -823,10 +870,20 @@ rgb::formats::gray::Gray_v08<u8>: pixel::EncodePixel
 rgb::formats::gray_alpha::GrayAlpha_v08<u8>: pixel::EncodePixel
 rgb::formats::rgb::Rgb<u8>: pixel::DecodePixel, pixel::EncodePixel
 rgb::formats::rgba::Rgba<u8>: pixel::DecodePixel, pixel::EncodePixel
+whereat::at::At<zencodec::error::CodecError>: From<DecodeError>, From<EncodeError>
+zencodec::WebpAnimationFrameDecoder: zencodec::traits::decoder::AnimationFrameDecoder
+zencodec::WebpAnimationFrameEncoder: zencodec::traits::encoder::AnimationFrameEncoder
+zencodec::WebpDecodeJob: Clone, zencodec::traits::decoding::DecodeJob<'a>
+zencodec::WebpDecoder<'_>: zencodec::traits::decoder::Decode
+zencodec::WebpDecoderConfig: Clone, Debug, Default, zencodec::traits::decoding::DecoderConfig
+zencodec::WebpEncodeJob: zencodec::traits::encoding::EncodeJob
+zencodec::WebpEncoder: zencodec::traits::encoder::Encoder
+zencodec::WebpEncoderConfig: Clone, Debug, zencodec::traits::encoding::EncoderConfig
+zencodec::WebpStreamingDecoder: zencodec::traits::decoder::StreamingDecode
 
 ## auto traits
 
-33 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+36 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 DecodeError: !RefUnwindSafe !UnwindSafe
 DecodeRequest<'a>: !RefUnwindSafe !UnwindSafe
 EncodeError: !RefUnwindSafe !UnwindSafe
@@ -834,3 +891,9 @@ EncodeRequest<'a>: !RefUnwindSafe !UnwindSafe
 WebPDecoder<'a>: !RefUnwindSafe !UnwindSafe
 mux::AnimationDecoder<'a>: !RefUnwindSafe !UnwindSafe
 mux::MuxError: !RefUnwindSafe !UnwindSafe
+zencodec::WebpAnimationFrameDecoder: !RefUnwindSafe !UnwindSafe
+zencodec::WebpDecodeJob: !RefUnwindSafe !UnwindSafe
+zencodec::WebpDecoder<'a>: !RefUnwindSafe !UnwindSafe
+zencodec::WebpEncodeJob: !RefUnwindSafe !UnwindSafe
+zencodec::WebpEncoder: !RefUnwindSafe !UnwindSafe
+zencodec::WebpStreamingDecoder: !RefUnwindSafe !UnwindSafe

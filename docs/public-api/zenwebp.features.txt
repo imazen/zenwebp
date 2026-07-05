@@ -1,5 +1,5 @@
 # zenwebp public API — additions from non-default features
-# features: ablation,analyzer,avx512,cms,fast-yuv,imgref,mode_debug,picker,pixel-types,std,target-zensim,testable_dispatch,zencodec
+# features: ablation,analyzer,avx512,cms,fast-yuv,imgref,mode_debug,pixel-types,std,target-zensim,testable_dispatch
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -9,36 +9,22 @@
 
 ## summary
 #
-#   pub modules                                 2
-#   pub types (struct/enum/trait/alias)        21
 #   pub consts/statics                          1
-#   free functions                              7
-#   inherent methods                           46
-#   struct fields                              54
-#   enum variants                              18
-#   re-exports                                  8
-#   trait roster entries (type × trait)        42
-#   auto-trait-complete types                  15
-#   auto-trait exceptions                       6
+#   free functions                              2
+#   struct fields                              15
+#   enum variants                               9
+#   re-exports                                  4
 #
 # per-module pub lines:
-#   (root)                           16
-#   decoder                           1
-#   encoder                          22
+#   (root)                           10
+#   encoder                          19
 #   pixel                             2
-#   sweep                            74
-#   zencodec                         42
 
-## items (157 lines)
+## items (31 lines)
 
 pub use AblationToggles
-pub use InternalParams
-pub use SharpYuvSetting
 pub use set_ablation_toggles
-pub decoder::DecodeError::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
 pub use encoder::AblationToggles
-pub use encoder::InternalParams
-pub use encoder::SharpYuvSetting
 pub use encoder::set_ablation_toggles
 pub encoder::validation::ValidationError::TargetZensimMaxPassesZero
 pub encoder::validation::ValidationError::TargetZensimMaxPassesZero::value: u8
@@ -49,7 +35,6 @@ pub encoder::validation::ValidationError::TargetZensimToleranceInvalid
 pub encoder::validation::ValidationError::TargetZensimToleranceInvalid::field: &'static str
 pub encoder::validation::ValidationError::TargetZensimToleranceInvalid::value: f32
 pub const encoder::validation::TARGET_ZENSIM_RANGE: core::ops::range::RangeInclusive<f32>
-pub encoder::EncodeError::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
 pub encoder::ValidationError::TargetZensimMaxPassesZero
 pub encoder::ValidationError::TargetZensimMaxPassesZero::value: u8
 pub encoder::ValidationError::TargetZensimOutOfRange
@@ -60,126 +45,6 @@ pub encoder::ValidationError::TargetZensimToleranceInvalid::field: &'static str
 pub encoder::ValidationError::TargetZensimToleranceInvalid::value: f32
 pub fn pixel::decode_to_img<P: pixel::DecodePixel>(&[u8]) -> DecodeResult<imgref::ImgVec<P>> where [u8]: rgb::legacy::internal::convert::AsPixels<P>
 pub fn pixel::encode_img<P: pixel::EncodePixel>(imgref::ImgRef<'_, P>) -> EncodeResult<alloc::vec::Vec<u8>> where [P]: rgb::legacy::internal::pixel::ComponentBytes<u8>
-pub mod sweep
-pub enum sweep::QualityGrid
-pub sweep::QualityGrid::Explicit(alloc::vec::Vec<f32>)
-pub sweep::QualityGrid::Step5
-pub sweep::QualityGrid::TrainingDense
-pub fn sweep::QualityGrid::points(&self) -> alloc::vec::Vec<f32>
-pub enum sweep::SweepVariant
-pub sweep::SweepVariant::Lossless(sweep::LosslessVariant)
-pub sweep::SweepVariant::Lossy(sweep::LossyVariant)
-pub fn sweep::SweepVariant::build(&self) -> EncoderConfig
-pub struct sweep::DroppedAxis
-pub sweep::DroppedAxis::axis: &'static str
-pub sweep::DroppedAxis::dropped: alloc::vec::Vec<alloc::string::String>
-pub sweep::DroppedAxis::kept: alloc::string::String
-pub struct sweep::LosslessAxes
-pub sweep::LosslessAxes::methods: alloc::vec::Vec<u8>
-pub sweep::LosslessAxes::qualities: alloc::vec::Vec<f32>
-pub fn sweep::LosslessAxes::scalar_dense() -> Self
-pub struct sweep::LosslessVariant
-pub sweep::LosslessVariant::method: u8
-pub sweep::LosslessVariant::quality: f32
-pub struct sweep::LossyAxes
-pub sweep::LossyAxes::filter_sharpness: alloc::vec::Vec<core::option::Option<u8>>
-pub sweep::LossyAxes::filter_strength: alloc::vec::Vec<core::option::Option<u8>>
-pub sweep::LossyAxes::internal: alloc::vec::Vec<sweep::NamedLossyProbe>
-pub sweep::LossyAxes::methods: alloc::vec::Vec<u8>
-pub sweep::LossyAxes::segments: alloc::vec::Vec<core::option::Option<u8>>
-pub sweep::LossyAxes::sharp_yuv: alloc::vec::Vec<bool>
-pub sweep::LossyAxes::sns_strength: alloc::vec::Vec<core::option::Option<u8>>
-pub fn sweep::LossyAxes::scalar_dense() -> Self
-pub struct sweep::LossyVariant
-pub sweep::LossyVariant::filter_sharpness: core::option::Option<u8>
-pub sweep::LossyVariant::filter_strength: core::option::Option<u8>
-pub sweep::LossyVariant::internal: sweep::NamedLossyProbe
-pub sweep::LossyVariant::method: u8
-pub sweep::LossyVariant::quality: f32
-pub sweep::LossyVariant::segments: core::option::Option<u8>
-pub sweep::LossyVariant::sharp_yuv: bool
-pub sweep::LossyVariant::sns_strength: core::option::Option<u8>
-pub struct sweep::NamedLossyProbe
-pub sweep::NamedLossyProbe::label: alloc::string::String
-pub sweep::NamedLossyProbe::params: crate::encoder::config::InternalParams
-pub fn sweep::NamedLossyProbe::default_probe() -> Self
-pub struct sweep::SweepAxes
-pub sweep::SweepAxes::lossless: core::option::Option<sweep::LosslessAxes>
-pub sweep::SweepAxes::lossy: core::option::Option<sweep::LossyAxes>
-pub fn sweep::SweepAxes::modes_full() -> Self
-pub fn sweep::SweepAxes::rd_core() -> Self
-pub fn sweep::SweepAxes::scalar_dense() -> Self
-pub struct sweep::SweepBuilder
-pub fn sweep::SweepBuilder::new(sweep::SweepAxes, sweep::QualityGrid) -> Self
-pub fn sweep::SweepBuilder::plan(&self) -> sweep::SweepPlan
-pub fn sweep::SweepBuilder::with_budget(self, usize) -> Self
-pub fn sweep::SweepBuilder::with_compute_limit(self, u8) -> Self
-pub fn sweep::SweepBuilder::with_max_deviations(self, u8) -> Self
-pub struct sweep::SweepCell
-pub sweep::SweepCell::aliases: alloc::vec::Vec<alloc::string::String>
-pub sweep::SweepCell::deviations: u8
-pub sweep::SweepCell::fingerprint: u64
-pub sweep::SweepCell::id: alloc::string::String
-pub sweep::SweepCell::quality: core::option::Option<f32>
-pub sweep::SweepCell::variant: sweep::SweepVariant
-pub struct sweep::SweepPlan
-pub sweep::SweepPlan::cells: alloc::vec::Vec<sweep::SweepCell>
-pub sweep::SweepPlan::compute_tier_skipped: alloc::vec::Vec<alloc::string::String>
-pub sweep::SweepPlan::dropped: alloc::vec::Vec<sweep::DroppedAxis>
-pub sweep::SweepPlan::duplicates_merged: usize
-pub sweep::SweepPlan::invalid_skipped: alloc::vec::Vec<alloc::string::String>
-pub sweep::SweepPlan::over_budget: bool
-pub sweep::SweepPlan::q_coarsenings: u32
-pub fn sweep::compute_tier(&sweep::SweepVariant) -> u8
-pub fn sweep::fingerprint(&sweep::SweepVariant) -> u64
-pub fn sweep::lossy_internal_probes() -> alloc::vec::Vec<sweep::NamedLossyProbe>
-pub fn sweep::lossy_probe_by_label(&str) -> core::option::Option<sweep::NamedLossyProbe>
-pub fn sweep::variant_from_cell_id(&str) -> core::result::Result<sweep::SweepVariant, alloc::string::String>
-pub mod zencodec
-pub struct zencodec::WebpAnimationFrameDecoder
-pub struct zencodec::WebpAnimationFrameEncoder
-pub struct zencodec::WebpDecodeJob
-pub fn zencodec::WebpDecodeJob::with_preferred(self, &[zenpixels::descriptor::PixelDescriptor]) -> Self
-pub struct zencodec::WebpDecoder<'a>
-pub struct zencodec::WebpDecoderConfig
-pub fn zencodec::WebpDecoderConfig::decode(&self, &[u8]) -> core::result::Result<zencodec::output::DecodeOutput, whereat::at::At<DecodeError>>
-pub fn zencodec::WebpDecoderConfig::inner(&self) -> &DecodeConfig
-pub fn zencodec::WebpDecoderConfig::inner_mut(&mut self) -> &mut DecodeConfig
-pub fn zencodec::WebpDecoderConfig::new() -> Self
-pub fn zencodec::WebpDecoderConfig::probe_header(&self, &[u8]) -> core::result::Result<zencodec::info::ImageInfo, whereat::at::At<DecodeError>>
-pub fn zencodec::WebpDecoderConfig::with_dithering_strength(self, u8) -> Self
-pub fn zencodec::WebpDecoderConfig::with_limits(self, zencodec::limits::ResourceLimits) -> Self
-pub fn zencodec::WebpDecoderConfig::with_upsampling(self, decoder::UpsamplingMethod) -> Self
-pub struct zencodec::WebpEncodeJob
-pub struct zencodec::WebpEncoder
-pub struct zencodec::WebpEncoderConfig
-pub fn zencodec::WebpEncoderConfig::calibrated_quality(&self) -> core::option::Option<f32>
-pub fn zencodec::WebpEncoderConfig::effort(&self) -> core::option::Option<i32>
-pub fn zencodec::WebpEncoderConfig::inner(&self) -> &EncoderConfig
-pub fn zencodec::WebpEncoderConfig::inner_mut(&mut self) -> &mut EncoderConfig
-pub fn zencodec::WebpEncoderConfig::lossless() -> Self
-pub fn zencodec::WebpEncoderConfig::lossy() -> Self
-pub fn zencodec::WebpEncoderConfig::with_alpha_quality_value(self, f32) -> Self
-pub fn zencodec::WebpEncoderConfig::with_calibrated_quality(self, f32) -> Self
-pub fn zencodec::WebpEncoderConfig::with_effort(self, i32) -> Self
-pub fn zencodec::WebpEncoderConfig::with_effort_u32(self, u32) -> Self
-pub fn zencodec::WebpEncoderConfig::with_exact(self, bool) -> Self
-pub fn zencodec::WebpEncoderConfig::with_filter_sharpness(self, u8) -> Self
-pub fn zencodec::WebpEncoderConfig::with_filter_strength(self, u8) -> Self
-pub fn zencodec::WebpEncoderConfig::with_lossless_mode(self, bool) -> Self
-pub fn zencodec::WebpEncoderConfig::with_method(self, u8) -> Self
-pub fn zencodec::WebpEncoderConfig::with_near_lossless(self, u8) -> Self
-pub fn zencodec::WebpEncoderConfig::with_preset(Preset, f32) -> Self
-pub fn zencodec::WebpEncoderConfig::with_preset_value(self, Preset) -> Self
-pub fn zencodec::WebpEncoderConfig::with_quality(self, f32) -> Self
-pub fn zencodec::WebpEncoderConfig::with_segments(self, u8) -> Self
-pub fn zencodec::WebpEncoderConfig::with_sharp_yuv(self, bool) -> Self
-pub fn zencodec::WebpEncoderConfig::with_sns_strength(self, u8) -> Self
-pub fn zencodec::WebpEncoderConfig::with_target_psnr(self, f32) -> Self
-pub fn zencodec::WebpEncoderConfig::with_target_size(self, u32) -> Self
-pub struct zencodec::WebpStreamingDecoder
-pub DecodeError::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
-pub EncodeError::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
 pub ValidationError::TargetZensimMaxPassesZero
 pub ValidationError::TargetZensimMaxPassesZero::value: u8
 pub ValidationError::TargetZensimOutOfRange
@@ -188,40 +53,3 @@ pub ValidationError::TargetZensimOutOfRange::value: f32
 pub ValidationError::TargetZensimToleranceInvalid
 pub ValidationError::TargetZensimToleranceInvalid::field: &'static str
 pub ValidationError::TargetZensimToleranceInvalid::value: f32
-
-## trait impls (24 types)
-
-DecodeError: From<zencodec::capabilities::UnsupportedOperation>
-EncodeError: From<zencodec::capabilities::UnsupportedOperation>
-detect::WebPProbe: zencodec::detect::SourceEncodingDetails
-sweep::DroppedAxis: Clone, Debug
-sweep::LosslessAxes: Clone, Debug
-sweep::LosslessVariant: Clone, Debug
-sweep::LossyAxes: Clone, Debug
-sweep::LossyVariant: Clone, Debug
-sweep::NamedLossyProbe: Clone, Debug
-sweep::QualityGrid: Clone, Debug
-sweep::SweepAxes: Clone, Debug
-sweep::SweepBuilder: Clone, Debug
-sweep::SweepCell: Clone, Debug
-sweep::SweepPlan: Clone, Debug
-sweep::SweepVariant: Clone, Debug
-zencodec::WebpAnimationFrameDecoder: zencodec::traits::decoder::AnimationFrameDecoder
-zencodec::WebpAnimationFrameEncoder: zencodec::traits::encoder::AnimationFrameEncoder
-zencodec::WebpDecodeJob: Clone, zencodec::traits::decoding::DecodeJob<'a>
-zencodec::WebpDecoder<'_>: zencodec::traits::decoder::Decode
-zencodec::WebpDecoderConfig: Clone, Debug, Default, zencodec::traits::decoding::DecoderConfig
-zencodec::WebpEncodeJob: zencodec::traits::encoding::EncodeJob
-zencodec::WebpEncoder: zencodec::traits::encoder::Encoder
-zencodec::WebpEncoderConfig: Clone, Debug, zencodec::traits::encoding::EncoderConfig
-zencodec::WebpStreamingDecoder: zencodec::traits::decoder::StreamingDecode
-
-## auto traits
-
-15 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
-zencodec::WebpAnimationFrameDecoder: !RefUnwindSafe !UnwindSafe
-zencodec::WebpDecodeJob: !RefUnwindSafe !UnwindSafe
-zencodec::WebpDecoder<'a>: !RefUnwindSafe !UnwindSafe
-zencodec::WebpEncodeJob: !RefUnwindSafe !UnwindSafe
-zencodec::WebpEncoder: !RefUnwindSafe !UnwindSafe
-zencodec::WebpStreamingDecoder: !RefUnwindSafe !UnwindSafe
