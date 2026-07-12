@@ -2127,11 +2127,22 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.1.25"
-source = "git+https://github.com/imazen/zencodec?branch=cancellation-classification-99#2c7fb39840ed03c02423554f8fe621b07055267f"
+source = "git+https://github.com/imazen/zencodec?rev=c3220d51d2ef8ec16e8328ada2d5a04c7e6750ee#c3220d51d2ef8ec16e8328ada2d5a04c7e6750ee"
 dependencies = [
  "almost-enough",
  "enough",
  "whereat",
+ "zenpixels",
+]
+
+[[package]]
+name = "zencodec-testkit"
+version = "0.1.0"
+source = "git+https://github.com/imazen/zencodec?rev=c3220d51d2ef8ec16e8328ada2d5a04c7e6750ee#c3220d51d2ef8ec16e8328ada2d5a04c7e6750ee"
+dependencies = [
+ "enough",
+ "whereat",
+ "zencodec",
  "zenpixels",
 ]
 
@@ -2299,6 +2310,7 @@ dependencies = [
  "zenanalyze",
  "zenbench",
  "zencodec",
+ "zencodec-testkit",
  "zenpixels",
  "zenpixels-convert",
  "zenpng",

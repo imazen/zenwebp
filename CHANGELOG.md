@@ -122,6 +122,12 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 
 ### Added
 
+- **Wire the `zencodec-testkit` `check_decode_truncation_series` EOF/truncation
+  conformance check** into `tests/decode_truncation_series.rs` — truncates a
+  known-good WebP at a deterministic prefix series and asserts every dyn-erased
+  decode failure categorizes as incomplete-input (never panic/OOM/`Internal`).
+  Bumps the `zencodec` git patch (root + `fuzz/`) to rev `c3220d51` (zencodec PR
+  #112), which carries the testkit; the testkit dev-dep is pinned to the same rev.
 - **Adopt the `zencodec` `CategorizedError` taxonomy (PR #103).** The public
   encode/decode error types — `DecodeError`, `EncodeError`, `mux::MuxError`,
   `ValidationError`, and `detect::ProbeError` — now `impl
