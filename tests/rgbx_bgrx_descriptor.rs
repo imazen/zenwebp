@@ -101,7 +101,7 @@ fn encode_bgrx_lossless_roundtrip() {
             &dst[..3],
             &expect_rgb[..],
             "RGB mismatch at pixel {i}: expected {:?} got {:?}",
-            &expect_rgb,
+            expect_rgb,
             &dst[..3]
         );
         assert_eq!(dst[3], 255, "decoded alpha must be opaque at pixel {i}");
