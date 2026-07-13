@@ -76,7 +76,7 @@ zenanalyze = { version = "0.1.0", optional = true, features = ["experimental"] }
 # `check_decode_truncation_series`). Pinned to the SAME rev as the
 # [patch.crates-io] zencodec above so both resolve to one unified zencodec.
 # Drop for a crates.io version dep once zencodec 0.1.26 + testkit publish.
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "2427387f86c77fdf773ae2fa219926a49cd32d99" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "44ca79279b265ba7dfe01a2b31ef74788429509a" }
 archmage = { version = "0.9.15", features = ["std", "macros"] }
 paste = "1.0.14"
 png = "0.18"
@@ -395,4 +395,4 @@ opt-level = 2
 # EOF/truncation conformance check. `ErrorCategory` was never published, so this
 # is not a break of any released API. The `zencodec-testkit` dev-dep below is
 # pinned to the SAME rev so both resolve to one unified zencodec.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "2427387f86c77fdf773ae2fa219926a49cd32d99" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "44ca79279b265ba7dfe01a2b31ef74788429509a" }

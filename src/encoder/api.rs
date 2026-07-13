@@ -3037,11 +3037,11 @@ mod encode_category_tests {
         // Cancellation delegates to StopReason (cancel vs timeout preserved).
         assert_eq!(
             EncodeError::Cancelled(enough::StopReason::Cancelled).category(),
-            C::Lifecycle(enough::StopReason::Cancelled)
+            C::Stopped(enough::StopReason::Cancelled)
         );
         assert_eq!(
             EncodeError::Cancelled(enough::StopReason::TimedOut).category(),
-            C::Lifecycle(enough::StopReason::TimedOut)
+            C::Stopped(enough::StopReason::TimedOut)
         );
 
         // Unsupported operation delegates to the zencodec cause type.
