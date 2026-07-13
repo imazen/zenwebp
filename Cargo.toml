@@ -76,7 +76,7 @@ zenanalyze = { version = "0.1.0", optional = true, features = ["experimental"] }
 # `check_decode_truncation_series`). Pinned to the SAME rev as the
 # [patch.crates-io] zencodec above so both resolve to one unified zencodec.
 # Drop for a crates.io version dep once zencodec 0.1.26 + testkit publish.
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "c3220d51d2ef8ec16e8328ada2d5a04c7e6750ee" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "2427387f86c77fdf773ae2fa219926a49cd32d99" }
 archmage = { version = "0.9.15", features = ["std", "macros"] }
 paste = "1.0.14"
 png = "0.18"
@@ -386,11 +386,13 @@ opt-level = 2
 opt-level = 2
 
 [patch.crates-io]
-# TEMP: until zencodec 0.1.26 ships (PR #103) — provides the unreleased
+# TEMP: until zencodec 0.1.26 ships (PR #103/#116) — provides the unreleased
 # `CategorizedError` taxonomy (trait + `ErrorCategory` + `LimitKind`). Remove
 # this patch and bump the `zencodec` version dependency once 0.1.26 is published.
-# Pinned to rev c3220d51 (PR #112 merged): on top of the taxonomy it also
-# carries the zencodec-testkit `check_decode_truncation_series` EOF/truncation
-# conformance check. The `zencodec-testkit` dev-dep below is pinned to the SAME
-# rev so both resolve to one unified zencodec.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "c3220d51d2ef8ec16e8328ada2d5a04c7e6750ee" }
+# Pinned to rev 2427387f (PR #116 merged): the two-level origin-first reshape of
+# `ErrorCategory` (Image/Request/Resource/Policy/Lifecycle/Io/Internal), on top
+# of the same taxonomy base and the zencodec-testkit `check_decode_truncation_series`
+# EOF/truncation conformance check. `ErrorCategory` was never published, so this
+# is not a break of any released API. The `zencodec-testkit` dev-dep below is
+# pinned to the SAME rev so both resolve to one unified zencodec.
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "2427387f86c77fdf773ae2fa219926a49cd32d99" }

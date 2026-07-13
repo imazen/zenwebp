@@ -822,12 +822,12 @@ impl WebpEncoder {
     ) -> Result<EncodeOutput, At<EncodeError>> {
         self.limits
             .check_dimensions(w, h)
-            .map_err(|e| at!(EncodeError::LimitExceeded(alloc::format!("{e}"))))?;
+            .map_err(|e| at!(EncodeError::LimitExceeded(e.kind(), alloc::format!("{e}"))))?;
         let bpp = layout.bytes_per_pixel() as u64;
         let estimated_mem = w as u64 * h as u64 * bpp;
         self.limits
             .check_memory(estimated_mem)
-            .map_err(|e| at!(EncodeError::LimitExceeded(alloc::format!("{e}"))))?;
+            .map_err(|e| at!(EncodeError::LimitExceeded(e.kind(), alloc::format!("{e}"))))?;
 
         let mut req =
             EncodeRequest::new(&self.inner_config, pixels, layout, w, h).with_stride(stride_pixels);
@@ -922,7 +922,7 @@ impl WebpEncoder {
         let data = req.encode()?;
         self.limits
             .check_output_size(data.len() as u64)
-            .map_err(|e| at!(EncodeError::LimitExceeded(alloc::format!("{e}"))))?;
+            .map_err(|e| at!(EncodeError::LimitExceeded(e.kind(), alloc::format!("{e}"))))?;
         Ok(EncodeOutput::new(data, ImageFormat::WebP))
     }
 }
@@ -1400,7 +1400,10 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
         self.limits
             .check_output_size(data.len() as u64)
             .map_err(|e| {
-                zencodec::CodecError::of(at!(EncodeError::LimitExceeded(alloc::format!("{e}"))))
+                zencodec::CodecError::of(at!(EncodeError::LimitExceeded(
+                    e.kind(),
+                    alloc::format!("{e}")
+                )))
             })?;
         Ok(EncodeOutput::new(data, ImageFormat::WebP))
     }
@@ -3288,18 +3291,21 @@ mod tests {
     #[test]
     fn envelope_category_survives_dyn_erasure() {
         use zencodec::decode::DynDecoderConfig;
-        use zencodec::{CodecError, CodecErrorExt, ErrorCategory};
+        use zencodec::{CodecError, CodecErrorExt, ErrorCategory, ImageError};
 
         let cfg = WebpDecoderConfig::new();
         let dyn_cfg: &dyn DynDecoderConfig = &cfg;
         // A non-RIFF buffer past the 20-byte length guard fails the RIFF
-        // signature check → `DecodeError::RiffSignatureInvalid` → `MalformedImage`.
+        // signature check → `DecodeError::RiffSignatureInvalid` → `Image(Malformed)`.
         let erased = dyn_cfg
             .dyn_job()
             .probe(b"not a valid webp file")
             .expect_err("malformed input must fail to probe");
 
-        assert_eq!(erased.error_category(), Some(ErrorCategory::MalformedImage));
+        assert_eq!(
+            erased.error_category(),
+            Some(ErrorCategory::Image(ImageError::Malformed))
+        );
         assert_eq!(
             erased.codec_error().and_then(CodecError::codec),
             Some("zenwebp")
@@ -3312,17 +3318,23 @@ mod tests {
     #[test]
     fn envelope_on_typed_decode_path() {
         use zencodec::decode::{DecodeJob, DecoderConfig};
-        use zencodec::{CodecError, CodecErrorExt, ErrorCategory};
+        use zencodec::{CodecError, CodecErrorExt, ErrorCategory, ImageError};
 
         let err = <WebpDecoderConfig as DecoderConfig>::job(WebpDecoderConfig::new())
             .probe(b"not a valid webp file")
             .expect_err("malformed input must fail to probe");
 
         // The concrete envelope answers both axes without any downcast.
-        assert_eq!(err.error().category(), ErrorCategory::MalformedImage);
+        assert_eq!(
+            err.error().category(),
+            ErrorCategory::Image(ImageError::Malformed)
+        );
         assert_eq!(err.error().codec(), Some("zenwebp"));
         // ...and the extension trait recovers them by walking the chain too.
-        assert_eq!(err.error_category(), Some(ErrorCategory::MalformedImage));
+        assert_eq!(
+            err.error_category(),
+            Some(ErrorCategory::Image(ImageError::Malformed))
+        );
         assert_eq!(
             err.codec_error().and_then(CodecError::codec),
             Some("zenwebp")

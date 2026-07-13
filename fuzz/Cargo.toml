@@ -19,10 +19,10 @@ members = ["."]
 
 # TEMP mirror of the workspace-root [patch.crates-io]: the fuzz crate is its own
 # workspace, so it does NOT inherit the parent patch. Drop both together when
-# zencodec 0.1.26 (PR #103 taxonomy) is published — see the root Cargo.toml's
-# matching comment. Keep the rev in sync with the root (c3220d51, PR #112).
+# zencodec 0.1.26 (PR #103/#116 taxonomy) is published — see the root Cargo.toml's
+# matching comment. Keep the rev in sync with the root (2427387f, PR #116).
 [patch.crates-io]
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "c3220d51d2ef8ec16e8328ada2d5a04c7e6750ee" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "2427387f86c77fdf773ae2fa219926a49cd32d99" }
 
 [profile.release]
 debug = 1

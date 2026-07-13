@@ -21,13 +21,8 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 
 ### QUEUED BREAKING CHANGES
 <!-- Not yet landed. Batch into a future 0.x minor once approved. -->
-- `EncodeError::LimitExceeded(String)` would become a kind-carrying variant
-  (e.g. `LimitExceeded { kind: LimitKind, message: String }`) so its
-  `CategorizedError::category()` can report the exact `LimitKind` instead of the
-  representative `Memory` it returns today. Deferred — changing the tuple
-  variant's shape is a breaking change; its construction sites
-  (`src/codec.rs`) already hold the typed `Limits`-check error, so the rewire is
-  mechanical once the break is approved.
+(none currently — the `EncodeError::LimitExceeded` kind-carrying item queued
+here has landed; see "Changed (BREAKING)" below.)
 
 ### Removed (BREAKING)
 - **Removed the feature-gated v0.1 zenwebp picker** (5d6df59): the `picker`
@@ -88,6 +83,17 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
   longer reachable under the crate's default+all-additive-feature set — the
   one real failure out of 196 checks). Enable `--features __expert` to keep
   calling it directly, or use `LossyConfig`/`InternalParams`.
+- **`EncodeError::LimitExceeded` now carries the real `zencodec::LimitKind`**:
+  `LimitExceeded(String)` → `LimitExceeded(zencodec::LimitKind, String)`. Its
+  `CategorizedError::category()` reports the actual kind exceeded
+  (`Width`/`Height`/`Pixels` from `check_dimensions`, `Memory` from
+  `check_memory`, `OutputSize` from `check_output_size`) instead of the
+  hardcoded `Memory` stand-in it returned before — the decode side
+  (`ImageTooLarge`→`Pixels`, `MemoryLimitExceeded`→`Memory`) already had this
+  precision; the encode side now matches. The four construction sites
+  (`src/codec.rs`) already held the typed `zencodec::LimitExceeded` cause, so
+  the rewire reads `e.kind()` at each call site. Resolves the item that was
+  queued in `QUEUED BREAKING CHANGES` since the PR #103 taxonomy adoption.
 
 ### Changed
 - **`zencodec` is now a required, always-on dependency — the codec-trait
@@ -148,11 +154,40 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
   `#[non_exhaustive]` enums; no public-API break). Behind a **temporary
   `[patch.crates-io]` pin** to the unreleased `cancellation-classification-99`
   branch — remove the patch and bump the `zencodec` dependency once
-  `zencodec 0.1.26` ships. `EncodeError::LimitExceeded(String)` is stringly and
-  can't carry the exact `LimitKind` (its construction sites collapse the
-  dimensions/memory/output-size limit checks into a message), so it maps to a
-  representative `Memory` kind (see QUEUED BREAKING CHANGES).
-
+  `zencodec 0.1.26` ships. At this point `EncodeError::LimitExceeded(String)`
+  was stringly and mapped to a representative `Memory` kind; see the reshape
+  entry below for the follow-up that gives it the exact `LimitKind`.
+- **Reshape `ErrorCategory` to the origin-first two-level taxonomy (zencodec
+  PR #116)**: `ErrorCategory` becomes `Image(ImageError)` /
+  `Request(RequestError)` / `Resource(ResourceError)` / `Policy(PolicyKind)` /
+  `Lifecycle(enough::StopReason)` / `Io(CodecIoKind)` /
+  `Internal(InternalKind)`, replacing the flat 17-variant enum above — the
+  origin split (image-bytes vs caller-request) makes ambiguous cases
+  structurally unambiguous instead of conflating them under one flat
+  "unsupported"/"invalid" axis. `ErrorCategory` was never published, so this
+  is not a break of any released API. Bumps the `zencodec`/`zencodec-testkit`
+  git patch (root + `fuzz/`) from rev `c3220d51` to `2427387f`. All five
+  `category()` maps (`DecodeError`, `EncodeError`, `MuxError`,
+  `ValidationError`, `ProbeError`) rewritten to the new shape;
+  `decode_truncation_series` conformance still passes. Two mapping bugs fixed
+  in the same pass (found by a 13-codec ripgrep audit,
+  `errorcategory-audit-2026-07-13.md`):
+  - `TargetZensimUnsupportedLayout` now maps to
+    `Request(Unsupported(PixelFormat))` (was `InvalidParameters`) — it's a
+    well-formed request for a pixel layout the closed-loop iteration doesn't
+    support yet, not a bad parameter value.
+  - `NoMoreFrames` now maps to `Request(Invalid(State))` (was
+    `Image(UnexpectedEof)`) — reading one frame past `num_frames()` via the
+    low-level `WebPDecoder::read_frame` is a normal end-of-animation signal
+    the caller could check for ahead of time (the high-level
+    `mux::AnimationDecoder::next_frame`/`decode_next` wrapper already turns it
+    into a clean `Ok(None)` before it ever reaches `category()`), not
+    truncated/incomplete image bytes. The old mapping would also have made it
+    silently pass the truncation-conformance check's incomplete-input
+    tolerance (`is_incomplete_input_category` accepts the whole `Image(_)`
+    arm), which was wrong — this has nothing to do with a truncated
+    bitstream. See "Changed (BREAKING)" for the `EncodeError::LimitExceeded`
+    kind-carrying follow-up landed in the same pass.
 - **Honor `zencodec::AllocPreference` (3-mode, per-site) at untrusted decode
   allocations**: the big buffers sized from decoded header
   dimensions — the final RGB/RGBA output, the VP8 row cache, the streaming

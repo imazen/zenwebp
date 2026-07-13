@@ -206,8 +206,9 @@ pub enum ValidationError {
     },
 }
 
-// Codec-agnostic error taxonomy (zencodec PR #103) so consumers can route on the
-// coarse category without naming this enum.
+// Codec-agnostic error taxonomy (zencodec PR #103/#116, origin-first two-level
+// reshape) so consumers can route on the coarse category without naming this
+// enum.
 impl zencodec::CategorizedError for ValidationError {
     fn codec_name(&self) -> Option<&'static str> {
         Some("zenwebp")
@@ -217,9 +218,10 @@ impl zencodec::CategorizedError for ValidationError {
         // Every `ValidationError` variant reports a caller-supplied configuration
         // value that failed a documented range or cross-parameter invariant — the
         // type's entire contract is "invalid configuration", so the whole type
-        // maps to `InvalidParameters` (future variants are validation failures by
-        // construction and share this mapping).
-        zencodec::ErrorCategory::InvalidParameters
+        // maps to `Request(Invalid(Parameters))` (future variants are validation
+        // failures by construction and share this mapping).
+        use zencodec::{InvalidKind, RequestError};
+        zencodec::ErrorCategory::Request(RequestError::Invalid(InvalidKind::Parameters))
     }
 }
 
@@ -316,7 +318,7 @@ pub(super) fn check_target_psnr(p: f32) -> Result<(), ValidationError> {
 #[cfg(test)]
 mod validation_category_tests {
     use super::ValidationError;
-    use zencodec::{CategorizedError, ErrorCategory as C};
+    use zencodec::{CategorizedError, ErrorCategory as C, InvalidKind as IK, RequestError as RE};
 
     #[test]
     fn validation_error_category_is_invalid_parameters() {
@@ -330,7 +332,7 @@ mod validation_category_tests {
                 valid: 0.0..=100.0,
             }
             .category(),
-            C::InvalidParameters
+            C::Request(RE::Invalid(IK::Parameters))
         );
         assert_eq!(
             ValidationError::TargetMutuallyExclusive {
@@ -338,12 +340,12 @@ mod validation_category_tests {
                 second: "target_psnr",
             }
             .category(),
-            C::InvalidParameters
+            C::Request(RE::Invalid(IK::Parameters))
         );
 
         // The At<E> blanket impl forwards both category and codec name.
         let traced = whereat::at!(ValidationError::QualityNotFinite { value: f32::NAN });
-        assert_eq!(traced.category(), C::InvalidParameters);
+        assert_eq!(traced.category(), C::Request(RE::Invalid(IK::Parameters)));
         assert_eq!(traced.codec_name(), Some("zenwebp"));
     }
 }

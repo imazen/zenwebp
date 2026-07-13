@@ -288,7 +288,7 @@ pub encoder::EncodeError::IccSynthesisUnavailable(alloc::string::String)
 pub encoder::EncodeError::InvalidBufferSize(alloc::string::String)
 pub encoder::EncodeError::InvalidDimensions
 pub encoder::EncodeError::IoError(std::io::error::Error)
-pub encoder::EncodeError::LimitExceeded(alloc::string::String)
+pub encoder::EncodeError::LimitExceeded(zencodec::limits::LimitKind, alloc::string::String)
 pub encoder::EncodeError::Partition0Overflow
 pub encoder::EncodeError::Partition0Overflow::max: u32
 pub encoder::EncodeError::Partition0Overflow::size: u32
@@ -648,7 +648,7 @@ pub EncodeError::IccSynthesisUnavailable(alloc::string::String)
 pub EncodeError::InvalidBufferSize(alloc::string::String)
 pub EncodeError::InvalidDimensions
 pub EncodeError::IoError(std::io::error::Error)
-pub EncodeError::LimitExceeded(alloc::string::String)
+pub EncodeError::LimitExceeded(zencodec::limits::LimitKind, alloc::string::String)
 pub EncodeError::Partition0Overflow
 pub EncodeError::Partition0Overflow::max: u32
 pub EncodeError::Partition0Overflow::size: u32

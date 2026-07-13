@@ -140,9 +140,10 @@ impl From<enough::StopReason> for DecodeError {
     }
 }
 
-// Codec-agnostic error taxonomy (zencodec PR #103). Maps every `DecodeError`
-// variant to exactly one coarse `ErrorCategory` so consumers can route on the
-// category (HTTP status, retry policy, logging) without naming this enum.
+// Codec-agnostic error taxonomy (zencodec PR #103/#116, origin-first two-level
+// reshape). Maps every `DecodeError` variant to exactly one coarse
+// `ErrorCategory` so consumers can route on the category (HTTP status, retry
+// policy, logging) without naming this enum.
 impl zencodec::CategorizedError for DecodeError {
     fn codec_name(&self) -> Option<&'static str> {
         Some("zenwebp")
@@ -151,6 +152,10 @@ impl zencodec::CategorizedError for DecodeError {
     fn category(&self) -> zencodec::ErrorCategory {
         use zencodec::ErrorCategory as C;
         use zencodec::LimitKind as L;
+        use zencodec::{
+            ImageError as IE, InvalidKind as IK, RequestError as RE, ResourceError as ReE,
+            UnsupportedImageKind as UIK,
+        };
         match self {
             // === I/O ===
             #[cfg(feature = "std")]
@@ -177,24 +182,39 @@ impl zencodec::CategorizedError for DecodeError {
             | DecodeError::IntraPredictionModeInvalid(_)
             | DecodeError::ChromaPredictionModeInvalid(_)
             | DecodeError::InconsistentImageSizes
-            | DecodeError::InvalidChunkSize => C::MalformedImage,
+            | DecodeError::InvalidChunkSize => C::Image(IE::Malformed),
 
             // === Truncated / insufficient input ===
-            DecodeError::NotEnoughInitData => C::UnexpectedEof,
-            // Animation-iteration end: a control-flow signal that no further
-            // frame exists, surfaced as end-of-input rather than its own category.
-            DecodeError::NoMoreFrames => C::UnexpectedEof,
+            DecodeError::NotEnoughInitData => C::Image(IE::UnexpectedEof),
+            // Animation-iteration end is a NORMAL control-flow signal, not
+            // truncated/incomplete image bytes — deliberately NOT
+            // `Image(UnexpectedEof)`. The crate's own idiomatic entry point
+            // (`AnimationDecoder::next_frame`/`decode_next`,
+            // `mux/anim_decode.rs`) already intercepts this exact variant and
+            // turns it into a clean `Ok(None)` before it ever reaches a
+            // caller inspecting `category()`; it only surfaces as a `category()`-
+            // visible `Err` when a caller drives the lower-level
+            // `WebPDecoder::read_frame` directly, one call past `num_frames()`
+            // (both are public, so the caller can and should check before
+            // calling again). That is exactly `InvalidKind::State` — "the
+            // operation was invoked ... out of sequence" — a caller-request
+            // fault, not an image-bytes fault. Mapping it to `Image(_)` would
+            // also make it silently pass the truncation-conformance check's
+            // "is this OK" tolerance (`is_incomplete_input_category` accepts
+            // the whole `Image(_)` arm), which is wrong: this has nothing to
+            // do with a truncated bitstream.
+            DecodeError::NoMoreFrames => C::Request(RE::Invalid(IK::State)),
 
             // === Format handled, but the bitstream uses an unimplemented feature ===
-            DecodeError::UnsupportedFeature(_) => C::UnsupportedImageFeature,
+            DecodeError::UnsupportedFeature(_) => C::Image(IE::Unsupported(UIK::Feature)),
 
             // === Caller-supplied parameter invalid (not the image's fault) ===
-            DecodeError::InvalidParameter(_) => C::InvalidParameters,
+            DecodeError::InvalidParameter(_) => C::Request(RE::Invalid(IK::Parameters)),
 
             // === Resource limits (closest LimitKind) ===
             // "Image too large" caps total image extent, so Pixels is the fit.
-            DecodeError::ImageTooLarge => C::LimitsExceeded(L::Pixels),
-            DecodeError::MemoryLimitExceeded => C::LimitsExceeded(L::Memory),
+            DecodeError::ImageTooLarge => C::Resource(ReE::Limits(L::Pixels)),
+            DecodeError::MemoryLimitExceeded => C::Resource(ReE::Limits(L::Memory)),
 
             // === Cancellation — delegate to the StopReason cause type ===
             // (TimedOut vs Cancelled is preserved through the delegation.)
@@ -2273,7 +2293,11 @@ mod tests {
 #[cfg(test)]
 mod decode_category_tests {
     use super::DecodeError;
-    use zencodec::{CategorizedError, ErrorCategory as C, LimitKind as L};
+    use zencodec::{
+        CategorizedError, ErrorCategory as C, ImageError as IE, InvalidKind as IK, LimitKind as L,
+        RequestError as RE, ResourceError as ReE, UnsupportedImageKind as UIK,
+        UnsupportedOperation as UO,
+    };
 
     #[test]
     fn decode_error_category_mapping() {
@@ -2282,60 +2306,77 @@ mod decode_category_tests {
         // Malformed bitstream content.
         assert_eq!(
             DecodeError::RiffSignatureInvalid([0; 4]).category(),
-            C::MalformedImage
+            C::Image(IE::Malformed)
         );
-        assert_eq!(DecodeError::HuffmanError.category(), C::MalformedImage);
-        assert_eq!(DecodeError::BitStreamError.category(), C::MalformedImage);
-        assert_eq!(DecodeError::InvalidChunkSize.category(), C::MalformedImage);
+        assert_eq!(
+            DecodeError::HuffmanError.category(),
+            C::Image(IE::Malformed)
+        );
+        assert_eq!(
+            DecodeError::BitStreamError.category(),
+            C::Image(IE::Malformed)
+        );
+        assert_eq!(
+            DecodeError::InvalidChunkSize.category(),
+            C::Image(IE::Malformed)
+        );
         assert_eq!(
             DecodeError::ChromaPredictionModeInvalid(9).category(),
-            C::MalformedImage
+            C::Image(IE::Malformed)
         );
 
         // Truncated / end-of-input.
-        assert_eq!(DecodeError::NotEnoughInitData.category(), C::UnexpectedEof);
-        assert_eq!(DecodeError::NoMoreFrames.category(), C::UnexpectedEof);
+        assert_eq!(
+            DecodeError::NotEnoughInitData.category(),
+            C::Image(IE::UnexpectedEof)
+        );
+        // NoMoreFrames is a normal end-of-animation control signal, NOT
+        // truncated/incomplete input — it must not read as Image(_) (see the
+        // reasoning at the category() match arm).
+        assert_eq!(
+            DecodeError::NoMoreFrames.category(),
+            C::Request(RE::Invalid(IK::State))
+        );
 
         // Unimplemented feature / caller params.
         assert_eq!(
             DecodeError::UnsupportedFeature("x".into()).category(),
-            C::UnsupportedImageFeature
+            C::Image(IE::Unsupported(UIK::Feature))
         );
         assert_eq!(
             DecodeError::InvalidParameter("x".into()).category(),
-            C::InvalidParameters
+            C::Request(RE::Invalid(IK::Parameters))
         );
 
         // Resource limits.
         assert_eq!(
             DecodeError::ImageTooLarge.category(),
-            C::LimitsExceeded(L::Pixels)
+            C::Resource(ReE::Limits(L::Pixels))
         );
         assert_eq!(
             DecodeError::MemoryLimitExceeded.category(),
-            C::LimitsExceeded(L::Memory)
+            C::Resource(ReE::Limits(L::Memory))
         );
 
         // Cancellation delegates to StopReason (cancel vs timeout preserved).
         assert_eq!(
             DecodeError::Cancelled(enough::StopReason::Cancelled).category(),
-            C::Cancelled
+            C::Lifecycle(enough::StopReason::Cancelled)
         );
         assert_eq!(
             DecodeError::Cancelled(enough::StopReason::TimedOut).category(),
-            C::TimedOut
+            C::Lifecycle(enough::StopReason::TimedOut)
         );
 
         // Unsupported operation delegates to the zencodec cause type.
         assert_eq!(
-            DecodeError::UnsupportedOperation(zencodec::UnsupportedOperation::AnimationDecode)
-                .category(),
-            C::UnsupportedOperation
+            DecodeError::UnsupportedOperation(UO::AnimationDecode).category(),
+            C::Request(RE::Unsupported(UO::AnimationDecode))
         );
 
         // The At<E> blanket impl forwards both category and codec name.
         let traced = whereat::at!(DecodeError::HuffmanError);
-        assert_eq!(traced.category(), C::MalformedImage);
+        assert_eq!(traced.category(), C::Image(IE::Malformed));
         assert_eq!(traced.codec_name(), Some("zenwebp"));
     }
 

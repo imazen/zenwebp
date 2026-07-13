@@ -49,9 +49,14 @@ pub enum EncodeError {
     #[error("Encoding cancelled: {0}")]
     Cancelled(enough::StopReason),
 
-    /// A resource limit was exceeded (dimensions, memory, etc.).
-    #[error("Limit exceeded: {0}")]
-    LimitExceeded(String),
+    /// A resource limit was exceeded (dimensions, memory, output size, etc.).
+    ///
+    /// Carries the actual [`zencodec::LimitKind`] that was exceeded (dimensions
+    /// checks report `Width`/`Height`/`Pixels`, memory checks report `Memory`,
+    /// output-size checks report `OutputSize`) alongside the formatted detail
+    /// message from the underlying `zencodec::LimitExceeded` cause.
+    #[error("Limit exceeded ({0:?}): {1}")]
+    LimitExceeded(zencodec::LimitKind, String),
 
     /// The color-emit plan needs an ICC profile synthesized from the source
     /// CICP and this build can't produce one. WebP has no CICP carrier, so
@@ -108,9 +113,10 @@ impl From<enough::StopReason> for EncodeError {
     }
 }
 
-// Codec-agnostic error taxonomy (zencodec PR #103). Maps every `EncodeError`
-// variant to exactly one coarse `ErrorCategory` so consumers can route on the
-// category (HTTP status, retry policy, logging) without naming this enum.
+// Codec-agnostic error taxonomy (zencodec PR #103/#116, origin-first two-level
+// reshape). Maps every `EncodeError` variant to exactly one coarse
+// `ErrorCategory` so consumers can route on the category (HTTP status, retry
+// policy, logging) without naming this enum.
 impl zencodec::CategorizedError for EncodeError {
     fn codec_name(&self) -> Option<&'static str> {
         Some("zenwebp")
@@ -119,34 +125,41 @@ impl zencodec::CategorizedError for EncodeError {
     fn category(&self) -> zencodec::ErrorCategory {
         use zencodec::ErrorCategory as C;
         use zencodec::LimitKind as L;
+        use zencodec::{
+            InvalidKind as IK, RequestError as RE, ResourceError as ReE, UnsupportedOperation as UO,
+        };
         match self {
             // === I/O ===
             #[cfg(feature = "std")]
             EncodeError::IoError(_) => C::Io(zencodec::CodecIoKind::opaque()),
 
             // === Caller-supplied configuration / parameters invalid ===
-            EncodeError::InvalidDimensions => C::InvalidParameters,
-            EncodeError::TargetZensimUnsupportedLayout(_) => C::InvalidParameters,
+            EncodeError::InvalidDimensions => C::Request(RE::Invalid(IK::Parameters)),
+            // The request is well-formed but asks for a pixel layout the
+            // closed-loop target-zensim iteration loop doesn't support yet
+            // (only Rgb8/Rgba8) — a caller-request "unsupported operation",
+            // not an out-of-range parameter value.
+            EncodeError::TargetZensimUnsupportedLayout(_) => {
+                C::Request(RE::Unsupported(UO::PixelFormat))
+            }
 
             // === Caller-supplied pixel buffer has the wrong geometry ===
-            EncodeError::InvalidBufferSize(_) => C::InvalidBuffer,
+            EncodeError::InvalidBufferSize(_) => C::Request(RE::Invalid(IK::Buffer)),
 
             // === Colour-management transform the codec won't perform itself ===
             // WebP has no CICP carrier, so a non-sRGB source needs a synthesized
             // ICC; when that can't be produced, the caller must supply the CMS.
-            EncodeError::IccSynthesisUnavailable(_) => C::CmsRequired,
+            EncodeError::IccSynthesisUnavailable(_) => C::Request(RE::CmsRequired),
 
             // === Resource limits ===
-            // `LimitExceeded` is stringly: its construction sites collapse the
-            // dimensions / memory / output-size `Limits` checks (which return
-            // typed `At<DecodeError>` limit errors) into a formatted message, so
-            // the exact `LimitKind` is not recoverable here. We report a
-            // representative `Memory` kind; carrying the precise kind would
-            // require a breaking change to this variant's shape (see CHANGELOG).
-            EncodeError::LimitExceeded(_) => C::LimitsExceeded(L::Memory),
+            // The variant now carries the real `LimitKind` from the
+            // `zencodec::LimitExceeded` cause at each construction site
+            // (dimensions/memory/output-size checks), so this reports it
+            // directly instead of a hardcoded stand-in.
+            EncodeError::LimitExceeded(kind, _) => C::Resource(ReE::Limits(*kind)),
             // Partition 0 (the compressed VP8 header) exceeds the format's
             // 19-bit byte cap — an output-size limit of the bitstream.
-            EncodeError::Partition0Overflow { .. } => C::LimitsExceeded(L::OutputSize),
+            EncodeError::Partition0Overflow { .. } => C::Resource(ReE::Limits(L::OutputSize)),
 
             // === Cancellation — delegate to the StopReason cause type ===
             EncodeError::Cancelled(reason) => reason.category(),
@@ -2964,7 +2977,10 @@ mod tests {
 #[cfg(test)]
 mod encode_category_tests {
     use super::{EncodeError, PixelLayout};
-    use zencodec::{CategorizedError, ErrorCategory as C, LimitKind as L};
+    use zencodec::{
+        CategorizedError, ErrorCategory as C, InvalidKind as IK, LimitKind as L,
+        RequestError as RE, ResourceError as ReE, UnsupportedOperation as UO,
+    };
 
     #[test]
     fn encode_error_category_mapping() {
@@ -2973,29 +2989,41 @@ mod encode_category_tests {
         // Caller config / parameters.
         assert_eq!(
             EncodeError::InvalidDimensions.category(),
-            C::InvalidParameters
+            C::Request(RE::Invalid(IK::Parameters))
         );
+        // Well-formed request, unsupported pixel layout for the target-zensim
+        // iteration loop — a caller-request "unsupported operation", not a
+        // bad parameter value.
         assert_eq!(
             EncodeError::TargetZensimUnsupportedLayout(PixelLayout::Yuv420).category(),
-            C::InvalidParameters
+            C::Request(RE::Unsupported(UO::PixelFormat))
         );
 
         // Caller pixel buffer geometry.
         assert_eq!(
             EncodeError::InvalidBufferSize("x".into()).category(),
-            C::InvalidBuffer
+            C::Request(RE::Invalid(IK::Buffer))
         );
 
         // Colour-management transform required (no CICP carrier in WebP).
         assert_eq!(
             EncodeError::IccSynthesisUnavailable("x".into()).category(),
-            C::CmsRequired
+            C::Request(RE::CmsRequired)
         );
 
-        // Resource limits. `LimitExceeded` is stringly → representative Memory.
+        // Resource limits. `LimitExceeded` now carries the real `LimitKind`
+        // from the construction site instead of a hardcoded stand-in.
         assert_eq!(
-            EncodeError::LimitExceeded("x".into()).category(),
-            C::LimitsExceeded(L::Memory)
+            EncodeError::LimitExceeded(L::Pixels, "x".into()).category(),
+            C::Resource(ReE::Limits(L::Pixels))
+        );
+        assert_eq!(
+            EncodeError::LimitExceeded(L::Memory, "x".into()).category(),
+            C::Resource(ReE::Limits(L::Memory))
+        );
+        assert_eq!(
+            EncodeError::LimitExceeded(L::OutputSize, "x".into()).category(),
+            C::Resource(ReE::Limits(L::OutputSize))
         );
         assert_eq!(
             EncodeError::Partition0Overflow {
@@ -3003,29 +3031,28 @@ mod encode_category_tests {
                 max: 524_287,
             }
             .category(),
-            C::LimitsExceeded(L::OutputSize)
+            C::Resource(ReE::Limits(L::OutputSize))
         );
 
         // Cancellation delegates to StopReason (cancel vs timeout preserved).
         assert_eq!(
             EncodeError::Cancelled(enough::StopReason::Cancelled).category(),
-            C::Cancelled
+            C::Lifecycle(enough::StopReason::Cancelled)
         );
         assert_eq!(
             EncodeError::Cancelled(enough::StopReason::TimedOut).category(),
-            C::TimedOut
+            C::Lifecycle(enough::StopReason::TimedOut)
         );
 
         // Unsupported operation delegates to the zencodec cause type.
         assert_eq!(
-            EncodeError::UnsupportedOperation(zencodec::UnsupportedOperation::AnimationEncode)
-                .category(),
-            C::UnsupportedOperation
+            EncodeError::UnsupportedOperation(UO::AnimationEncode).category(),
+            C::Request(RE::Unsupported(UO::AnimationEncode))
         );
 
         // The At<E> blanket impl forwards both category and codec name.
         let traced = whereat::at!(EncodeError::InvalidDimensions);
-        assert_eq!(traced.category(), C::InvalidParameters);
+        assert_eq!(traced.category(), C::Request(RE::Invalid(IK::Parameters)));
         assert_eq!(traced.codec_name(), Some("zenwebp"));
     }
 
