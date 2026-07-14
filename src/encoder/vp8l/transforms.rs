@@ -453,7 +453,8 @@ pub fn apply_predictor_transform(
     let (mut predictor_data, bits, _) = best.expect("bits range is non-empty");
 
     // Coarsen the mode image when it is repetitive (VP8LOptimizeSampling).
-    let final_bits = optimize_sampling(&mut predictor_data, width, height, bits, MAX_TRANSFORM_BITS);
+    let final_bits =
+        optimize_sampling(&mut predictor_data, width, height, bits, MAX_TRANSFORM_BITS);
     let blocks_x = subsample_size(width as u32, final_bits) as usize;
     let blocks_y = subsample_size(height as u32, final_bits) as usize;
     predictor_data.truncate(blocks_x * blocks_y);

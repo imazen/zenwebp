@@ -3,9 +3,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use super::backward_refs::{
-    get_backward_references, get_backward_references_with_palette,
-};
+use super::backward_refs::{get_backward_references, get_backward_references_with_palette};
 use super::bitwriter::BitWriter;
 use super::color_cache::ColorCache;
 use super::histogram::{
@@ -733,8 +731,7 @@ fn encode_argb_single_config(
     // carry an independently optimized cache-free token stream alongside the
     // cache-optimized one, and pick between them by full encode below.
     let auto_cache = config.cache_bits.is_none();
-    let do_no_cache =
-        auto_cache && config.quality.method >= 5 && config.quality.quality >= 75;
+    let do_no_cache = auto_cache && config.quality.method >= 5 && config.quality.quality >= 75;
 
     let result = if enc_palette_size > 0 {
         get_backward_references_with_palette(
