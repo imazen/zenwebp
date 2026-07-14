@@ -1738,6 +1738,19 @@ impl<'a> super::Vp8Encoder<'a> {
     /// RD formula: score = (R + H) * lambda + RD_DISTO_MULT * (D + SD + PSY)
     /// UV spectral distortion and psy-rd are enabled by PsyConfig at method >= 3.
     #[allow(clippy::needless_range_loop)] // block_idx used for both indexing and coordinate computation
+    /// The chroma mode chosen by the analysis pass (`MBAnalyzeBestUVMode`,
+    /// 0 = DC / 1 = TM), used at m0 under `StrictLibwebpParity` where libwebp
+    /// leaves the UV mode unrefined. Falls back to the RD pick if the hint
+    /// vector is unavailable (e.g. `partition_limit >= 100` suppressed it).
+    fn analysis_uv_mode(&self, mbx: usize, mby: usize) -> ChromaMode {
+        let mb_idx = mby * usize::from(self.macroblock_width) + mbx;
+        match self.fast_mb_uv_hints.get(mb_idx) {
+            Some(0) => ChromaMode::DC,
+            Some(1) => ChromaMode::TM,
+            _ => self.pick_best_uv(mbx, mby),
+        }
+    }
+
     fn pick_best_uv(&self, mbx: usize, mby: usize) -> ChromaMode {
         let mbw = usize::from(self.macroblock_width);
         let chroma_width = mbw * 8;
@@ -2045,12 +2058,17 @@ impl<'a> super::Vp8Encoder<'a> {
                     }
                 };
                 // libwebp refine_uv_mode = (method >= 1): m1 refines by SSE;
-                // m0 keeps the RD pick (libwebp m0 skips UV refinement
-                // entirely — the RD pick is zenwebp's better substitute, and
-                // the SSE pick at m0 pushed gradient q90 past the 1.3x size
-                // gate).
+                // m0 leaves the chroma mode at the analysis pick
+                // (`refine_uv_mode = 0`). Under StrictLibwebpParity, m0 uses
+                // that stored analysis UV mode verbatim to match libwebp;
+                // otherwise m0 keeps zenwebp's RD pick (measured better — the
+                // SSE pick at m0 pushed gradient q90 past the 1.3x size gate).
                 let chroma_mode = if self.method == 0 {
-                    self.pick_best_uv(mbx, mby)
+                    if self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity {
+                        self.analysis_uv_mode(mbx, mby)
+                    } else {
+                        self.pick_best_uv(mbx, mby)
+                    }
                 } else {
                     self.pick_uv_sse(mbx, mby)
                 };

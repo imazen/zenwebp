@@ -29,10 +29,12 @@ needed.**
    until the single-segment FastMBAnalyze-hint fix, 331f386). I4-vs-I16 split
    now matches libwebp exactly (136 = 136 I4 MBs). Residual ~5% is
    SSE/cost tie-breaking in `pick_intra16_sse`.
-2. **UV mode selection ~45% agree at m0.** libwebp m0 uses `refine_uv_mode=0`
-   — the UV mode is the analysis pass's `MBAnalyzeBestUVMode` alpha/entropy
-   pick, left untouched by RefineUsingDistortion. zen m0 uses an RD/SSE pick.
-   Parity requires storing the analysis UV mode per-MB and using it at m0.
+2. **UV mode selection — FIXED for m0** (45.5% → 96.2% agree). libwebp m0 uses
+   `refine_uv_mode=0` — the UV mode is the analysis pass's `MBAnalyzeBestUVMode`
+   alpha pick (DC or TM; `MAX_UV_MODE=2`), left untouched by
+   RefineUsingDistortion. The analysis UV mode is now stored per-MB
+   (`fast_mb_uv_hints`) and used verbatim at m0 under `StrictLibwebpParity`.
+   Residual ~4% is analysis-iterator reconstruction context, not the pick.
 3. **Coefficient probabilities.** libwebp ships DEFAULT probas at m0-m2 with a
    single segment: `OneStatPass` returns `size_p0 = ΣH + segment_hdr.size = 0`
    (H is 0 at RD_OPT_NONE, segment header is 0 at 1 segment), StatLoop treats 0

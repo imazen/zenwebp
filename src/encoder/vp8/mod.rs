@@ -489,6 +489,11 @@ struct Vp8Encoder<'a> {
     /// full RD mode evaluation, mirroring libwebp's `RefineUsingDistortion`
     /// flow at m0/m1. Empty for higher methods.
     fast_mb_hints: Vec<crate::encoder::analysis::MbModeHint>,
+    /// Per-MB analysis UV mode (0 = DC, 1 = TM), populated alongside
+    /// `fast_mb_hints`. Consumed at m0 under `StrictLibwebpParity` where
+    /// libwebp leaves the chroma mode at the analysis pick (`refine_uv_mode`
+    /// is 0). Empty otherwise.
+    fast_mb_uv_hints: Vec<u8>,
 
     macroblock_no_skip_coeff: Option<u8>,
     quantization_indices: QuantizationIndices,
@@ -613,6 +618,7 @@ impl<'a> Vp8Encoder<'a> {
             segment_tree_probs: [255, 255, 255], // Default probs
             segment_map: Vec::new(),
             fast_mb_hints: Vec::new(),
+            fast_mb_uv_hints: Vec::new(),
 
             macroblock_no_skip_coeff: None,
             quantization_indices: QuantizationIndices::default(),
@@ -1834,6 +1840,7 @@ impl<'a> Vp8Encoder<'a> {
         // populated at method <= 1 — the encode pass uses them to skip RD mode
         // selection (mirroring libwebp's `RefineUsingDistortion(try_both_modes=0)`).
         self.fast_mb_hints = analysis.mb_mode_hints.unwrap_or_default();
+        self.fast_mb_uv_hints = analysis.mb_uv_hints.unwrap_or_default();
 
         // Smooth segment map (3x3 majority filter) only when the preprocessing
         // smooth_segment_map flag explicitly opts in. libwebp gates this on `config->preprocessing & 1`
@@ -2171,6 +2178,7 @@ impl<'a> Vp8Encoder<'a> {
                     true,
                 );
                 self.fast_mb_hints = analysis.mb_mode_hints.unwrap_or_default();
+                self.fast_mb_uv_hints = analysis.mb_uv_hints.unwrap_or_default();
             }
         }
 

@@ -222,14 +222,18 @@ fn final_alpha_value(alpha: i32) -> u8 {
 /// When `method >= 4`, `sns_strength > 0`, and `cost_model = ZenwebpDefault`,
 /// blends in a masking-based alpha from local variance to improve adaptive
 /// quantization for textured regions. Disabled under `StrictLibwebpParity`.
+/// Returns `(finalized_alpha, raw_uv_alpha, analysis_uv_mode)`. The UV mode is
+/// libwebp's `MBAnalyzeBestUVMode` pick (0 = DC, 1 = TM — `MAX_UV_MODE` is 2)
+/// and is what libwebp uses verbatim as the chroma mode at m0
+/// (`refine_uv_mode = 0`).
 pub fn analyze_macroblock(
     it: &mut AnalysisIterator,
     method: u8,
     sns_strength: u8,
     cost_model: crate::encoder::api::CostModel,
-) -> (u8, i32) {
+) -> (u8, i32, usize) {
     let (best_alpha, _best_mode) = it.analyze_best_intra16_mode();
-    let (best_uv_alpha, _uv_mode) = it.analyze_best_uv_mode();
+    let (best_uv_alpha, uv_mode) = it.analyze_best_uv_mode();
 
     // Final susceptibility mix
     let alpha = (3 * best_alpha + best_uv_alpha + 2) >> 2;
@@ -248,7 +252,7 @@ pub fn analyze_macroblock(
     };
 
     // Finalize: invert and clip
-    (final_alpha_value(alpha), best_uv_alpha)
+    (final_alpha_value(alpha), best_uv_alpha, uv_mode)
 }
 
 /// Per-macroblock mode hint from the analysis pass.
@@ -283,6 +287,10 @@ pub struct AnalysisResult {
     /// `Some(hints)` means the encoder should consume the hints directly,
     /// matching libwebp's `RefineUsingDistortion(try_both_modes=0)` flow.
     pub mb_mode_hints: Option<Vec<MbModeHint>>,
+    /// Per-macroblock analysis UV mode (`0` = DC, `1` = TM), same gate as
+    /// `mb_mode_hints`. libwebp uses this verbatim as the chroma mode at m0
+    /// (`refine_uv_mode = 0`); the m1+ SSE refinement supersedes it.
+    pub mb_uv_hints: Option<Vec<u8>>,
 }
 
 /// Compute the FastMBAnalyze decision for a single macroblock.
@@ -411,6 +419,11 @@ pub(crate) fn analyze_image_with_hint_gate(
     } else {
         Vec::new()
     };
+    let mut mb_uv_hints: Vec<u8> = if collect_mode_hints {
+        Vec::with_capacity(total_mbs)
+    } else {
+        Vec::new()
+    };
 
     loop {
         it.import(y_src, u_src, v_src, y_stride, uv_stride);
@@ -420,7 +433,11 @@ pub(crate) fn analyze_image_with_hint_gate(
             mb_mode_hints.push(hint);
         }
 
-        let (alpha, uv_alpha) = analyze_macroblock(&mut it, method, sns_strength, cost_model);
+        let (alpha, uv_alpha, uv_mode) =
+            analyze_macroblock(&mut it, method, sns_strength, cost_model);
+        if collect_mode_hints {
+            mb_uv_hints.push(uv_mode as u8);
+        }
         mb_alphas.push(alpha);
         alpha_histogram[alpha as usize] += 1;
         uv_alpha_sum += uv_alpha as i64;
@@ -443,6 +460,11 @@ pub(crate) fn analyze_image_with_hint_gate(
         uv_alpha_avg,
         mb_mode_hints: if collect_mode_hints {
             Some(mb_mode_hints)
+        } else {
+            None
+        },
+        mb_uv_hints: if collect_mode_hints {
+            Some(mb_uv_hints)
         } else {
             None
         },
