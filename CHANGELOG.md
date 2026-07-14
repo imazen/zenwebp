@@ -317,6 +317,24 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Fixed
 
+- **Lossy m0-m2 emitted the wrong Intra4 mode for LD/RD/VR sub-blocks**
+  (cd5cc85, #38): the m0-m2 I4 mode pick indexed a mode-lookup array in
+  libwebp's internal B-mode numbering while scoring in zenwebp's IntraMode
+  order, so a winning LD/RD/VR *prediction* was emitted and reconstructed as a
+  different mode. Every affected sub-block got a worse prediction and larger
+  residual. Fix: derive the mode from the winning index via `IntraMode::from_i8`.
+  Equal-PSNR lossy corpus: **m0 −2.14%, m1 −2.14%, m2 −7.88%** bytes; m3-m6
+  unaffected (already correct). `benchmarks/bitexact_parity_2026-07-14.md`.
+- **Forward Walsh-Hadamard transform rounded incorrectly** (4a154e1, #38):
+  `wht4x4` (I16 Y2 DC transform) finalized with `(x + (x>0?1:0))/2` instead of
+  the VP8/libwebp arithmetic `x >> 1` (floor), diverging on every odd
+  intermediate and occasionally flipping a Y2 DC coefficient across a
+  quantization boundary. Fixed to `>> 1`; quality- and size-neutral on the
+  corpus (±0.02%), spec-correct.
+- **VP8 lossy m0/m1 single-segment collapsed every macroblock to I16-DC**
+  (331f386, #38): FastMBAnalyze mode hints were only populated when
+  `num_segments > 1`; with one segment the encoder never explored V/H/TM/I4.
+  Fix restores full mode selection — decode PSNR at m0 matches libwebp's.
 - **VP8L encoder wrote Huffman tree groups for clusters unreferenced by the
   entropy image**: histogram remap can strand a cluster with zero tiles, and
   `build_final_histograms` still emitted its (empty) trees — but decoders
