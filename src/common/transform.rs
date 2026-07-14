@@ -2642,6 +2642,52 @@ mod tests {
     extern crate std;
     use super::*;
 
+    /// The encoder's chroma-border reconstruction path (`idct4x4` + `add_residue`,
+    /// used in `transform_chroma_blocks`) MUST produce byte-identical output to
+    /// the fused `idct_add_residue_inplace` used by the decoder and the SSE
+    /// scorer — otherwise the encoder predicts the next MB from a reference the
+    /// decoder never reconstructs, drifting chroma coefficients (#38). Sweeps
+    /// random quantized-coefficient blocks (small levels, VP8-realistic) over a
+    /// random 4×4 prediction, exercising both the DC-only and full paths.
+    #[test]
+    fn idct_add_paths_agree() {
+        use super::{idct_add_residue_inplace, idct4x4};
+        use crate::common::prediction::add_residue;
+        let mut rng = XorShift(0xdead_beef_0bad_f00d);
+        for _ in 0..300_000 {
+            // Realistic dequantized coefficients: mostly small, DC can be larger.
+            let mut coeffs = [0i32; 16];
+            coeffs[0] = (rng.next_u8() as i32 - 128) * 8;
+            let nz = (rng.next_u8() % 5) as usize; // 0..4 nonzero ACs
+            for _ in 0..nz {
+                let pos = 1 + (rng.next_u8() as usize % 15);
+                coeffs[pos] = (rng.next_u8() as i32 - 128) * 4;
+            }
+            let mut pred = [0u8; 16];
+            for p in pred.iter_mut() {
+                *p = rng.next_u8();
+            }
+
+            // Path A: separate idct4x4 then add_residue+clamp (chroma border path).
+            let mut resid = coeffs;
+            idct4x4(&mut resid);
+            let mut rec_a = pred;
+            add_residue(&mut rec_a, &resid, 0, 0, 4);
+
+            // Path B: fused idct_add_residue_inplace (decoder / SSE path). Try
+            // BOTH the dc_only flag states so a mislabeled fast path can't hide.
+            let dc_only = coeffs[1..].iter().all(|&c| c == 0);
+            let mut cb = coeffs;
+            let mut rec_b = pred;
+            idct_add_residue_inplace(&mut cb, &mut rec_b, 0, 0, 4, dc_only);
+
+            assert_eq!(
+                rec_a, rec_b,
+                "coeffs={coeffs:?} pred={pred:?} dc_only={dc_only}"
+            );
+        }
+    }
+
     /// Faithful scalar port of libwebp's `FTransform_C` (dsp/enc.c). Takes a
     /// 4x4 residual block in natural row-major order and returns the forward-DCT
     /// coefficients. Used as the parity oracle for zen's SIMD forward transforms

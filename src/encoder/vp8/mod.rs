@@ -1115,6 +1115,10 @@ impl<'a> Vp8Encoder<'a> {
         self.sns_strength = params.sns_strength.min(100);
         self.smooth_segment_map = params.smooth_segment_map;
         self.cost_model = params.cost_model;
+        // Chroma error diffusion is a zenwebp perceptual extension; libwebp's
+        // default path (dithering_strength=0) does none. Disable it under
+        // StrictLibwebpParity so chroma coefficients match libwebp exactly.
+        self.do_error_diffusion = self.cost_model != super::api::CostModel::StrictLibwebpParity;
         self.multi_pass_stats = params.multi_pass_stats;
         self.segment_quant_overrides = params.segment_quant_overrides;
         self.filter_strength = params.filter_strength.min(100);
