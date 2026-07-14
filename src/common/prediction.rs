@@ -1536,6 +1536,325 @@ mod benches {
 mod tests {
     use super::*;
 
+    /// Differential test: zen's `I4Predictions::compute` vs a verbatim port of
+    /// libwebp's `Intra4Preds_C` (dsp/enc.c) on identical synthetic context.
+    /// libwebp's `top` layout: left = top[-5..-2] (L,K,J,I), top-left = top[-1]
+    /// (X), top = top[0..3] (A,B,C,D), top-right = top[4..7] (E,F,G,H).
+    /// This isolates the prediction MATH from any border/reconstruction setup.
+    mod i4_vs_libwebp {
+        use super::*;
+
+        #[inline]
+        fn avg3(a: u8, b: u8, c: u8) -> u8 {
+            ((a as u32 + 2 * b as u32 + c as u32 + 2) >> 2) as u8
+        }
+        #[inline]
+        fn avg2(a: u8, b: u8) -> u8 {
+            ((a as u32 + b as u32 + 1) >> 1) as u8
+        }
+
+        /// `t(i)` indexes libwebp's `top[i]` for i in -5..=7. Backing store is
+        /// a 13-element array where index `i + 5` holds `top[i]`.
+        struct Ctx([u8; 13]);
+        impl Ctx {
+            fn t(&self, i: i32) -> u8 {
+                self.0[(i + 5) as usize]
+            }
+        }
+
+        // The 10 libwebp Intra4 predictors, each returning a 4x4 block in
+        // row-major order (dst[x + y*4]).
+        fn lib_dc4(c: &Ctx) -> [u8; 16] {
+            let mut dc = 4u32;
+            for i in 0..4 {
+                dc += c.t(i) as u32 + c.t(-5 + i) as u32;
+            }
+            [(dc >> 3) as u8; 16]
+        }
+        fn lib_tm4(c: &Ctx) -> [u8; 16] {
+            let mut o = [0u8; 16];
+            let x = c.t(-1) as i32;
+            for y in 0..4 {
+                let l = c.t(-2 - y) as i32;
+                for xx in 0..4 {
+                    o[(y * 4 + xx) as usize] = (l + c.t(xx) as i32 - x).clamp(0, 255) as u8;
+                }
+            }
+            o
+        }
+        fn lib_ve4(c: &Ctx) -> [u8; 16] {
+            let vals = [
+                avg3(c.t(-1), c.t(0), c.t(1)),
+                avg3(c.t(0), c.t(1), c.t(2)),
+                avg3(c.t(1), c.t(2), c.t(3)),
+                avg3(c.t(2), c.t(3), c.t(4)),
+            ];
+            let mut o = [0u8; 16];
+            for y in 0..4 {
+                o[y * 4..y * 4 + 4].copy_from_slice(&vals);
+            }
+            o
+        }
+        fn lib_he4(c: &Ctx) -> [u8; 16] {
+            let (x, i, j, k, l) = (c.t(-1), c.t(-2), c.t(-3), c.t(-4), c.t(-5));
+            let rows = [avg3(x, i, j), avg3(i, j, k), avg3(j, k, l), avg3(k, l, l)];
+            let mut o = [0u8; 16];
+            for y in 0..4 {
+                o[y * 4..y * 4 + 4].copy_from_slice(&[rows[y]; 4]);
+            }
+            o
+        }
+        // For the diagonal modes, use libwebp's DST(x,y) = o[x + y*4] mapping.
+        fn lib_rd4(c: &Ctx) -> [u8; 16] {
+            let (x, i, j, k, l) = (c.t(-1), c.t(-2), c.t(-3), c.t(-4), c.t(-5));
+            let (a, b, cc, d) = (c.t(0), c.t(1), c.t(2), c.t(3));
+            let mut o = [0u8; 16];
+            let mut d3 = |xx: usize, yy: usize, v: u8| o[xx + yy * 4] = v;
+            d3(0, 3, avg3(j, k, l));
+            let v = avg3(i, j, k);
+            d3(0, 2, v);
+            d3(1, 3, v);
+            let v = avg3(x, i, j);
+            d3(0, 1, v);
+            d3(1, 2, v);
+            d3(2, 3, v);
+            let v = avg3(a, x, i);
+            d3(0, 0, v);
+            d3(1, 1, v);
+            d3(2, 2, v);
+            d3(3, 3, v);
+            let v = avg3(b, a, x);
+            d3(1, 0, v);
+            d3(2, 1, v);
+            d3(3, 2, v);
+            let v = avg3(cc, b, a);
+            d3(2, 0, v);
+            d3(3, 1, v);
+            d3(3, 0, avg3(d, cc, b));
+            o
+        }
+        fn lib_ld4(c: &Ctx) -> [u8; 16] {
+            let (a, b, cc, d, e, f, g, h) = (
+                c.t(0),
+                c.t(1),
+                c.t(2),
+                c.t(3),
+                c.t(4),
+                c.t(5),
+                c.t(6),
+                c.t(7),
+            );
+            let mut o = [0u8; 16];
+            let mut d3 = |xx: usize, yy: usize, v: u8| o[xx + yy * 4] = v;
+            d3(0, 0, avg3(a, b, cc));
+            let v = avg3(b, cc, d);
+            d3(1, 0, v);
+            d3(0, 1, v);
+            let v = avg3(cc, d, e);
+            d3(2, 0, v);
+            d3(1, 1, v);
+            d3(0, 2, v);
+            let v = avg3(d, e, f);
+            d3(3, 0, v);
+            d3(2, 1, v);
+            d3(1, 2, v);
+            d3(0, 3, v);
+            let v = avg3(e, f, g);
+            d3(3, 1, v);
+            d3(2, 2, v);
+            d3(1, 3, v);
+            let v = avg3(f, g, h);
+            d3(3, 2, v);
+            d3(2, 3, v);
+            d3(3, 3, avg3(g, h, h));
+            o
+        }
+        fn lib_vr4(c: &Ctx) -> [u8; 16] {
+            let (x, i, j, k) = (c.t(-1), c.t(-2), c.t(-3), c.t(-4));
+            let (a, b, cc, d) = (c.t(0), c.t(1), c.t(2), c.t(3));
+            let mut o = [0u8; 16];
+            let mut ds = |xx: usize, yy: usize, v: u8| o[xx + yy * 4] = v;
+            let v = avg2(x, a);
+            ds(0, 0, v);
+            ds(1, 2, v);
+            let v = avg2(a, b);
+            ds(1, 0, v);
+            ds(2, 2, v);
+            let v = avg2(b, cc);
+            ds(2, 0, v);
+            ds(3, 2, v);
+            ds(3, 0, avg2(cc, d));
+            ds(0, 3, avg3(k, j, i));
+            ds(0, 2, avg3(j, i, x));
+            let v = avg3(i, x, a);
+            ds(0, 1, v);
+            ds(1, 3, v);
+            let v = avg3(x, a, b);
+            ds(1, 1, v);
+            ds(2, 3, v);
+            let v = avg3(a, b, cc);
+            ds(2, 1, v);
+            ds(3, 3, v);
+            ds(3, 1, avg3(b, cc, d));
+            o
+        }
+        fn lib_vl4(c: &Ctx) -> [u8; 16] {
+            let (a, b, cc, d, e, f, g, h) = (
+                c.t(0),
+                c.t(1),
+                c.t(2),
+                c.t(3),
+                c.t(4),
+                c.t(5),
+                c.t(6),
+                c.t(7),
+            );
+            let mut o = [0u8; 16];
+            let mut ds = |xx: usize, yy: usize, v: u8| o[xx + yy * 4] = v;
+            ds(0, 0, avg2(a, b));
+            let v = avg2(b, cc);
+            ds(1, 0, v);
+            ds(0, 2, v);
+            let v = avg2(cc, d);
+            ds(2, 0, v);
+            ds(1, 2, v);
+            let v = avg2(d, e);
+            ds(3, 0, v);
+            ds(2, 2, v);
+            ds(0, 1, avg3(a, b, cc));
+            let v = avg3(b, cc, d);
+            ds(1, 1, v);
+            ds(0, 3, v);
+            let v = avg3(cc, d, e);
+            ds(2, 1, v);
+            ds(1, 3, v);
+            let v = avg3(d, e, f);
+            ds(3, 1, v);
+            ds(2, 3, v);
+            ds(3, 2, avg3(e, f, g));
+            ds(3, 3, avg3(f, g, h));
+            o
+        }
+        fn lib_hu4(c: &Ctx) -> [u8; 16] {
+            let (i, j, k, l) = (c.t(-2), c.t(-3), c.t(-4), c.t(-5));
+            let mut o = [0u8; 16];
+            let mut ds = |xx: usize, yy: usize, v: u8| o[xx + yy * 4] = v;
+            ds(0, 0, avg2(i, j));
+            let v = avg2(j, k);
+            ds(2, 0, v);
+            ds(0, 1, v);
+            let v = avg2(k, l);
+            ds(2, 1, v);
+            ds(0, 2, v);
+            ds(1, 0, avg3(i, j, k));
+            let v = avg3(j, k, l);
+            ds(3, 0, v);
+            ds(1, 1, v);
+            let v = avg3(k, l, l);
+            ds(3, 1, v);
+            ds(1, 2, v);
+            for &(xx, yy) in &[(3, 2), (2, 2), (0, 3), (1, 3), (2, 3), (3, 3)] {
+                ds(xx, yy, l);
+            }
+            o
+        }
+        fn lib_hd4(c: &Ctx) -> [u8; 16] {
+            let (x, i, j, k, l) = (c.t(-1), c.t(-2), c.t(-3), c.t(-4), c.t(-5));
+            let (a, b, cc) = (c.t(0), c.t(1), c.t(2));
+            let mut o = [0u8; 16];
+            let mut ds = |xx: usize, yy: usize, v: u8| o[xx + yy * 4] = v;
+            let v = avg2(i, x);
+            ds(0, 0, v);
+            ds(2, 1, v);
+            let v = avg2(j, i);
+            ds(0, 1, v);
+            ds(2, 2, v);
+            let v = avg2(k, j);
+            ds(0, 2, v);
+            ds(2, 3, v);
+            ds(0, 3, avg2(l, k));
+            ds(3, 0, avg3(a, b, cc));
+            ds(2, 0, avg3(x, a, b));
+            let v = avg3(i, x, a);
+            ds(1, 0, v);
+            ds(3, 1, v);
+            let v = avg3(j, i, x);
+            ds(1, 1, v);
+            ds(3, 2, v);
+            let v = avg3(k, j, i);
+            ds(1, 2, v);
+            ds(3, 3, v);
+            ds(1, 3, avg3(l, k, j));
+            o
+        }
+
+        // libwebp writes predictions in a fixed slot order; map each to the
+        // zenwebp `IntraMode` index used by `I4Predictions::data`.
+        // zen order: DC, TM, VE, HE, LD, RD, VR, VL, HD, HU (matches IntraMode).
+        fn lib_all(c: &Ctx) -> [[u8; 16]; 10] {
+            [
+                lib_dc4(c),
+                lib_tm4(c),
+                lib_ve4(c),
+                lib_he4(c),
+                lib_ld4(c),
+                lib_rd4(c),
+                lib_vr4(c),
+                lib_vl4(c),
+                lib_hd4(c),
+                lib_hu4(c),
+            ]
+        }
+
+        /// Build zen's bordered buffer for a sub-block at (x0, y0) so that its
+        /// prediction context equals `ctx`.
+        fn zen_from_ctx(ctx: &Ctx) -> [u8; LUMA_BLOCK_SIZE] {
+            let s = LUMA_STRIDE;
+            let (x0, y0) = (1usize, 1usize);
+            let mut ws = [0u8; LUMA_BLOCK_SIZE];
+            // top-left (X = top[-1])
+            ws[(y0 - 1) * s + x0 - 1] = ctx.t(-1);
+            // top row + top-right: top[0..7] = A..H
+            for i in 0..8 {
+                ws[(y0 - 1) * s + x0 + i] = ctx.t(i as i32);
+            }
+            // left column: l0..l3 = I,J,K,L = top[-2],top[-3],top[-4],top[-5]
+            for j in 0..4 {
+                ws[(y0 + j) * s + x0 - 1] = ctx.t(-2 - j as i32);
+            }
+            ws
+        }
+
+        #[test]
+        fn i4_predictions_match_libwebp() {
+            const NAMES: [&str; 10] = ["DC", "TM", "VE", "HE", "LD", "RD", "VR", "VL", "HD", "HU"];
+            // Deterministic xorshift over many random contexts.
+            let mut state = 0x1234_5678_9abc_def0u64;
+            let mut rng = || {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state >> 40) as u8
+            };
+            for _ in 0..2000 {
+                let mut arr = [0u8; 13];
+                for v in arr.iter_mut() {
+                    *v = rng();
+                }
+                let ctx = Ctx(arr);
+                let zen = I4Predictions::compute(&zen_from_ctx(&ctx), 1, 1, LUMA_STRIDE);
+                let lib = lib_all(&ctx);
+                for m in 0..10 {
+                    assert_eq!(
+                        zen.data[m], lib[m],
+                        "mode {} ({}) diverges\n ctx={:?}\n zen={:?}\n lib={:?}",
+                        m, NAMES[m], ctx.0, zen.data[m], lib[m]
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_avg2() {
         for i in 0u8..=255 {
