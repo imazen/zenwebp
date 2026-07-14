@@ -5,6 +5,43 @@ Moved from CLAUDE.md on 2026-02-06 to keep the main file lean.
 
 ## Resolved Bugs
 
+### VP8L Decoder Bit-Window Refill Under-Budget (2026-07-13, FIXED)
+
+**Bug:** The VP8L pixel-decode loop's mid-pixel refills were under-budgeted for
+worst-case Huffman code lengths. A literal reads GREEN+RED+BLUE+ALPHA codes (up
+to 15 bits each = 60 bits) but `BitReader::fill()` guarantees only 56; the
+refill after RED guarded `nbits < 15`, which covers BLUE but can leave ALPHA
+short. The backward-reference path had the analogous gap: DIST symbol (≤15) +
+distance extra bits (≤18) = 33 needed, with no refill after GREEN + length
+extras consumed up to 25. Result: spurious `BitStreamError` partway through
+*valid* streams whose trees are deep on all channels simultaneously. Because
+`peek_full()` zero-pads missing bits, a near-miss could in principle also alias
+to a wrong shorter symbol (silent desync) rather than erroring.
+
+**Found:** benchmarking crabmagick's encoder claims (2026-07-13) — libwebp
+`-m 0 -lossless` (low-effort: literal-heavy, near-max-depth trees) on a
+photographic 800×600 RGBA image produced a file libwebp decodes fine but
+zenwebp rejected at pixel 133,247 with `consume: want 14 have 13` (144 KB of
+input still unread). Crops of the same image did not reproduce — the trigger
+needs a pixel whose four channel codes sum past the remaining window, which
+takes deep trees on all four channels plus enough pixels to hit the jackpot.
+
+**Fix (efddb6c3):** refill thresholds now match worst-case budgets — `< 30`
+before BLUE+ALPHA (libwebp refills unconditionally after RED), `< 33` before
+the DIST symbol (libwebp refills before GetCopyDistance). Regression test
+`tests/vp8l_deep_tree_decode.rs` synthesizes a channel-correlated skewed
+histogram (rare pixels rare on every channel at once → 14-15 bit codes on all
+four trees), encodes with libwebp m0/m1/m4/m6 via webpx, and requires zenwebp
+to decode identically to libwebp. Verified fails-before/passes-after. Trigger
+artifact: `/mnt/v/fuzzes/zenwebp/artifacts/vp8l_deep_tree_refill_libwebp_m0_dice_800x600.webp`
+(sha256 242ea4a2…). Provenance (verified in source 2026-07-13): libwebp
+refills unconditionally after RED (`vp8l_dec.c:1201`) and before
+`GetCopyDistance` (`vp8l_dec.c:1087`); upstream image-webp 0.2.4 places its
+`nbits < 15` guard between BLUE and ALPHA (correct — only one 15-bit symbol
+remains). zenwebp's port moved the guard to after RED (before BLUE) while
+keeping the 15 threshold, which under-covers BLUE+ALPHA — the misplacement is
+zenwebp-local; neither upstream has the bug.
+
 ### I4 Mode Context Bug (2026-02-02, FIXED)
 
 **Bug:** Edge blocks in I4 mode selection were using hardcoded DC (0) context instead of

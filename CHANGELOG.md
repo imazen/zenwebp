@@ -252,6 +252,15 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Fixed
 
+- **VP8L decoder rejected valid deep-Huffman-tree streams** (efddb6c3): the
+  pixel-loop bit-window refills were under-budgeted — a literal's
+  GREEN+RED+BLUE+ALPHA codes can need 60 bits but `fill()` guarantees 56 and
+  the mid-literal refill only guarded 15; the backref path similarly lacked
+  headroom for DIST symbol + 18 distance extra bits (33). Valid libwebp
+  `-m 0 -lossless` files (literal-heavy, near-max-depth trees) failed with a
+  spurious `BitStreamError` mid-stream. Both refills now use worst-case
+  budgets; differential regression test vs libwebp in
+  `tests/vp8l_deep_tree_decode.rs`.
 - **Restore the `wasm32`/`i686`, `no_std`-test, and default-feature clippy
   builds** (pre-existing on `main`, unrelated to the taxonomy work; CI red since
   2026-06-23, run `28284349117`). Three independent breakages, fixed as one
