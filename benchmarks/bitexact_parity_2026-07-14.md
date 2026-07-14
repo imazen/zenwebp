@@ -43,9 +43,22 @@ needed.**
    29.38 dB vs libwebp 76 KB @ 29.38 dB — identical PSNR, libwebp just codes
    the same pixels with worse probabilities). Parity needs a
    StrictLibwebpParity gate that ships defaults under the same condition.
-4. **I4 sub-mode agreement ~2%** (b4_same 3/136). Even where both pick I4, the
-   16 per-sub-block modes rarely all match — `pick_intra4_sse` scoring detail.
-5. **Skip decisions + segment analysis (alpha/beta/k-means)** at segs>1.
+4. **I4 sub-mode agreement — characterized, not yet closed.** All-16-match is
+   3/136 MBs; per-sub-block is ~59%, and even **sub-block 0** (corner, default
+   context) is only ~69%. The scoring is verified faithful: `pick_intra4_sse_
+   body!` uses libwebp's exact `VP8SSE4x4(src, prediction) * RD_DISTO_MULT +
+   VP8FixedCostsI4[top][left][mode] * lambda_d_i4` over all 10 modes, strict
+   `<` in mode order, reconstructing the winner. The I16-neighbor context is
+   also correct: `LumaMode::into_intra()` maps I16 modes to the same B-mode
+   indices libwebp's `VP8SetIntra16Mode` stores (DC→0, TM→1, V→2, H→3). So the
+   divergence is in the **I4 predictions themselves** (`I4Predictions::compute`
+   vs `MakeIntra4Preds` — 10 modes with subtle top-right/edge handling) or the
+   `VP8SSE4x4` kernel, cascading through the 16-sub-block reconstruction chain.
+   Next chunk: per-prediction instrumentation on both sides for one shared-I4
+   MB's sub-block 0.
+5. **Skip decisions + segment analysis (alpha/beta/k-means)** at segs>1
+   (seg-map agreement only 38.1% at segs4 — the k-means cluster assignment
+   diverges, which also perturbs luma agreement 94.8% → 87.9% at segs4).
 
 ## What shipped from this investigation
 
