@@ -722,6 +722,23 @@ impl<'a> Vp8Encoder<'a> {
     /// This matches libwebp's FinalizeTokenProbas which sets dirty = has_changed where
     /// has_changed is true only if any coefficient was set to a value different from default.
     fn compute_updated_probabilities(&mut self) -> bool {
+        // libwebp ships DEFAULT coefficient probabilities at RD_OPT_NONE
+        // (method <= 2) with a single segment. `OneStatPass` returns
+        // `size_p0 = ΣH + segment_hdr.size`, which is 0 there — H is 0 without
+        // rate optimization, and the segment header is empty with one segment —
+        // and `StatLoop` treats `size_p0 == 0` as a failure, returning before
+        // `FinalizeTokenProbas` ever runs (frame_enc.c:648). The result is
+        // default-proba coding (larger output, same pixels). Reproduce that
+        // under `StrictLibwebpParity`; the tuned default keeps the
+        // image-adapted proba update (which is strictly smaller).
+        if self.cost_model == super::api::CostModel::StrictLibwebpParity
+            && self.method <= 2
+            && !self.segments_enabled
+        {
+            self.updated_probs = Some(COEFF_PROBS);
+            return false;
+        }
+
         // Always start from COEFF_PROBS (decoder defaults) for computing what to update.
         // This ensures the header signaling matches what the decoder expects.
         let mut updated = COEFF_PROBS;
