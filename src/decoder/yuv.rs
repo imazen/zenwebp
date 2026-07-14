@@ -1000,14 +1000,24 @@ fn zenyuv_encode_planes(
 
     let mut ctx = YuvContext::new(Range::Limited, Matrix::WebpEncoder);
 
-    // Two-pass: zenyuv Y-only (fast maddubs SIMD, no chroma compute)
-    // + our SIMD gamma chroma overwrite.
+    // Two-pass: Y-only + our SIMD gamma chroma overwrite. The tuned default
+    // uses zenyuv's fast maddubs Y (±1 vs the exact formula); under
+    // StrictLibwebpParity we compute Y with the exact `rgb_to_y` (VP8RGBToY),
+    // which is byte-identical to libwebp's Y.
+    let mut fill_y = |dst: &mut [u8]| match prec {
+        ChromaPrec::TunedByteRound => ctx.encode_420_y_only_u8(rgb, dst, w, h),
+        ChromaPrec::LibwebpExact => {
+            for (i, y) in dst.iter_mut().enumerate().take(w * h) {
+                *y = rgb_to_y(&rgb[i * 3..i * 3 + 3]);
+            }
+        }
+    };
     if mb_aligned_width {
-        ctx.encode_420_y_only_u8(rgb, &mut y_bytes[..w * h], w, h);
+        fill_y(&mut y_bytes[..w * h]);
         pad_plane_vertical(&mut y_bytes, luma_width, h, luma_height);
     } else {
         let mut y_tight = alloc::vec![0u8; w * h];
-        ctx.encode_420_y_only_u8(rgb, &mut y_tight, w, h);
+        fill_y(&mut y_tight);
         pad_plane(&y_tight, &mut y_bytes, w, h, luma_width, luma_height);
     }
     gamma_chroma_overwrite(
