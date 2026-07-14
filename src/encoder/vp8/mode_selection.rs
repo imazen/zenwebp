@@ -2491,9 +2491,19 @@ macro_rules! pick_intra4_sse_body {
                     src_block[y * 4..y * 4 + 4].copy_from_slice(&$ybuf[src_row..src_row + 4]);
                 }
 
+                // Evaluate modes in libwebp's internal B-mode iteration order
+                // so an exact SSE tie resolves to the same winner. libwebp
+                // loops `mode = 0..NUM_BMODES` in ITS numbering (DC, TM, VE, HE,
+                // RD, VR, LD, VL, HD, HU) with a strict `<`, so ties go to the
+                // lowest libwebp index. `preds.data`/`mode_costs` are in
+                // zenwebp's IntraMode order, so visit their indices in the
+                // permutation that reproduces libwebp's order: RD(zen 5),
+                // VR(zen 6), LD(zen 4) occupy libwebp slots 4, 5, 6.
+                const ITER_ORDER: [usize; 10] = [0, 1, 2, 3, 5, 6, 4, 7, 8, 9];
                 let mut best_idx = 0usize;
                 let mut best_score = u64::MAX;
-                for (m, pred) in preds.data.iter().enumerate() {
+                for &m in ITER_ORDER.iter() {
+                    let pred = &preds.data[m];
                     let sse = $sse4x4(&src_block, pred);
                     let score = u64::from(sse) * u64::from(RD_DISTO_MULT)
                         + u64::from(mode_costs[m]) * LAMBDA_D_I4;
