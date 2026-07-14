@@ -141,12 +141,25 @@ in a separate north-star issue.
 **Pre-audit numbers (kept for reference — 2026-03-28 measurement):**
 - CID22 Q75: **1.0149x** | Q90: **1.0060x** (near parity)
 
-**Speed (zenbench, 792079.png 512x512, Q75, 2026-03-28):**
+**Speed (zenbench method_default, 792079.png 512x512, Q75, 2026-07-14):**
 | Method | zenwebp | libwebp | Ratio |
 |--------|---------|---------|-------|
-| 0 | 6.4ms | 2.8ms | 2.3x |
-| 4 | 13.5ms | 9.9ms | **1.36x** |
-| 6 | 21.0ms | 15.7ms | **1.34x** |
+| 0 | 4.4ms | 2.5ms | 1.76x |
+| 2 | 4.0ms | 3.1ms | **1.30x** |
+| 4 | 11.6ms | 8.5ms | **1.36x** |
+| 6 | 19.6ms | 13.9ms | 1.41x |
+
+Large images (interleaved A/B, 2026-07-14): 2MP screen m2 1.20x / m4 1.38x /
+m6 1.41x; 8MP mixed m2 1.22x / m4 1.39x. m0 is ~2.0x at scale (analysis-heavy;
+still −7..−10% bytes vs libwebp m0 — that tier trades time for size).
+
+History note: the 2026-03-28 table showed m6 at 1.34x. The libwebp-parity
+audit (PR #37, 2026-04-26) moved m6 to ~1.41x — bisected 2026-07-14 to the
+audit window (17.4 → 20.3ms zen-side, libwebp anchor steady). Dominant causes:
+#22 (I4 penalty 3000 → 211, shifting work into I4 selection — our 3.4x-cost
+path) and #29 (trellis in I16 mode selection at m6, RD_OPT_TRELLIS_ALL
+parity). It bought m6 from 1.0022x to 0.9948x bytes (beats libwebp). The
+recovery lever is I4 selection cost, not reverting parity.
 
 *Instruction ratio ~1.12x but wall-clock ~1.36x — gap is memory access patterns.*
 

@@ -213,3 +213,31 @@ semantics. m2 is +12.8% bytes vs libwebp m2 (their direct-loop probas and
 mode mix differ); all vs_libwebp_matrix gates (≤1.3× size, score deltas,
 cross-decode) and zensim floors pass. m2 is now absolutely faster than m0
 (no hint pass, bail cuts I4 work).
+
+## Round 7: "regression vs historical" investigated + large-image validation
+
+**m6 wall bisected**: 17.4 → 20.3 ms landed inside the libwebp-parity audit
+(PR #37, 2026-04-26; #44 gate innocent — 19.9 ≈ 20.3). Dominated by #22
+(I4 penalty 3000 → 211: deliberately shifts macroblocks into the I4 path,
+which costs zenwebp 3.4× libwebp) and #29 (trellis quantization inside I16
+mode selection at m6 — RD_OPT_TRELLIS_ALL parity, spot-measured −0.7% bytes
+in its own commit). The audit bought m6 from 1.0022× to 0.9948× bytes. m4's
+ratio never regressed (1.36× then, 1.36–1.39× now); absolute times today are
+faster than the 2026-03-28 table on both sides (toolchain/box drift) — the
+March table is superseded in CLAUDE.md.
+
+**Large-image A/B (interleaved zen/lib pairs, medians of 7):**
+
+| tier | 2MP screen (1280×1558) | 8MP mixed (1440×5653) |
+|---|---|---|
+| m0 | 2.01× wall / 0.933× bytes | 2.02× / 0.927× |
+| m2 | **1.20× / 1.078×** | **1.22× / 1.080×** |
+| m4 | 1.38× / 1.001× | 1.39× / 0.998× |
+| m6 | 1.41× / 0.992× | — |
+
+The m2 RefineUsingDistortion port scales (1.30× at 512² → 1.20× at 2-8MP).
+m0 degrades to ~2.0× at scale and is slower than m2 in absolute terms — its
+full-alpha analysis + hint collection + RD UV pick grow with area while its
+cheap decimation saves less; it still buys −7% bytes vs libwebp m0. Named
+follow-ups: I4 selection cost (pulls m4/m6 AND makes the audit's I4 shift
+cheap); m0 analysis diet at scale.
