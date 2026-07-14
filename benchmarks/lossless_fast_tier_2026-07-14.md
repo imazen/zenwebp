@@ -96,3 +96,22 @@ iters stay quality-derived = 51 at q75). iters=16: photo 2.3× faster but
 smooth-gradient content +75% bytes; iters=32: gradient still +8.5%. A
 content-class size regression fails the tier's "still saves space" bar;
 revisit only with a cheap content gate.
+
+## Round 3: no-progress chain pruning at m0 (d8c9e3d)
+
+Search-tree pruning per the "cut stalled walks, not the toolbox" principle:
+abandon a chain walk after P consecutive non-improving candidates
+(quick-rejects included); improvements refill the budget. P sweep:
+
+| P | photo ms/bytes | dice | frymire | synth-diag-gradient 800×600 |
+|---|---|---|---|---|
+| none | ~28-34 / 215,688 | 16.5 / 193,254 | 70.0 / 283,652 | 11,716 |
+| 8 | 13.5 / 212,140 | 10.3 / 194,778 | 38.8 / 288,296 | 20,080 (+71%) |
+| 16 | 17.5 / 213,418 | 11.6 / 193,004 | 45.0 / 286,032 | 13,642 (+16%) |
+| **24 (shipped)** | 24.0 / 214,096 | 14.4 / 193,056 | 49.0 / 284,938 | 12,342 (+5.3%) |
+
+P=24 keeps every real-content size within ±0.5% (photo −0.7%, real-gradient
+gradients_png −0.1%) while cutting wall ~15-30%. The only regression is the
+synthetic diagonal-gradient stress case (+5.3%), whose productive candidates
+hide behind >24-candidate stall runs — flat iteration caps measured far
+worse there (+8.5% at 32 iters, +75% at 16). m1+ byte-identical.

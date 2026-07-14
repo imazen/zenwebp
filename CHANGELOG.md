@@ -147,6 +147,11 @@ here has landed; see "Changed (BREAKING)" below.)
   Net: m0 is now smaller than libwebp m0 on the whole benchmark grid
   (−5% to −19%) at ~1.0–1.2× its wall time. An m0 chain-iteration cap was
   measured and rejected (+8.5% to +75% on smooth gradients).
+- **m0 chain-walk no-progress pruning** (d8c9e3d): walks are abandoned after
+  24 consecutive non-improving candidates instead of a flat iteration cap —
+  productive deep walks keep their budget. Photo −0.7% bytes and ~20% less
+  wall, frymire −30% wall (+0.45%), real-content sizes within ±0.5%; the
+  synthetic diagonal-gradient stress case pays +5.3%. m1+ byte-identical.
 - **Wire the `zencodec-testkit` `check_decode_truncation_series` EOF/truncation
   conformance check** into `tests/decode_truncation_series.rs` — truncates a
   known-good WebP at a deterministic prefix series and asserts every dyn-erased
