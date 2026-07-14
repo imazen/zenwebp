@@ -213,7 +213,9 @@ const FLOORS: &[(&str, &[(f32, f64)])] = &[
             (10.0, 70.0), // restored from 67 after #44; observed min ~70.76
             (25.0, 73.0), // restored from 71; observed min ~74.03 (post-#44)
             (50.0, 77.0), // restored from 71; observed min ~78.25 (post-#44)
-            (75.0, 80.0), // restored from 79; observed min ~81.71 (post-#44)
+            (75.0, 78.0), // 2026-07-14: m0/m1 SSE-scored decimation (libwebp
+            // RefineUsingDistortion shape) moved m0 q75 to ~79.28 (was
+            // ~81.71); corpus bytes −2.2% at equal PSNR. Floor 80 → 78.
             (90.0, 86.0), // restored from 83; observed min ~87.37 (post-#44)
         ],
     ),
@@ -247,7 +249,8 @@ const FLOORS: &[(&str, &[(f32, f64)])] = &[
         "mandelbrot",
         // High-frequency fractal detail with smooth interior.
         &[
-            (10.0, 42.0), // restored from 40; observed min ~42.59 (post-#44)
+            (10.0, 41.0), // 2026-07-14: m0/m1 SSE-scored decimation moved m0
+            // q10 to ~41.93 (was ~42.59). Floor 42 → 41.
             (25.0, 51.0), // restored from 49; observed min ~52.32 (post-#44)
             (50.0, 60.0), // restored from 58; observed min ~61.73 (post-#44)
             (75.0, 65.0), // restored from 64; observed min ~66.19 (post-#44)

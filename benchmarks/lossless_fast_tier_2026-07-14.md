@@ -147,3 +147,36 @@ probability probe) — and it is exactly what buys the −4.3% bytes. Left as-is
 deliberately. Known follow-up: zen m0 trails libwebp m0 by ~0.9 dB PSNR
 aggregate on screens at −4.3% bytes (pre-existing, RD-point difference plus
 screen-content tuning; photo content is at parity).
+
+## Round 5: lossy m0/m1 — direct-loop verdict + SSE-scored decimation (landed)
+
+**Direct emission loop: measured and rejected, by wall clock this time.**
+History: zenwebp's pre-2026-02 two-pass loop was replaced by the token buffer
+(9625d4e); libwebp's m0-2 direct `VP8EncLoop` (single pass + 25%-MB
+probability probe) was never tried. Phase timers show why it never needs to
+be: at m0 the emit phase is **0.43 ms of ~4.5 ms** — the token round-trip is
+not the wall cost, and a probe pass would cost more than emission saves. No
+Rust constraint; a sink-generic serializer (~300 lines) could do it — it
+just doesn't pay.
+
+**The real m0-2 lever: SSE-scored decimation (libwebp RefineUsingDistortion
+shape), landed for m0/m1.** zenbench (interleaved, ±0.1 ms CIs — wall, not
+instruction counts):
+
+| tier | before | after | libwebp |
+|---|---|---|---|
+| zen m0 (diagnostic) | 4.52 ms | **4.4 ms** | 2.60 ms |
+| photo-512 m0 bytes | 13,536 | **13,172 (−2.7%)** | 14,660 |
+| imazen-26 lossy q75 aggregate | 6,656,292 B / 37.54 dB | **6,508,166 B (−2.2%) / 37.56 dB** | 6,955,106 B / 38.40 dB |
+
+I16-hint MBs: all four modes SSE-scored (lambda_d_i16=106, incl. the libwebp
+bug-#432 flat-border guard); I4-hint MBs: all ten sub-block modes SSE-scored
+(lambda_d_i4=11) with a single winner-only quantize for reconstruction — the
+RD path quantized every candidate. No I16 bail (libwebp try_both==0
+semantics). Two synthetic zensim floors re-baked for the new m0 mode
+decisions (gradient q75: 81.71→79.28, floor 80→78; mandelbrot q10:
+42.59→41.93, floor 42→41 — sub-point deltas, user-approved) while corpus
+bytes and PSNR both improve. Remaining m0 wall gap vs libwebp is ~1.7×;
+next candidates: single-arcane hoisting of the SSE pick loops (~14 dispatch
+boundaries per I4 sub-block today) and extending hints+SSE decimation to m2
+(worst tier at 2.9×).

@@ -1000,6 +1000,160 @@ impl<'a> super::Vp8Encoder<'a> {
         (LumaMode::DC, score, sse)
     }
 
+    /// libwebp `RefineUsingDistortion` Intra16 arm at RD_OPT_NONE (m0/m1):
+    /// score all four I16 modes by plain SSE plus the fixed mode cost weighted
+    /// by libwebp's empirical constant `lambda_d_i16 = 106` (quant_enc.c:1266)
+    /// — no per-mode quantization or coefficient-cost machinery. Includes the
+    /// libwebp bug-#432 border guard: flat sources on the first row/column are
+    /// pinned to DC/V to avoid seeding a checkerboard resonance.
+    ///
+    /// Returns the winning mode and its SSE (feeds the #44 `D > min_disto`
+    /// skip gate via `MacroblockInfo::intra16_d`).
+    fn pick_intra16_sse(&self, mbx: usize, mby: usize) -> (LumaMode, u32) {
+        const LAMBDA_D_I16: u64 = 106;
+        // Order matches FIXED_COSTS_I16.
+        const MODES: [LumaMode; 4] = [LumaMode::DC, LumaMode::V, LumaMode::H, LumaMode::TM];
+        let mbw = usize::from(self.macroblock_width);
+        let src_width = mbw * 16;
+
+        let mut best_mode = LumaMode::DC;
+        let mut best_sse = 0u32;
+        let mut best_score = u64::MAX;
+        for (idx, &mode) in MODES.iter().enumerate() {
+            let pred = self.get_predicted_luma_block_16x16(mode, mbx, mby);
+            let sse = sse_16x16_luma(&self.frame.ybuf, src_width, mbx, mby, &pred);
+            let score = u64::from(sse) * u64::from(RD_DISTO_MULT)
+                + u64::from(FIXED_COSTS_I16[idx]) * LAMBDA_D_I16;
+            if score < best_score {
+                best_score = score;
+                best_mode = mode;
+                best_sse = sse;
+            }
+        }
+
+        if mbx == 0 || mby == 0 {
+            let src_base = mby * 16 * src_width + mbx * 16;
+            if is_flat_source_16(&self.frame.ybuf[src_base..], src_width) {
+                // libwebp: best_mode = (it->x == 0) ? DC : V (bug #432).
+                best_mode = if mbx == 0 { LumaMode::DC } else { LumaMode::V };
+                let pred = self.get_predicted_luma_block_16x16(best_mode, mbx, mby);
+                best_sse = sse_16x16_luma(&self.frame.ybuf, src_width, mbx, mby, &pred);
+            }
+        }
+
+        (best_mode, best_sse)
+    }
+
+    /// libwebp `RefineUsingDistortion` Intra4 arm at RD_OPT_NONE (m0/m1):
+    /// each sub-block's mode is picked from all 10 candidates by plain SSE
+    /// plus the context-dependent fixed mode cost weighted by libwebp's
+    /// `lambda_d_i4 = 11` (quant_enc.c:1267). Only the winning mode is
+    /// transformed/quantized (once, for the reconstruction that feeds the
+    /// next sub-block's predictors) — the RD path quantizes every candidate.
+    /// No bail-out to I16: with `try_both_modes == 0` libwebp's early-exit
+    /// threshold is MAX_COST, so the analysis hint fully decides I16 vs I4.
+    fn pick_intra4_sse(&self, mbx: usize, mby: usize) -> [IntraMode; 16] {
+        const LAMBDA_D_I4: u64 = 11;
+        const MODES: [IntraMode; 10] = [
+            IntraMode::DC,
+            IntraMode::TM,
+            IntraMode::VE,
+            IntraMode::HE,
+            IntraMode::RD,
+            IntraMode::VR,
+            IntraMode::LD,
+            IntraMode::VL,
+            IntraMode::HD,
+            IntraMode::HU,
+        ];
+        let mbw = usize::from(self.macroblock_width);
+        let src_width = mbw * 16;
+        let mut y_with_border =
+            create_border_luma(mbx, mby, mbw, &self.top_border_y, &self.left_border_y);
+        let segment = self.get_segment_for_mb(mbx, mby);
+        let y1_matrix = segment.y1_matrix.as_ref().unwrap();
+
+        let mut best_modes = [IntraMode::DC; 16];
+        let mut best_mode_indices = [0usize; 16];
+
+        for sby in 0usize..4 {
+            for sbx in 0usize..4 {
+                let i = sby * 4 + sbx;
+                let y0 = sby * 4 + 1;
+                let x0 = sbx * 4 + 1;
+
+                let top_ctx = if sby == 0 {
+                    self.top_b_pred[mbx * 4 + sbx] as usize
+                } else {
+                    best_mode_indices[(sby - 1) * 4 + sbx]
+                };
+                let left_ctx = if sbx == 0 {
+                    self.left_b_pred[sby] as usize
+                } else {
+                    best_mode_indices[sby * 4 + (sbx - 1)]
+                };
+                let mode_costs: [u16; 10] = core::array::from_fn(|mode_idx| {
+                    crate::encoder::tables::VP8_FIXED_COSTS_I4[top_ctx][left_ctx][mode_idx]
+                });
+
+                let preds = I4Predictions::compute(&y_with_border, x0, y0, LUMA_STRIDE);
+
+                let src_base = (mby * 16 + sby * 4) * src_width + mbx * 16 + sbx * 4;
+                let mut src_block = [0u8; 16];
+                for y in 0..4 {
+                    let src_row = src_base + y * src_width;
+                    src_block[y * 4..y * 4 + 4]
+                        .copy_from_slice(&self.frame.ybuf[src_row..src_row + 4]);
+                }
+
+                let mut best_idx = 0usize;
+                let mut best_score = u64::MAX;
+                for (m, pred) in preds.data.iter().enumerate() {
+                    let sse = sse4x4_dispatch(&src_block, pred);
+                    let score = u64::from(sse) * u64::from(RD_DISTO_MULT)
+                        + u64::from(mode_costs[m]) * LAMBDA_D_I4;
+                    if score < best_score {
+                        best_score = score;
+                        best_idx = m;
+                    }
+                }
+
+                best_modes[i] = MODES[best_idx];
+                best_mode_indices[i] = best_idx;
+
+                // Reconstruct the winner so later sub-blocks predict from
+                // reconstructed (not source) neighbors, matching the decoder.
+                Self::apply_intra4_prediction(&mut y_with_border, MODES[best_idx], x0, y0);
+                let coeffs = crate::common::transform::ftransform_from_u8_4x4(
+                    &src_block,
+                    &preds.data[best_idx],
+                );
+                let mut quantized = [0i32; 16];
+                let mut dequant = [0i32; 16];
+                let has_nz = crate::encoder::quantize::quantize_dequantize_block_simd(
+                    &coeffs,
+                    y1_matrix,
+                    true,
+                    &mut quantized,
+                    &mut dequant,
+                );
+                if has_nz {
+                    let dc_only = dequant[1..].iter().all(|&c| c == 0);
+                    crate::common::transform::idct_add_residue_inplace(
+                        &mut dequant,
+                        &mut y_with_border,
+                        y0,
+                        x0,
+                        LUMA_STRIDE,
+                        dc_only,
+                    );
+                }
+            }
+        }
+
+        best_modes
+    }
+
     /// Estimate coefficient cost for a 16x16 luma macroblock (I16 mode).
     ///
     /// Quantizes coefficients and estimates their encoding cost without
@@ -1857,25 +2011,18 @@ impl<'a> super::Vp8Encoder<'a> {
                 let mut intra16_d: Option<u32> = None;
                 let (luma_mode, luma_bpred) = match hint {
                     MbModeHint::I16Dc => {
-                        let (_, _, d) = self.pick_intra16_fast_dc(mbx, mby);
+                        // libwebp RefineUsingDistortion: all four I16 modes
+                        // by SSE (not DC-only), lambda_d_i16 = 106.
+                        let (mode, d) = self.pick_intra16_sse(mbx, mby);
                         intra16_d = Some(d);
-                        (LumaMode::DC, None)
+                        (mode, None)
                     }
                     MbModeHint::I4AllDc => {
-                        // Need a baseline I16 score to compare against I4. Use
-                        // the fast DC scorer (matches what we'd report for
-                        // an I16-DC mode at m0/m1).
-                        let (_, i16_score, i16_d) = self.pick_intra16_fast_dc(mbx, mby);
-                        match self.pick_best_intra4(mbx, mby, i16_score) {
-                            Some((modes, _)) => (LumaMode::B, Some(modes)),
-                            // I4 didn't beat I16 — fall back to I16-DC (the
-                            // hint was advisory, libwebp's I4 path can also
-                            // bail out via `score_i4 >= best_score`).
-                            None => {
-                                intra16_d = Some(i16_d);
-                                (LumaMode::DC, None)
-                            }
-                        }
+                        // libwebp RefineUsingDistortion with try_both == 0:
+                        // the hint decides I4; sub-block modes are SSE-picked
+                        // (10 candidates each), no bail-out to I16.
+                        let modes = self.pick_intra4_sse(mbx, mby);
+                        (LumaMode::B, Some(modes))
                     }
                 };
                 let chroma_mode = self.pick_best_uv(mbx, mby);

@@ -105,6 +105,19 @@ intentionally moved trellis from m4 to m5 to align with libwebp's RD optimizatio
 
 ## Completed Investigations
 
+### Lossy m0/m1 SSE decimation (2026-07-14, LANDED) + direct-loop rejection
+
+Follow-up to the rejection below: the wall-measured answer. Phase timers put
+the emit phase at 0.43ms of ~4.5ms at m0 — the token buffer is NOT the wall
+cost and libwebp's direct VP8EncLoop shape (plus a 25%-MB probe) would cost
+more than it saves; no Rust constraint, just not worth it. The real lever
+was SSE-scored decimation (RefineUsingDistortion shape) for the m<=1 hint
+path: 4-mode SSE I16 pick + 10-mode SSE I4 pick with winner-only quantize.
+zenbench wall-neutral (4.52 -> 4.4ms), photo bytes -2.7%, imazen-26 corpus
+-2.2% bytes at +0.02dB. Two synthetic zensim floors re-baked (sub-point
+deltas, user-approved). Next: single-arcane hoist of the pick loops; extend
+to m2 (2.9x, worst tier).
+
 ### Lossy m0 low-effort port (2026-07-14, MEASURED AND REJECTED)
 
 Ported libwebp's lossy method-0 gates (FastMBAnalyze alpha=0, skip UV RD

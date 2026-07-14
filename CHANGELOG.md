@@ -274,6 +274,16 @@ here has landed; see "Changed (BREAKING)" below.)
   `DecodeError::Cancelled` / `EncodeError::Cancelled` — without adding `enough`
   to their own `Cargo.toml` (#65).
 
+### Changed
+- **Lossy m0/m1 mode decimation is SSE-scored** (libwebp
+  `RefineUsingDistortion` shape): I16-hint macroblocks pick among all four
+  modes by SSE + fixed cost (was DC-only), I4-hint macroblocks pick each
+  sub-block's mode from all ten candidates by SSE with a single winner-only
+  quantize (was a 3-mode full-RD loop). Wall-neutral on zenbench; photo-512
+  bytes −2.7%, imazen-26 screenshot corpus −2.2% bytes at equal PSNR. Two
+  synthetic zensim-floor cells re-baked for the new mode decisions
+  (sub-point deltas). m2+ unchanged.
+
 ### Fixed
 
 - **VP8L encoder wrote Huffman tree groups for clusters unreferenced by the
