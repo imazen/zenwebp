@@ -241,3 +241,17 @@ full-alpha analysis + hint collection + RD UV pick grow with area while its
 cheap decimation saves less; it still buys −7% bytes vs libwebp m0. Named
 follow-ups: I4 selection cost (pulls m4/m6 AND makes the audit's I4 shift
 cheap); m0 analysis diet at scale.
+
+## Round 8: m4 component decomposition (correcting an attribution)
+
+The m3-m6 wall offset vs libwebp is NOT a "token-buffer tax": libwebp also
+uses the token loop at m3+ (`use_tokens = rd_opt >= RD_OPT_BASIC`,
+webp_enc.c:121), and callgrind at m4 puts zen's `record_coeff_tokens` at
+3.9M of 218.7M instructions per encode (1.8%). Measured composition of the
+m4 gap (zen 218.7M vs lib 173.5M = 1.26x instructions; wall 1.36-1.39x):
+the fused mode-selection pipeline (evaluate_i4_modes + choose_macroblock_info
++ residual-cost — the documented 3.4x/2.1x components), compute_masking_alpha
+at ~3.3% (zen-only perceptual extension, off under StrictLibwebpParity), and
+the instruction→wall remainder is memory access patterns (the long-standing
+1.12x-instr/1.36x-wall observation). Token-buffer effects are an m0-2 story
+only, where the architectures actually differ.
