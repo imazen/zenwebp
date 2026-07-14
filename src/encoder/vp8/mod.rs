@@ -2122,12 +2122,39 @@ impl<'a> Vp8Encoder<'a> {
                 self.frame.sharpness_level = self.filter_sharpness;
             }
         } else {
-            // Disable segments for small images (overhead not worth it).
-            // Note: keep `fast_mb_hints` populated — they're independent of
-            // segmentation and still drive m0/m1 mode selection.
+            // Single segment: no per-region quantizer differentiation.
             self.segments_enabled = false;
             self.segments_update_map = false;
             self.segment_map = Vec::new();
+
+            // libwebp's analysis gate is `do_segments = ... || method <= 1`
+            // (analysis_enc.c:434): FastMBAnalyze — which drives m0/m1 mode
+            // selection — runs even with one segment. `analyze_and_assign_
+            // segments` (the multi-segment path above) is where hints were
+            // populated, so a single-segment m0/m1 encode was left with an
+            // empty `fast_mb_hints` and collapsed every MB to I16-DC. Run the
+            // hint-collecting analysis here too (segments stay disabled).
+            if self.method <= 1 && self.partition_limit < 100 {
+                let y_stride = usize::from(self.macroblock_width * 16);
+                let uv_stride = usize::from(self.macroblock_width * 8);
+                let width = usize::from(self.frame.width);
+                let height = usize::from(self.frame.height);
+                let analysis = analyze_image_with_hint_gate(
+                    &self.frame.ybuf,
+                    &self.frame.ubuf,
+                    &self.frame.vbuf,
+                    width,
+                    height,
+                    y_stride,
+                    uv_stride,
+                    self.method,
+                    self.sns_strength,
+                    self.cost_model,
+                    i32::from(lossy_quality),
+                    true,
+                );
+                self.fast_mb_hints = analysis.mb_mode_hints.unwrap_or_default();
+            }
         }
 
         self.left_border_y = [129u8; 16 + 1];
