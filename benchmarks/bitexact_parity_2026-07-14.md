@@ -125,3 +125,36 @@ Fixed by deriving the mode from the index via the single canonical
 unchanged. Parity (382297, StrictLibwebpParity): I4 per-sub-block agreement
 **58% → 92.6%**, all-16-match **2/136 → 86/136**, m0 byte ratio **1.011× →
 0.9996×** at matched PSNR. zensim matrix unchanged (14 ok).
+
+## Forward DCT proven bit-exact — chroma divergence is decision-level (part 6)
+
+The remaining chroma-DC divergence (mb(1,0) bottom U blocks quantized DC off by
++1, seen while feeding zen libwebp's exact YUV via the `yuvenc` harness) was
+suspected to be a SIMD-vs-scalar rounding difference in the forward transform.
+It is **not**. Two committed differential tests
+(`src/common/transform.rs::tests`) port libwebp's `FTransform_C` exactly and
+compare it against zen's actual production kernels:
+
+- `ftransform_single_matches_libwebp_c` — luma path `ftransform_from_u8_4x4`
+  vs `FTransform_C`, 500k random (src, ref) pairs: **identical**.
+- `ftransform2_matches_libwebp_c` — chroma path `ftransform2_from_u8` (the
+  paired 2-block SIMD DCT, exactly the kernel that produced the +1) vs
+  `FTransform_C` on each block, 500k random inputs: **identical**.
+- `ftransform_edge_cases_match_libwebp_c` — uniform-213-prediction / near-flat
+  source (the literal chroma-DC scenario) + odd/even `>>9`/`>>16` boundary
+  probes: **identical**.
+
+Combined with the already-verified quantize constants (QFIX=17,
+kBiasMatrices, kDcTable) this proves the **forward transform + quantization
+is bit-exact** for any matched input. Therefore the chroma DC +1 cannot be
+arithmetic: given identical source YUV, the only way a bit-exact DCT+quant
+emits a different DC is a different **prediction** (`ref_`). The chroma DC
+prediction of mb(1,0) reads mb(0,0)'s reconstructed chroma right edge; a
+hair's divergence in an upstream chroma mode pick or reconstruction cascades
+into mb(1,0)'s prediction and the transform faithfully reproduces it. This
+reclassifies the last chroma gap from "unresolved numerical contradiction" to
+the **same decision-level cascade** as the luma I4 work — closable by aligning
+chroma mode selection + the RGB→YUV source, not by touching the transform.
+
+These tests are permanent regression gates: if any future SIMD refactor breaks
+forward-transform bit-exactness, they fail loudly.

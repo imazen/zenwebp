@@ -2642,6 +2642,134 @@ mod tests {
     extern crate std;
     use super::*;
 
+    /// Faithful scalar port of libwebp's `FTransform_C` (dsp/enc.c). Takes a
+    /// 4x4 residual block in natural row-major order and returns the forward-DCT
+    /// coefficients. Used as the parity oracle for zen's SIMD forward transforms
+    /// under `CostModel::StrictLibwebpParity` (#38).
+    fn ftransform_c_reference(residual: &[i32; 16]) -> [i32; 16] {
+        let mut tmp = [0i32; 16];
+        // Pass 1 (rows)
+        for i in 0..4 {
+            let d0 = residual[i * 4];
+            let d1 = residual[i * 4 + 1];
+            let d2 = residual[i * 4 + 2];
+            let d3 = residual[i * 4 + 3];
+            let a0 = d0 + d3;
+            let a1 = d1 + d2;
+            let a2 = d1 - d2;
+            let a3 = d0 - d3;
+            tmp[i * 4] = (a0 + a1) * 8;
+            tmp[i * 4 + 1] = (a2 * 2217 + a3 * 5352 + 1812) >> 9;
+            tmp[i * 4 + 2] = (a0 - a1) * 8;
+            tmp[i * 4 + 3] = (a3 * 2217 - a2 * 5352 + 937) >> 9;
+        }
+        // Pass 2 (columns)
+        let mut out = [0i32; 16];
+        for i in 0..4 {
+            let a0 = tmp[i] + tmp[12 + i];
+            let a1 = tmp[4 + i] + tmp[8 + i];
+            let a2 = tmp[4 + i] - tmp[8 + i];
+            let a3 = tmp[i] - tmp[12 + i];
+            out[i] = (a0 + a1 + 7) >> 4;
+            out[4 + i] = ((a2 * 2217 + a3 * 5352 + 12000) >> 16) + i32::from(a3 != 0);
+            out[8 + i] = (a0 - a1 + 7) >> 4;
+            out[12 + i] = (a3 * 2217 - a2 * 5352 + 51000) >> 16;
+        }
+        out
+    }
+
+    /// A tiny xorshift PRNG so the sweep is deterministic without a dev-dep.
+    struct XorShift(u64);
+    impl XorShift {
+        fn next_u8(&mut self) -> u8 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            (x & 0xff) as u8
+        }
+    }
+
+    /// The luma forward-transform path (`ftransform_from_u8_4x4`) must be
+    /// bit-identical to libwebp's `FTransform_C` for every input. If this ever
+    /// fails, a byte-exact-parity divergence lives in the single-block SIMD DCT.
+    #[test]
+    fn ftransform_single_matches_libwebp_c() {
+        let mut rng = XorShift(0x1234_5678_9abc_def0);
+        for _ in 0..500_000 {
+            let mut src = [0u8; 16];
+            let mut refb = [0u8; 16];
+            for k in 0..16 {
+                src[k] = rng.next_u8();
+                refb[k] = rng.next_u8();
+            }
+            let residual: [i32; 16] = core::array::from_fn(|k| src[k] as i32 - refb[k] as i32);
+            let got = ftransform_from_u8_4x4(&src, &refb);
+            let want = ftransform_c_reference(&residual);
+            assert_eq!(got, want, "src={src:?} ref={refb:?}");
+        }
+    }
+
+    /// The chroma forward-transform path (`ftransform2_from_u8`, the paired
+    /// 2-block SIMD DCT used for U/V blocks) must also be bit-identical to
+    /// `FTransform_C` on each of its two blocks. This is the exact kernel that
+    /// produced the chroma-DC divergence under investigation for #38.
+    #[test]
+    fn ftransform2_matches_libwebp_c() {
+        let mut rng = XorShift(0x0fed_cba9_8765_4321);
+        // 8-wide src/ref rows (2 blocks side by side), 4 rows.
+        for _ in 0..500_000 {
+            let mut src = [0u8; 32];
+            let mut refb = [0u8; 32];
+            for k in 0..32 {
+                src[k] = rng.next_u8();
+                refb[k] = rng.next_u8();
+            }
+            let mut out = [0i16; 32];
+            ftransform2_from_u8(&src, &refb, 8, 8, &mut out);
+            // Reconstruct each block's residual in natural order and compare.
+            for block in 0..2 {
+                let residual: [i32; 16] = core::array::from_fn(|k| {
+                    let row = k / 4;
+                    let col = k % 4;
+                    let idx = row * 8 + block * 4 + col;
+                    src[idx] as i32 - refb[idx] as i32
+                });
+                let want = ftransform_c_reference(&residual);
+                let got: [i32; 16] = core::array::from_fn(|k| out[block * 16 + k] as i32);
+                assert_eq!(got, want, "block={block} src={src:?} ref={refb:?}");
+            }
+        }
+    }
+
+    /// Adversarial edge cases: uniform blocks, extreme gradients, and the
+    /// specific "constant-prediction, near-flat source" shape that chroma DC
+    /// blocks take (which is where the +1 divergence was observed).
+    #[test]
+    fn ftransform_edge_cases_match_libwebp_c() {
+        let mut cases: std::vec::Vec<([u8; 16], [u8; 16])> = std::vec::Vec::new();
+        // All combinations of {0, 1, 127, 128, 213, 254, 255} src over a
+        // uniform 213 prediction (the exact chroma-DC-prediction scenario).
+        for &s in &[0u8, 1, 84, 127, 128, 200, 212, 213, 214, 254, 255] {
+            cases.push(([s; 16], [213u8; 16]));
+        }
+        // Odd/even boundary probing around the >>9 and >>16 rounding.
+        for delta in -8i32..=8 {
+            let mut src = [128u8; 16];
+            for (k, sp) in src.iter_mut().enumerate() {
+                *sp = (128 + delta * (k as i32 - 8)).clamp(0, 255) as u8;
+            }
+            cases.push((src, [128u8; 16]));
+        }
+        for (src, refb) in cases {
+            let residual: [i32; 16] = core::array::from_fn(|k| src[k] as i32 - refb[k] as i32);
+            let got = ftransform_from_u8_4x4(&src, &refb);
+            let want = ftransform_c_reference(&residual);
+            assert_eq!(got, want, "src={src:?} ref={refb:?}");
+        }
+    }
+
     #[test]
     fn test_dct_inverse() {
         const BLOCK: [i32; 16] = [
