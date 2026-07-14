@@ -265,3 +265,51 @@ mby=0, where V/TM are unavailable). Harness + per-MB dumps:
 **Net m0 state:** luma byte-identical, RGB→YUV byte-identical, all modes match,
 partition 0 byte-identical; a handful of chroma DC coefficients differ by one
 quant level (zen 76470 vs libwebp 76430 bytes, 99.95% identical).
+
+## m0 BYTE-IDENTICAL — chroma DC diffusion inter-MB store (part 10)
+
+The final m0 gap was the chroma DC error diffusion's **inter-MB store**. Root
+cause traced against an instrumented libwebp (built from libwebp-sys 0.14.4's
+vendored source, byte-identical output to the linked lib): libwebp calls
+`StoreDiffusionErrors` **only inside `PickBestUV`**, which runs when
+`rd_opt_level > RD_OPT_NONE` (method ≥ 3). At method 0-2 libwebp runs the
+intra-MB `CorrectDCValues` correction with **zero** neighbor errors but never
+stores them, so `top_derr`/`left_derr` stay 0 for the whole frame. zenwebp's
+`apply_chroma_error_diffusion` stored unconditionally → over-propagated the DC
+diffusion error → shifted MB(1,0)'s block-3 DC one quant level (174 vs 177).
+
+Evidence: the store fires **0× at m0-2, 2× at m3-6**; patching libwebp to store
+at m0 (`ZEN_MIMIC=1`) reproduced zen's exact wrong state (`left_derr=[-1,4]`,
+`errs=[3,4,-7,0]`, level −13). Fixed by gating the store on `method >= 3 ||
+cost_model != StrictLibwebpParity` (`residuals.rs::apply_chroma_error_diffusion`).
+
+**Result — m0 segs1 `StrictLibwebpParity` is now BYTE-IDENTICAL to libwebp**
+(382297: 76430 bytes both, VP8 payload 100% identical, 0 decoded-pixel diff).
+m1/m2 UV mode agreement 88.8% → 95.6%. The tuned default is unchanged (it keeps
+inter-MB propagation, which measurably reduces banding on smooth low-q content —
+zensim gate stays green, 14 ok).
+
+**Full m0 parity chain (all verified byte-exact):** RGB→YUV (Y+U+V) → I16/I4/UV
+modes → forward DCT/WHT + quant → partition 0 → token coefficients → total
+bitstream. Remaining tail: m1/m2 UV residual 4.4% (method-specific, minor),
+m3-6 (~74-90%, RD-path I4 tie-break), segs>1 (k-means).
+
+### What became a tuned-default quality question
+Two m0-2 behaviors were found where zenwebp's deviation from libwebp is
+*measurably better on synthetic low-q* (gradient/noise): (1) byte-rounded chroma
+downsampling vs libwebp's ×4 precision, and (2) inter-MB DC diffusion
+propagation vs libwebp's m0-2 no-store. Both are kept in the tuned default and
+gated OFF only under parity. Whether they help *real* content (vs synthetic
+gradient/noise) is the open question a CID22 + imazen-26 chroma sweep answers.
+
+### Chroma-precision sweep result (real content) — keep the tuned default
+A/B on 3 CID22 + 12 imazen-26 color-rich images (imazen resized ≤1024 Lanczos3),
+Y held constant, exact ×4 vs tuned byte-round chroma, ZenwebpDefault method 4,
+q ∈ {20,35,50,75,90}, scored with zensim (`benchmarks/chroma_precision_sweep_2026-07-14.tsv`):
+**overall mean Δzsim(exact−tuned) = −0.038, Δsize = −0.05%** — both in the noise.
+Tuned keeps a small edge only at q20 (−0.195), consistent with the synthetic
+banding finding; q35–90 are dead even (±0.03). So byte-exact chroma should NOT
+become the default: it's neutral-to-marginally-worse on real content and would
+regress the synthetic floor gate. Keep tuned byte-round as default; parity uses
+exact. (Scope: single size regime, method 4 — an A/B decision, not a calibration
+constant, so the reduced grid is adequate for a "no meaningful difference" call.)

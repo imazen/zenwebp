@@ -1,0 +1,97 @@
+# Chroma precision A/B: libwebp-exact (×4) vs zenwebp-tuned (byte-round) chroma downsampling
+# Question: should byte-exact chroma be the DEFAULT (not just parity)?
+# Method: Y held constant (zenyuv default Y both variants); only source U/V precision varies.
+#   Encode ZenwebpDefault method 4, decode, zensim (ZensimProfile::latest) vs original.
+# Corpus: 3 CID22-512 + 12 imazen-26 (color-rich categories), imazen resized to <=1024 max-dim Lanczos3.
+# git=ad66b53 host=lilith date=2026-07-14T23:31:06Z
+# CONCLUSION: WASH on real content. Overall mean dzsim(E-T)=-0.038, dsize=-0.05% (both noise).
+#   Tuned keeps a small edge only at q20 (-0.195). No real-content case to switch the default;
+#   keep tuned byte-round (also passes the synthetic zensim floor gate). Parity uses exact.
+# Scope note: single size regime (<=1024) + method 4 only; A/B decision (keep), not a calibration constant.
+#
+# chroma precision sweep: EXACT(×4) vs TUNED(byte-round), Y held constant, method 4
+# image	q	zsim_tuned	zsim_exact	Δzsim(E−T)	size_tuned	size_exact	Δsize%
+cid22_382297	20	47.070	46.540	-0.530	23038	22916	-0.53
+cid22_382297	35	55.784	55.831	+0.047	30116	30018	-0.33
+cid22_382297	50	61.367	61.205	-0.162	37572	37482	-0.24
+cid22_382297	75	68.070	68.117	+0.046	49444	49424	-0.04
+cid22_382297	90	74.844	74.668	-0.176	89174	89120	-0.06
+cid22_1025469	20	47.958	47.856	-0.103	5542	5548	+0.11
+cid22_1025469	35	58.613	58.766	+0.153	7474	7486	+0.16
+cid22_1025469	50	64.211	64.198	-0.013	9502	9506	+0.04
+cid22_1025469	75	72.248	72.527	+0.279	13044	13106	+0.48
+cid22_1025469	90	83.798	83.840	+0.042	28328	28308	-0.07
+cid22_1418519	20	62.061	61.774	-0.287	5526	5516	-0.18
+cid22_1418519	35	68.771	68.193	-0.578	7156	7132	-0.34
+cid22_1418519	50	72.881	72.891	+0.010	8698	8732	+0.39
+cid22_1418519	75	78.869	78.773	-0.096	11586	11556	-0.26
+cid22_1418519	90	86.356	86.343	-0.013	22990	22892	-0.43
+1000-lilith-photos-general	20	38.030	38.147	+0.117	45088	44658	-0.95
+1000-lilith-photos-general	35	54.962	54.779	-0.183	65406	65300	-0.16
+1000-lilith-photos-general	50	64.671	64.849	+0.178	85708	85704	-0.00
+1000-lilith-photos-general	75	73.448	73.369	-0.079	114402	113922	-0.42
+1000-lilith-photos-general	90	83.074	83.076	+0.002	212280	212240	-0.02
+1400-lilith-nature	20	46.347	45.981	-0.366	19388	19440	+0.27
+1400-lilith-nature	35	57.078	57.198	+0.119	28546	28472	-0.26
+1400-lilith-nature	50	63.520	63.113	-0.407	37642	37722	+0.21
+1400-lilith-nature	75	71.823	71.881	+0.057	53360	53324	-0.07
+1400-lilith-nature	90	83.858	83.863	+0.004	116480	116230	-0.21
+1600-lilith-food	20	53.303	53.257	-0.046	25246	25272	+0.10
+1600-lilith-food	35	62.368	62.209	-0.159	34022	34028	+0.02
+1600-lilith-food	50	68.077	68.096	+0.018	42696	42634	-0.15
+1600-lilith-food	75	75.255	75.136	-0.120	59638	59584	-0.09
+1600-lilith-food	90	86.150	86.167	+0.017	129668	129644	-0.02
+2000-unsplash-people	20	55.171	55.162	-0.010	17016	17058	+0.25
+2000-unsplash-people	35	63.475	63.241	-0.234	22850	22872	+0.10
+2000-unsplash-people	50	68.821	68.803	-0.017	29192	29026	-0.57
+2000-unsplash-people	75	74.947	74.600	-0.347	40242	40282	+0.10
+2000-unsplash-people	90	85.426	85.449	+0.023	91570	91472	-0.11
+2400-unsplash-textures	20	61.910	62.195	+0.285	10274	10204	-0.68
+2400-unsplash-textures	35	67.440	67.448	+0.008	12980	12984	+0.03
+2400-unsplash-textures	50	71.565	71.800	+0.236	16152	16194	+0.26
+2400-unsplash-textures	75	76.393	76.239	-0.153	21734	21720	-0.06
+2400-unsplash-textures	90	82.072	81.990	-0.082	46458	46290	-0.36
+3300-met-museum-photos	20	53.345	53.301	-0.044	20316	20408	+0.45
+3300-met-museum-photos	35	61.193	61.760	+0.567	28428	28516	+0.31
+3300-met-museum-photos	50	66.728	66.992	+0.263	36284	36522	+0.66
+3300-met-museum-photos	75	73.282	73.237	-0.045	52818	52636	-0.34
+3300-met-museum-photos	90	86.262	86.144	-0.118	132024	131868	-0.12
+5200-epa-climate-impact-2021-report	20	61.495	60.847	-0.648	27620	27524	-0.35
+5200-epa-climate-impact-2021-report	35	69.295	69.520	+0.225	36024	36036	+0.03
+5200-epa-climate-impact-2021-report	50	73.944	74.217	+0.273	44100	44112	+0.03
+5200-epa-climate-impact-2021-report	75	79.861	80.121	+0.259	57580	57688	+0.19
+5200-epa-climate-impact-2021-report	90	87.406	87.356	-0.051	102580	102456	-0.12
+7000-lilith-plots	20	54.935	54.202	-0.734	170994	171154	+0.09
+7000-lilith-plots	35	58.889	59.534	+0.645	198970	199238	+0.13
+7000-lilith-plots	50	62.080	62.142	+0.062	220690	220858	+0.08
+7000-lilith-plots	75	65.047	64.956	-0.091	254106	254168	+0.02
+7000-lilith-plots	90	67.157	67.250	+0.093	336822	336586	-0.07
+8100-lilith-web-screenshots	20	65.408	64.909	-0.499	25018	24854	-0.66
+8100-lilith-web-screenshots	35	70.918	71.041	+0.122	30778	30656	-0.40
+8100-lilith-web-screenshots	50	75.421	75.457	+0.037	36824	36888	+0.17
+8100-lilith-web-screenshots	75	80.753	80.693	-0.061	45878	45940	+0.14
+8100-lilith-web-screenshots	90	85.695	85.720	+0.025	75770	75928	+0.21
+9000-lilith-ai-clipart	20	72.716	72.755	+0.039	6922	6898	-0.35
+9000-lilith-ai-clipart	35	78.205	77.752	-0.453	8362	8316	-0.55
+9000-lilith-ai-clipart	50	82.108	82.031	-0.077	9668	9642	-0.27
+9000-lilith-ai-clipart	75	86.068	86.097	+0.029	11994	11958	-0.30
+9000-lilith-ai-clipart	90	91.722	91.726	+0.004	21094	20998	-0.46
+9094-lilith-ai-illustrations	20	53.679	53.434	-0.244	47240	47338	+0.21
+9094-lilith-ai-illustrations	35	61.280	60.873	-0.408	65454	65458	+0.01
+9094-lilith-ai-illustrations	50	67.025	67.079	+0.054	85258	85276	+0.02
+9094-lilith-ai-illustrations	75	74.331	74.349	+0.018	119286	119234	-0.04
+9094-lilith-ai-illustrations	90	85.325	85.427	+0.101	243174	243076	-0.04
+9226-lilith-ai-products	20	53.094	53.235	+0.141	7054	7076	+0.31
+9226-lilith-ai-products	35	60.552	60.601	+0.049	9966	9890	-0.76
+9226-lilith-ai-products	50	66.519	66.500	-0.020	13334	13284	-0.37
+9226-lilith-ai-products	75	74.491	74.569	+0.078	21532	21512	-0.09
+9226-lilith-ai-products	90	88.246	88.286	+0.040	54726	54720	-0.01
+
+# AGGREGATE (mean over images), per q:
+# q	mean_zsim_tuned	mean_zsim_exact	Δzsim(E−T)	Δsize%(E−T)
+20	55.102	54.906	-0.195	-0.09
+35	63.255	63.250	-0.005	-0.02
+50	68.596	68.625	+0.029	+0.04
+75	74.992	74.977	-0.015	-0.06
+90	83.826	83.820	-0.006	-0.08
+OVERALL mean Δzsim(E−T) = -0.038  |  Δsize%(E−T) = -0.05  (positive Δzsim ⇒ EXACT better)
