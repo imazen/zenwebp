@@ -115,3 +115,35 @@ gradients_png −0.1%) while cutting wall ~15-30%. The only regression is the
 synthetic diagonal-gradient stress case (+5.3%), whose productive candidates
 hide behind >24-candidate stall runs — flat iteration caps measured far
 worse there (+8.5% at 32 iters, +75% at 16). m1+ byte-identical.
+
+## Round 4: imazen-26 corpus validation + lossy m0 investigation
+
+Representative production content: 12-image stratified sample (every 7th) of
+`/mnt/v/input/imazen-26-screenshots-2026-05-28` (106 web-viewport screenshots).
+Raw grid: `imazen26_m0_2026-07-14.tsv`. All lossless roundtrips pixel-exact.
+
+**Lossless m0 vs libwebp m0: 0.95× wall, 0.6396× bytes (−36%).** The fast
+tier is *faster than libwebp and a third smaller* on real screen content
+(best case: whitehouse briefing, 108 KB vs 1,019 KB — 9.4× smaller at equal
+speed; typical: −10..−45%). The palette path, fixed-bits cache, and
+entropy-cluster compaction all land on exactly this content class.
+
+**Lossy m0: libwebp's low-effort shortcuts MEASURED AND REJECTED.** zen lossy
+m0 runs 1.8–2.2× libwebp m0 wall at −4.3% bytes (q75, corpus aggregate).
+Ported libwebp's two m0 gates and measured:
+- `FastMBAnalyze` alpha=0 (skip the 4-mode Intra16 histogram analysis,
+  analysis_enc.c): −9.6% instructions but **+8.5% bytes and −0.49 dB PSNR on
+  screen content** (noaa homepage) — segmentation collapses when luma alpha
+  is constant. libwebp's m0 tuning absorbs this; ours measurably should not.
+- `refine_uv_mode = method >= 1` (use analysis UV mode at m0, skip the RD
+  pick): only ~2% of instructions (`pick_best_uv` = 1.6M of 96M/encode —
+  earlier wall deltas were machine noise), and +7..9% bytes on smooth
+  gradients even after extending the analysis UV search to 4 modes — trips
+  the vs_libwebp_matrix 1.3× size gate. Not worth it.
+
+The real 1.8× is architectural: the token-buffer stats pass (record 6.6M +
+emit 3.6M per encode vs libwebp m0's direct VP8EncLoop with a 25%-MB
+probability probe) — and it is exactly what buys the −4.3% bytes. Left as-is
+deliberately. Known follow-up: zen m0 trails libwebp m0 by ~0.9 dB PSNR
+aggregate on screens at −4.3% bytes (pre-existing, RD-point difference plus
+screen-content tuning; photo content is at parity).

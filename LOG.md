@@ -105,6 +105,20 @@ intentionally moved trellis from m4 to m5 to align with libwebp's RD optimizatio
 
 ## Completed Investigations
 
+### Lossy m0 low-effort port (2026-07-14, MEASURED AND REJECTED)
+
+Ported libwebp's lossy method-0 gates (FastMBAnalyze alpha=0, skip UV RD
+refinement) to close the 2.17x wall gap vs libwebp m0. Both reverted after
+measurement on the imazen-26 screenshot corpus: alpha=0 collapses
+segmentation (+8.5% bytes, -0.49 dB on screens for -9.6% instructions); the
+UV cut is ~2% of instructions and +7-9% bytes on smooth gradients (trips the
+vs_libwebp_matrix 1.3x gate; a 4-mode analysis UV search recovers only
+part). The gap is architectural — token-buffer stats pass vs libwebp's
+direct loop with a 25%-MB probe — and buys -4.3% bytes at q75 on the corpus.
+Full numbers: benchmarks/lossless_fast_tier_2026-07-14.md Round 4. Wall-time
+A/B on this box has ~25% run-to-run noise; trust callgrind instruction
+counts for encoder deltas.
+
 ### Multi-pass Re-quantization Experiment (2026-02-02, ABANDONED)
 
 **Tested approaches:**
