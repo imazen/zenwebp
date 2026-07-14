@@ -41,7 +41,7 @@ impl HashChain {
     /// - Color+run-length hash for constant-color runs
     /// - Heuristic row-above and previous-pixel initial guesses
     /// - Left-extension optimization (fills preceding positions without re-search)
-    pub fn new(argb: &[u32], quality: u8, width: usize) -> Self {
+    pub fn new(argb: &[u32], quality: u8, width: usize, low_effort: bool) -> Self {
         let size = argb.len();
         let mut offset_length = vec![0u32; size];
 
@@ -124,8 +124,10 @@ impl HashChain {
             let min_pos = base_position.saturating_sub(window_size);
             let length_max = max_len.min(256);
 
+            // Heuristics skipped at method 0, matching libwebp's
+            // VP8LHashChainFill `if (!low_effort)` gate.
             // Heuristic: try row above as initial guess
-            if base_position >= width {
+            if !low_effort && base_position >= width {
                 let curr_len = find_match_length(
                     argb,
                     base_position - width,
@@ -140,7 +142,7 @@ impl HashChain {
             }
 
             // Heuristic: try previous pixel
-            if base_position >= 1 {
+            if !low_effort && base_position >= 1 {
                 let curr_len =
                     find_match_length(argb, base_position - 1, argb_start, best_length, max_len);
                 if curr_len > best_length {
@@ -360,7 +362,7 @@ mod tests {
     fn test_hash_chain_simple() {
         // Simple test: repeated pixel should find match
         let pixels = vec![0xFF000000u32; 100];
-        let chain = HashChain::new(&pixels, 75, 10);
+        let chain = HashChain::new(&pixels, 75, 10, false);
 
         // Position 50 should find match with distance 1
         assert!(chain.length(50) > 0);
@@ -373,7 +375,7 @@ mod tests {
         pixels.extend_from_slice(&[0xFFAABBCCu32; 50]);
         pixels.extend_from_slice(&[0xFF112233u32; 50]);
 
-        let chain = HashChain::new(&pixels, 75, 50);
+        let chain = HashChain::new(&pixels, 75, 50, false);
 
         // Positions 100-149 should find matches to positions 0-49
         for i in 100..140 {

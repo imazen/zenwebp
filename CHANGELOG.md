@@ -128,6 +128,15 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Added
 
+- **True low-effort lossless m0 tier** matching libwebp's `low_effort`
+  shortcuts: skip entropy analysis (palette else SubtractGreen+Predictor),
+  fixed Select predictor for all tiles, no cross-color, no color cache,
+  single plain-LZ77 pass, 4-bin unconditional histogram merging without
+  stochastic/greedy. Photo 512²: 71 ms → 29 ms (−59%), instructions −71%;
+  now tracks libwebp m0 within ±2% bytes and 1.1–1.7× time. m1+ output
+  byte-identical. The old m0 operating point was a near-duplicate of m1
+  (same pipeline, coarser clustering tiles) and remains reachable via m1.
+  Measurements: `benchmarks/lossless_fast_tier_2026-07-14.{md,tsv}`.
 - **Wire the `zencodec-testkit` `check_decode_truncation_series` EOF/truncation
   conformance check** into `tests/decode_truncation_series.rs` — truncates a
   known-good WebP at a deterministic prefix series and asserts every dyn-erased
@@ -252,6 +261,15 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Fixed
 
+- **VP8L encoder wrote Huffman tree groups for clusters unreferenced by the
+  entropy image**: histogram remap can strand a cluster with zero tiles, and
+  `build_final_histograms` still emitted its (empty) trees — but decoders
+  size the group list from the entropy image's max symbol, so an
+  unreferenced trailing cluster shifted the rest of the bitstream (silent
+  whole-image corruption on decode). Latent for any method; easiest to hit
+  with the new m0 clustering. Final groups are now compacted to referenced
+  clusters with dense renumbering; regression coverage in
+  `tests/lossless_fast_tier.rs`.
 - **VP8L decoder rejected valid deep-Huffman-tree streams** (efddb6c3): the
   pixel-loop bit-window refills were under-budgeted — a literal's
   GREEN+RED+BLUE+ALPHA codes can need 60 bits but `fill()` guarantees 56 and

@@ -478,6 +478,22 @@ impl ClusterState {
         (0..self.active.len()).filter(|&i| self.active[i]).collect()
     }
 
+    /// Merge histogram `src` into `dst` unconditionally, without evaluating or
+    /// updating costs (libwebp's low-effort HistogramCombineEntropyBin path:
+    /// plain HistogramAdd + remove). Costs of surviving histograms must be
+    /// recomputed after the phase, before anything reads them.
+    fn merge_pair_unconditional(&mut self, dst: usize, src: usize) {
+        debug_assert!(dst != src);
+        let src_histo = self.histos[src].clone();
+        self.histos[dst].add(&src_histo);
+        self.active[src] = false;
+        for m in self.mapping.iter_mut() {
+            if *m == src {
+                *m = dst;
+            }
+        }
+    }
+
     /// Merge histogram `src` into `dst`, using the precomputed combined cost.
     /// Marks `src` inactive and remaps any tile pointing to `src` → `dst`.
     /// This is the common merge primitive used by all three combining phases.
@@ -526,7 +542,7 @@ fn stochastic_target_size(quality: u8) -> usize {
 }
 
 /// Phase 1: Compute per-tile entropy bin IDs from literal/red/blue costs.
-fn compute_entropy_bins(state: &ClusterState) -> Vec<usize> {
+fn compute_entropy_bins(state: &ClusterState, low_effort: bool) -> Vec<usize> {
     let mut lit_min = u64::MAX;
     let mut lit_max = 0u64;
     let mut red_min = u64::MAX;
@@ -549,6 +565,11 @@ fn compute_entropy_bins(state: &ClusterState) -> Vec<usize> {
     let mut bin_ids: Vec<usize> = Vec::with_capacity(state.costs.len());
     for cost in &state.costs {
         let lit_bin = get_bin_id_for_entropy(lit_min, lit_max, cost.per_type[0]);
+        if low_effort {
+            // libwebp GetHistoBinIndex: literal-entropy bin only (4 bins).
+            bin_ids.push(lit_bin);
+            continue;
+        }
         let red_bin = get_bin_id_for_entropy(red_min, red_max, cost.per_type[1]);
         let blue_bin = get_bin_id_for_entropy(blue_min, blue_max, cost.per_type[2]);
         bin_ids
@@ -560,7 +581,12 @@ fn compute_entropy_bins(state: &ClusterState) -> Vec<usize> {
 /// Phase 2: Merge histograms within each entropy bin (matching libwebp's
 /// HistogramCombineEntropyBin). Uses the incoming histogram's cost for the
 /// threshold, not the accumulator's.
-fn entropy_bin_combine_phase(state: &mut ClusterState, quality: u8, bin_ids: &[usize]) {
+fn entropy_bin_combine_phase(
+    state: &mut ClusterState,
+    quality: u8,
+    bin_ids: &[usize],
+    low_effort: bool,
+) {
     let n = state.histos.len();
     let factor = combine_cost_factor(state.count_active(), quality);
     let mut bin_first: Vec<Option<usize>> = vec![None; BIN_SIZE];
@@ -574,6 +600,14 @@ fn entropy_bin_combine_phase(state: &mut ClusterState, quality: u8, bin_ids: &[u
             bin_first[bin_id] = Some(i);
             continue;
         };
+
+        if low_effort {
+            // libwebp low-effort: merge same-bin histograms unconditionally,
+            // no cost evaluation. Costs are recomputed after the loop.
+            cluster_trace::inc_entropy_bin_merges();
+            state.merge_pair_unconditional(first, i);
+            continue;
+        }
 
         // libwebp uses the incoming histogram's cost for the threshold
         // (not the accumulator's), matching HistogramCombineEntropyBin.
@@ -591,6 +625,18 @@ fn entropy_bin_combine_phase(state: &mut ClusterState, quality: u8, bin_ids: &[u
         ) {
             cluster_trace::inc_entropy_bin_merges();
             state.merge_pair(first, i, combined_cost, per_type);
+        }
+    }
+
+    if low_effort {
+        // Unconditional merges above did not maintain costs; recompute for the
+        // survivors before anything (remap) reads them. Matches libwebp's
+        // "for low_effort case, update the final cost when everything is
+        // merged" loop in HistogramCombineEntropyBin.
+        for i in 0..n {
+            if state.active[i] {
+                state.costs[i] = compute_histogram_cost(&state.histos[i]);
+            }
         }
     }
 }
@@ -864,16 +910,32 @@ fn build_final_histograms(
     cache_bits: u8,
 ) -> (Vec<Histogram>, Vec<u16>) {
     let n = tile_histos.len();
-    let mut final_histos: Vec<Histogram> = active_indices
-        .iter()
-        .map(|_| Histogram::new(cache_bits))
-        .collect();
 
-    // Index mapping from cluster_idx → final histogram index
-    let mut cluster_to_final: Vec<Option<u16>> = vec![None; n];
-    for (final_idx, &cluster_idx) in active_indices.iter().enumerate() {
-        cluster_to_final[cluster_idx] = Some(final_idx as u16);
+    // Only clusters actually referenced by the post-remap mapping get a final
+    // slot. The decoder derives the Huffman group count from the entropy
+    // image's max symbol (max+1); an unreferenced trailing cluster would make
+    // the encoder write more tree groups than the decoder reads, shifting the
+    // rest of the bitstream. (Remap can strand a cluster with zero tiles —
+    // easiest to hit with the low-effort unconditional bin merging, but
+    // possible for any clustering outcome.)
+    let mut referenced: Vec<bool> = vec![false; n];
+    for tile_idx in 0..n {
+        referenced[mapping[tile_idx]] = true;
     }
+
+    // Index mapping from cluster_idx → dense final histogram index, in
+    // active_indices order (stable when every active cluster is referenced).
+    let mut cluster_to_final: Vec<Option<u16>> = vec![None; n];
+    let mut num_final: u16 = 0;
+    for &cluster_idx in active_indices.iter() {
+        if referenced[cluster_idx] {
+            cluster_to_final[cluster_idx] = Some(num_final);
+            num_final += 1;
+        }
+    }
+
+    let mut final_histos: Vec<Histogram> =
+        (0..num_final).map(|_| Histogram::new(cache_bits)).collect();
 
     let mut symbols: Vec<u16> = Vec::with_capacity(n);
     for tile_idx in 0..n {
@@ -893,6 +955,7 @@ fn cluster_histograms(
     tile_histos: &[Histogram],
     quality: u8,
     cache_bits: u8,
+    low_effort: bool,
 ) -> (Vec<Histogram>, Vec<u16>) {
     let n = tile_histos.len();
     cluster_trace::inc_cluster_calls();
@@ -924,29 +987,41 @@ fn cluster_histograms(
 
     let mut state = ClusterState::from_tiles(tile_histos);
 
-    // Phase 1+2: Entropy binning + bin-internal merging
-    let bin_ids = compute_entropy_bins(&state);
+    // Phase 1+2: Entropy binning + bin-internal merging.
+    // Low effort (method 0) bins on literal entropy only (4 bins vs 64) and
+    // merges same-bin histograms unconditionally, matching libwebp's
+    // VP8LGetHistoImageSymbols with low_effort set.
+    let bin_ids = compute_entropy_bins(&state, low_effort);
     let num_active = state.count_active();
-    let num_bins = BIN_SIZE.min(num_active);
-    if num_active > num_bins * 2 && quality < 100 {
-        entropy_bin_combine_phase(&mut state, quality, &bin_ids);
+    let num_bins = if low_effort { NUM_PARTITIONS } else { BIN_SIZE }.min(num_active);
+    let entropy_combine = num_active > num_bins * 2 && quality < 100;
+    if entropy_combine {
+        entropy_bin_combine_phase(&mut state, quality, &bin_ids, low_effort);
     }
 
-    // Phase 2b: Stochastic combining
-    let target_size = stochastic_target_size(quality);
-    let num_active_pre_stochastic = state.count_active();
-    cluster_trace::set_post_entropy_bin_count(num_active_pre_stochastic as u64);
+    // libwebp: "Don't combine the histograms using stochastic and greedy
+    // heuristics for low-effort compression mode" — but if entropy combining
+    // did not run (too few histograms), the normal phases still apply.
+    if !low_effort || !entropy_combine {
+        // Phase 2b: Stochastic combining
+        let target_size = stochastic_target_size(quality);
+        let num_active_pre_stochastic = state.count_active();
+        cluster_trace::set_post_entropy_bin_count(num_active_pre_stochastic as u64);
 
-    let do_greedy = if num_active_pre_stochastic > target_size {
-        stochastic_combine_phase(&mut state, target_size)
+        let do_greedy = if num_active_pre_stochastic > target_size {
+            stochastic_combine_phase(&mut state, target_size)
+        } else {
+            true
+        };
+
+        // Phase 3: Greedy combining (only when stochastic reached target)
+        cluster_trace::set_post_stochastic_count(state.count_active() as u64);
+        if do_greedy && state.count_active() > 1 {
+            greedy_combine_phase(&mut state);
+        }
     } else {
-        true
-    };
-
-    // Phase 3: Greedy combining (only when stochastic reached target)
-    cluster_trace::set_post_stochastic_count(state.count_active() as u64);
-    if do_greedy && state.count_active() > 1 {
-        greedy_combine_phase(&mut state);
+        cluster_trace::set_post_entropy_bin_count(state.count_active() as u64);
+        cluster_trace::set_post_stochastic_count(state.count_active() as u64);
     }
 
     // Phase 4: Remap tiles to best cluster
@@ -983,6 +1058,7 @@ pub fn build_meta_huffman(
     histo_bits: u8,
     cache_bits: u8,
     quality: u8,
+    low_effort: bool,
 ) -> MetaHuffmanInfo {
     let histo_bits = histo_bits.clamp(2, 8);
     #[cfg(feature = "std")]
@@ -1006,7 +1082,7 @@ pub fn build_meta_huffman(
     let tile_histos = build_tile_histograms(refs, width, height, histo_bits, cache_bits);
 
     // Cluster histograms
-    let (histograms, symbols) = cluster_histograms(&tile_histos, quality, cache_bits);
+    let (histograms, symbols) = cluster_histograms(&tile_histos, quality, cache_bits, low_effort);
 
     // Compute final costs
     let costs = histograms.iter().map(compute_histogram_cost).collect();
@@ -1074,7 +1150,7 @@ mod tests {
             h1.add_literal(make_argb(255, 128, 64, 32));
             h2.add_literal(make_argb(255, 128, 64, 32));
         }
-        let (groups, symbols) = cluster_histograms(&[h1, h2], 75, 0);
+        let (groups, symbols) = cluster_histograms(&[h1, h2], 75, 0, false);
         assert_eq!(groups.len(), 1);
         assert_eq!(symbols.len(), 2);
         assert_eq!(symbols[0], symbols[1]);

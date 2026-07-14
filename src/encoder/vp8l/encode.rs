@@ -443,43 +443,57 @@ pub(crate) fn encode_argb(
         false
     };
 
-    // Run entropy analysis (used for single-config best guess)
-    let palette_size_est = if palette_candidate {
-        // Quick count for entropy estimation (don't build full transform yet)
-        ColorIndexTransform::try_build(argb)
-            .as_ref()
-            .map(|p| p.palette.len())
-            .unwrap_or(0)
+    // Method 0 (low_effort): skip the entropy analysis entirely — libwebp's
+    // EncoderAnalyze comments "AnalyzeEntropy is somewhat slow" and hardwires
+    // the single config: palette when available, else SubtractGreen+Predictor,
+    // with the cheap (sorted/lexicographic) palette order.
+    let configs = if config.quality.method == 0 {
+        vec![CrunchConfig {
+            mode: if palette_candidate {
+                CrunchMode::Palette
+            } else {
+                CrunchMode::SpatialSubGreen
+            },
+            palette_sorting: PaletteSorting::Lexicographic,
+        }]
     } else {
-        0
-    };
-    let histo_bits_est =
-        get_histo_bits_palette(width, height, config.quality.method, palette_candidate);
-    let transform_bits_est = get_transform_bits(config.quality.method, histo_bits_est);
-    let transform_bits_clamped = clamp_bits(
-        width,
-        height,
-        transform_bits_est,
-        MIN_TRANSFORM_BITS,
-        MAX_TRANSFORM_BITS,
-        MAX_PREDICTOR_IMAGE_SIZE,
-    );
-    let analysis = analyze_entropy(
-        argb,
-        width,
-        height,
-        palette_candidate,
-        palette_size_est,
-        transform_bits_clamped,
-    );
+        // Run entropy analysis (used for single-config best guess)
+        let palette_size_est = if palette_candidate {
+            // Quick count for entropy estimation (don't build full transform yet)
+            ColorIndexTransform::try_build(argb)
+                .as_ref()
+                .map(|p| p.palette.len())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let histo_bits_est =
+            get_histo_bits_palette(width, height, config.quality.method, palette_candidate);
+        let transform_bits_est = get_transform_bits(config.quality.method, histo_bits_est);
+        let transform_bits_clamped = clamp_bits(
+            width,
+            height,
+            transform_bits_est,
+            MIN_TRANSFORM_BITS,
+            MAX_TRANSFORM_BITS,
+            MAX_PREDICTOR_IMAGE_SIZE,
+        );
+        let analysis = analyze_entropy(
+            argb,
+            width,
+            height,
+            palette_candidate,
+            palette_size_est,
+            transform_bits_clamped,
+        );
 
-    // Generate configs to try
-    let configs = generate_crunch_configs(
-        &analysis,
-        palette_candidate,
-        config.quality.method,
-        config.quality.quality,
-    );
+        generate_crunch_configs(
+            &analysis,
+            palette_candidate,
+            config.quality.method,
+            config.quality.quality,
+        )
+    };
 
     let result = if configs.len() == 1 {
         // Single config: encode in place (no clone needed)
@@ -577,7 +591,9 @@ fn encode_argb_single_config(
         );
     // Cross-color only when: not palette, R/B not always zero, and predictor is on.
     // For PaletteAndSpatial, cross-color is never used (matching libwebp).
+    // Method 0 never uses cross-color (libwebp: low_effort → use_cross_color = 0).
     let use_cross_color = config.use_cross_color
+        && config.quality.method != 0
         && !use_palette
         && use_predictor
         && !matches!(crunch.mode, CrunchMode::PaletteAndSpatial);
@@ -828,6 +844,7 @@ fn write_predictor_transform(
         pred_bits,
         max_quantization,
         use_subtract_green,
+        config.quality.method == 0,
     );
 
     let actual_bits = pred_bits;
@@ -934,6 +951,7 @@ fn encode_image_data(
             histo_bits,
             cache_bits,
             config.quality.quality,
+            config.quality.method == 0,
         )
     } else {
         build_single_histogram(refs, cache_bits)
@@ -1442,7 +1460,7 @@ fn encode_image_no_huffman(
     let cache_bits: u8 = 0;
 
     // Build hash chain for the sub-image
-    let hash_chain = HashChain::new(argb, quality, width);
+    let hash_chain = HashChain::new(argb, quality, width, false);
 
     // Try LZ77 Standard and RLE, pick best by entropy
     let refs_lz77 = backward_references_lz77(argb, width, height, cache_bits, &hash_chain);

@@ -389,6 +389,7 @@ pub fn apply_predictor_transform(
     size_bits: u8,
     max_quantization: u32,
     used_subtract_green: bool,
+    low_effort: bool,
 ) -> Vec<u32> {
     let block_size = 1usize << size_bits;
     let blocks_x = subsample_size(width as u32, size_bits) as usize;
@@ -397,6 +398,24 @@ pub fn apply_predictor_transform(
     // Choose best predictor for each block using entropy-based scoring.
     // Accumulated histogram tracks global residual distribution across all tiles.
     let mut predictor_data = vec![0u32; blocks_x * blocks_y];
+
+    // Method 0: no per-tile search — every tile uses Select (libwebp's
+    // kPredLowEffort = 11 in VP8LResidualImage). The residual pass below is
+    // unchanged; it reads the modes from predictor_data.
+    if low_effort {
+        predictor_data.fill(0xff000000 | ((PredictorMode::Select as u32) << 8));
+        return finish_predictor_transform(
+            pixels,
+            width,
+            height,
+            size_bits,
+            max_quantization,
+            used_subtract_green,
+            predictor_data,
+            blocks_x,
+        );
+    }
+
     let mut accumulated = [[0u32; 256]; 4];
 
     for by in 0..blocks_y {
@@ -430,6 +449,31 @@ pub fn apply_predictor_transform(
         }
     }
 
+    finish_predictor_transform(
+        pixels,
+        width,
+        height,
+        size_bits,
+        max_quantization,
+        used_subtract_green,
+        predictor_data,
+        blocks_x,
+    )
+}
+
+/// Compute and store predictor residuals for the chosen per-tile modes.
+/// Shared by the searched (m1+) and fixed-predictor (m0 low-effort) paths.
+#[allow(clippy::too_many_arguments)]
+fn finish_predictor_transform(
+    pixels: &mut [u32],
+    width: usize,
+    height: usize,
+    size_bits: u8,
+    max_quantization: u32,
+    used_subtract_green: bool,
+    predictor_data: Vec<u32>,
+    blocks_x: usize,
+) -> Vec<u32> {
     if max_quantization > 1 {
         // Forward-order processing with near-lossless residual quantization.
         // Precompute max_diffs for all interior rows from ORIGINAL pixel data

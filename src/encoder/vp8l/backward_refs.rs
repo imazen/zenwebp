@@ -666,11 +666,17 @@ fn get_backward_references_inner(
         return (BackwardRefs::new(), 0);
     }
 
-    // Method 0 (low_effort): matching libwebp's GetBackwardReferencesLowEffort.
-    let low_effort = method == 0;
-
     // Build hash chain
-    let hash_chain = HashChain::new(argb, quality, width);
+    let hash_chain = HashChain::new(argb, quality, width, method == 0);
+
+    // Method 0: matching libwebp's GetBackwardReferencesLowEffort — one plain
+    // LZ77 pass, no RLE trial, no cost comparison, no color cache, no
+    // TraceBackwards. Just LZ77 + 2D locality.
+    if method == 0 {
+        let mut refs = backward_references_lz77(argb, width, height, 0, &hash_chain);
+        apply_2d_locality(&mut refs, width);
+        return (refs, 0);
+    }
 
     // Determine which LZ77 types to try (matching libwebp's n_lz77s logic).
     // First sub-config always tries Standard + RLE.
@@ -705,8 +711,8 @@ fn get_backward_references_inner(
             _ => continue,
         };
 
-        // Evaluate with color cache (skip for method 0 — no cache in low_effort)
-        let mut cache_bits = if low_effort { 0 } else { cache_bits_max };
+        // Evaluate with color cache
+        let mut cache_bits = cache_bits_max;
         if cache_bits > 0 {
             cache_bits = calculate_best_cache_size(argb, quality, &refs_tmp, cache_bits_max);
         }
@@ -728,12 +734,6 @@ fn get_backward_references_inner(
         }
 
         lz77_type <<= 1;
-    }
-
-    // Method 0: no color cache, no TraceBackwards — just apply 2D locality and return
-    if low_effort {
-        apply_2d_locality(&mut best_refs, width);
-        return (best_refs, 0);
     }
 
     // Try LZ77 Box for palette images
@@ -885,7 +885,7 @@ mod tests {
     fn test_lz77_vs_rle() {
         // Solid color image - RLE should win
         let pixels = vec![0xFF000000u32; 1000];
-        let hash_chain = HashChain::new(&pixels, 75, 100);
+        let hash_chain = HashChain::new(&pixels, 75, 100, false);
         let refs_lz77 = backward_references_lz77(&pixels, 100, 10, 0, &hash_chain);
         let refs_rle = backward_references_rle(&pixels, 100, 10, 0);
 
