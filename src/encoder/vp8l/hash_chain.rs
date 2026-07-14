@@ -170,6 +170,21 @@ impl HashChain {
             // Follow hash chain
             let mut iters = iter_max;
             let mut best_argb = argb.get(argb_start + best_length).copied().unwrap_or(0);
+            // Method 0: search-tree pruning — abandon a walk after
+            // NO_PROGRESS_LIMIT consecutive candidates that failed to improve
+            // the match (rejects included). Unlike a flat iteration cap
+            // (measured: +8.5..75% bytes on smooth gradients), productive
+            // walks keep their full budget; only stalled ones end early. The
+            // row-above heuristic seeds the common distance==width match at
+            // step zero, which is what makes stall-counting safe here.
+            // m1+ uses an untriggerable budget: one dec+cmp per iteration.
+            const NO_PROGRESS_LIMIT: u32 = 24;
+            let stall_reset = if low_effort {
+                NO_PROGRESS_LIMIT
+            } else {
+                u32::MAX
+            };
+            let mut stall_budget = stall_reset;
 
             while chain_pos >= min_pos as i32 && iters > 0 {
                 iters -= 1;
@@ -183,7 +198,13 @@ impl HashChain {
                 // check and the load's bounds check into one.
                 match argb.get(p + best_length) {
                     Some(&v) if v == best_argb => {}
-                    _ => continue,
+                    _ => {
+                        stall_budget -= 1;
+                        if stall_budget == 0 {
+                            break;
+                        }
+                        continue;
+                    }
                 }
 
                 let curr_len = vector_mismatch(argb, p, argb_start, max_len);
@@ -191,8 +212,14 @@ impl HashChain {
                     best_length = curr_len;
                     best_distance = base_position - p;
                     best_argb = argb.get(argb_start + best_length).copied().unwrap_or(0);
+                    stall_budget = stall_reset;
 
                     if best_length >= length_max {
+                        break;
+                    }
+                } else {
+                    stall_budget -= 1;
+                    if stall_budget == 0 {
                         break;
                     }
                 }
