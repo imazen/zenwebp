@@ -3,6 +3,7 @@
 //! Uses libwebp's hash function and chain structure for finding matches.
 //! Includes left-extension optimization from libwebp's VP8LHashChainFill.
 
+use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 
