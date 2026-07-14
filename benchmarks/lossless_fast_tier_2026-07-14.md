@@ -180,3 +180,36 @@ bytes and PSNR both improve. Remaining m0 wall gap vs libwebp is ~1.7×;
 next candidates: single-arcane hoisting of the SSE pick loops (~14 dispatch
 boundaries per I4 sub-block today) and extending hints+SSE decimation to m2
 (worst tier at 2.9×).
+
+## Round 6: arcane hoist + full RefineUsingDistortion at m2
+
+- **Hoist** (739bc14 recipe): the SSE I4 pick loop now runs in a single
+  `#[arcane]` region via a shared macro body instantiated with `#[rite]`
+  SSE2 kernels (was ~14 dispatch boundaries per sub-block). Bit-exact;
+  wall-neutral at m0 on photo (I16-hinted MBs dominate) but load-bearing
+  for m2 where the I4 loop runs on every MB.
+- **m2 = full RefineUsingDistortion(try_both=1, refine_uv=1)**: SSE-scored
+  4-mode I16 pick, SSE-scored 10-mode I4 with libwebp's accumulate-and-bail
+  (score_i4 from i4_penalty = 1000·q_i4², header bits capped by
+  mb_header_limit = 256·510·8·1024/mbs), SSE-scored 4-mode UV refine
+  (lambda_d_uv=120). m1 also gets the SSE UV refine (libwebp
+  refine_uv_mode = m ≥ 1); m0 keeps the RD UV pick (libwebp m0 skips UV
+  refinement; the SSE pick there pushed gradient q90 to 1.317× — gate max
+  1.3×). m3+ keep the full RD path (libwebp RD_OPT_BASIC+).
+
+zenbench (interleaved, ±0.1 ms):
+
+| tier | before | after | libwebp | ratio |
+|---|---|---|---|---|
+| m0 | 4.4 ms | 4.4 ms (byte-stable) | 2.5 ms | 1.76× |
+| m1 (ad-hoc) | ~5.6 ms | ~4.6 ms | 3.2 ms | 1.45× |
+| **m2** | **9.6 ms** | **4.1 ms** | 3.1 ms | **1.30× (was 3.0×)** |
+| m4 / m6 | 11.7 / 19.9 | unchanged | 8.9 / 14.0 | 1.31× / 1.42× |
+
+photo-512 ladder after: m0 13,172 B / 37.05 dB → m1 13,198 / 37.06 →
+m2 12,772 / 36.91 → m4 11,444 / 37.05. m2's PSNR dip below m1 mirrors
+libwebp's own m2 (36.99 < their m1's 37.19) — inherent to RD_OPT_NONE
+semantics. m2 is +12.8% bytes vs libwebp m2 (their direct-loop probas and
+mode mix differ); all vs_libwebp_matrix gates (≤1.3× size, score deltas,
+cross-decode) and zensim floors pass. m2 is now absolutely faster than m0
+(no hint pass, bail cuts I4 work).

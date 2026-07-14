@@ -1009,7 +1009,7 @@ impl<'a> super::Vp8Encoder<'a> {
     ///
     /// Returns the winning mode and its SSE (feeds the #44 `D > min_disto`
     /// skip gate via `MacroblockInfo::intra16_d`).
-    fn pick_intra16_sse(&self, mbx: usize, mby: usize) -> (LumaMode, u32) {
+    fn pick_intra16_sse(&self, mbx: usize, mby: usize) -> (LumaMode, u32, u64, bool) {
         const LAMBDA_D_I16: u64 = 106;
         // Order matches FIXED_COSTS_I16.
         const MODES: [LumaMode; 4] = [LumaMode::DC, LumaMode::V, LumaMode::H, LumaMode::TM];
@@ -1031,17 +1031,20 @@ impl<'a> super::Vp8Encoder<'a> {
             }
         }
 
+        let mut flat_locked = false;
         if mbx == 0 || mby == 0 {
             let src_base = mby * 16 * src_width + mbx * 16;
             if is_flat_source_16(&self.frame.ybuf[src_base..], src_width) {
-                // libwebp: best_mode = (it->x == 0) ? DC : V (bug #432).
+                // libwebp: best_mode = (it->x == 0) ? DC : V, and
+                // try_both_modes = 0 ("stick to i16") — bug #432.
                 best_mode = if mbx == 0 { LumaMode::DC } else { LumaMode::V };
                 let pred = self.get_predicted_luma_block_16x16(best_mode, mbx, mby);
                 best_sse = sse_16x16_luma(&self.frame.ybuf, src_width, mbx, mby, &pred);
+                flat_locked = true;
             }
         }
 
-        (best_mode, best_sse)
+        (best_mode, best_sse, best_score, flat_locked)
     }
 
     /// libwebp `RefineUsingDistortion` Intra4 arm at RD_OPT_NONE (m0/m1):
@@ -1053,19 +1056,23 @@ impl<'a> super::Vp8Encoder<'a> {
     /// No bail-out to I16: with `try_both_modes == 0` libwebp's early-exit
     /// threshold is MAX_COST, so the analysis hint fully decides I16 vs I4.
     fn pick_intra4_sse(&self, mbx: usize, mby: usize) -> [IntraMode; 16] {
-        const LAMBDA_D_I4: u64 = 11;
-        const MODES: [IntraMode; 10] = [
-            IntraMode::DC,
-            IntraMode::TM,
-            IntraMode::VE,
-            IntraMode::HE,
-            IntraMode::RD,
-            IntraMode::VR,
-            IntraMode::LD,
-            IntraMode::VL,
-            IntraMode::HD,
-            IntraMode::HU,
-        ];
+        // No-bail variant (m0/m1: libwebp try_both_modes == 0 semantics).
+        self.pick_intra4_sse_with_bail(mbx, mby, u64::MAX, 0, u64::MAX)
+            .expect("no-bail I4 pick always returns modes")
+    }
+
+    /// SSE-scored Intra4 pick with libwebp's accumulate-and-bail (m2,
+    /// try_both_modes == 1): `score_i4` starts at `i4_penalty` and grows by
+    /// each sub-block's best SSE-domain score; returns `None` (use I16) when
+    /// it reaches `i16_score` or the header-bit sum exceeds `bit_limit`.
+    fn pick_intra4_sse_with_bail(
+        &self,
+        mbx: usize,
+        mby: usize,
+        i16_score: u64,
+        i4_penalty: u64,
+        bit_limit: u64,
+    ) -> Option<[IntraMode; 16]> {
         let mbw = usize::from(self.macroblock_width);
         let src_width = mbw * 16;
         let mut y_with_border =
@@ -1073,85 +1080,45 @@ impl<'a> super::Vp8Encoder<'a> {
         let segment = self.get_segment_for_mb(mbx, mby);
         let y1_matrix = segment.y1_matrix.as_ref().unwrap();
 
-        let mut best_modes = [IntraMode::DC; 16];
-        let mut best_mode_indices = [0usize; 16];
+        let top_ctx0: [usize; 4] =
+            core::array::from_fn(|sbx| self.top_b_pred[mbx * 4 + sbx] as usize);
+        let left_ctx0: [usize; 4] = core::array::from_fn(|sby| self.left_b_pred[sby] as usize);
 
-        for sby in 0usize..4 {
-            for sbx in 0usize..4 {
-                let i = sby * 4 + sbx;
-                let y0 = sby * 4 + 1;
-                let x0 = sbx * 4 + 1;
-
-                let top_ctx = if sby == 0 {
-                    self.top_b_pred[mbx * 4 + sbx] as usize
-                } else {
-                    best_mode_indices[(sby - 1) * 4 + sbx]
-                };
-                let left_ctx = if sbx == 0 {
-                    self.left_b_pred[sby] as usize
-                } else {
-                    best_mode_indices[sby * 4 + (sbx - 1)]
-                };
-                let mode_costs: [u16; 10] = core::array::from_fn(|mode_idx| {
-                    crate::encoder::tables::VP8_FIXED_COSTS_I4[top_ctx][left_ctx][mode_idx]
-                });
-
-                let preds = I4Predictions::compute(&y_with_border, x0, y0, LUMA_STRIDE);
-
-                let src_base = (mby * 16 + sby * 4) * src_width + mbx * 16 + sbx * 4;
-                let mut src_block = [0u8; 16];
-                for y in 0..4 {
-                    let src_row = src_base + y * src_width;
-                    src_block[y * 4..y * 4 + 4]
-                        .copy_from_slice(&self.frame.ybuf[src_row..src_row + 4]);
-                }
-
-                let mut best_idx = 0usize;
-                let mut best_score = u64::MAX;
-                for (m, pred) in preds.data.iter().enumerate() {
-                    let sse = sse4x4_dispatch(&src_block, pred);
-                    let score = u64::from(sse) * u64::from(RD_DISTO_MULT)
-                        + u64::from(mode_costs[m]) * LAMBDA_D_I4;
-                    if score < best_score {
-                        best_score = score;
-                        best_idx = m;
-                    }
-                }
-
-                best_modes[i] = MODES[best_idx];
-                best_mode_indices[i] = best_idx;
-
-                // Reconstruct the winner so later sub-blocks predict from
-                // reconstructed (not source) neighbors, matching the decoder.
-                Self::apply_intra4_prediction(&mut y_with_border, MODES[best_idx], x0, y0);
-                let coeffs = crate::common::transform::ftransform_from_u8_4x4(
-                    &src_block,
-                    &preds.data[best_idx],
-                );
-                let mut quantized = [0i32; 16];
-                let mut dequant = [0i32; 16];
-                let has_nz = crate::encoder::quantize::quantize_dequantize_block_simd(
-                    &coeffs,
-                    y1_matrix,
-                    true,
-                    &mut quantized,
-                    &mut dequant,
-                );
-                if has_nz {
-                    let dc_only = dequant[1..].iter().all(|&c| c == 0);
-                    crate::common::transform::idct_add_residue_inplace(
-                        &mut dequant,
-                        &mut y_with_border,
-                        y0,
-                        x0,
-                        LUMA_STRIDE,
-                        dc_only,
-                    );
-                }
-            }
+        // Single-arcane hoist (739bc14 recipe): the whole sub-block loop runs
+        // inside one target_feature region so the #[rite] SSE/transform/quant
+        // primitives inline and values stay in registers — the dispatched
+        // version paid ~14 arcane boundaries per sub-block.
+        #[cfg(target_arch = "x86_64")]
+        if let Some(token) = X64V3Token::summon() {
+            return pick_intra4_sse_arcane(
+                token,
+                &self.frame.ybuf,
+                src_width,
+                mbx,
+                mby,
+                &mut y_with_border,
+                y1_matrix,
+                &top_ctx0,
+                &left_ctx0,
+                i16_score,
+                i4_penalty,
+                bit_limit,
+            );
         }
 
-        best_modes
+        pick_intra4_sse_portable(
+            &self.frame.ybuf,
+            src_width,
+            mbx,
+            mby,
+            &mut y_with_border,
+            y1_matrix,
+            &top_ctx0,
+            &left_ctx0,
+            i16_score,
+            i4_penalty,
+            bit_limit,
+        )
     }
 
     /// Estimate coefficient cost for a 16x16 luma macroblock (I16 mode).
@@ -1707,6 +1674,58 @@ impl<'a> super::Vp8Encoder<'a> {
         Some((best_modes, running_score))
     }
 
+    /// libwebp `RefineUsingDistortion` UV arm (refine_uv_mode, m1/m2): pick
+    /// among the four chroma modes by plain SSE over both planes plus the
+    /// fixed mode cost weighted by `lambda_d_uv = 120` (quant_enc.c:1268) —
+    /// no per-mode quantization.
+    fn pick_uv_sse(&self, mbx: usize, mby: usize) -> ChromaMode {
+        const LAMBDA_D_UV: u64 = 120;
+        // Order matches FIXED_COSTS_UV.
+        const MODES: [ChromaMode; 4] =
+            [ChromaMode::DC, ChromaMode::V, ChromaMode::H, ChromaMode::TM];
+        let mbw = usize::from(self.macroblock_width);
+        let chroma_width = mbw * 8;
+
+        let mut best_mode = ChromaMode::DC;
+        let mut best_score = u64::MAX;
+        for (idx, &mode) in MODES.iter().enumerate() {
+            // Skip modes that need unavailable reference pixels (same
+            // availability rules as pick_best_uv).
+            if mode == ChromaMode::V && mby == 0 {
+                continue;
+            }
+            if mode == ChromaMode::H && mbx == 0 {
+                continue;
+            }
+            if mode == ChromaMode::TM && (mbx == 0 || mby == 0) {
+                continue;
+            }
+            let pred_u = self.get_predicted_chroma_block(
+                mode,
+                mbx,
+                mby,
+                &self.top_border_u,
+                &self.left_border_u,
+            );
+            let pred_v = self.get_predicted_chroma_block(
+                mode,
+                mbx,
+                mby,
+                &self.top_border_v,
+                &self.left_border_v,
+            );
+            let sse = sse_8x8_chroma(&self.frame.ubuf, chroma_width, mbx, mby, &pred_u)
+                + sse_8x8_chroma(&self.frame.vbuf, chroma_width, mbx, mby, &pred_v);
+            let score = u64::from(sse) * u64::from(RD_DISTO_MULT)
+                + u64::from(FIXED_COSTS_UV[idx]) * LAMBDA_D_UV;
+            if score < best_score {
+                best_score = score;
+                best_mode = mode;
+            }
+        }
+        best_mode
+    }
+
     /// Select the best chroma (UV) prediction mode using full RD scoring.
     ///
     /// This implements libwebp's full RD path for PickBestUV:
@@ -2013,7 +2032,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     MbModeHint::I16Dc => {
                         // libwebp RefineUsingDistortion: all four I16 modes
                         // by SSE (not DC-only), lambda_d_i16 = 106.
-                        let (mode, d) = self.pick_intra16_sse(mbx, mby);
+                        let (mode, d, _score, _flat) = self.pick_intra16_sse(mbx, mby);
                         intra16_d = Some(d);
                         (mode, None)
                     }
@@ -2025,7 +2044,16 @@ impl<'a> super::Vp8Encoder<'a> {
                         (LumaMode::B, Some(modes))
                     }
                 };
-                let chroma_mode = self.pick_best_uv(mbx, mby);
+                // libwebp refine_uv_mode = (method >= 1): m1 refines by SSE;
+                // m0 keeps the RD pick (libwebp m0 skips UV refinement
+                // entirely — the RD pick is zenwebp's better substitute, and
+                // the SSE pick at m0 pushed gradient q90 past the 1.3x size
+                // gate).
+                let chroma_mode = if self.method == 0 {
+                    self.pick_best_uv(mbx, mby)
+                } else {
+                    self.pick_uv_sse(mbx, mby)
+                };
                 let segment_id = self.get_segment_id_for_mb(mbx, mby);
                 return MacroblockInfo {
                     luma_mode,
@@ -2036,6 +2064,39 @@ impl<'a> super::Vp8Encoder<'a> {
                     intra16_d,
                 };
             }
+        }
+
+        // Method 2 (RD_OPT_NONE without analysis hints): libwebp's
+        // RefineUsingDistortion(try_both_modes=1, refine_uv_mode=1) —
+        // SSE-scored I16 pick, SSE-scored I4 with accumulate-and-bail
+        // against the I16 score (score_i4 starts at i4_penalty = 1000*q_i4^2,
+        // header bits capped by mb_header_limit), SSE-scored UV refine.
+        // m3+ keeps the full RD path below (libwebp RD_OPT_BASIC+).
+        if self.method == 2 && self.partition_limit < 100 {
+            let (i16_mode, i16_d, i16_score, flat_locked) = self.pick_intra16_sse(mbx, mby);
+            let (luma_mode, luma_bpred) = if flat_locked {
+                (i16_mode, None)
+            } else {
+                let segment = self.get_segment_for_mb(mbx, mby);
+                let q_i4 = (segment.ydc as u64 + 15 * segment.yac as u64 + 8) >> 4;
+                let i4_penalty = 1000u64 * q_i4 * q_i4;
+                let num_mb = u64::from(self.macroblock_width) * u64::from(self.macroblock_height);
+                let bit_limit = (256u64 * 510 * 8 * 1024) / num_mb.max(1);
+                match self.pick_intra4_sse_with_bail(mbx, mby, i16_score, i4_penalty, bit_limit) {
+                    Some(modes) => (LumaMode::B, Some(modes)),
+                    None => (i16_mode, None),
+                }
+            };
+            let chroma_mode = self.pick_uv_sse(mbx, mby);
+            let segment_id = self.get_segment_id_for_mb(mbx, mby);
+            return MacroblockInfo {
+                luma_mode,
+                luma_bpred,
+                chroma_mode,
+                segment_id,
+                coeffs_skipped: false,
+                intra16_d: Some(i16_d),
+            };
         }
 
         // Pick the best 16x16 luma mode using RD cost selection
@@ -2361,4 +2422,213 @@ impl<'a> super::Vp8Encoder<'a> {
         // Use the cost estimation function
         self.estimate_luma16_coeff_cost(&luma_blocks, segment)
     }
+}
+
+/// Shared body of the SSE-scored Intra4 pick. `$sse4x4`, `$ftransform`,
+/// `$quant`, `$idct_add` are the per-target primitives; on x86_64 the arcane
+/// wrapper below instantiates it with the `#[rite]` SSE2 kernels inside a
+/// single target_feature region, elsewhere the portable wrapper uses the
+/// dispatching helpers.
+macro_rules! pick_intra4_sse_body {
+    ($ybuf:expr, $src_width:expr, $mbx:expr, $mby:expr, $ywb:expr, $y1:expr,
+     $top_ctx0:expr, $left_ctx0:expr, $i16_score:expr, $i4_penalty:expr, $bit_limit:expr,
+     $sse4x4:expr, $ftransform:expr, $quant:expr, $idct_add:expr) => {{
+        const LAMBDA_D_I4: u64 = 11;
+        const MODES: [IntraMode; 10] = [
+            IntraMode::DC,
+            IntraMode::TM,
+            IntraMode::VE,
+            IntraMode::HE,
+            IntraMode::RD,
+            IntraMode::VR,
+            IntraMode::LD,
+            IntraMode::VL,
+            IntraMode::HD,
+            IntraMode::HU,
+        ];
+        let mut best_modes = [IntraMode::DC; 16];
+        let mut best_mode_indices = [0usize; 16];
+        let mut score_i4: u64 = $i4_penalty;
+        let mut i4_bit_sum: u64 = 0;
+
+        for sby in 0usize..4 {
+            for sbx in 0usize..4 {
+                let i = sby * 4 + sbx;
+                let y0 = sby * 4 + 1;
+                let x0 = sbx * 4 + 1;
+
+                let top_ctx = if sby == 0 {
+                    $top_ctx0[sbx]
+                } else {
+                    best_mode_indices[(sby - 1) * 4 + sbx]
+                };
+                let left_ctx = if sbx == 0 {
+                    $left_ctx0[sby]
+                } else {
+                    best_mode_indices[sby * 4 + (sbx - 1)]
+                };
+                let mode_costs: [u16; 10] = core::array::from_fn(|mode_idx| {
+                    crate::encoder::tables::VP8_FIXED_COSTS_I4[top_ctx][left_ctx][mode_idx]
+                });
+
+                let preds = I4Predictions::compute($ywb, x0, y0, LUMA_STRIDE);
+
+                let src_base = ($mby * 16 + sby * 4) * $src_width + $mbx * 16 + sbx * 4;
+                let mut src_block = [0u8; 16];
+                for y in 0..4 {
+                    let src_row = src_base + y * $src_width;
+                    src_block[y * 4..y * 4 + 4].copy_from_slice(&$ybuf[src_row..src_row + 4]);
+                }
+
+                let mut best_idx = 0usize;
+                let mut best_score = u64::MAX;
+                for (m, pred) in preds.data.iter().enumerate() {
+                    let sse = $sse4x4(&src_block, pred);
+                    let score = u64::from(sse) * u64::from(RD_DISTO_MULT)
+                        + u64::from(mode_costs[m]) * LAMBDA_D_I4;
+                    if score < best_score {
+                        best_score = score;
+                        best_idx = m;
+                    }
+                }
+
+                best_modes[i] = MODES[best_idx];
+                best_mode_indices[i] = best_idx;
+                score_i4 = score_i4.saturating_add(best_score);
+                i4_bit_sum += u64::from(mode_costs[best_idx]);
+                if score_i4 >= $i16_score || i4_bit_sum > $bit_limit {
+                    // Intra4 won't beat Intra16 (libwebp quant_enc.c:1310).
+                    return None;
+                }
+
+                // Reconstruct the winner so later sub-blocks predict from
+                // reconstructed (not source) neighbors, matching the decoder.
+                super::Vp8Encoder::apply_intra4_prediction($ywb, MODES[best_idx], x0, y0);
+                let coeffs = $ftransform(&src_block, &preds.data[best_idx]);
+                let mut quantized = [0i32; 16];
+                let mut dequant = [0i32; 16];
+                let has_nz = $quant(&coeffs, $y1, &mut quantized, &mut dequant);
+                if has_nz {
+                    let dc_only = dequant[1..].iter().all(|&c| c == 0);
+                    $idct_add(&mut dequant, $ywb, y0, x0, dc_only);
+                }
+            }
+        }
+
+        Some(best_modes)
+    }};
+}
+
+/// Single-`#[arcane]` instantiation of the SSE-scored Intra4 pick: every
+/// primitive is the `#[rite]` SSE2 kernel, inlined into this one
+/// target_feature region (739bc14 pattern).
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+#[allow(clippy::too_many_arguments)]
+fn pick_intra4_sse_arcane(
+    token: X64V3Token,
+    ybuf: &[u8],
+    src_width: usize,
+    mbx: usize,
+    mby: usize,
+    y_with_border: &mut [u8; LUMA_BLOCK_SIZE],
+    y1_matrix: &crate::encoder::quantize::VP8Matrix,
+    top_ctx0: &[usize; 4],
+    left_ctx0: &[usize; 4],
+    i16_score: u64,
+    i4_penalty: u64,
+    bit_limit: u64,
+) -> Option<[IntraMode; 16]> {
+    pick_intra4_sse_body!(
+        ybuf,
+        src_width,
+        mbx,
+        mby,
+        y_with_border,
+        y1_matrix,
+        top_ctx0,
+        left_ctx0,
+        i16_score,
+        i4_penalty,
+        bit_limit,
+        |src: &[u8; 16], pred: &[u8; 16]| crate::common::simd_sse::sse4x4_sse2(token, src, pred),
+        |src: &[u8; 16], pred: &[u8; 16]| {
+            crate::common::transform::ftransform_from_u8_4x4_sse2(token, src, pred)
+        },
+        |coeffs: &[i32; 16],
+         m: &crate::encoder::quantize::VP8Matrix,
+         q: &mut [i32; 16],
+         dq: &mut [i32; 16]| {
+            crate::encoder::quantize::quantize_dequantize_block_sse2(token, coeffs, m, true, q, dq)
+        },
+        |dq: &mut [i32; 16],
+         ywb: &mut [u8; LUMA_BLOCK_SIZE],
+         y0: usize,
+         x0: usize,
+         dc_only: bool| {
+            crate::common::transform::idct_add_residue_inplace_sse2_inner(
+                token,
+                dq,
+                ywb.as_mut_slice(),
+                y0,
+                x0,
+                LUMA_STRIDE,
+                dc_only,
+            )
+        }
+    )
+}
+
+/// Portable (dispatching) instantiation for non-x86_64 targets.
+#[allow(clippy::too_many_arguments)]
+fn pick_intra4_sse_portable(
+    ybuf: &[u8],
+    src_width: usize,
+    mbx: usize,
+    mby: usize,
+    y_with_border: &mut [u8; LUMA_BLOCK_SIZE],
+    y1_matrix: &crate::encoder::quantize::VP8Matrix,
+    top_ctx0: &[usize; 4],
+    left_ctx0: &[usize; 4],
+    i16_score: u64,
+    i4_penalty: u64,
+    bit_limit: u64,
+) -> Option<[IntraMode; 16]> {
+    pick_intra4_sse_body!(
+        ybuf,
+        src_width,
+        mbx,
+        mby,
+        y_with_border,
+        y1_matrix,
+        top_ctx0,
+        left_ctx0,
+        i16_score,
+        i4_penalty,
+        bit_limit,
+        |src: &[u8; 16], pred: &[u8; 16]| sse4x4_dispatch(src, pred),
+        |src: &[u8; 16], pred: &[u8; 16]| {
+            crate::common::transform::ftransform_from_u8_4x4(src, pred)
+        },
+        |coeffs: &[i32; 16],
+         m: &crate::encoder::quantize::VP8Matrix,
+         q: &mut [i32; 16],
+         dq: &mut [i32; 16]| {
+            crate::encoder::quantize::quantize_dequantize_block_simd(coeffs, m, true, q, dq)
+        },
+        |dq: &mut [i32; 16],
+         ywb: &mut [u8; LUMA_BLOCK_SIZE],
+         y0: usize,
+         x0: usize,
+         dc_only: bool| {
+            crate::common::transform::idct_add_residue_inplace(
+                dq,
+                ywb,
+                y0,
+                x0,
+                LUMA_STRIDE,
+                dc_only,
+            )
+        }
+    )
 }

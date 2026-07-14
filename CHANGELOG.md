@@ -275,6 +275,15 @@ here has landed; see "Changed (BREAKING)" below.)
   to their own `Cargo.toml` (#65).
 
 ### Changed
+- **Lossy m2 uses libwebp's full `RefineUsingDistortion` decimation**
+  (try_both + refine_uv): SSE-scored I16/I4 picks with the accumulate-and-
+  bail against the I16 score (`i4_penalty = 1000·q_i4²`, header bits capped
+  by `mb_header_limit`), SSE-scored UV refine; m1 also adopts the SSE UV
+  refine (libwebp `refine_uv_mode = m ≥ 1`). zenbench: **m2 9.6 → 4.1 ms
+  (3.0× → 1.30× of libwebp)**, m1 ~1.45×; m2 bytes/PSNR shift to libwebp-
+  m2-like RD points (photo 12,772 B/36.91 dB; +12.8% bytes vs libwebp m2,
+  within all matrix gates). The SSE I4 pick loop runs in a single
+  `#[arcane]` region (739bc14 recipe, bit-exact). m3+ RD paths unchanged.
 - **Lossy m0/m1 mode decimation is SSE-scored** (libwebp
   `RefineUsingDistortion` shape): I16-hint macroblocks pick among all four
   modes by SSE + fixed cost (was DC-only), I4-hint macroblocks pick each
