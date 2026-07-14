@@ -158,3 +158,50 @@ chroma mode selection + the RGB→YUV source, not by touching the transform.
 
 These tests are permanent regression gates: if any future SIMD refactor breaks
 forward-transform bit-exactness, they fail loudly.
+
+## Chroma downsampling made byte-exact — U/V now identical to libwebp (part 7)
+
+The chroma prediction cascade traced to its true source: zen's gamma-corrected
+2×2 downsampling was rounding the gamma-averaged R/G/B to a **byte** before the
+U/V matrix, where libwebp keeps them at **YUV_FIX+2 (×4) precision** through the
+matrix and only clamps the final U/V (`SUM4`/`SUM2` → `VP8ClipUV`,
+`picture_csp_enc.c` + `dsp/yuv.h`). That sub-byte precision loss produced the
+±1 chroma divergences that cascaded into chroma mode selection.
+
+Fixed by porting `Interpolate` / `LinearToGamma(base,shift)` / `VP8ClipUV`
+exactly (`src/decoder/yuv.rs`): the averaged channel stays at ×4 precision, the
+matrix runs on ×4 values, and `VP8ClipUV` descales by 18 with the `(1<<17)`
+rounder + `(128<<18)` bias and clamps. The gamma tables were already correct
+(`kGammaToLinearTab`, `kLinearToGammaTab` verified). A key algebraic identity
+(`linear_to_gamma_fx(2·S, 0) ≡ linear_to_gamma_fx(S, 1)`, both reduce to
+`Interpolate(2·S)`) means the odd-width / odd-height / corner edge cases, which
+pass replicated pixels, match libwebp's `SUM2` / `rgb_stride=0` handling with no
+special-casing. The production SIMD kernel (`gamma_chroma_rows_generic`) was
+converted to the same ×4 path via a 16384-entry sum→×4 LUT; two tests
+(`gamma_chroma_simd_matches_scalar`, `gamma_chroma_grayscale_is_128`) lock SIMD
+== scalar and the grayscale invariant.
+
+**Measured (382297, q75, libwebp's YUV extracted via `WebPPictureImportRGB` +
+`WebPPictureARGBToYUVA` — exactly what `WebPEncode` runs):**
+- **U plane: 0 / 65536 pixels differ (max |Δ| = 0)** — byte-identical.
+- **V plane: 0 / 65536 pixels differ (max |Δ| = 0)** — byte-identical.
+- **UV mode agreement m0 segs1: 96.2% → 100.0%** (every chroma mode now matches).
+- Remaining: **Y plane 572 / 262144 differ (max |Δ| = 1)** — zenyuv's SIMD
+  maddubs Y kernel vs libwebp's exact `VP8RGBToY` (16-bit coeffs). zen's scalar
+  `rgb_to_y` already matches libwebp exactly; the production path uses zenyuv's
+  approximate Y for speed. This is now the *only* source-level parity gap.
+
+**Gated on `StrictLibwebpParity`, not unconditional.** The byte-exact precision
+*regresses* the zensim floor on two synthetic low-q cells (gradient q10
+70.76→69.29, noise q10 43.37→41.57): zenwebp's byte-rounded chroma is
+*measurably better* than libwebp-exact there. So the tuned default keeps the
+byte-rounded path (`ChromaPrec::TunedByteRound`) and only
+`StrictLibwebpParity` uses `ChromaPrec::LibwebpExact` — exactly the
+"libwebp-exact vs zenwebp-tuned" split #38 is about. Both modes share one SIMD
+kernel and differ only by a 16384-entry LUT, because `byte×4` through the ×4
+matrix `>>18` reproduces the historical `byte` matrix `>>16` (the clamp added
+for both only fixes the old cast-wrap at out-of-range U/V — a strict
+correctness improvement that never changes an in-range value). The
+`ChromaPrec` is selected in `prepare_input_for_encoding` from
+`params.cost_model`. Result: tuned floors stay green (zensim matrix 14 ok),
+parity chroma is byte-identical to libwebp.

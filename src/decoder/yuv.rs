@@ -320,37 +320,120 @@ fn gamma_to_linear(v: u8) -> u32 {
     GAMMA_TO_LINEAR_TAB[v as usize] as u32
 }
 
-/// Convert a linear^0.80 value (0..4095) back to an sRGB byte (0..255)
-/// using interpolation in the inverse table.
-///
-/// The table has 33 entries at steps of 128. We interpolate between adjacent
-/// entries using the 7-bit fractional part.
+// ---------------------------------------------------------------------------
+// Gamma-corrected chroma downsampling — two precision modes.
+//
+// Both modes gamma-average each R/G/B channel over the 2×2 block (linear^0.80
+// space), then apply the VP8 U/V matrix. They differ only in intermediate
+// precision, and — crucially — reduce to the SAME final matrix+descale, so the
+// SIMD kernel is shared and only the LUT differs:
+//
+//   uv = VP8ClipUV(matrix(R4, G4, B4)) = (matrix(R4,G4,B4) + (1<<17) + (128<<18)) >> 18
+//
+// where R4/G4/B4 are the averaged channels at YUV_FIX+2 (×4) precision.
+//
+//   * ChromaPrec::LibwebpExact — R4 = LinearToGamma(sum, 0), keeping full ×4
+//     precision through the matrix as libwebp does (`picture_csp_enc.c`,
+//     `dsp/yuv.h`: SUM4 → VP8ClipUV). Byte-identical to libwebp; used under
+//     `CostModel::StrictLibwebpParity`.
+//   * ChromaPrec::TunedByteRound — R4 = round(sum/4)→byte→×4. Rounds each
+//     averaged channel to a byte first (2 fewer sub-byte bits). This is
+//     zenwebp's historical tuned behavior; it is *measurably better* than
+//     libwebp-exact on synthetic low-q gradient/noise (zensim regression
+//     matrix), so the tuned default keeps it.
+//
+// The `×4` scaling makes both share the `>> 18` + VP8ClipUV tail exactly:
+// for the tuned path, `byte×4` fed through the ×4 matrix and `>> 18` equals the
+// historical `byte` matrix `>> 16` (the extra ×4 cancels the extra `>> 2`),
+// while the added clamp only fixes the old cast-wrap at out-of-range U/V.
+//
+// Edge identity (both modes): SUM4 with replicated pixels equals SUM2, because
+// the averaged-channel value is a function of the linear sum and the tab index
+// `sum>>9` is invariant under the (pixels×2, weight÷2) rewrite. So the odd-
+// width / odd-height / corner call sites pass replicated pixels and need no
+// special-casing.
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+pub(crate) enum ChromaPrec {
+    /// Byte-rounded averaged channels — zenwebp tuned default.
+    TunedByteRound,
+    /// Full YUV_FIX+2 precision — byte-identical to libwebp.
+    LibwebpExact,
+}
+
+/// Shorthand for the tuned default used by the scalar reference / streaming
+/// paths (the production one-shot path selects per `CostModel`).
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+const TUNED: ChromaPrec = ChromaPrec::TunedByteRound;
+
+/// libwebp `Interpolate()`: `v = base_value << shift`. Returns the un-descaled
+/// interpolated value `v1·x + v0·(512 − x)`.
 #[inline(always)]
 #[cfg_attr(not(feature = "std"), allow(dead_code))]
-fn linear_to_gamma(v: u32) -> u8 {
-    let tab_idx = (v >> 7) as usize; // 0..32
-    let frac = v & 0x7F; // 7-bit fraction
+fn gamma_interpolate(v: u32) -> i32 {
+    let tab_pos = (v >> 9) as usize; // v >> (GAMMA_TAB_FIX + 2)
+    let x = (v & 511) as i32; // v & ((kGammaTabScale << 2) - 1)
+    let v0 = LINEAR_TO_GAMMA_TAB[tab_pos] as i32;
+    let v1 = LINEAR_TO_GAMMA_TAB[tab_pos + 1] as i32;
+    v1 * x + v0 * (512 - x)
+}
+
+/// libwebp `LinearToGamma(base_value, shift)`: the averaged channel value at
+/// YUV_FIX+2 (×4) fixed-point precision, suitable for `VP8RGBToU/V`.
+#[inline(always)]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+fn linear_to_gamma_fx(base_value: u32, shift: u32) -> i32 {
+    // (y + kGammaTabRounder) >> GAMMA_TAB_FIX, with kGammaTabRounder = 64.
+    (gamma_interpolate(base_value << shift) + 64) >> 7
+}
+
+/// Byte-rounded inverse gamma: linear^0.80 value (0..4095) → sRGB byte, via the
+/// 33-entry table with a 7-bit fractional interpolation. Used by the tuned path.
+#[inline(always)]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+fn linear_to_gamma_byte(v: u32) -> u8 {
+    // Real averaged values are ≤ 4095 (tab_idx ≤ 31), but the dense LUT builder
+    // sweeps a couple of unreachable sums that round to 4096; clamp so those
+    // never over-index the 33-entry table.
+    let tab_idx = ((v >> 7) as usize).min(31); // 0..31, +1 ≤ 32
+    let frac = v & 0x7F;
     let v0 = LINEAR_TO_GAMMA_TAB[tab_idx] as u32;
     let v1 = LINEAR_TO_GAMMA_TAB[tab_idx + 1] as u32;
     ((v0 * (128 - frac) + v1 * frac + 64) >> 7) as u8
 }
 
-/// Average 4 byte values in gamma-corrected (linear^0.80) space.
-/// Converts to linear, averages, converts back to sRGB byte.
+/// Averaged channel value at ×4 precision for a given 4-pixel gamma-linear
+/// `sum` (0..16380), in the selected precision mode. Both feed the identical
+/// `>> 18` + clamp tail below.
 #[inline(always)]
 #[cfg_attr(not(feature = "std"), allow(dead_code))]
-fn gamma_avg_4(a: u8, b: u8, c: u8, d: u8) -> u8 {
-    let sum = gamma_to_linear(a) + gamma_to_linear(b) + gamma_to_linear(c) + gamma_to_linear(d);
-    // Integer division by 4 with rounding
-    linear_to_gamma((sum + 2) >> 2)
+fn channel_x4(sum: u32, prec: ChromaPrec) -> i32 {
+    match prec {
+        ChromaPrec::LibwebpExact => linear_to_gamma_fx(sum, 0),
+        // Round the average to a byte (historical behavior), then ×4 so the
+        // shared `>> 18` matrix tail reproduces the historical `>> 16`.
+        ChromaPrec::TunedByteRound => (linear_to_gamma_byte((sum + 2) >> 2) as i32) * 4,
+    }
 }
 
-/// Average 2 byte values in gamma-corrected (linear^0.80) space.
+/// libwebp `VP8ClipUV`: descale from YUV_FIX+2, add the 128 chroma bias, clamp.
+/// `rounding = YUV_HALF << 2 = 1 << 17`.
 #[inline(always)]
 #[cfg_attr(not(feature = "std"), allow(dead_code))]
-fn gamma_avg_2(a: u8, b: u8) -> u8 {
-    let sum = gamma_to_linear(a) + gamma_to_linear(b);
-    linear_to_gamma((sum + 1) >> 1)
+fn vp8_clip_uv(uv: i32) -> u8 {
+    let x = (uv + (1 << 17) + (128 << 18)) >> 18;
+    x.clamp(0, 255) as u8
+}
+
+/// U/V from ×4-precision averaged R/G/B channels (the shared matrix tail).
+#[inline(always)]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+fn uv_from_channels_x4(r: i32, g: i32, b: i32) -> (u8, u8) {
+    (
+        vp8_clip_uv(-9719 * r - 19081 * g + 28800 * b),
+        vp8_clip_uv(28800 * r - 24116 * g - 4684 * b),
+    )
 }
 
 /// converts the whole image to yuv data and adds values on the end to make it match the macroblock sizes
@@ -405,7 +488,7 @@ pub(crate) fn convert_image_yuv<const BPP: usize>(
             y_bytes[src_row2 * luma_width + src_col2] = rgb_to_y(rgb4);
 
             // Convert to U/V with gamma-corrected chroma downsampling
-            let (u, v) = gamma_downsample_uv_4(rgb1, rgb2, rgb3, rgb4);
+            let (u, v) = gamma_downsample_uv_4(rgb1, rgb2, rgb3, rgb4, TUNED);
             u_bytes[chroma_row * chroma_width + chroma_col] = u;
             v_bytes[chroma_row * chroma_width + chroma_col] = v;
         }
@@ -424,7 +507,7 @@ pub(crate) fn convert_image_yuv<const BPP: usize>(
             y_bytes[src_row2 * luma_width + src_col] = rgb_to_y(rgb3);
 
             // Convert to U/V with gamma-corrected averaging of 2 pixels
-            let (u, v) = gamma_downsample_uv_2(rgb1, rgb3);
+            let (u, v) = gamma_downsample_uv_2(rgb1, rgb3, TUNED);
             u_bytes[chroma_row * chroma_width + chroma_col] = u;
             v_bytes[chroma_row * chroma_width + chroma_col] = v;
         }
@@ -450,7 +533,7 @@ pub(crate) fn convert_image_yuv<const BPP: usize>(
             y_bytes[src_row * luma_width + src_col2] = rgb_to_y(rgb2);
 
             // Convert to U/V with gamma-corrected averaging of 2 pixels
-            let (u, v) = gamma_downsample_uv_2(rgb1, rgb2);
+            let (u, v) = gamma_downsample_uv_2(rgb1, rgb2, TUNED);
             u_bytes[chroma_row * chroma_width + chroma_col] = u;
             v_bytes[chroma_row * chroma_width + chroma_col] = v;
         }
@@ -460,17 +543,15 @@ pub(crate) fn convert_image_yuv<const BPP: usize>(
             let src_col = width - 1;
             let chroma_col = col_pairs;
 
-            // Single pixel — no averaging needed, just convert directly
             let rgb = &image_data[(src_row * stride + src_col) * BPP..][..BPP];
 
             // Convert to Y
             y_bytes[src_row * luma_width + src_col] = rgb_to_y(rgb);
 
-            // Convert to U/V (single pixel, no downsampling needed)
-            u_bytes[chroma_row * chroma_width + chroma_col] =
-                rgb_to_u_single(rgb[0], rgb[1], rgb[2]);
-            v_bytes[chroma_row * chroma_width + chroma_col] =
-                rgb_to_v_single(rgb[0], rgb[1], rgb[2]);
+            // U/V: single pixel gamma-averaged with itself (SUM2, rgb_stride=0).
+            let (u, v) = gamma_downsample_uv_2(rgb, rgb, TUNED);
+            u_bytes[chroma_row * chroma_width + chroma_col] = u;
+            v_bytes[chroma_row * chroma_width + chroma_col] = v;
         }
     }
 
@@ -624,63 +705,37 @@ pub(crate) fn rgb_to_y(rgb: &[u8]) -> u8 {
     ((luma + YUV_HALF + (16 << YUV_FIX)) >> YUV_FIX) as u8
 }
 
-/// Compute U from a single pixel (no averaging).
+/// Compute gamma-corrected U/V for a 2×2 pixel block (SUM4), in the selected
+/// precision mode. Each R/G/B channel is averaged in linear^0.80 space, then
+/// the VP8 U/V matrix + VP8ClipUV are applied.
 #[inline(always)]
 #[cfg_attr(not(feature = "std"), allow(dead_code))]
-pub(crate) fn rgb_to_u_single(r: u8, g: u8, b: u8) -> u8 {
-    let u = -9719 * i32::from(r) - 19081 * i32::from(g) + 28800 * i32::from(b) + (128 << YUV_FIX);
-    ((u + YUV_HALF) >> YUV_FIX) as u8
+pub(crate) fn gamma_downsample_uv_4(
+    p1: &[u8],
+    p2: &[u8],
+    p3: &[u8],
+    p4: &[u8],
+    prec: ChromaPrec,
+) -> (u8, u8) {
+    let gtl = gamma_to_linear;
+    let r = channel_x4(gtl(p1[0]) + gtl(p2[0]) + gtl(p3[0]) + gtl(p4[0]), prec);
+    let g = channel_x4(gtl(p1[1]) + gtl(p2[1]) + gtl(p3[1]) + gtl(p4[1]), prec);
+    let b = channel_x4(gtl(p1[2]) + gtl(p2[2]) + gtl(p3[2]) + gtl(p4[2]), prec);
+    uv_from_channels_x4(r, g, b)
 }
 
-/// Compute V from a single pixel (no averaging).
+/// Compute gamma-corrected U/V for a 1×2 or 2×1 pixel pair (SUM2), in the
+/// selected precision mode. By the replication identity SUM2(a,b) ≡
+/// SUM4(a,a,b,b), so the 2-pixel sum is doubled and routed through the same
+/// `channel_x4` as SUM4.
 #[inline(always)]
 #[cfg_attr(not(feature = "std"), allow(dead_code))]
-pub(crate) fn rgb_to_v_single(r: u8, g: u8, b: u8) -> u8 {
-    let v = 28800 * i32::from(r) - 24116 * i32::from(g) - 4684 * i32::from(b) + (128 << YUV_FIX);
-    ((v + YUV_HALF) >> YUV_FIX) as u8
-}
-
-/// Get the chroma-downsampled U value for a 2x2 pixel block using
-/// gamma-corrected averaging (gamma=0.80, matching libwebp).
-///
-/// Each R/G/B channel is averaged in linear^0.80 space before the YUV
-/// matrix is applied to the averaged RGB values.
-pub(crate) fn rgb_to_u_avg(rgb1: &[u8], rgb2: &[u8], rgb3: &[u8], rgb4: &[u8]) -> u8 {
-    let r = gamma_avg_4(rgb1[0], rgb2[0], rgb3[0], rgb4[0]);
-    let g = gamma_avg_4(rgb1[1], rgb2[1], rgb3[1], rgb4[1]);
-    let b = gamma_avg_4(rgb1[2], rgb2[2], rgb3[2], rgb4[2]);
-    rgb_to_u_single(r, g, b)
-}
-
-/// Get the chroma-downsampled V value for a 2x2 pixel block using
-/// gamma-corrected averaging (gamma=0.80, matching libwebp).
-pub(crate) fn rgb_to_v_avg(rgb1: &[u8], rgb2: &[u8], rgb3: &[u8], rgb4: &[u8]) -> u8 {
-    let r = gamma_avg_4(rgb1[0], rgb2[0], rgb3[0], rgb4[0]);
-    let g = gamma_avg_4(rgb1[1], rgb2[1], rgb3[1], rgb4[1]);
-    let b = gamma_avg_4(rgb1[2], rgb2[2], rgb3[2], rgb4[2]);
-    rgb_to_v_single(r, g, b)
-}
-
-/// Compute gamma-corrected U/V for a 2x2 pixel block (4 pixels).
-/// Returns (u, v) with each R/G/B channel averaged in linear^0.80 space.
-#[inline(always)]
-#[cfg_attr(not(feature = "std"), allow(dead_code))]
-fn gamma_downsample_uv_4(p1: &[u8], p2: &[u8], p3: &[u8], p4: &[u8]) -> (u8, u8) {
-    let r = gamma_avg_4(p1[0], p2[0], p3[0], p4[0]);
-    let g = gamma_avg_4(p1[1], p2[1], p3[1], p4[1]);
-    let b = gamma_avg_4(p1[2], p2[2], p3[2], p4[2]);
-    (rgb_to_u_single(r, g, b), rgb_to_v_single(r, g, b))
-}
-
-/// Compute gamma-corrected U/V for a 1x2 or 2x1 pixel pair.
-/// Returns (u, v) with each R/G/B channel averaged in linear^0.80 space.
-#[inline(always)]
-#[cfg_attr(not(feature = "std"), allow(dead_code))]
-fn gamma_downsample_uv_2(p1: &[u8], p2: &[u8]) -> (u8, u8) {
-    let r = gamma_avg_2(p1[0], p2[0]);
-    let g = gamma_avg_2(p1[1], p2[1]);
-    let b = gamma_avg_2(p1[2], p2[2]);
-    (rgb_to_u_single(r, g, b), rgb_to_v_single(r, g, b))
+fn gamma_downsample_uv_2(p1: &[u8], p2: &[u8], prec: ChromaPrec) -> (u8, u8) {
+    let gtl = gamma_to_linear;
+    let r = channel_x4(2 * (gtl(p1[0]) + gtl(p2[0])), prec);
+    let g = channel_x4(2 * (gtl(p1[1]) + gtl(p2[1])), prec);
+    let b = channel_x4(2 * (gtl(p1[2]) + gtl(p2[2])), prec);
+    uv_from_channels_x4(r, g, b)
 }
 
 /// Convert image to YUV420 using sharp (iterative) chroma downsampling.
@@ -746,6 +801,8 @@ pub(crate) fn convert_image_sharp_yuv_with_config(
         height,
         stride,
         YuvEncodeMode::SharpWith(config),
+        // Sharp does its own iterative chroma refinement on top of a tuned base.
+        ChromaPrec::TunedByteRound,
     )
 }
 
@@ -761,8 +818,17 @@ pub(crate) fn convert_image_yuv_fast(
     width: u16,
     height: u16,
     stride: usize,
+    prec: ChromaPrec,
 ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    zenyuv_encode_planes(image_data, color, width, height, stride, YuvEncodeMode::Box)
+    zenyuv_encode_planes(
+        image_data,
+        color,
+        width,
+        height,
+        stride,
+        YuvEncodeMode::Box,
+        prec,
+    )
 }
 
 /// Return a tightly-packed RGB buffer (`width * height * 3` bytes). Uses garb's
@@ -895,6 +961,7 @@ fn zenyuv_encode_planes(
     height: u16,
     stride: usize,
     mode: YuvEncodeMode,
+    prec: ChromaPrec,
 ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     use crate::encoder::PixelLayout;
     use zenyuv::{Matrix, Range, YuvContext};
@@ -951,6 +1018,7 @@ fn zenyuv_encode_planes(
         &mut v_bytes,
         chroma_width,
         chroma_height,
+        prec,
     );
 
     // Sharp path: refine the gamma-corrected chroma via Newton-step iteration.
@@ -1066,17 +1134,25 @@ fn zenyuv_encode_planes(
     (y_bytes, u_bytes, v_bytes)
 }
 
-/// Build the dense 4096-entry inverse-gamma LUT. Computed lazily via `OnceLock`
-/// from the existing 33-entry interpolated formula; eliminates per-pixel
-/// interpolation arithmetic in the gamma-corrected chroma path.
+/// Build the dense 16384-entry LUT mapping a 4-pixel gamma-linear SUM (0..16380,
+/// i.e. NOT pre-divided by 4) directly to the ×4-precision averaged channel
+/// value for the selected mode (see [`channel_x4`]). Indexed by `sum & 0x3FFF`
+/// (max real sum is 4·4095 = 16380 < 16384, so `tab_pos = sum>>9 ≤ 31` and the
+/// 33-entry inverse table is never over-indexed). The two LUTs feed the same
+/// SIMD matrix/descale tail; only the LUT differs between tuned and parity.
 #[cfg(feature = "std")]
-fn linear_to_gamma_dense() -> &'static [u8; 4096] {
+fn chroma_channel_lut(prec: ChromaPrec) -> &'static [i16; 16384] {
     use std::sync::OnceLock;
-    static LUT: OnceLock<alloc::boxed::Box<[u8; 4096]>> = OnceLock::new();
-    LUT.get_or_init(|| {
-        let mut t = alloc::boxed::Box::new([0u8; 4096]);
+    static PARITY: OnceLock<alloc::boxed::Box<[i16; 16384]>> = OnceLock::new();
+    static TUNED: OnceLock<alloc::boxed::Box<[i16; 16384]>> = OnceLock::new();
+    let cell = match prec {
+        ChromaPrec::LibwebpExact => &PARITY,
+        ChromaPrec::TunedByteRound => &TUNED,
+    };
+    cell.get_or_init(|| {
+        let mut t = alloc::boxed::Box::new([0i16; 16384]);
         for (i, slot) in t.iter_mut().enumerate() {
-            *slot = linear_to_gamma(i as u32);
+            *slot = channel_x4(i as u32, prec) as i16;
         }
         t
     })
@@ -1103,15 +1179,17 @@ fn gamma_chroma_rows_generic(
     v_bytes: &mut [u8],
     chroma_width: usize,
     gamma_lut: &[u16; 256],
-    inv_gamma_dense: &[u8; 4096],
+    inv_gamma_fx_dense: &[i16; 16384],
 ) {
     #[allow(non_camel_case_types)]
     type u16x8 = magetypes::simd::generic::u16x8<Token>;
     #[allow(non_camel_case_types)]
     type i32x8 = magetypes::simd::generic::i32x8<Token>;
 
-    let two = u16x8::splat(token, 2);
-    let uv_bias = (128i32 << YUV_FIX) + YUV_HALF;
+    // libwebp keeps the gamma-averaged R/G/B at YUV_FIX+2 (×4) precision through
+    // the U/V matrix, then VP8ClipUV descales by 18 and adds the 128 bias:
+    //   uv = (-9719·R -19081·G +28800·B + (1<<17) + (128<<18)) >> 18, clamped.
+    let uv_bias = (128i32 << 18) + (1 << 17);
     let u_r = i32x8::splat(token, -9719);
     let u_g = i32x8::splat(token, -19081);
     let u_b = i32x8::splat(token, 28800);
@@ -1165,7 +1243,9 @@ fn gamma_chroma_rows_generic(
                 b_bo[i] = gamma_lut[bot[oi * 3 + 2] as usize];
             }
 
-            // ── Stage 2: SIMD average ── (max sum = 4*4095 fits in u16)
+            // ── Stage 2: SIMD sum ── (max sum = 4*4095 = 16380 fits in u16;
+            // NOT divided by 4 — libwebp's LinearToGamma(sum, shift=0) folds the
+            // /4 into the inverse-gamma LUT while keeping ×4 precision).
             let r_sum = u16x8::from_array(token, r_te)
                 + u16x8::from_array(token, r_to)
                 + u16x8::from_array(token, r_be)
@@ -1178,38 +1258,35 @@ fn gamma_chroma_rows_generic(
                 + u16x8::from_array(token, b_to)
                 + u16x8::from_array(token, b_be)
                 + u16x8::from_array(token, b_bo);
-            let r_avg_v = (r_sum + two).shr_logical_const::<2>();
-            let g_avg_v = (g_sum + two).shr_logical_const::<2>();
-            let b_avg_v = (b_sum + two).shr_logical_const::<2>();
 
-            let mut r_avg = [0u16; 8];
-            let mut g_avg = [0u16; 8];
-            let mut b_avg = [0u16; 8];
-            r_avg_v.store(&mut r_avg);
-            g_avg_v.store(&mut g_avg);
-            b_avg_v.store(&mut b_avg);
+            let mut r_s = [0u16; 8];
+            let mut g_s = [0u16; 8];
+            let mut b_s = [0u16; 8];
+            r_sum.store(&mut r_s);
+            g_sum.store(&mut g_s);
+            b_sum.store(&mut b_s);
 
-            // ── Stage 3: scalar gather out (dense LUT, no interpolation) ──
-            let mut r_u8 = [0i32; 8];
-            let mut g_u8 = [0i32; 8];
-            let mut b_u8 = [0i32; 8];
+            // ── Stage 3: scalar gather out (dense fx LUT → ×4 precision) ──
+            let mut r_fx = [0i32; 8];
+            let mut g_fx = [0i32; 8];
+            let mut b_fx = [0i32; 8];
             for i in 0..8 {
-                r_u8[i] = inv_gamma_dense[(r_avg[i] as usize) & 0xFFF] as i32;
-                g_u8[i] = inv_gamma_dense[(g_avg[i] as usize) & 0xFFF] as i32;
-                b_u8[i] = inv_gamma_dense[(b_avg[i] as usize) & 0xFFF] as i32;
+                r_fx[i] = inv_gamma_fx_dense[(r_s[i] as usize) & 0x3FFF] as i32;
+                g_fx[i] = inv_gamma_fx_dense[(g_s[i] as usize) & 0x3FFF] as i32;
+                b_fx[i] = inv_gamma_fx_dense[(b_s[i] as usize) & 0x3FFF] as i32;
             }
 
-            // ── Stage 4: SIMD YCbCr matrix (i32 fixed-point, YUV_FIX=16) ──
-            let r_v = i32x8::from_array(token, r_u8);
-            let g_v = i32x8::from_array(token, g_u8);
-            let b_v = i32x8::from_array(token, b_u8);
+            // ── Stage 4: SIMD YCbCr matrix on ×4 values (VP8ClipUV: >>18) ──
+            let r_v = i32x8::from_array(token, r_fx);
+            let g_v = i32x8::from_array(token, g_fx);
+            let b_v = i32x8::from_array(token, b_fx);
             let u_vals = uv_bias_v + r_v * u_r + g_v * u_g + b_v * u_b;
             let v_vals = uv_bias_v + r_v * v_r + g_v * v_g + b_v * v_b;
 
             let mut u_i32 = [0i32; 8];
             let mut v_i32 = [0i32; 8];
-            u_vals.shr_arithmetic_const::<16>().store(&mut u_i32);
-            v_vals.shr_arithmetic_const::<16>().store(&mut v_i32);
+            u_vals.shr_arithmetic_const::<18>().store(&mut u_i32);
+            v_vals.shr_arithmetic_const::<18>().store(&mut v_i32);
 
             let idx = row_pair * chroma_width + cp;
             for i in 0..8 {
@@ -1238,6 +1315,7 @@ fn gamma_chroma_overwrite(
     v_bytes: &mut [u8],
     chroma_width: usize,
     chroma_height_mb: usize,
+    prec: ChromaPrec,
 ) {
     let src_chroma_width = w.div_ceil(2);
     let src_chroma_height = h.div_ceil(2);
@@ -1263,7 +1341,7 @@ fn gamma_chroma_overwrite(
                     v_bytes,
                     chroma_width,
                     &GAMMA_TO_LINEAR_TAB,
-                    linear_to_gamma_dense(),
+                    chroma_channel_lut(prec),
                 ),
                 [v3, neon, wasm128, scalar]
             );
@@ -1280,14 +1358,15 @@ fn gamma_chroma_overwrite(
         for col_pair in simd_col_pairs..col_pairs {
             let c1 = col_pair * 2;
             let c2 = c1 + 1;
-            let (u, v) = gamma_downsample_uv_4(px(c1, r1), px(c2, r1), px(c1, r2), px(c2, r2));
+            let (u, v) =
+                gamma_downsample_uv_4(px(c1, r1), px(c2, r1), px(c1, r2), px(c2, r2), prec);
             let idx = row_pair * chroma_width + col_pair;
             u_bytes[idx] = u;
             v_bytes[idx] = v;
         }
         if odd_width {
             let c = w - 1;
-            let (u, v) = gamma_downsample_uv_2(px(c, r1), px(c, r2));
+            let (u, v) = gamma_downsample_uv_2(px(c, r1), px(c, r2), prec);
             let idx = row_pair * chroma_width + col_pairs;
             u_bytes[idx] = u;
             v_bytes[idx] = v;
@@ -1298,17 +1377,20 @@ fn gamma_chroma_overwrite(
         for col_pair in 0..col_pairs {
             let c1 = col_pair * 2;
             let c2 = c1 + 1;
-            let (u, v) = gamma_downsample_uv_2(px(c1, r), px(c2, r));
+            let (u, v) = gamma_downsample_uv_2(px(c1, r), px(c2, r), prec);
             let idx = row_pairs * chroma_width + col_pair;
             u_bytes[idx] = u;
             v_bytes[idx] = v;
         }
         if odd_width {
+            // Corner pixel: libwebp does SUM2 with rgb_stride=0 (the pixel
+            // averaged with itself), NOT a per-pixel conversion.
             let c = w - 1;
             let p = px(c, r);
+            let (u, v) = gamma_downsample_uv_2(p, p, prec);
             let idx = row_pairs * chroma_width + col_pairs;
-            u_bytes[idx] = rgb_to_u_single(p[0], p[1], p[2]);
-            v_bytes[idx] = rgb_to_v_single(p[0], p[1], p[2]);
+            u_bytes[idx] = u;
+            v_bytes[idx] = v;
         }
     }
 
@@ -1382,10 +1464,9 @@ pub(crate) fn convert_image_yuv_bgr<const BPP: usize>(
             y_bytes[src_row2 * luma_width + src_col1] = rgb_to_y(&rgb3);
             y_bytes[src_row2 * luma_width + src_col2] = rgb_to_y(&rgb4);
 
-            u_bytes[chroma_row * chroma_width + chroma_col] =
-                rgb_to_u_avg(&rgb1, &rgb2, &rgb3, &rgb4);
-            v_bytes[chroma_row * chroma_width + chroma_col] =
-                rgb_to_v_avg(&rgb1, &rgb2, &rgb3, &rgb4);
+            let (u, v) = gamma_downsample_uv_4(&rgb1, &rgb2, &rgb3, &rgb4, TUNED);
+            u_bytes[chroma_row * chroma_width + chroma_col] = u;
+            v_bytes[chroma_row * chroma_width + chroma_col] = v;
         }
 
         if odd_width {
@@ -1398,10 +1479,9 @@ pub(crate) fn convert_image_yuv_bgr<const BPP: usize>(
             y_bytes[src_row1 * luma_width + src_col] = rgb_to_y(&rgb1);
             y_bytes[src_row2 * luma_width + src_col] = rgb_to_y(&rgb3);
 
-            u_bytes[chroma_row * chroma_width + chroma_col] =
-                rgb_to_u_avg(&rgb1, &rgb1, &rgb3, &rgb3);
-            v_bytes[chroma_row * chroma_width + chroma_col] =
-                rgb_to_v_avg(&rgb1, &rgb1, &rgb3, &rgb3);
+            let (u, v) = gamma_downsample_uv_2(&rgb1, &rgb3, TUNED);
+            u_bytes[chroma_row * chroma_width + chroma_col] = u;
+            v_bytes[chroma_row * chroma_width + chroma_col] = v;
         }
     }
 
@@ -1420,10 +1500,9 @@ pub(crate) fn convert_image_yuv_bgr<const BPP: usize>(
             y_bytes[src_row * luma_width + src_col1] = rgb_to_y(&rgb1);
             y_bytes[src_row * luma_width + src_col2] = rgb_to_y(&rgb2);
 
-            u_bytes[chroma_row * chroma_width + chroma_col] =
-                rgb_to_u_avg(&rgb1, &rgb2, &rgb1, &rgb2);
-            v_bytes[chroma_row * chroma_width + chroma_col] =
-                rgb_to_v_avg(&rgb1, &rgb2, &rgb1, &rgb2);
+            let (u, v) = gamma_downsample_uv_2(&rgb1, &rgb2, TUNED);
+            u_bytes[chroma_row * chroma_width + chroma_col] = u;
+            v_bytes[chroma_row * chroma_width + chroma_col] = v;
         }
 
         if odd_width {
@@ -1434,8 +1513,9 @@ pub(crate) fn convert_image_yuv_bgr<const BPP: usize>(
 
             y_bytes[src_row * luma_width + src_col] = rgb_to_y(&rgb);
 
-            u_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_u_avg(&rgb, &rgb, &rgb, &rgb);
-            v_bytes[chroma_row * chroma_width + chroma_col] = rgb_to_v_avg(&rgb, &rgb, &rgb, &rgb);
+            let (u, v) = gamma_downsample_uv_2(&rgb, &rgb, TUNED);
+            u_bytes[chroma_row * chroma_width + chroma_col] = u;
+            v_bytes[chroma_row * chroma_width + chroma_col] = v;
         }
     }
 
@@ -2355,6 +2435,128 @@ fn fancy_upsample_16_pairs_inner_opt(
 #[cfg(test)]
 mod tests_simd {
     use super::*;
+
+    /// Pure-scalar reference for the gamma-corrected chroma plane: every 2×2
+    /// block via `gamma_downsample_uv_4`, odd-width/height/corner via the
+    /// replicated-pixel SUM4≡SUM2 identity. Mirrors what `gamma_chroma_overwrite`
+    /// must produce, but with NO SIMD, so any SIMD/scalar divergence surfaces.
+    #[cfg(feature = "std")]
+    fn gamma_chroma_scalar_ref(
+        rgb: &[u8],
+        w: usize,
+        h: usize,
+        u_bytes: &mut [u8],
+        v_bytes: &mut [u8],
+        chroma_width: usize,
+        prec: ChromaPrec,
+    ) {
+        let px = |x: usize, y: usize| -> &[u8] { &rgb[(y * w + x) * 3..(y * w + x) * 3 + 3] };
+        let cw = w.div_ceil(2);
+        let ch = h.div_ceil(2);
+        for cy in 0..ch {
+            let r1 = cy * 2;
+            let r2 = (r1 + 1).min(h - 1);
+            for cx in 0..cw {
+                let c1 = cx * 2;
+                let c2 = (c1 + 1).min(w - 1);
+                let (u, v) =
+                    gamma_downsample_uv_4(px(c1, r1), px(c2, r1), px(c1, r2), px(c2, r2), prec);
+                u_bytes[cy * chroma_width + cx] = u;
+                v_bytes[cy * chroma_width + cx] = v;
+            }
+        }
+    }
+
+    /// The production SIMD chroma kernel (`gamma_chroma_rows_generic`, exercised
+    /// via `gamma_chroma_overwrite`) must be byte-identical to the pure-scalar
+    /// gamma path across sizes that hit the ≥16-col SIMD bulk path, the scalar
+    /// tail, and odd-width/height edges. Since the scalar path is a verified
+    /// port of libwebp's SUM4/VP8ClipUV, SIMD==scalar ⇒ SIMD==libwebp.
+    #[cfg(feature = "std")]
+    #[test]
+    fn gamma_chroma_simd_matches_scalar() {
+        let sizes = [
+            (2usize, 2usize),
+            (3, 3),
+            (16, 2),
+            (17, 3),
+            (32, 32),
+            (33, 17),
+            (48, 10),
+            (64, 64),
+            (80, 5),
+        ];
+        let mut seed: u32 = 0x1234_5;
+        let mut rnd = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            (seed & 0xff) as u8
+        };
+        for (w, h) in sizes {
+            let rgb: Vec<u8> = (0..w * h * 3).map(|_| rnd()).collect();
+            let mb_w = w.div_ceil(16);
+            let mb_h = h.div_ceil(16);
+            let chroma_width = 8 * mb_w;
+            let chroma_height = 8 * mb_h;
+            let csz = chroma_width * chroma_height;
+
+            for prec in [ChromaPrec::TunedByteRound, ChromaPrec::LibwebpExact] {
+                let mut u_act = vec![0u8; csz];
+                let mut v_act = vec![0u8; csz];
+                gamma_chroma_overwrite(
+                    &rgb,
+                    w,
+                    h,
+                    &mut u_act,
+                    &mut v_act,
+                    chroma_width,
+                    chroma_height,
+                    prec,
+                );
+
+                let mut u_ref = vec![0u8; csz];
+                let mut v_ref = vec![0u8; csz];
+                gamma_chroma_scalar_ref(&rgb, w, h, &mut u_ref, &mut v_ref, chroma_width, prec);
+
+                // Compare only the valid (pre-padding) chroma region.
+                let cw = w.div_ceil(2);
+                let ch = h.div_ceil(2);
+                for cy in 0..ch {
+                    for cx in 0..cw {
+                        let idx = cy * chroma_width + cx;
+                        assert_eq!(
+                            u_act[idx], u_ref[idx],
+                            "U at ({cx},{cy}) size {w}x{h} {prec:?}"
+                        );
+                        assert_eq!(
+                            v_act[idx], v_ref[idx],
+                            "V at ({cx},{cy}) size {w}x{h} {prec:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Grayscale invariant: for any R=G=B block, the (R−G) and (B−G) chroma
+    /// contributions cancel, so U=V=128 exactly. Verifies the ×4-precision
+    /// path and VP8ClipUV bias/rounding land on the neutral chroma value.
+    #[cfg(feature = "std")]
+    #[test]
+    fn gamma_chroma_grayscale_is_128() {
+        for prec in [ChromaPrec::TunedByteRound, ChromaPrec::LibwebpExact] {
+            for g in [0u8, 1, 63, 64, 127, 128, 200, 254, 255] {
+                let (u, v) =
+                    gamma_downsample_uv_4(&[g, g, g], &[g, g, g], &[g, g, g], &[g, g, g], prec);
+                assert_eq!(u, 128, "U for gray {g} {prec:?}");
+                assert_eq!(v, 128, "V for gray {g} {prec:?}");
+                let (u2, v2) = gamma_downsample_uv_2(&[g, g, g], &[g, g, g], prec);
+                assert_eq!(u2, 128, "U(SUM2) for gray {g} {prec:?}");
+                assert_eq!(v2, 128, "V(SUM2) for gray {g} {prec:?}");
+            }
+        }
+    }
 
     #[cfg(target_arch = "x86_64")]
     #[test]

@@ -246,22 +246,33 @@ pub mod __test_helpers {
     }
 
     /// Fast RGB->YUV420 conversion (zenyuv SIMD Y + gamma-corrected scalar chroma).
+    ///
+    /// `libwebp_exact` selects the chroma precision: `false` is zenwebp's tuned
+    /// byte-rounded default; `true` is libwebp's YUV_FIX+2 precision (byte-exact
+    /// with `WebPPictureARGBToYUVA`), used under `CostModel::StrictLibwebpParity`.
     pub fn convert_image_yuv_rgb_fast(
         image_data: &[u8],
         width: u16,
         height: u16,
         stride: usize,
+        libwebp_exact: bool,
     ) -> (
         alloc::vec::Vec<u8>,
         alloc::vec::Vec<u8>,
         alloc::vec::Vec<u8>,
     ) {
+        let prec = if libwebp_exact {
+            crate::decoder::yuv::ChromaPrec::LibwebpExact
+        } else {
+            crate::decoder::yuv::ChromaPrec::TunedByteRound
+        };
         crate::decoder::yuv::convert_image_yuv_fast(
             image_data,
             crate::encoder::PixelLayout::Rgb8,
             width,
             height,
             stride,
+            prec,
         )
     }
 

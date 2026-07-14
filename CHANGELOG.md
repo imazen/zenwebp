@@ -136,6 +136,19 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Added
 
+- **Byte-exact chroma downsampling under `StrictLibwebpParity`** (#38): the
+  gamma-corrected 2×2 chroma downsampling now offers libwebp's YUV_FIX+2 (×4)
+  precision path (`ChromaPrec::LibwebpExact`), byte-identical to
+  `WebPPictureARGBToYUVA` (U/V: 0/65536 pixels differ on CID22 382297; UV mode
+  agreement at m0 96.2% → 100%). The tuned default keeps the byte-rounded path
+  (`ChromaPrec::TunedByteRound`), which scores measurably higher on synthetic
+  low-q gradient/noise. Both share one SIMD kernel (a 16384-entry LUT selects
+  the mode); the precision is chosen from `cost_model` in
+  `prepare_input_for_encoding`. Also fixes a latent U/V cast-wrap at
+  out-of-range colors (now clamped) and the odd×odd corner (now gamma-averaged
+  like libwebp, was a bare per-pixel convert). Forward-DCT bit-exactness vs
+  libwebp `FTransform_C` is locked by new differential tests in
+  `src/common/transform.rs`. See `benchmarks/bitexact_parity_2026-07-14.md`.
 - **Lossless m5/m6 predictor transform-bits search** (#70, 37cae10):
   VP8LResidualImage parity — methods above 4 search every predictor
   sampling in `[max_bits − 2·(m−4), max_bits]` by mode-usage + residual

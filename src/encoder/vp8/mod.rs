@@ -1034,9 +1034,18 @@ impl<'a> Vp8Encoder<'a> {
         } else {
             match color {
                 // zenyuv (SIMD Y) + gamma-corrected scalar chroma.
-                // Matches libwebp chroma quality; Y is within ±2 levels of scalar.
+                // Under StrictLibwebpParity the chroma uses libwebp's exact
+                // YUV_FIX+2 precision; otherwise the tuned byte-rounded path
+                // (measurably better on synthetic low-q — see the zensim gate).
                 PixelLayout::Rgb8 | PixelLayout::Rgba8 | PixelLayout::Bgr8 | PixelLayout::Bgra8 => {
-                    crate::decoder::yuv::convert_image_yuv_fast(data, color, width, height, stride)
+                    let prec = if params.cost_model == super::api::CostModel::StrictLibwebpParity {
+                        crate::decoder::yuv::ChromaPrec::LibwebpExact
+                    } else {
+                        crate::decoder::yuv::ChromaPrec::TunedByteRound
+                    };
+                    crate::decoder::yuv::convert_image_yuv_fast(
+                        data, color, width, height, stride, prec,
+                    )
                 }
                 PixelLayout::L8 => convert_image_y::<1>(data, width, height, stride),
                 PixelLayout::La8 => convert_image_y::<2>(data, width, height, stride),

@@ -32,7 +32,7 @@ fn chroma_simd_matches_scalar_exact() {
         let (_, u_scalar, v_scalar) =
             __test_helpers::convert_image_yuv_rgb(&rgb, w as u16, h as u16, w as usize);
         let (_, u_fast, v_fast) =
-            __test_helpers::convert_image_yuv_rgb_fast(&rgb, w as u16, h as u16, w as usize);
+            __test_helpers::convert_image_yuv_rgb_fast(&rgb, w as u16, h as u16, w as usize, false);
 
         assert_eq!(
             u_scalar.len(),
@@ -64,7 +64,7 @@ fn chroma_simd_odd_dimensions() {
         let (_, u_scalar, v_scalar) =
             __test_helpers::convert_image_yuv_rgb(&rgb, w as u16, h as u16, w as usize);
         let (_, u_fast, v_fast) =
-            __test_helpers::convert_image_yuv_rgb_fast(&rgb, w as u16, h as u16, w as usize);
+            __test_helpers::convert_image_yuv_rgb_fast(&rgb, w as u16, h as u16, w as usize, false);
 
         assert_eq!(u_scalar, u_fast, "{w}x{h}: U mismatch");
         assert_eq!(v_scalar, v_fast, "{w}x{h}: V mismatch");
@@ -79,7 +79,7 @@ fn chroma_simd_small_below_bulk_threshold() {
         let (_, u_scalar, v_scalar) =
             __test_helpers::convert_image_yuv_rgb(&rgb, w as u16, h as u16, w as usize);
         let (_, u_fast, v_fast) =
-            __test_helpers::convert_image_yuv_rgb_fast(&rgb, w as u16, h as u16, w as usize);
+            __test_helpers::convert_image_yuv_rgb_fast(&rgb, w as u16, h as u16, w as usize, false);
         assert_eq!(u_scalar, u_fast, "{w}x{h}: U mismatch");
         assert_eq!(v_scalar, v_fast, "{w}x{h}: V mismatch");
     }

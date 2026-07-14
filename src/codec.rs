@@ -1050,7 +1050,7 @@ fn convert_row_pair_to_yuv(
     u_plane: &mut Vec<u8>,
     v_plane: &mut Vec<u8>,
 ) {
-    use crate::decoder::yuv::{rgb_to_u_avg, rgb_to_v_avg, rgb_to_y};
+    use crate::decoder::yuv::{ChromaPrec, gamma_downsample_uv_4, rgb_to_y};
 
     // Y for both rows
     for x in 0..width {
@@ -1060,7 +1060,9 @@ fn convert_row_pair_to_yuv(
         y_plane.push(rgb_to_y(&row1[x * 3..x * 3 + 3]));
     }
 
-    // U/V: average of 2×2 blocks
+    // U/V: gamma-corrected average of 2×2 blocks (tuned default; the streaming
+    // path always uses the tuned chroma — one-shot parity goes through
+    // convert_image_yuv_fast with the cost-model-selected precision).
     let uv_w = width.div_ceil(2);
     for cx in 0..uv_w {
         let x0 = cx * 2;
@@ -1069,8 +1071,9 @@ fn convert_row_pair_to_yuv(
         let p01 = &row0[x1 * 3..x1 * 3 + 3];
         let p10 = &row1[x0 * 3..x0 * 3 + 3];
         let p11 = &row1[x1 * 3..x1 * 3 + 3];
-        u_plane.push(rgb_to_u_avg(p00, p01, p10, p11));
-        v_plane.push(rgb_to_v_avg(p00, p01, p10, p11));
+        let (u, v) = gamma_downsample_uv_4(p00, p01, p10, p11, ChromaPrec::TunedByteRound);
+        u_plane.push(u);
+        v_plane.push(v);
     }
 }
 
@@ -1084,7 +1087,7 @@ fn convert_single_row_to_yuv(
     u_plane: &mut Vec<u8>,
     v_plane: &mut Vec<u8>,
 ) {
-    use crate::decoder::yuv::{rgb_to_u_avg, rgb_to_v_avg, rgb_to_y};
+    use crate::decoder::yuv::{ChromaPrec, gamma_downsample_uv_4, rgb_to_y};
 
     for x in 0..width {
         y_plane.push(rgb_to_y(&row[x * 3..x * 3 + 3]));
@@ -1095,8 +1098,9 @@ fn convert_single_row_to_yuv(
         let x1 = (cx * 2 + 1).min(width - 1);
         let p0 = &row[x0 * 3..x0 * 3 + 3];
         let p1 = &row[x1 * 3..x1 * 3 + 3];
-        u_plane.push(rgb_to_u_avg(p0, p1, p0, p1));
-        v_plane.push(rgb_to_v_avg(p0, p1, p0, p1));
+        let (u, v) = gamma_downsample_uv_4(p0, p1, p0, p1, ChromaPrec::TunedByteRound);
+        u_plane.push(u);
+        v_plane.push(v);
     }
 }
 
