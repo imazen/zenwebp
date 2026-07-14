@@ -103,3 +103,25 @@ further roots remain (other odd-boundary quantization cases, UV/I4 ties).
 | m0 | all-DC (broken) | **0.9954×** @ equal PSNR |
 | m1 | all-DC (broken) | 1.0119× |
 | m2 | 0.9193× (wrong probas) | 1.0645× (probas now match; modes differ) |
+
+## Root cause #2: I4 mode array in wrong order (2026-07-14 part 5) — a real quality bug
+
+Traced the mb(9,0) sub-block-4 divergence to the end: the m0-m2 I4 pick
+(`pick_intra4_sse_body!`) had its `MODES` lookup array in libwebp's INTERNAL
+B-mode numbering `[…RD, VR, LD…]` (indices 4/5/6) while `preds.data` and
+`mode_costs` — indexed by the same loop variable — are in zenwebp's IntraMode
+declaration order `[…LD, RD, VR…]`. So `MODES[best_idx]` mapped a winning
+LD/RD/VR *prediction* to the WRONG `IntraMode`: the encoder scored one mode as
+best, then emitted and reconstructed a different one. On mb(9,0) sub-block 4 it
+scored VR (SSE 331, near-perfect) but emitted LD (SSE 107441), turning a
+zero-residual block into `[-24, 7, 8, …]`.
+
+Fixed by deriving the mode from the index via the single canonical
+`IntraMode::from_i8` (removing the duplicate array entirely). The m3-m6 path
+(`pick_best_intra4`) already used the correct order.
+
+**Impact — this is a quality bug, not just parity.** Default-path lossy corpus
+(12 files, equal PSNR): **m0 −2.14%, m1 −2.14%, m2 −7.88%** bytes; m3-m6
+unchanged. Parity (382297, StrictLibwebpParity): I4 per-sub-block agreement
+**58% → 92.6%**, all-16-match **2/136 → 86/136**, m0 byte ratio **1.011× →
+0.9996×** at matched PSNR. zensim matrix unchanged (14 ok).

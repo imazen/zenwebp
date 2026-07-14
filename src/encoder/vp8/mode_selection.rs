@@ -2457,18 +2457,6 @@ macro_rules! pick_intra4_sse_body {
      $top_ctx0:expr, $left_ctx0:expr, $i16_score:expr, $i4_penalty:expr, $bit_limit:expr,
      $sse4x4:expr, $ftransform:expr, $quant:expr, $idct_add:expr) => {{
         const LAMBDA_D_I4: u64 = 11;
-        const MODES: [IntraMode; 10] = [
-            IntraMode::DC,
-            IntraMode::TM,
-            IntraMode::VE,
-            IntraMode::HE,
-            IntraMode::RD,
-            IntraMode::VR,
-            IntraMode::LD,
-            IntraMode::VL,
-            IntraMode::HD,
-            IntraMode::HU,
-        ];
         let mut best_modes = [IntraMode::DC; 16];
         let mut best_mode_indices = [0usize; 16];
         let mut score_i4: u64 = $i4_penalty;
@@ -2515,7 +2503,14 @@ macro_rules! pick_intra4_sse_body {
                     }
                 }
 
-                best_modes[i] = MODES[best_idx];
+                // `best_idx` indexes `preds.data` / `mode_costs`, which are in
+                // IntraMode declaration order (DC, TM, VE, HE, LD, RD, VR, VL,
+                // HD, HU). Derive the IntraMode from that same index via
+                // `from_i8` — the single canonical mapping — so the emitted and
+                // reconstructed mode always matches the prediction that won.
+                let best_mode = IntraMode::from_i8(best_idx as i8)
+                    .expect("best_idx is in 0..10, a valid I4 mode index");
+                best_modes[i] = best_mode;
                 best_mode_indices[i] = best_idx;
                 score_i4 = score_i4.saturating_add(best_score);
                 i4_bit_sum += u64::from(mode_costs[best_idx]);
@@ -2526,7 +2521,7 @@ macro_rules! pick_intra4_sse_body {
 
                 // Reconstruct the winner so later sub-blocks predict from
                 // reconstructed (not source) neighbors, matching the decoder.
-                super::Vp8Encoder::apply_intra4_prediction($ywb, MODES[best_idx], x0, y0);
+                super::Vp8Encoder::apply_intra4_prediction($ywb, best_mode, x0, y0);
                 let coeffs = $ftransform(&src_block, &preds.data[best_idx]);
                 let mut quantized = [0i32; 16];
                 let mut dequant = [0i32; 16];
