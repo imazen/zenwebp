@@ -879,7 +879,12 @@ fn decode_literal_pixel(
         }
     } else {
         let red = tree[RED].read_symbol_fast(bit_reader)? as u8;
-        if bit_reader.nbits < 15 {
+        // BLUE + ALPHA can each be a 15-bit code (30 bits total). The loop-top
+        // fill() guarantees only 56 bits, and GREEN + RED may have consumed up
+        // to 30 of them, so a `< 15` guard here can leave ALPHA short (spurious
+        // BitStreamError mid-stream on deep-tree images; libwebp refills
+        // unconditionally after RED).
+        if bit_reader.nbits < 30 {
             bit_reader.fill();
         }
         let blue = tree[BLUE].read_symbol_fast(bit_reader)? as u8;
@@ -918,6 +923,13 @@ fn decode_backward_reference(
     let length_symbol = code - 256;
     let length = LosslessDecoder::get_copy_distance(bit_reader, length_symbol)?;
 
+    // DIST symbol (<= 15 bits) plus its extra bits (<= 18) can need 33 bits,
+    // but GREEN + length extra bits may have consumed up to 25 of the 56 the
+    // loop-top fill() guaranteed. Refill so the worst case fits (libwebp
+    // refills before GetCopyDistance).
+    if bit_reader.nbits < 33 {
+        bit_reader.fill();
+    }
     let dist_symbol = tree[DIST].read_symbol(bit_reader)?;
     let dist_code = LosslessDecoder::get_copy_distance(bit_reader, dist_symbol)?;
     let dist = LosslessDecoder::plane_code_to_distance(width, dist_code);
