@@ -1011,8 +1011,13 @@ impl<'a> super::Vp8Encoder<'a> {
     /// skip gate via `MacroblockInfo::intra16_d`).
     fn pick_intra16_sse(&self, mbx: usize, mby: usize) -> (LumaMode, u32, u64, bool) {
         const LAMBDA_D_I16: u64 = 106;
-        // Order matches FIXED_COSTS_I16.
-        const MODES: [LumaMode; 4] = [LumaMode::DC, LumaMode::V, LumaMode::H, LumaMode::TM];
+        // libwebp's RefineUsingDistortion iterates modes in VP8 index order
+        // (0 = DC, 1 = TM, 2 = V, 3 = H) with a strict `<`, so an exact SSE
+        // tie resolves to the lowest mode index. Match that order (not
+        // zenwebp's `[DC, V, H, TM]`) so tie-breaking agrees, and pair each
+        // mode with its cost from VP8FixedCostsI16 in the same order.
+        const MODES: [LumaMode; 4] = [LumaMode::DC, LumaMode::TM, LumaMode::V, LumaMode::H];
+        const COSTS: [u16; 4] = [663, 919, 872, 919]; // VP8FixedCostsI16, mode order
         let mbw = usize::from(self.macroblock_width);
         let src_width = mbw * 16;
 
@@ -1022,8 +1027,8 @@ impl<'a> super::Vp8Encoder<'a> {
         for (idx, &mode) in MODES.iter().enumerate() {
             let pred = self.get_predicted_luma_block_16x16(mode, mbx, mby);
             let sse = sse_16x16_luma(&self.frame.ybuf, src_width, mbx, mby, &pred);
-            let score = u64::from(sse) * u64::from(RD_DISTO_MULT)
-                + u64::from(FIXED_COSTS_I16[idx]) * LAMBDA_D_I16;
+            let score =
+                u64::from(sse) * u64::from(RD_DISTO_MULT) + u64::from(COSTS[idx]) * LAMBDA_D_I16;
             if score < best_score {
                 best_score = score;
                 best_mode = mode;
