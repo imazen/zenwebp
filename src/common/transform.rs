@@ -200,15 +200,16 @@ pub(crate) fn wht4x4(block: &mut [i32; 16]) {
         let c2 = a1 - b1;
         let d2 = d1 - c1;
 
-        let a3 = (a2 + if a2 > 0 { 1 } else { 0 }) / 2;
-        let b3 = (b2 + if b2 > 0 { 1 } else { 0 }) / 2;
-        let c3 = (c2 + if c2 > 0 { 1 } else { 0 }) / 2;
-        let d3 = (d2 + if d2 > 0 { 1 } else { 0 }) / 2;
-
-        block[i] = a3 as i32;
-        block[i + 4] = b3 as i32;
-        block[i + 8] = c3 as i32;
-        block[i + 12] = d3 as i32;
+        // libwebp's FTransformWHT finalizes with an arithmetic `>> 1` (floor
+        // toward -inf), NOT round-half-away or truncate-toward-zero. The two
+        // diverge on every odd intermediate (e.g. -1 >> 1 = -1, but -1 / 2 = 0
+        // truncating), which shifts Y2 DC levels across quantization
+        // boundaries and seeds a whole-frame mode-selection cascade. Match the
+        // shift exactly.
+        block[i] = (a2 >> 1) as i32;
+        block[i + 4] = (b2 >> 1) as i32;
+        block[i + 8] = (c2 >> 1) as i32;
+        block[i + 12] = (d2 >> 1) as i32;
     }
 }
 

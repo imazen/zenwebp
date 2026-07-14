@@ -60,6 +60,28 @@ needed.**
    (seg-map agreement only 38.1% at segs4 — the k-means cluster assignment
    diverges, which also perturbs luma agreement 94.8% → 87.9% at segs4).
 
+## Root cause found: forward WHT rounding (2026-07-14 part 4)
+
+Traced the first divergence on the photo to mb(4,0): identical mode (DC),
+identical left border, identical per-mode I16 SSEs — yet one Y2 coefficient
+differed (libwebp −1, zen 0). The forward Walsh-Hadamard transform
+(`wht4x4`) finalized with `(x + (x>0?1:0))/2` (round-half-up / truncate
+toward zero) where libwebp's `FTransformWHT` uses arithmetic `x >> 1` (floor
+toward −∞). They diverge on **every odd intermediate** (−1 >> 1 = −1, but
+−1 / 2 = 0). MBs 0-3 matched only because their Y2 coefficients were even;
+mb(4,0)'s odd coefficient crossed a quant boundary and seeded a whole-frame
+mode-selection cascade.
+
+Fixed to `>> 1`. Impact:
+- mb(4,0) Y2 now byte-identical to libwebp.
+- m0/m1 luma-mode agreement 95.2% → **96.5%**, sub-block-0 69.1% → 72.1%.
+- Corpus lossy size (12 files) ±0.02% (noise); zensim matrix unchanged
+  (14 ok). Spec-correct and quality-neutral, so applied unconditionally
+  (default path too), not gated on the parity flag.
+
+This is one cascade root; per-subblock I4 agreement is still ~58%, so
+further roots remain (other odd-boundary quantization cases, UV/I4 ties).
+
 ## What shipped from this investigation
 
 - `fix(vp8): run FastMBAnalyze hints at m0/m1 with a single segment` (331f386)
