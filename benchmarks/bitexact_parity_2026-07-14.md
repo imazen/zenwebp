@@ -205,3 +205,30 @@ correctness improvement that never changes an in-range value). The
 `ChromaPrec` is selected in `prepare_input_for_encoding` from
 `params.cost_model`. Result: tuned floors stay green (zensim matrix 14 ok),
 parity chroma is byte-identical to libwebp.
+
+## Exact Y + full RGB→YUV byte-identity; m0 modes 100% (part 8)
+
+zen's scalar `rgb_to_y` is already a bit-exact port of `VP8RGBToY`, but the
+production path used zenyuv's maddubs SIMD Y (±1: 572/262144 pixels on 382297).
+Under `StrictLibwebpParity` we now fill Y with `rgb_to_y`. With that, the
+**entire RGB→YUV conversion is byte-identical to libwebp** (`WebPPictureImportRGB`
++ `WebPPictureARGBToYUVA`): **Y 0/262144, U 0/65536, V 0/65536 differ**, and
+`zen-from-RGB` == `zen-from-libwebp-YUV` bitstreams.
+
+The exact Y also closed the residual I4 tie divergence — the ±1 Y differences
+had been flipping I4 SSE ties. Post-fix, **m0 segs1**: `y_same 100%`,
+`uv_same 100%`, `b4_same 136/136` (every luma mode, chroma mode, and all 16
+sub-blocks of all 136 I4 MBs match). m1/m2 luma likewise 100%; **partition 0
+(modes + proba updates) is byte-identical** (both 1619 bytes).
+
+**Remaining m0 gap — coefficient reconstruction cascade (~40 bytes, 0.05%).**
+The VP8 payload matches through partition 0 and the first 68 bytes of the token
+partition, then a *coefficient value* diverges. With byte-exact YUV, matching
+modes, bit-exact forward transform + quant, matching default probas
+(`COEFF_PROBS` == `VP8CoeffsProba0`, verified) and a verified-equivalent inverse
+WHT (`iwht4x4` vs `TransformWHT_C`, +3 rounder placement is algebraically
+identical), this must be a ±1 encoder-reconstruction difference in some MB that
+doesn't flip a mode but crosses a quant boundary in a downstream MB's residual.
+Harness: `scratchpad/webp-ll-compare/src/bin/chromacmp.rs` (libwebp YUV via FFI,
+per-plane diff, VP8-payload alignment). This is the last m0 parity gap; m1–m6
+UV (88.8%), m3–m6 modes (~74%), and segs>1 (k-means) remain beyond it.
