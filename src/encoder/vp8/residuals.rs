@@ -482,20 +482,38 @@ impl<'a> super::Vp8Encoder<'a> {
                 [err0, err1, err2, err3]
             };
 
-        // Process U channel
+        // Process U channel (intra-MB DC correction, reading neighbor errors)
         let u_errs = process_channel(u_blocks, self.top_derr[mbx][0], self.left_derr[0]);
         // Process V channel
         let v_errs = process_channel(v_blocks, self.top_derr[mbx][1], self.left_derr[1]);
 
-        // Store errors for next macroblock
-        for (ch, errs) in [(0usize, u_errs), (1, v_errs)] {
-            let [_err0, err1, err2, err3] = errs;
-            // left[0] = err1, left[1] = 3/4 of err3
-            self.left_derr[ch][0] = err1;
-            self.left_derr[ch][1] = ((3 * err3 as i32) >> 2) as i8;
-            // top[0] = err2, top[1] = 1/4 of err3
-            self.top_derr[mbx][ch][0] = err2;
-            self.top_derr[mbx][ch][1] = (err3 as i32 - self.left_derr[ch][1] as i32) as i8;
+        // Store errors for the next macroblock — inter-MB DC diffusion.
+        //
+        // libwebp calls StoreDiffusionErrors exclusively inside PickBestUV,
+        // which runs only when rd_opt_level > RD_OPT_NONE (method >= 3). At
+        // method 0-2 (RD_OPT_NONE / RefineUsingDistortion) it still runs the
+        // intra-MB CorrectDCValues above (with zero neighbor errors) but never
+        // stores, so top_derr/left_derr stay 0 for the whole frame. (Root cause
+        // traced against an instrumented libwebp — the store fires 0x at m0-2,
+        // 2x at m3-6; `method >= 3` maps exactly to `rd_opt_level > RD_OPT_NONE`.)
+        //
+        // zenwebp's tuned default stores at ALL methods: the extra inter-MB
+        // dithering measurably reduces banding on smooth low-q content
+        // (gradient/noise zensim +~1.6 at q10). So we only match libwebp's
+        // m0-2 no-store behavior under StrictLibwebpParity; the tuned default
+        // keeps propagating. m3-6 stores in every mode.
+        let store = self.method >= 3
+            || self.cost_model != crate::encoder::api::CostModel::StrictLibwebpParity;
+        if store {
+            for (ch, errs) in [(0usize, u_errs), (1, v_errs)] {
+                let [_err0, err1, err2, err3] = errs;
+                // left[0] = err1, left[1] = 3/4 of err3
+                self.left_derr[ch][0] = err1;
+                self.left_derr[ch][1] = ((3 * err3 as i32) >> 2) as i8;
+                // top[0] = err2, top[1] = 1/4 of err3
+                self.top_derr[mbx][ch][0] = err2;
+                self.top_derr[mbx][ch][1] = (err3 as i32 - self.left_derr[ch][1] as i32) as i8;
+            }
         }
     }
 
