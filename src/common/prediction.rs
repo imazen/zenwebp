@@ -1853,6 +1853,65 @@ mod tests {
                 }
             }
         }
+
+        /// The scoring path (`I4Predictions::compute`) and the reconstruction
+        /// path (`predict_b*pred`, via `apply_intra4_prediction`) are two
+        /// separate implementations. If they disagree, the residual is coded
+        /// against one prediction but added to the other during
+        /// reconstruction, corrupting the sub-block-to-sub-block chain. Pin
+        /// that they produce identical 4x4 blocks for every mode.
+        #[test]
+        fn i4_scoring_and_reconstruction_predictions_agree() {
+            fn extract(ws: &[u8; LUMA_BLOCK_SIZE], x0: usize, y0: usize) -> [u8; 16] {
+                let mut o = [0u8; 16];
+                for r in 0..4 {
+                    for c in 0..4 {
+                        o[r * 4 + c] = ws[(y0 + r) * LUMA_STRIDE + x0 + c];
+                    }
+                }
+                o
+            }
+            const NAMES: [&str; 10] = ["DC", "TM", "VE", "HE", "LD", "RD", "VR", "VL", "HD", "HU"];
+            let mut state = 0xDEAD_BEEF_CAFE_1234u64;
+            let mut rng = || {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state >> 40) as u8
+            };
+            for _ in 0..2000 {
+                let mut arr = [0u8; 13];
+                for v in arr.iter_mut() {
+                    *v = rng();
+                }
+                let ctx = Ctx(arr);
+                let base = zen_from_ctx(&ctx);
+                let scored = I4Predictions::compute(&base, 1, 1, LUMA_STRIDE);
+                // Index order matches I4Predictions::data / IntraMode:
+                // DC, TM, VE, HE, LD, RD, VR, VL, HD, HU.
+                for m in 0..10 {
+                    let mut ws = base;
+                    match m {
+                        0 => predict_bdcpred(&mut ws, 1, 1, LUMA_STRIDE),
+                        1 => predict_tmpred(&mut ws, 4, 1, 1, LUMA_STRIDE),
+                        2 => predict_bvepred(&mut ws, 1, 1, LUMA_STRIDE),
+                        3 => predict_bhepred(&mut ws, 1, 1, LUMA_STRIDE),
+                        4 => predict_bldpred(&mut ws, 1, 1, LUMA_STRIDE),
+                        5 => predict_brdpred(&mut ws, 1, 1, LUMA_STRIDE),
+                        6 => predict_bvrpred(&mut ws, 1, 1, LUMA_STRIDE),
+                        7 => predict_bvlpred(&mut ws, 1, 1, LUMA_STRIDE),
+                        8 => predict_bhdpred(&mut ws, 1, 1, LUMA_STRIDE),
+                        _ => predict_bhupred(&mut ws, 1, 1, LUMA_STRIDE),
+                    }
+                    let applied = extract(&ws, 1, 1);
+                    assert_eq!(
+                        scored.data[m], applied,
+                        "mode {} ({}) scoring vs reconstruction differ\n ctx={:?}\n scored={:?}\n applied={:?}",
+                        m, NAMES[m], ctx.0, scored.data[m], applied
+                    );
+                }
+            }
+        }
     }
 
     #[test]
