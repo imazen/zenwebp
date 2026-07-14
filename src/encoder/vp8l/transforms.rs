@@ -4,10 +4,13 @@
 
 #![allow(clippy::too_many_arguments)]
 
+use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 
 use archmage::prelude::*;
+
+use super::encode::{MAX_TRANSFORM_BITS, optimize_sampling};
 
 #[cfg(target_arch = "x86")]
 use archmage::intrinsics::x86 as simd_mem;
@@ -366,13 +369,23 @@ fn residual(pixel: u32, pred: u32) -> u32 {
 }
 
 /// Apply predictor transform.
-/// Returns the predictor mode data (subsampled image of modes).
+/// Returns the predictor mode data (subsampled image of modes) and the tile
+/// bits it is sampled at.
 ///
 /// Border handling matches the VP8L decoder:
 /// - (0,0): Black predictor (0xff000000)
 /// - Row 0, x>0: Left predictor (fixed, regardless of mode)
 /// - Col 0, y>0: Top predictor (fixed, regardless of mode)
 /// - Interior (y>0, x>0): mode from predictor_data
+///
+/// Like libwebp's VP8LResidualImage, every sampling in `[min_bits, max_bits]`
+/// is tried (methods above 4 pass min_bits < max_bits) and the winner is the
+/// level with the lowest mode-usage entropy plus per-plane entropy of the
+/// accumulated best-mode residuals; the winning mode image is then coarsened
+/// via `optimize_sampling` when repetitive. libwebp shares the per-pixel
+/// residual work across levels through Z-order super-tile histogram
+/// aggregation; we rerun the per-tile selection per level instead — the
+/// per-tile scoring work, which dominates, is the same either way.
 ///
 /// When `max_quantization <= 1` (exact lossless), pixels are processed in
 /// reverse order so neighbors remain as original values.
@@ -382,48 +395,104 @@ fn residual(pixel: u32, pred: u32) -> u32 {
 /// is updated with the reconstructed value (predict + quantized_residual)
 /// so subsequent predictions use the reconstructed data. This matches
 /// libwebp's CopyImageWithPrediction / GetResidual flow.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_predictor_transform(
     pixels: &mut [u32],
     width: usize,
     height: usize,
-    size_bits: u8,
+    min_bits: u8,
+    max_bits: u8,
     max_quantization: u32,
     used_subtract_green: bool,
     low_effort: bool,
-) -> Vec<u32> {
-    let block_size = 1usize << size_bits;
-    let blocks_x = subsample_size(width as u32, size_bits) as usize;
-    let blocks_y = subsample_size(height as u32, size_bits) as usize;
-
-    // Choose best predictor for each block using entropy-based scoring.
-    // Accumulated histogram tracks global residual distribution across all tiles.
-    let mut predictor_data = vec![0u32; blocks_x * blocks_y];
-
+) -> (Vec<u32>, u8) {
     // Method 0: no per-tile search — every tile uses Select (libwebp's
-    // kPredLowEffort = 11 in VP8LResidualImage).
+    // kPredLowEffort = 11 in VP8LResidualImage), at the coarsest sampling.
     if low_effort {
+        let blocks_x = subsample_size(width as u32, max_bits) as usize;
+        let blocks_y = subsample_size(height as u32, max_bits) as usize;
+        let mut predictor_data = vec![0u32; blocks_x * blocks_y];
         predictor_data.fill(0xff000000 | ((PredictorMode::Select as u32) << 8));
         if max_quantization == 1 {
             // Exact-lossless fast pass: fixed predictor, no per-pixel tile
             // lookup or mode dispatch (the generic pass below is ~15x more
             // instructions; libwebp has PredictorSub11_SSE2 for this).
             apply_select_residuals(pixels, width, height);
-            return predictor_data;
+            return (predictor_data, max_bits);
         }
         // Near-lossless + m0: fall through to the generic (quantizing) pass.
-        return finish_predictor_transform(
+        let data = finish_predictor_transform(
             pixels,
             width,
             height,
-            size_bits,
+            max_bits,
             max_quantization,
             used_subtract_green,
             predictor_data,
             blocks_x,
         );
+        return (data, max_bits);
     }
 
-    let mut accumulated = [[0u32; 256]; 4];
+    let min_bits = min_bits.min(max_bits);
+    let mut best: Option<(Vec<u32>, u8, u64)> = None;
+    for bits in min_bits..=max_bits {
+        let (modes, accumulated, usage) = select_predictor_modes(pixels, width, height, bits);
+        if min_bits == max_bits {
+            best = Some((modes, bits, 0));
+            break;
+        }
+        let mut cost = shannon_entropy(&usage);
+        for plane in accumulated.iter() {
+            cost += shannon_entropy(plane);
+        }
+        if best.as_ref().is_none_or(|b| cost < b.2) {
+            best = Some((modes, bits, cost));
+        }
+    }
+    let (mut predictor_data, bits, _) = best.expect("bits range is non-empty");
+
+    // Coarsen the mode image when it is repetitive (VP8LOptimizeSampling).
+    let final_bits = optimize_sampling(&mut predictor_data, width, height, bits, MAX_TRANSFORM_BITS);
+    let blocks_x = subsample_size(width as u32, final_bits) as usize;
+    let blocks_y = subsample_size(height as u32, final_bits) as usize;
+    predictor_data.truncate(blocks_x * blocks_y);
+
+    let data = finish_predictor_transform(
+        pixels,
+        width,
+        height,
+        final_bits,
+        max_quantization,
+        used_subtract_green,
+        predictor_data,
+        blocks_x,
+    );
+    (data, final_bits)
+}
+
+/// One full greedy per-tile predictor-mode selection pass at a given tile
+/// size. Returns the mode image, the accumulated best-mode residual
+/// histograms, and the per-mode usage counts — the inputs libwebp's
+/// GetBestPredictorsAndSubSampling uses to cost a sampling level.
+fn select_predictor_modes(
+    pixels: &[u32],
+    width: usize,
+    height: usize,
+    size_bits: u8,
+) -> (Vec<u32>, Box<[[u32; 256]; 4]>, [u32; 14]) {
+    let block_size = 1usize << size_bits;
+    let blocks_x = subsample_size(width as u32, size_bits) as usize;
+    let blocks_y = subsample_size(height as u32, size_bits) as usize;
+
+    let mut predictor_data = vec![0u32; blocks_x * blocks_y];
+    // Accumulated histogram tracks the global residual distribution of the
+    // winning modes across all tiles processed so far.
+    let mut accumulated: Box<[[u32; 256]; 4]> = Box::new([[0u32; 256]; 4]);
+    let mut usage = [0u32; 14];
+    let mut tile_histo: Box<[[u32; 256]; 4]> = Box::new([[0u32; 256]; 4]);
+    let mut scratch = Vec::with_capacity(block_size * block_size);
+    let mut best_scratch = Vec::with_capacity(block_size * block_size);
 
     for by in 0..blocks_y {
         for bx in 0..blocks_x {
@@ -450,22 +519,31 @@ pub fn apply_predictor_transform(
                 &mut accumulated,
                 left_mode,
                 above_mode,
+                &mut tile_histo,
+                &mut scratch,
+                &mut best_scratch,
             );
+            usage[best_mode as usize] += 1;
             // Store mode in green channel (as per spec), alpha=0xff (matching libwebp's ARGB_BLACK | mode<<8)
             predictor_data[by * blocks_x + bx] = 0xff000000 | ((best_mode as u32) << 8);
         }
     }
 
-    finish_predictor_transform(
-        pixels,
-        width,
-        height,
-        size_bits,
-        max_quantization,
-        used_subtract_green,
-        predictor_data,
-        blocks_x,
-    )
+    (predictor_data, accumulated, usage)
+}
+
+/// Shannon entropy in fixed point, matching libwebp's VP8LShannonEntropy:
+/// SLog2(sum) - Σ SLog2(x_i).
+fn shannon_entropy(xs: &[u32]) -> u64 {
+    let mut sum = 0u32;
+    let mut ret = 0u64;
+    for &x in xs {
+        if x != 0 {
+            sum += x;
+            ret += fast_slog2(x);
+        }
+    }
+    fast_slog2(sum).saturating_sub(ret)
 }
 
 /// Exact-lossless residual pass with every interior pixel predicted by
@@ -646,6 +724,13 @@ fn finish_predictor_transform(
 /// 3. Spatial coherence bonus (favoring same mode as left/above neighbors)
 ///
 /// Updates `accumulated` with the best mode's histogram for subsequent tiles.
+///
+/// `tile_histo` is a persistent scoring buffer: after scoring each mode, only
+/// the entries actually touched (tracked via `scratch`, the mode's residual
+/// list) are re-zeroed. Fine samplings (methods above 4 search down to 4x4
+/// tiles) would otherwise spend more time clearing 4x256 histograms than
+/// computing residuals.
+#[allow(clippy::too_many_arguments)]
 fn choose_best_predictor(
     pixels: &[u32],
     width: usize,
@@ -656,6 +741,9 @@ fn choose_best_predictor(
     accumulated: &mut [[u32; 256]; 4],
     left_mode: u8,
     above_mode: u8,
+    tile_histo: &mut [[u32; 256]; 4],
+    scratch: &mut Vec<u32>,
+    best_scratch: &mut Vec<u32>,
 ) -> PredictorMode {
     let x_start = bx * block_size;
     let y_start = by * block_size;
@@ -673,11 +761,9 @@ fn choose_best_predictor(
 
     let mut best_mode = PredictorMode::Black;
     let mut best_cost = i64::MAX;
-    let mut best_histo = [[0u32; 256]; 4];
 
     for mode in PredictorMode::all() {
-        let mut tile_histo = [[0u32; 256]; 4];
-
+        scratch.clear();
         for y in y_eff..y_end {
             for x in x_eff..x_end {
                 let pixel = pixels[y * width + x];
@@ -694,30 +780,40 @@ fn choose_best_predictor(
 
                 let pred = predict(mode, left, top, top_left, top_right);
                 let res = residual(pixel, pred);
-                update_histo(&mut tile_histo, res);
+                update_histo(tile_histo, res);
+                scratch.push(res);
             }
         }
 
         let cost = prediction_cost_spatial_histogram(
             accumulated,
-            &tile_histo,
+            tile_histo,
             mode as u8,
             left_mode,
             above_mode,
         );
 
+        // Re-zero exactly the touched entries before the next mode.
+        for &res in scratch.iter() {
+            tile_histo[0][(res >> 24) as usize] = 0;
+            tile_histo[1][((res >> 16) & 0xff) as usize] = 0;
+            tile_histo[2][((res >> 8) & 0xff) as usize] = 0;
+            tile_histo[3][(res & 0xff) as usize] = 0;
+        }
+
         if cost < best_cost {
             best_cost = cost;
             best_mode = mode;
-            best_histo = tile_histo;
+            core::mem::swap(scratch, best_scratch);
         }
     }
 
-    // Update accumulated histogram with best mode's histogram
-    for c in 0..4 {
-        for i in 0..256 {
-            accumulated[c][i] += best_histo[c][i];
-        }
+    // Update accumulated histogram with the best mode's residuals.
+    for &res in best_scratch.iter() {
+        accumulated[0][(res >> 24) as usize] += 1;
+        accumulated[1][((res >> 16) & 0xff) as usize] += 1;
+        accumulated[2][((res >> 8) & 0xff) as usize] += 1;
+        accumulated[3][(res & 0xff) as usize] += 1;
     }
 
     best_mode

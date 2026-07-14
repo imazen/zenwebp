@@ -816,38 +816,51 @@ fn write_predictor_transform(
     config: &Vp8lConfig,
     use_subtract_green: bool,
 ) {
-    let pred_bits = if config.predictor_bits == 0 {
+    let (min_bits, max_bits) = if config.predictor_bits == 0 {
         let histo_bits = get_histo_bits(width, height, config.quality.method);
         let transform_bits = get_transform_bits(config.quality.method, histo_bits);
-        clamp_bits(
+        let max_bits = clamp_bits(
             width,
             height,
             transform_bits,
             MIN_TRANSFORM_BITS,
             MAX_TRANSFORM_BITS,
             MAX_PREDICTOR_IMAGE_SIZE,
+        );
+        // libwebp's ApplyPredictFilter: methods above 4 also search finer
+        // samplings, down to max_bits - 2*(method-4).
+        let reduction = 2 * config.quality.method.saturating_sub(4);
+        let min_bits = clamp_bits(
+            width,
+            height,
+            max_bits.saturating_sub(reduction).max(MIN_TRANSFORM_BITS),
+            MIN_TRANSFORM_BITS,
+            MAX_TRANSFORM_BITS,
+            MAX_PREDICTOR_IMAGE_SIZE,
         )
+        .min(max_bits);
+        (min_bits, max_bits)
     } else {
-        config
+        let bits = config
             .predictor_bits
-            .clamp(MIN_TRANSFORM_BITS, MAX_TRANSFORM_BITS)
+            .clamp(MIN_TRANSFORM_BITS, MAX_TRANSFORM_BITS);
+        (bits, bits)
     };
     let max_quantization = if config.near_lossless < 100 {
         super::near_lossless::max_quantization_from_quality(config.near_lossless)
     } else {
         1
     };
-    let predictor_data = apply_predictor_transform(
+    let (predictor_data, actual_bits) = apply_predictor_transform(
         argb,
         width,
         height,
-        pred_bits,
+        min_bits,
+        max_bits,
         max_quantization,
         use_subtract_green,
         config.quality.method == 0,
     );
-
-    let actual_bits = pred_bits;
 
     // Signal predictor transform
     writer.write_bit(true); // transform present
@@ -890,10 +903,22 @@ fn write_cross_color_transform(
             .cross_color_bits
             .clamp(MIN_TRANSFORM_BITS, MAX_TRANSFORM_BITS)
     };
-    let cross_color_data =
+    let mut cross_color_data =
         apply_cross_color_transform(argb, width, height, cc_bits, config.quality.quality);
 
-    let actual_bits = cc_bits;
+    // Coarsen the multiplier image when it is repetitive, matching the
+    // VP8LOptimizeSampling call at the end of VP8LColorSpaceTransform.
+    let actual_bits = optimize_sampling(
+        &mut cross_color_data,
+        width,
+        height,
+        cc_bits,
+        MAX_TRANSFORM_BITS,
+    );
+    cross_color_data.truncate(
+        subsample_size(width as u32, actual_bits) as usize
+            * subsample_size(height as u32, actual_bits) as usize,
+    );
 
     // Signal cross-color transform
     writer.write_bit(true); // transform present
@@ -1169,7 +1194,7 @@ const MIN_HUFFMAN_BITS: u8 = 2;
 const MAX_HUFFMAN_BITS: u8 = 9; // 2 + (1 << 3) - 1
 /// Transform bits range (VP8L spec).
 const MIN_TRANSFORM_BITS: u8 = 2;
-const MAX_TRANSFORM_BITS: u8 = 9; // MIN_TRANSFORM_BITS + (1 << NUM_TRANSFORM_BITS) - 1
+pub(super) const MAX_TRANSFORM_BITS: u8 = 9; // MIN_TRANSFORM_BITS + (1 << NUM_TRANSFORM_BITS) - 1
 /// Maximum predictor/cross-color sub-image size.
 const MAX_PREDICTOR_IMAGE_SIZE: usize = 1 << 14; // 16384
 
@@ -1245,7 +1270,7 @@ fn get_transform_bits(method: u8, histo_bits: u8) -> u8 {
 ///
 /// For example, if every 2x2 group of tiles has the same predictor mode,
 /// we can double the block size (bits + 1) and halve the sub-image.
-fn optimize_sampling(
+pub(super) fn optimize_sampling(
     image: &mut [u32],
     full_width: usize,
     full_height: usize,
