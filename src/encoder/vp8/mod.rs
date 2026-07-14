@@ -2044,7 +2044,10 @@ impl<'a> Vp8Encoder<'a> {
             ubuf: u_buf,
             vbuf: v_buf,
 
-            version: 0,
+            // VP8 profile, deduced from config like libwebp (webp_enc.c):
+            // normal loop filter -> 0, filter disabled -> 2. (Profile 1 is
+            // the simple-filter variant, which we never emit.)
+            version: if self.filter_strength > 0 { 0 } else { 2 },
 
             for_display: true,
             pixel_type: 0,

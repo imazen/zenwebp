@@ -103,31 +103,31 @@ impl<'a> super::Vp8Encoder<'a> {
         self.encoder.write_flag(update_data);
 
         if update_data {
-            // segment_feature_mode: 0 = delta, 1 = absolute
-            // We use delta mode (relative to base quantizer)
-            self.encoder.write_flag(false); // delta mode
+            // segment_feature_mode: 0 = delta, 1 = absolute.
+            // libwebp always writes absolute values (syntax_enc.c: "we always
+            // use absolute values, not relative ones"); match it. The decoder
+            // result is identical either way.
+            self.encoder.write_flag(true); // absolute mode
 
-            // Write quantizer deltas for each segment (4 segments)
+            // Per-segment absolute quantizer index (signed 7-bit, flagged).
+            let base_q = i32::from(self.quantization_indices.yac_abs);
             for seg in &self.segments {
-                let has_delta = seg.quantizer_level != 0;
-                self.encoder.write_flag(has_delta);
-                if has_delta {
-                    // Quantizer delta is signed 7-bit value
-                    let abs_val = seg.quantizer_level.unsigned_abs();
-                    self.encoder.write_literal(7, abs_val);
-                    self.encoder.write_flag(seg.quantizer_level < 0);
+                let abs_q = (base_q + i32::from(seg.quantizer_level)).clamp(0, 127);
+                self.encoder.write_flag(abs_q != 0);
+                if abs_q != 0 {
+                    self.encoder.write_literal(7, abs_q.unsigned_abs() as u8);
+                    self.encoder.write_flag(abs_q < 0);
                 }
             }
 
-            // Write loop filter deltas for each segment
+            // Per-segment absolute loop filter strength (signed 6-bit, flagged).
+            let base_f = i32::from(self.frame.filter_level);
             for seg in &self.segments {
-                let has_delta = seg.loopfilter_level != 0;
-                self.encoder.write_flag(has_delta);
-                if has_delta {
-                    // Loop filter delta is signed 6-bit value
-                    self.encoder
-                        .write_literal(6, seg.loopfilter_level.unsigned_abs());
-                    self.encoder.write_flag(seg.loopfilter_level < 0);
+                let abs_f = (base_f + i32::from(seg.loopfilter_level)).clamp(0, 63);
+                self.encoder.write_flag(abs_f != 0);
+                if abs_f != 0 {
+                    self.encoder.write_literal(6, abs_f.unsigned_abs() as u8);
+                    self.encoder.write_flag(abs_f < 0);
                 }
             }
         }

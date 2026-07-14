@@ -96,6 +96,14 @@ here has landed; see "Changed (BREAKING)" below.)
   queued in `QUEUED BREAKING CHANGES` since the PR #103 taxonomy adoption.
 
 ### Changed
+- **VP8 profile bit matches libwebp** (#38): frame-tag version is now 2
+  when the loop filter is disabled (was always 0), matching
+  `webp_enc.c`'s profile deduction. Decode-identical.
+- **Segment quantizer/filter values written as absolute** (#38): the
+  segment header now uses `segment_feature_mode=1` with absolute
+  per-segment values like libwebp ("we always use absolute values"),
+  instead of deltas. Decode-identical; ~2 bytes/file larger, and the
+  header field values now compare equal against libwebp's.
 - **`zencodec` is now a required, always-on dependency — the codec-trait
   integration is no longer behind the optional `zencodec` cargo feature**
   (#69). `zencodec` is `#![no_std] + alloc`, so the `EncoderConfig` /
@@ -128,6 +136,20 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Added
 
+- **Lossless m5/m6 predictor transform-bits search** (#70, 37cae10):
+  VP8LResidualImage parity — methods above 4 search every predictor
+  sampling in `[max_bits − 2·(m−4), max_bits]` by mode-usage + residual
+  entropy, and the winning mode image is coarsened via OptimizeSampling
+  (now also applied to the cross-color multiplier image). Photos vs
+  libwebp: m5 1.0086× → 1.0011×, m6 1.0078× → 1.0003× (the m3–m6 ladder
+  was byte-flat before). `benchmarks/msweep_post70_2026-07-14.tsv`.
+- **Independent no-cache dual refs at m5+ q≥75** (#70, cd6714c):
+  libwebp `do_no_cache` parity — the cache-free token stream gets its own
+  LZ77-type selection, TraceBackwards, and full encode trial, replacing
+  the strip-based cache trial (which measurably never won).
+- **`dev/bitexact_diff.rs`** (#38): three-level bitstream diff harness vs
+  libwebp (frame-header fields, per-MB keyframe mode streams, agreement
+  percentages) with a self-contained RFC 6386 boolean decoder.
 - **True low-effort lossless m0 tier** matching libwebp's `low_effort`
   shortcuts: skip entropy analysis (palette else SubtractGreen+Predictor),
   fixed Select predictor for all tiles, no cross-color, single plain-LZ77
