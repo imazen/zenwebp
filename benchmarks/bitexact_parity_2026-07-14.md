@@ -232,3 +232,36 @@ doesn't flip a mode but crosses a quant boundary in a downstream MB's residual.
 Harness: `scratchpad/webp-ll-compare/src/bin/chromacmp.rs` (libwebp YUV via FFI,
 per-plane diff, VP8-payload alignment). This is the last m0 parity gap; m1–m6
 UV (88.8%), m3–m6 modes (~74%), and segs>1 (k-means) remain beyond it.
+
+## Chroma DC error diffusion + the residual m0 gap (part 9)
+
+**libwebp does chroma DC error diffusion (`CorrectDCValues`) for any quality
+≤ `ERROR_DIFFUSION_QUALITY` (98)** — i.e. at essentially all normal qualities,
+not just low-q dithering. `top_derr` is allocated whenever `quality ≤ 98 ||
+pass > 1` (`webp_enc.c`). So it is ON at q75. zen's
+`apply_chroma_error_diffusion` is a faithful port (verified: the C1=7/C2=8/
+DSHIFT=4/DSCALE=1 constants, the block 0→1→2→3 propagation using err0/err1/err2,
+`QuantizeSingle`'s `err = |V| − level·q` with the DSCALE shift, and
+`StoreDiffusionErrors`' `left=[err1, 3·err3>>2]`, `top=[err2, err3−left1]` all
+match). It must stay ON under `StrictLibwebpParity` (an earlier attempt to gate
+it OFF was wrong and made parity *worse* — zen-ED-off 76376 vs zen-ED-on 76470
+vs libwebp 76430; ED-on is closer, and libwebp does ED).
+
+**Remaining m0 chroma gap is NOT error diffusion.** Traced MB(1,0)'s
+bottom-right U sub-block: zen reconstructs it flat to 174, libwebp to 177. But
+ED on/off both leave zen at level −13 (174) — the FDCT DC (−307 pre-ED, −311
+post-ED) quantizes to −13 with uvDCq=24 either way. For libwebp's 177 it needs
+level −12, i.e. an FDCT-DC magnitude ~278–301 vs zen's ~307. With source
+byte-exact, uvDCq=24 shared (luma is byte-exact so the base quant matches), and
+the left border from the byte-identical MB(0,0) giving DC pred = 213 in both,
+every traced input matches yet the coded coefficient differs by one level. This
+is the same sub-±1-level chroma divergence that has resisted exhaustive
+inspection; resolving it requires an instrumented-libwebp dump of MB(1,0)'s
+chroma prediction + pre-quant DC to find where the ~10-magnitude FDCT-DC
+difference originates (candidate: a UV-mode/prediction edge case at the top row,
+mby=0, where V/TM are unavailable). Harness + per-MB dumps:
+`scratchpad/webp-ll-compare/src/bin/chromacmp.rs` (ZEN_CDUMP/ZEN_EDUMP env).
+
+**Net m0 state:** luma byte-identical, RGB→YUV byte-identical, all modes match,
+partition 0 byte-identical; a handful of chroma DC coefficients differ by one
+quant level (zen 76470 vs libwebp 76430 bytes, 99.95% identical).
