@@ -669,13 +669,46 @@ fn get_backward_references_inner(
     // Build hash chain
     let hash_chain = HashChain::new(argb, quality, width, method == 0);
 
-    // Method 0: matching libwebp's GetBackwardReferencesLowEffort — one plain
-    // LZ77 pass, no RLE trial, no cost comparison, no color cache, no
-    // TraceBackwards. Just LZ77 + 2D locality.
+    // Method 0: libwebp's GetBackwardReferencesLowEffort shape — one plain
+    // LZ77 pass, no RLE trial, no TraceBackwards — plus one cheap size lever
+    // libwebp m0 leaves on the floor: a FIXED-size color cache (no 0..=10
+    // search) accepted only when a single A/B histogram-cost check says it
+    // wins. On photographic content this recovers several percent of bytes
+    // for ~2% encode time; the guard keeps flat/synthetic content unaffected.
     if method == 0 {
         let mut refs = backward_references_lz77(argb, width, height, 0, &hash_chain);
+        let mut cache_bits = 0u8;
+        if cache_bits_max > 0 {
+            let bits = if palette_size > 0 {
+                // Palette-derived cap was computed by the caller.
+                cache_bits_max
+            } else {
+                // Size heuristic: smaller images can't fill a large cache,
+                // and its header cost dominates.
+                let px = width * height;
+                let by_size: u8 = if px < (1 << 14) {
+                    8
+                } else if px < (1 << 18) {
+                    9
+                } else {
+                    10
+                };
+                by_size.min(cache_bits_max)
+            };
+            let mut cached = refs.clone();
+            apply_cache_to_refs(argb, bits, &mut cached);
+            let cost_without =
+                estimate_histogram_bits(&Histogram::from_refs_with_plane_codes(&refs, 0, width));
+            let cost_with = estimate_histogram_bits(&Histogram::from_refs_with_plane_codes(
+                &cached, bits, width,
+            ));
+            if cost_with < cost_without {
+                refs = cached;
+                cache_bits = bits;
+            }
+        }
         apply_2d_locality(&mut refs, width);
-        return (refs, 0);
+        return (refs, cache_bits);
     }
 
     // Determine which LZ77 types to try (matching libwebp's n_lz77s logic).

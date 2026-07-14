@@ -400,10 +400,17 @@ pub fn apply_predictor_transform(
     let mut predictor_data = vec![0u32; blocks_x * blocks_y];
 
     // Method 0: no per-tile search — every tile uses Select (libwebp's
-    // kPredLowEffort = 11 in VP8LResidualImage). The residual pass below is
-    // unchanged; it reads the modes from predictor_data.
+    // kPredLowEffort = 11 in VP8LResidualImage).
     if low_effort {
         predictor_data.fill(0xff000000 | ((PredictorMode::Select as u32) << 8));
+        if max_quantization == 1 {
+            // Exact-lossless fast pass: fixed predictor, no per-pixel tile
+            // lookup or mode dispatch (the generic pass below is ~15x more
+            // instructions; libwebp has PredictorSub11_SSE2 for this).
+            apply_select_residuals(pixels, width, height);
+            return predictor_data;
+        }
+        // Near-lossless + m0: fall through to the generic (quantizing) pass.
         return finish_predictor_transform(
             pixels,
             width,
@@ -459,6 +466,46 @@ pub fn apply_predictor_transform(
         predictor_data,
         blocks_x,
     )
+}
+
+/// Exact-lossless residual pass with every interior pixel predicted by
+/// Select (mode 11): row 0 uses Left, column 0 uses Top, (0,0) uses opaque
+/// black — the spec's border rules, which the decoder applies regardless of
+/// the signaled tile mode. Select reads ORIGINAL neighbors only, so the pass
+/// streams forward with a one-row history buffer and no serial dependency.
+fn apply_select_residuals(pixels: &mut [u32], width: usize, height: usize) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    let mut prev_row = vec![0u32; width];
+    let mut cur_row = vec![0u32; width];
+
+    // Row 0: (0,0) = opaque black, the rest = Left predictor.
+    {
+        let row = &mut pixels[..width];
+        cur_row.copy_from_slice(row);
+        row[0] = residual(cur_row[0], 0xff000000);
+        for (dst, w) in row[1..].iter_mut().zip(cur_row.windows(2)) {
+            *dst = residual(w[1], w[0]);
+        }
+        core::mem::swap(&mut prev_row, &mut cur_row);
+    }
+
+    for y in 1..height {
+        let row = &mut pixels[y * width..(y + 1) * width];
+        cur_row.copy_from_slice(row);
+        // Column 0: Top predictor.
+        row[0] = residual(cur_row[0], prev_row[0]);
+        // Interior: Select(original left, original top, original top-left).
+        for (dst, (cw, pw)) in row[1..]
+            .iter_mut()
+            .zip(cur_row.windows(2).zip(prev_row.windows(2)))
+        {
+            let pred = select(cw[0], pw[1], pw[0]);
+            *dst = residual(cw[1], pred);
+        }
+        core::mem::swap(&mut prev_row, &mut cur_row);
+    }
 }
 
 /// Compute and store predictor residuals for the chosen per-tile modes.

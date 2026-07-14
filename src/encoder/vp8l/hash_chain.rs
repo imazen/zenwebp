@@ -55,7 +55,14 @@ impl HashChain {
         // Temporarily use offset_length as chain storage (reinterpreted as i32).
         // This is safe because both are u32/i32 and same size.
         let mut chain: Vec<i32> = vec![-1; size];
-        let mut hash_to_first: Vec<i32> = vec![-1; HASH_SIZE];
+        // Boxed fixed-size array: `hash_pix_pair` returns `key >> (32 - HASH_BITS)`,
+        // which LLVM can prove is < HASH_SIZE for an array (but not for a Vec,
+        // whose length is opaque) — eliminates a bounds check per pixel.
+        let mut hash_to_first: Box<[i32; HASH_SIZE]> = vec![-1i32; HASH_SIZE]
+            .into_boxed_slice()
+            .try_into()
+            .ok()
+            .unwrap();
 
         // Fill chain linking pixels with same hash
         let mut argb_comp = argb[0] == argb[1];
@@ -124,10 +131,11 @@ impl HashChain {
             let min_pos = base_position.saturating_sub(window_size);
             let length_max = max_len.min(256);
 
-            // Heuristics skipped at method 0, matching libwebp's
-            // VP8LHashChainFill `if (!low_effort)` gate.
-            // Heuristic: try row above as initial guess
-            if !low_effort && base_position >= width {
+            // Heuristic: try row above as initial guess. Kept ON at method 0
+            // (unlike libwebp) because the shallow m0 iteration cap can't
+            // reach distance==width candidates through the chain on smooth
+            // content — without this seed, gradients regress badly.
+            if base_position >= width {
                 let curr_len = find_match_length(
                     argb,
                     base_position - width,
@@ -160,42 +168,33 @@ impl HashChain {
 
             // Follow hash chain
             let mut iters = iter_max;
-            let best_argb_init = if best_length < argb.len() - argb_start {
-                argb[argb_start + best_length]
-            } else {
-                0
-            };
-            let mut best_argb = best_argb_init;
+            let mut best_argb = argb.get(argb_start + best_length).copied().unwrap_or(0);
 
             while chain_pos >= min_pos as i32 && iters > 0 {
                 iters -= 1;
                 let p = chain_pos as usize;
+                // Hoist the next-link load: same traversal order, and the
+                // reject paths below no longer each need their own copy.
+                chain_pos = chain[p];
 
-                // Quick rejection: check if end matches
-                if p + best_length < size {
-                    if argb[p + best_length] != best_argb {
-                        chain_pos = chain[p];
-                        continue;
-                    }
-                } else {
-                    chain_pos = chain[p];
-                    continue;
+                // Quick rejection: a candidate can only beat best_length if
+                // its pixel at that offset matches. `get` folds the range
+                // check and the load's bounds check into one.
+                match argb.get(p + best_length) {
+                    Some(&v) if v == best_argb => {}
+                    _ => continue,
                 }
 
                 let curr_len = vector_mismatch(argb, p, argb_start, max_len);
                 if curr_len > best_length {
                     best_length = curr_len;
                     best_distance = base_position - p;
-                    if argb_start + best_length < size {
-                        best_argb = argb[argb_start + best_length];
-                    }
+                    best_argb = argb.get(argb_start + best_length).copied().unwrap_or(0);
 
                     if best_length >= length_max {
                         break;
                     }
                 }
-
-                chain_pos = chain[p];
             }
 
             // Left-extension optimization (from libwebp):
@@ -333,15 +332,33 @@ fn find_match_length(
 }
 
 /// Find first mismatch position between two subsequences.
+/// Rides 4-pixel (16-byte) fixed-array compares while both sides match —
+/// LLVM folds the `try_into` into a single vector compare (same shape as
+/// libwebp's VectorMismatch_SSE2) — then pins the exact position with a
+/// short scalar tail. The naive per-u32 loop paid two bounds checks per
+/// pixel; iterator/chunked variants paid slicing + adapter overhead instead.
 #[inline]
 fn vector_mismatch(argb: &[u32], pos1: usize, pos2: usize, max_len: usize) -> usize {
-    let remaining1 = argb.len() - pos1;
-    let remaining2 = argb.len() - pos2;
-    let len = remaining1.min(remaining2).min(max_len);
-    for i in 0..len {
-        if argb[pos1 + i] != argb[pos2 + i] {
+    let a = &argb[pos1..];
+    let b = &argb[pos2..];
+    let len = a.len().min(b.len()).min(max_len);
+    let a = &a[..len];
+    let b = &b[..len];
+
+    let mut i = 0usize;
+    while i + 4 <= len {
+        let x: &[u32; 4] = a[i..i + 4].try_into().unwrap();
+        let y: &[u32; 4] = b[i..i + 4].try_into().unwrap();
+        if x != y {
+            break;
+        }
+        i += 4;
+    }
+    while i < len {
+        if a[i] != b[i] {
             return i;
         }
+        i += 1;
     }
     len
 }

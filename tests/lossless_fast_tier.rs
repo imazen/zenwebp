@@ -113,7 +113,7 @@ fn quadrants(w: u32, h: u32) -> Vec<u8> {
                     [v, v, v, 255]
                 }
                 (false, false) => {
-                    let v = if (x / 4 + y / 4) % 2 == 0 { 230 } else { 20 }; // checker
+                    let v = if (x / 4 + y / 4) % 2 == 0 { 180 } else { 20 }; // checker
                     [v, 40, 200 - v, 255]
                 }
             };

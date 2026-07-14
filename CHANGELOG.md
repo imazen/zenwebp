@@ -130,13 +130,23 @@ here has landed; see "Changed (BREAKING)" below.)
 
 - **True low-effort lossless m0 tier** matching libwebp's `low_effort`
   shortcuts: skip entropy analysis (palette else SubtractGreen+Predictor),
-  fixed Select predictor for all tiles, no cross-color, no color cache,
-  single plain-LZ77 pass, 4-bin unconditional histogram merging without
-  stochastic/greedy. Photo 512²: 71 ms → 29 ms (−59%), instructions −71%;
-  now tracks libwebp m0 within ±2% bytes and 1.1–1.7× time. m1+ output
+  fixed Select predictor for all tiles, no cross-color, single plain-LZ77
+  pass, 4-bin unconditional histogram merging without stochastic/greedy.
+  Photo 512²: 71 ms → 29 ms (−59%), instructions −71%. m1+ output
   byte-identical. The old m0 operating point was a near-duplicate of m1
   (same pipeline, coarser clustering tiles) and remains reachable via m1.
   Measurements: `benchmarks/lossless_fast_tier_2026-07-14.{md,tsv}`.
+- **m0 speed/size round 2**: dedicated fixed-Select residual pass (31M → ~3M
+  instructions on photo 512²; forward-streaming, no per-pixel mode dispatch);
+  hash-chain hot loop reworked to instruction parity with libwebp's
+  VP8LHashChainFill (4-pixel-compare `vector_mismatch`, fold-checked quick
+  reject, boxed `[i32; HASH_SIZE]` head table); row-above match heuristic
+  kept ON at m0 (dice −7% bytes); fixed-bits color cache at m0 with a single
+  A/B histogram-cost accept check instead of the 0..=10 search (photo −6.4%,
+  dice −11%, frymire −9% bytes; declined automatically where it loses).
+  Net: m0 is now smaller than libwebp m0 on the whole benchmark grid
+  (−5% to −19%) at ~1.0–1.2× its wall time. An m0 chain-iteration cap was
+  measured and rejected (+8.5% to +75% on smooth gradients).
 - **Wire the `zencodec-testkit` `check_decode_truncation_series` EOF/truncation
   conformance check** into `tests/decode_truncation_series.rs` — truncates a
   known-good WebP at a deterministic prefix series and asserts every dyn-erased

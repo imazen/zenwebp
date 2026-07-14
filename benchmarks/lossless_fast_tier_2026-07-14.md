@@ -59,3 +59,40 @@ whole-image corruption. Latent for any method; easiest to hit with m0's
 unconditional bin merging. Now compacted + dense-renumbered; guarded by
 `tests/lossless_fast_tier.rs` (m0 roundtrips through both decoders on photo,
 palette, alpha, multi-region, and tiny images).
+
+## Round 2 (same day): hash-chain parity + fixed-bits color cache
+
+Follow-up commits close the mechanical gap and buy back compression:
+
+1. **Dedicated fixed-Select residual pass** (m0, exact-lossless only): forward
+   streaming with a one-row history buffer, no per-pixel tile lookup or mode
+   dispatch. 31.1M → ~3M instructions per photo-512² encode (libwebp's
+   PredictorSub11_SSE2 equivalent is 2.1M).
+2. **Hash-chain instruction parity with libwebp confirmed** (photo: ours
+   ~182M vs libwebp ~150M per encode; dice: 250M vs 256M — at parity).
+   `vector_mismatch` rides 4-pixel fixed-array compares; the walk hoists the
+   next-link load and folds the quick-reject range+load checks via `get`;
+   `hash_to_first` is a boxed `[i32; HASH_SIZE]` so the shift-derived index
+   is provably in range.
+3. **Row-above heuristic kept ON at m0** (deviation from libwebp, which
+   skips it): seeds distance==width matches for ~1 compare/pixel and is a
+   pure size win — dice −7%, frymire −2 to −3%.
+4. **Fixed-bits color cache at m0** (deviation from libwebp, which never
+   caches at m0): size-heuristic bits (8/9/10 by pixel count; palette-derived
+   cap for palette images), accepted only when one A/B histogram-cost check
+   says it wins — no 0..=10 search. Photo −6.4%, dice −11%, frymire −9%,
+   gradients_png −14%; synthetics correctly declined (bytes unchanged).
+
+Final m0 (this file's TSV): smaller than libwebp m0 on ALL 7 images
+(photo −6.1%, dice −19.0%, frymire −12.4%, screenshot −5.2%) and smaller
+than crabmagick eff0 on 6 of 7. Instructions per encode: photo 279M
+(vs libwebp 210M, 1.33×; wall tracked ~1.0–1.2× in same-run comparisons),
+dice 170M (vs 120M, 1.41×, −19% bytes). Session start → now:
+photo m0 went 1,010M/193.8KB (near-dupe of m1) → 279M/215.7KB (true fast
+tier), with m1 (77ms/178.8KB) holding the high-compression slot.
+
+**Measured and rejected:** capping chain iterations at m0 (libwebp-style
+iters stay quality-derived = 51 at q75). iters=16: photo 2.3× faster but
+smooth-gradient content +75% bytes; iters=32: gradient still +8.5%. A
+content-class size regression fails the tier's "still saves space" bar;
+revisit only with a cheap content gate.
