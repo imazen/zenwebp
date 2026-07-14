@@ -167,6 +167,21 @@ recovery lever is I4 selection cost, not reverting parity.
 
 CID22 50-image subset: **0.996x** (0.4% smaller). Screenshots: **0.995x** (0.5% smaller).
 
+**m5/m6 ladder (issue #70, fixed 2026-07-14):** the ladder above m4 was
+byte-flat (m3=m4=m5=m6 identical) because two libwebp mechanisms were
+unported: the predictor transform-bits search (VP8LResidualImage tries all
+samplings in [max_bits−2·(m−4), max_bits] at m5/m6) and the m5 q≥75
+`do_no_cache` independent dual-refs (cache-free stream gets its own
+LZ77-type selection + TraceBackwards, both variants fully encoded). Both
+ported. 12-file msweep (`benchmarks/msweep_post70_2026-07-14.tsv`), photos:
+m5 1.0086→**1.0011**, m6 1.0078→**1.0003**; wall now matches libwebp's
+shape (m5 1710ms vs lib 1338ms — the previous 3× "speed win" at m5/m6 was
+skipped work). Screens m5/m6 residual 1.0022: fine-tile (16px) per-tile
+predictor selection is measurably weaker than libwebp's on a subset
+(weather 1.0082, archives 1.0060 — zen m4→m5 regresses where lib gains 1%);
+scoring formulas verified as exact ports (bias, combined entropy, border
+inclusion) — divergence is greedy-path/downstream, not formula-level.
+
 **Backward references parity (synthetic, 2026-03-25):**
 
 | Size | m1 | m2 | m4 | m5 |

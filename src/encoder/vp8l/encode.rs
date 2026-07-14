@@ -4,8 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::backward_refs::{
-    apply_cache_to_refs, get_backward_references, get_backward_references_with_palette,
-    strip_cache_from_refs,
+    get_backward_references, get_backward_references_with_palette,
 };
 use super::bitwriter::BitWriter;
 use super::color_cache::ColorCache;
@@ -730,7 +729,14 @@ fn encode_argb_single_config(
         .unwrap_or(0);
     stop.check().map_err(|e| at!(EncodeError::from(e)))?;
 
-    let (refs, cache_bits) = if enc_palette_size > 0 {
+    // libwebp's do_no_cache mode (EncoderAnalyze: method 5+, quality 75+):
+    // carry an independently optimized cache-free token stream alongside the
+    // cache-optimized one, and pick between them by full encode below.
+    let auto_cache = config.cache_bits.is_none();
+    let do_no_cache =
+        auto_cache && config.quality.method >= 5 && config.quality.quality >= 75;
+
+    let result = if enc_palette_size > 0 {
         get_backward_references_with_palette(
             enc_argb,
             enc_width,
@@ -739,6 +745,7 @@ fn encode_argb_single_config(
             config.quality.method,
             cache_bits_max,
             enc_palette_size,
+            do_no_cache,
         )
     } else {
         get_backward_references(
@@ -748,30 +755,18 @@ fn encode_argb_single_config(
             config.quality.quality,
             config.quality.method,
             cache_bits_max,
+            do_no_cache,
         )
     };
 
-    // Encode image data from backward references.
-    // Match libwebp: only try both cache_bits values at method 5+ quality 75+
-    // (or method 6 quality 100). At lower methods, the entropy-selected
-    // cache_bits is used directly. This halves histogram clustering work.
     let is_palette = palette_transform.is_some();
-    let auto_cache = config.cache_bits.is_none();
-    let do_cache_trial = auto_cache
-        && cache_bits > 0
-        && ((config.quality.method >= 5 && config.quality.quality >= 75)
-            || (config.quality.method >= 6 && config.quality.quality >= 100));
 
-    if do_cache_trial {
-        // Strip cache from refs to get the base (cache-free) token sequence.
-        let mut base_refs = refs;
-        strip_cache_from_refs(enc_argb, &mut base_refs);
-
-        // Trial 1: no color cache (cache_bits = 0)
+    if let Some(refs_no_cache) = result.refs_no_cache {
+        // Trial 1: the independently optimized cache-free stream.
         stop.check().map_err(|e| at!(EncodeError::from(e)))?;
         let output_no_cache = encode_image_data(
             writer.clone(),
-            &base_refs,
+            &refs_no_cache,
             0,
             enc_argb,
             enc_width,
@@ -780,14 +775,12 @@ fn encode_argb_single_config(
             is_palette,
         );
 
-        // Trial 2: entropy-selected cache_bits
+        // Trial 2: the cache-optimized stream.
         stop.check().map_err(|e| at!(EncodeError::from(e)))?;
-        let mut cached_refs = base_refs;
-        apply_cache_to_refs(enc_argb, cache_bits, &mut cached_refs);
         let output_with_cache = encode_image_data(
             writer,
-            &cached_refs,
-            cache_bits,
+            &result.refs,
+            result.cache_bits,
             enc_argb,
             enc_width,
             enc_height,
@@ -795,6 +788,15 @@ fn encode_argb_single_config(
             is_palette,
         );
 
+        #[cfg(feature = "std")]
+        if std::env::var_os("ZENWEBP_CACHE_TRIAL_TRACE").is_some() {
+            std::eprintln!(
+                "cache_trial: no_cache={} with_cache={} (bits={})",
+                output_no_cache.len(),
+                output_with_cache.len(),
+                result.cache_bits
+            );
+        }
         if output_no_cache.len() <= output_with_cache.len() {
             Ok(output_no_cache)
         } else {
@@ -802,7 +804,14 @@ fn encode_argb_single_config(
         }
     } else {
         Ok(encode_image_data(
-            writer, &refs, cache_bits, enc_argb, enc_width, enc_height, config, is_palette,
+            writer,
+            &result.refs,
+            result.cache_bits,
+            enc_argb,
+            enc_width,
+            enc_height,
+            config,
+            is_palette,
         ))
     }
 }

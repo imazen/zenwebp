@@ -549,27 +549,6 @@ fn calculate_best_cache_size(
     best_bits
 }
 
-/// Strip color cache references, converting CacheIdx back to Literal.
-/// Uses the original argb array to recover pixel values.
-pub fn strip_cache_from_refs(argb: &[u32], refs: &mut BackwardRefs) {
-    let mut pixel_index = 0usize;
-    for token in refs.tokens.iter_mut() {
-        match token {
-            PixOrCopy::Literal(_) => {
-                pixel_index += 1;
-            }
-            PixOrCopy::CacheIdx(_) => {
-                // Convert back to literal using original pixel data
-                *token = PixOrCopy::literal(argb[pixel_index]);
-                pixel_index += 1;
-            }
-            PixOrCopy::Copy { len, .. } => {
-                pixel_index += *len as usize;
-            }
-        }
-    }
-}
-
 /// Apply color cache to existing backward references.
 ///
 /// Converts literal pixels that hit the cache into cache index references.
@@ -603,6 +582,20 @@ pub(super) fn apply_cache_to_refs(argb: &[u32], cache_bits: u8, refs: &mut Backw
     }
 }
 
+/// Backward-reference selection result.
+///
+/// `refs`/`cache_bits` is the cache-optimized stream. Under `do_no_cache`
+/// (libwebp's method 5, quality >= 75 mode), `refs_no_cache` additionally
+/// carries an INDEPENDENTLY optimized cache-free stream — its own LZ77-type
+/// selection and TraceBackwards pass under the cache-free cost model — for
+/// the encoder to trial against by full encode. `None` when the two streams
+/// would be identical (or `do_no_cache` was off).
+pub struct BackwardRefsResult {
+    pub refs: BackwardRefs,
+    pub cache_bits: u8,
+    pub refs_no_cache: Option<BackwardRefs>,
+}
+
 /// Get the best backward references for the image.
 ///
 /// Tries multiple LZ77 strategies and picks the best one.
@@ -621,11 +614,22 @@ pub fn get_backward_references(
     quality: u8,
     method: u8,
     cache_bits_max: u8,
-) -> (BackwardRefs, u8) {
-    get_backward_references_inner(argb, width, height, quality, method, cache_bits_max, 0)
+    do_no_cache: bool,
+) -> BackwardRefsResult {
+    get_backward_references_inner(
+        argb,
+        width,
+        height,
+        quality,
+        method,
+        cache_bits_max,
+        0,
+        do_no_cache,
+    )
 }
 
 /// Get backward references with optional LZ77 Box for palette images.
+#[allow(clippy::too_many_arguments)]
 pub fn get_backward_references_with_palette(
     argb: &[u32],
     width: usize,
@@ -634,7 +638,8 @@ pub fn get_backward_references_with_palette(
     method: u8,
     cache_bits_max: u8,
     palette_size: usize,
-) -> (BackwardRefs, u8) {
+    do_no_cache: bool,
+) -> BackwardRefsResult {
     get_backward_references_inner(
         argb,
         width,
@@ -643,6 +648,7 @@ pub fn get_backward_references_with_palette(
         method,
         cache_bits_max,
         palette_size,
+        do_no_cache,
     )
 }
 
@@ -651,6 +657,7 @@ const LZ77_STANDARD: u32 = 1;
 const LZ77_RLE: u32 = 2;
 const LZ77_BOX: u32 = 4;
 
+#[allow(clippy::too_many_arguments)]
 fn get_backward_references_inner(
     argb: &[u32],
     width: usize,
@@ -659,11 +666,16 @@ fn get_backward_references_inner(
     method: u8,
     cache_bits_max: u8,
     palette_size: usize,
-) -> (BackwardRefs, u8) {
+    do_no_cache: bool,
+) -> BackwardRefsResult {
     let size = width * height;
 
     if size == 0 {
-        return (BackwardRefs::new(), 0);
+        return BackwardRefsResult {
+            refs: BackwardRefs::new(),
+            cache_bits: 0,
+            refs_no_cache: None,
+        };
     }
 
     // Build hash chain
@@ -708,7 +720,11 @@ fn get_backward_references_inner(
             }
         }
         apply_2d_locality(&mut refs, width);
-        return (refs, cache_bits);
+        return BackwardRefsResult {
+            refs,
+            cache_bits,
+            refs_no_cache: None,
+        };
     }
 
     // Determine which LZ77 types to try (matching libwebp's n_lz77s logic).
@@ -719,15 +735,69 @@ fn get_backward_references_inner(
 
     // Phase 1: Find best LZ77 type with cache optimization.
     // Matches libwebp's GetBackwardReferences: for each LZ77 type, compute
-    // refs with cache_bits=0, then evaluate with optimal cache.
+    // refs with cache_bits=0, then evaluate with optimal cache — and, under
+    // do_no_cache, ALSO track the best cache-free stream independently
+    // (its own LZ77-type choice under the cache-free cost model).
     let mut histo = Histogram::new(MAX_COLOR_CACHE_BITS);
     let mut best_refs = BackwardRefs::new();
     let mut cache_bits_best = 0u8;
     let mut best_cost = u64::MAX;
     let mut best_lz77_type = 0u32;
+    let mut best_nc_refs = BackwardRefs::new();
+    let mut best_nc_cost = u64::MAX;
+    let mut best_nc_lz77_type = 0u32;
 
     // Box hash chain (lazily initialized)
     let mut hash_chain_box: Option<HashChain> = None;
+
+    let mut evaluate = |refs_tmp: BackwardRefs,
+                        lz77_type: u32,
+                        best_refs: &mut BackwardRefs,
+                        cache_bits_best: &mut u8,
+                        best_cost: &mut u64,
+                        best_lz77_type: &mut u32,
+                        best_nc_refs: &mut BackwardRefs,
+                        best_nc_cost: &mut u64,
+                        best_nc_lz77_type: &mut u32| {
+        // The no-cache candidate first (libwebp evaluates i == 1 first).
+        let mut cost_no_cache = None;
+        if do_no_cache {
+            histo = Histogram::from_refs_with_plane_codes(&refs_tmp, 0, width);
+            let bit_cost = estimate_histogram_bits(&histo);
+            cost_no_cache = Some(bit_cost);
+            if bit_cost < *best_nc_cost {
+                *best_nc_cost = bit_cost;
+                *best_nc_refs = refs_tmp.clone();
+                *best_nc_lz77_type = lz77_type;
+            }
+        }
+
+        // Then with the entropy-selected color cache.
+        let mut cache_bits = cache_bits_max;
+        if cache_bits > 0 {
+            cache_bits = calculate_best_cache_size(argb, quality, &refs_tmp, cache_bits_max);
+        }
+        let mut refs_with_cache = refs_tmp;
+        if cache_bits > 0 {
+            apply_cache_to_refs(argb, cache_bits, &mut refs_with_cache);
+        }
+
+        let bit_cost = match cost_no_cache {
+            // cache_bits == 0: same stream as the no-cache candidate.
+            Some(cost) if cache_bits == 0 => cost,
+            _ => {
+                histo = Histogram::from_refs_with_plane_codes(&refs_with_cache, cache_bits, width);
+                estimate_histogram_bits(&histo)
+            }
+        };
+
+        if bit_cost < *best_cost {
+            *best_cost = bit_cost;
+            *best_refs = refs_with_cache;
+            *cache_bits_best = cache_bits;
+            *best_lz77_type = lz77_type;
+        }
+    };
 
     let mut lz77_type = 1u32;
     let mut types_remaining = lz77_types_to_try;
@@ -744,27 +814,17 @@ fn get_backward_references_inner(
             _ => continue,
         };
 
-        // Evaluate with color cache
-        let mut cache_bits = cache_bits_max;
-        if cache_bits > 0 {
-            cache_bits = calculate_best_cache_size(argb, quality, &refs_tmp, cache_bits_max);
-        }
-
-        let mut refs_with_cache = refs_tmp;
-        if cache_bits > 0 {
-            apply_cache_to_refs(argb, cache_bits, &mut refs_with_cache);
-        }
-
-        histo.clear();
-        histo = Histogram::from_refs_with_plane_codes(&refs_with_cache, cache_bits, width);
-        let bit_cost = estimate_histogram_bits(&histo);
-
-        if bit_cost < best_cost {
-            best_cost = bit_cost;
-            best_refs = refs_with_cache;
-            cache_bits_best = cache_bits;
-            best_lz77_type = lz77_type;
-        }
+        evaluate(
+            refs_tmp,
+            lz77_type,
+            &mut best_refs,
+            &mut cache_bits_best,
+            &mut best_cost,
+            &mut best_lz77_type,
+            &mut best_nc_refs,
+            &mut best_nc_cost,
+            &mut best_nc_lz77_type,
+        );
 
         lz77_type <<= 1;
     }
@@ -772,34 +832,35 @@ fn get_backward_references_inner(
     // Try LZ77 Box for palette images
     if try_box {
         let refs_box = backward_references_lz77_box(argb, width, height, 0, &hash_chain);
+        let prev_best_lz77_type = best_lz77_type;
 
-        let mut cache_bits = cache_bits_max;
-        if cache_bits > 0 {
-            cache_bits = calculate_best_cache_size(argb, quality, &refs_box, cache_bits_max);
-        }
+        evaluate(
+            refs_box,
+            LZ77_BOX,
+            &mut best_refs,
+            &mut cache_bits_best,
+            &mut best_cost,
+            &mut best_lz77_type,
+            &mut best_nc_refs,
+            &mut best_nc_cost,
+            &mut best_nc_lz77_type,
+        );
 
-        let mut refs_with_cache = refs_box;
-        if cache_bits > 0 {
-            apply_cache_to_refs(argb, cache_bits, &mut refs_with_cache);
-        }
-
-        histo = Histogram::from_refs_with_plane_codes(&refs_with_cache, cache_bits, width);
-        let bit_cost = estimate_histogram_bits(&histo);
-
-        if bit_cost < best_cost {
-            best_cost = bit_cost;
-            best_refs = refs_with_cache;
-            cache_bits_best = cache_bits;
-            best_lz77_type = LZ77_BOX;
-
+        if best_lz77_type == LZ77_BOX && prev_best_lz77_type != LZ77_BOX {
             // Save box chain for potential TraceBackwards use
             hash_chain_box = Some(HashChain::empty(size));
             // Rebuild box chain since we need it for TraceBackwards
         }
     }
 
+    // If the cache branch settled on no cache with the same LZ77 type, the
+    // two streams are identical — trace once and skip the duplicate trial
+    // (libwebp's clone-and-break shortcut at the end of GetBackwardReferences).
+    let do_no_cache = do_no_cache && !(cache_bits_best == 0 && best_lz77_type == best_nc_lz77_type);
+
     // Phase 2: Improve on simple LZ77 with TraceBackwards (quality >= 25).
-    // Matches libwebp: only for Standard or Box LZ77 types.
+    // Matches libwebp: only for Standard or Box LZ77 types, run separately
+    // per branch under that branch's cache cost model.
     if (best_lz77_type == LZ77_STANDARD || best_lz77_type == LZ77_BOX) && quality >= 25 {
         let hash_chain_for_tb = if best_lz77_type == LZ77_BOX {
             hash_chain_box.as_ref().unwrap_or(&hash_chain)
@@ -826,10 +887,42 @@ fn get_backward_references_inner(
         }
     }
 
+    if do_no_cache
+        && (best_nc_lz77_type == LZ77_STANDARD || best_nc_lz77_type == LZ77_BOX)
+        && quality >= 25
+    {
+        let hash_chain_for_tb = if best_nc_lz77_type == LZ77_BOX {
+            hash_chain_box.as_ref().unwrap_or(&hash_chain)
+        } else {
+            &hash_chain
+        };
+
+        let optimized =
+            trace_backwards_optimize(argb, width, height, 0, hash_chain_for_tb, &best_nc_refs);
+
+        histo = Histogram::from_refs_with_plane_codes(&optimized, 0, width);
+        let cost_trace = estimate_histogram_bits(&histo);
+
+        if cost_trace < best_nc_cost {
+            best_nc_refs = optimized;
+        }
+    }
+
     // Phase 3: Apply 2D locality transform
     apply_2d_locality(&mut best_refs, width);
 
-    (best_refs, cache_bits_best)
+    let refs_no_cache = if do_no_cache {
+        apply_2d_locality(&mut best_nc_refs, width);
+        Some(best_nc_refs)
+    } else {
+        None
+    };
+
+    BackwardRefsResult {
+        refs: best_refs,
+        cache_bits: cache_bits_best,
+        refs_no_cache,
+    }
 }
 
 /// Simple backward reference finder for very low quality.
@@ -910,7 +1003,8 @@ mod tests {
             pixels.push(0xFF112233u32);
             pixels.push(0xFF445566u32);
         }
-        let (refs, _cache_bits) = get_backward_references(&pixels, 10, 20, 75, 4, 10);
+        let result = get_backward_references(&pixels, 10, 20, 75, 4, 10, false);
+        let refs = result.refs;
         assert!(!refs.is_empty());
     }
 

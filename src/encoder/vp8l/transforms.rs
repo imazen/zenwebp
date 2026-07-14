@@ -750,35 +750,37 @@ fn choose_best_predictor(
     let x_end = (x_start + block_size).min(width);
     let y_end = (y_start + block_size).min(height);
 
-    // Effective start: skip row 0 and col 0 (they use fixed predictors)
-    let x_eff = x_start.max(1);
-    let y_eff = y_start.max(1);
-
-    // If no interior pixels to score, default to Black (mode 0, matching libwebp)
-    if x_eff >= x_end || y_eff >= y_end {
-        return PredictorMode::Black;
-    }
-
     let mut best_mode = PredictorMode::Black;
     let mut best_cost = i64::MAX;
 
     for mode in PredictorMode::all() {
         scratch.clear();
-        for y in y_eff..y_end {
-            for x in x_eff..x_end {
+        for y in y_start..y_end {
+            for x in x_start..x_end {
                 let pixel = pixels[y * width + x];
-                let left = pixels[y * width + x - 1];
-                let top = pixels[(y - 1) * width + x];
-                let top_left = pixels[(y - 1) * width + x - 1];
-                // At right edge, top_right wraps to first pixel of current row
-                // (matching decoder's memory layout behavior).
-                let top_right = if x + 1 < width {
-                    pixels[(y - 1) * width + x + 1]
+                // Border pixels use the decoder's fixed predictors regardless
+                // of mode; libwebp's GetResidual still feeds their residuals
+                // into every mode's histogram (and thus the accumulated
+                // context), so we do the same.
+                let pred = if y == 0 && x == 0 {
+                    0xff000000
+                } else if y == 0 {
+                    pixels[x - 1]
+                } else if x == 0 {
+                    pixels[(y - 1) * width]
                 } else {
-                    pixels[y * width]
+                    let left = pixels[y * width + x - 1];
+                    let top = pixels[(y - 1) * width + x];
+                    let top_left = pixels[(y - 1) * width + x - 1];
+                    // At right edge, top_right wraps to first pixel of current
+                    // row (matching decoder's memory layout behavior).
+                    let top_right = if x + 1 < width {
+                        pixels[(y - 1) * width + x + 1]
+                    } else {
+                        pixels[y * width]
+                    };
+                    predict(mode, left, top, top_left, top_right)
                 };
-
-                let pred = predict(mode, left, top, top_left, top_right);
                 let res = residual(pixel, pred);
                 update_histo(tile_histo, res);
                 scratch.push(res);

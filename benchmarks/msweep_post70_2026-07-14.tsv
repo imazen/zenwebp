@@ -1,0 +1,311 @@
+# msweep post-#70 (predictor-bits search + dual no-cache refs) — 2026-07-14
+# commit: (this commit); host: lilith; harness: scratchpad webp-ll-compare msweep (12-file stratified, exact=true both sides)
+corpus	file	dims	type	method	enc	wall_ms	bytes	psnr	roundtrip
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossless	0	zen	86.1	711798		exact
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossless	0	lib	82.4	800390		
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossy	0	zen	47.0	167786	34.08	
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossy	0	lib	24.8	179788	34.30	
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossless	1	zen	495.6	652752		exact
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossless	1	lib	315.3	652122		
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossy	1	zen	42.2	168200	34.08	
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossy	1	lib	31.8	174640	34.31	
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossless	2	zen	560.1	639862		exact
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossless	2	lib	403.6	637716		
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossy	2	zen	44.1	162130	34.05	
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossy	2	lib	38.2	150420	34.11	
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossless	3	zen	593.6	639862		exact
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossless	3	lib	414.2	637716		
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossy	3	zen	101.0	146184	34.14	
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossy	3	lib	82.0	145312	34.08	
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossless	4	zen	576.8	639862		exact
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossless	4	lib	400.8	637716		
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossy	4	zen	105.1	145350	34.12	
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossy	4	lib	78.1	145250	34.19	
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossless	5	zen	830.6	635716		exact
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossless	5	lib	612.6	631948		
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossy	5	zen	107.4	142654	34.02	
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossy	5	lib	86.9	144270	34.13	
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossless	6	zen	826.8	635716		exact
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossless	6	lib	602.0	631948		
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossy	6	zen	210.3	141268	33.99	
+imazen26	archives__home__1280x800__dpr1	1280x1558	lossy	6	lib	147.3	142338	34.10	
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossless	0	zen	193.6	1710324		exact
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossless	0	lib	190.1	2399202		
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossy	0	zen	151.3	405846	38.99	
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossy	0	lib	82.1	438452	39.76	
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossless	1	zen	1491.1	1564846		exact
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossless	1	lib	830.4	1561008		
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossy	1	zen	131.6	406346	38.99	
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossy	1	lib	95.3	424472	39.77	
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossless	2	zen	1485.2	1564846		exact
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossless	2	lib	837.3	1561008		
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossy	2	zen	142.9	398030	39.06	
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossy	2	lib	118.8	372294	39.07	
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossless	3	zen	1497.7	1564846		exact
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossless	3	lib	859.2	1561008		
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossy	3	zen	307.3	362250	39.26	
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossy	3	lib	235.3	357930	39.31	
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossless	4	zen	1671.1	1561818		exact
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossless	4	lib	1025.8	1560698		
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossy	4	zen	398.1	360934	39.24	
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossy	4	lib	242.0	358444	39.32	
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossless	5	zen	1633.6	1561818		exact
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossless	5	lib	1345.4	1562138		
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossy	5	zen	349.2	345890	38.90	
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossy	5	lib	269.3	349778	39.08	
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossless	6	zen	1698.9	1561818		exact
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossless	6	lib	1317.4	1562138		
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossy	6	zen	619.1	339436	38.85	
+imazen26	europeana__collections__1440x900__dpr1	1440x4736	lossy	6	lib	447.4	343636	39.12	
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossless	0	zen	804.1	6325500		exact
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossless	0	lib	950.7	7587944		
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossy	0	zen	315.5	740678	39.33	
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossy	0	lib	169.8	759816	39.71	
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossless	1	zen	3954.7	5739430		exact
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossless	1	lib	2610.5	5738822		
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossy	1	zen	270.4	741664	39.33	
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossy	1	lib	205.0	745580	39.72	
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossless	2	zen	3972.0	5739430		exact
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossless	2	lib	2612.5	5738822		
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossy	2	zen	294.1	734810	39.37	
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossy	2	lib	261.9	656170	39.28	
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossless	3	zen	4044.5	5739430		exact
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossless	3	lib	2562.4	5738822		
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossy	3	zen	660.2	627866	39.52	
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossy	3	lib	505.8	619454	39.40	
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossless	4	zen	4430.9	5691840		exact
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossless	4	lib	2976.7	5691408		
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossy	4	zen	694.2	625938	39.49	
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossy	4	lib	509.9	620034	39.41	
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossless	5	zen	4527.5	5691840		exact
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossless	5	lib	3912.6	5682988		
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossy	5	zen	728.2	614404	39.19	
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossy	5	lib	587.2	610336	39.34	
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossless	6	zen	4590.0	5691840		exact
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossless	6	lib	3803.7	5682988		
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossy	6	zen	1243.7	602572	39.18	
+imazen26	nasa__home__1920x1080__dpr1	1920x7408	lossy	6	lib	868.7	594862	39.32	
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossless	0	zen	425.2	2208114		exact
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossless	0	lib	465.0	3337804		
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossy	0	zen	179.3	331896	41.61	
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossy	0	lib	98.1	343438	42.54	
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossless	1	zen	2319.3	1963210		exact
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossless	1	lib	1454.7	1963940		
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossy	1	zen	154.6	332314	41.61	
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossy	1	lib	115.2	334772	42.57	
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossless	2	zen	2337.4	1963210		exact
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossless	2	lib	1443.0	1963940		
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossy	2	zen	154.9	314668	41.80	
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossy	2	lib	133.5	288088	41.86	
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossless	3	zen	2355.2	1963210		exact
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossless	3	lib	1488.5	1963940		
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossy	3	zen	375.1	281434	42.03	
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossy	3	lib	289.2	276784	42.10	
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossless	4	zen	2541.2	1964724		exact
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossless	4	lib	1701.2	1953768		
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossy	4	zen	401.5	280284	41.99	
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossy	4	lib	293.8	276862	42.09	
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossless	5	zen	2581.4	1964724		exact
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossless	5	lib	2028.3	1956030		
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossy	5	zen	404.8	273442	41.53	
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossy	5	lib	310.2	273162	41.93	
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossless	6	zen	2494.5	1964724		exact
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossless	6	lib	2065.3	1956030		
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossy	6	zen	660.3	269312	41.27	
+imazen26	nasa__voyager__1280x800__dpr1	1280x6696	lossy	6	lib	454.5	267944	41.88	
+imazen26	nps__acad__667x375__dpr1	667x5252	lossless	0	zen	170.7	2017480		exact
+imazen26	nps__acad__667x375__dpr1	667x5252	lossless	0	lib	166.7	2206968		
+imazen26	nps__acad__667x375__dpr1	667x5252	lossy	0	zen	92.7	377738	36.44	
+imazen26	nps__acad__667x375__dpr1	667x5252	lossy	0	lib	52.5	392084	36.89	
+imazen26	nps__acad__667x375__dpr1	667x5252	lossless	1	zen	981.5	1843608		exact
+imazen26	nps__acad__667x375__dpr1	667x5252	lossless	1	lib	745.7	1842388		
+imazen26	nps__acad__667x375__dpr1	667x5252	lossy	1	zen	82.9	378352	36.45	
+imazen26	nps__acad__667x375__dpr1	667x5252	lossy	1	lib	70.2	386310	36.90	
+imazen26	nps__acad__667x375__dpr1	667x5252	lossless	2	zen	970.1	1843608		exact
+imazen26	nps__acad__667x375__dpr1	667x5252	lossless	2	lib	684.5	1842388		
+imazen26	nps__acad__667x375__dpr1	667x5252	lossy	2	zen	96.4	367542	36.45	
+imazen26	nps__acad__667x375__dpr1	667x5252	lossy	2	lib	84.6	340010	36.45	
+imazen26	nps__acad__667x375__dpr1	667x5252	lossless	3	zen	979.6	1843608		exact
+imazen26	nps__acad__667x375__dpr1	667x5252	lossless	3	lib	665.1	1842388		
+imazen26	nps__acad__667x375__dpr1	667x5252	lossy	3	zen	202.3	329188	36.64	
+imazen26	nps__acad__667x375__dpr1	667x5252	lossy	3	lib	158.3	326980	36.36	
+imazen26	nps__acad__667x375__dpr1	667x5252	lossless	4	zen	1046.9	1837358		exact
+imazen26	nps__acad__667x375__dpr1	667x5252	lossless	4	lib	783.3	1835864		
+imazen26	nps__acad__667x375__dpr1	667x5252	lossy	4	zen	204.9	328080	36.58	
+imazen26	nps__acad__667x375__dpr1	667x5252	lossy	4	lib	156.0	327366	36.36	
+imazen26	nps__acad__667x375__dpr1	667x5252	lossless	5	zen	1469.8	1820462		exact
+imazen26	nps__acad__667x375__dpr1	667x5252	lossless	5	lib	1193.7	1818292		
+imazen26	nps__acad__667x375__dpr1	667x5252	lossy	5	zen	229.3	320272	36.40	
+imazen26	nps__acad__667x375__dpr1	667x5252	lossy	5	lib	184.8	321424	36.25	
+imazen26	nps__acad__667x375__dpr1	667x5252	lossless	6	zen	1547.7	1820462		exact
+imazen26	nps__acad__667x375__dpr1	667x5252	lossless	6	lib	1173.8	1818292		
+imazen26	nps__acad__667x375__dpr1	667x5252	lossy	6	zen	461.3	314138	36.34	
+imazen26	nps__acad__667x375__dpr1	667x5252	lossy	6	lib	336.6	315130	36.24	
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossless	0	zen	31.3	96722		exact
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossless	0	lib	20.4	156542		
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossy	0	zen	40.7	132016	37.98	
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossy	0	lib	19.8	142874	38.80	
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossless	1	zen	351.0	89580		exact
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossless	1	lib	156.7	89470		
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossy	1	zen	36.4	132102	37.98	
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossy	1	lib	25.2	139964	38.79	
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossless	2	zen	394.0	89916		exact
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossless	2	lib	223.4	89670		
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossy	2	zen	39.4	124960	38.22	
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossy	2	lib	32.0	118754	38.25	
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossless	3	zen	394.6	89916		exact
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossless	3	lib	215.1	89670		
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossy	3	zen	87.5	116074	38.37	
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossy	3	lib	67.7	115474	38.48	
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossless	4	zen	418.9	89916		exact
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossless	4	lib	221.3	89670		
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossy	4	zen	94.8	115070	38.31	
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossy	4	lib	67.7	115526	38.49	
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossless	5	zen	644.9	97044		exact
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossless	5	lib	423.0	96758		
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossy	5	zen	94.7	112976	38.16	
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossy	5	lib	72.9	114906	38.44	
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossless	6	zen	654.6	97044		exact
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossless	6	lib	387.3	96758		
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossy	6	zen	167.3	112378	38.16	
+imazen26	openstax__physics__667x375__dpr1	667x2818	lossy	6	lib	116.8	114276	38.22	
+imazen26	weather__home__414x896__dpr1	990x1390	lossless	0	zen	39.9	461124		exact
+imazen26	weather__home__414x896__dpr1	990x1390	lossless	0	lib	36.4	545672		
+imazen26	weather__home__414x896__dpr1	990x1390	lossy	0	zen	37.1	177928	32.11	
+imazen26	weather__home__414x896__dpr1	990x1390	lossy	0	lib	19.9	196402	32.57	
+imazen26	weather__home__414x896__dpr1	990x1390	lossless	1	zen	346.4	422452		exact
+imazen26	weather__home__414x896__dpr1	990x1390	lossless	1	lib	231.4	422428		
+imazen26	weather__home__414x896__dpr1	990x1390	lossy	1	zen	32.2	178380	32.11	
+imazen26	weather__home__414x896__dpr1	990x1390	lossy	1	lib	23.7	188232	32.59	
+imazen26	weather__home__414x896__dpr1	990x1390	lossless	2	zen	406.0	408404		exact
+imazen26	weather__home__414x896__dpr1	990x1390	lossless	2	lib	281.6	409692		
+imazen26	weather__home__414x896__dpr1	990x1390	lossy	2	zen	36.8	173292	32.31	
+imazen26	weather__home__414x896__dpr1	990x1390	lossy	2	lib	30.7	163258	32.38	
+imazen26	weather__home__414x896__dpr1	990x1390	lossless	3	zen	409.9	408404		exact
+imazen26	weather__home__414x896__dpr1	990x1390	lossless	3	lib	283.2	409692		
+imazen26	weather__home__414x896__dpr1	990x1390	lossy	3	zen	82.8	159346	32.35	
+imazen26	weather__home__414x896__dpr1	990x1390	lossy	3	lib	64.8	159036	32.31	
+imazen26	weather__home__414x896__dpr1	990x1390	lossless	4	zen	420.1	408404		exact
+imazen26	weather__home__414x896__dpr1	990x1390	lossless	4	lib	287.3	409692		
+imazen26	weather__home__414x896__dpr1	990x1390	lossy	4	zen	86.1	158368	32.41	
+imazen26	weather__home__414x896__dpr1	990x1390	lossy	4	lib	64.1	159210	32.20	
+imazen26	weather__home__414x896__dpr1	990x1390	lossless	5	zen	619.1	408982		exact
+imazen26	weather__home__414x896__dpr1	990x1390	lossless	5	lib	473.0	405570		
+imazen26	weather__home__414x896__dpr1	990x1390	lossy	5	zen	89.1	154786	32.32	
+imazen26	weather__home__414x896__dpr1	990x1390	lossy	5	lib	72.0	157168	32.27	
+imazen26	weather__home__414x896__dpr1	990x1390	lossless	6	zen	624.3	408982		exact
+imazen26	weather__home__414x896__dpr1	990x1390	lossless	6	lib	429.4	405570		
+imazen26	weather__home__414x896__dpr1	990x1390	lossy	6	zen	194.6	153316	32.30	
+imazen26	weather__home__414x896__dpr1	990x1390	lossy	6	lib	139.3	155138	32.33	
+cid22_512	1025469	512x512	lossless	0	zen	21.2	279402		exact
+cid22_512	1025469	512x512	lossless	0	lib	22.8	284794		
+cid22_512	1025469	512x512	lossy	0	zen	6.0	16208	37.15	
+cid22_512	1025469	512x512	lossy	0	lib	2.7	18590	37.46	
+cid22_512	1025469	512x512	lossless	1	zen	80.8	254308		exact
+cid22_512	1025469	512x512	lossless	1	lib	51.4	254164		
+cid22_512	1025469	512x512	lossy	1	zen	5.2	16234	37.14	
+cid22_512	1025469	512x512	lossy	1	lib	3.4	16498	37.43	
+cid22_512	1025469	512x512	lossless	2	zen	96.4	250650		exact
+cid22_512	1025469	512x512	lossless	2	lib	70.3	250620		
+cid22_512	1025469	512x512	lossy	2	zen	5.9	15342	37.12	
+cid22_512	1025469	512x512	lossy	2	lib	4.8	13854	37.11	
+cid22_512	1025469	512x512	lossless	3	zen	115.9	248752		exact
+cid22_512	1025469	512x512	lossless	3	lib	83.4	248450		
+cid22_512	1025469	512x512	lossy	3	zen	14.7	13276	37.29	
+cid22_512	1025469	512x512	lossy	3	lib	11.7	13068	37.33	
+cid22_512	1025469	512x512	lossless	4	zen	114.0	248752		exact
+cid22_512	1025469	512x512	lossless	4	lib	83.0	248450		
+cid22_512	1025469	512x512	lossy	4	zen	15.7	13054	37.29	
+cid22_512	1025469	512x512	lossy	4	lib	11.9	13072	37.32	
+cid22_512	1025469	512x512	lossless	5	zen	373.0	247814		exact
+cid22_512	1025469	512x512	lossless	5	lib	280.5	247818		
+cid22_512	1025469	512x512	lossy	5	zen	16.2	12558	37.13	
+cid22_512	1025469	512x512	lossy	5	lib	12.9	12496	37.12	
+cid22_512	1025469	512x512	lossless	6	zen	379.7	247814		exact
+cid22_512	1025469	512x512	lossless	6	lib	280.2	247818		
+cid22_512	1025469	512x512	lossy	6	zen	28.2	12242	37.09	
+cid22_512	1025469	512x512	lossy	6	lib	19.7	12070	37.14	
+cid22_512	1624487	512x512	lossless	0	zen	13.7	381006		exact
+cid22_512	1624487	512x512	lossless	0	lib	10.4	380482		
+cid22_512	1624487	512x512	lossy	0	zen	8.0	38374	33.61	
+cid22_512	1624487	512x512	lossy	0	lib	4.1	46754	33.55	
+cid22_512	1624487	512x512	lossless	1	zen	76.0	326814		exact
+cid22_512	1624487	512x512	lossless	1	lib	47.7	326908		
+cid22_512	1624487	512x512	lossy	1	zen	7.2	38510	33.61	
+cid22_512	1624487	512x512	lossy	1	lib	5.2	39022	33.56	
+cid22_512	1624487	512x512	lossless	2	zen	89.1	320854		exact
+cid22_512	1624487	512x512	lossless	2	lib	63.1	320698		
+cid22_512	1624487	512x512	lossy	2	zen	8.6	39748	33.40	
+cid22_512	1624487	512x512	lossy	2	lib	7.2	34820	33.40	
+cid22_512	1624487	512x512	lossless	3	zen	109.2	318080		exact
+cid22_512	1624487	512x512	lossless	3	lib	74.2	317398		
+cid22_512	1624487	512x512	lossy	3	zen	18.1	33644	33.65	
+cid22_512	1624487	512x512	lossy	3	lib	14.4	33380	33.72	
+cid22_512	1624487	512x512	lossless	4	zen	104.4	318080		exact
+cid22_512	1624487	512x512	lossless	4	lib	77.5	317398		
+cid22_512	1624487	512x512	lossy	4	zen	19.8	33356	33.66	
+cid22_512	1624487	512x512	lossy	4	lib	15.2	33358	33.73	
+cid22_512	1624487	512x512	lossless	5	zen	381.2	316714		exact
+cid22_512	1624487	512x512	lossless	5	lib	291.9	315754		
+cid22_512	1624487	512x512	lossy	5	zen	20.3	32996	33.56	
+cid22_512	1624487	512x512	lossy	5	lib	16.1	33126	33.57	
+cid22_512	1624487	512x512	lossless	6	zen	369.7	316714		exact
+cid22_512	1624487	512x512	lossless	6	lib	279.1	315754		
+cid22_512	1624487	512x512	lossy	6	zen	40.9	32244	33.53	
+cid22_512	1624487	512x512	lossy	6	lib	30.8	32236	33.62	
+cid22_512	2775196	512x512	lossless	0	zen	16.7	322678		exact
+cid22_512	2775196	512x512	lossless	0	lib	16.2	329266		
+cid22_512	2775196	512x512	lossy	0	zen	7.0	27760	32.49	
+cid22_512	2775196	512x512	lossy	0	lib	3.4	34854	32.75	
+cid22_512	2775196	512x512	lossless	1	zen	70.6	285878		exact
+cid22_512	2775196	512x512	lossless	1	lib	48.9	287246		
+cid22_512	2775196	512x512	lossy	1	zen	6.2	27838	32.48	
+cid22_512	2775196	512x512	lossy	1	lib	4.4	29322	32.73	
+cid22_512	2775196	512x512	lossless	2	zen	92.2	283690		exact
+cid22_512	2775196	512x512	lossless	2	lib	67.0	283662		
+cid22_512	2775196	512x512	lossy	2	zen	7.1	27626	32.45	
+cid22_512	2775196	512x512	lossy	2	lib	6.0	26366	32.47	
+cid22_512	2775196	512x512	lossless	3	zen	112.0	278908		exact
+cid22_512	2775196	512x512	lossless	3	lib	84.0	278728		
+cid22_512	2775196	512x512	lossy	3	zen	16.8	25440	32.58	
+cid22_512	2775196	512x512	lossy	3	lib	13.3	25308	32.59	
+cid22_512	2775196	512x512	lossless	4	zen	115.1	278908		exact
+cid22_512	2775196	512x512	lossless	4	lib	84.5	278728		
+cid22_512	2775196	512x512	lossy	4	zen	18.0	25470	32.60	
+cid22_512	2775196	512x512	lossy	4	lib	13.2	25304	32.55	
+cid22_512	2775196	512x512	lossless	5	zen	403.1	278422		exact
+cid22_512	2775196	512x512	lossless	5	lib	309.8	278366		
+cid22_512	2775196	512x512	lossy	5	zen	18.5	24712	32.50	
+cid22_512	2775196	512x512	lossy	5	lib	14.8	24616	32.50	
+cid22_512	2775196	512x512	lossless	6	zen	409.8	278422		exact
+cid22_512	2775196	512x512	lossless	6	lib	287.9	279332		
+cid22_512	2775196	512x512	lossy	6	zen	36.7	23842	32.47	
+cid22_512	2775196	512x512	lossy	6	lib	27.1	23918	32.50	
+cid22_512	382297	512x512	lossless	0	zen	12.1	431910		exact
+cid22_512	382297	512x512	lossless	0	lib	8.2	431796		
+cid22_512	382297	512x512	lossy	0	zen	9.2	54712	29.06	
+cid22_512	382297	512x512	lossy	0	lib	5.1	57008	29.17	
+cid22_512	382297	512x512	lossless	1	zen	70.1	411862		exact
+cid22_512	382297	512x512	lossless	1	lib	41.6	411658		
+cid22_512	382297	512x512	lossy	1	zen	8.1	54914	29.06	
+cid22_512	382297	512x512	lossy	1	lib	6.2	55284	29.17	
+cid22_512	382297	512x512	lossless	2	zen	89.7	404606		exact
+cid22_512	382297	512x512	lossless	2	lib	71.4	404784		
+cid22_512	382297	512x512	lossy	2	zen	9.4	54436	29.05	
+cid22_512	382297	512x512	lossy	2	lib	8.1	51164	29.06	
+cid22_512	382297	512x512	lossless	3	zen	136.7	394580		exact
+cid22_512	382297	512x512	lossless	3	lib	103.5	394164		
+cid22_512	382297	512x512	lossy	3	zen	19.8	49574	29.12	
+cid22_512	382297	512x512	lossy	3	lib	16.1	49412	29.13	
+cid22_512	382297	512x512	lossless	4	zen	139.6	394580		exact
+cid22_512	382297	512x512	lossless	4	lib	102.2	394164		
+cid22_512	382297	512x512	lossy	4	zen	21.4	49408	29.11	
+cid22_512	382297	512x512	lossy	4	lib	15.7	49468	29.13	
+cid22_512	382297	512x512	lossless	5	zen	552.9	388856		exact
+cid22_512	382297	512x512	lossless	5	lib	455.9	388554		
+cid22_512	382297	512x512	lossy	5	zen	22.2	48040	29.06	
+cid22_512	382297	512x512	lossy	5	lib	18.0	48398	29.09	
+cid22_512	382297	512x512	lossless	6	zen	534.6	388856		exact
+cid22_512	382297	512x512	lossless	6	lib	439.4	388554		
+cid22_512	382297	512x512	lossy	6	zen	52.2	47184	29.06	
+cid22_512	382297	512x512	lossy	6	lib	39.3	47406	29.10	
