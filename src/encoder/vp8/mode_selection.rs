@@ -1694,17 +1694,11 @@ impl<'a> super::Vp8Encoder<'a> {
         let mut best_mode = ChromaMode::DC;
         let mut best_score = u64::MAX;
         for (idx, &mode) in MODES.iter().enumerate() {
-            // Skip modes that need unavailable reference pixels (same
-            // availability rules as pick_best_uv).
-            if mode == ChromaMode::V && mby == 0 {
-                continue;
-            }
-            if mode == ChromaMode::H && mbx == 0 {
-                continue;
-            }
-            if mode == ChromaMode::TM && (mbx == 0 || mby == 0) {
-                continue;
-            }
+            // libwebp's RefineUsingDistortion evaluates ALL four chroma modes,
+            // including V/H/TM at frame edges — there the prediction reads the
+            // default borders (top=127, left=129), which the decoder uses too,
+            // so an edge V/H/TM pick is legal and round-trips. (Skipping them
+            // here diverged from libwebp at edge MBs — the m1/m2 UV gap.)
             let pred_u = self.get_predicted_chroma_block(
                 mode,
                 mbx,
