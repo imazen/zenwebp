@@ -42,10 +42,38 @@ matches exactly and dequantisation is injective, the *levels match* — so this 
 a rate-computation divergence, not quantisation. blk4 is the first sub-block
 carrying a large level (12 → cat3, range 11-18), which is why q75 never sees it:
 higher quant keeps levels small enough to avoid the category-coded range.
-Candidate: zen's precomputed `VP8_LEVEL_FIXED_COSTS` table vs libwebp's
-`VariableLevelCost` (computed per level from `VP8LevelCodes` + `VP8BitCost`),
-or the token-tree cost for large levels. Verify by comparing the two for
-level 12 at ctx=2 before changing anything.
+**Two candidates already REFUTED (2026-07-15) — do not re-check:**
+
+1. **`VP8_LEVEL_FIXED_COSTS` is byte-identical to libwebp's
+   `VP8LevelFixedCosts`** (`libwebp/src/dsp/cost.c`). Entry 12 = 901 in both;
+   the whole leading run matches (`0, 256, 256, 256, 256, 432, 618, 630, 731,
+   640, 640, 828, 901, 948, 1021, 1101, 1174, 1221, 1294, 1042, …`).
+2. **zen's level-cost precomputation matches `VP8CalculateLevelCosts`**
+   (`libwebp/src/enc/cost_enc.c`) line for line:
+   `cost0 = ctx>0 ? BitCost(1,p[0]) : 0`; `cost_base = BitCost(1,p[1]) + cost0`;
+   `table[0] = BitCost(0,p[1]) + cost0`; `table[v] = cost_base +
+   VariableLevelCost(v,p)` for `v in 1..=MAX_VARIABLE_LEVEL`; band remap via
+   `VP8EncBands`. zen's `variable_level_cost` matches `VariableLevelCost`
+   including the `VP8LevelCodes` pattern/bits walk from proba index 2 (zen's
+   `.min(MAX_VARIABLE_LEVEL)` clamp is equivalent — libwebp's caller never
+   exceeds it). zen's padding of `MAX_VARIABLE_LEVEL+1..127` with the max-level
+   cost is a bounds-check optimisation, not a semantic difference.
+
+So the rate *formula* and its tables are right. Since blk0-3 match with the same
+`level_costs` and the same ctx=2, the **probabilities also match at that MB** (a
+proba divergence would move every sub-block's R, not just blk4's).
+
+**That leaves the levels themselves.** The "D matches ⇒ levels match" inference
+is the weak link: D is an SSE, so two different level sets *can* coincide at
+D=36. If the levels do differ, this is a **quantisation-boundary divergence**
+at m3 (simple quant: libwebp `VP8EncQuantizeBlock` vs zen's
+`quantize_block_simd`) that only shows on blk4's residual — the round-vs-
+truncate class of bug that already bit the base quantiser (`52cf96f2`).
+
+**Next concrete step:** dump zen's and libwebp's blk4 levels at q90/m3
+mb(28,7) and compare directly. That needs an instrumented libwebp; a read-only
+reference tree exists at `/home/lilith/work/webp-porting/libwebp` (do NOT modify
+it — copy out to a scratch tree, and NOT to `/tmp`).
 
 ## STATE AT THE TIME OF THE ANALYSIS BELOW: 3488/4004 = 87.1% byte-identical
 
