@@ -1356,7 +1356,20 @@ impl<'a> Vp8Encoder<'a> {
             //     decoder sees the residuals exactly where it expects them.
             // This is the full #25 fix — the gate now fires whenever `prob >= 250`, not only
             // when `skip_mb == 0`.
-            if total_mb > 0 {
+            if self.cost_model == super::api::CostModel::StrictLibwebpParity {
+                // Modern libwebp NEVER enables the per-MB skip-proba flag: it
+                // asserts `proba.use_skip_proba == 0` at `VP8EncTokenLoop` entry
+                // and always writes `use_skip_proba = 0` to the bitstream (the
+                // `nb_skip`/`FinalizeSkipProba` machinery only feeds StatLoop's
+                // size estimate for pass decisions, never the emitted flag —
+                // verified via instrumented libwebp: use_skip=0 across q5..q75,
+                // m0..m6). zenwebp enabled it at low q (where its skip fraction
+                // crosses `prob < 250`), diverging from libwebp on every low-q
+                // cell. Match libwebp under parity: always emit all coefficient
+                // tokens, never the skip flag. (At high q zen already computed
+                // `None`, so q75 byte-identity is unaffected.)
+                self.macroblock_no_skip_coeff = None;
+            } else if total_mb > 0 {
                 let non_skip_mb = total_mb - skip_mb;
                 let prob = ((255 * non_skip_mb + total_mb / 2) / total_mb).min(255) as u8;
                 const SKIP_PROBA_THRESHOLD: u8 = 250;
