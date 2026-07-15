@@ -89,43 +89,71 @@ field, i.e. total size differs); 570 match a prefix then diverge in content.
 - **Do not re-report 14/14 as "parity complete."** Use this grid's 24% as the
   headline number and drive it up.
 
-## Default config (sns50/filter60/segs4) — diagnosis (2026-07-14)
+## Default config (sns50/filter60/segs4) — diagnosis (2026-07-15)
 
-Per the scope decision, the Default preset was investigated first. Field-level
-diff (via `dev/bitexact_diff.rs`, retargeted to sweep q at this config) shows the
-**dominant divergence is `seg_lf` — the per-segment loop-filter levels**. At
-m2–m5 across many q, one segment's filter comes out lower in zen (e.g. q30 m4
-seg2: zen=20 lib=50; q20 m4/m5 seg3: 18 vs 36; q5 m3/m4 seg1: 29 vs 55). All
-other fields (`seg_q`, modes: `y_same`/`uv_same`/`b4_same` = 100%) match.
+Per the scope decision, the Default preset was investigated first.
 
-**This is contained, not a cascade.** The VP8 loop filter doesn't affect
-keyframe intra prediction (neighbours are read pre-filter), so these cells have
-`1st-diff@36-38` (the filter header field) with identical coefficient content —
-getting `seg_lf` right makes them byte-identical, no downstream effect.
+### Two facts established with a real-libwebp-C oracle
 
-`seg_lf` is produced by `adjust_filter_strength` (`vp8/mod.rs`) from
-`max_edge_per_segment`, accumulated per-MB by `store_max_delta` over "blocky"
-I16 MBs (all Y1 AC zero, Y2 nonzero), gated on `D > min_disto`. At q30 m4 the
-divergence is `max_edge[seg2]`: zen=2, libwebp≈5 — zen under-counts the edge.
+The vendored libwebp source (`scratchpad/lwsrc/`, `trace_driver`) was rebuilt
+with instrumentation and used as ground truth:
 
-**Ruled out (instrumented + source-compared against vendored libwebp):**
-- **Y2 coefficient order** — libwebp `QuantizeBlock_C` writes `out[n]` in zigzag
-  order, so `y_dc_levels[1,2,4]` = zigzag 1,2,4, matching zen's `y2_zigzag[1,2,4]`.
-- **`D > min_disto` gate** — zen's `min_disto = 20*ydc` matches libwebp's
-  `20*m->y1.q[0]`; the gate structure matches.
-- **Flat-source D-doubling** — libwebp doubles `rd->D` for flat blocks before the
-  gate; making zen's gate use the doubled `d_final` was a **no-op** on the 4004-
-  cell grid (these blocky MBs aren't flat-source), so it wasn't shipped.
+1. **`webpx` == real libwebp C, byte-for-byte.** At q30 m4 sns50 segs4, zen ==
+   webpx == `trace_driver` output (all 27944 bytes identical). So the
+   `webpx`-based byteparity baseline *is* canonical libwebp — the grid numbers
+   are trustworthy.
+2. **The base-quant fix (`52cf96f2`) closed far more than the 4004-grid +8%
+   implied for this config.** The Default preset on 382297 is now **47/77 (61%)**
+   byte-identical, not ~49%.
 
-**Narrowed to:** the Y2 coefficient *values* `store_max_delta` reads
-(`stored_coeffs.y2_zigzag`, `mode_selection.rs` call site ~L1784) differ per-MB
-from libwebp's `rd->y_dc_levels` — a stored-coefficient / quant-pass mismatch,
-the same class as the m5 blocky-nz fix (`6b4fa0c`). **Next step:** build
-instrumented libwebp (scratchpad `libwebp-dbg/`) to dump per-MB `(segment,
-blocky, D, Y2[1,2,4], max_edge)` and diff against zen — the q75-style
-methodology. Separately, m6 diverges on I4/mode RD (`y_same` 90–99%) and m0/m1
-on `use_skip`/`skip_prob` (the #25 SKIP_PROBA path); both are distinct from
-`seg_lf`.
+### METHODOLOGY WARNING — rebuild every harness binary after a lib change
+
+The first diagnosis pass (committed then corrected here) chased a **phantom**:
+`segfielddiff` was built *before* the base-quant fix, so its zen encode still
+rounded the q30 base quant (53 vs the fixed 52), producing a fake `seg_lf`
+divergence at q30 **m4**. The 3-way oracle proved q30 m4 is fully
+byte-identical. The harness (`webp-ll-compare`) builds zenwebp into its *own*
+target, so rebuilding the lib in the zenwebp repo does **not** refresh a harness
+binary — you must rebuild the binary. Always rebuild ALL harness bins
+(methodcmp, byteparity_sweep, segfielddiff, …) after any lib edit before trusting
+their output. (Also: `bitexact_diff`'s field diffs print *before* their method's
+summary line — attribute each diff to the method whose summary follows it.)
+
+### Actual current divergence map (382297, post base-quant fix)
+
+```
+q\m  0 1 2 3 4 5 6      . = byte-identical
+  5  X X . X X X X      m2 is 100% identical across all q
+ 10  X X . . . X X      m0/m1 identical except low-q (skip_prob)
+ 20  . X . . . X X      m3/m4 identical mid-q
+ 30  . . . . . X X      divergences cluster at LOW-q and HIGH-q,
+ 40  . . . . . . .        consistent with parity traced at q75
+ 50  . . . . . . .
+ 60  . . . X . . .
+ 70  . . . . X . X
+ 80  . . . X X X X
+ 90  . . . X X X X
+ 95  . . . X X X X
+```
+
+### Real remaining causes (distinct, q-regime-clustered)
+
+- **m0/m1 low-q `use_skip`/`skip_prob`** (q5/q10): zen sets `use_skip=1`
+  (`skip_prob=248`) where libwebp uses `use_skip=0` — the #25 SKIP_PROBA gate
+  threshold (libwebp fires `use_skip_proba` at `skip_proba>=250`). Cleanest
+  candidate — a specific boolean-field threshold.
+- **m5 `seg_lf`** (low-mid q): the trellis-path StoreMaxDelta (`6b4fa0c` fixed it
+  at q75; still diverges off-q75). NOTE the earlier "seg_lf/max_edge" narrative
+  applied to m5-trellis, **not** the non-trellis m4 path — m4 is identical.
+- **m6 mode-RD** (`y_same` 90–99%) + `n_proba_updates` — I4/mode RD divergence.
+- **High-q (q80+) across m3–m6** — proba/RD divergence at fine quant.
+
+**Next step:** the m0/m1 low-q `skip_prob` threshold is the most tractable;
+trace with the now-instrumented `trace_driver` (env dumps `LWSMD`/`LWSFS`/`LWADJ`
+added for filter work; add a skip-proba dump). The `seg_lf`/`max_edge` machinery
+(`adjust_filter_strength`, `store_max_delta` in `vp8/mod.rs`) was verified
+CORRECT on the non-trellis path (zen and libwebp both compute seg2 max_edge=2,
+final=20 at q30 m4) — the m5 divergence is trellis-specific.
 
 ## Method note
 
