@@ -50,6 +50,21 @@ enabled in the shipping encoder), so parity just forces
   **This is the genuinely deep RD tail:** matching libwebp's exact per-sub-block I4
   RD so the ~6546-margin ties at m6 tip the same way. Not cracked this session;
   every shallower cause ruled out by tracing to the MB/sub-block level.
+
+  **Bit-level trace (deepest):** mb(3,0) sub-block-by-sub-block running scores:
+  even sub-block 0 (both pick TM, same context) has zen running=96252 vs libwebp
+  95966 — a **~286-unit difference from the SAME mode**, i.e. a ~16-unit
+  coefficient-rate (R) discrepancy per sub-block. These small per-sub-block R
+  deltas accumulate (sub-block 1 then flips: zen HU vs lib TM) until the I4 total
+  tips I4-vs-I16 the wrong way. So the m6 remainder is a **bit-level coefficient-
+  rate match**: zen's `get_residual_cost` on m6-trellis coefficients differs from
+  libwebp's `VP8GetCostLuma4` by ~16 units/sub-block. Root candidates (next):
+  (a) the m6-trellis produces a coefficient level or two differently than
+  libwebp's (same DP, but invoked in mode-selection vs reconstruction context);
+  (b) a level-cost/token-proba rounding. This is the hardest, subtlest tail —
+  bit-exact I4 RD matching. High-q cluster is likely the same mechanism (token
+  proba). Trace hooks (`LIBMODE` per-mode, `LIBI4blk` per-sub-block running,
+  `CTXDBG` context, zen `MB_DEBUG`/`ALLI16`) all in the scratchpad for next time.
 - **High-q q80–95, m3–m5.** Milder luma mode flips (`y_same` ~97%) + `n_proba_updates`
   off by a few. The n_proba is DOWNSTREAM of modes (when modes match, n_proba
   matches — verified at q40 m5), so the mode-RD is the root.
