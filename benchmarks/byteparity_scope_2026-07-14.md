@@ -31,8 +31,25 @@ enabled in the shipping encoder), so parity just forces
   (byte-identical at m5), and D are ALL ruled out. Next: per-mode trellis-rate
   dump at mb(4,0)#0 (same-mode zen-vs-lib) to pin the rate-accounting difference;
   it's mode-independent-looking (nz=0 R differs), so likely one systematic fix
-  closes the cluster. Instrumented libwebp `LIBI16`/`LIBI4blk`/`LAMDBG`/`A16`
-  hooks + zen `MB_DEBUG` are in place in the scratchpad.
+  closes the cluster. Instrumented libwebp `LIBI16`/`LIBI4blk`/`LAMDBG`/`A16`/
+  `LIBMODE`/`CTXDBG` hooks + zen `MB_DEBUG` are in place in the scratchpad.
+
+  **Exhaustive trace update (correcting the above):** the "nz=0 R=89 vs 229" was a
+  MISREAD — libwebp's 229 = flatness-penalty 140 + `VP8GetCostLuma4(empty)=89`,
+  which MATCHES zen's 89. So the empty-block rate is NOT the divergence. The real
+  root is the **I4-vs-I16 decision at mb(3,0)** (index 3, row 0): zen picks I4 (I4
+  score 863058 < I16 869604, margin **6546**), libwebp picks I16 (its I4 running
+  exceeds I16). zen's mb(3,0) I4 win makes sub-block 3 = HU, which becomes mb(4,0)'s
+  left mode-context (`left_ctx=9` where libwebp has `0`), cascading. So the divergence
+  is a **tiny-margin I4/I16 RD tie at m6**, from small per-sub-block RD deltas — NOT
+  a systematic lambda/table/rate bug (all of those are verified matching:
+  `lambda_i4=56`, the permuted `VP8_FIXED_COSTS_I4` (DC/HU costs match at default
+  ctx), `into_intra` I16→context mapping, and the empty-block rate). The FLIPS tool
+  missed mb(3,0) because its EMITTED mode may still match (multi-pass: the
+  context-building pass picks I4, emission may differ) — a subtlety to resolve next.
+  **This is the genuinely deep RD tail:** matching libwebp's exact per-sub-block I4
+  RD so the ~6546-margin ties at m6 tip the same way. Not cracked this session;
+  every shallower cause ruled out by tracing to the MB/sub-block level.
 - **High-q q80–95, m3–m5.** Milder luma mode flips (`y_same` ~97%) + `n_proba_updates`
   off by a few. The n_proba is DOWNSTREAM of modes (when modes match, n_proba
   matches — verified at q40 m5), so the mode-RD is the root.
