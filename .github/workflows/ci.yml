@@ -51,6 +51,13 @@ jobs:
         run: cargo test --features imgref
       - name: Test (--features mode_debug)
         run: cargo test --features mode_debug
+      # `tests/libwebp_byte_parity.rs` is the gate behind the bit-exact-libwebp
+      # encode claim (#38). It needs `__expert` for `with_cost_model`, so
+      # without this step it would never run in CI and a parity regression
+      # would ship silently — which is exactly how it was before: the check
+      # only existed as a scratchpad tool.
+      - name: Test (--features __expert) — libwebp byte-parity gate
+        run: cargo test --features __expert --test libwebp_byte_parity
 
   test-x86-features:
     name: Test x86 features (${{ matrix.name }})
