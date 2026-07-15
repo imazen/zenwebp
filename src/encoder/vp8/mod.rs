@@ -2130,10 +2130,30 @@ impl<'a> Vp8Encoder<'a> {
             self.segments[seg_idx] = segment;
         }
 
+        // The VP8 segment header always carries 4 quant + 4 filter slots.
+        // `SimplifySegments` (below) fills the `[num_final..config]` slots with the
+        // last surviving segment (`dqm[num_final-1]`), matching libwebp. But the
+        // slots BEYOND the configured count — `[config..4]` — are never touched by
+        // either the k-means (0..config) or SimplifySegments (..config); libwebp
+        // leaves them at their base/segment-0 values, so `PutSegmentHeader` emits
+        // seg0's quant+filter for them (verified: a 2-segment encode has
+        // `dqm[2] == dqm[3] == dqm[0]`). zenwebp left them holding segment-1's
+        // values, diverging the segment header on every segs<4 encode. Match
+        // libwebp under parity by pointing `[config..4]` at segment 0 (delta 0 →
+        // absolute = base). Use the pre-simplify count so we don't clobber
+        // SimplifySegments' correct `[num_final..config]` replication.
+        let config_num_segments = self.num_segments as usize;
+
         // Simplify segments by merging those with identical quant and filter settings
         // This can reduce the number of effective segments and save bits in the bitstream
         if self.num_segments > 1 {
             self.simplify_segments();
+        }
+
+        if self.cost_model == super::api::CostModel::StrictLibwebpParity {
+            for i in config_num_segments..self.segments.len() {
+                self.segments[i] = self.segments[0].clone();
+            }
         }
 
         // Compute segment tree probabilities from actual distribution
