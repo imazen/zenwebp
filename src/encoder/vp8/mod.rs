@@ -501,6 +501,19 @@ struct Vp8Encoder<'a> {
     token_probs: TokenProbTables,
     /// Token statistics for adaptive probability updates
     proba_stats: ProbaStats,
+    /// libwebp `fast_probe` (StatLoop, `frame_enc.c`): at method 0 the
+    /// stats-collection pass records residuals over only the first
+    /// `nb_mbs>>2` (or 50 if the frame has ≤200 MBs) macroblocks, and the
+    /// emitted coefficient probabilities are finalized from that subset. When
+    /// `Some(limit)` — set under `StrictLibwebpParity` at method 0 — snapshot
+    /// `proba_stats` after `limit` MBs and derive the emitted probabilities
+    /// from the snapshot, matching libwebp. `None` records the whole frame
+    /// (the tuned default, and every method ≥ 1).
+    fast_probe_stat_limit: Option<usize>,
+    /// Frozen copy of `proba_stats` taken at the `fast_probe_stat_limit`
+    /// boundary; `compute_updated_probabilities` reads this instead of the
+    /// full-frame `proba_stats` when present.
+    fast_probe_snapshot: Option<ProbaStats>,
     /// Updated probabilities computed from statistics
     updated_probs: Option<TokenProbTables>,
     /// Precomputed level costs for coefficient cost estimation
@@ -625,6 +638,8 @@ impl<'a> Vp8Encoder<'a> {
 
             token_probs: Default::default(),
             proba_stats: ProbaStats::new(),
+            fast_probe_stat_limit: None,
+            fast_probe_snapshot: None,
             updated_probs: None,
             level_costs: LevelCosts::new(),
             // Trellis quantization for RD-optimized coefficient selection.
@@ -750,6 +765,13 @@ impl<'a> Vp8Encoder<'a> {
         let mut updated = COEFF_PROBS;
         let mut has_changed = false;
 
+        // Under libwebp fast_probe (method-0 parity), finalize from the
+        // subset snapshot taken at the boundary rather than the full frame.
+        let stats_src = self
+            .fast_probe_snapshot
+            .as_ref()
+            .unwrap_or(&self.proba_stats);
+
         for t in 0..4 {
             for b in 0..8 {
                 for c in 0..3 {
@@ -759,8 +781,7 @@ impl<'a> Vp8Encoder<'a> {
                         let update_prob = COEFF_UPDATE_PROBS[t][b][c][p];
 
                         let (should_update, new_p, _savings) =
-                            self.proba_stats
-                                .should_update(t, b, c, p, default_prob, update_prob);
+                            stats_src.should_update(t, b, c, p, default_prob, update_prob);
 
                         // Update if savings are positive, matching libwebp's approach.
                         // The signaling cost (8 bits for value + 1 bit flag) is already
@@ -1214,6 +1235,23 @@ impl<'a> Vp8Encoder<'a> {
             if pass == 0 || is_last_pass {
                 self.proba_stats.reset();
             }
+
+            // libwebp fast_probe subset (method-0 StatLoop): the emitted
+            // coefficient probas are finalized from only the first
+            // (num_mb>>2 | 50) MBs. Arm the snapshot boundary under parity so
+            // the final `compute_updated_probabilities` uses that subset. If
+            // the frame has fewer MBs than the limit, the snapshot never fires
+            // and the whole frame is used — matching libwebp, which also
+            // records every MB in that case.
+            self.fast_probe_snapshot = None;
+            self.fast_probe_stat_limit = if self.cost_model
+                == super::api::CostModel::StrictLibwebpParity
+                && self.method == 0
+            {
+                Some(if num_mb > 200 { num_mb >> 2 } else { 50 })
+            } else {
+                None
+            };
 
             // Clear stored info - we only keep the last pass's results
             self.stored_mb_info.clear();
@@ -1731,6 +1769,19 @@ impl<'a> Vp8Encoder<'a> {
             if store_coeffs {
                 self.stored_mb_coeffs.push(stored_coeffs);
             }
+        }
+
+        // Freeze the proba-stat histogram at the libwebp fast_probe boundary
+        // (method-0 StatLoop subset). `total_mb` is 1-based here (incremented
+        // above, before recording), so `== limit` fires right after the
+        // `limit`-th MB's residuals were recorded — the same MB count libwebp
+        // processes in its stats pass. Later MBs keep accumulating into
+        // `proba_stats` (harmless; the snapshot is what emission uses).
+        if let Some(limit) = self.fast_probe_stat_limit
+            && row_state.total_mb as usize == limit
+            && self.fast_probe_snapshot.is_none()
+        {
+            self.fast_probe_snapshot = Some(self.proba_stats.clone());
         }
 
         // Store macroblock info for header writing
