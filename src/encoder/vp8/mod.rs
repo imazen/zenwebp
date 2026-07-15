@@ -1744,7 +1744,35 @@ impl<'a> Vp8Encoder<'a> {
                 // produce small D and are filtered out, preventing the
                 // loop filter from over-bumping on synthetic
                 // color-block content.
-                if self.store_max_edge_active() && !is_i4 && stored_coeffs.is_blocky_i16() {
+                //
+                // At m5 (RD_OPT_TRELLIS) libwebp calls StoreMaxDelta from
+                // PickBestIntra16 with do_trellis=0, so its "blocky" test (all
+                // Y1 AC zero) reads the MODE-SELECTION (non-trellis) nz. Here
+                // stored_coeffs holds the m5 trellis quant, which zeros more AC
+                // and would over-count blocky MBs — inflating max_edge and the
+                // per-segment loop-filter level (seg_lf). Under parity at m5
+                // (`do_trellis && !do_trellis_i4_mode`), recompute the
+                // AC-all-zero test from the non-trellis quant of the I16 DCT
+                // (`y_block_data.coeffs` == PickBestIntra16's luma_blocks); the
+                // Y2 DC is never trellised so its nonzero test is unchanged. m6
+                // and the tuned default use the stored (trellis) test. (#38)
+                let blocky = if !is_i4
+                    && self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity
+                    && self.do_trellis
+                    && !self.do_trellis_i4_mode
+                {
+                    let y1 = self.segments[mb_segment_id].y1_matrix.as_ref().unwrap();
+                    let ac_all_zero = (0..16).all(|b| {
+                        let mut blk: [i32; 16] =
+                            y_block_data.coeffs[b * 16..b * 16 + 16].try_into().unwrap();
+                        blk[0] = 0; // DC lives in Y2
+                        !crate::encoder::quantize::quantize_ac_only_simd(&mut blk, y1, true)
+                    });
+                    ac_all_zero && stored_coeffs.y2_zigzag.iter().any(|&c| c != 0)
+                } else {
+                    stored_coeffs.is_blocky_i16()
+                };
+                if self.store_max_edge_active() && !is_i4 && blocky {
                     let d = macroblock_info.intra16_d.unwrap_or(0);
                     if d > self.segments[mb_segment_id].min_disto {
                         self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
