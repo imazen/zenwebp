@@ -347,6 +347,27 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Fixed
 
+- **StrictLibwebpParity: ALL 14 of 14 method×segment cells now byte-identical
+  to libwebp** (#38, 8256bec / 8b60a62 / c96f767 / 6b4fa0c). Four more
+  parity-gated fixes (tuned default unchanged) closed the last three cells
+  (m4-segs4, m5-segs1, m5-segs4): (1) **I16 flat-source penalty as a latch** —
+  libwebp refines a single `is_flat` flag in DC→TM→V→H order and doubles a
+  mode's D/SD only while it holds (`quant_enc.c:1044`); zen checked each mode's
+  coeff-flatness independently and over-doubled (closed m4-segs4). (2)
+  **I4 trellis static context at m5** — libwebp's `SimpleQuantize`/
+  `ReconstructIntra4` reads the trellis rate context from the inter-MB neighbour
+  nz and never updates it between sub-blocks (its m6 path updates per sub-block
+  in `PickBestIntra4`); zen updated per sub-block, so at m5 it used the wrong
+  context. (3) **m5 chroma DC double-correction** — m5 reconstructs chroma
+  twice (`PickBestUV` then `SimpleQuantize`), and the second `CorrectDCValues`
+  reads the errors `StoreDiffusionErrors` just wrote (this MB's own), so the
+  final coded chroma DC uses the self errors, not the neighbour errors (closed
+  m5-segs1). (4) **m5 blocky-I16 filter delta from mode-selection nz** —
+  `StoreMaxDelta`'s all-Y1-AC-zero test uses the non-trellis PickBestIntra16 nz;
+  zen used the m5 trellis quant (which zeros more AC), inflating `seg_lf`
+  (closed m5-segs4). Byte-identical to libwebp on 382297 for **all** of
+  segs1 m0-m6 and segs4 m0-m6. Full inventory:
+  `benchmarks/bitexact_parity_2026-07-14.md` (part 14).
 - **StrictLibwebpParity: 11 of 14 method×segment cells now byte-identical to
   libwebp** (#38, 44b6a38 / a899036 / 4d41a33 / defebc5 / e6ee888). Six
   parity-gated fixes (tuned default unchanged): (1) pad the VP8 bitstream to

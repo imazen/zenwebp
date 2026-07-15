@@ -471,3 +471,91 @@ Seven fixes landed (all parity-gated, tuned default unchanged, lib 323 +
 zensim 14 + chroma 3 + pixel-perfect 14 green throughout): even-pad chunk,
 fast_probe m0 subset, tlambda clamp + I4 flatness penalty + max_i4_header_bits,
 mid-pass level_costs refresh, and the I4 sub-block tie-break.
+
+## 14 of 14 cells BYTE-IDENTICAL — trellis + chroma + filter roots (part 14)
+
+**ALL 14 (method × segment) cells are byte-identical to libwebp** on 382297
+(q75, `StrictLibwebpParity`): segs1 m0–m6 and segs4 m0–m6. Four parity-gated
+fixes closed the last three cells (m4-segs4, m5-segs1, m5-segs4). Harness:
+`scratchpad/webp-ll-compare` (`methodcmp`, `bitex5`, `i4dump`, `decodediff`) +
+instrumented libwebp `scratchpad/lwsrc` (`LIBI16m`/`LIBI4blk`/`LIBMODE`/
+`LIBTRELLIS`/`LIBCDC`/`LIBSTORE`, `TARGX`/`TARGY`/`TARGI`/`TDUMP`).
+
+### 1. m4-segs4 — I16 flat-source penalty must be a stateful latch (8256bec)
+
+Not a `VP8TDisto` precision cascade as part 13 guessed. libwebp's I16
+flat-source penalty (`quant_enc.c:1044-1058`) is a **stateful latch**:
+`is_flat` starts as `IsFlatSource16`, then is refined to
+`is_flat && IsFlat(mode_coeffs)` for each mode **in DC→TM→V→H order**, and once
+it goes false it never re-arms — so a mode's D/SD is doubled only if the source
+AND every earlier-order mode's coefficients are flat. zenwebp checked each
+mode's coeff-flatness independently. At mb(5,10) TM (mode 1) has non-flat
+coeffs, latching `is_flat` off, so libwebp does NOT double V's distortion
+(D=96); zen doubled it (D=192, exactly 2×, because V's coeffs happen to be
+flat). The inflated I16-V score (92100 vs 62660) made zen keep I4 (88248 <
+92100) where libwebp bailed to I16 (67706 > 62660) — the I4 blocks were
+byte-identical through the bail point. Fix: under parity iterate the I16 modes
+in libwebp's DC,TM,V,H order (MODES indices `[0,3,1,2]`) and carry the single
+`is_flat` latch. Iteration order does not change the winner (the tie-break is
+rank-based). The `tlambda`/`VP8TDisto` term was a red herring — same for
+m5-segs4, which is *filter*, not SD (item 4).
+
+### 2. m5 I4 trellis uses a static per-MB context (8b60a62)
+
+m5 = `RD_OPT_TRELLIS`: pick modes with regular quant, then re-quantize the
+chosen mode with trellis in `SimpleQuantize`. `SimpleQuantize`→
+`ReconstructIntra4` (`quant_enc.c:844`) reads the trellis rate context from the
+inter-MB neighbour nz and **never updates `it->top_nz`/`left_nz` between
+sub-blocks**, so all 16 I4 sub-blocks of an MB share one static context. m6 =
+`RD_OPT_TRELLIS_ALL` instead runs the I4 trellis inside `PickBestIntra4`, which
+DOES update per sub-block (that is why m6 was already byte-identical). zenwebp's
+final reconstruction pass updated the context per sub-block. Per-call
+`LIBTRELLIS`/`ZTRELLIS` dumps at mb(0,0): identical DCT inputs/lambda, but ctx0
+differed (zen `0,1,0,1,1,0,1,2,…` vs libwebp all `0`), flipping sub-block 15
+from a kept `-1` coeff to a skip. Fix: under parity at m5
+(`do_trellis && !do_trellis_i4_mode`), take the I4 trellis ctx0 from a frozen
+snapshot of the inter-MB neighbour nz. This made mb(0,0) luma byte-identical
+but did not close m5 alone — the chroma cascade (item 3) remained.
+
+### 3. m5 chroma DC is corrected TWICE — the second pass reads self errors (c96f767)
+
+m5 reconstructs chroma twice. `PickBestUV` corrects the chroma DC with the
+neighbour diffusion errors and calls `StoreDiffusionErrors` (`quant_enc.c:1349`),
+then `SimpleQuantize`→`ReconstructUV` corrects AGAIN (`quant_enc.c:988`) — but
+`StoreDiffusionErrors` has already overwritten `top_derr[x]`/`left_derr` with
+**this MB's own** errors, so the final coded chroma DC uses the self errors, not
+the neighbour errors. `LIBCDC`/`LIBSTORE` at mb(0,0): the 4-mode PickBestUV pass
+reads `top=[0,0] left=[0,0]`; `StoreDiffusionErrors` writes `left=[-1,4]
+top=[2,2]`; the SimpleQuantize pass then reads `top=[2,2] left=[-1,4]` and bumps
+a U DC level 32→33. zen corrected once (neighbour errors), so its final chroma
+DC diverged and cascaded into downstream chroma prediction + UV mode flips
+(mb(5,0) UV zen=DC vs lib=H). m4 (`RD_OPT_BASIC`) and m6 (`RD_OPT_TRELLIS_ALL`)
+reconstruct chroma once, so they were already correct. Fix: under parity at m5,
+after the neighbour correction + store, re-correct the FRESH FTransform DC with
+the just-stored self errors; keep the neighbour-correction errors as the stored
+propagation (libwebp does not re-store). Closed m5-segs1; brought m5-segs4 to
+size + full mode/segmentation parity (one seg_lf field remaining, item 4).
+
+### 4. m5-segs4 blocky-I16 filter delta from mode-selection (non-trellis) nz (6b4fa0c)
+
+Last field: `seg_lf[3]` zen=4 vs lib=2 (all modes/coeffs matched). libwebp's
+`StoreMaxDelta` (per-segment loop-filter `max_edge` bump for blocky DC-only I16
+MBs) is called from `PickBestIntra16` (`quant_enc.c:1120`) with `do_trellis=0`
+at m5, so its `(nz & 0x100ffff)==0x1000000` test (all 16 Y1 AC blocks zero, Y2
+nonzero) reads the **mode-selection (non-trellis)** quant. zenwebp tested it
+against `stored_coeffs`, which at m5 are the final TRELLIS quant — trellis zeros
+more AC, so more MBs counted as blocky, inflating `max_edge` for segment 3 and
+its derived filter level. Fix: under parity at m5 recompute the all-Y1-AC-zero
+test from the non-trellis quant of the I16 DCT (`y_block_data.coeffs` ==
+PickBestIntra16's `luma_blocks`, via `quantize_ac_only_simd`); Y2 DC is never
+trellised so its nonzero test is unchanged. m6 (libwebp runs the I16 trellis in
+PickBestIntra16, so its StoreMaxDelta nz is already trellis-based) and the tuned
+default keep the stored-coeffs test.
+
+**Session net (382297 StrictLibwebpParity): 11/14 → 14/14 byte-identical
+cells.** All four fixes parity-gated, tuned default unchanged, lib 323 + zensim
+14 + chroma 3 + pixel-perfect 14 green throughout. The two part-13 "remaining"
+guesses were both corrected: m4-segs4 was the I16 flat-latch (not a `VP8TDisto`
+cascade), and m5 was I4-trellis-context + chroma-double-correction +
+blocky-nz-source (not a single trellis-DP bug — the DP was already correct, as
+m6's byte-identity proved).
