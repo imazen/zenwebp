@@ -1,15 +1,43 @@
 # StrictLibwebpParity byte-identity — actual scope (2026-07-14)
 
-## CURRENT STATE (2026-07-15): 3407/4004 = 85.1% byte-identical
+## CURRENT STATE (2026-07-15): 3488/4004 = 87.1% byte-identical
 
-Four parity-gated fixes this session took the grid **24% → 85.1%**: base-quant
+Five parity-gated fixes this session took the grid **24% → 87.1%**: base-quant
 `52cf96f2`, segmentation-collapse `41923466`, trailing-slots `7acdd775`,
-**skip-proba `91c96168`**. The skip-proba one was NOT a StatLoop rearchitecture
-(I wrongly called it deep and stopped — it was a one-line gate): instrumented
-libwebp always writes `use_skip_proba = 0` (there's an unconditional
-`assert(use_skip_proba == 0)` at `VP8EncTokenLoop` entry; the flag is never
-enabled in the shipping encoder), so parity just forces
-`macroblock_no_skip_coeff = None`. Closed the whole low-q cluster (+256 cells).
+**skip-proba `91c96168`**, **I16-AC-trellis nz-context seed (this commit, +81
+cells)**. The skip-proba one was NOT a StatLoop rearchitecture (I wrongly called
+it deep and stopped — it was a one-line gate): instrumented libwebp always writes
+`use_skip_proba = 0` (there's an unconditional `assert(use_skip_proba == 0)` at
+`VP8EncTokenLoop` entry; the flag is never enabled in the shipping encoder), so
+parity just forces `macroblock_no_skip_coeff = None`. Closed the whole low-q
+cluster (+256 cells).
+
+**I16-AC-trellis nz-context seed (the m6 root cause).** At m6
+(RD_OPT_TRELLIS_ALL) zen's `pick_best_intra16` trellis-quantizes each I16
+candidate's AC blocks (`mode_selection.rs:793`). It seeded the per-block nz
+context `top_nz_t`/`left_nz_t` to **all-false**; libwebp's `ReconstructIntra16`
+calls `VP8IteratorNzToBytes` (`quant_enc.c:826`) FIRST, so its trellis context
+`ctx = it->top_nz[x] + it->left_nz[y]` (`:829`) uses the REAL neighbouring-MB
+coefficients. For an MB whose neighbours carry coefficients, the top-row /
+left-column blocks get ctx0=0 in zen vs 1-2 in libwebp → different trellis
+level-costs → different keep/drop → a candidate's D **and** R both shift. **Traced
+end-to-end (q40 m6, 382297, first emitted-pixel divergence = mb(11,8)):** zen and
+libwebp agreed exactly on I16 DC/TM/V, but the H candidate diverged (zen
+D=3062/R=22825 vs lib D=2734/R=25473) with a byte-identical H_PRED left column
+`[44,44,44,44,71,50,36,39,40,40,40,40,41,41,41,41]` — proving the prediction
+matched and only the trellis differed. The wrong H candidate won zen's I16
+(raw score 401464640 < DC 429540099) but lost I4-vs-I16 in FINAL terms
+(1212032 > 1172862), so zen emitted I4 where libwebp emitted I16-DC. Seeding the
+context from the real neighbour nz (zen's `top_complexity`/`left_complexity`,
+same source the I4 path already used) makes that cell byte-identical. Parity-gated
+(`seed_ctx = cost_model == StrictLibwebpParity`); the tuned default keeps the
+all-false seed and is byte-unchanged by construction.
+
+**Method to find it (reusable): `mbpixdiff`** — decode BOTH bitstreams and diff
+per-MB pixels to find the first EMITTED divergence, instead of chasing per-MB
+debug prints (which mix the ~4 non-emission probe calls per MB and mislead — my
+earlier mb(3,0) trace was a probe, not the emission). The first differing MB is
+the clean root; trace only that one.
 
 **Remaining ~15% is luma I4/I16 mode-RD**, in two overlapping clusters:
 - **m6, all q (~207 cells).** The m5→m6 delta is trellis-during-I4-mode-selection
@@ -47,24 +75,23 @@ enabled in the shipping encoder), so parity just forces
   ctx), `into_intra` I16→context mapping, and the empty-block rate). The FLIPS tool
   missed mb(3,0) because its EMITTED mode may still match (multi-pass: the
   context-building pass picks I4, emission may differ) — a subtlety to resolve next.
-  **This is the genuinely deep RD tail:** matching libwebp's exact per-sub-block I4
-  RD so the ~6546-margin ties at m6 tip the same way. Not cracked this session;
-  every shallower cause ruled out by tracing to the MB/sub-block level.
+  **RESOLVED (this commit) for the dominant m6 mechanism:** the m6 divergence was
+  the **I16-AC-trellis nz-context seed** (see the CURRENT STATE section above) —
+  zen seeded the mode-selection trellis context all-false where libwebp uses the
+  real neighbour nz. Fixing that took m6 from part of the 15% tail to a much
+  smaller remainder. The earlier "bit-level ~16-unit coefficient-rate at mb(3,0)"
+  trace below was a **NON-emission probe call** (zen calls `pick_best_intra*` ~4×
+  per MB with evolving state; `MB_DEBUG` mixes them), NOT the emission root — the
+  real first emitted divergence was mb(11,8). Lesson kept for the next tail:
+  **use `mbpixdiff` (decode both, diff per-MB) to find the first EMITTED
+  divergence; trace only that MB.** The stale probe-call trace is retained below
+  only as a cautionary example.
 
-  **Bit-level trace (deepest):** mb(3,0) sub-block-by-sub-block running scores:
-  even sub-block 0 (both pick TM, same context) has zen running=96252 vs libwebp
-  95966 — a **~286-unit difference from the SAME mode**, i.e. a ~16-unit
-  coefficient-rate (R) discrepancy per sub-block. These small per-sub-block R
-  deltas accumulate (sub-block 1 then flips: zen HU vs lib TM) until the I4 total
-  tips I4-vs-I16 the wrong way. So the m6 remainder is a **bit-level coefficient-
-  rate match**: zen's `get_residual_cost` on m6-trellis coefficients differs from
-  libwebp's `VP8GetCostLuma4` by ~16 units/sub-block. Root candidates (next):
-  (a) the m6-trellis produces a coefficient level or two differently than
-  libwebp's (same DP, but invoked in mode-selection vs reconstruction context);
-  (b) a level-cost/token-proba rounding. This is the hardest, subtlest tail —
-  bit-exact I4 RD matching. High-q cluster is likely the same mechanism (token
-  proba). Trace hooks (`LIBMODE` per-mode, `LIBI4blk` per-sub-block running,
-  `CTXDBG` context, zen `MB_DEBUG`/`ALLI16`) all in the scratchpad for next time.
+  **Stale probe-call trace (cautionary — NOT the emission root):** mb(3,0)
+  sub-block scores showed zen running=96252 vs libwebp 95966. This was a probe
+  call; zen actually emits I16 at mb(3,0) matching libwebp. Do not chase per-MB
+  `MB_DEBUG` output without first confirming (via `mbpixdiff`) that the MB is a
+  real emitted divergence.
 - **High-q q80–95, m3–m5.** Milder luma mode flips (`y_same` ~97%) + `n_proba_updates`
   off by a few. The n_proba is DOWNSTREAM of modes (when modes match, n_proba
   matches — verified at q40 m5), so the mode-RD is the root.

@@ -136,6 +136,21 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Added
 
+- **`StrictLibwebpParity` byte-exactness generalized to 87.1% of the grid** (#38,
+  2026-07-15): five parity-gated fixes took the broad byteparity grid (13 images ×
+  q5–95 × 4 configs × m0–6 = 4004 cells) from **24% → 87.1%**. The latest two:
+  (4) **skip-proba forced off** — instrumented libwebp always writes
+  `use_skip_proba = 0` (unconditional `assert(use_skip_proba == 0)` at
+  `VP8EncTokenLoop` entry), so parity forces `macroblock_no_skip_coeff = None`
+  (+256 low-q cells). (5) **I16-AC-trellis nz-context seed** — at m6
+  (RD_OPT_TRELLIS_ALL) zen's `pick_best_intra16` seeded the AC-trellis per-block nz
+  context all-false, but libwebp's `ReconstructIntra16` calls `VP8IteratorNzToBytes`
+  first so its trellis uses the REAL neighbour nz; for MBs whose neighbours carry
+  coefficients this flipped an I16 sub-mode (H vs DC) and cascaded to I4-vs-I16.
+  Seeding from `top_complexity`/`left_complexity` (parity-gated) fixed it (+81
+  cells; first emitted divergence at mb(11,8) traced byte-identical). All
+  parity-gated; tuned default byte-unchanged; q75 still 14/14; full test suite
+  green (689 passed). Scope: `benchmarks/byteparity_scope_2026-07-14.md`.
 - **`StrictLibwebpParity` byte-exactness generalized to 78.7% of the grid** (#38,
   2026-07-15, `52cf96f2`/`41923466`/`7acdd775`): three parity-gated fixes took the
   broad byteparity grid (13 images × q5–95 × 4 configs × m0–6) from **32% → 78.7%**.

@@ -792,11 +792,39 @@ impl<'a> super::Vp8Encoder<'a> {
             // (y1_quant hoisted outside mode loop to avoid redundant zero-init)
             if self.do_trellis_i4_mode {
                 // m6 RD_OPT_TRELLIS_ALL: use trellis quantization for I16 AC blocks.
-                // Track per-block has_nz context locally — `get_cost_luma16` itself
-                // resets these to all-false at function entry, so the ctx0 we feed
-                // into the trellis call needs to mirror that ordering exactly.
-                let mut top_nz_t = [false; 4];
-                let mut left_nz_t = [false; 4];
+                // Track per-block has_nz context, seeded from the REAL neighbouring-MB
+                // nz state. libwebp's `ReconstructIntra16` calls `VP8IteratorNzToBytes`
+                // (`quant_enc.c:826`) before the I16 AC trellis, so its `ctx =
+                // it->top_nz[x] + it->left_nz[y]` (`:829`) uses the actual top/left
+                // neighbour coefficients — NOT an all-false reset. For MBs whose
+                // neighbours carry coefficients, seeding all-false gives the top-row /
+                // left-column blocks ctx0=0 where libwebp has 1-2, changing the
+                // trellis level-costs and thus its keep/drop, which can flip the whole
+                // I16 mode winner (e.g. H vs DC) and cascade to the I4-vs-I16 pick.
+                // Parity-gated: the tuned default keeps the all-false seed (its
+                // calibration was fit against that behaviour). (#38)
+                let seed_ctx =
+                    self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity;
+                let mut top_nz_t = if seed_ctx {
+                    [
+                        self.top_complexity[mbx].y[0] != 0,
+                        self.top_complexity[mbx].y[1] != 0,
+                        self.top_complexity[mbx].y[2] != 0,
+                        self.top_complexity[mbx].y[3] != 0,
+                    ]
+                } else {
+                    [false; 4]
+                };
+                let mut left_nz_t = if seed_ctx {
+                    [
+                        self.left_complexity.y[0] != 0,
+                        self.left_complexity.y[1] != 0,
+                        self.left_complexity.y[2] != 0,
+                        self.left_complexity.y[3] != 0,
+                    ]
+                } else {
+                    [false; 4]
+                };
                 #[allow(clippy::needless_range_loop)]
                 for block_idx in 0..16 {
                     let bx = block_idx % 4;
