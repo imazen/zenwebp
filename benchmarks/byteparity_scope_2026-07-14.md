@@ -10,7 +10,19 @@ north-star (byte-identical at *all* matching settings) is not met — this doc
 records exactly how far it reaches so the next session doesn't over-trust the
 `methodcmp` 14/14.
 
-**Update (same day): base-quant round→truncate fix lands → 1270/4004 (32%).**
+**Update (2026-07-15): segmentation-collapse fix → 2666/4004 (66.6%).** Biggest
+single jump. libwebp writes `segmentation_enabled = (num_segments > 1)` *after*
+`SimplifySegments` merges equivalent segments; at sns=0 the SNS quantizer spread
+is 0, so all segments are uniform → libwebp collapses to 1 and turns segmentation
+OFF. zen set `segments_enabled` unconditionally, emitting a full 4-segment header
+where libwebp emits none — so the entire sns0/segs>1 config diverged. Fix
+(parity-gated, `vp8/mod.rs`): `segments_enabled = num_segments > 1`. Per-config:
+sns0/segs4 **0% → 78.3%** (now identical to sns0/segs1), sns50/segs4 **48.6% →
+79.3%**, sns30/segs2 **0% → 30.4%**, sns0/segs1 78.3% (unchanged). q75 14/14 held;
+tuned byte-unchanged. Commit `41923466`. Tuned-adoption candidate (strict
+byte-saving when it fires) pending a sweep.
+
+**Update (2026-07-15): base-quant round→truncate fix → 1270/4004 (32%).**
 First generalization step: `setup_encoding` computed the segs1 base quant with
 `quality_to_quant_index` (which **rounds** `127*(1-c)`), but libwebp truncates
 (`VP8SetSegmentParams`). They diverge by +1 at q10/30/50/80 (frac ≥ 0.5), which
