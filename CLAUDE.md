@@ -135,8 +135,30 @@ See `docs/PERFORMANCE.md` for benchmarks, `docs/CALL-TREE.md` for SIMD tiers, `d
 
 CostModel enum (#33) lets users switch to `StrictLibwebpParity` to disable
 zenwebp's perceptual extensions (PSY_WEIGHT_Y CSF, SATD masking blend, JND
-zeroing) for libwebp algorithm parity. Bit-exact-libwebp follow-up tracked
-in a separate north-star issue.
+zeroing) for libwebp algorithm parity.
+
+**`StrictLibwebpParity` is now byte-exact with libwebp (#38, 2026-07-14).**
+14/14 (method × segment) cells produce byte-identical output to libwebp:
+m0–m6 at segs1 (SNS=0, filter=0) and segs4 (SNS=50, filter=60). Verified via
+`methodcmp` + the full test suite. Root causes closed: forward DCT proven
+bit-exact (`transform.rs` differential tests), RGB→YUV byte-exact (×4 chroma
+precision + exact Y, `ChromaPrec::LibwebpExact`), chroma-DC diffusion store
+RD-gating, UV all-4-edge-modes, FastMBAnalyze alpha=0 at m0/m1, filter-bump RD
+gating, zigzag UV RD cost, mode tie-break orders, I4 flatness penalty + tlambda
+clamp + max_i4_header_bits + level_costs refresh, I16 flat-source latch, I4
+trellis static context, chroma-DC double-correction, StoreMaxDelta blocky-nz,
+container even-padding-inside-chunk. All parity fixes are gated so the tuned
+default is byte-unchanged. Provenance: `benchmarks/bitexact_parity_2026-07-14.md`.
+
+**Tuned-default adoptions from the parity work (#38-D, 2026-07-14):** two
+parity-gated fixes measured as wins on real content (CID22 + imazen-26) and
+adopted into `ZenwebpDefault`: `max_i4_header_bits` → libwebp's
+`partition_limit`-derived 65536 (−0.16% size / +0.014 zsim, `b9fd7cb`), and
+UV-mode RD scoring on the diffused reconstruction at m3-6 (−0.22% size / +0.107
+zsim, `816aea5`). Rejected after measuring: FastMBAnalyze-alpha at m0/m1
+(+4.25% bytes on the size-focused draft tier), I4 flatness penalty (wash), and
+mid-row level_costs refresh (documented tuned regression). Full write-up:
+`benchmarks/tuned_candidates_2026-07-14.md`.
 
 **Pre-audit numbers (kept for reference — 2026-03-28 measurement):**
 - CID22 Q75: **1.0149x** | Q90: **1.0060x** (near parity)

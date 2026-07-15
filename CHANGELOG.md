@@ -136,6 +136,25 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Added
 
+- **`StrictLibwebpParity` is now fully byte-exact with libwebp** (#38,
+  `816aea5`/`6b4fa0c`/`c96f767`+`8b60a62`/`8256bec`): all 14 (method × segment)
+  cells produce byte-identical output — m0–m6 at segs1 (SNS=0, filter=0) and
+  segs4 (SNS=50, filter=60), verified by `methodcmp` + the full suite. Closes
+  the residual m3-6 cascade left open by the earlier RD-path entry: I4 flatness
+  penalty in the running total, I16 flat-source latch, I4 trellis static
+  context, chroma-DC double-correction, StoreMaxDelta blocky-nz from the
+  mode-selection quant state, and container even-padding inside the VP8 chunk.
+  Full investigation: `benchmarks/bitexact_parity_2026-07-14.md`.
+- **Tuned default adopts two parity-gated wins** (#38-D): measured on CID22 +
+  imazen-26 and adopted into `ZenwebpDefault` — (1) `max_i4_header_bits` now
+  uses libwebp's `partition_limit`-derived value (65536 at the default) instead
+  of the historical 16384 I4-suppression band-aid, −0.16% size / +0.014 zsim at
+  m4/m6 (`b9fd7cb`); (2) UV modes are RD-scored on the diffused reconstruction
+  at m3-6 (matching what emission produces), −0.22% size / +0.107 zsim
+  (`816aea5`). FastMBAnalyze-alpha (+4.25% bytes), the I4 flatness penalty
+  (wash), and a mid-row level_costs refresh (regression) were measured and
+  rejected. Provenance: `benchmarks/tuned_candidates_2026-07-14.md` +
+  `benchmarks/maxi4_header_bits_2026-07-14.md`.
 - **Byte-exact chroma downsampling under `StrictLibwebpParity`** (#38): the
   gamma-corrected 2×2 chroma downsampling now offers libwebp's YUV_FIX+2 (×4)
   precision path (`ChromaPrec::LibwebpExact`), byte-identical to
