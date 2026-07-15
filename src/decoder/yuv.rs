@@ -2496,7 +2496,7 @@ mod tests_simd {
             (64, 64),
             (80, 5),
         ];
-        let mut seed: u32 = 0x1234_5;
+        let mut seed: u32 = 0x0001_2345;
         let mut rnd = || {
             seed ^= seed << 13;
             seed ^= seed >> 17;
