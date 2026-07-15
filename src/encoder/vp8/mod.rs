@@ -2192,8 +2192,19 @@ impl<'a> Vp8Encoder<'a> {
         }
 
         // Use libwebp-style quality curve to match expected behavior at Q75
-        // This emulates jpeg-like behavior where Q75 is "good quality"
-        let quant_index: u8 = quality_to_quant_index(lossy_quality);
+        // This emulates jpeg-like behavior where Q75 is "good quality".
+        // libwebp's base quant TRUNCATES `127*(1-c)` (`VP8SetSegmentParams`);
+        // `quality_to_quant_index` rounds, which diverges by +1 at q10/30/50/80
+        // (frac >= 0.5). For segs>1 this value is overwritten by the truncating
+        // `compute_segment_quant`, so only segs1 is affected — under parity use
+        // the truncating form so segs1 is byte-exact away from q75. The tuned
+        // default keeps the (rounded) value pending a measured adoption.
+        let quant_index: u8 =
+            if self.cost_model == super::api::CostModel::StrictLibwebpParity {
+                super::fast_math::quality_to_quant_index_trunc(lossy_quality)
+            } else {
+                quality_to_quant_index(lossy_quality)
+            };
         let quant_index_usize: usize = quant_index as usize;
 
         let mb_width = width.div_ceil(16);

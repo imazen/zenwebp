@@ -143,8 +143,10 @@ At **q75** on CID22 382297 (512×512), all **14** (method × config) cells are
 byte-identical to libwebp: m0–m6 at (SNS=0, filter=0, segs1) and (SNS=50,
 filter=60, segs4) — verified via `methodcmp` + the test grid. This is real and
 hard-won, but it **does not generalize**: a broad sweep (13 images incl.
-tiny/odd-dim synthetics + 3 CID22, q5–95, 4 configs, m0–6 = 4004 cells) is only
-**972/4004 (24%)** byte-identical. Two configs NOT covered by `methodcmp` —
+tiny/odd-dim synthetics + 3 CID22, q5–95, 4 configs, m0–6 = 4004 cells) started
+at **972/4004 (24%)** byte-identical (→ **1270/4004 (32%)** after the base-quant
+round→truncate fix; the segs1 config alone went 48.6% → 78.3%). Two configs NOT
+covered by `methodcmp` —
 (SNS=0, filter=0, segs4) and (SNS=30, filter=20, segs2) — **never** match (0%),
 and byte-identity oscillates 12–34% across q (a quantizer-index parity effect;
 odd steps ~12%, even ~32%) with **no q exceeding 34%**; other CID22 images sit

@@ -31,6 +31,21 @@ pub(crate) fn quality_to_quant_index(quality: u8) -> u8 {
     q.clamp(0, 127) as u8
 }
 
+/// libwebp's exact base quant index: `(int)(127 * (1 - c))` — **truncation**
+/// toward zero, matching `VP8SetSegmentParams`/`SetSegmentParams`
+/// (`quant_enc.c`). [`quality_to_quant_index`] rounds instead, which diverges
+/// by +1 wherever `127 * (1 - c)` has a fractional part ≥ 0.5 — i.e. q10, q30,
+/// q50, q80 (q75 rounds and truncates alike, which is why the q75-only parity
+/// gate never caught it). Only the segs1 base quant reaches this: segs>1 is
+/// overwritten by the truncating `compute_segment_quant`. Used under
+/// `StrictLibwebpParity` so segs1 is byte-exact away from q75.
+#[inline]
+pub(crate) fn quality_to_quant_index_trunc(quality: u8) -> u8 {
+    let c = quality_to_compression(quality);
+    let q = (127.0 * (1.0 - c)) as i32;
+    q.clamp(0, 127) as u8
+}
+
 //------------------------------------------------------------------------------
 // Rounding functions
 

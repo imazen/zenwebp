@@ -5,10 +5,21 @@
 The #38 parity work makes `CostModel::StrictLibwebpParity` **byte-identical to
 libwebp at the specific operating point it was traced against** (q75, CID22
 382297, two configs), across all 7 methods. It is **NOT** byte-identical in
-general. A broad grid is only **972/4004 (24%)** byte-identical. #38's
+general. The broad grid below started at **972/4004 (24%)** byte-identical. #38's
 north-star (byte-identical at *all* matching settings) is not met — this doc
 records exactly how far it reaches so the next session doesn't over-trust the
 `methodcmp` 14/14.
+
+**Update (same day): base-quant round→truncate fix lands → 1270/4004 (32%).**
+First generalization step: `setup_encoding` computed the segs1 base quant with
+`quality_to_quant_index` (which **rounds** `127*(1-c)`), but libwebp truncates
+(`VP8SetSegmentParams`). They diverge by +1 at q10/30/50/80 (frac ≥ 0.5), which
+q75 (26.20, rounds==truncates) could never expose. Parity now uses
+`quality_to_quant_index_trunc`. Effect on the clean **sns0/segs1** config:
+**48.6% → 78.3%** identical (q30 0→6/7, q50 0→7/7; q10 and q80 still carry a
+*second* divergence). Tuned default byte-unchanged, q75 still 14/14. The
+remaining open axes below are unchanged (segs4 mechanism, q5/q10/q80 second
+divergence, high-q q90/q95).
 
 ## Why the 14/14 was misleading
 
