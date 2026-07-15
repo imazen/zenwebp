@@ -377,6 +377,21 @@ impl<'a> super::Vp8Encoder<'a> {
             self.left_complexity.y[3] != 0,
         ];
 
+        // libwebp's m5 (RD_OPT_TRELLIS) I4 trellis runs in `SimpleQuantize` ->
+        // `ReconstructIntra4`, which reads the trellis rate context from the
+        // inter-MB neighbour nz but NEVER updates `it->top_nz`/`left_nz` between
+        // sub-blocks (`quant_enc.c:844`) — so all 16 sub-blocks share one static
+        // per-MB context. Its m6 (RD_OPT_TRELLIS_ALL) I4 trellis instead runs in
+        // `PickBestIntra4`, which DOES update the context per sub-block. zenwebp
+        // updates the context per sub-block in this final pass, which matches m6
+        // but diverges from m5's static context. Under parity, freeze the context
+        // at m5 (`do_trellis && !do_trellis_i4_mode`) to match `SimpleQuantize`;
+        // the tuned default keeps the (more accurate) intra-MB-updated context. (#38)
+        let static_i4_ctx = self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity
+            && !self.do_trellis_i4_mode;
+        let top_nz_frozen = top_nz;
+        let left_nz_frozen = left_nz;
+
         for sby in 0usize..4 {
             for sbx in 0usize..4 {
                 let i = sby * 4 + sbx;
@@ -425,7 +440,12 @@ impl<'a> super::Vp8Encoder<'a> {
                     // Trellis quantization for better RD trade-off
                     // trellis_quantize_block modifies current_subblock to contain
                     // the dequantized values (level * q)
-                    let ctx0 = (u8::from(left_nz[sby]) + u8::from(top_nz[sbx])).min(2) as usize;
+                    let ctx0 = if static_i4_ctx {
+                        (u8::from(left_nz_frozen[sby]) + u8::from(top_nz_frozen[sbx])).min(2)
+                            as usize
+                    } else {
+                        (u8::from(left_nz[sby]) + u8::from(top_nz[sbx])).min(2) as usize
+                    };
                     // Capture zigzag levels into the LumaBlockResult slot so the
                     // recorder doesn't re-run trellis on the same input. (#35-#8)
                     let zigzag_slot = &mut trellis_y1_zigzag.as_mut().unwrap()[i];
