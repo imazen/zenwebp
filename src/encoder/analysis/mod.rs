@@ -232,7 +232,21 @@ pub fn analyze_macroblock(
     sns_strength: u8,
     cost_model: crate::encoder::api::CostModel,
 ) -> (u8, i32, usize) {
-    let (best_alpha, _best_mode) = it.analyze_best_intra16_mode();
+    // libwebp's `MBAnalyze` uses `FastMBAnalyze` at method <= 1, which returns
+    // `best_alpha = 0` (it only does the fast DC-variance mode split, not the
+    // full per-mode histogram/susceptibility analysis). The full analysis runs
+    // only at method >= 2. zenwebp always ran the full luma analysis, so its
+    // segmentation histogram — and therefore the k-means centers, segment
+    // quantizers, and per-MB segment map — diverged from libwebp at m0/m1
+    // (seg_same 38.9% at m0/m1 vs 100% at m2+). Match libwebp's FastMBAnalyze
+    // alpha under parity; the tuned default keeps the fuller analysis (which may
+    // segment low-method encodes better — left unchanged pending a sweep).
+    let use_fast = method <= 1 && cost_model == crate::encoder::api::CostModel::StrictLibwebpParity;
+    let best_alpha = if use_fast {
+        0
+    } else {
+        it.analyze_best_intra16_mode().0
+    };
     let (best_uv_alpha, uv_mode) = it.analyze_best_uv_mode();
 
     // Final susceptibility mix
