@@ -1409,6 +1409,30 @@ impl<'a> Vp8Encoder<'a> {
 
         self.write_partitions();
 
+        // VP8 bitstream even-length padding.
+        //
+        // libwebp pads the whole VP8 bitstream to an even length and counts
+        // the pad byte INSIDE the VP8 chunk size (`syntax_enc.c`
+        // `VP8EncWrite`: `pad = vp8_size & 1; vp8_size += pad;`, then
+        // `PutVP8Header(pic, vp8_size)` writes the padded, even size). The
+        // pad byte therefore lives inside the `VP8 ` chunk and the chunk needs
+        // no separate RIFF alignment byte.
+        //
+        // zenwebp's default emits the true (possibly odd) bitstream length as
+        // the chunk size and lets `write_chunk` add the spec-standard RIFF
+        // padding byte AFTER the chunk (not counted in the chunk size). Both
+        // are valid WebP and decode identically, but they differ in the
+        // `VP8 ` chunk-size field (and pad-byte position) whenever the stream
+        // is odd-length — which blocks byte-identity with libwebp on ~half of
+        // all inputs. Under `StrictLibwebpParity`, append the pad here so it
+        // lands inside the chunk exactly as libwebp does; `write_chunk` then
+        // sees an even payload and adds no further padding.
+        if self.cost_model == super::api::CostModel::StrictLibwebpParity
+            && self.writer.len() % 2 == 1
+        {
+            self.writer.push(0);
+        }
+
         // Clean up
         self.stored_mb_info.clear();
 
