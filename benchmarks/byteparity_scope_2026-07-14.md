@@ -1,28 +1,27 @@
 # StrictLibwebpParity byte-identity — actual scope (2026-07-14)
 
-## CURRENT STATE (2026-07-15): 3151/4004 = 78.7% byte-identical
+## CURRENT STATE (2026-07-15): 3407/4004 = 85.1% byte-identical
 
-Three parity-gated segmentation fixes this session took the grid **32% → 78.7%**
-(base-quant `52cf96f2`, segmentation-collapse `41923466`, trailing-slots
-`7acdd775`). All four sweep configs are now converged at **78–79%** — the residual
-is a COMMON, config-independent cluster:
+Four parity-gated fixes this session took the grid **24% → 85.1%**: base-quant
+`52cf96f2`, segmentation-collapse `41923466`, trailing-slots `7acdd775`,
+**skip-proba `91c96168`**. The skip-proba one was NOT a StatLoop rearchitecture
+(I wrongly called it deep and stopped — it was a one-line gate): instrumented
+libwebp always writes `use_skip_proba = 0` (there's an unconditional
+`assert(use_skip_proba == 0)` at `VP8EncTokenLoop` entry; the flag is never
+enabled in the shipping encoder), so parity just forces
+`macroblock_no_skip_coeff = None`. Closed the whole low-q cluster (+256 cells).
 
-- **Low-q (q5/q10), all methods (~162 cells): `use_skip`/`skip_proba`.** zen sets
-  `use_skip=1` where libwebp uses 0. Root cause CONFIRMED: libwebp's `nb_skip`
-  count comes from `StatLoop` (`VP8Decimate`), and `use_skip_proba` is finalized
-  across libwebp's dual encode-loop (`VP8EncLoop` m0-2 vs `VP8EncTokenLoop` m3+) +
-  `do_size_search` path — the **#25 SKIP_PROBA + #27 multi-pass StatLoop**
-  rearchitecture. Magnitude is small (~12 MBs) but the mechanism is the port.
-- **High-q (q80–q95), m3–m6 (~228 cells): `n_proba_updates` + I4 sub-block
-  (`b4`) modes.** Token-proba update decision (`FinalizeTokenProbas`/`CalcTokenProba`)
-  + I4 sub-mode RD at fine quant. Deep.
-- **m6, most q (~222 cells): mode-RD.** `y_same` 87–97%, i4-count off by ~3 —
-  the RD_OPT_TRELLIS_ALL I4/I16 selection. Deep.
+**Remaining ~15% is luma I4/I16 mode-RD**, in two overlapping clusters:
+- **m6, all q (~207 cells).** The m5→m6 delta is trellis-during-I4-mode-selection
+  (RD_OPT_TRELLIS_ALL): q40 m5 has `b4_same` 832/832 (all I4 sub-modes match) but
+  q40 m6 has 377/768 + `y_same` 90.8% + i4-count off by ~4. zen's trellis-in-I4-
+  mode-selection diverges from libwebp's.
+- **High-q q80–95, m3–m5.** Milder luma mode flips (`y_same` ~97%) + `n_proba_updates`
+  off by a few. The n_proba is DOWNSTREAM of modes (when modes match, n_proba
+  matches — verified at q40 m5), so the mode-RD is the root.
 
-q50 is 100% identical (nearest the traced q75). Each remaining cluster is a
-multi-step trace into a named libwebp subsystem; none is a shallow single fix
-like the three segmentation wins. Next chunk: the StatLoop skip-count port
-(smallest of the three, single root cause).
+Both are per-MB RD-score matching (the genuinely harder tail), but NOT assumed
+deep — trace each flip against instrumented libwebp before concluding.
 
 ## TL;DR
 
