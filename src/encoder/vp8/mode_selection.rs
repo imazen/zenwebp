@@ -1432,13 +1432,18 @@ impl<'a> super::Vp8Encoder<'a> {
         // measured behaviour). (libwebp's `StatLoop` may halve this on
         // partition-0 overflow, but only for images whose header exceeds
         // `PARTITION0_SIZE_LIMIT` — far above these web-sized inputs.)
-        let max_header_bits: u32 =
-            if self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity {
-                let hb_limit = 100u64.saturating_sub(u64::from(self.partition_limit));
-                (256u64 * 16 * 16 * hb_limit * hb_limit / 10_000) as u32
-            } else {
-                256 * 16 * 16 / 4
-            };
+        // libwebp derives `max_i4_header_bits` from `partition_limit`:
+        // `256*16*16*(100-partition_limit)² / 100²` (65536 at the default
+        // `partition_limit = 0`). zenwebp's tuned default historically hardcoded
+        // `256*16*16/4 = 16384` (the `partition_limit = 50` point) as a band-aid
+        // for inaccurate I4 coefficient costs (faa3846, "prevent excessive I4
+        // usage"). Now that the I4 costs are accurate (zigzag scan order #3b90e27
+        // + flatness penalty #4d41a33), a CID22 + imazen-26 sweep showed the
+        // libwebp value is a small win on the tuned default too — −0.16% size,
+        // +0.014 zsim at m4/m6, with no I4 over-selection (files got smaller,
+        // not larger). So both paths now use libwebp's formula.
+        let hb_limit = 100u64.saturating_sub(u64::from(self.partition_limit));
+        let max_header_bits: u32 = (256u64 * 16 * 16 * hb_limit * hb_limit / 10_000) as u32;
 
         // Track non-zero context for accurate coefficient cost estimation
         // top_nz[x] = whether block above has non-zero coefficients
