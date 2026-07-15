@@ -731,7 +731,29 @@ impl<'a> super::Vp8Encoder<'a> {
         let mut rec_block = [0u8; 256];
         let mut all_levels = [0i16; 256];
 
-        for (mode_idx, &mode) in MODES.iter().enumerate() {
+        // libwebp evaluates I16 modes in DC, TM, V, H order (its internal mode
+        // numbers 0,1,2,3). Our `MODES` array is [DC, V, H, TM]; libwebp's order
+        // maps to MODES indices [0, 3, 1, 2]. Under parity we iterate in that
+        // order so the flat-source distortion-doubling latch (`is_flat_latch`,
+        // step 10) refines in the same DC→TM→V→H sequence libwebp uses. The
+        // winner is independent of iteration order (the tie-break below is
+        // rank-based, not position-based), so the tuned default keeps declaration
+        // order.
+        let eval_order: [usize; 4] = if parity_tiebreak {
+            [0, 3, 1, 2]
+        } else {
+            [0, 1, 2, 3]
+        };
+        // libwebp's flat-source penalty is a STATEFUL latch (`quant_enc.c:
+        // 1044-1058`): `is_flat` starts as IsFlatSource16, then is refined to
+        // `is_flat && IsFlat(mode_coeffs)` for each mode in DC,TM,V,H order; once
+        // it goes false it never re-arms. So a mode's distortion is doubled only
+        // if the source AND every earlier-order mode's coefficients are flat.
+        // zen's tuned default doubles per-mode independently (see step 10).
+        let mut is_flat_latch = is_flat;
+
+        for &mode_idx in eval_order.iter() {
+            let mode = MODES[mode_idx];
             // All four I16 modes (DC, V, H, TM) are evaluated at every position,
             // including MB borders. `create_border_luma` substitutes 127 above and
             // 129 left when the neighbour is out of frame; RD scoring picks the
@@ -931,21 +953,38 @@ impl<'a> super::Vp8Encoder<'a> {
                 (0, 0)
             };
 
-            // 10. Apply flat source penalty if applicable
-            let (d_final, sd_final) = if is_flat {
-                // Check if coefficients are also flat
-                // (all_levels hoisted outside mode loop to avoid redundant zero-init)
+            // 10. Apply flat-source distortion doubling.
+            //
+            // libwebp (`quant_enc.c:1051-1058`) refines a single `is_flat` latch
+            // in DC→TM→V→H order and doubles D/SD only while it still holds (see
+            // `is_flat_latch` above). Under parity we replicate that latch exactly
+            // (the loop iterates `eval_order` in libwebp's mode order); the tuned
+            // default keeps its historical per-mode-independent check.
+            // `coeffs_flat` builds the AC-level view (hoisted `all_levels`, all
+            // used entries written before read) and returns libwebp's `IsFlat`.
+            let coeffs_flat = |all_levels: &mut [i16; 256]| -> bool {
                 for block_idx in 0..16 {
                     for i in 1..16 {
                         all_levels[block_idx * 16 + i] = y1_quant_zz[block_idx][i] as i16;
                     }
                 }
-                if is_flat_coeffs(&all_levels, 16, FLATNESS_LIMIT_I16) {
-                    // Double distortion to penalize I16 for flat sources
-                    (sse * 2, spectral_disto * 2)
+                is_flat_coeffs(all_levels, 16, FLATNESS_LIMIT_I16)
+            };
+            let (d_final, sd_final) = if parity_tiebreak {
+                if is_flat_latch {
+                    is_flat_latch = coeffs_flat(&mut all_levels);
+                    if is_flat_latch {
+                        // Block is very flat; emphasize the (very low) distortion.
+                        (sse * 2, spectral_disto * 2)
+                    } else {
+                        (sse, spectral_disto)
+                    }
                 } else {
                     (sse, spectral_disto)
                 }
+            } else if is_flat && coeffs_flat(&mut all_levels) {
+                // Double distortion to penalize I16 for flat sources.
+                (sse * 2, spectral_disto * 2)
             } else {
                 (sse, spectral_disto)
             };
