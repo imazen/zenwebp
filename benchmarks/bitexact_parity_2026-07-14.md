@@ -421,3 +421,53 @@ bug. Harness: `scratchpad/lwsrc` (instrumented libwebp, `DUMPSTATS`/`TARGX`) +
 - **m5, m6 segs1**: trellis (`RD_OPT_TRELLIS`/`_ALL`) — m5 segs1 y_same 94.0%,
   m6 segs1 93.5%. Task 3 (trellis alignment); untouched, and gated on m3/m4
   reaching byte-identity first per the task plan.
+
+## 11 of 14 cells BYTE-IDENTICAL — I4 sub-block tie-break (part 13, 2026-07-14)
+
+**Byte-identical to libwebp now (382297, StrictLibwebpParity):**
+- **segs1: m0, m1, m2, m3, m4, m6** (all but m5).
+- **segs4: m0, m1, m2, m3, m6** (all but m4, m5).
+
+**11 of 14 cells.** One fix got here from part 12's "m3 modes 99.7%":
+
+**I4 sub-block mode tie-break** (`mode_selection.rs`, e6ee888). libwebp's
+`PickBestIntra4` iterates the 10 sub-block modes in index order 0..9 and keeps
+the first strict-minimum, so score ties resolve toward the lower mode index.
+zenwebp presorts modes by prediction SSE (for its RD early-exit), which
+resolves ties toward whichever tied mode sorts first by SSE — usually not the
+lowest index. On flat/low-detail sub-blocks two predictions often tie exactly:
+382297 m3 mb(27,23) sub-block 9 is an exact tie (blkscore 142133) between RD(5)
+and VR(6); libwebp picks RD, zen picked VR, and the different reconstruction
+cascaded pixels into downstream MBs — which is what had desynced the whole
+m3/m4 token stream (one different part-0 proba-update flag → 99% of bytes
+differ despite 99.7% mode agreement). At m3+ all 10 modes are evaluated, so
+index order changes only the tie-break; zen's `>= best` early-exit skips line
+up with libwebp's `score >= best` early `continue` in the same order (verified:
+the early-exit SD/coeff omissions only ever skip provably-can't-win modes, so
+the winner is unaffected). Applied to the sse2/wasm/scalar I4 paths under
+parity. → m3 segs1, m4 segs1, m3 segs4, m6 segs1 all byte-identical.
+
+**Remaining 3 cells (precisely characterized):**
+- **m5 segs1, m5 segs4** — trellis (`RD_OPT_TRELLIS`). Task 3; untouched, gated
+  on m4 reaching byte-identity first.
+- **m4 segs4** — a spectral-distortion (tdisto/SD) precision cascade. At m4
+  with sns>0, `tlambda_scale = sns_strength` makes `tlambda` large (42 here vs
+  the `.max(1)` floor of 1 at m3/sns=0), so the SD term (`tlambda·VP8TDisto`)
+  dominates near-ties. The first divergence is a **±1 pixel** reconstruction at
+  mb(4,10) (a matching-mode MB): sub-blocks 8/9 tie between VR(6) and LD(4) with
+  identical winner D/SD/H, but zen's *loser*-mode score differs from libwebp's
+  by a sub-unit amount that a `tlambda=42` multiplier turns into a mode flip.
+  That ±1 cascades into mb(5,10)'s I4-vs-I16 pick and onward (468/924 MBs
+  eventually differ, max |Δ|=84). Root is a sub-±1 numerical difference in one
+  I4 sub-block mode's SD or coeff cost, only observable when `tlambda` is large
+  — i.e. a `VP8TDisto4x4` (vertical-first Hadamard) bit-exactness question that
+  m3/sns=0 (SD≈0) never exercises. Needs per-mode SD/tdisto instrumentation on
+  both sides for mb(4,10) sub-block 8 to localize; the same class will gate m5
+  (trellis also weights SD). Harness ready (`MB_DEBUG`, `DIVERGE_SEGS` in
+  `bitex5`; `TARGX/TARGY` in the instrumented libwebp).
+
+**Session net (382297 StrictLibwebpParity): 3/14 → 11/14 byte-identical cells.**
+Seven fixes landed (all parity-gated, tuned default unchanged, lib 323 +
+zensim 14 + chroma 3 + pixel-perfect 14 green throughout): even-pad chunk,
+fast_probe m0 subset, tlambda clamp + I4 flatness penalty + max_i4_header_bits,
+mid-pass level_costs refresh, and the I4 sub-block tie-break.
