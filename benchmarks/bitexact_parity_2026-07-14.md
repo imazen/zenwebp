@@ -313,3 +313,37 @@ become the default: it's neutral-to-marginally-worse on real content and would
 regress the synthetic floor gate. Keep tuned byte-round as default; parity uses
 exact. (Scope: single size regime, method 4 — an A/B decision, not a calibration
 constant, so the reduced grid is adequate for a "no meaningful difference" call.)
+
+## Byte-identity ladder + segs>1 alignment (part 11)
+
+**Byte-identical to libwebp (382297, StrictLibwebpParity):**
+- **segs1: m0, m1, m2** (76430 / 75608 / 61190) — the whole RD_OPT_NONE range.
+- **segs4: m2** (51164).
+
+Fixes that got here (all on main, tuned default unchanged / parity-gated):
+- **m1/m2**: `pick_uv_sse` evaluated all 4 UV modes at edges (was skipping V/H/TM;
+  libwebp uses the default 127/129 borders the decoder shares). → m1/m2 segs1
+  byte-identical.
+- **segs>1 m0/m1**: use FastMBAnalyze alpha (0) at method ≤ 1 — libwebp's
+  `MBAnalyze` only runs the full susceptibility analysis at method ≥ 2; zen ran
+  it always, diverging the m0/m1 segmentation histogram → centers → seg map +
+  quantizers. → seg_same 38.9% → 100%, seg_q / seg_tree_probs now match.
+- **segs>1 filter**: gate the edge-based loop-filter bump (`StoreMaxDelta`) on
+  the RD path — libwebp calls it only from `PickBestIntra16` (method ≥ 3); zen
+  bumped at all methods, over-filtering segments 2/3 at m0-2. → m2 segs4
+  byte-identical; m0/m1 segs4 seg_lf now matches.
+
+**Remaining tail (precisely characterized):**
+- **m0/m1 segs4**: everything matches (modes, segmentation, seg_q, seg_lf) except
+  the coefficient-proba *update count* (zen 296 vs libwebp 210). The
+  `should_update` decision is a verified-faithful port of `FinalizeTokenProbas`
+  (branch_cost, `savings>0`, the 8·256 signalling term all match), so the
+  divergence is in the token-stat histogram feeding it — the same proba residual
+  as m3-6.
+- **m3-6 segs1**: RD-path cascade (y_same ~92%, uv_same ~84.5% after the zigzag-
+  cost / UV-diffusion / tie-break fixes). Next primary pieces: the tlambda
+  `CheckLambdaValue(≥1)` clamp coupled with an I4 ctx0 nz cascade (must land
+  together), then the proba residual above. m5/m6 additionally need trellis
+  alignment.
+- **segs>1 m3-6**: the segmentation is aligned (seg_same 100%); the residual is
+  the same m3-6 RD cascade on top.
