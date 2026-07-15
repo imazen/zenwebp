@@ -2195,12 +2195,11 @@ impl<'a> Vp8Encoder<'a> {
         // which made the whole sns0/segs>1 config diverge (segmentation on where
         // libwebp turned it off). Match libwebp under parity; the tuned default
         // keeps its prior behavior pending a measured adoption.
-        self.segments_enabled =
-            if self.cost_model == super::api::CostModel::StrictLibwebpParity {
-                self.num_segments > 1
-            } else {
-                true
-            };
+        self.segments_enabled = if self.cost_model == super::api::CostModel::StrictLibwebpParity {
+            self.num_segments > 1
+        } else {
+            true
+        };
         self.segments_update_map = should_update_map && self.segments_enabled;
 
         // Reset borders for actual encoding pass
