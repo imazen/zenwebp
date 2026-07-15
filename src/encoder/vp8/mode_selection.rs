@@ -1886,6 +1886,27 @@ impl<'a> super::Vp8Encoder<'a> {
                 &mut v_blocks,
             );
 
+            // Under StrictLibwebpParity, apply the chroma DC error diffusion that
+            // libwebp's ReconstructUV runs for every candidate mode
+            // (`CorrectDCValues`, gated on `it->top_derr != NULL`, i.e. quality
+            // <= 98). Scoring each mode on the *diffused* reconstruction is what
+            // makes the m3+ UV mode pick match libwebp — without it, the RD sees
+            // a different DC (and different levels) than the emitted bitstream,
+            // flipping edge/near-boundary picks (#38). Read-only on the diffusion
+            // state; the final emission still performs the actual store. The
+            // tuned default keeps scoring on the undiffused reconstruction.
+            if self.do_error_diffusion
+                && self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity
+            {
+                super::residuals::diffuse_chroma_dc_inplace(
+                    &mut u_blocks,
+                    &mut v_blocks,
+                    &self.top_derr[mbx],
+                    &self.left_derr,
+                    uv_matrix,
+                );
+            }
+
             // 2. Fused quantize+dequantize coefficients using SIMD
             // (uv_quant/uv_dequant hoisted outside mode loop to avoid redundant zero-init)
 

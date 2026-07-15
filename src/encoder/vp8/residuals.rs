@@ -19,6 +19,71 @@ use crate::encoder::cost::{
 // Eliminates sentinel `prob == 0` branch per iteration in the hot loop.
 const DCT_CAT_LENGTHS: [usize; 6] = [1, 2, 3, 4, 5, 11];
 
+/// Chroma DC error diffusion — a port of libwebp's `CorrectDCValues`
+/// (`quant_enc.c`). Adjusts each chroma block's DC coefficient in place by the
+/// diffused neighbour error, predicts the resulting quantization error, and
+/// returns the per-channel `[err0, err1, err2, err3]` for the caller to store.
+///
+/// Stateless: the caller supplies the current `top_derr` / `left_derr`
+/// (indexed `[channel][0..2]`) and decides whether to persist the returned
+/// errors. This lets the final emission path (`apply_chroma_error_diffusion`,
+/// which stores) and the m3+ RD mode-selection path (`pick_best_uv`, which only
+/// needs the corrected reconstruction) share byte-identical diffusion. Blocks
+/// are laid out as `[i32; 16*4]` = 4 chroma blocks × 16 coeffs, DC at
+/// `blocks[block_idx * 16]`, in 2×2 raster order (TL, TR, BL, BR).
+pub(crate) fn diffuse_chroma_dc_inplace(
+    u_blocks: &mut [i32; 16 * 4],
+    v_blocks: &mut [i32; 16 * 4],
+    top_derr: &[[i8; 2]; 2],
+    left_derr: &[[i8; 2]; 2],
+    uv_matrix: &crate::encoder::cost::VP8Matrix,
+) -> ([i8; 4], [i8; 4]) {
+    // Diffusion constants from libwebp.
+    const C1: i32 = 7; // fraction from top
+    const C2: i32 = 8; // fraction from left
+    const DSHIFT: i32 = 4;
+    const DSCALE: i32 = 1;
+
+    let q = uv_matrix.q[0] as i32;
+    let iq = uv_matrix.iq[0];
+    let bias = uv_matrix.bias[0];
+
+    // Add diffused error to the DC, predict what quantization will produce, and
+    // return the (descaled, clamped) error to diffuse onward. Leaves `*dc`
+    // adjusted so the caller's quantizer reproduces the same level.
+    let diffuse_dc = |dc: &mut i32, top_err: i8, left_err: i8| -> i8 {
+        let adjustment = (C1 * top_err as i32 + C2 * left_err as i32) >> (DSHIFT - DSCALE);
+        *dc += adjustment;
+
+        let sign = *dc < 0;
+        let abs_dc = dc.unsigned_abs();
+
+        let zthresh = ((1u32 << 17) - 1 - bias) / iq;
+        let level = if abs_dc > zthresh {
+            ((abs_dc * iq + bias) >> 17) as i32
+        } else {
+            0
+        };
+
+        let err = abs_dc as i32 - level * q;
+        let signed_err = if sign { -err } else { err };
+        (signed_err >> DSCALE).clamp(-127, 127) as i8
+    };
+
+    // Process one channel's 4 blocks in scan order, propagating errors.
+    let process_channel = |blocks: &mut [i32; 16 * 4], top: [i8; 2], left: [i8; 2]| -> [i8; 4] {
+        let err0 = diffuse_dc(&mut blocks[0], top[0], left[0]); // TL
+        let err1 = diffuse_dc(&mut blocks[16], top[1], err0); // TR
+        let err2 = diffuse_dc(&mut blocks[32], err0, left[1]); // BL
+        let err3 = diffuse_dc(&mut blocks[48], err1, err2); // BR
+        [err0, err1, err2, err3]
+    };
+
+    let u_errs = process_channel(u_blocks, top_derr[0], left_derr[0]);
+    let v_errs = process_channel(v_blocks, top_derr[1], left_derr[1]);
+    (u_errs, v_errs)
+}
+
 // Test-only counter for `trellis_reuse_assertion_is_actually_exercised_at_m6`.
 // Gated on `feature = "std"` because `thread_local!` requires `std::thread`;
 // no_std builds (cargo test --no-default-features) skip both this declaration
@@ -429,63 +494,16 @@ impl<'a> super::Vp8Encoder<'a> {
         mbx: usize,
         uv_matrix: &crate::encoder::cost::VP8Matrix,
     ) {
-        // Diffusion constants from libwebp
-        const C1: i32 = 7; // fraction from top
-        const C2: i32 = 8; // fraction from left
-        const DSHIFT: i32 = 4;
-        const DSCALE: i32 = 1;
-
-        let q = uv_matrix.q[0] as i32;
-        let iq = uv_matrix.iq[0];
-        let bias = uv_matrix.bias[0];
-
-        // Helper: add diffused error to DC, predict quantization, return error
-        // Does NOT overwrite the coefficient - leaves it adjusted for encoding
-        let diffuse_dc = |dc: &mut i32, top_err: i8, left_err: i8| -> i8 {
-            // Add diffused error from neighbors
-            let adjustment = (C1 * top_err as i32 + C2 * left_err as i32) >> (DSHIFT - DSCALE);
-            *dc += adjustment;
-
-            // Predict what quantization will produce (to compute error)
-            let sign = *dc < 0;
-            let abs_dc = dc.unsigned_abs();
-
-            let zthresh = ((1u32 << 17) - 1 - bias) / iq;
-            let level = if abs_dc > zthresh {
-                ((abs_dc * iq + bias) >> 17) as i32
-            } else {
-                0
-            };
-
-            // Error = |adjusted_input| - |reconstruction|
-            // This is what we'll diffuse to neighbors
-            let err = abs_dc as i32 - level * q;
-            let signed_err = if sign { -err } else { err };
-            (signed_err >> DSCALE).clamp(-127, 127) as i8
-        };
-
-        // Process each channel's 4 blocks in scan order
-        let process_channel =
-            |blocks: &mut [i32; 16 * 4], top: [i8; 2], left: [i8; 2]| -> [i8; 4] {
-                // Block 0 (position 0): top-left, uses top[0] and left[0]
-                let err0 = diffuse_dc(&mut blocks[0], top[0], left[0]);
-
-                // Block 1 (position 16): top-right, uses top[1] and err0
-                let err1 = diffuse_dc(&mut blocks[16], top[1], err0);
-
-                // Block 2 (position 32): bottom-left, uses err0 and left[1]
-                let err2 = diffuse_dc(&mut blocks[32], err0, left[1]);
-
-                // Block 3 (position 48): bottom-right, uses err1 and err2
-                let err3 = diffuse_dc(&mut blocks[48], err1, err2);
-
-                [err0, err1, err2, err3]
-            };
-
-        // Process U channel (intra-MB DC correction, reading neighbor errors)
-        let u_errs = process_channel(u_blocks, self.top_derr[mbx][0], self.left_derr[0]);
-        // Process V channel
-        let v_errs = process_channel(v_blocks, self.top_derr[mbx][1], self.left_derr[1]);
+        // Apply the intra-MB DC correction (reading neighbour errors from the
+        // previous MB). Shared with the m3+ RD path (`pick_best_uv`) so both use
+        // byte-identical diffusion. Returns the per-channel errors to store.
+        let (u_errs, v_errs) = diffuse_chroma_dc_inplace(
+            u_blocks,
+            v_blocks,
+            &self.top_derr[mbx],
+            &self.left_derr,
+            uv_matrix,
+        );
 
         // Store errors for the next macroblock — inter-MB DC diffusion.
         //
