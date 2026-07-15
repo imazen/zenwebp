@@ -8,32 +8,33 @@ mid-session. It is now committed as `dev/byteparity_sweep.rs` (the score),
 `dev/bitexact_diff.rs` (header fields + mode stream) — all wired as
 `__expert` examples. Never rebuild this in `/tmp` again.
 
-**The committed grid scores 3578/4004 = 89.4%, which is NOT comparable to the
-3488/4004 = 87.1% below.** 10 of the 13 images are synthetic and their generator
-was lost and reconstructed differently; the encoder is byte-identical across the
-two runs, so the delta is the grid, not progress. The 3 CID22 images are
-unchanged (299 of the 426 current failures). **3578/4004 is the durable baseline
-going forward** — re-run the committed tool for any before/after, and don't
-compare across grids.
+**The committed grid now scores 3767/4004 = 94.1%** (was 3578/4004 = 89.4% when
+the harness was first committed; the +189 came from the Cat5/Cat6 stat-node fix,
+`44ae3a0`). Neither number is comparable to the 3488/4004 = 87.1% below: 10 of
+the 13 images are synthetic and their generator was lost with the /tmp wipe and
+reconstructed differently, so the synthetic cells are simply different content
+(the encoder was byte-identical across that particular pair of runs). **3767/4004
+is the durable baseline going forward** — the grid is committed now; re-run the
+tool for any before/after, and don't compare across grids.
 
-What survives unchanged from the analysis below: the five root causes and their
-fixes, the per-config/per-method shape of the remainder, and the method notes.
+### Failure shape on the committed grid (237 of 4004, 2026-07-15, post-`44ae3a0`)
 
-### Failure shape on the committed grid (426 of 4004, 2026-07-15)
+By method (of 572 each): m0 20 · m1 38 · m2 36 · m3 23 · m4 21 · **m5 52 · m6 47**.
+By config (of 1001 each): sns0/flt0/segs1 **18** · sns0/flt0/segs4 **18** ·
+**sns30/flt20/segs2 96 · sns50/flt60/segs4 105**.
+By image: 1025469 105 · 1418519 75 · 382297 42 · synth_256x255 6 (others 0).
 
-By method (of 572 each): m0 20 · m1 38 · m2 36 · m3 70 · m4 68 · **m5 99 · m6 95**.
-By config (of 1001 each): sns0/flt0/segs1 67 · sns0/flt0/segs4 67 ·
-**sns30/flt20/segs2 142 · sns50/flt60/segs4 150**.
-By image: 1025469 118 · 1418519 98 · 382297 83 (synthetics ≤38 each).
+What this says now. (1) The **sns=0 configs are essentially closed** (18/1001
+each, ~98% identical) — the remaining 201 of 237 live in the **SNS + filter +
+multi-segment** configs, which is now overwhelmingly the dominant axis. So the
+next work is segment-dependent quantisation / filter-strength interaction, not
+coefficient rate. (2) The m3/m4 cluster collapsed (70→23, 68→21) with the
+Cat5/Cat6 fix; m5/m6 (52/47) retain a trellis-flavoured residue. (3) All 10
+synthetic images are now byte-identical except 6 cells on synth_256x255 — the
+remainder is real-photo content.
 
-Two things this says. (1) The remainder is concentrated in the **RD-optimising
-methods** (m3-m6 = 332 of 426) — m0-m2 are nearly closed. (2) The **SNS +
-filter + multi-segment configs** carry 292 of 426, roughly double the sns=0
-rows, so segment-dependent quantisation/filter interaction is now the largest
-single axis — larger than the m6 trellis cluster that dominated before the
-I16-AC-trellis-context fix.
-
-**Next root (localised, not yet fixed):** high-q I4 coefficient *rate*. At q90
+**(SOLVED — see "Cat5/Cat6 stat-node mismatch" below; kept for the trace method.)**
+The high-q I4 coefficient *rate* divergence. At q90
 m3 (sns0/segs1, 382297) the first emitted divergence is mb(28,7); I4 sub-blocks
 0-3 match exactly, then blk4 diverges with the SAME mode (VR), SAME D (36) and
 SAME mode-cost H (1667) but R=16752 (zen) vs 16730 (lib) — a 22-unit
@@ -90,7 +91,47 @@ is why exactly one `t` moved and by only 22. zen's next refresh is mb(1,8) =
 MB **257**, i.e. *after* the divergent mb(28,7) = MB 252, so blk4 is scored with
 the MB-128 values.
 
-**It is a SCHEDULE difference, not a code difference** (measured 2026-07-15).
+### SOLVED (2026-07-15): libwebp's Cat5/Cat6 stat-node mismatch — fixed in `44ae3a0`
+
+**Everything below in this subsection is SUPERSEDED.** The "schedule difference"
+conclusion was wrong, as was the StatLoop theory before it. Kept only as a record
+of the dead ends.
+
+The real cause: **libwebp has TWO coefficient recorders that disagree, and picks
+between them by which encode loop runs** (`use_tokens = rd_opt >= RD_OPT_BASIC`):
+
+* **m3-m6** → `VP8EncTokenLoop` → `VP8RecordCoeffTokens` (`token_enc.c`), which
+  codes Cat5/Cat6 with proba index `base_id + 10` but records the STATISTIC into
+  `s + 9`: `AddToken(tokens, 0, base_id + 10, s + 9)`. Cat3/Cat4 pair
+  `base_id + 9` with `s + 9` consistently — only Cat5/Cat6 mismatch. Upstream
+  consequence: `stats[..][10]` is never populated at all, so node 10's
+  probability can never adapt, and node 9's count merges Cat3/4/5/6.
+* **m0-m2** → plain `VP8EncLoop` → `RecordResiduals` → `VP8RecordCoeffs`
+  (`cost_enc.c`, `USE_LEVEL_CODE_TABLE`), whose `VP8LevelCodes` pattern records
+  node **10** for v>=35.
+
+zenwebp recorded node 10 for every method — the natural reading, and arguably
+more correct; the upstream split looks like a slip, not intent. But these counts
+feed `FinalizeTokenProbas`, so byte-exactness requires reproducing libwebp's
+accounting **per path**. Fixed via `TokenBuffer::cat56_stat_node9`
+(`parity && method >= 3`); tuned default keeps node-10 and is byte-unchanged.
+
+**Result: 3578/4004 (89.4%) → 3767/4004 (94.1%), +189.** m3 70→23, m4 68→21,
+m5 99→52, m6 95→47; m0-m2 unchanged. Applying the token-path rule to ALL methods
+first gave 3702 and REGRESSED m0-m2 (20/38/36 → 36/69/54) — that regression is
+what exposed the per-path split.
+
+Also settled here: **StatLoop's `FinalizeTokenProbas` never runs at m3** — it
+early-outs on `if (size_p0 == 0) return 0;`. All 8 finalizes come from the token
+loop (7 mid-refreshes + 1 pre-emit), confirmed by tagging each call site. So the
+StatLoop port is NOT needed for this; #27 stands on its own merits.
+
+Gate: `tests/libwebp_byte_parity.rs` (+ a CI step with `--features __expert`;
+CI previously never ran `__expert`, so the claim had no gate at all).
+
+---
+
+#### (superseded) "It is a SCHEDULE difference, not a code difference"
 Dumping `stats[3][1][2][9]` as `(nb,total)` at every `FinalizeTokenProbas`,
 libwebp at q90/m3 calls it **8 times with CUMULATIVE, never-reset stats**:
 
