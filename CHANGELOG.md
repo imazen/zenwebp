@@ -149,6 +149,23 @@ here has landed; see "Changed (BREAKING)" below.)
   like libwebp, was a bare per-pixel convert). Forward-DCT bit-exactness vs
   libwebp `FTransform_C` is locked by new differential tests in
   `src/common/transform.rs`. See `benchmarks/bitexact_parity_2026-07-14.md`.
+- **m3-6 RD-path parity fixes under `StrictLibwebpParity`** (#38): four root
+  causes of the m3+ RD divergence, closing much of the gap on 382297 q75 segs1
+  (y_same 89.7→92.0%, uv_same 80.6→84.5%, I4 count 914→888 vs lib 874, bytes
+  51632→51582 vs lib 51386; m0-2 remain byte-identical). (1) **Zigzag cost
+  order** (3b90e27, unconditional): the I16/UV RD coefficient cost
+  (`get_cost_luma16`/`get_cost_uv`) now walks coefficients in zigzag scan order
+  like libwebp, instead of natural (raster) order — the natural-order walk used
+  the wrong per-position bands and `last`, systematically under-costing and
+  flipping mode picks (the I4 path already zigzagged). (2) **Chroma DC error
+  diffusion in UV RD scoring** (0692ad6, parity-gated): `pick_best_uv` now
+  applies `CorrectDCValues` per candidate mode like libwebp's `ReconstructUV`,
+  via a shared `diffuse_chroma_dc_inplace`. (3) **I16/UV mode tie-break order**
+  (0eeff05, parity-gated): ties now resolve to the lowest libwebp mode number
+  (eval order DC,TM,V,H) so edge TM/H ties pick the same mode. (4) tlambda
+  `CheckLambdaValue(>=1)` clamp documented (5488ef1) — correct parity value but
+  left off pending an I4 sub-block ctx0 fix it regresses without. Residual gap
+  is cascade-dominated (I4 sub-block context + downstream reconstruction).
 - **Lossless m5/m6 predictor transform-bits search** (#70, 37cae10):
   VP8LResidualImage parity — methods above 4 search every predictor
   sampling in `[max_bits − 2·(m−4), max_bits]` by mode-usage + residual
