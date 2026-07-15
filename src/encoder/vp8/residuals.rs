@@ -494,6 +494,29 @@ impl<'a> super::Vp8Encoder<'a> {
         mbx: usize,
         uv_matrix: &crate::encoder::cost::VP8Matrix,
     ) {
+        // m5 (RD_OPT_TRELLIS) reconstructs chroma TWICE in libwebp: PickBestUV
+        // corrects with the neighbour errors and calls StoreDiffusionErrors,
+        // then SimpleQuantize's ReconstructUV corrects AGAIN — but by then
+        // StoreDiffusionErrors has overwritten `top_derr[x]`/`left_derr` with
+        // THIS MB's own errors, so the final coded chroma DC is corrected with
+        // the self errors, not the neighbour errors (quant_enc.c:988 + 1349,
+        // verified: at mb(0,0) the second pass reads top=[2,2] left=[-1,4] and
+        // bumps a U DC level 32->33). m4 (RD_OPT_BASIC) and m6
+        // (RD_OPT_TRELLIS_ALL) reconstruct chroma once. Under parity, replicate
+        // the m5 second correction below; the tuned default corrects once.
+        let double_correct = self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity
+            && self.do_trellis
+            && !self.do_trellis_i4_mode;
+        // Fresh (pre-correction) DCs, so the second pass corrects the original
+        // FTransform DC with the self errors (like SimpleQuantize's fresh
+        // FTransform), not the once-corrected value.
+        let fresh_dc = double_correct.then(|| {
+            (
+                [u_blocks[0], u_blocks[16], u_blocks[32], u_blocks[48]],
+                [v_blocks[0], v_blocks[16], v_blocks[32], v_blocks[48]],
+            )
+        });
+
         // Apply the intra-MB DC correction (reading neighbour errors from the
         // previous MB). Shared with the m3+ RD path (`pick_best_uv`) so both use
         // byte-identical diffusion. Returns the per-channel errors to store.
@@ -532,6 +555,31 @@ impl<'a> super::Vp8Encoder<'a> {
                 self.top_derr[mbx][ch][0] = err2;
                 self.top_derr[mbx][ch][1] = (err3 as i32 - self.left_derr[ch][1] as i32) as i8;
             }
+        }
+
+        // m5 parity second correction (see `double_correct` above): re-correct
+        // the FRESH DC with the self errors that `store` just wrote into
+        // `top_derr[mbx]`/`left_derr`. The returned errors are discarded —
+        // libwebp's SimpleQuantize does not re-store, so the next MB still reads
+        // the neighbour-correction errors persisted above. `double_correct`
+        // implies `store` (it needs the self errors in place), so at m5 the
+        // store always ran first.
+        if let Some((u_dc, v_dc)) = fresh_dc {
+            u_blocks[0] = u_dc[0];
+            u_blocks[16] = u_dc[1];
+            u_blocks[32] = u_dc[2];
+            u_blocks[48] = u_dc[3];
+            v_blocks[0] = v_dc[0];
+            v_blocks[16] = v_dc[1];
+            v_blocks[32] = v_dc[2];
+            v_blocks[48] = v_dc[3];
+            let _ = diffuse_chroma_dc_inplace(
+                u_blocks,
+                v_blocks,
+                &self.top_derr[mbx],
+                &self.left_derr,
+                uv_matrix,
+            );
         }
     }
 
