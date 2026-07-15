@@ -1,5 +1,29 @@
 # StrictLibwebpParity byte-identity — actual scope (2026-07-14)
 
+## CURRENT STATE (2026-07-15): 3151/4004 = 78.7% byte-identical
+
+Three parity-gated segmentation fixes this session took the grid **32% → 78.7%**
+(base-quant `52cf96f2`, segmentation-collapse `41923466`, trailing-slots
+`7acdd775`). All four sweep configs are now converged at **78–79%** — the residual
+is a COMMON, config-independent cluster:
+
+- **Low-q (q5/q10), all methods (~162 cells): `use_skip`/`skip_proba`.** zen sets
+  `use_skip=1` where libwebp uses 0. Root cause CONFIRMED: libwebp's `nb_skip`
+  count comes from `StatLoop` (`VP8Decimate`), and `use_skip_proba` is finalized
+  across libwebp's dual encode-loop (`VP8EncLoop` m0-2 vs `VP8EncTokenLoop` m3+) +
+  `do_size_search` path — the **#25 SKIP_PROBA + #27 multi-pass StatLoop**
+  rearchitecture. Magnitude is small (~12 MBs) but the mechanism is the port.
+- **High-q (q80–q95), m3–m6 (~228 cells): `n_proba_updates` + I4 sub-block
+  (`b4`) modes.** Token-proba update decision (`FinalizeTokenProbas`/`CalcTokenProba`)
+  + I4 sub-mode RD at fine quant. Deep.
+- **m6, most q (~222 cells): mode-RD.** `y_same` 87–97%, i4-count off by ~3 —
+  the RD_OPT_TRELLIS_ALL I4/I16 selection. Deep.
+
+q50 is 100% identical (nearest the traced q75). Each remaining cluster is a
+multi-step trace into a named libwebp subsystem; none is a shallow single fix
+like the three segmentation wins. Next chunk: the StatLoop skip-count port
+(smallest of the three, single root cause).
+
 ## TL;DR
 
 The #38 parity work makes `CostModel::StrictLibwebpParity` **byte-identical to

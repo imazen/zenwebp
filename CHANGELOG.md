@@ -136,6 +136,20 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Added
 
+- **`StrictLibwebpParity` byte-exactness generalized to 78.7% of the grid** (#38,
+  2026-07-15, `52cf96f2`/`41923466`/`7acdd775`): three parity-gated fixes took the
+  broad byteparity grid (13 images × q5–95 × 4 configs × m0–6) from **32% → 78.7%**.
+  (1) **Base quant truncates** — `setup_encoding` rounded `127*(1-c)` where libwebp
+  `(int)`-truncates, diverging at q10/30/50/80. (2) **Segmentation disabled on
+  collapse** — libwebp writes `segmentation_enabled = (num_segments > 1)` after
+  `SimplifySegments`; at sns=0 all segments are uniform and collapse to 1, so
+  libwebp turns segmentation OFF, but zen emitted a full 4-segment header (the whole
+  sns0/segs>1 config went 0% → 78% identical). (3) **Trailing segment slots** — the
+  4-slot segment header's unused `[config..4]` slots use libwebp's base/seg0 values,
+  not seg1's. All parity-gated; tuned default byte-unchanged; q75 still 14/14.
+  Remaining ~21% is a common low-q (skip-proba/StatLoop #25+#27), high-q (token
+  proba + I4 sub-mode), and m6 (mode-RD) tail. Scope + next steps:
+  `benchmarks/byteparity_scope_2026-07-14.md`.
 - **`StrictLibwebpParity` byte-exact at the traced operating point** (#38,
   `816aea5`/`6b4fa0c`/`c96f767`+`8b60a62`/`8256bec`): all 14 (method × config)
   cells are byte-identical to libwebp **at q75 on CID22 382297** — m0–m6 at
