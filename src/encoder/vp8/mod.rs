@@ -2166,9 +2166,22 @@ impl<'a> Vp8Encoder<'a> {
             || self.segment_tree_probs[1] != 255
             || self.segment_tree_probs[2] != 255;
 
-        // Enable segment-based encoding
-        self.segments_enabled = true;
-        self.segments_update_map = should_update_map;
+        // libwebp writes `segmentation_enabled = (num_segments > 1)`
+        // (`PutSegmentHeader`, after `SimplifySegments` collapses equivalent
+        // segments — `quant_enc.c`). When the segments collapse to 1 (uniform
+        // quant + filter, e.g. sns=0 where the SNS quantizer spread is 0),
+        // libwebp disables segmentation entirely. zenwebp set `segments_enabled`
+        // unconditionally, writing a full 4-segment header for uniform segments —
+        // which made the whole sns0/segs>1 config diverge (segmentation on where
+        // libwebp turned it off). Match libwebp under parity; the tuned default
+        // keeps its prior behavior pending a measured adoption.
+        self.segments_enabled =
+            if self.cost_model == super::api::CostModel::StrictLibwebpParity {
+                self.num_segments > 1
+            } else {
+                true
+            };
+        self.segments_update_map = should_update_map && self.segments_enabled;
 
         // Reset borders for actual encoding pass
         self.left_border_y = [129u8; 16 + 1];
