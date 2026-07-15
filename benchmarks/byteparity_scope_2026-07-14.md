@@ -89,6 +89,44 @@ field, i.e. total size differs); 570 match a prefix then diverge in content.
 - **Do not re-report 14/14 as "parity complete."** Use this grid's 24% as the
   headline number and drive it up.
 
+## Default config (sns50/filter60/segs4) — diagnosis (2026-07-14)
+
+Per the scope decision, the Default preset was investigated first. Field-level
+diff (via `dev/bitexact_diff.rs`, retargeted to sweep q at this config) shows the
+**dominant divergence is `seg_lf` — the per-segment loop-filter levels**. At
+m2–m5 across many q, one segment's filter comes out lower in zen (e.g. q30 m4
+seg2: zen=20 lib=50; q20 m4/m5 seg3: 18 vs 36; q5 m3/m4 seg1: 29 vs 55). All
+other fields (`seg_q`, modes: `y_same`/`uv_same`/`b4_same` = 100%) match.
+
+**This is contained, not a cascade.** The VP8 loop filter doesn't affect
+keyframe intra prediction (neighbours are read pre-filter), so these cells have
+`1st-diff@36-38` (the filter header field) with identical coefficient content —
+getting `seg_lf` right makes them byte-identical, no downstream effect.
+
+`seg_lf` is produced by `adjust_filter_strength` (`vp8/mod.rs`) from
+`max_edge_per_segment`, accumulated per-MB by `store_max_delta` over "blocky"
+I16 MBs (all Y1 AC zero, Y2 nonzero), gated on `D > min_disto`. At q30 m4 the
+divergence is `max_edge[seg2]`: zen=2, libwebp≈5 — zen under-counts the edge.
+
+**Ruled out (instrumented + source-compared against vendored libwebp):**
+- **Y2 coefficient order** — libwebp `QuantizeBlock_C` writes `out[n]` in zigzag
+  order, so `y_dc_levels[1,2,4]` = zigzag 1,2,4, matching zen's `y2_zigzag[1,2,4]`.
+- **`D > min_disto` gate** — zen's `min_disto = 20*ydc` matches libwebp's
+  `20*m->y1.q[0]`; the gate structure matches.
+- **Flat-source D-doubling** — libwebp doubles `rd->D` for flat blocks before the
+  gate; making zen's gate use the doubled `d_final` was a **no-op** on the 4004-
+  cell grid (these blocky MBs aren't flat-source), so it wasn't shipped.
+
+**Narrowed to:** the Y2 coefficient *values* `store_max_delta` reads
+(`stored_coeffs.y2_zigzag`, `mode_selection.rs` call site ~L1784) differ per-MB
+from libwebp's `rd->y_dc_levels` — a stored-coefficient / quant-pass mismatch,
+the same class as the m5 blocky-nz fix (`6b4fa0c`). **Next step:** build
+instrumented libwebp (scratchpad `libwebp-dbg/`) to dump per-MB `(segment,
+blocky, D, Y2[1,2,4], max_edge)` and diff against zen — the q75-style
+methodology. Separately, m6 diverges on I4/mode RD (`y_same` 90–99%) and m0/m1
+on `use_skip`/`skip_prob` (the #25 SKIP_PROBA path); both are distinct from
+`seg_lf`.
+
 ## Method note
 
 `methodcmp` should be extended to sweep q and multiple images (or replaced by
