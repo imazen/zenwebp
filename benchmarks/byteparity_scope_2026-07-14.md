@@ -139,9 +139,15 @@ q\m  0 1 2 3 4 5 6      . = byte-identical
 ### Real remaining causes (distinct, q-regime-clustered)
 
 - **m0/m1 low-q `use_skip`/`skip_prob`** (q5/q10): zen sets `use_skip=1`
-  (`skip_prob=248`) where libwebp uses `use_skip=0` — the #25 SKIP_PROBA gate
-  threshold (libwebp fires `use_skip_proba` at `skip_proba>=250`). Cleanest
-  candidate — a specific boolean-field threshold.
+  (`skip_prob=248`) where libwebp uses `use_skip=0`. NOT a shallow threshold fix:
+  the decision is `use_skip_proba = (skip_proba < 250)` on both sides and the
+  formula is the same modulo rounding (zen rounds `255*non_skip/total`; libwebp's
+  `CalcSkipProba` truncates — worth aligning, but the wrong direction to explain
+  248<250 alone), so the divergence is the **`nb_skip` count**. libwebp counts
+  `nb_skip` inside `StatLoop` via `VP8Decimate` per MB (`frame_enc.c:625`),
+  entangling this with the multi-pass `StatLoop` architecture — i.e. issue #25
+  (SKIP_PROBA) **and** #27 (full multi-pass StatLoop), both major open items, not
+  a one-line gate.
 - **m5 `seg_lf`** (low-mid q): the trellis-path StoreMaxDelta (`6b4fa0c` fixed it
   at q75; still diverges off-q75). NOTE the earlier "seg_lf/max_edge" narrative
   applied to m5-trellis, **not** the non-trellis m4 path — m4 is identical.
