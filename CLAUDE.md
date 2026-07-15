@@ -137,18 +137,30 @@ CostModel enum (#33) lets users switch to `StrictLibwebpParity` to disable
 zenwebp's perceptual extensions (PSY_WEIGHT_Y CSF, SATD masking blend, JND
 zeroing) for libwebp algorithm parity.
 
-**`StrictLibwebpParity` is now byte-exact with libwebp (#38, 2026-07-14).**
-14/14 (method × segment) cells produce byte-identical output to libwebp:
-m0–m6 at segs1 (SNS=0, filter=0) and segs4 (SNS=50, filter=60). Verified via
-`methodcmp` + the full test suite. Root causes closed: forward DCT proven
-bit-exact (`transform.rs` differential tests), RGB→YUV byte-exact (×4 chroma
-precision + exact Y, `ChromaPrec::LibwebpExact`), chroma-DC diffusion store
-RD-gating, UV all-4-edge-modes, FastMBAnalyze alpha=0 at m0/m1, filter-bump RD
-gating, zigzag UV RD cost, mode tie-break orders, I4 flatness penalty + tlambda
-clamp + max_i4_header_bits + level_costs refresh, I16 flat-source latch, I4
-trellis static context, chroma-DC double-correction, StoreMaxDelta blocky-nz,
-container even-padding-inside-chunk. All parity fixes are gated so the tuned
-default is byte-unchanged. Provenance: `benchmarks/bitexact_parity_2026-07-14.md`.
+**`StrictLibwebpParity` is byte-exact at the traced operating point (#38,
+2026-07-14) — NOT yet general. Bit-exactness remains an open north-star.**
+At **q75** on CID22 382297 (512×512), all **14** (method × config) cells are
+byte-identical to libwebp: m0–m6 at (SNS=0, filter=0, segs1) and (SNS=50,
+filter=60, segs4) — verified via `methodcmp` + the test grid. This is real and
+hard-won, but it **does not generalize**: a broad sweep (13 images incl.
+tiny/odd-dim synthetics + 3 CID22, q5–95, 4 configs, m0–6 = 4004 cells) is only
+**972/4004 (24%)** byte-identical. Two configs NOT covered by `methodcmp` —
+(SNS=0, filter=0, segs4) and (SNS=30, filter=20, segs2) — **never** match (0%),
+and byte-identity oscillates 12–34% across q (a quantizer-index parity effect;
+odd steps ~12%, even ~32%) with **no q exceeding 34%**; other CID22 images sit
+at 8–11% (the fixes were traced on 382297). So the parity fixes closed the gap
+*where they were traced* (q75 / 382297 / those two configs); generalizing across
+q, config, and content is open work. Root causes closed at the traced point:
+forward DCT proven bit-exact (`transform.rs` differential tests), RGB→YUV
+byte-exact (×4 chroma precision + exact Y, `ChromaPrec::LibwebpExact`), chroma-DC
+diffusion store RD-gating, UV all-4-edge-modes, FastMBAnalyze alpha=0 at m0/m1,
+filter-bump RD gating, zigzag UV RD cost, mode tie-break orders, I4 flatness
+penalty + tlambda clamp + max_i4_header_bits + level_costs refresh, I16
+flat-source latch, I4 trellis static context, chroma-DC double-correction,
+StoreMaxDelta blocky-nz, container even-padding-inside-chunk. All parity fixes
+are gated so the tuned default is byte-unchanged. Provenance:
+`benchmarks/bitexact_parity_2026-07-14.md` +
+`benchmarks/byteparity_scope_2026-07-14.md` (the broad-grid scope measurement).
 
 **Tuned-default adoptions from the parity work (#38-D, 2026-07-14):** two
 parity-gated fixes measured as wins on real content (CID22 + imazen-26) and

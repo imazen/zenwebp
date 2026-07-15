@@ -559,3 +559,12 @@ guesses were both corrected: m4-segs4 was the I16 flat-latch (not a `VP8TDisto`
 cascade), and m5 was I4-trellis-context + chroma-double-correction +
 blocky-nz-source (not a single trellis-DP bug — the DP was already correct, as
 m6's byte-identity proved).
+
+## Scope caveat (added same day)
+
+The 14/14 above is **q75 on 382297** for the two `methodcmp` configs. It does
+NOT generalize: a broad grid (13 images, q5–95, 4 configs, m0–6 = 4004 cells)
+is only **972/4004 (24%)** byte-identical — two configs never match and identity
+oscillates 12–34% across q. The fixes here are correct where traced (q75/382297)
+but bit-exactness across q/config/content is open work. Measurement + next-step
+breakdown: `byteparity_scope_2026-07-14.md`. #38 stays OPEN.

@@ -136,15 +136,21 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Added
 
-- **`StrictLibwebpParity` is now fully byte-exact with libwebp** (#38,
-  `816aea5`/`6b4fa0c`/`c96f767`+`8b60a62`/`8256bec`): all 14 (method × segment)
-  cells produce byte-identical output — m0–m6 at segs1 (SNS=0, filter=0) and
-  segs4 (SNS=50, filter=60), verified by `methodcmp` + the full suite. Closes
-  the residual m3-6 cascade left open by the earlier RD-path entry: I4 flatness
+- **`StrictLibwebpParity` byte-exact at the traced operating point** (#38,
+  `816aea5`/`6b4fa0c`/`c96f767`+`8b60a62`/`8256bec`): all 14 (method × config)
+  cells are byte-identical to libwebp **at q75 on CID22 382297** — m0–m6 at
+  (SNS=0, filter=0, segs1) and (SNS=50, filter=60, segs4), verified by
+  `methodcmp`. Closes the residual m3-6 cascade at that point: I4 flatness
   penalty in the running total, I16 flat-source latch, I4 trellis static
   context, chroma-DC double-correction, StoreMaxDelta blocky-nz from the
   mode-selection quant state, and container even-padding inside the VP8 chunk.
-  Full investigation: `benchmarks/bitexact_parity_2026-07-14.md`.
+  **Scope caveat — bit-exactness is NOT yet general:** a broad sweep (13 images,
+  q5–95, 4 configs, m0–6 = 4004 cells) is only 972/4004 (24%) byte-identical;
+  two configs (SNS=0/segs4, SNS=30/filter=20/segs2) never match and identity
+  oscillates 12–34% across q. The fixes were traced at q75/382297 and don't
+  generalize; #38 stays open. Full investigation:
+  `benchmarks/bitexact_parity_2026-07-14.md`;
+  scope: `benchmarks/byteparity_scope_2026-07-14.md`.
 - **Tuned default adopts two parity-gated wins** (#38-D): measured on CID22 +
   imazen-26 and adopted into `ZenwebpDefault` — (1) `max_i4_header_bits` now
   uses libwebp's `partition_limit`-derived value (65536 at the default) instead
