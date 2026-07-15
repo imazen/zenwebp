@@ -2199,12 +2199,11 @@ impl<'a> Vp8Encoder<'a> {
         // `compute_segment_quant`, so only segs1 is affected — under parity use
         // the truncating form so segs1 is byte-exact away from q75. The tuned
         // default keeps the (rounded) value pending a measured adoption.
-        let quant_index: u8 =
-            if self.cost_model == super::api::CostModel::StrictLibwebpParity {
-                super::fast_math::quality_to_quant_index_trunc(lossy_quality)
-            } else {
-                quality_to_quant_index(lossy_quality)
-            };
+        let quant_index: u8 = if self.cost_model == super::api::CostModel::StrictLibwebpParity {
+            super::fast_math::quality_to_quant_index_trunc(lossy_quality)
+        } else {
+            quality_to_quant_index(lossy_quality)
+        };
         let quant_index_usize: usize = quant_index as usize;
 
         let mb_width = width.div_ceil(16);
