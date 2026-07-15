@@ -14,8 +14,16 @@ enabled in the shipping encoder), so parity just forces
 **Remaining ~15% is luma I4/I16 mode-RD**, in two overlapping clusters:
 - **m6, all q (~207 cells).** The m5→m6 delta is trellis-during-I4-mode-selection
   (RD_OPT_TRELLIS_ALL): q40 m5 has `b4_same` 832/832 (all I4 sub-modes match) but
-  q40 m6 has 377/768 + `y_same` 90.8% + i4-count off by ~4. zen's trellis-in-I4-
-  mode-selection diverges from libwebp's.
+  q40 m6 has 377/768 + `y_same` 90.8% + i4-count off by ~4. **Traced (q40 m6,
+  382297):** it's a per-MB coefficient-RATE cascade, NOT a lambda/DP bug. The
+  I4-trellis lambdas match (`(7·q²)>>3`), block-score lambda matches
+  (`lambda_mode=18`), D/SD/H/modes match — only R diverges, driven by an nz-CONTEXT
+  difference (mb(11,8) sub-block 0: zen `ctx=1 t1+l0`, lib `ctx=2 t1+l1`). The R
+  drift starts BEFORE the first mode flip (mb(10,8), not a flip, already has zen
+  I16 R≈56210 vs lib 56470), so it cascades MB-by-MB from an earlier root through
+  the m6 I4-trellis-mode-selection context threading. Single cascade ⇒ fixing the
+  root should close most of the cluster. Next: all-MB I16-R diff to find the first
+  diverging MB (instrumented libwebp `LIBI16`/`LIBI4blk` + zen `MB_DEBUG` exist).
 - **High-q q80–95, m3–m5.** Milder luma mode flips (`y_same` ~97%) + `n_proba_updates`
   off by a few. The n_proba is DOWNSTREAM of modes (when modes match, n_proba
   matches — verified at q40 m5), so the mode-RD is the root.
