@@ -684,6 +684,18 @@ impl<'a> super::Vp8Encoder<'a> {
 
         let mut best_mode = LumaMode::DC;
         let mut best_rd_score = i64::MAX;
+        // libwebp evaluates I16 modes in the order DC, TM, V, H (its internal mode
+        // numbers 0,1,2,3) and keeps the first with a strictly-smaller score, so an
+        // exact tie resolves to the lowest libwebp mode number. Our `MODES` array is
+        // ordered [DC, V, H, TM]; the corresponding libwebp mode numbers are
+        // [0, 2, 3, 1]. Under StrictLibwebpParity we tie-break by this rank so an
+        // H/TM (or any) tie picks the same mode as libwebp (#38). At frame edges TM
+        // and H predict identically and tie constantly, so this drives a large share
+        // of the top-row/left-column I16 mode agreement.
+        const I16_LIB_RANK: [u8; 4] = [0, 2, 3, 1];
+        let parity_tiebreak =
+            self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity;
+        let mut best_lib_rank = u8::MAX;
         // Store best mode's cost components for final score recalculation with lambda_mode
         let mut best_coeff_cost = 0u32;
         let mut best_mode_cost = 0u16;
@@ -946,9 +958,14 @@ impl<'a> super::Vp8Encoder<'a> {
                 );
             }
 
-            if rd_score < best_rd_score {
+            let is_better = rd_score < best_rd_score
+                || (parity_tiebreak
+                    && rd_score == best_rd_score
+                    && I16_LIB_RANK[mode_idx] < best_lib_rank);
+            if is_better {
                 best_rd_score = rd_score;
                 best_mode = mode;
+                best_lib_rank = I16_LIB_RANK[mode_idx];
                 // Store components for final score recalculation
                 best_coeff_cost = coeff_cost;
                 best_mode_cost = mode_cost;
@@ -1808,6 +1825,15 @@ impl<'a> super::Vp8Encoder<'a> {
 
         let mut best_mode = ChromaMode::DC;
         let mut best_rd_score = i64::MAX;
+        // Match libwebp's PickBestUV tie-break: it evaluates chroma modes in the
+        // order DC, TM, V, H (internal mode numbers 0,1,2,3) and keeps the first
+        // strictly-smaller score, so ties resolve to the lowest libwebp mode
+        // number. Our `MODES` is [DC, V, H, TM] -> libwebp ranks [0, 2, 3, 1].
+        // (#38 — same edge TM/H tie phenomenon as the I16 path.)
+        const UV_LIB_RANK: [u8; 4] = [0, 2, 3, 1];
+        let parity_tiebreak =
+            self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity;
+        let mut best_lib_rank = u8::MAX;
 
         #[cfg(feature = "mode_debug")]
         let debug_uv = std::env::var("MB_DEBUG")
@@ -2089,9 +2115,14 @@ impl<'a> super::Vp8Encoder<'a> {
                 );
             }
 
-            if rd_score < best_rd_score {
+            let is_better = rd_score < best_rd_score
+                || (parity_tiebreak
+                    && rd_score == best_rd_score
+                    && UV_LIB_RANK[mode_idx] < best_lib_rank);
+            if is_better {
                 best_rd_score = rd_score;
                 best_mode = mode;
+                best_lib_rank = UV_LIB_RANK[mode_idx];
             }
         }
 
