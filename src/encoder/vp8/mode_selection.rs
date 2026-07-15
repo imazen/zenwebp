@@ -1766,6 +1766,12 @@ impl<'a> super::Vp8Encoder<'a> {
                 // dropped it from this running total, making I4 look ~140/blk too
                 // cheap and winning where libwebp picked I16. Add it back under
                 // parity; the tuned default keeps the prior running total.
+                // The I4 flatness penalty is folded into the running total only
+                // under parity (matches libwebp's I4/I16 cut). A CID22+imazen-26
+                // A/B confirmed adopting it for the tuned default is a wash
+                // (m3-6 net -0.02% size / +0.003 zsim at +0.9% time), so the
+                // tuned default keeps the prior running total. See
+                // benchmarks/tuned_candidates_2026-07-14.md.
                 let parity_flatness =
                     if self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity {
                         best_flatness_penalty

@@ -63,6 +63,43 @@ smooth-noise content, caught by the floor. The gate is
 `parity || method >= 3`, so tuned m0 is untouched and parity (which only reaches
 this fn at m3-6) stays 14/14 byte-identical.
 
+## 4. I4 flatness penalty in the running total → **REJECTED (wash)**
+
+libwebp folds a `FLATNESS_PENALTY` (~140/block) into `rd_i4.R` before the
+I4-vs-I16 comparison; the parity path matches this, but the tuned default omits
+it (I4 looks ~140/block cheaper). This pulls I4/I16 selection opposite to the
+`max_i4_header_bits` lift (#1), so it was measured as a pair.
+
+| m | Δsize | Δzsim | Δtime |
+|---|-------|-------|-------|
+| 3 | −0.02% | +0.014 | +1.8% |
+| 4 | −0.01% | −0.001 | +0.1% |
+| 5 | −0.02% | +0.006 | +0.9% |
+| 6 | −0.01% | −0.008 | +0.9% |
+| all | **−0.02%** | **+0.003** | +0.9% |
+
+Rejected as a wash: byte-neutral (−0.02%) and quality-neutral (+0.003 zsim,
+mixed sign by method) at +0.9% time. It also **confirms the `max_i4` decision
+is safe** — the penalty pulls I4 selection the opposite direction yet moves
+almost nothing, so the lifted clamp is not causing harmful I4 over-selection.
+Kept parity-only.
+
+## 5. Mid-row `level_costs` refresh → **REJECTED (previously measured)**
+
+Rebuilding the level-cost tables from the refreshed image-adapted probabilities
+mid-row (libwebp's `VP8CalculateLevelCosts` after `FinalizeTokenProbas`) is
+parity-only. Already measured as a tuned-default *regression* (1.0101x → 1.0114x
+on default compression, documented at `vp8/mod.rs:1564`) — not re-run. Kept
+parity-only.
+
+## Other parity gates (not candidates)
+
+`FinalizeTokenProbas` default-proba coding (tuned already keeps the strictly-
+smaller image-adapted update), container even-padding-inside-chunk (a 1-byte
+layout detail), and the m5 `StoreMaxDelta` non-trellis nonzero test (tuned uses
+the more-correct trellis test) are byte-exactness matching quirks where the
+tuned default is already equal or richer — nothing to adopt.
+
 ## Gates after adoption
 
 323 lib tests, the 14-cell zensim regression matrix, and v2 pixel-perfect all
