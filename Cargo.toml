@@ -197,6 +197,20 @@ required-features = ["__expert"]
 name = "debug_zensim"
 path = "dev/debug_zensim.rs"
 
+# #38 StrictLibwebpParity tooling. `byteparity_sweep` is the score; `mbpixdiff`
+# finds the first EMITTED divergence to trace (per-MB debug output mixes ~4
+# probe calls per MB and will mislead you otherwise); `bitexact_diff` drills
+# header fields + the mode stream for one cell.
+[[example]]
+name = "byteparity_sweep"
+path = "dev/byteparity_sweep.rs"
+required-features = ["__expert"]
+
+[[example]]
+name = "mbpixdiff"
+path = "dev/mbpixdiff.rs"
+required-features = ["__expert"]
+
 [[example]]
 name = "zensim_calibrate"
 path = "dev/zensim_calibrate.rs"

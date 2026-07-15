@@ -1,6 +1,53 @@
 # StrictLibwebpParity byte-identity — actual scope (2026-07-14)
 
-## CURRENT STATE (2026-07-15): 3488/4004 = 87.1% byte-identical
+## TOOLING NOTE (2026-07-15, read first)
+
+The harness that produced every number below lived in `/tmp` and **was wiped**
+mid-session. It is now committed as `dev/byteparity_sweep.rs` (the score),
+`dev/mbpixdiff.rs` (first-EMITTED-divergence finder), and the pre-existing
+`dev/bitexact_diff.rs` (header fields + mode stream) — all wired as
+`__expert` examples. Never rebuild this in `/tmp` again.
+
+**The committed grid scores 3578/4004 = 89.4%, which is NOT comparable to the
+3488/4004 = 87.1% below.** 10 of the 13 images are synthetic and their generator
+was lost and reconstructed differently; the encoder is byte-identical across the
+two runs, so the delta is the grid, not progress. The 3 CID22 images are
+unchanged (299 of the 426 current failures). **3578/4004 is the durable baseline
+going forward** — re-run the committed tool for any before/after, and don't
+compare across grids.
+
+What survives unchanged from the analysis below: the five root causes and their
+fixes, the per-config/per-method shape of the remainder, and the method notes.
+
+### Failure shape on the committed grid (426 of 4004, 2026-07-15)
+
+By method (of 572 each): m0 20 · m1 38 · m2 36 · m3 70 · m4 68 · **m5 99 · m6 95**.
+By config (of 1001 each): sns0/flt0/segs1 67 · sns0/flt0/segs4 67 ·
+**sns30/flt20/segs2 142 · sns50/flt60/segs4 150**.
+By image: 1025469 118 · 1418519 98 · 382297 83 (synthetics ≤38 each).
+
+Two things this says. (1) The remainder is concentrated in the **RD-optimising
+methods** (m3-m6 = 332 of 426) — m0-m2 are nearly closed. (2) The **SNS +
+filter + multi-segment configs** carry 292 of 426, roughly double the sns=0
+rows, so segment-dependent quantisation/filter interaction is now the largest
+single axis — larger than the m6 trellis cluster that dominated before the
+I16-AC-trellis-context fix.
+
+**Next root (localised, not yet fixed):** high-q I4 coefficient *rate*. At q90
+m3 (sns0/segs1, 382297) the first emitted divergence is mb(28,7); I4 sub-blocks
+0-3 match exactly, then blk4 diverges with the SAME mode (VR), SAME D (36) and
+SAME mode-cost H (1667) but R=16752 (zen) vs 16730 (lib) — a 22-unit
+coefficient-rate delta that then cascades (blk11 flips RD vs DC). Since D
+matches exactly and dequantisation is injective, the *levels match* — so this is
+a rate-computation divergence, not quantisation. blk4 is the first sub-block
+carrying a large level (12 → cat3, range 11-18), which is why q75 never sees it:
+higher quant keeps levels small enough to avoid the category-coded range.
+Candidate: zen's precomputed `VP8_LEVEL_FIXED_COSTS` table vs libwebp's
+`VariableLevelCost` (computed per level from `VP8LevelCodes` + `VP8BitCost`),
+or the token-tree cost for large levels. Verify by comparing the two for
+level 12 at ctx=2 before changing anything.
+
+## STATE AT THE TIME OF THE ANALYSIS BELOW: 3488/4004 = 87.1% byte-identical
 
 Five parity-gated fixes this session took the grid **24% → 87.1%**: base-quant
 `52cf96f2`, segmentation-collapse `41923466`, trailing-slots `7acdd775`,
