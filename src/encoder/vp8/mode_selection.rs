@@ -2032,17 +2032,27 @@ impl<'a> super::Vp8Encoder<'a> {
                 &mut v_blocks,
             );
 
-            // Under StrictLibwebpParity, apply the chroma DC error diffusion that
-            // libwebp's ReconstructUV runs for every candidate mode
-            // (`CorrectDCValues`, gated on `it->top_derr != NULL`, i.e. quality
-            // <= 98). Scoring each mode on the *diffused* reconstruction is what
-            // makes the m3+ UV mode pick match libwebp — without it, the RD sees
-            // a different DC (and different levels) than the emitted bitstream,
-            // flipping edge/near-boundary picks (#38). Read-only on the diffusion
-            // state; the final emission still performs the actual store. The
-            // tuned default keeps scoring on the undiffused reconstruction.
+            // Apply the chroma DC error diffusion that libwebp's ReconstructUV
+            // runs for every candidate mode (`CorrectDCValues`, gated on
+            // `it->top_derr != NULL`, i.e. quality <= 98). The emission path
+            // (prediction.rs) already diffuses for both cost models, so scoring
+            // each mode on the *undiffused* reconstruction meant the RD saw a
+            // different DC (and different levels) than the emitted bitstream.
+            // Scoring on the diffused reconstruction both matches libwebp under
+            // parity AND improves the tuned default's UV picks — a CID22+
+            // imazen-26 sweep showed -0.22% size / +0.107 zsim / +0.5% time
+            // across m3-6, so the tuned default now diffuses in the RD loop at
+            // m3+. It is deliberately NOT applied to the tuned m0 arm (which
+            // also routes through this fn, line ~2311): m0 keeps its measured-
+            // better undiffused RD pick, and diffusing it dips the synthetic
+            // noise floor (zensim_regression_matrix). Under parity this fn is
+            // only reached at m3-6, so the `parity` clause preserves parity's
+            // 14/14 byte-identity exactly. Read-only on the diffusion state;
+            // emission still performs the actual store.
+            // See benchmarks/tuned_candidates_2026-07-14.md.
             if self.do_error_diffusion
-                && self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity
+                && (self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity
+                    || self.method >= 3)
             {
                 super::residuals::diffuse_chroma_dc_inplace(
                     &mut u_blocks,

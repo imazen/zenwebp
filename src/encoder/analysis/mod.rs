@@ -239,8 +239,12 @@ pub fn analyze_macroblock(
     // segmentation histogram — and therefore the k-means centers, segment
     // quantizers, and per-MB segment map — diverged from libwebp at m0/m1
     // (seg_same 38.9% at m0/m1 vs 100% at m2+). Match libwebp's FastMBAnalyze
-    // alpha under parity; the tuned default keeps the fuller analysis (which may
-    // segment low-method encodes better — left unchanged pending a sweep).
+    // alpha under parity; the tuned default keeps the fuller analysis. A
+    // CID22+imazen-26 sweep confirmed the fuller analysis is what makes the
+    // tuned m0/m1 tier smaller: the alpha=0 fast path is +4.25% bytes (for
+    // +0.92 zsim / -8% time), a size regression on a draft tier whose purpose
+    // is minimum size — so the tuned default keeps the fuller analysis and only
+    // parity takes the fast path. See benchmarks/tuned_candidates_2026-07-14.md.
     let use_fast = method <= 1 && cost_model == crate::encoder::api::CostModel::StrictLibwebpParity;
     let best_alpha = if use_fast {
         0
