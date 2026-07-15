@@ -10,6 +10,16 @@ north-star (byte-identical at *all* matching settings) is not met — this doc
 records exactly how far it reaches so the next session doesn't over-trust the
 `methodcmp` 14/14.
 
+**Update (2026-07-15): trailing-segment-slot fix → 3151/4004 (78.7%).** The VP8
+segment header always carries 4 quant+filter slots; libwebp leaves the slots
+beyond the configured count (`[config..4]`) at base/seg0 (a 2-segment encode has
+`dqm[2]==dqm[3]==dqm[0]`), zen held seg1's values. Fix (parity-gated,
+`vp8/mod.rs`): point `[config..4]` at seg0 using the pre-simplify count (so
+`SimplifySegments`' correct `[num_final..config]` replication isn't clobbered).
+sns30/segs2 **30.4% → 78.8%**; all four configs now converged at **78–79%** — the
+residual is now a COMMON cluster (low-q skip/quant, high-q, m6 mode-RD),
+config-independent. Commit `7acdd775`.
+
 **Update (2026-07-15): segmentation-collapse fix → 2666/4004 (66.6%).** Biggest
 single jump. libwebp writes `segmentation_enabled = (num_segments > 1)` *after*
 `SimplifySegments` merges equivalent segments; at sns=0 the SNS quantizer spread
