@@ -70,17 +70,47 @@ at m3 (simple quant: libwebp `VP8EncQuantizeBlock` vs zen's
 `quantize_block_simd`) that only shows on blk4's residual — the round-vs-
 truncate class of bug that already bit the base quantiser (`52cf96f2`).
 
-### ROOT CAUSE FOUND (2026-07-15): zen never runs libwebp's StatLoop
+### CORRECTION (2026-07-15, later): the StatLoop claim below was WRONG
 
-Traced to the exact table entry, then to the mechanism. **libwebp calls
-`StatLoop(enc)` UNCONDITIONALLY as the first statement of `VP8EncLoop`**
-(`frame_enc.c`), for every method. It sweeps the frame collecting token
-statistics, finalises the coefficient probabilities, and rebuilds the level-cost
-tables — so **every RD decision from the very first MB is scored against
-image-adapted probabilities**. zen starts from the DEFAULT probability table and
-only refreshes mid-stream (`mod.rs:1569-1593`, every `max_count` MBs), so its
-cost tables are wrong for the whole first stretch of the frame and never derive
-from a full-frame stat pass at all.
+An earlier revision of this file (commit `f1844f4`) claimed the root cause was
+"zen never runs libwebp's StatLoop" and that zen scores RD against DEFAULT
+probabilities. **That is false and the commit message is wrong too.** zen's
+mid-row refresh (`mod.rs:1632-1645`) does fire and does adapt, and its
+`max_count = (num_mb/8).max(96)` already matches libwebp's `(mb_w*mb_h)>>3`
+floored at `MIN_COUNT 96` (both = 128 for a 32×32-MB frame).
+
+Measured with a `REFRESHDBG` probe, zen's refresh at mb(0,4) (MB 128) produces
+`prob[3][1][2] = [17, 51, 85, 127, 172, 180, 152, 123, 231, 155, 128]` against
+libwebp's in-effect `[17, 51, 85, 127, 172, 180, 152, 123, 231, 164, 128]`.
+**Nine of eleven entries are identical; only index 9 differs (155 vs 164).**
+
+That single entry explains everything: index 9 is one of the two probability
+slots that ONLY a level-12-class coefficient reaches (level 10 stops at 7), which
+is why exactly one `t` moved and by only 22. zen's next refresh is mb(1,8) =
+MB **257**, i.e. *after* the divergent mb(28,7) = MB 252, so blk4 is scored with
+the MB-128 values.
+
+**Corrected next step:** dump `proba_stats[3][1][2][9]` (`nb`/`total`) at the
+MB-128 refresh in both and find why the counts differ. MBs 0-251 are
+byte-identical, so the emitted tokens match — meaning the divergence is in how
+the stat is *accumulated*, not in the encode decisions. Note the two recorders
+are provably equivalent for v=12: libwebp's `USE_LEVEL_CODE_TABLE` path records
+`s+3(1), s+6(1), s+8(0), s+9(0)`, and zen's explicit-tree `record_coeffs`
+(`cost/stats.rs:149`) records the same — so suspect the *surrounding* accounting
+(which coefficients reach `s+9` at all, the `skip_eob`/context threading, or the
+EOB record), not the level-code mapping.
+
+The StatLoop material below is retained because it is accurate ABOUT LIBWEBP and
+the port constraints are real — but it is NOT the root cause of this gap.
+
+### (superseded) StatLoop analysis
+
+**libwebp calls `StatLoop(enc)` UNCONDITIONALLY as the first statement of
+`VP8EncLoop`** (`frame_enc.c`), for every method: it sweeps the frame collecting
+token statistics, finalises the coefficient probabilities, and rebuilds the
+level-cost tables before the encode loop. zen has no equivalent pre-pass; it
+reaches adapted probabilities only via the mid-row refresh (which, per the
+correction above, does work).
 
 **Evidence chain (q90/m3, 382297, mb(28,7), I4 sub-block 4):**
 1. Levels are byte-identical: `[-10,12,5,9,-9,-2,0,2,-6,2,0,-1,0,0,-1,-1]` in
@@ -113,14 +143,46 @@ rate to mis-score. This is the **#27 StatLoop** area — the skip-proba half was
 already closed (`91c96168`), but the probability-adaptation half was never
 ported.
 
-**Next step: port StatLoop** (`frame_enc.c: StatLoop` + `FinalizeTokenProbas`).
-Note `fast_probe = ((method == 0 || method == 3) && !do_search)`: at m3 the stat
-pass is reduced (`nb_mbs = (nb_mbs > 200) ? nb_mbs >> 1 : 100`), at m4-m6 it is
-a full pass, and `rd_opt = (method >= 3 || do_search) ? RD_OPT_BASIC :
-RD_OPT_NONE`. It must be parity-gated: zen's tuned default deliberately skips
-mid-row level-cost rebuilds because they measurably regressed compression
-(1.0101x→1.0114x, see `mod.rs:1577-1580`), so a StatLoop that changes the tuned
-default's bytes is NOT acceptable without a fresh A/B.
+### Porting StatLoop: one attempt MEASURED AND REJECTED (2026-07-15)
+
+zen already owns most of the parts — `compute_updated_probabilities()` IS
+`FinalizeTokenProbas` (including the m0 `fast_probe` subset snapshot), and a
+two-pass mechanism exists at m4 whose pass 1 applies `updated_probs` and rebuilds
+`level_costs` (`mod.rs:1266-1278`). **Naively enabling that two-pass under parity
+for every method regressed the grid 3578/4004 → 2299/4004** (m3-m6: ~70-99
+failures each → ~400, i.e. nearly every cell). Reverted; do not re-attempt by
+flipping the pass count.
+
+**Why it fails — zen's two-pass is not libwebp's StatLoop:**
+* libwebp's stats pass runs at `rd_opt = (method >= 3 || do_search) ?
+  RD_OPT_BASIC : RD_OPT_NONE` — so m5/m6 collect stats with **BASIC, not
+  trellis** — and it never emits.
+* `FinalizeTokenProbas` always writes either the stats-derived `new_p` or
+  `VP8CoeffsProba0[t][b][c][p]` — it **never carries a previously-adapted value
+  forward**. So "adapted" state is recomputed from whatever stats currently
+  exist, not accumulated.
+* `VP8EncTokenLoop` then calls `ResetTokenStats` **only on the last pass**, and
+  re-finalizes probs + level costs every `max_count` MBs from *that pass's own*
+  stats.
+
+**The live puzzle to solve first (cheap, do this before porting anything):**
+zen's `max_count = (num_mb / 8).max(96)` (`mod.rs:1335`) already matches
+libwebp's `(mb_w*mb_h)>>3` floored at `MIN_COUNT 96` — for 32×32 MBs both are
+**128**. So zen's mid-row refresh *should* have fired at ~MB 129 and left
+mb(28,7) (MB 252) with adapted probabilities. It didn't: the dump shows the
+shipped defaults. **Find out why that refresh is a no-op at m3 before building
+StatLoop on top of it** — either it isn't firing, or
+`compute_updated_probabilities` is rejecting every candidate and falling back to
+`COEFF_PROBS`. That single answer may be worth more than the whole port.
+
+Groundwork landed: `self.do_search` now mirrors libwebp's
+`enc->do_search = (target_size > 0 || target_PSNR > 0)` (`webp_enc.c:118`), which
+is what gates `fast_probe`.
+
+**Constraint for any port:** it must be parity-gated. zen's tuned default
+deliberately skips mid-row level-cost rebuilds because they measurably regressed
+compression (1.0101x→1.0114x, `mod.rs:1577-1580`), so a StatLoop that changes the
+tuned default's bytes is NOT acceptable without a fresh A/B.
 
 **Tooling:** the instrumented libwebp used for this lives at
 `~/work/zen/libwebp--zen38trace` (a copy — the reference tree at

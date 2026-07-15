@@ -29,10 +29,9 @@
 //! **Verified to catch the bug, not merely to pass** (2026-07-15, by
 //! reintroducing the defect — restoring one final histogram per *active*
 //! cluster). Against the broken encoder these fail with `BitStreamError`:
-//!   * `stranded_cluster_pinned_repro_511x320_m4_q25`
-//!   * `m4_quality_axis_stranding_content` / `m5_…` / `m6_…`
-//! plus the two unit tests in `meta_huffman.rs`
-//! (`final_histograms_skip_stranded_cluster`,
+//! `stranded_cluster_pinned_repro_511x320_m4_q25`,
+//! `m4_quality_axis_stranding_content` / `m5_…` / `m6_…`, plus the two unit
+//! tests in `meta_huffman.rs` (`final_histograms_skip_stranded_cluster`,
 //! `final_histograms_preserve_tile_counts_across_compaction`).
 //!
 //! These, by contrast, still PASS against the broken encoder —

@@ -538,6 +538,14 @@ struct Vp8Encoder<'a> {
     /// Run a stat-collection pre-pass (m4 only — m5/m6 already saturate).
     /// Default `false`. Set via `LossyConfig::with_multi_pass_stats(true)`.
     multi_pass_stats: bool,
+    /// libwebp's `enc->do_search` — `(target_size > 0 || target_PSNR > 0)`
+    /// (`webp_enc.c:118`). It disables `StatLoop`'s `fast_probe`, so the m0/m3
+    /// stats pass covers the whole frame instead of a subset. zen drives target
+    /// search from an outer loop (`encode_with_quality_search`), which re-runs
+    /// this encoder per q, so the inner encode has no notion of the search on
+    /// its own — this field carries it in. Only read under
+    /// `StrictLibwebpParity`. (#38)
+    do_search: bool,
     /// Per-segment additive quant_index offsets applied AFTER
     /// `compute_segment_quant`'s SNS modulation. `None` (default) leaves
     /// segments untouched. Crate-internal hook for `target_zensim`'s
@@ -655,6 +663,7 @@ impl<'a> Vp8Encoder<'a> {
             smooth_segment_map: false,
             cost_model: super::api::CostModel::ZenwebpDefault,
             multi_pass_stats: false,
+            do_search: false,
             segment_quant_overrides: None,
             filter_strength: 60,
             filter_sharpness: 0,
@@ -1153,6 +1162,9 @@ impl<'a> Vp8Encoder<'a> {
         // qualities — keep it enabled under StrictLibwebpParity too.
         self.do_error_diffusion = true;
         self.multi_pass_stats = params.multi_pass_stats;
+        // Mirrors libwebp's `enc->do_search = (config->target_size > 0 ||
+        // config->target_PSNR > 0)` (`webp_enc.c:118`).
+        self.do_search = params.target_size > 0 || params.target_psnr > 0.0;
         self.segment_quant_overrides = params.segment_quant_overrides;
         self.filter_strength = params.filter_strength.min(100);
         self.filter_sharpness = params.filter_sharpness.min(7);
@@ -1209,6 +1221,40 @@ impl<'a> Vp8Encoder<'a> {
         // `proba_stats` in trellis; adding a second pass at those tiers regresses size
         // (see #27 investigation). Multi-pass at m4 doubles encode time for ~0.1% size
         // win on photos — useful inside `target_size`/`target_zensim` search loops.
+        // libwebp calls `StatLoop(enc)` UNCONDITIONALLY as the first statement of
+        // `VP8EncLoop` (frame_enc.c), for every method: a stats pass that
+        // finalizes the coefficient probabilities (`FinalizeTokenProbas`) and
+        // rebuilds the level-cost tables (`VP8CalculateLevelCosts`) BEFORE the
+        // encode loop. So every RD decision libwebp makes — from the very first
+        // MB — is scored against image-adapted probabilities, whereas zen's
+        // single pass scores against the shipped defaults and only drifts toward
+        // adapted values via the mid-row refresh.
+        //
+        // That is the root of the m3-m6 byte-parity gap: those are exactly the
+        // cost-driven methods (332 of 426 remaining failures), and it shows up
+        // most at high q where there are more and larger coefficients for a wrong
+        // rate to mis-score. Traced to a single table entry at q90/m3 mb(28,7):
+        // identical levels, identical everything on the rate path, but
+        // `prob[band1][ctx2]` was still `[39,77,162,232,…]` (defaults) in zen vs
+        // `[17,51,85,127,…]` (adapted) in libwebp. See
+        // `benchmarks/byteparity_scope_2026-07-14.md`.
+        //
+        // zen's existing two-pass machinery IS this: pass 0 accumulates stats,
+        // then pass 1 applies `updated_probs` and rebuilds `level_costs` (below).
+        // It was just gated to m4. Under parity, run it for every method.
+        // Parity-gated: the tuned default keeps its prior pass count, since a
+        // stats pass changes its bytes and would need a fresh A/B first.
+        // MEASURED AND REJECTED (2026-07-15): naively running zen's existing
+        // two-pass here under parity (`= 2` for every method) REGRESSED the
+        // byteparity grid 3578/4004 -> 2299/4004, with m3-m6 going from ~70-99
+        // failures each to ~400 (nearly every cell). zen's pass-0/pass-1 is NOT
+        // semantically libwebp's StatLoop: libwebp's stats pass uses
+        // `rd_opt = (method >= 3 || do_search) ? RD_OPT_BASIC : RD_OPT_NONE`
+        // (so m5/m6 stat with BASIC, not trellis), never emits, and its token
+        // loop then calls `ResetTokenStats` on the last pass and re-finalizes
+        // probabilities from THAT pass's own stats every `max_count` MBs.
+        // A faithful port has to reproduce those semantics; do not re-attempt
+        // by flipping this count.
         let num_passes: usize = if self.multi_pass_stats && self.method == 4 {
             2
         } else {
@@ -1243,10 +1289,27 @@ impl<'a> Vp8Encoder<'a> {
             // the frame has fewer MBs than the limit, the snapshot never fires
             // and the whole frame is used — matching libwebp, which also
             // records every MB in that case.
+            // libwebp's `StatLoop` shortens the stats pass for m0 and m3:
+            //   fast_probe = ((method == 0 || method == 3) && !do_search)
+            //   m3: nb_mbs = (nb_mbs > 200) ? nb_mbs >> 1 : 100  // needs more
+            //                                                    // stats to be
+            //                                                    // reliable
+            //   m0: nb_mbs = (nb_mbs > 200) ? nb_mbs >> 2 : 50
+            // so the emitted probas are finalized from only that many MBs. m4-m6
+            // use the whole frame. `do_search` is libwebp's target-size search,
+            // which disables fast_probe entirely.
+            // NOTE: libwebp's `fast_probe` also shortens the m3 stats pass
+            // (`nb_mbs = (nb_mbs > 200) ? nb_mbs >> 1 : 100`), but that belongs
+            // to `StatLoop`, which zen does not have. Applying the m3 limit to
+            // this mid-row refresh instead is NOT equivalent and was measured as
+            // part of the rejected two-pass attempt above. Keep it m0-only until
+            // StatLoop itself is ported. (`self.do_search` carries libwebp's
+            // `enc->do_search`, which gates `fast_probe`, ready for that port.)
             self.fast_probe_snapshot = None;
             self.fast_probe_stat_limit = if self.cost_model
                 == super::api::CostModel::StrictLibwebpParity
                 && self.method == 0
+                && !self.do_search
             {
                 Some(if num_mb > 200 { num_mb >> 2 } else { 50 })
             } else {
@@ -1568,7 +1631,14 @@ impl<'a> Vp8Encoder<'a> {
             // emission reflects accumulated stats. (#35-#6)
             row_state.refresh_countdown -= 1;
             if row_state.refresh_countdown < 0 {
-                self.compute_updated_probabilities();
+                let _changed = self.compute_updated_probabilities();
+                #[cfg(feature = "mode_debug")]
+                if std::env::var("REFRESHDBG").is_ok() {
+                    eprintln!(
+                        "REFRESH at mb({mbx},{mby}) changed={_changed} prob[3][1][2]={:?}",
+                        self.updated_probs.as_ref().map(|p| p[3][1][2])
+                    );
+                }
                 // libwebp's token loop refreshes the level-cost tables
                 // alongside the probabilities every `max_count` MBs
                 // (`VP8CalculateLevelCosts` right after `FinalizeTokenProbas`,
