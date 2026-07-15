@@ -1556,6 +1556,26 @@ impl<'a> Vp8Encoder<'a> {
             row_state.refresh_countdown -= 1;
             if row_state.refresh_countdown < 0 {
                 self.compute_updated_probabilities();
+                // libwebp's token loop refreshes the level-cost tables
+                // alongside the probabilities every `max_count` MBs
+                // (`VP8CalculateLevelCosts` right after `FinalizeTokenProbas`,
+                // frame_enc.c:834-836), so mode-selection coefficient costs
+                // track the evolving distribution for the rest of the pass.
+                // zenwebp's tuned default deliberately skips this (rebuilding
+                // `level_costs` mid-row measurably regressed default
+                // compression, 1.0101x→1.0114x), leaving cost-based mode
+                // selection on the pass-start (default-proba) tables. Under
+                // StrictLibwebpParity we match libwebp: rebuild `level_costs`
+                // from the just-refreshed image-adapted probabilities so the
+                // I16/I4/UV coefficient costs (and thus the mode picks) line up
+                // — without this, chroma-UV costs run ~1.5× high and flip the
+                // DC/TM choice on later rows (e.g. 382297 m3 mb(4,4)).
+                if self.cost_model == super::api::CostModel::StrictLibwebpParity
+                    && let Some(updated) = self.updated_probs
+                {
+                    self.level_costs.mark_dirty();
+                    self.level_costs.calculate(&updated);
+                }
                 row_state.refresh_countdown = max_count;
             }
 
