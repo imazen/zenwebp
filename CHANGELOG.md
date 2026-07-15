@@ -468,7 +468,16 @@ here has landed; see "Changed (BREAKING)" below.)
   whole-image corruption on decode). Latent for any method; easiest to hit
   with the new m0 clustering. Final groups are now compacted to referenced
   clusters with dense renumbering; regression coverage in
-  `tests/lossless_fast_tier.rs`.
+  `tests/lossless_fast_tier.rs` and `tests/lossless_stranded_cluster.rs`
+  (#72). **Shipped broken in 0.4.4 at default settings** — 84% of pixels wrong
+  on one 512x320 rendition, `BitStreamError` on others; the stream is
+  well-formed so decoders returned garbage rather than erroring. The gate
+  sweeps m4/m5/m6 across the quality axis on content verified to strand a
+  cluster (a 511x320 crop, seed 42, fails at m4/q25 with the compaction
+  reverted — matching the reported renditions), plus two unit tests pinning
+  the compaction itself in `meta_huffman.rs`. All four were confirmed to fail
+  against a deliberately reintroduced defect, so they gate rather than merely
+  pass.
 - **VP8L decoder rejected valid deep-Huffman-tree streams** (efddb6c3): the
   pixel-loop bit-window refills were under-budgeted — a literal's
   GREEN+RED+BLUE+ALPHA codes can need 60 bits but `fill()` guarantees 56 and

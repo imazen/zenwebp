@@ -1155,4 +1155,90 @@ mod tests {
         assert_eq!(symbols.len(), 2);
         assert_eq!(symbols[0], symbols[1]);
     }
+
+    /// Phase 5 must emit a final histogram only for clusters the remap actually
+    /// references. An *active* cluster that the remap stranded with zero mapped
+    /// tiles must NOT get a slot: the decoder sizes its Huffman group list from
+    /// the entropy image's max symbol (max+1), so an extra trailing tree group
+    /// is parsed as pixel data and shifts the rest of the bitstream — a
+    /// valid-but-wrong stream that decoders accept while returning garbage.
+    /// Shipped broken in 0.4.4 at default settings (issue #72).
+    #[test]
+    fn final_histograms_skip_stranded_cluster() {
+        // 4 tiles, but the mapping only ever references clusters 0 and 2.
+        // Cluster 1 is active-but-stranded (zero tiles mapped to it).
+        let mut tile_histos = Vec::new();
+        for i in 0..4u32 {
+            let mut h = Histogram::new(0);
+            h.add_literal(make_argb(255, 10 * i as u8, 64, 32));
+            tile_histos.push(h);
+        }
+        let mapping = vec![0usize, 0, 2, 2];
+        let active_indices = vec![0usize, 1, 2];
+
+        let (final_histos, symbols) =
+            build_final_histograms(&tile_histos, &mapping, &active_indices, 0);
+
+        // Only the two referenced clusters get a tree group — not three.
+        assert_eq!(
+            final_histos.len(),
+            2,
+            "stranded active cluster must not get a final histogram (#72)"
+        );
+        // Symbols must be densely renumbered into [0, num_final).
+        assert_eq!(symbols, vec![0u16, 0, 1, 1], "symbols must be dense (#72)");
+        // The decoder derives group count from max symbol + 1; it must match
+        // exactly the number of trees we write, or the bitstream shifts.
+        let max_symbol = symbols.iter().copied().max().unwrap();
+        assert_eq!(
+            usize::from(max_symbol) + 1,
+            final_histos.len(),
+            "decoder-derived group count (max symbol + 1) must equal tree count (#72)"
+        );
+    }
+
+    /// Every tile's histogram must land in its cluster's final slot — the
+    /// compaction renumbers, it must not drop or misroute counts.
+    #[test]
+    fn final_histograms_preserve_tile_counts_across_compaction() {
+        let mut tile_histos = Vec::new();
+        for _ in 0..4u32 {
+            let mut h = Histogram::new(0);
+            for _ in 0..5 {
+                h.add_literal(make_argb(255, 128, 64, 32));
+            }
+            tile_histos.push(h);
+        }
+        // Clusters 1 and 3 stranded; only 0 and 2 referenced.
+        let mapping = vec![0usize, 2, 0, 2];
+        let active_indices = vec![0usize, 1, 2, 3];
+
+        let (final_histos, symbols) =
+            build_final_histograms(&tile_histos, &mapping, &active_indices, 0);
+
+        assert_eq!(final_histos.len(), 2, "two referenced clusters (#72)");
+        assert_eq!(symbols, vec![0u16, 1, 0, 1], "dense renumbering (#72)");
+        // Each final histogram absorbed exactly the tiles routed to it.
+        for (i, h) in final_histos.iter().enumerate() {
+            let mut expected = Histogram::new(0);
+            for (t, tile) in tile_histos.iter().enumerate() {
+                if usize::from(symbols[t]) == i {
+                    expected.add(tile);
+                }
+            }
+            assert_eq!(
+                h.literal, expected.literal,
+                "final histogram {i}: literal counts must equal the sum of its mapped tiles (#72)"
+            );
+            assert_eq!(h.red, expected.red, "final histogram {i}: red counts (#72)");
+            assert_eq!(
+                h.blue, expected.blue,
+                "final histogram {i}: blue counts (#72)"
+            );
+            assert_eq!(
+                h.alpha, expected.alpha,
+                "final histogram {i}: alpha counts (#72)"
+            );
+        }
+    }
 }
