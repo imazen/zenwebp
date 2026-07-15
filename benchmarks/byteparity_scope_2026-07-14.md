@@ -20,10 +20,19 @@ enabled in the shipping encoder), so parity just forces
   (`lambda_mode=18`), D/SD/H/modes match — only R diverges, driven by an nz-CONTEXT
   difference (mb(11,8) sub-block 0: zen `ctx=1 t1+l0`, lib `ctx=2 t1+l1`). The R
   drift starts BEFORE the first mode flip (mb(10,8), not a flip, already has zen
-  I16 R≈56210 vs lib 56470), so it cascades MB-by-MB from an earlier root through
-  the m6 I4-trellis-mode-selection context threading. Single cascade ⇒ fixing the
-  root should close most of the cluster. Next: all-MB I16-R diff to find the first
-  diverging MB (instrumented libwebp `LIBI16`/`LIBI4blk` + zen `MB_DEBUG` exist).
+  I16 R≈56210 vs lib 56470), so it cascades MB-by-MB. **Root traced to mb(4,0)**
+  (an all-MB I16-D/R diff found it as the first diverging MB in raster order).
+  At mb(4,0) sub-block 0, zen and libwebp have the SAME incoming context (`ctx=0
+  t0+l0`) and matching lambdas — yet zen's I4 sub-mode selection picks HU while
+  libwebp picks TM. Both winning sub-modes are **nz=0** (empty block), so the
+  coefficient rate should be mode-independent, yet zen's R=89 vs libwebp's R=229.
+  So the divergence is the **per-candidate-mode I4 *trellis rate* at m6** — the
+  deepest layer: lambda (`lambda_i4=(3·q²)>>7=56`, matches), context, trellis DP
+  (byte-identical at m5), and D are ALL ruled out. Next: per-mode trellis-rate
+  dump at mb(4,0)#0 (same-mode zen-vs-lib) to pin the rate-accounting difference;
+  it's mode-independent-looking (nz=0 R differs), so likely one systematic fix
+  closes the cluster. Instrumented libwebp `LIBI16`/`LIBI4blk`/`LAMDBG`/`A16`
+  hooks + zen `MB_DEBUG` are in place in the scratchpad.
 - **High-q q80–95, m3–m5.** Milder luma mode flips (`y_same` ~97%) + `n_proba_updates`
   off by a few. The n_proba is DOWNSTREAM of modes (when modes match, n_proba
   matches — verified at q40 m5), so the mode-RD is the root.
