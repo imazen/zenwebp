@@ -347,3 +347,77 @@ Fixes that got here (all on main, tuned default unchanged / parity-gated):
   alignment.
 - **segs>1 m3-6**: the segmentation is aligned (seg_same 100%); the residual is
   the same m3-6 RD cascade on top.
+
+## Non-RD tier CLOSED + m3-6 RD cascade collapsed (part 12, 2026-07-14)
+
+**Byte-identical to libwebp now (382297, StrictLibwebpParity):**
+- **segs1: m0, m1, m2** (unchanged).
+- **segs4: m0, m1, m2, AND m6** (57008 / 55284 / 51164 / 47406).
+
+The whole RD_OPT_NONE range is byte-identical for both single- and
+multi-segment. Five fixes (all on main, all parity-gated, tuned default
+unchanged, lib 323 + zensim 14 + chroma 3 green throughout):
+
+1. **VP8 even-pad inside the chunk** (`vp8/mod.rs`, 44b6a38). libwebp
+   (`syntax_enc.c` `VP8EncWrite`) pads the whole VP8 bitstream to even and
+   counts the pad byte *inside* the `VP8 ` chunk size; zenwebp emitted the
+   odd size and let `write_chunk` add a RIFF pad *after* the chunk. Same file
+   size, different chunk-size field (byte 16) on every odd-length stream. → m1
+   segs4 (the isolated 1-byte trailing-0x00 case) byte-identical.
+
+2. **fast_probe m0 stat subset** (`vp8/mod.rs`, a899036). libwebp's method-0
+   `StatLoop` finalizes the emitted probas from only the first `nb_mbs>>2` (or
+   50) MBs; zenwebp records the whole frame. Snapshot `proba_stats` at the
+   fast_probe boundary under parity. → m0 segs4 byte-identical (295 == 295
+   proba updates; was zen 431).
+
+3-5. **m3-6 RD I4/I16 cost alignment** (`types.rs` + `mode_selection.rs` +
+   `vp8/mod.rs`, 4d41a33 + defebc5). Four root causes, largest last:
+   - **tlambda `CheckLambdaValue(≥1)` clamp** — libwebp keeps the I16/I4
+     spectral-distortion term active at m0-m3/sns=0. (The documented pair.)
+   - **I4 running-total flatness penalty** — libwebp folds `FLATNESS_PENALTY`
+     (140) for flat non-DC sub-blocks into `rd_i4.R`; zenwebp applied it in
+     per-mode selection but dropped it from the I4-vs-I16 running total.
+     **CORRECTION to part 11:** the part-11 note blamed "an I4 ctx0 nz
+     cascade / missing ctx0==0 bit". That was a **misdiagnosis** — per-sub-block
+     ctx/nz dumps confirmed ctx is identical on both sides; the 140/blk gap is
+     purely the flatness penalty (it correlates exactly with non-DC mode, not
+     with ctx). The clamp + flatness fix land together.
+   - **`max_i4_header_bits`** — libwebp uses `256*16*16*(limit²)/100²`,
+     `limit = 100 - partition_limit` (default → 65536); zenwebp hardcoded 16384
+     (the limit=50 point), 4× low, bailing high-detail MBs to I16 early
+     (mb(17,0): total_mode_cost 17509 > 16384 but < 65536).
+   - **mid-pass `level_costs` refresh** (the dominant one) — libwebp's token
+     loop rebuilds `level_costs` (`VP8CalculateLevelCosts`) alongside the proba
+     every `max_count` MBs; zenwebp refreshed `updated_probs` but left
+     `level_costs` on pass-start defaults, so p0 came from refreshed probs and
+     level costs from default probs. The mismatch ran chroma-UV coeff costs
+     ~1.5× high on later rows and flipped DC/TM picks. Rebuild under parity.
+
+   Cumulative on m3 segs1: y-mode 92.0→**99.7%**, UV-mode 84.5→**100%**, I4
+   sub-block 133→**865/874**, proba-update count zen **296→209** (lib 210).
+
+**KEY FINDING — the "Task 1 recording bug" does NOT exist.** The proba-stat
+histogram recording is **byte-exact**: instrumenting both `FinalizeTokenProbas`
+(libwebp) and `compute_updated_probabilities` (zen) to dump all 1056
+`(nb,total,newp,use)` cells, m1 segs4 (100% modes) diffs in **0/1056 cells**.
+The 296-vs-210 count from part 11 split into two unrelated causes — fast_probe
+(m0, fix #2) and the RD mode cascade (m3-6, fixes #3-5) — neither a recording
+bug. Harness: `scratchpad/lwsrc` (instrumented libwebp, `DUMPSTATS`/`TARGX`) +
+`scratchpad/webp-ll-compare` (`methodcmp`, `bitex5`, `dumpstat` with
+`ZEN_DUMPSTATS`/`MB_DEBUG`).
+
+**Remaining tail (precisely characterized, all cascade- or trellis-dominated):**
+- **m3/m4**: down to a coefficient-level cascade. m3 segs1 = 99.7% modes,
+  proba count off by **1** (209 vs 210), 3 mode-flip MBs in the bottom-right
+  corner (mb(30,28)/(31,28)/(30,30)). Those flips are genuine RD ties tipping
+  on a ±1 reconstruction drift from an upstream *matching-mode* MB whose
+  coefficients differ slightly — so the byte stream desyncs at the part-0
+  proba-update section (one different update flag) and cascades (99% of bytes
+  differ despite 99.7% mode agreement). Closing it needs coefficient-level
+  (not mode-level) tracing to find the first ±1-coefficient MB; the transform +
+  quant are already proven bit-exact (parts 6/8), so the root is a downstream
+  quant-boundary crossing, not arithmetic.
+- **m5, m6 segs1**: trellis (`RD_OPT_TRELLIS`/`_ALL`) — m5 segs1 y_same 94.0%,
+  m6 segs1 93.5%. Task 3 (trellis alignment); untouched, and gated on m3/m4
+  reaching byte-identity first per the task plan.

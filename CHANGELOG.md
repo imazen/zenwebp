@@ -347,6 +347,24 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Fixed
 
+- **StrictLibwebpParity: non-RD tier now byte-identical + m3-6 RD cascade
+  collapsed** (#38, 44b6a38 / a899036 / 4d41a33 / defebc5). Five parity-gated
+  fixes (tuned default unchanged): (1) pad the VP8 bitstream to even *inside*
+  the `VP8 ` chunk like libwebp's `VP8EncWrite` instead of a RIFF pad after it
+  (differed on every odd-length stream); (2) finalize method-0 probabilities
+  from libwebp's `fast_probe` MB subset (`nb_mbs>>2`) via a `proba_stats`
+  snapshot; (3) clamp `tlambda` to ≥1 (`CheckLambdaValue`) + (4) fold the I4
+  `FLATNESS_PENALTY` into the I4-vs-I16 running total + (5) use libwebp's
+  `max_i4_header_bits = 256·16·16·(100−partition_limit)²/100²` (was hardcoded
+  16384) and rebuild `level_costs` mid-pass alongside the proba refresh
+  (`VP8CalculateLevelCosts`). Byte-identical to libwebp on 382297: **segs1
+  m0/m1/m2; segs4 m0/m1/m2/m6**. m3 segs1 mode agreement 92→**99.7%** (UV
+  84.5→**100%**), proba-update count zen **296→209** (lib 210). The part-11
+  "coefficient-proba recording bug" hypothesis was **falsified** — the stat
+  histogram is byte-exact (0/1056 cells differ where modes match); that count
+  gap was `fast_probe` + the RD mode cascade, not recording. Remaining tail is
+  a coefficient-level cascade (m3/m4, off-by-1 proba) and trellis (m5/m6).
+  Full inventory: `benchmarks/bitexact_parity_2026-07-14.md` (parts 11-12).
 - **Lossy m0-m2 emitted the wrong Intra4 mode for LD/RD/VR sub-blocks**
   (cd5cc85, #38): the m0-m2 I4 mode pick indexed a mode-lookup array in
   libwebp's internal B-mode numbering while scoring in zenwebp's IntraMode
