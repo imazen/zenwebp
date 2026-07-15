@@ -700,6 +700,13 @@ impl<'a> super::Vp8Encoder<'a> {
         // All elements are written before read in each iteration.
         let mut luma_blocks = [0i32; 256];
         let mut y1_quant = [[0i32; 16]; 16];
+        // Zigzag-scan-order views used only for the coefficient rate
+        // (`get_cost_luma16`) and the flatness test — libwebp codes `y_dc_levels`
+        // / `y_ac_levels` in zigzag order and `VP8GetCostLuma16` / `IsFlat` walk
+        // that order. Natural (raster) order stays in `y1_quant` / `y2_dequant`
+        // for the IDCT reconstruction path. Matches the I4 path (#38).
+        let mut y1_quant_zz = [[0i32; 16]; 16];
+        let mut y2_quant_zz = [0i32; 16];
         let mut recon_dequant_block = [0i32; 16];
         let mut rec_block = [0u8; 256];
         let mut all_levels = [0i16; 256];
@@ -815,9 +822,21 @@ impl<'a> super::Vp8Encoder<'a> {
             ];
             let top_y2_nz = self.top_complexity[mbx].y2 != 0;
             let left_y2_nz = self.left_complexity.y2 != 0;
+
+            // Build zigzag-scan-order views for the coefficient rate (see the
+            // `y1_quant_zz` / `y2_quant_zz` declarations). Natural order stays in
+            // `y1_quant` / `y2_dequant` for the IDCT reconstruction below.
+            for n in 0..16 {
+                y2_quant_zz[n] = y2_quant[ZIGZAG[n] as usize];
+            }
+            for (blk, blk_zz) in y1_quant.iter().zip(y1_quant_zz.iter_mut()) {
+                for n in 0..16 {
+                    blk_zz[n] = blk[ZIGZAG[n] as usize];
+                }
+            }
             let coeff_cost = get_cost_luma16(
-                &y2_quant,
-                &y1_quant,
+                &y2_quant_zz,
+                &y1_quant_zz,
                 top_y_nz,
                 left_y_nz,
                 top_y2_nz,
@@ -898,7 +917,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 // (all_levels hoisted outside mode loop to avoid redundant zero-init)
                 for block_idx in 0..16 {
                     for i in 1..16 {
-                        all_levels[block_idx * 16 + i] = y1_quant[block_idx][i] as i16;
+                        all_levels[block_idx * 16 + i] = y1_quant_zz[block_idx][i] as i16;
                     }
                 }
                 if is_flat_coeffs(&all_levels, 16, FLATNESS_LIMIT_I16) {
@@ -1766,8 +1785,14 @@ impl<'a> super::Vp8Encoder<'a> {
         // Use updated probabilities if available (for consistent mode selection)
         let probs = self.updated_probs.as_ref().unwrap_or(&self.token_probs);
 
-        // Pre-extract source blocks for TDisto/psy-rd (avoid repeated extraction per mode)
-        let need_spectral = tlambda > 0 || segment.psy_config.psy_rd_strength > 0;
+        // Pre-extract source blocks for TDisto/psy-rd (avoid repeated extraction per mode).
+        // libwebp's PickBestUV sets `rd_uv.SD = 0` unconditionally ("not calling TDisto
+        // here: it tends to flatten areas", `quant_enc.c:1222`) — chroma never gets a
+        // spectral-distortion term. Under StrictLibwebpParity we match that exactly by
+        // suppressing the UV TDisto/psy-rd path; the tuned default keeps zenwebp's
+        // perceptual UV extension unchanged. (#38)
+        let need_spectral = (tlambda > 0 || segment.psy_config.psy_rd_strength > 0)
+            && self.cost_model != crate::encoder::api::CostModel::StrictLibwebpParity;
         let (src_u_block, src_v_block) = if need_spectral {
             let mut u_block = [0u8; 64];
             let mut v_block = [0u8; 64];
@@ -1784,27 +1809,49 @@ impl<'a> super::Vp8Encoder<'a> {
         let mut best_mode = ChromaMode::DC;
         let mut best_rd_score = i64::MAX;
 
+        #[cfg(feature = "mode_debug")]
+        let debug_uv = std::env::var("MB_DEBUG")
+            .ok()
+            .and_then(|s| {
+                let parts: alloc::vec::Vec<_> = s.split(',').collect();
+                if parts.len() == 2 {
+                    Some((
+                        parts[0].parse::<usize>().ok()?,
+                        parts[1].parse::<usize>().ok()?,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .is_some_and(|(dx, dy)| dx == mbx && dy == mby);
+
         // Pre-allocate scratch buffers outside mode loop to avoid redundant zero-init.
         // All elements are written before read in each iteration.
         let mut u_blocks = [0i32; 64];
         let mut v_blocks = [0i32; 64];
         let mut uv_quant = [[0i32; 16]; 8];
+        // Zigzag-scan-order view of `uv_quant`, used only for the coefficient
+        // rate (`get_cost_uv`) and the flatness test. libwebp stores `uv_levels`
+        // in zigzag order (`quant.c` writes `out[]` zigzagged) and both
+        // `VP8GetCostUV` and `IsFlat` walk that scan order; our quant buffer is
+        // natural (raster) order for the IDCT path, so cost/flatness computed on
+        // it diverged from libwebp (wrong per-position bands + `last`), flipping
+        // UV mode picks at m3+ (#38). The I4 path already builds this zigzag view
+        // (see `evaluate_i4_modes_*`); this brings I-UV to parity with it.
+        let mut uv_quant_zz = [[0i32; 16]; 8];
         let mut uv_dequant = [[0i32; 16]; 8];
         let mut rec_u_block = [0u8; 64];
         let mut rec_v_block = [0u8; 64];
         let mut all_levels_uv = [0i16; 128];
 
         for (mode_idx, &mode) in MODES.iter().enumerate() {
-            // Skip modes that need unavailable reference pixels
-            if mode == ChromaMode::V && mby == 0 {
-                continue;
-            }
-            if mode == ChromaMode::H && mbx == 0 {
-                continue;
-            }
-            if mode == ChromaMode::TM && (mbx == 0 || mby == 0) {
-                continue;
-            }
+            // libwebp's PickBestUV (`quant_enc.c:1214`) evaluates ALL four chroma
+            // modes at every MB, including V/H/TM at frame edges — the prediction
+            // there reads the default borders (top=127, left=129), which the decoder
+            // uses too, so an edge V/H/TM pick is legal and round-trips. Skipping
+            // them diverged from libwebp at edge MBs (the m3+ UV gap, #38); this is
+            // the RD-path analog of the RefineUsingDistortion edge fix in
+            // `pick_uv_sse`.
 
             // Generate predictions for U and V
             let pred_u = self.get_predicted_chroma_block(
@@ -1868,6 +1915,15 @@ impl<'a> super::Vp8Encoder<'a> {
                 );
             }
 
+            // Build the zigzag-scan-order view for cost + flatness (see the
+            // `uv_quant_zz` declaration above). Natural order stays in `uv_quant`
+            // / `uv_dequant` for the IDCT reconstruction below.
+            for b in 0..8 {
+                for n in 0..16 {
+                    uv_quant_zz[b][n] = uv_quant[b][ZIGZAG[n] as usize];
+                }
+            }
+
             // 3. Compute coefficient cost using probability-dependent tables.
             // libwebp's VP8GetCostUV walks U then V channels (`ch ∈ {0,2}`) over a 2x2 grid
             // updating `it->top_nz[4+ch+x]`/`it->left_nz[4+ch+y]`. Import the live
@@ -1889,7 +1945,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 self.left_complexity.v[1] != 0,
             ];
             let coeff_cost = get_cost_uv(
-                &uv_quant,
+                &uv_quant_zz,
                 top_u_nz,
                 left_u_nz,
                 top_v_nz,
@@ -1982,7 +2038,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 // (all_levels_uv hoisted outside mode loop)
                 for block_idx in 0..8 {
                     for i in 0..16 {
-                        all_levels_uv[block_idx * 16 + i] = uv_quant[block_idx][i] as i16;
+                        all_levels_uv[block_idx * 16 + i] = uv_quant_zz[block_idx][i] as i16;
                     }
                 }
                 if is_flat_coeffs(&all_levels_uv, 8, FLATNESS_LIMIT_UV) {
@@ -2004,10 +2060,23 @@ impl<'a> super::Vp8Encoder<'a> {
                 i64::from(RD_DISTO_MULT) * (i64::from(sse) + i64::from(uv_spectral_disto));
             let rd_score = rate + distortion;
 
+            #[cfg(feature = "mode_debug")]
+            if debug_uv {
+                eprintln!(
+                    "  ZENUV mb({mbx},{mby}) mode_idx={mode_idx} H={} R={} penalty={} sse={} SD={} lambda_uv={} score={rd_score}",
+                    mode_cost, coeff_cost, rate_penalty, sse, uv_spectral_disto, lambda
+                );
+            }
+
             if rd_score < best_rd_score {
                 best_rd_score = rd_score;
                 best_mode = mode;
             }
+        }
+
+        #[cfg(feature = "mode_debug")]
+        if debug_uv {
+            eprintln!("  ZENUV mb({mbx},{mby}) WIN mode={best_mode:?} score={best_rd_score}");
         }
 
         best_mode
@@ -2173,9 +2242,18 @@ impl<'a> super::Vp8Encoder<'a> {
             let limit_boost = 211u64 + 211u64 * u64::from(self.partition_limit) * 5 / 100;
             let skip_i4_threshold = limit_boost * u64::from(segment.lambda_mode);
 
+            // libwebp's VP8Decimate calls PickBestIntra4 unconditionally at m3+
+            // (`quant_enc.c:1428`, gated only on `method >= 2` and
+            // `max_i4_header_bits > 0`) — there is no "skip I4 for flat DC blocks"
+            // heuristic. Under StrictLibwebpParity we always try I4 so the I16-vs-I4
+            // decision matches libwebp exactly (#38). The tuned default keeps the
+            // flat-DC skip as a speed optimization.
+            //
             // Skip I4 for very flat DC blocks (method 2-4)
             // For method 5-6, always try I4 for best quality (unless partition_limit overrides)
-            let should_try_i4 = (self.method >= 5 && self.partition_limit < 50)
+            let should_try_i4 = self.cost_model
+                == crate::encoder::api::CostModel::StrictLibwebpParity
+                || (self.method >= 5 && self.partition_limit < 50)
                 || i16_score > skip_i4_threshold
                 || luma_mode != LumaMode::DC;
 
