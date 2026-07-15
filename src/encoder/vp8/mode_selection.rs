@@ -1500,6 +1500,21 @@ impl<'a> super::Vp8Encoder<'a> {
                     None
                 };
 
+                // libwebp iterates the I4 sub-block modes in index order 0..9 and
+                // breaks score ties toward the lower index (strict `<`, first minimum
+                // wins). zenwebp presorts by prediction SSE so its early-exit can drop
+                // hopeless modes sooner — but that breaks ties toward whichever tied
+                // mode sorts first by SSE, which can differ from the lowest index.
+                // The tie is real: e.g. 382297 m3 mb(27,23) sub-block 9 is an exact
+                // score tie (142133) between RD(5) and VR(6); libwebp picks RD, zen
+                // picked VR, and the two reconstruct differently, cascading pixels
+                // into downstream MBs. Under parity, iterate in index order instead so
+                // ties resolve exactly like libwebp. At m3+ all 10 modes are evaluated
+                // (max_modes_to_try == 10), so index order changes only the tie-break,
+                // and zen's early-exit skips (`>= best`) then match libwebp's early
+                // `continue` in the same order.
+                let i4_index_order =
+                    self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity;
                 // === SIMD-hoisted path: single arcane context for all mode evaluation ===
                 // This eliminates per-call dispatch overhead by running all SIMD operations
                 // (ftransform, quantize, dequantize, sse, tdisto, is_flat, residual_cost)
@@ -1508,8 +1523,13 @@ impl<'a> super::Vp8Encoder<'a> {
                 let simd_result = {
                     use archmage::SimdToken;
                     archmage::X64V3Token::summon().and_then(|token| {
-                        // Pre-sort modes by prediction SSE using direct SIMD calls
-                        let mode_sse = presort_i4_modes_sse2(token, &src_block, &preds);
+                        // Pre-sort modes by prediction SSE (default) or use index order
+                        // 0..9 (parity, for libwebp's tie-break).
+                        let mode_sse = if i4_index_order {
+                            core::array::from_fn(|i| (0u32, i))
+                        } else {
+                            presort_i4_modes_sse2(token, &src_block, &preds)
+                        };
 
                         // Evaluate all candidate modes in a single arcane context
                         evaluate_i4_modes_sse2(
@@ -1582,7 +1602,13 @@ impl<'a> super::Vp8Encoder<'a> {
                 let simd_result = {
                     use archmage::SimdToken;
                     archmage::Wasm128Token::summon().and_then(|token| {
-                        let mode_sse = presort_i4_modes_wasm(token, &src_block, &preds);
+                        // Index order under parity (libwebp tie-break); see the sse2
+                        // path above.
+                        let mode_sse = if i4_index_order {
+                            core::array::from_fn(|i| (0u32, i))
+                        } else {
+                            presort_i4_modes_wasm(token, &src_block, &preds)
+                        };
 
                         evaluate_i4_modes_wasm(
                             token,
@@ -2468,7 +2494,12 @@ impl<'a> super::Vp8Encoder<'a> {
             let sse = sse4x4_dispatch(src_block, pred);
             mode_sse[mode_idx] = (sse, mode_idx);
         }
-        mode_sse.sort_unstable_by_key(|&(sse, _)| sse);
+        // Under parity, keep index order 0..9 so score ties resolve toward the
+        // lower mode index like libwebp; otherwise sort by SSE for early-exit.
+        // (See the sse2 path for the tie-break rationale.)
+        if self.cost_model != crate::encoder::api::CostModel::StrictLibwebpParity {
+            mode_sse.sort_unstable_by_key(|&(sse, _)| sse);
+        }
 
         for &(_, mode_idx) in mode_sse[..max_modes_to_try].iter() {
             let pred = preds.get(mode_idx);
