@@ -1634,9 +1634,15 @@ impl<'a> Vp8Encoder<'a> {
                 let _changed = self.compute_updated_probabilities();
                 #[cfg(feature = "mode_debug")]
                 if std::env::var("REFRESHDBG").is_ok() {
+                    let s = self.proba_stats.stats[3][1][2];
+                    let split = |v: u32| (v & 0xffff, (v >> 16) & 0xffff); // (nb, total)
                     eprintln!(
                         "REFRESH at mb({mbx},{mby}) changed={_changed} prob[3][1][2]={:?}",
                         self.updated_probs.as_ref().map(|p| p[3][1][2])
+                    );
+                    eprintln!(
+                        "  stats[3][1][2] (nb,total) per proba idx: {:?}",
+                        (0..11).map(|i| split(s[i])).collect::<alloc::vec::Vec<_>>()
                     );
                 }
                 // libwebp's token loop refreshes the level-cost tables

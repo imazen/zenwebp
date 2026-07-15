@@ -90,15 +90,42 @@ is why exactly one `t` moved and by only 22. zen's next refresh is mb(1,8) =
 MB **257**, i.e. *after* the divergent mb(28,7) = MB 252, so blk4 is scored with
 the MB-128 values.
 
-**Corrected next step:** dump `proba_stats[3][1][2][9]` (`nb`/`total`) at the
-MB-128 refresh in both and find why the counts differ. MBs 0-251 are
-byte-identical, so the emitted tokens match — meaning the divergence is in how
-the stat is *accumulated*, not in the encode decisions. Note the two recorders
-are provably equivalent for v=12: libwebp's `USE_LEVEL_CODE_TABLE` path records
-`s+3(1), s+6(1), s+8(0), s+9(0)`, and zen's explicit-tree `record_coeffs`
-(`cost/stats.rs:149`) records the same — so suspect the *surrounding* accounting
-(which coefficients reach `s+9` at all, the `skip_eob`/context threading, or the
-EOB record), not the level-code mapping.
+**It is a SCHEDULE difference, not a code difference** (measured 2026-07-15).
+Dumping `stats[3][1][2][9]` as `(nb,total)` at every `FinalizeTokenProbas`,
+libwebp at q90/m3 calls it **8 times with CUMULATIVE, never-reset stats**:
+
+```
+(30,84) → (77,198) → (146,367) → (207,538) → (260,710) → (270,741) → (276,763) → (278,772)
+```
+
+`CalcTokenProba(nb,total) = 255 - nb*255/total`, so:
+* call #1 → `255 - 30*255/84` = **164** — and 164 is exactly libwebp's LIVE value
+  at blk4. So blk4 is scored with libwebp's **first** finalize, which is
+  **StatLoop's**, computed over the m3 `fast_probe` subset (`nb_mbs >> 1` = 512
+  MBs), *before* the encode loop starts.
+* call #2 → `255 - 77*255/198` = 156 ≈ **zen's 155**.
+
+So zen's first refresh (MB 128, mid-encode) lands near libwebp's *second*
+finalize, while libwebp is still using its *first* (StatLoop's). The two
+encoders adapt on different schedules over different MB subsets — the recorders
+and the math agree. (The recorders are provably equivalent for v=12: libwebp's
+`USE_LEVEL_CODE_TABLE` path records `s+3(1), s+6(1), s+8(0), s+9(0)`, and zen's
+explicit-tree `record_coeffs` (`cost/stats.rs:149`) records the same.)
+
+**So StatLoop does matter — but for its SCHEDULE, not because zen "uses
+defaults".** The port must reproduce: (a) a pre-encode stats pass over the right
+subset (`fast_probe`: m3 → `nb_mbs>>1`|100, m0 → `nb_mbs>>2`|50, m4-m6 → full;
+disabled by `do_search`) at `rd_opt = RD_OPT_BASIC` for m3+, (b) one
+`FinalizeTokenProbas` + `VP8CalculateLevelCosts` from it, and (c) stats that
+then CONTINUE accumulating into the encode loop's periodic refreshes rather than
+starting from zero. Point (c) is the surprise: the observed totals only grow, so
+the encode loop's refreshes finalize from StatLoop's counts plus their own.
+Resolve how that squares with `ResetTokenStats` in `VP8EncTokenLoop` before
+porting — it is the one piece that reading the source did not settle.
+
+**Tool:** `REFRESHDBG=1` (mode_debug) prints zen's per-refresh probs + raw
+`(nb,total)` stats; the matching libwebp probe is `LIBFINALIZE` in
+`~/work/zen/libwebp--zen38trace`.
 
 The StatLoop material below is retained because it is accurate ABOUT LIBWEBP and
 the port constraints are real — but it is NOT the root cause of this gap.
