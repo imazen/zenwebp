@@ -920,24 +920,26 @@ impl Segment {
         //   m->tlambda = (tlambda_scale * q_i4) >> 5;
         // At m0-m3 the spectral-distortion penalty is OFF in libwebp; we now match.
         //
-        // #38 NOTE: libwebp actually runs `CheckLambdaValue(&m->tlambda)` after this,
-        // clamping tlambda to a minimum of 1, so at m0-m3 (or any sns=0 config)
-        // libwebp's tlambda is 1, NOT 0 — the I16/I4 spectral-distortion term stays
-        // active. Adding `.max(1)` here is the correct parity value and fixes the
-        // I16 SD (verified: mb(5,0) I16 DC SD 0->3 == libwebp) BUT in isolation it
-        // regressed the m3/m4 StrictLibwebpParity byte-match (y_same 92.0->90.6%,
-        // bytes 51582->51618 on 382297) because it interacts with an unfixed I4
-        // sub-block context (ctx0) cascade — several top-row I4 blocks cost 140
-        // less than libwebp (missing the ctx0==0 bit) due to an upstream nz
-        // mismatch. The clamp must land together with that I4-context fix, not
-        // standalone. Left OFF pending the I4 fix so parity progress stays
-        // monotonic.
+        // #38: libwebp runs `CheckLambdaValue(&m->tlambda)` after this, clamping
+        // tlambda to a minimum of 1, so at m0-m3 (or any sns=0 config) libwebp's
+        // tlambda is 1, NOT 0 — the I16/I4 spectral-distortion (SD) term stays
+        // active (verified: mb(5,0) I16 DC SD 0->3 == libwebp). In isolation the
+        // clamp regressed the m3/m4 byte-match because it was coupled with a
+        // separate I4 bug: the I4 running-total (compared against the I16 score)
+        // dropped libwebp's per-block `FLATNESS_PENALTY` (140 for flat non-DC
+        // sub-blocks), so I4 looked ~140/blk too cheap and won when libwebp chose
+        // I16. That penalty is now folded into the I4 block score
+        // (mode_selection.rs), so the pair lands together. Both are parity-gated;
+        // the tuned default leaves tlambda=0 at m0-m3 (SD off).
         let tlambda_scale = if method >= 4 {
             u32::from(sns_strength)
         } else {
             0
         };
         self.tlambda = (tlambda_scale * q_i4) >> 5;
+        if cost_model == crate::encoder::CostModel::StrictLibwebpParity {
+            self.tlambda = self.tlambda.max(1);
+        }
 
         // Per-MB distortion threshold for VP8AdjustFilterStrength's
         // StoreMaxDelta gate (libwebp `quant_enc.c:264`):

@@ -155,6 +155,12 @@ struct I4BlockResult {
     spectral_disto: i32,
     psy_cost: i32,
     coeff_cost: u32,
+    /// libwebp `FLATNESS_PENALTY` (140) for the winning mode if it is a flat
+    /// non-DC sub-block, else 0. libwebp folds this into `rd_i4.R`, so it must
+    /// be added to the I4 running total that is compared against the I16 score
+    /// (under parity). Kept separate from `coeff_cost` so the default path can
+    /// leave the running total unchanged.
+    flatness_penalty: u32,
 }
 
 /// Pre-sort I4 prediction modes by prediction SSE (ascending).
@@ -373,6 +379,7 @@ fn evaluate_i4_modes_sse2(
                 spectral_disto,
                 psy_cost,
                 coeff_cost,
+                flatness_penalty,
             });
         }
     }
@@ -595,6 +602,7 @@ fn evaluate_i4_modes_wasm(
                 spectral_disto,
                 psy_cost,
                 coeff_cost,
+                flatness_penalty,
             });
         }
     }
@@ -1372,8 +1380,26 @@ impl<'a> super::Vp8Encoder<'a> {
 
         // Track total mode cost for header bit limiting
         let mut total_mode_cost = 0u32;
-        // Maximum header bits for I4 modes (from libwebp)
-        let max_header_bits: u32 = 256 * 16 * 16 / 4;
+        // Maximum I4 header bits (partition-0 safeness factor).
+        //
+        // libwebp (`webp_enc.c`): `max_i4_header_bits = 256*16*16 *
+        // (limit*limit) / (100*100)` with `limit = 100 - config->partition_limit`;
+        // the default `partition_limit = 0` gives `limit = 100` → 65536.
+        // zenwebp's tuned default hardcodes 16384 (the `limit = 50` point),
+        // which bails high-detail MBs (e.g. 382297 mb(17,0): total_mode_cost
+        // 17509 > 16384 but < 65536) to I16 earlier than libwebp keeps I4.
+        // Under StrictLibwebpParity, match libwebp's formula so the I4/I16 cut
+        // lands where libwebp's does; the tuned default keeps 16384 (its
+        // measured behaviour). (libwebp's `StatLoop` may halve this on
+        // partition-0 overflow, but only for images whose header exceeds
+        // `PARTITION0_SIZE_LIMIT` — far above these web-sized inputs.)
+        let max_header_bits: u32 =
+            if self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity {
+                let hb_limit = 100u64.saturating_sub(u64::from(self.partition_limit));
+                (256u64 * 16 * 16 * hb_limit * hb_limit / 10_000) as u32
+            } else {
+                256 * 16 * 16 / 4
+            };
 
         // Track non-zero context for accurate coefficient cost estimation
         // top_nz[x] = whether block above has non-zero coefficients
@@ -1443,6 +1469,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 let mut best_spectral_disto = 0i32;
                 let mut best_psy_cost = 0i32;
                 let mut best_coeff_cost = 0u32;
+                let mut best_flatness_penalty = 0u32;
 
                 // Pre-compute all 10 I4 prediction modes at once
                 let preds = I4Predictions::compute(&y_with_border, x0, y0, LUMA_STRIDE);
@@ -1518,6 +1545,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     best_spectral_disto = result.spectral_disto;
                     best_psy_cost = result.psy_cost;
                     best_coeff_cost = result.coeff_cost;
+                    best_flatness_penalty = result.flatness_penalty;
                 } else {
                     // Scalar fallback (no SIMD available at runtime or not x86_64)
                     #[cfg(target_arch = "x86_64")]
@@ -1544,6 +1572,7 @@ impl<'a> super::Vp8Encoder<'a> {
                             &mut best_spectral_disto,
                             &mut best_psy_cost,
                             &mut best_coeff_cost,
+                            &mut best_flatness_penalty,
                         );
                     }
                 }
@@ -1587,6 +1616,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     best_spectral_disto = result.spectral_disto;
                     best_psy_cost = result.psy_cost;
                     best_coeff_cost = result.coeff_cost;
+                    best_flatness_penalty = result.flatness_penalty;
                 } else {
                     #[cfg(target_arch = "wasm32")]
                     {
@@ -1612,6 +1642,7 @@ impl<'a> super::Vp8Encoder<'a> {
                             &mut best_spectral_disto,
                             &mut best_psy_cost,
                             &mut best_coeff_cost,
+                            &mut best_flatness_penalty,
                         );
                     }
                 }
@@ -1641,6 +1672,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         &mut best_spectral_disto,
                         &mut best_psy_cost,
                         &mut best_coeff_cost,
+                        &mut best_flatness_penalty,
                     );
                 }
 
@@ -1655,20 +1687,38 @@ impl<'a> super::Vp8Encoder<'a> {
                 total_mode_cost += u32::from(best_mode_cost);
 
                 // Recalculate the block score with lambda_mode for accumulation
-                // (matching libwebp's SetRDScore(lambda_mode, &rd_i4) before AddScore)
+                // (matching libwebp's SetRDScore(lambda_mode, &rd_i4) before AddScore).
+                //
+                // libwebp folds `FLATNESS_PENALTY` into `rd_i4.R` before the
+                // running total (`AddScore(&rd_best, &rd_i4)`), so a flat non-DC
+                // sub-block costs +140 in the I4-vs-I16 comparison. zenwebp's
+                // per-mode selection already applies the penalty, but historically
+                // dropped it from this running total, making I4 look ~140/blk too
+                // cheap and winning where libwebp picked I16. Add it back under
+                // parity; the tuned default keeps the prior running total.
+                let parity_flatness =
+                    if self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity {
+                        best_flatness_penalty
+                    } else {
+                        0
+                    };
                 let block_score_for_comparison = crate::encoder::cost::rd_score_full(
                     best_sse,
                     best_spectral_disto + best_psy_cost,
                     best_mode_cost,
-                    best_coeff_cost,
+                    best_coeff_cost + parity_flatness,
                     lambda_mode,
                 ) as u64;
 
                 #[cfg(feature = "mode_debug")]
                 if debug_i4 {
                     eprintln!(
-                        "  I4 blk[{:2}]: mode={:?}, H={}, R={}, D={}, SD={}, block_score={}, running={}",
+                        "  I4 blk[{:2}]: ctx={}(t{}+l{}) nz={} mode={:?}, H={}, R={}, D={}, SD={}, block_score={}, running={}",
                         i,
+                        (nz_top as u8) + (nz_left as u8),
+                        nz_top as u8,
+                        nz_left as u8,
+                        best_has_nz as u8,
                         best_mode,
                         best_mode_cost,
                         best_coeff_cost,
@@ -2396,6 +2446,7 @@ impl<'a> super::Vp8Encoder<'a> {
         best_spectral_disto: &mut i32,
         best_psy_cost: &mut i32,
         best_coeff_cost: &mut u32,
+        best_flatness_penalty: &mut u32,
     ) {
         const MODES: [IntraMode; 10] = [
             IntraMode::DC,
@@ -2549,6 +2600,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 *best_spectral_disto = spectral_disto;
                 *best_psy_cost = psy_cost_val;
                 *best_coeff_cost = coeff_cost_val;
+                *best_flatness_penalty = flatness_penalty;
             }
         }
     }
