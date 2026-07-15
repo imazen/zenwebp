@@ -70,10 +70,63 @@ at m3 (simple quant: libwebp `VP8EncQuantizeBlock` vs zen's
 `quantize_block_simd`) that only shows on blk4's residual — the round-vs-
 truncate class of bug that already bit the base quantiser (`52cf96f2`).
 
-**Next concrete step:** dump zen's and libwebp's blk4 levels at q90/m3
-mb(28,7) and compare directly. That needs an instrumented libwebp; a read-only
-reference tree exists at `/home/lilith/work/webp-porting/libwebp` (do NOT modify
-it — copy out to a scratch tree, and NOT to `/tmp`).
+### ROOT CAUSE FOUND (2026-07-15): zen never runs libwebp's StatLoop
+
+Traced to the exact table entry, then to the mechanism. **libwebp calls
+`StatLoop(enc)` UNCONDITIONALLY as the first statement of `VP8EncLoop`**
+(`frame_enc.c`), for every method. It sweeps the frame collecting token
+statistics, finalises the coefficient probabilities, and rebuilds the level-cost
+tables — so **every RD decision from the very first MB is scored against
+image-adapted probabilities**. zen starts from the DEFAULT probability table and
+only refreshes mid-stream (`mod.rs:1569-1593`, every `max_count` MBs), so its
+cost tables are wrong for the whole first stretch of the frame and never derive
+from a full-frame stat pass at all.
+
+**Evidence chain (q90/m3, 382297, mb(28,7), I4 sub-block 4):**
+1. Levels are byte-identical: `[-10,12,5,9,-9,-2,0,2,-6,2,0,-1,0,0,-1,-1]` in
+   both → quantisation is correct, this is purely a RATE divergence.
+2. Per-coefficient dump: every `t` matches (1251, 861, 740, 1023, 586, 479, …)
+   EXCEPT n=1 (level 12, band 1, ctx 2): **lib t=1064 vs zen t=1086 = the Δ22**,
+   which then propagates to the block total (16730 vs 16752).
+3. Level 12 maps to `VP8LevelCodes[11] = {0x0d3, 0x013}`, whose pattern is the
+   only one reaching probability indices **8 and 9** — level 10 stops at 7. So a
+   single wrong pair of probabilities moves exactly one `t` and nothing else,
+   which is why the divergence looked impossibly narrow.
+4. Live probability dump at that moment, `prob[band1][ctx2]`:
+   * libwebp `[17, 51, 85, 127, 172, 180, 152, 123, 231, 164, 128]` (adapted)
+   * zen     `[39, 77, 162, 232, 172, 180, 245, 178, 255, 255, 128]` (**the
+     shipped defaults** — `src/common/types.rs:668`, byte-identical to
+     libwebp's `VP8CoeffsProba0[3][1][2]`)
+
+**Everything else on this path is already correct and was verified, not assumed:**
+`VP8_LEVEL_FIXED_COSTS` == `VP8LevelFixedCosts`; `VP8_LEVEL_CODES` ==
+`VP8LevelCodes`; the level-cost precomputation == `VP8CalculateLevelCosts`;
+`get_residual_cost` == `GetResidualCost_SSE2` (same clamps, same
+`t = costs[n+1][ctx]`, same EOB tail); `ExpandMatrix`/`zthresh`/`QFIX`/`BIAS`;
+the default probability table itself.
+
+**Why this is THE root of the remaining ~426 cells**, and consistent with the
+whole failure shape: m0-m2 barely use cost-driven decisions and are nearly
+closed (94/426); m3-m6 are exactly the RD-optimising methods and carry 332/426.
+High-q hurts more because there are more (and larger) coefficients for a wrong
+rate to mis-score. This is the **#27 StatLoop** area — the skip-proba half was
+already closed (`91c96168`), but the probability-adaptation half was never
+ported.
+
+**Next step: port StatLoop** (`frame_enc.c: StatLoop` + `FinalizeTokenProbas`).
+Note `fast_probe = ((method == 0 || method == 3) && !do_search)`: at m3 the stat
+pass is reduced (`nb_mbs = (nb_mbs > 200) ? nb_mbs >> 1 : 100`), at m4-m6 it is
+a full pass, and `rd_opt = (method >= 3 || do_search) ? RD_OPT_BASIC :
+RD_OPT_NONE`. It must be parity-gated: zen's tuned default deliberately skips
+mid-row level-cost rebuilds because they measurably regressed compression
+(1.0101x→1.0114x, see `mod.rs:1577-1580`), so a StatLoop that changes the tuned
+default's bytes is NOT acceptable without a fresh A/B.
+
+**Tooling:** the instrumented libwebp used for this lives at
+`~/work/zen/libwebp--zen38trace` (a copy — the reference tree at
+`/home/lilith/work/webp-porting/libwebp` is READ-ONLY and was not modified).
+`ZTRACE`/`RCDBG` env hooks + `zen38_driver.c` + `build_zen38.sh` are in it. Note
+`cargo test` captures stderr — pass `-- --nocapture` or debug prints vanish.
 
 ## STATE AT THE TIME OF THE ANALYSIS BELOW: 3488/4004 = 87.1% byte-identical
 

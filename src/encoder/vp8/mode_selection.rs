@@ -161,6 +161,11 @@ struct I4BlockResult {
     /// (under parity). Kept separate from `coeff_cost` so the default path can
     /// leave the running total unchanged.
     flatness_penalty: u32,
+    /// Winning mode's quantized levels in ZIGZAG order — the same order and
+    /// convention as libwebp's `rd->y_ac_levels[i4]`, so the two can be diffed
+    /// directly when tracing #38. Debug-only: not in the shipped struct.
+    #[cfg(feature = "mode_debug")]
+    levels_zz: [i32; 16],
 }
 
 /// Pre-sort I4 prediction modes by prediction SSE (ascending).
@@ -380,6 +385,8 @@ fn evaluate_i4_modes_sse2(
                 psy_cost,
                 coeff_cost,
                 flatness_penalty,
+                #[cfg(feature = "mode_debug")]
+                levels_zz: quantized_zigzag,
             });
         }
     }
@@ -1542,6 +1549,8 @@ impl<'a> super::Vp8Encoder<'a> {
                 let mut best_psy_cost = 0i32;
                 let mut best_coeff_cost = 0u32;
                 let mut best_flatness_penalty = 0u32;
+                #[cfg(feature = "mode_debug")]
+                let mut best_levels_zz = [0i32; 16];
 
                 // Pre-compute all 10 I4 prediction modes at once
                 let preds = I4Predictions::compute(&y_with_border, x0, y0, LUMA_STRIDE);
@@ -1638,6 +1647,10 @@ impl<'a> super::Vp8Encoder<'a> {
                     best_psy_cost = result.psy_cost;
                     best_coeff_cost = result.coeff_cost;
                     best_flatness_penalty = result.flatness_penalty;
+                    #[cfg(feature = "mode_debug")]
+                    {
+                        best_levels_zz = result.levels_zz;
+                    }
                 } else {
                     // Scalar fallback (no SIMD available at runtime or not x86_64)
                     #[cfg(target_arch = "x86_64")]
@@ -1831,6 +1844,9 @@ impl<'a> super::Vp8Encoder<'a> {
                         block_score_for_comparison,
                         running_score + block_score_for_comparison
                     );
+                    // Same order/convention as libwebp's ZTRACE lev=[...] so the
+                    // two can be diffed directly (#38).
+                    eprintln!("  ZLEV i4={i} lev={best_levels_zz:?}");
                 }
 
                 // Add this block's score to running total
