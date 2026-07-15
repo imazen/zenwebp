@@ -1273,7 +1273,20 @@ impl<'a> Vp8Encoder<'a> {
             let is_last_pass = pass == num_passes - 1;
 
             // Clear token buffer for this pass
-            self.token_buffer = Some(residuals::TokenBuffer::with_estimated_capacity(num_mb));
+            let mut tb = residuals::TokenBuffer::with_estimated_capacity(num_mb);
+            // libwebp picks its coefficient recorder by which encode loop runs:
+            // `use_tokens = (rd_opt >= RD_OPT_BASIC)` sends m3-m6 through
+            // `VP8EncTokenLoop` -> `VP8RecordCoeffTokens` (Cat5/6 statistic goes
+            // to node 9), while m0-m2 (RD_OPT_NONE) run plain `VP8EncLoop` ->
+            // `RecordResiduals` -> `VP8RecordCoeffs`, whose level-code table
+            // records node 10. The two upstream paths genuinely disagree, so
+            // parity has to follow the method. The tuned default keeps zenwebp's
+            // prior node-10 accounting for every method, leaving its bytes
+            // unchanged. See `TokenBuffer::cat56_stat_node9`. (#38)
+            tb.set_cat56_stat_node9(
+                self.cost_model == super::api::CostModel::StrictLibwebpParity && self.method >= 3,
+            );
+            self.token_buffer = Some(tb);
 
             // Reset statistics only on first pass or last pass (matches libwebp).
             // For intermediate passes, statistics ACCUMULATE across passes, giving

@@ -131,6 +131,30 @@ pub(crate) struct TokenBuffer {
     /// Only populated when `begin_mb()` is called per MB; otherwise stays empty
     /// and `emit_tokens` emits the whole stream.
     mb_token_starts: Vec<u32>,
+    /// Which stats node the Cat5/Cat6 magnitude bit is accumulated into.
+    ///
+    /// libwebp has TWO coefficient recorders and they disagree here, so this
+    /// must follow the loop libwebp would actually run for the method:
+    ///
+    /// * `true` — `VP8RecordCoeffTokens` (`token_enc.c`), used by
+    ///   `VP8EncTokenLoop` whenever `use_tokens` is set
+    ///   (`rd_opt >= RD_OPT_BASIC`, so **m3-m6**). It codes the bit with proba
+    ///   index `base_id + 10` but records the statistic into `s + 9`:
+    ///   `AddToken(tokens, 0, base_id + 10, s + 9)`. A consequence upstream is
+    ///   that `stats[..][10]` is never populated at all, so node 10's
+    ///   probability can never adapt, and node 9's count merges
+    ///   Cat3/Cat4/Cat5/Cat6 events.
+    /// * `false` — `VP8RecordCoeffs` (`cost_enc.c`, `USE_LEVEL_CODE_TABLE`
+    ///   path) via `RecordResiduals` under plain `VP8EncLoop`, i.e. **m0-m2**.
+    ///   Its `VP8LevelCodes` pattern records node 10 for v>=35.
+    ///
+    /// The mismatch looks like an upstream slip rather than intent (node 10 is
+    /// the natural home, which is what zenwebp did), but these counts feed
+    /// `FinalizeTokenProbas`, so byte-exactness requires reproducing libwebp's
+    /// accounting per-path. Only set true under `StrictLibwebpParity`; the
+    /// tuned default keeps zenwebp's prior node-10 accounting so its bytes are
+    /// unchanged. (#38)
+    cat56_stat_node9: bool,
 }
 
 #[allow(dead_code)]
@@ -139,6 +163,7 @@ impl TokenBuffer {
         Self {
             tokens: Vec::new(),
             mb_token_starts: Vec::new(),
+            cat56_stat_node9: false,
         }
     }
 
@@ -147,7 +172,14 @@ impl TokenBuffer {
         Self {
             tokens: Vec::with_capacity(num_macroblocks * 768),
             mb_token_starts: Vec::with_capacity(num_macroblocks + 1),
+            cat56_stat_node9: false,
         }
+    }
+
+    /// See [`TokenBuffer::cat56_stat_node9`]. Set once per encode from the
+    /// cost model + method, before any recording.
+    pub fn set_cat56_stat_node9(&mut self, on: bool) {
+        self.cat56_stat_node9 = on;
     }
 
     pub fn clear(&mut self) {
@@ -309,6 +341,7 @@ impl TokenBuffer {
         first_coeff: usize,
         initial_ctx: usize,
     ) -> bool {
+        let cat56_idx: usize = if self.cat56_stat_node9 { 9 } else { 10 };
         // Find last non-zero coefficient
         let last = coeffs[first_coeff..]
             .iter()
@@ -412,10 +445,13 @@ impl TokenBuffer {
                             }
                         } else if residue < (8 << 3) {
                             // Cat5
+                            // libwebp codes this with proba index `base_id + 10`
+                            // but records the statistic into `s + 9` on the token
+                            // path (`token_enc.c`). See `cat56_stat_node9`.
                             self.add_token(true, base_id + 8);
                             record_stat(&mut s[8], true);
                             self.add_token(false, base_id + 10);
-                            record_stat(&mut s[10], false);
+                            record_stat(&mut s[cat56_idx], false);
                             let r = residue - (8 << 2);
                             for i in 0..DCT_CAT_LENGTHS[4] {
                                 self.add_constant_token(
@@ -425,10 +461,11 @@ impl TokenBuffer {
                             }
                         } else {
                             // Cat6
+                            // Same proba-index/stat-index split as Cat5 above.
                             self.add_token(true, base_id + 8);
                             record_stat(&mut s[8], true);
                             self.add_token(true, base_id + 10);
-                            record_stat(&mut s[10], true);
+                            record_stat(&mut s[cat56_idx], true);
                             let r = residue - (8 << 3);
                             for i in 0..DCT_CAT_LENGTHS[5] {
                                 self.add_constant_token(
