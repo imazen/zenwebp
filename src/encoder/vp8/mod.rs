@@ -853,6 +853,18 @@ impl<'a> Vp8Encoder<'a> {
     /// (which is the output of `VP8EncQuantizeBlockWHT`, also zigzag-ordered).
     /// Indices 1, 2, 4 correspond to natural-order positions 1, 4, 2.
     #[inline]
+    /// Whether the edge-based loop-filter bump (`store_max_delta` →
+    /// `VP8AdjustFilterStrength`) should accumulate this MB. libwebp only calls
+    /// `StoreMaxDelta` from `PickBestIntra16` — the RD path (method >= 3); at
+    /// m0-2 (`RefineUsingDistortion`/`SimpleQuantize`) it never accumulates, so
+    /// `max_edge` stays 0 and the filter is left at its analysis-time level.
+    /// zenwebp historically accumulated at all methods (helps smooth-gradient
+    /// filtering at low q — #44); under StrictLibwebpParity we restrict it to
+    /// the RD path to match libwebp's per-segment filter levels at m0-2.
+    fn store_max_edge_active(&self) -> bool {
+        self.method >= 3 || self.cost_model != super::api::CostModel::StrictLibwebpParity
+    }
+
     fn store_max_delta(&mut self, segment_id: usize, y2_zigzag: &[i32; 16]) {
         let v0 = y2_zigzag[1].unsigned_abs();
         let v1 = y2_zigzag[2].unsigned_abs();
@@ -1650,7 +1662,7 @@ impl<'a> Vp8Encoder<'a> {
                 // produce small D and are filtered out, preventing the
                 // loop filter from over-bumping on synthetic
                 // color-block content.
-                if !is_i4 && stored_coeffs.is_blocky_i16() {
+                if self.store_max_edge_active() && !is_i4 && stored_coeffs.is_blocky_i16() {
                     let d = macroblock_info.intra16_d.unwrap_or(0);
                     if d > self.segments[mb_segment_id].min_disto {
                         self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
@@ -1683,7 +1695,7 @@ impl<'a> Vp8Encoder<'a> {
                 // Track edge magnitude for I16 "blocky" MBs (#34).
                 // See trellis branch above for the `D > min_disto`
                 // rationale (issue #44).
-                if !is_i4 && stored_coeffs.is_blocky_i16() {
+                if self.store_max_edge_active() && !is_i4 && stored_coeffs.is_blocky_i16() {
                     let d = macroblock_info.intra16_d.unwrap_or(0);
                     if d > self.segments[mb_segment_id].min_disto {
                         self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
