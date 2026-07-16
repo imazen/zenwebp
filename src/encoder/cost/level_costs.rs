@@ -178,6 +178,20 @@ impl LevelCosts {
         fixed + variable
     }
 
+    /// Per-ctype (remapped, level_cost) table pair for callers that walk
+    /// many positions of one coefficient type (the trellis DP) — hoists the
+    /// outer `[ctype]` indexing out of their inner loops.
+    #[inline]
+    pub fn ctype_tables(
+        &self,
+        ctype: usize,
+    ) -> (
+        &[[usize; NUM_CTX]; 16],
+        &[[LevelCostArray; NUM_CTX]; NUM_BANDS],
+    ) {
+        (&self.remapped[ctype], &self.level_cost[ctype])
+    }
+
     /// Get the cost table for a specific type, position, and context.
     #[inline]
     pub fn get_cost_table(&self, ctype: usize, position: usize, ctx: usize) -> &LevelCostArray {

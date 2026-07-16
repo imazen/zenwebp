@@ -136,6 +136,9 @@ pub fn trellis_quantize_block(
     let mut score_states = [[TrellisScoreState::default(); NUM_NODES]; 2];
     let mut ss_cur_idx = 0usize;
     let mut ss_prev_idx = 1usize;
+    // Hoist the per-ctype cost tables (libwebp's `CostArrayPtr costs`):
+    // the DP loop below indexes positions of ONE ctype only.
+    let (remapped_t, level_cost_t) = level_costs.ctype_tables(ctype);
 
     // Find last significant coefficient based on threshold
     let thresh = (mtx.q[1] as i64 * mtx.q[1] as i64 / 4) as i32;
@@ -213,7 +216,8 @@ pub fn trellis_quantize_block(
             // Position 15 has no successor; its slot is never read, so the
             // dummy keeps the reference branch-free.
             let next_costs = if n + 1 < 16 {
-                level_costs.get_cost_table(ctype, n + 1, ctx)
+                let band = remapped_t[n + 1][ctx];
+                &level_cost_t[band][ctx]
             } else {
                 &DUMMY_COSTS
             };
