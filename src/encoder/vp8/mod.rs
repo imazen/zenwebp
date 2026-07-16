@@ -1893,9 +1893,8 @@ impl<'a> Vp8Encoder<'a> {
 
         // Quantize and record tokens.
         //
-        // For non-trellis methods (0-4): quantize once, check for skip,
-        // then record tokens only if non-zero. Saves redundant quantization
-        // that check_all_coeffs_zero would have done separately.
+        // For non-trellis methods (0-4): quantize once into stored
+        // coefficients, derive the skip from them, record from stored.
         //
         // For trellis methods (5-6): use integrated path since trellis
         // quantization depends on complexity context updated per-block.
@@ -1925,7 +1924,7 @@ impl<'a> Vp8Encoder<'a> {
             // libwebp's m5/m6 skip decision is `is_skipped = (rd->nz == 0)`
             // (`VP8Decimate`, quant_enc.c) — the nz of the FINAL trellis
             // quantization, not a separate simple-quant test.
-            // `check_all_coeffs_zero` re-quantizes with the simple bias,
+            // The old separate skip test re-quantized with the simple bias,
             // which drops borderline coefficients the trellis keeps (the
             // trellis derives level0 with a NEUTRAL bias plus the sharpen
             // term, then RD-scores keeping vs dropping) — so the two disagree
@@ -1984,52 +1983,37 @@ impl<'a> Vp8Encoder<'a> {
                 self.stored_mb_coeffs.push(stored_coeffs);
             }
         } else if self.do_trellis {
-            // Trellis path: integrated quantize + record (old behavior)
-            let all_zero = self.check_all_coeffs_zero(
+            // Tuned trellis path (m5/m6): record the FINAL (trellis) levels
+            // and derive the skip from them, like the parity arm above.
+            // Historically the skip was decided by a separate simple-quant
+            // test (`check_all_coeffs_zero`, since removed), which disagreed
+            // with the trellis on borderline coefficients — the encoder then
+            // reconstructed WITH a kept coefficient (and predicted subsequent
+            // MBs from it) while signaling a skip, so its reference drifted
+            // from the decoder's pixels. Deriving the skip from the recorded
+            // levels fixes that mismatch; measured on the 15-image A/B corpus
+            // (m4 control ±0): m5 +0.011% size / +0.104 zsim, m6 +0.015% /
+            // +0.097 — adopted per
+            // `benchmarks/tuned_candidates_2026-07-16.md`.
+            let stored_coeffs = self.record_residual_tokens_storing(
                 &macroblock_info,
+                mbx as usize,
                 &y_block_data.coeffs,
                 &u_block_data.coeffs,
                 &v_block_data.coeffs,
+                y_block_data.trellis_y1_zigzag.as_ref(),
             );
-            if all_zero {
+            if stored_coeffs.is_all_zero(is_i4, first_coeff_y1) {
                 row_state.skip_mb += 1;
                 mb_info.coeffs_skipped = true;
-                // Record EOB-at-0 tokens for every block. This emits
-                // ~25 bits/MB into the token buffer; if `use_skip_proba=1`
-                // wins they get filtered out at emit time, otherwise the
-                // decoder reads them as the empty residuals it expects.
-                // record_from_stored_coeffs also clears top/left
-                // complexity correctly (has_coeffs=false for every block).
-                self.record_from_stored_coeffs(
-                    &macroblock_info,
-                    mbx as usize,
-                    &QuantizedMbCoeffs::ZERO,
-                );
-                if store_coeffs {
-                    self.stored_mb_coeffs.push(QuantizedMbCoeffs::ZERO);
-                }
             } else {
-                // Reuse trellis output from transform_luma_block to
-                // skip the second trellis pass inside the recorder
-                // (#35-#8). Always Some() on this branch because
-                // do_trellis is true.
-                let stored_coeffs = self.record_residual_tokens_storing(
-                    &macroblock_info,
-                    mbx as usize,
-                    &y_block_data.coeffs,
-                    &u_block_data.coeffs,
-                    &v_block_data.coeffs,
-                    y_block_data.trellis_y1_zigzag.as_ref(),
-                );
-                // Track edge magnitude for I16 "blocky" MBs (#34).
-                // Gate on `D > min_disto` per libwebp `quant_enc.c:1111`
-                // (issue #44). `intra16_d` is the I16 winning-mode raw
-                // SSE captured during mode selection; flat-region MBs
-                // produce small D and are filtered out, preventing the
-                // loop filter from over-bumping on synthetic
-                // color-block content. (The parity variant of this — I16
-                // CANDIDATE gating, fired before the skip decision — lives in
-                // the StrictLibwebpParity trellis branch above.)
+                // Track edge magnitude for I16 "blocky" MBs (#34). Gate on
+                // `D > min_disto` per libwebp `quant_enc.c:1111` (issue #44);
+                // flat-region MBs produce small D and are filtered out,
+                // preventing the loop filter from over-bumping on synthetic
+                // color-block content. (The parity variant — I16 CANDIDATE
+                // gating, fired before the skip decision — lives in the
+                // StrictLibwebpParity trellis branch above.)
                 let blocky = stored_coeffs.is_blocky_i16();
                 if self.store_max_edge_active() && !is_i4 && blocky {
                     let d = macroblock_info.intra16_d.unwrap_or(0);
@@ -2037,13 +2021,12 @@ impl<'a> Vp8Encoder<'a> {
                         self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
                     }
                 }
-                if store_coeffs {
-                    self.stored_mb_coeffs.push(stored_coeffs);
-                }
+            }
+            if store_coeffs {
+                self.stored_mb_coeffs.push(stored_coeffs);
             }
         } else {
             // Non-trellis path: quantize once, skip-check, record from stored.
-            // Avoids the redundant quantization in check_all_coeffs_zero.
             let stored_coeffs = self.quantize_mb_coeffs(
                 &macroblock_info,
                 &y_block_data.coeffs,

@@ -136,6 +136,16 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Added
 
+- **Tuned default adopts the trellis-derived skip at m5/m6** (#38 follow-up,
+  2026-07-16): the tuned trellis path decided the per-MB skip with a separate
+  simple-quant test while emission recorded trellis levels — on borderline
+  MBs the encoder reconstructed (and predicted from) a coefficient the
+  decoder never received. The skip now derives from the recorded levels,
+  matching the parity arm. Measured on the 15-image A/B corpus
+  (`dev/tuned_ab_sweep.rs`, new): m5 +0.011% size / **+0.104 zsim**, m6
+  +0.015% / **+0.097**, m4 control exactly 0; gain largest at low q (+0.156
+  at q25). `check_all_coeffs_zero` removed. Provenance:
+  `benchmarks/tuned_candidates_2026-07-16.md` + companion TSV.
 - **`StrictLibwebpParity` byte-exact across the FULL 4004-cell grid —
   100%** (#38, 2026-07-16): 99.75% → **4004/4004**. The last 10 cells (all
   real photos, q80+) were one root: exact I4 RD-score ties broken toward

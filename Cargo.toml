@@ -289,6 +289,14 @@ name = "zenwebp_features_replay"
 path = "dev/zenwebp_features_replay.rs"
 required-features = ["analyzer"]
 
+# Tuned-default A/B harness: (image, method, q) -> (size, zsim, min-of-3 ms)
+# TSV for measured adoption of parity-derived candidates. Run once per build
+# variant with a distinct --variant label; rows append to one TSV. See
+# benchmarks/tuned_candidates_2026-07-14.md for the discipline it feeds.
+[[example]]
+name = "tuned_ab_sweep"
+path = "dev/tuned_ab_sweep.rs"
+
 # One-shot empirical probe: do tiny zenwebp-encoded images have an
 # intrinsic ceiling on achievable zensim score? See dev/zensim_ceiling_probe.rs.
 [[example]]

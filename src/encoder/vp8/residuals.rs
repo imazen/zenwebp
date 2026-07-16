@@ -944,71 +944,6 @@ impl<'a> super::Vp8Encoder<'a> {
         end_of_block_index > 0
     }
 
-    /// Check if all coefficients in a macroblock would quantize to zero.
-    /// Used for skip detection.
-    pub(super) fn check_all_coeffs_zero(
-        &self,
-        macroblock_info: &MacroblockInfo,
-        y_block_data: &[i32; 16 * 16],
-        u_block_data: &[i32; 16 * 4],
-        v_block_data: &[i32; 16 * 4],
-    ) -> bool {
-        let segment = &self.segments[macroblock_info.segment_id.unwrap_or(0)];
-        let y1_matrix = segment.y1_matrix.as_ref().unwrap();
-        let y2_matrix = segment.y2_matrix.as_ref().unwrap();
-        let uv_matrix = segment.uv_matrix.as_ref().unwrap();
-
-        // For Intra16 mode, check Y2 block (DC coefficients after WHT)
-        if macroblock_info.luma_mode != LumaMode::B {
-            let mut coeffs0 = get_coeffs0_from_block(y_block_data);
-            transform::wht4x4(&mut coeffs0);
-
-            for (idx, &val) in coeffs0.iter().enumerate() {
-                if y2_matrix.quantize_coeff(val, idx) != 0 {
-                    return false;
-                }
-            }
-
-            // Check Y blocks (AC only for Intra16)
-            for block in y_block_data.chunks_exact(16) {
-                for (idx, &val) in block.iter().enumerate().skip(1) {
-                    if y1_matrix.quantize_coeff(val, idx) != 0 {
-                        return false;
-                    }
-                }
-            }
-        } else {
-            // For Intra4 mode, check all Y coefficients (DC + AC)
-            for block in y_block_data.chunks_exact(16) {
-                for (idx, &val) in block.iter().enumerate() {
-                    if y1_matrix.quantize_coeff(val, idx) != 0 {
-                        return false;
-                    }
-                }
-            }
-        }
-
-        // Check U blocks
-        for block in u_block_data.chunks_exact(16) {
-            for (idx, &val) in block.iter().enumerate() {
-                if uv_matrix.quantize_coeff(val, idx) != 0 {
-                    return false;
-                }
-            }
-        }
-
-        // Check V blocks
-        for block in v_block_data.chunks_exact(16) {
-            for (idx, &val) in block.iter().enumerate() {
-                if uv_matrix.quantize_coeff(val, idx) != 0 {
-                    return false;
-                }
-            }
-        }
-
-        true
-    }
-
     /// Record token statistics for a macroblock (used in first pass of two-pass encoding).
     /// This mirrors the structure of encode_residual_data but only records stats.
     /// Kept as fallback — token buffer path replaces this.
@@ -1378,8 +1313,7 @@ impl<'a> super::Vp8Encoder<'a> {
     /// Quantize a macroblock's coefficients without recording tokens.
     ///
     /// Separates quantization from token recording so skip detection can check
-    /// the quantized result before committing to token recording. Eliminates
-    /// redundant quantization in `check_all_coeffs_zero`.
+    /// the quantized result before committing to token recording.
     ///
     /// For non-trellis methods (0-4), quantization doesn't depend on complexity
     /// context, so this produces identical results to the integrated path.
