@@ -173,14 +173,26 @@ struct I4BlockResult {
     /// leave the running total unchanged.
     flatness_penalty: u32,
     /// Winning mode's quantized levels in ZIGZAG order — the same order and
-    /// convention as libwebp's `rd->y_ac_levels[i4]`, so the two can be diffed
-    /// directly when tracing #38. Debug-only: not in the shipped struct.
-    #[cfg(feature = "mode_debug")]
+    /// convention as libwebp's `rd->y_ac_levels[i4]` (diffable when tracing
+    /// #38). Carried into the final pass on the non-trellis tiers so the
+    /// winner isn't re-quantized there.
     levels_zz: [i32; 16],
 }
 
 /// Pre-sort I4 prediction modes by prediction SSE (ascending).
 /// Runs sse4x4 for all 10 modes using direct SIMD calls (no dispatch overhead).
+/// The I4 winner's full reconstruction + levels, carried from
+/// `pick_best_intra4` into the final coding pass on the NON-trellis tiers
+/// so the winning modes aren't re-predicted / re-DCT'd / re-quantized /
+/// re-IDCT'd there. Byte-safe by construction: non-trellis quantization is
+/// context-free, and the eval loop walks sub-blocks in coding order over
+/// the same borders as the final pass, so its residuals (and therefore
+/// levels and reconstruction) are bit-identical to a recompute.
+pub(super) struct I4WinnerCarry {
+    pub recon: [u8; LUMA_BLOCK_SIZE],
+    pub levels_zz: [[i32; 16]; 16],
+}
+
 /// m6-only trellis arm of the I4 candidate evaluation, kept out-of-line so
 /// the hot m0-m5 loop body stays small in the instruction cache. Returns
 /// (has_nz, dequantized-natural) exactly like the fused arm.
@@ -424,7 +436,6 @@ fn evaluate_i4_modes_sse2(
                 psy_cost,
                 coeff_cost,
                 flatness_penalty,
-                #[cfg(feature = "mode_debug")]
                 levels_zz: quantized_zigzag,
             });
         }
@@ -1432,7 +1443,11 @@ impl<'a> super::Vp8Encoder<'a> {
         mbx: usize,
         mby: usize,
         i16_score: u64,
-    ) -> Option<([IntraMode; 16], u64)> {
+    ) -> Option<(
+        [IntraMode; 16],
+        u64,
+        Option<alloc::boxed::Box<I4WinnerCarry>>,
+    )> {
         // Check for debug mode
         #[cfg(feature = "mode_debug")]
         let debug_i4 = std::env::var("MB_DEBUG")
@@ -1472,6 +1487,10 @@ impl<'a> super::Vp8Encoder<'a> {
 
         let mut best_modes = [IntraMode::DC; 16];
         let mut best_mode_indices = [0usize; 16]; // Track indices for context lookup
+        // Winner levels for the final-pass carry (SIMD arm only; the scalar
+        // fallback doesn't produce them, so it disables the carry).
+        let mut carry_levels = [[0i32; 16]; 16];
+        let mut carry_ok = true;
 
         // Create working buffer with border
         let mut y_with_border =
@@ -1635,7 +1654,6 @@ impl<'a> super::Vp8Encoder<'a> {
                 let mut best_psy_cost = 0i32;
                 let mut best_coeff_cost = 0u32;
                 let mut best_flatness_penalty = 0u32;
-                #[cfg(feature = "mode_debug")]
                 let mut best_levels_zz = [0i32; 16];
 
                 // Pre-compute all 10 I4 prediction modes at once
@@ -1734,11 +1752,9 @@ impl<'a> super::Vp8Encoder<'a> {
                     best_psy_cost = result.psy_cost;
                     best_coeff_cost = result.coeff_cost;
                     best_flatness_penalty = result.flatness_penalty;
-                    #[cfg(feature = "mode_debug")]
-                    {
-                        best_levels_zz = result.levels_zz;
-                    }
+                    best_levels_zz = result.levels_zz;
                 } else {
+                    carry_ok = false;
                     // Scalar fallback (no SIMD available at runtime or not x86_64)
                     #[cfg(target_arch = "x86_64")]
                     {
@@ -1955,6 +1971,8 @@ impl<'a> super::Vp8Encoder<'a> {
                 // Add back saved dequantized+IDCT result (already computed in inner loop)
                 // This eliminates a redundant dequantize + IDCT per block
                 add_residue(&mut y_with_border, &best_dequantized, y0, x0, LUMA_STRIDE);
+
+                carry_levels[i] = best_levels_zz;
             }
         }
 
@@ -1969,7 +1987,18 @@ impl<'a> super::Vp8Encoder<'a> {
             );
         }
 
-        Some((best_modes, running_score))
+        // Package the winner carry for the final pass (non-trellis only:
+        // trellis levels are context-dependent and the final pass owns the
+        // authoritative context chain there).
+        let carry = if carry_ok && !self.do_trellis {
+            Some(alloc::boxed::Box::new(I4WinnerCarry {
+                recon: y_with_border,
+                levels_zz: carry_levels,
+            }))
+        } else {
+            None
+        };
+        Some((best_modes, running_score, carry))
     }
 
     /// libwebp `RefineUsingDistortion` UV arm (refine_uv_mode, m1/m2): pick
@@ -2457,7 +2486,12 @@ impl<'a> super::Vp8Encoder<'a> {
         }
     }
 
-    pub(super) fn choose_macroblock_info(&self, mbx: usize, mby: usize) -> MacroblockInfo {
+    pub(super) fn choose_macroblock_info(
+        &self,
+        mbx: usize,
+        mby: usize,
+    ) -> (MacroblockInfo, Option<alloc::boxed::Box<I4WinnerCarry>>) {
+        let mut i4_carry: Option<alloc::boxed::Box<I4WinnerCarry>> = None;
         // FastMBAnalyze fast path (libwebp `RefineUsingDistortion(try_both_modes=0,
         // refine_uv_mode=method>=1)` at m0/m1, quant_enc.c:1447). The analysis
         // pass already chose I16 vs I4 via the DC-variance test in
@@ -2520,21 +2554,24 @@ impl<'a> super::Vp8Encoder<'a> {
                     self.pick_uv_sse(mbx, mby)
                 };
                 let segment_id = self.get_segment_id_for_mb(mbx, mby);
-                return MacroblockInfo {
-                    luma_mode,
-                    luma_bpred,
-                    chroma_mode,
-                    segment_id,
-                    coeffs_skipped: false,
-                    intra16_d,
-                    // m0-m2 are RD_OPT_NONE: libwebp never reaches
-                    // PickBestIntra16, so StoreMaxDelta never fires and these
-                    // are unused (`store_max_edge_active()` gates on
-                    // method >= 3 under parity).
-                    intra16_cand_d: intra16_d.unwrap_or(0),
-                    intra16_y2_zz: [0i32; 16],
-                    intra16_blocky: false,
-                };
+                return (
+                    MacroblockInfo {
+                        luma_mode,
+                        luma_bpred,
+                        chroma_mode,
+                        segment_id,
+                        coeffs_skipped: false,
+                        intra16_d,
+                        // m0-m2 are RD_OPT_NONE: libwebp never reaches
+                        // PickBestIntra16, so StoreMaxDelta never fires and these
+                        // are unused (`store_max_edge_active()` gates on
+                        // method >= 3 under parity).
+                        intra16_cand_d: intra16_d.unwrap_or(0),
+                        intra16_y2_zz: [0i32; 16],
+                        intra16_blocky: false,
+                    },
+                    None,
+                );
             }
         }
 
@@ -2571,18 +2608,21 @@ impl<'a> super::Vp8Encoder<'a> {
             };
             let chroma_mode = self.pick_uv_sse(mbx, mby);
             let segment_id = self.get_segment_id_for_mb(mbx, mby);
-            return MacroblockInfo {
-                luma_mode,
-                luma_bpred,
-                chroma_mode,
-                segment_id,
-                coeffs_skipped: false,
-                intra16_d: Some(i16_d),
-                // RD_OPT_NONE path — see the note on the m0-m2 ctor above.
-                intra16_cand_d: i16_d,
-                intra16_y2_zz: [0i32; 16],
-                intra16_blocky: false,
-            };
+            return (
+                MacroblockInfo {
+                    luma_mode,
+                    luma_bpred,
+                    chroma_mode,
+                    segment_id,
+                    coeffs_skipped: false,
+                    intra16_d: Some(i16_d),
+                    // RD_OPT_NONE path — see the note on the m0-m2 ctor above.
+                    intra16_cand_d: i16_d,
+                    intra16_y2_zz: [0i32; 16],
+                    intra16_blocky: false,
+                },
+                None,
+            );
         }
 
         // Pick the best 16x16 luma mode using RD cost selection
@@ -2663,7 +2703,8 @@ impl<'a> super::Vp8Encoder<'a> {
             if should_try_i4 {
                 match self.pick_best_intra4(mbx, mby, i16_score) {
                     #[allow(unused_variables)]
-                    Some((modes, i4_score)) => {
+                    Some((modes, i4_score, carry)) => {
+                        i4_carry = carry;
                         #[cfg(feature = "mode_debug")]
                         if debug_mb {
                             eprintln!("I4: score={} (beats I16)", i4_score);
@@ -2716,17 +2757,20 @@ impl<'a> super::Vp8Encoder<'a> {
             Some(i16_d)
         };
 
-        MacroblockInfo {
-            luma_mode,
-            luma_bpred,
-            chroma_mode,
-            segment_id,
-            coeffs_skipped: false,
-            intra16_d,
-            intra16_cand_d: i16_d,
-            intra16_y2_zz: i16_y2_zz,
-            intra16_blocky: i16_blocky,
-        }
+        (
+            MacroblockInfo {
+                luma_mode,
+                luma_bpred,
+                chroma_mode,
+                segment_id,
+                coeffs_skipped: false,
+                intra16_d,
+                intra16_cand_d: i16_d,
+                intra16_y2_zz: i16_y2_zz,
+                intra16_blocky: i16_blocky,
+            },
+            i4_carry,
+        )
     }
 
     /// Scalar fallback for I4 mode evaluation.

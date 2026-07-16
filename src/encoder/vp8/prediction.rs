@@ -257,8 +257,33 @@ impl<'a> super::Vp8Encoder<'a> {
         mbx: usize,
         mby: usize,
         macroblock_info: &MacroblockInfo,
+        i4_carry: Option<alloc::boxed::Box<super::mode_selection::I4WinnerCarry>>,
     ) -> LumaBlockResult {
         if macroblock_info.luma_mode == LumaMode::B {
+            // Non-trellis fast path: the RD pick already reconstructed the
+            // winning modes over the same borders; its levels are
+            // context-free, so re-predicting/re-quantizing here would
+            // reproduce them bit-for-bit. Set borders from the carried
+            // reconstruction and hand its levels to the recorder.
+            if let Some(carry) = i4_carry {
+                for (y, border_value) in self.left_border_y.iter_mut().enumerate() {
+                    *border_value = carry.recon[y * LUMA_STRIDE + 16];
+                }
+                for (x, border_value) in self.top_border_y[mbx * 16..][..16].iter_mut().enumerate()
+                {
+                    *border_value = carry.recon[16 * LUMA_STRIDE + x + 1];
+                }
+                return LumaBlockResult {
+                    // Raw DCT coefficients are consumed only by the recorder's
+                    // trellis debug cross-check (`y1_from_trellis == true`),
+                    // which never fires on this non-trellis path.
+                    coeffs: [0i32; 16 * 16],
+                    pred_block: carry.recon,
+                    y1_zigzag: carry.levels_zz,
+                    y1_from_trellis: false,
+                    y2_zigzag: [0i32; 16],
+                };
+            }
             if let Some(bpred_modes) = macroblock_info.luma_bpred {
                 return self.transform_luma_blocks_4x4(bpred_modes, mbx, mby);
             } else {
