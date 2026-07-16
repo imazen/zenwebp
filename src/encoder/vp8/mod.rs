@@ -541,6 +541,13 @@ struct Vp8Encoder<'a> {
     /// boundary; `compute_updated_probabilities` reads this instead of the
     /// full-frame `proba_stats` when present.
     fast_probe_snapshot: Option<ProbaStats>,
+    /// `skip_mb` frozen at the same `fast_probe_stat_limit` boundary. libwebp
+    /// counts `nb_skip` in `OneStatPass` over only the stats subset (m0
+    /// `fast_probe`), while `FinalizeSkipProba` divides by the FULL frame —
+    /// so at m0 the skip probability must come from the subset count.
+    /// `None` when the subset never closed (m1/m2, frames smaller than the
+    /// limit, tuned default): use the full-frame `skip_mb`. (#38)
+    fast_probe_skip_count: Option<u32>,
     /// Updated probabilities computed from statistics
     updated_probs: Option<TokenProbTables>,
     /// Precomputed level costs for coefficient cost estimation
@@ -675,6 +682,7 @@ impl<'a> Vp8Encoder<'a> {
             proba_stats: ProbaStats::new(),
             fast_probe_stat_limit: None,
             fast_probe_snapshot: None,
+            fast_probe_skip_count: None,
             updated_probs: None,
             level_costs: LevelCosts::new(),
             // Trellis quantization for RD-optimized coefficient selection.
@@ -1353,6 +1361,7 @@ impl<'a> Vp8Encoder<'a> {
             // StatLoop itself is ported. (`self.do_search` carries libwebp's
             // `enc->do_search`, which gates `fast_probe`, ready for that port.)
             self.fast_probe_snapshot = None;
+            self.fast_probe_skip_count = None;
             self.fast_probe_stat_limit = if self.cost_model
                 == super::api::CostModel::StrictLibwebpParity
                 && self.method == 0
@@ -1467,18 +1476,57 @@ impl<'a> Vp8Encoder<'a> {
             // This is the full #25 fix — the gate now fires whenever `prob >= 250`, not only
             // when `skip_mb == 0`.
             if self.cost_model == super::api::CostModel::StrictLibwebpParity {
-                // Modern libwebp NEVER enables the per-MB skip-proba flag: it
-                // asserts `proba.use_skip_proba == 0` at `VP8EncTokenLoop` entry
-                // and always writes `use_skip_proba = 0` to the bitstream (the
-                // `nb_skip`/`FinalizeSkipProba` machinery only feeds StatLoop's
-                // size estimate for pass decisions, never the emitted flag —
-                // verified via instrumented libwebp: use_skip=0 across q5..q75,
-                // m0..m6). zenwebp enabled it at low q (where its skip fraction
-                // crosses `prob < 250`), diverging from libwebp on every low-q
-                // cell. Match libwebp under parity: always emit all coefficient
-                // tokens, never the skip flag. (At high q zen already computed
-                // `None`, so q75 byte-identity is unaffected.)
-                self.macroblock_no_skip_coeff = None;
+                if self.method >= 3 {
+                    // m3-m6 run libwebp's `VP8EncTokenLoop`, which asserts
+                    // `proba->use_skip_proba == 0` at entry (`frame_enc.c:816`)
+                    // — the flag is never enabled on the token path, so parity
+                    // emits all coefficient tokens and no skip flag. (An
+                    // earlier revision forced this for EVERY method, claiming
+                    // libwebp never enables the flag; that was only ever
+                    // verified at sns0/flt0/segs1, where libwebp's skip count
+                    // happens to land at use_skip=0 too. Disproven at m0-m2
+                    // with SNS/multi-segment configs.) (#38)
+                    self.macroblock_no_skip_coeff = None;
+                } else if !self.segments_enabled {
+                    // m0-m2 with a single effective segment: `StatLoop` bails
+                    // out early — `OneStatPass` returns `size_p0 = ΣH +
+                    // segment_hdr.size`, which is 0 at RD_OPT_NONE without a
+                    // segment header, and `StatLoop` treats that as failure,
+                    // returning BEFORE `FinalizeSkipProba` ever runs. The flag
+                    // keeps its `VP8DefaultProbas` value of 0. Same upstream
+                    // quirk `compute_updated_probabilities` reproduces for the
+                    // coefficient probas (dumped via SKIPDBG: at q5/m1/sns0/
+                    // segs1 libwebp counts nb_skip=53 in the stats pass but
+                    // never finalizes, shipping use_skip=0). (#38)
+                    self.macroblock_no_skip_coeff = None;
+                } else {
+                    // m0-m2 run plain `VP8EncLoop`, whose StatLoop DOES
+                    // finalize the skip probability (`frame_enc.c:679`):
+                    //   - `nb_skip` is counted in `OneStatPass` over the stats
+                    //     subset only — m0 `fast_probe` shortens the pass to
+                    //     `total>200 ? total>>2 : 50` MBs; m1/m2 cover the
+                    //     whole frame (`frame_enc.c:629,644-650`).
+                    //   - `FinalizeSkipProba` then divides by the FULL frame:
+                    //     `skip_proba = (total - nb) * 255 / total` — truncated
+                    //     integer division, NO clamp (`CalcSkipProba`,
+                    //     `frame_enc.c:113`), and
+                    //     `use_skip_proba = (skip_proba < 250)`.
+                    // The stats-pass skip decisions equal the emission-pass
+                    // ones at RD_OPT_NONE (`RefineUsingDistortion` uses fixed
+                    // mode costs, never the adapted level costs), so zen's
+                    // per-MB skip count over the same subset reproduces
+                    // `nb_skip` exactly. (#38)
+                    let total = u64::from(total_mb);
+                    let nb_skip = u64::from(self.fast_probe_skip_count.unwrap_or(skip_mb));
+                    let skip_proba =
+                        ((total - nb_skip) * 255).checked_div(total).unwrap_or(255) as u8;
+                    const SKIP_PROBA_THRESHOLD: u8 = 250; // frame_enc.c:111
+                    self.macroblock_no_skip_coeff = if skip_proba < SKIP_PROBA_THRESHOLD {
+                        Some(skip_proba)
+                    } else {
+                        None
+                    };
+                }
             } else if total_mb > 0 {
                 let non_skip_mb = total_mb - skip_mb;
                 let prob = ((255 * non_skip_mb + total_mb / 2) / total_mb).min(255) as u8;
@@ -1991,6 +2039,9 @@ impl<'a> Vp8Encoder<'a> {
             && self.fast_probe_snapshot.is_none()
         {
             self.fast_probe_snapshot = Some(self.proba_stats.clone());
+            // Freeze the skip count at the same boundary: libwebp's
+            // `OneStatPass` accumulates `nb_skip` over exactly these MBs. (#38)
+            self.fast_probe_skip_count = Some(row_state.skip_mb);
         }
 
         // Store macroblock info for header writing

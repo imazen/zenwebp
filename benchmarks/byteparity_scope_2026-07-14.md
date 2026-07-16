@@ -8,9 +8,10 @@ mid-session. It is now committed as `dev/byteparity_sweep.rs` (the score),
 `dev/bitexact_diff.rs` (header fields + mode stream) — all wired as
 `__expert` examples. Never rebuild this in `/tmp` again.
 
-**The committed grid now scores 3829/4004 = 95.6%** (was 3578/4004 = 89.4% when
-the harness was first committed; the +189 came from the Cat5/Cat6 stat-node fix,
-`44ae3a0`, then +62 from the StoreMaxDelta I16-candidate gate, `c9abe85`).
+**The committed grid now scores 3922/4004 = 97.9%** (was 3578/4004 = 89.4% when
+the harness was first committed; +189 came from the Cat5/Cat6 stat-node fix
+`44ae3a0`, +62 from the StoreMaxDelta I16-candidate gate `c9abe85`, then **+93
+from the m0-m2 skip-proba StatLoop fix — this commit**).
 Neither number is comparable to the 3488/4004 = 87.1% below: 10 of
 the 13 images are synthetic and their generator was lost with the /tmp wipe and
 reconstructed differently, so the synthetic cells are simply different content
@@ -18,19 +19,57 @@ reconstructed differently, so the synthetic cells are simply different content
 is the durable baseline going forward** — the grid is committed now; re-run the
 tool for any before/after, and don't compare across grids.
 
-### Failure shape on the committed grid (175 of 4004, 2026-07-15, post-`c9abe85`)
+### Failure shape on the committed grid (82 of 4004, 2026-07-15, post-skip-fix)
 
-By method (of 572 each): **m0 20 · m1 38 · m2 36** · m3 **4** · m4 **3** ·
-m5 39 · m6 35.
+By method (of 572 each): m0 **0** · m1 **0** · m2 **1** · m3 4 · m4 3 ·
+**m5 39 · m6 35**.
 By config (of 1001 each): sns0/flt0/segs1 18 · sns0/flt0/segs4 18 ·
-sns30/flt20/segs2 70 · sns50/flt60/segs4 69.
+sns30/flt20/segs2 23 · sns50/flt60/segs4 23.
+By image: 1025469 42 · 1418519 22 · 382297 13 · synth_33x17 5 (all other
+synthetics 100%).
 
-**The axis flipped.** m3/m4 are now 99.3% identical (4 and 3 of 572) and the
-SNS+filter+multi-segment configs dropped from 201 to 139 of the remainder. What
-is left is dominated by **m0-m2 (94 of 175)** — the RD_OPT_NONE methods, which
-take libwebp's non-token `VP8EncLoop` path — plus an m5/m6 trellis residue
-(39/35). So the next work is the m0-m2 `VP8EncLoop`/`RefineUsingDistortion`
-path, NOT the RD methods.
+**m0-m2 are closed** (94 → 1; the one m2 straggler is synth_33x17 q90
+sns50/flt60/segs4, which fails m2-m6 alike — likely one shared root). The
+configs converged (23/23/18/18), so no config-specific mechanism remains. What
+is left is the **m5/m6 trellis residue (74 of 82)** plus the m3/m4 stragglers
+(4+3). Next work: the m5 (RD_OPT_TRELLIS) path.
+
+#### SOLVED: m0-m2 `use_skip`/`skip_prob` (this commit, +93)
+
+The single biggest divergence class of the 175: parity forced
+`macroblock_no_skip_coeff = None` for EVERY method, justified by libwebp's
+`assert(use_skip_proba == 0)` — but that assert is at `VP8EncTokenLoop` entry
+(`frame_enc.c:816`) and only covers m3-m6. m0-m2 run plain `VP8EncLoop`, whose
+`StatLoop` DOES finalize the skip probability. Three mechanisms had to be
+reproduced exactly (`SKIPDBG` dumps from the instrumented tree, q5/m1/382297):
+
+1. **`nb_skip` is counted over the stats subset, not the emission frame.**
+   `OneStatPass` counts `VP8Decimate()` skips; m0 `fast_probe` shortens that
+   pass to `total>200 ? total>>2 : 50` MBs (m1/m2 cover the whole frame). The
+   stats-pass skip decisions equal the emission-pass ones at RD_OPT_NONE
+   (`RefineUsingDistortion` uses fixed mode costs, never adapted level costs),
+   so zen freezes its per-MB skip count at the existing
+   `fast_probe_stat_limit` boundary (`fast_probe_skip_count`).
+2. **`FinalizeSkipProba` divides by the FULL frame** (`mb_w*mb_h`), truncated
+   integer division, NO clamp (`CalcSkipProba`), then
+   `use_skip_proba = (skip_proba < 250)`. zen's tuned formula rounds and
+   clamps to 1..254 — either alone flips cells near the threshold.
+3. **The `size_p0 == 0` StatLoop bailout gates the skip finalize too.** With a
+   single effective segment (sns0, or collapsed segs>1), `OneStatPass` returns
+   `size_p0 = ΣH + segment_hdr.size = 0` at RD_OPT_NONE and StatLoop returns
+   BEFORE `FinalizeSkipProba` — `use_skip_proba` keeps its `VP8DefaultProbas`
+   value 0. Dumped: q5/m1/sns0/segs1 counts `nb_skip=53` but never finalizes
+   (emits use_skip=0); q5/m1/sns50/segs4 finalizes `nb_skip=46/1024 →
+   skip_proba=243, use=1`. Same quirk `compute_updated_probabilities` already
+   reproduces for the coefficient probas — the skip arm now gates on
+   `!segments_enabled` identically.
+
+The earlier attempt (reverted at 3778/4004) enabled the flag with zen's
+full-frame rounded/clamped count — the sns configs improved but every sns0
+cell broke, exactly the (1)+(3) mechanisms. Verified per-cell with
+`bitexact_diff` on q5 m0/m1/m2 across all four configs before sweeping.
+`SKIPDBG` hooks (`FinalizeSkipProba`, `OneStatPass`, `VP8EncLoop` emit-skip
+counter) are committed in `~/work/zen/libwebp--zen38trace`.
 
 #### SOLVED: StoreMaxDelta gated on the final mode (`c9abe85`, +62)
 

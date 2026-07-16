@@ -136,6 +136,23 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Added
 
+- **`StrictLibwebpParity` byte-exactness at 97.9% of the grid; m0-m2 closed**
+  (#38, 2026-07-15): the committed byteparity grid (13 images × q5-95 × 4
+  configs × m0-6 = 4004 cells) went 89.4% → 94.1% (Cat5/Cat6 stat-node,
+  `44ae3a0`) → 95.6% (StoreMaxDelta from the I16 candidate, `c9abe85`) →
+  **97.9% (3922/4004)** with the **m0-m2 skip-proba fix** (+93 cells, closing
+  the entire m0-m2 axis, 94 → 1). Parity had forced `use_skip_proba = 0` for
+  every method, but libwebp's assert only covers the m3-m6 token loop; m0-m2
+  run `VP8EncLoop`, whose StatLoop finalizes the flag. Reproduced exactly:
+  `nb_skip` counted over the stats subset (m0 `fast_probe`: first
+  `total>200 ? total>>2 : 50` MBs, frozen via `fast_probe_skip_count`;
+  m1/m2 full frame), full-frame denominator with truncated unclamped
+  `CalcSkipProba`, `use_skip = skip_proba < 250`, and the `size_p0 == 0`
+  StatLoop bailout (single effective segment → finalize never runs → flag
+  stays 0). Remaining 82: m5/m6 trellis residue (39/35), m3/m4 stragglers
+  (4/3), one m2 synth cell. Parity-gated; tuned default byte-unchanged; full
+  suite + `libwebp_byte_parity` gate + clippy (default & `__expert`) green.
+  Scope + SKIPDBG evidence: `benchmarks/byteparity_scope_2026-07-14.md`.
 - **`StrictLibwebpParity` byte-exactness generalized to 87.1% of the grid** (#38,
   2026-07-15): five parity-gated fixes took the broad byteparity grid (13 images ×
   q5–95 × 4 configs × m0–6 = 4004 cells) from **24% → 87.1%**. The latest two:

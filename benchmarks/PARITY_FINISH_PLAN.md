@@ -8,22 +8,22 @@ Make `CostModel::StrictLibwebpParity` produce **byte-identical** output to libwe
 at matching `(quality, method, sns, filter, segments)`. Decoded pixels are already
 bit-exact and gated; this is about matching libwebp's exact **bytes**.
 
-## STATE (2026-07-15)
+## STATE (2026-07-15, post skip-proba fix)
 
-**3829/4004 = 95.6%** on the committed grid. 175 cells remain:
+**3922/4004 = 97.9%** on the committed grid. 82 cells remain:
 
 | axis | count | note |
 |---|---|---|
-| **m0-m2** | **94** (20/38/36) | **54% of the remainder — the next target** |
-| m5 / m6 | 39 / 35 | trellis residue |
-| m3 / m4 | 4 / 3 | 99.3% identical — effectively closed |
-| sns0/flt0/segs1 · segs4 | 18 · 18 | ~98% closed |
-| sns30/flt20/segs2 · sns50/flt60/segs4 | 70 · 69 | was 201 combined, now 139 |
+| **m5 / m6** | **39 / 35** | **90% of the remainder — the next target** |
+| m3 / m4 | 4 / 3 | effectively closed |
+| m0-m2 | 0 / 0 / 1 | **CLOSED** (was 94) — skip-proba StatLoop fix |
+| by config | 18 · 18 · 23 · 23 | converged — no config-specific mechanism left |
+| by image | 1025469 42 · 1418519 22 · 382297 13 · synth_33x17 5 | |
 
-**The axis flipped.** The RD methods (m3-m6) used to dominate; now m0-m2 do. Those
-are `RD_OPT_NONE`, which take a **completely different libwebp path** — plain
-`VP8EncLoop` → `RefineUsingDistortion` + `RecordResiduals` → `VP8RecordCoeffs`,
-not the token loop. Trace that path, not the RD one.
+**m0-m2 are done.** The remainder is the m5 (RD_OPT_TRELLIS) / m6
+(RD_OPT_TRELLIS_ALL) trellis residue, spread across q with a mild high-q lean
+(q80/q90: 15 each). The one m2 cell (synth_33x17 q90 sns50/flt60/segs4) fails
+m2-m6 alike — likely one shared root with the m5/m6 cluster there.
 
 ## TOOLS — all committed, all `--features __expert`
 
@@ -153,78 +153,32 @@ finalizes come from the token loop. #27 stands on its own merits only.
 | I16-AC-trellis nz-context seed | `f996eef` | +81 |
 | Cat5/Cat6 stat-node, per encode-loop path | `44ae3a0` | +189 |
 | StoreMaxDelta from the I16 CANDIDATE, not the final mode | `c9abe85` | +62 |
+| m0-m2 skip-proba: StatLoop-shaped count + size_p0 bailout | 2026-07-15 | +93 |
 
 Earlier: base-quant truncate `52cf96f2` · segmentation-collapse `41923466` ·
 trailing-slots `7acdd775` · skip-proba forced off `91c96168`.
 
-## STRATEGY FOR THE REMAINING 175
+## STRATEGY FOR THE REMAINING 82
 
-**1. m0-m2 (94 cells — start here). ROOT ALREADY FOUND: `use_skip` / `skip_prob`.**
+**1. m5/m6 trellis residue (74 cells — start here).** m5 = `RD_OPT_TRELLIS`,
+m6 = `RD_OPT_TRELLIS_ALL` (trellis during I4 mode selection). The
+I16-AC-trellis context fix (`f996eef`) closed the big part; what remains is
+likely the I4 trellis path. Image lean: 1025469 (42 of 82) and 1418519 (22) —
+trace there, not on 382297 (13). Spread across q with a high-q lean.
 
-Measured at q5/m1/sns50/flt60/segs4, where every mode decision already matches
-(y 100%, uv 100%, seg 100%) and the ONLY divergence is two header fields:
+**2. The 4+3 m3/m4 stragglers.** May share roots with #1 (e.g. 382297
+q80 m3+m4 sns0 fail identically in both segs configs — one mechanism, 4
+cells).
 
-```
-use_skip:   zen=0  lib=1
-skip_prob:  zen=0  lib=243
-```
+**3. synth_33x17 q90 sns50/flt60/segs4** fails m2-m6 alike (the only m2 cell) —
+likely one root, possibly odd-dimension + segments interaction at high q.
 
-`mod.rs:1469` forces `macroblock_no_skip_coeff = None` for **every** method under
-parity, justified by libwebp's `assert(proba->use_skip_proba == 0)`. **That assert
-is at `frame_enc.c:816` — inside `VP8EncTokenLoop`, which only runs when
-`use_tokens` is set (`rd_opt >= RD_OPT_BASIC`, i.e. m3-m6).** m0-m2 run plain
-`VP8EncLoop`, which *reads* the flag (`dont_use_skip = !proba.use_skip_proba`) and
-lets `FinalizeSkipProba` enable it. The code comment claims verification "across
-q5..q75, m0..m6" — that only ever exercised sns0/flt0/segs1, where libwebp emits 0
-too. **Treat that comment as disproven.**
-
-**ATTEMPTED AND REVERTED (measured):** gating the force to `method >= 3` and
-computing `skip_proba` libwebp's way for m0-m2 scored **3778/4004 (−51 net)** —
-but the split says the direction is right and only the *count* is wrong:
-
-| config | before | after |
-|---|---|---|
-| sns30/flt20/segs2 | 70 | **39** |
-| sns50/flt60/segs4 | 69 | **39** |
-| sns0/flt0/segs1 | 18 | **74** |
-| sns0/flt0/segs4 | 18 | **74** |
-| m0 | 20 | **62** |
-
-Enabling the flag fixed −61 in the SNS/segs configs and broke +112 in the sns0
-ones, i.e. **zen's `skip_mb` != libwebp's `nb_skip`**. Why:
-
-* `nb_skip` is counted ONLY in `StatLoop`'s `OneStatPass`
-  (`if (VP8Decimate(...)) ++enc->proba.nb_skip;`) — a **separate pass**, not the
-  emission pass zen counts in. `ResetStats` zeroes it.
-* `FinalizeSkipProba` then divides by the **FULL** frame:
-  `nb_mbs = enc->mb_w * enc->mb_h`, while `nb_skip` may have been accumulated over
-  only the `fast_probe` subset (m0: `nb_mbs>>2`, m3: `nb_mbs>>1`). At m0 that
-  inflates `skip_proba` toward 255, pushing it past the 250 threshold so
-  `use_skip` lands 0 — which is exactly why m0 broke worst (20 → 62).
-* libwebp's `CalcSkipProba` = `(total - nb) * 255 / total` — **truncated, no
-  clamp**. zen's tuned formula rounds (`+ total/2`) and clamps to 1..254.
-
-**Next step:** replicate `nb_skip` from a StatLoop-shaped count (subset-limited per
-`fast_probe`, denominator = full frame) before re-enabling the flag. zen already
-has the subset machinery for probabilities (`fast_probe_stat_limit`,
-`fast_probe_snapshot`) — mirror it for the skip count. Verify against
-`bitexact_diff` on BOTH a sns0 cell and a sns50 cell before measuring the grid;
-either alone will mislead you.
-
-Other m0-m2 facts: libwebp runs `RefineUsingDistortion` (not `PickBestIntra16`) and
-`RecordResiduals` → `VP8RecordCoeffs` (table recorder, node 10 for Cat5/6);
-`StoreMaxDelta` never fires (it lives at the end of `PickBestIntra16`), which is why
-`store_max_edge_active()` gates on `method >= 3`. Known upstream quirk documented in
-`dev/bitexact_diff.rs`: at m0-m2 with one effective segment StatLoop bails early
-(`size_p0 == 0`) and libwebp ships DEFAULT probas, costing it 25-35% size — zen must
-reproduce that under parity but must NOT adopt it for the tuned default.
-
-**2. m5/m6 trellis residue (74 cells).** m5 = `RD_OPT_TRELLIS`, m6 =
-`RD_OPT_TRELLIS_ALL` (trellis during I4 mode selection). The I16-AC-trellis context
-fix (`f996eef`) closed the big part; what remains is likely the I4 trellis path.
-
-**3. The 4+3 m3/m4 stragglers.** Lowest leverage, but a clean root may be visible
-now that everything else on those methods matches.
+**(solved) m0-m2 skip-proba** — was 94 cells, the whole m0-m2 axis. Full
+mechanism + SKIPDBG evidence in `byteparity_scope_2026-07-14.md` ("SOLVED:
+m0-m2 use_skip/skip_prob"): StatLoop-subset `nb_skip` count (m0 `fast_probe`
+freeze via `fast_probe_skip_count`), full-frame truncated unclamped
+`CalcSkipProba`, `< 250` threshold, and the `size_p0 == 0` bailout gating the
+finalize off at single-effective-segment configs (`!segments_enabled`).
 
 ## DONE
 
