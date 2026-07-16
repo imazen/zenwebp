@@ -872,7 +872,6 @@ pub(crate) fn quantize_dequantize_block_sse2(
 /// rather than left holding the original input value. Both produce identical
 /// final pixels because the WHT path overwrites slot 0 later — zeroing is just
 /// the clearer expression of intent. (#35-#11)
-#[cfg(target_arch = "x86_64")]
 pub fn quantize_dequantize_ac_only_simd(
     coeffs: &[i32; 16],
     matrix: &VP8Matrix,
@@ -880,62 +879,12 @@ pub fn quantize_dequantize_ac_only_simd(
     quantized: &mut [i32; 16],
     dequantized: &mut [i32; 16],
 ) -> bool {
+    // `quantize_dequantize_block_simd` dispatches per platform (incl. the
+    // scalar tier on i686), so ONE definition covers every arch — the old
+    // per-arch copies had identical bodies and left i686 with none.
     let has_nz =
         quantize_dequantize_block_simd(coeffs, matrix, use_sharpen, quantized, dequantized);
     // Zero DC; Y2 path will overwrite slot 0 with the WHT result later.
-    quantized[0] = 0;
-    dequantized[0] = 0;
-    has_nz || quantized[1..].iter().any(|&c| c != 0)
-}
-
-/// NEON fused quantize+dequantize for AC-only. See x86_64 variant for semantics.
-#[cfg(target_arch = "aarch64")]
-pub fn quantize_dequantize_ac_only_simd(
-    coeffs: &[i32; 16],
-    matrix: &VP8Matrix,
-    use_sharpen: bool,
-    quantized: &mut [i32; 16],
-    dequantized: &mut [i32; 16],
-) -> bool {
-    let has_nz =
-        quantize_dequantize_block_simd(coeffs, matrix, use_sharpen, quantized, dequantized);
-    quantized[0] = 0;
-    dequantized[0] = 0;
-    has_nz || quantized[1..].iter().any(|&c| c != 0)
-}
-
-/// WASM SIMD128 fused quantize+dequantize for AC-only. See x86_64 variant for semantics.
-#[cfg(target_arch = "wasm32")]
-pub fn quantize_dequantize_ac_only_simd(
-    coeffs: &[i32; 16],
-    matrix: &VP8Matrix,
-    use_sharpen: bool,
-    quantized: &mut [i32; 16],
-    dequantized: &mut [i32; 16],
-) -> bool {
-    let has_nz =
-        quantize_dequantize_block_simd(coeffs, matrix, use_sharpen, quantized, dequantized);
-    quantized[0] = 0;
-    dequantized[0] = 0;
-    has_nz || quantized[1..].iter().any(|&c| c != 0)
-}
-
-/// Scalar fallback for non-SIMD platforms
-#[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "x86",
-    target_arch = "aarch64",
-    target_arch = "wasm32"
-)))]
-
-pub fn quantize_dequantize_ac_only_simd(
-    coeffs: &[i32; 16],
-    matrix: &VP8Matrix,
-    _use_sharpen: bool,
-    quantized: &mut [i32; 16],
-    dequantized: &mut [i32; 16],
-) -> bool {
-    let has_nz = quantize_dequantize_block_scalar(coeffs, matrix, quantized, dequantized);
     quantized[0] = 0;
     dequantized[0] = 0;
     has_nz || quantized[1..].iter().any(|&c| c != 0)
