@@ -77,6 +77,17 @@ decisions cheaper. The old CLAUDE.md table (1.76x/1.30x/1.36x/1.41x,
   value per MB + remaining prediction staging; an out-param refactor of
   `transform_luma_block` would remove the big one.
 
+## Process note (added after the i686 CI break)
+
+The `output_hash` byte gate only covers the platform it runs on. The
+speed work's cfg'd arch arms (x86_64 / wasm32 / scalar-fallback) broke
+i686 twice: a missing `quantize_dequantize_ac_only_simd` definition
+(`5c37ee33`) and the I4 winner carry staying enabled with empty levels on
+the non-SIMD arms (`90bb08bf` — corrupted every I4 MB on 32-bit). Before
+pushing changes that touch arch-gated code paths, run the FULL suite on
+`--target i686-unknown-linux-gnu` locally; it exercises the scalar tiers
+the x86-64 gate never sees.
+
 ## Repro
 
 ```bash
