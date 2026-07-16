@@ -137,32 +137,36 @@ CostModel enum (#33) lets users switch to `StrictLibwebpParity` to disable
 zenwebp's perceptual extensions (PSY_WEIGHT_Y CSF, SATD masking blend, JND
 zeroing) for libwebp algorithm parity.
 
-**`StrictLibwebpParity` is byte-exact at the traced operating point (#38,
-2026-07-14) — NOT yet general. Bit-exactness remains an open north-star.**
-At **q75** on CID22 382297 (512×512), all **14** (method × config) cells are
-byte-identical to libwebp: m0–m6 at (SNS=0, filter=0, segs1) and (SNS=50,
-filter=60, segs4) — verified via `methodcmp` + the test grid. This is real and
-hard-won, but it **does not generalize**: a broad sweep (13 images incl.
-tiny/odd-dim synthetics + 3 CID22, q5–95, 4 configs, m0–6 = 4004 cells) started
-at **972/4004 (24%)** byte-identical (→ **1270/4004 (32%)** after the base-quant
-round→truncate fix; the segs1 config alone went 48.6% → 78.3%). Two configs NOT
-covered by `methodcmp` —
-(SNS=0, filter=0, segs4) and (SNS=30, filter=20, segs2) — **never** match (0%),
-and byte-identity oscillates 12–34% across q (a quantizer-index parity effect;
-odd steps ~12%, even ~32%) with **no q exceeding 34%**; other CID22 images sit
-at 8–11% (the fixes were traced on 382297). So the parity fixes closed the gap
-*where they were traced* (q75 / 382297 / those two configs); generalizing across
-q, config, and content is open work. Root causes closed at the traced point:
-forward DCT proven bit-exact (`transform.rs` differential tests), RGB→YUV
-byte-exact (×4 chroma precision + exact Y, `ChromaPrec::LibwebpExact`), chroma-DC
-diffusion store RD-gating, UV all-4-edge-modes, FastMBAnalyze alpha=0 at m0/m1,
-filter-bump RD gating, zigzag UV RD cost, mode tie-break orders, I4 flatness
-penalty + tlambda clamp + max_i4_header_bits + level_costs refresh, I16
-flat-source latch, I4 trellis static context, chroma-DC double-correction,
-StoreMaxDelta blocky-nz, container even-padding-inside-chunk. All parity fixes
-are gated so the tuned default is byte-unchanged. Provenance:
+**`StrictLibwebpParity` is byte-exact across the FULL committed grid —
+4004/4004 = 100% (#38, completed 2026-07-16).** The grid: 13 images (3 CID22
+512² photos + 10 synthetics incl. 1×1/2×2/3×3/17×17/33×17 odd-chroma and
+edge-partial MBs) × q ∈ {5,10,20,30,40,50,60,70,80,90,95} × 4 configs
+{(sns,flt,segs) = (0,0,1),(50,60,4),(0,0,4),(30,20,2)} × m0–m6. Measured by
+`dev/byteparity_sweep.rs` (the score); gated in CI by
+`tests/libwebp_byte_parity.rs` (`--features __expert` step: q75 pin, tiny/odd
+dims, q90 recorder paths, and regression anchors for the four final roots).
+**Claim scope:** byte-exactness is proven across THAT grid — unswept axes
+(filter_sharpness ≠ 0, partitions > 1, alpha, target_size, other content)
+need sweep extension before claim extension. The journey from 24%:
+base-quant round→truncate, segmentation-collapse, trailing-slots, skip-proba
+forced off at m3+ (token-loop assert), I16-AC-trellis nz-context seed,
+Cat5/Cat6 stat-node per encode-loop path, StoreMaxDelta from the I16
+CANDIDATE, m0-m2 skip-proba (StatLoop-subset count + size_p0 bailout,
+`46e2a2c`), m5/m6 skip from FINAL trellis levels (`a9fc2da`), segment-quant
+via exact `libm::pow` (`9a6a289`), and the I4 tie-break in LIBWEBP's enum
+order — its `B_*` enum permutes LD/RD/VR vs the spec order zen uses
+(`6051b1b9`, `LIBWEBP_I4_ORDER`). Earlier root causes: forward DCT bit-exact
+(`transform.rs` differential tests), RGB→YUV byte-exact (×4 chroma precision
++ exact Y, `ChromaPrec::LibwebpExact`), chroma-DC diffusion store RD-gating,
+UV all-4-edge-modes, FastMBAnalyze alpha=0 at m0/m1, filter-bump RD gating,
+zigzag UV RD cost, mode tie-break orders, I4 flatness penalty + tlambda clamp
++ max_i4_header_bits + level_costs refresh, I16 flat-source latch, I4 trellis
+static context, chroma-DC double-correction, StoreMaxDelta blocky-nz,
+container even-padding-inside-chunk. All parity fixes are gated so the tuned
+default is byte-unchanged. Provenance:
 `benchmarks/bitexact_parity_2026-07-14.md` +
-`benchmarks/byteparity_scope_2026-07-14.md` (the broad-grid scope measurement).
+`benchmarks/byteparity_scope_2026-07-14.md` (living scope doc) +
+`benchmarks/PARITY_FINISH_PLAN.md` (the completed playbook).
 
 **Tuned-default adoptions from the parity work (#38-D, 2026-07-14):** two
 parity-gated fixes measured as wins on real content (CID22 + imazen-26) and
