@@ -224,6 +224,14 @@ pub mod metadata;
 #[cfg(feature = "__expert")]
 pub mod sweep;
 
+/// #38 parity diagnostics: alpha-pipeline internals for `dev/alphadiff.rs`.
+/// `__expert`-gated, `doc(hidden)`, no semver guarantees.
+#[cfg(feature = "__expert")]
+#[doc(hidden)]
+pub mod __expert {
+    pub use crate::encoder::alpha_expert::*;
+}
+
 /// Test-only helpers exposed for integration tests.
 ///
 /// Not part of the public API; do not use in production code.

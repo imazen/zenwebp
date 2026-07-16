@@ -25,6 +25,8 @@
 
 /// Image analysis and auto-detection.
 #[doc(hidden)]
+/// libwebp-exact alpha-plane pipeline stages (#38 alpha parity).
+pub(crate) mod alpha;
 pub mod analysis;
 mod api;
 mod arithmetic;
@@ -82,3 +84,41 @@ pub use zensim_target::{ZensimEncodeMetrics, ZensimTarget};
 // Crate-internal re-exports for mux module
 pub(crate) use api::{chunk_size, encode_alpha_lossless, encode_frame_lossless, write_chunk};
 pub(crate) use vec_writer::VecWriter;
+
+/// #38 alpha-parity diagnostics surface for `dev/alphadiff.rs`.
+/// `__expert`-gated; NOT public API, no semver guarantees.
+#[cfg(feature = "__expert")]
+pub mod alpha_expert {
+    use alloc::vec::Vec;
+
+    pub use super::alpha::alpha_levels_for_quality;
+
+    /// Re-export of [`super::alpha::quantize_levels`].
+    pub fn alpha_quantize_levels(data: &mut [u8], num_levels: i32) {
+        super::alpha::quantize_levels(data, num_levels);
+    }
+
+    /// Re-export of [`super::alpha::apply_filter`].
+    pub fn alpha_apply_filter(mode: u8, input: &[u8], width: usize, height: usize) -> Vec<u8> {
+        super::alpha::apply_filter(mode, input, width, height)
+    }
+
+    /// One alpha VP8L trial payload at libwebp's alpha operating point.
+    pub fn alpha_vp8l_payload(
+        plane: &[u8],
+        width: u32,
+        height: u32,
+        effort_level: u8,
+        use_quality_100: bool,
+    ) -> Result<Vec<u8>, alloc::string::String> {
+        super::api::alpha_vp8l_payload_inner(
+            plane,
+            width,
+            height,
+            effort_level,
+            use_quality_100,
+            &enough::Unstoppable,
+        )
+        .map_err(|e| alloc::format!("{e:?}"))
+    }
+}

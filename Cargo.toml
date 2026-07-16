@@ -207,6 +207,11 @@ path = "dev/byteparity_sweep.rs"
 required-features = ["__expert"]
 
 [[example]]
+name = "alphadiff"
+path = "dev/alphadiff.rs"
+required-features = ["__expert"]
+
+[[example]]
 name = "mbpixdiff"
 path = "dev/mbpixdiff.rs"
 required-features = ["__expert"]

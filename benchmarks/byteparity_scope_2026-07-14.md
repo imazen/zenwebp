@@ -41,7 +41,7 @@ the two marked BOTH):
 | quality edges q0/q1/q99/q100 | 864/1456 → **1456/1456** | Three roots: (a) **BOTH MODELS** — the single-segment base init looked up `DC_QUANT[qi]` unclipped for UV DC; only q0 reaches qi>117, where the encoder then quantized UV DC with step 157 while every decoder (incl. zen's own, which caps at 132) dequantizes with 132 — a real encoder/decoder mismatch. (b) libwebp only allocates diffusion buffers at quality ≤ 98 (`webp_enc.c:167`); zen diffused at q99/q100 too, flipping ~14% of UV picks (parity now gates; tuned keeps always-on, effect is noise-level up there). (c) the `StoreMaxDelta` gate compares libwebp's `rd->D`, which carries the flat-latch DOUBLING; zen gated on raw SSE (synth 17x17 q1 m5: 2304 vs 1152 straddled min_disto 1560). |
 | partition_limit 30/60/100 | 123/252 → **252/252** | Two zenwebp-only mechanisms leaked into parity: a pl²-scaled I4 seed penalty (`base + base·pl²/400`; libwebp's partition_limit feeds ONLY `max_i4_header_bits`) and `partition_limit >= 100` gates that reroute m0-m2 onto entirely different paths (libwebp's RD_OPT_NONE never consults partition_limit — `RefineUsingDistortion` caps header bits with the partition_limit-independent `mb_header_limit`). |
 | segments-3 + sns/filter extremes (incl. sns>0 with segs1) | → **1120/1120** | libwebp applies the uv_alpha-derived UV quant deltas at EVERY segment count; when its analysis pass doesn't run (m2+ / one segment) `uv_alpha` keeps the 0 default (`analysis_enc.c:372`), still yielding `uvac_delta=-4`-class deltas at sns>0. zen's single-segment path skipped the deltas entirely (dumped: q50 m4 sns80 segs1, lib `q_uvac=-4`, zen none, 24% UV picks flipped). Parity computes them; tuned adoption is a candidate (finer UV at high SNS). |
-| alpha (RGBA) | 0/192 → **64/192** | **BOTH MODELS**: zen keyed the ALPH chunk on the input LAYOUT; libwebp scans the pixels (`WebPPictureHasTransparency`). Opaque RGBA now encodes as a bare `VP8 ` file, byte-identical to libwebp and ~80 B smaller per 64×64 (VP8X+ALPH dropped). The remaining 128 cells are REAL alpha: byte-parity there needs libwebp's alpha-plane coder (filter none/h/v/gradient selection × its VP8L-mini configuration) — a separate subsystem port, tracked as follow-on. |
+| alpha (RGBA) | 0/192 → **64/192** (see the alpha-pipeline note below) | **BOTH MODELS**: zen keyed the ALPH chunk on the input LAYOUT; libwebp scans the pixels (`WebPPictureHasTransparency`). Opaque RGBA now encodes as a bare `VP8 ` file, byte-identical to libwebp and ~80 B smaller per 64×64 (VP8X+ALPH dropped). The remaining 128 cells are REAL alpha: byte-parity there needs libwebp's alpha-plane coder (filter none/h/v/gradient selection × its VP8L-mini configuration) — a separate subsystem port, tracked as follow-on. |
 | sharp_yuv | 0/96 (documented) | zenyuv's sharp-YUV is its own algorithm, not a port of libwebp's SharpYUV library — every plane differs from the first pixel. Out of parity scope by design (the parity contract covers the VP8 encoder; the standard RGB→YUV path IS byte-exact via `ChromaPrec::LibwebpExact`). zen's sharp output measured ~2.5% smaller on the probe cells. |
 
 Out of scope (no matched knob / architecturally different — documented in the
@@ -55,6 +55,32 @@ q-edges, plim, segs1-SNS anchors) and `opaque_rgba_matches_libwebp_bare_vp8`.
 `zen38_driver` gained `[sharpness] [partition_limit]` args 9-10; new dump
 hooks: `I16DBG`, `UVDBG`, `SMDBG`, `UVQDBG`/`ZUVQ` (chroma-DC diffusion
 state), plus the earlier `REFRESHDBG2`/`LEVFINAL`/`TRELDBG`/`SKIPDBG`.
+
+### Alpha-plane pipeline ported; remaining distance is VP8L-stream parity (2026-07-16, later)
+
+`src/encoder/alpha.rs` now carries byte-faithful ports of libwebp's whole
+`EncodeAlpha` pipeline — `QuantizeLevels` (f64 k-means, libwebp's
+`alpha_levels = (q<=70) ? 2+q/5 : 16+(q-70)*8` mapping), the
+horizontal/vertical/gradient prediction filters, `WebPEstimateBestFilter`,
+`GetFilterMap`, and the `ApplyFiltersAndEncode` trial loop with per-trial
+raw fallback and libwebp's exact header byte — wired in under
+`StrictLibwebpParity` (`encode_alpha_libwebp_pipeline`, api.rs). The trial
+payloads go through zen's VP8L encoder at libwebp's alpha operating point
+(alpha in GREEN with R=B=0, `method = effort`, `quality = 8·effort`, or 100
+at m6+aq100).
+
+**Measured with the new `dev/alphadiff.rs` layer-isolating harness:** the
+pipeline stages agree (try-maps match, preprocessing bits match, the
+checker-alpha filter choice matches), but the PAYLOADS diverge at byte 0 and
+libwebp's are 6-10× smaller (64×64 gradient alpha: lib 23 B vs zen 137 B;
+checker: 32 vs 222). Re-encoding libwebp's OWN filtered plane through zen's
+VP8L reproduces the gap — so the remaining distance is pure **VP8L-stream
+divergence at the alpha operating point** (libwebp's low-quality VP8L path
+picks radically better modes for these planes), and the filter-choice
+differences are just each side's VP8L preferring different planes. Chunk B
+of the alpha work = the VP8L parity loop (instrument `VP8LEncodeStream`'s
+decisions — entropy mode, palette, cache_bits, huffman — in the trace tree
+and converge zen's, same method as the lossy campaign).
 
 ### Failure shape: NONE — 4004/4004 (2026-07-16)
 

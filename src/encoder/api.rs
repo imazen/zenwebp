@@ -2383,6 +2383,18 @@ pub(crate) fn alpha_is_opaque(
 /// Encodes the alpha part of the image data losslessly.
 /// Used for lossy images that include transparency.
 ///
+/// Under `StrictLibwebpParity` this runs libwebp's full `EncodeAlpha`
+/// pipeline (`alpha_enc.c`): `QuantizeLevels` preprocessing, the
+/// `GetFilterMap` filter-trial loop (none/horizontal/vertical/gradient at
+/// the default FAST filtering), a per-trial raw fallback when compression
+/// does not pay, and the winning payload coded with the VP8L encoder at
+/// libwebp's alpha operating point (`method = effort`, `quality =
+/// 8·effort`, alpha in the GREEN channel with R=B=0). The tuned default
+/// keeps zenwebp's historical single-shot path (no filters, gray-expanded
+/// plane, its own quantizer mapping) — its bytes are unchanged; switching
+/// it to the libwebp pipeline is a measurable-adoption candidate (filters
+/// usually shrink the ALPH payload).
+///
 /// # Panics
 ///
 /// Panics if the image data is not of the indicated dimensions.
@@ -2395,6 +2407,8 @@ pub(crate) fn encode_alpha_lossless(
     stride: usize,
     color: PixelLayout,
     alpha_quality: u8,
+    effort_level: u8,
+    cost_model: CostModel,
     stop: &dyn enough::Stop,
 ) -> EncodeResult<()> {
     let bytes_per_pixel = match color {
@@ -2411,11 +2425,6 @@ pub(crate) fn encode_alpha_lossless(
         return Err(at!(EncodeError::InvalidDimensions));
     }
 
-    let filtering_method = 0u8;
-    // 0 is raw alpha data
-    // 1 is using the lossless format to encode alpha data
-    let compression_method = 1u8;
-
     // Extract alpha channel (row-by-row to handle stride)
     let ww = width as usize;
     let hh = height as usize;
@@ -2428,6 +2437,23 @@ pub(crate) fn encode_alpha_lossless(
     }
 
     debug_assert_eq!(alpha_data.len(), (width * height) as usize);
+
+    if cost_model == CostModel::StrictLibwebpParity {
+        return encode_alpha_libwebp_pipeline(
+            writer,
+            alpha_data,
+            width,
+            height,
+            effort_level.min(6),
+            alpha_quality,
+            stop,
+        );
+    }
+
+    let filtering_method = 0u8;
+    // 0 is raw alpha data
+    // 1 is using the lossless format to encode alpha data
+    let compression_method = 1u8;
 
     // Apply lossy alpha quantization if alpha_quality < 100
     let preprocessing = if alpha_quality < 100 {
@@ -2454,6 +2480,109 @@ pub(crate) fn encode_alpha_lossless(
     )?;
 
     Ok(())
+}
+
+/// libwebp's `EncodeAlpha` + `ApplyFiltersAndEncode` + `EncodeAlphaInternal`
+/// (`alpha_enc.c`), at the shipped defaults `alpha_compression = 1`
+/// (lossless) and `alpha_filtering = 1` (FAST). See
+/// `crate::encoder::alpha` for the ported stages. (#38)
+fn encode_alpha_libwebp_pipeline(
+    writer: &mut Vec<u8>,
+    mut alpha_data: Vec<u8>,
+    width: u32,
+    height: u32,
+    effort_level: u8,
+    alpha_quality: u8,
+    stop: &dyn enough::Stop,
+) -> EncodeResult<()> {
+    use super::alpha as alph;
+
+    let ww = width as usize;
+    let hh = height as usize;
+    let data_size = ww * hh;
+    let reduce_levels = alpha_quality < 100;
+
+    if reduce_levels {
+        alph::quantize_levels(
+            &mut alpha_data,
+            alph::alpha_levels_for_quality(alpha_quality),
+        );
+    }
+
+    let try_map = alph::filter_try_map(
+        &alpha_data,
+        ww,
+        hh,
+        alph::AlphaFiltering::Fast,
+        effort_level,
+    );
+
+    // (score, filter, method, payload); libwebp keeps the FIRST minimum
+    // (strict `<`) iterating filters in ascending order.
+    let mut best: Option<(usize, u8, u8, Vec<u8>)> = None;
+    for filter in 0u8..4 {
+        if try_map & (1 << filter) == 0 {
+            continue;
+        }
+        let plane = alph::apply_filter(filter, &alpha_data, ww, hh);
+        let payload =
+            alpha_vp8l_payload_inner(&plane, width, height, effort_level, !reduce_levels, stop)?;
+
+        // Per-trial raw fallback: compressed larger than source reverts to
+        // ALPHA_NO_COMPRESSION for THIS trial (`EncodeAlphaInternal`).
+        let (method, out) = if payload.len() > data_size {
+            (0u8, plane)
+        } else {
+            (1u8, payload)
+        };
+        let score = 1 + out.len(); // ALPHA_HEADER_LEN + payload
+        if best.as_ref().is_none_or(|b| score < b.0) {
+            best = Some((score, filter, method, out));
+        }
+    }
+
+    let (_, filter, method, out) = best.expect("try_map always contains at least one filter");
+    let header = method | (filter << 2) | (u8::from(reduce_levels) << 4);
+    writer.push(header);
+    writer.extend_from_slice(&out);
+    Ok(())
+}
+
+/// One alpha VP8L trial payload: libwebp transfers the (filtered) alpha
+/// values to the GREEN channel with R = B = 0 (`WebPDispatchAlphaToGreen`)
+/// and encodes that image with the full lossless coder at
+/// `method = effort_level`, `quality = (use_quality_100 && effort == 6)
+/// ? 100 : 8 * effort` (`EncodeLossless`, alpha_enc.c). (#38)
+pub(crate) fn alpha_vp8l_payload_inner(
+    plane: &[u8],
+    width: u32,
+    height: u32,
+    effort_level: u8,
+    use_quality_100: bool,
+    stop: &dyn enough::Stop,
+) -> EncodeResult<Vec<u8>> {
+    let mut rgb = Vec::with_capacity(plane.len() * 3);
+    for &a in plane {
+        rgb.extend_from_slice(&[0, a, 0]);
+    }
+    let trial_params = EncoderParams {
+        method: effort_level,
+        lossy_quality: super::alpha::vp8l_quality_for_effort(effort_level, use_quality_100) as u8,
+        ..EncoderParams::default()
+    };
+    let mut payload = Vec::new();
+    encode_frame_lossless(
+        &mut payload,
+        &rgb,
+        width,
+        height,
+        width as usize,
+        PixelLayout::Rgb8,
+        trial_params,
+        true,
+        stop,
+    )?;
+    Ok(payload)
 }
 
 pub(crate) const fn chunk_size(inner_bytes: usize) -> u32 {
@@ -2556,6 +2685,8 @@ impl<'a> WebPEncoder<'a> {
         let lossy_with_alpha =
             use_lossy && color.has_alpha() && !alpha_is_opaque(data, width, height, stride, color);
         let alpha_quality = self.params.alpha_quality;
+        let alpha_effort = self.params.method;
+        let alpha_cost_model = self.params.cost_model;
 
         let mut stats = EncodeStats::default();
 
@@ -2621,6 +2752,8 @@ impl<'a> WebPEncoder<'a> {
                     stride,
                     color,
                     alpha_quality,
+                    alpha_effort,
+                    alpha_cost_model,
                     self.stop,
                 )?;
 
@@ -2716,6 +2849,8 @@ impl<'a> WebPEncoder<'a> {
         let lossy_with_alpha =
             use_lossy && color.has_alpha() && !alpha_is_opaque(data, width, height, stride, color);
         let alpha_quality = self.params.alpha_quality;
+        let alpha_effort = self.params.method;
+        let alpha_cost_model = self.params.cost_model;
         let mut stats;
         let diagnostics;
 
@@ -2770,6 +2905,8 @@ impl<'a> WebPEncoder<'a> {
                     stride,
                     color,
                     alpha_quality,
+                    alpha_effort,
+                    alpha_cost_model,
                     self.stop,
                 )?;
                 total_bytes += chunk_size(alpha_chunk.len());
