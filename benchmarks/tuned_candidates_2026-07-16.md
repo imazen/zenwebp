@@ -126,3 +126,25 @@ hash-chain iteration accounting was NOT adopted for tuned (parity-gated
 via `Vp8lConfig::parity`): zenwebp's stall-budget + always-on row-above
 seed measured +8.5..75% bytes BETTER than the flat cap on smooth
 gradients at m0 (see `hash_chain.rs` comments).
+
+## 6. segs1 uv_alpha dq_uv → **REJECTED** (2026-07-16, later)
+
+The last queued candidate from the extremes-axis work: libwebp applies
+uv_alpha-derived UV quant deltas at every segment count; zenwebp's tuned
+single-segment path skips them. Measured (`tuned_ab_sweep --segments 1
+--sns 50`, m2/4/6 × q25-90, 180 paired cells, all changed;
+`segs1_dquv_ab_2026-07-16.tsv`):
+
+| axis | Δsize | Δzsim |
+|---|---|---|
+| m2 / m4 / m6 | +2.76% / +2.77% / +2.88% | +0.34 / +0.36 / +0.38 |
+| q25 / q50 / q75 | +1.3% / +1.2% / +1.5% | +0.53 / +0.32 / +0.18 |
+| q90 | **+7.26%** | +0.42 |
+
+Rejected: ~+0.35 zsim for ~+2.8% bytes sits ON the tuned RD curve (not
+above it like the adopted candidates), the q90 leg is clearly below it,
+and at m2+ the delta is driven by libwebp's UNSET `uv_alpha = 0` default
+(its analysis doesn't run there) rather than content signal — libwebp is
+spending bytes on a hardcoded "assume chroma is bad" guess. No shipped
+preset uses segments=1, so the affected path is explicit-override only.
+Verdict recorded at the parity gate in `vp8/mod.rs`.

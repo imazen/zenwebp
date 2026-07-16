@@ -2972,9 +2972,12 @@ impl<'a> Vp8Encoder<'a> {
             // still yielding non-zero deltas whenever sns_strength > 0
             // (traced at 382297 q50 m4 sns80 segs1: lib writes uvac_delta=-4,
             // zen wrote none, flipping 24% of UV picks). zenwebp's tuned
-            // single-segment path historically skipped the deltas entirely —
-            // a tuned-adoption candidate pending an A/B (finer UV quant at
-            // high SNS); parity computes them here. (#38)
+            // single-segment path skips the deltas: MEASURED AND REJECTED
+            // for adoption (A/B 2026-07-16, segs1 sns50, 180 cells: +0.35
+            // zsim for +2.8% bytes overall, +7.3% bytes at q90 — on/below
+            // the tuned RD curve, and at m2+ the delta comes from libwebp's
+            // unset uv_alpha=0 default, not content). Parity computes them
+            // here. (#38)
             if self.cost_model == super::api::CostModel::StrictLibwebpParity {
                 const MID_UV_ALPHA: i32 = 64;
                 const MIN_UV_ALPHA: i32 = 30;

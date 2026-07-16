@@ -1,0 +1,1 @@
+# git: 3f035c9; cmd: tuned_ab_sweep --segments 1 --sns 50 --methods 2,4,6 --qs 25,50,75,90 on ~/tmp/abcorpus; candidate = parity segs1 dq_uv block enabled for tuned; host: lilith

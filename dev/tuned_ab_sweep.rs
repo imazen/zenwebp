@@ -18,6 +18,10 @@
 //!   cargo run --release --example tuned_ab_sweep -- \
 //!     --corpus ~/tmp/abcorpus --variant baseline \
 //!     --methods 4,5,6 --qs 25,50,75,90 --out ~/tmp/ab_trellis_skip.tsv
+//!
+//! Optional knob overrides (default preset values when absent):
+//!   --segments N --sns N — for candidates that only fire off-default
+//!   (e.g. the segs1 uv_alpha dq_uv adoption A/B).
 
 #![forbid(unsafe_code)]
 
@@ -64,6 +68,8 @@ fn main() {
     let out = arg_value(&args, "--out").expect("--out <tsv> required");
     let methods = parse_u8_list(&arg_value(&args, "--methods").unwrap_or_else(|| "4,5,6".into()));
     let qs = parse_u8_list(&arg_value(&args, "--qs").unwrap_or_else(|| "25,50,75,90".into()));
+    let segments: Option<u8> = arg_value(&args, "--segments").and_then(|s| s.parse().ok());
+    let sns: Option<u8> = arg_value(&args, "--sns").and_then(|s| s.parse().ok());
 
     let mut images: Vec<std::path::PathBuf> = std::fs::read_dir(&corpus)
         .expect("corpus dir")
@@ -98,7 +104,13 @@ fn main() {
 
         for &m in &methods {
             for &q in &qs {
-                let cfg = LossyConfig::new().with_quality(f32::from(q)).with_method(m);
+                let mut cfg = LossyConfig::new().with_quality(f32::from(q)).with_method(m);
+                if let Some(segs) = segments {
+                    cfg = cfg.with_segments(segs);
+                }
+                if let Some(sns) = sns {
+                    cfg = cfg.with_sns_strength(sns);
+                }
                 let mut best_ms = f64::MAX;
                 let mut webp: Vec<u8> = Vec::new();
                 for _ in 0..3 {
