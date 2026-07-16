@@ -139,6 +139,18 @@ Next iterations: dump both sides' backward refs for the main image (lengths
 histogram) and the clustering combine costs; converge zen's histogram
 clustering + LZ77 length choice at the alpha operating point.
 
+**Clustering-dump status (HISTDBG landed, open question):** libwebp's greedy
+pair evaluation on the checker main image shows `diff ≈ -4.3e9` — merging IS
+favorable on its side too, which contradicts the "lib keeps 2 groups"
+reading of the TREE counts (lib emits 15 TREE stores per ALPH stream vs
+zen's 10). The group accounting needs IMAGE-boundary tags (palette image /
+entropy image / main image) on the TREE markers to disambiguate — 15 may be
+palette(5) + entropy-image(5) + merged-main(5), i.e. lib codes an entropy
+image where zen skips it (or vice versa). Also zen's 2-histogram case never
+reaches the instrumented `push` (no ZHIST lines) — its tiny-set clustering
+takes a different branch; instrument that branch next. Both dumps are in
+place (`HISTDBG` env, both trees).
+
 ### Failure shape: NONE — 4004/4004 (2026-07-16)
 
 #### SOLVED: I4 tie-break must follow libwebp's ENUM order (this commit, +10)

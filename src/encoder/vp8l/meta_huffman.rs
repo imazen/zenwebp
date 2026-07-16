@@ -341,6 +341,14 @@ impl HistoQueue {
             cost_threshold as u64,
         ) {
             let cost_diff = cost_combo as i64 - sum_cost;
+            #[cfg(feature = "mode_debug")]
+            if std::env::var("HISTDBG").is_ok() {
+                std::eprintln!(
+                    "ZHIST pair idx({idx1},{idx2}) cost1={} cost2={} combo={cost_combo} diff={cost_diff} thresh={cost_threshold}",
+                    costs[idx1].total,
+                    costs[idx2].total,
+                );
+            }
             let pair = HistogramPair {
                 idx1,
                 idx2,
