@@ -282,7 +282,10 @@ fn permutation_axis_anchors_byte_identical() {
 fn opaque_rgba_matches_libwebp_bare_vp8() {
     let (w, h) = (64u32, 64u32);
     let rgb = synth(w, h, 31);
-    let rgba: Vec<u8> = rgb.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect();
+    let rgba: Vec<u8> = rgb
+        .chunks_exact(3)
+        .flat_map(|p| [p[0], p[1], p[2], 255])
+        .collect();
     for &(q, m) in &[(5u8, 0u8), (50, 2), (75, 4), (90, 6)] {
         let cfg = LossyConfig::new()
             .with_quality(f32::from(q))
@@ -305,7 +308,8 @@ fn opaque_rgba_matches_libwebp_bare_vp8() {
             .encode_rgba(&rgba, w, h, webpx::Unstoppable)
             .unwrap();
         assert_eq!(
-            zen, lib,
+            zen,
+            lib,
             "opaque RGBA q{q} m{m}: zen={} lib={} — expected bare VP8, byte-identical",
             zen.len(),
             lib.len()
