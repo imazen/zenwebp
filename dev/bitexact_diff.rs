@@ -28,7 +28,10 @@ fn load(path: &str) -> (Vec<u8>, u32, u32) {
     buf.truncate(info.buffer_size());
     let rgb: Vec<u8> = match info.color_type {
         png::ColorType::Rgb => buf,
-        png::ColorType::Rgba => buf.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect(),
+        png::ColorType::Rgba => buf
+            .chunks_exact(4)
+            .flat_map(|p| [p[0], p[1], p[2]])
+            .collect(),
         png::ColorType::Grayscale => buf.iter().flat_map(|&g| [g, g, g]).collect(),
         _ => unreachable!(),
     };
@@ -239,7 +242,6 @@ fn parse_hdr(p: &[u8]) -> Hdr {
     }
 }
 
-
 pub const KEYFRAME_YMODE_TREE: [i8; 8] = [-B_PRED, 2, 4, 6, -DC_PRED, -V_PRED, -H_PRED, -TM_PRED];
 pub const KEYFRAME_YMODE_PROBS: [u8; 4] = [145, 156, 163, 128];
 pub const KEYFRAME_BPRED_MODE_TREE: [i8; 18] = [
@@ -423,9 +425,8 @@ fn diff_fields(z: &Hdr, l: &Hdr) -> Vec<String> {
     out
 }
 
-
 struct ModeStream {
-    y_modes: Vec<i8>,       // per MB: B_PRED(-?) or I16 mode constant
+    y_modes: Vec<i8>, // per MB: B_PRED(-?) or I16 mode constant
     uv_modes: Vec<i8>,
     b_modes: Vec<[i8; 16]>, // valid when y == B_PRED
     skips: Vec<u32>,
@@ -482,8 +483,16 @@ fn parse_modes(p: &[u8], mb_w: usize, mb_h: usize) -> (Hdr, ModeStream) {
             if y == B_PRED {
                 for sy in 0..4 {
                     for sx in 0..4 {
-                        let a = if sy == 0 { above[mbx * 4 + sx] } else { bm[(sy - 1) * 4 + sx] };
-                        let l = if sx == 0 { left[sy] } else { bm[sy * 4 + sx - 1] };
+                        let a = if sy == 0 {
+                            above[mbx * 4 + sx]
+                        } else {
+                            bm[(sy - 1) * 4 + sx]
+                        };
+                        let l = if sx == 0 {
+                            left[sy]
+                        } else {
+                            bm[sy * 4 + sx - 1]
+                        };
                         let m = tree_decode(
                             &mut b,
                             &KEYFRAME_BPRED_MODE_TREE,
@@ -580,8 +589,25 @@ fn main() {
     let (mb_w, mb_h) = (((w + 15) / 16) as usize, ((h + 15) / 16) as usize);
     println!("image: {img_path} {w}x{h} ({mb_w}x{mb_h} MBs)");
 
-    for (q, sns, flt, segs) in [(75u8, 0u8, 0u8, 1u8), (75, 50, 60, 4)] {
-        for m in [2u8, 3, 4, 5, 6] {
+    // The grid is overridable from argv so this can chase cells outside q75.
+    // That matters: after the Cat5/Cat6 fix (44ae3a0) the sns=0 configs are
+    // ~98% byte-identical and 201 of the 237 remaining failures live in the
+    // SNS + filter + multi-segment cells, which this tool could not reach while
+    // the grid was hardcoded to q75.
+    //   argv: [image] [q] [m] [sns] [flt] [segs]
+    // With no overrides it runs the original two-config q75 grid across m2-m6.
+    let arg_u8 = |i: usize| -> Option<u8> { args.get(i).and_then(|s| s.parse().ok()) };
+    let grid: Vec<(u8, u8, u8, u8)> = match (arg_u8(2), arg_u8(4), arg_u8(5), arg_u8(6)) {
+        (Some(q), Some(sns), Some(flt), Some(segs)) => vec![(q, sns, flt, segs)],
+        _ => vec![(75u8, 0u8, 0u8, 1u8), (75, 50, 60, 4)],
+    };
+    let methods: Vec<u8> = match arg_u8(3) {
+        Some(m) => vec![m],
+        None => vec![2u8, 3, 4, 5, 6],
+    };
+
+    for (q, sns, flt, segs) in grid {
+        for m in methods.iter().copied() {
             let cfg = LossyConfig::new()
                 .with_quality(q as f32)
                 .with_method(m)
@@ -608,8 +634,18 @@ fn main() {
                 println!("   {d}");
             }
             let n = zm.y_modes.len();
-            let y_same = zm.y_modes.iter().zip(&lm.y_modes).filter(|(a, b)| a == b).count();
-            let uv_same = zm.uv_modes.iter().zip(&lm.uv_modes).filter(|(a, b)| a == b).count();
+            let y_same = zm
+                .y_modes
+                .iter()
+                .zip(&lm.y_modes)
+                .filter(|(a, b)| a == b)
+                .count();
+            let uv_same = zm
+                .uv_modes
+                .iter()
+                .zip(&lm.uv_modes)
+                .filter(|(a, b)| a == b)
+                .count();
             let b_same = zm
                 .b_modes
                 .iter()
@@ -629,8 +665,12 @@ fn main() {
             let seg_same = if zm.segments.len() == lm.segments.len() && !zm.segments.is_empty() {
                 format!(
                     " seg_same={:.1}%",
-                    100.0 * zm.segments.iter().zip(&lm.segments).filter(|(a, b)| a == b).count()
-                        as f64
+                    100.0
+                        * zm.segments
+                            .iter()
+                            .zip(&lm.segments)
+                            .filter(|(a, b)| a == b)
+                            .count() as f64
                         / n as f64
                 )
             } else {

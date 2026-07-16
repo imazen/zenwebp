@@ -6,7 +6,9 @@
 //! prediction inputs and neighbour context are provably shared.
 //!
 //! Usage: move to examples/ or add an [[example]] entry, then:
-//!   cargo run --release --example mbpixdiff -- [image.png] [quality] [method]
+//!   cargo run --release --example mbpixdiff -- \
+//!       [image.png] [quality] [method] [sns] [filter] [segments]
+//! Defaults: q40 m6 sns0 flt0 segs1.
 //!
 //! ## Why this exists (read before tracing #38 by hand)
 //!
@@ -57,8 +59,13 @@ fn main() {
         .unwrap_or("/home/lilith/.cache/codec-corpus/v1/CID22/CID22-512/validation/382297.png");
     let q: u8 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(40);
     let m: u8 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(6);
-    // Held at the config the #38 trace uses; edit if chasing another cell.
-    let (sns, flt, segs) = (0u8, 0u8, 1u8);
+    // The config axis matters as much as q/m: after the Cat5/Cat6 fix the sns=0
+    // configs are ~98% byte-identical, and 201 of the 237 remaining failures
+    // live in the SNS + filter + multi-segment cells (sns30/flt20/segs2 and
+    // sns50/flt60/segs4). Those were untraceable while this was hardcoded.
+    let sns: u8 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let flt: u8 = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let segs: u8 = args.get(6).and_then(|s| s.parse().ok()).unwrap_or(1);
 
     let (rgb, w, h) = load(img_path);
     let (mb_w, mb_h) = (w.div_ceil(16) as usize, h.div_ceil(16) as usize);

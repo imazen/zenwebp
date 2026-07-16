@@ -631,7 +631,11 @@ impl<'a> super::Vp8Encoder<'a> {
     /// RD formula: score = (R + H) * lambda + RD_DISTO_MULT * (D + SD)
     /// Where: R = coeff cost, H = mode cost, D = SSE, SD = spectral distortion
     ///
-    /// Returns `(best_mode, rd_score, d_raw)`:
+    /// Returns `(best_mode, rd_score, d_raw, y2_zigzag, is_blocky)`. The last
+    /// two describe the winning I16 CANDIDATE and are needed even when I4 wins
+    /// the macroblock: libwebp records them at the end of `PickBestIntra16`,
+    /// before `PickBestIntra4` can override the mode. (#38)
+    ///
     ///   - `rd_score` — combined RD score for comparison against Intra4x4.
     ///   - `d_raw` — winning-mode raw source-vs-reconstruction SSE before
     ///     the flat-source doubling. Matches libwebp's `rd->D` (the value
@@ -639,7 +643,7 @@ impl<'a> super::Vp8Encoder<'a> {
     ///     `quant_enc.c:1111`). Threaded into `MacroblockInfo` so the
     ///     `store_max_delta` call site can apply the `D > min_disto` gate
     ///     (issue #44).
-    fn pick_best_intra16(&self, mbx: usize, mby: usize) -> (LumaMode, u64, u32) {
+    fn pick_best_intra16(&self, mbx: usize, mby: usize) -> (LumaMode, u64, u32, [i32; 16], bool) {
         // Check for debug mode
         #[cfg(feature = "mode_debug")]
         let debug_i16 = std::env::var("MB_DEBUG")
@@ -664,7 +668,13 @@ impl<'a> super::Vp8Encoder<'a> {
         // Fast path for method 0-1: DC mode only with SSE-based scoring
         // This avoids the full RD evaluation loop for maximum speed
         if self.method <= 1 {
-            return self.pick_intra16_fast_dc(mbx, mby);
+            // m0/m1 are RD_OPT_NONE, where libwebp uses RefineUsingDistortion and
+            // never calls PickBestIntra16 — so StoreMaxDelta never fires either
+            // (it lives at the end of that function). `store_max_edge_active()`
+            // gates on method >= 3 under parity to match, so the Y2/blocky
+            // carriers are unused here.
+            let (mode, score, d) = self.pick_intra16_fast_dc(mbx, mby);
+            return (mode, score, d, [0i32; 16], false);
         }
 
         // The 4 modes to try for 16x16 luma prediction (order matches FIXED_COSTS_I16)
@@ -722,6 +732,12 @@ impl<'a> super::Vp8Encoder<'a> {
         // compares against `dqm->min_disto`. Threaded through MacroblockInfo
         // so `store_max_delta` can apply the gate (issue #44).
         let mut best_d_raw = 0u32;
+        // Winning I16 candidate's Y2 (zigzag) and blocky flag, carried out so the
+        // `store_max_delta` gate can fire even when I4 ultimately wins the MB —
+        // libwebp records these inside `PickBestIntra16`, before `PickBestIntra4`
+        // runs. (#38)
+        let mut best_y2_zz = [0i32; 16];
+        let mut best_i16_blocky = false;
 
         // Pre-allocate scratch buffers outside mode loop to avoid redundant zero-init.
         // All elements are written before read in each iteration.
@@ -1056,6 +1072,20 @@ impl<'a> super::Vp8Encoder<'a> {
                 best_psy_cost = psy_cost;
                 // Raw SSE (pre flat-source doubling) for the #44 gate.
                 best_d_raw = sse;
+                // Winning I16 candidate's Y2 (zigzag) + whether the MB is
+                // "blocky" (only DCs non-zero). libwebp records these from the
+                // I16 candidate at the END of `PickBestIntra16`, BEFORE
+                // `PickBestIntra4` can override the mode — so they must survive
+                // even when I4 ultimately wins. See the `store_max_delta` call
+                // site. (#38)
+                best_y2_zz = y2_quant_zz;
+                // libwebp's `(rd->nz & 0x100ffff) == 0x1000000`: the Y2 block has
+                // non-zero coefficients AND all 16 Y-AC blocks are zero. Index 0
+                // of each `y1_quant_zz` row is the DC slot, which lives in Y2 and
+                // is forced to 0 on this path, so scanning the whole row is the
+                // AC test.
+                best_i16_blocky = y2_quant_zz.iter().any(|&c| c != 0)
+                    && y1_quant_zz.iter().all(|blk| blk.iter().all(|&c| c == 0));
             }
         }
 
@@ -1086,7 +1116,13 @@ impl<'a> super::Vp8Encoder<'a> {
         }
 
         // Convert to u64 for interface compatibility (score should be positive)
-        (best_mode, final_score.max(0) as u64, best_d_raw)
+        (
+            best_mode,
+            final_score.max(0) as u64,
+            best_d_raw,
+            best_y2_zz,
+            best_i16_blocky,
+        )
     }
 
     /// Fast DC-only mode selection for method 0.
@@ -2380,6 +2416,13 @@ impl<'a> super::Vp8Encoder<'a> {
                     segment_id,
                     coeffs_skipped: false,
                     intra16_d,
+                    // m0-m2 are RD_OPT_NONE: libwebp never reaches
+                    // PickBestIntra16, so StoreMaxDelta never fires and these
+                    // are unused (`store_max_edge_active()` gates on
+                    // method >= 3 under parity).
+                    intra16_cand_d: intra16_d.unwrap_or(0),
+                    intra16_y2_zz: [0i32; 16],
+                    intra16_blocky: false,
                 };
             }
         }
@@ -2414,11 +2457,15 @@ impl<'a> super::Vp8Encoder<'a> {
                 segment_id,
                 coeffs_skipped: false,
                 intra16_d: Some(i16_d),
+                // RD_OPT_NONE path — see the note on the m0-m2 ctor above.
+                intra16_cand_d: i16_d,
+                intra16_y2_zz: [0i32; 16],
+                intra16_blocky: false,
             };
         }
 
         // Pick the best 16x16 luma mode using RD cost selection
-        let (luma_mode, i16_score, i16_d) = self.pick_best_intra16(mbx, mby);
+        let (luma_mode, i16_score, i16_d, i16_y2_zz, i16_blocky) = self.pick_best_intra16(mbx, mby);
 
         // Debug output for specific macroblock (check MB_DEBUG env var)
         // Set MB_DEBUG=x,y to debug mode selection for that macroblock
@@ -2534,6 +2581,11 @@ impl<'a> super::Vp8Encoder<'a> {
         // `StoreMaxDelta` is gated on `(nz & 0x100ffff) == 0x1000000` —
         // i.e. an I16 MB with non-zero Y2 and zero Y1 AC — so I4 MBs
         // never reach that call site anyway.
+        // NOTE: `intra16_d` stays None for I4 macroblocks — it is the *winning
+        // mode's* distortion, and for I4 that is not an I16 number. The
+        // store_max_delta gate uses `intra16_cand_d` instead, which is the I16
+        // CANDIDATE's D and is retained regardless of the final mode (libwebp
+        // gates on exactly that, inside PickBestIntra16). (#38)
         let intra16_d = if luma_bpred.is_some() {
             None
         } else {
@@ -2547,6 +2599,9 @@ impl<'a> super::Vp8Encoder<'a> {
             segment_id,
             coeffs_skipped: false,
             intra16_d,
+            intra16_cand_d: i16_d,
+            intra16_y2_zz: i16_y2_zz,
+            intra16_blocky: i16_blocky,
         }
     }
 

@@ -386,6 +386,33 @@ struct MacroblockInfo {
     /// matching libwebp's `quant_enc.c:1111` per-MB filter-strength gate
     /// (issue #44).
     intra16_d: Option<u32>,
+    /// The I16 CANDIDATE's Y2 (zigzag) and blocky flag, retained even when I4
+    /// wins the macroblock.
+    ///
+    /// libwebp runs `StoreMaxDelta` at the end of `PickBestIntra16`
+    /// (`quant_enc.c:1035`), i.e. BEFORE `PickBestIntra4` can override the mode:
+    ///
+    /// ```c
+    /// if ((rd->nz & 0x100ffff) == 0x1000000 && rd->D > dqm->min_disto) {
+    ///   StoreMaxDelta(dqm, rd->y_dc_levels);
+    /// }
+    /// ```
+    ///
+    /// So a macroblock whose I16 candidate is blocky-and-high-distortion feeds
+    /// `max_edge` even if it is finally emitted as I4. zenwebp used to gate that
+    /// on the FINAL mode (`!is_i4`) and drop `intra16_d` for I4 macroblocks,
+    /// which under-counted `max_edge` and left the segment's loop-filter level
+    /// un-bumped. Measured on CID22 382297 q5/m4/sns50/flt60/segs4: one missed
+    /// macroblock put `max_edge[1]` at 1 instead of 2, so segment 1's filter
+    /// level came out 29 where libwebp writes 55 — a header-field divergence
+    /// with every mode decision otherwise identical. (#38)
+    ///
+    /// `intra16_cand_d` is the I16 CANDIDATE's raw distortion (unlike
+    /// `intra16_d`, which is the WINNING mode's and is None for I4). It is what
+    /// libwebp's `rd->D > dqm->min_disto` half of the gate compares.
+    intra16_cand_d: u32,
+    intra16_y2_zz: [i32; 16],
+    intra16_blocky: bool,
 }
 
 pub(super) type ChromaCoeffs = [i32; 16 * 4];
@@ -970,6 +997,13 @@ impl<'a> Vp8Encoder<'a> {
         let mut max_level = 0i32;
         for s in 0..MAX_SEGMENTS {
             let max_edge = self.max_edge_per_segment[s];
+            #[cfg(feature = "mode_debug")]
+            if std::env::var("FSDBG").is_ok() {
+                eprintln!(
+                    "ZENADJ seg{s} max_edge={max_edge} y2q1={} fstrength_before={}",
+                    self.segments[s].y2ac, self.segments[s].loopfilter_level
+                );
+            }
             // y2.q[1] is the Y2 AC quantizer in libwebp's expanded matrix.
             // zenwebp stores it directly on Segment as `y2ac` (i16).
             let y2_q1 = i32::from(self.segments[s].y2ac);
@@ -1858,26 +1892,35 @@ impl<'a> Vp8Encoder<'a> {
                 // (`y_block_data.coeffs` == PickBestIntra16's luma_blocks); the
                 // Y2 DC is never trellised so its nonzero test is unchanged. m6
                 // and the tuned default use the stored (trellis) test. (#38)
-                let blocky = if !is_i4
-                    && self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity
-                    && self.do_trellis
-                    && !self.do_trellis_i4_mode
-                {
-                    let y1 = self.segments[mb_segment_id].y1_matrix.as_ref().unwrap();
-                    let ac_all_zero = (0..16).all(|b| {
-                        let mut blk: [i32; 16] =
-                            y_block_data.coeffs[b * 16..b * 16 + 16].try_into().unwrap();
-                        blk[0] = 0; // DC lives in Y2
-                        !crate::encoder::quantize::quantize_ac_only_simd(&mut blk, y1, true)
-                    });
-                    ac_all_zero && stored_coeffs.y2_zigzag.iter().any(|&c| c != 0)
+                if self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity {
+                    // libwebp runs StoreMaxDelta at the END of PickBestIntra16,
+                    // BEFORE PickBestIntra4 can override the mode — so it feeds
+                    // `max_edge` from the I16 CANDIDATE even for macroblocks that
+                    // are finally emitted as I4. Gating on the final mode
+                    // (`!is_i4`, below) under-counts `max_edge`, which leaves the
+                    // segment's loop-filter level un-bumped in
+                    // VP8AdjustFilterStrength and writes a wrong seg_lf header.
+                    //
+                    // Both halves come from `pick_best_intra16` now, which also
+                    // fixes the m5 trellis skew the old recompute worked around:
+                    // that function trellises the I16 AC only at m6
+                    // (`do_trellis_i4_mode`), exactly like libwebp's
+                    // `PickBestIntra16` (do_trellis=0 at m5), so its blocky test
+                    // reads the same nz libwebp's does at every method. (#38)
+                    if self.store_max_edge_active()
+                        && macroblock_info.intra16_blocky
+                        && macroblock_info.intra16_cand_d > self.segments[mb_segment_id].min_disto
+                    {
+                        let y2 = macroblock_info.intra16_y2_zz;
+                        self.store_max_delta(mb_segment_id, &y2);
+                    }
                 } else {
-                    stored_coeffs.is_blocky_i16()
-                };
-                if self.store_max_edge_active() && !is_i4 && blocky {
-                    let d = macroblock_info.intra16_d.unwrap_or(0);
-                    if d > self.segments[mb_segment_id].min_disto {
-                        self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
+                    let blocky = stored_coeffs.is_blocky_i16();
+                    if self.store_max_edge_active() && !is_i4 && blocky {
+                        let d = macroblock_info.intra16_d.unwrap_or(0);
+                        if d > self.segments[mb_segment_id].min_disto {
+                            self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
+                        }
                     }
                 }
                 if store_coeffs {
@@ -1894,6 +1937,18 @@ impl<'a> Vp8Encoder<'a> {
                 &v_block_data.coeffs,
             );
             let all_zero = stored_coeffs.is_all_zero(is_i4, first_coeff_y1);
+            // libwebp records max_edge inside PickBestIntra16, which runs before
+            // both the I4 override AND the skip decision — so it must fire here
+            // regardless of `is_i4` or `all_zero`. See the trellis branch above.
+            // (#38)
+            if self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity
+                && self.store_max_edge_active()
+                && macroblock_info.intra16_blocky
+                && macroblock_info.intra16_cand_d > self.segments[mb_segment_id].min_disto
+            {
+                let y2 = macroblock_info.intra16_y2_zz;
+                self.store_max_delta(mb_segment_id, &y2);
+            }
             if all_zero {
                 row_state.skip_mb += 1;
                 mb_info.coeffs_skipped = true;
@@ -1907,7 +1962,11 @@ impl<'a> Vp8Encoder<'a> {
                 // Track edge magnitude for I16 "blocky" MBs (#34).
                 // See trellis branch above for the `D > min_disto`
                 // rationale (issue #44).
-                if self.store_max_edge_active() && !is_i4 && stored_coeffs.is_blocky_i16() {
+                if self.cost_model != crate::encoder::api::CostModel::StrictLibwebpParity
+                    && self.store_max_edge_active()
+                    && !is_i4
+                    && stored_coeffs.is_blocky_i16()
+                {
                     let d = macroblock_info.intra16_d.unwrap_or(0);
                     if d > self.segments[mb_segment_id].min_disto {
                         self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);

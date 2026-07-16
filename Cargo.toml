@@ -212,6 +212,11 @@ path = "dev/mbpixdiff.rs"
 required-features = ["__expert"]
 
 [[example]]
+name = "bitexact_diff"
+path = "dev/bitexact_diff.rs"
+required-features = ["__expert"]
+
+[[example]]
 name = "zensim_calibrate"
 path = "dev/zensim_calibrate.rs"
 required-features = ["target-zensim"]
