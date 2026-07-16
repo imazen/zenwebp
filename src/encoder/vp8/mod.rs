@@ -1148,6 +1148,27 @@ impl<'a> Vp8Encoder<'a> {
             let v_plane = &data[y_size + uv_size..y_size + uv_size * 2];
 
             crate::decoder::yuv::import_yuv420_planes(y_plane, u_plane, v_plane, width, height)
+        } else if params.sharp_yuv.is_some()
+            && params.cost_model == super::api::CostModel::StrictLibwebpParity
+            && !matches!(color, PixelLayout::L8 | PixelLayout::La8)
+        {
+            if width >= 4 && height >= 4 {
+                // Parity: libwebp's own SharpYUV algorithm, byte-exact port.
+                crate::encoder::sharpyuv::convert_image_sharp_libwebp(
+                    data, color, width, height, stride,
+                )
+            } else {
+                // libwebp disables iterative conversion below
+                // kMinDimensionIterativeConversion (4) — standard path.
+                crate::decoder::yuv::convert_image_yuv_fast(
+                    data,
+                    color,
+                    width,
+                    height,
+                    stride,
+                    crate::decoder::yuv::ChromaPrec::LibwebpExact,
+                )
+            }
         } else if let Some(sharp_cfg) = &params.sharp_yuv {
             crate::decoder::yuv::convert_image_sharp_yuv_with_config(
                 data, color, width, height, stride, *sharp_cfg,
@@ -1199,6 +1220,28 @@ impl<'a> Vp8Encoder<'a> {
                 stride,
                 color
             );
+        }
+
+        // ZYUVDUMP=<path>: dump the tight Y/U/V region of the encoder input
+        // planes (mb-aligned strides trimmed) for input-conversion parity
+        // diffing against libwebp's `dump_encoder_yuv` (#38 SharpYUV).
+        #[cfg(feature = "mode_debug")]
+        if let Ok(path) = std::env::var("ZYUVDUMP") {
+            let w = usize::from(width);
+            let h = usize::from(height);
+            let (lw, cw) = (w.div_ceil(16) * 16, w.div_ceil(16) * 8);
+            let (tcw, tch) = (w.div_ceil(2), h.div_ceil(2));
+            let mut out = alloc::vec::Vec::new();
+            for j in 0..h {
+                out.extend_from_slice(&y_bytes[j * lw..j * lw + w]);
+            }
+            for j in 0..tch {
+                out.extend_from_slice(&u_bytes[j * cw..j * cw + tcw]);
+            }
+            for j in 0..tch {
+                out.extend_from_slice(&v_bytes[j * cw..j * cw + tcw]);
+            }
+            std::fs::write(path, out).unwrap();
         }
 
         self.setup_encoding(

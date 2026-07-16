@@ -1,5 +1,5 @@
 //! Sharp-YUV quality comparison: zenyuv's sharp converter vs libwebp's
-//! SharpYUV library (#38 "dig into yuv").
+//! SharpYUV library vs the zenwebp SharpYUV PORT (#38 "dig into yuv").
 //!
 //! zenyuv's sharp-YUV is a redesign (Newton step with the inverse-matrix
 //! Jacobian, f32 math, 2 iterations, optional Y refinement), not a port of
@@ -9,8 +9,9 @@
 //! output per byte?
 //!
 //! For each corpus PNG × quality: encode with sharp YUV enabled through
-//! zenwebp (tuned default) and through libwebp (webpx), decode both, score
-//! zensim + SSIM-free size, print one TSV row.
+//! zenwebp (tuned default), through the `encoder::sharpyuv` port (its planes
+//! fed back via `PixelLayout::Yuv420` so only the converter differs), and
+//! through libwebp (webpx); decode, score zensim, print one TSV row.
 //!
 //! Usage:
 //!   cargo run --release --features __expert --example sharpyuv_compare -- \
@@ -58,7 +59,7 @@ fn main() {
 
     let z = Zensim::new(ZensimProfile::latest());
     println!(
-        "image\tq\tzen_sharp_bytes\tzen_sharp_zsim\tlib_sharp_bytes\tlib_sharp_zsim\tzen_std_bytes\tzen_std_zsim"
+        "image\tq\tzen_sharp_bytes\tzen_sharp_zsim\tport_sharp_bytes\tport_sharp_zsim\tlib_sharp_bytes\tlib_sharp_zsim\tzen_std_bytes\tzen_std_zsim"
     );
     for path in &images {
         let name = path.file_stem().unwrap().to_string_lossy().to_string();
@@ -101,6 +102,21 @@ fn main() {
             )
             .encode()
             .expect("zen std encode");
+            // The port's planes fed back through Yuv420 input: identical
+            // tuned encoder, ONLY the RGB→YUV converter differs.
+            let (py, pu, pv) = zenwebp::__expert::sharpyuv_convert_rgb(&rgb, w as u16, h as u16);
+            let mut yuv = py;
+            yuv.extend_from_slice(&pu);
+            yuv.extend_from_slice(&pv);
+            let port_sharp = EncodeRequest::lossy(
+                &LossyConfig::new().with_quality(f32::from(q)).with_method(m),
+                &yuv,
+                PixelLayout::Yuv420,
+                w,
+                h,
+            )
+            .encode()
+            .expect("port sharp encode");
             let lib_sharp = webpx::EncoderConfig::new()
                 .quality(f32::from(q))
                 .method(m)
@@ -109,9 +125,11 @@ fn main() {
                 .expect("lib sharp encode");
 
             println!(
-                "{name}\t{q}\t{}\t{:.3}\t{}\t{:.3}\t{}\t{:.3}",
+                "{name}\t{q}\t{}\t{:.3}\t{}\t{:.3}\t{}\t{:.3}\t{}\t{:.3}",
                 zen_sharp.len(),
                 score(&zen_sharp),
+                port_sharp.len(),
+                score(&port_sharp),
                 lib_sharp.len(),
                 score(&lib_sharp),
                 zen_std.len(),

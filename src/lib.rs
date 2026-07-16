@@ -230,6 +230,32 @@ pub mod sweep;
 #[doc(hidden)]
 pub mod __expert {
     pub use crate::encoder::alpha_expert::*;
+
+    /// libwebp SharpYUV port (#38): RGB→YUV420, byte-exact vs
+    /// `SharpYuvConvert`. Returns TIGHT (Y, U, V) planes — Y is
+    /// width×height, U/V are ⌈w/2⌉×⌈h/2⌉ — suitable for
+    /// [`crate::PixelLayout::Yuv420`] input and for diffing against libwebp
+    /// plane dumps. Diagnostics only.
+    pub fn sharpyuv_convert_rgb(
+        rgb: &[u8],
+        width: u16,
+        height: u16,
+    ) -> (
+        alloc::vec::Vec<u8>,
+        alloc::vec::Vec<u8>,
+        alloc::vec::Vec<u8>,
+    ) {
+        crate::encoder::sharpyuv::sharp_yuv_convert(
+            rgb,
+            3,
+            0,
+            1,
+            2,
+            usize::from(width),
+            usize::from(height),
+            usize::from(width) * 3,
+        )
+    }
 }
 
 /// Test-only helpers exposed for integration tests.

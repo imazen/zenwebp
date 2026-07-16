@@ -212,6 +212,11 @@ path = "dev/sharpyuv_compare.rs"
 required-features = ["__expert"]
 
 [[example]]
+name = "sharpyuv_selftest"
+path = "dev/sharpyuv_selftest.rs"
+required-features = ["__expert"]
+
+[[example]]
 name = "alphadiff"
 path = "dev/alphadiff.rs"
 required-features = ["__expert"]

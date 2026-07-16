@@ -275,6 +275,51 @@ fn permutation_axis_anchors_byte_identical() {
     }
 }
 
+/// sharp_yuv input conversion: under parity, RGB→YUV runs through
+/// `encoder::sharpyuv` — the exact port of libwebp's `SharpYuvConvert`
+/// (10-bit fixed-point W/RGB-delta iteration, linear-light targets, 9-3-3-1
+/// decoder-matched filter) — so whole files stay byte-identical. Images with
+/// either dimension < 4 must ALSO match: libwebp disables iterative
+/// conversion below `kMinDimensionIterativeConversion` and so do we. (#38)
+#[test]
+fn sharp_yuv_matches_libwebp() {
+    let cells = [
+        // (w, h, seed, q, m, sns, flt, segs)
+        (128u32, 128u32, 43u32, 75u8, 4u8, 50u8, 60u8, 4u8),
+        (129, 127, 37, 50, 2, 0, 0, 1),
+        (64, 64, 31, 90, 6, 50, 60, 4),
+        (3, 3, 13, 75, 4, 50, 60, 4), // < 4px: sharp falls back to standard
+    ];
+    for (w, h, seed, q, m, sns, flt, segs) in cells {
+        let rgb = synth(w, h, seed);
+        let cfg = LossyConfig::new()
+            .with_quality(f32::from(q))
+            .with_method(m)
+            .with_segments(segs)
+            .with_sns_strength(sns)
+            .with_filter_strength(flt)
+            .with_sharp_yuv(true)
+            .with_cost_model(CostModel::StrictLibwebpParity);
+        let zen = EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h)
+            .encode()
+            .unwrap();
+        let lib = webpx::EncoderConfig::new()
+            .quality(f32::from(q))
+            .method(m)
+            .segments(segs)
+            .sns_strength(sns)
+            .filter_strength(flt)
+            .sharp_yuv(true)
+            .encode_rgb(&rgb, w, h, webpx::Unstoppable)
+            .unwrap();
+        assert_eq!(
+            zen, lib,
+            "sharp_yuv {w}x{h} q{q} m{m} sns{sns} flt{flt} segs{segs}: \
+             not byte-identical (SharpYUV port regression, #38)"
+        );
+    }
+}
+
 /// Opaque RGBA input must produce a bare `VP8 ` file byte-identical to
 /// libwebp's — no VP8X/ALPH wrapper (libwebp scans the pixels via
 /// `WebPPictureHasTransparency`; zenwebp now does the same). (#38)

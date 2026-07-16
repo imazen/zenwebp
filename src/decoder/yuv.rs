@@ -901,7 +901,14 @@ fn to_tight_rgb<'a>(
 
 /// Copy a tight `src_w x src_h` plane into a `dst_w x dst_h` buffer with edge replication
 /// on the right and bottom borders.
-fn pad_plane(src: &[u8], dst: &mut [u8], src_w: usize, src_h: usize, dst_w: usize, dst_h: usize) {
+pub(crate) fn pad_plane(
+    src: &[u8],
+    dst: &mut [u8],
+    src_w: usize,
+    src_h: usize,
+    dst_w: usize,
+    dst_h: usize,
+) {
     for y in 0..src_h {
         let sr = &src[y * src_w..(y + 1) * src_w];
         let dr = &mut dst[y * dst_w..(y + 1) * dst_w];

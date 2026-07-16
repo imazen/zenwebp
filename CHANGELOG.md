@@ -136,6 +136,25 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Added
 
+- **SharpYUV port — `sharp_yuv` byte-exact under `StrictLibwebpParity`**
+  (#38, 2026-07-16): `src/encoder/sharpyuv.rs` is an exact Rust port of
+  libwebp's SharpYUV converter (`sharpyuv/*.c`, 8-bit path): 10-bit
+  fixed-point W/(R−W,G−W,B−W) iteration with linear-light targets (baked
+  16-bit sRGB↔linear tables dumped from libwebp, immune to libm `pow`
+  drift), the decoder-matched 9-3-3-1 upsampling filter, ≤4 gradient
+  passes with the padded-dims `3·w·h` exit threshold, and the
+  `kSharpYuvMatrixWebp` 16.16 final conversion. Verified byte-identical to
+  `SharpYuvConvert` on 17 shapes (1×1…1023×7) and to the full
+  webpx-flow encoder planes on real images; the byteparity sweep's
+  sharp_yuv axis went 0/96 → **96/96 byte-identical** with the base grid
+  unchanged at 4004/4004. Parity encodes route RGB/BGR input through the
+  port when `sharp_yuv` is on (falling back to standard conversion below
+  libwebp's 4-pixel `kMinDimensionIterativeConversion`, like libwebp);
+  the tuned default keeps zenyuv's sharp converter. New anchor test
+  `sharp_yuv_matches_libwebp`; diagnostics: `dev/sharpyuv_selftest.rs`,
+  `__expert::sharpyuv_convert_rgb`, `bitexact_diff` arg 9, `ZYUVDUMP`
+  plane dump (mode_debug).
+
 - **Alpha-plane pipeline + full-VP8L payloads; tuned ALPH 2-3.5× smaller**
   (#38, 2026-07-16): `src/encoder/alpha.rs` ports libwebp's whole
   `EncodeAlpha` pipeline (QuantizeLevels k-means, h/v/gradient filters,

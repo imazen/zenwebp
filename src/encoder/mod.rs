@@ -46,6 +46,8 @@ pub(crate) mod psy;
 pub mod quantize;
 /// Residual cost estimation (SIMD-optimized)
 mod residual_cost;
+/// Exact port of libwebp's SharpYUV RGB→YUV420 converter (#38).
+pub(crate) mod sharpyuv;
 /// Codec lookup tables.
 #[doc(hidden)]
 pub mod tables;

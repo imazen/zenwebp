@@ -640,8 +640,10 @@ fn main() {
         None => vec![2u8, 3, 4, 5, 6],
     };
     // Optional 7th arg: filter_sharpness (default 0). 8th: partition_limit.
+    // 9th: 1 = sharp_yuv input conversion (#38 SharpYUV port).
     let sharp: u8 = arg_u8(7).unwrap_or(0);
     let plim: Option<u8> = arg_u8(8);
+    let sharp_yuv = arg_u8(9) == Some(1);
 
     for (q, sns, flt, segs) in grid {
         for m in methods.iter().copied() {
@@ -658,19 +660,26 @@ fn main() {
             } else {
                 cfg
             };
+            let cfg = if sharp_yuv {
+                cfg.with_sharp_yuv(true)
+            } else {
+                cfg
+            };
             let zen = EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h)
                 .encode()
                 .unwrap();
-            let lib = webpx::EncoderConfig::new()
+            let mut lcfg = webpx::EncoderConfig::new()
                 .quality(q as f32)
                 .method(m)
                 .segments(segs)
                 .sns_strength(sns)
                 .filter_strength(flt)
                 .filter_sharpness(sharp)
-                .partition_limit(plim.unwrap_or(0))
-                .encode_rgb(&rgb, w, h, webpx::Unstoppable)
-                .unwrap();
+                .partition_limit(plim.unwrap_or(0));
+            if sharp_yuv {
+                lcfg = lcfg.sharp_yuv(true);
+            }
+            let lib = lcfg.encode_rgb(&rgb, w, h, webpx::Unstoppable).unwrap();
             let (zh, zm) = parse_modes(vp8_payload(&zen), mb_w, mb_h);
             let (lh, lm) = parse_modes(vp8_payload(&lib), mb_w, mb_h);
             for d in diff_fields(&zh, &lh) {
