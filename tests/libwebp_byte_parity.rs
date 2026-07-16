@@ -9,9 +9,9 @@
 //! ## What is and is not claimed
 //!
 //! As of 2026-07-16 the full committed grid — 13 images (3 CID22 512² photos
-//! + 10 synthetics incl. 1×1/2×2/3×3/odd-chroma/edge-partial MBs) × q ∈
+//! plus 10 synthetics incl. 1×1/2×2/3×3/odd-chroma/edge-partial MBs) × q ∈
 //! {5..95} × 4 configs {(sns,flt,segs) = (0,0,1),(50,60,4),(0,0,4),(30,20,2)}
-//! × m0-m6 = **4004 cells — is 4004/4004 byte-identical** (measured by
+//! × m0-m6 = 4004 cells — is **4004/4004 byte-identical** (measured by
 //! `dev/byteparity_sweep.rs`, which is the score; this test is the gate).
 //! The honest claim is "byte-exact across that grid": settings outside it
 //! (filter_sharpness ≠ 0, partitions > 1, alpha, target_size, other content)
