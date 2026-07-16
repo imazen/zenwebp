@@ -8,21 +8,61 @@ mid-session. It is now committed as `dev/byteparity_sweep.rs` (the score),
 `dev/bitexact_diff.rs` (header fields + mode stream) — all wired as
 `__expert` examples. Never rebuild this in `/tmp` again.
 
-**The committed grid now scores 3767/4004 = 94.1%** (was 3578/4004 = 89.4% when
+**The committed grid now scores 3829/4004 = 95.6%** (was 3578/4004 = 89.4% when
 the harness was first committed; the +189 came from the Cat5/Cat6 stat-node fix,
-`44ae3a0`). Neither number is comparable to the 3488/4004 = 87.1% below: 10 of
+`44ae3a0`, then +62 from the StoreMaxDelta I16-candidate gate, `c9abe85`).
+Neither number is comparable to the 3488/4004 = 87.1% below: 10 of
 the 13 images are synthetic and their generator was lost with the /tmp wipe and
 reconstructed differently, so the synthetic cells are simply different content
 (the encoder was byte-identical across that particular pair of runs). **3767/4004
 is the durable baseline going forward** — the grid is committed now; re-run the
 tool for any before/after, and don't compare across grids.
 
-### Failure shape on the committed grid (237 of 4004, 2026-07-15, post-`44ae3a0`)
+### Failure shape on the committed grid (175 of 4004, 2026-07-15, post-`c9abe85`)
 
-By method (of 572 each): m0 20 · m1 38 · m2 36 · m3 23 · m4 21 · **m5 52 · m6 47**.
-By config (of 1001 each): sns0/flt0/segs1 **18** · sns0/flt0/segs4 **18** ·
-**sns30/flt20/segs2 96 · sns50/flt60/segs4 105**.
-By image: 1025469 105 · 1418519 75 · 382297 42 · synth_256x255 6 (others 0).
+By method (of 572 each): **m0 20 · m1 38 · m2 36** · m3 **4** · m4 **3** ·
+m5 39 · m6 35.
+By config (of 1001 each): sns0/flt0/segs1 18 · sns0/flt0/segs4 18 ·
+sns30/flt20/segs2 70 · sns50/flt60/segs4 69.
+
+**The axis flipped.** m3/m4 are now 99.3% identical (4 and 3 of 572) and the
+SNS+filter+multi-segment configs dropped from 201 to 139 of the remainder. What
+is left is dominated by **m0-m2 (94 of 175)** — the RD_OPT_NONE methods, which
+take libwebp's non-token `VP8EncLoop` path — plus an m5/m6 trellis residue
+(39/35). So the next work is the m0-m2 `VP8EncLoop`/`RefineUsingDistortion`
+path, NOT the RD methods.
+
+#### SOLVED: StoreMaxDelta gated on the final mode (`c9abe85`, +62)
+
+libwebp runs `StoreMaxDelta` at the END of `PickBestIntra16`
+(`quant_enc.c:1035`) — BEFORE `PickBestIntra4` can override the mode and before
+the skip decision — so a macroblock whose I16 candidate is blocky-and-high-D
+feeds `max_edge` even when finally emitted as I4 or skipped. zenwebp gated on the
+FINAL mode and dropped `intra16_d` for I4 macroblocks, under-counting `max_edge`,
+so `VP8AdjustFilterStrength` failed to bump the segment's loop-filter level and
+the segmentation header shipped a wrong `seg_lf`.
+
+Traced at 382297 q5/m4/sns50/flt60/segs4, where EVERY mode decision already
+matched (y 100%, uv 100%, b4 714/714, seg 100%) and the only divergence was one
+header field:
+
+```
+seg_lf:   zen=[50, 29, 63, 60]   lib=[50, 55, 63, 60]
+max_edge: zen=[0, 1, 3, 4]       lib=[0, 2, 3, 4]
+```
+
+ONE missed macroblock: `max_edge[1]` 1 vs 2 (delta 27 → no bump, vs 55 → bump).
+Fixed by carrying the I16 candidate's Y2 + blocky flag + `intra16_cand_d` out of
+`pick_best_intra16`. That also retired the m5 trellis workaround, since the
+blocky test now comes from the same place libwebp's does.
+
+**Method note:** `dev/mbpixdiff.rs` and `dev/bitexact_diff.rs` were BOTH
+hardcoded (sns0/flt0/segs1, and q75 respectively) and could not reach this
+cluster at all; `bitexact_diff` was additionally unbuildable (it `include!`s a
+`coeff_update_probs.rs` that did not exist). Both are now parameterised
+`[image] [q] [m] [sns] [flt] [segs]`. `bitexact_diff` found this root in ONE run
+by printing the header-field diff — reach for it whenever `mbpixdiff` reports a
+small `1st-diff@` offset, which means a header field rather than content.
 
 What this says now. (1) The **sns=0 configs are essentially closed** (18/1001
 each, ~98% identical) — the remaining 201 of 237 live in the **SNS + filter +
