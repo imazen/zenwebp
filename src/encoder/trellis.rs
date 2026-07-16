@@ -36,20 +36,27 @@ struct TrellisNode {
     level: i16, // quantized level
 }
 
+/// Placeholder cost table for score states whose `costs` is never read
+/// (position 15 has no successor). Keeping the reference always-valid
+/// removes an Option branch from every predecessor evaluation in the DP
+/// inner loop. (Zeros also reproduce the old `None` arm's value — fixed
+/// cost plus zero variable — should it ever be read.)
+static DUMMY_COSTS: LevelCostArray = [0; crate::encoder::cost::level_costs::LEVEL_COST_ARRAY_SIZE];
+
 /// Score state for trellis traversal
 /// Stores score and a reference to cost table for the *next* position.
 /// The cost table is determined by the context resulting from this state's level.
 #[derive(Clone, Copy)]
 struct TrellisScoreState<'a> {
-    score: i64,                        // partial RD score
-    costs: Option<&'a LevelCostArray>, // cost table for next position (based on ctx from this level)
+    score: i64,                // partial RD score
+    costs: &'a LevelCostArray, // cost table for next position (based on ctx from this level)
 }
 
 impl Default for TrellisScoreState<'_> {
     fn default() -> Self {
         Self {
             score: MAX_COST,
-            costs: None,
+            costs: &DUMMY_COSTS,
         }
     }
 }
@@ -166,16 +173,18 @@ pub fn trellis_quantize_block(
     for state in &mut score_states[ss_cur_idx][..NUM_NODES] {
         *state = TrellisScoreState {
             score: init_score,
-            costs: Some(initial_costs),
+            costs: initial_costs,
         };
     }
 
-    // Traverse trellis
+    // Traverse trellis (loop invariants hoisted: biases, psy gate)
+    let neutral_bias = quantization_bias(0x00);
+    let thresh_bias = quantization_bias(0x80);
+    let psy_active = psy_config.psy_trellis_strength > 0;
     for n in first..=last as usize {
         let j = VP8_ZIGZAG[n];
         let q = mtx.q[j] as i32;
         let iq = mtx.iq[j];
-        let neutral_bias = quantization_bias(0x00);
 
         // Get sign from original coefficient
         let sign = coeffs[j] < 0;
@@ -186,7 +195,6 @@ pub fn trellis_quantize_block(
         let level0 = quantdiv(coeff_with_sharpen as u32, iq, neutral_bias).min(MAX_LEVEL as i32);
 
         // Threshold level for pruning
-        let thresh_bias = quantization_bias(0x80);
         let thresh_level =
             quantdiv(coeff_with_sharpen as u32, iq, thresh_bias).min(MAX_LEVEL as i32);
 
@@ -201,11 +209,13 @@ pub fn trellis_quantize_block(
             // Context for next position: min(level, 2)
             let ctx = (level as usize).min(2);
 
-            // Store cost table for next position (based on context from this level)
+            // Cost table for the next position (based on this level's ctx).
+            // Position 15 has no successor; its slot is never read, so the
+            // dummy keeps the reference branch-free.
             let next_costs = if n + 1 < 16 {
-                Some(level_costs.get_cost_table(ctype, n + 1, ctx))
+                level_costs.get_cost_table(ctype, n + 1, ctx)
             } else {
-                None
+                &DUMMY_COSTS
             };
 
             // Reset current score state
@@ -235,7 +245,7 @@ pub fn trellis_quantize_block(
             // JND (Just Noticeable Difference) gating (2026 algorithm):
             // Skip the penalty if the coefficient is below the JND threshold,
             // meaning zeroing it won't cause visible artifacts anyway.
-            if level == 0 && abs_coeff > 0 && psy_config.psy_trellis_strength > 0 {
+            if psy_active && level == 0 && abs_coeff > 0 {
                 // Check if coefficient is below JND threshold (imperceptible)
                 // ctype: 0=Y2, 1=Y_AC, 2=Y_DC, 3=UV
                 let is_chroma = ctype == 3;
@@ -264,19 +274,11 @@ pub fn trellis_quantize_block(
                 let ss_prev = &score_states[ss_prev_idx];
 
                 // Predecessor 0
-                let cost0 = if let Some(costs) = ss_prev[0].costs {
-                    level_cost_fast(costs, level_usize) as i64
-                } else {
-                    VP8_LEVEL_FIXED_COSTS[level_usize] as i64
-                };
+                let cost0 = level_cost_fast(ss_prev[0].costs, level_usize) as i64;
                 let score0 = ss_prev[0].score + cost0 * lambda as i64;
 
                 // Predecessor 1
-                let cost1 = if let Some(costs) = ss_prev[1].costs {
-                    level_cost_fast(costs, level_usize) as i64
-                } else {
-                    VP8_LEVEL_FIXED_COSTS[level_usize] as i64
-                };
+                let cost1 = level_cost_fast(ss_prev[1].costs, level_usize) as i64;
                 let score1 = ss_prev[1].score + cost1 * lambda as i64;
 
                 // Select best

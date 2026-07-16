@@ -277,10 +277,15 @@ fn residual_cost_loop(
     cost
 }
 
-/// Entry shim for get_residual_cost_sse2
+/// Entry shim for get_residual_cost_sse2. Also the SHARED out-of-line copy
+/// for arcane callers: `get_residual_cost_sse2` is `#[rite]` (inline-always
+/// into its region), and it was being inlined into every cost walker and
+/// the I4 evaluator — 4+ ~3KB copies that thrashed the 32KB I1 cache in the
+/// per-MB loop. Arcane→arcane calls carry the token, so sharing one copy
+/// costs a plain call, no dispatch.
 #[cfg(target_arch = "x86_64")]
 #[arcane]
-fn get_residual_cost_entry(
+pub(crate) fn get_residual_cost_entry(
     _token: X64V3Token,
     ctx0: usize,
     res: &Residual,
@@ -787,7 +792,7 @@ fn get_cost_luma16_arcane(
     let mut total_cost = 0u32;
     let dc_ctx = (top_y2 as usize) + (left_y2 as usize);
     let dc_res = Residual::new(dc_levels, 1, 0);
-    total_cost += get_residual_cost_sse2(token, dc_ctx, &dc_res, costs, probs);
+    total_cost += get_residual_cost_entry(token, dc_ctx, &dc_res, costs, probs);
 
     let mut top_nz = top_y;
     let mut left_nz = left_y;
@@ -796,7 +801,7 @@ fn get_cost_luma16_arcane(
             let block_idx = y * 4 + x;
             let ctx = (top_nz[x] as usize) + (left_nz[y] as usize);
             let ac_res = Residual::new(&ac_levels[block_idx], 0, 1);
-            total_cost += get_residual_cost_sse2(token, ctx, &ac_res, costs, probs);
+            total_cost += get_residual_cost_entry(token, ctx, &ac_res, costs, probs);
             let has_nz = ac_res.last >= 0;
             top_nz[x] = has_nz;
             left_nz[y] = has_nz;
@@ -828,7 +833,7 @@ fn get_cost_uv_arcane(
                 let block_idx = ch_idx * 4 + y * 2 + x;
                 let ctx = (top_nz[x] as usize) + (left_nz[y] as usize);
                 let res = Residual::new(&uv_levels[block_idx], 2, 0);
-                total_cost += get_residual_cost_sse2(token, ctx, &res, costs, probs);
+                total_cost += get_residual_cost_entry(token, ctx, &res, costs, probs);
                 let has_nz = res.last >= 0;
                 top_nz[x] = has_nz;
                 left_nz[y] = has_nz;

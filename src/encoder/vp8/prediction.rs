@@ -4,6 +4,9 @@
 //! forward/inverse DCT transform, quantization, and reconstruction for
 //! both luma (16x16 and 4x4) and chroma (8x8) blocks.
 
+#[cfg(target_arch = "x86_64")]
+use archmage::{X64V3Token, prelude::*};
+
 use crate::common::prediction::*;
 use crate::common::transform;
 use crate::common::types::*;
@@ -43,6 +46,49 @@ pub(super) struct ChromaBlockResult {
     pub zigzag: [[i32; 16]; 4],
     /// The bordered prediction/reconstruction buffer.
     pub pred_block: [u8; CHROMA_BLOCK_SIZE],
+}
+
+/// One-region SSE2 body of `fill_luma_blocks_from_predicted_16x16`: the
+/// eight block-pair forward DCTs and the i16→i32 widen run inside a single
+/// `target_feature` region (the dispatching version paid an arcane boundary
+/// per pair).
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+fn fill_luma_blocks_16x16_arcane(
+    token: archmage::X64V3Token,
+    ybuf: &[u8],
+    predicted_y_block: &[u8; LUMA_BLOCK_SIZE],
+    mbx: usize,
+    mby: usize,
+    src_stride: usize,
+    luma_blocks: &mut [i32; 16 * 16],
+) {
+    let pred_stride = LUMA_STRIDE;
+    for block_y in 0..4 {
+        for block_x_pair in 0..2 {
+            let block_x = block_x_pair * 2;
+            let pred_start = (block_y * 4 + 1) * pred_stride + block_x * 4 + 1;
+            let src_row = mby * 16 + block_y * 4;
+            let src_col = mbx * 16 + block_x * 4;
+            let src_start = src_row * src_stride + src_col;
+
+            let mut out16 = [0i16; 32];
+            crate::common::transform::ftransform2_sse2(
+                token,
+                &ybuf[src_start..],
+                &predicted_y_block[pred_start..],
+                src_stride,
+                pred_stride,
+                &mut out16,
+            );
+            let out_base0 = (block_y * 4 + block_x) * 16;
+            let out_base1 = out_base0 + 16;
+            for i in 0..16 {
+                luma_blocks[out_base0 + i] = i32::from(out16[i]);
+                luma_blocks[out_base1 + i] = i32::from(out16[16 + i]);
+            }
+        }
+    }
 }
 
 impl<'a> super::Vp8Encoder<'a> {
@@ -108,6 +154,20 @@ impl<'a> super::Vp8Encoder<'a> {
     ) {
         let pred_stride = LUMA_STRIDE;
         let src_stride = usize::from(self.macroblock_width * 16);
+
+        #[cfg(target_arch = "x86_64")]
+        if let Some(token) = X64V3Token::summon() {
+            fill_luma_blocks_16x16_arcane(
+                token,
+                &self.frame.ybuf,
+                predicted_y_block,
+                mbx,
+                mby,
+                src_stride,
+                luma_blocks,
+            );
+            return;
+        }
 
         // Process pairs of horizontally adjacent blocks using fused residual+DCT
         for block_y in 0..4 {

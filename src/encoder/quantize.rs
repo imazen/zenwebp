@@ -587,6 +587,30 @@ pub fn quantize_ac_only_simd(
 // Fused Quantize + Dequantize SIMD
 // =============================================================================
 
+/// One-region fused quantize+dequantize of all 16 luma AC blocks of an MB
+/// (I16: DC lives in Y2 and is zeroed). Batches what was 16 per-block
+/// dispatches into a single `target_feature` region where the `#[rite]`
+/// kernel inlines. Levels land in `quant` (natural order), dequantized
+/// values in `dequant`. Bit-identical to per-block `quantize_ac_only_simd`
+/// + scalar `dequantize` (same kernel, DC zeroed on input).
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+pub(crate) fn quantize_dequantize_luma16_ac_arcane(
+    token: X64V3Token,
+    luma_blocks: &[i32; 16 * 16],
+    matrix: &VP8Matrix,
+    quant: &mut [[i32; 16]; 16],
+    dequant: &mut [[i32; 16]; 16],
+) {
+    for b in 0..16 {
+        let mut blk: [i32; 16] = luma_blocks[b * 16..][..16].try_into().unwrap();
+        blk[0] = 0;
+        quantize_dequantize_block_sse2(token, &blk, matrix, true, &mut quant[b], &mut dequant[b]);
+        quant[b][0] = 0;
+        dequant[b][0] = 0;
+    }
+}
+
 /// Fused quantize+dequantize: produces both quantized levels and dequantized
 /// values (quantized * q) in a single SIMD pass. Returns true if any coefficient
 /// is non-zero. Coefficients are in natural (raster) order.

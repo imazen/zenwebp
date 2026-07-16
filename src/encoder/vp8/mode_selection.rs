@@ -181,6 +181,47 @@ struct I4BlockResult {
 
 /// Pre-sort I4 prediction modes by prediction SSE (ascending).
 /// Runs sse4x4 for all 10 modes using direct SIMD calls (no dispatch overhead).
+/// m6-only trellis arm of the I4 candidate evaluation, kept out-of-line so
+/// the hot m0-m5 loop body stays small in the instruction cache. Returns
+/// (has_nz, dequantized-natural) exactly like the fused arm.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn i4_trellis_quantize_recon(
+    residual: &mut [i32; 16],
+    quantized_zigzag: &mut [i32; 16],
+    quantized_natural: &mut [i32; 16],
+    y1_matrix: &crate::encoder::quantize::VP8Matrix,
+    lambda: u32,
+    nz_top: bool,
+    nz_left: bool,
+    level_costs: &crate::encoder::cost::LevelCosts,
+    psy_config: &crate::encoder::psy::PsyConfig,
+) -> (bool, [i32; 16]) {
+    let ctx0 = usize::from(nz_top) + usize::from(nz_left);
+    const CTYPE_I4_AC: usize = 3;
+    let nz = trellis_quantize_block(
+        residual,
+        quantized_zigzag,
+        y1_matrix,
+        lambda,
+        0,
+        level_costs,
+        CTYPE_I4_AC,
+        ctx0,
+        psy_config,
+    );
+    for n in 0..16 {
+        let j = ZIGZAG[n] as usize;
+        quantized_natural[j] = quantized_zigzag[n];
+    }
+    let mut dq = *quantized_natural;
+    for (idx, val) in dq.iter_mut().enumerate() {
+        *val = y1_matrix.dequantize(*val, idx);
+    }
+    crate::common::transform::idct4x4(&mut dq);
+    (nz, dq)
+}
+
 #[archmage::arcane]
 fn presort_i4_modes_sse2(
     _token: archmage::X64V3Token,
@@ -241,32 +282,19 @@ fn evaluate_i4_modes_sse2(
         let mut quantized_zigzag = [0i32; 16];
         let mut quantized_natural = [0i32; 16];
         let (has_nz, dequantized) = if let Some(lambda) = trellis_lambda_i4 {
-            // Trellis quantization (scalar, called from arcane context is fine)
-            let ctx0 = usize::from(nz_top) + usize::from(nz_left);
-            const CTYPE_I4_AC: usize = 3;
-            let nz = trellis_quantize_block(
+            // Trellis quantization: m6-only, out-of-line so the hot m0-m5
+            // candidate loop stays small in the instruction cache.
+            i4_trellis_quantize_recon(
                 &mut residual,
                 &mut quantized_zigzag,
+                &mut quantized_natural,
                 y1_matrix,
                 lambda,
-                0,
+                nz_top,
+                nz_left,
                 level_costs,
-                CTYPE_I4_AC,
-                ctx0,
                 psy_config,
-            );
-            // Convert zigzag to natural order
-            for n in 0..16 {
-                let j = ZIGZAG[n] as usize;
-                quantized_natural[j] = quantized_zigzag[n];
-            }
-            // Dequantize + IDCT for trellis path
-            let mut dq = quantized_natural;
-            for (idx, val) in dq.iter_mut().enumerate() {
-                *val = y1_matrix.dequantize(*val, idx);
-            }
-            crate::common::transform::idct4x4_sse2(_token, &mut dq);
-            (nz, dq)
+            )
         } else {
             // Fused quantize+dequantize using direct SIMD call
             let mut dequant_natural = [0i32; 16];
@@ -327,7 +355,7 @@ fn evaluate_i4_modes_sse2(
         // Get coefficient cost using direct SIMD call (expensive)
         let ctx0 = (nz_top as usize) + (nz_left as usize);
         let res = Residual::new(&quantized_zigzag, 3, 0); // CTYPE_I4_AC=3, first=0
-        let coeff_cost = crate::encoder::residual_cost::get_residual_cost_sse2(
+        let coeff_cost = crate::encoder::residual_cost::get_residual_cost_entry(
             _token,
             ctx0,
             &res,
@@ -754,6 +782,7 @@ impl<'a> super::Vp8Encoder<'a> {
         // All elements are written before read in each iteration.
         let mut luma_blocks = [0i32; 256];
         let mut y1_quant = [[0i32; 16]; 16];
+        let mut y1_dequant = [[0i32; 16]; 16];
         // Zigzag-scan-order views used only for the coefficient rate
         // (`get_cost_luma16`) and the flatness test — libwebp codes `y_dc_levels`
         // / `y_ac_levels` in zigzag order and `VP8GetCostLuma16` / `IsFlat` walk
@@ -761,7 +790,7 @@ impl<'a> super::Vp8Encoder<'a> {
         // for the IDCT reconstruction path. Matches the I4 path (#38).
         let mut y1_quant_zz = [[0i32; 16]; 16];
         let mut y2_quant_zz = [0i32; 16];
-        let mut recon_dequant_block = [0i32; 16];
+        let mut recon_dequant_block;
         let mut rec_block = [0u8; 256];
         let mut all_levels = [0i16; 256];
 
@@ -848,73 +877,54 @@ impl<'a> super::Vp8Encoder<'a> {
                 // I16 mode winner (e.g. H vs DC) and cascade to the I4-vs-I16 pick.
                 // Parity-gated: the tuned default keeps the all-false seed (its
                 // calibration was fit against that behaviour). (#38)
-                let seed_ctx =
-                    self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity;
-                let mut top_nz_t = if seed_ctx {
-                    [
-                        self.top_complexity[mbx].y[0] != 0,
-                        self.top_complexity[mbx].y[1] != 0,
-                        self.top_complexity[mbx].y[2] != 0,
-                        self.top_complexity[mbx].y[3] != 0,
-                    ]
-                } else {
-                    [false; 4]
-                };
-                let mut left_nz_t = if seed_ctx {
-                    [
-                        self.left_complexity.y[0] != 0,
-                        self.left_complexity.y[1] != 0,
-                        self.left_complexity.y[2] != 0,
-                        self.left_complexity.y[3] != 0,
-                    ]
-                } else {
-                    [false; 4]
-                };
-                #[allow(clippy::needless_range_loop)]
-                for block_idx in 0..16 {
-                    let bx = block_idx % 4;
-                    let by = block_idx / 4;
-                    let block_start = block_idx * 16;
-                    let mut coeffs: [i32; 16] = luma_blocks[block_start..block_start + 16]
-                        .try_into()
-                        .unwrap();
-                    coeffs[0] = 0; // DC handled by Y2
-                    let ctx0 = (u8::from(top_nz_t[bx]) + u8::from(left_nz_t[by])).min(2) as usize;
-                    let mut zigzag_levels = [0i32; 16];
-                    let has_nz = trellis_quantize_block(
-                        &mut coeffs,
-                        &mut zigzag_levels,
-                        y1_matrix,
-                        segment.lambda_trellis_i16,
-                        1, // first=1 for I16_AC (DC lives in Y2)
-                        &self.level_costs,
-                        0, // ctype=0 for I16_AC
-                        ctx0,
-                        &segment.psy_config,
-                    );
-                    top_nz_t[bx] = has_nz;
-                    left_nz_t[by] = has_nz;
-                    // Convert zigzag-ordered levels back to natural index so the
-                    // downstream `y1_matrix.dequantize(level, i)` and cost paths
-                    // see the same storage convention as the simple-quant branch.
-                    let mut natural = [0i32; 16];
-                    for n in 1..16 {
-                        natural[crate::encoder::tables::VP8_ZIGZAG[n]] = zigzag_levels[n];
-                    }
-                    y1_quant[block_idx] = natural;
-                }
+                self.i16_rd_trellis_quantize(
+                    mbx,
+                    &luma_blocks,
+                    y1_matrix,
+                    segment,
+                    &mut y1_quant,
+                    &mut y1_dequant,
+                );
             } else {
-                // m0..m5: simple SIMD quantization (no trellis during mode selection)
-                #[allow(clippy::needless_range_loop)]
-                for block_idx in 0..16 {
-                    // Copy block from luma_blocks (DC will be zeroed by quantize_ac_only)
-                    let block_start = block_idx * 16;
-                    let mut block: [i32; 16] = luma_blocks[block_start..block_start + 16]
-                        .try_into()
-                        .unwrap();
-                    block[0] = 0; // DC is handled by Y2
-                    crate::encoder::quantize::quantize_ac_only_simd(&mut block, y1_matrix, true);
-                    y1_quant[block_idx] = block;
+                // m0..m5: fused SIMD quantize+dequantize of all 16 AC blocks
+                // in one target_feature region (dequantized values feed the
+                // reconstruction below without a scalar dequantize pass).
+                #[cfg(target_arch = "x86_64")]
+                let fused = if let Some(token) = X64V3Token::summon() {
+                    crate::encoder::quantize::quantize_dequantize_luma16_ac_arcane(
+                        token,
+                        &luma_blocks,
+                        y1_matrix,
+                        &mut y1_quant,
+                        &mut y1_dequant,
+                    );
+                    true
+                } else {
+                    false
+                };
+                #[cfg(not(target_arch = "x86_64"))]
+                let fused = false;
+                if !fused {
+                    #[allow(clippy::needless_range_loop)]
+                    for block_idx in 0..16 {
+                        // Copy block from luma_blocks (DC zeroed: it lives in Y2)
+                        let block_start = block_idx * 16;
+                        let mut block: [i32; 16] = luma_blocks[block_start..block_start + 16]
+                            .try_into()
+                            .unwrap();
+                        block[0] = 0;
+                        let mut q = [0i32; 16];
+                        crate::encoder::quantize::quantize_dequantize_block_simd(
+                            &block,
+                            y1_matrix,
+                            true,
+                            &mut q,
+                            &mut y1_dequant[block_idx],
+                        );
+                        q[0] = 0;
+                        y1_dequant[block_idx][0] = 0;
+                        y1_quant[block_idx] = q;
+                    }
                 }
             }
 
@@ -971,10 +981,8 @@ impl<'a> super::Vp8Encoder<'a> {
                 let bx = block_idx % 4;
                 let by = block_idx / 4;
 
-                // AC from Y1 (recon_dequant_block hoisted outside mode loop)
-                for i in 1..16 {
-                    recon_dequant_block[i] = y1_matrix.dequantize(y1_quant[block_idx][i], i);
-                }
+                // AC from Y1 (dequantized during the fused quantize pass)
+                recon_dequant_block = y1_dequant[block_idx];
                 // DC from Y2
                 recon_dequant_block[0] = y2_dequant[block_idx];
 
@@ -2373,6 +2381,80 @@ impl<'a> super::Vp8Encoder<'a> {
         }
 
         best_mode
+    }
+
+    /// m6-only (RD_OPT_TRELLIS_ALL) I16-AC trellis arm of the I16 RD loop,
+    /// out-of-line so the hot m0-m5 loop body stays small in the
+    /// instruction cache. Fills `y1_quant` (levels, natural order) and
+    /// `y1_dequant` exactly like the fused simple-quant arm.
+    #[inline(never)]
+    fn i16_rd_trellis_quantize(
+        &self,
+        mbx: usize,
+        luma_blocks: &[i32; 16 * 16],
+        y1_matrix: &crate::encoder::quantize::VP8Matrix,
+        segment: &Segment,
+        y1_quant: &mut [[i32; 16]; 16],
+        y1_dequant: &mut [[i32; 16]; 16],
+    ) {
+        let seed_ctx = self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity;
+        let mut top_nz_t = if seed_ctx {
+            [
+                self.top_complexity[mbx].y[0] != 0,
+                self.top_complexity[mbx].y[1] != 0,
+                self.top_complexity[mbx].y[2] != 0,
+                self.top_complexity[mbx].y[3] != 0,
+            ]
+        } else {
+            [false; 4]
+        };
+        let mut left_nz_t = if seed_ctx {
+            [
+                self.left_complexity.y[0] != 0,
+                self.left_complexity.y[1] != 0,
+                self.left_complexity.y[2] != 0,
+                self.left_complexity.y[3] != 0,
+            ]
+        } else {
+            [false; 4]
+        };
+        #[allow(clippy::needless_range_loop)]
+        for block_idx in 0..16 {
+            let bx = block_idx % 4;
+            let by = block_idx / 4;
+            let block_start = block_idx * 16;
+            let mut coeffs: [i32; 16] = luma_blocks[block_start..block_start + 16]
+                .try_into()
+                .unwrap();
+            coeffs[0] = 0; // DC handled by Y2
+            let ctx0 = (u8::from(top_nz_t[bx]) + u8::from(left_nz_t[by])).min(2) as usize;
+            let mut zigzag_levels = [0i32; 16];
+            let has_nz = trellis_quantize_block(
+                &mut coeffs,
+                &mut zigzag_levels,
+                y1_matrix,
+                segment.lambda_trellis_i16,
+                1, // first=1 for I16_AC (DC lives in Y2)
+                &self.level_costs,
+                0, // ctype=0 for I16_AC
+                ctx0,
+                &segment.psy_config,
+            );
+            top_nz_t[bx] = has_nz;
+            left_nz_t[by] = has_nz;
+            // Convert zigzag-ordered levels back to natural index so the
+            // downstream cost/reconstruction paths see the same storage
+            // convention as the simple-quant branch.
+            let mut natural = [0i32; 16];
+            for n in 1..16 {
+                natural[crate::encoder::tables::VP8_ZIGZAG[n]] = zigzag_levels[n];
+            }
+            y1_quant[block_idx] = natural;
+            // trellis_quantize_block leaves dequantized values in `coeffs`
+            // (natural order) — keep for reconstruction.
+            y1_dequant[block_idx] = coeffs;
+            y1_dequant[block_idx][0] = 0;
+        }
     }
 
     pub(super) fn choose_macroblock_info(&self, mbx: usize, mby: usize) -> MacroblockInfo {
