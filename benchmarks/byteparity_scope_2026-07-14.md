@@ -112,6 +112,33 @@ pipeline produces for the same lossless plane (137 vs 26 B on the probe).
 Routing tuned alpha through full VP8L is a strict size win with identical
 decoded pixels.
 
+### Alpha bit-level loop: state after the A=0 fix (2026-07-16, later still)
+
+`BITDBG` (both bit writers dump `(nbits, value)` records; `TREE` markers with
+full code-length dumps at every huffman store) drove two iterations:
+
+1. **A=0 alpha-in-green (fixed, `e535ac21`)**: `WebPDispatchAlphaToGreen`
+   leaves A/R/B zeroed — the trial pixels are `0x0000aa00` with ALPHA=0, not
+   opaque (hence libwebp's `exact=1`). zen built opaque RGB, flipping the
+   palette image's alpha tree from `{0}` to `{0,255}`. With A=0 the palette
+   image matches libwebp **bit-for-bit** and the checker payload is 31 vs 32
+   bytes, first-diff at byte 5.
+2. **Remaining two roots, precisely located** (checker cell, main
+   packed-index image):
+   * **Meta-huffman group count**: libwebp keeps TWO huffman groups for the
+     main image (histo_bits=5 → 1×2 tiles on the 8×64 packed image); zen's
+     clustering merges them into ONE. Different combine-cost decision —
+     the known "histogram clustering differences" residual from the
+     lossless work, now with a minimal reproducer.
+   * **LZ77 length distribution**: green-tree lengths differ only on
+     length-codes 269-272 (lib `3,3,4,4` vs zen `4,4,3,3` — swapped
+     frequencies), i.e. the match LENGTHS zen's LZ77 emits differ slightly
+     from libwebp's on this pattern. Distance trees identical.
+
+Next iterations: dump both sides' backward refs for the main image (lengths
+histogram) and the clustering combine costs; converge zen's histogram
+clustering + LZ77 length choice at the alpha operating point.
+
 ### Failure shape: NONE — 4004/4004 (2026-07-16)
 
 #### SOLVED: I4 tie-break must follow libwebp's ENUM order (this commit, +10)

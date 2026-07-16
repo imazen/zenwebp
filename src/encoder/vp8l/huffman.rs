@@ -329,7 +329,15 @@ pub fn write_huffman_tree(w: &mut BitWriter, lengths: &[u8]) {
     // #38 bit-level parity trace marker (pairs with LBIT TREE in libwebp).
     #[cfg(feature = "mode_debug")]
     if std::env::var("BITDBG").is_ok() {
-        std::eprintln!("ZBIT TREE");
+        use core::fmt::Write as _;
+        let mut line = alloc::string::String::new();
+        let _ = write!(line, "ZBIT TREE nsym={} lens:", lengths.len());
+        for (i, &l) in lengths.iter().enumerate() {
+            if l != 0 {
+                let _ = write!(line, " {i}:{l}");
+            }
+        }
+        std::eprintln!("{line}");
     }
 
     // Check for trivial cases
