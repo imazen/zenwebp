@@ -121,6 +121,11 @@ fn main() {
         lib.len(),
         if zen == lib { "IDENTICAL" } else { "DIFFER" }
     );
+    // ALPHADUMP=<prefix>: save both files for container-level diffing.
+    if let Ok(prefix) = std::env::var("ALPHADUMP") {
+        std::fs::write(format!("{prefix}.zen.webp"), &zen).unwrap();
+        std::fs::write(format!("{prefix}.lib.webp"), &lib).unwrap();
+    }
 
     let zalph = find_chunk(&zen, b"ALPH");
     let lalph = find_chunk(&lib, b"ALPH");

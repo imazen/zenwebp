@@ -41,6 +41,13 @@ pub fn encode_vp8l(
         return Err(at!(EncodeError::InvalidDimensions));
     }
 
+    // #38 BITDBG: stream boundary marker (pairs with LBIT STREAM) so
+    // per-trial TREE stores can be tallied per VP8L stream.
+    #[cfg(feature = "mode_debug")]
+    if std::env::var("BITDBG").is_ok() {
+        std::eprintln!("ZBIT STREAM w={width} h={height}");
+    }
+
     let w = width as usize;
     let h = height as usize;
     let expected_len = w * h * if has_alpha { 4 } else { 3 };
@@ -444,15 +451,20 @@ pub(crate) fn encode_argb(
     // EncoderAnalyze comments "AnalyzeEntropy is somewhat slow" and hardwires
     // the single config: palette when available, else SubtractGreen+Predictor,
     // with the cheap (sorted/lexicographic) palette order.
-    let configs = if config.quality.method == 0 {
-        vec![CrunchConfig {
-            mode: if palette_candidate {
-                CrunchMode::Palette
-            } else {
-                CrunchMode::SpatialSubGreen
-            },
-            palette_sorting: PaletteSorting::Lexicographic,
-        }]
+    let (configs, red_and_blue_always_zero) = if config.quality.method == 0 {
+        // rb_zero is unused at m0: low_effort forces cross-color off anyway
+        // (libwebp leaves the flag unset on this path).
+        (
+            vec![CrunchConfig {
+                mode: if palette_candidate {
+                    CrunchMode::Palette
+                } else {
+                    CrunchMode::SpatialSubGreen
+                },
+                palette_sorting: PaletteSorting::Lexicographic,
+            }],
+            false,
+        )
     } else {
         // Run entropy analysis (used for single-config best guess)
         let palette_size_est = if palette_candidate {
@@ -511,12 +523,21 @@ pub(crate) fn encode_argb(
                 );
             }
         }
-        configs
+        (configs, analysis.red_and_blue_always_zero)
     };
 
     let result = if configs.len() == 1 {
         // Single config: encode in place (no clone needed)
-        encode_argb_single_config(argb, width, height, has_alpha, config, &configs[0], stop)
+        encode_argb_single_config(
+            argb,
+            width,
+            height,
+            has_alpha,
+            config,
+            &configs[0],
+            red_and_blue_always_zero,
+            stop,
+        )
     } else {
         // Multi-config: clone original pixels, try each config, keep smallest
         let original = argb.to_vec();
@@ -532,6 +553,7 @@ pub(crate) fn encode_argb(
                 has_alpha,
                 config,
                 crunch_config,
+                red_and_blue_always_zero,
                 stop,
             ) {
                 Ok(output) => {
@@ -578,6 +600,7 @@ fn encode_argb_single_config(
     has_alpha: bool,
     config: &Vp8lConfig,
     crunch: &CrunchConfig,
+    red_and_blue_always_zero: bool,
     stop: &dyn enough::Stop,
 ) -> EncodeResult<Vec<u8>> {
     let mut writer = BitWriter::with_capacity(width * height / 2);
@@ -617,10 +640,15 @@ fn encode_argb_single_config(
     // Cross-color only when: not palette, R/B not always zero, and predictor is on.
     // For PaletteAndSpatial, cross-color is never used (matching libwebp).
     // Method 0 never uses cross-color (libwebp: low_effort → use_cross_color = 0).
+    // libwebp: `use_cross_color = red_and_blue_always_zero ? 0 : use_predict`
+    // (vp8l_enc.c) — an image whose R/B channels are constant-zero for the
+    // chosen mode (e.g. every alpha-in-green ALPH plane) gains nothing from
+    // cross-color, and libwebp skips the transform entirely. (#38)
     let use_cross_color = config.use_cross_color
         && config.quality.method != 0
         && !use_palette
         && use_predictor
+        && !red_and_blue_always_zero
         && !matches!(crunch.mode, CrunchMode::PaletteAndSpatial);
 
     // Build palette transform if needed
@@ -687,7 +715,16 @@ fn encode_argb_single_config(
         for w in palette.palette[..encoded_palette_size].windows(2) {
             tmp_palette.push(sub_pixels(w[1], w[0]));
         }
-        encode_image_no_huffman(&mut writer, &tmp_palette, encoded_palette_size, 1, 20);
+        zbit_img(1);
+        encode_image_no_huffman(
+            &mut writer,
+            &tmp_palette,
+            encoded_palette_size,
+            1,
+            20,
+            config.parity,
+        );
+        zbit_img(0);
 
         // Apply transform and bundle pixels
         let xbits = palette.xbits();
@@ -771,6 +808,7 @@ fn encode_argb_single_config(
             cache_bits_max,
             enc_palette_size,
             do_no_cache,
+            config.parity,
         )
     } else {
         get_backward_references(
@@ -781,6 +819,7 @@ fn encode_argb_single_config(
             config.quality.method,
             cache_bits_max,
             do_no_cache,
+            config.parity,
         )
     };
 
@@ -910,6 +949,7 @@ fn write_predictor_transform(
         pred_w,
         pred_h,
         config.quality.quality,
+        config.parity,
     );
 }
 
@@ -968,6 +1008,7 @@ fn write_cross_color_transform(
         cc_w,
         cc_h,
         config.quality.quality,
+        config.parity,
     );
 }
 
@@ -986,6 +1027,22 @@ fn encode_image_data(
     config: &Vp8lConfig,
     is_palette: bool,
 ) -> Vec<u8> {
+    // #38 REFDBG: dump the final backward-ref stream (pairs with LREF in
+    // libwebp's StoreImageToBitMask) for bit-level LZ77 comparison.
+    #[cfg(feature = "mode_debug")]
+    if std::env::var("REFDBG").is_ok() {
+        std::eprintln!("ZREF IMG w={enc_width}");
+        for token in refs.iter() {
+            match *token {
+                super::types::PixOrCopy::Literal(v) => std::eprintln!("ZREF L {v:08x}"),
+                super::types::PixOrCopy::CacheIdx(i) => std::eprintln!("ZREF C {i}"),
+                super::types::PixOrCopy::Copy { len, dist } => {
+                    std::eprintln!("ZREF M d={dist} l={len}")
+                }
+            }
+        }
+    }
+
     // Write color cache info
     if cache_bits > 0 {
         writer.write_bit(true);
@@ -1055,13 +1112,16 @@ fn encode_image_data(
             })
             .collect();
 
+        zbit_img(2);
         encode_image_no_huffman(
             &mut writer,
             &histo_argb_pixels,
             actual_w,
             actual_h,
             config.quality.quality,
+            config.parity,
         );
+        zbit_img(0);
 
         // Update meta_info to reflect optimized sampling for image data encoding
         if actual_histo_bits != meta_info.histo_bits {
@@ -1483,13 +1543,16 @@ fn can_use_palette(argb: &[u32]) -> bool {
     true
 }
 
-/// Write predictor sub-image (variable modes per block).
-///
-/// The sub-image encodes one pixel per block with the predictor mode in the
-/// green channel (0-13). Other channels are zero. Uses Huffman coding for
-/// the green channel and trivial single-entry trees for other channels.
-/// Encode a sub-image (predictor modes, cross-color data, histogram image, palette)
-/// using full LZ77 + Huffman but no meta-Huffman or transforms.
+/// #38 BITDBG: label the nested image for the ZBIT TREE dumps. No-op unless
+/// mode_debug. 0=main 1=palette 2=entropy 3=predictor 4=crosscolor.
+#[inline]
+fn zbit_img(_idx: usize) {
+    #[cfg(feature = "mode_debug")]
+    crate::encoder::vp8l::huffman::ZBIT_IMG.store(_idx, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Encode a sub-image (predictor modes, cross-color data, histogram image,
+/// palette) using full LZ77 + Huffman but no meta-Huffman or transforms.
 /// Matches libwebp's EncodeImageNoHuffman.
 fn encode_image_no_huffman(
     writer: &mut BitWriter,
@@ -1497,6 +1560,7 @@ fn encode_image_no_huffman(
     width: usize,
     height: usize,
     quality: u8,
+    parity: bool,
 ) {
     use super::backward_refs::{
         apply_2d_locality, backward_references_lz77, backward_references_rle,
@@ -1519,7 +1583,7 @@ fn encode_image_no_huffman(
     let cache_bits: u8 = 0;
 
     // Build hash chain for the sub-image
-    let hash_chain = HashChain::new(argb, quality, width, false);
+    let hash_chain = HashChain::new(argb, quality, width, false, parity);
 
     // Try LZ77 Standard and RLE, pick best by entropy
     let refs_lz77 = backward_references_lz77(argb, width, height, cache_bits, &hash_chain);
@@ -1628,14 +1692,22 @@ fn encode_image_no_huffman(
     }
 }
 
+/// Write predictor sub-image (variable modes per block).
+///
+/// The sub-image encodes one pixel per block with the predictor mode in the
+/// green channel (0-13). Other channels are zero. Uses Huffman coding for
+/// the green channel and trivial single-entry trees for other channels.
 fn write_predictor_image(
     writer: &mut BitWriter,
     predictor_data: &[u32],
     width: usize,
     height: usize,
     quality: u8,
+    parity: bool,
 ) {
-    encode_image_no_huffman(writer, predictor_data, width, height, quality);
+    zbit_img(3);
+    encode_image_no_huffman(writer, predictor_data, width, height, quality, parity);
+    zbit_img(0);
 }
 
 /// Write cross-color sub-image (multiplier data).
@@ -1645,8 +1717,11 @@ fn write_cross_color_image(
     width: usize,
     height: usize,
     quality: u8,
+    parity: bool,
 ) {
-    encode_image_no_huffman(writer, cross_color_data, width, height, quality);
+    zbit_img(4);
+    encode_image_no_huffman(writer, cross_color_data, width, height, quality, parity);
+    zbit_img(0);
 }
 
 /// Subtract two pixels component-wise (wrapping).
@@ -1851,6 +1926,7 @@ mod tests {
             false,
             &config,
             &crunch,
+            false,
             &enough::Unstoppable,
         );
         assert!(result.is_ok(), "PaletteAndSpatial encoding failed");
@@ -1891,6 +1967,7 @@ mod tests {
             false,
             &config,
             &crunch_md,
+            false,
             &enough::Unstoppable,
         )
         .unwrap();
@@ -1907,6 +1984,7 @@ mod tests {
             false,
             &config,
             &crunch_lex,
+            false,
             &enough::Unstoppable,
         )
         .unwrap();

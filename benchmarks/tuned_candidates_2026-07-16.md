@@ -102,3 +102,27 @@ scalar port is 1.5× faster than libwebp's own SSE2 build. Opt-in flag
 only — tuned DEFAULT bytes unchanged; `sharp_yuv_config(custom)` still
 selects zenyuv. Full analysis, A/B table, and speed data:
 `sharpyuv_port_2026-07-16.md` (+ `sharpyuv_port_ab_2026-07-16.tsv`).
+
+## 4. Transparent-area cleanup (lossy `exact=false`) → **ADOPTED** (2026-07-16, later)
+
+`WebPCleanupTransparentArea` (YUV flavor) was the documented-but-missing
+behavior behind the public `exact` flag: libwebp's default (`exact=0`)
+smoothens invisible luma in mixed-alpha 8×8 blocks and flattens fully
+transparent blocks before encoding. Now implemented for RGBA/BGRA/La8 on
+BOTH cost models (the flag already promised it; libwebp does it
+unconditionally at default): checker-alpha probe VP8 layer 1554 → 1058 B
+(−32%), visible pixels bit-identical, `exact(true)` opts out. The
+La8↔RGBA cross-format equivalence suite pins the layouts to identical
+behavior.
+
+## 5. VP8L: huffman tie-break + rb_zero cross-color skip → **ADOPTED** (2026-07-16, later)
+
+Both are libwebp-exact behaviors adopted on both models (see CHANGELOG):
+equal-cost Huffman trees now match libwebp's assignment, and cross-color
+is skipped when R/B are constant-zero (pure-gray content in subtract-green
+modes saves ~5 stored trees + a transform image). A/B corpus lossless
+ratio: 1.0011× (m4), 0.9999× (m6) — within the historical band. The
+hash-chain iteration accounting was NOT adopted for tuned (parity-gated
+via `Vp8lConfig::parity`): zenwebp's stall-budget + always-on row-above
+seed measured +8.5..75% bytes BETTER than the flat cap on smooth
+gradients at m0 (see `hash_chain.rs` comments).

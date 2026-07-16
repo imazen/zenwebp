@@ -361,3 +361,69 @@ fn opaque_rgba_matches_libwebp_bare_vp8() {
         );
     }
 }
+
+/// Transparent RGBA (real ALPH chunk): whole files must be byte-identical.
+/// Pins the full alpha stack (#38): the libwebp alpha pipeline + QuantizeLevels,
+/// the ALPH VP8L stream (huffman equal-count tie-break exactly like
+/// `GenerateOptimalTree`; `red_and_blue_always_zero` skipping cross-color;
+/// libwebp hash-chain iteration accounting under parity), the
+/// `WebPCleanupTransparentArea` YUV smoothen/flatten + post-cleanup re-pad,
+/// and the alpha-weighted chroma conversion (`WebPAccumulateRGBA`).
+#[test]
+fn transparent_rgba_matches_libwebp() {
+    // (w, h, seed, alpha kind: 1 = gradient, 2 = 8px checker)
+    let cells = [
+        (64u32, 64u32, 31u32, 1u8, 75u8, 4u8),
+        (64, 64, 31, 2, 75, 0),
+        (64, 64, 31, 2, 50, 2),
+        (33, 17, 23, 1, 90, 6),
+        (33, 17, 23, 2, 5, 5),
+    ];
+    for (w, h, seed, kind, q, m) in cells {
+        let rgb = synth(w, h, seed);
+        let rgba: Vec<u8> = rgb
+            .chunks_exact(3)
+            .enumerate()
+            .flat_map(|(i, p)| {
+                let (x, y) = ((i as u32) % w, (i as u32) / w);
+                let a = match kind {
+                    1 => (x * 255 / w.max(1)) as u8,
+                    _ => {
+                        if ((x / 8) + (y / 8)) % 2 == 0 {
+                            0
+                        } else {
+                            255
+                        }
+                    }
+                };
+                [p[0], p[1], p[2], a]
+            })
+            .collect();
+        let cfg = LossyConfig::new()
+            .with_quality(f32::from(q))
+            .with_method(m)
+            .with_segments(4)
+            .with_sns_strength(50)
+            .with_filter_strength(60)
+            .with_cost_model(CostModel::StrictLibwebpParity);
+        let zen = EncodeRequest::lossy(&cfg, &rgba, PixelLayout::Rgba8, w, h)
+            .encode()
+            .unwrap();
+        let lib = webpx::EncoderConfig::new()
+            .quality(f32::from(q))
+            .method(m)
+            .segments(4)
+            .sns_strength(50)
+            .filter_strength(60)
+            .encode_rgba(&rgba, w, h, webpx::Unstoppable)
+            .unwrap();
+        assert_eq!(
+            zen,
+            lib,
+            "transparent RGBA {w}x{h} kind{kind} q{q} m{m}: zen={} lib={} \
+             (alpha-stack parity regression, #38)",
+            zen.len(),
+            lib.len()
+        );
+    }
+}

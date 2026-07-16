@@ -119,6 +119,8 @@ pub mod alpha_expert {
             height,
             effort_level,
             use_quality_100,
+            // The expert helper exists to reproduce libwebp's ALPH stream.
+            true,
             &enough::Unstoppable,
         )
         .map_err(|e| alloc::format!("{e:?}"))

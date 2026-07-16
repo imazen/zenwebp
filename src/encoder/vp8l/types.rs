@@ -101,6 +101,13 @@ pub struct Vp8lConfig {
     ///   alpha-compositing workflows that still rely on the underlying RGB
     ///   after transparency is removed/re-combined.
     pub exact: bool,
+    /// Match libwebp's hash-chain search accounting exactly (heuristics
+    /// consume iterations; pre-decrement chain walk; no stall budget; the
+    /// row-above seed follows libwebp's `!low_effort` gate instead of
+    /// zenwebp's always-on tuned choice). Set for `StrictLibwebpParity`
+    /// ALPH streams; the tuned lossless default keeps zenwebp's variant
+    /// (measured better on smooth gradients at m0). (#38)
+    pub parity: bool,
     /// Omit the VP8L container header bits (signature byte, 14-bit
     /// width/height, alpha flag, version). The ALPH chunk of a lossy+alpha
     /// file embeds a VP8L stream that begins directly at the transform bits
@@ -125,6 +132,7 @@ impl Default for Vp8lConfig {
             predictor_bits: 0,      // Auto-detect from method (matching libwebp)
             cross_color_bits: 0,    // Auto-detect from method (matching libwebp)
             exact: false,           // Match libwebp: drop RGB under alpha=0 by default
+            parity: false,
         }
     }
 }

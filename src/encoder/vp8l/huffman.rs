@@ -2,11 +2,8 @@
 //!
 //! Implements canonical Huffman codes as required by the VP8L bitstream.
 
-use alloc::boxed::Box;
-use alloc::collections::BinaryHeap;
 use alloc::vec;
 use alloc::vec::Vec;
-use core::cmp::Ordering;
 
 use super::bitwriter::BitWriter;
 
@@ -182,14 +179,25 @@ pub fn build_huffman_lengths(freq: &[u32], max_len: u8) -> Vec<u8> {
     lengths
 }
 
-/// Build a length-limited Huffman tree using a BinaryHeap.
+/// One pass of libwebp's `GenerateOptimalTree` at a given `count_min` —
+/// an EXACT port of the sorted-array merge, including its tie-breaking:
 ///
-/// Matches libwebp's GenerateOptimalTree tie-breaking:
-/// - CompareHuffmanTrees sorts descending by count, ascending by value
-/// - Internal nodes have value=-1 (combined last among equal-count nodes)
-/// - Leaf nodes use symbol index as value (higher symbols combined first)
-/// - Returns false if any code exceeds tree_depth_limit (caller doubles
-///   count_min and retries)
+/// - initial leaves sorted by count DESC, ties by value ASC
+///   (`CompareHuffmanTrees`; values are unique so the sort is total),
+/// - each step merges the two array-tail entries (smallest counts; among
+///   equal counts the highest-value leaf sits later and merges first),
+/// - the merged node is inserted before the FIRST entry with
+///   `total_count <= merged` — i.e. a fresh internal node outranks every
+///   equal-count entry, including OLDER internal nodes.
+///
+/// The previous BinaryHeap implementation got the leaf/internal tie right
+/// (internal `value = -1` pops last) but left the order among EQUAL-COUNT
+/// INTERNAL nodes to heap sift order, which diverged from libwebp on the
+/// alpha checker probe (green tree symbols 269-272 got the same {3,3,4,4}
+/// length multiset assigned to different symbols). (#38)
+///
+/// Returns false if any code exceeds `tree_depth_limit` (caller doubles
+/// `count_min` and retries).
 fn generate_tree_with_min_count(
     _freq: &[u32],
     non_zero: &[(usize, u32)],
@@ -199,69 +207,74 @@ fn generate_tree_with_min_count(
 ) -> bool {
     lengths.fill(0);
 
-    #[derive(Eq, PartialEq)]
+    #[derive(Clone, Copy)]
     struct Node {
-        weight: u64,
-        /// Matches libwebp's HuffmanTree.value for tie-breaking:
-        /// leaf nodes = symbol index (>= 0), internal nodes = -1.
+        total_count: u32,
+        /// Symbol index for leaves, -1 for internal nodes (libwebp's
+        /// `HuffmanTree.value`).
         value: i32,
-        symbol: Option<usize>,
-        children: Option<(Box<Node>, Box<Node>)>,
+        /// Pool indices of children (-1 for leaves).
+        left: i32,
+        right: i32,
     }
 
-    impl Ord for Node {
-        fn cmp(&self, other: &Self) -> Ordering {
-            // BinaryHeap is a max-heap. We want min-heap on weight, and for
-            // equal weight we want the highest value to pop first (matching
-            // libwebp which combines from end of descending-sorted array).
-            other
-                .weight
-                .cmp(&self.weight)
-                .then(self.value.cmp(&other.value))
-        }
-    }
-
-    impl PartialOrd for Node {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-            Some(self.cmp(other))
-        }
-    }
-
-    let mut heap = BinaryHeap::new();
-    for &(sym, f) in non_zero.iter() {
-        heap.push(Node {
-            weight: f.max(count_min) as u64,
+    // Active working array, kept sorted by count DESC (ties: value ASC).
+    let mut tree: Vec<Node> = non_zero
+        .iter()
+        .map(|&(sym, f)| Node {
+            total_count: f.max(count_min),
             value: sym as i32,
-            symbol: Some(sym),
-            children: None,
-        });
-    }
+            left: -1,
+            right: -1,
+        })
+        .collect();
+    tree.sort_by(|a, b| {
+        b.total_count
+            .cmp(&a.total_count)
+            .then(a.value.cmp(&b.value))
+    });
 
-    while heap.len() > 1 {
-        let a = heap.pop().unwrap();
-        let b = heap.pop().unwrap();
-        heap.push(Node {
-            weight: a.weight + b.weight,
-            value: -1, // internal node, matching libwebp
-            symbol: None,
-            children: Some((Box::new(a), Box::new(b))),
-        });
-    }
+    // Merged-out nodes park in the pool; internal nodes reference them.
+    let mut pool: Vec<Node> = Vec::with_capacity(tree.len() * 2);
 
-    fn collect_depths(node: &Node, depth: u8, lengths: &mut [u8], max_depth: &mut u8) {
-        if let Some(sym) = node.symbol {
-            lengths[sym] = depth.max(1);
-            *max_depth = (*max_depth).max(depth);
-        } else if let Some((ref left, ref right)) = node.children {
-            collect_depths(left, depth + 1, lengths, max_depth);
-            collect_depths(right, depth + 1, lengths, max_depth);
+    if tree.len() > 1 {
+        while tree.len() > 1 {
+            let last = tree.pop().unwrap();
+            let second = tree.pop().unwrap();
+            pool.push(last);
+            pool.push(second);
+            let count = pool[pool.len() - 1].total_count + pool[pool.len() - 2].total_count;
+            // Insertion point: before the first entry with count <= merged.
+            let k = tree
+                .iter()
+                .position(|n| n.total_count <= count)
+                .unwrap_or(tree.len());
+            tree.insert(
+                k,
+                Node {
+                    total_count: count,
+                    value: -1,
+                    left: (pool.len() - 1) as i32,
+                    right: (pool.len() - 2) as i32,
+                },
+            );
         }
-    }
-
-    if let Some(root) = heap.pop() {
-        let mut max_depth = 0u8;
-        collect_depths(&root, 0, lengths, &mut max_depth);
+        // SetBitDepths: assign leaf depths from the root.
+        fn set_bit_depths(node: &Node, pool: &[Node], lengths: &mut [u8], level: u8) -> u8 {
+            if node.left >= 0 {
+                let a = set_bit_depths(&pool[node.left as usize], pool, lengths, level + 1);
+                let b = set_bit_depths(&pool[node.right as usize], pool, lengths, level + 1);
+                a.max(b)
+            } else {
+                lengths[node.value as usize] = level.max(1);
+                level
+            }
+        }
+        let max_depth = set_bit_depths(&tree[0], &pool, lengths, 0);
         max_depth <= tree_depth_limit
+    } else if tree.len() == 1 {
+        lengths[tree[0].value as usize] = 1;
+        true
     } else {
         true
     }
@@ -324,6 +337,15 @@ fn reverse_bits_16(num_bits: u32, bits: u32) -> u32 {
     retval >> (16 - num_bits)
 }
 
+/// #38 BITDBG: which nested VP8L image the next TREE stores belong to
+/// (pairs with libwebp's `g_lbit_img`). Indexes [`ZBIT_IMG_NAMES`].
+#[cfg(feature = "mode_debug")]
+pub(crate) static ZBIT_IMG: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+#[cfg(feature = "mode_debug")]
+pub(crate) const ZBIT_IMG_NAMES: [&str; 5] =
+    ["main", "palette", "entropy", "predictor", "crosscolor"];
+
 /// Write a Huffman tree to the bitstream.
 pub fn write_huffman_tree(w: &mut BitWriter, lengths: &[u8]) {
     // #38 bit-level parity trace marker (pairs with LBIT TREE in libwebp).
@@ -331,7 +353,8 @@ pub fn write_huffman_tree(w: &mut BitWriter, lengths: &[u8]) {
     if std::env::var("BITDBG").is_ok() {
         use core::fmt::Write as _;
         let mut line = alloc::string::String::new();
-        let _ = write!(line, "ZBIT TREE nsym={} lens:", lengths.len());
+        let img = ZBIT_IMG_NAMES[ZBIT_IMG.load(core::sync::atomic::Ordering::Relaxed)];
+        let _ = write!(line, "ZBIT TREE img={img} nsym={} lens:", lengths.len());
         for (i, &l) in lengths.iter().enumerate() {
             if l != 0 {
                 let _ = write!(line, " {i}:{l}");

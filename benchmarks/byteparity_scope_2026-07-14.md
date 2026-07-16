@@ -41,7 +41,7 @@ the two marked BOTH):
 | quality edges q0/q1/q99/q100 | 864/1456 → **1456/1456** | Three roots: (a) **BOTH MODELS** — the single-segment base init looked up `DC_QUANT[qi]` unclipped for UV DC; only q0 reaches qi>117, where the encoder then quantized UV DC with step 157 while every decoder (incl. zen's own, which caps at 132) dequantizes with 132 — a real encoder/decoder mismatch. (b) libwebp only allocates diffusion buffers at quality ≤ 98 (`webp_enc.c:167`); zen diffused at q99/q100 too, flipping ~14% of UV picks (parity now gates; tuned keeps always-on, effect is noise-level up there). (c) the `StoreMaxDelta` gate compares libwebp's `rd->D`, which carries the flat-latch DOUBLING; zen gated on raw SSE (synth 17x17 q1 m5: 2304 vs 1152 straddled min_disto 1560). |
 | partition_limit 30/60/100 | 123/252 → **252/252** | Two zenwebp-only mechanisms leaked into parity: a pl²-scaled I4 seed penalty (`base + base·pl²/400`; libwebp's partition_limit feeds ONLY `max_i4_header_bits`) and `partition_limit >= 100` gates that reroute m0-m2 onto entirely different paths (libwebp's RD_OPT_NONE never consults partition_limit — `RefineUsingDistortion` caps header bits with the partition_limit-independent `mb_header_limit`). |
 | segments-3 + sns/filter extremes (incl. sns>0 with segs1) | → **1120/1120** | libwebp applies the uv_alpha-derived UV quant deltas at EVERY segment count; when its analysis pass doesn't run (m2+ / one segment) `uv_alpha` keeps the 0 default (`analysis_enc.c:372`), still yielding `uvac_delta=-4`-class deltas at sns>0. zen's single-segment path skipped the deltas entirely (dumped: q50 m4 sns80 segs1, lib `q_uvac=-4`, zen none, 24% UV picks flipped). Parity computes them; tuned adoption is a candidate (finer UV at high SNS). |
-| alpha (RGBA) | 0/192 → **64/192** (see the alpha-pipeline note below) | **BOTH MODELS**: zen keyed the ALPH chunk on the input LAYOUT; libwebp scans the pixels (`WebPPictureHasTransparency`). Opaque RGBA now encodes as a bare `VP8 ` file, byte-identical to libwebp and ~80 B smaller per 64×64 (VP8X+ALPH dropped). The remaining 128 cells are REAL alpha: byte-parity there needs libwebp's alpha-plane coder (filter none/h/v/gradient selection × its VP8L-mini configuration) — a separate subsystem port, tracked as follow-on. |
+| alpha (RGBA) | 0/192 → 64/192 → **192/192** (2026-07-16) | Six roots, in landing order. (1) **BOTH MODELS**: zen keyed the ALPH chunk on the input LAYOUT; libwebp scans the pixels (`WebPPictureHasTransparency`) — opaque RGBA now encodes as a bare `VP8 ` file. (2) The full libwebp alpha pipeline port (filters × full VP8L × raw fallback, `src/encoder/alpha.rs`). (3) **BOTH MODELS**: the Huffman equal-count tie-break — zen's BinaryHeap left equal-count INTERNAL-node order to sift order; libwebp's `GenerateOptimalTree` sorted-array merge inserts a fresh internal node before every equal-count entry. Exact port in `generate_tree_with_min_count`; same-cost trees, different symbol assignment (dumped: green lens 269-272 swapped on the checker while the REFS were identical — the earlier "LZ77 length distribution" reading was wrong, as was "meta-huffman group count": the 15-vs-10 TREE stores were a SECOND CRUNCH CONFIG, disambiguated by `img=`/STREAM tags). (4) **BOTH MODELS**: `red_and_blue_always_zero` was computed but never consumed — libwebp skips cross-color entirely when R/B are constant-zero (every alpha-in-green plane); zen spent ~5 trees + a transform image on it and flipped the filter choice downstream. (5) **BOTH MODELS**: `WebPCleanupTransparentArea` (YUV flavor) was documented on `exact` but never implemented for lossy — mixed-alpha 8×8 blocks get visible-average luma smoothing, fully-transparent blocks flatten Y/U/V to the run's first pixel, run POST-conversion like libwebp; the MB padding must be re-replicated after (stale pre-cleanup edges broke every non-MB-aligned size). Checker VP8 layer: 1554 → 1058 B. (6) parity-gated: `WebPAccumulateRGBA` alpha-WEIGHTED linear chroma averaging for mixed-alpha 2×2 blocks (`kInvAlpha` verified = floor((1<<19)/a), computed not baked), and libwebp's hash-chain iteration accounting (heuristics consume iterations, pre-decrement chain walk, no stall budget, row-above gated `!low_effort`) via `Vp8lConfig::parity` — zen's tuned lossless keeps its stall-budget + always-on row-above (measured m0 wins). CI: `transparent_rgba_matches_libwebp`. |
 | sharp_yuv | 0/96 → **96/96** (2026-07-16) | Closed by porting libwebp's SharpYUV library exactly (`src/encoder/sharpyuv.rs`): 10-bit fixed-point W/RGB-delta iteration, linear-light targets via baked 16-bit sRGB tables (dumped from an instrumented build — immune to libm `pow` drift), decoder-matched 9-3-3-1 filter, ≤4 passes with the padded-dims `3·w·h` exit, `kSharpYuvMatrixWebp` 16.16 final. Converter verified IDENTICAL vs `SharpYuvConvert` on 17 shapes + the full webpx ARGB flow; tiny images (<4 px) fall back to standard conversion like libwebp (`kMinDimensionIterativeConversion`). Also ADOPTED for the tuned `.sharp_yuv(true)` (+1.0..+1.8 zsim vs +0.18..+0.32 from zenyuv's converter; 1.5× faster than libwebp's SSE2 build). See `sharpyuv_port_2026-07-16.md`. |
 
 Out of scope (no matched knob / architecturally different — documented in the
@@ -135,21 +135,17 @@ full code-length dumps at every huffman store) drove two iterations:
      frequencies), i.e. the match LENGTHS zen's LZ77 emits differ slightly
      from libwebp's on this pattern. Distance trees identical.
 
-Next iterations: dump both sides' backward refs for the main image (lengths
-histogram) and the clustering combine costs; converge zen's histogram
-clustering + LZ77 length choice at the alpha operating point.
-
-**Clustering-dump status (HISTDBG landed, open question):** libwebp's greedy
-pair evaluation on the checker main image shows `diff ≈ -4.3e9` — merging IS
-favorable on its side too, which contradicts the "lib keeps 2 groups"
-reading of the TREE counts (lib emits 15 TREE stores per ALPH stream vs
-zen's 10). The group accounting needs IMAGE-boundary tags (palette image /
-entropy image / main image) on the TREE markers to disambiguate — 15 may be
-palette(5) + entropy-image(5) + merged-main(5), i.e. lib codes an entropy
-image where zen skips it (or vice versa). Also zen's 2-histogram case never
-reaches the instrumented `push` (no ZHIST lines) — its tiny-set clustering
-takes a different branch; instrument that branch next. Both dumps are in
-place (`HISTDBG` env, both trees).
+**RESOLVED (2026-07-16, later): the axis is 192/192.** The image-boundary
+tags (`img=` on TREE, `STREAM` markers, `REFDBG` op dumps) answered both
+open questions in one pass: the 15-vs-10 TREE stores were NOT an
+entropy-image/group difference — libwebp's `VP8LEncodeStream` runs a
+SECOND CRUNCH CONFIG inside one stream (15 = palette 5 + main 5 + second
+config's main 5), and the "LZ77 length distribution" divergence was NOT
+in the refs at all (`REFDBG`: byte-identical op streams) but in the
+Huffman equal-count tie-break assigning the same {3,3,4,4} length
+multiset to different symbols. The clustering was never wrong. See the
+alpha row in the axis table above for all six roots and where each
+landed.
 
 ### Failure shape: NONE — 4004/4004 (2026-07-16)
 

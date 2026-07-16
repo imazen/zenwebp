@@ -607,6 +607,7 @@ pub struct BackwardRefsResult {
 /// - Method 1+: full pipeline with cache evaluation per LZ77 type, TraceBackwards DP
 ///
 /// Matches libwebp's GetBackwardReferences / GetBackwardReferencesLowEffort flow.
+#[allow(clippy::too_many_arguments)]
 pub fn get_backward_references(
     argb: &[u32],
     width: usize,
@@ -615,6 +616,7 @@ pub fn get_backward_references(
     method: u8,
     cache_bits_max: u8,
     do_no_cache: bool,
+    parity: bool,
 ) -> BackwardRefsResult {
     get_backward_references_inner(
         argb,
@@ -625,6 +627,7 @@ pub fn get_backward_references(
         cache_bits_max,
         0,
         do_no_cache,
+        parity,
     )
 }
 
@@ -639,6 +642,7 @@ pub fn get_backward_references_with_palette(
     cache_bits_max: u8,
     palette_size: usize,
     do_no_cache: bool,
+    parity: bool,
 ) -> BackwardRefsResult {
     get_backward_references_inner(
         argb,
@@ -649,6 +653,7 @@ pub fn get_backward_references_with_palette(
         cache_bits_max,
         palette_size,
         do_no_cache,
+        parity,
     )
 }
 
@@ -667,6 +672,7 @@ fn get_backward_references_inner(
     cache_bits_max: u8,
     palette_size: usize,
     do_no_cache: bool,
+    parity: bool,
 ) -> BackwardRefsResult {
     let size = width * height;
 
@@ -679,7 +685,7 @@ fn get_backward_references_inner(
     }
 
     // Build hash chain
-    let hash_chain = HashChain::new(argb, quality, width, method == 0);
+    let hash_chain = HashChain::new(argb, quality, width, method == 0, parity);
 
     // Method 0: libwebp's GetBackwardReferencesLowEffort shape — one plain
     // LZ77 pass, no RLE trial, no TraceBackwards — plus one cheap size lever
@@ -1003,7 +1009,7 @@ mod tests {
             pixels.push(0xFF112233u32);
             pixels.push(0xFF445566u32);
         }
-        let result = get_backward_references(&pixels, 10, 20, 75, 4, 10, false);
+        let result = get_backward_references(&pixels, 10, 20, 75, 4, 10, false, false);
         let refs = result.refs;
         assert!(!refs.is_empty());
     }
@@ -1012,7 +1018,7 @@ mod tests {
     fn test_lz77_vs_rle() {
         // Solid color image - RLE should win
         let pixels = vec![0xFF000000u32; 1000];
-        let hash_chain = HashChain::new(&pixels, 75, 100, false);
+        let hash_chain = HashChain::new(&pixels, 75, 100, false, false);
         let refs_lz77 = backward_references_lz77(&pixels, 100, 10, 0, &hash_chain);
         let refs_rle = backward_references_rle(&pixels, 100, 10, 0);
 

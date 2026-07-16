@@ -42,7 +42,7 @@ impl HashChain {
     /// - Color+run-length hash for constant-color runs
     /// - Heuristic row-above and previous-pixel initial guesses
     /// - Left-extension optimization (fills preceding positions without re-search)
-    pub fn new(argb: &[u32], quality: u8, width: usize, low_effort: bool) -> Self {
+    pub fn new(argb: &[u32], quality: u8, width: usize, low_effort: bool, parity: bool) -> Self {
         let size = argb.len();
         let mut offset_length = vec![0u32; size];
 
@@ -132,11 +132,17 @@ impl HashChain {
             let min_pos = base_position.saturating_sub(window_size);
             let length_max = max_len.min(256);
 
+            // Follow hash chain (budget shared with the heuristics under
+            // parity, exactly like libwebp's `--iter` accounting).
+            let mut iters = iter_max;
+
             // Heuristic: try row above as initial guess. Kept ON at method 0
             // (unlike libwebp) because the shallow m0 iteration cap can't
             // reach distance==width candidates through the chain on smooth
-            // content — without this seed, gradients regress badly.
-            if base_position >= width {
+            // content — without this seed, gradients regress badly. Under
+            // parity it follows libwebp's `!low_effort` gate and costs one
+            // iteration.
+            if (!parity || !low_effort) && base_position >= width {
                 let curr_len = find_match_length(
                     argb,
                     base_position - width,
@@ -148,15 +154,21 @@ impl HashChain {
                     best_length = curr_len;
                     best_distance = width;
                 }
+                if parity {
+                    iters -= 1;
+                }
             }
 
-            // Heuristic: try previous pixel
+            // Heuristic: try previous pixel (costs one iteration in libwebp).
             if !low_effort && base_position >= 1 {
                 let curr_len =
                     find_match_length(argb, base_position - 1, argb_start, best_length, max_len);
                 if curr_len > best_length {
                     best_length = curr_len;
                     best_distance = 1;
+                }
+                if parity {
+                    iters -= 1;
                 }
             }
 
@@ -167,8 +179,12 @@ impl HashChain {
                 chain[base_position]
             };
 
-            // Follow hash chain
-            let mut iters = iter_max;
+            // libwebp's chain walk is `for (; pos >= min_pos && --iter;)` —
+            // PRE-decrement, so it examines one fewer candidate than the
+            // remaining budget. The tuned loop below is post-decrement.
+            if parity {
+                iters = iters.saturating_sub(1);
+            }
             let mut best_argb = argb.get(argb_start + best_length).copied().unwrap_or(0);
             // Method 0: search-tree pruning — abandon a walk after
             // NO_PROGRESS_LIMIT consecutive candidates that failed to improve
@@ -179,7 +195,7 @@ impl HashChain {
             // step zero, which is what makes stall-counting safe here.
             // m1+ uses an untriggerable budget: one dec+cmp per iteration.
             const NO_PROGRESS_LIMIT: u32 = 24;
-            let stall_reset = if low_effort {
+            let stall_reset = if low_effort && !parity {
                 NO_PROGRESS_LIMIT
             } else {
                 u32::MAX
@@ -407,7 +423,7 @@ mod tests {
     fn test_hash_chain_simple() {
         // Simple test: repeated pixel should find match
         let pixels = vec![0xFF000000u32; 100];
-        let chain = HashChain::new(&pixels, 75, 10, false);
+        let chain = HashChain::new(&pixels, 75, 10, false, false);
 
         // Position 50 should find match with distance 1
         assert!(chain.length(50) > 0);
@@ -420,7 +436,7 @@ mod tests {
         pixels.extend_from_slice(&[0xFFAABBCCu32; 50]);
         pixels.extend_from_slice(&[0xFF112233u32; 50]);
 
-        let chain = HashChain::new(&pixels, 75, 50, false);
+        let chain = HashChain::new(&pixels, 75, 50, false, false);
 
         // Positions 100-149 should find matches to positions 0-49
         for i in 100..140 {

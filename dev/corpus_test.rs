@@ -1,8 +1,8 @@
 //! Corpus-level file size comparison between zenwebp and libwebp.
 //!
-//! Usage: cargo run --release --example corpus_test [directory] [method]
+//! Usage: cargo run --release --example corpus_test [directory] [method] [lossless]
 //! Default directory: /tmp/CID22/original
-//! Default method: 4
+//! Default method: 4; pass "lossless" as the 3rd arg for the VP8L comparison.
 
 use std::env;
 use std::fs;
@@ -15,6 +15,7 @@ fn main() {
         .map(|s| s.as_str())
         .unwrap_or("/tmp/CID22/original");
     let method: u8 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(4);
+    let lossless = args.get(3).map(String::as_str) == Some("lossless");
 
     let mut zen_total = 0u64;
     let mut lib_total = 0u64;
@@ -37,7 +38,7 @@ fn main() {
             Ok(r) => r,
             Err(_) => continue,
         };
-        let mut buf = vec![0u8; reader.output_buffer_size()];
+        let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
         let info = match reader.next_frame(&mut buf) {
             Ok(i) => i,
             Err(_) => continue,
@@ -56,26 +57,42 @@ fn main() {
             _ => continue,
         };
 
-        let _cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
-            .with_method(method)
-            .with_sns_strength(0)
-            .with_filter_strength(0)
-            .with_segments(1);
-        let zen = match EncodeRequest::new(&_cfg, &rgb, PixelLayout::Rgb8, w, h).encode() {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        let lib = match webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
-            .method(method)
-            .sns_strength(0)
-            .filter_strength(0)
-            .filter_sharpness(0)
-            .segments(1)
-            .encode_rgb(&rgb, w, h, webpx::Unstoppable)
-        {
-            Ok(v) => v,
-            Err(_) => continue,
+        let (zen, lib) = if lossless {
+            let zcfg = zenwebp::LosslessConfig::new().with_method(method);
+            let zen = match EncodeRequest::lossless(&zcfg, &rgb, PixelLayout::Rgb8, w, h).encode() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let lib = match webpx::EncoderConfig::new_lossless()
+                .method(method)
+                .encode_rgb(&rgb, w, h, webpx::Unstoppable)
+            {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            (zen, lib)
+        } else {
+            let cfg = EncoderConfig::with_preset(Preset::Default, 75.0)
+                .with_method(method)
+                .with_sns_strength(0)
+                .with_filter_strength(0)
+                .with_segments(1);
+            let zen = match EncodeRequest::new(&cfg, &rgb, PixelLayout::Rgb8, w, h).encode() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let lib = match webpx::EncoderConfig::with_preset(webpx::Preset::Default, 75.0)
+                .method(method)
+                .sns_strength(0)
+                .filter_strength(0)
+                .filter_sharpness(0)
+                .segments(1)
+                .encode_rgb(&rgb, w, h, webpx::Unstoppable)
+            {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            (zen, lib)
         };
 
         zen_total += zen.len() as u64;
@@ -100,7 +117,11 @@ fn main() {
         );
     }
 
-    println!("\n=== Corpus Results (m{}, Q75, SNS=0) ===", method);
+    println!(
+        "\n=== Corpus Results (m{}, {}) ===",
+        method,
+        if lossless { "lossless" } else { "Q75, SNS=0" }
+    );
     println!("Directory: {}", dir);
     println!("Images: {}", count);
     println!("zenwebp total: {} bytes", zen_total);

@@ -738,6 +738,54 @@ fn gamma_downsample_uv_2(p1: &[u8], p2: &[u8], prec: ChromaPrec) -> (u8, u8) {
     uv_from_channels_x4(r, g, b)
 }
 
+// ---------------------------------------------------------------------------
+// Alpha-weighted chroma (libwebp `WebPAccumulateRGBA`, dsp/yuv.c).
+//
+// For a 2×2 block whose summed alpha is neither 0 nor 4·255, libwebp averages
+// each channel in linear space WEIGHTED BY ALPHA — transparent pixels don't
+// pollute the chroma of their visible neighbors:
+//
+//   value = LinearToGamma(DIVIDE_BY_ALPHA(Σ aᵢ·GammaToLinear(cᵢ), Σ aᵢ), 0)
+//
+// `kInvAlpha[a]` is exactly floor((1 << kAlphaFix) / a) with kAlphaFix = 19
+// (verified against the baked table), so it is computed instead of baked;
+// `DIVIDE_BY_ALPHA(sum, a) = (sum · kInvAlpha[a]) >> (kAlphaFix − 2)` — the
+// ×4 premultiply LinearToGamma expects is folded into the shift. (#38)
+
+#[inline(always)]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+fn divide_by_alpha(sum: u32, a: u32) -> u32 {
+    debug_assert!(a > 0 && a <= 4 * 0xff);
+    (sum * ((1u32 << 19) / a)) >> 17
+}
+
+/// Weighted SUM4 → (u, v), libwebp-exact precision only.
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+fn gamma_downsample_uv_4_weighted(ps: [&[u8]; 4], alphas: [u32; 4], total_a: u32) -> (u8, u8) {
+    let gtl = gamma_to_linear;
+    let ch = |c: usize| -> i32 {
+        let wsum = alphas[0] * gtl(ps[0][c])
+            + alphas[1] * gtl(ps[1][c])
+            + alphas[2] * gtl(ps[2][c])
+            + alphas[3] * gtl(ps[3][c]);
+        linear_to_gamma_fx(divide_by_alpha(wsum, total_a), 0)
+    };
+    uv_from_channels_x4(ch(0), ch(1), ch(2))
+}
+
+/// Weighted SUM2 → (u, v): the two pixels count twice (libwebp's `step=0` /
+/// doubled-alpha forms), so `total_a = 2·(a1 + a2)`.
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+fn gamma_downsample_uv_2_weighted(p1: &[u8], p2: &[u8], a1: u32, a2: u32) -> (u8, u8) {
+    let gtl = gamma_to_linear;
+    let total_a = 2 * (a1 + a2);
+    let ch = |c: usize| -> i32 {
+        let wsum = 2 * (a1 * gtl(p1[c]) + a2 * gtl(p2[c]));
+        linear_to_gamma_fx(divide_by_alpha(wsum, total_a), 0)
+    };
+    uv_from_channels_x4(ch(0), ch(1), ch(2))
+}
+
 /// Convert image to YUV420 using sharp (iterative) chroma downsampling.
 ///
 /// This produces higher-quality chroma planes at the cost of being slower.
@@ -1027,6 +1075,23 @@ fn zenyuv_encode_planes(
         fill_y(&mut y_tight);
         pad_plane(&y_tight, &mut y_bytes, w, h, luma_width, luma_height);
     }
+    // Tight alpha plane for the weighted-chroma fixup (parity precision +
+    // alpha-carrying layouts only; both RGBA and BGRA store alpha last).
+    let alpha_plane: Option<alloc::vec::Vec<u8>> = if prec == ChromaPrec::LibwebpExact
+        && matches!(color, PixelLayout::Rgba8 | PixelLayout::Bgra8)
+    {
+        Some(
+            (0..h)
+                .flat_map(|y| {
+                    image_data[y * src_stride_bytes..y * src_stride_bytes + w * 4]
+                        .chunks_exact(4)
+                        .map(|p| p[3])
+                })
+                .collect(),
+        )
+    } else {
+        None
+    };
     gamma_chroma_overwrite(
         rgb,
         w,
@@ -1036,6 +1101,7 @@ fn zenyuv_encode_planes(
         chroma_width,
         chroma_height,
         prec,
+        alpha_plane.as_deref(),
     );
 
     // Sharp path: refine the gamma-corrected chroma via Newton-step iteration.
@@ -1333,6 +1399,10 @@ fn gamma_chroma_overwrite(
     chroma_width: usize,
     chroma_height_mb: usize,
     prec: ChromaPrec,
+    // Tight w×h alpha plane. When present (LibwebpExact + alpha input),
+    // 2×2 blocks with mixed alpha are re-derived alpha-weighted after the
+    // bulk pass (libwebp `WebPAccumulateRGBA`). None = opaque semantics.
+    alpha: Option<&[u8]>,
 ) {
     let src_chroma_width = w.div_ceil(2);
     let src_chroma_height = h.div_ceil(2);
@@ -1408,6 +1478,69 @@ fn gamma_chroma_overwrite(
             let idx = row_pairs * chroma_width + col_pairs;
             u_bytes[idx] = u;
             v_bytes[idx] = v;
+        }
+    }
+
+    // Alpha-weighted fixup: recompute the (rare) mixed-alpha blocks.
+    if let Some(a_plane) = alpha {
+        let a = |x: usize, y: usize| -> u32 { u32::from(a_plane[y * w + x]) };
+        for row_pair in 0..row_pairs {
+            let (r1, r2) = (row_pair * 2, row_pair * 2 + 1);
+            for col_pair in 0..col_pairs {
+                let (c1, c2) = (col_pair * 2, col_pair * 2 + 1);
+                let alphas = [a(c1, r1), a(c2, r1), a(c1, r2), a(c2, r2)];
+                let total: u32 = alphas.iter().sum();
+                if total != 0 && total != 4 * 0xff {
+                    let idx = row_pair * chroma_width + col_pair;
+                    let (u, v) = gamma_downsample_uv_4_weighted(
+                        [px(c1, r1), px(c2, r1), px(c1, r2), px(c2, r2)],
+                        alphas,
+                        total,
+                    );
+                    u_bytes[idx] = u;
+                    v_bytes[idx] = v;
+                }
+            }
+            if odd_width {
+                let c = w - 1;
+                let (a1, a2) = (a(c, r1), a(c, r2));
+                let total = 2 * (a1 + a2);
+                if total != 0 && total != 4 * 0xff {
+                    let idx = row_pair * chroma_width + col_pairs;
+                    let (u, v) = gamma_downsample_uv_2_weighted(px(c, r1), px(c, r2), a1, a2);
+                    u_bytes[idx] = u;
+                    v_bytes[idx] = v;
+                }
+            }
+        }
+        if odd_height {
+            let r = h - 1;
+            for col_pair in 0..col_pairs {
+                let (c1, c2) = (col_pair * 2, col_pair * 2 + 1);
+                let (a1, a2) = (a(c1, r), a(c2, r));
+                let total = 2 * (a1 + a2);
+                if total != 0 && total != 4 * 0xff {
+                    let idx = row_pairs * chroma_width + col_pair;
+                    let (u, v) = gamma_downsample_uv_2_weighted(px(c1, r), px(c2, r), a1, a2);
+                    u_bytes[idx] = u;
+                    v_bytes[idx] = v;
+                }
+            }
+            // Corner: SUM2 of the pixel with itself — total alpha 4·a is 0
+            // or 1020 for every a∈{0,255}; mixed is impossible only for
+            // those extremes, so re-derive when 0 < a < 255.
+            if odd_width {
+                let c = w - 1;
+                let av = a(c, r);
+                let total = 4 * av;
+                if total != 0 && total != 4 * 0xff {
+                    let idx = row_pairs * chroma_width + col_pairs;
+                    let p = px(c, r);
+                    let (u, v) = gamma_downsample_uv_2_weighted(p, p, av, av);
+                    u_bytes[idx] = u;
+                    v_bytes[idx] = v;
+                }
+            }
         }
     }
 
@@ -2530,6 +2663,7 @@ mod tests_simd {
                     chroma_width,
                     chroma_height,
                     prec,
+                    None,
                 );
 
                 let mut u_ref = vec![0u8; csz];

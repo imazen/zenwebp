@@ -1097,12 +1097,157 @@ impl<'a> Vp8Encoder<'a> {
         }
     }
 
+    /// Port of libwebp's `WebPCleanupTransparentArea` (YUV flavor,
+    /// `picture_tools_enc.c`), run AFTER RGB→YUV conversion exactly like
+    /// libwebp's lossy flow (`webp_enc.c`: convert, then cleanup): per 8×8
+    /// luma block, mixed-alpha blocks get their invisible lumas replaced by
+    /// the block's visible-luma average (`SmoothenBlock`), fully-transparent
+    /// blocks are flattened (Y 8×8, U/V 4×4) to the first pixel of the run;
+    /// right/bottom partial blocks are smoothened only. `exact(true)` opts
+    /// out, same as libwebp. Alpha itself is untouched. (#38)
+    #[allow(clippy::too_many_arguments)]
+    fn cleanup_transparent_area_yuv(
+        alpha: &[u8],
+        a_stride: usize,
+        y_plane: &mut [u8],
+        y_stride: usize,
+        u_plane: &mut [u8],
+        v_plane: &mut [u8],
+        uv_stride: usize,
+        width: usize,
+        height: usize,
+    ) {
+        const SIZE: usize = 8;
+        const SIZE2: usize = SIZE / 2;
+
+        // `SmoothenBlock`: average visible lumas over invisible ones;
+        // returns true when the whole block is transparent.
+        fn smoothen_block(
+            alpha: &[u8],
+            a_stride: usize,
+            a_off: usize,
+            luma: &mut [u8],
+            y_stride: usize,
+            y_off: usize,
+            w: usize,
+            h: usize,
+        ) -> bool {
+            let mut sum = 0u32;
+            let mut count = 0u32;
+            for y in 0..h {
+                for x in 0..w {
+                    if alpha[a_off + y * a_stride + x] != 0 {
+                        count += 1;
+                        sum += u32::from(luma[y_off + y * y_stride + x]);
+                    }
+                }
+            }
+            if count > 0 && count < (w * h) as u32 {
+                let avg = (sum / count) as u8;
+                for y in 0..h {
+                    for x in 0..w {
+                        if alpha[a_off + y * a_stride + x] == 0 {
+                            luma[y_off + y * y_stride + x] = avg;
+                        }
+                    }
+                }
+            }
+            count == 0
+        }
+
+        fn flatten(plane: &mut [u8], off: usize, v: u8, stride: usize, size: usize) {
+            for y in 0..size {
+                plane[off + y * stride..off + y * stride + size].fill(v);
+            }
+        }
+
+        let mut y = 0usize;
+        while y + SIZE <= height {
+            let a_row = y * a_stride;
+            let y_row = y * y_stride;
+            let uv_row = (y / 2) * uv_stride;
+            let mut need_reset = true;
+            let mut values = [0u8; 3];
+            let mut x = 0usize;
+            while x + SIZE <= width {
+                if smoothen_block(
+                    alpha,
+                    a_stride,
+                    a_row + x,
+                    y_plane,
+                    y_stride,
+                    y_row + x,
+                    SIZE,
+                    SIZE,
+                ) {
+                    if need_reset {
+                        values[0] = y_plane[y_row + x];
+                        values[1] = u_plane[uv_row + (x >> 1)];
+                        values[2] = v_plane[uv_row + (x >> 1)];
+                        need_reset = false;
+                    }
+                    flatten(y_plane, y_row + x, values[0], y_stride, SIZE);
+                    flatten(u_plane, uv_row + (x >> 1), values[1], uv_stride, SIZE2);
+                    flatten(v_plane, uv_row + (x >> 1), values[2], uv_stride, SIZE2);
+                } else {
+                    need_reset = true;
+                }
+                x += SIZE;
+            }
+            if x < width {
+                smoothen_block(
+                    alpha,
+                    a_stride,
+                    a_row + x,
+                    y_plane,
+                    y_stride,
+                    y_row + x,
+                    width - x,
+                    SIZE,
+                );
+            }
+            y += SIZE;
+        }
+        if y < height {
+            let sub_height = height - y;
+            let a_row = y * a_stride;
+            let y_row = y * y_stride;
+            let mut x = 0usize;
+            while x + SIZE <= width {
+                smoothen_block(
+                    alpha,
+                    a_stride,
+                    a_row + x,
+                    y_plane,
+                    y_stride,
+                    y_row + x,
+                    SIZE,
+                    sub_height,
+                );
+                x += SIZE;
+            }
+            if x < width {
+                smoothen_block(
+                    alpha,
+                    a_stride,
+                    a_row + x,
+                    y_plane,
+                    y_stride,
+                    y_row + x,
+                    width - x,
+                    sub_height,
+                );
+            }
+        }
+    }
+
     /// Convert input pixels to YUV420 planes and prime the encoder frame buffers.
     ///
-    /// Handles ARGB→RGBA fixup, planar YUV import, sharp-YUV / fast-YUV / luma-only
-    /// dispatch, and a strided-buffer-size sanity check, then forwards into
-    /// [`Self::setup_encoding`] which fills `self.frame.{ybuf,ubuf,vbuf}` and
-    /// initialises per-segment quant / filter state.
+    /// Handles ARGB→RGBA fixup, transparent-area cleanup, planar YUV import,
+    /// sharp-YUV / fast-YUV / luma-only dispatch, and a strided-buffer-size
+    /// sanity check, then forwards into [`Self::setup_encoding`] which fills
+    /// `self.frame.{ybuf,ubuf,vbuf}` and initialises per-segment quant /
+    /// filter state.
     fn prepare_input_for_encoding(
         &mut self,
         data: &[u8],
@@ -1134,7 +1279,7 @@ impl<'a> Vp8Encoder<'a> {
             (data, color)
         };
 
-        let (y_bytes, u_bytes, v_bytes) = if color == PixelLayout::Yuv420 {
+        let (mut y_bytes, mut u_bytes, mut v_bytes) = if color == PixelLayout::Yuv420 {
             // YUV420 planar data: [Y, U, V] packed into a single buffer
             let w = usize::from(width);
             let h = usize::from(height);
@@ -1227,6 +1372,67 @@ impl<'a> Vp8Encoder<'a> {
                 stride,
                 color
             );
+        }
+
+        // libwebp default (`exact=0`): after conversion, smoothen/flatten the
+        // Y/U/V under transparent alpha so invisible pixels compress to
+        // nothing (`WebPCleanupTransparentArea`, YUV flavor — run at the
+        // same point in the flow as libwebp's lossy encode). `exact(true)`
+        // opts out. The ALPH plane reads the ORIGINAL data; alpha is
+        // untouched here.
+        if !params.exact
+            && matches!(
+                color,
+                PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::La8
+            )
+        {
+            let (bpp, a_off) = if color == PixelLayout::La8 {
+                (2usize, 1usize)
+            } else {
+                (4, 3)
+            };
+            let w = usize::from(width);
+            let h = usize::from(height);
+            let alpha_plane: alloc::vec::Vec<u8> = (0..h)
+                .flat_map(|y| {
+                    let row = y * stride * bpp;
+                    data[row..row + w * bpp].chunks_exact(bpp).map(|p| p[a_off])
+                })
+                .collect();
+            if alpha_plane.contains(&0) {
+                let y_stride = usize::from(width.div_ceil(16)) * 16;
+                let uv_stride = usize::from(width.div_ceil(16)) * 8;
+                Self::cleanup_transparent_area_yuv(
+                    &alpha_plane,
+                    w,
+                    &mut y_bytes,
+                    y_stride,
+                    &mut u_bytes,
+                    &mut v_bytes,
+                    uv_stride,
+                    w,
+                    h,
+                );
+                // The MB-alignment padding was replicated from the
+                // PRE-cleanup edges; refresh it so padded columns/rows
+                // extend the cleaned pixels (libwebp replicates from its
+                // tight planes at import time, i.e. post-cleanup).
+                let repad = |plane: &mut [u8], tw: usize, th: usize, pw: usize| {
+                    for y in 0..th {
+                        let last = plane[y * pw + tw - 1];
+                        plane[y * pw + tw..(y + 1) * pw].fill(last);
+                    }
+                    let (filled, rest) = plane.split_at_mut(th * pw);
+                    let last_row = &filled[(th - 1) * pw..];
+                    for chunk in rest.chunks_exact_mut(pw) {
+                        chunk.copy_from_slice(last_row);
+                    }
+                };
+                let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
+                repad(&mut y_bytes, w, h, y_stride);
+                repad(&mut u_bytes, cw, ch, uv_stride);
+                repad(&mut v_bytes, cw, ch, uv_stride);
+            }
         }
 
         // ZYUVDUMP=<path>: dump the tight Y/U/V region of the encoder input

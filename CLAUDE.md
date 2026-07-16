@@ -145,18 +145,22 @@ edge-partial MBs) × q ∈ {5,10,20,30,40,50,60,70,80,90,95} × 4 configs
 `dev/byteparity_sweep.rs` (the score); gated in CI by
 `tests/libwebp_byte_parity.rs` (`--features __expert` step: q75 pin, tiny/odd
 dims, q90 recorder paths, and regression anchors for the four final roots).
-**Claim scope (updated 2026-07-16):** the sweep's phase-2 axes are ALSO
-100%: filter_sharpness 1-7 (1960/1960), segments-3 + sns/filter extremes
+**Claim scope (updated 2026-07-16): EVERY swept axis is 100%.** Phase-2:
+filter_sharpness 1-7 (1960/1960), segments-3 + sns/filter extremes
 (1120/1120), quality edges q0/q1/q99/q100 (1456/1456), partition_limit
-30/60/100 (252/252), and sharp_yuv (96/96 — closed by the exact SharpYUV
-port `src/encoder/sharpyuv.rs`; also ADOPTED for the tuned
-`.sharp_yuv(true)`: +1.0..+1.8 zsim vs zenyuv's +0.2..+0.3, 1.5× faster
-than libwebp's SSE2 build; `benchmarks/sharpyuv_port_2026-07-16.md`).
-Alpha (RGBA) is the one open axis: 64/192 — opaque-RGBA is byte-exact,
-real-alpha ALPH payloads are within ±1-3 bytes (LZ77 length-code freqs +
-tree-store question; `byteparity_scope_2026-07-14.md` records the bit-level
-state). target_size/pass>1/autofilter/preprocessing remain out of scope
-(no matched knob). The journey from 24%:
+30/60/100 (252/252), sharp_yuv (96/96 — the exact SharpYUV port
+`src/encoder/sharpyuv.rs`; also ADOPTED for the tuned `.sharp_yuv(true)`:
++1.0..+1.8 zsim vs zenyuv's +0.2..+0.3, 1.5× faster than libwebp's SSE2
+build; `benchmarks/sharpyuv_port_2026-07-16.md`), and alpha (RGBA)
+**192/192** — six roots: content-based ALPH decision, the full libwebp
+alpha pipeline, the Huffman equal-count tie-break (exact
+`GenerateOptimalTree` port), `red_and_blue_always_zero` cross-color skip,
+`WebPCleanupTransparentArea` YUV smoothen/flatten (+ post-cleanup re-pad),
+alpha-weighted chroma (`WebPAccumulateRGBA`) + libwebp hash-chain
+iteration accounting under `Vp8lConfig::parity`. CI anchors:
+`sharp_yuv_matches_libwebp`, `transparent_rgba_matches_libwebp`.
+target_size/pass>1/autofilter/preprocessing remain out of scope (no
+matched knob). The journey from 24%:
 base-quant round→truncate, segmentation-collapse, trailing-slots, skip-proba
 forced off at m3+ (token-loop assert), I16-AC-trellis nz-context seed,
 Cat5/Cat6 stat-node per encode-loop path, StoreMaxDelta from the I16

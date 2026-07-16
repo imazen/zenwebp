@@ -136,6 +136,28 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Changed
 
+- **Lossy `exact` is now implemented: transparent areas are cleaned up by
+  default** (#38, 2026-07-16): the long-documented `EncoderConfig::exact`
+  flag (default `false`, matching libwebp) previously did nothing on the
+  lossy path — RGB under fully-transparent pixels was encoded verbatim.
+  The port of libwebp's `WebPCleanupTransparentArea` (YUV flavor) now
+  runs after conversion for RGBA/BGRA/La8 input: mixed-alpha 8×8 blocks
+  get their invisible lumas averaged from the visible ones, fully
+  transparent blocks flatten to the run's first pixel — the checker-alpha
+  probe's VP8 layer shrank 1554 → 1058 B with identical visible pixels.
+  `exact(true)` preserves RGB under alpha=0 exactly as before.
+- **VP8L Huffman ties now break exactly like libwebp** (#38, 2026-07-16):
+  the length-limited Huffman builder is now an exact port of libwebp's
+  `GenerateOptimalTree` sorted-array merge; the previous BinaryHeap left
+  the order of equal-count internal nodes to heap sift order. Same-cost
+  trees (identical length multisets), so sizes move only via tree-storage
+  RLE by ±bytes; A/B corpus lossless ratio vs libwebp: 1.0011× (m4) /
+  0.9999× (m6). Also: `red_and_blue_always_zero` (computed since the
+  entropy-analysis port but never consumed) now skips the cross-color
+  transform exactly like libwebp — images whose R/B channels are
+  constant-zero for the chosen mode (alpha planes, pure-gray content in
+  subtract-green modes) no longer spend a transform image on it.
+
 - **`.sharp_yuv(true)` now runs the libwebp SharpYUV port** (#38,
   2026-07-16): measured +1.0..+1.8 zensim over standard conversion on the
   15-image A/B corpus (zenyuv's Newton converter: +0.18..+0.32) at the
@@ -148,6 +170,23 @@ here has landed; see "Changed (BREAKING)" below.)
   `benchmarks/sharpyuv_port_2026-07-16.md`.
 
 ### Added
+
+- **Alpha (RGBA) byte-parity axis complete: 192/192** (#38, 2026-07-16):
+  whole lossy+alpha files under `StrictLibwebpParity` are byte-identical
+  to libwebp across the sweep's alpha grid (opaque/gradient/checker ×
+  64×64/33×17 × q5-90 × m0-6 × aq100/90) — the byteparity sweep is now
+  100% on EVERY axis (base 4004/4004 + six permutation axes). Landed
+  across this and the entries above: the Huffman tie-break port, the
+  `red_and_blue_always_zero` cross-color skip, transparent-area cleanup
+  (+ post-cleanup MB re-pad), alpha-WEIGHTED chroma averaging for
+  mixed-alpha 2×2 blocks (`WebPAccumulateRGBA`, parity precision), and
+  libwebp's hash-chain iteration accounting (heuristics consume
+  iterations, pre-decrement walk, no stall budget) behind
+  `Vp8lConfig::parity` — the tuned lossless keeps zenwebp's stall-budget
+  variant (measured better at m0 on smooth gradients). New CI anchor
+  `transparent_rgba_matches_libwebp`; diagnostics: `img=`-tagged TREE
+  dumps, `ZBIT/LBIT STREAM` markers, `REFDBG` backward-ref dumps,
+  `ALPHADUMP`, `corpus_test` lossless mode.
 
 - **SharpYUV port — `sharp_yuv` byte-exact under `StrictLibwebpParity`**
   (#38, 2026-07-16): `src/encoder/sharpyuv.rs` is an exact Rust port of

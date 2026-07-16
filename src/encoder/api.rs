@@ -2477,6 +2477,7 @@ pub(crate) fn encode_alpha_lossless(
         height,
         effort_level.min(6),
         reduce_levels,
+        cost_model == CostModel::StrictLibwebpParity,
         stop,
     )
 }
@@ -2492,6 +2493,7 @@ fn encode_alpha_libwebp_pipeline(
     height: u32,
     effort_level: u8,
     reduce_levels: bool,
+    parity: bool,
     stop: &dyn enough::Stop,
 ) -> EncodeResult<()> {
     use super::alpha as alph;
@@ -2516,8 +2518,15 @@ fn encode_alpha_libwebp_pipeline(
             continue;
         }
         let plane = alph::apply_filter(filter, &alpha_data, ww, hh);
-        let payload =
-            alpha_vp8l_payload_inner(&plane, width, height, effort_level, !reduce_levels, stop)?;
+        let payload = alpha_vp8l_payload_inner(
+            &plane,
+            width,
+            height,
+            effort_level,
+            !reduce_levels,
+            parity,
+            stop,
+        )?;
 
         // Per-trial raw fallback: compressed larger than source reverts to
         // ALPHA_NO_COMPRESSION for THIS trial (`EncodeAlphaInternal`).
@@ -2550,6 +2559,7 @@ pub(crate) fn alpha_vp8l_payload_inner(
     height: u32,
     effort_level: u8,
     use_quality_100: bool,
+    parity: bool,
     stop: &dyn enough::Stop,
 ) -> EncodeResult<Vec<u8>> {
     // `WebPDispatchAlphaToGreen` leaves A/R/B ZEROED — the alpha-in-green
@@ -2572,6 +2582,7 @@ pub(crate) fn alpha_vp8l_payload_inner(
         },
         exact: true,
         omit_headers: true,
+        parity,
         ..super::vp8l::Vp8lConfig::default()
     };
     super::vp8l::encode_vp8l(&rgba, width, height, true, &vp8l_config, stop)
