@@ -248,13 +248,24 @@ impl<'a> super::Vp8Encoder<'a> {
         for y in 0usize..4 {
             for x in 0usize..4 {
                 let i = y * 4 + x;
-                let mut block = luma_blocks[i * 16..][..16].try_into().unwrap();
+                let mut block: [i32; 16] = luma_blocks[i * 16..][..16].try_into().unwrap();
 
                 // Apply DCT was already done, now quantize
                 let dequant_block = if let Some(lambda) = trellis_lambda {
                     // Trellis quantization for better RD trade-off
                     let ctx0 = (u8::from(left_nz[y]) + u8::from(top_nz[x])).min(2) as usize;
                     let zigzag_slot = &mut trellis_y1_zigzag.as_mut().unwrap()[i];
+                    // Per-block trellis dump, format-matched to TRELDBG in the
+                    // instrumented libwebp's ReconstructIntra16. (#38)
+                    #[cfg(feature = "mode_debug")]
+                    let treldbg = std::env::var("TRELDBG").is_ok()
+                        && std::env::var("TARGX").is_ok_and(|v| v == mbx.to_string())
+                        && std::env::var("TARGY").is_ok_and(|v| v == mby.to_string());
+                    #[cfg(feature = "mode_debug")]
+                    if treldbg {
+                        let dbg_in: &[i32] = &block;
+                        eprintln!("TRELI16 n={i} ctx={ctx0} lam={lambda} in={dbg_in:?}");
+                    }
                     let has_nz = trellis_quantize_block(
                         &mut block,
                         zigzag_slot,
@@ -266,6 +277,11 @@ impl<'a> super::Vp8Encoder<'a> {
                         ctx0,
                         &segment.psy_config,
                     );
+                    #[cfg(feature = "mode_debug")]
+                    if treldbg {
+                        let dbg_out: &[i32] = &zigzag_slot[..];
+                        eprintln!("TRELI16 n={i} out={dbg_out:?} nz={}", u8::from(has_nz));
+                    }
                     top_nz[x] = has_nz;
                     left_nz[y] = has_nz;
                     // block now contains dequantized values at natural indices

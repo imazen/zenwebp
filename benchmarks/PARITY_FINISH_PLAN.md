@@ -8,22 +8,23 @@ Make `CostModel::StrictLibwebpParity` produce **byte-identical** output to libwe
 at matching `(quality, method, sns, filter, segments)`. Decoded pixels are already
 bit-exact and gated; this is about matching libwebp's exact **bytes**.
 
-## STATE (2026-07-15, post skip-proba fix)
+## STATE (2026-07-16, post trellis-skip fix)
 
-**3922/4004 = 97.9%** on the committed grid. 82 cells remain:
+**3989/4004 = 99.6%** on the committed grid. 15 cells remain, ALL q80+, in
+~5 clusters:
 
-| axis | count | note |
+| cluster | cells | note |
 |---|---|---|
-| **m5 / m6** | **39 / 35** | **90% of the remainder — the next target** |
-| m3 / m4 | 4 / 3 | effectively closed |
-| m0-m2 | 0 / 0 / 1 | **CLOSED** (was 94) — skip-proba StatLoop fix |
-| by config | 18 · 18 · 23 · 23 | converged — no config-specific mechanism left |
-| by image | 1025469 42 · 1418519 22 · 382297 13 · synth_33x17 5 | |
+| synth_33x17 q90 m2-m6 sns50/flt60/segs4 | 5 | one root; odd-dim + segs, the only m2 |
+| 382297 q80 m3+m4 sns0 (both segs configs) | 4 | one root; zen +22B |
+| 382297 q95 m6 sns0 (both segs configs) | 2 | zen −26B |
+| 382297 q90+q95 m5 sns30/flt20/segs2 | 2 | |
+| 382297 q95 m3 segs4 · 1025469 q95 m5 segs4 | 2 | q95 stragglers |
 
-**m0-m2 are done.** The remainder is the m5 (RD_OPT_TRELLIS) / m6
-(RD_OPT_TRELLIS_ALL) trellis residue, spread across q with a mild high-q lean
-(q80/q90: 15 each). The one m2 cell (synth_33x17 q90 sns50/flt60/segs4) fails
-m2-m6 alike — likely one shared root with the m5/m6 cluster there.
+m0-m2, the m5/m6 trellis residue, and every q≤70 cell are **closed**. The
+sns0 segs1/segs4 pairs stay byte-identical to each other (collapse works), so
+the 4-cell q80 m3/m4 cluster and the 5-cell synth_33x17 cluster are the two
+highest-leverage roots.
 
 ## TOOLS — all committed, all `--features __expert`
 
@@ -153,25 +154,33 @@ finalizes come from the token loop. #27 stands on its own merits only.
 | I16-AC-trellis nz-context seed | `f996eef` | +81 |
 | Cat5/Cat6 stat-node, per encode-loop path | `44ae3a0` | +189 |
 | StoreMaxDelta from the I16 CANDIDATE, not the final mode | `c9abe85` | +62 |
-| m0-m2 skip-proba: StatLoop-shaped count + size_p0 bailout | 2026-07-15 | +93 |
+| m0-m2 skip-proba: StatLoop-shaped count + size_p0 bailout | `46e2a2c` | +93 |
+| m5/m6 skip from FINAL trellis levels, not simple re-quant | 2026-07-16 | +67 |
 
 Earlier: base-quant truncate `52cf96f2` · segmentation-collapse `41923466` ·
 trailing-slots `7acdd775` · skip-proba forced off `91c96168`.
 
-## STRATEGY FOR THE REMAINING 82
+## STRATEGY FOR THE REMAINING 15
 
-**1. m5/m6 trellis residue (74 cells — start here).** m5 = `RD_OPT_TRELLIS`,
-m6 = `RD_OPT_TRELLIS_ALL` (trellis during I4 mode selection). The
-I16-AC-trellis context fix (`f996eef`) closed the big part; what remains is
-likely the I4 trellis path. Image lean: 1025469 (42 of 82) and 1418519 (22) —
-trace there, not on 382297 (13). Spread across q with a high-q lean.
+**1. synth_33x17 q90 m2-m6 sns50/flt60/segs4 (5 cells — one root).** The only
+m2 cell; fails every method ≥2 the same way — likely odd-dimension (33x17,
+partial edge MBs) × segments × high-q. `mbpixdiff` first.
 
-**2. The 4+3 m3/m4 stragglers.** May share roots with #1 (e.g. 382297
-q80 m3+m4 sns0 fail identically in both segs configs — one mechanism, 4
-cells).
+**2. 382297 q80 m3+m4 sns0 (4 cells — one root).** zen +22B, both segs
+configs byte-identical to each other. m3+m4 failing together = the
+RD_OPT_BASIC (non-trellis token-loop) path.
 
-**3. synth_33x17 q90 sns50/flt60/segs4** fails m2-m6 alike (the only m2 cell) —
-likely one root, possibly odd-dimension + segments interaction at high q.
+**3. The q90-q95 m5/m6 tail (6 cells).** Likely per-cluster roots; trace
+after the two above — they may share mechanisms.
+
+**(solved) m5/m6 trellis-skip** — was 74 cells. zen decided the per-MB skip
+with `check_all_coeffs_zero` (simple re-quant of the raw DCT); libwebp skips
+on `rd->nz == 0` — the FINAL trellis nz. The trellis keeps borderline
+coefficients the simple bias drops (neutral-bias level0 + sharpen + RD), so
+zen skipped MBs libwebp coded. Parity arm now records actual levels and
+derives skip from `stored_coeffs.is_all_zero`; StoreMaxDelta fires before the
+skip test. Full trace + tooling (`REFRESHDBG2`/`LEVFINAL`/`TRELDBG`) in
+`byteparity_scope_2026-07-14.md`.
 
 **(solved) m0-m2 skip-proba** — was 94 cells, the whole m0-m2 axis. Full
 mechanism + SKIPDBG evidence in `byteparity_scope_2026-07-14.md` ("SOLVED:

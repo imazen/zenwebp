@@ -8,10 +8,11 @@ mid-session. It is now committed as `dev/byteparity_sweep.rs` (the score),
 `dev/bitexact_diff.rs` (header fields + mode stream) — all wired as
 `__expert` examples. Never rebuild this in `/tmp` again.
 
-**The committed grid now scores 3922/4004 = 97.9%** (was 3578/4004 = 89.4% when
+**The committed grid now scores 3989/4004 = 99.6%** (was 3578/4004 = 89.4% when
 the harness was first committed; +189 came from the Cat5/Cat6 stat-node fix
-`44ae3a0`, +62 from the StoreMaxDelta I16-candidate gate `c9abe85`, then **+93
-from the m0-m2 skip-proba StatLoop fix — this commit**).
+`44ae3a0`, +62 from the StoreMaxDelta I16-candidate gate `c9abe85`, +93 from
+the m0-m2 skip-proba StatLoop fix `46e2a2c`, then **+67 from the m5/m6
+trellis-skip fix — this commit**).
 Neither number is comparable to the 3488/4004 = 87.1% below: 10 of
 the 13 images are synthetic and their generator was lost with the /tmp wipe and
 reconstructed differently, so the synthetic cells are simply different content
@@ -19,20 +20,56 @@ reconstructed differently, so the synthetic cells are simply different content
 is the durable baseline going forward** — the grid is committed now; re-run the
 tool for any before/after, and don't compare across grids.
 
-### Failure shape on the committed grid (82 of 4004, 2026-07-15, post-skip-fix)
+### Failure shape on the committed grid (15 of 4004, 2026-07-16, post-trellis-skip)
 
-By method (of 572 each): m0 **0** · m1 **0** · m2 **1** · m3 4 · m4 3 ·
-**m5 39 · m6 35**.
-By config (of 1001 each): sns0/flt0/segs1 18 · sns0/flt0/segs4 18 ·
-sns30/flt20/segs2 23 · sns50/flt60/segs4 23.
-By image: 1025469 42 · 1418519 22 · 382297 13 · synth_33x17 5 (all other
-synthetics 100%).
+By method (of 572 each): m0 **0** · m1 **0** · m2 1 · m3 4 · m4 3 · m5 4 ·
+m6 3. **Every remaining cell is q80+** — the full list:
 
-**m0-m2 are closed** (94 → 1; the one m2 straggler is synth_33x17 q90
-sns50/flt60/segs4, which fails m2-m6 alike — likely one shared root). The
-configs converged (23/23/18/18), so no config-specific mechanism remains. What
-is left is the **m5/m6 trellis residue (74 of 82)** plus the m3/m4 stragglers
-(4+3). Next work: the m5 (RD_OPT_TRELLIS) path.
+```
+382297   q80 m3+m4 sns0 (both segs configs, identical bytes)  4 cells  zen +22B
+382297   q95 m6 sns0 (both segs configs)                      2 cells  zen −26B
+382297   q95 m3 sns50/flt60/segs4                             1 cell   same size
+382297   q90+q95 m5 sns30/flt20/segs2                         2 cells
+1025469  q95 m5 sns50/flt60/segs4                             1 cell
+synth_33x17 q90 m2-m6 sns50/flt60/segs4                       5 cells  one root
+```
+
+**m0-m2 and the m5/m6 trellis residue are closed.** What is left is a high-q
+(q80-q95) tail in ~5 clusters, plus the odd-dimension synth_33x17 q90 cluster
+(fails m2-m6 alike — likely one shared root).
+
+#### SOLVED: m5/m6 skip decision from simple quant, not trellis (this commit, +67)
+
+At m5/m6 libwebp's skip is `is_skipped = (rd->nz == 0)` (`VP8Decimate`) — the
+nz of the FINAL trellis quantization. zen decided the skip with
+`check_all_coeffs_zero`, which re-quantizes the raw DCT coefficients with the
+SIMPLE quantizer. The trellis derives its level0 candidates with a NEUTRAL
+bias plus the `sharpen` term and then RD-scores keep-vs-drop, so it keeps
+borderline coefficients the simple bias drops — on those MBs zen skipped what
+libwebp coded. Traced at 1025469 q20 m5 sns0 mb(14,4) (the ONLY differing MB
+of that cell): both sides' trellis produce the identical single AC level=1
+(`TRELDBG`: in, ctx=1, lam=3249, out all match), but zen's simple-quant skip
+test said all-zero and discarded it. Fix (parity-gated): record the actual
+levels via `record_residual_tokens_storing` and derive the skip from
+`stored_coeffs.is_all_zero` — for agreeing MBs the recorded tokens are
+byte-identical EOB streams, so nothing else moves. `StoreMaxDelta` now also
+fires BEFORE the skip test on this path (libwebp stores it at the end of
+`PickBestIntra16`, before the skip decision). m5 39→4, m6 35→3.
+
+Note the tuned default keeps the simple-quant skip test — switching it to the
+trellis-derived skip is a tuned-adoption CANDIDATE (it fixes a real
+encoder-side reference mismatch: the encoder reconstructs WITH the kept
+coefficient, then codes a skip, so its intra predictions drift from the
+decoder's pixels) but needs a size/zensim A/B before adoption.
+
+Diagnosis tooling committed for the next tail: `REFRESHDBG2` (full per-finalize
+stats+proba table dump, both sides, diffable line-by-line), `LEVFINAL` (final
+recorded levels for one MB), `TRELDBG` (per-block I16-AC trellis in/out) — all
+`mode_debug` + `TARGX`/`TARGY`-gated in zen, env-gated in
+`libwebp--zen38trace`. The FDUMP diff proved the mid-pass refresh state was
+IDENTICAL at the diverging MB (block 1 of 8 matched; blocks 2-8 diverged only
+as the downstream cascade), which pinned the root inside the MB's own
+quantization in one step.
 
 #### SOLVED: m0-m2 `use_skip`/`skip_prob` (this commit, +93)
 

@@ -136,6 +136,23 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Added
 
+- **`StrictLibwebpParity` byte-exactness at 99.6% of the grid; m5/m6 trellis
+  residue closed** (#38, 2026-07-16): 97.9% → **99.6% (3989/4004)**, +67
+  cells (m5 39→4, m6 35→3). zen decided the per-MB skip with
+  `check_all_coeffs_zero` — a SIMPLE re-quantization of the raw DCT — but at
+  m5/m6 libwebp skips on `rd->nz == 0`, the nz of the FINAL trellis
+  quantization; the trellis keeps borderline coefficients the simple bias
+  drops (neutral-bias level0 + sharpen + RD), so zen skipped MBs libwebp
+  coded. The parity trellis path now records the actual levels and derives
+  the skip from them, and fires `StoreMaxDelta` before the skip test
+  (libwebp stores it at the end of `PickBestIntra16`). Remaining 15 cells
+  are all q80+. Also adds diffable diagnosis hooks (`REFRESHDBG2`,
+  `LEVFINAL`, `TRELDBG`; `mode_debug`-gated) format-matched to the
+  instrumented libwebp tree. Tuned default byte-unchanged (its simple-quant
+  skip test is retained; switching is a measured-adoption candidate — it
+  fixes an encoder-side reference mismatch where a skipped MB's encoder
+  reconstruction keeps a coefficient the decoder never sees). Scope:
+  `benchmarks/byteparity_scope_2026-07-14.md`.
 - **`StrictLibwebpParity` byte-exactness at 97.9% of the grid; m0-m2 closed**
   (#38, 2026-07-15): the committed byteparity grid (13 images × q5-95 × 4
   configs × m0-6 = 4004 cells) went 89.4% → 94.1% (Cat5/Cat6 stat-node,

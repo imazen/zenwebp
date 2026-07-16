@@ -417,6 +417,17 @@ struct MacroblockInfo {
 
 pub(super) type ChromaCoeffs = [i32; 16 * 4];
 
+/// Space-joined level list for the LEVFINAL debug dump (#38).
+#[cfg(feature = "mode_debug")]
+fn fmt_levels(levels: &[i32; 16]) -> alloc::string::String {
+    use core::fmt::Write as _;
+    let mut s = alloc::string::String::new();
+    for v in levels {
+        let _ = write!(s, " {v}");
+    }
+    s
+}
+
 /// Quantized zigzag coefficients for a macroblock, stored for multi-pass encoding.
 /// libwebp stores quantized coefficients from pass 1 and reuses them in pass 2+.
 /// These are the final quantized values (post-trellis if applicable), ready for
@@ -838,6 +849,32 @@ impl<'a> Vp8Encoder<'a> {
                     }
                 }
             }
+        }
+
+        // Full stats+proba dump per finalize, format-matched to the
+        // instrumented libwebp's REFRESHDBG2 block in `FinalizeTokenProbas`
+        // (libwebp--zen38trace) so the two can be diffed line-by-line. (#38)
+        #[cfg(feature = "mode_debug")]
+        if std::env::var("REFRESHDBG2").is_ok() {
+            use core::fmt::Write as _;
+            for t in 0..4 {
+                for b in 0..8 {
+                    for c in 0..3 {
+                        let mut line = alloc::string::String::new();
+                        let _ = write!(line, "FDUMP {t} {b} {c} S");
+                        for p in 0..11 {
+                            let v = stats_src.stats[t][b][c][p];
+                            let _ = write!(line, " {}/{}", v & 0xffff, (v >> 16) & 0xffff);
+                        }
+                        let _ = write!(line, " P");
+                        for p in 0..11 {
+                            let _ = write!(line, " {}", updated[t][b][c][p]);
+                        }
+                        eprintln!("{line}");
+                    }
+                }
+            }
+            eprintln!("FDUMP-END");
         }
 
         // Always set updated_probs with the computed values.
@@ -1883,7 +1920,71 @@ impl<'a> Vp8Encoder<'a> {
             .expect("token buffer not initialized")
             .begin_mb();
 
-        if self.do_trellis {
+        if self.do_trellis
+            && self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity
+        {
+            // libwebp's m5/m6 skip decision is `is_skipped = (rd->nz == 0)`
+            // (`VP8Decimate`, quant_enc.c) — the nz of the FINAL trellis
+            // quantization, not a separate simple-quant test.
+            // `check_all_coeffs_zero` re-quantizes with the simple bias,
+            // which drops borderline coefficients the trellis keeps (the
+            // trellis derives level0 with a NEUTRAL bias plus the sharpen
+            // term, then RD-scores keeping vs dropping) — so the two disagree
+            // on rare MBs. Traced at 1025469 q20 m5 sns0 mb(14,4): simple
+            // quant says all-zero, the trellis keeps a single AC level=1
+            // (identical trellis output on both sides), libwebp codes it and
+            // zen skipped it. Record the actual levels and derive the skip
+            // from them; for an all-zero MB the recorded tokens are the same
+            // EOB-at-0 stream the ZERO path records, so agreeing MBs are
+            // byte-unchanged. (#38)
+            //
+            // StoreMaxDelta runs BEFORE the skip test: libwebp stores it at
+            // the end of PickBestIntra16, before the skip decision, so a
+            // finally-skipped MB still feeds max_edge (see the non-trellis
+            // branch below for the same ordering).
+            if self.store_max_edge_active()
+                && macroblock_info.intra16_blocky
+                && macroblock_info.intra16_cand_d > self.segments[mb_segment_id].min_disto
+            {
+                let y2 = macroblock_info.intra16_y2_zz;
+                self.store_max_delta(mb_segment_id, &y2);
+            }
+            let stored_coeffs = self.record_residual_tokens_storing(
+                &macroblock_info,
+                mbx as usize,
+                &y_block_data.coeffs,
+                &u_block_data.coeffs,
+                &v_block_data.coeffs,
+                y_block_data.trellis_y1_zigzag.as_ref(),
+            );
+            // Final recorded levels for one MB, format-matched to the
+            // LEVFINAL dump in the instrumented libwebp's VP8Decimate
+            // (libwebp--zen38trace). TARGX/TARGY select the MB. (#38)
+            #[cfg(feature = "mode_debug")]
+            if std::env::var("LEVFINAL").is_ok()
+                && std::env::var("TARGX").is_ok_and(|v| v == mbx.to_string())
+                && std::env::var("TARGY").is_ok_and(|v| v == mby.to_string())
+            {
+                eprintln!("LEVFINAL mb({mbx},{mby}) type={}", i32::from(!is_i4));
+                eprintln!("  y_dc: {}", fmt_levels(&stored_coeffs.y2_zigzag));
+                for (b, blk) in stored_coeffs.y1_zigzag.iter().enumerate() {
+                    eprintln!("  y_ac[{b:2}]: {}", fmt_levels(blk));
+                }
+                for (b, blk) in stored_coeffs.u_zigzag.iter().enumerate() {
+                    eprintln!("  uv[{b}]: {}", fmt_levels(blk));
+                }
+                for (b, blk) in stored_coeffs.v_zigzag.iter().enumerate() {
+                    eprintln!("  uv[{}]: {}", b + 4, fmt_levels(blk));
+                }
+            }
+            if stored_coeffs.is_all_zero(is_i4, first_coeff_y1) {
+                row_state.skip_mb += 1;
+                mb_info.coeffs_skipped = true;
+            }
+            if store_coeffs {
+                self.stored_mb_coeffs.push(stored_coeffs);
+            }
+        } else if self.do_trellis {
             // Trellis path: integrated quantize + record (old behavior)
             let all_zero = self.check_all_coeffs_zero(
                 &macroblock_info,
@@ -1927,48 +2028,14 @@ impl<'a> Vp8Encoder<'a> {
                 // SSE captured during mode selection; flat-region MBs
                 // produce small D and are filtered out, preventing the
                 // loop filter from over-bumping on synthetic
-                // color-block content.
-                //
-                // At m5 (RD_OPT_TRELLIS) libwebp calls StoreMaxDelta from
-                // PickBestIntra16 with do_trellis=0, so its "blocky" test (all
-                // Y1 AC zero) reads the MODE-SELECTION (non-trellis) nz. Here
-                // stored_coeffs holds the m5 trellis quant, which zeros more AC
-                // and would over-count blocky MBs — inflating max_edge and the
-                // per-segment loop-filter level (seg_lf). Under parity at m5
-                // (`do_trellis && !do_trellis_i4_mode`), recompute the
-                // AC-all-zero test from the non-trellis quant of the I16 DCT
-                // (`y_block_data.coeffs` == PickBestIntra16's luma_blocks); the
-                // Y2 DC is never trellised so its nonzero test is unchanged. m6
-                // and the tuned default use the stored (trellis) test. (#38)
-                if self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity {
-                    // libwebp runs StoreMaxDelta at the END of PickBestIntra16,
-                    // BEFORE PickBestIntra4 can override the mode — so it feeds
-                    // `max_edge` from the I16 CANDIDATE even for macroblocks that
-                    // are finally emitted as I4. Gating on the final mode
-                    // (`!is_i4`, below) under-counts `max_edge`, which leaves the
-                    // segment's loop-filter level un-bumped in
-                    // VP8AdjustFilterStrength and writes a wrong seg_lf header.
-                    //
-                    // Both halves come from `pick_best_intra16` now, which also
-                    // fixes the m5 trellis skew the old recompute worked around:
-                    // that function trellises the I16 AC only at m6
-                    // (`do_trellis_i4_mode`), exactly like libwebp's
-                    // `PickBestIntra16` (do_trellis=0 at m5), so its blocky test
-                    // reads the same nz libwebp's does at every method. (#38)
-                    if self.store_max_edge_active()
-                        && macroblock_info.intra16_blocky
-                        && macroblock_info.intra16_cand_d > self.segments[mb_segment_id].min_disto
-                    {
-                        let y2 = macroblock_info.intra16_y2_zz;
-                        self.store_max_delta(mb_segment_id, &y2);
-                    }
-                } else {
-                    let blocky = stored_coeffs.is_blocky_i16();
-                    if self.store_max_edge_active() && !is_i4 && blocky {
-                        let d = macroblock_info.intra16_d.unwrap_or(0);
-                        if d > self.segments[mb_segment_id].min_disto {
-                            self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
-                        }
+                // color-block content. (The parity variant of this — I16
+                // CANDIDATE gating, fired before the skip decision — lives in
+                // the StrictLibwebpParity trellis branch above.)
+                let blocky = stored_coeffs.is_blocky_i16();
+                if self.store_max_edge_active() && !is_i4 && blocky {
+                    let d = macroblock_info.intra16_d.unwrap_or(0);
+                    if d > self.segments[mb_segment_id].min_disto {
+                        self.store_max_delta(mb_segment_id, &stored_coeffs.y2_zigzag);
                     }
                 }
                 if store_coeffs {
