@@ -2541,9 +2541,14 @@ pub(crate) fn alpha_vp8l_payload_inner(
     use_quality_100: bool,
     stop: &dyn enough::Stop,
 ) -> EncodeResult<Vec<u8>> {
-    let mut rgb = Vec::with_capacity(plane.len() * 3);
+    // `WebPDispatchAlphaToGreen` leaves A/R/B ZEROED — the alpha-in-green
+    // pixels are 0x0000aa00 with ALPHA = 0, not opaque (this is why libwebp
+    // sets exact=1: without it the all-transparent pixels' green would be
+    // scrubbed). Dumped bit-level: an opaque variant flips the palette
+    // image's alpha tree from {0} to {0,255} and diverges from byte 4. (#38)
+    let mut rgba = Vec::with_capacity(plane.len() * 4);
     for &a in plane {
-        rgb.extend_from_slice(&[0, a, 0]);
+        rgba.extend_from_slice(&[0, a, 0, 0]);
     }
     // Full VP8L pipeline (palette / predictors / LZ77 / meta-huffman) with
     // the ALPH stream framing — NOT the literal-only implicit-dimensions
@@ -2558,7 +2563,7 @@ pub(crate) fn alpha_vp8l_payload_inner(
         omit_headers: true,
         ..super::vp8l::Vp8lConfig::default()
     };
-    super::vp8l::encode_vp8l(&rgb, width, height, false, &vp8l_config, stop)
+    super::vp8l::encode_vp8l(&rgba, width, height, true, &vp8l_config, stop)
 }
 
 pub(crate) const fn chunk_size(inner_bytes: usize) -> u32 {

@@ -326,6 +326,12 @@ fn reverse_bits_16(num_bits: u32, bits: u32) -> u32 {
 
 /// Write a Huffman tree to the bitstream.
 pub fn write_huffman_tree(w: &mut BitWriter, lengths: &[u8]) {
+    // #38 bit-level parity trace marker (pairs with LBIT TREE in libwebp).
+    #[cfg(feature = "mode_debug")]
+    if std::env::var("BITDBG").is_ok() {
+        std::eprintln!("ZBIT TREE");
+    }
+
     // Check for trivial cases
     let non_zero: Vec<(usize, u8)> = lengths
         .iter()

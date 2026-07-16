@@ -40,6 +40,13 @@ impl BitWriter {
         debug_assert!(n_bits <= 32);
         debug_assert!(n_bits == 0 || (value >> n_bits) == 0);
 
+        // #38 bit-level parity trace, diffable against the instrumented
+        // libwebp's LBIT dump (BITDBG in bit_writer_utils.h).
+        #[cfg(feature = "mode_debug")]
+        if n_bits > 0 && std::env::var("BITDBG").is_ok() {
+            std::eprintln!("ZBIT {n_bits} {value}");
+        }
+
         self.bits |= value << self.used;
         self.used += n_bits;
 
