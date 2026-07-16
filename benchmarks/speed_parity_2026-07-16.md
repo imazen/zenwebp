@@ -86,6 +86,28 @@ decisions cheaper. The old CLAUDE.md table (1.76x/1.30x/1.36x/1.41x,
   value per MB + remaining prediction staging; an out-param refactor of
   `transform_luma_block` would remove the big one.
 
+## i16 port state (chunk 7+, in progress)
+
+Stage A landed (`dd6236ec`): quantized LEVELS are i16 end-to-end
+(Residual/cost kernels — the SSE2 pack prelude is gone — recorder,
+trellis OUT, every carrier struct). Byte-identical, all platforms.
+
+**Stage B (next): the block arrays.** Targets, in order:
+1. `trellis_quantize_block` internals: `coeffs: &mut [i32;16]` →
+   i16 in/out like libwebp (`in[16]`/`out[16]` are int16_t); the DP's
+   `coeff_with_sharpen`, `level0*q` products fit i32 locals over i16
+   storage. This is the m6 lever (~190M, 2x libwebp per call).
+2. `quantize_dequantize_block_*` quantized/dequantized outputs → i16
+   (dequantized = level*q bounded by DCT range ≈ ±16k ✓); ripples into
+   idct_add_residue (takes dequantized) and the fused pipelines.
+3. DCT blocks: `ftransform2` already outputs i16 — drop the i32 widen in
+   fill_luma_blocks/chroma (luma_blocks/u_blocks/v_blocks → [i16;...]),
+   WHT/iwht i16.
+4. Re-audit m4 code weight after: `pred_chroma8_tm` has 200 panic call
+   sites (per-pixel bounds checks in the analysis TM prediction — apply
+   the fixed-region pattern); `encode_image` 44, `encode_macroblock` 24;
+   hoist `segment.*_matrix.as_ref().unwrap()` out of per-mode loops.
+
 ## Process note (added after the i686 CI break)
 
 The `output_hash` byte gate only covers the platform it runs on. The
