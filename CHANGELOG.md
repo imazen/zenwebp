@@ -136,20 +136,26 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Changed
 
-- **Encoder speed: −22% wall at m4, m2 at libwebp parity — zero byte
-  changes** (#38 speed, 2026-07-16, `ec577bba`/`4868ce95`/`7caf05a4`/
-  `74ca25f2`): the final coding pass now uses the fused SIMD primitives
-  (was per-coefficient scalar), reconstruction levels feed the token
+- **Encoder speed: m2 at/above libwebp, m4 −14% instructions — zero
+  byte changes** (#38 speed, 2026-07-16, six chunks `ec577bba` through
+  `fdb928ab`): the final coding pass now uses the fused SIMD primitives
+  (was per-coefficient scalar); reconstruction levels feed the token
   recorder directly (the raw DCT input was being re-quantized a second
-  time), bordered prediction workspaces are shared across mode loops,
+  time); bordered prediction workspaces are shared across mode loops;
   the residual-cost walkers run one arcane region per MB instead of one
-  dispatch per block, and the trellis DP lost its Option-branches and
-  per-position table indexing. Wall ratios vs libwebp (512² q75,
-  default preset): m0 2.41→1.88x, m2 1.24→**1.00x**, m4 1.47→**1.25x**,
-  m6 1.57→1.53x (diagnostic settings: m2 **0.91x**, m4 1.13x). Every
-  slice verified byte-identical over the `dev/output_hash.rs` grid (both
-  cost models, alpha, sharp, lossless). Analysis + next levers:
-  `benchmarks/speed_parity_2026-07-16.md`.
+  dispatch per block; the trellis DP lost its Option-branches and
+  per-position table indexing; and the I4 + UV RD winners' full
+  reconstructions and levels carry into the final pass instead of being
+  recomputed (I4: non-trellis SIMD paths; UV: diffusion-contract-gated,
+  the final pass replays only the error store). Wall ratios vs libwebp
+  (512² q75): m0 2.41→~1.9x, m2 1.24→**1.00x** (diagnostic **0.88x —
+  faster than libwebp**), m4 1.47→**~1.26x** (instructions 1.075x),
+  m6 1.57→~1.55x. Every slice verified byte-identical over the
+  `dev/output_hash.rs` grid (both cost models, alpha, sharp, lossless)
+  plus full test suites on x86-64 AND i686 (the 32-bit lane caught two
+  real breaks in arch-gated arms). Analysis + next levers (i16
+  coefficient migration for m6's trellis and the I1 footprint; I16
+  winner carry): `benchmarks/speed_parity_2026-07-16.md`.
 
 - **Lossy `exact` is now implemented: transparent areas are cleaned up by
   default** (#38, 2026-07-16): the long-documented `EncoderConfig::exact`
