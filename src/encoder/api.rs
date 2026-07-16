@@ -2438,48 +2438,36 @@ pub(crate) fn encode_alpha_lossless(
 
     debug_assert_eq!(alpha_data.len(), (width * height) as usize);
 
-    if cost_model == CostModel::StrictLibwebpParity {
-        return encode_alpha_libwebp_pipeline(
-            writer,
-            alpha_data,
-            width,
-            height,
-            effort_level.min(6),
-            alpha_quality,
-            stop,
-        );
+    // Level quantization: parity uses libwebp's `QuantizeLevels` k-means
+    // with its (q<=70 ? 2+q/5 : 16+(q-70)*8) mapping; the tuned default
+    // keeps its historical uniform mapping so its decoded ALPHA VALUES are
+    // unchanged. Everything downstream (filter trials, full-VP8L payload,
+    // raw fallback) is shared: it re-encodes the same quantized plane
+    // losslessly, so tuned adoption is a pure size win — measured 54->26 B
+    // (gradient), 109->32 B (checker) per 64x64 plane; see
+    // benchmarks/tuned_candidates_2026-07-16.md.
+    let reduce_levels = alpha_quality < 100;
+    if reduce_levels {
+        if cost_model == CostModel::StrictLibwebpParity {
+            super::alpha::quantize_levels(
+                &mut alpha_data,
+                super::alpha::alpha_levels_for_quality(alpha_quality),
+            );
+        } else {
+            let num_levels = 1u16 + u16::from(alpha_quality) * 255 / 100;
+            quantize_alpha_levels(&mut alpha_data, num_levels);
+        }
     }
 
-    let filtering_method = 0u8;
-    // 0 is raw alpha data
-    // 1 is using the lossless format to encode alpha data
-    let compression_method = 1u8;
-
-    // Apply lossy alpha quantization if alpha_quality < 100
-    let preprocessing = if alpha_quality < 100 {
-        let num_levels = 1u16 + u16::from(alpha_quality) * 255 / 100;
-        quantize_alpha_levels(&mut alpha_data, num_levels);
-        1u8 // preprocessing = 1 signals quantized levels
-    } else {
-        0u8
-    };
-
-    let initial_byte = preprocessing << 4 | filtering_method << 2 | compression_method;
-    writer.push(initial_byte);
-
-    encode_frame_lossless(
+    encode_alpha_libwebp_pipeline(
         writer,
-        &alpha_data,
+        alpha_data,
         width,
         height,
-        ww, // alpha data is contiguous, stride = width
-        PixelLayout::L8,
-        EncoderParams::default(),
-        true,
+        effort_level.min(6),
+        reduce_levels,
         stop,
-    )?;
-
-    Ok(())
+    )
 }
 
 /// libwebp's `EncodeAlpha` + `ApplyFiltersAndEncode` + `EncodeAlphaInternal`
@@ -2488,11 +2476,11 @@ pub(crate) fn encode_alpha_lossless(
 /// `crate::encoder::alpha` for the ported stages. (#38)
 fn encode_alpha_libwebp_pipeline(
     writer: &mut Vec<u8>,
-    mut alpha_data: Vec<u8>,
+    alpha_data: Vec<u8>,
     width: u32,
     height: u32,
     effort_level: u8,
-    alpha_quality: u8,
+    reduce_levels: bool,
     stop: &dyn enough::Stop,
 ) -> EncodeResult<()> {
     use super::alpha as alph;
@@ -2500,14 +2488,6 @@ fn encode_alpha_libwebp_pipeline(
     let ww = width as usize;
     let hh = height as usize;
     let data_size = ww * hh;
-    let reduce_levels = alpha_quality < 100;
-
-    if reduce_levels {
-        alph::quantize_levels(
-            &mut alpha_data,
-            alph::alpha_levels_for_quality(alpha_quality),
-        );
-    }
 
     let try_map = alph::filter_try_map(
         &alpha_data,

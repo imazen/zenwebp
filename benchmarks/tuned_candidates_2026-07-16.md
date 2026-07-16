@@ -68,3 +68,26 @@ test on non-skipped MBs; parity: I16-candidate test before the skip decision).
 - **I4 tie-break order** — on an exact RD tie both candidates are equally
   good by definition; libwebp's visit order is not better, just *its*.
   The tuned SSE-presort keeps its early-exit speed advantage.
+
+## 2. Alpha pipeline (filters + full VP8L + raw fallback) → **ADOPTED** (2026-07-16, later)
+
+The tuned default's ALPH payloads used a literal-only VP8L fallback (the
+`implicit_dimensions` branch) with no prediction filters and no raw
+fallback. The libwebp pipeline ported for parity — filter trials
+(none/h/v/gradient via `GetFilterMap`), the FULL VP8L coder on the
+alpha-in-green plane, per-trial raw fallback — re-encodes the SAME quantized
+plane losslessly, so decoded pixels are bit-identical and the change is a
+pure size win:
+
+| probe (64×64/33×17 planes) | before | after |
+|---|---|---|
+| gradient alpha, aq100 | 54 B | **26 B** |
+| checker alpha, aq100 | 109 B | **32 B** |
+| gradient, aq90 (quantized) | 54 B | **26 B** |
+| gradient 33×17, aq100 | 61 B | **32 B** |
+
+2-3.5× smaller ALPH chunks at a small encode-time cost (filter trials ×
+full VP8L on a tiny plane). The tuned default keeps its historical uniform
+level-quantizer mapping (`1 + aq·255/100` levels) so decoded alpha VALUES
+at aq<100 are unchanged; only the lossless representation shrank. Parity
+uses libwebp's `QuantizeLevels` k-means + its level mapping.

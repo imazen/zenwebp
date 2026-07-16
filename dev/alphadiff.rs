@@ -85,6 +85,9 @@ fn main() {
     let rgba = synth_rgba(w, h, seed, kind);
     println!("input: {w}x{h} seed{seed} kind{kind} q{q} m{m} alpha_q{aq}");
 
+    // 5th arg "tuned" measures the tuned default instead of parity (for the
+    // tuned-adoption A/B of the alpha pipeline).
+    let tuned = args.get(5).map(String::as_str) == Some("tuned");
     let mut cfg = LossyConfig::new()
         .with_quality(f32::from(q))
         .with_method(m)
@@ -92,7 +95,11 @@ fn main() {
         .with_sns_strength(50)
         .with_filter_strength(60)
         .with_filter_sharpness(0)
-        .with_cost_model(CostModel::StrictLibwebpParity);
+        .with_cost_model(if tuned {
+            CostModel::ZenwebpDefault
+        } else {
+            CostModel::StrictLibwebpParity
+        });
     cfg.alpha_quality = aq;
     let zen = EncodeRequest::lossy(&cfg, &rgba, PixelLayout::Rgba8, w, h)
         .encode()
