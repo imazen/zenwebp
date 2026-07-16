@@ -176,7 +176,7 @@ struct I4BlockResult {
     /// convention as libwebp's `rd->y_ac_levels[i4]` (diffable when tracing
     /// #38). Carried into the final pass on the non-trellis tiers so the
     /// winner isn't re-quantized there.
-    levels_zz: [i32; 16],
+    levels_zz: [i16; 16],
 }
 
 /// Pre-sort I4 prediction modes by prediction SSE (ascending).
@@ -190,7 +190,7 @@ struct I4BlockResult {
 /// levels and reconstruction) are bit-identical to a recompute.
 pub(super) struct I4WinnerCarry {
     pub recon: [u8; LUMA_BLOCK_SIZE],
-    pub levels_zz: [[i32; 16]; 16],
+    pub levels_zz: [[i16; 16]; 16],
 }
 
 /// The UV winner's reconstruction + levels + diffusion errors, carried from
@@ -201,8 +201,8 @@ pub(super) struct I4WinnerCarry {
 pub(super) struct UvWinnerCarry {
     pub recon_u: [u8; CHROMA_BLOCK_SIZE],
     pub recon_v: [u8; CHROMA_BLOCK_SIZE],
-    pub zigzag_u: [[i32; 16]; 4],
-    pub zigzag_v: [[i32; 16]; 4],
+    pub zigzag_u: [[i16; 16]; 4],
+    pub zigzag_v: [[i16; 16]; 4],
     /// Winner's per-channel diffusion errors (`None` when diffusion is off).
     pub errs: Option<([i8; 4], [i8; 4])>,
 }
@@ -214,7 +214,7 @@ pub(super) struct UvWinnerCarry {
 #[inline(never)]
 fn i4_trellis_quantize_recon(
     residual: &mut [i32; 16],
-    quantized_zigzag: &mut [i32; 16],
+    quantized_zigzag: &mut [i16; 16],
     quantized_natural: &mut [i32; 16],
     y1_matrix: &crate::encoder::quantize::VP8Matrix,
     lambda: u32,
@@ -238,7 +238,7 @@ fn i4_trellis_quantize_recon(
     );
     for n in 0..16 {
         let j = ZIGZAG[n] as usize;
-        quantized_natural[j] = quantized_zigzag[n];
+        quantized_natural[j] = i32::from(quantized_zigzag[n]);
     }
     let mut dq = *quantized_natural;
     for (idx, val) in dq.iter_mut().enumerate() {
@@ -305,7 +305,7 @@ fn evaluate_i4_modes_sse2(
             crate::common::transform::ftransform_from_u8_4x4_sse2(_token, src_block, pred);
 
         // Quantize - use trellis if enabled, otherwise fused quantize+dequantize
-        let mut quantized_zigzag = [0i32; 16];
+        let mut quantized_zigzag = [0i16; 16];
         let mut quantized_natural = [0i32; 16];
         let (has_nz, dequantized) = if let Some(lambda) = trellis_lambda_i4 {
             // Trellis quantization: m6-only, out-of-line so the hot m0-m5
@@ -335,7 +335,7 @@ fn evaluate_i4_modes_sse2(
             // Convert natural to zigzag for cost estimation
             for n in 0..16 {
                 let j = ZIGZAG[n] as usize;
-                quantized_zigzag[n] = quantized_natural[j];
+                quantized_zigzag[n] = quantized_natural[j] as i16;
             }
             // IDCT the dequantized values (direct sse2, skip token re-summon)
             crate::common::transform::idct4x4_sse2(_token, &mut dequant_natural);
@@ -352,10 +352,9 @@ fn evaluate_i4_modes_sse2(
 
         // Flatness penalty for non-DC modes (cheap SIMD check)
         let flatness_penalty: u32 = if mode_idx > 0 {
-            let levels_i16: [i16; 16] = core::array::from_fn(|k| quantized_zigzag[k] as i16);
             if crate::encoder::cost::distortion::is_flat_coeffs_sse2(
                 _token,
-                &levels_i16,
+                &quantized_zigzag,
                 1,
                 FLATNESS_LIMIT_I4,
             ) {
@@ -516,7 +515,7 @@ fn evaluate_i4_modes_wasm(
             crate::common::transform::ftransform_from_u8_4x4_wasm_impl(_token, src_block, pred);
 
         // Quantize - use trellis if enabled, otherwise fused quantize+dequantize
-        let mut quantized_zigzag = [0i32; 16];
+        let mut quantized_zigzag = [0i16; 16];
         let mut quantized_natural = [0i32; 16];
         let (has_nz, dequantized) = if let Some(lambda) = trellis_lambda_i4 {
             // Trellis quantization (scalar, called from arcane context is fine)
@@ -536,7 +535,7 @@ fn evaluate_i4_modes_wasm(
             // Convert zigzag to natural order
             for n in 0..16 {
                 let j = ZIGZAG[n] as usize;
-                quantized_natural[j] = quantized_zigzag[n];
+                quantized_natural[j] = i32::from(quantized_zigzag[n]);
             }
             // Dequantize + IDCT for trellis path
             let mut dq = quantized_natural;
@@ -559,7 +558,7 @@ fn evaluate_i4_modes_wasm(
             // Convert natural to zigzag for cost estimation
             for n in 0..16 {
                 let j = ZIGZAG[n] as usize;
-                quantized_zigzag[n] = quantized_natural[j];
+                quantized_zigzag[n] = quantized_natural[j] as i16;
             }
             // IDCT the dequantized values
             transform::idct4x4(&mut dequant_natural);
@@ -576,7 +575,7 @@ fn evaluate_i4_modes_wasm(
 
         // Flatness penalty for non-DC modes (cheap SIMD check)
         let flatness_penalty: u32 = if mode_idx > 0 {
-            let levels_i16: [i16; 16] = core::array::from_fn(|k| quantized_zigzag[k] as i16);
+            let levels_i16: [i16; 16] = core::array::from_fn(|k| quantized_zigzag[k]);
             if crate::common::simd_wasm::is_flat_coeffs_wasm(
                 _token,
                 &levels_i16,
@@ -708,7 +707,7 @@ impl<'a> super::Vp8Encoder<'a> {
     ///     `quant_enc.c:1111`). Threaded into `MacroblockInfo` so the
     ///     `store_max_delta` call site can apply the `D > min_disto` gate
     ///     (issue #44).
-    fn pick_best_intra16(&self, mbx: usize, mby: usize) -> (LumaMode, u64, u32, [i32; 16], bool) {
+    fn pick_best_intra16(&self, mbx: usize, mby: usize) -> (LumaMode, u64, u32, [i16; 16], bool) {
         // Check for debug mode
         #[cfg(feature = "mode_debug")]
         let debug_i16 = std::env::var("MB_DEBUG")
@@ -739,7 +738,7 @@ impl<'a> super::Vp8Encoder<'a> {
             // gates on method >= 3 under parity to match, so the Y2/blocky
             // carriers are unused here.
             let (mode, score, d) = self.pick_intra16_fast_dc(mbx, mby);
-            return (mode, score, d, [0i32; 16], false);
+            return (mode, score, d, [0i16; 16], false);
         }
 
         // The 4 modes to try for 16x16 luma prediction (order matches FIXED_COSTS_I16)
@@ -801,7 +800,7 @@ impl<'a> super::Vp8Encoder<'a> {
         // `store_max_delta` gate can fire even when I4 ultimately wins the MB —
         // libwebp records these inside `PickBestIntra16`, before `PickBestIntra4`
         // runs. (#38)
-        let mut best_y2_zz = [0i32; 16];
+        let mut best_y2_zz = [0i16; 16];
         let mut best_i16_blocky = false;
 
         // Pre-allocate scratch buffers outside mode loop to avoid redundant zero-init.
@@ -814,8 +813,8 @@ impl<'a> super::Vp8Encoder<'a> {
         // / `y_ac_levels` in zigzag order and `VP8GetCostLuma16` / `IsFlat` walk
         // that order. Natural (raster) order stays in `y1_quant` / `y2_dequant`
         // for the IDCT reconstruction path. Matches the I4 path (#38).
-        let mut y1_quant_zz = [[0i32; 16]; 16];
-        let mut y2_quant_zz = [0i32; 16];
+        let mut y1_quant_zz = [[0i16; 16]; 16];
+        let mut y2_quant_zz = [0i16; 16];
         let mut recon_dequant_block;
         let mut rec_block = [0u8; 256];
         let mut all_levels = [0i16; 256];
@@ -978,11 +977,11 @@ impl<'a> super::Vp8Encoder<'a> {
             // `y1_quant_zz` / `y2_quant_zz` declarations). Natural order stays in
             // `y1_quant` / `y2_dequant` for the IDCT reconstruction below.
             for n in 0..16 {
-                y2_quant_zz[n] = y2_quant[ZIGZAG[n] as usize];
+                y2_quant_zz[n] = y2_quant[ZIGZAG[n] as usize] as i16;
             }
             for (blk, blk_zz) in y1_quant.iter().zip(y1_quant_zz.iter_mut()) {
                 for n in 0..16 {
-                    blk_zz[n] = blk[ZIGZAG[n] as usize];
+                    blk_zz[n] = blk[ZIGZAG[n] as usize] as i16;
                 }
             }
             let coeff_cost = get_cost_luma16(
@@ -1072,7 +1071,7 @@ impl<'a> super::Vp8Encoder<'a> {
             let coeffs_flat = |all_levels: &mut [i16; 256]| -> bool {
                 for block_idx in 0..16 {
                     for i in 1..16 {
-                        all_levels[block_idx * 16 + i] = y1_quant_zz[block_idx][i] as i16;
+                        all_levels[block_idx * 16 + i] = y1_quant_zz[block_idx][i];
                     }
                 }
                 is_flat_coeffs(all_levels, 16, FLATNESS_LIMIT_I16)
@@ -1504,7 +1503,7 @@ impl<'a> super::Vp8Encoder<'a> {
         let mut best_mode_indices = [0usize; 16]; // Track indices for context lookup
         // Winner levels for the final-pass carry (SIMD arm only; the scalar
         // fallback doesn't produce them, so it disables the carry).
-        let mut carry_levels = [[0i32; 16]; 16];
+        let mut carry_levels = [[0i16; 16]; 16];
         let mut carry_ok = true;
 
         // Create working buffer with border
@@ -1669,7 +1668,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 let mut best_psy_cost = 0i32;
                 let mut best_coeff_cost = 0u32;
                 let mut best_flatness_penalty = 0u32;
-                let mut best_levels_zz = [0i32; 16];
+                let mut best_levels_zz = [0i16; 16];
 
                 // Pre-compute all 10 I4 prediction modes at once
                 let preds = I4Predictions::compute(&y_with_border, x0, y0, LUMA_STRIDE);
@@ -2173,7 +2172,7 @@ impl<'a> super::Vp8Encoder<'a> {
         // it diverged from libwebp (wrong per-position bands + `last`), flipping
         // UV mode picks at m3+ (#38). The I4 path already builds this zigzag view
         // (see `evaluate_i4_modes_*`); this brings I-UV to parity with it.
-        let mut uv_quant_zz = [[0i32; 16]; 8];
+        let mut uv_quant_zz = [[0i16; 16]; 8];
         let mut uv_dequant = [[0i32; 16]; 8];
         let mut rec_u_block = [0u8; 64];
         let mut rec_v_block = [0u8; 64];
@@ -2279,7 +2278,7 @@ impl<'a> super::Vp8Encoder<'a> {
             // / `uv_dequant` for the IDCT reconstruction below.
             for b in 0..8 {
                 for n in 0..16 {
-                    uv_quant_zz[b][n] = uv_quant[b][ZIGZAG[n] as usize];
+                    uv_quant_zz[b][n] = uv_quant[b][ZIGZAG[n] as usize] as i16;
                 }
             }
 
@@ -2397,7 +2396,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 // (all_levels_uv hoisted outside mode loop)
                 for block_idx in 0..8 {
                     for i in 0..16 {
-                        all_levels_uv[block_idx * 16 + i] = uv_quant_zz[block_idx][i] as i16;
+                        all_levels_uv[block_idx * 16 + i] = uv_quant_zz[block_idx][i];
                     }
                 }
                 if is_flat_coeffs(&all_levels_uv, 8, FLATNESS_LIMIT_UV) {
@@ -2436,8 +2435,8 @@ impl<'a> super::Vp8Encoder<'a> {
                 best_mode = mode;
                 best_lib_rank = UV_LIB_RANK[mode_idx];
                 if carriable {
-                    let mut zigzag_u = [[0i32; 16]; 4];
-                    let mut zigzag_v = [[0i32; 16]; 4];
+                    let mut zigzag_u = [[0i16; 16]; 4];
+                    let mut zigzag_v = [[0i16; 16]; 4];
                     zigzag_u.copy_from_slice(&uv_quant_zz[..4]);
                     zigzag_v.copy_from_slice(&uv_quant_zz[4..]);
                     carry = Some(alloc::boxed::Box::new(UvWinnerCarry {
@@ -2504,7 +2503,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 .unwrap();
             coeffs[0] = 0; // DC handled by Y2
             let ctx0 = (u8::from(top_nz_t[bx]) + u8::from(left_nz_t[by])).min(2) as usize;
-            let mut zigzag_levels = [0i32; 16];
+            let mut zigzag_levels = [0i16; 16];
             let has_nz = trellis_quantize_block(
                 &mut coeffs,
                 &mut zigzag_levels,
@@ -2523,7 +2522,7 @@ impl<'a> super::Vp8Encoder<'a> {
             // convention as the simple-quant branch.
             let mut natural = [0i32; 16];
             for n in 1..16 {
-                natural[crate::encoder::tables::VP8_ZIGZAG[n]] = zigzag_levels[n];
+                natural[crate::encoder::tables::VP8_ZIGZAG[n]] = i32::from(zigzag_levels[n]);
             }
             y1_quant[block_idx] = natural;
             // trellis_quantize_block leaves dequantized values in `coeffs`
@@ -2618,7 +2617,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         // are unused (`store_max_edge_active()` gates on
                         // method >= 3 under parity).
                         intra16_cand_d: intra16_d.unwrap_or(0),
-                        intra16_y2_zz: [0i32; 16],
+                        intra16_y2_zz: [0i16; 16],
                         intra16_blocky: false,
                     },
                     None,
@@ -2670,7 +2669,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     intra16_d: Some(i16_d),
                     // RD_OPT_NONE path — see the note on the m0-m2 ctor above.
                     intra16_cand_d: i16_d,
-                    intra16_y2_zz: [0i32; 16],
+                    intra16_y2_zz: [0i16; 16],
                     intra16_blocky: false,
                 },
                 None,
@@ -2889,7 +2888,7 @@ impl<'a> super::Vp8Encoder<'a> {
 
             let mut residual = crate::common::transform::ftransform_from_u8_4x4(src_block, pred);
 
-            let mut quantized_zigzag = [0i32; 16];
+            let mut quantized_zigzag = [0i16; 16];
             let mut quantized_natural = [0i32; 16];
             let (has_nz, dequantized) = if let Some(lambda) = trellis_lambda_i4 {
                 let ctx0 = usize::from(nz_top) + usize::from(nz_left);
@@ -2907,7 +2906,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 );
                 for n in 0..16 {
                     let j = ZIGZAG[n] as usize;
-                    quantized_natural[j] = quantized_zigzag[n];
+                    quantized_natural[j] = i32::from(quantized_zigzag[n]);
                 }
                 let mut dq = quantized_natural;
                 for (idx, val) in dq.iter_mut().enumerate() {
@@ -2926,7 +2925,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 );
                 for n in 0..16 {
                     let j = ZIGZAG[n] as usize;
-                    quantized_zigzag[n] = quantized_natural[j];
+                    quantized_zigzag[n] = quantized_natural[j] as i16;
                 }
                 transform::idct4x4(&mut dequant_natural);
                 (nz, dequant_natural)
@@ -2937,7 +2936,7 @@ impl<'a> super::Vp8Encoder<'a> {
 
             // Flatness penalty for non-DC modes (cheap check)
             let flatness_penalty: u32 = if mode_idx > 0 {
-                let levels_i16: [i16; 16] = core::array::from_fn(|k| quantized_zigzag[k] as i16);
+                let levels_i16: [i16; 16] = core::array::from_fn(|k| quantized_zigzag[k]);
                 if is_flat_coeffs(&levels_i16, 1, FLATNESS_LIMIT_I4) {
                     FLATNESS_PENALTY
                 } else {

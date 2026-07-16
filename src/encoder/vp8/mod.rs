@@ -411,13 +411,13 @@ struct MacroblockInfo {
     /// `intra16_d`, which is the WINNING mode's and is None for I4). It is what
     /// libwebp's `rd->D > dqm->min_disto` half of the gate compares.
     intra16_cand_d: u32,
-    intra16_y2_zz: [i32; 16],
+    intra16_y2_zz: [i16; 16],
     intra16_blocky: bool,
 }
 
 /// Space-joined level list for the LEVFINAL debug dump (#38).
 #[cfg(feature = "mode_debug")]
-fn fmt_levels(levels: &[i32; 16]) -> alloc::string::String {
+fn fmt_levels(levels: &[i16; 16]) -> alloc::string::String {
     use core::fmt::Write as _;
     let mut s = alloc::string::String::new();
     for v in levels {
@@ -433,13 +433,13 @@ fn fmt_levels(levels: &[i32; 16]) -> alloc::string::String {
 #[derive(Clone)]
 struct QuantizedMbCoeffs {
     /// Y2 DC transform coefficients (16 values), only used for I16 mode
-    y2_zigzag: [i32; 16],
+    y2_zigzag: [i16; 16],
     /// Y1 block coefficients (16 blocks × 16 values), zigzag order
-    y1_zigzag: [[i32; 16]; 16],
+    y1_zigzag: [[i16; 16]; 16],
     /// U block coefficients (4 blocks × 16 values), zigzag order
-    u_zigzag: [[i32; 16]; 4],
+    u_zigzag: [[i16; 16]; 4],
     /// V block coefficients (4 blocks × 16 values), zigzag order
-    v_zigzag: [[i32; 16]; 4],
+    v_zigzag: [[i16; 16]; 4],
 }
 
 impl QuantizedMbCoeffs {
@@ -965,10 +965,10 @@ impl<'a> Vp8Encoder<'a> {
         self.method >= 3 || self.cost_model != super::api::CostModel::StrictLibwebpParity
     }
 
-    fn store_max_delta(&mut self, segment_id: usize, y2_zigzag: &[i32; 16]) {
-        let v0 = y2_zigzag[1].unsigned_abs();
-        let v1 = y2_zigzag[2].unsigned_abs();
-        let v2 = y2_zigzag[4].unsigned_abs();
+    fn store_max_delta(&mut self, segment_id: usize, y2_zigzag: &[i16; 16]) {
+        let v0 = u32::from(y2_zigzag[1].unsigned_abs());
+        let v1 = u32::from(y2_zigzag[2].unsigned_abs());
+        let v2 = u32::from(y2_zigzag[4].unsigned_abs());
         let max_v = v0.max(v1).max(v2) as i32;
         if max_v > self.max_edge_per_segment[segment_id] {
             self.max_edge_per_segment[segment_id] = max_v;

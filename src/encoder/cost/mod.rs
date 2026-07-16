@@ -329,7 +329,7 @@ mod tests {
         ];
 
         let mut coeffs = block;
-        let mut trellis_out = [0i32; 16];
+        let mut trellis_out = [0i16; 16];
 
         // Lambda for i4: (7 * 50^2) >> 3 = 2187
         let lambda = 2187u32;

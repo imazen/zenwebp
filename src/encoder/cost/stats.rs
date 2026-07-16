@@ -147,7 +147,7 @@ pub enum TokenType {
 /// * `ctx` - Initial context (0, 1, or 2)
 /// * `stats` - Statistics accumulator
 pub fn record_coeffs(
-    coeffs: &[i32],
+    coeffs: &[i16],
     token_type: TokenType,
     first: usize,
     ctx: usize,
@@ -179,7 +179,7 @@ pub fn record_coeffs(
     // Process coefficients up to end_of_block (last non-zero + 1)
     while n < end_of_block {
         let band = VP8_ENC_BANDS[n] as usize;
-        let v = coeffs[n].unsigned_abs();
+        let v = u32::from(coeffs[n].unsigned_abs());
         n += 1;
 
         // Record at node 0 (EOB check) if not skipping

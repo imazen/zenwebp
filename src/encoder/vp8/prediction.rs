@@ -30,12 +30,12 @@ pub(super) struct LumaBlockResult {
     /// consumes these directly instead of re-quantizing the same DCT
     /// input a second time (levels ARE what reconstruction dequantized,
     /// so reuse is definitionally byte-identical).
-    pub y1_zigzag: [[i32; 16]; 16],
+    pub y1_zigzag: [[i16; 16]; 16],
     /// Whether `y1_zigzag` came from the trellis (enables the recorder's
     /// one-shot debug cross-check of the cached trellis output).
     pub y1_from_trellis: bool,
     /// Quantized Y2 (WHT) levels in ZIGZAG order — I16 only, zeros for I4.
-    pub y2_zigzag: [i32; 16],
+    pub y2_zigzag: [i16; 16],
 }
 
 /// Result from chroma block transform, containing quantized coefficients
@@ -43,7 +43,7 @@ pub(super) struct LumaBlockResult {
 pub(super) struct ChromaBlockResult {
     /// Quantized levels in ZIGZAG order per sub-block (what the recorder
     /// emits — captured from the reconstruction quantize).
-    pub zigzag: [[i32; 16]; 4],
+    pub zigzag: [[i16; 16]; 4],
     /// The bordered prediction/reconstruction buffer.
     pub pred_block: [u8; CHROMA_BLOCK_SIZE],
 }
@@ -281,7 +281,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     pred_block: carry.recon,
                     y1_zigzag: carry.levels_zz,
                     y1_from_trellis: false,
-                    y2_zigzag: [0i32; 16],
+                    y2_zigzag: [0i16; 16],
                 };
             }
             if let Some(bpred_modes) = macroblock_info.luma_bpred {
@@ -307,9 +307,9 @@ impl<'a> super::Vp8Encoder<'a> {
         }
         // Levels in zigzag order for the recorder (avoids its re-WHT +
         // re-quantize of the same input).
-        let mut y2_zigzag = [0i32; 16];
+        let mut y2_zigzag = [0i16; 16];
         for i in 0..16 {
-            y2_zigzag[i] = coeffs0[usize::from(ZIGZAG[i])];
+            y2_zigzag[i] = coeffs0[usize::from(ZIGZAG[i])] as i16;
         }
 
         // Y1 blocks (AC only): use trellis if enabled
@@ -345,7 +345,7 @@ impl<'a> super::Vp8Encoder<'a> {
         // When trellis is enabled, capture the zigzag levels per sub-block so
         // record_residual_tokens_storing can reuse them instead of re-running
         // trellis on the exact same DCT input. (#35-#8)
-        let mut y1_zigzag = [[0i32; 16]; 16];
+        let mut y1_zigzag = [[0i16; 16]; 16];
         for y in 0usize..4 {
             for x in 0usize..4 {
                 let i = y * 4 + x;
@@ -380,7 +380,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     );
                     #[cfg(feature = "mode_debug")]
                     if treldbg {
-                        let dbg_out: &[i32] = &zigzag_slot[..];
+                        let dbg_out: &[i16] = &zigzag_slot[..];
                         eprintln!("TRELI16 n={i} out={dbg_out:?} nz={}", u8::from(has_nz));
                     }
                     top_nz[x] = has_nz;
@@ -402,7 +402,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     );
                     // Zigzag levels for the recorder; slot 0 stays 0 (I16-AC).
                     for k in 0..16 {
-                        y1_zigzag[i][k] = quantized[usize::from(ZIGZAG[k])];
+                        y1_zigzag[i][k] = quantized[usize::from(ZIGZAG[k])] as i16;
                     }
                     dq
                 };
@@ -473,7 +473,7 @@ impl<'a> super::Vp8Encoder<'a> {
 
         // Capture per-sub-block zigzag levels so the recorder can skip
         // re-quantizing (or re-trellising, #35-#8) the same DCT input.
-        let mut y1_zigzag = [[0i32; 16]; 16];
+        let mut y1_zigzag = [[0i16; 16]; 16];
 
         // Track non-zero context for trellis (I4 uses ctype=3)
         // IMPORTANT: Initialize from global state to match encode_residual
@@ -587,7 +587,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         &mut dq,
                     );
                     for k in 0..16 {
-                        y1_zigzag[i][k] = quantized[usize::from(ZIGZAG[k])];
+                        y1_zigzag[i][k] = quantized[usize::from(ZIGZAG[k])] as i16;
                     }
                     current_subblock = dq;
                     has_nz
@@ -623,7 +623,7 @@ impl<'a> super::Vp8Encoder<'a> {
             pred_block: y_with_border,
             y1_zigzag,
             y1_from_trellis: trellis_lambda.is_some(),
-            y2_zigzag: [0i32; 16],
+            y2_zigzag: [0i16; 16],
         }
     }
 
@@ -824,8 +824,8 @@ impl<'a> super::Vp8Encoder<'a> {
         // fused pair IS `quantize_coeff`/`* q`), ~4× fewer instructions.
         let segment = self.get_segment_for_mb(mbx, mby);
         let uv_matrix = segment.uv_matrix.as_ref().unwrap();
-        let mut u_zigzag = [[0i32; 16]; 4];
-        let mut v_zigzag = [[0i32; 16]; 4];
+        let mut u_zigzag = [[0i16; 16]; 4];
+        let mut v_zigzag = [[0i16; 16]; 4];
         for (blocks, zigzag, predicted) in [
             (&u_blocks, &mut u_zigzag, &mut predicted_u),
             (&v_blocks, &mut v_zigzag, &mut predicted_v),
@@ -842,7 +842,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     &mut dequantized,
                 );
                 for k in 0..16 {
-                    zigzag[i][k] = quantized[usize::from(ZIGZAG[k])];
+                    zigzag[i][k] = quantized[usize::from(ZIGZAG[k])] as i16;
                 }
                 let (x, y) = (i % 2, i / 2);
                 let dc_only = dequantized[1..].iter().all(|&c| c == 0);

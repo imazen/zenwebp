@@ -120,7 +120,7 @@ fn level_cost_fast(costs: &LevelCostArray, level: usize) -> u32 {
 #[allow(private_interfaces)] // psy_config is pub(crate), but this function is exposed for debugging
 pub fn trellis_quantize_block(
     coeffs: &mut [i32; 16],
-    out: &mut [i32; 16],
+    out: &mut [i16; 16],
     mtx: &VP8Matrix,
     lambda: u32,
     first: usize,
@@ -357,7 +357,7 @@ pub fn trellis_quantize_block(
             node.level as i32
         };
 
-        out[n] = level;
+        out[n] = level as i16;
         has_nz |= level != 0;
 
         // Reconstruct coefficient for subsequent prediction

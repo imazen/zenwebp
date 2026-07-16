@@ -25,6 +25,12 @@ fn split4_ref<T>(arr: &[T; 16]) -> (&[T; 4], &[T; 4], &[T; 4], &[T; 4]) {
 /// Split `&mut [T; 16]` into two `&mut [T; 8]` without runtime bounds checks.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline(always)]
+fn split2_ref<T>(arr: &[T; 16]) -> (&[T; 8], &[T; 8]) {
+    let (a, b) = arr.split_at(8);
+    (a.try_into().unwrap(), b.try_into().unwrap())
+}
+
+#[inline(always)]
 fn split2_mut<T>(arr: &mut [T; 16]) -> (&mut [T; 8], &mut [T; 8]) {
     let (a, b) = arr.split_first_chunk_mut::<8>().unwrap();
     let b: &mut [T; 8] = b.try_into().unwrap();
@@ -49,8 +55,8 @@ pub struct Residual<'a> {
     pub first: usize,
     /// Last non-zero coefficient index (-1 if all zero)
     pub last: i32,
-    /// Coefficient array
-    pub coeffs: &'a [i32; 16],
+    /// Coefficient array (quantized levels, |level| <= 2047 fits i16)
+    pub coeffs: &'a [i16; 16],
     /// Coefficient type (0=I16DC, 1=I16AC, 2=Chroma, 3=I4)
     pub coeff_type: usize,
 }
@@ -58,7 +64,7 @@ pub struct Residual<'a> {
 impl<'a> Residual<'a> {
     /// Create a new residual from coefficients.
     /// Automatically finds the last non-zero coefficient.
-    pub fn new(coeffs: &'a [i32; 16], coeff_type: usize, first: usize) -> Self {
+    pub fn new(coeffs: &'a [i16; 16], coeff_type: usize, first: usize) -> Self {
         let last = coeffs
             .iter()
             .rposition(|&c| c != 0)
@@ -340,16 +346,10 @@ pub(crate) fn get_residual_cost_sse2(
         let k_cst2 = _mm_set1_epi8(2);
         let k_cst67 = _mm_set1_epi8(MAX_VARIABLE_LEVEL as i8);
 
-        // Load coefficients as i32 and pack to i16
-        let (c0_arr, c1_arr, c2_arr, c3_arr) = split4_ref(res.coeffs);
-        let c0_32 = simd_mem::_mm_loadu_si128(c0_arr);
-        let c1_32 = simd_mem::_mm_loadu_si128(c1_arr);
-        let c2_32 = simd_mem::_mm_loadu_si128(c2_arr);
-        let c3_32 = simd_mem::_mm_loadu_si128(c3_arr);
-
-        // Pack i32 to i16 (signed saturation)
-        let c0 = _mm_packs_epi32(c0_32, c1_32); // 8 x i16
-        let c1 = _mm_packs_epi32(c2_32, c3_32); // 8 x i16
+        // Load coefficients directly as i16 (levels fit i16 by construction)
+        let (c0_arr, c1_arr) = split2_ref(res.coeffs);
+        let c0 = simd_mem::_mm_loadu_si128(c0_arr); // 8 x i16
+        let c1 = simd_mem::_mm_loadu_si128(c1_arr); // 8 x i16
 
         // Compute absolute values: abs(v) = max(v, -v)
         let d0 = _mm_sub_epi16(zero, c0);
@@ -642,14 +642,29 @@ pub(crate) fn get_residual_cost_wasm(
         let k_cst67 = u8x16_splat(MAX_VARIABLE_LEVEL as u8);
 
         // Load coefficients as i32
-        let c0 = i32x4(res.coeffs[0], res.coeffs[1], res.coeffs[2], res.coeffs[3]);
-        let c1 = i32x4(res.coeffs[4], res.coeffs[5], res.coeffs[6], res.coeffs[7]);
-        let c2 = i32x4(res.coeffs[8], res.coeffs[9], res.coeffs[10], res.coeffs[11]);
+        let c0 = i32x4(
+            i32::from(res.coeffs[0]),
+            i32::from(res.coeffs[1]),
+            i32::from(res.coeffs[2]),
+            i32::from(res.coeffs[3]),
+        );
+        let c1 = i32x4(
+            i32::from(res.coeffs[4]),
+            i32::from(res.coeffs[5]),
+            i32::from(res.coeffs[6]),
+            i32::from(res.coeffs[7]),
+        );
+        let c2 = i32x4(
+            i32::from(res.coeffs[8]),
+            i32::from(res.coeffs[9]),
+            i32::from(res.coeffs[10]),
+            i32::from(res.coeffs[11]),
+        );
         let c3 = i32x4(
-            res.coeffs[12],
-            res.coeffs[13],
-            res.coeffs[14],
-            res.coeffs[15],
+            i32::from(res.coeffs[12]),
+            i32::from(res.coeffs[13]),
+            i32::from(res.coeffs[14]),
+            i32::from(res.coeffs[15]),
         );
 
         // Pack i32 → i16 (signed saturation)
@@ -754,7 +769,7 @@ pub(crate) fn get_residual_cost_wasm(
 /// # Returns
 /// (cost, has_nonzero) - Cost in 1/256 bits and whether this block has non-zero coeffs
 pub fn get_cost_luma4(
-    levels: &[i32; 16],
+    levels: &[i16; 16],
     top_nz: bool,
     left_nz: bool,
     costs: &LevelCosts,
@@ -780,8 +795,8 @@ pub fn get_cost_luma4(
 #[arcane]
 fn get_cost_luma16_arcane(
     token: X64V3Token,
-    dc_levels: &[i32; 16],
-    ac_levels: &[[i32; 16]; 16],
+    dc_levels: &[i16; 16],
+    ac_levels: &[[i16; 16]; 16],
     top_y: [bool; 4],
     left_y: [bool; 4],
     top_y2: bool,
@@ -816,7 +831,7 @@ fn get_cost_luma16_arcane(
 #[arcane]
 fn get_cost_uv_arcane(
     token: X64V3Token,
-    uv_levels: &[[i32; 16]; 8],
+    uv_levels: &[[i16; 16]; 8],
     top_u: [bool; 2],
     left_u: [bool; 2],
     top_v: [bool; 2],
@@ -864,8 +879,8 @@ fn get_cost_uv_arcane(
 /// Total cost in 1/256 bits
 #[allow(clippy::too_many_arguments)]
 pub fn get_cost_luma16(
-    dc_levels: &[i32; 16],
-    ac_levels: &[[i32; 16]; 16],
+    dc_levels: &[i16; 16],
+    ac_levels: &[[i16; 16]; 16],
     top_y: [bool; 4],
     left_y: [bool; 4],
     top_y2: bool,
@@ -926,7 +941,7 @@ pub fn get_cost_luma16(
 /// # Returns
 /// Total cost in 1/256 bits
 pub fn get_cost_uv(
-    uv_levels: &[[i32; 16]; 8],
+    uv_levels: &[[i16; 16]; 8],
     top_u: [bool; 2],
     left_u: [bool; 2],
     top_v: [bool; 2],

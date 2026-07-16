@@ -336,7 +336,7 @@ impl TokenBuffer {
     pub fn record_coeff_tokens(
         &mut self,
         stats: &mut ProbaStats,
-        coeffs: &[i32; 16],
+        coeffs: &[i16; 16],
         coeff_type: usize,
         first_coeff: usize,
         initial_ctx: usize,
@@ -364,7 +364,7 @@ impl TokenBuffer {
         }
 
         while n < 16 {
-            let c = coeffs[n];
+            let c = i32::from(coeffs[n]);
             n += 1;
             let sign = c < 0;
             let v = c.unsigned_abs();
@@ -857,7 +857,7 @@ impl<'a> super::Vp8Encoder<'a> {
 
         // convert to zigzag and quantize using VP8Matrix biased quantization
         // this is the only lossy part of the encoding
-        let mut zigzag_block = [0i32; 16];
+        let mut zigzag_block = [0i16; 16];
 
         if let Some(lambda) = trellis_lambda {
             // Trellis quantization for better RD optimization
@@ -878,7 +878,7 @@ impl<'a> super::Vp8Encoder<'a> {
             // Simple quantization
             for i in first_coeff..16 {
                 let zigzag_index = usize::from(ZIGZAG[i]);
-                zigzag_block[i] = matrix.quantize_coeff(block[zigzag_index], zigzag_index);
+                zigzag_block[i] = matrix.quantize_coeff(block[zigzag_index], zigzag_index) as i16;
             }
         }
 
@@ -950,7 +950,8 @@ impl<'a> super::Vp8Encoder<'a> {
 
                     let category_probs = PROB_DCT_CAT[(category - DCT_CAT1) as usize];
 
-                    let extra = value - i32::from(DCT_CAT_BASE[(category - DCT_CAT1) as usize]);
+                    let extra =
+                        i32::from(value) - i32::from(DCT_CAT_BASE[(category - DCT_CAT1) as usize]);
 
                     let mut mask = if category == DCT_CAT6 {
                         1 << (11 - 1)
@@ -1025,10 +1026,10 @@ impl<'a> super::Vp8Encoder<'a> {
             transform::wht4x4(&mut coeffs0);
 
             // Quantize to zigzag order
-            let mut zigzag = [0i32; 16];
+            let mut zigzag = [0i16; 16];
             for i in 0..16 {
                 let zigzag_index = usize::from(ZIGZAG[i]);
-                zigzag[i] = y2_matrix.quantize_coeff(coeffs0[zigzag_index], zigzag_index);
+                zigzag[i] = y2_matrix.quantize_coeff(coeffs0[zigzag_index], zigzag_index) as i16;
             }
 
             let complexity = self.left_complexity.y2 + self.top_complexity[mbx].y2;
@@ -1068,7 +1069,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     .unwrap();
 
                 // Quantize to zigzag order
-                let mut zigzag = [0i32; 16];
+                let mut zigzag = [0i16; 16];
 
                 let top = self.top_complexity[mbx].y[x];
                 let ctx0 = (left + top).min(2) as usize;
@@ -1093,7 +1094,8 @@ impl<'a> super::Vp8Encoder<'a> {
                     // Simple quantization
                     for i in first_coeff..16 {
                         let zigzag_index = usize::from(ZIGZAG[i]);
-                        zigzag[i] = y1_matrix.quantize_coeff(block[zigzag_index], zigzag_index);
+                        zigzag[i] =
+                            y1_matrix.quantize_coeff(block[zigzag_index], zigzag_index) as i16;
                     }
                 }
 
@@ -1120,10 +1122,10 @@ impl<'a> super::Vp8Encoder<'a> {
                     .try_into()
                     .unwrap();
 
-                let mut zigzag = [0i32; 16];
+                let mut zigzag = [0i16; 16];
                 for i in 0..16 {
                     let zigzag_index = usize::from(ZIGZAG[i]);
-                    zigzag[i] = uv_matrix.quantize_coeff(block[zigzag_index], zigzag_index);
+                    zigzag[i] = uv_matrix.quantize_coeff(block[zigzag_index], zigzag_index) as i16;
                 }
 
                 let top = self.top_complexity[mbx].u[x];
@@ -1152,10 +1154,10 @@ impl<'a> super::Vp8Encoder<'a> {
                     .try_into()
                     .unwrap();
 
-                let mut zigzag = [0i32; 16];
+                let mut zigzag = [0i16; 16];
                 for i in 0..16 {
                     let zigzag_index = usize::from(ZIGZAG[i]);
-                    zigzag[i] = uv_matrix.quantize_coeff(block[zigzag_index], zigzag_index);
+                    zigzag[i] = uv_matrix.quantize_coeff(block[zigzag_index], zigzag_index) as i16;
                 }
 
                 let top = self.top_complexity[mbx].v[x];
@@ -1232,10 +1234,10 @@ impl<'a> super::Vp8Encoder<'a> {
             let mut coeffs0 = get_coeffs0_from_block(y_block_data);
             transform::wht4x4(&mut coeffs0);
 
-            let mut zigzag = [0i32; 16];
+            let mut zigzag = [0i16; 16];
             for i in 0..16 {
                 let zi = usize::from(ZIGZAG[i]);
-                zigzag[i] = y2_matrix.quantize_coeff(coeffs0[zi], zi);
+                zigzag[i] = y2_matrix.quantize_coeff(coeffs0[zi], zi) as i16;
             }
 
             let complexity = self.left_complexity.y2 + self.top_complexity[mbx].y2;
@@ -1259,7 +1261,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     .try_into()
                     .unwrap();
 
-                let mut zigzag = [0i32; 16];
+                let mut zigzag = [0i16; 16];
                 let top = self.top_complexity[mbx].y[x];
                 let ctx0 = (left + top).min(2) as usize;
 
@@ -1280,7 +1282,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 } else {
                     for i in first_coeff_y1..16 {
                         let zi = usize::from(ZIGZAG[i]);
-                        zigzag[i] = y1_matrix.quantize_coeff(block[zi], zi);
+                        zigzag[i] = y1_matrix.quantize_coeff(block[zi], zi) as i16;
                     }
                 }
 
@@ -1306,10 +1308,10 @@ impl<'a> super::Vp8Encoder<'a> {
                     .try_into()
                     .unwrap();
 
-                let mut zigzag = [0i32; 16];
+                let mut zigzag = [0i16; 16];
                 for i in 0..16 {
                     let zi = usize::from(ZIGZAG[i]);
-                    zigzag[i] = uv_matrix.quantize_coeff(block[zi], zi);
+                    zigzag[i] = uv_matrix.quantize_coeff(block[zi], zi) as i16;
                 }
 
                 let top = self.top_complexity[mbx].u[x];
@@ -1337,10 +1339,10 @@ impl<'a> super::Vp8Encoder<'a> {
                     .try_into()
                     .unwrap();
 
-                let mut zigzag = [0i32; 16];
+                let mut zigzag = [0i16; 16];
                 for i in 0..16 {
                     let zi = usize::from(ZIGZAG[i]);
-                    zigzag[i] = uv_matrix.quantize_coeff(block[zi], zi);
+                    zigzag[i] = uv_matrix.quantize_coeff(block[zi], zi) as i16;
                 }
 
                 let top = self.top_complexity[mbx].v[x];
