@@ -44,7 +44,9 @@ pub use classifier::{
 };
 pub use histogram::{collect_histogram_bps, forward_dct_4x4};
 pub use iterator::AnalysisIterator;
-pub use segment::{assign_segments_kmeans, compute_segment_quant, smooth_segment_map};
+pub use segment::{
+    assign_segments_kmeans, compute_segment_quant, compute_segment_quant_libm, smooth_segment_map,
+};
 
 //------------------------------------------------------------------------------
 // Constants

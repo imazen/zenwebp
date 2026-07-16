@@ -23,7 +23,36 @@
 
 use zenwebp::{CostModel, EncodeRequest, LossyConfig, PixelLayout};
 
+/// Same generator as `dev/byteparity_sweep.rs` — `synth:WxH:SEED` image specs
+/// reproduce the sweep's synthetic cells exactly. (#38)
+fn synth(w: u32, h: u32, seed: u32) -> (Vec<u8>, u32, u32) {
+    let mut px = Vec::with_capacity((w as usize) * (h as usize) * 3);
+    let mut s = seed.wrapping_mul(2_654_435_761).wrapping_add(1);
+    for y in 0..h {
+        for x in 0..w {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            let n = (s >> 24) as u8 / 8;
+            let r = ((x * 255 / w.max(1)) as u8).wrapping_add(n);
+            let g = ((y * 255 / h.max(1)) as u8).wrapping_add(n);
+            let b = (((x + y) * 255 / (w + h).max(1)) as u8).wrapping_add(n);
+            px.extend_from_slice(&[r, g, b]);
+        }
+    }
+    (px, w, h)
+}
+
 fn load(path: &str) -> (Vec<u8>, u32, u32) {
+    if let Some(spec) = path.strip_prefix("synth:") {
+        let (dims, seed) = spec.split_once(':').expect("synth:WxH:SEED");
+        let (w, h) = dims.split_once('x').expect("synth:WxH:SEED");
+        return synth(
+            w.parse().unwrap(),
+            h.parse().unwrap(),
+            seed.parse().unwrap(),
+        );
+    }
     let file = std::fs::File::open(path).unwrap();
     let mut d = png::Decoder::new(std::io::BufReader::new(file));
     d.set_transformations(png::Transformations::normalize_to_color8());

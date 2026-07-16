@@ -2330,8 +2330,19 @@ impl<'a> Vp8Encoder<'a> {
             let center = center as i32;
             let transformed_alpha = (255 * (center - mid_alpha) / effective_range).clamp(-127, 127);
             let beta = (255 * (center - min_center) / effective_range).clamp(0, 255) as u8;
+            // Parity needs libwebp's exact libm pow chain — the fast
+            // approximation flips the truncated quant index at integer
+            // boundaries (synth 33x17 q90: seg1 12 vs 11). (#38)
             let mut seg_quant_index =
-                compute_segment_quant(quality, transformed_alpha, sns_strength);
+                if self.cost_model == super::api::CostModel::StrictLibwebpParity {
+                    super::analysis::compute_segment_quant_libm(
+                        quality,
+                        transformed_alpha,
+                        sns_strength,
+                    )
+                } else {
+                    compute_segment_quant(quality, transformed_alpha, sns_strength)
+                };
             // target_zensim per-segment correction: apply additive
             // override (clamped) AFTER SNS modulation. `None` (default)
             // leaves the value untouched, so non-target-zensim encodes

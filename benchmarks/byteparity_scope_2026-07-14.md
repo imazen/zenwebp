@@ -8,11 +8,12 @@ mid-session. It is now committed as `dev/byteparity_sweep.rs` (the score),
 `dev/bitexact_diff.rs` (header fields + mode stream) — all wired as
 `__expert` examples. Never rebuild this in `/tmp` again.
 
-**The committed grid now scores 3989/4004 = 99.6%** (was 3578/4004 = 89.4% when
-the harness was first committed; +189 came from the Cat5/Cat6 stat-node fix
-`44ae3a0`, +62 from the StoreMaxDelta I16-candidate gate `c9abe85`, +93 from
-the m0-m2 skip-proba StatLoop fix `46e2a2c`, then **+67 from the m5/m6
-trellis-skip fix — this commit**).
+**The committed grid now scores 3994/4004 = 99.75%** (was 3578/4004 = 89.4%
+when the harness was first committed; +189 came from the Cat5/Cat6 stat-node
+fix `44ae3a0`, +62 from the StoreMaxDelta I16-candidate gate `c9abe85`, +93
+from the m0-m2 skip-proba StatLoop fix `46e2a2c`, +67 from the m5/m6
+trellis-skip fix `a9fc2da`, then **+5 from the segment-quant libm-pow fix —
+this commit**).
 Neither number is comparable to the 3488/4004 = 87.1% below: 10 of
 the 13 images are synthetic and their generator was lost with the /tmp wipe and
 reconstructed differently, so the synthetic cells are simply different content
@@ -20,10 +21,9 @@ reconstructed differently, so the synthetic cells are simply different content
 is the durable baseline going forward** — the grid is committed now; re-run the
 tool for any before/after, and don't compare across grids.
 
-### Failure shape on the committed grid (15 of 4004, 2026-07-16, post-trellis-skip)
+### Failure shape on the committed grid (10 of 4004, 2026-07-16, post-libm-pow)
 
-By method (of 572 each): m0 **0** · m1 **0** · m2 1 · m3 4 · m4 3 · m5 4 ·
-m6 3. **Every remaining cell is q80+** — the full list:
+All 10 remaining cells are real photos at q80+, in 5 clusters:
 
 ```
 382297   q80 m3+m4 sns0 (both segs configs, identical bytes)  4 cells  zen +22B
@@ -31,12 +31,25 @@ m6 3. **Every remaining cell is q80+** — the full list:
 382297   q95 m3 sns50/flt60/segs4                             1 cell   same size
 382297   q90+q95 m5 sns30/flt20/segs2                         2 cells
 1025469  q95 m5 sns50/flt60/segs4                             1 cell
-synth_33x17 q90 m2-m6 sns50/flt60/segs4                       5 cells  one root
 ```
 
-**m0-m2 and the m5/m6 trellis residue are closed.** What is left is a high-q
-(q80-q95) tail in ~5 clusters, plus the odd-dimension synth_33x17 q90 cluster
-(fails m2-m6 alike — likely one shared root).
+All synthetics (incl. every tiny/odd-dimension case) are now 100%.
+
+#### SOLVED: segment-quant pow approximation off-by-one (this commit, +5)
+
+The whole synth_33x17 q90 sns50/segs4 cluster (m2-m6, the only m2 cell) was
+ONE header field found by `bitexact_diff` in a single run: `seg_q zen=[12,12,
+9,6] lib=[12,11,9,6]` (seg_lf followed). `compute_segment_quant` evaluated
+`pow(QualityToCompression(Q), expn)` with zenwebp's fast polynomial
+`pow`/`cbrt` approximations (~1e-10 relative error); libwebp uses the
+platform libm, and the result feeds a truncation `(int)(127.*(1.-c))` — a
+hair of error at an integer boundary flips the quant index by one. Fix
+(parity-gated): `compute_segment_quant_libm` + `quality_to_compression_libm`
+mirror libwebp's exact expressions via `libm::pow` (including the base
+`pow(linear_c, 1./3.)` — libwebp does NOT call cbrt). The parity-only
+`quality_to_quant_index_trunc` (segs1 base quant) now also routes through the
+libm chain. Tuned default keeps the fast path. `mbpixdiff`/`bitexact_diff`
+gained `synth:WxH:SEED` image specs reproducing the sweep's synthetic cells.
 
 #### SOLVED: m5/m6 skip decision from simple quant, not trellis (this commit, +67)
 

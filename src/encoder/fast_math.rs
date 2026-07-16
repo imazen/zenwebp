@@ -31,6 +31,22 @@ pub(crate) fn quality_to_quant_index(quality: u8) -> u8 {
     q.clamp(0, 127) as u8
 }
 
+/// `QualityToCompression` with libm math, for `StrictLibwebpParity`: libwebp
+/// computes `pow(linear_c, 1. / 3.)` with the platform libm, and the fast
+/// [`cbrt`] approximation above can land on the other side of the
+/// `(int)(127 * (1 - c))` truncation boundary. Bit-comparable results need
+/// the same `pow` chain libwebp uses. (#38)
+#[inline]
+pub(crate) fn quality_to_compression_libm(quality: u8) -> f64 {
+    let c = f64::from(quality) / 100.0;
+    let linear_c = if c < 0.75 {
+        c * (2.0 / 3.0)
+    } else {
+        2.0 * c - 1.0
+    };
+    libm::pow(linear_c, 1.0 / 3.0)
+}
+
 /// libwebp's exact base quant index: `(int)(127 * (1 - c))` — **truncation**
 /// toward zero, matching `VP8SetSegmentParams`/`SetSegmentParams`
 /// (`quant_enc.c`). [`quality_to_quant_index`] rounds instead, which diverges
@@ -38,10 +54,11 @@ pub(crate) fn quality_to_quant_index(quality: u8) -> u8 {
 /// q50, q80 (q75 rounds and truncates alike, which is why the q75-only parity
 /// gate never caught it). Only the segs1 base quant reaches this: segs>1 is
 /// overwritten by the truncating `compute_segment_quant`. Used under
-/// `StrictLibwebpParity` so segs1 is byte-exact away from q75.
+/// `StrictLibwebpParity` so segs1 is byte-exact away from q75; parity-only,
+/// so the compression factor comes from the libm chain, not the fast cbrt.
 #[inline]
 pub(crate) fn quality_to_quant_index_trunc(quality: u8) -> u8 {
-    let c = quality_to_compression(quality);
+    let c = quality_to_compression_libm(quality);
     let q = (127.0 * (1.0 - c)) as i32;
     q.clamp(0, 127) as u8
 }

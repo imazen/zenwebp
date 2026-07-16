@@ -182,6 +182,26 @@ pub fn compute_segment_quant(quality: u8, segment_alpha: i32, sns_strength: u8) 
     q.clamp(0, 127) as u8
 }
 
+/// [`compute_segment_quant`] with libm math, for `StrictLibwebpParity`.
+///
+/// libwebp evaluates `pow(QualityToCompression(Q), expn)` with the platform
+/// libm (`VP8SetSegmentParams`, quant_enc.c); zenwebp's fast `pow`/`cbrt`
+/// approximations are within ~1e-10, but the result feeds a truncation
+/// (`(int)(127. * (1. - c))`) and a hair of error flips the quant index by
+/// one exactly at integer boundaries (seen at synth 33x17 q90 sns50 segs4:
+/// seg1 zen=12 vs libwebp=11, which then skews seg_lf and every downstream
+/// mode decision). The tuned default keeps the fast path. (#38)
+pub fn compute_segment_quant_libm(quality: u8, segment_alpha: i32, sns_strength: u8) -> u8 {
+    const SNS_TO_DQ: f64 = 0.9;
+    let amp = SNS_TO_DQ * (sns_strength as f64) / 100.0 / 128.0;
+    let expn = 1.0 - amp * (segment_alpha as f64);
+    debug_assert!(expn > 0.0);
+    let c_base = crate::encoder::fast_math::quality_to_compression_libm(quality);
+    let c = libm::pow(c_base, expn);
+    let q = (127.0 * (1.0 - c)) as i32;
+    q.clamp(0, 127) as u8
+}
+
 /// Smooth the segment map by replacing isolated blocks with the majority of neighbors.
 ///
 /// Uses a 3x3 majority filter: if 5 or more of the 8 neighbors share a segment ID,

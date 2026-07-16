@@ -136,6 +136,21 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Added
 
+- **`StrictLibwebpParity` byte-exactness at 99.75% of the grid; all
+  synthetics closed** (#38, 2026-07-16): 99.6% → **99.75% (3994/4004)**, +5.
+  The synth_33x17 q90 sns50/segs4 cluster (m2-m6) was one root:
+  `compute_segment_quant` evaluated libwebp's
+  `pow(QualityToCompression(Q), expn)` with the fast polynomial `pow`/`cbrt`
+  approximations, and the ~1e-10 error flipped the truncated
+  `(int)(127*(1-c))` quant index at an integer boundary (seg1 12 vs
+  libwebp's 11, skewing seg_lf and downstream mode decisions). Parity now
+  uses `compute_segment_quant_libm`/`quality_to_compression_libm` — the
+  exact libm chain, including the base `pow(linear_c, 1./3.)` (libwebp never
+  calls cbrt); the segs1-only `quality_to_quant_index_trunc` routes through
+  it too. Tuned default keeps the fast path, bytes unchanged.
+  `mbpixdiff`/`bitexact_diff` accept `synth:WxH:SEED` image specs
+  reproducing the sweep's synthetic cells. Remaining 10 cells: real photos
+  q80+ in 5 clusters. Scope: `benchmarks/byteparity_scope_2026-07-14.md`.
 - **`StrictLibwebpParity` byte-exactness at 99.6% of the grid; m5/m6 trellis
   residue closed** (#38, 2026-07-16): 97.9% → **99.6% (3989/4004)**, +67
   cells (m5 39→4, m6 35→3). zen decided the per-MB skip with

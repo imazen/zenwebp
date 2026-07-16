@@ -8,23 +8,23 @@ Make `CostModel::StrictLibwebpParity` produce **byte-identical** output to libwe
 at matching `(quality, method, sns, filter, segments)`. Decoded pixels are already
 bit-exact and gated; this is about matching libwebp's exact **bytes**.
 
-## STATE (2026-07-16, post trellis-skip fix)
+## STATE (2026-07-16, post segment-quant-libm fix)
 
-**3989/4004 = 99.6%** on the committed grid. 15 cells remain, ALL q80+, in
-~5 clusters:
+**3994/4004 = 99.75%** on the committed grid. 10 cells remain — all real
+photos, all q80+, in 5 clusters:
 
 | cluster | cells | note |
 |---|---|---|
-| synth_33x17 q90 m2-m6 sns50/flt60/segs4 | 5 | one root; odd-dim + segs, the only m2 |
-| 382297 q80 m3+m4 sns0 (both segs configs) | 4 | one root; zen +22B |
+| 382297 q80 m3+m4 sns0 (both segs configs) | 4 | one root; zen +22B — **next target** |
 | 382297 q95 m6 sns0 (both segs configs) | 2 | zen −26B |
 | 382297 q90+q95 m5 sns30/flt20/segs2 | 2 | |
-| 382297 q95 m3 segs4 · 1025469 q95 m5 segs4 | 2 | q95 stragglers |
+| 382297 q95 m3 segs4 | 1 | same size, content diff @6854 |
+| 1025469 q95 m5 segs4 | 1 | |
 
-m0-m2, the m5/m6 trellis residue, and every q≤70 cell are **closed**. The
-sns0 segs1/segs4 pairs stay byte-identical to each other (collapse works), so
-the 4-cell q80 m3/m4 cluster and the 5-cell synth_33x17 cluster are the two
-highest-leverage roots.
+m0-m2, the m5/m6 trellis residue, every q≤70 cell, and ALL synthetics
+(tiny/odd dimensions included) are **closed**. The sns0 segs1/segs4 pairs
+stay byte-identical to each other, so these are ~5 distinct roots at most —
+likely fewer.
 
 ## TOOLS — all committed, all `--features __expert`
 
@@ -155,23 +155,28 @@ finalizes come from the token loop. #27 stands on its own merits only.
 | Cat5/Cat6 stat-node, per encode-loop path | `44ae3a0` | +189 |
 | StoreMaxDelta from the I16 CANDIDATE, not the final mode | `c9abe85` | +62 |
 | m0-m2 skip-proba: StatLoop-shaped count + size_p0 bailout | `46e2a2c` | +93 |
-| m5/m6 skip from FINAL trellis levels, not simple re-quant | 2026-07-16 | +67 |
+| m5/m6 skip from FINAL trellis levels, not simple re-quant | `a9fc2da` | +67 |
+| segment-quant via libm pow (fast-pow flipped trunc boundary) | 2026-07-16 | +5 |
 
 Earlier: base-quant truncate `52cf96f2` · segmentation-collapse `41923466` ·
 trailing-slots `7acdd775` · skip-proba forced off `91c96168`.
 
-## STRATEGY FOR THE REMAINING 15
+## STRATEGY FOR THE REMAINING 10
 
-**1. synth_33x17 q90 m2-m6 sns50/flt60/segs4 (5 cells — one root).** The only
-m2 cell; fails every method ≥2 the same way — likely odd-dimension (33x17,
-partial edge MBs) × segments × high-q. `mbpixdiff` first.
-
-**2. 382297 q80 m3+m4 sns0 (4 cells — one root).** zen +22B, both segs
+**1. 382297 q80 m3+m4 sns0 (4 cells — one root).** zen +22B, both segs
 configs byte-identical to each other. m3+m4 failing together = the
 RD_OPT_BASIC (non-trellis token-loop) path.
 
-**3. The q90-q95 m5/m6 tail (6 cells).** Likely per-cluster roots; trace
-after the two above — they may share mechanisms.
+**2. The q90-q95 m5/m6/m3 tail (6 cells).** Likely per-cluster roots; trace
+after #1 — they may share mechanisms.
+
+**(solved) synth_33x17 q90 cluster** — was 5 cells, one root: the fast
+`pow`/`cbrt` approximations flipped `compute_segment_quant`'s truncated quant
+index at an integer boundary (seg1 12 vs 11). Parity now routes the whole
+`QualityToCompression → pow(c_base, expn) → (int)(127*(1-c))` chain through
+`libm::pow`, mirroring libwebp literally. `bitexact_diff` found it in one
+run; `synth:WxH:SEED` specs now feed the sweep's synthetics to both trace
+tools.
 
 **(solved) m5/m6 trellis-skip** — was 74 cells. zen decided the per-MB skip
 with `check_all_coeffs_zero` (simple re-quant of the raw DCT); libwebp skips
