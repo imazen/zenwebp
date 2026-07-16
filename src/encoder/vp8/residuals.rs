@@ -554,6 +554,30 @@ impl<'a> super::Vp8Encoder<'a> {
             )
         });
 
+        // UVQDBG: state dump for the first corrected MB, format-comparable to
+        // the instrumented libwebp's UVQDBG in ReconstructUV. (#38)
+        #[cfg(feature = "mode_debug")]
+        let uvqdbg = std::env::var("UVQDBG").is_ok()
+            && std::env::var("TARGX").is_ok_and(|v| v == mbx.to_string());
+        #[cfg(feature = "mode_debug")]
+        if uvqdbg {
+            eprintln!(
+                "ZUVQ pre DC: {} {} {} {} | {} {} {} {} top_derr={:?} left_derr={:?} q0={} iq0={} bias0={}",
+                u_blocks[0],
+                u_blocks[16],
+                u_blocks[32],
+                u_blocks[48],
+                v_blocks[0],
+                v_blocks[16],
+                v_blocks[32],
+                v_blocks[48],
+                self.top_derr[mbx],
+                self.left_derr,
+                uv_matrix.q[0],
+                uv_matrix.iq[0],
+                uv_matrix.bias[0]
+            );
+        }
         // Apply the intra-MB DC correction (reading neighbour errors from the
         // previous MB). Shared with the m3+ RD path (`pick_best_uv`) so both use
         // byte-identical diffusion. Returns the per-channel errors to store.
@@ -564,6 +588,20 @@ impl<'a> super::Vp8Encoder<'a> {
             &self.left_derr,
             uv_matrix,
         );
+        #[cfg(feature = "mode_debug")]
+        if uvqdbg {
+            eprintln!(
+                "ZUVQ post1 DC: {} {} {} {} | {} {} {} {} u_errs={u_errs:?} v_errs={v_errs:?}",
+                u_blocks[0],
+                u_blocks[16],
+                u_blocks[32],
+                u_blocks[48],
+                v_blocks[0],
+                v_blocks[16],
+                v_blocks[32],
+                v_blocks[48],
+            );
+        }
 
         // Store errors for the next macroblock — inter-MB DC diffusion.
         //
@@ -617,6 +655,22 @@ impl<'a> super::Vp8Encoder<'a> {
                 &self.left_derr,
                 uv_matrix,
             );
+            #[cfg(feature = "mode_debug")]
+            if uvqdbg {
+                eprintln!(
+                    "ZUVQ post2 DC: {} {} {} {} | {} {} {} {} (self top_derr={:?} left_derr={:?})",
+                    u_blocks[0],
+                    u_blocks[16],
+                    u_blocks[32],
+                    u_blocks[48],
+                    v_blocks[0],
+                    v_blocks[16],
+                    v_blocks[32],
+                    v_blocks[48],
+                    self.top_derr[mbx],
+                    self.left_derr,
+                );
+            }
         }
     }
 

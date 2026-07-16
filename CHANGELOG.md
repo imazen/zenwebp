@@ -136,6 +136,27 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Added
 
+- **`StrictLibwebpParity` validated across every shared setting axis; six
+  more roots closed** (#38, 2026-07-16): `dev/byteparity_sweep.rs` gained a
+  phase-2 permutation sweep (filter_sharpness 1-7, segments 3 + sns/filter
+  extremes incl. sns>0/segs1, quality edges q0/q1/q99/q100, pinned
+  partition_limit, sharp_yuv, RGBA alpha) — all knob axes now 100%:
+  sharpness 1960/1960, extremes 1120/1120, q-edges 1456/1456,
+  partition_limit 252/252. Roots: libwebp's `SetupFilterStrength`
+  read-before-assign (strength derived with the PREVIOUS call's sharpness);
+  UV-DC quant index unclipped at 117 in the single-segment init (**both
+  models** — a real encoder/decoder mismatch at q0); error diffusion active
+  above libwebp's q≤98 gate; `StoreMaxDelta` gating on raw instead of
+  flat-latch-doubled D; a zenwebp-only pl²-scaled I4 seed plus plim100 path
+  reroutes leaking into parity; missing uv_alpha-derived UV quant deltas on
+  the single-segment path. **Opaque RGBA now encodes as a bare `VP8 ` file**
+  (**both models**, like libwebp's `WebPPictureHasTransparency`) — drops a
+  wasted VP8X+ALPH wrapper (~80 B on a 64×64). Follow-on documented:
+  non-opaque alpha (needs libwebp's alpha-plane coder port; 128 sweep cells)
+  and sharp_yuv (zenyuv's own algorithm, out of parity scope by design). CI
+  gate extended with permutation + opaque-RGBA anchors; trace tools gained
+  sharpness/partition_limit args and new dump hooks. Scope:
+  `benchmarks/byteparity_scope_2026-07-14.md`.
 - **Tuned default adopts the trellis-derived skip at m5/m6** (#38 follow-up,
   2026-07-16): the tuned trellis path decided the per-MB skip with a separate
   simple-quant test while emission recorded trellis levels — on borderline

@@ -1236,10 +1236,17 @@ impl<'a> Vp8Encoder<'a> {
         self.sns_strength = params.sns_strength.min(100);
         self.smooth_segment_map = params.smooth_segment_map;
         self.cost_model = params.cost_model;
-        // libwebp does chroma DC error diffusion (CorrectDCValues) for any
-        // quality <= ERROR_DIFFUSION_QUALITY (98), so it is ON at all normal
-        // qualities — keep it enabled under StrictLibwebpParity too.
-        self.do_error_diffusion = true;
+        // libwebp allocates the chroma error-diffusion buffers only when
+        // `quality <= ERROR_DIFFUSION_QUALITY (98)` (`webp_enc.c:167`) — at
+        // q99/q100 `top_derr == NULL` and `CorrectDCValues` never runs, so
+        // parity must disable diffusion there (traced at q99 m4: zen's H/TM
+        // UV candidates carried diffused DCs, libwebp's didn't, flipping ~14%
+        // of UV picks). The tuned default keeps diffusion at every quality:
+        // at q99+ the DC errors it shapes are ±1-2 steps and the effect is
+        // noise-level, so switching tuned off up there is not worth a bytes
+        // change without a measured win. (#38)
+        self.do_error_diffusion = params.lossy_quality <= 98
+            || self.cost_model != super::api::CostModel::StrictLibwebpParity;
         self.multi_pass_stats = params.multi_pass_stats;
         // Mirrors libwebp's `enc->do_search = (config->target_size > 0 ||
         // config->target_PSNR > 0)` (`webp_enc.c:118`).
@@ -1940,6 +1947,18 @@ impl<'a> Vp8Encoder<'a> {
             // the end of PickBestIntra16, before the skip decision, so a
             // finally-skipped MB still feeds max_edge (see the non-trellis
             // branch below for the same ordering).
+            #[cfg(feature = "mode_debug")]
+            if std::env::var("SMDBG").is_ok() {
+                eprintln!(
+                    "ZENSM mb({mbx},{mby}) seg={mb_segment_id} blocky={} cand_d={} min_disto={} y2_124={},{},{}",
+                    macroblock_info.intra16_blocky,
+                    macroblock_info.intra16_cand_d,
+                    self.segments[mb_segment_id].min_disto,
+                    macroblock_info.intra16_y2_zz[1],
+                    macroblock_info.intra16_y2_zz[2],
+                    macroblock_info.intra16_y2_zz[4],
+                );
+            }
             if self.store_max_edge_active()
                 && macroblock_info.intra16_blocky
                 && macroblock_info.intra16_cand_d > self.segments[mb_segment_id].min_disto
@@ -2182,7 +2201,13 @@ impl<'a> Vp8Encoder<'a> {
         // anyway. Skipping the per-MB DC sums when we already know they'll be
         // unused saves ~16 sums per MB on large noisy images that hit the
         // partition_limit retry path.
-        let collect_mode_hints = self.method <= 1 && self.partition_limit < 100;
+        // The `partition_limit < 100` clause is a zenwebp-only optimization
+        // (plim100 forces I16-only in the tuned default, so hints are dead
+        // weight). libwebp's analysis never consults partition_limit, so
+        // parity collects hints at every limit. (#38)
+        let collect_mode_hints = self.method <= 1
+            && (self.partition_limit < 100
+                || self.cost_model == super::api::CostModel::StrictLibwebpParity);
         let analysis = analyze_image_with_hint_gate(
             &self.frame.ybuf,
             &self.frame.ubuf,
@@ -2333,9 +2358,26 @@ impl<'a> Vp8Encoder<'a> {
                 let delta = deltas.get(seg_idx).copied().unwrap_or(0) as i32;
                 seg_quant_index = (i32::from(seg_quant_index) + delta).clamp(0, 127) as u8;
             }
+            // libwebp's `SetupFilterStrength` reads `filter_hdr.sharpness` at
+            // the TOP of the function but only assigns it from the config at
+            // the BOTTOM (`quant_enc.c:294`) — so the per-segment strength
+            // derivation always sees the PREVIOUS call's sharpness, which at
+            // the default single pass is the zero-initialized value. Dumped
+            // live (LIBFS, config sharpness=1): `base = qstep` — the identity
+            // row 0, not row 1. The header sharpness field and
+            // `VP8AdjustFilterStrength` use the real config value. Parity
+            // reproduces the stale read (0); the tuned default keeps zen's
+            // read-through behavior, deriving strength with the same
+            // sharpness the decoder will actually filter with. (#38)
+            let strength_sharpness =
+                if self.cost_model == super::api::CostModel::StrictLibwebpParity {
+                    0
+                } else {
+                    self.filter_sharpness
+                };
             let seg_filter = super::cost::compute_filter_level_with_beta(
                 seg_quant_index,
-                self.filter_sharpness,
+                strength_sharpness,
                 self.filter_strength,
                 beta,
             );
@@ -2515,10 +2557,20 @@ impl<'a> Vp8Encoder<'a> {
         self.macroblock_width = mb_width;
         self.macroblock_height = mb_height;
 
-        // Compute optimal filter level based on quantization and preset tuning params
+        // Compute optimal filter level based on quantization and preset tuning
+        // params. Parity derives strength with sharpness 0 — libwebp's
+        // `SetupFilterStrength` reads `filter_hdr.sharpness` before assigning
+        // it from the config, so its derivation always sees the previous
+        // call's value (0 at the default single pass); see the per-segment
+        // loop in `encode_image` for the full story. (#38)
+        let strength_sharpness = if self.cost_model == super::api::CostModel::StrictLibwebpParity {
+            0
+        } else {
+            self.filter_sharpness
+        };
         let filter_level = super::cost::compute_filter_level(
             quant_index,
-            self.filter_sharpness,
+            strength_sharpness,
             self.filter_strength,
         );
 
@@ -2560,14 +2612,23 @@ impl<'a> Vp8Encoder<'a> {
         self.quantization_indices = quantization_indices;
 
         // Initialize all 4 segments with base quantization first
-        // This provides fallback values before segment analysis
+        // This provides fallback values before segment analysis. At
+        // `num_segments == 1` this init IS the final segment (the
+        // segment-analysis reconfiguration never runs), so it must apply the
+        // same index clips libwebp's `SetupMatrices` does — in particular the
+        // UV DC clip to 117 (`m->uv.q[0] = kDcTable[clip(q + dq_uv_dc, 0,
+        // 117)]`, quant_enc.c:233). Only quality 0 reaches indices above 117,
+        // which is how the unclipped lookup survived every q1-q100 sweep:
+        // at q0/segs1 zen quantized UV DC with step 157 (index 127) while
+        // libwebp — and both DECODERS — use 132 (index 117), diverging every
+        // chroma DC. (#38)
         for seg_idx in 0..4 {
             let mut segment = Segment {
                 ydc: DC_QUANT[quant_index_usize],
                 yac: AC_QUANT[quant_index_usize],
                 y2dc: DC_QUANT[quant_index_usize] * 2,
                 y2ac: VP8_AC_TABLE2[quant_index_usize] as i16,
-                uvdc: DC_QUANT[quant_index_usize],
+                uvdc: DC_QUANT[quant_index_usize.min(117)],
                 uvac: AC_QUANT[quant_index_usize],
                 quantizer_level: 0, // No delta for base segment
                 quant_index,
@@ -2620,7 +2681,11 @@ impl<'a> Vp8Encoder<'a> {
             // populated, so a single-segment m0/m1 encode was left with an
             // empty `fast_mb_hints` and collapsed every MB to I16-DC. Run the
             // hint-collecting analysis here too (segments stay disabled).
-            if self.method <= 1 && self.partition_limit < 100 {
+            let mut uv_alpha_avg: i32 = 0; // libwebp's no-analysis default (analysis_enc.c:372)
+            if self.method <= 1
+                && (self.partition_limit < 100
+                    || self.cost_model == super::api::CostModel::StrictLibwebpParity)
+            {
                 let y_stride = usize::from(self.macroblock_width * 16);
                 let uv_stride = usize::from(self.macroblock_width * 8);
                 let width = usize::from(self.frame.width);
@@ -2641,6 +2706,48 @@ impl<'a> Vp8Encoder<'a> {
                 );
                 self.fast_mb_hints = analysis.mb_mode_hints.unwrap_or_default();
                 self.fast_mb_uv_hints = analysis.mb_uv_hints.unwrap_or_default();
+                uv_alpha_avg = analysis.uv_alpha_avg;
+            }
+
+            // libwebp applies the uv_alpha-derived UV quant deltas at EVERY
+            // segment count — `VP8SetSegmentParams` runs unconditionally, and
+            // when its analysis pass doesn't (method >= 2 with one segment)
+            // `enc->uv_alpha` keeps the 0 default (`analysis_enc.c:372`),
+            // still yielding non-zero deltas whenever sns_strength > 0
+            // (traced at 382297 q50 m4 sns80 segs1: lib writes uvac_delta=-4,
+            // zen wrote none, flipping 24% of UV picks). zenwebp's tuned
+            // single-segment path historically skipped the deltas entirely —
+            // a tuned-adoption candidate pending an A/B (finer UV quant at
+            // high SNS); parity computes them here. (#38)
+            if self.cost_model == super::api::CostModel::StrictLibwebpParity {
+                const MID_UV_ALPHA: i32 = 64;
+                const MIN_UV_ALPHA: i32 = 30;
+                const MAX_UV_ALPHA: i32 = 100;
+                const MAX_DQ_UV: i32 = 6;
+                const MIN_DQ_UV: i32 = -4;
+                let sns = i32::from(self.sns_strength);
+                let dq_uv_ac = (uv_alpha_avg - MID_UV_ALPHA) * (MAX_DQ_UV - MIN_DQ_UV)
+                    / (MAX_UV_ALPHA - MIN_UV_ALPHA);
+                let dq_uv_ac = (dq_uv_ac * sns / 100).clamp(MIN_DQ_UV, MAX_DQ_UV);
+                let dq_uv_dc = (-4 * sns / 100).clamp(-15, 15);
+                if dq_uv_dc != 0 {
+                    self.quantization_indices.uvdc_delta = Some(dq_uv_dc as i8);
+                }
+                if dq_uv_ac != 0 {
+                    self.quantization_indices.uvac_delta = Some(dq_uv_ac as i8);
+                }
+                let qi = i32::from(quant_index);
+                let uv_dc_idx = (qi + dq_uv_dc).clamp(0, 117) as usize;
+                let uv_ac_idx = (qi + dq_uv_ac).clamp(0, 127) as usize;
+                for seg in self.segments.iter_mut() {
+                    seg.uvdc = DC_QUANT[uv_dc_idx];
+                    seg.uvac = AC_QUANT[uv_ac_idx];
+                }
+                let (sns_strength, method, cost_model) =
+                    (self.sns_strength, self.method, self.cost_model);
+                for seg in self.segments.iter_mut() {
+                    seg.init_matrices(sns_strength, method, cost_model);
+                }
             }
         }
 

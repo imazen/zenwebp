@@ -639,6 +639,9 @@ fn main() {
         Some(m) => vec![m],
         None => vec![2u8, 3, 4, 5, 6],
     };
+    // Optional 7th arg: filter_sharpness (default 0). 8th: partition_limit.
+    let sharp: u8 = arg_u8(7).unwrap_or(0);
+    let plim: Option<u8> = arg_u8(8);
 
     for (q, sns, flt, segs) in grid {
         for m in methods.iter().copied() {
@@ -648,8 +651,13 @@ fn main() {
                 .with_segments(segs)
                 .with_sns_strength(sns)
                 .with_filter_strength(flt)
-                .with_filter_sharpness(0)
+                .with_filter_sharpness(sharp)
                 .with_cost_model(CostModel::StrictLibwebpParity);
+            let cfg = if let Some(p) = plim {
+                cfg.with_partition_limit(p)
+            } else {
+                cfg
+            };
             let zen = EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h)
                 .encode()
                 .unwrap();
@@ -659,7 +667,8 @@ fn main() {
                 .segments(segs)
                 .sns_strength(sns)
                 .filter_strength(flt)
-                .filter_sharpness(0)
+                .filter_sharpness(sharp)
+                .partition_limit(plim.unwrap_or(0))
                 .encode_rgb(&rgb, w, h, webpx::Unstoppable)
                 .unwrap();
             let (zh, zm) = parse_modes(vp8_payload(&zen), mb_w, mb_h);

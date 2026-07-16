@@ -2342,6 +2342,44 @@ fn quantize_alpha_levels(data: &mut [u8], num_levels: u16) {
     }
 }
 
+/// True when every alpha sample in the image is 255 (fully opaque).
+///
+/// libwebp decides whether a lossy encode carries an ALPH chunk by scanning
+/// the actual pixels (`WebPPictureHasTransparency`), not by the input layout
+/// — an opaque RGBA source encodes as a plain `VP8 ` file. zenwebp
+/// historically keyed on the layout alone, wrapping opaque RGBA in a
+/// VP8X + ALPH container (~80 wasted bytes on a 64×64, plus the extended
+/// header on every such file). Both cost models now skip the alpha plane
+/// when it is uniformly 255. (#38)
+pub(crate) fn alpha_is_opaque(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    stride: usize,
+    color: PixelLayout,
+) -> bool {
+    let bytes_per_pixel = match color {
+        PixelLayout::La8 => 2usize,
+        PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => 4,
+        _ => return true,
+    };
+    let alpha_offset = match color {
+        PixelLayout::Argb8 => 0usize,
+        _ => bytes_per_pixel - 1,
+    };
+    let ww = width as usize;
+    let hh = height as usize;
+    let stride_bytes = stride * bytes_per_pixel;
+    let row_bytes = ww * bytes_per_pixel;
+    (0..hh).all(|y| {
+        data[y * stride_bytes..y * stride_bytes + row_bytes]
+            .iter()
+            .skip(alpha_offset)
+            .step_by(bytes_per_pixel)
+            .all(|&a| a == 255)
+    })
+}
+
 /// Encodes the alpha part of the image data losslessly.
 /// Used for lossy images that include transparency.
 ///
@@ -2511,7 +2549,12 @@ impl<'a> WebPEncoder<'a> {
     ) -> EncodeResult<EncodeStats> {
         let mut frame = Vec::new();
 
-        let lossy_with_alpha = self.params.use_lossy && color.has_alpha();
+        // Content-based, like libwebp's WebPPictureHasTransparency: an opaque
+        // RGBA/BGRA/LA source carries no ALPH chunk and (absent metadata) uses
+        // the simple container. See `alpha_is_opaque`. (#38)
+        let use_lossy = self.params.use_lossy;
+        let lossy_with_alpha =
+            use_lossy && color.has_alpha() && !alpha_is_opaque(data, width, height, stride, color);
         let alpha_quality = self.params.alpha_quality;
 
         let mut stats = EncodeStats::default();
@@ -2594,7 +2637,7 @@ impl<'a> WebPEncoder<'a> {
             if !self.exif_metadata.is_empty() {
                 flags |= 1 << 3;
             }
-            if color.has_alpha() {
+            if lossy_with_alpha || (!use_lossy && color.has_alpha()) {
                 flags |= 1 << 4;
             }
             if !self.icc_profile.is_empty() {
@@ -2666,7 +2709,12 @@ impl<'a> WebPEncoder<'a> {
         }
 
         let mut frame = Vec::new();
-        let lossy_with_alpha = self.params.use_lossy && color.has_alpha();
+        // Content-based, like libwebp's WebPPictureHasTransparency: an opaque
+        // RGBA/BGRA/LA source carries no ALPH chunk and (absent metadata) uses
+        // the simple container. See `alpha_is_opaque`. (#38)
+        let use_lossy = self.params.use_lossy;
+        let lossy_with_alpha =
+            use_lossy && color.has_alpha() && !alpha_is_opaque(data, width, height, stride, color);
         let alpha_quality = self.params.alpha_quality;
         let mut stats;
         let diagnostics;
@@ -2737,7 +2785,7 @@ impl<'a> WebPEncoder<'a> {
             if !self.exif_metadata.is_empty() {
                 flags |= 1 << 3;
             }
-            if color.has_alpha() {
+            if lossy_with_alpha || (!use_lossy && color.has_alpha()) {
                 flags |= 1 << 4;
             }
             if !self.icc_profile.is_empty() {

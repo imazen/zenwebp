@@ -18,22 +18,28 @@
 //! `1st-diff@4` means only the RIFF size field differs so far, i.e. the payloads
 //! diverge in content, not in an early header field.
 //!
-//! ## Baseline: 3578/4004 = 89.4% (2026-07-15, this grid)
+//! ## Phase 1 — THE base grid (4004 cells)
 //!
-//! **This number is NOT comparable to the 3488/4004 (87.1%) quoted in
-//! `benchmarks/byteparity_scope_2026-07-14.md`.** That measurement came from an
-//! ad-hoc harness that lived in `/tmp` and was wiped; 10 of the 13 images here
-//! are synthetic, and their generator was reconstructed from scratch rather
-//! than recovered, so the synthetic cells are different content. The encoder is
-//! byte-identical between the two runs — the delta is the grid, not progress.
-//! The 3 CID22 images are unchanged and account for 299 of the 426 failures.
+//! 13 images x q{5..95} x 4 (sns,flt,segs) configs x m0-6. Complete at
+//! 4004/4004 since 2026-07-16; the climb from 24% is recorded in
+//! `benchmarks/byteparity_scope_2026-07-14.md`. This phase's tally is THE
+//! score — keep its grid frozen so before/after deltas stay comparable.
 //!
-//! Treat 3578/4004 as the durable baseline: this file is committed, so the grid
-//! is now reproducible. Don't compare across grids; re-run this tool for a
-//! before/after on any encoder change.
+//! ## Phase 2 — axis permutations (added 2026-07-16)
 //!
-//! The 24% -> ~87-89% climb across five parity-gated fixes on 2026-07-15 is
-//! recorded in `benchmarks/byteparity_scope_2026-07-14.md`.
+//! Sweeps the previously-unswept setting axes both encoders expose:
+//! filter_sharpness 1-7, segments 3 + sns/filter extremes, quality edges
+//! (q0/q1/q99/q100), pinned partition_limit, sharp_yuv, and alpha (RGBA
+//! input, alpha_quality 100/90). Each axis tallies separately so a
+//! not-yet-parity axis (e.g. alpha's separately-coded plane) doesn't blur
+//! the score of the others.
+//!
+//! Out of scope (no matched knob or architecturally different):
+//! target_size/target_PSNR (zen drives an outer q-search loop, libwebp a
+//! multi-pass StatLoop search), pass>1, autofilter, filter_type,
+//! preprocessing bits, multi-partition output (zenwebp always emits 1
+//! token partition; libwebp default `partitions=0` matches), low_memory,
+//! emulate_jpeg_size, qmin/qmax.
 
 use std::path::Path;
 
@@ -84,6 +90,184 @@ fn synth(w: u32, h: u32, seed: u32) -> (Vec<u8>, u32, u32) {
     (px, w, h)
 }
 
+/// RGBA variant of `synth` with a chosen alpha pattern.
+///   0 = fully opaque (both sides must omit the ALPH chunk)
+///   1 = horizontal alpha gradient
+///   2 = 8x8 binary checker (0 / 255)
+fn synth_rgba(w: u32, h: u32, seed: u32, alpha_kind: u8) -> Vec<u8> {
+    let (rgb, _, _) = synth(w, h, seed);
+    let mut px = Vec::with_capacity((w as usize) * (h as usize) * 4);
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) as usize) * 3;
+            let a = match alpha_kind {
+                0 => 255u8,
+                1 => (x * 255 / w.max(1)) as u8,
+                _ => {
+                    if ((x / 8) + (y / 8)) % 2 == 0 {
+                        0
+                    } else {
+                        255
+                    }
+                }
+            };
+            px.extend_from_slice(&[rgb[i], rgb[i + 1], rgb[i + 2], a]);
+        }
+    }
+    px
+}
+
+/// One comparison cell across every swept axis. Defaults reproduce the
+/// phase-1 base grid exactly.
+#[derive(Clone, Copy)]
+struct Cell {
+    q: u8,
+    m: u8,
+    sns: u8,
+    flt: u8,
+    segs: u8,
+    sharp: u8,
+    /// `Some(v)` pins partition_limit on BOTH sides (zen `None` default is
+    /// an auto-retry that starts at 0 = libwebp's default).
+    plimit: Option<u8>,
+    sharp_yuv: bool,
+    /// `Some(aq)` encodes RGBA input with this alpha_quality.
+    alpha_q: Option<u8>,
+}
+
+impl Cell {
+    const fn base(q: u8, m: u8, sns: u8, flt: u8, segs: u8) -> Self {
+        Self {
+            q,
+            m,
+            sns,
+            flt,
+            segs,
+            sharp: 0,
+            plimit: None,
+            sharp_yuv: false,
+            alpha_q: None,
+        }
+    }
+
+    fn label(&self, name: &str) -> String {
+        let mut s = format!(
+            "{name} q{} m{} sns{} flt{} segs{}",
+            self.q, self.m, self.sns, self.flt, self.segs
+        );
+        if self.sharp != 0 {
+            s.push_str(&format!(" sh{}", self.sharp));
+        }
+        if let Some(p) = self.plimit {
+            s.push_str(&format!(" plim{p}"));
+        }
+        if self.sharp_yuv {
+            s.push_str(" sharpyuv");
+        }
+        if let Some(a) = self.alpha_q {
+            s.push_str(&format!(" alphaq{a}"));
+        }
+        s
+    }
+}
+
+/// Encode one cell through both encoders; Ok(None) = byte-identical,
+/// Ok(Some(msg)) = diverged, Err = zen encode error.
+fn run_cell(name: &str, pixels: &[u8], w: u32, h: u32, c: Cell) -> Result<Option<String>, String> {
+    let mut cfg = LossyConfig::new()
+        .with_quality(f32::from(c.q))
+        .with_method(c.m)
+        .with_segments(c.segs)
+        .with_sns_strength(c.sns)
+        .with_filter_strength(c.flt)
+        .with_filter_sharpness(c.sharp)
+        .with_cost_model(CostModel::StrictLibwebpParity);
+    if let Some(p) = c.plimit {
+        cfg = cfg.with_partition_limit(p);
+    }
+    if c.sharp_yuv {
+        cfg = cfg.with_sharp_yuv(true);
+    }
+    if let Some(aq) = c.alpha_q {
+        cfg.alpha_quality = aq;
+    }
+    let layout = if c.alpha_q.is_some() {
+        PixelLayout::Rgba8
+    } else {
+        PixelLayout::Rgb8
+    };
+    let zen = EncodeRequest::lossy(&cfg, pixels, layout, w, h)
+        .encode()
+        .map_err(|e| format!("{}: zen ERR {e:?}", c.label(name)))?;
+
+    let mut lcfg = webpx::EncoderConfig::new()
+        .quality(f32::from(c.q))
+        .method(c.m)
+        .segments(c.segs)
+        .sns_strength(c.sns)
+        .filter_strength(c.flt)
+        .filter_sharpness(c.sharp);
+    if let Some(p) = c.plimit {
+        lcfg = lcfg.partition_limit(p);
+    }
+    if c.sharp_yuv {
+        lcfg = lcfg.sharp_yuv(true);
+    }
+    let lib = if let Some(aq) = c.alpha_q {
+        lcfg.alpha_quality(aq)
+            .encode_rgba(pixels, w, h, webpx::Unstoppable)
+            .unwrap()
+    } else {
+        lcfg.encode_rgb(pixels, w, h, webpx::Unstoppable).unwrap()
+    };
+
+    if zen == lib {
+        Ok(None)
+    } else {
+        let common = zen.iter().zip(&lib).take_while(|(a, b)| a == b).count();
+        Ok(Some(format!(
+            "{}: zen={} lib={} 1st-diff@{common}",
+            c.label(name),
+            zen.len(),
+            lib.len()
+        )))
+    }
+}
+
+/// Tally for one phase/axis: run the cells, collect failures.
+struct Tally {
+    total: u32,
+    ident: u32,
+    fails: Vec<String>,
+}
+
+impl Tally {
+    fn new() -> Self {
+        Self {
+            total: 0,
+            ident: 0,
+            fails: Vec::new(),
+        }
+    }
+    fn run(&mut self, name: &str, pixels: &[u8], w: u32, h: u32, c: Cell) {
+        self.total += 1;
+        match run_cell(name, pixels, w, h, c) {
+            Ok(None) => self.ident += 1,
+            Ok(Some(msg)) => self.fails.push(msg),
+            Err(msg) => self.fails.push(msg),
+        }
+    }
+    fn report(&self, label: &str, cap: usize) {
+        println!("AXIS {label}: {}/{} byte-identical", self.ident, self.total);
+        for f in self.fails.iter().take(cap) {
+            println!("  {f}");
+        }
+        if self.fails.len() > cap {
+            println!("  ... and {} more", self.fails.len() - cap);
+        }
+    }
+}
+
 fn main() {
     // Real images (skipped if absent) + synthetic tiny/odd/edge cases. The
     // tiny and odd-dimension entries matter: they exercise partial-MB edges and
@@ -120,70 +304,161 @@ fn main() {
     // other two are the shipped-default-ish and a mid config.
     let configs: &[(u8, u8, u8)] = &[(0, 0, 1), (50, 60, 4), (0, 0, 4), (30, 20, 2)];
 
-    let mut total = 0u32;
-    let mut ident = 0u32;
-    let mut fails: Vec<String> = Vec::new();
-
+    // ===== Phase 1: THE base grid (frozen — this tally is the score) =====
+    let mut base = Tally::new();
     for (name, rgb, w, h) in &imgs {
         for &(sns, flt, segs) in configs {
             for &q in qs {
                 for m in 0u8..=6 {
-                    let cfg = LossyConfig::new()
-                        .with_quality(f32::from(q))
-                        .with_method(m)
-                        .with_segments(segs)
-                        .with_sns_strength(sns)
-                        .with_filter_strength(flt)
-                        .with_filter_sharpness(0)
-                        .with_cost_model(CostModel::StrictLibwebpParity);
-                    let zen =
-                        match EncodeRequest::lossy(&cfg, rgb, PixelLayout::Rgb8, *w, *h).encode() {
-                            Ok(z) => z,
-                            Err(e) => {
-                                fails.push(format!(
-                                    "{name} q{q} m{m} sns{sns} flt{flt} segs{segs}: zen ERR {e:?}"
-                                ));
-                                total += 1;
-                                continue;
-                            }
+                    base.run(name, rgb, *w, *h, Cell::base(q, m, sns, flt, segs));
+                }
+            }
+        }
+    }
+    println!(
+        "# byte-parity sweep: {}/{} BYTE-IDENTICAL ({} images, {} q, {} configs, m0-6)",
+        base.ident,
+        base.total,
+        imgs.len(),
+        qs.len(),
+        configs.len()
+    );
+    if base.fails.is_empty() {
+        println!("ALL BYTE-IDENTICAL");
+    } else {
+        println!("--- {} non-identical cells ---", base.fails.len());
+        for f in &base.fails {
+            println!("{f}");
+        }
+    }
+
+    // Skip the axis phase with --base-only (keeps the fast score loop).
+    if std::env::args().any(|a| a == "--base-only") {
+        return;
+    }
+    let by_name = |n: &str| imgs.iter().find(|(name, ..)| name == n);
+    let pick = |names: &[&str]| -> Vec<&(String, Vec<u8>, u32, u32)> {
+        names.iter().filter_map(|n| by_name(n)).collect()
+    };
+
+    println!("\n# ===== Phase 2: axis permutations =====");
+
+    // --- filter_sharpness 1..7 ---
+    let mut t = Tally::new();
+    for (name, rgb, w, h) in pick(&["382297.png", "1025469.png", "synth_33x17", "synth_129x127"]) {
+        for sharp in 1u8..=7 {
+            for &(sns, flt, segs) in &[(50u8, 60u8, 4u8), (30, 20, 2)] {
+                for &q in &[5u8, 20, 50, 75, 90] {
+                    for m in 0u8..=6 {
+                        let c = Cell {
+                            sharp,
+                            ..Cell::base(q, m, sns, flt, segs)
                         };
-                    let lib = webpx::EncoderConfig::new()
-                        .quality(f32::from(q))
-                        .method(m)
-                        .segments(segs)
-                        .sns_strength(sns)
-                        .filter_strength(flt)
-                        .filter_sharpness(0)
-                        .encode_rgb(rgb, *w, *h, webpx::Unstoppable)
-                        .unwrap();
-                    total += 1;
-                    if zen == lib {
-                        ident += 1;
-                    } else {
-                        let common = zen.iter().zip(&lib).take_while(|(a, b)| a == b).count();
-                        fails.push(format!(
-                            "{name} q{q} m{m} sns{sns} flt{flt} segs{segs}: zen={} lib={} 1st-diff@{common}",
-                            zen.len(),
-                            lib.len()
-                        ));
+                        t.run(name, rgb, *w, *h, c);
                     }
                 }
             }
         }
     }
+    t.report("filter_sharpness 1-7", 20);
 
-    println!(
-        "# byte-parity sweep: {ident}/{total} BYTE-IDENTICAL ({} images, {} q, {} configs, m0-6)",
-        imgs.len(),
-        qs.len(),
-        configs.len()
-    );
-    if fails.is_empty() {
-        println!("ALL BYTE-IDENTICAL");
-    } else {
-        println!("--- {} non-identical cells ---", fails.len());
-        for f in &fails {
-            println!("{f}");
+    // --- segments=3 + sns/filter extremes ---
+    let mut t = Tally::new();
+    for (name, rgb, w, h) in pick(&["382297.png", "1025469.png", "1418519.png", "synth_129x127"]) {
+        for &(sns, flt, segs) in &[
+            (50u8, 60u8, 3u8),
+            (100, 100, 4),
+            (80, 30, 4),
+            (25, 10, 2),
+            (100, 0, 4),
+            (0, 100, 1),
+            // sns>0 with ONE segment: exercises the uv_alpha-derived UV quant
+            // deltas on the single-segment path (uv_alpha defaults to 0 when
+            // the analysis pass doesn't run, m2+). (#38)
+            (80, 60, 1),
+            (100, 30, 1),
+        ] {
+            for &q in &[5u8, 20, 50, 75, 90] {
+                for m in 0u8..=6 {
+                    t.run(name, rgb, *w, *h, Cell::base(q, m, sns, flt, segs));
+                }
+            }
         }
     }
+    t.report("segments-3 + sns/filter extremes", 20);
+
+    // --- quality edges q0/q1/q99/q100 ---
+    let mut t = Tally::new();
+    for (name, rgb, w, h) in &imgs {
+        for &(sns, flt, segs) in configs {
+            for &q in &[0u8, 1, 99, 100] {
+                for m in 0u8..=6 {
+                    t.run(name, rgb, *w, *h, Cell::base(q, m, sns, flt, segs));
+                }
+            }
+        }
+    }
+    t.report("quality edges 0/1/99/100", 20);
+
+    // --- pinned partition_limit ---
+    let mut t = Tally::new();
+    for (name, rgb, w, h) in pick(&["382297.png", "1025469.png"]) {
+        for &pl in &[30u8, 60, 100] {
+            for &(sns, flt, segs) in &[(50u8, 60u8, 4u8), (0, 0, 1)] {
+                for &q in &[5u8, 50, 90] {
+                    for m in 0u8..=6 {
+                        let c = Cell {
+                            plimit: Some(pl),
+                            ..Cell::base(q, m, sns, flt, segs)
+                        };
+                        t.run(name, rgb, *w, *h, c);
+                    }
+                }
+            }
+        }
+    }
+    t.report("partition_limit 30/60/100", 20);
+
+    // --- sharp_yuv input conversion ---
+    let mut t = Tally::new();
+    for (name, rgb, w, h) in pick(&["382297.png", "1025469.png", "1418519.png"]) {
+        for &(sns, flt, segs) in &[(50u8, 60u8, 4u8), (0, 0, 1)] {
+            for &q in &[5u8, 50, 75, 90] {
+                for &m in &[0u8, 2, 4, 6] {
+                    let c = Cell {
+                        sharp_yuv: true,
+                        ..Cell::base(q, m, sns, flt, segs)
+                    };
+                    t.run(name, rgb, *w, *h, c);
+                }
+            }
+        }
+    }
+    t.report("sharp_yuv", 20);
+
+    // --- alpha (RGBA input) ---
+    let mut t = Tally::new();
+    for &(w, h, seed) in &[(64u32, 64u32, 31u32), (33, 17, 23)] {
+        for alpha_kind in 0u8..=2 {
+            let rgba = synth_rgba(w, h, seed, alpha_kind);
+            let name = format!(
+                "synthA{alpha_kind}_{w}x{h}",
+                alpha_kind = alpha_kind,
+                w = w,
+                h = h
+            );
+            for &aq in &[100u8, 90] {
+                for &q in &[5u8, 50, 75, 90] {
+                    for &m in &[0u8, 2, 4, 6] {
+                        let c = Cell {
+                            alpha_q: Some(aq),
+                            ..Cell::base(q, m, 50, 60, 4)
+                        };
+                        t.run(&name, &rgba, w, h, c);
+                    }
+                }
+            }
+        }
+    }
+    t.report("alpha (RGBA, alpha_quality 100/90)", 20);
 }

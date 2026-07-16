@@ -96,6 +96,8 @@ fn main() {
     let sns: u8 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
     let flt: u8 = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(0);
     let segs: u8 = args.get(6).and_then(|s| s.parse().ok()).unwrap_or(1);
+    let sharp: u8 = args.get(7).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let plim: Option<u8> = args.get(8).and_then(|s| s.parse().ok());
 
     let (rgb, w, h) = load(img_path);
     let (mb_w, mb_h) = (w.div_ceil(16) as usize, h.div_ceil(16) as usize);
@@ -109,8 +111,13 @@ fn main() {
         .with_segments(segs)
         .with_sns_strength(sns)
         .with_filter_strength(flt)
-        .with_filter_sharpness(0)
+        .with_filter_sharpness(sharp)
         .with_cost_model(CostModel::StrictLibwebpParity);
+    let cfg = if let Some(p) = plim {
+        cfg.with_partition_limit(p)
+    } else {
+        cfg
+    };
     let zen = EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h)
         .encode()
         .unwrap();
@@ -120,7 +127,8 @@ fn main() {
         .segments(segs)
         .sns_strength(sns)
         .filter_strength(flt)
-        .filter_sharpness(0)
+        .filter_sharpness(sharp)
+        .partition_limit(plim.unwrap_or(0))
         .encode_rgb(&rgb, w, h, webpx::Unstoppable)
         .unwrap();
     println!(

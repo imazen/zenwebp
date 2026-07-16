@@ -8,18 +8,22 @@ Make `CostModel::StrictLibwebpParity` produce **byte-identical** output to libwe
 at matching `(quality, method, sns, filter, segments)`. Decoded pixels are already
 bit-exact and gated; this is about matching libwebp's exact **bytes**.
 
-## STATE (2026-07-16): ✅ **DONE — 4004/4004 = 100% byte-identical**
+## STATE (2026-07-16): ✅ **DONE — base grid 4004/4004 AND every shared knob axis at 100%**
 
-The committed grid is complete. The DONE criteria below are met: score at
-4004/4004, all gates green (full suite, `libwebp_byte_parity` incl. new
-regression anchors for the four final roots, clippy on default/`__expert`/
-`__expert,mode_debug`), docs + CHANGELOG current.
+The committed grid is complete, and the phase-2 setting-permutation sweep
+(added the same day) closed every axis both encoders share semantically:
+filter_sharpness 1-7 (1960/1960), segments-3 + sns/filter extremes incl.
+sns>0/segs1 (1120/1120), quality edges q0/q1/q99/q100 (1456/1456), pinned
+partition_limit (252/252), opaque-RGBA (64/64 of the alpha axis). Six more
+roots fell — see "Setting-permutation validation" in
+`byteparity_scope_2026-07-14.md` for the table.
 
-**Claim discipline still applies:** byte-exactness is proven ACROSS THIS
-GRID (13 images × q{5..95} × 4 configs × m0-m6), not universally. Unswept
-axes: `filter_sharpness ≠ 0`, `partitions > 1`, alpha, `target_size`, more
-content. If the north-star widens, extend `dev/byteparity_sweep.rs` along
-those axes and re-enter THE LOOP; the tooling and this playbook stay valid.
+**Remaining, documented as follow-on (different-implementation subsystems,
+not knob gaps):** non-opaque alpha (needs libwebp's alpha-plane filter
+selection + VP8L-mini port; 128 sweep cells) and sharp_yuv (zenyuv's own
+algorithm by design — out of parity scope). Out-of-scope axes (no matched
+knob): target_size/PSNR search, pass>1, autofilter, filter_type,
+preprocessing bits, multi-partition, low_memory, emulate_jpeg_size.
 
 ## TOOLS — all committed, all `--features __expert`
 

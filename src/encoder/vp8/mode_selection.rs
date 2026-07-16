@@ -1081,8 +1081,16 @@ impl<'a> super::Vp8Encoder<'a> {
                 best_sse = d_final;
                 best_spectral_disto = sd_final;
                 best_psy_cost = psy_cost;
-                // Raw SSE (pre flat-source doubling) for the #44 gate.
-                best_d_raw = sse;
+                // D for the #44 `store_max_delta` gate. libwebp reads `rd->D`
+                // at the END of PickBestIntra16 — which carries the
+                // flat-source-latch DOUBLING when it fired (`quant_enc.c:1051`
+                // doubles `rd_cur->D` before the winner copy) — so parity
+                // gates on the doubled value (traced at synth 17x17 q1 m5
+                // mb(1,1): lib D=2304 vs raw 1152 straddled min_disto=1560,
+                // and the missed max_edge bump shipped a wrong seg_lf). The
+                // tuned default keeps the raw SSE its #44 calibration was
+                // measured against.
+                best_d_raw = if parity_tiebreak { d_final } else { sse };
                 // Winning I16 candidate's Y2 (zigzag) + whether the MB is
                 // "blocky" (only DCs non-zero). libwebp records these from the
                 // I16 candidate at the END of `PickBestIntra16`, BEFORE
@@ -1481,14 +1489,24 @@ impl<'a> super::Vp8Encoder<'a> {
         // the early-exit `running_score >= i16_score` even when I4 would
         // actually win. Fixed in #22.
         //
-        // partition_limit (0-100) still scales the penalty up to prevent
-        // partition-0 overflow on very large images at high limits — that
-        // mechanism is orthogonal to the libwebp default and remains in
-        // place; only the base constant changes from 3000 to 211.
+        // partition_limit (0-100) still scales the penalty up in the TUNED
+        // default to prevent partition-0 overflow on very large images at
+        // high limits — a zenwebp-only mechanism on top of libwebp's
+        // `max_i4_header_bits` cap. libwebp's partition_limit feeds ONLY that
+        // cap, so parity must seed with the bare 211·lambda_mode: the scaled
+        // seed biased the I4-vs-I16 cut at every pinned partition_limit
+        // (traced at 382297 q5 m3 plim30: zen seed 79547 vs libwebp 24476,
+        // flipping i4-count 679 vs 686 and cascading 570 MBs). At the
+        // default partition_limit=0 the scale term is zero, which is why the
+        // whole plim-0 grid never saw it. (#38)
         const H_INTRA4_BIT_COST: u64 = 211;
         let base_penalty = H_INTRA4_BIT_COST * u64::from(lambda_mode);
-        let limit_scale = u64::from(self.partition_limit); // 0-100
-        let i4_penalty = base_penalty + base_penalty * limit_scale * limit_scale / 400;
+        let i4_penalty = if self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity {
+            base_penalty
+        } else {
+            let limit_scale = u64::from(self.partition_limit); // 0-100
+            base_penalty + base_penalty * limit_scale * limit_scale / 400
+        };
         let mut running_score = i4_penalty;
 
         #[cfg(feature = "mode_debug")]
@@ -2377,7 +2395,11 @@ impl<'a> super::Vp8Encoder<'a> {
         // Chroma still goes through `pick_best_uv` here (zenwebp's path
         // matches libwebp m1's `refine_uv_mode=1`; m0 differs but UV mode
         // experiments showed zero size change on the worst offender).
-        if self.method <= 1 && self.partition_limit < 100 && !self.fast_mb_hints.is_empty() {
+        if self.method <= 1
+            && (self.partition_limit < 100
+                || self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity)
+            && !self.fast_mb_hints.is_empty()
+        {
             let mb_idx = mby * usize::from(self.macroblock_width) + mbx;
             if let Some(&hint) = self.fast_mb_hints.get(mb_idx) {
                 use crate::encoder::analysis::MbModeHint;
@@ -2445,7 +2467,17 @@ impl<'a> super::Vp8Encoder<'a> {
         // against the I16 score (score_i4 starts at i4_penalty = 1000*q_i4^2,
         // header bits capped by mb_header_limit), SSE-scored UV refine.
         // m3+ keeps the full RD path below (libwebp RD_OPT_BASIC+).
-        if self.method == 2 && self.partition_limit < 100 {
+        //
+        // The `partition_limit < 100` clause is a zenwebp-only escape hatch
+        // (drop to the RD path, whose max_i4_header_bits=0 then suppresses
+        // I4 entirely). libwebp's m0-m2 never consult partition_limit —
+        // `RefineUsingDistortion` caps header bits with `mb_header_limit`,
+        // which is partition_limit-independent — so parity stays on this
+        // path at every limit. (#38)
+        if self.method == 2
+            && (self.partition_limit < 100
+                || self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity)
+        {
             let (i16_mode, i16_d, i16_score, flat_locked) = self.pick_intra16_sse(mbx, mby);
             let (luma_mode, luma_bpred) = if flat_locked {
                 (i16_mode, None)
@@ -2521,7 +2553,10 @@ impl<'a> super::Vp8Encoder<'a> {
         // - method 2-4: Try I4 with fast filtering
         // - method 5-6: Full I4 search
         // partition_limit >= 100 forces I16-only to prevent partition 0 overflow.
-        let (luma_mode, luma_bpred) = if self.method <= 1 || self.partition_limit >= 100 {
+        let (luma_mode, luma_bpred) = if self.method <= 1
+            || (self.partition_limit >= 100
+                && self.cost_model != crate::encoder::api::CostModel::StrictLibwebpParity)
+        {
             // Fastest / partition overflow prevention: I16 only, no I4 evaluation
             (luma_mode, None)
         } else {

@@ -28,6 +28,34 @@ reconstructed differently, so the synthetic cells are simply different content
 is the durable baseline going forward** — the grid is committed now; re-run the
 tool for any before/after, and don't compare across grids.
 
+### Setting-permutation validation (2026-07-16, later): every shared knob axis at 100%
+
+After the base grid completed, `dev/byteparity_sweep.rs` gained a phase-2 axis
+sweep over the previously-unswept settings both encoders expose. Six more
+parity roots fell (each dumped live before fixing, all parity-gated except
+the two marked BOTH):
+
+| axis | before → after | root |
+|---|---|---|
+| filter_sharpness 1-7 | 196/1960 → **1960/1960** | libwebp's `SetupFilterStrength` READS `filter_hdr.sharpness` at the top and assigns it from config at the BOTTOM — the strength derivation always sees the previous call's value (0 at the default single pass). Dumped: config sh=1 still gives `base = qstep` (row 0). zen derived with the real sharpness; parity now derives with 0. Tuned keeps read-through (it filters with the sharpness the decoder will use). |
+| quality edges q0/q1/q99/q100 | 864/1456 → **1456/1456** | Three roots: (a) **BOTH MODELS** — the single-segment base init looked up `DC_QUANT[qi]` unclipped for UV DC; only q0 reaches qi>117, where the encoder then quantized UV DC with step 157 while every decoder (incl. zen's own, which caps at 132) dequantizes with 132 — a real encoder/decoder mismatch. (b) libwebp only allocates diffusion buffers at quality ≤ 98 (`webp_enc.c:167`); zen diffused at q99/q100 too, flipping ~14% of UV picks (parity now gates; tuned keeps always-on, effect is noise-level up there). (c) the `StoreMaxDelta` gate compares libwebp's `rd->D`, which carries the flat-latch DOUBLING; zen gated on raw SSE (synth 17x17 q1 m5: 2304 vs 1152 straddled min_disto 1560). |
+| partition_limit 30/60/100 | 123/252 → **252/252** | Two zenwebp-only mechanisms leaked into parity: a pl²-scaled I4 seed penalty (`base + base·pl²/400`; libwebp's partition_limit feeds ONLY `max_i4_header_bits`) and `partition_limit >= 100` gates that reroute m0-m2 onto entirely different paths (libwebp's RD_OPT_NONE never consults partition_limit — `RefineUsingDistortion` caps header bits with the partition_limit-independent `mb_header_limit`). |
+| segments-3 + sns/filter extremes (incl. sns>0 with segs1) | → **1120/1120** | libwebp applies the uv_alpha-derived UV quant deltas at EVERY segment count; when its analysis pass doesn't run (m2+ / one segment) `uv_alpha` keeps the 0 default (`analysis_enc.c:372`), still yielding `uvac_delta=-4`-class deltas at sns>0. zen's single-segment path skipped the deltas entirely (dumped: q50 m4 sns80 segs1, lib `q_uvac=-4`, zen none, 24% UV picks flipped). Parity computes them; tuned adoption is a candidate (finer UV at high SNS). |
+| alpha (RGBA) | 0/192 → **64/192** | **BOTH MODELS**: zen keyed the ALPH chunk on the input LAYOUT; libwebp scans the pixels (`WebPPictureHasTransparency`). Opaque RGBA now encodes as a bare `VP8 ` file, byte-identical to libwebp and ~80 B smaller per 64×64 (VP8X+ALPH dropped). The remaining 128 cells are REAL alpha: byte-parity there needs libwebp's alpha-plane coder (filter none/h/v/gradient selection × its VP8L-mini configuration) — a separate subsystem port, tracked as follow-on. |
+| sharp_yuv | 0/96 (documented) | zenyuv's sharp-YUV is its own algorithm, not a port of libwebp's SharpYUV library — every plane differs from the first pixel. Out of parity scope by design (the parity contract covers the VP8 encoder; the standard RGB→YUV path IS byte-exact via `ChromaPrec::LibwebpExact`). zen's sharp output measured ~2.5% smaller on the probe cells. |
+
+Out of scope (no matched knob / architecturally different — documented in the
+sweep header): target_size/target_PSNR (zen searches q in an outer loop,
+libwebp inside StatLoop), pass>1, autofilter, filter_type, preprocessing
+bits, multi-partition output, low_memory, emulate_jpeg_size, qmin/qmax.
+
+The CI gate gained `permutation_axis_anchors_byte_identical` (sharpness,
+q-edges, plim, segs1-SNS anchors) and `opaque_rgba_matches_libwebp_bare_vp8`.
+`bitexact_diff`/`mbpixdiff` accept `[sharp] [plim]` args 7-8;
+`zen38_driver` gained `[sharpness] [partition_limit]` args 9-10; new dump
+hooks: `I16DBG`, `UVDBG`, `SMDBG`, `UVQDBG`/`ZUVQ` (chroma-DC diffusion
+state), plus the earlier `REFRESHDBG2`/`LEVFINAL`/`TRELDBG`/`SKIPDBG`.
+
 ### Failure shape: NONE — 4004/4004 (2026-07-16)
 
 #### SOLVED: I4 tie-break must follow libwebp's ENUM order (this commit, +10)
