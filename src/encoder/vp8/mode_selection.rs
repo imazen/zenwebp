@@ -660,6 +660,7 @@ fn evaluate_i4_modes_wasm(
                 psy_cost,
                 coeff_cost,
                 flatness_penalty,
+                levels_zz: quantized_zigzag,
             });
         }
     }
@@ -1831,7 +1832,9 @@ impl<'a> super::Vp8Encoder<'a> {
                     best_psy_cost = result.psy_cost;
                     best_coeff_cost = result.coeff_cost;
                     best_flatness_penalty = result.flatness_penalty;
+                    best_levels_zz = result.levels_zz;
                 } else {
+                    carry_ok = false;
                     #[cfg(target_arch = "wasm32")]
                     {
                         self.evaluate_i4_modes_scalar(
@@ -1864,6 +1867,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 // Fallback: no SIMD available
                 #[cfg(not(any(target_arch = "x86_64", target_arch = "wasm32")))]
                 {
+                    carry_ok = false;
                     self.evaluate_i4_modes_scalar(
                         &src_block,
                         &preds,
