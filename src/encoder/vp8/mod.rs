@@ -1920,8 +1920,7 @@ impl<'a> Vp8Encoder<'a> {
             .expect("token buffer not initialized")
             .begin_mb();
 
-        if self.do_trellis
-            && self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity
+        if self.do_trellis && self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity
         {
             // libwebp's m5/m6 skip decision is `is_skipped = (rd->nz == 0)`
             // (`VP8Decimate`, quant_enc.c) — the nz of the FINAL trellis
