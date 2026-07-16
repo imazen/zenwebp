@@ -136,6 +136,32 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Added
 
+- **Alpha-plane pipeline + full-VP8L payloads; tuned ALPH 2-3.5× smaller**
+  (#38, 2026-07-16): `src/encoder/alpha.rs` ports libwebp's whole
+  `EncodeAlpha` pipeline (QuantizeLevels k-means, h/v/gradient filters,
+  `WebPEstimateBestFilter`, `GetFilterMap` trial loop, raw fallback, header
+  byte). Root of the old 6-10× payload gap: zen's ALPH payloads used a
+  literal-only VP8L fallback — never the full pipeline. New
+  `Vp8lConfig::omit_headers` provides the ALPH stream framing (libwebp
+  writes signature/dimensions/version only in `VP8LEncodeImage`); parity
+  AND the tuned default now route alpha through the full VP8L coder
+  (palette/predictors/LZ77/meta-huffman). Tuned ALPH payloads shrink
+  2-3.5× (54→26, 109→32 B probes) with bit-identical decoded pixels
+  (tuned keeps its level-quantizer mapping). Parity payloads land within
+  0-3 bytes of libwebp with all pipeline decisions matching (`VP8LDBG`/
+  `ZVP8LDBG` dumps agree on palette/histo-bits/entropy-mode/sorting);
+  remaining bit-level divergence in the entropy-coded region is the next
+  chunk. `dev/alphadiff.rs` (new) isolates the divergence layer.
+- **Sharp-YUV dig: libwebp's SharpYUV substantially outperforms zenyuv's
+  sharp** (2026-07-16): measured on the 15-image corpus
+  (`dev/sharpyuv_compare.rs`, new), libwebp's SharpYUV delivers +0.95 to
+  +1.78 zsim over standard conversion where zenyuv's sharp delivers only
+  +0.23 to +0.32 — a genuine ~+0.6-1.0 zsim algorithmic advantage at
+  mid-high quality even after discounting its 2-5% byte spend. zenyuv's
+  redesign claim ("2 Newton iterations beat 4 gradient iterations") does
+  not hold up end-to-end. Queued: exact SharpYUV port inside zenwebp
+  (closes the sharp_yuv parity axis AND becomes a quality-mode candidate).
+  Full analysis: `benchmarks/sharpyuv_dig_2026-07-16.md` + TSV.
 - **`StrictLibwebpParity` validated across every shared setting axis; six
   more roots closed** (#38, 2026-07-16): `dev/byteparity_sweep.rs` gained a
   phase-2 permutation sweep (filter_sharpness 1-7, segments 3 + sns/filter
