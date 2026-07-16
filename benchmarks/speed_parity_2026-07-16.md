@@ -1,8 +1,9 @@
 # Encoder speed-parity program, session 1 (2026-07-16)
 
 Directive: hold exactness constant (every output byte, both cost models),
-close the wall-clock gap vs libwebp. Four chunks landed (`ec577bba`,
-`4868ce95`, `7caf05a4`, `74ca25f2`); every change gated by
+close the wall-clock gap vs libwebp. Six chunks landed (`ec577bba`,
+`4868ce95`, `7caf05a4`, `74ca25f2`, `af19d414`+`90bb08bf`, `fdb928ab`);
+every change gated by
 `dev/output_hash.rs` (grid hash over 21 images × both cost models ×
 m0-6 × q{5,50,75,90} + alpha/sharp/lossless sections — byte-identical
 before/after each slice), the full 52-binary test suite, clippy ×3, fmt.
@@ -19,7 +20,9 @@ zen/libwebp wall ratios, session start → end:
 | m6 | 1.57x → **1.53x** | 1.50x |
 
 Instructions (callgrind, default preset): m0 90.6M → 75.1M (lib 41.1M),
-m4 213.3M → 189.0M (lib 170.7M = 1.11x), m6 408.2M → 394.8M (lib 250.8M).
+m4 213.3M → **183.5M** (lib 170.7M = **1.075x**), m6 408.2M → 392.5M
+(lib 250.8M). m4 wall (~1.25x) now exceeds its instruction ratio by ~17%
+— the I1-footprint/branch wall is the binding constraint there.
 
 Context for the m0 gap: zen's m0 deliberately does more (hint analysis +
 RD UV picks) and produces −7..−10% bytes vs libwebp m0 — that tier trades
@@ -50,6 +53,14 @@ decisions cheaper. The old CLAUDE.md table (1.76x/1.30x/1.36x/1.41x,
    out-of-line; trellis micro (de-Optioned cost pointers, hoisted biases
    + psy gate).
 4. **Trellis table hoist** (`74ca25f2`).
+5. **I4 winner carry** (`af19d414` + i686 fix `90bb08bf`): the RD pick's
+   fully-reconstructed I4 winner (recon + zigzag levels) feeds the final
+   pass directly on the non-trellis tiers; SIMD-eval paths only (the
+   scalar fallback disables it — see the process note below).
+6. **UV winner carry** (`fdb928ab`): same for chroma, with the diffusion
+   contract encoded in the gate (carriable ⟺ RD diffusion behaviour ==
+   final-pass behaviour; tuned m0-m2 and parity-m5 excluded); the final
+   pass replays only the diffusion error STORE.
 
 ## Where the remaining gap lives (measured, for the next session)
 
@@ -61,14 +72,12 @@ decisions cheaper. The old CLAUDE.md table (1.76x/1.30x/1.36x/1.41x,
   (double data traffic through the DP, double-width output/input clears)
   and codegen density. The structural fix is an i16 coefficient
   migration through the coeff pipeline — large but mechanical.
-- **Winner recompute**: the final pass re-predicts, re-DCTs,
-  re-quantizes (m6: re-trellises) and re-IDCTs the WINNING mode that the
-  RD loop already fully reconstructed; libwebp keeps `PickBestIntra4`'s
-  best via buffer swap. Carrying the I4 winner is byte-safe by the
-  #35-#8 contract (identical input tuple); I16 non-trellis levels are
-  context-free so equally carryable; m6-I16 must keep the recompute (the
-  tuned RD seeds trellis ctx all-false, the final pass uses real ctx).
-  UV carry needs care with the diffusion error store.
+- **Winner recompute**: I4 and UV winners now carry (chunks 5-6). Still
+  open: the I16 winner (non-trellis levels are context-free ⇒ carryable
+  at m2-m4; small on photo content, bigger on I16-heavy screenshots),
+  and m5/m6 luma recomputes stay by design (trellis context: m5 RD
+  quantizes simple while the final trellises; m6 tuned seeds all-false
+  in RD vs real ctx in the final pass).
 - **I1 cache (wall vs instruction gap)**: zen's per-MB loop walks ~54KB
   of code (872k I1 misses vs 121k). De-duplication of rite kernels helped
   little; the executed footprint itself is the issue — i16 migration and
