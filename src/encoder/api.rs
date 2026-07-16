@@ -218,6 +218,14 @@ pub enum CostModel {
     /// (PSY_WEIGHT_Y, SATD masking blend, JND zeroing) so the encoder
     /// matches libwebp's algorithm at the same `(quality, method, sns,
     /// filter, segments)` settings.
+    ///
+    /// Byte-exact with libwebp across the verified grid (#38, 2026-07-16):
+    /// 13 images (photos + tiny/odd-dimension synthetics) × quality 5-95 ×
+    /// 4 (sns, filter, segments) configs × methods 0-6 — 4004/4004 cells
+    /// byte-identical, gated in CI (`tests/libwebp_byte_parity.rs`).
+    /// Settings outside that grid (`filter_sharpness != 0`, multiple
+    /// partitions, alpha, `target_size`) are not yet swept for
+    /// byte-identity, though they use the same parity code paths.
     StrictLibwebpParity,
 }
 
