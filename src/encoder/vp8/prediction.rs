@@ -20,7 +20,7 @@ use super::residuals::get_coeffs0_from_block;
 /// and the prediction/reconstruction buffer for SSE computation.
 pub(super) struct LumaBlockResult {
     /// Quantized coefficients for all 16 4x4 blocks.
-    pub coeffs: [i32; 16 * 16],
+    pub coeffs: [i16; 16 * 16],
     /// The bordered prediction/reconstruction buffer.
     /// After transform, contains reconstructed pixels (prediction + IDCT).
     pub pred_block: [u8; LUMA_BLOCK_SIZE],
@@ -49,9 +49,8 @@ pub(super) struct ChromaBlockResult {
 }
 
 /// One-region SSE2 body of `fill_luma_blocks_from_predicted_16x16`: the
-/// eight block-pair forward DCTs and the i16→i32 widen run inside a single
-/// `target_feature` region (the dispatching version paid an arcane boundary
-/// per pair).
+/// eight block-pair forward DCTs run inside a single `target_feature`
+/// region (the dispatching version paid an arcane boundary per pair).
 #[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
 fn fill_luma_blocks_16x16_arcane(
@@ -61,7 +60,7 @@ fn fill_luma_blocks_16x16_arcane(
     mbx: usize,
     mby: usize,
     src_stride: usize,
-    luma_blocks: &mut [i32; 16 * 16],
+    luma_blocks: &mut [i16; 16 * 16],
 ) {
     let pred_stride = LUMA_STRIDE;
     for block_y in 0..4 {
@@ -83,10 +82,8 @@ fn fill_luma_blocks_16x16_arcane(
             );
             let out_base0 = (block_y * 4 + block_x) * 16;
             let out_base1 = out_base0 + 16;
-            for i in 0..16 {
-                luma_blocks[out_base0 + i] = i32::from(out16[i]);
-                luma_blocks[out_base1 + i] = i32::from(out16[16 + i]);
-            }
+            luma_blocks[out_base0..out_base0 + 16].copy_from_slice(&out16[..16]);
+            luma_blocks[out_base1..out_base1 + 16].copy_from_slice(&out16[16..]);
         }
     }
 }
@@ -138,8 +135,8 @@ impl<'a> super::Vp8Encoder<'a> {
         predicted_y_block: &[u8; LUMA_BLOCK_SIZE],
         mbx: usize,
         mby: usize,
-    ) -> [i32; 16 * 16] {
-        let mut luma_blocks = [0i32; 16 * 16];
+    ) -> [i16; 16 * 16] {
+        let mut luma_blocks = [0i16; 16 * 16];
         self.fill_luma_blocks_from_predicted_16x16(predicted_y_block, mbx, mby, &mut luma_blocks);
         luma_blocks
     }
@@ -150,7 +147,7 @@ impl<'a> super::Vp8Encoder<'a> {
         predicted_y_block: &[u8; LUMA_BLOCK_SIZE],
         mbx: usize,
         mby: usize,
-        luma_blocks: &mut [i32; 16 * 16],
+        luma_blocks: &mut [i16; 16 * 16],
     ) {
         let pred_stride = LUMA_STRIDE;
         let src_stride = usize::from(self.macroblock_width * 16);
@@ -196,10 +193,8 @@ impl<'a> super::Vp8Encoder<'a> {
                 let out_base0 = block_idx0 * 16;
                 let out_base1 = block_idx1 * 16;
 
-                for i in 0..16 {
-                    luma_blocks[out_base0 + i] = out16[i] as i32;
-                    luma_blocks[out_base1 + i] = out16[16 + i] as i32;
-                }
+                luma_blocks[out_base0..out_base0 + 16].copy_from_slice(&out16[..16]);
+                luma_blocks[out_base1..out_base1 + 16].copy_from_slice(&out16[16..]);
             }
         }
     }
@@ -211,10 +206,10 @@ impl<'a> super::Vp8Encoder<'a> {
         predicted_y_block: &[u8; LUMA_BLOCK_SIZE],
         mbx: usize,
         mby: usize,
-    ) -> [i32; 16 * 16] {
+    ) -> [i16; 16 * 16] {
         let stride = LUMA_STRIDE;
         let width = usize::from(self.macroblock_width * 16);
-        let mut luma_blocks = [0i32; 16 * 16];
+        let mut luma_blocks = [0i16; 16 * 16];
 
         for block_y in 0..4 {
             for block_x in 0..4 {
@@ -237,7 +232,12 @@ impl<'a> super::Vp8Encoder<'a> {
                 // transform block before copying it into main block
                 transform::dct4x4(&mut block);
 
-                luma_blocks[block_index..][..16].copy_from_slice(&block);
+                for (dst, &v) in luma_blocks[block_index..][..16]
+                    .iter_mut()
+                    .zip(block.iter())
+                {
+                    *dst = v as i16;
+                }
             }
         }
 
@@ -277,7 +277,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     // Raw DCT coefficients are consumed only by the recorder's
                     // trellis debug cross-check (`y1_from_trellis == true`),
                     // which never fires on this non-trellis path.
-                    coeffs: [0i32; 16 * 16],
+                    coeffs: [0i16; 16 * 16],
                     pred_block: carry.recon,
                     y1_zigzag: carry.levels_zz,
                     y1_from_trellis: false,
@@ -349,11 +349,17 @@ impl<'a> super::Vp8Encoder<'a> {
         for y in 0usize..4 {
             for x in 0usize..4 {
                 let i = y * 4 + x;
-                let mut block: [i32; 16] = luma_blocks[i * 16..][..16].try_into().unwrap();
+                let block: &[i16; 16] = luma_blocks[i * 16..][..16].try_into().unwrap();
 
                 // Apply DCT was already done, now quantize
                 let dequant_block = if let Some(lambda) = trellis_lambda {
                     // Trellis quantization for better RD trade-off
+                    // (the DP still runs on i32 coefficients; widen at this
+                    // m5/m6-only boundary until the trellis itself goes i16)
+                    let mut wide = [0i32; 16];
+                    for (d, &v) in wide.iter_mut().zip(block.iter()) {
+                        *d = i32::from(v);
+                    }
                     let ctx0 = (u8::from(left_nz[y]) + u8::from(top_nz[x])).min(2) as usize;
                     let zigzag_slot = &mut y1_zigzag[i];
                     // Per-block trellis dump, format-matched to TRELDBG in the
@@ -364,11 +370,11 @@ impl<'a> super::Vp8Encoder<'a> {
                         && std::env::var("TARGY").is_ok_and(|v| v == mby.to_string());
                     #[cfg(feature = "mode_debug")]
                     if treldbg {
-                        let dbg_in: &[i32] = &block;
+                        let dbg_in: &[i32] = &wide;
                         eprintln!("TRELI16 n={i} ctx={ctx0} lam={lambda} in={dbg_in:?}");
                     }
                     let has_nz = trellis_quantize_block(
-                        &mut block,
+                        &mut wide,
                         zigzag_slot,
                         y1_matrix,
                         lambda,
@@ -385,16 +391,21 @@ impl<'a> super::Vp8Encoder<'a> {
                     }
                     top_nz[x] = has_nz;
                     left_nz[y] = has_nz;
-                    // block now contains dequantized values at natural indices
-                    block
+                    // `wide` now contains dequantized values at natural indices
+                    // (i16-bounded — level*q stays in the DCT range)
+                    let mut dq16 = [0i16; 16];
+                    for (d, &v) in dq16.iter_mut().zip(wide.iter()) {
+                        *d = v as i16;
+                    }
+                    dq16
                 } else {
                     // Fused SIMD quantize+dequantize, AC only (bit-identical:
                     // the sharpen boost is baked into the Y1 matrix, and the
                     // nz flags below feed only the trellis branch's context).
-                    let mut quantized = [0i32; 16];
-                    let mut dq = [0i32; 16];
+                    let mut quantized = [0i16; 16];
+                    let mut dq = [0i16; 16];
                     crate::encoder::quantize::quantize_dequantize_ac_only_simd(
-                        &block,
+                        block,
                         y1_matrix,
                         true,
                         &mut quantized,
@@ -402,18 +413,19 @@ impl<'a> super::Vp8Encoder<'a> {
                     );
                     // Zigzag levels for the recorder; slot 0 stays 0 (I16-AC).
                     for k in 0..16 {
-                        y1_zigzag[i][k] = quantized[usize::from(ZIGZAG[k])] as i16;
+                        y1_zigzag[i][k] = quantized[usize::from(ZIGZAG[k])];
                     }
                     dq
                 };
 
                 // Add Y2 DC component, then fused IDCT + add-residue straight
                 // into the prediction (replaces the scalar idct4x4 + staging
-                // array + separate add_residue pass).
+                // array + separate add_residue pass). The inverse-WHT DC is
+                // i16-bounded like all coefficient-domain values.
                 let mut full_block = dequant_block;
-                full_block[0] = y2_dequant[i];
+                full_block[0] = y2_dequant[i] as i16;
                 let dc_only = full_block[1..].iter().all(|&c| c == 0);
-                crate::common::transform::idct_add_residue_inplace(
+                crate::common::transform::idct_add_residue_i16(
                     &mut full_block,
                     &mut y_with_border,
                     1 + y * 4,
@@ -451,7 +463,7 @@ impl<'a> super::Vp8Encoder<'a> {
         mbx: usize,
         mby: usize,
     ) -> LumaBlockResult {
-        let mut luma_blocks = [0i32; 16 * 16];
+        let mut luma_blocks = [0i16; 16 * 16];
         let stride = LUMA_STRIDE;
         let mbw = self.macroblock_width;
         let width = usize::from(mbw * 16);
@@ -543,7 +555,12 @@ impl<'a> super::Vp8Encoder<'a> {
 
                 transform::dct4x4(&mut current_subblock);
 
-                luma_blocks[block_index..][..16].copy_from_slice(&current_subblock);
+                for (dst, &v) in luma_blocks[block_index..][..16]
+                    .iter_mut()
+                    .zip(current_subblock.iter())
+                {
+                    *dst = v as i16;
+                }
 
                 // quantize and de-quantize the subblock
                 // IMPORTANT: Must use same quantization method as encode_coefficients
@@ -576,20 +593,27 @@ impl<'a> super::Vp8Encoder<'a> {
                 } else {
                     // Fused SIMD quantize+dequantize (bit-identical: sharpen
                     // is baked into the Y1 matrix; `true` applies it exactly
-                    // like `quantize_coeff` does).
-                    let mut quantized = [0i32; 16];
-                    let mut dq = [0i32; 16];
+                    // like `quantize_coeff` does). The kernel is i16 in/out;
+                    // the raw DCT block is i16-bounded by construction.
+                    let mut block16 = [0i16; 16];
+                    for (d, &v) in block16.iter_mut().zip(current_subblock.iter()) {
+                        *d = v as i16;
+                    }
+                    let mut quantized = [0i16; 16];
+                    let mut dq = [0i16; 16];
                     let has_nz = crate::encoder::quantize::quantize_dequantize_block_simd(
-                        &current_subblock,
+                        &block16,
                         y1_matrix,
                         true,
                         &mut quantized,
                         &mut dq,
                     );
                     for k in 0..16 {
-                        y1_zigzag[i][k] = quantized[usize::from(ZIGZAG[k])] as i16;
+                        y1_zigzag[i][k] = quantized[usize::from(ZIGZAG[k])];
                     }
-                    current_subblock = dq;
+                    for (d, &v) in current_subblock.iter_mut().zip(dq.iter()) {
+                        *d = i32::from(v);
+                    }
                     has_nz
                 };
 
@@ -672,8 +696,8 @@ impl<'a> super::Vp8Encoder<'a> {
         chroma_data: &[u8],
         mbx: usize,
         mby: usize,
-    ) -> [i32; 16 * 4] {
-        let mut chroma_blocks = [0i32; 16 * 4];
+    ) -> [i16; 16 * 4] {
+        let mut chroma_blocks = [0i16; 16 * 4];
         self.fill_chroma_blocks_from_predicted(
             predicted_chroma,
             chroma_data,
@@ -691,7 +715,7 @@ impl<'a> super::Vp8Encoder<'a> {
         chroma_data: &[u8],
         mbx: usize,
         mby: usize,
-        chroma_blocks: &mut [i32; 16 * 4],
+        chroma_blocks: &mut [i16; 16 * 4],
     ) {
         let pred_stride = CHROMA_STRIDE;
         let src_stride = usize::from(self.macroblock_width * 8);
@@ -718,10 +742,8 @@ impl<'a> super::Vp8Encoder<'a> {
             let out_base0 = block_y * 32;
             let out_base1 = out_base0 + 16;
 
-            for i in 0..16 {
-                chroma_blocks[out_base0 + i] = out16[i] as i32;
-                chroma_blocks[out_base1 + i] = out16[16 + i] as i32;
-            }
+            chroma_blocks[out_base0..out_base0 + 16].copy_from_slice(&out16[..16]);
+            chroma_blocks[out_base1..out_base1 + 16].copy_from_slice(&out16[16..]);
         }
     }
 
@@ -831,9 +853,9 @@ impl<'a> super::Vp8Encoder<'a> {
             (&v_blocks, &mut v_zigzag, &mut predicted_v),
         ] {
             for i in 0usize..4 {
-                let block: &[i32; 16] = blocks[i * 16..][..16].try_into().unwrap();
-                let mut quantized = [0i32; 16];
-                let mut dequantized = [0i32; 16];
+                let block: &[i16; 16] = blocks[i * 16..][..16].try_into().unwrap();
+                let mut quantized = [0i16; 16];
+                let mut dequantized = [0i16; 16];
                 crate::encoder::quantize::quantize_dequantize_block_simd(
                     block,
                     uv_matrix,
@@ -842,11 +864,11 @@ impl<'a> super::Vp8Encoder<'a> {
                     &mut dequantized,
                 );
                 for k in 0..16 {
-                    zigzag[i][k] = quantized[usize::from(ZIGZAG[k])] as i16;
+                    zigzag[i][k] = quantized[usize::from(ZIGZAG[k])];
                 }
                 let (x, y) = (i % 2, i / 2);
                 let dc_only = dequantized[1..].iter().all(|&c| c == 0);
-                crate::common::transform::idct_add_residue_inplace(
+                crate::common::transform::idct_add_residue_i16(
                     &mut dequantized,
                     predicted,
                     1 + y * 4,

@@ -57,7 +57,7 @@ pub(crate) fn sse4x4_with_residual_neon(
     _token: NeonToken,
     src: &[u8; 16],
     pred: &[u8; 16],
-    residual: &[i32; 16],
+    residual: &[i16; 16],
 ) -> u32 {
     sse4x4_with_residual_inner(_token, src, pred, residual)
 }
@@ -67,7 +67,7 @@ fn sse4x4_with_residual_inner(
     _token: NeonToken,
     src: &[u8; 16],
     pred: &[u8; 16],
-    residual: &[i32; 16],
+    residual: &[i16; 16],
 ) -> u32 {
     let src_vec = simd_mem::vld1q_u8(src);
     let pred_vec = simd_mem::vld1q_u8(pred);
@@ -76,14 +76,10 @@ fn sse4x4_with_residual_inner(
     let pred_lo = vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(pred_vec)));
     let pred_hi = vreinterpretq_s16_u16(vmovl_u8(vget_high_u8(pred_vec)));
 
-    // Load residuals and pack to i16
-    let (rq0, rq1, rq2, rq3) = super::q16(residual);
-    let r0 = simd_mem::vld1q_s32(rq0);
-    let r1 = simd_mem::vld1q_s32(rq1);
-    let r2 = simd_mem::vld1q_s32(rq2);
-    let r3 = simd_mem::vld1q_s32(rq3);
-    let res_lo = vcombine_s16(vmovn_s32(r0), vmovn_s32(r1));
-    let res_hi = vcombine_s16(vmovn_s32(r2), vmovn_s32(r3));
+    // Load residuals directly as i16
+    let (r_lo, r_hi) = super::h16(residual);
+    let res_lo = simd_mem::vld1q_s16(r_lo);
+    let res_hi = simd_mem::vld1q_s16(r_hi);
 
     // Reconstruct: pred + residual, clamp to [0, 255]
     let rec_lo = vaddq_s16(pred_lo, res_lo);
@@ -599,11 +595,11 @@ fn dequantize_block_inner(_token: NeonToken, q: &[u16; 16], coeffs: &mut [i32; 1
 #[arcane]
 pub(crate) fn quantize_dequantize_block_neon(
     _token: NeonToken,
-    coeffs: &[i32; 16],
+    coeffs: &[i16; 16],
     matrix: &VP8Matrix,
     use_sharpen: bool,
-    quantized: &mut [i32; 16],
-    dequantized: &mut [i32; 16],
+    quantized: &mut [i16; 16],
+    dequantized: &mut [i16; 16],
 ) -> bool {
     quantize_dequantize_block_inner(_token, coeffs, matrix, use_sharpen, quantized, dequantized)
 }
@@ -611,23 +607,18 @@ pub(crate) fn quantize_dequantize_block_neon(
 #[rite]
 fn quantize_dequantize_block_inner(
     _token: NeonToken,
-    coeffs: &[i32; 16],
+    coeffs: &[i16; 16],
     matrix: &VP8Matrix,
     use_sharpen: bool,
-    quantized: &mut [i32; 16],
-    dequantized: &mut [i32; 16],
+    quantized: &mut [i16; 16],
+    dequantized: &mut [i16; 16],
 ) -> bool {
     let max_coeff = vdupq_n_s16(MAX_LEVEL as i16);
 
-    // Pack i32 to i16
-    let (cq0, cq1, cq2, cq3) = super::q16(coeffs);
-    let c0 = simd_mem::vld1q_s32(cq0);
-    let c1 = simd_mem::vld1q_s32(cq1);
-    let c2 = simd_mem::vld1q_s32(cq2);
-    let c3 = simd_mem::vld1q_s32(cq3);
-
-    let in0 = vcombine_s16(vmovn_s32(c0), vmovn_s32(c1));
-    let in8 = vcombine_s16(vmovn_s32(c2), vmovn_s32(c3));
+    // Direct i16 loads (DCT coefficients are i16 end-to-end)
+    let (c_lo, c_hi) = super::h16(coeffs);
+    let in0 = simd_mem::vld1q_s16(c_lo);
+    let in8 = simd_mem::vld1q_s16(c_hi);
 
     // Sign and absolute value
     let sign0 = vshrq_n_s16::<15>(in0);
@@ -701,12 +692,10 @@ fn quantize_dequantize_block_inner(
     qout0 = vsubq_s16(veorq_s16(qout0, sign0), sign0);
     qout8 = vsubq_s16(veorq_s16(qout8, sign8), sign8);
 
-    // Store quantized (i16 → i32)
-    let (qm0, qm1, qm2, qm3) = super::q16_mut(quantized);
-    simd_mem::vst1q_s32(qm0, vmovl_s16(vget_low_s16(qout0)));
-    simd_mem::vst1q_s32(qm1, vmovl_s16(vget_high_s16(qout0)));
-    simd_mem::vst1q_s32(qm2, vmovl_s16(vget_low_s16(qout8)));
-    simd_mem::vst1q_s32(qm3, vmovl_s16(vget_high_s16(qout8)));
+    // Store quantized levels directly as i16
+    let (qm_lo, qm_hi) = super::h16_mut(quantized);
+    simd_mem::vst1q_s16(qm_lo, qout0);
+    simd_mem::vst1q_s16(qm_hi, qout8);
 
     // Dequantize: quantized * q
     let (mq_lo, mq_hi) = super::h16(&matrix.q);
@@ -716,12 +705,10 @@ fn quantize_dequantize_block_inner(
     let dq0 = vmulq_s16(qout0, vreinterpretq_s16_u16(q0));
     let dq8 = vmulq_s16(qout8, vreinterpretq_s16_u16(q8_val));
 
-    // Store dequantized (i16 → i32)
-    let (dm0, dm1, dm2, dm3) = super::q16_mut(dequantized);
-    simd_mem::vst1q_s32(dm0, vmovl_s16(vget_low_s16(dq0)));
-    simd_mem::vst1q_s32(dm1, vmovl_s16(vget_high_s16(dq0)));
-    simd_mem::vst1q_s32(dm2, vmovl_s16(vget_low_s16(dq8)));
-    simd_mem::vst1q_s32(dm3, vmovl_s16(vget_high_s16(dq8)));
+    // Store dequantized values directly as i16
+    let (dm_lo, dm_hi) = super::h16_mut(dequantized);
+    simd_mem::vst1q_s16(dm_lo, dq0);
+    simd_mem::vst1q_s16(dm_hi, dq8);
 
     // Non-zero check
     let or0 = vorrq_s16(qout0, qout8);

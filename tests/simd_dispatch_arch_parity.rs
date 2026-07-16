@@ -305,18 +305,18 @@ fn quantize_dequantize_block_dispatch_matches_scalar() {
     let matrix = make_test_matrix(8, 12);
     let mut mismatches = Vec::new();
     for seed in 0..=255u8 {
-        let mut coeffs = [0i32; 16];
+        let mut coeffs = [0i16; 16];
         for i in 0..16 {
             let v = seed.wrapping_add((i as u8).wrapping_mul(13));
-            coeffs[i] = (v as i32) - 128;
+            coeffs[i] = i16::from(v) - 128;
         }
-        let mut q_disp = [0i32; 16];
-        let mut dq_disp = [0i32; 16];
+        let mut q_disp = [0i16; 16];
+        let mut dq_disp = [0i16; 16];
         let any_disp =
             quantize_dequantize_block_dispatch(&coeffs, &matrix, false, &mut q_disp, &mut dq_disp);
 
-        let mut q_scal = [0i32; 16];
-        let mut dq_scal = [0i32; 16];
+        let mut q_scal = [0i16; 16];
+        let mut dq_scal = [0i16; 16];
         let any_scal =
             quantize_dequantize_block_scalar(&coeffs, &matrix, &mut q_scal, &mut dq_scal);
 
@@ -407,13 +407,13 @@ fn sse4x4_with_residual_dispatch_matches_scalar() {
     for seed in 0..=255u8 {
         let mut src = [0u8; 16];
         let mut pred = [0u8; 16];
-        let mut res = [0i32; 16];
+        let mut res = [0i16; 16];
         for i in 0..16 {
             src[i] = seed.wrapping_add((i as u8).wrapping_mul(7));
             pred[i] = seed
                 .wrapping_add((i as u8).wrapping_mul(11))
                 .wrapping_add(3);
-            res[i] = (seed.wrapping_add((i as u8).wrapping_mul(13)) as i32) - 128;
+            res[i] = i16::from(seed.wrapping_add((i as u8).wrapping_mul(13))) - 128;
         }
         let dispatched = sse4x4_with_residual_dispatch(&src, &pred, &res);
         let scalar = sse4x4_with_residual_scalar(&src, &pred, &res);

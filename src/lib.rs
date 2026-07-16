@@ -331,12 +331,12 @@ pub mod __test_helpers {
     }
 
     /// Forward DCT used by the encoder; dispatched (SSE2 / NEON / etc).
-    pub fn ftransform_from_u8_4x4_dispatch(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
+    pub fn ftransform_from_u8_4x4_dispatch(src: &[u8; 16], ref_: &[u8; 16]) -> [i16; 16] {
         crate::common::transform::ftransform_from_u8_4x4(src, ref_)
     }
 
     /// Scalar reference forward DCT.
-    pub fn ftransform_from_u8_4x4_scalar(src: &[u8; 16], ref_: &[u8; 16]) -> [i32; 16] {
+    pub fn ftransform_from_u8_4x4_scalar(src: &[u8; 16], ref_: &[u8; 16]) -> [i16; 16] {
         crate::common::transform::ftransform_from_u8_4x4_scalar(src, ref_)
     }
 
@@ -371,11 +371,11 @@ pub mod __test_helpers {
 
     /// Dispatched fused quantize+dequantize used by the encoder.
     pub fn quantize_dequantize_block_dispatch(
-        coeffs: &[i32; 16],
+        coeffs: &[i16; 16],
         matrix: &crate::encoder::quantize::VP8Matrix,
         use_sharpen: bool,
-        quantized: &mut [i32; 16],
-        dequantized: &mut [i32; 16],
+        quantized: &mut [i16; 16],
+        dequantized: &mut [i16; 16],
     ) -> bool {
         crate::encoder::quantize::quantize_dequantize_block_simd(
             coeffs,
@@ -389,10 +389,10 @@ pub mod __test_helpers {
     /// Scalar reference fused quantize+dequantize (does NOT use sharpen,
     /// matching the scalar dispatch tier's behavior).
     pub fn quantize_dequantize_block_scalar(
-        coeffs: &[i32; 16],
+        coeffs: &[i16; 16],
         matrix: &crate::encoder::quantize::VP8Matrix,
-        quantized: &mut [i32; 16],
-        dequantized: &mut [i32; 16],
+        quantized: &mut [i16; 16],
+        dequantized: &mut [i16; 16],
     ) -> bool {
         crate::encoder::quantize::quantize_dequantize_block_scalar(
             coeffs,
@@ -471,7 +471,7 @@ pub mod __test_helpers {
     pub fn sse4x4_with_residual_dispatch(
         src: &[u8; 16],
         pred: &[u8; 16],
-        dequantized: &[i32; 16],
+        dequantized: &[i16; 16],
     ) -> u32 {
         crate::encoder::vp8::mode_selection::__test_only_sse4x4_with_residual_dispatch(
             src,
@@ -484,11 +484,11 @@ pub mod __test_helpers {
     pub fn sse4x4_with_residual_scalar(
         src: &[u8; 16],
         pred: &[u8; 16],
-        dequantized: &[i32; 16],
+        dequantized: &[i16; 16],
     ) -> u32 {
         let mut sum = 0u32;
         for i in 0..16 {
-            let rec = (i32::from(pred[i]) + dequantized[i]).clamp(0, 255) as u8;
+            let rec = (i32::from(pred[i]) + i32::from(dequantized[i])).clamp(0, 255) as u8;
             let d = (src[i] as i32 - rec as i32).unsigned_abs();
             sum += d * d;
         }

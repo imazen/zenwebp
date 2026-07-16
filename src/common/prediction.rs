@@ -246,81 +246,86 @@ pub(crate) fn create_border_chroma(
     chroma_block
 }
 
-// Helper function for adding residue to a 4x4 sub-block
-// from a contiguous block of 16
-//
-// Only 16 elements from rblock are used to add residue, so it is restricted to 16 elements
+// Helper for adding residue to a 4x4 sub-block from a contiguous block of 16.
+// Only 16 elements from rblock are used, so it is restricted to 16 elements
 // to enable SIMD and other optimizations.
-//
-// Clippy suggests the clamp method, but it seems to optimize worse as of rustc 1.82.0 nightly.
+
+/// i16-residual variant of `add_residue` for the encoder's i16 coefficient
+/// pipeline (residuals are i16-bounded IDCT outputs).
 #[allow(clippy::manual_clamp)]
 #[inline(always)]
-pub(crate) fn add_residue<const N: usize>(
+pub(crate) fn add_residue_i16<const N: usize>(
     pblock: &mut [u8; N],
-    rblock: &[i32; 16],
+    rblock: &[i16; 16],
     y0: usize,
     x0: usize,
     stride: usize,
 ) {
     incant!(
-        add_residue_dispatch(pblock.as_mut_slice(), rblock, y0, x0, stride),
+        add_residue_i16_dispatch(pblock.as_mut_slice(), rblock, y0, x0, stride),
         [v3, neon, scalar]
     );
 }
 
 #[cfg(target_arch = "x86_64")]
-#[cfg(target_arch = "x86_64")]
 #[inline(always)]
-fn add_residue_dispatch_v3(
+fn add_residue_i16_dispatch_v3(
     token: X64V3Token,
     pblock: &mut [u8],
-    rblock: &[i32; 16],
+    rblock: &[i16; 16],
     y0: usize,
     x0: usize,
     stride: usize,
 ) {
-    add_residue_sse2(token, pblock, rblock, y0, x0, stride);
+    add_residue_i16_sse2(token, pblock, rblock, y0, x0, stride);
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-fn add_residue_dispatch_neon(
+fn add_residue_i16_dispatch_neon(
     token: NeonToken,
     pblock: &mut [u8],
-    rblock: &[i32; 16],
+    rblock: &[i16; 16],
     y0: usize,
     x0: usize,
     stride: usize,
 ) {
-    crate::common::transform::add_residue_neon(token, pblock, rblock, y0, x0, stride);
+    let mut wide = [0i32; 16];
+    for (d, &v) in wide.iter_mut().zip(rblock.iter()) {
+        *d = i32::from(v);
+    }
+    crate::common::transform::add_residue_neon(token, pblock, &wide, y0, x0, stride);
 }
 
 #[inline(always)]
-fn add_residue_dispatch_scalar(
+fn add_residue_i16_dispatch_scalar(
     _token: ScalarToken,
     pblock: &mut [u8],
-    rblock: &[i32; 16],
+    rblock: &[i16; 16],
     y0: usize,
     x0: usize,
     stride: usize,
 ) {
     let mut pos = y0 * stride + x0;
-    for row in rblock.chunks(4) {
-        for (p, &a) in pblock[pos..][..4].iter_mut().zip(row.iter()) {
-            *p = (a + i32::from(*p)).clamp(0, 255) as u8;
+    for row_idx in 0..4 {
+        for col_idx in 0..4 {
+            let r = i32::from(rblock[row_idx * 4 + col_idx]);
+            let p = i32::from(pblock[pos + col_idx]);
+            pblock[pos + col_idx] = (p + r).clamp(0, 255) as u8;
         }
         pos += stride;
     }
 }
 
-/// SIMD implementation of add_residue using SSE2.
-/// Processes one row at a time: load 4 u8, zero-extend, add i32, pack back to u8 with saturation.
+/// SSE2 i16-residual add: two 8-lane loads replace the four i32 row loads,
+/// and the add runs in i16 (prediction is u8-range, residual i16 — the i16
+/// add cannot wrap before the u8 saturating pack).
+#[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
-#[inline(always)]
-fn add_residue_sse2(
+fn add_residue_i16_sse2(
     _token: archmage::X64V3Token,
     pblock: &mut [u8],
-    rblock: &[i32; 16],
+    rblock: &[i16; 16],
     y0: usize,
     x0: usize,
     stride: usize,
@@ -332,30 +337,27 @@ fn add_residue_sse2(
     use core::arch::x86_64::*;
 
     let zero = _mm_setzero_si128();
+    let (r_lo_arr, r_hi_arr) = crate::common::h16(rblock);
+    let r_lo = simd_mem::_mm_loadu_si128(r_lo_arr);
+    let r_hi = simd_mem::_mm_loadu_si128(r_hi_arr);
+
     let mut pos = y0 * stride + x0;
-
     for row_idx in 0..4 {
-        // Load 4 residual values (i32)
-        let r = simd_mem::_mm_loadu_si128(
-            <&[i32; 4]>::try_from(&rblock[row_idx * 4..row_idx * 4 + 4]).unwrap(),
-        );
+        // Residual row as 4 i16 lanes in the low half
+        let r_row = match row_idx {
+            0 => r_lo,
+            1 => _mm_unpackhi_epi64(r_lo, r_lo),
+            2 => r_hi,
+            _ => _mm_unpackhi_epi64(r_hi, r_hi),
+        };
 
-        // Load 4 prediction bytes using array conversion (avoids per-byte indexing)
         let p_arr: [u8; 4] = pblock[pos..pos + 4].try_into().unwrap();
-        let p_bytes = i32::from_ne_bytes(p_arr);
-        let p4 = _mm_cvtsi32_si128(p_bytes);
-        // Unpack bytes to words, then words to dwords (zero extension)
+        let p4 = _mm_cvtsi32_si128(i32::from_ne_bytes(p_arr));
         let p_words = _mm_unpacklo_epi8(p4, zero);
-        let p = _mm_unpacklo_epi16(p_words, zero);
 
-        // Add residuals
-        let sum = _mm_add_epi32(p, r);
+        let sum = _mm_add_epi16(p_words, r_row);
+        let packed_8 = _mm_packus_epi16(sum, sum);
 
-        // Pack back to u8 with saturation: i32 -> i16 -> u8
-        let packed_16 = _mm_packs_epi32(sum, sum); // i32 -> i16 (saturate)
-        let packed_8 = _mm_packus_epi16(packed_16, packed_16); // i16 -> u8 (saturate)
-
-        // Store 4 bytes using array conversion (avoids per-byte indexing)
         let result = _mm_cvtsi128_si32(packed_8) as u32;
         pblock[pos..pos + 4].copy_from_slice(&result.to_ne_bytes());
 
@@ -2026,13 +2028,13 @@ mod tests {
 
     #[test]
     fn test_add_residue() {
-        let mut pblock = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
-        let rblock = [
+        let mut pblock = [1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        let rblock: [i16; 16] = [
             -1, -2, -3, -4, 250, 249, 248, 250, -10, -18, -192, -17, -3, 15, 18, 9,
         ];
         let expected: [u8; 16] = [0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 10, 29, 33, 25];
 
-        add_residue(&mut pblock, &rblock, 0, 0, 4);
+        add_residue_i16(&mut pblock, &rblock, 0, 0, 4);
 
         for (&e, &i) in expected.iter().zip(&pblock) {
             assert_eq!(e, i);

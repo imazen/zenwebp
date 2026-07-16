@@ -25,6 +25,7 @@ pub mod simd_wasm;
 
 /// Split `&[T; 16]` into four `&[T; 4]` references.
 #[inline(always)]
+#[cfg_attr(target_arch = "x86_64", allow(dead_code))] // used by the NEON/WASM kernel tiers
 pub(crate) fn q16<T>(a: &[T; 16]) -> (&[T; 4], &[T; 4], &[T; 4], &[T; 4]) {
     let (a0, rest) = a.split_first_chunk::<4>().unwrap();
     let (a1, rest) = rest.split_first_chunk::<4>().unwrap();

@@ -41,6 +41,23 @@ fn load_u16x8(a: &[u16; 8]) -> v128 {
 }
 
 #[inline(always)]
+fn load_i16x8(a: &[i16; 8]) -> v128 {
+    i16x8(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7])
+}
+
+#[inline(always)]
+fn store_i16x8(out: &mut [i16; 8], v: v128) {
+    out[0] = i16x8_extract_lane::<0>(v);
+    out[1] = i16x8_extract_lane::<1>(v);
+    out[2] = i16x8_extract_lane::<2>(v);
+    out[3] = i16x8_extract_lane::<3>(v);
+    out[4] = i16x8_extract_lane::<4>(v);
+    out[5] = i16x8_extract_lane::<5>(v);
+    out[6] = i16x8_extract_lane::<6>(v);
+    out[7] = i16x8_extract_lane::<7>(v);
+}
+
+#[inline(always)]
 fn store_i32x4(out: &mut [i32; 4], v: v128) {
     out[0] = i32x4_extract_lane::<0>(v);
     out[1] = i32x4_extract_lane::<1>(v);
@@ -104,7 +121,7 @@ pub(crate) fn sse4x4_with_residual_wasm(
     _token: Wasm128Token,
     src: &[u8; 16],
     pred: &[u8; 16],
-    residual: &[i32; 16],
+    residual: &[i16; 16],
 ) -> u32 {
     let src_vec = load_u8x16(src);
     let pred_vec = load_u8x16(pred);
@@ -113,14 +130,10 @@ pub(crate) fn sse4x4_with_residual_wasm(
     let pred_lo = u16x8_extend_low_u8x16(pred_vec);
     let pred_hi = u16x8_extend_high_u8x16(pred_vec);
 
-    // Load residuals as i32x4, narrow to i16x8
-    let (rq0, rq1, rq2, rq3) = super::q16(residual);
-    let r0 = load_i32x4(rq0);
-    let r1 = load_i32x4(rq1);
-    let r2 = load_i32x4(rq2);
-    let r3 = load_i32x4(rq3);
-    let res_lo = i16x8_narrow_i32x4(r0, r1);
-    let res_hi = i16x8_narrow_i32x4(r2, r3);
+    // Load residuals directly as i16
+    let (r_lo, r_hi) = super::h16(residual);
+    let res_lo = load_i16x8(r_lo);
+    let res_hi = load_i16x8(r_hi);
 
     // Reconstruct: pred + residual, clamp to [0, 255]
     let rec_lo = i16x8_add(pred_lo, res_lo);
@@ -524,23 +537,18 @@ pub(crate) fn dequantize_block_wasm(_token: Wasm128Token, q: &[u16; 16], coeffs:
 #[rite]
 pub(crate) fn quantize_dequantize_block_wasm(
     _token: Wasm128Token,
-    coeffs: &[i32; 16],
+    coeffs: &[i16; 16],
     matrix: &VP8Matrix,
     use_sharpen: bool,
-    quantized: &mut [i32; 16],
-    dequantized: &mut [i32; 16],
+    quantized: &mut [i16; 16],
+    dequantized: &mut [i16; 16],
 ) -> bool {
     let max_coeff = i16x8_splat(MAX_LEVEL as i16);
 
-    // Pack i32 to i16
-    let (cq0, cq1, cq2, cq3) = super::q16(coeffs);
-    let c0 = load_i32x4(cq0);
-    let c1 = load_i32x4(cq1);
-    let c2 = load_i32x4(cq2);
-    let c3 = load_i32x4(cq3);
-
-    let in0 = i16x8_narrow_i32x4(c0, c1);
-    let in8 = i16x8_narrow_i32x4(c2, c3);
+    // Direct i16 loads (DCT coefficients are i16 end-to-end)
+    let (c_lo, c_hi) = super::h16(coeffs);
+    let in0 = load_i16x8(c_lo);
+    let in8 = load_i16x8(c_hi);
 
     // Sign and absolute value
     let sign0 = i16x8_shr(in0, 15);
@@ -605,12 +613,10 @@ pub(crate) fn quantize_dequantize_block_wasm(
     qout0 = i16x8_sub(v128_xor(qout0, sign0), sign0);
     qout8 = i16x8_sub(v128_xor(qout8, sign8), sign8);
 
-    // Store quantized (i16 → i32)
-    let (qm0, qm1, qm2, qm3) = super::q16_mut(quantized);
-    store_i32x4(qm0, i32x4_extend_low_i16x8(qout0));
-    store_i32x4(qm1, i32x4_extend_high_i16x8(qout0));
-    store_i32x4(qm2, i32x4_extend_low_i16x8(qout8));
-    store_i32x4(qm3, i32x4_extend_high_i16x8(qout8));
+    // Store quantized levels directly as i16
+    let (qm_lo, qm_hi) = super::h16_mut(quantized);
+    store_i16x8(qm_lo, qout0);
+    store_i16x8(qm_hi, qout8);
 
     // Dequantize: quantized * q
     let (mq_lo, mq_hi) = super::h16(&matrix.q);
@@ -620,12 +626,10 @@ pub(crate) fn quantize_dequantize_block_wasm(
     let dq0 = i16x8_mul(qout0, q0);
     let dq8 = i16x8_mul(qout8, q8_val);
 
-    // Store dequantized (i16 → i32)
-    let (dm0, dm1, dm2, dm3) = super::q16_mut(dequantized);
-    store_i32x4(dm0, i32x4_extend_low_i16x8(dq0));
-    store_i32x4(dm1, i32x4_extend_high_i16x8(dq0));
-    store_i32x4(dm2, i32x4_extend_low_i16x8(dq8));
-    store_i32x4(dm3, i32x4_extend_high_i16x8(dq8));
+    // Store dequantized values directly as i16
+    let (dm_lo, dm_hi) = super::h16_mut(dequantized);
+    store_i16x8(dm_lo, dq0);
+    store_i16x8(dm_hi, dq8);
 
     // Non-zero check
     let or0 = v128_or(qout0, qout8);

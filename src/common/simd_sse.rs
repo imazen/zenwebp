@@ -64,10 +64,10 @@ pub(crate) fn sse4x4_sse2(_token: X64V3Token, a: &[u8; 16], b: &[u8; 16]) -> u32
 /// Scalar implementation of SSE with residual
 #[inline]
 #[allow(dead_code)]
-pub fn sse4x4_with_residual_scalar(src: &[u8; 16], pred: &[u8; 16], residual: &[i32; 16]) -> u32 {
+pub fn sse4x4_with_residual_scalar(src: &[u8; 16], pred: &[u8; 16], residual: &[i16; 16]) -> u32 {
     let mut sum = 0u32;
     for i in 0..16 {
-        let reconstructed = (i32::from(pred[i]) + residual[i]).clamp(0, 255);
+        let reconstructed = (i32::from(pred[i]) + i32::from(residual[i])).clamp(0, 255);
         let diff = i32::from(src[i]) - reconstructed;
         sum += (diff * diff) as u32;
     }
@@ -82,7 +82,7 @@ pub(crate) fn sse4x4_with_residual_sse2(
     _token: X64V3Token,
     src: &[u8; 16],
     pred: &[u8; 16],
-    residual: &[i32; 16],
+    residual: &[i16; 16],
 ) -> u32 {
     let zero = _mm_setzero_si128();
     let max_255 = _mm_set1_epi16(255);
@@ -97,16 +97,10 @@ pub(crate) fn sse4x4_with_residual_sse2(
     let pred_lo = _mm_unpacklo_epi8(pred_bytes, zero);
     let pred_hi = _mm_unpackhi_epi8(pred_bytes, zero);
 
-    // Load residuals (4 i32 values at a time) and pack to i16
-    let (r0, r1, r2, r3) = super::q16(residual);
-    let res0 = simd_mem::_mm_loadu_si128(r0);
-    let res1 = simd_mem::_mm_loadu_si128(r1);
-    let res2 = simd_mem::_mm_loadu_si128(r2);
-    let res3 = simd_mem::_mm_loadu_si128(r3);
-
-    // Pack i32 to i16 (saturating)
-    let res_lo = _mm_packs_epi32(res0, res1);
-    let res_hi = _mm_packs_epi32(res2, res3);
+    // Load residuals directly as i16 (two 8-lane loads)
+    let (r_lo, r_hi) = super::h16(residual);
+    let res_lo = simd_mem::_mm_loadu_si128(r_lo);
+    let res_hi = simd_mem::_mm_loadu_si128(r_hi);
 
     // Reconstruct: pred + residual, clamped to [0, 255]
     let rec_lo = _mm_add_epi16(pred_lo, res_lo);
@@ -577,7 +571,7 @@ mod tests {
         t: X64V3Token,
         src: &[u8; 16],
         pred: &[u8; 16],
-        res: &[i32; 16],
+        res: &[i16; 16],
     ) -> u32 {
         sse4x4_with_residual_sse2(t, src, pred, res)
     }
@@ -652,7 +646,7 @@ mod tests {
     fn test_sse4x4_with_residual_scalar() {
         let src = [100u8; 16];
         let pred = [90u8; 16];
-        let residual = [10i32; 16]; // pred + residual = 100, so SSE = 0
+        let residual = [10i16; 16]; // pred + residual = 100, so SSE = 0
         assert_eq!(sse4x4_with_residual_scalar(&src, &pred, &residual), 0);
     }
 
@@ -668,7 +662,7 @@ mod tests {
         let pred: [u8; 16] = [
             95, 105, 115, 125, 85, 75, 65, 55, 45, 35, 25, 15, 5, 2, 1, 0,
         ];
-        let residual: [i32; 16] = [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 2, 1];
+        let residual: [i16; 16] = [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 2, 1];
 
         let scalar = sse4x4_with_residual_scalar(&src, &pred, &residual);
         let simd = call_sse4x4_with_residual(token, &src, &pred, &residual);

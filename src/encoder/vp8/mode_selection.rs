@@ -79,7 +79,7 @@ fn sse4x4_impl_scalar(_token: ScalarToken, src: &[u8; 16], pred: &[u8; 16]) -> u
 
 /// Dispatch SSE4x4 with residual computation to best available SIMD path.
 #[inline(always)]
-fn sse4x4_with_residual_dispatch(src: &[u8; 16], pred: &[u8; 16], dequantized: &[i32; 16]) -> u32 {
+fn sse4x4_with_residual_dispatch(src: &[u8; 16], pred: &[u8; 16], dequantized: &[i16; 16]) -> u32 {
     incant!(
         sse4x4_with_residual_impl(src, pred, dequantized),
         [v3, neon, wasm128, scalar]
@@ -91,7 +91,7 @@ fn sse4x4_with_residual_dispatch(src: &[u8; 16], pred: &[u8; 16], dequantized: &
 pub fn __test_only_sse4x4_with_residual_dispatch(
     src: &[u8; 16],
     pred: &[u8; 16],
-    dequantized: &[i32; 16],
+    dequantized: &[i16; 16],
 ) -> u32 {
     sse4x4_with_residual_dispatch(src, pred, dequantized)
 }
@@ -102,7 +102,7 @@ fn sse4x4_with_residual_impl_v3(
     _token: X64V3Token,
     src: &[u8; 16],
     pred: &[u8; 16],
-    dequantized: &[i32; 16],
+    dequantized: &[i16; 16],
 ) -> u32 {
     crate::common::simd_sse::sse4x4_with_residual_sse2(_token, src, pred, dequantized)
 }
@@ -113,7 +113,7 @@ fn sse4x4_with_residual_impl_neon(
     token: NeonToken,
     src: &[u8; 16],
     pred: &[u8; 16],
-    dequantized: &[i32; 16],
+    dequantized: &[i16; 16],
 ) -> u32 {
     crate::common::simd_neon::sse4x4_with_residual_neon(token, src, pred, dequantized)
 }
@@ -124,7 +124,7 @@ fn sse4x4_with_residual_impl_wasm128(
     token: Wasm128Token,
     src: &[u8; 16],
     pred: &[u8; 16],
-    dequantized: &[i32; 16],
+    dequantized: &[i16; 16],
 ) -> u32 {
     crate::common::simd_wasm::sse4x4_with_residual_wasm(token, src, pred, dequantized)
 }
@@ -134,11 +134,11 @@ fn sse4x4_with_residual_impl_scalar(
     _token: ScalarToken,
     src: &[u8; 16],
     pred: &[u8; 16],
-    dequantized: &[i32; 16],
+    dequantized: &[i16; 16],
 ) -> u32 {
     let mut sum = 0u32;
     for i in 0..16 {
-        let reconstructed = (i32::from(pred[i]) + dequantized[i]).clamp(0, 255) as u8;
+        let reconstructed = (i32::from(pred[i]) + i32::from(dequantized[i])).clamp(0, 255) as u8;
         let diff = i32::from(src[i]) - i32::from(reconstructed);
         sum += (diff * diff) as u32;
     }
@@ -161,7 +161,7 @@ struct I4BlockResult {
     mode_idx: usize,
     rd_score: u64,
     has_nz: bool,
-    dequantized: [i32; 16],
+    dequantized: [i16; 16],
     sse: u32,
     spectral_disto: i32,
     psy_cost: i32,
@@ -213,20 +213,26 @@ pub(super) struct UvWinnerCarry {
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn i4_trellis_quantize_recon(
-    residual: &mut [i32; 16],
+    residual: &[i16; 16],
     quantized_zigzag: &mut [i16; 16],
-    quantized_natural: &mut [i32; 16],
+    quantized_natural: &mut [i16; 16],
     y1_matrix: &crate::encoder::quantize::VP8Matrix,
     lambda: u32,
     nz_top: bool,
     nz_left: bool,
     level_costs: &crate::encoder::cost::LevelCosts,
     psy_config: &crate::encoder::psy::PsyConfig,
-) -> (bool, [i32; 16]) {
+) -> (bool, [i16; 16]) {
     let ctx0 = usize::from(nz_top) + usize::from(nz_left);
     const CTYPE_I4_AC: usize = 3;
+    // Trellis DP still runs on i32 coefficients; widen at this (m6-only,
+    // out-of-line) boundary until the trellis itself goes i16.
+    let mut wide = [0i32; 16];
+    for (d, &v) in wide.iter_mut().zip(residual.iter()) {
+        *d = i32::from(v);
+    }
     let nz = trellis_quantize_block(
-        residual,
+        &mut wide,
         quantized_zigzag,
         y1_matrix,
         lambda,
@@ -238,14 +244,18 @@ fn i4_trellis_quantize_recon(
     );
     for n in 0..16 {
         let j = ZIGZAG[n] as usize;
-        quantized_natural[j] = i32::from(quantized_zigzag[n]);
+        quantized_natural[j] = quantized_zigzag[n];
     }
-    let mut dq = *quantized_natural;
+    let mut dq = [0i32; 16];
     for (idx, val) in dq.iter_mut().enumerate() {
-        *val = y1_matrix.dequantize(*val, idx);
+        *val = y1_matrix.dequantize(i32::from(quantized_natural[idx]), idx);
     }
     crate::common::transform::idct4x4(&mut dq);
-    (nz, dq)
+    let mut out = [0i16; 16];
+    for (d, &v) in out.iter_mut().zip(dq.iter()) {
+        *d = v as i16;
+    }
+    (nz, out)
 }
 
 #[archmage::arcane]
@@ -301,17 +311,17 @@ fn evaluate_i4_modes_sse2(
         let pred = preds.get(mode_idx);
 
         // Fused residual + DCT using direct SIMD call
-        let mut residual =
+        let residual =
             crate::common::transform::ftransform_from_u8_4x4_sse2(_token, src_block, pred);
 
         // Quantize - use trellis if enabled, otherwise fused quantize+dequantize
         let mut quantized_zigzag = [0i16; 16];
-        let mut quantized_natural = [0i32; 16];
+        let mut quantized_natural = [0i16; 16];
         let (has_nz, dequantized) = if let Some(lambda) = trellis_lambda_i4 {
             // Trellis quantization: m6-only, out-of-line so the hot m0-m5
             // candidate loop stays small in the instruction cache.
             i4_trellis_quantize_recon(
-                &mut residual,
+                &residual,
                 &mut quantized_zigzag,
                 &mut quantized_natural,
                 y1_matrix,
@@ -323,7 +333,7 @@ fn evaluate_i4_modes_sse2(
             )
         } else {
             // Fused quantize+dequantize using direct SIMD call
-            let mut dequant_natural = [0i32; 16];
+            let mut dequant_natural = [0i16; 16];
             let nz = crate::encoder::quantize::quantize_dequantize_block_sse2(
                 _token,
                 &residual,
@@ -335,10 +345,10 @@ fn evaluate_i4_modes_sse2(
             // Convert natural to zigzag for cost estimation
             for n in 0..16 {
                 let j = ZIGZAG[n] as usize;
-                quantized_zigzag[n] = quantized_natural[j] as i16;
+                quantized_zigzag[n] = quantized_natural[j];
             }
             // IDCT the dequantized values (direct sse2, skip token re-summon)
-            crate::common::transform::idct4x4_sse2(_token, &mut dequant_natural);
+            crate::common::transform::idct4x4_i16_sse2(_token, &mut dequant_natural);
             (nz, dequant_natural)
         };
 
@@ -403,7 +413,7 @@ fn evaluate_i4_modes_sse2(
             // Build reconstructed 4x4 block
             let mut rec_block = [0u8; 16];
             for k in 0..16 {
-                rec_block[k] = (i32::from(pred[k]) + dequantized[k]).clamp(0, 255) as u8;
+                rec_block[k] = (i32::from(pred[k]) + i32::from(dequantized[k])).clamp(0, 255) as u8;
             }
 
             let td = if tlambda > 0 {
@@ -511,42 +521,29 @@ fn evaluate_i4_modes_wasm(
         let pred = preds.get(mode_idx);
 
         // Fused residual + DCT using direct SIMD call
-        let mut residual =
+        let residual =
             crate::common::transform::ftransform_from_u8_4x4_wasm_impl(_token, src_block, pred);
 
         // Quantize - use trellis if enabled, otherwise fused quantize+dequantize
         let mut quantized_zigzag = [0i16; 16];
-        let mut quantized_natural = [0i32; 16];
+        let mut quantized_natural = [0i16; 16];
         let (has_nz, dequantized) = if let Some(lambda) = trellis_lambda_i4 {
             // Trellis quantization (scalar, called from arcane context is fine)
-            let ctx0 = usize::from(nz_top) + usize::from(nz_left);
-            const CTYPE_I4_AC: usize = 3;
-            let nz = trellis_quantize_block(
-                &mut residual,
+            let nz = i4_trellis_quantize_recon(
+                &residual,
                 &mut quantized_zigzag,
+                &mut quantized_natural,
                 y1_matrix,
                 lambda,
-                0,
+                nz_top,
+                nz_left,
                 level_costs,
-                CTYPE_I4_AC,
-                ctx0,
                 psy_config,
             );
-            // Convert zigzag to natural order
-            for n in 0..16 {
-                let j = ZIGZAG[n] as usize;
-                quantized_natural[j] = i32::from(quantized_zigzag[n]);
-            }
-            // Dequantize + IDCT for trellis path
-            let mut dq = quantized_natural;
-            for (idx, val) in dq.iter_mut().enumerate() {
-                *val = y1_matrix.dequantize(*val, idx);
-            }
-            transform::idct4x4(&mut dq);
-            (nz, dq)
+            (nz.0, nz.1)
         } else {
             // Fused quantize+dequantize using direct SIMD call
-            let mut dequant_natural = [0i32; 16];
+            let mut dequant_natural = [0i16; 16];
             let nz = crate::common::simd_wasm::quantize_dequantize_block_wasm(
                 _token,
                 &residual,
@@ -558,10 +555,10 @@ fn evaluate_i4_modes_wasm(
             // Convert natural to zigzag for cost estimation
             for n in 0..16 {
                 let j = ZIGZAG[n] as usize;
-                quantized_zigzag[n] = quantized_natural[j] as i16;
+                quantized_zigzag[n] = quantized_natural[j];
             }
             // IDCT the dequantized values
-            transform::idct4x4(&mut dequant_natural);
+            transform::idct4x4_i16(&mut dequant_natural);
             (nz, dequant_natural)
         };
 
@@ -627,7 +624,7 @@ fn evaluate_i4_modes_wasm(
             // Build reconstructed 4x4 block
             let mut rec_block = [0u8; 16];
             for k in 0..16 {
-                rec_block[k] = (i32::from(pred[k]) + dequantized[k]).clamp(0, 255) as u8;
+                rec_block[k] = (i32::from(pred[k]) + i32::from(dequantized[k])).clamp(0, 255) as u8;
             }
 
             let td = if tlambda > 0 {
@@ -805,9 +802,9 @@ impl<'a> super::Vp8Encoder<'a> {
 
         // Pre-allocate scratch buffers outside mode loop to avoid redundant zero-init.
         // All elements are written before read in each iteration.
-        let mut luma_blocks = [0i32; 256];
-        let mut y1_quant = [[0i32; 16]; 16];
-        let mut y1_dequant = [[0i32; 16]; 16];
+        let mut luma_blocks = [0i16; 256];
+        let mut y1_quant = [[0i16; 16]; 16];
+        let mut y1_dequant = [[0i16; 16]; 16];
         // Zigzag-scan-order views used only for the coefficient rate
         // (`get_cost_luma16`) and the flatness test — libwebp codes `y_dc_levels`
         // / `y_ac_levels` in zigzag order and `VP8GetCostLuma16` / `IsFlat` walk
@@ -871,7 +868,7 @@ impl<'a> super::Vp8Encoder<'a> {
             // 2. Extract DC coefficients and do WHT
             let mut dc_coeffs = [0i32; 16];
             for (i, dc) in dc_coeffs.iter_mut().enumerate() {
-                *dc = luma_blocks[i * 16];
+                *dc = i32::from(luma_blocks[i * 16]);
             }
             let mut y2_coeffs = dc_coeffs;
             transform::wht4x4(&mut y2_coeffs);
@@ -934,11 +931,11 @@ impl<'a> super::Vp8Encoder<'a> {
                     for block_idx in 0..16 {
                         // Copy block from luma_blocks (DC zeroed: it lives in Y2)
                         let block_start = block_idx * 16;
-                        let mut block: [i32; 16] = luma_blocks[block_start..block_start + 16]
+                        let mut block: [i16; 16] = luma_blocks[block_start..block_start + 16]
                             .try_into()
                             .unwrap();
                         block[0] = 0;
-                        let mut q = [0i32; 16];
+                        let mut q = [0i16; 16];
                         crate::encoder::quantize::quantize_dequantize_block_simd(
                             &block,
                             y1_matrix,
@@ -981,7 +978,7 @@ impl<'a> super::Vp8Encoder<'a> {
             }
             for (blk, blk_zz) in y1_quant.iter().zip(y1_quant_zz.iter_mut()) {
                 for n in 0..16 {
-                    blk_zz[n] = blk[ZIGZAG[n] as usize] as i16;
+                    blk_zz[n] = blk[ZIGZAG[n] as usize];
                 }
             }
             let coeff_cost = get_cost_luma16(
@@ -1008,14 +1005,15 @@ impl<'a> super::Vp8Encoder<'a> {
 
                 // AC from Y1 (dequantized during the fused quantize pass)
                 recon_dequant_block = y1_dequant[block_idx];
-                // DC from Y2
-                recon_dequant_block[0] = y2_dequant[block_idx];
+                // DC from Y2 (inverse-WHT output is i16-bounded like all
+                // coefficient-domain values)
+                recon_dequant_block[0] = y2_dequant[block_idx] as i16;
 
                 // Fused IDCT + add residue to prediction (reads pred, adds IDCT, clamps, stores)
                 let x0 = 1 + bx * 4;
                 let y0 = 1 + by * 4;
                 let dc_only = recon_dequant_block[1..].iter().all(|&c| c == 0);
-                crate::common::transform::idct_add_residue_inplace(
+                crate::common::transform::idct_add_residue_i16(
                     &mut recon_dequant_block,
                     &mut reconstructed,
                     y0,
@@ -1349,13 +1347,13 @@ impl<'a> super::Vp8Encoder<'a> {
     ///
     /// Quantizes coefficients and estimates their encoding cost without
     /// permanently modifying state.
-    fn estimate_luma16_coeff_cost(&self, luma_blocks: &[i32; 256], segment: &Segment) -> u32 {
+    fn estimate_luma16_coeff_cost(&self, luma_blocks: &[i16; 256], segment: &Segment) -> u32 {
         let mut total_cost = 0u32;
 
         // Extract DC coefficients and estimate Y2 (DC transform) cost
         let mut dc_coeffs = [0i32; 16];
         for (i, dc) in dc_coeffs.iter_mut().enumerate() {
-            *dc = luma_blocks[i * 16];
+            *dc = i32::from(luma_blocks[i * 16]);
         }
 
         // WHT transform on DC coefficients
@@ -1379,7 +1377,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 if i == 0 {
                     *coeff = 0; // DC is in Y2 block
                 } else {
-                    *coeff = luma_blocks[block_start + i] / i32::from(segment.yac);
+                    *coeff = i32::from(luma_blocks[block_start + i]) / i32::from(segment.yac);
                 }
             }
 
@@ -1661,7 +1659,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 let mut best_block_score = u64::MAX;
                 let mut best_has_nz = false;
                 // Save best dequantized+IDCT result to avoid recomputing in post-loop
-                let mut best_dequantized = [0i32; 16];
+                let mut best_dequantized = [0i16; 16];
                 // Track best block's SSE, spectral distortion, psy cost, and coeff cost for recalculating with lambda_mode
                 let mut best_sse = 0u32;
                 let mut best_spectral_disto = 0i32;
@@ -1987,7 +1985,13 @@ impl<'a> super::Vp8Encoder<'a> {
 
                 // Add back saved dequantized+IDCT result (already computed in inner loop)
                 // This eliminates a redundant dequantize + IDCT per block
-                add_residue(&mut y_with_border, &best_dequantized, y0, x0, LUMA_STRIDE);
+                crate::common::prediction::add_residue_i16(
+                    &mut y_with_border,
+                    &best_dequantized,
+                    y0,
+                    x0,
+                    LUMA_STRIDE,
+                );
 
                 carry_levels[i] = best_levels_zz;
             }
@@ -2161,9 +2165,9 @@ impl<'a> super::Vp8Encoder<'a> {
 
         // Pre-allocate scratch buffers outside mode loop to avoid redundant zero-init.
         // All elements are written before read in each iteration.
-        let mut u_blocks = [0i32; 64];
-        let mut v_blocks = [0i32; 64];
-        let mut uv_quant = [[0i32; 16]; 8];
+        let mut u_blocks = [0i16; 64];
+        let mut v_blocks = [0i16; 64];
+        let mut uv_quant = [[0i16; 16]; 8];
         // Zigzag-scan-order view of `uv_quant`, used only for the coefficient
         // rate (`get_cost_uv`) and the flatness test. libwebp stores `uv_levels`
         // in zigzag order (`quant.c` writes `out[]` zigzagged) and both
@@ -2173,7 +2177,7 @@ impl<'a> super::Vp8Encoder<'a> {
         // UV mode picks at m3+ (#38). The I4 path already builds this zigzag view
         // (see `evaluate_i4_modes_*`); this brings I-UV to parity with it.
         let mut uv_quant_zz = [[0i16; 16]; 8];
-        let mut uv_dequant = [[0i32; 16]; 8];
+        let mut uv_dequant = [[0i16; 16]; 8];
         let mut rec_u_block = [0u8; 64];
         let mut rec_v_block = [0u8; 64];
         let mut all_levels_uv = [0i16; 128];
@@ -2250,7 +2254,7 @@ impl<'a> super::Vp8Encoder<'a> {
             // Process U blocks (indices 0-3)
             for block_idx in 0..4 {
                 let block_start = block_idx * 16;
-                let coeffs: [i32; 16] = u_blocks[block_start..block_start + 16].try_into().unwrap();
+                let coeffs: [i16; 16] = u_blocks[block_start..block_start + 16].try_into().unwrap();
                 crate::encoder::quantize::quantize_dequantize_block_simd(
                     &coeffs,
                     uv_matrix,
@@ -2263,7 +2267,7 @@ impl<'a> super::Vp8Encoder<'a> {
             // Process V blocks (indices 4-7)
             for block_idx in 0..4 {
                 let block_start = block_idx * 16;
-                let coeffs: [i32; 16] = v_blocks[block_start..block_start + 16].try_into().unwrap();
+                let coeffs: [i16; 16] = v_blocks[block_start..block_start + 16].try_into().unwrap();
                 crate::encoder::quantize::quantize_dequantize_block_simd(
                     &coeffs,
                     uv_matrix,
@@ -2278,7 +2282,7 @@ impl<'a> super::Vp8Encoder<'a> {
             // / `uv_dequant` for the IDCT reconstruction below.
             for b in 0..8 {
                 for n in 0..16 {
-                    uv_quant_zz[b][n] = uv_quant[b][ZIGZAG[n] as usize] as i16;
+                    uv_quant_zz[b][n] = uv_quant[b][ZIGZAG[n] as usize];
                 }
             }
 
@@ -2323,7 +2327,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 let x0 = 1 + bx * 4;
                 let y0 = 1 + by * 4;
                 let dc_only = uv_dequant[block_idx][1..].iter().all(|&c| c == 0);
-                crate::common::transform::idct_add_residue_inplace(
+                crate::common::transform::idct_add_residue_i16(
                     &mut uv_dequant[block_idx],
                     &mut reconstructed_u,
                     y0,
@@ -2340,7 +2344,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 let x0 = 1 + bx * 4;
                 let y0 = 1 + by * 4;
                 let dc_only = uv_dequant[4 + block_idx][1..].iter().all(|&c| c == 0);
-                crate::common::transform::idct_add_residue_inplace(
+                crate::common::transform::idct_add_residue_i16(
                     &mut uv_dequant[4 + block_idx],
                     &mut reconstructed_v,
                     y0,
@@ -2466,11 +2470,11 @@ impl<'a> super::Vp8Encoder<'a> {
     fn i16_rd_trellis_quantize(
         &self,
         mbx: usize,
-        luma_blocks: &[i32; 16 * 16],
+        luma_blocks: &[i16; 16 * 16],
         y1_matrix: &crate::encoder::quantize::VP8Matrix,
         segment: &Segment,
-        y1_quant: &mut [[i32; 16]; 16],
-        y1_dequant: &mut [[i32; 16]; 16],
+        y1_quant: &mut [[i16; 16]; 16],
+        y1_dequant: &mut [[i16; 16]; 16],
     ) {
         let seed_ctx = self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity;
         let mut top_nz_t = if seed_ctx {
@@ -2498,9 +2502,15 @@ impl<'a> super::Vp8Encoder<'a> {
             let bx = block_idx % 4;
             let by = block_idx / 4;
             let block_start = block_idx * 16;
-            let mut coeffs: [i32; 16] = luma_blocks[block_start..block_start + 16]
-                .try_into()
-                .unwrap();
+            // Trellis DP still runs on i32 coefficients; widen at this
+            // (m6-only) boundary until the trellis itself goes i16.
+            let mut coeffs = [0i32; 16];
+            for (d, &v) in coeffs
+                .iter_mut()
+                .zip(&luma_blocks[block_start..block_start + 16])
+            {
+                *d = i32::from(v);
+            }
             coeffs[0] = 0; // DC handled by Y2
             let ctx0 = (u8::from(top_nz_t[bx]) + u8::from(left_nz_t[by])).min(2) as usize;
             let mut zigzag_levels = [0i16; 16];
@@ -2520,14 +2530,16 @@ impl<'a> super::Vp8Encoder<'a> {
             // Convert zigzag-ordered levels back to natural index so the
             // downstream cost/reconstruction paths see the same storage
             // convention as the simple-quant branch.
-            let mut natural = [0i32; 16];
+            let mut natural = [0i16; 16];
             for n in 1..16 {
-                natural[crate::encoder::tables::VP8_ZIGZAG[n]] = i32::from(zigzag_levels[n]);
+                natural[crate::encoder::tables::VP8_ZIGZAG[n]] = zigzag_levels[n];
             }
             y1_quant[block_idx] = natural;
             // trellis_quantize_block leaves dequantized values in `coeffs`
-            // (natural order) — keep for reconstruction.
-            y1_dequant[block_idx] = coeffs;
+            // (natural order, i16-bounded) — keep for reconstruction.
+            for (d, &v) in y1_dequant[block_idx].iter_mut().zip(coeffs.iter()) {
+                *d = v as i16;
+            }
             y1_dequant[block_idx][0] = 0;
         }
     }
@@ -2847,7 +2859,7 @@ impl<'a> super::Vp8Encoder<'a> {
         best_mode_idx: &mut usize,
         best_block_score: &mut u64,
         best_has_nz: &mut bool,
-        best_dequantized: &mut [i32; 16],
+        best_dequantized: &mut [i16; 16],
         best_sse: &mut u32,
         best_spectral_disto: &mut i32,
         best_psy_cost: &mut i32,
@@ -2886,36 +2898,25 @@ impl<'a> super::Vp8Encoder<'a> {
         for &(_, mode_idx) in mode_sse[..max_modes_to_try].iter() {
             let pred = preds.get(mode_idx);
 
-            let mut residual = crate::common::transform::ftransform_from_u8_4x4(src_block, pred);
+            let residual = crate::common::transform::ftransform_from_u8_4x4(src_block, pred);
 
             let mut quantized_zigzag = [0i16; 16];
-            let mut quantized_natural = [0i32; 16];
+            let mut quantized_natural = [0i16; 16];
             let (has_nz, dequantized) = if let Some(lambda) = trellis_lambda_i4 {
-                let ctx0 = usize::from(nz_top) + usize::from(nz_left);
-                const CTYPE_I4_AC: usize = 3;
-                let nz = trellis_quantize_block(
-                    &mut residual,
+                let nz = i4_trellis_quantize_recon(
+                    &residual,
                     &mut quantized_zigzag,
+                    &mut quantized_natural,
                     y1_matrix,
                     lambda,
-                    0,
+                    nz_top,
+                    nz_left,
                     &self.level_costs,
-                    CTYPE_I4_AC,
-                    ctx0,
                     &segment.psy_config,
                 );
-                for n in 0..16 {
-                    let j = ZIGZAG[n] as usize;
-                    quantized_natural[j] = i32::from(quantized_zigzag[n]);
-                }
-                let mut dq = quantized_natural;
-                for (idx, val) in dq.iter_mut().enumerate() {
-                    *val = y1_matrix.dequantize(*val, idx);
-                }
-                transform::idct4x4(&mut dq);
-                (nz, dq)
+                (nz.0, nz.1)
             } else {
-                let mut dequant_natural = [0i32; 16];
+                let mut dequant_natural = [0i16; 16];
                 let nz = crate::encoder::quantize::quantize_dequantize_block_simd(
                     &residual,
                     y1_matrix,
@@ -2925,9 +2926,9 @@ impl<'a> super::Vp8Encoder<'a> {
                 );
                 for n in 0..16 {
                     let j = ZIGZAG[n] as usize;
-                    quantized_zigzag[n] = quantized_natural[j] as i16;
+                    quantized_zigzag[n] = quantized_natural[j];
                 }
-                transform::idct4x4(&mut dequant_natural);
+                transform::idct4x4_i16(&mut dequant_natural);
                 (nz, dequant_natural)
             };
 
@@ -2975,7 +2976,8 @@ impl<'a> super::Vp8Encoder<'a> {
             {
                 let mut rec_block = [0u8; 16];
                 for k in 0..16 {
-                    rec_block[k] = (i32::from(pred[k]) + dequantized[k]).clamp(0, 255) as u8;
+                    rec_block[k] =
+                        (i32::from(pred[k]) + i32::from(dequantized[k])).clamp(0, 255) as u8;
                 }
                 let td = if tlambda > 0 {
                     let td_raw = tdisto_4x4(src_block, &rec_block, 4, &segment.psy_config.luma_csf);
@@ -3122,8 +3124,8 @@ macro_rules! pick_intra4_sse_body {
                 // reconstructed (not source) neighbors, matching the decoder.
                 super::Vp8Encoder::apply_intra4_prediction($ywb, best_mode, x0, y0);
                 let coeffs = $ftransform(&src_block, &preds.data[best_idx]);
-                let mut quantized = [0i32; 16];
-                let mut dequant = [0i32; 16];
+                let mut quantized = [0i16; 16];
+                let mut dequant = [0i16; 16];
                 let has_nz = $quant(&coeffs, $y1, &mut quantized, &mut dequant);
                 if has_nz {
                     let dc_only = dequant[1..].iter().all(|&c| c == 0);
@@ -3172,18 +3174,18 @@ fn pick_intra4_sse_arcane(
         |src: &[u8; 16], pred: &[u8; 16]| {
             crate::common::transform::ftransform_from_u8_4x4_sse2(token, src, pred)
         },
-        |coeffs: &[i32; 16],
+        |coeffs: &[i16; 16],
          m: &crate::encoder::quantize::VP8Matrix,
-         q: &mut [i32; 16],
-         dq: &mut [i32; 16]| {
+         q: &mut [i16; 16],
+         dq: &mut [i16; 16]| {
             crate::encoder::quantize::quantize_dequantize_block_sse2(token, coeffs, m, true, q, dq)
         },
-        |dq: &mut [i32; 16],
+        |dq: &mut [i16; 16],
          ywb: &mut [u8; LUMA_BLOCK_SIZE],
          y0: usize,
          x0: usize,
          dc_only: bool| {
-            crate::common::transform::idct_add_residue_inplace_sse2_inner(
+            crate::common::transform::idct_add_residue_i16_sse2_inner(
                 token,
                 dq,
                 ywb.as_mut_slice(),
@@ -3227,25 +3229,18 @@ fn pick_intra4_sse_portable(
         |src: &[u8; 16], pred: &[u8; 16]| {
             crate::common::transform::ftransform_from_u8_4x4(src, pred)
         },
-        |coeffs: &[i32; 16],
+        |coeffs: &[i16; 16],
          m: &crate::encoder::quantize::VP8Matrix,
-         q: &mut [i32; 16],
-         dq: &mut [i32; 16]| {
+         q: &mut [i16; 16],
+         dq: &mut [i16; 16]| {
             crate::encoder::quantize::quantize_dequantize_block_simd(coeffs, m, true, q, dq)
         },
-        |dq: &mut [i32; 16],
+        |dq: &mut [i16; 16],
          ywb: &mut [u8; LUMA_BLOCK_SIZE],
          y0: usize,
          x0: usize,
          dc_only: bool| {
-            crate::common::transform::idct_add_residue_inplace(
-                dq,
-                ywb,
-                y0,
-                x0,
-                LUMA_STRIDE,
-                dc_only,
-            )
+            crate::common::transform::idct_add_residue_i16(dq, ywb, y0, x0, LUMA_STRIDE, dc_only)
         }
     )
 }
