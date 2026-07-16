@@ -1000,6 +1000,13 @@ impl EncoderConfig {
 
     /// Enable or disable sharp YUV conversion.
     /// `true` enables with default config, `false` disables.
+    ///
+    /// The default runs libwebp's SharpYUV algorithm (exact port —
+    /// iterative luma/chroma optimization in linear light against the
+    /// decoder's fancy-upsampling filter): measured +1.0..+1.8 zensim over
+    /// standard conversion at +2-5% bytes. A custom
+    /// [`Self::sharp_yuv_config`] selects zenyuv's Newton-refinement
+    /// converter instead.
     #[must_use]
     pub fn sharp_yuv(mut self, enable: bool) -> Self {
         self.sharp_yuv = if enable {
@@ -1010,8 +1017,12 @@ impl EncoderConfig {
         self
     }
 
-    /// Enable sharp YUV with a custom configuration.
+    /// Enable sharp YUV with a custom zenyuv configuration.
     /// Implicitly enables sharp YUV.
+    ///
+    /// Any non-default config routes through zenyuv's Newton-refinement
+    /// converter (which these knobs parameterize) rather than the libwebp
+    /// SharpYUV port that plain [`Self::sharp_yuv`]`(true)` uses.
     #[must_use]
     pub fn sharp_yuv_config(mut self, config: zenyuv::SharpYuvConfig) -> Self {
         self.sharp_yuv = Some(config);

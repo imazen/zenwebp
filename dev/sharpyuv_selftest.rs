@@ -9,9 +9,11 @@
 //!   cargo run --release --features __expert --example sharpyuv_selftest -- \
 //!       <planes.bin> <W> <H> <SEED>
 //!   cargo run ... -- <planes.bin> <W> <H> --rgb <raw_rgb_file>
+//!   cargo run ... -- --bench <W> <H> [iters=20]
 //!
 //! The second form compares against a real image dumped by the trace tree's
 //! `dump_encoder_yuv` (webpx-flow ARGB import + WebPPictureSharpARGBToYUVA).
+//! `--bench` times the port converter (min of N runs) for adoption calls.
 
 fn synth(w: usize, h: usize, mut s: u32) -> Vec<u8> {
     let mut rgb = vec![0u8; w * h * 3];
@@ -31,6 +33,25 @@ fn synth(w: usize, h: usize, mut s: u32) -> Vec<u8> {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args[1] == "--bench" {
+        let w: usize = args[2].parse().unwrap();
+        let h: usize = args[3].parse().unwrap();
+        let iters: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(20);
+        let rgb = synth(w, h, 99);
+        let mut best = f64::MAX;
+        for _ in 0..iters {
+            let t = std::time::Instant::now();
+            let (y, _, _) = zenwebp::__expert::sharpyuv_convert_rgb(&rgb, w as u16, h as u16);
+            best = best.min(t.elapsed().as_secs_f64());
+            std::hint::black_box(y);
+        }
+        println!(
+            "port sharpyuv {w}x{h}: min {:.3} ms ({:.1} Mpix/s)",
+            best * 1e3,
+            (w * h) as f64 / best / 1e6
+        );
+        return;
+    }
     let planes = std::fs::read(&args[1]).expect("planes.bin from dump_sharpyuv");
     let w: usize = args[2].parse().unwrap();
     let h: usize = args[3].parse().unwrap();

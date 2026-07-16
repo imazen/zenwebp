@@ -91,3 +91,14 @@ full VP8L on a tiny plane). The tuned default keeps its historical uniform
 level-quantizer mapping (`1 + aq·255/100` levels) so decoded alpha VALUES
 at aq<100 are unchanged; only the lossless representation shrank. Parity
 uses libwebp's `QuantizeLevels` k-means + its level mapping.
+
+## 3. SharpYUV port for `.sharp_yuv(true)` → **ADOPTED** (2026-07-16, later)
+
+The libwebp SharpYUV port built for the parity sharp_yuv axis (96/96)
+replaces zenyuv's Newton-refinement converter on the plain
+`.sharp_yuv(true)` path: **+1.0..+1.8 zsim** over standard conversion vs
+zenyuv's +0.18..+0.32, at the technique-inherent +2-5% bytes, and the
+scalar port is 1.5× faster than libwebp's own SSE2 build. Opt-in flag
+only — tuned DEFAULT bytes unchanged; `sharp_yuv_config(custom)` still
+selects zenyuv. Full analysis, A/B table, and speed data:
+`sharpyuv_port_2026-07-16.md` (+ `sharpyuv_port_ab_2026-07-16.tsv`).

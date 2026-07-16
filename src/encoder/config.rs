@@ -440,10 +440,11 @@ impl LossyConfig {
     /// Enable or disable sharp YUV conversion. Expert-only.
     /// `true` enables with default config, `false` disables.
     ///
-    /// **Gated behind the `expert` cargo feature.** Default consumers
-    /// should use [`Preset::Photo`] (which enables sharp YUV via the
-    /// preset's internal config); this setter is for codec calibration
-    /// sweeps + the picker training pipeline. See
+    /// **Gated behind the `expert` cargo feature** — this setter is for
+    /// codec calibration sweeps + the picker training pipeline (no preset
+    /// enables sharp YUV; it is always an explicit opt-in). The default
+    /// config runs the libwebp SharpYUV port; a custom
+    /// [`Self::with_sharp_yuv_config`] selects zenyuv's converter. See
     /// [`LossyConfig::with_internal_params`].
     #[cfg(feature = "__expert")]
     #[must_use]

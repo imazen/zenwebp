@@ -134,6 +134,19 @@ here has landed; see "Changed (BREAKING)" below.)
   GitHub `README.md`). Added `benchmarks/README.md` documenting the
   fair-benchmark methodology and exact repro. No code or public-API change.
 
+### Changed
+
+- **`.sharp_yuv(true)` now runs the libwebp SharpYUV port** (#38,
+  2026-07-16): measured +1.0..+1.8 zensim over standard conversion on the
+  15-image A/B corpus (zenyuv's Newton converter: +0.18..+0.32) at the
+  technique-inherent +2-5% bytes; the scalar port also benches 1.5× faster
+  than libwebp's SSE2 build (44 vs 28 Mpix/s). Opt-in path only — default
+  encodes (sharp off) are byte-unchanged, and `sharp_yuv_config(custom)`
+  still selects zenyuv's converter. Below 4 px either dimension, sharp
+  falls back to standard conversion (libwebp's
+  `kMinDimensionIterativeConversion`). Analysis + data:
+  `benchmarks/sharpyuv_port_2026-07-16.md`.
+
 ### Added
 
 - **SharpYUV port — `sharp_yuv` byte-exact under `StrictLibwebpParity`**

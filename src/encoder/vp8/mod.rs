@@ -1149,24 +1149,31 @@ impl<'a> Vp8Encoder<'a> {
 
             crate::decoder::yuv::import_yuv420_planes(y_plane, u_plane, v_plane, width, height)
         } else if params.sharp_yuv.is_some()
-            && params.cost_model == super::api::CostModel::StrictLibwebpParity
             && !matches!(color, PixelLayout::L8 | PixelLayout::La8)
+            && (params.cost_model == super::api::CostModel::StrictLibwebpParity
+                || params.sharp_yuv == Some(zenyuv::SharpYuvConfig::default()))
         {
+            // libwebp's SharpYUV algorithm, byte-exact port. Used under
+            // parity AND as the tuned `.sharp_yuv(true)` default — measured
+            // +1.0..+1.8 zsim over standard conversion (4-6x zenyuv's
+            // Newton refinement) at +2-5% bytes, and 1.5x faster than
+            // libwebp's own SSE2 build; see
+            // `benchmarks/sharpyuv_port_2026-07-16.md`. A custom
+            // `sharp_yuv_config(..)` still selects zenyuv's converter below.
             if width >= 4 && height >= 4 {
-                // Parity: libwebp's own SharpYUV algorithm, byte-exact port.
                 crate::encoder::sharpyuv::convert_image_sharp_libwebp(
                     data, color, width, height, stride,
                 )
             } else {
                 // libwebp disables iterative conversion below
                 // kMinDimensionIterativeConversion (4) — standard path.
+                let prec = if params.cost_model == super::api::CostModel::StrictLibwebpParity {
+                    crate::decoder::yuv::ChromaPrec::LibwebpExact
+                } else {
+                    crate::decoder::yuv::ChromaPrec::TunedByteRound
+                };
                 crate::decoder::yuv::convert_image_yuv_fast(
-                    data,
-                    color,
-                    width,
-                    height,
-                    stride,
-                    crate::decoder::yuv::ChromaPrec::LibwebpExact,
+                    data, color, width, height, stride, prec,
                 )
             }
         } else if let Some(sharp_cfg) = &params.sharp_yuv {
