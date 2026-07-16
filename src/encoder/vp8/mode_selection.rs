@@ -21,6 +21,17 @@ use archmage::prelude::*;
 
 use super::{MacroblockInfo, sse_8x8_chroma, sse_16x16_luma};
 
+/// libwebp's I4 mode iteration order — its internal `B_*` enum (DC, TM, VE,
+/// HE, **RD, VR, LD**, VL, HD, HU; `common_dec.h`) — expressed in zenwebp's
+/// spec-order mode indices (where `B_LD_PRED=4`, `B_RD_PRED=5`,
+/// `B_VR_PRED=6`). libwebp keeps the FIRST minimum on an exact RD-score tie
+/// (strict `<`), so the parity iteration must visit candidates in ITS order,
+/// not zen's index order: an exact LD-vs-VR tie picks VR in libwebp (its 5 <
+/// its 6) but would pick LD in zen index order (zen 4 < zen 6). Traced at
+/// 382297 q80 m3 sns0 mb(26,16) blk3: both candidates score 145452 at
+/// lambda_i4=12; libwebp emits VR, zen emitted LD, and 264 MBs cascaded. (#38)
+const LIBWEBP_I4_ORDER: [usize; 10] = [0, 1, 2, 3, 5, 6, 4, 7, 8, 9];
+
 // =============================================================================
 // Helper dispatch functions for inline SSE computation
 // =============================================================================
@@ -1617,19 +1628,20 @@ impl<'a> super::Vp8Encoder<'a> {
                     None
                 };
 
-                // libwebp iterates the I4 sub-block modes in index order 0..9 and
-                // breaks score ties toward the lower index (strict `<`, first minimum
-                // wins). zenwebp presorts by prediction SSE so its early-exit can drop
-                // hopeless modes sooner — but that breaks ties toward whichever tied
-                // mode sorts first by SSE, which can differ from the lowest index.
-                // The tie is real: e.g. 382297 m3 mb(27,23) sub-block 9 is an exact
-                // score tie (142133) between RD(5) and VR(6); libwebp picks RD, zen
-                // picked VR, and the two reconstruct differently, cascading pixels
-                // into downstream MBs. Under parity, iterate in index order instead so
-                // ties resolve exactly like libwebp. At m3+ all 10 modes are evaluated
-                // (max_modes_to_try == 10), so index order changes only the tie-break,
-                // and zen's early-exit skips (`>= best`) then match libwebp's early
-                // `continue` in the same order.
+                // libwebp iterates the I4 sub-block modes in ITS enum order and
+                // breaks score ties toward the first minimum (strict `<`). zenwebp
+                // presorts by prediction SSE so its early-exit can drop hopeless
+                // modes sooner — but that breaks ties toward whichever tied mode
+                // sorts first by SSE. The tie is real: e.g. 382297 m3 mb(27,23)
+                // sub-block 9 is an exact score tie (142133) between RD and VR;
+                // 382297 q80 m3 mb(26,16) blk3 ties LD vs VR at 145452. Under
+                // parity, iterate in `LIBWEBP_I4_ORDER` — libwebp's enum order
+                // expressed in zen indices (libwebp's LD/RD/VR numbering is
+                // permuted vs the spec order zen uses, so plain 0..9 breaks
+                // LD-vs-VR ties the wrong way). At m3+ all 10 modes are evaluated
+                // (max_modes_to_try == 10), so the order changes only the
+                // tie-break, and zen's early-exit skips (`>= best`) then match
+                // libwebp's early `continue` in the same order.
                 let i4_index_order =
                     self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity;
                 // === SIMD-hoisted path: single arcane context for all mode evaluation ===
@@ -1643,7 +1655,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         // Pre-sort modes by prediction SSE (default) or use index order
                         // 0..9 (parity, for libwebp's tie-break).
                         let mode_sse = if i4_index_order {
-                            core::array::from_fn(|i| (0u32, i))
+                            LIBWEBP_I4_ORDER.map(|i| (0u32, i))
                         } else {
                             presort_i4_modes_sse2(token, &src_block, &preds)
                         };
@@ -1726,7 +1738,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         // Index order under parity (libwebp tie-break); see the sse2
                         // path above.
                         let mode_sse = if i4_index_order {
-                            core::array::from_fn(|i| (0u32, i))
+                            LIBWEBP_I4_ORDER.map(|i| (0u32, i))
                         } else {
                             presort_i4_modes_wasm(token, &src_block, &preds)
                         };
@@ -2653,11 +2665,13 @@ impl<'a> super::Vp8Encoder<'a> {
             let sse = sse4x4_dispatch(src_block, pred);
             mode_sse[mode_idx] = (sse, mode_idx);
         }
-        // Under parity, keep index order 0..9 so score ties resolve toward the
-        // lower mode index like libwebp; otherwise sort by SSE for early-exit.
-        // (See the sse2 path for the tie-break rationale.)
+        // Under parity, visit modes in libwebp's enum order so score ties
+        // resolve exactly like libwebp; otherwise sort by SSE for early-exit.
+        // (See `LIBWEBP_I4_ORDER` for the LD/RD/VR permutation rationale.)
         if self.cost_model != crate::encoder::api::CostModel::StrictLibwebpParity {
             mode_sse.sort_unstable_by_key(|&(sse, _)| sse);
+        } else {
+            mode_sse = LIBWEBP_I4_ORDER.map(|i| (0u32, i));
         }
 
         for &(_, mode_idx) in mode_sse[..max_modes_to_try].iter() {

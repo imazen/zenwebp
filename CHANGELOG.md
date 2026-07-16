@@ -136,6 +136,23 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Added
 
+- **`StrictLibwebpParity` byte-exact across the FULL 4004-cell grid —
+  100%** (#38, 2026-07-16): 99.75% → **4004/4004**. The last 10 cells (all
+  real photos, q80+) were one root: exact I4 RD-score ties broken toward
+  different modes. zenwebp's `B_*` mode constants use the VP8 spec order
+  (`LD=4, RD=5, VR=6`) while libwebp's internal enum permutes them
+  (`RD=4, VR=5, LD=6`), and libwebp keeps the first minimum iterating ITS
+  order — so an exact LD-vs-VR tie (382297 q80 m3 mb(26,16) blk3: both score
+  145452) picked different winners and cascaded 264 MBs. Parity now iterates
+  `LIBWEBP_I4_ORDER` (libwebp's visit order in zen indices) in all three I4
+  evaluator paths. The CI gate gains regression anchors for the four
+  2026-07-16 roots (skip-proba, trellis-skip, libm-pow, tie-break order:
+  two SNS configs × q5/q20/q80 × m0-m6 + the 33x17 pow-boundary cell). The
+  proven claim is byte-exactness across the committed grid — 13 images
+  (CID22 photos + tiny/odd synthetics) × q5-95 × 4 (sns,flt,segs) configs ×
+  m0-m6; unswept axes (sharpness≠0, partitions>1, alpha, target_size) need
+  sweep extension before claim extension. Tuned default byte-unchanged
+  throughout. Scope: `benchmarks/byteparity_scope_2026-07-14.md`.
 - **`StrictLibwebpParity` byte-exactness at 99.75% of the grid; all
   synthetics closed** (#38, 2026-07-16): 99.6% → **99.75% (3994/4004)**, +5.
   The synth_33x17 q90 sns50/segs4 cluster (m2-m6) was one root:

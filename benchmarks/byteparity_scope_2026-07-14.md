@@ -8,12 +8,19 @@ mid-session. It is now committed as `dev/byteparity_sweep.rs` (the score),
 `dev/bitexact_diff.rs` (header fields + mode stream) — all wired as
 `__expert` examples. Never rebuild this in `/tmp` again.
 
-**The committed grid now scores 3994/4004 = 99.75%** (was 3578/4004 = 89.4%
-when the harness was first committed; +189 came from the Cat5/Cat6 stat-node
-fix `44ae3a0`, +62 from the StoreMaxDelta I16-candidate gate `c9abe85`, +93
-from the m0-m2 skip-proba StatLoop fix `46e2a2c`, +67 from the m5/m6
-trellis-skip fix `a9fc2da`, then **+5 from the segment-quant libm-pow fix —
-this commit**).
+**The committed grid is COMPLETE: 4004/4004 = 100% byte-identical
+(2026-07-16).** The path: 3578 (89.4%, harness committed) → +189 Cat5/Cat6
+stat-node `44ae3a0` → +62 StoreMaxDelta I16-candidate `c9abe85` → +93 m0-m2
+skip-proba StatLoop `46e2a2c` → +67 m5/m6 trellis-skip `a9fc2da` → +5
+segment-quant libm-pow `9a6a289` → **+10 I4 tie-break in libwebp's enum order
+(this commit) = 4004/4004**. The gate
+(`tests/libwebp_byte_parity.rs`, CI `__expert` step) now pins regression
+anchors for all four 2026-07-16 roots on top of the q75/tiny/q90 pins.
+
+**Claim discipline:** what is proven is byte-exactness across THIS grid —
+13 images × q{5..95} × 4 (sns,flt,segs) configs × m0-m6. Settings outside it
+(filter_sharpness ≠ 0, partitions > 1, alpha, target_size, exotic content)
+are unswept; widen the grid before widening the claim.
 Neither number is comparable to the 3488/4004 = 87.1% below: 10 of
 the 13 images are synthetic and their generator was lost with the /tmp wipe and
 reconstructed differently, so the synthetic cells are simply different content
@@ -21,19 +28,31 @@ reconstructed differently, so the synthetic cells are simply different content
 is the durable baseline going forward** — the grid is committed now; re-run the
 tool for any before/after, and don't compare across grids.
 
-### Failure shape on the committed grid (10 of 4004, 2026-07-16, post-libm-pow)
+### Failure shape: NONE — 4004/4004 (2026-07-16)
 
-All 10 remaining cells are real photos at q80+, in 5 clusters:
+#### SOLVED: I4 tie-break must follow libwebp's ENUM order (this commit, +10)
 
-```
-382297   q80 m3+m4 sns0 (both segs configs, identical bytes)  4 cells  zen +22B
-382297   q95 m6 sns0 (both segs configs)                      2 cells  zen −26B
-382297   q95 m3 sns50/flt60/segs4                             1 cell   same size
-382297   q90+q95 m5 sns30/flt20/segs2                         2 cells
-1025469  q95 m5 sns50/flt60/segs4                             1 cell
-```
+The last 10 cells (all real photos, all q80+, in 5 apparent "clusters") were
+ONE root: exact I4 RD-score ties broken toward different modes. zenwebp's
+`B_*` constants use the VP8 spec order (`LD=4, RD=5, VR=6`); libwebp's
+internal enum permutes them (`RD=4, VR=5, LD=6`, `common_dec.h`). libwebp
+keeps the FIRST minimum (strict `<`) iterating ITS order, so on an exact tie
+between LD and VR libwebp picks VR while zen's "iterate 0..9" parity
+tie-break picked LD. Traced at 382297 q80 m3 sns0 mb(26,16) blk3: LD
+`(1564+6909)·12 + 256·171` == VR `(1282+7447)·12 + 256·159` == **145452**,
+an exact tie; 264 MBs cascaded from that one sub-block. (The trace first
+proved probas/level-costs identical via the REFRESHDBG2 block diff — blocks
+1-4 matched, the divergence sat between refreshes — then I16DBG showed all
+four I16 candidates byte-equal, isolating the I4 loop; the per-sub-block R
+delta of exactly 140 = FLATNESS_PENALTY was a red herring, zen folds it
+into the score differently but equivalently.) Fix: `LIBWEBP_I4_ORDER =
+[0,1,2,3,5,6,4,7,8,9]` — libwebp's visit order in zen indices — used by all
+three evaluator paths (sse2/wasm/scalar) under parity. Exact ties concentrate
+at high q (fine quant → many near-equal candidates), which is why the tail
+was all q80+.
 
-All synthetics (incl. every tiny/odd-dimension case) are now 100%.
+Earlier the same day (see below): +93 m0-m2 skip-proba, +67 m5/m6
+trellis-skip, +5 segment-quant libm-pow.
 
 #### SOLVED: segment-quant pow approximation off-by-one (this commit, +5)
 

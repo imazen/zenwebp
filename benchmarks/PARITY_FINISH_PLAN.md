@@ -8,23 +8,18 @@ Make `CostModel::StrictLibwebpParity` produce **byte-identical** output to libwe
 at matching `(quality, method, sns, filter, segments)`. Decoded pixels are already
 bit-exact and gated; this is about matching libwebp's exact **bytes**.
 
-## STATE (2026-07-16, post segment-quant-libm fix)
+## STATE (2026-07-16): ✅ **DONE — 4004/4004 = 100% byte-identical**
 
-**3994/4004 = 99.75%** on the committed grid. 10 cells remain — all real
-photos, all q80+, in 5 clusters:
+The committed grid is complete. The DONE criteria below are met: score at
+4004/4004, all gates green (full suite, `libwebp_byte_parity` incl. new
+regression anchors for the four final roots, clippy on default/`__expert`/
+`__expert,mode_debug`), docs + CHANGELOG current.
 
-| cluster | cells | note |
-|---|---|---|
-| 382297 q80 m3+m4 sns0 (both segs configs) | 4 | one root; zen +22B — **next target** |
-| 382297 q95 m6 sns0 (both segs configs) | 2 | zen −26B |
-| 382297 q90+q95 m5 sns30/flt20/segs2 | 2 | |
-| 382297 q95 m3 segs4 | 1 | same size, content diff @6854 |
-| 1025469 q95 m5 segs4 | 1 | |
-
-m0-m2, the m5/m6 trellis residue, every q≤70 cell, and ALL synthetics
-(tiny/odd dimensions included) are **closed**. The sns0 segs1/segs4 pairs
-stay byte-identical to each other, so these are ~5 distinct roots at most —
-likely fewer.
+**Claim discipline still applies:** byte-exactness is proven ACROSS THIS
+GRID (13 images × q{5..95} × 4 configs × m0-m6), not universally. Unswept
+axes: `filter_sharpness ≠ 0`, `partitions > 1`, alpha, `target_size`, more
+content. If the north-star widens, extend `dev/byteparity_sweep.rs` along
+those axes and re-enter THE LOOP; the tooling and this playbook stay valid.
 
 ## TOOLS — all committed, all `--features __expert`
 
@@ -156,19 +151,19 @@ finalizes come from the token loop. #27 stands on its own merits only.
 | StoreMaxDelta from the I16 CANDIDATE, not the final mode | `c9abe85` | +62 |
 | m0-m2 skip-proba: StatLoop-shaped count + size_p0 bailout | `46e2a2c` | +93 |
 | m5/m6 skip from FINAL trellis levels, not simple re-quant | `a9fc2da` | +67 |
-| segment-quant via libm pow (fast-pow flipped trunc boundary) | 2026-07-16 | +5 |
+| segment-quant via libm pow (fast-pow flipped trunc boundary) | `9a6a289` | +5 |
+| I4 tie-break in LIBWEBP's enum order (LD/RD/VR permuted) | 2026-07-16 | +10 → **4004/4004** |
 
 Earlier: base-quant truncate `52cf96f2` · segmentation-collapse `41923466` ·
 trailing-slots `7acdd775` · skip-proba forced off `91c96168`.
 
-## STRATEGY FOR THE REMAINING 10
+## STRATEGY — none needed; grid complete. Solved-root index:
 
-**1. 382297 q80 m3+m4 sns0 (4 cells — one root).** zen +22B, both segs
-configs byte-identical to each other. m3+m4 failing together = the
-RD_OPT_BASIC (non-trellis token-loop) path.
-
-**2. The q90-q95 m5/m6/m3 tail (6 cells).** Likely per-cluster roots; trace
-after #1 — they may share mechanisms.
+**(solved) I4 tie-break order** — the final 10 cells, one root: zen's B-mode
+constants are spec-order (LD=4,RD=5,VR=6), libwebp's enum is permuted
+(RD=4,VR=5,LD=6), and exact RD ties resolve to the first-visited mode.
+`LIBWEBP_I4_ORDER` in `mode_selection.rs` now drives the parity iteration in
+all three evaluator paths. Ties concentrate at high q.
 
 **(solved) synth_33x17 q90 cluster** — was 5 cells, one root: the fast
 `pow`/`cbrt` approximations flipped `compute_segment_quant`'s truncated quant
@@ -194,17 +189,18 @@ freeze via `fast_probe_skip_count`), full-frame truncated unclamped
 `CalcSkipProba`, `< 250` threshold, and the `size_p0 == 0` bailout gating the
 finalize off at single-effective-segment configs (`!segments_enabled`).
 
-## DONE
+## DONE — ✅ criteria met 2026-07-16
 
-`byteparity_sweep` at 4004/4004 — or a measured max with each residual documented
-as a *named* libwebp-internal requiring a specific rearchitecture. Then: all gates
-green, doc + CHANGELOG current, `.workongoing` removed.
+`byteparity_sweep` at **4004/4004**; all gates green; docs + CHANGELOG
+current; `.workongoing` removed at session end.
 
-**Do not advertise unqualified "bit-exact libwebp encode" below 100%.** What is
-true and gated today: byte-exact at q75 across m0-m6 on two configs, plus
-tiny/odd dimensions, plus q90 across both recorder paths. Decode bit-exactness IS
-complete and gated (`tests/v2_pixel_perfect.rs` asserts `max_diff == 0` vs real
-libwebp).
+**Advertise the claim with its scope:** byte-exact across the committed grid
+(13 images × q5-95 × 4 configs × m0-m6), gated in CI by
+`tests/libwebp_byte_parity.rs` (q75 pin, tiny/odd dims, q90 recorder paths,
+plus regression anchors for the four 2026-07-16 roots). Decode bit-exactness
+was already complete and gated (`tests/v2_pixel_perfect.rs`, `max_diff == 0`
+vs real libwebp). Unswept encode axes remain (sharpness, partitions, alpha,
+target_size) — extend the sweep before extending the claim.
 
 ## GUARDRAILS
 

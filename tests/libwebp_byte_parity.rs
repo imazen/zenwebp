@@ -8,15 +8,14 @@
 //!
 //! ## What is and is not claimed
 //!
-//! `StrictLibwebpParity` is byte-exact at the **traced operating point**, not
-//! across the whole configuration space. The pinned grid below is the part that
-//! is actually byte-identical and must stay that way. The broad picture
-//! (13 images x q5-95 x 4 configs x m0-6 = 4004 cells) currently sits at
-//! **3767/4004 = 94.1%** — measured by `dev/byteparity_sweep.rs`, which is the
-//! score, not a gate. Do not advertise "bit-exact libwebp encode" as an
-//! unqualified property while that number is below 100%; what is true today is
-//! "byte-exact at q75 on this content across every method and these two
-//! configs".
+//! As of 2026-07-16 the full committed grid — 13 images (3 CID22 512² photos
+//! + 10 synthetics incl. 1×1/2×2/3×3/odd-chroma/edge-partial MBs) × q ∈
+//! {5..95} × 4 configs {(sns,flt,segs) = (0,0,1),(50,60,4),(0,0,4),(30,20,2)}
+//! × m0-m6 = **4004 cells — is 4004/4004 byte-identical** (measured by
+//! `dev/byteparity_sweep.rs`, which is the score; this test is the gate).
+//! The honest claim is "byte-exact across that grid": settings outside it
+//! (filter_sharpness ≠ 0, partitions > 1, alpha, target_size, other content)
+//! have not been swept — widen the grid before widening the claim.
 //!
 //! Provenance: `benchmarks/byteparity_scope_2026-07-14.md`.
 //!
@@ -172,5 +171,46 @@ fn high_quality_spans_both_recorder_paths() {
     // m0-m2 take libwebp's non-token path; m3-m6 take the token path.
     for m in 0u8..=6 {
         assert_byte_identical(&format!("synth_{w}x{h}"), &rgb, w, h, Cell::plain(90, m));
+    }
+}
+
+/// Regression anchors for the four roots that completed the 4004-cell grid
+/// (2026-07-16, #38): the m0-m2 skip-proba StatLoop count (fires at low q
+/// with SNS + multi-segment configs), the m5/m6 skip-from-trellis-levels
+/// decision (mid q), the segment-quant libm-pow truncation boundary, and the
+/// I4 tie-break in libwebp's enum order (high q, where exact RD ties
+/// concentrate). Sweeps the two SNS configs the q75 pin never covered at
+/// low/mid/high q, plus the exact odd-dimension cell that exposed the pow
+/// boundary.
+#[test]
+fn sns_configs_low_mid_high_q_byte_identical() {
+    let (w, h) = (512u32, 512u32);
+    let rgb = synth(w, h, 41);
+    for (sns, flt, segs) in [(50u8, 60u8, 4u8), (30, 20, 2)] {
+        for q in [5u8, 20, 80] {
+            for m in 0u8..=6 {
+                let c = Cell {
+                    q,
+                    m,
+                    sns,
+                    flt,
+                    segs,
+                };
+                assert_byte_identical(&format!("synth_{w}x{h}"), &rgb, w, h, c);
+            }
+        }
+    }
+    // The segment-quant pow-boundary cell: synth 33x17 q90 sns50/flt60/segs4
+    // (seg1 quant index flipped 12 vs 11 under the fast-pow approximation).
+    let rgb = synth(33, 17, 23);
+    for m in 0u8..=6 {
+        let c = Cell {
+            q: 90,
+            m,
+            sns: 50,
+            flt: 60,
+            segs: 4,
+        };
+        assert_byte_identical("synth_33x17", &rgb, 33, 17, c);
     }
 }
