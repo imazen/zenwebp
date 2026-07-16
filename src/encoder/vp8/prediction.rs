@@ -10,8 +10,8 @@ use crate::common::types::*;
 
 use crate::encoder::cost::trellis_quantize_block;
 
+use super::MacroblockInfo;
 use super::residuals::get_coeffs0_from_block;
-use super::{ChromaCoeffs, MacroblockInfo};
 
 /// Result from luma block transform, containing quantized coefficients
 /// and the prediction/reconstruction buffer for SSE computation.
@@ -21,20 +21,26 @@ pub(super) struct LumaBlockResult {
     /// The bordered prediction/reconstruction buffer.
     /// After transform, contains reconstructed pixels (prediction + IDCT).
     pub pred_block: [u8; LUMA_BLOCK_SIZE],
-    /// Trellis-quantized zigzag levels for each of the 16 Y1 sub-blocks,
-    /// produced during reconstruction when trellis is enabled. Used by
-    /// `record_residual_tokens_storing` to avoid running trellis twice on
-    /// the same data — once here for reconstruction, once again for token
-    /// emission. `None` when trellis is disabled (non-trellis methods 0-4
-    /// take a different code path entirely). (#35-#8)
-    pub trellis_y1_zigzag: Option<[[i32; 16]; 16]>,
+    /// Quantized Y1 levels in ZIGZAG order for each of the 16 sub-blocks,
+    /// captured during reconstruction — trellis levels on the trellis
+    /// tiers (#35-#8), simple-quantizer levels otherwise. The recorder
+    /// consumes these directly instead of re-quantizing the same DCT
+    /// input a second time (levels ARE what reconstruction dequantized,
+    /// so reuse is definitionally byte-identical).
+    pub y1_zigzag: [[i32; 16]; 16],
+    /// Whether `y1_zigzag` came from the trellis (enables the recorder's
+    /// one-shot debug cross-check of the cached trellis output).
+    pub y1_from_trellis: bool,
+    /// Quantized Y2 (WHT) levels in ZIGZAG order — I16 only, zeros for I4.
+    pub y2_zigzag: [i32; 16],
 }
 
 /// Result from chroma block transform, containing quantized coefficients
 /// and the reconstruction buffer for SSE computation.
 pub(super) struct ChromaBlockResult {
-    /// Quantized coefficients for 4 sub-blocks (U or V).
-    pub coeffs: [i32; 16 * 4],
+    /// Quantized levels in ZIGZAG order per sub-block (what the recorder
+    /// emits — captured from the reconstruction quantize).
+    pub zigzag: [[i32; 16]; 4],
     /// The bordered prediction/reconstruction buffer.
     pub pred_block: [u8; CHROMA_BLOCK_SIZE],
 }
@@ -205,6 +211,12 @@ impl<'a> super::Vp8Encoder<'a> {
         for (index, value) in coeffs0.iter_mut().enumerate() {
             *value = y2_matrix.quantize_coeff(*value, index);
         }
+        // Levels in zigzag order for the recorder (avoids its re-WHT +
+        // re-quantize of the same input).
+        let mut y2_zigzag = [0i32; 16];
+        for i in 0..16 {
+            y2_zigzag[i] = coeffs0[usize::from(ZIGZAG[i])];
+        }
 
         // Y1 blocks (AC only): use trellis if enabled
         let trellis_lambda = if self.do_trellis {
@@ -239,12 +251,7 @@ impl<'a> super::Vp8Encoder<'a> {
         // When trellis is enabled, capture the zigzag levels per sub-block so
         // record_residual_tokens_storing can reuse them instead of re-running
         // trellis on the exact same DCT input. (#35-#8)
-        let mut dequantized_blocks = [0i32; 16 * 16];
-        let mut trellis_y1_zigzag: Option<[[i32; 16]; 16]> = if trellis_lambda.is_some() {
-            Some([[0i32; 16]; 16])
-        } else {
-            None
-        };
+        let mut y1_zigzag = [[0i32; 16]; 16];
         for y in 0usize..4 {
             for x in 0usize..4 {
                 let i = y * 4 + x;
@@ -254,7 +261,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 let dequant_block = if let Some(lambda) = trellis_lambda {
                     // Trellis quantization for better RD trade-off
                     let ctx0 = (u8::from(left_nz[y]) + u8::from(top_nz[x])).min(2) as usize;
-                    let zigzag_slot = &mut trellis_y1_zigzag.as_mut().unwrap()[i];
+                    let zigzag_slot = &mut y1_zigzag[i];
                     // Per-block trellis dump, format-matched to TRELDBG in the
                     // instrumented libwebp's ReconstructIntra16. (#38)
                     #[cfg(feature = "mode_debug")]
@@ -287,41 +294,39 @@ impl<'a> super::Vp8Encoder<'a> {
                     // block now contains dequantized values at natural indices
                     block
                 } else {
-                    // Simple quantization
-                    let mut has_nz = false;
-                    for (idx, y_value) in block.iter_mut().enumerate() {
-                        if idx == 0 {
-                            *y_value = 0; // DC goes to Y2
-                        } else {
-                            let level = y1_matrix.quantize_coeff(*y_value, idx);
-                            has_nz |= level != 0;
-                            *y_value = y1_matrix.dequantize(level, idx);
-                        }
+                    // Fused SIMD quantize+dequantize, AC only (bit-identical:
+                    // the sharpen boost is baked into the Y1 matrix, and the
+                    // nz flags below feed only the trellis branch's context).
+                    let mut quantized = [0i32; 16];
+                    let mut dq = [0i32; 16];
+                    crate::encoder::quantize::quantize_dequantize_ac_only_simd(
+                        &block,
+                        y1_matrix,
+                        true,
+                        &mut quantized,
+                        &mut dq,
+                    );
+                    // Zigzag levels for the recorder; slot 0 stays 0 (I16-AC).
+                    for k in 0..16 {
+                        y1_zigzag[i][k] = quantized[usize::from(ZIGZAG[k])];
                     }
-                    top_nz[x] = has_nz;
-                    left_nz[y] = has_nz;
-                    block
+                    dq
                 };
 
-                // Add Y2 DC component
+                // Add Y2 DC component, then fused IDCT + add-residue straight
+                // into the prediction (replaces the scalar idct4x4 + staging
+                // array + separate add_residue pass).
                 let mut full_block = dequant_block;
                 full_block[0] = y2_dequant[i];
-
-                // IDCT
-                transform::idct4x4(&mut full_block);
-                dequantized_blocks[i * 16..][..16].copy_from_slice(&full_block);
-            }
-        }
-
-        // Apply residue to each block
-        for y in 0usize..4 {
-            for x in 0usize..4 {
-                let i = x + y * 4;
-                let rb: &[i32; 16] = dequantized_blocks[i * 16..][..16].try_into().unwrap();
-                let y0 = 1 + y * 4;
-                let x0 = 1 + x * 4;
-
-                add_residue(&mut y_with_border, rb, y0, x0, LUMA_STRIDE);
+                let dc_only = full_block[1..].iter().all(|&c| c == 0);
+                crate::common::transform::idct_add_residue_inplace(
+                    &mut full_block,
+                    &mut y_with_border,
+                    1 + y * 4,
+                    1 + x * 4,
+                    LUMA_STRIDE,
+                    dc_only,
+                );
             }
         }
 
@@ -337,7 +342,9 @@ impl<'a> super::Vp8Encoder<'a> {
         LumaBlockResult {
             coeffs: luma_blocks,
             pred_block: y_with_border,
-            trellis_y1_zigzag,
+            y1_zigzag,
+            y1_from_trellis: trellis_lambda.is_some(),
+            y2_zigzag,
         }
     }
 
@@ -370,13 +377,9 @@ impl<'a> super::Vp8Encoder<'a> {
             None
         };
 
-        // Capture per-sub-block trellis zigzag levels so the recorder can skip
-        // re-trellising the same DCT input. (#35-#8)
-        let mut trellis_y1_zigzag: Option<[[i32; 16]; 16]> = if trellis_lambda.is_some() {
-            Some([[0i32; 16]; 16])
-        } else {
-            None
-        };
+        // Capture per-sub-block zigzag levels so the recorder can skip
+        // re-quantizing (or re-trellising, #35-#8) the same DCT input.
+        let mut y1_zigzag = [[0i32; 16]; 16];
 
         // Track non-zero context for trellis (I4 uses ctype=3)
         // IMPORTANT: Initialize from global state to match encode_residual
@@ -464,7 +467,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     };
                     // Capture zigzag levels into the LumaBlockResult slot so the
                     // recorder doesn't re-run trellis on the same input. (#35-#8)
-                    let zigzag_slot = &mut trellis_y1_zigzag.as_mut().unwrap()[i];
+                    let zigzag_slot = &mut y1_zigzag[i];
                     trellis_quantize_block(
                         &mut current_subblock,
                         zigzag_slot,
@@ -477,13 +480,22 @@ impl<'a> super::Vp8Encoder<'a> {
                         &segment.psy_config,
                     )
                 } else {
-                    // Simple quantization
-                    let mut has_nz = false;
-                    for (index, y_value) in current_subblock.iter_mut().enumerate() {
-                        let level = y1_matrix.quantize_coeff(*y_value, index);
-                        has_nz |= level != 0;
-                        *y_value = y1_matrix.dequantize(level, index);
+                    // Fused SIMD quantize+dequantize (bit-identical: sharpen
+                    // is baked into the Y1 matrix; `true` applies it exactly
+                    // like `quantize_coeff` does).
+                    let mut quantized = [0i32; 16];
+                    let mut dq = [0i32; 16];
+                    let has_nz = crate::encoder::quantize::quantize_dequantize_block_simd(
+                        &current_subblock,
+                        y1_matrix,
+                        true,
+                        &mut quantized,
+                        &mut dq,
+                    );
+                    for k in 0..16 {
+                        y1_zigzag[i][k] = quantized[usize::from(ZIGZAG[k])];
                     }
+                    current_subblock = dq;
                     has_nz
                 };
 
@@ -491,8 +503,15 @@ impl<'a> super::Vp8Encoder<'a> {
                 top_nz[sbx] = has_nz;
                 left_nz[sby] = has_nz;
 
-                transform::idct4x4(&mut current_subblock);
-                add_residue(&mut y_with_border, &current_subblock, y0, x0, stride);
+                let dc_only = current_subblock[1..].iter().all(|&c| c == 0);
+                crate::common::transform::idct_add_residue_inplace(
+                    &mut current_subblock,
+                    &mut y_with_border,
+                    y0,
+                    x0,
+                    stride,
+                    dc_only,
+                );
             }
         }
 
@@ -508,7 +527,9 @@ impl<'a> super::Vp8Encoder<'a> {
         LumaBlockResult {
             coeffs: luma_blocks,
             pred_block: y_with_border,
-            trellis_y1_zigzag,
+            y1_zigzag,
+            y1_from_trellis: trellis_lambda.is_some(),
+            y2_zigzag: [0i32; 16],
         }
     }
 
@@ -606,52 +627,6 @@ impl<'a> super::Vp8Encoder<'a> {
         }
     }
 
-    fn get_chroma_block_coeffs(
-        &self,
-        chroma_blocks: [i32; 16 * 4],
-        segment: &Segment,
-    ) -> ChromaCoeffs {
-        let mut chroma_coeffs: ChromaCoeffs = [0i32; 16 * 4];
-        let uv_matrix = segment.uv_matrix.as_ref().unwrap();
-
-        for (block, coeff_block) in chroma_blocks
-            .chunks_exact(16)
-            .zip(chroma_coeffs.chunks_exact_mut(16))
-        {
-            for ((index, &value), coeff) in block.iter().enumerate().zip(coeff_block.iter_mut()) {
-                *coeff = uv_matrix.quantize_coeff(value, index);
-            }
-        }
-
-        chroma_coeffs
-    }
-
-    fn get_dequantized_blocks_from_coeffs_chroma(
-        &self,
-        chroma_coeffs: &ChromaCoeffs,
-        segment: &Segment,
-    ) -> [i32; 16 * 4] {
-        let mut dequantized_blocks = [0i32; 16 * 4];
-        let uv_matrix = segment.uv_matrix.as_ref().unwrap();
-
-        for (coeffs_block, dequant_block) in chroma_coeffs
-            .chunks_exact(16)
-            .zip(dequantized_blocks.chunks_exact_mut(16))
-        {
-            for ((index, &coeff), dequant_value) in coeffs_block
-                .iter()
-                .enumerate()
-                .zip(dequant_block.iter_mut())
-            {
-                *dequant_value = uv_matrix.dequantize(coeff, index);
-            }
-
-            transform::idct4x4(dequant_block.try_into().unwrap());
-        }
-
-        dequantized_blocks
-    }
-
     pub(super) fn transform_chroma_blocks(
         &mut self,
         mbx: usize,
@@ -689,27 +664,44 @@ impl<'a> super::Vp8Encoder<'a> {
             self.apply_chroma_error_diffusion(&mut u_blocks, &mut v_blocks, mbx, &uv_matrix);
         }
 
+        // Fused quantize+dequantize (one SIMD pass per block) followed by
+        // fused IDCT+add-residue into the prediction — the same primitives
+        // the RD path (`pick_best_uv`) uses, replacing the historical
+        // per-coefficient scalar quantize → scalar dequant → scalar idct →
+        // add_residue chain. Bit-identical math (the scalar tier of the
+        // fused pair IS `quantize_coeff`/`* q`), ~4× fewer instructions.
         let segment = self.get_segment_for_mb(mbx, mby);
-        let u_coeffs = self.get_chroma_block_coeffs(u_blocks, segment);
-        let v_coeffs = self.get_chroma_block_coeffs(v_blocks, segment);
-
-        let quantized_u_residue =
-            self.get_dequantized_blocks_from_coeffs_chroma(&u_coeffs, segment);
-        let quantized_v_residue =
-            self.get_dequantized_blocks_from_coeffs_chroma(&v_coeffs, segment);
-
-        for y in 0usize..2 {
-            for x in 0usize..2 {
-                let i = x + y * 2;
-                let urb: &[i32; 16] = quantized_u_residue[i * 16..][..16].try_into().unwrap();
-
-                let y0 = 1 + y * 4;
-                let x0 = 1 + x * 4;
-                add_residue(&mut predicted_u, urb, y0, x0, stride);
-
-                let vrb: &[i32; 16] = quantized_v_residue[i * 16..][..16].try_into().unwrap();
-
-                add_residue(&mut predicted_v, vrb, y0, x0, stride);
+        let uv_matrix = segment.uv_matrix.as_ref().unwrap();
+        let mut u_zigzag = [[0i32; 16]; 4];
+        let mut v_zigzag = [[0i32; 16]; 4];
+        for (blocks, zigzag, predicted) in [
+            (&u_blocks, &mut u_zigzag, &mut predicted_u),
+            (&v_blocks, &mut v_zigzag, &mut predicted_v),
+        ] {
+            for i in 0usize..4 {
+                let block: &[i32; 16] = blocks[i * 16..][..16].try_into().unwrap();
+                let mut quantized = [0i32; 16];
+                let mut dequantized = [0i32; 16];
+                crate::encoder::quantize::quantize_dequantize_block_simd(
+                    block,
+                    uv_matrix,
+                    false,
+                    &mut quantized,
+                    &mut dequantized,
+                );
+                for k in 0..16 {
+                    zigzag[i][k] = quantized[usize::from(ZIGZAG[k])];
+                }
+                let (x, y) = (i % 2, i / 2);
+                let dc_only = dequantized[1..].iter().all(|&c| c == 0);
+                crate::common::transform::idct_add_residue_inplace(
+                    &mut dequantized,
+                    predicted,
+                    1 + y * 4,
+                    1 + x * 4,
+                    stride,
+                    dc_only,
+                );
             }
         }
 
@@ -735,11 +727,11 @@ impl<'a> super::Vp8Encoder<'a> {
 
         (
             ChromaBlockResult {
-                coeffs: u_blocks,
+                zigzag: u_zigzag,
                 pred_block: predicted_u,
             },
             ChromaBlockResult {
-                coeffs: v_blocks,
+                zigzag: v_zigzag,
                 pred_block: predicted_v,
             },
         )

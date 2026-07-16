@@ -1375,74 +1375,20 @@ impl<'a> super::Vp8Encoder<'a> {
     #[allow(clippy::needless_range_loop)]
     pub(super) fn quantize_mb_coeffs(
         &self,
-        macroblock_info: &MacroblockInfo,
-        y_block_data: &[i32; 16 * 16],
-        u_block_data: &[i32; 16 * 4],
-        v_block_data: &[i32; 16 * 4],
+        y_block_data: &super::prediction::LumaBlockResult,
+        u_block_data: &super::prediction::ChromaBlockResult,
+        v_block_data: &super::prediction::ChromaBlockResult,
     ) -> QuantizedMbCoeffs {
-        let segment = &self.segments[macroblock_info.segment_id.unwrap_or(0)];
-        let y1_matrix = segment.y1_matrix.as_ref().unwrap();
-        let y2_matrix = segment.y2_matrix.as_ref().unwrap();
-        let uv_matrix = segment.uv_matrix.as_ref().unwrap();
-
-        let is_i4 = macroblock_info.luma_mode == LumaMode::B;
-        let first_coeff_y1 = if is_i4 { 0usize } else { 1 };
-
-        let mut stored = QuantizedMbCoeffs {
-            y2_zigzag: [0; 16],
-            y1_zigzag: [[0; 16]; 16],
-            u_zigzag: [[0; 16]; 4],
-            v_zigzag: [[0; 16]; 4],
-        };
-
-        // Y2 (DC transform) - only for I16 mode
-        if !is_i4 {
-            let mut coeffs0 = get_coeffs0_from_block(y_block_data);
-            transform::wht4x4(&mut coeffs0);
-
-            for i in 0..16 {
-                let zi = usize::from(ZIGZAG[i]);
-                stored.y2_zigzag[i] = y2_matrix.quantize_coeff(coeffs0[zi], zi);
-            }
+        // Pure assembly: the transform pass already produced the zigzag
+        // levels during reconstruction (the levels it dequantized are by
+        // construction the levels the decoder will see), so re-quantizing
+        // the raw DCT input here would be redundant work.
+        QuantizedMbCoeffs {
+            y2_zigzag: y_block_data.y2_zigzag,
+            y1_zigzag: y_block_data.y1_zigzag,
+            u_zigzag: u_block_data.zigzag,
+            v_zigzag: v_block_data.zigzag,
         }
-
-        // Y1 blocks (simple quantization only — no trellis)
-        for y in 0usize..4 {
-            for x in 0..4 {
-                let block_idx = y * 4 + x;
-                let block: &[i32; 16] = y_block_data[block_idx * 16..][..16].try_into().unwrap();
-                for i in first_coeff_y1..16 {
-                    let zi = usize::from(ZIGZAG[i]);
-                    stored.y1_zigzag[block_idx][i] = y1_matrix.quantize_coeff(block[zi], zi);
-                }
-            }
-        }
-
-        // U blocks
-        for y in 0usize..2 {
-            for x in 0usize..2 {
-                let block_idx = y * 2 + x;
-                let block: &[i32; 16] = u_block_data[block_idx * 16..][..16].try_into().unwrap();
-                for i in 0..16 {
-                    let zi = usize::from(ZIGZAG[i]);
-                    stored.u_zigzag[block_idx][i] = uv_matrix.quantize_coeff(block[zi], zi);
-                }
-            }
-        }
-
-        // V blocks
-        for y in 0usize..2 {
-            for x in 0usize..2 {
-                let block_idx = y * 2 + x;
-                let block: &[i32; 16] = v_block_data[block_idx * 16..][..16].try_into().unwrap();
-                for i in 0..16 {
-                    let zi = usize::from(ZIGZAG[i]);
-                    stored.v_zigzag[block_idx][i] = uv_matrix.quantize_coeff(block[zi], zi);
-                }
-            }
-        }
-
-        stored
     }
 
     /// Record tokens for a macroblock's residual data and return the quantized coefficients.
@@ -1460,11 +1406,11 @@ impl<'a> super::Vp8Encoder<'a> {
         &mut self,
         macroblock_info: &MacroblockInfo,
         mbx: usize,
-        y_block_data: &[i32; 16 * 16],
-        u_block_data: &[i32; 16 * 4],
-        v_block_data: &[i32; 16 * 4],
-        pre_trellised_y1: Option<&[[i32; 16]; 16]>,
+        y_result: &super::prediction::LumaBlockResult,
+        u_result: &super::prediction::ChromaBlockResult,
+        v_result: &super::prediction::ChromaBlockResult,
     ) -> QuantizedMbCoeffs {
+        let y_block_data = &y_result.coeffs;
         // Extract segment data by value/copy to avoid borrow conflicts with proba_stats.
         // Only copies small scalar values (lambdas, flags), not the large matrices.
         let segment_id = macroblock_info.segment_id.unwrap_or(0);
@@ -1499,16 +1445,10 @@ impl<'a> super::Vp8Encoder<'a> {
             v_zigzag: [[0; 16]; 4],
         };
 
-        // Y2 (DC transform) - only for I16 mode
+        // Y2 (DC transform) - only for I16 mode. Levels were captured during
+        // reconstruction (same WHT input, same quantizer) — reuse them.
         if !is_i4 {
-            let y2_matrix = self.segments[segment_id].y2_matrix.as_ref().unwrap();
-            let mut coeffs0 = get_coeffs0_from_block(y_block_data);
-            transform::wht4x4(&mut coeffs0);
-
-            for i in 0..16 {
-                let zi = usize::from(ZIGZAG[i]);
-                stored.y2_zigzag[i] = y2_matrix.quantize_coeff(coeffs0[zi], zi);
-            }
+            stored.y2_zigzag = y_result.y2_zigzag;
 
             let complexity = self.left_complexity.y2 + self.top_complexity[mbx].y2;
             let has_coeffs = token_buf.record_coeff_tokens(
@@ -1534,7 +1474,8 @@ impl<'a> super::Vp8Encoder<'a> {
                 let ctx0 = (left + top).min(2) as usize;
 
                 if let Some(lambda) = y1_trellis_lambda {
-                    if let Some(pre) = pre_trellised_y1 {
+                    if y_result.y1_from_trellis {
+                        let pre = &y_result.y1_zigzag;
                         // Reuse the trellis output captured during reconstruction
                         // in transform_luma_block / transform_luma_blocks_4x4.
                         // Saves running trellis_quantize_block twice on the same
@@ -1616,11 +1557,8 @@ impl<'a> super::Vp8Encoder<'a> {
                         );
                     }
                 } else {
-                    let y1_matrix = self.segments[segment_id].y1_matrix.as_ref().unwrap();
-                    for i in first_coeff_y1..16 {
-                        let zi = usize::from(ZIGZAG[i]);
-                        stored.y1_zigzag[block_idx][i] = y1_matrix.quantize_coeff(block[zi], zi);
-                    }
+                    // Non-trellis: levels captured during reconstruction.
+                    stored.y1_zigzag[block_idx] = y_result.y1_zigzag[block_idx];
                 }
 
                 let has_coeffs = token_buf.record_coeff_tokens(
@@ -1642,15 +1580,7 @@ impl<'a> super::Vp8Encoder<'a> {
             let mut left = self.left_complexity.u[y];
             for x in 0usize..2 {
                 let block_idx = y * 2 + x;
-                let block: &[i32; 16] = u_block_data[block_idx * 16..][..16].try_into().unwrap();
-
-                {
-                    let uv_matrix = self.segments[segment_id].uv_matrix.as_ref().unwrap();
-                    for i in 0..16 {
-                        let zi = usize::from(ZIGZAG[i]);
-                        stored.u_zigzag[block_idx][i] = uv_matrix.quantize_coeff(block[zi], zi);
-                    }
-                }
+                stored.u_zigzag[block_idx] = u_result.zigzag[block_idx];
 
                 let top = self.top_complexity[mbx].u[x];
                 let complexity = (left + top).min(2) as usize;
@@ -1674,15 +1604,7 @@ impl<'a> super::Vp8Encoder<'a> {
             let mut left = self.left_complexity.v[y];
             for x in 0usize..2 {
                 let block_idx = y * 2 + x;
-                let block: &[i32; 16] = v_block_data[block_idx * 16..][..16].try_into().unwrap();
-
-                {
-                    let uv_matrix = self.segments[segment_id].uv_matrix.as_ref().unwrap();
-                    for i in 0..16 {
-                        let zi = usize::from(ZIGZAG[i]);
-                        stored.v_zigzag[block_idx][i] = uv_matrix.quantize_coeff(block[zi], zi);
-                    }
-                }
+                stored.v_zigzag[block_idx] = v_result.zigzag[block_idx];
 
                 let top = self.top_complexity[mbx].v[x];
                 let complexity = (left + top).min(2) as usize;

@@ -415,8 +415,6 @@ struct MacroblockInfo {
     intra16_blocky: bool,
 }
 
-pub(super) type ChromaCoeffs = [i32; 16 * 4];
-
 /// Space-joined level list for the LEVFINAL debug dump (#38).
 #[cfg(feature = "mode_debug")]
 fn fmt_levels(levels: &[i32; 16]) -> alloc::string::String {
@@ -2225,10 +2223,9 @@ impl<'a> Vp8Encoder<'a> {
             let stored_coeffs = self.record_residual_tokens_storing(
                 &macroblock_info,
                 mbx as usize,
-                &y_block_data.coeffs,
-                &u_block_data.coeffs,
-                &v_block_data.coeffs,
-                y_block_data.trellis_y1_zigzag.as_ref(),
+                &y_block_data,
+                &u_block_data,
+                &v_block_data,
             );
             // Final recorded levels for one MB, format-matched to the
             // LEVFINAL dump in the instrumented libwebp's VP8Decimate
@@ -2273,10 +2270,9 @@ impl<'a> Vp8Encoder<'a> {
             let stored_coeffs = self.record_residual_tokens_storing(
                 &macroblock_info,
                 mbx as usize,
-                &y_block_data.coeffs,
-                &u_block_data.coeffs,
-                &v_block_data.coeffs,
-                y_block_data.trellis_y1_zigzag.as_ref(),
+                &y_block_data,
+                &u_block_data,
+                &v_block_data,
             );
             if stored_coeffs.is_all_zero(is_i4, first_coeff_y1) {
                 row_state.skip_mb += 1;
@@ -2302,12 +2298,8 @@ impl<'a> Vp8Encoder<'a> {
             }
         } else {
             // Non-trellis path: quantize once, skip-check, record from stored.
-            let stored_coeffs = self.quantize_mb_coeffs(
-                &macroblock_info,
-                &y_block_data.coeffs,
-                &u_block_data.coeffs,
-                &v_block_data.coeffs,
-            );
+            let stored_coeffs =
+                self.quantize_mb_coeffs(&y_block_data, &u_block_data, &v_block_data);
             let all_zero = stored_coeffs.is_all_zero(is_i4, first_coeff_y1);
             // libwebp records max_edge inside PickBestIntra16, which runs before
             // both the I4 override AND the skip decision — so it must fire here

@@ -212,6 +212,21 @@ path = "dev/sharpyuv_compare.rs"
 required-features = ["__expert"]
 
 [[example]]
+name = "callgrind_encode"
+path = "dev/callgrind_encode.rs"
+required-features = ["_profiling"]
+
+[[example]]
+name = "callgrind_libwebp"
+path = "dev/callgrind_libwebp.rs"
+required-features = ["_profiling"]
+
+[[example]]
+name = "output_hash"
+path = "dev/output_hash.rs"
+required-features = ["__expert"]
+
+[[example]]
 name = "corpus_test"
 path = "dev/corpus_test.rs"
 required-features = ["__expert"]
