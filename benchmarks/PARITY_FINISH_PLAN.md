@@ -8,22 +8,24 @@ Make `CostModel::StrictLibwebpParity` produce **byte-identical** output to libwe
 at matching `(quality, method, sns, filter, segments)`. Decoded pixels are already
 bit-exact and gated; this is about matching libwebp's exact **bytes**.
 
-## STATE (2026-07-16): ✅ **DONE — base grid 4004/4004 AND every shared knob axis at 100%**
+## STATE (2026-07-16, final): ✅ **DONE — every sweep axis at 100%, no follow-ons left**
 
-The committed grid is complete, and the phase-2 setting-permutation sweep
-(added the same day) closed every axis both encoders share semantically:
-filter_sharpness 1-7 (1960/1960), segments-3 + sns/filter extremes incl.
-sns>0/segs1 (1120/1120), quality edges q0/q1/q99/q100 (1456/1456), pinned
-partition_limit (252/252), opaque-RGBA (64/64 of the alpha axis). Six more
-roots fell — see "Setting-permutation validation" in
-`byteparity_scope_2026-07-14.md` for the table.
+Base grid 4004/4004, and EVERY phase-2 axis: filter_sharpness 1-7
+(1960/1960), segments-3 + sns/filter extremes incl. sns>0/segs1
+(1120/1120), quality edges q0/q1/q99/q100 (1456/1456), pinned
+partition_limit (252/252), **sharp_yuv 96/96** (closed by the exact
+SharpYUV port, `src/encoder/sharpyuv.rs` +
+`benchmarks/sharpyuv_port_2026-07-16.md`), and **alpha 192/192**
+(opaque + gradient + checker; six roots — Huffman tie-break, rb_zero
+cross-color skip, WebPCleanupTransparentArea + re-pad, weighted chroma,
+hash-chain accounting under `Vp8lConfig::parity`; see the alpha row in
+`byteparity_scope_2026-07-14.md`). CI anchors:
+`tests/libwebp_byte_parity.rs` incl. `sharp_yuv_matches_libwebp` and
+`transparent_rgba_matches_libwebp`.
 
-**Remaining, documented as follow-on (different-implementation subsystems,
-not knob gaps):** non-opaque alpha (needs libwebp's alpha-plane filter
-selection + VP8L-mini port; 128 sweep cells) and sharp_yuv (zenyuv's own
-algorithm by design — out of parity scope). Out-of-scope axes (no matched
-knob): target_size/PSNR search, pass>1, autofilter, filter_type,
-preprocessing bits, multi-partition, low_memory, emulate_jpeg_size.
+Out-of-scope axes (no matched knob): target_size/PSNR search, pass>1,
+autofilter, filter_type, preprocessing bits, multi-partition,
+low_memory, emulate_jpeg_size.
 
 ## TOOLS — all committed, all `--features __expert`
 
