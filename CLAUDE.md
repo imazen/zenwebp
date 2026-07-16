@@ -194,13 +194,22 @@ mid-row level_costs refresh (documented tuned regression). Full write-up:
 **Pre-audit numbers (kept for reference — 2026-03-28 measurement):**
 - CID22 Q75: **1.0149x** | Q90: **1.0060x** (near parity)
 
-**Speed (zenbench method_default, 792079.png 512x512, Q75, 2026-07-14):**
-| Method | zenwebp | libwebp | Ratio |
-|--------|---------|---------|-------|
-| 0 | 4.4ms | 2.5ms | 1.76x |
-| 2 | 4.0ms | 3.1ms | **1.30x** |
-| 4 | 11.6ms | 8.5ms | **1.36x** |
-| 6 | 19.6ms | 13.9ms | 1.41x |
+**Speed (zenbench method_default, 792079.png 512x512, Q75, 2026-07-16
+post speed-parity chunks 1-4 — `benchmarks/speed_parity_2026-07-16.md`):**
+| Method | zenwebp | libwebp | Ratio | diagnostic (sns0/segs1) |
+|--------|---------|---------|-------|------|
+| 0 | 4.9ms | 2.6ms | 1.88x | 1.92x |
+| 2 | 3.9ms | 3.9ms | **1.00x — parity** | **0.91x (faster)** |
+| 4 | 12.6ms | 10.1ms | **1.25x** | **1.13x** |
+| 6 | 23.9ms | 15.6ms | 1.53x | 1.50x |
+
+All four speed chunks are output-byte-invariant (gated per slice by
+`dev/output_hash.rs` + the parity suite). m0 trades time for −7..−10%
+bytes by design. Remaining gap breakdown + next levers (i16 coefficient
+migration for the trellis/m6; RD-winner reconstruction carry; I1
+footprint): see the speed-parity doc. Pre-#38-D numbers for history:
+m0 1.76x / m2 1.30x / m4 1.36x / m6 1.41x (2026-07-14, before the
+byte-buying adoptions).
 
 Large images (interleaved A/B, 2026-07-14): 2MP screen m2 1.20x / m4 1.38x /
 m6 1.41x; 8MP mixed m2 1.22x / m4 1.39x. m0 is ~2.0x at scale (analysis-heavy;
