@@ -138,6 +138,16 @@ fn main() {
                 la.len() - 1,
                 first_diff(&za[1..], &la[1..])
             );
+            if za.len() <= 65 && la.len() <= 65 {
+                let hex = |b: &[u8]| {
+                    b.iter()
+                        .map(|v| format!("{v:02x}"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                };
+                println!("  zen: {}", hex(&za[1..]));
+                println!("  lib: {}", hex(&la[1..]));
+            }
 
             // Layer isolation: reproduce LIB's filtered plane and run zen's
             // VP8L on it at libwebp's alpha operating point.

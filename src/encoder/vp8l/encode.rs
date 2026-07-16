@@ -484,12 +484,34 @@ pub(crate) fn encode_argb(
             transform_bits_clamped,
         );
 
-        generate_crunch_configs(
+        let configs = generate_crunch_configs(
             &analysis,
             palette_candidate,
             config.quality.method,
             config.quality.quality,
-        )
+        );
+        // #38 alpha-parity diagnostics, format-comparable to the VP8LDBG dump
+        // in the instrumented libwebp tree (EncoderAnalyze).
+        #[cfg(feature = "mode_debug")]
+        if std::env::var("ZVP8LDBG").is_ok() {
+            std::eprintln!(
+                "ZVP8LDBG analyze {width}x{height} q={} m={} palette_size={palette_size_est} use_palette={} histo_bits={histo_bits_est} transform_bits={transform_bits_clamped} mode={:?} rb_zero={} n_configs={}",
+                config.quality.quality,
+                config.quality.method,
+                u8::from(palette_candidate),
+                analysis.mode,
+                u8::from(analysis.red_and_blue_always_zero),
+                configs.len(),
+            );
+            for (i, c) in configs.iter().enumerate() {
+                std::eprintln!(
+                    "ZVP8LDBG   config[{i}] mode={:?} sorting={:?}",
+                    c.mode,
+                    c.palette_sorting
+                );
+            }
+        }
+        configs
     };
 
     let result = if configs.len() == 1 {
@@ -560,16 +582,22 @@ fn encode_argb_single_config(
 ) -> EncodeResult<Vec<u8>> {
     let mut writer = BitWriter::with_capacity(width * height / 2);
 
-    // Write VP8L signature
-    writer.write_bits(0x2f, 8);
+    // The ALPH-embedded stream (`config.omit_headers`) begins directly at
+    // the transform bits: no signature, no dimensions, no version. libwebp
+    // writes those only in `VP8LEncodeImage`, not in the `VP8LEncodeStream`
+    // used for the alpha plane. (#38)
+    if !config.omit_headers {
+        // Write VP8L signature
+        writer.write_bits(0x2f, 8);
 
-    // Write dimensions
-    writer.write_bits((width - 1) as u64, 14);
-    writer.write_bits((height - 1) as u64, 14);
+        // Write dimensions
+        writer.write_bits((width - 1) as u64, 14);
+        writer.write_bits((height - 1) as u64, 14);
 
-    // Alpha hint and version
-    writer.write_bit(has_alpha);
-    writer.write_bits(0, 3); // version 0
+        // Alpha hint and version
+        writer.write_bit(has_alpha);
+        writer.write_bits(0, 3); // version 0
+    }
 
     // Derive transform flags from CrunchMode
     let use_palette = matches!(

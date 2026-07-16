@@ -82,6 +82,36 @@ of the alpha work = the VP8L parity loop (instrument `VP8LEncodeStream`'s
 decisions — entropy mode, palette, cache_bits, huffman — in the trace tree
 and converge zen's, same method as the lossy campaign).
 
+### Alpha Chunk B part 1: full VP8L behind the ALPH payload (2026-07-16, later)
+
+Root of the 6-10× payload gap found: zen's ALPH payloads NEVER used the full
+VP8L pipeline — `encode_frame_lossless`'s `implicit_dimensions` branch (the
+alpha plane) falls to a **literal-only** encoder (subtract-green + plain
+literals, "fast but produces larger files"). libwebp's `EncodeLossless` runs
+the complete `VP8LEncodeStream` (palette / predictors / LZ77 / meta-huffman)
+and only skips the container header bits (signature + dimensions + version
+live in `VP8LEncodeImage`, not in the stream).
+
+Fix: `Vp8lConfig::omit_headers` starts the stream at the transform bits, and
+the parity trial payload (`alpha_vp8l_payload_inner`) now calls the full
+`encode_vp8l` with `exact=1, method=effort, quality=8·effort`. Measured
+(alphadiff): gradient-alpha payload 137 → **26 B** (lib 23); checker 222 →
+**32 B (size-identical to lib's 32)**; ALPH header/filter/preprocessing all
+match; and zen's VP8L analysis decisions now line up with the instrumented
+libwebp's (`VP8LDBG`/`ZVP8LDBG` dumps: same palette_size, histo_bits=5,
+transform_bits=5, same entropy mode — Spatial on the raw gradient plane,
+Palette on filtered — same MinimizeDelta sorting, same rb_zero). Remaining:
+bit-level divergence from ~byte 4-5 inside the entropy-coded region
+(huffman code-length coding / palette-image literals) — the next loop
+iterations live inside zen's VP8L stream writer vs libwebp's
+`StoreHuffmanCode`/`EncodeImageNoHuffman`.
+
+**Tuned-adoption candidate surfaced (large):** the TUNED default's ALPH
+payloads still use the literal-only fallback — 5-7× larger than the full
+pipeline produces for the same lossless plane (137 vs 26 B on the probe).
+Routing tuned alpha through full VP8L is a strict size win with identical
+decoded pixels.
+
 ### Failure shape: NONE — 4004/4004 (2026-07-16)
 
 #### SOLVED: I4 tie-break must follow libwebp's ENUM order (this commit, +10)

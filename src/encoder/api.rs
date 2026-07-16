@@ -2565,24 +2565,20 @@ pub(crate) fn alpha_vp8l_payload_inner(
     for &a in plane {
         rgb.extend_from_slice(&[0, a, 0]);
     }
-    let trial_params = EncoderParams {
-        method: effort_level,
-        lossy_quality: super::alpha::vp8l_quality_for_effort(effort_level, use_quality_100) as u8,
-        ..EncoderParams::default()
+    // Full VP8L pipeline (palette / predictors / LZ77 / meta-huffman) with
+    // the ALPH stream framing — NOT the literal-only implicit-dimensions
+    // fallback in `encode_frame_lossless`, which is what capped zen's alpha
+    // compression before (#38).
+    let vp8l_config = super::vp8l::Vp8lConfig {
+        quality: super::vp8l::Vp8lQuality {
+            quality: super::alpha::vp8l_quality_for_effort(effort_level, use_quality_100) as u8,
+            method: effort_level,
+        },
+        exact: true,
+        omit_headers: true,
+        ..super::vp8l::Vp8lConfig::default()
     };
-    let mut payload = Vec::new();
-    encode_frame_lossless(
-        &mut payload,
-        &rgb,
-        width,
-        height,
-        width as usize,
-        PixelLayout::Rgb8,
-        trial_params,
-        true,
-        stop,
-    )?;
-    Ok(payload)
+    super::vp8l::encode_vp8l(&rgb, width, height, false, &vp8l_config, stop)
 }
 
 pub(crate) const fn chunk_size(inner_bytes: usize) -> u32 {

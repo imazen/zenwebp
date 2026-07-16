@@ -101,12 +101,20 @@ pub struct Vp8lConfig {
     ///   alpha-compositing workflows that still rely on the underlying RGB
     ///   after transparency is removed/re-combined.
     pub exact: bool,
+    /// Omit the VP8L container header bits (signature byte, 14-bit
+    /// width/height, alpha flag, version). The ALPH chunk of a lossy+alpha
+    /// file embeds a VP8L stream that begins directly at the transform bits
+    /// — dimensions are implicit from the frame; libwebp writes those header
+    /// fields only in `VP8LEncodeImage`, never in the `VP8LEncodeStream`
+    /// used for alpha (#38). Default `false`.
+    pub omit_headers: bool,
 }
 
 impl Default for Vp8lConfig {
     fn default() -> Self {
         Self {
             quality: Vp8lQuality::default(),
+            omit_headers: false,
             cache_bits: None,   // Auto-detect optimal cache bits
             near_lossless: 100, // Exact lossless (disabled)
             use_predictor: true,
