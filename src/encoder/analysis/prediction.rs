@@ -26,6 +26,9 @@ use archmage::intrinsics::x86_64 as simd_mem;
 /// Fill a block with a constant value (BPS stride)
 #[inline]
 fn fill_block(dst: &mut [u8], value: u8, size: usize) {
+    // One bounds check for the whole block; the loops below are check-free
+    // (`size` is 8 or 16, both with BPS row stride).
+    let dst = &mut dst[..(size - 1) * BPS + size];
     for y in 0..size {
         for x in 0..size {
             dst[y * BPS + x] = value;
@@ -37,6 +40,8 @@ fn fill_block(dst: &mut [u8], value: u8, size: usize) {
 #[inline]
 fn vertical_pred(dst: &mut [u8], top: Option<&[u8]>, size: usize) {
     if let Some(top) = top {
+        let dst = &mut dst[..(size - 1) * BPS + size];
+        let top = &top[..size];
         for y in 0..size {
             for x in 0..size {
                 dst[y * BPS + x] = top[x];
@@ -51,6 +56,8 @@ fn vertical_pred(dst: &mut [u8], top: Option<&[u8]>, size: usize) {
 #[inline]
 fn horizontal_pred(dst: &mut [u8], left: Option<&[u8]>, size: usize) {
     if let Some(left) = left {
+        let dst = &mut dst[..(size - 1) * BPS + size];
+        let left = &left[..size];
         for y in 0..size {
             for x in 0..size {
                 dst[y * BPS + x] = left[y];
@@ -256,7 +263,9 @@ pub fn pred_chroma8_dc(dst: &mut [u8], left: Option<&[u8]>, top: Option<&[u8]>) 
         }
     };
 
-    // Fill 8x8 block
+    // Fill 8x8 block (fixed-size window: one bounds check at entry, none
+    // in the loops — see CLAUDE.md "bounds check elimination").
+    let dst: &mut [u8; 7 * BPS + 8] = (&mut dst[..7 * BPS + 8]).try_into().unwrap();
     for y in 0..8 {
         for x in 0..8 {
             dst[y * BPS + x] = dc_val;
@@ -291,6 +300,9 @@ pub fn pred_chroma8_tm(dst: &mut [u8], left_with_corner: Option<&[u8]>, top: Opt
 /// Scalar TrueMotion for 8x8 chroma.
 #[inline]
 fn pred_chroma8_tm_scalar(dst: &mut [u8], left: &[u8], top: &[u8]) {
+    let dst: &mut [u8; 7 * BPS + 8] = (&mut dst[..7 * BPS + 8]).try_into().unwrap();
+    let left: &[u8; 9] = (&left[..9]).try_into().unwrap();
+    let top: &[u8; 8] = (&top[..8]).try_into().unwrap();
     let tl = i32::from(left[0]);
     for y in 0..8 {
         let l = i32::from(left[1 + y]);
@@ -328,6 +340,9 @@ fn pred_chroma8_tm_impl_scalar(_token: ScalarToken, dst: &mut [u8], left: &[u8],
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 fn pred_chroma8_tm_sse2(_token: X64V3Token, dst: &mut [u8], left: &[u8], top: &[u8]) {
+    // Fixed-size windows: one bounds check each at entry, none per row.
+    let dst: &mut [u8; 7 * BPS + 8] = (&mut dst[..7 * BPS + 8]).try_into().unwrap();
+    let left: &[u8; 9] = (&left[..9]).try_into().unwrap();
     let zero = _mm_setzero_si128();
 
     // Load 8 bytes of top using 128-bit load (safe API requires [u8; 16])

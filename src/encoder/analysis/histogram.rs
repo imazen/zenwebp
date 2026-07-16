@@ -36,11 +36,14 @@ pub fn forward_dct_4x4(
     for i in 0..4 {
         let src_row = i * src_stride;
         let pred_row = i * pred_stride;
+        // One bounds check per row instead of four.
+        let s: &[u8; 4] = src[src_row..src_row + 4].try_into().unwrap();
+        let p: &[u8; 4] = pred[pred_row..pred_row + 4].try_into().unwrap();
 
-        let d0 = i32::from(src[src_row]) - i32::from(pred[pred_row]);
-        let d1 = i32::from(src[src_row + 1]) - i32::from(pred[pred_row + 1]);
-        let d2 = i32::from(src[src_row + 2]) - i32::from(pred[pred_row + 2]);
-        let d3 = i32::from(src[src_row + 3]) - i32::from(pred[pred_row + 3]);
+        let d0 = i32::from(s[0]) - i32::from(p[0]);
+        let d1 = i32::from(s[1]) - i32::from(p[1]);
+        let d2 = i32::from(s[2]) - i32::from(p[2]);
+        let d3 = i32::from(s[3]) - i32::from(p[3]);
 
         let a0 = d0 + d3;
         let a1 = d1 + d2;
