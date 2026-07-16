@@ -57,7 +57,9 @@ fn main() {
     images.sort();
 
     let z = Zensim::new(ZensimProfile::latest());
-    println!("image\tq\tzen_sharp_bytes\tzen_sharp_zsim\tlib_sharp_bytes\tlib_sharp_zsim\tzen_std_bytes\tzen_std_zsim");
+    println!(
+        "image\tq\tzen_sharp_bytes\tzen_sharp_zsim\tlib_sharp_bytes\tlib_sharp_zsim\tzen_std_bytes\tzen_std_zsim"
+    );
     for path in &images {
         let name = path.file_stem().unwrap().to_string_lossy().to_string();
         let Some((rgb, w, h)) = load_png(path) else {
@@ -72,7 +74,9 @@ fn main() {
             let n = (w as usize) * (h as usize) * 3;
             let dec_chunks: &[[u8; 3]] = bytemuck::cast_slice(&dec[..n]);
             let dec_slice = RgbSlice::new(dec_chunks, w as usize, h as usize);
-            z.compute_with_ref(&pre, &dec_slice).expect("zensim").score()
+            z.compute_with_ref(&pre, &dec_slice)
+                .expect("zensim")
+                .score()
         };
 
         for &q in &qs {
