@@ -786,6 +786,15 @@ impl<'a> super::Vp8Encoder<'a> {
         // zen's tuned default doubles per-mode independently (see step 10).
         let mut is_flat_latch = is_flat;
 
+        // Bordered prediction workspace, built once for all four modes.
+        let mut pred_ws = create_border_luma(
+            mbx,
+            mby,
+            usize::from(self.macroblock_width),
+            &self.top_border_y,
+            &self.left_border_y,
+        );
+
         for &mode_idx in eval_order.iter() {
             let mode = MODES[mode_idx];
             // All four I16 modes (DC, V, H, TM) are evaluated at every position,
@@ -796,12 +805,14 @@ impl<'a> super::Vp8Encoder<'a> {
             // the border-value-padded prediction to compete on top-row, left-column,
             // and corner MBs (small images and frame edges).
 
-            // Generate prediction for this mode
-            let pred = self.get_predicted_luma_block_16x16(mode, mbx, mby);
+            // Generate prediction for this mode (shared bordered workspace —
+            // predictions write the full interior and read only the border).
+            Self::predict_luma_16x16_into(&mut pred_ws, mode, mbx, mby);
+            let pred = &pred_ws;
 
             // === Full reconstruction for RD evaluation ===
             // 1. Compute residuals and forward DCT (luma_blocks hoisted outside mode loop)
-            self.fill_luma_blocks_from_predicted_16x16(&pred, mbx, mby, &mut luma_blocks);
+            self.fill_luma_blocks_from_predicted_16x16(pred, mbx, mby, &mut luma_blocks);
 
             // 2. Extract DC coefficients and do WHT
             let mut dc_coeffs = [0i32; 16];
@@ -955,7 +966,7 @@ impl<'a> super::Vp8Encoder<'a> {
             transform::iwht4x4(&mut y2_dequant);
 
             // 7. Dequantize Y1, add DC from Y2, and do fused inverse DCT + add residue
-            let mut reconstructed = pred;
+            let mut reconstructed = *pred;
             for block_idx in 0..16 {
                 let bx = block_idx % 4;
                 let by = block_idx / 4;
@@ -1197,9 +1208,11 @@ impl<'a> super::Vp8Encoder<'a> {
         let mut best_mode = LumaMode::DC;
         let mut best_sse = 0u32;
         let mut best_score = u64::MAX;
+        let mut pred_ws =
+            create_border_luma(mbx, mby, mbw, &self.top_border_y, &self.left_border_y);
         for (idx, &mode) in MODES.iter().enumerate() {
-            let pred = self.get_predicted_luma_block_16x16(mode, mbx, mby);
-            let sse = sse_16x16_luma(&self.frame.ybuf, src_width, mbx, mby, &pred);
+            Self::predict_luma_16x16_into(&mut pred_ws, mode, mbx, mby);
+            let sse = sse_16x16_luma(&self.frame.ybuf, src_width, mbx, mby, &pred_ws);
             let score =
                 u64::from(sse) * u64::from(RD_DISTO_MULT) + u64::from(COSTS[idx]) * LAMBDA_D_I16;
             if score < best_score {
@@ -1216,8 +1229,8 @@ impl<'a> super::Vp8Encoder<'a> {
                 // libwebp: best_mode = (it->x == 0) ? DC : V, and
                 // try_both_modes = 0 ("stick to i16") — bug #432.
                 best_mode = if mbx == 0 { LumaMode::DC } else { LumaMode::V };
-                let pred = self.get_predicted_luma_block_16x16(best_mode, mbx, mby);
-                best_sse = sse_16x16_luma(&self.frame.ybuf, src_width, mbx, mby, &pred);
+                Self::predict_luma_16x16_into(&mut pred_ws, best_mode, mbx, mby);
+                best_sse = sse_16x16_luma(&self.frame.ybuf, src_width, mbx, mby, &pred_ws);
                 flat_locked = true;
             }
         }
@@ -1965,28 +1978,19 @@ impl<'a> super::Vp8Encoder<'a> {
 
         let mut best_mode = ChromaMode::DC;
         let mut best_score = u64::MAX;
+        // Bordered prediction workspaces, built once for all four modes.
+        let mut pred_u_ws = create_border_chroma(mbx, mby, &self.top_border_u, &self.left_border_u);
+        let mut pred_v_ws = create_border_chroma(mbx, mby, &self.top_border_v, &self.left_border_v);
         for (idx, &mode) in MODES.iter().enumerate() {
             // libwebp's RefineUsingDistortion evaluates ALL four chroma modes,
             // including V/H/TM at frame edges — there the prediction reads the
             // default borders (top=127, left=129), which the decoder uses too,
             // so an edge V/H/TM pick is legal and round-trips. (Skipping them
             // here diverged from libwebp at edge MBs — the m1/m2 UV gap.)
-            let pred_u = self.get_predicted_chroma_block(
-                mode,
-                mbx,
-                mby,
-                &self.top_border_u,
-                &self.left_border_u,
-            );
-            let pred_v = self.get_predicted_chroma_block(
-                mode,
-                mbx,
-                mby,
-                &self.top_border_v,
-                &self.left_border_v,
-            );
-            let sse = sse_8x8_chroma(&self.frame.ubuf, chroma_width, mbx, mby, &pred_u)
-                + sse_8x8_chroma(&self.frame.vbuf, chroma_width, mbx, mby, &pred_v);
+            Self::predict_chroma_8x8_into(&mut pred_u_ws, mode, mbx, mby);
+            Self::predict_chroma_8x8_into(&mut pred_v_ws, mode, mbx, mby);
+            let sse = sse_8x8_chroma(&self.frame.ubuf, chroma_width, mbx, mby, &pred_u_ws)
+                + sse_8x8_chroma(&self.frame.vbuf, chroma_width, mbx, mby, &pred_v_ws);
             let score = u64::from(sse) * u64::from(RD_DISTO_MULT)
                 + u64::from(FIXED_COSTS_UV[idx]) * LAMBDA_D_UV;
             if score < best_score {
@@ -2105,6 +2109,9 @@ impl<'a> super::Vp8Encoder<'a> {
         let mut rec_u_block = [0u8; 64];
         let mut rec_v_block = [0u8; 64];
         let mut all_levels_uv = [0i16; 128];
+        // Bordered prediction workspaces, built once for all four modes.
+        let mut pred_u = create_border_chroma(mbx, mby, &self.top_border_u, &self.left_border_u);
+        let mut pred_v = create_border_chroma(mbx, mby, &self.top_border_v, &self.left_border_v);
 
         for (mode_idx, &mode) in MODES.iter().enumerate() {
             // libwebp's PickBestUV (`quant_enc.c:1214`) evaluates ALL four chroma
@@ -2115,21 +2122,9 @@ impl<'a> super::Vp8Encoder<'a> {
             // the RD-path analog of the RefineUsingDistortion edge fix in
             // `pick_uv_sse`.
 
-            // Generate predictions for U and V
-            let pred_u = self.get_predicted_chroma_block(
-                mode,
-                mbx,
-                mby,
-                &self.top_border_u,
-                &self.left_border_u,
-            );
-            let pred_v = self.get_predicted_chroma_block(
-                mode,
-                mbx,
-                mby,
-                &self.top_border_v,
-                &self.left_border_v,
-            );
+            // Generate predictions for U and V (shared bordered workspaces).
+            Self::predict_chroma_8x8_into(&mut pred_u, mode, mbx, mby);
+            Self::predict_chroma_8x8_into(&mut pred_v, mode, mbx, mby);
 
             // === Full reconstruction for RD evaluation ===
             // 1. Compute residuals and forward DCT (buffers hoisted outside mode loop)

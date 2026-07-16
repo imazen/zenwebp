@@ -767,6 +767,77 @@ pub fn get_cost_luma4(
     (cost, has_nz)
 }
 
+/// One-region SSE2 variant of [`get_cost_luma16`]: the 17 per-block residual
+/// costs run inside a single `target_feature` region so the `#[rite]` kernel
+/// inlines (the dispatching version paid an arcane boundary per block).
+#[cfg(target_arch = "x86_64")]
+#[allow(clippy::too_many_arguments)]
+#[arcane]
+fn get_cost_luma16_arcane(
+    token: X64V3Token,
+    dc_levels: &[i32; 16],
+    ac_levels: &[[i32; 16]; 16],
+    top_y: [bool; 4],
+    left_y: [bool; 4],
+    top_y2: bool,
+    left_y2: bool,
+    costs: &LevelCosts,
+    probs: &TokenProbTables,
+) -> u32 {
+    let mut total_cost = 0u32;
+    let dc_ctx = (top_y2 as usize) + (left_y2 as usize);
+    let dc_res = Residual::new(dc_levels, 1, 0);
+    total_cost += get_residual_cost_sse2(token, dc_ctx, &dc_res, costs, probs);
+
+    let mut top_nz = top_y;
+    let mut left_nz = left_y;
+    for y in 0..4 {
+        for x in 0..4 {
+            let block_idx = y * 4 + x;
+            let ctx = (top_nz[x] as usize) + (left_nz[y] as usize);
+            let ac_res = Residual::new(&ac_levels[block_idx], 0, 1);
+            total_cost += get_residual_cost_sse2(token, ctx, &ac_res, costs, probs);
+            let has_nz = ac_res.last >= 0;
+            top_nz[x] = has_nz;
+            left_nz[y] = has_nz;
+        }
+    }
+    total_cost
+}
+
+/// One-region SSE2 variant of [`get_cost_uv`] (same shape as
+/// [`get_cost_luma16_arcane`]).
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn get_cost_uv_arcane(
+    token: X64V3Token,
+    uv_levels: &[[i32; 16]; 8],
+    top_u: [bool; 2],
+    left_u: [bool; 2],
+    top_v: [bool; 2],
+    left_v: [bool; 2],
+    costs: &LevelCosts,
+    probs: &TokenProbTables,
+) -> u32 {
+    let mut total_cost = 0u32;
+    for ch_idx in 0..2 {
+        let mut top_nz = if ch_idx == 0 { top_u } else { top_v };
+        let mut left_nz = if ch_idx == 0 { left_u } else { left_v };
+        for y in 0..2 {
+            for x in 0..2 {
+                let block_idx = ch_idx * 4 + y * 2 + x;
+                let ctx = (top_nz[x] as usize) + (left_nz[y] as usize);
+                let res = Residual::new(&uv_levels[block_idx], 2, 0);
+                total_cost += get_residual_cost_sse2(token, ctx, &res, costs, probs);
+                let has_nz = res.last >= 0;
+                top_nz[x] = has_nz;
+                left_nz[y] = has_nz;
+            }
+        }
+    }
+    total_cost
+}
+
 /// Calculate the cost of encoding all 16 luma blocks in I16 mode.
 /// Includes DC block (Y2) and 16 AC blocks (Y1).
 ///
@@ -797,6 +868,13 @@ pub fn get_cost_luma16(
     costs: &LevelCosts,
     probs: &TokenProbTables,
 ) -> u32 {
+    #[cfg(target_arch = "x86_64")]
+    if let Some(token) = X64V3Token::summon() {
+        return get_cost_luma16_arcane(
+            token, dc_levels, ac_levels, top_y, left_y, top_y2, left_y2, costs, probs,
+        );
+    }
+
     let mut total_cost = 0u32;
 
     // DC block (type 1 = I16DC, also known as Y2). libwebp uses
@@ -851,6 +929,11 @@ pub fn get_cost_uv(
     costs: &LevelCosts,
     probs: &TokenProbTables,
 ) -> u32 {
+    #[cfg(target_arch = "x86_64")]
+    if let Some(token) = X64V3Token::summon() {
+        return get_cost_uv_arcane(token, uv_levels, top_u, left_u, top_v, left_v, costs, probs);
+    }
+
     let mut total_cost = 0u32;
 
     // UV blocks use coeff_type=2 (TYPE_CHROMA_A). All coefficients including DC (first=0).

@@ -53,28 +53,37 @@ impl<'a> super::Vp8Encoder<'a> {
         mbx: usize,
         mby: usize,
     ) -> [u8; LUMA_BLOCK_SIZE] {
-        let stride = LUMA_STRIDE;
-
-        let mbw = self.macroblock_width;
-
         let mut y_with_border = create_border_luma(
             mbx,
             mby,
-            mbw.into(),
+            self.macroblock_width.into(),
             &self.top_border_y,
             &self.left_border_y,
         );
+        Self::predict_luma_16x16_into(&mut y_with_border, luma_mode, mbx, mby);
+        y_with_border
+    }
 
-        // do the prediction
+    /// Run a 16×16 luma prediction into an already-bordered workspace.
+    ///
+    /// Every mode writes the FULL interior and reads only the border, so a
+    /// single `create_border_luma` workspace can be reused across the four
+    /// I16 modes of a selection loop instead of being rebuilt per mode.
+    #[inline]
+    pub(super) fn predict_luma_16x16_into(
+        y_with_border: &mut [u8; LUMA_BLOCK_SIZE],
+        luma_mode: LumaMode,
+        mbx: usize,
+        mby: usize,
+    ) {
+        let stride = LUMA_STRIDE;
         match luma_mode {
-            LumaMode::V => predict_vpred(&mut y_with_border, 16, 1, 1, stride),
-            LumaMode::H => predict_hpred(&mut y_with_border, 16, 1, 1, stride),
-            LumaMode::TM => predict_tmpred(&mut y_with_border, 16, 1, 1, stride),
-            LumaMode::DC => predict_dcpred(&mut y_with_border, 16, stride, mby != 0, mbx != 0),
+            LumaMode::V => predict_vpred(y_with_border, 16, 1, 1, stride),
+            LumaMode::H => predict_hpred(y_with_border, 16, 1, 1, stride),
+            LumaMode::TM => predict_tmpred(y_with_border, 16, 1, 1, stride),
+            LumaMode::DC => predict_dcpred(y_with_border, 16, stride, mby != 0, mbx != 0),
             LumaMode::B => unreachable!(),
         }
-
-        y_with_border
     }
 
     // Uses fused residual+DCT for pairs of blocks
@@ -542,29 +551,33 @@ impl<'a> super::Vp8Encoder<'a> {
         left_border: &[u8],
     ) -> [u8; CHROMA_BLOCK_SIZE] {
         let mut chroma_with_border = create_border_chroma(mbx, mby, top_border, left_border);
+        Self::predict_chroma_8x8_into(&mut chroma_with_border, chroma_mode, mbx, mby);
+        chroma_with_border
+    }
 
+    /// Run an 8×8 chroma prediction into an already-bordered workspace (same
+    /// reuse contract as [`Self::predict_luma_16x16_into`]).
+    #[inline]
+    pub(super) fn predict_chroma_8x8_into(
+        chroma_with_border: &mut [u8; CHROMA_BLOCK_SIZE],
+        chroma_mode: ChromaMode,
+        mbx: usize,
+        mby: usize,
+    ) {
         match chroma_mode {
             ChromaMode::DC => {
-                predict_dcpred(
-                    &mut chroma_with_border,
-                    8,
-                    CHROMA_STRIDE,
-                    mby != 0,
-                    mbx != 0,
-                );
+                predict_dcpred(chroma_with_border, 8, CHROMA_STRIDE, mby != 0, mbx != 0);
             }
             ChromaMode::V => {
-                predict_vpred(&mut chroma_with_border, 8, 1, 1, CHROMA_STRIDE);
+                predict_vpred(chroma_with_border, 8, 1, 1, CHROMA_STRIDE);
             }
             ChromaMode::H => {
-                predict_hpred(&mut chroma_with_border, 8, 1, 1, CHROMA_STRIDE);
+                predict_hpred(chroma_with_border, 8, 1, 1, CHROMA_STRIDE);
             }
             ChromaMode::TM => {
-                predict_tmpred(&mut chroma_with_border, 8, 1, 1, CHROMA_STRIDE);
+                predict_tmpred(chroma_with_border, 8, 1, 1, CHROMA_STRIDE);
             }
         }
-
-        chroma_with_border
     }
 
     /// SIMD version: uses fused residual+DCT for pairs of blocks
