@@ -507,13 +507,12 @@ deep — trace each flip against instrumented libwebp before concluding.
 
 ## TL;DR
 
-The #38 parity work makes `CostModel::StrictLibwebpParity` **byte-identical to
-libwebp at the specific operating point it was traced against** (q75, CID22
-382297, two configs), across all 7 methods. It is **NOT** byte-identical in
-general. The broad grid below started at **972/4004 (24%)** byte-identical. #38's
-north-star (byte-identical at *all* matching settings) is not met — this doc
-records exactly how far it reaches so the next session doesn't over-trust the
-`methodcmp` 14/14.
+**(2026-07-16: COMPLETE — the grid below is now 4004/4004 = 100%; see the top
+of this doc.)** Historical framing kept for provenance: the #38 parity work
+initially made `CostModel::StrictLibwebpParity` byte-identical to libwebp only
+at the specific operating point it was traced against (q75, CID22 382297, two
+configs), across all 7 methods. The broad grid below started at **972/4004
+(24%)** byte-identical; everything from here down records the climb.
 
 **Update (2026-07-15): trailing-segment-slot fix → 3151/4004 (78.7%).** The VP8
 segment header always carries 4 quant+filter slots; libwebp leaves the slots
