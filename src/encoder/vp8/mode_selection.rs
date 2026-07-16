@@ -193,6 +193,20 @@ pub(super) struct I4WinnerCarry {
     pub levels_zz: [[i32; 16]; 16],
 }
 
+/// The UV winner's reconstruction + levels + diffusion errors, carried from
+/// `pick_best_uv` into the final chroma pass when the RD loop's diffusion
+/// behaviour matches the final pass's (see the `carriable` gate) — the
+/// final pass then skips its full predict/DCT/diffuse/quantize/IDCT
+/// recompute and only replays the error-store side effect.
+pub(super) struct UvWinnerCarry {
+    pub recon_u: [u8; CHROMA_BLOCK_SIZE],
+    pub recon_v: [u8; CHROMA_BLOCK_SIZE],
+    pub zigzag_u: [[i32; 16]; 4],
+    pub zigzag_v: [[i32; 16]; 4],
+    /// Winner's per-channel diffusion errors (`None` when diffusion is off).
+    pub errs: Option<([i8; 4], [i8; 4])>,
+}
+
 /// m6-only trellis arm of the I4 candidate evaluation, kept out-of-line so
 /// the hot m0-m5 loop body stays small in the instruction cache. Returns
 /// (has_nz, dequantized-natural) exactly like the fused arm.
@@ -2063,11 +2077,25 @@ impl<'a> super::Vp8Encoder<'a> {
         match self.fast_mb_uv_hints.get(mb_idx) {
             Some(0) => ChromaMode::DC,
             Some(1) => ChromaMode::TM,
-            _ => self.pick_best_uv(mbx, mby),
+            _ => self.pick_best_uv(mbx, mby).0,
         }
     }
 
-    fn pick_best_uv(&self, mbx: usize, mby: usize) -> ChromaMode {
+    fn pick_best_uv(
+        &self,
+        mbx: usize,
+        mby: usize,
+    ) -> (ChromaMode, Option<alloc::boxed::Box<UvWinnerCarry>>) {
+        // The carry is valid only when the final pass would reproduce this
+        // loop's diffusion exactly: either diffusion is off entirely, or the
+        // RD loop diffused (parity || m3+) AND the final pass applies a
+        // single correction (parity-m5 double-corrects with self errors,
+        // which this loop does not model).
+        let carry_parity = self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity;
+        let carriable = !self.do_error_diffusion
+            || ((carry_parity || self.method >= 3)
+                && !(carry_parity && self.do_trellis && !self.do_trellis_i4_mode));
+        let mut carry: Option<alloc::boxed::Box<UvWinnerCarry>> = None;
         let mbw = usize::from(self.macroblock_width);
         let chroma_width = mbw * 8;
 
@@ -2202,18 +2230,20 @@ impl<'a> super::Vp8Encoder<'a> {
             // 14/14 byte-identity exactly. Read-only on the diffusion state;
             // emission still performs the actual store.
             // See benchmarks/tuned_candidates_2026-07-14.md.
-            if self.do_error_diffusion
+            let mode_errs = if self.do_error_diffusion
                 && (self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity
                     || self.method >= 3)
             {
-                super::residuals::diffuse_chroma_dc_inplace(
+                Some(super::residuals::diffuse_chroma_dc_inplace(
                     &mut u_blocks,
                     &mut v_blocks,
                     &self.top_derr[mbx],
                     &self.left_derr,
                     uv_matrix,
-                );
-            }
+                ))
+            } else {
+                None
+            };
 
             // 2. Fused quantize+dequantize coefficients using SIMD
             // (uv_quant/uv_dequant hoisted outside mode loop to avoid redundant zero-init)
@@ -2405,6 +2435,19 @@ impl<'a> super::Vp8Encoder<'a> {
                 best_rd_score = rd_score;
                 best_mode = mode;
                 best_lib_rank = UV_LIB_RANK[mode_idx];
+                if carriable {
+                    let mut zigzag_u = [[0i32; 16]; 4];
+                    let mut zigzag_v = [[0i32; 16]; 4];
+                    zigzag_u.copy_from_slice(&uv_quant_zz[..4]);
+                    zigzag_v.copy_from_slice(&uv_quant_zz[4..]);
+                    carry = Some(alloc::boxed::Box::new(UvWinnerCarry {
+                        recon_u: reconstructed_u,
+                        recon_v: reconstructed_v,
+                        zigzag_u,
+                        zigzag_v,
+                        errs: mode_errs,
+                    }));
+                }
             }
         }
 
@@ -2413,7 +2456,7 @@ impl<'a> super::Vp8Encoder<'a> {
             eprintln!("  ZENUV mb({mbx},{mby}) WIN mode={best_mode:?} score={best_rd_score}");
         }
 
-        best_mode
+        (best_mode, carry)
     }
 
     /// m6-only (RD_OPT_TRELLIS_ALL) I16-AC trellis arm of the I16 RD loop,
@@ -2494,7 +2537,11 @@ impl<'a> super::Vp8Encoder<'a> {
         &self,
         mbx: usize,
         mby: usize,
-    ) -> (MacroblockInfo, Option<alloc::boxed::Box<I4WinnerCarry>>) {
+    ) -> (
+        MacroblockInfo,
+        Option<alloc::boxed::Box<I4WinnerCarry>>,
+        Option<alloc::boxed::Box<UvWinnerCarry>>,
+    ) {
         let mut i4_carry: Option<alloc::boxed::Box<I4WinnerCarry>> = None;
         // FastMBAnalyze fast path (libwebp `RefineUsingDistortion(try_both_modes=0,
         // refine_uv_mode=method>=1)` at m0/m1, quant_enc.c:1447). The analysis
@@ -2552,7 +2599,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     if self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity {
                         self.analysis_uv_mode(mbx, mby)
                     } else {
-                        self.pick_best_uv(mbx, mby)
+                        self.pick_best_uv(mbx, mby).0
                     }
                 } else {
                     self.pick_uv_sse(mbx, mby)
@@ -2574,6 +2621,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         intra16_y2_zz: [0i32; 16],
                         intra16_blocky: false,
                     },
+                    None,
                     None,
                 );
             }
@@ -2625,6 +2673,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     intra16_y2_zz: [0i32; 16],
                     intra16_blocky: false,
                 },
+                None,
                 None,
             );
         }
@@ -2740,7 +2789,7 @@ impl<'a> super::Vp8Encoder<'a> {
         };
 
         // Pick the best chroma mode using RD-based selection
-        let chroma_mode = self.pick_best_uv(mbx, mby);
+        let (chroma_mode, uv_carry) = self.pick_best_uv(mbx, mby);
 
         // Get segment ID from segment map if enabled
         let segment_id = self.get_segment_id_for_mb(mbx, mby);
@@ -2774,6 +2823,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 intra16_blocky: i16_blocky,
             },
             i4_carry,
+            uv_carry,
         )
     }
 

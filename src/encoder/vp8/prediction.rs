@@ -730,8 +730,62 @@ impl<'a> super::Vp8Encoder<'a> {
         mbx: usize,
         mby: usize,
         chroma_mode: ChromaMode,
+        uv_carry: Option<alloc::boxed::Box<super::mode_selection::UvWinnerCarry>>,
     ) -> (ChromaBlockResult, ChromaBlockResult) {
         let stride = CHROMA_STRIDE;
+
+        // RD-winner fast path: `pick_best_uv` already produced this exact
+        // reconstruction and these exact levels (its diffusion behaviour is
+        // gate-matched to this pass — see `UvWinnerCarry`); only the
+        // diffusion error STORE side effect remains to replay.
+        if let Some(carry) = uv_carry {
+            if let Some((u_errs, v_errs)) = carry.errs {
+                // Same store gate as `apply_chroma_error_diffusion`: libwebp
+                // stores only from PickBestUV (method >= 3); zenwebp's tuned
+                // default stores at every method.
+                let store = self.method >= 3
+                    || self.cost_model != crate::encoder::api::CostModel::StrictLibwebpParity;
+                if store {
+                    for (ch, errs) in [(0usize, u_errs), (1, v_errs)] {
+                        let [_err0, err1, err2, err3] = errs;
+                        self.left_derr[ch][0] = err1;
+                        self.left_derr[ch][1] = ((3 * err3 as i32) >> 2) as i8;
+                        self.top_derr[mbx][ch][0] = err2;
+                        self.top_derr[mbx][ch][1] =
+                            (err3 as i32 - self.left_derr[ch][1] as i32) as i8;
+                    }
+                }
+            }
+
+            for ((y, u_border_value), v_border_value) in self
+                .left_border_u
+                .iter_mut()
+                .enumerate()
+                .zip(self.left_border_v.iter_mut())
+            {
+                *u_border_value = carry.recon_u[y * stride + 8];
+                *v_border_value = carry.recon_v[y * stride + 8];
+            }
+            for ((x, u_border_value), v_border_value) in self.top_border_u[mbx * 8..][..8]
+                .iter_mut()
+                .enumerate()
+                .zip(self.top_border_v[mbx * 8..][..8].iter_mut())
+            {
+                *u_border_value = carry.recon_u[8 * stride + x + 1];
+                *v_border_value = carry.recon_v[8 * stride + x + 1];
+            }
+
+            return (
+                ChromaBlockResult {
+                    zigzag: carry.zigzag_u,
+                    pred_block: carry.recon_u,
+                },
+                ChromaBlockResult {
+                    zigzag: carry.zigzag_v,
+                    pred_block: carry.recon_v,
+                },
+            );
+        }
 
         let mut predicted_u = self.get_predicted_chroma_block(
             chroma_mode,

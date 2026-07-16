@@ -2087,7 +2087,8 @@ impl<'a> Vp8Encoder<'a> {
         num_passes: usize,
         row_state: &mut MbRowState,
     ) {
-        let (macroblock_info, i4_carry) = self.choose_macroblock_info(mbx.into(), mby.into());
+        let (macroblock_info, i4_carry, uv_carry) =
+            self.choose_macroblock_info(mbx.into(), mby.into());
 
         // Update b_pred context for next macroblock's mode selection
         // This must happen during encoding pass, not just header writing
@@ -2120,8 +2121,12 @@ impl<'a> Vp8Encoder<'a> {
         let y_block_data =
             self.transform_luma_block(mbx.into(), mby.into(), &macroblock_info, i4_carry);
 
-        let (u_block_data, v_block_data) =
-            self.transform_chroma_blocks(mbx.into(), mby.into(), macroblock_info.chroma_mode);
+        let (u_block_data, v_block_data) = self.transform_chroma_blocks(
+            mbx.into(),
+            mby.into(),
+            macroblock_info.chroma_mode,
+            uv_carry,
+        );
 
         // Accumulate SSE for PSNR computation (source vs reconstructed)
         row_state.sse_y += u64::from(sse_16x16_luma(
