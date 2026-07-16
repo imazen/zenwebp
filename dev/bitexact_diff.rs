@@ -16,6 +16,11 @@
 //! bails early (OneStatPass returns size_p0==0) and ships DEFAULT probas,
 //! costing it 25-35% size on those cells - do not "fix" zen to match
 //! without gating on StrictLibwebpParity.
+// The 4x8x3x11 walks over COEFF_UPDATE_PROBS mirror the RFC 6386 (13.4) header
+// layout and libwebp's own loop nesting, so the indices ARE the meaning here —
+// iterator adaptors would obscure what bit position is being parsed.
+#![allow(clippy::needless_range_loop)]
+
 use zenwebp::{CostModel, EncodeRequest, LossyConfig, PixelLayout};
 
 fn load(path: &str) -> (Vec<u8>, u32, u32) {
@@ -586,7 +591,7 @@ fn main() {
         .map(String::as_str)
         .unwrap_or("/home/lilith/.cache/codec-corpus/v1/CID22/CID22-512/validation/382297.png");
     let (rgb, w, h) = load(img_path);
-    let (mb_w, mb_h) = (((w + 15) / 16) as usize, ((h + 15) / 16) as usize);
+    let (mb_w, mb_h) = (w.div_ceil(16) as usize, h.div_ceil(16) as usize);
     println!("image: {img_path} {w}x{h} ({mb_w}x{mb_h} MBs)");
 
     // The grid is overridable from argv so this can chase cells outside q75.
