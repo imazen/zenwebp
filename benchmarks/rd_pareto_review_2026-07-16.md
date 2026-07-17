@@ -110,11 +110,25 @@ tuned on; the earlier worry that they'd hurt graphics is refuted.
    misclassifying picker would risk. This matches the earlier picker
    post-mortem: the axes where a picker could help are not these knobs.
 3. **The Pareto work that remains is TIER-level, not per-image:**
-   - **m2 (−1.0%, worst at low q on dense detail)** is the concrete target.
-     It is faster than libwebp with a ~3-9% wall surplus; candidate levers:
-     RD-score the I16-vs-I4 cut (or the top-2 SSE candidates) instead of
-     pure SSE at m2, or import the m3 UV-RD pick. Any candidate must be
-     A/B'd with the established harness (size + zsim + ms, this corpus).
+   - **m2 (−1.0%, worst at low q on dense detail)** — DECOMPOSED
+     (`m2_parity_2026-07-16.tsv`): parity-m2 reproduces libwebp exactly
+     (0.000% same-q size delta — sanity), so the whole gap is tuned deltas
+     live at m≤2. Ablations: the tuned gamma-corrected chroma conversion
+     accounts for ~0.3% (libwebp-exact chroma: 1.008 → 1.005); the
+     filter-sharpness mapping is null at the default (both 0); the
+     residual ~0.5% is spread across quantizer-index rounding, skip-proba
+     estimation, and SSE-path tie-break details. The structural story:
+     zen's m0/m1 win (+9%) comes from running the FULL analysis pass
+     where libwebp's FastMBAnalyze doesn't — at m2 libwebp also runs full
+     analysis, erasing that advantage and exposing the tuned costs
+     undiluted (every psy benefit is gated m3+, so m2 gets costs, no
+     benefits). Levers, in preference order: (a) spend the ~3-9% wall
+     surplus on partial RD scoring at m2 (the I16-vs-I4 cut), which adds
+     a benefit rather than removing a feature; (b) gate the tuned chroma
+     to m3+ — recovers ~0.3% but is entangled with the m0/m1 +9% win and
+     the synthetic-low-q zensim gate, so it needs the full-grid A/B
+     before touching; (c) accept — m2 is a draft tier and the gap is
+     under 1%.
    - **scans-class gap (+3.3% at RD tiers)**: needs the per-MB decision
      diff first; no knob-level fix exists among the tested ones.
 4. **m0's +9% and m6's +1.2%** are the standing wins to protect: any future

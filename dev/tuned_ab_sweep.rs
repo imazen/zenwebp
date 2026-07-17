@@ -75,6 +75,7 @@ fn main() {
     let segments: Option<u8> = arg_value(&args, "--segments").and_then(|s| s.parse().ok());
     let sns: Option<u8> = arg_value(&args, "--sns").and_then(|s| s.parse().ok());
     let use_libwebp = arg_value(&args, "--encoder").as_deref() == Some("libwebp");
+    let parity = args.iter().any(|a| a == "--parity");
 
     let mut images: Vec<std::path::PathBuf> = std::fs::read_dir(&corpus)
         .expect("corpus dir")
@@ -110,6 +111,14 @@ fn main() {
         for &m in &methods {
             for &q in &qs {
                 let mut cfg = LossyConfig::new().with_quality(f32::from(q)).with_method(m);
+                if parity {
+                    #[cfg(feature = "__expert")]
+                    {
+                        cfg = cfg.with_cost_model(zenwebp::CostModel::StrictLibwebpParity);
+                    }
+                    #[cfg(not(feature = "__expert"))]
+                    panic!("--parity requires building with --features __expert");
+                }
                 if let Some(segs) = segments {
                     cfg = cfg.with_segments(segs);
                 }
