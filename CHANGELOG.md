@@ -136,6 +136,27 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Changed
 
+- **Encoder speed session 2: m4 instruction AND wall parity with libwebp,
+  m2 beats it — zero byte changes** (#38 speed, 2026-07-16, chunks
+  `dd6236ec`/`dd352c55`/`7c33e0ae`/`f62983ab`/`479681c7`): the i16
+  coefficient port is complete — DCT block carriers, the fused
+  quantize+dequantize family on every SIMD tier (input packs + output
+  sign-extend unpacks deleted), i16 IDCT/ftransform/add-residue encoder
+  variants, and `trellis_quantize_block` i16 in/out, all matching
+  libwebp's `int16_t` pipeline; the analysis TM/DC predictions lost
+  hundreds of per-pixel bounds checks (fixed-window pattern); the I16 RD
+  winner's reconstruction + levels now carry into the final pass at
+  m3/m4 (completing the I4/UV/I16 winner-carry set); the segment
+  quantization matrices are plain fields (11 hot-loop Option unwraps
+  gone); and ~700 lines of unused legacy record paths were deleted.
+  Result (512² q75 vs libwebp): m4 instructions 183.5M → **171.2M vs
+  libwebp's 170.7M = 1.003x**, wall **1.015x diagnostic / ~1.16x
+  default** (was 1.25x); m2 default **0.97x — faster than libwebp**;
+  m6 392→374M (the residue is trellis-DP codegen density, measured and
+  documented). Byte gate `958f376a6c8b118f` unchanged across every
+  slice; suites green on x86-64 + i686 + wasm32.
+  `benchmarks/speed_parity_2026-07-16.md` has the full breakdown.
+
 - **Encoder speed: m2 at/above libwebp, m4 −14% instructions — zero
   byte changes** (#38 speed, 2026-07-16, six chunks `ec577bba` through
   `fdb928ab`): the final coding pass now uses the fused SIMD primitives

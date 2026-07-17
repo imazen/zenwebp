@@ -195,22 +195,26 @@ mid-row level_costs refresh (documented tuned regression). Full write-up:
 - CID22 Q75: **1.0149x** | Q90: **1.0060x** (near parity)
 
 **Speed (zenbench method_default, 792079.png 512x512, Q75, 2026-07-16
-post speed-parity chunks 1-6 — `benchmarks/speed_parity_2026-07-16.md`):**
+post speed-parity sessions 1-2 — `benchmarks/speed_parity_2026-07-16.md`):**
 | Method | zenwebp | libwebp | Ratio | diagnostic (sns0/segs1) |
 |--------|---------|---------|-------|------|
-| 0 | 5.0ms | 2.5ms | ~1.9x | 1.88x |
-| 2 | 4.1ms | 4.1ms | **1.00x — parity** | **0.88x (faster)** |
-| 4 | 12.4ms | 9.8ms | **~1.26x** (instr 1.075x) | **1.27x** |
-| 6 | 23.9ms | 15.0ms | ~1.55x | 1.54x |
+| 0 | 4.7ms | 2.6ms | ~1.79x | 1.84x |
+| 2 | 4.0ms | 4.1ms | **0.97x — beats libwebp** | **0.91x** |
+| 4 | 11.4ms | 9.8ms | **~1.16x** (instr **1.003x — parity**) | **1.015x — wall parity** |
+| 6 | 21.7ms | 15.5ms | ~1.40x | 1.39x |
 
-All six speed chunks are output-byte-invariant (gated per slice by
-`dev/output_hash.rs` + the parity suite + full i686 test runs). m0
-trades time for −7..−10% bytes by design; m4's wall now exceeds its
-instruction ratio (I1 executed-footprint is the binding constraint).
-Remaining levers (i16 coefficient migration → fixes m6's trellis AND
-the I1 wall; I16 winner carry; LumaBlockResult out-param): see the
-speed-parity doc. Pre-#38-D numbers for history: m0 1.76x / m2 1.30x /
-m4 1.36x / m6 1.41x (2026-07-14, before the byte-buying adoptions).
+All speed chunks are output-byte-invariant (gated per slice by
+`dev/output_hash.rs` COMBINED 958f376a6c8b118f + the parity suite +
+full i686 test runs). Session 2 completed the i16 coefficient port
+(carriers, fused quantize family, IDCT/ftransform variants, trellis
+in/out — matching libwebp's int16_t pipeline), the I16 winner carry,
+the segment-matrix de-Option, and the analysis-prediction bounds strip.
+m0 trades time for −7..−10% bytes by design. m6's remaining 1.4x is
+the trellis DP's per-line codegen density (~191M of 374M; static size
+matches libwebp, per-call ~2.6x). See the speed-parity doc for the
+measured remaining-gap breakdown. Pre-#38-D numbers for history:
+m0 1.76x / m2 1.30x / m4 1.36x / m6 1.41x (2026-07-14, before the
+byte-buying adoptions).
 
 Large images (interleaved A/B, 2026-07-14): 2MP screen m2 1.20x / m4 1.38x /
 m6 1.41x; 8MP mixed m2 1.22x / m4 1.39x. m0 is ~2.0x at scale (analysis-heavy;

@@ -1,28 +1,32 @@
-# Encoder speed-parity program, session 1 (2026-07-16)
+# Encoder speed-parity program, sessions 1-2 (2026-07-16)
 
 Directive: hold exactness constant (every output byte, both cost models),
-close the wall-clock gap vs libwebp. Six chunks landed (`ec577bba`,
-`4868ce95`, `7caf05a4`, `74ca25f2`, `af19d414`+`90bb08bf`, `fdb928ab`);
-every change gated by
-`dev/output_hash.rs` (grid hash over 21 images × both cost models ×
-m0-6 × q{5,50,75,90} + alpha/sharp/lossless sections — byte-identical
-before/after each slice), the full 52-binary test suite, clippy ×3, fmt.
+close the wall-clock gap vs libwebp. Session 1 landed six chunks
+(`ec577bba`, `4868ce95`, `7caf05a4`, `74ca25f2`, `af19d414`+`90bb08bf`,
+`fdb928ab`); session 2 landed the i16 port + m4 code-weight chunks
+(`dd6236ec`, `dd352c55`, `7c33e0ae`, `f62983ab`, `479681c7`). Every
+change gated by `dev/output_hash.rs` (grid hash over 21 images × both
+cost models × m0-6 × q{5,50,75,90} + alpha/sharp/lossless sections —
+byte-identical before/after each slice, COMBINED 958f376a6c8b118f), the
+full 52-binary x86-64 suite, the full i686 suite, wasm32 build, clippy
+×3, fmt.
 
-## Result (792079.png 512×512 q75, zenbench interleaved, quiet box)
+## Result (792079.png 512×512 q75, zenbench interleaved)
 
-zen/libwebp wall ratios, session start → end:
+zen/libwebp wall ratios, program start → session-2 end (box under
+load-avg ~5-7 for the session-2 numbers; ratios are interleaved A/B):
 
 | method | default preset | diagnostic (sns0/flt0/segs1) |
 |---|---|---|
-| m0 | 2.41x → **1.88x** | 1.92x |
-| m2 | 1.24x → **1.00x (parity)** | **0.91x — 9% faster than libwebp** |
-| m4 | 1.47x → **1.25x** | **1.13x** |
-| m6 | 1.57x → **1.53x** | 1.50x |
+| m0 | 2.41x → **1.79x** | 1.84x |
+| m2 | 1.24x → **0.97x — beats libwebp** | **0.91x** |
+| m4 | 1.47x → **1.16x** | **1.015x — wall parity** |
+| m6 | 1.57x → **1.40x** | 1.39x |
 
-Instructions (callgrind, default preset): m0 90.6M → 75.1M (lib 41.1M),
-m4 213.3M → **183.5M** (lib 170.7M = **1.075x**), m6 408.2M → 392.5M
-(lib 250.8M). m4 wall (~1.25x) now exceeds its instruction ratio by ~17%
-— the I1-footprint/branch wall is the binding constraint there.
+Instructions (callgrind, default preset, session-2 end): m0 90.6M →
+**72.5M** (lib 41.1M), m2 **58.2M**, m4 213.3M → **171.2M** (lib 170.7M
+= **1.003x — instruction parity**), m6 408.2M → **374.0M** (lib 250.8M
+= 1.49x, all in the trellis DP — see below).
 
 Context for the m0 gap: zen's m0 deliberately does more (hint analysis +
 RD UV picks) and produces −7..−10% bytes vs libwebp m0 — that tier trades
@@ -64,49 +68,67 @@ decisions cheaper. The old CLAUDE.md table (1.76x/1.30x/1.36x/1.41x,
 
 ## Where the remaining gap lives (measured, for the next session)
 
-- **m6 (1.5x): `trellis_quantize_block` is ~190M of 395M** vs libwebp's
-  ~104M inlined equivalent. Call counts are fine (zen 130k I4-candidate
-  trellis calls vs libwebp 250k `ReconstructIntra4` — the presort +
-  max_modes + early-bail already halve the candidates); the per-call cost
-  is ~2x. Root causes: **i32 coefficient arrays vs libwebp's `int16_t`**
-  (double data traffic through the DP, double-width output/input clears)
-  and codegen density. The structural fix is an i16 coefficient
-  migration through the coeff pipeline — large but mechanical.
-- **Winner recompute**: I4 and UV winners now carry (chunks 5-6). Still
-  open: the I16 winner (non-trellis levels are context-free ⇒ carryable
-  at m2-m4; small on photo content, bigger on I16-heavy screenshots),
-  and m5/m6 luma recomputes stay by design (trellis context: m5 RD
-  quantizes simple while the final trellises; m6 tuned seeds all-false
-  in RD vs real ctx in the final pass).
-- **I1 cache (wall vs instruction gap)**: zen's per-MB loop walks ~54KB
-  of code (872k I1 misses vs 121k). De-duplication of rite kernels helped
-  little; the executed footprint itself is the issue — i16 migration and
-  less monomorphized inlining are the levers that shrink it.
+- **m6 (1.4x): `trellis_quantize_block` is ~191M of 374M** (51%).
+  Measured precisely in session 2: libwebp's trellis lives INLINED in
+  `ReconstructIntra4` (75.6M self over 125,100 calls ≈ 560/call
+  including quantize glue); zen's is 1468/call over 130,330 calls —
+  ~2.6x per call. The i16 in/out conversion + caller de-shimming moved
+  m6 only 395→374M: the DP body itself is the cost. Static code size is
+  near-identical (602 vs 569 instructions) and the algorithm is a
+  line-faithful port; the excess is per-line codegen density (bounds
+  checks, `Ord::min` sequences ≈ 320/call in cmp.rs, table addressing).
+  A bounds-proof pass (`& 1`/`.min(15)` masks) was tried and REVERTED:
+  +3M — the mask ops cost more than the checks they eliminate. Next
+  lever if resumed: assembly-diff the DP loop body against libwebp's
+  and chase specific codegen (e.g. the `&level_cost_t[band][ctx]`
+  addressing chain, 8.2M).
+- **Winner recompute: DONE.** I4 + UV (session 1) + I16 (session 2,
+  `479681c7`) all carry. m5/m6 luma recomputes stay by design (trellis
+  context: m5 RD quantizes simple while the final trellises; m6 tuned
+  seeds all-false in RD vs real ctx in the final pass).
+- **I1 cache**: ~848k I1 misses at m4 (cachegrind) vs libwebp 121k;
+  biggest per-fn miss counts are the per-MB orchestrators evicted
+  between MBs (choose_macroblock_info 144k, pick_best_uv 126k,
+  encode_macroblock 119k). Wall parity at m4 was reached anyway — real
+  hardware prefetch tolerates this pattern better than cachegrind's
+  model suggests. Remaining lever: shrink the walked span per MB
+  (outline runtime-dead fallback arms).
 - **memcpy ~3.2M at m4**: mostly `LumaBlockResult` (~2.5KB) returned by
   value per MB + remaining prediction staging; an out-param refactor of
   `transform_luma_block` would remove the big one.
 
-## i16 port state (chunk 7+, in progress)
+## i16 port state — COMPLETE (session 2)
 
-Stage A landed (`dd6236ec`): quantized LEVELS are i16 end-to-end
-(Residual/cost kernels — the SSE2 pack prelude is gone — recorder,
-trellis OUT, every carrier struct). Byte-identical, all platforms.
+Stage A (`dd6236ec`): quantized LEVELS i16 end-to-end (Residual/cost
+kernels — the SSE2 pack prelude gone — recorder, trellis OUT, every
+carrier struct).
 
-**Stage B (next): the block arrays.** Targets, in order:
-1. `trellis_quantize_block` internals: `coeffs: &mut [i32;16]` →
-   i16 in/out like libwebp (`in[16]`/`out[16]` are int16_t); the DP's
-   `coeff_with_sharpen`, `level0*q` products fit i32 locals over i16
-   storage. This is the m6 lever (~190M, 2x libwebp per call).
-2. `quantize_dequantize_block_*` quantized/dequantized outputs → i16
-   (dequantized = level*q bounded by DCT range ≈ ±16k ✓); ripples into
-   idct_add_residue (takes dequantized) and the fused pipelines.
-3. DCT blocks: `ftransform2` already outputs i16 — drop the i32 widen in
-   fill_luma_blocks/chroma (luma_blocks/u_blocks/v_blocks → [i16;...]),
-   WHT/iwht i16.
-4. Re-audit m4 code weight after: `pred_chroma8_tm` has 200 panic call
-   sites (per-pixel bounds checks in the analysis TM prediction — apply
-   the fixed-region pattern); `encode_image` 44, `encode_macroblock` 24;
-   hoist `segment.*_matrix.as_ref().unwrap()` out of per-mode loops.
+Stage B (`7c33e0ae`): the block arrays + kernel family. DCT carriers
+(luma_blocks/u_blocks/v_blocks/LumaBlockResult::coeffs/y1_quant/
+y1_dequant/uv_quant/uv_dequant) are [i16;N]; `ftransform_from_u8_4x4*`
+return [i16;16] (the sign-extend tails deleted); the fused
+`quantize_dequantize_*` family is i16 in/out on every tier (the SSE2/
+NEON/WASM kernels were already 16-bit inside — the input packs and
+output sign-extend unpacks are deleted, −12 instructions per SSE2
+call); `idct_add_residue_i16` + `idct4x4_i16` + `add_residue_i16`
+encoder variants (decoder keeps its i32 `_inner` paths);
+`sse4x4_with_residual` takes i16 residuals; chroma DC diffusion runs on
+i16 blocks. Dead code deleted alongside: the four unused legacy record
+paths (~690 lines), `Plane`, the DCT token constants, the i32
+`add_residue`/`idct_add_residue_inplace` dispatch families.
+
+Stage B trellis (`f62983ab`): `trellis_quantize_block` is i16 in/out
+like libwebp's `int16_t in[16]/out[16]` (DP stays i32 in locals); every
+caller-side widen shim deleted; the trellis arms reuse the dequantized
+values trellis writes back instead of re-deriving them.
+
+m4 code-weight audit (`dd352c55` bounds-strip + `479681c7`):
+analysis-prediction bounds checks stripped via fixed windows
+(pred_chroma8_tm 200→4 panic sites); `Segment::{y1,y2,uv}_matrix`
+de-Optioned (11 hot-loop unwrap paths gone); I16 winner carry ends the
+final-pass 16×16 recompute at m3/m4. `encode_image` retains ~31
+bounds-check sites but they are outside the per-MB loop (header/emit/
+finalize — not hot).
 
 ## Process note (added after the i686 CI break)
 
