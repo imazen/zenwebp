@@ -1325,12 +1325,19 @@ impl<'a> Vp8Encoder<'a> {
             )
         } else {
             match color {
-                // zenyuv (SIMD Y) + gamma-corrected scalar chroma.
-                // Under StrictLibwebpParity the chroma uses libwebp's exact
-                // YUV_FIX+2 precision; otherwise the tuned byte-rounded path
-                // (measurably better on synthetic low-q — see the zensim gate).
+                // zenyuv (SIMD Y) + libwebp-exact chroma at m1+ / parity.
+                // The tuned byte-rounded chroma survives only at m0: on the
+                // 15-image real-content corpus the libwebp-exact YUV_FIX+2
+                // chroma is a matched-zsim win at EVERY method (m1 -0.15%,
+                // m2 -0.30%, m4 -0.24%, m6 -0.04%; low-q m4 -0.68%), while at
+                // m0 it is neutral (0.9996) AND the byte-rounded path is what
+                // holds the synthetic gradient m0-q10 zensim floor (69.29 vs
+                // 70 with exact chroma). See
+                // benchmarks/rd_round3_2026-07-16.md.
                 PixelLayout::Rgb8 | PixelLayout::Rgba8 | PixelLayout::Bgr8 | PixelLayout::Bgra8 => {
-                    let prec = if params.cost_model == super::api::CostModel::StrictLibwebpParity {
+                    let prec = if params.cost_model == super::api::CostModel::StrictLibwebpParity
+                        || params.method >= 1
+                    {
                         crate::decoder::yuv::ChromaPrec::LibwebpExact
                     } else {
                         crate::decoder::yuv::ChromaPrec::TunedByteRound
