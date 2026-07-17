@@ -2572,32 +2572,26 @@ impl<'a> super::Vp8Encoder<'a> {
         }
     }
 
+    /// Out-of-line m0-m2 mode selection (the RefineUsingDistortion
+    /// analogues). Returns `None` when the caller should fall through to
+    /// the full m3+ RD path (no analysis hints / partition-limit escape).
     #[allow(clippy::type_complexity)]
-    pub(super) fn choose_macroblock_info(
+    #[inline(never)]
+    fn choose_macroblock_info_fast(
         &self,
         mbx: usize,
         mby: usize,
-    ) -> (
+    ) -> Option<(
         MacroblockInfo,
         Option<alloc::boxed::Box<I4WinnerCarry>>,
         Option<alloc::boxed::Box<I16WinnerCarry>>,
         Option<alloc::boxed::Box<UvWinnerCarry>>,
-    ) {
-        let mut i4_carry: Option<alloc::boxed::Box<I4WinnerCarry>> = None;
+    )> {
         // FastMBAnalyze fast path (libwebp `RefineUsingDistortion(try_both_modes=0,
         // refine_uv_mode=method>=1)` at m0/m1, quant_enc.c:1447). The analysis
         // pass already chose I16 vs I4 via the DC-variance test in
-        // `FastMBAnalyze`. Consume that hint directly:
-        //   - I16Dc  => LumaMode::DC (matches `pick_intra16_fast_dc`)
-        //   - I4AllDc => run `pick_best_intra4` to refine the per-sub-block
-        //     modes. libwebp uses an SSE-only loop here; we reuse our
-        //     existing RD path which is more accurate but slower. This
-        //     resolves #32 (4× size blowup on tiny low-color images at m0):
-        //     the previous code unconditionally picked I16-DC at m0/m1
-        //     regardless of source variance, missing the I4 case entirely.
-        // Chroma still goes through `pick_best_uv` here (zenwebp's path
-        // matches libwebp m1's `refine_uv_mode=1`; m0 differs but UV mode
-        // experiments showed zero size change on the worst offender).
+        // `FastMBAnalyze`; I16Dc consumes the hint, I4AllDc refines per-sub-block
+        // modes (resolves #32). Chroma goes through the SSE/RD refiners below.
         if self.method <= 1
             && (self.partition_limit < 100
                 || self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity)
@@ -2646,7 +2640,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     self.pick_uv_sse(mbx, mby)
                 };
                 let segment_id = self.get_segment_id_for_mb(mbx, mby);
-                return (
+                return Some((
                     MacroblockInfo {
                         luma_mode,
                         luma_bpred,
@@ -2665,7 +2659,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     None,
                     None,
                     None,
-                );
+                ));
             }
         }
 
@@ -2702,7 +2696,7 @@ impl<'a> super::Vp8Encoder<'a> {
             };
             let chroma_mode = self.pick_uv_sse(mbx, mby);
             let segment_id = self.get_segment_id_for_mb(mbx, mby);
-            return (
+            return Some((
                 MacroblockInfo {
                     luma_mode,
                     luma_bpred,
@@ -2718,9 +2712,30 @@ impl<'a> super::Vp8Encoder<'a> {
                 None,
                 None,
                 None,
-            );
+            ));
         }
 
+        None
+    }
+    #[allow(clippy::type_complexity)]
+    pub(super) fn choose_macroblock_info(
+        &self,
+        mbx: usize,
+        mby: usize,
+    ) -> (
+        MacroblockInfo,
+        Option<alloc::boxed::Box<I4WinnerCarry>>,
+        Option<alloc::boxed::Box<I16WinnerCarry>>,
+        Option<alloc::boxed::Box<UvWinnerCarry>>,
+    ) {
+        let mut i4_carry: Option<alloc::boxed::Box<I4WinnerCarry>> = None;
+        // m0-m2 take out-of-line fast paths (RefineUsingDistortion analogues)
+        // so the m3+ RD body below stays small in I1 for the per-MB loop.
+        if self.method <= 2
+            && let Some(r) = self.choose_macroblock_info_fast(mbx, mby)
+        {
+            return r;
+        }
         // Pick the best 16x16 luma mode using RD cost selection
         let (luma_mode, i16_score, i16_d, i16_y2_zz, i16_blocky, mut i16_carry) =
             self.pick_best_intra16(mbx, mby);

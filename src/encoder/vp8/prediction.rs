@@ -315,6 +315,20 @@ impl<'a> super::Vp8Encoder<'a> {
             };
         }
 
+        self.transform_luma_i16_full(mbx, mby, macroblock_info)
+    }
+
+    /// Full I16 luma recompute (predict → DCT → quantize → IDCT →
+    /// borders). Reached only when the I16 winner carry doesn't apply
+    /// (m5/m6 trellis tiers, non-RD paths) — kept out-of-line so the
+    /// per-MB hot path in `encode_macroblock` stays small in I1.
+    #[inline(never)]
+    fn transform_luma_i16_full(
+        &mut self,
+        mbx: usize,
+        mby: usize,
+        macroblock_info: &MacroblockInfo,
+    ) -> LumaBlockResult {
         let mut y_with_border =
             self.get_predicted_luma_block_16x16(macroblock_info.luma_mode, mbx, mby);
         let luma_blocks = self.get_luma_blocks_from_predicted_16x16(&y_with_border, mbx, mby);
@@ -471,6 +485,7 @@ impl<'a> super::Vp8Encoder<'a> {
     // this is for transforming the luma blocks for each subblock independently
     // meaning the luma mode is B
     #[allow(clippy::needless_range_loop)] // sbx,sby indices used for multiple arrays and coordinate computation
+    #[inline(never)]
     fn transform_luma_blocks_4x4(
         &mut self,
         bpred_modes: [IntraMode; 16],
@@ -817,6 +832,20 @@ impl<'a> super::Vp8Encoder<'a> {
             );
         }
 
+        self.transform_chroma_full(mbx, mby, chroma_mode)
+    }
+
+    /// Full chroma recompute (predict → DCT → diffuse → quantize → IDCT →
+    /// borders). Reached only when the UV winner carry doesn't apply —
+    /// kept out-of-line so the per-MB hot path stays small in I1.
+    #[inline(never)]
+    fn transform_chroma_full(
+        &mut self,
+        mbx: usize,
+        mby: usize,
+        chroma_mode: ChromaMode,
+    ) -> (ChromaBlockResult, ChromaBlockResult) {
+        let stride = CHROMA_STRIDE;
         let mut predicted_u = self.get_predicted_chroma_block(
             chroma_mode,
             mbx,
