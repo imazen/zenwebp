@@ -136,6 +136,19 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Changed
 
+- **Tuned default: libwebp-exact chroma conversion at m1+** (#38 RD
+  round 3, `6ef3df9b`): the gamma-corrected byte-rounded chroma measured
+  as a matched-quality loss on real content at every method (m2 −0.30%,
+  m4 −0.24% bytes at equal zensim; 15-image corpus). The tuned default
+  now uses libwebp's exact YUV_FIX+2 chroma at method ≥ 1; m0 keeps the
+  byte-rounded path (neutral there, and it holds the synthetic-gradient
+  low-q floor). m0 output is bit-unchanged. With this, the tuned default
+  sits at m0 0.908 / m2 1.005 / m4 0.993 / m6 0.984 vs libwebp at
+  matched zensim. Also measured and rejected: truncate-exact segment
+  quant (null) and an m2 UV-RD pick (null at +25% time). Analysis:
+  `benchmarks/rd_pareto_review_2026-07-16.md` +
+  `benchmarks/rd_round3_2026-07-16.md`.
+
 - **Encoder speed session 2: m4 instruction AND wall parity with libwebp,
   m2 beats it — zero byte changes** (#38 speed, 2026-07-16, chunks
   `dd6236ec`/`dd352c55`/`7c33e0ae`/`f62983ab`/`479681c7`): the i16

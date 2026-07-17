@@ -134,3 +134,8 @@ tuned on; the earlier worry that they'd hurt graphics is refuted.
 4. **m0's +9% and m6's +1.2%** are the standing wins to protect: any future
    tuning A/B should keep this anchor sweep as its regression gate
    (`--encoder libwebp` arm makes it one command per side).
+
+**Round 3 followed up on these verdicts** — chroma adopted at m1+ (the
+anchor moved to m0 0.908 / m2 1.005 / m4 0.993 / m6 0.984), quant
+rounding and m2 UV-RD measured null and rejected. See
+`rd_round3_2026-07-16.md`.
