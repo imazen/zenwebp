@@ -126,6 +126,16 @@ See `docs/PERFORMANCE.md` for benchmarks, `docs/CALL-TREE.md` for SIMD tiers, `d
 | 5 | **1.0002x** |
 | 6 | 1.0022x |
 
+**RD position vs libwebp (matched-zensim size ratio, 15-image corpus,
+q10-95, 2026-07-16 post RD rounds 1-3 — `benchmarks/rd_pareto_review_2026-07-16.md`
++ `rd_round3_2026-07-16.md`):** m0 **0.908** / m2 1.005 / m4 **0.992** /
+m6 **0.984** (<1 = zenwebp needs fewer bytes at equal quality). Round-3
+adoptions: libwebp-exact chroma at m1+ and the mid-row level-cost refresh
+at m3/m4 (closes the document-scans pocket, 1.024→1.002 at m4). The
+tuned-vs-parity knob space is fully swept — remaining rejected candidates
+are measured operating-point shifts, not wins; per-image knob picking has
+no exploitable signal in these axes.
+
 **Production settings (SNS=50, filter=60), 2026-04-26 post-libwebp-parity-audit:**
 - CID22 Q75 m4: **1.0028x** (was 1.0149x pre-audit; closed via #21–#34 in PR #37)
 - CID22 Q75 m6: **0.9948x** (now beats libwebp on bytes)
