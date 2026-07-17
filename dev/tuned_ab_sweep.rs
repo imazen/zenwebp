@@ -22,6 +22,10 @@
 //! Optional knob overrides (default preset values when absent):
 //!   --segments N --sns N — for candidates that only fire off-default
 //!   (e.g. the segs1 uv_alpha dq_uv adoption A/B).
+//!
+//! `--encoder libwebp` swaps the encoder for libwebp (via webpx, default
+//! preset) so the same TSV can carry a libwebp RD anchor next to the zen
+//! variants — used for the encoder-level Pareto review.
 
 #![forbid(unsafe_code)]
 
@@ -70,6 +74,7 @@ fn main() {
     let qs = parse_u8_list(&arg_value(&args, "--qs").unwrap_or_else(|| "25,50,75,90".into()));
     let segments: Option<u8> = arg_value(&args, "--segments").and_then(|s| s.parse().ok());
     let sns: Option<u8> = arg_value(&args, "--sns").and_then(|s| s.parse().ok());
+    let use_libwebp = arg_value(&args, "--encoder").as_deref() == Some("libwebp");
 
     let mut images: Vec<std::path::PathBuf> = std::fs::read_dir(&corpus)
         .expect("corpus dir")
@@ -115,9 +120,24 @@ fn main() {
                 let mut webp: Vec<u8> = Vec::new();
                 for _ in 0..3 {
                     let t = Instant::now();
-                    webp = EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h)
-                        .encode()
-                        .expect("encode");
+                    webp = if use_libwebp {
+                        let mut lc =
+                            webpx::EncoderConfig::with_preset(webpx::Preset::Default, f32::from(q));
+                        lc = lc.method(m);
+                        if let Some(segs) = segments {
+                            lc = lc.segments(segs);
+                        }
+                        if let Some(sns) = sns {
+                            lc = lc.sns_strength(sns);
+                        }
+                        lc.encode_rgb(&rgb, w, h, webpx::Unstoppable)
+                            .expect("libwebp encode")
+                            .to_vec()
+                    } else {
+                        EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h)
+                            .encode()
+                            .expect("encode")
+                    };
                     best_ms = best_ms.min(t.elapsed().as_secs_f64() * 1000.0);
                 }
                 let (dec, w2, h2) = zenwebp::oneshot::decode_rgb(&webp).expect("decode");
