@@ -77,11 +77,20 @@ decisions cheaper. The old CLAUDE.md table (1.76x/1.30x/1.36x/1.41x,
   near-identical (602 vs 569 instructions) and the algorithm is a
   line-faithful port; the excess is per-line codegen density (bounds
   checks, `Ord::min` sequences ≈ 320/call in cmp.rs, table addressing).
-  A bounds-proof pass (`& 1`/`.min(15)` masks) was tried and REVERTED:
-  +3M — the mask ops cost more than the checks they eliminate. Next
-  lever if resumed: assembly-diff the DP loop body against libwebp's
-  and chase specific codegen (e.g. the `&level_cost_t[band][ctx]`
-  addressing chain, 8.2M).
+  Two micro-passes were tried and REVERTED as measured regressions:
+  bounds-proof masks (`& 1`/`.min(15)`, +3M) and `..`-for-`..=` on the
+  DP loop (+2.8M) — the annotation-line attributions (cmp.rs 320/call,
+  range.rs 102/call) are inlining artifacts, not real overhead. New
+  facts from the q-scaling probe: zen's DP loop BODY is statically
+  smaller than libwebp's (309 vs 410 instructions), and the per-call
+  ratio SHRINKS with q (q75 ~2.4x → q90 ~1.5x) — the gap is per-call
+  FIXED cost, not per-iteration cost. Candidates that remain unproven:
+  the zeroed `nodes`/`score_states` stack init (libwebp leaves its C
+  arrays uninitialized), the last-coefficient scan, and prologue spill
+  traffic. Next lever if resumed: instrument BOTH encoders with a
+  position-count histogram (the instrumented tree at
+  `~/work/zen/libwebp--zen38trace` + a `ZENWEBP_TRACE`-style counter)
+  to split fixed vs per-position cost exactly.
 - **Winner recompute: DONE.** I4 + UV (session 1) + I16 (session 2,
   `479681c7`) all carry. m5/m6 luma recomputes stay by design (trellis
   context: m5 RD quantizes simple while the final trellises; m6 tuned
