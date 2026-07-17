@@ -258,6 +258,7 @@ impl<'a> super::Vp8Encoder<'a> {
         mby: usize,
         macroblock_info: &MacroblockInfo,
         i4_carry: Option<alloc::boxed::Box<super::mode_selection::I4WinnerCarry>>,
+        i16_carry: Option<alloc::boxed::Box<super::mode_selection::I16WinnerCarry>>,
     ) -> LumaBlockResult {
         if macroblock_info.luma_mode == LumaMode::B {
             // Non-trellis fast path: the RD pick already reconstructed the
@@ -291,13 +292,36 @@ impl<'a> super::Vp8Encoder<'a> {
             }
         }
 
+        // I16 winner carry (m3/m4, non-trellis): the RD pick already
+        // reconstructed the winning mode over the same borders with the
+        // same quantize/IDCT primitives; hand its reconstruction + levels
+        // straight to the recorder.
+        if let Some(carry) = i16_carry {
+            for (y, border_value) in self.left_border_y.iter_mut().enumerate() {
+                *border_value = carry.recon[y * LUMA_STRIDE + 16];
+            }
+            for (x, border_value) in self.top_border_y[mbx * 16..][..16].iter_mut().enumerate() {
+                *border_value = carry.recon[16 * LUMA_STRIDE + x + 1];
+            }
+            return LumaBlockResult {
+                // Raw DCT coefficients feed only the recorder's trellis debug
+                // cross-check (`y1_from_trellis == true`), which never fires on
+                // this non-trellis path.
+                coeffs: [0i16; 16 * 16],
+                pred_block: carry.recon,
+                y1_zigzag: carry.y1_zigzag,
+                y1_from_trellis: false,
+                y2_zigzag: carry.y2_zigzag,
+            };
+        }
+
         let mut y_with_border =
             self.get_predicted_luma_block_16x16(macroblock_info.luma_mode, mbx, mby);
         let luma_blocks = self.get_luma_blocks_from_predicted_16x16(&y_with_border, mbx, mby);
 
         let segment = &self.segments[macroblock_info.segment_id.unwrap_or(0)];
-        let y1_matrix = segment.y1_matrix.as_ref().unwrap();
-        let y2_matrix = segment.y2_matrix.as_ref().unwrap();
+        let y1_matrix = &segment.y1_matrix;
+        let y2_matrix = &segment.y2_matrix;
 
         // Y2 (DC) block: no trellis, simple quantization
         let mut coeffs0 = get_coeffs0_from_block(&luma_blocks);
@@ -556,7 +580,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 // quantize and de-quantize the subblock
                 // IMPORTANT: Must use same quantization method as encode_coefficients
                 // to avoid prediction mismatch between encoder and decoder
-                let y1_matrix = segment.y1_matrix.as_ref().unwrap();
+                let y1_matrix = &segment.y1_matrix;
                 let has_nz = if let Some(lambda) = trellis_lambda {
                     // Trellis quantization for better RD trade-off
                     // trellis_quantize_block modifies block16 to contain
@@ -817,7 +841,7 @@ impl<'a> super::Vp8Encoder<'a> {
         // This must be done here so the same quantized values are used for both
         // reconstruction (border updates) and encoding (bitstream).
         let segment = self.get_segment_for_mb(mbx, mby);
-        let uv_matrix = segment.uv_matrix.clone().unwrap();
+        let uv_matrix = segment.uv_matrix.clone();
         if self.do_error_diffusion {
             self.apply_chroma_error_diffusion(&mut u_blocks, &mut v_blocks, mbx, &uv_matrix);
         }
@@ -829,7 +853,7 @@ impl<'a> super::Vp8Encoder<'a> {
         // add_residue chain. Bit-identical math (the scalar tier of the
         // fused pair IS `quantize_coeff`/`* q`), ~4× fewer instructions.
         let segment = self.get_segment_for_mb(mbx, mby);
-        let uv_matrix = segment.uv_matrix.as_ref().unwrap();
+        let uv_matrix = &segment.uv_matrix;
         let mut u_zigzag = [[0i16; 16]; 4];
         let mut v_zigzag = [[0i16; 16]; 4];
         for (blocks, zigzag, predicted) in [

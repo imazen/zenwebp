@@ -2087,7 +2087,7 @@ impl<'a> Vp8Encoder<'a> {
         num_passes: usize,
         row_state: &mut MbRowState,
     ) {
-        let (macroblock_info, i4_carry, uv_carry) =
+        let (macroblock_info, i4_carry, i16_carry, uv_carry) =
             self.choose_macroblock_info(mbx.into(), mby.into());
 
         // Update b_pred context for next macroblock's mode selection
@@ -2118,8 +2118,13 @@ impl<'a> Vp8Encoder<'a> {
         }
 
         // Transform blocks (updates border state for next macroblock)
-        let y_block_data =
-            self.transform_luma_block(mbx.into(), mby.into(), &macroblock_info, i4_carry);
+        let y_block_data = self.transform_luma_block(
+            mbx.into(),
+            mby.into(),
+            &macroblock_info,
+            i4_carry,
+            i16_carry,
+        );
 
         let (u_block_data, v_block_data) = self.transform_chroma_blocks(
             mbx.into(),

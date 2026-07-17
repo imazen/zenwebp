@@ -822,8 +822,7 @@ impl<'a> super::Vp8Encoder<'a> {
                             if !self.verified_trellis_reuse {
                                 let mut coeffs_check = *block;
                                 let mut zigzag_check = [0i16; 16];
-                                let y1_matrix =
-                                    self.segments[segment_id].y1_matrix.as_ref().unwrap();
+                                let y1_matrix = &self.segments[segment_id].y1_matrix;
                                 let psy_config = &self.segments[segment_id].psy_config;
                                 trellis_quantize_block(
                                     &mut coeffs_check,
@@ -853,7 +852,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     } else {
                         let mut coeffs = *block;
                         // Borrow segment fields individually to avoid conflict with proba_stats
-                        let y1_matrix = self.segments[segment_id].y1_matrix.as_ref().unwrap();
+                        let y1_matrix = &self.segments[segment_id].y1_matrix;
                         let psy_config = &self.segments[segment_id].psy_config;
                         trellis_quantize_block(
                             &mut coeffs,

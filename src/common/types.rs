@@ -783,10 +783,14 @@ pub(crate) struct Segment {
     #[allow(dead_code)] // Stored for debugging/info purposes
     pub(crate) quant_index: u8,
 
-    // Quantization matrices for trellis optimization
-    pub(crate) y1_matrix: Option<VP8Matrix>,
-    pub(crate) y2_matrix: Option<VP8Matrix>,
-    pub(crate) uv_matrix: Option<VP8Matrix>,
+    // Quantization matrices for trellis optimization.
+    // Plain fields (not Option): `init_matrices` populates them before any
+    // encoder use; a default-zeroed matrix is never read. Keeping them
+    // non-optional removes the Option discriminant checks + unwrap panic
+    // paths from the per-MB hot loops.
+    pub(crate) y1_matrix: VP8Matrix,
+    pub(crate) y2_matrix: VP8Matrix,
+    pub(crate) uv_matrix: VP8Matrix,
 
     // Lambda values for trellis quantization (scaled by 256 for fixed-point)
     // Computed as: lambda = (scale * q^2) where q is the AC quantizer
@@ -838,21 +842,9 @@ impl Segment {
         method: u8,
         cost_model: crate::encoder::CostModel,
     ) {
-        self.y1_matrix = Some(VP8Matrix::new(
-            self.ydc as u16,
-            self.yac as u16,
-            MatrixType::Y1,
-        ));
-        self.y2_matrix = Some(VP8Matrix::new(
-            self.y2dc as u16,
-            self.y2ac as u16,
-            MatrixType::Y2,
-        ));
-        self.uv_matrix = Some(VP8Matrix::new(
-            self.uvdc as u16,
-            self.uvac as u16,
-            MatrixType::UV,
-        ));
+        self.y1_matrix = VP8Matrix::new(self.ydc as u16, self.yac as u16, MatrixType::Y1);
+        self.y2_matrix = VP8Matrix::new(self.y2dc as u16, self.y2ac as u16, MatrixType::Y2);
+        self.uv_matrix = VP8Matrix::new(self.uvdc as u16, self.uvac as u16, MatrixType::UV);
 
         // Compute trellis lambda values based on quantizer
         // These formulas match libwebp's SetupMatrices:

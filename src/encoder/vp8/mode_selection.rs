@@ -193,6 +193,20 @@ pub(super) struct I4WinnerCarry {
     pub levels_zz: [[i16; 16]; 16],
 }
 
+/// The I16 winner's reconstruction + levels, carried from `pick_best_intra16`
+/// into the final coding pass on the non-trellis tiers (m3/m4 — the final
+/// pass trellises at m5/m6 while the RD loop doesn't, so the levels would
+/// diverge there). Byte-safe by construction: the RD loop reconstructs each
+/// candidate with the very primitives the final pass uses (same bordered
+/// prediction, fused quantize+dequantize with DC in Y2, Y2 WHT quantize,
+/// fused IDCT-add), so the winner's levels and reconstruction are
+/// bit-identical to a recompute.
+pub(super) struct I16WinnerCarry {
+    pub recon: [u8; LUMA_BLOCK_SIZE],
+    pub y1_zigzag: [[i16; 16]; 16],
+    pub y2_zigzag: [i16; 16],
+}
+
 /// The UV winner's reconstruction + levels + diffusion errors, carried from
 /// `pick_best_uv` into the final chroma pass when the RD loop's diffusion
 /// behaviour matches the final pass's (see the `carriable` gate) — the
@@ -693,7 +707,19 @@ impl<'a> super::Vp8Encoder<'a> {
     ///     `quant_enc.c:1111`). Threaded into `MacroblockInfo` so the
     ///     `store_max_delta` call site can apply the `D > min_disto` gate
     ///     (issue #44).
-    fn pick_best_intra16(&self, mbx: usize, mby: usize) -> (LumaMode, u64, u32, [i16; 16], bool) {
+    #[allow(clippy::type_complexity)]
+    fn pick_best_intra16(
+        &self,
+        mbx: usize,
+        mby: usize,
+    ) -> (
+        LumaMode,
+        u64,
+        u32,
+        [i16; 16],
+        bool,
+        Option<alloc::boxed::Box<I16WinnerCarry>>,
+    ) {
         // Check for debug mode
         #[cfg(feature = "mode_debug")]
         let debug_i16 = std::env::var("MB_DEBUG")
@@ -724,15 +750,15 @@ impl<'a> super::Vp8Encoder<'a> {
             // gates on method >= 3 under parity to match, so the Y2/blocky
             // carriers are unused here.
             let (mode, score, d) = self.pick_intra16_fast_dc(mbx, mby);
-            return (mode, score, d, [0i16; 16], false);
+            return (mode, score, d, [0i16; 16], false, None);
         }
 
         // The 4 modes to try for 16x16 luma prediction (order matches FIXED_COSTS_I16)
         const MODES: [LumaMode; 4] = [LumaMode::DC, LumaMode::V, LumaMode::H, LumaMode::TM];
 
         let segment = self.get_segment_for_mb(mbx, mby);
-        let y1_matrix = segment.y1_matrix.as_ref().unwrap();
-        let y2_matrix = segment.y2_matrix.as_ref().unwrap();
+        let y1_matrix = &segment.y1_matrix;
+        let y2_matrix = &segment.y2_matrix;
         let lambda = segment.lambda_i16;
         let tlambda = segment.tlambda;
 
@@ -788,6 +814,10 @@ impl<'a> super::Vp8Encoder<'a> {
         // runs. (#38)
         let mut best_y2_zz = [0i16; 16];
         let mut best_i16_blocky = false;
+        // Winner carry: the final pass quantizes exactly like this RD loop
+        // only on the non-trellis tiers (m5/m6 run trellis there).
+        let carriable = !self.do_trellis;
+        let mut carry: Option<alloc::boxed::Box<I16WinnerCarry>> = None;
 
         // Pre-allocate scratch buffers outside mode loop to avoid redundant zero-init.
         // All elements are written before read in each iteration.
@@ -1136,6 +1166,22 @@ impl<'a> super::Vp8Encoder<'a> {
                 // AC test.
                 best_i16_blocky = y2_quant_zz.iter().any(|&c| c != 0)
                     && y1_quant_zz.iter().all(|blk| blk.iter().all(|&c| c == 0));
+                if carriable {
+                    match carry.as_mut() {
+                        Some(c) => {
+                            c.recon = reconstructed;
+                            c.y1_zigzag = y1_quant_zz;
+                            c.y2_zigzag = y2_quant_zz;
+                        }
+                        None => {
+                            carry = Some(alloc::boxed::Box::new(I16WinnerCarry {
+                                recon: reconstructed,
+                                y1_zigzag: y1_quant_zz,
+                                y2_zigzag: y2_quant_zz,
+                            }));
+                        }
+                    }
+                }
             }
         }
 
@@ -1172,6 +1218,7 @@ impl<'a> super::Vp8Encoder<'a> {
             best_d_raw,
             best_y2_zz,
             best_i16_blocky,
+            carry,
         )
     }
 
@@ -1289,7 +1336,7 @@ impl<'a> super::Vp8Encoder<'a> {
         let mut y_with_border =
             create_border_luma(mbx, mby, mbw, &self.top_border_y, &self.left_border_y);
         let segment = self.get_segment_for_mb(mbx, mby);
-        let y1_matrix = segment.y1_matrix.as_ref().unwrap();
+        let y1_matrix = &segment.y1_matrix;
 
         let top_ctx0: [usize; 4] =
             core::array::from_fn(|sbx| self.top_b_pred[mbx * 4 + sbx] as usize);
@@ -1669,7 +1716,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         .copy_from_slice(&self.frame.ybuf[src_row..src_row + 4]);
                 }
 
-                let y1_matrix = segment.y1_matrix.as_ref().unwrap();
+                let y1_matrix = &segment.y1_matrix;
 
                 // Number of modes to try depends on method:
                 // - method 0-2: 3 modes (fast, RD_OPT_NONE equivalent)
@@ -2096,7 +2143,7 @@ impl<'a> super::Vp8Encoder<'a> {
             [ChromaMode::DC, ChromaMode::V, ChromaMode::H, ChromaMode::TM];
 
         let segment = self.get_segment_for_mb(mbx, mby);
-        let uv_matrix = segment.uv_matrix.as_ref().unwrap();
+        let uv_matrix = &segment.uv_matrix;
         let lambda = segment.lambda_uv;
         let tlambda = segment.tlambda;
 
@@ -2525,6 +2572,7 @@ impl<'a> super::Vp8Encoder<'a> {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     pub(super) fn choose_macroblock_info(
         &self,
         mbx: usize,
@@ -2532,6 +2580,7 @@ impl<'a> super::Vp8Encoder<'a> {
     ) -> (
         MacroblockInfo,
         Option<alloc::boxed::Box<I4WinnerCarry>>,
+        Option<alloc::boxed::Box<I16WinnerCarry>>,
         Option<alloc::boxed::Box<UvWinnerCarry>>,
     ) {
         let mut i4_carry: Option<alloc::boxed::Box<I4WinnerCarry>> = None;
@@ -2615,6 +2664,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     },
                     None,
                     None,
+                    None,
                 );
             }
         }
@@ -2667,11 +2717,13 @@ impl<'a> super::Vp8Encoder<'a> {
                 },
                 None,
                 None,
+                None,
             );
         }
 
         // Pick the best 16x16 luma mode using RD cost selection
-        let (luma_mode, i16_score, i16_d, i16_y2_zz, i16_blocky) = self.pick_best_intra16(mbx, mby);
+        let (luma_mode, i16_score, i16_d, i16_y2_zz, i16_blocky, mut i16_carry) =
+            self.pick_best_intra16(mbx, mby);
 
         // Debug output for specific macroblock (check MB_DEBUG env var)
         // Set MB_DEBUG=x,y to debug mode selection for that macroblock
@@ -2802,6 +2854,11 @@ impl<'a> super::Vp8Encoder<'a> {
             Some(i16_d)
         };
 
+        // The I16 carry only applies when I16 actually won the MB.
+        if luma_bpred.is_some() {
+            i16_carry = None;
+        }
+
         (
             MacroblockInfo {
                 luma_mode,
@@ -2815,6 +2872,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 intra16_blocky: i16_blocky,
             },
             i4_carry,
+            i16_carry,
             uv_carry,
         )
     }

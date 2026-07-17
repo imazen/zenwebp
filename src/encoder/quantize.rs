@@ -85,7 +85,7 @@ pub fn quantdiv(coeff: u32, iq: u32, bias: u32) -> i32 {
 // Quantization matrix
 
 /// Quantization matrix for a coefficient type (Y1, Y2, UV)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct VP8Matrix {
     /// Quantizer steps for each coefficient position
     pub q: [u16; 16],
