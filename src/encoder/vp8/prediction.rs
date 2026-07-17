@@ -354,12 +354,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 // Apply DCT was already done, now quantize
                 let dequant_block = if let Some(lambda) = trellis_lambda {
                     // Trellis quantization for better RD trade-off
-                    // (the DP still runs on i32 coefficients; widen at this
-                    // m5/m6-only boundary until the trellis itself goes i16)
-                    let mut wide = [0i32; 16];
-                    for (d, &v) in wide.iter_mut().zip(block.iter()) {
-                        *d = i32::from(v);
-                    }
+                    let mut work = *block;
                     let ctx0 = (u8::from(left_nz[y]) + u8::from(top_nz[x])).min(2) as usize;
                     let zigzag_slot = &mut y1_zigzag[i];
                     // Per-block trellis dump, format-matched to TRELDBG in the
@@ -370,11 +365,11 @@ impl<'a> super::Vp8Encoder<'a> {
                         && std::env::var("TARGY").is_ok_and(|v| v == mby.to_string());
                     #[cfg(feature = "mode_debug")]
                     if treldbg {
-                        let dbg_in: &[i32] = &wide;
+                        let dbg_in: &[i16] = &work;
                         eprintln!("TRELI16 n={i} ctx={ctx0} lam={lambda} in={dbg_in:?}");
                     }
                     let has_nz = trellis_quantize_block(
-                        &mut wide,
+                        &mut work,
                         zigzag_slot,
                         y1_matrix,
                         lambda,
@@ -391,13 +386,8 @@ impl<'a> super::Vp8Encoder<'a> {
                     }
                     top_nz[x] = has_nz;
                     left_nz[y] = has_nz;
-                    // `wide` now contains dequantized values at natural indices
-                    // (i16-bounded — level*q stays in the DCT range)
-                    let mut dq16 = [0i16; 16];
-                    for (d, &v) in dq16.iter_mut().zip(wide.iter()) {
-                        *d = v as i16;
-                    }
-                    dq16
+                    // `work` now contains dequantized values at natural indices
+                    work
                 } else {
                     // Fused SIMD quantize+dequantize, AC only (bit-identical:
                     // the sharpen boost is baked into the Y1 matrix, and the
@@ -555,12 +545,13 @@ impl<'a> super::Vp8Encoder<'a> {
 
                 transform::dct4x4(&mut current_subblock);
 
-                for (dst, &v) in luma_blocks[block_index..][..16]
-                    .iter_mut()
-                    .zip(current_subblock.iter())
-                {
-                    *dst = v as i16;
+                // Narrow the raw DCT block once (i16-bounded by construction);
+                // it feeds the coeffs store, the quantizer, and the trellis.
+                let mut block16 = [0i16; 16];
+                for (d, &v) in block16.iter_mut().zip(current_subblock.iter()) {
+                    *d = v as i16;
                 }
+                luma_blocks[block_index..][..16].copy_from_slice(&block16);
 
                 // quantize and de-quantize the subblock
                 // IMPORTANT: Must use same quantization method as encode_coefficients
@@ -568,7 +559,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 let y1_matrix = segment.y1_matrix.as_ref().unwrap();
                 let has_nz = if let Some(lambda) = trellis_lambda {
                     // Trellis quantization for better RD trade-off
-                    // trellis_quantize_block modifies current_subblock to contain
+                    // trellis_quantize_block modifies block16 to contain
                     // the dequantized values (level * q)
                     let ctx0 = if static_i4_ctx {
                         (u8::from(left_nz_frozen[sby]) + u8::from(top_nz_frozen[sbx])).min(2)
@@ -580,7 +571,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     // recorder doesn't re-run trellis on the same input. (#35-#8)
                     let zigzag_slot = &mut y1_zigzag[i];
                     trellis_quantize_block(
-                        &mut current_subblock,
+                        &mut block16,
                         zigzag_slot,
                         y1_matrix,
                         lambda,
@@ -593,12 +584,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 } else {
                     // Fused SIMD quantize+dequantize (bit-identical: sharpen
                     // is baked into the Y1 matrix; `true` applies it exactly
-                    // like `quantize_coeff` does). The kernel is i16 in/out;
-                    // the raw DCT block is i16-bounded by construction.
-                    let mut block16 = [0i16; 16];
-                    for (d, &v) in block16.iter_mut().zip(current_subblock.iter()) {
-                        *d = v as i16;
-                    }
+                    // like `quantize_coeff` does).
                     let mut quantized = [0i16; 16];
                     let mut dq = [0i16; 16];
                     let has_nz = crate::encoder::quantize::quantize_dequantize_block_simd(
@@ -611,9 +597,7 @@ impl<'a> super::Vp8Encoder<'a> {
                     for k in 0..16 {
                         y1_zigzag[i][k] = quantized[usize::from(ZIGZAG[k])];
                     }
-                    for (d, &v) in current_subblock.iter_mut().zip(dq.iter()) {
-                        *d = i32::from(v);
-                    }
+                    block16 = dq;
                     has_nz
                 };
 
@@ -621,9 +605,9 @@ impl<'a> super::Vp8Encoder<'a> {
                 top_nz[sbx] = has_nz;
                 left_nz[sby] = has_nz;
 
-                let dc_only = current_subblock[1..].iter().all(|&c| c == 0);
-                crate::common::transform::idct_add_residue_inplace(
-                    &mut current_subblock,
+                let dc_only = block16[1..].iter().all(|&c| c == 0);
+                crate::common::transform::idct_add_residue_i16(
+                    &mut block16,
                     &mut y_with_border,
                     y0,
                     x0,

@@ -322,7 +322,7 @@ mod tests {
 
         // Test case: DC dominant block (natural order)
         let block = [
-            500i32, 50, 25, 10, // row 0
+            500i16, 50, 25, 10, // row 0
             5, 3, 2, 1, // row 1
             0, 0, 0, 0, // row 2
             0, 0, 0, 0, // row 3
@@ -354,7 +354,7 @@ mod tests {
         let mut simple_out = [0i32; 16];
         for i in 0..16 {
             let j = VP8_ZIGZAG[i]; // Convert zigzag position to natural
-            simple_out[i] = matrix.quantize_coeff(block[j], j);
+            simple_out[i] = matrix.quantize_coeff(i32::from(block[j]), j);
         }
 
         // Both should produce non-zero DC coefficient

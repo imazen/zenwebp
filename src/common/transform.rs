@@ -1450,70 +1450,6 @@ pub(crate) fn idct_add_residue_inplace_with_token(
 // In-place fused IDCT + add_residue for encoder
 // =============================================================================
 
-/// In-place fused IDCT + add residue with dispatch (no token needed).
-/// Reads prediction from `block[y0*stride+x0..]`, performs IDCT on coefficients,
-/// adds residual to prediction, clamps 0-255, stores back, and clears coefficients.
-///
-/// DC-only fast path when `dc_only` is true (skips full IDCT, just adds constant).
-#[inline(always)]
-pub(crate) fn idct_add_residue_inplace(
-    coeffs: &mut [i32; 16],
-    block: &mut [u8],
-    y0: usize,
-    x0: usize,
-    stride: usize,
-    dc_only: bool,
-) {
-    incant!(
-        idct_add_residue_inplace_dispatch(coeffs, block, y0, x0, stride, dc_only),
-        [v3, neon, wasm128, scalar]
-    );
-}
-
-#[cfg(target_arch = "x86_64")]
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
-fn idct_add_residue_inplace_dispatch_v3(
-    token: X64V3Token,
-    coeffs: &mut [i32; 16],
-    block: &mut [u8],
-    y0: usize,
-    x0: usize,
-    stride: usize,
-    dc_only: bool,
-) {
-    idct_add_residue_inplace_sse2(token, coeffs, block, y0, x0, stride, dc_only);
-}
-
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-fn idct_add_residue_inplace_dispatch_neon(
-    token: NeonToken,
-    coeffs: &mut [i32; 16],
-    block: &mut [u8],
-    y0: usize,
-    x0: usize,
-    stride: usize,
-    dc_only: bool,
-) {
-    idct_add_residue_inplace_neon(token, coeffs, block, y0, x0, stride, dc_only);
-}
-
-#[cfg(target_arch = "wasm32")]
-#[inline(always)]
-fn idct_add_residue_inplace_dispatch_wasm128(
-    _token: Wasm128Token,
-    coeffs: &mut [i32; 16],
-    block: &mut [u8],
-    y0: usize,
-    x0: usize,
-    stride: usize,
-    dc_only: bool,
-) {
-    // TODO: WASM128 IDCT implementation — delegate to scalar for now
-    idct_add_residue_inplace_dispatch_scalar(ScalarToken, coeffs, block, y0, x0, stride, dc_only);
-}
-
 /// i16-coefficient variant of `idct_add_residue_inplace` for the encoder's
 /// i16 pipeline (dequantized values are i16-bounded by construction).
 #[inline(always)]
@@ -2899,7 +2835,7 @@ mod tests {
     /// random 4×4 prediction, exercising both the DC-only and full paths.
     #[test]
     fn idct_add_paths_agree() {
-        use super::{idct_add_residue_i16, idct_add_residue_inplace, idct4x4_i16};
+        use super::{ScalarToken, idct_add_residue_i16, idct4x4_i16};
         use crate::common::prediction::add_residue_i16;
         let mut rng = XorShift(0xdead_beef_0bad_f00d);
         for _ in 0..300_000 {
@@ -2929,13 +2865,21 @@ mod tests {
             let mut rec_b = pred;
             idct_add_residue_i16(&mut cb, &mut rec_b, 0, 0, 4, dc_only);
 
-            // Path C: the i32 fused variant (decoder path) must agree too.
+            // Path C: the scalar i32 reference must agree too.
             let mut cw = [0i32; 16];
             for (d, &v) in cw.iter_mut().zip(coeffs.iter()) {
                 *d = i32::from(v);
             }
             let mut rec_c = pred;
-            idct_add_residue_inplace(&mut cw, &mut rec_c, 0, 0, 4, dc_only);
+            idct_add_residue_inplace_dispatch_scalar(
+                ScalarToken,
+                &mut cw,
+                &mut rec_c,
+                0,
+                0,
+                4,
+                dc_only,
+            );
 
             assert_eq!(
                 rec_a, rec_b,

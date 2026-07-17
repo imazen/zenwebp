@@ -225,14 +225,9 @@ fn i4_trellis_quantize_recon(
 ) -> (bool, [i16; 16]) {
     let ctx0 = usize::from(nz_top) + usize::from(nz_left);
     const CTYPE_I4_AC: usize = 3;
-    // Trellis DP still runs on i32 coefficients; widen at this (m6-only,
-    // out-of-line) boundary until the trellis itself goes i16.
-    let mut wide = [0i32; 16];
-    for (d, &v) in wide.iter_mut().zip(residual.iter()) {
-        *d = i32::from(v);
-    }
+    let mut work = *residual;
     let nz = trellis_quantize_block(
-        &mut wide,
+        &mut work,
         quantized_zigzag,
         y1_matrix,
         lambda,
@@ -246,16 +241,10 @@ fn i4_trellis_quantize_recon(
         let j = ZIGZAG[n] as usize;
         quantized_natural[j] = quantized_zigzag[n];
     }
-    let mut dq = [0i32; 16];
-    for (idx, val) in dq.iter_mut().enumerate() {
-        *val = y1_matrix.dequantize(i32::from(quantized_natural[idx]), idx);
-    }
-    crate::common::transform::idct4x4(&mut dq);
-    let mut out = [0i16; 16];
-    for (d, &v) in out.iter_mut().zip(dq.iter()) {
-        *d = v as i16;
-    }
-    (nz, out)
+    // `work` now holds the dequantized values (natural order); IDCT it for
+    // the reconstruction the SSE scorer needs.
+    crate::common::transform::idct4x4_i16(&mut work);
+    (nz, work)
 }
 
 #[archmage::arcane]
@@ -2502,15 +2491,9 @@ impl<'a> super::Vp8Encoder<'a> {
             let bx = block_idx % 4;
             let by = block_idx / 4;
             let block_start = block_idx * 16;
-            // Trellis DP still runs on i32 coefficients; widen at this
-            // (m6-only) boundary until the trellis itself goes i16.
-            let mut coeffs = [0i32; 16];
-            for (d, &v) in coeffs
-                .iter_mut()
-                .zip(&luma_blocks[block_start..block_start + 16])
-            {
-                *d = i32::from(v);
-            }
+            let mut coeffs: [i16; 16] = luma_blocks[block_start..block_start + 16]
+                .try_into()
+                .unwrap();
             coeffs[0] = 0; // DC handled by Y2
             let ctx0 = (u8::from(top_nz_t[bx]) + u8::from(left_nz_t[by])).min(2) as usize;
             let mut zigzag_levels = [0i16; 16];
@@ -2536,10 +2519,8 @@ impl<'a> super::Vp8Encoder<'a> {
             }
             y1_quant[block_idx] = natural;
             // trellis_quantize_block leaves dequantized values in `coeffs`
-            // (natural order, i16-bounded) — keep for reconstruction.
-            for (d, &v) in y1_dequant[block_idx].iter_mut().zip(coeffs.iter()) {
-                *d = v as i16;
-            }
+            // (natural order) — keep for reconstruction.
+            y1_dequant[block_idx] = coeffs;
             y1_dequant[block_idx][0] = 0;
         }
     }

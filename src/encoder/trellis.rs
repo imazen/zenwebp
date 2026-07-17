@@ -119,7 +119,7 @@ fn level_cost_fast(costs: &LevelCostArray, level: usize) -> u32 {
 #[allow(clippy::needless_range_loop)] // p indexes multiple arrays with different semantics
 #[allow(private_interfaces)] // psy_config is pub(crate), but this function is exposed for debugging
 pub fn trellis_quantize_block(
-    coeffs: &mut [i32; 16],
+    coeffs: &mut [i16; 16],
     out: &mut [i16; 16],
     mtx: &VP8Matrix,
     lambda: u32,
@@ -145,7 +145,8 @@ pub fn trellis_quantize_block(
     let mut last = first as i32 - 1;
     for n in (first..16).rev() {
         let j = VP8_ZIGZAG[n];
-        let err = coeffs[j] * coeffs[j];
+        let c = i32::from(coeffs[j]);
+        let err = c * c;
         if err > thresh {
             last = n as i32;
             break;
@@ -190,8 +191,9 @@ pub fn trellis_quantize_block(
         let iq = mtx.iq[j];
 
         // Get sign from original coefficient
-        let sign = coeffs[j] < 0;
-        let abs_coeff = if sign { -coeffs[j] } else { coeffs[j] };
+        let c = i32::from(coeffs[j]);
+        let sign = c < 0;
+        let abs_coeff = if sign { -c } else { c };
         let coeff_with_sharpen = abs_coeff + mtx.sharpen[j] as i32;
 
         // Base quantized level with neutral bias
@@ -254,9 +256,9 @@ pub fn trellis_quantize_block(
                 // ctype: 0=Y2, 1=Y_AC, 2=Y_DC, 3=UV
                 let is_chroma = ctype == 3;
                 let below_jnd = if is_chroma {
-                    psy_config.is_below_jnd_uv(j, coeffs[j])
+                    psy_config.is_below_jnd_uv(j, i32::from(coeffs[j]))
                 } else {
-                    psy_config.is_below_jnd_y(j, coeffs[j])
+                    psy_config.is_below_jnd_y(j, i32::from(coeffs[j]))
                 };
 
                 // Only penalize zeroing if coefficient is perceptible
@@ -360,8 +362,9 @@ pub fn trellis_quantize_block(
         out[n] = level as i16;
         has_nz |= level != 0;
 
-        // Reconstruct coefficient for subsequent prediction
-        coeffs[j] = level * mtx.q[j] as i32;
+        // Reconstruct coefficient for subsequent prediction (level*q is
+        // i16-bounded — it tracks the original DCT coefficient)
+        coeffs[j] = (level * i32::from(mtx.q[j])) as i16;
 
         if n == first {
             break;

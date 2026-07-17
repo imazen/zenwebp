@@ -820,10 +820,7 @@ impl<'a> super::Vp8Encoder<'a> {
                             #[cfg(all(test, feature = "std"))]
                             TRELLIS_REUSE_HITS.with(|c| c.set(c.get() + 1));
                             if !self.verified_trellis_reuse {
-                                let mut coeffs_check = [0i32; 16];
-                                for (d, &v) in coeffs_check.iter_mut().zip(block.iter()) {
-                                    *d = i32::from(v);
-                                }
+                                let mut coeffs_check = *block;
                                 let mut zigzag_check = [0i16; 16];
                                 let y1_matrix =
                                     self.segments[segment_id].y1_matrix.as_ref().unwrap();
@@ -854,12 +851,7 @@ impl<'a> super::Vp8Encoder<'a> {
                         let _ = lambda;
                         stored.y1_zigzag[block_idx] = pre[block_idx];
                     } else {
-                        // Trellis DP still runs on i32 coefficients; widen at
-                        // this (m5/m6-only) boundary.
-                        let mut coeffs = [0i32; 16];
-                        for (d, &v) in coeffs.iter_mut().zip(block.iter()) {
-                            *d = i32::from(v);
-                        }
+                        let mut coeffs = *block;
                         // Borrow segment fields individually to avoid conflict with proba_stats
                         let y1_matrix = self.segments[segment_id].y1_matrix.as_ref().unwrap();
                         let psy_config = &self.segments[segment_id].psy_config;
