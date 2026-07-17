@@ -130,16 +130,23 @@ final-pass 16×16 recompute at m3/m4. `encode_image` retains ~31
 bounds-check sites but they are outside the per-MB loop (header/emit/
 finalize — not hot).
 
-## Process note (added after the i686 CI break)
+## Process note (added after the i686 CI break; extended after aarch64)
 
 The `output_hash` byte gate only covers the platform it runs on. The
 speed work's cfg'd arch arms (x86_64 / wasm32 / scalar-fallback) broke
 i686 twice: a missing `quantize_dequantize_ac_only_simd` definition
 (`5c37ee33`) and the I4 winner carry staying enabled with empty levels on
-the non-SIMD arms (`90bb08bf` — corrupted every I4 MB on 32-bit). Before
-pushing changes that touch arch-gated code paths, run the FULL suite on
-`--target i686-unknown-linux-gnu` locally; it exercises the scalar tiers
-the x86-64 gate never sees.
+the non-SIMD arms (`90bb08bf` — corrupted every I4 MB on 32-bit). Then
+the stage-A i16 conversion missed the NEON residual-cost kernel and
+broke every aarch64 CI lane on `f62983ab` (fixed `e0854c76`). The local
+per-chunk gate is therefore FOUR targets now:
+
+```bash
+cargo test  --release --features __expert                                  # x86-64
+cargo test  --release --target i686-unknown-linux-gnu --features __expert  # 32-bit/scalar tiers
+cargo build --release --target wasm32-unknown-unknown --no-default-features
+cargo check --release --target aarch64-unknown-linux-gnu --features __expert  # NEON tier compile
+```
 
 ## Repro
 
