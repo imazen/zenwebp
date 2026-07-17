@@ -43,6 +43,7 @@ fn rows4_mut<T>(a: &mut [T; 16]) -> (&mut [T; 4], &mut [T; 4], &mut [T; 4], &mut
 }
 
 /// Split `&[T; 16]` into two `&[T; 8]` halves.
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn halves8<T>(a: &[T; 16]) -> (&[T; 8], &[T; 8]) {
     let (lo, rest) = a.split_first_chunk::<8>().unwrap();
@@ -51,6 +52,7 @@ fn halves8<T>(a: &[T; 16]) -> (&[T; 8], &[T; 8]) {
 }
 
 /// Split `&mut [T; 16]` into two `&mut [T; 8]` halves.
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn halves8_mut<T>(a: &mut [T; 16]) -> (&mut [T; 8], &mut [T; 8]) {
     let (lo, rest) = a.split_first_chunk_mut::<8>().unwrap();

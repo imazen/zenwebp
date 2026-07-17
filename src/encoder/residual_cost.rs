@@ -492,16 +492,10 @@ pub(crate) fn get_residual_cost_neon(
         let k_cst2 = vdupq_n_u8(2);
         let k_cst67 = vdupq_n_u8(MAX_VARIABLE_LEVEL as u8);
 
-        // Load coefficients as i32 and pack to i16 (signed saturation via vqmovn)
-        let (c0_arr, c1_arr, c2_arr, c3_arr) = split4_ref(res.coeffs);
-        let c0 = simd_mem::vld1q_s32(c0_arr);
-        let c1 = simd_mem::vld1q_s32(c1_arr);
-        let c2 = simd_mem::vld1q_s32(c2_arr);
-        let c3 = simd_mem::vld1q_s32(c3_arr);
-
-        // Pack i32 to i16 (signed saturation)
-        let s0 = vcombine_s16(vqmovn_s32(c0), vqmovn_s32(c1)); // 8 x i16
-        let s1 = vcombine_s16(vqmovn_s32(c2), vqmovn_s32(c3)); // 8 x i16
+        // Load coefficients directly as i16 (levels are i16 end-to-end)
+        let (c_lo, c_hi) = crate::common::h16(res.coeffs);
+        let s0 = simd_mem::vld1q_s16(c_lo); // 8 x i16
+        let s1 = simd_mem::vld1q_s16(c_hi); // 8 x i16
 
         // Absolute value (i16)
         let e0 = vabsq_s16(s0);
