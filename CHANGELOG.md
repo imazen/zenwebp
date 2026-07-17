@@ -136,6 +136,20 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Changed
 
+- **Tuned default: mid-row level-cost refresh at m3/m4 — closes the
+  document-scans pocket** (#38 RD round 3): libwebp rebuilds its
+  level-cost tables alongside the mid-pass probability refresh; the
+  tuned default now does the same at the non-trellis RD tiers. Measured
+  −0.17%/−0.15% matched-zsim on the 15-image corpus and 1.024 → 1.002
+  vs libwebp on scanned documents at m4 (whose stationary token
+  statistics are exactly where image-adapted cost tables pay — found
+  via the per-MB decision probe after mode counts proved identical).
+  m5/m6 keep pass-start tables: the refresh also feeds the trellis DP
+  and measured a broad loss there (+0.44%, 10/15 images; their output
+  verified bit-identical under the gate). Anchor after rounds 1-3:
+  m0 0.908 / m2 1.005 / m4 0.992 / m6 0.984 vs libwebp at matched
+  zensim. `benchmarks/rd_round3_2026-07-16.md`.
+
 - **Tuned default: libwebp-exact chroma conversion at m1+** (#38 RD
   round 3, `6ef3df9b`): the gamma-corrected byte-rounded chroma measured
   as a matched-quality loss on real content at every method (m2 −0.30%,

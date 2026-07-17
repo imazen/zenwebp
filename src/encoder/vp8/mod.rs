@@ -2050,16 +2050,20 @@ impl<'a> Vp8Encoder<'a> {
                 // (`VP8CalculateLevelCosts` right after `FinalizeTokenProbas`,
                 // frame_enc.c:834-836), so mode-selection coefficient costs
                 // track the evolving distribution for the rest of the pass.
-                // zenwebp's tuned default deliberately skips this (rebuilding
-                // `level_costs` mid-row measurably regressed default
-                // compression, 1.0101x→1.0114x), leaving cost-based mode
-                // selection on the pass-start (default-proba) tables. Under
-                // StrictLibwebpParity we match libwebp: rebuild `level_costs`
-                // from the just-refreshed image-adapted probabilities so the
-                // I16/I4/UV coefficient costs (and thus the mode picks) line up
-                // — without this, chroma-UV costs run ~1.5× high and flip the
-                // DC/TM choice on later rows (e.g. 382297 m3 mb(4,4)).
-                if self.cost_model == super::api::CostModel::StrictLibwebpParity
+                // Parity always matches libwebp (without this, chroma-UV costs
+                // run ~1.5× high and flip the DC/TM choice on later rows —
+                // e.g. 382297 m3 mb(4,4)). The tuned default adopts it at the
+                // non-trellis RD tiers (m3-m4): measured −0.17%/−0.15%
+                // matched-zsim on the 15-image corpus AND it closes the
+                // scans-class pocket at m4 (1.024 → 1.002 vs libwebp; the
+                // stationary token statistics of document scans are exactly
+                // where image-adapted cost tables pay). At m5-m6 the refresh
+                // also feeds the trellis DP and measured a broad LOSS
+                // (+0.44%, 10/15 images) — the trellis tiers keep the
+                // pass-start tables. See benchmarks/rd_round3_2026-07-16.md.
+                let tuned_refresh = self.cost_model == super::api::CostModel::ZenwebpDefault
+                    && (3..=4).contains(&self.method);
+                if (self.cost_model == super::api::CostModel::StrictLibwebpParity || tuned_refresh)
                     && let Some(updated) = self.updated_probs
                 {
                     self.level_costs.mark_dirty();

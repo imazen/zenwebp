@@ -332,6 +332,13 @@ required-features = ["analyzer"]
 name = "tuned_ab_sweep"
 path = "dev/tuned_ab_sweep.rs"
 
+# Scans-pocket probe: per-config I4/I16/skip + segment stats, tuned vs
+# parity, on scan-class images. See benchmarks/rd_pareto_review_2026-07-16.md.
+[[example]]
+name = "scan_stats_probe"
+path = "dev/scan_stats_probe.rs"
+required-features = ["__expert"]
+
 # One-shot empirical probe: do tiny zenwebp-encoded images have an
 # intrinsic ceiling on achievable zensim score? See dev/zensim_ceiling_probe.rs.
 [[example]]
