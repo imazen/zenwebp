@@ -1485,6 +1485,16 @@ impl<'a> WebPDecoder<'a> {
                     4,
                 )?;
 
+                // The alpha plane was sized from the ANMF frame dimensions, but the
+                // reconstruction loop below (and composite_frame afterwards) indexes it
+                // with the embedded VP8's own decoded dimensions. A crafted animated
+                // WebP whose VP8 keyframe declares different dims than its ANMF frame
+                // would otherwise index `alpha_chunk.data` (or `frame_scratch`) out of
+                // bounds and panic. Mirror the plain-VP8 arm and reject the mismatch.
+                if u32::from(w) != frame_width || u32::from(h) != frame_height {
+                    return Err(at!(DecodeError::InconsistentImageSizes));
+                }
+
                 let fw = usize::from(w);
                 let fh = usize::from(h);
 
