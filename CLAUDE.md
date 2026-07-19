@@ -65,7 +65,7 @@ Quick paths:
 
 ## ML/picker status (2026-05-20)
 
-zenwebp's 2026-04-29 to 2026-05-03 picker spike at `src/encoder/picker/` is currently in tree but **never wired into the public API** per the 2026-05-20 per-codec audit. Considered dead code; removal pending separate cleanup.
+zenwebp's 2026-04-29 to 2026-05-03 picker spike at `src/encoder/picker/` was REMOVED 2026-07-01 (5d6df59, "feat(picker)!: remove the feature-gated v0.1 zenwebp picker").
 
 For working picker reference: `~/work/zen/zenavif/src/auto_tune.rs` + `EncoderConfig::auto_tune()` is the only production-shipped zen-codec picker today.
 
@@ -644,14 +644,14 @@ bounds checks in loop filter / YUV->RGB conversion.
 convert image.png -depth 8 RGB:image_WxH.rgb
 
 # Profile zenwebp
-valgrind --tool=callgrind --callgrind-out-file=/tmp/callgrind.zen.out \
+valgrind --tool=callgrind --callgrind-out-file=~/tmp/callgrind.zen.out \
   target/release/examples/callgrind_encode image_WxH.rgb W H 75 4
 
 # Profile libwebp
-valgrind --tool=callgrind --callgrind-out-file=/tmp/callgrind.lib.out \
+valgrind --tool=callgrind --callgrind-out-file=~/tmp/callgrind.lib.out \
   target/release/examples/callgrind_libwebp image_WxH.rgb W H 75 4
 
-# Criterion head-to-head
+# Criterion head-to-head (legacy — new benches use zenbench)
 cargo bench --bench encode_vs_libwebp
 ```
 
