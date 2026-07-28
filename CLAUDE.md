@@ -79,6 +79,18 @@ See `docs/PERFORMANCE.md` for benchmarks, `docs/CALL-TREE.md` for SIMD tiers, `d
 
 **Benchmarks**: `benches/decode_compare.rs` (14 images), `benches/decode_lossless_compare.rs`. zenbench, no `-C target-cpu=native`.
 
+**SIMD tier isolation**: `benches/tier_isolation.rs` measures the native SIMD
+tier against a forced-scalar run of the same code path
+(`dangerously_disable_token_process_wide`, toggled in the untimed `with_input`
+closure). Every other bench compares zenwebp to libwebp or another crate, so
+before this there was no way to tell whether a hand-written SIMD kernel was
+faster than the scalar fallback it replaces. Arch-generic: NEON on aarch64,
+AVX2 on x86_64. Requires `archmage/testable_dispatch` (in dev-deps) and must
+NOT be built with `-C target-cpu=native` — that pins the tier at compile time,
+after which it cannot be disabled and the bench skips rather than reporting the
+SIMD path twice. Apple M4 Pro, 2026-07-28: NEON is worth 1.52-1.64x end-to-end
+on decode and encode (`benchmarks/neon_tier_isolation_2026-07-28.meta`).
+
 ## Key Files
 
 **Encoder (lossy):**
