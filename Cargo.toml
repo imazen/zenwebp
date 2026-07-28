@@ -77,7 +77,10 @@ zenanalyze = { version = "0.1.0", optional = true, features = ["experimental"] }
 # [patch.crates-io] zencodec above so both resolve to one unified zencodec.
 # Drop for a crates.io version dep once zencodec 0.1.26 + testkit publish.
 zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "44ca79279b265ba7dfe01a2b31ef74788429509a" }
-archmage = { version = "0.9.15", features = ["std", "macros"] }
+# `testable_dispatch` lets benches/tier_isolation.rs disable the baseline
+# SIMD token (NEON on aarch64) so the scalar arm is real rather than a
+# second measurement of the SIMD path.
+archmage = { version = "0.9.15", features = ["std", "macros", "testable_dispatch"] }
 paste = "1.0.14"
 png = "0.18"
 rand = "0.10.1"
@@ -427,6 +430,10 @@ harness = false
 
 [[bench]]
 name = "decode_zenbench"
+harness = false
+
+[[bench]]
+name = "tier_isolation"
 harness = false
 
 [[bench]]

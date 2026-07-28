@@ -1,0 +1,32 @@
+# zenwebp NEON vs forced-scalar — first tier-isolated measurement on ARM
+date:    2026-07-28
+host:    Apple M4 Pro (12 core), macOS, aarch64
+command: cargo bench --bench tier_isolation
+build:   release, NO -C target-cpu=native (required — native pins the tier at
+         compile time, after which it cannot be disabled and the bench skips)
+corpus:  codec-corpus gb82-sc, lossy q75 method 4
+
+## Why this file exists
+
+zenwebp carries ~125 hand-written NEON functions, but every pre-existing bench
+compares zenwebp against libwebp or another zen crate — never zenwebp against
+itself with SIMD disabled. There was no way to tell whether any NEON kernel was
+actually faster than the scalar fallback it replaces, so a NEON regression
+would have been invisible. benches/tier_isolation.rs closes that.
+
+## Result
+
+| workload                        | NEON     | scalar   | speedup |
+|---------------------------------|----------|----------|---------|
+| decode codec_wiki 2560x1664     |   8.46ms |  13.86ms |  1.64x  |
+| encode codec_wiki 2560x1664     | 134.57ms | 208.59ms |  1.55x  |
+| decode terminal 1646x1062       |   6.48ms |   9.84ms |  1.52x  |
+| encode terminal 1646x1062       |  62.80ms |  96.61ms |  1.54x  |
+
+NEON is worth 1.52-1.64x end-to-end on both decode and encode. No regression
+found — unlike linear-srgb, where the equivalent bench immediately exposed a
+kernel that was slower through NEON than with NEON disabled.
+
+These are whole-pipeline numbers; they bound what NEON contributes overall but
+do not attribute it per kernel. Narrowing a specific kernel still needs a
+targeted bench or a profile.

@@ -1,0 +1,139 @@
+warning: unused macro definition: `load_8x4_impl`
+    --> src/decoder/loop_filter.rs:1333:14
+     |
+1333 | macro_rules! load_8x4_impl {
+     |              ^^^^^^^^^^^^^
+     |
+     = note: `#[warn(unused_macros)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused macro definition: `store_4x4_impl`
+    --> src/decoder/loop_filter.rs:1366:14
+     |
+1366 | macro_rules! store_4x4_impl {
+     |              ^^^^^^^^^^^^^^
+
+warning: unused macro definition: `load_16x4_impl`
+    --> src/decoder/loop_filter.rs:1393:14
+     |
+1393 | macro_rules! load_16x4_impl {
+     |              ^^^^^^^^^^^^^^
+
+warning: unused macro definition: `store_16x4_impl`
+    --> src/decoder/loop_filter.rs:1408:14
+     |
+1408 | macro_rules! store_16x4_impl {
+     |              ^^^^^^^^^^^^^^^
+
+warning: unused macro definition: `store_q1q2_16_impl`
+    --> src/decoder/loop_filter.rs:1426:14
+     |
+1426 | macro_rules! store_q1q2_16_impl {
+     |              ^^^^^^^^^^^^^^^^^^
+
+warning: unused macro definition: `store_uv_16x4_impl`
+    --> src/decoder/loop_filter.rs:1458:14
+     |
+1458 | macro_rules! store_uv_16x4_impl {
+     |              ^^^^^^^^^^^^^^^^^^
+
+warning: unused macro definition: `store_q1q2_uv_16_impl`
+    --> src/decoder/loop_filter.rs:1476:14
+     |
+1476 | macro_rules! store_q1q2_uv_16_impl {
+     |              ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `u8x32`
+  --> src/decoder/lossless_transform_simd.rs:16:39
+   |
+16 | use magetypes::simd::generic::{u8x16, u8x32};
+   |                                       ^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused macro definition: `planar_to_24b_helper`
+    --> src/decoder/yuv.rs:1902:14
+     |
+1902 | macro_rules! planar_to_24b_helper {
+     |              ^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> src/encoder/vp8/mode_selection.rs:1705:21
+     |
+1705 |                 let mut best_levels_zz = [0i16; 16];
+     |                     ----^^^^^^^^^^^^^^
+     |                     |
+     |                     help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `i4_index_order`
+    --> src/encoder/vp8/mode_selection.rs:1750:21
+     |
+1750 |                 let i4_index_order =
+     |                     ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_i4_index_order`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `idct_add_residue_and_clear_with_token` is never used
+    --> src/common/prediction.rs:1296:15
+     |
+1296 | pub(crate) fn idct_add_residue_and_clear_with_token<const N: usize>(
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `yuv_to_rgb_scalar` is never used
+    --> src/decoder/yuv.rs:2061:4
+     |
+2061 | fn yuv_to_rgb_scalar(y: u8, u: u8, v: u8) -> (u8, u8, u8) {
+     |    ^^^^^^^^^^^^^^^^^
+
+warning: `zenwebp` (lib) generated 13 warnings (run `cargo fix --lib -p zenwebp` to apply 3 suggestions)
+   Compiling zenwebp v0.5.0 (/Users/lilith/work/zen/zenwebp)
+    Finished `bench` profile [optimized] target(s) in 10.71s
+     Running benches/tier_isolation.rs (target/release/deps/tier_isolation-076fb6b8de2563ba)
+[tier_isolation] comparing neon vs forced scalar
+[zenbench] calibration: int=0.31ns/iter mem_bw=104.6GiB/s mem_lat=7.7ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.22ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /var/folders/sc/m9jbk0qj0jz4w09h7gg8v3p80000gn/T/zenbench/zenbench-1785241816-18416.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1785241816-18416
+  git: ff2d0c7681990f7d077f6edee221ad7923af1f2e
+═══════════════════════════════════════════════════════════════
+
+  decode/codec_wiki_2560x1664  40 rounds × 1 calls
+             mean ±mad ms  95% CI vs base   
+  ├─ neon      8.5 ±0.2ms  [8.2–8.8]ms      
+  ╰─ scalar   13.9 ±0.2ms  [+64.2%–+65.7%]  
+
+  neon    ██████████████████████████████████████ 8.46ms
+  scalar  ██████████████████████████████████████████████████████████████ 13.86ms
+
+  encode/codec_wiki_2560x1664  30 rounds × 1 calls
+              mean ±mad ms  95% CI vs base   
+  ├─ neon     134.6 ±1.4ms  [134.1–135.0]ms  
+  ╰─ scalar   208.6 ±1.2ms  [+54.5%–+55.6%]  
+
+  neon    ███████████████████████████████████████ 134.57ms
+  scalar  █████████████████████████████████████████████████████████████ 208.59ms
+
+  decode/terminal_1646x1062  30 rounds × 1 calls
+             mean ±mad ms  95% CI vs base   
+  ├─ neon     6.5 ±0.7ms  [6.3–6.7]ms      
+  ╰─ scalar   9.8 ±0.8ms  [+47.7%–+56.4%]  
+
+  neon    █████████████████████████████████████████ 6.48ms
+  scalar  ███████████████████████████████████████████████████████████████ 9.84ms
+
+  encode/terminal_1646x1062  30 rounds × 1 calls
+             mean ±mad ms  95% CI vs base   
+  ├─ neon     62.8 ±2.0ms  [62.4–63.3]ms    
+  ╰─ scalar   96.6 ±0.8ms  [+52.5%–+55.1%]  
+
+  neon    ████████████████████████████████████████ 62.80ms
+  scalar  ██████████████████████████████████████████████████████████████ 96.61ms
+
+  total: 33.7s  (25 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
