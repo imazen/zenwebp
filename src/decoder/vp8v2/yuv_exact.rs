@@ -1857,3 +1857,25 @@ mod tests {
         }
     }
 }
+
+
+/// Dev-only per-kernel access for `benches/kernel_tiers.rs`. NOT public API.
+#[cfg(feature = "_dev")]
+#[doc(hidden)]
+pub mod __bench_kernels {
+    /// Exact YUV 4:2:0 -> RGB conversion, dispatched.
+    #[allow(clippy::too_many_arguments)]
+    pub fn yuv420_to_rgb_exact(
+        ybuf: &[u8],
+        ubuf: &[u8],
+        vbuf: &[u8],
+        width: usize,
+        height: usize,
+        y_stride: usize,
+        uv_stride: usize,
+        output: &mut alloc::vec::Vec<u8>,
+        bpp: usize,
+    ) {
+        super::yuv420_to_rgb_exact(ybuf, ubuf, vbuf, width, height, y_stride, uv_stride, output, bpp)
+    }
+}

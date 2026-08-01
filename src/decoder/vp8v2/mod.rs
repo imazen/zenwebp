@@ -16,6 +16,9 @@ mod header;
 mod pipeline;
 pub(super) mod predict_fused;
 mod tables;
+#[cfg(feature = "_dev")]
+pub mod yuv_exact;
+#[cfg(not(feature = "_dev"))]
 pub(crate) mod yuv_exact;
 
 pub(crate) use context::DecoderContext;

@@ -140,6 +140,40 @@ fn bench(suite: &mut Suite) {
         });
     }
 
+
+    // ---- WebP decode: exact YUV 4:2:0 -> RGB ----
+    // The biggest uncovered module by dispatch count. This is the lossy decode
+    // output path, run once per frame over every pixel.
+    {
+        const W: usize = 1280;
+        const H: usize = 720;
+        let cw = W.div_ceil(2);
+        let chh = H.div_ceil(2);
+        let yb: &'static [u8] = Box::leak(
+            (0..W * H).map(|i| ((i * 7919) % 251) as u8).collect::<Vec<u8>>().into_boxed_slice());
+        let ub: &'static [u8] = Box::leak(
+            (0..cw * chh).map(|i| ((i * 5779) % 241) as u8).collect::<Vec<u8>>().into_boxed_slice());
+        let vb: &'static [u8] = Box::leak(
+            (0..cw * chh).map(|i| ((i * 3571) % 239) as u8).collect::<Vec<u8>>().into_boxed_slice());
+
+        for (label, bpp) in [("rgb", 3usize), ("rgba", 4usize)] {
+            suite.compare(&format!("yuv420_to_rgb_exact/{label}"), move |g| {
+                g.throughput(Throughput::Bytes((W * H * bpp) as u64));
+                for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
+                    g.bench(arm, move |b| {
+                        b.with_input(move || { set_simd(simd); Vec::<u8>::new() })
+                            .run(move |mut out| {
+                                zenwebp::decoder::vp8v2::yuv_exact::__bench_kernels::yuv420_to_rgb_exact(
+                                    yb, ub, vb, W, H, W, cw, &mut out, bpp,
+                                );
+                                out
+                            })
+                    });
+                }
+            });
+        }
+    }
+
     set_simd(true);
 }
 

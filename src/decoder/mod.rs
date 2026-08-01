@@ -28,6 +28,9 @@ mod yuv_fused;
 pub(crate) mod vp8;
 
 // VP8 lossy decoder (streaming cache→RGB architecture)
+#[cfg(feature = "_dev")]
+pub mod vp8v2;
+#[cfg(not(feature = "_dev"))]
 pub(crate) mod vp8v2;
 
 // Re-export public API
