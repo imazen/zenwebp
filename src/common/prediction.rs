@@ -2167,3 +2167,34 @@ mod tests {
         }
     }
 }
+
+
+/// Dev-only per-kernel access for `benches/kernel_tiers.rs`. NOT public API.
+#[cfg(feature = "_dev")]
+#[doc(hidden)]
+pub mod __bench_kernels {
+    /// Add an i16 residue block into a prediction block, dispatched.
+    ///
+    /// Measured 0.95x against its own forced-scalar tier on aarch64 (CI
+    /// [-5.7%, -4.4%], ratio stable across runs). The cost is the i16 -> i32
+    /// widening in `add_residue_i16_dispatch_neon`: it builds a 16-element
+    /// scratch before any vector work, and 16 values is too few to repay it.
+    ///
+    /// NOT gated to scalar, because the obvious gate makes it WORSE. Routing
+    /// the neon arm to `add_residue_i16_dispatch_scalar` measured 0.91x — the
+    /// extra dispatch boundary costs more than the widening it removes, so the
+    /// boundary is the floor here, not the widening. Left as-is deliberately;
+    /// a real fix would need a NEON path that consumes i16 directly.
+    ///
+    /// The two arms are bit-identical (max |diff| = 0 over 100,000 random
+    /// blocks at four offsets), so this is a pure performance question.
+    pub fn add_residue_i16_256(
+        pblock: &mut [u8; 256],
+        rblock: &[i16; 16],
+        y0: usize,
+        x0: usize,
+        stride: usize,
+    ) {
+        super::add_residue_i16::<256>(pblock, rblock, y0, x0, stride)
+    }
+}

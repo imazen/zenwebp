@@ -1291,3 +1291,14 @@ mod benches {
         });
     }
 }
+
+
+/// Dev-only per-kernel access for `benches/kernel_tiers.rs`. NOT public API.
+#[cfg(feature = "_dev")]
+#[doc(hidden)]
+pub mod __bench_kernels {
+    /// Inverse subtract-green transform (decode side), dispatched.
+    pub fn apply_subtract_green_transform(image_data: &mut [u8]) {
+        super::apply_subtract_green_transform(image_data)
+    }
+}

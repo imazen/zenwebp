@@ -12,6 +12,15 @@ mod internal_error;
 mod limits;
 mod loop_filter;
 mod lossless;
+/// Dev-only public exposure for per-tier benchmarking. NOT public API.
+///
+/// `missing_docs` is allowed here because the gate surfaces pre-existing
+/// internal items that were never part of the documented surface; documenting
+/// them would imply a stability they do not have.
+#[cfg(feature = "_dev")]
+#[allow(missing_docs)]
+pub mod lossless_transform;
+#[cfg(not(feature = "_dev"))]
 mod lossless_transform;
 #[cfg(any(
     target_arch = "x86_64",

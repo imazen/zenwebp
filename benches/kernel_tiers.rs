@@ -174,6 +174,44 @@ fn bench(suite: &mut Suite) {
         }
     }
 
+
+    // ---- residue add + lossless inverse transform ----
+    {
+        let r16: &'static [i16; 16] = Box::leak(Box::new([
+            12, -34, 56, -7, 89, -21, 3, -45, 67, -8, 90, -12, 34, -56, 7, -89,
+        ]));
+        suite.compare("add_residue_i16", |g| {
+            for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
+                g.bench(arm, move |b| {
+                    b.with_input(move || { set_simd(simd); [128u8; 256] })
+                        .run(move |mut p| {
+                            zenwebp::common::prediction::__bench_kernels::add_residue_i16_256(
+                                &mut p, r16, 0, 0, 16,
+                            );
+                            p
+                        })
+                });
+            }
+        });
+
+        // Decode-side inverse subtract-green over a 1 MP ARGB image.
+        const N: usize = (1 << 20) * 4;
+        let img: &'static [u8] = Box::leak(
+            (0..N).map(|i| ((i * 7919) % 251) as u8).collect::<Vec<u8>>().into_boxed_slice());
+        suite.compare("inverse_subtract_green/1MP", move |g| {
+            g.throughput(Throughput::Bytes(N as u64));
+            for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
+                g.bench(arm, move |b| {
+                    b.with_input(move || { set_simd(simd); img.to_vec() })
+                        .run(move |mut v| {
+                            zenwebp::decoder::lossless_transform::__bench_kernels::apply_subtract_green_transform(&mut v);
+                            v
+                        })
+                });
+            }
+        });
+    }
+
     set_simd(true);
 }
 
