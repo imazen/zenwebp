@@ -422,6 +422,25 @@ fn tdisto_8x8_sse2(_token: X64V3Token, a: &[u8], b: &[u8], stride: usize, w: &[u
 /// * `src` - Source pixels (16x16 block accessed with given stride)
 /// * `stride` - Row stride of source buffer
 #[inline]
+/// NOTE on its tier behaviour, measured 2026-07-31 (benches/kernel_tiers.rs):
+/// this predicate's NEON-vs-scalar ratio is WORKLOAD-DEPENDENT, and the
+/// dispatch is deliberately left alone because of it.
+///
+///   flat 16x16 block  (full traversal):  8.2 ns vs 111.3 ns   13.6x
+///   non-flat block    (early exit):      7.7 ns vs   5.9 ns    0.76x
+///
+/// `is_flat_source_16_scalar` returns at the FIRST differing pixel, so on
+/// non-flat input it finishes in about one comparison while any vector form
+/// loads a whole 16-byte row. Measuring only non-flat input reports 0.74x and
+/// reads like a broken SIMD path; measuring only flat input reports 13.6x and
+/// reads like a huge win. Both are real, and which one dominates depends on
+/// content — flat 16x16 blocks are uncommon in photographs and common in
+/// screen content.
+///
+/// Arithmetic for anyone revisiting: the scalar early exit saves ~2 ns per
+/// non-flat block, the vector path saves ~103 ns per flat one, so SIMD wins on
+/// average once roughly 2% of blocks are flat. Do NOT "fix" this to scalar on
+/// the strength of the non-flat number alone.
 pub fn is_flat_source_16(src: &[u8], stride: usize) -> bool {
     incant!(
         is_flat_source_16_impl(src, stride),
