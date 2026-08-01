@@ -635,9 +635,13 @@ impl WebpEncodeJob {
         if let Some(px) = self.limits.max_pixels {
             limits = limits.max_total_pixels(px);
         }
-        if let Some(mem) = self.limits.max_memory_bytes {
-            limits = limits.max_memory(mem);
-        }
+        // `max_memory_bytes` is deliberately NOT forwarded: `crate::Limits` is
+        // the decoder's allocation-budget type, and the native ENCODE path
+        // never reads its `max_memory` — forwarding it stored a limit nothing
+        // checked. The encode memory budget is enforced honestly in one place:
+        // `WebpEncoder::do_encode`'s pre-flight against the calibrated
+        // `heuristics::estimate_encode` peak. Dimension/pixel caps stay
+        // forwarded — the native encode genuinely validates those.
         if self.limits.max_width.is_some() || self.limits.max_height.is_some() {
             limits = limits.max_dimensions(
                 self.limits.max_width.unwrap_or(u32::MAX),
@@ -824,7 +828,17 @@ impl WebpEncoder {
             .check_dimensions(w, h)
             .map_err(|e| at!(EncodeError::LimitExceeded(e.kind(), alloc::format!("{e}"))))?;
         let bpp = layout.bytes_per_pixel() as u64;
-        let estimated_mem = w as u64 * h as u64 * bpp;
+        // Honest pre-flight: gate on the calibrated peak estimate — the
+        // encoder's working set (`heuristics::estimate_encode`, VmHWM-marginal
+        // calibrated, 2026-06-23 sweep, safe-upper-bound `_EST` fit) PLUS the
+        // input buffer held for the encode's duration — not just the
+        // `w*h*bpp` input buffer, which under-states the real peak (lossless:
+        // 18 MB fixed + 24 B/px working vs a 3-4 B/px input). Same
+        // input+working convention as `estimate_encode_resources`. This is
+        // the single encode-side memory enforcement point.
+        let input_bytes = w as u64 * h as u64 * bpp;
+        let est = crate::heuristics::estimate_encode(w, h, bpp as u8, &self.inner_config);
+        let estimated_mem = est.peak_memory_bytes.saturating_add(input_bytes);
         self.limits
             .check_memory(estimated_mem)
             .map_err(|e| at!(EncodeError::LimitExceeded(e.kind(), alloc::format!("{e}"))))?;
@@ -3248,6 +3262,72 @@ mod tests {
         let decoded = dec.decode(output.data()).unwrap();
         assert!(decoded.width() > 0);
         assert!(decoded.height() > 0);
+    }
+
+    /// The encode memory pre-flight gates on the CALIBRATED peak estimate
+    /// (`heuristics::estimate_encode` working set + the held input buffer),
+    /// not just the raw `w*h*bpp` input buffer. 1024×1024 RGB8 lossy: the
+    /// input buffer is 3 MiB — the old input-buffer check ADMITTED it under
+    /// an 8 MiB cap — but the calibrated peak (8.5 MB fixed + 3.4 B/px
+    /// working + the held input) is ~15 MB, well past the budget. The honest
+    /// check must reject up front with `LimitKind::Memory`.
+    #[test]
+    fn encode_memory_preflight_rejects_calibrated_peak_over_budget() {
+        use zencodec::{ErrorCategory, LimitKind, ResourceError};
+
+        let cap: u64 = 8 * 1024 * 1024;
+        let (w, h) = (1024u32, 1024u32);
+        let input_bytes = w as u64 * h as u64 * 3;
+        assert!(
+            input_bytes < cap,
+            "input buffer must fit the cap (the old check admitted this size)"
+        );
+        // Pin the test's premise to the model the gate reads: the calibrated
+        // peak for this exact config must exceed the cap.
+        let config = WebpEncoderConfig::lossy();
+        let est = crate::heuristics::estimate_encode(w, h, 3, &config.inner)
+            .peak_memory_bytes
+            .saturating_add(input_bytes);
+        assert!(est > cap, "calibrated peak {est} must exceed cap {cap}");
+
+        let buf = make_rgb8_pixels(w, h);
+        let err = config
+            .job()
+            .with_limits(ResourceLimits::none().with_max_memory(cap))
+            .encoder()
+            .unwrap()
+            .encode(buf.as_slice())
+            .expect_err("honest pre-flight must reject");
+        assert_eq!(
+            err.error().category(),
+            ErrorCategory::Resource(ResourceError::Limits(LimitKind::Memory)),
+            "rejection must be the memory-limit path, got: {err}"
+        );
+    }
+
+    /// A budget that covers the calibrated peak admits the encode and it
+    /// completes (moderate 64 MiB cap for a 1024×1024 RGB8 lossy encode whose
+    /// modeled peak is ~15 MiB).
+    #[test]
+    fn encode_memory_preflight_admits_within_budget() {
+        let (w, h) = (1024u32, 1024u32);
+        let config = WebpEncoderConfig::lossy();
+        let cap: u64 = 64 * 1024 * 1024;
+        let est = crate::heuristics::estimate_encode(w, h, 3, &config.inner)
+            .peak_memory_bytes
+            .saturating_add(w as u64 * h as u64 * 3);
+        assert!(est <= cap, "modeled peak {est} must fit the moderate cap {cap}");
+
+        let buf = make_rgb8_pixels(w, h);
+        let output = config
+            .job()
+            .with_limits(ResourceLimits::none().with_max_memory(cap))
+            .encoder()
+            .unwrap()
+            .encode(buf.as_slice())
+            .expect("64 MiB budget must admit a 1 MP lossy encode");
+        assert!(!output.is_empty());
+        assert_eq!(output.format(), ImageFormat::WebP);
     }
 
     #[test]
