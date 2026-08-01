@@ -17,6 +17,11 @@ mod histogram;
 mod huffman;
 mod meta_huffman;
 mod near_lossless;
+/// Public under `_dev` so `benches/kernel_tiers.rs` can measure the VP8L
+/// transforms per-tier. Not public API, not semver-covered.
+#[cfg(feature = "_dev")]
+pub mod transforms;
+#[cfg(not(feature = "_dev"))]
 mod transforms;
 mod types;
 

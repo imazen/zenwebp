@@ -116,6 +116,30 @@ fn bench(suite: &mut Suite) {
         d!("is_flat_source_16/early-exit", distortion::is_flat_source_16(plane_a, STRIDE));
     }
 
+
+    // ---- VP8L lossless: subtract-green ----
+    // Per-pixel transform applied across the whole image on the lossless path.
+    // `pub` + `incant!`-dispatched, so no shim needed.
+    {
+        const N: usize = 1 << 20;
+        let px: &'static [u32] = Box::leak(
+            (0..N).map(|i| ((i as u32).wrapping_mul(2_654_435_761)) | 0xFF00_0000)
+                .collect::<Vec<u32>>().into_boxed_slice(),
+        );
+        suite.compare("apply_subtract_green/1MP", move |g| {
+            g.throughput(Throughput::Bytes((N * 4) as u64));
+            for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
+                g.bench(arm, move |b| {
+                    b.with_input(move || { set_simd(simd); px.to_vec() })
+                        .run(move |mut v| {
+                            zenwebp::encoder::vp8l::transforms::apply_subtract_green(&mut v);
+                            v
+                        })
+                });
+            }
+        });
+    }
+
     set_simd(true);
 }
 
