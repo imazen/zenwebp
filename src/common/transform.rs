@@ -358,7 +358,21 @@ fn dct4x4_dispatch_v3(token: X64V3Token, block: &mut [i32; 16]) {
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 fn dct4x4_dispatch_neon(token: NeonToken, block: &mut [i32; 16]) {
-    dct4x4_neon(token, block);
+    // MEASURED SLOWER than scalar on aarch64: 23.3 ns vs 18.4 ns (0.79x,
+    // CI [-21.2%, -20.6%], reproduced). Same reason as `idct4x4_dispatch_neon`
+    // above — 16 elements is too small to repay the vector setup.
+    //
+    // Output-safe WITHIN THE FORMAT'S DOMAIN, which is worth stating precisely:
+    // over 200,000 random blocks the two agree exactly (max |diff| = 0) for
+    // inputs in +-255, the VP8 residual range (pixel minus prediction). They
+    // DIVERGE above that — max |diff| 4096 at +-512, 7569 at +-1024 — because
+    // `dct4x4_neon` carries i16 intermediates that overflow where the scalar
+    // i32 form does not. Nothing in the encoder feeds it out-of-range values,
+    // but a future caller that did would have been getting different results
+    // from the two tiers already; this note is so that is not discovered the
+    // hard way.
+    let _ = token;
+    dct4x4_scalar(block);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -384,7 +398,18 @@ fn idct4x4_dispatch_v3(token: X64V3Token, block: &mut [i32; 16]) {
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 fn idct4x4_dispatch_neon(token: NeonToken, block: &mut [i32; 16]) {
-    idct4x4_neon(token, block);
+    // MEASURED SLOWER than the scalar path on aarch64, so it routes there:
+    // 26.1 ns vs 19.2 ns (0.74x, CI [-27.0%, -25.8%], reproduced across runs).
+    // A 4x4 i32 transform is 16 elements — the vector load/transpose/store
+    // setup costs more than the scalar butterflies at that size, and NEON is
+    // BASELINE on aarch64 so the scalar arm is autovectorized anyway.
+    //
+    // Output-safe: `idct4x4_neon` and the scalar form are bit-identical over
+    // 200,000 random blocks (max |diff| = 0), so this is purely a dispatch
+    // choice. `idct4x4_neon` is kept, not deleted — it is correct, and on a
+    // different aarch64 microarchitecture the balance may differ.
+    let _ = token;
+    idct4x4_scalar(block);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -3171,5 +3196,42 @@ mod tests {
                 "test case {case_idx}: dispatched IDCT+add_residue differs from reference"
             );
         }
+    }
+}
+
+
+/// Dev-only per-kernel access for `benches/kernel_tiers.rs`.
+///
+/// NOT public API and NOT semver-covered. These exist because zenwebp was only
+/// ever measured end-to-end (whole-image decode/encode), which cannot show a
+/// single kernel running slower than its own scalar fallback — the failure mode
+/// that turned out to be real in zenquant, zenresize, linear-srgb and iwssim
+/// during the 2026-07 aarch64 sweep.
+#[cfg(feature = "_dev")]
+#[doc(hidden)]
+pub mod __bench_kernels {
+    /// Inverse DCT, dispatched.
+    pub fn idct4x4(b: &mut [i32; 16]) {
+        super::idct4x4(b)
+    }
+    /// Forward DCT, dispatched.
+    pub fn dct4x4(b: &mut [i32; 16]) {
+        super::dct4x4(b)
+    }
+    /// Inverse Walsh-Hadamard, dispatched.
+    pub fn iwht4x4(b: &mut [i32; 16]) {
+        super::iwht4x4(b)
+    }
+    /// Forward Walsh-Hadamard, dispatched.
+    pub fn wht4x4(b: &mut [i32; 16]) {
+        super::wht4x4(b)
+    }
+    /// Scalar reference for the inverse DCT.
+    pub fn idct4x4_scalar(b: &mut [i32; 16]) {
+        super::idct4x4_scalar(b)
+    }
+    /// Scalar reference for the forward DCT.
+    pub fn dct4x4_scalar(b: &mut [i32; 16]) {
+        super::dct4x4_scalar(b)
     }
 }

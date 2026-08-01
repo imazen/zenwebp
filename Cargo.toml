@@ -121,6 +121,8 @@ zensim-regress = "0.3.0"
 
 [features]
 default = ["std", "fast-yuv", "pixel-types"]
+# Dev-only: exposes internal SIMD kernels for per-tier benchmarking. Not API.
+_dev = []
 # Enable std library. Required only for Encoder.encode_to_writer().
 # Without std, use slice-based decoder and Vec-based encoder APIs.
 std = ["thiserror/std", "whereat/std", "byteorder-lite/std"]
@@ -472,3 +474,8 @@ opt-level = 2
 # is not a break of any released API. The `zencodec-testkit` dev-dep below is
 # pinned to the SAME rev so both resolve to one unified zencodec.
 zencodec = { git = "https://github.com/imazen/zencodec", rev = "44ca79279b265ba7dfe01a2b31ef74788429509a" }
+
+[[bench]]
+name = "kernel_tiers"
+harness = false
+required-features = ["_dev"]

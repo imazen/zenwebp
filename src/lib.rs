@@ -132,6 +132,11 @@ whereat::define_at_crate_info!();
 extern crate test;
 
 // Core modules (internal — public API is re-exported at crate root)
+/// Public under `_dev` so `benches/kernel_tiers.rs` can measure the transform
+/// kernels per-tier. Not public API, not semver-covered.
+#[cfg(feature = "_dev")]
+pub mod common;
+#[cfg(not(feature = "_dev"))]
 pub(crate) mod common;
 pub mod decoder;
 /// Encoder detection and quality estimation from WebP file headers.
