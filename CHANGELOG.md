@@ -96,6 +96,24 @@ here has landed; see "Changed (BREAKING)" below.)
   queued in `QUEUED BREAKING CHANGES` since the PR #103 taxonomy adoption.
 
 ### Changed
+- **zencodec encode memory pre-flight now gates on the calibrated peak
+  estimate (5b17fd84).** With `ResourceLimits::max_memory_bytes` set, the
+  encode pre-flight compares the budget against
+  `heuristics::estimate_encode(..)`'s `peak_memory_bytes` (the
+  VmHWM-calibrated safe-upper-bound working set from the 2026-06-23 sweep:
+  lossy 8.5 MB + 3.4 B/px, lossless 18 MB + 24 B/px) plus the held input
+  buffer — the same convention `estimate_encode_resources` reports — instead
+  of just the `w*h*bpp` input buffer (1024×1024 RGB8 lossy: 3 MiB claimed vs
+  ~15 MiB modeled peak). Encodes near a tight budget that previously slipped
+  through now fail up front with `Resource(Limits(Memory))`; raise
+  `max_memory_bytes` if the honest estimate rejects a budget you know is
+  sufficient. Also removes the dead `max_memory` forwarding in
+  `build_inner_config`: `crate::Limits` is the decoder's allocation-budget
+  type and the native encode path never reads its `max_memory`, so the
+  adapter was storing a limit nothing checked — the `do_encode` pre-flight
+  is now the single encode-side memory enforcement point (dimension/pixel
+  caps stay forwarded; the native encode genuinely validates those). Encode
+  is single-threaded, so there is no thread-memory axis to cap.
 - **VP8 profile bit matches libwebp** (#38): frame-tag version is now 2
   when the loop filter is disabled (was always 0), matching
   `webp_enc.c`'s profile deduction. Decode-identical.
