@@ -265,6 +265,15 @@ fn dequantize_block_dispatch_v3(_token: X64V3Token, q: &[u16; 16], coeffs: &mut 
 /// is purely a dispatch-overhead question, and the fix would be to stop
 /// dispatching per block — hoisting the token to the caller and using a
 /// `#[rite]` — not to change what the arm does.
+///
+/// That hoist was COSTED and rejected, so the decision is not re-litigated on
+/// intuition: 2560x1664 is 266,240 4x4 blocks, and at the measured ~1.1 ns of
+/// boundary cost per call that is 0.29 ms against a 149 ms encode — **0.20%**.
+/// Buying it means changing signatures across 10 call sites in the encoder's
+/// hot loop (`vp8/prediction.rs`, `vp8/mode_selection.rs`, `quantize.rs`),
+/// which is a real regression surface for two tenths of a percent. If the
+/// dispatch boundary is ever attacked, do it as a deliberate encoder-wide
+/// change with its own gates, not as a fix for these two kernels.
 #[allow(clippy::needless_range_loop)]
 fn dequantize_block_dispatch_neon(token: NeonToken, q: &[u16; 16], coeffs: &mut [i32; 16]) {
     crate::common::simd_neon::dequantize_block_neon(token, q, coeffs);
