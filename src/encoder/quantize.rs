@@ -250,6 +250,22 @@ fn dequantize_block_dispatch_v3(_token: X64V3Token, q: &[u16; 16], coeffs: &mut 
 /// NEON tier for dequantize_block dispatch.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
+/// NOTE (measured 2026-07-31): this arm reads 0.90x against its own
+/// forced-scalar tier — 10.6 ns vs 9.5 ns, CI [-10.2%, -9.2%], reproduced.
+///
+/// The gap is NOT the kernel body. Replacing this call with the scalar form's
+/// loop inlined directly here measured 0.88x — no better, slightly worse. What
+/// costs is the `#[arcane]` dispatch boundary itself: on a ~10 ns kernel doing
+/// 16 multiplies, the target-feature transition is a material fraction of the
+/// total, and no choice of body recovers it.
+///
+/// The same shape appeared on `common::prediction::add_residue_i16` (0.95x,
+/// where routing to the scalar arm made it 0.91x). Both are left alone: the
+/// arms are bit-identical (verified over 200,000 random blocks here), so this
+/// is purely a dispatch-overhead question, and the fix would be to stop
+/// dispatching per block — hoisting the token to the caller and using a
+/// `#[rite]` — not to change what the arm does.
+#[allow(clippy::needless_range_loop)]
 fn dequantize_block_dispatch_neon(token: NeonToken, q: &[u16; 16], coeffs: &mut [i32; 16]) {
     crate::common::simd_neon::dequantize_block_neon(token, q, coeffs);
 }

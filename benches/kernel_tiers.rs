@@ -212,6 +212,52 @@ fn bench(suite: &mut Suite) {
         });
     }
 
+
+    // ---- encoder quantization ----
+    // Built through `VP8Matrix::new` rather than a hand-filled struct: its
+    // fields are interdependent (iq = (1<<QFIX)/q, bias, zthresh), so a
+    // literal would be self-inconsistent and the timings meaningless.
+    {
+        use zenwebp::encoder::quantize::{MatrixType, VP8Matrix, quantize_block_simd,
+                                         quantize_dequantize_block_simd};
+        let m: &'static VP8Matrix = Box::leak(Box::new(VP8Matrix::new(8, 12, MatrixType::Y1)));
+        let src16: &'static [i16; 16] = Box::leak(Box::new([
+            420, -180, 96, -44, 210, -130, 60, -22, 88, -300, 150, -70, 33, -18, 9, -400,
+        ]));
+        let src32: &'static [i32; 16] = Box::leak(Box::new([
+            420, -180, 96, -44, 210, -130, 60, -22, 88, -300, 150, -70, 33, -18, 9, -400,
+        ]));
+
+        suite.compare("quantize_block_simd", |g| {
+            for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
+                g.bench(arm, move |b| {
+                    b.with_input(move || { set_simd(simd); *src32 })
+                        .run(move |mut c| { let r = quantize_block_simd(&mut c, m, false); (c, r) })
+                });
+            }
+        });
+        suite.compare("quantize_dequantize_block", |g| {
+            for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
+                g.bench(arm, move |b| {
+                    b.with_input(move || set_simd(simd))
+                        .run(move |_| {
+                            let (mut q, mut d) = ([0i16; 16], [0i16; 16]);
+                            let r = quantize_dequantize_block_simd(src16, m, false, &mut q, &mut d);
+                            (q, d, r)
+                        })
+                });
+            }
+        });
+        suite.compare("dequantize_block", |g| {
+            for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
+                g.bench(arm, move |b| {
+                    b.with_input(move || { set_simd(simd); *src32 })
+                        .run(move |mut c| { m.dequantize_block(&mut c); c })
+                });
+            }
+        });
+    }
+
     set_simd(true);
 }
 
