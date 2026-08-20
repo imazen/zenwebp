@@ -682,6 +682,21 @@ here has landed; see "Changed (BREAKING)" below.)
 
 ### Fixed
 
+- **wasm32 SIMD128 decoded every lossy WebP to solid green** (shipped since
+  v0.4.2, `0811747`). In `yuv_fused::wasm_fused::fused_row_2uv_wasm`, the Y/U/V
+  widening emulated libwebp's `_mm_unpacklo_epi8(zero, x)` with
+  `i8x16_shuffle::<8, 0, 9, 1, ...>(zero, x_half)` — every index is < 16, so all
+  sixteen lanes came from `zero` and the samples were discarded. With Y=U=V=0 the
+  transform yields R=`sat((0-14234)>>6)`=0, G=`8708>>6`=136, B=0: RGB (0, 136, 0)
+  for ~98% of pixels. Replaced with `u16x8_shl(u16x8_extend_low_u8x16(x), 8)`.
+  wasm+simd128 decode is now byte-identical to x86_64. Only the YUV→RGB stage was
+  affected — decoded YUV planes were always correct. Gated by
+  `fused_row_2uv_matches_scalar_reference` (`src/decoder/yuv_fused.rs`, the file's
+  first test), verified to fail against the reintroduced defect, plus a CI job
+  that runs the lib suite under wasmtime with `-C target-feature=+simd128`. The
+  previous `wasm` CI job was `cargo check` only: it never executed wasm and
+  `--no-default-features` without `+simd128` never even compiled the kernel.
+
 - **StrictLibwebpParity: ALL 14 of 14 method×segment cells now byte-identical
   to libwebp** (#38, 8256bec / 8b60a62 / c96f767 / 6b4fa0c). Four more
   parity-gated fixes (tuned default unchanged) closed the last three cells
