@@ -95,6 +95,31 @@ here has landed; see "Changed (BREAKING)" below.)
   the rewire reads `e.kind()` at each call site. Resolves the item that was
   queued in `QUEUED BREAKING CHANGES` since the PR #103 taxonomy adoption.
 
+### Fixed
+- **Lossy RGBA at m6 was ~40x slower than m4 — the tuned default no longer
+  escalates the alpha plane's VP8L to quality 100.** Since `376b7b6` (tuned
+  default adopts the libwebp alpha pipeline) every lossy-alpha encode at
+  `method = 6` with the default `alpha_quality = 100` hit libwebp's
+  `EncodeLossless` escape branch (`use_quality_100 && effort == 6` →
+  VP8L quality 100), running the q100/m6 cruncher (predictor transform-bits
+  sweep, dual refs, TraceBackwards) once per filter trial. Found as the
+  debug-wedge "75x alpha slowdown" on a wasm32 CDN edge deployment; the
+  operating point is libwebp-faithful (native libwebp pays 223ms on the same
+  150x150 RGBA q80 m6 input) but wrong for the tuned default. Measured
+  (native, 150x150 logo-alpha, q80 m6): 558ms → 13.7ms; 570x570:
+  1890ms → 45ms; ALPH grows ~25% (a few % of total file). The tuned default
+  now always codes alpha at `quality = 8·effort`; `StrictLibwebpParity`
+  keeps the escalation (byte parity unchanged, suite green). Guarded by
+  `tests/lossy_alpha_effort.rs` (alpha stays bit-exact at
+  `alpha_quality = 100`).
+
+### Added
+- **`LossyConfig::with_alpha_effort(0..=6)`** — decouples the alpha plane's
+  effort from `method` (default `None` = follow `method`). The alpha plane
+  is coded with VP8L at `quality = 8·effort`; lowering it trades ALPH bytes
+  for encode time without touching the VP8 image plane. Threaded through
+  `EncoderParams` into both the still and animation (mux) alpha paths.
+
 ### Changed
 - **zencodec encode memory pre-flight now gates on the calibrated peak
   estimate (5b17fd84).** With `ResourceLimits::max_memory_bytes` set, the
