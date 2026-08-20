@@ -95,6 +95,31 @@ here has landed; see "Changed (BREAKING)" below.)
   the rewire reads `e.kind()` at each call site. Resolves the item that was
   queued in `QUEUED BREAKING CHANGES` since the PR #103 taxonomy adoption.
 
+### Fixed
+- **32-bit (wasm32) container parsing could spin forever at 100% CPU on a
+  malformed WebP.** Two independent `u64 → usize` narrowings, both required
+  to reproduce: `SliceReader::seek_from_start` cast the seek target to
+  `usize` *before* the range check, so on a 32-bit target
+  `seek_from_start(30 + 2^32)` truncated to `30`, passed `30 > len`, and
+  silently rewound the cursor instead of erroring; and
+  `WebPDemuxer::parse_extended`'s chunk walk computed
+  `chunk_start + 8 + rounded` in `usize`, which wraps back onto
+  `chunk_start` for a chunk declaring `size == 0xFFFF_FFF8`. Together the
+  walk re-read the same chunk header forever. A 70-byte VP8X file was
+  enough; `mux::WebPDemuxer::new` and `metadata::{icc_profile,exif,xmp}`
+  hung, and via `parse_extended` so would `WebPMux::from_data`,
+  `decode_lossy_internal`, `DecoderContext::decode_animation`, and the
+  zencodec `VP8X` branch. **64-bit targets were never affected** — no
+  narrowing, so the seek correctly errored. Present since `c73b75c`
+  (2026-02-03) and invisible because CI never executed a 32-bit target.
+  Both narrowings are fixed at the source (range-check in `u64`, advance
+  via `next_chunk_pos() -> u64`), along with the same class in the
+  previously-unreachable `SliceReader::set_position` and its `std::io::Seek`
+  impl. Gated by pure-arithmetic unit tests that fail cleanly (rather than
+  time the job out) on any 32-bit target, plus the
+  `crash-…-wasm32-chunkwalk-spin` fuzz seed and new demuxer/metadata
+  coverage in `tests/fuzz_regression.rs`.
+
 ### Changed
 - **zencodec encode memory pre-flight now gates on the calibrated peak
   estimate (5b17fd84).** With `ResourceLimits::max_memory_bytes` set, the

@@ -34,10 +34,13 @@ impl<'a> SliceReader<'a> {
         self.pos as u64
     }
 
-    /// Sets the current position.
+    /// Sets the current position, clamped to the end of the slice.
     #[inline]
     pub fn set_position(&mut self, pos: u64) {
-        self.pos = pos as usize;
+        // Clamp in `u64`, not after narrowing: `pos as usize` truncates on
+        // 32-bit targets, so an out-of-range value can land *behind* the
+        // current position instead of at the end. See `seek_from_start`.
+        self.pos = pos.min(self.data.len() as u64) as usize;
     }
 
     /// Returns the underlying byte slice.
@@ -73,12 +76,16 @@ impl<'a> SliceReader<'a> {
     /// Seek to a position from the start.
     #[inline]
     pub fn seek_from_start(&mut self, pos: u64) -> Result<u64, DecodeError> {
-        let pos = pos as usize;
-        if pos > self.data.len() {
+        // Range-check BEFORE narrowing. `pos` is derived from file-declared
+        // chunk sizes, so on 32-bit targets (wasm32) `pos as usize` truncates
+        // an out-of-range seek into a valid in-range one — which silently
+        // rewinds the caller instead of erroring, and container walks that
+        // seek chunk-by-chunk then spin forever at 100% CPU.
+        if pos > self.data.len() as u64 {
             return Err(DecodeError::BitStreamError);
         }
-        self.pos = pos;
-        Ok(self.pos as u64)
+        self.pos = pos as usize;
+        Ok(pos)
     }
 
     /// Seek relative to current position.
@@ -247,6 +254,10 @@ impl<'a> std::io::BufRead for SliceReader<'a> {
 impl<'a> std::io::Seek for SliceReader<'a> {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         let new_pos = match pos {
+            // Reject out-of-range in `u64` before narrowing — `n as usize`
+            // truncates on 32-bit targets and would turn an invalid seek into
+            // a valid one. See `SliceReader::seek_from_start`.
+            std::io::SeekFrom::Start(n) if n > self.data.len() as u64 => None,
             std::io::SeekFrom::Start(n) => Some(n as usize),
             std::io::SeekFrom::End(n) => {
                 if n >= 0 {
@@ -274,5 +285,51 @@ impl<'a> std::io::Seek for SliceReader<'a> {
                 "seek out of bounds",
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SliceReader;
+
+    /// Regression: a seek target past the end must ERROR, not truncate into a
+    /// valid position. On 32-bit targets (wasm32) `pos as usize` before the
+    /// range check turns `data.len() + 2^32` into `data.len()`, which rewinds
+    /// container walks instead of stopping them — an infinite loop at 100% CPU.
+    #[test]
+    fn seek_past_end_errors_instead_of_truncating() {
+        let data = [0u8; 70];
+        let mut r = SliceReader::new(&data);
+        r.seek_from_start(30).unwrap();
+
+        // 30 + 2^32: truncates to 30 on a 32-bit `usize`.
+        assert!(r.seek_from_start(30 + (1u64 << 32)).is_err());
+        assert_eq!(r.position(), 30, "failed seek must not move the cursor");
+
+        // Exactly at the end is still a legal seek; one past it is not.
+        assert!(r.seek_from_start(70).is_ok());
+        assert!(r.seek_from_start(71).is_err());
+    }
+
+    /// `set_position` clamps to the end; it must never land *behind* the
+    /// cursor because the value truncated into range on a 32-bit `usize`.
+    #[test]
+    fn set_position_clamps_instead_of_truncating() {
+        let data = [0u8; 70];
+        let mut r = SliceReader::new(&data);
+        r.set_position(30 + (1u64 << 32));
+        assert_eq!(r.position(), 70);
+    }
+
+    /// Same guarantee through the `std::io::Seek` impl.
+    #[cfg(feature = "std")]
+    #[test]
+    fn io_seek_start_past_end_errors_instead_of_truncating() {
+        use std::io::{Seek, SeekFrom};
+        let data = [0u8; 70];
+        let mut r = SliceReader::new(&data);
+        r.seek(SeekFrom::Start(30)).unwrap();
+        assert!(r.seek(SeekFrom::Start(30 + (1u64 << 32))).is_err());
+        assert_eq!(r.position(), 30, "failed seek must not move the cursor");
     }
 }

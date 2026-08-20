@@ -81,6 +81,25 @@ fn run_decode_v2(input: &[u8]) {
     }
 }
 
+/// Container-level entry points. `run_decode_*` all go through `WebPDecoder`,
+/// which walks VP8X chunks itself and never touches the demuxer — so the
+/// `wasm32-chunkwalk-spin` seed would be inert without this. These three are
+/// public API and reach `WebPDemuxer::parse_extended` directly.
+///
+/// On 64-bit this only asserts "does not panic"; the spin it guards against is
+/// 32-bit-only, so a regression shows up as a hang under the wasm test job.
+/// The cheap, legible gates for that arithmetic are the unit tests in
+/// `src/slice_reader.rs` and `src/mux/demux.rs`.
+fn run_demux(input: &[u8]) {
+    if let Ok(demuxer) = zenwebp::mux::WebPDemuxer::new(input) {
+        let _ = demuxer.num_frames();
+        for _frame in demuxer.frames() {}
+    }
+    let _ = zenwebp::metadata::icc_profile(input);
+    let _ = zenwebp::metadata::exif(input);
+    let _ = zenwebp::metadata::xmp(input);
+}
+
 #[test]
 fn fuzz_regression_seeds_do_not_panic() {
     let dir = regression_dir();
@@ -108,6 +127,7 @@ fn fuzz_regression_seeds_do_not_panic() {
         run_decode_still(&input);
         run_decode_animated(&input);
         run_decode_v2(&input);
+        run_demux(&input);
 
         eprintln!("ok: {name} ({} bytes)", input.len());
     }

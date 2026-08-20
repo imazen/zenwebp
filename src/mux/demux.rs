@@ -321,14 +321,14 @@ impl<'a> WebPDemuxer<'a> {
         };
 
         // Skip any remaining VP8X payload padding
-        let vp8x_rounded = vp8x_size + (vp8x_size & 1);
-        r.seek_from_start(12 + 8 + vp8x_rounded as u64)
+        let vp8x_rounded = vp8x_size as u64 + (vp8x_size & 1) as u64;
+        r.seek_from_start(12 + 8 + vp8x_rounded)
             .map_err(|e| at!(MuxError::from(e)))?;
 
-        let max_pos = 8 + riff_size; // RIFF header (8 bytes) + declared size
+        let max_pos = 8 + riff_size as u64; // RIFF header (8 bytes) + declared size
 
         // Scan all chunks
-        while (r.position() as usize) + 8 <= max_pos && (r.position() as usize) + 8 <= data.len() {
+        while r.position() + 8 <= max_pos && (r.position() as usize) + 8 <= data.len() {
             let chunk_start = r.position() as usize;
             let mut fourcc = [0u8; 4];
             if r.read_exact(&mut fourcc).is_err() {
@@ -339,7 +339,7 @@ impl<'a> WebPDemuxer<'a> {
                 Err(_) => break,
             };
             let payload_start = r.position() as usize;
-            let rounded = size + (size & 1);
+            let next_pos = next_chunk_pos(chunk_start, size);
 
             match &fourcc {
                 b"ICCP" if has_icc => {
@@ -422,9 +422,7 @@ impl<'a> WebPDemuxer<'a> {
             }
 
             // Advance past this chunk's payload
-            if r.seek_from_start((chunk_start + 8 + rounded) as u64)
-                .is_err()
-            {
+            if r.seek_from_start(next_pos).is_err() {
                 break;
             }
         }
@@ -718,4 +716,40 @@ impl ExactSizeIterator for DemuxFrameIter<'_, '_> {}
 /// Read a 24-bit little-endian value from 3 bytes.
 fn read_u24_le(bytes: &[u8]) -> u32 {
     u32::from(bytes[0]) | (u32::from(bytes[1]) << 8) | (u32::from(bytes[2]) << 16)
+}
+
+/// Byte offset of the chunk following the one starting at `chunk_start`.
+///
+/// `size` is read verbatim from the file, so it spans the whole `u32` range.
+/// The sum MUST be computed in `u64`: on 32-bit targets (wasm32) a `usize`
+/// sum wraps, and a chunk declaring `size == 0xFFFF_FFF8` lands back on
+/// `chunk_start` — the chunk walk then never advances and spins at 100% CPU.
+#[inline]
+fn next_chunk_pos(chunk_start: usize, size: usize) -> u64 {
+    chunk_start as u64 + 8 + size as u64 + (size & 1) as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_chunk_pos;
+
+    /// Regression: the chunk walk must move forward for every declared size,
+    /// including the ones that wrap a 32-bit `usize`. Fails cleanly on wasm32
+    /// (and any 32-bit target) if the arithmetic ever narrows again.
+    #[test]
+    fn chunk_walk_advance_does_not_wrap_on_32bit() {
+        // 0xFFFF_FFF8 is the exact value that maps back onto `chunk_start`.
+        assert_eq!(next_chunk_pos(30, 0xFFFF_FFF8), 30 + 8 + 0xFFFF_FFF8);
+        // Neighbours that would seek *backwards* under a 32-bit sum.
+        assert_eq!(next_chunk_pos(4096, 0xFFFF_FFF0), 4096 + 8 + 0xFFFF_FFF0);
+        // u32::MAX: odd, so the +1 padding is what overflows.
+        assert_eq!(next_chunk_pos(0, 0xFFFF_FFFF), 8 + 0xFFFF_FFFF + 1);
+        // Every case must strictly advance past the 8-byte header.
+        for size in [0usize, 1, 2, 0x7FFF_FFFF, 0xFFFF_FFF8, 0xFFFF_FFFF] {
+            assert!(
+                next_chunk_pos(30, size) >= 38,
+                "size {size:#x} did not advance"
+            );
+        }
+    }
 }
