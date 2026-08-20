@@ -1258,3 +1258,55 @@ fn fused_row_2uv_dispatch_scalar(
         set_pixel(&mut rgb[yx * 3..yx * 3 + 3], y_row[yx], u_val, v_val);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[allow(unused_imports)]
+    use alloc::{vec, vec::Vec};
+
+    use crate::decoder::vp8v2::yuv_exact::fill_2uv_row_generic;
+
+    /// The fused SIMD kernel must be byte-identical to the scalar reference on
+    /// whatever tier the build selects: v3 on x86_64, NEON on aarch64, SIMD128
+    /// on wasm32. The wasm tier shipped a whole-image corruption for months
+    /// because CI only ever ran `cargo check` for wasm — never executed it.
+    #[test]
+    fn fused_row_2uv_matches_scalar_reference() {
+        // Two patterns: a ramp, and an LCG spread that pushes R/G/B into the
+        // saturating ends of the YUV->RGB transform.
+        for pattern in 0..2u32 {
+            let sample = |i: usize, salt: u32| -> u8 {
+                if pattern == 0 {
+                    (i * 7 + salt as usize * 37) as u8
+                } else {
+                    let x = (i as u32)
+                        .wrapping_mul(1_664_525)
+                        .wrapping_add(1_013_904_223 ^ salt);
+                    (x >> 24) as u8
+                }
+            };
+            // Widths straddling the 32-pixel SIMD block and its 16-pixel tail.
+            for width in [
+                1usize, 2, 3, 15, 16, 17, 31, 32, 33, 47, 63, 64, 65, 127, 550,
+            ] {
+                let chroma_width = width.div_ceil(2);
+                let y: Vec<u8> = (0..width).map(|i| sample(i, 0)).collect();
+                let u_near: Vec<u8> = (0..chroma_width).map(|i| sample(i, 1)).collect();
+                let u_far: Vec<u8> = (0..chroma_width).map(|i| sample(i, 2)).collect();
+                let v_near: Vec<u8> = (0..chroma_width).map(|i| sample(i, 3)).collect();
+                let v_far: Vec<u8> = (0..chroma_width).map(|i| sample(i, 4)).collect();
+
+                let mut fused = vec![0u8; width * 3];
+                super::fused_row_2uv(&mut fused, &y, &u_near, &u_far, &v_near, &v_far);
+
+                let mut reference = vec![0u8; width * 3];
+                fill_2uv_row_generic(&mut reference, &y, &u_near, &u_far, &v_near, &v_far, 3);
+
+                assert_eq!(
+                    fused, reference,
+                    "fused kernel differs from scalar: pattern={pattern} width={width}"
+                );
+            }
+        }
+    }
+}

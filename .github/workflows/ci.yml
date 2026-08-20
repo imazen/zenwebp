@@ -115,6 +115,16 @@ jobs:
       - name: Check WASM (no_std)
         run: cargo check --target wasm32-wasip1 --no-default-features
 
+      # `cargo check` never executes a single wasm instruction, and without
+      # +simd128 it does not even compile the SIMD128 kernels. That is how the
+      # fused YUV->RGB kernel shipped a whole-image corruption from v0.4.2.
+      - uses: bytecodealliance/actions/wasmtime/setup@v1
+      - name: Test WASM SIMD128 (wasmtime)
+        env:
+          RUSTFLAGS: "-C target-feature=+simd128"
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
+        run: cargo test --lib --release --target wasm32-wasip1 --no-default-features
+
   feature-permutations:
     name: Feature permutations
     runs-on: ubuntu-latest

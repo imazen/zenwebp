@@ -521,7 +521,7 @@ fn fill_2uv_row_scalar(
 
 /// Shared scalar implementation (used by all non-SIMD tiers and as tail handler).
 #[inline(always)]
-fn fill_2uv_row_generic(
+pub(crate) fn fill_2uv_row_generic(
     rgb: &mut [u8],
     y_row: &[u8],
     u_near: &[u8],
@@ -1497,6 +1497,8 @@ mod tests {
 
     /// Encode 64x64 Q75, decode with yuv_exact, compare against webpx::decode_rgb().
     /// Asserts zero diffs (bit-exact with libwebp).
+    // libwebp cross-check: `webpx` is a non-wasm dev-dependency.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn bit_exact_vs_libwebp_64x64_q75() {
         let (w, h) = (64, 64);
@@ -1547,6 +1549,8 @@ mod tests {
     }
 
     /// Same test but for RGBA output.
+    // libwebp cross-check: `webpx` is a non-wasm dev-dependency.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn bit_exact_vs_libwebp_64x64_q75_rgba() {
         let (w, h) = (64, 64);
@@ -1592,6 +1596,8 @@ mod tests {
     }
 
     /// Quick decode speed comparison: zenwebp (yuv_exact) vs libwebp.
+    // libwebp cross-check: `webpx` is a non-wasm dev-dependency.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn bench_vs_libwebp_512() {
         let (w, h) = (512, 512);
@@ -1642,6 +1648,8 @@ mod tests {
     }
 
     /// Test odd dimensions to verify edge handling.
+    // libwebp cross-check: `webpx` is a non-wasm dev-dependency.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn bit_exact_vs_libwebp_odd_dimensions() {
         for &(w, h) in &[(1, 1), (3, 3), (17, 9), (63, 63), (65, 33)] {
