@@ -881,7 +881,6 @@ mod wasm_fused {
         // Convert 16 YUV444 → 48 bytes RGB
         fn convert_and_store_rgb16(y: v128, u: v128, v: v128, rgb: &mut [u8; 48]) {
             fn process_half(y_half: v128, u_half: v128, v_half: v128) -> (v128, v128, v128) {
-                let zero = u16x8_splat(0);
                 let k19077 = u16x8_splat(19077);
                 let k26149 = u16x8_splat(26149);
                 let k14234 = u16x8_splat(14234);
@@ -891,61 +890,12 @@ mod wasm_fused {
                 let k13320 = u16x8_splat(13320);
                 let k8708 = u16x8_splat(8708);
 
-                // Widen to u16 in high byte position
-                let y16 = u16x8_extend_high_u8x16(i8x16_shuffle::<
-                    8,
-                    0,
-                    9,
-                    1,
-                    10,
-                    2,
-                    11,
-                    3,
-                    12,
-                    4,
-                    13,
-                    5,
-                    14,
-                    6,
-                    15,
-                    7,
-                >(zero, y_half));
-                let u16v = u16x8_extend_high_u8x16(i8x16_shuffle::<
-                    8,
-                    0,
-                    9,
-                    1,
-                    10,
-                    2,
-                    11,
-                    3,
-                    12,
-                    4,
-                    13,
-                    5,
-                    14,
-                    6,
-                    15,
-                    7,
-                >(zero, u_half));
-                let v16v = u16x8_extend_high_u8x16(i8x16_shuffle::<
-                    8,
-                    0,
-                    9,
-                    1,
-                    10,
-                    2,
-                    11,
-                    3,
-                    12,
-                    4,
-                    13,
-                    5,
-                    14,
-                    6,
-                    15,
-                    7,
-                >(zero, v_half));
+                // Widen to u16 with the value in the high byte (x << 8), matching
+                // libwebp's `_mm_unpacklo_epi8(zero, x)`. The 8 active samples sit
+                // in lanes 0..8 of each half.
+                let y16 = u16x8_shl(u16x8_extend_low_u8x16(y_half), 8);
+                let u16v = u16x8_shl(u16x8_extend_low_u8x16(u_half), 8);
+                let v16v = u16x8_shl(u16x8_extend_low_u8x16(v_half), 8);
 
                 // mulhi_epu16 emulation: multiply wide, take high 16 bits
                 fn mulhi_epu16(a: v128, b: v128) -> v128 {
