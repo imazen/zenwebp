@@ -254,6 +254,11 @@ pub struct LossyConfig {
     pub method: u8,
     /// Alpha channel quality (0-100, 100 = lossless alpha). Default: 100.
     pub alpha_quality: u8,
+    /// Alpha plane effort (0-6), decoupled from [`Self::method`].
+    /// `None` (default) = follow `method`. The alpha plane is re-encoded
+    /// with the VP8L coder at `quality = 8·effort`; lowering this trades
+    /// ALPH bytes for encode time without touching the VP8 image plane.
+    pub alpha_effort: Option<u8>,
     /// Target file size in bytes (0 = disabled). Default: 0.
     pub target_size: u32,
     /// Target PSNR in dB (0.0 = disabled). Default: 0.0.
@@ -329,6 +334,7 @@ impl LossyConfig {
             quality: 75.0,
             method: 4,
             alpha_quality: 100,
+            alpha_effort: None,
             target_size: 0,
             target_psnr: 0.0,
             target_zensim: None,
@@ -375,6 +381,14 @@ impl LossyConfig {
     #[must_use]
     pub fn with_alpha_quality(mut self, quality: u8) -> Self {
         self.alpha_quality = quality.min(100);
+        self
+    }
+
+    /// Set alpha plane effort (0-6), decoupled from the image `method`.
+    /// Default follows `method`.
+    #[must_use]
+    pub fn with_alpha_effort(mut self, effort: u8) -> Self {
+        self.alpha_effort = Some(effort.min(6));
         self
     }
 
@@ -1102,6 +1116,7 @@ impl core::fmt::Debug for LossyConfig {
             .field("quality", &self.quality)
             .field("method", &self.method)
             .field("alpha_quality", &self.alpha_quality)
+            .field("alpha_effort", &self.alpha_effort)
             .field("target_size", &self.target_size)
             .field("target_psnr", &self.target_psnr)
             .field("preset", &self.preset)
@@ -1170,6 +1185,7 @@ impl LossyConfig {
             target_psnr: self.target_psnr,
             sharp_yuv: self.sharp_yuv,
             alpha_quality: self.alpha_quality,
+            alpha_effort: self.alpha_effort,
             partition_limit: self.partition_limit,
             exact: false, // Not applicable to lossy (alpha plane is lossless separately)
             smooth_segment_map: self.smooth_segment_map,
@@ -1196,6 +1212,7 @@ impl LosslessConfig {
             target_psnr: 0.0,
             sharp_yuv: None,
             alpha_quality: self.alpha_quality,
+            alpha_effort: None,    // Lossy-only knob
             partition_limit: None, // Not applicable to lossless
             exact: self.exact,
             smooth_segment_map: false, // Not applicable to lossless

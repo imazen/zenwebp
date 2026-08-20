@@ -646,6 +646,8 @@ pub struct EncoderParams {
     pub(crate) sharp_yuv: Option<zenyuv::SharpYuvConfig>,
     /// Alpha channel quality (0-100). 100 = lossless alpha, <100 = quantize alpha levels.
     pub(crate) alpha_quality: u8,
+    /// Alpha plane effort (0-6). `None` = follow `method`.
+    pub(crate) alpha_effort: Option<u8>,
     /// Partition limit (0-100). Penalizes I4 mode to prevent partition 0 overflow.
     /// None = automatic retry on overflow.
     pub(crate) partition_limit: Option<u8>,
@@ -693,6 +695,7 @@ impl Default for EncoderParams {
             target_psnr: 0.0,
             sharp_yuv: None,
             alpha_quality: 100,
+            alpha_effort: None,
             partition_limit: None,
             exact: false,
             smooth_segment_map: false,
@@ -1141,6 +1144,7 @@ impl EncoderConfig {
             target_psnr: self.target_psnr,
             sharp_yuv: self.sharp_yuv,
             alpha_quality: self.alpha_quality,
+            alpha_effort: None, // legacy config predates the knob
             partition_limit: self.partition_limit,
             exact: self.exact,
             smooth_segment_map: self.smooth_segment_map,
@@ -2394,17 +2398,17 @@ pub(crate) fn alpha_is_opaque(
 /// Encodes the alpha part of the image data losslessly.
 /// Used for lossy images that include transparency.
 ///
-/// Under `StrictLibwebpParity` this runs libwebp's full `EncodeAlpha`
-/// pipeline (`alpha_enc.c`): `QuantizeLevels` preprocessing, the
-/// `GetFilterMap` filter-trial loop (none/horizontal/vertical/gradient at
-/// the default FAST filtering), a per-trial raw fallback when compression
-/// does not pay, and the winning payload coded with the VP8L encoder at
-/// libwebp's alpha operating point (`method = effort`, `quality =
-/// 8·effort`, alpha in the GREEN channel with R=B=0). The tuned default
-/// keeps zenwebp's historical single-shot path (no filters, gray-expanded
-/// plane, its own quantizer mapping) — its bytes are unchanged; switching
-/// it to the libwebp pipeline is a measurable-adoption candidate (filters
-/// usually shrink the ALPH payload).
+/// Both cost models run libwebp's full `EncodeAlpha` pipeline
+/// (`alpha_enc.c`): `QuantizeLevels` preprocessing (the tuned default keeps
+/// its historical uniform level mapping), the `GetFilterMap` filter-trial
+/// loop (none/horizontal/vertical/gradient at the default FAST filtering),
+/// a per-trial raw fallback when compression does not pay, and the winning
+/// payload coded with the VP8L encoder at libwebp's alpha operating point
+/// (`method = effort`, `quality = 8·effort`, alpha in the GREEN channel
+/// with R=B=0). Only `StrictLibwebpParity` keeps libwebp's escalation to
+/// VP8L quality 100 at `alpha_quality == 100 && effort == 6`; the tuned
+/// default caps alpha at `8·effort` — the escalation costs ~40x for the
+/// last ~25% of the ALPH chunk (see `alpha_vp8l_payload_inner`).
 ///
 /// # Panics
 ///
@@ -2553,6 +2557,14 @@ fn encode_alpha_libwebp_pipeline(
 /// and encodes that image with the full lossless coder at
 /// `method = effort_level`, `quality = (use_quality_100 && effort == 6)
 /// ? 100 : 8 * effort` (`EncodeLossless`, alpha_enc.c). (#38)
+///
+/// The quality-100 escalation is PARITY-ONLY: at m6 with the default
+/// `alpha_quality = 100` it kicks the per-trial VP8L into the q100/m6
+/// cruncher (predictor transform-bits sweep, dual refs), which costs
+/// ~40x the q48 point for the last ~25% of an ALPH chunk — measured
+/// 558ms -> 13.7ms on a 150x150 RGBA at q80 m6 (debug-wedge, 2026-08-20;
+/// native libwebp pays 223ms on the same input). The tuned default caps
+/// alpha at `quality = 8 * effort`.
 pub(crate) fn alpha_vp8l_payload_inner(
     plane: &[u8],
     width: u32,
@@ -2577,7 +2589,8 @@ pub(crate) fn alpha_vp8l_payload_inner(
     // compression before (#38).
     let vp8l_config = super::vp8l::Vp8lConfig {
         quality: super::vp8l::Vp8lQuality {
-            quality: super::alpha::vp8l_quality_for_effort(effort_level, use_quality_100) as u8,
+            quality: super::alpha::vp8l_quality_for_effort(effort_level, use_quality_100 && parity)
+                as u8,
             method: effort_level,
         },
         exact: true,
@@ -2688,7 +2701,7 @@ impl<'a> WebPEncoder<'a> {
         let lossy_with_alpha =
             use_lossy && color.has_alpha() && !alpha_is_opaque(data, width, height, stride, color);
         let alpha_quality = self.params.alpha_quality;
-        let alpha_effort = self.params.method;
+        let alpha_effort = self.params.alpha_effort.unwrap_or(self.params.method);
         let alpha_cost_model = self.params.cost_model;
 
         let mut stats = EncodeStats::default();
@@ -2852,7 +2865,7 @@ impl<'a> WebPEncoder<'a> {
         let lossy_with_alpha =
             use_lossy && color.has_alpha() && !alpha_is_opaque(data, width, height, stride, color);
         let alpha_quality = self.params.alpha_quality;
-        let alpha_effort = self.params.method;
+        let alpha_effort = self.params.alpha_effort.unwrap_or(self.params.method);
         let alpha_cost_model = self.params.cost_model;
         let mut stats;
         let diagnostics;

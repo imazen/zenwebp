@@ -503,7 +503,7 @@ fn encode_frame_data(
                 stride,
                 color,
                 params.alpha_quality,
-                params.method,
+                params.alpha_effort.unwrap_or(params.method),
                 params.cost_model,
                 &Unstoppable,
             )
