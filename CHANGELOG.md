@@ -24,6 +24,47 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 (none currently — the `EncodeError::LimitExceeded` kind-carrying item queued
 here has landed; see "Changed (BREAKING)" below.)
 
+### Fixed (2026-08-21 review pass)
+- **VP8L max-dimension (16384) images no longer wrap to 0 pixels.** Both the
+  demuxer and decoder parsed VP8L dimensions as `(1 + header) & 0x3FFF`
+  instead of `(header & 0x3FFF) + 1`; a legal 16384-px dimension masked to 0,
+  and the decoder then rejected the valid file with `BitStreamError`. Gate:
+  `tests/vp8l_max_dimensions.rs`.
+- **`DecodeConfig::limits(...)` dimension/pixel/frame caps are now enforced.**
+  They were applied via `set_limits` *after* `read_data` had already run the
+  container gates against the defaults, so a caller tightening the caps was
+  silently ignored on every entry point. Gate:
+  `tests/decode_limits_enforced.rs`.
+- **Out-of-range encoder quality clamps instead of panicking.**
+  `LossyConfig::with_preset` / the `EncoderConfig` enum `with_quality` +
+  the config→params `roundf(q) as u8` boundary let `quality > 100` reach a
+  `panic!` (and `> 255` wrap to a low quality). Gate:
+  `tests/encode_quality_no_panic.rs`.
+- **Mux/demux untrusted-input hardening:** a 38-byte VP8X+ANIM file panicked
+  `WebPDemuxer::new` out of bounds (fixed + fuzz seed); ANMF sub-chunk
+  bitstreams were clamped to the whole file instead of the frame's own
+  payload end (O(N·filesize) amplification through `WebPMux`); and
+  `SliceReader::take_slice`/`peek_slice`/`read_exact` + `StreamingDecoder`
+  size arithmetic wrapped on 32-bit for file-declared sizes.
+- **VP8L #72 emit-time invariant** (`debug_assert`, runs in test + fuzz
+  builds): trees written must equal the entropy image's max symbol + 1, the
+  exact invariant #72 violated. Catches the class at emit time — including
+  content the roundtrip gate cannot (non-stranding inputs).
+
+### Added (2026-08-21 review pass)
+- **`StreamingDecoder` test suite** (`tests/streaming_decoder.rs`) — the API
+  had zero executed tests.
+- **Encode/mux fuzz targets:** `demux_container` (container + metadata entry
+  points the `WebPDecoder` targets never reach).
+
+### Changed (2026-08-21 review pass)
+- **Removed ~1900 lines of dead v1 decoder diagnostics** (`decoder::vp8`
+  BlockDiagnostic/DiagnosticFrame/TreeNode + the dead tree-reading fns,
+  `vp8v2/animation.rs`, the disabled `i4_diagnostic_harness`).
+- **`EncoderConfig` enum builder setters now clamp** to the same ranges as
+  the concrete `LossyConfig`/`LosslessConfig` setters (closes a `validate()`
+  contract hole); `LossyConfig` `Debug` now prints all fields.
+
 ### Removed (BREAKING)
 - **Removed the feature-gated v0.1 zenwebp picker** (5d6df59): the `picker`
   cargo feature and the `pub mod encoder::picker` surface

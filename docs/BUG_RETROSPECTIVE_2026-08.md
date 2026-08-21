@@ -265,6 +265,35 @@ visible, caller-controlled skip when that module is next touched.
   `|| echo` gate fix.
 - This document; CLAUDE.md points here.
 
+### Review + coverage pass (later same day)
+
+A 4-agent review (mux/container, decoder+limits, encoder-config plumbing,
+VP8L emit invariants) plus a coverage/test-quality pass. Every fix was
+verified against source with a repro or negative control before landing —
+the agents' findings were treated as leads, not truth (several proposed
+"obvious fixes" had hidden hazards; see #77 and #78). Landed:
+
+- **VP8L max-dimension (16384) wrap → 0 pixels** — `(1 + header) & mask`
+  instead of `(field) + 1`; a legal max-size lossless image *failed to
+  decode*. A **correctness** bug (wrong/absent pixels), the highest-severity
+  find. Gate `tests/vp8l_max_dimensions.rs`.
+- **`DecodeConfig::limits` were dead** — applied after `read_data` ran the
+  gates against defaults. Gate `tests/decode_limits_enforced.rs`.
+- **Encoder `quality > 100` panicked the library** from public constructors.
+  Gate `tests/encode_quality_no_panic.rs`.
+- **Mux untrusted-input:** 38-byte ANIM OOB panic (repro'd), ANMF quadratic
+  amplification, `take_slice`/`peek_slice`/streaming 32-bit wraps.
+- **VP8L #72 emit-time invariant** (`debug_assert`) — catches the class at
+  emit, including non-stranding content the roundtrip gate cannot.
+- **~1900 lines dead v1 diagnostics removed**; weak unit tests strengthened
+  to assert pixels/properties (were `is_ok()`-only or assertion-free);
+  `StreamingDecoder` + `demux_container` coverage added.
+- Config consistency: enum setters clamp; `LossyConfig` Debug completed.
+
+Backlog of design-level / measurement-needed findings: **#78**. Palette
+cache-bits determinism: **#77**. Coverage started at 82.5% src lines; the
+0% files were dead code (removed) or the now-tested `StreamingDecoder`.
+
 ## Still open after this audit
 
 - **Publish.** crates.io 0.4.5 (2026-05-02) still ships #72 (silent lossless
