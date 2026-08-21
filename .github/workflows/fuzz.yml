@@ -27,6 +27,13 @@ jobs:
           - decode_animated
           - decode_still
           - decode_v2
+          # Encode-side targets carry the exact roundtrip oracle: fuzz bytes
+          # drive a content generator + the method/quality grid, and decoded
+          # pixels must match the source. This is the guard for the
+          # "encoder emits a valid-but-wrong stream" class (#72) that
+          # decode-only fuzzing structurally cannot see.
+          - encode_lossless_roundtrip
+          - encode_lossy_roundtrip
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
@@ -81,8 +88,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build
+      # No fallback `|| echo` here: it used to turn a FAILING harness into a
+      # green step ("gate that doesn't gate"). The harness itself asserts that
+      # fuzz/regression/ is non-empty, so a missing dir fails loudly too.
       - name: Regression seeds
-        run: |
-          if [ -d fuzz/regression ] && [ "$(ls fuzz/regression/ 2>/dev/null | wc -l)" -gt 0 ]; then
-            cargo test --test fuzz_regression 2>/dev/null || echo "No regression test found — seeds exist but no test harness"
-          fi
+        run: cargo test --test fuzz_regression

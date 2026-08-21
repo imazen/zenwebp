@@ -4,15 +4,25 @@
 //! has a fuzz target. Each seed file is a previously-found crash that has been
 //! fixed; this test ensures none of them re-introduce a panic.
 //!
-//! Reproduces what the `decode_still`, `decode_animated`, and `decode_v2` fuzz
-//! targets do, but as a regular `cargo test` — no nightly toolchain needed.
-//! Failures here mean a regression of a previously-fixed bug.
+//! Reproduces what the `decode_still`, `decode_animated`, `decode_v2`,
+//! `encode_lossless_roundtrip`, and `encode_lossy_roundtrip` fuzz targets do,
+//! but as a regular `cargo test` — no nightly toolchain needed. Failures here
+//! mean a regression of a previously-fixed bug.
 //!
 //! To add a new seed: drop the (preferably minimized) crash file into
 //! `fuzz/regression/` with a `crash-<sha>` name, no other action required.
 
 use std::fs;
 use std::path::PathBuf;
+
+// Encode-side targets (`encode_lossless_roundtrip` / `encode_lossy_roundtrip`)
+// share their EXACT logic with the fuzz bins via include! — single source of
+// truth, because a generator that drifted between the fuzzer and this replay
+// harness would silently defuse every encode regression seed.
+include!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/fuzz/fuzz_targets/encode_roundtrip_core.rs"
+));
 
 /// Cap the buffer the `still`/`animated` regression helpers allocate.
 ///
@@ -128,6 +138,10 @@ fn fuzz_regression_seeds_do_not_panic() {
         run_decode_animated(&input);
         run_decode_v2(&input);
         run_demux(&input);
+        // Encode-side seeds are parameter blobs, not WebP files; decode seeds
+        // run through these too (they just exercise arbitrary encode cells).
+        run_encode_lossless_roundtrip(&input);
+        run_encode_lossy_roundtrip(&input);
 
         eprintln!("ok: {name} ({} bytes)", input.len());
     }

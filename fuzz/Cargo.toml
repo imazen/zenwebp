@@ -44,3 +44,15 @@ name = "decode_v2"
 path = "fuzz_targets/decode_v2.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "encode_lossless_roundtrip"
+path = "fuzz_targets/encode_lossless_roundtrip.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "encode_lossy_roundtrip"
+path = "fuzz_targets/encode_lossy_roundtrip.rs"
+test = false
+doc = false
