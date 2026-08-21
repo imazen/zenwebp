@@ -245,8 +245,13 @@ impl<'a> WebPDemuxer<'a> {
         }
 
         let header = r.read_u32_le().map_err(|e| at!(MuxError::from(e)))?;
-        let width = (1 + header) & 0x3FFF;
-        let height = (1 + (header >> 14)) & 0x3FFF;
+        // Extract the 14-bit field THEN add 1 (width = field + 1, range
+        // [1, 16384]). `(1 + header) & 0x3FFF` adds 1 to the whole header
+        // first, so a max field of 0x3FFF (width 16384) carries into bit 14
+        // and masks to 0 — reporting a legal 16384-wide VP8L as 0. Matches
+        // the authoritative parse in decoder/lossless.rs.
+        let width = (header & 0x3FFF) + 1;
+        let height = ((header >> 14) & 0x3FFF) + 1;
         let has_alpha = (header >> 28) & 1 != 0;
 
         // Clamp the recorded bitstream range to the actual buffer length so

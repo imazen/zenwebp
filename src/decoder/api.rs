@@ -999,8 +999,12 @@ impl<'a> WebPDecoder<'a> {
                     return Err(at!(DecodeError::VersionNumberInvalid(version as u8)));
                 }
 
-                self.width = (1 + header) & 0x3FFF;
-                self.height = (1 + (header >> 14)) & 0x3FFF;
+                // Field + 1, NOT (1 + header) & mask: the latter carries into
+                // bit 14 for a max 0x3FFF field and wraps a legal 16384-wide
+                // image to 0 (then the VP8L decoder's own dimension check
+                // rejects the file). Matches decoder/lossless.rs.
+                self.width = (header & 0x3FFF) + 1;
+                self.height = ((header >> 14) & 0x3FFF) + 1;
                 self.limits.check_dimensions(self.width, self.height)?;
                 self.chunks
                     .insert(WebPRiffChunk::VP8L, start..start + chunk_size);
