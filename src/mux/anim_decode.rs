@@ -98,8 +98,14 @@ impl<'a> AnimationDecoder<'a> {
         data: &'a [u8],
         config: &DecodeConfig,
     ) -> Result<Self, whereat::At<DecodeError>> {
-        let mut decoder = WebPDecoder::new_with_options(data, config.to_options())?;
-        decoder.set_limits(config.limits.clone());
+        // Limits go through the constructor so the container walk's
+        // frame-count / dimension gates in `read_data` enforce them (a later
+        // `set_limits` runs after those checks).
+        let decoder = WebPDecoder::new_with_options_and_limits(
+            data,
+            config.to_options(),
+            config.limits.clone(),
+        )?;
         if !decoder.is_animated() {
             return Err(at!(DecodeError::InvalidParameter(
                 alloc::string::String::from("not an animated WebP"),

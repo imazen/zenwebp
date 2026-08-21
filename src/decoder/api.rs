@@ -894,10 +894,19 @@ impl<'a> WebPDecoder<'a> {
         }
     }
 
-    /// Create a new `WebPDecoder` from the data slice with the given options.
-    pub(crate) fn new_with_options(
+    /// Create a new `WebPDecoder` from the data slice with the given options
+    /// and limits.
+    ///
+    /// `limits` MUST be supplied here rather than via a later `set_limits`
+    /// call: `read_data()` runs the container/header `check_dimensions` /
+    /// `check_frame_count` gates inline, so a limit applied afterward would
+    /// only ever see the default ceilings. (This was the bug that made
+    /// `DecodeConfig::limits(...)`'s dimension/pixel/frame caps dead on every
+    /// entry point.)
+    pub(crate) fn new_with_options_and_limits(
         data: &'a [u8],
         webp_decode_options: WebPDecodeOptions,
+        limits: super::limits::Limits,
     ) -> DecodeResult<Self> {
         let mut decoder = Self {
             r: SliceReader::new(data),
@@ -908,7 +917,7 @@ impl<'a> WebPDecoder<'a> {
             chunks: HashMap::new(),
             animation: Default::default(),
             memory_limit: usize::MAX,
-            limits: super::limits::Limits::default(),
+            limits,
             is_lossy: false,
             has_alpha: false,
             loop_count: LoopCount::Times(NonZeroU16::new(1).unwrap()),
@@ -918,6 +927,18 @@ impl<'a> WebPDecoder<'a> {
         };
         decoder.read_data()?;
         Ok(decoder)
+    }
+
+    /// Create a new `WebPDecoder` with the given options and default limits.
+    pub(crate) fn new_with_options(
+        data: &'a [u8],
+        webp_decode_options: WebPDecodeOptions,
+    ) -> DecodeResult<Self> {
+        Self::new_with_options_and_limits(
+            data,
+            webp_decode_options,
+            super::limits::Limits::default(),
+        )
     }
 
     fn read_data(&mut self) -> DecodeResult<()> {
@@ -1634,8 +1655,10 @@ fn decode_native_internal(
     limits: &super::limits::Limits,
     stop: Option<&dyn enough::Stop>,
 ) -> DecodeResult<(Vec<u8>, u32, u32, bool)> {
-    let mut decoder = WebPDecoder::new_with_options(data, options.clone())?;
-    decoder.set_limits(limits.clone());
+    // Limits must reach the constructor so `read_data`'s dimension/frame
+    // gates enforce them; a later `set_limits` would run after those checks.
+    let mut decoder =
+        WebPDecoder::new_with_options_and_limits(data, options.clone(), limits.clone())?;
     decoder.set_stop(stop);
     let (w, h) = decoder.dimensions();
     let output_size = decoder
