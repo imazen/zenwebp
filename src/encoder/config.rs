@@ -916,8 +916,8 @@ impl EncoderConfig {
     #[must_use]
     pub fn with_method(mut self, method: u8) -> Self {
         match &mut self {
-            Self::Lossy(cfg) => cfg.method = method,
-            Self::Lossless(cfg) => cfg.method = method,
+            Self::Lossy(cfg) => cfg.method = method.min(6),
+            Self::Lossless(cfg) => cfg.method = method.min(6),
         }
         self
     }
@@ -926,7 +926,7 @@ impl EncoderConfig {
     #[must_use]
     pub fn with_sns_strength(mut self, strength: u8) -> Self {
         if let Self::Lossy(cfg) = &mut self {
-            cfg.sns_strength = Some(strength);
+            cfg.sns_strength = Some(strength.min(100));
         }
         self
     }
@@ -935,7 +935,7 @@ impl EncoderConfig {
     #[must_use]
     pub fn with_filter_strength(mut self, strength: u8) -> Self {
         if let Self::Lossy(cfg) = &mut self {
-            cfg.filter_strength = Some(strength);
+            cfg.filter_strength = Some(strength.min(100));
         }
         self
     }
@@ -944,7 +944,7 @@ impl EncoderConfig {
     #[must_use]
     pub fn with_filter_sharpness(mut self, sharpness: u8) -> Self {
         if let Self::Lossy(cfg) = &mut self {
-            cfg.filter_sharpness = Some(sharpness);
+            cfg.filter_sharpness = Some(sharpness.min(7));
         }
         self
     }
@@ -953,7 +953,7 @@ impl EncoderConfig {
     #[must_use]
     pub fn with_segments(mut self, segments: u8) -> Self {
         if let Self::Lossy(cfg) = &mut self {
-            cfg.segments = Some(segments);
+            cfg.segments = Some(segments.clamp(1, 4));
         }
         self
     }
@@ -974,7 +974,7 @@ impl EncoderConfig {
     #[must_use]
     pub fn with_near_lossless(mut self, value: u8) -> Self {
         if let Self::Lossless(cfg) = &mut self {
-            cfg.near_lossless = value;
+            cfg.near_lossless = value.min(100);
         }
         self
     }
@@ -1127,6 +1127,11 @@ impl core::fmt::Debug for LossyConfig {
             .field("filter_sharpness", &self.filter_sharpness)
             .field("segments", &self.segments)
             .field("partition_limit", &self.partition_limit)
+            .field("target_zensim", &self.target_zensim)
+            .field("smooth_segment_map", &self.smooth_segment_map)
+            .field("cost_model", &self.cost_model)
+            .field("multi_pass_stats", &self.multi_pass_stats)
+            .field("segment_quant_overrides", &self.segment_quant_overrides)
             .field("limits", &self.limits)
             .finish()
     }
