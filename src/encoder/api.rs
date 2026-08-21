@@ -1133,7 +1133,7 @@ impl EncoderConfig {
         EncoderParams {
             use_predictor_transform: true,
             use_lossy: !self.lossless,
-            lossy_quality: super::fast_math::roundf(self.quality) as u8,
+            lossy_quality: super::fast_math::roundf(self.quality.clamp(0.0, 100.0)) as u8,
             method: self.method,
             sns_strength: self.sns_strength.unwrap_or(sns),
             filter_strength: self.filter_strength.unwrap_or(filter),

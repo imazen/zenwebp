@@ -357,7 +357,7 @@ impl LossyConfig {
     #[must_use]
     pub fn with_preset(preset: Preset, quality: f32) -> Self {
         Self {
-            quality,
+            quality: quality.clamp(0.0, 100.0),
             preset: Some(preset),
             ..Self::new()
         }
@@ -902,6 +902,7 @@ impl EncoderConfig {
     /// Works for both lossy and lossless configurations.
     #[must_use]
     pub fn with_quality(mut self, quality: f32) -> Self {
+        let quality = quality.clamp(0.0, 100.0);
         match &mut self {
             Self::Lossy(cfg) => cfg.quality = quality,
             Self::Lossless(cfg) => cfg.quality = quality,
@@ -1174,7 +1175,7 @@ impl LossyConfig {
         EncoderParams {
             use_predictor_transform: true,
             use_lossy: true,
-            lossy_quality: fast_math::roundf(self.quality) as u8,
+            lossy_quality: fast_math::roundf(self.quality.clamp(0.0, 100.0)) as u8,
             method: self.method,
             sns_strength: self.sns_strength.unwrap_or(sns),
             filter_strength: self.filter_strength.unwrap_or(filter),
@@ -1201,7 +1202,7 @@ impl LosslessConfig {
         EncoderParams {
             use_predictor_transform: true,
             use_lossy: false,
-            lossy_quality: fast_math::roundf(self.quality) as u8,
+            lossy_quality: fast_math::roundf(self.quality.clamp(0.0, 100.0)) as u8,
             method: self.method,
             sns_strength: 0,
             filter_strength: 0,
