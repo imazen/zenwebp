@@ -148,6 +148,8 @@ pub mod mux;
 
 // Slice reader utility (used by decoder and mux)
 mod slice_reader;
+#[cfg(test)]
+pub(crate) mod test_token_lock;
 
 /// Type-safe pixel format traits for decoding and encoding.
 #[cfg(feature = "pixel-types")]

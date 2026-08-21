@@ -2625,6 +2625,7 @@ mod tests_simd {
     #[cfg(feature = "std")]
     #[test]
     fn gamma_chroma_simd_matches_scalar() {
+        let _token_lock = crate::test_token_lock::lock_tokens_for_test();
         let sizes = [
             (2usize, 2usize),
             (3, 3),
@@ -2696,6 +2697,7 @@ mod tests_simd {
     #[cfg(feature = "std")]
     #[test]
     fn gamma_chroma_grayscale_is_128() {
+        let _token_lock = crate::test_token_lock::lock_tokens_for_test();
         for prec in [ChromaPrec::TunedByteRound, ChromaPrec::LibwebpExact] {
             for g in [0u8, 1, 63, 64, 127, 128, 200, 254, 255] {
                 let (u, v) =
@@ -2712,6 +2714,7 @@ mod tests_simd {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_yuv_to_rgb_matches_scalar() {
+        let _token_lock = crate::test_token_lock::lock_tokens_for_test();
         if X64V3Token::summon().is_none() {
             return;
         }
@@ -2752,6 +2755,7 @@ mod tests_simd {
     #[test]
     #[cfg(target_arch = "x86_64")]
     fn test_yuv_to_rgb_32_pixels() {
+        let _token_lock = crate::test_token_lock::lock_tokens_for_test();
         if X64V3Token::summon().is_none() {
             return;
         }
@@ -2786,6 +2790,7 @@ mod tests_simd {
     #[test]
     #[cfg(target_arch = "x86_64")]
     fn test_fancy_upsample_8_pairs() {
+        let _token_lock = crate::test_token_lock::lock_tokens_for_test();
         if X64V3Token::summon().is_none() {
             return;
         }

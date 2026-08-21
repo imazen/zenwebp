@@ -1771,6 +1771,7 @@ mod tests {
     /// On x86: tests V3 vs scalar. On aarch64: tests NEON vs scalar.
     #[test]
     fn simd_tiers_produce_identical_output() {
+        let _token_lock = crate::test_token_lock::lock_tokens_for_test();
         use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 
         // Generate test data: 128 Y pixels, 65 chroma samples
@@ -1815,6 +1816,7 @@ mod tests {
     /// Same permutation test but with odd widths to exercise scalar tails.
     #[test]
     fn simd_tiers_identical_odd_widths() {
+        let _token_lock = crate::test_token_lock::lock_tokens_for_test();
         use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 
         for width in [1, 3, 15, 17, 31, 33, 63, 65] {

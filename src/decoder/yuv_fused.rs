@@ -1272,6 +1272,7 @@ mod tests {
     /// because CI only ever ran `cargo check` for wasm — never executed it.
     #[test]
     fn fused_row_2uv_matches_scalar_reference() {
+        let _token_lock = crate::test_token_lock::lock_tokens_for_test();
         // Two patterns: a ramp, and an LCG spread that pushes R/G/B into the
         // saturating ends of the YUV->RGB transform.
         for pattern in 0..2u32 {
