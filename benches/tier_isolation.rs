@@ -129,7 +129,7 @@ zenbench::main!(|suite| {
 
         // --- decode ---
         let webp = webp_data.clone();
-        suite.compare(&format!("decode/{}", img.name), |group| {
+        suite.compare(format!("decode/{}", img.name), |group| {
             for (label, simd) in [(TIER_NAME, true), ("scalar", false)] {
                 let data = webp.clone();
                 group.bench(label, move |b| {
@@ -153,7 +153,7 @@ zenbench::main!(|suite| {
 
         // --- encode ---
         let src = rgb.clone();
-        suite.compare(&format!("encode/{}", img.name), |group| {
+        suite.compare(format!("encode/{}", img.name), |group| {
             for (label, simd) in [(TIER_NAME, true), ("scalar", false)] {
                 let pixels = src.clone();
                 group.bench(label, move |b| {

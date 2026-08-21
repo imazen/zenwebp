@@ -159,7 +159,7 @@ fn generate_lossy_content(rgba: &mut [u8], w: usize, h: usize, mode: u8, seed: u
             for y in 0..h {
                 for x in 0..w {
                     let i = (y * w + x) * 4;
-                    let opaque = ((x / bw) + (y / bh)) % 2 == 0;
+                    let opaque = ((x / bw) + (y / bh)).is_multiple_of(2);
                     rgba[i] = rng.byte();
                     rgba[i + 1] = rng.byte();
                     rgba[i + 2] = rng.byte();
