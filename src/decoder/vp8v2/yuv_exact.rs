@@ -1858,7 +1858,6 @@ mod tests {
     }
 }
 
-
 /// Dev-only per-kernel access for `benches/kernel_tiers.rs`. NOT public API.
 #[cfg(feature = "_dev")]
 #[doc(hidden)]
@@ -1876,6 +1875,8 @@ pub mod __bench_kernels {
         output: &mut alloc::vec::Vec<u8>,
         bpp: usize,
     ) {
-        super::yuv420_to_rgb_exact(ybuf, ubuf, vbuf, width, height, y_stride, uv_stride, output, bpp)
+        super::yuv420_to_rgb_exact(
+            ybuf, ubuf, vbuf, width, height, y_stride, uv_stride, output, bpp,
+        )
     }
 }

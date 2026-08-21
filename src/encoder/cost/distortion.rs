@@ -421,7 +421,7 @@ fn tdisto_8x8_sse2(_token: X64V3Token, a: &[u8], b: &[u8], stride: usize, w: &[u
 /// # Arguments
 /// * `src` - Source pixels (16x16 block accessed with given stride)
 /// * `stride` - Row stride of source buffer
-#[inline]
+///
 /// NOTE on its tier behaviour, measured 2026-07-31 (benches/kernel_tiers.rs):
 /// this predicate's NEON-vs-scalar ratio is WORKLOAD-DEPENDENT, and the
 /// dispatch is deliberately left alone because of it.
@@ -441,6 +441,7 @@ fn tdisto_8x8_sse2(_token: X64V3Token, a: &[u8], b: &[u8], stride: usize, w: &[u
 /// non-flat block, the vector path saves ~103 ns per flat one, so SIMD wins on
 /// average once roughly 2% of blocks are flat. Do NOT "fix" this to scalar on
 /// the strength of the non-flat number alone.
+#[inline]
 pub fn is_flat_source_16(src: &[u8], stride: usize) -> bool {
     incant!(
         is_flat_source_16_impl(src, stride),

@@ -3199,7 +3199,6 @@ mod tests {
     }
 }
 
-
 /// Dev-only per-kernel access for `benches/kernel_tiers.rs`.
 ///
 /// NOT public API and NOT semver-covered. These exist because zenwebp was only

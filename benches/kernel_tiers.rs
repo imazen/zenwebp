@@ -21,7 +21,11 @@ type TierToken = archmage::NeonToken;
 type TierToken = archmage::X64V3Token;
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-const TIER_NAME: &str = if cfg!(target_arch = "aarch64") { "neon" } else { "v3(avx2)" };
+const TIER_NAME: &str = if cfg!(target_arch = "aarch64") {
+    "neon"
+} else {
+    "v3(avx2)"
+};
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 fn set_simd(on: bool) -> bool {
@@ -29,7 +33,9 @@ fn set_simd(on: bool) -> bool {
     TierToken::dangerously_disable_token_process_wide(!on).is_ok()
 }
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-fn set_simd(_on: bool) -> bool { false }
+fn set_simd(_on: bool) -> bool {
+    false
+}
 
 fn coeffs(seed: u32) -> [i32; 16] {
     let mut s = seed | 1;
@@ -55,8 +61,14 @@ fn bench(suite: &mut Suite) {
             suite.compare($name, |g| {
                 for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
                     g.bench(arm, move |b| {
-                        b.with_input(move || { set_simd(simd); coeffs(7) })
-                            .run(move |mut blk| { $call(&mut blk); blk })
+                        b.with_input(move || {
+                            set_simd(simd);
+                            coeffs(7)
+                        })
+                        .run(move |mut blk| {
+                            $call(&mut blk);
+                            blk
+                        })
                     });
                 }
             });
@@ -68,7 +80,6 @@ fn bench(suite: &mut Suite) {
     t!("iwht4x4", transform::iwht4x4);
     t!("wht4x4", transform::wht4x4);
 
-
     // ---- encoder distortion kernels ----
     // The transform group above found 2 regressions in 4 kernels, so the next
     // hottest module is worth sweeping too rather than assuming it is clean.
@@ -77,10 +88,16 @@ fn bench(suite: &mut Suite) {
         use zenwebp::encoder::cost::distortion;
         const STRIDE: usize = 32;
         let plane_a: &'static [u8] = Box::leak(
-            (0..STRIDE * 32).map(|i| ((i * 7919) % 251) as u8).collect::<Vec<u8>>().into_boxed_slice(),
+            (0..STRIDE * 32)
+                .map(|i| ((i * 7919) % 251) as u8)
+                .collect::<Vec<u8>>()
+                .into_boxed_slice(),
         );
         let plane_b: &'static [u8] = Box::leak(
-            (0..STRIDE * 32).map(|i| ((i * 5779) % 241) as u8).collect::<Vec<u8>>().into_boxed_slice(),
+            (0..STRIDE * 32)
+                .map(|i| ((i * 5779) % 241) as u8)
+                .collect::<Vec<u8>>()
+                .into_boxed_slice(),
         );
         // The VP8 "weights" table shape; values are irrelevant to timing.
         let w: &'static [u16; 16] = Box::leak(Box::new([
@@ -101,9 +118,18 @@ fn bench(suite: &mut Suite) {
                 });
             };
         }
-        d!("tdisto_4x4", distortion::tdisto_4x4(plane_a, plane_b, STRIDE, w));
-        d!("tdisto_8x8", distortion::tdisto_8x8(plane_a, plane_b, STRIDE, w));
-        d!("tdisto_16x16", distortion::tdisto_16x16(plane_a, plane_b, STRIDE, w));
+        d!(
+            "tdisto_4x4",
+            distortion::tdisto_4x4(plane_a, plane_b, STRIDE, w)
+        );
+        d!(
+            "tdisto_8x8",
+            distortion::tdisto_8x8(plane_a, plane_b, STRIDE, w)
+        );
+        d!(
+            "tdisto_16x16",
+            distortion::tdisto_16x16(plane_a, plane_b, STRIDE, w)
+        );
         // Measured BOTH ways on purpose. `is_flat_source_16_scalar` returns at
         // the first differing pixel, so on non-flat input it exits after ~1
         // comparison while any vector path loads a whole 16-byte row. Timing
@@ -112,10 +138,15 @@ fn bench(suite: &mut Suite) {
         // apparent `is_opaque` loss. The flat case forces full traversal and is
         // the one that actually exercises the vector work.
         let flat: &'static [u8] = Box::leak(vec![128u8; STRIDE * 32].into_boxed_slice());
-        d!("is_flat_source_16/flat", distortion::is_flat_source_16(flat, STRIDE));
-        d!("is_flat_source_16/early-exit", distortion::is_flat_source_16(plane_a, STRIDE));
+        d!(
+            "is_flat_source_16/flat",
+            distortion::is_flat_source_16(flat, STRIDE)
+        );
+        d!(
+            "is_flat_source_16/early-exit",
+            distortion::is_flat_source_16(plane_a, STRIDE)
+        );
     }
-
 
     // ---- VP8L lossless: subtract-green ----
     // Per-pixel transform applied across the whole image on the lossless path.
@@ -123,23 +154,27 @@ fn bench(suite: &mut Suite) {
     {
         const N: usize = 1 << 20;
         let px: &'static [u32] = Box::leak(
-            (0..N).map(|i| ((i as u32).wrapping_mul(2_654_435_761)) | 0xFF00_0000)
-                .collect::<Vec<u32>>().into_boxed_slice(),
+            (0..N)
+                .map(|i| ((i as u32).wrapping_mul(2_654_435_761)) | 0xFF00_0000)
+                .collect::<Vec<u32>>()
+                .into_boxed_slice(),
         );
         suite.compare("apply_subtract_green/1MP", move |g| {
             g.throughput(Throughput::Bytes((N * 4) as u64));
             for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
                 g.bench(arm, move |b| {
-                    b.with_input(move || { set_simd(simd); px.to_vec() })
-                        .run(move |mut v| {
-                            zenwebp::encoder::vp8l::transforms::apply_subtract_green(&mut v);
-                            v
-                        })
+                    b.with_input(move || {
+                        set_simd(simd);
+                        px.to_vec()
+                    })
+                    .run(move |mut v| {
+                        zenwebp::encoder::vp8l::transforms::apply_subtract_green(&mut v);
+                        v
+                    })
                 });
             }
         });
     }
-
 
     // ---- WebP decode: exact YUV 4:2:0 -> RGB ----
     // The biggest uncovered module by dispatch count. This is the lossy decode
@@ -150,11 +185,23 @@ fn bench(suite: &mut Suite) {
         let cw = W.div_ceil(2);
         let chh = H.div_ceil(2);
         let yb: &'static [u8] = Box::leak(
-            (0..W * H).map(|i| ((i * 7919) % 251) as u8).collect::<Vec<u8>>().into_boxed_slice());
+            (0..W * H)
+                .map(|i| ((i * 7919) % 251) as u8)
+                .collect::<Vec<u8>>()
+                .into_boxed_slice(),
+        );
         let ub: &'static [u8] = Box::leak(
-            (0..cw * chh).map(|i| ((i * 5779) % 241) as u8).collect::<Vec<u8>>().into_boxed_slice());
+            (0..cw * chh)
+                .map(|i| ((i * 5779) % 241) as u8)
+                .collect::<Vec<u8>>()
+                .into_boxed_slice(),
+        );
         let vb: &'static [u8] = Box::leak(
-            (0..cw * chh).map(|i| ((i * 3571) % 239) as u8).collect::<Vec<u8>>().into_boxed_slice());
+            (0..cw * chh)
+                .map(|i| ((i * 3571) % 239) as u8)
+                .collect::<Vec<u8>>()
+                .into_boxed_slice(),
+        );
 
         for (label, bpp) in [("rgb", 3usize), ("rgba", 4usize)] {
             suite.compare(&format!("yuv420_to_rgb_exact/{label}"), move |g| {
@@ -174,7 +221,6 @@ fn bench(suite: &mut Suite) {
         }
     }
 
-
     // ---- residue add + lossless inverse transform ----
     {
         let r16: &'static [i16; 16] = Box::leak(Box::new([
@@ -183,13 +229,16 @@ fn bench(suite: &mut Suite) {
         suite.compare("add_residue_i16", |g| {
             for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
                 g.bench(arm, move |b| {
-                    b.with_input(move || { set_simd(simd); [128u8; 256] })
-                        .run(move |mut p| {
-                            zenwebp::common::prediction::__bench_kernels::add_residue_i16_256(
-                                &mut p, r16, 0, 0, 16,
-                            );
-                            p
-                        })
+                    b.with_input(move || {
+                        set_simd(simd);
+                        [128u8; 256]
+                    })
+                    .run(move |mut p| {
+                        zenwebp::common::prediction::__bench_kernels::add_residue_i16_256(
+                            &mut p, r16, 0, 0, 16,
+                        );
+                        p
+                    })
                 });
             }
         });
@@ -197,7 +246,11 @@ fn bench(suite: &mut Suite) {
         // Decode-side inverse subtract-green over a 1 MP ARGB image.
         const N: usize = (1 << 20) * 4;
         let img: &'static [u8] = Box::leak(
-            (0..N).map(|i| ((i * 7919) % 251) as u8).collect::<Vec<u8>>().into_boxed_slice());
+            (0..N)
+                .map(|i| ((i * 7919) % 251) as u8)
+                .collect::<Vec<u8>>()
+                .into_boxed_slice(),
+        );
         suite.compare("inverse_subtract_green/1MP", move |g| {
             g.throughput(Throughput::Bytes(N as u64));
             for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
@@ -212,14 +265,14 @@ fn bench(suite: &mut Suite) {
         });
     }
 
-
     // ---- encoder quantization ----
     // Built through `VP8Matrix::new` rather than a hand-filled struct: its
     // fields are interdependent (iq = (1<<QFIX)/q, bias, zthresh), so a
     // literal would be self-inconsistent and the timings meaningless.
     {
-        use zenwebp::encoder::quantize::{MatrixType, VP8Matrix, quantize_block_simd,
-                                         quantize_dequantize_block_simd};
+        use zenwebp::encoder::quantize::{
+            MatrixType, VP8Matrix, quantize_block_simd, quantize_dequantize_block_simd,
+        };
         let m: &'static VP8Matrix = Box::leak(Box::new(VP8Matrix::new(8, 12, MatrixType::Y1)));
         let src16: &'static [i16; 16] = Box::leak(Box::new([
             420, -180, 96, -44, 210, -130, 60, -22, 88, -300, 150, -70, 33, -18, 9, -400,
@@ -231,28 +284,39 @@ fn bench(suite: &mut Suite) {
         suite.compare("quantize_block_simd", |g| {
             for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
                 g.bench(arm, move |b| {
-                    b.with_input(move || { set_simd(simd); *src32 })
-                        .run(move |mut c| { let r = quantize_block_simd(&mut c, m, false); (c, r) })
+                    b.with_input(move || {
+                        set_simd(simd);
+                        *src32
+                    })
+                    .run(move |mut c| {
+                        let r = quantize_block_simd(&mut c, m, false);
+                        (c, r)
+                    })
                 });
             }
         });
         suite.compare("quantize_dequantize_block", |g| {
             for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
                 g.bench(arm, move |b| {
-                    b.with_input(move || set_simd(simd))
-                        .run(move |_| {
-                            let (mut q, mut d) = ([0i16; 16], [0i16; 16]);
-                            let r = quantize_dequantize_block_simd(src16, m, false, &mut q, &mut d);
-                            (q, d, r)
-                        })
+                    b.with_input(move || set_simd(simd)).run(move |_| {
+                        let (mut q, mut d) = ([0i16; 16], [0i16; 16]);
+                        let r = quantize_dequantize_block_simd(src16, m, false, &mut q, &mut d);
+                        (q, d, r)
+                    })
                 });
             }
         });
         suite.compare("dequantize_block", |g| {
             for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
                 g.bench(arm, move |b| {
-                    b.with_input(move || { set_simd(simd); *src32 })
-                        .run(move |mut c| { m.dequantize_block(&mut c); c })
+                    b.with_input(move || {
+                        set_simd(simd);
+                        *src32
+                    })
+                    .run(move |mut c| {
+                        m.dequantize_block(&mut c);
+                        c
+                    })
                 });
             }
         });

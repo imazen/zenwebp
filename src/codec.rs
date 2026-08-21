@@ -3316,7 +3316,10 @@ mod tests {
         let est = crate::heuristics::estimate_encode(w, h, 3, &config.inner)
             .peak_memory_bytes
             .saturating_add(w as u64 * h as u64 * 3);
-        assert!(est <= cap, "modeled peak {est} must fit the moderate cap {cap}");
+        assert!(
+            est <= cap,
+            "modeled peak {est} must fit the moderate cap {cap}"
+        );
 
         let buf = make_rgb8_pixels(w, h);
         let output = config

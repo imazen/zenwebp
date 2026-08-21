@@ -2168,7 +2168,6 @@ mod tests {
     }
 }
 
-
 /// Dev-only per-kernel access for `benches/kernel_tiers.rs`. NOT public API.
 #[cfg(feature = "_dev")]
 #[doc(hidden)]
