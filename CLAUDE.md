@@ -69,6 +69,32 @@ zenwebp's 2026-04-29 to 2026-05-03 picker spike at `src/encoder/picker/` was REM
 
 For working picker reference: `~/work/zen/zenavif/src/auto_tune.rs` + `EncoderConfig::auto_tune()` is the only production-shipped zen-codec picker today.
 
+## Bug-class guards + review policy (2026-08-21)
+
+`docs/BUG_RETROSPECTIVE_2026-08.md` inventories every bug-fix PR/issue to
+date, the seven bug classes, and the practice that allowed each. The policy
+section there is binding; the short form:
+
+1. A regression test counts only after it was watched to FAIL against the
+   defect (negative control) — say so in the commit body.
+2. Ported kernels land WITH their differential test (libwebp or the scalar
+   reference) in the same change.
+3. A tier/target CI doesn't EXECUTE is untested; `cargo check` is not
+   coverage (wasm runs under wasmtime in CI since #73).
+4. Encoder validation compares against ORIGINAL pixels across the settings
+   grid (self-consistency roundtrips missed #72's 84%-corrupt streams).
+5. Every public parsing entry point gets a fuzz target + stable replay in
+   `tests/fuzz_regression.rs`; encode-side fuzzing lives in
+   `fuzz/fuzz_targets/encode_*_roundtrip.rs` (shared core, exact oracle).
+6. Size/offset math: check in u64 BEFORE narrowing to usize; fix the whole
+   class surface in one change.
+7. Default operating points are named functions with pinned tests
+   (`alpha_vp8l_quality`); per-method-work adoptions get wall-time sweeps.
+8. No `|| true`-shaped CI steps, no silent test skips.
+9. Fork PRs run zero CI until a maintainer approves the workflow run —
+   approve first, never read the checks column as green without the repo's
+   own jobs.
+
 ## Performance & Testing
 
 See `docs/PERFORMANCE.md` for benchmarks, `docs/CALL-TREE.md` for SIMD tiers, `docs/ARCHITECTURE-CLEANUP.md` for code organization.

@@ -96,6 +96,24 @@ here has landed; see "Changed (BREAKING)" below.)
   queued in `QUEUED BREAKING CHANGES` since the PR #103 taxonomy adoption.
 
 ### Fixed
+- **io::Seek `End`/`Current` arms no longer narrow offsets before checked
+  math** — completing PR #74's u64-before-narrow sweep one function below
+  the fix: on a 32-bit target `seek(Current(2^32))` succeeded at the SAME
+  position (a no-progress loop for callers advancing by file-declared
+  sizes) and `seek(End(2^32))` succeeded at the end instead of erroring.
+  Gated by `io_seek_end_current_do_not_truncate` (executes on 32-bit in the
+  i686 CI job).
+- **The m6 alpha operating point is now a named, unit-pinned decision**
+  (`alpha::alpha_vp8l_quality`): both of PR #75's end-to-end tests stay
+  green with the q100 escalation reverted (alpha is bit-exact either way),
+  so the 40x cliff was one `&& parity` revert from silently returning.
+  `alpha_vp8l_operating_point_pinned` is the gate.
+- **CI restored to green** (red since 2026-08-01): cargo fmt drift across 6
+  files + 3 `clippy::doc_lazy_continuation` errors from a doc block split
+  around `#[inline]` in `cost/distortion.rs`.
+- **The fuzz workflow's regression step no longer hides harness failures**
+  behind `|| echo` — a failing `tests/fuzz_regression.rs` looked green.
+
 - **32-bit (wasm32) container parsing could spin forever at 100% CPU on a
   malformed WebP.** Two independent `u64 → usize` narrowings, both required
   to reproduce: `SliceReader::seek_from_start` cast the seek target to
@@ -138,6 +156,20 @@ here has landed; see "Changed (BREAKING)" below.)
   `alpha_quality = 100`).
 
 ### Added
+- **Encode-side fuzz targets with an exact roundtrip oracle**
+  (`encode_lossless_roundtrip`, `encode_lossy_roundtrip`): fuzz bytes drive
+  a structured content generator over the method×quality grid; decoded
+  pixels must equal the source exactly (lossless / alpha plane). This is
+  the guard for the "encoder emits a valid-but-wrong stream" class (#72)
+  that decode-only fuzzing structurally cannot see. Logic is shared
+  verbatim with `tests/fuzz_regression.rs` via include! so regression
+  seeds replay identically on stable; both targets joined the nightly
+  fuzz matrix.
+- **`docs/BUG_RETROSPECTIVE_2026-08.md`** — full PR/issue bug inventory,
+  the seven recurring bug classes, the practice that allowed each, and the
+  binding review policy (negative-control regression tests, differential
+  tests landing with ports, executed-tier coverage, u64-before-narrow,
+  named operating points). CLAUDE.md carries the short form.
 - **`LossyConfig::with_alpha_effort(0..=6)`** — decouples the alpha plane's
   effort from `method` (default `None` = follow `method`). The alpha plane
   is coded with VP8L at `quality = 8·effort`; lowering it trades ALPH bytes
