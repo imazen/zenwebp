@@ -351,8 +351,14 @@ impl<'a> WebPDemuxer<'a> {
                 }
                 b"ANIM"
                     if is_animated
-                    // ANIM: 4 bytes background color + 2 bytes loop count
-                    && size >= 6 =>
+                    // ANIM: 4 bytes background color + 2 bytes loop count.
+                    // `size >= 6` is the DECLARED size; the loop only
+                    // guarantees `payload_start <= data.len()`, so the 6
+                    // payload bytes must be separately confirmed present or
+                    // `data[payload_start]` panics on a truncated/crafted
+                    // file (a 38-byte input was enough — OOB at demux.rs).
+                    && size >= 6
+                    && payload_start + 6 <= data.len() =>
                 {
                     let bg_start = payload_start;
                     demuxer.background_color = [
@@ -591,12 +597,18 @@ impl<'a> WebPDemuxer<'a> {
         let sub_size = u32::from_le_bytes([sub[4], sub[5], sub[6], sub[7]]) as usize;
         let sub_payload_offset = start.checked_add(16 + 8)?; // absolute offset in data
 
+        // Clamp sub-chunk payloads to THIS frame's own end (`end = start +
+        // size`, already validated <= data.len()), NOT to the whole file. A
+        // frame declaring `sub_size = u32::MAX` otherwise exposes the entire
+        // rest of the file as its bitstream — so N frames each pointing at the
+        // tail give a consumer that `.to_vec()`s per frame (e.g. WebPMux) an
+        // O(N * filesize) blow-up. ALPH below is bounded the same way.
         match sub_fourcc {
             b"VP8L" => {
-                let end = sub_payload_offset
+                let sub_end = sub_payload_offset
                     .checked_add(sub_size)
-                    .map(|e| e.min(self.data.len()))
-                    .unwrap_or(self.data.len())
+                    .map(|e| e.min(end))
+                    .unwrap_or(end)
                     .max(sub_payload_offset);
                 Some(DemuxFrame {
                     frame_num: idx as u32 + 1,
@@ -609,15 +621,15 @@ impl<'a> WebPDemuxer<'a> {
                     blend,
                     has_alpha: true, // VP8L can always carry alpha
                     is_lossy: false,
-                    bitstream: &self.data[sub_payload_offset..end],
+                    bitstream: &self.data[sub_payload_offset..sub_end],
                     alpha_data: None,
                 })
             }
             b"VP8 " => {
-                let end = sub_payload_offset
+                let sub_end = sub_payload_offset
                     .checked_add(sub_size)
-                    .map(|e| e.min(self.data.len()))
-                    .unwrap_or(self.data.len())
+                    .map(|e| e.min(end))
+                    .unwrap_or(end)
                     .max(sub_payload_offset);
                 Some(DemuxFrame {
                     frame_num: idx as u32 + 1,
@@ -630,18 +642,20 @@ impl<'a> WebPDemuxer<'a> {
                     blend,
                     has_alpha: false,
                     is_lossy: true,
-                    bitstream: &self.data[sub_payload_offset..end],
+                    bitstream: &self.data[sub_payload_offset..sub_end],
                     alpha_data: None,
                 })
             }
             b"ALPH" => {
                 // ALPH chunk followed by VP8 chunk. All offset arithmetic is
                 // attacker-controlled (sub_size, the trailing VP8 size) so use
-                // checked_add and bounded slicing to avoid panics.
+                // checked_add and bounded slicing to avoid panics. Clamp to
+                // this frame's own end, not the whole file (see the VP8L/VP8
+                // arms above).
                 let alpha_end = sub_payload_offset
                     .checked_add(sub_size)
-                    .map(|e| e.min(self.data.len()))
-                    .unwrap_or(self.data.len())
+                    .map(|e| e.min(end))
+                    .unwrap_or(end)
                     .max(sub_payload_offset);
                 let alpha_data = self.data.get(sub_payload_offset..alpha_end)?;
 
@@ -666,8 +680,8 @@ impl<'a> WebPDemuxer<'a> {
                 let vp8_start = vp8_header_start.checked_add(8)?;
                 let vp8_end = vp8_start
                     .checked_add(vp8_size)
-                    .map(|e| e.min(self.data.len()))
-                    .unwrap_or(self.data.len())
+                    .map(|e| e.min(frame_end))
+                    .unwrap_or(frame_end)
                     .max(vp8_start);
 
                 Some(DemuxFrame {
@@ -731,7 +745,31 @@ fn next_chunk_pos(chunk_start: usize, size: usize) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::next_chunk_pos;
+    use super::{WebPDemuxer, next_chunk_pos};
+
+    /// Regression: a VP8X animation file whose ANIM chunk declares its 6-byte
+    /// payload but truncates before it must not panic. The loop only
+    /// guarantees `payload_start <= data.len()`; a 38-byte crafted file put
+    /// `payload_start == data.len()` and indexed one past the end.
+    #[test]
+    fn truncated_anim_payload_does_not_panic() {
+        let mut out = alloc::vec::Vec::new();
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(b"WEBP");
+        out.extend_from_slice(b"VP8X");
+        out.extend_from_slice(&10u32.to_le_bytes());
+        out.push(0b0000_0010); // animation flag
+        out.extend_from_slice(&[0u8; 9]);
+        out.extend_from_slice(b"ANIM");
+        out.extend_from_slice(&6u32.to_le_bytes()); // declares 6, provides 0
+        let riff = (out.len() - 8) as u32;
+        out[4..8].copy_from_slice(&riff.to_le_bytes());
+        assert_eq!(out.len(), 38);
+
+        // Must return (Ok or Err) without panicking.
+        let _ = WebPDemuxer::new(&out);
+    }
 
     /// Regression: the chunk walk must move forward for every declared size,
     /// including the ones that wrap a 32-bit `usize`. Fails cleanly on wasm32

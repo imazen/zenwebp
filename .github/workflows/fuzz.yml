@@ -34,6 +34,10 @@ jobs:
           # decode-only fuzzing structurally cannot see.
           - encode_lossless_roundtrip
           - encode_lossy_roundtrip
+          # Container/mux + metadata entry points — never reached by the
+          # WebPDecoder-based targets (it walks VP8X itself). A 38-byte
+          # VP8X+ANIM file reached an OOB panic here.
+          - demux_container
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly

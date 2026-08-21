@@ -56,3 +56,9 @@ name = "encode_lossy_roundtrip"
 path = "fuzz_targets/encode_lossy_roundtrip.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "demux_container"
+path = "fuzz_targets/demux_container.rs"
+test = false
+doc = false

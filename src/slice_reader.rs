@@ -110,7 +110,9 @@ impl<'a> SliceReader<'a> {
     #[inline]
     pub fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), DecodeError> {
         let n = buf.len();
-        if self.pos + n > self.data.len() {
+        // `n` is a real buffer length here (can't overflow), but the
+        // remaining-bytes form keeps every bounds check in this file uniform.
+        if n > self.data.len() - self.pos {
             return Err(DecodeError::BitStreamError);
         }
         buf.copy_from_slice(&self.data[self.pos..self.pos + n]);
@@ -205,7 +207,12 @@ impl<'a> SliceReader<'a> {
     /// Returns a slice reference without copying data.
     #[inline]
     pub fn take_slice(&mut self, n: usize) -> Result<&'a [u8], DecodeError> {
-        if self.pos + n > self.data.len() {
+        // Compare against remaining bytes rather than `self.pos + n`: callers
+        // pass file-declared chunk sizes (`chunk_size as usize`), so on a
+        // 32-bit target `self.pos + n` wraps for a near-u32::MAX `n` and the
+        // guard would pass, then the slice index panics. `self.pos <=
+        // self.data.len()` is an invariant, so the subtraction can't underflow.
+        if n > self.data.len() - self.pos {
             return Err(DecodeError::BitStreamError);
         }
         let slice = &self.data[self.pos..self.pos + n];
@@ -216,7 +223,9 @@ impl<'a> SliceReader<'a> {
     /// Get a slice of n bytes from the current position without advancing.
     #[inline]
     pub fn peek_slice(&self, n: usize) -> Result<&'a [u8], DecodeError> {
-        if self.pos + n > self.data.len() {
+        // See `take_slice`: remaining-bytes comparison avoids a 32-bit wrap on
+        // an attacker-controlled `n`.
+        if n > self.data.len() - self.pos {
             return Err(DecodeError::BitStreamError);
         }
         Ok(&self.data[self.pos..self.pos + n])
@@ -321,6 +330,32 @@ mod tests {
         let mut r = SliceReader::new(&data);
         r.set_position(30 + (1u64 << 32));
         assert_eq!(r.position(), 70);
+    }
+
+    /// Regression: `take_slice`/`peek_slice` must reject an `n` that would
+    /// wrap `self.pos + n` on a 32-bit target, rather than passing the bounds
+    /// check and panicking on the slice index. Callers pass file-declared
+    /// `chunk_size as usize`, so this is reachable from untrusted input.
+    /// Trivially passes on 64-bit; gates for real on i686 and wasm32.
+    #[test]
+    fn take_and_peek_slice_reject_wrapping_length() {
+        let data = [0u8; 70];
+        let mut r = SliceReader::new(&data);
+        r.seek_from_start(60).unwrap();
+
+        // usize::MAX - 8: on 32-bit `60 + n` wraps below 70; must still error.
+        let huge = usize::MAX - 8;
+        assert!(r.peek_slice(huge).is_err());
+        assert!(r.take_slice(huge).is_err());
+        assert_eq!(r.position(), 60, "failed take_slice must not advance");
+
+        // Exactly-remaining is legal; one past is not.
+        assert!(r.peek_slice(10).is_ok());
+        assert!(r.peek_slice(11).is_err());
+        let s = r.take_slice(10).unwrap();
+        assert_eq!(s.len(), 10);
+        assert_eq!(r.position(), 70);
+        assert!(r.take_slice(1).is_err());
     }
 
     /// Same guarantee through the `std::io::Seek` impl.

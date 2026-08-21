@@ -772,7 +772,19 @@ fn encode_argb_single_config(
         None => {
             // Auto-detect optimal cache size
             if let Some(ref pt) = palette_transform {
-                // Cap cache bits for palette images (matching libwebp)
+                // NOTE (2026-08-21, #77): this `31 - leading_zeros` idiom is a
+                // u32 log2-floor, but `ps` is `usize`. On a 64-bit target
+                // `usize::leading_zeros()` is 64-based, so `31 - lz` saturates
+                // to 0 for every ps < 1024 and this pins the palette color
+                // cache search ceiling to 1 bit — DIFFERENT output than a
+                // 32-bit build, which gets the intended libwebp
+                // BitsLog2Floor+1 ceiling. That platform divergence is a real
+                // bug, but the naive `(ps as u32)` fix measured as a small
+                // tuned-default REGRESSION on synthetic palette content (the
+                // cost-estimated cache search is not monotone in its ceiling),
+                // so it must not land without a palette-corpus sweep. Tracked
+                // in #77; StrictLibwebpParity is unaffected (it sets bits
+                // explicitly via the `Some(bits)` arm).
                 let ps = pt.palette.len();
                 if ps < (1 << 10) {
                     let log2_floor = 31u32.saturating_sub(ps.leading_zeros());
@@ -1135,6 +1147,37 @@ fn encode_image_data(
         }
     } else {
         writer.write_bit(false); // no meta-Huffman
+    }
+
+    // #72 emit-time invariant (debug builds — runs in `cargo test` and under
+    // cargo-fuzz, both of which enable debug-assertions): the number of
+    // Huffman groups we are about to write MUST equal what the decoder
+    // derives from the entropy image, i.e. `max(histogram_symbols) + 1`.
+    // Issue #72 shipped a stream where an extra trailing group was written
+    // for a remap-stranded cluster; the decoder sized its group list from the
+    // entropy image's max symbol and parsed the surplus trees as pixel data
+    // (silent whole-image corruption). This pins that invariant at the emit
+    // site rather than relying only on the downstream roundtrip gate.
+    debug_assert_eq!(
+        meta_info.histograms.len(),
+        meta_info.num_histograms,
+        "VP8L: histogram count desync (histograms.len vs num_histograms)"
+    );
+    if meta_info.num_histograms > 1 {
+        let max_sym = meta_info
+            .histogram_symbols
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(0) as usize;
+        debug_assert_eq!(
+            meta_info.histograms.len(),
+            max_sym + 1,
+            "VP8L #72 invariant: trees written ({}) != entropy-image max symbol + 1 ({}); \
+             decoder would misparse the surplus trees as pixel data",
+            meta_info.histograms.len(),
+            max_sym + 1
+        );
     }
 
     // Build Huffman codes for each histogram group (5 trees per group)
