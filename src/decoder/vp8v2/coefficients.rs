@@ -684,10 +684,27 @@ mod tests {
         let probs = [[[128u8; 11]; 3]; 17];
         let dq = DequantPair { dc: 4, ac: 8 };
 
-        let _n = read_coefficients(&mut reader, &mut output, &probs, 0, 0, dq);
+        let nonzero = read_coefficients(&mut reader, &mut output, &probs, 0, 0, dq);
 
-        // With random-ish data, we expect some coefficients decoded.
-        // The exact values depend on the arithmetic decoder state,
-        // but the function should not panic.
+        // The 0xFF byte stream with balanced probs deterministically decodes
+        // at least one non-zero coefficient (the input and probs are fixed;
+        // the boolean decoder is a pure function of them).
+        assert!(nonzero, "expected non-zero block from the 0xFF stream");
+        assert!(
+            output.iter().any(|&c| c != 0),
+            "nonzero=true but every coefficient is 0"
+        );
+        // Dequantization property: slot 0 is scaled by dq.dc, slots 1.. by
+        // dq.ac — every decoded coefficient must be a multiple of its
+        // dequantizer (levels are integers).
+        assert_eq!(
+            output[0] % 4,
+            0,
+            "DC not a multiple of dq.dc: {}",
+            output[0]
+        );
+        for (i, &c) in output.iter().enumerate().skip(1) {
+            assert_eq!(c % 8, 0, "AC[{i}] not a multiple of dq.ac: {c}");
+        }
     }
 }

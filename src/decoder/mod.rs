@@ -33,9 +33,6 @@ mod streaming;
 pub(crate) mod yuv;
 mod yuv_fused;
 
-// VP8 diagnostic types and tree nodes (used by lossless decoder and tests)
-pub(crate) mod vp8;
-
 // VP8 lossy decoder (streaming cache→RGB architecture)
 #[cfg(feature = "_dev")]
 pub mod vp8v2;
@@ -53,10 +50,6 @@ pub use api::{
 #[allow(deprecated)]
 pub use limits::Limits;
 pub use streaming::{StreamStatus, StreamingDecoder};
-
-// Re-export diagnostic types for tests (hidden from public docs)
-#[doc(hidden)]
-pub use vp8::{BlockDiagnostic, DiagnosticFrame, MacroblockDiagnostic, TreeNode};
 
 // Re-export common types used in diagnostics
 #[doc(hidden)]

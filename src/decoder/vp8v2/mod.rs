@@ -9,7 +9,6 @@
 //! - Fixed-size arrays for per-MB working storage
 
 #[allow(dead_code)]
-mod animation;
 mod coefficients;
 mod context;
 mod header;

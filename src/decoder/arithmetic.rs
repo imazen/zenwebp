@@ -6,8 +6,6 @@ use whereat::at;
 
 use super::api::DecodeError;
 
-use super::vp8::TreeNode;
-
 /// Lookup table for shift amount needed to normalize range to [128, 254].
 /// Index is range value (1-127). Returns shift count in [1, 7].
 /// For range r, shift = 7 - floor(log2(r)).
@@ -249,27 +247,6 @@ impl ArithmeticDecoder {
         self.cold_read_optional_signed_value(n)
     }
 
-    // This is generic and inlined just to skip the first bounds check.
-    #[inline]
-    pub(crate) fn read_with_tree<const N: usize>(&mut self, tree: &[TreeNode; N]) -> BitResult<i8> {
-        let first_node = tree[0];
-        self.read_with_tree_with_first_node(tree, first_node)
-    }
-
-    // Do not inline this because inlining significantly worsens performance.
-    #[inline(never)]
-    pub(crate) fn read_with_tree_with_first_node(
-        &mut self,
-        tree: &[TreeNode],
-        first_node: TreeNode,
-    ) -> BitResult<i8> {
-        if let Some(v) = self.fast().read_with_tree(tree, first_node) {
-            return BitResult::ok(v);
-        }
-
-        self.cold_read_with_tree(tree, usize::from(first_node.index))
-    }
-
     // As a similar (but different) speedup to BitResult, the FastDecoder reads
     // bits under an assumption and validates it at the end.
     //
@@ -406,27 +383,6 @@ impl ArithmeticDecoder {
         };
         self.keep_accumulating(res, value)
     }
-
-    #[cold]
-    #[inline(never)]
-    fn cold_read_with_tree(&mut self, tree: &[TreeNode], start: usize) -> BitResult<i8> {
-        let mut index = start;
-        let mut res = self.start_accumulated_result();
-
-        loop {
-            let node = tree[index];
-            let prob = node.prob;
-            let b = self.cold_read_bit(prob).or_accumulate(&mut res);
-            let t = if b { node.right } else { node.left };
-            let new_index = usize::from(t);
-            if new_index < tree.len() {
-                index = new_index;
-            } else {
-                let value = TreeNode::value_from_branch(t);
-                return self.keep_accumulating(res, value);
-            }
-        }
-    }
 }
 
 #[allow(dead_code)]
@@ -475,11 +431,6 @@ impl FastDecoder<'_> {
         } else {
             i32::from(magnitude)
         };
-        self.commit_if_valid(value)
-    }
-
-    fn read_with_tree(mut self, tree: &[TreeNode], first_node: TreeNode) -> Option<i8> {
-        let value = self.fast_read_with_tree(tree, first_node);
         self.commit_if_valid(value)
     }
 
@@ -657,18 +608,6 @@ impl FastDecoder<'_> {
             v = (v << 1) + u8::from(b);
         }
         v
-    }
-
-    fn fast_read_with_tree(&mut self, tree: &[TreeNode], mut node: TreeNode) -> i8 {
-        loop {
-            let prob = node.prob;
-            let b = self.fast_read_bit(prob);
-            let i = if b { node.right } else { node.left };
-            let Some(next_node) = tree.get(usize::from(i)) else {
-                return TreeNode::value_from_branch(i);
-            };
-            node = *next_node;
-        }
     }
 }
 

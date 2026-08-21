@@ -1752,14 +1752,40 @@ mod tests {
         assert_eq!(data[0], 0x2f);
     }
 
+    /// Wrap a raw VP8L stream in a minimal RIFF container and decode it with
+    /// the crate's own decoder, so encode unit tests assert PIXELS, not just
+    /// "returned Ok" (a valid-but-wrong stream passes an is_ok check — the
+    /// #72 failure shape).
+    fn decode_stream(stream: &[u8]) -> (alloc::vec::Vec<u8>, crate::PixelLayout) {
+        let mut file = alloc::vec::Vec::new();
+        file.extend_from_slice(b"RIFF");
+        let chunk = stream.len() as u32;
+        let padded = chunk + (chunk & 1);
+        file.extend_from_slice(&(4 + 8 + padded).to_le_bytes());
+        file.extend_from_slice(b"WEBP");
+        file.extend_from_slice(b"VP8L");
+        file.extend_from_slice(&chunk.to_le_bytes());
+        file.extend_from_slice(stream);
+        if chunk & 1 == 1 {
+            file.push(0);
+        }
+        let config = crate::DecodeConfig::default();
+        let (px, _, _, layout) = crate::DecodeRequest::new(&config, &file)
+            .decode()
+            .expect("encoded VP8L stream must decode");
+        (px, layout)
+    }
+
     #[test]
     fn test_encode_with_alpha() {
         // 4x4 semi-transparent red
         let pixels: Vec<u8> = [255, 0, 0, 128].repeat(16);
         let config = Vp8lConfig::default();
 
-        let result = encode_vp8l(&pixels, 4, 4, true, &config, &enough::Unstoppable);
-        assert!(result.is_ok());
+        let data = encode_vp8l(&pixels, 4, 4, true, &config, &enough::Unstoppable).unwrap();
+        let (decoded, layout) = decode_stream(&data);
+        assert_eq!(layout, crate::PixelLayout::Rgba8);
+        assert_eq!(decoded, pixels, "lossless RGBA roundtrip must be exact");
     }
 
     #[test]
@@ -1775,8 +1801,25 @@ mod tests {
         }
 
         let config = Vp8lConfig::default();
-        let result = encode_vp8l(&pixels, 16, 16, false, &config, &enough::Unstoppable);
-        assert!(result.is_ok());
+        let data = encode_vp8l(&pixels, 16, 16, false, &config, &enough::Unstoppable).unwrap();
+        let (decoded, layout) = decode_stream(&data);
+        match layout {
+            crate::PixelLayout::Rgb8 => {
+                assert_eq!(decoded, pixels, "lossless RGB roundtrip must be exact");
+            }
+            crate::PixelLayout::Rgba8 => {
+                let rgb: Vec<u8> = decoded
+                    .chunks_exact(4)
+                    .flat_map(|p| [p[0], p[1], p[2]])
+                    .collect();
+                assert!(
+                    decoded.chunks_exact(4).all(|p| p[3] == 255),
+                    "opaque input must decode opaque"
+                );
+                assert_eq!(rgb, pixels, "lossless RGB roundtrip must be exact");
+            }
+            other => panic!("unexpected layout {other:?}"),
+        }
     }
 
     #[test]

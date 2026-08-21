@@ -246,16 +246,36 @@ mod tests {
 
     #[test]
     fn test_dither_8x8_stays_in_bounds() {
+        // The property under test is NO WRAPAROUND at max amplitude: the
+        // descaled dither delta is small (|delta1| <= 8 at amp=255), so
+        // pixels near 0 must stay near 0 and pixels near 255 near 255. A
+        // broken clamp (or a lost descale) would fling values to the far
+        // end of the range.
         let mut rg = VP8Random::new();
         let stride = 8;
-        // Test with extreme values
         let mut buf_low = vec![0u8; stride * 8];
         dither_8x8(&mut rg, &mut buf_low, stride, 255);
-        // All values should still be valid u8
+        assert!(
+            buf_low.iter().all(|&v| v <= 16),
+            "dither wrapped a near-0 pixel far from 0: {:?}",
+            buf_low.iter().max()
+        );
+        assert!(
+            buf_low.iter().any(|&v| v > 0),
+            "max-amplitude dither left an all-zero block untouched"
+        );
 
         let mut rg2 = VP8Random::new();
         let mut buf_high = vec![255u8; stride * 8];
         dither_8x8(&mut rg2, &mut buf_high, stride, 255);
-        // All values should still be valid u8 (clamped)
+        assert!(
+            buf_high.iter().all(|&v| v >= 239),
+            "dither wrapped a near-255 pixel far from 255: {:?}",
+            buf_high.iter().min()
+        );
+        assert!(
+            buf_high.iter().any(|&v| v < 255),
+            "max-amplitude dither left an all-255 block untouched"
+        );
     }
 }

@@ -115,10 +115,14 @@ impl StreamingDecoder {
             }
         }
 
-        // Check if all data has arrived
+        // Check if all data has arrived. Compute in u64: `riff_size as usize
+        // + 8` wraps on a 32-bit target for a file declaring a near-u32::MAX
+        // RIFF size, which would report Complete after a handful of bytes and
+        // hand `finish_*` truncated garbage (same class as the #74 container
+        // spin — narrow only after the arithmetic).
         if let Some(riff_size) = self.riff_size {
-            let total = riff_size as usize + 8; // RIFF header is 8 bytes before payload
-            if self.buf.len() >= total {
+            let total = u64::from(riff_size) + 8; // RIFF header is 8 bytes before payload
+            if self.buf.len() as u64 >= total {
                 return Ok(StreamStatus::Complete);
             }
         }
@@ -146,17 +150,24 @@ impl StreamingDecoder {
         self.buf.len()
     }
 
-    /// Returns the total expected size in bytes, if the RIFF header has been parsed.
+    /// Returns the total expected size in bytes, if the RIFF header has been
+    /// parsed. Returns `None` when the declared size does not fit in `usize`
+    /// (only possible on 32-bit targets, for a file that could never be
+    /// buffered there anyway).
     #[must_use]
     pub fn total_size(&self) -> Option<usize> {
-        self.riff_size.map(|s| s as usize + 8)
+        self.riff_size
+            .and_then(|s| usize::try_from(u64::from(s) + 8).ok())
     }
 
     /// Returns true if all data has been received.
     #[must_use]
     pub fn is_complete(&self) -> bool {
-        self.total_size()
-            .is_some_and(|total| self.buf.len() >= total)
+        // u64 arithmetic: `size as usize + 8` wraps on 32-bit targets for a
+        // near-u32::MAX declared size and would report completion after a
+        // handful of bytes (see `append`).
+        self.riff_size
+            .is_some_and(|s| self.buf.len() as u64 >= u64::from(s) + 8)
     }
 
     /// Consume the decoder and decode to RGBA pixels.
