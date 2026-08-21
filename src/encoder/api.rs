@@ -2589,8 +2589,7 @@ pub(crate) fn alpha_vp8l_payload_inner(
     // compression before (#38).
     let vp8l_config = super::vp8l::Vp8lConfig {
         quality: super::vp8l::Vp8lQuality {
-            quality: super::alpha::vp8l_quality_for_effort(effort_level, use_quality_100 && parity)
-                as u8,
+            quality: super::alpha::alpha_vp8l_quality(effort_level, use_quality_100, parity) as u8,
             method: effort_level,
         },
         exact: true,

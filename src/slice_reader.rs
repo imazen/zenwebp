@@ -253,32 +253,34 @@ impl<'a> std::io::BufRead for SliceReader<'a> {
 #[cfg(feature = "std")]
 impl<'a> std::io::Seek for SliceReader<'a> {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
-        let new_pos = match pos {
-            // Reject out-of-range in `u64` before narrowing — `n as usize`
-            // truncates on 32-bit targets and would turn an invalid seek into
-            // a valid one. See `SliceReader::seek_from_start`.
-            std::io::SeekFrom::Start(n) if n > self.data.len() as u64 => None,
-            std::io::SeekFrom::Start(n) => Some(n as usize),
+        // All arithmetic and range checks happen in `u64`; narrowing to
+        // `usize` only after `new_pos <= len` is proven. `n as usize` on a
+        // 32-bit target truncates i64/u64 offsets, which can turn an invalid
+        // seek into a "valid" one (or a no-op) — the same class as the
+        // `seek_from_start` truncation that spun container parsing forever.
+        let len = self.data.len() as u64;
+        let new_pos: Option<u64> = match pos {
+            std::io::SeekFrom::Start(n) => Some(n),
             std::io::SeekFrom::End(n) => {
                 if n >= 0 {
-                    self.data.len().checked_add(n as usize)
+                    len.checked_add(n as u64)
                 } else {
-                    self.data.len().checked_sub((-n) as usize)
+                    len.checked_sub(n.unsigned_abs())
                 }
             }
             std::io::SeekFrom::Current(n) => {
                 if n >= 0 {
-                    self.pos.checked_add(n as usize)
+                    (self.pos as u64).checked_add(n as u64)
                 } else {
-                    self.pos.checked_sub((-n) as usize)
+                    (self.pos as u64).checked_sub(n.unsigned_abs())
                 }
             }
         };
 
         match new_pos {
-            Some(pos) if pos <= self.data.len() => {
-                self.pos = pos;
-                Ok(self.pos as u64)
+            Some(pos) if pos <= len => {
+                self.pos = pos as usize;
+                Ok(pos)
             }
             _ => Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -331,5 +333,34 @@ mod tests {
         r.seek(SeekFrom::Start(30)).unwrap();
         assert!(r.seek(SeekFrom::Start(30 + (1u64 << 32))).is_err());
         assert_eq!(r.position(), 30, "failed seek must not move the cursor");
+    }
+
+    /// `SeekFrom::End`/`Current` with a huge positive offset must error, not
+    /// truncate. On a 32-bit `usize`, `n as usize` maps `2^32` to `0`, so
+    /// `Current(2^32)` "succeeded" at the SAME position (a no-progress loop
+    /// for any caller advancing by file-declared sizes) and `End(2^32)`
+    /// "succeeded" at the end instead of erroring.
+    #[cfg(feature = "std")]
+    #[test]
+    fn io_seek_end_current_do_not_truncate() {
+        use std::io::{Seek, SeekFrom};
+        let data = [0u8; 70];
+        let mut r = SliceReader::new(&data);
+        r.seek(SeekFrom::Start(30)).unwrap();
+
+        assert!(r.seek(SeekFrom::Current(1i64 << 32)).is_err());
+        assert_eq!(r.position(), 30, "failed seek must not move the cursor");
+        assert!(r.seek(SeekFrom::End(1i64 << 32)).is_err());
+        assert_eq!(r.position(), 30, "failed seek must not move the cursor");
+
+        // i64::MIN is the `unsigned_abs` edge (`-n` would overflow).
+        assert!(r.seek(SeekFrom::Current(i64::MIN)).is_err());
+        assert!(r.seek(SeekFrom::End(i64::MIN)).is_err());
+
+        // Legal seeks through every arm still work.
+        assert_eq!(r.seek(SeekFrom::Current(10)).unwrap(), 40);
+        assert_eq!(r.seek(SeekFrom::Current(-10)).unwrap(), 30);
+        assert_eq!(r.seek(SeekFrom::End(0)).unwrap(), 70);
+        assert_eq!(r.seek(SeekFrom::End(-70)).unwrap(), 0);
     }
 }

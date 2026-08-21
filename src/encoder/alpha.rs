@@ -334,9 +334,44 @@ pub(crate) fn vp8l_quality_for_effort(effort_level: u8, use_quality_100: bool) -
     }
 }
 
+/// The alpha plane's VP8L operating point, as a NAMED decision so the
+/// tuned-vs-parity split is pinned by unit tests rather than living inline
+/// at the call site (where the `&& parity` was one revert away from
+/// silently reintroducing the m6 40x cliff).
+///
+/// Only `StrictLibwebpParity` keeps libwebp's escalation to quality 100 at
+/// `alpha_quality == 100 && effort == 6`; the tuned default always codes
+/// alpha at `quality = 8 * effort`. The escalation runs the q100/m6 VP8L
+/// cruncher once per filter trial (~40x the q48 point for ~25% of the ALPH
+/// chunk — measured 558ms → 13.7ms on a 150x150 RGBA q80 m6, 2026-08-20).
+pub(crate) fn alpha_vp8l_quality(effort_level: u8, use_quality_100: bool, parity: bool) -> f32 {
+    vp8l_quality_for_effort(effort_level, use_quality_100 && parity)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Operating-point gate for the m6 alpha cliff: the tuned default must
+    /// NOT escalate the alpha plane's VP8L to quality 100 at effort 6 — only
+    /// `StrictLibwebpParity` keeps libwebp's escalation. The end-to-end tests
+    /// in `tests/lossy_alpha_effort.rs` stay green with the escalation
+    /// reverted (alpha is bit-exact either way), so this pin is the gate.
+    #[test]
+    fn alpha_vp8l_operating_point_pinned() {
+        // THE fix: tuned default caps m6 alpha at 8*6 = 48.
+        assert_eq!(alpha_vp8l_quality(6, true, false), 48.0);
+        // Parity keeps libwebp's escalation.
+        assert_eq!(alpha_vp8l_quality(6, true, true), 100.0);
+        // Below effort 6 neither model escalates.
+        for e in 0..6u8 {
+            assert_eq!(alpha_vp8l_quality(e, true, false), 8.0 * f32::from(e));
+            assert_eq!(alpha_vp8l_quality(e, true, true), 8.0 * f32::from(e));
+        }
+        // alpha_quality < 100 never escalates.
+        assert_eq!(alpha_vp8l_quality(6, false, true), 48.0);
+        assert_eq!(alpha_vp8l_quality(6, false, false), 48.0);
+    }
 
     #[test]
     fn quantize_levels_preserves_min_max() {
