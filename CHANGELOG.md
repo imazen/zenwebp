@@ -24,6 +24,20 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 (none currently — the `EncodeError::LimitExceeded` kind-carrying item queued
 here has landed; see "Changed (BREAKING)" below.)
 
+### Changed (2026-08-27 issue sweep)
+- **`chunks_exact(N)` → `as_chunks::<N>()`, slice 1 of #76 (31 of 78 sites):**
+  the VP8L decoder's inverse-transform loops (predictors 5/7/10/11/12/13,
+  scalar color transform, subtract-green, color-indexing) and the SSE2
+  kernels' scalar tails. Measured, not assumed: pixel output byte-identical
+  (checksums + the libwebp golden / roundtrip gates), `cargo asm` shows the
+  same bounds-check count before and after on every dispatch symbol, and
+  wall-clock is flat within before-vs-before drift — for these loops the
+  lint fix is hygiene, not an optimization
+  (`benchmarks/as_chunks_migration_2026-08-27.md`). The package-level
+  `chunks_exact_to_as_chunks = "allow"` stays until the remaining 47 sites
+  (`codec.rs`, `vp8l` encoder, `yuv.rs`) are migrated with the same
+  measurement.
+
 ### Fixed (2026-08-27 issue sweep)
 - **Lossless decoder errors now carry their origin `file:line` (#60,
   remaining half).** `LosslessDecoder`'s header / transform-list /

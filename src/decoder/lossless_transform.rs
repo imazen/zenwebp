@@ -375,11 +375,10 @@ pub fn apply_predictor_transform_5(image_data: &mut [u8], range: Range<usize>, w
     let top_right = &old[range.start - width * 4 + 4..];
     let top = &old[range.start - width * 4..];
 
-    for ((chunk, tr), t) in current
-        .chunks_exact_mut(4)
-        .zip(top_right.chunks_exact(4))
-        .zip(top.chunks_exact(4))
-    {
+    let (current, _) = current.as_chunks_mut::<4>();
+    let (top_right, _) = top_right.as_chunks::<4>();
+    let (top, _) = top.as_chunks::<4>();
+    for ((chunk, tr), t) in current.iter_mut().zip(top_right).zip(top) {
         prev = [
             chunk[0].wrapping_add(average2_autovec(average2_autovec(prev[0], tr[0]), t[0])),
             chunk[1].wrapping_add(average2_autovec(average2_autovec(prev[1], tr[1]), t[1])),
@@ -413,11 +412,13 @@ pub fn apply_predictor_transform_7(image_data: &mut [u8], range: Range<usize>, w
     let mut prev: [u8; 4] = *old.last_chunk::<4>().unwrap();
     let top = &old[range.start - width * 4..][..(range.end - range.start)];
 
-    let mut current_chunks = current.chunks_exact_mut(64);
-    let mut top_chunks = top.chunks_exact(64);
+    let (current_chunks, current_rem) = current.as_chunks_mut::<64>();
+    let (top_chunks, top_rem) = top.as_chunks::<64>();
 
-    for (current, top) in (&mut current_chunks).zip(&mut top_chunks) {
-        for (chunk, t) in current.chunks_exact_mut(4).zip(top.chunks_exact(4)) {
+    for (current, top) in current_chunks.iter_mut().zip(top_chunks) {
+        let (current, _) = current[..].as_chunks_mut::<4>();
+        let (top, _) = top[..].as_chunks::<4>();
+        for (chunk, t) in current.iter_mut().zip(top) {
             prev = [
                 chunk[0].wrapping_add(average2_autovec(prev[0], t[0])),
                 chunk[1].wrapping_add(average2_autovec(prev[1], t[1])),
@@ -427,11 +428,9 @@ pub fn apply_predictor_transform_7(image_data: &mut [u8], range: Range<usize>, w
             chunk.copy_from_slice(&prev);
         }
     }
-    for (chunk, t) in current_chunks
-        .into_remainder()
-        .chunks_exact_mut(4)
-        .zip(top_chunks.remainder().chunks_exact(4))
-    {
+    let (current_rem, _) = current_rem.as_chunks_mut::<4>();
+    let (top_rem, _) = top_rem.as_chunks::<4>();
+    for (chunk, t) in current_rem.iter_mut().zip(top_rem) {
         prev = [
             chunk[0].wrapping_add(average2_autovec(prev[0], t[0])),
             chunk[1].wrapping_add(average2_autovec(prev[1], t[1])),
@@ -488,12 +487,11 @@ pub fn apply_predictor_transform_10(image_data: &mut [u8], range: Range<usize>, 
     let top = &old[range.start - width * 4..];
     let top_right = &old[range.start - width * 4 + 4..];
 
-    for (((chunk, tl), t), tr) in current
-        .chunks_exact_mut(4)
-        .zip(top_left.chunks_exact(4))
-        .zip(top.chunks_exact(4))
-        .zip(top_right.chunks_exact(4))
-    {
+    let (current, _) = current.as_chunks_mut::<4>();
+    let (top_left, _) = top_left.as_chunks::<4>();
+    let (top, _) = top.as_chunks::<4>();
+    let (top_right, _) = top_right.as_chunks::<4>();
+    for (((chunk, tl), t), tr) in current.iter_mut().zip(top_left).zip(top).zip(top_right) {
         prev = [
             chunk[0].wrapping_add(average2(average2(prev[0], tl[0]), average2(t[0], tr[0]))),
             chunk[1].wrapping_add(average2(average2(prev[1], tl[1]), average2(t[1], tr[1]))),
@@ -521,7 +519,9 @@ pub fn apply_predictor_transform_11(image_data: &mut [u8], range: Range<usize>, 
         i16::from(old[range.start - width * 4 - 1]),
     ];
 
-    for (chunk, top) in current.chunks_exact_mut(4).zip(top.chunks_exact(4)) {
+    let (current, _) = current.as_chunks_mut::<4>();
+    let (top, _) = top.as_chunks::<4>();
+    for (chunk, top) in current.iter_mut().zip(top) {
         let t = [
             i16::from(top[0]),
             i16::from(top[1]),
@@ -538,19 +538,19 @@ pub fn apply_predictor_transform_11(image_data: &mut [u8], range: Range<usize>, 
         }
 
         if predict_left < predict_top {
-            chunk.copy_from_slice(&[
+            *chunk = [
                 chunk[0].wrapping_add(l[0] as u8),
                 chunk[1].wrapping_add(l[1] as u8),
                 chunk[2].wrapping_add(l[2] as u8),
                 chunk[3].wrapping_add(l[3] as u8),
-            ]);
+            ];
         } else {
-            chunk.copy_from_slice(&[
+            *chunk = [
                 chunk[0].wrapping_add(t[0] as u8),
                 chunk[1].wrapping_add(t[1] as u8),
                 chunk[2].wrapping_add(t[2] as u8),
                 chunk[3].wrapping_add(t[3] as u8),
-            ]);
+            ];
         }
 
         tl = t;
@@ -570,11 +570,10 @@ pub fn apply_predictor_transform_12(image_data: &mut [u8], range: Range<usize>, 
     let top_left = &old[range.start - width * 4 - 4..];
     let top = &old[range.start - width * 4..];
 
-    for ((chunk, tl), t) in current
-        .chunks_exact_mut(4)
-        .zip(top_left.chunks_exact(4))
-        .zip(top.chunks_exact(4))
-    {
+    let (current, _) = current.as_chunks_mut::<4>();
+    let (top_left, _) = top_left.as_chunks::<4>();
+    let (top, _) = top.as_chunks::<4>();
+    for ((chunk, tl), t) in current.iter_mut().zip(top_left).zip(top) {
         prev = [
             chunk[0].wrapping_add(clamp_add_subtract_full(
                 i16::from(prev[0]),
@@ -608,11 +607,10 @@ pub fn apply_predictor_transform_13(image_data: &mut [u8], range: Range<usize>, 
     let top_left = &old[range.start - width * 4 - 4..][..(range.end - range.start)];
     let top = &old[range.start - width * 4..][..(range.end - range.start)];
 
-    for ((chunk, tl), t) in current
-        .chunks_exact_mut(4)
-        .zip(top_left.chunks_exact(4))
-        .zip(top.chunks_exact(4))
-    {
+    let (current, _) = current.as_chunks_mut::<4>();
+    let (top_left, _) = top_left.as_chunks::<4>();
+    let (top, _) = top.as_chunks::<4>();
+    for ((chunk, tl), t) in current.iter_mut().zip(top_left).zip(top) {
         prev = [
             chunk[0].wrapping_add(clamp_add_subtract_half(
                 (i16::from(prev[0]) + i16::from(t[0])) / 2,
@@ -736,13 +734,13 @@ fn apply_color_transform_impl_scalar(
 
         for (block, transform) in row
             .chunks_mut(4 << size_bits)
-            .zip(row_tf_data.chunks_exact(4))
+            .zip(row_tf_data.as_chunks::<4>().0)
         {
             let red_to_blue = transform[0];
             let green_to_blue = transform[1];
             let green_to_red = transform[2];
 
-            for pixel in block.chunks_exact_mut(4) {
+            for pixel in block.as_chunks_mut::<4>().0 {
                 let green = u32::from(pixel[1]);
                 let mut temp_red = u32::from(pixel[0]);
                 let mut temp_blue = u32::from(pixel[2]);
@@ -790,7 +788,7 @@ fn apply_subtract_green_impl_wasm128(token: Wasm128Token, image_data: &mut [u8])
 }
 
 fn apply_subtract_green_impl_scalar(_token: ScalarToken, image_data: &mut [u8]) {
-    for pixel in image_data.chunks_exact_mut(4) {
+    for pixel in image_data.as_chunks_mut::<4>().0 {
         pixel[0] = pixel[0].wrapping_add(pixel[1]);
         pixel[2] = pixel[2].wrapping_add(pixel[1]);
     }
@@ -816,10 +814,10 @@ pub(crate) fn apply_color_indexing_transform(
         // convince the compiler that the length of the table is 256 to avoid bounds checks in the loop below
         let table: &[[u8; 4]; 256] = table.as_slice().try_into().unwrap();
 
-        for pixel in image_data.chunks_exact_mut(4) {
+        for pixel in image_data.as_chunks_mut::<4>().0 {
             // Index is in G channel.
             // WebP format encodes ARGB pixels, but we permute to RGBA immediately after reading from the bitstream.
-            pixel.copy_from_slice(&table[pixel[1] as usize]);
+            *pixel = table[pixel[1] as usize];
         }
     } else {
         // table_size_u16 is 1 to 16
@@ -933,7 +931,9 @@ fn apply_color_indexing_transform_small_table<const W_BITS: u8, const EXP_ENTRY_
             &image_data[packed_row_input_global_offset..][..input_stride_bytes_packed];
 
         for (packed_argb_chunk, packed_idx) in packed_argb_row_slice
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .zip(packed_indices_for_row.iter_mut())
         {
             *packed_idx = packed_argb_chunk[1];
@@ -948,17 +948,15 @@ fn apply_color_indexing_transform_small_table<const W_BITS: u8, const EXP_ENTRY_
         let (full_blocks_part, final_block_part) =
             output_row_slice_mut.split_at_mut(num_full_blocks * EXP_ENTRY_SIZE);
 
-        for (output_chunk_slice, &packed_index_byte) in full_blocks_part
-            .chunks_exact_mut(EXP_ENTRY_SIZE) // Uses const generic to avoid expensive memmove call
+        // `as_chunks_mut` hands out `[u8; EXP_ENTRY_SIZE]` directly: a fixed-size
+        // copy, no per-block `first_chunk_mut().unwrap()` check.
+        for (output_chunk_array, &packed_index_byte) in full_blocks_part
+            .as_chunks_mut::<EXP_ENTRY_SIZE>()
+            .0
+            .iter_mut()
             .zip(packed_indices_for_row.iter())
         {
-            let output_chunk_array: &mut [u8; EXP_ENTRY_SIZE] = output_chunk_slice
-                .first_chunk_mut::<EXP_ENTRY_SIZE>()
-                .unwrap();
-
-            let colors_data_array = &expanded_lookup_table_array[packed_index_byte as usize];
-
-            *output_chunk_array = *colors_data_array;
+            *output_chunk_array = expanded_lookup_table_array[packed_index_byte as usize];
         }
 
         if packed_image_width_in_blocks > 0 {

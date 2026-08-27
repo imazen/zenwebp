@@ -84,7 +84,7 @@ fn add_green_to_blue_and_red_sse2(_token: X64V1Token, image_data: &mut [u8]) {
     }
 
     // Scalar fallback for remaining pixels
-    for pixel in image_data[simd_len..].chunks_exact_mut(4) {
+    for pixel in image_data[simd_len..].as_chunks_mut::<4>().0 {
         pixel[0] = pixel[0].wrapping_add(pixel[1]);
         pixel[2] = pixel[2].wrapping_add(pixel[1]);
     }
@@ -118,7 +118,7 @@ pub(crate) fn transform_color_inverse_sse2_entry(
 
         for (block, transform) in row
             .chunks_mut(4 << size_bits)
-            .zip(row_tf_data.chunks_exact(4))
+            .zip(row_tf_data.as_chunks::<4>().0)
         {
             transform_color_inverse_block_sse2(
                 _token,
@@ -229,7 +229,7 @@ fn transform_color_inverse_block_sse2(
     }
 
     // Scalar fallback
-    for pixel in block[simd_len..].chunks_exact_mut(4) {
+    for pixel in block[simd_len..].as_chunks_mut::<4>().0 {
         let green = pixel[1];
         let mut temp_red = u32::from(pixel[0]);
         let mut temp_blue = u32::from(pixel[2]);
@@ -606,7 +606,7 @@ pub(crate) fn transform_color_inverse_generic<T: magetypes::simd::backends::U8x1
 
         for (block, transform) in row
             .chunks_mut(4 << size_bits)
-            .zip(row_tf_data.chunks_exact(4))
+            .zip(row_tf_data.as_chunks::<4>().0)
         {
             let g2r = transform[2] as i8 as i32;
             let g2b = transform[1] as i8 as i32;
@@ -647,7 +647,7 @@ pub(crate) fn transform_color_inverse_generic<T: magetypes::simd::backends::U8x1
             }
 
             // Scalar tail for remaining pixels
-            for pixel in remainder.chunks_exact_mut(4) {
+            for pixel in remainder.as_chunks_mut::<4>().0 {
                 let green = pixel[1] as i8 as i32;
                 pixel[0] = pixel[0].wrapping_add(((g2r * green) >> 5) as u8);
                 let red = pixel[0] as i8 as i32;
@@ -699,7 +699,7 @@ pub(crate) fn add_green_portable<T: magetypes::simd::backends::U8x16Backend>(
         chunk[12] = chunk[12].wrapping_add(g3);
         chunk[14] = chunk[14].wrapping_add(g3);
     }
-    for pixel in remainder.chunks_exact_mut(4) {
+    for pixel in remainder.as_chunks_mut::<4>().0 {
         pixel[0] = pixel[0].wrapping_add(pixel[1]);
         pixel[2] = pixel[2].wrapping_add(pixel[1]);
     }
