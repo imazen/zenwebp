@@ -9,23 +9,60 @@
 
 ## summary
 #
+#   pub types (struct/enum/trait/alias)         2
 #   pub consts/statics                          1
-#   free functions                              2
-#   struct fields                              15
+#   free functions                             12
+#   struct fields                              43
 #   enum variants                               9
 #   re-exports                                  4
+#   trait roster entries (type × trait)         4
+#   auto-trait-complete types                   1
 #
 # per-module pub lines:
 #   (root)                           10
-#   encoder                          19
+#   encoder                          59
 #   pixel                             2
 
-## items (31 lines)
+## items (65 lines)
 
 pub use AblationToggles
 pub use set_ablation_toggles
 pub use encoder::AblationToggles
 pub use encoder::set_ablation_toggles
+pub encoder::analysis::classifier::ZenanalyzeDiag::distinct_color_bins: u32
+pub encoder::analysis::classifier::ZenanalyzeDiag::edge_density: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::edge_slope_stdev: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::flat_color_block_ratio: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::high_freq_energy_ratio: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::indexed_palette_width: u32
+pub encoder::analysis::classifier::ZenanalyzeDiag::line_art_score: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::natural_likelihood: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::palette_fits_in_256: bool
+pub encoder::analysis::classifier::ZenanalyzeDiag::screen_content: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::skin_tone_fraction: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::text_likelihood: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::uniformity: f32
+pub encoder::analysis::classifier::ZenanalyzeDiag::variance: f32
+pub struct encoder::analysis::ZenanalyzeDiag [also: encoder::analysis::classifier]
+pub encoder::analysis::ZenanalyzeDiag::distinct_color_bins: u32
+pub encoder::analysis::ZenanalyzeDiag::edge_density: f32
+pub encoder::analysis::ZenanalyzeDiag::edge_slope_stdev: f32
+pub encoder::analysis::ZenanalyzeDiag::flat_color_block_ratio: f32
+pub encoder::analysis::ZenanalyzeDiag::high_freq_energy_ratio: f32
+pub encoder::analysis::ZenanalyzeDiag::indexed_palette_width: u32
+pub encoder::analysis::ZenanalyzeDiag::line_art_score: f32
+pub encoder::analysis::ZenanalyzeDiag::natural_likelihood: f32
+pub encoder::analysis::ZenanalyzeDiag::palette_fits_in_256: bool
+pub encoder::analysis::ZenanalyzeDiag::screen_content: f32
+pub encoder::analysis::ZenanalyzeDiag::skin_tone_fraction: f32
+pub encoder::analysis::ZenanalyzeDiag::text_likelihood: f32
+pub encoder::analysis::ZenanalyzeDiag::uniformity: f32
+pub encoder::analysis::ZenanalyzeDiag::variance: f32
+pub fn encoder::analysis::classify_image_type_rgb8(&[u8], u32, u32) -> encoder::analysis::classifier::ImageContentType [also: encoder::analysis::classifier]
+pub fn encoder::analysis::classify_image_type_rgb8_diag(&[u8], u32, u32) -> (encoder::analysis::classifier::ImageContentType, encoder::analysis::classifier::ZenanalyzeDiag) [also: encoder::analysis::classifier]
+pub fn encoder::analysis::decide_bucket_from_diag(&encoder::analysis::classifier::ZenanalyzeDiag) -> encoder::analysis::classifier::ImageContentType [also: encoder::analysis::classifier]
+pub fn encoder::analysis::decide_bucket_stable(&encoder::analysis::classifier::ZenanalyzeDiag) -> encoder::analysis::classifier::ImageContentType [also: encoder::analysis::classifier]
+pub fn encoder::analysis::rgba8_to_rgb8(&[u8]) -> alloc::vec::Vec<u8> [also: encoder::analysis::classifier]
 pub encoder::validation::ValidationError::TargetZensimMaxPassesZero
 pub encoder::validation::ValidationError::TargetZensimMaxPassesZero::value: u8
 pub encoder::validation::ValidationError::TargetZensimOutOfRange
@@ -53,3 +90,11 @@ pub ValidationError::TargetZensimOutOfRange::value: f32
 pub ValidationError::TargetZensimToleranceInvalid
 pub ValidationError::TargetZensimToleranceInvalid::field: &'static str
 pub ValidationError::TargetZensimToleranceInvalid::value: f32
+
+## trait impls (1 types)
+
+encoder::analysis::classifier::ZenanalyzeDiag: Clone, Copy, Debug, Default
+
+## auto traits
+
+1 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe

@@ -1330,6 +1330,7 @@ pub(crate) fn normal_v_filter32_edge(
 /// Transposes into 2 packed registers: (cols01, cols23).
 ///
 /// Mirrors libwebp's `Load8x4_SSE2`.
+#[cfg(target_arch = "x86_64")]
 macro_rules! load_8x4_impl {
     ($pixels:expr, $base:expr, $stride:expr) => {{
         let base_ = $base;
@@ -1363,6 +1364,7 @@ macro_rules! load_8x4_impl {
 }
 
 /// Store 4 rows of 4 bytes each from a single __m128i register.
+#[cfg(target_arch = "x86_64")]
 macro_rules! store_4x4_impl {
     ($pixels:expr, $base:expr, $stride:expr, $vals:expr) => {{
         let base_ = $base;
@@ -1390,6 +1392,7 @@ macro_rules! store_4x4_impl {
 
 /// Load 4 bytes from each of 16 rows, producing 4 column __m128i values.
 /// Mirrors libwebp's `Load16x4_SSE2`.
+#[cfg(target_arch = "x86_64")]
 macro_rules! load_16x4_impl {
     ($pixels:expr, $base:expr, $stride:expr) => {{
         let (pq_lo_a, pq_hi_a) = load_8x4_impl!($pixels, $base, $stride);
@@ -1405,6 +1408,7 @@ macro_rules! load_16x4_impl {
 
 /// Transpose 4 columns and store as 16 rows of 4 bytes.
 /// Mirrors libwebp's `Store16x4_SSE2`.
+#[cfg(target_arch = "x86_64")]
 macro_rules! store_16x4_impl {
     ($pixels:expr, $base:expr, $stride:expr, $col0:expr, $col1:expr, $col2:expr, $col3:expr) => {{
         let t0_ = _mm_unpacklo_epi8($col0, $col1);
@@ -1423,6 +1427,7 @@ macro_rules! store_16x4_impl {
 }
 
 /// Store q1,q2 as 2-byte rows for 16 rows.
+#[cfg(target_arch = "x86_64")]
 macro_rules! store_q1q2_16_impl {
     ($pixels:expr, $base:expr, $stride:expr, $q1:expr, $q2:expr) => {{
         let t0_ = _mm_unpacklo_epi8($q1, $q2);

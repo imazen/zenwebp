@@ -6,27 +6,27 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenwebp.txt 855 lines (supported surface) | zenwebp.features.txt 31 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,mode_debug,pixel-types,std,target-zensim,testable_dispatch) | zenwebp.internal.txt 989 lines (1292 hidden + 219 excluded-feature)
+# files: zenwebp.txt 973 lines (supported surface) | zenwebp.features.txt 67 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,mode_debug,pixel-types,std,target-zensim,testable_dispatch) | zenwebp.internal.txt 966 lines (1154 hidden + 265 excluded-feature)
 
 ## summary
 #
-#   pub modules                                11
-#   pub types (struct/enum/trait/alias)        72
-#   pub consts/statics                         16
-#   free functions                             51
-#   inherent methods                          257
-#   struct fields                             220
-#   enum variants                             178
-#   re-exports                                 17
-#   trait roster entries (type × trait)       163
-#   auto-trait-complete types                  36
+#   pub modules                                17
+#   pub types (struct/enum/trait/alias)        83
+#   pub consts/statics                         18
+#   free functions                             78
+#   inherent methods                          276
+#   struct fields                             271
+#   enum variants                             192
+#   re-exports                                 15
+#   trait roster entries (type × trait)       179
+#   auto-trait-complete types                  42
 #   auto-trait exceptions                      13
 #
 # per-module pub lines:
 #   (root)                          320
 #   decoder                          95
 #   detect                           25
-#   encoder                         155
+#   encoder                         283
 #   heuristics                       14
 #   metadata                         10
 #   mux                             135
@@ -34,7 +34,7 @@
 #   pixel                            11
 #   zencodec                         41
 
-## items (789 lines)
+## items (903 lines)
 
 pub mod zenwebp
 pub use EncoderConfig
@@ -68,7 +68,7 @@ pub decoder::DecodeError::InvalidChunkSize
 pub decoder::DecodeError::InvalidColorCacheBits(u8)
 pub decoder::DecodeError::InvalidCompressionMethod
 pub decoder::DecodeError::InvalidParameter(alloc::string::String)
-pub decoder::DecodeError::IoError(std::io::error::Error)
+pub decoder::DecodeError::IoError(core::io::error::Error)
 pub decoder::DecodeError::LosslessSignatureInvalid(u8)
 pub decoder::DecodeError::LumaPredictionModeInvalid(i8)
 pub decoder::DecodeError::MemoryLimitExceeded
@@ -226,13 +226,115 @@ pub fn detect::WebPProbe::is_lossless(&self) -> bool
 pub fn detect::WebPProbe::recommended_quality(&self) -> core::option::Option<f32>
 pub fn detect::probe(&[u8]) -> core::result::Result<detect::WebPProbe, detect::ProbeError>
 pub mod encoder
-pub use encoder::ClassifierDiag
 pub use encoder::EncoderConfig
-pub use encoder::ImageContentType
 pub use encoder::LosslessConfig
 pub use encoder::LossyConfig
 pub use encoder::ZensimEncodeMetrics
 pub use encoder::ZensimTarget
+pub mod encoder::analysis
+pub mod encoder::analysis::classifier
+pub encoder::analysis::classifier::ImageContentType::Drawing
+pub encoder::analysis::classifier::ImageContentType::Icon
+pub encoder::analysis::classifier::ImageContentType::Photo
+pub encoder::analysis::classifier::ImageContentType::Text
+pub encoder::analysis::classifier::ClassifierDiag::content_type: encoder::analysis::classifier::ImageContentType
+pub encoder::analysis::classifier::ClassifierDiag::edge_density: f32
+pub encoder::analysis::classifier::ClassifierDiag::high_frac: f32
+pub encoder::analysis::classifier::ClassifierDiag::is_bimodal: bool
+pub encoder::analysis::classifier::ClassifierDiag::low_frac: f32
+pub encoder::analysis::classifier::ClassifierDiag::uniformity: f32
+pub mod encoder::analysis::histogram
+pub fn encoder::analysis::histogram::collect_histogram_with_offset(&[u8], usize, &[u8], usize, usize, usize) -> encoder::analysis::DctHistogram
+pub mod encoder::analysis::iterator
+pub encoder::analysis::iterator::AnalysisIterator::height: usize
+pub encoder::analysis::iterator::AnalysisIterator::mb_h: usize
+pub encoder::analysis::iterator::AnalysisIterator::mb_w: usize
+pub encoder::analysis::iterator::AnalysisIterator::u_left: [u8; 9]
+pub encoder::analysis::iterator::AnalysisIterator::uv_top: alloc::vec::Vec<u8>
+pub encoder::analysis::iterator::AnalysisIterator::v_left: [u8; 9]
+pub encoder::analysis::iterator::AnalysisIterator::width: usize
+pub encoder::analysis::iterator::AnalysisIterator::x: usize
+pub encoder::analysis::iterator::AnalysisIterator::y: usize
+pub encoder::analysis::iterator::AnalysisIterator::y_left: [u8; 17]
+pub encoder::analysis::iterator::AnalysisIterator::y_top: alloc::vec::Vec<u8>
+pub encoder::analysis::iterator::AnalysisIterator::yuv_in: alloc::vec::Vec<u8>
+pub encoder::analysis::iterator::AnalysisIterator::yuv_p: alloc::vec::Vec<u8>
+pub fn encoder::analysis::iterator::AnalysisIterator::analyze_best_intra16_mode(&mut self) -> (i32, usize)
+pub fn encoder::analysis::iterator::AnalysisIterator::analyze_best_uv_mode(&mut self) -> (i32, usize)
+pub fn encoder::analysis::iterator::AnalysisIterator::import(&mut self, &[u8], &[u8], &[u8], usize, usize)
+pub fn encoder::analysis::iterator::AnalysisIterator::is_done(&self) -> bool
+pub fn encoder::analysis::iterator::AnalysisIterator::new(usize, usize) -> Self
+pub fn encoder::analysis::iterator::AnalysisIterator::next(&mut self) -> bool
+pub fn encoder::analysis::iterator::AnalysisIterator::reset(&mut self)
+pub fn encoder::analysis::iterator::AnalysisIterator::set_row(&mut self, usize)
+pub mod encoder::analysis::prediction
+pub fn encoder::analysis::prediction::make_chroma8_preds(&mut [u8], core::option::Option<&[u8]>, core::option::Option<&[u8]>, core::option::Option<&[u8]>)
+pub fn encoder::analysis::prediction::make_luma16_preds(&mut [u8], core::option::Option<&[u8]>, core::option::Option<&[u8]>)
+pub fn encoder::analysis::prediction::pred_chroma8_dc(&mut [u8], core::option::Option<&[u8]>, core::option::Option<&[u8]>)
+pub fn encoder::analysis::prediction::pred_chroma8_tm(&mut [u8], core::option::Option<&[u8]>, core::option::Option<&[u8]>)
+pub fn encoder::analysis::prediction::pred_luma16_dc(&mut [u8], core::option::Option<&[u8]>, core::option::Option<&[u8]>)
+pub fn encoder::analysis::prediction::pred_luma16_tm(&mut [u8], core::option::Option<&[u8]>, core::option::Option<&[u8]>)
+pub mod encoder::analysis::segment
+pub encoder::analysis::ImageContentType::Drawing
+pub encoder::analysis::ImageContentType::Icon
+pub encoder::analysis::ImageContentType::Photo
+pub encoder::analysis::ImageContentType::Text
+pub enum encoder::analysis::MbModeHint
+pub encoder::analysis::MbModeHint::I16Dc
+pub encoder::analysis::MbModeHint::I4AllDc
+pub struct encoder::analysis::AnalysisIterator [also: encoder::analysis::iterator]
+pub encoder::analysis::AnalysisIterator::height: usize
+pub encoder::analysis::AnalysisIterator::mb_h: usize
+pub encoder::analysis::AnalysisIterator::mb_w: usize
+pub encoder::analysis::AnalysisIterator::u_left: [u8; 9]
+pub encoder::analysis::AnalysisIterator::uv_top: alloc::vec::Vec<u8>
+pub encoder::analysis::AnalysisIterator::v_left: [u8; 9]
+pub encoder::analysis::AnalysisIterator::width: usize
+pub encoder::analysis::AnalysisIterator::x: usize
+pub encoder::analysis::AnalysisIterator::y: usize
+pub encoder::analysis::AnalysisIterator::y_left: [u8; 17]
+pub encoder::analysis::AnalysisIterator::y_top: alloc::vec::Vec<u8>
+pub encoder::analysis::AnalysisIterator::yuv_in: alloc::vec::Vec<u8>
+pub encoder::analysis::AnalysisIterator::yuv_p: alloc::vec::Vec<u8>
+pub fn encoder::analysis::iterator::AnalysisIterator::analyze_best_intra16_mode(&mut self) -> (i32, usize)
+pub fn encoder::analysis::iterator::AnalysisIterator::analyze_best_uv_mode(&mut self) -> (i32, usize)
+pub fn encoder::analysis::iterator::AnalysisIterator::import(&mut self, &[u8], &[u8], &[u8], usize, usize)
+pub fn encoder::analysis::iterator::AnalysisIterator::is_done(&self) -> bool
+pub fn encoder::analysis::iterator::AnalysisIterator::new(usize, usize) -> Self
+pub fn encoder::analysis::iterator::AnalysisIterator::next(&mut self) -> bool
+pub fn encoder::analysis::iterator::AnalysisIterator::reset(&mut self)
+pub fn encoder::analysis::iterator::AnalysisIterator::set_row(&mut self, usize)
+pub struct encoder::analysis::AnalysisResult
+pub encoder::analysis::AnalysisResult::alpha_histogram: [u32; 256]
+pub encoder::analysis::AnalysisResult::mb_alphas: alloc::vec::Vec<u8>
+pub encoder::analysis::AnalysisResult::mb_mode_hints: core::option::Option<alloc::vec::Vec<encoder::analysis::MbModeHint>>
+pub encoder::analysis::AnalysisResult::mb_uv_hints: core::option::Option<alloc::vec::Vec<u8>>
+pub encoder::analysis::AnalysisResult::uv_alpha_avg: i32
+pub encoder::analysis::ClassifierDiag::content_type: encoder::analysis::classifier::ImageContentType
+pub encoder::analysis::ClassifierDiag::edge_density: f32
+pub encoder::analysis::ClassifierDiag::high_frac: f32
+pub encoder::analysis::ClassifierDiag::is_bimodal: bool
+pub encoder::analysis::ClassifierDiag::low_frac: f32
+pub encoder::analysis::ClassifierDiag::uniformity: f32
+pub struct encoder::analysis::DctHistogram
+pub encoder::analysis::DctHistogram::last_non_zero: usize
+pub encoder::analysis::DctHistogram::max_value: u32
+pub fn encoder::analysis::DctHistogram::from_distribution(&[u32; 32]) -> Self
+pub fn encoder::analysis::DctHistogram::get_alpha(&self) -> i32
+pub fn encoder::analysis::DctHistogram::new() -> Self
+pub const encoder::analysis::MAX_ALPHA: u8
+pub const encoder::analysis::NUM_SEGMENTS: usize
+pub fn encoder::analysis::analyze_image(&[u8], &[u8], &[u8], usize, usize, usize, usize, u8, u8, CostModel, i32) -> encoder::analysis::AnalysisResult
+pub fn encoder::analysis::analyze_macroblock(&mut encoder::analysis::iterator::AnalysisIterator, u8, u8, CostModel) -> (u8, i32, usize)
+pub fn encoder::analysis::assign_segments_kmeans(&[u32; 256], usize) -> ([u8; 4], [u8; 256], i32) [also: encoder::analysis::segment]
+pub fn encoder::analysis::classify_image_type(&[u8], usize, usize, usize, &[u32; 256]) -> encoder::analysis::classifier::ImageContentType [also: encoder::analysis::classifier]
+pub fn encoder::analysis::classify_image_type_diag(&[u8], usize, usize, usize, &[u32; 256]) -> encoder::analysis::classifier::ClassifierDiag [also: encoder::analysis::classifier]
+pub fn encoder::analysis::collect_histogram_bps(&[u8], &[u8], usize, usize) -> encoder::analysis::DctHistogram [also: encoder::analysis::histogram]
+pub fn encoder::analysis::compute_segment_quant(u8, i32, u8) -> u8 [also: encoder::analysis::segment]
+pub fn encoder::analysis::compute_segment_quant_libm(u8, i32, u8) -> u8 [also: encoder::analysis::segment]
+pub fn encoder::analysis::content_type_to_tuning(encoder::analysis::classifier::ImageContentType) -> (u8, u8, u8, u8) [also: encoder::analysis::classifier]
+pub fn encoder::analysis::forward_dct_4x4(&[u8], &[u8], usize, usize) -> [i16; 16] [also: encoder::analysis::histogram]
+pub fn encoder::analysis::smooth_segment_map(&mut [u8], usize, usize) [also: encoder::analysis::segment]
 pub mod encoder::validation
 pub encoder::validation::ValidationError::AlphaQualityOutOfRange
 pub encoder::validation::ValidationError::AlphaQualityOutOfRange::valid: core::ops::range::RangeInclusive<u8>
@@ -287,13 +389,18 @@ pub encoder::EncodeError::Cancelled(enough::reason::StopReason)
 pub encoder::EncodeError::IccSynthesisUnavailable(alloc::string::String)
 pub encoder::EncodeError::InvalidBufferSize(alloc::string::String)
 pub encoder::EncodeError::InvalidDimensions
-pub encoder::EncodeError::IoError(std::io::error::Error)
+pub encoder::EncodeError::IoError(core::io::error::Error)
 pub encoder::EncodeError::LimitExceeded(zencodec::limits::LimitKind, alloc::string::String)
 pub encoder::EncodeError::Partition0Overflow
 pub encoder::EncodeError::Partition0Overflow::max: u32
 pub encoder::EncodeError::Partition0Overflow::size: u32
 pub encoder::EncodeError::TargetZensimUnsupportedLayout(PixelLayout)
 pub encoder::EncodeError::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
+#[non_exhaustive] pub enum encoder::ImageContentType [also: encoder::analysis, encoder::analysis::classifier]
+pub encoder::ImageContentType::Drawing
+pub encoder::ImageContentType::Icon
+pub encoder::ImageContentType::Photo
+pub encoder::ImageContentType::Text
 pub encoder::PixelLayout::Argb8
 pub encoder::PixelLayout::Bgr8
 pub encoder::PixelLayout::Bgra8
@@ -346,9 +453,16 @@ pub encoder::ValidationError::TargetMutuallyExclusive::second: &'static str
 pub encoder::ValidationError::TargetPsnrOutOfRange
 pub encoder::ValidationError::TargetPsnrOutOfRange::valid: core::ops::range::RangeInclusive<f32>
 pub encoder::ValidationError::TargetPsnrOutOfRange::value: f32
+pub struct encoder::ClassifierDiag [also: encoder::analysis, encoder::analysis::classifier]
+pub encoder::ClassifierDiag::content_type: encoder::analysis::classifier::ImageContentType
+pub encoder::ClassifierDiag::edge_density: f32
+pub encoder::ClassifierDiag::high_frac: f32
+pub encoder::ClassifierDiag::is_bimodal: bool
+pub encoder::ClassifierDiag::low_frac: f32
+pub encoder::ClassifierDiag::uniformity: f32
 pub fn EncodeRequest<'a>::encode(self) -> EncodeResult<alloc::vec::Vec<u8>>
 pub fn EncodeRequest<'a>::encode_into(self, &mut alloc::vec::Vec<u8>) -> EncodeResult<()>
-pub fn EncodeRequest<'a>::encode_to<W: std::io::Write>(self, W) -> EncodeResult<()>
+pub fn EncodeRequest<'a>::encode_to<W: core::io::write::Write>(self, W) -> EncodeResult<()>
 pub fn EncodeRequest<'a>::encode_with_metrics(self) -> EncodeResult<(alloc::vec::Vec<u8>, super::zensim_target::ZensimEncodeMetrics)>
 pub fn EncodeRequest<'a>::encode_with_stats(self) -> EncodeResult<(alloc::vec::Vec<u8>, encoder::EncodeStats)>
 pub fn EncodeRequest<'a>::lossless(&'a config::LosslessConfig, &'a [u8], PixelLayout, u32, u32) -> Self
@@ -629,7 +743,7 @@ pub DecodeError::InvalidChunkSize
 pub DecodeError::InvalidColorCacheBits(u8)
 pub DecodeError::InvalidCompressionMethod
 pub DecodeError::InvalidParameter(alloc::string::String)
-pub DecodeError::IoError(std::io::error::Error)
+pub DecodeError::IoError(core::io::error::Error)
 pub DecodeError::LosslessSignatureInvalid(u8)
 pub DecodeError::LumaPredictionModeInvalid(i8)
 pub DecodeError::MemoryLimitExceeded
@@ -647,7 +761,7 @@ pub EncodeError::Cancelled(enough::reason::StopReason)
 pub EncodeError::IccSynthesisUnavailable(alloc::string::String)
 pub EncodeError::InvalidBufferSize(alloc::string::String)
 pub EncodeError::InvalidDimensions
-pub EncodeError::IoError(std::io::error::Error)
+pub EncodeError::IoError(core::io::error::Error)
 pub EncodeError::LimitExceeded(zencodec::limits::LimitKind, alloc::string::String)
 pub EncodeError::Partition0Overflow
 pub EncodeError::Partition0Overflow::max: u32
@@ -733,7 +847,7 @@ pub fn DecodeRequest<'a>::stride(self, u32) -> Self
 pub struct EncodeRequest<'a> [also: encoder]
 pub fn EncodeRequest<'a>::encode(self) -> EncodeResult<alloc::vec::Vec<u8>>
 pub fn EncodeRequest<'a>::encode_into(self, &mut alloc::vec::Vec<u8>) -> EncodeResult<()>
-pub fn EncodeRequest<'a>::encode_to<W: std::io::Write>(self, W) -> EncodeResult<()>
+pub fn EncodeRequest<'a>::encode_to<W: core::io::write::Write>(self, W) -> EncodeResult<()>
 pub fn EncodeRequest<'a>::encode_with_metrics(self) -> EncodeResult<(alloc::vec::Vec<u8>, super::zensim_target::ZensimEncodeMetrics)>
 pub fn EncodeRequest<'a>::encode_with_stats(self) -> EncodeResult<(alloc::vec::Vec<u8>, encoder::EncodeStats)>
 pub fn EncodeRequest<'a>::lossless(&'a config::LosslessConfig, &'a [u8], PixelLayout, u32, u32) -> Self
@@ -826,12 +940,12 @@ pub fn WebPDecoder<'a>::xmp_metadata(&mut self) -> DecodeResult<core::option::Op
 pub type DecodeResult<T> = core::result::Result<T, whereat::at::At<DecodeError>> [also: decoder]
 pub type EncodeResult<T> = core::result::Result<T, whereat::at::At<EncodeError>> [also: encoder]
 
-## trait impls (52 types)
+## trait impls (56 types)
 
 CostModel: Clone, Copy, Debug, Default, Eq, PartialEq
 DecodeConfig: Clone, Debug, Default, PartialEq
-DecodeError: Debug, Display, Error, From<enough::reason::StopReason>, From<std::io::error::Error>, From<zencodec::capabilities::UnsupportedOperation>, zencodec::error::CategorizedError
-EncodeError: Debug, Display, Error, From<enough::reason::StopReason>, From<std::io::error::Error>, From<zencodec::capabilities::UnsupportedOperation>, zencodec::error::CategorizedError
+DecodeError: Debug, Display, Error, From<core::io::error::Error>, From<enough::reason::StopReason>, From<zencodec::capabilities::UnsupportedOperation>, zencodec::error::CategorizedError
+EncodeError: Debug, Display, Error, From<core::io::error::Error>, From<enough::reason::StopReason>, From<zencodec::capabilities::UnsupportedOperation>, zencodec::error::CategorizedError
 ImageInfo: Clone, Debug
 ImageMetadata<'a>: Clone, Copy, Debug, Default
 Limits: Clone, Debug, Default, PartialEq
@@ -848,6 +962,10 @@ detect::ProbeError: Clone, Debug, Display, Eq, Error, PartialEq, zencodec::error
 detect::WebPProbe: Clone, Debug, zencodec::detect::SourceEncodingDetails
 encoder::EncodeStats: Clone, Debug, Default
 encoder::NoProgress: encoder::EncodeProgress
+encoder::analysis::DctHistogram: Clone, Copy, Default
+encoder::analysis::MbModeHint: Clone, Copy, Debug, Eq, PartialEq
+encoder::analysis::classifier::ClassifierDiag: Clone, Copy, Debug
+encoder::analysis::classifier::ImageContentType: Clone, Copy, Debug, Eq, PartialEq
 encoder::validation::ValidationError: Clone, Debug, Display, Error, zencodec::error::CategorizedError
 heuristics::DecodeEstimate: Clone, Copy, Debug
 heuristics::EncodeEstimate: Clone, Copy, Debug
@@ -883,7 +1001,7 @@ zencodec::WebpStreamingDecoder: zencodec::traits::decoder::StreamingDecode
 
 ## auto traits
 
-36 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+42 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 DecodeError: !RefUnwindSafe !UnwindSafe
 DecodeRequest<'a>: !RefUnwindSafe !UnwindSafe
 EncodeError: !RefUnwindSafe !UnwindSafe

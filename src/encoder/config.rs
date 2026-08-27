@@ -1194,6 +1194,7 @@ impl LossyConfig {
             alpha_effort: self.alpha_effort,
             partition_limit: self.partition_limit,
             exact: false, // Not applicable to lossy (alpha plane is lossless separately)
+            near_lossless: 100, // Lossless-only knob
             smooth_segment_map: self.smooth_segment_map,
             cost_model: self.cost_model,
             multi_pass_stats: self.multi_pass_stats,
@@ -1221,6 +1222,7 @@ impl LosslessConfig {
             alpha_effort: None,    // Lossy-only knob
             partition_limit: None, // Not applicable to lossless
             exact: self.exact,
+            near_lossless: self.near_lossless,
             smooth_segment_map: false, // Not applicable to lossless
             cost_model: super::api::CostModel::ZenwebpDefault,
             multi_pass_stats: false, // Not applicable to lossless

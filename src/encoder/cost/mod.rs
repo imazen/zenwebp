@@ -24,7 +24,7 @@ pub use lambda::{
     compute_filter_level_with_beta, filter_strength_from_delta,
 };
 pub use level_costs::{LevelCostArray, LevelCostTables, LevelCosts, RemappedCosts};
-pub use stats::{NUM_BANDS, NUM_CTX, NUM_PROBAS, NUM_TYPES, ProbaStats, TokenType, record_coeffs};
+pub use stats::{NUM_BANDS, NUM_CTX, NUM_PROBAS, NUM_TYPES, ProbaStats, TokenType};
 
 // Re-export tables from tables for backward compatibility
 pub use super::tables::*;

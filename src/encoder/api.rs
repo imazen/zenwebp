@@ -654,6 +654,8 @@ pub struct EncoderParams {
     /// Preserve RGB under fully-transparent pixels (alpha=0) in lossless mode.
     /// `false` (default) matches libwebp: zero RGB for better compression.
     pub(crate) exact: bool,
+    /// Near-lossless preprocessing for lossless mode (0-100, 100 = off).
+    pub(crate) near_lossless: u8,
     /// Preprocessing options. Default: all off (matching libwebp's
     /// `config->preprocessing = 0`).
     pub(crate) smooth_segment_map: bool,
@@ -698,6 +700,7 @@ impl Default for EncoderParams {
             alpha_effort: None,
             partition_limit: None,
             exact: false,
+            near_lossless: 100,
             smooth_segment_map: false,
             cost_model: CostModel::ZenwebpDefault,
             multi_pass_stats: false,
@@ -1147,6 +1150,7 @@ impl EncoderConfig {
             alpha_effort: None, // legacy config predates the knob
             partition_limit: self.partition_limit,
             exact: self.exact,
+            near_lossless: self.near_lossless,
             smooth_segment_map: self.smooth_segment_map,
             cost_model: self.cost_model,
             multi_pass_stats: self.multi_pass_stats,
@@ -1868,6 +1872,10 @@ pub(crate) fn encode_frame_lossless(
         let vp8l_config = super::vp8l::Vp8lConfig {
             quality: super::vp8l::Vp8lQuality { quality, method },
             exact: params.exact,
+            // Was dropped here — `..default()` silently reset it to 100, so
+            // `with_near_lossless(q)` was a no-op at every method and quality
+            // (found by the decode-bounded roundtrip test, zenwebp#89).
+            near_lossless: params.near_lossless,
             ..super::vp8l::Vp8lConfig::default()
         };
 

@@ -24,6 +24,35 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 (none currently — the `EncodeError::LimitExceeded` kind-carrying item queued
 here has landed; see "Changed (BREAKING)" below.)
 
+### Fixed (2026-08-26 ultracode sweep, #89)
+- **`LosslessConfig::with_near_lossless` was a complete no-op.** The public
+  config carried the value, but when it was lowered to the VP8L config
+  (`encoder/api.rs`) `..Vp8lConfig::default()` silently reset it to 100, so
+  every near-lossless quality from 80 down to 0 produced bytes identical to
+  exact lossless — for months, at every method. Found by the new
+  decode-and-bound test on its first run (the only prior coverage was the
+  byte-identity SIMD tier grid, which cannot see a deterministic no-op). Now
+  plumbed through `EncoderParams::near_lossless`; measured per-channel error
+  is exactly `max_quantization/2` (1, 2, 4, 8, 16 at nl 80/60/40/20/0) and
+  files shrink accordingly (noise m6: 27.7 KB → 12.4 KB at nl 0).
+- Removed the dead `encoder::cost::record_coeffs()` (and its re-export): its
+  stats traversal stopped recording node-0 events after the first zero
+  coefficient, diverging from the live emitter (`record_coeff_tokens`) and
+  from libwebp's `VP8RecordCoeffs`, with a comment asserting the wrong
+  invariant. Nothing called it; deleting beats inviting a miscalibrated
+  stats pass.
+- ARM builds: the five x86-only loop-filter helper macros are now
+  `cfg(target_arch = "x86_64")`-gated (they tripped `unused_macros` under
+  `-D warnings` on aarch64).
+
+### Added (2026-08-26)
+- `tests/near_lossless_roundtrip.rs`: decodes near-lossless output at nl
+  80/60/40/20/0 × m0/m3/m6 × 3 fixtures with the crate decoder and asserts
+  per-channel error ≤ `max_quantization`, plus liveness (m≥1 must alter
+  noise) and an nl=100 exactness control.
+- `docs/public-api/*` snapshots regenerated (stale since 2026-07-13; format
+  bump of zenutils-apidoc + the i32→i16 test-helper signatures).
+
 ### Fixed (2026-08-21 review pass)
 - **VP8L max-dimension (16384) images no longer wrap to 0 pixels.** Both the
   demuxer and decoder parsed VP8L dimensions as `(1 + header) & 0x3FFF`
