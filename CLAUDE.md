@@ -94,6 +94,15 @@ section there is binding; the short form:
 9. Fork PRs run zero CI until a maintainer approves the workflow run —
    approve first, never read the checks column as green without the repo's
    own jobs.
+10. Every user-facing encoder option needs a LIVENESS test that decodes the
+    output and proves the option changed something (bytes AND pixels), with
+    a bounded oracle where the option is lossy. Byte-identity tier grids
+    cannot see a deterministic no-op: `with_near_lossless(q)` was silently
+    dropped at the `Vp8lConfig` boundary (`..default()` reset it to 100) for
+    months while the SIMD tier parity grid stayed green (#89, 2026-08-26;
+    `tests/near_lossless_roundtrip.rs` is the shape to copy). When lowering
+    one config struct into another, never `..Default::default()` past a
+    field the caller set — list every field or lower explicitly.
 
 ## Performance & Testing
 
