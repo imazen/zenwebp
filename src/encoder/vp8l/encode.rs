@@ -772,26 +772,7 @@ fn encode_argb_single_config(
         None => {
             // Auto-detect optimal cache size
             if let Some(ref pt) = palette_transform {
-                // NOTE (2026-08-21, #77): this `31 - leading_zeros` idiom is a
-                // u32 log2-floor, but `ps` is `usize`. On a 64-bit target
-                // `usize::leading_zeros()` is 64-based, so `31 - lz` saturates
-                // to 0 for every ps < 1024 and this pins the palette color
-                // cache search ceiling to 1 bit — DIFFERENT output than a
-                // 32-bit build, which gets the intended libwebp
-                // BitsLog2Floor+1 ceiling. That platform divergence is a real
-                // bug, but the naive `(ps as u32)` fix measured as a small
-                // tuned-default REGRESSION on synthetic palette content (the
-                // cost-estimated cache search is not monotone in its ceiling),
-                // so it must not land without a palette-corpus sweep. Tracked
-                // in #77; StrictLibwebpParity is unaffected (it sets bits
-                // explicitly via the `Some(bits)` arm).
-                let ps = pt.palette.len();
-                if ps < (1 << 10) {
-                    let log2_floor = 31u32.saturating_sub(ps.leading_zeros());
-                    (log2_floor + 1).min(10) as u8
-                } else {
-                    10
-                }
+                palette_cache_bits_ceiling(pt.palette.len())
             } else {
                 10 // Auto-detect: try all sizes up to MAX_COLOR_CACHE_BITS
             }
@@ -1397,6 +1378,47 @@ fn get_transform_bits(method: u8, histo_bits: u8) -> u8 {
         5
     };
     histo_bits.min(max_transform_bits)
+}
+
+/// Color-cache search ceiling (in bits) for a palette image, when
+/// `Vp8lConfig::cache_bits` is `None`. A tuned operating point, pinned by
+/// `palette_cache_bits_ceiling_is_pinned` (#77).
+///
+/// History: the auto-detect code meant to use libwebp's
+/// `BitsLog2Floor(palette_size) + 1` (`EncodeStreamHook`), but computed the
+/// log2 as `31 - leading_zeros()` on a `usize`. That is only a log2-floor on
+/// 32-bit targets; on 64-bit `leading_zeros()` is 64-based, the subtraction
+/// saturated to 0, and the ceiling was 1 bit for every palette — so the same
+/// image encoded to different bytes on i686 and x86_64.
+///
+/// Measured 2026-08-27 before unifying (90 real palette PNGs from the
+/// `codec-corpus` png-8 set, ≤ 2.5 MP, m0/m3/m4/m5/m6 = 450 cells, default
+/// lossless config; `benchmarks/palette_cache_ceiling_2026-08-27.md`),
+/// total bytes relative to this ceiling of 1:
+///
+/// | ceiling            | Δ bytes  | cells better / worse / tied |
+/// |--------------------|----------|-----------------------------|
+/// | 0 (no cache)       | +1.569 % | 25 / 266 / 159              |
+/// | **1**              | —        | —                           |
+/// | 2                  | +0.020 % | 97 / 125 / 228              |
+/// | 3                  | +0.507 % | 57 / 168 / 225              |
+/// | libwebp log2+1     | +1.056 % | 36 / 191 / 223              |
+///
+/// The libwebp ceiling loses at every method (m0, which takes the ceiling
+/// verbatim, +1.43 % with zero wins; even m5/m6 with the full-encode
+/// cache/no-cache arbiter +0.71 %): the cost-estimated cache search is not
+/// monotone in its ceiling, so a wider search picks worse caches. The
+/// 64-bit behaviour is therefore kept as the tuned default and made
+/// explicit, which unifies all targets with zero byte change on 64-bit.
+/// `StrictLibwebpParity` is unaffected (it sets bits via `Some(bits)`).
+pub(super) const PALETTE_CACHE_BITS_CEILING: u8 = 1;
+
+/// See [`PALETTE_CACHE_BITS_CEILING`]. Takes the palette size so the call
+/// site documents what the ceiling is a function of; the tuned point is
+/// currently flat in it.
+#[inline]
+pub(super) fn palette_cache_bits_ceiling(_palette_size: usize) -> u8 {
+    PALETTE_CACHE_BITS_CEILING
 }
 
 /// Optimize the sampling of a sub-image (predictor or histogram).
@@ -2078,5 +2100,32 @@ mod tests {
         // Both should be valid VP8L
         assert_eq!(result_md[0], 0x2f);
         assert_eq!(result_lex[0], 0x2f);
+    }
+}
+
+#[cfg(test)]
+mod palette_cache_ceiling_tests {
+    use super::*;
+
+    /// The palette color-cache ceiling is a pinned tuned default (#77). It
+    /// must be the same number on every target — the previous code derived
+    /// it from `usize::leading_zeros()` and so differed between 32- and
+    /// 64-bit builds — and it must stay at the measured optimum until a
+    /// new corpus sweep moves it (see the const's doc table).
+    #[test]
+    fn palette_cache_bits_ceiling_is_pinned() {
+        for palette_size in 1..=256usize {
+            assert_eq!(
+                palette_cache_bits_ceiling(palette_size),
+                1,
+                "palette_size {palette_size}: the tuned ceiling moved — re-measure before changing it"
+            );
+        }
+        // Reference for what the platform-dependent code produced on
+        // 32-bit targets (libwebp's BitsLog2Floor + 1), which measured
+        // +1.06 % bytes on the png-8 corpus: it must NOT come back.
+        let libwebp = |ps: usize| ((31 - (ps as u32).leading_zeros()) as u8 + 1).min(10);
+        assert_eq!(libwebp(256), 9);
+        assert_ne!(palette_cache_bits_ceiling(256), libwebp(256));
     }
 }

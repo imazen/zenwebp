@@ -38,6 +38,17 @@ here has landed; see "Changed (BREAKING)" below.)
   `tests/lossless_roundtrip.rs::m5_m6_sampling_search_roundtrips_exactly`;
   the seed replays in `tests/fuzz_regression.rs` with a rejected-before-work
   gate (watched to fail against the old budget).
+- **VP8L palette color-cache ceiling differed between 32- and 64-bit
+  builds (#77).** Auto-detect computed libwebp's `BitsLog2Floor(palette) + 1`
+  as `31 - leading_zeros()` on a `usize`; on 64-bit that saturated to 0 and
+  pinned the search ceiling at 1 bit, so a palette image encoded to
+  different bytes on i686 vs x86_64. Measured before unifying (90 real
+  png-8 corpus images × m0/m3/m4/m5/m6, `benchmarks/palette_cache_ceiling_2026-08-27.md`):
+  the libwebp ceiling is +1.06 % bytes (191 cells worse / 36 better), and
+  ceilings 0 / 2 / 3 are +1.57 % / +0.02 % / +0.51 %, so the 64-bit
+  behaviour (1) is now the explicit, pinned tuned default
+  (`PALETTE_CACHE_BITS_CEILING`, test `palette_cache_bits_ceiling_is_pinned`)
+  — zero byte change on 64-bit, i686 output now matches.
 
 ### Fixed (2026-08-26 ultracode sweep, #89)
 - **`LosslessConfig::with_near_lossless` was a complete no-op.** The public
