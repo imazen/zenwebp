@@ -19,7 +19,9 @@ use std::io::Write;
 use zenwebp::{EncodeRequest, LossyConfig, PixelLayout, ZensimTarget};
 
 fn load_rgb8(path: &str) -> (Vec<u8>, u32, u32) {
-    let dec = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path).expect("open")));
+    let dec = png::Decoder::new(std::io::BufReader::new(
+        std::fs::File::open(path).expect("open"),
+    ));
     let mut reader = dec.read_info().expect("png info");
     let mut buf = vec![0u8; reader.output_buffer_size().expect("size")];
     let info = reader.next_frame(&mut buf).expect("png frame");
@@ -98,10 +100,9 @@ fn main() {
             let zt = ZensimTarget::new(t).with_max_passes(max_passes);
             let cfg = LossyConfig::new().with_target_zensim(zt);
             let t0 = std::time::Instant::now();
-            let (bytes, metrics) =
-                EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h)
-                    .encode_with_metrics()
-                    .expect("encode");
+            let (bytes, metrics) = EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h)
+                .encode_with_metrics()
+                .expect("encode");
             let encode_ms = t0.elapsed().as_secs_f64() * 1e3;
             let (dec, dw, dh) = zenwebp::decoder::decode_rgb(&bytes).expect("decode");
             assert_eq!((dw, dh), (w, h), "decode dims");
@@ -122,7 +123,10 @@ fn main() {
                 metrics.targets_met,
             )
             .unwrap();
-            eprintln!("{name} t{t:.0} k{max_passes}: passes={} inloop={:.2} pub02={s:.2}", metrics.passes_used, metrics.achieved_score);
+            eprintln!(
+                "{name} t{t:.0} k{max_passes}: passes={} inloop={:.2} pub02={s:.2}",
+                metrics.passes_used, metrics.achieved_score
+            );
         }
     }
     println!("census written to {out_dir}");
