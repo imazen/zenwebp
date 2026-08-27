@@ -232,8 +232,10 @@ impl WebPMux {
                 height: frame.height,
             }));
         }
-        if frame.x_offset + frame.width > self.canvas_width
-            || frame.y_offset + frame.height > self.canvas_height
+        // Sum in u64: an offset near u32::MAX wrapped the u32 sum back under
+        // the canvas size and the frame was accepted (#78).
+        if u64::from(frame.x_offset) + u64::from(frame.width) > u64::from(self.canvas_width)
+            || u64::from(frame.y_offset) + u64::from(frame.height) > u64::from(self.canvas_height)
         {
             return Err(whereat::at!(MuxError::FrameOutsideCanvas {
                 x: frame.x_offset,
@@ -274,6 +276,20 @@ impl WebPMux {
     /// Assemble the final WebP file.
     #[track_caller]
     pub fn assemble(&self) -> MuxResult<Vec<u8>> {
+        // VP8X stores `canvas - 1` in 24 bits; a zero canvas (reachable via
+        // `new(0, _)` or `from_data` on a zero-width VP8 header the demuxer
+        // accepts) underflowed that field — panic in debug, a 16 MP canvas
+        // in release (#78).
+        if self.canvas_width == 0
+            || self.canvas_height == 0
+            || self.canvas_width > 1 << 24
+            || self.canvas_height > 1 << 24
+        {
+            return Err(at!(MuxError::InvalidDimensions {
+                width: self.canvas_width,
+                height: self.canvas_height,
+            }));
+        }
         if self.animation.is_some() {
             self.assemble_animated()
         } else {
@@ -458,8 +474,6 @@ impl WebPMux {
         if let Some(alpha) = &frame.alpha_data {
             size += 8 + alpha.len() + (alpha.len() & 1); // ALPH chunk
         }
-        let frame_chunk_tag = if frame.is_lossless { b"VP8L" } else { b"VP8 " };
-        let _ = frame_chunk_tag; // used for clarity
         size += 8 + frame.bitstream.len() + (frame.bitstream.len() & 1); // VP8/VP8L chunk
         size
     }

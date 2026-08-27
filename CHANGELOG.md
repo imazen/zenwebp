@@ -25,6 +25,38 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 here has landed; see "Changed (BREAKING)" below.)
 
 ### Fixed (2026-08-27 issue sweep)
+- **#78 review-backlog, pure-bug subset (7 of ~30 items; the rest still
+  tracked there):**
+  - **Near-lossless corrupted palette images (#78-A, V).** Once #89 plumbed
+    `near_lossless`, `PaletteAndSpatial` ran residual quantization on the
+    palette-INDEX plane (index ± 1 is an unrelated color). The index plane
+    now always gets strength 100, as libwebp does for palette images;
+    `tests/near_lossless_roundtrip.rs::near_lossless_is_exact_on_palette_images`
+    decodes every palette-transform encode and demands exactness (max error
+    255 with the guard removed).
+  - **`reset_animation` / `AnimationDecoder::reset` composited onto a stale
+    canvas (#78-B).** The rewind kept the last pass's canvas and
+    previous-frame rectangle, so frame 1 of the next pass only disposed the
+    LAST frame's rectangle — `decode_all()` twice returned different first
+    frames. The canvas and rectangle now reset too (`tests/anim_reset.rs`).
+  - **`Limits::max_frame_count(n)` rejected the n-th frame (#78-B).** The
+    gate ran `>=` on the post-increment count; `max_frame_count(3)` refused
+    every 3-frame animation and the default 10,000 admitted 9,999. Exactly
+    `n` frames are admitted now.
+  - **`WebPMux::push_frame` offset overflow (#78-C).** `x_offset + width`
+    was summed in u32, so an offset near `u32::MAX` wrapped under the canvas
+    and the frame was accepted; the check is done in u64.
+  - **`WebPMux::assemble` on a zero canvas underflowed VP8X (#78-C)** —
+    panic in debug, a 16 MP canvas in release; now `InvalidDimensions`.
+  - **Demuxer: VP8L animation frames reported `has_alpha: true`
+    unconditionally (#78-C)**; they now read the header's alpha_is_used bit
+    like the still path, so an RGB lossless animation demuxes as opaque.
+  - **`build_meta_huffman` re-clamped `histo_bits` to 8 (#78-D)**, undoing
+    the caller's `MAX_HUFF_IMAGE_SIZE` choice of 9 (a 16383² palette m0
+    image got 4x the intended tiles). Clamps to the VP8L range `[2, 9]`.
+  - Doc drift: `Vp8lConfig::{predictor,cross_color}_bits` are clamped to
+    `[2, 9]`, not 2-8; dead `frame_chunk_tag` in `assemble.rs` removed.
+  Every fix above was watched to fail its new test with the fix reverted.
 - **Fuzz: `encode_lossless_roundtrip` farm timeout (#79).** The harness
   budget `w*h*(1+method) <= 700_000` modeled encode cost as linear in method
   and let m6 run 100k pixels; the timeout seed (403x147 pure noise, m6/q100)

@@ -7,6 +7,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+use super::encode::{MAX_HUFFMAN_BITS, MIN_HUFFMAN_BITS};
 use super::entropy::{
     HistogramCosts, compute_histogram_cost, costs_from_merge, get_combined_histogram_cost,
     get_combined_histogram_cost_with_detail,
@@ -1068,7 +1069,10 @@ pub fn build_meta_huffman(
     quality: u8,
     low_effort: bool,
 ) -> MetaHuffmanInfo {
-    let histo_bits = histo_bits.clamp(2, 8);
+    // The full VP8L range. This used to re-clamp to 8, silently undoing the
+    // `MAX_HUFF_IMAGE_SIZE` clamp the caller already applied (a 16383²
+    // palette m0 image gets histo_bits 9 → 4x the intended tile count) (#78).
+    let histo_bits = histo_bits.clamp(MIN_HUFFMAN_BITS, MAX_HUFFMAN_BITS);
     #[cfg(feature = "std")]
     if std::env::var("ZENWEBP_TRACE").is_ok() {
         let xsize = super::types::subsample_size(width as u32, histo_bits);
@@ -1248,5 +1252,30 @@ mod tests {
                 "final histogram {i}: alpha counts (#72)"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod histo_bits_range_tests {
+    use super::super::types::make_argb;
+    use super::*;
+
+    /// `build_meta_huffman` used to re-clamp `histo_bits` to 8, silently
+    /// undoing the caller's `MAX_HUFF_IMAGE_SIZE`-driven choice of 9 (the
+    /// VP8L maximum, 3 bits + 2). The returned info must carry the
+    /// requested 9 (#78-D).
+    #[test]
+    fn histo_bits_9_is_preserved() {
+        let mut refs = BackwardRefs::new();
+        for i in 0..64u32 {
+            refs.push(PixOrCopy::literal(make_argb(255, i as u8, 0, 0)));
+        }
+        let info = build_meta_huffman(&refs, 8, 8, 9, 0, 75, false);
+        assert_eq!(info.histo_bits, 9);
+        // And the range is still clamped at both ends.
+        let info = build_meta_huffman(&refs, 8, 8, 12, 0, 75, false);
+        assert_eq!(info.histo_bits, MAX_HUFFMAN_BITS);
+        let info = build_meta_huffman(&refs, 8, 8, 0, 0, 75, false);
+        assert_eq!(info.histo_bits, MIN_HUFFMAN_BITS);
     }
 }

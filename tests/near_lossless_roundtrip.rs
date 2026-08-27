@@ -211,3 +211,108 @@ fn near_lossless_100_is_exact() {
         }
     }
 }
+
+/// Palette content with spatial structure in INDEX space, so the encoder's
+/// `PaletteAndSpatial` crunch mode (predictor on the palette-index plane)
+/// is the winning candidate at m5/m6.
+fn palette_ramp_rgb(w: u32, h: u32) -> Img {
+    // 64 saturated hues around the color circle: consecutive entries are
+    // close (so the encoder's delta-minimizing palette sort keeps ramp
+    // order) but R, G and B all vary (so subtract-green cannot collapse the
+    // RGB residuals the way it does for gray). Laid out as a diagonal ramp
+    // of indices, the index plane is smooth and the entropy analysis picks
+    // `PaletteAndSpatial` — the mode with the predictor on the index plane.
+    let palette: Vec<[u8; 3]> = (0..64u32)
+        .map(|i| {
+            let h = i * 6; // 0..384 → 6 sextants of 64
+            let (sextant, f) = (h / 64, (h % 64 * 4) as u8);
+            match sextant {
+                0 => [255, f, 0],
+                1 => [255 - f, 255, 0],
+                2 => [0, 255, f],
+                3 => [0, 255 - f, 255],
+                4 => [f, 0, 255],
+                _ => [255, 0, 255 - f],
+            }
+        })
+        .collect();
+    let mut px = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let idx = ((x + y) * 63 / (w + h - 2).max(1)) as usize;
+            px.extend_from_slice(&palette[idx.min(63)]);
+        }
+    }
+    Img {
+        name: "palette_ramp_rgb",
+        w,
+        h,
+        layout: PixelLayout::Rgb8,
+        px,
+    }
+}
+
+/// Whether the VP8L payload of a simple-container WebP opens with a
+/// color-indexing (palette) transform. zenwebp writes the palette transform
+/// first whenever it is used, and the VP8L header is exactly 5 bytes, so the
+/// first transform's `present` bit and 2-bit type sit in the low bits of
+/// payload byte 5 (type 3 = COLOR_INDEXING).
+fn uses_palette_transform(webp: &[u8]) -> bool {
+    let pos = webp
+        .windows(4)
+        .position(|w| w == b"VP8L")
+        .expect("simple-container VP8L chunk");
+    let payload = &webp[pos + 8..];
+    assert_eq!(payload[0], 0x2f, "VP8L signature");
+    let b = payload[5];
+    (b & 1) == 1 && ((b >> 1) & 3) == 3
+}
+
+/// Near-lossless must be a no-op on palette images. libwebp forces strength
+/// 100 whenever the palette transform is used (`EncodeStreamHook`), because
+/// the predictor in `PaletteAndSpatial` mode runs on the palette-INDEX plane
+/// and residual quantization there swaps pixels to unrelated palette entries.
+/// zenwebp lowered `near_lossless` into `write_predictor_transform` without
+/// that guard, so once #89 plumbed the knob, `with_near_lossless(q < 100)`
+/// corrupted every PaletteAndSpatial encode (#78-A).
+///
+/// Only encodes that actually chose the color-indexing transform are held
+/// to exactness (the entropy analysis may route a 64-color image to a
+/// non-palette mode at lower methods, where near-lossless is legitimately
+/// lossy); the test requires that at least the m6/q100 brute-force cells
+/// did use it, so the guard is exercised. Watched to FAIL (max error 8-32
+/// on the palette cells) with the guard removed.
+#[test]
+fn near_lossless_is_exact_on_palette_images() {
+    let img = palette_ramp_rgb(128, 128);
+    let mut palette_cells = 0;
+    for method in [0u8, 3, 5, 6] {
+        for nl in [0u8, 20, 40, 60, 80] {
+            // q100 so m6 brute-forces every crunch mode (and m5 tries the
+            // palette variant): PaletteAndSpatial must be on the table.
+            let lc = LosslessConfig::new()
+                .with_method(method)
+                .with_quality(100.0)
+                .with_near_lossless(nl);
+            let webp = EncodeRequest::lossless(&lc, &img.px, img.layout, img.w, img.h)
+                .encode()
+                .unwrap_or_else(|e| panic!("{} m{method} nl{nl}: encode: {e:?}", img.name));
+            if !uses_palette_transform(&webp) {
+                continue;
+            }
+            palette_cells += 1;
+            let (decoded, w, h) = decode_rgba(&webp);
+            assert_eq!((w, h), (img.w, img.h));
+            let (max, changed) = compare(&img, &decoded);
+            assert!(
+                !changed,
+                "{} m{method} nl{nl}: palette-transform encode must roundtrip exactly, max error {max}",
+                img.name
+            );
+        }
+    }
+    assert!(
+        palette_cells >= 5,
+        "only {palette_cells} cells used the palette transform — the fixture no longer exercises the guard"
+    );
+}

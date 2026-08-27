@@ -79,3 +79,41 @@ fn max_dimensions_enforced_on_decode_rgb_and_into() {
         "decode_rgba_into must honor max_dimensions"
     );
 }
+
+/// Build an N-frame animation (tiny lossless frames) for the frame-count gate.
+fn animation_with_frames(n: u32) -> Vec<u8> {
+    use zenwebp::mux::{AnimationConfig, AnimationEncoder};
+    let mut anim = AnimationEncoder::new(8, 8, AnimationConfig::default()).unwrap();
+    let cfg = EncoderConfig::new_lossless();
+    for i in 0..n {
+        let rgba = vec![(i * 40) as u8; 8 * 8 * 4];
+        anim.add_frame(&rgba, PixelLayout::Rgba8, i * 100, &cfg)
+            .unwrap();
+    }
+    anim.finalize(100).unwrap()
+}
+
+/// `Limits::max_frame_count(n)` is documented as a MAXIMUM ("Maximum number
+/// of frames in an animation"). The gate ran `count >= max` on the
+/// post-increment count, so it rejected the n-th frame: `max_frame_count(3)`
+/// refused every 3-frame animation, and the default 10,000 cap admitted
+/// 9,999. Exactly `max` frames must be admitted; `max + 1` rejected.
+#[test]
+fn max_frame_count_admits_exactly_the_limit() {
+    use zenwebp::mux::AnimationDecoder;
+    let three = animation_with_frames(3);
+
+    let at_limit = DecodeConfig::default().limits(Limits::default().max_frame_count(3));
+    let mut dec = AnimationDecoder::new_with_config(&three, &at_limit)
+        .expect("max_frame_count(3) must admit a 3-frame animation");
+    let frames = dec
+        .decode_all()
+        .expect("all 3 frames decode under the limit");
+    assert_eq!(frames.len(), 3);
+
+    let under = DecodeConfig::default().limits(Limits::default().max_frame_count(2));
+    assert!(
+        AnimationDecoder::new_with_config(&three, &under).is_err(),
+        "max_frame_count(2) must reject a 3-frame animation"
+    );
+}

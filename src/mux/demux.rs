@@ -615,6 +615,17 @@ impl<'a> WebPDemuxer<'a> {
                     .map(|e| e.min(end))
                     .unwrap_or(end)
                     .max(sub_payload_offset);
+                let bitstream = &self.data[sub_payload_offset..sub_end];
+                // Same field the still-image path reads: the VP8L header's
+                // alpha_is_used bit (bit 28 of the LE u32 after the 0x2f
+                // signature). This used to be hard-coded `true` for every
+                // VP8L frame, so an opaque lossless animation reported
+                // alpha on every frame while a still of the same bitstream
+                // did not (#78).
+                let has_alpha = bitstream
+                    .get(1..5)
+                    .map(|h| (u32::from_le_bytes([h[0], h[1], h[2], h[3]]) >> 28) & 1 != 0)
+                    .unwrap_or(false);
                 Some(DemuxFrame {
                     frame_num: idx as u32 + 1,
                     x_offset,
@@ -624,7 +635,7 @@ impl<'a> WebPDemuxer<'a> {
                     duration_ms,
                     dispose,
                     blend,
-                    has_alpha: true, // VP8L can always carry alpha
+                    has_alpha,
                     is_lossy: false,
                     bitstream: &self.data[sub_payload_offset..sub_end],
                     alpha_data: None,

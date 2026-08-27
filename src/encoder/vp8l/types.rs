@@ -88,9 +88,11 @@ pub struct Vp8lConfig {
     pub use_palette: bool,
     /// Use meta-Huffman (spatially-varying codes).
     pub use_meta_huffman: bool,
-    /// Predictor transform block size bits (0 = auto-detect from method, 2-8 = explicit).
+    /// Predictor transform block size bits (0 = auto-detect from method, 2-9 = explicit;
+    /// values are clamped to the VP8L range `[2, 9]`).
     pub predictor_bits: u8,
-    /// Cross-color transform block size bits (0 = auto-detect from method, 2-8 = explicit).
+    /// Cross-color transform block size bits (0 = auto-detect from method, 2-9 = explicit;
+    /// values are clamped to the VP8L range `[2, 9]`).
     pub cross_color_bits: u8,
     /// Preserve RGB values under fully transparent pixels (alpha=0).
     ///

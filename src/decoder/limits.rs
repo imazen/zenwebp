@@ -187,9 +187,13 @@ impl Limits {
     }
 
     /// Check if frame count is within limits.
+    ///
+    /// `max_frame_count` is a maximum: exactly `max` frames are admitted and
+    /// the `max + 1`-th is rejected. (The gate used to run `>=` on the
+    /// post-increment count, refusing the `max`-th frame — #78.)
     pub fn check_frame_count(&self, count: usize) -> Result<(), whereat::At<DecodeError>> {
         if let Some(max) = self.max_frame_count
-            && count as u64 >= max
+            && count as u64 > max
         {
             return Err(at!(DecodeError::InvalidParameter(alloc::format!(
                 "frame count {} exceeds limit {}",

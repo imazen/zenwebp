@@ -1286,3 +1286,126 @@ fn single_frame_matches_static_encoder_output() {
         "1-frame anim and static encode must decode identically"
     );
 }
+
+// ============================================================================
+// #78-C: assembler robustness (2026-08-27)
+// ============================================================================
+
+/// `push_frame` bounds-checked `x_offset + width` in u32. An offset near
+/// `u32::MAX` wrapped the sum back under the canvas width, so the frame was
+/// ACCEPTED (release) or the add panicked (debug). Both are wrong: the check
+/// must be done in u64 and reject the frame.
+#[test]
+fn mux_push_frame_offset_overflow_is_rejected() {
+    let mut mux = WebPMux::new(100, 100);
+    mux.set_animation([0; 4], LoopCount::Forever);
+
+    for (x, y) in [(u32::MAX - 1, 0), (0, u32::MAX - 1)] {
+        let result = mux.push_frame(MuxFrame {
+            x_offset: x, // even, so it clears the odd-offset check first
+            y_offset: y,
+            width: 20,
+            height: 10,
+            duration_ms: 100,
+            dispose: DisposeMethod::None,
+            blend: BlendMethod::Overwrite,
+            bitstream: vec![0],
+            alpha_data: None,
+            is_lossless: true,
+        });
+        let err = result.expect_err("a frame whose offset+size wraps u32 must be rejected");
+        assert!(
+            matches!(
+                err.error(),
+                zenwebp::mux::MuxError::FrameOutsideCanvas { .. }
+            ),
+            "expected FrameOutsideCanvas, got {:?}",
+            err.error()
+        );
+    }
+    assert_eq!(mux.num_frames(), 0);
+}
+
+/// `assemble()` wrote `canvas_width - 1` / `canvas_height - 1` into VP8X
+/// unchecked. A zero canvas (reachable through `WebPMux::new(0, 0)`, and
+/// through `from_data` on a zero-width VP8 header the demuxer accepts)
+/// underflowed: panic in debug, `0xFFFFFF` (a 16 MP canvas) in release.
+/// It must be a clean `InvalidDimensions` error instead.
+#[test]
+fn mux_zero_canvas_is_rejected_not_underflowed() {
+    for (w, h) in [(0, 0), (0, 16), (16, 0)] {
+        let mut mux = WebPMux::new(w, h);
+        // Metadata forces the extended (VP8X) container, the path that
+        // serialises the canvas size.
+        mux.set_exif(vec![0x49, 0x49, 0x2a, 0x00]);
+        mux.set_image(MuxFrame {
+            x_offset: 0,
+            y_offset: 0,
+            width: 16,
+            height: 16,
+            duration_ms: 0,
+            dispose: DisposeMethod::None,
+            blend: BlendMethod::Overwrite,
+            bitstream: vec![0x2f, 0, 0, 0, 0],
+            alpha_data: None,
+            is_lossless: true,
+        });
+        let err = mux.assemble().expect_err("a zero canvas must not assemble");
+        assert!(
+            matches!(
+                err.error(),
+                zenwebp::mux::MuxError::InvalidDimensions { .. }
+            ),
+            "{w}x{h}: expected InvalidDimensions, got {:?}",
+            err.error()
+        );
+    }
+}
+
+/// A VP8L frame inside an ANMF reported `has_alpha: true` unconditionally,
+/// while the still-image path reads the header's alpha_is_used bit (set
+/// when the encoder input carried an alpha channel). Animation frames must
+/// report the same bit the still demux reports for the identical pixels:
+/// RGB input → no alpha, RGBA input → alpha (#78-C).
+#[test]
+fn demux_vp8l_animation_frames_report_header_alpha_bit() {
+    let cfg = EncoderConfig::new_lossless();
+    let check = |pixels: Vec<u8>, layout: PixelLayout, expect_alpha: bool| {
+        let mut anim = AnimationEncoder::new(
+            8,
+            8,
+            AnimationConfig {
+                minimize_size: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        anim.add_frame(&pixels, layout, 0, &cfg).unwrap();
+        anim.add_frame(&pixels, layout, 100, &cfg).unwrap();
+        let webp = anim.finalize(100).unwrap();
+
+        // Still encode of the same pixels: the demuxer's still path reads
+        // the VP8L header bit, which is the reference the frames must match.
+        let still = EncodeRequest::new(&cfg, &pixels, layout, 8, 8)
+            .encode()
+            .unwrap();
+        let still_alpha = WebPDemuxer::new(&still).unwrap().has_alpha();
+        assert_eq!(
+            still_alpha, expect_alpha,
+            "still-path reference for {layout:?}"
+        );
+
+        let demux = WebPDemuxer::new(&webp).unwrap();
+        assert_eq!(demux.num_frames(), 2);
+        for f in demux.frames() {
+            assert!(!f.is_lossy);
+            assert_eq!(
+                f.has_alpha, still_alpha,
+                "{layout:?}: VP8L animation frame {} has_alpha={} but the still of the same pixels says {}",
+                f.frame_num, f.has_alpha, still_alpha
+            );
+        }
+    };
+    check(solid_rgb(8, 8, 10, 20, 30), PixelLayout::Rgb8, false);
+    check(solid_rgba(8, 8, 10, 20, 30, 128), PixelLayout::Rgba8, true);
+}

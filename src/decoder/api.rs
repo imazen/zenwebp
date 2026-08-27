@@ -1618,6 +1618,18 @@ impl<'a> WebPDecoder<'a> {
         self.animation.next_frame = 0;
         self.animation.next_frame_start = self.chunks.get(&WebPRiffChunk::ANMF).unwrap().start - 8;
         self.animation.dispose_next_frame = true;
+        // Compositing state must restart from the fresh-decoder shape too:
+        // the canvas is re-created (background-filled) on the next frame,
+        // and there is no "previous frame" rectangle to dispose. Leaving the
+        // last pass's canvas + rectangle in place made frame 1 of the next
+        // pass clear only the LAST frame's rectangle and paint over stale
+        // pixels everywhere else (#78: `decode_all()` twice returned two
+        // different first frames).
+        self.animation.canvas = None;
+        self.animation.previous_frame_width = 0;
+        self.animation.previous_frame_height = 0;
+        self.animation.previous_frame_x_offset = 0;
+        self.animation.previous_frame_y_offset = 0;
         Ok(())
     }
 

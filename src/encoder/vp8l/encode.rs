@@ -681,7 +681,15 @@ fn encode_argb_single_config(
 
         // Predictor transform (applied second, on subtract-green'd image)
         if use_predictor {
-            write_predictor_transform(&mut writer, argb, width, height, config, use_subtract_green);
+            write_predictor_transform(
+                &mut writer,
+                argb,
+                width,
+                height,
+                config,
+                config.near_lossless,
+                use_subtract_green,
+            );
         }
 
         // Cross-color transform (applied third, on predictor residuals)
@@ -745,12 +753,20 @@ fn encode_argb_single_config(
             } else {
                 argb
             };
+            // The predictor runs on the palette INDEX plane here, and
+            // near-lossless residual quantization on indices would swap
+            // colors arbitrarily (index ± 1 is an unrelated palette entry).
+            // libwebp forces strength 100 for palette images
+            // (`EncodeStreamHook`: `enc->use_palette_ ? 100 : near_lossless`);
+            // without this guard `with_near_lossless(q < 100)` corrupted
+            // every PaletteAndSpatial encode (#78-A).
             write_predictor_transform(
                 &mut writer,
                 pred_argb,
                 enc_width,
                 pred_argb.len() / enc_width,
                 config,
+                100,
                 false, // no subtract green with palette
             );
         }
@@ -874,12 +890,17 @@ fn encode_argb_single_config(
 }
 
 /// Apply and signal predictor transform.
+///
+/// `near_lossless` is the residual-quantization strength for THIS plane
+/// (100 = exact); callers pass 100 for the palette-index plane regardless of
+/// `config.near_lossless`.
 fn write_predictor_transform(
     writer: &mut BitWriter,
     argb: &mut [u32],
     width: usize,
     height: usize,
     config: &Vp8lConfig,
+    near_lossless: u8,
     use_subtract_green: bool,
 ) {
     let (min_bits, max_bits) = if config.predictor_bits == 0 {
@@ -912,8 +933,8 @@ fn write_predictor_transform(
             .clamp(MIN_TRANSFORM_BITS, MAX_TRANSFORM_BITS);
         (bits, bits)
     };
-    let max_quantization = if config.near_lossless < 100 {
-        super::near_lossless::max_quantization_from_quality(config.near_lossless)
+    let max_quantization = if near_lossless < 100 {
+        super::near_lossless::max_quantization_from_quality(near_lossless)
     } else {
         1
     };
@@ -1308,8 +1329,8 @@ fn encode_image_data(
 /// Maximum number of histogram tiles (matching libwebp's MAX_HUFF_IMAGE_SIZE).
 const MAX_HUFF_IMAGE_SIZE: usize = 2600;
 /// Min/max Huffman bits range (VP8L spec: 3 bits, range [2, 9]).
-const MIN_HUFFMAN_BITS: u8 = 2;
-const MAX_HUFFMAN_BITS: u8 = 9; // 2 + (1 << 3) - 1
+pub(super) const MIN_HUFFMAN_BITS: u8 = 2;
+pub(super) const MAX_HUFFMAN_BITS: u8 = 9; // 2 + (1 << 3) - 1
 /// Transform bits range (VP8L spec).
 const MIN_TRANSFORM_BITS: u8 = 2;
 pub(super) const MAX_TRANSFORM_BITS: u8 = 9; // MIN_TRANSFORM_BITS + (1 << NUM_TRANSFORM_BITS) - 1
