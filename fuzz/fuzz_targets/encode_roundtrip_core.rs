@@ -179,6 +179,41 @@ fn generate_lossy_content(rgba: &mut [u8], w: usize, h: usize, mode: u8, seed: u
     }
 }
 
+/// Measured per-pixel cost of a lossless encode at each method, relative to
+/// m0, on the worst-case content the generator produces (pure RGBA noise:
+/// no palette, no matches, maximal histograms — both zenwebp AND libwebp
+/// emit the raw pixels and burn the whole method budget getting there).
+///
+/// Measured 2026-08-27 on the #79 timeout seed (403x147 noise, q100, release
+/// build, Apple M4 Pro, zenwebp 0.72x of libwebp wall at m6): µs/pixel
+/// m0 0.11 · m1 0.10 · m2 0.31 · m3 1.25 · m4 3.8 · m5 3.8 · m6 26.5. The
+/// old budget (`w*h*(1+method) <= 700_000`) modeled cost as LINEAR in method
+/// and let m6 run 100k pixels: 1.6 s bare metal, which is ~70 s under the
+/// fuzz build's ASAN + sancov instrumentation (#68 measured ~43x) — past the
+/// farm's 25 s per-input timeout (#79). m6 is ~250x m0 per pixel, not 7x.
+const LOSSLESS_METHOD_COST: [usize; 7] = [1, 1, 3, 12, 38, 38, 260];
+
+/// Per-input work ceiling in m0-pixel-equivalents (~0.11 µs each): 1.2M ≈
+/// 130 ms bare metal worst case ≈ 5-6 s instrumented, under both the 10 s
+/// slow-unit report and the 25 s timeout with margin for a slow farm box.
+///
+/// Resulting caps: m0/m1 uncapped inside the 640x640 generator range
+/// (≤ 45 ms), m2 400k px (632²), m3 100k px (316²), m4/m5 31k px (177²),
+/// m6 4.6k px (68²). Every method still lands in multi-tile entropy-image
+/// territory (4 px tiles at m5/m6, 8 px at m4). What this does NOT reach is
+/// the m5/m6 multi-sampling predictor search, which only engages above
+/// MAX_HUFF_IMAGE_SIZE = 2600 tiles (> 41.6k px at 4 px tiles); that path is
+/// covered deterministically by `tests/lossless_roundtrip.rs`
+/// (`m5_m6_sampling_search_roundtrips_exactly`), not by the fuzzer.
+const LOSSLESS_BUDGET: usize = 1_200_000;
+
+/// Whether a `w x h @ method` lossless cell is cheap enough to fuzz.
+#[allow(dead_code)]
+pub fn lossless_cell_within_budget(w: usize, h: usize, method: u8) -> bool {
+    let cost = LOSSLESS_METHOD_COST[usize::from(method.min(6))];
+    w.saturating_mul(h).saturating_mul(cost) <= LOSSLESS_BUDGET
+}
+
 /// Lossless encode → decode → exact pixel comparison. Panics on any
 /// corruption; clean encode errors (limits) return silently.
 #[allow(dead_code)]
@@ -194,9 +229,7 @@ pub fn run_encode_lossless_roundtrip(input: &[u8]) {
     let seed = u32::from_le_bytes([input[7], input[8], input[9], input[10]]);
     // input[11] is a reserved axis (near-lossless has no exact oracle).
 
-    // Budget: cost scales with pixels × method. m6 caps near 316x316, m0 near
-    // 590x590 — both comfortably in multi-tile entropy-image territory.
-    if w * h * (1 + method as usize) > 700_000 {
+    if !lossless_cell_within_budget(w, h, method) {
         return;
     }
 

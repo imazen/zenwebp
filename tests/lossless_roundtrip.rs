@@ -683,3 +683,56 @@ fn rgba_gallery_images_roundtrip() {
         assert_rgba_highlevel_roundtrip(&rgba, w, h);
     }
 }
+
+// --- m5/m6 multi-sampling predictor search (deterministic cover for #79) ---
+
+/// Smooth gradient plus low-amplitude grain: defeats the palette path, keeps
+/// the predictor transform live, and is cheap enough at m6 to run in CI.
+fn gradient_grain(w: u32, h: u32) -> Vec<u8> {
+    let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+    let mut seed = 0x9E37_79B9u32;
+    for y in 0..h {
+        for x in 0..w {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let g = (seed >> 24) as u8 & 0x0F;
+            rgb.extend_from_slice(&[
+                ((x * 255 / w) as u8).wrapping_add(g),
+                ((y * 255 / h) as u8).wrapping_add(g >> 1),
+                (((x + y) * 128 / (w + h)) as u8) ^ g,
+            ]);
+        }
+    }
+    rgb
+}
+
+/// The m5/m6 predictor search over several tile samplings
+/// (`VP8LResidualImage` range `[max_bits - 2*(m-4), max_bits]`) only engages
+/// once the image has more than `MAX_HUFF_IMAGE_SIZE = 2600` 4 px tiles, i.e.
+/// above ~41.6k pixels. The encode-roundtrip fuzz budget (#79) deliberately
+/// caps m5/m6 below that (m6 noise is ~250x m0 per pixel; the farm timed
+/// out), so this test is the deterministic cover for that path: 256x256 gives
+/// 4096 tiles at bits=2, forcing histo_bits=3 and a [2, 3] search at both
+/// methods. Exactness is checked against the ORIGINAL pixels.
+#[test]
+fn m5_m6_sampling_search_roundtrips_exactly() {
+    let (w, h) = (256, 256);
+    let rgb = gradient_grain(w, h);
+    for method in [5u8, 6] {
+        let cfg = zenwebp::EncoderConfig::Lossless(
+            zenwebp::LosslessConfig::new()
+                .with_method(method)
+                .with_quality(100.0),
+        );
+        let webp = zenwebp::EncodeRequest::new(&cfg, &rgb, zenwebp::PixelLayout::Rgb8, w, h)
+            .encode()
+            .unwrap_or_else(|e| panic!("m{method} encode failed: {e}"));
+        let (decoded, dw, dh) = zenwebp::oneshot::decode_rgba(&webp).expect("decode failed");
+        assert_eq!((dw, dh), (w, h), "m{method} dimensions");
+        let mismatches = decoded
+            .chunks_exact(4)
+            .zip(rgb.chunks_exact(3))
+            .filter(|(d, s)| d[..3] != s[..])
+            .count();
+        assert_eq!(mismatches, 0, "m{method}: {mismatches} pixel mismatches");
+    }
+}

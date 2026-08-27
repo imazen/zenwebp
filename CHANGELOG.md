@@ -24,6 +24,21 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 (none currently — the `EncodeError::LimitExceeded` kind-carrying item queued
 here has landed; see "Changed (BREAKING)" below.)
 
+### Fixed (2026-08-27 issue sweep)
+- **Fuzz: `encode_lossless_roundtrip` farm timeout (#79).** The harness
+  budget `w*h*(1+method) <= 700_000` modeled encode cost as linear in method
+  and let m6 run 100k pixels; the timeout seed (403x147 pure noise, m6/q100)
+  is 1.6 s bare metal (zenwebp 0.72x of libwebp on the same pixels — inherent
+  m6 cost on incompressible content, not a zenwebp pathology) and ~70 s under
+  ASAN + sancov, past the farm's 25 s limit. Measured per-pixel cost is
+  m0 0.11 / m3 1.25 / m4-m5 3.8 / m6 26.5 µs (~250x m0, not 7x); the budget
+  now weights each method by that table (`LOSSLESS_METHOD_COST`, worst case
+  ~130 ms bare metal). The m5/m6 multi-sampling predictor search this puts
+  out of the fuzzer's reach is covered deterministically by
+  `tests/lossless_roundtrip.rs::m5_m6_sampling_search_roundtrips_exactly`;
+  the seed replays in `tests/fuzz_regression.rs` with a rejected-before-work
+  gate (watched to fail against the old budget).
+
 ### Fixed (2026-08-26 ultracode sweep, #89)
 - **`LosslessConfig::with_near_lossless` was a complete no-op.** The public
   config carried the value, but when it was lowered to the VP8L config

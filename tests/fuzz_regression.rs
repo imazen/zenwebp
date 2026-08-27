@@ -196,3 +196,58 @@ fn bomb_seed_rejected_quickly() {
          a bound regressed (full decode or unbounded work)"
     );
 }
+
+/// Regression for #79: the fuzz farm timed out on `encode_lossless_roundtrip`
+/// with a 14-byte input decoding to 403x147 pure-noise RGBA at m6/q100. That
+/// cell is 1.6 s bare metal (zenwebp is 0.72x of libwebp's wall on the same
+/// pixels — inherent m6 cost on incompressible content, not a pathology) and
+/// ~70 s under ASAN + sancov, past the farm's 25 s per-input timeout. The old
+/// harness budget scaled linearly in method; the fix weights each method by
+/// its measured per-pixel cost (`LOSSLESS_METHOD_COST`), which rejects this
+/// cell before any pixel work.
+///
+/// Watched to FAIL against the old `w*h*(1+method) <= 700_000` budget
+/// (1.58 s, over the 500 ms bound) before the weighted budget landed.
+#[test]
+fn issue79_m6_noise_seed_rejected_by_budget() {
+    let dir = regression_dir();
+    let seed = fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.contains("issue79"))
+                .unwrap_or(false)
+        })
+        .expect("issue #79 timeout regression seed must be present in fuzz/regression/");
+    let input = fs::read(&seed).expect("read #79 seed");
+
+    // Decode the parameter blob the same way the harness does and pin the
+    // cell it names, so a generator/layout drift can't silently retarget it.
+    let w = 1 + (u16::from_le_bytes([input[0], input[1]]) % 640) as usize;
+    let h = 1 + (u16::from_le_bytes([input[2], input[3]]) % 640) as usize;
+    let method = input[4] % 7;
+    assert_eq!(
+        (w, h, method),
+        (403, 147, 6),
+        "#79 seed no longer names the m6 cell"
+    );
+    assert!(
+        !lossless_cell_within_budget(w, h, method),
+        "403x147 @ m6 (~1.6 s bare metal, ~70 s instrumented) must be over the fuzz budget"
+    );
+
+    // And the harness must actually bail before doing the encode. A full m6
+    // encode of this cell is > 1.5 s on the fastest hardware we have (and
+    // libwebp needs 2.2 s), so 500 ms cleanly separates "rejected" from
+    // "encoded" without being flaky on slow CI runners.
+    let start = std::time::Instant::now();
+    run_encode_lossless_roundtrip(&input);
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_millis(500),
+        "#79 seed took {elapsed:?} — the budget no longer rejects the m6 noise cell"
+    );
+}
