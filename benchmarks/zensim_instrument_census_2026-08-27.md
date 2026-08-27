@@ -36,3 +36,16 @@ instrument census has never run.
 ## Endgame
 Census TSVs + harness committed here; verdict appended; zensim plan +
 memory updated; ship decision (if PASS) user-gated as always.
+
+## AMENDMENT (2026-08-27, before any run) — model-vintage discovery
+`zenwebp`'s target-zensim stack depends on PUBLISHED zensim `0.2` (the
+`PreviewV0_2` model), NOT the campaign-standard v47/B path-dep family: its
+targets, bucket anchors, and tolerances are all calibrated on that scale.
+Consequence for phase A: a v47-A judge alone would measure CROSS-MODEL
+disagreement, not loop error. Phase A therefore judges decoded pixels with
+BOTH models — `err_pub02` (self-consistent loop error, the loop's own
+contract) and `err_v47a` (the fleet-standard offset, reported not gated).
+Phase B's bar applies to `err_pub02` (like-for-like vs the bucket baseline).
+A model-family upgrade for zenwebp's loop (path-dep zensim + re-anchored
+buckets) is a SEPARATE registered wave if the user wants it — it invalidates
+the shipped anchor tables and is not smuggled into this census.
