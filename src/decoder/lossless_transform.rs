@@ -1,6 +1,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Range;
+use whereat::{At, at};
 
 use archmage::prelude::*;
 
@@ -31,11 +32,15 @@ pub(crate) fn apply_predictor_transform(
     height: u16,
     size_bits: u8,
     predictor_data: &[u8],
-) -> Result<(), InternalDecodeError> {
-    incant!(
+) -> Result<(), At<InternalDecodeError>> {
+    // The per-predictor bounds validators run inside the dispatched kernels
+    // on the 2-byte `Result`; the trace starts here at the transform entry
+    // (#60), which is the first cold frame above them.
+    let result = incant!(
         apply_predictor_transform_impl(image_data, width, height, size_bits, predictor_data),
         [v3, v1, neon, wasm128, scalar]
-    )
+    );
+    result.map_err(|e| at!(e))
 }
 
 /// AVX2 predictor transform — delegates to monolithic #[arcane] entry in SIMD file.
@@ -797,9 +802,9 @@ pub(crate) fn apply_color_indexing_transform(
     height: u16,
     table_size: u16,
     table_data: &[u8],
-) -> Result<(), InternalDecodeError> {
+) -> Result<(), At<InternalDecodeError>> {
     if table_size == 0 {
-        return Err(InternalDecodeError::TransformError);
+        return Err(at!(InternalDecodeError::TransformError));
     }
     if table_size > 16 {
         // convert the table of colors into a Vec of color values that can be directly indexed

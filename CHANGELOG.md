@@ -25,6 +25,22 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 here has landed; see "Changed (BREAKING)" below.)
 
 ### Fixed (2026-08-27 issue sweep)
+- **Lossless decoder errors now carry their origin `file:line` (#60,
+  remaining half).** `LosslessDecoder`'s header / transform-list /
+  Huffman-code / color-cache paths and the transform entry points returned a
+  bare `InternalDecodeError` that only picked up a location at the caller's
+  `?` (or none at all — the `From<E> for At<E>` bridge records no frame), so
+  a corrupt VP8L file reported `BitStreamError` with no hint which of ~20
+  checks failed. Those cold paths now return `At<InternalDecodeError>` with
+  every origin tagged (`traced()` lifts the hot-path `BitReader` /
+  `read_symbol` results at their call sites); `decode_frame` returns
+  `At<DecodeError>` and keeps the trace. The per-pixel loop
+  (`decode_image_data` + helpers) deliberately keeps the 2-byte error and is
+  tagged once at its call boundary; the per-predictor bounds validators are
+  tagged at the `apply_predictor_transform` entry.
+  `tests/whereat_lossless_origins.rs` asserts the FIRST frame of three
+  crafted failures is in `src/decoder/lossless.rs` (watched to fail with an
+  untraced origin).
 - **Decode allocations that bypassed `AllocPreference` (#63, #78-B) — 8 more
   sites routed through `alloc_util`:** the RGBA↔RGB conversion buffers of
   `decode_rgb` / `decode_rgba` / the lossy fast path (native and zencodec),

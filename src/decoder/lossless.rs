@@ -6,6 +6,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
 
+use whereat::{At, ResultAtExt, at};
+
 use crate::slice_reader::SliceReader;
 
 use super::api::DecodeError;
@@ -54,6 +56,21 @@ const HUFFMAN_CODES_PER_META_CODE: usize = 5;
 type HuffmanCodeGroup = [HuffmanTree; HUFFMAN_CODES_PER_META_CODE];
 
 const ALPHABET_SIZE: [u16; HUFFMAN_CODES_PER_META_CODE] = [256 + 24, 256, 256, 256, 40];
+
+/// Lift a hot-path `InternalDecodeError` into a traced error at THIS call
+/// site (#60). The per-pixel loop (`decode_image_data` and its helpers) and
+/// `BitReader` keep the 2-byte `Result`; the cold header / transform /
+/// Huffman-code paths carry `At<InternalDecodeError>` so an error's origin
+/// `file:line` survives to the API boundary instead of being captured only
+/// where the caller's `?` happens to sit.
+#[inline]
+#[track_caller]
+fn traced<T>(r: Result<T, InternalDecodeError>) -> Result<T, At<InternalDecodeError>> {
+    match r {
+        Ok(v) => Ok(v),
+        Err(e) => Err(at!(e)),
+    }
+}
 
 #[inline]
 pub(crate) fn subsample_size(size: u16, bits: u8) -> u16 {
@@ -107,7 +124,7 @@ impl<'a> LosslessDecoder<'a> {
     /// Allocate a `Vec<u8>` of length `size` after first checking it against
     /// `Limits::check_memory`. Returns a `BitStreamError` mapped from the
     /// limits check failure if the allocation would exceed the budget.
-    fn alloc_bytes_checked(&self, size: usize) -> Result<Vec<u8>, InternalDecodeError> {
+    fn alloc_bytes_checked(&self, size: usize) -> Result<Vec<u8>, At<InternalDecodeError>> {
         // The lossless ARGB plane is sized from the decoded header dimensions
         // (`width * height * 4`) → fallible by default. `try_reserve` gives a
         // graceful `MemoryLimitExceeded` on a malicious header rather than an
@@ -119,10 +136,10 @@ impl<'a> LosslessDecoder<'a> {
         if let Some(limits) = self.limits {
             limits
                 .check_memory(size)
-                .map_err(|_| InternalDecodeError::MemoryLimitExceeded)?;
+                .map_err(|_| at!(InternalDecodeError::MemoryLimitExceeded))?;
         }
         crate::decoder::alloc_util::alloc_zeroed(pref, true, size)
-            .map_err(|_| InternalDecodeError::MemoryLimitExceeded)
+            .map_err(|_| at!(InternalDecodeError::MemoryLimitExceeded))
     }
 
     /// Decodes a frame.
@@ -136,9 +153,9 @@ impl<'a> LosslessDecoder<'a> {
         height: u32,
         implicit_dimensions: bool,
         buf: &mut [u8],
-    ) -> Result<(), DecodeError> {
+    ) -> Result<(), At<DecodeError>> {
         self.decode_frame_internal(width, height, implicit_dimensions, buf)
-            .map_err(DecodeError::from)
+            .map_err_at(DecodeError::from)
     }
 
     fn decode_frame_internal(
@@ -147,26 +164,26 @@ impl<'a> LosslessDecoder<'a> {
         height: u32,
         implicit_dimensions: bool,
         buf: &mut [u8],
-    ) -> Result<(), InternalDecodeError> {
+    ) -> Result<(), At<InternalDecodeError>> {
         if implicit_dimensions {
             self.width = width as u16;
             self.height = height as u16;
         } else {
-            let signature = self.bit_reader.read_bits::<u8>(8)?;
+            let signature = traced(self.bit_reader.read_bits::<u8>(8))?;
             if signature != 0x2f {
-                return Err(InternalDecodeError::BitStreamError);
+                return Err(at!(InternalDecodeError::BitStreamError));
             }
 
-            self.width = self.bit_reader.read_bits::<u16>(14)? + 1;
-            self.height = self.bit_reader.read_bits::<u16>(14)? + 1;
+            self.width = traced(self.bit_reader.read_bits::<u16>(14))? + 1;
+            self.height = traced(self.bit_reader.read_bits::<u16>(14))? + 1;
             if u32::from(self.width) != width || u32::from(self.height) != height {
-                return Err(InternalDecodeError::BitStreamError);
+                return Err(at!(InternalDecodeError::BitStreamError));
             }
 
-            let _alpha_used = self.bit_reader.read_bits::<u8>(1)?;
-            let version_num = self.bit_reader.read_bits::<u8>(3)?;
+            let _alpha_used = traced(self.bit_reader.read_bits::<u8>(1))?;
+            let version_num = traced(self.bit_reader.read_bits::<u8>(3))?;
             if version_num != 0 {
-                return Err(InternalDecodeError::BitStreamError);
+                return Err(at!(InternalDecodeError::BitStreamError));
             }
         }
 
@@ -239,24 +256,24 @@ impl<'a> LosslessDecoder<'a> {
         ysize: u16,
         is_argb_img: bool,
         data: &mut [u8],
-    ) -> Result<(), InternalDecodeError> {
+    ) -> Result<(), At<InternalDecodeError>> {
         let color_cache_bits = self.read_color_cache()?;
         let color_cache = color_cache_bits.map(ColorCache::new);
 
         let huffman_info = self.read_huffman_codes(is_argb_img, xsize, ysize, color_cache)?;
-        self.decode_image_data(xsize, ysize, huffman_info, data)
+        traced(self.decode_image_data(xsize, ysize, huffman_info, data))
     }
 
     /// Reads transforms and their data from the bitstream
-    fn read_transforms(&mut self) -> Result<u16, InternalDecodeError> {
+    fn read_transforms(&mut self) -> Result<u16, At<InternalDecodeError>> {
         let mut xsize = self.width;
 
-        while self.bit_reader.read_bits::<u8>(1)? == 1 {
-            let transform_type_val = self.bit_reader.read_bits::<u8>(2)?;
+        while traced(self.bit_reader.read_bits::<u8>(1))? == 1 {
+            let transform_type_val = traced(self.bit_reader.read_bits::<u8>(2))?;
 
             if self.transforms[usize::from(transform_type_val)].is_some() {
                 //can only have one of each transform, error
-                return Err(InternalDecodeError::TransformError);
+                return Err(at!(InternalDecodeError::TransformError));
             }
 
             self.transform_order.push(transform_type_val);
@@ -265,7 +282,7 @@ impl<'a> LosslessDecoder<'a> {
                 0 => {
                     //predictor
 
-                    let size_bits = self.bit_reader.read_bits::<u8>(3)? + 2;
+                    let size_bits = traced(self.bit_reader.read_bits::<u8>(3))? + 2;
 
                     let block_xsize = subsample_size(xsize, size_bits);
                     let block_ysize = subsample_size(self.height, size_bits);
@@ -283,7 +300,7 @@ impl<'a> LosslessDecoder<'a> {
                 1 => {
                     //color transform
 
-                    let size_bits = self.bit_reader.read_bits::<u8>(3)? + 2;
+                    let size_bits = traced(self.bit_reader.read_bits::<u8>(3))? + 2;
 
                     let block_xsize = subsample_size(xsize, size_bits);
                     let block_ysize = subsample_size(self.height, size_bits);
@@ -304,7 +321,7 @@ impl<'a> LosslessDecoder<'a> {
                     TransformType::SubtractGreen
                 }
                 3 => {
-                    let color_table_size = self.bit_reader.read_bits::<u16>(8)? + 1;
+                    let color_table_size = traced(self.bit_reader.read_bits::<u16>(8))? + 1;
 
                     let mut color_map =
                         self.alloc_bytes_checked(usize::from(color_table_size) * 4)?;
@@ -352,7 +369,7 @@ impl<'a> LosslessDecoder<'a> {
         xsize: u16,
         ysize: u16,
         color_cache: Option<ColorCache>,
-    ) -> Result<HuffmanInfo, InternalDecodeError> {
+    ) -> Result<HuffmanInfo, At<InternalDecodeError>> {
         let mut num_huff_groups = 1u32;
 
         let mut huffman_bits = 0;
@@ -360,9 +377,9 @@ impl<'a> LosslessDecoder<'a> {
         let mut huffman_ysize = 1;
         let mut entropy_image = Vec::new();
 
-        if read_meta && self.bit_reader.read_bits::<u8>(1)? == 1 {
+        if read_meta && traced(self.bit_reader.read_bits::<u8>(1))? == 1 {
             //meta huffman codes
-            huffman_bits = self.bit_reader.read_bits::<u8>(3)? + 2;
+            huffman_bits = traced(self.bit_reader.read_bits::<u8>(3))? + 2;
             huffman_xsize = subsample_size(xsize, huffman_bits);
             huffman_ysize = subsample_size(ysize, huffman_bits);
 
@@ -386,7 +403,7 @@ impl<'a> LosslessDecoder<'a> {
         // Each group contains 5 Huffman trees, so 16384 groups is already very generous.
         const MAX_HUFF_GROUPS: u32 = 16384;
         if num_huff_groups > MAX_HUFF_GROUPS {
-            return Err(InternalDecodeError::HuffmanError);
+            return Err(at!(InternalDecodeError::HuffmanError));
         }
 
         let mut hufftree_groups = Vec::new();
@@ -442,42 +459,42 @@ impl<'a> LosslessDecoder<'a> {
     fn read_huffman_code(
         &mut self,
         alphabet_size: u16,
-    ) -> Result<HuffmanTree, InternalDecodeError> {
-        let simple = self.bit_reader.read_bits::<u8>(1)? == 1;
+    ) -> Result<HuffmanTree, At<InternalDecodeError>> {
+        let simple = traced(self.bit_reader.read_bits::<u8>(1))? == 1;
 
         if simple {
-            let num_symbols = self.bit_reader.read_bits::<u8>(1)? + 1;
+            let num_symbols = traced(self.bit_reader.read_bits::<u8>(1))? + 1;
 
-            let is_first_8bits = self.bit_reader.read_bits::<u8>(1)?;
-            let zero_symbol = self.bit_reader.read_bits::<u16>(1 + 7 * is_first_8bits)?;
+            let is_first_8bits = traced(self.bit_reader.read_bits::<u8>(1))?;
+            let zero_symbol = traced(self.bit_reader.read_bits::<u16>(1 + 7 * is_first_8bits))?;
 
             if zero_symbol >= alphabet_size {
-                return Err(InternalDecodeError::BitStreamError);
+                return Err(at!(InternalDecodeError::BitStreamError));
             }
 
             if num_symbols == 1 {
                 Ok(HuffmanTree::build_single_node(zero_symbol))
             } else {
-                let one_symbol = self.bit_reader.read_bits::<u16>(8)?;
+                let one_symbol = traced(self.bit_reader.read_bits::<u16>(8))?;
                 if one_symbol >= alphabet_size {
-                    return Err(InternalDecodeError::BitStreamError);
+                    return Err(at!(InternalDecodeError::BitStreamError));
                 }
                 Ok(HuffmanTree::build_two_node(zero_symbol, one_symbol))
             }
         } else {
             let mut code_length_code_lengths = vec![0; CODE_LENGTH_CODES];
 
-            let num_code_lengths = 4 + self.bit_reader.read_bits::<usize>(4)?;
+            let num_code_lengths = 4 + traced(self.bit_reader.read_bits::<usize>(4))?;
             for i in 0..num_code_lengths {
                 code_length_code_lengths[CODE_LENGTH_CODE_ORDER[i]] =
-                    self.bit_reader.read_bits(3)?;
+                    traced(self.bit_reader.read_bits(3))?;
             }
 
             let new_code_lengths =
                 self.read_huffman_code_lengths(code_length_code_lengths, alphabet_size)?;
 
             HuffmanTree::build_implicit(new_code_lengths)
-                .map_err(|_| InternalDecodeError::HuffmanError)
+                .map_err(|_| at!(InternalDecodeError::HuffmanError))
         }
     }
 
@@ -486,15 +503,15 @@ impl<'a> LosslessDecoder<'a> {
         &mut self,
         code_length_code_lengths: Vec<u16>,
         num_symbols: u16,
-    ) -> Result<Vec<u16>, InternalDecodeError> {
+    ) -> Result<Vec<u16>, At<InternalDecodeError>> {
         let table = HuffmanTree::build_implicit(code_length_code_lengths)
-            .map_err(|_| InternalDecodeError::HuffmanError)?;
+            .map_err(|_| at!(InternalDecodeError::HuffmanError))?;
 
-        let mut max_symbol = if self.bit_reader.read_bits::<u8>(1)? == 1 {
-            let length_nbits = 2 + 2 * self.bit_reader.read_bits::<u8>(3)?;
-            let max_minus_two = self.bit_reader.read_bits::<u16>(length_nbits)?;
+        let mut max_symbol = if traced(self.bit_reader.read_bits::<u8>(1))? == 1 {
+            let length_nbits = 2 + 2 * traced(self.bit_reader.read_bits::<u8>(3))?;
+            let max_minus_two = traced(self.bit_reader.read_bits::<u16>(length_nbits))?;
             if max_minus_two > num_symbols - 2 {
-                return Err(InternalDecodeError::BitStreamError);
+                return Err(at!(InternalDecodeError::BitStreamError));
             }
             2 + max_minus_two
         } else {
@@ -512,7 +529,7 @@ impl<'a> LosslessDecoder<'a> {
             max_symbol -= 1;
 
             self.bit_reader.fill();
-            let code_len = table.read_symbol(&mut self.bit_reader)?;
+            let code_len = traced(table.read_symbol(&mut self.bit_reader))?;
 
             if code_len < 16 {
                 code_lengths[usize::from(symbol)] = code_len;
@@ -527,18 +544,19 @@ impl<'a> LosslessDecoder<'a> {
                     0 => 2,
                     1 => 3,
                     2 => 7,
-                    _ => return Err(InternalDecodeError::BitStreamError),
+                    _ => return Err(at!(InternalDecodeError::BitStreamError)),
                 };
                 let repeat_offset = match slot {
                     0 | 1 => 3,
                     2 => 11,
-                    _ => return Err(InternalDecodeError::BitStreamError),
+                    _ => return Err(at!(InternalDecodeError::BitStreamError)),
                 };
 
-                let mut repeat = self.bit_reader.read_bits::<u16>(extra_bits)? + repeat_offset;
+                let mut repeat =
+                    traced(self.bit_reader.read_bits::<u16>(extra_bits))? + repeat_offset;
 
                 if symbol + repeat > num_symbols {
-                    return Err(InternalDecodeError::BitStreamError);
+                    return Err(at!(InternalDecodeError::BitStreamError));
                 }
 
                 let length = if use_prev { prev_code_len } else { 0 };
@@ -703,12 +721,12 @@ impl<'a> LosslessDecoder<'a> {
     }
 
     /// Reads color cache data from the bitstream
-    fn read_color_cache(&mut self) -> Result<Option<u8>, InternalDecodeError> {
-        if self.bit_reader.read_bits::<u8>(1)? == 1 {
-            let code_bits = self.bit_reader.read_bits::<u8>(4)?;
+    fn read_color_cache(&mut self) -> Result<Option<u8>, At<InternalDecodeError>> {
+        if traced(self.bit_reader.read_bits::<u8>(1))? == 1 {
+            let code_bits = traced(self.bit_reader.read_bits::<u8>(4))?;
 
             if !(1..=11).contains(&code_bits) {
-                return Err(InternalDecodeError::InvalidColorCacheBits);
+                return Err(at!(InternalDecodeError::InvalidColorCacheBits));
             }
 
             Ok(Some(code_bits))
