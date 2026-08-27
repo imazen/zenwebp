@@ -701,7 +701,19 @@ pub(crate) mod iteration {
         };
 
         // 2. Resolve the starting q.
-        let mut q = if ablate_naive_starting_q() {
+        //
+        // Census-instrumentation override (registration:
+        // benchmarks/zensim_instrument_census_2026-08-27.md phase B): the A/B
+        // driver sets ZENWEBP_ZQ_START_Q per encode to seed pass 1 from the
+        // fitted Zq head instead of the bucket anchors. Ships nothing —
+        // unset/unparsable = shipped behavior, byte-identical.
+        let census_q0: Option<f32> = std::env::var("ZENWEBP_ZQ_START_Q")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+            .filter(|q| q.is_finite() && *q > 0.0 && *q <= 100.0);
+        let mut q = if let Some(q0) = census_q0 {
+            q0
+        } else if ablate_naive_starting_q() {
             // Chunk C ablation: skip per-bucket lookup, use a single ramp.
             naive_starting_q(target.target)
         } else if ablate_pre_phase2_anchors() {

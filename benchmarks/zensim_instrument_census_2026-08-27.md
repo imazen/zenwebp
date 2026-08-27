@@ -49,3 +49,36 @@ Phase B's bar applies to `err_pub02` (like-for-like vs the bucket baseline).
 A model-family upgrade for zenwebp's loop (path-dep zensim + re-anchored
 buckets) is a SEPARATE registered wave if the user wants it — it invalidates
 the shipped anchor tables and is not smuggled into this census.
+
+## RESULTS (2026-08-27, same day)
+
+**Phase A — control census (the criterion's instrument census, now closed):**
+| arm | median \|err_pub02\| | ±2 hits | photo | nonphoto | med passes |
+|---|---|---|---|---|---|
+| pass-1 anchors (band off — harness misconfig kept as the anchor-accuracy row) | 3.261 | 12/27 | 1.871 | 6.798 | 1.0 |
+| k2 (shipped band) | **1.859** | 15/27 | 1.118 | 5.092 | 2.0 |
+| k3 (shipped band) | **0.967** | 17/27 | 0.526 | 3.776 | 3.0 |
+Judge = decoded pixels through the loop's own published-zensim calls
+(`err_pub02`, per the amendment). Harness: `examples/zensim_census.rs`;
+decoded PNGs persisted for the fleet-judge (v47) column pass.
+Found + fixed during phase A: a band-less config never iterates (the ship
+band IS the iteration trigger) — k2≡k3 med-passes-1.0 exposed it.
+
+**Phase B — Zq head arm: G FAIL as registered; the bucket anchors stay.**
+Fit (family script, per-codec copy): 5 features chosen
+(grayscale_score, flat_color_block_ratio, skin_tone_fraction,
+gradient_fraction, aq_map_std), G-W1 val |q0−q*| p50 6.43 / p90 21.23.
+| k | A med | B med | improvement (bar ≥15%) | A→B hits | verdict |
+|---|---|---|---|---|---|
+| 2 | 1.859 | 1.708 | **+8.1%** | 15→14 (regressed) | FAIL |
+| 3 | 0.967 | 1.402 | **−45.0%** | 17→17 | FAIL |
+Per class: the head HELPS nonphoto (5.09→3.69 at k2; 3.78→2.48 at k3) and
+HURTS photo (1.12→1.45; 0.53→1.32) — zenwebp's 3-bucket anchor calibration
+is already strong on photo, and the head's p50-6.4q noise degrades it. Same
+lever-shape as the jxl zq census (nonphoto-concentrated benefit) against a
+much stronger control. The `ZENWEBP_ZQ_START_Q` hook stays in-tree as inert
+census instrumentation (unset = shipped behavior, byte-identical).
+Registered future lever (NOT re-gated here): a nonphoto-only conditional
+would need the same dominance check the jxl record's conditional got —
+here the head LOSES photo outright, so conditionality is not dominated;
+it would still need its own registered wave.
