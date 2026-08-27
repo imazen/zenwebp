@@ -118,9 +118,49 @@ pub(crate) fn try_resize_zeroed(
     Ok(())
 }
 
+/// Allocate an EMPTY `Vec<u8>` with room for `n` bytes, honoring the per-site
+/// fallibility — for buffers that are filled by `extend_from_slice` rather
+/// than zero-initialised.
+///
+/// * fallible → `try_reserve_exact(n)`, returning [`AllocFailed`] on failure.
+/// * infallible → `Vec::with_capacity(n)` (aborts on OOM).
+#[inline]
+pub(crate) fn alloc_with_capacity(
+    pref: AllocPreference,
+    site_default_fallible: bool,
+    n: usize,
+) -> Result<Vec<u8>, AllocFailed> {
+    if resolve_fallible(pref, site_default_fallible) {
+        let mut v = Vec::new();
+        v.try_reserve_exact(n).map_err(|_| AllocFailed)?;
+        Ok(v)
+    } else {
+        Ok(Vec::with_capacity(n))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alloc_with_capacity_all_modes_reserve() {
+        for (pref, site) in [
+            (AllocPreference::CodecDefault, true),
+            (AllocPreference::Fallible, false),
+            (AllocPreference::Infallible, true),
+        ] {
+            let v = alloc_with_capacity(pref, site, 4096).unwrap();
+            assert!(v.is_empty());
+            assert!(v.capacity() >= 4096);
+        }
+    }
+
+    #[test]
+    fn alloc_with_capacity_fallible_oom_returns_err() {
+        assert!(alloc_with_capacity(AllocPreference::Fallible, true, usize::MAX).is_err());
+        assert!(alloc_with_capacity(AllocPreference::CodecDefault, true, usize::MAX).is_err());
+    }
 
     // `CodecDefault` keeps each site's own default fallibility.
 

@@ -25,6 +25,19 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 here has landed; see "Changed (BREAKING)" below.)
 
 ### Fixed (2026-08-27 issue sweep)
+- **Decode allocations that bypassed `AllocPreference` (#63, #78-B) — 8 more
+  sites routed through `alloc_util`:** the RGBA↔RGB conversion buffers of
+  `decode_rgb` / `decode_rgba` / the lossy fast path (native and zencodec),
+  the animation canvas in `WebPDecoder::read_frame`, the zencodec
+  animation frame buffer (initial + the re-allocation after an owned frame
+  is taken), the streaming-decoder alpha plane, and the `decode_yuv420`
+  plane buffers (new `alloc_util::alloc_with_capacity`). All are
+  fallible-by-default and honour `Fallible` / `Infallible` overrides.
+  `DecodeRequest::decode_yuv420` also now applies the request's `Limits`
+  (it previously called the config-less free function, so dimension /
+  pixel caps were dead on that path). Remaining un-audited: the encoder side
+  has no fallible allocation at all (0 `try_reserve` sites) — still tracked
+  in #63.
 - **#78 review-backlog, pure-bug subset (7 of ~30 items; the rest still
   tracked there):**
   - **Near-lossless corrupted palette images (#78-A, V).** Once #89 plumbed

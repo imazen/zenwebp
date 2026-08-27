@@ -1882,7 +1882,14 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                     // Apply alpha filtering to produce final alpha plane
                     let fw = usize::from(w);
                     let fh = usize::from(h);
-                    let mut alpha_out = alloc::vec![0u8; fw * fh];
+                    // Full-frame alpha plane from header dims → fallible by
+                    // default (#63/#78-B).
+                    let mut alpha_out = crate::decoder::alloc_util::alloc_zeroed(
+                        cfg.limits.alloc_pref,
+                        true,
+                        fw * fh,
+                    )
+                    .map_err(|_| zencodec::CodecError::of(at!(DecodeError::MemoryLimitExceeded)))?;
                     for y in 0..fh {
                         for x in 0..fw {
                             let predictor =
@@ -2011,6 +2018,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         // The AnimationDecoder borrows &[u8] from the owned Vec, so we use self_cell
         // to safely express this relationship without unsafe code.
         let owned_data = data.into_owned();
+        let alloc_pref = cfg.limits.alloc_pref;
         let decoder = OwnedAnimDecoder::try_new(
             AnimDecoderOwner {
                 data: owned_data,
@@ -2025,6 +2033,9 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         let canvas_height = anim_info.canvas_height;
         let bpp: usize = if has_alpha { 4 } else { 3 };
         let buf_size = canvas_width as usize * canvas_height as usize * bpp;
+        // Canvas-sized composited-frame buffer → fallible by default (#63).
+        let frame_buf = crate::decoder::alloc_util::alloc_zeroed(alloc_pref, true, buf_size)
+            .map_err(|_| zencodec::CodecError::of(at!(DecodeError::MemoryLimitExceeded)))?;
         let source_desc = if has_alpha {
             PixelDescriptor::RGBA8_SRGB
         } else {
@@ -2034,7 +2045,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         Ok(WebpAnimationFrameDecoder {
             decoder,
             preferred: preferred.to_vec(),
-            frame_buf: alloc::vec![0u8; buf_size],
+            frame_buf,
+            alloc_pref,
             has_alpha,
             canvas_width,
             canvas_height,
@@ -2155,7 +2167,13 @@ impl WebpDecoder<'_> {
             // but for no-alpha images decode_rgba_lossy returns RGBA with alpha=255.
             // Convert to RGB to save memory.
             let pixel_count = (w as usize) * (h as usize);
-            let mut rgb = alloc::vec![0u8; pixel_count * 3];
+            // Full-image conversion buffer → fallible by default (#63).
+            let mut rgb = crate::decoder::alloc_util::alloc_zeroed(
+                alloc_pref_from_zencodec(self.limits.prefer_fallible_allocations),
+                true,
+                pixel_count * 3,
+            )
+            .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
             garb::bytes::rgba_to_rgb(&pixels, &mut rgb)
                 .map_err(|e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))?;
             PixelBuffer::from_vec(rgb, w, h, PixelDescriptor::RGB8_SRGB)
@@ -2618,6 +2636,8 @@ pub struct WebpAnimationFrameDecoder {
     /// Reusable buffer for composited frame data. Pre-allocated to canvas size;
     /// reused across frames without reallocating.
     frame_buf: Vec<u8>,
+    /// Allocation policy for re-creating `frame_buf` after it was taken.
+    alloc_pref: crate::decoder::alloc_util::AllocPreference,
     /// Whether the animation has alpha (RGBA vs RGB output).
     has_alpha: bool,
     /// Canvas dimensions.
@@ -2674,7 +2694,13 @@ impl WebpAnimationFrameDecoder {
         // Re-allocate if frame_buf was taken by render_next_frame_owned.
         let expected_size = self.stride() * self.canvas_height as usize;
         if self.frame_buf.len() < expected_size {
-            self.frame_buf.resize(expected_size, 0);
+            crate::decoder::alloc_util::try_resize_zeroed(
+                self.alloc_pref,
+                true,
+                &mut self.frame_buf,
+                expected_size,
+            )
+            .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
         }
 
         let frame_buf = &mut self.frame_buf;
@@ -4465,5 +4491,50 @@ mod tests {
             zencodec::ColorAuthority::Icc,
             "an ICCP profile must mark ICC as the authoritative color carrier"
         );
+    }
+
+    /// Animation path under every allocation policy (#63): the composited
+    /// frame buffer (canvas-sized, allocated in the constructor and re-created
+    /// by `try_resize_zeroed` after `render_next_frame_owned` takes it) must
+    /// yield byte-identical frames for `CodecDefault`, `Fallible` and
+    /// `Infallible`.
+    #[test]
+    fn fallible_alloc_animation_decode_matches_default() {
+        use zencodec::ResourceLimits;
+        use zencodec::decode::AnimationFrameDecoder;
+        use zencodec::encode::AnimationFrameEncoder;
+
+        let enc_config = WebpEncoderConfig::lossy().with_quality(90.0);
+        let mut enc = enc_config.job().animation_frame_encoder().unwrap();
+        for _ in 0..3 {
+            enc.push_frame(make_rgba8_pixels(24, 20).as_slice(), 100, None)
+                .unwrap();
+        }
+        let data = enc.finish(None).unwrap().data().to_vec();
+
+        let frames = |pref: Option<zencodec::AllocPreference>| -> Vec<alloc::vec::Vec<u8>> {
+            let job = WebpDecoderConfig::new().job();
+            let job = match pref {
+                Some(p) => {
+                    job.with_limits(ResourceLimits::none().with_prefer_fallible_allocations(p))
+                }
+                None => job,
+            };
+            let mut dec = job
+                .animation_frame_decoder(Cow::Owned(data.clone()), &[])
+                .unwrap();
+            let mut out = Vec::new();
+            // The owned path takes `frame_buf`, so every frame after the
+            // first goes through the fallible re-allocation branch.
+            while let Some(f) = dec.render_next_frame_owned(None).unwrap() {
+                out.push(f.into_buffer().into_vec());
+            }
+            out
+        };
+        let default = frames(None);
+        assert_eq!(default.len(), 3);
+        assert!(default.iter().all(|f| !f.is_empty()));
+        assert_eq!(default, frames(Some(zencodec::AllocPreference::Fallible)));
+        assert_eq!(default, frames(Some(zencodec::AllocPreference::Infallible)));
     }
 }

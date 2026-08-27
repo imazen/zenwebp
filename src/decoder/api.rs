@@ -548,7 +548,14 @@ impl<'a> DecodeRequest<'a> {
             Ok((native, w, h))
         } else {
             let pixel_count = (w as usize) * (h as usize);
-            let mut rgb = alloc::vec![0u8; pixel_count * 3];
+            // Full-image conversion buffer, sized from the (limit-checked)
+            // header dimensions → fallible by default (#63).
+            let mut rgb = super::alloc_util::alloc_zeroed(
+                self.config.limits.alloc_pref,
+                true,
+                pixel_count * 3,
+            )
+            .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
             garb::bytes::rgba_to_rgb(&native, &mut rgb).map_err(|e| at!(garb_err(e)))?;
             Ok((rgb, w, h))
         }
@@ -614,8 +621,12 @@ impl<'a> DecodeRequest<'a> {
     }
 
     /// Decode to YUV 4:2:0 planes (lossy only).
+    ///
+    /// Honors the request's [`Limits`](super::limits::Limits) (dimension /
+    /// pixel / memory caps and the allocation policy); this used to discard
+    /// the request config entirely (#78-B).
     pub fn decode_yuv420(self) -> DecodeResult<YuvPlanes> {
-        decode_yuv420(self.data)
+        decode_yuv420_with_config(self.data, self.config)
     }
 
     /// Decode lossy VP8 to RGB.
@@ -734,7 +745,12 @@ impl<'a> DecodeRequest<'a> {
                 // Convert to requested bpp if needed
                 if decode_bpp == 4 && bpp == 3 {
                     let pixel_count = usize::from(w) * usize::from(h);
-                    let mut rgb = alloc::vec![0u8; pixel_count * 3];
+                    let mut rgb = super::alloc_util::alloc_zeroed(
+                        self.config.limits.alloc_pref,
+                        true,
+                        pixel_count * 3,
+                    )
+                    .map_err(|_| whereat::at!(DecodeError::MemoryLimitExceeded))?;
                     garb::bytes::rgba_to_rgb(&output, &mut rgb)
                         .map_err(|e| whereat::at!(garb_err(e)))?;
                     Ok((rgb, w, h))
@@ -1561,7 +1577,12 @@ impl<'a> WebPDecoder<'a> {
             self.animation.canvas = {
                 let canvas_alloc = self.width as usize * self.height as usize * 4;
                 self.limits.check_memory(canvas_alloc)?;
-                let mut canvas = vec![0; canvas_alloc];
+                // The animation canvas is the allocation `alloc_util`'s own
+                // doc names as fallible-by-default; it was a plain `vec!`
+                // until #63/#78-B.
+                let mut canvas =
+                    super::alloc_util::alloc_zeroed(self.limits.alloc_pref, true, canvas_alloc)
+                        .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
                 if let Some(color) = info.background_color.as_ref() {
                     canvas
                         .chunks_exact_mut(4)
@@ -1702,7 +1723,8 @@ fn decode_to_rgba_internal(
         Ok((native, w, h))
     } else {
         let pixel_count = (w as usize) * (h as usize);
-        let mut rgba = alloc::vec![0u8; pixel_count * 4];
+        let mut rgba = super::alloc_util::alloc_zeroed(limits.alloc_pref, true, pixel_count * 4)
+            .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
         garb::bytes::rgb_to_rgba(&native, &mut rgba).map_err(|e| at!(garb_err(e)))?;
         Ok((rgba, w, h))
     }
@@ -2108,7 +2130,17 @@ pub fn decode_bgr_into(
 /// [`YuvPlanes`] containing separate Y, U, and V buffers.
 #[track_caller]
 pub fn decode_yuv420(data: &[u8]) -> DecodeResult<YuvPlanes> {
-    let decoder = WebPDecoder::new(data)?;
+    decode_yuv420_with_config(data, &DecodeConfig::default())
+}
+
+/// [`decode_yuv420`] under a caller-supplied [`DecodeConfig`]: the config's
+/// limits gate the header (dimensions / pixels / frames) and decide whether
+/// the plane buffers are allocated fallibly.
+#[track_caller]
+fn decode_yuv420_with_config(data: &[u8], config: &DecodeConfig) -> DecodeResult<YuvPlanes> {
+    let decoder =
+        WebPDecoder::new_with_options_and_limits(data, config.to_options(), config.limits.clone())?;
+    let alloc_pref = config.limits.alloc_pref;
 
     if decoder.is_lossy() && !decoder.is_animated() {
         // For lossy images, extract the native YUV planes from the VP8 frame
@@ -2132,15 +2164,23 @@ pub fn decode_yuv420(data: &[u8]) -> DecodeResult<YuvPlanes> {
             };
             let chroma_bw = buffer_width / 2;
 
-            let mut y = Vec::with_capacity((w * h) as usize);
+            // Plane buffers sized from the frame header → fallible by
+            // default (#63).
+            let oom = |_| at!(DecodeError::MemoryLimitExceeded);
+            let mut y = super::alloc_util::alloc_with_capacity(alloc_pref, true, (w * h) as usize)
+                .map_err(oom)?;
             for row in 0..h as usize {
                 y.extend_from_slice(
                     &frame.ybuf[row * buffer_width..row * buffer_width + w as usize],
                 );
             }
 
-            let mut u = Vec::with_capacity((uv_w * uv_h) as usize);
-            let mut v = Vec::with_capacity((uv_w * uv_h) as usize);
+            let mut u =
+                super::alloc_util::alloc_with_capacity(alloc_pref, true, (uv_w * uv_h) as usize)
+                    .map_err(oom)?;
+            let mut v =
+                super::alloc_util::alloc_with_capacity(alloc_pref, true, (uv_w * uv_h) as usize)
+                    .map_err(oom)?;
             for row in 0..uv_h as usize {
                 u.extend_from_slice(&frame.ubuf[row * chroma_bw..row * chroma_bw + uv_w as usize]);
                 v.extend_from_slice(&frame.vbuf[row * chroma_bw..row * chroma_bw + uv_w as usize]);
@@ -2436,5 +2476,66 @@ mod decode_category_tests {
             DecodeError::IoError(std::io::Error::other("boom")).category(),
             C::Io(zencodec::CodecIoKind::opaque())
         );
+    }
+}
+
+#[cfg(test)]
+mod yuv420_config_tests {
+    use super::*;
+    use crate::decoder::alloc_util::AllocPreference;
+    use crate::decoder::limits::Limits;
+    use crate::{EncodeRequest, EncoderConfig, PixelLayout};
+
+    fn lossy_32x32() -> Vec<u8> {
+        let mut rgb = vec![0u8; 32 * 32 * 3];
+        for (i, px) in rgb.chunks_exact_mut(3).enumerate() {
+            px[0] = (i % 32 * 8) as u8;
+            px[1] = (i / 32 * 8) as u8;
+            px[2] = 128;
+        }
+        EncodeRequest::new(
+            &EncoderConfig::new_lossy().with_quality(80.0),
+            &rgb,
+            PixelLayout::Rgb8,
+            32,
+            32,
+        )
+        .encode()
+        .unwrap()
+    }
+
+    /// `DecodeRequest::decode_yuv420` used to call the config-less free
+    /// function, discarding the request's limits entirely (#78-B): a
+    /// dimension cap must reject the image on this path like on every
+    /// other. Watched to FAIL with the free-function call restored.
+    #[test]
+    fn decode_yuv420_honors_request_limits() {
+        let webp = lossy_32x32();
+        let ok = DecodeRequest::new(&DecodeConfig::default(), &webp)
+            .decode_yuv420()
+            .expect("32x32 decodes under default limits");
+        assert_eq!((ok.y_width, ok.y_height), (32, 32));
+        assert_eq!(ok.y.len(), 32 * 32);
+
+        let tight = DecodeConfig::default().limits(Limits::default().max_dimensions(8, 8));
+        assert!(
+            DecodeRequest::new(&tight, &webp).decode_yuv420().is_err(),
+            "max_dimensions(8, 8) must reject a 32x32 image on the YUV path"
+        );
+    }
+
+    /// The plane buffers now go through `alloc_util` (#63): every
+    /// allocation policy must yield identical planes.
+    #[test]
+    fn decode_yuv420_planes_identical_across_alloc_policies() {
+        let webp = lossy_32x32();
+        let planes = |pref: AllocPreference| {
+            let cfg = DecodeConfig::default().limits(Limits::default().with_alloc_pref(pref));
+            let p = DecodeRequest::new(&cfg, &webp).decode_yuv420().unwrap();
+            (p.y, p.u, p.v)
+        };
+        let base = planes(AllocPreference::CodecDefault);
+        assert_eq!(base, planes(AllocPreference::Fallible));
+        assert_eq!(base, planes(AllocPreference::Infallible));
     }
 }
