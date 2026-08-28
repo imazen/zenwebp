@@ -80,6 +80,17 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
   falsified for the whole codebase; the migration is hygiene.
 
 ### Changed (2026-08-28, #71 probe)
+- **VP8L stochastic clustering ports two `HistogramCombineStochastic`
+  details (refs #71): −0.023 % more on the 11-file m4/m5 set, zen/libwebp
+  1.0004 → 1.0002.** The push threshold is tightened inside the sampling
+  loop (`best_cost = curr_cost` after every better pair, so the 9-slot
+  queue only fills with pairs better than the running best) and a pair is
+  ordered by compact position so the merge keeps the lower slot and the
+  compaction / later RNG picks match libwebp's. Group counts now track
+  libwebp's (archives m5 17 → 21 vs 25, weather m5 11 → 13 vs 12).
+  Cumulative #71 effect on the set: 1.0016 → 1.0002; weather m5 1.0083 →
+  1.0058, archives m5 1.0058 → 1.0022. Byte-parity sweep unchanged;
+  `dev/output_hash.rs` COMBINED → `4ab15c58a26f87e0`.
 - **VP8L entropy-bin clustering ports libwebp's `try_combine` gate (refs
   #71): −0.116 % lossless bytes on the 11-file m4/m5 set, zen/libwebp
   1.0016 → 1.0004.** `HistogramCombineEntropyBin` only merges a same-bin

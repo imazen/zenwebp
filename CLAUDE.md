@@ -306,15 +306,16 @@ skipped work). Screens m5/m6 residual 1.0022 (weather 1.0083, archives
 streams and shows the predictor mode maps and cross-color tiles are
 identical tile for tile to libwebp's at m4/m5 on both files. The whole
 gap is the main image's histogram clustering: zenwebp ended with fewer
-Huffman groups than libwebp on every cell of the 11-file m4/m5 set. First
-cause found and ported: `HistogramCombineEntropyBin`'s `try_combine` /
-`num_combine_failures` gate (keep trivial R/B/A symbols) — −0.116 % over
-the 22 cells, zen/lib 1.0016 → 1.0004, `nasa__voyager` −11.3 KB, weather
-m5 1.0083 → 1.0068, archives m5 1.0058 → 1.0038. Loop shapes / cost
-factor / stochastic target verified equivalent; empty-tile handling
-mirrors libwebp (neutral). Remaining group deficit (11 vs 12, 17 vs 25):
-next is a differential test of the pair cost (`GetCombinedHistogramEntropy`)
-against an instrumented libwebp — kept in `dev/`, not `/tmp`, this time.
+Huffman groups than libwebp on every cell of the 11-file m4/m5 set. Three
+divergences found by reading and ported: `HistogramCombineEntropyBin`'s
+`try_combine` / `num_combine_failures` gate (keep trivial R/B/A symbols;
+−0.116 %), and `HistogramCombineStochastic`'s in-loop threshold
+tightening + compact-position pair ordering (−0.023 %). Cumulative:
+zen/lib 1.0016 → 1.0002 on the set, weather m5 1.0083 → 1.0058, archives
+m5 1.0058 → 1.0022, group counts now track libwebp's. Empty-tile
+handling mirrors libwebp (neutral). Remaining: a differential test of the
+pair cost (`GetCombinedHistogramEntropy`) against an instrumented
+libwebp — kept in `dev/`, not `/tmp`, this time.
 
 **Backward references parity (synthetic, 2026-03-25):**
 

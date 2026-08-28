@@ -723,7 +723,12 @@ fn stochastic_combine_phase(state: &mut ClusterState, target_size: usize) -> boo
         }
         cluster_trace::inc_stochastic_outer_iters();
 
-        let best_cost = if histo_queue.queue.is_empty() {
+        // libwebp tightens this threshold INSIDE the sampling loop: every
+        // pair that beats the best so far becomes the new bar for the rest
+        // of the iteration, so the 9-slot queue only ever fills with pairs
+        // better than the running best (#71 — zenwebp kept the bar fixed
+        // for the whole iteration and filled the queue with worse pairs).
+        let mut best_cost = if histo_queue.queue.is_empty() {
             0i64
         } else {
             histo_queue.queue[0].cost_diff
@@ -746,14 +751,22 @@ fn stochastic_combine_phase(state: &mut ClusterState, target_size: usize) -> boo
                 ci2 += 1;
             }
 
-            let idx1 = compact[ci1];
-            let idx2 = compact[ci2];
+            // HistoQueuePush orders the pair by compact position (idx1 <
+            // idx2) and the merge keeps idx1's slot, removing idx2 by
+            // swapping the last histogram into it; mirror that ordering so
+            // the compaction — and every later RNG-driven pick — matches.
+            let (lo, hi) = if ci1 < ci2 { (ci1, ci2) } else { (ci2, ci1) };
+            let idx1 = compact[lo];
+            let idx2 = compact[hi];
 
             pair_evals_this_iter += 1;
             let curr_cost =
                 histo_queue.push(&state.histos, &state.costs, idx1, idx2, best_cost.min(0));
-            if curr_cost < 0 && histo_queue.queue.len() >= histo_queue.max_size {
-                break;
+            if curr_cost < 0 {
+                best_cost = curr_cost;
+                if histo_queue.queue.len() >= histo_queue.max_size {
+                    break;
+                }
             }
         }
         cluster_trace::add_stochastic_pair_evals(pair_evals_this_iter);
