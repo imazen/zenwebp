@@ -95,14 +95,15 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 - **Added `dev/issue71_probe.rs` + `decoder::vp8l_transform_dump`
   (`mode_debug`)**: parses both zenwebp's and libwebp's lossless streams
   with our decoder and splits the size gap into transform sub-images,
-  Huffman tables and pixel data. Finding
+  Huffman tables, pixel data and the main image's literal / cache / copy
+  token mix. Finding
   (`benchmarks/issue71_probe_2026-08-28.md`): the predictor mode maps and
   cross-color tiles are **identical tile for tile** to libwebp's at m4 and
   m5 on both #71 files — suspects (1) mode-image coding and (3) greedy
   tie-breaking are falsified — and the whole gap is the main image's
   histogram clustering ending with fewer Huffman groups than libwebp on all
-  22 cells (e.g. 10 vs 12, 17 vs 25), plus a small cross-color sub-image
-  coding difference (≤273 B).
+  22 cells (e.g. 10 vs 12, 17 vs 25) while the token streams agree to
+  0.1–0.3 %, plus a small cross-color sub-image coding difference (≤273 B).
 
 ### Fixed (2026-08-27 issue sweep)
 - **#78 review backlog, encoder-config subset (refs #78; the issue was

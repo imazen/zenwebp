@@ -169,6 +169,12 @@ fn main() {
                     s.main.pixel_data_bits,
                     s.main.pixel_data_bits / 8
                 );
+                let [lit, cache, copies, copied] = s.main.tokens;
+                println!(
+                    "    main tokens: literals={lit} cache_hits={cache} copies={copies} copied_pixels={copied} (avg copy len {:.1}, {:.1}% of pixels via copies)",
+                    copied as f64 / copies.max(1) as f64,
+                    100.0 * copied as f64 / f64::from(w * h)
+                );
             }
             // Tile-by-tile predictor agreement when both streams use the same grid.
             let zp = sides[0].dump.iter().find(|d| d.0 == 0);

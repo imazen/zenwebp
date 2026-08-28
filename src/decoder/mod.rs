@@ -71,6 +71,8 @@ pub struct Vp8lMainImageInfo {
     pub huffman_tables_bits: u64,
     /// Bits spent on the pixel data itself.
     pub pixel_data_bits: u64,
+    /// Main-image token counts: `[literals, cache_hits, copies, copied_pixels]`.
+    pub tokens: [u64; 4],
 }
 
 /// `mode_debug` diagnostic for #71: decode a simple (non-animated)
@@ -110,6 +112,7 @@ pub fn vp8l_transform_dump(
         entropy_image_bits: main.entropy_image_bits,
         huffman_tables_bits: main.pixel_data_start - main_start - main.entropy_image_bits,
         pixel_data_bits: total_bits - main.pixel_data_start,
+        tokens: main.tokens,
     };
     Ok((
         dumps

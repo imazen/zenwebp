@@ -219,9 +219,11 @@ impl<'a> LosslessDecoder<'a> {
             let transformed_width = d.read_transforms()?;
             main_start = d.bit_reader.bits_consumed();
             let n = usize::from(transformed_width) * usize::from(d.height) * 4;
+            token_stats::reset();
             d.decode_image_stream(transformed_width, d.height, true, &mut buf[..n])
         })()
         .map_err_at(DecodeError::from)?;
+        d.main_dump.tokens = token_stats::snapshot();
         Ok((
             core::mem::take(&mut d.tf_dump),
             main_start,
@@ -803,6 +805,8 @@ impl<'a> LosslessDecoder<'a> {
                     }
                 }
             } else if code < color_cache_limit {
+                #[cfg(feature = "mode_debug")]
+                token_stats::CACHE_HITS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 // Color cache lookup
                 let cc = color_cache
                     .as_mut()
@@ -961,6 +965,8 @@ fn try_decode_packed(
         if let Some(cc) = color_cache.as_mut() {
             cc.insert(entry.value);
         }
+        #[cfg(feature = "mode_debug")]
+        token_stats::LITERALS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         Ok(PackedOutcome::LiteralEmitted)
     } else {
         // Non-literal: consume tabulated bits and surface the green code
@@ -984,6 +990,8 @@ fn decode_literal_pixel(
     index: usize,
     color_cache: &mut Option<ColorCache>,
 ) -> Result<(), InternalDecodeError> {
+    #[cfg(feature = "mode_debug")]
+    token_stats::LITERALS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     if meta.is_trivial_literal {
         // R, B, A are constant - only green came from the bitstream
         let pixel = [
@@ -1041,6 +1049,11 @@ fn decode_backward_reference(
 ) -> Result<usize, InternalDecodeError> {
     let length_symbol = code - 256;
     let length = LosslessDecoder::get_copy_distance(bit_reader, length_symbol)?;
+    #[cfg(feature = "mode_debug")]
+    {
+        token_stats::COPIES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        token_stats::COPIED_PIXELS.fetch_add(length as u64, core::sync::atomic::Ordering::Relaxed);
+    }
 
     // DIST symbol (<= 15 bits) plus its extra bits (<= 18) can need 33 bits,
     // but GREEN + length extra bits may have consumed up to 25 of the 56 the
@@ -1288,6 +1301,32 @@ pub(crate) struct BitReader<'a> {
     nbits: u8,
 }
 
+/// `mode_debug` token counters for the #71 diagnostics: literals, color-cache
+/// hits, backward-reference copies and the pixels they cover. Process-wide
+/// (the decoder is single-threaded per stream; `debug_transforms` resets them
+/// around the main image).
+#[cfg(feature = "mode_debug")]
+pub(crate) mod token_stats {
+    use core::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    pub static LITERALS: AtomicU64 = AtomicU64::new(0);
+    pub static CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+    pub static COPIES: AtomicU64 = AtomicU64::new(0);
+    pub static COPIED_PIXELS: AtomicU64 = AtomicU64::new(0);
+    pub fn reset() {
+        for c in [&LITERALS, &CACHE_HITS, &COPIES, &COPIED_PIXELS] {
+            c.store(0, Relaxed);
+        }
+    }
+    pub fn snapshot() -> [u64; 4] {
+        [
+            LITERALS.load(Relaxed),
+            CACHE_HITS.load(Relaxed),
+            COPIES.load(Relaxed),
+            COPIED_PIXELS.load(Relaxed),
+        ]
+    }
+}
+
 /// Level-0 (main) image coding parameters, for the `mode_debug`
 /// diagnostics (#71).
 #[cfg(feature = "mode_debug")]
@@ -1304,6 +1343,8 @@ pub(crate) struct MainImageDump {
     /// Bit offset (from the VP8L start) where the pixel data begins, i.e.
     /// after every Huffman code table.
     pub pixel_data_start: u64,
+    /// Main-image token counts: literals, cache hits, copies, copied pixels.
+    pub tokens: [u64; 4],
 }
 
 /// One parsed VP8L transform, for the `mode_debug` diagnostics (#71).
