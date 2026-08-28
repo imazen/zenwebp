@@ -37,6 +37,13 @@ impl BitWriter {
     /// Write `n_bits` from `value` (LSB-first).
     #[inline]
     pub fn write_bits(&mut self, value: u64, n_bits: u8) {
+        // Caller contract, checked in debug builds (cargo test, cargo-fuzz):
+        // a value wider than `n_bits` would OR its high bits into every
+        // following byte. A release-build mask
+        // (`value & ((1 << n_bits) - 1)`) was measured for #78 and rejected:
+        // +3.7% wall on the 1024² lossless-with-alpha encode (578-581 ms →
+        // 604-608 ms, 3×3 interleaved runs, Apple M4 Pro) for a guard against
+        // a bug the asserts already catch; flat on RGB/L8. See CHANGELOG.
         debug_assert!(n_bits <= 32);
         debug_assert!(n_bits == 0 || (value >> n_bits) == 0);
 

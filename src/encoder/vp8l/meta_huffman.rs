@@ -949,7 +949,13 @@ fn build_final_histograms(
     let mut symbols: Vec<u16> = Vec::with_capacity(n);
     for tile_idx in 0..n {
         let cluster = mapping[tile_idx];
-        let final_idx = cluster_to_final[cluster].unwrap_or(0);
+        // `referenced` was computed from this same `mapping`, so every
+        // cluster reached here has a final index. A `None` is the exact #72
+        // shape (a tile pointing at a remap-stranded cluster); absorbing it
+        // as group 0 would emit a valid-but-wrong stream, so fail loudly
+        // instead (#78).
+        let final_idx = cluster_to_final[cluster]
+            .expect("VP8L: tile maps to a cluster with no final histogram (#72 invariant)");
         symbols.push(final_idx);
         final_histos[final_idx as usize].add(&tile_histos[tile_idx]);
     }

@@ -1083,6 +1083,21 @@ fn encode_image_data(
         }
     }
 
+    // #78 emit-time invariant (debug builds, like the #72 one below): the
+    // backward-reference stream must cover exactly enc_width * enc_height
+    // pixels — a short or long stream is a valid-but-wrong VP8L image that
+    // the decoder either truncates or rejects.
+    debug_assert_eq!(
+        refs.iter()
+            .map(|t| match *t {
+                super::types::PixOrCopy::Copy { len, .. } => usize::from(len),
+                _ => 1,
+            })
+            .sum::<usize>(),
+        enc_width * enc_height,
+        "VP8L: backward-ref stream pixel count != enc_width * enc_height"
+    );
+
     // Write color cache info
     if cache_bits > 0 {
         writer.write_bit(true);
@@ -1206,7 +1221,31 @@ fn encode_image_data(
             meta_info.histograms.len(),
             max_sym + 1
         );
+        // #78: the entropy image must be exactly the tile grid the decoder
+        // derives from (width, height, histo_bits) — one symbol per tile.
+        let tiles_w = super::types::subsample_size(enc_width as u32, meta_info.histo_bits) as usize;
+        let tiles_h =
+            super::types::subsample_size(enc_height as u32, meta_info.histo_bits) as usize;
+        debug_assert_eq!(
+            meta_info.histogram_symbols.len(),
+            tiles_w * tiles_h,
+            "VP8L: entropy image has {} symbols, tile grid is {}x{} at histo_bits={}",
+            meta_info.histogram_symbols.len(),
+            tiles_w,
+            tiles_h,
+            meta_info.histo_bits
+        );
     }
+    // #78: every group's green/length/cache alphabet must match the
+    // cache_bits signaled in the header, or the decoder builds a
+    // different-sized tree than the one we serialize.
+    debug_assert!(
+        meta_info
+            .histograms
+            .iter()
+            .all(|h| h.literal.len() == super::histogram::literal_alphabet_size(cache_bits)),
+        "VP8L: histogram green alphabet size != literal_alphabet_size(cache_bits={cache_bits})"
+    );
 
     // Build Huffman codes for each histogram group (5 trees per group)
     let mut all_codes: Vec<HuffmanGroupCodes> = Vec::with_capacity(meta_info.num_histograms);

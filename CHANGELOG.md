@@ -21,8 +21,16 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 
 ### QUEUED BREAKING CHANGES
 <!-- Not yet landed. Batch into a future 0.x minor once approved. -->
-(none currently — the `EncodeError::LimitExceeded` kind-carrying item queued
-here has landed; see "Changed (BREAKING)" below.)
+- Remove `MuxError::FrameOutOfBounds` — never constructed anywhere in the
+  crate (#78-C). Public enum variant, so it waits for the next breaking
+  batch.
+- `LossyConfig::exact` (lossy `WebPCleanupTransparentArea` opt-out, the
+  `cwebp -exact` equivalent) — a new public field on a `#[non_exhaustive]`
+  struct is additive, but it changes the documented meaning of `exact`
+  ("not applicable to lossy") and needs a decision on the default (#78-A).
+- Demuxer/decoder duplicate-chunk policy: the demuxer is last-wins, the
+  decoder first-wins (`or_insert`) for ICCP/EXIF/XMP/VP8L; pick one and
+  align both (#78-C). Behaviour change for files with duplicated chunks.
 
 ### Changed (2026-08-27 issue sweep)
 - **`zencodec` dependency moved to the published registry release `0.1.26`**
@@ -129,6 +137,23 @@ here has landed; see "Changed (BREAKING)" below.)
     instead of truncating on write.
   - Tests in `tests/review_backlog_78.rs::decode_mux`, each watched to
     FAIL with its check removed.
+- **#78 review backlog, VP8L emit-guard subset (refs #78):**
+  - Two more emit-time invariants next to the #72 one (debug builds — run
+    by `cargo test` and cargo-fuzz): the backward-reference stream must
+    cover exactly `enc_width × enc_height` pixels, the entropy image must
+    have one symbol per `subsample_size(w,h,histo_bits)` tile, and every
+    histogram's green/length/cache alphabet must equal
+    `literal_alphabet_size(cache_bits)`.
+  - `build_meta_huffman`'s `cluster_to_final[cluster].unwrap_or(0)` is now
+    an `expect`: `referenced` is derived from the same `mapping`, so a
+    `None` there is exactly the #72 shape (a tile pointing at a
+    remap-stranded cluster) and silently emitting group 0 would be a
+    valid-but-wrong stream.
+  - The bit-writer's `debug_assert!`s stay debug-only: the proposed
+    release-build mask was **measured and rejected** — +3.7% wall on the
+    1024² lossless-with-alpha encode (578–581 ms → 604–608 ms, 3×3
+    interleaved runs on an Apple M4 Pro; flat on RGB8/L8) for a guard
+    against a caller bug the asserts already catch.
 - **`prefer_fallible_allocations` now reaches the encoder (#63, encoder
   half).** The zencodec `WebpEncodeJob` dropped
   `ResourceLimits::prefer_fallible_allocations` on the floor (only pixel /
