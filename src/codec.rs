@@ -648,6 +648,13 @@ impl WebpEncodeJob {
                 self.limits.max_height.unwrap_or(u32::MAX),
             );
         }
+        // `prefer_fallible_allocations` reaches the encoder's top-level
+        // O(pixels) buffers through `EncoderParams::alloc_pref` (#63): every
+        // encoder site defaults to infallible, so only `Fallible` changes
+        // behaviour (allocation failure → `LimitExceeded(Memory)`).
+        limits = limits.with_alloc_pref(alloc_pref_from_zencodec(
+            self.limits.prefer_fallible_allocations,
+        ));
         inner = inner.limits(limits);
         inner
     }
@@ -4532,5 +4539,37 @@ mod tests {
         assert!(default.iter().all(|f| !f.is_empty()));
         assert_eq!(default, frames(Some(zencodec::AllocPreference::Fallible)));
         assert_eq!(default, frames(Some(zencodec::AllocPreference::Infallible)));
+    }
+
+    /// `ResourceLimits::prefer_fallible_allocations` must reach the ENCODER's
+    /// `EncoderParams::alloc_pref` through `WebpEncodeJob::build_inner_config`
+    /// (#63). Liveness: this fails (every arm reads `CodecDefault`) if the
+    /// lowering line in `build_inner_config` is removed.
+    #[test]
+    fn encode_job_lowers_alloc_preference_into_encoder_params() {
+        use crate::decoder::alloc_util::AllocPreference as Internal;
+        use zencodec::encode::{EncodeJob, EncoderConfig as _};
+        for (pref, expect) in [
+            (zencodec::AllocPreference::Fallible, Internal::Fallible),
+            (zencodec::AllocPreference::Infallible, Internal::Infallible),
+            (
+                zencodec::AllocPreference::CodecDefault,
+                Internal::CodecDefault,
+            ),
+        ] {
+            for cfg in [WebpEncoderConfig::lossy(), WebpEncoderConfig::lossless()] {
+                let job = cfg
+                    .job()
+                    .with_limits(ResourceLimits::none().with_prefer_fallible_allocations(pref));
+                let inner = job.build_inner_config();
+                assert_eq!(inner.to_params().alloc_pref, expect, "{pref:?}");
+            }
+        }
+        // Unset limits: the encoder's own default.
+        let job = WebpEncoderConfig::lossless().job();
+        assert_eq!(
+            job.build_inner_config().to_params().alloc_pref,
+            Internal::CodecDefault
+        );
     }
 }

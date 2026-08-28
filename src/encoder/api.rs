@@ -682,6 +682,11 @@ pub struct EncoderParams {
     /// applied per-segment via `(seg_quant_index as i32 + delta).clamp(0,
     /// 127)` before `init_matrices`.
     pub(crate) segment_quant_overrides: Option<[i8; 4]>,
+    /// Allocation-fallibility policy for the encoder's top-level O(pixels)
+    /// buffers (#63). Lowered from `Limits::alloc_pref`; the native API leaves
+    /// it at `CodecDefault` (= infallible on every encoder site), the
+    /// `zencodec` adapter forwards `ResourceLimits::prefer_fallible_allocations`.
+    pub(crate) alloc_pref: crate::decoder::alloc_util::AllocPreference,
 }
 
 impl Default for EncoderParams {
@@ -708,8 +713,23 @@ impl Default for EncoderParams {
             cost_model: CostModel::ZenwebpDefault,
             multi_pass_stats: false,
             segment_quant_overrides: None,
+            alloc_pref: crate::decoder::alloc_util::AllocPreference::CodecDefault,
         }
     }
+}
+
+/// Map an [`AllocFailed`](crate::decoder::alloc_util::AllocFailed) from one of
+/// the encoder's fallible O(pixels) allocations to the encode error the
+/// `zencodec` memory-limit path already uses (#63).
+#[cold]
+#[track_caller]
+pub(crate) fn alloc_failed_error(
+    _: crate::decoder::alloc_util::AllocFailed,
+) -> whereat::At<EncodeError> {
+    at!(EncodeError::LimitExceeded(
+        zencodec::LimitKind::Memory,
+        "allocation failed (prefer_fallible_allocations = Fallible)".into(),
+    ))
 }
 
 /// Progress callback for encoding. Return `Err(StopReason)` to cancel.
@@ -1158,6 +1178,7 @@ impl EncoderConfig {
             cost_model: self.cost_model,
             multi_pass_stats: self.multi_pass_stats,
             segment_quant_overrides: None,
+            alloc_pref: self.limits.alloc_pref,
         }
     }
 
@@ -1867,7 +1888,8 @@ pub(crate) fn encode_frame_lossless(
     // identical content fed as RGB (#57).
     if !implicit_dimensions {
         // Convert to contiguous RGBA or RGB for encode_vp8l
-        let (pixels, has_alpha) = convert_to_contiguous(data, width, height, stride, color);
+        let (pixels, has_alpha) =
+            convert_to_contiguous(data, width, height, stride, color, params.alloc_pref)?;
 
         // Build VP8L config from params
         let quality = params.lossy_quality; // quality field controls lossless effort
@@ -1882,8 +1904,15 @@ pub(crate) fn encode_frame_lossless(
             ..super::vp8l::Vp8lConfig::default()
         };
 
-        let vp8l_data =
-            super::vp8l::encode_vp8l(&pixels, width, height, has_alpha, &vp8l_config, stop)?;
+        let vp8l_data = super::vp8l::encode_vp8l_with_alloc(
+            &pixels,
+            width,
+            height,
+            has_alpha,
+            &vp8l_config,
+            params.alloc_pref,
+            stop,
+        )?;
         writer.extend_from_slice(&vp8l_data);
         return Ok(());
     }
@@ -1928,9 +1957,15 @@ pub(crate) fn encode_frame_lossless(
     // expand to RGBA (row-by-row to handle stride)
     let stride_bytes = stride * bpp;
     let row_bytes = ww * bpp;
+    // Top-level O(pixels) buffer: infallible by default, `try_reserve` under
+    // `AllocPreference::Fallible` (#63).
+    let alloc_rgba = |n: usize| {
+        crate::decoder::alloc_util::alloc_zeroed(params.alloc_pref, false, n)
+            .map_err(alloc_failed_error)
+    };
     let mut pixels: Vec<u8> = match color {
         PixelLayout::L8 => {
-            let mut out = alloc::vec![0u8; npixels * 4];
+            let mut out = alloc_rgba(npixels * 4)?;
             for y in 0..hh {
                 garb::bytes::gray_to_rgba(
                     &data[y * stride_bytes..y * stride_bytes + ww],
@@ -1941,7 +1976,7 @@ pub(crate) fn encode_frame_lossless(
             out
         }
         PixelLayout::La8 => {
-            let mut out = alloc::vec![0u8; npixels * 4];
+            let mut out = alloc_rgba(npixels * 4)?;
             for y in 0..hh {
                 garb::bytes::gray_alpha_to_rgba(
                     &data[y * stride_bytes..y * stride_bytes + row_bytes],
@@ -1952,7 +1987,7 @@ pub(crate) fn encode_frame_lossless(
             out
         }
         PixelLayout::Rgb8 => {
-            let mut out = alloc::vec![0u8; npixels * 4];
+            let mut out = alloc_rgba(npixels * 4)?;
             for y in 0..hh {
                 garb::bytes::rgb_to_rgba(
                     &data[y * stride_bytes..y * stride_bytes + row_bytes],
@@ -1963,7 +1998,7 @@ pub(crate) fn encode_frame_lossless(
             out
         }
         PixelLayout::Rgba8 => {
-            let mut out = alloc::vec![0u8; npixels * 4];
+            let mut out = alloc_rgba(npixels * 4)?;
             for y in 0..hh {
                 out[y * ww * 4..(y + 1) * ww * 4]
                     .copy_from_slice(&data[y * stride_bytes..y * stride_bytes + row_bytes]);
@@ -1971,7 +2006,7 @@ pub(crate) fn encode_frame_lossless(
             out
         }
         PixelLayout::Bgr8 => {
-            let mut out = alloc::vec![0u8; npixels * 4];
+            let mut out = alloc_rgba(npixels * 4)?;
             for y in 0..hh {
                 garb::bytes::bgr_to_rgba(
                     &data[y * stride_bytes..y * stride_bytes + row_bytes],
@@ -1982,7 +2017,7 @@ pub(crate) fn encode_frame_lossless(
             out
         }
         PixelLayout::Bgra8 => {
-            let mut out = alloc::vec![0u8; npixels * 4];
+            let mut out = alloc_rgba(npixels * 4)?;
             for y in 0..hh {
                 garb::bytes::bgra_to_rgba(
                     &data[y * stride_bytes..y * stride_bytes + row_bytes],
@@ -1993,7 +2028,7 @@ pub(crate) fn encode_frame_lossless(
             out
         }
         PixelLayout::Argb8 => {
-            let mut out = alloc::vec![0u8; npixels * 4];
+            let mut out = alloc_rgba(npixels * 4)?;
             for y in 0..hh {
                 garb::bytes::argb_to_rgba(
                     &data[y * stride_bytes..y * stride_bytes + row_bytes],
@@ -2169,24 +2204,30 @@ pub(crate) fn encode_frame_lossless(
 
 /// Convert pixel data to contiguous RGBA or RGB for encode_vp8l.
 ///
-/// Returns (pixel_data, has_alpha).
+/// Returns (pixel_data, has_alpha). The output buffer is a top-level
+/// O(pixels) allocation: infallible by default, `try_reserve` under
+/// `AllocPreference::Fallible` (#63).
 fn convert_to_contiguous(
     data: &[u8],
     width: u32,
     height: u32,
     stride: usize,
     color: PixelLayout,
-) -> (Vec<u8>, bool) {
+    alloc_pref: crate::decoder::alloc_util::AllocPreference,
+) -> EncodeResult<(Vec<u8>, bool)> {
     let ww = width as usize;
     let hh = height as usize;
     let npixels = ww * hh;
     let bpp = color.bytes_per_pixel();
     let stride_bytes = stride * bpp;
     let row_bytes = ww * bpp;
+    let alloc_px = |n: usize| {
+        crate::decoder::alloc_util::alloc_zeroed(alloc_pref, false, n).map_err(alloc_failed_error)
+    };
 
-    match color {
+    Ok(match color {
         PixelLayout::Rgb8 => {
-            let mut out = alloc::vec![0u8; npixels * 3];
+            let mut out = alloc_px(npixels * 3)?;
             for y in 0..hh {
                 out[y * ww * 3..(y + 1) * ww * 3]
                     .copy_from_slice(&data[y * stride_bytes..y * stride_bytes + row_bytes]);
@@ -2194,7 +2235,7 @@ fn convert_to_contiguous(
             (out, false)
         }
         PixelLayout::Rgba8 => {
-            let mut out = alloc::vec![0u8; npixels * 4];
+            let mut out = alloc_px(npixels * 4)?;
             for y in 0..hh {
                 out[y * ww * 4..(y + 1) * ww * 4]
                     .copy_from_slice(&data[y * stride_bytes..y * stride_bytes + row_bytes]);
@@ -2203,7 +2244,7 @@ fn convert_to_contiguous(
         }
         PixelLayout::Bgr8 => {
             // Convert BGR to RGB
-            let mut out = alloc::vec![0u8; npixels * 3];
+            let mut out = alloc_px(npixels * 3)?;
             for y in 0..hh {
                 let src = &data[y * stride_bytes..y * stride_bytes + row_bytes];
                 let dst = &mut out[y * ww * 3..(y + 1) * ww * 3];
@@ -2222,7 +2263,7 @@ fn convert_to_contiguous(
         }
         PixelLayout::Bgra8 => {
             // Convert BGRA to RGBA
-            let mut out = alloc::vec![0u8; npixels * 4];
+            let mut out = alloc_px(npixels * 4)?;
             for y in 0..hh {
                 garb::bytes::bgra_to_rgba(
                     &data[y * stride_bytes..y * stride_bytes + row_bytes],
@@ -2234,7 +2275,7 @@ fn convert_to_contiguous(
         }
         PixelLayout::Argb8 => {
             // Convert ARGB to RGBA
-            let mut out = alloc::vec![0u8; npixels * 4];
+            let mut out = alloc_px(npixels * 4)?;
             for y in 0..hh {
                 garb::bytes::argb_to_rgba(
                     &data[y * stride_bytes..y * stride_bytes + row_bytes],
@@ -2246,7 +2287,7 @@ fn convert_to_contiguous(
         }
         PixelLayout::L8 => {
             // Grayscale → RGB
-            let mut out = alloc::vec![0u8; npixels * 3];
+            let mut out = alloc_px(npixels * 3)?;
             for y in 0..hh {
                 let src = &data[y * stride_bytes..y * stride_bytes + ww];
                 let dst = &mut out[y * ww * 3..(y + 1) * ww * 3];
@@ -2258,7 +2299,7 @@ fn convert_to_contiguous(
         }
         PixelLayout::La8 => {
             // Grayscale+Alpha → RGBA
-            let mut out = alloc::vec![0u8; npixels * 4];
+            let mut out = alloc_px(npixels * 4)?;
             for y in 0..hh {
                 garb::bytes::gray_alpha_to_rgba(
                     &data[y * stride_bytes..y * stride_bytes + row_bytes],
@@ -2269,7 +2310,7 @@ fn convert_to_contiguous(
             (out, true)
         }
         PixelLayout::Yuv420 => unreachable!(),
-    }
+    })
 }
 
 /// Quantize alpha values to `num_levels` distinct values using k-means clustering.
@@ -2438,6 +2479,7 @@ pub(crate) fn encode_alpha_lossless(
     alpha_quality: u8,
     effort_level: u8,
     cost_model: CostModel,
+    alloc_pref: crate::decoder::alloc_util::AllocPreference,
     stop: &dyn enough::Stop,
 ) -> EncodeResult<()> {
     let bytes_per_pixel = match color {
@@ -2459,7 +2501,10 @@ pub(crate) fn encode_alpha_lossless(
     let hh = height as usize;
     let stride_bytes = stride * bytes_per_pixel;
     let row_bytes = ww * bytes_per_pixel;
-    let mut alpha_data = Vec::with_capacity(ww * hh);
+    // Tight alpha plane: a top-level O(pixels) buffer (#63).
+    let mut alpha_data =
+        crate::decoder::alloc_util::alloc_with_capacity(alloc_pref, false, ww * hh)
+            .map_err(alloc_failed_error)?;
     for y in 0..hh {
         let row = &data[y * stride_bytes..y * stride_bytes + row_bytes];
         alpha_data.extend(row.iter().skip(alpha_offset).step_by(bytes_per_pixel));
@@ -2496,6 +2541,7 @@ pub(crate) fn encode_alpha_lossless(
         effort_level.min(6),
         reduce_levels,
         cost_model == CostModel::StrictLibwebpParity,
+        alloc_pref,
         stop,
     )
 }
@@ -2512,6 +2558,7 @@ fn encode_alpha_libwebp_pipeline(
     effort_level: u8,
     reduce_levels: bool,
     parity: bool,
+    alloc_pref: crate::decoder::alloc_util::AllocPreference,
     stop: &dyn enough::Stop,
 ) -> EncodeResult<()> {
     use super::alpha as alph;
@@ -2543,6 +2590,7 @@ fn encode_alpha_libwebp_pipeline(
             effort_level,
             !reduce_levels,
             parity,
+            alloc_pref,
             stop,
         )?;
 
@@ -2586,6 +2634,7 @@ pub(crate) fn alpha_vp8l_payload_inner(
     effort_level: u8,
     use_quality_100: bool,
     parity: bool,
+    alloc_pref: crate::decoder::alloc_util::AllocPreference,
     stop: &dyn enough::Stop,
 ) -> EncodeResult<Vec<u8>> {
     // `WebPDispatchAlphaToGreen` leaves A/R/B ZEROED — the alpha-in-green
@@ -2593,7 +2642,10 @@ pub(crate) fn alpha_vp8l_payload_inner(
     // sets exact=1: without it the all-transparent pixels' green would be
     // scrubbed). Dumped bit-level: an opaque variant flips the palette
     // image's alpha tree from {0} to {0,255} and diverges from byte 4. (#38)
-    let mut rgba = Vec::with_capacity(plane.len() * 4);
+    // Alpha-in-green RGBA plane: a top-level O(pixels) buffer (#63).
+    let mut rgba =
+        crate::decoder::alloc_util::alloc_with_capacity(alloc_pref, false, plane.len() * 4)
+            .map_err(alloc_failed_error)?;
     for &a in plane {
         rgba.extend_from_slice(&[0, a, 0, 0]);
     }
@@ -2611,7 +2663,7 @@ pub(crate) fn alpha_vp8l_payload_inner(
         parity,
         ..super::vp8l::Vp8lConfig::default()
     };
-    super::vp8l::encode_vp8l(&rgba, width, height, true, &vp8l_config, stop)
+    super::vp8l::encode_vp8l_with_alloc(&rgba, width, height, true, &vp8l_config, alloc_pref, stop)
 }
 
 pub(crate) const fn chunk_size(inner_bytes: usize) -> u32 {
@@ -2716,6 +2768,7 @@ impl<'a> WebPEncoder<'a> {
         let alpha_quality = self.params.alpha_quality;
         let alpha_effort = self.params.alpha_effort.unwrap_or(self.params.method);
         let alpha_cost_model = self.params.cost_model;
+        let alloc_pref = self.params.alloc_pref;
 
         let mut stats = EncodeStats::default();
 
@@ -2783,6 +2836,7 @@ impl<'a> WebPEncoder<'a> {
                     alpha_quality,
                     alpha_effort,
                     alpha_cost_model,
+                    alloc_pref,
                     self.stop,
                 )?;
 
@@ -2880,6 +2934,7 @@ impl<'a> WebPEncoder<'a> {
         let alpha_quality = self.params.alpha_quality;
         let alpha_effort = self.params.alpha_effort.unwrap_or(self.params.method);
         let alpha_cost_model = self.params.cost_model;
+        let alloc_pref = self.params.alloc_pref;
         let mut stats;
         let diagnostics;
 
@@ -2936,6 +2991,7 @@ impl<'a> WebPEncoder<'a> {
                     alpha_quality,
                     alpha_effort,
                     alpha_cost_model,
+                    alloc_pref,
                     self.stop,
                 )?;
                 total_bytes += chunk_size(alpha_chunk.len());

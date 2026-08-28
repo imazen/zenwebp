@@ -1199,6 +1199,7 @@ impl LossyConfig {
             cost_model: self.cost_model,
             multi_pass_stats: self.multi_pass_stats,
             segment_quant_overrides: self.segment_quant_overrides,
+            alloc_pref: self.limits.alloc_pref,
         }
     }
 }
@@ -1227,6 +1228,7 @@ impl LosslessConfig {
             cost_model: super::api::CostModel::ZenwebpDefault,
             multi_pass_stats: false, // Not applicable to lossless
             segment_quant_overrides: None,
+            alloc_pref: self.limits.alloc_pref,
         }
     }
 }

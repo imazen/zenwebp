@@ -1254,7 +1254,7 @@ impl<'a> Vp8Encoder<'a> {
         height: u16,
         stride: usize,
         params: &super::api::EncoderParams,
-    ) {
+    ) -> super::api::EncodeResult<()> {
         // For ARGB input, convert to RGBA so the standard RGBA code path handles it.
         let argb_converted;
         let (data, color) = if color == PixelLayout::Argb8 {
@@ -1263,7 +1263,11 @@ impl<'a> Vp8Encoder<'a> {
             let bpp = 4usize;
             let stride_bytes = stride * bpp;
             let row_bytes = w * bpp;
-            let mut out = alloc::vec![0u8; w * h * 4];
+            // Top-level O(pixels) buffer: infallible by default, `try_reserve`
+            // under `AllocPreference::Fallible` (#63).
+            let mut out =
+                crate::decoder::alloc_util::alloc_zeroed(params.alloc_pref, false, w * h * 4)
+                    .map_err(super::api::alloc_failed_error)?;
             for y in 0..h {
                 garb::bytes::argb_to_rgba(
                     &data[y * stride_bytes..y * stride_bytes + row_bytes],
@@ -1470,6 +1474,7 @@ impl<'a> Vp8Encoder<'a> {
             u_bytes,
             v_bytes,
         );
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1518,7 +1523,7 @@ impl<'a> Vp8Encoder<'a> {
         self.num_segments = params.num_segments.clamp(1, 4);
         self.preset = params.preset;
         self.partition_limit = params.partition_limit.unwrap_or(0).min(100);
-        self.prepare_input_for_encoding(data, color, width, height, stride, params);
+        self.prepare_input_for_encoding(data, color, width, height, stride, params)?;
 
         // Calculate initial level costs for mode selection and trellis
         if self.level_costs.is_dirty() {

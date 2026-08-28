@@ -505,6 +505,7 @@ fn encode_frame_data(
                 params.alpha_quality,
                 params.alpha_effort.unwrap_or(params.method),
                 params.cost_model,
+                params.alloc_pref,
                 &Unstoppable,
             )
             .map_err_at(MuxError::EncodeError)?;

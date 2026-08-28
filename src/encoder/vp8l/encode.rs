@@ -37,6 +37,30 @@ pub fn encode_vp8l(
     config: &Vp8lConfig,
     stop: &dyn enough::Stop,
 ) -> EncodeResult<Vec<u8>> {
+    encode_vp8l_with_alloc(
+        pixels,
+        width,
+        height,
+        has_alpha,
+        config,
+        crate::decoder::alloc_util::AllocPreference::CodecDefault,
+        stop,
+    )
+}
+
+/// [`encode_vp8l`] with an explicit allocation-fallibility policy for the
+/// ARGB plane (the encoder's largest single buffer, 4 bytes/pixel). The
+/// public entry point uses `CodecDefault` (= infallible here); the crate's
+/// encode paths forward `EncoderParams::alloc_pref` (#63).
+pub(crate) fn encode_vp8l_with_alloc(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    has_alpha: bool,
+    config: &Vp8lConfig,
+    alloc_pref: crate::decoder::alloc_util::AllocPreference,
+    stop: &dyn enough::Stop,
+) -> EncodeResult<Vec<u8>> {
     if width == 0 || width > 16384 || height == 0 || height > 16384 {
         return Err(at!(EncodeError::InvalidDimensions));
     }
@@ -62,7 +86,9 @@ pub fn encode_vp8l(
     // Convert RGBA/RGB bytes to packed ARGB u32 array.
     // On little-endian, ARGB u32 has byte order [B,G,R,A] = BGRA,
     // so we use garb's SIMD-accelerated rgba_to_bgra / rgb_to_bgra.
-    let mut argb: Vec<u32> = alloc::vec![0u32; w * h];
+    let mut argb: Vec<u32> =
+        crate::decoder::alloc_util::alloc_filled(alloc_pref, false, w * h, 0u32)
+            .map_err(crate::encoder::api::alloc_failed_error)?;
     #[cfg(target_endian = "little")]
     {
         let dst_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut argb);

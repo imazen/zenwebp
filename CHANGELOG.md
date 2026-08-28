@@ -72,6 +72,38 @@ here has landed; see "Changed (BREAKING)" below.)
   falsified for the whole codebase; the migration is hygiene.
 
 ### Fixed (2026-08-27 issue sweep)
+- **`prefer_fallible_allocations` now reaches the encoder (#63, encoder
+  half).** The zencodec `WebpEncodeJob` dropped
+  `ResourceLimits::prefer_fallible_allocations` on the floor (only pixel /
+  dimension caps were lowered into the encoder's `Limits`); it is now carried
+  as `EncoderParams::alloc_pref` and honored by the encoder's top-level
+  O(pixels) buffers — the layout-expansion copies in `encode_frame_lossless`
+  / `convert_to_contiguous`, the VP8L ARGB plane
+  (`encode_vp8l_with_alloc`, crate-internal; the public `encode_vp8l` is
+  unchanged), the lossy `Argb8` → RGBA fix-up, and both ALPH alpha planes.
+  Encoder sites default to **infallible** (input is caller-sized and the
+  memory budget is already pre-flighted against `heuristics::estimate_encode`),
+  so `CodecDefault` / native API behaviour is byte-for-byte unchanged
+  (`dev/output_hash.rs` COMBINED `b1309ba43b9b5e43`, libwebp byte-parity
+  gate green); under `Fallible` an allocation failure returns
+  `EncodeError::LimitExceeded(LimitKind::Memory, ..)` instead of aborting.
+  The deeper per-pixel working set (YUV planes, hash chains, backward refs,
+  histograms, token buffers) stays infallible and is documented as such in
+  `decoder::alloc_util`. Tests: `tests/alloc_pref_encode.rs` (three-mode
+  byte identity on lossless RGB/RGBA/BGRA/GRAY and lossy RGB/RGBA/BGRA with
+  real transparency — watched to FAIL when the fallible helper is stubbed to
+  `Err`), `codec::tests::encode_job_lowers_alloc_preference_into_encoder_params`
+  (watched to FAIL with the lowering removed), `alloc_util::alloc_filled`
+  unit tests.
+- **Decode-side allocation audit closed (#63, decoder half):** the last
+  unrouted full-image conversion buffers — `decode_bgr`, `decode_rgb565`,
+  `decode_rgba4444`, and `decode_yuv420`'s lossless/animated fallback
+  planes — now go through `alloc_util` (fallible by default like the RGBA
+  buffer they convert). Every remaining plain `vec!` on the decode path is
+  input-bounded (VP8 partitions are size-checked against the remaining input
+  before allocation) or width-bounded scratch (Huffman tables ≤ 2^15
+  entries, color cache ≤ 2^11, per-MB-row context, per-row transform
+  scratch, dither/loop-filter test fixtures).
 - **Lossless decoder errors now carry their origin `file:line` (#60,
   remaining half).** `LosslessDecoder`'s header / transform-list /
   Huffman-code / color-cache paths and the transform entry points returned a

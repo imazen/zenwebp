@@ -228,6 +228,7 @@ impl zencodec::CategorizedError for DecodeError {
 
 // Core decoder implementation using SliceReader for no_std compatibility
 use alloc::format;
+#[cfg(test)]
 use alloc::vec;
 use alloc::vec::Vec;
 use core::num::NonZeroU16;
@@ -2010,7 +2011,14 @@ pub fn decode_bgra(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
 #[track_caller]
 pub fn decode_bgr(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
     let (rgba, w, h) = decode_rgba(data)?;
-    let mut bgr = vec![0u8; (w * h * 3) as usize];
+    // Full-image conversion buffer sized from the (validated) header →
+    // fallible by default like the RGBA buffer it converts (#63).
+    let mut bgr = super::alloc_util::alloc_zeroed(
+        super::alloc_util::AllocPreference::CodecDefault,
+        true,
+        (w * h * 3) as usize,
+    )
+    .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
     garb::bytes::rgba_to_bgr(&rgba, &mut bgr).map_err(|e| at!(garb_err(e)))?;
     Ok((bgr, w, h))
 }
@@ -2208,13 +2216,19 @@ fn decode_yuv420_with_config(data: &[u8], config: &DecodeConfig) -> DecodeResult
     let luma_width = 16 * mb_width;
     let chroma_width = 8 * mb_width;
 
-    let mut y = Vec::with_capacity((w * h) as usize);
+    // Tight plane buffers sized from the decoded dimensions → fallible by
+    // default, same policy as the lossy branch above (#63).
+    let oom = |_| at!(DecodeError::MemoryLimitExceeded);
+    let mut y =
+        super::alloc_util::alloc_with_capacity(alloc_pref, true, (w * h) as usize).map_err(oom)?;
     for row in 0..h as usize {
         y.extend_from_slice(&y_bytes[row * luma_width..row * luma_width + w as usize]);
     }
 
-    let mut u = Vec::with_capacity((uv_w * uv_h) as usize);
-    let mut v = Vec::with_capacity((uv_w * uv_h) as usize);
+    let mut u = super::alloc_util::alloc_with_capacity(alloc_pref, true, (uv_w * uv_h) as usize)
+        .map_err(oom)?;
+    let mut v = super::alloc_util::alloc_with_capacity(alloc_pref, true, (uv_w * uv_h) as usize)
+        .map_err(oom)?;
     for row in 0..uv_h as usize {
         u.extend_from_slice(&u_bytes[row * chroma_width..row * chroma_width + uv_w as usize]);
         v.extend_from_slice(&v_bytes[row * chroma_width..row * chroma_width + uv_w as usize]);
@@ -2269,7 +2283,13 @@ pub fn decode_argb_premultiplied(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32
 #[track_caller]
 pub fn decode_rgb565(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
     let (rgba, w, h) = decode_rgba(data)?;
-    let mut out = vec![0u8; (w * h * 2) as usize];
+    // Full-image conversion buffer → fallible by default (#63).
+    let mut out = super::alloc_util::alloc_zeroed(
+        super::alloc_util::AllocPreference::CodecDefault,
+        true,
+        (w * h * 2) as usize,
+    )
+    .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
     garb::bytes::rgba_to_rgb565(&rgba, &mut out).map_err(|e| at!(garb_err(e)))?;
     Ok((out, w, h))
 }
@@ -2280,7 +2300,13 @@ pub fn decode_rgb565(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
 #[track_caller]
 pub fn decode_rgba4444(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
     let (rgba, w, h) = decode_rgba(data)?;
-    let mut out = vec![0u8; (w * h * 2) as usize];
+    // Full-image conversion buffer → fallible by default (#63).
+    let mut out = super::alloc_util::alloc_zeroed(
+        super::alloc_util::AllocPreference::CodecDefault,
+        true,
+        (w * h * 2) as usize,
+    )
+    .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
     garb::bytes::rgba_to_rgba4444(&rgba, &mut out).map_err(|e| at!(garb_err(e)))?;
     Ok((out, w, h))
 }

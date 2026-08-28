@@ -29,6 +29,24 @@
 //! signal with no codec-error coupling — and each call site maps `AllocFailed`
 //! to the error type appropriate for its layer (`InternalDecodeError` on the
 //! hot decode paths, `DecodeError` at the API boundary).
+//!
+//! # Encoder regime (#63)
+//!
+//! The encoder's input is caller-owned, so its buffer sizes are *trusted*
+//! (the caller already holds an image of that size) and the configured
+//! memory budget is enforced up front by the `zencodec` adapter's pre-flight
+//! against `heuristics::estimate_encode`. Encoder sites therefore default to
+//! the **infallible** path (`site_default_fallible = false`), and the
+//! preference only changes behaviour when a caller asks for
+//! [`Fallible`](AllocPreference::Fallible) through
+//! `ResourceLimits::prefer_fallible_allocations`. Under `Fallible` the
+//! top-level O(pixels) encoder buffers — the layout-expansion copies, the
+//! VP8L ARGB plane, the lossy ARGB→RGBA fix-up and the ALPH alpha planes —
+//! go through `try_reserve` and an allocation failure surfaces as
+//! `EncodeError::LimitExceeded(LimitKind::Memory, ..)` instead of an abort.
+//! The deeper per-pixel working set (YUV planes, hash chains, backward
+//! references, histograms, token buffers) is still infallible; the pre-flight
+//! estimate is the guard for those.
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -139,9 +157,53 @@ pub(crate) fn alloc_with_capacity(
     }
 }
 
+/// Allocate `n` elements of `value` (any `Clone` element type), honoring the
+/// per-site fallibility. The element-generic sibling of [`alloc_zeroed`] for
+/// buffers such as the VP8L `Vec<u32>` ARGB plane.
+///
+/// * fallible → `try_reserve_exact(n)` then fill, returning [`AllocFailed`]
+///   on allocation failure.
+/// * infallible → `vec![value; n]` (aborts on OOM).
+#[inline]
+pub(crate) fn alloc_filled<T: Clone>(
+    pref: AllocPreference,
+    site_default_fallible: bool,
+    n: usize,
+    value: T,
+) -> Result<Vec<T>, AllocFailed> {
+    if resolve_fallible(pref, site_default_fallible) {
+        let mut v = Vec::new();
+        v.try_reserve_exact(n).map_err(|_| AllocFailed)?;
+        v.resize(n, value);
+        Ok(v)
+    } else {
+        Ok(vec![value; n])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alloc_filled_all_modes_equal_contents() {
+        let a = alloc_filled(AllocPreference::CodecDefault, false, 1000, 0xAB_u32).unwrap();
+        let b = alloc_filled(AllocPreference::Infallible, false, 1000, 0xAB_u32).unwrap();
+        let c = alloc_filled(AllocPreference::Fallible, false, 1000, 0xAB_u32).unwrap();
+        assert_eq!(a.len(), 1000);
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+        assert!(a.iter().all(|&x| x == 0xAB));
+    }
+
+    #[test]
+    fn alloc_filled_fallible_oom_returns_err() {
+        assert!(alloc_filled(AllocPreference::Fallible, false, usize::MAX, 0u32).is_err());
+        // Encoder sites default to infallible: CodecDefault must NOT take the
+        // fallible path there (an impossible size would abort, so only the
+        // Fallible override is exercised against usize::MAX).
+        assert!(!resolve_fallible(AllocPreference::CodecDefault, false));
+    }
 
     #[test]
     fn alloc_with_capacity_all_modes_reserve() {
