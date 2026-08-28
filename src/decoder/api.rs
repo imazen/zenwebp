@@ -925,6 +925,10 @@ impl<'a> WebPDecoder<'a> {
         webp_decode_options: WebPDecodeOptions,
         limits: super::limits::Limits,
     ) -> DecodeResult<Self> {
+        // `Limits::max_file_size` had no caller on the native path — the
+        // documented 100 MB default was never enforced outside the zencodec
+        // adapter (#78).
+        limits.check_file_size(data.len() as u64)?;
         let mut decoder = Self {
             r: SliceReader::new(data),
             width: 0,

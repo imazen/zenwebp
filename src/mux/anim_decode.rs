@@ -81,6 +81,10 @@ pub struct AnimationDecoder<'a> {
     frames_read: u32,
     total_frames: u32,
     stop: Option<&'a dyn enough::Stop>,
+    /// `Limits::max_memory` from the config, applied to the RETAINED total
+    /// in [`Self::decode_all`] (the per-frame `check_memory` inside
+    /// `read_frame` only ever sees one canvas at a time) (#78).
+    max_memory: Option<u64>,
 }
 
 impl<'a> AnimationDecoder<'a> {
@@ -128,6 +132,7 @@ impl<'a> AnimationDecoder<'a> {
             frames_read: 0,
             total_frames,
             stop: None,
+            max_memory: config.limits.max_memory,
         })
     }
 
@@ -259,10 +264,25 @@ impl<'a> AnimationDecoder<'a> {
     }
 
     /// Decode all remaining frames at once.
+    ///
+    /// Every frame is a full canvas copy, so the retained total is
+    /// `frames × canvas`. That aggregate is checked against
+    /// `Limits::max_memory` (counting the working canvas too) and fails with
+    /// [`DecodeError::MemoryLimitExceeded`] before the next copy is made —
+    /// the per-frame check inside `read_frame` cannot see the accumulation
+    /// (#78). Use [`Self::next_frame`] / [`Self::decode_next`] to stream
+    /// frames under a tighter budget.
     pub fn decode_all(&mut self) -> Result<Vec<AnimFrame>, whereat::At<DecodeError>> {
         self.reset()?;
         let mut frames = Vec::with_capacity(self.total_frames as usize);
+        let mut retained = self.buf.len() as u64;
         while let Some(frame) = self.next_frame()? {
+            retained = retained.saturating_add(frame.data.len() as u64);
+            if let Some(max) = self.max_memory
+                && retained > max
+            {
+                return Err(at!(DecodeError::MemoryLimitExceeded));
+            }
             frames.push(frame);
         }
         Ok(frames)

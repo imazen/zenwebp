@@ -36,6 +36,10 @@ use whereat::at;
 
 use super::api::{DecodeConfig, DecodeError, DecodeResult, ImageInfo, WebPDecoder};
 
+/// Smallest buffer worth handing to `WebPDecoder::new`: RIFF header (12) +
+/// chunk header (8) + the VP8/VP8L/VP8X header bytes.
+const HEADER_MIN_BYTES: usize = 30;
+
 /// Status returned from [`StreamingDecoder::append`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -59,6 +63,11 @@ pub struct StreamingDecoder {
     buf: Vec<u8>,
     riff_size: Option<u32>,
     header_parsed: bool,
+    /// Buffered length at which the next header parse is attempted. Doubles
+    /// after each failed attempt so a stream delivered in tiny pieces costs
+    /// O(n) total parsing instead of O(n²) (#78); a completed stream is
+    /// always parsed regardless.
+    next_header_attempt: usize,
     config: DecodeConfig,
 }
 
@@ -70,6 +79,7 @@ impl StreamingDecoder {
             buf: Vec::new(),
             riff_size: None,
             header_parsed: false,
+            next_header_attempt: HEADER_MIN_BYTES,
             config: DecodeConfig::default(),
         }
     }
@@ -81,6 +91,7 @@ impl StreamingDecoder {
             buf: Vec::new(),
             riff_size: None,
             header_parsed: false,
+            next_header_attempt: HEADER_MIN_BYTES,
             config,
         }
     }
@@ -89,6 +100,11 @@ impl StreamingDecoder {
     ///
     /// Returns the current status after incorporating the new data.
     pub fn append(&mut self, data: &[u8]) -> Result<StreamStatus, whereat::At<DecodeError>> {
+        // `Limits::max_file_size` bounds the buffered stream too; without
+        // this the buffer grew without limit (#78).
+        self.config
+            .limits
+            .check_file_size((self.buf.len() as u64).saturating_add(data.len() as u64))?;
         self.buf.extend_from_slice(data);
 
         // Try to parse RIFF header (12 bytes minimum)
@@ -107,24 +123,32 @@ impl StreamingDecoder {
             self.riff_size = Some(size);
         }
 
-        // Check if we have enough for headers (RIFF + first chunk header)
-        if !self.header_parsed && self.buf.len() >= 30 {
-            // Try parsing — if it succeeds, headers are ready
-            if WebPDecoder::new(&self.buf).is_ok() {
-                self.header_parsed = true;
-            }
-        }
-
         // Check if all data has arrived. Compute in u64: `riff_size as usize
         // + 8` wraps on a 32-bit target for a file declaring a near-u32::MAX
         // RIFF size, which would report Complete after a handful of bytes and
         // hand `finish_*` truncated garbage (same class as the #74 container
         // spin — narrow only after the arithmetic).
-        if let Some(riff_size) = self.riff_size {
+        let complete = self.riff_size.is_some_and(|riff_size| {
             let total = u64::from(riff_size) + 8; // RIFF header is 8 bytes before payload
-            if self.buf.len() as u64 >= total {
-                return Ok(StreamStatus::Complete);
+            self.buf.len() as u64 >= total
+        });
+
+        // Check if we have enough for headers (RIFF + first chunk header).
+        // `WebPDecoder::new` walks every chunk in the buffer, so retrying it
+        // on every append is quadratic in the number of pieces; retry only
+        // once the buffer has doubled since the last failure (or the stream
+        // is complete, so `info()` is available whenever `Complete` is).
+        if !self.header_parsed && (complete || self.buf.len() >= self.next_header_attempt) {
+            // Try parsing — if it succeeds, headers are ready
+            if WebPDecoder::new(&self.buf).is_ok() {
+                self.header_parsed = true;
+            } else {
+                self.next_header_attempt = self.buf.len().saturating_mul(2).max(HEADER_MIN_BYTES);
             }
+        }
+
+        if complete {
+            return Ok(StreamStatus::Complete);
         }
 
         if self.header_parsed {

@@ -74,6 +74,14 @@ pub enum MuxError {
         /// Canvas height.
         canvas_height: u32,
     },
+
+    /// A frame duration does not fit the ANMF chunk's 24-bit field
+    /// (max 16 777 215 ms). Previously truncated silently on write (#78).
+    #[error("Frame duration {duration_ms} ms exceeds the 24-bit ANMF field (max 16777215)")]
+    FrameDurationTooLarge {
+        /// The offending duration in milliseconds.
+        duration_ms: u32,
+    },
 }
 
 // Codec-agnostic error taxonomy (zencodec PR #103/#116, origin-first two-level
@@ -98,6 +106,7 @@ impl zencodec::CategorizedError for MuxError {
             MuxError::InvalidDimensions { .. }
             | MuxError::OddFrameOffset { .. }
             | MuxError::FrameOutsideCanvas { .. }
+            | MuxError::FrameDurationTooLarge { .. }
             // Caller asked for a frame index past the end of the sequence.
             | MuxError::FrameOutOfBounds { .. } => C::Request(RE::Invalid(IK::Parameters)),
 
@@ -158,6 +167,13 @@ mod mux_category_tests {
         );
         assert_eq!(
             MuxError::FrameOutOfBounds { index: 9, total: 2 }.category(),
+            C::Request(RE::Invalid(IK::Parameters))
+        );
+        assert_eq!(
+            MuxError::FrameDurationTooLarge {
+                duration_ms: 0x0100_0000
+            }
+            .category(),
             C::Request(RE::Invalid(IK::Parameters))
         );
 

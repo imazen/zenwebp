@@ -438,6 +438,21 @@ impl<'a> WebPDemuxer<'a> {
             }
         }
 
+        // Every recorded ANMF must parse: `frames()` yields `DemuxFrame`s
+        // (not `Result`s) and stops at the first frame `parse_anmf_frame`
+        // rejects, while `num_frames()` / `ExactSizeIterator::len()` counted
+        // the record — a malformed middle frame made the iterator under-run
+        // its own length (#78). Reject the file up front instead.
+        for idx in 0..demuxer.frames.len() {
+            if demuxer.parse_anmf_frame(idx).is_none() {
+                return Err(at!(MuxError::InvalidFormat(alloc::format!(
+                    "ANMF frame {} is malformed (payload {} bytes)",
+                    idx + 1,
+                    demuxer.frames[idx].anmf_payload_size
+                ))));
+            }
+        }
+
         Ok(demuxer)
     }
 

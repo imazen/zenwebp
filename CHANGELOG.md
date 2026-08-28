@@ -101,6 +101,34 @@ here has landed; see "Changed (BREAKING)" below.)
     (`Limits::max_memory` does).
   - Tests: `tests/review_backlog_78.rs` — each watched to FAIL against its
     defect (gate removed / callback dropped / bypass restored).
+- **#78 review backlog, decoder/mux subset (refs #78):**
+  - `AnimationDecoder::decode_all` enforces `Limits::max_memory` on the
+    RETAINED total (working canvas + every frame copy) and fails with
+    `MemoryLimitExceeded` before the next copy; the per-frame check inside
+    `read_frame` never saw the accumulation. `next_frame` streaming under
+    the same budget is unaffected.
+  - `Limits::max_file_size` is now enforced on the native decode path
+    (`WebPDecoder` construction) and on `StreamingDecoder::append`'s
+    buffered total — `check_file_size` had no caller outside the zencodec
+    adapter, so the documented 100 MB default of `Limits::default()` was
+    never applied natively. **Behaviour change:** native decodes of inputs
+    above the configured `max_file_size` now return
+    `DecodeError::InvalidParameter` instead of proceeding.
+  - `StreamingDecoder::append` retries the header parse only once the
+    buffer has doubled since the last failed attempt (and always once the
+    stream is complete): `WebPDecoder::new` walks every chunk, so the old
+    retry-on-every-append was O(n²) in the number of pieces. `info()` is
+    still available at `HeaderReady` and always by `Complete`.
+  - `WebPDemuxer::new` validates every recorded ANMF frame up front and
+    rejects the file (`MuxError::InvalidFormat`) if one is malformed:
+    `frames()` used to stop at the first unparseable frame while
+    `num_frames()` / `ExactSizeIterator::len()` still counted it.
+  - `WebPMux::push_frame` rejects `duration_ms > 16 777 215` with the new
+    `MuxError::FrameDurationTooLarge { duration_ms }` (`MuxError` is
+    `#[non_exhaustive]`; categorized as `Request(Invalid(Parameters))`)
+    instead of truncating on write.
+  - Tests in `tests/review_backlog_78.rs::decode_mux`, each watched to
+    FAIL with its check removed.
 - **`prefer_fallible_allocations` now reaches the encoder (#63, encoder
   half).** The zencodec `WebpEncodeJob` dropped
   `ResourceLimits::prefer_fallible_allocations` on the floor (only pixel /

@@ -246,6 +246,13 @@ impl WebPMux {
                 canvas_height: self.canvas_height,
             }));
         }
+        // The ANMF duration field is 24 bits; `write_u24_le` used to truncate
+        // anything larger silently (#78).
+        if frame.duration_ms > 0x00FF_FFFF {
+            return Err(whereat::at!(MuxError::FrameDurationTooLarge {
+                duration_ms: frame.duration_ms,
+            }));
+        }
         self.frames.push(frame);
         Ok(())
     }
