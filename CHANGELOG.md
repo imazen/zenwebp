@@ -91,7 +91,11 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
   set (+0.007 %): CID22 photos now land on libwebp's group counts exactly
   and shrink, `weather` m5 1.0058 → 1.0012, `archives` m5 1.0022 → 1.0014,
   three screens grow ~0.1 %. The stochastic stop condition also now matches
-  (`size >= target` keeps merging; zero byte effect). Byte-parity sweep
+  (`size >= target` keeps merging; zero byte effect). The harness also dumps
+  both encoders' backward-reference streams (`LREF` / `ZREF`): the residual
+  #71 gap starts at one TraceBackwards choice (libwebp `M d=1 l=8` +
+  literal vs zenwebp `M d=5 l=9` at token 888/966 of `weather` m5),
+  recorded in the doc as the next chunk. Byte-parity sweep
   unchanged; `dev/output_hash.rs` COMBINED `4ab15c58a26f87e0` →
   `4ecf20dac54d177f`.
 - **VP8L stochastic clustering ports two `HistogramCombineStochastic`

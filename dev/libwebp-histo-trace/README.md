@@ -20,6 +20,13 @@ HISTDBG=1 cargo run --release --features mode_debug --example issue71_probe -- \
 grep '^LHIST phase' lib.trace; grep '^ZHIST phase' zen.trace
 ```
 
+Backward references: the same build prints `LREF IMG w=<width>` then one
+`LREF L <argb>` / `LREF C <idx>` / `LREF M d=<code> l=<len>` line per token
+of every (sub-)image `StoreImageToBitMask` writes; zenwebp's `REFDBG=1`
+prints the identical `ZREF` shape. Match streams by width (the two m5
+candidates — cache and no-cache — come in opposite order on the two
+sides; the one with `C` tokens is the cache variant).
+
 `LHIST`/`ZHIST phase=...` lines carry the histogram count after each
 phase (copy / bin / stochastic / greedy / remap); `push` lines are the
 `HistoQueuePush` evaluations (stochastic + greedy), `bin` lines the

@@ -9,7 +9,7 @@ VENDOR=${VENDOR:-$(cargo read --path-only libwebp-sys | tail -1)/vendor}
 [ -d "$VENDOR/src/enc" ] || { echo "vendor dir not found: $VENDOR" >&2; exit 1; }
 rm -rf "$OUT/src" && mkdir -p "$OUT"
 cp -R "$VENDOR" "$OUT/src"
-python3 "$HERE/instrument.py" "$OUT/src/src/enc/histogram_enc.c"
+python3 "$HERE/instrument.py" "$OUT/src/src/enc/histogram_enc.c" "$OUT/src/src/enc/vp8l_enc.c"
 CC=${CC:-cc}
 ARCHFLAG=""
 case "$(uname -m)" in

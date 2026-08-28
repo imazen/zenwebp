@@ -133,3 +133,32 @@ rep("""        if (try_combine ||
 """)
 open(p, 'w').write(s)
 print("instrumented", p)
+
+# Optional second file: vp8l_enc.c — dump the final backward-reference stream
+# of every image/sub-image (`LREF` lines, pairs with zenwebp's `REFDBG=1`
+# `ZREF` lines) from StoreImageToBitMask.
+if len(sys.argv) > 2:
+    p2 = sys.argv[2]
+    s = open(p2).read()
+    old2 = """  VP8LRefsCursor c = VP8LRefsCursorInit(refs);
+  while (VP8LRefsCursorOk(&c)) {
+    const PixOrCopy* const v = c.cur_pos;
+    if ((tile_x != (x & tile_mask)) || (tile_y != (y & tile_mask))) {"""
+    new2 = """  VP8LRefsCursor c = VP8LRefsCursorInit(refs);
+  fprintf(stderr, "LREF IMG w=%d\\n", width);
+  while (VP8LRefsCursorOk(&c)) {
+    const PixOrCopy* const v = c.cur_pos;
+    if (PixOrCopyIsLiteral(v)) {
+      fprintf(stderr, "LREF L %08x\\n", v->argb_or_distance);
+    } else if (PixOrCopyIsCacheIdx(v)) {
+      fprintf(stderr, "LREF C %u\\n", v->argb_or_distance);
+    } else {
+      fprintf(stderr, "LREF M d=%u l=%u\\n", v->argb_or_distance, PixOrCopyLength(v));
+    }
+    if ((tile_x != (x & tile_mask)) || (tile_y != (y & tile_mask))) {"""
+    assert s.count(old2) == 1, s.count(old2)
+    s = s.replace(old2, new2)
+    if '#include <stdio.h>' not in s:
+        s = s.replace('#include <assert.h>\n', '#include <assert.h>\n#include <stdio.h>\n', 1)
+    open(p2, 'w').write(s)
+    print("instrumented", p2)
