@@ -95,6 +95,13 @@ fn main() {
         let path = Path::new(path);
         let (rgba, w, h) = load_png_rgba(path);
         let name = path.file_stem().unwrap().to_string_lossy();
+        // For dev/libwebp-histo-trace: dump the raw RGBA the encoders see.
+        if let Ok(dir) = std::env::var("ISSUE71_DUMP_RGBA") {
+            std::fs::create_dir_all(&dir).expect("dump dir");
+            let out = Path::new(&dir).join(format!("{name}.rgba"));
+            std::fs::write(&out, &rgba).expect("dump rgba");
+            eprintln!("dumped {} ({w}x{h})", out.display());
+        }
         for &m in &methods {
             let zen_cfg = zenwebp::LosslessConfig::new()
                 .with_method(m)

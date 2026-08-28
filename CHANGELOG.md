@@ -80,6 +80,20 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
   falsified for the whole codebase; the migration is hygiene.
 
 ### Changed (2026-08-28, #71 probe)
+- **VP8L entropy binning uses libwebp's quartile bin function (refs #71).**
+  `get_bin_id_for_entropy` cut the dominant-cost range in thirds
+  (`(NUM_PARTITIONS − 1)·delta/range`); libwebp's `GetBinIdForEntropy` is
+  `(int)((NUM_PARTITIONS − 1e-6)·delta/range)` in double — quartiles. Found
+  with the new instrumented-libwebp differential
+  (`dev/libwebp-histo-trace/`: `build.sh` + `instrument.py` + `main.c`,
+  paired with `HISTDBG=1` on the `mode_debug` probe), which also shows the
+  pair costs are identical on both sides. Measured a wash on the 11-file
+  set (+0.007 %): CID22 photos now land on libwebp's group counts exactly
+  and shrink, `weather` m5 1.0058 → 1.0012, `archives` m5 1.0022 → 1.0014,
+  three screens grow ~0.1 %. The stochastic stop condition also now matches
+  (`size >= target` keeps merging; zero byte effect). Byte-parity sweep
+  unchanged; `dev/output_hash.rs` COMBINED `4ab15c58a26f87e0` →
+  `4ecf20dac54d177f`.
 - **VP8L stochastic clustering ports two `HistogramCombineStochastic`
   details (refs #71): −0.023 % more on the 11-file m4/m5 set, zen/libwebp
   1.0004 → 1.0002.** The push threshold is tightened inside the sampling

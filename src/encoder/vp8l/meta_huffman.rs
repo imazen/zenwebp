@@ -188,6 +188,17 @@ pub fn print_clustering_stats() {
     cluster_trace::print_and_reset();
 }
 
+/// `HISTDBG` phase trace (#71): one line per clustering phase boundary,
+/// shaped like the instrumented libwebp's `LHIST phase=...` lines
+/// (`dev/libwebp-histo-trace/`). No-op without `mode_debug`.
+#[inline]
+fn zhist_phase(_phase: &str, _size: usize, _extra: core::fmt::Arguments<'_>) {
+    #[cfg(feature = "mode_debug")]
+    if std::env::var("HISTDBG").is_ok() {
+        std::eprintln!("ZHIST phase={_phase} size={_size} {_extra}");
+    }
+}
+
 /// Maximum Huffman group count for greedy combining.
 const MAX_HISTO_GREEDY: usize = 100;
 
@@ -282,11 +293,17 @@ fn get_bin_id_for_entropy(min: u64, max: u64, val: u64) -> usize {
     if min == max {
         return 0;
     }
-    // Map val to [0, NUM_PARTITIONS-1] linearly
+    // libwebp's GetBinIdForEntropy: `(int)((NUM_PARTITIONS - 1e-6) * delta /
+    // range)` in double — i.e. the range cut into NUM_PARTITIONS equal
+    // quartiles, the maximum landing in the last one. zenwebp used
+    // `(NUM_PARTITIONS - 1) * delta / range` (thirds, bin 3 only at the
+    // maximum), which put far more tiles into bin 0 and over-merged them
+    // (#71: 14 distinct bins vs libwebp's 23 on `weather` m5, and an
+    // entropy-bin phase ending at 118 groups vs 193).
     let range = max - min;
-    let offset = val.saturating_sub(min);
-    let bin = ((NUM_PARTITIONS as u64 - 1) * offset) / range;
-    bin.min(NUM_PARTITIONS as u64 - 1) as usize
+    let delta = val.saturating_sub(min);
+    let bin = ((NUM_PARTITIONS as f64 - 1e-6) * delta as f64 / range as f64) as usize;
+    bin.min(NUM_PARTITIONS - 1)
 }
 
 /// Priority queue entry for histogram pair merging.
@@ -651,13 +668,22 @@ fn entropy_bin_combine_phase(
         let cost_thresh_val =
             threshold.saturating_sub(div_round_i64(bit_cost_incoming as i64 * factor, 100) as u64);
 
-        if let Some((combined_cost, per_type)) = get_combined_histogram_cost_with_detail(
+        let eval = get_combined_histogram_cost_with_detail(
             &state.histos[first],
             &state.costs[first],
             &state.histos[i],
             &state.costs[i],
             cost_thresh_val,
-        ) {
+        );
+        #[cfg(feature = "mode_debug")]
+        if std::env::var("HISTDBG").is_ok() {
+            std::eprintln!(
+                "ZHIST bin idx={i} first={first} bin={bin_id} cost={bit_cost_incoming} thresh={} eval={}",
+                -div_round_i64(bit_cost_incoming as i64 * factor, 100),
+                u8::from(eval.is_some())
+            );
+        }
+        if let Some((combined_cost, per_type)) = eval {
             // `try_combine` (HistogramCombineEntropyBin): RED=1, BLUE=2,
             // ALPHA=3 in `trivial_sym`. The combined histogram's trivial
             // symbol is the shared one or none (`costs_from_merge` rule).
@@ -672,6 +698,14 @@ fn entropy_bin_combine_phase(
                         || c.trivial_sym[3].is_none()
                 };
                 try_combine = non_trivial(ci) && non_trivial(cf);
+            }
+            #[cfg(feature = "mode_debug")]
+            if std::env::var("HISTDBG").is_ok() {
+                std::eprintln!(
+                    "ZHIST bin-merge idx={i} first={first} try_combine={} failures={}",
+                    u8::from(try_combine),
+                    bin_failures[bin_id]
+                );
             }
             if try_combine || bin_failures[bin_id] >= MAX_COMBINE_FAILURES {
                 cluster_trace::inc_entropy_bin_merges();
@@ -714,7 +748,10 @@ fn stochastic_combine_phase(state: &mut ClusterState, target_size: usize) -> boo
     let mut seed: u32 = 1;
 
     for _iter in 0..outer_iters {
-        if compact_size < 2 || compact_size <= target_size {
+        // libwebp: `image_histo->size >= min_cluster_size` keeps merging AT
+        // the target, so the phase ends one below it (42 for target 43 on
+        // `weather` m5, where zenwebp stopped at 43).
+        if compact_size < 2 || compact_size < target_size {
             break;
         }
         tries_with_no_success += 1;
@@ -1073,10 +1110,20 @@ fn cluster_histograms(
     // VP8LGetHistoImageSymbols with low_effort set.
     let bin_ids = compute_entropy_bins(&state, low_effort);
     let num_active = state.count_active();
+    zhist_phase(
+        "copy",
+        num_active,
+        format_args!("raw={n} cache_bits={cache_bits} quality={quality}"),
+    );
     let num_bins = if low_effort { NUM_PARTITIONS } else { BIN_SIZE }.min(num_active);
     let entropy_combine = num_active > num_bins * 2 && quality < 100;
     if entropy_combine {
         entropy_bin_combine_phase(&mut state, quality, &bin_ids, low_effort);
+        zhist_phase(
+            "bin",
+            state.count_active(),
+            format_args!("factor={}", combine_cost_factor(n, quality)),
+        );
     }
 
     // libwebp: "Don't combine the histograms using stochastic and greedy
@@ -1093,11 +1140,17 @@ fn cluster_histograms(
         } else {
             true
         };
+        zhist_phase(
+            "stochastic",
+            state.count_active(),
+            format_args!("target={target_size} do_greedy={}", u8::from(do_greedy)),
+        );
 
         // Phase 3: Greedy combining (only when stochastic reached target)
         cluster_trace::set_post_stochastic_count(state.count_active() as u64);
         if do_greedy && state.count_active() > 1 {
             greedy_combine_phase(&mut state);
+            zhist_phase("greedy", state.count_active(), format_args!(""));
         }
     } else {
         cluster_trace::set_post_entropy_bin_count(state.count_active() as u64);
@@ -1112,7 +1165,9 @@ fn cluster_histograms(
     }
 
     // Phase 5: Build final histogram outputs
-    build_final_histograms(tile_histos, &state.mapping, &active_indices, cache_bits)
+    let out = build_final_histograms(tile_histos, &state.mapping, &active_indices, cache_bits);
+    zhist_phase("remap", out.0.len(), format_args!(""));
+    out
 }
 
 #[inline]
