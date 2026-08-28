@@ -2087,17 +2087,22 @@ checksum = "00f1f60154ad4ef9871d606765c3ea037cde93bbd77536327b594de8f82df1cb"
 
 [[package]]
 name = "zenanalyze"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9711cf1c3363003dd436f5b5dc113f7881f9b377613eecbf41f91b6b85626442"
+version = "0.2.0"
+source = "git+https://github.com/imazen/zenanalyze#47c3c69e383220618166d5bc1e34b25fa6fb8559"
 dependencies = [
  "archmage",
  "garb",
  "linear-srgb",
  "magetypes",
+ "zenanalyze-api",
  "zenpixels",
  "zenpixels-convert",
 ]
+
+[[package]]
+name = "zenanalyze-api"
+version = "0.1.1"
+source = "git+https://github.com/imazen/zenanalyze#47c3c69e383220618166d5bc1e34b25fa6fb8559"
 
 [[package]]
 name = "zenbench"
@@ -2310,6 +2315,7 @@ dependencies = [
  "whereat",
  "yuv",
  "zenanalyze",
+ "zenanalyze-api",
  "zenbench",
  "zencodec",
  "zencodec-testkit",

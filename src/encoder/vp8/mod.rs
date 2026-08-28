@@ -3106,7 +3106,7 @@ pub(crate) fn encode_frame_lossy(
 /// `preset` set to a concrete (non-Auto) value so the inner encoder's
 /// own classifier short-circuits. Returns `None` when no override is
 /// needed (analyzer off, preset != Auto, layout unsupported, etc.).
-#[cfg(feature = "analyzer")]
+#[cfg(feature = "analyzer-bundled")]
 fn resolve_auto_preset_via_analyzer(
     params: &super::api::EncoderParams,
     data: &[u8],
@@ -3173,7 +3173,7 @@ fn resolve_auto_preset_via_analyzer(
     Some(p)
 }
 
-#[cfg(not(feature = "analyzer"))]
+#[cfg(not(feature = "analyzer-bundled"))]
 fn resolve_auto_preset_via_analyzer(
     _params: &super::api::EncoderParams,
     _data: &[u8],

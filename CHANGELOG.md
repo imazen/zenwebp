@@ -19,6 +19,45 @@ root cause) and multiple breaking changes. 0.5.0 covers all of it, matching
 the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 ("Tag as 0.5.0 (minor bump for API; 0.4.5 yanked)").
 
+### Changed
+
+- **The `analyzer` feature now speaks the `zenanalyze-api` contract only** —
+  no `zenanalyze` dependency at all (owner directive 2026-08-28,
+  "zenanalyze-api should be the sole contract and intermediary so different
+  zenanalyze versions can compile together"; see `docs/sole-contract.md` in
+  imazen/zenanalyze).
+
+  **This fixes a feature that had not compiled.** `src/encoder/analysis/
+  classifier.rs` named `zenanalyze::feature::AnalysisFeature` variants directly
+  while the manifest pinned published `zenanalyze 0.1.0`, so once
+  `IndexedPaletteWidth` was replaced upstream by `PaletteLog2Size`,
+  `cargo build --features analyzer` failed outright — the manifest said so and
+  told local devs to hand-patch a sibling checkout, and CI never enabled the
+  feature. `--features analyzer` now builds anywhere and is covered by CI.
+
+  The classifier reads its ten signals by **bare name**
+  (`zenanalyze_api::Select::Names`), so an upstream re-definition can no longer
+  break it: thresholds, not fitted coefficients, so a code drift doesn't
+  invalidate the rule. Every threshold and its numeric value is unchanged.
+
+  New API (contract-only, `analyzer`): `CLASSIFIER_FEATURES`,
+  `classifier_request()`, `diag_from_offer` / `diag_from_owned_offer`,
+  `classify_image_type_from_offer`, `classify_image_type_with_provider`. The
+  first two let an orchestrator unionize this classifier's ask with other
+  codecs' and run ONE shared analysis pass.
+
+  New feature `analyzer-bundled = ["analyzer", "dep:zenanalyze"]` supplies
+  `zenanalyze::Analyzer` as a default provider, keeping the zero-argument
+  `classify_image_type_rgb8` / `_rgb8_diag` entries and the encoder's internal
+  Auto-preset + target-zensim paths working with no caller plumbing. It is the
+  **only** place this crate names `zenanalyze` (the "host picks the version"
+  role), and the `dev/` feature extractors ride on it.
+
+  Migration: callers of `classify_image_type_rgb8` either enable
+  `analyzer-bundled` (unchanged behaviour) or, better, pass a provider /
+  shared offer. Since the old feature could not be built, no working caller
+  can be affected.
+
 ### QUEUED BREAKING CHANGES
 <!-- Not yet landed. Batch into a future 0.x minor once approved. -->
 - Remove `MuxError::FrameOutOfBounds` — never constructed anywhere in the

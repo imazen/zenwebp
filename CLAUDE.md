@@ -54,6 +54,44 @@ Calibration is **per content class** (photo/screen/line-art/mixed) in
 `benchmarks/calibration_2026-05-28.md`; raw CSVs + corpus on `/mnt/v`. Mixed is
 thin (~10 source refs) — weakest table; the size guard keeps it correct.
 
+## zenanalyze-api is the SOLE contract (owner directive 2026-08-28)
+
+> "Zenanalyze-api should be the sole contract and intermediary so different
+> zenanalyze versions can compile together."
+
+zenwebp's library code depends on **`zenanalyze-api` only**. The classifier
+(`src/encoder/analysis/classifier.rs`) reads its signals out of a
+`zenanalyze_api::Offer` or extracts through a `&dyn FeatureProvider` the caller
+supplies — it names no `zenanalyze` type. Feature layout:
+
+- `analyzer = ["dep:zenanalyze-api"]` — contract-only. Builds anywhere, CI
+  covers it.
+- `analyzer-bundled = ["analyzer", "dep:zenanalyze"]` — adds
+  `zenanalyze::Analyzer` as a default provider so the zero-argument entries and
+  the encoder's internal Auto-preset / target-zensim paths keep working.
+  `classifier::bundled_provider()` is the **only** place zenwebp names
+  `zenanalyze`; the `dev/` extractors ride here too.
+
+Why this matters: before 2026-08-28 the classifier named
+`zenanalyze::feature::AnalysisFeature` variants directly against a registry
+`0.1.0` pin, and `--features analyzer` **had not compiled** since
+`IndexedPaletteWidth` became `PaletteLog2Size` upstream. That is the exact
+failure mode the sole-contract rule prevents.
+
+Use `Select::Names` (bare name, any version) for threshold heuristics like this
+classifier; `Select::Features` (version-pinned) is mandatory for anything with
+fitted coefficients, so a code drift misses instead of silently feeding a model
+drifted inputs.
+
+**Never pin the contract by git rev.** A registry dep and a git dep are
+different Cargo sources — as are two git deps at different revs — and each
+split produces two incompatible `Offer` types. Declare
+`zenanalyze-api = "0.1.0"` and route unreleased changes through the single
+`[patch.crates-io]` at the bottom of `Cargo.toml` (delete it once
+zenanalyze-api 0.1.1 / zenanalyze 0.2.x are published).
+
+Full rules: `docs/sole-contract.md` in imazen/zenanalyze.
+
 ## Canonical training data + indexes (added 2026-05-20)
 
 **The canonical index for all ML data lives at `~/work/zen/DATA_PROVENANCE.md`.**

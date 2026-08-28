@@ -58,6 +58,22 @@ jobs:
       # only existed as a scratchpad tool.
       - name: Test (--features __expert) — libwebp byte-parity gate
         run: cargo test --features __expert --test libwebp_byte_parity
+      # `analyzer` routes content classification through the `zenanalyze-api`
+      # contract and pulls in NO `zenanalyze` — so unlike the old direct-dep
+      # form (which had not compiled since `IndexedPaletteWidth` was renamed
+      # upstream, and which CI therefore never enabled) this builds anywhere.
+      # Cover it, or the contract-side classifier rots exactly as the direct-dep
+      # one did.
+      - name: Test (--features analyzer) — zenanalyze-api contract path
+        run: |
+          cargo test --features analyzer --lib
+          cargo clippy --features analyzer --lib -- -D warnings
+      # The bundled provider (`zenanalyze::Analyzer`) + the dev/ extractors.
+      # Needs the sibling only as a git dep, which CI can fetch.
+      - name: Build (--features analyzer-bundled) — bundled provider + dev tools
+        run: |
+          cargo test --features analyzer-bundled --lib
+          cargo build --features analyzer-bundled --example zenanalyze_classify_diff
 
   test-x86-features:
     name: Test x86 features (${{ matrix.name }})

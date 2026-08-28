@@ -427,37 +427,136 @@ fn compute_color_uniformity(y_src: &[u8], width: usize, height: usize, y_stride:
     uniform_count as f32 / total_blocks as f32
 }
 
-/// Classify image content type via the `zenanalyze` shared scanner.
+/// The bare feature names this classifier reads, in no particular order.
 ///
-/// One streaming pass over the RGB(A)8 source extracts the soft
-/// content-class likelihoods (`ScreenContentLikelihood`,
-/// `TextLikelihood`, `NaturalLikelihood`) plus the cheap palette /
-/// flat-colour signals that distinguish "screenshot or UI graphic"
-/// from "natural photograph". This replaces the homegrown
-/// `classify_image_type` heuristic (alpha histogram + Y-plane edge /
-/// uniformity scan) with a single shared signal source, so the same
-/// thresholds drive zenwebp / zenjpeg / zenavif preset selection.
-///
-/// Threshold rationale (ScreenContent ≥ 0.6, Text ≥ 0.5,
-/// FlatColorBlockRatio ≥ 0.20): these are starting points distilled
-/// from zenanalyze's documented behaviour (photos cluster
-/// `ScreenContentLikelihood` below 0.05, screen content above 0.7;
-/// ROC-AUC 0.978 at the default budget). Tune against the
-/// `auto_detection_tuning` corpus; do not relax thresholds without
-/// confirming the test floors still hold.
-///
-/// `width` and `height` ≤ 128 still routes to `Icon` (preserves
-/// the existing small-image carve-out).
+/// Named rather than version-pinned on purpose: the decision below is a set of
+/// hand-tuned thresholds, and a re-definition of, say, `edge_slope_stdev` moves
+/// the numbers a little but does not invalidate the rule — so
+/// [`Select::Names`](zenanalyze_api::Select::Names) is the right selector, and it
+/// is what lets this file name features **without naming a `zenanalyze`
+/// version**. (A compiled model would need
+/// [`Select::Features`](zenanalyze_api::Select::Features) instead, so a code
+/// drift misses rather than silently feeding it drifted inputs.)
 #[cfg(feature = "analyzer")]
-pub fn classify_image_type_rgb8(rgb: &[u8], width: u32, height: u32) -> ImageContentType {
-    classify_image_type_rgb8_diag(rgb, width, height).0
+pub const CLASSIFIER_FEATURES: [&str; 10] = [
+    "flat_color_block_ratio",
+    "distinct_color_bins",
+    "variance",
+    "edge_density",
+    "uniformity",
+    "high_freq_energy_ratio",
+    "palette_fits_in_256",
+    "palette_log2_size",
+    "skin_tone_fraction",
+    "edge_slope_stdev",
+];
+
+/// This classifier's ask, for an orchestrator unionizing several codecs'
+/// requests before running one shared analysis pass.
+#[cfg(feature = "analyzer")]
+#[must_use]
+pub fn classifier_request() -> zenanalyze_api::Request<'static> {
+    zenanalyze_api::Request::new(zenanalyze_api::Select::Names(&CLASSIFIER_FEATURES))
 }
 
-/// Diagnostic variant of [`classify_image_type_rgb8`] returning the
-/// raw zenanalyze signals alongside the bucket decision. Used by the
-/// classifier-comparison harness in `dev/`.
+/// Read the classifier's signals out of anything that can look a feature up by
+/// bare name. Absent features keep their [`Default`] value, which is what the
+/// pre-contract code did for the four likelihoods culled from zenanalyze.
 #[cfg(feature = "analyzer")]
-pub fn classify_image_type_rgb8_diag(
+fn diag_from_lookup(get: impl Fn(&str) -> Option<zenanalyze_api::Value>) -> ZenanalyzeDiag {
+    use zenanalyze_api::Value;
+    let f32_of = |name: &str| get(name).map_or(0.0, Value::to_f32);
+    let u32_of = |name: &str| match get(name) {
+        Some(Value::U32(x)) => x,
+        Some(v) => v.to_f32() as u32,
+        None => 0,
+    };
+    ZenanalyzeDiag {
+        // Culled from zenanalyze's post-cull schema (ids 27/28/29/45 stay
+        // reserved); zero here, as before, so the thresholds that read them are
+        // inert rather than wrong.
+        screen_content: 0.0,
+        text_likelihood: 0.0,
+        natural_likelihood: 0.0,
+        line_art_score: 0.0,
+        flat_color_block_ratio: f32_of("flat_color_block_ratio"),
+        distinct_color_bins: u32_of("distinct_color_bins"),
+        variance: f32_of("variance"),
+        edge_density: f32_of("edge_density"),
+        uniformity: f32_of("uniformity"),
+        high_freq_energy_ratio: f32_of("high_freq_energy_ratio"),
+        palette_fits_in_256: matches!(get("palette_fits_in_256"), Some(Value::Bool(true))),
+        // `ZenanalyzeDiag.indexed_palette_width` keeps the legacy field name for
+        // dev tooling that reads its printouts; the value comes from the
+        // wider-codomain `palette_log2_size` (codomain `{1..15, 24}`), which
+        // replaced `indexed_palette_width` upstream.
+        indexed_palette_width: u32_of("palette_log2_size"),
+        skin_tone_fraction: f32_of("skin_tone_fraction"),
+        edge_slope_stdev: f32_of("edge_slope_stdev"),
+    }
+}
+
+/// Read the classifier's signals out of a borrowed [`Offer`](zenanalyze_api::Offer)
+/// — the shared-pass path: an orchestrator runs ONE analysis for every codec and
+/// lends the result here, so this classification costs no extra pixels.
+#[cfg(feature = "analyzer")]
+#[must_use]
+pub fn diag_from_offer(offer: &zenanalyze_api::Offer<'_>) -> ZenanalyzeDiag {
+    diag_from_lookup(|name| offer.get(name).map(zenanalyze_api::FeatureResult::value))
+}
+
+/// [`diag_from_offer`] for the owned twin (a deserialized offer — a parquet row,
+/// a stored stamp).
+#[cfg(feature = "analyzer")]
+#[must_use]
+pub fn diag_from_owned_offer(offer: &zenanalyze_api::OwnedOffer) -> ZenanalyzeDiag {
+    diag_from_lookup(|name| {
+        offer
+            .get(name)
+            .map(zenanalyze_api::OwnedFeatureResult::value)
+    })
+}
+
+/// Classify content type from a shared [`Offer`](zenanalyze_api::Offer).
+///
+/// Thresholds are unchanged from the pre-contract classifier; only the source of
+/// the values moved. `width`/`height` ≤ 128 still routes to `Icon` (preserving the
+/// small-image carve-out) without consulting the offer.
+///
+/// Threshold rationale (ScreenContent ≥ 0.6, Text ≥ 0.5, FlatColorBlockRatio ≥
+/// 0.20): starting points distilled from zenanalyze's documented behaviour (photos
+/// cluster `ScreenContentLikelihood` below 0.05, screen content above 0.7; ROC-AUC
+/// 0.978 at the default budget). Tune against the `auto_detection_tuning` corpus;
+/// do not relax thresholds without confirming the test floors still hold.
+#[cfg(feature = "analyzer")]
+#[must_use]
+pub fn classify_image_type_from_offer(
+    offer: &zenanalyze_api::Offer<'_>,
+    width: u32,
+    height: u32,
+) -> (ImageContentType, ZenanalyzeDiag) {
+    if width <= 128 && height <= 128 {
+        return (ImageContentType::Icon, ZenanalyzeDiag::default());
+    }
+    let diag = diag_from_offer(offer);
+    (decide_bucket_from_diag(&diag), diag)
+}
+
+/// Classify content type by extracting through a
+/// [`FeatureProvider`](zenanalyze_api::FeatureProvider) the caller supplies — the
+/// no-shared-offer path, still without naming a `zenanalyze` type.
+///
+/// The host chooses the analyzer version by choosing which provider it passes;
+/// `zenanalyze::Analyzer` (behind zenanalyze's `api` feature) is the usual one,
+/// and the `analyzer-bundled` feature wires it up for you via
+/// [`classify_image_type_rgb8`].
+///
+/// Falls back to `(Photo, default)` — never a panic — if the buffer is malformed
+/// or the provider cannot produce the signals.
+#[cfg(feature = "analyzer")]
+#[must_use]
+pub fn classify_image_type_with_provider(
+    provider: &dyn zenanalyze_api::FeatureProvider,
     rgb: &[u8],
     width: u32,
     height: u32,
@@ -468,80 +567,52 @@ pub fn classify_image_type_rgb8_diag(
     if rgb.len() != (width as usize) * (height as usize) * 3 {
         return (ImageContentType::Photo, ZenanalyzeDiag::default());
     }
-    use zenanalyze::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
-    // NOTE: ScreenContentLikelihood / TextLikelihood / NaturalLikelihood /
-    // LineArtScore were culled from zenanalyze in the post-cull 0.1.0
-    // schema; they are filled with 0.0 below for backward compat with
-    // the diag struct. Downstream callers should migrate to direct
-    // signals (palette, HF energy, edge slope, etc.).
-    const FEATURES: FeatureSet = FeatureSet::new()
-        .with(AnalysisFeature::FlatColorBlockRatio)
-        .with(AnalysisFeature::DistinctColorBins)
-        .with(AnalysisFeature::Variance)
-        .with(AnalysisFeature::EdgeDensity)
-        .with(AnalysisFeature::Uniformity)
-        .with(AnalysisFeature::HighFreqEnergyRatio)
-        // Experimental signals (gated on zenanalyze's `experimental`
-        // feature). PaletteFitsIn256 / PaletteLog2Size catch graphics
-        // with a small palette. (`PaletteLog2Size` replaced
-        // `IndexedPaletteWidth` in zenanalyze post-2026-05-02 — same
-        // signal, wider codomain {1..15, 24} that includes the 1-BPP
-        // case.)
-        .with(AnalysisFeature::PaletteFitsIn256)
-        .with(AnalysisFeature::PaletteLog2Size)
-        // Physics-based photo-vs-artwork discriminators shipped in
-        // zenanalyze 0.1.0 per zenjpeg#123. SkinToneFraction is a
-        // "presence of human content" cue (LAB-space skin-region
-        // pixel fraction); EdgeSlopeStdev measures the spread of
-        // luma gradient magnitudes across the edge subset and
-        // separates photographic anti-aliased edges (tight stddev
-        // around the lens MTF cutoff, ~15–32) from screen / chart
-        // content (>35) and from smooth illustrations / line art
-        // (<15).
-        .with(AnalysisFeature::SkinToneFraction)
-        .with(AnalysisFeature::EdgeSlopeStdev);
-    let q = AnalysisQuery::new(FEATURES);
-    let r = match zenanalyze::try_analyze_features_rgb8(rgb, width, height, &q) {
-        Ok(r) => r,
-        Err(_) => return (ImageContentType::Photo, ZenanalyzeDiag::default()),
+    let Ok(offer) = provider.extract_rgb8(rgb, width, height, &classifier_request()) else {
+        return (ImageContentType::Photo, ZenanalyzeDiag::default());
     };
-    let diag = ZenanalyzeDiag {
-        // Culled from zenanalyze 0.1.0 post-cull; defaulted to 0.0.
-        screen_content: 0.0,
-        text_likelihood: 0.0,
-        natural_likelihood: 0.0,
-        flat_color_block_ratio: r
-            .get_f32(AnalysisFeature::FlatColorBlockRatio)
-            .unwrap_or(0.0),
-        distinct_color_bins: r
-            .get(AnalysisFeature::DistinctColorBins)
-            .and_then(|v| v.as_u32())
-            .unwrap_or(0),
-        variance: r.get_f32(AnalysisFeature::Variance).unwrap_or(0.0),
-        edge_density: r.get_f32(AnalysisFeature::EdgeDensity).unwrap_or(0.0),
-        uniformity: r.get_f32(AnalysisFeature::Uniformity).unwrap_or(0.0),
-        high_freq_energy_ratio: r
-            .get_f32(AnalysisFeature::HighFreqEnergyRatio)
-            .unwrap_or(0.0),
-        palette_fits_in_256: r
-            .get(AnalysisFeature::PaletteFitsIn256)
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        // ZenanalyzeDiag.indexed_palette_width keeps the legacy struct
-        // field name for compatibility with dev tooling that reads
-        // ZenanalyzeDiag printouts; the value now comes from the
-        // wider-codomain `PaletteLog2Size` (id 121, codomain
-        // `{1..15, 24}`).
-        indexed_palette_width: r
-            .get(AnalysisFeature::PaletteLog2Size)
-            .and_then(|v| v.as_u32())
-            .unwrap_or(0),
-        line_art_score: 0.0, // culled in zenanalyze 0.1.0 post-cull
-        skin_tone_fraction: r.get_f32(AnalysisFeature::SkinToneFraction).unwrap_or(0.0),
-        edge_slope_stdev: r.get_f32(AnalysisFeature::EdgeSlopeStdev).unwrap_or(0.0),
-    };
-    let bucket = decide_bucket_from_diag(&diag);
-    (bucket, diag)
+    let diag = diag_from_owned_offer(&offer);
+    (decide_bucket_from_diag(&diag), diag)
+}
+
+/// The bundled default provider: `zenanalyze::Analyzer` for the `zenanalyze`
+/// version this build pinned.
+///
+/// **This function is the only place in zenwebp that names a `zenanalyze` type**,
+/// and it exists to play the host role (choosing a version) for callers that
+/// don't want to supply one — see `docs/sole-contract.md` in imazen/zenanalyze.
+/// Everything above it works against `zenanalyze-api` alone.
+#[cfg(feature = "analyzer-bundled")]
+#[must_use]
+pub fn bundled_provider() -> impl zenanalyze_api::FeatureProvider {
+    zenanalyze::Analyzer::new()
+}
+
+/// Classify image content type using the [`bundled_provider`].
+///
+/// One analysis pass over the RGB8 source extracts the palette / flat-colour /
+/// edge signals that distinguish "screenshot or UI graphic" from "natural
+/// photograph", so the same thresholds drive zenwebp / zenjpeg / zenavif preset
+/// selection from a single shared signal source.
+///
+/// Prefer [`classify_image_type_from_offer`] when an orchestrator already ran a
+/// pass — this entry point runs its own.
+#[cfg(feature = "analyzer-bundled")]
+#[must_use]
+pub fn classify_image_type_rgb8(rgb: &[u8], width: u32, height: u32) -> ImageContentType {
+    classify_image_type_rgb8_diag(rgb, width, height).0
+}
+
+/// Diagnostic variant of [`classify_image_type_rgb8`] returning the raw signals
+/// alongside the bucket decision. Used by the classifier-comparison harness in
+/// `dev/`.
+#[cfg(feature = "analyzer-bundled")]
+#[must_use]
+pub fn classify_image_type_rgb8_diag(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+) -> (ImageContentType, ZenanalyzeDiag) {
+    classify_image_type_with_provider(&bundled_provider(), rgb, width, height)
 }
 
 /// Threshold-only decision over the zenanalyze signals using only

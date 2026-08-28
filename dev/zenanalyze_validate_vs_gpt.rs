@@ -22,7 +22,7 @@
 //!     --example zenanalyze_validate_vs_gpt -- \
 //!     /home/lilith/work/coefficient/benchmarks/classifier-eval/labels.tsv
 
-#![cfg(feature = "analyzer")]
+#![cfg(feature = "analyzer-bundled")]
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
