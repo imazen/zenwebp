@@ -300,11 +300,18 @@ LZ77-type selection + TraceBackwards, both variants fully encoded). Both
 ported. 12-file msweep (`benchmarks/msweep_post70_2026-07-14.tsv`), photos:
 m5 1.0086→**1.0011**, m6 1.0078→**1.0003**; wall now matches libwebp's
 shape (m5 1710ms vs lib 1338ms — the previous 3× "speed win" at m5/m6 was
-skipped work). Screens m5/m6 residual 1.0022: fine-tile (16px) per-tile
-predictor selection is measurably weaker than libwebp's on a subset
-(weather 1.0082, archives 1.0060 — zen m4→m5 regresses where lib gains 1%);
-scoring formulas verified as exact ports (bias, combined entropy, border
-inclusion) — divergence is greedy-path/downstream, not formula-level.
+skipped work). Screens m5/m6 residual 1.0022 (weather 1.0083, archives
+1.0058 at m5): **NOT the predictor selection** — `dev/issue71_probe.rs`
+(2026-08-28, `benchmarks/issue71_probe_2026-08-28.md`) parses both
+streams and shows the predictor mode maps and cross-color tiles are
+identical tile for tile to libwebp's at m4/m5 on both files. The whole
+gap is the main image's histogram clustering: zenwebp ends with fewer
+Huffman groups than libwebp on every cell of the 11-file m4/m5 set (e.g.
+10 vs 12, 17 vs 25, 85 vs 96), pays ~1 KB less for tables and 4+ KB more
+for pixels. Loop shapes / gating / cost factor / stochastic target are
+verified equivalent; empty-tile handling now mirrors libwebp (neutral).
+Next: differential test of the pair cost (`GetCombinedHistogramEntropy`)
+against an instrumented libwebp — kept in `dev/`, not `/tmp`, this time.
 
 **Backward references parity (synthetic, 2026-03-25):**
 

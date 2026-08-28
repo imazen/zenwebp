@@ -31,6 +31,17 @@ pub struct Histogram {
 }
 
 impl Histogram {
+    /// True when no symbol of any alphabet was counted — a tile fully
+    /// covered by backward-reference copies that started in an earlier
+    /// tile. libwebp's `is_used[]` all-false case.
+    pub fn is_empty(&self) -> bool {
+        self.literal.iter().all(|&c| c == 0)
+            && self.red.iter().all(|&c| c == 0)
+            && self.blue.iter().all(|&c| c == 0)
+            && self.alpha.iter().all(|&c| c == 0)
+            && self.distance.iter().all(|&c| c == 0)
+    }
+
     /// Create a new histogram with the given cache bits.
     pub fn new(cache_bits: u8) -> Self {
         let literal_size = literal_alphabet_size(cache_bits);

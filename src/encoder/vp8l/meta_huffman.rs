@@ -471,10 +471,24 @@ struct ClusterState {
 impl ClusterState {
     fn from_tiles(tile_histos: &[Histogram]) -> Self {
         let n = tile_histos.len();
+        // libwebp's HistogramCopyAndAnalyze drops completely empty tile
+        // histograms (tiles fully covered by LZ77 copies that started in an
+        // earlier tile) BEFORE clustering, so image_histo->size, the
+        // entropy-bin ranges, the stochastic phase's iteration/sample counts
+        // and its RNG-driven pair picks all see only the populated tiles.
+        // Keeping them active here made zenwebp cluster a 27%-empty
+        // population on 16px screenshot tiles and end with fewer groups
+        // (#71). The first tile always carries the first token and is kept
+        // regardless, like libwebp's `assert(i > 0)`.
+        let active: Vec<bool> = tile_histos
+            .iter()
+            .enumerate()
+            .map(|(i, h)| i == 0 || !h.is_empty())
+            .collect();
         Self {
             histos: tile_histos.to_vec(),
             costs: tile_histos.iter().map(compute_histogram_cost).collect(),
-            active: vec![true; n],
+            active,
             mapping: (0..n).collect(),
         }
     }
@@ -597,7 +611,9 @@ fn entropy_bin_combine_phase(
     low_effort: bool,
 ) {
     let n = state.histos.len();
-    let factor = combine_cost_factor(state.count_active(), quality);
+    // libwebp sizes the factor from the RAW tile count (image_histo_raw_size),
+    // empties included.
+    let factor = combine_cost_factor(n, quality);
     let mut bin_first: Vec<Option<usize>> = vec![None; BIN_SIZE];
 
     for i in 0..n {
@@ -874,6 +890,13 @@ fn remap_tiles_to_clusters(
     cluster_trace::add_remap_evals(remap_total);
 
     for tile_idx in 0..n {
+        // Empty tile (dropped before clustering, see `from_tiles`): libwebp's
+        // HistogramRemap gives it the previous tile's symbol "to help future
+        // LZ77" on the entropy image; it contributes nothing to any group.
+        if tile_idx > 0 && tile_histos[tile_idx].is_empty() {
+            state.mapping[tile_idx] = state.mapping[tile_idx - 1];
+            continue;
+        }
         let mut best_cluster = state.mapping[tile_idx];
         let mut best_bits = i64::MAX;
 

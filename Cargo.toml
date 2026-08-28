@@ -230,6 +230,11 @@ path = "dev/output_hash.rs"
 required-features = ["__expert"]
 
 [[example]]
+name = "issue71_probe"
+path = "dev/issue71_probe.rs"
+required-features = ["mode_debug"]
+
+[[example]]
 name = "corpus_test"
 path = "dev/corpus_test.rs"
 required-features = ["__expert"]

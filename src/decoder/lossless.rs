@@ -84,6 +84,12 @@ const NUM_TRANSFORM_TYPES: usize = 4;
 //Decodes lossless WebP images
 pub(crate) struct LosslessDecoder<'a> {
     bit_reader: BitReader<'a>,
+    /// `mode_debug` diagnostic: one record per parsed transform (#71).
+    #[cfg(feature = "mode_debug")]
+    tf_dump: Vec<TransformDump>,
+    /// `mode_debug` diagnostic: level-0 (main) image coding parameters (#71).
+    #[cfg(feature = "mode_debug")]
+    main_dump: MainImageDump,
     transforms: [Option<TransformType>; NUM_TRANSFORM_TYPES],
     transform_order: Vec<u8>,
     width: u16,
@@ -97,6 +103,10 @@ impl<'a> LosslessDecoder<'a> {
     pub(crate) fn new(data: &'a [u8]) -> Self {
         Self {
             bit_reader: BitReader::new(SliceReader::new(data)),
+            #[cfg(feature = "mode_debug")]
+            tf_dump: Vec::new(),
+            #[cfg(feature = "mode_debug")]
+            main_dump: MainImageDump::default(),
             transforms: [None, None, None, None],
             transform_order: Vec::new(),
             width: 0,
@@ -158,12 +168,12 @@ impl<'a> LosslessDecoder<'a> {
             .map_err_at(DecodeError::from)
     }
 
-    fn decode_frame_internal(
+    /// Parse (or, for `implicit_dimensions`, assume) the VP8L header.
+    fn read_header(
         &mut self,
         width: u32,
         height: u32,
         implicit_dimensions: bool,
-        buf: &mut [u8],
     ) -> Result<(), At<InternalDecodeError>> {
         if implicit_dimensions {
             self.width = width as u16;
@@ -186,6 +196,47 @@ impl<'a> LosslessDecoder<'a> {
                 return Err(at!(InternalDecodeError::BitStreamError));
             }
         }
+        Ok(())
+    }
+
+    /// Diagnostic (`mode_debug`): parse the header + transform list of a
+    /// raw VP8L bitstream and return one record per transform — type,
+    /// size_bits, the bits its sub-image cost on the wire, and its decoded
+    /// data (predictor modes live in the green byte) — plus the bit offset
+    /// where the main image starts. Used by `dev/issue71_probe.rs` to
+    /// compare zenwebp's and libwebp's transform coding (#71).
+    #[cfg(feature = "mode_debug")]
+    pub(crate) fn debug_transforms(
+        data: &'a [u8],
+        width: u32,
+        height: u32,
+    ) -> Result<(Vec<TransformDump>, u64, MainImageDump), At<DecodeError>> {
+        let mut d = Self::new(data);
+        let mut main_start = 0u64;
+        let mut buf = alloc::vec![0u8; width as usize * height as usize * 4];
+        (|| -> Result<(), At<InternalDecodeError>> {
+            d.read_header(width, height, false)?;
+            let transformed_width = d.read_transforms()?;
+            main_start = d.bit_reader.bits_consumed();
+            let n = usize::from(transformed_width) * usize::from(d.height) * 4;
+            d.decode_image_stream(transformed_width, d.height, true, &mut buf[..n])
+        })()
+        .map_err_at(DecodeError::from)?;
+        Ok((
+            core::mem::take(&mut d.tf_dump),
+            main_start,
+            core::mem::take(&mut d.main_dump),
+        ))
+    }
+
+    fn decode_frame_internal(
+        &mut self,
+        width: u32,
+        height: u32,
+        implicit_dimensions: bool,
+        buf: &mut [u8],
+    ) -> Result<(), At<InternalDecodeError>> {
+        self.read_header(width, height, implicit_dimensions)?;
 
         let transformed_width = self.read_transforms()?;
         let transformed_size = usize::from(transformed_width) * usize::from(self.height) * 4;
@@ -259,8 +310,16 @@ impl<'a> LosslessDecoder<'a> {
     ) -> Result<(), At<InternalDecodeError>> {
         let color_cache_bits = self.read_color_cache()?;
         let color_cache = color_cache_bits.map(ColorCache::new);
+        #[cfg(feature = "mode_debug")]
+        if is_argb_img {
+            self.main_dump.cache_bits = color_cache_bits;
+        }
 
         let huffman_info = self.read_huffman_codes(is_argb_img, xsize, ysize, color_cache)?;
+        #[cfg(feature = "mode_debug")]
+        if is_argb_img {
+            self.main_dump.pixel_data_start = self.bit_reader.bits_consumed();
+        }
         traced(self.decode_image_data(xsize, ysize, huffman_info, data))
     }
 
@@ -277,6 +336,8 @@ impl<'a> LosslessDecoder<'a> {
             }
 
             self.transform_order.push(transform_type_val);
+            #[cfg(feature = "mode_debug")]
+            let bits_before = self.bit_reader.bits_consumed();
 
             let transform_type = match transform_type_val {
                 0 => {
@@ -348,6 +409,30 @@ impl<'a> LosslessDecoder<'a> {
                 _ => unreachable!(),
             };
 
+            #[cfg(feature = "mode_debug")]
+            self.tf_dump.push(TransformDump {
+                kind: transform_type_val,
+
+                size_bits: match &transform_type {
+                    TransformType::PredictorTransform { size_bits, .. }
+                    | TransformType::ColorTransform { size_bits, .. } => *size_bits,
+
+                    _ => 0,
+                },
+
+                bits: self.bit_reader.bits_consumed() - bits_before,
+
+                data: match &transform_type {
+                    TransformType::PredictorTransform { predictor_data, .. } => {
+                        predictor_data.clone()
+                    }
+
+                    TransformType::ColorTransform { transform_data, .. } => transform_data.clone(),
+
+                    _ => alloc::vec::Vec::new(),
+                },
+            });
+
             self.transforms[usize::from(transform_type_val)] = Some(transform_type);
         }
 
@@ -377,6 +462,14 @@ impl<'a> LosslessDecoder<'a> {
         let mut huffman_ysize = 1;
         let mut entropy_image = Vec::new();
 
+        #[cfg(feature = "mode_debug")]
+        let meta_start = self.bit_reader.bits_consumed();
+        #[cfg(feature = "mode_debug")]
+        if read_meta {
+            self.main_dump.num_groups = 1;
+            self.main_dump.histo_bits = 0;
+            self.main_dump.entropy_image_bits = 1;
+        }
         if read_meta && traced(self.bit_reader.read_bits::<u8>(1))? == 1 {
             //meta huffman codes
             huffman_bits = traced(self.bit_reader.read_bits::<u8>(3))? + 2;
@@ -399,6 +492,12 @@ impl<'a> LosslessDecoder<'a> {
                     meta_huff_code
                 })
                 .collect::<Vec<u16>>();
+            #[cfg(feature = "mode_debug")]
+            {
+                self.main_dump.histo_bits = huffman_bits;
+                self.main_dump.num_groups = num_huff_groups;
+                self.main_dump.entropy_image_bits = self.bit_reader.bits_consumed() - meta_start;
+            }
         }
 
         // Cap the number of Huffman groups to prevent memory amplification attacks.
@@ -1189,7 +1288,45 @@ pub(crate) struct BitReader<'a> {
     nbits: u8,
 }
 
+/// Level-0 (main) image coding parameters, for the `mode_debug`
+/// diagnostics (#71).
+#[cfg(feature = "mode_debug")]
+#[derive(Debug, Clone, Default)]
+pub(crate) struct MainImageDump {
+    /// Color cache bits (`None` = no cache).
+    pub cache_bits: Option<u8>,
+    /// Meta-Huffman tile bits (0 = single group).
+    pub histo_bits: u8,
+    /// Number of Huffman groups.
+    pub num_groups: u32,
+    /// Bits spent on the meta-Huffman flag + entropy image.
+    pub entropy_image_bits: u64,
+    /// Bit offset (from the VP8L start) where the pixel data begins, i.e.
+    /// after every Huffman code table.
+    pub pixel_data_start: u64,
+}
+
+/// One parsed VP8L transform, for the `mode_debug` diagnostics (#71).
+#[cfg(feature = "mode_debug")]
+#[derive(Debug, Clone)]
+pub(crate) struct TransformDump {
+    /// 0 = predictor, 1 = color, 2 = subtract-green, 3 = color-indexing.
+    pub kind: u8,
+    /// Tile size bits (predictor / color transforms), 0 otherwise.
+    pub size_bits: u8,
+    /// Bits the transform (header + sub-image) cost on the wire.
+    pub bits: u64,
+    /// Decoded transform data (ARGB bytes per tile), empty for others.
+    pub data: Vec<u8>,
+}
+
 impl<'a> BitReader<'a> {
+    /// Total bits consumed from the underlying slice so far.
+    #[cfg(feature = "mode_debug")]
+    pub(crate) fn bits_consumed(&self) -> u64 {
+        self.reader.position() * 8 - u64::from(self.nbits)
+    }
+
     fn new(reader: SliceReader<'a>) -> Self {
         Self {
             reader,

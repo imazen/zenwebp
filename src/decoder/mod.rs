@@ -54,3 +54,70 @@ pub use streaming::{StreamStatus, StreamingDecoder};
 // Re-export common types used in diagnostics
 #[doc(hidden)]
 pub use crate::common::types::{ChromaMode, IntraMode, LumaMode};
+
+/// Level-0 (main) image coding parameters of a VP8L stream (#71 diagnostic).
+#[cfg(feature = "mode_debug")]
+#[derive(Debug, Clone, Default)]
+pub struct Vp8lMainImageInfo {
+    /// Color cache bits (`None` = no cache).
+    pub cache_bits: Option<u8>,
+    /// Meta-Huffman tile bits (0 = single group).
+    pub histo_bits: u8,
+    /// Number of Huffman groups.
+    pub num_groups: u32,
+    /// Bits spent on the meta-Huffman flag + entropy image.
+    pub entropy_image_bits: u64,
+    /// Bits spent on the Huffman code tables (all groups).
+    pub huffman_tables_bits: u64,
+    /// Bits spent on the pixel data itself.
+    pub pixel_data_bits: u64,
+}
+
+/// `mode_debug` diagnostic for #71: decode a simple (non-animated)
+/// lossless WebP and return, per transform,
+/// `(kind, size_bits, bits_on_wire, decoded_data)`, the bit offset where
+/// the main image starts, the VP8L payload length in bits, and the main
+/// image's coding parameters. `kind`: 0 predictor, 1 color, 2
+/// subtract-green, 3 color-indexing; predictor modes are the green byte of
+/// each 4-byte tile entry.
+#[cfg(feature = "mode_debug")]
+#[allow(clippy::type_complexity)]
+pub fn vp8l_transform_dump(
+    webp: &[u8],
+) -> Result<
+    (
+        alloc::vec::Vec<(u8, u8, u64, alloc::vec::Vec<u8>)>,
+        u64,
+        u64,
+        Vp8lMainImageInfo,
+    ),
+    alloc::string::String,
+> {
+    let demux = crate::mux::WebPDemuxer::new(webp).map_err(|e| alloc::format!("{e:?}"))?;
+    let frame = demux.frame(1).ok_or("no frame")?;
+    if frame.is_lossy {
+        return Err("not a lossless frame".into());
+    }
+    let payload = frame.bitstream;
+    let (dumps, main_start, main) =
+        lossless::LosslessDecoder::debug_transforms(payload, frame.width, frame.height)
+            .map_err(|e| alloc::format!("{e:?}"))?;
+    let total_bits = payload.len() as u64 * 8;
+    let info = Vp8lMainImageInfo {
+        cache_bits: main.cache_bits,
+        histo_bits: main.histo_bits,
+        num_groups: main.num_groups,
+        entropy_image_bits: main.entropy_image_bits,
+        huffman_tables_bits: main.pixel_data_start - main_start - main.entropy_image_bits,
+        pixel_data_bits: total_bits - main.pixel_data_start,
+    };
+    Ok((
+        dumps
+            .into_iter()
+            .map(|d| (d.kind, d.size_bits, d.bits, d.data))
+            .collect(),
+        main_start,
+        total_bits,
+        info,
+    ))
+}

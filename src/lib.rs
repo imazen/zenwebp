@@ -270,6 +270,10 @@ pub mod __expert {
 /// Not part of the public API; do not use in production code.
 #[doc(hidden)]
 pub mod __test_helpers {
+    /// `mode_debug` diagnostic for #71 — see [`crate::decoder::vp8l_transform_dump`].
+    #[cfg(feature = "mode_debug")]
+    pub use crate::decoder::vp8l_transform_dump;
+
     /// Scalar RGB->YUV420 conversion (same path the encoder uses).
     ///
     /// Returns (y, u, v) planes with macroblock-aligned dimensions.

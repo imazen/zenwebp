@@ -79,6 +79,31 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
   doc rather than hidden. Net: #76's "real optimization" hypothesis is
   falsified for the whole codebase; the migration is hygiene.
 
+### Changed (2026-08-28, #71 probe)
+- **VP8L histogram clustering drops empty tile histograms before
+  clustering, like libwebp's `HistogramCopyAndAnalyze`** (refs #71). Tiles
+  fully covered by LZ77 copies from earlier tiles (27 % of the 16px tiles on
+  the `weather` screenshot) used to stay active through the entropy-bin,
+  stochastic and greedy phases, skewing the bin ranges, the iteration /
+  sample counts and the RNG-driven pair picks; they are now inactive from
+  the start and get the previous tile's symbol on remap
+  (`Histogram::is_empty`). Measured neutral: −210 B over the 22-cell
+  11-file m4/m5 set (−0.001 %), no group count changed, byte-parity sweep
+  unchanged (3080/3080 base, alpha 192/192). `dev/output_hash.rs` COMBINED
+  moves `b1309ba43b9b5e43` → `5bd48ee3963f2783` (lossless + lossy-alpha
+  sections).
+- **Added `dev/issue71_probe.rs` + `decoder::vp8l_transform_dump`
+  (`mode_debug`)**: parses both zenwebp's and libwebp's lossless streams
+  with our decoder and splits the size gap into transform sub-images,
+  Huffman tables and pixel data. Finding
+  (`benchmarks/issue71_probe_2026-08-28.md`): the predictor mode maps and
+  cross-color tiles are **identical tile for tile** to libwebp's at m4 and
+  m5 on both #71 files — suspects (1) mode-image coding and (3) greedy
+  tie-breaking are falsified — and the whole gap is the main image's
+  histogram clustering ending with fewer Huffman groups than libwebp on all
+  22 cells (e.g. 10 vs 12, 17 vs 25), plus a small cross-color sub-image
+  coding difference (≤273 B).
+
 ### Fixed (2026-08-27 issue sweep)
 - **#78 review backlog, encoder-config subset (refs #78; the issue was
   auto-closed by 2dc3853's `fixes` trailer with ~23 items still open):**
