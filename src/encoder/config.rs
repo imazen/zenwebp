@@ -693,14 +693,17 @@ impl LossyConfig {
         layout: super::api::PixelLayout,
         width: u32,
         height: u32,
+        stop: &dyn enough::Stop,
+        progress: &dyn super::api::EncodeProgress,
     ) -> Result<
         (
             alloc::vec::Vec<u8>,
+            super::api::EncodeStats,
             super::zensim_target::ZensimEncodeMetrics,
         ),
         At<super::api::EncodeError>,
     > {
-        encode_pixels_with_metrics_impl(self, pixels, layout, width, height)
+        encode_pixels_with_metrics_impl(self, pixels, layout, width, height, stop, progress)
     }
 }
 
@@ -716,8 +719,17 @@ pub struct LosslessConfig {
     /// Quality/speed tradeoff (0 = fast, 6 = slower but better). Default: 4.
     pub method: u8,
     /// Alpha channel quality (0-100, 100 = lossless alpha). Default: 100.
+    ///
+    /// **Not used by the lossless encoder** — VP8L carries alpha inside the
+    /// lossless bitstream, so there is no separate alpha plane to
+    /// quantize. Kept so [`EncoderConfig::with_lossless`] round-trips the
+    /// value when switching to/from a [`LossyConfig`] (#78).
     pub alpha_quality: u8,
     /// Target file size in bytes (0 = disabled). Default: 0.
+    ///
+    /// **Not used by the lossless encoder** (the size search is lossy-only,
+    /// as in libwebp). Kept so [`EncoderConfig::with_lossless`] round-trips
+    /// the value when switching to/from a [`LossyConfig`] (#78).
     pub target_size: u32,
     /// Near-lossless preprocessing (0 = max preprocessing, 100 = off). Default: 100.
     pub near_lossless: u8,
@@ -1038,9 +1050,15 @@ impl EncoderConfig {
                 let q = self.get_quality();
                 let m = self.get_method();
                 let l = self.get_limits().clone();
+                let (aq, ts) = match &self {
+                    Self::Lossy(c) => (c.alpha_quality, c.target_size),
+                    Self::Lossless(c) => (c.alpha_quality, c.target_size),
+                };
                 Self::Lossless(LosslessConfig {
                     quality: q,
                     method: m,
+                    alpha_quality: aq,
+                    target_size: ts,
                     limits: l,
                     ..LosslessConfig::new()
                 })
@@ -1050,9 +1068,15 @@ impl EncoderConfig {
                 let q = self.get_quality();
                 let m = self.get_method();
                 let l = self.get_limits().clone();
+                let (aq, ts) = match &self {
+                    Self::Lossy(c) => (c.alpha_quality, c.target_size),
+                    Self::Lossless(c) => (c.alpha_quality, c.target_size),
+                };
                 Self::Lossy(LossyConfig {
                     quality: q,
                     method: m,
+                    alpha_quality: aq,
+                    target_size: ts,
                     limits: l,
                     ..LossyConfig::new()
                 })
@@ -1178,7 +1202,6 @@ impl LossyConfig {
         };
 
         EncoderParams {
-            use_predictor_transform: true,
             use_lossy: true,
             lossy_quality: fast_math::roundf(self.quality.clamp(0.0, 100.0)) as u8,
             method: self.method,
@@ -1207,7 +1230,6 @@ impl LossyConfig {
 impl LosslessConfig {
     pub(crate) fn to_params(&self) -> EncoderParams {
         EncoderParams {
-            use_predictor_transform: true,
             use_lossy: false,
             lossy_quality: fast_math::roundf(self.quality.clamp(0.0, 100.0)) as u8,
             method: self.method,
@@ -1271,36 +1293,46 @@ impl EncoderConfig {
 // ============================================================================
 
 #[cfg(feature = "target-zensim")]
+#[allow(clippy::too_many_arguments)]
 fn encode_pixels_with_metrics_impl(
     cfg: &LossyConfig,
     pixels: &[u8],
     layout: super::api::PixelLayout,
     width: u32,
     height: u32,
+    stop: &dyn enough::Stop,
+    progress: &dyn super::api::EncodeProgress,
 ) -> Result<
     (
         alloc::vec::Vec<u8>,
+        super::api::EncodeStats,
         super::zensim_target::ZensimEncodeMetrics,
     ),
     At<super::api::EncodeError>,
 > {
     if let Some(t) = cfg.target_zensim {
-        return super::zensim_target::iteration::run(cfg, t, pixels, layout, width, height);
+        return super::zensim_target::iteration::run(
+            cfg, t, pixels, layout, width, height, stop, progress,
+        );
     }
     // No target_zensim → straight single-pass encode.
-    encode_single_pass(cfg, pixels, layout, width, height)
+    encode_single_pass(cfg, pixels, layout, width, height, stop, progress)
 }
 
 #[cfg(not(feature = "target-zensim"))]
+#[allow(clippy::too_many_arguments)]
 fn encode_pixels_with_metrics_impl(
     cfg: &LossyConfig,
     pixels: &[u8],
     layout: super::api::PixelLayout,
     width: u32,
     height: u32,
+    stop: &dyn enough::Stop,
+    progress: &dyn super::api::EncodeProgress,
 ) -> Result<
     (
         alloc::vec::Vec<u8>,
+        super::api::EncodeStats,
         super::zensim_target::ZensimEncodeMetrics,
     ),
     At<super::api::EncodeError>,
@@ -1316,9 +1348,9 @@ fn encode_pixels_with_metrics_impl(
             super::analysis::ImageContentType::Photo,
         )
         .clamp(0.0, 100.0);
-        return encode_single_pass(&probe, pixels, layout, width, height);
+        return encode_single_pass(&probe, pixels, layout, width, height, stop, progress);
     }
-    encode_single_pass(cfg, pixels, layout, width, height)
+    encode_single_pass(cfg, pixels, layout, width, height, stop, progress)
 }
 
 /// Single-pass encode (Rgb8 or Rgba8), no metrics. Plumb through
@@ -1329,19 +1361,28 @@ fn encode_single_pass(
     layout: super::api::PixelLayout,
     width: u32,
     height: u32,
+    stop: &dyn enough::Stop,
+    progress: &dyn super::api::EncodeProgress,
 ) -> Result<
     (
         alloc::vec::Vec<u8>,
+        super::api::EncodeStats,
         super::zensim_target::ZensimEncodeMetrics,
     ),
     At<super::api::EncodeError>,
 > {
-    let req = super::api::EncodeRequest::lossy(cfg, pixels, layout, width, height);
-    match req.encode() {
-        Ok(bytes) => {
+    // `encode_inner` (not `encode`) so this can never re-enter the
+    // target_zensim dispatch; the caller's stop/progress ride along like on
+    // every other request (#78).
+    let req = super::api::EncodeRequest::lossy(cfg, pixels, layout, width, height)
+        .with_stop(stop)
+        .with_progress(progress);
+    match req.encode_inner() {
+        Ok((bytes, stats)) => {
             let len = bytes.len();
             Ok((
                 bytes,
+                stats,
                 super::zensim_target::ZensimEncodeMetrics::no_target(len),
             ))
         }
@@ -1392,6 +1433,9 @@ impl LossyConfig {
         v::check_quality(self.quality)?;
         v::check_method(self.method)?;
         v::check_alpha_quality(self.alpha_quality)?;
+        if let Some(e) = self.alpha_effort {
+            v::check_alpha_effort(e)?;
+        }
         v::check_target_psnr(self.target_psnr)?;
 
         if let Some(s) = self.sns_strength

@@ -35,7 +35,7 @@ use super::error::{MuxError, MuxResult};
 use crate::decoder::LoopCount;
 use crate::encoder::vp8::encode_frame_lossy;
 use crate::encoder::{
-    EncoderConfig, EncoderParams, NoProgress, PixelLayout, encode_alpha_lossless,
+    EncoderConfig, EncoderParams, NoProgress, PixelLayout, alpha_is_opaque, encode_alpha_lossless,
     encode_frame_lossless,
 };
 use enough::Unstoppable;
@@ -170,6 +170,7 @@ impl AnimationEncoder {
         timestamp_ms: u32,
         encoder_config: &EncoderConfig,
     ) -> MuxResult<()> {
+        reject_target_zensim(encoder_config)?;
         // If optimization is disabled, or input is YUV420 (can't diff planar
         // data pixel-by-pixel), fall through to full-canvas encoding.
         if !self.minimize_size || color_type == PixelLayout::Yuv420 {
@@ -286,6 +287,7 @@ impl AnimationEncoder {
         dispose: DisposeMethod,
         blend: BlendMethod,
     ) -> MuxResult<()> {
+        reject_target_zensim(encoder_config)?;
         let params = encoder_config.to_params();
         let encoded = encode_frame_data(pixels, frame_width, frame_height, color_type, &params)?;
         self.push_encoded_frame(
@@ -465,6 +467,23 @@ struct EncodedFrame {
     is_lossless: bool,
 }
 
+/// `target_zensim` is a closed loop (encode → decode → measure) over a
+/// single still image; the animation encoder does not run it per frame.
+/// Refuse loudly instead of silently single-passing the frame (#78 — the
+/// knob was dropped on this path the same way #75's was).
+fn reject_target_zensim(config: &EncoderConfig) -> MuxResult<()> {
+    if let EncoderConfig::Lossy(c) = config
+        && c.target_zensim.is_some()
+    {
+        return Err(whereat::at!(MuxError::EncodeError(
+            crate::encoder::EncodeError::UnsupportedOperation(
+                zencodec::UnsupportedOperation::AnimationEncode,
+            ),
+        )));
+    }
+    Ok(())
+}
+
 /// Encode a single frame to raw bitstream data (no RIFF container).
 fn encode_frame_data(
     pixels: &[u8],
@@ -474,9 +493,13 @@ fn encode_frame_data(
     params: &EncoderParams,
 ) -> Result<EncodedFrame, whereat::At<MuxError>> {
     let mut bitstream = Vec::new();
-    let lossy_with_alpha = params.use_lossy && color.has_alpha();
-
     let stride = width as usize;
+    // Same content-based gate as the still-image path: an opaque RGBA/BGRA
+    // frame carries no ALPH chunk (#78 — the animation path used to emit a
+    // redundant all-255 ALPH for every opaque alpha-layout frame).
+    let lossy_with_alpha = params.use_lossy
+        && color.has_alpha()
+        && !alpha_is_opaque(pixels, width, height, stride, color);
     if params.use_lossy {
         // `EncodeError` → `MuxError`, preserving the whereat trace from the
         // encoder so a frame-encode failure keeps its source location.
@@ -528,7 +551,6 @@ fn encode_frame_data(
             stride,
             color,
             params.clone(),
-            false,
             &Unstoppable,
         )
         .map_err_at(MuxError::EncodeError)?;

@@ -1151,15 +1151,18 @@ impl<'a> WebPDecoder<'a> {
         Ok(())
     }
 
-    /// Sets the maximum amount of memory that the decoder is allowed to allocate at once.
-    ///
-    /// TODO: Some allocations currently ignore this limit.
     /// Set a cooperative cancellation token for decoding.
     pub fn set_stop(&mut self, stop: Option<&'a dyn enough::Stop>) {
         self.stop = stop;
     }
 
-    /// Sets the memory limit in bytes for decoded image buffers.
+    /// Sets the maximum size in bytes of a metadata chunk (ICCP / EXIF / XMP)
+    /// the decoder will copy out for [`Self::icc_profile`],
+    /// [`Self::exif_metadata`] and [`Self::xmp_metadata`].
+    ///
+    /// This does **not** bound the image buffers — those are governed by
+    /// [`Limits::max_memory`](super::limits::Limits::max_memory) via
+    /// [`Self::set_limits`] / `DecodeConfig::limits`.
     pub fn set_memory_limit(&mut self, limit: usize) {
         self.memory_limit = limit;
     }

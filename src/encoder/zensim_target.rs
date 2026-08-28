@@ -520,7 +520,18 @@ pub(crate) mod iteration {
     /// Result of running the closed-loop iteration: bytes + metrics, or
     /// an error if a hard constraint was violated. Carries `At<EncodeError>`
     /// so a failure inside the iteration keeps its `file:line` trace.
-    pub(crate) type IterationResult = Result<(Vec<u8>, ZensimEncodeMetrics), At<EncodeError>>;
+    /// The converged bytes, the encoder statistics of the winning pass, and
+    /// the iteration metrics. Stats ride along so
+    /// `EncodeRequest::encode_with_stats` can honor `target_zensim` too
+    /// (#78: it used to bypass the iteration and single-pass silently).
+    pub(crate) type IterationResult = Result<
+        (
+            Vec<u8>,
+            crate::encoder::api::EncodeStats,
+            ZensimEncodeMetrics,
+        ),
+        At<EncodeError>,
+    >;
 
     /// Disable Phase 3 per-segment correction. When set, every pass after
     /// pass 0 takes the global-q secant step (or fallback step) instead of
@@ -674,6 +685,10 @@ pub(crate) mod iteration {
     /// pass 1+ uses per-segment diffmap-driven correction when segments
     /// are active (Phase 3), falling back to a global-q secant step when
     /// segments are disabled (`num_segments == 1`) or unavailable.
+    /// `stop` / `progress` are the request's callbacks, forwarded to every
+    /// probe encode so cancellation and progress reporting keep working
+    /// inside the closed loop (#78: the probes were built without them).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn run(
         cfg: &LossyConfig,
         target: ZensimTarget,
@@ -681,6 +696,8 @@ pub(crate) mod iteration {
         layout: PixelLayout,
         width: u32,
         height: u32,
+        stop: &dyn enough::Stop,
+        progress: &dyn crate::encoder::api::EncodeProgress,
     ) -> IterationResult {
         // Layout gate: Rgb8 / Rgba8 only. The public API gate
         // (`EncodeRequest::try_encode_target_zensim_with_metrics`) already
@@ -753,8 +770,9 @@ pub(crate) mod iteration {
         // also captures the encoder's per-MB segment_map via the internal
         // `EncodeDiagnostics` struct so Phase 3 can aggregate the diffmap
         // per real k-means segment instead of a 2x2 spatial proxy.
-        let (bytes0, diag0) =
-            encode_at_with_diagnostics(cfg, q, false, None, pixels, layout, width, height)?;
+        let (bytes0, stats0, diag0) = encode_at_with_diagnostics(
+            cfg, q, false, None, pixels, layout, width, height, stop, progress,
+        )?;
         let max_passes = target.max_passes.max(1);
 
         if trace_phase3() {
@@ -772,6 +790,7 @@ pub(crate) mod iteration {
         if max_passes <= 1 {
             return Ok((
                 bytes0.clone(),
+                stats0.clone(),
                 ZensimEncodeMetrics {
                     achieved_score: f32::NAN,
                     passes_used: 1,
@@ -807,6 +826,7 @@ pub(crate) mod iteration {
 
         let mut best = Candidate {
             bytes: bytes0,
+            stats: stats0,
             score: score0,
             q,
             seg_overrides: None,
@@ -963,7 +983,7 @@ pub(crate) mod iteration {
             // user's LossyConfig value when
             // [`AblationToggles::no_multi_pass_stats`] is set.
             let mps = !ablate_no_multi_pass_stats();
-            let (bytes_n, diag_n) = encode_at_with_diagnostics(
+            let (bytes_n, stats_n, diag_n) = encode_at_with_diagnostics(
                 cfg,
                 next_q,
                 mps,
@@ -972,6 +992,8 @@ pub(crate) mod iteration {
                 layout,
                 width,
                 height,
+                stop,
+                progress,
             )?;
             let (score_n, dm_n) =
                 measure_score_and_diffmap(&z, &pre, &bytes_n, layout, width, height)?;
@@ -996,6 +1018,7 @@ pub(crate) mod iteration {
                 best,
                 Candidate {
                     bytes: bytes_n,
+                    stats: stats_n,
                     score: score_n,
                     q: next_q,
                     seg_overrides: next_overrides,
@@ -1032,6 +1055,7 @@ pub(crate) mod iteration {
 
     struct Candidate {
         bytes: Vec<u8>,
+        stats: crate::encoder::api::EncodeStats,
         score: f32,
         // q and seg_overrides are populated for diagnostic tracing /
         // debugging (the trace lines reference them). pick_best only
@@ -1148,6 +1172,7 @@ pub(crate) mod iteration {
         let bytes_len = best.bytes.len();
         Ok((
             best.bytes,
+            best.stats,
             ZensimEncodeMetrics {
                 achieved_score: best.score,
                 passes_used,
@@ -1180,7 +1205,10 @@ pub(crate) mod iteration {
         layout: PixelLayout,
         width: u32,
         height: u32,
-    ) -> Result<(Vec<u8>, EncodeDiagnostics), At<EncodeError>> {
+        stop: &dyn enough::Stop,
+        progress: &dyn crate::encoder::api::EncodeProgress,
+    ) -> Result<(Vec<u8>, crate::encoder::api::EncodeStats, EncodeDiagnostics), At<EncodeError>>
+    {
         let mut probe_cfg = cfg.clone();
         probe_cfg.quality = q.clamp(0.0, 100.0);
         probe_cfg.multi_pass_stats = enable_multi_pass;
@@ -1191,10 +1219,15 @@ pub(crate) mod iteration {
         probe_cfg.target_zensim = None;
         probe_cfg.segment_quant_overrides = seg_overrides;
 
+        // Forward the caller's stop token + progress sink: a probe encode
+        // is a full encode, and without them cancellation was ignored for
+        // the whole closed loop (#78).
         let req =
-            crate::encoder::api::EncodeRequest::lossy(&probe_cfg, pixels, layout, width, height);
+            crate::encoder::api::EncodeRequest::lossy(&probe_cfg, pixels, layout, width, height)
+                .with_stop(stop)
+                .with_progress(progress);
         match req.encode_inner_with_diagnostics() {
-            Ok((bytes, _stats, diag)) => Ok((bytes, diag)),
+            Ok((bytes, stats, diag)) => Ok((bytes, stats, diag)),
             // Preserve the encoder's whereat trace.
             Err(at_err) => Err(at_err),
         }

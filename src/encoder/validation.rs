@@ -83,6 +83,15 @@ pub enum ValidationError {
         valid: RangeInclusive<u8>,
     },
 
+    /// `alpha_effort` is outside the valid range.
+    #[error("alpha_effort {value} out of valid range {valid:?}")]
+    AlphaEffortOutOfRange {
+        /// The invalid value.
+        value: u8,
+        /// The valid inclusive range.
+        valid: RangeInclusive<u8>,
+    },
+
     /// `sns_strength` is outside the valid range.
     #[error("sns_strength {value} out of valid range {valid:?}")]
     SnsStrengthOutOfRange {
@@ -236,6 +245,8 @@ pub const QUALITY_RANGE: RangeInclusive<f32> = 0.0..=100.0;
 pub const METHOD_RANGE: RangeInclusive<u8> = 0..=6;
 /// Valid range for `alpha_quality`.
 pub const ALPHA_QUALITY_RANGE: RangeInclusive<u8> = 0..=100;
+/// Valid range for `alpha_effort` (same 0..=6 scale as `method`).
+pub const ALPHA_EFFORT_RANGE: RangeInclusive<u8> = 0..=6;
 /// Valid range for `sns_strength`.
 pub const SNS_STRENGTH_RANGE: RangeInclusive<u8> = 0..=100;
 /// Valid range for `filter_strength`.
@@ -284,6 +295,17 @@ pub(super) fn check_method(m: u8) -> Result<(), ValidationError> {
         return Err(ValidationError::MethodOutOfRange {
             value: m,
             valid: METHOD_RANGE,
+        });
+    }
+    Ok(())
+}
+
+#[inline]
+pub(super) fn check_alpha_effort(e: u8) -> Result<(), ValidationError> {
+    if !ALPHA_EFFORT_RANGE.contains(&e) {
+        return Err(ValidationError::AlphaEffortOutOfRange {
+            value: e,
+            valid: ALPHA_EFFORT_RANGE,
         });
     }
     Ok(())

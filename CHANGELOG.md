@@ -72,6 +72,35 @@ here has landed; see "Changed (BREAKING)" below.)
   falsified for the whole codebase; the migration is hygiene.
 
 ### Fixed (2026-08-27 issue sweep)
+- **#78 review backlog, encoder-config subset (refs #78; the issue was
+  auto-closed by 2dc3853's `fixes` trailer with ~23 items still open):**
+  - `target_zensim` probes now carry the request's `stop` / `progress`
+    callbacks — cancellation was ignored for the whole closed loop.
+  - `EncodeRequest::encode_with_stats` honors `target_zensim` like
+    `encode()` does (it single-passed silently); the returned stats are the
+    winning pass's. `LossyConfig::encode_pixels_with_metrics` (crate) now
+    yields `(bytes, EncodeStats, metrics)`.
+  - `AnimationEncoder::add_frame*` refuse a lossy config with
+    `target_zensim` set (`EncodeError::UnsupportedOperation(AnimationEncode)`)
+    instead of silently single-passing every frame.
+  - `EncoderConfig::with_lossless` now preserves `alpha_quality` and
+    `target_size` in both directions, as its doc promised.
+  - `LossyConfig::validate` checks `alpha_effort` (new
+    `ValidationError::AlphaEffortOutOfRange`, range `0..=6`;
+    `ValidationError` is `#[non_exhaustive]`).
+  - Animation frames use the still path's content-based ALPH gate: an
+    opaque RGBA/BGRA frame no longer carries a redundant all-255 ALPH chunk.
+  - The literal-only VP8L writer behind `encode_frame_lossless`'s
+    `implicit_dimensions` flag was unreachable (both callers passed `false`)
+    and is removed along with its helpers and the never-read
+    `EncoderParams::use_predictor_transform`; output is byte-identical
+    (`dev/output_hash.rs` COMBINED `b1309ba43b9b5e43`, byte-parity gate).
+  - Docs: `LosslessConfig::{alpha_quality,target_size}` state that the
+    lossless encoder does not use them; `WebPDecoder::set_memory_limit`
+    now documents that it bounds metadata-chunk copies, not image buffers
+    (`Limits::max_memory` does).
+  - Tests: `tests/review_backlog_78.rs` — each watched to FAIL against its
+    defect (gate removed / callback dropped / bypass restored).
 - **`prefer_fallible_allocations` now reaches the encoder (#63, encoder
   half).** The zencodec `WebpEncodeJob` dropped
   `ResourceLimits::prefer_fallible_allocations` on the floor (only pixel /

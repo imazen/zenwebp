@@ -69,6 +69,7 @@ pub mod zensim_target;
 // Re-export public API
 pub use analysis::{ClassifierDiag, ImageContentType};
 pub(crate) use api::EncoderParams;
+pub(crate) use api::alpha_is_opaque;
 pub use api::{
     CostModel, EncodeError, EncodeProgress, EncodeRequest, EncodeResult, EncodeStats,
     ImageMetadata, NoProgress, PixelLayout, Preset,

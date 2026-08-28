@@ -13,13 +13,10 @@
 //!     .encode()?;
 //! # Ok::<(), whereat::At<zenwebp::EncodeError>>(())
 //! ```
-use alloc::collections::BinaryHeap;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::cmp::Ordering;
 use core::fmt;
-use core::iter::Peekable;
 use thiserror::Error;
 use whereat::at;
 
@@ -301,323 +298,12 @@ impl fmt::Display for PixelLayout {
     }
 }
 
-/// Bit writer that writes to a Vec<u8> - infallible operations.
-struct BitWriter<'a> {
-    writer: &'a mut Vec<u8>,
-    buffer: u64,
-    nbits: u8,
-}
-
-impl<'a> BitWriter<'a> {
-    fn new(writer: &'a mut Vec<u8>) -> Self {
-        Self {
-            writer,
-            buffer: 0,
-            nbits: 0,
-        }
-    }
-
-    fn write_bits(&mut self, bits: u64, nbits: u8) {
-        debug_assert!(nbits <= 64);
-
-        self.buffer |= bits << self.nbits;
-        self.nbits += nbits;
-
-        if self.nbits >= 64 {
-            self.writer.write_all(&self.buffer.to_le_bytes());
-            self.nbits -= 64;
-            self.buffer = bits.checked_shr(u32::from(nbits - self.nbits)).unwrap_or(0);
-        }
-        debug_assert!(self.nbits < 64);
-    }
-
-    fn flush(&mut self) {
-        if !self.nbits.is_multiple_of(8) {
-            self.write_bits(0, 8 - self.nbits % 8);
-        }
-        if self.nbits > 0 {
-            self.writer
-                .write_all(&self.buffer.to_le_bytes()[..self.nbits as usize / 8]);
-            self.buffer = 0;
-            self.nbits = 0;
-        }
-    }
-}
-
-fn write_single_entry_huffman_tree(w: &mut BitWriter<'_>, symbol: u8) {
-    w.write_bits(1, 2);
-    if symbol <= 1 {
-        w.write_bits(0, 1);
-        w.write_bits(u64::from(symbol), 1);
-    } else {
-        w.write_bits(1, 1);
-        w.write_bits(u64::from(symbol), 8);
-    }
-}
-
-fn build_huffman_tree(
-    frequencies: &[u32],
-    lengths: &mut [u8],
-    codes: &mut [u16],
-    length_limit: u8,
-) -> bool {
-    assert_eq!(frequencies.len(), lengths.len());
-    assert_eq!(frequencies.len(), codes.len());
-
-    if frequencies.iter().filter(|&&f| f > 0).count() <= 1 {
-        lengths.fill(0);
-        codes.fill(0);
-        return false;
-    }
-
-    #[derive(Eq, PartialEq, Copy, Clone, Debug)]
-    struct Item(u32, u16);
-    impl Ord for Item {
-        fn cmp(&self, other: &Self) -> Ordering {
-            other.0.cmp(&self.0)
-        }
-    }
-    impl PartialOrd for Item {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-            Some(self.cmp(other))
-        }
-    }
-
-    // Build a huffman tree
-    let mut internal_nodes = Vec::new();
-    let mut nodes = BinaryHeap::from_iter(
-        frequencies
-            .iter()
-            .enumerate()
-            .filter(|&(_, &frequency)| frequency > 0)
-            .map(|(i, &frequency)| Item(frequency, i as u16)),
-    );
-    while nodes.len() > 1 {
-        let Item(frequency1, index1) = nodes.pop().unwrap();
-        let mut root = nodes.peek_mut().unwrap();
-        internal_nodes.push((index1, root.1));
-        *root = Item(
-            frequency1 + root.0,
-            internal_nodes.len() as u16 + frequencies.len() as u16 - 1,
-        );
-    }
-
-    // Walk the tree to assign code lengths
-    lengths.fill(0);
-    let mut stack = Vec::new();
-    stack.push((nodes.pop().unwrap().1, 0));
-    while let Some((node, depth)) = stack.pop() {
-        let node = node as usize;
-        if node < frequencies.len() {
-            lengths[node] = depth as u8;
-        } else {
-            let (left, right) = internal_nodes[node - frequencies.len()];
-            stack.push((left, depth + 1));
-            stack.push((right, depth + 1));
-        }
-    }
-
-    // Limit the codes to length length_limit
-    let mut max_length = 0;
-    for &length in lengths.iter() {
-        max_length = max_length.max(length);
-    }
-    if max_length > length_limit {
-        let mut counts = [0u32; 16];
-        for &length in lengths.iter() {
-            counts[length.min(length_limit) as usize] += 1;
-        }
-
-        let mut total = 0;
-        for (i, count) in counts
-            .iter()
-            .enumerate()
-            .skip(1)
-            .take(length_limit as usize)
-        {
-            total += count << (length_limit as usize - i);
-        }
-
-        while total > 1u32 << length_limit {
-            let mut i = length_limit as usize - 1;
-            while counts[i] == 0 {
-                i -= 1;
-            }
-            counts[i] -= 1;
-            counts[length_limit as usize] -= 1;
-            counts[i + 1] += 2;
-            total -= 1;
-        }
-
-        // assign new lengths
-        let mut len = length_limit;
-        let mut indexes = frequencies.iter().copied().enumerate().collect::<Vec<_>>();
-        indexes.sort_unstable_by_key(|&(_, frequency)| frequency);
-        for &(i, frequency) in &indexes {
-            if frequency > 0 {
-                while counts[len as usize] == 0 {
-                    len -= 1;
-                }
-                lengths[i] = len;
-                counts[len as usize] -= 1;
-            }
-        }
-    }
-
-    // Assign codes
-    codes.fill(0);
-    let mut code = 0u32;
-    for len in 1..=length_limit {
-        for (i, &length) in lengths.iter().enumerate() {
-            if length == len {
-                codes[i] = (code as u16).reverse_bits() >> (16 - len);
-                code += 1;
-            }
-        }
-        code <<= 1;
-    }
-    assert_eq!(code, 2 << length_limit);
-
-    true
-}
-
-fn write_huffman_tree(
-    w: &mut BitWriter<'_>,
-    frequencies: &[u32],
-    lengths: &mut [u8],
-    codes: &mut [u16],
-) {
-    if !build_huffman_tree(frequencies, lengths, codes, 15) {
-        let symbol = frequencies
-            .iter()
-            .position(|&frequency| frequency > 0)
-            .unwrap_or(0);
-        write_single_entry_huffman_tree(w, symbol as u8);
-        return;
-    }
-
-    let mut code_length_lengths = [0u8; 16];
-    let mut code_length_codes = [0u16; 16];
-    let mut code_length_frequencies = [0u32; 16];
-    for &length in lengths.iter() {
-        code_length_frequencies[length as usize] += 1;
-    }
-    let single_code_length_length = !build_huffman_tree(
-        &code_length_frequencies,
-        &mut code_length_lengths,
-        &mut code_length_codes,
-        7,
-    );
-
-    const CODE_LENGTH_ORDER: [usize; 19] = [
-        17, 18, 0, 1, 2, 3, 4, 5, 16, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-    ];
-
-    // Write the huffman tree
-    w.write_bits(0, 1); // normal huffman tree
-    w.write_bits(19 - 4, 4); // num_code_lengths - 4
-
-    for i in CODE_LENGTH_ORDER {
-        if i > 15 || code_length_frequencies[i] == 0 {
-            w.write_bits(0, 3);
-        } else if single_code_length_length {
-            w.write_bits(1, 3);
-        } else {
-            w.write_bits(u64::from(code_length_lengths[i]), 3);
-        }
-    }
-
-    match lengths.len() {
-        256 => {
-            w.write_bits(1, 1); // max_symbol is stored
-            w.write_bits(3, 3); // max_symbol_nbits / 2 - 2
-            w.write_bits(254, 8); // max_symbol - 2
-        }
-        280 => w.write_bits(0, 1),
-        _ => unreachable!(),
-    }
-
-    // Write the huffman codes
-    if !single_code_length_length {
-        for &len in lengths.iter() {
-            w.write_bits(
-                u64::from(code_length_codes[len as usize]),
-                code_length_lengths[len as usize],
-            );
-        }
-    }
-}
-
-const fn length_to_symbol(len: u16) -> (u16, u8) {
-    let len = len - 1;
-    let highest_bit = len.ilog2() as u16;
-    let second_highest_bit = (len >> (highest_bit - 1)) & 1;
-    let extra_bits = highest_bit - 1;
-    let symbol = 2 * highest_bit + second_highest_bit;
-    (symbol, extra_bits as u8)
-}
-
-#[inline(always)]
-fn count_run(
-    pixel: &[u8; 4],
-    it: &mut Peekable<core::slice::Iter<'_, [u8; 4]>>,
-    frequencies1: &mut [u32; 280],
-) {
-    let mut run_length = 0;
-    while run_length < 4096 && it.peek() == Some(&pixel) {
-        run_length += 1;
-        it.next();
-    }
-    if run_length > 0 {
-        if run_length <= 4 {
-            let symbol = 256 + run_length - 1;
-            frequencies1[symbol] += 1;
-        } else {
-            let (symbol, _extra_bits) = length_to_symbol(run_length as u16);
-            frequencies1[256 + symbol as usize] += 1;
-        }
-    }
-}
-
-#[inline(always)]
-fn write_run(
-    w: &mut BitWriter<'_>,
-    pixel: &[u8; 4],
-    it: &mut Peekable<core::slice::Iter<'_, [u8; 4]>>,
-    codes1: &[u16; 280],
-    lengths1: &[u8; 280],
-) {
-    let mut run_length = 0;
-    while run_length < 4096 && it.peek() == Some(&pixel) {
-        run_length += 1;
-        it.next();
-    }
-    if run_length > 0 {
-        if run_length <= 4 {
-            let symbol = 256 + run_length - 1;
-            w.write_bits(u64::from(codes1[symbol]), lengths1[symbol]);
-        } else {
-            let (symbol, extra_bits) = length_to_symbol(run_length as u16);
-            w.write_bits(
-                u64::from(codes1[256 + symbol as usize]),
-                lengths1[256 + symbol as usize],
-            );
-            w.write_bits(
-                (run_length as u64 - 1) & ((1 << extra_bits) - 1),
-                extra_bits,
-            );
-        }
-    }
-}
-
 /// Allows fine-tuning some encoder parameters.
 ///
 /// Pass to [`WebPEncoder::set_params()`].
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct EncoderParams {
-    /// Use a predictor transform. Enabled by default.
-    pub use_predictor_transform: bool,
     /// Use the lossy encoding to encode the image using the VP8 compression format.
     pub use_lossy: bool,
     /// A quality value for the lossy encoding that must be between 0 and 100. Defaults to 95.
@@ -692,7 +378,6 @@ pub struct EncoderParams {
 impl Default for EncoderParams {
     fn default() -> Self {
         Self {
-            use_predictor_transform: true,
             use_lossy: false,
             lossy_quality: 95,
             method: 4, // Balanced speed/quality
@@ -1157,7 +842,6 @@ impl EncoderConfig {
         };
 
         EncoderParams {
-            use_predictor_transform: true,
             use_lossy: !self.lossless,
             lossy_quality: super::fast_math::roundf(self.quality.clamp(0.0, 100.0)) as u8,
             method: self.method,
@@ -1545,8 +1229,17 @@ impl<'a> EncodeRequest<'a> {
     }
 
     /// Encode to WebP bytes and return encoding statistics.
+    ///
+    /// Honors `target_zensim` exactly like [`Self::encode`]: when the lossy
+    /// config sets a target (and the `target-zensim` feature is on), the
+    /// closed-loop iteration runs and the statistics returned are those of
+    /// the winning pass. (#78: this entry point used to bypass the
+    /// iteration and single-pass silently.)
     #[track_caller]
     pub fn encode_with_stats(self) -> EncodeResult<(Vec<u8>, EncodeStats)> {
+        if let Some((bytes, stats, _metrics)) = self.try_encode_target_zensim_with_metrics()? {
+            return Ok((bytes, stats));
+        }
         self.encode_inner()
     }
 
@@ -1577,8 +1270,8 @@ impl<'a> EncodeRequest<'a> {
     pub fn encode_with_metrics(
         self,
     ) -> EncodeResult<(Vec<u8>, super::zensim_target::ZensimEncodeMetrics)> {
-        if let Some(pair) = self.try_encode_target_zensim_with_metrics()? {
-            return Ok(pair);
+        if let Some((bytes, _stats, metrics)) = self.try_encode_target_zensim_with_metrics()? {
+            return Ok((bytes, metrics));
         }
         let (output, _stats) = self.encode_inner()?;
         let len = output.len();
@@ -1598,7 +1291,7 @@ impl<'a> EncodeRequest<'a> {
     /// back to the normal single-pass path.
     fn try_encode_target_zensim_bytes(&self) -> EncodeResult<Option<Vec<u8>>> {
         match self.try_encode_target_zensim_with_metrics()? {
-            Some((bytes, _m)) => Ok(Some(bytes)),
+            Some((bytes, _stats, _m)) => Ok(Some(bytes)),
             None => Ok(None),
         }
     }
@@ -1624,7 +1317,13 @@ impl<'a> EncodeRequest<'a> {
     #[allow(clippy::unnecessary_wraps)] // signature aligns with feature-on counterpart
     fn try_encode_target_zensim_with_metrics(
         &self,
-    ) -> EncodeResult<Option<(Vec<u8>, super::zensim_target::ZensimEncodeMetrics)>> {
+    ) -> EncodeResult<
+        Option<(
+            Vec<u8>,
+            EncodeStats,
+            super::zensim_target::ZensimEncodeMetrics,
+        )>,
+    > {
         // Only Rgb8/Rgba8 lossy configs with target_zensim set and no
         // metadata/stride trigger the iteration path. Other layouts
         // with target_zensim set return a typed error (no silent
@@ -1655,13 +1354,15 @@ impl<'a> EncodeRequest<'a> {
             // through. Take the safe path.
             return Ok(None);
         }
-        let pair = lossy.encode_pixels_with_metrics(
+        let triple = lossy.encode_pixels_with_metrics(
             self.pixels,
             self.color_type,
             self.width,
             self.height,
+            self.stop,
+            self.progress,
         )?;
-        Ok(Some(pair))
+        Ok(Some(triple))
     }
 
     /// Encode to WebP, writing to an [`io::Write`](std::io::Write) implementor.
@@ -1738,7 +1439,7 @@ impl<'a> EncodeRequest<'a> {
         Ok((output, stats, diag))
     }
 
-    fn encode_inner(self) -> EncodeResult<(Vec<u8>, EncodeStats)> {
+    pub(crate) fn encode_inner(self) -> EncodeResult<(Vec<u8>, EncodeStats)> {
         // Validate dimensions against limits
         self.config
             .get_limits()
@@ -1826,8 +1527,11 @@ fn validate_buffer_size(
 /// Encode image data losslessly with the indicated color type.
 ///
 /// Uses the full VP8L pipeline (LZ77, histogram clustering, transforms)
-/// for main image encoding. Falls back to a simple literal-only encoder
-/// for alpha plane encoding (implicit_dimensions = true).
+/// for every layout; L8/La8 are widened to RGB/RGBA first so grayscale
+/// gets the same treatment as color (#57). The literal-only writer that
+/// used to sit behind an `implicit_dimensions` flag was unreachable (both
+/// callers passed `false`; the ALPH plane goes through
+/// `encode_alpha_lossless`) and was removed (#78).
 ///
 /// # Panics
 ///
@@ -1841,14 +1545,13 @@ pub(crate) fn encode_frame_lossless(
     stride: usize,
     color: PixelLayout,
     params: EncoderParams,
-    implicit_dimensions: bool,
     stop: &dyn enough::Stop,
 ) -> EncodeResult<()> {
-    let (is_color, is_alpha, bytes_per_pixel) = match color {
-        PixelLayout::L8 => (false, false, 1),
-        PixelLayout::La8 => (false, true, 2),
-        PixelLayout::Rgb8 | PixelLayout::Bgr8 => (true, false, 3),
-        PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => (true, true, 4),
+    let bytes_per_pixel = match color {
+        PixelLayout::L8 => 1,
+        PixelLayout::La8 => 2,
+        PixelLayout::Rgb8 | PixelLayout::Bgr8 => 3,
+        PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => 4,
         PixelLayout::Yuv420 => {
             return Err(at!(EncodeError::InvalidBufferSize(
                 "YUV 4:2:0 input only supports lossy encoding".into(),
@@ -1859,7 +1562,6 @@ pub(crate) fn encode_frame_lossless(
     let bpp = bytes_per_pixel as usize;
     let ww = width as usize;
     let hh = height as usize;
-    let npixels = ww * hh;
     let min_size = if hh > 0 {
         stride * bpp * (hh - 1) + ww * bpp
     } else {
@@ -1886,319 +1588,33 @@ pub(crate) fn encode_frame_lossless(
     // as color instead of falling to the literal-only encoder. Honestly-
     // declared grayscale otherwise paid a large compression penalty vs the
     // identical content fed as RGB (#57).
-    if !implicit_dimensions {
-        // Convert to contiguous RGBA or RGB for encode_vp8l
-        let (pixels, has_alpha) =
-            convert_to_contiguous(data, width, height, stride, color, params.alloc_pref)?;
+    // Convert to contiguous RGBA or RGB for encode_vp8l
+    let (pixels, has_alpha) =
+        convert_to_contiguous(data, width, height, stride, color, params.alloc_pref)?;
 
-        // Build VP8L config from params
-        let quality = params.lossy_quality; // quality field controls lossless effort
-        let method = params.method;
-        let vp8l_config = super::vp8l::Vp8lConfig {
-            quality: super::vp8l::Vp8lQuality { quality, method },
-            exact: params.exact,
-            // Was dropped here — `..default()` silently reset it to 100, so
-            // `with_near_lossless(q)` was a no-op at every method and quality
-            // (found by the decode-bounded roundtrip test, zenwebp#89).
-            near_lossless: params.near_lossless,
-            ..super::vp8l::Vp8lConfig::default()
-        };
-
-        let vp8l_data = super::vp8l::encode_vp8l_with_alloc(
-            &pixels,
-            width,
-            height,
-            has_alpha,
-            &vp8l_config,
-            params.alloc_pref,
-            stop,
-        )?;
-        writer.extend_from_slice(&vp8l_data);
-        return Ok(());
-    }
-
-    // Fallback: simple literal-only encoder for alpha planes only. This is fast
-    // but produces larger files; it is reached solely via implicit_dimensions
-    // (the alpha plane of a lossy+alpha encode), where the VP8L header carrying
-    // explicit width/height must be omitted and encode_vp8l can't be used. Main
-    // images of every layout — including L8/La8 — take the full pipeline above.
-    let w = &mut BitWriter::new(writer);
-
-    if !implicit_dimensions {
-        w.write_bits(0x2f, 8); // signature
-        w.write_bits(u64::from(width) - 1, 14);
-        w.write_bits(u64::from(height) - 1, 14);
-
-        w.write_bits(u64::from(is_alpha), 1); // alpha used
-        w.write_bits(0x0, 3); // version
-    }
-    // subtract green transform
-    w.write_bits(0b101, 3);
-
-    // predictor transform
-    if params.use_predictor_transform {
-        w.write_bits(0b111001, 6);
-        w.write_bits(0x0, 1); // no color cache
-        write_single_entry_huffman_tree(w, 2);
-        for _ in 0..4 {
-            write_single_entry_huffman_tree(w, 0);
-        }
-    }
-
-    // transforms done
-    w.write_bits(0x0, 1);
-
-    // color cache
-    w.write_bits(0x0, 1);
-
-    // meta-huffman codes
-    w.write_bits(0x0, 1);
-
-    // expand to RGBA (row-by-row to handle stride)
-    let stride_bytes = stride * bpp;
-    let row_bytes = ww * bpp;
-    // Top-level O(pixels) buffer: infallible by default, `try_reserve` under
-    // `AllocPreference::Fallible` (#63).
-    let alloc_rgba = |n: usize| {
-        crate::decoder::alloc_util::alloc_zeroed(params.alloc_pref, false, n)
-            .map_err(alloc_failed_error)
-    };
-    let mut pixels: Vec<u8> = match color {
-        PixelLayout::L8 => {
-            let mut out = alloc_rgba(npixels * 4)?;
-            for y in 0..hh {
-                garb::bytes::gray_to_rgba(
-                    &data[y * stride_bytes..y * stride_bytes + ww],
-                    &mut out[y * ww * 4..(y + 1) * ww * 4],
-                )
-                .expect("validated buffer sizes");
-            }
-            out
-        }
-        PixelLayout::La8 => {
-            let mut out = alloc_rgba(npixels * 4)?;
-            for y in 0..hh {
-                garb::bytes::gray_alpha_to_rgba(
-                    &data[y * stride_bytes..y * stride_bytes + row_bytes],
-                    &mut out[y * ww * 4..(y + 1) * ww * 4],
-                )
-                .expect("validated buffer sizes");
-            }
-            out
-        }
-        PixelLayout::Rgb8 => {
-            let mut out = alloc_rgba(npixels * 4)?;
-            for y in 0..hh {
-                garb::bytes::rgb_to_rgba(
-                    &data[y * stride_bytes..y * stride_bytes + row_bytes],
-                    &mut out[y * ww * 4..(y + 1) * ww * 4],
-                )
-                .expect("validated buffer sizes");
-            }
-            out
-        }
-        PixelLayout::Rgba8 => {
-            let mut out = alloc_rgba(npixels * 4)?;
-            for y in 0..hh {
-                out[y * ww * 4..(y + 1) * ww * 4]
-                    .copy_from_slice(&data[y * stride_bytes..y * stride_bytes + row_bytes]);
-            }
-            out
-        }
-        PixelLayout::Bgr8 => {
-            let mut out = alloc_rgba(npixels * 4)?;
-            for y in 0..hh {
-                garb::bytes::bgr_to_rgba(
-                    &data[y * stride_bytes..y * stride_bytes + row_bytes],
-                    &mut out[y * ww * 4..(y + 1) * ww * 4],
-                )
-                .expect("validated buffer sizes");
-            }
-            out
-        }
-        PixelLayout::Bgra8 => {
-            let mut out = alloc_rgba(npixels * 4)?;
-            for y in 0..hh {
-                garb::bytes::bgra_to_rgba(
-                    &data[y * stride_bytes..y * stride_bytes + row_bytes],
-                    &mut out[y * ww * 4..(y + 1) * ww * 4],
-                )
-                .expect("validated buffer sizes");
-            }
-            out
-        }
-        PixelLayout::Argb8 => {
-            let mut out = alloc_rgba(npixels * 4)?;
-            for y in 0..hh {
-                garb::bytes::argb_to_rgba(
-                    &data[y * stride_bytes..y * stride_bytes + row_bytes],
-                    &mut out[y * ww * 4..(y + 1) * ww * 4],
-                )
-                .expect("validated buffer sizes");
-            }
-            out
-        }
-        PixelLayout::Yuv420 => unreachable!(), // already rejected above
+    // Build VP8L config from params
+    let quality = params.lossy_quality; // quality field controls lossless effort
+    let method = params.method;
+    let vp8l_config = super::vp8l::Vp8lConfig {
+        quality: super::vp8l::Vp8lQuality { quality, method },
+        exact: params.exact,
+        // Was dropped here — `..default()` silently reset it to 100, so
+        // `with_near_lossless(q)` was a no-op at every method and quality
+        // (found by the decode-bounded roundtrip test, zenwebp#89).
+        near_lossless: params.near_lossless,
+        ..super::vp8l::Vp8lConfig::default()
     };
 
-    // compute subtract green transform
-    for pixel in pixels.as_chunks_mut::<4>().0 {
-        pixel[0] = pixel[0].wrapping_sub(pixel[1]);
-        pixel[2] = pixel[2].wrapping_sub(pixel[1]);
-    }
-
-    // compute predictor transform
-    if params.use_predictor_transform {
-        let row_bytes = width as usize * 4;
-        for y in (1..height as usize).rev() {
-            let (prev, current) =
-                pixels[(y - 1) * row_bytes..][..row_bytes * 2].split_at_mut(row_bytes);
-            for (c, p) in current.iter_mut().zip(prev) {
-                *c = c.wrapping_sub(*p);
-            }
-        }
-        for i in (4..row_bytes).rev() {
-            pixels[i] = pixels[i].wrapping_sub(pixels[i - 4]);
-        }
-        pixels[3] = pixels[3].wrapping_sub(255);
-    }
-
-    stop.check().map_err(|e| at!(EncodeError::from(e)))?;
-
-    // compute frequencies
-    let mut frequencies0 = [0u32; 256];
-    let mut frequencies1 = [0u32; 280];
-    let mut frequencies2 = [0u32; 256];
-    let mut frequencies3 = [0u32; 256];
-    let mut it = pixels.as_chunks::<4>().0.iter().peekable();
-    match color {
-        PixelLayout::L8 => {
-            frequencies0[0] = 1;
-            frequencies2[0] = 1;
-            frequencies3[0] = 1;
-            while let Some(pixel) = it.next() {
-                frequencies1[pixel[1] as usize] += 1;
-                count_run(pixel, &mut it, &mut frequencies1);
-            }
-        }
-        PixelLayout::La8 => {
-            frequencies0[0] = 1;
-            frequencies2[0] = 1;
-            while let Some(pixel) = it.next() {
-                frequencies1[pixel[1] as usize] += 1;
-                frequencies3[pixel[3] as usize] += 1;
-                count_run(pixel, &mut it, &mut frequencies1);
-            }
-        }
-        PixelLayout::Rgb8 | PixelLayout::Bgr8 => {
-            // BGR already converted to RGB in pixel expansion above
-            frequencies3[0] = 1;
-            while let Some(pixel) = it.next() {
-                frequencies0[pixel[0] as usize] += 1;
-                frequencies1[pixel[1] as usize] += 1;
-                frequencies2[pixel[2] as usize] += 1;
-                count_run(pixel, &mut it, &mut frequencies1);
-            }
-        }
-        PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => {
-            // BGRA/ARGB already converted to RGBA in pixel expansion above
-            while let Some(pixel) = it.next() {
-                frequencies0[pixel[0] as usize] += 1;
-                frequencies1[pixel[1] as usize] += 1;
-                frequencies2[pixel[2] as usize] += 1;
-                frequencies3[pixel[3] as usize] += 1;
-                count_run(pixel, &mut it, &mut frequencies1);
-            }
-        }
-        PixelLayout::Yuv420 => unreachable!(),
-    }
-
-    // compute and write huffman codes
-    let mut lengths0 = [0u8; 256];
-    let mut lengths1 = [0u8; 280];
-    let mut lengths2 = [0u8; 256];
-    let mut lengths3 = [0u8; 256];
-    let mut codes0 = [0u16; 256];
-    let mut codes1 = [0u16; 280];
-    let mut codes2 = [0u16; 256];
-    let mut codes3 = [0u16; 256];
-    write_huffman_tree(w, &frequencies1, &mut lengths1, &mut codes1);
-    if is_color {
-        write_huffman_tree(w, &frequencies0, &mut lengths0, &mut codes0);
-        write_huffman_tree(w, &frequencies2, &mut lengths2, &mut codes2);
-    } else {
-        write_single_entry_huffman_tree(w, 0);
-        write_single_entry_huffman_tree(w, 0);
-    }
-    if is_alpha {
-        write_huffman_tree(w, &frequencies3, &mut lengths3, &mut codes3);
-    } else if params.use_predictor_transform {
-        write_single_entry_huffman_tree(w, 0);
-    } else {
-        write_single_entry_huffman_tree(w, 255);
-    }
-    write_single_entry_huffman_tree(w, 1);
-
-    // Write image data
-    let mut it = pixels.as_chunks::<4>().0.iter().peekable();
-    match color {
-        PixelLayout::L8 => {
-            while let Some(pixel) = it.next() {
-                w.write_bits(
-                    u64::from(codes1[pixel[1] as usize]),
-                    lengths1[pixel[1] as usize],
-                );
-                write_run(w, pixel, &mut it, &codes1, &lengths1);
-            }
-        }
-        PixelLayout::La8 => {
-            while let Some(pixel) = it.next() {
-                let len1 = lengths1[pixel[1] as usize];
-                let len3 = lengths3[pixel[3] as usize];
-
-                let code = u64::from(codes1[pixel[1] as usize])
-                    | (u64::from(codes3[pixel[3] as usize]) << len1);
-
-                w.write_bits(code, len1 + len3);
-                write_run(w, pixel, &mut it, &codes1, &lengths1);
-            }
-        }
-        PixelLayout::Rgb8 | PixelLayout::Bgr8 => {
-            // BGR already converted to RGB in pixel expansion above
-            while let Some(pixel) = it.next() {
-                let len1 = lengths1[pixel[1] as usize];
-                let len0 = lengths0[pixel[0] as usize];
-                let len2 = lengths2[pixel[2] as usize];
-
-                let code = u64::from(codes1[pixel[1] as usize])
-                    | (u64::from(codes0[pixel[0] as usize]) << len1)
-                    | (u64::from(codes2[pixel[2] as usize]) << (len1 + len0));
-
-                w.write_bits(code, len1 + len0 + len2);
-                write_run(w, pixel, &mut it, &codes1, &lengths1);
-            }
-        }
-        PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => {
-            // BGRA/ARGB already converted to RGBA in pixel expansion above
-            while let Some(pixel) = it.next() {
-                let len1 = lengths1[pixel[1] as usize];
-                let len0 = lengths0[pixel[0] as usize];
-                let len2 = lengths2[pixel[2] as usize];
-                let len3 = lengths3[pixel[3] as usize];
-
-                let code = u64::from(codes1[pixel[1] as usize])
-                    | (u64::from(codes0[pixel[0] as usize]) << len1)
-                    | (u64::from(codes2[pixel[2] as usize]) << (len1 + len0))
-                    | (u64::from(codes3[pixel[3] as usize]) << (len1 + len0 + len2));
-
-                w.write_bits(code, len1 + len0 + len2 + len3);
-                write_run(w, pixel, &mut it, &codes1, &lengths1);
-            }
-        }
-        PixelLayout::Yuv420 => unreachable!(),
-    }
-
-    w.flush();
+    let vp8l_data = super::vp8l::encode_vp8l_with_alloc(
+        &pixels,
+        width,
+        height,
+        has_alpha,
+        &vp8l_config,
+        params.alloc_pref,
+        stop,
+    )?;
+    writer.extend_from_slice(&vp8l_data);
     Ok(())
 }
 
@@ -2794,7 +2210,6 @@ impl<'a> WebPEncoder<'a> {
                 stride,
                 color,
                 self.params,
-                false,
                 self.stop,
             )?;
             b"VP8L"
@@ -3111,11 +2526,6 @@ mod tests {
         roundtrip_libwebp_params(EncoderParams {
             exact: true,
             ..EncoderParams::default()
-        });
-        roundtrip_libwebp_params(EncoderParams {
-            use_predictor_transform: false,
-            exact: true,
-            ..Default::default()
         });
     }
 
