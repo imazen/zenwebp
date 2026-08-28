@@ -92,7 +92,9 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
   is 1.0004 of libwebp (was 1.0012). Default mode on the 11-file m4/m5
   set: −0.010 % vs the previous state, zen/libwebp **1.0001** (from 1.0016
   before the #71 work). What remains on `weather` (1.0057 tuned vs 1.0004
-  parity) is the deliberate tuned hash-chain accounting, not clustering.
+  parity) is the deliberate tuned hash-chain accounting, not clustering —
+  re-measured with `issue71_probe --parity`: libwebp's accounting would
+  cost +1 740 B on the set (+0.006 %), so the tuned default stands.
   Byte-parity sweep unchanged (3080/3080, alpha 192/192);
   `dev/output_hash.rs` COMBINED `4ecf20dac54d177f` → `31a62d4d81dc3de4`.
 - **VP8L entropy binning uses libwebp's quartile bin function (refs #71).**
