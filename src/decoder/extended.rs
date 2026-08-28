@@ -81,9 +81,10 @@ pub(crate) fn composite_frame(
     // current frame carries alpha, so we always clear with 4-byte pixels.
     if let Some(clear_color) = clear_color {
         if frame_is_full_size {
-            for pixel in canvas[..expected_canvas_size].chunks_exact_mut(4) {
-                pixel.copy_from_slice(&clear_color);
-            }
+            canvas[..expected_canvas_size]
+                .as_chunks_mut::<4>()
+                .0
+                .fill(clear_color);
         } else {
             for y in 0..previous_frame_height as usize {
                 for x in 0..previous_frame_width as usize {
@@ -374,7 +375,7 @@ pub(crate) fn read_alpha_chunk(
         let mut green =
             crate::decoder::alloc_util::alloc_zeroed(limits.alloc_pref, true, green_size)
                 .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
-        for (rgba_val, green_val) in rgba_data.chunks_exact(4).zip(green.iter_mut()) {
+        for (rgba_val, green_val) in rgba_data.as_chunks::<4>().0.iter().zip(green.iter_mut()) {
             *green_val = rgba_val[1];
         }
         green
@@ -437,9 +438,9 @@ mod tests {
         .unwrap();
 
         // After clear + RGB→RGBA composite, every pixel should be opaque white.
-        for (i, pixel) in canvas.chunks_exact(4).enumerate() {
+        for (i, pixel) in canvas.as_chunks::<4>().0.iter().enumerate() {
             assert_eq!(
-                pixel,
+                *pixel,
                 [0xFF, 0xFF, 0xFF, 0xFF],
                 "pixel {i} corrupted: {pixel:?}"
             );

@@ -8,7 +8,7 @@ use zencodec::encode::DynEncoderConfig as _;
 use zenpixels::{PixelDescriptor, PixelSlice};
 
 fn rgba_to_bgra_inplace(bytes: &mut [u8]) {
-    for p in bytes.chunks_exact_mut(4) {
+    for p in bytes.as_chunks_mut::<4>().0.iter_mut() {
         p.swap(0, 2);
     }
 }

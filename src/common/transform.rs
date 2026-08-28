@@ -201,7 +201,7 @@ pub(crate) fn iwht4x4(block: &mut [i32; 16]) {
         block[12 + i] = d1 - c1;
     }
 
-    for block in block.chunks_exact_mut(4) {
+    for block in block.as_chunks_mut::<4>().0 {
         let a1 = block[0] + block[3];
         let b1 = block[1] + block[2];
         let c1 = block[1] - block[2];

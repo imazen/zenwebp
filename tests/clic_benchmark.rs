@@ -32,7 +32,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
         png::ColorType::Rgba => {
             let rgba = &buf[..info.buffer_size()];
             let mut rgb = Vec::with_capacity((width * height * 3) as usize);
-            for pixel in rgba.chunks_exact(4) {
+            for pixel in rgba.as_chunks::<4>().0.iter() {
                 rgb.extend_from_slice(&pixel[..3]);
             }
             rgb
@@ -48,7 +48,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
         png::ColorType::GrayscaleAlpha => {
             let ga = &buf[..info.buffer_size()];
             let mut rgb = Vec::with_capacity((width * height * 3) as usize);
-            for pixel in ga.chunks_exact(2) {
+            for pixel in ga.as_chunks::<2>().0.iter() {
                 let g = pixel[0];
                 rgb.extend_from_slice(&[g, g, g]);
             }
@@ -63,7 +63,9 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 fn compute_ssim2(original: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {
     // Convert u8 RGB to Vec<[f32; 3]>
     let orig_f32: Vec<[f32; 3]> = original
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| {
             [
                 p[0] as f32 / 255.0,
@@ -74,7 +76,9 @@ fn compute_ssim2(original: &[u8], decoded: &[u8], width: u32, height: u32) -> f6
         .collect();
 
     let dec_f32: Vec<[f32; 3]> = decoded
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| {
             [
                 p[0] as f32 / 255.0,

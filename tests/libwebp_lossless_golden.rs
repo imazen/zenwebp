@@ -44,7 +44,7 @@ fn lib_roundtrip(rgba: &[u8], w: u32, h: u32) -> Vec<u8> {
 /// Compare two RGBA buffers and report the worst per-channel delta.
 fn max_delta(a: &[u8], b: &[u8]) -> [u16; 4] {
     let mut d = [0u16; 4];
-    for (ap, bp) in a.chunks_exact(4).zip(b.chunks_exact(4)) {
+    for (ap, bp) in a.as_chunks::<4>().0.iter().zip(b.as_chunks::<4>().0.iter()) {
         for c in 0..4 {
             d[c] = d[c].max((ap[c] as i16 - bp[c] as i16).unsigned_abs());
         }

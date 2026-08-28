@@ -951,8 +951,10 @@ fn as_f32_slice(data: &[u8]) -> Cow<'_, [f32]> {
     match bytemuck::try_cast_slice(data) {
         Ok(s) => Cow::Borrowed(s),
         Err(bytemuck::PodCastError::TargetAlignmentGreaterAndInputNotAligned) => Cow::Owned(
-            data.chunks_exact(4)
-                .map(|c| f32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
+            data.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| f32::from_ne_bytes(*c))
                 .collect(),
         ),
         Err(e) => panic!("cannot cast &[u8] to &[f32]: {e:?}"),
@@ -3081,11 +3083,8 @@ mod tests {
         let mut s = buf.as_slice_mut();
         for y in 0..h {
             let row = s.row_mut(y);
-            for chunk in row.chunks_exact_mut(4) {
-                chunk[0] = 100;
-                chunk[1] = 150;
-                chunk[2] = 200;
-                chunk[3] = 255;
+            for chunk in row.as_chunks_mut::<4>().0 {
+                *chunk = [100, 150, 200, 255];
             }
         }
         buf
@@ -3459,11 +3458,8 @@ mod tests {
     #[test]
     fn encode_srgba8() {
         let mut data = vec![0u8; 16 * 16 * 4];
-        for chunk in data.chunks_exact_mut(4) {
-            chunk[0] = 100;
-            chunk[1] = 150;
-            chunk[2] = 200;
-            chunk[3] = 255;
+        for chunk in data.as_chunks_mut::<4>().0 {
+            *chunk = [100, 150, 200, 255];
         }
         let config = WebpEncoderConfig::lossy().with_quality(75.0);
         let output = config

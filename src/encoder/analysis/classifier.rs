@@ -708,10 +708,8 @@ pub struct ZenanalyzeDiag {
 pub fn rgba8_to_rgb8(rgba: &[u8]) -> alloc::vec::Vec<u8> {
     use alloc::vec::Vec;
     let mut out = Vec::with_capacity(rgba.len() / 4 * 3);
-    for px in rgba.chunks_exact(4) {
-        out.push(px[0]);
-        out.push(px[1]);
-        out.push(px[2]);
+    for px in rgba.as_chunks::<4>().0 {
+        out.extend_from_slice(&px[..3]);
     }
     out
 }

@@ -59,7 +59,7 @@ fn deep_tree_image(w: u32, h: u32) -> Vec<u8> {
         }
     }
     // Avoid alpha=0 so `exact` cleanup semantics never enter the picture.
-    for px in rgba.chunks_exact_mut(4) {
+    for px in rgba.as_chunks_mut::<4>().0.iter_mut() {
         if px[3] == 0 {
             px[3] = 1;
         }

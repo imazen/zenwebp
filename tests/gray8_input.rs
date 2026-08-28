@@ -63,7 +63,7 @@ fn lossless_l8_roundtrip_is_byte_exact() {
 
     let (decoded, dw, dh) = zenwebp::oneshot::decode_rgba(&webp).expect("decode");
     assert_eq!((dw, dh), (w, h));
-    for (i, px) in decoded.chunks_exact(4).enumerate() {
+    for (i, px) in decoded.as_chunks::<4>().0.iter().enumerate() {
         assert_eq!(
             (px[0], px[1], px[2], px[3]),
             (gray[i], gray[i], gray[i], 255),
@@ -89,7 +89,7 @@ fn lossy_l8_roundtrip_within_tolerance_and_neutral_chroma() {
     // plane round-tripped to its neutral value through quant.
     let mut max_chroma_split = 0i32;
     let mut max_y_diff = 0i32;
-    for (i, px) in decoded.chunks_exact(4).enumerate() {
+    for (i, px) in decoded.as_chunks::<4>().0.iter().enumerate() {
         let split = (px[0] as i32 - px[1] as i32)
             .abs()
             .max((px[1] as i32 - px[2] as i32).abs());
@@ -128,7 +128,7 @@ fn zencodec_gray8_passthrough_lossless_byte_exact() {
 
     let (decoded, dw, dh) = zenwebp::oneshot::decode_rgba(&bytes).expect("decode");
     assert_eq!((dw, dh), (w, h));
-    for (i, px) in decoded.chunks_exact(4).enumerate() {
+    for (i, px) in decoded.as_chunks::<4>().0.iter().enumerate() {
         assert_eq!(
             (px[0], px[1], px[2], px[3]),
             (gray[i], gray[i], gray[i], 255),
@@ -166,7 +166,7 @@ fn zencodec_gray8_padded_stride_lossless_byte_exact() {
 
     let (decoded, dw, dh) = zenwebp::oneshot::decode_rgba(&bytes).expect("decode");
     assert_eq!((dw, dh), (w, h));
-    for (i, px) in decoded.chunks_exact(4).enumerate() {
+    for (i, px) in decoded.as_chunks::<4>().0.iter().enumerate() {
         assert_eq!(
             (px[0], px[1], px[2], px[3]),
             (gray[i], gray[i], gray[i], 255),
@@ -179,7 +179,7 @@ fn zencodec_gray8_padded_stride_lossless_byte_exact() {
 /// La8 lossless size guard below.
 fn gray_alpha_to_rgba(la: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(la.len() * 2);
-    for px in la.chunks_exact(2) {
+    for px in la.as_chunks::<2>().0.iter() {
         out.push(px[0]);
         out.push(px[0]);
         out.push(px[0]);
@@ -227,7 +227,7 @@ fn lossless_la8_no_larger_than_gray_expanded_rgba() {
     // channel carries real entropy (a constant alpha would compress trivially
     // either way and prove nothing).
     let mut la = vec![0u8; (w as usize) * (h as usize) * 2];
-    for (i, px) in la.chunks_exact_mut(2).enumerate() {
+    for (i, px) in la.as_chunks_mut::<2>().0.iter_mut().enumerate() {
         px[0] = gray[i];
         px[1] = ((i * 7) % 256) as u8;
     }
@@ -253,7 +253,7 @@ fn lossless_la8_no_larger_than_gray_expanded_rgba() {
     // transparent pixels).
     let (decoded, dw, dh) = zenwebp::oneshot::decode_rgba(&la8_webp).expect("decode");
     assert_eq!((dw, dh), (w, h));
-    for (i, px) in decoded.chunks_exact(4).enumerate() {
+    for (i, px) in decoded.as_chunks::<4>().0.iter().enumerate() {
         assert_eq!(
             (px[0], px[1], px[2], px[3]),
             (gray[i], gray[i], gray[i], ((i * 7) % 256) as u8),

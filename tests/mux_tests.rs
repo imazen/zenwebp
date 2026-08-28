@@ -891,7 +891,9 @@ fn subframe_rgb_input_works() {
     let frame2_rgba = patched_rgba(64, 64, [100, 100, 100, 255], 8, 8, 8, 8, [200, 50, 50, 255]);
     // Convert back to RGB for input
     let frame2: Vec<u8> = frame2_rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|p| [p[0], p[1], p[2]])
         .collect();
 

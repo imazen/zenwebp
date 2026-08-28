@@ -122,7 +122,7 @@ fn rgbf32_lossless_roundtrip() {
     let bytes = floats_as_bytes(&f);
     let decoded = encode_roundtrip(&bytes, PixelDescriptor::RGBF32_LINEAR, true);
 
-    for (i, px) in decoded.chunks_exact(4).enumerate() {
+    for (i, px) in decoded.as_chunks::<4>().0.iter().enumerate() {
         let r_lin = f[i * 3];
         let g_lin = f[i * 3 + 1];
         let b_lin = f[i * 3 + 2];
@@ -145,7 +145,7 @@ fn rgbaf32_lossless_roundtrip() {
     let bytes = floats_as_bytes(&f);
     let decoded = encode_roundtrip(&bytes, PixelDescriptor::RGBAF32_LINEAR, true);
 
-    for (i, px) in decoded.chunks_exact(4).enumerate() {
+    for (i, px) in decoded.as_chunks::<4>().0.iter().enumerate() {
         let r_lin = f[i * 4];
         let g_lin = f[i * 4 + 1];
         let b_lin = f[i * 4 + 2];
@@ -172,7 +172,7 @@ fn grayf32_lossless_roundtrip() {
     let bytes = floats_as_bytes(&f);
     let decoded = encode_roundtrip(&bytes, PixelDescriptor::GRAYF32_LINEAR, true);
 
-    for (i, px) in decoded.chunks_exact(4).enumerate() {
+    for (i, px) in decoded.as_chunks::<4>().0.iter().enumerate() {
         let g_lin = f[i];
         let g_srgb = linear_f32_to_srgb_u8(g_lin);
         assert_eq!(
@@ -190,7 +190,7 @@ fn rgbf32_lossy_roundtrip_within_tolerance() {
     let decoded = encode_roundtrip(&bytes, PixelDescriptor::RGBF32_LINEAR, false);
 
     let mut max_rgb = 0i32;
-    for (i, px) in decoded.chunks_exact(4).enumerate() {
+    for (i, px) in decoded.as_chunks::<4>().0.iter().enumerate() {
         let r_exp = linear_f32_to_srgb_u8(f[i * 3]);
         let g_exp = linear_f32_to_srgb_u8(f[i * 3 + 1]);
         let b_exp = linear_f32_to_srgb_u8(f[i * 3 + 2]);
@@ -213,7 +213,7 @@ fn rgbaf32_lossy_roundtrip_within_tolerance() {
 
     let mut max_rgb = 0i32;
     let mut max_alpha = 0i32;
-    for (i, px) in decoded.chunks_exact(4).enumerate() {
+    for (i, px) in decoded.as_chunks::<4>().0.iter().enumerate() {
         let r_exp = linear_f32_to_srgb_u8(f[i * 4]);
         let g_exp = linear_f32_to_srgb_u8(f[i * 4 + 1]);
         let b_exp = linear_f32_to_srgb_u8(f[i * 4 + 2]);
@@ -241,7 +241,7 @@ fn grayf32_lossy_roundtrip_within_tolerance() {
 
     let mut max_split = 0i32;
     let mut max_y = 0i32;
-    for (i, px) in decoded.chunks_exact(4).enumerate() {
+    for (i, px) in decoded.as_chunks::<4>().0.iter().enumerate() {
         let g_exp = linear_f32_to_srgb_u8(f[i]);
         let split = (px[0] as i32 - px[1] as i32)
             .abs()

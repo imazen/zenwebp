@@ -160,7 +160,7 @@ fn compare_rgba(a: &[u8], b: &[u8]) -> (u32, u32, u32) {
     let mut diff = 0u32;
     let mut max_rgb = 0u32;
     let mut max_alpha = 0u32;
-    for (x, y) in a.chunks_exact(4).zip(b.chunks_exact(4)) {
+    for (x, y) in a.as_chunks::<4>().0.iter().zip(b.as_chunks::<4>().0.iter()) {
         if x != y {
             diff += 1;
         }

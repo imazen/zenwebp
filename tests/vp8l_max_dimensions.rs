@@ -35,7 +35,9 @@ fn roundtrip_max_dim(w: u32, h: u32) {
         .expect("decode 16384-edge VP8L (was rejected by the dimension-mask bug)");
     assert_eq!((dw, dh), (w, h), "decoded dimensions must match");
     let rgb: Vec<u8> = rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|p| [p[0], p[1], p[2]])
         .collect();
     match pixels.len() {

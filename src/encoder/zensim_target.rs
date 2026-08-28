@@ -1681,7 +1681,7 @@ pub(crate) mod iteration {
             let mut alpha_hist = [0u32; 256];
             match layout {
                 PixelLayout::Rgb8 => {
-                    for px in pixels.chunks_exact(3).take(w * h) {
+                    for px in pixels.as_chunks::<3>().0.iter().take(w * h) {
                         let y = ((u32::from(px[0]) * 76
                             + u32::from(px[1]) * 150
                             + u32::from(px[2]) * 30)
@@ -1691,7 +1691,7 @@ pub(crate) mod iteration {
                     }
                 }
                 PixelLayout::Rgba8 => {
-                    for px in pixels.chunks_exact(4).take(w * h) {
+                    for px in pixels.as_chunks::<4>().0.iter().take(w * h) {
                         let y = ((u32::from(px[0]) * 76
                             + u32::from(px[1]) * 150
                             + u32::from(px[2]) * 30)

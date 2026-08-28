@@ -23,7 +23,7 @@ fn main() {
     }
     let z = zensim::Zensim::new(zensim::ZensimProfile::latest());
     let mut src_chunks: Vec<[u8; 3]> = Vec::with_capacity((w * h) as usize);
-    for px in buf.chunks_exact(3) {
+    for px in buf.as_chunks::<3>().0.iter() {
         src_chunks.push([px[0], px[1], px[2]]);
     }
     let slice = zensim::RgbSlice::new(&src_chunks, w as usize, h as usize);
@@ -36,7 +36,7 @@ fn main() {
         let (rgb, w2, h2) = zenwebp::oneshot::decode_rgb(&webp).unwrap();
         assert_eq!((w2, h2), (w, h));
         let mut dec_chunks: Vec<[u8; 3]> = Vec::with_capacity((w2 * h2) as usize);
-        for px in rgb.chunks_exact(3) {
+        for px in rgb.as_chunks::<3>().0.iter() {
             dec_chunks.push([px[0], px[1], px[2]]);
         }
         let dec_slice = zensim::RgbSlice::new(&dec_chunks, w2 as usize, h2 as usize);

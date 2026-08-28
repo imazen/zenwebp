@@ -20,7 +20,6 @@ use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::fmt;
 use core::iter::Peekable;
-use core::slice::ChunksExact;
 use thiserror::Error;
 use whereat::at;
 
@@ -559,7 +558,11 @@ const fn length_to_symbol(len: u16) -> (u16, u8) {
 }
 
 #[inline(always)]
-fn count_run(pixel: &[u8], it: &mut Peekable<ChunksExact<u8>>, frequencies1: &mut [u32; 280]) {
+fn count_run(
+    pixel: &[u8; 4],
+    it: &mut Peekable<core::slice::Iter<'_, [u8; 4]>>,
+    frequencies1: &mut [u32; 280],
+) {
     let mut run_length = 0;
     while run_length < 4096 && it.peek() == Some(&pixel) {
         run_length += 1;
@@ -579,8 +582,8 @@ fn count_run(pixel: &[u8], it: &mut Peekable<ChunksExact<u8>>, frequencies1: &mu
 #[inline(always)]
 fn write_run(
     w: &mut BitWriter<'_>,
-    pixel: &[u8],
-    it: &mut Peekable<ChunksExact<u8>>,
+    pixel: &[u8; 4],
+    it: &mut Peekable<core::slice::Iter<'_, [u8; 4]>>,
     codes1: &[u16; 280],
     lengths1: &[u8; 280],
 ) {
@@ -2004,7 +2007,7 @@ pub(crate) fn encode_frame_lossless(
     };
 
     // compute subtract green transform
-    for pixel in pixels.chunks_exact_mut(4) {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
         pixel[0] = pixel[0].wrapping_sub(pixel[1]);
         pixel[2] = pixel[2].wrapping_sub(pixel[1]);
     }
@@ -2032,7 +2035,7 @@ pub(crate) fn encode_frame_lossless(
     let mut frequencies1 = [0u32; 280];
     let mut frequencies2 = [0u32; 256];
     let mut frequencies3 = [0u32; 256];
-    let mut it = pixels.chunks_exact(4).peekable();
+    let mut it = pixels.as_chunks::<4>().0.iter().peekable();
     match color {
         PixelLayout::L8 => {
             frequencies0[0] = 1;
@@ -2102,7 +2105,7 @@ pub(crate) fn encode_frame_lossless(
     write_single_entry_huffman_tree(w, 1);
 
     // Write image data
-    let mut it = pixels.chunks_exact(4).peekable();
+    let mut it = pixels.as_chunks::<4>().0.iter().peekable();
     match color {
         PixelLayout::L8 => {
             while let Some(pixel) = it.next() {
@@ -2204,7 +2207,12 @@ fn convert_to_contiguous(
             for y in 0..hh {
                 let src = &data[y * stride_bytes..y * stride_bytes + row_bytes];
                 let dst = &mut out[y * ww * 3..(y + 1) * ww * 3];
-                for (d, s) in dst.chunks_exact_mut(3).zip(src.chunks_exact(3)) {
+                for (d, s) in dst
+                    .as_chunks_mut::<3>()
+                    .0
+                    .iter_mut()
+                    .zip(src.as_chunks::<3>().0)
+                {
                     d[0] = s[2]; // R
                     d[1] = s[1]; // G
                     d[2] = s[0]; // B
@@ -2242,10 +2250,8 @@ fn convert_to_contiguous(
             for y in 0..hh {
                 let src = &data[y * stride_bytes..y * stride_bytes + ww];
                 let dst = &mut out[y * ww * 3..(y + 1) * ww * 3];
-                for (d, &s) in dst.chunks_exact_mut(3).zip(src.iter()) {
-                    d[0] = s;
-                    d[1] = s;
-                    d[2] = s;
+                for (d, &s) in dst.as_chunks_mut::<3>().0.iter_mut().zip(src.iter()) {
+                    *d = [s; 3];
                 }
             }
             (out, false)

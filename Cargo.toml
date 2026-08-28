@@ -411,14 +411,6 @@ required-features = ["_wasm_profiling"]
 # archmage::autoversion(cfg(simd)) uses "simd" as an archmage config name, not a Cargo feature
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(simd)'] }
 
-[lints.clippy]
-# New in clippy 1.98 (2026-08); fires at 60 hot-path pixel loops. as_chunks
-# gives LLVM fixed-size arrays (bounds-check elimination), so the migration is
-# a REAL optimization candidate — it must land as its own measured change
-# (cargo asm + zenbench + the byte-hash gates), not as a lint-silencing sweep.
-# Tracked in issue #76.
-chunks_exact_to_as_chunks = "allow"
-
 [profile.release]
 lto = true
 codegen-units = 1

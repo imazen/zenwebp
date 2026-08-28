@@ -1385,7 +1385,7 @@ mod tests {
         }
 
         let mut tf_data = vec![0u8; block_xsize * ((height >> size_bits) + 1) * 4];
-        for chunk in tf_data.chunks_exact_mut(4) {
+        for chunk in tf_data.as_chunks_mut::<4>().0 {
             chunk[0] = 23; // red_to_blue
             chunk[1] = 170; // green_to_blue (negative as i8)
             chunk[2] = 50; // green_to_red
@@ -1445,7 +1445,7 @@ mod tests {
             }
 
             let mut tf_data = vec![0u8; block_xsize * 4 + 16];
-            for chunk in tf_data.chunks_exact_mut(4) {
+            for chunk in tf_data.as_chunks_mut::<4>().0 {
                 chunk[0] = r2b;
                 chunk[1] = g2b;
                 chunk[2] = g2r;
@@ -1497,7 +1497,7 @@ mod tests {
         // Predictor data: all blocks use predictor 1 (left)
         let pred_data_len = block_xsize * ((height >> size_bits) + 2) * 4;
         let mut pred_data = vec![0u8; pred_data_len];
-        for chunk in pred_data.chunks_exact_mut(4) {
+        for chunk in pred_data.as_chunks_mut::<4>().0 {
             chunk[1] = 1; // predictor index in byte 1
         }
 
@@ -1557,7 +1557,7 @@ mod tests {
         }
 
         let mut pred_data = vec![0u8; block_xsize * (height + 1) * 4];
-        for chunk in pred_data.chunks_exact_mut(4) {
+        for chunk in pred_data.as_chunks_mut::<4>().0 {
             chunk[1] = 2; // predictor 2 (top)
         }
 

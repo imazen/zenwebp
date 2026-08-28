@@ -68,7 +68,9 @@ const ALL_IMAGES: &[(&str, ImgGen)] = &[
 // carry alpha, and a gray variant for L8/La8.
 
 fn rgba_to_l8(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .map(|px| {
             // Project to luminance via standard rec601 weights so we get a
             // genuine grayscale image rather than collapsing only the R
@@ -87,7 +89,9 @@ fn l8_to_rgba(l8: &[u8]) -> Vec<u8> {
 }
 
 fn rgba_to_la8(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|px| {
             let y = (0.2126 * px[0] as f32 + 0.7152 * px[1] as f32 + 0.0722 * px[2] as f32) as u8;
             [y, px[3]]
@@ -97,32 +101,40 @@ fn rgba_to_la8(rgba: &[u8]) -> Vec<u8> {
 
 fn la8_to_rgba(la8: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(la8.len() * 2);
-    for px in la8.chunks_exact(2) {
+    for px in la8.as_chunks::<2>().0.iter() {
         out.extend_from_slice(&[px[0], px[0], px[0], px[1]]);
     }
     out
 }
 
 fn rgba_to_rgb(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|px| px[..3].to_vec())
         .collect()
 }
 
 fn rgba_to_bgra(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|px| [px[2], px[1], px[0], px[3]])
         .collect()
 }
 
 fn rgba_to_argb(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|px| [px[3], px[0], px[1], px[2]])
         .collect()
 }
 
 fn rgba_to_bgr(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|px| [px[2], px[1], px[0]])
         .collect()
 }
@@ -355,7 +367,12 @@ fn run_lossless_matrix(case: &LossyMatrixCase) {
             if decoded != reference {
                 let mut diff = 0u32;
                 let mut maxd = [0u16; 4];
-                for (a, b) in reference.chunks_exact(4).zip(decoded.chunks_exact(4)) {
+                for (a, b) in reference
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(decoded.as_chunks::<4>().0.iter())
+                {
                     if a != b {
                         diff += 1;
                     }
@@ -391,28 +408,28 @@ fn to_rgba_id(p: &[u8]) -> Vec<u8> {
 }
 fn rgb_to_opaque_rgba(rgb: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgb.len() / 3 * 4);
-    for px in rgb.chunks_exact(3) {
+    for px in rgb.as_chunks::<3>().0.iter() {
         out.extend_from_slice(&[px[0], px[1], px[2], 255]);
     }
     out
 }
 fn bgra_to_rgba(bgra: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bgra.len());
-    for px in bgra.chunks_exact(4) {
+    for px in bgra.as_chunks::<4>().0.iter() {
         out.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
     }
     out
 }
 fn argb_to_rgba(argb: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(argb.len());
-    for px in argb.chunks_exact(4) {
+    for px in argb.as_chunks::<4>().0.iter() {
         out.extend_from_slice(&[px[1], px[2], px[3], px[0]]);
     }
     out
 }
 fn bgr_to_opaque_rgba(bgr: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bgr.len() / 3 * 4);
-    for px in bgr.chunks_exact(3) {
+    for px in bgr.as_chunks::<3>().0.iter() {
         out.extend_from_slice(&[px[2], px[1], px[0], 255]);
     }
     out

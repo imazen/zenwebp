@@ -29,7 +29,12 @@ fn histogram_per_channel(zen: &[u8], lib: &[u8]) {
     assert_eq!(zen.len(), lib.len());
     let mut per_channel = [[0u64; 256]; 4];
     let mut per_class: HashMap<&'static str, (u64, [u32; 4])> = HashMap::new();
-    for (z, l) in zen.chunks_exact(4).zip(lib.chunks_exact(4)) {
+    for (z, l) in zen
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(lib.as_chunks::<4>().0.iter())
+    {
         let class = classify(z[3]); // use zen alpha for classification
         let entry = per_class.entry(class).or_insert((0, [0u32; 4]));
         entry.0 += 1;
@@ -104,12 +109,19 @@ fn zenwebp_decoder_matches_libwebp_on_rose_rgba() {
     // Divergence — report evidence, then fail.
     let total = (zw * zh) as usize;
     let diff_px = zen_px
-        .chunks_exact(4)
-        .zip(lib_px.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(lib_px.as_chunks::<4>().0.iter())
         .filter(|(z, l)| z != l)
         .count();
     let mut max_delta = [0u16; 4];
-    for (z, l) in zen_px.chunks_exact(4).zip(lib_px.chunks_exact(4)) {
+    for (z, l) in zen_px
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(lib_px.as_chunks::<4>().0.iter())
+    {
         for c in 0..4 {
             max_delta[c] = max_delta[c].max((z[c] as i16 - l[c] as i16).unsigned_abs());
         }
@@ -176,7 +188,9 @@ fn zenwebp_bgra_dyn_dispatch_matches_libwebp_on_rose() {
     // Convert zen output to RGBA for comparison.
     let zen_rgba: Vec<u8> = if descriptor == PixelDescriptor::BGRA8_SRGB {
         zen_bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|p| [p[2], p[1], p[0], p[3]])
             .collect()
     } else if descriptor == PixelDescriptor::RGBA8_SRGB {
@@ -193,8 +207,10 @@ fn zenwebp_bgra_dyn_dispatch_matches_libwebp_on_rose() {
 
     let total = (zw * zh) as usize;
     let diff_px = zen_rgba
-        .chunks_exact(4)
-        .zip(lib_rgba.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(lib_rgba.as_chunks::<4>().0.iter())
         .filter(|(z, l)| z != l)
         .count();
     eprintln!(

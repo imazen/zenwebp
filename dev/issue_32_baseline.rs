@@ -20,12 +20,16 @@ fn decode_png_rgb(path: &str) -> (u32, u32, Vec<u8>) {
     let rgb = match info.color_type {
         png::ColorType::Rgb => bytes.to_vec(),
         png::ColorType::Rgba => bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[1], p[2]])
             .collect(),
         png::ColorType::Grayscale => bytes.iter().flat_map(|&g| [g, g, g]).collect(),
         png::ColorType::GrayscaleAlpha => bytes
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[0], p[0]])
             .collect(),
         other => panic!("unsupported color type {:?}", other),

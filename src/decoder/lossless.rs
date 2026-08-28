@@ -388,7 +388,9 @@ impl<'a> LosslessDecoder<'a> {
             self.decode_image_stream(huffman_xsize, huffman_ysize, false, &mut data)?;
 
             entropy_image = data
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|pixel| {
                     let meta_huff_code = (u16::from(pixel[0]) << 8) | u16::from(pixel[1]);
                     if u32::from(meta_huff_code) >= num_huff_groups {
@@ -978,8 +980,8 @@ fn decode_backward_reference(
         }
 
         if let Some(cc) = color_cache.as_mut() {
-            for pixel in data[index * 4..][..length * 4].chunks_exact(4) {
-                cc.insert(*pixel.first_chunk::<4>().unwrap());
+            for pixel in data[index * 4..][..length * 4].as_chunks::<4>().0 {
+                cc.insert(*pixel);
             }
         }
     }

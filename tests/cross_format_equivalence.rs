@@ -111,7 +111,7 @@ const GRAY_ALPHA_GENS: &[(&str, ImgGen)] = &[("gray_alpha", gen_gray_alpha_rgba)
 
 fn rgba_to_bgra(rgba: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgba.len());
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0.iter() {
         out.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
     }
     out
@@ -119,7 +119,7 @@ fn rgba_to_bgra(rgba: &[u8]) -> Vec<u8> {
 
 fn rgba_to_argb(rgba: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgba.len());
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0.iter() {
         out.extend_from_slice(&[px[3], px[0], px[1], px[2]]);
     }
     out
@@ -127,7 +127,7 @@ fn rgba_to_argb(rgba: &[u8]) -> Vec<u8> {
 
 fn rgba_to_rgb(rgba: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgba.len() / 4 * 3);
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0.iter() {
         out.extend_from_slice(&px[..3]);
     }
     out
@@ -135,7 +135,7 @@ fn rgba_to_rgb(rgba: &[u8]) -> Vec<u8> {
 
 fn rgba_to_bgr(rgba: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgba.len() / 4 * 3);
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0.iter() {
         out.extend_from_slice(&[px[2], px[1], px[0]]);
     }
     out
@@ -143,7 +143,7 @@ fn rgba_to_bgr(rgba: &[u8]) -> Vec<u8> {
 
 fn rgba_to_l8(rgba: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgba.len() / 4);
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0.iter() {
         debug_assert!(
             px[0] == px[1] && px[1] == px[2],
             "rgba_to_l8 requires R=G=B input"
@@ -155,7 +155,7 @@ fn rgba_to_l8(rgba: &[u8]) -> Vec<u8> {
 
 fn rgba_to_la8(rgba: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgba.len() / 2);
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0.iter() {
         debug_assert!(
             px[0] == px[1] && px[1] == px[2],
             "rgba_to_la8 requires R=G=B input"
@@ -169,7 +169,7 @@ fn rgba_to_la8(rgba: &[u8]) -> Vec<u8> {
 /// Strip alpha (force opaque) — used for opaque-only pair tests.
 fn force_opaque(rgba: &[u8]) -> Vec<u8> {
     let mut out = rgba.to_vec();
-    for px in out.chunks_exact_mut(4) {
+    for px in out.as_chunks_mut::<4>().0.iter_mut() {
         px[3] = 255;
     }
     out
@@ -221,7 +221,7 @@ fn rgba_diff(a: &[u8], b: &[u8]) -> (u32, [u16; 4]) {
     assert_eq!(a.len(), b.len());
     let mut count = 0u32;
     let mut max = [0u16; 4];
-    for (ap, bp) in a.chunks_exact(4).zip(b.chunks_exact(4)) {
+    for (ap, bp) in a.as_chunks::<4>().0.iter().zip(b.as_chunks::<4>().0.iter()) {
         if ap != bp {
             count += 1;
         }

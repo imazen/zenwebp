@@ -42,10 +42,34 @@ here has landed; see "Changed (BREAKING)" below.)
   same bounds-check count before and after on every dispatch symbol, and
   wall-clock is flat within before-vs-before drift — for these loops the
   lint fix is hygiene, not an optimization
-  (`benchmarks/as_chunks_migration_2026-08-27.md`). The package-level
-  `chunks_exact_to_as_chunks = "allow"` stays until the remaining 47 sites
-  (`codec.rs`, `vp8l` encoder, `yuv.rs`) are migrated with the same
-  measurement.
+  (`benchmarks/as_chunks_migration_2026-08-27.md`).
+- **`chunks_exact(N)` → `as_chunks::<N>()`, slice 2 of #76 — migration
+  complete, package-level `chunks_exact_to_as_chunks` allow dropped.** The
+  remaining 24 lib sites (VP8L decoder color-cache insert + entropy image,
+  animation canvas clear / composite, `iwht4x4`, the alpha-fallback
+  lossless writer `encode_frame_lossless` and its run-length helpers, the
+  `Bgr8`/`L8` → `Rgb8` expansion, `as_f32_slice`, the parity alpha-plane
+  extraction, the unused `fill_rgba_row_simple_scalar`, the `target_zensim`
+  luma plane, the `analyzer` RGBA→RGB helper, and the big-endian VP8L argb
+  packing) plus ~100 test / dev / example / fuzz-target sites. Only
+  runtime-width `chunks_exact(width * 4)` / `(stride)` / `(bpp)` iterators
+  remain, which the lint does not cover. Gates (same doc, slice 2): the
+  `dev/output_hash.rs` COMBINED hash is byte-identical
+  (`b1309ba43b9b5e43` before and after, 8 images × both cost models),
+  every decode/encode checksum in a 16-case harness is identical, the whole
+  CI feature matrix + wasm (wasmtime) + SIMD tier parity pass locally, and
+  `cargo asm` shows the same bounds-check count on every touched symbol
+  (`iwht4x4` 0/0, `read_frame` 7/7, `decode_image_stream` 8/8,
+  `encode_frame_lossless` 5/5, `composite_frame` 6/6). zenbench A/B
+  (`decode_compare`, `decode_lossless_compare`, `encode_vs_libwebp` against
+  `--save-baseline` runs of `main@origin`): every zen/libwebp ratio within
+  the libwebp control's own jitter, encode 22/22 unchanged. The scratch
+  harness's wall-clock is flat within drift on 15 of 16 cases; the 16th
+  (1024² lossless m2 from `Bgra8`,
+  +2.7% min-of-runs) bisects to `src/decoder/lossless.rs`, a file the
+  lossless *encoder* never executes — a code-layout shift, recorded in the
+  doc rather than hidden. Net: #76's "real optimization" hypothesis is
+  falsified for the whole codebase; the migration is hygiene.
 
 ### Fixed (2026-08-27 issue sweep)
 - **Lossless decoder errors now carry their origin `file:line` (#60,

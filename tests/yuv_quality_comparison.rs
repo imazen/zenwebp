@@ -94,7 +94,9 @@ fn ssimulacra2(a: &[u8], b: &[u8], w: usize, h: usize) -> f64 {
         }
     }
     let a_rgb: Vec<[f32; 3]> = a
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| {
             [
                 srgb_to_linear(p[0]),
@@ -104,7 +106,9 @@ fn ssimulacra2(a: &[u8], b: &[u8], w: usize, h: usize) -> f64 {
         })
         .collect();
     let b_rgb: Vec<[f32; 3]> = b
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| {
             [
                 srgb_to_linear(p[0]),

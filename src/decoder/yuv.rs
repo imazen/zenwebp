@@ -215,14 +215,17 @@ fn fill_rgba_row_simple_scalar<const BPP: usize>(
     v_vec: &[u8],
     rgba: &mut [u8],
 ) {
-    // Fill 2 pixels per iteration: these pixels share `u` and `v` components
-    let mut rgb_chunks = rgba.chunks_exact_mut(BPP * 2);
-    let mut y_chunks = y_vec.chunks_exact(2);
+    // Fill 2 pixels per iteration: these pixels share `u` and `v` components.
+    // `as_chunks_mut::<BPP>` then `::<2>` pairs up pixels without needing a
+    // `{BPP * 2}` const expression.
+    let (rgb_pairs, rgb_tail) = rgba.as_chunks_mut::<BPP>().0.as_chunks_mut::<2>();
+    let (y_pairs, y_tail) = y_vec.as_chunks::<2>();
     let mut u_iter = u_vec.iter();
     let mut v_iter = v_vec.iter();
 
-    for (((rgb, y), &u), &v) in (&mut rgb_chunks)
-        .zip(&mut y_chunks)
+    for (((rgb, y), &u), &v) in rgb_pairs
+        .iter_mut()
+        .zip(y_pairs)
         .zip(&mut u_iter)
         .zip(&mut v_iter)
     {
@@ -237,24 +240,19 @@ fn fill_rgba_row_simple_scalar<const BPP: usize>(
         let get_g = |y: u8| clip(mulhi(y, 19077) - coeffs[1] - coeffs[2] + 8708);
         let get_b = |y: u8| clip(mulhi(y, 19077) + coeffs[3] - 17685);
 
-        let rgb1 = &mut rgb[0..3];
+        let rgb1 = &mut rgb[0];
         rgb1[0] = get_r(y[0]);
         rgb1[1] = get_g(y[0]);
         rgb1[2] = get_b(y[0]);
 
-        let rgb2 = &mut rgb[BPP..];
+        let rgb2 = &mut rgb[1];
         rgb2[0] = get_r(y[1]);
         rgb2[1] = get_g(y[1]);
         rgb2[2] = get_b(y[1]);
     }
 
-    let remainder = rgb_chunks.into_remainder();
-    if remainder.len() >= 3
-        && let (Some(&y), Some(&u), Some(&v)) = (
-            y_chunks.remainder().iter().next(),
-            u_iter.next(),
-            v_iter.next(),
-        )
+    if let Some(remainder) = rgb_tail.first_mut()
+        && let (Some(&y), Some(&u), Some(&v)) = (y_tail.first(), u_iter.next(), v_iter.next())
     {
         let coeffs = [
             mulhi(v, 26149),
@@ -1084,7 +1082,9 @@ fn zenyuv_encode_planes(
             (0..h)
                 .flat_map(|y| {
                     image_data[y * src_stride_bytes..y * src_stride_bytes + w * 4]
-                        .chunks_exact(4)
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
                         .map(|p| p[3])
                 })
                 .collect(),

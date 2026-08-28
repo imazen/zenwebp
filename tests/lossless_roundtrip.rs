@@ -729,8 +729,10 @@ fn m5_m6_sampling_search_roundtrips_exactly() {
         let (decoded, dw, dh) = zenwebp::oneshot::decode_rgba(&webp).expect("decode failed");
         assert_eq!((dw, dh), (w, h), "m{method} dimensions");
         let mismatches = decoded
-            .chunks_exact(4)
-            .zip(rgb.chunks_exact(3))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(rgb.as_chunks::<3>().0.iter())
             .filter(|(d, s)| d[..3] != s[..])
             .count();
         assert_eq!(mismatches, 0, "m{method}: {mismatches} pixel mismatches");

@@ -1583,10 +1583,8 @@ impl<'a> WebPDecoder<'a> {
                 let mut canvas =
                     super::alloc_util::alloc_zeroed(self.limits.alloc_pref, true, canvas_alloc)
                         .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
-                if let Some(color) = info.background_color.as_ref() {
-                    canvas
-                        .chunks_exact_mut(4)
-                        .for_each(|c| c.copy_from_slice(color))
+                if let Some(color) = info.background_color {
+                    canvas.as_chunks_mut::<4>().0.fill(color);
                 }
                 Some(canvas)
             }
@@ -2330,7 +2328,7 @@ mod tests {
         // The `yuv` crate's bilinear chroma upsampling uses slightly different
         // rounding than our hand-written upsample, so allow +-1 tolerance.
         let first_pixel = &data[..RGB_BPP];
-        for (i, ch) in data.chunks_exact(3).enumerate() {
+        for (i, ch) in data.as_chunks::<3>().0.iter().enumerate() {
             for c in 0..3 {
                 let diff = (ch[c] as i16 - first_pixel[c] as i16).unsigned_abs();
                 assert!(
@@ -2365,7 +2363,7 @@ mod tests {
         // The `yuv` crate's bilinear chroma upsampling uses slightly different
         // rounding than our hand-written upsample, so allow +-1 tolerance.
         let first_pixel = &data[..RGB_BPP];
-        for (i, ch) in data.chunks_exact(3).enumerate() {
+        for (i, ch) in data.as_chunks::<3>().0.iter().enumerate() {
             for c in 0..3 {
                 let diff = (ch[c] as i16 - first_pixel[c] as i16).unsigned_abs();
                 assert!(
@@ -2488,7 +2486,7 @@ mod yuv420_config_tests {
 
     fn lossy_32x32() -> Vec<u8> {
         let mut rgb = vec![0u8; 32 * 32 * 3];
-        for (i, px) in rgb.chunks_exact_mut(3).enumerate() {
+        for (i, px) in rgb.as_chunks_mut::<3>().0.iter_mut().enumerate() {
             px[0] = (i % 32 * 8) as u8;
             px[1] = (i / 32 * 8) as u8;
             px[2] = 128;

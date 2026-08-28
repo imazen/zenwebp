@@ -193,7 +193,9 @@ fn compute_ssim2(orig: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {
     let w = width as usize;
     let h = height as usize;
     let orig_rgb: Vec<[f32; 3]> = orig
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| {
             [
                 srgb_to_linear(p[0]),
@@ -203,7 +205,9 @@ fn compute_ssim2(orig: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {
         })
         .collect();
     let dec_rgb: Vec<[f32; 3]> = decoded
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| {
             [
                 srgb_to_linear(p[0]),
@@ -240,11 +244,15 @@ fn compute_butter(orig: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {
     let w = width as usize;
     let h = height as usize;
     let src: Vec<RGB8> = orig
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| RGB8::new(c[0], c[1], c[2]))
         .collect();
     let dst: Vec<RGB8> = decoded
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| RGB8::new(c[0], c[1], c[2]))
         .collect();
     if src.len() != w * h || dst.len() != w * h {

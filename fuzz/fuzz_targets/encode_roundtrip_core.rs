@@ -90,7 +90,7 @@ fn generate_lossless_content(rgba: &mut [u8], w: usize, h: usize, mode: u8, seed
             for p in pal.iter_mut().take(n) {
                 *p = [rng.byte(), rng.byte(), rng.byte(), rng.byte()];
             }
-            for px in rgba.chunks_exact_mut(4) {
+            for px in rgba.as_chunks_mut::<4>().0.iter_mut() {
                 px.copy_from_slice(&pal[(rng.next() as usize) % n]);
             }
         }
@@ -169,7 +169,7 @@ fn generate_lossy_content(rgba: &mut [u8], w: usize, h: usize, mode: u8, seed: u
         }
         // Opaque noise (no ALPH chunk at all).
         _ => {
-            for px in rgba.chunks_exact_mut(4) {
+            for px in rgba.as_chunks_mut::<4>().0.iter_mut() {
                 px[0] = rng.byte();
                 px[1] = rng.byte();
                 px[2] = rng.byte();
@@ -263,11 +263,11 @@ pub fn run_encode_lossless_roundtrip(input: &[u8]) {
             // Encoder may drop an all-opaque alpha channel; the oracle is
             // then RGB equality + the source really being opaque.
             assert!(
-                rgba.chunks_exact(4).all(|p| p[3] == 255),
+                rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255),
                 "alpha dropped from a non-opaque image"
             );
             let rgb: Vec<u8> = rgba
-                .chunks_exact(4)
+                .as_chunks::<4>().0.iter()
                 .flat_map(|p| [p[0], p[1], p[2]])
                 .collect();
             assert_eq!(pixels, rgb, "lossless roundtrip corrupted pixels (rgb)");
@@ -321,7 +321,7 @@ pub fn run_encode_lossy_roundtrip(input: &[u8]) {
         PixelLayout::Rgba8 => {
             // alpha_quality defaults to 100 (lossless alpha): decoded alpha
             // must be bit-exact.
-            for (i, (px, src)) in pixels.chunks_exact(4).zip(rgba.chunks_exact(4)).enumerate() {
+            for (i, (px, src)) in pixels.as_chunks::<4>().0.iter().zip(rgba.as_chunks::<4>().0.iter()).enumerate() {
                 assert_eq!(
                     px[3], src[3],
                     "alpha_quality=100 alpha mismatch at pixel {i}"
@@ -330,7 +330,7 @@ pub fn run_encode_lossy_roundtrip(input: &[u8]) {
         }
         PixelLayout::Rgb8 => {
             assert!(
-                rgba.chunks_exact(4).all(|p| p[3] == 255),
+                rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255),
                 "alpha dropped from a non-opaque image"
             );
         }

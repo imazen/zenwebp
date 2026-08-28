@@ -61,7 +61,9 @@ fn calculate_dssim(original: &[u8], decoded: &[u8], width: u32, height: u32) -> 
     }
 
     let orig_rgba: Vec<RGBA<f32>> = original
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| {
             RGBA::new(
                 srgb_to_linear(p[0]),
@@ -72,7 +74,9 @@ fn calculate_dssim(original: &[u8], decoded: &[u8], width: u32, height: u32) -> 
         })
         .collect();
     let dec_rgba: Vec<RGBA<f32>> = decoded
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| {
             RGBA::new(
                 srgb_to_linear(p[0]),
@@ -113,7 +117,9 @@ fn calculate_ssimulacra2(original: &[u8], decoded: &[u8], width: u32, height: u3
 
     // Convert to linear RGB f32 format for fast-ssim2
     let orig_rgb: Vec<[f32; 3]> = original
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| {
             [
                 srgb_to_linear(p[0]),
@@ -123,7 +129,9 @@ fn calculate_ssimulacra2(original: &[u8], decoded: &[u8], width: u32, height: u3
         })
         .collect();
     let dec_rgb: Vec<[f32; 3]> = decoded
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| {
             [
                 srgb_to_linear(p[0]),

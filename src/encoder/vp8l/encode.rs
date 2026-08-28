@@ -77,11 +77,11 @@ pub fn encode_vp8l(
     #[cfg(target_endian = "big")]
     {
         if has_alpha {
-            for (dst, p) in argb.iter_mut().zip(pixels.chunks_exact(4)) {
+            for (dst, p) in argb.iter_mut().zip(pixels.as_chunks::<4>().0) {
                 *dst = make_argb(p[3], p[0], p[1], p[2]);
             }
         } else {
-            for (dst, p) in argb.iter_mut().zip(pixels.chunks_exact(3)) {
+            for (dst, p) in argb.iter_mut().zip(pixels.as_chunks::<3>().0) {
                 *dst = make_argb(255, p[0], p[1], p[2]);
             }
         }
@@ -1895,11 +1895,13 @@ mod tests {
             }
             crate::PixelLayout::Rgba8 => {
                 let rgb: Vec<u8> = decoded
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .flat_map(|p| [p[0], p[1], p[2]])
                     .collect();
                 assert!(
-                    decoded.chunks_exact(4).all(|p| p[3] == 255),
+                    decoded.as_chunks::<4>().0.iter().all(|p| p[3] == 255),
                     "opaque input must decode opaque"
                 );
                 assert_eq!(rgb, pixels, "lossless RGB roundtrip must be exact");
@@ -2038,7 +2040,9 @@ mod tests {
 
         // Convert to ARGB
         let mut argb: Vec<u32> = pixels
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|p| make_argb(255, p[0], p[1], p[2]))
             .collect();
 
@@ -2077,7 +2081,9 @@ mod tests {
         }
 
         let mut argb: Vec<u32> = pixels
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|p| make_argb(255, p[0], p[1], p[2]))
             .collect();
 

@@ -44,7 +44,9 @@ const METHODS: &[u8] = &[0, 4, 6];
 const QUALITIES: &[f32] = &[10.0, 25.0, 50.0, 75.0, 90.0];
 
 fn rgba_to_l8(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .map(|px| (0.2126 * px[0] as f32 + 0.7152 * px[1] as f32 + 0.0722 * px[2] as f32) as u8)
         .collect()
 }
@@ -56,7 +58,9 @@ fn l8_to_rgba(l8: &[u8]) -> Vec<u8> {
     out
 }
 fn rgba_to_la8(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|px| {
             let y = (0.2126 * px[0] as f32 + 0.7152 * px[1] as f32 + 0.0722 * px[2] as f32) as u8;
             [y, px[3]]
@@ -65,25 +69,29 @@ fn rgba_to_la8(rgba: &[u8]) -> Vec<u8> {
 }
 fn la8_to_rgba(la8: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(la8.len() * 2);
-    for px in la8.chunks_exact(2) {
+    for px in la8.as_chunks::<2>().0.iter() {
         out.extend_from_slice(&[px[0], px[0], px[0], px[1]]);
     }
     out
 }
 fn rgba_to_rgb(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|px| px[..3].to_vec())
         .collect()
 }
 fn rgb_to_opaque_rgba(rgb: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgb.len() / 3 * 4);
-    for px in rgb.chunks_exact(3) {
+    for px in rgb.as_chunks::<3>().0.iter() {
         out.extend_from_slice(&[px[0], px[1], px[2], 255]);
     }
     out
 }
 fn rgba_to_bgra(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|px| [px[2], px[1], px[0], px[3]])
         .collect()
 }
@@ -91,23 +99,29 @@ fn bgra_to_rgba(bgra: &[u8]) -> Vec<u8> {
     rgba_to_bgra(bgra)
 }
 fn rgba_to_argb(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|px| [px[3], px[0], px[1], px[2]])
         .collect()
 }
 fn argb_to_rgba(argb: &[u8]) -> Vec<u8> {
-    argb.chunks_exact(4)
+    argb.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|px| [px[1], px[2], px[3], px[0]])
         .collect()
 }
 fn rgba_to_bgr(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|px| [px[2], px[1], px[0]])
         .collect()
 }
 fn bgr_to_opaque_rgba(bgr: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bgr.len() / 3 * 4);
-    for px in bgr.chunks_exact(3) {
+    for px in bgr.as_chunks::<3>().0.iter() {
         out.extend_from_slice(&[px[2], px[1], px[0], 255]);
     }
     out

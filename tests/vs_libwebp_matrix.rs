@@ -71,23 +71,29 @@ const ALL_IMAGES: &[(&str, ImgGen)] = &[
 // ---------------------------------------------------------------------------
 
 fn rgba_to_rgb(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|px| px[..3].to_vec())
         .collect()
 }
 fn rgba_to_bgra(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|px| [px[2], px[1], px[0], px[3]])
         .collect()
 }
 fn rgba_to_bgr(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|px| [px[2], px[1], px[0]])
         .collect()
 }
 fn force_opaque(rgba: &[u8]) -> Vec<u8> {
     let mut out = rgba.to_vec();
-    for px in out.chunks_exact_mut(4) {
+    for px in out.as_chunks_mut::<4>().0.iter_mut() {
         px[3] = 255;
     }
     out
