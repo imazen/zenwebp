@@ -80,6 +80,21 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
   falsified for the whole codebase; the migration is hygiene.
 
 ### Changed (2026-08-28, #71 probe)
+- **VP8L histogram clustering walks libwebp's compact array (refs #71):
+  the entropy-bin phase re-examines the slot a swap-with-last removal just
+  filled, the stochastic RNG picks index that same compacted order, greedy
+  pairs are formed/ordered by position, and remap ties + final group
+  numbering follow it (`meta_huffman::Compact`).** Verified decision for
+  decision against the instrumented libwebp: on `weather` m5 the phase
+  counts now match (995 → 193 → 42 → 12 groups), the entropy-bin and
+  queue-push sequences agree until a tile whose histogram differs, and
+  under libwebp's hash-chain accounting (`Vp8lConfig::parity`) the file
+  is 1.0004 of libwebp (was 1.0012). Default mode on the 11-file m4/m5
+  set: −0.010 % vs the previous state, zen/libwebp **1.0001** (from 1.0016
+  before the #71 work). What remains on `weather` (1.0057 tuned vs 1.0004
+  parity) is the deliberate tuned hash-chain accounting, not clustering.
+  Byte-parity sweep unchanged (3080/3080, alpha 192/192);
+  `dev/output_hash.rs` COMBINED `4ecf20dac54d177f` → `31a62d4d81dc3de4`.
 - **VP8L entropy binning uses libwebp's quartile bin function (refs #71).**
   `get_bin_id_for_entropy` cut the dominant-cost range in thirds
   (`(NUM_PARTITIONS − 1)·delta/range`); libwebp's `GetBinIdForEntropy` is

@@ -438,16 +438,16 @@ impl HistoQueue {
     }
 
     /// Replace bad_id with good_id in a pair's indices, keeping idx1 < idx2.
-    fn fix_pair_idx(pair: &mut HistogramPair, bad_id: usize, good_id: usize) {
+    fn fix_pair_idx(pair: &mut HistogramPair, bad_id: usize, good_id: usize, compact: &Compact) {
         if pair.idx1 == bad_id {
             pair.idx1 = good_id;
         }
         if pair.idx2 == bad_id {
             pair.idx2 = good_id;
         }
-        if pair.idx1 > pair.idx2 {
-            core::mem::swap(&mut pair.idx1, &mut pair.idx2);
-        }
+        let (a, b) = compact.ordered(pair.idx1, pair.idx2);
+        pair.idx1 = a;
+        pair.idx2 = b;
     }
 
     /// Re-evaluate pair cost. Returns false if pair should be removed.
@@ -581,6 +581,60 @@ fn stochastic_target_size(quality: u8) -> usize {
     t.min(MAX_HISTO_GREEDY as u64) as usize
 }
 
+/// libwebp's compact histogram array (`image_histo`): `order[pos]` is the
+/// original tile index at that position, `pos[orig]` its position (or
+/// `NO_POS` once removed). Removal is swap-with-last, exactly like
+/// `HistogramSetRemoveHistogram`, because the position sequence feeds the
+/// entropy-bin walk (the swapped-in histogram is examined next), the
+/// stochastic RNG picks, the greedy pair order, the remap tie-breaks and
+/// the final group numbering (#71, verified event-for-event against the
+/// instrumented libwebp in `dev/libwebp-histo-trace/`).
+struct Compact {
+    order: Vec<usize>,
+    pos: Vec<usize>,
+}
+
+const NO_POS: usize = usize::MAX;
+
+impl Compact {
+    fn new(active: &[bool]) -> Self {
+        let order: Vec<usize> = (0..active.len()).filter(|&i| active[i]).collect();
+        let mut pos = vec![NO_POS; active.len()];
+        for (p, &i) in order.iter().enumerate() {
+            pos[i] = p;
+        }
+        Self { order, pos }
+    }
+
+    fn len(&self) -> usize {
+        self.order.len()
+    }
+
+    /// Remove `orig` by moving the last histogram into its slot.
+    fn remove(&mut self, orig: usize) {
+        let p = self.pos[orig];
+        debug_assert!(
+            p != NO_POS,
+            "removing a histogram that is not in the compact array"
+        );
+        let last = self.order.pop().expect("compact array is not empty");
+        if p < self.order.len() {
+            self.order[p] = last;
+            self.pos[last] = p;
+        }
+        self.pos[orig] = NO_POS;
+    }
+
+    /// `(a, b)` ordered by compact position (`HistoQueuePush`'s idx1 < idx2).
+    fn ordered(&self, a: usize, b: usize) -> (usize, usize) {
+        if self.pos[a] <= self.pos[b] {
+            (a, b)
+        } else {
+            (b, a)
+        }
+    }
+}
+
 /// Phase 1: Compute per-tile entropy bin IDs from literal/red/blue costs.
 fn compute_entropy_bins(state: &ClusterState, low_effort: bool) -> Vec<usize> {
     let mut lit_min = u64::MAX;
@@ -626,11 +680,15 @@ fn entropy_bin_combine_phase(
     quality: u8,
     bin_ids: &[usize],
     low_effort: bool,
+    compact: &mut Compact,
 ) {
     let n = state.histos.len();
     // libwebp sizes the factor from the RAW tile count (image_histo_raw_size),
     // empties included.
     let factor = combine_cost_factor(n, quality);
+    // libwebp stores `first` as a position; a bin-first that gets swapped
+    // into a removed slot keeps being reached through its (now dangling)
+    // pointer, i.e. by object identity — so key it by ORIGINAL index here.
     let mut bin_first: Vec<Option<usize>> = vec![None; BIN_SIZE];
     // libwebp's per-bin `num_combine_failures`: a same-bin merge that passes
     // the cost test is still SKIPPED (up to `MAX_COMBINE_FAILURES` times per
@@ -643,13 +701,15 @@ fn entropy_bin_combine_phase(
     const MAX_COMBINE_FAILURES: u16 = 32;
     let mut bin_failures = [0u16; BIN_SIZE];
 
-    for i in 0..n {
-        if !state.active[i] {
-            continue;
-        }
+    // Walk libwebp's compact array: a removed slot is refilled by the LAST
+    // histogram and that slot is examined again before moving on.
+    let mut idx = 0usize;
+    while idx < compact.len() {
+        let i = compact.order[idx];
         let bin_id = bin_ids[i];
         let Some(first) = bin_first[bin_id] else {
             bin_first[bin_id] = Some(i);
+            idx += 1;
             continue;
         };
 
@@ -658,6 +718,7 @@ fn entropy_bin_combine_phase(
             // no cost evaluation. Costs are recomputed after the loop.
             cluster_trace::inc_entropy_bin_merges();
             state.merge_pair_unconditional(first, i);
+            compact.remove(i);
             continue;
         }
 
@@ -710,9 +771,13 @@ fn entropy_bin_combine_phase(
             if try_combine || bin_failures[bin_id] >= MAX_COMBINE_FAILURES {
                 cluster_trace::inc_entropy_bin_merges();
                 state.merge_pair(first, i, combined_cost, per_type);
+                compact.remove(i);
             } else {
                 bin_failures[bin_id] += 1;
+                idx += 1;
             }
+        } else {
+            idx += 1;
         }
     }
 
@@ -721,10 +786,8 @@ fn entropy_bin_combine_phase(
         // survivors before anything (remap) reads them. Matches libwebp's
         // "for low_effort case, update the final cost when everything is
         // merged" loop in HistogramCombineEntropyBin.
-        for i in 0..n {
-            if state.active[i] {
-                state.costs[i] = compute_histogram_cost(&state.histos[i]);
-            }
+        for &i in &compact.order {
+            state.costs[i] = compute_histogram_cost(&state.histos[i]);
         }
     }
 }
@@ -732,14 +795,16 @@ fn entropy_bin_combine_phase(
 /// Phase 2b: Stochastic combining via size-9 priority queue with Lehmer RNG
 /// (matching libwebp's HistogramCombineStochastic). Returns true if the greedy
 /// phase should run (i.e., active count reached target_size).
-fn stochastic_combine_phase(state: &mut ClusterState, target_size: usize) -> bool {
+fn stochastic_combine_phase(
+    state: &mut ClusterState,
+    target_size: usize,
+    compact: &mut Compact,
+) -> bool {
     const HISTO_QUEUE_SIZE: usize = 9;
     let mut histo_queue = HistoQueue::new(HISTO_QUEUE_SIZE);
 
-    // Build a compact index: position -> original index. This matches libwebp's
-    // approach where histograms are stored in a compact array and
-    // HistogramSetRemoveHistogram swaps in the last element.
-    let mut compact: Vec<usize> = state.active_indices();
+    // `compact` is libwebp's image_histo array in the order the entropy-bin
+    // phase left it; the RNG picks below are positions into it.
     let mut compact_size = compact.len();
 
     let outer_iters = compact_size;
@@ -793,8 +858,8 @@ fn stochastic_combine_phase(state: &mut ClusterState, target_size: usize) -> boo
             // swapping the last histogram into it; mirror that ordering so
             // the compaction — and every later RNG-driven pick — matches.
             let (lo, hi) = if ci1 < ci2 { (ci1, ci2) } else { (ci2, ci1) };
-            let idx1 = compact[lo];
-            let idx2 = compact[hi];
+            let idx1 = compact.order[lo];
+            let idx2 = compact.order[hi];
 
             pair_evals_this_iter += 1;
             let curr_cost =
@@ -820,21 +885,20 @@ fn stochastic_combine_phase(state: &mut ClusterState, target_size: usize) -> boo
         cluster_trace::inc_stochastic_merges();
         state.merge_pair(best_idx1, merge_idx2, combined_cost, per_type);
 
-        // Remove merge_idx2 from compact array (swap with last, like libwebp)
-        if let Some(pos) = compact.iter().position(|&x| x == merge_idx2) {
-            compact.swap(pos, compact_size - 1);
-            compact_size -= 1;
-            compact.truncate(compact_size);
-        }
+        // Remove merge_idx2 from the compact array (swap with last, like
+        // HistogramSetRemoveHistogram).
+        compact.remove(merge_idx2);
+        compact_size = compact.len();
 
         // Update queue: remove pairs involving the merged indices,
-        // re-evaluate pairs that reference either idx.
+        // re-evaluate pairs that reference either idx, re-order by position.
         update_queue_after_stochastic_merge(
             &mut histo_queue,
             &state.histos,
             &state.costs,
             best_idx1,
             merge_idx2,
+            compact,
         );
 
         tries_with_no_success = 0;
@@ -852,6 +916,7 @@ fn update_queue_after_stochastic_merge(
     costs: &[HistogramCosts],
     best_idx1: usize,
     merge_idx2: usize,
+    compact: &Compact,
 ) {
     let mut j = 0usize;
     while j < histo_queue.queue.len() {
@@ -867,7 +932,7 @@ fn update_queue_after_stochastic_merge(
 
         if is_idx1_best || is_idx2_best {
             // Fix index references
-            HistoQueue::fix_pair_idx(&mut histo_queue.queue[j], merge_idx2, best_idx1);
+            HistoQueue::fix_pair_idx(&mut histo_queue.queue[j], merge_idx2, best_idx1, compact);
             // Re-evaluate cost
             cluster_trace::inc_stochastic_queue_updates();
             if !HistoQueue::update_pair(histos, costs, &mut histo_queue.queue[j]) {
@@ -876,9 +941,12 @@ fn update_queue_after_stochastic_merge(
             }
         }
 
-        // (In libwebp, HistogramSetRemoveHistogram moves the last histo
-        // into the removed slot. We don't compact our histos array, so we
-        // only need to fix the merge_idx2 reference above.)
+        // HistoQueueFixPair(image_histo->size, best_idx2, p): the last
+        // histogram moved into best_idx2's slot, so re-order by position.
+        let q = &mut histo_queue.queue[j];
+        let (a, b) = compact.ordered(q.idx1, q.idx2);
+        q.idx1 = a;
+        q.idx2 = b;
         histo_queue.update_head(j);
         j += 1;
     }
@@ -887,10 +955,8 @@ fn update_queue_after_stochastic_merge(
 /// Phase 3: Greedy combining via O(n^2)-initialized priority queue
 /// (matching libwebp's HistogramCombineGreedy). Only runs when the active count
 /// is small enough (typically after stochastic has reached target_size).
-fn greedy_combine_phase(state: &mut ClusterState) {
-    let n = state.histos.len();
-    let active_indices = state.active_indices();
-    let active_n = active_indices.len();
+fn greedy_combine_phase(state: &mut ClusterState, compact: &mut Compact) {
+    let active_n = compact.len();
 
     let mut histo_queue = HistoQueue::new(active_n * active_n);
     let greedy_init_pairs = (active_n * (active_n - 1)) / 2;
@@ -901,8 +967,8 @@ fn greedy_combine_phase(state: &mut ClusterState) {
             histo_queue.push_greedy(
                 &state.histos,
                 &state.costs,
-                active_indices[ai],
-                active_indices[aj],
+                compact.order[ai],
+                compact.order[aj],
             );
         }
     }
@@ -915,9 +981,10 @@ fn greedy_combine_phase(state: &mut ClusterState) {
         let per_type = histo_queue.queue[0].per_type_costs;
         cluster_trace::inc_greedy_merges();
         state.merge_pair(best_idx1, best_idx2, combined_cost, per_type);
+        compact.remove(best_idx2);
 
-        // Remove stale pairs involving merged indices (no index fixup needed
-        // because we never compact our histos array).
+        // Remove pairs intersecting the just-combined pair; re-order the
+        // survivors by (possibly moved) position.
         let mut j = 0usize;
         while j < histo_queue.queue.len() {
             let p = &histo_queue.queue[j];
@@ -928,19 +995,25 @@ fn greedy_combine_phase(state: &mut ClusterState) {
             {
                 histo_queue.pop_at(j);
             } else {
+                let q = &mut histo_queue.queue[j];
+                let (a, b) = compact.ordered(q.idx1, q.idx2);
+                q.idx1 = a;
+                q.idx2 = b;
                 histo_queue.update_head(j);
                 j += 1;
             }
         }
 
-        // Add new pairs involving the merged accumulator (best_idx1).
+        // Add new pairs involving the merged accumulator, in compact order.
         let mut new_pairs = 0u64;
-        for i in 0..n {
-            if !state.active[i] || i == best_idx1 {
+        for pos in 0..compact.len() {
+            let i = compact.order[pos];
+            if i == best_idx1 {
                 continue;
             }
             new_pairs += 1;
-            histo_queue.push_greedy(&state.histos, &state.costs, best_idx1, i);
+            let (a, b) = compact.ordered(best_idx1, i);
+            histo_queue.push_greedy(&state.histos, &state.costs, a, b);
         }
         cluster_trace::add_greedy_new_pairs(new_pairs);
     }
@@ -1103,6 +1176,7 @@ fn cluster_histograms(
     }
 
     let mut state = ClusterState::from_tiles(tile_histos);
+    let mut compact = Compact::new(&state.active);
 
     // Phase 1+2: Entropy binning + bin-internal merging.
     // Low effort (method 0) bins on literal entropy only (4 bins vs 64) and
@@ -1118,7 +1192,7 @@ fn cluster_histograms(
     let num_bins = if low_effort { NUM_PARTITIONS } else { BIN_SIZE }.min(num_active);
     let entropy_combine = num_active > num_bins * 2 && quality < 100;
     if entropy_combine {
-        entropy_bin_combine_phase(&mut state, quality, &bin_ids, low_effort);
+        entropy_bin_combine_phase(&mut state, quality, &bin_ids, low_effort, &mut compact);
         zhist_phase(
             "bin",
             state.count_active(),
@@ -1136,7 +1210,7 @@ fn cluster_histograms(
         cluster_trace::set_post_entropy_bin_count(num_active_pre_stochastic as u64);
 
         let do_greedy = if num_active_pre_stochastic > target_size {
-            stochastic_combine_phase(&mut state, target_size)
+            stochastic_combine_phase(&mut state, target_size, &mut compact)
         } else {
             true
         };
@@ -1149,7 +1223,7 @@ fn cluster_histograms(
         // Phase 3: Greedy combining (only when stochastic reached target)
         cluster_trace::set_post_stochastic_count(state.count_active() as u64);
         if do_greedy && state.count_active() > 1 {
-            greedy_combine_phase(&mut state);
+            greedy_combine_phase(&mut state, &mut compact);
             zhist_phase("greedy", state.count_active(), format_args!(""));
         }
     } else {
@@ -1157,8 +1231,11 @@ fn cluster_histograms(
         cluster_trace::set_post_stochastic_count(state.count_active() as u64);
     }
 
-    // Phase 4: Remap tiles to best cluster
-    let active_indices = state.active_indices();
+    // Phase 4: Remap tiles to best cluster, groups scanned in compact order
+    // (HistogramRemap's strict `<` gives ties to the earlier position); the
+    // final groups are numbered in that order too (`symbols[i] = best_out`).
+    debug_assert_eq!(compact.len(), state.count_active());
+    let active_indices = compact.order.clone();
     cluster_trace::set_post_greedy_count(active_indices.len() as u64);
     if !active_indices.is_empty() {
         remap_tiles_to_clusters(&mut state, tile_histos, &active_indices);

@@ -46,6 +46,22 @@ fn load_png_rgba(path: &Path) -> (Vec<u8>, u32, u32) {
 
 const KIND: [&str; 4] = ["predictor", "color", "subtract-green", "color-indexing"];
 
+/// Wrap a raw VP8L payload in a simple RIFF/WEBP container.
+fn riff_vp8l(payload: &[u8]) -> Vec<u8> {
+    let padded = payload.len() + (payload.len() & 1);
+    let mut out = Vec::with_capacity(20 + padded);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&((4 + 8 + padded) as u32).to_le_bytes());
+    out.extend_from_slice(b"WEBP");
+    out.extend_from_slice(b"VP8L");
+    out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    out.extend_from_slice(payload);
+    if payload.len() & 1 == 1 {
+        out.push(0);
+    }
+    out
+}
+
 struct Side {
     name: &'static str,
     bytes: Vec<u8>,
@@ -79,6 +95,15 @@ fn mode_histogram(data: &[u8]) -> [u32; 16] {
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let mut methods = vec![4u8, 5];
+    // `--parity`: encode zenwebp's side with `Vp8lConfig::parity = true`
+    // (libwebp's hash-chain iteration accounting instead of the tuned
+    // default) to separate deliberate tuning from porting gaps.
+    let parity = if let Some(i) = args.iter().position(|a| a == "--parity") {
+        args.remove(i);
+        true
+    } else {
+        false
+    };
     if let Some(i) = args.iter().position(|a| a == "--methods") {
         methods = args[i + 1]
             .split(',')
@@ -103,18 +128,34 @@ fn main() {
             eprintln!("dumped {} ({w}x{h})", out.display());
         }
         for &m in &methods {
-            let zen_cfg = zenwebp::LosslessConfig::new()
-                .with_method(m)
-                .with_exact(true);
-            let zen = zenwebp::EncodeRequest::lossless(
-                &zen_cfg,
-                &rgba,
-                zenwebp::PixelLayout::Rgba8,
-                w,
-                h,
-            )
-            .encode()
-            .expect("zen encode");
+            let zen = if parity {
+                let cfg = zenwebp::encoder::vp8l::Vp8lConfig {
+                    quality: zenwebp::encoder::vp8l::Vp8lQuality {
+                        quality: 75,
+                        method: m,
+                    },
+                    exact: true,
+                    parity: true,
+                    ..zenwebp::encoder::vp8l::Vp8lConfig::default()
+                };
+                let payload = zenwebp::encoder::vp8l::encode_vp8l(
+                    &rgba,
+                    w,
+                    h,
+                    true,
+                    &cfg,
+                    &enough::Unstoppable,
+                )
+                .expect("zen parity encode");
+                riff_vp8l(&payload)
+            } else {
+                let zen_cfg = zenwebp::LosslessConfig::new()
+                    .with_method(m)
+                    .with_exact(true);
+                zenwebp::EncodeRequest::lossless(&zen_cfg, &rgba, zenwebp::PixelLayout::Rgba8, w, h)
+                    .encode()
+                    .expect("zen encode")
+            };
             let lib = webpx::EncoderConfig::new_lossless()
                 .method(m)
                 .exact(true)

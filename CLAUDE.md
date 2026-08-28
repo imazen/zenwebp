@@ -306,20 +306,21 @@ skipped work). Screens m5/m6 residual 1.0022 (weather 1.0083, archives
 streams and shows the predictor mode maps and cross-color tiles are
 identical tile for tile to libwebp's at m4/m5 on both files. The whole
 gap is the main image's histogram clustering: zenwebp ended with fewer
-Huffman groups than libwebp on every cell of the 11-file m4/m5 set. Four
+Huffman groups than libwebp on every cell of the 11-file m4/m5 set. Five
 divergences found and ported: `HistogramCombineEntropyBin`'s
 `try_combine` / `num_combine_failures` gate (−0.116 %),
 `HistogramCombineStochastic`'s in-loop threshold tightening +
 compact-position pair ordering (−0.023 %), the quartile
-`GetBinIdForEntropy` (zenwebp had thirds; a wash overall, photos now on
-libwebp's group counts, weather m5 1.0058 → 1.0012) and the stochastic
-stop condition (zero effect). Cumulative: zen/lib 1.0016 → 1.0002 on the
-set, weather m5 1.0083 → 1.0012, archives m5 1.0058 → 1.0014.
+`GetBinIdForEntropy` (zenwebp had thirds), the stochastic stop condition,
+and the full compact-array position walk (`meta_huffman::Compact`,
+−0.010 %). Cumulative: zen/lib 1.0016 → **1.0001** on the set.
 `dev/libwebp-histo-trace/` is the committed instrumented-libwebp
-differential (`HISTDBG=1` on our side): pair costs are identical, the
-decision traces agree until the tile HISTOGRAMS differ, i.e. the residual
-is upstream in the backward references (0.1–0.3 % token differences),
-not in clustering.
+differential (`HISTDBG=1` / `REFDBG=1` on our side): the clustering is
+now verified decision-for-decision equal on identical tile histograms
+(weather m5 phase counts 995 → 193 → 42 → 12 match), and under
+`Vp8lConfig::parity` hash-chain accounting weather m5 is 1.0004. The
+residual in tuned mode (weather m5 1.0057) is the deliberate hash-chain
+accounting choice (0.1–0.3 % different LZ77 tokens), not a porting gap.
 
 **Backward references parity (synthetic, 2026-03-25):**
 
