@@ -80,6 +80,18 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
   falsified for the whole codebase; the migration is hygiene.
 
 ### Changed (2026-08-28, #71 probe)
+- **VP8L entropy-bin clustering ports libwebp's `try_combine` gate (refs
+  #71): −0.116 % lossless bytes on the 11-file m4/m5 set, zen/libwebp
+  1.0016 → 1.0004.** `HistogramCombineEntropyBin` only merges a same-bin
+  pair that passes the cost test if the combined histogram keeps trivial
+  red/blue/alpha symbols or both candidates are already non-trivial there;
+  otherwise it counts a per-bin failure (merging regardless after 32).
+  zenwebp merged on the cost test alone and lost the single-symbol codes,
+  ending with fewer Huffman groups than libwebp on every cell
+  (`benchmarks/issue71_probe_2026-08-28.md` §3b: `nasa__voyager` −11.3 KB,
+  85 → 93 groups; `weather` m5 1.0083 → 1.0068; CID22 photos unchanged).
+  Byte-parity sweep unchanged (3080/3080, alpha 192/192);
+  `dev/output_hash.rs` COMBINED → `430d62a5b59b819d`.
 - **VP8L histogram clustering drops empty tile histograms before
   clustering, like libwebp's `HistogramCopyAndAnalyze`** (refs #71). Tiles
   fully covered by LZ77 copies from earlier tiles (27 % of the 16px tiles on

@@ -615,6 +615,16 @@ fn entropy_bin_combine_phase(
     // empties included.
     let factor = combine_cost_factor(n, quality);
     let mut bin_first: Vec<Option<usize>> = vec![None; BIN_SIZE];
+    // libwebp's per-bin `num_combine_failures`: a same-bin merge that passes
+    // the cost test is still SKIPPED (up to `MAX_COMBINE_FAILURES` times per
+    // bin) unless the combined histogram keeps trivial red/blue/alpha symbols
+    // or both candidates are already non-trivial in one of those channels.
+    // Merging a trivial-symbol tile into a non-trivial one loses the
+    // single-symbol codes for that group; zenwebp merged unconditionally and
+    // ended with fewer Huffman groups than libwebp on every cell of the #71
+    // m-sweep set (e.g. 17 vs 25 on `archives` m5).
+    const MAX_COMBINE_FAILURES: u16 = 32;
+    let mut bin_failures = [0u16; BIN_SIZE];
 
     for i in 0..n {
         if !state.active[i] {
@@ -648,8 +658,27 @@ fn entropy_bin_combine_phase(
             &state.costs[i],
             cost_thresh_val,
         ) {
-            cluster_trace::inc_entropy_bin_merges();
-            state.merge_pair(first, i, combined_cost, per_type);
+            // `try_combine` (HistogramCombineEntropyBin): RED=1, BLUE=2,
+            // ALPHA=3 in `trivial_sym`. The combined histogram's trivial
+            // symbol is the shared one or none (`costs_from_merge` rule).
+            let (cf, ci) = (&state.costs[first], &state.costs[i]);
+            let combo_trivial =
+                |t: usize| cf.trivial_sym[t].is_some() && cf.trivial_sym[t] == ci.trivial_sym[t];
+            let mut try_combine = combo_trivial(1) && combo_trivial(2) && combo_trivial(3);
+            if !try_combine {
+                let non_trivial = |c: &HistogramCosts| {
+                    c.trivial_sym[1].is_none()
+                        || c.trivial_sym[2].is_none()
+                        || c.trivial_sym[3].is_none()
+                };
+                try_combine = non_trivial(ci) && non_trivial(cf);
+            }
+            if try_combine || bin_failures[bin_id] >= MAX_COMBINE_FAILURES {
+                cluster_trace::inc_entropy_bin_merges();
+                state.merge_pair(first, i, combined_cost, per_type);
+            } else {
+                bin_failures[bin_id] += 1;
+            }
         }
     }
 
