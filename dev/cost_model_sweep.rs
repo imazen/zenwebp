@@ -38,12 +38,16 @@ fn load_png_rgb(path: &PathBuf) -> Option<Image> {
     let rgb: Vec<u8> = match info.color_type {
         png::ColorType::Rgb => buf,
         png::ColorType::Rgba => buf
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[1], p[2]])
             .collect(),
         png::ColorType::Grayscale => buf.iter().flat_map(|&g| [g, g, g]).collect(),
         png::ColorType::GrayscaleAlpha => buf
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[0], p[0]])
             .collect(),
         _ => return None,
@@ -81,7 +85,9 @@ fn decode_rgba(webp: &[u8]) -> Vec<u8> {
 }
 
 fn rgba_to_rgb_vec(rgba: &[u8]) -> Vec<RGB8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .map(|p| RGB8 {
             r: p[0],
             g: p[1],
@@ -91,7 +97,9 @@ fn rgba_to_rgb_vec(rgba: &[u8]) -> Vec<RGB8> {
 }
 
 fn rgb_to_rgb_vec(rgb: &[u8]) -> Vec<RGB8> {
-    rgb.chunks_exact(3)
+    rgb.as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| RGB8 {
             r: p[0],
             g: p[1],

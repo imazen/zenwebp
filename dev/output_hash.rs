@@ -51,7 +51,9 @@ fn load_png(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
     let rgb: Vec<u8> = match info.color_type {
         png::ColorType::Rgb => buf,
         png::ColorType::Rgba => buf
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[1], p[2]])
             .collect(),
         png::ColorType::Grayscale => buf.iter().flat_map(|&g| [g, g, g]).collect(),
@@ -128,7 +130,9 @@ fn main() {
         let mut h: u64 = 0xcbf29ce484222325;
         for (name, rgb, w, h_px) in &images {
             let rgba: Vec<u8> = rgb
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .enumerate()
                 .flat_map(|(i, p)| {
                     let (x, y) = ((i as u32) % *w, (i as u32) / *w);

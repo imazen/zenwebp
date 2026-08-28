@@ -151,7 +151,9 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let rgb = match info.color_type {
         png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
         png::ColorType::Rgba => buf[..info.buffer_size()]
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[1], p[2]])
             .collect(),
         png::ColorType::Grayscale => buf[..info.buffer_size()]
@@ -159,7 +161,9 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
             .flat_map(|&g| [g, g, g])
             .collect(),
         png::ColorType::GrayscaleAlpha => buf[..info.buffer_size()]
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[0], p[0]])
             .collect(),
         _ => return None,
@@ -183,7 +187,7 @@ fn load_jpeg(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 
 fn rgb_to_y(rgb: &[u8]) -> Vec<u8> {
     let mut y = Vec::with_capacity(rgb.len() / 3);
-    for px in rgb.chunks_exact(3) {
+    for px in rgb.as_chunks::<3>().0.iter() {
         let yv =
             ((u32::from(px[0]) * 76 + u32::from(px[1]) * 150 + u32::from(px[2]) * 30) >> 8) as u8;
         y.push(yv);

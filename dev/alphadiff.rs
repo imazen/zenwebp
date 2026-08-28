@@ -163,7 +163,7 @@ fn main() {
 
             // Layer isolation: reproduce LIB's filtered plane and run zen's
             // VP8L on it at libwebp's alpha operating point.
-            let mut plane: Vec<u8> = rgba.chunks_exact(4).map(|p| p[3]).collect();
+            let mut plane: Vec<u8> = rgba.as_chunks::<4>().0.iter().map(|p| p[3]).collect();
             if lp == 1 {
                 zenwebp::__expert::alpha_quantize_levels(
                     &mut plane,

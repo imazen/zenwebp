@@ -21,7 +21,9 @@ fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32)> {
     let rgb = match info.color_type {
         png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
         png::ColorType::Rgba => buf[..info.buffer_size()]
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[1], p[2]])
             .collect(),
         png::ColorType::Grayscale => buf[..info.buffer_size()]
@@ -58,7 +60,9 @@ fn srgb_to_linear(v: u8) -> f32 {
 }
 
 fn rgb8_to_linear(rgb: &[u8]) -> Vec<[f32; 3]> {
-    rgb.chunks_exact(3)
+    rgb.as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| {
             [
                 srgb_to_linear(p[0]),
@@ -105,11 +109,15 @@ fn butteraugli_score(original_rgb: &[u8], webp_bytes: &[u8], w: u32, h: u32) -> 
 
     // Convert to RGB8 pixel slices
     let orig_pixels: Vec<RGB8> = original_rgb
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| RGB8::new(p[0], p[1], p[2]))
         .collect();
     let dec_pixels: Vec<RGB8> = decoded
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| RGB8::new(p[0], p[1], p[2]))
         .collect();
 
@@ -156,7 +164,7 @@ fn classify_rgb(rgb: &[u8], w: u32, h: u32) -> zenwebp::encoder::ClassifierDiag 
         uv_stride,
         4,
         50,
-        zenwebp::encoder::api::CostModel::ZenwebpDefault,
+        zenwebp::CostModel::ZenwebpDefault,
         75,
     );
 

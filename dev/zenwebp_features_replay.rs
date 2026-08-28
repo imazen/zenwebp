@@ -124,7 +124,7 @@ fn load_jpeg_rgb8(path: &PathBuf) -> Option<(Vec<u8>, u32, u32)> {
             // Naive CMYK→RGB; HDR-class JPEGs in the multiaxis corpus
             // are not CMYK in practice, so this branch is best-effort.
             let mut out = Vec::with_capacity((w as usize) * (h as usize) * 3);
-            for px in pixels.chunks_exact(4) {
+            for px in pixels.as_chunks::<4>().0.iter() {
                 let (c, m, y, k) = (px[0], px[1], px[2], px[3]);
                 let r = ((255 - c as i32) * (255 - k as i32) / 255).max(0).min(255) as u8;
                 let g = ((255 - m as i32) * (255 - k as i32) / 255).max(0).min(255) as u8;

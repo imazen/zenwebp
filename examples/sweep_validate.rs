@@ -65,7 +65,9 @@ fn decode_and_score(img: &Image, webp: &[u8]) -> Result<(Vec<u8>, Option<f64>), 
     }
     let lin = |bytes: &[u8]| -> Vec<[f32; 3]> {
         bytes
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|p| {
                 [
                     srgb_to_linear(p[0]),

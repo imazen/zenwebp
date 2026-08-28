@@ -36,7 +36,9 @@ fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32, bool)> {
     let rgb = match info.color_type {
         png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
         png::ColorType::Rgba => buf[..info.buffer_size()]
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[1], p[2]])
             .collect(),
         png::ColorType::Grayscale => buf[..info.buffer_size()]
@@ -51,7 +53,7 @@ fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32, bool)> {
 fn rgb_to_yuv420_y_only(rgb: &[u8], w: usize, h: usize) -> Vec<u8> {
     // BT.601 Y for the original classifier (matches detect_bucket()).
     let mut y = Vec::with_capacity(w * h);
-    for px in rgb.chunks_exact(3) {
+    for px in rgb.as_chunks::<3>().0.iter() {
         let yv =
             ((u32::from(px[0]) * 76 + u32::from(px[1]) * 150 + u32::from(px[2]) * 30) >> 8) as u8;
         y.push(yv);

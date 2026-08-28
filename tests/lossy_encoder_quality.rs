@@ -969,7 +969,9 @@ mod corpus_tests {
         let rgb = match info.color_type {
             png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
             png::ColorType::Rgba => buf[..info.buffer_size()]
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .flat_map(|p| [p[0], p[1], p[2]])
                 .collect(),
             png::ColorType::Grayscale => buf[..info.buffer_size()]

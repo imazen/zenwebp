@@ -328,7 +328,9 @@ fn opaque_rgba_matches_libwebp_bare_vp8() {
     let (w, h) = (64u32, 64u32);
     let rgb = synth(w, h, 31);
     let rgba: Vec<u8> = rgb
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .flat_map(|p| [p[0], p[1], p[2], 255])
         .collect();
     for &(q, m) in &[(5u8, 0u8), (50, 2), (75, 4), (90, 6)] {
@@ -382,7 +384,9 @@ fn transparent_rgba_matches_libwebp() {
     for (w, h, seed, kind, q, m) in cells {
         let rgb = synth(w, h, seed);
         let rgba: Vec<u8> = rgb
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .enumerate()
             .flat_map(|(i, p)| {
                 let (x, y) = ((i as u32) % w, (i as u32) / w);

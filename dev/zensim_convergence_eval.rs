@@ -340,7 +340,7 @@ fn decode_png(path: &PathBuf) -> Option<DecodedPng> {
         png::ColorType::Rgb | png::ColorType::Indexed => (buf, None),
         png::ColorType::Rgba => {
             let mut rgb = Vec::with_capacity(w as usize * h as usize * 3);
-            for px in buf.chunks_exact(4) {
+            for px in buf.as_chunks::<4>().0.iter() {
                 rgb.extend_from_slice(&[px[0], px[1], px[2]]);
             }
             (rgb, Some(buf))
@@ -354,7 +354,7 @@ fn decode_png(path: &PathBuf) -> Option<DecodedPng> {
         }
         png::ColorType::GrayscaleAlpha => {
             let mut rgb = Vec::with_capacity(w as usize * h as usize * 3);
-            for px in buf.chunks_exact(2) {
+            for px in buf.as_chunks::<2>().0.iter() {
                 rgb.extend_from_slice(&[px[0], px[0], px[0]]);
             }
             (rgb, None)
