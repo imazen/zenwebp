@@ -64,10 +64,13 @@ jobs:
       # upstream, and which CI therefore never enabled) this builds anywhere.
       # Cover it, or the contract-side classifier rots exactly as the direct-dep
       # one did.
+      # NOTE: tests only, no lint gate. This job runs the full OS matrix, and
+      # zenwebp's lint baseline is clean only on x86 — on aarch64 eight
+      # arch-gated items (the x86 SIMD macros in loop_filter/yuv, `u8x32`, the
+      # scalar fallbacks) are dead and fire under `-D warnings`. The analyzer
+      # clippy gate lives in the `Clippy` job below, which is ubuntu-only.
       - name: Test (--features analyzer) — zenanalyze-api contract path
-        run: |
-          cargo test --features analyzer --lib
-          cargo clippy --features analyzer --lib -- -D warnings
+        run: cargo test --features analyzer --lib
       # The bundled provider (`zenanalyze::Analyzer`) + the dev/ extractors.
       # Needs the sibling only as a git dep, which CI can fetch.
       - name: Build (--features analyzer-bundled) — bundled provider + dev tools
@@ -219,6 +222,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
+      # The contract-only classifier path. Gated here rather than in the Test
+      # job because that job's aarch64 leg has a pre-existing arch-gated
+      # dead-code baseline; this runner is x86, where the baseline is clean.
+      - name: Clippy (--features analyzer)
+        run: cargo clippy --features analyzer --all-targets -- -D warnings
 
   fmt:
     name: Format

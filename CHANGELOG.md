@@ -53,6 +53,14 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
   **only** place this crate names `zenanalyze` (the "host picks the version"
   role), and the `dev/` feature extractors ride on it.
 
+  CI: `--features analyzer` (tests) and `--features analyzer-bundled` (tests +
+  a dev-example build) run in the cross-OS `Test` job; the analyzer **lint** gate
+  runs in the ubuntu-only `Clippy` job. It cannot live in the `Test` job —
+  zenwebp's lint baseline is clean only on x86, and the aarch64 legs carry eight
+  pre-existing arch-gated dead-code findings (the x86 SIMD macros in
+  `loop_filter`/`yuv`, the `u8x32` import, the scalar fallbacks) that fire under
+  `-D warnings`.
+
   Tests for the contract path (`classifier::contract_tests`, gated on `analyzer`
   alone, so they run in exactly the configuration a consumer ships): every name
   in `CLASSIFIER_FEATURES` reaches the `ZenanalyzeDiag` field it feeds with its
