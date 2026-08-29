@@ -577,10 +577,15 @@ pub fn classify_image_type_with_provider(
 /// The bundled default provider: `zenanalyze::Analyzer` for the `zenanalyze`
 /// version this build pinned.
 ///
-/// **This function is the only place in zenwebp that names a `zenanalyze` type**,
-/// and it exists to play the host role (choosing a version) for callers that
-/// don't want to supply one — see `docs/sole-contract.md` in imazen/zenanalyze.
-/// Everything above it works against `zenanalyze-api` alone.
+/// It exists so callers that don't want to supply a provider still get one —
+/// this crate picking an analyzer version on their behalf. Everything above it
+/// works against `zenanalyze-api` alone, which is what lets a host on a
+/// *different* `zenanalyze` version drive the same classifier.
+///
+/// Depending on `zenanalyze` directly is explicitly permitted (see
+/// `docs/sole-contract.md` in imazen/zenanalyze); the rule that matters is that
+/// no `zenanalyze` type appears in a public signature, so callers aren't pinned
+/// to this crate's analyzer version.
 #[cfg(feature = "analyzer-bundled")]
 #[must_use]
 pub fn bundled_provider() -> impl zenanalyze_api::FeatureProvider {

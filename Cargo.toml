@@ -57,9 +57,10 @@ magetypes = { version = "0.9.15" }
 rgb = { version = "0.8", optional = true, default-features = false, features = ["as-bytes"] }
 imgref = { version = "1.12", optional = true, default-features = false }
 zensim = { version = "0.2", optional = true }
-# `zenanalyze-api` is the SOLE zenanalyze-family dependency of this crate's
-# library code — the version-unifying feature contract (`Offer`, `Request`,
-# `FeatureProvider`). See `docs/sole-contract.md` in imazen/zenanalyze.
+# `zenanalyze-api` — the version-unifying feature contract (`Offer`, `Request`,
+# `FeatureProvider`) and this crate's INTERCHANGE BOUNDARY, so a host on any
+# `zenanalyze` version can drive the classifier. See `docs/sole-contract.md` in
+# imazen/zenanalyze.
 #
 # Declared as a crates.io VERSION, never a git rev: a registry dep and a git dep
 # are different Cargo sources, and two git deps at different revs are too —
@@ -67,10 +68,12 @@ zensim = { version = "0.2", optional = true }
 # Unreleased contract changes come in through the single `[patch.crates-io]`
 # below, which rewrites this entry and KEEPS unification.
 zenanalyze-api = { version = "0.1.0", optional = true, default-features = false }
-# zenanalyze itself is optional and belongs to the `analyzer-bundled` feature
-# only — the "host picks the version" role (it supplies `zenanalyze::Analyzer`,
-# a `FeatureProvider` impl) plus the dev/ extractors. Nothing in the library's
-# classification logic names a `zenanalyze` type.
+# zenanalyze itself is optional, behind `analyzer-bundled`, where it supplies a
+# default `zenanalyze::Analyzer` provider (and powers the dev/ extractors) so
+# callers don't have to plumb one. A direct dep like this is explicitly PERMITTED
+# — a codec that needs features the host didn't provide should re-analyse. It is
+# kept optional here only because the classifier genuinely doesn't need it when
+# an offer or a provider is supplied.
 #
 # Historical note: this used to be a plain registry `0.1.0` pin that the library
 # named types from directly, and `--features analyzer` HAD NOT COMPILED since
@@ -185,9 +188,8 @@ analyzer = ["dep:zenanalyze-api"]
 # `analyzer` plus a bundled default provider (`zenanalyze::Analyzer`), so the
 # zero-argument entry points (`classify_image_type_rgb8`) and the encoder's
 # internal Auto-preset / target-zensim paths can classify with no caller
-# plumbing. This is the "host chooses the analyzer version" role expressed as a
-# cargo feature, and the ONLY place this crate names `zenanalyze`. The dev/
-# feature extractors also ride here.
+# plumbing — this crate picking an analyzer version on the caller's behalf. The
+# dev/ feature extractors also ride here.
 analyzer-bundled = ["analyzer", "dep:zenanalyze"]
 # dev-only — enables runtime ablation toggles read from environment
 # variables for `dev/zensim_*.rs` measurement binaries. Production

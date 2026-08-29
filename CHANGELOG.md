@@ -21,11 +21,15 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 
 ### Changed
 
-- **The `analyzer` feature now speaks the `zenanalyze-api` contract only** —
-  no `zenanalyze` dependency at all (owner directive 2026-08-28,
-  "zenanalyze-api should be the sole contract and intermediary so different
-  zenanalyze versions can compile together"; see `docs/sole-contract.md` in
-  imazen/zenanalyze).
+- **The `analyzer` feature now speaks the `zenanalyze-api` contract** — it takes
+  an `Offer` or a `&dyn FeatureProvider`, so a host on any `zenanalyze` version
+  can drive the classifier, and `analyzer` alone pulls in no `zenanalyze` (owner
+  directive 2026-08-28, "zenanalyze-api should be the sole contract and
+  intermediary so different zenanalyze versions can compile together", corrected
+  the same day to "a direct dep is okay though, a reanalysis might be needed
+  anyway if the upstream provided features are insufficient" — so
+  `analyzer-bundled`'s direct dep is permitted and normal, not a leftover; see
+  `docs/sole-contract.md` in imazen/zenanalyze).
 
   **This fixes a feature that had not compiled.** `src/encoder/analysis/
   classifier.rs` named `zenanalyze::feature::AnalysisFeature` variants directly
@@ -49,9 +53,9 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
   New feature `analyzer-bundled = ["analyzer", "dep:zenanalyze"]` supplies
   `zenanalyze::Analyzer` as a default provider, keeping the zero-argument
   `classify_image_type_rgb8` / `_rgb8_diag` entries and the encoder's internal
-  Auto-preset + target-zensim paths working with no caller plumbing. It is the
-  **only** place this crate names `zenanalyze` (the "host picks the version"
-  role), and the `dev/` feature extractors ride on it.
+  Auto-preset + target-zensim paths working with no caller plumbing. This crate picks an
+  analyzer version on the caller's behalf there; the `dev/` feature extractors
+  ride on it too.
 
   CI: `--features analyzer` (tests) and `--features analyzer-bundled` (tests +
   a dev-example build) run in the cross-OS `Test` job; the analyzer **lint** gate
