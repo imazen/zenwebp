@@ -62,6 +62,16 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
   so it is not caused by this pass, and CI's `Clippy` job runs `ubuntu-latest`
   only.
 
+  The three **nested** tracked lockfiles were refreshed under the same
+  third-party-only constraint: `fuzz/Cargo.lock` (21 packages),
+  `apidoc/Cargo.lock` (14), and `zenwebp-recompress/Cargo.lock` (27 —
+  `anyhow` 1.0.104, `bytemuck` 1.25.2 and friends). `fuzz` and `apidoc` still
+  `cargo check --all-targets` clean, and the nested recompress workspace —
+  which path-depends on the `zensim` / `zenpixels` / `zenanalyze` siblings and
+  has its own weekly `recompress.yml` — builds and passes its full suite
+  (**41 tests, 0 failures**). Its sibling path-deps were left untouched, as
+  zen-family deps are out of scope here.
+
 - **`zencodec` / `zencodec-testkit` / `zenpixels` / `zenpixels-convert`
   requirements now span the published minor AND the next one**: `zencodec
   >=0.1.26, <0.3.0`, `zencodec-testkit >=0.1.0, <0.3.0`, `zenpixels >=0.2.11,
