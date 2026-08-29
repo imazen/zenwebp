@@ -18,7 +18,37 @@ checked out on zenwebp's core CI runners; making it a workspace member would
 break zenwebp's `cargo build`/`test` (Cargo resolves the whole member graph
 upfront). Build it from its own directory: `cd zenwebp-recompress && cargo
 test`. Its own CI is `.github/workflows/recompress.yml` (isolated, path-
-filtered, checks out the three siblings).
+filtered + **weekly schedule**, checks out the three siblings).
+
+**Two zensims exist in this repo, and only one of them drifts.** The main
+crate takes `zensim = "0.2"` from the **registry** (locked at 0.2.7); the
+nested workspace path-depends on **sibling `zensim` main** (0.3.0). That is
+why sibling drift can redden `recompress.yml` while zenwebp's core CI stays
+green — the isolation works. It also means the two see different APIs: 0.2.7
+predates the generation-A deprecation, so `ZensimProfile::latest()` in
+`tests/` and `dev/` is fine there, and would only start warning if the main
+crate is ever bumped to zensim 0.3.
+
+**The recompress workspace pins `ZensimProfile::A` on purpose, via an
+explicit `deprecated-profiles` feature.** zensim 0.3.0 deprecated
+generation-A and gated it behind that feature — ON in zensim's *own* default
+set, but this workspace takes `default-features = false`, so the variant
+compiled out and the crate stopped building (2026-08-29; the break sat unseen
+for 2.5 months because nothing matched the `paths:` filter after 2026-06-12).
+**Do not "fix" a future recurrence by migrating to `B` / `codec_target()`.**
+That is a score change, not a rename: `src/calibration/calib_tables.rs` is
+248,501 cells of absolute zensim-**A** scores and the public
+`target_zensim_a` knob is on the same scale, so re-pointing the profile
+without re-fitting silently re-scales every projection. The profile is a
+single `measure::PROFILE` constant guarded by
+`profile_is_pinned_to_zensim_a`; changing it is legitimate only alongside a
+B-scored recalibration sweep that updates the guard in the same change.
+
+**A dormant path-filtered workflow rots in two directions**, and the same
+2026-08-29 run surfaced both: sibling API drift *and* toolchain drift (clippy
+1.98's `chunks_exact_to_as_chunks` firing under `-D warnings`). Neither is
+visible to a `paths:` filter over this repo, which is why the workflow now
+also runs on a weekly `schedule:` plus `workflow_dispatch`.
 
 **DeblockReencode is FALSIFIED** (measured net-negative; VP8 already
 deblocks in-loop). The router never selects it; the artifact-aware filter
