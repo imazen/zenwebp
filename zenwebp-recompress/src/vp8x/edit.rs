@@ -196,8 +196,10 @@ mod tests {
         let (o, _, _) = decode_rgba(&webp).unwrap();
         let (r, _, _) = decode_rgba(&wrap_vp8(&v)).unwrap();
         let vdiffs = o
-            .chunks_exact(4)
-            .zip(r.chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(r.as_chunks::<4>().0.iter())
             .filter(|(a, b)| a[0..3] != b[0..3])
             .count();
         assert_eq!(vdiffs, 0, "verbatim transcode must be pixel-exact");
@@ -214,8 +216,10 @@ mod tests {
         assert_eq!((ew, eh), (w, h));
         // Mean abs RGB delta should be modest (we kept DC + low AC).
         let total: u64 = o
-            .chunks_exact(4)
-            .zip(e.chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(e.as_chunks::<4>().0.iter())
             .map(|(a, b)| {
                 (0..3)
                     .map(|c| (a[c] as i32 - b[c] as i32).unsigned_abs() as u64)

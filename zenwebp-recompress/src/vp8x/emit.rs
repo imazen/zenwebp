@@ -754,8 +754,10 @@ mod tests {
                     // color plane; alpha (ALPH chunk) is preserved separately
                     // by the real strategy and is dropped by this test wrapper.
                     let diffs = orig_px
-                        .chunks_exact(4)
-                        .zip(re_px.chunks_exact(4))
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .zip(re_px.as_chunks::<4>().0.iter())
                         .filter(|(a, b)| a[0..3] != b[0..3])
                         .count();
                     eprintln!(
