@@ -21,6 +21,47 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 
 ### Changed (2026-08-29, dependency version ranges)
 
+- **Third-party dependency pass — 64 lockfile packages + `hashbrown` `"0.16"`
+  → `"0.17.1"`.** The lockfile half was run as `cargo update -p …` naming each
+  of the 209 third-party packages individually, with every zen-family crate
+  excluded (`zencodec*`, `zenpixels*`, `zenpng`, `zensim`, `zenanalyze*`,
+  `zenyuv`, `zenbench`, `zenblend`, `zenresize`, `zenquant`, `zenflate`,
+  `archmage`, `magetypes`, `garb`, `linear-srgb`, `whereat`, `enough`,
+  `butteraugli`, `fast-ssim2`, `codec-corpus`), so nothing in the sibling graph
+  moved. Notable: **`yuv` 0.8.15 → 0.8.17** (the colour-conversion path),
+  `bytemuck` 1.25.0 → 1.25.2, `thiserror` 2.0.18 → 2.0.20, `libc` 0.2.186 →
+  0.2.189, `memchr` 2.8.2 → 2.8.3, `imgref` 1.12.2 → 1.12.3, `flate2` 1.1.9 →
+  1.1.10, `crc32fast` 1.5.0 → 1.5.1, `cc` 1.2.64 → 1.4.4, `zune-core` 0.5.1 →
+  0.5.3. `getrandom` 0.4.2 → 0.4.3 also drops the whole
+  `wit-bindgen` / `wasm-encoder` / `wasmparser` / `wasip3` subtree it used to
+  pull in — a transitive simplification, not a capability change.
+
+  **`hashbrown` was the one requirement that actually blocked a newer
+  release**, and it is a `no_std` core dependency, so it was checked rather
+  than assumed. hashbrown is used in exactly one place — `chunks: HashMap<
+  WebPRiffChunk, Range<u64>>` in `src/decoder/api.rs` — and only ever through
+  `entry().or_insert()`, `contains_key()` and `get()`. It is **never iterated**,
+  so hasher or iteration-order changes across the bump cannot reach any output
+  byte. 0.17.1 still offers the `default-hasher` feature this crate selects and
+  declares `rust-version = 1.85.0`, comfortably under the declared MSRV of 1.93.
+
+  Verified against the refreshed graph: the **libwebp byte-parity gate passes
+  8/8** (`cargo test --features __expert --test libwebp_byte_parity`), the
+  **SIMD tier parity suite passes 5/5**, and the test suite is green across the
+  feature matrix — 735 default, 602 `--no-default-features` (the no_std path
+  that actually exercises hashbrown), 737 with
+  `std,pixel-types,imgref,cms`, 0 failures anywhere. `cargo fmt --check` and
+  `cargo hack check --rust-version` (MSRV 1.93) are clean.
+
+  `cargo clippy --all-targets -- -D warnings` reports 16 errors on this
+  aarch64 host — the documented arch-dependent lint baseline described under
+  "CI: lint gates go in the `Clippy` job" in `CLAUDE.md` (x86-only SIMD macros
+  in `loop_filter.rs` / `yuv.rs`, the `u8x32` import in
+  `lossless_transform_simd.rs`, and friends; live on x86, cfg-shaped, not dead
+  code). It reproduces identically on the *pre-update* lockfile and manifest,
+  so it is not caused by this pass, and CI's `Clippy` job runs `ubuntu-latest`
+  only.
+
 - **`zencodec` / `zencodec-testkit` / `zenpixels` / `zenpixels-convert`
   requirements now span the published minor AND the next one**: `zencodec
   >=0.1.26, <0.3.0`, `zencodec-testkit >=0.1.0, <0.3.0`, `zenpixels >=0.2.11,
