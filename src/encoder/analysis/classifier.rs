@@ -795,3 +795,130 @@ pub fn content_type_to_tuning(content_type: ImageContentType) -> (u8, u8, u8, u8
         ImageContentType::Icon => (0, 0, 0, 4),   // Icon preset: no SNS, no filter
     }
 }
+
+/// Tests for the contract-only path — no `zenanalyze` in the build.
+///
+/// This is the regression gate for the failure that motivated the migration: the
+/// classifier used to name upstream enum variants directly, so a rename
+/// (`IndexedPaletteWidth` → `PaletteLog2Size`) stopped the crate compiling. The
+/// names now live in `CLASSIFIER_FEATURES` and are read out of an offer, and a
+/// hand-built offer is the only way to prove that every one of them still reaches
+/// the field it feeds. Building the offer by hand (rather than through a
+/// provider) is the point: it needs no analyzer at all, so this runs in exactly
+/// the configuration a consumer ships.
+#[cfg(all(test, feature = "analyzer"))]
+mod contract_tests {
+    use super::*;
+    use zenanalyze_api::{FeatureResult, NamedFeature, Offer, OwnedFeatureResult, Provenance};
+
+    /// Cells for `(name, value)` pairs, qualified with an arbitrary but valid
+    /// code version — the classifier matches by BARE name, so the hex is free.
+    fn cells(pairs: &[(&str, zenanalyze_api::Value)]) -> Vec<OwnedFeatureResult> {
+        pairs
+            .iter()
+            .map(|(name, value)| {
+                let qualified = NamedFeature::qualified_for(name, 0x1234_5678);
+                OwnedFeatureResult::new(&qualified, *value)
+            })
+            .collect()
+    }
+
+    fn offer_of<'a>(cells: &'a [OwnedFeatureResult]) -> Vec<FeatureResult<'a>> {
+        cells.iter().map(OwnedFeatureResult::as_ref).collect()
+    }
+
+    /// Every name in `CLASSIFIER_FEATURES` lands in the `ZenanalyzeDiag` field it
+    /// feeds, with its native type preserved. A typo or a stale name would leave
+    /// the corresponding field at its default and this catches it — the check the
+    /// pre-contract code got from the compiler, and which by-name lookup gives up.
+    #[test]
+    fn every_classifier_feature_reaches_its_diag_field() {
+        use zenanalyze_api::Value;
+        let owned = cells(&[
+            ("flat_color_block_ratio", Value::F32(0.11)),
+            ("distinct_color_bins", Value::U32(1234)),
+            ("variance", Value::F32(22.5)),
+            ("edge_density", Value::F32(0.33)),
+            ("uniformity", Value::F32(0.44)),
+            ("high_freq_energy_ratio", Value::F32(0.55)),
+            ("palette_fits_in_256", Value::Bool(true)),
+            ("palette_log2_size", Value::U32(7)),
+            ("skin_tone_fraction", Value::F32(0.66)),
+            ("edge_slope_stdev", Value::F32(77.0)),
+        ]);
+        let borrowed = offer_of(&owned);
+        let diag = diag_from_offer(&Offer::new(&borrowed, Provenance::new("test")));
+
+        assert_eq!(diag.flat_color_block_ratio, 0.11);
+        assert_eq!(diag.distinct_color_bins, 1234, "u32 must survive natively");
+        assert_eq!(diag.variance, 22.5);
+        assert_eq!(diag.edge_density, 0.33);
+        assert_eq!(diag.uniformity, 0.44);
+        assert_eq!(diag.high_freq_energy_ratio, 0.55);
+        assert!(diag.palette_fits_in_256, "bool must survive natively");
+        assert_eq!(
+            diag.indexed_palette_width, 7,
+            "the legacy field reads palette_log2_size, the name that replaced \
+             IndexedPaletteWidth upstream"
+        );
+        assert_eq!(diag.skin_tone_fraction, 0.66);
+        assert_eq!(diag.edge_slope_stdev, 77.0);
+
+        // The four likelihoods were culled upstream; they must read as 0.0, not
+        // as garbage, because `decide_bucket_from_diag` still tests them.
+        assert_eq!(diag.screen_content, 0.0);
+        assert_eq!(diag.text_likelihood, 0.0);
+        assert_eq!(diag.natural_likelihood, 0.0);
+        assert_eq!(diag.line_art_score, 0.0);
+
+        // And the ask names exactly these ten, so an orchestrator's shared pass
+        // covers the rule.
+        assert_eq!(CLASSIFIER_FEATURES.len(), 10);
+        for name in CLASSIFIER_FEATURES {
+            assert!(
+                owned.iter().any(|c| c.name() == name),
+                "{name} is requested but was not exercised above"
+            );
+        }
+    }
+
+    /// A feature the offer doesn't carry keeps its default rather than reading a
+    /// neighbour's value — the property that lets the rule survive an upstream
+    /// cull instead of failing to build.
+    #[test]
+    fn a_missing_feature_defaults_instead_of_shifting_the_others() {
+        use zenanalyze_api::Value;
+        let owned = cells(&[("variance", Value::F32(9.0))]);
+        let borrowed = offer_of(&owned);
+        let diag = diag_from_offer(&Offer::new(&borrowed, Provenance::new("test")));
+        assert_eq!(diag.variance, 9.0);
+        assert_eq!(diag.edge_density, 0.0);
+        assert_eq!(diag.distinct_color_bins, 0);
+        assert!(!diag.palette_fits_in_256);
+    }
+
+    /// The offer entry reproduces the documented decisions: the small-image
+    /// carve-out short-circuits to `Icon` without consulting the offer, and a
+    /// screen-content-shaped diag routes to `Drawing` through the flat-block rule.
+    #[test]
+    fn offer_entry_preserves_the_icon_carve_out_and_the_drawing_rule() {
+        use zenanalyze_api::Value;
+        let owned = cells(&[
+            ("flat_color_block_ratio", Value::F32(0.90)),
+            ("distinct_color_bins", Value::U32(64)),
+        ]);
+        let borrowed = offer_of(&owned);
+        let offer = Offer::new(&borrowed, Provenance::new("test"));
+
+        // <= 128 in BOTH dims: Icon, and the offer is not read.
+        assert_eq!(
+            classify_image_type_from_offer(&offer, 128, 128).0,
+            ImageContentType::Icon
+        );
+        // Above the carve-out: flat >= 0.50 and distinct < 4096 => Drawing.
+        assert_eq!(
+            classify_image_type_from_offer(&offer, 512, 512).0,
+            ImageContentType::Drawing
+        );
+    }
+}

@@ -53,6 +53,17 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
   **only** place this crate names `zenanalyze` (the "host picks the version"
   role), and the `dev/` feature extractors ride on it.
 
+  Tests for the contract path (`classifier::contract_tests`, gated on `analyzer`
+  alone, so they run in exactly the configuration a consumer ships): every name
+  in `CLASSIFIER_FEATURES` reaches the `ZenanalyzeDiag` field it feeds with its
+  native type intact, a missing feature defaults instead of shifting its
+  neighbours, and the offer entry preserves both the `Icon` carve-out and the
+  flat-block `Drawing` rule. **Negative control run:** reintroducing the exact
+  defect — reading `indexed_palette_width` instead of `palette_log2_size` —
+  fails `every_classifier_feature_reaches_its_diag_field` (`left: 0, right: 7`)
+  and passes once reverted. By-name lookup gives up the compiler's rename check;
+  this is what replaces it.
+
   Migration: callers of `classify_image_type_rgb8` either enable
   `analyzer-bundled` (unchanged behaviour) or, better, pass a provider /
   shared offer. Since the old feature could not be built, no working caller
