@@ -19,6 +19,44 @@ root cause) and multiple breaking changes. 0.5.0 covers all of it, matching
 the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 ("Tag as 0.5.0 (minor bump for API; 0.4.5 yanked)").
 
+### Fixed (2026-08-29, `zenwebp-recompress` — 2.5 months of unseen drift)
+
+- **`zenwebp-recompress` builds again: `ZensimProfile::A` was gated out from
+  under it by a sibling.** zensim 0.3.0 deprecated generation-A and put it
+  behind a new `deprecated-profiles` Cargo feature. That feature is ON in
+  zensim's *own* default set, but this workspace takes
+  `zensim = { default-features = false }`, so the variant simply vanished and
+  `src/measure.rs:60` stopped compiling. The dep now names
+  `deprecated-profiles` explicitly.
+  **Scores are unchanged — this is deliberately NOT a migration to `B`.** The
+  obvious-looking fix (follow the deprecation note to
+  `ZensimProfile::B` / `codec_target()`) would have been a **score change
+  wearing a rename's clothes**: zensim documents `B` vs `A` as a trade, not
+  strict dominance, and every constant in
+  `zenwebp-recompress/src/calibration/calib_tables.rs` is an absolute
+  zensim-**A** score from a 248,501-cell A-scored sweep, as is the public
+  `target_zensim_a` knob. Re-pointing the profile without re-fitting that
+  table would have left every projection silently miscalibrated and made all
+  previously recorded numbers incomparable. `A` stays pinned until a B-scored
+  recalibration sweep lands. The profile is now a single `measure::PROFILE`
+  constant guarded by `profile_is_pinned_to_zensim_a`, which was watched to
+  fail (`left: "zensim-b"`) before landing.
+- **Clippy's `chunks_exact_to_as_chunks` (new in the 1.98 toolchain) broke the
+  lint gate.** A second, independent rot in the same dormant window, hidden
+  behind the compile error above — CI never reached the clippy step to report
+  it. Six sites in `src/vp8x/{edit,emit}.rs` test code converted to
+  `as_chunks::<4>()`; semantics identical, transcoder unchanged.
+- **`recompress.yml` now also runs on a weekly schedule + `workflow_dispatch`.**
+  Root cause of both breaks above: the workflow fires only on a `paths:` filter
+  over this repo, but what actually breaks it — the sibling `main`s it
+  path-depends on (zensim / zenpixels / zenanalyze) and the `stable` toolchain
+  — moves entirely outside those paths. Nothing matched the filter between
+  2026-06-12 and 2026-08-29, so the workflow did not run for 2.5 months and
+  two breaks accumulated unseen. A time trigger is the only one that can catch
+  external drift; it bounds the blind window to a week. The push filter is kept
+  (a 3-OS matrix on every unrelated commit is not worth it) and isolation is
+  preserved — a red scheduled run still cannot block zenwebp's core CI.
+
 ### Fixed (2026-08-29, CI)
 
 - **Pushes to `main` now cancel their superseded CI runs.** Both `ci.yml` and

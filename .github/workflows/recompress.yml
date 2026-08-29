@@ -3,7 +3,9 @@ name: recompress
 # Isolated CI for the nested `zenwebp-recompress/` workspace. Kept separate
 # from the core `ci.yml` so that drift in the sibling path deps
 # (zensim / zenpixels / zenanalyze main) can only redden THIS workflow, never
-# zenwebp's core build. Triggers only on changes under zenwebp-recompress/.
+# zenwebp's core build. Triggers on changes under zenwebp-recompress/, plus a
+# weekly schedule that catches sibling/toolchain drift (see the `schedule:`
+# note below) and `workflow_dispatch` for on-demand runs.
 on:
   push:
     branches: [main]
@@ -15,6 +17,20 @@ on:
     paths:
       - "zenwebp-recompress/**"
       - ".github/workflows/recompress.yml"
+  # The `paths:` filters above only see edits to THIS repo. The two things
+  # that actually break this workspace — the sibling `main`s it path-depends
+  # on (zensim / zenpixels / zenanalyze) and the `stable` toolchain — move
+  # entirely outside those paths, so drift is invisible to a push trigger.
+  # Measured: nothing matched the filter between 2026-06-12 and 2026-08-29,
+  # and TWO independent breaks accumulated unseen in that window (zensim
+  # gating `ZensimProfile::A` behind `deprecated-profiles`, and clippy's new
+  # `chunks_exact_to_as_chunks`). A time trigger is the only one that can
+  # catch external drift; it bounds the blind window to a week instead of a
+  # quarter. Isolation is preserved — a red scheduled run still cannot block
+  # zenwebp's core CI.
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
 
 concurrency:
   # `github.head_ref` is empty on push events (it is set only for
