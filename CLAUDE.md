@@ -142,6 +142,27 @@ section there is binding; the short form:
     one config struct into another, never `..Default::default()` past a
     field the caller set — list every field or lower explicitly.
 
+## CI: lint gates go in the `Clippy` job, never the cross-OS `Test` job
+
+**The lint baseline is arch-dependent.** On x86 `cargo clippy --all-targets --
+-D warnings` is clean; on aarch64 eight items are dead and fire as errors — the
+x86 SIMD macros in `loop_filter.rs` / `yuv.rs`, the `u8x32` import in
+`lossless_transform_simd.rs`, `idct_add_residue_and_clear_with_token`,
+`yuv_to_rgb_scalar`, and two in `mode_selection.rs`. They are *live* on x86, so
+they are not dead code to delete; they are cfg-shaped.
+
+The `Test` job runs six platforms including `macos-latest` and
+`ubuntu-24.04-arm`. The `Clippy` job runs ubuntu-latest only. So a `-D warnings`
+step added to `Test` fails on both ARM legs while passing everywhere else.
+
+This cost a red CI run on 2026-08-28 (run 33221654303): a
+`cargo clippy --features analyzer` line was added to the `Test` job, its tests
+half passed on all six platforms, and the clippy half failed on macOS arm64 with
+exactly those eight. Fixed by moving the lint to the `Clippy` job.
+
+If you want aarch64 lint coverage, that is a real (open) gap — but closing it
+means cfg-gating the arch-specific internals, not adding a gate to `Test`.
+
 ## Performance & Testing
 
 See `docs/PERFORMANCE.md` for benchmarks, `docs/CALL-TREE.md` for SIMD tiers, `docs/ARCHITECTURE-CLEANUP.md` for code organization.
