@@ -19,6 +19,25 @@ root cause) and multiple breaking changes. 0.5.0 covers all of it, matching
 the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 ("Tag as 0.5.0 (minor bump for API; 0.4.5 yanked)").
 
+### Changed (2026-08-29, dependency version ranges)
+
+- **`zencodec` / `zencodec-testkit` / `zenpixels` / `zenpixels-convert`
+  requirements now span the published minor AND the next one**: `zencodec
+  >=0.1.26, <0.3.0`, `zencodec-testkit >=0.1.0, <0.3.0`, `zenpixels >=0.2.11,
+  <0.4.0`, `zenpixels-convert >=0.2.13, <0.4.0` (both the normal and dev-dep
+  entries). For a `0.x` crate Cargo treats the minor as the major, so a plain
+  `"0.1.26"` meant `^0.1.26` = `>=0.1.26, <0.2.0` and a `zencodec 0.2.0` release
+  would have been invisible until this manifest was hand-edited — the
+  coordinated wave the `zencodec 0.1.26` rollout cost every consumer repo. Floors
+  are unchanged and nothing newer is published, so resolution is identical
+  (`cargo metadata --all-features`: one copy of each). Caveat: the *published*
+  `zencodec-testkit 0.1.0` still declares `zencodec ^0.1.26`, so it must
+  republish with its own widened range before `zencodec 0.2.0` ships, or this
+  dev-dep graph would carry two `zencodec` copies whose types do not unify.
+  `zenwebp-recompress`'s `path =` / `workspace = true` bindings are untouched.
+  The standing current-plus-next rule is documented in the zencodec repo's
+  `CLAUDE.md`.
+
 ### Fixed (2026-08-29, `zenwebp-recompress` — 2.5 months of unseen drift)
 
 - **`zenwebp-recompress` builds again: `ZensimProfile::A` was gated out from

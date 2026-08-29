@@ -33,16 +33,16 @@ hashbrown = { version = "0.16", default-features = false, features = ["default-h
 thiserror = { version = "2.0.18", default-features = false }
 whereat = { version = "0.1.5", default-features = false }
 libm = "0.2.16"
-zencodec = "0.1.26"
+zencodec = ">=0.1.26, <0.3.0"
 # zennode = { path = "../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
-zenpixels = { version = "0.2.11", default-features = false }
+zenpixels = { version = ">=0.2.11, <0.4.0", default-features = false }
 # Used by the zencodec encode path to synthesize an ICC profile from a
 # CICP-only source (WebP has no CICP carrier, so an embedded ICC is the only
 # way to retain non-sRGB primaries). `synthesize_icc_for_cicp` is a transfer-
 # aware lookup — no CMS, no_std-safe. Unconditional (the zencodec integration
 # is always-on); `default-features = false` keeps the wasm32 (no_std) build
 # clean.
-zenpixels-convert = { version = "0.2.13", default-features = false }
+zenpixels-convert = { version = ">=0.2.13, <0.4.0", default-features = false }
 # self_cell backs the owned-data animation decoder in the zencodec adapter
 # (codec.rs). no_std-clean, so it rides the always-on integration.
 self_cell = { version = "1.2" }
@@ -85,7 +85,7 @@ zenanalyze = { version = "0.2.0", optional = true, features = ["api", "experimen
 [dev-dependencies]
 # Companion crate shipping the conformance checks (incl.
 # `check_decode_truncation_series`); rides the same registry zencodec 0.1.26.
-zencodec-testkit = "0.1.0"
+zencodec-testkit = ">=0.1.0, <0.3.0"
 # `testable_dispatch` lets benches/tier_isolation.rs disable the baseline
 # SIMD token (NEON on aarch64) so the scalar arm is real rather than a
 # second measurement of the SIMD path.
@@ -96,7 +96,7 @@ rand = "0.10.1"
 rayon = "1.10"
 rgb = "0.8"
 zenpng = "0.1.4"
-zenpixels-convert = { version = "0.2.13", features = ["rgb"] }
+zenpixels-convert = { version = ">=0.2.13, <0.4.0", features = ["rgb"] }
 jpeg-decoder = "0.3"
 # zenanalyze as a path-pinned dev-dep was removed: CI regression-test
 # runs (`cargo build` then `cargo test --test fuzz_regression`) don't
