@@ -19,6 +19,19 @@ root cause) and multiple breaking changes. 0.5.0 covers all of it, matching
 the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 ("Tag as 0.5.0 (minor bump for API; 0.4.5 yanked)").
 
+### Fixed (2026-08-29, CI)
+
+- **Pushes to `main` now cancel their superseded CI runs.** Both `ci.yml` and
+  `recompress.yml` keyed their concurrency group on
+  `${{ github.head_ref || github.run_id }}`. `github.head_ref` is populated
+  only for `pull_request` events, so on a push it was empty and the group fell
+  through to `github.run_id` — unique per run, so no two pushes ever shared a
+  group and `cancel-in-progress` could never fire. Every push started a full
+  six-platform matrix that ran to completion even when three commits landed
+  seconds apart. Now keyed on `${{ github.ref }}`, which is set for both event
+  types (`refs/heads/main` on push, `refs/pull/N/merge` on a PR), so PR
+  cancellation is unchanged and consecutive pushes supersede each other.
+
 ### Changed
 
 - **The `analyzer` feature now speaks the `zenanalyze-api` contract** — it takes

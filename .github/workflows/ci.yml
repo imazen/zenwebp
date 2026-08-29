@@ -11,7 +11,13 @@ on:
     branches: [main, "fixall/**", "stack/**"]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  # `github.head_ref` is set ONLY on pull_request events. On a push it is
+  # empty, so the group fell through to `github.run_id` — unique per run,
+  # so pushes never collided and nothing was ever cancelled. `github.ref`
+  # is set on both event types (`refs/heads/main` on push,
+  # `refs/pull/N/merge` on a PR), so PR behaviour is unchanged while
+  # consecutive pushes to a branch now supersede each other.
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:

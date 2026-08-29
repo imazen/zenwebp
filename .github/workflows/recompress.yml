@@ -17,7 +17,11 @@ on:
       - ".github/workflows/recompress.yml"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  # `github.head_ref` is empty on push events (it is set only for
+  # pull_request), so this group fell through to the always-unique
+  # `github.run_id` and pushes were never cancelled. `github.ref` is
+  # populated for both event types.
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
