@@ -18,7 +18,17 @@ authors = ["Lilith River <lilith@imazen.io>"]
 [workspace.dependencies]
 # Sibling path deps — relative to THIS manifest (zen/zenwebp/zenwebp-recompress/).
 zenwebp = { path = "..", default-features = false, features = ["std"] }
-zensim = { path = "../../zensim/zensim", default-features = false }
+# `deprecated-profiles` is what keeps `ZensimProfile::A` reachable. zensim
+# 0.3.0 deprecated generation-A and gated it behind that feature — ON in
+# zensim's OWN default set, but we build with `default-features = false`, so
+# the variant compiled out from under us and `measure.rs` stopped building.
+# Do NOT drop this back to plain `default-features = false` and "fix" the
+# call site by switching to `B`/`codec_target()`: every constant in
+# `src/calibration/calib_tables.rs` is in absolute zensim-A score units.
+# See CHANGELOG 2026-08-29 and `src/measure.rs`.
+zensim = { path = "../../zensim/zensim", default-features = false, features = [
+    "deprecated-profiles",
+] }
 zenanalyze = { path = "../../zenanalyze", default-features = false }
 zenpixels = { path = "../../zenpixels/zenpixels", default-features = false }
 
