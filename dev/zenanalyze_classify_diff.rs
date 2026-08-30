@@ -7,7 +7,7 @@
 //!
 //! Requires `--features analyzer`.
 
-#![cfg(feature = "analyzer-bundled")]
+#![cfg(feature = "analyzer")]
 #![forbid(unsafe_code)]
 
 use std::env;

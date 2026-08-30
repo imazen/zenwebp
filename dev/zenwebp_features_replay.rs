@@ -42,7 +42,7 @@
 
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::time::Instant;
@@ -126,9 +126,9 @@ fn load_jpeg_rgb8(path: &PathBuf) -> Option<(Vec<u8>, u32, u32)> {
             let mut out = Vec::with_capacity((w as usize) * (h as usize) * 3);
             for px in pixels.as_chunks::<4>().0.iter() {
                 let (c, m, y, k) = (px[0], px[1], px[2], px[3]);
-                let r = ((255 - c as i32) * (255 - k as i32) / 255).max(0).min(255) as u8;
-                let g = ((255 - m as i32) * (255 - k as i32) / 255).max(0).min(255) as u8;
-                let b = ((255 - y as i32) * (255 - k as i32) / 255).max(0).min(255) as u8;
+                let r = ((255 - c as i32) * (255 - k as i32) / 255).clamp(0, 255) as u8;
+                let g = ((255 - m as i32) * (255 - k as i32) / 255).clamp(0, 255) as u8;
+                let b = ((255 - y as i32) * (255 - k as i32) / 255).clamp(0, 255) as u8;
                 out.push(r);
                 out.push(g);
                 out.push(b);
@@ -253,7 +253,7 @@ fn read_cells_from_features_tsv(input: &PathBuf) -> Vec<Cell> {
     cells
 }
 
-fn read_cells_from_manifest(manifest: &PathBuf, root: &PathBuf) -> Vec<Cell> {
+fn read_cells_from_manifest(manifest: &Path, root: &Path) -> Vec<Cell> {
     let f = std::fs::File::open(manifest).expect("open manifest TSV");
     let reader = BufReader::new(f);
     let mut cells = Vec::new();
@@ -407,7 +407,7 @@ fn main() {
                 f.flush().ok();
             }
             let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            if n % 32 == 0 || n == total {
+            if n.is_multiple_of(32) || n == total {
                 let dt = started.elapsed().as_secs_f64();
                 let rate = n as f64 / dt;
                 let eta = (total - n) as f64 / rate.max(1e-6);

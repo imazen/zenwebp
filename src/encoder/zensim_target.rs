@@ -323,7 +323,7 @@ pub(crate) fn zensim_to_starting_q_for_bucket(target: f32, bucket: ImageContentT
 /// the three soft scores so they don't all collapse to zero on real
 /// content. If `total == 0` (degenerate / 1×1 input), we fall back to
 /// the Photo anchor — same default as the discrete-bucket path.
-#[cfg(feature = "analyzer-bundled")]
+#[cfg(feature = "analyzer")]
 #[allow(clippy::needless_pass_by_value, dead_code)]
 fn starting_q_via_likelihoods(
     target: f32,
@@ -740,11 +740,11 @@ pub(crate) mod iteration {
                 None => pre_phase2_starting_q(target.target, ImageContentType::Photo),
             }
         } else {
-            // With the `analyzer-bundled` feature on: try the continuous blend
+            // With the `analyzer` feature on: try the continuous blend
             // first, falling back to the discrete bucket-anchor table
             // when the analyzer signals are unavailable. With the
             // feature off, this reduces to the original lookup.
-            #[cfg(feature = "analyzer-bundled")]
+            #[cfg(feature = "analyzer")]
             {
                 match starting_q_via_likelihoods(target.target, pixels, layout, width, height) {
                     Some(q) => q,
@@ -756,7 +756,7 @@ pub(crate) mod iteration {
                     },
                 }
             }
-            #[cfg(not(feature = "analyzer-bundled"))]
+            #[cfg(not(feature = "analyzer"))]
             {
                 match bucket {
                     Some(b) => zensim_to_starting_q_for_bucket(target.target, b),
@@ -1689,7 +1689,7 @@ pub(crate) mod iteration {
         // When the `analyzer` feature is on, route through zenanalyze
         // so the bucket decision uses the same shared signal source as
         // the encoder's Auto-preset path. See `classify_image_type_rgb8`.
-        #[cfg(feature = "analyzer-bundled")]
+        #[cfg(feature = "analyzer")]
         {
             let bucket = match layout {
                 PixelLayout::Rgb8 => crate::encoder::analysis::classify_image_type_rgb8(
@@ -1708,7 +1708,7 @@ pub(crate) mod iteration {
 
         // Fallback (no `analyzer` feature): the original Y-plane +
         // alpha-histogram heuristic. BT.601 Y = 0.299R + 0.587G + 0.114B.
-        #[cfg(not(feature = "analyzer-bundled"))]
+        #[cfg(not(feature = "analyzer"))]
         {
             let mut y_plane: Vec<u8> = Vec::with_capacity(w * h);
             let mut alpha_hist = [0u32; 256];

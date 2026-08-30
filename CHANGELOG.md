@@ -5,6 +5,36 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+### Changed
+
+- **The classifier takes an `Offer`; the `&dyn FeatureProvider` path is gone.**
+  `zenanalyze-api` cut `FeatureProvider` / `ProviderError` / `OwnedCatalog` before
+  its 0.1.1 shipped — the contract is data, not behaviour, and the model is push
+  (the host hands over an offer, the codec answers yes/no, and scans itself on
+  "no"). Accordingly:
+  - `classify_image_type_with_provider(&dyn FeatureProvider, …)` → removed. Use
+    `classify_image_type_from_offer` / the new
+    `classify_image_type_from_owned_offer` when a host already ran a pass.
+  - `bundled_provider()` → removed.
+  - `classify_image_type_rgb8` / `_diag` keep their signatures and now run their
+    own pass via `zenanalyze::offer_for_request`.
+
+  **Nothing published is affected.** crates.io serves zenwebp 0.4.4, which has no
+  `analyzer` feature at all — this entire surface is unreleased, so no version
+  bump is owed for the removal.
+
+- **`analyzer-bundled` removed; `analyzer` now pulls `zenanalyze` too.** The
+  second flag bought "analyzer without zenanalyze", a configuration nobody
+  shipped. Its real cost was a split gate: the ubuntu `Clippy` job only ever ran
+  `--features analyzer`, so the five `dev/` targets gated behind
+  `analyzer-bundled` were **never linted** and had accumulated six clippy
+  findings (`manual_clamp` ×3, `manual_is_multiple_of` ×2, `&PathBuf`→`&Path`),
+  all fixed here. One flag, one configuration, one gate.
+
+  The rule that actually matters is unchanged and independently checkable: no
+  `zenanalyze` type appears in any public signature, so a host on a different
+  `zenanalyze` version can still drive `classify_image_type_from_offer`.
+
 **Next release from main is 0.5.0** — the picker removal (5d6df59) and the
 `At<zencodec::CodecError>` Pattern-B migration (#69) below are already on
 main; the manifest is pre-bumped so a publish from head cannot ship them

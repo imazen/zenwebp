@@ -37,18 +37,20 @@ pub use classifier::{
     ClassifierDiag, ImageContentType, classify_image_type, classify_image_type_diag,
     content_type_to_tuning,
 };
-// Contract-only surface: works against `zenanalyze-api` alone, no `zenanalyze`
-// dependency. See `docs/sole-contract.md` in imazen/zenanalyze.
+// Offer-taking surface: every signature here names `zenanalyze-api` types only, so
+// a host on ANY `zenanalyze` version can drive these by handing in its own `Offer`.
+// See `docs/sole-contract.md` in imazen/zenanalyze.
 #[cfg(feature = "analyzer")]
 pub use classifier::{
     CLASSIFIER_FEATURES, ZenanalyzeDiag, classifier_request, classify_image_type_from_offer,
-    classify_image_type_with_provider, decide_bucket_from_diag, decide_bucket_stable,
+    classify_image_type_from_owned_offer, decide_bucket_from_diag, decide_bucket_stable,
     diag_from_offer, diag_from_owned_offer, rgba8_to_rgb8,
 };
-// The bundled-provider convenience entries — these construct a
-// `zenanalyze::Analyzer`, so they need the analyzer version to be pinned here.
-#[cfg(feature = "analyzer-bundled")]
-pub use classifier::{bundled_provider, classify_image_type_rgb8, classify_image_type_rgb8_diag};
+// The self-scanning convenience entries — these run a pass with the `zenanalyze`
+// this crate pinned, so the analyzer version is ours rather than the caller's.
+// Prefer the offer-taking entries above when a host already ran a pass.
+#[cfg(feature = "analyzer")]
+pub use classifier::{classify_image_type_rgb8, classify_image_type_rgb8_diag};
 pub use histogram::{collect_histogram_bps, forward_dct_4x4};
 pub use iterator::AnalysisIterator;
 pub use segment::{

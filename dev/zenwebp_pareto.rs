@@ -538,7 +538,7 @@ fn main() {
         }
 
         let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if n % 4 == 0 || n == unit_count {
+        if n.is_multiple_of(4) || n == unit_count {
             let dt = started.elapsed().as_secs_f64();
             let rate = n as f64 / dt;
             let eta = (unit_count - n) as f64 / rate;

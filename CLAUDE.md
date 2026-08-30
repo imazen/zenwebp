@@ -93,20 +93,24 @@ thin (~10 source refs) — weakest table; the size guard keeps it correct.
 > might be needed anyway if the upstream provided features are insufficient."*
 
 `zenanalyze-api` is **preferred** as the interchange boundary — the classifier
-(`src/encoder/analysis/classifier.rs`) takes a `zenanalyze_api::Offer` or a
-`&dyn FeatureProvider`, so a host on any `zenanalyze` version can drive it. A
-**direct `zenanalyze` dep is permitted**, and re-analysing when the host's
-features are insufficient is a normal thing for a codec to do. Feature layout:
+(`src/encoder/analysis/classifier.rs`) takes a `zenanalyze_api::Offer` (or its
+owned twin), so a host on any `zenanalyze` version can drive it. A **direct
+`zenanalyze` dep is permitted**, and re-analysing when the host's features are
+insufficient is a normal thing for a codec to do. Feature layout:
 
-- `analyzer = ["dep:zenanalyze-api"]` — the boundary alone. Builds anywhere,
-  CI covers it.
-- `analyzer-bundled = ["analyzer", "dep:zenanalyze"]` — adds
-  `zenanalyze::Analyzer` as a default provider so the zero-argument entries and
-  the encoder's internal Auto-preset / target-zensim paths keep working;
-  `classifier::bundled_provider()` is where that happens. The `dev/` extractors
-  ride here too. Kept optional only because the classifier genuinely doesn't
-  need it when an offer or provider is supplied — not because the dep is
-  discouraged.
+- `analyzer = ["dep:zenanalyze-api", "dep:zenanalyze"]` — the whole classifier.
+  The offer-taking entries (`classify_image_type_from_offer` / `_from_owned_offer`)
+  name contract types only; the zero-argument entries (`classify_image_type_rgb8`)
+  scan for themselves with the bundled `zenanalyze`, as do the encoder's internal
+  Auto-preset / target-zensim paths and the `dev/` extractors.
+
+**There is no `analyzer-bundled`** (removed 2026-08-30) and no
+`&dyn FeatureProvider` path. The contract carries no extraction trait — it is
+data, not behaviour; the model is push (take the offer, answer yes/no, scan
+yourself on "no"). The second flag bought "analyzer without zenanalyze", a
+configuration nobody shipped, and it split the CI gate: the `Clippy` job only
+ever passed `--features analyzer`, so the five `dev/` targets behind the other
+flag went unlinted and accumulated six findings. Don't reintroduce either.
 
 Three rules are hard here:
 

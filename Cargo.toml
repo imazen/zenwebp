@@ -58,9 +58,9 @@ rgb = { version = "0.8", optional = true, default-features = false, features = [
 imgref = { version = "1.12", optional = true, default-features = false }
 zensim = { version = "0.2", optional = true }
 # `zenanalyze-api` — the version-unifying feature contract (`Offer`, `Request`,
-# `FeatureProvider`) and this crate's INTERCHANGE BOUNDARY, so a host on any
-# `zenanalyze` version can drive the classifier. See `docs/sole-contract.md` in
-# imazen/zenanalyze.
+# `Select`) and this crate's INTERCHANGE BOUNDARY, so a host on any `zenanalyze`
+# version can drive the classifier by handing it an `Offer`. See
+# `docs/sole-contract.md` in imazen/zenanalyze.
 #
 # Declared as a crates.io VERSION, never a git rev: a registry dep and a git dep
 # are different Cargo sources, and two git deps at different revs are too —
@@ -68,12 +68,17 @@ zensim = { version = "0.2", optional = true }
 # Unreleased contract changes come in through the single `[patch.crates-io]`
 # below, which rewrites this entry and KEEPS unification.
 zenanalyze-api = { version = "0.1.0", optional = true, default-features = false }
-# zenanalyze itself is optional, behind `analyzer-bundled`, where it supplies a
-# default `zenanalyze::Analyzer` provider (and powers the dev/ extractors) so
-# callers don't have to plumb one. A direct dep like this is explicitly PERMITTED
-# — a codec that needs features the host didn't provide should re-analyse. It is
-# kept optional here only because the classifier genuinely doesn't need it when
-# an offer or a provider is supplied.
+# zenanalyze rides `analyzer` unconditionally: it is what `classify_image_type_rgb8`
+# scans with when no offer was handed in, and what powers the dev/ extractors. A
+# direct dep like this is explicitly PERMITTED — a codec that needs features the
+# host didn't provide should re-analyse. The public boundary is still
+# zenanalyze-api-only, which is the rule that actually matters and is checkable by
+# reading the signatures.
+#
+# It used to be optional behind a second `analyzer-bundled` feature. That flag was
+# removed 2026-08-30: it bought "analyzer without zenanalyze", a configuration
+# nobody built, and its `#[cfg(not(analyzer-bundled))]` arms were dead code that CI
+# only compiled by accident. Feature permutations are where bugs hide.
 #
 # Historical note: this used to be a plain registry `0.1.0` pin that the library
 # named types from directly, and `--features analyzer` HAD NOT COMPILED since
@@ -102,7 +107,7 @@ jpeg-decoder = "0.3"
 # runs (`cargo build` then `cargo test --test fuzz_regression`) don't
 # have the sibling repo checked out, and unconditional path-only
 # dev-deps break cargo's dependency resolution. The dev/ binaries that
-# consume zenanalyze have `required-features = ["analyzer-bundled"]`, which
+# consume zenanalyze have `required-features = ["analyzer"]`, which
 # pulls it in via the optional regular dep above when the feature is
 # enabled.
 
@@ -180,17 +185,16 @@ cms = ["zenpixels-convert/icc-db"]
 # decodes → measures → adjusts global VP8 quality until it lands in
 # the target band. See `LossyConfig::with_target_zensim`.
 target-zensim = ["dep:zensim", "std"]
-# Content classification through the `zenanalyze-api` contract: the classifier
-# reads feature values out of a `zenanalyze_api::Offer`, or extracts them via a
-# `&dyn FeatureProvider` the caller supplies. NO zenanalyze dependency — this
-# feature builds anywhere, which is the point of the contract.
-analyzer = ["dep:zenanalyze-api"]
-# `analyzer` plus a bundled default provider (`zenanalyze::Analyzer`), so the
-# zero-argument entry points (`classify_image_type_rgb8`) and the encoder's
-# internal Auto-preset / target-zensim paths can classify with no caller
-# plumbing — this crate picking an analyzer version on the caller's behalf. The
-# dev/ feature extractors also ride here.
-analyzer-bundled = ["analyzer", "dep:zenanalyze"]
+# Content classification. The classifier reads feature values out of a
+# `zenanalyze_api::Offer` the caller hands in; when there is no offer, the
+# zero-argument entry points (`classify_image_type_rgb8`) run their own scan with
+# the bundled `zenanalyze`. Both deps ride this one flag — see the note on the
+# `zenanalyze` dependency above for why there is no second, provider-less variant.
+#
+# The contract still governs the BOUNDARY: no `zenanalyze` type appears in any
+# public signature here, so a host on a different `zenanalyze` version can drive
+# `classify_image_type_from_offer` with its own pass.
+analyzer = ["dep:zenanalyze-api", "dep:zenanalyze"]
 # dev-only — enables runtime ablation toggles read from environment
 # variables for `dev/zensim_*.rs` measurement binaries. Production
 # builds should leave this off so the iteration hot path makes no
@@ -330,7 +334,7 @@ path = "dev/issue44_dump_scores.rs"
 [[example]]
 name = "zenanalyze_classify_diff"
 path = "dev/zenanalyze_classify_diff.rs"
-required-features = ["analyzer-bundled"]
+required-features = ["analyzer"]
 
 # Proper Pareto sweep harness following zenpicker/FOR_NEW_CODECS.md
 # Step 1+2. Per (image, config, q) → (bytes, zensim, encode_ms).
@@ -339,7 +343,7 @@ required-features = ["analyzer-bundled"]
 [[example]]
 name = "zenwebp_pareto"
 path = "dev/zenwebp_pareto.rs"
-required-features = ["analyzer-bundled"]
+required-features = ["analyzer"]
 
 # Replays features against an existing pareto features TSV — used to
 # regenerate the feature columns when the analyzer schema has moved
@@ -347,7 +351,7 @@ required-features = ["analyzer-bundled"]
 [[example]]
 name = "zenwebp_features_replay"
 path = "dev/zenwebp_features_replay.rs"
-required-features = ["analyzer-bundled"]
+required-features = ["analyzer"]
 
 # Tuned-default A/B harness: (image, method, q) -> (size, zsim, min-of-3 ms)
 # TSV for measured adoption of parity-derived candidates. Run once per build
@@ -369,7 +373,7 @@ required-features = ["__expert"]
 [[example]]
 name = "zensim_ceiling_probe"
 path = "dev/zensim_ceiling_probe.rs"
-required-features = ["analyzer-bundled"]
+required-features = ["analyzer"]
 
 # Build size-dense corpus: 20 representative source images resampled
 # (Mitchell-Netravali) to log-spaced sizes 32..4096 for picker
@@ -382,7 +386,7 @@ path = "dev/build_size_dense_corpus.rs"
 [[example]]
 name = "zenanalyze_validate_vs_gpt"
 path = "dev/zenanalyze_validate_vs_gpt.rs"
-required-features = ["analyzer-bundled"]
+required-features = ["analyzer"]
 
 [[example]]
 name = "hrtb_test"

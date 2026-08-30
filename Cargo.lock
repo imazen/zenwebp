@@ -1960,7 +1960,7 @@ checksum = "00f1f60154ad4ef9871d606765c3ea037cde93bbd77536327b594de8f82df1cb"
 [[package]]
 name = "zenanalyze"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zenanalyze#47c3c69e383220618166d5bc1e34b25fa6fb8559"
+source = "git+https://github.com/imazen/zenanalyze#e676651eb1f3628a7f2854ce812d2cd10ed0d8fd"
 dependencies = [
  "archmage",
  "garb",
@@ -1974,7 +1974,7 @@ dependencies = [
 [[package]]
 name = "zenanalyze-api"
 version = "0.1.1"
-source = "git+https://github.com/imazen/zenanalyze#47c3c69e383220618166d5bc1e34b25fa6fb8559"
+source = "git+https://github.com/imazen/zenanalyze#e676651eb1f3628a7f2854ce812d2cd10ed0d8fd"
 
 [[package]]
 name = "zenbench"

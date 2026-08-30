@@ -542,21 +542,52 @@ pub fn classify_image_type_from_offer(
     (decide_bucket_from_diag(&diag), diag)
 }
 
-/// Classify content type by extracting through a
-/// [`FeatureProvider`](zenanalyze_api::FeatureProvider) the caller supplies — the
-/// no-shared-offer path, still without naming a `zenanalyze` type.
-///
-/// The host chooses the analyzer version by choosing which provider it passes;
-/// `zenanalyze::Analyzer` (behind zenanalyze's `api` feature) is the usual one,
-/// and the `analyzer-bundled` feature wires it up for you via
-/// [`classify_image_type_rgb8`].
-///
-/// Falls back to `(Photo, default)` — never a panic — if the buffer is malformed
-/// or the provider cannot produce the signals.
+/// [`classify_image_type_from_offer`] for the owned twin — a deserialized offer,
+/// or one this crate just produced for itself.
 #[cfg(feature = "analyzer")]
 #[must_use]
-pub fn classify_image_type_with_provider(
-    provider: &dyn zenanalyze_api::FeatureProvider,
+pub fn classify_image_type_from_owned_offer(
+    offer: &zenanalyze_api::OwnedOffer,
+    width: u32,
+    height: u32,
+) -> (ImageContentType, ZenanalyzeDiag) {
+    if width <= 128 && height <= 128 {
+        return (ImageContentType::Icon, ZenanalyzeDiag::default());
+    }
+    let diag = diag_from_owned_offer(offer);
+    (decide_bucket_from_diag(&diag), diag)
+}
+
+/// Classify image content type, running one analysis pass over the RGB8 source.
+///
+/// One pass extracts the palette / flat-colour / edge signals that distinguish
+/// "screenshot or UI graphic" from "natural photograph", so the same thresholds
+/// drive zenwebp / zenjpeg / zenavif preset selection from a single shared signal
+/// source.
+///
+/// **Prefer [`classify_image_type_from_offer`] when an orchestrator already ran a
+/// pass** — this entry point runs its own, and the host already paid for that one.
+/// The contract's flow is push: take the offer you were handed, ask whether it is
+/// enough, and only scan yourself when it is not.
+///
+/// The `zenanalyze` version is this crate's own — a caller that needs a *different*
+/// analyzer version runs its own pass and hands the result to
+/// [`classify_image_type_from_offer`], which names no `zenanalyze` type.
+#[cfg(feature = "analyzer")]
+#[must_use]
+pub fn classify_image_type_rgb8(rgb: &[u8], width: u32, height: u32) -> ImageContentType {
+    classify_image_type_rgb8_diag(rgb, width, height).0
+}
+
+/// Diagnostic variant of [`classify_image_type_rgb8`] returning the raw signals
+/// alongside the bucket decision. Used by the classifier-comparison harness in
+/// `dev/`.
+///
+/// Falls back to `(Photo, default)` — never a panic — if the buffer is malformed
+/// or this build cannot produce the signals.
+#[cfg(feature = "analyzer")]
+#[must_use]
+pub fn classify_image_type_rgb8_diag(
     rgb: &[u8],
     width: u32,
     height: u32,
@@ -567,57 +598,11 @@ pub fn classify_image_type_with_provider(
     if rgb.len() != (width as usize) * (height as usize) * 3 {
         return (ImageContentType::Photo, ZenanalyzeDiag::default());
     }
-    let Ok(offer) = provider.extract_rgb8(rgb, width, height, &classifier_request()) else {
+    let Ok(offer) = zenanalyze::offer_for_request(rgb, width, height, &classifier_request()) else {
         return (ImageContentType::Photo, ZenanalyzeDiag::default());
     };
     let diag = diag_from_owned_offer(&offer);
     (decide_bucket_from_diag(&diag), diag)
-}
-
-/// The bundled default provider: `zenanalyze::Analyzer` for the `zenanalyze`
-/// version this build pinned.
-///
-/// It exists so callers that don't want to supply a provider still get one —
-/// this crate picking an analyzer version on their behalf. Everything above it
-/// works against `zenanalyze-api` alone, which is what lets a host on a
-/// *different* `zenanalyze` version drive the same classifier.
-///
-/// Depending on `zenanalyze` directly is explicitly permitted (see
-/// `docs/sole-contract.md` in imazen/zenanalyze); the rule that matters is that
-/// no `zenanalyze` type appears in a public signature, so callers aren't pinned
-/// to this crate's analyzer version.
-#[cfg(feature = "analyzer-bundled")]
-#[must_use]
-pub fn bundled_provider() -> impl zenanalyze_api::FeatureProvider {
-    zenanalyze::Analyzer::new()
-}
-
-/// Classify image content type using the [`bundled_provider`].
-///
-/// One analysis pass over the RGB8 source extracts the palette / flat-colour /
-/// edge signals that distinguish "screenshot or UI graphic" from "natural
-/// photograph", so the same thresholds drive zenwebp / zenjpeg / zenavif preset
-/// selection from a single shared signal source.
-///
-/// Prefer [`classify_image_type_from_offer`] when an orchestrator already ran a
-/// pass — this entry point runs its own.
-#[cfg(feature = "analyzer-bundled")]
-#[must_use]
-pub fn classify_image_type_rgb8(rgb: &[u8], width: u32, height: u32) -> ImageContentType {
-    classify_image_type_rgb8_diag(rgb, width, height).0
-}
-
-/// Diagnostic variant of [`classify_image_type_rgb8`] returning the raw signals
-/// alongside the bucket decision. Used by the classifier-comparison harness in
-/// `dev/`.
-#[cfg(feature = "analyzer-bundled")]
-#[must_use]
-pub fn classify_image_type_rgb8_diag(
-    rgb: &[u8],
-    width: u32,
-    height: u32,
-) -> (ImageContentType, ZenanalyzeDiag) {
-    classify_image_type_with_provider(&bundled_provider(), rgb, width, height)
 }
 
 /// Threshold-only decision over the zenanalyze signals using only
