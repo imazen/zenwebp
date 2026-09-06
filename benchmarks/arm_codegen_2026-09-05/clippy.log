@@ -1,0 +1,248 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling libm v0.2.16
+    Checking safe_unaligned_simd v0.2.5
+   Compiling rustversion v1.0.23
+   Compiling autocfg v1.5.1
+   Compiling num-traits v0.2.19
+   Compiling syn v3.0.4
+   Compiling syn v2.0.119
+   Compiling bytemuck_derive v1.12.0
+   Compiling paste v1.0.15
+   Compiling archmage-macros v0.9.27
+    Checking whereat v0.1.5
+    Checking bytemuck v1.25.2
+   Compiling thiserror v2.0.20
+    Checking enough v0.4.4
+    Checking archmage v0.9.27
+    Checking almost-enough v0.4.4
+   Compiling thiserror-impl v2.0.20
+    Checking zenpixels v0.2.14
+    Checking foldhash v0.2.0
+    Checking once_cell v1.21.4
+    Checking zencodec v0.1.26
+    Checking hashbrown v0.17.1
+    Checking rgb v0.8.53
+    Checking magetypes v0.9.27
+    Checking garb v0.2.8
+    Checking byteorder-lite v0.1.0
+    Checking self_cell v1.3.0
+    Checking linear-srgb v0.6.12
+    Checking zenpixels-convert v0.2.14
+    Checking zenyuv v0.1.3
+    Checking zenwebp v0.5.0 (/Users/lilith/work/zen/zenwebp)
+error: unused macro definition: `store_uv_16x4_impl`
+    --> src/decoder/loop_filter.rs:1463:14
+     |
+1463 | macro_rules! store_uv_16x4_impl {
+     |              ^^^^^^^^^^^^^^^^^^
+     |
+     = note: `-D unused-macros` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(unused_macros)]`
+
+error: unused macro definition: `store_q1q2_uv_16_impl`
+    --> src/decoder/loop_filter.rs:1481:14
+     |
+1481 | macro_rules! store_q1q2_uv_16_impl {
+     |              ^^^^^^^^^^^^^^^^^^^^^
+
+error: unused import: `u8x32`
+  --> src/decoder/lossless_transform_simd.rs:16:39
+   |
+16 | use magetypes::simd::generic::{u8x16, u8x32};
+   |                                       ^^^^^
+   |
+   = note: `-D unused-imports` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(unused_imports)]`
+
+error: unused macro definition: `planar_to_24b_helper`
+    --> src/decoder/yuv.rs:1902:14
+     |
+1902 | macro_rules! planar_to_24b_helper {
+     |              ^^^^^^^^^^^^^^^^^^^^
+
+error: variable does not need to be mutable
+    --> src/encoder/vp8/mode_selection.rs:1705:21
+     |
+1705 |                 let mut best_levels_zz = [0i16; 16];
+     |                     ----^^^^^^^^^^^^^^
+     |                     |
+     |                     help: remove this `mut`
+     |
+     = note: `-D unused-mut` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(unused_mut)]`
+
+error: unused variable: `i4_index_order`
+    --> src/encoder/vp8/mode_selection.rs:1750:21
+     |
+1750 |                 let i4_index_order =
+     |                     ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_i4_index_order`
+     |
+     = note: `-D unused-variables` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(unused_variables)]`
+
+error: type `decoder::internal_error::InternalDecodeError` is more private than the item `decoder::lossless_transform::apply_predictor_transform_0`
+   --> src/decoder/lossless_transform.rs:291:1
+    |
+291 | / pub fn apply_predictor_transform_0(
+292 | |     image_data: &mut [u8],
+293 | |     range: Range<usize>,
+294 | |     _width: usize,
+295 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `decoder::lossless_transform::apply_predictor_transform_0` is reachable at visibility `pub`
+    |
+note: but type `decoder::internal_error::InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: `-D private-interfaces` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(private_interfaces)]`
+
+error: type `decoder::internal_error::InternalDecodeError` is more private than the item `decoder::lossless_transform::apply_predictor_transform_1`
+   --> src/decoder/lossless_transform.rs:307:1
+    |
+307 | / pub fn apply_predictor_transform_1(
+308 | |     image_data: &mut [u8],
+309 | |     range: Range<usize>,
+310 | |     _width: usize,
+311 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `decoder::lossless_transform::apply_predictor_transform_1` is reachable at visibility `pub`
+    |
+note: but type `decoder::internal_error::InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: type `decoder::internal_error::InternalDecodeError` is more private than the item `decoder::lossless_transform::apply_predictor_transform_2`
+   --> src/decoder/lossless_transform.rs:323:1
+    |
+323 | / pub fn apply_predictor_transform_2(
+324 | |     image_data: &mut [u8],
+325 | |     range: Range<usize>,
+326 | |     width: usize,
+327 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `decoder::lossless_transform::apply_predictor_transform_2` is reachable at visibility `pub`
+    |
+note: but type `decoder::internal_error::InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: type `decoder::internal_error::InternalDecodeError` is more private than the item `decoder::lossless_transform::apply_predictor_transform_3`
+   --> src/decoder/lossless_transform.rs:339:1
+    |
+339 | / pub fn apply_predictor_transform_3(
+340 | |     image_data: &mut [u8],
+341 | |     range: Range<usize>,
+342 | |     width: usize,
+343 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `decoder::lossless_transform::apply_predictor_transform_3` is reachable at visibility `pub`
+    |
+note: but type `decoder::internal_error::InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: type `decoder::internal_error::InternalDecodeError` is more private than the item `decoder::lossless_transform::apply_predictor_transform_4`
+   --> src/decoder/lossless_transform.rs:355:1
+    |
+355 | / pub fn apply_predictor_transform_4(
+356 | |     image_data: &mut [u8],
+357 | |     range: Range<usize>,
+358 | |     width: usize,
+359 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `decoder::lossless_transform::apply_predictor_transform_4` is reachable at visibility `pub`
+    |
+note: but type `decoder::internal_error::InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: type `decoder::internal_error::InternalDecodeError` is more private than the item `decoder::lossless_transform::apply_predictor_transform_6`
+   --> src/decoder/lossless_transform.rs:392:1
+    |
+392 | / pub fn apply_predictor_transform_6(
+393 | |     image_data: &mut [u8],
+394 | |     range: Range<usize>,
+395 | |     width: usize,
+396 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `decoder::lossless_transform::apply_predictor_transform_6` is reachable at visibility `pub`
+    |
+note: but type `decoder::internal_error::InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: type `decoder::internal_error::InternalDecodeError` is more private than the item `decoder::lossless_transform::apply_predictor_transform_8`
+   --> src/decoder/lossless_transform.rs:444:1
+    |
+444 | / pub fn apply_predictor_transform_8(
+445 | |     image_data: &mut [u8],
+446 | |     range: Range<usize>,
+447 | |     width: usize,
+448 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `decoder::lossless_transform::apply_predictor_transform_8` is reachable at visibility `pub`
+    |
+note: but type `decoder::internal_error::InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: type `decoder::internal_error::InternalDecodeError` is more private than the item `decoder::lossless_transform::apply_predictor_transform_9`
+   --> src/decoder/lossless_transform.rs:463:1
+    |
+463 | / pub fn apply_predictor_transform_9(
+464 | |     image_data: &mut [u8],
+465 | |     range: Range<usize>,
+466 | |     width: usize,
+467 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `decoder::lossless_transform::apply_predictor_transform_9` is reachable at visibility `pub`
+    |
+note: but type `decoder::internal_error::InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: function `idct_add_residue_and_clear_with_token` is never used
+    --> src/common/prediction.rs:1296:15
+     |
+1296 | pub(crate) fn idct_add_residue_and_clear_with_token<const N: usize>(
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `-D dead-code` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+error: function `yuv_to_rgb_scalar` is never used
+    --> src/decoder/yuv.rs:2061:4
+     |
+2061 | fn yuv_to_rgb_scalar(y: u8, u: u8, v: u8) -> (u8, u8, u8) {
+     |    ^^^^^^^^^^^^^^^^^
+
+error: could not compile `zenwebp` (lib) due to 16 previous errors
+        5.24 real         3.86 user         0.89 sys
+           441483264  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              324034  page reclaims
+                1397  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                  74  messages sent
+                 104  messages received
+                  87  signals received
+                 458  voluntary context switches
+               10576  involuntary context switches
+           331262448  instructions retired
+           104577811  cycles elapsed
+             7422480  peak memory footprint

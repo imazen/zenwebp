@@ -105,3 +105,5 @@ zenwebp-recompress/benchmarks/paired_sweep_*.csv
 zenwebp-recompress/benchmarks/deblock_weakfilter_*.csv
 zenwebp-recompress/benchmarks/test_corpus_*.csv
 zenwebp-recompress/benchmarks/clean_sweep_*.csv
+.jj/
+!benchmarks/arm_codegen_2026-09-05/*.log

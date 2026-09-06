@@ -1,0 +1,8 @@
+magetypes idiomatic patterns — self-test
+  [A] inline #[magetypes] scale_plane           OK
+  [B] extracted generic kernel dot              OK (3570 vs 3570)
+  [C] hand-tuned _v4x slotted via incant! suffix OK (fallback tier active)
+  [D] #[autoversion] color matrix               OK
+  [E] nested incant! rewriting pipeline         OK
+  [F] polyfill implementation_name() assertions OK
+all patterns OK

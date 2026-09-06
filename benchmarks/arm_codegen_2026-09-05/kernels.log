@@ -1,0 +1,213 @@
+[kernel_tiers] comparing neon vs forced scalar
+[zenbench] calibration: int=0.29ns/iter mem_bw=115.5GiB/s mem_lat=7.3ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.26ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /Users/lilith/tmp/zenbench/zenbench-1788658358-9410.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1788658358-9410
+  git: f7f1451dbc9037c9c7666d44d20b457a6a711716
+═══════════════════════════════════════════════════════════════
+
+  idct4x4  200 rounds × 66K calls
+             mean ±mad ns  95% CI vs base 
+  ├─ neon     39.9 ±2.0ns  [39.1–40.7]ns  
+  ╰─ scalar   39.9 ±2.5ns  [-1.4%–+1.5%]   [1]
+
+  scalar  ███████████████████████████████████████████████████████████████ 39.9ns
+  neon    ███████████████████████████████████████████████████████████████ 39.9ns
+  [1] CI crosses zero
+
+  dct4x4  200 rounds × 62K calls
+             mean ±mad ns  95% CI vs base 
+  ├─ neon     41.0 ±3.4ns  [40.2–41.8]ns  
+  ╰─ scalar   40.3 ±2.0ns  [-3.1%–-0.5%]   [1]
+
+  scalar  ██████████████████████████████████████████████████████████████ 40.3ns
+  neon    ███████████████████████████████████████████████████████████████ 41.0ns
+  [1] CI crosses zero
+
+  iwht4x4  200 rounds × 66K calls
+             mean ±mad ns  95% CI vs base 
+  ├─ neon     32.5 ±2.9ns  [31.9–33.2]ns  
+  ╰─ scalar   32.5 ±3.3ns  [-1.6%–+1.4%]   [1]
+
+  scalar  ███████████████████████████████████████████████████████████████ 32.5ns
+  neon    ███████████████████████████████████████████████████████████████ 32.5ns
+  [1] CI crosses zero
+
+  wht4x4  200 rounds × 71K calls
+             mean ±mad ns  95% CI vs base 
+  ├─ neon     32.1 ±1.9ns  [31.7–32.6]ns  
+  ╰─ scalar   32.3 ±2.3ns  [-1.1%–+1.9%]   [1]
+
+  neon    ███████████████████████████████████████████████████████████████ 32.1ns
+  scalar  ███████████████████████████████████████████████████████████████ 32.3ns
+  [1] CI crosses zero
+
+  tdisto_4x4  30 rounds × 90K calls
+             mean ±mad ns  95% CI vs base   
+  ├─ neon     21.9 ±3.3ns  [20.5–23.2]ns    
+  ╰─ scalar   30.3 ±3.4ns  [+36.0%–+40.4%]  
+
+  neon    ██████████████████████████████████████████████ 21.9ns
+  scalar  ███████████████████████████████████████████████████████████████ 30.3ns
+
+  tdisto_8x8  50 rounds × 20K calls
+               mean ±mad ns  95% CI vs base   
+  ├─ neon      77.8 ±17.3ns  [70.9–84.3]ns     [1]
+  ╰─ scalar   115.2 ±16.8ns  [+43.9%–+52.0%]   [2]
+
+  neon    ██████████████████████████████████████████ 77.8ns
+  scalar  ██████████████████████████████████████████████████████████████ 115.2ns
+  [1] CV=31%
+  [2] CV=29%
+
+  tdisto_16x16  30 rounds × 5K calls
+             mean ±mad ns  95% CI vs base   
+  ├─ neon     346 ±50ns  [323–367]ns      
+  ╰─ scalar   522 ±15ns  [+47.8%–+54.4%]  
+
+  neon    █████████████████████████████████████████ 345.7ns
+  scalar  ██████████████████████████████████████████████████████████████ 522.5ns
+
+  is_flat_source_16/flat  30 rounds × 21K calls
+                 mean ±mad ns  95% CI vs base       
+  ├─ neon        8.36 ±1.69ns  [7.60–9.09]ns         [1]
+  ╰─ scalar   113.34 ±23.83ns  [+1139.8%–+1372.1%]   [2]
+
+  neon    █████ 8.4ns
+  scalar  ██████████████████████████████████████████████████████████████ 113.3ns
+  [1] CV=26%
+  [2] CV=26%
+
+  is_flat_source_16/early-exit  100 rounds × 333K calls
+              mean ±mad ns  95% CI vs base   
+  ├─ neon     9.02 ±0.60ns  [8.83–9.20]ns    
+  ╰─ scalar   7.50 ±1.30ns  [-18.5%–-15.3%]  
+
+  scalar  █████████████████████████████████████████████████████ 7.5ns
+  neon    ████████████████████████████████████████████████████████████████ 9.0ns
+
+  apply_subtract_green/1MP  30 rounds × 37 calls
+                mean ±mad µs  95% CI vs base        iB/s
+  ├─ neon       89.7 ±9.3µs  [86.6–93.0]µs        43.5G
+  ╰─ scalar   196.8 ±14.5µs  [+112.9%–+125.8%]    19.9G
+
+  neon    ███████████████████████████████████████████████████████████ 43.5 GiB/s
+  scalar  ███████████████████████████ 19.9 GiB/s
+
+  yuv420_to_rgb_exact/rgb  30 rounds × 2 calls
+                  mean ±mad µs  95% CI vs base        iB/s
+  ├─ neon      736.5 ±153.2µs  [678.2–792.9]µs      3.50G [1]
+  ╰─ scalar   3817.6 ±565.6µs  [+388.1%–+446.7%]     691M [2] [3]
+
+  neon    ███████████████████████████████████████████████████████████ 3.50 GiB/s
+  scalar  ███████████ 691 MiB/s
+  [1] CV=22%
+  [2] drift r=0.68 — later rounds slower
+  [3] CV=20%
+
+  yuv420_to_rgb_exact/rgba  30 rounds × 2 calls
+                  mean ±mad µs  95% CI vs base        iB/s
+  ├─ neon      832.9 ±147.3µs  [792.2–871.0]µs      4.12G
+  ╰─ scalar   4157.4 ±173.8µs  [+391.2%–+406.7%]     846M
+
+  neon    ███████████████████████████████████████████████████████████ 4.12 GiB/s
+  scalar  ████████████ 846 MiB/s
+
+  add_residue_i16  200 rounds × 66K calls
+             mean ±mad ns  95% CI vs base 
+  ├─ neon     40.9 ±2.9ns  [40.1–41.6]ns  
+  ╰─ scalar   38.8 ±2.9ns  [-6.4%–-3.6%]  
+
+  scalar  ████████████████████████████████████████████████████████████ 38.8ns
+  neon    ███████████████████████████████████████████████████████████████ 40.9ns
+
+  inverse_subtract_green/1MP  200 rounds × 15 calls
+                mean ±mad µs  95% CI vs base       iB/s
+  ├─ neon     489.5 ±42.2µs  [484.0–495.1]µs     7.98G
+  ╰─ scalar   489.7 ±44.3µs  [-1.5%–+1.6%]       7.98G [1]
+
+  neon    ███████████████████████████████████████████████████████████ 7.98 GiB/s
+  scalar  ███████████████████████████████████████████████████████████ 7.98 GiB/s
+  [1] CI crosses zero
+
+  quantize_block_simd  40 rounds × 58K calls
+             mean ±mad ns  95% CI vs base   
+  ├─ neon     36.7 ±2.7ns  [34.7–38.5]ns    
+  ╰─ scalar   53.3 ±7.2ns  [+41.3%–+49.7%]  
+
+  neon    ███████████████████████████████████████████ 36.7ns
+  scalar  ███████████████████████████████████████████████████████████████ 53.3ns
+
+  quantize_dequantize_block  50 rounds × 45K calls
+             mean ±mad ns  95% CI vs base   
+  ├─ neon     43.8 ±7.3ns  [41.9–45.7]ns    
+  ╰─ scalar   60.6 ±3.3ns  [+34.0%–+40.2%]  
+
+  neon    ██████████████████████████████████████████████ 43.8ns
+  scalar  ███████████████████████████████████████████████████████████████ 60.6ns
+
+  dequantize_block  200 rounds × 76K calls
+             mean ±mad ns  95% CI vs base  
+  ├─ neon     23.6 ±1.4ns  [23.2–24.1]ns   
+  ╰─ scalar   21.3 ±0.9ns  [-11.3%–-8.3%]  
+
+  scalar  █████████████████████████████████████████████████████████ 21.3ns
+  neon    ███████████████████████████████████████████████████████████████ 23.6ns
+
+  total: 219.8s  (25 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+group=idct4x4 benchmark=neon  |  vs_base=baseline  |  min=16.7ns mean=39.9ns median=41.1ns mad=2.0ns  |  n=200 cv=14.5% rounds=200 calls=66666 mean_ci=[39.1ns 40.7ns] cold=42.0ns
+group=idct4x4 benchmark=scalar  |  vs_base_pct=+0.02 ci=[-1.41% +1.52%] significant=false effect=0.00 p=0.9417  |  min=16.3ns mean=39.9ns median=41.3ns mad=2.5ns  |  n=200 cv=14.6% rounds=200 calls=66666 mean_ci=[39.1ns 40.6ns]
+group=dct4x4 benchmark=neon  |  vs_base=baseline  |  min=19.9ns mean=41.0ns median=42.4ns mad=3.4ns  |  n=200 cv=13.8% rounds=200 calls=62500 mean_ci=[40.2ns 41.8ns]
+group=dct4x4 benchmark=scalar  |  vs_base_pct=-1.78 ci=[-3.14% -0.46%] significant=false effect=-0.13 p=0.0111  |  min=19.8ns mean=40.3ns median=42.0ns mad=2.0ns  |  n=200 cv=13.3% rounds=200 calls=62500 mean_ci=[39.5ns 41.0ns]
+group=iwht4x4 benchmark=neon  |  vs_base=baseline  |  min=15.9ns mean=32.5ns median=33.3ns mad=2.9ns  |  n=200 cv=14.4% rounds=200 calls=66666 mean_ci=[31.9ns 33.2ns] cold=42.0ns
+group=iwht4x4 benchmark=scalar  |  vs_base_pct=-0.06 ci=[-1.56% +1.42%] significant=false effect=-0.00 p=0.7432  |  min=15.7ns mean=32.5ns median=33.3ns mad=3.3ns  |  n=200 cv=14.8% rounds=200 calls=66666 mean_ci=[31.8ns 33.2ns]
+group=wht4x4 benchmark=neon  |  vs_base=baseline  |  min=17.4ns mean=32.1ns median=32.3ns mad=1.9ns  |  n=200 cv=10.3% rounds=200 calls=71428 mean_ci=[31.7ns 32.6ns]
+group=wht4x4 benchmark=scalar  |  vs_base_pct=+0.41 ci=[-1.06% +1.89%] significant=false effect=0.04 p=0.5286  |  min=17.6ns mean=32.3ns median=32.5ns mad=2.3ns  |  n=200 cv=11.2% rounds=200 calls=71428 mean_ci=[31.8ns 32.8ns]
+group=tdisto_4x4 benchmark=neon  |  vs_base=baseline  |  min=10.4ns mean=21.9ns median=23.0ns mad=3.3ns  |  n=30 cv=17.8% rounds=30 calls=90909 mean_ci=[20.5ns 23.2ns]
+group=tdisto_4x4 benchmark=scalar  |  vs_base_pct=+38.25 ci=[+36.05% +40.36%] significant=true effect=2.13 p=0.0000  |  min=14.4ns mean=30.3ns median=31.9ns mad=3.4ns  |  n=30 cv=17.6% rounds=30 calls=90909 mean_ci=[28.3ns 32.1ns]
+group=tdisto_8x8 benchmark=neon  |  vs_base=baseline  |  min=30.4ns mean=77.8ns median=89.2ns mad=17.3ns  |  n=50 cv=31.5% rounds=50 calls=20833 mean_ci=[70.9ns 84.3ns] cold=42.0ns
+group=tdisto_8x8 benchmark=scalar  |  vs_base_pct=+48.08 ci=[+43.86% +51.99%] significant=true effect=1.27 p=0.0000  |  min=47.2ns mean=115.2ns median=130.7ns mad=16.8ns  |  n=50 cv=29.2% rounds=50 calls=20833 mean_ci=[105.5ns 124.1ns] cold=42.0ns
+group=tdisto_16x16 benchmark=neon  |  vs_base=baseline  |  min=151.5ns mean=345.7ns median=351.1ns mad=49.7ns  |  n=30 cv=18.2% rounds=30 calls=5102 mean_ci=[322.7ns 367.1ns] cold=292.0ns
+group=tdisto_16x16 benchmark=scalar  |  vs_base_pct=+51.15 ci=[+47.79% +54.43%] significant=true effect=2.46 p=0.0000  |  min=246.6ns mean=522.5ns median=544.0ns mad=14.6ns  |  n=30 cv=15.2% rounds=30 calls=5102 mean_ci=[492.1ns 547.9ns] cold=209.0ns
+group=is_flat_source_16/flat benchmark=neon  |  vs_base=baseline  |  min=3.8ns mean=8.4ns median=8.6ns mad=1.7ns  |  n=30 cv=25.6% rounds=30 calls=21739 mean_ci=[7.6ns 9.1ns] cold=42.0ns
+group=is_flat_source_16/flat benchmark=scalar  |  vs_base_pct=+1256.40 ci=[+1139.81% +1372.06%] significant=true effect=5.02 p=0.0000  |  min=49.5ns mean=113.3ns median=111.3ns mad=23.8ns  |  n=30 cv=26.0% rounds=30 calls=21739 mean_ci=[103.0ns 123.5ns] cold=41.0ns
+group=is_flat_source_16/early-exit benchmark=neon  |  vs_base=baseline  |  min=4.1ns mean=9.0ns median=9.3ns mad=0.6ns  |  n=100 cv=10.8% rounds=100 calls=333333 mean_ci=[8.8ns 9.2ns]
+group=is_flat_source_16/early-exit benchmark=scalar  |  vs_base_pct=-16.85 ci=[-18.49% -15.25%] significant=true effect=-1.41 p=0.0000  |  min=3.2ns mean=7.5ns median=7.7ns mad=1.3ns  |  n=100 cv=15.6% rounds=100 calls=333333 mean_ci=[7.3ns 7.7ns]
+group=apply_subtract_green/1MP benchmark=neon  |  vs_base=baseline  |  min=71.61µs mean=89.74µs median=86.23µs mad=9.32µs  |  throughput=43.53 GiB/s  |  n=30 cv=9.9% rounds=30 calls=37 mean_ci=[86.64µs 92.97µs] cold=59.00µs
+group=apply_subtract_green/1MP benchmark=scalar  |  vs_base_pct=+119.25 ci=[+112.91% +125.81%] significant=true effect=9.05 p=0.0000  |  min=158.60µs mean=196.76µs median=199.70µs mad=14.48µs  |  throughput=19.85 GiB/s  |  n=30 cv=7.2% rounds=30 calls=37 mean_ci=[191.67µs 201.60µs] cold=133.71µs
+group=yuv420_to_rgb_exact/rgb benchmark=neon  |  vs_base=baseline  |  min=421.65µs mean=736.53µs median=765.85µs mad=153.20µs  |  throughput=3.50 GiB/s  |  n=30 cv=22.2% rounds=30 calls=2 mean_ci=[678.20µs 792.92µs] cold=377.12µs
+group=yuv420_to_rgb_exact/rgb benchmark=scalar  |  vs_base_pct=+418.32 ci=[+388.08% +446.74%] significant=true effect=5.52 p=0.0000  |  min=2.20ms mean=3.82ms median=4.07ms mad=565.56µs  |  throughput=690.68 MiB/s  |  n=30 cv=20.2% rounds=30 calls=2 mean_ci=[3.54ms 4.08ms] cold=1.85ms
+group=yuv420_to_rgb_exact/rgba benchmark=neon  |  vs_base=baseline  |  min=509.14µs mean=832.91µs median=807.66µs mad=147.33µs  |  throughput=4.12 GiB/s  |  n=30 cv=13.6% rounds=30 calls=2 mean_ci=[792.17µs 870.99µs] cold=397.67µs
+group=yuv420_to_rgb_exact/rgba benchmark=scalar  |  vs_base_pct=+399.29 ci=[+391.24% +406.68%] significant=true effect=21.77 p=0.0000  |  min=2.46ms mean=4.16ms median=4.33ms mad=173.78µs  |  throughput=845.64 MiB/s  |  n=30 cv=12.5% rounds=30 calls=2 mean_ci=[3.96ms 4.32ms] cold=1.87ms
+group=add_residue_i16 benchmark=neon  |  vs_base=baseline  |  min=19.5ns mean=40.9ns median=42.3ns mad=2.9ns  |  n=200 cv=13.4% rounds=200 calls=66666 mean_ci=[40.1ns 41.6ns] cold=41.0ns
+group=add_residue_i16 benchmark=scalar  |  vs_base_pct=-4.99 ci=[-6.41% -3.59%] significant=true effect=-0.38 p=0.0000  |  min=17.6ns mean=38.8ns median=40.6ns mad=2.9ns  |  n=200 cv=13.2% rounds=200 calls=66666 mean_ci=[38.1ns 39.5ns] cold=42.0ns
+group=inverse_subtract_green/1MP benchmark=neon  |  vs_base=baseline  |  min=381.48µs mean=489.53µs median=487.00µs mad=42.18µs  |  throughput=7.98 GiB/s  |  n=200 cv=8.2% rounds=200 calls=15 mean_ci=[483.99µs 495.13µs] cold=321.12µs
+group=inverse_subtract_green/1MP benchmark=scalar  |  vs_base_pct=+0.04 ci=[-1.52% +1.58%] significant=false effect=0.00 p=0.6707  |  min=372.18µs mean=489.73µs median=485.83µs mad=44.32µs  |  throughput=7.98 GiB/s  |  n=200 cv=8.4% rounds=200 calls=15 mean_ci=[484.05µs 495.39µs] cold=324.33µs
+group=quantize_block_simd benchmark=neon  |  vs_base=baseline  |  min=20.3ns mean=36.7ns median=40.2ns mad=2.7ns  |  n=40 cv=17.1% rounds=40 calls=58823 mean_ci=[34.7ns 38.5ns] cold=42.0ns
+group=quantize_block_simd benchmark=scalar  |  vs_base_pct=+45.46 ci=[+41.27% +49.73%] significant=true effect=2.11 p=0.0000  |  min=29.7ns mean=53.3ns median=55.9ns mad=7.2ns  |  n=40 cv=17.4% rounds=40 calls=58823 mean_ci=[50.5ns 56.1ns]
+group=quantize_dequantize_block benchmark=neon  |  vs_base=baseline  |  min=23.1ns mean=43.8ns median=44.3ns mad=7.3ns  |  n=50 cv=15.8% rounds=50 calls=45454 mean_ci=[41.9ns 45.7ns] cold=42.0ns
+group=quantize_dequantize_block benchmark=scalar  |  vs_base_pct=+37.05 ci=[+34.03% +40.15%] significant=true effect=2.22 p=0.0000  |  min=33.0ns mean=60.6ns median=60.4ns mad=3.3ns  |  n=50 cv=13.2% rounds=50 calls=45454 mean_ci=[58.4ns 62.8ns] cold=41.0ns
+group=dequantize_block benchmark=neon  |  vs_base=baseline  |  min=10.5ns mean=23.6ns median=23.7ns mad=1.4ns  |  n=200 cv=13.6% rounds=200 calls=76923 mean_ci=[23.2ns 24.1ns] cold=42.0ns
+group=dequantize_block benchmark=scalar  |  vs_base_pct=-9.76 ci=[-11.30% -8.25%] significant=true effect=-0.76 p=0.0000  |  min=9.6ns mean=21.3ns median=21.5ns mad=0.9ns  |  n=200 cv=13.2% rounds=200 calls=76923 mean_ci=[20.9ns 21.7ns] cold=42.0ns
+      219.86 real        44.36 user        25.04 sys
+            30195712  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              273070  page reclaims
+                   8  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              276613  involuntary context switches
+        676414959012  instructions retired
+        190279210142  cycles elapsed
+            22299008  peak memory footprint

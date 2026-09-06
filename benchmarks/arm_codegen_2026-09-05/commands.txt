@@ -1,0 +1,27 @@
+Host: Apple M4 Pro / Mac16,11 / Darwin 25.5.0 / 24 GiB RAM
+Date: 2026-09-06 UTC (2026-09-05 America/Denver)
+zenwebp: f7f1451dbc9037c9c7666d44d20b457a6a711716
+archmage checkout: ebc204640c64f407cee9f6521b5b2e1385d0dbd6
+zenwebp locked archmage + magetypes: 0.9.27
+Rust: rustc 1.98.0 (88d9e12ae 2026-08-18), LLVM 22.1.8
+
+All heavy commands were serialized; recorded build/run prefix:
+  CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR=/Users/lilith/tmp nice -n 19 /usr/bin/time -l
+All stdout and stderr were saved under /Users/lilith/tmp/arm-codegen-2026-09-05/.
+
+From zenwebp:
+  cargo fmt -p zenwebp -- --check
+  cargo bench --locked --features _dev --bench kernel_tiers --no-run
+  target/release/deps/kernel_tiers-12722174decf9351 --format=llm
+  otool -tvV target/release/deps/kernel_tiers-12722174decf9351
+  cargo clippy --locked --lib --features _dev -- -D warnings
+  cargo test --locked --release --lib
+
+From archmage:
+  just generate validate-registry validate-tokens soundness
+  cargo fmt -p archmage -p archmage-macros -p magetypes -p xtask -- --check
+  cargo rustc --locked -p magetypes --release --example idiomatic_patterns_all -- --emit=asm
+  target/release/examples/idiomatic_patterns_all
+
+The assembly excerpts come from these compiled outputs; no source modifications
+were present in either tree during compilation or measurement.
