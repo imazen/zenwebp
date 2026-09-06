@@ -596,3 +596,32 @@ fn tdisto_16x16_dispatch_matches_scalar_reference() {
             .join("\n  ")
     );
 }
+
+#[test]
+fn tdisto_strided_minimal_rows_match_scalar() {
+    for stride in [4, 5, 7, 16, 31, 64] {
+        for offset in 0..16 {
+            for seed in 0..=255u8 {
+                let len = offset + 3 * stride + 4;
+                let mut a = vec![0x55; len];
+                let mut b = vec![0xaa; len];
+                let (aa, bb) = make_blocks_4x4(seed);
+                for row in 0..4 {
+                    let start = offset + row * stride;
+                    a[start..start + 4].copy_from_slice(&aa[row * 4..row * 4 + 4]);
+                    b[start..start + 4].copy_from_slice(&bb[row * 4..row * 4 + 4]);
+                }
+                assert_eq!(
+                    tdisto_4x4(&a[offset..], &b[offset..], stride, &W_FAVOR_HIGH_FREQ),
+                    tdisto_4x4_scalar_reference(
+                        &a[offset..],
+                        &b[offset..],
+                        stride,
+                        &W_FAVOR_HIGH_FREQ
+                    ),
+                    "stride={stride} offset={offset} seed={seed}"
+                );
+            }
+        }
+    }
+}

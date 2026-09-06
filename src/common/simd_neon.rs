@@ -229,21 +229,11 @@ pub(crate) fn tdisto_4x4_fused_inner(
     // Helper: load 4 bytes from slice, widen to i16
     macro_rules! load_row_pair {
         ($src_a:expr, $src_b:expr, $off:expr) => {{
-            let a_bytes = simd_mem::vld1_u8(
-                <&[u8; 8]>::try_from(
-                    &[
-                        $src_a[$off],
-                        $src_a[$off + 1],
-                        $src_a[$off + 2],
-                        $src_a[$off + 3],
-                        $src_b[$off],
-                        $src_b[$off + 1],
-                        $src_b[$off + 2],
-                        $src_b[$off + 3],
-                    ][..],
-                )
-                .unwrap(),
-            );
+            let a_row = $src_a[$off..].first_chunk::<4>().unwrap();
+            let b_row = $src_b[$off..].first_chunk::<4>().unwrap();
+            let a_bytes = simd_mem::vld1_u8(&[
+                a_row[0], a_row[1], a_row[2], a_row[3], b_row[0], b_row[1], b_row[2], b_row[3],
+            ]);
             vreinterpretq_s16_u16(vmovl_u8(a_bytes))
         }};
     }
