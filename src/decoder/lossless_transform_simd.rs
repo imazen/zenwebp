@@ -1315,6 +1315,70 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     use archmage::prelude::*;
 
+    #[test]
+    #[cfg(target_arch = "aarch64")]
+    fn portable_add_green_matches_byte_oracle() {
+        use archmage::{NeonToken, ScalarToken, SimdToken};
+        let token = NeonToken::summon().expect("NEON is baseline on aarch64");
+        let check = |input: &[u8]| {
+            let mut expected = input.to_vec();
+            for pixel in expected.chunks_exact_mut(4) {
+                pixel[0] = pixel[0].wrapping_add(pixel[1]);
+                pixel[2] = pixel[2].wrapping_add(pixel[1]);
+            }
+            let mut actual = input.to_vec();
+            super::add_green_portable(token, &mut actual);
+            assert_eq!(actual, expected);
+            let mut generic_scalar = input.to_vec();
+            super::add_green_portable(ScalarToken, &mut generic_scalar);
+            assert_eq!(generic_scalar, expected);
+        };
+
+        // Every (channel, green) pair, including wrapping addition, in both
+        // updated channels. Green and alpha must remain unchanged.
+        let mut all_pairs = vec![];
+        for green in 0..=255u8 {
+            for channel in 0..=255u8 {
+                all_pairs.extend_from_slice(&[channel, green, !channel, channel ^ green]);
+            }
+        }
+        check(&all_pairs);
+
+        // Unaligned starts, every vector tail, and incomplete trailing pixels.
+        for offset in 0..16 {
+            for len in 0..=131 {
+                let mut actual: alloc::vec::Vec<u8> = (0..offset + len + 16)
+                    .map(|i| (i as u8).wrapping_mul(73))
+                    .collect();
+                let mut expected = actual.clone();
+                for pixel in expected[offset..offset + len].chunks_exact_mut(4) {
+                    pixel[0] = pixel[0].wrapping_add(pixel[1]);
+                    pixel[2] = pixel[2].wrapping_add(pixel[1]);
+                }
+                super::add_green_portable(token, &mut actual[offset..offset + len]);
+                assert_eq!(actual, expected, "offset={offset}, len={len}");
+            }
+        }
+
+        // The primitive operates on one row at a time; cropped rows retain
+        // their parent's stride and padding outside the supplied row slice.
+        for width in [1, 3, 4, 5, 15, 16, 17, 65] {
+            let stride = width * 4 + 19;
+            let mut actual = vec![197u8; stride * 7];
+            let mut expected = actual.clone();
+            for row in expected.chunks_exact_mut(stride) {
+                for pixel in row[3..3 + width * 4].chunks_exact_mut(4) {
+                    pixel[0] = pixel[0].wrapping_add(pixel[1]);
+                    pixel[2] = pixel[2].wrapping_add(pixel[1]);
+                }
+            }
+            for row in actual.chunks_exact_mut(stride) {
+                super::add_green_portable(token, &mut row[3..3 + width * 4]);
+            }
+            assert_eq!(actual, expected, "width={width}, stride={stride}");
+        }
+    }
+
     /// Test that SSE2 subtract-green matches scalar.
     #[test]
     #[cfg(target_arch = "x86_64")]
