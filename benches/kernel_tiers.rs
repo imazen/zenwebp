@@ -259,7 +259,7 @@ fn bench(suite: &mut Suite) {
                     .collect::<Vec<u8>>()
                     .into_boxed_slice(),
             );
-            suite.compare(&format!("inverse_subtract_green/{label}"), move |g| {
+            suite.compare(format!("inverse_subtract_green/{label}"), move |g| {
                 g.throughput(Throughput::Bytes(bytes as u64));
                 for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
                     g.bench(arm, move |b| {

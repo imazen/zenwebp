@@ -672,11 +672,23 @@ pub(crate) fn transform_color_inverse_generic<T: magetypes::simd::backends::U8x1
 /// green/alpha lanes. Both channels are updated in one vector addition.
 #[cfg(any(target_arch = "aarch64", target_arch = "wasm32"))]
 #[inline(always)]
-pub(crate) fn add_green_portable<T: magetypes::simd::backends::U8x16Backend>(
+pub(crate) fn add_green_portable<
+    T: magetypes::simd::backends::U8x16Backend + magetypes::simd::backends::U8x32Backend,
+>(
     token: T,
     image_data: &mut [u8],
 ) {
-    let (chunks, remainder) = image_data.as_chunks_mut::<16>();
+    let (chunks, remainder) = image_data.as_chunks_mut::<32>();
+    for chunk in chunks {
+        let input = u8x32::load(token, chunk);
+        let bytes = input.to_array();
+        let green = u8x32::from_array(
+            token,
+            core::array::from_fn(|i| if i % 2 == 0 { bytes[(i & !3) + 1] } else { 0 }),
+        );
+        (input + green).store(chunk);
+    }
+    let (chunks, remainder) = remainder.as_chunks_mut::<16>();
     for chunk in chunks {
         let input = u8x16::load(token, chunk);
         let bytes = input.to_array();
@@ -1304,10 +1316,16 @@ mod tests {
     use archmage::prelude::*;
 
     #[test]
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(
+        target_arch = "aarch64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    ))]
     fn portable_add_green_matches_byte_oracle() {
-        use archmage::{NeonToken, ScalarToken, SimdToken};
-        let token = NeonToken::summon().expect("NEON is baseline on aarch64");
+        use archmage::{ScalarToken, SimdToken};
+        #[cfg(target_arch = "aarch64")]
+        let token = archmage::NeonToken::summon().expect("NEON is baseline on aarch64");
+        #[cfg(target_arch = "wasm32")]
+        let token = archmage::Wasm128Token::summon().expect("test requires SIMD128");
         let check = |input: &[u8]| {
             let mut expected = input.to_vec();
             for pixel in expected.chunks_exact_mut(4) {

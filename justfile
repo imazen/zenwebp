@@ -102,12 +102,12 @@ api-doc:
 api-doc-check:
     ZEN_API_DOC=check cargo test --manifest-path apidoc/Cargo.toml
 # Reproduce the ARM kernel audit on macOS, retaining full output in ~/tmp.
-arm-kernel-audit-macos:
+arm-kernel-audit-macos group="":
     #!/usr/bin/env bash
     set -euo pipefail
     test "$(uname -s)" = Darwin
     mkdir -p "$HOME/tmp"
     audit_log="$HOME/tmp/zenwebp-arm-kernels-$(date -u +%Y%m%dT%H%M%SZ).log"
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 \
-      nice -n 19 /usr/bin/time -l cargo bench --locked --features _dev --bench kernel_tiers -- --format=llm \
+      nice -n 19 /usr/bin/time -l cargo bench --locked --features _dev --bench kernel_tiers -- --group="{{group}}" --format=llm \
       2>&1 | tee "$audit_log"
