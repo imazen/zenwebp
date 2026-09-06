@@ -243,26 +243,35 @@ fn bench(suite: &mut Suite) {
             }
         });
 
-        // Decode-side inverse subtract-green over a 1 MP ARGB image.
-        const N: usize = (1 << 20) * 4;
-        let img: &'static [u8] = Box::leak(
-            (0..N)
-                .map(|i| ((i * 7919) % 251) as u8)
-                .collect::<Vec<u8>>()
-                .into_boxed_slice(),
-        );
-        suite.compare("inverse_subtract_green/1MP", move |g| {
-            g.throughput(Throughput::Bytes(N as u64));
-            for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
-                g.bench(arm, move |b| {
-                    b.with_input(move || { set_simd(simd); img.to_vec() })
-                        .run(move |mut v| {
-                            zenwebp::decoder::lossless_transform::__bench_kernels::apply_subtract_green_transform(&mut v);
-                            v
-                        })
-                });
-            }
-        });
+        // Sweep working-set sizes for the byte-wise inverse transform. The
+        // kernel has no quality/content-dependent branches. Keep the 1MP name
+        // so earlier measurements of the same input remain easy to compare.
+        for (side, label) in [
+            (64, "64x64"),
+            (256, "256x256"),
+            (1024, "1MP"),
+            (4096, "4096x4096"),
+        ] {
+            let bytes = side * side * 4;
+            let img: &'static [u8] = Box::leak(
+                (0..bytes)
+                    .map(|i| ((i * 7919) % 251) as u8)
+                    .collect::<Vec<u8>>()
+                    .into_boxed_slice(),
+            );
+            suite.compare(&format!("inverse_subtract_green/{label}"), move |g| {
+                g.throughput(Throughput::Bytes(bytes as u64));
+                for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
+                    g.bench(arm, move |b| {
+                        b.with_input(move || { set_simd(simd); img.to_vec() })
+                            .run(move |mut v| {
+                                zenwebp::decoder::lossless_transform::__bench_kernels::apply_subtract_green_transform(&mut v);
+                                v
+                            })
+                    });
+                }
+            });
+        }
     }
 
     // ---- encoder quantization ----
