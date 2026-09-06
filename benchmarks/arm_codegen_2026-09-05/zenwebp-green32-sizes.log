@@ -1,0 +1,270 @@
+   Compiling zenwebp v0.5.0 (/Users/lilith/work/zen/zenwebp)
+warning: unused macro definition: `store_uv_16x4_impl`
+    --> src/decoder/loop_filter.rs:1463:14
+     |
+1463 | macro_rules! store_uv_16x4_impl {
+     |              ^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(unused_macros)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused macro definition: `store_q1q2_uv_16_impl`
+    --> src/decoder/loop_filter.rs:1481:14
+     |
+1481 | macro_rules! store_q1q2_uv_16_impl {
+     |              ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused macro definition: `planar_to_24b_helper`
+    --> src/decoder/yuv.rs:1902:14
+     |
+1902 | macro_rules! planar_to_24b_helper {
+     |              ^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> src/encoder/vp8/mode_selection.rs:1705:21
+     |
+1705 |                 let mut best_levels_zz = [0i16; 16];
+     |                     ----^^^^^^^^^^^^^^
+     |                     |
+     |                     help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `i4_index_order`
+    --> src/encoder/vp8/mode_selection.rs:1750:21
+     |
+1750 |                 let i4_index_order =
+     |                     ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_i4_index_order`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: type `InternalDecodeError` is more private than the item `apply_predictor_transform_0`
+   --> src/decoder/lossless_transform.rs:291:1
+    |
+291 | / pub fn apply_predictor_transform_0(
+292 | |     image_data: &mut [u8],
+293 | |     range: Range<usize>,
+294 | |     _width: usize,
+295 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `apply_predictor_transform_0` is reachable at visibility `pub`
+    |
+note: but type `InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: type `InternalDecodeError` is more private than the item `apply_predictor_transform_1`
+   --> src/decoder/lossless_transform.rs:307:1
+    |
+307 | / pub fn apply_predictor_transform_1(
+308 | |     image_data: &mut [u8],
+309 | |     range: Range<usize>,
+310 | |     _width: usize,
+311 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `apply_predictor_transform_1` is reachable at visibility `pub`
+    |
+note: but type `InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `InternalDecodeError` is more private than the item `apply_predictor_transform_2`
+   --> src/decoder/lossless_transform.rs:323:1
+    |
+323 | / pub fn apply_predictor_transform_2(
+324 | |     image_data: &mut [u8],
+325 | |     range: Range<usize>,
+326 | |     width: usize,
+327 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `apply_predictor_transform_2` is reachable at visibility `pub`
+    |
+note: but type `InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `InternalDecodeError` is more private than the item `apply_predictor_transform_3`
+   --> src/decoder/lossless_transform.rs:339:1
+    |
+339 | / pub fn apply_predictor_transform_3(
+340 | |     image_data: &mut [u8],
+341 | |     range: Range<usize>,
+342 | |     width: usize,
+343 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `apply_predictor_transform_3` is reachable at visibility `pub`
+    |
+note: but type `InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `InternalDecodeError` is more private than the item `apply_predictor_transform_4`
+   --> src/decoder/lossless_transform.rs:355:1
+    |
+355 | / pub fn apply_predictor_transform_4(
+356 | |     image_data: &mut [u8],
+357 | |     range: Range<usize>,
+358 | |     width: usize,
+359 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `apply_predictor_transform_4` is reachable at visibility `pub`
+    |
+note: but type `InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `InternalDecodeError` is more private than the item `apply_predictor_transform_6`
+   --> src/decoder/lossless_transform.rs:392:1
+    |
+392 | / pub fn apply_predictor_transform_6(
+393 | |     image_data: &mut [u8],
+394 | |     range: Range<usize>,
+395 | |     width: usize,
+396 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `apply_predictor_transform_6` is reachable at visibility `pub`
+    |
+note: but type `InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `InternalDecodeError` is more private than the item `apply_predictor_transform_8`
+   --> src/decoder/lossless_transform.rs:444:1
+    |
+444 | / pub fn apply_predictor_transform_8(
+445 | |     image_data: &mut [u8],
+446 | |     range: Range<usize>,
+447 | |     width: usize,
+448 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `apply_predictor_transform_8` is reachable at visibility `pub`
+    |
+note: but type `InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `InternalDecodeError` is more private than the item `apply_predictor_transform_9`
+   --> src/decoder/lossless_transform.rs:463:1
+    |
+463 | / pub fn apply_predictor_transform_9(
+464 | |     image_data: &mut [u8],
+465 | |     range: Range<usize>,
+466 | |     width: usize,
+467 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `apply_predictor_transform_9` is reachable at visibility `pub`
+    |
+note: but type `InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `idct_add_residue_and_clear_with_token` is never used
+    --> src/common/prediction.rs:1296:15
+     |
+1296 | pub(crate) fn idct_add_residue_and_clear_with_token<const N: usize>(
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `yuv_to_rgb_scalar` is never used
+    --> src/decoder/yuv.rs:2061:4
+     |
+2061 | fn yuv_to_rgb_scalar(y: u8, u: u8, v: u8) -> (u8, u8, u8) {
+     |    ^^^^^^^^^^^^^^^^^
+
+warning: `zenwebp` (lib) generated 15 warnings (run `cargo fix --lib -p zenwebp` to apply 2 suggestions)
+warning: unused import: `archmage::SimdToken`
+  --> benches/kernel_tiers.rs:32:9
+   |
+32 |     use archmage::SimdToken;
+   |         ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `zenwebp` (bench "kernel_tiers") generated 1 warning (run `cargo fix --bench "kernel_tiers" -p zenwebp` to apply 1 suggestion)
+    Finished `bench` profile [optimized] target(s) in 10.97s
+     Running benches/kernel_tiers.rs (target/release/deps/kernel_tiers-12722174decf9351)
+[kernel_tiers] comparing neon vs forced scalar
+[zenbench] calibration: int=0.33ns/iter mem_bw=104.2GiB/s mem_lat=7.4ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.32ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /Users/lilith/tmp/zenbench/zenbench-1788660080-ae1a.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1788660080-ae1a
+  git: bd677255b7c1d032146ed29c46dd03ccb72fca9d
+═══════════════════════════════════════════════════════════════
+
+  inverse_subtract_green/64x64  30 rounds × 814 calls
+             mean ±mad ns  95% CI vs base        iB/s
+  ├─ neon        405 ±7ns  [375–435]ns          37.7G [1]
+  ╰─ scalar   3343 ±628ns  [+676.0%–+774.6%]    4.56G [2]
+
+  neon    ███████████████████████████████████████████████████████████ 37.7 GiB/s
+  scalar  ███████ 4.56 GiB/s
+  [1] CV=21%
+  [2] CV=21%
+
+  inverse_subtract_green/256x256  30 rounds × 51 calls
+               mean ±mad µs  95% CI vs base        iB/s
+  ├─ neon       9.4 ±1.1µs  [8.6–10.1]µs         26.1G [1]
+  ╰─ scalar   55.7 ±12.4µs  [+452.9%–+535.7%]    4.39G [2]
+
+  neon    ███████████████████████████████████████████████████████████ 26.1 GiB/s
+  scalar  ██████████ 4.39 GiB/s
+  [1] CV=23%
+  [2] CV=22%
+
+  inverse_subtract_green/1MP  30 rounds × 14 calls
+                mean ±mad µs  95% CI vs base        iB/s
+  ├─ neon     105.6 ±15.7µs  [100.2–111.2]µs      37.0G
+  ╰─ scalar   618.0 ±60.3µs  [+468.1%–+503.9%]    6.32G [1]
+
+  neon    ███████████████████████████████████████████████████████████ 37.0 GiB/s
+  scalar  ██████████ 6.32 GiB/s
+  [1] drift r=0.55 — later rounds slower
+
+  inverse_subtract_green/4096x4096  30 rounds × 1 calls
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ neon     1.6 ±0.2ms  [1.6–1.7]ms          37.9G
+  ╰─ scalar   9.6 ±0.7ms  [+461.4%–+497.1%]    6.54G
+
+  neon    ███████████████████████████████████████████████████████████ 37.9 GiB/s
+  scalar  ██████████ 6.54 GiB/s
+
+  total: 17.3s  (2 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+group=inverse_subtract_green/64x64 benchmark=neon  |  vs_base=baseline  |  min=184.2ns mean=405.3ns median=417.7ns mad=7.0ns  |  throughput=37.65 GiB/s  |  n=30 cv=20.6% rounds=30 calls=814 mean_ci=[375.5ns 434.8ns] cold=209.0ns
+group=inverse_subtract_green/64x64 benchmark=scalar  |  vs_base_pct=+725.05 ci=[+675.96% +774.57%] significant=true effect=6.77 p=0.0000  |  min=1.50µs mean=3.34µs median=3.43µs mad=627.8ns  |  throughput=4.56 GiB/s  |  n=30 cv=21.0% rounds=30 calls=814 mean_ci=[3.10µs 3.58µs] cold=1.33µs
+group=inverse_subtract_green/256x256 benchmark=neon  |  vs_base=baseline  |  min=4.23µs mean=9.37µs median=9.61µs mad=1.06µs  |  throughput=26.07 GiB/s  |  n=30 cv=22.7% rounds=30 calls=51 mean_ci=[8.63µs 10.13µs] cold=3.67µs
+group=inverse_subtract_green/256x256 benchmark=scalar  |  vs_base_pct=+494.47 ci=[+452.90% +535.70%] significant=true effect=5.26 p=0.0000  |  min=25.04µs mean=55.67µs median=54.54µs mad=12.41µs  |  throughput=4.39 GiB/s  |  n=30 cv=22.0% rounds=30 calls=51 mean_ci=[51.27µs 59.91µs] cold=18.21µs
+group=inverse_subtract_green/1MP benchmark=neon  |  vs_base=baseline  |  min=73.22µs mean=105.57µs median=101.77µs mad=15.70µs  |  throughput=37.00 GiB/s  |  n=30 cv=14.6% rounds=30 calls=14 mean_ci=[100.18µs 111.16µs] cold=58.58µs
+group=inverse_subtract_green/1MP benchmark=scalar  |  vs_base_pct=+485.80 ci=[+468.11% +503.94%] significant=true effect=11.77 p=0.0000  |  min=417.14µs mean=618.02µs median=631.49µs mad=60.31µs  |  throughput=6.32 GiB/s  |  n=30 cv=11.4% rounds=30 calls=14 mean_ci=[592.43µs 641.59µs] cold=335.29µs
+group=inverse_subtract_green/4096x4096 benchmark=neon  |  vs_base=baseline  |  min=1.13ms mean=1.65ms median=1.63ms mad=234.08µs  |  throughput=37.88 GiB/s  |  n=30 cv=13.1% rounds=30 calls=1 mean_ci=[1.57ms 1.73ms] cold=987.67µs
+group=inverse_subtract_green/4096x4096 benchmark=scalar  |  vs_base_pct=+479.48 ci=[+461.38% +497.13%] significant=true effect=12.50 p=0.0000  |  min=6.30ms mean=9.55ms median=9.90ms mad=652.38µs  |  throughput=6.54 GiB/s  |  n=30 cv=11.1% rounds=30 calls=1 mean_ci=[9.16ms 9.90ms] cold=5.31ms
+       28.79 real        10.97 user         1.92 sys
+           424706048  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               81332  page reclaims
+                 108  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   5  messages sent
+                   5  messages received
+                   5  signals received
+                  97  voluntary context switches
+               19428  involuntary context switches
+          1338887835  instructions retired
+           413211497  cycles elapsed
+            54772312  peak memory footprint

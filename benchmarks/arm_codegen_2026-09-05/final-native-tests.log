@@ -1,0 +1,407 @@
+   Compiling zenwebp v0.5.0 (/Users/lilith/work/zen/zenwebp)
+warning: unused macro definition: `store_uv_16x4_impl`
+    --> src/decoder/loop_filter.rs:1463:14
+     |
+1463 | macro_rules! store_uv_16x4_impl {
+     |              ^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(unused_macros)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused macro definition: `store_q1q2_uv_16_impl`
+    --> src/decoder/loop_filter.rs:1481:14
+     |
+1481 | macro_rules! store_q1q2_uv_16_impl {
+     |              ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::*`
+    --> src/decoder/loop_filter.rs:3222:9
+     |
+3222 |     use super::*;
+     |         ^^^^^^^^
+     |
+     = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `alloc::vec`
+    --> src/decoder/loop_filter.rs:3223:9
+     |
+3223 |     use alloc::vec;
+     |         ^^^^^^^^^^
+
+warning: unused macro definition: `planar_to_24b_helper`
+    --> src/decoder/yuv.rs:1902:14
+     |
+1902 | macro_rules! planar_to_24b_helper {
+     |              ^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> src/encoder/vp8/mode_selection.rs:1705:21
+     |
+1705 |                 let mut best_levels_zz = [0i16; 16];
+     |                     ----^^^^^^^^^^^^^^
+     |                     |
+     |                     help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `i4_index_order`
+    --> src/encoder/vp8/mode_selection.rs:1750:21
+     |
+1750 |                 let i4_index_order =
+     |                     ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_i4_index_order`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `idct_add_residue_and_clear_with_token` is never used
+    --> src/common/prediction.rs:1296:15
+     |
+1296 | pub(crate) fn idct_add_residue_and_clear_with_token<const N: usize>(
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `apply_predictor_transform_scalar` is never used
+   --> src/decoder/lossless_transform.rs:135:15
+    |
+135 | pub(crate) fn apply_predictor_transform_scalar(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `yuv_to_rgb_scalar` is never used
+    --> src/decoder/yuv.rs:2061:4
+     |
+2061 | fn yuv_to_rgb_scalar(y: u8, u: u8, v: u8) -> (u8, u8, u8) {
+     |    ^^^^^^^^^^^^^^^^^
+
+warning: function `get_fancy_chroma_value` is never used
+    --> src/decoder/yuv.rs:2782:8
+     |
+2782 |     fn get_fancy_chroma_value(main: u8, secondary1: u8, secondary2: u8, tertiary: u8) -> u8 {
+     |        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `zenwebp` (lib test) generated 11 warnings (run `cargo fix --lib -p zenwebp --tests` to apply 4 suggestions)
+    Finished `release` profile [optimized] target(s) in 18.16s
+     Running unittests src/lib.rs (target/release/deps/zenwebp-ebd3c13bf62c76fb)
+
+running 320 tests
+test codec::tests::capabilities_decode ... ok
+test codec::tests::capabilities_encode ... ok
+test codec::tests::decode_capabilities_enforces_max_input_bytes ... ok
+test codec::tests::encode_job_lowers_alloc_preference_into_encoder_params ... ok
+test codec::tests::effort_and_quality_getters ... ok
+test codec::tests::dyn_encoder_path ... ok
+test codec::tests::animation_lazy_decode_with_start_frame ... ok
+test codec::tests::animation_roundtrip_lazy_decode ... ok
+test codec::tests::cicp_only_source_synthesizes_icc ... ok
+test codec::tests::cicp_only_srgb_source_embeds_no_icc ... ok
+test codec::tests::encode_srgba8 ... ok
+test codec::tests::encoder_trait_gray8 ... ok
+test codec::tests::encode_memory_preflight_rejects_calibrated_peak_over_budget ... ok
+test codec::tests::encoder_trait_roundtrip ... ok
+test codec::tests::decode_sets_icc_color_authority ... ok
+test codec::tests::cicp_pq_without_cms_embeds_bundled_icc ... ok
+test codec::tests::envelope_category_survives_dyn_erasure ... ok
+test codec::tests::envelope_on_typed_decode_path ... ok
+test codec::tests::estimate_decode_resources_reports_peak_and_serial ... ok
+test codec::tests::fallible_alloc_animation_decode_matches_default ... ok
+test codec::tests::fidelity_targets_roundtrip ... ok
+test codec::tests::four_layer_decode_flow ... ok
+test codec::tests::four_layer_encode_flow ... ok
+test codec::tests::job_with_stop ... ok
+test codec::tests::output_info_minimal ... ok
+test codec::tests::last_frame_duration_preserved ... ok
+test codec::tests::probe_header ... ok
+test codec::tests::push_decoder_bgra_negotiation ... ok
+test codec::tests::push_decoder_cow_owned_works ... ok
+test codec::tests::push_decoder_fallback_lossless ... ok
+test codec::tests::fallible_alloc_decode_matches_default ... ok
+test codec::tests::push_decoder_parity_corpus_alpha ... ok
+test codec::tests::push_decoder_parity_lossy_with_alpha ... ok
+test codec::tests::roundtrip_rgb8_lossy ... ok
+test codec::tests::push_decoder_parity_corpus_lossless ... ok
+test codec::tests::push_decoder_parity_corpus_gallery1 ... ok
+test codec::tests::roundtrip_rgba8_lossless ... ok
+test codec::tests::push_decoder_parity_lossy_rgb ... ok
+test codec::tests::source_icc_is_kept_verbatim ... ok
+test codec::tests::streaming_decode_basic ... ok
+test codec::tests::streaming_decode_rejects_lossless ... ok
+test codec::tests::streaming_decode_matches_oneshot ... ok
+test codec::tests::streaming_encode_capabilities ... ok
+test codec::tests::streaming_decode_with_alpha ... ok
+test codec::tests::streaming_encode_lossless_rgba8 ... ok
+test codec::tests::streaming_encode_lossy_rgb8_odd_height ... ok
+test codec::tests::streaming_encode_lossy_rgb8 ... ok
+test codec::tests::streaming_decode_large_image ... ok
+test common::prediction::tests::test_avg2 ... ok
+test common::prediction::tests::i4_vs_libwebp::i4_predictions_match_libwebp ... ok
+test common::prediction::tests::test_add_residue ... ok
+test common::prediction::tests::test_edge_pixels ... ok
+test common::prediction::tests::test_avg2_specific ... ok
+test common::prediction::tests::i4_vs_libwebp::i4_scoring_and_reconstruction_predictions_agree ... ok
+test common::prediction::tests::test_predict_bhepred ... ok
+test common::prediction::tests::test_predict_bldpred ... ok
+test common::prediction::tests::test_predict_brdpred ... ok
+test common::prediction::tests::test_predict_bvepred ... ok
+test common::prediction::tests::test_top_pixels ... ok
+test common::transform::tests_simd::test_dct_intrinsics_matches_scalar ... ok
+test common::transform::tests::idct_add_residue_matches_reference ... ok
+test common::transform::tests_simd::test_ftransform2_from_u8 ... ok
+test common::transform::tests_simd::test_ftransform_from_u8_4x4_varied ... ok
+test common::transform::tests_simd::test_roundtrip ... ok
+test common::transform::tests::ftransform_edge_cases_match_libwebp_c ... ok
+test codec::tests::streaming_encode_matches_oneshot ... ok
+test common::transform::tests_simd::test_ftransform_from_u8_4x4 ... ok
+test common::transform::tests_simd::test_idct_intrinsics_matches_scalar ... ok
+test common::transform::tests_simd::test_dct_two_intrinsics ... ok
+test common::transform::tests::test_dct_inverse ... ok
+test decoder::alloc_util::tests::alloc_filled_all_modes_equal_contents ... ok
+test decoder::alloc_util::tests::alloc_filled_fallible_oom_returns_err ... ok
+test decoder::alloc_util::tests::alloc_with_capacity_all_modes_reserve ... ok
+test decoder::alloc_util::tests::alloc_with_capacity_fallible_oom_returns_err ... ok
+test decoder::alloc_util::tests::alloc_zeroed_all_modes_equal_bytes ... ok
+test decoder::alloc_util::tests::alloc_zeroed_fallible_oom_returns_err ... ok
+test decoder::alloc_util::tests::codec_default_keeps_site_default_false ... ok
+test decoder::alloc_util::tests::codec_default_keeps_site_default_true ... ok
+test decoder::alloc_util::tests::default_is_codec_default ... ok
+test decoder::alloc_util::tests::explicit_fallible_overrides_any_site_default ... ok
+test decoder::alloc_util::tests::explicit_infallible_overrides_any_site_default ... ok
+test decoder::alloc_util::tests::try_resize_all_modes_equal_bytes ... ok
+test decoder::alloc_util::tests::try_resize_fallible_oom_returns_err ... ok
+test decoder::alpha_blending::tests::alpha_blending_optimization ... ignored
+test decoder::alloc_util::tests::try_resize_grows_and_zero_fills ... ok
+test decoder::api::decode_category_tests::decode_error_category_mapping ... ok
+test decoder::api::decode_category_tests::decode_io_error_is_io ... ok
+test decoder::api::tests::add_with_overflow_size ... ok
+test decoder::api::tests::decode_2x2_single_color_image ... ok
+test decoder::arithmetic::tests::test_arithmetic_decoder_hello_long ... ok
+test decoder::api::tests::decode_3x3_single_color_image ... ok
+test decoder::arithmetic::tests::test_arithmetic_decoder_hello_short ... ok
+test decoder::arithmetic::tests::test_arithmetic_decoder_uninit ... ok
+test decoder::bit_reader::tests::test_basic_reading ... ok
+test decoder::bit_reader::tests::test_compare_various_probs ... ok
+test decoder::bit_reader::tests::test_compare_with_arithmetic_decoder ... ok
+test decoder::bit_reader::tests::test_get_value ... ok
+test decoder::bit_reader::tests::test_short_data ... ok
+test decoder::dither::tests::test_dither_8x8_modifies_pixels ... ok
+test decoder::dither::tests::test_dither_8x8_stays_in_bounds ... ok
+test decoder::dither::tests::test_dither_amplitudes_high_quant ... ok
+test decoder::dither::tests::test_dither_amplitudes_low_quant ... ok
+test decoder::dither::tests::test_dither_amplitudes_zero_strength ... ok
+test decoder::dither::tests::test_random_deterministic ... ok
+test decoder::api::yuv420_config_tests::decode_yuv420_honors_request_limits ... ok
+test decoder::dither::tests::test_random_range ... ok
+test decoder::api::yuv420_config_tests::decode_yuv420_planes_identical_across_alloc_policies ... ok
+test decoder::extended::tests::dispose_clear_fullsize_rgb_frame ... ok
+test decoder::extended::tests::dispose_clear_subframe_rgb_frame ... ok
+test decoder::limits::tests::check_dimensions_ok ... ok
+test decoder::limits::tests::builder_pattern ... ok
+test decoder::limits::tests::check_dimensions_too_large ... ok
+test decoder::limits::tests::check_total_pixels ... ok
+test decoder::limits::tests::default_limits ... ok
+test decoder::limits::tests::no_limits ... ok
+test decoder::lossless::test::bit_read_error_test ... ok
+test decoder::lossless::test::bit_read_test ... ok
+test decoder::lossless_transform::coalesce_tests::coalesced_matches_per_block ... ok
+test decoder::vp8v2::coefficients::tests::complexity_layout ... ok
+test decoder::vp8v2::coefficients::tests::dequant_pair_dc_ac_indexing ... ok
+test decoder::vp8v2::coefficients::tests::non_zero_blocks_y2_dc_only ... ok
+test decoder::vp8v2::coefficients::tests::get_large_value_valid ... ok
+test decoder::vp8v2::coefficients::tests::mb_row_entry_default ... ok
+test decoder::vp8v2::coefficients::tests::prob_dct_cat_matches_common ... ok
+test decoder::vp8v2::coefficients::tests::wht_dc_only_broadcast ... ok
+test decoder::vp8v2::coefficients::tests::read_coefficients_all_zero ... ok
+test decoder::vp8v2::coefficients::tests::read_coefficients_first_one ... ok
+test decoder::vp8v2::coefficients::tests::zigzag_matches_common ... ok
+test decoder::vp8v2::coefficients::tests::read_coefficients_nonzero ... ok
+test decoder::vp8v2::context::tests::test_ensure_capacity_allocates ... ok
+test decoder::vp8v2::context::tests::test_ensure_capacity_grows ... ok
+test decoder::vp8v2::context::tests::test_ensure_capacity_no_filter ... ok
+test decoder::vp8v2::context::tests::test_ensure_capacity_reuses_allocation ... ok
+test decoder::vp8v2::context::tests::test_new_context_has_empty_buffers ... ok
+test decoder::vp8v2::header::tests::reject_bad_start_code ... ok
+test decoder::vp8v2::header::tests::accept_max_dimensions ... ok
+test decoder::vp8v2::header::tests::reject_empty_data ... ok
+test decoder::vp8v2::header::tests::reject_non_keyframe ... ok
+test decoder::vp8v2::header::tests::reject_too_short_for_frame_tag ... ok
+test decoder::lossless_transform_simd::tests::portable_add_green_matches_byte_oracle ... ok
+test decoder::vp8v2::header::tests::reject_truncated_multi_partition ... ok
+test decoder::vp8v2::header::tests::reject_truncated_partition ... ok
+test decoder::vp8v2::header::tests::reject_zero_dimensions ... ok
+test decoder::vp8v2::header::tests::reject_zero_height ... ok
+test decoder::vp8v2::header::tests::reject_zero_width ... ok
+test decoder::vp8v2::predict_fused::tests::test_border_extraction ... ok
+test decoder::vp8v2::predict_fused::tests::test_chroma_dc_prediction_to_cache ... ok
+test decoder::vp8v2::predict_fused::tests::test_luma_dc_prediction_to_cache ... ok
+test decoder::vp8v2::predict_fused::tests::test_luma_dc_with_residue ... ok
+test decoder::vp8v2::predict_fused::tests::test_luma_v_prediction_to_cache ... ok
+test decoder::lossless_transform::coalesce_tests::coalesced_matches_per_block_uniform ... ok
+test decoder::vp8v2::yuv_exact::tests::simd_tiers_identical_odd_widths ... ok
+test decoder::vp8v2::yuv_exact::tests::simd_tiers_produce_identical_output ... ok
+test decoder::yuv::tests::test_yuv_conversions ... ok
+test decoder::yuv::tests_simd::gamma_chroma_grayscale_is_128 ... ok
+test decoder::vp8v2::yuv_exact::tests::bit_exact_vs_libwebp_64x64_q75 ... ok
+test decoder::yuv::tests_simd::gamma_chroma_simd_matches_scalar ... ok
+test decoder::vp8v2::yuv_exact::tests::bit_exact_vs_libwebp_64x64_q75_rgba ... ok
+test decoder::yuv_fused::tests::fused_row_2uv_matches_scalar_reference ... ok
+test detect::probe_category_tests::probe_error_category_mapping ... ok
+test detect::tests::test_probe_not_webp ... ok
+test detect::tests::test_probe_too_short ... ok
+test detect::tests::test_quant_roundtrip ... ok
+test detect::tests::test_quant_to_quality_boundaries ... ok
+test encoder::alpha::tests::alpha_levels_mapping_matches_libwebp ... ok
+test encoder::alpha::tests::alpha_vp8l_operating_point_pinned ... ok
+test encoder::alpha::tests::filters_roundtrip_against_unfilter ... ok
+test encoder::alpha::tests::quantize_levels_noop_when_few_levels ... ok
+test encoder::alpha::tests::quantize_levels_preserves_min_max ... ok
+test encoder::api::encode_category_tests::encode_error_category_mapping ... ok
+test encoder::api::encode_category_tests::encode_io_error_is_io ... ok
+test encoder::api::tests::cost_model_variants_encode_and_decode ... ok
+test encoder::arithmetic::tests::test_arithmetic_encoder_hello ... ok
+test encoder::arithmetic::tests::test_arithmetic_encoder_short ... ok
+test encoder::arithmetic::tests::test_encoder_tree ... ok
+test encoder::arithmetic::tests::test_encoder_with_decoder ... ok
+test encoder::cost::tests::test_bit_cost ... ok
+test encoder::cost::tests::test_entropy_cost_table ... ok
+test encoder::cost::tests::test_estimate_residual_cost ... ok
+test encoder::cost::tests::test_lambda_calculation ... ok
+test decoder::vp8v2::yuv_exact::tests::bit_exact_vs_libwebp_odd_dimensions ... ok
+test encoder::cost::tests::test_level_fixed_costs ... ok
+test encoder::cost::tests::test_rd_score ... ok
+test encoder::fast_math::tests::test_cbrt ... ok
+test encoder::fast_math::tests::test_pow_basic ... ok
+test encoder::cost::tests::test_trellis_basic ... ok
+test encoder::fast_math::tests::test_pow_typical_values ... ok
+test encoder::fast_math::tests::test_round ... ok
+test encoder::fast_math::tests::test_roundf ... ok
+test encoder::psy::tests::test_masking_methods_correlate ... ok
+test encoder::psy::tests::test_psy_rd_cost_disabled ... ok
+test encoder::psy::tests::test_psy_rd_cost_energy_gain_no_penalty ... ok
+test encoder::psy::tests::test_psy_rd_cost_energy_loss ... ok
+test encoder::psy::tests::test_psy_rd_cost_scales_with_strength ... ok
+test encoder::psy::tests::test_satd_16x16_is_sum_of_4x4s ... ok
+test encoder::psy::tests::test_satd_4x4_flat_block ... ok
+test encoder::psy::tests::test_satd_4x4_noise_has_energy ... ok
+test encoder::quantize::tests::test_quantize_dequantize_block_all_zero ... ok
+test encoder::quantize::tests::test_quantize_dequantize_block_matches_separate ... ok
+test encoder::tables::fixed_costs_i4_perm_tests::audit_spot_checks ... ok
+test encoder::tables::fixed_costs_i4_perm_tests::permutation_matches_manual_lookup ... ok
+test encoder::validation::validation_category_tests::validation_error_category_is_invalid_parameters ... ok
+test encoder::vp8::residuals::token_buffer_tests::begin_mb_records_offsets_in_order ... ok
+test encoder::vp8::residuals::token_buffer_tests::emit_tokens_filtered_all_skipped_emits_nothing ... ok
+test encoder::vp8::residuals::token_buffer_tests::emit_tokens_filtered_drops_middle_mb ... ok
+test encoder::vp8::residuals::token_buffer_tests::emit_tokens_filtered_first_mb_skip ... ok
+test encoder::vp8::residuals::token_buffer_tests::emit_tokens_filtered_handles_last_mb_skip ... ok
+test encoder::vp8::residuals::token_buffer_tests::emit_tokens_filtered_skip_mask_all_kept_matches_full_emit ... ok
+test encoder::vp8::residuals::token_buffer_tests::empty_mb_span_is_handled ... ok
+test encoder::vp8l::backward_refs::tests::test_2d_neighborhood_codes ... ok
+test encoder::vp8l::backward_refs::tests::test_backward_refs_simple ... ok
+test encoder::vp8l::backward_refs::tests::test_distance_code_roundtrip ... ok
+test encoder::vp8l::backward_refs::tests::test_lz77_vs_rle ... ok
+test encoder::vp8l::backward_refs::tests::test_get_backward_references ... ok
+test encoder::vp8l::bitwriter::tests::test_write_14_bits ... ok
+test encoder::vp8l::bitwriter::tests::test_write_bits ... ok
+test encoder::vp8l::bitwriter::tests::test_write_multiple_bytes ... ok
+test encoder::vp8l::color_cache::tests::test_color_cache_collision ... ok
+test encoder::vp8l::color_cache::tests::test_color_cache_insert_lookup ... ok
+test encoder::vp8l::color_cache::tests::test_hash_determinism ... ok
+test encoder::vp8l::cost_model::tests::test_cost_manager_basic ... ok
+test encoder::vp8l::cost_model::tests::test_counts_to_bit_estimates ... ok
+test encoder::vp8l::cost_model::tests::test_div_round ... ok
+test encoder::vp8l::cost_model::tests::test_fast_log2 ... ok
+test encoder::vp8l::cost_model::tests::test_push_interval_small ... ok
+test encoder::vp8l::encode::palette_cache_ceiling_tests::palette_cache_bits_ceiling_is_pinned ... ok
+test encoder::vp8l::encode::tests::test_encode_gradient ... ok
+test encoder::vp8l::encode::tests::test_encode_simple ... ok
+test encoder::vp8l::encode::tests::test_encode_with_alpha ... ok
+test encoder::vp8l::encode::tests::test_generate_configs_m5_no_palette ... ok
+test encoder::vp8l::encode::tests::test_generate_configs_m5_palette ... ok
+test encoder::vp8l::encode::tests::test_generate_configs_m6_q100_brute ... ok
+test encoder::vp8l::encode::tests::test_generate_configs_m6_q100_no_palette ... ok
+test encoder::vp8l::encode::tests::test_generate_configs_single ... ok
+test encoder::vp8l::encode::tests::test_multi_config_palette_image ... ok
+test encoder::vp8l::encode::tests::test_palette_and_spatial_forced ... ok
+test encoder::vp8l::encode::tests::test_brute_force_all_modes ... ok
+test encoder::vp8l::encode::tests::test_sub_pixels ... ok
+test encoder::vp8l::entropy::tests::test_combined_cost_threshold ... ok
+test encoder::vp8l::encode::tests::test_palette_sorting_lexicographic ... ok
+test encoder::vp8l::entropy::tests::test_compute_histogram_cost ... ok
+test encoder::vp8l::entropy::tests::test_fast_slog2 ... ok
+test encoder::vp8l::entropy::tests::test_population_cost_trivial ... ok
+test encoder::vp8l::entropy::tests::test_population_cost_two_symbols ... ok
+test encoder::vp8l::hash_chain::tests::test_hash_deterministic ... ok
+test encoder::vp8l::hash_chain::tests::test_hash_chain_simple ... ok
+test encoder::vp8l::hash_chain::tests::test_left_extension ... ok
+test encoder::vp8l::hash_chain::tests::test_vector_mismatch ... ok
+test encoder::vp8l::histogram::tests::test_distance_codes ... ok
+test encoder::vp8l::histogram::tests::test_histogram_literal ... ok
+test encoder::vp8l::histogram::tests::test_length_codes ... ok
+test encoder::vp8l::histogram::tests::test_literal_alphabet_size ... ok
+test encoder::vp8l::huffman::tests::test_build_huffman_16_equal ... ok
+test encoder::vp8l::huffman::tests::test_build_huffman_single ... ok
+test encoder::vp8l::huffman::tests::test_build_huffman_skewed ... ok
+test encoder::vp8l::huffman::tests::test_build_huffman_two ... ok
+test encoder::vp8l::huffman::tests::test_build_huffman_uniform ... ok
+test encoder::vp8l::huffman::tests::test_canonical_codes ... ok
+test encoder::vp8l::meta_huffman::histo_bits_range_tests::histo_bits_9_is_preserved ... ok
+test encoder::vp8l::meta_huffman::tests::final_histograms_preserve_tile_counts_across_compaction ... ok
+test encoder::vp8l::meta_huffman::tests::final_histograms_skip_stranded_cluster ... ok
+test encoder::vp8l::meta_huffman::tests::test_build_tile_histograms ... ok
+test encoder::vp8l::meta_huffman::tests::test_cluster_identical ... ok
+test encoder::vp8l::meta_huffman::tests::test_single_histogram ... ok
+test encoder::vp8l::near_lossless::tests::test_add_green_to_blue_and_red ... ok
+test encoder::vp8l::near_lossless::tests::test_find_closest_discretized ... ok
+test encoder::vp8l::near_lossless::tests::test_find_closest_discretized_matches_libwebp ... ok
+test encoder::vp8l::near_lossless::tests::test_is_near ... ok
+test encoder::vp8l::near_lossless::tests::test_max_diff_between_pixels ... ok
+test encoder::vp8l::near_lossless::tests::test_max_quantization_from_quality ... ok
+test encoder::vp8l::near_lossless::tests::test_near_lossless_bits ... ok
+test encoder::vp8l::near_lossless::tests::test_near_lossless_component_basic ... ok
+test encoder::vp8l::near_lossless::tests::test_near_lossless_modifies_pixels ... ok
+test encoder::vp8l::near_lossless::tests::test_near_lossless_residual_reconstruct ... ok
+test encoder::vp8l::near_lossless::tests::test_near_lossless_residual_smooth ... ok
+test encoder::vp8l::near_lossless::tests::test_quality_100_is_noop ... ok
+test encoder::vp8l::near_lossless::tests::test_short_image_skipped ... ok
+test encoder::vp8l::near_lossless::tests::test_small_image_skipped ... ok
+test encoder::vp8l::transforms::tests::test_average2 ... ok
+test encoder::vp8l::transforms::tests::test_color_index_small_palette ... ok
+test encoder::vp8l::transforms::tests::test_color_index_too_many_colors ... ok
+test encoder::vp8l::near_lossless::tests::test_near_lossless_bounded_error ... ok
+test encoder::vp8l::transforms::tests::test_palette_bundle_16_colors ... ok
+test encoder::vp8l::transforms::tests::test_palette_bundle_2_colors ... ok
+test encoder::vp8l::transforms::tests::test_palette_sort_minimize_deltas ... ok
+test encoder::vp8l::transforms::tests::test_residual ... ok
+test encoder::vp8l::transforms::tests::test_subtract_green ... ok
+test encoder::zensim_target::tests::calibration_clamps_at_endpoints ... ok
+test encoder::zensim_target::tests::calibration_monotonic_per_bucket ... ok
+test encoder::zensim_target::tests::metrics_no_target ... ok
+test encoder::zensim_target::tests::target_builder ... ok
+test encoder::zensim_target::tests::target_default ... ok
+test exif_orientation::tests::empty_data ... ok
+test exif_orientation::tests::invalid_orientation_nine ... ok
+test exif_orientation::tests::invalid_orientation_zero ... ok
+test exif_orientation::tests::no_orientation_tag ... ok
+test exif_orientation::tests::normal_orientation ... ok
+test exif_orientation::tests::parse_big_endian ... ok
+test exif_orientation::tests::parity_with_zencodec_helper ... ok
+test exif_orientation::tests::parse_little_endian ... ok
+test exif_orientation::tests::parse_with_exif_prefix ... ok
+test exif_orientation::tests::truncated_header ... ok
+test mux::demux::tests::chunk_walk_advance_does_not_wrap_on_32bit ... ok
+test mux::demux::tests::truncated_anim_payload_does_not_panic ... ok
+test mux::error::mux_category_tests::mux_error_category_mapping ... ok
+test slice_reader::tests::io_seek_end_current_do_not_truncate ... ok
+test slice_reader::tests::io_seek_start_past_end_errors_instead_of_truncating ... ok
+test slice_reader::tests::seek_past_end_errors_instead_of_truncating ... ok
+test slice_reader::tests::set_position_clamps_instead_of_truncating ... ok
+test slice_reader::tests::take_and_peek_slice_reject_wrapping_length ... ok
+test decoder::vp8v2::yuv_exact::tests::streaming_matches_fullframe ... ok
+test common::prediction::tests::test_avg3 ... ok
+test common::transform::tests::idct_add_paths_agree ... ok
+test encoder::api::tests::write_webp_exif ... ok
+test common::transform::tests::ftransform_single_matches_libwebp_c ... ok
+test encoder::api::tests::write_webp ... ok
+test codec::tests::encode_memory_preflight_admits_within_budget ... ok
+test common::transform::tests::ftransform2_matches_libwebp_c ... ok
+test decoder::vp8v2::yuv_exact::tests::bench_vs_libwebp_512 ... ok
+test encoder::api::tests::roundtrip_libwebp ... ok
+
+test result: ok. 319 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.18s
+

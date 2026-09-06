@@ -1,0 +1,206 @@
+   Compiling zenwebp v0.5.0 (/Users/lilith/work/zen/zenwebp)
+warning: unused macro definition: `store_uv_16x4_impl`
+    --> src/decoder/loop_filter.rs:1463:14
+     |
+1463 | macro_rules! store_uv_16x4_impl {
+     |              ^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(unused_macros)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused macro definition: `store_q1q2_uv_16_impl`
+    --> src/decoder/loop_filter.rs:1481:14
+     |
+1481 | macro_rules! store_q1q2_uv_16_impl {
+     |              ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused macro definition: `planar_to_24b_helper`
+    --> src/decoder/yuv.rs:1902:14
+     |
+1902 | macro_rules! planar_to_24b_helper {
+     |              ^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> src/encoder/vp8/mode_selection.rs:1705:21
+     |
+1705 |                 let mut best_levels_zz = [0i16; 16];
+     |                     ----^^^^^^^^^^^^^^
+     |                     |
+     |                     help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `i4_index_order`
+    --> src/encoder/vp8/mode_selection.rs:1750:21
+     |
+1750 |                 let i4_index_order =
+     |                     ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_i4_index_order`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: type `InternalDecodeError` is more private than the item `apply_predictor_transform_0`
+   --> src/decoder/lossless_transform.rs:291:1
+    |
+291 | / pub fn apply_predictor_transform_0(
+292 | |     image_data: &mut [u8],
+293 | |     range: Range<usize>,
+294 | |     _width: usize,
+295 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `apply_predictor_transform_0` is reachable at visibility `pub`
+    |
+note: but type `InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: type `InternalDecodeError` is more private than the item `apply_predictor_transform_1`
+   --> src/decoder/lossless_transform.rs:307:1
+    |
+307 | / pub fn apply_predictor_transform_1(
+308 | |     image_data: &mut [u8],
+309 | |     range: Range<usize>,
+310 | |     _width: usize,
+311 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `apply_predictor_transform_1` is reachable at visibility `pub`
+    |
+note: but type `InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `InternalDecodeError` is more private than the item `apply_predictor_transform_2`
+   --> src/decoder/lossless_transform.rs:323:1
+    |
+323 | / pub fn apply_predictor_transform_2(
+324 | |     image_data: &mut [u8],
+325 | |     range: Range<usize>,
+326 | |     width: usize,
+327 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `apply_predictor_transform_2` is reachable at visibility `pub`
+    |
+note: but type `InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `InternalDecodeError` is more private than the item `apply_predictor_transform_3`
+   --> src/decoder/lossless_transform.rs:339:1
+    |
+339 | / pub fn apply_predictor_transform_3(
+340 | |     image_data: &mut [u8],
+341 | |     range: Range<usize>,
+342 | |     width: usize,
+343 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `apply_predictor_transform_3` is reachable at visibility `pub`
+    |
+note: but type `InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `InternalDecodeError` is more private than the item `apply_predictor_transform_4`
+   --> src/decoder/lossless_transform.rs:355:1
+    |
+355 | / pub fn apply_predictor_transform_4(
+356 | |     image_data: &mut [u8],
+357 | |     range: Range<usize>,
+358 | |     width: usize,
+359 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `apply_predictor_transform_4` is reachable at visibility `pub`
+    |
+note: but type `InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `InternalDecodeError` is more private than the item `apply_predictor_transform_6`
+   --> src/decoder/lossless_transform.rs:392:1
+    |
+392 | / pub fn apply_predictor_transform_6(
+393 | |     image_data: &mut [u8],
+394 | |     range: Range<usize>,
+395 | |     width: usize,
+396 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `apply_predictor_transform_6` is reachable at visibility `pub`
+    |
+note: but type `InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `InternalDecodeError` is more private than the item `apply_predictor_transform_8`
+   --> src/decoder/lossless_transform.rs:444:1
+    |
+444 | / pub fn apply_predictor_transform_8(
+445 | |     image_data: &mut [u8],
+446 | |     range: Range<usize>,
+447 | |     width: usize,
+448 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `apply_predictor_transform_8` is reachable at visibility `pub`
+    |
+note: but type `InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `InternalDecodeError` is more private than the item `apply_predictor_transform_9`
+   --> src/decoder/lossless_transform.rs:463:1
+    |
+463 | / pub fn apply_predictor_transform_9(
+464 | |     image_data: &mut [u8],
+465 | |     range: Range<usize>,
+466 | |     width: usize,
+467 | | ) -> Result<(), InternalDecodeError> {
+    | |____________________________________^ function `apply_predictor_transform_9` is reachable at visibility `pub`
+    |
+note: but type `InternalDecodeError` is only usable at visibility `pub(crate)`
+   --> src/decoder/internal_error.rs:17:1
+    |
+ 17 | pub(crate) enum InternalDecodeError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `idct_add_residue_and_clear_with_token` is never used
+    --> src/common/prediction.rs:1296:15
+     |
+1296 | pub(crate) fn idct_add_residue_and_clear_with_token<const N: usize>(
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `yuv_to_rgb_scalar` is never used
+    --> src/decoder/yuv.rs:2061:4
+     |
+2061 | fn yuv_to_rgb_scalar(y: u8, u: u8, v: u8) -> (u8, u8, u8) {
+     |    ^^^^^^^^^^^^^^^^^
+
+warning: `zenwebp` (lib) generated 15 warnings (run `cargo fix --lib -p zenwebp` to apply 2 suggestions)
+    Finished `release` profile [optimized] target(s) in 9.51s
+     Running tests/simd_dispatch_arch_parity.rs (target/release/deps/simd_dispatch_arch_parity-406684c1cd7e9634)
+
+running 16 tests
+test dequantize_block_dispatch_matches_scalar ... ok
+test dct4x4_dispatch_matches_scalar ... ok
+test idct4x4_dispatch_matches_scalar ... ok
+test ftransform_from_u8_4x4_dispatch_matches_scalar ... ok
+test is_flat_coeffs_dispatch_matches_scalar ... ok
+test quantize_block_dispatch_matches_scalar ... ok
+test quantize_dequantize_block_dispatch_matches_scalar ... ok
+test sse4x4_dispatch_matches_scalar_reference ... ok
+test sse4x4_with_residual_dispatch_matches_scalar ... ok
+test is_flat_source_16_dispatch_matches_scalar_reference ... ok
+test sse_8x8_chroma_dispatch_matches_scalar ... ok
+test sse_16x16_luma_dispatch_matches_scalar ... ok
+test tdisto_4x4_dispatch_matches_scalar_reference ... ok
+test tdisto_8x8_dispatch_matches_scalar_reference ... ok
+test tdisto_16x16_dispatch_matches_scalar_reference ... ok
+test tdisto_strided_minimal_rows_match_scalar ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
