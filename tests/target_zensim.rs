@@ -143,23 +143,17 @@ fn strict_undershoot_errors_on_unreachable_target() {
         .with_max_passes(1);
     let cfg = LossyConfig::new().with_method(4).with_target_zensim(target);
 
-    // Single-pass strict mode bypasses iteration entirely (max_passes=1
-    // ships the calibrated encode without measuring). To make strict-mode
-    // bite we need max_passes >= 2 so the loop runs and finalize() can
-    // check the floor. Use a 2-pass strict run instead.
-    let target2 = ZensimTarget::new(99.0)
-        .with_max_undershoot(Some(0.5))
-        .with_max_undershoot_ship(None) // disable lenient ship-band undershoot
-        .with_max_passes(2);
-    let cfg2 = LossyConfig::new()
-        .with_method(4)
-        .with_target_zensim(target2);
-    let _ = cfg; // suppress unused
-    let result = EncodeRequest::lossy(&cfg2, &rgb, PixelLayout::Rgb8, w, h).encode_with_metrics();
-    assert!(
-        result.is_err(),
-        "expected strict-mode error for unreachable target 99 on mixed content; got Ok"
-    );
+    for passes in [1, 2] {
+        let cfg = cfg
+            .clone()
+            .with_target_zensim(target.with_max_passes(passes));
+        let result =
+            EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h).encode_with_metrics();
+        assert!(
+            result.is_err(),
+            "strict undershoot must fail with {passes} pass(es)"
+        );
+    }
 }
 
 #[test]
@@ -346,11 +340,10 @@ fn target_zensim_accepts_rgba_input() {
         .encode_with_metrics()
         .expect("RGBA target_zensim encode should succeed");
     assert!(!bytes.is_empty(), "encoded bytes should be non-empty");
-    assert!(
-        m.targets_met,
-        "target_zensim should converge for the synthetic photo+alpha image (achieved={}, passes={})",
-        m.achieved_score, m.passes_used,
-    );
+    // This fixture overshoots (~89 for target 80). Keep the original
+    // quality floor, and distinguish success from actual band attainment.
+    assert!(m.achieved_score >= 79.5);
+    assert_eq!(m.targets_met, (79.5..=81.5).contains(&m.achieved_score));
     assert!(
         m.achieved_score.is_finite(),
         "achieved_score should be finite once iteration runs",
@@ -518,4 +511,53 @@ fn convergence_census_27_cells_k2_k3() {
          first-step correction looks mis-scaled",
         total / 2
     );
+}
+
+#[test]
+fn one_pass_reports_measured_score_and_missed_band() {
+    let (rgb, w, h) = mixed_content_256();
+    let cfg = LossyConfig::new()
+        .with_method(4)
+        .with_target_zensim(ZensimTarget::new(100.0).with_max_passes(1));
+    let (bytes, m) = EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h)
+        .encode_with_metrics()
+        .unwrap();
+    assert!(m.achieved_score.is_finite(), "one-pass score: {:?}", m);
+    assert_eq!(m.passes_used, 1);
+    assert_eq!(m.bytes, bytes.len());
+    assert!(m.achieved_score < 99.5, "fixture must miss the ship band");
+    assert!(
+        !m.targets_met,
+        "best-effort success is not target attainment"
+    );
+}
+
+#[test]
+fn quality_endpoint_stop_counts_only_executed_encodes() {
+    let (rgb, w, h) = mixed_content_256();
+    let cfg = LossyConfig::new()
+        .with_method(4)
+        .with_segments(1)
+        .with_target_zensim(ZensimTarget::new(100.0).with_max_passes(8));
+    let (_, m) = EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h)
+        .encode_with_metrics()
+        .unwrap();
+    assert!(m.achieved_score < 99.5, "fixture must miss the ship band");
+    assert_eq!(m.passes_used, 1, "q=100 cannot move upward");
+    assert!(!m.targets_met);
+}
+
+#[test]
+fn negative_target_keeps_original_scale() {
+    let (rgb, w, h) = mixed_content_256();
+    let cfg = LossyConfig::new()
+        .with_method(4)
+        .with_target_zensim(ZensimTarget::new(-10.0).with_max_passes(1));
+    cfg.validate()
+        .expect("finite negative targets are representable requests");
+    let (_, m) = EncodeRequest::lossy(&cfg, &rgb, PixelLayout::Rgb8, w, h)
+        .encode_with_metrics()
+        .unwrap();
+    assert!(m.achieved_score.is_finite());
+    assert_eq!(m.targets_met, (-10.5..=-8.5).contains(&m.achieved_score));
 }

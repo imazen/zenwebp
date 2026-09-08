@@ -57,6 +57,9 @@ magetypes = { version = "0.9.15" }
 rgb = { version = "0.8", optional = true, default-features = false, features = ["as-bytes"] }
 imgref = { version = "1.12", optional = true, default-features = false }
 zensim = { version = "0.2", optional = true }
+# Private experimental runtime: leave the calibrated legacy scorer untouched.
+zensim-candidate = { package = "zensim", version = "0.3.0", git = "https://github.com/imazen/zensim", rev = "6c7c14a300ace3b0e1631b754faf8bd99aebbcdf", optional = true, default-features = false, features = ["custom-profiles", "feature-regime-v2"] }
+zenpredict-serving = { package = "zenpredict", version = "0.2.0", git = "https://github.com/imazen/zenanalyze", rev = "05de3cbc44b19d8769077d99710b0146c761d6df", optional = true }
 # `zenanalyze-api` — the version-unifying feature contract (`Offer`, `Request`,
 # `Select`) and this crate's INTERCHANGE BOUNDARY, so a host on any `zenanalyze`
 # version can drive the classifier by handing it an `Offer`. See
@@ -128,7 +131,8 @@ yuv = "0.8"
 # Pareto sweep harness uses zenresize for size variants (Lanczos),
 # matching the project-wide resampling used elsewhere in zen* benches.
 zenresize = "0.3"
-# serde_json = "1"
+serde_json = "1"
+sha2 = "0.10"
 zenbench = { version = "0.1.2", features = ["criterion-compat"] }
 zensim = "0.2"
 zensim-regress = "0.3.0"
@@ -201,6 +205,8 @@ analyzer = ["dep:zenanalyze-api", "dep:zenanalyze"]
 # `std::env::var` calls. See `src/encoder/zensim_target.rs` for the
 # list of toggles.
 ablation = ["target-zensim"]
+# Private candidate binding for the existing phase-3 trace instrument.
+__zensim-research = ["ablation", "dep:zensim-candidate", "dep:zenpredict-serving"]
 # Expose advanced encoder tuning knobs (partition_limit, multi_pass_stats,
 # smooth_segment_map, sharp_yuv, cost_model). Gated because the default
 # public API surface keeps the codec's user contract minimal — Quality

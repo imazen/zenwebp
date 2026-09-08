@@ -16,6 +16,10 @@
 //!   <PHASE3_TRACE lines for this run>
 //!   ===RESULT=== achieved=... bytes=... passes=... met=...
 
+#[cfg(feature = "__zensim-research")]
+#[path = "zensim_candidate_probe.rs"]
+mod candidate_probe;
+
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -96,6 +100,9 @@ fn decode_png_rgb(path: &PathBuf) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 fn main() {
+    let mut candidate_out: Option<PathBuf> = None;
+    let mut fine_gap: Option<f32> = None;
+    let mut custom_variants = false;
     let mut images: Vec<PathBuf> = Vec::new();
     let mut target = 80.0f32;
     let mut max_overshoot = 1.5f32;
@@ -105,12 +112,15 @@ fn main() {
     let mut args = env::args().skip(1).collect::<Vec<_>>().into_iter();
     while let Some(a) = args.next() {
         match a.as_str() {
+            "--candidate-out" => candidate_out = Some(PathBuf::from(args.next().unwrap())),
+            "--fine-gap" => fine_gap = Some(args.next().unwrap().parse().unwrap()),
             "--image" => images.push(PathBuf::from(args.next().unwrap())),
             "--target" => target = args.next().unwrap().parse().unwrap(),
             "--max-overshoot" => max_overshoot = args.next().unwrap().parse().unwrap(),
             "--max-passes" => max_passes = args.next().unwrap().parse().unwrap(),
             "--method" => method = args.next().unwrap().parse().unwrap(),
             "--variants" => {
+                custom_variants = true;
                 variants = args
                     .next()
                     .unwrap()
@@ -127,6 +137,30 @@ fn main() {
         );
         std::process::exit(2);
     }
+    if let Some(out) = candidate_out {
+        assert!(
+            images.len() == 1 && !custom_variants,
+            "candidate mode requires one image and no --variants"
+        );
+        #[cfg(feature = "__zensim-research")]
+        candidate_probe::run(
+            &images[0],
+            &out,
+            target,
+            max_overshoot,
+            max_passes,
+            method,
+            fine_gap,
+        )
+        .expect("candidate probe failed");
+        #[cfg(not(feature = "__zensim-research"))]
+        {
+            let _ = out;
+            panic!("requires __zensim-research");
+        }
+        return;
+    }
+    assert!(fine_gap.is_none(), "--fine-gap requires --candidate-out");
     eprintln!(
         "zensim_phase3_trace: target={target} max_overshoot={max_overshoot} max_passes={max_passes} method={method}"
     );

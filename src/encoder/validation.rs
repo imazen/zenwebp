@@ -261,12 +261,12 @@ pub const PARTITION_LIMIT_RANGE: RangeInclusive<u8> = 0..=100;
 /// upper bound (80 dB) reflects libwebp's documented sane cap.
 pub const TARGET_PSNR_RANGE: RangeInclusive<f32> = 0.0..=80.0;
 /// Valid range for `target_zensim.target` (zensim score; same scale as
-/// the metric's own 0..=100 output).
+/// the metric output, including finite negative scores).
 ///
 /// Only available when the unstable `target-zensim` cargo feature is
 /// enabled.
 #[cfg(feature = "target-zensim")]
-pub const TARGET_ZENSIM_RANGE: RangeInclusive<f32> = 0.0..=100.0;
+pub const TARGET_ZENSIM_RANGE: RangeInclusive<f32> = f32::MIN..=100.0;
 /// Valid range for `near_lossless`. 100 = off, 0 = max preprocessing
 /// (libwebp's `WebPConfig.near_lossless`).
 pub const NEAR_LOSSLESS_RANGE: RangeInclusive<u8> = 0..=100;

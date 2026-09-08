@@ -2,6 +2,19 @@
 
 ### [Unreleased]
 
+#### Targeting (2026-09-08)
+- `target-zensim`: measure one-pass encodes, enforce their strict undershoot
+  limit, count only completed full encodes, and report `targets_met` from the
+  actual ship band. Candidate selection respects strict floors before the ship
+  band. Best-effort overshoots and misses may return `Ok` with this flag false.
+- Accept finite negative target scores without clamping the score scale.
+- Hidden `__zensim-research` binds an exact complete Rust bake to the existing
+  scalar/segment targeting loop and phase-3 trace driver. Cached binned maps,
+  neutral controls, actual segment quantizers and independently checked output
+  artifacts are experimental; this does not replace the calibrated legacy
+  scorer or the separate recompress Profile A workspace. See
+  `docs/zensim-candidate-binding-2026-09-08.md`.
+
 #### Packaging
 - Fixed `include` list: `LICENSE-AGPL3` and `LICENSE-COMMERCIAL` were missing from the published tarball (typo `LICENSE-AGPL` did not match the actual filename). Both license files now ship correctly.
 - `zenwebp-recompress`: added `exclude` list to drop `benchmarks/`, `docs/`, `scripts/`, `tests/`, and `DESIGN.md` from the published tarball.

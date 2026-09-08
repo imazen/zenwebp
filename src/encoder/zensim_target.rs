@@ -125,7 +125,8 @@ pub struct ZensimTarget {
     pub max_undershoot: Option<f32>,
 
     /// Iteration budget. `1` = single-pass (no correction; behaves like a
-    /// regular encode at the calibrated starting q). `2` = default; one
+    /// regular encode at the calibrated starting q, followed by measurement
+    /// and the strict undershoot check). `2` = default; one
     /// initial encode plus one correction pass.
     pub max_passes: u8,
 }
@@ -200,14 +201,13 @@ impl ZensimTarget {
 /// Outcome of a target-zensim encode, returned alongside the WebP bytes
 /// from [`EncodeRequest::encode_with_metrics`](super::api::EncodeRequest::encode_with_metrics).
 ///
-/// `targets_met` is `false` when:
-/// - the iteration ran (target_zensim was set with the feature enabled), AND
-/// - `achieved_score < target.target`, AND
-/// - `max_undershoot.is_some()` AND `target - achieved > max_undershoot.unwrap()`
+/// With targeting enabled, `targets_met` reports membership in the configured
+/// ship band: `target - max_undershoot_ship.unwrap_or(0)` through
+/// `target + max_overshoot.unwrap_or(infinity)`. Best-effort encodes may return
+/// `Ok` with this flag false. The independent `max_undershoot` error threshold
+/// applies to every budget, including one pass.
 ///
-/// In all other cases — including configs without `target_zensim`, configs
-/// where the feature is compiled out, and best-effort runs that landed
-/// below target — `targets_met` is `true`.
+/// Without an active target, [`Self::no_target`] returns a true flag and NaN score.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ZensimEncodeMetrics {
@@ -222,7 +222,7 @@ pub struct ZensimEncodeMetrics {
     /// Encoded WebP byte count.
     pub bytes: usize,
 
-    /// Whether the strictness contract was honored. See struct docs.
+    /// Whether the measured score is in the ship band. See struct docs.
     pub targets_met: bool,
 }
 
@@ -507,6 +507,10 @@ const PHASE3_FINE_GAP_DEFAULT: f32 = 0.5;
 // Iteration loop (gated on the `target-zensim` feature)
 // ============================================================================
 
+#[cfg(feature = "__zensim-research")]
+#[path = "zensim_candidate.rs"]
+mod candidate;
+
 #[cfg(feature = "target-zensim")]
 pub(crate) mod iteration {
     use super::*;
@@ -516,6 +520,12 @@ pub(crate) mod iteration {
     use alloc::format;
     use alloc::vec::Vec;
     use whereat::{At, ResultAtExt, at};
+
+    pub(super) enum SpatialMap {
+        Pixels(Vec<f32>),
+        #[cfg(feature = "__zensim-research")]
+        Macroblocks(Vec<f32>),
+    }
 
     /// Result of running the closed-loop iteration: bytes + metrics, or
     /// an error if a hard constraint was violated. Carries `At<EncodeError>`
@@ -709,9 +719,53 @@ pub(crate) mod iteration {
                 return Err(at!(EncodeError::TargetZensimUnsupportedLayout(other)));
             }
         }
+        #[cfg(feature = "__zensim-research")]
+        let candidate_config = super::candidate::Config::from_env(layout, width, height)?;
+        #[cfg(feature = "__zensim-research")]
+        let research_seed = candidate_config.as_ref().map(|c| c.seed_q);
+        #[cfg(not(feature = "__zensim-research"))]
+        let research_seed: Option<f32> = None;
+        #[cfg(feature = "__zensim-research")]
+        let research_mode = candidate_config.as_ref().map(|c| c.mode.as_str());
+        #[cfg(not(feature = "__zensim-research"))]
+        let research_mode: Option<&str> = None;
+        #[cfg(feature = "__zensim-research")]
+        let mut candidate_measurement = candidate_config
+            .as_ref()
+            .map(|c| super::candidate::Measurement::new(c, pixels, width, height))
+            .transpose()?;
+        let legacy = if research_seed.is_none() {
+            let z = zensim::Zensim::new(zensim::ZensimProfile::latest());
+            let pre =
+                build_source_reference(&z, pixels, layout, width, height).ok_or_else(|| {
+                    at!(EncodeError::InvalidBufferSize(
+                        "zensim precompute_reference failed (image too small?)".into()
+                    ))
+                })?;
+            Some((z, pre))
+        } else {
+            None
+        };
+        #[allow(unused_mut)]
+        let mut measure = |bytes: &[u8],
+                           q,
+                           stats: &crate::encoder::api::EncodeStats,
+                           diag: &EncodeDiagnostics,
+                           overrides,
+                           encode_seconds|
+         -> Result<(f32, SpatialMap), At<EncodeError>> {
+            #[cfg(feature = "__zensim-research")]
+            if let Some(measurement) = &mut candidate_measurement {
+                return measurement.measure(bytes, q, stats, diag, overrides, encode_seconds);
+            }
+            let _ = (q, stats, diag, overrides, encode_seconds);
+            let (z, pre) = legacy.as_ref().expect("legacy scorer without candidate");
+            let (score, map) = measure_score_and_diffmap(z, pre, bytes, layout, width, height)?;
+            Ok((score, SpatialMap::Pixels(map)))
+        };
         // 1. Detect bucket from a quick classifier pass on the source.
         // Skipped entirely when the naive-starting-q ablation is on.
-        let bucket = if ablate_naive_starting_q() {
+        let bucket = if research_seed.is_some() || ablate_naive_starting_q() {
             None
         } else {
             detect_bucket(pixels, layout, width, height)
@@ -728,7 +782,7 @@ pub(crate) mod iteration {
             .ok()
             .and_then(|v| v.parse::<f32>().ok())
             .filter(|q| q.is_finite() && *q > 0.0 && *q <= 100.0);
-        let mut q = if let Some(q0) = census_q0 {
+        let mut q = if let Some(q0) = research_seed.or(census_q0) {
             q0
         } else if ablate_naive_starting_q() {
             // Chunk C ablation: skip per-bucket lookup, use a single ramp.
@@ -770,9 +824,11 @@ pub(crate) mod iteration {
         // also captures the encoder's per-MB segment_map via the internal
         // `EncodeDiagnostics` struct so Phase 3 can aggregate the diffmap
         // per real k-means segment instead of a 2x2 spatial proxy.
+        let encode_start = std::time::Instant::now();
         let (bytes0, stats0, diag0) = encode_at_with_diagnostics(
             cfg, q, false, None, pixels, layout, width, height, stop, progress,
         )?;
+        let encode_seconds = encode_start.elapsed().as_secs_f64();
         let max_passes = target.max_passes.max(1);
 
         if trace_phase3() {
@@ -787,31 +843,12 @@ pub(crate) mod iteration {
             );
         }
 
-        if max_passes <= 1 {
-            return Ok((
-                bytes0.clone(),
-                stats0.clone(),
-                ZensimEncodeMetrics {
-                    achieved_score: f32::NAN,
-                    passes_used: 1,
-                    bytes: bytes0.len(),
-                    targets_met: true,
-                },
-            ));
-        }
-
         // 4. Measure pass 0 with per-pixel diffmap (used by Phase 3 if
         // segments are active). The reference and the decoded probe
         // both go through the same layout-aware path so the pair is
         // measured consistently (RGB→RGB, RGBA→RGBA with deterministic
         // noise compositing).
-        let z = zensim::Zensim::new(zensim::ZensimProfile::latest());
-        let pre = build_source_reference(&z, pixels, layout, width, height).ok_or_else(|| {
-            at!(EncodeError::InvalidBufferSize(
-                "zensim precompute_reference failed (image too small?)".into(),
-            ))
-        })?;
-        let (score0, dm0) = measure_score_and_diffmap(&z, &pre, &bytes0, layout, width, height)?;
+        let (score0, dm0) = measure(&bytes0, q, &stats0, &diag0, None, encode_seconds)?;
 
         if trace_phase3() {
             eprintln!(
@@ -833,7 +870,7 @@ pub(crate) mod iteration {
         };
 
         // Already in band? Ship pass 0.
-        if in_band(score0, &target) {
+        if max_passes == 1 || (in_band(score0, &target) && above_failure_floor(score0, &target)) {
             return finalize(best, 1, &target);
         }
 
@@ -848,7 +885,8 @@ pub(crate) mod iteration {
         // Chunk A ablation: when [`AblationToggles::disable_phase3`] is
         // set, force the global-q fallback path even when segments are
         // active.
-        let per_segment_enabled = !ablate_disable_phase3()
+        let per_segment_enabled = research_mode != Some("scalar")
+            && !ablate_disable_phase3()
             && diag0.num_segments > 1
             && !diag0.segment_map.is_empty()
             && diag0.mb_width > 0
@@ -904,6 +942,7 @@ pub(crate) mod iteration {
         };
         #[cfg(not(feature = "ablation"))]
         let phase3_fine_gap: f32 = super::PHASE3_FINE_GAP_DEFAULT;
+        let mut passes_used = 1;
         for pass in 1..max_passes {
             let abs_gap = (target.target - last_score).abs();
             let use_per_segment =
@@ -951,7 +990,14 @@ pub(crate) mod iteration {
                     );
                 }
                 // Keep q the same when doing per-segment correction.
-                (last_q, Some(dec.overrides))
+                (
+                    last_q,
+                    Some(if research_mode == Some("neutral") {
+                        [0; 4]
+                    } else {
+                        dec.overrides
+                    }),
+                )
             } else {
                 let nq = compute_next_q(last_q, last_score, prev_probe, &target);
                 if trace_phase3() {
@@ -974,7 +1020,8 @@ pub(crate) mod iteration {
                 Some(o) => o != cum_overrides,
                 None => false,
             };
-            if !q_moved && !overrides_moved {
+            let neutral_control = use_per_segment && research_mode == Some("neutral");
+            if !q_moved && !overrides_moved && !neutral_control {
                 break;
             }
 
@@ -982,7 +1029,8 @@ pub(crate) mod iteration {
             // amortizes across passes. Chunk D ablation: leave it at the
             // user's LossyConfig value when
             // [`AblationToggles::no_multi_pass_stats`] is set.
-            let mps = !ablate_no_multi_pass_stats();
+            let mps = research_mode.is_none() && !ablate_no_multi_pass_stats();
+            let encode_start = std::time::Instant::now();
             let (bytes_n, stats_n, diag_n) = encode_at_with_diagnostics(
                 cfg,
                 next_q,
@@ -995,9 +1043,16 @@ pub(crate) mod iteration {
                 stop,
                 progress,
             )?;
-            let (score_n, dm_n) =
-                measure_score_and_diffmap(&z, &pre, &bytes_n, layout, width, height)?;
-            let passes_used = pass + 1;
+            let encode_seconds = encode_start.elapsed().as_secs_f64();
+            let (score_n, dm_n) = measure(
+                &bytes_n,
+                next_q,
+                &stats_n,
+                &diag_n,
+                next_overrides,
+                encode_seconds,
+            )?;
+            passes_used += 1;
 
             if trace_phase3() {
                 eprintln!(
@@ -1026,7 +1081,7 @@ pub(crate) mod iteration {
                 &target,
             );
 
-            if in_band(score_n, &target) {
+            if in_band(score_n, &target) && above_failure_floor(score_n, &target) {
                 return finalize(best, passes_used, &target);
             }
 
@@ -1050,7 +1105,7 @@ pub(crate) mod iteration {
             last_diag = diag_n;
         }
 
-        finalize(best, max_passes, &target)
+        finalize(best, passes_used, &target)
     }
 
     struct Candidate {
@@ -1066,7 +1121,111 @@ pub(crate) mod iteration {
         seg_overrides: Option<[i8; 4]>,
     }
 
+    #[cfg(test)]
+    mod selection_regression {
+        use super::*;
+        #[cfg(feature = "__zensim-research")]
+        #[test]
+        fn integral_map_matches_pixels_on_clipped_macroblocks() {
+            let (width, height) = (21u32, 19u32);
+            let values: Vec<f32> = (0..width * height).map(|i| ((i * 7) % 13) as f32).collect();
+            let diag = EncodeDiagnostics {
+                mb_width: 2,
+                mb_height: 2,
+                num_segments: 2,
+                segment_map: vec![0, 1, 1, 0],
+            };
+            let mut sums = vec![0.0f32; 4];
+            for y in 0..height as usize {
+                for x in 0..width as usize {
+                    sums[(y / 16) * 2 + x / 16] += values[y * width as usize + x];
+                }
+            }
+            let target = ZensimTarget::new(80.0);
+            let pixel = next_segment_overrides(
+                [0; 4],
+                &SpatialMap::Pixels(values),
+                width,
+                height,
+                &diag,
+                79.0,
+                &target,
+            );
+            let integral = next_segment_overrides(
+                [0; 4],
+                &SpatialMap::Macroblocks(sums),
+                width,
+                height,
+                &diag,
+                79.0,
+                &target,
+            );
+            assert_eq!(
+                integral.counts.iter().sum::<u64>(),
+                u64::from(width * height)
+            );
+            assert_eq!(integral.counts, pixel.counts);
+            assert_eq!(integral.means, pixel.means);
+            assert_eq!(integral.overrides, pixel.overrides);
+        }
+
+        #[test]
+        fn hard_floor_precedes_lenient_ship_band() {
+            let make = |score| Candidate {
+                bytes: vec![0; 100],
+                stats: Default::default(),
+                score,
+                q: 80.,
+                seg_overrides: None,
+            };
+            let target = ZensimTarget::new(80.).with_max_undershoot(Some(0.1));
+            let chosen = pick_best(make(85.), make(79.8), &target);
+            assert_eq!(chosen.score, 85.);
+        }
+
+        #[test]
+        fn accepted_undershoot_beats_overshoot_outside_ship_band() {
+            let make = |score, size| Candidate {
+                bytes: vec![0; size],
+                stats: Default::default(),
+                score,
+                q: 80.0,
+                seg_overrides: None,
+            };
+            let target = ZensimTarget::new(80.0);
+            let chosen = pick_best(make(85.0, 100), make(79.8, 90), &target);
+            assert_eq!(chosen.score, 79.8);
+            assert!(in_band(chosen.score, &target));
+        }
+    }
+
+    fn above_failure_floor(score: f32, target: &ZensimTarget) -> bool {
+        target
+            .max_undershoot
+            .is_none_or(|slack| score >= target.target - slack)
+    }
+
     fn pick_best(prev: Candidate, cand: Candidate, target: &ZensimTarget) -> Candidate {
+        match (
+            above_failure_floor(prev.score, target),
+            above_failure_floor(cand.score, target),
+        ) {
+            (false, true) => return cand,
+            (true, false) => return prev,
+            _ => {}
+        }
+        match (in_band(prev.score, target), in_band(cand.score, target)) {
+            (false, true) => return cand,
+            (true, false) => return prev,
+            (true, true) => {
+                return if cand.bytes.len() < prev.bytes.len() {
+                    cand
+                } else {
+                    prev
+                };
+            }
+            (false, false) => {}
+        }
         let prev_feas = prev.score >= target.target;
         let cand_feas = cand.score >= target.target;
         match (prev_feas, cand_feas) {
@@ -1165,10 +1324,7 @@ pub(crate) mod iteration {
                 best.score, target.target, slack, passes_used,
             ))));
         }
-        let targets_met = best.score >= target.target
-            || target
-                .max_undershoot
-                .is_none_or(|t| (target.target - best.score) <= t);
+        let targets_met = in_band(best.score, target);
         let bytes_len = best.bytes.len();
         Ok((
             best.bytes,
@@ -1402,7 +1558,7 @@ pub(crate) mod iteration {
 
     fn next_segment_overrides(
         cum: [i8; 4],
-        diffmap: &[f32],
+        diffmap: &SpatialMap,
         width: u32,
         height: u32,
         diag: &EncodeDiagnostics,
@@ -1439,9 +1595,9 @@ pub(crate) mod iteration {
         let use_quadrant = super::ablation_runtime::USE_QUADRANT_PROXY.with(|c| c.get());
         #[cfg(not(feature = "ablation"))]
         let use_quadrant = false;
-        if use_quadrant {
+        if let (true, SpatialMap::Pixels(pixels)) = (use_quadrant, diffmap) {
             let q_overrides =
-                next_segment_overrides_quadrant_proxy(cum, diffmap, width, height, score, target);
+                next_segment_overrides_quadrant_proxy(cum, pixels, width, height, score, target);
             return OverrideDecision {
                 overrides: q_overrides,
                 means: [0.0; 4],
@@ -1490,15 +1646,24 @@ pub(crate) mod iteration {
                 if seg >= n {
                     continue;
                 }
-                let mut block_sum = 0.0f64;
-                let mut block_count = 0u64;
-                for py in py0..py1 {
-                    let row = &diffmap[py * w + px0..py * w + px1];
-                    for &v in row {
-                        block_sum += v as f64;
-                        block_count += 1;
+                let (block_sum, block_count) = match diffmap {
+                    SpatialMap::Pixels(values) => {
+                        let mut sum = 0.0f64;
+                        let mut count = 0u64;
+                        for py in py0..py1 {
+                            for &v in &values[py * w + px0..py * w + px1] {
+                                sum += v as f64;
+                                count += 1;
+                            }
+                        }
+                        (sum, count)
                     }
-                }
+                    #[cfg(feature = "__zensim-research")]
+                    SpatialMap::Macroblocks(values) => (
+                        f64::from(values[mb_y * mb_w + mb_x]),
+                        ((px1 - px0) * (py1 - py0)) as u64,
+                    ),
+                };
                 if block_count > 0 {
                     sum[seg] += block_sum;
                     counts[seg] += block_count;

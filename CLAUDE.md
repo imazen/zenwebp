@@ -84,6 +84,30 @@ Calibration is **per content class** (photo/screen/line-art/mixed) in
 `benchmarks/calibration_2026-05-28.md`; raw CSVs + corpus on `/mnt/v`. Mixed is
 thin (~10 source refs) — weakest table; the size guard keeps it correct.
 
+## Complete candidate target binding (2026-09-08)
+
+The opt-in `__zensim-research` feature binds an exact bake through the public
+Rust `BakeScorer` surface, using private `zensim-candidate` / `zenpredict-serving`
+aliases pinned in Cargo.lock. This leaves registry zensim 0.2 and the nested
+recompress Profile A calibration intact. No candidate runtime type crosses the
+public WebP API. The zenanalyze Offer source-unification rule below is unchanged.
+
+Owner: `src/encoder/zensim_target.rs` and its private `zensim_candidate.rs`.
+Run the existing `zensim_phase3_trace` example with `--candidate-out <fresh>`;
+explicit `ZENWEBP_ZQ_BAKE`, `ZENWEBP_ZQ_START_Q`, `ZENWEBP_ZQ_SPATIAL` and
+`ZENSIM_FORMULA_REV=1` are required. Optional fresh `ZENWEBP_ZQ_TRACE_DIR` records
+all probes. Only opaque packed sRGB8 is covered by this experiment; legacy RGBA
+measurement retains its compositing behavior. The candidate map contains absolute
+16x16 block integrals, including clipped edge blocks, from complete-model cached
+attribution. Unsupported spatial terms/gates fail explicitly.
+
+`targets_met` now describes the actual ship band, including upper overshoot;
+`Ok` alone means only that the failure threshold was honored. One-shot targeting
+includes a decode/comparison and strict check. `passes_used` is full encodes
+actually executed. Negative targets keep their original scale. Registration:
+`docs/zensim-candidate-binding-2026-09-08.md`. Binding is not model qualification
+or proof that the existing segment policy improves matched RD.
+
 ## zenanalyze-api is the interchange boundary (owner directive 2026-08-28, corrected)
 
 > "Zenanalyze-api should be the sole contract and intermediary so different

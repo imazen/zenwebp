@@ -6,35 +6,35 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenwebp.txt 973 lines (supported surface) | zenwebp.features.txt 67 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,mode_debug,pixel-types,std,target-zensim,testable_dispatch) | zenwebp.internal.txt 966 lines (1154 hidden + 265 excluded-feature)
+# files: zenwebp.txt 985 lines (supported surface) | zenwebp.features.txt 83 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,mode_debug,pixel-types,std,target-zensim,testable_dispatch) | zenwebp.internal.txt 975 lines (1167 hidden + 270 excluded-feature)
 
 ## summary
 #
 #   pub modules                                17
 #   pub types (struct/enum/trait/alias)        83
-#   pub consts/statics                         18
+#   pub consts/statics                         19
 #   free functions                             78
 #   inherent methods                          276
-#   struct fields                             271
-#   enum variants                             192
+#   struct fields                             278
+#   enum variants                             196
 #   re-exports                                 15
 #   trait roster entries (type × trait)       179
 #   auto-trait-complete types                  42
 #   auto-trait exceptions                      13
 #
 # per-module pub lines:
-#   (root)                          320
+#   (root)                          323
 #   decoder                          95
 #   detect                           25
-#   encoder                         283
+#   encoder                         290
 #   heuristics                       14
 #   metadata                         10
-#   mux                             135
+#   mux                             137
 #   oneshot                          16
 #   pixel                            11
 #   zencodec                         41
 
-## items (903 lines)
+## items (915 lines)
 
 pub mod zenwebp
 pub use EncoderConfig
@@ -68,7 +68,7 @@ pub decoder::DecodeError::InvalidChunkSize
 pub decoder::DecodeError::InvalidColorCacheBits(u8)
 pub decoder::DecodeError::InvalidCompressionMethod
 pub decoder::DecodeError::InvalidParameter(alloc::string::String)
-pub decoder::DecodeError::IoError(core::io::error::Error)
+pub decoder::DecodeError::IoError(std::io::error::Error)
 pub decoder::DecodeError::LosslessSignatureInvalid(u8)
 pub decoder::DecodeError::LumaPredictionModeInvalid(i8)
 pub decoder::DecodeError::MemoryLimitExceeded
@@ -336,6 +336,9 @@ pub fn encoder::analysis::content_type_to_tuning(encoder::analysis::classifier::
 pub fn encoder::analysis::forward_dct_4x4(&[u8], &[u8], usize, usize) -> [i16; 16] [also: encoder::analysis::histogram]
 pub fn encoder::analysis::smooth_segment_map(&mut [u8], usize, usize) [also: encoder::analysis::segment]
 pub mod encoder::validation
+pub encoder::validation::ValidationError::AlphaEffortOutOfRange
+pub encoder::validation::ValidationError::AlphaEffortOutOfRange::valid: core::ops::range::RangeInclusive<u8>
+pub encoder::validation::ValidationError::AlphaEffortOutOfRange::value: u8
 pub encoder::validation::ValidationError::AlphaQualityOutOfRange
 pub encoder::validation::ValidationError::AlphaQualityOutOfRange::valid: core::ops::range::RangeInclusive<u8>
 pub encoder::validation::ValidationError::AlphaQualityOutOfRange::value: u8
@@ -373,6 +376,7 @@ pub encoder::validation::ValidationError::TargetMutuallyExclusive::second: &'sta
 pub encoder::validation::ValidationError::TargetPsnrOutOfRange
 pub encoder::validation::ValidationError::TargetPsnrOutOfRange::valid: core::ops::range::RangeInclusive<f32>
 pub encoder::validation::ValidationError::TargetPsnrOutOfRange::value: f32
+pub const encoder::validation::ALPHA_EFFORT_RANGE: core::ops::range::RangeInclusive<u8>
 pub const encoder::validation::ALPHA_QUALITY_RANGE: core::ops::range::RangeInclusive<u8>
 pub const encoder::validation::FILTER_SHARPNESS_RANGE: core::ops::range::RangeInclusive<u8>
 pub const encoder::validation::FILTER_STRENGTH_RANGE: core::ops::range::RangeInclusive<u8>
@@ -389,7 +393,7 @@ pub encoder::EncodeError::Cancelled(enough::reason::StopReason)
 pub encoder::EncodeError::IccSynthesisUnavailable(alloc::string::String)
 pub encoder::EncodeError::InvalidBufferSize(alloc::string::String)
 pub encoder::EncodeError::InvalidDimensions
-pub encoder::EncodeError::IoError(core::io::error::Error)
+pub encoder::EncodeError::IoError(std::io::error::Error)
 pub encoder::EncodeError::LimitExceeded(zencodec::limits::LimitKind, alloc::string::String)
 pub encoder::EncodeError::Partition0Overflow
 pub encoder::EncodeError::Partition0Overflow::max: u32
@@ -416,6 +420,9 @@ pub encoder::Preset::Icon
 pub encoder::Preset::Photo
 pub encoder::Preset::Picture
 pub encoder::Preset::Text
+pub encoder::ValidationError::AlphaEffortOutOfRange
+pub encoder::ValidationError::AlphaEffortOutOfRange::valid: core::ops::range::RangeInclusive<u8>
+pub encoder::ValidationError::AlphaEffortOutOfRange::value: u8
 pub encoder::ValidationError::AlphaQualityOutOfRange
 pub encoder::ValidationError::AlphaQualityOutOfRange::valid: core::ops::range::RangeInclusive<u8>
 pub encoder::ValidationError::AlphaQualityOutOfRange::value: u8
@@ -462,7 +469,7 @@ pub encoder::ClassifierDiag::low_frac: f32
 pub encoder::ClassifierDiag::uniformity: f32
 pub fn EncodeRequest<'a>::encode(self) -> EncodeResult<alloc::vec::Vec<u8>>
 pub fn EncodeRequest<'a>::encode_into(self, &mut alloc::vec::Vec<u8>) -> EncodeResult<()>
-pub fn EncodeRequest<'a>::encode_to<W: core::io::write::Write>(self, W) -> EncodeResult<()>
+pub fn EncodeRequest<'a>::encode_to<W: std::io::Write>(self, W) -> EncodeResult<()>
 pub fn EncodeRequest<'a>::encode_with_metrics(self) -> EncodeResult<(alloc::vec::Vec<u8>, super::zensim_target::ZensimEncodeMetrics)>
 pub fn EncodeRequest<'a>::encode_with_stats(self) -> EncodeResult<(alloc::vec::Vec<u8>, encoder::EncodeStats)>
 pub fn EncodeRequest<'a>::lossless(&'a config::LosslessConfig, &'a [u8], PixelLayout, u32, u32) -> Self
@@ -541,6 +548,8 @@ pub mux::DisposeMethod::None
 #[non_exhaustive] pub enum mux::MuxError
 pub mux::MuxError::DecodeError(DecodeError)
 pub mux::MuxError::EncodeError(EncodeError)
+pub mux::MuxError::FrameDurationTooLarge
+pub mux::MuxError::FrameDurationTooLarge::duration_ms: u32
 pub mux::MuxError::FrameOutOfBounds
 pub mux::MuxError::FrameOutOfBounds::index: u32
 pub mux::MuxError::FrameOutOfBounds::total: u32
@@ -743,7 +752,7 @@ pub DecodeError::InvalidChunkSize
 pub DecodeError::InvalidColorCacheBits(u8)
 pub DecodeError::InvalidCompressionMethod
 pub DecodeError::InvalidParameter(alloc::string::String)
-pub DecodeError::IoError(core::io::error::Error)
+pub DecodeError::IoError(std::io::error::Error)
 pub DecodeError::LosslessSignatureInvalid(u8)
 pub DecodeError::LumaPredictionModeInvalid(i8)
 pub DecodeError::MemoryLimitExceeded
@@ -761,7 +770,7 @@ pub EncodeError::Cancelled(enough::reason::StopReason)
 pub EncodeError::IccSynthesisUnavailable(alloc::string::String)
 pub EncodeError::InvalidBufferSize(alloc::string::String)
 pub EncodeError::InvalidDimensions
-pub EncodeError::IoError(core::io::error::Error)
+pub EncodeError::IoError(std::io::error::Error)
 pub EncodeError::LimitExceeded(zencodec::limits::LimitKind, alloc::string::String)
 pub EncodeError::Partition0Overflow
 pub EncodeError::Partition0Overflow::max: u32
@@ -786,6 +795,9 @@ pub Preset::Photo
 pub Preset::Picture
 pub Preset::Text
 #[non_exhaustive] pub enum ValidationError [also: encoder, encoder::validation]
+pub ValidationError::AlphaEffortOutOfRange
+pub ValidationError::AlphaEffortOutOfRange::valid: core::ops::range::RangeInclusive<u8>
+pub ValidationError::AlphaEffortOutOfRange::value: u8
 pub ValidationError::AlphaQualityOutOfRange
 pub ValidationError::AlphaQualityOutOfRange::valid: core::ops::range::RangeInclusive<u8>
 pub ValidationError::AlphaQualityOutOfRange::value: u8
@@ -847,7 +859,7 @@ pub fn DecodeRequest<'a>::stride(self, u32) -> Self
 pub struct EncodeRequest<'a> [also: encoder]
 pub fn EncodeRequest<'a>::encode(self) -> EncodeResult<alloc::vec::Vec<u8>>
 pub fn EncodeRequest<'a>::encode_into(self, &mut alloc::vec::Vec<u8>) -> EncodeResult<()>
-pub fn EncodeRequest<'a>::encode_to<W: core::io::write::Write>(self, W) -> EncodeResult<()>
+pub fn EncodeRequest<'a>::encode_to<W: std::io::Write>(self, W) -> EncodeResult<()>
 pub fn EncodeRequest<'a>::encode_with_metrics(self) -> EncodeResult<(alloc::vec::Vec<u8>, super::zensim_target::ZensimEncodeMetrics)>
 pub fn EncodeRequest<'a>::encode_with_stats(self) -> EncodeResult<(alloc::vec::Vec<u8>, encoder::EncodeStats)>
 pub fn EncodeRequest<'a>::lossless(&'a config::LosslessConfig, &'a [u8], PixelLayout, u32, u32) -> Self
@@ -944,8 +956,8 @@ pub type EncodeResult<T> = core::result::Result<T, whereat::at::At<EncodeError>>
 
 CostModel: Clone, Copy, Debug, Default, Eq, PartialEq
 DecodeConfig: Clone, Debug, Default, PartialEq
-DecodeError: Debug, Display, Error, From<core::io::error::Error>, From<enough::reason::StopReason>, From<zencodec::capabilities::UnsupportedOperation>, zencodec::error::CategorizedError
-EncodeError: Debug, Display, Error, From<core::io::error::Error>, From<enough::reason::StopReason>, From<zencodec::capabilities::UnsupportedOperation>, zencodec::error::CategorizedError
+DecodeError: Debug, Display, Error, From<enough::reason::StopReason>, From<std::io::error::Error>, From<zencodec::capabilities::UnsupportedOperation>, zencodec::error::CategorizedError
+EncodeError: Debug, Display, Error, From<enough::reason::StopReason>, From<std::io::error::Error>, From<zencodec::capabilities::UnsupportedOperation>, zencodec::error::CategorizedError
 ImageInfo: Clone, Debug
 ImageMetadata<'a>: Clone, Copy, Debug, Default
 Limits: Clone, Debug, Default, PartialEq

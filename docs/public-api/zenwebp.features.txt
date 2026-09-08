@@ -9,24 +9,34 @@
 
 ## summary
 #
-#   pub types (struct/enum/trait/alias)         2
-#   pub consts/statics                          1
-#   free functions                             12
-#   struct fields                              43
+#   pub types (struct/enum/trait/alias)         3
+#   pub consts/statics                          3
+#   free functions                             23
+#   struct fields                              50
 #   enum variants                               9
 #   re-exports                                  4
-#   trait roster entries (type × trait)         4
-#   auto-trait-complete types                   1
+#   trait roster entries (type × trait)         7
+#   auto-trait-complete types                   2
 #
 # per-module pub lines:
 #   (root)                           10
-#   encoder                          59
+#   decoder                           9
+#   encoder                          71
 #   pixel                             2
 
-## items (65 lines)
+## items (80 lines)
 
 pub use AblationToggles
 pub use set_ablation_toggles
+pub struct decoder::Vp8lMainImageInfo
+pub decoder::Vp8lMainImageInfo::cache_bits: core::option::Option<u8>
+pub decoder::Vp8lMainImageInfo::entropy_image_bits: u64
+pub decoder::Vp8lMainImageInfo::histo_bits: u8
+pub decoder::Vp8lMainImageInfo::huffman_tables_bits: u64
+pub decoder::Vp8lMainImageInfo::num_groups: u32
+pub decoder::Vp8lMainImageInfo::pixel_data_bits: u64
+pub decoder::Vp8lMainImageInfo::tokens: [u64; 4]
+pub fn decoder::vp8l_transform_dump(&[u8]) -> core::result::Result<(alloc::vec::Vec<(u8, u8, u64, alloc::vec::Vec<u8>)>, u64, u64, decoder::Vp8lMainImageInfo), alloc::string::String>
 pub use encoder::AblationToggles
 pub use encoder::set_ablation_toggles
 pub encoder::analysis::classifier::ZenanalyzeDiag::distinct_color_bins: u32
@@ -58,10 +68,16 @@ pub encoder::analysis::ZenanalyzeDiag::skin_tone_fraction: f32
 pub encoder::analysis::ZenanalyzeDiag::text_likelihood: f32
 pub encoder::analysis::ZenanalyzeDiag::uniformity: f32
 pub encoder::analysis::ZenanalyzeDiag::variance: f32
+pub const encoder::analysis::CLASSIFIER_FEATURES: [&str; 10] [also: encoder::analysis::classifier]
+pub fn encoder::analysis::classifier_request() -> zenanalyze_api::Request<'static> [also: encoder::analysis::classifier]
+pub fn encoder::analysis::classify_image_type_from_offer(&zenanalyze_api::Offer<'_>, u32, u32) -> (encoder::analysis::classifier::ImageContentType, encoder::analysis::classifier::ZenanalyzeDiag) [also: encoder::analysis::classifier]
+pub fn encoder::analysis::classify_image_type_from_owned_offer(&zenanalyze_api::OwnedOffer, u32, u32) -> (encoder::analysis::classifier::ImageContentType, encoder::analysis::classifier::ZenanalyzeDiag) [also: encoder::analysis::classifier]
 pub fn encoder::analysis::classify_image_type_rgb8(&[u8], u32, u32) -> encoder::analysis::classifier::ImageContentType [also: encoder::analysis::classifier]
 pub fn encoder::analysis::classify_image_type_rgb8_diag(&[u8], u32, u32) -> (encoder::analysis::classifier::ImageContentType, encoder::analysis::classifier::ZenanalyzeDiag) [also: encoder::analysis::classifier]
 pub fn encoder::analysis::decide_bucket_from_diag(&encoder::analysis::classifier::ZenanalyzeDiag) -> encoder::analysis::classifier::ImageContentType [also: encoder::analysis::classifier]
 pub fn encoder::analysis::decide_bucket_stable(&encoder::analysis::classifier::ZenanalyzeDiag) -> encoder::analysis::classifier::ImageContentType [also: encoder::analysis::classifier]
+pub fn encoder::analysis::diag_from_offer(&zenanalyze_api::Offer<'_>) -> encoder::analysis::classifier::ZenanalyzeDiag [also: encoder::analysis::classifier]
+pub fn encoder::analysis::diag_from_owned_offer(&zenanalyze_api::OwnedOffer) -> encoder::analysis::classifier::ZenanalyzeDiag [also: encoder::analysis::classifier]
 pub fn encoder::analysis::rgba8_to_rgb8(&[u8]) -> alloc::vec::Vec<u8> [also: encoder::analysis::classifier]
 pub encoder::validation::ValidationError::TargetZensimMaxPassesZero
 pub encoder::validation::ValidationError::TargetZensimMaxPassesZero::value: u8
@@ -91,10 +107,11 @@ pub ValidationError::TargetZensimToleranceInvalid
 pub ValidationError::TargetZensimToleranceInvalid::field: &'static str
 pub ValidationError::TargetZensimToleranceInvalid::value: f32
 
-## trait impls (1 types)
+## trait impls (2 types)
 
+decoder::Vp8lMainImageInfo: Clone, Debug, Default
 encoder::analysis::classifier::ZenanalyzeDiag: Clone, Copy, Debug, Default
 
 ## auto traits
 
-1 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+2 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe

@@ -1,5 +1,5 @@
 # zenwebp public API — doc(hidden) items and excluded-feature surface
-# excluded features: __expert,_benchmarks,_corpus_tests,_dev,_profiling,_wasm_profiling
+# excluded features: __expert,__zensim-research,_benchmarks,_corpus_tests,_dev,_profiling,_wasm_profiling
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -11,8 +11,8 @@
 #
 #   pub modules                                33
 #   pub types (struct/enum/trait/alias)        80
-#   pub consts/statics                         72
-#   free functions                            172
+#   pub consts/statics                         74
+#   free functions                            188
 #   inherent methods                          241
 #   struct fields                             313
 #   enum variants                             100
@@ -23,17 +23,17 @@
 # per-module pub lines:
 #   (root)                           78
 #   __expert                          5
-#   __test_helpers                   31
-#   common                           60
+#   __test_helpers                   32
+#   common                           65
 #   decoder                          47
 #   detect                            1
-#   encoder                         685
+#   encoder                         697
 #   heuristics                        2
 #   mux                               4
 #   sweep                           100
 #   zencodec                          3
 
-## items (912 lines)
+## items (921 lines)
 
 #[non_exhaustive] pub enum SharpYuvSetting [also: encoder, encoder::config]
 #[non_exhaustive] pub enum encoder::cost::ImageContentType [also: encoder::cost::classifier]
@@ -55,6 +55,7 @@ pub const __test_helpers::CHROMA_BLOCK_SIZE: usize
 pub const __test_helpers::CHROMA_STRIDE: usize
 pub const __test_helpers::LUMA_BLOCK_SIZE: usize
 pub const __test_helpers::LUMA_STRIDE: usize
+pub const encoder::cost::CLASSIFIER_FEATURES: [&str; 10] [also: encoder::cost::classifier]
 pub const encoder::cost::DEFAULT_SNS_STRENGTH: u32 [also: encoder::cost::lambda]
 pub const encoder::cost::FIXED_COSTS_I16: [u16; 4] [also: encoder::tables]
 pub const encoder::cost::FIXED_COSTS_UV: [u16; 4] [also: encoder::tables]
@@ -129,12 +130,15 @@ pub fn __test_helpers::quantize_dequantize_block_dispatch(&[i16; 16], &encoder::
 pub fn __test_helpers::quantize_dequantize_block_scalar(&[i16; 16], &encoder::quantize::VP8Matrix, &mut [i16; 16], &mut [i16; 16]) -> bool
 pub fn __test_helpers::sse4x4_dispatch(&[u8; 16], &[u8; 16]) -> u32
 pub fn __test_helpers::sse4x4_with_residual_dispatch(&[u8; 16], &[u8; 16], &[i16; 16]) -> u32
-pub fn __test_helpers::sse4x4_with_residual_scalar(&[u8; 16], &[u8; 16], &[i16; 16]) -> u32
+pub fn __test_helpers::sse4x4_with_residual_scalar(&[u8; 16], &[u8; 16], &[i16; 16]) -> u32 [also: common::simd_sse]
 pub fn __test_helpers::sse_16x16_luma_dispatch(&[u8], usize, usize, usize, &[u8; 544]) -> u32
-pub fn __test_helpers::sse_16x16_luma_scalar(&[u8], usize, usize, usize, &[u8; 544]) -> u32
+pub fn __test_helpers::sse_16x16_luma_scalar(&[u8], usize, usize, usize, &[u8; 544]) -> u32 [also: common::simd_sse]
 pub fn __test_helpers::sse_8x8_chroma_dispatch(&[u8], usize, usize, usize, &[u8; 288]) -> u32
-pub fn __test_helpers::sse_8x8_chroma_scalar(&[u8], usize, usize, usize, &[u8; 288]) -> u32
+pub fn __test_helpers::sse_8x8_chroma_scalar(&[u8], usize, usize, usize, &[u8; 288]) -> u32 [also: common::simd_sse]
+pub fn __test_helpers::vp8l_transform_dump(&[u8]) -> core::result::Result<(alloc::vec::Vec<(u8, u8, u64, alloc::vec::Vec<u8>)>, u64, u64, decoder::Vp8lMainImageInfo), alloc::string::String>
 pub fn common::prediction::__bench_kernels::add_residue_i16_256(&mut [u8; 256], &[i16; 16], usize, usize, usize)
+pub fn common::simd_sse::sse4x4_scalar(&[u8; 16], &[u8; 16]) -> u32
+pub fn common::simd_sse::t_transform_scalar(&[u8], usize, &[u16; 16]) -> i32
 pub fn common::transform::__bench_kernels::dct4x4(&mut [i32; 16])
 pub fn common::transform::__bench_kernels::idct4x4(&mut [i32; 16])
 pub fn common::transform::__bench_kernels::iwht4x4(&mut [i32; 16])
@@ -284,8 +288,11 @@ pub fn encoder::cost::calc_lambda_trellis_i4(u32) -> u32 [also: encoder::cost::l
 pub fn encoder::cost::calc_lambda_trellis_uv(u32) -> u32 [also: encoder::cost::lambda]
 pub fn encoder::cost::calc_lambda_uv(u32) -> u32 [also: encoder::cost::lambda]
 pub fn encoder::cost::calc_tlambda(u32, u32) -> u32 [also: encoder::cost::lambda]
+pub fn encoder::cost::classifier_request() -> zenanalyze_api::Request<'static> [also: encoder::cost::classifier]
 pub fn encoder::cost::classify_image_type(&[u8], usize, usize, usize, &[u32; 256]) -> encoder::analysis::classifier::ImageContentType [also: encoder::cost::classifier]
 pub fn encoder::cost::classify_image_type_diag(&[u8], usize, usize, usize, &[u32; 256]) -> encoder::analysis::classifier::ClassifierDiag [also: encoder::cost::classifier]
+pub fn encoder::cost::classify_image_type_from_offer(&zenanalyze_api::Offer<'_>, u32, u32) -> (encoder::analysis::classifier::ImageContentType, encoder::analysis::classifier::ZenanalyzeDiag) [also: encoder::cost::classifier]
+pub fn encoder::cost::classify_image_type_from_owned_offer(&zenanalyze_api::OwnedOffer, u32, u32) -> (encoder::analysis::classifier::ImageContentType, encoder::analysis::classifier::ZenanalyzeDiag) [also: encoder::cost::classifier]
 pub fn encoder::cost::classify_image_type_rgb8(&[u8], u32, u32) -> encoder::analysis::classifier::ImageContentType [also: encoder::cost::classifier]
 pub fn encoder::cost::classify_image_type_rgb8_diag(&[u8], u32, u32) -> (encoder::analysis::classifier::ImageContentType, encoder::analysis::classifier::ZenanalyzeDiag) [also: encoder::cost::classifier]
 pub fn encoder::cost::collect_histogram_bps(&[u8], &[u8], usize, usize) -> encoder::analysis::DctHistogram [also: encoder::cost::histogram]
@@ -296,6 +303,8 @@ pub fn encoder::cost::compute_segment_quant_libm(u8, i32, u8) -> u8 [also: encod
 pub fn encoder::cost::content_type_to_tuning(encoder::analysis::classifier::ImageContentType) -> (u8, u8, u8, u8) [also: encoder::cost::classifier]
 pub fn encoder::cost::decide_bucket_from_diag(&encoder::analysis::classifier::ZenanalyzeDiag) -> encoder::analysis::classifier::ImageContentType [also: encoder::cost::classifier]
 pub fn encoder::cost::decide_bucket_stable(&encoder::analysis::classifier::ZenanalyzeDiag) -> encoder::analysis::classifier::ImageContentType [also: encoder::cost::classifier]
+pub fn encoder::cost::diag_from_offer(&zenanalyze_api::Offer<'_>) -> encoder::analysis::classifier::ZenanalyzeDiag [also: encoder::cost::classifier]
+pub fn encoder::cost::diag_from_owned_offer(&zenanalyze_api::OwnedOffer) -> encoder::analysis::classifier::ZenanalyzeDiag [also: encoder::cost::classifier]
 pub fn encoder::cost::distortion::is_flat_source_16_scalar(&[u8], usize) -> bool
 pub fn encoder::cost::estimate_dc16_cost(&[i32; 16]) -> u32
 pub fn encoder::cost::estimate_luma16_cost(&[[i32; 16]; 16], bool) -> u32
@@ -472,7 +481,7 @@ pub mod __test_helpers
 pub mod common
 pub mod common::prediction
 pub mod common::prediction::__bench_kernels
-pub mod common::simd_neon
+pub mod common::simd_sse
 pub mod common::transform
 pub mod common::transform::__bench_kernels
 pub mod common::types
