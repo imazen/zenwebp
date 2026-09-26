@@ -324,7 +324,7 @@ pub(crate) fn zensim_to_starting_q_for_bucket(target: f32, bucket: ImageContentT
 /// content. If `total == 0` (degenerate / 1×1 input), we fall back to
 /// the Photo anchor — same default as the discrete-bucket path.
 #[cfg(feature = "analyzer")]
-#[allow(clippy::needless_pass_by_value, dead_code)]
+#[allow(dead_code)]
 fn starting_q_via_likelihoods(
     target: f32,
     pixels: &[u8],

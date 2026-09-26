@@ -1293,7 +1293,6 @@ impl EncoderConfig {
 // ============================================================================
 
 #[cfg(feature = "target-zensim")]
-#[allow(clippy::too_many_arguments)]
 fn encode_pixels_with_metrics_impl(
     cfg: &LossyConfig,
     pixels: &[u8],
@@ -1320,7 +1319,6 @@ fn encode_pixels_with_metrics_impl(
 }
 
 #[cfg(not(feature = "target-zensim"))]
-#[allow(clippy::too_many_arguments)]
 fn encode_pixels_with_metrics_impl(
     cfg: &LossyConfig,
     pixels: &[u8],

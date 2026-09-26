@@ -4,7 +4,6 @@
 //! distortion, lambda, level costs, and token statistics.
 
 #![allow(dead_code)]
-#![allow(clippy::needless_range_loop)]
 
 // Submodules
 pub mod distortion;

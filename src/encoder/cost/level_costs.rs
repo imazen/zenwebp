@@ -7,7 +7,6 @@
 //! Then remapped_costs provides direct access by coefficient position: \[type\]\[n\]\[ctx\].
 
 #![allow(dead_code)]
-#![allow(clippy::needless_range_loop)]
 
 use super::stats::{NUM_BANDS, NUM_CTX, NUM_PROBAS, NUM_TYPES};
 use super::vp8_bit_cost;

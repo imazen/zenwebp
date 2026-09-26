@@ -9,8 +9,6 @@
 //! Uses archmage's `#[rite]` for inner functions (inlined into the single `#[arcane]`
 //! entry point), eliminating per-call target_feature boundary overhead.
 
-#![allow(clippy::too_many_arguments)]
-
 use archmage::prelude::*;
 use core::ops::Range;
 use magetypes::simd::generic::{u8x16, u8x32};

@@ -251,7 +251,6 @@ impl<'a> super::Vp8Encoder<'a> {
     // 4. Quantizes the block and dequantizes each subblock
     // 5. Calculates the quantized block - this can be used to calculate how accurate the
     // result is and is used to populate the borders for the next macroblock
-    #[allow(clippy::needless_range_loop)] // x,y indices used for multiple arrays and coordinate computation
     pub(super) fn transform_luma_block(
         &mut self,
         mbx: usize,
@@ -484,7 +483,6 @@ impl<'a> super::Vp8Encoder<'a> {
 
     // this is for transforming the luma blocks for each subblock independently
     // meaning the luma mode is B
-    #[allow(clippy::needless_range_loop)] // sbx,sby indices used for multiple arrays and coordinate computation
     #[inline(never)]
     fn transform_luma_blocks_4x4(
         &mut self,

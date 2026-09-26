@@ -3,8 +3,6 @@
 //! Contains VP8Matrix for quantize/dequantize operations on 4x4 DCT blocks.
 //! SIMD-optimized quantization using SSE2 intrinsics.
 
-// Many loops in this file match libwebp's C patterns for clarity when comparing
-#![allow(clippy::needless_range_loop)]
 #![allow(dead_code)]
 
 use archmage::prelude::*;
@@ -274,7 +272,6 @@ fn dequantize_block_dispatch_v3(_token: X64V3Token, q: &[u16; 16], coeffs: &mut 
 /// which is a real regression surface for two tenths of a percent. If the
 /// dispatch boundary is ever attacked, do it as a deliberate encoder-wide
 /// change with its own gates, not as a fix for these two kernels.
-#[allow(clippy::needless_range_loop)]
 fn dequantize_block_dispatch_neon(token: NeonToken, q: &[u16; 16], coeffs: &mut [i32; 16]) {
     crate::common::simd_neon::dequantize_block_neon(token, q, coeffs);
 }

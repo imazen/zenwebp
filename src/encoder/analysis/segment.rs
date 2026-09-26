@@ -7,7 +7,6 @@
 //! Ported from libwebp src/enc/analysis_enc.c
 
 #![allow(dead_code)]
-#![allow(clippy::needless_range_loop)]
 
 extern crate alloc;
 use alloc::vec;

@@ -2,7 +2,6 @@
 //!
 //! All platform variants (scalar, SSE2, NEON, WASM SIMD128) in one file.
 
-#![allow(clippy::too_many_arguments)]
 // Allow dead code when std is disabled - some functions are encoder-only
 #![cfg_attr(not(feature = "std"), allow(dead_code))]
 // Allow dead code when std is disabled - some functions are encoder-only

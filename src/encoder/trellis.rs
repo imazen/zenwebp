@@ -11,7 +11,6 @@
 //! imperceptible and can be zeroed without penalty.
 
 #![allow(dead_code)]
-#![allow(clippy::needless_range_loop)]
 
 use super::cost::{LevelCostArray, LevelCosts, RD_DISTO_MULT};
 use super::psy::PsyConfig;
@@ -116,7 +115,6 @@ fn level_cost_fast(costs: &LevelCostArray, level: usize) -> u32 {
 /// # Returns
 /// True if any non-zero coefficient was produced
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::needless_range_loop)] // p indexes multiple arrays with different semantics
 #[allow(private_interfaces)] // psy_config is pub(crate), but this function is exposed for debugging
 pub fn trellis_quantize_block(
     coeffs: &mut [i16; 16],

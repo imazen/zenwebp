@@ -2,7 +2,6 @@
 //!
 //! Contains methods for selecting optimal I16, I4, and UV prediction modes
 //! using rate-distortion cost evaluation.
-#![allow(clippy::too_many_arguments)]
 
 use crate::common::prediction::*;
 use crate::common::transform;
@@ -707,7 +706,6 @@ impl<'a> super::Vp8Encoder<'a> {
     ///     `quant_enc.c:1111`). Threaded into `MacroblockInfo` so the
     ///     `store_max_delta` call site can apply the `D > min_disto` gate
     ///     (issue #44).
-    #[allow(clippy::type_complexity)]
     fn pick_best_intra16(
         &self,
         mbx: usize,
@@ -946,7 +944,6 @@ impl<'a> super::Vp8Encoder<'a> {
                 #[cfg(not(target_arch = "x86_64"))]
                 let fused = false;
                 if !fused {
-                    #[allow(clippy::needless_range_loop)]
                     for block_idx in 0..16 {
                         // Copy block from luma_blocks (DC zeroed: it lives in Y2)
                         let block_start = block_idx * 16;
@@ -2106,7 +2103,6 @@ impl<'a> super::Vp8Encoder<'a> {
     ///
     /// RD formula: score = (R + H) * lambda + RD_DISTO_MULT * (D + SD + PSY)
     /// UV spectral distortion and psy-rd are enabled by PsyConfig at method >= 3.
-    #[allow(clippy::needless_range_loop)] // block_idx used for both indexing and coordinate computation
     /// The chroma mode chosen by the analysis pass (`MBAnalyzeBestUVMode`,
     /// 0 = DC / 1 = TM), used at m0 under `StrictLibwebpParity` where libwebp
     /// leaves the UV mode unrefined. Falls back to the RD pick if the hint
@@ -2533,7 +2529,6 @@ impl<'a> super::Vp8Encoder<'a> {
         } else {
             [false; 4]
         };
-        #[allow(clippy::needless_range_loop)]
         for block_idx in 0..16 {
             let bx = block_idx % 4;
             let by = block_idx / 4;

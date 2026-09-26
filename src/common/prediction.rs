@@ -252,7 +252,6 @@ pub(crate) fn create_border_chroma(
 
 /// i16-residual variant of `add_residue` for the encoder's i16 coefficient
 /// pipeline (residuals are i16-bounded IDCT outputs).
-#[allow(clippy::manual_clamp)]
 #[inline(always)]
 pub(crate) fn add_residue_i16<const N: usize>(
     pblock: &mut [u8; N],

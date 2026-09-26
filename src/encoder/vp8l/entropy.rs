@@ -3,8 +3,6 @@
 //! Matches libwebp's PopulationCost/BitsEntropyRefine approach
 //! for accurate histogram cost estimation used in clustering.
 
-#![allow(clippy::too_many_arguments)]
-
 use super::histogram::Histogram;
 
 // === Instrumentation counters for tracing call counts ===

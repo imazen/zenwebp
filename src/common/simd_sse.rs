@@ -5,8 +5,6 @@
 //!
 //! Uses archmage for safe SIMD intrinsics with token-based CPU feature verification.
 
-#![allow(clippy::needless_range_loop)]
-
 use archmage::prelude::*;
 
 #[cfg(target_arch = "x86_64")]

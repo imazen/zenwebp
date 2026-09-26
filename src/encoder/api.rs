@@ -1314,7 +1314,6 @@ impl<'a> EncodeRequest<'a> {
     /// fall back to a single-pass encode and return `None` so the
     /// caller can take the normal path. (TODO: thread metadata
     /// through iteration once a user needs it.)
-    #[allow(clippy::unnecessary_wraps)] // signature aligns with feature-on counterpart
     fn try_encode_target_zensim_with_metrics(
         &self,
     ) -> EncodeResult<

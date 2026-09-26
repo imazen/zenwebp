@@ -4420,7 +4420,6 @@ fn do_filter4_neon(
 /// Returns (op2, op1, op0, oq0, oq1, oq2)
 
 #[rite]
-#[allow(clippy::type_complexity)]
 fn do_filter6_neon(
     _token: NeonToken,
     p2: uint8x16_t,
@@ -4518,7 +4517,6 @@ fn load_16x4_neon(
 /// Load 16 pixels from 8 consecutive rows (for normal vertical filter)
 
 #[rite]
-#[allow(clippy::type_complexity)]
 fn load_16x8_neon(
     _token: NeonToken,
     buf: &[u8],
@@ -4575,7 +4573,6 @@ fn store_16x2_neon(
 /// Loads 8 rows centered on the edge.
 
 #[rite]
-#[allow(clippy::type_complexity)]
 fn load_8x8x2_neon(
     _token: NeonToken,
     u_buf: &[u8],
@@ -4780,7 +4777,6 @@ fn load_4x16_neon(
 /// Load 8 columns from 16 rows (for normal horizontal filter)
 
 #[rite]
-#[allow(clippy::type_complexity)]
 fn load_8x16_neon(
     _token: NeonToken,
     buf: &[u8],
@@ -4957,7 +4953,6 @@ fn load_4x8x2_neon(
 /// Load 8 columns from 8 U rows + 8 V rows for normal horizontal chroma filter
 
 #[rite]
-#[allow(clippy::type_complexity)]
 fn load_8x8x2_h_neon(
     _token: NeonToken,
     u_buf: &[u8],

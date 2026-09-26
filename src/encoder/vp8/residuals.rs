@@ -683,7 +683,6 @@ impl<'a> super::Vp8Encoder<'a> {
     /// For non-trellis methods (0-4), quantization doesn't depend on complexity
     /// context, so this produces identical results to the integrated path.
     /// For trellis methods (5-6), use `record_residual_tokens_storing` instead.
-    #[allow(clippy::needless_range_loop)]
     pub(super) fn quantize_mb_coeffs(
         &self,
         y_block_data: &super::prediction::LumaBlockResult,
@@ -712,7 +711,6 @@ impl<'a> super::Vp8Encoder<'a> {
     /// Pass `None` from contexts that did not run trellis (e.g. older code
     /// paths or calls where the caller didn't capture trellis output).
     /// (#35-#8)
-    #[allow(clippy::needless_range_loop)] // i is used to index both ZIGZAG and output arrays
     pub(super) fn record_residual_tokens_storing(
         &mut self,
         macroblock_info: &MacroblockInfo,

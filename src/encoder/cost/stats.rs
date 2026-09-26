@@ -4,7 +4,6 @@
 //! This enables two-pass encoding with optimal probability updates.
 
 #![allow(dead_code)]
-#![allow(clippy::needless_range_loop)]
 
 use super::super::tables::VP8_ENTROPY_COST;
 use super::vp8_bit_cost;

@@ -447,9 +447,7 @@ fn emit_part0(frame: &Frame) -> Vec<u8> {
     e.put_bit(frame.refresh_entropy_probs, 128);
 
     // Token prob updates: emit update flag + new prob where it differs from
-    // the default, matching what parse read. (4-deep table walk; index form
-    // is clearest.)
-    #[allow(clippy::needless_range_loop)]
+    // the default, matching what parse read.
     for i in 0..4 {
         for j in 0..8 {
             for k in 0..3 {
