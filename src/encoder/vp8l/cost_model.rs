@@ -586,73 +586,73 @@ pub fn trace_backwards_optimize(
     let mut first_offset_is_constant: i32 = -1;
     let mut reach: usize = 0;
 
-    for i in 1..pix_count {
-        if i & (STOP_CHECK_STRIDE - 1) == 0 {
-            stop.check()?;
-        }
-        let prev_cost = manager.costs[i - 1];
+    for start in (1..pix_count).step_by(STOP_CHECK_STRIDE) {
+        stop.check()?;
+        for i in start..start.saturating_add(STOP_CHECK_STRIDE).min(pix_count) {
+            let prev_cost = manager.costs[i - 1];
 
-        // Try adding the pixel as a literal
-        add_single_literal_cost(
-            argb,
-            &cost_model,
-            &mut cache,
-            i,
-            prev_cost,
-            &mut manager.costs,
-            &mut manager.dist_array,
-        );
+            // Try adding the pixel as a literal
+            add_single_literal_cost(
+                argb,
+                &cost_model,
+                &mut cache,
+                i,
+                prev_cost,
+                &mut manager.costs,
+                &mut manager.dist_array,
+            );
 
-        // Try copy starting at position i
-        let (offset, len) = hash_chain.find_copy(i);
+            // Try copy starting at position i
+            let (offset, len) = hash_chain.find_copy(i);
 
-        if len >= 2 && offset > 0 {
-            if offset as i64 != offset_prev {
-                let plane_code = distance_to_plane_code(xsize, offset);
-                offset_cost = cost_model.distance_cost(plane_code);
-                first_offset_is_constant = 1;
-                manager.push_interval(prev_cost + offset_cost, i, len);
-            } else {
-                // Same offset as previous pixel — use the optimization from libwebp
-                // that avoids redundant PushInterval calls for constant-offset regions.
-                debug_assert!(offset_cost >= 0);
-                debug_assert!(len_prev >= 0);
-                debug_assert!(first_offset_is_constant == 0 || first_offset_is_constant == 1);
+            if len >= 2 && offset > 0 {
+                if offset as i64 != offset_prev {
+                    let plane_code = distance_to_plane_code(xsize, offset);
+                    offset_cost = cost_model.distance_cost(plane_code);
+                    first_offset_is_constant = 1;
+                    manager.push_interval(prev_cost + offset_cost, i, len);
+                } else {
+                    // Same offset as previous pixel — use the optimization from libwebp
+                    // that avoids redundant PushInterval calls for constant-offset regions.
+                    debug_assert!(offset_cost >= 0);
+                    debug_assert!(len_prev >= 0);
+                    debug_assert!(first_offset_is_constant == 0 || first_offset_is_constant == 1);
 
-                if first_offset_is_constant == 1 {
-                    reach = i - 1 + len_prev as usize - 1;
-                    first_offset_is_constant = 0;
-                }
+                    if first_offset_is_constant == 1 {
+                        reach = i - 1 + len_prev as usize - 1;
+                        first_offset_is_constant = 0;
+                    }
 
-                if i + len - 1 > reach {
-                    // Find last consecutive pixel with same offset within [i, reach+1]
-                    let mut j = i;
-                    while j <= reach {
-                        let (offset_j, _) = hash_chain.find_copy(j + 1);
-                        if offset_j as i64 != offset_prev {
-                            break;
+                    if i + len - 1 > reach {
+                        // Find last consecutive pixel with same offset within [i, reach+1]
+                        let mut j = i;
+                        while j <= reach {
+                            let (offset_j, _) = hash_chain.find_copy(j + 1);
+                            if offset_j as i64 != offset_prev {
+                                break;
+                            }
+                            j += 1;
                         }
-                        j += 1;
-                    }
-                    // Get the match at j (the boundary position)
-                    let (_, len_j) = hash_chain.find_copy(j);
+                        // Get the match at j (the boundary position)
+                        let (_, len_j) = hash_chain.find_copy(j);
 
-                    // Update costs at j-1 and j from active intervals
-                    if j > 0 {
-                        manager.update_cost_at_index(j - 1, false);
-                    }
-                    manager.update_cost_at_index(j, false);
+                        // Update costs at j-1 and j from active intervals
+                        if j > 0 {
+                            manager.update_cost_at_index(j - 1, false);
+                        }
+                        manager.update_cost_at_index(j, false);
 
-                    let cost_at_j_minus_1 = if j > 0 { manager.costs[j - 1] } else { 0 };
-                    manager.push_interval(cost_at_j_minus_1 + offset_cost, j, len_j);
-                    reach = j + len_j - 1;
+                        let cost_at_j_minus_1 = if j > 0 { manager.costs[j - 1] } else { 0 };
+                        manager.push_interval(cost_at_j_minus_1 + offset_cost, j, len_j);
+                        reach = j + len_j - 1;
+                    }
                 }
             }
-        }
 
-        manager.update_cost_at_index(i, true);
-        offset_prev = offset as i64;
-        len_prev = len as i64;
+            manager.update_cost_at_index(i, true);
+            offset_prev = offset as i64;
+            len_prev = len as i64;
+        }
     }
 
     // Phase 3: Backward trace — extract optimal path

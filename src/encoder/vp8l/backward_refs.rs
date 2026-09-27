@@ -95,12 +95,12 @@ pub fn apply_2d_locality(
 ) -> Result<(), enough::StopReason> {
     // may_stop collapses Unstoppable: checks below are a None-test.
     let stop = stop.may_stop().then_some(stop);
-    for (i, token) in refs.tokens.iter_mut().enumerate() {
-        if i & (REFS_STOP_CHECK_STRIDE - 1) == 0 {
-            stop.check()?;
-        }
-        if let PixOrCopy::Copy { dist, .. } = token {
-            *dist = distance_to_plane_code(xsize, *dist as usize);
+    for chunk in refs.tokens.chunks_mut(REFS_STOP_CHECK_STRIDE) {
+        stop.check()?;
+        for token in chunk {
+            if let PixOrCopy::Copy { dist, .. } = token {
+                *dist = distance_to_plane_code(xsize, *dist as usize);
+            }
         }
     }
     Ok(())
@@ -148,65 +148,63 @@ pub(super) fn backward_references_lz77(
 
     let mut i = 0;
     let mut i_last_check: i32 = -1;
-    let mut next_check = REFS_STOP_CHECK_STRIDE;
-
     while i < pix_count {
-        if i >= next_check {
-            stop.check()?;
-            next_check = i.saturating_add(REFS_STOP_CHECK_STRIDE);
-        }
-        let (offset, len) = hash_chain.find_copy(i);
-        let mut chosen_len;
+        stop.check()?;
+        let batch_end = i.saturating_add(REFS_STOP_CHECK_STRIDE).min(pix_count);
+        while i < batch_end {
+            let (offset, len) = hash_chain.find_copy(i);
+            let mut chosen_len;
 
-        if len >= MIN_LENGTH {
-            let len_ini = len;
-            let mut max_reach = 0i64;
-            let j_max = if i + len_ini >= pix_count {
-                pix_count - 1
-            } else {
-                i + len_ini
-            };
+            if len >= MIN_LENGTH {
+                let len_ini = len;
+                let mut max_reach = 0i64;
+                let j_max = if i + len_ini >= pix_count {
+                    pix_count - 1
+                } else {
+                    i + len_ini
+                };
 
-            // Only start from what we have not checked already
-            i_last_check = i_last_check.max(i as i32);
+                // Only start from what we have not checked already
+                i_last_check = i_last_check.max(i as i32);
 
-            // Look-ahead: find best combination of current + next match
-            // Check positions i+1 through i+len to see if deferring gives better reach
-            chosen_len = len;
-            for j in ((i_last_check + 1) as usize)..=j_max {
-                let len_j = hash_chain.length(j);
-                let reach = j as i64
-                    + if len_j >= MIN_LENGTH {
-                        len_j as i64
-                    } else {
-                        1 // Single literal
-                    };
-                if reach > max_reach {
-                    chosen_len = j - i;
-                    max_reach = reach;
-                    if max_reach >= pix_count as i64 {
-                        break;
+                // Look-ahead: find best combination of current + next match
+                // Check positions i+1 through i+len to see if deferring gives better reach
+                chosen_len = len;
+                for j in ((i_last_check + 1) as usize)..=j_max {
+                    let len_j = hash_chain.length(j);
+                    let reach = j as i64
+                        + if len_j >= MIN_LENGTH {
+                            len_j as i64
+                        } else {
+                            1 // Single literal
+                        };
+                    if reach > max_reach {
+                        chosen_len = j - i;
+                        max_reach = reach;
+                        if max_reach >= pix_count as i64 {
+                            break;
+                        }
                     }
                 }
+            } else {
+                chosen_len = 1;
             }
-        } else {
-            chosen_len = 1;
-        }
 
-        if chosen_len <= 1 {
-            // Emit literal
-            add_single_literal(argb[i], &mut cache.as_mut(), &mut refs);
-            i += 1;
-        } else {
-            // Emit backward reference with RAW distance
-            refs.push(PixOrCopy::copy(chosen_len as u16, offset as u32));
-            // Update color cache with copied pixels
-            if let Some(ref mut c) = cache {
-                for k in 0..chosen_len {
-                    c.insert(argb[i + k]);
+            if chosen_len <= 1 {
+                // Emit literal
+                add_single_literal(argb[i], &mut cache.as_mut(), &mut refs);
+                i += 1;
+            } else {
+                // Emit backward reference with RAW distance
+                refs.push(PixOrCopy::copy(chosen_len as u16, offset as u32));
+                // Update color cache with copied pixels
+                if let Some(ref mut c) = cache {
+                    for k in 0..chosen_len {
+                        c.insert(argb[i + k]);
+                    }
                 }
+                i += chosen_len;
             }
-            i += chosen_len;
         }
     }
 
@@ -238,55 +236,54 @@ pub(super) fn backward_references_rle(
     add_single_literal(argb[0], &mut cache.as_mut(), &mut refs);
 
     let mut i = 1;
-    let mut next_check = REFS_STOP_CHECK_STRIDE;
     while i < pix_count {
-        if i >= next_check {
-            stop.check()?;
-            next_check = i.saturating_add(REFS_STOP_CHECK_STRIDE);
-        }
-        let max_len = (pix_count - i).min(MAX_LENGTH);
+        stop.check()?;
+        let batch_end = i.saturating_add(REFS_STOP_CHECK_STRIDE).min(pix_count);
+        while i < batch_end {
+            let max_len = (pix_count - i).min(MAX_LENGTH);
 
-        // Check RLE match (distance=1, same as previous pixel)
-        // Quick rejection before expensive linear scan (matching libwebp's FindMatchLength)
-        let rle_len = if argb[i] != argb[i - 1] {
-            0
-        } else {
-            let mut len = 1;
-            while len < max_len && argb[i + len] == argb[i - 1 + len] {
-                len += 1;
-            }
-            len
-        };
-
-        // Check previous row match (distance=xsize)
-        let prev_row_len = if i < xsize || argb[i] != argb[i - xsize] {
-            0
-        } else {
-            let mut len = 1;
-            while len < max_len && argb[i + len] == argb[i - xsize + len] {
-                len += 1;
-            }
-            len
-        };
-
-        if rle_len >= prev_row_len && rle_len >= MIN_LENGTH {
-            // Use RLE (distance=1)
-            refs.push(PixOrCopy::copy(rle_len as u16, 1));
-            // RLE doesn't change cache state (same pixel repeated)
-            i += rle_len;
-        } else if prev_row_len >= MIN_LENGTH {
-            // Use previous row (distance=xsize)
-            refs.push(PixOrCopy::copy(prev_row_len as u16, xsize as u32));
-            if let Some(ref mut c) = cache {
-                for k in 0..prev_row_len {
-                    c.insert(argb[i + k]);
+            // Check RLE match (distance=1, same as previous pixel)
+            // Quick rejection before expensive linear scan (matching libwebp's FindMatchLength)
+            let rle_len = if argb[i] != argb[i - 1] {
+                0
+            } else {
+                let mut len = 1;
+                while len < max_len && argb[i + len] == argb[i - 1 + len] {
+                    len += 1;
                 }
+                len
+            };
+
+            // Check previous row match (distance=xsize)
+            let prev_row_len = if i < xsize || argb[i] != argb[i - xsize] {
+                0
+            } else {
+                let mut len = 1;
+                while len < max_len && argb[i + len] == argb[i - xsize + len] {
+                    len += 1;
+                }
+                len
+            };
+
+            if rle_len >= prev_row_len && rle_len >= MIN_LENGTH {
+                // Use RLE (distance=1)
+                refs.push(PixOrCopy::copy(rle_len as u16, 1));
+                // RLE doesn't change cache state (same pixel repeated)
+                i += rle_len;
+            } else if prev_row_len >= MIN_LENGTH {
+                // Use previous row (distance=xsize)
+                refs.push(PixOrCopy::copy(prev_row_len as u16, xsize as u32));
+                if let Some(ref mut c) = cache {
+                    for k in 0..prev_row_len {
+                        c.insert(argb[i + k]);
+                    }
+                }
+                i += prev_row_len;
+            } else {
+                // Literal
+                add_single_literal(argb[i], &mut cache.as_mut(), &mut refs);
+                i += 1;
             }
-            i += prev_row_len;
-        } else {
-            // Literal
-            add_single_literal(argb[i], &mut cache.as_mut(), &mut refs);
-            i += 1;
         }
     }
 
@@ -326,14 +323,19 @@ pub(super) fn backward_references_lz77_box(
     // counts[i] = how many times pixel at i is repeated starting from i
     let mut counts = vec![0u16; pix_count];
     counts[pix_count - 1] = 1;
-    for i in (0..pix_count - 1).rev() {
-        if i & (REFS_STOP_CHECK_STRIDE - 1) == 0 {
-            stop.check()?;
-        }
-        if argb[i] == argb[i + 1] {
-            counts[i] = counts[i + 1].saturating_add(1).min(MAX_LENGTH as u16);
-        } else {
-            counts[i] = 1;
+    for start in (0..pix_count - 1).step_by(REFS_STOP_CHECK_STRIDE).rev() {
+        stop.check()?;
+        for i in (start
+            ..start
+                .saturating_add(REFS_STOP_CHECK_STRIDE)
+                .min(pix_count - 1))
+            .rev()
+        {
+            if argb[i] == argb[i + 1] {
+                counts[i] = counts[i + 1].saturating_add(1).min(MAX_LENGTH as u16);
+            } else {
+                counts[i] = 1;
+            }
         }
     }
 
@@ -378,88 +380,89 @@ pub(super) fn backward_references_lz77_box(
     let mut best_offset_prev: i32 = -1;
     let mut best_length_prev: i32 = -1;
 
-    for i in 1..pix_count {
-        if i & (REFS_STOP_CHECK_STRIDE - 1) == 0 {
-            stop.check()?;
-        }
-        let mut best_length = hash_chain_best.find_copy(i).1 as i32;
-        let mut best_offset: i32;
-        let mut do_compute = true;
+    for start in (1..pix_count).step_by(REFS_STOP_CHECK_STRIDE) {
+        stop.check()?;
+        for i in start..start.saturating_add(REFS_STOP_CHECK_STRIDE).min(pix_count) {
+            let mut best_length = hash_chain_best.find_copy(i).1 as i32;
+            let mut best_offset: i32;
+            let mut do_compute = true;
 
-        if best_length >= MAX_LENGTH as i32 {
-            // Check if best match from hash_chain_best is in our window
-            let bo = hash_chain_best.offset(i) as i32;
-            for &wo in window_offsets {
-                if bo == wo {
-                    do_compute = false;
-                    break;
+            if best_length >= MAX_LENGTH as i32 {
+                // Check if best match from hash_chain_best is in our window
+                let bo = hash_chain_best.offset(i) as i32;
+                for &wo in window_offsets {
+                    if bo == wo {
+                        do_compute = false;
+                        break;
+                    }
                 }
-            }
-            best_offset = bo;
-        } else {
-            best_offset = 0;
-        }
-
-        if do_compute {
-            let use_prev = best_length_prev > 1 && best_length_prev < MAX_LENGTH as i32;
-            let offsets_to_try = if use_prev {
-                &window_offsets_new[..]
+                best_offset = bo;
             } else {
-                window_offsets
-            };
+                best_offset = 0;
+            }
 
-            best_length = if use_prev { best_length_prev - 1 } else { 0 };
-            best_offset = if use_prev { best_offset_prev } else { 0 };
+            if do_compute {
+                let use_prev = best_length_prev > 1 && best_length_prev < MAX_LENGTH as i32;
+                let offsets_to_try = if use_prev {
+                    &window_offsets_new[..]
+                } else {
+                    window_offsets
+                };
 
-            for &wo in offsets_to_try {
-                let j_offset = i as i32 - wo;
-                if j_offset < 0 || argb[j_offset as usize] != argb[i] {
-                    continue;
-                }
+                best_length = if use_prev { best_length_prev - 1 } else { 0 };
+                best_offset = if use_prev { best_offset_prev } else { 0 };
 
-                // Match using run-length counts for fast comparison
-                let mut curr_length = 0i32;
-                let mut j = i;
-                let mut jo = j_offset as usize;
-                loop {
-                    let cjo = counts[jo] as i32;
-                    let cj = counts[j] as i32;
-                    if cjo != cj {
-                        curr_length += cjo.min(cj);
-                        break;
+                for &wo in offsets_to_try {
+                    let j_offset = i as i32 - wo;
+                    if j_offset < 0 || argb[j_offset as usize] != argb[i] {
+                        continue;
                     }
-                    curr_length += cjo;
-                    jo += cjo as usize;
-                    j += cjo as usize;
-                    if curr_length > MAX_LENGTH as i32 || j >= pix_count || argb[jo] != argb[j] {
-                        break;
-                    }
-                }
 
-                if best_length < curr_length {
-                    best_offset = wo;
-                    if curr_length >= MAX_LENGTH as i32 {
-                        best_length = MAX_LENGTH as i32;
-                        break;
-                    } else {
-                        best_length = curr_length;
+                    // Match using run-length counts for fast comparison
+                    let mut curr_length = 0i32;
+                    let mut j = i;
+                    let mut jo = j_offset as usize;
+                    loop {
+                        let cjo = counts[jo] as i32;
+                        let cj = counts[j] as i32;
+                        if cjo != cj {
+                            curr_length += cjo.min(cj);
+                            break;
+                        }
+                        curr_length += cjo;
+                        jo += cjo as usize;
+                        j += cjo as usize;
+                        if curr_length > MAX_LENGTH as i32 || j >= pix_count || argb[jo] != argb[j]
+                        {
+                            break;
+                        }
+                    }
+
+                    if best_length < curr_length {
+                        best_offset = wo;
+                        if curr_length >= MAX_LENGTH as i32 {
+                            best_length = MAX_LENGTH as i32;
+                            break;
+                        } else {
+                            best_length = curr_length;
+                        }
                     }
                 }
             }
-        }
 
-        if best_length <= MIN_LENGTH as i32 {
-            box_chain.set(i, 0, 0);
-            best_offset_prev = 0;
-            best_length_prev = 0;
-        } else {
-            box_chain.set(
-                i,
-                best_offset as usize,
-                best_length.min(MAX_LENGTH as i32) as usize,
-            );
-            best_offset_prev = best_offset;
-            best_length_prev = best_length;
+            if best_length <= MIN_LENGTH as i32 {
+                box_chain.set(i, 0, 0);
+                best_offset_prev = 0;
+                best_length_prev = 0;
+            } else {
+                box_chain.set(
+                    i,
+                    best_offset as usize,
+                    best_length.min(MAX_LENGTH as i32) as usize,
+                );
+                best_offset_prev = best_offset;
+                best_length_prev = best_length;
+            }
         }
     }
 

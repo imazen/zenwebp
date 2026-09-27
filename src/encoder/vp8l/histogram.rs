@@ -112,14 +112,14 @@ impl Histogram {
         // may_stop collapses Unstoppable: checks below are a None-test.
         let stop = stop.may_stop().then_some(stop);
         let mut h = Self::new(cache_bits);
-        for (i, token) in refs.iter().enumerate() {
-            if i & (HISTOGRAM_STOP_CHECK_STRIDE - 1) == 0 {
-                stop.check()?;
-            }
-            match *token {
-                PixOrCopy::Literal(argb) => h.add_literal(argb),
-                PixOrCopy::CacheIdx(idx) => h.add_cache_idx(idx),
-                PixOrCopy::Copy { len, dist } => h.add_copy(len, dist),
+        for chunk in refs.tokens.chunks(HISTOGRAM_STOP_CHECK_STRIDE) {
+            stop.check()?;
+            for token in chunk {
+                match *token {
+                    PixOrCopy::Literal(argb) => h.add_literal(argb),
+                    PixOrCopy::CacheIdx(idx) => h.add_cache_idx(idx),
+                    PixOrCopy::Copy { len, dist } => h.add_copy(len, dist),
+                }
             }
         }
         Ok(h)
@@ -136,17 +136,17 @@ impl Histogram {
         // may_stop collapses Unstoppable: checks below are a None-test.
         let stop = stop.may_stop().then_some(stop);
         let mut h = Self::new(cache_bits);
-        for (i, token) in refs.iter().enumerate() {
-            if i & (HISTOGRAM_STOP_CHECK_STRIDE - 1) == 0 {
-                stop.check()?;
-            }
-            match *token {
-                PixOrCopy::Literal(argb) => h.add_literal(argb),
-                PixOrCopy::CacheIdx(idx) => h.add_cache_idx(idx),
-                PixOrCopy::Copy { len, dist } => {
-                    let plane_code =
-                        super::backward_refs::distance_to_plane_code(xsize, dist as usize);
-                    h.add_copy(len, plane_code);
+        for chunk in refs.tokens.chunks(HISTOGRAM_STOP_CHECK_STRIDE) {
+            stop.check()?;
+            for token in chunk {
+                match *token {
+                    PixOrCopy::Literal(argb) => h.add_literal(argb),
+                    PixOrCopy::CacheIdx(idx) => h.add_cache_idx(idx),
+                    PixOrCopy::Copy { len, dist } => {
+                        let plane_code =
+                            super::backward_refs::distance_to_plane_code(xsize, dist as usize);
+                        h.add_copy(len, plane_code);
+                    }
                 }
             }
         }
