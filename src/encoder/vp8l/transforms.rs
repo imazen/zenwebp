@@ -411,6 +411,30 @@ pub fn apply_predictor_transform(
     max_quantization: u32,
     used_subtract_green: bool,
     low_effort: bool,
+) -> (Vec<u32>, u8) {
+    apply_predictor_transform_with_stop(
+        pixels,
+        width,
+        height,
+        min_bits,
+        max_bits,
+        max_quantization,
+        used_subtract_green,
+        low_effort,
+        &enough::Unstoppable,
+    )
+    .expect("Unstoppable never stops")
+}
+
+pub(crate) fn apply_predictor_transform_with_stop(
+    pixels: &mut [u32],
+    width: usize,
+    height: usize,
+    min_bits: u8,
+    max_bits: u8,
+    max_quantization: u32,
+    used_subtract_green: bool,
+    low_effort: bool,
     stop: &dyn enough::Stop,
 ) -> Result<(Vec<u32>, u8), enough::StopReason> {
     // may_stop collapses Unstoppable: checks below are a None-test.
@@ -1408,6 +1432,24 @@ pub fn apply_cross_color_transform(
     height: usize,
     transform_bits: u8,
     quality: u8,
+) -> Vec<u32> {
+    apply_cross_color_transform_with_stop(
+        pixels,
+        width,
+        height,
+        transform_bits,
+        quality,
+        &enough::Unstoppable,
+    )
+    .expect("Unstoppable never stops")
+}
+
+pub(crate) fn apply_cross_color_transform_with_stop(
+    pixels: &mut [u32],
+    width: usize,
+    height: usize,
+    transform_bits: u8,
+    quality: u8,
     stop: &dyn enough::Stop,
 ) -> Result<Vec<u32>, enough::StopReason> {
     // may_stop collapses Unstoppable: checks below are a None-test.
@@ -1899,7 +1941,12 @@ fn palette_has_non_monotonous_deltas(palette: &[u32]) -> bool {
 /// For palette_size <=4: 4 indices per pixel (2 bits each)
 /// For palette_size <=16: 2 indices per pixel (4 bits each)
 /// Matches libwebp's VP8LBundleColorMap_C.
-pub fn bundle_color_map(
+pub fn bundle_color_map(pixels: &[u32], width: usize, xbits: u8) -> Vec<u32> {
+    bundle_color_map_with_stop(pixels, width, xbits, &enough::Unstoppable)
+        .expect("Unstoppable never stops")
+}
+
+pub(crate) fn bundle_color_map_with_stop(
     pixels: &[u32],
     width: usize,
     xbits: u8,
@@ -1951,19 +1998,28 @@ impl ColorIndexTransform {
     /// Try to build a color index transform.
     /// Returns None if image has more than 256 colors.
     /// Palette is sorted to minimize deltas (default strategy).
-    pub fn try_build(
+    pub fn try_build(pixels: &[u32]) -> Option<Self> {
+        Self::try_build_with_stop(pixels, &enough::Unstoppable).expect("Unstoppable never stops")
+    }
+
+    pub(crate) fn try_build_with_stop(
         pixels: &[u32],
         stop: &dyn enough::Stop,
     ) -> Result<Option<Self>, enough::StopReason> {
         // may_stop collapses Unstoppable: checks below are a None-test.
         let stop = stop.may_stop().then_some(stop);
-        Self::try_build_with_sorting(pixels, true, &stop)
+        Self::try_build_with_sorting_with_stop(pixels, true, &stop)
     }
 
     /// Try to build a color index transform with a specific sorting strategy.
     /// `minimize_delta`: true = greedy nearest-neighbor, false = lexicographic.
     /// Returns None if image has more than 256 colors.
-    pub fn try_build_with_sorting(
+    pub fn try_build_with_sorting(pixels: &[u32], minimize_delta: bool) -> Option<Self> {
+        Self::try_build_with_sorting_with_stop(pixels, minimize_delta, &enough::Unstoppable)
+            .expect("Unstoppable never stops")
+    }
+
+    pub(crate) fn try_build_with_sorting_with_stop(
         pixels: &[u32],
         minimize_delta: bool,
         stop: &dyn enough::Stop,
@@ -2007,7 +2063,12 @@ impl ColorIndexTransform {
     }
 
     /// Apply the transform: convert ARGB to palette indices in green channel.
-    pub fn apply(
+    pub fn apply(&self, pixels: &mut [u32]) {
+        self.apply_with_stop(pixels, &enough::Unstoppable)
+            .expect("Unstoppable never stops")
+    }
+
+    pub(crate) fn apply_with_stop(
         &self,
         pixels: &mut [u32],
         stop: &dyn enough::Stop,
@@ -2033,7 +2094,12 @@ impl ColorIndexTransform {
 
     /// Apply the transform and bundle pixels into packed format.
     /// Returns the packed pixel buffer and the new (packed) width.
-    pub fn apply_and_bundle(
+    pub fn apply_and_bundle(&self, pixels: &mut [u32], width: usize) -> (Vec<u32>, usize) {
+        self.apply_and_bundle_with_stop(pixels, width, &enough::Unstoppable)
+            .expect("Unstoppable never stops")
+    }
+
+    pub(crate) fn apply_and_bundle_with_stop(
         &self,
         pixels: &mut [u32],
         width: usize,
@@ -2042,7 +2108,7 @@ impl ColorIndexTransform {
         // may_stop collapses Unstoppable: checks below are a None-test.
         let stop = stop.may_stop().then_some(stop);
         // First apply: convert ARGB to palette indices
-        self.apply(pixels, &stop)?;
+        self.apply_with_stop(pixels, &stop)?;
 
         let xbits = self.xbits();
         if xbits == 0 {
@@ -2051,7 +2117,7 @@ impl ColorIndexTransform {
         }
 
         let packed_width = subsample_size(width as u32, xbits) as usize;
-        let packed = bundle_color_map(pixels, width, xbits, &stop)?;
+        let packed = bundle_color_map_with_stop(pixels, width, xbits, &stop)?;
         Ok((packed, packed_width))
     }
 }
@@ -2104,7 +2170,7 @@ mod tests {
             make_argb(255, 255, 0, 0), // Red again
         ];
 
-        let transform = ColorIndexTransform::try_build(&pixels, &enough::Unstoppable)
+        let transform = ColorIndexTransform::try_build_with_stop(&pixels, &enough::Unstoppable)
             .unwrap()
             .unwrap();
         assert_eq!(transform.palette.len(), 2);
@@ -2118,7 +2184,7 @@ mod tests {
             .map(|i| make_argb(255, (i % 256) as u8, (i / 256) as u8, 0))
             .collect();
         assert!(
-            ColorIndexTransform::try_build(&pixels, &enough::Unstoppable)
+            ColorIndexTransform::try_build_with_stop(&pixels, &enough::Unstoppable)
                 .unwrap()
                 .is_none()
         );
@@ -2128,7 +2194,7 @@ mod tests {
     fn test_palette_bundle_2_colors() {
         // 2-color palette: xbits=3, 8 pixels per packed pixel
         let indices: Vec<u32> = (0..16).map(|i| make_argb(255, 0, i & 1, 0)).collect();
-        let bundled = bundle_color_map(&indices, 16, 3, &enough::Unstoppable).unwrap();
+        let bundled = bundle_color_map_with_stop(&indices, 16, 3, &enough::Unstoppable).unwrap();
         // 16 pixels / 8 per packed = 2 packed pixels
         assert_eq!(bundled.len(), 2);
         // First packed pixel: indices 0,1,0,1,0,1,0,1
@@ -2143,7 +2209,7 @@ mod tests {
         let indices: Vec<u32> = (0..8)
             .map(|i| make_argb(255, 0, (i * 3) & 0xf, 0))
             .collect();
-        let bundled = bundle_color_map(&indices, 8, 1, &enough::Unstoppable).unwrap();
+        let bundled = bundle_color_map_with_stop(&indices, 8, 1, &enough::Unstoppable).unwrap();
         // 8 pixels / 2 per packed = 4 packed pixels
         assert_eq!(bundled.len(), 4);
     }

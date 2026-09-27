@@ -283,6 +283,9 @@ impl HashChain {
                     break;
                 }
                 base_position -= 1;
+                if base_position & (CHAIN_STOP_CHECK_STRIDE - 1) == 0 {
+                    stop.check()?;
+                }
 
                 // Stop if no match
                 if best_distance == 0 {

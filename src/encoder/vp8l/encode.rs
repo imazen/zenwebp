@@ -15,8 +15,8 @@ use super::huffman::{
 };
 use super::meta_huffman::{build_meta_huffman, build_single_histogram};
 use super::transforms::{
-    ColorIndexTransform, apply_cross_color_transform, apply_predictor_transform,
-    apply_subtract_green,
+    ColorIndexTransform, apply_cross_color_transform_with_stop,
+    apply_predictor_transform_with_stop, apply_subtract_green,
 };
 use super::types::{
     NUM_LENGTH_CODES, NUM_LITERAL_CODES, PixOrCopy, Vp8lConfig, argb_alpha, argb_blue, argb_green,
@@ -502,7 +502,7 @@ pub(crate) fn encode_argb(
         // Run entropy analysis (used for single-config best guess)
         let palette_size_est = if palette_candidate {
             // Quick count for entropy estimation (don't build full transform yet)
-            ColorIndexTransform::try_build(argb, &stop)
+            ColorIndexTransform::try_build_with_stop(argb, &stop)
                 .map_err(|e| at!(EncodeError::from(e)))?
                 .as_ref()
                 .map(|p| p.palette.len())
@@ -690,7 +690,7 @@ fn encode_argb_single_config(
     // Build palette transform if needed
     let minimize_delta = matches!(crunch.palette_sorting, PaletteSorting::MinimizeDelta);
     let palette_transform = if use_palette {
-        ColorIndexTransform::try_build_with_sorting(argb, minimize_delta, &stop)
+        ColorIndexTransform::try_build_with_sorting_with_stop(argb, minimize_delta, &stop)
             .map_err(|e| at!(EncodeError::from(e)))?
     } else {
         None
@@ -786,12 +786,12 @@ fn encode_argb_single_config(
         // Apply transform and bundle pixels
         let xbits = palette.xbits();
         palette
-            .apply(argb, &stop)
+            .apply_with_stop(argb, &stop)
             .map_err(|e| at!(EncodeError::from(e)))?;
 
         if xbits > 0 {
             let packed_width = subsample_size(width as u32, xbits) as usize;
-            let packed = super::transforms::bundle_color_map(argb, width, xbits, &stop)
+            let packed = super::transforms::bundle_color_map_with_stop(argb, width, xbits, &stop)
                 .map_err(|e| at!(EncodeError::from(e)))?;
             enc_width = packed_width;
             packed_buf = Some(packed);
@@ -1004,7 +1004,7 @@ fn write_predictor_transform(
     } else {
         1
     };
-    let (predictor_data, actual_bits) = apply_predictor_transform(
+    let (predictor_data, actual_bits) = apply_predictor_transform_with_stop(
         argb,
         width,
         height,
@@ -1063,8 +1063,14 @@ fn write_cross_color_transform(
             .cross_color_bits
             .clamp(MIN_TRANSFORM_BITS, MAX_TRANSFORM_BITS)
     };
-    let mut cross_color_data =
-        apply_cross_color_transform(argb, width, height, cc_bits, config.quality.quality, &stop)?;
+    let mut cross_color_data = apply_cross_color_transform_with_stop(
+        argb,
+        width,
+        height,
+        cc_bits,
+        config.quality.quality,
+        &stop,
+    )?;
 
     // Coarsen the multiplier image when it is repetitive, matching the
     // VP8LOptimizeSampling call at the end of VP8LColorSpaceTransform.
