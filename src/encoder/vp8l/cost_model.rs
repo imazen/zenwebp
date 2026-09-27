@@ -28,6 +28,9 @@ const COST_CACHE_INTERVAL_SIZE_MAX: usize = 500;
 /// Small interval threshold — serialize directly instead of tracking.
 const SKIP_DISTANCE: usize = 10;
 
+/// Positions between `stop` polls in the O(pixels) TraceBackwards passes.
+const STOP_CHECK_STRIDE: usize = 1 << 15;
+
 /// Compute log2(v) in fixed-point (matching libwebp's VP8LFastLog2).
 /// Returns 0 for v == 0 or v == 1.
 fn fast_log2(v: u32) -> u32 {
@@ -85,17 +88,22 @@ pub struct CostModel {
 
 impl CostModel {
     /// Build cost model from histogram of initial backward refs.
-    pub fn build(xsize: usize, cache_bits: u8, refs: &BackwardRefs) -> Self {
+    pub fn build(
+        xsize: usize,
+        cache_bits: u8,
+        refs: &BackwardRefs,
+        stop: &dyn enough::Stop,
+    ) -> Result<Self, enough::StopReason> {
         // Build histogram with plane-code-aware distances
-        let histo = Histogram::from_refs_with_plane_codes(refs, cache_bits, xsize);
+        let histo = Histogram::from_refs_with_plane_codes(refs, cache_bits, xsize, stop)?;
 
-        Self {
+        Ok(Self {
             literal: counts_to_bit_estimates(&histo.literal),
             red: counts_to_bit_estimates(&histo.red),
             blue: counts_to_bit_estimates(&histo.blue),
             alpha: counts_to_bit_estimates(&histo.alpha),
             distance: counts_to_bit_estimates(&histo.distance),
-        }
+        })
     }
 
     /// Cost of encoding a literal ARGB pixel.
@@ -535,12 +543,13 @@ pub fn trace_backwards_optimize(
     cache_bits: u8,
     hash_chain: &super::hash_chain::HashChain,
     initial_refs: &BackwardRefs,
-) -> BackwardRefs {
+    stop: &dyn enough::Stop,
+) -> Result<BackwardRefs, enough::StopReason> {
     let pix_count = argb.len();
     let use_color_cache = cache_bits > 0;
 
     // Phase 1: Build cost model from initial greedy refs
-    let cost_model = CostModel::build(xsize, cache_bits, initial_refs);
+    let cost_model = CostModel::build(xsize, cache_bits, initial_refs, stop)?;
 
     // Phase 2: Forward DP pass using interval-based cost manager
     let mut manager = CostManager::new(pix_count, &cost_model);
@@ -573,6 +582,9 @@ pub fn trace_backwards_optimize(
     let mut reach: usize = 0;
 
     for i in 1..pix_count {
+        if i & (STOP_CHECK_STRIDE - 1) == 0 {
+            stop.check()?;
+        }
         let prev_cost = manager.costs[i - 1];
 
         // Try adding the pixel as a literal
@@ -663,7 +675,12 @@ pub fn trace_backwards_optimize(
     };
 
     let mut i = 0;
+    let mut next_check = STOP_CHECK_STRIDE;
     for &step in &path {
+        if i >= next_check {
+            stop.check()?;
+            next_check = i.saturating_add(STOP_CHECK_STRIDE);
+        }
         let step = step as usize;
         if step == 1 {
             // Literal or cache hit
@@ -692,7 +709,7 @@ pub fn trace_backwards_optimize(
         }
     }
 
-    refs
+    Ok(refs)
 }
 
 /// Try adding a literal (or cache hit) at position idx with cost tracking.

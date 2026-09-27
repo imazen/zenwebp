@@ -9,6 +9,10 @@ use alloc::vec::Vec;
 
 use super::types::{HASH_BITS, HASH_SIZE, MAX_LENGTH, MAX_LENGTH_BITS, WINDOW_SIZE};
 
+/// Pixels between `stop` polls in the O(pixels) chain passes. ~32K pixels is
+/// well under a millisecond of work — far below the ~50ms responsiveness bar.
+const CHAIN_STOP_CHECK_STRIDE: usize = 1 << 15;
+
 /// Hash multipliers for two-pixel hashing (from libwebp).
 const HASH_MULT_HI: u32 = 0xc6a4a793;
 const HASH_MULT_LO: u32 = 0x5bd1e996;
@@ -42,12 +46,23 @@ impl HashChain {
     /// - Color+run-length hash for constant-color runs
     /// - Heuristic row-above and previous-pixel initial guesses
     /// - Left-extension optimization (fills preceding positions without re-search)
-    pub fn new(argb: &[u32], quality: u8, width: usize, low_effort: bool, parity: bool) -> Self {
+    ///
+    /// `stop` is polled every [`CHAIN_STOP_CHECK_STRIDE`] pixels in both the
+    /// fill and match-find passes so a cancelled encode doesn't finish an
+    /// O(pixels) chain build before noticing.
+    pub fn new(
+        argb: &[u32],
+        quality: u8,
+        width: usize,
+        low_effort: bool,
+        parity: bool,
+        stop: &dyn enough::Stop,
+    ) -> Result<Self, enough::StopReason> {
         let size = argb.len();
         let mut offset_length = vec![0u32; size];
 
         if size <= 2 {
-            return Self { offset_length };
+            return Ok(Self { offset_length });
         }
 
         let iter_max = get_max_iters(quality);
@@ -68,7 +83,14 @@ impl HashChain {
         // Fill chain linking pixels with same hash
         let mut argb_comp = argb[0] == argb[1];
         let mut pos = 0usize;
+        // pos jumps by whole run-lengths, so poll on a crossed boundary
+        // rather than `pos % STRIDE` (a giant run could skip every residue).
+        let mut next_check = CHAIN_STOP_CHECK_STRIDE;
         while pos < size.saturating_sub(2) {
+            if pos >= next_check {
+                stop.check()?;
+                next_check = pos.saturating_add(CHAIN_STOP_CHECK_STRIDE);
+            }
             let argb_comp_next = pos + 2 < size && argb[pos + 1] == argb[pos + 2];
 
             if argb_comp && argb_comp_next {
@@ -125,6 +147,9 @@ impl HashChain {
 
         let mut base_position = size - 2;
         while base_position > 0 {
+            if base_position & (CHAIN_STOP_CHECK_STRIDE - 1) == 0 {
+                stop.check()?;
+            }
             let max_len = max_find_copy_length(size - 1 - base_position);
             let argb_start = base_position;
             let mut best_length = 0usize;
@@ -281,7 +306,7 @@ impl HashChain {
             }
         }
 
-        Self { offset_length }
+        Ok(Self { offset_length })
     }
 
     /// Get the best match distance at a position.
@@ -423,7 +448,7 @@ mod tests {
     fn test_hash_chain_simple() {
         // Simple test: repeated pixel should find match
         let pixels = vec![0xFF000000u32; 100];
-        let chain = HashChain::new(&pixels, 75, 10, false, false);
+        let chain = HashChain::new(&pixels, 75, 10, false, false, &enough::Unstoppable).unwrap();
 
         // Position 50 should find match with distance 1
         assert!(chain.length(50) > 0);
@@ -436,7 +461,7 @@ mod tests {
         pixels.extend_from_slice(&[0xFFAABBCCu32; 50]);
         pixels.extend_from_slice(&[0xFF112233u32; 50]);
 
-        let chain = HashChain::new(&pixels, 75, 50, false, false);
+        let chain = HashChain::new(&pixels, 75, 50, false, false, &enough::Unstoppable).unwrap();
 
         // Positions 100-149 should find matches to positions 0-49
         for i in 100..140 {

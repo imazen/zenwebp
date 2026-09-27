@@ -49,6 +49,22 @@ root cause) and multiple breaking changes. 0.5.0 covers all of it, matching
 the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 ("Tag as 0.5.0 (minor bump for API; 0.4.5 yanked)").
 
+### Fixed
+
+- **VP8L lossless encode now honours cancellation internally.** The lossless
+  path polled `stop` only at top-level phase boundaries; the passes in between —
+  hash-chain construction, the three backward-reference strategies,
+  cache-size search, cache application, 2D-locality conversion,
+  trace-backwards optimisation, predictor/cross-colour/near-lossless/palette
+  transforms, per-tile histogram construction, entropy-bin/stochastic/greedy
+  histogram clustering, and the final token-emission loop — each ran to
+  completion uninterruptibly. On a 2048×2048 RGBA lossless encode that meant
+  ~1.3 s with a single poll. All of those internals now take
+  `&dyn enough::Stop` and return `Result<_, StopReason>`, checking every
+  ~32K covered pixels/tokens (loops whose counters advance by whole match
+  lengths poll on crossed boundaries instead). Measured worst inter-poll gap on
+  that workload: ~12 ms. Encoded output is unchanged; no public API moved.
+
 ### Changed (2026-08-29, dependency version ranges)
 
 - **Third-party dependency pass — 64 lockfile packages + `hashbrown` `"0.16"`

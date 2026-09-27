@@ -11,6 +11,9 @@ use super::types::{
     argb_blue, argb_green, argb_red,
 };
 
+/// Tokens between `stop` polls when folding a ref stream into a histogram.
+const HISTOGRAM_STOP_CHECK_STRIDE: usize = 1 << 15;
+
 /// VP8L histogram for a single Huffman code group.
 #[derive(Debug, Clone)]
 pub struct Histogram {
@@ -100,23 +103,38 @@ impl Histogram {
 
     /// Build histogram from backward references.
     /// Assumes distances in refs are already plane codes.
-    pub fn from_refs(refs: &BackwardRefs, cache_bits: u8) -> Self {
+    pub fn from_refs(
+        refs: &BackwardRefs,
+        cache_bits: u8,
+        stop: &dyn enough::Stop,
+    ) -> Result<Self, enough::StopReason> {
         let mut h = Self::new(cache_bits);
-        for token in refs.iter() {
+        for (i, token) in refs.iter().enumerate() {
+            if i & (HISTOGRAM_STOP_CHECK_STRIDE - 1) == 0 {
+                stop.check()?;
+            }
             match *token {
                 PixOrCopy::Literal(argb) => h.add_literal(argb),
                 PixOrCopy::CacheIdx(idx) => h.add_cache_idx(idx),
                 PixOrCopy::Copy { len, dist } => h.add_copy(len, dist),
             }
         }
-        h
+        Ok(h)
     }
 
     /// Build histogram from backward references with raw distances,
     /// converting to plane codes on the fly for accurate distance statistics.
-    pub fn from_refs_with_plane_codes(refs: &BackwardRefs, cache_bits: u8, xsize: usize) -> Self {
+    pub fn from_refs_with_plane_codes(
+        refs: &BackwardRefs,
+        cache_bits: u8,
+        xsize: usize,
+        stop: &dyn enough::Stop,
+    ) -> Result<Self, enough::StopReason> {
         let mut h = Self::new(cache_bits);
-        for token in refs.iter() {
+        for (i, token) in refs.iter().enumerate() {
+            if i & (HISTOGRAM_STOP_CHECK_STRIDE - 1) == 0 {
+                stop.check()?;
+            }
             match *token {
                 PixOrCopy::Literal(argb) => h.add_literal(argb),
                 PixOrCopy::CacheIdx(idx) => h.add_cache_idx(idx),
@@ -127,7 +145,7 @@ impl Histogram {
                 }
             }
         }
-        h
+        Ok(h)
     }
 
     /// Merge another histogram into this one.

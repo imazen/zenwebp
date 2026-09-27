@@ -299,7 +299,14 @@ fn is_smooth(prev_row: &[u32], curr_row: &[u32], next_row: &[u32], x: usize, lim
 ///
 /// Reads from `src`, writes to `dst`. Border pixels (first/last row, first/last
 /// column) are copied unchanged. Interior non-smooth pixels are quantized.
-fn near_lossless_pass(src: &[u32], w: usize, h: usize, bits: u8, dst: &mut [u32]) {
+fn near_lossless_pass(
+    src: &[u32],
+    w: usize,
+    h: usize,
+    bits: u8,
+    dst: &mut [u32],
+    stop: &dyn enough::Stop,
+) -> Result<(), enough::StopReason> {
     let limit = 1i32 << bits;
 
     // Working rows: prev, curr, next (matching libwebp's copy_buffer approach)
@@ -313,6 +320,9 @@ fn near_lossless_pass(src: &[u32], w: usize, h: usize, bits: u8, dst: &mut [u32]
     }
 
     for y in 0..h {
+        if y & 63 == 0 {
+            stop.check()?;
+        }
         if y == 0 || y == h - 1 {
             // Border rows: copy unchanged
             dst[y * w..(y + 1) * w].copy_from_slice(&src[y * w..(y + 1) * w]);
@@ -337,6 +347,8 @@ fn near_lossless_pass(src: &[u32], w: usize, h: usize, bits: u8, dst: &mut [u32]
         let temp = core::mem::replace(&mut prev_row, curr_row);
         curr_row = core::mem::replace(&mut next_row, temp);
     }
+
+    Ok(())
 }
 
 /// Apply near-lossless preprocessing to an ARGB pixel array.
@@ -348,28 +360,36 @@ fn near_lossless_pass(src: &[u32], w: usize, h: usize, bits: u8, dst: &mut [u32]
 /// - quality >= 100 (exact lossless)
 /// - both dimensions < 64 (small icon)
 /// - height < 3 (too few rows for 4-connected neighborhood)
-pub fn apply_near_lossless(argb: &mut [u32], w: usize, h: usize, quality: u8) {
+pub fn apply_near_lossless(
+    argb: &mut [u32],
+    w: usize,
+    h: usize,
+    quality: u8,
+    stop: &dyn enough::Stop,
+) -> Result<(), enough::StopReason> {
     if quality >= 100 {
-        return;
+        return Ok(());
     }
     let limit_bits = near_lossless_bits(quality);
     if limit_bits == 0 {
-        return;
+        return Ok(());
     }
     // Skip small images (matching libwebp)
     if (w < MIN_DIM_FOR_NEAR_LOSSLESS && h < MIN_DIM_FOR_NEAR_LOSSLESS) || h < 3 {
-        return;
+        return Ok(());
     }
 
     // First pass: full limit_bits
     let mut copy_buffer = argb.to_vec();
-    near_lossless_pass(&copy_buffer, w, h, limit_bits, argb);
+    near_lossless_pass(&copy_buffer, w, h, limit_bits, argb, stop)?;
 
     // Refinement passes: limit_bits-1 down to 1
     for bits in (1..limit_bits).rev() {
+        stop.check()?;
         copy_buffer.copy_from_slice(argb);
-        near_lossless_pass(&copy_buffer, w, h, bits, argb);
+        near_lossless_pass(&copy_buffer, w, h, bits, argb, stop)?;
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -509,7 +529,7 @@ mod tests {
     fn test_quality_100_is_noop() {
         let mut argb = vec![0xFF_00_00_00u32; 100 * 100];
         let original = argb.clone();
-        apply_near_lossless(&mut argb, 100, 100, 100);
+        apply_near_lossless(&mut argb, 100, 100, 100, &enough::Unstoppable).unwrap();
         assert_eq!(argb, original);
     }
 
@@ -518,7 +538,7 @@ mod tests {
         // Both dims < 64: skip
         let mut argb = vec![0xFF_80_80_80u32; 32 * 32];
         let original = argb.clone();
-        apply_near_lossless(&mut argb, 32, 32, 50);
+        apply_near_lossless(&mut argb, 32, 32, 50, &enough::Unstoppable).unwrap();
         assert_eq!(argb, original);
     }
 
@@ -527,7 +547,7 @@ mod tests {
         // height < 3: skip
         let mut argb = vec![0xFF_80_80_80u32; 100 * 2];
         let original = argb.clone();
-        apply_near_lossless(&mut argb, 100, 2, 50);
+        apply_near_lossless(&mut argb, 100, 2, 50, &enough::Unstoppable).unwrap();
         assert_eq!(argb, original);
     }
 
@@ -547,7 +567,7 @@ mod tests {
             }
         }
         let original = argb.clone();
-        apply_near_lossless(&mut argb, w, h, 60); // bits=2
+        apply_near_lossless(&mut argb, w, h, 60, &enough::Unstoppable).unwrap(); // bits=2
 
         // Borders should be unchanged
         for x in 0..w {
@@ -597,7 +617,7 @@ mod tests {
 
         for quality in [0u8, 20, 40, 60, 80, 99] {
             let mut test = original.clone();
-            apply_near_lossless(&mut test, w, h, quality);
+            apply_near_lossless(&mut test, w, h, quality, &enough::Unstoppable).unwrap();
 
             let limit_bits = near_lossless_bits(quality);
             // After all passes (limit_bits down to 1), max error per pass is
