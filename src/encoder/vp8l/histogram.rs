@@ -10,6 +10,7 @@ use super::types::{
     ALPHABET_SIZE_RED, BackwardRefs, NUM_LENGTH_CODES, NUM_LITERAL_CODES, PixOrCopy, argb_alpha,
     argb_blue, argb_green, argb_red,
 };
+use enough::Stop;
 
 /// Tokens between `stop` polls when folding a ref stream into a histogram.
 const HISTOGRAM_STOP_CHECK_STRIDE: usize = 1 << 15;
@@ -108,6 +109,8 @@ impl Histogram {
         cache_bits: u8,
         stop: &dyn enough::Stop,
     ) -> Result<Self, enough::StopReason> {
+        // may_stop collapses Unstoppable: checks below are a None-test.
+        let stop = stop.may_stop().then_some(stop);
         let mut h = Self::new(cache_bits);
         for (i, token) in refs.iter().enumerate() {
             if i & (HISTOGRAM_STOP_CHECK_STRIDE - 1) == 0 {
@@ -130,6 +133,8 @@ impl Histogram {
         xsize: usize,
         stop: &dyn enough::Stop,
     ) -> Result<Self, enough::StopReason> {
+        // may_stop collapses Unstoppable: checks below are a None-test.
+        let stop = stop.may_stop().then_some(stop);
         let mut h = Self::new(cache_bits);
         for (i, token) in refs.iter().enumerate() {
             if i & (HISTOGRAM_STOP_CHECK_STRIDE - 1) == 0 {

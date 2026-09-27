@@ -8,6 +8,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::types::{HASH_BITS, HASH_SIZE, MAX_LENGTH, MAX_LENGTH_BITS, WINDOW_SIZE};
+use enough::Stop;
 
 /// Pixels between `stop` polls in the O(pixels) chain passes. ~32K pixels is
 /// well under a millisecond of work — far below the ~50ms responsiveness bar.
@@ -58,6 +59,8 @@ impl HashChain {
         parity: bool,
         stop: &dyn enough::Stop,
     ) -> Result<Self, enough::StopReason> {
+        // may_stop collapses Unstoppable: checks below are a None-test.
+        let stop = stop.may_stop().then_some(stop);
         let size = argb.len();
         let mut offset_length = vec![0u32; size];
 

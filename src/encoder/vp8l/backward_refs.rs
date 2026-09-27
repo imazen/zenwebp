@@ -19,6 +19,7 @@ use super::types::{
     BackwardRefs, MAX_LENGTH, MIN_LENGTH, NUM_LENGTH_CODES, NUM_LITERAL_CODES, PixOrCopy,
     argb_alpha, argb_blue, argb_green, argb_red,
 };
+use enough::Stop;
 
 /// Distance code lookup table for 2D neighborhood.
 /// Maps (xoffset, yoffset) pairs to distance codes 1-120.
@@ -92,6 +93,8 @@ pub fn apply_2d_locality(
     xsize: usize,
     stop: &dyn enough::Stop,
 ) -> Result<(), enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     for (i, token) in refs.tokens.iter_mut().enumerate() {
         if i & (REFS_STOP_CHECK_STRIDE - 1) == 0 {
             stop.check()?;
@@ -132,6 +135,8 @@ pub(super) fn backward_references_lz77(
     hash_chain: &HashChain,
     stop: &dyn enough::Stop,
 ) -> Result<BackwardRefs, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let pix_count = argb.len();
     let mut refs = BackwardRefs::with_capacity(pix_count);
     let use_color_cache = cache_bits > 0;
@@ -218,6 +223,8 @@ pub(super) fn backward_references_rle(
     cache_bits: u8,
     stop: &dyn enough::Stop,
 ) -> Result<BackwardRefs, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let pix_count = argb.len();
     let mut refs = BackwardRefs::with_capacity(pix_count);
     let use_color_cache = cache_bits > 0;
@@ -307,6 +314,8 @@ pub(super) fn backward_references_lz77_box(
     hash_chain_best: &HashChain,
     stop: &dyn enough::Stop,
 ) -> Result<BackwardRefs, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     use alloc::vec;
 
     let pix_count = xsize * ysize;
@@ -455,7 +464,7 @@ pub(super) fn backward_references_lz77_box(
     }
 
     // Use the box chain with standard LZ77 to produce final refs
-    backward_references_lz77(argb, xsize, ysize, cache_bits, &box_chain, stop)
+    backward_references_lz77(argb, xsize, ysize, cache_bits, &box_chain, &stop)
 }
 
 /// Maximum color cache bits.
@@ -477,6 +486,8 @@ fn calculate_best_cache_size(
     cache_bits_max: u8,
     stop: &dyn enough::Stop,
 ) -> Result<u8, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     if quality <= 25 || cache_bits_max == 0 {
         return Ok(0);
     }
@@ -597,6 +608,8 @@ pub(super) fn apply_cache_to_refs(
     refs: &mut BackwardRefs,
     stop: &dyn enough::Stop,
 ) -> Result<(), enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let mut cache = ColorCache::new(cache_bits);
     let mut pixel_index = 0usize;
     let mut next_check = REFS_STOP_CHECK_STRIDE;
@@ -669,6 +682,8 @@ pub fn get_backward_references(
     parity: bool,
     stop: &dyn enough::Stop,
 ) -> Result<BackwardRefsResult, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     get_backward_references_inner(
         argb,
         width,
@@ -679,7 +694,7 @@ pub fn get_backward_references(
         0,
         do_no_cache,
         parity,
-        stop,
+        &stop,
     )
 }
 
@@ -697,6 +712,8 @@ pub fn get_backward_references_with_palette(
     parity: bool,
     stop: &dyn enough::Stop,
 ) -> Result<BackwardRefsResult, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     get_backward_references_inner(
         argb,
         width,
@@ -707,7 +724,7 @@ pub fn get_backward_references_with_palette(
         palette_size,
         do_no_cache,
         parity,
-        stop,
+        &stop,
     )
 }
 
@@ -729,6 +746,8 @@ fn get_backward_references_inner(
     parity: bool,
     stop: &dyn enough::Stop,
 ) -> Result<BackwardRefsResult, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let size = width * height;
 
     if size == 0 {
@@ -740,7 +759,7 @@ fn get_backward_references_inner(
     }
 
     // Build hash chain
-    let hash_chain = HashChain::new(argb, quality, width, method == 0, parity, stop)?;
+    let hash_chain = HashChain::new(argb, quality, width, method == 0, parity, &stop)?;
 
     // Method 0: libwebp's GetBackwardReferencesLowEffort shape — one plain
     // LZ77 pass, no RLE trial, no TraceBackwards — plus one cheap size lever
@@ -749,7 +768,7 @@ fn get_backward_references_inner(
     // wins. On photographic content this recovers several percent of bytes
     // for ~2% encode time; the guard keeps flat/synthetic content unaffected.
     if method == 0 {
-        let mut refs = backward_references_lz77(argb, width, height, 0, &hash_chain, stop)?;
+        let mut refs = backward_references_lz77(argb, width, height, 0, &hash_chain, &stop)?;
         let mut cache_bits = 0u8;
         if cache_bits_max > 0 {
             let bits = if palette_size > 0 {
@@ -769,19 +788,19 @@ fn get_backward_references_inner(
                 by_size.min(cache_bits_max)
             };
             let mut cached = refs.clone();
-            apply_cache_to_refs(argb, bits, &mut cached, stop)?;
+            apply_cache_to_refs(argb, bits, &mut cached, &stop)?;
             let cost_without = estimate_histogram_bits(&Histogram::from_refs_with_plane_codes(
-                &refs, 0, width, stop,
+                &refs, 0, width, &stop,
             )?);
             let cost_with = estimate_histogram_bits(&Histogram::from_refs_with_plane_codes(
-                &cached, bits, width, stop,
+                &cached, bits, width, &stop,
             )?);
             if cost_with < cost_without {
                 refs = cached;
                 cache_bits = bits;
             }
         }
-        apply_2d_locality(&mut refs, width, stop)?;
+        apply_2d_locality(&mut refs, width, &stop)?;
         return Ok(BackwardRefsResult {
             refs,
             cache_bits,
@@ -824,7 +843,7 @@ fn get_backward_references_inner(
         // The no-cache candidate first (libwebp evaluates i == 1 first).
         let mut cost_no_cache = None;
         if do_no_cache {
-            histo = Histogram::from_refs_with_plane_codes(&refs_tmp, 0, width, stop)?;
+            histo = Histogram::from_refs_with_plane_codes(&refs_tmp, 0, width, &stop)?;
             let bit_cost = estimate_histogram_bits(&histo);
             cost_no_cache = Some(bit_cost);
             if bit_cost < *best_nc_cost {
@@ -837,11 +856,12 @@ fn get_backward_references_inner(
         // Then with the entropy-selected color cache.
         let mut cache_bits = cache_bits_max;
         if cache_bits > 0 {
-            cache_bits = calculate_best_cache_size(argb, quality, &refs_tmp, cache_bits_max, stop)?;
+            cache_bits =
+                calculate_best_cache_size(argb, quality, &refs_tmp, cache_bits_max, &stop)?;
         }
         let mut refs_with_cache = refs_tmp;
         if cache_bits > 0 {
-            apply_cache_to_refs(argb, cache_bits, &mut refs_with_cache, stop)?;
+            apply_cache_to_refs(argb, cache_bits, &mut refs_with_cache, &stop)?;
         }
 
         let bit_cost = match cost_no_cache {
@@ -852,7 +872,7 @@ fn get_backward_references_inner(
                     &refs_with_cache,
                     cache_bits,
                     width,
-                    stop,
+                    &stop,
                 )?;
                 estimate_histogram_bits(&histo)
             }
@@ -877,8 +897,8 @@ fn get_backward_references_inner(
         types_remaining &= !lz77_type;
 
         let refs_tmp = match lz77_type {
-            LZ77_RLE => backward_references_rle(argb, width, height, 0, stop)?,
-            LZ77_STANDARD => backward_references_lz77(argb, width, height, 0, &hash_chain, stop)?,
+            LZ77_RLE => backward_references_rle(argb, width, height, 0, &stop)?,
+            LZ77_STANDARD => backward_references_lz77(argb, width, height, 0, &hash_chain, &stop)?,
             _ => continue,
         };
 
@@ -899,7 +919,7 @@ fn get_backward_references_inner(
 
     // Try LZ77 Box for palette images
     if try_box {
-        let refs_box = backward_references_lz77_box(argb, width, height, 0, &hash_chain, stop)?;
+        let refs_box = backward_references_lz77_box(argb, width, height, 0, &hash_chain, &stop)?;
         let prev_best_lz77_type = best_lz77_type;
 
         evaluate(
@@ -943,11 +963,11 @@ fn get_backward_references_inner(
             cache_bits_best,
             hash_chain_for_tb,
             &best_refs,
-            stop,
+            &stop,
         )?;
 
         // Compare TraceBackwards result against current best
-        histo = Histogram::from_refs_with_plane_codes(&optimized, cache_bits_best, width, stop)?;
+        histo = Histogram::from_refs_with_plane_codes(&optimized, cache_bits_best, width, &stop)?;
         let cost_trace = estimate_histogram_bits(&histo);
 
         if cost_trace < best_cost {
@@ -973,10 +993,10 @@ fn get_backward_references_inner(
             0,
             hash_chain_for_tb,
             &best_nc_refs,
-            stop,
+            &stop,
         )?;
 
-        histo = Histogram::from_refs_with_plane_codes(&optimized, 0, width, stop)?;
+        histo = Histogram::from_refs_with_plane_codes(&optimized, 0, width, &stop)?;
         let cost_trace = estimate_histogram_bits(&histo);
 
         if cost_trace < best_nc_cost {
@@ -985,10 +1005,10 @@ fn get_backward_references_inner(
     }
 
     // Phase 3: Apply 2D locality transform
-    apply_2d_locality(&mut best_refs, width, stop)?;
+    apply_2d_locality(&mut best_refs, width, &stop)?;
 
     let refs_no_cache = if do_no_cache {
-        apply_2d_locality(&mut best_nc_refs, width, stop)?;
+        apply_2d_locality(&mut best_nc_refs, width, &stop)?;
         Some(best_nc_refs)
     } else {
         None

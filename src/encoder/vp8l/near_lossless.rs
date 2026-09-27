@@ -14,6 +14,7 @@
 use alloc::vec;
 
 use super::types::make_argb;
+use enough::Stop;
 
 const MIN_DIM_FOR_NEAR_LOSSLESS: usize = 64;
 
@@ -307,6 +308,8 @@ fn near_lossless_pass(
     dst: &mut [u32],
     stop: &dyn enough::Stop,
 ) -> Result<(), enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let limit = 1i32 << bits;
 
     // Working rows: prev, curr, next (matching libwebp's copy_buffer approach)
@@ -367,6 +370,8 @@ pub fn apply_near_lossless(
     quality: u8,
     stop: &dyn enough::Stop,
 ) -> Result<(), enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     if quality >= 100 {
         return Ok(());
     }
@@ -381,13 +386,13 @@ pub fn apply_near_lossless(
 
     // First pass: full limit_bits
     let mut copy_buffer = argb.to_vec();
-    near_lossless_pass(&copy_buffer, w, h, limit_bits, argb, stop)?;
+    near_lossless_pass(&copy_buffer, w, h, limit_bits, argb, &stop)?;
 
     // Refinement passes: limit_bits-1 down to 1
     for bits in (1..limit_bits).rev() {
         stop.check()?;
         copy_buffer.copy_from_slice(argb);
-        near_lossless_pass(&copy_buffer, w, h, bits, argb, stop)?;
+        near_lossless_pass(&copy_buffer, w, h, bits, argb, &stop)?;
     }
     Ok(())
 }

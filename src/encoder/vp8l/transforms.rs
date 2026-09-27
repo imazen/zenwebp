@@ -18,6 +18,7 @@ use archmage::intrinsics::x86 as simd_mem;
 use archmage::intrinsics::x86_64 as simd_mem;
 
 use super::types::{argb_alpha, argb_blue, argb_green, argb_red, make_argb, subsample_size};
+use enough::Stop;
 
 /// Rows between `stop` polls in row-wise O(pixels) transform passes.
 const TRANSFORM_STOP_CHECK_ROWS: usize = 64;
@@ -412,6 +413,8 @@ pub fn apply_predictor_transform(
     low_effort: bool,
     stop: &dyn enough::Stop,
 ) -> Result<(Vec<u32>, u8), enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     // Method 0: no per-tile search — every tile uses Select (libwebp's
     // kPredLowEffort = 11 in VP8LResidualImage), at the coarsest sampling.
     if low_effort {
@@ -423,7 +426,7 @@ pub fn apply_predictor_transform(
             // Exact-lossless fast pass: fixed predictor, no per-pixel tile
             // lookup or mode dispatch (the generic pass below is ~15x more
             // instructions; libwebp has PredictorSub11_SSE2 for this).
-            apply_select_residuals(pixels, width, height, stop)?;
+            apply_select_residuals(pixels, width, height, &stop)?;
             return Ok((predictor_data, max_bits));
         }
         // Near-lossless + m0: fall through to the generic (quantizing) pass.
@@ -436,7 +439,7 @@ pub fn apply_predictor_transform(
             used_subtract_green,
             predictor_data,
             blocks_x,
-            stop,
+            &stop,
         )?;
         return Ok((data, max_bits));
     }
@@ -446,7 +449,7 @@ pub fn apply_predictor_transform(
     for bits in min_bits..=max_bits {
         stop.check()?;
         let (modes, accumulated, usage) =
-            select_predictor_modes(pixels, width, height, bits, stop)?;
+            select_predictor_modes(pixels, width, height, bits, &stop)?;
         if min_bits == max_bits {
             best = Some((modes, bits, 0));
             break;
@@ -477,7 +480,7 @@ pub fn apply_predictor_transform(
         used_subtract_green,
         predictor_data,
         blocks_x,
-        stop,
+        &stop,
     )?;
     Ok((data, final_bits))
 }
@@ -497,6 +500,8 @@ fn select_predictor_modes(
     size_bits: u8,
     stop: &dyn enough::Stop,
 ) -> Result<ModeSelection, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let block_size = 1usize << size_bits;
     let blocks_x = subsample_size(width as u32, size_bits) as usize;
     let blocks_y = subsample_size(height as u32, size_bits) as usize;
@@ -576,6 +581,8 @@ fn apply_select_residuals(
     height: usize,
     stop: &dyn enough::Stop,
 ) -> Result<(), enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     if width == 0 || height == 0 {
         return Ok(());
     }
@@ -629,6 +636,8 @@ fn finish_predictor_transform(
     blocks_x: usize,
     stop: &dyn enough::Stop,
 ) -> Result<Vec<u32>, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     if max_quantization > 1 {
         // Forward-order processing with near-lossless residual quantization.
         // Precompute max_diffs for all interior rows from ORIGINAL pixel data
@@ -1401,6 +1410,8 @@ pub fn apply_cross_color_transform(
     quality: u8,
     stop: &dyn enough::Stop,
 ) -> Result<Vec<u32>, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let block_size = 1usize << transform_bits;
     let tiles_x = subsample_size(width as u32, transform_bits) as usize;
     let tiles_y = subsample_size(height as u32, transform_bits) as usize;
@@ -1894,6 +1905,8 @@ pub fn bundle_color_map(
     xbits: u8,
     stop: &dyn enough::Stop,
 ) -> Result<Vec<u32>, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     if xbits == 0 {
         // No packing needed - just ensure format is 0xff000000 | (idx << 8)
         let mut dst = Vec::with_capacity(pixels.len());
@@ -1942,7 +1955,9 @@ impl ColorIndexTransform {
         pixels: &[u32],
         stop: &dyn enough::Stop,
     ) -> Result<Option<Self>, enough::StopReason> {
-        Self::try_build_with_sorting(pixels, true, stop)
+        // may_stop collapses Unstoppable: checks below are a None-test.
+        let stop = stop.may_stop().then_some(stop);
+        Self::try_build_with_sorting(pixels, true, &stop)
     }
 
     /// Try to build a color index transform with a specific sorting strategy.
@@ -1953,6 +1968,8 @@ impl ColorIndexTransform {
         minimize_delta: bool,
         stop: &dyn enough::Stop,
     ) -> Result<Option<Self>, enough::StopReason> {
+        // may_stop collapses Unstoppable: checks below are a None-test.
+        let stop = stop.may_stop().then_some(stop);
         let mut seen = alloc::collections::BTreeSet::new();
 
         for (i, &pixel) in pixels.iter().enumerate() {
@@ -1995,6 +2012,8 @@ impl ColorIndexTransform {
         pixels: &mut [u32],
         stop: &dyn enough::Stop,
     ) -> Result<(), enough::StopReason> {
+        // may_stop collapses Unstoppable: checks below are a None-test.
+        let stop = stop.may_stop().then_some(stop);
         // Build reverse lookup using a hash map for fast lookups
         let mut lookup = alloc::collections::BTreeMap::new();
         for (i, &color) in self.palette.iter().enumerate() {
@@ -2020,8 +2039,10 @@ impl ColorIndexTransform {
         width: usize,
         stop: &dyn enough::Stop,
     ) -> Result<(Vec<u32>, usize), enough::StopReason> {
+        // may_stop collapses Unstoppable: checks below are a None-test.
+        let stop = stop.may_stop().then_some(stop);
         // First apply: convert ARGB to palette indices
-        self.apply(pixels, stop)?;
+        self.apply(pixels, &stop)?;
 
         let xbits = self.xbits();
         if xbits == 0 {
@@ -2030,7 +2051,7 @@ impl ColorIndexTransform {
         }
 
         let packed_width = subsample_size(width as u32, xbits) as usize;
-        let packed = bundle_color_map(pixels, width, xbits, stop)?;
+        let packed = bundle_color_map(pixels, width, xbits, &stop)?;
         Ok((packed, packed_width))
     }
 }

@@ -18,6 +18,7 @@ use super::types::{
     BackwardRefs, MAX_LENGTH, NUM_LENGTH_CODES, NUM_LITERAL_CODES, PixOrCopy, argb_alpha,
     argb_blue, argb_green, argb_red,
 };
+use enough::Stop;
 
 /// Fixed-point precision for entropy (matches libwebp LOG_2_PRECISION_BITS).
 const LOG_2_PRECISION_BITS: u32 = 23;
@@ -94,8 +95,10 @@ impl CostModel {
         refs: &BackwardRefs,
         stop: &dyn enough::Stop,
     ) -> Result<Self, enough::StopReason> {
+        // may_stop collapses Unstoppable: checks below are a None-test.
+        let stop = stop.may_stop().then_some(stop);
         // Build histogram with plane-code-aware distances
-        let histo = Histogram::from_refs_with_plane_codes(refs, cache_bits, xsize, stop)?;
+        let histo = Histogram::from_refs_with_plane_codes(refs, cache_bits, xsize, &stop)?;
 
         Ok(Self {
             literal: counts_to_bit_estimates(&histo.literal),
@@ -545,11 +548,13 @@ pub fn trace_backwards_optimize(
     initial_refs: &BackwardRefs,
     stop: &dyn enough::Stop,
 ) -> Result<BackwardRefs, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let pix_count = argb.len();
     let use_color_cache = cache_bits > 0;
 
     // Phase 1: Build cost model from initial greedy refs
-    let cost_model = CostModel::build(xsize, cache_bits, initial_refs, stop)?;
+    let cost_model = CostModel::build(xsize, cache_bits, initial_refs, &stop)?;
 
     // Phase 2: Forward DP pass using interval-based cost manager
     let mut manager = CostManager::new(pix_count, &cost_model);
