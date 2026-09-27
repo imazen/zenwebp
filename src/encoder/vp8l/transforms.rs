@@ -18,6 +18,12 @@ use archmage::intrinsics::x86 as simd_mem;
 use archmage::intrinsics::x86_64 as simd_mem;
 
 use super::types::{argb_alpha, argb_blue, argb_green, argb_red, make_argb, subsample_size};
+use enough::Stop;
+
+/// Rows between `stop` polls in row-wise O(pixels) transform passes.
+const TRANSFORM_STOP_CHECK_ROWS: usize = 64;
+/// Pixels between `stop` polls in flat per-pixel transform loops.
+const TRANSFORM_STOP_CHECK_PIXELS: usize = 1 << 15;
 
 /// Transform type identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -406,6 +412,33 @@ pub fn apply_predictor_transform(
     used_subtract_green: bool,
     low_effort: bool,
 ) -> (Vec<u32>, u8) {
+    apply_predictor_transform_with_stop(
+        pixels,
+        width,
+        height,
+        min_bits,
+        max_bits,
+        max_quantization,
+        used_subtract_green,
+        low_effort,
+        &enough::Unstoppable,
+    )
+    .expect("Unstoppable never stops")
+}
+
+pub(crate) fn apply_predictor_transform_with_stop(
+    pixels: &mut [u32],
+    width: usize,
+    height: usize,
+    min_bits: u8,
+    max_bits: u8,
+    max_quantization: u32,
+    used_subtract_green: bool,
+    low_effort: bool,
+    stop: &dyn enough::Stop,
+) -> Result<(Vec<u32>, u8), enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     // Method 0: no per-tile search — every tile uses Select (libwebp's
     // kPredLowEffort = 11 in VP8LResidualImage), at the coarsest sampling.
     if low_effort {
@@ -417,8 +450,8 @@ pub fn apply_predictor_transform(
             // Exact-lossless fast pass: fixed predictor, no per-pixel tile
             // lookup or mode dispatch (the generic pass below is ~15x more
             // instructions; libwebp has PredictorSub11_SSE2 for this).
-            apply_select_residuals(pixels, width, height);
-            return (predictor_data, max_bits);
+            apply_select_residuals(pixels, width, height, &stop)?;
+            return Ok((predictor_data, max_bits));
         }
         // Near-lossless + m0: fall through to the generic (quantizing) pass.
         let data = finish_predictor_transform(
@@ -430,14 +463,17 @@ pub fn apply_predictor_transform(
             used_subtract_green,
             predictor_data,
             blocks_x,
-        );
-        return (data, max_bits);
+            &stop,
+        )?;
+        return Ok((data, max_bits));
     }
 
     let min_bits = min_bits.min(max_bits);
     let mut best: Option<(Vec<u32>, u8, u64)> = None;
     for bits in min_bits..=max_bits {
-        let (modes, accumulated, usage) = select_predictor_modes(pixels, width, height, bits);
+        stop.check()?;
+        let (modes, accumulated, usage) =
+            select_predictor_modes(pixels, width, height, bits, &stop)?;
         if min_bits == max_bits {
             best = Some((modes, bits, 0));
             break;
@@ -468,20 +504,28 @@ pub fn apply_predictor_transform(
         used_subtract_green,
         predictor_data,
         blocks_x,
-    );
-    (data, final_bits)
+        &stop,
+    )?;
+    Ok((data, final_bits))
 }
 
 /// One full greedy per-tile predictor-mode selection pass at a given tile
 /// size. Returns the mode image, the accumulated best-mode residual
 /// histograms, and the per-mode usage counts — the inputs libwebp's
 /// GetBestPredictorsAndSubSampling uses to cost a sampling level.
+/// Per-tile mode selection result: mode image, accumulated residual
+/// histograms, per-mode usage counts.
+type ModeSelection = (Vec<u32>, Box<[[u32; 256]; 4]>, [u32; 14]);
+
 fn select_predictor_modes(
     pixels: &[u32],
     width: usize,
     height: usize,
     size_bits: u8,
-) -> (Vec<u32>, Box<[[u32; 256]; 4]>, [u32; 14]) {
+    stop: &dyn enough::Stop,
+) -> Result<ModeSelection, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let block_size = 1usize << size_bits;
     let blocks_x = subsample_size(width as u32, size_bits) as usize;
     let blocks_y = subsample_size(height as u32, size_bits) as usize;
@@ -496,6 +540,9 @@ fn select_predictor_modes(
     let mut best_scratch = Vec::with_capacity(block_size * block_size);
 
     for by in 0..blocks_y {
+        // One tile row covers >= 2^size_bits image rows — a poll per row of
+        // tiles keeps the gap bounded by a fraction of a millisecond.
+        stop.check()?;
         for bx in 0..blocks_x {
             // Get left and above modes for spatial coherence bias.
             // 0xff means no neighbor (edge tiles), ensuring no bias match.
@@ -530,7 +577,7 @@ fn select_predictor_modes(
         }
     }
 
-    (predictor_data, accumulated, usage)
+    Ok((predictor_data, accumulated, usage))
 }
 
 /// Shannon entropy in fixed point, matching libwebp's VP8LShannonEntropy:
@@ -552,9 +599,16 @@ fn shannon_entropy(xs: &[u32]) -> u64 {
 /// black — the spec's border rules, which the decoder applies regardless of
 /// the signaled tile mode. Select reads ORIGINAL neighbors only, so the pass
 /// streams forward with a one-row history buffer and no serial dependency.
-fn apply_select_residuals(pixels: &mut [u32], width: usize, height: usize) {
+fn apply_select_residuals(
+    pixels: &mut [u32],
+    width: usize,
+    height: usize,
+    stop: &dyn enough::Stop,
+) -> Result<(), enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     if width == 0 || height == 0 {
-        return;
+        return Ok(());
     }
     let mut prev_row = vec![0u32; width];
     let mut cur_row = vec![0u32; width];
@@ -571,6 +625,9 @@ fn apply_select_residuals(pixels: &mut [u32], width: usize, height: usize) {
     }
 
     for y in 1..height {
+        if y & (TRANSFORM_STOP_CHECK_ROWS - 1) == 0 {
+            stop.check()?;
+        }
         let row = &mut pixels[y * width..(y + 1) * width];
         cur_row.copy_from_slice(row);
         // Column 0: Top predictor.
@@ -585,6 +642,8 @@ fn apply_select_residuals(pixels: &mut [u32], width: usize, height: usize) {
         }
         core::mem::swap(&mut prev_row, &mut cur_row);
     }
+
+    Ok(())
 }
 
 /// Compute and store predictor residuals for the chosen per-tile modes.
@@ -599,13 +658,19 @@ fn finish_predictor_transform(
     used_subtract_green: bool,
     predictor_data: Vec<u32>,
     blocks_x: usize,
-) -> Vec<u32> {
+    stop: &dyn enough::Stop,
+) -> Result<Vec<u32>, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     if max_quantization > 1 {
         // Forward-order processing with near-lossless residual quantization.
         // Precompute max_diffs for all interior rows from ORIGINAL pixel data
         // before any modifications.
         let mut all_max_diffs = vec![0u8; width * height];
         for y in 1..height.saturating_sub(1) {
+            if y & (TRANSFORM_STOP_CHECK_ROWS - 1) == 0 {
+                stop.check()?;
+            }
             super::near_lossless::max_diffs_for_row(
                 pixels,
                 width,
@@ -620,6 +685,9 @@ fn finish_predictor_transform(
         let mut residuals = vec![0u32; width * height];
 
         for y in 0..height {
+            if y & (TRANSFORM_STOP_CHECK_ROWS - 1) == 0 {
+                stop.check()?;
+            }
             for x in 0..width {
                 let idx = y * width + x;
                 let pred = if y == 0 && x == 0 {
@@ -679,6 +747,9 @@ fn finish_predictor_transform(
     } else {
         // Exact lossless: reverse-order processing (neighbors stay original).
         for y in (0..height).rev() {
+            if y & (TRANSFORM_STOP_CHECK_ROWS - 1) == 0 {
+                stop.check()?;
+            }
             for x in (0..width).rev() {
                 let pred = if y == 0 && x == 0 {
                     // Top-left corner: Black
@@ -713,7 +784,7 @@ fn finish_predictor_transform(
         }
     }
 
-    predictor_data
+    Ok(predictor_data)
 }
 
 /// Choose the best predictor mode for a block using entropy-based scoring.
@@ -1362,6 +1433,27 @@ pub fn apply_cross_color_transform(
     transform_bits: u8,
     quality: u8,
 ) -> Vec<u32> {
+    apply_cross_color_transform_with_stop(
+        pixels,
+        width,
+        height,
+        transform_bits,
+        quality,
+        &enough::Unstoppable,
+    )
+    .expect("Unstoppable never stops")
+}
+
+pub(crate) fn apply_cross_color_transform_with_stop(
+    pixels: &mut [u32],
+    width: usize,
+    height: usize,
+    transform_bits: u8,
+    quality: u8,
+    stop: &dyn enough::Stop,
+) -> Result<Vec<u32>, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let block_size = 1usize << transform_bits;
     let tiles_x = subsample_size(width as u32, transform_bits) as usize;
     let tiles_y = subsample_size(height as u32, transform_bits) as usize;
@@ -1374,6 +1466,8 @@ pub fn apply_cross_color_transform(
     let mut prev_y = CrossColorMultipliers::default();
 
     for ty in 0..tiles_y {
+        // One tile row covers >= 2^transform_bits image rows.
+        stop.check()?;
         for tx in 0..tiles_x {
             let start_x = tx * block_size;
             let start_y = ty * block_size;
@@ -1455,7 +1549,7 @@ pub fn apply_cross_color_transform(
         }
     }
 
-    transform_data
+    Ok(transform_data)
 }
 
 /// Apply cross-color forward transform to a single tile (matching libwebp's VP8LTransformColor_C).
@@ -1848,12 +1942,28 @@ fn palette_has_non_monotonous_deltas(palette: &[u32]) -> bool {
 /// For palette_size <=16: 2 indices per pixel (4 bits each)
 /// Matches libwebp's VP8LBundleColorMap_C.
 pub fn bundle_color_map(pixels: &[u32], width: usize, xbits: u8) -> Vec<u32> {
+    bundle_color_map_with_stop(pixels, width, xbits, &enough::Unstoppable)
+        .expect("Unstoppable never stops")
+}
+
+pub(crate) fn bundle_color_map_with_stop(
+    pixels: &[u32],
+    width: usize,
+    xbits: u8,
+    stop: &dyn enough::Stop,
+) -> Result<Vec<u32>, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     if xbits == 0 {
         // No packing needed - just ensure format is 0xff000000 | (idx << 8)
-        return pixels
-            .iter()
-            .map(|&p| 0xff000000 | ((argb_green(p) as u32) << 8))
-            .collect();
+        let mut dst = Vec::with_capacity(pixels.len());
+        for (i, &p) in pixels.iter().enumerate() {
+            if i & (TRANSFORM_STOP_CHECK_PIXELS - 1) == 0 {
+                stop.check()?;
+            }
+            dst.push(0xff000000 | ((argb_green(p) as u32) << 8));
+        }
+        return Ok(dst);
     }
 
     let bit_depth = 1u32 << (3 - xbits);
@@ -1863,6 +1973,9 @@ pub fn bundle_color_map(pixels: &[u32], width: usize, xbits: u8) -> Vec<u32> {
     let mut dst = Vec::with_capacity(packed_width * height);
 
     for y in 0..height {
+        if y & (TRANSFORM_STOP_CHECK_ROWS - 1) == 0 {
+            stop.check()?;
+        }
         let row_start = y * width;
         let mut code = 0xff000000u32;
         for x in 0..width {
@@ -1878,7 +1991,7 @@ pub fn bundle_color_map(pixels: &[u32], width: usize, xbits: u8) -> Vec<u32> {
         }
     }
 
-    dst
+    Ok(dst)
 }
 
 impl ColorIndexTransform {
@@ -1886,19 +1999,42 @@ impl ColorIndexTransform {
     /// Returns None if image has more than 256 colors.
     /// Palette is sorted to minimize deltas (default strategy).
     pub fn try_build(pixels: &[u32]) -> Option<Self> {
-        Self::try_build_with_sorting(pixels, true)
+        Self::try_build_with_stop(pixels, &enough::Unstoppable).expect("Unstoppable never stops")
+    }
+
+    pub(crate) fn try_build_with_stop(
+        pixels: &[u32],
+        stop: &dyn enough::Stop,
+    ) -> Result<Option<Self>, enough::StopReason> {
+        // may_stop collapses Unstoppable: checks below are a None-test.
+        let stop = stop.may_stop().then_some(stop);
+        Self::try_build_with_sorting_with_stop(pixels, true, &stop)
     }
 
     /// Try to build a color index transform with a specific sorting strategy.
     /// `minimize_delta`: true = greedy nearest-neighbor, false = lexicographic.
     /// Returns None if image has more than 256 colors.
     pub fn try_build_with_sorting(pixels: &[u32], minimize_delta: bool) -> Option<Self> {
+        Self::try_build_with_sorting_with_stop(pixels, minimize_delta, &enough::Unstoppable)
+            .expect("Unstoppable never stops")
+    }
+
+    pub(crate) fn try_build_with_sorting_with_stop(
+        pixels: &[u32],
+        minimize_delta: bool,
+        stop: &dyn enough::Stop,
+    ) -> Result<Option<Self>, enough::StopReason> {
+        // may_stop collapses Unstoppable: checks below are a None-test.
+        let stop = stop.may_stop().then_some(stop);
         let mut seen = alloc::collections::BTreeSet::new();
 
-        for &pixel in pixels {
+        for (i, &pixel) in pixels.iter().enumerate() {
+            if i & (TRANSFORM_STOP_CHECK_PIXELS - 1) == 0 {
+                stop.check()?;
+            }
             seen.insert(pixel);
             if seen.len() > 256 {
-                return None;
+                return Ok(None);
             }
         }
 
@@ -1913,7 +2049,7 @@ impl ColorIndexTransform {
             palette_sorted
         };
 
-        Some(Self { palette })
+        Ok(Some(Self { palette }))
     }
 
     /// Build from a pre-sorted palette (for multi-config testing).
@@ -1928,34 +2064,61 @@ impl ColorIndexTransform {
 
     /// Apply the transform: convert ARGB to palette indices in green channel.
     pub fn apply(&self, pixels: &mut [u32]) {
+        self.apply_with_stop(pixels, &enough::Unstoppable)
+            .expect("Unstoppable never stops")
+    }
+
+    pub(crate) fn apply_with_stop(
+        &self,
+        pixels: &mut [u32],
+        stop: &dyn enough::Stop,
+    ) -> Result<(), enough::StopReason> {
+        // may_stop collapses Unstoppable: checks below are a None-test.
+        let stop = stop.may_stop().then_some(stop);
         // Build reverse lookup using a hash map for fast lookups
         let mut lookup = alloc::collections::BTreeMap::new();
         for (i, &color) in self.palette.iter().enumerate() {
             lookup.insert(color, i as u8);
         }
 
-        for pixel in pixels.iter_mut() {
+        for (i, pixel) in pixels.iter_mut().enumerate() {
+            if i & (TRANSFORM_STOP_CHECK_PIXELS - 1) == 0 {
+                stop.check()?;
+            }
             let idx = lookup[pixel];
             // Store index in green channel (A=0xff, R=0, G=idx, B=0)
             *pixel = make_argb(255, 0, idx, 0);
         }
+        Ok(())
     }
 
     /// Apply the transform and bundle pixels into packed format.
     /// Returns the packed pixel buffer and the new (packed) width.
     pub fn apply_and_bundle(&self, pixels: &mut [u32], width: usize) -> (Vec<u32>, usize) {
+        self.apply_and_bundle_with_stop(pixels, width, &enough::Unstoppable)
+            .expect("Unstoppable never stops")
+    }
+
+    pub(crate) fn apply_and_bundle_with_stop(
+        &self,
+        pixels: &mut [u32],
+        width: usize,
+        stop: &dyn enough::Stop,
+    ) -> Result<(Vec<u32>, usize), enough::StopReason> {
+        // may_stop collapses Unstoppable: checks below are a None-test.
+        let stop = stop.may_stop().then_some(stop);
         // First apply: convert ARGB to palette indices
-        self.apply(pixels);
+        self.apply_with_stop(pixels, &stop)?;
 
         let xbits = self.xbits();
         if xbits == 0 {
             // No packing needed
-            return (pixels.to_vec(), width);
+            return Ok((pixels.to_vec(), width));
         }
 
         let packed_width = subsample_size(width as u32, xbits) as usize;
-        let packed = bundle_color_map(pixels, width, xbits);
-        (packed, packed_width)
+        let packed = bundle_color_map_with_stop(pixels, width, xbits, &stop)?;
+        Ok((packed, packed_width))
     }
 }
 
@@ -2007,7 +2170,9 @@ mod tests {
             make_argb(255, 255, 0, 0), // Red again
         ];
 
-        let transform = ColorIndexTransform::try_build(&pixels).unwrap();
+        let transform = ColorIndexTransform::try_build_with_stop(&pixels, &enough::Unstoppable)
+            .unwrap()
+            .unwrap();
         assert_eq!(transform.palette.len(), 2);
         assert_eq!(transform.xbits(), 3); // Can pack 8 per pixel
     }
@@ -2018,15 +2183,18 @@ mod tests {
         let pixels: Vec<u32> = (0..257)
             .map(|i| make_argb(255, (i % 256) as u8, (i / 256) as u8, 0))
             .collect();
-        let transform = ColorIndexTransform::try_build(&pixels);
-        assert!(transform.is_none());
+        assert!(
+            ColorIndexTransform::try_build_with_stop(&pixels, &enough::Unstoppable)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
     fn test_palette_bundle_2_colors() {
         // 2-color palette: xbits=3, 8 pixels per packed pixel
         let indices: Vec<u32> = (0..16).map(|i| make_argb(255, 0, i & 1, 0)).collect();
-        let bundled = bundle_color_map(&indices, 16, 3);
+        let bundled = bundle_color_map_with_stop(&indices, 16, 3, &enough::Unstoppable).unwrap();
         // 16 pixels / 8 per packed = 2 packed pixels
         assert_eq!(bundled.len(), 2);
         // First packed pixel: indices 0,1,0,1,0,1,0,1
@@ -2041,7 +2209,7 @@ mod tests {
         let indices: Vec<u32> = (0..8)
             .map(|i| make_argb(255, 0, (i * 3) & 0xf, 0))
             .collect();
-        let bundled = bundle_color_map(&indices, 8, 1);
+        let bundled = bundle_color_map_with_stop(&indices, 8, 1, &enough::Unstoppable).unwrap();
         // 8 pixels / 2 per packed = 4 packed pixels
         assert_eq!(bundled.len(), 4);
     }

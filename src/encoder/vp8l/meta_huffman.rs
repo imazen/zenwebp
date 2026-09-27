@@ -14,6 +14,11 @@ use super::entropy::{
 };
 use super::histogram::Histogram;
 use super::types::{BackwardRefs, PixOrCopy, subsample_size};
+use enough::Stop;
+
+/// Pixels/tokens between `stop` polls in the histogram-building and
+/// clustering passes below (well under the ~50 ms responsiveness target).
+const REFS_TOKEN_STOP_STRIDE: usize = 1 << 15;
 
 // === Instrumentation counters for tracing clustering behavior ===
 #[cfg(feature = "std")]
@@ -239,7 +244,10 @@ fn build_tile_histograms(
     _height: usize,
     histo_bits: u8,
     cache_bits: u8,
-) -> Vec<Histogram> {
+    stop: &dyn enough::Stop,
+) -> Result<Vec<Histogram>, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let histo_xsize = subsample_size(width as u32, histo_bits) as usize;
     let histo_ysize = subsample_size(_height as u32, histo_bits) as usize;
     let num_tiles = histo_xsize * histo_ysize;
@@ -248,6 +256,9 @@ fn build_tile_histograms(
 
     let mut x = 0usize;
     let mut y = 0usize;
+    // Poll on covered-pixel boundaries, not token boundaries: Copy tokens
+    // advance coverage by `len` in the inner loop below.
+    let mut next_check = REFS_TOKEN_STOP_STRIDE;
 
     for token in refs.iter() {
         let tile_idx = (y >> histo_bits) * histo_xsize + (x >> histo_bits);
@@ -283,9 +294,15 @@ fn build_tile_histograms(
                 }
             }
         }
+
+        let covered = y * width + x;
+        if covered >= next_check {
+            stop.check()?;
+            next_check = covered + REFS_TOKEN_STOP_STRIDE;
+        }
     }
 
-    histos
+    Ok(histos)
 }
 
 /// Get bin ID for entropy-based binning (matching libwebp's GetBinIdForEntropy).
@@ -681,7 +698,10 @@ fn entropy_bin_combine_phase(
     bin_ids: &[usize],
     low_effort: bool,
     compact: &mut Compact,
-) {
+    stop: &dyn enough::Stop,
+) -> Result<(), enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let n = state.histos.len();
     // libwebp sizes the factor from the RAW tile count (image_histo_raw_size),
     // empties included.
@@ -705,6 +725,9 @@ fn entropy_bin_combine_phase(
     // histogram and that slot is examined again before moving on.
     let mut idx = 0usize;
     while idx < compact.len() {
+        if idx & (REFS_TOKEN_STOP_STRIDE - 1) == 0 {
+            stop.check()?;
+        }
         let i = compact.order[idx];
         let bin_id = bin_ids[i];
         let Some(first) = bin_first[bin_id] else {
@@ -790,6 +813,7 @@ fn entropy_bin_combine_phase(
             state.costs[i] = compute_histogram_cost(&state.histos[i]);
         }
     }
+    Ok(())
 }
 
 /// Phase 2b: Stochastic combining via size-9 priority queue with Lehmer RNG
@@ -799,7 +823,10 @@ fn stochastic_combine_phase(
     state: &mut ClusterState,
     target_size: usize,
     compact: &mut Compact,
-) -> bool {
+    stop: &dyn enough::Stop,
+) -> Result<bool, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     const HISTO_QUEUE_SIZE: usize = 9;
     let mut histo_queue = HistoQueue::new(HISTO_QUEUE_SIZE);
 
@@ -824,6 +851,9 @@ fn stochastic_combine_phase(
             break;
         }
         cluster_trace::inc_stochastic_outer_iters();
+        // Each outer iteration samples O(compact_size) pairs — poll per
+        // iteration so the O(n²) total stays interruptible.
+        stop.check()?;
 
         // libwebp tightens this threshold INSIDE the sampling loop: every
         // pair that beats the best so far becomes the new bar for the rest
@@ -904,7 +934,7 @@ fn stochastic_combine_phase(
         tries_with_no_success = 0;
     }
 
-    compact_size <= target_size
+    Ok(compact_size <= target_size)
 }
 
 /// After a stochastic merge, prune/repair the priority queue: drop the pair
@@ -955,7 +985,13 @@ fn update_queue_after_stochastic_merge(
 /// Phase 3: Greedy combining via O(n^2)-initialized priority queue
 /// (matching libwebp's HistogramCombineGreedy). Only runs when the active count
 /// is small enough (typically after stochastic has reached target_size).
-fn greedy_combine_phase(state: &mut ClusterState, compact: &mut Compact) {
+fn greedy_combine_phase(
+    state: &mut ClusterState,
+    compact: &mut Compact,
+    stop: &dyn enough::Stop,
+) -> Result<(), enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let active_n = compact.len();
 
     let mut histo_queue = HistoQueue::new(active_n * active_n);
@@ -963,6 +999,10 @@ fn greedy_combine_phase(state: &mut ClusterState, compact: &mut Compact) {
     cluster_trace::add_greedy_initial_pairs(greedy_init_pairs as u64);
 
     for ai in 0..active_n {
+        // The O(n²) pair init is the bulk of this phase's cost.
+        if ai & (REFS_TOKEN_STOP_STRIDE - 1) == 0 {
+            stop.check()?;
+        }
         for aj in (ai + 1)..active_n {
             histo_queue.push_greedy(
                 &state.histos,
@@ -975,6 +1015,7 @@ fn greedy_combine_phase(state: &mut ClusterState, compact: &mut Compact) {
 
     // Greedily merge the best pair until no beneficial pair remains.
     while !histo_queue.queue.is_empty() {
+        stop.check()?;
         let best_idx1 = histo_queue.queue[0].idx1;
         let best_idx2 = histo_queue.queue[0].idx2;
         let combined_cost = histo_queue.queue[0].cost_combo;
@@ -1017,6 +1058,7 @@ fn greedy_combine_phase(state: &mut ClusterState, compact: &mut Compact) {
         }
         cluster_trace::add_greedy_new_pairs(new_pairs);
     }
+    Ok(())
 }
 
 /// Phase 4: For each original tile, search active clusters for the one that
@@ -1026,13 +1068,16 @@ fn remap_tiles_to_clusters(
     state: &mut ClusterState,
     tile_histos: &[Histogram],
     active_indices: &[usize],
-) {
+    stop: &dyn enough::Stop,
+) -> Result<(), enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let n = tile_histos.len();
     if active_indices.len() == 1 {
         for m in state.mapping.iter_mut() {
             *m = active_indices[0];
         }
-        return;
+        return Ok(());
     }
 
     // Cache tile histogram costs to avoid recomputation
@@ -1042,6 +1087,10 @@ fn remap_tiles_to_clusters(
     cluster_trace::add_remap_evals(remap_total);
 
     for tile_idx in 0..n {
+        // Tiles × clusters is the O(n·k) remap pass.
+        if tile_idx & (REFS_TOKEN_STOP_STRIDE - 1) == 0 {
+            stop.check()?;
+        }
         // Empty tile (dropped before clustering, see `from_tiles`): libwebp's
         // HistogramRemap gives it the previous tile's symbol "to help future
         // LZ77" on the entropy image; it contributes nothing to any group.
@@ -1083,6 +1132,7 @@ fn remap_tiles_to_clusters(
 
         state.mapping[tile_idx] = best_cluster;
     }
+    Ok(())
 }
 
 /// Phase 5: Project active clusters into a dense [0, K) index space and rebuild
@@ -1146,7 +1196,10 @@ fn cluster_histograms(
     quality: u8,
     cache_bits: u8,
     low_effort: bool,
-) -> (Vec<Histogram>, Vec<u16>) {
+    stop: &dyn enough::Stop,
+) -> Result<(Vec<Histogram>, Vec<u16>), enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let n = tile_histos.len();
     cluster_trace::inc_cluster_calls();
     cluster_trace::add_initial_histograms(n as u64);
@@ -1170,9 +1223,9 @@ fn cluster_histograms(
 
     if n <= 1 {
         if n == 1 {
-            return (vec![tile_histos[0].clone()], vec![0]);
+            return Ok((vec![tile_histos[0].clone()], vec![0]));
         }
-        return (Vec::new(), Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
 
     let mut state = ClusterState::from_tiles(tile_histos);
@@ -1192,7 +1245,14 @@ fn cluster_histograms(
     let num_bins = if low_effort { NUM_PARTITIONS } else { BIN_SIZE }.min(num_active);
     let entropy_combine = num_active > num_bins * 2 && quality < 100;
     if entropy_combine {
-        entropy_bin_combine_phase(&mut state, quality, &bin_ids, low_effort, &mut compact);
+        entropy_bin_combine_phase(
+            &mut state,
+            quality,
+            &bin_ids,
+            low_effort,
+            &mut compact,
+            &stop,
+        )?;
         zhist_phase(
             "bin",
             state.count_active(),
@@ -1210,7 +1270,7 @@ fn cluster_histograms(
         cluster_trace::set_post_entropy_bin_count(num_active_pre_stochastic as u64);
 
         let do_greedy = if num_active_pre_stochastic > target_size {
-            stochastic_combine_phase(&mut state, target_size, &mut compact)
+            stochastic_combine_phase(&mut state, target_size, &mut compact, &stop)?
         } else {
             true
         };
@@ -1223,7 +1283,7 @@ fn cluster_histograms(
         // Phase 3: Greedy combining (only when stochastic reached target)
         cluster_trace::set_post_stochastic_count(state.count_active() as u64);
         if do_greedy && state.count_active() > 1 {
-            greedy_combine_phase(&mut state, &mut compact);
+            greedy_combine_phase(&mut state, &mut compact, &stop)?;
             zhist_phase("greedy", state.count_active(), format_args!(""));
         }
     } else {
@@ -1238,13 +1298,13 @@ fn cluster_histograms(
     let active_indices = compact.order.clone();
     cluster_trace::set_post_greedy_count(active_indices.len() as u64);
     if !active_indices.is_empty() {
-        remap_tiles_to_clusters(&mut state, tile_histos, &active_indices);
+        remap_tiles_to_clusters(&mut state, tile_histos, &active_indices, &stop)?;
     }
 
     // Phase 5: Build final histogram outputs
     let out = build_final_histograms(tile_histos, &state.mapping, &active_indices, cache_bits);
     zhist_phase("remap", out.0.len(), format_args!(""));
-    out
+    Ok(out)
 }
 
 #[inline]
@@ -1271,7 +1331,10 @@ pub fn build_meta_huffman(
     cache_bits: u8,
     quality: u8,
     low_effort: bool,
-) -> MetaHuffmanInfo {
+    stop: &dyn enough::Stop,
+) -> Result<MetaHuffmanInfo, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     // The full VP8L range. This used to re-clamp to 8, silently undoing the
     // `MAX_HUFF_IMAGE_SIZE` clamp the caller already applied (a 16383²
     // palette m0 image gets histo_bits 9 → 4x the intended tile count) (#78).
@@ -1294,15 +1357,16 @@ pub fn build_meta_huffman(
     }
 
     // Build per-tile histograms from backward reference tokens
-    let tile_histos = build_tile_histograms(refs, width, height, histo_bits, cache_bits);
+    let tile_histos = build_tile_histograms(refs, width, height, histo_bits, cache_bits, &stop)?;
 
     // Cluster histograms
-    let (histograms, symbols) = cluster_histograms(&tile_histos, quality, cache_bits, low_effort);
+    let (histograms, symbols) =
+        cluster_histograms(&tile_histos, quality, cache_bits, low_effort, &stop)?;
 
     // Compute final costs
     let costs = histograms.iter().map(compute_histogram_cost).collect();
 
-    MetaHuffmanInfo {
+    Ok(MetaHuffmanInfo {
         histo_bits,
         num_histograms: histograms.len(),
         histogram_symbols: symbols,
@@ -1310,16 +1374,22 @@ pub fn build_meta_huffman(
         costs,
         image_width: width,
         image_height: height,
-    }
+    })
 }
 
 /// Build a single-histogram MetaHuffmanInfo (no spatial variation).
 /// Assumes distances in refs are already plane codes (from apply_2d_locality).
-pub fn build_single_histogram(refs: &BackwardRefs, cache_bits: u8) -> MetaHuffmanInfo {
-    let histogram = Histogram::from_refs(refs, cache_bits);
+pub fn build_single_histogram(
+    refs: &BackwardRefs,
+    cache_bits: u8,
+    stop: &dyn enough::Stop,
+) -> Result<MetaHuffmanInfo, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
+    let histogram = Histogram::from_refs(refs, cache_bits, &stop)?;
     let costs = vec![compute_histogram_cost(&histogram)];
 
-    MetaHuffmanInfo {
+    Ok(MetaHuffmanInfo {
         histo_bits: 0,
         num_histograms: 1,
         histogram_symbols: Vec::new(),
@@ -1327,7 +1397,7 @@ pub fn build_single_histogram(refs: &BackwardRefs, cache_bits: u8) -> MetaHuffma
         costs,
         image_width: 0,
         image_height: 0,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -1340,7 +1410,7 @@ mod tests {
         let mut refs = BackwardRefs::new();
         refs.push(PixOrCopy::literal(make_argb(255, 128, 64, 32)));
         refs.push(PixOrCopy::literal(make_argb(255, 128, 64, 32)));
-        let info = build_single_histogram(&refs, 0);
+        let info = build_single_histogram(&refs, 0, &enough::Unstoppable).unwrap();
         assert_eq!(info.num_histograms, 1);
         assert!(info.histogram_symbols.is_empty());
     }
@@ -1352,7 +1422,7 @@ mod tests {
         for _ in 0..16 {
             refs.push(PixOrCopy::literal(make_argb(255, 128, 64, 32)));
         }
-        let histos = build_tile_histograms(&refs, 4, 4, 2, 0);
+        let histos = build_tile_histograms(&refs, 4, 4, 2, 0, &enough::Unstoppable).unwrap();
         assert_eq!(histos.len(), 1); // 4/4 = 1 tile for bits=2
     }
 
@@ -1365,7 +1435,8 @@ mod tests {
             h1.add_literal(make_argb(255, 128, 64, 32));
             h2.add_literal(make_argb(255, 128, 64, 32));
         }
-        let (groups, symbols) = cluster_histograms(&[h1, h2], 75, 0, false);
+        let (groups, symbols) =
+            cluster_histograms(&[h1, h2], 75, 0, false, &enough::Unstoppable).unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(symbols.len(), 2);
         assert_eq!(symbols[0], symbols[1]);
@@ -1473,12 +1544,12 @@ mod histo_bits_range_tests {
         for i in 0..64u32 {
             refs.push(PixOrCopy::literal(make_argb(255, i as u8, 0, 0)));
         }
-        let info = build_meta_huffman(&refs, 8, 8, 9, 0, 75, false);
+        let info = build_meta_huffman(&refs, 8, 8, 9, 0, 75, false, &enough::Unstoppable).unwrap();
         assert_eq!(info.histo_bits, 9);
         // And the range is still clamped at both ends.
-        let info = build_meta_huffman(&refs, 8, 8, 12, 0, 75, false);
+        let info = build_meta_huffman(&refs, 8, 8, 12, 0, 75, false, &enough::Unstoppable).unwrap();
         assert_eq!(info.histo_bits, MAX_HUFFMAN_BITS);
-        let info = build_meta_huffman(&refs, 8, 8, 0, 0, 75, false);
+        let info = build_meta_huffman(&refs, 8, 8, 0, 0, 75, false, &enough::Unstoppable).unwrap();
         assert_eq!(info.histo_bits, MIN_HUFFMAN_BITS);
     }
 }

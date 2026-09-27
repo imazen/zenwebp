@@ -15,8 +15,8 @@ use super::huffman::{
 };
 use super::meta_huffman::{build_meta_huffman, build_single_histogram};
 use super::transforms::{
-    ColorIndexTransform, apply_cross_color_transform, apply_predictor_transform,
-    apply_subtract_green,
+    ColorIndexTransform, apply_cross_color_transform_with_stop,
+    apply_predictor_transform_with_stop, apply_subtract_green,
 };
 use super::types::{
     NUM_LENGTH_CODES, NUM_LITERAL_CODES, PixOrCopy, Vp8lConfig, argb_alpha, argb_blue, argb_green,
@@ -25,6 +25,7 @@ use super::types::{
 
 use super::entropy::vp8l_bits_entropy;
 use crate::encoder::api::{EncodeError, EncodeResult};
+use enough::Stop;
 #[allow(unused_imports)]
 use whereat::at;
 
@@ -37,6 +38,8 @@ pub fn encode_vp8l(
     config: &Vp8lConfig,
     stop: &dyn enough::Stop,
 ) -> EncodeResult<Vec<u8>> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     encode_vp8l_with_alloc(
         pixels,
         width,
@@ -44,7 +47,7 @@ pub fn encode_vp8l(
         has_alpha,
         config,
         crate::decoder::alloc_util::AllocPreference::CodecDefault,
-        stop,
+        &stop,
     )
 }
 
@@ -61,6 +64,8 @@ pub(crate) fn encode_vp8l_with_alloc(
     alloc_pref: crate::decoder::alloc_util::AllocPreference,
     stop: &dyn enough::Stop,
 ) -> EncodeResult<Vec<u8>> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     if width == 0 || width > 16384 || height == 0 || height > 16384 {
         return Err(at!(EncodeError::InvalidDimensions));
     }
@@ -123,7 +128,7 @@ pub(crate) fn encode_vp8l_with_alloc(
     }
 
     // Encode with the full pipeline
-    encode_argb(&mut argb, w, h, has_alpha, config, stop)
+    encode_argb(&mut argb, w, h, has_alpha, config, &stop)
 }
 
 /// Mask off RGB bits of any pixel whose alpha byte is 0. The u32 ARGB layout
@@ -466,6 +471,8 @@ pub(crate) fn encode_argb(
     config: &Vp8lConfig,
     stop: &dyn enough::Stop,
 ) -> EncodeResult<Vec<u8>> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     // Determine if palette is available (needed for config generation)
     let palette_candidate = if config.use_palette {
         can_use_palette(argb)
@@ -495,7 +502,8 @@ pub(crate) fn encode_argb(
         // Run entropy analysis (used for single-config best guess)
         let palette_size_est = if palette_candidate {
             // Quick count for entropy estimation (don't build full transform yet)
-            ColorIndexTransform::try_build(argb)
+            ColorIndexTransform::try_build_with_stop(argb, &stop)
+                .map_err(|e| at!(EncodeError::from(e)))?
                 .as_ref()
                 .map(|p| p.palette.len())
                 .unwrap_or(0)
@@ -562,7 +570,7 @@ pub(crate) fn encode_argb(
             config,
             &configs[0],
             red_and_blue_always_zero,
-            stop,
+            &stop,
         )
     } else {
         // Multi-config: clone original pixels, try each config, keep smallest
@@ -580,7 +588,7 @@ pub(crate) fn encode_argb(
                 config,
                 crunch_config,
                 red_and_blue_always_zero,
-                stop,
+                &stop,
             ) {
                 Ok(output) => {
                     let keep = match &best_output {
@@ -629,6 +637,8 @@ fn encode_argb_single_config(
     red_and_blue_always_zero: bool,
     stop: &dyn enough::Stop,
 ) -> EncodeResult<Vec<u8>> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let mut writer = BitWriter::with_capacity(width * height / 2);
 
     // The ALPH-embedded stream (`config.omit_headers`) begins directly at
@@ -680,7 +690,8 @@ fn encode_argb_single_config(
     // Build palette transform if needed
     let minimize_delta = matches!(crunch.palette_sorting, PaletteSorting::MinimizeDelta);
     let palette_transform = if use_palette {
-        ColorIndexTransform::try_build_with_sorting(argb, minimize_delta)
+        ColorIndexTransform::try_build_with_sorting_with_stop(argb, minimize_delta, &stop)
+            .map_err(|e| at!(EncodeError::from(e)))?
     } else {
         None
     };
@@ -688,7 +699,8 @@ fn encode_argb_single_config(
     // Apply near-lossless preprocessing if enabled.
     // Matching libwebp: only when not palette and not predictor mode.
     if config.near_lossless < 100 && !use_palette && !use_predictor {
-        super::near_lossless::apply_near_lossless(argb, width, height, config.near_lossless);
+        super::near_lossless::apply_near_lossless(argb, width, height, config.near_lossless, &stop)
+            .map_err(|e| at!(EncodeError::from(e)))?;
     }
 
     // Apply transforms and signal them in bitstream.
@@ -702,7 +714,13 @@ fn encode_argb_single_config(
         if use_subtract_green {
             writer.write_bit(true); // transform present
             writer.write_bits(2, 2); // subtract green = 2
-            apply_subtract_green(argb);
+            // Chunked so `stop` is polled between ~1M-pixel slices even on
+            // adversarially large images (the per-pixel pass itself is SIMD
+            // and exact — splitting it changes nothing).
+            for chunk in argb.chunks_mut(1 << 20) {
+                apply_subtract_green(chunk);
+                stop.check().map_err(|e| at!(EncodeError::from(e)))?;
+            }
         }
 
         // Predictor transform (applied second, on subtract-green'd image)
@@ -715,12 +733,15 @@ fn encode_argb_single_config(
                 config,
                 config.near_lossless,
                 use_subtract_green,
-            );
+                &stop,
+            )
+            .map_err(|e| at!(EncodeError::from(e)))?;
         }
 
         // Cross-color transform (applied third, on predictor residuals)
         if use_cross_color {
-            write_cross_color_transform(&mut writer, argb, width, height, config);
+            write_cross_color_transform(&mut writer, argb, width, height, config, &stop)
+                .map_err(|e| at!(EncodeError::from(e)))?;
         }
     }
 
@@ -757,16 +778,21 @@ fn encode_argb_single_config(
             1,
             20,
             config.parity,
-        );
+            &stop,
+        )
+        .map_err(|e| at!(EncodeError::from(e)))?;
         zbit_img(0);
 
         // Apply transform and bundle pixels
         let xbits = palette.xbits();
-        palette.apply(argb);
+        palette
+            .apply_with_stop(argb, &stop)
+            .map_err(|e| at!(EncodeError::from(e)))?;
 
         if xbits > 0 {
             let packed_width = subsample_size(width as u32, xbits) as usize;
-            let packed = super::transforms::bundle_color_map(argb, width, xbits);
+            let packed = super::transforms::bundle_color_map_with_stop(argb, width, xbits, &stop)
+                .map_err(|e| at!(EncodeError::from(e)))?;
             enc_width = packed_width;
             packed_buf = Some(packed);
         }
@@ -794,7 +820,9 @@ fn encode_argb_single_config(
                 config,
                 100,
                 false, // no subtract green with palette
-            );
+                &stop,
+            )
+            .map_err(|e| at!(EncodeError::from(e)))?;
         }
     }
 
@@ -844,6 +872,7 @@ fn encode_argb_single_config(
             enc_palette_size,
             do_no_cache,
             config.parity,
+            &stop,
         )
     } else {
         get_backward_references(
@@ -855,8 +884,10 @@ fn encode_argb_single_config(
             cache_bits_max,
             do_no_cache,
             config.parity,
+            &stop,
         )
-    };
+    }
+    .map_err(|e| at!(EncodeError::from(e)))?;
 
     let is_palette = palette_transform.is_some();
 
@@ -872,7 +903,9 @@ fn encode_argb_single_config(
             enc_height,
             config,
             is_palette,
-        );
+            &stop,
+        )
+        .map_err(|e| at!(EncodeError::from(e)))?;
 
         // Trial 2: the cache-optimized stream.
         stop.check().map_err(|e| at!(EncodeError::from(e)))?;
@@ -885,7 +918,9 @@ fn encode_argb_single_config(
             enc_height,
             config,
             is_palette,
-        );
+            &stop,
+        )
+        .map_err(|e| at!(EncodeError::from(e)))?;
 
         #[cfg(feature = "std")]
         if std::env::var_os("ZENWEBP_CACHE_TRIAL_TRACE").is_some() {
@@ -902,7 +937,7 @@ fn encode_argb_single_config(
             Ok(output_with_cache)
         }
     } else {
-        Ok(encode_image_data(
+        encode_image_data(
             writer,
             &result.refs,
             result.cache_bits,
@@ -911,7 +946,9 @@ fn encode_argb_single_config(
             enc_height,
             config,
             is_palette,
-        ))
+            &stop,
+        )
+        .map_err(|e| at!(EncodeError::from(e)))
     }
 }
 
@@ -928,7 +965,10 @@ fn write_predictor_transform(
     config: &Vp8lConfig,
     near_lossless: u8,
     use_subtract_green: bool,
-) {
+    stop: &dyn enough::Stop,
+) -> Result<(), enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let (min_bits, max_bits) = if config.predictor_bits == 0 {
         let histo_bits = get_histo_bits(width, height, config.quality.method);
         let transform_bits = get_transform_bits(config.quality.method, histo_bits);
@@ -964,7 +1004,7 @@ fn write_predictor_transform(
     } else {
         1
     };
-    let (predictor_data, actual_bits) = apply_predictor_transform(
+    let (predictor_data, actual_bits) = apply_predictor_transform_with_stop(
         argb,
         width,
         height,
@@ -973,7 +1013,8 @@ fn write_predictor_transform(
         max_quantization,
         use_subtract_green,
         config.quality.method == 0,
-    );
+        &stop,
+    )?;
 
     // Signal predictor transform
     writer.write_bit(true); // transform present
@@ -990,7 +1031,9 @@ fn write_predictor_transform(
         pred_h,
         config.quality.quality,
         config.parity,
-    );
+        &stop,
+    )?;
+    Ok(())
 }
 
 /// Apply and signal cross-color transform.
@@ -1000,7 +1043,10 @@ fn write_cross_color_transform(
     width: usize,
     height: usize,
     config: &Vp8lConfig,
-) {
+    stop: &dyn enough::Stop,
+) -> Result<(), enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     let cc_bits = if config.cross_color_bits == 0 {
         let histo_bits = get_histo_bits(width, height, config.quality.method);
         let transform_bits = get_transform_bits(config.quality.method, histo_bits);
@@ -1017,8 +1063,14 @@ fn write_cross_color_transform(
             .cross_color_bits
             .clamp(MIN_TRANSFORM_BITS, MAX_TRANSFORM_BITS)
     };
-    let mut cross_color_data =
-        apply_cross_color_transform(argb, width, height, cc_bits, config.quality.quality);
+    let mut cross_color_data = apply_cross_color_transform_with_stop(
+        argb,
+        width,
+        height,
+        cc_bits,
+        config.quality.quality,
+        &stop,
+    )?;
 
     // Coarsen the multiplier image when it is repetitive, matching the
     // VP8LOptimizeSampling call at the end of VP8LColorSpaceTransform.
@@ -1049,7 +1101,9 @@ fn write_cross_color_transform(
         cc_h,
         config.quality.quality,
         config.parity,
-    );
+        &stop,
+    )?;
+    Ok(())
 }
 
 /// Encode image data from backward references into a VP8L bitstream.
@@ -1066,7 +1120,10 @@ fn encode_image_data(
     enc_height: usize,
     config: &Vp8lConfig,
     is_palette: bool,
-) -> Vec<u8> {
+    stop: &dyn enough::Stop,
+) -> Result<Vec<u8>, enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     // #38 REFDBG: dump the final backward-ref stream (pairs with LREF in
     // libwebp's StoreImageToBitMask) for bit-level LZ77 comparison.
     #[cfg(feature = "mode_debug")]
@@ -1114,6 +1171,10 @@ fn encode_image_data(
         0u8
     };
 
+    // Histogram construction + meta-Huffman clustering are O(refs) passes —
+    // poll before them so a big image can't run them unobserved.
+    stop.check()?;
+
     let meta_info = if use_meta {
         build_meta_huffman(
             refs,
@@ -1123,9 +1184,10 @@ fn encode_image_data(
             cache_bits,
             config.quality.quality,
             config.quality.method == 0,
-        )
+            &stop,
+        )?
     } else {
-        build_single_histogram(refs, cache_bits)
+        build_single_histogram(refs, cache_bits, &stop)?
     };
 
     // Write meta-Huffman flag and prefix image.
@@ -1175,7 +1237,8 @@ fn encode_image_data(
             actual_h,
             config.quality.quality,
             config.parity,
-        );
+            &stop,
+        )?;
         zbit_img(0);
 
         // Update meta_info to reflect optimized sampling for image data encoding
@@ -1278,8 +1341,15 @@ fn encode_image_data(
     let mut x = 0usize;
     let mut y = 0usize;
     let mut argb_idx = 0usize;
+    // Tokens advance argb_idx by whole match lengths; poll on the crossed
+    // boundary so giant copies can't skip every check residue.
+    let mut next_check = EMIT_STOP_CHECK_PIXELS;
 
     for token in refs.iter() {
+        if argb_idx >= next_check {
+            stop.check()?;
+            next_check = argb_idx.saturating_add(EMIT_STOP_CHECK_PIXELS);
+        }
         // Select Huffman group for current tile
         let group_idx = if meta_info.num_histograms > 1 {
             let tile_idx = (y >> meta_info.histo_bits) * histo_xsize + (x >> meta_info.histo_bits);
@@ -1388,8 +1458,12 @@ fn encode_image_data(
         }
     }
 
-    writer.finish()
+    Ok(writer.finish())
 }
+
+/// Pixels between `stop` polls in the token emit loop and other O(pixels)
+/// encode passes driven from this file.
+const EMIT_STOP_CHECK_PIXELS: usize = 1 << 15;
 
 /// Maximum number of histogram tiles (matching libwebp's MAX_HUFF_IMAGE_SIZE).
 const MAX_HUFF_IMAGE_SIZE: usize = 2600;
@@ -1712,7 +1786,10 @@ fn encode_image_no_huffman(
     height: usize,
     quality: u8,
     parity: bool,
-) {
+    stop: &dyn enough::Stop,
+) -> Result<(), enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     use super::backward_refs::{
         apply_2d_locality, backward_references_lz77, backward_references_rle,
     };
@@ -1727,21 +1804,21 @@ fn encode_image_no_huffman(
         for _ in 0..5 {
             write_single_entry_tree(writer, 0);
         }
-        return;
+        return Ok(());
     }
 
     // No color cache for sub-images (matching libwebp: cache_bits=0)
     let cache_bits: u8 = 0;
 
     // Build hash chain for the sub-image
-    let hash_chain = HashChain::new(argb, quality, width, false, parity);
+    let hash_chain = HashChain::new(argb, quality, width, false, parity, &stop)?;
 
     // Try LZ77 Standard and RLE, pick best by entropy
-    let refs_lz77 = backward_references_lz77(argb, width, height, cache_bits, &hash_chain);
-    let refs_rle = backward_references_rle(argb, width, height, cache_bits);
+    let refs_lz77 = backward_references_lz77(argb, width, height, cache_bits, &hash_chain, &stop)?;
+    let refs_rle = backward_references_rle(argb, width, height, cache_bits, &stop)?;
 
-    let histo_lz77 = Histogram::from_refs_with_plane_codes(&refs_lz77, cache_bits, width);
-    let histo_rle = Histogram::from_refs_with_plane_codes(&refs_rle, cache_bits, width);
+    let histo_lz77 = Histogram::from_refs_with_plane_codes(&refs_lz77, cache_bits, width, &stop)?;
+    let histo_rle = Histogram::from_refs_with_plane_codes(&refs_rle, cache_bits, width, &stop)?;
 
     let cost_lz77 = estimate_histogram_bits(&histo_lz77);
     let cost_rle = estimate_histogram_bits(&histo_rle);
@@ -1753,10 +1830,10 @@ fn encode_image_no_huffman(
     };
 
     // Apply 2D locality transform
-    apply_2d_locality(&mut best_refs, width);
+    apply_2d_locality(&mut best_refs, width, &stop)?;
 
     // Build single histogram from refs
-    let histo = Histogram::from_refs(&best_refs, cache_bits);
+    let histo = Histogram::from_refs(&best_refs, cache_bits, &stop)?;
 
     // Build Huffman codes for each channel
     let lit_lengths = build_huffman_lengths(&histo.literal, 15);
@@ -1841,6 +1918,8 @@ fn encode_image_no_huffman(
             }
         }
     }
+
+    Ok(())
 }
 
 /// Write predictor sub-image (variable modes per block).
@@ -1855,10 +1934,22 @@ fn write_predictor_image(
     height: usize,
     quality: u8,
     parity: bool,
-) {
+    stop: &dyn enough::Stop,
+) -> Result<(), enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     zbit_img(3);
-    encode_image_no_huffman(writer, predictor_data, width, height, quality, parity);
+    encode_image_no_huffman(
+        writer,
+        predictor_data,
+        width,
+        height,
+        quality,
+        parity,
+        &stop,
+    )?;
     zbit_img(0);
+    Ok(())
 }
 
 /// Write cross-color sub-image (multiplier data).
@@ -1869,10 +1960,22 @@ fn write_cross_color_image(
     height: usize,
     quality: u8,
     parity: bool,
-) {
+    stop: &dyn enough::Stop,
+) -> Result<(), enough::StopReason> {
+    // may_stop collapses Unstoppable: checks below are a None-test.
+    let stop = stop.may_stop().then_some(stop);
     zbit_img(4);
-    encode_image_no_huffman(writer, cross_color_data, width, height, quality, parity);
+    encode_image_no_huffman(
+        writer,
+        cross_color_data,
+        width,
+        height,
+        quality,
+        parity,
+        &stop,
+    )?;
     zbit_img(0);
+    Ok(())
 }
 
 /// Subtract two pixels component-wise (wrapping).
