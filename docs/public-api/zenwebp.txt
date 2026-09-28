@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenwebp.txt 985 lines (supported surface) | zenwebp.features.txt 83 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,mode_debug,pixel-types,std,target-zensim,testable_dispatch) | zenwebp.internal.txt 975 lines (1167 hidden + 270 excluded-feature)
+# files: zenwebp.txt 995 lines (supported surface) | zenwebp.features.txt 83 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,mode_debug,pixel-types,std,target-zensim,testable_dispatch) | zenwebp.internal.txt 977 lines (1169 hidden + 270 excluded-feature)
 
 ## summary
 #
@@ -14,27 +14,27 @@
 #   pub types (struct/enum/trait/alias)        83
 #   pub consts/statics                         19
 #   free functions                             78
-#   inherent methods                          276
-#   struct fields                             278
-#   enum variants                             196
+#   inherent methods                          282
+#   struct fields                             280
+#   enum variants                             197
 #   re-exports                                 15
 #   trait roster entries (type × trait)       179
-#   auto-trait-complete types                  42
-#   auto-trait exceptions                      13
+#   auto-trait-complete types                  41
+#   auto-trait exceptions                      14
 #
 # per-module pub lines:
-#   (root)                          323
+#   (root)                          325
 #   decoder                          95
 #   detect                           25
 #   encoder                         290
 #   heuristics                       14
 #   metadata                         10
-#   mux                             137
+#   mux                             144
 #   oneshot                          16
 #   pixel                            11
 #   zencodec                         41
 
-## items (915 lines)
+## items (924 lines)
 
 pub mod zenwebp
 pub use EncoderConfig
@@ -167,6 +167,7 @@ pub fn WebPDecoder<'a>::new(&'a [u8]) -> DecodeResult<Self>
 pub fn WebPDecoder<'a>::num_frames(&self) -> u32
 pub fn WebPDecoder<'a>::output_buffer_size(&self) -> core::option::Option<usize>
 pub fn WebPDecoder<'a>::read_frame(&mut self, &mut [u8]) -> DecodeResult<u32>
+pub fn WebPDecoder<'a>::read_frame_with_stop(&mut self, &mut [u8], core::option::Option<&dyn enough::Stop>) -> DecodeResult<u32>
 pub fn WebPDecoder<'a>::read_image(&mut self, &mut [u8]) -> DecodeResult<()>
 pub fn WebPDecoder<'a>::reset_animation(&mut self) -> DecodeResult<()>
 pub fn WebPDecoder<'a>::set_background_color(&mut self, [u8; 4]) -> DecodeResult<()>
@@ -549,7 +550,7 @@ pub mux::DisposeMethod::None
 pub mux::MuxError::DecodeError(DecodeError)
 pub mux::MuxError::EncodeError(EncodeError)
 pub mux::MuxError::FrameDurationTooLarge
-pub mux::MuxError::FrameDurationTooLarge::duration_ms: u32
+pub mux::MuxError::FrameDurationTooLarge::duration_ms: u64
 pub mux::MuxError::FrameOutOfBounds
 pub mux::MuxError::FrameOutOfBounds::index: u32
 pub mux::MuxError::FrameOutOfBounds::total: u32
@@ -565,6 +566,9 @@ pub mux::MuxError::InvalidDimensions::height: u32
 pub mux::MuxError::InvalidDimensions::width: u32
 pub mux::MuxError::InvalidFormat(alloc::string::String)
 pub mux::MuxError::NoFrames
+pub mux::MuxError::NonmonotonicTimestamp
+pub mux::MuxError::NonmonotonicTimestamp::previous_ms: u64
+pub mux::MuxError::NonmonotonicTimestamp::timestamp_ms: u64
 pub mux::MuxError::OddFrameOffset
 pub mux::MuxError::OddFrameOffset::x: u32
 pub mux::MuxError::OddFrameOffset::y: u32
@@ -572,7 +576,7 @@ pub struct mux::AnimFrame
 pub mux::AnimFrame::data: alloc::vec::Vec<u8>
 pub mux::AnimFrame::duration_ms: u32
 pub mux::AnimFrame::height: u32
-pub mux::AnimFrame::timestamp_ms: u32
+pub mux::AnimFrame::timestamp_ms: u64
 pub mux::AnimFrame::width: u32
 pub struct mux::AnimationConfig
 pub mux::AnimationConfig::background_color: [u8; 4]
@@ -582,6 +586,7 @@ pub struct mux::AnimationDecoder<'a>
 pub fn mux::AnimationDecoder<'a>::current_frame_data(&self) -> &[u8]
 pub fn mux::AnimationDecoder<'a>::decode_all(&mut self) -> core::result::Result<alloc::vec::Vec<mux::AnimFrame>, whereat::at::At<DecodeError>>
 pub fn mux::AnimationDecoder<'a>::decode_next(&mut self) -> core::result::Result<core::option::Option<mux::FrameInfo>, whereat::at::At<DecodeError>>
+pub fn mux::AnimationDecoder<'a>::decode_next_with_stop(&mut self, core::option::Option<&dyn enough::Stop>) -> core::result::Result<core::option::Option<mux::FrameInfo>, whereat::at::At<DecodeError>>
 pub fn mux::AnimationDecoder<'a>::exif_metadata(&mut self) -> core::result::Result<core::option::Option<alloc::vec::Vec<u8>>, whereat::at::At<DecodeError>>
 pub fn mux::AnimationDecoder<'a>::frames_read(&self) -> u32
 pub fn mux::AnimationDecoder<'a>::has_more_frames(&self) -> bool
@@ -598,10 +603,13 @@ pub fn mux::AnimationDecoder<'a>::set_memory_limit(&mut self, usize)
 pub fn mux::AnimationDecoder<'a>::set_stop(&mut self, &'a dyn enough::Stop)
 pub fn mux::AnimationDecoder<'a>::xmp_metadata(&mut self) -> core::result::Result<core::option::Option<alloc::vec::Vec<u8>>, whereat::at::At<DecodeError>>
 pub struct mux::AnimationEncoder
-pub fn mux::AnimationEncoder::add_frame(&mut self, &[u8], PixelLayout, u32, &EncoderConfig) -> mux::MuxResult<()>
-pub fn mux::AnimationEncoder::add_frame_advanced(&mut self, &[u8], PixelLayout, u32, u32, u32, u32, u32, &EncoderConfig, mux::DisposeMethod, mux::BlendMethod) -> mux::MuxResult<()>
+pub fn mux::AnimationEncoder::add_frame(&mut self, &[u8], PixelLayout, u64, &EncoderConfig) -> mux::MuxResult<()>
+pub fn mux::AnimationEncoder::add_frame_advanced(&mut self, &[u8], PixelLayout, u32, u32, u32, u32, u64, &EncoderConfig, mux::DisposeMethod, mux::BlendMethod) -> mux::MuxResult<()>
+pub fn mux::AnimationEncoder::add_frame_advanced_with_stop(&mut self, &[u8], PixelLayout, u32, u32, u32, u32, u64, &EncoderConfig, mux::DisposeMethod, mux::BlendMethod, &dyn enough::Stop) -> mux::MuxResult<()>
+pub fn mux::AnimationEncoder::add_frame_with_stop(&mut self, &[u8], PixelLayout, u64, &EncoderConfig, &dyn enough::Stop) -> mux::MuxResult<()>
 pub fn mux::AnimationEncoder::exif(&mut self, alloc::vec::Vec<u8>)
 pub fn mux::AnimationEncoder::finalize(self, u32) -> mux::MuxResult<alloc::vec::Vec<u8>>
+pub fn mux::AnimationEncoder::finalize_animation(self, u32) -> mux::MuxResult<alloc::vec::Vec<u8>>
 pub fn mux::AnimationEncoder::icc_profile(&mut self, alloc::vec::Vec<u8>)
 pub fn mux::AnimationEncoder::new(u32, u32, mux::AnimationConfig) -> mux::MuxResult<Self>
 pub fn mux::AnimationEncoder::xmp(&mut self, alloc::vec::Vec<u8>)
@@ -629,7 +637,7 @@ pub struct mux::DemuxFrameIter<'a, 'b>
 pub struct mux::FrameInfo
 pub mux::FrameInfo::duration_ms: u32
 pub mux::FrameInfo::height: u32
-pub mux::FrameInfo::timestamp_ms: u32
+pub mux::FrameInfo::timestamp_ms: u64
 pub mux::FrameInfo::width: u32
 pub struct mux::MuxFrame
 pub mux::MuxFrame::alpha_data: core::option::Option<alloc::vec::Vec<u8>>
@@ -941,6 +949,7 @@ pub fn WebPDecoder<'a>::new(&'a [u8]) -> DecodeResult<Self>
 pub fn WebPDecoder<'a>::num_frames(&self) -> u32
 pub fn WebPDecoder<'a>::output_buffer_size(&self) -> core::option::Option<usize>
 pub fn WebPDecoder<'a>::read_frame(&mut self, &mut [u8]) -> DecodeResult<u32>
+pub fn WebPDecoder<'a>::read_frame_with_stop(&mut self, &mut [u8], core::option::Option<&dyn enough::Stop>) -> DecodeResult<u32>
 pub fn WebPDecoder<'a>::read_image(&mut self, &mut [u8]) -> DecodeResult<()>
 pub fn WebPDecoder<'a>::reset_animation(&mut self) -> DecodeResult<()>
 pub fn WebPDecoder<'a>::set_background_color(&mut self, [u8; 4]) -> DecodeResult<()>
@@ -1013,7 +1022,7 @@ zencodec::WebpStreamingDecoder: zencodec::traits::decoder::StreamingDecode
 
 ## auto traits
 
-42 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+41 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 DecodeError: !RefUnwindSafe !UnwindSafe
 DecodeRequest<'a>: !RefUnwindSafe !UnwindSafe
 EncodeError: !RefUnwindSafe !UnwindSafe
@@ -1022,6 +1031,7 @@ WebPDecoder<'a>: !RefUnwindSafe !UnwindSafe
 mux::AnimationDecoder<'a>: !RefUnwindSafe !UnwindSafe
 mux::MuxError: !RefUnwindSafe !UnwindSafe
 zencodec::WebpAnimationFrameDecoder: !RefUnwindSafe !UnwindSafe
+zencodec::WebpAnimationFrameEncoder: !RefUnwindSafe !UnwindSafe
 zencodec::WebpDecodeJob: !RefUnwindSafe !UnwindSafe
 zencodec::WebpDecoder<'a>: !RefUnwindSafe !UnwindSafe
 zencodec::WebpEncodeJob: !RefUnwindSafe !UnwindSafe

@@ -87,7 +87,7 @@ fn animation_with_frames(n: u32) -> Vec<u8> {
     let cfg = EncoderConfig::new_lossless();
     for i in 0..n {
         let rgba = vec![(i * 40) as u8; 8 * 8 * 4];
-        anim.add_frame(&rgba, PixelLayout::Rgba8, i * 100, &cfg)
+        anim.add_frame(&rgba, PixelLayout::Rgba8, u64::from(i) * 100, &cfg)
             .unwrap();
     }
     anim.finalize(100).unwrap()

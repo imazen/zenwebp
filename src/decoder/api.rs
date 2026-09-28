@@ -312,6 +312,7 @@ enum ImageKind {
 }
 
 struct AnimationState {
+    failed: bool,
     next_frame: u32,
     next_frame_start: u64,
     dispose_next_frame: bool,
@@ -331,6 +332,7 @@ struct AnimationState {
 impl Default for AnimationState {
     fn default() -> Self {
         Self {
+            failed: false,
             next_frame: 0,
             next_frame_start: 0,
             dispose_next_frame: true,
@@ -1409,6 +1411,36 @@ impl<'a> WebPDecoder<'a> {
     /// `DecodeError::NoMoreFrames` and `buf` is left unchanged.
     ///
     pub fn read_frame(&mut self, buf: &mut [u8]) -> DecodeResult<u32> {
+        self.read_frame_with_stop(buf, None)
+    }
+
+    /// Read a composited animation frame with a short-lived cancellation token.
+    /// Both this token and the decoder's stored token are checked. A decode
+    /// error requires [`Self::reset_animation`] before more frames can be read.
+    pub fn read_frame_with_stop(
+        &mut self,
+        buf: &mut [u8],
+        stop: Option<&dyn enough::Stop>,
+    ) -> DecodeResult<u32> {
+        if self.animation.failed {
+            return Err(at!(DecodeError::InvalidParameter(String::from(
+                "animation decode failed; reset required",
+            ))));
+        }
+        let stored = self.stop;
+        let stops = FrameStops { stored, call: stop };
+        let result = self.read_frame_inner(buf, &stops);
+        if result
+            .as_ref()
+            .is_err_and(|e| !matches!(e.error(), DecodeError::NoMoreFrames))
+        {
+            self.animation.failed = true;
+        }
+        result
+    }
+
+    fn read_frame_inner(&mut self, buf: &mut [u8], stop: &dyn enough::Stop) -> DecodeResult<u32> {
+        stop.check().map_err(|e| at!(DecodeError::from(e)))?;
         if !self.is_animated() {
             return Err(at!(DecodeError::InvalidParameter(String::from(
                 "not an animated WebP",
@@ -1468,10 +1500,11 @@ impl<'a> WebPDecoder<'a> {
                 // DecoderContext is reused from self.animation.ctx, saving
                 // ~100KB of allocation per frame for coefficient/filter buffers.
                 let data_slice = self.r.take_slice(chunk_size as usize)?;
-                let (w, h) = self.animation.ctx.decode_to_rgb(
+                let (w, h) = self.animation.ctx.decode_to_rgb_with_stop(
                     data_slice,
                     &mut self.animation.frame_scratch,
                     3,
+                    Some(stop),
                 )?;
                 if u32::from(w) != frame_width || u32::from(h) != frame_height {
                     return Err(at!(DecodeError::InconsistentImageSizes));
@@ -1481,7 +1514,7 @@ impl<'a> WebPDecoder<'a> {
             WebPRiffChunk::VP8L => {
                 let data_slice = self.r.take_slice(chunk_size as usize)?;
                 let mut lossless_decoder = LosslessDecoder::new(data_slice);
-                lossless_decoder.set_stop(self.stop);
+                lossless_decoder.set_stop(Some(stop));
                 lossless_decoder.set_limits(Some(&self.limits));
                 let frame_alloc = frame_width as usize * frame_height as usize * 4;
                 self.limits.check_memory(frame_alloc)?;
@@ -1514,11 +1547,12 @@ impl<'a> WebPDecoder<'a> {
                     self.r
                         .seek_relative((chunk_size_rounded - chunk_size) as i64)?;
                 }
-                let alpha_chunk = read_alpha_chunk(
+                let alpha_chunk = extended::read_alpha_chunk_with_stop(
                     alpha_slice,
                     frame_width as u16,
                     frame_height as u16,
                     &self.limits,
+                    Some(stop),
                 )?;
 
                 // read opaque — lossy decode with buffer reuse
@@ -1528,10 +1562,11 @@ impl<'a> WebPDecoder<'a> {
                 }
 
                 let vp8_slice = self.r.take_slice(next_chunk_size as usize)?;
-                let (w, h) = self.animation.ctx.decode_to_rgb(
+                let (w, h) = self.animation.ctx.decode_to_rgb_with_stop(
                     vp8_slice,
                     &mut self.animation.frame_scratch,
                     4,
+                    Some(stop),
                 )?;
 
                 // The alpha plane was sized from the ANMF frame dimensions, but the
@@ -1548,6 +1583,7 @@ impl<'a> WebPDecoder<'a> {
                 let fh = usize::from(h);
 
                 for y in 0..fh {
+                    stop.check().map_err(|e| at!(DecodeError::from(e)))?;
                     for x in 0..fw {
                         let predictor: u8 = get_alpha_predictor(
                             x,
@@ -1570,6 +1606,7 @@ impl<'a> WebPDecoder<'a> {
             _ => return Err(at!(DecodeError::ChunkHeaderInvalid(chunk.to_fourcc()))),
         };
 
+        stop.check().map_err(|e| at!(DecodeError::from(e)))?;
         let clear_color = if self.animation.dispose_next_frame {
             match (info.background_color, frame_has_alpha) {
                 (color @ Some(_), _) => color,
@@ -1615,6 +1652,7 @@ impl<'a> WebPDecoder<'a> {
             self.animation.previous_frame_y_offset,
         )?;
 
+        stop.check().map_err(|e| at!(DecodeError::from(e)))?;
         self.animation.previous_frame_width = frame_width;
         self.animation.previous_frame_height = frame_height;
         self.animation.previous_frame_x_offset = frame_x;
@@ -1642,6 +1680,7 @@ impl<'a> WebPDecoder<'a> {
                 "not an animated WebP",
             ))));
         }
+        self.animation.failed = false;
         self.animation.next_frame = 0;
         self.animation.next_frame_start = self.chunks.get(&WebPRiffChunk::ANMF).unwrap().start - 8;
         self.animation.dispose_next_frame = true;
@@ -2568,5 +2607,21 @@ mod yuv420_config_tests {
         let base = planes(AllocPreference::CodecDefault);
         assert_eq!(base, planes(AllocPreference::Fallible));
         assert_eq!(base, planes(AllocPreference::Infallible));
+    }
+}
+
+struct FrameStops<'a> {
+    stored: Option<&'a dyn enough::Stop>,
+    call: Option<&'a dyn enough::Stop>,
+}
+impl enough::Stop for FrameStops<'_> {
+    fn check(&self) -> core::result::Result<(), enough::StopReason> {
+        if let Some(stop) = self.stored {
+            stop.check()?;
+        }
+        if let Some(stop) = self.call {
+            stop.check()?;
+        }
+        Ok(())
     }
 }

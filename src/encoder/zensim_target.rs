@@ -1121,84 +1121,6 @@ pub(crate) mod iteration {
         seg_overrides: Option<[i8; 4]>,
     }
 
-    #[cfg(test)]
-    mod selection_regression {
-        use super::*;
-        #[cfg(feature = "__zensim-research")]
-        #[test]
-        fn integral_map_matches_pixels_on_clipped_macroblocks() {
-            let (width, height) = (21u32, 19u32);
-            let values: Vec<f32> = (0..width * height).map(|i| ((i * 7) % 13) as f32).collect();
-            let diag = EncodeDiagnostics {
-                mb_width: 2,
-                mb_height: 2,
-                num_segments: 2,
-                segment_map: vec![0, 1, 1, 0],
-            };
-            let mut sums = vec![0.0f32; 4];
-            for y in 0..height as usize {
-                for x in 0..width as usize {
-                    sums[(y / 16) * 2 + x / 16] += values[y * width as usize + x];
-                }
-            }
-            let target = ZensimTarget::new(80.0);
-            let pixel = next_segment_overrides(
-                [0; 4],
-                &SpatialMap::Pixels(values),
-                width,
-                height,
-                &diag,
-                79.0,
-                &target,
-            );
-            let integral = next_segment_overrides(
-                [0; 4],
-                &SpatialMap::Macroblocks(sums),
-                width,
-                height,
-                &diag,
-                79.0,
-                &target,
-            );
-            assert_eq!(
-                integral.counts.iter().sum::<u64>(),
-                u64::from(width * height)
-            );
-            assert_eq!(integral.counts, pixel.counts);
-            assert_eq!(integral.means, pixel.means);
-            assert_eq!(integral.overrides, pixel.overrides);
-        }
-
-        #[test]
-        fn hard_floor_precedes_lenient_ship_band() {
-            let make = |score| Candidate {
-                bytes: vec![0; 100],
-                stats: Default::default(),
-                score,
-                q: 80.,
-                seg_overrides: None,
-            };
-            let target = ZensimTarget::new(80.).with_max_undershoot(Some(0.1));
-            let chosen = pick_best(make(85.), make(79.8), &target);
-            assert_eq!(chosen.score, 85.);
-        }
-
-        #[test]
-        fn accepted_undershoot_beats_overshoot_outside_ship_band() {
-            let make = |score, size| Candidate {
-                bytes: vec![0; size],
-                stats: Default::default(),
-                score,
-                q: 80.0,
-                seg_overrides: None,
-            };
-            let target = ZensimTarget::new(80.0);
-            let chosen = pick_best(make(85.0, 100), make(79.8, 90), &target);
-            assert_eq!(chosen.score, 79.8);
-            assert!(in_band(chosen.score, &target));
-        }
-    }
-
     fn above_failure_floor(score: f32, target: &ZensimTarget) -> bool {
         target
             .max_undershoot
@@ -1903,6 +1825,83 @@ pub(crate) mod iteration {
             let bucket =
                 crate::encoder::analysis::classify_image_type(&y_plane, w, h, w, &alpha_hist);
             Some(bucket)
+        }
+    }
+    #[cfg(test)]
+    mod selection_regression {
+        use super::*;
+        #[cfg(feature = "__zensim-research")]
+        #[test]
+        fn integral_map_matches_pixels_on_clipped_macroblocks() {
+            let (width, height) = (21u32, 19u32);
+            let values: Vec<f32> = (0..width * height).map(|i| ((i * 7) % 13) as f32).collect();
+            let diag = EncodeDiagnostics {
+                mb_width: 2,
+                mb_height: 2,
+                num_segments: 2,
+                segment_map: vec![0, 1, 1, 0],
+            };
+            let mut sums = vec![0.0f32; 4];
+            for y in 0..height as usize {
+                for x in 0..width as usize {
+                    sums[(y / 16) * 2 + x / 16] += values[y * width as usize + x];
+                }
+            }
+            let target = ZensimTarget::new(80.0);
+            let pixel = next_segment_overrides(
+                [0; 4],
+                &SpatialMap::Pixels(values),
+                width,
+                height,
+                &diag,
+                79.0,
+                &target,
+            );
+            let integral = next_segment_overrides(
+                [0; 4],
+                &SpatialMap::Macroblocks(sums),
+                width,
+                height,
+                &diag,
+                79.0,
+                &target,
+            );
+            assert_eq!(
+                integral.counts.iter().sum::<u64>(),
+                u64::from(width * height)
+            );
+            assert_eq!(integral.counts, pixel.counts);
+            assert_eq!(integral.means, pixel.means);
+            assert_eq!(integral.overrides, pixel.overrides);
+        }
+
+        #[test]
+        fn hard_floor_precedes_lenient_ship_band() {
+            let make = |score| Candidate {
+                bytes: vec![0; 100],
+                stats: Default::default(),
+                score,
+                q: 80.,
+                seg_overrides: None,
+            };
+            let target = ZensimTarget::new(80.).with_max_undershoot(Some(0.1));
+            let chosen = pick_best(make(85.), make(79.8), &target);
+            assert_eq!(chosen.score, 85.);
+        }
+
+        #[test]
+        fn accepted_undershoot_beats_overshoot_outside_ship_band() {
+            let make = |score, size| Candidate {
+                bytes: vec![0; size],
+                stats: Default::default(),
+                score,
+                q: 80.0,
+                seg_overrides: None,
+            };
+            let target = ZensimTarget::new(80.0);
+            let chosen = pick_best(make(85.0, 100), make(79.8, 90), &target);
+            assert_eq!(chosen.score, 79.8);
+            assert!(in_band(chosen.score, &target));
         }
     }
 }

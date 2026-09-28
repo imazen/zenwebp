@@ -33,7 +33,7 @@ pub struct FrameInfo {
     /// Canvas height in pixels.
     pub height: u32,
     /// Cumulative presentation timestamp in milliseconds.
-    pub timestamp_ms: u32,
+    pub timestamp_ms: u64,
     /// Display duration of this frame in milliseconds.
     pub duration_ms: u32,
 }
@@ -48,7 +48,7 @@ pub struct AnimFrame {
     /// Canvas height in pixels.
     pub height: u32,
     /// Cumulative presentation timestamp in milliseconds.
-    pub timestamp_ms: u32,
+    pub timestamp_ms: u64,
     /// Display duration of this frame in milliseconds.
     pub duration_ms: u32,
 }
@@ -77,10 +77,9 @@ pub struct AnimationInfo {
 pub struct AnimationDecoder<'a> {
     decoder: WebPDecoder<'a>,
     buf: Vec<u8>,
-    cumulative_ms: u32,
+    cumulative_ms: u64,
     frames_read: u32,
     total_frames: u32,
-    stop: Option<&'a dyn enough::Stop>,
     /// `Limits::max_memory` from the config, applied to the RETAINED total
     /// in [`Self::decode_all`] (the per-frame `check_memory` inside
     /// `read_frame` only ever sees one canvas at a time) (#78).
@@ -131,7 +130,6 @@ impl<'a> AnimationDecoder<'a> {
             cumulative_ms: 0,
             frames_read: 0,
             total_frames,
-            stop: None,
             max_memory: config.limits.max_memory,
         })
     }
@@ -171,7 +169,6 @@ impl<'a> AnimationDecoder<'a> {
 
     /// Set a cooperative cancellation token.
     pub fn set_stop(&mut self, stop: &'a dyn enough::Stop) {
-        self.stop = Some(stop);
         self.decoder.set_stop(Some(stop));
     }
 
@@ -224,13 +221,23 @@ impl<'a> AnimationDecoder<'a> {
     /// available via [`current_frame_data()`](Self::current_frame_data)
     /// until the next call to `decode_next` or `next_frame`.
     pub fn decode_next(&mut self) -> Result<Option<FrameInfo>, whereat::At<DecodeError>> {
-        if let Some(stop) = self.stop {
-            stop.check().map_err(|e| at!(DecodeError::from(e)))?;
-        }
-        match self.decoder.read_frame(&mut self.buf) {
+        self.decode_next_with_stop(None)
+    }
+
+    /// Decode one composited frame with a short-lived cancellation token.
+    /// Cancellation is checked within VP8, VP8L and alpha decoding. An error
+    /// poisons further output until the animation is reset.
+    pub fn decode_next_with_stop(
+        &mut self,
+        stop: Option<&dyn enough::Stop>,
+    ) -> Result<Option<FrameInfo>, whereat::At<DecodeError>> {
+        match self.decoder.read_frame_with_stop(&mut self.buf, stop) {
             Ok(duration_ms) => {
                 let timestamp_ms = self.cumulative_ms;
-                self.cumulative_ms = self.cumulative_ms.saturating_add(duration_ms);
+                self.cumulative_ms = self
+                    .cumulative_ms
+                    .checked_add(u64::from(duration_ms))
+                    .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
                 self.frames_read += 1;
                 let (w, h) = self.decoder.dimensions();
                 Ok(Some(FrameInfo {

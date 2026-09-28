@@ -46,7 +46,7 @@ fn three_subframe_animation() -> Vec<u8> {
             4,
             x,
             y,
-            i as u32 * 100,
+            i as u64 * 100,
             &cfg,
             DisposeMethod::None,
             BlendMethod::Overwrite,
