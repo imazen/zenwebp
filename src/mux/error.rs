@@ -80,7 +80,16 @@ pub enum MuxError {
     #[error("Frame duration {duration_ms} ms exceeds the 24-bit ANMF field (max 16777215)")]
     FrameDurationTooLarge {
         /// The offending duration in milliseconds.
-        duration_ms: u32,
+        duration_ms: u64,
+    },
+
+    /// Presentation timestamps must not move backwards.
+    #[error("Animation timestamp {timestamp_ms} precedes {previous_ms} ms")]
+    NonmonotonicTimestamp {
+        /// Timestamp of the pending frame.
+        previous_ms: u64,
+        /// Rejected timestamp of the incoming frame.
+        timestamp_ms: u64,
     },
 }
 
@@ -107,6 +116,7 @@ impl zencodec::CategorizedError for MuxError {
             | MuxError::OddFrameOffset { .. }
             | MuxError::FrameOutsideCanvas { .. }
             | MuxError::FrameDurationTooLarge { .. }
+            | MuxError::NonmonotonicTimestamp { .. }
             // Caller asked for a frame index past the end of the sequence.
             | MuxError::FrameOutOfBounds { .. } => C::Request(RE::Invalid(IK::Parameters)),
 

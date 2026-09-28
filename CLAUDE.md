@@ -1028,3 +1028,20 @@ is essentially the current implementation.
 **Project standards**: `#![forbid(unsafe_code)]` with default features. no_std+alloc (minimum: wasm32). CI with codecov. Fuzz targets required. Safe for malicious input — no amplification, bound memory/CPU.
 
 **Streaming encode** — `push_rows`/`finish` implemented. Lossy RGB8 converts to YUV420 during push (50% memory savings). Other formats accumulate raw bytes. WebP algorithms still need the full image at finish time, but callers can push strips without holding the full source.
+
+## Animation contract regressions (2026-09-28)
+
+`tests/animation_timing.rs` and `tests/animation_decode_contract.rs` cover
+exact timing, single-frame animation signaling, total plays, long timelines,
+transactional admission, internal cancellation, and ICC-bearing transcodes.
+The eight admission/timing/metadata/cancellation negative controls were run
+and failed behaviorally with each corresponding fix removed. The decoder
+context/cancellation tests and P3 decode→encode test also failed before their
+fixes. Do not replace these checks with trait-presence assertions.
+
+Native animation timestamps are now u64; wire durations remain checked u24.
+`finalize_animation` retains ANIM/ANMF for one frame; legacy `finalize` may
+produce a static image. Animation output remains buffered until RIFF assembly.
+Pixel bytes with non-sRGB descriptors must keep ICC context: accepting them
+as sRGB would silently alter their interpretation. Decode errors after entry
+poison animation state until reset.

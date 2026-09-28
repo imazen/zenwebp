@@ -90,6 +90,17 @@ struct AnimationParams {
 }
 
 impl WebPMux {
+    pub(crate) fn retained_bytes(&self) -> u64 {
+        let frame_bytes = |frame: &MuxFrame| {
+            frame.bitstream.len() as u64 + frame.alpha_data.as_ref().map_or(0, |v| v.len() as u64)
+        };
+        self.frames.iter().map(frame_bytes).sum::<u64>()
+            + self.single_image.as_ref().map_or(0, frame_bytes)
+            + self.icc_profile.as_ref().map_or(0, |v| v.len() as u64)
+            + self.exif.as_ref().map_or(0, |v| v.len() as u64)
+            + self.xmp.as_ref().map_or(0, |v| v.len() as u64)
+    }
+
     /// Create a new mux assembler with the given canvas dimensions.
     pub fn new(width: u32, height: u32) -> Self {
         Self {
@@ -220,37 +231,19 @@ impl WebPMux {
     /// Frame offsets must be even. The frame must fit within the canvas.
     #[track_caller]
     pub fn push_frame(&mut self, frame: MuxFrame) -> MuxResult<()> {
-        if !frame.x_offset.is_multiple_of(2) || !frame.y_offset.is_multiple_of(2) {
-            return Err(whereat::at!(MuxError::OddFrameOffset {
-                x: frame.x_offset,
-                y: frame.y_offset,
-            }));
-        }
-        if frame.width == 0 || frame.height == 0 || frame.width > 16384 || frame.height > 16384 {
-            return Err(whereat::at!(MuxError::InvalidDimensions {
-                width: frame.width,
-                height: frame.height,
-            }));
-        }
-        // Sum in u64: an offset near u32::MAX wrapped the u32 sum back under
-        // the canvas size and the frame was accepted (#78).
-        if u64::from(frame.x_offset) + u64::from(frame.width) > u64::from(self.canvas_width)
-            || u64::from(frame.y_offset) + u64::from(frame.height) > u64::from(self.canvas_height)
-        {
-            return Err(whereat::at!(MuxError::FrameOutsideCanvas {
-                x: frame.x_offset,
-                y: frame.y_offset,
-                width: frame.width,
-                height: frame.height,
-                canvas_width: self.canvas_width,
-                canvas_height: self.canvas_height,
-            }));
-        }
+        validate_frame_region(
+            self.canvas_width,
+            self.canvas_height,
+            frame.width,
+            frame.height,
+            frame.x_offset,
+            frame.y_offset,
+        )?;
         // The ANMF duration field is 24 bits; `write_u24_le` used to truncate
         // anything larger silently (#78).
         if frame.duration_ms > 0x00FF_FFFF {
             return Err(whereat::at!(MuxError::FrameDurationTooLarge {
-                duration_ms: frame.duration_ms,
+                duration_ms: u64::from(frame.duration_ms),
             }));
         }
         self.frames.push(frame);
@@ -516,4 +509,39 @@ impl WebPMux {
         let frame_chunk = if frame.is_lossless { b"VP8L" } else { b"VP8 " };
         write_chunk(out, frame_chunk, &frame.bitstream);
     }
+}
+
+/// Shared admission check for a mux frame and the native animation encoder.
+pub(crate) fn validate_frame_region(
+    canvas_width: u32,
+    canvas_height: u32,
+    width: u32,
+    height: u32,
+    x_offset: u32,
+    y_offset: u32,
+) -> MuxResult<()> {
+    if !x_offset.is_multiple_of(2) || !y_offset.is_multiple_of(2) {
+        return Err(whereat::at!(MuxError::OddFrameOffset {
+            x: x_offset,
+            y: y_offset,
+        }));
+    }
+    if width == 0 || height == 0 || width > 16384 || height > 16384 {
+        return Err(whereat::at!(MuxError::InvalidDimensions { width, height }));
+    }
+    // Sum in u64: an offset near u32::MAX wrapped the u32 sum back under
+    // the canvas size and the frame was accepted (#78).
+    if u64::from(x_offset) + u64::from(width) > u64::from(canvas_width)
+        || u64::from(y_offset) + u64::from(height) > u64::from(canvas_height)
+    {
+        return Err(whereat::at!(MuxError::FrameOutsideCanvas {
+            x: x_offset,
+            y: y_offset,
+            width,
+            height,
+            canvas_width,
+            canvas_height,
+        }));
+    }
+    Ok(())
 }

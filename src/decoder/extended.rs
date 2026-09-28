@@ -326,6 +326,19 @@ pub(crate) fn read_alpha_chunk(
     height: u16,
     limits: &super::limits::Limits,
 ) -> Result<AlphaChunk, whereat::At<DecodeError>> {
+    read_alpha_chunk_with_stop(data, width, height, limits, None)
+}
+
+pub(crate) fn read_alpha_chunk_with_stop(
+    data: &[u8],
+    width: u16,
+    height: u16,
+    limits: &super::limits::Limits,
+    stop: Option<&dyn enough::Stop>,
+) -> Result<AlphaChunk, whereat::At<DecodeError>> {
+    if let Some(stop) = stop {
+        stop.check().map_err(|e| at!(DecodeError::from(e)))?;
+    }
     if data.is_empty() {
         return Err(at!(DecodeError::BitStreamError));
     }
@@ -361,6 +374,7 @@ pub(crate) fn read_alpha_chunk(
         limits.check_memory(rgba_size)?;
 
         let mut decoder = LosslessDecoder::new(alpha_data);
+        decoder.set_stop(stop);
         decoder.set_limits(Some(limits));
 
         // Alpha-as-VP8L scratch + extracted green plane are sized from the
