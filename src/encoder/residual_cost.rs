@@ -971,3 +971,89 @@ pub fn get_cost_uv(
 
     total_cost
 }
+
+/// wasm SIMD128 residual cost vs the scalar reference on random inputs.
+#[cfg(all(
+    test,
+    any(
+        all(target_arch = "wasm32", target_feature = "simd128"),
+        target_arch = "x86_64"
+    )
+))]
+mod wasm_parity {
+    use super::*;
+    // The same randomized domain runs against the x86 tier too: an input on
+    // which x86 also disagrees with scalar is outside the production domain.
+    #[cfg(target_arch = "wasm32")]
+    fn tok() -> Wasm128Token {
+        Wasm128Token::summon().expect("+simd128")
+    }
+    #[cfg(target_arch = "x86_64")]
+    fn tok() -> X64V3Token {
+        X64V3Token::summon().expect("AVX2")
+    }
+    macro_rules! simd {
+        ($f:ident) => {
+            paste::paste! {{
+                #[cfg(target_arch = "wasm32")]
+                let f = [<$f _wasm128>];
+                #[cfg(target_arch = "x86_64")]
+                let f = [<$f _v3>];
+                f
+            }}
+        };
+    }
+    use crate::common::types::COEFF_PROBS;
+    use crate::encoder::cost::LevelCosts;
+
+    fn rng(seed: &mut u64) -> u64 {
+        *seed ^= *seed << 13;
+        *seed ^= *seed >> 7;
+        *seed ^= *seed << 17;
+        *seed
+    }
+
+    #[test]
+    fn residual_cost_matches_scalar() {
+        let t = tok();
+        let mut s = 0x5eed_1234_abcd_0001u64;
+        let mut probs = COEFF_PROBS;
+        let mut costs = LevelCosts::new();
+        for case in 0..20_000 {
+            if case % 2_000 == 0 {
+                // Re-randomize probabilities so all cost-table entries matter.
+                for p in probs.iter_mut().flatten().flatten().flatten() {
+                    *p = 1 + (rng(&mut s) % 255) as u8;
+                }
+                costs.calculate(&probs);
+            }
+            let density = rng(&mut s) % 10;
+            let big = rng(&mut s) % 4 == 0;
+            let ty = (rng(&mut s) % 4) as usize;
+            let first = if ty == 0 {
+                1
+            } else {
+                (rng(&mut s) % 2) as usize
+            };
+            let mut c: [i16; 16] = core::array::from_fn(|_| {
+                if rng(&mut s) % 10 < density {
+                    let m = if big { 2048 } else { 12 };
+                    (rng(&mut s) % (2 * m + 1)) as i16 - m as i16
+                } else {
+                    0
+                }
+            });
+            // With first = 1 the DC slot is carried by Y2 and is zero here.
+            if first == 1 {
+                c[0] = 0;
+            }
+            let res = Residual::new(&c, ty, first);
+            let ctx0 = (rng(&mut s) % 3) as usize;
+            assert_eq!(
+                simd!(get_residual_cost_dispatch)(t, ctx0, &res, &costs, &probs),
+                get_residual_cost_dispatch_scalar(ScalarToken, ctx0, &res, &costs, &probs),
+                "residual cost case {case} type {ty} first {first} ctx {ctx0} coeffs {c:?}"
+            );
+        }
+    }
+}

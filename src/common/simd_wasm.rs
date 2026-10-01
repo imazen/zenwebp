@@ -181,12 +181,14 @@ pub(crate) fn sse_8x8_chroma_wasm(
     mby: usize,
     pred: &[u8; CHROMA_BLOCK_SIZE],
 ) -> u32 {
-    let chroma_width = src_width / 2;
+    // `src_width` is already the chroma plane's stride (callers pass the
+    // chroma width), as in the scalar / SSE2 / NEON kernels; halving it again
+    // read the wrong source rows.
     let mut acc = i32x4_splat(0);
-    let src_base = mby * 8 * chroma_width + mbx * 8;
+    let src_base = mby * 8 * src_width + mbx * 8;
 
     for row in 0..8 {
-        let src_off = src_base + row * chroma_width;
+        let src_off = src_base + row * src_width;
         let pred_off = (1 + row) * CHROMA_STRIDE + 1;
 
         let src_row = <&[u8; 8]>::try_from(&src_uv[src_off..src_off + 8]).unwrap();
@@ -257,11 +259,20 @@ pub(crate) fn tdisto_4x4_fused_wasm(
         let t23_lo = i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(vb2, vb3);
         let t23_hi = i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(vb2, vb3);
 
-        // Step 2: interleave 32-bit pairs
-        tmp0 = i32x4_shuffle::<0, 4, 1, 5>(t01_lo, t23_lo);
-        tmp1 = i32x4_shuffle::<2, 6, 3, 7>(t01_lo, t23_lo);
-        tmp2 = i32x4_shuffle::<0, 4, 1, 5>(t01_hi, t23_hi);
-        tmp3 = i32x4_shuffle::<2, 6, 3, 7>(t01_hi, t23_hi);
+        // Step 2: interleave 32-bit pairs -> [A col0 | A col1], [A col2 | A col3],
+        // [B col0 | B col1], [B col2 | B col3] (four vertical freqs per column).
+        let u0 = i32x4_shuffle::<0, 4, 1, 5>(t01_lo, t23_lo);
+        let u1 = i32x4_shuffle::<2, 6, 3, 7>(t01_lo, t23_lo);
+        let u2 = i32x4_shuffle::<0, 4, 1, 5>(t01_hi, t23_hi);
+        let u3 = i32x4_shuffle::<2, 6, 3, 7>(t01_hi, t23_hi);
+
+        // Step 3: interleave 64-bit halves so tmp_c = [A col c | B col c]
+        // (libwebp TTransform_SSE2's unpack{lo,hi}_epi64). Without it the
+        // horizontal pass added block A's columns to block B's.
+        tmp0 = i64x2_shuffle::<0, 2>(u0, u2);
+        tmp1 = i64x2_shuffle::<1, 3>(u0, u2);
+        tmp2 = i64x2_shuffle::<0, 2>(u1, u3);
+        tmp3 = i64x2_shuffle::<1, 3>(u1, u3);
     }
 
     // Horizontal Hadamard
@@ -285,10 +296,10 @@ pub(crate) fn tdisto_4x4_fused_wasm(
     let b_abs_01 = i16x8_abs(b_01);
     let b_abs_23 = i16x8_abs(b_23);
 
-    // Load weights
-    let (w_lo, w_hi) = super::h16(w);
-    let w_0 = load_u16x8(w_lo);
-    let w_8 = load_u16x8(w_hi);
+    // Lane j of `*_01` / `*_23` holds (vertical freq j % 4, horizontal freq
+    // j / 4 (+2)), whose weight is w[4 * vertical + horizontal]: transposed.
+    let w_0 = u16x8(w[0], w[4], w[8], w[12], w[1], w[5], w[9], w[13]);
+    let w_8 = u16x8(w[2], w[6], w[10], w[14], w[3], w[7], w[11], w[15]);
 
     // Weighted multiply-accumulate using extending multiply
     let a_prod_0 = i32x4_extmul_low_i16x8(a_abs_01, w_0);
@@ -634,4 +645,48 @@ pub(crate) fn quantize_dequantize_block_wasm(
     // Non-zero check
     let or0 = v128_or(qout0, qout8);
     hsum_abs_i16x8(or0) != 0
+}
+
+/// wasm SIMD128 SSE kernels vs the scalar references on random inputs.
+/// Compiled only for `+simd128` builds (the scalar wasm build has no token).
+#[cfg(all(test, target_feature = "simd128"))]
+mod wasm_parity {
+    use super::*;
+
+    fn rng(seed: &mut u64) -> u64 {
+        *seed ^= *seed << 13;
+        *seed ^= *seed >> 7;
+        *seed ^= *seed << 17;
+        *seed
+    }
+
+    #[archmage::arcane]
+    fn sse_pair(t: Wasm128Token, a: &[u8; 16], b: &[u8; 16], r: &[i16; 16]) -> (u32, u32) {
+        (sse4x4_wasm(t, a, b), sse4x4_with_residual_wasm(t, a, b, r))
+    }
+
+    #[test]
+    fn sse_kernels_match_scalar() {
+        let t = Wasm128Token::summon().expect("+simd128");
+        let mut s = 0x7777_aaaa_5555_3333u64;
+        for case in 0..50_000 {
+            let a: [u8; 16] = core::array::from_fn(|_| rng(&mut s) as u8);
+            let b: [u8; 16] = core::array::from_fn(|_| rng(&mut s) as u8);
+            let m = [8u64, 64, 300, 1024][case % 4];
+            let r: [i16; 16] =
+                core::array::from_fn(|_| ((rng(&mut s) % (2 * m + 1)) as i64 - m as i64) as i16);
+            let (x, y) = sse_pair(t, &a, &b, &r);
+            let want_x: u32 = (0..16)
+                .map(|i| (i32::from(a[i]) - i32::from(b[i])).pow(2) as u32)
+                .sum();
+            let want_y: u32 = (0..16)
+                .map(|i| {
+                    let rec = (i32::from(b[i]) + i32::from(r[i])).clamp(0, 255);
+                    (i32::from(a[i]) - rec).pow(2) as u32
+                })
+                .sum();
+            assert_eq!(x, want_x, "sse4x4 case {case}");
+            assert_eq!(y, want_y, "sse4x4_with_residual case {case} r {r:?}");
+        }
+    }
 }

@@ -3490,3 +3490,63 @@ fn encode_with_psnr_search(
 
     Ok(best_enc_stats)
 }
+
+/// wasm SIMD128 (and x86, same domain) SSE kernels vs the scalar reference.
+#[cfg(all(
+    test,
+    any(
+        all(target_arch = "wasm32", target_feature = "simd128"),
+        target_arch = "x86_64"
+    )
+))]
+mod simd_parity {
+    use super::*;
+    use alloc::vec::Vec;
+
+    fn rng(seed: &mut u64) -> u64 {
+        *seed ^= *seed << 13;
+        *seed ^= *seed >> 7;
+        *seed ^= *seed << 17;
+        *seed
+    }
+
+    #[test]
+    fn sse_mb_kernels_match_scalar() {
+        #[cfg(target_arch = "wasm32")]
+        let (t, luma, chroma) = (
+            Wasm128Token::summon().expect("+simd128"),
+            sse_16x16_luma_dispatch_wasm128,
+            sse_8x8_chroma_dispatch_wasm128,
+        );
+        #[cfg(target_arch = "x86_64")]
+        let (t, luma, chroma) = (
+            X64V3Token::summon().expect("AVX2"),
+            sse_16x16_luma_dispatch_v3,
+            sse_8x8_chroma_dispatch_v3,
+        );
+        let mut s = 0x2468_ace0_1357_9bdfu64;
+        for case in 0..2_000 {
+            let (mbw, mbh) = (
+                1 + (rng(&mut s) % 4) as usize,
+                1 + (rng(&mut s) % 4) as usize,
+            );
+            let (mbx, mby) = ((rng(&mut s) as usize) % mbw, (rng(&mut s) as usize) % mbh);
+            let yw = mbw * 16;
+            let y: Vec<u8> = (0..yw * mbh * 16).map(|_| rng(&mut s) as u8).collect();
+            let uvw = mbw * 8;
+            let uv: Vec<u8> = (0..uvw * mbh * 8).map(|_| rng(&mut s) as u8).collect();
+            let py: [u8; LUMA_BLOCK_SIZE] = core::array::from_fn(|_| rng(&mut s) as u8);
+            let pc: [u8; CHROMA_BLOCK_SIZE] = core::array::from_fn(|_| rng(&mut s) as u8);
+            assert_eq!(
+                luma(t, &y, yw, mbx, mby, &py),
+                sse_16x16_luma_dispatch_scalar(ScalarToken, &y, yw, mbx, mby, &py),
+                "sse_16x16_luma case {case}"
+            );
+            assert_eq!(
+                chroma(t, &uv, uvw, mbx, mby, &pc),
+                sse_8x8_chroma_dispatch_scalar(ScalarToken, &uv, uvw, mbx, mby, &pc),
+                "sse_8x8_chroma case {case} mb ({mbx},{mby}) of {mbw}x{mbh}"
+            );
+        }
+    }
+}

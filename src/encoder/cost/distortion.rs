@@ -641,3 +641,103 @@ pub const FLATNESS_LIMIT_UV: i32 = 2;
 /// Flatness penalty added to rate when UV coefficients are flat (libwebp)
 /// This discourages selection of non-DC modes when content is flat.
 pub const FLATNESS_PENALTY: u32 = 140;
+
+/// wasm SIMD128 kernels vs the scalar reference on random inputs.
+#[cfg(all(
+    test,
+    any(
+        all(target_arch = "wasm32", target_feature = "simd128"),
+        target_arch = "x86_64"
+    )
+))]
+mod wasm_parity {
+    use super::*;
+    // The same randomized domain runs against the x86 tier too: an input on
+    // which x86 also disagrees with scalar is outside the production domain.
+    #[cfg(target_arch = "wasm32")]
+    fn tok() -> Wasm128Token {
+        Wasm128Token::summon().expect("+simd128")
+    }
+    #[cfg(target_arch = "x86_64")]
+    fn tok() -> X64V3Token {
+        X64V3Token::summon().expect("AVX2")
+    }
+    macro_rules! simd {
+        ($f:ident) => {
+            paste::paste! {{
+                #[cfg(target_arch = "wasm32")]
+                let f = [<$f _wasm128>];
+                #[cfg(target_arch = "x86_64")]
+                let f = [<$f _v3>];
+                f
+            }}
+        };
+    }
+    use alloc::vec::Vec;
+
+    fn rng(seed: &mut u64) -> u64 {
+        *seed ^= *seed << 13;
+        *seed ^= *seed >> 7;
+        *seed ^= *seed << 17;
+        *seed
+    }
+
+    #[test]
+    fn distortion_kernels_match_scalar() {
+        let t = tok();
+        let mut s = 0x0bad_cafe_dead_beefu64;
+        for case in 0..5_000 {
+            let stride = 16 + (rng(&mut s) % 24) as usize;
+            let spread = [4u64, 32, 256][case % 3];
+            let base = (rng(&mut s) % 256) as i64;
+            let px = |s: &mut u64| {
+                (base + (rng(s) % spread) as i64 - spread as i64 / 2).clamp(0, 255) as u8
+            };
+            let a: Vec<u8> = (0..stride * 16).map(|_| px(&mut s)).collect();
+            let b: Vec<u8> = (0..stride * 16).map(|_| px(&mut s)).collect();
+            // The weight tables the encoder actually passes.
+            let w: [u16; 16] = [
+                crate::encoder::tables::VP8_WEIGHT_Y,
+                crate::encoder::psy::PSY_WEIGHT_Y,
+                crate::encoder::psy::PSY_WEIGHT_UV,
+            ][(rng(&mut s) % 3) as usize];
+            assert_eq!(
+                simd!(tdisto_4x4_dispatch)(t, &a, &b, stride, &w),
+                tdisto_4x4_dispatch_scalar(ScalarToken, &a, &b, stride, &w),
+                "tdisto_4x4 case {case}"
+            );
+            assert_eq!(
+                simd!(tdisto_8x8_dispatch)(t, &a, &b, stride, &w),
+                tdisto_8x8_dispatch_scalar(ScalarToken, &a, &b, stride, &w),
+                "tdisto_8x8 case {case}"
+            );
+            assert_eq!(
+                simd!(tdisto_16x16_dispatch)(t, &a, &b, stride, &w),
+                tdisto_16x16_dispatch_scalar(ScalarToken, &a, &b, stride, &w),
+                "tdisto_16x16 case {case}"
+            );
+            assert_eq!(
+                simd!(is_flat_source_16_impl)(t, &a, stride),
+                is_flat_source_16_impl_scalar(ScalarToken, &a, stride),
+                "is_flat_source_16 case {case}"
+            );
+            let nb = 1 + (rng(&mut s) % 16) as usize;
+            let density = rng(&mut s) % 8;
+            let levels: Vec<i16> = (0..nb * 16)
+                .map(|_| {
+                    if rng(&mut s) % 8 < density {
+                        (rng(&mut s) % 9) as i16 - 4
+                    } else {
+                        0
+                    }
+                })
+                .collect();
+            let thresh = (rng(&mut s) % 40) as i32;
+            assert_eq!(
+                simd!(is_flat_coeffs_dispatch)(t, &levels, nb, thresh),
+                is_flat_coeffs_dispatch_scalar(ScalarToken, &levels, nb, thresh),
+                "is_flat_coeffs case {case} nb {nb} thresh {thresh}"
+            );
+        }
+    }
+}

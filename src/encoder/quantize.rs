@@ -973,3 +973,103 @@ mod tests {
         assert_eq!(dequantized, [0; 16]);
     }
 }
+
+/// wasm SIMD128 kernels vs the scalar reference on random inputs (runs in
+/// CI's wasmtime `--lib` job; scalar output is what x86/NEON produce).
+#[cfg(all(
+    test,
+    any(
+        all(target_arch = "wasm32", target_feature = "simd128"),
+        target_arch = "x86_64"
+    )
+))]
+mod wasm_parity {
+    use super::*;
+    // The same randomized domain runs against the x86 tier too: an input on
+    // which x86 also disagrees with scalar is outside the production domain.
+    #[cfg(target_arch = "wasm32")]
+    fn tok() -> Wasm128Token {
+        Wasm128Token::summon().expect("+simd128")
+    }
+    #[cfg(target_arch = "x86_64")]
+    fn tok() -> X64V3Token {
+        X64V3Token::summon().expect("AVX2")
+    }
+    macro_rules! simd {
+        ($f:ident) => {
+            paste::paste! {{
+                #[cfg(target_arch = "wasm32")]
+                let f = [<$f _wasm128>];
+                #[cfg(target_arch = "x86_64")]
+                let f = [<$f _v3>];
+                f
+            }}
+        };
+    }
+
+    fn rng(seed: &mut u64) -> u64 {
+        *seed ^= *seed << 13;
+        *seed ^= *seed >> 7;
+        *seed ^= *seed << 17;
+        *seed
+    }
+
+    #[test]
+    fn quantize_kernels_match_scalar() {
+        let t = tok();
+        let mut s = 0x1234_5678_9abc_def1u64;
+        for case in 0..20_000 {
+            let ty = [MatrixType::Y1, MatrixType::Y2, MatrixType::UV][case % 3];
+            // VP8 quantizer steps start at 4 (Y2 up to 2*157 DC / 284*155/100 AC);
+            // the SIMD paths hold iq = 2^17/q in u16, which needs q >= 4.
+            let q_dc = 4 + (rng(&mut s) % 311) as u16;
+            let q_ac = 4 + (rng(&mut s) % 437) as u16;
+            let m = VP8Matrix::new(q_dc, q_ac, ty);
+            let range = [64i64, 512, 2048, 8191][(rng(&mut s) % 4) as usize];
+            let c16: [i16; 16] = core::array::from_fn(|_| {
+                ((rng(&mut s) % (2 * range as u64 + 1)) as i64 - range) as i16
+            });
+            let c32: [i32; 16] = core::array::from_fn(|i| i32::from(c16[i]));
+            // Y1 is always quantized with sharpening; Y2/UV have a zero
+            // sharpen table, so both flag values are in-domain for them.
+            let flags: &[bool] = if matches!(ty, MatrixType::Y1) {
+                &[true]
+            } else {
+                &[true, false]
+            };
+            for &sharpen in flags {
+                let (mut a, mut b) = (c32, c32);
+                let na = simd!(quantize_block_dispatch)(t, &mut a, &m, sharpen);
+                let nb = quantize_block_dispatch_scalar(ScalarToken, &mut b, &m, sharpen);
+                assert_eq!(
+                    (a, na),
+                    (b, nb),
+                    "quantize_block case {case} sharpen {sharpen} q {q_dc}/{q_ac}"
+                );
+
+                let (mut qa, mut da, mut qb, mut db) =
+                    ([0i16; 16], [0i16; 16], [0i16; 16], [0i16; 16]);
+                let na = simd!(quantize_dequantize_block_dispatch)(
+                    t, &c16, &m, sharpen, &mut qa, &mut da,
+                );
+                let nb = quantize_dequantize_block_dispatch_scalar(
+                    ScalarToken,
+                    &c16,
+                    &m,
+                    sharpen,
+                    &mut qb,
+                    &mut db,
+                );
+                assert_eq!(
+                    (qa, da, na),
+                    (qb, db, nb),
+                    "quantize_dequantize case {case} sharpen {sharpen} q {q_dc}/{q_ac} in {c16:?}"
+                );
+            }
+            let (mut a, mut b) = (c32, c32);
+            simd!(dequantize_block_dispatch)(t, &m.q, &mut a);
+            dequantize_block_dispatch_scalar(ScalarToken, &m.q, &mut b);
+            assert_eq!(a, b, "dequantize case {case}");
+        }
+    }
+}

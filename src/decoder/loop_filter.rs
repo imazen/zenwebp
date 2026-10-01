@@ -6983,7 +6983,7 @@ pub(crate) fn filter_row_simd(
 /// --target wasm32-wasip1` with `+simd128`). It pins the 2026-10-01 fix, where
 /// `do_filter6` used `p0 - q0` instead of the base delta and the base delta
 /// saturated `3*(q0-p0)` before adding `p1 - q1`.
-#[cfg(all(test, target_arch = "wasm32"))]
+#[cfg(all(test, target_arch = "wasm32", target_feature = "simd128"))]
 mod wasm_tests {
     use super::*;
     use alloc::vec::Vec;
