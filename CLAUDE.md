@@ -263,6 +263,19 @@ little-endian layout differ.
 **On this box `~/.cargo/config.toml` forces `+simd128` for wasm32-wasip1**;
 a scalar wasm build needs `RUSTFLAGS="-C target-feature=-simd128"`.
 
+**Golden codec hashes (2026-10-01)**: `tests/golden/cases.rs` (shared case
+list + modes, public API + `alloc` only) → `tests/golden/codec_golden.tsv`
+(format-versioned, `zenwebp-golden v1`). Lib unit test
+`golden_tests::golden_codec_hashes` asserts it on every CI target incl.
+wasm scalar/simd128; `tests/golden_codec.rs` (native) additionally checks
+every decode digest against libwebp and is the only writer
+(`ZENWEBP_GOLDEN_BLESS=1`). An encoder change that moves the enc hash needs
+a deliberate re-bless; a decode hash that changes means a libwebp-parity
+break. Measured: encoder output byte-identical on x86_64 (debug + release),
+aarch64 (qemu) and wasm scalar/simd128 — the wasm simd128 encoder was not
+until two kernel fixes (tdisto transpose, chroma SSE stride). Bump
+`FORMAT_VERSION` when cases/modes/hash layout change.
+
 **Benchmarks**: `benches/decode_compare.rs` (14 images), `benches/decode_lossless_compare.rs`. zenbench, no `-C target-cpu=native`.
 
 **SIMD tier isolation**: `benches/tier_isolation.rs` measures the native SIMD

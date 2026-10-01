@@ -126,6 +126,17 @@
 
 extern crate alloc;
 
+// Golden-hash unit test: the shared case module names the public API as
+// `zenwebp::`, as it is also compiled into `tests/golden_codec.rs`.
+#[cfg(test)]
+extern crate self as zenwebp;
+#[cfg(test)]
+#[path = "../tests/golden/cases.rs"]
+#[allow(dead_code)] // `format_line` is only used by the blessing test.
+mod golden_cases;
+#[cfg(test)]
+mod golden_tests;
+
 whereat::define_at_crate_info!();
 
 #[cfg(all(test, feature = "_benchmarks"))]

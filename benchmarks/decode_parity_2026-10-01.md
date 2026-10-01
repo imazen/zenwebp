@@ -152,6 +152,27 @@ randomized cases across the six luma kernels vs the scalar spec filters),
 which runs in CI's wasmtime `--lib` job and was watched to fail on the old
 kernels (kernel 3, case 3).
 
+## Round 3: golden codec hashes (encoder + decoder, every target)
+
+`tests/golden/` pins 510 synthetic cases (336 lossy, 168 lossless, 6
+animated): encoded-bytes hash + a folded hash over 10–13 decode modes. At
+blessing time all 6,054 per-mode decode digests equal libwebp's.
+
+| target | result |
+|---|---|
+| x86_64 release / debug | all 510 identical |
+| aarch64 (qemu-user, NEON) | all 510 identical |
+| wasm32 scalar | all 510 identical |
+| wasm32 SIMD128 (before) | **174 lossy cases encoded differently** |
+| wasm32 SIMD128 (after) | all 510 identical |
+
+Root cause, found by forcing groups of `incant!` sites to scalar and then
+by per-kernel differential tests (`wasm_parity` modules, also run on the
+x86 tier to validate the input domain): `tdisto_4x4_fused_wasm` (missing
+64-bit stage of the two-block transpose; used by tdisto 4×4/8×8/16×16 and
+the wasm I4 loop) and `sse_8x8_chroma_wasm` (re-halved an already-chroma
+stride). Decoding was never affected — only mode decisions.
+
 ## Not covered
 
 - Truncated / corrupted inputs (no invalid corpus; error-agreement is untested).

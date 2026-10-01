@@ -155,6 +155,14 @@ jobs:
           CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
         run: cargo test --lib --release --target wasm32-wasip1 --no-default-features
 
+      # Scalar wasm (no SIMD128): the golden codec hashes must hold on the
+      # scalar fallbacks too, so tier divergence shows up from either side.
+      - name: Test WASM scalar (wasmtime)
+        env:
+          RUSTFLAGS: "-C target-feature=-simd128"
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
+        run: cargo test --lib --release --target wasm32-wasip1 --no-default-features
+
   feature-permutations:
     name: Feature permutations
     runs-on: ubuntu-latest

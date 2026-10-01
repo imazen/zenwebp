@@ -5,6 +5,34 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+### Fixed
+
+- **wasm32 SIMD128 lossy encoder produced different bytes than every other
+  target** (174 of 336 lossy golden cases). Two kernels diverged from their
+  scalar references: `tdisto_4x4_fused_wasm` transposed its two packed 4×4
+  blocks with two interleave stages instead of three, so the spectral
+  distortion mixed source and reconstruction columns (affects I4 / I16 / UV
+  mode decisions at the RD methods); `sse_8x8_chroma_wasm` halved a stride
+  that callers already pass as the chroma width, comparing predictions
+  against the wrong source rows. The bitstreams were valid but encoded with
+  worse mode decisions than on x86/ARM. Now byte-identical to x86_64 and
+  aarch64 on all 510 golden cases.
+
+### Added
+
+- **Golden codec hashes** (`tests/golden/`): 510 synthetic full-coverage
+  cases (11 patterns × 8 sizes from 1×1 to 130×66 × 5 alpha modes × 22
+  lossy/preset/lossless configs, plus 6 animations) pin the encoded-bytes
+  hash and a hash over every decode mode (RGBA/RGB/BGRA/BGR/ARGB, the three
+  premultiplied layouts, RGB565, RGBA4444, YUV, no-fancy, dithering,
+  animation). Asserted by a lib unit test on every CI target incl. wasm32
+  (scalar and SIMD128), and by `tests/golden_codec.rs`, which also requires
+  every decode digest to equal libwebp's. Re-bless with
+  `ZENWEBP_GOLDEN_BLESS=1 cargo test --release --test golden_codec`.
+- Randomized wasm-vs-scalar differential tests for the wasm quantize,
+  residual-cost, distortion and SSE kernels (also run against the x86 tier
+  to keep the input domain honest).
+
 ### Changed
 
 - **Premultiplied, RGB565 and RGBA4444 decode output now match libwebp
