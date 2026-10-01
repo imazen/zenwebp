@@ -140,6 +140,14 @@ scalar build must pass `-C target-feature=-simd128` explicitly.
   libwebp in every mode where x86 is).
 - **scalar wasm: all 397,593 digests identical to x86_64.**
 
+### aarch64-unknown-linux-gnu (NEON), qemu-user
+
+`decode_parity_dump` cross-built (`CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc`)
+and run under `qemu-aarch64 -L /usr/aarch64-linux-gnu` in 14 shards: **all
+397,593 digests identical to x86_64**. qemu-user emulates NEON
+instruction-for-instruction, so this exercises the NEON kernels' arithmetic,
+not Apple-silicon timing.
+
 Pinned by `loop_filter::wasm_tests::wasm_filters_match_scalar_spec` (20,000
 randomized cases across the six luma kernels vs the scalar spec filters),
 which runs in CI's wasmtime `--lib` job and was watched to fail on the old
@@ -151,7 +159,8 @@ kernels (kernel 3, case 3).
 - Cropping / scaling / `bypass_filtering` / flip: zenwebp exposes none of them.
 - Animation decoding with `Simple` upsampling or dithering: libwebp's
   `WebPAnimDecoder` has no such options, so there is no reference.
-- aarch64 (NEON) has not been run through this sweep yet.
+- macOS (Apple silicon) not yet run; aarch64 coverage so far is Linux under
+  qemu-user (below).
 
 ## Reproduce
 
