@@ -5,6 +5,33 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+### Fixed
+
+- **`UpsamplingMethod::Simple` (no-fancy upsampling) now works.** The setting
+  was stored and never read, so every lossy decode used fancy upsampling.
+  Point-sampled output is now byte-identical to libwebp's
+  `no_fancy_upsampling` across `DecodeRequest`, `WebPDecoder` and
+  `AnimationDecoder`; the zencodec streaming decoder falls back to the full
+  decode for it. The `gallery1_nofancy` reference PNGs, which had been
+  regenerated from the broken output, are restored to dwebp's.
+- **Animation compositing is byte-identical to libwebp's `WebPAnimDecoder`.**
+  Keyframes are copied instead of blended against the cleared canvas (which
+  lost up to ~50 levels on translucent pixels and zeroed RGB under alpha 0);
+  pixels inside a background-disposed previous frame are copied raw; the
+  previous frame is disposed even when the current frame has no alpha (stale
+  pixels survived before); the blend uses libwebp's `(dst_a*(256-src_a))>>8`.
+- **Animations without frame alpha no longer lose transparency.** When a
+  background dispose or an undersized first frame leaves transparent canvas
+  pixels, `has_alpha()` / `AnimationInfo::has_alpha` now report alpha, so
+  frames decode as RGBA instead of turning those pixels opaque black.
+
+### Added
+
+- `dev/decode_parity_sweep.rs`: wide-corpus decoder parity sweep vs libwebp
+  (13,601 files, 43,414 comparisons, all exact —
+  `benchmarks/decode_parity_2026-10-01.md`), and
+  `tests/libwebp_decode_parity.rs` pinning the cases above.
+
 ### Changed
 
 - **The classifier takes an `Offer`; the `&dyn FeatureProvider` path is gone.**

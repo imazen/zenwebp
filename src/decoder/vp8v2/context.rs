@@ -102,6 +102,10 @@ pub struct DecoderContext {
     /// Per-segment dither amplitudes (computed from UV AC quantizer indices and strength).
     pub(super) dither_amp: [i32; MAX_SEGMENTS],
 
+    /// Chroma upsampling for RGB output: fancy (libwebp default) or
+    /// point-sampled (libwebp `no_fancy_upsampling`).
+    pub(super) upsampling: crate::decoder::UpsamplingMethod,
+
     // ---- Reuse tracking ----
     pub(super) last_mbwidth: u16,
     pub(super) last_mbheight: u16,
@@ -164,6 +168,7 @@ impl DecoderContext {
             dither_enabled: false,
             dither_rg: VP8Random::new(),
             dither_amp: [0; MAX_SEGMENTS],
+            upsampling: crate::decoder::UpsamplingMethod::Bilinear,
 
             last_mbwidth: 0,
             last_mbheight: 0,
@@ -222,6 +227,11 @@ impl DecoderContext {
     /// Set chroma dithering strength on an existing context (non-consuming).
     pub fn set_dithering_strength(&mut self, strength: u8) {
         self.dither_strength = strength;
+    }
+
+    /// Set the chroma upsampling used by [`Self::decode_to_rgb`].
+    pub fn set_upsampling(&mut self, method: crate::decoder::UpsamplingMethod) {
+        self.upsampling = method;
     }
 
     /// Resize buffers for the given macroblock dimensions and filter context.

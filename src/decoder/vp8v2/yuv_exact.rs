@@ -144,6 +144,40 @@ pub(crate) fn yuv420_to_rgb_exact(
     }
 }
 
+/// Convert full-frame YUV420 to RGB or RGBA with point-sampled chroma: pixel
+/// (x, y) uses chroma sample (x/2, y/2). Matches libwebp's `EmitSampledRGB`
+/// (`WebPSamplerProcessPlane` + `YuvTo{Rgb,Rgba}Row`), i.e. `no_fancy_upsampling`.
+///
+/// `output` is resized to `width * height * bpp`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn yuv420_to_rgb_sampled(
+    ybuf: &[u8],
+    ubuf: &[u8],
+    vbuf: &[u8],
+    width: usize,
+    height: usize,
+    y_stride: usize,
+    uv_stride: usize,
+    output: &mut Vec<u8>,
+    bpp: usize,
+) {
+    debug_assert!(bpp == 3 || bpp == 4);
+    output.resize(width * height * bpp, 0);
+    if height == 0 || width == 0 {
+        return;
+    }
+    let chroma_width = (width + 1) / 2;
+    for (y, out_row) in output.chunks_exact_mut(width * bpp).enumerate() {
+        let y_row = &ybuf[y * y_stride..][..width];
+        let uv_off = (y / 2) * uv_stride;
+        let u_row = &ubuf[uv_off..][..chroma_width];
+        let v_row = &vbuf[uv_off..][..chroma_width];
+        for (x, (dst, &luma)) in out_row.chunks_exact_mut(bpp).zip(y_row).enumerate() {
+            write_pixel(dst, luma, u_row[x / 2], v_row[x / 2]);
+        }
+    }
+}
+
 /// Convert visible cache rows from one MB row directly to RGB output.
 ///
 /// This is the streaming alternative to `yuv420_to_rgb_exact`: instead of

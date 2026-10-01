@@ -1791,6 +1791,16 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
 
         let cfg = self.build_config();
         let dither_strength = cfg.dithering_strength;
+        // The strip pipeline only implements fancy upsampling. Reject
+        // point-sampled requests so callers fall back to the full decode,
+        // which honors `UpsamplingMethod::Simple`.
+        if cfg.upsampling == crate::decoder::UpsamplingMethod::Simple {
+            return Err(zencodec::CodecError::of(at!(
+                DecodeError::UnsupportedFeature(
+                    "streaming decode supports fancy upsampling only".into(),
+                )
+            )));
+        }
 
         // Determine bpp from preferred list
         let has_alpha_preferred = preferred.contains(&PixelDescriptor::RGBA8_SRGB)

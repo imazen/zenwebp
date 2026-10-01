@@ -126,7 +126,7 @@ webp = "0.3.1"
 # 0.4.0: webpx free decode fns apply Limits::default() (64 MP / 64 MiB
 # caps) — fine here, the differential tests decode corpus images far
 # below the caps. 0.1.4 was yanked upstream.
-webpx = "0.4.0"
+webpx = { version = "0.4.0", features = ["animation"] }
 yuv = "0.8"
 # Pareto sweep harness uses zenresize for size variants (Lanczos),
 # matching the project-wide resampling used elsewhere in zen* benches.
@@ -506,3 +506,11 @@ required-features = ["_dev"]
 [patch.crates-io]
 zenanalyze-api = { git = "https://github.com/imazen/zenanalyze" }
 zenanalyze = { git = "https://github.com/imazen/zenanalyze" }
+
+# Wide-corpus decoder parity sweep vs libwebp (rgba/rgb/nofancy/yuv/anim,
+# tolerance 0) over existing .webp files plus libwebp- and zenwebp-encoded
+# variants of PNG sources. See benchmarks/decode_parity_*.md.
+[[example]]
+name = "decode_parity_sweep"
+path = "dev/decode_parity_sweep.rs"
+required-features = ["__expert"]

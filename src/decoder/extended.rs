@@ -25,28 +25,59 @@ pub(crate) struct WebPExtendedInfo {
     pub(crate) background_color_hint: [u8; 4],
 }
 
-/// Composites a frame onto a canvas.
+/// Rectangle and disposal state of the previously composited animation frame.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PrevFrame {
+    pub(crate) x: u32,
+    pub(crate) y: u32,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    /// The previous frame asked to be disposed to the background.
+    pub(crate) dispose_to_background: bool,
+    /// The previous frame was composited as a keyframe.
+    pub(crate) was_keyframe: bool,
+}
+
+/// Composites a frame onto a canvas, mirroring libwebp's `WebPAnimDecoderGetNext`
+/// (`src/demux/anim_decode.c`) so animated output is byte-identical to libwebp.
 ///
-/// Starts by filling the rectangle occupied by the previous frame with the background
-/// color, if provided. Then copies or blends the frame onto the canvas.
+/// The model, in libwebp's terms:
+/// 1. A frame is a *keyframe* when it is the first frame, when it is full-canvas
+///    and either declares no alpha or does not blend, or when the previous frame
+///    was disposed to the background and was itself full-canvas or a keyframe.
+///    A keyframe starts from a canvas filled with `clear_color`.
+/// 2. Otherwise the canvas is the previous canvas with the previous frame's
+///    rectangle filled with `clear_color` if that frame was disposed.
+/// 3. The frame's pixels are written raw. When blending (and not a keyframe),
+///    pixels with alpha < 255 are then blended against the pre-frame canvas —
+///    except inside a disposed previous rectangle, where libwebp treats the
+///    blend against transparent as a no-op and keeps the raw pixel.
+///
+/// `clear_color` is transparent black unless the caller overrode the background
+/// (libwebp always uses transparent). With an opaque/colored override, the
+/// "blend against cleared pixel is a no-op" shortcut no longer holds, so those
+/// pixels are blended against the clear color instead.
+///
+/// `frame` is RGB (`frame_bpp == 3`, implicitly opaque) or RGBA (`4`).
+/// `frame_declares_alpha` is the container/bitstream alpha flag libwebp's demuxer
+/// reports (ALPH chunk for VP8, the header bit for VP8L), used only for the
+/// keyframe decision. Returns whether the frame was a keyframe.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn composite_frame(
     canvas: &mut [u8],
     canvas_width: u32,
     canvas_height: u32,
-    clear_color: Option<[u8; 4]>,
+    clear_color: [u8; 4],
     frame: &[u8],
+    frame_bpp: usize,
     frame_offset_x: u32,
     frame_offset_y: u32,
     frame_width: u32,
     frame_height: u32,
-    frame_has_alpha: bool,
+    frame_declares_alpha: bool,
     frame_use_alpha_blending: bool,
-    previous_frame_width: u32,
-    previous_frame_height: u32,
-    previous_frame_offset_x: u32,
-    previous_frame_offset_y: u32,
-) -> Result<(), whereat::At<DecodeError>> {
+    prev: Option<PrevFrame>,
+) -> Result<bool, whereat::At<DecodeError>> {
     // Validate canvas size with checked arithmetic
     let canvas_stride = (canvas_width as usize)
         .checked_mul(4)
@@ -54,93 +85,81 @@ pub(crate) fn composite_frame(
     let expected_canvas_size = canvas_stride
         .checked_mul(canvas_height as usize)
         .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
-    if canvas.len() < expected_canvas_size {
+    if canvas.len() < expected_canvas_size
+        || frame_offset_x.saturating_add(frame_width) > canvas_width
+        || frame_offset_y.saturating_add(frame_height) > canvas_height
+    {
+        return Err(at!(DecodeError::ImageTooLarge));
+    }
+    let frame_stride = (frame_width as usize) * frame_bpp;
+    if (frame_bpp != 3 && frame_bpp != 4) || frame.len() < frame_stride * frame_height as usize {
         return Err(at!(DecodeError::ImageTooLarge));
     }
 
-    let frame_is_full_size = frame_offset_x == 0
-        && frame_offset_y == 0
-        && frame_width == canvas_width
-        && frame_height == canvas_height;
-
-    if frame_is_full_size && !frame_use_alpha_blending {
-        if frame_has_alpha {
-            canvas.copy_from_slice(frame);
-        } else {
-            garb::bytes::rgb_to_rgba(frame, canvas).map_err(|e| {
-                at!(DecodeError::InvalidParameter(alloc::format!(
-                    "pixel conversion: {e}"
-                )))
-            })?;
+    let is_full = |w: u32, h: u32| w == canvas_width && h == canvas_height;
+    let is_keyframe = match prev {
+        None => true,
+        Some(p) => {
+            ((!frame_declares_alpha || !frame_use_alpha_blending)
+                && is_full(frame_width, frame_height))
+                || (p.dispose_to_background && (is_full(p.width, p.height) || p.was_keyframe))
         }
-        return Ok(());
-    }
+    };
 
-    // Clear rectangle occupied by previous frame.
-    // The canvas is always RGBA (4 bytes/pixel) regardless of whether the
-    // current frame carries alpha, so we always clear with 4-byte pixels.
-    if let Some(clear_color) = clear_color {
-        if frame_is_full_size {
-            canvas[..expected_canvas_size]
+    if is_keyframe {
+        canvas[..expected_canvas_size]
+            .as_chunks_mut::<4>()
+            .0
+            .fill(clear_color);
+    } else if let Some(p) = prev
+        && p.dispose_to_background
+    {
+        for y in p.y..p.y + p.height {
+            let row = y as usize * canvas_stride + p.x as usize * 4;
+            canvas[row..row + p.width as usize * 4]
                 .as_chunks_mut::<4>()
                 .0
                 .fill(clear_color);
-        } else {
-            for y in 0..previous_frame_height as usize {
-                for x in 0..previous_frame_width as usize {
-                    let canvas_index = (x + previous_frame_offset_x as usize) * 4
-                        + (y + previous_frame_offset_y as usize) * canvas_stride;
+        }
+    }
 
-                    let output = &mut canvas[canvas_index..][..4];
-                    output.copy_from_slice(&clear_color);
+    let clear_is_transparent = clear_color == [0, 0, 0, 0];
+    // Region whose pre-frame pixels are known to be `clear_color`.
+    let cleared = |x: u32, y: u32| -> bool {
+        if is_keyframe {
+            return true;
+        }
+        match prev {
+            Some(p) if p.dispose_to_background => {
+                x >= p.x && x < p.x + p.width && y >= p.y && y < p.y + p.height
+            }
+            _ => false,
+        }
+    };
+
+    for fy in 0..frame_height {
+        let cy = frame_offset_y + fy;
+        let src_row = &frame[fy as usize * frame_stride..][..frame_stride];
+        let dst_row = &mut canvas[cy as usize * canvas_stride + frame_offset_x as usize * 4..]
+            [..frame_width as usize * 4];
+        for (fx, dst) in dst_row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let s = &src_row[fx * frame_bpp..];
+            let src = [s[0], s[1], s[2], if frame_bpp == 4 { s[3] } else { 255 }];
+            *dst = if !frame_use_alpha_blending || src[3] == 255 {
+                src
+            } else if cleared(frame_offset_x + fx as u32, cy) {
+                if clear_is_transparent {
+                    src
+                } else {
+                    do_alpha_blending(src, clear_color)
                 }
-            }
+            } else {
+                do_alpha_blending(src, *dst)
+            };
         }
     }
 
-    let width = frame_width.min(canvas_width.saturating_sub(frame_offset_x)) as usize;
-    let height = frame_height.min(canvas_height.saturating_sub(frame_offset_y)) as usize;
-
-    if frame_has_alpha && frame_use_alpha_blending {
-        for y in 0..height {
-            for x in 0..width {
-                let frame_index = (x + y * frame_width as usize) * 4;
-                let canvas_index = (x + frame_offset_x as usize) * 4
-                    + (y + frame_offset_y as usize) * canvas_stride;
-
-                let input = &frame[frame_index..][..4];
-                let output = &mut canvas[canvas_index..][..4];
-
-                let blended =
-                    do_alpha_blending(input.try_into().unwrap(), output.try_into().unwrap());
-                output.copy_from_slice(&blended);
-            }
-        }
-    } else if frame_has_alpha {
-        for y in 0..height {
-            let frame_index = (y * frame_width as usize) * 4;
-            let canvas_index =
-                frame_offset_x as usize * 4 + (y + frame_offset_y as usize) * canvas_stride;
-
-            canvas[canvas_index..][..width * 4].copy_from_slice(&frame[frame_index..][..width * 4]);
-        }
-    } else {
-        garb::bytes::rgb_to_rgba_strided(
-            &frame[..height * frame_width as usize * 3],
-            &mut canvas[frame_offset_x as usize * 4 + frame_offset_y as usize * canvas_stride..],
-            width,
-            height,
-            frame_width as usize * 3,
-            canvas_stride,
-        )
-        .map_err(|e| {
-            at!(DecodeError::InvalidParameter(alloc::format!(
-                "pixel conversion: {e}"
-            )))
-        })?;
-    }
-
-    Ok(())
+    Ok(is_keyframe)
 }
 
 pub(crate) fn get_alpha_predictor(
@@ -422,18 +441,23 @@ mod tests {
             &mut canvas,
             w,
             h,
-            Some([0, 0, 0, 0]),
+            [0, 0, 0, 0],
             &frame,
+            3,
             0,
             0,
             w,
             h,
-            false, // frame_has_alpha
-            true,  // frame_use_alpha_blending (forces slow path)
-            w,
-            h,
-            0,
-            0,
+            false, // frame_declares_alpha
+            true,  // frame_use_alpha_blending
+            Some(PrevFrame {
+                x: 0,
+                y: 0,
+                width: w,
+                height: h,
+                dispose_to_background: true,
+                was_keyframe: false,
+            }),
         )
         .unwrap();
 
@@ -469,18 +493,23 @@ mod tests {
             &mut canvas,
             canvas_w,
             canvas_h,
-            Some([0, 0, 0, 0]),
+            [0, 0, 0, 0],
             &frame,
+            3,
             0,
             0,
             frame_w,
             frame_h,
             false,
             true,
-            prev_w,
-            prev_h,
-            prev_x,
-            prev_y,
+            Some(PrevFrame {
+                x: prev_x,
+                y: prev_y,
+                width: prev_w,
+                height: prev_h,
+                dispose_to_background: true,
+                was_keyframe: false,
+            }),
         )
         .unwrap();
 

@@ -41,7 +41,11 @@ pub struct FrameInfo {
 /// A decoded animation frame with owned RGBA pixel data.
 #[derive(Debug, Clone)]
 pub struct AnimFrame {
-    /// RGBA pixel data (canvas_width * canvas_height * 4 bytes).
+    /// Composited canvas pixels: RGBA (`width * height * 4` bytes) when
+    /// [`AnimationInfo::has_alpha`] is true, otherwise RGB (`* 3` bytes).
+    /// `has_alpha` is also true when compositing can leave transparent pixels
+    /// (a background dispose or a first frame smaller than the canvas), so RGB
+    /// output only ever drops an alpha channel that is uniformly 255.
     pub data: Vec<u8>,
     /// Canvas width in pixels.
     pub width: u32,

@@ -241,6 +241,19 @@ See `docs/PERFORMANCE.md` for benchmarks, `docs/CALL-TREE.md` for SIMD tiers, `d
 
 **Pixel-exact gate**: `tests/v2_pixel_perfect.rs` (tolerance 0 vs libwebp). Lossless: `examples/lossless_rt_check.rs` (24/24 exact).
 
+**Wide-corpus decode parity (2026-10-01)**: `dev/decode_parity_sweep.rs`
+diffs every output mode (rgba / rgb / nofancy / yuv / animation canvases)
+against libwebp 1.6.0 on 272 existing files + ~13.3k files encoded by both
+encoders over the whole knob grid: **43,414/43,414 exact**
+(`benchmarks/decode_parity_2026-10-01.md`). It found three bugs the
+reference-PNG tests had hidden — nofancy was a dead option, animation
+compositing was not libwebp's, and compositing-created transparency was
+dropped. Lessons: reference PNGs must come from dwebp/webpmux, never from
+our own output (two sets had been re-blessed from buggy output), and lossy
+reftests are exact (`tests/decode.rs`). Animation compositing is
+`extended::composite_frame`, a step-for-step mirror of libwebp's
+`WebPAnimDecoderGetNext`; pinned by `tests/libwebp_decode_parity.rs`.
+
 **Benchmarks**: `benches/decode_compare.rs` (14 images), `benches/decode_lossless_compare.rs`. zenbench, no `-C target-cpu=native`.
 
 **SIMD tier isolation**: `benches/tier_isolation.rs` measures the native SIMD

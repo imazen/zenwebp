@@ -319,6 +319,9 @@ struct AnimationState {
     previous_frame_height: u32,
     previous_frame_x_offset: u32,
     previous_frame_y_offset: u32,
+    /// The previous frame was composited as a keyframe (libwebp's
+    /// `prev_frame_was_keyframe`), part of the next frame's keyframe test.
+    previous_frame_was_keyframe: bool,
     canvas: Option<Vec<u8>>,
     /// Reusable scratch buffer for per-frame decode data.
     /// Avoids allocating a fresh Vec<u8> for every animation frame.
@@ -338,6 +341,7 @@ impl Default for AnimationState {
             previous_frame_height: 0,
             previous_frame_x_offset: 0,
             previous_frame_y_offset: 0,
+            previous_frame_was_keyframe: false,
             canvas: None,
             frame_scratch: Vec::new(),
             ctx: DecoderContext::new(),
@@ -680,6 +684,7 @@ impl<'a> DecodeRequest<'a> {
                 let vp8_data = &data[vp8_start..vp8_end];
 
                 let mut ctx = DecoderContext::new().with_dithering_strength(dither_strength);
+                ctx.set_upsampling(self.config.upsampling);
                 ctx.set_alloc_pref(self.config.limits.alloc_pref);
                 let mut output = Vec::new();
                 let (w, h) = ctx.decode_to_rgb(vp8_data, &mut output, bpp)?;
@@ -711,6 +716,7 @@ impl<'a> DecodeRequest<'a> {
                 }
 
                 let mut ctx = DecoderContext::new().with_dithering_strength(dither_strength);
+                ctx.set_upsampling(self.config.upsampling);
                 ctx.set_alloc_pref(self.config.limits.alloc_pref);
                 let mut output = Vec::new();
 
@@ -1042,6 +1048,13 @@ impl<'a> WebPDecoder<'a> {
                 let max_position = position + riff_size.saturating_sub(12);
                 self.r.seek_from_start(position)?;
 
+                // Whether compositing can leave transparent canvas pixels even
+                // though no frame carries alpha (see `anim_can_be_transparent`).
+                let mut anim_transparent = false;
+                // (dispose_to_background, frame covers canvas and is opaque) of
+                // the previous ANMF frame.
+                let mut prev_anmf: Option<bool> = None;
+
                 while position < max_position {
                     match read_chunk_header(&mut self.r) {
                         Ok((chunk, chunk_size, chunk_size_rounded)) => {
@@ -1059,8 +1072,13 @@ impl<'a> WebPDecoder<'a> {
                                     return Err(at!(DecodeError::InvalidChunkSize));
                                 }
 
-                                self.r.seek_relative(12)?;
-                                let duration = self.r.read_u32_le()? & 0xffffff;
+                                let fx = extended::read_3_bytes(&mut self.r)? * 2;
+                                let fy = extended::read_3_bytes(&mut self.r)? * 2;
+                                let fw = extended::read_3_bytes(&mut self.r)? + 1;
+                                let fh = extended::read_3_bytes(&mut self.r)? + 1;
+                                let duration_flags = self.r.read_u32_le()?;
+                                let duration = duration_flags & 0xffffff;
+                                let dispose_bg = (duration_flags >> 24) & 1 != 0;
                                 self.loop_duration =
                                     self.loop_duration.wrapping_add(u64::from(duration));
 
@@ -1069,15 +1087,41 @@ impl<'a> WebPDecoder<'a> {
                                 // image contains any lossy image data. VP8 chunks store lossy data
                                 // and the spec says that lossless images SHOULD NOT contain ALPH
                                 // chunks, so we treat both as indicators of lossy images.
-                                if !self.is_lossy {
-                                    let (subchunk, ..) = read_chunk_header(&mut self.r)?;
-                                    if let WebPRiffChunk::VP8 | WebPRiffChunk::ALPH = subchunk {
-                                        self.is_lossy = true;
-                                    }
-                                    self.r.seek_relative(chunk_size_rounded as i64 - 24)?;
-                                } else {
-                                    self.r.seek_relative(chunk_size_rounded as i64 - 16)?;
+                                let (subchunk, ..) = read_chunk_header(&mut self.r)?;
+                                if let WebPRiffChunk::VP8 | WebPRiffChunk::ALPH = subchunk {
+                                    self.is_lossy = true;
                                 }
+                                let mut consumed = 24i64;
+                                let frame_alpha = match subchunk {
+                                    WebPRiffChunk::ALPH => true,
+                                    WebPRiffChunk::VP8 => false,
+                                    // VP8L `alpha_is_used`: bit 28 after the
+                                    // 0x2f signature byte.
+                                    WebPRiffChunk::VP8L if chunk_size >= 29 => {
+                                        let mut hdr = [0u8; 5];
+                                        self.r.read_exact(&mut hdr)?;
+                                        consumed += 5;
+                                        (u32::from_le_bytes([hdr[1], hdr[2], hdr[3], hdr[4]]) >> 28)
+                                            & 1
+                                            != 0
+                                    }
+                                    _ => true,
+                                };
+                                let opaque_full = !frame_alpha
+                                    && fx == 0
+                                    && fy == 0
+                                    && fw == info.canvas_width
+                                    && fh == info.canvas_height;
+                                anim_transparent |= frame_alpha
+                                    || match prev_anmf {
+                                        // Frame 1 must cover the zero-filled canvas.
+                                        None => !opaque_full,
+                                        // A background dispose leaves a hole
+                                        // unless this frame repaints everything.
+                                        Some(prev_dispose_bg) => prev_dispose_bg && !opaque_full,
+                                    };
+                                prev_anmf = Some(dispose_bg);
+                                self.r.seek_relative(chunk_size_rounded as i64 - consumed)?;
 
                                 continue;
                             }
@@ -1146,7 +1190,13 @@ impl<'a> WebPDecoder<'a> {
                     }
                 }
 
-                self.has_alpha = info.alpha;
+                // libwebp's WebPAnimDecoder always yields RGBA. An animation
+                // whose VP8X alpha flag is clear (no frame carries alpha) can
+                // still composite to transparent canvas pixels — a first frame
+                // smaller than the canvas, or a background dispose the next
+                // frame does not fully repaint — so report alpha then too,
+                // or RGB output would turn those pixels opaque black.
+                self.has_alpha = info.alpha || (info.animation && anim_transparent);
                 self.kind = ImageKind::Extended(info);
             }
             _ => return Err(at!(DecodeError::ChunkHeaderInvalid(chunk.to_fourcc()))),
@@ -1352,6 +1402,9 @@ impl<'a> WebPDecoder<'a> {
             self.animation
                 .ctx
                 .set_dithering_strength(self.webp_decode_options.dithering_strength);
+            self.animation
+                .ctx
+                .set_upsampling(self.webp_decode_options.lossy_upsampling);
             // Honor the allocation-fallibility policy for the row cache and the
             // RGB output buffer (set from the zencodec boundary; CodecDefault
             // on the native API → behavior unchanged).
@@ -1453,6 +1506,9 @@ impl<'a> WebPDecoder<'a> {
         self.animation
             .ctx
             .set_dithering_strength(self.webp_decode_options.dithering_strength);
+        self.animation
+            .ctx
+            .set_upsampling(self.webp_decode_options.lossy_upsampling);
         // Propagate the allocation-fallibility policy to the reusable context.
         self.animation.ctx.set_alloc_pref(self.limits.alloc_pref);
 
@@ -1462,7 +1518,9 @@ impl<'a> WebPDecoder<'a> {
             return Err(at!(DecodeError::ChunkHeaderInvalid(chunk.to_fourcc())));
         }
 
-        let frame_has_alpha: bool = match chunk {
+        // (bytes per pixel in frame_scratch, alpha flag as libwebp's demuxer
+        // reports it — used for the keyframe decision only).
+        let (frame_bpp, frame_declares_alpha): (usize, bool) = match chunk {
             WebPRiffChunk::VP8 => {
                 // Lossy VP8 decode with buffer reuse across animation frames.
                 // DecoderContext is reused from self.animation.ctx, saving
@@ -1476,10 +1534,15 @@ impl<'a> WebPDecoder<'a> {
                 if u32::from(w) != frame_width || u32::from(h) != frame_height {
                     return Err(at!(DecodeError::InconsistentImageSizes));
                 }
-                false
+                (3, false)
             }
             WebPRiffChunk::VP8L => {
                 let data_slice = self.r.take_slice(chunk_size as usize)?;
+                // VP8L header: 0x2f signature, then 14+14 bits of size and
+                // the `alpha_is_used` bit (bit 28 of the following LE u32).
+                let vp8l_alpha = data_slice
+                    .get(1..5)
+                    .is_some_and(|b| (u32::from_le_bytes([b[0], b[1], b[2], b[3]]) >> 28) & 1 != 0);
                 let mut lossless_decoder = LosslessDecoder::new(data_slice);
                 lossless_decoder.set_stop(self.stop);
                 lossless_decoder.set_limits(Some(&self.limits));
@@ -1500,7 +1563,7 @@ impl<'a> WebPDecoder<'a> {
                     false,
                     &mut self.animation.frame_scratch,
                 )?;
-                true
+                (4, vp8l_alpha)
             }
             WebPRiffChunk::ALPH => {
                 if chunk_size_rounded + 32 > anmf_size {
@@ -1565,60 +1628,58 @@ impl<'a> WebPDecoder<'a> {
                     }
                 }
 
-                true
+                (4, true)
             }
             _ => return Err(at!(DecodeError::ChunkHeaderInvalid(chunk.to_fourcc()))),
         };
 
-        let clear_color = if self.animation.dispose_next_frame {
-            match (info.background_color, frame_has_alpha) {
-                (color @ Some(_), _) => color,
-                (_, true) => Some([0, 0, 0, 0]),
-                _ => None,
-            }
-        } else {
-            None
-        };
+        // libwebp's WebPAnimDecoder ignores the ANIM background color and
+        // composites onto transparent black; a caller-set background
+        // (`set_background_color`) overrides that.
+        let clear_color = info.background_color.unwrap_or([0, 0, 0, 0]);
 
-        // fill starting canvas with clear color
         if self.animation.canvas.is_none() {
             self.animation.canvas = {
                 let canvas_alloc = self.width as usize * self.height as usize * 4;
                 self.limits.check_memory(canvas_alloc)?;
                 // The animation canvas is the allocation `alloc_util`'s own
                 // doc names as fallible-by-default; it was a plain `vec!`
-                // until #63/#78-B.
-                let mut canvas =
+                // until #63/#78-B. Frame 1 is always a keyframe, which fills it.
+                let canvas =
                     super::alloc_util::alloc_zeroed(self.limits.alloc_pref, true, canvas_alloc)
                         .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
-                if let Some(color) = info.background_color {
-                    canvas.as_chunks_mut::<4>().0.fill(color);
-                }
                 Some(canvas)
             }
         }
-        extended::composite_frame(
+        let prev = (self.animation.next_frame > 0).then_some(extended::PrevFrame {
+            x: self.animation.previous_frame_x_offset,
+            y: self.animation.previous_frame_y_offset,
+            width: self.animation.previous_frame_width,
+            height: self.animation.previous_frame_height,
+            dispose_to_background: self.animation.dispose_next_frame,
+            was_keyframe: self.animation.previous_frame_was_keyframe,
+        });
+        let is_keyframe = extended::composite_frame(
             self.animation.canvas.as_mut().unwrap(),
             self.width,
             self.height,
             clear_color,
             &self.animation.frame_scratch,
+            frame_bpp,
             frame_x,
             frame_y,
             frame_width,
             frame_height,
-            frame_has_alpha,
+            frame_declares_alpha,
             use_alpha_blending,
-            self.animation.previous_frame_width,
-            self.animation.previous_frame_height,
-            self.animation.previous_frame_x_offset,
-            self.animation.previous_frame_y_offset,
+            prev,
         )?;
 
         self.animation.previous_frame_width = frame_width;
         self.animation.previous_frame_height = frame_height;
         self.animation.previous_frame_x_offset = frame_x;
         self.animation.previous_frame_y_offset = frame_y;
+        self.animation.previous_frame_was_keyframe = is_keyframe;
 
         self.animation.dispose_next_frame = dispose;
         self.animation.next_frame_start += anmf_size + 8;
@@ -1657,6 +1718,7 @@ impl<'a> WebPDecoder<'a> {
         self.animation.previous_frame_height = 0;
         self.animation.previous_frame_x_offset = 0;
         self.animation.previous_frame_y_offset = 0;
+        self.animation.previous_frame_was_keyframe = false;
         Ok(())
     }
 
