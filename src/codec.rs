@@ -23,7 +23,10 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use whereat::{At, ResultAtExt, at};
-use zencodec::decode::{AnimationFrame, DecodeOutput, OutputInfo, OwnedAnimationFrame, SinkError};
+use zencodec::decode::{
+    AnimationFrame, DecodeOutput, IncrementalDecode, OutputInfo, OwnedAnimationFrame, PushOutcome,
+    PushStatus, SinkError,
+};
 use zencodec::encode::EncodeOutput;
 use zencodec::{
     ImageFormat, ImageInfo, ImageSequence, Metadata, Orientation, OrientationHint, ResourceLimits,
@@ -1512,6 +1515,14 @@ impl WebpDecoderConfig {
             .at()?
             .decode()
     }
+    /// Convenience: create an incremental decoder with this config.
+    pub fn incremental_decoder(
+        &self,
+        preferred: &[PixelDescriptor],
+    ) -> Result<WebpIncrementalDecoder, At<zencodec::CodecError>> {
+        use zencodec::decode::DecoderConfig;
+        self.clone().job().into_incremental_decoder(preferred)
+    }
 }
 
 impl Default for WebpDecoderConfig {
@@ -1536,6 +1547,7 @@ static DECODE_CAPABILITIES: zencodec::decode::DecodeCapabilities =
         .with_cheap_probe(true)
         .with_native_alpha(true)
         .with_streaming(true)
+        .with_incremental(true)
         .with_enforces_max_pixels(true)
         .with_enforces_max_memory(true)
         .with_enforces_max_input_bytes(true);
@@ -1674,6 +1686,26 @@ impl WebpDecodeJob {
         self.limits
             .max_input_bytes
             .or(self.config.inner.limits.max_file_size)
+    }
+
+    /// Create an incremental push/pull decoder from this job.
+    pub fn into_incremental_decoder(
+        self,
+        preferred: &[PixelDescriptor],
+    ) -> Result<WebpIncrementalDecoder, At<zencodec::CodecError>> {
+        let cfg = self.build_config();
+        let stop = self.stop;
+        let limits = Some(self.limits);
+        let policy = self.policy;
+        let orientation = self.orientation;
+        Ok(WebpIncrementalDecoder::new(
+            cfg,
+            stop,
+            limits,
+            policy,
+            preferred,
+            orientation,
+        ))
     }
 }
 
@@ -2080,6 +2112,16 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
             limits: self.limits,
             accumulated_duration_ms: 0,
         })
+    }
+
+    fn dyn_incremental_decoder(
+        self,
+        preferred: &[PixelDescriptor],
+    ) -> Result<Box<dyn zencodec::decode::DynIncrementalDecoder>, zencodec::decode::BoxedError> {
+        let dec = self
+            .into_incremental_decoder(preferred)
+            .map_err(|e| Box::new(e) as zencodec::decode::BoxedError)?;
+        Ok(Box::new(zencodec::decode::IncrementalDecoderShim(dec)))
     }
 }
 
@@ -2616,6 +2658,395 @@ impl zencodec::decode::StreamingDecode for WebpStreamingDecoder {
 
     fn info(&self) -> &ImageInfo {
         &self.info
+    }
+}
+
+// ── WebpIncrementalDecoder ─────────────────────────────────────────────────
+
+/// Incremental WebP decoder implementing [`zencodec::decode::IncrementalDecode`].
+///
+/// Accepts compressed input bytes in arbitrary chunks without performing any I/O,
+/// decoding and yielding scanlines/batches as soon as sufficient data has been pushed.
+pub struct WebpIncrementalDecoder {
+    config: DecodeConfig,
+    stop: Option<zencodec::StopToken>,
+    limits: Option<ResourceLimits>,
+    policy: Option<zencodec::decode::DecodePolicy>,
+    preferred: Vec<PixelDescriptor>,
+    orientation: OrientationHint,
+
+    // Header & metadata
+    header_parsed: bool,
+    descriptor: Option<PixelDescriptor>,
+    info: Option<ImageInfo>,
+    riff_size: Option<u32>,
+    next_header_attempt: usize,
+
+    // Buffered input
+    buf: Vec<u8>,
+    total_input_bytes: u64,
+
+    // Output scanline pulling state
+    pixel_data: Vec<u8>,
+    width: u32,
+    height: u32,
+    row_bytes: usize,
+    current_row: u32,
+    batch_rows: u32,
+
+    output_ready: bool,
+    is_eof: bool,
+    is_complete: bool,
+}
+
+impl WebpIncrementalDecoder {
+    /// Create a new incremental decoder from job parameters.
+    pub fn new(
+        config: DecodeConfig,
+        stop: Option<zencodec::StopToken>,
+        limits: Option<ResourceLimits>,
+        policy: Option<zencodec::decode::DecodePolicy>,
+        preferred: &[PixelDescriptor],
+        orientation: OrientationHint,
+    ) -> Self {
+        Self {
+            config,
+            stop,
+            limits,
+            policy,
+            preferred: preferred.to_vec(),
+            orientation,
+            header_parsed: false,
+            descriptor: None,
+            info: None,
+            riff_size: None,
+            next_header_attempt: 30,
+            buf: Vec::new(),
+            total_input_bytes: 0,
+            pixel_data: Vec::new(),
+            width: 0,
+            height: 0,
+            row_bytes: 0,
+            current_row: 0,
+            batch_rows: 16,
+            output_ready: false,
+            is_eof: false,
+            is_complete: false,
+        }
+    }
+
+    /// Set the batch row count yielded per [`pull_batch`](IncrementalDecode::pull_batch) call.
+    #[must_use]
+    pub fn with_batch_rows(mut self, batch_rows: u32) -> Self {
+        self.batch_rows = batch_rows;
+        self
+    }
+
+    /// Image width in pixels, if known.
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Image height in pixels, if known.
+    #[must_use]
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Pixel descriptor for the output.
+    #[must_use]
+    pub fn descriptor(&self) -> Option<PixelDescriptor> {
+        self.descriptor
+    }
+}
+
+impl Default for WebpIncrementalDecoder {
+    fn default() -> Self {
+        Self::new(
+            DecodeConfig::default(),
+            None,
+            None,
+            None,
+            &[],
+            OrientationHint::Preserve,
+        )
+    }
+}
+
+impl IncrementalDecode for WebpIncrementalDecoder {
+    type Error = At<zencodec::CodecError>;
+
+    fn push_chunk(
+        &mut self,
+        chunk: &[u8],
+        is_eof: bool,
+        stop: Option<&dyn enough::Stop>,
+    ) -> Result<PushOutcome, Self::Error> {
+        if let Some(stop) = stop {
+            stop.check().map_err(|e| at!(DecodeError::from(e))).map_err(zencodec::CodecError::of)?;
+        }
+        if let Some(ref stop) = self.stop {
+            let cancel: &dyn enough::Stop = stop;
+            cancel.check().map_err(|e| at!(DecodeError::from(e))).map_err(zencodec::CodecError::of)?;
+        }
+
+        if self.is_complete {
+            return Ok(PushOutcome::new(0, PushStatus::Complete));
+        }
+
+        self.total_input_bytes = self.total_input_bytes.saturating_add(chunk.len() as u64);
+        if let Some(ref limits) = self.limits {
+            limits
+                .check_input_size(self.total_input_bytes)
+                .map_err(|e| zencodec::CodecError::of(at!(e)))?;
+        }
+        self.config
+            .limits
+            .check_file_size(self.total_input_bytes)
+            .map_err(zencodec::CodecError::of)?;
+
+        if is_eof {
+            self.is_eof = true;
+        }
+
+        self.buf.extend_from_slice(chunk);
+
+        // Try parsing RIFF header (12 bytes minimum)
+        if self.riff_size.is_none() && self.buf.len() >= 12 {
+            if &self.buf[0..4] != b"RIFF" {
+                return Err(zencodec::CodecError::of(at!(DecodeError::RiffSignatureInvalid(
+                    self.buf[0..4].try_into().unwrap(),
+                ))));
+            }
+            let size = u32::from_le_bytes(self.buf[4..8].try_into().unwrap());
+            if &self.buf[8..12] != b"WEBP" {
+                return Err(zencodec::CodecError::of(at!(DecodeError::WebpSignatureInvalid(
+                    self.buf[8..12].try_into().unwrap(),
+                ))));
+            }
+            self.riff_size = Some(size);
+        }
+
+        let full_file_received = self.riff_size.is_some_and(|riff_size| {
+            let total = u64::from(riff_size) + 8;
+            self.buf.len() as u64 >= total
+        });
+
+        // Try probing header if not yet done
+        if !self.header_parsed && (full_file_received || self.buf.len() >= self.next_header_attempt) {
+            match crate::ImageInfo::from_webp(&self.buf) {
+                Ok(native_info) => {
+                    let mut info = to_image_info(&native_info, None);
+                    info = report_probe_for_hint(info, self.orientation);
+                    if let Some(ref policy) = self.policy {
+                        if !policy.resolve_icc(true) {
+                            info.source_color.icc_profile = None;
+                        }
+                        if !policy.resolve_exif(true) {
+                            info.embedded_metadata.exif = None;
+                        }
+                        if !policy.resolve_xmp(true) {
+                            info.embedded_metadata.xmp = None;
+                        }
+                    }
+
+                    if let Some(ref limits) = self.limits {
+                        limits
+                            .check_dimensions(native_info.width, native_info.height)
+                            .map_err(|e| zencodec::CodecError::of(at!(e)))?;
+                    }
+
+                    let want_4channel = native_info.has_alpha
+                        || self.preferred.contains(&PixelDescriptor::RGBA8_SRGB)
+                        || self.preferred.contains(&PixelDescriptor::BGRA8_SRGB);
+                    let want_bgra = self.preferred.contains(&PixelDescriptor::BGRA8_SRGB)
+                        && (!self.preferred.contains(&PixelDescriptor::RGBA8_SRGB)
+                            || self.preferred.iter().position(|d| d == &PixelDescriptor::BGRA8_SRGB)
+                                < self.preferred.iter().position(|d| d == &PixelDescriptor::RGBA8_SRGB));
+                    let desc = if want_4channel {
+                        if want_bgra {
+                            PixelDescriptor::BGRA8_SRGB
+                        } else {
+                            PixelDescriptor::RGBA8_SRGB
+                        }
+                    } else {
+                        PixelDescriptor::RGB8_SRGB
+                    };
+
+                    self.width = info.width;
+                    self.height = info.height;
+                    self.descriptor = Some(desc);
+                    self.info = Some(info);
+                    self.header_parsed = true;
+                }
+                Err(e) => {
+                    if !self.is_eof && !full_file_received {
+                        self.next_header_attempt = self.buf.len().saturating_mul(2).max(30);
+                    } else {
+                        return Err(zencodec::CodecError::of(e));
+                    }
+                }
+            }
+        }
+
+        // Truncation check on EOF
+        if self.is_eof && !full_file_received {
+            if let Some(riff_size) = self.riff_size {
+                let total = u64::from(riff_size) + 8;
+                if (self.buf.len() as u64) < total {
+                    return Err(zencodec::CodecError::of(at!(DecodeError::NotEnoughInitData)));
+                }
+            }
+        }
+
+        // Ready to decode when full file received or EOF
+        if (full_file_received || self.is_eof) && !self.output_ready {
+            if !self.header_parsed {
+                let native_info = crate::ImageInfo::from_webp(&self.buf)
+                    .map_err(zencodec::CodecError::of)?;
+                let mut info = to_image_info(&native_info, None);
+                info = report_probe_for_hint(info, self.orientation);
+                if let Some(ref policy) = self.policy {
+                    if !policy.resolve_icc(true) {
+                        info.source_color.icc_profile = None;
+                    }
+                    if !policy.resolve_exif(true) {
+                        info.embedded_metadata.exif = None;
+                    }
+                    if !policy.resolve_xmp(true) {
+                        info.embedded_metadata.xmp = None;
+                    }
+                }
+                let want_4channel = native_info.has_alpha
+                    || self.preferred.contains(&PixelDescriptor::RGBA8_SRGB)
+                    || self.preferred.contains(&PixelDescriptor::BGRA8_SRGB);
+                let want_bgra = self.preferred.contains(&PixelDescriptor::BGRA8_SRGB)
+                    && (!self.preferred.contains(&PixelDescriptor::RGBA8_SRGB)
+                        || self.preferred.iter().position(|d| d == &PixelDescriptor::BGRA8_SRGB)
+                            < self.preferred.iter().position(|d| d == &PixelDescriptor::RGBA8_SRGB));
+                let desc = if want_4channel {
+                    if want_bgra {
+                        PixelDescriptor::BGRA8_SRGB
+                    } else {
+                        PixelDescriptor::RGBA8_SRGB
+                    }
+                } else {
+                    PixelDescriptor::RGB8_SRGB
+                };
+                self.width = info.width;
+                self.height = info.height;
+                self.descriptor = Some(desc);
+                self.info = Some(info);
+                self.header_parsed = true;
+            }
+
+            let mut req = DecodeRequest::new(&self.config, &self.buf);
+            if let Some(ref s) = self.stop {
+                let cancel: &dyn enough::Stop = s;
+                req = req.stop(cancel);
+            } else if let Some(s) = stop {
+                req = req.stop(s);
+            }
+
+            let desc = self.descriptor.unwrap_or(PixelDescriptor::RGBA8_SRGB);
+            let is_4channel = desc == PixelDescriptor::RGBA8_SRGB || desc == PixelDescriptor::BGRA8_SRGB;
+            let is_bgra = desc == PixelDescriptor::BGRA8_SRGB;
+
+            let (buf, w, h) = if is_4channel {
+                let (mut pixels, w, h) = req.decode_rgba().map_err(zencodec::CodecError::of)?;
+                if is_bgra {
+                    let _ = garb::bytes::rgba_to_bgra_inplace(&mut pixels);
+                }
+                let buf = PixelBuffer::from_vec(pixels, w, h, desc)
+                    .map_err(|_| zencodec::CodecError::of(at!(DecodeError::InvalidParameter("pixel count mismatch".into()))))?;
+                (buf, w, h)
+            } else {
+                let (pixels, w, h) = req.decode_rgb().map_err(zencodec::CodecError::of)?;
+                let buf = PixelBuffer::from_vec(pixels, w, h, PixelDescriptor::RGB8_SRGB)
+                    .map_err(|_| zencodec::CodecError::of(at!(DecodeError::InvalidParameter("pixel count mismatch".into()))))?;
+                (buf, w, h)
+            };
+
+            let info = self.info.clone().unwrap_or_else(|| {
+                let has_alpha = buf.has_alpha();
+                ImageInfo::new(w, h, ImageFormat::WebP)
+                    .with_alpha(has_alpha)
+                    .with_bit_depth(8)
+                    .with_channel_count(if has_alpha { 4 } else { 3 })
+            });
+
+            let output = DecodeOutput::new(buf, info);
+            let output = apply_orientation_to_output(output, self.orientation);
+
+            let final_info = output.info().clone();
+            let final_buf = output.into_buffer();
+
+            self.width = final_buf.width();
+            self.height = final_buf.height();
+            self.descriptor = Some(final_buf.descriptor());
+            self.row_bytes = final_buf.stride();
+            self.pixel_data = final_buf.into_vec();
+            self.info = Some(final_info);
+            self.current_row = 0;
+            self.output_ready = true;
+
+            return Ok(PushOutcome::new(chunk.len(), PushStatus::OutputReady));
+        }
+
+        if self.output_ready {
+            Ok(PushOutcome::new(chunk.len(), PushStatus::OutputReady))
+        } else {
+            Ok(PushOutcome::new(chunk.len(), PushStatus::NeedMoreInput))
+        }
+    }
+
+    fn pull_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, Self::Error> {
+        if !self.output_ready || self.is_complete {
+            return Ok(None);
+        }
+
+        if self.current_row >= self.height {
+            self.is_complete = true;
+            return Ok(None);
+        }
+
+        let y = self.current_row;
+        let rows_remaining = self.height - y;
+        let num_rows = if self.batch_rows == 0 {
+            rows_remaining
+        } else {
+            self.batch_rows.min(rows_remaining)
+        };
+
+        let start_byte = y as usize * self.row_bytes;
+        let batch_bytes = num_rows as usize * self.row_bytes;
+        let end_byte = start_byte + batch_bytes;
+
+        let desc = self.descriptor.unwrap_or(PixelDescriptor::RGBA8_SRGB);
+        let slice = PixelSlice::new(
+            &self.pixel_data[start_byte..end_byte],
+            self.width,
+            num_rows,
+            self.row_bytes,
+            desc,
+        )
+        .map_err(|_| zencodec::CodecError::of(at!(DecodeError::InvalidParameter("invalid pixel slice".into()))))?;
+
+        self.current_row += num_rows;
+        if self.current_row >= self.height {
+            self.is_complete = true;
+        }
+
+        Ok(Some((y, slice)))
+    }
+
+    fn info(&self) -> Option<&ImageInfo> {
+        self.info.as_ref()
+    }
+
+    fn is_complete(&self) -> bool {
+        self.is_complete
     }
 }
 

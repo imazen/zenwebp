@@ -50,6 +50,7 @@ pub use api::{
 #[allow(deprecated)]
 pub use limits::Limits;
 pub use streaming::{StreamStatus, StreamingDecoder};
+pub use crate::codec::WebpIncrementalDecoder;
 
 // Re-export common types used in diagnostics
 #[doc(hidden)]
