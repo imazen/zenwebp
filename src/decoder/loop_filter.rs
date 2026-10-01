@@ -5623,37 +5623,46 @@ fn hev(p1: v128, p0: v128, q0: v128, q1: v128, thresh: i32) -> v128 {
     v128_or(h1, h2)
 }
 
-/// DoFilter2: simple VP8 filter (modifies p0, q0)
-/// a = clamp((p0 - q0 + 3*(q1 - p1) + 4) >> 3)  for q0
-/// Also computes a2 = (a + 1) >> 1 for p0
+/// libwebp `GetBaseDelta_SSE2` on sign-flipped values:
+/// `sat(sat(sat((p1 - q1) + (q0 - p0)) + (q0 - p0)) + (q0 - p0))`.
+/// The accumulation order matters: `sat(x + sat(3y))` differs once `3y`
+/// saturates and `x` has the opposite sign.
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn base_delta(sp1: v128, sp0: v128, sq0: v128, sq1: v128) -> v128 {
+    let p1_q1 = i8x16_sub_sat(sp1, sq1);
+    let q0_p0 = i8x16_sub_sat(sq0, sp0);
+    let s1 = i8x16_add_sat(p1_q1, q0_p0);
+    let s2 = i8x16_add_sat(q0_p0, s1);
+    i8x16_add_sat(q0_p0, s2)
+}
+
+/// libwebp `DoSimpleFilter_SSE2` on sign-flipped p0/q0 with a masked delta.
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn simple_filter_signed(sp0: v128, sq0: v128, a: v128) -> (v128, v128) {
+    let v3 = i8x16_shr(i8x16_add_sat(a, i8x16_splat(3)), 3);
+    let v4 = i8x16_shr(i8x16_add_sat(a, i8x16_splat(4)), 3);
+    (i8x16_add_sat(sp0, v3), i8x16_sub_sat(sq0, v4))
+}
+
+/// DoFilter2: simple VP8 filter (modifies p0, q0). libwebp `DoFilter2_SSE2`.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 fn do_filter2(p1: v128, p0: &mut v128, q0: &mut v128, q1: v128, mask: v128) {
     let sign = u8x16_splat(0x80);
-    // Convert to signed domain
     let sp1 = v128_xor(p1, sign);
     let sp0 = v128_xor(*p0, sign);
     let sq0 = v128_xor(*q0, sign);
     let sq1 = v128_xor(q1, sign);
-
-    // a = 3*(q0 - p0) + satu8(p1 - q1)
-    let a0 = i8x16_sub_sat(sp1, sq1); // clamp(p1 - q1)
-    let a1 = i8x16_sub_sat(sq0, sp0); // clamp(q0 - p0)
-    let a2 = i8x16_add_sat(a1, a1); // 2*(q0 - p0)
-    let a3 = i8x16_add_sat(a2, a1); // 3*(q0 - p0)
-    let a = i8x16_add_sat(a0, a3); // 3*(q0-p0) + clamp(p1-q1)
-    let a_masked = v128_and(a, mask);
-
-    // Filter1 = clamp(a + 4) >> 3
-    let f1 = i8x16_shr(i8x16_add_sat(a_masked, i8x16_splat(4)), 3);
-    // Filter2 = clamp(a + 3) >> 3
-    let f2 = i8x16_shr(i8x16_add_sat(a_masked, i8x16_splat(3)), 3);
-
-    *q0 = v128_xor(i8x16_sub_sat(sq0, f1), sign);
-    *p0 = v128_xor(i8x16_add_sat(sp0, f2), sign);
+    let a = v128_and(base_delta(sp1, sp0, sq0, sq1), mask);
+    let (np0, nq0) = simple_filter_signed(sp0, sq0, a);
+    *p0 = v128_xor(np0, sign);
+    *q0 = v128_xor(nq0, sign);
 }
 
-/// DoFilter4: normal inner VP8 filter (modifies p1, p0, q0, q1)
+/// DoFilter4: normal inner VP8 filter (modifies p1, p0, q0, q1).
+/// libwebp `DoFilter4_SSE2`: the `p1 - q1` term only where HEV.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 fn do_filter4(
@@ -5670,34 +5679,39 @@ fn do_filter4(
     let sq0 = v128_xor(*q0, sign);
     let sq1 = v128_xor(*q1, sign);
 
-    let a0 = i8x16_sub_sat(sp1, sq1);
-    let a0_hev = v128_and(a0, hev_mask); // only apply p1-q1 term where HEV
-    let a1 = i8x16_sub_sat(sq0, sp0);
-    let a2 = i8x16_add_sat(a1, a1);
-    let a3 = i8x16_add_sat(a2, a1);
-    let a = i8x16_add_sat(a0_hev, a3);
-    let a_masked = v128_and(a, mask);
+    let t2 = i8x16_sub_sat(sq0, sp0);
+    let mut t1 = v128_and(i8x16_sub_sat(sp1, sq1), hev_mask);
+    t1 = i8x16_add_sat(t1, t2);
+    t1 = i8x16_add_sat(t1, t2);
+    t1 = i8x16_add_sat(t1, t2);
+    let a = v128_and(t1, mask);
 
-    // Filter1, Filter2
-    let f1 = i8x16_shr(i8x16_add_sat(a_masked, i8x16_splat(4)), 3);
-    let f2 = i8x16_shr(i8x16_add_sat(a_masked, i8x16_splat(3)), 3);
+    // Filter1 = (a + 4) >> 3 applied to q0, Filter2 = (a + 3) >> 3 to p0.
+    let f1 = i8x16_shr(i8x16_add_sat(a, i8x16_splat(4)), 3);
+    let f2 = i8x16_shr(i8x16_add_sat(a, i8x16_splat(3)), 3);
+    *q0 = v128_xor(i8x16_sub_sat(sq0, f1), sign);
+    *p0 = v128_xor(i8x16_add_sat(sp0, f2), sign);
 
-    let new_q0 = v128_xor(i8x16_sub_sat(sq0, f1), sign);
-    let new_p0 = v128_xor(i8x16_add_sat(sp0, f2), sign);
-
-    // For non-HEV pixels, also adjust p1 and q1
-    let f3 = i8x16_add_sat(f1, i8x16_splat(1));
-    let f3 = i8x16_shr(f3, 1); // (f1 + 1) >> 1
-    let not_hev = v128_not(hev_mask);
-    let f3_masked = v128_and(f3, not_hev);
-
-    *q0 = new_q0;
-    *p0 = new_p0;
-    *q1 = v128_xor(i8x16_sub_sat(sq1, f3_masked), sign);
-    *p1 = v128_xor(i8x16_add_sat(sp1, f3_masked), sign);
+    // (Filter1 + 1) >> 1 to p1/q1 where not HEV (|f1| <= 16, no overflow).
+    let f3 = v128_andnot(i8x16_shr(i8x16_add(f1, i8x16_splat(1)), 1), hev_mask);
+    *q1 = v128_xor(i8x16_sub_sat(sq1, f3), sign);
+    *p1 = v128_xor(i8x16_add_sat(sp1, f3), sign);
 }
 
-/// DoFilter6: normal edge VP8 filter (modifies p2, p1, p0, q0, q1, q2)
+/// `(f*k + 63) >> 7` for the 6-tap update, saturated back to i8.
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn tap(f_lo: v128, f_hi: v128, k: i16) -> v128 {
+    let kv = i16x8_splat(k);
+    let r = i16x8_splat(63);
+    let lo = i16x8_shr(i16x8_add(i16x8_mul(f_lo, kv), r), 7);
+    let hi = i16x8_shr(i16x8_add(i16x8_mul(f_hi, kv), r), 7);
+    i8x16_narrow_i16x8(lo, hi)
+}
+
+/// DoFilter6: normal macroblock-edge VP8 filter (modifies p2..q2).
+/// libwebp `DoFilter6_SSE2`: one base delta; HEV pixels get the simple
+/// filter, the rest the 27/18/9 six-tap update.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 fn do_filter6(
@@ -5713,70 +5727,31 @@ fn do_filter6(
     let sign = u8x16_splat(0x80);
     let sp2 = v128_xor(*p2, sign);
     let sp1 = v128_xor(*p1, sign);
-    let sp0 = v128_xor(*p0, sign);
-    let sq0 = v128_xor(*q0, sign);
+    let mut sp0 = v128_xor(*p0, sign);
+    let mut sq0 = v128_xor(*q0, sign);
     let sq1 = v128_xor(*q1, sign);
     let sq2 = v128_xor(*q2, sign);
 
-    // For HEV pixels: same as simple filter (do_filter2 logic)
-    let a0 = i8x16_sub_sat(sp1, sq1);
-    let a1 = i8x16_sub_sat(sq0, sp0);
-    let a2 = i8x16_add_sat(a1, a1);
-    let a3 = i8x16_add_sat(a2, a1);
-    let a = i8x16_add_sat(a0, a3);
-    let a_masked = v128_and(a, mask);
+    let a = v128_and(base_delta(sp1, sp0, sq0, sq1), mask);
 
-    let f1 = i8x16_shr(i8x16_add_sat(a_masked, i8x16_splat(4)), 3);
-    let f2 = i8x16_shr(i8x16_add_sat(a_masked, i8x16_splat(3)), 3);
+    // HEV pixels: simple filter.
+    let (hp0, hq0) = simple_filter_signed(sp0, sq0, v128_and(a, hev_mask));
+    sp0 = hp0;
+    sq0 = hq0;
 
-    let hev_q0 = v128_xor(i8x16_sub_sat(sq0, f1), sign);
-    let hev_p0 = v128_xor(i8x16_add_sat(sp0, f2), sign);
+    // Non-HEV pixels: six-tap.
+    let f = v128_andnot(a, hev_mask);
+    let (f_lo, f_hi) = (i16x8_extend_low_i8x16(f), i16x8_extend_high_i8x16(f));
+    let a0 = tap(f_lo, f_hi, 27);
+    let a1 = tap(f_lo, f_hi, 18);
+    let a2 = tap(f_lo, f_hi, 9);
 
-    // For non-HEV pixels: wider filter using p2,p1,p0,q0,q1,q2
-    // a = clamp(p0 - q0), then compute 27*a+63 >> 7, 18*a+63 >> 7, 9*a+63 >> 7
-    let not_hev = v128_and(mask, v128_not(hev_mask));
-    let w = i8x16_sub_sat(sp0, sq0); // clamp(p0 - q0) in signed domain
-
-    // Widen to i16 for wider filter computation
-    let w_lo = i16x8_extend_low_i8x16(w);
-    let w_hi = i16x8_extend_high_i8x16(w);
-    let round = i16x8_splat(63);
-
-    // 27 * w
-    let w27_lo = i16x8_mul(w_lo, i16x8_splat(27));
-    let w27_hi = i16x8_mul(w_hi, i16x8_splat(27));
-    let a_27_lo = i16x8_shr(i16x8_add(w27_lo, round), 7);
-    let a_27_hi = i16x8_shr(i16x8_add(w27_hi, round), 7);
-    let a27 = i8x16_narrow_i16x8(a_27_lo, a_27_hi);
-
-    // 18 * w
-    let w18_lo = i16x8_mul(w_lo, i16x8_splat(18));
-    let w18_hi = i16x8_mul(w_hi, i16x8_splat(18));
-    let a_18_lo = i16x8_shr(i16x8_add(w18_lo, round), 7);
-    let a_18_hi = i16x8_shr(i16x8_add(w18_hi, round), 7);
-    let a18 = i8x16_narrow_i16x8(a_18_lo, a_18_hi);
-
-    // 9 * w
-    let w9_lo = i16x8_mul(w_lo, i16x8_splat(9));
-    let w9_hi = i16x8_mul(w_hi, i16x8_splat(9));
-    let a_9_lo = i16x8_shr(i16x8_add(w9_lo, round), 7);
-    let a_9_hi = i16x8_shr(i16x8_add(w9_hi, round), 7);
-    let a9 = i8x16_narrow_i16x8(a_9_lo, a_9_hi);
-
-    let wide_q0 = v128_xor(i8x16_sub_sat(sq0, a27), sign);
-    let wide_p0 = v128_xor(i8x16_add_sat(sp0, a27), sign);
-    let wide_q1 = v128_xor(i8x16_sub_sat(sq1, a18), sign);
-    let wide_p1 = v128_xor(i8x16_add_sat(sp1, a18), sign);
-    let wide_q2 = v128_xor(i8x16_sub_sat(sq2, a9), sign);
-    let wide_p2 = v128_xor(i8x16_add_sat(sp2, a9), sign);
-
-    // Select: HEV pixels use simple filter, non-HEV use wide filter
-    *q0 = v128_bitselect(hev_q0, wide_q0, hev_mask);
-    *p0 = v128_bitselect(hev_p0, wide_p0, hev_mask);
-    *q1 = v128_bitselect(*q1, wide_q1, not_hev); // only modify non-HEV
-    *p1 = v128_bitselect(*p1, wide_p1, not_hev);
-    *q2 = v128_bitselect(*q2, wide_q2, not_hev);
-    *p2 = v128_bitselect(*p2, wide_p2, not_hev);
+    *p0 = v128_xor(i8x16_add_sat(sp0, a0), sign);
+    *q0 = v128_xor(i8x16_sub_sat(sq0, a0), sign);
+    *p1 = v128_xor(i8x16_add_sat(sp1, a1), sign);
+    *q1 = v128_xor(i8x16_sub_sat(sq1, a1), sign);
+    *p2 = v128_xor(i8x16_add_sat(sp2, a2), sign);
+    *q2 = v128_xor(i8x16_sub_sat(sq2, a2), sign);
 }
 
 // =============================================================================
@@ -6999,6 +6974,103 @@ pub(crate) fn filter_row_simd(
                     sub_bedge_limit_i,
                 );
             }
+        }
+    }
+}
+
+/// Randomized differential test: every wasm SIMD128 luma filter kernel against
+/// the scalar spec filters. Runs in CI under wasmtime (`cargo test --lib
+/// --target wasm32-wasip1` with `+simd128`). It pins the 2026-10-01 fix, where
+/// `do_filter6` used `p0 - q0` instead of the base delta and the base delta
+/// saturated `3*(q0-p0)` before adding `p1 - q1`.
+#[cfg(all(test, target_arch = "wasm32"))]
+mod wasm_tests {
+    use super::*;
+    use alloc::vec::Vec;
+
+    #[archmage::arcane]
+    fn run(t: Wasm128Token, kind: u8, buf: &mut [u8], stride: usize, hev: i32, il: i32, el: i32) {
+        // Edge at row 4 (vertical kernels) or column 4 (horizontal kernels).
+        match kind {
+            0 => simple_v_filter16_wasm(t, buf, 4 * stride, stride, el),
+            1 => simple_h_filter16_wasm(t, buf, 4, 0, stride, el),
+            2 => normal_v_filter16_inner_wasm(t, buf, 4 * stride, stride, hev, il, el),
+            3 => normal_v_filter16_edge_wasm(t, buf, 4 * stride, stride, hev, il, el),
+            4 => normal_h_filter16_inner_wasm(t, buf, 4, 0, stride, hev, il, el),
+            _ => normal_h_filter16_edge_wasm(t, buf, 4, 0, stride, hev, il, el),
+        }
+    }
+
+    fn scalar(kind: u8, buf: &mut [u8], stride: usize, hev: u8, il: u8, el: u8) {
+        for i in 0..16 {
+            match kind {
+                0 => simple_segment_vertical(el, buf, 4 * stride + i, stride),
+                1 => simple_segment_horizontal(el, &mut buf[i * stride..][..8]),
+                2 => subblock_filter_vertical(hev, il, el, buf, 4 * stride + i, stride),
+                3 => macroblock_filter_vertical(hev, il, el, buf, 4 * stride + i, stride),
+                4 => subblock_filter_horizontal(hev, il, el, &mut buf[i * stride..][..8]),
+                _ => macroblock_filter_horizontal(hev, il, el, &mut buf[i * stride..][..8]),
+            }
+        }
+    }
+
+    #[test]
+    fn wasm_filters_match_scalar_spec() {
+        let Some(token) = Wasm128Token::summon() else {
+            panic!("wasm tests require +simd128");
+        };
+        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let stride = 24;
+        for case in 0..20_000u32 {
+            let kind = (case % 6) as u8;
+            // Smooth-ish lines with a step at the edge, so masks pass often
+            // and |q0 - p0| reaches the saturating range; plus pure noise.
+            let base = (next() % 256) as i32;
+            let step = (next() % 256) as i32 - 128;
+            let jitter = 1 + (next() % 24) as i32;
+            let noisy = next() % 8 == 0;
+            // Kernels 1, 4, 5 filter a vertical edge (step along x); the
+            // others a horizontal edge (step along y).
+            let across_x = matches!(kind, 1 | 4 | 5);
+            let mut buf: Vec<u8> = (0..stride * 16)
+                .map(|i| {
+                    let pos = if across_x { i % stride } else { i / stride };
+                    if noisy {
+                        (next() % 256) as u8
+                    } else {
+                        let side = if pos >= 4 { step } else { 0 };
+                        (base + side + (next() % jitter as u64) as i32).clamp(0, 255) as u8
+                    }
+                })
+                .collect();
+            let hev = (next() % 4) as u8;
+            let il = (next() % 64) as u8;
+            // Reachable ranges (header.rs): mbedge_limit <= (63+2)*2+63 = 193.
+            // Beyond that the u8-saturating SIMD threshold sum (libwebp SSE2
+            // does the same) diverges from the scalar spec by construction.
+            let el = (next() % 194) as u8;
+            let mut want = buf.clone();
+            scalar(kind, &mut want, stride, hev, il, el);
+            run(
+                token,
+                kind,
+                &mut buf,
+                stride,
+                i32::from(hev),
+                i32::from(il),
+                i32::from(el),
+            );
+            assert!(
+                buf == want,
+                "kernel {kind} case {case} hev {hev} il {il} el {el}: first diff at {:?}",
+                buf.iter().zip(&want).position(|(a, b)| a != b)
+            );
         }
     }
 }
