@@ -111,14 +111,13 @@ matching `WEBP_CSP_MODE` with `no_fancy_upsampling` / `dithering_strength`.
 | `DecodeConfig` dithering 50 / 100 (RGBA, RGB, and combined with `Simple`) | `dithering_strength` 50 / 100 |
 | `decode_yuv420` | `WebPDecodeYUV` |
 
-**Differ by convention, not by decoded pixels** — confirmed by diagnostic
-modes that re-derive libwebp's output from zenwebp's exact RGBA:
-
-| output | zenwebp | libwebp | diagnostic that matches 100 % |
-|---|---|---|---|
-| `decode_{rgba,bgra,argb}_premultiplied` (1,514 alpha files) | `garb`: `C*A/255` rounded | `floor(C*A/255)` (`(x*a*32897)>>23`) | zen RGBA + libwebp formula |
-| `decode_rgb565` | `garb`: `(c*31+128)>>8` rounding, little-endian u16 (documented) | bit truncation (`c & 0xf8`), high byte first (`WEBP_SWAP_16BIT_CSP=0`) | zen RGBA + libwebp packing |
-| `decode_rgba4444` | `garb`: `(c*15+128)>>8` rounding, little-endian u16 (documented) | bit truncation (`c & 0xf0`), high byte first | zen RGBA + libwebp packing |
+**Premultiplied / RGB565 / RGBA4444** first differed by convention only
+(zenwebp's decoded RGBA was identical; `garb` rounded to nearest and wrote
+little-endian u16, libwebp floors/truncates and writes high byte first).
+Diagnostic modes re-deriving libwebp's output from zenwebp's RGBA matched
+100 %, and zenwebp now implements libwebp's conventions directly: after the
+change all 335,707 comparisons (incl. 1,514 alpha files × 3 premultiplied
+layouts, and every file in 565 / 4444) are exact.
 
 ### wasm32-wasip1
 

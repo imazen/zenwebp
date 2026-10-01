@@ -5,6 +5,17 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+### Changed
+
+- **Premultiplied, RGB565 and RGBA4444 decode output now match libwebp
+  byte for byte.** `decode_{rgba,bgra,argb}_premultiplied` round down
+  (`floor(C*A/255)`, libwebp `MODE_rgbA`/`bgrA`/`Argb`) instead of to
+  nearest. `decode_rgb565` / `decode_rgba4444` truncate channels to 5/6/5 and
+  4 bits instead of rounding, and store each pixel **high byte first**
+  (libwebp's default `WEBP_SWAP_16BIT_CSP=0`) instead of little-endian u16.
+  Callers that read the 16-bit formats as native little-endian `u16` must
+  byte-swap. Values change by at most one quantization step.
+
 ### Fixed
 
 - **wasm32 SIMD128 loop filter produced wrong pixels** on 3,339 of the

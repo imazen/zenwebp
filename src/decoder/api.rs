@@ -2314,70 +2314,105 @@ fn decode_yuv420_with_config(data: &[u8], config: &DecodeConfig) -> DecodeResult
     })
 }
 
+/// Premultiply 4-byte pixels in place exactly as libwebp's
+/// `WebPApplyAlphaMultiply` does: `C' = floor(C * A / 255)`, computed as
+/// `(C * A * 32897) >> 23` (bit-identical for all 8-bit `C`, `A`). Opaque
+/// pixels are left untouched. `alpha` is the alpha byte's index (0 or 3).
+fn premultiply_libwebp(pixels: &mut [u8], alpha: usize) {
+    for px in pixels.as_chunks_mut::<4>().0 {
+        let a = u32::from(px[alpha]);
+        if a != 255 {
+            let m = a * 32897;
+            for (i, c) in px.iter_mut().enumerate() {
+                if i != alpha {
+                    *c = ((u32::from(*c) * m) >> 23) as u8;
+                }
+            }
+        }
+    }
+}
+
 /// Decode WebP data to premultiplied RGBA pixels.
 ///
-/// Each color channel is multiplied by its alpha: `C' = C * A / 255`.
+/// Each color channel is multiplied by its alpha and rounded down,
+/// `C' = floor(C * A / 255)` — byte-identical to libwebp's `MODE_rgbA`.
 /// This is the native format for GPU compositing and avoids a per-pixel
 /// multiply during alpha blending. Lossy for low-alpha pixels.
 #[track_caller]
 pub fn decode_rgba_premultiplied(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
     let (mut pixels, w, h) = decode_rgba(data)?;
-    garb::bytes::premultiply_alpha_rgba_u8(&mut pixels).map_err(|e| at!(garb_err(e)))?;
+    premultiply_libwebp(&mut pixels, 3);
     Ok((pixels, w, h))
 }
 
 /// Decode WebP data to premultiplied BGRA pixels.
 ///
-/// Each color channel is multiplied by its alpha: `C' = C * A / 255`.
+/// `C' = floor(C * A / 255)`, byte-identical to libwebp's `MODE_bgrA`.
 #[track_caller]
 pub fn decode_bgra_premultiplied(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
     let (mut pixels, w, h) = decode_bgra(data)?;
-    garb::bytes::premultiply_alpha_bgra_u8(&mut pixels).map_err(|e| at!(garb_err(e)))?;
+    premultiply_libwebp(&mut pixels, 3);
     Ok((pixels, w, h))
 }
 
 /// Decode WebP data to premultiplied ARGB pixels.
 ///
-/// Each color channel is multiplied by its alpha: `C' = C * A / 255`.
+/// `C' = floor(C * A / 255)`, byte-identical to libwebp's `MODE_Argb`.
 #[track_caller]
 pub fn decode_argb_premultiplied(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
-    let (mut pixels, w, h) = decode_rgba_premultiplied(data)?;
-    garb::bytes::rgba_to_argb_inplace(&mut pixels).map_err(|e| at!(garb_err(e)))?;
+    let (mut pixels, w, h) = decode_argb(data)?;
+    premultiply_libwebp(&mut pixels, 0);
     Ok((pixels, w, h))
 }
 
-/// Decode WebP data to RGB565 pixels (2 bytes per pixel, little-endian).
-///
-/// Bit layout per u16: `R[15:11] G[10:5] B[4:0]`.
-#[track_caller]
-pub fn decode_rgb565(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
+/// Pack decoded RGBA into a 2-byte-per-pixel format with `pack`.
+fn pack_16bit(data: &[u8], pack: fn(&[u8; 4]) -> [u8; 2]) -> DecodeResult<(Vec<u8>, u32, u32)> {
     let (rgba, w, h) = decode_rgba(data)?;
     // Full-image conversion buffer → fallible by default (#63).
     let mut out = super::alloc_util::alloc_zeroed(
         super::alloc_util::AllocPreference::CodecDefault,
         true,
-        (w * h * 2) as usize,
+        (w as usize) * (h as usize) * 2,
     )
     .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
-    garb::bytes::rgba_to_rgb565(&rgba, &mut out).map_err(|e| at!(garb_err(e)))?;
+    for (dst, src) in out
+        .as_chunks_mut::<2>()
+        .0
+        .iter_mut()
+        .zip(rgba.as_chunks::<4>().0)
+    {
+        *dst = pack(src);
+    }
     Ok((out, w, h))
 }
 
-/// Decode WebP data to RGBA4444 pixels (2 bytes per pixel, little-endian).
+/// Decode WebP data to RGB565 pixels (2 bytes per pixel).
 ///
-/// Bit layout per u16: `R[15:12] G[11:8] B[7:4] A[3:0]`.
+/// Byte-identical to libwebp's `MODE_RGB_565` (default
+/// `WEBP_SWAP_16BIT_CSP=0`): channels are truncated to 5/6/5 bits (not
+/// rounded) and stored high byte first — byte 0 is `RRRRRGGG`, byte 1 is
+/// `GGGBBBBB` (i.e. the `R[15:11] G[10:5] B[4:0]` u16 in big-endian order).
+#[track_caller]
+pub fn decode_rgb565(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
+    pack_16bit(data, |p| {
+        [
+            (p[0] & 0xf8) | (p[1] >> 5),
+            ((p[1] << 3) & 0xe0) | (p[2] >> 3),
+        ]
+    })
+}
+
+/// Decode WebP data to RGBA4444 pixels (2 bytes per pixel, not premultiplied).
+///
+/// Byte-identical to libwebp's `MODE_RGBA_4444` (default
+/// `WEBP_SWAP_16BIT_CSP=0`): channels are truncated to 4 bits (not rounded)
+/// and stored high byte first — byte 0 is `RRRRGGGG`, byte 1 is `BBBBAAAA`
+/// (i.e. the `R[15:12] G[11:8] B[7:4] A[3:0]` u16 in big-endian order).
 #[track_caller]
 pub fn decode_rgba4444(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
-    let (rgba, w, h) = decode_rgba(data)?;
-    // Full-image conversion buffer → fallible by default (#63).
-    let mut out = super::alloc_util::alloc_zeroed(
-        super::alloc_util::AllocPreference::CodecDefault,
-        true,
-        (w * h * 2) as usize,
-    )
-    .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
-    garb::bytes::rgba_to_rgba4444(&rgba, &mut out).map_err(|e| at!(garb_err(e)))?;
-    Ok((out, w, h))
+    pack_16bit(data, |p| {
+        [(p[0] & 0xf0) | (p[1] >> 4), (p[2] & 0xf0) | (p[3] >> 4)]
+    })
 }
 
 #[cfg(test)]

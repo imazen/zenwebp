@@ -257,8 +257,9 @@ Round 2 (same day): every output format/option (397,593 comparisons) and
 wasm32 via `dev/decode_parity_dump.rs` + `just decode-parity-wasm`. Found
 the wasm simd128 loop filter wrong on 3,339 of 8,722 lossy files (38 %, all filter-on) (fixed;
 pinned by `loop_filter::wasm_tests`). Premultiplied / RGB565 / RGBA4444
-differ from libwebp by documented `garb` conventions only (rounding vs
-truncation, little-endian u16) — see the benchmark doc before "fixing".
+now use libwebp's conventions (floor premultiply, bit truncation, high byte
+first) implemented in `decoder/api.rs` — not `garb`, whose rounding and
+little-endian layout differ.
 **On this box `~/.cargo/config.toml` forces `+simd128` for wasm32-wasip1**;
 a scalar wasm build needs `RUSTFLAGS="-C target-feature=-simd128"`.
 

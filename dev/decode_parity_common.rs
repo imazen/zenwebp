@@ -85,14 +85,6 @@ pub fn modes(k: Kind) -> &'static [(&'static str, LibSpec)] {
         ("argb_premul", spec("Argb")),
         ("rgb565", spec("RGB_565")),
         ("rgba4444", spec("RGBA_4444")),
-        // Diagnostics: zen's documented little-endian u16 swapped to libwebp's
-        // default (WEBP_SWAP_16BIT_CSP=0) byte order, and zen's straight RGBA
-        // premultiplied with libwebp's floor(x*a/255).
-        ("diag_rgb565_swapped", spec("RGB_565")),
-        ("diag_rgba4444_swapped", spec("RGBA_4444")),
-        ("diag_rgba_premul_floor", spec("rgbA")),
-        ("diag_rgb565_libpack", spec("RGB_565")),
-        ("diag_rgba4444_libpack", spec("RGBA_4444")),
         ("rgba_into_stride", spec("RGBA")),
         ("rgb_into_stride", spec("RGB")),
         ("bgra_into_stride", spec("BGRA")),
@@ -374,62 +366,6 @@ pub fn zen_decode(mode: &str, data: &[u8]) -> Out {
         "argb_premul" => o::decode_argb_premultiplied(data).map_err(e),
         "rgb565" => o::decode_rgb565(data).map_err(e),
         "rgba4444" => o::decode_rgba4444(data).map_err(e),
-        "diag_rgb565_swapped" | "diag_rgba4444_swapped" => {
-            let f = if mode == "diag_rgb565_swapped" {
-                o::decode_rgb565
-            } else {
-                o::decode_rgba4444
-            };
-            let (b, w, h) = f(data).map_err(e)?;
-            Ok((
-                b.as_chunks::<2>()
-                    .0
-                    .iter()
-                    .flat_map(|p| [p[1], p[0]])
-                    .collect(),
-                w,
-                h,
-            ))
-        }
-        // libwebp VP8YuvToRgb565 / VP8LConvertBGRAToRGBA4444: bit truncation,
-        // high byte first.
-        "diag_rgb565_libpack" => {
-            let (b, w, h) = o::decode_rgba(data).map_err(e)?;
-            let out = b
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .flat_map(|p| {
-                    [
-                        (p[0] & 0xf8) | (p[1] >> 5),
-                        ((p[1] << 3) & 0xe0) | (p[2] >> 3),
-                    ]
-                })
-                .collect();
-            Ok((out, w, h))
-        }
-        "diag_rgba4444_libpack" => {
-            let (b, w, h) = o::decode_rgba(data).map_err(e)?;
-            let out = b
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .flat_map(|p| [(p[0] & 0xf0) | (p[1] >> 4), (p[2] & 0xf0) | (p[3] >> 4)])
-                .collect();
-            Ok((out, w, h))
-        }
-        "diag_rgba_premul_floor" => {
-            let (mut b, w, h) = o::decode_rgba(data).map_err(e)?;
-            for p in b.as_chunks_mut::<4>().0 {
-                let a = u32::from(p[3]);
-                if a != 255 {
-                    for c in &mut p[..3] {
-                        *c = ((u32::from(*c) * a * 32897) >> 23) as u8;
-                    }
-                }
-            }
-            Ok((b, w, h))
-        }
         "rgba_into_stride" => into_stride(data, 4, o::decode_rgba_into),
         "rgb_into_stride" => into_stride(data, 3, o::decode_rgb_into),
         "bgra_into_stride" => into_stride(data, 4, o::decode_bgra_into),
