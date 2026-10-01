@@ -13,24 +13,24 @@ earlier history lives in git log and LOG.md.)
   `no_fancy_upsampling` across `DecodeRequest`, `WebPDecoder` and
   `AnimationDecoder`; the zencodec streaming decoder falls back to the full
   decode for it. The `gallery1_nofancy` reference PNGs, which had been
-  regenerated from the broken output, are restored to dwebp's.
+  regenerated from the broken output, are restored to dwebp's. (78a8e42)
 - **Animation compositing is byte-identical to libwebp's `WebPAnimDecoder`.**
   Keyframes are copied instead of blended against the cleared canvas (which
   lost up to ~50 levels on translucent pixels and zeroed RGB under alpha 0);
   pixels inside a background-disposed previous frame are copied raw; the
   previous frame is disposed even when the current frame has no alpha (stale
-  pixels survived before); the blend uses libwebp's `(dst_a*(256-src_a))>>8`.
+  pixels survived before); the blend uses libwebp's `(dst_a*(256-src_a))>>8`. (78a8e42)
 - **Animations without frame alpha no longer lose transparency.** When a
   background dispose or an undersized first frame leaves transparent canvas
   pixels, `has_alpha()` / `AnimationInfo::has_alpha` now report alpha, so
-  frames decode as RGBA instead of turning those pixels opaque black.
+  frames decode as RGBA instead of turning those pixels opaque black. (78a8e42)
 
 ### Added
 
 - `dev/decode_parity_sweep.rs`: wide-corpus decoder parity sweep vs libwebp
   (13,601 files, 43,414 comparisons, all exact —
   `benchmarks/decode_parity_2026-10-01.md`), and
-  `tests/libwebp_decode_parity.rs` pinning the cases above.
+  `tests/libwebp_decode_parity.rs` pinning the cases above. (78a8e42)
 
 ### Changed
 
