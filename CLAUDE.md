@@ -253,6 +253,14 @@ our own output (two sets had been re-blessed from buggy output), and lossy
 reftests are exact (`tests/decode.rs`). Animation compositing is
 `extended::composite_frame`, a step-for-step mirror of libwebp's
 `WebPAnimDecoderGetNext`; pinned by `tests/libwebp_decode_parity.rs`.
+Round 2 (same day): every output format/option (397,593 comparisons) and
+wasm32 via `dev/decode_parity_dump.rs` + `just decode-parity-wasm`. Found
+the wasm simd128 loop filter wrong on 3,339 of 8,722 lossy files (38 %, all filter-on) (fixed;
+pinned by `loop_filter::wasm_tests`). Premultiplied / RGB565 / RGBA4444
+differ from libwebp by documented `garb` conventions only (rounding vs
+truncation, little-endian u16) — see the benchmark doc before "fixing".
+**On this box `~/.cargo/config.toml` forces `+simd128` for wasm32-wasip1**;
+a scalar wasm build needs `RUSTFLAGS="-C target-feature=-simd128"`.
 
 **Benchmarks**: `benches/decode_compare.rs` (14 images), `benches/decode_lossless_compare.rs`. zenbench, no `-C target-cpu=native`.
 

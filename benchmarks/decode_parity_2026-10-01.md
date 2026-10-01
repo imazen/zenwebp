@@ -92,13 +92,66 @@ Before the fixes: 6,424 of 43,414 comparisons failed.
 Regression tests: `tests/libwebp_decode_parity.rs` (7 tests, each watched to
 fail on the pre-fix code) and exact lossy comparison in `tests/decode.rs`.
 
+## Round 2: every decoder option and output format, plus wasm
+
+Same corpus (13,599 files after de-duplicating same-named sources), now 39
+modes for lossy stills, 29 for lossless, 1 for animations: **397,593
+comparisons**. libwebp side is `WebPDecode` via raw `libwebp-sys` FFI in the
+matching `WEBP_CSP_MODE` with `no_fancy_upsampling` / `dithering_strength`.
+
+**Exact on every file** (tolerance 0):
+
+| zenwebp entry point | libwebp equivalent |
+|---|---|
+| `oneshot::decode_{rgba,rgb,bgra,bgr,argb}` | `MODE_{RGBA,RGB,BGRA,BGR,ARGB}` |
+| `decode_{rgba,rgb,bgra,argb,bgr}_into` at stride w+3 (padding verified untouched) | same modes |
+| `StreamingDecoder` fed in 977-byte chunks | `MODE_RGBA` |
+| `WebPDecoder::read_image` (fancy and `Simple`) | `MODE_RGBA` (+`no_fancy`) |
+| zencodec `decode()`, `push_decoder` RGBA / BGRA / `Simple` / dither 100 | `MODE_RGBA` (+options) |
+| `DecodeConfig` dithering 50 / 100 (RGBA, RGB, and combined with `Simple`) | `dithering_strength` 50 / 100 |
+| `decode_yuv420` | `WebPDecodeYUV` |
+
+**Differ by convention, not by decoded pixels** — confirmed by diagnostic
+modes that re-derive libwebp's output from zenwebp's exact RGBA:
+
+| output | zenwebp | libwebp | diagnostic that matches 100 % |
+|---|---|---|---|
+| `decode_{rgba,bgra,argb}_premultiplied` (1,514 alpha files) | `garb`: `C*A/255` rounded | `floor(C*A/255)` (`(x*a*32897)>>23`) | zen RGBA + libwebp formula |
+| `decode_rgb565` | `garb`: `(c*31+128)>>8` rounding, little-endian u16 (documented) | bit truncation (`c & 0xf8`), high byte first (`WEBP_SWAP_16BIT_CSP=0`) | zen RGBA + libwebp packing |
+| `decode_rgba4444` | `garb`: `(c*15+128)>>8` rounding, little-endian u16 (documented) | bit truncation (`c & 0xf0`), high byte first | zen RGBA + libwebp packing |
+
+### wasm32-wasip1
+
+`dev/decode_parity_dump.rs` digests zenwebp's output for every (file, mode)
+on any target and compares against the libwebp digests the native sweep
+wrote (`--save-gen` / `--hash-out`); `dev/decode_parity_wasm.sh` shards it
+across wasmtime processes (`just decode-parity-wasm`). Note
+`~/.cargo/config.toml` adds `+simd128` for wasm32-wasip1 on this box, so the
+scalar build must pass `-C target-feature=-simd128` explicitly.
+
+- **simd128, before the fix: 3,339 lossy files wrong in every mode,
+  including raw YUV** — the loop filter. `do_filter6` (macroblock-edge
+  filter, non-HEV pixels) used `sat(p0 - q0)` instead of libwebp's base
+  delta `p1 - q1 + 3*(q0 - p0)`, with the opposite sign; and the base delta
+  saturated `3*(q0 - p0)` before adding `p1 - q1` (libwebp accumulates
+  `q0 - p0` three times with saturation) in all three wasm filters. Every
+  failing file had the loop filter on; lossless was unaffected.
+- **simd128, after: all 397,593 digests identical to x86_64** (so exact vs
+  libwebp in every mode where x86 is).
+- **scalar wasm: all 397,593 digests identical to x86_64.**
+
+Pinned by `loop_filter::wasm_tests::wasm_filters_match_scalar_spec` (20,000
+randomized cases across the six luma kernels vs the scalar spec filters),
+which runs in CI's wasmtime `--lib` job and was watched to fail on the old
+kernels (kernel 3, case 3).
+
 ## Not covered
 
 - Truncated / corrupted inputs (no invalid corpus; error-agreement is untested).
-- Decoder options other than upsampling (cropping, scaling, dithering,
-  `bypass_filtering`).
-- The zencodec streaming path is exercised only through the fancy default.
-- Only x86_64 here; the aarch64/wasm tiers were not part of this run.
+- Cropping / scaling / `bypass_filtering` / flip: zenwebp exposes none of them.
+- Animation decoding with `Simple` upsampling or dithering: libwebp's
+  `WebPAnimDecoder` has no such options, so there is no reference.
+- aarch64 (NEON) has not been run through this sweep yet.
 
 ## Reproduce
 
@@ -112,6 +165,7 @@ cargo run --release --features __expert --example decode_parity_sweep -- \
   --out ~/tmp/decode-parity/run.tsv --mismatch-dir ~/tmp/decode-parity/mismatch
 ```
 
-Runtime: ~30 s on 28 threads. The full per-file TSV (4 MB) is not committed.
+Or `just decode-parity` then `just decode-parity-wasm`. Runtime: ~2 min
+for the sweep on 28 threads, ~2 min per wasm flavour on 14 shards. The full per-file TSV (4 MB) is not committed.
 `--detail FILE` prints a per-frame/per-channel breakdown for an animated
 mismatch; with `DP_REF_PREFIX=<dir/name>` it also diffs `<name>-N.png`.

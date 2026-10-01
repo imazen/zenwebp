@@ -111,3 +111,28 @@ arm-kernel-audit-macos group="":
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 \
       nice -n 19 /usr/bin/time -l cargo bench --locked --features _dev --bench kernel_tiers -- --group="{{group}}" --format=llm \
       2>&1 | tee "$audit_log"
+
+# Wide-corpus decoder parity vs libwebp (benchmarks/decode_parity_*.md).
+# corpus = a codec-corpus checkout; writes ~/tmp/decode-parity/{run.tsv,gen,mismatch}.
+decode-parity corpus="~/tmp/codec-corpus-sparse":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out="$HOME/tmp/decode-parity"; mkdir -p "$out"; rm -rf "$out/gen" "$out/mismatch"
+    cargo build --release --features __expert --example decode_parity_sweep
+    nice -n 19 ./target/release/examples/decode_parity_sweep --files {{corpus}} --files tests/images \
+      --gen-src {{corpus}} --encodes-per-variant 2 --out "$out/run.tsv" --mismatch-dir "$out/mismatch" \
+      --save-gen "$out/gen" --hash-out "$out/gen/lib.hashes" 2>&1 | tee "$out/run.log"
+
+# Re-check the `decode-parity` corpus on wasm32-wasip1 (scalar + simd128) under wasmtime.
+decode-parity-wasm:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out="$HOME/tmp/decode-parity"
+    RUSTFLAGS="-C target-feature=-simd128" CARGO_TARGET_DIR=target/wasm-scalar \
+      cargo build --release --target wasm32-wasip1 --example decode_parity_dump
+    RUSTFLAGS="-C target-feature=+simd128" CARGO_TARGET_DIR=target/wasm-simd128 \
+      cargo build --release --target wasm32-wasip1 --example decode_parity_dump
+    for v in scalar simd128; do
+      dev/decode_parity_wasm.sh target/wasm-$v/wasm32-wasip1/release/examples/decode_parity_dump.wasm \
+        "$out/gen" "$out/wasm-$v" 14 | tee "$out/wasm-$v.summary"
+    done

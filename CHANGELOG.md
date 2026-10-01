@@ -7,6 +7,16 @@ earlier history lives in git log and LOG.md.)
 
 ### Fixed
 
+- **wasm32 SIMD128 loop filter produced wrong pixels** on 3,339 of the
+  8,722 lossy files in the parity corpus (38 %; every one had the loop
+  filter on), near macroblock edges. `do_filter6` used `p0 - q0` instead of the VP8 base delta, and the
+  base delta saturated `3*(q0 - p0)` before adding `p1 - q1`. The wasm
+  filters now mirror libwebp's `DoFilter{2,4,6}_SSE2`; wasm (scalar and
+  simd128) output is byte-identical to x86_64 and libwebp across the
+  397,593-comparison parity corpus.
+
+### Fixed
+
 - **`UpsamplingMethod::Simple` (no-fancy upsampling) now works.** The setting
   was stored and never read, so every lossy decode used fancy upsampling.
   Point-sampled output is now byte-identical to libwebp's

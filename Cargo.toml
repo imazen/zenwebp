@@ -514,3 +514,10 @@ zenanalyze = { git = "https://github.com/imazen/zenanalyze" }
 name = "decode_parity_sweep"
 path = "dev/decode_parity_sweep.rs"
 required-features = ["__expert"]
+
+# Target-independent half of the sweep (no libwebp): digests zenwebp's output
+# per (file, mode) and compares against the sweep's `--hash-out` libwebp
+# digests. Builds for wasm32-wasip1 to check the wasm/simd128 tiers.
+[[example]]
+name = "decode_parity_dump"
+path = "dev/decode_parity_dump.rs"

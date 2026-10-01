@@ -28,21 +28,21 @@
 //!     --files ~/.cache/codec-corpus/v1/webp-conformance \
 //!     --gen-src ~/.cache/codec-corpus/v1/CID22 --encodes-per-variant 4 \
 //!     --out benchmarks/decode_parity_2026-10-01.tsv --mismatch-dir ~/tmp/dp-mismatch
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
+#[path = "decode_parity_common.rs"]
+mod common;
+
+use common::{LibSpec, Out, digest, kind, modes, pack_planes, zen_decode};
 use rayon::prelude::*;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use zenwebp::decoder::UpsamplingMethod;
 use zenwebp::mux::{
     AnimationConfig, AnimationDecoder, AnimationEncoder, BlendMethod, DisposeMethod,
 };
-use zenwebp::{
-    DecodeConfig, DecodeRequest, EncodeRequest, EncoderConfig, LosslessConfig, LossyConfig,
-    PixelLayout,
-};
+use zenwebp::{EncodeRequest, EncoderConfig, LosslessConfig, LossyConfig, PixelLayout};
 
 // ---------------------------------------------------------------------------
 // RNG (splitmix64, seeded per source so runs are reproducible)
@@ -102,8 +102,6 @@ fn cmp_bytes(a: &[u8], b: &[u8]) -> (u8, u64) {
     (max, n)
 }
 
-type Out = Result<(Vec<u8>, u32, u32), String>;
-
 fn compare(file: &str, mode: &'static str, zen: std::thread::Result<Out>, lib: Out) -> Row {
     let mut row = Row {
         file: file.to_string(),
@@ -153,152 +151,53 @@ fn quiet_catch<T>(f: impl FnOnce() -> T + std::panic::UnwindSafe) -> std::thread
     std::panic::catch_unwind(f)
 }
 
-/// Pack YUV planes tightly (y, then u, then v) so both sides compare equal-shape.
-#[allow(clippy::too_many_arguments)]
-fn pack_planes(
-    y: &[u8],
-    ys: usize,
-    u: &[u8],
-    us: usize,
-    v: &[u8],
-    vs: usize,
-    w: usize,
-    h: usize,
-) -> Option<Vec<u8>> {
-    let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
-    let mut out = Vec::with_capacity(w * h + 2 * cw * ch);
-    for r in 0..h {
-        out.extend_from_slice(y.get(r * ys..r * ys + w)?);
-    }
-    for r in 0..ch {
-        out.extend_from_slice(u.get(r * us..r * us + cw)?);
-    }
-    for r in 0..ch {
-        out.extend_from_slice(v.get(r * vs..r * vs + cw)?);
-    }
-    Some(out)
-}
-
-enum Kind {
-    Lossy,
-    Lossless,
-    Animated,
-    Unknown,
-}
-
-fn kind(data: &[u8]) -> Kind {
-    if data.len() < 16 || &data[0..4] != b"RIFF" || &data[8..12] != b"WEBP" {
-        return Kind::Unknown;
-    }
-    match &data[12..16] {
-        b"VP8 " => Kind::Lossy,
-        b"VP8L" => Kind::Lossless,
-        b"VP8X" => {
-            if data.len() > 20 && data[20] & 0x02 != 0 {
-                return Kind::Animated;
-            }
-            // Find the image chunk.
-            let mut off = 12usize;
-            while off + 8 <= data.len() {
-                let id = &data[off..off + 4];
-                let sz = u32::from_le_bytes(data[off + 4..off + 8].try_into().unwrap()) as usize;
-                if id == b"VP8 " {
-                    return Kind::Lossy;
-                }
-                if id == b"VP8L" {
-                    return Kind::Lossless;
-                }
-                off = off.saturating_add(8).saturating_add(sz + (sz & 1));
-            }
-            Kind::Unknown
+/// libwebp advanced decode (`WebPDecode`) in an arbitrary colorspace with
+/// `no_fancy_upsampling` / `dithering_strength`, copied out tightly.
+#[allow(unsafe_code)]
+fn lib_advanced(data: &[u8], spec: LibSpec) -> Out {
+    use libwebp_sys::*;
+    let (mode, bpp) = match spec.csp {
+        "RGBA" => (WEBP_CSP_MODE::MODE_RGBA, 4),
+        "RGB" => (WEBP_CSP_MODE::MODE_RGB, 3),
+        "BGRA" => (WEBP_CSP_MODE::MODE_BGRA, 4),
+        "BGR" => (WEBP_CSP_MODE::MODE_BGR, 3),
+        "ARGB" => (WEBP_CSP_MODE::MODE_ARGB, 4),
+        "rgbA" => (WEBP_CSP_MODE::MODE_rgbA, 4),
+        "bgrA" => (WEBP_CSP_MODE::MODE_bgrA, 4),
+        "Argb" => (WEBP_CSP_MODE::MODE_Argb, 4),
+        "RGB_565" => (WEBP_CSP_MODE::MODE_RGB_565, 2),
+        "RGBA_4444" => (WEBP_CSP_MODE::MODE_RGBA_4444, 2),
+        other => return Err(format!("unsupported csp {other}")),
+    };
+    // SAFETY: standard libwebp advanced-API usage; the output buffer is
+    // libwebp-owned, read within its reported stride/height, then freed.
+    unsafe {
+        let mut config = WebPDecoderConfig::new().map_err(|_| "WebPInitDecoderConfig")?;
+        config.options.no_fancy_upsampling = spec.no_fancy as i32;
+        config.options.dithering_strength = i32::from(spec.dithering);
+        config.output.colorspace = mode;
+        let status = WebPDecode(data.as_ptr(), data.len(), &mut config);
+        if status != VP8StatusCode::VP8_STATUS_OK {
+            return Err(format!("libwebp {status:?}"));
         }
-        _ => Kind::Unknown,
+        let rgba = &config.output.u.RGBA;
+        let (w, h) = (config.output.width as usize, config.output.height as usize);
+        let stride = rgba.stride as usize;
+        let mut px = Vec::with_capacity(w * h * bpp);
+        for y in 0..h {
+            px.extend_from_slice(std::slice::from_raw_parts(
+                rgba.rgba.add(y * stride),
+                w * bpp,
+            ));
+        }
+        WebPFreeDecBuffer(&mut config.output);
+        Ok((px, w as u32, h as u32))
     }
 }
 
-fn check_file(name: &str, data: &[u8]) -> Vec<Row> {
-    let mut rows = Vec::new();
-    let k = kind(data);
-    if matches!(k, Kind::Animated) {
-        let zen = quiet_catch(|| -> Out {
-            let mut d = AnimationDecoder::new(data).map_err(|e| format!("{e}"))?;
-            let frames = d.decode_all().map_err(|e| format!("{e}"))?;
-            let (w, h) = frames
-                .first()
-                .map(|f| (f.width, f.height))
-                .unwrap_or((0, 0));
-            let mut all = Vec::new();
-            for f in &frames {
-                // AnimFrame.data is RGB (3 bpp) when the file has no alpha;
-                // libwebp's WebPAnimDecoder always emits RGBA.
-                if f.data.len() == (f.width * f.height * 3) as usize {
-                    for p in f.data.as_chunks::<3>().0.iter() {
-                        all.extend_from_slice(&[p[0], p[1], p[2], 255]);
-                    }
-                } else {
-                    all.extend_from_slice(&f.data);
-                }
-            }
-            Ok((all, w, h * frames.len() as u32))
-        });
-        let lib = (|| -> Out {
-            let mut d = webpx::AnimationDecoder::new(data).map_err(|e| format!("{e}"))?;
-            let frames = d.decode_all().map_err(|e| format!("{e}"))?;
-            let (w, h) = frames
-                .first()
-                .map(|f| (f.width, f.height))
-                .unwrap_or((0, 0));
-            let mut all = Vec::new();
-            for f in &frames {
-                all.extend_from_slice(&f.data);
-            }
-            Ok((all, w, h * frames.len() as u32))
-        })();
-        rows.push(compare(name, "anim", zen, lib));
-        return rows;
-    }
-
-    let zen = quiet_catch(|| zenwebp::oneshot::decode_rgba(data).map_err(|e| format!("{e}")));
-    let lib = webpx::decode_rgba(data).map_err(|e| format!("{e}"));
-    rows.push(compare(name, "rgba", zen, lib));
-
-    let zen = quiet_catch(|| zenwebp::oneshot::decode_rgb(data).map_err(|e| format!("{e}")));
-    let lib = webpx::decode_rgb(data).map_err(|e| format!("{e}"));
-    rows.push(compare(name, "rgb", zen, lib));
-
-    if matches!(k, Kind::Lossy) {
-        let zen = quiet_catch(|| {
-            let cfg = DecodeConfig::default().upsampling(UpsamplingMethod::Simple);
-            DecodeRequest::new(&cfg, data)
-                .decode_rgba()
-                .map_err(|e| format!("{e}"))
-        });
-        let lib = (|| -> Out {
-            webpx::Decoder::new(data)
-                .map_err(|e| format!("{e}"))?
-                .config(webpx::DecoderConfig::new().no_fancy_upsampling(true))
-                .decode_rgba_raw()
-                .map_err(|e| format!("{e}"))
-        })();
-        rows.push(compare(name, "rgba_nofancy", zen, lib));
-
-        let zen = quiet_catch(|| -> Out {
-            let p = zenwebp::oneshot::decode_yuv420(data).map_err(|e| format!("{e}"))?;
-            let (w, h) = (p.y_width as usize, p.y_height as usize);
-            let packed = pack_planes(
-                &p.y,
-                w,
-                &p.u,
-                p.uv_width as usize,
-                &p.v,
-                p.uv_width as usize,
-                w,
-                h,
-            )
-            .ok_or("zen yuv plane short")?;
-            Ok((packed, p.y_width, p.y_height))
-        });
-        let lib = (|| -> Out {
+fn lib_decode(data: &[u8], spec: LibSpec) -> Out {
+    match spec.csp {
+        "YUV" => {
             let p = webpx::decode_yuv(data).map_err(|e| format!("{e}"))?;
             let packed = pack_planes(
                 &p.y,
@@ -312,10 +211,35 @@ fn check_file(name: &str, data: &[u8]) -> Vec<Row> {
             )
             .ok_or("lib yuv plane short")?;
             Ok((packed, p.width, p.height))
-        })();
-        rows.push(compare(name, "yuv", zen, lib));
+        }
+        "ANIM" => {
+            let mut d = webpx::AnimationDecoder::new(data).map_err(|e| format!("{e}"))?;
+            let frames = d.decode_all().map_err(|e| format!("{e}"))?;
+            let (w, h) = frames
+                .first()
+                .map(|f| (f.width, f.height))
+                .unwrap_or((0, 0));
+            let mut all = Vec::new();
+            for f in &frames {
+                all.extend_from_slice(&f.data);
+            }
+            Ok((all, w, h * frames.len() as u32))
+        }
+        _ => lib_advanced(data, spec),
     }
-    rows
+}
+
+/// Compare every applicable mode; also returns libwebp's digest per mode.
+fn check_file(name: &str, data: &[u8]) -> (Vec<Row>, Vec<(&'static str, String)>) {
+    let mut rows = Vec::new();
+    let mut digests = Vec::new();
+    for &(mode, spec) in modes(kind(data)) {
+        let zen = quiet_catch(|| zen_decode(mode, data));
+        let lib = lib_decode(data, spec);
+        digests.push((mode, digest(&lib)));
+        rows.push(compare(name, mode, zen, lib));
+    }
+    (rows, digests)
 }
 
 // ---------------------------------------------------------------------------
@@ -746,6 +670,7 @@ fn main() {
     let mut out_path = PathBuf::from("decode_parity.tsv");
     let mut mismatch_dir: Option<PathBuf> = None;
     let mut save_gen: Option<PathBuf> = None;
+    let mut hash_out: Option<PathBuf> = None;
     let mut per_variant = 2u32;
     let mut gen_limit = usize::MAX;
     let mut args = std::env::args().skip(1);
@@ -756,6 +681,7 @@ fn main() {
             "--out" => out_path = PathBuf::from(args.next().unwrap()),
             "--mismatch-dir" => mismatch_dir = Some(PathBuf::from(args.next().unwrap())),
             "--save-gen" => save_gen = Some(PathBuf::from(args.next().unwrap())),
+            "--hash-out" => hash_out = Some(PathBuf::from(args.next().unwrap())),
             "--encodes-per-variant" => per_variant = args.next().unwrap().parse().unwrap(),
             "--detail" => return detail(Path::new(&args.next().unwrap())),
             "--gen-limit" => gen_limit = args.next().unwrap().parse().unwrap(),
@@ -767,12 +693,29 @@ fn main() {
     for d in [&mismatch_dir, &save_gen].into_iter().flatten() {
         std::fs::create_dir_all(d).unwrap();
     }
+    if let Some(d) = &save_gen {
+        std::fs::create_dir_all(d.join("existing")).unwrap();
+        std::fs::create_dir_all(d.join("gen")).unwrap();
+    }
 
     let rows: Mutex<Vec<Row>> = Mutex::new(Vec::new());
-    let record = |name: &str, data: &[u8], rs: Vec<Row>| {
+    // `file \t mode \t libwebp digest` for offline comparison of other
+    // targets' zenwebp output (`decode_parity_dump --expect`).
+    let hashes: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    // `name` is relative to the --save-gen dir: `existing/<flat path>` or `gen/<file>`.
+    let record = |name: &str, data: &[u8], (rs, ds): (Vec<Row>, Vec<(&'static str, String)>)| {
         let bad = rs.iter().any(|r| !matches!(r.status, "match" | "both_err"));
         if bad && let Some(d) = &mismatch_dir {
             std::fs::write(d.join(name.replace('/', "__")), data).ok();
+        }
+        if let Some(d) = &save_gen {
+            std::fs::write(d.join(name), data).ok();
+        }
+        if hash_out.is_some() {
+            let mut h = hashes.lock().unwrap();
+            for (mode, dg) in ds {
+                h.push(format!("{name}\t{mode}\t{dg}"));
+            }
         }
         rows.lock().unwrap().extend(rs);
     };
@@ -787,9 +730,12 @@ fn main() {
     eprintln!("phase 1: {} existing .webp files", files.len());
     files.par_iter().for_each(|p| {
         let Ok(data) = std::fs::read(p) else { return };
-        let name = p.to_string_lossy().to_string();
-        let rs = check_file(&name, &data);
-        record(&name, &data, rs);
+        let flat = p
+            .to_string_lossy()
+            .trim_start_matches('/')
+            .replace('/', "__");
+        let name = format!("existing/{flat}");
+        record(&name, &data, check_file(&name, &data));
     });
 
     // Phase 2: generated.
@@ -811,7 +757,12 @@ fn main() {
         if w > 4096 || h > 4096 {
             return;
         }
-        let stem = p.file_stem().unwrap().to_string_lossy().to_string();
+        // Same-named PNGs live in several corpora; a path hash keeps names unique.
+        let stem = format!(
+            "{}-{:04x}",
+            p.file_stem().unwrap().to_string_lossy(),
+            hash_str(&p.to_string_lossy()) & 0xffff
+        );
         let mut rng = Rng(hash_str(&p.to_string_lossy()));
         let mut encoded: Vec<(String, Vec<u8>)> = Vec::new();
         for v in variants(&stem, &rgba, w, h, has_alpha, &mut rng) {
@@ -830,11 +781,7 @@ fn main() {
             }
         }
         for (name, data) in &encoded {
-            if let Some(d) = &save_gen {
-                std::fs::write(d.join(name.trim_start_matches("gen/")), data).ok();
-            }
-            let rs = check_file(name, data);
-            record(name, data, rs);
+            record(name, data, check_file(name, data));
         }
         let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         if n.is_multiple_of(25) {
@@ -842,6 +789,11 @@ fn main() {
         }
     });
 
+    if let Some(p) = &hash_out {
+        let mut h = hashes.into_inner().unwrap();
+        h.sort();
+        std::fs::write(p, h.join("\n") + "\n").unwrap();
+    }
     let mut rows = rows.into_inner().unwrap();
     rows.sort_by(|a, b| (&a.file, a.mode).cmp(&(&b.file, b.mode)));
     let mut tsv = String::from("file\tmode\tstatus\tmax_diff\tdiff_bytes\ttotal_bytes\tnote\n");
