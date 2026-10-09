@@ -20,6 +20,15 @@ earlier history lives in git log and LOG.md.)
 
 ### Added
 
+- **Structural inventory** (`DecodeJob::inventory`, `DecodeCapabilities::with_inventory`):
+  a byte-exact map of the RIFF header, every chunk (pad bytes, ANMF frame headers
+  and sub-chunks, ANIM fields) and bytes past the RIFF size, each with the
+  disposition the zencodec decode path gives it (Metadata / ImageData / Skipped /
+  Unknown / Padding / Trailing). Cross-checked against `exiftool -v3`
+  (`just inventory-oracle`) and fuzzed (`fuzz/fuzz_targets/inventory.rs`).
+  Depends on imazen/zencodec#133; `Cargo.toml` patches zencodec to its
+  `feat/inventory` branch until it is released. (8ea1fddb, fd50b3af)
+
 - **Golden codec hashes** (`tests/golden/`): 510 synthetic full-coverage
   cases (11 patterns × 8 sizes from 1×1 to 130×66 × 5 alpha modes × 22
   lossy/preset/lossless configs, plus 6 animations) pin the encoded-bytes

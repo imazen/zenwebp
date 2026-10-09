@@ -542,13 +542,12 @@ fn current_behaviour_unknown_chunk_between_anmf_stops_the_frame_chain() {
     let inv = inventory_of(&data);
     let anmf = find(&inv, "ANMF");
     assert_eq!(anmf.len(), 3);
-    assert_ne!(
-        anmf[0]
+    assert!(
+        !anmf[0]
             .detail
             .as_deref()
             .unwrap_or("")
-            .contains("unreachable"),
-        true
+            .contains("unreachable")
     );
     for later in &anmf[1..] {
         assert!(
@@ -734,7 +733,7 @@ fn current_behaviour_odd_sized_anmf_breaks_the_next_frame() {
         }
         // Rebuild the frame with an unpadded, odd-sized VP8L sub-chunk.
         let mut sub = chunks_of_sub(&p[16..]);
-        if sub.len() % 2 == 0 {
+        if sub.len().is_multiple_of(2) {
             sub.push(0);
         }
         let mut payload = p[..16].to_vec();
@@ -906,4 +905,25 @@ fn oracle_exiftool_chunk_list() {
         files.len()
     );
     assert!(failures.is_empty(), "differences:\n{}", failures.join("\n"));
+}
+
+/// The three container walkers disagree on metadata: `WebPDecoder` (the zencodec
+/// path, which the inventory follows) keeps the first ICCP/EXIF/XMP and ignores
+/// the VP8X flags; `WebPDemuxer` keeps the last one and only when the flag is
+/// set.
+#[test]
+fn current_behaviour_decoder_and_demuxer_disagree_on_metadata() {
+    let (mut data, _, exif, _) = everything_still_no_junk();
+    let second_exif = b"II*\0second-exif-ignored".to_vec();
+    // Flags say EXIF present: decoder keeps the first, demuxer the last.
+    let info = WebpDecoderConfig::new().job().probe(&data).unwrap();
+    assert_eq!(info.embedded_metadata.exif.as_deref(), Some(&exif[..]));
+    let demux = zenwebp::mux::WebPDemuxer::new(&data).unwrap();
+    assert_eq!(demux.exif(), Some(&second_exif[..]));
+    // Flag cleared: decoder still reports EXIF, demuxer reports none.
+    data[20] &= !0x08;
+    let info = WebpDecoderConfig::new().job().probe(&data).unwrap();
+    assert_eq!(info.embedded_metadata.exif.as_deref(), Some(&exif[..]));
+    let demux = zenwebp::mux::WebPDemuxer::new(&data).unwrap();
+    assert_eq!(demux.exif(), None);
 }
