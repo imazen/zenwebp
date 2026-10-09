@@ -771,3 +771,139 @@ fn chunks_of_sub(body: &[u8]) -> Vec<u8> {
     let size = u32::from_le_bytes(body[4..8].try_into().unwrap()) as usize;
     body[8..8 + size].to_vec()
 }
+
+// ── Cross-check against exiftool -v3 ────────────────────────────────────────
+
+/// Top-level `(fourcc, payload size, payload offset)` as `exiftool -v3` lists
+/// them. The offset is the first hex-dump line of the chunk, absent for empty
+/// chunks.
+fn exiftool_chunks(bin: &str, path: &std::path::Path) -> Vec<(String, u64, Option<u64>)> {
+    let out = std::process::Command::new(bin)
+        .arg("-v3")
+        .arg(path)
+        .output()
+        .expect("run exiftool");
+    assert!(
+        out.status.success(),
+        "exiftool failed on {}",
+        path.display()
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut chunks: Vec<(String, u64, Option<u64>)> = Vec::new();
+    let mut want_offset = false;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("RIFF '") {
+            let (name, rest) = rest.split_once("' chunk (").expect("chunk header line");
+            let size: u64 = rest
+                .split_whitespace()
+                .next()
+                .and_then(|n| n.parse().ok())
+                .expect("chunk size");
+            chunks.push((name.to_string(), size, None));
+            want_offset = true;
+        } else if want_offset
+            && let Some(hex) = line.strip_prefix("      ")
+            && let Some((off, _)) = hex.split_once(": ")
+            && let Ok(off) = u64::from_str_radix(off, 16)
+        {
+            chunks.last_mut().unwrap().2 = Some(off);
+            want_offset = false;
+        }
+    }
+    chunks
+}
+
+/// Every top-level chunk exiftool lists must be a chunk part of ours with the
+/// same FourCC, payload offset and payload size, in the same order.
+fn compare_with_exiftool(bin: &str, path: &std::path::Path, data: &[u8]) -> Result<usize, String> {
+    let inv = inventory_of(data);
+    let ours: Vec<_> = inv
+        .children(None)
+        .into_iter()
+        .map(|id| inv.get(id).unwrap())
+        .filter(|p| p.kind == PartKind::Chunk)
+        .collect();
+    let theirs = exiftool_chunks(bin, path);
+    if ours.len() != theirs.len() {
+        return Err(format!(
+            "exiftool lists {} chunks, the inventory has {}",
+            theirs.len(),
+            ours.len()
+        ));
+    }
+    for (i, (p, (name, size, off))) in ours.iter().zip(&theirs).enumerate() {
+        let label = p.label.as_deref().unwrap_or("");
+        if label != name {
+            return Err(format!("chunk {i}: exiftool {name:?}, inventory {label:?}"));
+        }
+        let span = p.range.end - p.range.start - 8; // payload (+ zero pad)
+        if !(span == *size || span == *size + 1 && size % 2 == 1) {
+            return Err(format!(
+                "chunk {i} {name}: exiftool size {size}, inventory span {span}"
+            ));
+        }
+        if let Some(off) = off
+            && *off != p.range.start + 8
+        {
+            return Err(format!(
+                "chunk {i} {name}: exiftool payload offset {off}, inventory {}",
+                p.range.start + 8
+            ));
+        }
+    }
+    Ok(ours.len())
+}
+
+/// Run with `INVENTORY_ORACLE_EXIFTOOL=exiftool` (see `just inventory-oracle`).
+#[test]
+#[ignore = "needs INVENTORY_ORACLE_EXIFTOOL; run via `just inventory-oracle`"]
+fn oracle_exiftool_chunk_list() {
+    let bin = std::env::var("INVENTORY_ORACLE_EXIFTOOL")
+        .expect("set INVENTORY_ORACLE_EXIFTOOL to the exiftool binary");
+    let tmp = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    let mut files: Vec<(String, std::path::PathBuf)> = Vec::new();
+    let corpus = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
+    let dir = corpus.get("webp-conformance/valid").expect("corpus dir");
+    let mut names: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("webp"))
+        .collect();
+    names.sort();
+    for p in names {
+        files.push((
+            format!("corpus/{}", p.file_name().unwrap().to_string_lossy()),
+            p,
+        ));
+    }
+    for (name, data) in [
+        ("synthetic/everything_still", everything_still_no_junk().0),
+        ("synthetic/animation", animation()),
+        ("synthetic/lossy_alpha", lossy_alpha()),
+    ] {
+        let path = tmp.join(name.replace('/', "_") + ".webp");
+        std::fs::write(&path, data).unwrap();
+        files.push((name.to_string(), path));
+    }
+    assert!(files.len() >= 20);
+    let mut failures = Vec::new();
+    let mut chunk_total = 0;
+    for (name, path) in &files {
+        let data = std::fs::read(path).unwrap();
+        match compare_with_exiftool(&bin, path, &data) {
+            Ok(n) => {
+                chunk_total += n;
+                println!("oracle ok   {n:2} chunks  {name}");
+            }
+            Err(e) => {
+                println!("oracle DIFF {name}: {e}");
+                failures.push(format!("{name}: {e}"));
+            }
+        }
+    }
+    println!(
+        "oracle: {} files, {chunk_total} chunks matched",
+        files.len()
+    );
+    assert!(failures.is_empty(), "differences:\n{}", failures.join("\n"));
+}

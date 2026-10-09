@@ -136,3 +136,7 @@ decode-parity-wasm:
       dev/decode_parity_wasm.sh target/wasm-$v/wasm32-wasip1/release/examples/decode_parity_dump.wasm \
         "$out/gen" "$out/wasm-$v" 14 | tee "$out/wasm-$v.summary"
     done
+
+# Cross-check the structural inventory against exiftool -v3 (needs exiftool on PATH).
+inventory-oracle:
+    INVENTORY_ORACLE_EXIFTOOL=exiftool cargo test --test inventory -- --ignored oracle --nocapture
