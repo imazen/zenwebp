@@ -2074,9 +2074,8 @@ dependencies = [
 
 [[package]]
 name = "zencodec"
-version = "0.1.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be4b0d4108a8f062c85090bf8d0e6dd00fea976ffacc0e4f3cb6b03284a75531"
+version = "0.1.27"
+source = "git+https://github.com/imazen/zencodec?branch=feat%2Finventory#83355c545f13c7768209ef3f98f9a428311a05ed"
 dependencies = [
  "almost-enough",
  "enough",
@@ -2087,8 +2086,7 @@ dependencies = [
 [[package]]
 name = "zencodec-testkit"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4b207c6328de63a6692cb08b2276ee539107a1532c7879489ebdd04355bf9f9"
+source = "git+https://github.com/imazen/zencodec?branch=feat%2Finventory#83355c545f13c7768209ef3f98f9a428311a05ed"
 dependencies = [
  "enough",
  "whereat",

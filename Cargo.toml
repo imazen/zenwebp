@@ -506,6 +506,10 @@ required-features = ["_dev"]
 [patch.crates-io]
 zenanalyze-api = { git = "https://github.com/imazen/zenanalyze" }
 zenanalyze = { git = "https://github.com/imazen/zenanalyze" }
+# zencodec#133 (structural inventories). Swap for the released zencodec /
+# zencodec-testkit before merging this branch.
+zencodec = { git = "https://github.com/imazen/zencodec", branch = "feat/inventory" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", branch = "feat/inventory" }
 
 # Wide-corpus decoder parity sweep vs libwebp (rgba/rgb/nofancy/yuv/anim,
 # tolerance 0) over existing .webp files plus libwebp- and zenwebp-encoded

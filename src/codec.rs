@@ -1536,6 +1536,7 @@ static DECODE_CAPABILITIES: zencodec::decode::DecodeCapabilities =
         .with_cheap_probe(true)
         .with_native_alpha(true)
         .with_streaming(true)
+        .with_inventory(true)
         .with_enforces_max_pixels(true)
         .with_enforces_max_memory(true)
         .with_enforces_max_input_bytes(true);
@@ -1719,6 +1720,23 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
             info = info.with_source_encoding_details(probe);
         }
         Ok(self.apply_policy_to_info(info))
+    }
+
+    fn inventory(
+        &self,
+        data: &[u8],
+    ) -> Result<Option<zencodec::inventory::Inventory>, At<zencodec::CodecError>> {
+        let stop = self.stop.clone();
+        let mut check = || -> Result<(), DecodeError> {
+            if let Some(ref s) = stop {
+                use enough::Stop;
+                s.check().map_err(DecodeError::from)?;
+            }
+            Ok(())
+        };
+        crate::inventory::walk(data, &mut check)
+            .map(Some)
+            .map_err(|e| zencodec::CodecError::of(at!(e)))
     }
 
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<zencodec::CodecError>> {

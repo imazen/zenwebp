@@ -154,6 +154,7 @@ pub mod decoder;
 pub mod detect;
 pub mod encoder;
 mod exif_orientation;
+mod inventory;
 /// WebP mux/demux and animation encoding.
 pub mod mux;
 
