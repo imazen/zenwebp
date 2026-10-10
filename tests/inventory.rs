@@ -2224,3 +2224,37 @@ fn review2_r8_canvas_product_overflow() {
         "{inv}"
     );
 }
+
+/// Round 3 N2: `detect::probe` also fails when the VP8 first partition (clamped to
+/// the data) is under 2 bytes.
+#[test]
+fn review3_n2_first_partition_under_two_bytes() {
+    let mut vp8 = chunk_payload(&chunks_of(&lossy_seed(16, 16, 2)), b"VP8 ");
+    // Frame tag: bit 0 keyframe(0), bits 1-3 version, bit 4 show_frame, bits 5.. first_part_size.
+    let tag = u32::from(vp8[0]) | u32::from(vp8[1]) << 8 | u32::from(vp8[2]) << 16;
+    let tag = (tag & 0x1f) | (1 << 5);
+    vp8[..3].copy_from_slice(&tag.to_le_bytes()[..3]);
+    let simple = riff(&[(*b"VP8 ", vp8.clone()), (*b"ICCP", b"icc-last".to_vec())]);
+    assert!(zenwebp::detect::probe(&simple).is_err());
+    let inv = inventory_of(&simple);
+    assert_eq!(
+        find(&inv, "ICCP")[0].disposition,
+        Disposition::Skipped,
+        "{inv}"
+    );
+
+    // Two VP8 chunks in a VP8X still: decode() uses the last, detect::probe fails on the first.
+    let good = chunk_payload(&chunks_of(&lossy_seed(16, 16, 2)), b"VP8 ");
+    let data = riff(&[
+        (*b"VP8X", vp8x_still(16, 16, 0x20)),
+        (*b"ICCP", b"icc-first".to_vec()),
+        (*b"VP8 ", vp8),
+        (*b"VP8 ", good),
+        (*b"ICCP", b"icc-dup".to_vec()),
+    ]);
+    assert!(zenwebp::detect::probe(&data).is_err());
+    assert!(WebpDecoderConfig::new().decode(&data).is_ok());
+    let inv = inventory_of(&data);
+    let iccs = find(&inv, "ICCP");
+    assert_eq!(iccs[1].disposition, Disposition::Skipped, "{inv}");
+}

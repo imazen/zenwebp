@@ -431,9 +431,15 @@ impl Walker<'_, '_> {
         let Some(d) = self.data.get(s..e) else {
             return false;
         };
-        d.len() >= 10
-            && (u32::from(d[0]) | u32::from(d[1]) << 8 | u32::from(d[2]) << 16) & 1 == 0
+        if d.len() < 10 {
+            return false;
+        }
+        let tag = u32::from(d[0]) | u32::from(d[1]) << 8 | u32::from(d[2]) << 16;
+        // `parse_uncompressed_header`: keyframe, start code, and a first
+        // partition of at least 2 bytes (`MiniBoolReader::new`), clamped to the data.
+        tag & 1 == 0
             && d[3..6] == [0x9d, 0x01, 0x2a]
+            && (10 + (tag >> 5) as usize).min(d.len()) >= 12
     }
 
     /// What `detect::probe` makes of the file, in file order over the chunks
