@@ -45,6 +45,7 @@ pub(crate) fn walk(
         inv: Inventory::new(ImageFormat::WebP, data.len() as u64),
         check,
         ticks: 0,
+        unplaced: Vec::new(),
     };
     w.run()?;
     Ok(w.inv)
@@ -97,6 +98,8 @@ struct Walker<'a, 'c> {
     inv: Inventory,
     check: &'c mut dyn FnMut() -> Result<(), DecodeError>,
     ticks: u32,
+    /// First-ANMF scan ranges not inside one sub-chunk's payload.
+    unplaced: Vec<([u8; 4], Range<u64>)>,
 }
 
 /// Printable-ASCII rendering of a FourCC (non-printable bytes as `\xNN`).
@@ -946,6 +949,92 @@ impl Walker<'_, '_> {
         if end_pos < riff_end && end_pos < len {
             self.truncated_header(None, end_pos, riff_end)?;
         }
+        self.place_unplaced()
+    }
+
+    /// The first-ANMF scan's misread can file a range that runs past the ANMF:
+    /// over later top-level chunks, or past the RIFF end. Those bytes reach
+    /// `ImageInfo` as ICC/EXIF/XMP, so every leaf part they touch that is not
+    /// already consumed becomes `Metadata(kind)` (with a detail), and any span
+    /// no top-level part covers gets its own `Metadata(kind)` part. Runs before
+    /// the final `fill_gaps(None, Trailing)`.
+    fn place_unplaced(&mut self) -> Result<(), DecodeError> {
+        let ranges = core::mem::take(&mut self.unplaced);
+        if ranges.is_empty() {
+            return Ok(());
+        }
+        // Every part id, parents first (the tree is shallow).
+        let mut ids: Vec<PartId> = Vec::new();
+        let mut stack = self.inv.children(None);
+        stack.reverse();
+        while let Some(id) = stack.pop() {
+            ids.push(id);
+            let mut kids = self.inv.children(Some(id));
+            kids.reverse();
+            stack.extend(kids);
+        }
+        for (f, r) in ranges {
+            let r = r.start..r.end.min(self.len);
+            if r.start >= r.end {
+                continue;
+            }
+            let kind = match &f {
+                b"ICCP" => MetadataKind::Icc,
+                b"EXIF" => MetadataKind::Exif,
+                _ => MetadataKind::Xmp,
+            };
+            let note = format!(
+                "bytes {}..{} are filed by read_data's first-ANMF scan as {} (a misread header \
+                 whose range leaves the ANMF); ImageInfo reports them as the file's metadata",
+                r.start,
+                r.end,
+                fourcc_label(&f)
+            );
+            for &id in &ids {
+                if !self.inv.children(Some(id)).is_empty() {
+                    continue; // containers: their children carry the bytes
+                }
+                let Some(p) = self.inv.get(id) else { continue };
+                if p.range.start >= r.end || p.range.end <= r.start {
+                    continue;
+                }
+                if !p.disposition.is_consumed() {
+                    self.inv.set_disposition(id, Disposition::Metadata(kind));
+                }
+                self.append_detail(id, &note);
+            }
+            // Span no top-level part covers.
+            let mut cursor = r.start;
+            let mut spans: Vec<Range<u64>> = Vec::new();
+            for id in self.inv.children(None) {
+                let Some(p) = self.inv.get(id) else { continue };
+                if p.range.end <= cursor {
+                    continue;
+                }
+                if p.range.start >= r.end {
+                    break;
+                }
+                if p.range.start > cursor {
+                    spans.push(cursor..p.range.start);
+                }
+                cursor = cursor.max(p.range.end);
+            }
+            if cursor < r.end {
+                spans.push(cursor..r.end);
+            }
+            for span in spans {
+                self.push(
+                    None,
+                    Part::new(
+                        PartKind::Field,
+                        PartTag::Name("first-ANMF scan range".into()),
+                        span,
+                        Disposition::Metadata(kind),
+                    )
+                    .with_detail(note.clone()),
+                )?;
+            }
+        }
         Ok(())
     }
 
@@ -1526,18 +1615,11 @@ impl Walker<'_, '_> {
             };
             self.inv.fill_gaps(Some(sid), gap).map_err(parts_err)?;
         }
+        // Ranges that leave this ANMF's sub-chunks are placed against the whole
+        // file once every top-level part exists (`place_unplaced`).
         for (qi, (f, r)) in quirk.iter().enumerate() {
             if is_first && !placed[qi] {
-                self.append_detail(
-                    id,
-                    &format!(
-                        "read_data's first-ANMF scan also files bytes {}..{} as {}, which \
-                         ImageInfo reports as the file's metadata",
-                        r.start,
-                        r.end,
-                        fourcc_label(f)
-                    ),
-                );
+                self.unplaced.push((*f, r.clone()));
             }
         }
         self.inv

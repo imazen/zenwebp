@@ -2258,3 +2258,81 @@ fn review3_n2_first_partition_under_two_bytes() {
     let iccs = find(&inv, "ICCP");
     assert_eq!(iccs[1].disposition, Disposition::Skipped, "{inv}");
 }
+
+/// Round 3 N3: a first-ANMF scan range that leaves the ANMF reaches `ImageInfo`
+/// over top-level chunks and over bytes past the RIFF end.
+#[test]
+fn review3_n3_misread_range_leaves_the_anmf() {
+    let build = |n: u32, trailing: &[u8]| {
+        let mut chunks = chunks_of(&animation());
+        let i = chunks.iter().position(|c| &c.0 == b"ANMF").unwrap();
+        let mut misread = b"XMP ".to_vec();
+        misread.extend(n.to_le_bytes());
+        let mut p = chunks[i].1[..16].to_vec();
+        p.extend(chunk_bytes(b"ABCD", &misread));
+        p.extend(chunk_bytes(b"ZERO", &[]));
+        p.extend(&chunks[i].1[16..]);
+        chunks[i].1 = p;
+        chunks.insert(
+            i + 1,
+            (*b"ZEN3", b"owner=someone serial=42 gps=47.6N".to_vec()),
+        );
+        let mut d = riff(&chunks);
+        d.extend(trailing);
+        (d, chunks)
+    };
+    // Where the scan's second range starts: 16 (frame header) + 16 (ABCD) + 8 (ZERO) into the ANMF payload.
+    let (probe_data, chunks) = build(0, &[]);
+    let anmf_at = probe_data.windows(4).position(|w| w == b"ANMF").unwrap() as u64 + 8;
+    let start = anmf_at + 40;
+    let zen3_at = probe_data.windows(4).position(|w| w == b"ZEN3").unwrap() as u64;
+    let zen3_end = zen3_at + 8 + chunks[2].1.len() as u64 + (chunks[2].1.len() as u64 & 1);
+
+    // (a) the range ends exactly at the end of the private ZEN3 chunk.
+    let (data, _) = build((zen3_end - start) as u32, &[]);
+    let info = WebpDecoderConfig::new().job().probe(&data).unwrap();
+    let xmp = info
+        .embedded_metadata
+        .xmp
+        .as_deref()
+        .expect("xmp from the misread");
+    assert_eq!(xmp, &data[start as usize..zen3_end as usize]);
+    let inv = inventory_of(&data);
+    let zen3 = find(&inv, "ZEN3")[0];
+    assert_eq!(
+        zen3.disposition,
+        Disposition::Metadata(MetadataKind::Xmp),
+        "{inv}"
+    );
+    assert!(zen3.detail.as_deref().unwrap().contains("first-ANMF scan"));
+
+    // (b) the range runs past the RIFF end into trailing bytes.
+    // Trailing bytes that parse as a whole chunk, so the decoder's walk (which
+    // overruns the RIFF end, #107) does not fail on them.
+    let mut tail = b"TAIL".to_vec();
+    tail.extend(24u32.to_le_bytes());
+    tail.extend(b"secret-bytes-0123456789");
+    tail.extend([0, 0]);
+    let tail = &tail[..];
+    let (data, _) = build(0, tail);
+    let riff_end = data.len() as u64 - tail.len() as u64;
+    let (data, _) = build((riff_end + 20 - start) as u32, tail);
+    let info = WebpDecoderConfig::new().job().probe(&data).unwrap();
+    assert_eq!(
+        info.embedded_metadata.xmp.as_deref().unwrap(),
+        &data[start as usize..(riff_end + 20) as usize]
+    );
+    let inv = inventory_of(&data);
+    let span = inv
+        .parts()
+        .iter()
+        .find(|p| matches!(&p.tag, PartTag::Name(n) if n == "first-ANMF scan range"))
+        .expect("a top-level part over the trailing bytes");
+    assert_eq!(span.disposition, Disposition::Metadata(MetadataKind::Xmp));
+    assert_eq!(span.range, riff_end..riff_end + 20);
+    assert!(
+        inv.parts()
+            .iter()
+            .any(|p| p.disposition == Disposition::Trailing)
+    );
+}
