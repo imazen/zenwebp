@@ -380,16 +380,15 @@ impl Walker<'_, '_> {
         let ids = self.all_ids();
         let top = self.inv.children(None);
         // The ANMF `decode()` renders as the still image: the first in file order.
-        let first_anmf = top.iter().copied().find(|&id| {
-            self.inv
-                .get(id)
-                .is_some_and(|p| p.label.as_deref() == Some("ANMF"))
-        });
+        let first_anmf = top
+            .iter()
+            .copied()
+            .find(|&id| self.inv.get(id).is_some_and(|p| p.label() == Some("ANMF")));
         for &id in &ids {
             let Some(p) = self.inv.get(id) else { continue };
-            let disposition = p.disposition;
-            let parent = p.parent;
-            let is_loop = matches!(&p.tag, PartTag::Name(n) if n == "loop_count");
+            let disposition = p.disposition();
+            let parent = p.parent();
+            let is_loop = matches!(&p.tag(), PartTag::Name(n) if n == "loop_count");
             let in_probe = self.probe_icc_ids.contains(&id)
                 || parent.is_some_and(|q| self.probe_icc_ids.contains(&q));
             let stripped = match disposition {
@@ -428,14 +427,10 @@ impl Walker<'_, '_> {
                     let mut anc = parent;
                     let mut frame = None;
                     while let Some(a) = anc {
-                        if self
-                            .inv
-                            .get(a)
-                            .is_some_and(|q| q.label.as_deref() == Some("ANMF"))
-                        {
+                        if self.inv.get(a).is_some_and(|q| q.label() == Some("ANMF")) {
                             frame = Some(a);
                         }
-                        anc = self.inv.get(a).and_then(|q| q.parent);
+                        anc = self.inv.get(a).and_then(|q| q.parent());
                     }
                     if frame.is_some() && frame != first_anmf {
                         self.inv.set_disposition(id, Disposition::Skipped);
@@ -518,7 +513,7 @@ impl Walker<'_, '_> {
     }
 
     fn append_detail(&mut self, id: PartId, text: &str) {
-        let new = match self.inv.get(id).and_then(|p| p.detail.clone()) {
+        let new = match self.inv.get(id).and_then(|p| p.detail().clone()) {
             Some(old) => format!("{old}; {text}"),
             None => text.to_string(),
         };
@@ -615,10 +610,10 @@ impl Walker<'_, '_> {
         // bytes stay unconsumed, the detail names the reader).
         for id in self.inv.children(None) {
             let Some(p) = self.inv.get(id) else { continue };
-            if p.disposition != Disposition::Trailing || p.range.end - p.range.start < 8 {
+            if p.disposition() != Disposition::Trailing || p.range().end - p.range().start < 8 {
                 continue;
             }
-            let start = p.range.start;
+            let start = p.range().start;
             if extended && start < declared_end + 10 {
                 self.append_detail(
                     id,
@@ -1282,14 +1277,11 @@ impl Walker<'_, '_> {
             );
             for &id in &ids {
                 let Some(p) = self.inv.get(id) else { continue };
-                if p.range.start >= r.end || p.range.end <= r.start {
+                if p.range().start >= r.end || p.range().end <= r.start {
                     continue;
                 }
-                let (pr, consumed, has_body) = (
-                    p.range.clone(),
-                    p.disposition.is_consumed(),
-                    p.body.is_some(),
-                );
+                let (pr, consumed, has_body) =
+                    (p.range(), p.disposition().is_consumed(), p.body().is_some());
                 if !self.inv.children(Some(id)).is_empty() {
                     // Containers: their children carry the bytes; note only when
                     // the container's own header is inside the range.
@@ -1320,16 +1312,16 @@ impl Walker<'_, '_> {
             let mut spans: Vec<Range<u64>> = Vec::new();
             for id in self.inv.children(None) {
                 let Some(p) = self.inv.get(id) else { continue };
-                if p.range.end <= cursor {
+                if p.range().end <= cursor {
                     continue;
                 }
-                if p.range.start >= r.end {
+                if p.range().start >= r.end {
                     break;
                 }
-                if p.range.start > cursor {
-                    spans.push(cursor..p.range.start);
+                if p.range().start > cursor {
+                    spans.push(cursor..p.range().start);
                 }
-                cursor = cursor.max(p.range.end);
+                cursor = cursor.max(p.range().end);
             }
             if cursor < r.end {
                 spans.push(cursor..r.end);

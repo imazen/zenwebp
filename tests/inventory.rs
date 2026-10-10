@@ -161,7 +161,7 @@ fn render(inv: &Inventory) -> String {
     let mut depth = vec![0usize; inv.parts().len()];
     let mut out = String::new();
     for (i, p) in inv.parts().iter().enumerate() {
-        if let Some(parent) = p.parent {
+        if let Some(parent) = p.parent() {
             depth[i] = depth[parent.index()] + 1;
         }
     }
@@ -172,8 +172,8 @@ fn render(inv: &Inventory) -> String {
         let mut cur = Some(i);
         while let Some(c) = cur {
             let p = &inv.parts()[c];
-            chain.push((p.range.start, p.range.end));
-            cur = p.parent.map(|x| x.index());
+            chain.push((p.range().start, p.range().end));
+            cur = p.parent().map(|x| x.index());
         }
         chain.reverse();
         chain
@@ -184,19 +184,19 @@ fn render(inv: &Inventory) -> String {
             out,
             "{}{:?} {} {}..{} {}",
             "  ".repeat(depth[i]),
-            p.kind,
-            match &p.tag {
+            p.kind(),
+            match &p.tag() {
                 PartTag::FourCc(f) => format!("{:?}", String::from_utf8_lossy(f)),
                 other => format!("{other:?}"),
             },
-            p.range.start,
-            p.range.end,
-            p.disposition
+            p.range().start,
+            p.range().end,
+            p.disposition()
         );
-        if let Some(l) = &p.label {
+        if let Some(l) = &p.label() {
             let _ = write!(out, " label={l:?}");
         }
-        if let Some(d) = &p.detail {
+        if let Some(d) = &p.detail() {
             let _ = write!(out, " detail={d:?}");
         }
         out.push('\n');
@@ -208,15 +208,15 @@ fn top_level_chunks(inv: &Inventory) -> Vec<(String, Disposition)> {
     inv.children(None)
         .into_iter()
         .map(|id| inv.get(id).unwrap())
-        .filter(|p| p.kind == PartKind::Chunk)
-        .map(|p| (p.label.as_deref().unwrap_or("").to_string(), p.disposition))
+        .filter(|p| p.kind() == PartKind::Chunk)
+        .map(|p| (p.label().unwrap_or("").to_string(), p.disposition()))
         .collect()
 }
 
 fn find<'a>(inv: &'a Inventory, label: &str) -> Vec<&'a zencodec::inventory::Part> {
     inv.parts()
         .iter()
-        .filter(|p| p.label.as_deref() == Some(label))
+        .filter(|p| p.label() == Some(label))
         .collect()
 }
 
@@ -273,8 +273,8 @@ fn simple_lossy_and_lossless_are_one_image_chunk() {
         let top = top_level_chunks(&inv);
         assert_eq!(top.len(), 1, "{}", inv);
         assert_eq!(top[0].1, Disposition::ImageData);
-        assert_eq!(inv.parts()[0].kind, PartKind::Header);
-        assert_eq!(inv.parts()[0].range, 0..12);
+        assert_eq!(inv.parts()[0].kind(), PartKind::Header);
+        assert_eq!(inv.parts()[0].range(), 0..12);
     }
 }
 
@@ -345,12 +345,12 @@ fn extended_still_dispositions_match_decoder_output() {
     // Unknown chunk: label is the FourCC, detail shows the readable payload start.
     let zen = find(&inv, "ZEN1");
     assert_eq!(zen.len(), 1);
-    assert!(zen[0].detail.as_deref().unwrap().contains("serial=12345"));
+    assert!(zen[0].detail().unwrap().contains("serial=12345"));
     // Trailing junk is the last part and is not consumed.
     let last = inv.children(None).pop().unwrap();
     let last = inv.get(last).unwrap();
-    assert_eq!(last.disposition, Disposition::Trailing);
-    assert_eq!(last.range.end, data.len() as u64);
+    assert_eq!(last.disposition(), Disposition::Trailing);
+    assert_eq!(last.range().end, data.len() as u64);
     zencodec_testkit::check_inventory(WebpDecoderConfig::new(), &data).unwrap();
 }
 
@@ -364,7 +364,7 @@ fn metadata_flags_do_not_gate_the_decoders_metadata_reads() {
     let inv = inventory_of(&data);
     let exif_part = find(&inv, "EXIF")[0];
     assert_eq!(
-        exif_part.disposition,
+        exif_part.disposition(),
         Disposition::Metadata(MetadataKind::Exif)
     );
     let info = WebpDecoderConfig::new().job().probe(&data).unwrap();
@@ -379,7 +379,7 @@ fn alph_is_image_data_only_when_the_decoder_uses_it() {
     let inv = inventory_of(&data);
     // `decode()` still parses ALPH through the demuxer, then drops the channel.
     let alph = find(&inv, "ALPH")[0];
-    assert_eq!(alph.disposition, Disposition::Dropped, "{inv}");
+    assert_eq!(alph.disposition(), Disposition::Dropped, "{inv}");
     let info = WebpDecoderConfig::new().job().probe(&data).unwrap();
     assert!(!info.has_alpha);
 }
@@ -415,43 +415,43 @@ fn animation_frames_header_and_subchunks() {
     let anmf = find(&inv, "ANMF");
     assert_eq!(anmf.len(), 3);
     for a in &anmf {
-        assert_eq!(a.disposition, Disposition::Structure);
-        assert!(a.body.is_some());
+        assert_eq!(a.disposition(), Disposition::Structure);
+        assert!(a.body().is_some());
     }
     let headers: Vec<_> = inv
         .parts()
         .iter()
-        .filter(|p| p.kind == PartKind::Header && p.range.end - p.range.start == 16)
+        .filter(|p| p.kind() == PartKind::Header && p.range().end - p.range().start == 16)
         .collect();
     assert_eq!(headers.len(), 3);
     assert!(
         headers
             .iter()
-            .all(|h| h.disposition == Disposition::Metadata(MetadataKind::Animation))
+            .all(|h| h.disposition() == Disposition::Metadata(MetadataKind::Animation))
     );
     let frames: Vec<_> = inv
         .parts()
         .iter()
-        .filter(|p| p.parent.is_some() && p.label.as_deref() == Some("VP8L"))
+        .filter(|p| p.parent().is_some() && p.label() == Some("VP8L"))
         .collect();
     assert_eq!(frames.len(), 3);
     assert!(
         frames
             .iter()
-            .all(|f| f.disposition == Disposition::ImageData)
+            .all(|f| f.disposition() == Disposition::ImageData)
     );
     // ANIM: background colour is native-only, loop count reaches zencodec.
     let anim = find(&inv, "ANIM")[0];
-    assert_eq!(anim.body.as_ref().map(|b| b.end - b.start), Some(6));
+    assert_eq!(anim.body().as_ref().map(|b| b.end - b.start), Some(6));
     let anim_id = inv
         .children(None)
         .into_iter()
-        .find(|&id| inv.get(id).unwrap().label.as_deref() == Some("ANIM"))
+        .find(|&id| inv.get(id).unwrap().label() == Some("ANIM"))
         .unwrap();
     let kids = inv.children(Some(anim_id));
     let kinds: Vec<_> = kids
         .iter()
-        .map(|&k| inv.get(k).unwrap().disposition)
+        .map(|&k| inv.get(k).unwrap().disposition())
         .collect();
     assert_eq!(
         kinds,
@@ -474,10 +474,10 @@ fn later_anmf_subchunks_are_not_read() {
     let inv = inventory_of(&data);
     let exif = find(&inv, "EXIF");
     assert_eq!(exif.len(), 1);
-    assert_eq!(exif[0].disposition, Disposition::Skipped);
-    assert!(exif[0].parent.is_some());
+    assert_eq!(exif[0].disposition(), Disposition::Skipped);
+    assert!(exif[0].parent().is_some());
     let fprv = find(&inv, "FPRV");
-    assert_eq!(fprv[0].disposition, Disposition::Unknown);
+    assert_eq!(fprv[0].disposition(), Disposition::Unknown);
     zencodec_testkit::check_inventory(WebpDecoderConfig::new(), &data).unwrap();
 }
 
@@ -509,13 +509,13 @@ fn current_behaviour_vp8x_walk_reads_a_chunk_past_the_riff_end() {
     let inv = inventory_of(&data);
     let part = find(&inv, "EXIF")[0];
     assert_eq!(
-        part.disposition,
+        part.disposition(),
         Disposition::Metadata(MetadataKind::Exif),
         "{inv}"
     );
-    assert_eq!(part.range.start, riff_end as u64);
+    assert_eq!(part.range().start, riff_end as u64);
     assert!(
-        part.detail
+        part.detail()
             .as_deref()
             .unwrap()
             .contains("past the RIFF end")
@@ -545,26 +545,23 @@ fn current_behaviour_unknown_chunk_between_anmf_stops_the_frame_chain() {
     assert_eq!(anmf.len(), 3);
     assert!(
         !anmf[0]
-            .detail
+            .detail()
             .as_deref()
             .unwrap_or("")
             .contains("unreachable")
     );
     for later in &anmf[1..] {
-        assert!(
-            later.detail.as_deref().unwrap().contains("unreachable"),
-            "{inv}"
-        );
+        assert!(later.detail().unwrap().contains("unreachable"), "{inv}");
     }
     // Unreachable frames: only the first sub-chunk's header (and the VP8L
     // alpha word) is read; the pixel payload is Skipped.
     let header_only = inv
         .parts()
         .iter()
-        .filter(|p| p.parent.is_some() && p.label.as_deref() == Some("VP8L"))
+        .filter(|p| p.parent().is_some() && p.label() == Some("VP8L"))
         .filter(|p| {
-            p.disposition == Disposition::Structure
-                && p.detail
+            p.disposition() == Disposition::Structure
+                && p.detail()
                     .as_deref()
                     .is_some_and(|d| d.contains("header read by read_data"))
         })
@@ -573,7 +570,7 @@ fn current_behaviour_unknown_chunk_between_anmf_stops_the_frame_chain() {
     let skipped_payload = inv
         .parts()
         .iter()
-        .filter(|p| p.kind == PartKind::Gap && p.disposition == Disposition::Skipped)
+        .filter(|p| p.kind() == PartKind::Gap && p.disposition() == Disposition::Skipped)
         .count();
     assert_eq!(skipped_payload, 2, "{inv}");
 }
@@ -624,7 +621,7 @@ fn malformed_inputs_yield_valid_inventories() {
     let mut padded = good.clone();
     let inv = inventory_of(&good);
     let exif = find(&inv, "EXIF")[0];
-    let pad = exif.range.end as usize - 1;
+    let pad = exif.range().end as usize - 1;
     assert_eq!(padded[pad], 0, "fixture has a zero pad byte to flip");
     padded[pad] = 0x5a;
     cases.push(("non-zero pad", padded.clone()));
@@ -636,10 +633,10 @@ fn malformed_inputs_yield_valid_inventories() {
     let nz: Vec<_> = inv
         .parts()
         .iter()
-        .filter(|p| p.disposition == Disposition::Padding)
+        .filter(|p| p.disposition() == Disposition::Padding)
         .collect();
     assert_eq!(nz.len(), 1, "{inv}");
-    assert!(nz[0].detail.as_deref().unwrap().contains("0x5a"));
+    assert!(nz[0].detail().unwrap().contains("0x5a"));
 }
 
 // ── Pinned part list ────────────────────────────────────────────────────────
@@ -731,8 +728,8 @@ fn current_behaviour_trailing_data_after_a_vp8x_file_fails_the_decode() {
     );
     let inv = inventory_of(&data);
     let last = inv.get(inv.children(None).pop().unwrap()).unwrap();
-    assert_eq!(last.disposition, Disposition::Trailing);
-    assert_eq!(last.range.end, data.len() as u64);
+    assert_eq!(last.disposition(), Disposition::Trailing);
+    assert_eq!(last.range().end, data.len() as u64);
     // The same bytes after a simple-format file are harmless.
     let mut simple = lossless_rgb();
     simple.extend(b"trailing junk, longer than a chunk header");
@@ -769,19 +766,13 @@ fn current_behaviour_odd_sized_anmf_breaks_the_next_frame() {
     let anmf = find(&inv, "ANMF");
     assert!(
         !anmf[0]
-            .detail
+            .detail()
             .as_deref()
             .unwrap_or("")
             .contains("unreachable")
     );
-    assert!(
-        anmf[1].detail.as_deref().unwrap().contains("unreachable"),
-        "{inv}"
-    );
-    assert!(
-        anmf[2].detail.as_deref().unwrap().contains("unreachable"),
-        "{inv}"
-    );
+    assert!(anmf[1].detail().unwrap().contains("unreachable"), "{inv}");
+    assert!(anmf[2].detail().unwrap().contains("unreachable"), "{inv}");
 }
 
 /// Payload of the first sub-chunk in `body` (test-side, well-formed input).
@@ -839,7 +830,7 @@ fn compare_with_exiftool(bin: &str, path: &std::path::Path, data: &[u8]) -> Resu
         .children(None)
         .into_iter()
         .map(|id| inv.get(id).unwrap())
-        .filter(|p| p.kind == PartKind::Chunk)
+        .filter(|p| p.kind() == PartKind::Chunk)
         .collect();
     let theirs = exiftool_chunks(bin, path);
     if ours.len() != theirs.len() {
@@ -850,22 +841,22 @@ fn compare_with_exiftool(bin: &str, path: &std::path::Path, data: &[u8]) -> Resu
         ));
     }
     for (i, (p, (name, size, off))) in ours.iter().zip(&theirs).enumerate() {
-        let label = p.label.as_deref().unwrap_or("");
+        let label = p.label().unwrap_or("");
         if label != name {
             return Err(format!("chunk {i}: exiftool {name:?}, inventory {label:?}"));
         }
-        let span = p.range.end - p.range.start - 8; // payload (+ zero pad)
+        let span = p.range().end - p.range().start - 8; // payload (+ zero pad)
         if !(span == *size || span == *size + 1 && size % 2 == 1) {
             return Err(format!(
                 "chunk {i} {name}: exiftool size {size}, inventory span {span}"
             ));
         }
         if let Some(off) = off
-            && *off != p.range.start + 8
+            && *off != p.range().start + 8
         {
             return Err(format!(
                 "chunk {i} {name}: exiftool payload offset {off}, inventory {}",
-                p.range.start + 8
+                p.range().start + 8
             ));
         }
     }
@@ -1045,11 +1036,11 @@ fn review_f1_duplicate_image_chunks_follow_decode() {
     assert_ne!(zc_pixels(&data), zc_pixels(&a));
     let inv = inventory_of(&data);
     let vp8 = find(&inv, "VP8 ");
-    assert_eq!(vp8[0].disposition, Disposition::Skipped, "{inv}");
-    assert_eq!(vp8[1].disposition, Disposition::ImageData, "{inv}");
+    assert_eq!(vp8[0].disposition(), Disposition::Skipped, "{inv}");
+    assert_eq!(vp8[1].disposition(), Disposition::ImageData, "{inv}");
     assert!(
         vp8[1]
-            .detail
+            .detail()
             .as_deref()
             .unwrap()
             .contains("native WebPDecoder would use the first")
@@ -1072,8 +1063,8 @@ fn review_f1_duplicate_image_chunks_follow_decode() {
     assert_eq!(zc_pixels(&two), zc_pixels(&second_only));
     let inv = inventory_of(&two);
     let alph = find(&inv, "ALPH");
-    assert_eq!(alph[0].disposition, Disposition::Skipped, "{inv}");
-    assert!(alph[1].disposition.is_consumed(), "{inv}");
+    assert_eq!(alph[0].disposition(), Disposition::Skipped, "{inv}");
+    assert!(alph[1].disposition().is_consumed(), "{inv}");
 
     // [VP8L, VP8 ]: the native decoder rejects the file, the demuxer path decodes the VP8.
     let ll = chunk_payload(&chunks_of(&lossless_rgb()), b"VP8L");
@@ -1086,12 +1077,12 @@ fn review_f1_duplicate_image_chunks_follow_decode() {
     assert!(WebpDecoderConfig::new().decode(&mixed).is_ok());
     let inv = inventory_of(&mixed);
     assert_eq!(
-        find(&inv, "VP8L")[0].disposition,
+        find(&inv, "VP8L")[0].disposition(),
         Disposition::Skipped,
         "{inv}"
     );
     assert_eq!(
-        find(&inv, "VP8 ")[0].disposition,
+        find(&inv, "VP8 ")[0].disposition(),
         Disposition::ImageData,
         "{inv}"
     );
@@ -1138,30 +1129,30 @@ fn review_f2_trailing_bytes_drop_metadata_in_decode() {
     );
     let inv = inventory_of(&data);
     assert_eq!(
-        find(&inv, "EXIF")[0].disposition,
+        find(&inv, "EXIF")[0].disposition(),
         Disposition::Dropped,
         "{inv}"
     );
     assert_eq!(
-        find(&inv, "XMP ")[0].disposition,
+        find(&inv, "XMP ")[0].disposition(),
         Disposition::Dropped,
         "{inv}"
     );
     // The ICCP: dropped from ImageInfo, still exposed through WebPProbe.
     assert_eq!(
-        find(&inv, "ICCP")[0].disposition,
+        find(&inv, "ICCP")[0].disposition(),
         Disposition::Metadata(MetadataKind::Icc)
     );
     assert!(
         inv.get(inv.children(None)[0])
             .unwrap()
-            .detail
+            .detail()
             .as_deref()
             .unwrap()
             .contains("probe() fails")
     );
     let last = inv.get(inv.children(None).pop().unwrap()).unwrap();
-    assert_eq!(last.disposition, Disposition::Trailing);
+    assert_eq!(last.disposition(), Disposition::Trailing);
 }
 
 /// Review F3: `detect::probe` (source_encoding_details) reads chunks the decoder skips.
@@ -1185,12 +1176,12 @@ fn review_f3_probe_view_of_skipped_chunks() {
         let inv = inventory_of(&data);
         let part = find(&inv, "ICCP")[0];
         assert_eq!(
-            part.disposition,
+            part.disposition(),
             Disposition::Metadata(MetadataKind::Icc),
             "{inv}"
         );
         assert!(
-            part.detail
+            part.detail()
                 .as_deref()
                 .unwrap()
                 .contains("source_encoding_details")
@@ -1218,15 +1209,15 @@ fn review_f3_probe_view_of_skipped_chunks() {
     let inv = inventory_of(&data);
     let iccs = find(&inv, "ICCP");
     assert_eq!(
-        iccs[0].disposition,
+        iccs[0].disposition(),
         Disposition::Metadata(MetadataKind::Icc)
     );
     assert_eq!(
-        iccs[1].disposition,
+        iccs[1].disposition(),
         Disposition::Metadata(MetadataKind::Icc),
         "{inv}"
     );
-    assert!(iccs[1].detail.as_deref().unwrap().contains("duplicate"));
+    assert!(iccs[1].detail().unwrap().contains("duplicate"));
     // (c) a second VP8X feeds WebPProbe's size and alpha.
     let data = riff(&[
         (*b"VP8X", vp8x_still(16, 16, 0)),
@@ -1238,7 +1229,7 @@ fn review_f3_probe_view_of_skipped_chunks() {
     let inv = inventory_of(&data);
     assert!(
         find(&inv, "VP8X")[1]
-            .detail
+            .detail()
             .as_deref()
             .unwrap()
             .contains("WebPProbe")
@@ -1256,8 +1247,8 @@ fn review_f3_probe_view_of_skipped_chunks() {
     let data = riff(&chunks);
     let inv = inventory_of(&data);
     let vp8 = find(&inv, "VP8 ")[0];
-    assert_eq!(vp8.disposition, Disposition::Skipped);
-    assert!(vp8.detail.as_deref().unwrap().contains("WebPProbe quality"));
+    assert_eq!(vp8.disposition(), Disposition::Skipped);
+    assert!(vp8.detail().unwrap().contains("WebPProbe quality"));
 }
 
 fn set_vp8l_alpha_bit(anmf: &mut [u8], on: bool) {
@@ -1312,36 +1303,36 @@ fn review_f4_unreachable_frame_bytes_that_the_decoder_reads() {
     let headers: Vec<_> = inv
         .parts()
         .iter()
-        .filter(|p| p.kind == PartKind::Header && p.range.end - p.range.start == 16)
+        .filter(|p| p.kind() == PartKind::Header && p.range().end - p.range().start == 16)
         .collect();
     assert_eq!(headers.len(), 3);
     assert!(
         headers
             .iter()
-            .all(|h| h.disposition == Disposition::Metadata(MetadataKind::Animation))
+            .all(|h| h.disposition() == Disposition::Metadata(MetadataKind::Animation))
     );
     // Frame 3's VP8L: header and the alpha word are Structure; the pixels are Skipped.
     let vp8l = find(&inv, "VP8L")
         .into_iter()
-        .filter(|p| p.parent.is_some())
+        .filter(|p| p.parent().is_some())
         .nth(2)
         .unwrap();
-    assert_eq!(vp8l.disposition, Disposition::Structure, "{inv}");
+    assert_eq!(vp8l.disposition(), Disposition::Structure, "{inv}");
     let word = inv
         .parts()
         .iter()
         .find(|p| {
-            matches!(&p.tag, PartTag::Name(n) if n == "alpha_is_used header")
-                && p.range.start == vp8l.range.start + 8
+            matches!(&p.tag(), PartTag::Name(n) if n == "alpha_is_used header")
+                && p.range().start == vp8l.range().start + 8
         })
         .expect("alpha_is_used field of frame 3");
-    assert_eq!(word.disposition, Disposition::Structure);
-    assert_eq!(word.range.start, vp8l.range.start + 8);
-    assert_eq!(word.range.end, vp8l.range.start + 13);
+    assert_eq!(word.disposition(), Disposition::Structure);
+    assert_eq!(word.range().start, vp8l.range().start + 8);
+    assert_eq!(word.range().end, vp8l.range().start + 13);
     assert!(
         inv.parts()
             .iter()
-            .any(|p| p.kind == PartKind::Gap && p.disposition == Disposition::Skipped)
+            .any(|p| p.kind() == PartKind::Gap && p.disposition() == Disposition::Skipped)
     );
 }
 
@@ -1375,7 +1366,7 @@ fn review_f5_metadata_in_first_anmf_reaches_image_info() {
             let inv = inventory_of(&data);
             let part = find(&inv, std::str::from_utf8(&fourcc).unwrap())[0];
             assert!(
-                matches!(part.disposition, Disposition::Metadata(_)),
+                matches!(part.disposition(), Disposition::Metadata(_)),
                 "{} v{variant}: {inv}",
                 String::from_utf8_lossy(&fourcc)
             );
@@ -1401,7 +1392,7 @@ fn review_f6_rejected_files_report_nothing_consumed() {
     assert!(consumed.is_empty(), "{consumed:?}\n{inv}");
     assert!(
         inv.parts()[0]
-            .detail
+            .detail()
             .as_deref()
             .unwrap()
             .contains("decoder rejects")
@@ -1417,11 +1408,11 @@ fn review_f6_rejected_files_report_nothing_consumed() {
     assert!(WebpDecoderConfig::new().decode(&data).is_err());
     let inv = inventory_of(&data);
     assert_eq!(
-        find(&inv, "ICCP")[0].disposition,
+        find(&inv, "ICCP")[0].disposition(),
         Disposition::Skipped,
         "{inv}"
     );
-    assert!(!find(&inv, "VP8L")[0].disposition.is_consumed());
+    assert!(!find(&inv, "VP8L")[0].disposition().is_consumed());
 
     // (c) the same flag error on a LOSSY still still decodes (demuxer path), without metadata.
     let vp8 = chunk_payload(&chunks_of(&lossy_seed(32, 24, 0)), b"VP8 ");
@@ -1435,12 +1426,12 @@ fn review_f6_rejected_files_report_nothing_consumed() {
     assert!(out.info().source_color.icc_profile.is_none());
     let inv = inventory_of(&data);
     assert_eq!(
-        find(&inv, "VP8 ")[0].disposition,
+        find(&inv, "VP8 ")[0].disposition(),
         Disposition::ImageData,
         "{inv}"
     );
     assert_eq!(
-        find(&inv, "ICCP")[0].disposition,
+        find(&inv, "ICCP")[0].disposition(),
         Disposition::Metadata(MetadataKind::Icc)
     );
 }
@@ -1454,9 +1445,9 @@ fn review_f7_truncated_header_inside_a_vp8x_riff() {
     let exif_at = full.windows(4).rposition(|w| w == b"EXIF").unwrap();
     let inv = inventory_of(&full[..exif_at + 3]);
     let last = inv.get(inv.children(None).pop().unwrap()).unwrap();
-    assert_eq!(last.disposition, Disposition::Malformed, "{inv}");
+    assert_eq!(last.disposition(), Disposition::Malformed, "{inv}");
     assert!(
-        last.detail
+        last.detail()
             .as_deref()
             .unwrap()
             .contains("truncated chunk header")
@@ -1479,15 +1470,15 @@ fn review_f8_short_vp8x_is_parsed_by_the_decoder() {
     assert!(out.info().has_alpha);
     let inv = inventory_of(&data);
     let vp8x = find(&inv, "VP8X")[0];
-    assert_eq!(vp8x.disposition, Disposition::Structure, "{inv}");
-    assert!(vp8x.detail.as_deref().unwrap().contains("decoder reads 10"));
+    assert_eq!(vp8x.disposition(), Disposition::Structure, "{inv}");
+    assert!(vp8x.detail().unwrap().contains("decoder reads 10"));
     assert_eq!(
-        find(&inv, "ALPH")[0].disposition,
+        find(&inv, "ALPH")[0].disposition(),
         Disposition::ImageData,
         "{inv}"
     );
     assert_eq!(
-        find(&inv, "VP8 ")[0].disposition,
+        find(&inv, "VP8 ")[0].disposition(),
         Disposition::ImageData,
         "{inv}"
     );
@@ -1533,9 +1524,9 @@ fn review_f9_chunk_after_alph_is_decoded_as_vp8() {
     assert_eq!(renamed[0].data, orig[0].data, "decoded identically");
     let inv = inventory_of(&data);
     let zz = find(&inv, "ZZZZ")[0];
-    assert_eq!(zz.disposition, Disposition::ImageData, "{inv}");
+    assert_eq!(zz.disposition(), Disposition::ImageData, "{inv}");
     assert!(
-        zz.detail
+        zz.detail()
             .as_deref()
             .unwrap()
             .contains("whatever its FourCC")
@@ -1550,11 +1541,11 @@ fn review_f10_reserved_bytes_and_alpha_slack() {
     let reserved: Vec<_> = inv
         .parts()
         .iter()
-        .filter(|p| matches!(&p.tag, PartTag::Name(n) if n == "reserved"))
+        .filter(|p| matches!(&p.tag(), PartTag::Name(n) if n == "reserved"))
         .collect();
     assert_eq!(reserved.len(), 1);
-    assert_eq!(reserved[0].disposition, Disposition::Dropped);
-    assert_eq!(reserved[0].range, 21..24);
+    assert_eq!(reserved[0].disposition(), Disposition::Dropped);
+    assert_eq!(reserved[0].range(), 21..24);
 
     // Uncompressed ALPH (compression 0) with 9 bytes past width*height.
     let base = chunks_of(&lossy_alpha_seed(8, 8, 4));
@@ -1580,16 +1571,16 @@ fn review_f10_reserved_bytes_and_alpha_slack() {
     let plane = inv
         .parts()
         .iter()
-        .find(|p| matches!(&p.tag, PartTag::Name(n) if n == "alpha plane"))
+        .find(|p| matches!(&p.tag(), PartTag::Name(n) if n == "alpha plane"))
         .expect("alpha plane child");
-    assert_eq!(plane.disposition, Disposition::ImageData);
-    assert_eq!(plane.range.end - plane.range.start, 65);
+    assert_eq!(plane.disposition(), Disposition::ImageData);
+    assert_eq!(plane.range().end - plane.range().start, 65);
     let tail = inv
         .parts()
         .iter()
-        .find(|p| p.kind == PartKind::Gap && p.disposition == Disposition::Unreferenced)
+        .find(|p| p.kind() == PartKind::Gap && p.disposition() == Disposition::Unreferenced)
         .expect("slack gap");
-    assert_eq!(tail.range.end - tail.range.start, 10);
+    assert_eq!(tail.range().end - tail.range().start, 10);
 }
 
 // ── Review round 2 ──────────────────────────────────────────────────────────
@@ -1655,20 +1646,20 @@ fn review2_r8_default_limits_are_modelled() {
     assert!(out.info().source_color.icc_profile.is_none());
     let inv = inventory_of(&data);
     assert_eq!(
-        find(&inv, "EXIF")[0].disposition,
+        find(&inv, "EXIF")[0].disposition(),
         Disposition::Dropped,
         "{inv}"
     );
     assert!(
         first_top_part(&inv)
-            .detail
+            .detail()
             .as_deref()
             .unwrap()
             .contains("total pixels")
     );
     // ICCP stays reachable through WebPProbe, and says so.
     assert_eq!(
-        find(&inv, "ICCP")[0].disposition,
+        find(&inv, "ICCP")[0].disposition(),
         Disposition::Metadata(MetadataKind::Icc)
     );
 
@@ -1685,14 +1676,14 @@ fn review2_r8_default_limits_are_modelled() {
     let inv = inventory_of(&data);
     assert!(
         first_top_part(&inv)
-            .detail
+            .detail()
             .as_deref()
             .unwrap()
             .contains("frame count 10001")
     );
     assert!(
         !inv.parts().iter().any(|p| matches!(
-            p.disposition,
+            p.disposition(),
             Disposition::ImageData | Disposition::Metadata(_)
         )),
         "a rejected file consumes nothing"
@@ -1710,7 +1701,7 @@ fn review2_r8_default_limits_are_modelled() {
     ]);
     assert!(WebpDecoderConfig::new().decode(&data).is_err());
     let inv = inventory_of(&data);
-    assert!(!find(&inv, "EXIF")[0].disposition.is_consumed(), "{inv}");
+    assert!(!find(&inv, "EXIF")[0].disposition().is_consumed(), "{inv}");
 
     // (d) simple VP8L whose header declares 16384x16384 (268 MP).
     let mut ll = lossless_rgba_vp8l(8, 8, 1);
@@ -1721,9 +1712,9 @@ fn review2_r8_default_limits_are_modelled() {
     assert!(WebpDecoderConfig::new().decode(&data).is_err());
     let inv = inventory_of(&data);
     let image = find(&inv, "VP8L")[0];
-    assert_eq!(image.disposition, Disposition::Malformed, "{inv}");
-    assert!(image.detail.as_deref().unwrap().contains("exceeds limit"));
-    assert!(!find(&inv, "ICCP")[0].disposition.is_consumed());
+    assert_eq!(image.disposition(), Disposition::Malformed, "{inv}");
+    assert!(image.detail().unwrap().contains("exceeds limit"));
+    assert!(!find(&inv, "ICCP")[0].disposition().is_consumed());
 }
 
 /// R1: an ANMF in a non-animated file still feeds the first-ANMF scan.
@@ -1756,15 +1747,15 @@ fn review2_r1_anmf_in_a_still_files_metadata() {
     let inv = inventory_of(&data);
     let iccp = find(&inv, "ICCP")[0];
     assert_eq!(
-        iccp.disposition,
+        iccp.disposition(),
         Disposition::Metadata(MetadataKind::Icc),
         "{inv}"
     );
-    assert!(iccp.parent.is_some());
+    assert!(iccp.parent().is_some());
     let anmf = find(&inv, "ANMF")[0];
-    assert_eq!(anmf.disposition, Disposition::Skipped);
+    assert_eq!(anmf.disposition(), Disposition::Skipped);
     assert!(
-        anmf.detail
+        anmf.detail()
             .as_deref()
             .unwrap()
             .contains("animation flag is clear")
@@ -1772,9 +1763,9 @@ fn review2_r1_anmf_in_a_still_files_metadata() {
     let header = inv
         .parts()
         .iter()
-        .find(|p| p.kind == PartKind::Header && p.range.end - p.range.start == 16)
+        .find(|p| p.kind() == PartKind::Header && p.range().end - p.range().start == 16)
         .unwrap();
-    assert_eq!(header.disposition, Disposition::Dropped);
+    assert_eq!(header.disposition(), Disposition::Dropped);
 }
 
 /// R2: the first-ANMF scan's misread can file another chunk's payload.
@@ -1796,12 +1787,12 @@ fn review2_r2_misread_header_files_another_chunks_payload() {
     let inv = inventory_of(&data);
     let zen2 = find(&inv, "ZEN2")[0];
     assert_eq!(
-        zen2.disposition,
+        zen2.disposition(),
         Disposition::Metadata(MetadataKind::Xmp),
         "{inv}"
     );
     assert!(
-        zen2.detail
+        zen2.detail()
             .as_deref()
             .unwrap()
             .contains("misreads a header")
@@ -1831,7 +1822,7 @@ fn review2_r2_misread_header_files_another_chunks_payload() {
         assert!(
             inv.parts()
                 .iter()
-                .any(|p| p.disposition == Disposition::Metadata(MetadataKind::Xmp)),
+                .any(|p| p.disposition() == Disposition::Metadata(MetadataKind::Xmp)),
             "{x:?}\n{inv}"
         );
     }
@@ -1849,7 +1840,7 @@ fn review2_r3_alph_is_dropped_when_from_webp_fails() {
     let clean = WebpDecoderConfig::new().decode(&data).unwrap();
     assert!(clean.has_alpha());
     assert_eq!(
-        find(&inventory_of(&data), "ALPH")[0].disposition,
+        find(&inventory_of(&data), "ALPH")[0].disposition(),
         Disposition::ImageData
     );
     data.extend(b"trailing junk, longer than a chunk header");
@@ -1860,8 +1851,8 @@ fn review2_r3_alph_is_dropped_when_from_webp_fails() {
     );
     let inv = inventory_of(&data);
     let alph = find(&inv, "ALPH")[0];
-    assert_eq!(alph.disposition, Disposition::Dropped, "{inv}");
-    assert!(alph.detail.as_deref().unwrap().contains("outputs RGB"));
+    assert_eq!(alph.disposition(), Disposition::Dropped, "{inv}");
+    assert!(alph.detail().unwrap().contains("outputs RGB"));
 }
 
 fn lossless_anim_with_trailing_vp8() -> Vec<u8> {
@@ -1895,10 +1886,10 @@ fn review2_r4_probe_icc_not_claimed_when_detect_probe_fails() {
     let inv = inventory_of(&data);
     let iccs = find(&inv, "ICCP");
     assert_eq!(
-        iccs[0].disposition,
+        iccs[0].disposition(),
         Disposition::Metadata(MetadataKind::Icc)
     );
-    assert_eq!(iccs[1].disposition, Disposition::Skipped, "{inv}");
+    assert_eq!(iccs[1].disposition(), Disposition::Skipped, "{inv}");
 
     // A VP8 whose uncompressed header detect::probe rejects: no WebPProbe either.
     let mut vp8 = chunk_payload(&chunks_of(&lossy_seed(16, 16, 2)), b"VP8 ");
@@ -1912,7 +1903,7 @@ fn review2_r4_probe_icc_not_claimed_when_detect_probe_fails() {
     assert!(zenwebp::detect::probe(&data).is_err());
     let inv = inventory_of(&data);
     assert!(!inv.parts().iter().any(|p| {
-        p.detail
+        p.detail()
             .as_deref()
             .is_some_and(|d| d.contains("reported through source_encoding_details"))
     }));
@@ -1929,12 +1920,12 @@ fn review2_r5_probe_bitstream_owner_in_file_order() {
     let inv = inventory_of(&data);
     let vp8 = find(&inv, "VP8 ")[0];
     assert!(
-        !vp8.detail.as_deref().unwrap().contains("WebPProbe quality"),
+        !vp8.detail().unwrap().contains("WebPProbe quality"),
         "{inv}"
     );
     let anmf = find(&inv, "ANMF")[0];
     assert!(
-        anmf.detail
+        anmf.detail()
             .as_deref()
             .unwrap()
             .contains("WebPProbe quality/lossless"),
@@ -1953,7 +1944,7 @@ fn review2_r5_probe_bitstream_owner_in_file_order() {
     let inv = inventory_of(&riff(&chunks));
     assert!(
         find(&inv, "VP8 ")[0]
-            .detail
+            .detail()
             .as_deref()
             .unwrap()
             .contains("WebPProbe quality")
@@ -1983,12 +1974,12 @@ fn review2_r7_truncated_final_iccp_is_still_metadata() {
         let inv = inventory_of(&data);
         let iccp = find(&inv, "ICCP")[0];
         assert_eq!(
-            iccp.disposition,
+            iccp.disposition(),
             Disposition::Metadata(MetadataKind::Icc),
             "{inv}"
         );
         assert!(
-            iccp.detail
+            iccp.detail()
                 .as_deref()
                 .unwrap()
                 .contains("only 7 are present")
@@ -2022,12 +2013,12 @@ fn review2_r9_simple_file_header_checks() {
         assert!(WebpDecoderConfig::new().decode(&data).is_err(), "{name}");
         let inv = inventory_of(&data);
         assert_eq!(
-            find(&inv, "VP8 ")[0].disposition,
+            find(&inv, "VP8 ")[0].disposition(),
             Disposition::Malformed,
             "{name}\n{inv}"
         );
         assert!(
-            !find(&inv, "ICCP")[0].disposition.is_consumed(),
+            !find(&inv, "ICCP")[0].disposition().is_consumed(),
             "{name}\n{inv}"
         );
     }
@@ -2036,7 +2027,7 @@ fn review2_r9_simple_file_header_checks() {
     let data = riff(&[(*b"VP8L", ll)]);
     assert!(WebpDecoderConfig::new().decode(&data).is_err());
     assert_eq!(
-        find(&inventory_of(&data), "VP8L")[0].disposition,
+        find(&inventory_of(&data), "VP8L")[0].disposition(),
         Disposition::Malformed
     );
 }
@@ -2089,7 +2080,7 @@ fn review3_n1_truncated_last_chunk_is_image_data_with_a_conditional_note() {
         let inv = inventory_of(&data);
         assert!(
             !inv.parts()[0]
-                .detail
+                .detail()
                 .as_deref()
                 .unwrap()
                 .contains("decoder rejects"),
@@ -2099,16 +2090,16 @@ fn review3_n1_truncated_last_chunk_is_image_data_with_a_conditional_note() {
         let part = find(&inv, l).into_iter().next_back().unwrap();
         // ALPH is decoded then dropped here: from_webp fails, so the output is RGB.
         assert!(
-            part.disposition.is_consumed() || part.disposition == Disposition::Dropped,
+            part.disposition().is_consumed() || part.disposition() == Disposition::Dropped,
             "{name}\n{inv}"
         );
-        let d = part.detail.as_deref().unwrap();
+        let d = part.detail().unwrap();
         assert!(
             d.contains("only") && d.contains("else it falls back to WebPDecoder"),
             "{name}: {d}"
         );
         assert_eq!(
-            find(&inv, "ICCP")[0].disposition,
+            find(&inv, "ICCP")[0].disposition(),
             Disposition::Metadata(MetadataKind::Icc)
         );
     }
@@ -2125,9 +2116,9 @@ fn review3_n1_truncated_last_chunk_is_image_data_with_a_conditional_note() {
     assert!(WebpDecoderConfig::new().decode(&data).is_err());
     let inv = inventory_of(&data);
     let last = find(&inv, "VP8 ").into_iter().next_back().unwrap();
-    assert_eq!(last.disposition, Disposition::ImageData, "{inv}");
+    assert_eq!(last.disposition(), Disposition::ImageData, "{inv}");
     assert!(
-        last.detail
+        last.detail()
             .as_deref()
             .unwrap()
             .contains("when they suffice")
@@ -2141,7 +2132,7 @@ fn review3_n1_truncated_last_chunk_is_image_data_with_a_conditional_note() {
     assert!(WebpDecoderConfig::new().decode(&simple).is_ok());
     let inv = inventory_of(&simple);
     assert_eq!(
-        find(&inv, "VP8 ")[0].disposition,
+        find(&inv, "VP8 ")[0].disposition(),
         Disposition::ImageData,
         "{inv}"
     );
@@ -2149,7 +2140,7 @@ fn review3_n1_truncated_last_chunk_is_image_data_with_a_conditional_note() {
     simple_ll.truncate(simple_ll.len() - 2);
     assert!(WebpDecoderConfig::new().decode(&simple_ll).is_err());
     assert_eq!(
-        find(&inventory_of(&simple_ll), "VP8L")[0].disposition,
+        find(&inventory_of(&simple_ll), "VP8L")[0].disposition(),
         Disposition::Malformed
     );
 }
@@ -2162,11 +2153,11 @@ fn review2_f10_details() {
     let frame = inv
         .parts()
         .iter()
-        .find(|p| p.parent.is_some() && p.label.as_deref() == Some("VP8L"))
+        .find(|p| p.parent().is_some() && p.label() == Some("VP8L"))
         .unwrap();
     assert!(
         frame
-            .detail
+            .detail()
             .as_deref()
             .unwrap()
             .contains("not distinguished")
@@ -2174,7 +2165,7 @@ fn review2_f10_details() {
     let inv = inventory_of(&lossy_alpha_animation());
     let alph = find(&inv, "ALPH")[0];
     assert!(
-        alph.detail
+        alph.detail()
             .as_deref()
             .unwrap()
             .contains("not distinguished")
@@ -2189,7 +2180,7 @@ fn review2_f10_details() {
         (*b"VP8 ", chunk_payload(&base, b"VP8 ")),
     ]);
     let alph = find(&inventory_of(&data), "ALPH")[0].clone();
-    let d = alph.detail.as_deref().unwrap();
+    let d = alph.detail().unwrap();
     assert!(
         d.contains("no bytes after it") && !d.contains("; compressed alpha"),
         "{d}"
@@ -2213,13 +2204,13 @@ fn review2_r8_canvas_product_overflow() {
     let inv = inventory_of(&data);
     assert!(
         first_top_part(&inv)
-            .detail
+            .detail()
             .as_deref()
             .unwrap()
             .contains("probe() fails here")
     );
     assert_eq!(
-        find(&inv, "EXIF")[0].disposition,
+        find(&inv, "EXIF")[0].disposition(),
         Disposition::Dropped,
         "{inv}"
     );
@@ -2238,7 +2229,7 @@ fn review3_n2_first_partition_under_two_bytes() {
     assert!(zenwebp::detect::probe(&simple).is_err());
     let inv = inventory_of(&simple);
     assert_eq!(
-        find(&inv, "ICCP")[0].disposition,
+        find(&inv, "ICCP")[0].disposition(),
         Disposition::Skipped,
         "{inv}"
     );
@@ -2256,7 +2247,7 @@ fn review3_n2_first_partition_under_two_bytes() {
     assert!(WebpDecoderConfig::new().decode(&data).is_ok());
     let inv = inventory_of(&data);
     let iccs = find(&inv, "ICCP");
-    assert_eq!(iccs[1].disposition, Disposition::Skipped, "{inv}");
+    assert_eq!(iccs[1].disposition(), Disposition::Skipped, "{inv}");
 }
 
 /// Round 3 N3: a first-ANMF scan range that leaves the ANMF reaches `ImageInfo`
@@ -2300,11 +2291,11 @@ fn review3_n3_misread_range_leaves_the_anmf() {
     let inv = inventory_of(&data);
     let zen3 = find(&inv, "ZEN3")[0];
     assert_eq!(
-        zen3.disposition,
+        zen3.disposition(),
         Disposition::Metadata(MetadataKind::Xmp),
         "{inv}"
     );
-    assert!(zen3.detail.as_deref().unwrap().contains("first-ANMF scan"));
+    assert!(zen3.detail().unwrap().contains("first-ANMF scan"));
 
     // (b) the range runs past the RIFF end into trailing bytes.
     // Trailing bytes that parse as a whole chunk, so the decoder's walk (which
@@ -2326,14 +2317,14 @@ fn review3_n3_misread_range_leaves_the_anmf() {
     let span = inv
         .parts()
         .iter()
-        .find(|p| matches!(&p.tag, PartTag::Name(n) if n == "first-ANMF scan range"))
+        .find(|p| matches!(&p.tag(), PartTag::Name(n) if n == "first-ANMF scan range"))
         .expect("a top-level part over the trailing bytes");
-    assert_eq!(span.disposition, Disposition::Metadata(MetadataKind::Xmp));
-    assert_eq!(span.range, riff_end..riff_end + 20);
+    assert_eq!(span.disposition(), Disposition::Metadata(MetadataKind::Xmp));
+    assert_eq!(span.range(), riff_end..riff_end + 20);
     assert!(
         inv.parts()
             .iter()
-            .any(|p| p.disposition == Disposition::Trailing)
+            .any(|p| p.disposition() == Disposition::Trailing)
     );
 }
 
@@ -2393,21 +2384,21 @@ fn review4_q1_job_settings() {
     let inv = job().inventory(&data).unwrap().unwrap();
     inv.validate().unwrap();
     assert_eq!(
-        find(&inv, "EXIF")[0].disposition,
+        find(&inv, "EXIF")[0].disposition(),
         Disposition::Dropped,
         "{inv}"
     );
-    assert_eq!(find(&inv, "XMP ")[0].disposition, Disposition::Dropped);
+    assert_eq!(find(&inv, "XMP ")[0].disposition(), Disposition::Dropped);
     assert!(
         find(&inv, "EXIF")[0]
-            .detail
+            .detail()
             .as_deref()
             .unwrap()
             .contains("DecodePolicy strips it")
     );
     let iccp = find(&inv, "ICCP")[0];
-    assert_eq!(iccp.disposition, Disposition::Metadata(MetadataKind::Icc));
-    assert!(iccp.detail.as_deref().unwrap().contains("WebPProbe"));
+    assert_eq!(iccp.disposition(), Disposition::Metadata(MetadataKind::Icc));
+    assert!(iccp.detail().unwrap().contains("WebPProbe"));
 
     // (b) animation denied: decode() returns frame 1, the animation decoder refuses.
     let anim = animation();
@@ -2427,8 +2418,8 @@ fn review4_q1_job_settings() {
     let frames: Vec<_> = inv
         .parts()
         .iter()
-        .filter(|p| p.parent.is_some() && p.label.as_deref() == Some("VP8L"))
-        .map(|p| p.disposition)
+        .filter(|p| p.parent().is_some() && p.label() == Some("VP8L"))
+        .map(|p| p.disposition())
         .collect();
     assert_eq!(
         frames,
@@ -2442,9 +2433,9 @@ fn review4_q1_job_settings() {
     let loop_count = inv
         .parts()
         .iter()
-        .find(|p| matches!(&p.tag, PartTag::Name(n) if n == "loop_count"))
+        .find(|p| matches!(&p.tag(), PartTag::Name(n) if n == "loop_count"))
         .unwrap();
-    assert_eq!(loop_count.disposition, Disposition::Dropped);
+    assert_eq!(loop_count.disposition(), Disposition::Dropped);
 
     // (c) max_input_bytes: the same error as decode().
     let job = || {
@@ -2467,10 +2458,10 @@ fn review4_q1_job_settings() {
     let inv = job().inventory(&data).unwrap().unwrap();
     inv.validate().unwrap();
     let vp8 = find(&inv, "VP8 ")[0];
-    assert_eq!(vp8.disposition, Disposition::Skipped, "{inv}");
-    assert!(vp8.detail.as_deref().unwrap().contains("job's limits"));
+    assert_eq!(vp8.disposition(), Disposition::Skipped, "{inv}");
+    assert!(vp8.detail().unwrap().contains("job's limits"));
     assert_eq!(
-        find(&inv, "EXIF")[0].disposition,
+        find(&inv, "EXIF")[0].disposition(),
         Disposition::Metadata(MetadataKind::Exif)
     );
     // ...and max_frames on an animation.
@@ -2484,7 +2475,7 @@ fn review4_q1_job_settings() {
     assert!(
         !inv.parts()
             .iter()
-            .any(|p| p.disposition == Disposition::ImageData),
+            .any(|p| p.disposition() == Disposition::ImageData),
         "{inv}"
     );
 
@@ -2517,7 +2508,7 @@ fn field_children<'a>(
     inv.parts()
         .iter()
         .filter(|p| {
-            p.parent
+            p.parent()
                 .and_then(|q| inv.get(q))
                 .is_some_and(|q| std::ptr::eq(q, parent))
         })
@@ -2541,13 +2532,16 @@ fn review4_q2_icc_and_xmp_tails() {
     let iccp = find(&inv, "ICCP")[0];
     let kids = field_children(&inv, iccp);
     assert_eq!(kids.len(), 2, "{inv}");
-    assert_eq!(kids[0].range.end - kids[0].range.start, 132);
-    assert_eq!(kids[1].range.end - kids[1].range.start, tail.len() as u64);
+    assert_eq!(kids[0].range().end - kids[0].range().start, 132);
+    assert_eq!(
+        kids[1].range().end - kids[1].range().start,
+        tail.len() as u64
+    );
     assert!(
         kids.iter()
-            .all(|k| k.disposition == Disposition::Metadata(MetadataKind::Icc))
+            .all(|k| k.disposition() == Disposition::Metadata(MetadataKind::Icc))
     );
-    assert!(kids[1].detail.as_deref().unwrap().contains("declared size"));
+    assert!(kids[1].detail().unwrap().contains("declared size"));
     let xmpp = find(&inv, "XMP ")[0];
     let kids = field_children(&inv, xmpp);
     assert_eq!(kids.len(), 2, "{inv}");
@@ -2556,10 +2550,13 @@ fn review4_q2_icc_and_xmp_tails() {
             .position(|w| w == b"<?xpacket end=")
             .map(|i| i + xmp[i..].windows(2).position(|w| w == b"?>").unwrap() + 2),
     );
-    assert_eq!(kids[0].range.end - kids[0].range.start, cut.unwrap() as u64);
+    assert_eq!(
+        kids[0].range().end - kids[0].range().start,
+        cut.unwrap() as u64
+    );
     assert!(
         kids.iter()
-            .all(|k| k.disposition == Disposition::Metadata(MetadataKind::Xmp))
+            .all(|k| k.disposition() == Disposition::Metadata(MetadataKind::Xmp))
     );
     // Without a packet wrapper the end is </x:xmpmeta>; EXIF stays whole.
     let bare = b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"></x:xmpmeta>trailing-note".to_vec();
@@ -2573,7 +2570,7 @@ fn review4_q2_icc_and_xmp_tails() {
     let inv = inventory_of(&data);
     let kids = field_children(&inv, find(&inv, "XMP ")[0]);
     assert_eq!(
-        kids[1].range.end - kids[1].range.start,
+        kids[1].range().end - kids[1].range().start,
         b"trailing-note".len() as u64
     );
     assert!(field_children(&inv, find(&inv, "EXIF")[0]).is_empty());
@@ -2607,19 +2604,22 @@ fn review4_q4_partial_cover() {
         let z = find(&inv, "ZEN3")[0];
         if whole {
             assert_eq!(
-                z.disposition,
+                z.disposition(),
                 Disposition::Metadata(MetadataKind::Xmp),
                 "{inv}"
             );
         } else {
-            assert_eq!(z.disposition, Disposition::Unknown, "{inv}");
+            assert_eq!(z.disposition(), Disposition::Unknown, "{inv}");
             let kids = field_children(&inv, z);
             assert_eq!(kids.len(), 1, "{inv}");
             assert_eq!(
-                kids[0].disposition,
+                kids[0].disposition(),
                 Disposition::Metadata(MetadataKind::Xmp)
             );
-            assert_eq!(kids[0].range.end - kids[0].range.start, u64::from(cover));
+            assert_eq!(
+                kids[0].range().end - kids[0].range().start,
+                u64::from(cover)
+            );
         }
     }
 }
@@ -2638,8 +2638,8 @@ fn review4_q3_other_readers() {
     let second = find(&inv, "VP8X")[1];
     let kids = field_children(&inv, second);
     assert_eq!(kids.len(), 1, "{inv}");
-    assert_eq!(kids[0].disposition, Disposition::Structure);
-    assert_eq!(kids[0].range.end - kids[0].range.start, 10);
+    assert_eq!(kids[0].disposition(), Disposition::Structure);
+    assert_eq!(kids[0].range().end - kids[0].range().start, 10);
     // ... also after a simple image.
     let data = riff(&[
         (*b"VP8 ", vp8.clone()),
@@ -2657,8 +2657,8 @@ fn review4_q3_other_readers() {
     data.extend(b"ZZZZ\x04\0\0\0abcd");
     let inv = inventory_of(&data);
     let last = inv.get(inv.children(None).pop().unwrap()).unwrap();
-    assert_eq!(last.disposition, Disposition::Trailing);
-    let d = last.detail.as_deref().unwrap();
+    assert_eq!(last.disposition(), Disposition::Trailing);
+    let d = last.detail().unwrap();
     assert!(
         d.contains("read_data") && d.contains("detect::probe"),
         "{d}"
@@ -2669,11 +2669,11 @@ fn review4_q3_other_readers() {
     ll.truncate(ll.len() - 2);
     let inv = inventory_of(&ll);
     let img = find(&inv, "VP8L")[0];
-    assert_eq!(img.disposition, Disposition::Malformed);
+    assert_eq!(img.disposition(), Disposition::Malformed);
     let kids = field_children(&inv, img);
     assert_eq!(kids.len(), 1, "{inv}");
-    assert_eq!(kids[0].range.end - kids[0].range.start, 5);
-    assert_eq!(kids[0].disposition, Disposition::Structure);
+    assert_eq!(kids[0].range().end - kids[0].range().start, 5);
+    assert_eq!(kids[0].disposition(), Disposition::Structure);
 
     // (g) a simple VP8 chunk shorter than its 10-byte frame header.
     // The chunk declares 5 payload bytes; the frame header continues past it
@@ -2688,7 +2688,7 @@ fn review4_q3_other_readers() {
     let inv = inventory_of(&short);
     assert!(
         find(&inv, "VP8 ")[0]
-            .detail
+            .detail()
             .as_deref()
             .unwrap()
             .contains("10-byte frame header from the file"),
@@ -2708,7 +2708,7 @@ fn review4_q3_other_readers() {
     let alph = find(&inv, "ALPH");
     assert!(
         alph[0]
-            .detail
+            .detail()
             .as_deref()
             .unwrap()
             .contains("falls back to WebPDecoder")
@@ -2717,9 +2717,9 @@ fn review4_q3_other_readers() {
     cleared[20] &= !0x10;
     let inv = inventory_of(&cleared);
     let last = find(&inv, "ALPH").into_iter().next_back().unwrap();
-    assert_eq!(last.disposition, Disposition::Dropped);
+    assert_eq!(last.disposition(), Disposition::Dropped);
     assert!(
-        last.detail
+        last.detail()
             .as_deref()
             .unwrap()
             .contains("a corrupt ALPH makes decode() fail")

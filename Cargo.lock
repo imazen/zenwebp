@@ -2075,7 +2075,7 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.1.27"
-source = "git+https://github.com/imazen/zencodec?branch=feat%2Finventory#b631eb286576df9179facdc0f2bfb2124c55e178"
+source = "git+https://github.com/imazen/zencodec?branch=feat%2Finventory#71b1f8d4d536f3e218f17094b0b001d0db452e0b"
 dependencies = [
  "almost-enough",
  "enough",
@@ -2086,7 +2086,7 @@ dependencies = [
 [[package]]
 name = "zencodec-testkit"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?branch=feat%2Finventory#b631eb286576df9179facdc0f2bfb2124c55e178"
+source = "git+https://github.com/imazen/zencodec?branch=feat%2Finventory#71b1f8d4d536f3e218f17094b0b001d0db452e0b"
 dependencies = [
  "enough",
  "whereat",

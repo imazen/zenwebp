@@ -521,8 +521,8 @@ fn signature(d: &[u8]) -> String {
 /// The bytes of a part an overwrite may touch without changing framing: a
 /// chunk's payload (not its 8-byte header or pad), or a whole gap/field/header.
 fn writable(d: &[u8], p: &Part) -> std::ops::Range<usize> {
-    let (s, e) = (p.range.start as usize, p.range.end as usize);
-    if p.kind == PartKind::Chunk {
+    let (s, e) = (p.range().start as usize, p.range().end as usize);
+    if p.kind() == PartKind::Chunk {
         if s + 8 > d.len() {
             return s..s;
         }
@@ -574,7 +574,7 @@ fn both_directions() {
         *counts.entry("inputs".into()).or_default() += 1;
         let mut has_kids = vec![false; inv.parts().len()];
         for p in inv.parts() {
-            if let Some(q) = p.parent {
+            if let Some(q) = p.parent() {
                 has_kids[q.index()] = true;
             }
         }
@@ -586,10 +586,10 @@ fn both_directions() {
             if w.is_empty() {
                 continue;
             }
-            let consumed = p.disposition.is_consumed();
+            let consumed = p.disposition().is_consumed();
             if consumed
                 && !matches!(
-                    p.disposition,
+                    p.disposition(),
                     Disposition::Metadata(_) | Disposition::ImageData
                 )
             {
@@ -607,7 +607,7 @@ fn both_directions() {
                 *b ^= 0xA5;
             }
             let changed = signature(&d2) != base;
-            let key_detail: String = p.detail.as_deref().unwrap_or("").chars().take(60).collect();
+            let key_detail: String = p.detail().unwrap_or("").chars().take(60).collect();
             let class = format!(
                 "{} {} {:?} [{}]",
                 if consumed {
@@ -615,8 +615,8 @@ fn both_directions() {
                 } else {
                     "D1 unconsumed-changed"
                 },
-                p.disposition,
-                p.label.as_deref().unwrap_or(match p.kind {
+                p.disposition(),
+                p.label().unwrap_or(match p.kind() {
                     PartKind::Gap => "gap",
                     PartKind::Field => "field",
                     PartKind::Header => "header",
@@ -624,10 +624,9 @@ fn both_directions() {
                 }),
                 key_detail
             );
-            let in_anmf = p.parent.is_some_and(|q| {
-                inv.get(q)
-                    .is_some_and(|q| q.label.as_deref() == Some("ANMF"))
-            });
+            let in_anmf = p
+                .parent()
+                .is_some_and(|q| inv.get(q).is_some_and(|q| q.label() == Some("ANMF")));
             let mut class = class;
             if consumed && !any_ok {
                 continue; // nothing reaches the caller either way
@@ -636,24 +635,24 @@ fn both_directions() {
                 continue; // a frame after a failing frame is never decoded (bitstream-level)
             }
             let decode_ok = !base.contains("D[err]");
-            if consumed && p.disposition == Disposition::ImageData && !decode_ok && !anim_ok {
+            if consumed && p.disposition() == Disposition::ImageData && !decode_ok && !anim_ok {
                 continue; // the image is not decoded at all (bitstream-level), so its bytes cannot matter
             }
             if consumed
-                && p.disposition == Disposition::Metadata(MetadataKind::Animation)
+                && p.disposition() == Disposition::Metadata(MetadataKind::Animation)
                 && !anim_ok
             {
                 continue; // animation metadata is only observable through the animation path
             }
-            if consumed && !changed && p.disposition == Disposition::ImageData && demux_fails {
+            if consumed && !changed && p.disposition() == Disposition::ImageData && demux_fails {
                 class = format!(
                     "{class} <demuxer path fails: decode() fell back to WebPDecoder's first chunks>"
                 );
             }
             if !consumed && changed {
-                let det = p.detail.as_deref().unwrap_or("");
-                let sub = if p.kind == PartKind::Gap && p.disposition == Disposition::Trailing {
-                    if p.range.start < riff_end + 10 {
+                let det = p.detail().unwrap_or("");
+                let sub = if p.kind() == PartKind::Gap && p.disposition() == Disposition::Trailing {
+                    if p.range().start < riff_end + 10 {
                         "trailing: inside read_data's 10-byte overrun"
                     } else {
                         "trailing: beyond the overrun (detect::probe walks to EOF)"
@@ -683,7 +682,7 @@ fn both_directions() {
                 .or_default() += 1;
             if violation && !consumed {
                 // Safe direction: allowed only when the detail names the reader.
-                let det = p.detail.as_deref().unwrap_or("");
+                let det = p.detail().unwrap_or("");
                 let named = [
                     "detect::probe",
                     "WebPProbe",
@@ -705,7 +704,8 @@ fn both_directions() {
                     let _ = std::fs::write(out_dir.join(format!("{tag}-{n}.webp")), &d);
                     println!(
                         "CEX {tag}-{n}: part {}..{} :: {class}",
-                        p.range.start, p.range.end
+                        p.range().start,
+                        p.range().end
                     );
                 }
                 *n += 1;
