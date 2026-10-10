@@ -128,8 +128,11 @@ jobs:
         # container, since cross sets WORKDIR=/project and `../zenanalyze`
         # in the manifest resolves to /zenanalyze. Cross 0.2.5 doesn't
         # auto-mount path deps that live outside the repo dir.
+        # CODEC_CORPUS_CACHE: the container's default cache dir is not writable
+        # (codec-corpus fails with PermissionDenied); /tmp is.
         env:
           CROSS_CONTAINER_OPTS: "-v ${{ github.workspace }}/../zenanalyze:/zenanalyze"
+          CODEC_CORPUS_CACHE: /tmp/codec-corpus-cache
         run: cross test --target i686-unknown-linux-gnu
 
   wasm:
