@@ -2382,7 +2382,7 @@ fn review4_q1_job_settings() {
         .with_allow_icc(false)
         .with_allow_exif(false)
         .with_allow_xmp(false);
-    let job = || WebpDecoderConfig::new().job().with_policy(strip.clone());
+    let job = || WebpDecoderConfig::new().job().with_policy(strip);
     let info = job().probe(&data).unwrap();
     assert!(info.source_color.icc_profile.is_none());
     assert!(info.embedded_metadata.exif.is_none() && info.embedded_metadata.xmp.is_none());
