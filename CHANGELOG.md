@@ -27,7 +27,10 @@ earlier history lives in git log and LOG.md.)
   Unknown / Padding / Trailing). Cross-checked against `exiftool -v3`
   (`just inventory-oracle`) and fuzzed (`fuzz/fuzz_targets/inventory.rs`).
   Depends on imazen/zencodec#133; `Cargo.toml` patches zencodec to its
-  `feat/inventory` branch until it is released. (8ea1fddb, fd50b3af)
+  `feat/inventory` branch until it is released. (8ea1fddb, fd50b3af; review round 1 follows `dde499ed`): dispositions follow
+  each zencodec entry point (`decode()` pixels via `WebPDemuxer`, `ImageInfo` via
+  `WebPDecoder`, `source_encoding_details()` via `detect::probe`); decoder divergences are
+  documented in the part details and issue 111
 
 - **Golden codec hashes** (`tests/golden/`): 510 synthetic full-coverage
   cases (11 patterns × 8 sizes from 1×1 to 130×66 × 5 alpha modes × 22

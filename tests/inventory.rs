@@ -377,8 +377,9 @@ fn alph_is_image_data_only_when_the_decoder_uses_it() {
     let (mut data, ..) = everything_still();
     data[20] &= !0x10;
     let inv = inventory_of(&data);
+    // `decode()` still parses ALPH through the demuxer, then drops the channel.
     let alph = find(&inv, "ALPH")[0];
-    assert_eq!(alph.disposition, Disposition::Skipped, "{inv}");
+    assert_eq!(alph.disposition, Disposition::Dropped, "{inv}");
     let info = WebpDecoderConfig::new().job().probe(&data).unwrap();
     assert!(!info.has_alpha);
 }
@@ -555,13 +556,26 @@ fn current_behaviour_unknown_chunk_between_anmf_stops_the_frame_chain() {
             "{inv}"
         );
     }
-    let skipped_images = inv
+    // Unreachable frames: only the first sub-chunk's header (and the VP8L
+    // alpha word) is read; the pixel payload is Skipped.
+    let header_only = inv
         .parts()
         .iter()
         .filter(|p| p.parent.is_some() && p.label.as_deref() == Some("VP8L"))
-        .filter(|p| p.disposition == Disposition::Skipped)
+        .filter(|p| {
+            p.disposition == Disposition::Structure
+                && p.detail
+                    .as_deref()
+                    .is_some_and(|d| d.contains("header read by read_data"))
+        })
         .count();
-    assert_eq!(skipped_images, 2, "{inv}");
+    assert_eq!(header_only, 2, "{inv}");
+    let skipped_payload = inv
+        .parts()
+        .iter()
+        .filter(|p| p.kind == PartKind::Gap && p.disposition == Disposition::Skipped)
+        .count();
+    assert_eq!(skipped_payload, 2, "{inv}");
 }
 
 #[test]
@@ -668,9 +682,14 @@ fn pinned_part_list() {
     let data = pinned_fixture();
     let inv = inventory_of(&data);
     let got = render(&inv);
+    if let Ok(path) = std::env::var("BLESS_PINNED") {
+        std::fs::write(path, &got).unwrap();
+    }
     let expected = r####"Header "RIFF" 0..12 structure label="RIFF/WEBP" detail="riff_size=174; 4 bytes follow the declared RIFF end at 182"
-Chunk "VP8X" 12..30 structure label="VP8X" detail="flags=0x3e (icc=1 alpha=1 exif=1 xmp=1 anim=1), canvas 4x4; reserved bits are ignored"
-  Field Name("flags+canvas") 20..30 structure
+Chunk "VP8X" 12..30 structure label="VP8X" detail="flags=0x3e (icc=1 alpha=1 exif=1 xmp=1 anim=1), canvas 4x4"
+  Field Name("flags") 20..21 structure
+  Field Name("reserved") 21..24 dropped detail="read into _reserved_bytes and discarded"
+  Field Name("canvas") 24..30 structure
 Chunk "ICCP" 30..42 metadata(icc) label="ICCP" detail="first occurrence"
 Chunk "ANIM" 42..56 structure label="ANIM"
   Field Name("background_color") 50..54 dropped detail="native WebPDecoder::background_color_hint only; the zencodec path does not report it"
@@ -681,12 +700,12 @@ Chunk "ANMF" 56..124 structure label="ANMF"
   Chunk "VP8 " 92..104 image-data label="VP8 " detail="frame image"
   Chunk "EXIF" 104..114 skipped label="EXIF" detail="read_frame reads only the frame's image chunk(s)"
   Chunk "QQQQ" 114..124 unknown label="QQQQ" detail="unrecognised chunk type; payload starts \"hi\""
-Chunk "VP8 " 124..134 skipped label="VP8 " detail="animated file: frames are read from ANMF, not from top-level image chunks"
+Chunk "VP8 " 124..134 skipped label="VP8 " detail="animated file: frames are read from ANMF; WebPProbe quality/lossless come from this chunk"
 Chunk "ZEN1" 134..147 unknown label="ZEN1" detail="unrecognised chunk type; payload starts \"hello\""
 Gap None 147..148 padding detail="non-zero RIFF pad byte 0x41"
 Chunk "EXIF" 148..160 metadata(exif) label="EXIF" detail="first occurrence"
 Chunk "XMP " 160..172 metadata(xmp) label="XMP " detail="first occurrence"
-Chunk "ICCP" 172..182 skipped label="ICCP" detail="duplicate chunk: the decoder keeps the first one"
+Chunk "ICCP" 172..182 metadata(icc) label="ICCP" detail="duplicate: ImageInfo keeps the first ICCP; reported through source_encoding_details() (WebPProbe::icc_profile: detect::probe keeps the last ICCP and ignores the RIFF size), not through ImageInfo"
 Gap None 182..186 trailing
 "####;
     assert_eq!(got, expected);
@@ -926,4 +945,649 @@ fn current_behaviour_decoder_and_demuxer_disagree_on_metadata() {
     assert_eq!(info.embedded_metadata.exif.as_deref(), Some(&exif[..]));
     let demux = zenwebp::mux::WebPDemuxer::new(&data).unwrap();
     assert_eq!(demux.exif(), None);
+}
+
+// ── Review round 1: dispositions per zencodec entry point ───────────────────
+
+fn seeded_rgb(w: usize, h: usize, seed: u8) -> Vec<u8> {
+    let mut px = Vec::with_capacity(w * h * 3);
+    for y in 0..h {
+        for x in 0..w {
+            px.extend([
+                ((x * 255 / w) as u8) ^ seed,
+                ((y * 255 / h) as u8).wrapping_add(seed),
+                ((x ^ y) as u8).wrapping_mul(seed | 1),
+            ]);
+        }
+    }
+    px
+}
+
+fn seeded_rgba(w: usize, h: usize, seed: u8) -> Vec<u8> {
+    let mut px = Vec::with_capacity(w * h * 4);
+    for (i, c) in seeded_rgb(w, h, seed).chunks(3).enumerate() {
+        let x = i % w;
+        px.extend([c[0], c[1], c[2], (255 - (x * 255 / w)) as u8 ^ seed]);
+    }
+    px
+}
+
+fn lossy_seed(w: usize, h: usize, seed: u8) -> Vec<u8> {
+    EncodeRequest::new(
+        &EncoderConfig::Lossy(LossyConfig::default()),
+        &seeded_rgb(w, h, seed),
+        PixelLayout::Rgb8,
+        w as u32,
+        h as u32,
+    )
+    .encode()
+    .unwrap()
+}
+
+fn lossy_alpha_seed(w: usize, h: usize, seed: u8) -> Vec<u8> {
+    EncodeRequest::new(
+        &EncoderConfig::Lossy(LossyConfig::default()),
+        &seeded_rgba(w, h, seed),
+        PixelLayout::Rgba8,
+        w as u32,
+        h as u32,
+    )
+    .encode()
+    .unwrap()
+}
+
+fn chunk_payload(chunks: &[Chunk], f: &[u8; 4]) -> Vec<u8> {
+    chunks.iter().find(|c| &c.0 == f).unwrap().1.clone()
+}
+
+fn zc_pixels(data: &[u8]) -> Vec<u8> {
+    let out = WebpDecoderConfig::new()
+        .decode(data)
+        .expect("zencodec decode");
+    out.pixels().contiguous_bytes().into_owned()
+}
+
+fn probe_details(info: &zencodec::ImageInfo) -> zenwebp::detect::WebPProbe {
+    webp_probe(info.source_encoding_details())
+}
+
+fn webp_probe(d: Option<&dyn zencodec::SourceEncodingDetails>) -> zenwebp::detect::WebPProbe {
+    d.and_then(|d| d.codec_details::<zenwebp::detect::WebPProbe>())
+        .cloned()
+        .expect("WebPProbe details")
+}
+
+fn vp8x_still(w: u32, h: u32, flags: u8) -> Vec<u8> {
+    let mut v = vec![flags, 0, 0, 0];
+    v.extend((w - 1).to_le_bytes()[..3].iter());
+    v.extend((h - 1).to_le_bytes()[..3].iter());
+    v
+}
+
+/// Review F1: `decode()` takes a lossy VP8X still's pixels from `WebPDemuxer`,
+/// which keeps the LAST VP8 and the LAST ALPH; the native decoder keeps the first.
+#[test]
+fn review_f1_duplicate_image_chunks_follow_decode() {
+    let a = lossy_seed(32, 24, 0);
+    let b = lossy_seed(32, 24, 0x5a);
+    let vp8_a = chunk_payload(&chunks_of(&a), b"VP8 ");
+    let vp8_b = chunk_payload(&chunks_of(&b), b"VP8 ");
+    let data = riff(&[
+        (*b"VP8X", vp8x_still(32, 24, 0)),
+        (*b"VP8 ", vp8_a),
+        (*b"VP8 ", vp8_b),
+    ]);
+    assert_eq!(
+        zc_pixels(&data),
+        zc_pixels(&b),
+        "decode() uses the last VP8"
+    );
+    assert_ne!(zc_pixels(&data), zc_pixels(&a));
+    let inv = inventory_of(&data);
+    let vp8 = find(&inv, "VP8 ");
+    assert_eq!(vp8[0].disposition, Disposition::Skipped, "{inv}");
+    assert_eq!(vp8[1].disposition, Disposition::ImageData, "{inv}");
+    assert!(
+        vp8[1]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("native WebPDecoder would use the first")
+    );
+
+    // Duplicate ALPH: the last plane is applied.
+    let (la, lb) = (lossy_alpha_seed(32, 24, 0), lossy_alpha_seed(32, 24, 0x5a));
+    let (ca, cb) = (chunks_of(&la), chunks_of(&lb));
+    let two = riff(&[
+        (*b"VP8X", chunk_payload(&ca, b"VP8X")),
+        (*b"ALPH", chunk_payload(&ca, b"ALPH")),
+        (*b"ALPH", chunk_payload(&cb, b"ALPH")),
+        (*b"VP8 ", chunk_payload(&ca, b"VP8 ")),
+    ]);
+    let second_only = riff(&[
+        (*b"VP8X", chunk_payload(&ca, b"VP8X")),
+        (*b"ALPH", chunk_payload(&cb, b"ALPH")),
+        (*b"VP8 ", chunk_payload(&ca, b"VP8 ")),
+    ]);
+    assert_eq!(zc_pixels(&two), zc_pixels(&second_only));
+    let inv = inventory_of(&two);
+    let alph = find(&inv, "ALPH");
+    assert_eq!(alph[0].disposition, Disposition::Skipped, "{inv}");
+    assert!(alph[1].disposition.is_consumed(), "{inv}");
+
+    // [VP8L, VP8 ]: the native decoder rejects the file, the demuxer path decodes the VP8.
+    let ll = chunk_payload(&chunks_of(&lossless_rgb()), b"VP8L");
+    let vp8_32 = chunk_payload(&chunks_of(&a), b"VP8 ");
+    let mixed = riff(&[
+        (*b"VP8X", vp8x_still(32, 24, 0)),
+        (*b"VP8L", ll),
+        (*b"VP8 ", vp8_32),
+    ]);
+    assert!(WebpDecoderConfig::new().decode(&mixed).is_ok());
+    let inv = inventory_of(&mixed);
+    assert_eq!(
+        find(&inv, "VP8L")[0].disposition,
+        Disposition::Skipped,
+        "{inv}"
+    );
+    assert_eq!(
+        find(&inv, "VP8 ")[0].disposition,
+        Disposition::ImageData,
+        "{inv}"
+    );
+}
+
+/// Review F2: 8+ trailing bytes after a VP8X lossy still make `probe()` fail while
+/// `decode()` succeeds without ICC/EXIF/XMP in `ImageInfo`.
+#[test]
+fn review_f2_trailing_bytes_drop_metadata_in_decode() {
+    let base = chunks_of(&lossy_alpha_seed(32, 24, 7));
+    let mut vp8x = chunk_payload(&base, b"VP8X");
+    vp8x[0] |= 0x20 | 0x08 | 0x04;
+    let mut data = riff(&[
+        (*b"VP8X", vp8x),
+        (*b"ICCP", vec![0xAB; 64]),
+        (*b"ALPH", chunk_payload(&base, b"ALPH")),
+        (*b"VP8 ", chunk_payload(&base, b"VP8 ")),
+        (*b"EXIF", b"II*\0\x08\0\0\0\0\0\0\0\0\0".to_vec()),
+        (*b"XMP ", b"<x:xmpmeta/>".to_vec()),
+    ]);
+    assert!(
+        WebpDecoderConfig::new()
+            .decode(&data)
+            .unwrap()
+            .info()
+            .embedded_metadata
+            .exif
+            .is_some()
+    );
+    data.extend(b"trailing junk, longer than a chunk header");
+    assert!(WebpDecoderConfig::new().job().probe(&data).is_err());
+    let out = WebpDecoderConfig::new()
+        .decode(&data)
+        .expect("decode survives");
+    assert!(out.info().source_color.icc_profile.is_none());
+    assert!(out.info().embedded_metadata.exif.is_none());
+    assert!(out.info().embedded_metadata.xmp.is_none());
+    // ...but WebPProbe, attached to the output, still carries the ICC profile.
+    assert_eq!(
+        webp_probe(out.source_encoding_details())
+            .icc_profile
+            .as_deref(),
+        Some(&[0xAB; 64][..])
+    );
+    let inv = inventory_of(&data);
+    assert_eq!(
+        find(&inv, "EXIF")[0].disposition,
+        Disposition::Dropped,
+        "{inv}"
+    );
+    assert_eq!(
+        find(&inv, "XMP ")[0].disposition,
+        Disposition::Dropped,
+        "{inv}"
+    );
+    // The ICCP: dropped from ImageInfo, still exposed through WebPProbe.
+    assert_eq!(
+        find(&inv, "ICCP")[0].disposition,
+        Disposition::Metadata(MetadataKind::Icc)
+    );
+    assert!(
+        inv.get(inv.children(None)[0])
+            .unwrap()
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("probe() fails")
+    );
+    let last = inv.get(inv.children(None).pop().unwrap()).unwrap();
+    assert_eq!(last.disposition, Disposition::Trailing);
+}
+
+/// Review F3: `detect::probe` (source_encoding_details) reads chunks the decoder skips.
+#[test]
+fn review_f3_probe_view_of_skipped_chunks() {
+    // (a) ICCP after a simple image, and past the RIFF end.
+    let vp8l = chunk_payload(&chunks_of(&lossless_rgb()), b"VP8L");
+    let icc = b"ICC-after-simple-image-serial-777".to_vec();
+    let after = riff(&[(*b"VP8L", vp8l.clone()), (*b"ICCP", icc.clone())]);
+    let mut past_end = riff(&[(*b"VP8L", vp8l)]);
+    past_end.extend(chunk_bytes(b"ICCP", &icc));
+    for data in [after, past_end] {
+        let out = WebpDecoderConfig::new().decode(&data).unwrap();
+        assert!(out.info().source_color.icc_profile.is_none());
+        assert_eq!(
+            webp_probe(out.source_encoding_details())
+                .icc_profile
+                .as_deref(),
+            Some(&icc[..])
+        );
+        let inv = inventory_of(&data);
+        let part = find(&inv, "ICCP")[0];
+        assert_eq!(
+            part.disposition,
+            Disposition::Metadata(MetadataKind::Icc),
+            "{inv}"
+        );
+        assert!(
+            part.detail
+                .as_deref()
+                .unwrap()
+                .contains("source_encoding_details")
+        );
+    }
+    // (b) duplicate ICCP in a VP8X still: ImageInfo keeps the first, WebPProbe the last.
+    let vp8 = chunk_payload(&chunks_of(&lossy_seed(16, 16, 2)), b"VP8 ");
+    let data = riff(&[
+        (*b"VP8X", vp8x_still(16, 16, 0x20)),
+        (*b"ICCP", b"first-icc".to_vec()),
+        (*b"VP8 ", vp8.clone()),
+        (*b"ICCP", b"second-icc-skipped".to_vec()),
+    ]);
+    let out = WebpDecoderConfig::new().decode(&data).unwrap();
+    assert_eq!(
+        out.info().source_color.icc_profile.as_deref(),
+        Some(&b"first-icc"[..])
+    );
+    assert_eq!(
+        webp_probe(out.source_encoding_details())
+            .icc_profile
+            .as_deref(),
+        Some(&b"second-icc-skipped"[..])
+    );
+    let inv = inventory_of(&data);
+    let iccs = find(&inv, "ICCP");
+    assert_eq!(
+        iccs[0].disposition,
+        Disposition::Metadata(MetadataKind::Icc)
+    );
+    assert_eq!(
+        iccs[1].disposition,
+        Disposition::Metadata(MetadataKind::Icc),
+        "{inv}"
+    );
+    assert!(iccs[1].detail.as_deref().unwrap().contains("duplicate"));
+    // (c) a second VP8X feeds WebPProbe's size and alpha.
+    let data = riff(&[
+        (*b"VP8X", vp8x_still(16, 16, 0)),
+        (*b"VP8 ", vp8),
+        (*b"VP8X", vec![0x10, 0, 0, 0, 0xff, 0x0f, 0, 0xff, 0x0f, 0]),
+    ]);
+    let p = probe_details(&WebpDecoderConfig::new().job().probe(&data).unwrap());
+    assert_eq!((p.width, p.has_alpha), (4096, true));
+    let inv = inventory_of(&data);
+    assert!(
+        find(&inv, "VP8X")[1]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("WebPProbe")
+    );
+    // (d) animated file with a top-level VP8 before the first ANMF: WebPProbe's quality comes from it.
+    let mut chunks = chunks_of(&animation());
+    let i = chunks.iter().position(|c| &c.0 == b"ANMF").unwrap();
+    chunks.insert(
+        i,
+        (
+            *b"VP8 ",
+            chunk_payload(&chunks_of(&lossy_seed(8, 8, 3)), b"VP8 "),
+        ),
+    );
+    let data = riff(&chunks);
+    let inv = inventory_of(&data);
+    let vp8 = find(&inv, "VP8 ")[0];
+    assert_eq!(vp8.disposition, Disposition::Skipped);
+    assert!(vp8.detail.as_deref().unwrap().contains("WebPProbe quality"));
+}
+
+fn set_vp8l_alpha_bit(anmf: &mut [u8], on: bool) {
+    assert_eq!(&anmf[16..20], b"VP8L");
+    let b = &mut anmf[16 + 8 + 4];
+    if on { *b |= 0x10 } else { *b &= !0x10 }
+}
+
+/// Review F4: an unreachable ANMF's header and first sub-chunk header still feed `has_alpha`.
+#[test]
+fn review_f4_unreachable_frame_bytes_that_the_decoder_reads() {
+    let mut chunks = chunks_of(&animation());
+    chunks[0].1[0] &= !0x10;
+    for c in chunks.iter_mut().filter(|c| &c.0 == b"ANMF") {
+        set_vp8l_alpha_bit(&mut c.1, false);
+    }
+    let second = chunks
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| &c.0 == b"ANMF")
+        .nth(1)
+        .unwrap()
+        .0;
+    chunks.insert(second, (*b"JUNK", vec![1, 2, 3, 4]));
+    let base = riff(&chunks);
+    assert!(
+        !WebpDecoderConfig::new()
+            .job()
+            .probe(&base)
+            .unwrap()
+            .has_alpha
+    );
+    let third = chunks
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| &c.0 == b"ANMF")
+        .nth(2)
+        .unwrap()
+        .0;
+    set_vp8l_alpha_bit(&mut chunks[third].1, true);
+    let data = riff(&chunks);
+    assert!(
+        WebpDecoderConfig::new()
+            .job()
+            .probe(&data)
+            .unwrap()
+            .has_alpha,
+        "a bit in the unreachable frame 3 switches the output to RGBA"
+    );
+    let inv = inventory_of(&data);
+    // Every frame header is read, reachable or not.
+    let headers: Vec<_> = inv
+        .parts()
+        .iter()
+        .filter(|p| p.kind == PartKind::Header && p.range.end - p.range.start == 16)
+        .collect();
+    assert_eq!(headers.len(), 3);
+    assert!(
+        headers
+            .iter()
+            .all(|h| h.disposition == Disposition::Metadata(MetadataKind::Animation))
+    );
+    // Frame 3's VP8L: header and the alpha word are Structure; the pixels are Skipped.
+    let vp8l = find(&inv, "VP8L")
+        .into_iter()
+        .filter(|p| p.parent.is_some())
+        .nth(2)
+        .unwrap();
+    assert_eq!(vp8l.disposition, Disposition::Structure, "{inv}");
+    let word = inv
+        .parts()
+        .iter()
+        .find(|p| {
+            matches!(&p.tag, PartTag::Name(n) if n == "alpha_is_used header")
+                && p.range.start == vp8l.range.start + 8
+        })
+        .expect("alpha_is_used field of frame 3");
+    assert_eq!(word.disposition, Disposition::Structure);
+    assert_eq!(word.range.start, vp8l.range.start + 8);
+    assert_eq!(word.range.end, vp8l.range.start + 13);
+    assert!(
+        inv.parts()
+            .iter()
+            .any(|p| p.kind == PartKind::Gap && p.disposition == Disposition::Skipped)
+    );
+}
+
+/// Review F5: ICCP/EXIF/XMP at the start of the first ANMF reach `ImageInfo`.
+#[test]
+fn review_f5_metadata_in_first_anmf_reaches_image_info() {
+    let icc = vec![0x11u8; 40];
+    let exif = b"II*\0\x08\0\0\0\0\0\0\0\0\0frame-exif-serial-XYZ".to_vec();
+    let xmp = b"<x:xmpmeta>frame</x:xmpmeta>".to_vec();
+    for (fourcc, payload) in [(*b"ICCP", &icc), (*b"EXIF", &exif), (*b"XMP ", &xmp)] {
+        for variant in 0..2 {
+            let mut prefix = Vec::new();
+            if variant == 1 {
+                prefix.extend(chunk_bytes(b"ZERO", &[]));
+            }
+            prefix.extend(chunk_bytes(&fourcc, payload));
+            let mut chunks = chunks_of(&animation());
+            let i = chunks.iter().position(|c| &c.0 == b"ANMF").unwrap();
+            let mut p = chunks[i].1[..16].to_vec();
+            p.extend(&prefix);
+            p.extend(&chunks[i].1[16..]);
+            chunks[i].1 = p;
+            let data = riff(&chunks);
+            let info = WebpDecoderConfig::new().job().probe(&data).unwrap();
+            let reported = match &fourcc {
+                b"ICCP" => info.source_color.icc_profile.as_deref().map(<[u8]>::to_vec),
+                b"EXIF" => info.embedded_metadata.exif.as_deref().map(<[u8]>::to_vec),
+                _ => info.embedded_metadata.xmp.as_deref().map(<[u8]>::to_vec),
+            };
+            assert_eq!(reported.as_deref(), Some(&payload[..]), "variant {variant}");
+            let inv = inventory_of(&data);
+            let part = find(&inv, std::str::from_utf8(&fourcc).unwrap())[0];
+            assert!(
+                matches!(part.disposition, Disposition::Metadata(_)),
+                "{} v{variant}: {inv}",
+                String::from_utf8_lossy(&fourcc)
+            );
+        }
+    }
+}
+
+/// Review F6: files the decoder rejects report nothing as consumed beyond the headers.
+#[test]
+fn review_f6_rejected_files_report_nothing_consumed() {
+    // (a) an ANMF smaller than 24 bytes: read_data fails.
+    let mut chunks = chunks_of(&animation());
+    let i = chunks.iter().position(|c| &c.0 == b"ANMF").unwrap();
+    let anmf = chunks[i].1.clone();
+    chunks.insert(i, (*b"ANMF", anmf[..20].to_vec()));
+    let data = riff(&chunks);
+    assert!(WebpDecoderConfig::new().job().probe(&data).is_err());
+    let inv = inventory_of(&data);
+    let consumed: Vec<_> = top_level_chunks(&inv)
+        .into_iter()
+        .filter(|(l, d)| d.is_consumed() && l != "VP8X")
+        .collect();
+    assert!(consumed.is_empty(), "{consumed:?}\n{inv}");
+    assert!(
+        inv.parts()[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("decoder rejects")
+    );
+
+    // (b) lossless VP8X still with the EXIF flag set and no EXIF chunk: ChunkMissing.
+    let vp8l = chunk_payload(&chunks_of(&lossless_rgb()), b"VP8L");
+    let data = riff(&[
+        (*b"VP8X", vp8x_still(32, 24, 0x08 | 0x20)),
+        (*b"ICCP", vec![0x42; 20]),
+        (*b"VP8L", vp8l),
+    ]);
+    assert!(WebpDecoderConfig::new().decode(&data).is_err());
+    let inv = inventory_of(&data);
+    assert_eq!(
+        find(&inv, "ICCP")[0].disposition,
+        Disposition::Skipped,
+        "{inv}"
+    );
+    assert!(!find(&inv, "VP8L")[0].disposition.is_consumed());
+
+    // (c) the same flag error on a LOSSY still still decodes (demuxer path), without metadata.
+    let vp8 = chunk_payload(&chunks_of(&lossy_seed(32, 24, 0)), b"VP8 ");
+    let data = riff(&[
+        (*b"VP8X", vp8x_still(32, 24, 0x08 | 0x20)),
+        (*b"ICCP", vec![0x42; 20]),
+        (*b"VP8 ", vp8),
+    ]);
+    assert!(WebpDecoderConfig::new().job().probe(&data).is_err());
+    let out = WebpDecoderConfig::new().decode(&data).unwrap();
+    assert!(out.info().source_color.icc_profile.is_none());
+    let inv = inventory_of(&data);
+    assert_eq!(
+        find(&inv, "VP8 ")[0].disposition,
+        Disposition::ImageData,
+        "{inv}"
+    );
+    assert_eq!(
+        find(&inv, "ICCP")[0].disposition,
+        Disposition::Metadata(MetadataKind::Icc)
+    );
+}
+
+/// Review F7: a header cut short inside the RIFF range is Malformed, not Trailing.
+#[test]
+fn review_f7_truncated_header_inside_a_vp8x_riff() {
+    let mut chunks = chunks_of(&lossy_alpha_seed(32, 24, 7));
+    chunks.push((*b"EXIF", b"II*\0\x08\0\0\0\0\0\0\0\0\0".to_vec()));
+    let full = riff(&chunks);
+    let exif_at = full.windows(4).rposition(|w| w == b"EXIF").unwrap();
+    let inv = inventory_of(&full[..exif_at + 3]);
+    let last = inv.get(inv.children(None).pop().unwrap()).unwrap();
+    assert_eq!(last.disposition, Disposition::Malformed, "{inv}");
+    assert!(
+        last.detail
+            .as_deref()
+            .unwrap()
+            .contains("truncated chunk header")
+    );
+}
+
+/// Review F8: a VP8X payload under 10 bytes is parsed anyway.
+#[test]
+fn review_f8_short_vp8x_is_parsed_by_the_decoder() {
+    let base = chunks_of(&lossy_alpha_seed(4, 4, 9));
+    let mut data = riff(&[
+        (*b"VP8X", vec![0x10, 0, 0, 0]),
+        ([3, 0, 0, 3], vec![]),
+        (*b"ALPH", chunk_payload(&base, b"ALPH")),
+        (*b"VP8 ", chunk_payload(&base, b"VP8 ")),
+    ]);
+    let riff_size = (data.len() - 8) as u32;
+    data[4..8].copy_from_slice(&riff_size.to_le_bytes());
+    let out = WebpDecoderConfig::new().decode(&data).unwrap();
+    assert!(out.info().has_alpha);
+    let inv = inventory_of(&data);
+    let vp8x = find(&inv, "VP8X")[0];
+    assert_eq!(vp8x.disposition, Disposition::Structure, "{inv}");
+    assert!(vp8x.detail.as_deref().unwrap().contains("decoder reads 10"));
+    assert_eq!(
+        find(&inv, "ALPH")[0].disposition,
+        Disposition::ImageData,
+        "{inv}"
+    );
+    assert_eq!(
+        find(&inv, "VP8 ")[0].disposition,
+        Disposition::ImageData,
+        "{inv}"
+    );
+}
+
+/// Review F9: the chunk after ALPH in an ANMF is decoded as VP8 whatever its FourCC.
+#[test]
+fn review_f9_chunk_after_alph_is_decoded_as_vp8() {
+    let mut anim = AnimationEncoder::new(
+        16,
+        16,
+        AnimationConfig {
+            minimize_size: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    for (i, seed) in [1u8, 2].into_iter().enumerate() {
+        anim.add_frame(
+            &seeded_rgba(16, 16, seed),
+            PixelLayout::Rgba8,
+            i as u32 * 100,
+            &EncoderConfig::Lossy(LossyConfig::default()),
+        )
+        .unwrap();
+    }
+    let data = anim.finalize(100).unwrap();
+    let orig = zenwebp::mux::AnimationDecoder::new(&data)
+        .unwrap()
+        .decode_all()
+        .unwrap();
+    let mut chunks = chunks_of(&data);
+    let i = chunks.iter().position(|c| &c.0 == b"ANMF").unwrap();
+    let alph_len = u32::from_le_bytes(chunks[i].1[20..24].try_into().unwrap()) as usize;
+    let off = 16 + 8 + alph_len + (alph_len & 1);
+    assert_eq!(&chunks[i].1[off..off + 4], b"VP8 ");
+    chunks[i].1[off..off + 4].copy_from_slice(b"ZZZZ");
+    let data = riff(&chunks);
+    let renamed = zenwebp::mux::AnimationDecoder::new(&data)
+        .unwrap()
+        .decode_all()
+        .unwrap();
+    assert_eq!(renamed[0].data, orig[0].data, "decoded identically");
+    let inv = inventory_of(&data);
+    let zz = find(&inv, "ZZZZ")[0];
+    assert_eq!(zz.disposition, Disposition::ImageData, "{inv}");
+    assert!(
+        zz.detail
+            .as_deref()
+            .unwrap()
+            .contains("whatever its FourCC")
+    );
+}
+
+/// Review F10 / COMMON item 4: no unread bytes hidden inside consumed parts that can be found cheaply.
+#[test]
+fn review_f10_reserved_bytes_and_alpha_slack() {
+    let (data, ..) = everything_still_no_junk();
+    let inv = inventory_of(&data);
+    let reserved: Vec<_> = inv
+        .parts()
+        .iter()
+        .filter(|p| matches!(&p.tag, PartTag::Name(n) if n == "reserved"))
+        .collect();
+    assert_eq!(reserved.len(), 1);
+    assert_eq!(reserved[0].disposition, Disposition::Dropped);
+    assert_eq!(reserved[0].range, 21..24);
+
+    // Uncompressed ALPH (compression 0) with 9 bytes past width*height.
+    let base = chunks_of(&lossy_alpha_seed(8, 8, 4));
+    let mut alph = vec![0u8]; // header: no compression, no filter
+    alph.extend((0..64u8).map(|i| 255 - i));
+    let exact = riff(&[
+        (*b"VP8X", chunk_payload(&base, b"VP8X")),
+        (*b"ALPH", alph.clone()),
+        (*b"VP8 ", chunk_payload(&base, b"VP8 ")),
+    ]);
+    alph.extend(b"secret-123");
+    let slack = riff(&[
+        (*b"VP8X", chunk_payload(&base, b"VP8X")),
+        (*b"ALPH", alph),
+        (*b"VP8 ", chunk_payload(&base, b"VP8 ")),
+    ]);
+    assert_eq!(
+        zc_pixels(&exact),
+        zc_pixels(&slack),
+        "slack does not change the pixels"
+    );
+    let inv = inventory_of(&slack);
+    let plane = inv
+        .parts()
+        .iter()
+        .find(|p| matches!(&p.tag, PartTag::Name(n) if n == "alpha plane"))
+        .expect("alpha plane child");
+    assert_eq!(plane.disposition, Disposition::ImageData);
+    assert_eq!(plane.range.end - plane.range.start, 65);
+    let tail = inv
+        .parts()
+        .iter()
+        .find(|p| p.kind == PartKind::Gap && p.disposition == Disposition::Unreferenced)
+        .expect("slack gap");
+    assert_eq!(tail.range.end - tail.range.start, 10);
 }

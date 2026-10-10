@@ -14,7 +14,7 @@ libfuzzer-sys = "0.4"
 path = ".."
 
 [dependencies.zencodec]
-version = ">=0.1.26, <0.3.0"
+version = ">=0.1.27, <0.3.0"
 
 # zencodec#133 (structural inventories); swap for the released zencodec before
 # merging, together with the same patch in the root Cargo.toml.
