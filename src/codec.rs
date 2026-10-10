@@ -1726,6 +1726,45 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         &self,
         data: &[u8],
     ) -> Result<Option<zencodec::inventory::Inventory>, At<zencodec::CodecError>> {
+        // Same gates, same errors as `decode()` (`WebpDecoder::do_decode`).
+        if let Some(ref stop) = self.stop {
+            enough::Stop::check(stop)
+                .map_err(|e| zencodec::CodecError::of(at!(DecodeError::Cancelled(e))))?;
+        }
+        if let Some(max) = self.effective_input_size_limit()
+            && data.len() as u64 > max
+        {
+            return Err(zencodec::CodecError::of(at!(
+                DecodeError::InvalidParameter(alloc::format!(
+                    "input size {} exceeds limit {}",
+                    data.len(),
+                    max
+                ))
+            )));
+        }
+        let mut job = crate::inventory::JobView::default();
+        if let Some(ref policy) = self.policy {
+            job.strip_icc = !policy.resolve_icc(true);
+            job.strip_exif = !policy.resolve_exif(true);
+            job.strip_xmp = !policy.resolve_xmp(true);
+            job.deny_animation = !policy.resolve_animation(true);
+        }
+        // `do_decode` checks the job's limits against `from_webp`'s dimensions,
+        // and `build_config` hands the frame limit to `read_data` on the general
+        // (animated) path. `probe()` applies neither.
+        if let Ok(info) = crate::ImageInfo::from_webp(data) {
+            if let Err(e) = self.limits.check_dimensions(info.width, info.height) {
+                job.decode_fails = Some(alloc::format!("{e}"));
+            } else if info.has_animation
+                && let Some(max) = self.limits.max_frames
+                && u64::from(info.frame_count) > max as u64
+            {
+                job.decode_fails = Some(alloc::format!(
+                    "frame count {} exceeds limit {max}",
+                    info.frame_count
+                ));
+            }
+        }
         let stop = self.stop.clone();
         let mut check = || -> Result<(), DecodeError> {
             if let Some(ref s) = stop {
@@ -1734,7 +1773,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
             }
             Ok(())
         };
-        crate::inventory::walk(data, &mut check)
+        crate::inventory::walk(data, &mut check, &job)
             .map(Some)
             .map_err(|e| zencodec::CodecError::of(at!(e)))
     }

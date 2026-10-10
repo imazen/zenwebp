@@ -700,7 +700,7 @@ Chunk "ANMF" 56..124 structure label="ANMF"
   Chunk "VP8 " 92..104 image-data label="VP8 " detail="frame image; bytes after the bitstream's own end are not distinguished"
   Chunk "EXIF" 104..114 skipped label="EXIF" detail="read_frame reads only the frame's image chunk(s)"
   Chunk "QQQQ" 114..124 unknown label="QQQQ" detail="unrecognised chunk type; payload starts \"hi\""
-Chunk "VP8 " 124..134 skipped label="VP8 " detail="animated file: frames are read from ANMF"
+Chunk "VP8 " 124..134 skipped label="VP8 " detail="animated file: frames are read from ANMF; detect::probe fails on this chunk's frame header, so no WebPProbe is attached"
 Chunk "ZEN1" 134..147 unknown label="ZEN1" detail="unrecognised chunk type; payload starts \"hello\""
 Gap None 147..148 padding detail="non-zero RIFF pad byte 0x41"
 Chunk "EXIF" 148..160 metadata(exif) label="EXIF" detail="first occurrence"
@@ -2334,5 +2334,394 @@ fn review3_n3_misread_range_leaves_the_anmf() {
         inv.parts()
             .iter()
             .any(|p| p.disposition == Disposition::Trailing)
+    );
+}
+
+// ── Review round 4 ──────────────────────────────────────────────────────────
+
+fn still_with_meta(meta: &[([u8; 4], Vec<u8>)], flags: u8) -> Vec<u8> {
+    let vp8 = chunk_payload(&chunks_of(&lossy_seed(16, 16, 3)), b"VP8 ");
+    let mut cs: Vec<Chunk> = vec![(*b"VP8X", vp8x_still(16, 16, flags))];
+    cs.extend(meta.iter().cloned());
+    cs.push((*b"VP8 ", vp8));
+    riff(&cs)
+}
+
+#[derive(Clone, Copy)]
+struct AlwaysStop;
+impl enough::Stop for AlwaysStop {
+    fn check(&self) -> Result<(), enough::StopReason> {
+        Err(enough::StopReason::Cancelled)
+    }
+}
+
+fn decode_with(
+    job: zenwebp::zencodec::WebpDecodeJob,
+    data: &[u8],
+) -> Result<zencodec::decode::DecodeOutput, String> {
+    job.decoder(std::borrow::Cow::Borrowed(data), &[])
+        .and_then(zencodec::decode::Decode::decode)
+        .map_err(|e| e.to_string())
+}
+
+/// Q1: the job's policy, limits and stop token change the answer.
+#[test]
+fn review4_q1_job_settings() {
+    use zencodec::decode::DecodePolicy;
+    let data = still_with_meta(
+        &[
+            (*b"ICCP", b"icc-policy".to_vec()),
+            (*b"EXIF", b"II*\0exif-policy".to_vec()),
+            (*b"XMP ", b"<xmp-policy/>".to_vec()),
+        ],
+        0x20 | 0x08 | 0x04,
+    );
+    // (a) metadata policy: EXIF/XMP Dropped; the ICCP stays Metadata because
+    // WebPProbe (source_encoding_details) still carries it.
+    let strip = DecodePolicy::none()
+        .with_allow_icc(false)
+        .with_allow_exif(false)
+        .with_allow_xmp(false);
+    let job = || WebpDecoderConfig::new().job().with_policy(strip.clone());
+    let info = job().probe(&data).unwrap();
+    assert!(info.source_color.icc_profile.is_none());
+    assert!(info.embedded_metadata.exif.is_none() && info.embedded_metadata.xmp.is_none());
+    assert_eq!(
+        probe_details(&info).icc_profile.as_deref(),
+        Some(&b"icc-policy"[..])
+    );
+    let inv = job().inventory(&data).unwrap().unwrap();
+    inv.validate().unwrap();
+    assert_eq!(
+        find(&inv, "EXIF")[0].disposition,
+        Disposition::Dropped,
+        "{inv}"
+    );
+    assert_eq!(find(&inv, "XMP ")[0].disposition, Disposition::Dropped);
+    assert!(
+        find(&inv, "EXIF")[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("DecodePolicy strips it")
+    );
+    let iccp = find(&inv, "ICCP")[0];
+    assert_eq!(iccp.disposition, Disposition::Metadata(MetadataKind::Icc));
+    assert!(iccp.detail.as_deref().unwrap().contains("WebPProbe"));
+
+    // (b) animation denied: decode() returns frame 1, the animation decoder refuses.
+    let anim = animation();
+    let job = || {
+        WebpDecoderConfig::new()
+            .job()
+            .with_policy(DecodePolicy::none().with_allow_animation(false))
+    };
+    assert!(
+        job()
+            .animation_frame_decoder(std::borrow::Cow::Borrowed(&anim[..]), &[])
+            .is_err()
+    );
+    assert!(decode_with(job(), &anim).is_ok());
+    let inv = job().inventory(&anim).unwrap().unwrap();
+    inv.validate().unwrap();
+    let frames: Vec<_> = inv
+        .parts()
+        .iter()
+        .filter(|p| p.parent.is_some() && p.label.as_deref() == Some("VP8L"))
+        .map(|p| p.disposition)
+        .collect();
+    assert_eq!(
+        frames,
+        vec![
+            Disposition::ImageData,
+            Disposition::Skipped,
+            Disposition::Skipped
+        ],
+        "{inv}"
+    );
+    let loop_count = inv
+        .parts()
+        .iter()
+        .find(|p| matches!(&p.tag, PartTag::Name(n) if n == "loop_count"))
+        .unwrap();
+    assert_eq!(loop_count.disposition, Disposition::Dropped);
+
+    // (c) max_input_bytes: the same error as decode().
+    let job = || {
+        WebpDecoderConfig::new()
+            .job()
+            .with_limits(zencodec::ResourceLimits::none().with_max_input_bytes(64))
+    };
+    let dec = decode_with(job(), &data).unwrap_err();
+    let inv = job().inventory(&data).unwrap_err().to_string();
+    assert_eq!(inv, dec);
+
+    // (c') max_pixels: decode() fails, probe() does not apply the job's limits.
+    let job = || {
+        WebpDecoderConfig::new()
+            .job()
+            .with_limits(zencodec::ResourceLimits::none().with_max_pixels(100))
+    };
+    assert!(decode_with(job(), &data).is_err());
+    assert!(job().probe(&data).is_ok());
+    let inv = job().inventory(&data).unwrap().unwrap();
+    inv.validate().unwrap();
+    let vp8 = find(&inv, "VP8 ")[0];
+    assert_eq!(vp8.disposition, Disposition::Skipped, "{inv}");
+    assert!(vp8.detail.as_deref().unwrap().contains("job's limits"));
+    assert_eq!(
+        find(&inv, "EXIF")[0].disposition,
+        Disposition::Metadata(MetadataKind::Exif)
+    );
+    // ...and max_frames on an animation.
+    let job = || {
+        WebpDecoderConfig::new()
+            .job()
+            .with_limits(zencodec::ResourceLimits::none().with_max_frames(2))
+    };
+    assert!(decode_with(job(), &anim).is_err());
+    let inv = job().inventory(&anim).unwrap().unwrap();
+    assert!(
+        !inv.parts()
+            .iter()
+            .any(|p| p.disposition == Disposition::ImageData),
+        "{inv}"
+    );
+
+    // (d) a stopped token: inventory() fails like decode().
+    let job = || {
+        WebpDecoderConfig::new()
+            .job()
+            .with_stop(zencodec::StopToken::new(AlwaysStop))
+    };
+    assert!(decode_with(job(), &data).is_err());
+    assert!(job().inventory(&data).is_err());
+}
+
+fn icc_with_tail(declared: u32, tail: &[u8]) -> Vec<u8> {
+    let mut h = vec![0u8; 132];
+    h[0..4].copy_from_slice(&declared.to_be_bytes());
+    h[8..12].copy_from_slice(&[4, 0x30, 0, 0]);
+    h[12..16].copy_from_slice(b"mntr");
+    h[16..20].copy_from_slice(b"RGB ");
+    h[20..24].copy_from_slice(b"XYZ ");
+    h[36..40].copy_from_slice(b"acsp");
+    h.extend(tail);
+    h
+}
+
+fn field_children<'a>(
+    inv: &'a Inventory,
+    parent: &zencodec::inventory::Part,
+) -> Vec<&'a zencodec::inventory::Part> {
+    inv.parts()
+        .iter()
+        .filter(|p| {
+            p.parent
+                .and_then(|q| inv.get(q))
+                .is_some_and(|q| std::ptr::eq(q, parent))
+        })
+        .collect()
+}
+
+/// Q2: tails the caller still receives are their own Metadata children.
+#[test]
+fn review4_q2_icc_and_xmp_tails() {
+    let tail = b"TAIL-past-the-ICC-declared-size owner=someone serial=42".to_vec();
+    let icc = icc_with_tail(132, &tail);
+    let xmp = b"<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?><x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/><?xpacket end=\"w\"?>TAIL-after-the-xpacket-trailer gps=47.6N".to_vec();
+    let data = still_with_meta(
+        &[(*b"ICCP", icc.clone()), (*b"XMP ", xmp.clone())],
+        0x20 | 0x04,
+    );
+    let info = WebpDecoderConfig::new().job().probe(&data).unwrap();
+    assert_eq!(info.source_color.icc_profile.as_deref(), Some(&icc[..]));
+    assert_eq!(info.embedded_metadata.xmp.as_deref(), Some(&xmp[..]));
+    let inv = inventory_of(&data);
+    let iccp = find(&inv, "ICCP")[0];
+    let kids = field_children(&inv, iccp);
+    assert_eq!(kids.len(), 2, "{inv}");
+    assert_eq!(kids[0].range.end - kids[0].range.start, 132);
+    assert_eq!(kids[1].range.end - kids[1].range.start, tail.len() as u64);
+    assert!(
+        kids.iter()
+            .all(|k| k.disposition == Disposition::Metadata(MetadataKind::Icc))
+    );
+    assert!(kids[1].detail.as_deref().unwrap().contains("declared size"));
+    let xmpp = find(&inv, "XMP ")[0];
+    let kids = field_children(&inv, xmpp);
+    assert_eq!(kids.len(), 2, "{inv}");
+    let cut = xmp.windows(2).position(|w| w == b"?>").map(|_| ()).and(
+        xmp.windows(14)
+            .position(|w| w == b"<?xpacket end=")
+            .map(|i| i + xmp[i..].windows(2).position(|w| w == b"?>").unwrap() + 2),
+    );
+    assert_eq!(kids[0].range.end - kids[0].range.start, cut.unwrap() as u64);
+    assert!(
+        kids.iter()
+            .all(|k| k.disposition == Disposition::Metadata(MetadataKind::Xmp))
+    );
+    // Without a packet wrapper the end is </x:xmpmeta>; EXIF stays whole.
+    let bare = b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"></x:xmpmeta>trailing-note".to_vec();
+    let data = still_with_meta(
+        &[
+            (*b"XMP ", bare.clone()),
+            (*b"EXIF", b"II*\0exif-and-more".to_vec()),
+        ],
+        0x04 | 0x08,
+    );
+    let inv = inventory_of(&data);
+    let kids = field_children(&inv, find(&inv, "XMP ")[0]);
+    assert_eq!(
+        kids[1].range.end - kids[1].range.start,
+        b"trailing-note".len() as u64
+    );
+    assert!(field_children(&inv, find(&inv, "EXIF")[0]).is_empty());
+    // A profile whose declared size matches the payload is not split.
+    let data = still_with_meta(&[(*b"ICCP", icc_with_tail(132, &[]))], 0x20);
+    let inv = inventory_of(&data);
+    assert!(field_children(&inv, find(&inv, "ICCP")[0]).is_empty());
+}
+
+/// Q4: a misread range that covers part of a leaf marks only that part.
+#[test]
+fn review4_q4_partial_cover() {
+    let secret = b"owner=someone serial=42 gps=47.6N rest-is-not-delivered".to_vec();
+    for (cover, whole) in [(8 + 10u32, false), (8 + secret.len() as u32 + 1, true)] {
+        let mut chunks = chunks_of(&animation());
+        let i = chunks.iter().position(|c| &c.0 == b"ANMF").unwrap();
+        let mut misread = b"XMP ".to_vec();
+        misread.extend(cover.to_le_bytes());
+        let mut p = chunks[i].1[..16].to_vec();
+        p.extend(chunk_bytes(b"ABCD", &misread));
+        p.extend(chunk_bytes(b"ZERO", &[]));
+        chunks[i].1 = p;
+        chunks.insert(i + 1, (*b"ZEN3", secret.clone()));
+        let data = riff(&chunks);
+        let info = WebpDecoderConfig::new().job().probe(&data).unwrap();
+        assert_eq!(
+            info.embedded_metadata.xmp.as_ref().map(|v| v.len()),
+            Some(cover as usize)
+        );
+        let inv = inventory_of(&data);
+        let z = find(&inv, "ZEN3")[0];
+        if whole {
+            assert_eq!(
+                z.disposition,
+                Disposition::Metadata(MetadataKind::Xmp),
+                "{inv}"
+            );
+        } else {
+            assert_eq!(z.disposition, Disposition::Unknown, "{inv}");
+            let kids = field_children(&inv, z);
+            assert_eq!(kids.len(), 1, "{inv}");
+            assert_eq!(
+                kids[0].disposition,
+                Disposition::Metadata(MetadataKind::Xmp)
+            );
+            assert_eq!(kids[0].range.end - kids[0].range.start, u64::from(cover));
+        }
+    }
+}
+
+/// Q3: bytes other readers read carry a note (or a small Structure child).
+#[test]
+fn review4_q3_other_readers() {
+    // (b) a second VP8X: detect::probe reads its 10 bytes.
+    let vp8 = chunk_payload(&chunks_of(&lossy_seed(16, 16, 2)), b"VP8 ");
+    let data = riff(&[
+        (*b"VP8X", vp8x_still(16, 16, 0)),
+        (*b"VP8 ", vp8.clone()),
+        (*b"VP8X", vec![0x10, 0, 0, 0, 0xff, 0x0f, 0, 0xff, 0x0f, 0]),
+    ]);
+    let inv = inventory_of(&data);
+    let second = find(&inv, "VP8X")[1];
+    let kids = field_children(&inv, second);
+    assert_eq!(kids.len(), 1, "{inv}");
+    assert_eq!(kids[0].disposition, Disposition::Structure);
+    assert_eq!(kids[0].range.end - kids[0].range.start, 10);
+    // ... also after a simple image.
+    let data = riff(&[
+        (*b"VP8 ", vp8.clone()),
+        (*b"VP8X", vec![0x10, 0, 0, 0, 7, 0, 0, 7, 0, 0]),
+    ]);
+    let inv = inventory_of(&data);
+    assert_eq!(
+        field_children(&inv, find(&inv, "VP8X")[0]).len(),
+        1,
+        "{inv}"
+    );
+
+    // (c) trailing bytes after a VP8X file name the readers.
+    let mut data = riff(&[(*b"VP8X", vp8x_still(16, 16, 0)), (*b"VP8 ", vp8.clone())]);
+    data.extend(b"ZZZZ\x04\0\0\0abcd");
+    let inv = inventory_of(&data);
+    let last = inv.get(inv.children(None).pop().unwrap()).unwrap();
+    assert_eq!(last.disposition, Disposition::Trailing);
+    let d = last.detail.as_deref().unwrap();
+    assert!(
+        d.contains("read_data") && d.contains("detect::probe"),
+        "{d}"
+    );
+
+    // (d) a truncated simple VP8L: the 5-byte header is Structure.
+    let mut ll = riff(&[(*b"VP8L", lossless_rgba_vp8l(16, 16, 1))]);
+    ll.truncate(ll.len() - 2);
+    let inv = inventory_of(&ll);
+    let img = find(&inv, "VP8L")[0];
+    assert_eq!(img.disposition, Disposition::Malformed);
+    let kids = field_children(&inv, img);
+    assert_eq!(kids.len(), 1, "{inv}");
+    assert_eq!(kids[0].range.end - kids[0].range.start, 5);
+    assert_eq!(kids[0].disposition, Disposition::Structure);
+
+    // (g) a simple VP8 chunk shorter than its 10-byte frame header.
+    // The chunk declares 5 payload bytes; the frame header continues past it
+    // (no pad byte), so read_data still finds a valid header in the file.
+    let mut body = b"WEBPVP8 ".to_vec();
+    body.extend(5u32.to_le_bytes());
+    body.extend(&vp8[..12]);
+    let mut short = b"RIFF".to_vec();
+    short.extend((body.len() as u32).to_le_bytes());
+    short.extend(body);
+    assert!(WebpDecoderConfig::new().job().probe(&short).is_ok());
+    let inv = inventory_of(&short);
+    assert!(
+        find(&inv, "VP8 ")[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("10-byte frame header from the file"),
+        "{inv}"
+    );
+
+    // (e)(f) ALPH notes on the demuxer path.
+    let (la, lb) = (lossy_alpha_seed(32, 24, 0), lossy_alpha_seed(32, 24, 0x5a));
+    let (ca, cb) = (chunks_of(&la), chunks_of(&lb));
+    let two = riff(&[
+        (*b"VP8X", chunk_payload(&ca, b"VP8X")),
+        (*b"ALPH", chunk_payload(&ca, b"ALPH")),
+        (*b"ALPH", chunk_payload(&cb, b"ALPH")),
+        (*b"VP8 ", chunk_payload(&ca, b"VP8 ")),
+    ]);
+    let inv = inventory_of(&two);
+    let alph = find(&inv, "ALPH");
+    assert!(
+        alph[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("falls back to WebPDecoder")
+    );
+    let mut cleared = two.clone();
+    cleared[20] &= !0x10;
+    let inv = inventory_of(&cleared);
+    let last = find(&inv, "ALPH").into_iter().next_back().unwrap();
+    assert_eq!(last.disposition, Disposition::Dropped);
+    assert!(
+        last.detail
+            .as_deref()
+            .unwrap()
+            .contains("a corrupt ALPH makes decode() fail")
     );
 }

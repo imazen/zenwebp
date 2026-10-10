@@ -33,12 +33,29 @@ use crate::DecodeError;
 /// How often (in chunks) the cancellation check runs.
 const CHECK_EVERY: u32 = 64;
 
-/// Walk `data` and describe every byte. `check` is polled periodically and may
-/// abort the walk (cooperative cancellation).
+/// What the zencodec job's own settings do to the answer (`codec.rs`
+/// `inventory()` fills it from the job's `DecodePolicy` and `ResourceLimits`).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct JobView {
+    /// `apply_policy_to_info` removes these from `ImageInfo`.
+    pub strip_icc: bool,
+    pub strip_exif: bool,
+    pub strip_xmp: bool,
+    /// The policy denies animation: `decode()` returns frame 1 and
+    /// `animation_frame_decoder` refuses the file.
+    pub deny_animation: bool,
+    /// Why `decode()` fails under the job's limits (`probe()` is unaffected).
+    pub decode_fails: Option<String>,
+}
+
+/// Walk `data` and describe every byte. `check` runs once before the walk and
+/// then periodically, and may abort it (cooperative cancellation).
 pub(crate) fn walk(
     data: &[u8],
     check: &mut dyn FnMut() -> Result<(), DecodeError>,
+    job: &JobView,
 ) -> Result<Inventory, DecodeError> {
+    check()?;
     let mut w = Walker {
         data,
         len: data.len() as u64,
@@ -46,8 +63,10 @@ pub(crate) fn walk(
         check,
         ticks: 0,
         unplaced: Vec::new(),
+        probe_icc_ids: Vec::new(),
     };
     w.run()?;
+    w.apply_job(job);
     Ok(w.inv)
 }
 
@@ -100,6 +119,9 @@ struct Walker<'a, 'c> {
     ticks: u32,
     /// First-ANMF scan ranges not inside one sub-chunk's payload.
     unplaced: Vec<([u8; 4], Range<u64>)>,
+    /// ICCP parts `WebPProbe::icc_profile` delivers (the job's policy strips
+    /// `ImageInfo`'s copy, not this one).
+    probe_icc_ids: Vec<PartId>,
 }
 
 /// Printable-ASCII rendering of a FourCC (non-printable bytes as `\xNN`).
@@ -244,6 +266,194 @@ impl Walker<'_, '_> {
             )?;
         }
         Ok(id)
+    }
+
+    /// A metadata chunk the caller receives whole. When the blob has its own
+    /// internal end before the payload's end (an ICC profile's declared size, an
+    /// XMP packet's trailer), the tail is a separate `Metadata(kind)` child: the
+    /// caller still receives it, and an auditor must see it. EXIF (TIFF) has no
+    /// single declared end and stays whole. `probe` marks a chunk
+    /// `WebPProbe::icc_profile` delivers (kept when truncated: `detect::probe`
+    /// clamps it).
+    fn emit_meta(
+        &mut self,
+        parent: Option<PartId>,
+        c: &RawChunk,
+        kind: MetadataKind,
+        detail: String,
+        probe: bool,
+    ) -> Result<PartId, DecodeError> {
+        let s = c.payload.start as usize;
+        let e = c.payload.end as usize;
+        let payload = self.data.get(s..e).unwrap_or(&[]);
+        let end = if c.truncated && !probe {
+            None
+        } else {
+            match kind {
+                MetadataKind::Icc => icc_declared_end(payload),
+                MetadataKind::Xmp => xmp_packet_end(payload),
+                _ => None,
+            }
+        };
+        let id = self.emit_ex(
+            parent,
+            c,
+            Disposition::Metadata(kind),
+            Some(detail),
+            end.is_some(),
+            probe,
+        )?;
+        if probe {
+            self.probe_icc_ids.push(id);
+        }
+        if let Some(end) = end {
+            let cut = c.payload.start + end as u64;
+            let (what, tail) = match kind {
+                MetadataKind::Icc => (
+                    "ICC profile",
+                    "past the ICC profile's declared size; delivered with it",
+                ),
+                _ => (
+                    "XMP packet",
+                    "after the XMP packet's end; delivered with it",
+                ),
+            };
+            self.child(
+                id,
+                what,
+                c.payload.start..cut,
+                Disposition::Metadata(kind),
+                None,
+            )?;
+            self.child(
+                id,
+                "tail",
+                cut..c.payload.end,
+                Disposition::Metadata(kind),
+                Some(tail.to_string()),
+            )?;
+        }
+        Ok(id)
+    }
+
+    /// The 10 VP8X bytes `detect::probe` reads (flags, reserved, canvas) as a
+    /// `Structure` child of a chunk reported unread.
+    fn vp8x_probe_child(&mut self, id: PartId, c: &RawChunk) -> Result<(), DecodeError> {
+        let s = c.payload.start;
+        if c.payload.end >= s + 10 {
+            self.child(
+                id,
+                "detect::probe header",
+                s..s + 10,
+                Disposition::Structure,
+                Some(
+                    "detect::probe reads flags and canvas here; WebPProbe width, height and \
+                     has_alpha come from the last VP8X it meets"
+                        .to_string(),
+                ),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Every part id, parents before children.
+    fn all_ids(&self) -> Vec<PartId> {
+        let mut ids: Vec<PartId> = Vec::new();
+        let mut stack = self.inv.children(None);
+        stack.reverse();
+        while let Some(id) = stack.pop() {
+            ids.push(id);
+            let mut kids = self.inv.children(Some(id));
+            kids.reverse();
+            stack.extend(kids);
+        }
+        ids
+    }
+
+    /// Apply the job's policy and limits (see [`JobView`]) to the finished walk.
+    fn apply_job(&mut self, job: &JobView) {
+        if !(job.strip_icc || job.strip_exif || job.strip_xmp || job.deny_animation)
+            && job.decode_fails.is_none()
+        {
+            return;
+        }
+        let ids = self.all_ids();
+        let top = self.inv.children(None);
+        // The ANMF `decode()` renders as the still image: the first in file order.
+        let first_anmf = top.iter().copied().find(|&id| {
+            self.inv
+                .get(id)
+                .is_some_and(|p| p.label.as_deref() == Some("ANMF"))
+        });
+        for &id in &ids {
+            let Some(p) = self.inv.get(id) else { continue };
+            let disposition = p.disposition;
+            let parent = p.parent;
+            let is_loop = matches!(&p.tag, PartTag::Name(n) if n == "loop_count");
+            let in_probe = self.probe_icc_ids.contains(&id)
+                || parent.is_some_and(|q| self.probe_icc_ids.contains(&q));
+            let stripped = match disposition {
+                Disposition::Metadata(MetadataKind::Icc) => job.strip_icc,
+                Disposition::Metadata(MetadataKind::Exif) => job.strip_exif,
+                Disposition::Metadata(MetadataKind::Xmp) => job.strip_xmp,
+                _ => false,
+            };
+            if stripped {
+                if in_probe {
+                    self.append_detail(
+                        id,
+                        "the job's DecodePolicy strips ImageInfo's copy; WebPProbe \
+                         (source_encoding_details) still carries it",
+                    );
+                } else {
+                    self.inv.set_disposition(id, Disposition::Dropped);
+                    self.append_detail(id, "the job's DecodePolicy strips it");
+                }
+            }
+            if is_loop && (job.deny_animation || job.decode_fails.is_some()) {
+                self.inv.set_disposition(id, Disposition::Dropped);
+                self.append_detail(
+                    id,
+                    "only the animation decoder reports it, and under this job's settings it \
+                     refuses the file",
+                );
+            }
+            if disposition == Disposition::ImageData {
+                if let Some(reason) = &job.decode_fails {
+                    self.inv.set_disposition(id, Disposition::Skipped);
+                    let t = format!("decode() fails under the job's limits: {reason}");
+                    self.append_detail(id, &t);
+                } else if job.deny_animation {
+                    // Frame images outside the first ANMF.
+                    let mut anc = parent;
+                    let mut frame = None;
+                    while let Some(a) = anc {
+                        if self
+                            .inv
+                            .get(a)
+                            .is_some_and(|q| q.label.as_deref() == Some("ANMF"))
+                        {
+                            frame = Some(a);
+                        }
+                        anc = self.inv.get(a).and_then(|q| q.parent);
+                    }
+                    if frame.is_some() && frame != first_anmf {
+                        self.inv.set_disposition(id, Disposition::Skipped);
+                        self.append_detail(
+                            id,
+                            "the job's DecodePolicy denies animation: decode() returns frame 1 \
+                             and the animation decoder refuses the file",
+                        );
+                    }
+                }
+            }
+        }
+        if let (Some(reason), Some(&hdr)) = (&job.decode_fails, top.first()) {
+            let t = format!(
+                "decode() fails under the job's limits: {reason}; probe() does not apply them"
+            );
+            self.append_detail(hdr, &t);
+        }
     }
 
     /// First printable run of the payload, for unknown chunks.
@@ -397,9 +607,31 @@ impl Walker<'_, '_> {
                 _ => self.walk_rejected(first, riff_end)?,
             },
         }
+        let extended = d.get(12..16) == Some(b"VP8X");
         self.inv
             .fill_gaps(None, Disposition::Trailing)
-            .map_err(parts_err)
+            .map_err(parts_err)?;
+        // Other readers still look at trailing bytes (the safe direction: the
+        // bytes stay unconsumed, the detail names the reader).
+        for id in self.inv.children(None) {
+            let Some(p) = self.inv.get(id) else { continue };
+            if p.disposition != Disposition::Trailing || p.range.end - p.range.start < 8 {
+                continue;
+            }
+            let start = p.range.start;
+            if extended && start < declared_end + 10 {
+                self.append_detail(
+                    id,
+                    "read_data's VP8X chunk loop reads a chunk header that starts within 10 \
+                     bytes past the RIFF end, and its size decides whether read_data fails",
+                );
+            }
+            self.append_detail(
+                id,
+                "detect::probe walks chunk headers to the end of the data and reads them here",
+            );
+        }
+        Ok(())
     }
 
     /// Push a `Malformed` gap for a header that does not fit before `end`.
@@ -452,21 +684,23 @@ impl Walker<'_, '_> {
     /// VP8/VP8L, or the first sub-chunk of an ANMF that comes earlier while
     /// the animation flag is set), plus whether that owner is inside an ANMF.
     /// One computation serves both the ICC claim and the bitstream-owner detail.
-    fn detect_model(&self, all: &[&RawChunk]) -> Option<DetectModel> {
+    fn detect_model(&self, all: &[&RawChunk]) -> Result<DetectModel, Option<usize>> {
         let mut animated = false;
+        let mut last_vp8x: Option<usize> = None;
         let mut owner: Option<(usize, bool)> = None;
         let mut icc: Option<usize> = None;
         for (i, c) in all.iter().enumerate() {
             match &c.fourcc {
                 b"VP8 " if owner.is_none() => {
                     if !self.vp8_header_ok(&c.payload) {
-                        return None;
+                        return Err(Some(i));
                     }
                     owner = Some((i, false));
                 }
                 b"VP8L" if owner.is_none() => owner = Some((i, false)),
                 b"VP8X" if c.payload.end - c.payload.start >= 10 => {
                     animated = self.data[c.payload.start as usize] & 0x02 != 0;
+                    last_vp8x = Some(i);
                 }
                 b"ANMF" if animated && owner.is_none() && c.payload.end - c.payload.start >= 24 => {
                     let sub = c.payload.start + 16;
@@ -476,7 +710,7 @@ impl Walker<'_, '_> {
                         let pe = (sub + 8 + size).min(c.payload.end);
                         if f == b"VP8 " {
                             if !self.vp8_header_ok(&(sub + 8..pe)) {
-                                return None;
+                                return Err(Some(i));
                             }
                             owner = Some((i, true));
                         } else if f == b"VP8L" {
@@ -488,11 +722,14 @@ impl Walker<'_, '_> {
                 _ => {}
             }
         }
-        owner.map(|(o, in_anmf)| DetectModel {
-            icc,
-            owner: o,
-            owner_in_anmf: in_anmf,
-        })
+        owner
+            .map(|(o, in_anmf)| DetectModel {
+                icc,
+                owner: o,
+                owner_in_anmf: in_anmf,
+                last_vp8x,
+            })
+            .ok_or(None)
     }
 
     const TRUNCATED_NOTE: &'static str = "decode() decodes the bytes present when they suffice, \
@@ -513,15 +750,26 @@ impl Walker<'_, '_> {
         probe_first: Option<&RawChunk>,
     ) -> Result<(), DecodeError> {
         let (chunks, end_pos) = self.collect_chunks(start)?;
-        let p_icc = probe_first.and_then(|f| {
+        let det = probe_first.and_then(|f| {
             let all: Vec<&RawChunk> = core::iter::once(f).chain(chunks.iter()).collect();
-            self.detect_model(&all)
-                .and_then(|m| m.icc)
-                .and_then(|i| i.checked_sub(1))
+            self.detect_model(&all).ok()
         });
+        let p_icc = det
+            .as_ref()
+            .and_then(|m| m.icc)
+            .and_then(|i| i.checked_sub(1));
+        let p_vp8x = det
+            .as_ref()
+            .and_then(|m| m.last_vp8x)
+            .and_then(|i| i.checked_sub(1));
         for (i, c) in chunks.iter().enumerate() {
             let exposed = Some(i) == p_icc;
-            if c.pos >= riff_end && !exposed {
+            if c.pos >= riff_end && !exposed && Some(i) != p_vp8x {
+                continue;
+            }
+            if Some(i) == p_vp8x {
+                let id = self.unread(None, c, why)?;
+                self.vp8x_probe_child(id, c)?;
                 continue;
             }
             if exposed {
@@ -530,12 +778,11 @@ impl Walker<'_, '_> {
                 } else {
                     ""
                 };
-                self.emit_ex(
+                self.emit_meta(
                     None,
                     c,
-                    Disposition::Metadata(MetadataKind::Icc),
-                    Some(format!("{}{past}", Self::PROBE_ICC)),
-                    false,
+                    MetadataKind::Icc,
+                    format!("{}{past}", Self::PROBE_ICC),
                     true,
                 )?;
             } else {
@@ -620,7 +867,7 @@ impl Walker<'_, '_> {
         } else {
             String::new()
         };
-        self.emit_ex(
+        let id = self.emit_ex(
             None,
             &first,
             Disposition::ImageData,
@@ -630,10 +877,38 @@ impl Walker<'_, '_> {
             false,
             keep,
         )?;
+        // `read_data` reads the frame header from the file, not from the chunk:
+        // 10 bytes for VP8, 5 for VP8L, and `probe()` reports what it finds.
+        let hlen: u64 = if &first.fourcc == b"VP8 " { 10 } else { 5 };
+        let s = first.payload.start;
+        if first.size < hlen {
+            self.append_detail(
+                id,
+                &format!(
+                    "read_data reads the {hlen}-byte frame header from the file, past this \
+                     chunk's {}-byte payload: probe() takes the dimensions from the bytes that \
+                     follow",
+                    first.size
+                ),
+            );
+        } else if first.truncated && &first.fourcc == b"VP8L" && s + hlen <= first.payload.end {
+            self.child(
+                id,
+                "header",
+                s..s + hlen,
+                Disposition::Structure,
+                Some(
+                    "read_data reads the signature and header word; probe() reports the \
+                     dimensions and the alpha bit"
+                        .to_string(),
+                ),
+            )?;
+        }
         self.walk_tail(
             first.next,
             riff_end,
-            "simple-format file: the decoder reads nothing after the image chunk",
+            "simple-format file: the decoder reads nothing after the image chunk (detect::probe \
+             walks every chunk header)",
             Some(&first),
         )
     }
@@ -695,7 +970,9 @@ impl Walker<'_, '_> {
             let p_icc = m.p_icc == Some(i);
             // Past the RIFF end only a chunk some walker keeps is a chunk; the rest
             // stays Trailing.
-            let kept_past_end = p_icc || (c.is_known() && m.first(&c.fourcc) == Some(i));
+            let kept_past_end = p_icc
+                || m.p_last_vp8x == Some(i)
+                || (c.is_known() && m.first(&c.fourcc) == Some(i));
             if c.pos >= riff_end && !kept_past_end {
                 continue;
             }
@@ -712,7 +989,7 @@ impl Walker<'_, '_> {
             let dup_note = "duplicate chunk";
             match &c.fourcc {
                 b"VP8X" => {
-                    self.emit(
+                    let id = self.emit(
                         None,
                         c,
                         Disposition::Skipped,
@@ -722,10 +999,17 @@ impl Walker<'_, '_> {
                         )),
                         false,
                     )?;
+                    if m.p_last_vp8x == Some(i) {
+                        self.vp8x_probe_child(id, c)?;
+                    }
                 }
                 b"VP8 " | b"VP8L" => {
                     let owner = if m.p_bitstream == Some((i, false)) {
-                        "; WebPProbe quality/lossless come from this chunk"
+                        "; detect::probe parses this chunk's frame header: WebPProbe \
+                         quality/lossless come from this chunk"
+                    } else if m.p_fail == Some(i) {
+                        "; detect::probe fails on this chunk's frame header, so no WebPProbe \
+                         is attached"
                     } else {
                         ""
                     };
@@ -806,18 +1090,30 @@ impl Walker<'_, '_> {
                     match used {
                         Some(d) => {
                             let n = if d == Disposition::Dropped && !m.alpha_flag {
-                                "decoded, then discarded: the VP8X alpha flag is clear"
+                                "decoded, then discarded: the VP8X alpha flag is clear; parsed: \
+                                 a corrupt ALPH makes decode() fail"
                             } else if d == Disposition::Dropped {
                                 "decoded, then discarded: ImageInfo::from_webp fails for this \
-                                 file, so decode() outputs RGB"
+                                 file, so decode() outputs RGB; parsed: a corrupt ALPH makes \
+                                 decode() fail"
                             } else {
                                 "alpha plane for the VP8 image"
                             };
-                            self.emit_alph(c, d, &format!("{n}{past}"), m.canvas)?;
+                            let fallback = if m.d_viable && m.first(b"ALPH") != Some(i) {
+                                "; if the demuxer path fails, decode() falls back to \
+                                 WebPDecoder, which uses the first ALPH"
+                            } else {
+                                ""
+                            };
+                            self.emit_alph(c, d, &format!("{n}{fallback}{past}"), m.canvas)?;
                         }
                         None => {
                             let n = if m.animated {
                                 "animated file: alpha is read from the ANMF sub-chunk"
+                            } else if m.d_viable && m.first(b"ALPH") == Some(i) {
+                                "decode() takes the last ALPH chunk (WebPDemuxer); if the \
+                                 demuxer path fails, decode() falls back to WebPDecoder, which \
+                                 uses this first ALPH"
                             } else if m.d_viable {
                                 "decode() takes the last ALPH chunk (WebPDemuxer)"
                             } else if !m.alpha_flag {
@@ -865,21 +1161,24 @@ impl Walker<'_, '_> {
                         } else {
                             "duplicate: ImageInfo keeps the first ICCP".to_string()
                         };
-                        self.emit_ex(
+                        self.emit_meta(
                             None,
                             c,
-                            Disposition::Metadata(MetadataKind::Icc),
-                            Some(format!("{why}; {}{past}", Self::PROBE_ICC)),
-                            false,
+                            MetadataKind::Icc,
+                            format!("{why}; {}{past}", Self::PROBE_ICC),
                             true,
                         )?;
-                    } else {
+                    } else if let Disposition::Metadata(kind) = d {
                         let n = if exposed {
                             format!("{n}; also {}", Self::PROBE_ICC)
                         } else {
                             n
                         };
-                        self.emit_ex(None, c, d, Some(format!("{n}{past}")), false, exposed)?;
+                        // `p_icc`: WebPProbe delivers it too, whether or not it is
+                        // also ImageInfo's copy.
+                        self.emit_meta(None, c, kind, format!("{n}{past}"), p_icc)?;
+                    } else {
+                        self.emit(None, c, d, Some(format!("{n}{past}")), false)?;
                     }
                 }
                 b"ANIM" => {
@@ -963,16 +1262,7 @@ impl Walker<'_, '_> {
         if ranges.is_empty() {
             return Ok(());
         }
-        // Every part id, parents first (the tree is shallow).
-        let mut ids: Vec<PartId> = Vec::new();
-        let mut stack = self.inv.children(None);
-        stack.reverse();
-        while let Some(id) = stack.pop() {
-            ids.push(id);
-            let mut kids = self.inv.children(Some(id));
-            kids.reverse();
-            stack.extend(kids);
-        }
+        let ids = self.all_ids();
         for (f, r) in ranges {
             let r = r.start..r.end.min(self.len);
             if r.start >= r.end {
@@ -991,15 +1281,37 @@ impl Walker<'_, '_> {
                 fourcc_label(&f)
             );
             for &id in &ids {
-                if !self.inv.children(Some(id)).is_empty() {
-                    continue; // containers: their children carry the bytes
-                }
                 let Some(p) = self.inv.get(id) else { continue };
                 if p.range.start >= r.end || p.range.end <= r.start {
                     continue;
                 }
-                if !p.disposition.is_consumed() {
+                let (pr, consumed, has_body) = (
+                    p.range.clone(),
+                    p.disposition.is_consumed(),
+                    p.body.is_some(),
+                );
+                if !self.inv.children(Some(id)).is_empty() {
+                    // Containers: their children carry the bytes; note only when
+                    // the container's own header is inside the range.
+                    if pr.start + 8 > r.start && pr.start < r.end {
+                        self.append_detail(id, &note);
+                    }
+                    continue;
+                }
+                let whole = r.start <= pr.start && r.end >= pr.end;
+                if !consumed && whole {
                     self.inv.set_disposition(id, Disposition::Metadata(kind));
+                } else if !consumed && !has_body {
+                    // Only part of this leaf is delivered: mark that part, keep the
+                    // rest of the leaf unconsumed.
+                    let cut = r.start.max(pr.start)..r.end.min(pr.end);
+                    self.child(
+                        id,
+                        "first-ANMF scan range",
+                        cut,
+                        Disposition::Metadata(kind),
+                        Some(note.clone()),
+                    )?;
                 }
                 self.append_detail(id, &note);
             }
@@ -1195,6 +1507,18 @@ impl Walker<'_, '_> {
         // --- detect::probe ----------------------------------------------------------
         let all: Vec<&RawChunk> = core::iter::once(vp8x).chain(chunks.iter()).collect();
         let det = self.detect_model(&all);
+        let p_fail = det
+            .as_ref()
+            .err()
+            .copied()
+            .flatten()
+            .and_then(|i| i.checked_sub(1));
+        let p_last_vp8x = det
+            .as_ref()
+            .ok()
+            .and_then(|d| d.last_vp8x)
+            .and_then(|i| i.checked_sub(1));
+        let det = det.ok();
         let p_icc = det
             .as_ref()
             .and_then(|d| d.icc)
@@ -1225,6 +1549,8 @@ impl Walker<'_, '_> {
             quirk,
             p_icc,
             p_bitstream,
+            p_fail,
+            p_last_vp8x,
             firsts,
         }
     }
@@ -1521,13 +1847,7 @@ impl Walker<'_, '_> {
                         fourcc_label(&sc.fourcc)
                     )
                 };
-                self.emit(
-                    Some(id),
-                    sc,
-                    Disposition::Metadata(kind_of(&f)),
-                    Some(note),
-                    false,
-                )?;
+                self.emit_meta(Some(id), sc, kind_of(&f), note, false)?;
                 continue;
             }
             hits.retain(|&qi| quirk[qi].1.start < quirk[qi].1.end);
@@ -1677,6 +1997,9 @@ impl Walker<'_, '_> {
 /// `detect::probe`'s outcome when it succeeds (see `detect_model`).
 struct DetectModel {
     icc: Option<usize>,
+    /// The last VP8X with 10 payload bytes: `WebPProbe` width, height and
+    /// `has_alpha` come from it.
+    last_vp8x: Option<usize>,
     owner: usize,
     owner_in_anmf: bool,
 }
@@ -1704,6 +2027,10 @@ struct Model {
     p_icc: Option<usize>,
     /// The chunk `detect::probe` takes its quality from (index, inside an ANMF).
     p_bitstream: Option<(usize, bool)>,
+    /// The VP8 chunk whose header makes `detect::probe` fail.
+    p_fail: Option<usize>,
+    /// The VP8X (after the first) whose 10 bytes `WebPProbe` reports.
+    p_last_vp8x: Option<usize>,
     firsts: Vec<([u8; 4], Option<usize>)>,
 }
 
@@ -1715,6 +2042,29 @@ impl Model {
             .find(|(g, _)| g == f)
             .and_then(|(_, i)| *i)
     }
+}
+
+/// End of an ICC profile inside `payload` when its header's declared size
+/// (big-endian u32 at offset 0) is shorter than the payload.
+fn icc_declared_end(payload: &[u8]) -> Option<usize> {
+    if payload.len() < 128 {
+        return None;
+    }
+    let size = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
+    (128..payload.len()).contains(&size).then_some(size)
+}
+
+/// End of an XMP packet inside `payload`: after `<?xpacket end=...?>`, or
+/// after `</x:xmpmeta>` when there is no packet wrapper. `None` when nothing
+/// follows it.
+fn xmp_packet_end(payload: &[u8]) -> Option<usize> {
+    let find = |hay: &[u8], needle: &[u8]| hay.windows(needle.len()).position(|w| w == needle);
+    let end = if let Some(i) = find(payload, b"<?xpacket end=") {
+        i + find(&payload[i..], b"?>")? + 2
+    } else {
+        find(payload, b"</x:xmpmeta>")? + b"</x:xmpmeta>".len()
+    };
+    (end < payload.len()).then_some(end)
 }
 
 /// Part cap used to bound the intermediate chunk lists.
