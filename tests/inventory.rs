@@ -2041,9 +2041,79 @@ fn review2_r9_simple_file_header_checks() {
     );
 }
 
-/// R10: the demuxer path is claimed only when its chunks are present in full.
+/// R10 / round 3 N1: a clamped last chunk is not a rejected file. The demuxer
+/// clamps it; whether the bytes present suffice is a bitstream question.
 #[test]
-fn review2_r10_truncated_last_vp8_is_not_claimed_to_decode() {
+fn review3_n1_truncated_last_chunk_is_image_data_with_a_conditional_note() {
+    let base = chunks_of(&lossy_alpha_seed(32, 24, 7));
+    let mut vp8x = chunk_payload(&base, b"VP8X");
+    vp8x[0] |= 0x20;
+    let build = |alph_last: bool| {
+        let mut chunks = vec![
+            (*b"VP8X", vp8x.clone()),
+            (*b"ICCP", b"icc-bytes-serial-9".to_vec()),
+        ];
+        if alph_last {
+            chunks.push((*b"VP8 ", chunk_payload(&base, b"VP8 ")));
+            chunks.push((*b"ALPH", chunk_payload(&base, b"ALPH")));
+        } else {
+            chunks.push((*b"ALPH", chunk_payload(&base, b"ALPH")));
+            chunks.push((*b"VP8 ", chunk_payload(&base, b"VP8 ")));
+        }
+        riff(&chunks)
+    };
+    let patch_size = |data: &mut Vec<u8>, fourcc: &[u8; 4], add: u32| {
+        let at = data.windows(4).rposition(|w| w == fourcc).unwrap() + 4;
+        let n = u32::from_le_bytes(data[at..at + 4].try_into().unwrap()) + add;
+        data[at..at + 4].copy_from_slice(&n.to_le_bytes());
+    };
+    let mut cases: Vec<(&str, Vec<u8>, &[u8; 4])> = Vec::new();
+    let mut d = build(false);
+    d.pop();
+    cases.push(("VP8 cut 1 byte", d, b"VP8 "));
+    let mut d = build(false);
+    patch_size(&mut d, b"VP8 ", 100);
+    cases.push(("VP8 size +100", d, b"VP8 "));
+    let mut d = build(true);
+    patch_size(&mut d, b"ALPH", 50);
+    cases.push(("ALPH size +50", d, b"ALPH"));
+    for (name, data, label) in cases {
+        let out = WebpDecoderConfig::new().decode(&data).expect(name);
+        assert_eq!(
+            webp_probe(out.source_encoding_details())
+                .icc_profile
+                .as_deref(),
+            Some(&b"icc-bytes-serial-9"[..]),
+            "{name}"
+        );
+        let inv = inventory_of(&data);
+        assert!(
+            !inv.parts()[0]
+                .detail
+                .as_deref()
+                .unwrap()
+                .contains("decoder rejects"),
+            "{name}\n{inv}"
+        );
+        let l = std::str::from_utf8(label).unwrap();
+        let part = find(&inv, l).into_iter().next_back().unwrap();
+        // ALPH is decoded then dropped here: from_webp fails, so the output is RGB.
+        assert!(
+            part.disposition.is_consumed() || part.disposition == Disposition::Dropped,
+            "{name}\n{inv}"
+        );
+        let d = part.detail.as_deref().unwrap();
+        assert!(
+            d.contains("only") && d.contains("else it falls back to WebPDecoder"),
+            "{name}: {d}"
+        );
+        assert_eq!(
+            find(&inv, "ICCP")[0].disposition,
+            Disposition::Metadata(MetadataKind::Icc)
+        );
+    }
+
+    // Cut 20 bytes: decode fails, and the wording still says "when they suffice".
     let vp8 = chunk_payload(&chunks_of(&lossy_seed(32, 24, 2)), b"VP8 ");
     let mut data = riff(&[
         (*b"VP8X", vp8x_still(32, 24, 0x20)),
@@ -2053,15 +2123,34 @@ fn review2_r10_truncated_last_vp8_is_not_claimed_to_decode() {
     ]);
     data.truncate(data.len() - 20);
     assert!(WebpDecoderConfig::new().decode(&data).is_err());
-    assert!(WebpDecoderConfig::new().job().probe(&data).is_err());
     let inv = inventory_of(&data);
+    let last = find(&inv, "VP8 ").into_iter().next_back().unwrap();
+    assert_eq!(last.disposition, Disposition::ImageData, "{inv}");
     assert!(
-        !inv.parts().iter().any(|p| p.kind == PartKind::Chunk
-            && matches!(
-                p.disposition,
-                Disposition::ImageData | Disposition::Metadata(_)
-            )),
+        last.detail
+            .as_deref()
+            .unwrap()
+            .contains("when they suffice")
+    );
+
+    // Simple files: a truncated VP8 still decodes (ImageData); a truncated VP8L fails (Malformed).
+    let vp8 = chunk_payload(&chunks_of(&lossy_seed(64, 64, 4)), b"VP8 ");
+    let mut simple = riff(&[(*b"VP8 ", vp8)]);
+    let n = u32::from_le_bytes(simple[16..20].try_into().unwrap()) + 100;
+    simple[16..20].copy_from_slice(&n.to_le_bytes()); // size overshoots, every bitstream byte is present
+    assert!(WebpDecoderConfig::new().decode(&simple).is_ok());
+    let inv = inventory_of(&simple);
+    assert_eq!(
+        find(&inv, "VP8 ")[0].disposition,
+        Disposition::ImageData,
         "{inv}"
+    );
+    let mut simple_ll = riff(&[(*b"VP8L", lossless_rgba_vp8l(16, 16, 1))]);
+    simple_ll.truncate(simple_ll.len() - 2);
+    assert!(WebpDecoderConfig::new().decode(&simple_ll).is_err());
+    assert_eq!(
+        find(&inventory_of(&simple_ll), "VP8L")[0].disposition,
+        Disposition::Malformed
     );
 }
 

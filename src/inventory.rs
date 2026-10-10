@@ -197,8 +197,7 @@ impl Walker<'_, '_> {
             (
                 disposition,
                 Some(format!(
-                    "chunk declares {} payload bytes, only {} are present (the bytes present are \
-                     delivered){}",
+                    "chunk declares {} payload bytes, only {} are present{}",
                     c.size,
                     c.payload.end - c.payload.start,
                     detail.map(|d| format!("; {d}")).unwrap_or_default()
@@ -487,6 +486,9 @@ impl Walker<'_, '_> {
         })
     }
 
+    const TRUNCATED_NOTE: &'static str = "decode() decodes the bytes present when they suffice, \
+        else it falls back to WebPDecoder and fails";
+
     const PROBE_ICC: &'static str = "reported through source_encoding_details() \
         (WebPProbe::icc_profile: detect::probe keeps the last ICCP and ignores the RIFF size), \
         not through ImageInfo";
@@ -601,14 +603,23 @@ impl Walker<'_, '_> {
             )?;
             return self.walk_tail(first.next, riff_end, &why, None);
         }
-        self.emit(
+        // A truncated simple VP8 still decodes when the bytes present suffice
+        // (`decode_lossy_internal` clamps); a truncated VP8L fails in `chunk_slice`.
+        let keep = first.truncated && &first.fourcc == b"VP8 ";
+        let note = if keep {
+            format!("; {}", Self::TRUNCATED_NOTE)
+        } else {
+            String::new()
+        };
+        self.emit_ex(
             None,
             &first,
             Disposition::ImageData,
             Some(format!(
-                "{kind} image; bytes after the bitstream's own end are not distinguished"
+                "{kind} image; bytes after the bitstream's own end are not distinguished{note}"
             )),
             false,
+            keep,
         )?;
         self.walk_tail(
             first.next,
@@ -753,7 +764,13 @@ impl Walker<'_, '_> {
                     } else {
                         n
                     };
-                    self.emit(None, c, d, Some(format!("{n}{past}")), false)?;
+                    let keep = d == Disposition::ImageData && c.truncated && m.d_viable;
+                    let n = if keep {
+                        format!("{n}; {}", Self::TRUNCATED_NOTE)
+                    } else {
+                        n
+                    };
+                    self.emit_ex(None, c, d, Some(format!("{n}{past}")), false, keep)?;
                 }
                 b"ALPH" => {
                     let used = if m.animated {
@@ -1074,13 +1091,11 @@ impl Walker<'_, '_> {
         };
         let d_last_img = last_of(&|c| matches!(&c.fourcc, b"VP8 " | b"VP8L"));
         let d_last_alph = last_of(&|c| &c.fourcc == b"ALPH");
-        // The demuxer path needs the chosen bitstream (and ALPH) to be present
-        // in full; a clamped one makes it fail and `decode()` falls back to
-        // `WebPDecoder` (first chunks).
+        // The demuxer clamps a chunk that runs past EOF; whether the bytes
+        // present suffice is a bitstream question (see `TRUNCATED_NOTE`).
         let d_viable = !animated
             && vp8x.size >= 10
-            && d_last_img.is_some_and(|i| &chunks[i].fourcc == b"VP8 " && !chunks[i].truncated)
-            && !d_last_alph.is_some_and(|i| chunks[i].truncated);
+            && d_last_img.is_some_and(|i| &chunks[i].fourcc == b"VP8 ");
 
         // --- detect::probe ----------------------------------------------------------
         let all: Vec<&RawChunk> = core::iter::once(vp8x).chain(chunks.iter()).collect();
@@ -1184,10 +1199,9 @@ impl Walker<'_, '_> {
     ) -> Result<(), DecodeError> {
         let s = c.payload.start;
         let plane = 1 + u64::from(canvas.0) * u64::from(canvas.1);
-        let uncompressed = !c.truncated
-            && c.payload.end > s
-            && self.data.get(s as usize).is_some_and(|b| b & 3 == 0);
-        if uncompressed && s + plane < c.payload.end {
+        let uncompressed =
+            c.payload.end > s && self.data.get(s as usize).is_some_and(|b| b & 3 == 0);
+        if uncompressed && !c.truncated && s + plane < c.payload.end {
             let id = self.emit(
                 None,
                 c,
@@ -1200,20 +1214,17 @@ impl Walker<'_, '_> {
                 .fill_gaps(Some(id), Disposition::Unreferenced)
                 .map_err(parts_err)?;
         } else {
-            self.emit(
-                None,
-                c,
-                disposition,
-                Some(if uncompressed {
-                    format!("{detail}; uncompressed alpha plane with no bytes after it")
-                } else {
-                    format!(
-                        "{detail}; compressed alpha: bytes after the stream's own end are not \
-                         distinguished"
-                    )
-                }),
-                false,
-            )?;
+            let note = if c.truncated {
+                format!("{detail}; {}", Self::TRUNCATED_NOTE)
+            } else if uncompressed {
+                format!("{detail}; uncompressed alpha plane with no bytes after it")
+            } else {
+                format!(
+                    "{detail}; compressed alpha: bytes after the stream's own end are not \
+                     distinguished"
+                )
+            };
+            self.emit_ex(None, c, disposition, Some(note), false, true)?;
         }
         Ok(())
     }
