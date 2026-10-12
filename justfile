@@ -166,3 +166,7 @@ inventory-mutation:
 metadata-input-limit-check:
     cargo test --features inventory --test inventory job_ -- --nocapture
     cargo clippy --features inventory --lib --test inventory -- -D warnings
+
+# Populate and validate the same corpus mounted into cross by CI.
+metadata-corpus-check:
+    cargo test --features inventory --test inventory corpus_webp_conformance_valid -- --exact

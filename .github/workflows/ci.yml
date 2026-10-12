@@ -126,13 +126,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: cross-i686
+      - name: Prefetch inventory corpus on the host
+        env:
+          CODEC_CORPUS_CACHE: ${{ github.workspace }}/.corpus-cache
+        run: cargo test --features inventory --test inventory corpus_webp_conformance_valid -- --exact
       - name: Run tests (i686)
         # Mount the zenanalyze sibling at /zenanalyze inside the cross
         # container, since cross sets WORKDIR=/project and `../zenanalyze`
         # in the manifest resolves to /zenanalyze. Cross 0.2.5 doesn't
         # auto-mount path deps that live outside the repo dir.
         env:
-          CROSS_CONTAINER_OPTS: "-v ${{ github.workspace }}/../zenanalyze:/zenanalyze"
+          CROSS_CONTAINER_OPTS: "-v ${{ github.workspace }}/../zenanalyze:/zenanalyze -v ${{ github.workspace }}/.corpus-cache:/codec-corpus"
+          CODEC_CORPUS_CACHE: /codec-corpus
         run: cross test --target i686-unknown-linux-gnu --features inventory
 
   wasm:

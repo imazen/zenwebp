@@ -5,6 +5,8 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+- Prefetch the WebP inventory corpus before i686 tests and mount its cache explicitly into the cross container; retain the existing conformance assertions.
+
 - Inventory input-size failures now retain typed `LimitExceeded::InputSize`
   (approved expectation update); decode keeps its existing native error.
 
