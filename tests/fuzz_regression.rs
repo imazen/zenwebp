@@ -137,6 +137,15 @@ fn fuzz_regression_seeds_do_not_panic() {
         run_decode_still(&input);
         run_decode_animated(&input);
         run_decode_v2(&input);
+        #[cfg(feature = "inventory")]
+        {
+            use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
+            let inventory = zenwebp::zencodec::WebpDecoderConfig::new()
+                .job()
+                .inventory(&input)
+                .expect("bounded regression inventory");
+            inventory.validate().expect("inventory covers the input");
+        }
         run_demux(&input);
         // Encode-side seeds are parameter blobs, not WebP files; decode seeds
         // run through these too (they just exercise arbitrary encode cells).

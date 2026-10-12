@@ -1,5 +1,5 @@
 # zenwebp public API — additions from non-default features
-# features: ablation,analyzer,avx512,cms,fast-yuv,imgref,mode_debug,pixel-types,std,target-zensim,testable_dispatch
+# features: ablation,analyzer,avx512,cms,fast-yuv,imgref,inventory,mode_debug,pixel-types,std,target-zensim,testable_dispatch
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -12,6 +12,7 @@
 #   pub types (struct/enum/trait/alias)         3
 #   pub consts/statics                          3
 #   free functions                             23
+#   inherent methods                            1
 #   struct fields                              50
 #   enum variants                               9
 #   re-exports                                  4
@@ -23,8 +24,9 @@
 #   decoder                           9
 #   encoder                          71
 #   pixel                             2
+#   zencodec                          1
 
-## items (80 lines)
+## items (81 lines)
 
 pub use AblationToggles
 pub use set_ablation_toggles
@@ -98,6 +100,7 @@ pub encoder::ValidationError::TargetZensimToleranceInvalid::field: &'static str
 pub encoder::ValidationError::TargetZensimToleranceInvalid::value: f32
 pub fn pixel::decode_to_img<P: pixel::DecodePixel>(&[u8]) -> DecodeResult<imgref::ImgVec<P>> where [u8]: rgb::legacy::internal::convert::AsPixels<P>
 pub fn pixel::encode_img<P: pixel::EncodePixel>(imgref::ImgRef<'_, P>) -> EncodeResult<alloc::vec::Vec<u8>> where [P]: rgb::legacy::internal::pixel::ComponentBytes<u8>
+pub fn zencodec::WebpDecodeJob::inventory(&self, &[u8]) -> core::result::Result<zencodec::inventory::Inventory, whereat::at::At<zencodec::error::CodecError>>
 pub ValidationError::TargetZensimMaxPassesZero
 pub ValidationError::TargetZensimMaxPassesZero::value: u8
 pub ValidationError::TargetZensimOutOfRange

@@ -5,6 +5,17 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+### Metadata inventory
+
+- Default-off `inventory` reuses PR106 (`cd09b5bd`), preserves typed part causes,
+  and returns typed unsupported when disabled. Existing metadata decoding does
+  not require the walker. See docs/metadata-integration.md for scope and checks.
+- Native/i686 inventory regressions, no_std, clippy, the fuzz target, and
+  ExifTool container comparisons pass against the pinned contract (`c1c3292f`).
+- The crates.io 0.4.4 API comparison retains the existing main-branch
+  EncodeError::LimitExceeded tuple break; inventory itself was not published.
+
+
 ### Fixed
 
 - **wasm32 SIMD128 lossy encoder produced different bytes than every other

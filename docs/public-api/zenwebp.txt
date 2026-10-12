@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenwebp.txt 985 lines (supported surface) | zenwebp.features.txt 83 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,mode_debug,pixel-types,std,target-zensim,testable_dispatch) | zenwebp.internal.txt 975 lines (1167 hidden + 270 excluded-feature)
+# files: zenwebp.txt 985 lines (supported surface) | zenwebp.features.txt 84 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,inventory,mode_debug,pixel-types,std,target-zensim,testable_dispatch) | zenwebp.internal.txt 975 lines (1167 hidden + 270 excluded-feature)
 
 ## summary
 #

@@ -1,8 +1,9 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, review/zenmeta-integration]
   pull_request:
     # Trigger on PRs targeting `main` (the usual flow) AND on PRs targeting
     # the long-lived `fixall/*` consolidation branch or any `stack/*` branch
@@ -51,6 +52,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run tests (default features)
         run: cargo test
+      - name: Inventory contract and replay
+        run: cargo test --features inventory --test inventory --test inventory_feature --test fuzz_regression
       - name: Run tests (no_std)
         run: cargo test --no-default-features
       - name: Test (--features imgref)
@@ -130,7 +133,7 @@ jobs:
         # auto-mount path deps that live outside the repo dir.
         env:
           CROSS_CONTAINER_OPTS: "-v ${{ github.workspace }}/../zenanalyze:/zenanalyze"
-        run: cross test --target i686-unknown-linux-gnu
+        run: cross test --target i686-unknown-linux-gnu --features inventory
 
   wasm:
     name: WASM check
