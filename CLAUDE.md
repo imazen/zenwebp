@@ -1046,6 +1046,8 @@ is essentially the current implementation.
 
 ## Known Bugs
 
+- Inventory CI on i686 failed opening the corpus cache with PermissionDenied (2026-10-12). The workflow now prefetches on the host and mounts that directory explicitly at `/codec-corpus`, passed through Cross.toml. Conformance assertions remain unchanged.
+
 (none currently)
 
 ## User Feedback Log

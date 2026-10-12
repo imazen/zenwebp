@@ -1536,6 +1536,7 @@ static DECODE_CAPABILITIES: zencodec::decode::DecodeCapabilities =
         .with_cheap_probe(true)
         .with_native_alpha(true)
         .with_streaming(true)
+        .with_inventory(cfg!(feature = "inventory"))
         .with_enforces_max_pixels(true)
         .with_enforces_max_memory(true)
         .with_enforces_max_input_bytes(true);
@@ -1719,6 +1720,74 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
             info = info.with_source_encoding_details(probe);
         }
         Ok(self.apply_policy_to_info(info))
+    }
+
+    #[cfg(feature = "inventory")]
+    fn inventory(
+        &self,
+        data: &[u8],
+    ) -> Result<zencodec::inventory::Inventory, At<zencodec::CodecError>> {
+        if let Some(ref stop) = self.stop {
+            enough::Stop::check(stop)
+                .map_err(|e| zencodec::CodecError::of(at!(DecodeError::Cancelled(e))))?;
+        }
+        if let Some(max) = self.effective_input_size_limit()
+            && data.len() as u64 > max
+        {
+            use zencodec::CategorizedError;
+            let error = zencodec::LimitExceeded::InputSize {
+                actual: data.len() as u64,
+                max,
+            };
+            return Err(at!(zencodec::CodecError::from_parts(
+                Some("zenwebp"),
+                error.category(),
+                alloc::boxed::Box::new(error)
+            )));
+        }
+        let mut job = crate::inventory::JobView::default();
+        if let Some(ref policy) = self.policy {
+            job.strip_icc = !policy.resolve_icc(true);
+            job.strip_exif = !policy.resolve_exif(true);
+            job.strip_xmp = !policy.resolve_xmp(true);
+            job.deny_animation = !policy.resolve_animation(true);
+        }
+        // `do_decode` checks the job's limits against `from_webp`'s dimensions,
+        // and `build_config` hands the frame limit to `read_data` on the general
+        // (animated) path. `probe()` applies neither.
+        if let Ok(info) = crate::ImageInfo::from_webp(data) {
+            if let Err(e) = self.limits.check_dimensions(info.width, info.height) {
+                job.decode_fails = Some(alloc::format!("{e}"));
+            } else if info.has_animation
+                && let Some(max) = self.limits.max_frames
+                && u64::from(info.frame_count) > max as u64
+            {
+                job.decode_fails = Some(alloc::format!(
+                    "frame count {} exceeds limit {max}",
+                    info.frame_count
+                ));
+            }
+        }
+        let stop = self.stop.clone();
+        let mut check = || -> Result<(), crate::inventory::WalkError> {
+            if let Some(ref s) = stop {
+                use enough::Stop;
+                s.check()
+                    .map_err(|e| crate::inventory::WalkError::Decode(DecodeError::from(e)))?;
+            }
+            Ok(())
+        };
+        crate::inventory::walk(data, &mut check, &job).map_err(|e| match e {
+            crate::inventory::WalkError::Decode(e) => zencodec::CodecError::of(at!(e)),
+            crate::inventory::WalkError::Parts(e) => {
+                use zencodec::CategorizedError;
+                at!(zencodec::CodecError::from_parts(
+                    Some("zenwebp"),
+                    e.category(),
+                    alloc::boxed::Box::new(e)
+                ))
+            }
+        })
     }
 
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<zencodec::CodecError>> {

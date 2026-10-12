@@ -33,7 +33,7 @@ hashbrown = { version = "0.17.1", default-features = false, features = ["default
 thiserror = { version = "2.0.18", default-features = false }
 whereat = { version = "0.1.5", default-features = false }
 libm = "0.2.16"
-zencodec = ">=0.1.26, <0.3.0"
+zencodec = ">=0.1.27, <0.3.0"
 # zennode = { path = "../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 zenpixels = { version = ">=0.2.11, <0.4.0", default-features = false }
 # Used by the zencodec encode path to synthesize an ICC profile from a
@@ -138,6 +138,8 @@ zensim = "0.2"
 zensim-regress = "0.3.0"
 
 [features]
+# Optional structural walker; baseline metadata is always available.
+inventory = []
 default = ["std", "fast-yuv", "pixel-types"]
 # Dev-only: exposes internal SIMD kernels for per-tier benchmarking. Not API.
 _dev = []
@@ -506,6 +508,11 @@ required-features = ["_dev"]
 [patch.crates-io]
 zenanalyze-api = { git = "https://github.com/imazen/zenanalyze" }
 zenanalyze = { git = "https://github.com/imazen/zenanalyze" }
+# zencodec#133 (structural inventories). The version floor above (0.1.27) is the first
+# release that must contain the inventory API. Swap this patch for the released zencodec /
+# zencodec-testkit before merging this branch.
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "c1c3292ff10f386191780ad407526951165da47a" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "c1c3292ff10f386191780ad407526951165da47a" }
 
 # Wide-corpus decoder parity sweep vs libwebp (rgba/rgb/nofancy/yuv/anim,
 # tolerance 0) over existing .webp files plus libwebp- and zenwebp-encoded

@@ -1,8 +1,9 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, review/zenmeta-integration]
   pull_request:
     # Trigger on PRs targeting `main` (the usual flow) AND on PRs targeting
     # the long-lived `fixall/*` consolidation branch or any `stack/*` branch
@@ -51,6 +52,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run tests (default features)
         run: cargo test
+      - name: Inventory contract and replay
+        run: cargo test --features inventory --test inventory --test inventory_feature --test fuzz_regression
       - name: Run tests (no_std)
         run: cargo test --no-default-features
       - name: Test (--features imgref)
@@ -123,14 +126,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: cross-i686
+      - name: Prefetch inventory corpus on the host
+        env:
+          CODEC_CORPUS_CACHE: ${{ github.workspace }}/.corpus-cache
+        run: cargo test --features inventory --test inventory corpus_webp_conformance_valid -- --exact
       - name: Run tests (i686)
         # Mount the zenanalyze sibling at /zenanalyze inside the cross
         # container, since cross sets WORKDIR=/project and `../zenanalyze`
         # in the manifest resolves to /zenanalyze. Cross 0.2.5 doesn't
         # auto-mount path deps that live outside the repo dir.
         env:
-          CROSS_CONTAINER_OPTS: "-v ${{ github.workspace }}/../zenanalyze:/zenanalyze"
-        run: cross test --target i686-unknown-linux-gnu
+          CROSS_CONTAINER_OPTS: "-v ${{ github.workspace }}/../zenanalyze:/zenanalyze -v ${{ github.workspace }}/.corpus-cache:/codec-corpus"
+          CODEC_CORPUS_CACHE: /codec-corpus
+        run: cross test --target i686-unknown-linux-gnu --features inventory
 
   wasm:
     name: WASM check

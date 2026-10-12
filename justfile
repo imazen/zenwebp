@@ -136,3 +136,37 @@ decode-parity-wasm:
       dev/decode_parity_wasm.sh target/wasm-$v/wasm32-wasip1/release/examples/decode_parity_dump.wasm \
         "$out/gen" "$out/wasm-$v" 14 | tee "$out/wasm-$v.summary"
     done
+
+# Structural metadata tests, default-off contract, and compiler checks.
+metadata-check:
+    cargo test --features inventory --test inventory --test inventory_both_directions --test inventory_feature --test fuzz_regression
+    cargo clippy --features inventory --lib --tests -- -D warnings
+    cargo check --no-default-features --features inventory
+    cargo test --test inventory_feature
+
+inventory-oracle:
+    INVENTORY_ORACLE_EXIFTOOL="$(command -v exiftool)" cargo test --features inventory --test inventory -- --ignored --nocapture
+
+metadata-portability:
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test --features inventory --target i686-unknown-linux-gnu --test inventory --test inventory_feature --test fuzz_regression
+    cargo check --manifest-path fuzz/Cargo.toml --bin inventory
+    just api-doc
+
+metadata-api-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    baseline=$(cargo read zenwebp==0.4.4 --path-only)
+    RUSTC_BOOTSTRAP=1 cargo rustdoc --lib --features inventory -- -Zunstable-options --output-format json
+    RUSTC_BOOTSTRAP=1 cargo rustdoc --manifest-path "$baseline/Cargo.toml" --target-dir "$PWD/target/published-api/0.4.4" --lib -- -Zunstable-options --output-format json
+    cargo semver-checks check-release --current-rustdoc target/doc/zenwebp.json --baseline-rustdoc target/published-api/0.4.4/doc/zenwebp.json --release-type patch
+
+inventory-mutation:
+    cargo test --features inventory --test inventory_both_directions -- --ignored --nocapture
+
+metadata-input-limit-check:
+    cargo test --features inventory --test inventory job_ -- --nocapture
+    cargo clippy --features inventory --lib --test inventory -- -D warnings
+
+# Populate and validate the same corpus mounted into cross by CI.
+metadata-corpus-check:
+    cargo test --features inventory --test inventory corpus_webp_conformance_valid -- --exact
