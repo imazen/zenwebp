@@ -162,3 +162,7 @@ metadata-api-check:
 
 inventory-mutation:
     cargo test --features inventory --test inventory_both_directions -- --ignored --nocapture
+
+metadata-input-limit-check:
+    cargo test --features inventory --test inventory job_ -- --nocapture
+    cargo clippy --features inventory --lib --test inventory -- -D warnings

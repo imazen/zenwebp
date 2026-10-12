@@ -5,6 +5,9 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+- Inventory input-size failures now retain typed `LimitExceeded::InputSize`
+  (approved expectation update); decode keeps its existing native error.
+
 ### Metadata inventory
 
 - Default-off `inventory` reuses PR106 (`cd09b5bd`), preserves typed part causes,

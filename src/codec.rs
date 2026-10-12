@@ -1727,7 +1727,6 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         &self,
         data: &[u8],
     ) -> Result<zencodec::inventory::Inventory, At<zencodec::CodecError>> {
-        // Same gates, same errors as `decode()` (`WebpDecoder::do_decode`).
         if let Some(ref stop) = self.stop {
             enough::Stop::check(stop)
                 .map_err(|e| zencodec::CodecError::of(at!(DecodeError::Cancelled(e))))?;
@@ -1735,12 +1734,15 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         if let Some(max) = self.effective_input_size_limit()
             && data.len() as u64 > max
         {
-            return Err(zencodec::CodecError::of(at!(
-                DecodeError::InvalidParameter(alloc::format!(
-                    "input size {} exceeds limit {}",
-                    data.len(),
-                    max
-                ))
+            use zencodec::CategorizedError;
+            let error = zencodec::LimitExceeded::InputSize {
+                actual: data.len() as u64,
+                max,
+            };
+            return Err(at!(zencodec::CodecError::from_parts(
+                Some("zenwebp"),
+                error.category(),
+                alloc::boxed::Box::new(error)
             )));
         }
         let mut job = crate::inventory::JobView::default();

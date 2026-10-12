@@ -8,6 +8,7 @@
 
 use std::fmt::Write as _;
 
+use zencodec::CodecErrorExt;
 use zencodec::decode::{DecodeJob, DecoderConfig};
 use zencodec::inventory::{Disposition, Inventory, MetadataKind, PartKind, PartTag};
 use zenwebp::mux::{AnimationConfig, AnimationEncoder, WebPMux};
@@ -2354,15 +2355,21 @@ fn review4_q1_job_settings() {
         .unwrap();
     assert_eq!(loop_count.disposition(), Disposition::Dropped);
 
-    // (c) max_input_bytes: the same error as decode().
+    // (c) max_input_bytes: both reject; inventory preserves the typed limit.
     let job = || {
         WebpDecoderConfig::new()
             .job()
             .with_limits(zencodec::ResourceLimits::none().with_max_input_bytes(64))
     };
-    let dec = decode_with(job(), &data).unwrap_err();
-    let inv = job().inventory(&data).unwrap_err().to_string();
-    assert_eq!(inv, dec);
+    assert!(decode_with(job(), &data).is_err());
+    let inv = job().inventory(&data).unwrap_err();
+    assert_eq!(
+        inv.limit_exceeded(),
+        Some(&zencodec::LimitExceeded::InputSize {
+            actual: data.len() as u64,
+            max: 64
+        })
+    );
 
     // (c') max_pixels: decode() fails, probe() does not apply the job's limits.
     let job = || {
