@@ -336,6 +336,10 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
   can be affected.
 
 ### QUEUED BREAKING CHANGES
+
+- Published 0.4.4 comparison: nine codec-trait associated errors now use
+  `At<CodecError>` instead of native errors (already in `162e05de`); see
+  [metadata integration](docs/metadata-integration.md).
 <!-- Not yet landed. Batch into a future 0.x minor once approved. -->
 - Remove `MuxError::FrameOutOfBounds` — never constructed anywhere in the
   crate (#78-C). Public enum variant, so it waits for the next breaking
