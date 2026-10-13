@@ -20,7 +20,7 @@ fn shared_timing_boundaries_and_dispatch() {
         (d(u64::MAX, 1), None),
         (ms(10), Some(ms(10))),
     ];
-    tk::check_animation_timing(E::lossless(), D::new(), &img, true, &exact).unwrap();
+    tk::check_animation_timing(E::lossless(), D::new(), img.as_slice(), true, &exact).unwrap();
     let ordinary = [
         (d(1, 30), Some(ms(33))),
         (d(u64::MAX, 1), None),
@@ -28,7 +28,7 @@ fn shared_timing_boundaries_and_dispatch() {
         (ms(0), Some(ms(0))),
         (d(1, 30), Some(ms(33))),
     ];
-    tk::check_animation_timing(E::lossless(), D::new(), &img, false, &ordinary).unwrap();
+    tk::check_animation_timing(E::lossless(), D::new(), img.as_slice(), false, &ordinary).unwrap();
 }
 
 #[test]
@@ -50,7 +50,7 @@ fn policy_and_inventory_contracts() {
         tk::check_encode_policy_admission(
             enc.clone(),
             D::new(),
-            &img,
+            img.as_slice(),
             Metadata::none(),
             EncodePolicy::none(),
             policy,

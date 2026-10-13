@@ -20,7 +20,7 @@ version = ">=0.1.27, <0.3.0"
 # zencodec#133 (structural inventories); swap for the released zencodec before
 # merging, together with the same patch in the root Cargo.toml.
 [patch.crates-io]
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "919dd67861abc3bf0192b9a67f760454a1a96407" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "ab420b6c064eaa9c3abecb01f51b85413c0f2529" }
 
 # Prevent this from interfering with workspaces
 [workspace]
