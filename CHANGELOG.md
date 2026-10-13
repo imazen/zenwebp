@@ -5,6 +5,12 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+### Tests
+
+- Exercise shared timing boundaries, rejected-frame state, policy admission and
+  inventory limits/dispatch with the reusable codec testkit.
+
+
 - Give the independent recompress workspace the shared zencodec patch it needs
   while 0.1.27 is unpublished; parent package patches are not inherited.
 

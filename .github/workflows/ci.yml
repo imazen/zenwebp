@@ -51,7 +51,7 @@ jobs:
       - name: Run tests (default features)
         run: cargo test
       - name: Inventory contract and replay
-        run: cargo test --features inventory --test inventory --test inventory_feature --test fuzz_regression
+        run: cargo test --features inventory --test inventory --test inventory_feature --test fuzz_regression --test shared_contracts
       - name: Run tests (no_std)
         run: cargo test --no-default-features
       - name: Test (--features imgref)

@@ -189,3 +189,9 @@ recompress-contract-check:
     cargo test --manifest-path zenwebp-recompress/Cargo.toml --all-features
     cargo clippy --manifest-path zenwebp-recompress/Cargo.toml --all-targets --all-features -- -D warnings
     cargo fmt --manifest-path zenwebp-recompress/Cargo.toml -- --check
+
+# New shared contracts, with inventory both enabled and absent.
+shared-contract-check:
+    cargo test -p zenwebp --features inventory --test shared_contracts
+    cargo test -p zenwebp --test shared_contracts
+    cargo clippy -p zenwebp --features inventory --test shared_contracts -- -D warnings
