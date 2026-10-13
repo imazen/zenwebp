@@ -5,6 +5,9 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+- Timing tests compare rational durations directly, retaining their existing
+  exact expectations without the deprecated millisecond projection.
+
 ### Animation timing
 
 - Add ordinary rational timing with cumulative millisecond rounding and explicit

@@ -3669,7 +3669,10 @@ mod tests {
         // Each render_next_frame decodes one frame lazily.
         let f1 = dec.render_next_frame(None).unwrap().expect("frame 1");
         assert_eq!(f1.frame_index(), 0);
-        assert_eq!(f1.duration_ms(), 100);
+        assert_eq!(
+            f1.duration(),
+            zencodec::animation::FrameDuration::from_millis(100)
+        );
 
         let f2 = dec.render_next_frame_owned(None).unwrap().expect("frame 2");
         assert_eq!(f2.frame_index(), 1);
@@ -3870,18 +3873,22 @@ mod tests {
 
         let f1 = dec.render_next_frame(None).unwrap().expect("frame 1");
         assert_eq!(
-            f1.duration_ms(),
-            200,
+            f1.duration(),
+            zencodec::animation::FrameDuration::from_millis(200),
             "first frame duration should be 200ms"
         );
 
         let f2 = dec.render_next_frame(None).unwrap().expect("frame 2");
-        assert_eq!(f2.duration_ms(), 50, "second frame duration should be 50ms");
+        assert_eq!(
+            f2.duration(),
+            zencodec::animation::FrameDuration::from_millis(50),
+            "second frame duration should be 50ms"
+        );
 
         let f3 = dec.render_next_frame(None).unwrap().expect("frame 3");
         assert_eq!(
-            f3.duration_ms(),
-            300,
+            f3.duration(),
+            zencodec::animation::FrameDuration::from_millis(300),
             "last frame duration should be 300ms, not hardcoded 100ms"
         );
 
