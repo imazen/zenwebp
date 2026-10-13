@@ -170,3 +170,15 @@ metadata-input-limit-check:
 # Populate and validate the same corpus mounted into cross by CI.
 metadata-corpus-check:
     cargo test --features inventory --test inventory corpus_webp_conformance_valid -- --exact
+
+animation-timing-check:
+    cargo test -p zenwebp --test animation_timing
+    cargo clippy -p zenwebp --lib --test animation_timing -- -D warnings
+
+animation-timing-oracle output:
+    cargo run -p zenwebp --example animation_timing_oracle -- "{{output}}"
+    python3 tests/animation_timing_oracle.py "{{output}}"
+
+animation-integration-check: animation-timing-check
+    cargo test -p zenwebp --lib codec::
+    cargo test -p zenwebp --features inventory --test inventory

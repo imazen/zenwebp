@@ -5,6 +5,16 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+### Animation timing
+
+- Add ordinary rational timing with cumulative millisecond rounding and explicit
+  exact timing. Each ordinary push reports the duration actually encoded.
+- Reject 24-bit duration overflow and cumulative timestamp overflow before
+  accepting a frame, rather than failing during finalization or saturating time.
+- Pin the coordinated unpublished zencodec contract from PR138. Existing
+  millisecond entrypoints retain their signatures.
+- CI targets macOS ARM64 only.
+
 - Prefetch the WebP inventory corpus before i686 tests and mount its cache explicitly into the cross container; retain the existing conformance assertions.
 
 - Inventory input-size failures now retain typed `LimitExceeded::InputSize`

@@ -347,6 +347,7 @@ static ENCODE_CAPABILITIES: zencodec::encode::EncodeCapabilities =
         .with_lossy(true)
         .with_lossless(true)
         .with_animation(true)
+        .with_animation_timing(true)
         .with_push_rows(true)
         .with_native_alpha(true)
         .with_effort_range(0, 10)
@@ -770,6 +771,8 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
             inner_config,
             anim_enc: None,
             cumulative_ms: 0,
+            timing: zencodec::animation::TimingQuantizer::new(1000, 0x00ff_ffff)
+                .expect("valid WebP clock"),
             last_frame_duration_ms: 100,
             canvas_size: self.canvas_size,
             loop_count,
@@ -1326,6 +1329,7 @@ pub struct WebpAnimationFrameEncoder {
     inner_config: EncoderConfig,
     anim_enc: Option<AnimationEncoder>,
     cumulative_ms: u32,
+    timing: zencodec::animation::TimingQuantizer,
     last_frame_duration_ms: u32,
     canvas_size: Option<(u32, u32)>,
     loop_count: crate::decoder::LoopCount,
@@ -1364,12 +1368,48 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
         EncodeError::from(op).into()
     }
 
+    fn push_frame_timed(
+        &mut self,
+        pixels: PixelSlice<'_>,
+        duration: zencodec::animation::FrameDuration,
+        stop: Option<&dyn enough::Stop>,
+    ) -> Result<zencodec::animation::FrameDuration, Self::Error> {
+        let mut timing = self.timing;
+        let encoded = timing
+            .quantize(duration)
+            .map_err(|_| Self::reject(UnsupportedOperation::AnimationTiming))?;
+        self.push_frame_exact(pixels, encoded, stop)?;
+        self.timing = timing;
+        Ok(encoded)
+    }
+
+    fn push_frame_exact(
+        &mut self,
+        pixels: PixelSlice<'_>,
+        duration: zencodec::animation::FrameDuration,
+        stop: Option<&dyn enough::Stop>,
+    ) -> Result<(), Self::Error> {
+        let ticks = duration
+            .ticks_at(1000)
+            .ok()
+            .and_then(|n| u32::try_from(n).ok())
+            .ok_or_else(|| Self::reject(UnsupportedOperation::AnimationTiming))?;
+        self.push_frame(pixels, ticks, stop)
+    }
+
     fn push_frame(
         &mut self,
         pixels: PixelSlice<'_>,
         duration_ms: u32,
         stop: Option<&dyn enough::Stop>,
     ) -> Result<(), At<zencodec::CodecError>> {
+        if duration_ms > 0x00ff_ffff {
+            return Err(Self::reject(UnsupportedOperation::AnimationTiming));
+        }
+        let cumulative_ms = self
+            .cumulative_ms
+            .checked_add(duration_ms)
+            .ok_or_else(|| Self::reject(UnsupportedOperation::AnimationTiming))?;
         if let Some(s) = stop {
             s.check()
                 .map_err(|e| zencodec::CodecError::of(at!(EncodeError::from(e))))?;
@@ -1403,7 +1443,7 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
         enc.add_frame(&buf, layout, timestamp_ms, &self.inner_config)
             .map_err_at(mux_to_encode_err)
             .map_err(zencodec::CodecError::of)?;
-        self.cumulative_ms = self.cumulative_ms.saturating_add(duration_ms);
+        self.cumulative_ms = cumulative_ms;
         self.last_frame_duration_ms = duration_ms;
         Ok(())
     }
