@@ -2795,6 +2795,8 @@ impl IncrementalDecode for WebpIncrementalDecoder {
             return Ok(PushOutcome::new(0, PushStatus::Complete));
         }
 
+        let was_header_parsed = self.header_parsed;
+
         self.total_input_bytes = self.total_input_bytes.saturating_add(chunk.len() as u64);
         if let Some(ref limits) = self.limits {
             limits
@@ -2991,14 +2993,20 @@ impl IncrementalDecode for WebpIncrementalDecoder {
             self.current_row = 0;
             self.output_ready = true;
 
-            return Ok(PushOutcome::new(chunk.len(), PushStatus::OutputReady));
+            let header_ready = !was_header_parsed && self.header_parsed;
+            return Ok(PushOutcome::new(chunk.len(), PushStatus::OutputReady).with_header_ready(header_ready));
         }
 
+        let header_ready = !was_header_parsed && self.header_parsed;
         if self.output_ready {
-            Ok(PushOutcome::new(chunk.len(), PushStatus::OutputReady))
+            Ok(PushOutcome::new(chunk.len(), PushStatus::OutputReady).with_header_ready(header_ready))
         } else {
-            Ok(PushOutcome::new(chunk.len(), PushStatus::NeedMoreInput))
+            Ok(PushOutcome::new(chunk.len(), PushStatus::NeedMoreInput).with_header_ready(header_ready))
         }
+    }
+
+    fn wrap_sink_error(err: zencodec::decode::SinkError) -> Self::Error {
+        zencodec::CodecError::of(at!(DecodeError::InvalidParameter(alloc::format!("{err}"))))
     }
 
     fn pull_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, Self::Error> {
