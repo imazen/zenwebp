@@ -5,6 +5,9 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+- Give the independent recompress workspace the shared zencodec patch it needs
+  while 0.1.27 is unpublished; parent package patches are not inherited.
+
 - Timing tests compare rational durations directly, retaining their existing
   exact expectations without the deprecated millisecond projection.
 

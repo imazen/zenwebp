@@ -182,3 +182,10 @@ animation-timing-oracle output:
 animation-integration-check: animation-timing-check
     cargo test -p zenwebp --lib codec::
     cargo test -p zenwebp --features inventory --test inventory
+
+# The nested workspace resolves patches independently of the parent package.
+recompress-contract-check:
+    cargo test --manifest-path zenwebp-recompress/Cargo.toml --workspace
+    cargo test --manifest-path zenwebp-recompress/Cargo.toml --all-features
+    cargo clippy --manifest-path zenwebp-recompress/Cargo.toml --all-targets --all-features -- -D warnings
+    cargo fmt --manifest-path zenwebp-recompress/Cargo.toml -- --check
