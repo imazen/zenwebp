@@ -3053,10 +3053,15 @@ impl IncrementalDecode for WebpIncrementalDecoder {
         self.info.as_ref()
     }
 
+    fn output_descriptor(&self) -> Option<PixelDescriptor> {
+        self.descriptor
+    }
+
     fn is_complete(&self) -> bool {
         self.is_complete
     }
 }
+
 
 // ── Full Frame Decoder ──────────────────────────────────────────────────────
 
