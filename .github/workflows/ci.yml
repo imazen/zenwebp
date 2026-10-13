@@ -39,8 +39,6 @@ jobs:
             os: ubuntu-24.04-arm
           - name: macOS arm64
             os: macos-latest
-          - name: macOS x64
-            os: macos-26-intel
           - name: Windows x64
             os: windows-latest
           - name: Windows arm64
@@ -101,8 +99,6 @@ jobs:
         include:
           - name: Linux x64
             os: ubuntu-latest
-          - name: macOS x64
-            os: macos-26-intel
           - name: Windows x64
             os: windows-latest
     steps:
@@ -206,8 +202,6 @@ jobs:
             os: ubuntu-24.04-arm
           - name: macOS arm64
             os: macos-latest
-          - name: macOS x64
-            os: macos-26-intel
           - name: Windows x64
             os: windows-latest
           - name: Windows arm64

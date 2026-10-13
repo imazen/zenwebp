@@ -56,8 +56,8 @@ jobs:
             os: ubuntu-latest
           - name: Windows arm64
             os: windows-11-arm
-          - name: macOS x64
-            os: macos-26-intel
+          - name: macOS arm64
+            os: macos-latest
     steps:
       - name: Checkout zenwebp
         uses: actions/checkout@v6
