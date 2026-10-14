@@ -5,6 +5,28 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+### Tests
+
+- Exercise shared timing boundaries, rejected-frame state, policy admission and
+  inventory limits/dispatch with the reusable codec testkit.
+
+
+- Give the independent recompress workspace the shared zencodec patch it needs
+  while 0.1.27 is unpublished; parent package patches are not inherited.
+
+- Timing tests compare rational durations directly, retaining their existing
+  exact expectations without the deprecated millisecond projection.
+
+### Animation timing
+
+- Add ordinary rational timing with cumulative millisecond rounding and explicit
+  exact timing. Each ordinary push reports the duration actually encoded.
+- Reject 24-bit duration overflow and cumulative timestamp overflow before
+  accepting a frame, rather than failing during finalization or saturating time.
+- Pin the coordinated unpublished zencodec contract from PR138. Existing
+  millisecond entrypoints retain their signatures.
+- CI targets macOS ARM64 only.
+
 - Prefetch the WebP inventory corpus before i686 tests and mount its cache explicitly into the cross container; retain the existing conformance assertions.
 
 - Inventory input-size failures now retain typed `LimitExceeded::InputSize`
