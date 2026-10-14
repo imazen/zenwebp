@@ -5,6 +5,11 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+### Dependency integration
+
+- Align temporary zencodec/zenmeta/testkit pins with the checked fidelity and operation-matrix contracts (`4fda4391`). Replace coordinated git pins with released versions before publication.
+
+
 ### Tests
 
 - Exercise shared timing boundaries, rejected-frame state, policy admission and

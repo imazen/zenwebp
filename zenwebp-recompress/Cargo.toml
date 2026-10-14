@@ -117,4 +117,4 @@ zenwebp = { workspace = true, features = ["std"] }
 # Cargo does not inherit the parent package's patch table into this workspace.
 # Keep the unpublished contract revision aligned until zencodec 0.1.27 ships.
 [patch.crates-io]
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "ab420b6c064eaa9c3abecb01f51b85413c0f2529" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "4fda439133d465246174b55f62426dc54ef204dd" }
