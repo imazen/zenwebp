@@ -329,10 +329,11 @@ optimization, a redesigned streaming decoder, SIMD acceleration via
 encoding, and extensive optimization across all pipelines to reach libwebp feature
 and performance parity.
 
-- **[libwebp](https://chromium.googlesource.com/webm/libwebp)** (Google) —
-  reference implementation. Our lossy encoder follows libwebp's algorithms for RD
-  optimization, trellis quantization, and mode selection. The WebP format itself
-  is Google's creation.
+- **[libwebp](https://chromium.googlesource.com/webm/libwebp)** —
+  reference implementation (James Zern and contributors).
+  Our lossy encoder follows libwebp's algorithms for RD
+  optimization, trellis quantization, and mode selection. The WebP format
+  comes from the WebM project — see the reference implementation.
 - **Claude** (Anthropic) — AI-assisted development.
 
 Contributions are welcome — please open an issue or pull request. Code review is
@@ -367,7 +368,7 @@ See [LICENSE-COMMERCIAL](https://github.com/imazen/zenwebp/blob/main/LICENSE-COM
 for details.
 
 Upstream code from [image-rs/image-webp](https://github.com/image-rs/image-webp) is
-licensed under MIT OR Apache-2.0. Our additions and improvements are dual-licensed
+licensed under MIT OR Apache-2.0 (texts in `upstream-notices/`). Our additions and improvements are dual-licensed
 (AGPL-3.0 or commercial) as above. Versions 0.1.x–0.3.x of zenwebp were MIT OR
 Apache-2.0.
 
