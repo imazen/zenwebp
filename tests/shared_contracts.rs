@@ -77,3 +77,26 @@ fn policy_and_inventory_contracts() {
     #[cfg(feature = "inventory")]
     tk::check_inventory_input_limit(D::new(), bytes.data()).unwrap();
 }
+
+#[test]
+fn unsupported_causes_survive_erasure() {
+    use zencodec::encode::AnimationFrameEncoder;
+    use zencodec::{CodecErrorExt, UnsupportedOperation};
+    let img = tk::TestImage::rgb8_gradient(16, 16);
+    let mut encoder = E::lossless().job().animation_frame_encoder().unwrap();
+    let err = encoder
+        .push_frame_exact(img.as_slice(), Duration::new(1, 3).unwrap(), None)
+        .unwrap_err();
+    let erased: Box<dyn std::error::Error + Send + Sync> = Box::new(err);
+    assert_eq!(
+        erased.unsupported_operation(),
+        Some(&UnsupportedOperation::AnimationTiming)
+    );
+    let native: Box<dyn std::error::Error + Send + Sync> = Box::new(
+        zenwebp::decoder::DecodeError::from(UnsupportedOperation::DecodePolicy),
+    );
+    assert_eq!(
+        native.unsupported_operation(),
+        Some(&UnsupportedOperation::DecodePolicy)
+    );
+}

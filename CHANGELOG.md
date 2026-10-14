@@ -5,6 +5,10 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve typed unsupported-operation causes in encoder and decoder error chains, including erased animation-timing refusals.
+
 ### Dependency integration
 
 - Align temporary zencodec/zenmeta/testkit pins with the checked fidelity and operation-matrix contracts (`4fda4391`). Replace coordinated git pins with released versions before publication.

@@ -1065,3 +1065,9 @@ is essentially the current implementation.
 **Project standards**: `#![forbid(unsafe_code)]` with default features. no_std+alloc (minimum: wasm32). CI with codecov. Fuzz targets required. Safe for malicious input — no amplification, bound memory/CPU.
 
 **Streaming encode** — `push_rows`/`finish` implemented. Lossy RGB8 converts to YUV420 during push (50% memory savings). Other formats accumulate raw bytes. WebP algorithms still need the full image at finish time, but callers can push strips without holding the full source.
+
+### Typed refusal regression
+
+Transparent unsupported-operation wrappers skipped the shared cause in `Error::source`.
+The wrappers now retain that cause; `unsupported_causes_survive_erasure` covers
+exact animation timing and the decoder wrapper.

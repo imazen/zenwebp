@@ -76,7 +76,7 @@ pub enum EncodeError {
     },
 
     /// Unsupported codec operation.
-    #[error(transparent)]
+    #[error("{0}")]
     UnsupportedOperation(#[from] zencodec::UnsupportedOperation),
 
     /// `target_zensim` was set on the lossy config, but the input
