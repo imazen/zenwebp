@@ -511,8 +511,8 @@ zenanalyze = { git = "https://github.com/imazen/zenanalyze" }
 # zencodec#133 (structural inventories). The version floor above (0.1.27) is the first
 # release that must contain the inventory API. Swap this patch for the released zencodec /
 # zencodec-testkit before merging this branch.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "17c84d82ecc02e20dd7107ff307eac0ac3503007" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "17c84d82ecc02e20dd7107ff307eac0ac3503007" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "fa49f7ce0fc75e65b88da1a0eb90b17378297ceb" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "fa49f7ce0fc75e65b88da1a0eb90b17378297ceb" }
 
 # Wide-corpus decoder parity sweep vs libwebp (rgba/rgb/nofancy/yuv/anim,
 # tolerance 0) over existing .webp files plus libwebp- and zenwebp-encoded
