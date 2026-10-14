@@ -518,9 +518,9 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 
 [[package]]
 name = "enough"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8e1bd41ecce82c300d0c84fa35b080fa6db50a5398b18f1abf0357bb067549e"
+checksum = "877362cb7b70d1c617f0cd3c67708bd58d894a86af5104018e2c10ebaee3c02f"
 
 [[package]]
 name = "equator"
@@ -749,6 +749,15 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
+name = "how-far"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "090dfeab9752b8574ff7b6fcfc96af46f4e4fc5b2cd0a3462e6d419b076eb7d1"
+dependencies = [
+ "enough",
+]
 
 [[package]]
 name = "image"
@@ -2075,22 +2084,35 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.1.27"
-source = "git+https://github.com/imazen/zencodec?rev=4fda439133d465246174b55f62426dc54ef204dd#4fda439133d465246174b55f62426dc54ef204dd"
+source = "git+https://github.com/imazen/zencodec?rev=17c84d82ecc02e20dd7107ff307eac0ac3503007#17c84d82ecc02e20dd7107ff307eac0ac3503007"
 dependencies = [
  "almost-enough",
  "enough",
+ "how-far",
  "whereat",
+ "zenpixels",
+]
+
+[[package]]
+name = "zencodec-io"
+version = "0.1.0"
+source = "git+https://github.com/imazen/zencodec?rev=17c84d82ecc02e20dd7107ff307eac0ac3503007#17c84d82ecc02e20dd7107ff307eac0ac3503007"
+dependencies = [
+ "enough",
+ "how-far",
+ "zencodec",
  "zenpixels",
 ]
 
 [[package]]
 name = "zencodec-testkit"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=4fda439133d465246174b55f62426dc54ef204dd#4fda439133d465246174b55f62426dc54ef204dd"
+source = "git+https://github.com/imazen/zencodec?rev=17c84d82ecc02e20dd7107ff307eac0ac3503007#17c84d82ecc02e20dd7107ff307eac0ac3503007"
 dependencies = [
  "enough",
  "whereat",
  "zencodec",
+ "zencodec-io",
  "zenpixels",
 ]
 

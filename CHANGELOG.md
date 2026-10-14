@@ -5,6 +5,16 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+### Added
+
+- Incremental (sans-I/O) decode: `dyn_incremental_decoder` returns
+  `zencodec::helpers::WholeFileIncremental` and `DecodeCapabilities::incremental`
+  is declared, so the zencodec-io drivers (files, streams, async sources) serve
+  WebP. The header is reported as soon as it probes; rows come from
+  `push_decoder` once the whole file is offered (VP8 parsing and reconstruction
+  are fused per macroblock and VP8L transforms run on the whole image, so
+  neither resumes between inputs yet).
+
 ### Fixed
 
 - Preserve typed unsupported-operation causes in encoder and decoder error chains, including erased animation-timing refusals.

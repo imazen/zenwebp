@@ -1568,6 +1568,7 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
 
 static DECODE_CAPABILITIES: zencodec::decode::DecodeCapabilities =
     zencodec::decode::DecodeCapabilities::new()
+        .with_incremental(true)
         .with_icc(true)
         .with_exif(true)
         .with_xmp(true)
@@ -2189,6 +2190,21 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
             limits: self.limits,
             accumulated_duration_ms: 0,
         })
+    }
+
+    /// Incremental (sans-I/O) decode: the header is reported as soon as it
+    /// probes, and the image decodes through `push_decoder` once the whole
+    /// file is offered (VP8 parsing and reconstruction are fused per macroblock and VP8L transforms run on the whole image, so neither can yet resume between inputs).
+    fn dyn_incremental_decoder(
+        self,
+        preferred: &[PixelDescriptor],
+    ) -> Result<
+        alloc::boxed::Box<zencodec::decode::DynIncrementalDecoder>,
+        zencodec::decode::BoxedError,
+    > {
+        Ok(zencodec::decode::erase_incremental(
+            zencodec::helpers::WholeFileIncremental::new(self, preferred),
+        ))
     }
 }
 
