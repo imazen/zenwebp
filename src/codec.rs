@@ -3022,10 +3022,10 @@ mod tests {
                     .collect();
                 let stride = w as usize * bpp;
                 let whole = || PixelSlice::new(&px, w, h, stride, desc).unwrap();
-                let mut configs: Vec<(String, WebpEncoderConfig)> = (0..=6u8)
+                let mut configs: Vec<(alloc::string::String, WebpEncoderConfig)> = (0..=6u8)
                     .map(|m| {
                         (
-                            format!("lossy m{m}"),
+                            alloc::format!("lossy m{m}"),
                             WebpEncoderConfig::lossy().with_quality(80.0).with_method(m),
                         )
                     })
