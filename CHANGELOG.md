@@ -7,6 +7,18 @@ earlier history lives in git log and LOG.md.)
 
 ### Fixed
 
+- Streaming encode (`push_rows` + `finish`) of lossy RGB8 without sharp YUV
+  now gives the bytes and pixels `encode` gives. It converted row pairs to
+  YUV with its own converter at a fixed chroma precision, while `encode`
+  picks libwebp-exact chroma at method >= 1, so their pixels differed
+  (found by zencodecs' N x M transcode matrix: 6 RGB8-source cells,
+  645-3459 differing samples). The streaming path now keeps rows in the
+  encode layout and encodes them at `finish`. Rows held during push grow
+  from 1.5 to 3 bytes per pixel; the peak at `finish` should be about the
+  same (RGB rows plus padded YUV, versus YUV planes, a packed copy and a
+  padded import), but that is reasoning, not a measurement.
+  New test `push_rows_matches_one_shot_bytes` covers lossy m0-m6 and
+  lossless, RGB8 and RGBA8, five sizes, five strip heights.
 - Preserve typed unsupported-operation causes in encoder and decoder error chains, including erased animation-timing refusals.
 
 ### Dependency integration
