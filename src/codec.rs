@@ -4370,10 +4370,15 @@ mod tests {
             .icc_profile
             .as_deref()
             .expect("CICP-only Display P3 source must produce an embedded (synthesized) ICC");
-        let expected = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+        // What the profile describes, not its bytes: zenpixels 0.2.17 serves
+        // the exact, cicp-tagged profile instead of the curated
+        // `DISPLAY_P3_V4` (zenpixels#86/#87); both describe P3 + sRGB curve.
+        let id = zenpixels::icc::identify_common(embedded).expect("a recognised profile");
+        let cicp = id.to_cicp().expect("CICP for the profile");
         assert_eq!(
-            embedded, expected,
-            "embedded ICC must be the bundled Display P3 profile synthesized from CICP"
+            (cicp.color_primaries, cicp.transfer_characteristics),
+            (12, 13),
+            "embedded ICC must describe Display P3 with the sRGB curve"
         );
     }
 
