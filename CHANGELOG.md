@@ -7,6 +7,7 @@ earlier history lives in git log and LOG.md.)
 
 ### Fixed
 
+- f32 input is stored as 8-bit sRGB, but a caller's CICP calling it linear (transfer 8) was turned into a linear ICC profile next to the sRGB samples, so readers decoded them as linear. The transfer now moves to sRGB, keeping the primaries, before the profile is synthesized. Test: `a_linear_cicp_on_f32_input_is_written_as_srgb`.
 - Streaming encode (`push_rows` + `finish`) of lossy RGB8 without sharp YUV
   now gives the bytes and pixels `encode` gives. It converted row pairs to
   YUV with its own converter at a fixed chroma precision, while `encode`

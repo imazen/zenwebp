@@ -259,3 +259,51 @@ fn grayf32_lossy_roundtrip_within_tolerance() {
         "GRAYF32_LINEAR lossy q85 luma delta exceeded tolerance: {max_y}"
     );
 }
+
+/// f32 input is stored as 8-bit sRGB, so a CICP calling it linear must not
+/// turn into a linear ICC profile next to sRGB samples: the profile must say
+/// sRGB, with the CICP's primaries.
+#[test]
+fn a_linear_cicp_on_f32_input_is_written_as_srgb() {
+    use std::borrow::Cow;
+    use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
+    let floats = linear_gradient_rgb_f32(3);
+    let bytes: Vec<u8> = floats.iter().flat_map(|f| f.to_ne_bytes()).collect();
+    let slice = PixelSlice::new(
+        &bytes,
+        W,
+        H,
+        W as usize * 12,
+        PixelDescriptor::RGBF32_LINEAR,
+    )
+    .unwrap();
+    let out = WebpEncoderConfig::lossless()
+        .job()
+        .with_metadata_policy(
+            zencodec::Metadata::none().with_cicp(zencodec::Cicp::new(12, 8, 0, true)),
+            zencodec::MetadataPolicy::PreserveExact,
+        )
+        .encoder()
+        .unwrap()
+        .encode(slice)
+        .unwrap();
+    let decoded = zenwebp::zencodec::WebpDecoderConfig::new()
+        .job()
+        .decoder(Cow::Borrowed(out.data()), &[])
+        .unwrap()
+        .decode()
+        .unwrap();
+    let icc = decoded
+        .info()
+        .source_color
+        .icc_profile
+        .clone()
+        .expect("a P3 source needs an ICC in WebP");
+    let cicp = zenpixels::icc::identify_common(&icc)
+        .and_then(|id| id.to_cicp())
+        .expect("a known profile");
+    assert_eq!(
+        (cicp.color_primaries, cicp.transfer_characteristics),
+        (12, 13)
+    );
+}

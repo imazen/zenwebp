@@ -819,6 +819,19 @@ pub struct WebpEncoder {
 }
 
 impl WebpEncoder {
+    /// f32 input is stored as 8-bit sRGB (`pixels_to_webp_input`). A CICP
+    /// calling it linear described the input, not the file: move its
+    /// transfer to sRGB, keeping the primaries, before an ICC is synthesized
+    /// from it.
+    fn describe_stored_f32(&mut self, desc: PixelDescriptor) {
+        if desc.channel_type() == zenpixels::ChannelType::F32
+            && let Some(c) = self.cicp.as_mut()
+            && c.transfer_characteristics == 8
+        {
+            c.transfer_characteristics = 13;
+        }
+    }
+
     fn do_encode(
         self,
         pixels: &[u8],
@@ -1073,7 +1086,8 @@ impl zencodec::encode::Encoder for WebpEncoder {
         }
     }
 
-    fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<zencodec::CodecError>> {
+    fn encode(mut self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<zencodec::CodecError>> {
+        self.describe_stored_f32(pixels.descriptor());
         let (buf, layout, w, h, stride) =
             pixels_to_webp_input(&pixels).map_err(zencodec::CodecError::of)?;
         self.do_encode(&buf, layout, w, h, stride)
@@ -1085,6 +1099,7 @@ impl zencodec::encode::Encoder for WebpEncoder {
         if strip_h == 0 {
             return Ok(());
         }
+        self.describe_stored_f32(rows.descriptor());
         // Each strip is converted to the layout `encode` would use;
         // `finish` encodes the accumulated rows exactly as `encode` does.
         let (buf, layout, _, _, _) =
