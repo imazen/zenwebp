@@ -29,7 +29,6 @@ const TIER_NAME: &str = if cfg!(target_arch = "aarch64") {
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 fn set_simd(on: bool) -> bool {
-    use archmage::SimdToken;
     TierToken::dangerously_disable_token_process_wide(!on).is_ok()
 }
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]

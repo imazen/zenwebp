@@ -108,8 +108,10 @@ arm-kernel-audit-macos group="":
     test "$(uname -s)" = Darwin
     mkdir -p "$HOME/tmp"
     audit_log="$HOME/tmp/zenwebp-arm-kernels-$(date -u +%Y%m%dT%H%M%SZ).log"
+    group_args=()
+    if [[ -n '{{group}}' ]]; then group_args+=("--group={{group}}"); fi
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 \
-      nice -n 19 /usr/bin/time -l cargo bench --locked --features _dev --bench kernel_tiers -- --group="{{group}}" --format=llm \
+      nice -n 19 /usr/bin/time -l cargo bench --features _dev --bench kernel_tiers -- "${group_args[@]}" --cpu-policy=unrestricted --format=llm \
       2>&1 | tee "$audit_log"
 
 # Wide-corpus decoder parity vs libwebp (benchmarks/decode_parity_*.md).
