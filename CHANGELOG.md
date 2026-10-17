@@ -5,6 +5,16 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+### Added
+
+- Incremental (sans-I/O) decode: `dyn_incremental_decoder` returns
+  `zencodec::helpers::WholeFileIncremental` and `DecodeCapabilities::incremental`
+  is declared, so the zencodec-io drivers (files, streams, async sources) serve
+  WebP. The header is reported as soon as it probes; rows come from
+  `push_decoder` once the whole file is offered (VP8 parsing and reconstruction
+  are fused per macroblock and VP8L transforms run on the whole image, so
+  neither resumes between inputs yet).
+
 ### Fixed
 
 - f32 input is stored as 8-bit sRGB, but a caller's CICP calling it linear (transfer 8) was turned into a linear ICC profile next to the sRGB samples, so readers decoded them as linear. The transfer now moves to sRGB, keeping the primaries, before the profile is synthesized. Test: `a_linear_cicp_on_f32_input_is_written_as_srgb`.
