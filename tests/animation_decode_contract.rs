@@ -146,3 +146,110 @@ fn animation_decode_cancellation_reaches_lossy_and_lossless_kernels() {
         }
     }
 }
+
+#[test]
+fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
+    use zencodec::decode::{Decode, StreamingDecode};
+    use zencodec::encode::Encoder;
+    let data: Vec<_> = (0..17 * 19 * 4)
+        .map(|i| ((i * 73 + i / 11) % 255) as u8)
+        .collect();
+    let pixels = PixelBuffer::from_vec(data, 17, 19, PixelDescriptor::RGBA8_SRGB).unwrap();
+    let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+    for lossy in [false, true] {
+        let config = if lossy {
+            WebpEncoderConfig::lossy()
+        } else {
+            WebpEncoderConfig::lossless()
+        };
+        let output = config
+            .job()
+            .with_metadata_policy(
+                zencodec::Metadata::none().with_icc(icc),
+                zencodec::MetadataPolicy::PreserveExact,
+            )
+            .encoder()
+            .unwrap()
+            .encode(pixels.as_slice())
+            .unwrap();
+        let rgba = WebpDecoderConfig::new()
+            .job()
+            .decoder(Cow::Borrowed(output.data()), &[])
+            .unwrap()
+            .decode()
+            .unwrap()
+            .pixels()
+            .contiguous_bytes()
+            .into_owned();
+        for allow_icc in [None, Some(true), Some(false)] {
+            let deny_icc = allow_icc == Some(false);
+            let job = || {
+                let job = WebpDecoderConfig::new().job();
+                if let Some(allow) = allow_icc {
+                    job.with_policy(zencodec::decode::DecodePolicy::default().with_allow_icc(allow))
+                } else {
+                    job
+                }
+            };
+            for bgra in [false, true] {
+                let preferred: &[PixelDescriptor] = if bgra {
+                    &[PixelDescriptor::BGRA8_SRGB]
+                } else {
+                    &[]
+                };
+                let decoded = job()
+                    .decoder(Cow::Borrowed(output.data()), preferred)
+                    .unwrap()
+                    .decode()
+                    .unwrap();
+                let mut expected = rgba.clone();
+                if bgra {
+                    for pixel in expected.as_chunks_mut::<4>().0 {
+                        pixel.swap(0, 2);
+                    }
+                }
+                assert_eq!(decoded.pixels().contiguous_bytes().as_ref(), expected);
+                let descriptor = decoded.pixels().descriptor();
+                assert_eq!(descriptor.primaries, zenpixels::ColorPrimaries::DisplayP3);
+                assert_eq!(
+                    descriptor.layout(),
+                    if bgra {
+                        zenpixels::ChannelLayout::Bgra
+                    } else {
+                        zenpixels::ChannelLayout::Rgba
+                    }
+                );
+                if !bgra {
+                    assert_eq!(
+                        job().output_info(output.data()).unwrap().native_format,
+                        descriptor
+                    );
+                }
+                let check = |view: &zenpixels::PixelSlice<'_>| {
+                    assert_eq!(view.descriptor(), descriptor);
+                    assert_eq!(
+                        view.color_context().and_then(|c| c.icc.as_deref()),
+                        (!deny_icc).then_some(icc)
+                    );
+                };
+                check(&decoded.pixels());
+                let mut streaming = job()
+                    .streaming_decoder(Cow::Borrowed(output.data()), preferred)
+                    .unwrap();
+                let mut streamed = Vec::new();
+                while let Some((_, batch)) = streaming.next_batch().unwrap() {
+                    check(&batch);
+                    streamed.extend_from_slice(&batch.contiguous_bytes());
+                }
+                assert_eq!(streamed, expected);
+                let mut animation = job()
+                    .animation_frame_decoder(Cow::Borrowed(output.data()), preferred)
+                    .unwrap();
+                let frame = animation.render_next_frame(None).unwrap().unwrap();
+                check(frame.pixels());
+                assert_eq!(frame.pixels().contiguous_bytes().as_ref(), expected);
+                assert!(animation.render_next_frame(None).unwrap().is_none());
+            }
+        }
+    }
+}

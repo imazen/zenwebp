@@ -2028,6 +2028,11 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         {
             desc = PixelDescriptor::BGRA8_SRGB;
         }
+        desc = zencodec::helpers::descriptor_for_decoded_pixels_v2(
+            desc.format,
+            &to_image_info(&native, None).source_color,
+            None,
+        );
         // Report the post-orientation output geometry + the transform the
         // decoder will apply. `Preserve` applies nothing (output = stored dims);
         // a bake hint outputs the resolved orientation's dims and records it.
@@ -2901,7 +2906,7 @@ impl zencodec::decode::StreamingDecode for Vp8StreamingDecoder {
         }
 
         // Apply RGBA→BGRA swizzle if negotiated
-        if self.descriptor == PixelDescriptor::BGRA8_SRGB {
+        if self.descriptor.layout() == zenpixels::ChannelLayout::Bgra {
             let strip_data = &mut self.strip_buf[..strip_bytes];
             let _ = garb::bytes::rgba_to_bgra_inplace(strip_data);
         }
