@@ -318,7 +318,23 @@ mod native_contract {
                 .unwrap();
             let output = encoder.finish(None).unwrap();
             let demux = WebPDemuxer::new(output.data()).unwrap();
-            assert_eq!(demux.icc_profile(), Some(icc));
+            let expected_icc = if explicit_icc {
+                std::borrow::Cow::Borrowed(icc)
+            } else {
+                use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
+                let SynthesizedIcc::Profile(profile) =
+                    synthesize_icc_for_cicp(zenpixels::Cicp::DISPLAY_P3)
+                else {
+                    panic!("Display P3 must have a synthesized ICC carrier");
+                };
+                assert_eq!(
+                    zenpixels::icc::extract_cicp(&profile),
+                    Some(zenpixels::Cicp::DISPLAY_P3),
+                    "the synthesized carrier must name the requested primaries and transfer"
+                );
+                profile
+            };
+            assert_eq!(demux.icc_profile(), Some(expected_icc.as_ref()));
             assert_eq!(demux.exif(), Some(&b"Exif\0\0animation-exif"[..]));
             assert_eq!(demux.xmp(), Some(&b"<x:xmpmeta>animation</x:xmpmeta>"[..]));
         }

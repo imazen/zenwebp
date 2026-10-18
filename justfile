@@ -10,7 +10,7 @@ test:
 
 # PR105 integration: both timing contracts plus retained whole-file behavior.
 animation-contract-check:
-    cargo test --locked --test animation_timing --test animation_decode_contract --test sansio --test streaming_decoder
+    cargo test --locked --no-fail-fast --test animation_timing --test animation_decode_contract --test sansio --test streaming_decoder --test libwebp_decode_parity
 
 animation-contract-lint:
     cargo clippy --locked --lib --tests -- -D warnings

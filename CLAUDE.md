@@ -1049,10 +1049,10 @@ is essentially the current implementation.
 - PR105 integration preserves byte-based animation row packing. The padded-row
   regression compares native decoded pixels with the tightly packed source;
   the pinned pixel contract requires whole-pixel strides. The regression is
-  executed and passes. The integrated focused gate passes39/40; the remaining
-  original PR105 CICP-only test expects curated P3 ICC bytes while the merged
-  shared synthesizer selects the CICP-tagged bundled profile. Keep that
-  assertion enabled until its contract update is approved.
+  executed and passes. The integrated focused gate passes40/40. The approved
+  CICP-only expectation requires exact shared synthesized ICC bytes and the
+  requested CICP tag; explicitly supplied curated ICC remains byte-exact.
+  All pixel, metadata, timing and admission assertions remain enabled.
 - PR105 integration exposed animation ICC context missing from one-shot decode.
   One-shot, strip and frame paths now derive the same color descriptor and
   carry retained ICC context; extraction denial removes the optional ICC.
