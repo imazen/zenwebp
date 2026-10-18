@@ -532,3 +532,7 @@ required-features = ["__expert"]
 [[example]]
 name = "decode_parity_dump"
 path = "dev/decode_parity_dump.rs"
+
+[[bench]]
+name = "animation_contract_perf"
+harness = false

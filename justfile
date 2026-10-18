@@ -261,3 +261,7 @@ wholefile-api-check:
     RUSTC_BOOTSTRAP=1 cargo rustdoc --locked --lib --features "$(features Cargo.toml)" -- -Zunstable-options --output-format json
     RUSTC_BOOTSTRAP=1 cargo rustdoc --manifest-path "$baseline/Cargo.toml" --locked --lib --features "$(features "$baseline/Cargo.toml")" --target-dir "$target_dir/published-api" -- -Zunstable-options --output-format json
     cargo semver-checks check-release --current-rustdoc "$target_dir/doc/zenwebp.json" --baseline-rustdoc "$target_dir/published-api/doc/zenwebp.json"
+
+# Same witness on main and PR105; point both runs at identical input fixtures.
+animation-contract-perf:
+    cargo bench --locked --bench animation_contract_perf -- --cpu-policy=unrestricted --format=json
