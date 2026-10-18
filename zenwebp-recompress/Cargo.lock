@@ -579,7 +579,7 @@ dependencies = [
  "garb",
  "linear-srgb",
  "magetypes",
- "zenpixels 0.2.16 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zenpixels 0.2.16",
  "zenpixels-convert",
 ]
 
@@ -597,21 +597,13 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.1.27"
-source = "git+https://github.com/imazen/zencodec?rev=fa49f7ce0fc75e65b88da1a0eb90b17378297ceb#fa49f7ce0fc75e65b88da1a0eb90b17378297ceb"
+source = "git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc#d327434b0826a3e39633665c76f5081c0ceb34cc"
 dependencies = [
  "almost-enough",
  "enough",
  "how-far",
  "whereat",
- "zenpixels 0.2.16 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "zenpixels"
-version = "0.2.16"
-dependencies = [
- "bytemuck",
- "whereat",
+ "zenpixels 0.2.16",
 ]
 
 [[package]]
@@ -623,6 +615,14 @@ dependencies = [
  "bytemuck",
  "imgref",
  "rgb",
+ "whereat",
+]
+
+[[package]]
+name = "zenpixels"
+version = "0.2.17"
+dependencies = [
+ "bytemuck",
  "whereat",
 ]
 
@@ -641,13 +641,13 @@ dependencies = [
  "once_cell",
  "paste",
  "whereat",
- "zenpixels 0.2.16 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zenpixels 0.2.16",
 ]
 
 [[package]]
 name = "zenpredict"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zenanalyze?rev=417cc785b83bee0b3f827ae85c5203f5e104a308#417cc785b83bee0b3f827ae85c5203f5e104a308"
+source = "git+https://github.com/imazen/zenanalyze?rev=f0903489300aea240ffae2e3f1359f8f2b9a0ba4#f0903489300aea240ffae2e3f1359f8f2b9a0ba4"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -669,7 +669,7 @@ dependencies = [
  "safe_unaligned_simd",
  "whereat",
  "zenblend",
- "zenpixels 0.2.16 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zenpixels 0.2.16",
 ]
 
 [[package]]
@@ -705,7 +705,7 @@ dependencies = [
  "thiserror",
  "whereat",
  "zencodec",
- "zenpixels 0.2.16 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zenpixels 0.2.16",
  "zenpixels-convert",
  "zenyuv",
 ]
@@ -719,7 +719,7 @@ dependencies = [
  "rayon",
  "thiserror",
  "zenanalyze",
- "zenpixels 0.2.16",
+ "zenpixels 0.2.17",
  "zensim",
  "zenwebp",
 ]

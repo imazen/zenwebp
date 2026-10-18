@@ -187,10 +187,36 @@ animation-integration-check: animation-timing-check
 
 # The nested workspace resolves patches independently of the parent package.
 recompress-contract-check:
-    cargo test --manifest-path zenwebp-recompress/Cargo.toml --workspace
-    cargo test --manifest-path zenwebp-recompress/Cargo.toml --all-features
-    cargo clippy --manifest-path zenwebp-recompress/Cargo.toml --all-targets --all-features -- -D warnings
+    cargo test --locked --manifest-path zenwebp-recompress/Cargo.toml --workspace
+    cargo test --locked --manifest-path zenwebp-recompress/Cargo.toml --all-features
+    cargo clippy --locked --manifest-path zenwebp-recompress/Cargo.toml --all-targets --all-features -- -D warnings
     cargo fmt --manifest-path zenwebp-recompress/Cargo.toml -- --check
+
+# Each standalone workspace must resolve the same unpublished interface source.
+sync-wholefile-locks:
+    cargo update -p zencodec
+    cargo update --manifest-path fuzz/Cargo.toml -p zencodec
+    cargo update --manifest-path zenwebp-recompress/Cargo.toml -p zencodec
+
+wholefile-lock-check:
+    cargo check --locked --manifest-path fuzz/Cargo.toml --bins
+    just recompress-contract-check
+    just wholefile-lock-sources
+
+wholefile-lock-sources:
+    #!/usr/bin/env python3
+    from pathlib import Path
+    import tomllib
+    root = tomllib.loads(Path("Cargo.toml").read_text())
+    revision = root["patch"]["crates-io"]["zencodec"]["rev"]
+    shared = {"zencodec", "zencodec-io", "zencodec-testkit", "zenmeta"}
+    for path in ["Cargo.lock", "fuzz/Cargo.lock", "zenwebp-recompress/Cargo.lock"]:
+        packages = tomllib.loads(Path(path).read_text())["package"]
+        assert sum(p["name"] == "zencodec" for p in packages) == 1, path
+        for package in packages:
+            if package["name"] in shared:
+                assert f"rev={revision}#{revision}" in package.get("source", ""), (path, package)
+        print(f"{path}: one zencodec source at {revision}")
 
 # New shared contracts, with inventory both enabled and absent.
 shared-contract-check:
