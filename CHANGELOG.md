@@ -40,6 +40,8 @@ earlier history lives in git log and LOG.md.)
 
 ### Dependency integration
 
+- Align the root codec, I/O driver and testkit source with zencodec `802952b7`; provide a reproducible rustdoc-JSON semver check for unpublished root patches.
+
 - Align temporary zencodec/zenmeta/testkit pins with the checked fidelity and operation-matrix contracts (`4fda4391`). Replace coordinated git pins with released versions before publication.
 
 

@@ -205,8 +205,23 @@ sansio-check:
 # Complete post-landing whole-file decoder validation.
 wholefile-gate:
     cargo test --locked
+    cargo test --locked --features inventory --test inventory --test inventory_feature --test fuzz_regression --test shared_contracts
     cargo clippy --locked --all-targets -- -D warnings
     cargo fmt -p zenwebp -- --check
     cargo test --locked --doc
     cargo doc --locked --no-deps
-    cargo semver-checks check-release
+    just wholefile-api-check
+
+# Supply rustdoc JSON directly because Cargo's generated dependency wrapper
+# does not inherit the root patches for unpublished dependencies.
+wholefile-api-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    target_dir=$(python3 -c 'import os,pathlib; print(pathlib.Path(os.environ.get("CARGO_TARGET_DIR", "target")).resolve())')
+    baseline=$(cargo read zenwebp --path-only)
+    features() {
+      python3 -c 'import sys,tomllib; f=tomllib.load(open(sys.argv[1],"rb"))["features"]; print(",".join(k for k in f if k not in ("unstable","nightly","bench","no_std") and not k.startswith(("_","unstable_","unstable-"))))' "$1"
+    }
+    RUSTC_BOOTSTRAP=1 cargo rustdoc --locked --lib --features "$(features Cargo.toml)" -- -Zunstable-options --output-format json
+    RUSTC_BOOTSTRAP=1 cargo rustdoc --manifest-path "$baseline/Cargo.toml" --locked --lib --features "$(features "$baseline/Cargo.toml")" --target-dir "$target_dir/published-api" -- -Zunstable-options --output-format json
+    cargo semver-checks check-release --current-rustdoc "$target_dir/doc/zenwebp.json" --baseline-rustdoc "$target_dir/published-api/doc/zenwebp.json"
