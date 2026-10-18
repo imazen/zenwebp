@@ -40,7 +40,7 @@ fn lossy_animation_decodes_all_frames() {
     let enc_config = EncoderConfig::new_lossy().with_quality(75.0).with_method(4);
     for i in 0..num_frames {
         let pixels = frame_rgb(w, h, i);
-        anim.add_frame(&pixels, PixelLayout::Rgb8, i * 100, &enc_config)
+        anim.add_frame(&pixels, PixelLayout::Rgb8, u64::from(i) * 100, &enc_config)
             .unwrap();
     }
 
@@ -149,13 +149,13 @@ fn animation_decoder_lossy_correctness() {
     let info = decoder.info();
 
     let mut frames_decoded = 0u32;
-    let mut cumulative_ms = 0u32;
+    let mut cumulative_ms = 0u64;
 
     while let Some(frame) = decoder.next_frame().unwrap() {
         assert_eq!(frame.width, info.canvas_width);
         assert_eq!(frame.height, info.canvas_height);
         assert_eq!(frame.timestamp_ms, cumulative_ms);
-        cumulative_ms += frame.duration_ms;
+        cumulative_ms += u64::from(frame.duration_ms);
 
         // Verify against reference PNG
         let i = frames_decoded + 1;
@@ -274,7 +274,7 @@ fn animation_reset_produces_identical_output() {
     let enc_config = EncoderConfig::new_lossy().with_quality(75.0).with_method(4);
     for i in 0..3u32 {
         let pixels = frame_rgb(w, h, i);
-        anim.add_frame(&pixels, PixelLayout::Rgb8, i * 100, &enc_config)
+        anim.add_frame(&pixels, PixelLayout::Rgb8, u64::from(i) * 100, &enc_config)
             .unwrap();
     }
 
@@ -362,7 +362,7 @@ fn lossy_animation_roundtrip_pixel_exact() {
     let enc_config = EncoderConfig::new_lossy().with_quality(75.0).with_method(4);
     for i in 0..4u32 {
         let pixels = frame_rgb(w, h, i);
-        anim.add_frame(&pixels, PixelLayout::Rgb8, i * 50, &enc_config)
+        anim.add_frame(&pixels, PixelLayout::Rgb8, u64::from(i) * 50, &enc_config)
             .unwrap();
     }
 
@@ -421,7 +421,7 @@ fn decode_animation_api_lossy() {
     let enc_config = EncoderConfig::new_lossy().with_quality(75.0).with_method(4);
     for i in 0..num_frames {
         let pixels = frame_rgb(w, h, i);
-        anim.add_frame(&pixels, PixelLayout::Rgb8, i * 100, &enc_config)
+        anim.add_frame(&pixels, PixelLayout::Rgb8, u64::from(i) * 100, &enc_config)
             .unwrap();
     }
 
@@ -481,7 +481,7 @@ fn decode_animation_api_early_stop() {
     let enc_config = EncoderConfig::new_lossy().with_quality(75.0).with_method(0);
     for i in 0..5u32 {
         let pixels = frame_rgb(w, h, i);
-        anim.add_frame(&pixels, PixelLayout::Rgb8, i * 50, &enc_config)
+        anim.add_frame(&pixels, PixelLayout::Rgb8, u64::from(i) * 50, &enc_config)
             .unwrap();
     }
 

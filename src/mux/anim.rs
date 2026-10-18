@@ -38,7 +38,7 @@ use crate::encoder::{
     EncoderConfig, EncoderParams, NoProgress, PixelLayout, alpha_is_opaque, encode_alpha_lossless,
     encode_frame_lossless,
 };
-use enough::Unstoppable;
+use enough::{Stop, Unstoppable};
 use whereat::ResultAtExt;
 
 /// Configuration for an animated WebP.
@@ -67,7 +67,7 @@ impl Default for AnimationConfig {
 /// Pending frame waiting for the next timestamp to compute its duration.
 struct PendingFrame {
     mux_frame: MuxFrame,
-    timestamp_ms: u32,
+    timestamp_ms: u64,
 }
 
 /// Animated WebP encoder.
@@ -85,6 +85,18 @@ pub struct AnimationEncoder {
 }
 
 impl AnimationEncoder {
+    pub(crate) fn retained_bytes(&self) -> u64 {
+        self.mux.retained_bytes()
+            + self.prev_canvas.as_ref().map_or(0, |v| v.len() as u64)
+            + self.pending.as_ref().map_or(0, |p| {
+                p.mux_frame.bitstream.len() as u64
+                    + p.mux_frame
+                        .alpha_data
+                        .as_ref()
+                        .map_or(0, |v| v.len() as u64)
+            })
+    }
+
     /// Create a new animation encoder.
     ///
     /// The canvas dimensions must be between 1 and 16384 (inclusive).
@@ -105,6 +117,28 @@ impl AnimationEncoder {
         })
     }
 
+    fn validate_timestamp(&self, timestamp_ms: u64) -> MuxResult<u32> {
+        // Validate before taking the previous frame, so an invalid timestamp
+        // never discards a frame the caller already supplied.
+        let duration = if let Some(prev) = &self.pending {
+            let duration = timestamp_ms.checked_sub(prev.timestamp_ms).ok_or_else(|| {
+                whereat::at!(MuxError::NonmonotonicTimestamp {
+                    previous_ms: prev.timestamp_ms,
+                    timestamp_ms,
+                })
+            })?;
+            if duration > 0x00FF_FFFF {
+                return Err(whereat::at!(MuxError::FrameDurationTooLarge {
+                    duration_ms: duration
+                }));
+            }
+            duration as u32
+        } else {
+            0
+        };
+        Ok(duration)
+    }
+
     /// Flush the previous pending frame and enqueue a new encoded frame.
     #[allow(clippy::too_many_arguments)]
     fn push_encoded_frame(
@@ -114,13 +148,13 @@ impl AnimationEncoder {
         frame_height: u32,
         x_offset: u32,
         y_offset: u32,
-        timestamp_ms: u32,
+        timestamp_ms: u64,
         dispose: DisposeMethod,
         blend: BlendMethod,
     ) -> MuxResult<()> {
+        let duration = self.validate_timestamp(timestamp_ms)?;
         // Flush previous pending frame
         if let Some(prev) = self.pending.take() {
-            let duration = timestamp_ms.saturating_sub(prev.timestamp_ms);
             let mut frame = prev.mux_frame;
             frame.duration_ms = duration;
             self.mux.push_frame(frame)?;
@@ -167,14 +201,37 @@ impl AnimationEncoder {
         &mut self,
         pixels: &[u8],
         color_type: PixelLayout,
-        timestamp_ms: u32,
+        timestamp_ms: u64,
         encoder_config: &EncoderConfig,
     ) -> MuxResult<()> {
+        self.add_frame_with_stop(
+            pixels,
+            color_type,
+            timestamp_ms,
+            encoder_config,
+            &Unstoppable,
+        )
+    }
+
+    /// Add a full-canvas frame with cooperative cancellation inside the pixel
+    /// encoder. Cancellation leaves the previous accepted frame pending.
+    #[track_caller]
+    pub fn add_frame_with_stop(
+        &mut self,
+        pixels: &[u8],
+        color_type: PixelLayout,
+        timestamp_ms: u64,
+        encoder_config: &EncoderConfig,
+        stop: &dyn Stop,
+    ) -> MuxResult<()> {
+        check_stop(stop)?;
+        self.validate_timestamp(timestamp_ms)?;
+        validate_pixels(pixels, self.width, self.height, color_type)?;
         reject_target_zensim(encoder_config)?;
         // If optimization is disabled, or input is YUV420 (can't diff planar
         // data pixel-by-pixel), fall through to full-canvas encoding.
         if !self.minimize_size || color_type == PixelLayout::Yuv420 {
-            let result = self.add_frame_advanced(
+            let result = self.add_frame_advanced_with_stop(
                 pixels,
                 color_type,
                 self.width,
@@ -185,9 +242,10 @@ impl AnimationEncoder {
                 encoder_config,
                 DisposeMethod::None,
                 BlendMethod::Overwrite,
+                stop,
             );
             // Invalidate canvas tracking for YUV420 (can't convert)
-            if color_type == PixelLayout::Yuv420 {
+            if result.is_ok() && color_type == PixelLayout::Yuv420 {
                 self.prev_canvas = None;
             }
             return result;
@@ -213,7 +271,7 @@ impl AnimationEncoder {
                     } else {
                         PixelLayout::Rgb8
                     };
-                    let encoded = encode_frame_data(one_pixel, 1, 1, sub_color, &params)?;
+                    let encoded = encode_frame_data(one_pixel, 1, 1, sub_color, &params, stop)?;
                     self.push_encoded_frame(
                         encoded,
                         1,
@@ -233,7 +291,7 @@ impl AnimationEncoder {
                     } else {
                         PixelLayout::Rgb8
                     };
-                    let encoded = encode_frame_data(&sub_pixels, w, h, sub_color, &params)?;
+                    let encoded = encode_frame_data(&sub_pixels, w, h, sub_color, &params, stop)?;
                     self.push_encoded_frame(
                         encoded,
                         w,
@@ -248,7 +306,8 @@ impl AnimationEncoder {
             }
         } else {
             // First frame or after canvas invalidation — encode full canvas
-            let encoded = encode_frame_data(pixels, self.width, self.height, color_type, &params)?;
+            let encoded =
+                encode_frame_data(pixels, self.width, self.height, color_type, &params, stop)?;
             self.push_encoded_frame(
                 encoded,
                 self.width,
@@ -282,14 +341,60 @@ impl AnimationEncoder {
         frame_height: u32,
         x_offset: u32,
         y_offset: u32,
-        timestamp_ms: u32,
+        timestamp_ms: u64,
         encoder_config: &EncoderConfig,
         dispose: DisposeMethod,
         blend: BlendMethod,
     ) -> MuxResult<()> {
+        self.add_frame_advanced_with_stop(
+            pixels,
+            color_type,
+            frame_width,
+            frame_height,
+            x_offset,
+            y_offset,
+            timestamp_ms,
+            encoder_config,
+            dispose,
+            blend,
+            &Unstoppable,
+        )
+    }
+
+    /// Add a positioned frame with cancellation inside the encoder. Invalid
+    /// geometry, buffer length and timestamps reject before encoding or state
+    /// mutation. Offsets use canvas pixels and must be even.
+    #[track_caller]
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_frame_advanced_with_stop(
+        &mut self,
+        pixels: &[u8],
+        color_type: PixelLayout,
+        frame_width: u32,
+        frame_height: u32,
+        x_offset: u32,
+        y_offset: u32,
+        timestamp_ms: u64,
+        encoder_config: &EncoderConfig,
+        dispose: DisposeMethod,
+        blend: BlendMethod,
+        stop: &dyn Stop,
+    ) -> MuxResult<()> {
+        check_stop(stop)?;
+        self.validate_timestamp(timestamp_ms)?;
+        super::assemble::validate_frame_region(
+            self.width,
+            self.height,
+            frame_width,
+            frame_height,
+            x_offset,
+            y_offset,
+        )?;
+        validate_pixels(pixels, frame_width, frame_height, color_type)?;
         reject_target_zensim(encoder_config)?;
         let params = encoder_config.to_params();
-        let encoded = encode_frame_data(pixels, frame_width, frame_height, color_type, &params)?;
+        let encoded =
+            encode_frame_data(pixels, frame_width, frame_height, color_type, &params, stop)?;
         self.push_encoded_frame(
             encoded,
             frame_width,
@@ -310,7 +415,27 @@ impl AnimationEncoder {
     /// `last_frame_duration_ms` is the display duration for the final frame,
     /// since there is no subsequent timestamp to derive it from.
     #[track_caller]
-    pub fn finalize(mut self, last_frame_duration_ms: u32) -> MuxResult<Vec<u8>> {
+    pub fn finalize(self, last_frame_duration_ms: u32) -> MuxResult<Vec<u8>> {
+        self.finalize_inner(last_frame_duration_ms, true)
+    }
+
+    /// Finalize with animation signaling even when there is only one frame.
+    /// Preserves the frame's duration and repetition count in ANIM/ANMF.
+    #[track_caller]
+    pub fn finalize_animation(self, last_frame_duration_ms: u32) -> MuxResult<Vec<u8>> {
+        self.finalize_inner(last_frame_duration_ms, false)
+    }
+
+    fn finalize_inner(
+        mut self,
+        last_frame_duration_ms: u32,
+        allow_static: bool,
+    ) -> MuxResult<Vec<u8>> {
+        if last_frame_duration_ms > 0x00FF_FFFF {
+            return Err(whereat::at!(MuxError::FrameDurationTooLarge {
+                duration_ms: u64::from(last_frame_duration_ms)
+            }));
+        }
         // Flush the last pending frame
         if let Some(prev) = self.pending.take() {
             let mut frame = prev.mux_frame;
@@ -322,7 +447,9 @@ impl AnimationEncoder {
         // This avoids producing a 1-frame animated container (with ANIM/ANMF
         // chunks) when the caller used the animation encoder optimistically
         // without knowing the frame count in advance.
-        self.mux.downgrade_single_frame_to_static();
+        if allow_static {
+            self.mux.downgrade_single_frame_to_static();
+        }
 
         self.mux.assemble()
     }
@@ -491,6 +618,7 @@ fn encode_frame_data(
     height: u32,
     color: PixelLayout,
     params: &EncoderParams,
+    stop: &dyn Stop,
 ) -> Result<EncodedFrame, whereat::At<MuxError>> {
     let mut bitstream = Vec::new();
     let stride = width as usize;
@@ -511,7 +639,7 @@ fn encode_frame_data(
             stride,
             color,
             params,
-            &Unstoppable,
+            stop,
             &NoProgress,
         )
         .map_err_at(MuxError::EncodeError)?;
@@ -529,7 +657,7 @@ fn encode_frame_data(
                 params.alpha_effort.unwrap_or(params.method),
                 params.cost_model,
                 params.alloc_pref,
-                &Unstoppable,
+                stop,
             )
             .map_err_at(MuxError::EncodeError)?;
             Some(alpha)
@@ -537,6 +665,7 @@ fn encode_frame_data(
             None
         };
 
+        check_stop(stop)?;
         Ok(EncodedFrame {
             bitstream,
             alpha_data,
@@ -551,13 +680,40 @@ fn encode_frame_data(
             stride,
             color,
             params.clone(),
-            &Unstoppable,
+            stop,
         )
         .map_err_at(MuxError::EncodeError)?;
+        check_stop(stop)?;
         Ok(EncodedFrame {
             bitstream,
             alpha_data: None,
             is_lossless: true,
         })
     }
+}
+
+fn check_stop(stop: &dyn Stop) -> MuxResult<()> {
+    stop.check()
+        .map_err(|e| whereat::at!(MuxError::EncodeError(crate::EncodeError::from(e))))
+}
+
+fn validate_pixels(pixels: &[u8], width: u32, height: u32, layout: PixelLayout) -> MuxResult<()> {
+    if width == 0 || height == 0 || width > 16384 || height > 16384 {
+        return Err(whereat::at!(MuxError::InvalidDimensions { width, height }));
+    }
+    let (w, h) = (width as usize, height as usize);
+    let required = if layout == PixelLayout::Yuv420 {
+        w * h + 2 * w.div_ceil(2) * h.div_ceil(2)
+    } else {
+        w * h * layout.bytes_per_pixel()
+    };
+    if pixels.len() < required {
+        return Err(whereat::at!(MuxError::EncodeError(
+            crate::EncodeError::InvalidBufferSize(alloc::format!(
+                "animation pixel buffer has {} bytes, requires {required}",
+                pixels.len()
+            ))
+        )));
+    }
+    Ok(())
 }

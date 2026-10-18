@@ -8,6 +8,13 @@ test_webp := env_var_or_default("TEST_WEBP", "/tmp/test.webp")
 test:
     cargo test --lib
 
+# PR105 integration: both timing contracts plus retained whole-file behavior.
+animation-contract-check:
+    cargo test --locked --test animation_timing --test animation_decode_contract --test sansio --test streaming_decoder
+
+animation-contract-lint:
+    cargo clippy --locked --lib --tests -- -D warnings
+
 # Run clippy
 clippy:
     cargo clippy --all-targets --all-features -- -D warnings

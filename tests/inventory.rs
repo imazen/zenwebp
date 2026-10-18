@@ -142,7 +142,7 @@ fn animation() -> Vec<u8> {
         .enumerate()
     {
         let rgba: Vec<u8> = color.iter().cycle().take(8 * 8 * 4).copied().collect();
-        anim.add_frame(&rgba, PixelLayout::Rgba8, i as u32 * 100, &cfg)
+        anim.add_frame(&rgba, PixelLayout::Rgba8, i as u64 * 100, &cfg)
             .unwrap();
     }
     anim.finalize(100).unwrap()
@@ -1465,7 +1465,7 @@ fn review_f9_chunk_after_alph_is_decoded_as_vp8() {
         anim.add_frame(
             &seeded_rgba(16, 16, seed),
             PixelLayout::Rgba8,
-            i as u32 * 100,
+            i as u64 * 100,
             &EncoderConfig::Lossy(LossyConfig::default()),
         )
         .unwrap();
@@ -1572,7 +1572,7 @@ fn lossy_alpha_animation() -> Vec<u8> {
         anim.add_frame(
             &seeded_rgba(16, 16, seed),
             PixelLayout::Rgba8,
-            i as u32 * 100,
+            i as u64 * 100,
             &EncoderConfig::Lossy(LossyConfig::default()),
         )
         .unwrap();

@@ -23,7 +23,7 @@ keywords = ["webp", "image", "encoder", "decoder", "codec"]
 readme = "README.crates.md"
 autobenches = false
 
-include = ["/src", "LICENSE-AGPL3", "LICENSE-COMMERCIAL", "README.crates.md", "CHANGES.md"]
+include = ["/src", "LICENSE-AGPL3", "LICENSE-COMMERCIAL", "README.crates.md", "CHANGES.md", "CHANGELOG.md"]
 
 [dependencies]
 # Core dependencies - all no_std compatible
@@ -507,6 +507,9 @@ required-features = ["_dev"]
 # still resolves to a single source and the `Offer` types unify. Delete this
 # block once zenanalyze-api 0.1.1 / zenanalyze 0.2.x are published.
 [patch.crates-io]
+# Merged pixel-context bridge; keep root, fuzz and recompress on one revision.
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
 zenanalyze-api = { git = "https://github.com/imazen/zenanalyze" }
 zenanalyze = { git = "https://github.com/imazen/zenanalyze" }
 # zencodec#133 (structural inventories). The version floor above (0.1.27) is the first

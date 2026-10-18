@@ -579,7 +579,7 @@ dependencies = [
  "garb",
  "linear-srgb",
  "magetypes",
- "zenpixels 0.2.16",
+ "zenpixels 0.2.17 (git+https://github.com/imazen/zenpixels?rev=1d3ddd2131b22e9e3754c765d4ce45ce3901de59)",
  "zenpixels-convert",
 ]
 
@@ -603,19 +603,7 @@ dependencies = [
  "enough",
  "how-far",
  "whereat",
- "zenpixels 0.2.16",
-]
-
-[[package]]
-name = "zenpixels"
-version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5851fd39b312749a3c367a0cd3522bd95d43276cfa613e9c18df748447cef3a8"
-dependencies = [
- "bytemuck",
- "imgref",
- "rgb",
- "whereat",
+ "zenpixels 0.2.17 (git+https://github.com/imazen/zenpixels?rev=1d3ddd2131b22e9e3754c765d4ce45ce3901de59)",
 ]
 
 [[package]]
@@ -627,10 +615,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenpixels"
+version = "0.2.17"
+source = "git+https://github.com/imazen/zenpixels?rev=1d3ddd2131b22e9e3754c765d4ce45ce3901de59#1d3ddd2131b22e9e3754c765d4ce45ce3901de59"
+dependencies = [
+ "bytemuck",
+ "imgref",
+ "rgb",
+ "whereat",
+]
+
+[[package]]
 name = "zenpixels-convert"
-version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf516a64a98f08fa2aa19e86f1389e49894f750441044d65369687cf88a1b8dd"
+version = "0.2.17"
+source = "git+https://github.com/imazen/zenpixels?rev=1d3ddd2131b22e9e3754c765d4ce45ce3901de59#1d3ddd2131b22e9e3754c765d4ce45ce3901de59"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -641,13 +639,13 @@ dependencies = [
  "once_cell",
  "paste",
  "whereat",
- "zenpixels 0.2.16",
+ "zenpixels 0.2.17 (git+https://github.com/imazen/zenpixels?rev=1d3ddd2131b22e9e3754c765d4ce45ce3901de59)",
 ]
 
 [[package]]
 name = "zenpredict"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zenanalyze?rev=f0903489300aea240ffae2e3f1359f8f2b9a0ba4#f0903489300aea240ffae2e3f1359f8f2b9a0ba4"
+source = "git+https://github.com/imazen/zenanalyze?rev=05de3cbc44b19d8769077d99710b0146c761d6df#05de3cbc44b19d8769077d99710b0146c761d6df"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -669,7 +667,7 @@ dependencies = [
  "safe_unaligned_simd",
  "whereat",
  "zenblend",
- "zenpixels 0.2.16",
+ "zenpixels 0.2.17 (git+https://github.com/imazen/zenpixels?rev=1d3ddd2131b22e9e3754c765d4ce45ce3901de59)",
 ]
 
 [[package]]
@@ -705,7 +703,7 @@ dependencies = [
  "thiserror",
  "whereat",
  "zencodec",
- "zenpixels 0.2.16",
+ "zenpixels 0.2.17 (git+https://github.com/imazen/zenpixels?rev=1d3ddd2131b22e9e3754c765d4ce45ce3901de59)",
  "zenpixels-convert",
  "zenyuv",
 ]

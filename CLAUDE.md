@@ -1046,6 +1046,11 @@ is essentially the current implementation.
 
 ## Known Bugs
 
+- PR105 integration preserves byte-based animation row packing. The padded-row
+  regression compares native decoded pixels with the tightly packed source;
+  the pinned pixel contract requires whole-pixel strides. Runtime validation
+  is pending the heavy-slot grant.
+
 - Guarded offset admission (2026-10-18): a known source length applies to every offered window. The negative control at offset 17 returned `Need` under a 32-byte cap; the adapter now checks the known total independently of offset, preserves the typed input-size error, and remains terminal on retry.
 
 - VP8X prefix regression (2026-10-18): early canvas metadata is accepted only while fewer bytes than the RIFF-declared file length are present. A complete file with missing flagged metadata must retain the native probe error; `review_f6_rejected_files_report_nothing_consumed` and the sans-I/O regression guard this boundary.
@@ -1078,3 +1083,20 @@ is essentially the current implementation.
 Transparent unsupported-operation wrappers skipped the shared cause in `Error::source`.
 The wrappers now retain that cause; `unsupported_causes_survive_erasure` covers
 exact animation timing and the decoder wrapper.
+
+## Animation contract regressions (2026-09-28)
+
+`tests/animation_timing.rs` and `tests/animation_decode_contract.rs` cover
+exact timing, single-frame animation signaling, total plays, long timelines,
+transactional admission, internal cancellation, and ICC-bearing transcodes.
+The eight admission/timing/metadata/cancellation negative controls were run
+and failed behaviorally with each corresponding fix removed. The decoder
+context/cancellation tests and P3 decode→encode test also failed before their
+fixes. Do not replace these checks with trait-presence assertions.
+
+Native animation timestamps are now u64; wire durations remain checked u24.
+`finalize_animation` retains ANIM/ANMF for one frame; legacy `finalize` may
+produce a static image. Animation output remains buffered until RIFF assembly.
+Pixel bytes with non-sRGB descriptors must keep ICC context: accepting them
+as sRGB would silently alter their interpretation. Decode errors after entry
+poison animation state until reset.

@@ -2,6 +2,29 @@
 
 ### [Unreleased]
 
+#### Animation timing and admission
+- Exact rational zencodec durations either fit WebP's 24-bit millisecond field
+  or reject before acceptance through `push_frame_exact`; ordinary timed pushes
+  keep cumulative quantization and report the encoded duration. Zero stays zero.
+  Native timestamps use u64 beyond 49 days; native animation timestamp arguments
+  and decoded frame timestamps change from u32 to u64 (breaking, queued for
+  reviewed 0.5 release; see CHANGELOG.md). The shared encoder keeps its existing
+  u32 cumulative admission cap.
+- Explicit animation finalization preserves a single frame's ANIM/ANMF timing
+  and total play count. Oversized loop counts and nonmonotonic timestamps reject.
+- Animation jobs preserve ICC/EXIF/XMP, share still-image CICP-to-ICC emission,
+  enforce frame/dimension limits, and pass job/per-call cancellation into native
+  encoding. Native animation admission checks buffer lengths and frame regions
+  before changing pending-frame state.
+- Borrowed and owned animation decode frames retain ICC color context and
+  descriptors. Wide-gamut U8 animations can be reencoded without relabeling
+  samples; unsupported float, narrow-range, and premultiplied input rejects.
+- Decode cancellation reaches VP8, VP8L, and ALPH kernels. A failed frame
+  poisons the native animation decoder until reset. Skipped frames count
+  toward limits. Encode admission includes retained-frame memory.
+- Animation encoding still buffers compressed frames until RIFF assembly;
+  it does not offer streaming writes to a nonseekable sink.
+
 #### Targeting (2026-09-08)
 - `target-zensim`: measure one-pass encodes, enforce their strict undershoot
   limit, count only completed full encodes, and report `targets_met` from the

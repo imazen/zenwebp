@@ -13,7 +13,7 @@
 #   pub types (struct/enum/trait/alias)        80
 #   pub consts/statics                         74
 #   free functions                            188
-#   inherent methods                          241
+#   inherent methods                          243
 #   struct fields                             313
 #   enum variants                             100
 #   re-exports                                  5
@@ -29,11 +29,11 @@
 #   detect                            1
 #   encoder                         697
 #   heuristics                        2
-#   mux                               4
+#   mux                               6
 #   sweep                           100
 #   zencodec                          3
 
-## items (921 lines)
+## items (923 lines)
 
 #[non_exhaustive] pub enum SharpYuvSetting [also: encoder, encoder::config]
 #[non_exhaustive] pub enum encoder::cost::ImageContentType [also: encoder::cost::classifier]
@@ -425,8 +425,10 @@ pub fn encoder::zensim_target::ZensimTarget::with_max_undershoot_ship(self, core
 pub fn encoder::zensim_target::set_toggles(encoder::zensim_target::AblationToggles)
 pub fn heuristics::estimate_animation_encode(u32, u32, u32, &encoder::config::EncoderConfig) -> heuristics::EncodeEstimate
 pub fn heuristics::estimate_encode(u32, u32, u8, &encoder::config::EncoderConfig) -> heuristics::EncodeEstimate
-pub fn mux::AnimationEncoder::add_frame(&mut self, &[u8], PixelLayout, u32, &encoder::config::EncoderConfig) -> mux::MuxResult<()>
-pub fn mux::AnimationEncoder::add_frame_advanced(&mut self, &[u8], PixelLayout, u32, u32, u32, u32, u32, &encoder::config::EncoderConfig, mux::DisposeMethod, mux::BlendMethod) -> mux::MuxResult<()>
+pub fn mux::AnimationEncoder::add_frame(&mut self, &[u8], PixelLayout, u64, &encoder::config::EncoderConfig) -> mux::MuxResult<()>
+pub fn mux::AnimationEncoder::add_frame_advanced(&mut self, &[u8], PixelLayout, u32, u32, u32, u32, u64, &encoder::config::EncoderConfig, mux::DisposeMethod, mux::BlendMethod) -> mux::MuxResult<()>
+pub fn mux::AnimationEncoder::add_frame_advanced_with_stop(&mut self, &[u8], PixelLayout, u32, u32, u32, u32, u64, &encoder::config::EncoderConfig, mux::DisposeMethod, mux::BlendMethod, &dyn enough::Stop) -> mux::MuxResult<()>
+pub fn mux::AnimationEncoder::add_frame_with_stop(&mut self, &[u8], PixelLayout, u64, &encoder::config::EncoderConfig, &dyn enough::Stop) -> mux::MuxResult<()>
 pub fn mux::BlendMethod::assert_fields_are_eq(&self)
 pub fn mux::DisposeMethod::assert_fields_are_eq(&self)
 pub fn set_ablation_toggles(encoder::zensim_target::AblationToggles) [also: encoder]

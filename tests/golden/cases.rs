@@ -382,7 +382,8 @@ fn encode_anim(i: usize) -> Vec<u8> {
             DisposeMethod::None
         };
         if cfg_is_delta(i) && full {
-            enc.add_frame(&px, PixelLayout::Rgba8, f * 100, c).unwrap();
+            enc.add_frame(&px, PixelLayout::Rgba8, u64::from(f) * 100, c)
+                .unwrap();
         } else {
             enc.add_frame_advanced(
                 &px,
@@ -391,7 +392,7 @@ fn encode_anim(i: usize) -> Vec<u8> {
                 fh,
                 x,
                 y,
-                f * 100,
+                u64::from(f) * 100,
                 c,
                 dispose,
                 blend,

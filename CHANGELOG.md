@@ -409,6 +409,16 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 
 ### QUEUED BREAKING CHANGES
 
+- PR105 (`6b580c25`): native `AnimationEncoder::add_frame` and
+  `add_frame_advanced` timestamp arguments, `FrameInfo::timestamp_ms`, and
+  `AnimFrame::timestamp_ms` widen from `u32` to `u64`. Queue for the reviewed
+  0.5 breaking release; never backport these signatures to 0.4.x. Callers with
+  typed `u32` timestamps use `u64::from(timestamp)`. Wire delays remain u24
+  milliseconds and `duration_ms` remains u32. The shared animation encoder
+  retains its existing u32 cumulative admission cap and ordinary/exact timing
+  distinction. This PR requires API review before landing; no release is
+  authorized by this entry.
+
 - Published 0.4.4 comparison: nine codec-trait associated errors now use
   `At<CodecError>` instead of native errors (already in `162e05de`); see
   [metadata integration](docs/metadata-integration.md).
