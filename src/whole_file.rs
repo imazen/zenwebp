@@ -69,13 +69,13 @@ where
         stop: &dyn enough::Stop,
     ) -> Result<Progress, StepError<Self::Error>> {
         stop.check()?;
-        if input.offset == 0 {
-            let bytes = input.total_len.unwrap_or(0).max(input.bytes.len() as u64);
-            self.limits
-                .check_input_size(bytes)
-                .and_then(|()| self.limits.check_memory(bytes))
-                .map_err(|e| self.limit_error(e))?;
-        }
+        // A length hint applies to the source, independently of the offered
+        // window. Reject it before the shared adapter requests offset zero.
+        let bytes = input.total_len.unwrap_or(0).max(input.bytes.len() as u64);
+        self.limits
+            .check_input_size(bytes)
+            .and_then(|()| self.limits.check_memory(bytes))
+            .map_err(|e| self.limit_error(e))?;
         if input.offset == 0 && (self.inner.info().is_none() || input.reaches_end()) {
             match self.probe.probe(input.bytes) {
                 Ok(info) => self

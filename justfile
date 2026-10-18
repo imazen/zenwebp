@@ -225,6 +225,9 @@ shared-contract-check:
     cargo clippy -p zenwebp --features inventory --test shared_contracts -- -D warnings
 
 # Whole-file incremental fixture parity and resource admission.
+wholefile-admission-check:
+    cargo test --locked --test sansio known_length_limit_is_independent_of_the_offered_offset -- --nocapture
+
 sansio-check:
     cargo test --locked --test sansio -- --nocapture
 

@@ -17,6 +17,8 @@ earlier history lives in git log and LOG.md.)
 
 ### Fixed
 
+- Reject a known oversized whole-file source before requesting input even when the offered window starts at a nonzero offset; preserve the typed limit cause and terminal error state.
+
 - Keep native probe failures for complete malformed VP8X files; early canvas-header fallback applies only to incomplete RIFF input.
 
 - Check whole-file input and memory caps before requesting a source prefix, retain typed limit causes, and validate complete animation limits after an early header. VP8X probing accepts its complete canvas header before an image chunk arrives.

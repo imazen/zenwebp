@@ -143,6 +143,35 @@ fn input_limit_rejects_known_length_before_requesting_file() {
 }
 
 #[test]
+fn known_length_limit_is_independent_of_the_offered_offset() {
+    let mut inc = D::new()
+        .job()
+        .with_limits(ResourceLimits::none().with_max_input_bytes(32))
+        .dyn_incremental_decoder(&[])
+        .unwrap();
+    let mut sink = CollectSink::new();
+    let result = inc.step(
+        Input::new(17, &[0]).with_total_len(1024 * 1024),
+        &mut sink,
+        &enough::Unstoppable,
+    );
+    let Err(StepError::Codec(error)) = result else {
+        panic!("known oversized input must fail before any Need: {result:?}");
+    };
+    assert_eq!(
+        error.limit_exceeded(),
+        Some(&LimitExceeded::InputSize {
+            actual: 1024 * 1024,
+            max: 32,
+        })
+    );
+    assert!(sink.descriptor().is_none());
+    assert!(matches!(
+        inc.step(Input::empty(), &mut sink, &enough::Unstoppable),
+        Err(StepError::Finished)
+    ));
+}
+#[test]
 fn shared_check_all() {
     tk::check_all(E::lossless(), D::new()).unwrap();
 }
