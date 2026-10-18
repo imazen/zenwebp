@@ -1046,6 +1046,14 @@ is essentially the current implementation.
 
 ## Known Bugs
 
+- PR105 timestamp compatibility: native timestamp parameters and decoded frame
+  fields retain u32. Differences, cumulative decode time and final-frame end
+  use wide checked arithmetic; unrepresentable time refuses instead of wrapping
+  or saturating. Decoder overflow remains terminal until reset. The regression
+  covers exact-cap end, zero duration and a typed u32 caller. Focused40/40,
+  strict lint and regenerated API snapshots pass. Performance method and limits
+  are in [benchmarks/pr105](benchmarks/pr105/README.md).
+
 - PR105 integration preserves byte-based animation row packing. The padded-row
   regression compares native decoded pixels with the tightly packed source;
   the pinned pixel contract requires whole-pixel strides. The regression is

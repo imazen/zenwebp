@@ -576,7 +576,7 @@ pub struct mux::AnimFrame
 pub mux::AnimFrame::data: alloc::vec::Vec<u8>
 pub mux::AnimFrame::duration_ms: u32
 pub mux::AnimFrame::height: u32
-pub mux::AnimFrame::timestamp_ms: u64
+pub mux::AnimFrame::timestamp_ms: u32
 pub mux::AnimFrame::width: u32
 pub struct mux::AnimationConfig
 pub mux::AnimationConfig::background_color: [u8; 4]
@@ -603,10 +603,10 @@ pub fn mux::AnimationDecoder<'a>::set_memory_limit(&mut self, usize)
 pub fn mux::AnimationDecoder<'a>::set_stop(&mut self, &'a dyn enough::Stop)
 pub fn mux::AnimationDecoder<'a>::xmp_metadata(&mut self) -> core::result::Result<core::option::Option<alloc::vec::Vec<u8>>, whereat::at::At<DecodeError>>
 pub struct mux::AnimationEncoder
-pub fn mux::AnimationEncoder::add_frame(&mut self, &[u8], PixelLayout, u64, &EncoderConfig) -> mux::MuxResult<()>
-pub fn mux::AnimationEncoder::add_frame_advanced(&mut self, &[u8], PixelLayout, u32, u32, u32, u32, u64, &EncoderConfig, mux::DisposeMethod, mux::BlendMethod) -> mux::MuxResult<()>
-pub fn mux::AnimationEncoder::add_frame_advanced_with_stop(&mut self, &[u8], PixelLayout, u32, u32, u32, u32, u64, &EncoderConfig, mux::DisposeMethod, mux::BlendMethod, &dyn enough::Stop) -> mux::MuxResult<()>
-pub fn mux::AnimationEncoder::add_frame_with_stop(&mut self, &[u8], PixelLayout, u64, &EncoderConfig, &dyn enough::Stop) -> mux::MuxResult<()>
+pub fn mux::AnimationEncoder::add_frame(&mut self, &[u8], PixelLayout, u32, &EncoderConfig) -> mux::MuxResult<()>
+pub fn mux::AnimationEncoder::add_frame_advanced(&mut self, &[u8], PixelLayout, u32, u32, u32, u32, u32, &EncoderConfig, mux::DisposeMethod, mux::BlendMethod) -> mux::MuxResult<()>
+pub fn mux::AnimationEncoder::add_frame_advanced_with_stop(&mut self, &[u8], PixelLayout, u32, u32, u32, u32, u32, &EncoderConfig, mux::DisposeMethod, mux::BlendMethod, &dyn enough::Stop) -> mux::MuxResult<()>
+pub fn mux::AnimationEncoder::add_frame_with_stop(&mut self, &[u8], PixelLayout, u32, &EncoderConfig, &dyn enough::Stop) -> mux::MuxResult<()>
 pub fn mux::AnimationEncoder::exif(&mut self, alloc::vec::Vec<u8>)
 pub fn mux::AnimationEncoder::finalize(self, u32) -> mux::MuxResult<alloc::vec::Vec<u8>>
 pub fn mux::AnimationEncoder::finalize_animation(self, u32) -> mux::MuxResult<alloc::vec::Vec<u8>>
@@ -637,7 +637,7 @@ pub struct mux::DemuxFrameIter<'a, 'b>
 pub struct mux::FrameInfo
 pub mux::FrameInfo::duration_ms: u32
 pub mux::FrameInfo::height: u32
-pub mux::FrameInfo::timestamp_ms: u64
+pub mux::FrameInfo::timestamp_ms: u32
 pub mux::FrameInfo::width: u32
 pub struct mux::MuxFrame
 pub mux::MuxFrame::alpha_data: core::option::Option<alloc::vec::Vec<u8>>

@@ -1,0 +1,29 @@
+{
+  "baseline_source": "a3fec3fec04cad9322af0a9e6bed023e72f1929c",
+  "pr_source_and_harness": "e63e0a834d7729c514bd1a833b0d5da72d6d9aa6",
+  "cpu": "Apple M4 Pro",
+  "arch": "aarch64",
+  "os": "macOS",
+  "date": "2026-10-18",
+  "mode": "interleaved; median of three per-pass means; same locked PR dependency graph",
+  "zenbench": "0.1.8",
+  "timed_work": "in-memory Rust codec calls; setup/I/O excluded",
+  "profile": "release opt3, thin LTO, codegen-units1, debug0; default CPU target",
+  "controls": {
+    "memory_guard": "12G monitored macOS process-tree guard",
+    "build_jobs": 4,
+    "incremental": false,
+    "rustc_wrapper": null
+  },
+  "resource_line": "run-heavy: done rc=0 233s | peak-RSS 0.04GiB | min-avail 18616MiB | peak-load 3.25",
+  "benchmark_binary_sha256": "5e244b04f1d657a3e1f2511728d55322a46fa9cda0eb2dad1debd362c8316f4d",
+  "files": {
+    "tools/animation-perf/Cargo.lock": "4277fac11fcdc3dfe554a294cc5dbe3ad93bd0b1f57f8864d9d47e123db9d096",
+    "tools/animation-perf/src/main.rs": "745eb57e44a9e86349ea40783706eab3833ae01115553d881874e8f08273e294",
+    "tools/animation-perf/src/arm.rs": "8df3430914879cbf5129581c47da198de83b728351c196828d13873623f01145",
+    "tests/reference/gallery1/1.png": "5252352087e3e9f1d2b5d7e8db48c09a5c2ceb9a6ae1e8196957f1382c2a632a",
+    "tests/images/animated/random_lossy.webp": "23a17de1e9ec907f2d503e8eda4036fcdb87ff55ac7f2a7468cf05dfbdb6d7f6",
+    "tests/images/animated/random_lossless.webp": "5988f42bfae86fb813d27dafc3fc8e259024d1048c9e41edb6bd008289b1b80a",
+    "tests/images/gallery1/1.webp": "4a5afeaff8483923da964bc7896f02d0283e8bff99b5b8f82a31ae3214dab1d0"
+  }
+}
