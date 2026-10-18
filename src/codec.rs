@@ -2188,7 +2188,6 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                 random_access: false,
             })
         };
-        let color_context = Arc::new(base_info.source_color.to_color_context());
         let source_desc = zencodec::helpers::descriptor_for_decoded_pixels_v2(
             if anim_info.has_alpha {
                 zenpixels::PixelFormat::Rgba8
@@ -2199,6 +2198,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
             None,
         );
         let base_info = self.apply_policy_to_info(base_info);
+        let color_context = Arc::new(base_info.source_color.to_color_context());
         let shared_info = Arc::new(base_info);
         drop(probe_anim);
 
@@ -2403,7 +2403,15 @@ impl WebpDecoder<'_> {
                 .with_bit_depth(8)
                 .with_channel_count(if has_alpha { 4 } else { 3 })
         };
+        let descriptor = zencodec::helpers::descriptor_for_decoded_pixels_v2(
+            buf.descriptor().format,
+            &info.source_color,
+            None,
+        );
         let info = self.apply_policy_to_info(info);
+        let buf = buf
+            .with_descriptor(descriptor)
+            .with_color_context(Arc::new(info.source_color.to_color_context()));
 
         let mut output = DecodeOutput::new(buf, info);
         if let Ok(probe) = crate::detect::probe(data) {
@@ -2450,7 +2458,15 @@ impl WebpDecoder<'_> {
                 .with_bit_depth(8)
                 .with_channel_count(if has_alpha { 4 } else { 3 })
         };
+        let descriptor = zencodec::helpers::descriptor_for_decoded_pixels_v2(
+            buf.descriptor().format,
+            &info.source_color,
+            None,
+        );
         let info = self.apply_policy_to_info(info);
+        let buf = buf
+            .with_descriptor(descriptor)
+            .with_color_context(Arc::new(info.source_color.to_color_context()));
 
         let mut output = DecodeOutput::new(buf, info);
         if let Ok(probe) = crate::detect::probe(data) {
@@ -2466,15 +2482,25 @@ fn negotiate_format(pixels: PixelBuffer, preferred: &[PixelDescriptor]) -> Pixel
         return pixels;
     }
     let desc = pixels.descriptor();
-    // Check if BGRA is preferred and we have RGBA
-    if preferred.contains(&PixelDescriptor::BGRA8_SRGB) && desc == PixelDescriptor::RGBA8_SRGB {
-        let w = pixels.width();
-        let h = pixels.height();
-        let mut raw = pixels.into_parts().data;
-        garb::bytes::rgba_to_bgra_inplace(&mut raw)
-            .expect("negotiate_format: validated 4bpp buffer");
-        return PixelBuffer::from_vec(raw, w, h, PixelDescriptor::BGRA8_SRGB)
-            .expect("negotiate_format: dimensions unchanged");
+    // Swizzle rows in place so padding, offsets and color context survive.
+    if preferred.contains(&PixelDescriptor::BGRA8_SRGB)
+        && desc.layout() == zenpixels::ChannelLayout::Rgba
+    {
+        let mut pixels = pixels;
+        let height = pixels.height();
+        let mut rows = pixels.as_slice_mut();
+        for y in 0..height {
+            garb::bytes::rgba_to_bgra_inplace(rows.row_mut(y))
+                .expect("negotiate_format: validated 4bpp row");
+        }
+        drop(rows);
+        return pixels
+            .reinterpret(
+                PixelDescriptor::BGRA8_SRGB
+                    .with_primaries(desc.primaries)
+                    .with_transfer(desc.transfer()),
+            )
+            .expect("negotiate_format: four-channel layout unchanged");
     }
     pixels
 }
@@ -2796,6 +2822,12 @@ impl Vp8StreamingDecoder {
             descriptor = PixelDescriptor::BGRA8_SRGB;
         }
 
+        descriptor = zencodec::helpers::descriptor_for_decoded_pixels_v2(
+            descriptor.format,
+            &info.source_color,
+            None,
+        );
+
         // Max strip rows: last MB row may emit extra_y_rows + 16 rows.
         // For the first row of a single-row image, it's 16.
         let max_strip_rows = if mbheight == 1 { 16 } else { extra_y_rows + 16 };
@@ -2887,6 +2919,7 @@ impl zencodec::decode::StreamingDecode for Vp8StreamingDecoder {
             )))
         })?;
 
+        let slice = slice.with_color_context(Arc::new(self.info.source_color.to_color_context()));
         Ok(Some((y_start as u32, slice)))
     }
 
