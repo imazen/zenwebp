@@ -2470,7 +2470,7 @@ fn negotiate_format(pixels: PixelBuffer, preferred: &[PixelDescriptor]) -> Pixel
     if preferred.contains(&PixelDescriptor::BGRA8_SRGB) && desc == PixelDescriptor::RGBA8_SRGB {
         let w = pixels.width();
         let h = pixels.height();
-        let mut raw = pixels.into_vec();
+        let mut raw = pixels.into_parts().data;
         garb::bytes::rgba_to_bgra_inplace(&mut raw)
             .expect("negotiate_format: validated 4bpp buffer");
         return PixelBuffer::from_vec(raw, w, h, PixelDescriptor::BGRA8_SRGB)
@@ -4367,7 +4367,7 @@ mod tests {
         }
 
         // Compare pixel-by-pixel
-        let reference = oneshot_buf.into_vec();
+        let reference = oneshot_buf.into_parts().data;
         assert_eq!(
             assembled.len(),
             reference.len(),
@@ -4573,7 +4573,7 @@ mod tests {
         let width = buf.width();
         let height = buf.height();
         let desc = buf.descriptor();
-        (buf.into_vec(), width, height, desc)
+        (buf.into_parts().data, width, height, desc)
     }
 
     /// Decode `data` under the given [`AllocPreference`] (via the zencodec
@@ -4594,7 +4594,8 @@ mod tests {
             .decode()
             .unwrap()
             .into_buffer()
-            .into_vec()
+            .into_parts()
+            .data
     }
 
     /// Decoding with `AllocPreference::Fallible` (the `try_reserve` path) and
@@ -5052,7 +5053,7 @@ mod tests {
             // The owned path takes `frame_buf`, so every frame after the
             // first goes through the fallible re-allocation branch.
             while let Some(f) = dec.render_next_frame_owned(None).unwrap() {
-                out.push(f.into_buffer().into_vec());
+                out.push(f.into_buffer().into_parts().data);
             }
             out
         };

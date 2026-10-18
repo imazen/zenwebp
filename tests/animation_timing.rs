@@ -164,30 +164,6 @@ mod native_contract {
             }
         }
 
-        #[test]
-        fn shared_animation_packs_padded_rows_without_changing_pixels() {
-            let tight = [
-                12, 34, 56, 255, 78, 90, 123, 255, 142, 33, 64, 255, 231, 82, 11, 255,
-            ];
-            let mut padded = [0xA5u8; 24];
-            padded[..8].copy_from_slice(&tight[..8]);
-            padded[12..20].copy_from_slice(&tight[8..]);
-            let pixels =
-                zenpixels::PixelSlice::new(&padded, 2, 2, 12, PixelDescriptor::RGBA8_SRGB).unwrap();
-            let mut encoder = WebpEncoderConfig::lossless()
-                .job()
-                .animation_frame_encoder()
-                .unwrap();
-            encoder
-                .push_frame_exact(pixels, FrameDuration::from_millis(7), None)
-                .unwrap();
-            let output = encoder.finish(None).unwrap();
-            let mut decoder = AnimationDecoder::new(output.data()).unwrap();
-            let frame = decoder.next_frame().unwrap().unwrap();
-            assert_eq!(frame.data, tight);
-            assert_eq!(frame.duration_ms, 7);
-            assert!(decoder.next_frame().unwrap().is_none());
-        }
         assert!(
             WebpEncoderConfig::lossless()
                 .job()
@@ -195,6 +171,31 @@ mod native_contract {
                 .animation_frame_encoder()
                 .is_err()
         );
+    }
+
+    #[test]
+    fn shared_animation_packs_padded_rows_without_changing_pixels() {
+        let tight = [
+            12, 34, 56, 255, 78, 90, 123, 255, 142, 33, 64, 255, 231, 82, 11, 255,
+        ];
+        let mut padded = [0xA5u8; 24];
+        padded[..8].copy_from_slice(&tight[..8]);
+        padded[12..20].copy_from_slice(&tight[8..]);
+        let pixels =
+            zenpixels::PixelSlice::new(&padded, 2, 2, 12, PixelDescriptor::RGBA8_SRGB).unwrap();
+        let mut encoder = WebpEncoderConfig::lossless()
+            .job()
+            .animation_frame_encoder()
+            .unwrap();
+        encoder
+            .push_frame_exact(pixels, FrameDuration::from_millis(7), None)
+            .unwrap();
+        let output = encoder.finish(None).unwrap();
+        let mut decoder = AnimationDecoder::new(output.data()).unwrap();
+        let frame = decoder.next_frame().unwrap().unwrap();
+        assert_eq!(frame.data, tight);
+        assert_eq!(frame.duration_ms, 7);
+        assert!(decoder.next_frame().unwrap().is_none());
     }
 
     #[test]

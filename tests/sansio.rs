@@ -54,7 +54,7 @@ fn assert_parity(data: &[u8]) {
             let pixels = expected.into_buffer();
             assert_eq!((info.width, info.height), (pixels.width(), pixels.height()));
             assert_eq!(sink.descriptor(), Some(pixels.descriptor()));
-            assert_eq!(sink.bytes(), pixels.into_vec());
+            assert_eq!(sink.bytes(), pixels.into_parts().data);
             assert!(sink.finished());
         }
         (Err(_), Err(zencodec_io::DriveError::Step(StepError::Codec(_)))) => {}
@@ -350,7 +350,7 @@ fn assert_other_decode_paths(data: &[u8]) {
         .unwrap();
         assert!(stats.reads > 0);
         assert_eq!(sink.descriptor(), Some(reference.descriptor()));
-        assert_eq!(sink.bytes(), reference.into_vec());
+        assert_eq!(sink.bytes(), reference.into_parts().data);
     }
 }
 
