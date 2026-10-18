@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use zenbench::prelude::*;
 use zenpixels::{PixelBuffer, PixelDescriptor};

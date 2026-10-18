@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Main-vs-PR105 performance witness. All timed work is in-memory native Rust.
 //! Run the same source and settings on each revision; see benchmarks/pr105/.
 use std::{borrow::Cow, path::PathBuf, sync::Arc, time::Duration};
