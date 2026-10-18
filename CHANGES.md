@@ -6,10 +6,9 @@
 - Exact rational zencodec durations either fit WebP's 24-bit millisecond field
   or reject before acceptance through `push_frame_exact`; ordinary timed pushes
   keep cumulative quantization and report the encoded duration. Zero stays zero.
-  Native timestamps use u64 beyond 49 days; native animation timestamp arguments
-  and decoded frame timestamps change from u32 to u64 (breaking, queued for
-  reviewed 0.5 release; see CHANGELOG.md). The shared encoder keeps its existing
-  u32 cumulative admission cap.
+  Public native timestamp arguments and frame fields retain u32. Checked wider
+  arithmetic rejects a timeline beyond u32::MAX milliseconds instead of
+  wrapping or saturating. The shared encoder keeps its existing u32 cap.
 - Explicit animation finalization preserves a single frame's ANIM/ANMF timing
   and total play count. Oversized loop counts and nonmonotonic timestamps reject.
 - Animation jobs preserve ICC/EXIF/XMP, share still-image CICP-to-ICC emission,

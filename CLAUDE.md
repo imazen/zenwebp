@@ -1096,14 +1096,16 @@ exact animation timing and the decoder wrapper.
 ## Animation contract regressions (2026-09-28)
 
 `tests/animation_timing.rs` and `tests/animation_decode_contract.rs` cover
-exact timing, single-frame animation signaling, total plays, long timelines,
+exact timing, single-frame animation signaling, total plays, bounded timelines,
 transactional admission, internal cancellation, and ICC-bearing transcodes.
 The eight admission/timing/metadata/cancellation negative controls were run
 and failed behaviorally with each corresponding fix removed. The decoder
 context/cancellation tests and P3 decode→encode test also failed before their
 fixes. Do not replace these checks with trait-presence assertions.
 
-Native animation timestamps are now u64; wire durations remain checked u24.
+Public native animation timestamps remain u32. Wide checked arithmetic refuses
+unrepresentable timelines; wire durations remain checked u24. Overflow is
+terminal until decoder reset.
 `finalize_animation` retains ANIM/ANMF for one frame; legacy `finalize` may
 produce a static image. Animation output remains buffered until RIFF assembly.
 Pixel bytes with non-sRGB descriptors must keep ICC context: accepting them

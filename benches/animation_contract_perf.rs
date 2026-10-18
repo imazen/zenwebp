@@ -4,7 +4,7 @@ use std::{borrow::Cow, path::PathBuf, sync::Arc, time::Duration};
 use zenbench::prelude::*;
 use zencodec::{
     decode::{AnimationFrameDecoder, Decode, DecodeJob, DecoderConfig},
-    encode::{AnimationFrameEncoder, EncodeJob, Encoder as _, EncoderConfig as _},
+    encode::{AnimationFrameEncoder, EncodeJob, EncoderConfig as _},
 };
 use zenpixels::{PixelBuffer, PixelDescriptor};
 use zenwebp::{
@@ -26,7 +26,7 @@ fn native_encode(frames: &[PixelBuffer], lossy: bool) -> usize {
     for (i, frame) in frames.iter().enumerate() {
         enc.add_frame(
             frame.as_contiguous_bytes().unwrap(),
-            PixelLayout::Rgba8,
+            PixelLayout::Rgb8,
             i as u32 * 20,
             &cfg,
         )
@@ -73,14 +73,22 @@ fn bench(suite: &mut Suite) {
             .expect("set ZENWEBP_PERF_FIXTURES to the common repository tests directory"),
     );
     let png = std::fs::read(root.join("reference/gallery1/1.png")).unwrap();
-    let photo = image::load_from_memory(&png).unwrap().to_rgba8();
+    let mut reader = png::Decoder::new(std::io::Cursor::new(png))
+        .read_info()
+        .unwrap();
+    let mut photo = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut photo).unwrap();
+    assert_eq!(info.color_type, png::ColorType::Rgb);
+    assert_eq!(info.bit_depth, png::BitDepth::Eight);
     let frames: Arc<Vec<_>> = Arc::new(
-        (0..3)
+        (0..3usize)
             .map(|i| {
-                let data = image::imageops::crop_imm(&photo, i * 16, i * 8, 256, 256)
-                    .to_image()
-                    .into_raw();
-                PixelBuffer::from_vec(data, 256, 256, PixelDescriptor::RGBA8_SRGB).unwrap()
+                let mut data = Vec::with_capacity(256 * 256 * 3);
+                for row in 0..256 {
+                    let offset = ((row + i * 8) * info.width as usize + i * 16) * 3;
+                    data.extend_from_slice(&photo[offset..offset + 256 * 3]);
+                }
+                PixelBuffer::from_vec(data, 256, 256, PixelDescriptor::RGB8_SRGB).unwrap()
             })
             .collect(),
     );
@@ -99,6 +107,7 @@ fn bench(suite: &mut Suite) {
                     .max_rounds(80)
                     .max_time(Duration::from_secs(3));
                 g.bench("zenwebp", move |b| {
+                    let frames = frames.clone();
                     b.iter(move || {
                         black_box(if shared {
                             shared_encode(&frames, lossy)
@@ -129,6 +138,7 @@ fn bench(suite: &mut Suite) {
                     .max_rounds(80)
                     .max_time(Duration::from_secs(3));
                 g.bench("zenwebp", move |b| {
+                    let bytes = bytes.clone();
                     b.iter(move || {
                         black_box(if shared {
                             shared_decode(&bytes)
@@ -150,6 +160,7 @@ fn bench(suite: &mut Suite) {
             .max_rounds(80)
             .max_time(Duration::from_secs(3));
         g.bench("zenwebp", move |b| {
+            let bytes = bytes.clone();
             b.iter(move || {
                 black_box(
                     WebpDecoderConfig::new()
