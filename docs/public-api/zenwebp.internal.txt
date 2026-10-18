@@ -12,7 +12,7 @@
 #   pub modules                                33
 #   pub types (struct/enum/trait/alias)        80
 #   pub consts/statics                         74
-#   free functions                            188
+#   free functions                            183
 #   inherent methods                          243
 #   struct fields                             313
 #   enum variants                             100
@@ -24,7 +24,7 @@
 #   (root)                           78
 #   __expert                          5
 #   __test_helpers                   32
-#   common                           65
+#   common                           60
 #   decoder                          47
 #   detect                            1
 #   encoder                         697
@@ -33,7 +33,7 @@
 #   sweep                           100
 #   zencodec                          3
 
-## items (923 lines)
+## items (921 lines)
 
 #[non_exhaustive] pub enum SharpYuvSetting [also: encoder, encoder::config]
 #[non_exhaustive] pub enum encoder::cost::ImageContentType [also: encoder::cost::classifier]
@@ -130,15 +130,13 @@ pub fn __test_helpers::quantize_dequantize_block_dispatch(&[i16; 16], &encoder::
 pub fn __test_helpers::quantize_dequantize_block_scalar(&[i16; 16], &encoder::quantize::VP8Matrix, &mut [i16; 16], &mut [i16; 16]) -> bool
 pub fn __test_helpers::sse4x4_dispatch(&[u8; 16], &[u8; 16]) -> u32
 pub fn __test_helpers::sse4x4_with_residual_dispatch(&[u8; 16], &[u8; 16], &[i16; 16]) -> u32
-pub fn __test_helpers::sse4x4_with_residual_scalar(&[u8; 16], &[u8; 16], &[i16; 16]) -> u32 [also: common::simd_sse]
+pub fn __test_helpers::sse4x4_with_residual_scalar(&[u8; 16], &[u8; 16], &[i16; 16]) -> u32
 pub fn __test_helpers::sse_16x16_luma_dispatch(&[u8], usize, usize, usize, &[u8; 544]) -> u32
-pub fn __test_helpers::sse_16x16_luma_scalar(&[u8], usize, usize, usize, &[u8; 544]) -> u32 [also: common::simd_sse]
+pub fn __test_helpers::sse_16x16_luma_scalar(&[u8], usize, usize, usize, &[u8; 544]) -> u32
 pub fn __test_helpers::sse_8x8_chroma_dispatch(&[u8], usize, usize, usize, &[u8; 288]) -> u32
-pub fn __test_helpers::sse_8x8_chroma_scalar(&[u8], usize, usize, usize, &[u8; 288]) -> u32 [also: common::simd_sse]
+pub fn __test_helpers::sse_8x8_chroma_scalar(&[u8], usize, usize, usize, &[u8; 288]) -> u32
 pub fn __test_helpers::vp8l_transform_dump(&[u8]) -> core::result::Result<(alloc::vec::Vec<(u8, u8, u64, alloc::vec::Vec<u8>)>, u64, u64, decoder::Vp8lMainImageInfo), alloc::string::String>
 pub fn common::prediction::__bench_kernels::add_residue_i16_256(&mut [u8; 256], &[i16; 16], usize, usize, usize)
-pub fn common::simd_sse::sse4x4_scalar(&[u8; 16], &[u8; 16]) -> u32
-pub fn common::simd_sse::t_transform_scalar(&[u8], usize, &[u16; 16]) -> i32
 pub fn common::transform::__bench_kernels::dct4x4(&mut [i32; 16])
 pub fn common::transform::__bench_kernels::idct4x4(&mut [i32; 16])
 pub fn common::transform::__bench_kernels::iwht4x4(&mut [i32; 16])
@@ -483,7 +481,7 @@ pub mod __test_helpers
 pub mod common
 pub mod common::prediction
 pub mod common::prediction::__bench_kernels
-pub mod common::simd_sse
+pub mod common::simd_neon
 pub mod common::transform
 pub mod common::transform::__bench_kernels
 pub mod common::types

@@ -1048,8 +1048,17 @@ is essentially the current implementation.
 
 - PR105 integration preserves byte-based animation row packing. The padded-row
   regression compares native decoded pixels with the tightly packed source;
-  the pinned pixel contract requires whole-pixel strides. Runtime validation
-  is pending the heavy-slot grant.
+  the pinned pixel contract requires whole-pixel strides. The regression is
+  executed and passes. The integrated focused gate passes39/40; the remaining
+  original PR105 CICP-only test expects curated P3 ICC bytes while the merged
+  shared synthesizer selects the CICP-tagged bundled profile. Keep that
+  assertion enabled until its contract update is approved.
+- PR105 integration exposed animation ICC context missing from one-shot decode.
+  One-shot, strip and frame paths now derive the same color descriptor and
+  carry retained ICC context; extraction denial removes the optional ICC.
+  `still_decoder_views_keep_icc_context_and_bgra_pixels` checks exact channel
+  order, source samples, descriptors and policy across decoder views. The
+  unchanged shared check_all, independent libwebp gates and strict lint pass.
 
 - Guarded offset admission (2026-10-18): a known source length applies to every offered window. The negative control at offset 17 returned `Need` under a 32-byte cap; the adapter now checks the known total independently of offset, preserves the typed input-size error, and remains terminal on retry.
 

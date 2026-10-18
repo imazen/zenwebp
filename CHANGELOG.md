@@ -17,6 +17,11 @@ earlier history lives in git log and LOG.md.)
 
 ### Fixed
 
+- Retain decoded ICC context and resolved color descriptors consistently across
+  one-shot, scanline-batch and animation views; BGRA negotiation preserves
+  color metadata and works by rows. Extraction denial still removes ICC bytes
+  (`403ee1bc`, `58ec506b`).
+
 - Reject a known oversized whole-file source before requesting input even when the offered window starts at a nonzero offset; preserve the typed limit cause and terminal error state.
 
 - Keep native probe failures for complete malformed VP8X files; early canvas-header fallback applies only to incomplete RIFF input.
