@@ -1803,6 +1803,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
             Err(error)
                 if matches!(error.error(), DecodeError::ChunkMissing)
                     && data.len() >= 30
+                    && (data.len() as u64)
+                        < u64::from(u32::from_le_bytes(data[4..8].try_into().unwrap())) + 8
                     && &data[12..16] == b"VP8X"
                     && data[16..20] == 10u32.to_le_bytes() =>
             {

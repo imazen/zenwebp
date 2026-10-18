@@ -1046,6 +1046,8 @@ is essentially the current implementation.
 
 ## Known Bugs
 
+- VP8X prefix regression (2026-10-18): early canvas metadata is accepted only while fewer bytes than the RIFF-declared file length are present. A complete file with missing flagged metadata must retain the native probe error; `review_f6_rejected_files_report_nothing_consumed` and the sans-I/O regression guard this boundary.
+
 - Guarded whole-file regressions (2026-10-18): `tests/sansio.rs` checks typed input admission before `Need`, bounded unknown-length requests, exact-cap EOF, dimensions, and full animation frame caps after an early VP8X header. The adapter revalidates complete input because the early header has no frame count.
 - Shared conformance guards (2026-10-18): `check_all` exposed missing VP8L batch decoding, structured orientation emission, single-frame animation views, and unresolved fallback quality. The scanline-batch contract permits one full-image batch; native VP8 strips stay separate from that fallback. Assert exact pixels, ordered complete rows, negotiated format and EOF. The streaming trait capability does not promise bounded working memory or input resumption. Fixture tests check pixels through slice, real-window read-at, pull batches and first-frame views.
 

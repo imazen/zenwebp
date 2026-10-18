@@ -381,3 +381,19 @@ fn structured_orientation_uses_exif_without_rotating_encoded_pixels() {
     }
     assert_eq!(&*oracle, expected);
 }
+
+#[test]
+fn complete_invalid_extended_file_is_not_an_incomplete_header() {
+    let image = tk::TestImage::rgb8_gradient(32, 24);
+    let data = E::lossy().job().encode(image.as_slice()).unwrap();
+    assert_eq!(&data.data()[12..16], b"VP8 ");
+    let mut extended = data.data()[..12].to_vec();
+    extended.extend_from_slice(b"VP8X\x0a\0\0\0");
+    // Metadata flags require absent ICC and EXIF chunks in this complete file.
+    extended.extend_from_slice(&[0x28, 0, 0, 0, 31, 0, 0, 23, 0, 0]);
+    extended.extend_from_slice(&data.data()[12..]);
+    let riff_size = u32::try_from(extended.len() - 8).unwrap();
+    extended[4..8].copy_from_slice(&riff_size.to_le_bytes());
+    D::new().job().probe(&extended[..30]).unwrap();
+    assert!(D::new().job().probe(&extended).is_err());
+}

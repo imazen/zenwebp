@@ -17,6 +17,8 @@ earlier history lives in git log and LOG.md.)
 
 ### Fixed
 
+- Keep native probe failures for complete malformed VP8X files; early canvas-header fallback applies only to incomplete RIFF input.
+
 - Check whole-file input and memory caps before requesting a source prefix, retain typed limit causes, and validate complete animation limits after an early header. VP8X probing accepts its complete canvas header before an image chunk arrives.
 - Extend the scanline-batch adapter to VP8L, first animation frames, and settings requiring a full decode, using a full-image batch. Native VP8 strips remain available. Still inputs can also be read through the animation entrypoint as one frame.
 - Emit structured orientation through EXIF when no source tag exists, and report the quality actually selected for an unsupported fidelity target.
