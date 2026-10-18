@@ -1289,29 +1289,6 @@ pub(crate) fn idct_add_residue_and_clear_with_token<const N: usize>(
     );
 }
 
-/// NEON fused IDCT + add residue + clear.
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-pub(crate) fn idct_add_residue_and_clear_with_token<const N: usize>(
-    token: archmage::NeonToken,
-    pblock: &mut [u8; N],
-    rblock: &mut [i32; 16],
-    y0: usize,
-    x0: usize,
-    stride: usize,
-) {
-    let dc_only = rblock[1..].iter().all(|&c| c == 0);
-    crate::common::transform::idct_add_residue_inplace_neon(
-        token,
-        rblock,
-        pblock.as_mut_slice(),
-        y0,
-        x0,
-        stride,
-        dc_only,
-    );
-}
-
 /// WASM SIMD128 fused IDCT + add residue + clear.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]

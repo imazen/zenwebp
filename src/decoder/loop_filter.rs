@@ -1460,6 +1460,7 @@ macro_rules! store_q1q2_16_impl {
 }
 
 /// Store 4 columns as 8 U rows and 8 V rows of 4 bytes each.
+#[cfg(target_arch = "x86_64")]
 macro_rules! store_uv_16x4_impl {
     ($u:expr, $v:expr, $base:expr, $stride:expr, $c0:expr, $c1:expr, $c2:expr, $c3:expr) => {{
         let t0_ = _mm_unpacklo_epi8($c0, $c1);
@@ -1478,6 +1479,7 @@ macro_rules! store_uv_16x4_impl {
 }
 
 /// Store q1,q2 as 2-byte rows for 8 U + 8 V rows.
+#[cfg(target_arch = "x86_64")]
 macro_rules! store_q1q2_uv_16_impl {
     ($u:expr, $v:expr, $base:expr, $stride:expr, $q1:expr, $q2:expr) => {{
         let t0_ = _mm_unpacklo_epi8($q1, $q2); // U rows 0-7
@@ -3219,7 +3221,9 @@ pub(crate) fn normal_v_filter_uv_inner(
 #[cfg(test)]
 mod tests {
     extern crate std;
+    #[cfg(target_arch = "x86_64")]
     use super::*;
+    #[cfg(target_arch = "x86_64")]
     use alloc::vec;
 
     // #[arcane] wrappers for calling #[rite] filter functions from tests.

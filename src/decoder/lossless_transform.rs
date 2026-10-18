@@ -131,7 +131,7 @@ fn apply_predictor_transform_impl_wasm128(
 }
 
 /// Scalar predictor transform (public for test use).
-#[cfg(test)]
+#[cfg(all(test, target_arch = "x86_64"))]
 pub(crate) fn apply_predictor_transform_scalar(
     image_data: &mut [u8],
     width: u16,

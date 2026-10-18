@@ -1326,7 +1326,7 @@ mod tests {
         let token = archmage::Wasm128Token::summon().expect("test requires SIMD128");
         let check = |input: &[u8]| {
             let mut expected = input.to_vec();
-            for pixel in expected.chunks_exact_mut(4) {
+            for pixel in expected.as_chunks_mut::<4>().0 {
                 pixel[0] = pixel[0].wrapping_add(pixel[1]);
                 pixel[2] = pixel[2].wrapping_add(pixel[1]);
             }
@@ -1355,7 +1355,7 @@ mod tests {
                     .map(|i| (i as u8).wrapping_mul(73))
                     .collect();
                 let mut expected = actual.clone();
-                for pixel in expected[offset..offset + len].chunks_exact_mut(4) {
+                for pixel in expected[offset..offset + len].as_chunks_mut::<4>().0 {
                     pixel[0] = pixel[0].wrapping_add(pixel[1]);
                     pixel[2] = pixel[2].wrapping_add(pixel[1]);
                 }
@@ -1371,7 +1371,7 @@ mod tests {
             let mut actual = vec![197u8; stride * 7];
             let mut expected = actual.clone();
             for row in expected.chunks_exact_mut(stride) {
-                for pixel in row[3..3 + width * 4].chunks_exact_mut(4) {
+                for pixel in row[3..3 + width * 4].as_chunks_mut::<4>().0 {
                     pixel[0] = pixel[0].wrapping_add(pixel[1]);
                     pixel[2] = pixel[2].wrapping_add(pixel[1]);
                 }

@@ -1699,7 +1699,10 @@ impl<'a> super::Vp8Encoder<'a> {
                 let mut best_psy_cost = 0i32;
                 let mut best_coeff_cost = 0u32;
                 let mut best_flatness_penalty = 0u32;
+                #[cfg(any(target_arch = "x86_64", target_arch = "wasm32"))]
                 let mut best_levels_zz = [0i16; 16];
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "wasm32")))]
+                let best_levels_zz = [0i16; 16];
 
                 // Pre-compute all 10 I4 prediction modes at once
                 let preds = I4Predictions::compute(&y_with_border, x0, y0, LUMA_STRIDE);
@@ -1744,6 +1747,7 @@ impl<'a> super::Vp8Encoder<'a> {
                 // (max_modes_to_try == 10), so the order changes only the
                 // tie-break, and zen's early-exit skips (`>= best`) then match
                 // libwebp's early `continue` in the same order.
+                #[cfg(any(target_arch = "x86_64", target_arch = "wasm32"))]
                 let i4_index_order =
                     self.cost_model == crate::encoder::api::CostModel::StrictLibwebpParity;
                 // === SIMD-hoisted path: single arcane context for all mode evaluation ===

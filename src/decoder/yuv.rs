@@ -1899,6 +1899,7 @@ fn pack_and_store_rgba(
 }
 
 /// Helper macro for VP8PlanarTo24b - splits even/odd bytes
+#[cfg(target_arch = "x86_64")]
 macro_rules! planar_to_24b_helper {
     ($in0:expr, $in1:expr, $in2:expr, $in3:expr, $in4:expr, $in5:expr,
      $out0:expr, $out1:expr, $out2:expr, $out3:expr, $out4:expr, $out5:expr) => {
@@ -2057,6 +2058,7 @@ fn yuv420_to_rgb_32(
 }
 
 /// Scalar fallback for YUV to RGB conversion (single pixel).
+#[cfg(target_arch = "x86_64")]
 #[inline]
 fn yuv_to_rgb_scalar(y: u8, u: u8, v: u8) -> (u8, u8, u8) {
     fn mulhi(val: u8, coeff: u16) -> i32 {
@@ -2779,6 +2781,7 @@ mod tests_simd {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
     fn get_fancy_chroma_value(main: u8, secondary1: u8, secondary2: u8, tertiary: u8) -> u8 {
         let val0 = u16::from(main);
         let val1 = u16::from(secondary1);
