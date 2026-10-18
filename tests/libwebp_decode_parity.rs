@@ -171,7 +171,7 @@ fn build_anim(cw: u32, ch: u32, frames: &[Frame]) -> Vec<u8> {
             f.h,
             f.x,
             f.y,
-            i as u64 * 100,
+            i as u32 * 100,
             &ecfg,
             f.dispose,
             f.blend,

@@ -33,7 +33,7 @@ pub struct FrameInfo {
     /// Canvas height in pixels.
     pub height: u32,
     /// Cumulative presentation timestamp in milliseconds.
-    pub timestamp_ms: u64,
+    pub timestamp_ms: u32,
     /// Display duration of this frame in milliseconds.
     pub duration_ms: u32,
 }
@@ -52,7 +52,7 @@ pub struct AnimFrame {
     /// Canvas height in pixels.
     pub height: u32,
     /// Cumulative presentation timestamp in milliseconds.
-    pub timestamp_ms: u64,
+    pub timestamp_ms: u32,
     /// Display duration of this frame in milliseconds.
     pub duration_ms: u32,
 }
@@ -82,6 +82,7 @@ pub struct AnimationDecoder<'a> {
     decoder: WebPDecoder<'a>,
     buf: Vec<u8>,
     cumulative_ms: u64,
+    failed: bool,
     frames_read: u32,
     total_frames: u32,
     /// `Limits::max_memory` from the config, applied to the RETAINED total
@@ -132,6 +133,7 @@ impl<'a> AnimationDecoder<'a> {
             decoder,
             buf,
             cumulative_ms: 0,
+            failed: false,
             frames_read: 0,
             total_frames,
             max_memory: config.limits.max_memory,
@@ -235,13 +237,21 @@ impl<'a> AnimationDecoder<'a> {
         &mut self,
         stop: Option<&dyn enough::Stop>,
     ) -> Result<Option<FrameInfo>, whereat::At<DecodeError>> {
-        match self.decoder.read_frame_with_stop(&mut self.buf, stop) {
+        if self.failed {
+            return Err(at!(DecodeError::InvalidParameter(
+                "animation decode failed; reset required".into(),
+            )));
+        }
+        let result = (|| match self.decoder.read_frame_with_stop(&mut self.buf, stop) {
             Ok(duration_ms) => {
-                let timestamp_ms = self.cumulative_ms;
-                self.cumulative_ms = self
+                let timestamp_ms = u32::try_from(self.cumulative_ms)
+                    .map_err(|_| at!(DecodeError::ImageTooLarge))?;
+                let next_ms = self
                     .cumulative_ms
                     .checked_add(u64::from(duration_ms))
+                    .filter(|&ms| ms <= u64::from(u32::MAX))
                     .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
+                self.cumulative_ms = next_ms;
                 self.frames_read += 1;
                 let (w, h) = self.decoder.dimensions();
                 Ok(Some(FrameInfo {
@@ -253,7 +263,11 @@ impl<'a> AnimationDecoder<'a> {
             }
             Err(ref e) if matches!(e.error(), DecodeError::NoMoreFrames) => Ok(None),
             Err(e) => Err(e),
+        })();
+        if result.is_err() {
+            self.failed = true;
         }
+        result
     }
 
     /// Borrow the current composited frame data.
@@ -270,6 +284,7 @@ impl<'a> AnimationDecoder<'a> {
     pub fn reset(&mut self) -> Result<(), whereat::At<DecodeError>> {
         self.decoder.reset_animation()?;
         self.cumulative_ms = 0;
+        self.failed = false;
         self.frames_read = 0;
         Ok(())
     }

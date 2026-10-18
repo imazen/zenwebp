@@ -1377,15 +1377,9 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
             .map_err(zencodec::CodecError::of)?;
         let timestamp_ms = self.cumulative_ms;
         let enc = self.anim_enc.as_mut().unwrap();
-        enc.add_frame_with_stop(
-            &buf,
-            layout,
-            u64::from(timestamp_ms),
-            &self.inner_config,
-            &stops,
-        )
-        .map_err_at(mux_to_encode_err)
-        .map_err(zencodec::CodecError::of)?;
+        enc.add_frame_with_stop(&buf, layout, timestamp_ms, &self.inner_config, &stops)
+            .map_err_at(mux_to_encode_err)
+            .map_err(zencodec::CodecError::of)?;
         if let Err(error) = self.limits.check_memory(enc.retained_bytes()) {
             self.failed = true;
             return Err(zencodec::CodecError::of(at!(EncodeError::LimitExceeded(

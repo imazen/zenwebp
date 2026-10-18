@@ -140,7 +140,7 @@ fn lossless_anim() -> Vec<u8> {
         .enumerate()
     {
         let rgba: Vec<u8> = color.iter().cycle().take(8 * 8 * 4).copied().collect();
-        anim.add_frame(&rgba, PixelLayout::Rgba8, i as u64 * 100, &cfg)
+        anim.add_frame(&rgba, PixelLayout::Rgba8, i as u32 * 100, &cfg)
             .unwrap();
     }
     anim.finalize(100).unwrap()
@@ -161,7 +161,7 @@ fn lossy_alpha_anim() -> Vec<u8> {
         anim.add_frame(
             &pattern_rgba(16, 16, 40 * i + 3),
             PixelLayout::Rgba8,
-            u64::from(i) * 100,
+            i * 100,
             &cfg,
         )
         .unwrap();

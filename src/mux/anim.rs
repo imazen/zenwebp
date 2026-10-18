@@ -67,7 +67,7 @@ impl Default for AnimationConfig {
 /// Pending frame waiting for the next timestamp to compute its duration.
 struct PendingFrame {
     mux_frame: MuxFrame,
-    timestamp_ms: u64,
+    timestamp_ms: u32,
 }
 
 /// Animated WebP encoder.
@@ -117,16 +117,18 @@ impl AnimationEncoder {
         })
     }
 
-    fn validate_timestamp(&self, timestamp_ms: u64) -> MuxResult<u32> {
+    fn validate_timestamp(&self, timestamp_ms: u32) -> MuxResult<u32> {
         // Validate before taking the previous frame, so an invalid timestamp
         // never discards a frame the caller already supplied.
         let duration = if let Some(prev) = &self.pending {
-            let duration = timestamp_ms.checked_sub(prev.timestamp_ms).ok_or_else(|| {
-                whereat::at!(MuxError::NonmonotonicTimestamp {
-                    previous_ms: prev.timestamp_ms,
-                    timestamp_ms,
-                })
-            })?;
+            let duration = u64::from(timestamp_ms)
+                .checked_sub(u64::from(prev.timestamp_ms))
+                .ok_or_else(|| {
+                    whereat::at!(MuxError::NonmonotonicTimestamp {
+                        previous_ms: u64::from(prev.timestamp_ms),
+                        timestamp_ms: u64::from(timestamp_ms),
+                    })
+                })?;
             if duration > 0x00FF_FFFF {
                 return Err(whereat::at!(MuxError::FrameDurationTooLarge {
                     duration_ms: duration
@@ -148,7 +150,7 @@ impl AnimationEncoder {
         frame_height: u32,
         x_offset: u32,
         y_offset: u32,
-        timestamp_ms: u64,
+        timestamp_ms: u32,
         dispose: DisposeMethod,
         blend: BlendMethod,
     ) -> MuxResult<()> {
@@ -201,7 +203,7 @@ impl AnimationEncoder {
         &mut self,
         pixels: &[u8],
         color_type: PixelLayout,
-        timestamp_ms: u64,
+        timestamp_ms: u32,
         encoder_config: &EncoderConfig,
     ) -> MuxResult<()> {
         self.add_frame_with_stop(
@@ -220,7 +222,7 @@ impl AnimationEncoder {
         &mut self,
         pixels: &[u8],
         color_type: PixelLayout,
-        timestamp_ms: u64,
+        timestamp_ms: u32,
         encoder_config: &EncoderConfig,
         stop: &dyn Stop,
     ) -> MuxResult<()> {
@@ -341,7 +343,7 @@ impl AnimationEncoder {
         frame_height: u32,
         x_offset: u32,
         y_offset: u32,
-        timestamp_ms: u64,
+        timestamp_ms: u32,
         encoder_config: &EncoderConfig,
         dispose: DisposeMethod,
         blend: BlendMethod,
@@ -374,7 +376,7 @@ impl AnimationEncoder {
         frame_height: u32,
         x_offset: u32,
         y_offset: u32,
-        timestamp_ms: u64,
+        timestamp_ms: u32,
         encoder_config: &EncoderConfig,
         dispose: DisposeMethod,
         blend: BlendMethod,
@@ -435,6 +437,16 @@ impl AnimationEncoder {
             return Err(whereat::at!(MuxError::FrameDurationTooLarge {
                 duration_ms: u64::from(last_frame_duration_ms)
             }));
+        }
+        if let Some(prev) = &self.pending {
+            let end_ms = u64::from(prev.timestamp_ms) + u64::from(last_frame_duration_ms);
+            if end_ms > u64::from(u32::MAX) {
+                return Err(whereat::at!(MuxError::EncodeError(
+                    crate::encoder::EncodeError::InvalidBufferSize(
+                        "animation timeline exceeds u32 milliseconds".into(),
+                    )
+                )));
+            }
         }
         // Flush the last pending frame
         if let Some(prev) = self.pending.take() {

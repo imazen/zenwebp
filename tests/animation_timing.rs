@@ -237,30 +237,78 @@ mod native_contract {
     }
 
     #[test]
-    fn long_timeline_survives_u32_milliseconds_on_encode_and_native_decode() {
-        let pixels = pixels();
-        let mut encoder = AnimationEncoder::new(2, 2, AnimationConfig::default()).unwrap();
+    fn native_timeline_refuses_overflow_and_preserves_public_u32_types() {
+        use zenwebp::mux::{BlendMethod, DisposeMethod, MuxFrame, WebPMux};
+        let pixels = pixels().copy_to_contiguous_bytes();
         let config = zenwebp::EncoderConfig::new_lossless();
-        let milliseconds = 0x00FF_FFFF;
-        for index in 0..260_u64 {
-            encoder
-                .add_frame(
-                    &pixels.copy_to_contiguous_bytes(),
-                    zenwebp::PixelLayout::Rgba8,
-                    index * u64::from(milliseconds),
-                    &config,
-                )
-                .unwrap();
+        // Explicit u32 variables witness source compatibility of the encoder API.
+        let mut encoder = AnimationEncoder::new(2, 2, AnimationConfig::default()).unwrap();
+        let timestamp: u32 = u32::MAX;
+        encoder
+            .add_frame(&pixels, zenwebp::PixelLayout::Rgba8, timestamp, &config)
+            .unwrap();
+        assert!(
+            encoder.finalize_animation(1).is_err(),
+            "final frame must not cross the u32 timeline ceiling"
+        );
+        let mut encoder = AnimationEncoder::new(2, 2, AnimationConfig::default()).unwrap();
+        encoder
+            .add_frame(&pixels, zenwebp::PixelLayout::Rgba8, timestamp, &config)
+            .unwrap();
+        assert!(
+            encoder.finalize_animation(0).is_ok(),
+            "exact ceiling is representable"
+        );
+
+        // The mux can construct wire-valid durations beyond the native API's timeline.
+        let mut single = AnimationEncoder::new(2, 2, AnimationConfig::default()).unwrap();
+        single
+            .add_frame(&pixels, zenwebp::PixelLayout::Rgba8, 0, &config)
+            .unwrap();
+        let seed = single.finalize_animation(1).unwrap();
+        let demux = WebPDemuxer::new(&seed).unwrap();
+        let bitstream = demux.frame(1).unwrap().bitstream.to_vec();
+        let mut mux = WebPMux::new(2, 2);
+        mux.set_animation([0; 4], zenwebp::decoder::LoopCount::Forever);
+        for duration_ms in std::iter::repeat_n(0x00FF_FFFF, 256).chain([255, 0, 1]) {
+            mux.push_frame(MuxFrame {
+                x_offset: 0,
+                y_offset: 0,
+                width: 2,
+                height: 2,
+                duration_ms,
+                dispose: DisposeMethod::None,
+                blend: BlendMethod::Overwrite,
+                bitstream: bitstream.clone(),
+                alpha_data: None,
+                is_lossless: true,
+            })
+            .unwrap();
         }
-        let encoded = encoder.finalize_animation(milliseconds).unwrap();
-        let mut decoder = AnimationDecoder::new(&encoded).unwrap();
-        for index in 0..260_u64 {
+        let wire = mux.assemble().unwrap();
+        let mut decoder = AnimationDecoder::new(&wire).unwrap();
+        for index in 0..256u32 {
             let frame = decoder.next_frame().unwrap().unwrap();
-            assert_eq!(frame.timestamp_ms, index * u64::from(milliseconds));
-            assert_eq!(frame.duration_ms, milliseconds);
-            assert_eq!(frame.data, pixels.copy_to_contiguous_bytes());
+            let timestamp: u32 = frame.timestamp_ms;
+            assert_eq!(timestamp, index * 0x00FF_FFFF);
+            assert_eq!(frame.data, pixels);
         }
-        assert!(decoder.next_frame().unwrap().is_none());
+        let end = decoder.next_frame().unwrap().unwrap();
+        assert_eq!(end.timestamp_ms, u32::MAX - 255);
+        assert_eq!(end.duration_ms, 255);
+        let zero = decoder.next_frame().unwrap().unwrap();
+        assert_eq!(zero.timestamp_ms, u32::MAX);
+        assert_eq!(zero.duration_ms, 0);
+        assert!(
+            decoder.next_frame().is_err(),
+            "unrepresentable timeline must refuse, not saturate or wrap"
+        );
+        assert!(
+            decoder.next_frame().is_err(),
+            "overflow refusal must remain terminal until reset"
+        );
+        decoder.reset().unwrap();
+        assert_eq!(decoder.next_frame().unwrap().unwrap().timestamp_ms, 0u32);
     }
 
     #[test]
@@ -278,7 +326,7 @@ mod native_contract {
         );
         assert!(
             encoder
-                .add_frame(&pixels, zenwebp::PixelLayout::Rgba8, u64::MAX, &config)
+                .add_frame(&pixels, zenwebp::PixelLayout::Rgba8, u32::MAX, &config)
                 .is_err()
         );
         encoder
