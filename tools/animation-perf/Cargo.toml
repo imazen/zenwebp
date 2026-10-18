@@ -1,0 +1,35 @@
+[package]
+name = "zenwebp-animation-perf"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+zenwebp-main = { package = "zenwebp", path = "main" }
+zenwebp-pr = { package = "zenwebp", path = "../.." }
+zenbench = "=0.1.8"
+zenpixels = { version = "=0.2.17", default-features = false }
+zencodec = "=0.1.27"
+png = "=0.18.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[patch.crates-io]
+# Merged pixel-context bridge; keep root, fuzz and recompress on one revision.
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
+zenanalyze-api = { git = "https://github.com/imazen/zenanalyze" }
+zenanalyze = { git = "https://github.com/imazen/zenanalyze" }
+# zencodec#133 (structural inventories). The version floor above (0.1.27) is the first
+# release that must contain the inventory API. Swap this patch for the released zencodec /
+# zencodec-testkit before merging this branch.
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
+
+# Wide-corpus decoder parity sweep vs libwebp (rgba/rgb/nofancy/yuv/anim,
+# tolerance 0) over existing .webp files plus libwebp- and zenwebp-encoded
+# variants of PNG sources. See benchmarks/decode_parity_*.md.
