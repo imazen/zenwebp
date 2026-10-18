@@ -223,6 +223,7 @@ pub use enough::{Stop, StopReason, Unstoppable};
 // pub mod zennode_defs;
 
 mod codec;
+mod whole_file;
 
 /// zencodec trait implementations for WebP encoding and decoding.
 pub mod zencodec {

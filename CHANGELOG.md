@@ -7,8 +7,8 @@ earlier history lives in git log and LOG.md.)
 
 ### Added
 
-- Incremental (sans-I/O) decode: `dyn_incremental_decoder` returns
-  `zencodec::helpers::WholeFileIncremental` and `DecodeCapabilities::incremental`
+- Incremental (sans-I/O) decode: `dyn_incremental_decoder` wraps
+  `zencodec::helpers::WholeFileIncremental` with resource admission and `DecodeCapabilities::incremental`
   is declared, so the zencodec-io drivers (files, streams, async sources) serve
   WebP. The header is reported as soon as it probes; rows come from
   `push_decoder` once the whole file is offered (VP8 parsing and reconstruction
@@ -16,6 +16,10 @@ earlier history lives in git log and LOG.md.)
   neither resumes between inputs yet).
 
 ### Fixed
+
+- Check whole-file input and memory caps before requesting a source prefix, retain typed limit causes, and validate complete animation limits after an early header. VP8X probing accepts its complete canvas header before an image chunk arrives.
+- Extend the scanline-batch adapter to VP8L, first animation frames, and settings requiring a full decode, using a full-image batch. Native VP8 strips remain available. Still inputs can also be read through the animation entrypoint as one frame.
+- Emit structured orientation through EXIF when no source tag exists, and report the quality actually selected for an unsupported fidelity target.
 
 - f32 input is stored as 8-bit sRGB, but a caller's CICP calling it linear (transfer 8) was turned into a linear ICC profile next to the sRGB samples, so readers decoded them as linear. The transfer now moves to sRGB, keeping the primaries, before the profile is synthesized. Test: `a_linear_cicp_on_f32_input_is_written_as_srgb`.
 - Streaming encode (`push_rows` + `finish`) of lossy RGB8 without sharp YUV
@@ -38,6 +42,8 @@ earlier history lives in git log and LOG.md.)
 
 
 ### Tests
+
+- Exercise unchanged shared `check_all`, fixture pixels and structural header boundaries, slice/read-at/pull/first-frame parity with preferred formats, typed admission and exact-cap EOF, and independent libwebp readback of structured orientation.
 
 - Exercise shared timing boundaries, rejected-frame state, policy admission and
   inventory limits/dispatch with the reusable codec testkit.

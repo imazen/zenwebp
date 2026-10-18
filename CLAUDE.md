@@ -1046,6 +1046,9 @@ is essentially the current implementation.
 
 ## Known Bugs
 
+- Guarded whole-file regressions (2026-10-18): `tests/sansio.rs` checks typed input admission before `Need`, bounded unknown-length requests, exact-cap EOF, dimensions, and full animation frame caps after an early VP8X header. The adapter revalidates complete input because the early header has no frame count.
+- Shared conformance guards (2026-10-18): `check_all` exposed missing VP8L batch decoding, structured orientation emission, single-frame animation views, and unresolved fallback quality. The scanline-batch contract permits one full-image batch; native VP8 strips stay separate from that fallback. Assert exact pixels, ordered complete rows, negotiated format and EOF. The streaming trait capability does not promise bounded working memory or input resumption. Fixture tests check pixels through slice, real-window read-at, pull batches and first-frame views.
+
 - Inventory CI on i686 failed opening the corpus cache with PermissionDenied (2026-10-12). The workflow now prefetches on the host and mounts that directory explicitly at `/codec-corpus`, passed through Cross.toml. Conformance assertions remain unchanged.
 
 (none currently)

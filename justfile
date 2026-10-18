@@ -197,3 +197,16 @@ shared-contract-check:
     cargo test -p zenwebp --features inventory --test shared_contracts
     cargo test -p zenwebp --test shared_contracts
     cargo clippy -p zenwebp --features inventory --test shared_contracts -- -D warnings
+
+# Whole-file incremental fixture parity and resource admission.
+sansio-check:
+    cargo test --locked --test sansio -- --nocapture
+
+# Complete post-landing whole-file decoder validation.
+wholefile-gate:
+    cargo test --locked
+    cargo clippy --locked --all-targets -- -D warnings
+    cargo fmt -p zenwebp -- --check
+    cargo test --locked --doc
+    cargo doc --locked --no-deps
+    cargo semver-checks check-release
