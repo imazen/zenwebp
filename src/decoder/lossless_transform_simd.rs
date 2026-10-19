@@ -678,9 +678,9 @@ pub(crate) fn add_green_portable<
 ) {
     let (chunks, remainder) = image_data.as_chunks_mut::<32>();
     for chunk in chunks {
-        let input = u8x32::load(token, chunk);
+        let input = u8x32::load_t(token, chunk);
         let bytes = input.to_array();
-        let green = u8x32::from_array(
+        let green = u8x32::from_array_t(
             token,
             core::array::from_fn(|i| if i % 2 == 0 { bytes[(i & !3) + 1] } else { 0 }),
         );
@@ -688,10 +688,10 @@ pub(crate) fn add_green_portable<
     }
     let (chunks, remainder) = remainder.as_chunks_mut::<16>();
     for chunk in chunks {
-        let input = u8x16::load(token, chunk);
+        let input = u8x16::load_t(token, chunk);
         let bytes = input.to_array();
         let [g0, g1, g2, g3] = [bytes[1], bytes[5], bytes[9], bytes[13]];
-        let green = u8x16::from_array(
+        let green = u8x16::from_array_t(
             token,
             [g0, 0, g0, 0, g1, 0, g1, 0, g2, 0, g2, 0, g3, 0, g3, 0],
         );
@@ -716,8 +716,8 @@ pub(crate) fn predictor_add_body<T: magetypes::simd::backends::U8x16Backend>(
     let simd_len = len & !15;
     let mut i = range.start;
     while i < range.start + simd_len {
-        let cur = u8x16::load(token, chunk16_ref(image_data, i));
-        let src = u8x16::load(token, chunk16_ref(image_data, i - offset));
+        let cur = u8x16::load_t(token, chunk16_ref(image_data, i));
+        let src = u8x16::load_t(token, chunk16_ref(image_data, i - offset));
         (cur + src).store(chunk16(image_data, i));
         i += 16;
     }
@@ -739,9 +739,9 @@ pub(crate) fn predictor_avg_body<T: magetypes::simd::backends::U8x16Backend>(
     let simd_len = len & !15;
     let mut i = range.start;
     while i < range.start + simd_len {
-        let cur = u8x16::load(token, chunk16_ref(image_data, i));
-        let a = u8x16::load(token, chunk16_ref(image_data, i - offset_a));
-        let b = u8x16::load(token, chunk16_ref(image_data, i - offset_b));
+        let cur = u8x16::load_t(token, chunk16_ref(image_data, i));
+        let a = u8x16::load_t(token, chunk16_ref(image_data, i - offset_a));
+        let b = u8x16::load_t(token, chunk16_ref(image_data, i - offset_b));
         // Floor average: (a & b) + ((a ^ b) >> 1)
         let avg = (a & b) + u8x16::shr_logical_const::<1>(a ^ b);
         (cur + avg).store(chunk16(image_data, i));
@@ -792,15 +792,15 @@ fn predictor_add_body_wide<
     let simd32_len = len & !31;
     let mut i = range.start;
     while i < range.start + simd32_len {
-        let cur = u8x32::load(token, chunk32_ref(image_data, i));
-        let src = u8x32::load(token, chunk32_ref(image_data, i - offset));
+        let cur = u8x32::load_t(token, chunk32_ref(image_data, i));
+        let src = u8x32::load_t(token, chunk32_ref(image_data, i - offset));
         (cur + src).store(chunk32(image_data, i));
         i += 32;
     }
     // 16-byte tail
     while i + 16 <= range.end {
-        let cur = u8x16::load(token, chunk16_ref(image_data, i));
-        let src = u8x16::load(token, chunk16_ref(image_data, i - offset));
+        let cur = u8x16::load_t(token, chunk16_ref(image_data, i));
+        let src = u8x16::load_t(token, chunk16_ref(image_data, i - offset));
         (cur + src).store(chunk16(image_data, i));
         i += 16;
     }
@@ -831,18 +831,18 @@ fn predictor_avg_body_wide<
     let simd32_len = len & !31;
     let mut i = range.start;
     while i < range.start + simd32_len {
-        let cur = u8x32::load(token, chunk32_ref(image_data, i));
-        let a = u8x32::load(token, chunk32_ref(image_data, i - offset_a));
-        let b = u8x32::load(token, chunk32_ref(image_data, i - offset_b));
+        let cur = u8x32::load_t(token, chunk32_ref(image_data, i));
+        let a = u8x32::load_t(token, chunk32_ref(image_data, i - offset_a));
+        let b = u8x32::load_t(token, chunk32_ref(image_data, i - offset_b));
         let avg = (a & b) + u8x32::shr_logical_const::<1>(a ^ b);
         (cur + avg).store(chunk32(image_data, i));
         i += 32;
     }
     // 16-byte tail
     while i + 16 <= range.end {
-        let cur = u8x16::load(token, chunk16_ref(image_data, i));
-        let a = u8x16::load(token, chunk16_ref(image_data, i - offset_a));
-        let b = u8x16::load(token, chunk16_ref(image_data, i - offset_b));
+        let cur = u8x16::load_t(token, chunk16_ref(image_data, i));
+        let a = u8x16::load_t(token, chunk16_ref(image_data, i - offset_a));
+        let b = u8x16::load_t(token, chunk16_ref(image_data, i - offset_b));
         let avg = (a & b) + u8x16::shr_logical_const::<1>(a ^ b);
         (cur + avg).store(chunk16(image_data, i));
         i += 16;

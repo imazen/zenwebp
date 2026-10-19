@@ -254,3 +254,9 @@ wholefile-api-check:
     RUSTC_BOOTSTRAP=1 cargo rustdoc --locked --lib --features "$(features Cargo.toml)" -- -Zunstable-options --output-format json
     RUSTC_BOOTSTRAP=1 cargo rustdoc --manifest-path "$baseline/Cargo.toml" --locked --lib --features "$(features "$baseline/Cargo.toml")" --target-dir "$target_dir/published-api" -- -Zunstable-options --output-format json
     cargo semver-checks check-release --current-rustdoc "$target_dir/doc/zenwebp.json" --baseline-rustdoc "$target_dir/published-api/doc/zenwebp.json"
+
+# Check compatibility after admitting the current archmage/magetypes beta.
+beta-cohort-check:
+    cargo fmt --check
+    cargo clippy --locked --workspace --lib -- -D warnings
+    cargo test --locked --workspace --lib --no-fail-fast
