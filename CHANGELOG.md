@@ -5,6 +5,10 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+### Changed
+
+- Admit archmage/magetypes 0.9.31-beta.1 alongside compatible stable versions; use explicit-token aliases where needed. Formatting, strict library lint and library tests pass (`ab50d43c`).
+
 ### Added
 
 - Incremental (sans-I/O) decode: `dyn_incremental_decoder` wraps
