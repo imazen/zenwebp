@@ -257,6 +257,7 @@ wholefile-api-check:
 
 # Check compatibility after admitting the current archmage/magetypes beta.
 beta-cohort-check:
+    cargo metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml > /dev/null
     cargo fmt --check
     cargo clippy --locked --workspace --lib -- -D warnings
     cargo test --locked --workspace --lib --no-fail-fast
