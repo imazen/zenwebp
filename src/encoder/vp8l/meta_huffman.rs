@@ -880,23 +880,43 @@ fn cluster_histograms(
         }
     }
 
-    // Phase 5: Rebuild final histograms from remapped tiles
-    let mut final_histos: Vec<Histogram> = active_indices
-        .iter()
-        .map(|_| Histogram::new(cache_bits))
-        .collect();
-
-    // Create index mapping from cluster_idx → final histogram index
-    let mut cluster_to_final: Vec<Option<u16>> = vec![None; n];
-    for (final_idx, &cluster_idx) in active_indices.iter().enumerate() {
-        cluster_to_final[cluster_idx] = Some(final_idx as u16);
+    // Phase 5: Rebuild final histograms from remapped tiles.
+    //
+    // Only clusters actually referenced by the post-remap mapping get a final
+    // slot. The decoder derives the Huffman group count from the entropy
+    // image's max symbol (max+1); an unreferenced trailing cluster would make
+    // the encoder write more tree groups than the decoder reads, shifting the
+    // rest of the bitstream (#72, #118). Remap can strand a cluster with zero
+    // tiles for any clustering outcome.
+    let mut referenced: Vec<bool> = vec![false; n];
+    for tile_idx in 0..n {
+        referenced[mapping[tile_idx]] = true;
     }
+
+    // Index mapping from cluster_idx → dense final histogram index, in
+    // active_indices order (stable when every active cluster is referenced).
+    let mut cluster_to_final: Vec<Option<u16>> = vec![None; n];
+    let mut num_final: u16 = 0;
+    for &cluster_idx in active_indices.iter() {
+        if referenced[cluster_idx] {
+            cluster_to_final[cluster_idx] = Some(num_final);
+            num_final += 1;
+        }
+    }
+
+    let mut final_histos: Vec<Histogram> =
+        (0..num_final).map(|_| Histogram::new(cache_bits)).collect();
 
     // Build final symbols and accumulate histograms
     let mut symbols: Vec<u16> = Vec::with_capacity(n);
     for tile_idx in 0..n {
         let cluster = mapping[tile_idx];
-        let final_idx = cluster_to_final[cluster].unwrap_or(0);
+        // `referenced` was computed from this same `mapping`, so every
+        // cluster reached here has a final index. A `None` is the #72 shape
+        // (a tile pointing at a remap-stranded cluster); absorbing it as
+        // group 0 would emit a valid-but-wrong stream, so fail loudly.
+        let final_idx = cluster_to_final[cluster]
+            .expect("VP8L: tile maps to a cluster with no final histogram (#72 invariant)");
         symbols.push(final_idx);
         final_histos[final_idx as usize].add(&tile_histos[tile_idx]);
     }
