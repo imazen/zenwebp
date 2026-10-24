@@ -8,8 +8,6 @@
 //! - Flat u8 probability tables (no TreeNode indirection)
 //! - Fixed-size arrays for per-MB working storage
 
-#[allow(dead_code)]
-mod animation;
 mod coefficients;
 mod context;
 mod header;
@@ -131,15 +129,17 @@ impl DecoderContext {
             .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
         output.resize(output_size, 0);
 
-        if self.tables.extra_y_rows >= 2 {
+        let sampled = self.upsampling == crate::decoder::UpsamplingMethod::Simple;
+        if self.tables.extra_y_rows >= 2 && !sampled {
             // Streaming path: convert cache rows directly to RGB.
             // Requires extra_y_rows >= 2 so the cache has enough UV rows
             // for the fancy upsampler at MB row boundaries.
             self.decode_mb_rows_to_rgb(output, bpp)
                 .map_err(|e| at!(DecodeError::from(e)))?;
         } else {
-            // Fallback for no-filter case (extra_y_rows=0): use full-frame
-            // YUV buffers. This is rare (very high quality / filter disabled).
+            // Full-frame YUV buffers: the no-filter case (extra_y_rows=0,
+            // rare: very high quality / filter disabled) and point-sampled
+            // (no-fancy) output, which needs no cross-row chroma context.
             let frame = self
                 .decode_to_frame_internal()
                 .map_err(|e| at!(DecodeError::from(e)))?;
@@ -148,7 +148,12 @@ impl DecoderContext {
             let mbwidth = (fw + 15) / 16;
             let y_stride = mbwidth * 16;
             let uv_stride = mbwidth * 8;
-            yuv_exact::yuv420_to_rgb_exact(
+            let convert = if sampled {
+                yuv_exact::yuv420_to_rgb_sampled
+            } else {
+                yuv_exact::yuv420_to_rgb_exact
+            };
+            convert(
                 &frame.ybuf,
                 &frame.ubuf,
                 &frame.vbuf,

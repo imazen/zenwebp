@@ -32,11 +32,12 @@ fn blend_pixel_nonpremult(src: u32, dst: u32) -> u32 {
         dst
     } else {
         let dst_a = ((dst >> channel_shift(3)) & 0xff) as u8;
-        // Approximate integer arithmetic for: dst_factor_a = (dst_a * (255 - src_a)) / 255
-        // libwebp used the following formula here:
-        //let dst_factor_a = (dst_a as u32 * (256 - src_a as u32)) >> 8;
-        // however, we've found that we can use a more precise approximation without losing performance:
-        let dst_factor_a = div_by_255(u32::from(dst_a) * (255 - u32::from(src_a)));
+        // Approximate integer arithmetic for: dst_factor_a = (dst_a * (255 - src_a)) / 255,
+        // exactly as libwebp's BlendPixelNonPremult computes it. A rounded
+        // divide-by-255 is closer to the real-valued formula, but it makes
+        // animated output diverge from libwebp's WebPAnimDecoder by 1 level
+        // wherever a translucent pixel lands on a translucent canvas.
+        let dst_factor_a = (u32::from(dst_a) * (256 - u32::from(src_a))) >> 8;
         let blend_a = u32::from(src_a) + dst_factor_a;
         let scale = (1u32 << 24) / blend_a;
 
@@ -61,17 +62,6 @@ pub(crate) fn do_alpha_blending(buffer: [u8; 4], canvas: [u8; 4]) -> [u8; 4] {
     // So instead we reverse the order of bytes on big-endian here, at the interface.
     // `from_le_bytes` is a no-op on little endian (most systems) and a cheap shuffle on big endian.
     blend_pixel_nonpremult(u32::from_le_bytes(buffer), u32::from_le_bytes(canvas)).to_le_bytes()
-}
-
-/// Divides by 255, rounding to nearest (as opposed to down, like regular integer division does).
-/// TODO: cannot output 256, so the output is effecitively u8. Plumb that through the code.
-//
-// Sources:
-// https://arxiv.org/pdf/2202.02864
-// https://github.com/image-rs/image-webp/issues/119#issuecomment-2544007820
-#[inline]
-const fn div_by_255(v: u32) -> u32 {
-    (((v + 0x80) >> 8) + v + 0x80) >> 8
 }
 
 #[cfg(test)]
