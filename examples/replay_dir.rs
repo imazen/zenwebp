@@ -1,8 +1,9 @@
-//! Replays every file under `$REPLAY_DIR` (recursively) through the public
-//! decode/demux entry points, catching panics per entry point and reporting
-//! them grouped by panic location. Used to triage fuzz-farm crash sets against
-//! this release line. Run explicitly:
-//! `REPLAY_DIR=<dir> cargo test --release --test replay_dir -- --nocapture`
+//! Replays every `crash-*` file under a directory (recursively) through the
+//! public decode/demux entry points, catching panics per entry point and
+//! reporting them grouped by panic location, plus any input slower than
+//! 500 ms. Used to triage fuzz-farm crash sets against this release line:
+//! `cargo run --release --example replay_dir -- <dir>`
+//! Exits non-zero when any panic signature or slow input is found.
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
@@ -54,7 +55,7 @@ fn animated(input: &[u8]) {
         if n <= MAX_PIXEL_BYTES && d.is_animated() {
             let mut data = vec![0u8; n];
             let mut guard = 0;
-            while let Ok(_) = d.read_frame(&mut data) {
+            while d.read_frame(&mut data).is_ok() {
                 guard += 1;
                 if guard > 100_000 {
                     panic!("read_frame did not terminate");
@@ -81,9 +82,14 @@ fn demux(input: &[u8]) {
     let _ = zenwebp::metadata::xmp(input);
 }
 
-#[test]
-fn replay() {
-    let root = PathBuf::from(std::env::var("REPLAY_DIR").expect("set REPLAY_DIR"));
+type Entry = (&'static str, fn(&[u8]));
+
+fn main() {
+    let root = PathBuf::from(
+        std::env::args()
+            .nth(1)
+            .expect("usage: replay_dir <dir of crash-* files>"),
+    );
     let mut files = Vec::new();
     walk(&root, &mut files);
     files.sort();
@@ -94,7 +100,7 @@ fn replay() {
             .unwrap_or_default();
         *LAST_PANIC.lock().unwrap() = loc;
     }));
-    let entries: [(&str, fn(&[u8])); 4] = [
+    let entries: [Entry; 4] = [
         ("still", still),
         ("animated", animated),
         ("v2", v2),
