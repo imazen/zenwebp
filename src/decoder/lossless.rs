@@ -626,7 +626,12 @@ impl<'a> LosslessDecoder<'a> {
                     }
                 } else {
                     let red = tree[RED].read_symbol_fast(&mut self.bit_reader)? as u8;
-                    if self.bit_reader.nbits < 15 {
+                    // BLUE + ALPHA can each be a 15-bit code (30 bits total). The
+                    // loop-top fill() guarantees only 56 bits, and GREEN + RED may
+                    // have consumed up to 30 of them, so a `< 15` guard here can
+                    // leave ALPHA short (spurious BitStreamError mid-stream on
+                    // deep-tree images; libwebp refills unconditionally after RED).
+                    if self.bit_reader.nbits < 30 {
                         self.bit_reader.fill();
                     }
                     let blue = tree[BLUE].read_symbol_fast(&mut self.bit_reader)? as u8;
@@ -651,6 +656,13 @@ impl<'a> LosslessDecoder<'a> {
                 let length_symbol = code - 256;
                 let length = Self::get_copy_distance(&mut self.bit_reader, length_symbol)?;
 
+                // DIST symbol (<= 15 bits) plus its extra bits (<= 18) can need 33
+                // bits, but GREEN + length extra bits may have consumed up to 25 of
+                // the 56 the loop-top fill() guaranteed. Refill so the worst case
+                // fits (libwebp refills before GetCopyDistance).
+                if self.bit_reader.nbits < 33 {
+                    self.bit_reader.fill();
+                }
                 let dist_symbol = tree[DIST].read_symbol(&mut self.bit_reader)?;
                 let dist_code = Self::get_copy_distance(&mut self.bit_reader, dist_symbol)?;
                 let dist = Self::plane_code_to_distance(width, dist_code);
