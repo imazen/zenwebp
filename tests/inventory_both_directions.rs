@@ -562,11 +562,6 @@ fn both_directions() {
         let base = signature(&d);
         let any_ok = !(base.contains("P[err]") && base.contains("D[err]"));
         let anim_ok = base.contains("A[") && !base.contains("A[err]") && !base.contains("Err(())");
-        let riff_end = 8 + u64::from(u32::from_le_bytes(
-            d.get(4..8)
-                .and_then(|b| b.try_into().ok())
-                .unwrap_or([0; 4]),
-        ));
         let demux_fails = demux_bitstream_fails_r4(&d);
         *counts.entry("inputs".into()).or_default() += 1;
         let mut has_kids = vec![false; inv.parts().len()];
@@ -649,11 +644,7 @@ fn both_directions() {
             if !consumed && changed {
                 let det = p.detail().unwrap_or("");
                 let sub = if p.kind() == PartKind::Gap && p.disposition() == Disposition::Trailing {
-                    if p.range().start < riff_end + 10 {
-                        "trailing: inside read_data's 10-byte overrun"
-                    } else {
-                        "trailing: beyond the overrun (detect::probe walks to EOF)"
-                    }
+                    "trailing: detect::probe walks to EOF"
                 } else if det.contains("WebPProbe quality") {
                     "owner of WebPProbe quality"
                 } else if (det.contains("WebPDemuxer") || det.contains("decoded, then discarded"))

@@ -13,9 +13,8 @@
 //! - A chunk part spans its 8-byte header, payload and a **zero** pad byte. A
 //!   non-zero pad byte is its own `Padding` part, so a pad byte that carries
 //!   data is visible.
-//! - Bytes past `8 + riff_size` are `Trailing`, except chunks the decoder
-//!   actually reads there (its VP8X walk limit overruns the RIFF end by 10
-//!   bytes, see `walk_extended`).
+//! - Bytes past `8 + riff_size` are `Trailing`, except chunks `detect::probe`
+//!   reads there (it walks to the end of the data, see `walk_extended`).
 
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -605,7 +604,6 @@ impl Walker<'_, '_> {
                 _ => self.walk_rejected(first, riff_end)?,
             },
         }
-        let extended = d.get(12..16) == Some(b"VP8X");
         self.inv
             .fill_gaps(None, Disposition::Trailing)
             .map_err(parts_err)?;
@@ -615,14 +613,6 @@ impl Walker<'_, '_> {
             let Some(p) = self.inv.get(id) else { continue };
             if p.disposition() != Disposition::Trailing || p.range().end - p.range().start < 8 {
                 continue;
-            }
-            let start = p.range().start;
-            if extended && start < declared_end + 10 {
-                self.append_detail(
-                    id,
-                    "read_data's VP8X chunk loop reads a chunk header that starts within 10 \
-                     bytes past the RIFF end, and its size decides whether read_data fails",
-                );
             }
             self.append_detail(
                 id,
@@ -924,8 +914,8 @@ impl Walker<'_, '_> {
     ///
     /// - `WebPDecoder::read_data` (`decoder/api.rs`) feeds `probe()`,
     ///   `ImageInfo` metadata, animation, and the pixels of lossless and
-    ///   non-lossy-still files. Its chunk loop ends at `position + riff_size -
-    ///   12`, ten bytes past the RIFF end for the usual 10-byte VP8X payload.
+    ///   non-lossy-still files. Its chunk loop reads a chunk header only if
+    ///   it fits before the RIFF end (`8 + riff_size`).
     /// - `WebPDemuxer` supplies the pixels of a non-animated lossy still for
     ///   `decode()`, `push_decoder` and `streaming_decoder`: it keeps the
     ///   *last* VP8/VP8L and the last ALPH inside the RIFF size.
@@ -961,7 +951,6 @@ impl Walker<'_, '_> {
         }
 
         // --- the chunks the walkers visit -------------------------------------
-        let mut frame_cursor = m.first_anmf.map(|i| chunks[i].pos);
         let mut frame_chain_ok = true;
         for (i, c) in chunks.iter().enumerate() {
             self.tick()?;
@@ -971,11 +960,14 @@ impl Walker<'_, '_> {
             let kept_past_end = p_icc
                 || m.p_last_vp8x == Some(i)
                 || (c.is_known() && m.first(&c.fourcc) == Some(i));
-            if c.pos >= riff_end && !kept_past_end {
+            // `read_data` and `WebPDemuxer` read a chunk only when its header
+            // fits before the RIFF end.
+            let outside = c.pos + 8 > 8 + riff_size;
+            if outside && !kept_past_end {
                 continue;
             }
-            let past = if c.pos >= riff_end {
-                "; starts past the RIFF end"
+            let past = if outside {
+                "; lies past the RIFF end"
             } else {
                 ""
             };
@@ -1212,13 +1204,14 @@ impl Walker<'_, '_> {
                             false,
                         )?;
                     } else {
+                        // `read_frame` walks ANMF to ANMF inside the RIFF size,
+                        // skipping other chunks; one it cannot decode (size < 32)
+                        // ends the chain.
                         let reachable =
-                            frame_chain_ok && frame_cursor == Some(c.pos) && c.size >= 32;
+                            frame_chain_ok && c.size >= 32 && c.pos + 8 <= 8 + riff_size;
                         if !reachable {
                             frame_chain_ok = false;
                         }
-                        // `read_frame`: next_frame_start += anmf_size + 8, no rounding.
-                        frame_cursor = Some(c.pos + 8 + c.size);
                         let id = self.emit_anmf(c, reachable, m.first_anmf == Some(i), &m.quirk)?;
                         if m.p_bitstream == Some((i, true))
                             && let Some(id) = id
@@ -1385,14 +1378,15 @@ impl Walker<'_, '_> {
         {
             native_err = Some(e.error().to_string());
         }
-        let limit = vp8x.next.saturating_add(riff_size.saturating_sub(12));
+        // `read_data` reads a chunk header only if it fits before the RIFF end.
+        let limit = 8 + riff_size;
         let mut w_in = vec![false; chunks.len()];
         let mut frames = 0usize;
         // An error before the loop (file size, canvas limits) leaves `w_in` as
         // the loop would have set it, so "first occurrence" stays meaningful.
         let pre_err = native_err.is_some();
         for (i, c) in chunks.iter().enumerate() {
-            if c.pos >= limit || (!pre_err && native_err.is_some()) {
+            if c.pos + 8 > limit || (!pre_err && native_err.is_some()) {
                 break;
             }
             w_in[i] = true;
@@ -1743,8 +1737,8 @@ impl Walker<'_, '_> {
             None
         } else {
             Some(
-                "unreachable: read_frame advances by the unrounded ANMF size and expects the \
-                 next ANMF header there (and needs size >= 32), so this frame and every later \
+                "unreachable: read_frame needs an ANMF of at least 32 bytes inside the RIFF \
+                 size, and stops at the first one that is not, so this frame and every later \
                  one fail to decode; read_data still reads its header"
                     .to_string(),
             )
