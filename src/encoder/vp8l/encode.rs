@@ -1012,6 +1012,37 @@ fn encode_image_data(
         writer.write_bit(false); // no meta-Huffman
     }
 
+    // #72 emit-time invariant (debug builds — runs in `cargo test` and under
+    // cargo-fuzz, both of which enable debug-assertions): the number of
+    // Huffman groups we are about to write MUST equal what the decoder
+    // derives from the entropy image, i.e. `max(histogram_symbols) + 1`.
+    // Issue #72 shipped a stream where an extra trailing group was written
+    // for a remap-stranded cluster; the decoder sized its group list from the
+    // entropy image's max symbol and parsed the surplus trees as pixel data
+    // (silent whole-image corruption). This pins that invariant at the emit
+    // site rather than relying only on the downstream roundtrip gate.
+    debug_assert_eq!(
+        meta_info.histograms.len(),
+        meta_info.num_histograms,
+        "VP8L: histogram count desync (histograms.len vs num_histograms)"
+    );
+    if meta_info.num_histograms > 1 {
+        let max_sym = meta_info
+            .histogram_symbols
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(0) as usize;
+        debug_assert_eq!(
+            meta_info.histograms.len(),
+            max_sym + 1,
+            "VP8L #72 invariant: trees written ({}) != entropy-image max symbol + 1 ({}); \
+             decoder would misparse the surplus trees as pixel data",
+            meta_info.histograms.len(),
+            max_sym + 1
+        );
+    }
+
     // Build Huffman codes for each histogram group (5 trees per group)
     let mut all_codes: Vec<HuffmanGroupCodes> = Vec::with_capacity(meta_info.num_histograms);
     for h in &meta_info.histograms {
