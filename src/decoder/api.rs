@@ -543,6 +543,13 @@ impl<'a> DecodeRequest<'a> {
     }
 
     fn decode_lossy_internal(self, bpp: usize) -> DecodeResult<(Vec<u8>, u16, u16)> {
+        // Honor cancellation before doing any work — the one-shot lossy path
+        // has no mid-decode checkpoints (the VP8v2 context does not carry a
+        // stop token), so the entry check is the cancellation contract here.
+        if let Some(stop) = self.stop {
+            stop.check()
+                .map_err(|r| whereat::at!(DecodeError::Cancelled(r)))?;
+        }
         let data = self.data;
         let dither_strength = self.config.dithering_strength;
         if data.len() < 20 {
@@ -1218,6 +1225,13 @@ impl<'a> WebPDecoder<'a> {
                 .get(range.start as usize..range.end as usize)
                 .ok_or(at!(DecodeError::InvalidChunkSize))?;
 
+            // The lossy VP8 context carries no stop token, so this entry check
+            // is the cancellation contract for a still lossy decode (the VP8L
+            // branch above hands the token to the lossless decoder).
+            if let Some(stop) = self.stop {
+                stop.check().map_err(|r| at!(DecodeError::Cancelled(r)))?;
+            }
+
             // Lossy VP8 direct decode path
             let bpp = if self.has_alpha() { 4 } else { 3 };
             self.animation
@@ -1283,6 +1297,12 @@ impl<'a> WebPDecoder<'a> {
 
         if self.animation.next_frame == self.num_frames {
             return Err(at!(DecodeError::NoMoreFrames));
+        }
+
+        // Lossy (VP8 / ALPH+VP8) frames decode through a context that carries
+        // no stop token; check once per frame so cancellation is honored.
+        if let Some(stop) = self.stop {
+            stop.check().map_err(|r| at!(DecodeError::Cancelled(r)))?;
         }
 
         let ImageKind::Extended(info) = &self.kind else {
