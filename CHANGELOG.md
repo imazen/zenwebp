@@ -10,7 +10,7 @@ Changelog; versions follow Cargo semver.
 
 (none — 0.4.x takes only semver-compatible fixes)
 
-## [0.4.6] - unreleased
+## [0.4.6] - 2026-10-24
 
 Bug-fix release on top of 0.4.4 (0.4.5 was yanked). Every fix is backported
 from `main` unless marked *new*, and each landed with a regression test that
