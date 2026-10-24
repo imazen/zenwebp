@@ -153,14 +153,14 @@ fn apply_subtract_green_generic<T: magetypes::simd::backends::U8x16Backend>(
 
     while i < simd_len {
         let chunk: &mut [u8; 16] = (&mut pixel_bytes[i..i + 16]).try_into().unwrap();
-        let inp = u8x16::load(token, chunk);
+        let inp = u8x16::load_t(token, chunk);
         // Build green mask: [g0 0 g0 0 | g1 0 g1 0 | g2 0 g2 0 | g3 0 g3 0]
         let arr = inp.to_array();
         let g0 = arr[1];
         let g1 = arr[5];
         let g2 = arr[9];
         let g3 = arr[13];
-        let mask = u8x16::from_array(
+        let mask = u8x16::from_array_t(
             token,
             [g0, 0, g0, 0, g1, 0, g1, 0, g2, 0, g2, 0, g3, 0, g3, 0],
         );
@@ -957,20 +957,20 @@ fn combined_shannon_entropy_impl(token: Token, x: &[u32; 256], y: &[u32; 256]) -
     let mut retval: u64 = 0;
     let mut sum_x: u32 = 0;
     let mut sum_xy: u32 = 0;
-    let zero = u32x4::zero(token);
+    let zero = u32x4::zero_t(token);
 
     let mut i = 0usize;
     while i < 256 {
         // Load 16 u32 values from X and Y (4 × u32x4 each)
-        let x0 = u32x4::from_array(token, *x[i..].first_chunk::<4>().unwrap());
-        let x1 = u32x4::from_array(token, *x[i + 4..].first_chunk::<4>().unwrap());
-        let x2 = u32x4::from_array(token, *x[i + 8..].first_chunk::<4>().unwrap());
-        let x3 = u32x4::from_array(token, *x[i + 12..].first_chunk::<4>().unwrap());
+        let x0 = u32x4::from_array_t(token, *x[i..].first_chunk::<4>().unwrap());
+        let x1 = u32x4::from_array_t(token, *x[i + 4..].first_chunk::<4>().unwrap());
+        let x2 = u32x4::from_array_t(token, *x[i + 8..].first_chunk::<4>().unwrap());
+        let x3 = u32x4::from_array_t(token, *x[i + 12..].first_chunk::<4>().unwrap());
 
-        let y0 = u32x4::from_array(token, *y[i..].first_chunk::<4>().unwrap());
-        let y1 = u32x4::from_array(token, *y[i + 4..].first_chunk::<4>().unwrap());
-        let y2 = u32x4::from_array(token, *y[i + 8..].first_chunk::<4>().unwrap());
-        let y3 = u32x4::from_array(token, *y[i + 12..].first_chunk::<4>().unwrap());
+        let y0 = u32x4::from_array_t(token, *y[i..].first_chunk::<4>().unwrap());
+        let y1 = u32x4::from_array_t(token, *y[i + 4..].first_chunk::<4>().unwrap());
+        let y2 = u32x4::from_array_t(token, *y[i + 8..].first_chunk::<4>().unwrap());
+        let y3 = u32x4::from_array_t(token, *y[i + 12..].first_chunk::<4>().unwrap());
 
         // Build 16-bit bitmask: bit j set if x[i+j] != 0
         let mx = (x0.simd_ne(zero).bitmask() & 0xF)

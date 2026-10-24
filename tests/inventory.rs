@@ -485,12 +485,10 @@ fn later_anmf_subchunks_are_not_read() {
 
 // ── Container quirks (decoder behaviour the inventory mirrors) ──────────────
 
-/// Decoder quirk: the VP8X chunk walk runs ten bytes past the RIFF end, so a
-/// chunk header starting right after the declared RIFF end is still read. If
-/// the decoder is fixed to stop at the RIFF end, this test and the walk's
-/// `past_end` handling change in the same commit.
+/// The VP8X chunk walk stops at the RIFF end (#107): a chunk header starting
+/// right after the declared RIFF size is trailing data, not a chunk.
 #[test]
-fn current_behaviour_vp8x_walk_reads_a_chunk_past_the_riff_end() {
+fn vp8x_walk_stops_at_the_riff_end() {
     let (data, ..) = everything_still();
     let chunks = chunks_of(&data[..data.len() - 4]); // drop the junk
     let exif = b"II*\0\x08\0\0\0\0\0\0\0\0\0".to_vec();
@@ -504,26 +502,21 @@ fn current_behaviour_vp8x_walk_reads_a_chunk_past_the_riff_end() {
     data.extend(chunk_bytes(b"EXIF", &exif)); // outside the RIFF size
     let info = WebpDecoderConfig::new().job().probe(&data).unwrap();
     assert_eq!(
-        info.embedded_metadata.exif.as_deref(),
-        Some(&exif[..]),
-        "decoder reads an EXIF chunk that starts at the RIFF end"
+        info.embedded_metadata.exif, None,
+        "an EXIF chunk that starts at the RIFF end is not read"
     );
     let inv = inventory_of(&data);
-    let part = find(&inv, "EXIF")[0];
-    assert_eq!(
-        part.disposition(),
-        Disposition::Metadata(MetadataKind::Exif),
-        "{inv}"
-    );
-    assert_eq!(part.range().start, riff_end as u64);
-    assert!(part.detail().unwrap().contains("past the RIFF end"));
+    assert!(find(&inv, "EXIF").is_empty(), "{inv}");
+    let last = inv.get(inv.children(None).pop().unwrap()).unwrap();
+    assert_eq!(last.disposition(), Disposition::Trailing, "{inv}");
+    assert_eq!(last.range().start, riff_end as u64);
+    assert_eq!(last.range().end, data.len() as u64);
 }
 
-/// Decoder quirk: `read_frame` advances by the unrounded ANMF size and expects
-/// the next ANMF header there. An unknown chunk between ANMFs, or an ANMF with
-/// a pad byte, stops decoding at that frame.
+/// `read_frame` skips chunks between ANMF frames (#109), so every frame is
+/// reachable and the inventory marks none unreachable.
 #[test]
-fn current_behaviour_unknown_chunk_between_anmf_stops_the_frame_chain() {
+fn unknown_chunk_between_anmf_is_skipped() {
     let data = animation();
     let mut chunks = chunks_of(&data);
     let second = chunks
@@ -535,34 +528,25 @@ fn current_behaviour_unknown_chunk_between_anmf_stops_the_frame_chain() {
         .0;
     chunks.insert(second, (*b"JUNK", vec![1, 2, 3, 4]));
     let data = riff(&chunks);
-    let all = zenwebp::mux::AnimationDecoder::new(&data).and_then(|mut d| d.decode_all());
-    assert!(all.is_err(), "decoder is expected to fail at frame 2");
+    let all = zenwebp::mux::AnimationDecoder::new(&data)
+        .and_then(|mut d| d.decode_all())
+        .unwrap();
+    assert_eq!(all.len(), 3);
     let inv = inventory_of(&data);
     let anmf = find(&inv, "ANMF");
     assert_eq!(anmf.len(), 3);
-    assert!(!anmf[0].detail().unwrap_or("").contains("unreachable"));
-    for later in &anmf[1..] {
-        assert!(later.detail().unwrap().contains("unreachable"), "{inv}");
+    for f in &anmf {
+        assert!(!f.detail().unwrap_or("").contains("unreachable"), "{inv}");
     }
-    // Unreachable frames: only the first sub-chunk's header (and the VP8L
-    // alpha word) is read; the pixel payload is Skipped.
-    let header_only = inv
+    assert_eq!(find(&inv, "JUNK")[0].disposition(), Disposition::Unknown);
+    let image_data = inv
         .parts()
         .iter()
         .filter(|p| p.parent().is_some() && p.label() == Some("VP8L"))
-        .filter(|p| {
-            p.disposition() == Disposition::Structure
-                && p.detail()
-                    .is_some_and(|d| d.contains("header read by read_data"))
-        })
+        .filter(|p| p.disposition() == Disposition::ImageData)
         .count();
-    assert_eq!(header_only, 2, "{inv}");
-    let skipped_payload = inv
-        .parts()
-        .iter()
-        .filter(|p| p.kind() == PartKind::Gap && p.disposition() == Disposition::Skipped)
-        .count();
-    assert_eq!(skipped_payload, 2, "{inv}");
+    assert_eq!(image_data, 3, "{inv}");
+    zencodec_testkit::check_inventory(WebpDecoderConfig::new(), &data).unwrap();
 }
 
 #[test]
@@ -700,36 +684,32 @@ Gap None 182..186 trailing
 
 // ── More decoder quirks the walk mirrors ────────────────────────────────────
 
-/// Decoder quirk: after the VP8X chunk walk's ten-byte overrun, 8 or more
-/// bytes of data following the RIFF end are parsed as a chunk header whose
-/// size is then seeked over, so the whole decode fails. The inventory itself
-/// still reports the bytes as `Trailing`.
+/// Trailing data after a VP8X file is ignored (#107): the decode succeeds
+/// with the same pixels, and the inventory reports the bytes as `Trailing`.
 #[test]
-fn current_behaviour_trailing_data_after_a_vp8x_file_fails_the_decode() {
-    let (mut data, ..) = everything_still_no_junk();
-    assert!(
-        zenwebp::decoder::decode_rgba(&data).is_ok(),
-        "fixture decodes as built"
-    );
+fn trailing_data_after_a_vp8x_file_is_ignored() {
+    let (data, ..) = everything_still_no_junk();
+    let (want, ..) = zenwebp::decoder::decode_rgba(&data).expect("fixture decodes as built");
+    let mut data = data;
     data.extend(b"trailing junk, longer than a chunk header");
-    assert!(
-        zenwebp::decoder::decode_rgba(&data).is_err(),
-        "decoder is expected to reject trailing data after a VP8X file"
-    );
+    let (got, ..) = zenwebp::decoder::decode_rgba(&data).expect("trailing data is ignored");
+    assert!(got == want);
     let inv = inventory_of(&data);
     let last = inv.get(inv.children(None).pop().unwrap()).unwrap();
     assert_eq!(last.disposition(), Disposition::Trailing);
     assert_eq!(last.range().end, data.len() as u64);
-    // The same bytes after a simple-format file are harmless.
+    let d = last.detail().unwrap();
+    assert!(!d.contains("read_data"), "{d}");
+    // The same bytes after a simple-format file are harmless too.
     let mut simple = lossless_rgb();
     simple.extend(b"trailing junk, longer than a chunk header");
     assert!(zenwebp::decoder::decode_rgba(&simple).is_ok());
 }
 
-/// Decoder quirk: `read_frame` advances by the unrounded ANMF size, so an ANMF
-/// whose size is odd (pad byte after it) is followed by a read at the pad byte.
+/// An odd-sized ANMF is followed by its pad byte; the next frame starts after
+/// it (#108), and the last sub-chunk may rely on the ANMF's pad byte.
 #[test]
-fn current_behaviour_odd_sized_anmf_breaks_the_next_frame() {
+fn odd_sized_anmf_frames_all_decode() {
     let base = chunks_of(&animation());
     let mut chunks: Vec<Chunk> = Vec::new();
     for (f, p) in &base {
@@ -750,13 +730,14 @@ fn current_behaviour_odd_sized_anmf_breaks_the_next_frame() {
         chunks.push((*f, payload));
     }
     let data = riff(&chunks);
-    let all = zenwebp::mux::AnimationDecoder::new(&data).and_then(|mut d| d.decode_all());
-    assert!(all.is_err(), "decoder is expected to fail at frame 2");
+    let all = zenwebp::mux::AnimationDecoder::new(&data)
+        .and_then(|mut d| d.decode_all())
+        .unwrap();
+    assert_eq!(all.len(), 3);
     let inv = inventory_of(&data);
-    let anmf = find(&inv, "ANMF");
-    assert!(!anmf[0].detail().unwrap_or("").contains("unreachable"));
-    assert!(anmf[1].detail().unwrap().contains("unreachable"), "{inv}");
-    assert!(anmf[2].detail().unwrap().contains("unreachable"), "{inv}");
+    for f in find(&inv, "ANMF") {
+        assert!(!f.detail().unwrap_or("").contains("unreachable"), "{inv}");
+    }
 }
 
 /// Payload of the first sub-chunk in `body` (test-side, well-formed input).
@@ -1071,37 +1052,46 @@ fn review_f1_duplicate_image_chunks_follow_decode() {
     );
 }
 
-/// Review F2: 8+ trailing bytes after a VP8X lossy still make `probe()` fail while
-/// `decode()` succeeds without ICC/EXIF/XMP in `ImageInfo`.
+/// Review F2: when `read_data` fails on a VP8X lossy still that the demuxer
+/// decodes, `probe()` fails while `decode()` succeeds without ICC/EXIF/XMP in
+/// `ImageInfo`. Trailing bytes no longer trigger it (#107); a flagged but
+/// missing EXIF chunk still does.
 #[test]
 fn review_f2_trailing_bytes_drop_metadata_in_decode() {
     let base = chunks_of(&lossy_alpha_seed(32, 24, 7));
     let mut vp8x = chunk_payload(&base, b"VP8X");
     vp8x[0] |= 0x20 | 0x08 | 0x04;
-    let mut data = riff(&[
-        (*b"VP8X", vp8x),
-        (*b"ICCP", vec![0xAB; 64]),
-        (*b"ALPH", chunk_payload(&base, b"ALPH")),
-        (*b"VP8 ", chunk_payload(&base, b"VP8 ")),
-        (*b"EXIF", b"II*\0\x08\0\0\0\0\0\0\0\0\0".to_vec()),
-        (*b"XMP ", b"<x:xmpmeta/>".to_vec()),
-    ]);
-    assert!(
-        WebpDecoderConfig::new()
-            .decode(&data)
-            .unwrap()
-            .info()
-            .embedded_metadata
-            .exif
-            .is_some()
-    );
+    let exif = b"II*\0\x08\0\0\0\0\0\0\0\0\0".to_vec();
+    let with_exif = |exif: Option<&[u8]>| {
+        let mut c = vec![
+            (*b"VP8X", vp8x.clone()),
+            (*b"ICCP", vec![0xAB; 64]),
+            (*b"ALPH", chunk_payload(&base, b"ALPH")),
+            (*b"VP8 ", chunk_payload(&base, b"VP8 ")),
+        ];
+        if let Some(e) = exif {
+            c.push((*b"EXIF", e.to_vec()));
+        }
+        c.push((*b"XMP ", b"<x:xmpmeta/>".to_vec()));
+        riff(&c)
+    };
+    let mut data = with_exif(Some(&exif));
     data.extend(b"trailing junk, longer than a chunk header");
+    let out = WebpDecoderConfig::new().decode(&data).unwrap();
+    assert_eq!(
+        out.info().embedded_metadata.exif.as_deref(),
+        Some(&exif[..])
+    );
+    assert!(out.info().embedded_metadata.xmp.is_some());
+    assert!(out.info().source_color.icc_profile.is_some());
+    assert!(WebpDecoderConfig::new().job().probe(&data).is_ok());
+
+    let data = with_exif(None);
     assert!(WebpDecoderConfig::new().job().probe(&data).is_err());
     let out = WebpDecoderConfig::new()
         .decode(&data)
         .expect("decode survives");
     assert!(out.info().source_color.icc_profile.is_none());
-    assert!(out.info().embedded_metadata.exif.is_none());
     assert!(out.info().embedded_metadata.xmp.is_none());
     // ...but WebPProbe, attached to the output, still carries the ICC profile.
     assert_eq!(
@@ -1111,11 +1101,7 @@ fn review_f2_trailing_bytes_drop_metadata_in_decode() {
         Some(&[0xAB; 64][..])
     );
     let inv = inventory_of(&data);
-    assert_eq!(
-        find(&inv, "EXIF")[0].disposition(),
-        Disposition::Dropped,
-        "{inv}"
-    );
+    assert!(find(&inv, "EXIF").is_empty(), "{inv}");
     assert_eq!(
         find(&inv, "XMP ")[0].disposition(),
         Disposition::Dropped,
@@ -1133,8 +1119,6 @@ fn review_f2_trailing_bytes_drop_metadata_in_decode() {
             .unwrap()
             .contains("probe() fails")
     );
-    let last = inv.get(inv.children(None).pop().unwrap()).unwrap();
-    assert_eq!(last.disposition(), Disposition::Trailing);
 }
 
 /// Review F3: `detect::probe` (source_encoding_details) reads chunks the decoder skips.
@@ -1234,6 +1218,8 @@ fn set_vp8l_alpha_bit(anmf: &mut [u8], on: bool) {
 }
 
 /// Review F4: an unreachable ANMF's header and first sub-chunk header still feed `has_alpha`.
+/// Frame 2 is a 30-byte ANMF: `read_data` counts it (>= 24 bytes) but
+/// `read_frame` needs 32, so frames 2 and 3 are unreachable.
 #[test]
 fn review_f4_unreachable_frame_bytes_that_the_decoder_reads() {
     let mut chunks = chunks_of(&animation());
@@ -1248,7 +1234,12 @@ fn review_f4_unreachable_frame_bytes_that_the_decoder_reads() {
         .nth(1)
         .unwrap()
         .0;
-    chunks.insert(second, (*b"JUNK", vec![1, 2, 3, 4]));
+    let mut short = chunks[second].1[..16].to_vec();
+    short.extend(b"VP8L");
+    short.extend(6u32.to_le_bytes());
+    short.extend([0x2f, 0, 0, 0, 0, 0]);
+    assert_eq!(short.len(), 30);
+    chunks[second].1 = short;
     let base = riff(&chunks);
     assert!(
         !WebpDecoderConfig::new()
@@ -1776,15 +1767,21 @@ fn review2_r2_misread_header_files_another_chunks_payload() {
     }
 }
 
-/// R3: when `from_webp` fails, `decode()` outputs RGB: the alpha plane is discarded.
+/// R3: when `from_webp` fails, `decode()` outputs RGB: the alpha plane is
+/// discarded. Trailing bytes no longer trigger it (#107); a flagged but
+/// missing EXIF chunk still does.
 #[test]
 fn review2_r3_alph_is_dropped_when_from_webp_fails() {
     let base = chunks_of(&lossy_alpha_seed(32, 24, 7));
-    let mut data = riff(&[
-        (*b"VP8X", chunk_payload(&base, b"VP8X")),
-        (*b"ALPH", chunk_payload(&base, b"ALPH")),
-        (*b"VP8 ", chunk_payload(&base, b"VP8 ")),
-    ]);
+    let mut vp8x = chunk_payload(&base, b"VP8X");
+    let build = |vp8x: &[u8]| {
+        riff(&[
+            (*b"VP8X", vp8x.to_vec()),
+            (*b"ALPH", chunk_payload(&base, b"ALPH")),
+            (*b"VP8 ", chunk_payload(&base, b"VP8 ")),
+        ])
+    };
+    let mut data = build(&vp8x);
     let clean = WebpDecoderConfig::new().decode(&data).unwrap();
     assert!(clean.has_alpha());
     assert_eq!(
@@ -1792,6 +1789,10 @@ fn review2_r3_alph_is_dropped_when_from_webp_fails() {
         Disposition::ImageData
     );
     data.extend(b"trailing junk, longer than a chunk header");
+    let trailing = WebpDecoderConfig::new().decode(&data).unwrap();
+    assert!(trailing.has_alpha(), "trailing bytes keep the alpha plane");
+    vp8x[0] |= 0x08; // EXIF flag, no EXIF chunk
+    let data = build(&vp8x);
     let out = WebpDecoderConfig::new().decode(&data).unwrap();
     assert!(
         !out.has_alpha(),
@@ -2584,7 +2585,7 @@ fn review4_q3_other_readers() {
     assert_eq!(last.disposition(), Disposition::Trailing);
     let d = last.detail().unwrap();
     assert!(
-        d.contains("read_data") && d.contains("detect::probe"),
+        !d.contains("read_data") && d.contains("detect::probe"),
         "{d}"
     );
 

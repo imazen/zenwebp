@@ -265,3 +265,10 @@ wholefile-api-check:
 # Same witness on main and PR105; point both runs at identical input fixtures.
 animation-contract-perf:
     cargo bench --locked --bench animation_contract_perf -- --cpu-policy=unrestricted --format=json
+
+# Check compatibility after admitting the current archmage/magetypes beta.
+beta-cohort-check:
+    cargo metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml > /dev/null
+    cargo fmt --check
+    cargo clippy --locked --workspace --lib -- -D warnings
+    cargo test --locked --workspace --lib --no-fail-fast

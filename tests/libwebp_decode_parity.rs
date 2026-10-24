@@ -486,3 +486,22 @@ fn anim_blend_inside_disposed_rect_is_raw() {
     );
     assert_anim_matches("blend-in-disposed-rect", &data);
 }
+
+/// The committed animated samples decode frame-for-frame identically to
+/// libwebp's WebPAnimDecoder. (Together with `tests/decode.rs`'s animated
+/// reftests this pins the restored `random_lossless-{2,3}.png` references to
+/// libwebp's output, not the crate's own.)
+#[test]
+fn committed_animations_match_libwebp() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/images/animated");
+    let mut n = 0;
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|e| e == "webp") {
+            let data = std::fs::read(&path).unwrap();
+            assert_anim_matches(&path.display().to_string(), &data);
+            n += 1;
+        }
+    }
+    assert!(n >= 2, "expected the committed animated samples, found {n}");
+}

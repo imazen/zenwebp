@@ -1273,13 +1273,13 @@ fn gamma_chroma_rows_generic(
     // the U/V matrix, then VP8ClipUV descales by 18 and adds the 128 bias:
     //   uv = (-9719·R -19081·G +28800·B + (1<<17) + (128<<18)) >> 18, clamped.
     let uv_bias = (128i32 << 18) + (1 << 17);
-    let u_r = i32x8::splat(token, -9719);
-    let u_g = i32x8::splat(token, -19081);
-    let u_b = i32x8::splat(token, 28800);
-    let v_r = i32x8::splat(token, 28800);
-    let v_g = i32x8::splat(token, -24116);
-    let v_b = i32x8::splat(token, -4684);
-    let uv_bias_v = i32x8::splat(token, uv_bias);
+    let u_r = i32x8::splat_t(token, -9719);
+    let u_g = i32x8::splat_t(token, -19081);
+    let u_b = i32x8::splat_t(token, 28800);
+    let v_r = i32x8::splat_t(token, 28800);
+    let v_g = i32x8::splat_t(token, -24116);
+    let v_b = i32x8::splat_t(token, -4684);
+    let uv_bias_v = i32x8::splat_t(token, uv_bias);
 
     for row_pair in 0..row_pairs {
         let r1 = row_pair * 2;
@@ -1329,18 +1329,18 @@ fn gamma_chroma_rows_generic(
             // ── Stage 2: SIMD sum ── (max sum = 4*4095 = 16380 fits in u16;
             // NOT divided by 4 — libwebp's LinearToGamma(sum, shift=0) folds the
             // /4 into the inverse-gamma LUT while keeping ×4 precision).
-            let r_sum = u16x8::from_array(token, r_te)
-                + u16x8::from_array(token, r_to)
-                + u16x8::from_array(token, r_be)
-                + u16x8::from_array(token, r_bo);
-            let g_sum = u16x8::from_array(token, g_te)
-                + u16x8::from_array(token, g_to)
-                + u16x8::from_array(token, g_be)
-                + u16x8::from_array(token, g_bo);
-            let b_sum = u16x8::from_array(token, b_te)
-                + u16x8::from_array(token, b_to)
-                + u16x8::from_array(token, b_be)
-                + u16x8::from_array(token, b_bo);
+            let r_sum = u16x8::from_array_t(token, r_te)
+                + u16x8::from_array_t(token, r_to)
+                + u16x8::from_array_t(token, r_be)
+                + u16x8::from_array_t(token, r_bo);
+            let g_sum = u16x8::from_array_t(token, g_te)
+                + u16x8::from_array_t(token, g_to)
+                + u16x8::from_array_t(token, g_be)
+                + u16x8::from_array_t(token, g_bo);
+            let b_sum = u16x8::from_array_t(token, b_te)
+                + u16x8::from_array_t(token, b_to)
+                + u16x8::from_array_t(token, b_be)
+                + u16x8::from_array_t(token, b_bo);
 
             let mut r_s = [0u16; 8];
             let mut g_s = [0u16; 8];
@@ -1360,9 +1360,9 @@ fn gamma_chroma_rows_generic(
             }
 
             // ── Stage 4: SIMD YCbCr matrix on ×4 values (VP8ClipUV: >>18) ──
-            let r_v = i32x8::from_array(token, r_fx);
-            let g_v = i32x8::from_array(token, g_fx);
-            let b_v = i32x8::from_array(token, b_fx);
+            let r_v = i32x8::from_array_t(token, r_fx);
+            let g_v = i32x8::from_array_t(token, g_fx);
+            let b_v = i32x8::from_array_t(token, b_fx);
             let u_vals = uv_bias_v + r_v * u_r + g_v * u_g + b_v * u_b;
             let v_vals = uv_bias_v + r_v * v_r + g_v * v_g + b_v * v_b;
 
