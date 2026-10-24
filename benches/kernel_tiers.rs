@@ -203,7 +203,7 @@ fn bench(suite: &mut Suite) {
         );
 
         for (label, bpp) in [("rgb", 3usize), ("rgba", 4usize)] {
-            suite.compare(&format!("yuv420_to_rgb_exact/{label}"), move |g| {
+            suite.compare(format!("yuv420_to_rgb_exact/{label}"), move |g| {
                 g.throughput(Throughput::Bytes((W * H * bpp) as u64));
                 for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
                     g.bench(arm, move |b| {

@@ -16,9 +16,11 @@ mod lossless;
 ///
 /// `missing_docs` is allowed here because the gate surfaces pre-existing
 /// internal items that were never part of the documented surface; documenting
-/// them would imply a stability they do not have.
+/// them would imply a stability they do not have. `private_interfaces` for the
+/// same reason: the kernels return the crate-private `InternalDecodeError`,
+/// which the bench only `unwrap`s.
 #[cfg(feature = "_dev")]
-#[allow(missing_docs)]
+#[allow(missing_docs, private_interfaces)]
 pub mod lossless_transform;
 #[cfg(not(feature = "_dev"))]
 mod lossless_transform;
