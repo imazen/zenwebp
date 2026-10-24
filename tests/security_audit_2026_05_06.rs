@@ -60,6 +60,14 @@ impl BitWriter {
 /// sub-image allocation happens *before* decode_image_stream is called on it.
 /// The test asserts that the limits check fires before any real decode work.
 fn build_amplifying_vp8l(width: u32, height: u32) -> Vec<u8> {
+    build_amplifying_vp8l_alpha(width, height, false)
+}
+
+/// As [`build_amplifying_vp8l`], optionally with the alpha-used bit set.
+/// With alpha, `read_image` decodes straight into the caller's RGBA buffer
+/// (no full-canvas scratch allocation, hence no early `check_memory`), so
+/// the transform sub-image allocation is the FIRST limits gate reached.
+fn build_amplifying_vp8l_alpha(width: u32, height: u32, alpha: bool) -> Vec<u8> {
     assert!((1..=16384).contains(&width));
     assert!((1..=16384).contains(&height));
 
@@ -67,7 +75,7 @@ fn build_amplifying_vp8l(width: u32, height: u32) -> Vec<u8> {
     w.write(0x2f, 8);
     w.write((width - 1) as u64, 14);
     w.write((height - 1) as u64, 14);
-    w.write(0, 1); // alpha-used
+    w.write(u64::from(alpha), 1); // alpha-used
     w.write(0, 3); // version
     w.write(1, 1); // transform present
     w.write(0, 2); // type = 0 (predictor)
@@ -114,6 +122,37 @@ fn h1_predictor_transform_allocation_rejected_when_over_memory_limit() {
     let limits = Limits::default().max_memory(4 * 1024 * 1024);
 
     let mut decoder = WebPDecoder::new(&webp).expect("header parse ok");
+    decoder.set_limits(limits);
+
+    let buf_size = decoder
+        .output_buffer_size()
+        .expect("output_buffer_size computable");
+    let mut out = vec![0u8; buf_size];
+
+    let err = decoder
+        .read_image(&mut out)
+        .expect_err("decode must reject due to memory limit");
+    assert!(
+        matches!(err.error(), DecodeError::MemoryLimitExceeded),
+        "expected MemoryLimitExceeded, got: {:?}",
+        err.error()
+    );
+}
+
+/// The alpha variant reaches the transform allocation without passing any
+/// earlier full-canvas memory check. The opaque test above is rejected first
+/// by `read_image`'s RGBA scratch check (256 MB > 4 MB), so it passes even
+/// with the sub-image gate removed (verified on main and on 0.4.x,
+/// 2026-10-24); only this variant pins the H1 gate itself.
+#[test]
+fn h1_predictor_transform_allocation_rejected_with_alpha() {
+    let payload = build_amplifying_vp8l_alpha(8192, 8192, true);
+    let webp = wrap_vp8l(&payload);
+
+    let limits = Limits::default().max_memory(4 * 1024 * 1024);
+
+    let mut decoder = WebPDecoder::new(&webp).expect("header parse ok");
+    assert!(decoder.has_alpha());
     decoder.set_limits(limits);
 
     let buf_size = decoder
