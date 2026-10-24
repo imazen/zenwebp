@@ -82,6 +82,15 @@ pub enum MuxError {
         /// The offending duration in milliseconds.
         duration_ms: u32,
     },
+
+    /// Presentation timestamps must not move backwards.
+    #[error("Animation timestamp {timestamp_ms} precedes {previous_ms} ms")]
+    NonmonotonicTimestamp {
+        /// Timestamp of the pending frame.
+        previous_ms: u32,
+        /// Rejected timestamp of the incoming frame.
+        timestamp_ms: u32,
+    },
 }
 
 // Codec-agnostic error taxonomy (zencodec PR #103/#116, origin-first two-level
@@ -107,6 +116,7 @@ impl zencodec::CategorizedError for MuxError {
             | MuxError::OddFrameOffset { .. }
             | MuxError::FrameOutsideCanvas { .. }
             | MuxError::FrameDurationTooLarge { .. }
+            | MuxError::NonmonotonicTimestamp { .. }
             // Caller asked for a frame index past the end of the sequence.
             | MuxError::FrameOutOfBounds { .. } => C::Request(RE::Invalid(IK::Parameters)),
 

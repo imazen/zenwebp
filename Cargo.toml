@@ -23,12 +23,15 @@ keywords = ["webp", "image", "encoder", "decoder", "codec"]
 readme = "README.crates.md"
 autobenches = false
 
-include = ["/src", "LICENSE-AGPL3", "LICENSE-COMMERCIAL", "README.crates.md", "CHANGES.md"]
+include = ["/src", "LICENSE-AGPL3", "LICENSE-COMMERCIAL", "README.crates.md", "CHANGES.md", "CHANGELOG.md"]
 
 [dependencies]
 # Core dependencies - all no_std compatible
 byteorder-lite = { version = "0.1.0", default-features = false }
 enough = { version = "0.4.3", default-features = false, features = ["alloc"] }
+# Cancellation plus approximate progress for the native and zencodec entry
+# points (`with_pulse`); `Pulse: Stop + Report`. Same rev zencodec uses.
+how-far = { version = "0.1.0", default-features = false }
 hashbrown = { version = "0.17.1", default-features = false, features = ["default-hasher"] }
 thiserror = { version = "2.0.18", default-features = false }
 whereat = { version = "0.1.5", default-features = false }
@@ -91,6 +94,7 @@ zenanalyze-api = { version = "0.1.0", optional = true, default-features = false 
 zenanalyze = { version = "0.2.0", optional = true, features = ["api", "experimental"] }
 
 [dev-dependencies]
+how-far-along = { version = "0.1.0", default-features = false, features = ["std"] }
 zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
 # Companion crate shipping the conformance checks (incl.
 # `check_decode_truncation_series`); rides the same registry zencodec 0.1.26.
@@ -507,6 +511,9 @@ required-features = ["_dev"]
 # still resolves to a single source and the `Offer` types unify. Delete this
 # block once zenanalyze-api 0.1.1 / zenanalyze 0.2.x are published.
 [patch.crates-io]
+# Merged pixel-context bridge; keep root, fuzz and recompress on one revision.
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
 zenanalyze-api = { git = "https://github.com/imazen/zenanalyze" }
 zenanalyze = { git = "https://github.com/imazen/zenanalyze" }
 # zencodec#133 (structural inventories). The version floor above (0.1.27) is the first
@@ -529,3 +536,7 @@ required-features = ["__expert"]
 [[example]]
 name = "decode_parity_dump"
 path = "dev/decode_parity_dump.rs"
+
+[[bench]]
+name = "animation_contract_perf"
+harness = false

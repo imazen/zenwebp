@@ -8,6 +8,13 @@ test_webp := env_var_or_default("TEST_WEBP", "/tmp/test.webp")
 test:
     cargo test --lib
 
+# PR105 integration: both timing contracts plus retained whole-file behavior.
+animation-contract-check:
+    cargo test --locked --no-fail-fast --test animation_timing --test animation_decode_contract --test sansio --test streaming_decoder --test libwebp_decode_parity
+
+animation-contract-lint:
+    cargo clippy --locked --lib --tests -- -D warnings
+
 # Run clippy
 clippy:
     cargo clippy --all-targets --all-features -- -D warnings
@@ -254,6 +261,10 @@ wholefile-api-check:
     RUSTC_BOOTSTRAP=1 cargo rustdoc --locked --lib --features "$(features Cargo.toml)" -- -Zunstable-options --output-format json
     RUSTC_BOOTSTRAP=1 cargo rustdoc --manifest-path "$baseline/Cargo.toml" --locked --lib --features "$(features "$baseline/Cargo.toml")" --target-dir "$target_dir/published-api" -- -Zunstable-options --output-format json
     cargo semver-checks check-release --current-rustdoc "$target_dir/doc/zenwebp.json" --baseline-rustdoc "$target_dir/published-api/doc/zenwebp.json"
+
+# Same witness on main and PR105; point both runs at identical input fixtures.
+animation-contract-perf:
+    cargo bench --locked --bench animation_contract_perf -- --cpu-policy=unrestricted --format=json
 
 # Check compatibility after admitting the current archmage/magetypes beta.
 beta-cohort-check:

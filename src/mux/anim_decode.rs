@@ -81,10 +81,10 @@ pub struct AnimationInfo {
 pub struct AnimationDecoder<'a> {
     decoder: WebPDecoder<'a>,
     buf: Vec<u8>,
-    cumulative_ms: u32,
+    cumulative_ms: u64,
+    failed: bool,
     frames_read: u32,
     total_frames: u32,
-    stop: Option<&'a dyn enough::Stop>,
     /// `Limits::max_memory` from the config, applied to the RETAINED total
     /// in [`Self::decode_all`] (the per-frame `check_memory` inside
     /// `read_frame` only ever sees one canvas at a time) (#78).
@@ -133,9 +133,9 @@ impl<'a> AnimationDecoder<'a> {
             decoder,
             buf,
             cumulative_ms: 0,
+            failed: false,
             frames_read: 0,
             total_frames,
-            stop: None,
             max_memory: config.limits.max_memory,
         })
     }
@@ -175,8 +175,14 @@ impl<'a> AnimationDecoder<'a> {
 
     /// Set a cooperative cancellation token.
     pub fn set_stop(&mut self, stop: &'a dyn enough::Stop) {
-        self.stop = Some(stop);
         self.decoder.set_stop(Some(stop));
+    }
+
+    /// Report progress to, and take cancellation from, a [`how_far::Pulse`]:
+    /// the frame count is declared as its total and each decoded frame
+    /// advances it by one. Checked together with any [`set_stop`](Self::set_stop) token.
+    pub fn set_pulse(&mut self, pulse: &'a dyn how_far::Pulse) {
+        self.decoder.set_pulse(Some(pulse));
     }
 
     /// Set upsampling method for lossy frames.
@@ -228,13 +234,46 @@ impl<'a> AnimationDecoder<'a> {
     /// available via [`current_frame_data()`](Self::current_frame_data)
     /// until the next call to `decode_next` or `next_frame`.
     pub fn decode_next(&mut self) -> Result<Option<FrameInfo>, whereat::At<DecodeError>> {
-        if let Some(stop) = self.stop {
-            stop.check().map_err(|e| at!(DecodeError::from(e)))?;
+        self.decode_next_ctl(None)
+    }
+
+    /// [`decode_next`](Self::decode_next) with a pulse for this call only.
+    ///
+    /// Its cancellation is checked within VP8, VP8L and alpha decoding,
+    /// together with the stored [`set_stop`](Self::set_stop) / [`set_pulse`](Self::set_pulse)
+    /// policy, and it is advanced by one unit when the frame is complete. An
+    /// error poisons further output until [`reset`](Self::reset). Pass
+    /// `&how_far::StopOnly::borrowed(&token)` for cancellation alone.
+    pub fn decode_next_with_pulse(
+        &mut self,
+        pulse: &dyn how_far::Pulse,
+    ) -> Result<Option<FrameInfo>, whereat::At<DecodeError>> {
+        self.decode_next_ctl(Some(pulse))
+    }
+
+    fn decode_next_ctl(
+        &mut self,
+        pulse: Option<&dyn how_far::Pulse>,
+    ) -> Result<Option<FrameInfo>, whereat::At<DecodeError>> {
+        if self.failed {
+            return Err(at!(DecodeError::InvalidParameter(
+                "animation decode failed; reset required".into(),
+            )));
         }
-        match self.decoder.read_frame(&mut self.buf) {
+        let frame = match pulse {
+            Some(pulse) => self.decoder.read_frame_with_pulse(&mut self.buf, pulse),
+            None => self.decoder.read_frame(&mut self.buf),
+        };
+        let result = (|| match frame {
             Ok(duration_ms) => {
-                let timestamp_ms = self.cumulative_ms;
-                self.cumulative_ms = self.cumulative_ms.saturating_add(duration_ms);
+                let timestamp_ms = u32::try_from(self.cumulative_ms)
+                    .map_err(|_| at!(DecodeError::ImageTooLarge))?;
+                let next_ms = self
+                    .cumulative_ms
+                    .checked_add(u64::from(duration_ms))
+                    .filter(|&ms| ms <= u64::from(u32::MAX))
+                    .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
+                self.cumulative_ms = next_ms;
                 self.frames_read += 1;
                 let (w, h) = self.decoder.dimensions();
                 Ok(Some(FrameInfo {
@@ -246,7 +285,11 @@ impl<'a> AnimationDecoder<'a> {
             }
             Err(ref e) if matches!(e.error(), DecodeError::NoMoreFrames) => Ok(None),
             Err(e) => Err(e),
+        })();
+        if result.is_err() {
+            self.failed = true;
         }
+        result
     }
 
     /// Borrow the current composited frame data.
@@ -263,6 +306,7 @@ impl<'a> AnimationDecoder<'a> {
     pub fn reset(&mut self) -> Result<(), whereat::At<DecodeError>> {
         self.decoder.reset_animation()?;
         self.cumulative_ms = 0;
+        self.failed = false;
         self.frames_read = 0;
         Ok(())
     }

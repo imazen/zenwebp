@@ -1046,6 +1046,28 @@ is essentially the current implementation.
 
 ## Known Bugs
 
+- PR105 timestamp compatibility: native timestamp parameters and decoded frame
+  fields retain u32. Differences, cumulative decode time and final-frame end
+  use wide checked arithmetic; unrepresentable time refuses instead of wrapping
+  or saturating. Decoder overflow remains terminal until reset. The regression
+  covers exact-cap end, zero duration and a typed u32 caller. Focused40/40,
+  strict lint and regenerated API snapshots pass. Performance method and limits
+  are in [benchmarks/pr105](benchmarks/pr105/README.md).
+
+- PR105 integration preserves byte-based animation row packing. The padded-row
+  regression compares native decoded pixels with the tightly packed source;
+  the pinned pixel contract requires whole-pixel strides. The regression is
+  executed and passes. The integrated focused gate passes40/40. The approved
+  CICP-only expectation requires exact shared synthesized ICC bytes and the
+  requested CICP tag; explicitly supplied curated ICC remains byte-exact.
+  All pixel, metadata, timing and admission assertions remain enabled.
+- PR105 integration exposed animation ICC context missing from one-shot decode.
+  One-shot, strip and frame paths now derive the same color descriptor and
+  carry retained ICC context; extraction denial removes the optional ICC.
+  `still_decoder_views_keep_icc_context_and_bgra_pixels` checks exact channel
+  order, source samples, descriptors and policy across decoder views. The
+  unchanged shared check_all, independent libwebp gates and strict lint pass.
+
 - Guarded offset admission (2026-10-18): a known source length applies to every offered window. The negative control at offset 17 returned `Need` under a 32-byte cap; the adapter now checks the known total independently of offset, preserves the typed input-size error, and remains terminal on retry.
 
 - VP8X prefix regression (2026-10-18): early canvas metadata is accepted only while fewer bytes than the RIFF-declared file length are present. A complete file with missing flagged metadata must retain the native probe error; `review_f6_rejected_files_report_nothing_consumed` and the sans-I/O regression guard this boundary.
@@ -1078,3 +1100,22 @@ is essentially the current implementation.
 Transparent unsupported-operation wrappers skipped the shared cause in `Error::source`.
 The wrappers now retain that cause; `unsupported_causes_survive_erasure` covers
 exact animation timing and the decoder wrapper.
+
+## Animation contract regressions (2026-09-28)
+
+`tests/animation_timing.rs` and `tests/animation_decode_contract.rs` cover
+exact timing, single-frame animation signaling, total plays, bounded timelines,
+transactional admission, internal cancellation, and ICC-bearing transcodes.
+The eight admission/timing/metadata/cancellation negative controls were run
+and failed behaviorally with each corresponding fix removed. The decoder
+context/cancellation tests and P3 decode→encode test also failed before their
+fixes. Do not replace these checks with trait-presence assertions.
+
+Public native animation timestamps remain u32. Wide checked arithmetic refuses
+unrepresentable timelines; wire durations remain checked u24. Overflow is
+terminal until decoder reset.
+`finalize_animation` retains ANIM/ANMF for one frame; legacy `finalize` may
+produce a static image. Animation output remains buffered until RIFF assembly.
+Pixel bytes with non-sRGB descriptors must keep ICC context: accepting them
+as sRGB would silently alter their interpretation. Decode errors after entry
+poison animation state until reset.

@@ -312,6 +312,7 @@ enum ImageKind {
 }
 
 struct AnimationState {
+    failed: bool,
     next_frame: u32,
     next_frame_start: u64,
     dispose_next_frame: bool,
@@ -334,6 +335,7 @@ struct AnimationState {
 impl Default for AnimationState {
     fn default() -> Self {
         Self {
+            failed: false,
             next_frame: 0,
             next_frame_start: 0,
             dispose_next_frame: true,
@@ -471,6 +473,7 @@ pub struct DecodeRequest<'a> {
     config: &'a DecodeConfig,
     data: &'a [u8],
     stop: Option<&'a dyn enough::Stop>,
+    pulse: Option<&'a dyn how_far::Pulse>,
     stride_pixels: Option<u32>,
 }
 
@@ -482,6 +485,7 @@ impl<'a> DecodeRequest<'a> {
             config,
             data,
             stop: None,
+            pulse: None,
             stride_pixels: None,
         }
     }
@@ -490,6 +494,17 @@ impl<'a> DecodeRequest<'a> {
     #[must_use]
     pub fn stop(mut self, stop: &'a dyn enough::Stop) -> Self {
         self.stop = Some(stop);
+        self
+    }
+
+    /// Report progress to, and take cancellation from, a [`how_far::Pulse`].
+    ///
+    /// The image height is declared as the pulse's total and decoded rows
+    /// advance it (one unit for the first frame of an animation). Checked
+    /// together with any [`stop`](Self::stop) token.
+    #[must_use]
+    pub fn pulse(mut self, pulse: &'a dyn how_far::Pulse) -> Self {
+        self.pulse = Some(pulse);
         self
     }
 
@@ -512,6 +527,7 @@ impl<'a> DecodeRequest<'a> {
             &self.config.to_options(),
             &self.config.limits,
             self.stop,
+            self.pulse,
         )?;
         let layout = if has_alpha {
             crate::PixelLayout::Rgba8
@@ -537,6 +553,7 @@ impl<'a> DecodeRequest<'a> {
             &self.config.to_options(),
             &self.config.limits,
             self.stop,
+            self.pulse,
         )?;
         Ok((rgba, w, h))
     }
@@ -548,6 +565,7 @@ impl<'a> DecodeRequest<'a> {
             &self.config.to_options(),
             &self.config.limits,
             self.stop,
+            self.pulse,
         )?;
         if !has_alpha {
             Ok((native, w, h))
@@ -576,6 +594,7 @@ impl<'a> DecodeRequest<'a> {
             &self.config.to_options(),
             &self.config.limits,
             self.stop,
+            self.pulse,
         )?;
         convert_to_output(
             &rgba,
@@ -605,6 +624,7 @@ impl<'a> DecodeRequest<'a> {
             &self.config.to_options(),
             &self.config.limits,
             self.stop,
+            self.pulse,
         )?;
         convert_to_output(
             &rgba,
@@ -647,10 +667,19 @@ impl<'a> DecodeRequest<'a> {
     }
 
     fn decode_lossy_internal(self, bpp: usize) -> DecodeResult<(Vec<u8>, u16, u16)> {
-        // Honor cancellation before doing any work — the one-shot lossy path
-        // has no mid-decode checkpoints (the VP8v2 context does not carry a
-        // stop token), so the entry check is the cancellation contract here.
-        if let Some(stop) = self.stop {
+        crate::pulse::with_pulse_opt(self.pulse, self.stop, |stop, pulse| {
+            self.decode_lossy_ctl(bpp, stop, pulse)
+        })
+    }
+
+    fn decode_lossy_ctl(
+        self,
+        bpp: usize,
+        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn how_far::Pulse>,
+    ) -> DecodeResult<(Vec<u8>, u16, u16)> {
+        // Entry check; the VP8 decoder then checks once per macroblock row.
+        if let Some(stop) = stop {
             stop.check()
                 .map_err(|r| whereat::at!(DecodeError::Cancelled(r)))?;
         }
@@ -687,7 +716,8 @@ impl<'a> DecodeRequest<'a> {
                 ctx.set_upsampling(self.config.upsampling);
                 ctx.set_alloc_pref(self.config.limits.alloc_pref);
                 let mut output = Vec::new();
-                let (w, h) = ctx.decode_to_rgb(vp8_data, &mut output, bpp)?;
+                let (w, h) =
+                    ctx.decode_to_rgb_with_stop(vp8_data, &mut output, bpp, stop, pulse)?;
                 Ok((output, w, h))
             }
             b"VP8X" => {
@@ -722,7 +752,13 @@ impl<'a> DecodeRequest<'a> {
 
                 // Decode lossy bitstream, requesting RGBA if alpha is present
                 let decode_bpp = if frame.has_alpha { 4 } else { bpp };
-                let (w, h) = ctx.decode_to_rgb(frame.bitstream, &mut output, decode_bpp)?;
+                let (w, h) = ctx.decode_to_rgb_with_stop(
+                    frame.bitstream,
+                    &mut output,
+                    decode_bpp,
+                    stop,
+                    pulse,
+                )?;
 
                 // Apply alpha channel if present
                 if let Some(alpha_data) = frame.alpha_data {
@@ -837,6 +873,7 @@ pub struct WebPDecoder<'a> {
     webp_decode_options: WebPDecodeOptions,
 
     stop: Option<&'a dyn enough::Stop>,
+    pulse: Option<&'a dyn how_far::Pulse>,
 }
 
 impl<'a> WebPDecoder<'a> {
@@ -956,6 +993,7 @@ impl<'a> WebPDecoder<'a> {
             loop_duration: 0,
             webp_decode_options,
             stop: None,
+            pulse: None,
         };
         decoder.read_data()?;
         Ok(decoder)
@@ -1219,6 +1257,16 @@ impl<'a> WebPDecoder<'a> {
         self.stop = stop;
     }
 
+    /// Report progress to, and take cancellation from, a [`how_far::Pulse`].
+    ///
+    /// [`read_image`](Self::read_image) declares the image height as the
+    /// pulse's total and advances it by decoded rows; [`read_frame`](Self::read_frame)
+    /// declares the frame count and advances one unit per frame. Cancellation
+    /// is checked together with any [`set_stop`](Self::set_stop) token.
+    pub fn set_pulse(&mut self, pulse: Option<&'a dyn how_far::Pulse>) {
+        self.pulse = pulse;
+    }
+
     /// Sets the maximum size in bytes of a metadata chunk (ICCP / EXIF / XMP)
     /// the decoder will copy out for [`Self::icc_profile`],
     /// [`Self::exif_metadata`] and [`Self::xmp_metadata`].
@@ -1363,22 +1411,45 @@ impl<'a> WebPDecoder<'a> {
     /// Returns the raw bytes of the image. For animated images, this is the first frame.
     ///
     /// Fails with `ImageTooLarge` if `buf` has length different than `output_buffer_size()`
+    ///
+    /// A pulse set with [`set_pulse`](Self::set_pulse) is told the image height
+    /// as its total and advanced by decoded rows (one unit for the first frame
+    /// of an animation).
     pub fn read_image(&mut self, buf: &mut [u8]) -> DecodeResult<()> {
         if Some(buf.len()) != self.output_buffer_size() {
             return Err(at!(DecodeError::ImageTooLarge));
         }
+        crate::pulse::with_pulse_opt(self.pulse, self.stop, |stop, pulse| {
+            if let Some(pulse) = pulse {
+                let units = if self.is_animated() { 1 } else { self.height };
+                crate::pulse::declare_total(pulse, u64::from(units));
+            }
+            self.read_image_ctl(buf, stop, pulse)
+        })
+    }
 
+    fn read_image_ctl(
+        &mut self,
+        buf: &mut [u8],
+        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn how_far::Pulse>,
+    ) -> DecodeResult<()> {
+        let report = pulse.map(|p| p as &dyn how_far::Report);
         if self.is_animated() {
             let saved = core::mem::take(&mut self.animation);
             self.animation.next_frame_start =
                 self.chunks.get(&WebPRiffChunk::ANMF).unwrap().start - 8;
-            let result = self.read_frame(buf);
+            let result = self.read_frame_ctl(buf, stop.unwrap_or(&enough::Unstoppable), None);
             self.animation = saved;
             result?;
+            if let Some(report) = report {
+                report.advance(1);
+            }
         } else if let Some(range) = self.chunks.get(&WebPRiffChunk::VP8L) {
             let data_slice = self.chunk_slice(range)?;
             let mut decoder = LosslessDecoder::new(data_slice);
-            decoder.set_stop(self.stop);
+            decoder.set_stop(stop);
+            decoder.set_report(report);
             decoder.set_limits(Some(&self.limits));
 
             if self.has_alpha {
@@ -1406,10 +1477,8 @@ impl<'a> WebPDecoder<'a> {
                 .get(range.start as usize..range.end as usize)
                 .ok_or(at!(DecodeError::InvalidChunkSize))?;
 
-            // The lossy VP8 context carries no stop token, so this entry check
-            // is the cancellation contract for a still lossy decode (the VP8L
-            // branch above hands the token to the lossless decoder).
-            if let Some(stop) = self.stop {
+            // Entry check; the VP8 decoder then checks once per macroblock row.
+            if let Some(stop) = stop {
                 stop.check().map_err(|r| at!(DecodeError::Cancelled(r)))?;
             }
 
@@ -1426,10 +1495,13 @@ impl<'a> WebPDecoder<'a> {
             // on the native API → behavior unchanged).
             self.animation.ctx.set_alloc_pref(self.limits.alloc_pref);
             let mut output = Vec::new();
-            let (w, h) = self
-                .animation
-                .ctx
-                .decode_to_rgb(vp8_data, &mut output, bpp)?;
+            let (w, h) = self.animation.ctx.decode_to_rgb_with_stop(
+                vp8_data,
+                &mut output,
+                bpp,
+                stop,
+                pulse,
+            )?;
             if u32::from(w) != self.width || u32::from(h) != self.height {
                 return Err(at!(DecodeError::InconsistentImageSizes));
             }
@@ -1478,6 +1550,66 @@ impl<'a> WebPDecoder<'a> {
     /// `DecodeError::NoMoreFrames` and `buf` is left unchanged.
     ///
     pub fn read_frame(&mut self, buf: &mut [u8]) -> DecodeResult<u32> {
+        crate::pulse::with_pulse_opt(self.pulse, self.stop, |stop, pulse| {
+            if let Some(pulse) = pulse
+                && self.animation.next_frame == 0
+            {
+                crate::pulse::declare_total(pulse, u64::from(self.num_frames));
+            }
+            self.read_frame_ctl(buf, stop.unwrap_or(&enough::Unstoppable), pulse)
+        })
+    }
+
+    /// [`read_frame`](Self::read_frame) with a pulse for this call only.
+    ///
+    /// The pulse's cancellation is checked together with the decoder's stored
+    /// [`set_stop`](Self::set_stop) / [`set_pulse`](Self::set_pulse) policy,
+    /// inside the VP8, VP8L and alpha decoders. The pulse is advanced by one
+    /// unit when the frame is complete; the stored pulse is not. Pass
+    /// `&how_far::StopOnly::borrowed(&token)` for cancellation alone.
+    pub fn read_frame_with_pulse(
+        &mut self,
+        buf: &mut [u8],
+        pulse: &dyn how_far::Pulse,
+    ) -> DecodeResult<u32> {
+        crate::pulse::with_pulse_opt(self.pulse, self.stop, |stored, _| match stored {
+            Some(stored) => {
+                let combined = how_far::WithStop::borrowed(pulse, stored);
+                self.read_frame_ctl(buf, &combined, Some(&combined))
+            }
+            None => self.read_frame_ctl(buf, pulse, Some(pulse)),
+        })
+    }
+
+    /// Decode one frame; a decode error poisons the animation until
+    /// [`reset_animation`](Self::reset_animation). `pulse` gets one unit per
+    /// completed frame.
+    fn read_frame_ctl(
+        &mut self,
+        buf: &mut [u8],
+        stop: &dyn enough::Stop,
+        pulse: Option<&dyn how_far::Pulse>,
+    ) -> DecodeResult<u32> {
+        if self.animation.failed {
+            return Err(at!(DecodeError::InvalidParameter(String::from(
+                "animation decode failed; reset required",
+            ))));
+        }
+        let result = self.read_frame_inner(buf, stop);
+        match &result {
+            Ok(_) => {
+                if let Some(pulse) = pulse {
+                    pulse.advance(1);
+                }
+            }
+            Err(e) if matches!(e.error(), DecodeError::NoMoreFrames) => {}
+            Err(_) => self.animation.failed = true,
+        }
+        result
+    }
+
+    fn read_frame_inner(&mut self, buf: &mut [u8], stop: &dyn enough::Stop) -> DecodeResult<u32> {
+        stop.check().map_err(|e| at!(DecodeError::from(e)))?;
         if !self.is_animated() {
             return Err(at!(DecodeError::InvalidParameter(String::from(
                 "not an animated WebP",
@@ -1489,12 +1621,6 @@ impl<'a> WebPDecoder<'a> {
 
         if self.animation.next_frame == self.num_frames {
             return Err(at!(DecodeError::NoMoreFrames));
-        }
-
-        // Lossy (VP8 / ALPH+VP8) frames decode through a context that carries
-        // no stop token; check once per frame so cancellation is honored.
-        if let Some(stop) = self.stop {
-            stop.check().map_err(|r| at!(DecodeError::Cancelled(r)))?;
         }
 
         let ImageKind::Extended(info) = &self.kind else {
@@ -1562,10 +1688,12 @@ impl<'a> WebPDecoder<'a> {
                 // DecoderContext is reused from self.animation.ctx, saving
                 // ~100KB of allocation per frame for coefficient/filter buffers.
                 let data_slice = self.r.take_slice(chunk_size as usize)?;
-                let (w, h) = self.animation.ctx.decode_to_rgb(
+                let (w, h) = self.animation.ctx.decode_to_rgb_with_stop(
                     data_slice,
                     &mut self.animation.frame_scratch,
                     3,
+                    Some(stop),
+                    None,
                 )?;
                 if u32::from(w) != frame_width || u32::from(h) != frame_height {
                     return Err(at!(DecodeError::InconsistentImageSizes));
@@ -1580,7 +1708,7 @@ impl<'a> WebPDecoder<'a> {
                     .get(1..5)
                     .is_some_and(|b| (u32::from_le_bytes([b[0], b[1], b[2], b[3]]) >> 28) & 1 != 0);
                 let mut lossless_decoder = LosslessDecoder::new(data_slice);
-                lossless_decoder.set_stop(self.stop);
+                lossless_decoder.set_stop(Some(stop));
                 lossless_decoder.set_limits(Some(&self.limits));
                 let frame_alloc = frame_width as usize * frame_height as usize * 4;
                 self.limits.check_memory(frame_alloc)?;
@@ -1613,11 +1741,12 @@ impl<'a> WebPDecoder<'a> {
                     self.r
                         .seek_relative((chunk_size_rounded - chunk_size) as i64)?;
                 }
-                let alpha_chunk = read_alpha_chunk(
+                let alpha_chunk = extended::read_alpha_chunk_with_stop(
                     alpha_slice,
                     frame_width as u16,
                     frame_height as u16,
                     &self.limits,
+                    Some(stop),
                 )?;
 
                 // read opaque — lossy decode with buffer reuse
@@ -1628,10 +1757,12 @@ impl<'a> WebPDecoder<'a> {
                 }
 
                 let vp8_slice = self.r.take_slice(next_chunk_size as usize)?;
-                let (w, h) = self.animation.ctx.decode_to_rgb(
+                let (w, h) = self.animation.ctx.decode_to_rgb_with_stop(
                     vp8_slice,
                     &mut self.animation.frame_scratch,
                     4,
+                    Some(stop),
+                    None,
                 )?;
 
                 // The alpha plane was sized from the ANMF frame dimensions, but the
@@ -1648,6 +1779,7 @@ impl<'a> WebPDecoder<'a> {
                 let fh = usize::from(h);
 
                 for y in 0..fh {
+                    stop.check().map_err(|e| at!(DecodeError::from(e)))?;
                     for x in 0..fw {
                         let predictor: u8 = get_alpha_predictor(
                             x,
@@ -1670,6 +1802,7 @@ impl<'a> WebPDecoder<'a> {
             _ => return Err(at!(DecodeError::ChunkHeaderInvalid(chunk.to_fourcc()))),
         };
 
+        stop.check().map_err(|e| at!(DecodeError::from(e)))?;
         // libwebp's WebPAnimDecoder ignores the ANIM background color and
         // composites onto transparent black; a caller-set background
         // (`set_background_color`) overrides that.
@@ -1712,6 +1845,7 @@ impl<'a> WebPDecoder<'a> {
             prev,
         )?;
 
+        stop.check().map_err(|e| at!(DecodeError::from(e)))?;
         self.animation.previous_frame_width = frame_width;
         self.animation.previous_frame_height = frame_height;
         self.animation.previous_frame_x_offset = frame_x;
@@ -1740,6 +1874,7 @@ impl<'a> WebPDecoder<'a> {
                 "not an animated WebP",
             ))));
         }
+        self.animation.failed = false;
         self.animation.next_frame = 0;
         self.animation.next_frame_start = self.chunks.get(&WebPRiffChunk::ANMF).unwrap().start - 8;
         self.animation.dispose_next_frame = true;
@@ -1796,12 +1931,14 @@ fn decode_native_internal(
     options: &WebPDecodeOptions,
     limits: &super::limits::Limits,
     stop: Option<&dyn enough::Stop>,
+    pulse: Option<&dyn how_far::Pulse>,
 ) -> DecodeResult<(Vec<u8>, u32, u32, bool)> {
     // Limits must reach the constructor so `read_data`'s dimension/frame
     // gates enforce them; a later `set_limits` would run after those checks.
     let mut decoder =
         WebPDecoder::new_with_options_and_limits(data, options.clone(), limits.clone())?;
     decoder.set_stop(stop);
+    decoder.set_pulse(pulse);
     let (w, h) = decoder.dimensions();
     let output_size = decoder
         .output_buffer_size()
@@ -1822,8 +1959,9 @@ fn decode_to_rgba_internal(
     options: &WebPDecodeOptions,
     limits: &super::limits::Limits,
     stop: Option<&dyn enough::Stop>,
+    pulse: Option<&dyn how_far::Pulse>,
 ) -> DecodeResult<(Vec<u8>, u32, u32)> {
-    let (native, w, h, has_alpha) = decode_native_internal(data, options, limits, stop)?;
+    let (native, w, h, has_alpha) = decode_native_internal(data, options, limits, stop, pulse)?;
     if has_alpha {
         Ok((native, w, h))
     } else {

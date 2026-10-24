@@ -3,5 +3,7 @@
 //! Shared implementation + format docs: the `zenutils-apidoc` crate.
 #[test]
 fn public_api_surface_docs_are_current() {
-    zenutils_apidoc::ApiDoc::new().workspace_dir("..").run();
+    zenutils_apidoc::ApiDoc::new()
+        .workspace_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
+        .run();
 }

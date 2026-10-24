@@ -117,4 +117,7 @@ zenwebp = { workspace = true, features = ["std"] }
 # Cargo does not inherit the parent package's patch table into this workspace.
 # Keep the unpublished contract revision aligned until zencodec 0.1.27 ships.
 [patch.crates-io]
+# Merged pixel-context bridge; keep root, fuzz and recompress on one revision.
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
 zencodec = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }

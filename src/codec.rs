@@ -604,6 +604,7 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
         WebpEncodeJob {
             config: self,
             stop: None,
+            pulse: None,
             icc: None,
             exif: None,
             xmp: None,
@@ -623,6 +624,7 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
 pub struct WebpEncodeJob {
     config: WebpEncoderConfig,
     stop: Option<zencodec::StopToken>,
+    pulse: Option<how_far::SharedPulse>,
     icc: Option<Arc<[u8]>>,
     exif: Option<Arc<[u8]>>,
     xmp: Option<Arc<[u8]>>,
@@ -722,6 +724,15 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
         self
     }
 
+    /// Cancellation and progress. A still encode declares 100 units and
+    /// reports percent; an animation encoder reports one unit per accepted
+    /// frame (the total is unknown until `finish`).
+    fn with_pulse(mut self, pulse: how_far::SharedPulse) -> Self {
+        self.stop = Some(zencodec::StopToken::new(pulse.clone()));
+        self.pulse = Some(pulse);
+        self
+    }
+
     fn with_policy(mut self, policy: zencodec::encode::EncodePolicy) -> Self {
         self.policy = Some(policy);
         self
@@ -776,6 +787,7 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
         Ok(WebpEncoder {
             inner_config,
             stop: self.stop,
+            pulse: self.pulse,
             icc: self.icc,
             exif,
             xmp: self.xmp,
@@ -795,7 +807,11 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
             Some(Some(0)) | None => crate::decoder::LoopCount::Forever,
             Some(None) => crate::decoder::LoopCount::Forever,
             Some(Some(n)) => {
-                let n16 = (n.min(u16::MAX as u32)) as u16;
+                let n16 = u16::try_from(n).map_err(|_| {
+                    zencodec::CodecError::of(at!(EncodeError::InvalidBufferSize(
+                        "WebP supports at most 65535 total animation plays".into()
+                    )))
+                })?;
                 crate::decoder::LoopCount::Times(
                     core::num::NonZeroU16::new(n16)
                         .unwrap_or(core::num::NonZeroU16::new(1).unwrap()),
@@ -812,6 +828,20 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
             canvas_size: self.canvas_size,
             loop_count,
             limits: self.limits,
+            stop: self.stop,
+            pulse: self.pulse,
+            icc: self.icc,
+            exif: self.exif,
+            xmp: self.xmp,
+            cicp: self.cicp,
+            color_policy: self
+                .policy
+                .unwrap_or_default()
+                .resolve_color(zencodec::ColorEmitPolicy::Balanced),
+            frames: 0,
+            frame_descriptor: None,
+            frame_color: None,
+            failed: false,
         })
     }
 }
@@ -839,6 +869,7 @@ enum StreamAccum {
 pub struct WebpEncoder {
     inner_config: EncoderConfig,
     stop: Option<zencodec::StopToken>,
+    pulse: Option<how_far::SharedPulse>,
     icc: Option<Arc<[u8]>>,
     exif: Option<Arc<[u8]>>,
     xmp: Option<Arc<[u8]>>,
@@ -899,79 +930,12 @@ impl WebpEncoder {
         if let Some(ref stop) = self.stop {
             req = req.with_stop(stop);
         }
-        // Holds any synthesized ICC bytes (bundled `&'static`, or a
-        // cms-moxcms-generated profile) alive until `req.encode()` below: `meta`
-        // borrows the bytes and is moved into `req`, so the holder must outlive
-        // the metadata block. Assigned unconditionally inside it.
-        let synth_holder;
+        if let Some(ref pulse) = self.pulse {
+            req = req.with_pulse(pulse);
+        }
+        let icc_holder = resolve_webp_icc(self.icc.as_ref(), self.cicp, self.color_policy, layout)?;
         {
-            // Resolve which color description WebP should embed. WebP's only
-            // color carrier is an embedded ICC profile (no CICP carrier), so the
-            // plan's `cicp` field is intentionally ignored — the whole point of
-            // running the resolver is to turn a CICP-only source into a
-            // synthesized ICC instead of silently emitting an untagged
-            // (sRGB-assumed) WebP.
-            let channel_count: u8 = match layout {
-                PixelLayout::L8 => 1,
-                PixelLayout::La8 => 2,
-                PixelLayout::Rgb8 | PixelLayout::Bgr8 | PixelLayout::Yuv420 => 3,
-                PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => 4,
-            };
-            let mut src = zencodec::SourceColor::default().with_channel_count(channel_count);
-            if let Some(cicp) = self.cicp {
-                src = src
-                    .with_cicp(cicp)
-                    .with_color_authority(zencodec::ColorAuthority::Cicp);
-            }
-            if let Some(ref icc) = self.icc {
-                // ICC is WebP's authoritative carrier; if both are present prefer
-                // it (matches the decode-side authority).
-                src = src
-                    .with_icc_profile(icc.clone())
-                    .with_color_authority(zencodec::ColorAuthority::Icc);
-            }
-            let plan = zencodec::resolve_color_emit(&src, &ENCODE_CAPABILITIES, self.color_policy);
-
-            // Lower the ICC disposition to bytes that outlive the local `meta`.
-            // `SynthesizeFrom` lowers a full CICP via the transfer-aware
-            // `synthesize_icc_for_cicp` (so a BT.2020-PQ source never gets the
-            // SDR-TRC Rec.2020 profile). `Profile` → bundled `&'static` bytes, or
-            // a cms-moxcms-generated profile held alive in `synth_holder`;
-            // `NotNeeded` (sRGB default) → embed no ICC.
-            //
-            // Every other outcome is an ERROR, not a silent skip: WebP has NO
-            // CICP carrier, so an embedded ICC is the ONLY way this color
-            // survives — emitting without it would misrepresent the image as
-            // sRGB. The `cms` feature (icc-db blob synthesis) covers the full
-            // ITU-T H.273 grid incl PQ/HLG, with no moxcms dependency.
-            synth_holder = match &plan.icc {
-                zencodec::IccDisposition::SynthesizeFrom(cicp) => {
-                    use zenpixels_convert::icc_profiles::SynthesizedIcc;
-                    match zenpixels_convert::icc_profiles::synthesize_icc_for_cicp(*cicp) {
-                        SynthesizedIcc::Profile(bytes) => Some(bytes),
-                        SynthesizedIcc::NotNeeded => None,
-                        outcome => {
-                            return Err(at!(EncodeError::IccSynthesisUnavailable(alloc::format!(
-                                "CICP primaries {} / transfer {} ({outcome:?}); enable \
-                                 zenwebp's `cms` feature, supply an ICC profile, or drop \
-                                 the CICP",
-                                cicp.color_primaries,
-                                cicp.transfer_characteristics
-                            ))));
-                        }
-                    }
-                }
-                _ => None,
-            };
-            let icc_bytes: Option<&[u8]> = match plan.icc {
-                zencodec::IccDisposition::KeepSource => self.icc.as_deref(),
-                zencodec::IccDisposition::SynthesizeFrom(_) => synth_holder.as_deref(),
-                zencodec::IccDisposition::Drop => None,
-                // `IccDisposition` is #[non_exhaustive]; embed nothing for any
-                // future disposition we don't yet understand.
-                _ => None,
-            };
-
+            let icc_bytes = icc_holder.as_deref();
             let mut meta = crate::ImageMetadata::new();
             if let Some(icc) = icc_bytes {
                 meta = meta.with_icc_profile(icc);
@@ -1189,6 +1153,18 @@ pub struct WebpAnimationFrameEncoder {
     canvas_size: Option<(u32, u32)>,
     loop_count: crate::decoder::LoopCount,
     limits: ResourceLimits,
+    stop: Option<zencodec::StopToken>,
+    /// The job's pulse: one unit per accepted frame.
+    pulse: Option<how_far::SharedPulse>,
+    icc: Option<Arc<[u8]>>,
+    exif: Option<Arc<[u8]>>,
+    xmp: Option<Arc<[u8]>>,
+    cicp: Option<zencodec::Cicp>,
+    color_policy: zencodec::ColorEmitPolicy,
+    frames: u32,
+    frame_descriptor: Option<PixelDescriptor>,
+    frame_color: Option<Arc<zenpixels::ColorContext>>,
+    failed: bool,
 }
 
 /// Convert a [`MuxError`] to an [`EncodeError`].
@@ -1202,14 +1178,55 @@ fn mux_to_encode_err(e: MuxError) -> EncodeError {
 }
 
 impl WebpAnimationFrameEncoder {
-    fn ensure_encoder(&mut self, frame_w: u32, frame_h: u32) -> Result<(), At<EncodeError>> {
+    fn ensure_encoder(
+        &mut self,
+        frame_w: u32,
+        frame_h: u32,
+        layout: PixelLayout,
+        pixels: &PixelSlice<'_>,
+    ) -> Result<(), At<EncodeError>> {
+        let (cw, ch) = self.canvas_size.unwrap_or((frame_w, frame_h));
+        if (cw, ch) != (frame_w, frame_h) {
+            return Err(at!(EncodeError::InvalidDimensions));
+        }
         if self.anim_enc.is_none() {
-            let (cw, ch) = self.canvas_size.unwrap_or((frame_w, frame_h));
             let config = AnimationConfig {
                 loop_count: self.loop_count,
                 ..AnimationConfig::default()
             };
-            let enc = AnimationEncoder::new(cw, ch, config).map_err_at(mux_to_encode_err)?;
+            let mut enc = AnimationEncoder::new(cw, ch, config).map_err_at(mux_to_encode_err)?;
+            let context = pixels.color_context();
+            let icc = self
+                .icc
+                .as_ref()
+                .or_else(|| context.and_then(|c| c.icc.as_ref()));
+            let desc = pixels.descriptor();
+            let cicp = self
+                .cicp
+                .or_else(|| context.and_then(|c| c.cicp))
+                .or_else(|| {
+                    Some(zencodec::Cicp::new(
+                        desc.primaries.to_cicp()?,
+                        desc.transfer().to_cicp()?,
+                        0,
+                        true,
+                    ))
+                });
+            if icc.is_none() && cicp.is_none() {
+                return Err(at!(EncodeError::IccSynthesisUnavailable(
+                    "animation color requires an ICC profile or known CICP".into()
+                )));
+            }
+            if let Some(icc) = resolve_webp_icc(icc, cicp, self.color_policy, layout)? {
+                enc.icc_profile(icc.into_owned());
+            }
+            if let Some(exif) = &self.exif {
+                enc.exif(exif.to_vec());
+            }
+            if let Some(xmp) = &self.xmp {
+                enc.xmp(xmp.to_vec());
+            }
+            self.canvas_size = Some((cw, ch));
             self.anim_enc = Some(enc);
         }
         Ok(())
@@ -1258,48 +1275,153 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
         duration_ms: u32,
         stop: Option<&dyn enough::Stop>,
     ) -> Result<(), At<zencodec::CodecError>> {
+        if self.failed {
+            return Err(zencodec::CodecError::of(at!(
+                EncodeError::InvalidBufferSize("animation encoder has failed".into())
+            )));
+        }
         if duration_ms > 0x00ff_ffff {
             return Err(Self::reject(UnsupportedOperation::AnimationTiming));
         }
-        let cumulative_ms = self
+        let next_ms = self
             .cumulative_ms
             .checked_add(duration_ms)
             .ok_or_else(|| Self::reject(UnsupportedOperation::AnimationTiming))?;
-        if let Some(s) = stop {
-            s.check()
-                .map_err(|e| zencodec::CodecError::of(at!(EncodeError::from(e))))?;
+        let job_stop = self.stop.clone();
+        let stops = AnimationStops {
+            job: job_stop.as_ref(),
+            call: stop,
+        };
+        enough::Stop::check(&stops)
+            .map_err(|e| zencodec::CodecError::of(at!(EncodeError::from(e))))?;
+        let frames = self
+            .frames
+            .checked_add(1)
+            .ok_or_else(|| Self::reject(UnsupportedOperation::AnimationTiming))?;
+        self.limits
+            .check_frames(frames)
+            .and_then(|_| self.limits.check_dimensions(pixels.width(), pixels.rows()))
+            .map_err(|e| {
+                zencodec::CodecError::of(at!(EncodeError::LimitExceeded(
+                    e.kind(),
+                    alloc::format!("{e}")
+                )))
+            })?;
+        if self
+            .canvas_size
+            .is_some_and(|size| size != (pixels.width(), pixels.rows()))
+        {
+            return Err(zencodec::CodecError::of(at!(
+                EncodeError::InvalidDimensions
+            )));
         }
-        let (buf, layout, w, h, stride_pixels) =
-            pixels_to_webp_input(&pixels).map_err(zencodec::CodecError::of)?;
+        let desc = pixels.descriptor();
+        if desc.channel_type() != zenpixels::ChannelType::U8
+            || desc.signal_range != zenpixels::SignalRange::Full
+            || matches!(
+                desc.alpha(),
+                Some(zenpixels::AlphaMode::Premultiplied | zenpixels::AlphaMode::Undefined)
+            )
+        {
+            return Err(Self::reject(UnsupportedOperation::PixelFormat));
+        }
+        if self.frame_descriptor.is_some_and(|previous| {
+            previous.transfer() != desc.transfer() || previous.primaries != desc.primaries
+        }) || (self.frame_descriptor.is_some()
+            && self.frame_color.as_ref() != pixels.color_context())
+        {
+            return Err(zencodec::CodecError::of(at!(
+                EncodeError::InvalidBufferSize(
+                    "animation frames must share one color interpretation".into()
+                )
+            )));
+        }
+        let layout = match desc.layout() {
+            zenpixels::ChannelLayout::Rgb => PixelLayout::Rgb8,
+            zenpixels::ChannelLayout::Rgba => PixelLayout::Rgba8,
+            zenpixels::ChannelLayout::Bgra => PixelLayout::Bgra8,
+            zenpixels::ChannelLayout::Gray => PixelLayout::L8,
+            zenpixels::ChannelLayout::GrayAlpha => PixelLayout::La8,
+            _ => return Err(Self::reject(UnsupportedOperation::PixelFormat)),
+        };
+        let (w, h) = (pixels.width(), pixels.rows());
+        let buf = alloc::borrow::Cow::Borrowed(pixels.as_strided_bytes());
+        let retained = self
+            .anim_enc
+            .as_ref()
+            .map_or(0, AnimationEncoder::retained_bytes);
+        let estimate = crate::heuristics::estimate_encode(
+            w,
+            h,
+            layout.bytes_per_pixel() as u8,
+            &self.inner_config,
+        );
+        let memory = estimate
+            .peak_memory_bytes
+            .saturating_add(u64::from(w) * u64::from(h) * 8)
+            .saturating_add(retained);
+        self.limits.check_memory(memory).map_err(|e| {
+            zencodec::CodecError::of(at!(EncodeError::LimitExceeded(
+                e.kind(),
+                alloc::format!("{e}")
+            )))
+        })?;
         // AnimationEncoder::add_frame assumes tightly-packed rows
         // (stride == width). Pack to contiguous if the caller's PixelSlice has
         // padded rows — e.g. imageflow's SIMD-aligned bitmaps, where the t_stride
         // may be larger than width * bytes_per_pixel.
         let bpp = layout.bytes_per_pixel();
-        let tight_stride = w as usize;
-        let buf: alloc::borrow::Cow<'_, [u8]> = if stride_pixels == tight_stride {
+        let dst_stride_bytes = w as usize * bpp;
+        let buf: alloc::borrow::Cow<'_, [u8]> = if pixels.stride() == dst_stride_bytes {
             buf
         } else {
-            let src_stride_bytes = stride_pixels * bpp;
-            let dst_stride_bytes = tight_stride * bpp;
-            let mut packed = alloc::vec![0u8; dst_stride_bytes * h as usize];
+            let src_stride_bytes = pixels.stride();
+            let mut packed = Vec::new();
+            packed
+                .try_reserve_exact(dst_stride_bytes * h as usize)
+                .map_err(|_| {
+                    zencodec::CodecError::of(at!(EncodeError::InvalidBufferSize(
+                        "animation allocation failed".into()
+                    )))
+                })?;
             for row in 0..h as usize {
+                enough::Stop::check(&stops)
+                    .map_err(|e| zencodec::CodecError::of(at!(EncodeError::from(e))))?;
                 let src_off = row * src_stride_bytes;
-                let dst_off = row * dst_stride_bytes;
-                packed[dst_off..dst_off + dst_stride_bytes]
-                    .copy_from_slice(&buf[src_off..src_off + dst_stride_bytes]);
+                packed.extend_from_slice(&buf[src_off..src_off + dst_stride_bytes]);
             }
             alloc::borrow::Cow::Owned(packed)
         };
-        self.ensure_encoder(w, h)
+        self.ensure_encoder(w, h, layout, &pixels)
             .map_err(zencodec::CodecError::of)?;
         let timestamp_ms = self.cumulative_ms;
         let enc = self.anim_enc.as_mut().unwrap();
-        enc.add_frame(&buf, layout, timestamp_ms, &self.inner_config)
-            .map_err_at(mux_to_encode_err)
-            .map_err(zencodec::CodecError::of)?;
-        self.cumulative_ms = cumulative_ms;
+        // Cancellation only: the job's pulse counts frames, not the frame's
+        // encode percent.
+        enc.add_frame_with_pulse(
+            &buf,
+            layout,
+            timestamp_ms,
+            &self.inner_config,
+            &how_far::StopOnly::borrowed(&stops),
+        )
+        .map_err_at(mux_to_encode_err)
+        .map_err(zencodec::CodecError::of)?;
+        if let Err(error) = self.limits.check_memory(enc.retained_bytes()) {
+            self.failed = true;
+            return Err(zencodec::CodecError::of(at!(EncodeError::LimitExceeded(
+                error.kind(),
+                alloc::format!("{error}")
+            ))));
+        }
+        self.cumulative_ms = next_ms;
         self.last_frame_duration_ms = duration_ms;
+        self.frames = frames;
+        self.frame_descriptor = Some(desc);
+        self.frame_color = pixels.color_context().cloned();
+        if let Some(pulse) = &self.pulse {
+            how_far::Report::advance(pulse, 1);
+        }
         Ok(())
     }
 
@@ -1307,16 +1429,24 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
         self,
         stop: Option<&dyn enough::Stop>,
     ) -> Result<EncodeOutput, At<zencodec::CodecError>> {
-        if let Some(s) = stop {
-            s.check()
-                .map_err(|e| zencodec::CodecError::of(at!(EncodeError::from(e))))?;
+        if self.failed {
+            return Err(zencodec::CodecError::of(at!(
+                EncodeError::InvalidBufferSize("animation encoder has failed".into())
+            )));
         }
+        let job_stop = self.stop.clone();
+        let stops = AnimationStops {
+            job: job_stop.as_ref(),
+            call: stop,
+        };
+        enough::Stop::check(&stops)
+            .map_err(|e| zencodec::CodecError::of(at!(EncodeError::from(e))))?;
         let enc = self
             .anim_enc
             .ok_or_else(|| EncodeError::InvalidBufferSize("no frames added".into()))
             .map_err(|e| zencodec::CodecError::of(at!(e)))?;
         let data = enc
-            .finalize(self.last_frame_duration_ms)
+            .finalize_animation(self.last_frame_duration_ms)
             .map_err_at(mux_to_encode_err)
             .map_err(zencodec::CodecError::of)?;
         self.limits
@@ -1476,6 +1606,7 @@ impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
         WebpDecodeJob {
             config: self,
             stop: None,
+            pulse: None,
             limits: ResourceLimits::none(),
             start_frame_index: 0,
             policy: None,
@@ -1492,6 +1623,7 @@ impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
 pub struct WebpDecodeJob {
     config: WebpDecoderConfig,
     stop: Option<zencodec::StopToken>,
+    pulse: Option<how_far::SharedPulse>,
     limits: ResourceLimits,
     start_frame_index: u32,
     policy: Option<zencodec::decode::DecodePolicy>,
@@ -1777,6 +1909,17 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         self
     }
 
+    /// Cancellation and progress. Still decodes (one-shot, scanline-batch and
+    /// push) declare the image height and report decoded rows; with a pulse
+    /// the scanline-batch decoder takes its full-image path, like any stop
+    /// token. Animation decoders declare the frame count and report one unit
+    /// per decoded frame.
+    fn with_pulse(mut self, pulse: how_far::SharedPulse) -> Self {
+        self.stop = Some(zencodec::StopToken::new(pulse.clone()));
+        self.pulse = Some(pulse);
+        self
+    }
+
     fn with_limits(mut self, limits: ResourceLimits) -> Self {
         self.limits = limits;
         self
@@ -1922,6 +2065,11 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         {
             desc = PixelDescriptor::BGRA8_SRGB;
         }
+        desc = zencodec::helpers::descriptor_for_decoded_pixels_v2(
+            desc.format,
+            &to_image_info(&native, None).source_color,
+            None,
+        );
         // Report the post-orientation output geometry + the transform the
         // decoder will apply. `Preserve` applies nothing (output = stored dims);
         // a bake hint outputs the resolved orientation's dims and records it.
@@ -1950,6 +2098,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         Ok(WebpDecoder {
             config: cfg,
             stop,
+            pulse: self.pulse.clone(),
             input_size_limit: self.effective_input_size_limit(),
             limits: self.limits,
             data,
@@ -2006,6 +2155,10 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
     ) -> Result<WebpAnimationFrameDecoder, At<zencodec::CodecError>> {
+        if let Some(stop) = &self.stop {
+            enough::Stop::check(stop)
+                .map_err(|e| zencodec::CodecError::of(at!(DecodeError::from(e))))?;
+        }
         // Block animation if policy denies it.
         if let Some(ref policy) = self.policy
             && !policy.resolve_animation(true)
@@ -2078,7 +2231,17 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                 random_access: false,
             })
         };
+        let source_desc = zencodec::helpers::descriptor_for_decoded_pixels_v2(
+            if anim_info.has_alpha {
+                zenpixels::PixelFormat::Rgba8
+            } else {
+                zenpixels::PixelFormat::Rgb8
+            },
+            &base_info.source_color,
+            None,
+        );
         let base_info = self.apply_policy_to_info(base_info);
+        let color_context = Arc::new(base_info.source_color.to_color_context());
         let shared_info = Arc::new(base_info);
         drop(probe_anim);
 
@@ -2104,16 +2267,18 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         // Canvas-sized composited-frame buffer → fallible by default (#63).
         let frame_buf = crate::decoder::alloc_util::alloc_zeroed(alloc_pref, true, buf_size)
             .map_err(|_| zencodec::CodecError::of(at!(DecodeError::MemoryLimitExceeded)))?;
-        let source_desc = if has_alpha {
-            PixelDescriptor::RGBA8_SRGB
-        } else {
-            PixelDescriptor::RGB8_SRGB
-        };
 
         Ok(WebpAnimationFrameDecoder {
             inner: WebpAnimationInner::Native(alloc::boxed::Box::new(
                 NativeAnimationFrameDecoder {
                     decoder,
+                    stop: self.stop,
+                    pulse: self.pulse.inspect(|pulse| {
+                        crate::pulse::declare_total(pulse, u64::from(total_frames));
+                    }),
+                    failed: false,
+                    color_context,
+                    source_descriptor: source_desc,
                     preferred: preferred.to_vec(),
                     frame_buf,
                     alloc_pref,
@@ -2165,6 +2330,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
 pub struct WebpDecoder<'a> {
     config: DecodeConfig,
     stop: Option<zencodec::StopToken>,
+    pulse: Option<how_far::SharedPulse>,
     input_size_limit: Option<u64>,
     limits: ResourceLimits,
     data: Cow<'a, [u8]>,
@@ -2243,6 +2409,9 @@ impl WebpDecoder<'_> {
         if let Some(ref stop) = self.stop {
             req = req.stop(stop);
         }
+        if let Some(ref pulse) = self.pulse {
+            req = req.pulse(pulse);
+        }
         let (pixels, w, h) = req.decode_rgba_lossy()?;
 
         let w = u32::from(w);
@@ -2284,7 +2453,15 @@ impl WebpDecoder<'_> {
                 .with_bit_depth(8)
                 .with_channel_count(if has_alpha { 4 } else { 3 })
         };
+        let descriptor = zencodec::helpers::descriptor_for_decoded_pixels_v2(
+            buf.descriptor().format,
+            &info.source_color,
+            None,
+        );
         let info = self.apply_policy_to_info(info);
+        let buf = buf
+            .with_descriptor(descriptor)
+            .with_color_context(Arc::new(info.source_color.to_color_context()));
 
         let mut output = DecodeOutput::new(buf, info);
         if let Ok(probe) = crate::detect::probe(data) {
@@ -2299,6 +2476,9 @@ impl WebpDecoder<'_> {
         if let Some(ref stop) = self.stop {
             req = req.stop(stop);
         }
+        if let Some(ref pulse) = self.pulse {
+            req = req.pulse(pulse);
+        }
 
         let (pixels, w, h, layout) = req.decode()?;
 
@@ -2309,12 +2489,14 @@ impl WebpDecoder<'_> {
                 .map_err(|_| at!(DecodeError::InvalidParameter("pixel count mismatch".into())))?,
             _ => {
                 // Fallback: decode as RGBA
-                let rgba_req = DecodeRequest::new(&self.config, data);
-                let (rgba_pixels, rw, rh) = if let Some(ref stop) = self.stop {
-                    rgba_req.stop(stop).decode_rgba()?
-                } else {
-                    rgba_req.decode_rgba()?
-                };
+                let mut rgba_req = DecodeRequest::new(&self.config, data);
+                if let Some(ref stop) = self.stop {
+                    rgba_req = rgba_req.stop(stop);
+                }
+                if let Some(ref pulse) = self.pulse {
+                    rgba_req = rgba_req.pulse(pulse);
+                }
+                let (rgba_pixels, rw, rh) = rgba_req.decode_rgba()?;
                 PixelBuffer::from_vec(rgba_pixels, rw, rh, PixelDescriptor::RGBA8_SRGB).map_err(
                     |_| at!(DecodeError::InvalidParameter("pixel count mismatch".into())),
                 )?
@@ -2331,7 +2513,15 @@ impl WebpDecoder<'_> {
                 .with_bit_depth(8)
                 .with_channel_count(if has_alpha { 4 } else { 3 })
         };
+        let descriptor = zencodec::helpers::descriptor_for_decoded_pixels_v2(
+            buf.descriptor().format,
+            &info.source_color,
+            None,
+        );
         let info = self.apply_policy_to_info(info);
+        let buf = buf
+            .with_descriptor(descriptor)
+            .with_color_context(Arc::new(info.source_color.to_color_context()));
 
         let mut output = DecodeOutput::new(buf, info);
         if let Ok(probe) = crate::detect::probe(data) {
@@ -2347,15 +2537,25 @@ fn negotiate_format(pixels: PixelBuffer, preferred: &[PixelDescriptor]) -> Pixel
         return pixels;
     }
     let desc = pixels.descriptor();
-    // Check if BGRA is preferred and we have RGBA
-    if preferred.contains(&PixelDescriptor::BGRA8_SRGB) && desc == PixelDescriptor::RGBA8_SRGB {
-        let w = pixels.width();
-        let h = pixels.height();
-        let mut raw = pixels.into_vec();
-        garb::bytes::rgba_to_bgra_inplace(&mut raw)
-            .expect("negotiate_format: validated 4bpp buffer");
-        return PixelBuffer::from_vec(raw, w, h, PixelDescriptor::BGRA8_SRGB)
-            .expect("negotiate_format: dimensions unchanged");
+    // Swizzle rows in place so padding, offsets and color context survive.
+    if preferred.contains(&PixelDescriptor::BGRA8_SRGB)
+        && desc.layout() == zenpixels::ChannelLayout::Rgba
+    {
+        let mut pixels = pixels;
+        let height = pixels.height();
+        let mut rows = pixels.as_slice_mut();
+        for y in 0..height {
+            garb::bytes::rgba_to_bgra_inplace(rows.row_mut(y))
+                .expect("negotiate_format: validated 4bpp row");
+        }
+        drop(rows);
+        return pixels
+            .reinterpret(
+                PixelDescriptor::BGRA8_SRGB
+                    .with_primaries(desc.primaries)
+                    .with_transfer(desc.transfer()),
+            )
+            .expect("negotiate_format: four-channel layout unchanged");
     }
     pixels
 }
@@ -2677,6 +2877,12 @@ impl Vp8StreamingDecoder {
             descriptor = PixelDescriptor::BGRA8_SRGB;
         }
 
+        descriptor = zencodec::helpers::descriptor_for_decoded_pixels_v2(
+            descriptor.format,
+            &info.source_color,
+            None,
+        );
+
         // Max strip rows: last MB row may emit extra_y_rows + 16 rows.
         // For the first row of a single-row image, it's 16.
         let max_strip_rows = if mbheight == 1 { 16 } else { extra_y_rows + 16 };
@@ -2750,7 +2956,7 @@ impl zencodec::decode::StreamingDecode for Vp8StreamingDecoder {
         }
 
         // Apply RGBA→BGRA swizzle if negotiated
-        if self.descriptor == PixelDescriptor::BGRA8_SRGB {
+        if self.descriptor.layout() == zenpixels::ChannelLayout::Bgra {
             let strip_data = &mut self.strip_buf[..strip_bytes];
             let _ = garb::bytes::rgba_to_bgra_inplace(strip_data);
         }
@@ -2768,6 +2974,7 @@ impl zencodec::decode::StreamingDecode for Vp8StreamingDecoder {
             )))
         })?;
 
+        let slice = slice.with_color_context(Arc::new(self.info.source_color.to_color_context()));
         Ok(Some((y_start as u32, slice)))
     }
 
@@ -2908,6 +3115,11 @@ impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
 
 struct NativeAnimationFrameDecoder {
     decoder: OwnedAnimDecoder,
+    stop: Option<zencodec::StopToken>,
+    pulse: Option<how_far::SharedPulse>,
+    failed: bool,
+    color_context: Arc<zenpixels::ColorContext>,
+    source_descriptor: PixelDescriptor,
     preferred: Vec<PixelDescriptor>,
     /// Reusable buffer for composited frame data. Pre-allocated to canvas size;
     /// reused across frames without reallocating.
@@ -2941,7 +3153,7 @@ struct NativeAnimationFrameDecoder {
 impl NativeAnimationFrameDecoder {
     /// Decode and discard frames before `start_frame_index` (needed for
     /// correct compositing state). Called lazily on first `render_next_frame`.
-    fn skip_to_start(&mut self) -> Result<(), At<DecodeError>> {
+    fn skip_to_start(&mut self, pulse: &dyn how_far::Pulse) -> Result<(), At<DecodeError>> {
         if self.frames_skipped {
             return Ok(());
         }
@@ -2950,23 +3162,26 @@ impl NativeAnimationFrameDecoder {
         for _ in 0..skip_count {
             let done = self
                 .decoder
-                .with_dependent_mut(|_, anim| match anim.decode_next() {
-                    Ok(Some(_)) => Ok(false),
-                    Ok(None) => Ok(true),
+                .with_dependent_mut(|_, anim| match anim.decode_next_with_pulse(pulse) {
+                    Ok(Some(info)) => Ok(Some(info.duration_ms)),
+                    Ok(None) => Ok(None),
                     Err(e) => Err(e),
                 })
                 .at()?;
-            if done {
+            let Some(duration) = done else {
                 break;
-            }
+            };
+            self.record_frame(duration)?;
         }
-        self.next_frame_index = self.start_frame_index;
         Ok(())
     }
 
     /// Decode next frame into `self.frame_buf` (zero-alloc: reuses buffer).
     /// Returns `true` if a frame was decoded, `false` if no more frames.
-    fn decode_next_into_buf(&mut self) -> Result<bool, At<DecodeError>> {
+    fn decode_next_into_buf(
+        &mut self,
+        pulse: &dyn how_far::Pulse,
+    ) -> Result<bool, At<DecodeError>> {
         // Re-allocate if frame_buf was taken by render_next_frame_owned.
         let expected_size = self.stride() * self.canvas_height as usize;
         if self.frame_buf.len() < expected_size {
@@ -2983,7 +3198,7 @@ impl NativeAnimationFrameDecoder {
         let result = self
             .decoder
             .with_dependent_mut(|_, anim| {
-                match anim.decode_next() {
+                match anim.decode_next_with_pulse(pulse) {
                     Ok(Some(info)) => {
                         let data = anim.current_frame_data();
                         // frame_buf is pre-allocated to canvas size; this is a memcpy, no alloc.
@@ -3000,17 +3215,62 @@ impl NativeAnimationFrameDecoder {
             Some(duration_ms) => {
                 self.current_duration_ms = duration_ms;
                 // Apply RGBA→BGRA swizzle in-place if preferred.
-                let source = if self.has_alpha {
-                    PixelDescriptor::RGBA8_SRGB
-                } else {
-                    PixelDescriptor::RGB8_SRGB
-                };
+                let source = self.source_descriptor;
                 self.current_descriptor =
                     negotiate_format_inplace(&mut self.frame_buf, source, &self.preferred);
                 Ok(true)
             }
             None => Ok(false),
         }
+    }
+
+    fn record_frame(&mut self, duration_ms: u32) -> Result<(), At<DecodeError>> {
+        self.next_frame_index = self
+            .next_frame_index
+            .checked_add(1)
+            .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
+        self.accumulated_duration_ms = self
+            .accumulated_duration_ms
+            .checked_add(u64::from(duration_ms))
+            .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
+        self.limits
+            .check_frames(self.next_frame_index)
+            .and_then(|_| self.limits.check_animation_ms(self.accumulated_duration_ms))
+            .map_err(|e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))
+    }
+
+    fn advance(&mut self, stop: Option<&dyn enough::Stop>) -> Result<Option<u32>, At<DecodeError>> {
+        if self.failed {
+            return Err(at!(DecodeError::InvalidParameter(
+                "animation decoder has failed".into()
+            )));
+        }
+        let job = self.stop.clone();
+        let stops = AnimationStops {
+            job: job.as_ref(),
+            call: stop,
+        };
+        // One unit per decoded frame to the job's pulse, if any.
+        let job_pulse = self.pulse.clone();
+        let base: &dyn how_far::Pulse = match &job_pulse {
+            Some(pulse) => pulse,
+            None => &how_far::NoPulse,
+        };
+        let ctl = how_far::WithStop::borrowed(base, &stops);
+        let result = (|| {
+            enough::Stop::check(&stops).map_err(|e| at!(DecodeError::from(e)))?;
+            self.skip_to_start(&ctl)?;
+            if !self.decode_next_into_buf(&ctl)? {
+                return Ok(None);
+            }
+            let index = self.next_frame_index;
+            self.record_frame(self.current_duration_ms)?;
+            Ok(Some(index))
+        })();
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
     }
 
     /// Byte stride for the current frame format.
@@ -3029,11 +3289,13 @@ fn negotiate_format_inplace(
 ) -> PixelDescriptor {
     if !preferred.is_empty()
         && preferred.contains(&PixelDescriptor::BGRA8_SRGB)
-        && source == PixelDescriptor::RGBA8_SRGB
+        && source.layout() == zenpixels::ChannelLayout::Rgba
     {
         garb::bytes::rgba_to_bgra_inplace(data)
             .expect("negotiate_format_inplace: validated 4bpp buffer");
-        return PixelDescriptor::BGRA8_SRGB;
+        return PixelDescriptor::BGRA8_SRGB
+            .with_transfer(source.transfer())
+            .with_primaries(source.primaries);
     }
     source
 }
@@ -3061,37 +3323,9 @@ impl zencodec::decode::AnimationFrameDecoder for NativeAnimationFrameDecoder {
         &mut self,
         stop: Option<&dyn enough::Stop>,
     ) -> Result<Option<AnimationFrame<'_>>, At<zencodec::CodecError>> {
-        if let Some(s) = stop {
-            s.check()
-                .map_err(|e| zencodec::CodecError::of(at!(DecodeError::from(e))))?;
-        }
-        self.skip_to_start().map_err(zencodec::CodecError::of)?;
-
-        if !self
-            .decode_next_into_buf()
-            .map_err(zencodec::CodecError::of)?
-        {
+        let Some(idx) = self.advance(stop).map_err(zencodec::CodecError::of)? else {
             return Ok(None);
-        }
-        let idx = self.next_frame_index;
-        self.next_frame_index += 1;
-
-        // Enforce max_frames limit.
-        self.limits
-            .check_frames(self.next_frame_index)
-            .map_err(|e| {
-                zencodec::CodecError::of(at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))
-            })?;
-
-        // Enforce max_animation_ms limit.
-        self.accumulated_duration_ms = self
-            .accumulated_duration_ms
-            .saturating_add(self.current_duration_ms as u64);
-        self.limits
-            .check_animation_ms(self.accumulated_duration_ms)
-            .map_err(|e| {
-                zencodec::CodecError::of(at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))
-            })?;
+        };
 
         // Zero-alloc: create PixelSlice directly from the reusable frame_buf.
         let stride = self.stride();
@@ -3107,6 +3341,7 @@ impl zencodec::decode::AnimationFrameDecoder for NativeAnimationFrameDecoder {
                 "frame buffer mismatch".into(),
             )))
         })?;
+        let slice = slice.with_color_context(self.color_context.clone());
         Ok(Some(AnimationFrame::new(
             slice,
             self.current_duration_ms,
@@ -3118,37 +3353,9 @@ impl zencodec::decode::AnimationFrameDecoder for NativeAnimationFrameDecoder {
         &mut self,
         stop: Option<&dyn enough::Stop>,
     ) -> Result<Option<OwnedAnimationFrame>, At<zencodec::CodecError>> {
-        if let Some(s) = stop {
-            s.check()
-                .map_err(|e| zencodec::CodecError::of(at!(DecodeError::from(e))))?;
-        }
-        self.skip_to_start().map_err(zencodec::CodecError::of)?;
-
-        if !self
-            .decode_next_into_buf()
-            .map_err(zencodec::CodecError::of)?
-        {
+        let Some(idx) = self.advance(stop).map_err(zencodec::CodecError::of)? else {
             return Ok(None);
-        }
-        let idx = self.next_frame_index;
-        self.next_frame_index += 1;
-
-        // Enforce max_frames limit.
-        self.limits
-            .check_frames(self.next_frame_index)
-            .map_err(|e| {
-                zencodec::CodecError::of(at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))
-            })?;
-
-        // Enforce max_animation_ms limit.
-        self.accumulated_duration_ms = self
-            .accumulated_duration_ms
-            .saturating_add(self.current_duration_ms as u64);
-        self.limits
-            .check_animation_ms(self.accumulated_duration_ms)
-            .map_err(|e| {
-                zencodec::CodecError::of(at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))
-            })?;
+        };
 
         // Take the frame_buf for the owned PixelBuffer. A fresh buffer will
         // be allocated on the next call (unavoidable for owned output).
@@ -3164,6 +3371,7 @@ impl zencodec::decode::AnimationFrameDecoder for NativeAnimationFrameDecoder {
                 "frame size mismatch".into()
             )))
         })?;
+        let buf = buf.with_color_context(self.color_context.clone());
         Ok(Some(OwnedAnimationFrame::new(
             buf,
             self.current_duration_ms,
@@ -3330,6 +3538,70 @@ fn report_probe_for_hint(mut info: ImageInfo, hint: OrientationHint) -> ImageInf
     info.width = ow;
     info.height = oh;
     info.with_orientation(Orientation::Identity)
+}
+
+struct AnimationStops<'a> {
+    job: Option<&'a zencodec::StopToken>,
+    call: Option<&'a dyn enough::Stop>,
+}
+impl enough::Stop for AnimationStops<'_> {
+    fn check(&self) -> Result<(), enough::StopReason> {
+        if let Some(s) = self.job {
+            s.check()?;
+        }
+        if let Some(s) = self.call {
+            s.check()?;
+        }
+        Ok(())
+    }
+}
+
+/// Shared still/animation lowering: WebP has ICC as its sole color carrier.
+fn resolve_webp_icc(
+    icc: Option<&Arc<[u8]>>,
+    cicp: Option<zencodec::Cicp>,
+    policy: zencodec::ColorEmitPolicy,
+    layout: PixelLayout,
+) -> Result<Option<alloc::borrow::Cow<'_, [u8]>>, At<EncodeError>> {
+    let channels = match layout {
+        PixelLayout::L8 => 1,
+        PixelLayout::La8 => 2,
+        PixelLayout::Rgb8 | PixelLayout::Bgr8 | PixelLayout::Yuv420 => 3,
+        PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => 4,
+    };
+    let mut source = zencodec::SourceColor::default().with_channel_count(channels);
+    if let Some(cicp) = cicp {
+        source = source
+            .with_cicp(cicp)
+            .with_color_authority(zencodec::ColorAuthority::Cicp);
+    }
+    if let Some(icc) = icc {
+        source = source
+            .with_icc_profile(icc.clone())
+            .with_color_authority(zencodec::ColorAuthority::Icc);
+    }
+    let plan = zencodec::resolve_color_emit(&source, &ENCODE_CAPABILITIES, policy);
+    match plan.icc {
+        zencodec::IccDisposition::KeepSource => {
+            Ok(icc.map(|v| alloc::borrow::Cow::Borrowed(v.as_ref())))
+        }
+        zencodec::IccDisposition::Drop => Ok(None),
+        zencodec::IccDisposition::SynthesizeFrom(cicp) => {
+            use zenpixels_convert::icc_profiles::SynthesizedIcc;
+            match zenpixels_convert::icc_profiles::synthesize_icc_for_cicp(cicp) {
+                SynthesizedIcc::Profile(bytes) => Ok(Some(bytes)),
+                SynthesizedIcc::NotNeeded => Ok(None),
+                outcome => Err(at!(EncodeError::IccSynthesisUnavailable(alloc::format!(
+                    "CICP primaries {} / transfer {} ({outcome:?}); enable cms or supply an ICC profile",
+                    cicp.color_primaries,
+                    cicp.transfer_characteristics
+                )))),
+            }
+        }
+        _ => Err(at!(EncodeError::IccSynthesisUnavailable(
+            "unsupported ICC emission disposition".into()
+        ))),
+    }
 }
 
 #[cfg(test)]
@@ -4194,7 +4466,7 @@ mod tests {
         }
 
         // Compare pixel-by-pixel
-        let reference = oneshot_buf.into_vec();
+        let reference = oneshot_buf.into_parts().data;
         assert_eq!(
             assembled.len(),
             reference.len(),
@@ -4400,7 +4672,7 @@ mod tests {
         let width = buf.width();
         let height = buf.height();
         let desc = buf.descriptor();
-        (buf.into_vec(), width, height, desc)
+        (buf.into_parts().data, width, height, desc)
     }
 
     /// Decode `data` under the given [`AllocPreference`] (via the zencodec
@@ -4421,7 +4693,8 @@ mod tests {
             .decode()
             .unwrap()
             .into_buffer()
-            .into_vec()
+            .into_parts()
+            .data
     }
 
     /// Decoding with `AllocPreference::Fallible` (the `try_reserve` path) and
@@ -4879,7 +5152,7 @@ mod tests {
             // The owned path takes `frame_buf`, so every frame after the
             // first goes through the fallible re-allocation branch.
             while let Some(f) = dec.render_next_frame_owned(None).unwrap() {
-                out.push(f.into_buffer().into_vec());
+                out.push(f.into_buffer().into_parts().data);
             }
             out
         };

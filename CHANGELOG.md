@@ -9,8 +9,13 @@ earlier history lives in git log and LOG.md.)
 
 - Admit archmage/magetypes 0.9.31-beta.1 alongside compatible stable versions; use explicit-token aliases where needed. Formatting, strict library lint and library tests pass (`ab50d43c`).
 
+### QUEUED BREAKING CHANGES
+
+(none queued by these entries; PR #105's unreleased `*_with_stop` methods became the `*_with_pulse` methods below)
+
 ### Added
 
+- how-far adoption: cancellation plus approximate progress through one `how_far::Pulse`. Native: `EncodeRequest::with_pulse` (percent, total 100), `DecodeRequest::pulse` / `WebPDecoder::set_pulse` (image rows; frames for `read_frame`), `AnimationDecoder::set_pulse` (frames), and per-call `WebPDecoder::read_frame_with_pulse`, `AnimationDecoder::decode_next_with_pulse`, `AnimationEncoder::add_frame_with_pulse` / `add_frame_advanced_with_pulse`. zencodec: `WebpDecodeJob::with_pulse` / `WebpEncodeJob::with_pulse` override the stop-only default (rows / percent / frames). VP8 decode now checks cancellation once per macroblock row on every path (it used to check only at entry for still decodes). `Pulse`, `StopOnly` and `NoPulse` are re-exported. Units and cancellation pinned by `tests/how_far_pulse.rs`; mutation-checked (removing each reporting site or the VP8 row check fails 1-4 of its 7 tests).
 - Incremental (sans-I/O) decode: `dyn_incremental_decoder` wraps
   `zencodec::helpers::WholeFileIncremental` with resource admission and `DecodeCapabilities::incremental`
   is declared, so the zencodec-io drivers (files, streams, async sources) serve
@@ -26,6 +31,16 @@ earlier history lives in git log and LOG.md.)
 - Container walk (#107, #108, #109), each checked against libwebp in `tests/container_walk.rs` (all 4 tests fail without the fix). The VP8X chunk walk stopped ten bytes past the RIFF end, so trailing data after a VP8X file failed the decode, or (zencodec lossy stills) silently dropped ICC/EXIF/XMP and alpha, and a chunk after the RIFF end was read as metadata; it now reads a chunk only when its header fits inside the RIFF size, as `WebPDemuxer` does. `read_frame` stepped to the next frame by the unpadded ANMF size and required the next chunk to be an ANMF, so an odd-sized ANMF or any other chunk between frames ended the animation; it now walks ANMF to ANMF the way `read_data` counts frames, and bounds ANMF sub-chunks by the padded ANMF size as libwebp does (an odd ANMF whose last sub-chunk uses the ANMF's pad byte failed at frame 1). The `inventory` model and its quirk tests now describe the fixed walk.
 - A pre-stopped cancellation token now fails native lossy decodes: `DecodeRequest::decode_rgba`/`decode_rgb` (via `WebPDecoder::read_image`) and `WebPDecoder::read_frame` decoded VP8 content to completion because the VP8 context carries no stop token (8d62efc fixed only the zencodec adapter). Entry checks added; `tests/lossy_cancellation.rs` fails 2/3 without them. Found while backporting to 0.4.x.
 - Test coverage from the 0.4.x backport: `tests/anmf_alph_dims_mismatch.rs` pins the 6c63e9e ALPH/ANMF dimension guard (panics without it); `h1_predictor_transform_allocation_rejected_with_alpha` pins the lossless sub-image memory gate, which the existing opaque H1 test does not (it passes with the gate removed); `committed_animations_match_libwebp` diffs the committed animated samples frame-by-frame against libwebp.
+
+- Keep native animation timestamp arguments and decoded frame fields as u32.
+  Wide checked arithmetic refuses unrepresentable cumulative time, including
+  final-frame duration; decoder overflow stays terminal until reset. Public
+  timestamp widening is not part of PR105 (`b7755a5b`).
+
+- Retain decoded ICC context and resolved color descriptors consistently across
+  one-shot, scanline-batch and animation views; BGRA negotiation preserves
+  color metadata and works by rows. Extraction denial still removes ICC bytes
+  (`403ee1bc`, `58ec506b`).
 
 - Reject a known oversized whole-file source before requesting input even when the offered window starts at a nonzero offset; preserve the typed limit cause and terminal error state.
 
