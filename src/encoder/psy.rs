@@ -32,7 +32,7 @@ use super::tables::{VP8_WEIGHT_TRELLIS, VP8_WEIGHT_Y};
 /// This lets the encoder spend fewer bits on HF detail that viewers
 /// won't notice, improving rate-quality trade-off.
 #[rustfmt::skip]
-const PSY_WEIGHT_Y: [u16; 16] = [
+pub(crate) const PSY_WEIGHT_Y: [u16; 16] = [
     48, 36, 18,  6,
     36, 30, 14,  5,
     18, 14,  8,  3,
@@ -44,7 +44,7 @@ const PSY_WEIGHT_Y: [u16; 16] = [
 /// Human vision has much lower spatial acuity for color than luminance,
 /// so chroma HF components can be de-emphasized more aggressively.
 #[rustfmt::skip]
-const PSY_WEIGHT_UV: [u16; 16] = [
+pub(crate) const PSY_WEIGHT_UV: [u16; 16] = [
     32, 20, 10,  3,
     20, 14,  7,  2,
     10,  7,  4,  1,
