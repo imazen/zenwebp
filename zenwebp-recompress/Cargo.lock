@@ -696,6 +696,7 @@ dependencies = [
  "enough",
  "garb",
  "hashbrown",
+ "how-far",
  "libm",
  "linear-srgb",
  "magetypes",
