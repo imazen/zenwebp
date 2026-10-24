@@ -21,6 +21,9 @@ earlier history lives in git log and LOG.md.)
 
 ### Fixed
 
+- A pre-stopped cancellation token now fails native lossy decodes: `DecodeRequest::decode_rgba`/`decode_rgb` (via `WebPDecoder::read_image`) and `WebPDecoder::read_frame` decoded VP8 content to completion because the VP8 context carries no stop token (8d62efc fixed only the zencodec adapter). Entry checks added; `tests/lossy_cancellation.rs` fails 2/3 without them. Found while backporting to 0.4.x.
+- Test coverage from the 0.4.x backport: `tests/anmf_alph_dims_mismatch.rs` pins the 6c63e9e ALPH/ANMF dimension guard (panics without it); `h1_predictor_transform_allocation_rejected_with_alpha` pins the lossless sub-image memory gate, which the existing opaque H1 test does not (it passes with the gate removed); `committed_animations_match_libwebp` diffs the committed animated samples frame-by-frame against libwebp.
+
 - Reject a known oversized whole-file source before requesting input even when the offered window starts at a nonzero offset; preserve the typed limit cause and terminal error state.
 
 - Keep native probe failures for complete malformed VP8X files; early canvas-header fallback applies only to incomplete RIFF input.
