@@ -427,6 +427,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "critical-section"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -757,6 +763,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "090dfeab9752b8574ff7b6fcfc96af46f4e4fc5b2cd0a3462e6d419b076eb7d1"
 dependencies = [
  "enough",
+]
+
+[[package]]
+name = "how-far-along"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "341fd592ab88e539e66604194e7bdeabd057bb13ab7227ef1f6c929617d70da9"
+dependencies = [
+ "critical-section",
+ "enough",
+ "how-far",
 ]
 
 [[package]]
@@ -2285,6 +2302,8 @@ dependencies = [
  "fast-ssim2",
  "garb",
  "hashbrown",
+ "how-far",
+ "how-far-along",
  "image-webp",
  "imgref",
  "jpeg-decoder",

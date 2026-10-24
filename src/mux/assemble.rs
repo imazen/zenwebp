@@ -243,7 +243,7 @@ impl WebPMux {
         // anything larger silently (#78).
         if frame.duration_ms > 0x00FF_FFFF {
             return Err(whereat::at!(MuxError::FrameDurationTooLarge {
-                duration_ms: u64::from(frame.duration_ms),
+                duration_ms: frame.duration_ms,
             }));
         }
         self.frames.push(frame);

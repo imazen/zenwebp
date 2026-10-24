@@ -9,8 +9,13 @@ earlier history lives in git log and LOG.md.)
 
 - Admit archmage/magetypes 0.9.31-beta.1 alongside compatible stable versions; use explicit-token aliases where needed. Formatting, strict library lint and library tests pass (`ab50d43c`).
 
+### QUEUED BREAKING CHANGES
+
+(none queued by these entries; PR #105's unreleased `*_with_stop` methods became the `*_with_pulse` methods below)
+
 ### Added
 
+- how-far adoption: cancellation plus approximate progress through one `how_far::Pulse`. Native: `EncodeRequest::with_pulse` (percent, total 100), `DecodeRequest::pulse` / `WebPDecoder::set_pulse` (image rows; frames for `read_frame`), `AnimationDecoder::set_pulse` (frames), and per-call `WebPDecoder::read_frame_with_pulse`, `AnimationDecoder::decode_next_with_pulse`, `AnimationEncoder::add_frame_with_pulse` / `add_frame_advanced_with_pulse`. zencodec: `WebpDecodeJob::with_pulse` / `WebpEncodeJob::with_pulse` override the stop-only default (rows / percent / frames). VP8 decode now checks cancellation once per macroblock row on every path (it used to check only at entry for still decodes). `Pulse`, `StopOnly` and `NoPulse` are re-exported. Units and cancellation pinned by `tests/how_far_pulse.rs`; mutation-checked (removing each reporting site or the VP8 row check fails 1-4 of its 7 tests).
 - Incremental (sans-I/O) decode: `dyn_incremental_decoder` wraps
   `zencodec::helpers::WholeFileIncremental` with resource admission and `DecodeCapabilities::incremental`
   is declared, so the zencodec-io drivers (files, streams, async sources) serve

@@ -604,6 +604,7 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
         WebpEncodeJob {
             config: self,
             stop: None,
+            pulse: None,
             icc: None,
             exif: None,
             xmp: None,
@@ -623,6 +624,7 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
 pub struct WebpEncodeJob {
     config: WebpEncoderConfig,
     stop: Option<zencodec::StopToken>,
+    pulse: Option<how_far::SharedPulse>,
     icc: Option<Arc<[u8]>>,
     exif: Option<Arc<[u8]>>,
     xmp: Option<Arc<[u8]>>,
@@ -722,6 +724,15 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
         self
     }
 
+    /// Cancellation and progress. A still encode declares 100 units and
+    /// reports percent; an animation encoder reports one unit per accepted
+    /// frame (the total is unknown until `finish`).
+    fn with_pulse(mut self, pulse: how_far::SharedPulse) -> Self {
+        self.stop = Some(zencodec::StopToken::new(pulse.clone()));
+        self.pulse = Some(pulse);
+        self
+    }
+
     fn with_policy(mut self, policy: zencodec::encode::EncodePolicy) -> Self {
         self.policy = Some(policy);
         self
@@ -776,6 +787,7 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
         Ok(WebpEncoder {
             inner_config,
             stop: self.stop,
+            pulse: self.pulse,
             icc: self.icc,
             exif,
             xmp: self.xmp,
@@ -817,6 +829,7 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
             loop_count,
             limits: self.limits,
             stop: self.stop,
+            pulse: self.pulse,
             icc: self.icc,
             exif: self.exif,
             xmp: self.xmp,
@@ -856,6 +869,7 @@ enum StreamAccum {
 pub struct WebpEncoder {
     inner_config: EncoderConfig,
     stop: Option<zencodec::StopToken>,
+    pulse: Option<how_far::SharedPulse>,
     icc: Option<Arc<[u8]>>,
     exif: Option<Arc<[u8]>>,
     xmp: Option<Arc<[u8]>>,
@@ -915,6 +929,9 @@ impl WebpEncoder {
             EncodeRequest::new(&self.inner_config, pixels, layout, w, h).with_stride(stride_pixels);
         if let Some(ref stop) = self.stop {
             req = req.with_stop(stop);
+        }
+        if let Some(ref pulse) = self.pulse {
+            req = req.with_pulse(pulse);
         }
         let icc_holder = resolve_webp_icc(self.icc.as_ref(), self.cicp, self.color_policy, layout)?;
         {
@@ -1137,6 +1154,8 @@ pub struct WebpAnimationFrameEncoder {
     loop_count: crate::decoder::LoopCount,
     limits: ResourceLimits,
     stop: Option<zencodec::StopToken>,
+    /// The job's pulse: one unit per accepted frame.
+    pulse: Option<how_far::SharedPulse>,
     icc: Option<Arc<[u8]>>,
     exif: Option<Arc<[u8]>>,
     xmp: Option<Arc<[u8]>>,
@@ -1377,9 +1396,17 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
             .map_err(zencodec::CodecError::of)?;
         let timestamp_ms = self.cumulative_ms;
         let enc = self.anim_enc.as_mut().unwrap();
-        enc.add_frame_with_stop(&buf, layout, timestamp_ms, &self.inner_config, &stops)
-            .map_err_at(mux_to_encode_err)
-            .map_err(zencodec::CodecError::of)?;
+        // Cancellation only: the job's pulse counts frames, not the frame's
+        // encode percent.
+        enc.add_frame_with_pulse(
+            &buf,
+            layout,
+            timestamp_ms,
+            &self.inner_config,
+            &how_far::StopOnly::borrowed(&stops),
+        )
+        .map_err_at(mux_to_encode_err)
+        .map_err(zencodec::CodecError::of)?;
         if let Err(error) = self.limits.check_memory(enc.retained_bytes()) {
             self.failed = true;
             return Err(zencodec::CodecError::of(at!(EncodeError::LimitExceeded(
@@ -1392,6 +1419,9 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
         self.frames = frames;
         self.frame_descriptor = Some(desc);
         self.frame_color = pixels.color_context().cloned();
+        if let Some(pulse) = &self.pulse {
+            how_far::Report::advance(pulse, 1);
+        }
         Ok(())
     }
 
@@ -1576,6 +1606,7 @@ impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
         WebpDecodeJob {
             config: self,
             stop: None,
+            pulse: None,
             limits: ResourceLimits::none(),
             start_frame_index: 0,
             policy: None,
@@ -1592,6 +1623,7 @@ impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
 pub struct WebpDecodeJob {
     config: WebpDecoderConfig,
     stop: Option<zencodec::StopToken>,
+    pulse: Option<how_far::SharedPulse>,
     limits: ResourceLimits,
     start_frame_index: u32,
     policy: Option<zencodec::decode::DecodePolicy>,
@@ -1877,6 +1909,17 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         self
     }
 
+    /// Cancellation and progress. Still decodes (one-shot, scanline-batch and
+    /// push) declare the image height and report decoded rows; with a pulse
+    /// the scanline-batch decoder takes its full-image path, like any stop
+    /// token. Animation decoders declare the frame count and report one unit
+    /// per decoded frame.
+    fn with_pulse(mut self, pulse: how_far::SharedPulse) -> Self {
+        self.stop = Some(zencodec::StopToken::new(pulse.clone()));
+        self.pulse = Some(pulse);
+        self
+    }
+
     fn with_limits(mut self, limits: ResourceLimits) -> Self {
         self.limits = limits;
         self
@@ -2055,6 +2098,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         Ok(WebpDecoder {
             config: cfg,
             stop,
+            pulse: self.pulse.clone(),
             input_size_limit: self.effective_input_size_limit(),
             limits: self.limits,
             data,
@@ -2229,6 +2273,9 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                 NativeAnimationFrameDecoder {
                     decoder,
                     stop: self.stop,
+                    pulse: self.pulse.inspect(|pulse| {
+                        crate::pulse::declare_total(pulse, u64::from(total_frames));
+                    }),
                     failed: false,
                     color_context,
                     source_descriptor: source_desc,
@@ -2283,6 +2330,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
 pub struct WebpDecoder<'a> {
     config: DecodeConfig,
     stop: Option<zencodec::StopToken>,
+    pulse: Option<how_far::SharedPulse>,
     input_size_limit: Option<u64>,
     limits: ResourceLimits,
     data: Cow<'a, [u8]>,
@@ -2361,6 +2409,9 @@ impl WebpDecoder<'_> {
         if let Some(ref stop) = self.stop {
             req = req.stop(stop);
         }
+        if let Some(ref pulse) = self.pulse {
+            req = req.pulse(pulse);
+        }
         let (pixels, w, h) = req.decode_rgba_lossy()?;
 
         let w = u32::from(w);
@@ -2425,6 +2476,9 @@ impl WebpDecoder<'_> {
         if let Some(ref stop) = self.stop {
             req = req.stop(stop);
         }
+        if let Some(ref pulse) = self.pulse {
+            req = req.pulse(pulse);
+        }
 
         let (pixels, w, h, layout) = req.decode()?;
 
@@ -2435,12 +2489,14 @@ impl WebpDecoder<'_> {
                 .map_err(|_| at!(DecodeError::InvalidParameter("pixel count mismatch".into())))?,
             _ => {
                 // Fallback: decode as RGBA
-                let rgba_req = DecodeRequest::new(&self.config, data);
-                let (rgba_pixels, rw, rh) = if let Some(ref stop) = self.stop {
-                    rgba_req.stop(stop).decode_rgba()?
-                } else {
-                    rgba_req.decode_rgba()?
-                };
+                let mut rgba_req = DecodeRequest::new(&self.config, data);
+                if let Some(ref stop) = self.stop {
+                    rgba_req = rgba_req.stop(stop);
+                }
+                if let Some(ref pulse) = self.pulse {
+                    rgba_req = rgba_req.pulse(pulse);
+                }
+                let (rgba_pixels, rw, rh) = rgba_req.decode_rgba()?;
                 PixelBuffer::from_vec(rgba_pixels, rw, rh, PixelDescriptor::RGBA8_SRGB).map_err(
                     |_| at!(DecodeError::InvalidParameter("pixel count mismatch".into())),
                 )?
@@ -3060,6 +3116,7 @@ impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
 struct NativeAnimationFrameDecoder {
     decoder: OwnedAnimDecoder,
     stop: Option<zencodec::StopToken>,
+    pulse: Option<how_far::SharedPulse>,
     failed: bool,
     color_context: Arc<zenpixels::ColorContext>,
     source_descriptor: PixelDescriptor,
@@ -3096,7 +3153,7 @@ struct NativeAnimationFrameDecoder {
 impl NativeAnimationFrameDecoder {
     /// Decode and discard frames before `start_frame_index` (needed for
     /// correct compositing state). Called lazily on first `render_next_frame`.
-    fn skip_to_start(&mut self, stop: &dyn enough::Stop) -> Result<(), At<DecodeError>> {
+    fn skip_to_start(&mut self, pulse: &dyn how_far::Pulse) -> Result<(), At<DecodeError>> {
         if self.frames_skipped {
             return Ok(());
         }
@@ -3105,7 +3162,7 @@ impl NativeAnimationFrameDecoder {
         for _ in 0..skip_count {
             let done = self
                 .decoder
-                .with_dependent_mut(|_, anim| match anim.decode_next_with_stop(Some(stop)) {
+                .with_dependent_mut(|_, anim| match anim.decode_next_with_pulse(pulse) {
                     Ok(Some(info)) => Ok(Some(info.duration_ms)),
                     Ok(None) => Ok(None),
                     Err(e) => Err(e),
@@ -3121,7 +3178,10 @@ impl NativeAnimationFrameDecoder {
 
     /// Decode next frame into `self.frame_buf` (zero-alloc: reuses buffer).
     /// Returns `true` if a frame was decoded, `false` if no more frames.
-    fn decode_next_into_buf(&mut self, stop: &dyn enough::Stop) -> Result<bool, At<DecodeError>> {
+    fn decode_next_into_buf(
+        &mut self,
+        pulse: &dyn how_far::Pulse,
+    ) -> Result<bool, At<DecodeError>> {
         // Re-allocate if frame_buf was taken by render_next_frame_owned.
         let expected_size = self.stride() * self.canvas_height as usize;
         if self.frame_buf.len() < expected_size {
@@ -3138,7 +3198,7 @@ impl NativeAnimationFrameDecoder {
         let result = self
             .decoder
             .with_dependent_mut(|_, anim| {
-                match anim.decode_next_with_stop(Some(stop)) {
+                match anim.decode_next_with_pulse(pulse) {
                     Ok(Some(info)) => {
                         let data = anim.current_frame_data();
                         // frame_buf is pre-allocated to canvas size; this is a memcpy, no alloc.
@@ -3190,10 +3250,17 @@ impl NativeAnimationFrameDecoder {
             job: job.as_ref(),
             call: stop,
         };
+        // One unit per decoded frame to the job's pulse, if any.
+        let job_pulse = self.pulse.clone();
+        let base: &dyn how_far::Pulse = match &job_pulse {
+            Some(pulse) => pulse,
+            None => &how_far::NoPulse,
+        };
+        let ctl = how_far::WithStop::borrowed(base, &stops);
         let result = (|| {
             enough::Stop::check(&stops).map_err(|e| at!(DecodeError::from(e)))?;
-            self.skip_to_start(&stops)?;
-            if !self.decode_next_into_buf(&stops)? {
+            self.skip_to_start(&ctl)?;
+            if !self.decode_next_into_buf(&ctl)? {
                 return Ok(None);
             }
             let index = self.next_frame_index;

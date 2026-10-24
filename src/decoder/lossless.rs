@@ -95,6 +95,9 @@ pub(crate) struct LosslessDecoder<'a> {
     width: u16,
     height: u16,
     stop: Option<&'a dyn enough::Stop>,
+    /// Receives one unit per decoded row of the main ARGB image (not of the
+    /// transform or entropy sub-images).
+    report: Option<&'a dyn how_far::Report>,
     limits: Option<&'a Limits>,
 }
 
@@ -112,6 +115,7 @@ impl<'a> LosslessDecoder<'a> {
             width: 0,
             height: 0,
             stop: None,
+            report: None,
             limits: None,
         }
     }
@@ -119,6 +123,11 @@ impl<'a> LosslessDecoder<'a> {
     /// Set a cooperative cancellation token.
     pub(crate) fn set_stop(&mut self, stop: Option<&'a dyn enough::Stop>) {
         self.stop = stop;
+    }
+
+    /// Report main-image rows as they are decoded.
+    pub(crate) fn set_report(&mut self, report: Option<&'a dyn how_far::Report>) {
+        self.report = report;
     }
 
     /// Set the memory/resource limits used to gate intermediate allocations
@@ -322,7 +331,8 @@ impl<'a> LosslessDecoder<'a> {
         if is_argb_img {
             self.main_dump.pixel_data_start = self.bit_reader.bits_consumed();
         }
-        traced(self.decode_image_data(xsize, ysize, huffman_info, data))
+        let report = if is_argb_img { self.report } else { None };
+        traced(self.decode_image_data(xsize, ysize, huffman_info, data, report))
     }
 
     /// Reads transforms and their data from the bitstream
@@ -693,6 +703,7 @@ impl<'a> LosslessDecoder<'a> {
         height: u16,
         mut huffman_info: HuffmanInfo,
         data: &mut [u8],
+        report: Option<&dyn how_far::Report>,
     ) -> Result<(), InternalDecodeError> {
         let width_usize = usize::from(width);
         let num_values = width_usize * usize::from(height);
@@ -720,6 +731,7 @@ impl<'a> LosslessDecoder<'a> {
         let mut col: usize = 0;
         let mut row: usize = 0;
         let mut index: usize = 0;
+        let mut reported_rows: usize = 0;
 
         let huff_index = get_huff_index(image, xsize, group_bits, 0, 0);
         let mut group_idx = huff_index;
@@ -739,6 +751,12 @@ impl<'a> LosslessDecoder<'a> {
                 // Check for cooperative cancellation at block boundaries
                 if let Some(stop) = self.stop {
                     stop.check()?;
+                }
+                if let Some(report) = report
+                    && row > reported_rows
+                {
+                    report.advance((row - reported_rows) as u64);
+                    reported_rows = row;
                 }
             }
 
@@ -822,6 +840,9 @@ impl<'a> LosslessDecoder<'a> {
             }
         }
 
+        if let Some(report) = report {
+            report.advance((usize::from(height) - reported_rows) as u64);
+        }
         Ok(())
     }
 

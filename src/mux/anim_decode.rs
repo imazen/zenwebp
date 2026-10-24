@@ -178,6 +178,13 @@ impl<'a> AnimationDecoder<'a> {
         self.decoder.set_stop(Some(stop));
     }
 
+    /// Report progress to, and take cancellation from, a [`how_far::Pulse`]:
+    /// the frame count is declared as its total and each decoded frame
+    /// advances it by one. Checked together with any [`set_stop`](Self::set_stop) token.
+    pub fn set_pulse(&mut self, pulse: &'a dyn how_far::Pulse) {
+        self.decoder.set_pulse(Some(pulse));
+    }
+
     /// Set upsampling method for lossy frames.
     pub fn set_lossy_upsampling(&mut self, method: UpsamplingMethod) {
         self.decoder.set_lossy_upsampling(method);
@@ -227,22 +234,37 @@ impl<'a> AnimationDecoder<'a> {
     /// available via [`current_frame_data()`](Self::current_frame_data)
     /// until the next call to `decode_next` or `next_frame`.
     pub fn decode_next(&mut self) -> Result<Option<FrameInfo>, whereat::At<DecodeError>> {
-        self.decode_next_with_stop(None)
+        self.decode_next_ctl(None)
     }
 
-    /// Decode one composited frame with a short-lived cancellation token.
-    /// Cancellation is checked within VP8, VP8L and alpha decoding. An error
-    /// poisons further output until the animation is reset.
-    pub fn decode_next_with_stop(
+    /// [`decode_next`](Self::decode_next) with a pulse for this call only.
+    ///
+    /// Its cancellation is checked within VP8, VP8L and alpha decoding,
+    /// together with the stored [`set_stop`](Self::set_stop) / [`set_pulse`](Self::set_pulse)
+    /// policy, and it is advanced by one unit when the frame is complete. An
+    /// error poisons further output until [`reset`](Self::reset). Pass
+    /// `&how_far::StopOnly::borrowed(&token)` for cancellation alone.
+    pub fn decode_next_with_pulse(
         &mut self,
-        stop: Option<&dyn enough::Stop>,
+        pulse: &dyn how_far::Pulse,
+    ) -> Result<Option<FrameInfo>, whereat::At<DecodeError>> {
+        self.decode_next_ctl(Some(pulse))
+    }
+
+    fn decode_next_ctl(
+        &mut self,
+        pulse: Option<&dyn how_far::Pulse>,
     ) -> Result<Option<FrameInfo>, whereat::At<DecodeError>> {
         if self.failed {
             return Err(at!(DecodeError::InvalidParameter(
                 "animation decode failed; reset required".into(),
             )));
         }
-        let result = (|| match self.decoder.read_frame_with_stop(&mut self.buf, stop) {
+        let frame = match pulse {
+            Some(pulse) => self.decoder.read_frame_with_pulse(&mut self.buf, pulse),
+            None => self.decoder.read_frame(&mut self.buf),
+        };
+        let result = (|| match frame {
             Ok(duration_ms) => {
                 let timestamp_ms = u32::try_from(self.cumulative_ms)
                     .map_err(|_| at!(DecodeError::ImageTooLarge))?;

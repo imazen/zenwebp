@@ -80,16 +80,16 @@ pub enum MuxError {
     #[error("Frame duration {duration_ms} ms exceeds the 24-bit ANMF field (max 16777215)")]
     FrameDurationTooLarge {
         /// The offending duration in milliseconds.
-        duration_ms: u64,
+        duration_ms: u32,
     },
 
     /// Presentation timestamps must not move backwards.
     #[error("Animation timestamp {timestamp_ms} precedes {previous_ms} ms")]
     NonmonotonicTimestamp {
         /// Timestamp of the pending frame.
-        previous_ms: u64,
+        previous_ms: u32,
         /// Rejected timestamp of the incoming frame.
-        timestamp_ms: u64,
+        timestamp_ms: u32,
     },
 }
 
