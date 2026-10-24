@@ -610,7 +610,15 @@ fn encode_argb_single_config(
 
         // Predictor transform (applied second, on subtract-green'd image)
         if use_predictor {
-            write_predictor_transform(&mut writer, argb, width, height, config, use_subtract_green);
+            write_predictor_transform(
+                &mut writer,
+                argb,
+                width,
+                height,
+                config,
+                config.near_lossless,
+                use_subtract_green,
+            );
         }
 
         // Cross-color transform (applied third, on predictor residuals)
@@ -665,12 +673,20 @@ fn encode_argb_single_config(
             } else {
                 argb
             };
+            // The predictor runs on the palette INDEX plane here, and
+            // near-lossless residual quantization on indices would swap
+            // colors arbitrarily (index ± 1 is an unrelated palette entry).
+            // libwebp forces strength 100 for palette images
+            // (`EncodeStreamHook`: `enc->use_palette_ ? 100 : near_lossless`);
+            // without this guard `with_near_lossless(q < 100)` corrupted
+            // every PaletteAndSpatial encode (#78-A).
             write_predictor_transform(
                 &mut writer,
                 pred_argb,
                 enc_width,
                 pred_argb.len() / enc_width,
                 config,
+                100,
                 false, // no subtract green with palette
             );
         }
@@ -790,12 +806,17 @@ fn encode_argb_single_config(
 }
 
 /// Apply and signal predictor transform.
+///
+/// `near_lossless` is the residual-quantization strength for THIS plane
+/// (100 = exact); callers pass 100 for the palette-index plane regardless of
+/// `config.near_lossless`.
 fn write_predictor_transform(
     writer: &mut BitWriter,
     argb: &mut [u32],
     width: usize,
     height: usize,
     config: &Vp8lConfig,
+    near_lossless: u8,
     use_subtract_green: bool,
 ) {
     let pred_bits = if config.predictor_bits == 0 {
@@ -814,8 +835,8 @@ fn write_predictor_transform(
             .predictor_bits
             .clamp(MIN_TRANSFORM_BITS, MAX_TRANSFORM_BITS)
     };
-    let max_quantization = if config.near_lossless < 100 {
-        super::near_lossless::max_quantization_from_quality(config.near_lossless)
+    let max_quantization = if near_lossless < 100 {
+        super::near_lossless::max_quantization_from_quality(near_lossless)
     } else {
         1
     };
@@ -1145,8 +1166,8 @@ fn encode_image_data(
 /// Maximum number of histogram tiles (matching libwebp's MAX_HUFF_IMAGE_SIZE).
 const MAX_HUFF_IMAGE_SIZE: usize = 2600;
 /// Min/max Huffman bits range (VP8L spec: 3 bits, range [2, 9]).
-const MIN_HUFFMAN_BITS: u8 = 2;
-const MAX_HUFFMAN_BITS: u8 = 9; // 2 + (1 << 3) - 1
+pub(super) const MIN_HUFFMAN_BITS: u8 = 2;
+pub(super) const MAX_HUFFMAN_BITS: u8 = 9; // 2 + (1 << 3) - 1
 /// Transform bits range (VP8L spec).
 const MIN_TRANSFORM_BITS: u8 = 2;
 const MAX_TRANSFORM_BITS: u8 = 9; // MIN_TRANSFORM_BITS + (1 << NUM_TRANSFORM_BITS) - 1
@@ -1778,6 +1799,83 @@ mod tests {
         let data = result.unwrap();
         assert_eq!(data[0], 0x2f); // VP8L signature
         assert!(data.len() > 10); // Non-trivial output
+    }
+
+    /// Near-lossless must not touch the palette-INDEX plane: in
+    /// PaletteAndSpatial the predictor runs on indices, and quantizing an
+    /// index residual swaps the pixel to an unrelated palette entry (#78-A;
+    /// libwebp forces strength 100 when the palette is used). Forces the
+    /// mode with near_lossless = 0 and requires an exact decode.
+    #[test]
+    fn palette_and_spatial_ignores_near_lossless() {
+        let palette: Vec<[u8; 3]> = (0..64u32)
+            .map(|i| {
+                let h = i * 6;
+                let (sextant, f) = (h / 64, (h % 64 * 4) as u8);
+                match sextant {
+                    0 => [255, f, 0],
+                    1 => [255 - f, 255, 0],
+                    2 => [0, 255, f],
+                    3 => [0, 255 - f, 255],
+                    4 => [f, 0, 255],
+                    _ => [255, 0, 255 - f],
+                }
+            })
+            .collect();
+        let (w, h) = (64usize, 64usize);
+        let mut rgb = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                // Textured index plane: neighbouring indices differ a lot, so
+                // near-lossless's local max_diff allows real quantization.
+                rgb.extend_from_slice(&palette[(x * 7 + y * 13 + (x * y) % 5) % 64]);
+            }
+        }
+        let mut argb: Vec<u32> = rgb
+            .chunks_exact(3)
+            .map(|p| make_argb(255, p[0], p[1], p[2]))
+            .collect();
+
+        let config = Vp8lConfig {
+            near_lossless: 0,
+            ..Vp8lConfig::default()
+        };
+        let crunch = CrunchConfig {
+            mode: CrunchMode::PaletteAndSpatial,
+            palette_sorting: PaletteSorting::MinimizeDelta,
+        };
+        let vp8l = encode_argb_single_config(
+            &mut argb,
+            w,
+            h,
+            false,
+            &config,
+            &crunch,
+            &enough::Unstoppable,
+        )
+        .expect("PaletteAndSpatial encode");
+        // First transform: present bit + type 3 (color indexing).
+        assert_eq!(vp8l[5] & 0b111, 0b111, "palette transform not first");
+
+        let mut webp = Vec::new();
+        webp.extend_from_slice(b"RIFF");
+        let riff = 4 + 8 + vp8l.len() + (vp8l.len() % 2);
+        webp.extend_from_slice(&(riff as u32).to_le_bytes());
+        webp.extend_from_slice(b"WEBPVP8L");
+        webp.extend_from_slice(&(vp8l.len() as u32).to_le_bytes());
+        webp.extend_from_slice(&vp8l);
+        if vp8l.len() % 2 == 1 {
+            webp.push(0);
+        }
+        let (decoded, dw, dh) = crate::oneshot::decode_rgb(&webp).expect("decode");
+        assert_eq!((dw as usize, dh as usize), (w, h));
+        let max_err = decoded
+            .iter()
+            .zip(&rgb)
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        assert_eq!(max_err, 0, "near_lossless altered a palette-index plane");
     }
 
     #[test]
