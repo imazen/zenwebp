@@ -10,6 +10,7 @@ use crate::slice_reader::SliceReader;
 
 use super::api::DecodeError;
 use super::internal_error::InternalDecodeError;
+use super::limits::Limits;
 use super::lossless_transform::{
     apply_color_indexing_transform, apply_color_transform, apply_predictor_transform,
     apply_subtract_green_transform,
@@ -71,6 +72,7 @@ pub(crate) struct LosslessDecoder<'a> {
     width: u16,
     height: u16,
     stop: Option<&'a dyn enough::Stop>,
+    limits: Option<&'a Limits>,
 }
 
 impl<'a> LosslessDecoder<'a> {
@@ -83,12 +85,35 @@ impl<'a> LosslessDecoder<'a> {
             width: 0,
             height: 0,
             stop: None,
+            limits: None,
         }
     }
 
     /// Set a cooperative cancellation token.
     pub(crate) fn set_stop(&mut self, stop: Option<&'a dyn enough::Stop>) {
         self.stop = stop;
+    }
+
+    /// Set the memory/resource limits used to gate intermediate allocations
+    /// (predictor/color transform sub-images, meta-Huffman entropy image, etc.).
+    ///
+    /// Without this set, intermediate transforms can allocate up to
+    /// `ceil(width / 4)^2 * 4` bytes per transform without bound. See
+    /// `Limits::check_memory` for the budgeting model.
+    pub(crate) fn set_limits(&mut self, limits: Option<&'a Limits>) {
+        self.limits = limits;
+    }
+
+    /// Allocate a `Vec<u8>` of length `size` after first checking it against
+    /// `Limits::check_memory`. Returns a `BitStreamError` mapped from the
+    /// limits check failure if the allocation would exceed the budget.
+    fn alloc_bytes_checked(&self, size: usize) -> Result<Vec<u8>, InternalDecodeError> {
+        if let Some(limits) = self.limits {
+            limits
+                .check_memory(size)
+                .map_err(|_| InternalDecodeError::MemoryLimitExceeded)?;
+        }
+        Ok(vec![0; size])
     }
 
     /// Decodes a frame.
@@ -236,8 +261,9 @@ impl<'a> LosslessDecoder<'a> {
                     let block_xsize = subsample_size(xsize, size_bits);
                     let block_ysize = subsample_size(self.height, size_bits);
 
-                    let mut predictor_data =
-                        vec![0; usize::from(block_xsize) * usize::from(block_ysize) * 4];
+                    let mut predictor_data = self.alloc_bytes_checked(
+                        usize::from(block_xsize) * usize::from(block_ysize) * 4,
+                    )?;
                     self.decode_image_stream(block_xsize, block_ysize, false, &mut predictor_data)?;
 
                     TransformType::PredictorTransform {
@@ -253,8 +279,9 @@ impl<'a> LosslessDecoder<'a> {
                     let block_xsize = subsample_size(xsize, size_bits);
                     let block_ysize = subsample_size(self.height, size_bits);
 
-                    let mut transform_data =
-                        vec![0; usize::from(block_xsize) * usize::from(block_ysize) * 4];
+                    let mut transform_data = self.alloc_bytes_checked(
+                        usize::from(block_xsize) * usize::from(block_ysize) * 4,
+                    )?;
                     self.decode_image_stream(block_xsize, block_ysize, false, &mut transform_data)?;
 
                     TransformType::ColorTransform {
@@ -270,7 +297,8 @@ impl<'a> LosslessDecoder<'a> {
                 3 => {
                     let color_table_size = self.bit_reader.read_bits::<u16>(8)? + 1;
 
-                    let mut color_map = vec![0; usize::from(color_table_size) * 4];
+                    let mut color_map =
+                        self.alloc_bytes_checked(usize::from(color_table_size) * 4)?;
                     self.decode_image_stream(color_table_size, 1, false, &mut color_map)?;
 
                     let bits = if color_table_size <= 2 {
@@ -329,7 +357,8 @@ impl<'a> LosslessDecoder<'a> {
             huffman_xsize = subsample_size(xsize, huffman_bits);
             huffman_ysize = subsample_size(ysize, huffman_bits);
 
-            let mut data = vec![0; usize::from(huffman_xsize) * usize::from(huffman_ysize) * 4];
+            let mut data = self
+                .alloc_bytes_checked(usize::from(huffman_xsize) * usize::from(huffman_ysize) * 4)?;
             self.decode_image_stream(huffman_xsize, huffman_ysize, false, &mut data)?;
 
             entropy_image = data
