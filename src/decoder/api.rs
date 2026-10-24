@@ -526,8 +526,12 @@ impl<'a> DecodeRequest<'a> {
     }
 
     /// Decode to YUV 4:2:0 planes (lossy only).
+    ///
+    /// Honors the request's [`Limits`](super::limits::Limits) (dimension /
+    /// pixel / frame caps); this used to discard the request config
+    /// entirely (#78-B).
     pub fn decode_yuv420(self) -> DecodeResult<YuvPlanes> {
-        decode_yuv420(self.data)
+        decode_yuv420_with_config(self.data, self.config)
     }
 
     /// Decode lossy VP8 to RGB.
@@ -2015,7 +2019,15 @@ pub fn decode_bgr_into(
 /// [`YuvPlanes`] containing separate Y, U, and V buffers.
 #[track_caller]
 pub fn decode_yuv420(data: &[u8]) -> DecodeResult<YuvPlanes> {
-    let decoder = WebPDecoder::new(data)?;
+    decode_yuv420_with_config(data, &DecodeConfig::default())
+}
+
+/// [`decode_yuv420`] under a caller-supplied [`DecodeConfig`]: the config's
+/// limits gate the header (dimensions / pixels / frames).
+#[track_caller]
+fn decode_yuv420_with_config(data: &[u8], config: &DecodeConfig) -> DecodeResult<YuvPlanes> {
+    let decoder =
+        WebPDecoder::new_with_options_and_limits(data, config.to_options(), config.limits.clone())?;
 
     if decoder.is_lossy() && !decoder.is_animated() {
         // For lossy images, extract the native YUV planes from the VP8 frame
@@ -2243,5 +2255,48 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod yuv420_limits_tests {
+    use super::*;
+    use crate::{EncodeRequest, EncoderConfig, PixelLayout};
+
+    fn lossy_32x32() -> Vec<u8> {
+        let mut rgb = vec![0u8; 32 * 32 * 3];
+        for (i, px) in rgb.chunks_exact_mut(3).enumerate() {
+            px[0] = (i % 32 * 8) as u8;
+            px[1] = (i / 32 * 8) as u8;
+            px[2] = 128;
+        }
+        EncodeRequest::new(
+            &EncoderConfig::new_lossy().with_quality(80.0),
+            &rgb,
+            PixelLayout::Rgb8,
+            32,
+            32,
+        )
+        .encode()
+        .unwrap()
+    }
+
+    /// `DecodeRequest::decode_yuv420` called the config-less free function,
+    /// so the request's limits were dead on that path (#78-B).
+    #[test]
+    fn decode_yuv420_honors_request_limits() {
+        let webp = lossy_32x32();
+        let ok = DecodeRequest::new(&DecodeConfig::default(), &webp)
+            .decode_yuv420()
+            .expect("32x32 decodes under default limits");
+        assert_eq!((ok.y_width, ok.y_height), (32, 32));
+        assert_eq!(ok.y.len(), 32 * 32);
+
+        let tight = DecodeConfig::default()
+            .limits(super::super::limits::Limits::default().max_dimensions(8, 8));
+        assert!(
+            DecodeRequest::new(&tight, &webp).decode_yuv420().is_err(),
+            "max_dimensions(8, 8) must reject a 32x32 image on the YUV path"
+        );
     }
 }
