@@ -308,6 +308,7 @@ fn test_scraped_webp_corpus() {
     let mut mismatch = 0usize;
     let mut panicked = 0usize;
     let mut mismatch_files: Vec<(String, u8, usize)> = Vec::new(); // (path, max_diff, count)
+    let mut animations = 0usize;
 
     let config = DecodeConfig::default().with_dithering_strength(0);
 
@@ -318,6 +319,26 @@ fn test_scraped_webp_corpus() {
             Ok(d) => d,
             Err(_) => continue,
         };
+
+        // Animations: libwebp's still API rejects them (UNSUPPORTED_FEATURE),
+        // so every composited frame is compared with WebPAnimDecoder instead.
+        if WebPDecoder::new(&data).is_ok_and(|d| d.is_animated()) {
+            animations += 1;
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                compare_animation_with_libwebp(&data)
+            })) {
+                Ok(Ok(())) => exact_match += 1,
+                Ok(Err(why)) => {
+                    mismatch += 1;
+                    eprintln!("  ANIMATION MISMATCH: {} — {why}", path.display());
+                }
+                Err(_) => {
+                    panicked += 1;
+                    eprintln!("  PANIC: {}", path.display());
+                }
+            }
+            continue;
+        }
 
         // zenwebp decode (catch panics)
         let zen_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -403,7 +424,7 @@ fn test_scraped_webp_corpus() {
     let elapsed = start.elapsed();
 
     println!("\n=== Scraped WebP Corpus vs libwebp ===");
-    println!("  Total:       {tested}");
+    println!("  Total:       {tested} ({animations} animated)");
     println!("  Exact match: {exact_match}");
     println!("  Mismatch:    {mismatch}");
     println!("  zen fail:    {zen_only_fail}");
@@ -429,9 +450,58 @@ fn test_scraped_webp_corpus() {
         mismatch, 0,
         "{mismatch} files had pixel differences vs libwebp"
     );
+    // libwebp is the oracle in both directions: a file only one side decodes
+    // is a disagreement to settle, not a pass.
+    assert_eq!(
+        zen_only_fail, 0,
+        "{zen_only_fail} files only libwebp decodes"
+    );
+    assert_eq!(
+        lib_only_fail, 0,
+        "{lib_only_fail} files only zenwebp decodes"
+    );
 }
 
-/// Get the codec-corpus path for a specific subdirectory.
+/// Every composited frame (RGBA) and duration of an animation, zenwebp vs
+/// libwebp's `WebPAnimDecoder`. libwebp reports end timestamps.
+fn compare_animation_with_libwebp(data: &[u8]) -> Result<(), String> {
+    let lib = webpx::AnimationDecoder::new(data)
+        .and_then(|mut d| d.decode_all())
+        .map_err(|e| format!("libwebp: {e:?}"))?;
+    let mut dec = zenwebp::mux::AnimationDecoder::new(data).map_err(|e| format!("zen: {e}"))?;
+    let has_alpha = dec.info().has_alpha;
+    let zen = dec.decode_all().map_err(|e| format!("zen: {e}"))?;
+    if zen.len() != lib.len() {
+        return Err(format!("frame count zen {} lib {}", zen.len(), lib.len()));
+    }
+    let mut prev_end = 0i32;
+    for (i, (z, l)) in zen.iter().zip(&lib).enumerate() {
+        let lib_ms = l.timestamp_ms.wrapping_sub(prev_end) as u32;
+        prev_end = l.timestamp_ms;
+        if z.duration_ms != lib_ms {
+            return Err(format!(
+                "frame {i} duration zen {} lib {lib_ms}",
+                z.duration_ms
+            ));
+        }
+        let z4: Vec<u8> = if has_alpha {
+            z.data.clone()
+        } else {
+            z.data
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .flat_map(|p| [p[0], p[1], p[2], 255])
+                .collect()
+        };
+        if z4 != l.data {
+            let diffs = z4.iter().zip(&l.data).filter(|(a, b)| a != b).count();
+            return Err(format!("frame {i}: {diffs} bytes differ"));
+        }
+    }
+    Ok(())
+}
+
 /// A codec-corpus dataset; a missing or unfetchable dataset fails the test.
 fn corpus_path(subdir: &str) -> std::path::PathBuf {
     let corpus = codec_corpus::Corpus::new().expect("codec-corpus cache unavailable");
