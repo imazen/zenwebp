@@ -239,8 +239,8 @@ fn ftransform_from_u8_4x4_dispatch_matches_scalar() {
         "ftransform_from_u8_4x4 dispatched != scalar on {} of 256 seeds (first: seed={} disp={:?} scal={:?})",
         mismatches.len(),
         mismatches[0].0,
-        &mismatches[0].1,
-        &mismatches[0].2,
+        mismatches[0].1,
+        mismatches[0].2,
     );
 }
 
