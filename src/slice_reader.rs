@@ -34,10 +34,13 @@ impl<'a> SliceReader<'a> {
         self.pos as u64
     }
 
-    /// Sets the current position.
+    /// Sets the current position, clamped to the end of the slice.
     #[inline]
     pub fn set_position(&mut self, pos: u64) {
-        self.pos = pos as usize;
+        // Clamp in `u64`, not after narrowing: `pos as usize` truncates on
+        // 32-bit targets, so an out-of-range value can land *behind* the
+        // current position instead of at the end. See `seek_from_start`.
+        self.pos = pos.min(self.data.len() as u64) as usize;
     }
 
     /// Returns the underlying byte slice.
@@ -73,12 +76,16 @@ impl<'a> SliceReader<'a> {
     /// Seek to a position from the start.
     #[inline]
     pub fn seek_from_start(&mut self, pos: u64) -> Result<u64, DecodeError> {
-        let pos = pos as usize;
-        if pos > self.data.len() {
+        // Range-check BEFORE narrowing. `pos` is derived from file-declared
+        // chunk sizes, so on 32-bit targets (wasm32) `pos as usize` truncates
+        // an out-of-range seek into a valid in-range one — which silently
+        // rewinds the caller instead of erroring, and container walks that
+        // seek chunk-by-chunk then spin forever at 100% CPU.
+        if pos > self.data.len() as u64 {
             return Err(DecodeError::BitStreamError);
         }
-        self.pos = pos;
-        Ok(self.pos as u64)
+        self.pos = pos as usize;
+        Ok(pos)
     }
 
     /// Seek relative to current position.
@@ -103,7 +110,9 @@ impl<'a> SliceReader<'a> {
     #[inline]
     pub fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), DecodeError> {
         let n = buf.len();
-        if self.pos + n > self.data.len() {
+        // `n` is a real buffer length here (can't overflow), but the
+        // remaining-bytes form keeps every bounds check in this file uniform.
+        if n > self.data.len() - self.pos {
             return Err(DecodeError::BitStreamError);
         }
         buf.copy_from_slice(&self.data[self.pos..self.pos + n]);
@@ -198,7 +207,12 @@ impl<'a> SliceReader<'a> {
     /// Returns a slice reference without copying data.
     #[inline]
     pub fn take_slice(&mut self, n: usize) -> Result<&'a [u8], DecodeError> {
-        if self.pos + n > self.data.len() {
+        // Compare against remaining bytes rather than `self.pos + n`: callers
+        // pass file-declared chunk sizes (`chunk_size as usize`), so on a
+        // 32-bit target `self.pos + n` wraps for a near-u32::MAX `n` and the
+        // guard would pass, then the slice index panics. `self.pos <=
+        // self.data.len()` is an invariant, so the subtraction can't underflow.
+        if n > self.data.len() - self.pos {
             return Err(DecodeError::BitStreamError);
         }
         let slice = &self.data[self.pos..self.pos + n];
@@ -209,7 +223,9 @@ impl<'a> SliceReader<'a> {
     /// Get a slice of n bytes from the current position without advancing.
     #[inline]
     pub fn peek_slice(&self, n: usize) -> Result<&'a [u8], DecodeError> {
-        if self.pos + n > self.data.len() {
+        // See `take_slice`: remaining-bytes comparison avoids a 32-bit wrap on
+        // an attacker-controlled `n`.
+        if n > self.data.len() - self.pos {
             return Err(DecodeError::BitStreamError);
         }
         Ok(&self.data[self.pos..self.pos + n])
@@ -246,33 +262,140 @@ impl<'a> std::io::BufRead for SliceReader<'a> {
 #[cfg(feature = "std")]
 impl<'a> std::io::Seek for SliceReader<'a> {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
-        let new_pos = match pos {
-            std::io::SeekFrom::Start(n) => Some(n as usize),
+        // All arithmetic and range checks happen in `u64`; narrowing to
+        // `usize` only after `new_pos <= len` is proven. `n as usize` on a
+        // 32-bit target truncates i64/u64 offsets, which can turn an invalid
+        // seek into a "valid" one (or a no-op) — the same class as the
+        // `seek_from_start` truncation that spun container parsing forever.
+        let len = self.data.len() as u64;
+        let new_pos: Option<u64> = match pos {
+            std::io::SeekFrom::Start(n) => Some(n),
             std::io::SeekFrom::End(n) => {
                 if n >= 0 {
-                    self.data.len().checked_add(n as usize)
+                    len.checked_add(n as u64)
                 } else {
-                    self.data.len().checked_sub((-n) as usize)
+                    len.checked_sub(n.unsigned_abs())
                 }
             }
             std::io::SeekFrom::Current(n) => {
                 if n >= 0 {
-                    self.pos.checked_add(n as usize)
+                    (self.pos as u64).checked_add(n as u64)
                 } else {
-                    self.pos.checked_sub((-n) as usize)
+                    (self.pos as u64).checked_sub(n.unsigned_abs())
                 }
             }
         };
 
         match new_pos {
-            Some(pos) if pos <= self.data.len() => {
-                self.pos = pos;
-                Ok(self.pos as u64)
+            Some(pos) if pos <= len => {
+                self.pos = pos as usize;
+                Ok(pos)
             }
             _ => Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "seek out of bounds",
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SliceReader;
+
+    /// Regression: a seek target past the end must ERROR, not truncate into a
+    /// valid position. On 32-bit targets (wasm32) `pos as usize` before the
+    /// range check turns `data.len() + 2^32` into `data.len()`, which rewinds
+    /// container walks instead of stopping them — an infinite loop at 100% CPU.
+    #[test]
+    fn seek_past_end_errors_instead_of_truncating() {
+        let data = [0u8; 70];
+        let mut r = SliceReader::new(&data);
+        r.seek_from_start(30).unwrap();
+
+        // 30 + 2^32: truncates to 30 on a 32-bit `usize`.
+        assert!(r.seek_from_start(30 + (1u64 << 32)).is_err());
+        assert_eq!(r.position(), 30, "failed seek must not move the cursor");
+
+        // Exactly at the end is still a legal seek; one past it is not.
+        assert!(r.seek_from_start(70).is_ok());
+        assert!(r.seek_from_start(71).is_err());
+    }
+
+    /// `set_position` clamps to the end; it must never land *behind* the
+    /// cursor because the value truncated into range on a 32-bit `usize`.
+    #[test]
+    fn set_position_clamps_instead_of_truncating() {
+        let data = [0u8; 70];
+        let mut r = SliceReader::new(&data);
+        r.set_position(30 + (1u64 << 32));
+        assert_eq!(r.position(), 70);
+    }
+
+    /// Regression: `take_slice`/`peek_slice` must reject an `n` that would
+    /// wrap `self.pos + n` on a 32-bit target, rather than passing the bounds
+    /// check and panicking on the slice index. Callers pass file-declared
+    /// `chunk_size as usize`, so this is reachable from untrusted input.
+    /// Trivially passes on 64-bit; gates for real on i686 and wasm32.
+    #[test]
+    fn take_and_peek_slice_reject_wrapping_length() {
+        let data = [0u8; 70];
+        let mut r = SliceReader::new(&data);
+        r.seek_from_start(60).unwrap();
+
+        // usize::MAX - 8: on 32-bit `60 + n` wraps below 70; must still error.
+        let huge = usize::MAX - 8;
+        assert!(r.peek_slice(huge).is_err());
+        assert!(r.take_slice(huge).is_err());
+        assert_eq!(r.position(), 60, "failed take_slice must not advance");
+
+        // Exactly-remaining is legal; one past is not.
+        assert!(r.peek_slice(10).is_ok());
+        assert!(r.peek_slice(11).is_err());
+        let s = r.take_slice(10).unwrap();
+        assert_eq!(s.len(), 10);
+        assert_eq!(r.position(), 70);
+        assert!(r.take_slice(1).is_err());
+    }
+
+    /// Same guarantee through the `std::io::Seek` impl.
+    #[cfg(feature = "std")]
+    #[test]
+    fn io_seek_start_past_end_errors_instead_of_truncating() {
+        use std::io::{Seek, SeekFrom};
+        let data = [0u8; 70];
+        let mut r = SliceReader::new(&data);
+        r.seek(SeekFrom::Start(30)).unwrap();
+        assert!(r.seek(SeekFrom::Start(30 + (1u64 << 32))).is_err());
+        assert_eq!(r.position(), 30, "failed seek must not move the cursor");
+    }
+
+    /// `SeekFrom::End`/`Current` with a huge positive offset must error, not
+    /// truncate. On a 32-bit `usize`, `n as usize` maps `2^32` to `0`, so
+    /// `Current(2^32)` "succeeded" at the SAME position (a no-progress loop
+    /// for any caller advancing by file-declared sizes) and `End(2^32)`
+    /// "succeeded" at the end instead of erroring.
+    #[cfg(feature = "std")]
+    #[test]
+    fn io_seek_end_current_do_not_truncate() {
+        use std::io::{Seek, SeekFrom};
+        let data = [0u8; 70];
+        let mut r = SliceReader::new(&data);
+        r.seek(SeekFrom::Start(30)).unwrap();
+
+        assert!(r.seek(SeekFrom::Current(1i64 << 32)).is_err());
+        assert_eq!(r.position(), 30, "failed seek must not move the cursor");
+        assert!(r.seek(SeekFrom::End(1i64 << 32)).is_err());
+        assert_eq!(r.position(), 30, "failed seek must not move the cursor");
+
+        // i64::MIN is the `unsigned_abs` edge (`-n` would overflow).
+        assert!(r.seek(SeekFrom::Current(i64::MIN)).is_err());
+        assert!(r.seek(SeekFrom::End(i64::MIN)).is_err());
+
+        // Legal seeks through every arm still work.
+        assert_eq!(r.seek(SeekFrom::Current(10)).unwrap(), 40);
+        assert_eq!(r.seek(SeekFrom::Current(-10)).unwrap(), 30);
+        assert_eq!(r.seek(SeekFrom::End(0)).unwrap(), 70);
+        assert_eq!(r.seek(SeekFrom::End(-70)).unwrap(), 0);
     }
 }
