@@ -39,6 +39,13 @@ magetypes = { version = "0.9.15" }
 rgb = { version = "0.8", optional = true, default-features = false, features = ["as-bytes"] }
 imgref = { version = "1.12", optional = true, default-features = false }
 
+[lints.clippy]
+# New in clippy 1.98 (2026-08); fires at hot-path pixel loops on the 0.4.x
+# line. Main migrated to as_chunks as its own measured change (#76); the
+# maintenance branch keeps the code byte-identical and allows the lint, as
+# main did before that migration.
+chunks_exact_to_as_chunks = "allow"
+
 [dev-dependencies]
 archmage = { version = "0.9.15", features = ["std", "macros"] }
 paste = "1.0.14"

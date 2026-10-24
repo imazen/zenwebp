@@ -582,8 +582,7 @@ impl<'a> LosslessDecoder<'a> {
             self.bit_reader.fill();
 
             // Fast path 2: use_packed_table - single 6-bit lookup decodes entire pixel
-            let code;
-            if meta.use_packed_table {
+            let code = if meta.use_packed_table {
                 let val = (self.bit_reader.peek_full() as usize) & (PACKED_TABLE_SIZE - 1);
                 let entry = meta.packed_table[val];
                 if entry.bits < BITS_SPECIAL_MARKER {
@@ -604,10 +603,10 @@ impl<'a> LosslessDecoder<'a> {
                 // Non-literal: extract green code, fall through to normal processing
                 let actual_bits = entry.bits - BITS_SPECIAL_MARKER;
                 self.bit_reader.consume(actual_bits)?;
-                code = u16::from(entry.value[1]) | (u16::from(entry.value[2]) << 8);
+                u16::from(entry.value[1]) | (u16::from(entry.value[2]) << 8)
             } else {
-                code = tree[GREEN].read_symbol_fast(&mut self.bit_reader)?;
-            }
+                tree[GREEN].read_symbol_fast(&mut self.bit_reader)?
+            };
 
             if code < 256 {
                 // Literal pixel
