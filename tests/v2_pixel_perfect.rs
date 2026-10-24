@@ -322,29 +322,23 @@ fn load_png_rgb(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     Some((rgb, width, height))
 }
 
+/// Category 1 on real photos: CID22-512 validation (41 images, codec-corpus).
+/// It used Kodak, which codec-corpus no longer carries; the test then skipped
+/// itself silently, so this gate tested nothing. A missing corpus or an
+/// unreadable image now fails the test.
 #[test]
-fn cat1_roundtrip_corpus_kodak() {
-    let corpus = match codec_corpus::Corpus::new() {
-        Ok(c) => c,
-        Err(_) => {
-            eprintln!("Skipping: codec-corpus not available");
-            return;
-        }
-    };
-    let kodak = match corpus.get("kodak") {
-        Ok(d) => d,
-        Err(_) => {
-            eprintln!("Skipping: kodak corpus not available");
-            return;
-        }
-    };
+fn cat1_roundtrip_corpus_cid22() {
+    let corpus = codec_corpus::Corpus::new().expect("codec-corpus cache unavailable");
+    let dir = corpus
+        .get("CID22/CID22-512/validation")
+        .expect("CID22-512 validation corpus unavailable");
 
-    println!("\n=== Category 1: Roundtrip kodak corpus Q50/Q75/Q90 ===");
+    println!("\n=== Category 1: Roundtrip CID22-512 validation Q50/Q75/Q90 ===");
     let mut tested = 0u32;
     let mut worst_lib_rgb = 0u8;
     let mut worst_file = String::new();
 
-    let mut entries: Vec<_> = std::fs::read_dir(&kodak)
+    let mut entries: Vec<_> = std::fs::read_dir(&dir)
         .expect("read_dir failed")
         .filter_map(|e| e.ok())
         .collect();
@@ -355,10 +349,8 @@ fn cat1_roundtrip_corpus_kodak() {
         if path.extension().and_then(|e| e.to_str()) != Some("png") {
             continue;
         }
-        let (rgb, w, h) = match load_png_rgb(&path) {
-            Some(v) => v,
-            None => continue,
-        };
+        let (rgb, w, h) =
+            load_png_rgb(&path).unwrap_or_else(|| panic!("cannot load {}", path.display()));
 
         let fname = path.file_name().unwrap().to_string_lossy();
         for &q in &[50.0, 75.0, 90.0] {
@@ -374,7 +366,11 @@ fn cat1_roundtrip_corpus_kodak() {
     println!(
         "  Tested {tested} roundtrips, worst zenwebp-vs-libwebp RGB diff: {worst_lib_rgb} ({worst_file})"
     );
-    assert!(tested > 0, "No kodak images found");
+    assert_eq!(
+        tested,
+        41 * 3,
+        "expected all 41 CID22-512 validation images"
+    );
 }
 
 // ---------------------------------------------------------------------------

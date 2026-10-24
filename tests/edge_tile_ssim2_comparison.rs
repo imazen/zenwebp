@@ -15,9 +15,23 @@ use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssim
 use std::path::{Path, PathBuf};
 use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
-fn kodak_path() -> Option<std::path::PathBuf> {
-    let corpus = codec_corpus::Corpus::new().ok()?;
-    corpus.get("kodak").ok()
+/// CID22-512 validation photos (41 PNGs from codec-corpus), sorted. These
+/// tools used Kodak, which codec-corpus no longer carries (the house rules
+/// also ban it as overfit); a missing dataset fails instead of skipping.
+fn cid22_images() -> Vec<std::path::PathBuf> {
+    let corpus = codec_corpus::Corpus::new().expect("codec-corpus cache unavailable");
+    let dir = corpus
+        .get("CID22/CID22-512/validation")
+        .expect("CID22-512 validation corpus unavailable");
+    let mut images: Vec<_> = std::fs::read_dir(&dir)
+        .expect("read CID22 dir")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "png"))
+        .collect();
+    images.sort();
+    assert!(!images.is_empty(), "no PNGs in {}", dir.display());
+    images
 }
 
 /// Load PNG and return RGB data with dimensions
@@ -181,20 +195,8 @@ fn calculate_ssim2(rgb1: &[u8], rgb2: &[u8], width: usize, height: usize) -> f64
 #[test]
 #[ignore]
 fn test_edge_tile_ssim2_comparison() {
-    let kodak_dir = match kodak_path() {
-        Some(p) => p,
-        None => {
-            eprintln!("Skipping: kodak corpus unavailable");
-            return;
-        }
-    };
-
-    // Find test images (use first 6 for reasonable test time)
-    let mut images: Vec<PathBuf> = (1..=6)
-        .map(|i| kodak_dir.join(format!("{}.png", i)))
-        .filter(|p| p.exists())
-        .collect();
-    images.sort();
+    // First 6 images for reasonable test time.
+    let images: Vec<PathBuf> = cid22_images().into_iter().take(6).collect();
 
     if images.is_empty() {
         panic!("No PNG images found in corpus");
@@ -361,17 +363,9 @@ fn test_edge_tile_ssim2_comparison() {
 #[test]
 #[ignore]
 fn test_edge_full_image_comparison() {
-    let kodak_dir = match kodak_path() {
-        Some(p) => p,
-        None => {
-            eprintln!("Skipping: kodak corpus unavailable");
-            return;
-        }
-    };
-
     println!("\n=== FULL IMAGE QUALITY AT NON-ALIGNED SIZES ===\n");
 
-    let image_path = kodak_dir.join("1.png");
+    let image_path = cid22_images().swap_remove(0);
     let (rgb, orig_width, orig_height) = load_png(&image_path).expect("Failed to load image");
 
     // Test various non-aligned sizes

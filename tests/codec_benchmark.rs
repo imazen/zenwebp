@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 //! Rate-distortion benchmark comparing our encoder vs libwebp
 //!
-//! Uses the Kodak image corpus for standardized comparison.
+//! Uses the CID22-512 validation photos (codec-corpus) for comparison.
 //! Measures quality at equal bits-per-pixel for apples-to-apples comparison.
 //! Uses SSIMULACRA2 for perceptual quality measurement (higher = better).
 
@@ -9,9 +9,23 @@ use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssim
 use std::path::Path;
 use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
-fn kodak_path() -> Option<std::path::PathBuf> {
-    let corpus = codec_corpus::Corpus::new().ok()?;
-    corpus.get("kodak").ok()
+/// CID22-512 validation photos (41 PNGs from codec-corpus), sorted. These
+/// tools used Kodak, which codec-corpus no longer carries (the house rules
+/// also ban it as overfit); a missing dataset fails instead of skipping.
+fn cid22_images() -> Vec<std::path::PathBuf> {
+    let corpus = codec_corpus::Corpus::new().expect("codec-corpus cache unavailable");
+    let dir = corpus
+        .get("CID22/CID22-512/validation")
+        .expect("CID22-512 validation corpus unavailable");
+    let mut images: Vec<_> = std::fs::read_dir(&dir)
+        .expect("read CID22 dir")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "png"))
+        .collect();
+    images.sort();
+    assert!(!images.is_empty(), "no PNGs in {}", dir.display());
+    images
 }
 
 /// Calculate SSIMULACRA2 between two RGB images
@@ -226,23 +240,16 @@ fn interpolate_ssim2_at_bpp(results: &[EncodeResult], target_bpp: f64) -> Option
 
 #[test]
 #[ignore] // Run with: cargo test codec_benchmark --release -- --ignored --nocapture
-fn codec_benchmark_kodak() {
-    let kodak_dir = match kodak_path() {
-        Some(p) => p,
-        None => {
-            eprintln!("Skipping: kodak corpus unavailable");
-            return;
-        }
-    };
+fn codec_benchmark_cid22() {
+    let images = cid22_images();
 
-    println!("\n=== Kodak Corpus Rate-Distortion Benchmark ===\n");
+    println!("\n=== CID22-512 Rate-Distortion Benchmark ===\n");
 
     let mut all_results = Vec::new();
 
     // Benchmark all images
-    for i in 1..=24 {
-        let path = kodak_dir.join(format!("{}.png", i));
-        if let Some(results) = benchmark_image(&path) {
+    for (i, path) in images.iter().enumerate() {
+        if let Some(results) = benchmark_image(path) {
             println!(
                 "Image {:2}: {}x{} ({} pixels)",
                 i, results.width, results.height, results.pixels
