@@ -25,12 +25,22 @@ fn lossy_webp() -> Vec<u8> {
 fn native_lossy_decode_honors_pre_stopped_token() {
     let data = lossy_webp();
     let cfg = zenwebp::DecodeConfig::default();
-    assert!(zenwebp::DecodeRequest::new(&cfg, &data).decode_rgba().is_ok());
+    assert!(
+        zenwebp::DecodeRequest::new(&cfg, &data)
+            .decode_rgba()
+            .is_ok()
+    );
 
     let stop = AlwaysStopped;
     for result in [
-        zenwebp::DecodeRequest::new(&cfg, &data).stop(&stop).decode_rgba().map(|_| ()),
-        zenwebp::DecodeRequest::new(&cfg, &data).stop(&stop).decode_rgb().map(|_| ()),
+        zenwebp::DecodeRequest::new(&cfg, &data)
+            .stop(&stop)
+            .decode_rgba()
+            .map(|_| ()),
+        zenwebp::DecodeRequest::new(&cfg, &data)
+            .stop(&stop)
+            .decode_rgb()
+            .map(|_| ()),
     ] {
         let err = result.expect_err("stopped token must cancel the lossy decode");
         assert!(
@@ -79,12 +89,17 @@ fn animated_lossy_frame_honors_pre_stopped_token() {
     let mut decoder = zenwebp::WebPDecoder::new(&data).unwrap();
     assert!(decoder.is_animated());
     let mut buf = vec![0u8; decoder.output_buffer_size().unwrap()];
-    assert!(decoder.read_frame(&mut buf).is_ok(), "unstopped frame decodes");
+    assert!(
+        decoder.read_frame(&mut buf).is_ok(),
+        "unstopped frame decodes"
+    );
 
     let mut decoder = zenwebp::WebPDecoder::new(&data).unwrap();
     let stop = AlwaysStopped;
     decoder.set_stop(Some(&stop));
-    let err = decoder.read_frame(&mut buf).expect_err("stopped token must cancel the frame");
+    let err = decoder
+        .read_frame(&mut buf)
+        .expect_err("stopped token must cancel the frame");
     assert!(
         matches!(err.error(), zenwebp::DecodeError::Cancelled(_)),
         "expected Cancelled, got {err:?}"
@@ -97,10 +112,12 @@ fn zencodec_lossy_decode_honors_pre_stopped_token() {
     use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
     let data = lossy_webp();
     let job = || zenwebp::zencodec::WebpDecoderConfig::new().job();
-    assert!(job()
-        .decoder(std::borrow::Cow::Borrowed(&data[..]), &[])
-        .and_then(|d| d.decode())
-        .is_ok());
+    assert!(
+        job()
+            .decoder(std::borrow::Cow::Borrowed(&data[..]), &[])
+            .and_then(|d| d.decode())
+            .is_ok()
+    );
 
     let err = job()
         .with_stop(zencodec::StopToken::new(AlwaysStopped))

@@ -30,7 +30,14 @@ fn u24(v: u32) -> [u8; 3] {
 fn mismatched_animation(anmf_w: u32, anmf_h: u32) -> Vec<u8> {
     let (w, h) = (8u32, 8u32);
     let rgba: Vec<u8> = (0..w * h)
-        .flat_map(|i| [(i * 4) as u8, (i * 3) as u8, (i * 7) as u8, (i * 5 + 1) as u8])
+        .flat_map(|i| {
+            [
+                (i * 4) as u8,
+                (i * 3) as u8,
+                (i * 7) as u8,
+                (i * 5 + 1) as u8,
+            ]
+        })
         .collect();
     let cfg = zenwebp::LossyConfig::new();
     let still = zenwebp::EncodeRequest::lossy(&cfg, &rgba, zenwebp::PixelLayout::Rgba8, w, h)

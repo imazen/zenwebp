@@ -17,7 +17,11 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         let p = e.path();
         if p.is_dir() {
             walk(&p, out);
-        } else if p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("crash-")) {
+        } else if p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("crash-"))
+        {
             out.push(p);
         }
     }
@@ -84,11 +88,18 @@ fn replay() {
     walk(&root, &mut files);
     files.sort();
     std::panic::set_hook(Box::new(|info| {
-        let loc = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
+        let loc = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_default();
         *LAST_PANIC.lock().unwrap() = loc;
     }));
-    let entries: [(&str, fn(&[u8])); 4] =
-        [("still", still), ("animated", animated), ("v2", v2), ("demux", demux)];
+    let entries: [(&str, fn(&[u8])); 4] = [
+        ("still", still),
+        ("animated", animated),
+        ("v2", v2),
+        ("demux", demux),
+    ];
     let mut by_sig: BTreeMap<String, (usize, PathBuf)> = BTreeMap::new();
     let mut slow: Vec<(Duration, String, PathBuf)> = Vec::new();
     for f in &files {
@@ -115,5 +126,10 @@ fn replay() {
     for (dt, name, f) in slow.iter().rev().take(20) {
         eprintln!("SLOW {dt:?} {name} {}", f.display());
     }
-    assert!(by_sig.is_empty() && slow.is_empty(), "{} panic signatures, {} slow", by_sig.len(), slow.len());
+    assert!(
+        by_sig.is_empty() && slow.is_empty(),
+        "{} panic signatures, {} slow",
+        by_sig.len(),
+        slow.len()
+    );
 }
