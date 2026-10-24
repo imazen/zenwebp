@@ -70,12 +70,18 @@ build-no-std:
     cargo build --no-default-features
 
 # Cross-test i686 (32-bit x86) via QEMU
-test-i686:
-    cross test --features "std,pixel-types" --target i686-unknown-linux-gnu
+test-i686: corpus-prefetch
+    CROSS_CONTAINER_OPTS="-v $HOME/.cache/codec-corpus:/codec-corpus/codec-corpus" CODEC_CORPUS_CACHE=/codec-corpus cross test --features "std,pixel-types" --target i686-unknown-linux-gnu
 
 # Cross-test armv7 (32-bit ARM) via QEMU
-test-armv7:
-    cross test --features "std,pixel-types" --target armv7-unknown-linux-gnueabihf
+test-armv7: corpus-prefetch
+    CROSS_CONTAINER_OPTS="-v $HOME/.cache/codec-corpus:/codec-corpus/codec-corpus" CODEC_CORPUS_CACHE=/codec-corpus cross test --features "std,pixel-types" --target armv7-unknown-linux-gnueabihf
+
+# The cross containers cannot fetch codec-corpus datasets; cache every one a
+# test reads on the host first (the same two the i686 CI job prefetches).
+corpus-prefetch:
+    cargo test --features inventory --test inventory corpus_webp_conformance_valid -- --exact
+    cargo test --test v2_pixel_perfect cat1_roundtrip_corpus_cid22 -- --exact
 
 # Cross-test all non-native targets
 test-cross: test-i686 test-armv7
