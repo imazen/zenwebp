@@ -543,6 +543,8 @@ pub struct EncoderParams {
     /// Preserve RGB under fully-transparent pixels (alpha=0) in lossless mode.
     /// `false` (default) matches libwebp: zero RGB for better compression.
     pub(crate) exact: bool,
+    /// Near-lossless preprocessing for lossless mode (0-100, 100 = off).
+    pub(crate) near_lossless: u8,
 }
 
 impl Default for EncoderParams {
@@ -563,6 +565,7 @@ impl Default for EncoderParams {
             alpha_quality: 100,
             partition_limit: None,
             exact: false,
+            near_lossless: 100,
         }
     }
 }
@@ -915,6 +918,7 @@ impl EncoderConfig {
             alpha_quality: self.alpha_quality,
             partition_limit: self.partition_limit,
             exact: self.exact,
+            near_lossless: self.near_lossless,
         }
     }
 
@@ -1441,6 +1445,10 @@ pub(crate) fn encode_frame_lossless(
         let vp8l_config = super::vp8l::Vp8lConfig {
             quality: super::vp8l::Vp8lQuality { quality, method },
             exact: params.exact,
+            // Was dropped here: `..default()` silently reset it to 100, so
+            // `with_near_lossless(q)` was a no-op at every method and quality
+            // (#89).
+            near_lossless: params.near_lossless,
             ..super::vp8l::Vp8lConfig::default()
         };
 

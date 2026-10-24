@@ -754,6 +754,7 @@ impl LossyConfig {
             alpha_quality: self.alpha_quality,
             partition_limit: self.partition_limit,
             exact: false, // Not applicable to lossy (alpha plane is lossless separately)
+            near_lossless: 100, // Lossless-only knob
         }
     }
 }
@@ -776,6 +777,7 @@ impl LosslessConfig {
             alpha_quality: self.alpha_quality,
             partition_limit: None, // Not applicable to lossless
             exact: self.exact,
+            near_lossless: self.near_lossless,
         }
     }
 }
