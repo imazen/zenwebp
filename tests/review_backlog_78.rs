@@ -181,3 +181,39 @@ mod decode_mux {
         }
     }
 }
+
+/// From bac15b9 on main: `EncoderConfig::with_lossless` claimed to preserve
+/// common settings but rebuilt the target config with `..new()`, dropping
+/// `alpha_quality` and `target_size` in both directions.
+mod encoder_config {
+    use zenwebp::{EncoderConfig, LossyConfig};
+
+    #[test]
+    fn with_lossless_round_trips_alpha_quality_and_target_size() {
+        let lossy = EncoderConfig::Lossy(
+            LossyConfig::new()
+                .with_quality(63.0)
+                .with_method(2)
+                .with_alpha_quality(37)
+                .with_target_size(12_345),
+        );
+        let lossless = lossy.clone().with_lossless(true);
+        match &lossless {
+            EncoderConfig::Lossless(c) => {
+                assert_eq!(c.quality, 63.0);
+                assert_eq!(c.method, 2);
+                assert_eq!(c.alpha_quality, 37, "alpha_quality dropped lossy→lossless");
+                assert_eq!(c.target_size, 12_345, "target_size dropped lossy→lossless");
+            }
+            other => panic!("expected Lossless, got {other:?}"),
+        }
+        let back = lossless.with_lossless(false);
+        match &back {
+            EncoderConfig::Lossy(c) => {
+                assert_eq!(c.alpha_quality, 37, "alpha_quality dropped lossless→lossy");
+                assert_eq!(c.target_size, 12_345, "target_size dropped lossless→lossy");
+            }
+            other => panic!("expected Lossy, got {other:?}"),
+        }
+    }
+}

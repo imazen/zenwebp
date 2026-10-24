@@ -606,9 +606,15 @@ impl EncoderConfig {
                 let q = self.get_quality();
                 let m = self.get_method();
                 let l = self.get_limits().clone();
+                let (aq, ts) = match &self {
+                    Self::Lossy(c) => (c.alpha_quality, c.target_size),
+                    Self::Lossless(c) => (c.alpha_quality, c.target_size),
+                };
                 Self::Lossless(LosslessConfig {
                     quality: q,
                     method: m,
+                    alpha_quality: aq,
+                    target_size: ts,
                     limits: l,
                     ..LosslessConfig::new()
                 })
@@ -618,9 +624,15 @@ impl EncoderConfig {
                 let q = self.get_quality();
                 let m = self.get_method();
                 let l = self.get_limits().clone();
+                let (aq, ts) = match &self {
+                    Self::Lossy(c) => (c.alpha_quality, c.target_size),
+                    Self::Lossless(c) => (c.alpha_quality, c.target_size),
+                };
                 Self::Lossy(LossyConfig {
                     quality: q,
                     method: m,
+                    alpha_quality: aq,
+                    target_size: ts,
                     limits: l,
                     ..LossyConfig::new()
                 })
