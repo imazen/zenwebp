@@ -6,6 +6,10 @@ Changelog; versions follow Cargo semver.
 
 ## [Unreleased]
 
+### Fixed
+
+- Container walk (#107, #108, #109), backported from main and checked against libwebp in `tests/container_walk.rs` (all 4 tests fail without the fix). Trailing data after a VP8X file no longer fails the decode, and a chunk after the RIFF end is no longer read as metadata (the chunk walk ran ten bytes past the RIFF end). An odd-sized ANMF, or any other chunk between ANMF frames, no longer ends the animation: `read_frame` steps by the padded ANMF size, skips non-ANMF chunks, and bounds sub-chunks by the padded ANMF size as libwebp does.
+
 ### QUEUED BREAKING CHANGES
 
 (none — 0.4.x takes only semver-compatible fixes)

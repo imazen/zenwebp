@@ -728,6 +728,10 @@ pub struct WebPDecoder<'a> {
     loop_duration: u64,
 
     chunks: HashMap<WebPRiffChunk, Range<u64>>,
+    /// End of the RIFF payload (`8 + riff_size`). The VP8X chunk walk in
+    /// `read_data` and the ANMF walk in `read_frame` both stop here, so every
+    /// frame `read_data` counts is one `read_frame` can reach.
+    riff_end: u64,
 
     webp_decode_options: WebPDecodeOptions,
 
@@ -841,6 +845,7 @@ impl<'a> WebPDecoder<'a> {
             num_frames: 0,
             kind: ImageKind::Lossy,
             chunks: HashMap::new(),
+            riff_end: 0,
             animation: Default::default(),
             memory_limit: usize::MAX,
             limits,
@@ -944,7 +949,11 @@ impl<'a> WebPDecoder<'a> {
                 self.limits.check_dimensions(self.width, self.height)?;
 
                 let mut position = start + chunk_size_rounded;
-                let max_position = position + riff_size.saturating_sub(12);
+                // Chunks live inside the RIFF payload: a chunk header must
+                // fit before `8 + riff_size`. Bytes after it are trailing data
+                // (#107: the old bound, `position + riff_size - 12`, ran ten
+                // bytes past the RIFF end and parsed trailing bytes as chunks).
+                self.riff_end = riff_size.saturating_add(8);
                 self.r.seek_from_start(position)?;
 
                 // Whether compositing can leave transparent canvas pixels even
@@ -954,7 +963,7 @@ impl<'a> WebPDecoder<'a> {
                 // the previous ANMF frame.
                 let mut prev_anmf: Option<bool> = None;
 
-                while position < max_position {
+                while position.saturating_add(8) <= self.riff_end {
                     match read_chunk_header(&mut self.r) {
                         Ok((chunk, chunk_size, chunk_size_rounded)) => {
                             let range = position + 8..position + 8 + chunk_size;
@@ -1379,12 +1388,23 @@ impl<'a> WebPDecoder<'a> {
             unreachable!()
         };
 
+        // Walk to the next ANMF the way `read_data` counted it: chunks are
+        // padded to even size (#108), and other chunks may sit between frames
+        // (#109).
         self.r.seek_from_start(self.animation.next_frame_start)?;
-
-        let anmf_size = match read_chunk_header(&mut self.r)? {
-            (WebPRiffChunk::ANMF, size, _) if size >= 32 => size,
-            _ => return Err(at!(DecodeError::ChunkHeaderInvalid(*b"ANMF"))),
+        let anmf_size_rounded = loop {
+            if self.r.stream_position().saturating_add(8) > self.riff_end {
+                return Err(at!(DecodeError::ChunkHeaderInvalid(*b"ANMF")));
+            }
+            match read_chunk_header(&mut self.r)? {
+                (WebPRiffChunk::ANMF, size, rounded) if size >= 32 => break rounded,
+                (WebPRiffChunk::ANMF, ..) => {
+                    return Err(at!(DecodeError::ChunkHeaderInvalid(*b"ANMF")));
+                }
+                (_, _, rounded) => self.r.seek_relative(rounded as i64)?,
+            }
         };
+        let anmf_start = self.r.stream_position() - 8;
 
         // Read ANMF chunk
         let frame_x = extended::read_3_bytes(&mut self.r)? * 2;
@@ -1411,8 +1431,11 @@ impl<'a> WebPDecoder<'a> {
             .set_upsampling(self.webp_decode_options.lossy_upsampling);
 
         // Read normal bitstream now
+        // Sub-chunk bounds use the padded ANMF size, as libwebp's
+        // `ParseAnimationFrame` does: the ANMF's own pad byte may pad its last
+        // sub-chunk.
         let (chunk, chunk_size, chunk_size_rounded) = read_chunk_header(&mut self.r)?;
-        if chunk_size_rounded + 24 > anmf_size {
+        if chunk_size_rounded + 24 > anmf_size_rounded {
             return Err(at!(DecodeError::ChunkHeaderInvalid(chunk.to_fourcc())));
         }
 
@@ -1456,7 +1479,7 @@ impl<'a> WebPDecoder<'a> {
                 (4, vp8l_alpha)
             }
             WebPRiffChunk::ALPH => {
-                if chunk_size_rounded + 32 > anmf_size {
+                if chunk_size_rounded + 32 > anmf_size_rounded {
                     return Err(at!(DecodeError::ChunkHeaderInvalid(chunk.to_fourcc())));
                 }
 
@@ -1475,8 +1498,9 @@ impl<'a> WebPDecoder<'a> {
                 )?;
 
                 // read opaque — lossy decode with buffer reuse
-                let (next_chunk, next_chunk_size, _) = read_chunk_header(&mut self.r)?;
-                if chunk_size + next_chunk_size + 32 > anmf_size {
+                let (next_chunk, next_chunk_size, next_chunk_size_rounded) =
+                    read_chunk_header(&mut self.r)?;
+                if chunk_size_rounded + next_chunk_size_rounded + 32 > anmf_size_rounded {
                     return Err(at!(DecodeError::ChunkHeaderInvalid(next_chunk.to_fourcc())));
                 }
 
@@ -1568,7 +1592,7 @@ impl<'a> WebPDecoder<'a> {
         self.animation.previous_frame_was_keyframe = is_keyframe;
 
         self.animation.dispose_next_frame = dispose;
-        self.animation.next_frame_start += anmf_size + 8;
+        self.animation.next_frame_start = anmf_start + 8 + anmf_size_rounded;
         self.animation.next_frame += 1;
 
         if self.has_alpha() {
