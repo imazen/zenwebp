@@ -544,20 +544,13 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
 
 /// Streaming accumulation state for row-level encoding.
 ///
-/// Initialized on the first `push_rows` call based on encoder config and input format.
+/// Rows are kept in the layout `encode` would hand the encoder, and
+/// `finish` runs the same encode on them, so `push_rows` + `finish` gives the
+/// bytes `encode` gives. (A YUV accumulator that converted row pairs during
+/// push was removed on 2026-10-15: it used its own converter with a fixed
+/// chroma precision, so its pixels differed from `encode` at method >= 1.)
 enum StreamAccum {
-    /// Lossy opaque RGB8: convert to YUV420 during push for lower peak memory
-    /// (1.5 bytes/pixel vs 3 bytes/pixel for RGB8 input).
-    Yuv {
-        y_plane: Vec<u8>,
-        u_plane: Vec<u8>,
-        v_plane: Vec<u8>,
-        /// Held-back RGB row for chroma pairing when odd rows received.
-        pending_row: Vec<u8>,
-        width: u32,
-        total_rows: u32,
-    },
-    /// Generic path: accumulate converted pixel bytes.
+    /// Accumulated pixel bytes in the encode layout.
     Raw {
         pixels: Vec<u8>,
         layout: PixelLayout,
@@ -725,68 +718,6 @@ fn pixels_to_webp_input<'a>(
     }
 }
 
-/// Convert a pair of RGB8 rows to Y/U/V planes.
-///
-/// Appends Y samples for both rows and one row of U/V chroma samples
-/// (2:1 subsampling in both directions).
-fn convert_row_pair_to_yuv(
-    row0: &[u8],
-    row1: &[u8],
-    width: usize,
-    y_plane: &mut Vec<u8>,
-    u_plane: &mut Vec<u8>,
-    v_plane: &mut Vec<u8>,
-) {
-    use crate::decoder::yuv::{rgb_to_u_avg, rgb_to_v_avg, rgb_to_y};
-
-    // Y for both rows
-    for x in 0..width {
-        y_plane.push(rgb_to_y(&row0[x * 3..x * 3 + 3]));
-    }
-    for x in 0..width {
-        y_plane.push(rgb_to_y(&row1[x * 3..x * 3 + 3]));
-    }
-
-    // U/V: average of 2×2 blocks
-    let uv_w = width.div_ceil(2);
-    for cx in 0..uv_w {
-        let x0 = cx * 2;
-        let x1 = (cx * 2 + 1).min(width - 1);
-        let p00 = &row0[x0 * 3..x0 * 3 + 3];
-        let p01 = &row0[x1 * 3..x1 * 3 + 3];
-        let p10 = &row1[x0 * 3..x0 * 3 + 3];
-        let p11 = &row1[x1 * 3..x1 * 3 + 3];
-        u_plane.push(rgb_to_u_avg(p00, p01, p10, p11));
-        v_plane.push(rgb_to_v_avg(p00, p01, p10, p11));
-    }
-}
-
-/// Convert a single RGB8 row to Y plane + U/V chroma (edge replication).
-///
-/// Used for the last row when image height is odd.
-fn convert_single_row_to_yuv(
-    row: &[u8],
-    width: usize,
-    y_plane: &mut Vec<u8>,
-    u_plane: &mut Vec<u8>,
-    v_plane: &mut Vec<u8>,
-) {
-    use crate::decoder::yuv::{rgb_to_u_avg, rgb_to_v_avg, rgb_to_y};
-
-    for x in 0..width {
-        y_plane.push(rgb_to_y(&row[x * 3..x * 3 + 3]));
-    }
-    let uv_w = width.div_ceil(2);
-    for cx in 0..uv_w {
-        let x0 = cx * 2;
-        let x1 = (cx * 2 + 1).min(width - 1);
-        let p0 = &row[x0 * 3..x0 * 3 + 3];
-        let p1 = &row[x1 * 3..x1 * 3 + 3];
-        u_plane.push(rgb_to_u_avg(p0, p1, p0, p1));
-        v_plane.push(rgb_to_v_avg(p0, p1, p0, p1));
-    }
-}
-
 impl zencodec::encode::Encoder for WebpEncoder {
     type Error = At<EncodeError>;
 
@@ -810,7 +741,6 @@ impl zencodec::encode::Encoder for WebpEncoder {
     }
 
     fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), At<EncodeError>> {
-        let desc = rows.descriptor();
         let strip_w = rows.width();
         let strip_h = rows.rows();
 
@@ -818,104 +748,24 @@ impl zencodec::encode::Encoder for WebpEncoder {
             return Ok(());
         }
 
-        // Initialize streaming state on first push
-        if self.stream.is_none() {
-            let is_lossy = matches!(self.inner_config, EncoderConfig::Lossy(_));
-            let is_rgb8 = desc == PixelDescriptor::RGB8_SRGB;
-            let sharp_yuv = match &self.inner_config {
-                EncoderConfig::Lossy(cfg) => cfg.sharp_yuv,
-                EncoderConfig::Lossless(_) => None,
-            };
-
-            if is_lossy && is_rgb8 && sharp_yuv.is_none() {
-                // YUV conversion path: lower peak memory
-                let (cw, ch) = self.canvas_size.unwrap_or((strip_w, 0));
-                let y_cap = cw as usize * ch as usize;
-                let uv_w = (cw as usize).div_ceil(2);
-                let uv_h = (ch as usize).div_ceil(2);
-                self.stream = Some(StreamAccum::Yuv {
-                    y_plane: Vec::with_capacity(y_cap),
-                    u_plane: Vec::with_capacity(uv_w * uv_h),
-                    v_plane: Vec::with_capacity(uv_w * uv_h),
-                    pending_row: Vec::new(),
-                    width: cw,
-                    total_rows: 0,
-                });
-            } else {
-                // Generic path: convert per-strip, accumulate bytes
-                let (_, layout, _, _, _) = pixels_to_webp_input(&rows)?;
-                let (cw, ch) = self.canvas_size.unwrap_or((strip_w, 0));
-                let bpp = layout.bytes_per_pixel();
-                let cap = cw as usize * ch as usize * bpp;
-                self.stream = Some(StreamAccum::Raw {
-                    pixels: Vec::with_capacity(cap),
-                    layout,
-                    width: cw,
-                    total_rows: 0,
-                });
-                // First strip already converted; store it
-                let stream = self.stream.as_mut().unwrap();
-                if let StreamAccum::Raw {
-                    pixels, total_rows, ..
-                } = stream
-                {
-                    let (buf, _, _, _, _) = pixels_to_webp_input(&rows)?;
-                    pixels.extend_from_slice(&buf);
-                    *total_rows += strip_h;
-                }
-                return Ok(());
-            }
-        }
-
-        match self.stream.as_mut().unwrap() {
-            StreamAccum::Yuv {
-                y_plane,
-                u_plane,
-                v_plane,
-                pending_row,
-                width,
-                total_rows,
-            } => {
-                let w = *width as usize;
-                let data = rows.contiguous_bytes();
-                let row_bytes = w * 3;
-                let input_row_count = data.len() / row_bytes;
-                let mut i = 0;
-
-                // Pair pending row from previous push with first new row
-                if !pending_row.is_empty() && input_row_count > 0 {
-                    let mut pr = core::mem::take(pending_row);
-                    let row1 = &data[0..row_bytes];
-                    convert_row_pair_to_yuv(&pr, row1, w, y_plane, u_plane, v_plane);
-                    pr.clear();
-                    *pending_row = pr; // return allocation
-                    i = 1;
-                }
-
-                // Process complete row pairs
-                while i + 1 < input_row_count {
-                    let r0 = &data[i * row_bytes..(i + 1) * row_bytes];
-                    let r1 = &data[(i + 1) * row_bytes..(i + 2) * row_bytes];
-                    convert_row_pair_to_yuv(r0, r1, w, y_plane, u_plane, v_plane);
-                    i += 2;
-                }
-
-                // Leftover row → pending
-                if i < input_row_count {
-                    pending_row.clear();
-                    pending_row.extend_from_slice(&data[i * row_bytes..(i + 1) * row_bytes]);
-                }
-
-                *total_rows += input_row_count as u32;
-            }
+        // Rows are converted to the encode layout and kept; `finish` runs the
+        // one-shot encode on them, so the output equals `encode()`'s.
+        let (buf, layout, _, _, _) = pixels_to_webp_input(&rows)?;
+        let stream = self.stream.get_or_insert_with(|| {
+            let (cw, ch) = self.canvas_size.unwrap_or((strip_w, 0));
+            let cap = cw as usize * ch as usize * layout.bytes_per_pixel();
             StreamAccum::Raw {
-                pixels, total_rows, ..
-            } => {
-                let (buf, _, _, _, _) = pixels_to_webp_input(&rows)?;
-                pixels.extend_from_slice(&buf);
-                *total_rows += strip_h;
+                pixels: Vec::with_capacity(cap),
+                layout,
+                width: cw,
+                total_rows: 0,
             }
-        }
+        });
+        let StreamAccum::Raw {
+            pixels, total_rows, ..
+        } = stream;
+        pixels.extend_from_slice(&buf);
+        *total_rows += strip_h;
 
         Ok(())
     }
@@ -926,50 +776,14 @@ impl zencodec::encode::Encoder for WebpEncoder {
             .take()
             .ok_or_else(|| at!(EncodeError::InvalidBufferSize("no rows pushed".into())))?;
 
-        match stream {
-            StreamAccum::Yuv {
-                mut y_plane,
-                mut u_plane,
-                mut v_plane,
-                pending_row,
-                width,
-                total_rows,
-            } => {
-                // Process pending row (odd image height)
-                if !pending_row.is_empty() {
-                    convert_single_row_to_yuv(
-                        &pending_row,
-                        width as usize,
-                        &mut y_plane,
-                        &mut u_plane,
-                        &mut v_plane,
-                    );
-                }
-
-                // Pack Y+U+V into a single buffer for the Yuv420 encode path
-                let mut yuv_buf = Vec::with_capacity(y_plane.len() + u_plane.len() + v_plane.len());
-                yuv_buf.append(&mut y_plane);
-                yuv_buf.append(&mut u_plane);
-                yuv_buf.append(&mut v_plane);
-
-                self.do_encode(
-                    &yuv_buf,
-                    PixelLayout::Yuv420,
-                    width,
-                    total_rows,
-                    width as usize,
-                )
-                .map_err(|e| at!(e))
-            }
-            StreamAccum::Raw {
-                pixels,
-                layout,
-                width,
-                total_rows,
-            } => self
-                .do_encode(&pixels, layout, width, total_rows, width as usize)
-                .map_err(|e| at!(e)),
-        }
+        let StreamAccum::Raw {
+            pixels,
+            layout,
+            width,
+            total_rows,
+        } = stream;
+        self.do_encode(&pixels, layout, width, total_rows, width as usize)
+            .map_err(|e| at!(e))
     }
 }
 
@@ -2439,6 +2253,65 @@ fn to_image_info(native: &crate::ImageInfo, loop_count: Option<Option<u32>>) -> 
 
 #[cfg(test)]
 mod tests {
+    /// `push_rows` + `finish` must give the bytes `encode` gives: lossy and
+    /// lossless, RGB8 and RGBA8, odd and even sizes, every strip height, every
+    /// lossy method (method >= 1 selects libwebp-exact chroma, which the
+    /// removed row-pair YUV accumulator did not use).
+    #[test]
+    fn push_rows_matches_one_shot_bytes() {
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+        for (w, h) in [(1u32, 1u32), (2, 2), (3, 5), (17, 9), (67, 45)] {
+            for desc in [PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB] {
+                let bpp = desc.bytes_per_pixel();
+                let px: Vec<u8> = (0..(w * h) as usize * bpp)
+                    .map(|i| (i * 37 % 251) as u8 ^ (i / 7) as u8)
+                    .collect();
+                let stride = w as usize * bpp;
+                let whole = || PixelSlice::new(&px, w, h, stride, desc).unwrap();
+                let mut configs: Vec<(alloc::string::String, WebpEncoderConfig)> = (0..=6u8)
+                    .map(|m| {
+                        (
+                            alloc::format!("lossy m{m}"),
+                            WebpEncoderConfig::lossy().with_quality(80.0).with_method(m),
+                        )
+                    })
+                    .collect();
+                configs.push(("lossless".into(), WebpEncoderConfig::lossless()));
+                for (name, cfg) in configs {
+                    let want = cfg
+                        .clone()
+                        .job()
+                        .encoder()
+                        .unwrap()
+                        .encode(whole())
+                        .unwrap()
+                        .into_vec();
+                    for strip in [1u32, 2, 3, 7, h] {
+                        let mut enc = cfg.clone().job().encoder().unwrap();
+                        let mut y = 0;
+                        while y < h {
+                            let n = strip.min(h - y);
+                            let s = PixelSlice::new(
+                                &px[y as usize * stride..(y + n) as usize * stride],
+                                w,
+                                n,
+                                stride,
+                                desc,
+                            )
+                            .unwrap();
+                            enc.push_rows(s).unwrap();
+                            y += n;
+                        }
+                        let got = enc.finish().unwrap().into_vec();
+                        assert_eq!(
+                            got, want,
+                            "{w}x{h} {desc:?} {name} strip {strip}: push_rows differs from encode"
+                        );
+                    }
+                }
+            }
+        }
+    }
     use super::*;
     use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
