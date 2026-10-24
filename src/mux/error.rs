@@ -92,4 +92,12 @@ pub enum MuxError {
         /// Canvas height.
         canvas_height: u32,
     },
+
+    /// A frame duration does not fit the ANMF chunk's 24-bit field
+    /// (max 16 777 215 ms). Previously truncated silently on write (#78).
+    #[error("Frame duration {duration_ms} ms exceeds the 24-bit ANMF field (max 16777215)")]
+    FrameDurationTooLarge {
+        /// The offending duration in milliseconds.
+        duration_ms: u32,
+    },
 }
