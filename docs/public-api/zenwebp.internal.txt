@@ -13,7 +13,7 @@
 #   pub types (struct/enum/trait/alias)        80
 #   pub consts/statics                         74
 #   free functions                            188
-#   inherent methods                          241
+#   inherent methods                          224
 #   struct fields                             313
 #   enum variants                             100
 #   re-exports                                  5
@@ -21,19 +21,18 @@
 #   auto-trait-complete types                  33
 #
 # per-module pub lines:
-#   (root)                           78
+#   (root)                           75
 #   __expert                          5
 #   __test_helpers                   32
-#   common                           65
-#   decoder                          47
-#   detect                            1
-#   encoder                         697
+#   common                           62
+#   decoder                          44
+#   encoder                         692
 #   heuristics                        2
-#   mux                               4
+#   mux                               2
 #   sweep                           100
 #   zencodec                          3
 
-## items (921 lines)
+## items (904 lines)
 
 #[non_exhaustive] pub enum SharpYuvSetting [also: encoder, encoder::config]
 #[non_exhaustive] pub enum encoder::cost::ImageContentType [also: encoder::cost::classifier]
@@ -96,13 +95,10 @@ pub enum encoder::cost::MbModeHint
 pub enum encoder::cost::TokenType [also: encoder::cost::stats]
 pub enum sweep::QualityGrid
 pub enum sweep::SweepVariant
-pub fn CostModel::assert_fields_are_eq(&self)
 pub fn EncodeRequest<'a>::encode_with_metrics(self) -> EncodeResult<(alloc::vec::Vec<u8>, encoder::zensim_target::ZensimEncodeMetrics)>
 pub fn EncodeRequest<'a>::lossless(&'a encoder::config::LosslessConfig, &'a [u8], PixelLayout, u32, u32) -> Self
 pub fn EncodeRequest<'a>::lossy(&'a encoder::config::LossyConfig, &'a [u8], PixelLayout, u32, u32) -> Self
 pub fn EncodeRequest<'a>::new(&'a encoder::config::EncoderConfig, &'a [u8], PixelLayout, u32, u32) -> Self
-pub fn PixelLayout::assert_fields_are_eq(&self)
-pub fn Preset::assert_fields_are_eq(&self)
 pub fn __expert::alpha_apply_filter(u8, &[u8], usize, usize) -> alloc::vec::Vec<u8> [also: encoder::alpha_expert]
 pub fn __expert::alpha_levels_for_quality(u8) -> i32 [also: encoder::alpha_expert]
 pub fn __expert::alpha_quantize_levels(&mut [u8], i32) [also: encoder::alpha_expert]
@@ -143,27 +139,21 @@ pub fn common::transform::__bench_kernels::dct4x4(&mut [i32; 16])
 pub fn common::transform::__bench_kernels::idct4x4(&mut [i32; 16])
 pub fn common::transform::__bench_kernels::iwht4x4(&mut [i32; 16])
 pub fn common::transform::__bench_kernels::wht4x4(&mut [i32; 16])
-pub fn common::types::ChromaMode::assert_fields_are_eq(&self)
-pub fn common::types::ChromaMode::clone(&self) -> common::types::ChromaMode
-pub fn common::types::ChromaMode::default() -> common::types::ChromaMode
-pub fn common::types::ChromaMode::eq(&self, &common::types::ChromaMode) -> bool
+pub fn common::types::ChromaMode::clone(&self) -> Self
+pub fn common::types::ChromaMode::default() -> Self
+pub fn common::types::ChromaMode::eq(&self, &Self) -> bool
 pub fn common::types::ChromaMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn common::types::Frame::clone(&self) -> common::types::Frame
-pub fn common::types::Frame::default() -> common::types::Frame
-pub fn common::types::IntraMode::assert_fields_are_eq(&self)
-pub fn common::types::IntraMode::clone(&self) -> common::types::IntraMode
-pub fn common::types::IntraMode::default() -> common::types::IntraMode
-pub fn common::types::IntraMode::eq(&self, &common::types::IntraMode) -> bool
+pub fn common::types::Frame::clone(&self) -> Self
+pub fn common::types::Frame::default() -> Self
+pub fn common::types::IntraMode::clone(&self) -> Self
+pub fn common::types::IntraMode::default() -> Self
+pub fn common::types::IntraMode::eq(&self, &Self) -> bool
 pub fn common::types::IntraMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn common::types::LumaMode::assert_fields_are_eq(&self)
-pub fn common::types::LumaMode::clone(&self) -> common::types::LumaMode
-pub fn common::types::LumaMode::default() -> common::types::LumaMode
-pub fn common::types::LumaMode::eq(&self, &common::types::LumaMode) -> bool
+pub fn common::types::LumaMode::clone(&self) -> Self
+pub fn common::types::LumaMode::default() -> Self
+pub fn common::types::LumaMode::eq(&self, &Self) -> bool
 pub fn common::types::LumaMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn decoder::BitstreamFormat::assert_fields_are_eq(&self)
 pub fn decoder::LoopCount::assert_fields_are_eq(&self)
-pub fn decoder::StreamStatus::assert_fields_are_eq(&self)
-pub fn decoder::UpsamplingMethod::assert_fields_are_eq(&self)
 pub fn decoder::lossless_transform::__bench_kernels::apply_subtract_green_transform(&mut [u8])
 pub fn decoder::lossless_transform::apply_predictor_transform_0(&mut [u8], core::ops::range::Range<usize>, usize) -> core::result::Result<(), super::internal_error::InternalDecodeError>
 pub fn decoder::lossless_transform::apply_predictor_transform_1(&mut [u8], core::ops::range::Range<usize>, usize) -> core::result::Result<(), super::internal_error::InternalDecodeError>
@@ -180,22 +170,19 @@ pub fn decoder::lossless_transform::apply_predictor_transform_7(&mut [u8], core:
 pub fn decoder::lossless_transform::apply_predictor_transform_8(&mut [u8], core::ops::range::Range<usize>, usize) -> core::result::Result<(), super::internal_error::InternalDecodeError>
 pub fn decoder::lossless_transform::apply_predictor_transform_9(&mut [u8], core::ops::range::Range<usize>, usize) -> core::result::Result<(), super::internal_error::InternalDecodeError>
 pub fn decoder::vp8v2::yuv_exact::__bench_kernels::yuv420_to_rgb_exact(&[u8], &[u8], &[u8], usize, usize, usize, usize, &mut alloc::vec::Vec<u8>, usize)
-pub fn detect::ProbeError::assert_fields_are_eq(&self)
-pub fn encoder::Vp8lConfig::clone(&self) -> encoder::Vp8lConfig
+pub fn encoder::Vp8lConfig::clone(&self) -> Self
 pub fn encoder::Vp8lConfig::default() -> Self
 pub fn encoder::Vp8lConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encoder::Vp8lQuality::assert_fields_are_eq(&self)
-pub fn encoder::Vp8lQuality::clone(&self) -> encoder::Vp8lQuality
+pub fn encoder::Vp8lQuality::clone(&self) -> Self
 pub fn encoder::Vp8lQuality::default() -> Self
-pub fn encoder::Vp8lQuality::eq(&self, &encoder::Vp8lQuality) -> bool
+pub fn encoder::Vp8lQuality::eq(&self, &Self) -> bool
 pub fn encoder::Vp8lQuality::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encoder::Vp8lQuality::max_iters(&self) -> usize
 pub fn encoder::Vp8lQuality::window_size(&self, usize) -> usize
-pub fn encoder::analysis::MbModeHint::assert_fields_are_eq(&self)
-pub fn encoder::analysis::classifier::ImageContentType::assert_fields_are_eq(&self)
 pub fn encoder::config::EncoderConfig::as_lossless(&self) -> core::option::Option<&encoder::config::LosslessConfig>
 pub fn encoder::config::EncoderConfig::as_lossy(&self) -> core::option::Option<&encoder::config::LossyConfig>
-pub fn encoder::config::EncoderConfig::clone(&self) -> encoder::config::EncoderConfig
+pub fn encoder::config::EncoderConfig::clone(&self) -> Self
 pub fn encoder::config::EncoderConfig::encode_img<P: pixel::EncodePixel>(&self, imgref::ImgRef<'_, P>) -> EncodeResult<alloc::vec::Vec<u8>> where [P]: rgb::legacy::internal::pixel::ComponentBytes<u8>
 pub fn encoder::config::EncoderConfig::encode_pixels<P: pixel::EncodePixel>(&self, &[P], u32, u32) -> EncodeResult<alloc::vec::Vec<u8>> where [P]: rgb::legacy::internal::pixel::ComponentBytes<u8>
 pub fn encoder::config::EncoderConfig::estimate(&self, u32, u32, u8) -> heuristics::EncodeEstimate
@@ -220,11 +207,11 @@ pub fn encoder::config::EncoderConfig::with_sharp_yuv(self, bool) -> Self
 pub fn encoder::config::EncoderConfig::with_sns_strength(self, u8) -> Self
 pub fn encoder::config::EncoderConfig::with_target_psnr(self, f32) -> Self
 pub fn encoder::config::EncoderConfig::with_target_size(self, u32) -> Self
-pub fn encoder::config::InternalParams::clone(&self) -> encoder::config::InternalParams
-pub fn encoder::config::InternalParams::default() -> encoder::config::InternalParams
+pub fn encoder::config::InternalParams::clone(&self) -> Self
+pub fn encoder::config::InternalParams::default() -> Self
 pub fn encoder::config::InternalParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encoder::config::InternalParams::validate(&self) -> core::result::Result<(), encoder::validation::ValidationError>
-pub fn encoder::config::LosslessConfig::clone(&self) -> encoder::config::LosslessConfig
+pub fn encoder::config::LosslessConfig::clone(&self) -> Self
 pub fn encoder::config::LosslessConfig::default() -> Self
 pub fn encoder::config::LosslessConfig::estimate_memory(&self, u32, u32, u8) -> u64
 pub fn encoder::config::LosslessConfig::estimate_memory_ceiling(&self, u32, u32, u8) -> u64
@@ -240,7 +227,7 @@ pub fn encoder::config::LosslessConfig::with_method(self, u8) -> Self
 pub fn encoder::config::LosslessConfig::with_near_lossless(self, u8) -> Self
 pub fn encoder::config::LosslessConfig::with_quality(self, f32) -> Self
 pub fn encoder::config::LosslessConfig::with_target_size(self, u32) -> Self
-pub fn encoder::config::LossyConfig::clone(&self) -> encoder::config::LossyConfig
+pub fn encoder::config::LossyConfig::clone(&self) -> Self
 pub fn encoder::config::LossyConfig::default() -> Self
 pub fn encoder::config::LossyConfig::estimate_memory(&self, u32, u32, u8) -> u64
 pub fn encoder::config::LossyConfig::estimate_memory_ceiling(&self, u32, u32, u8) -> u64
@@ -270,9 +257,9 @@ pub fn encoder::config::LossyConfig::with_sns_strength(self, u8) -> Self
 pub fn encoder::config::LossyConfig::with_target_psnr(self, f32) -> Self
 pub fn encoder::config::LossyConfig::with_target_size(self, u32) -> Self
 pub fn encoder::config::LossyConfig::with_target_zensim<T: core::convert::Into<encoder::zensim_target::ZensimTarget>>(self, T) -> Self
-pub fn encoder::config::SharpYuvSetting::clone(&self) -> encoder::config::SharpYuvSetting
+pub fn encoder::config::SharpYuvSetting::clone(&self) -> Self
 pub fn encoder::config::SharpYuvSetting::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encoder::cost::PsyConfig::clone(&self) -> encoder::cost::PsyConfig
+pub fn encoder::cost::PsyConfig::clone(&self) -> Self
 pub fn encoder::cost::PsyConfig::default() -> Self
 pub fn encoder::cost::PsyConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encoder::cost::Residual<'a>::new(&'a [i16; 16], usize, usize) -> Self
@@ -320,7 +307,7 @@ pub fn encoder::cost::histogram::collect_histogram_with_offset(&[u8], usize, &[u
 pub fn encoder::cost::is_flat_coeffs(&[i16], usize, i32) -> bool [also: encoder::cost::distortion]
 pub fn encoder::cost::is_flat_source_16(&[u8], usize) -> bool [also: encoder::cost::distortion]
 pub fn encoder::cost::level_costs::LevelCosts::calculate(&mut self, &[[[[u8; 11]; 3]; 8]; 4])
-pub fn encoder::cost::level_costs::LevelCosts::clone(&self) -> encoder::cost::level_costs::LevelCosts
+pub fn encoder::cost::level_costs::LevelCosts::clone(&self) -> Self
 pub fn encoder::cost::level_costs::LevelCosts::ctype_tables(&self, usize) -> (&[[usize; 3]; 16], &[[encoder::cost::level_costs::LevelCostArray; 3]; 8])
 pub fn encoder::cost::level_costs::LevelCosts::default() -> Self
 pub fn encoder::cost::level_costs::LevelCosts::get_cost_table(&self, usize, usize, usize) -> &encoder::cost::level_costs::LevelCostArray
@@ -345,15 +332,14 @@ pub fn encoder::cost::rd_score_with_coeffs(u32, u16, u32, u32) -> u64
 pub fn encoder::cost::rgba8_to_rgb8(&[u8]) -> alloc::vec::Vec<u8> [also: encoder::cost::classifier]
 pub fn encoder::cost::smooth_segment_map(&mut [u8], usize, usize) [also: encoder::cost::segment]
 pub fn encoder::cost::stats::ProbaStats::calc_proba(&self, usize, usize, usize, usize) -> u8
-pub fn encoder::cost::stats::ProbaStats::clone(&self) -> encoder::cost::stats::ProbaStats
-pub fn encoder::cost::stats::ProbaStats::default() -> encoder::cost::stats::ProbaStats
+pub fn encoder::cost::stats::ProbaStats::clone(&self) -> Self
+pub fn encoder::cost::stats::ProbaStats::default() -> Self
 pub fn encoder::cost::stats::ProbaStats::new() -> Self
 pub fn encoder::cost::stats::ProbaStats::record(&mut self, usize, usize, usize, usize, bool)
 pub fn encoder::cost::stats::ProbaStats::reset(&mut self)
 pub fn encoder::cost::stats::ProbaStats::should_update(&self, usize, usize, usize, usize, u8, u8) -> (bool, u8, i32)
-pub fn encoder::cost::stats::TokenType::assert_fields_are_eq(&self)
-pub fn encoder::cost::stats::TokenType::clone(&self) -> encoder::cost::stats::TokenType
-pub fn encoder::cost::stats::TokenType::eq(&self, &encoder::cost::stats::TokenType) -> bool
+pub fn encoder::cost::stats::TokenType::clone(&self) -> Self
+pub fn encoder::cost::stats::TokenType::eq(&self, &Self) -> bool
 pub fn encoder::cost::stats::TokenType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encoder::cost::t_transform(&[u8], usize, &[u16; 16]) -> i32 [also: encoder::cost::distortion]
 pub fn encoder::cost::tdisto_16x16(&[u8], &[u8], usize, &[u16; 16]) -> i32 [also: encoder::cost::distortion]
@@ -362,11 +348,11 @@ pub fn encoder::cost::tdisto_8x8(&[u8], &[u8], usize, &[u16; 16]) -> i32 [also: 
 pub fn encoder::cost::trellis_quantize_block(&mut [i16; 16], &mut [i16; 16], &encoder::quantize::VP8Matrix, u32, usize, &encoder::cost::level_costs::LevelCosts, usize, usize, &encoder::cost::PsyConfig) -> bool
 pub fn encoder::cost::vp8_bit_cost(bool, u8) -> u16
 pub fn encoder::encode_vp8l(&[u8], u32, u32, bool, &encoder::Vp8lConfig, &dyn enough::Stop) -> EncodeResult<alloc::vec::Vec<u8>> [also: encoder::vp8l]
-pub fn encoder::quantize::MatrixType::clone(&self) -> encoder::quantize::MatrixType
+pub fn encoder::quantize::MatrixType::clone(&self) -> Self
 pub fn encoder::quantize::MatrixType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encoder::quantize::VP8Matrix::average_q(&self) -> u32
-pub fn encoder::quantize::VP8Matrix::clone(&self) -> encoder::quantize::VP8Matrix
-pub fn encoder::quantize::VP8Matrix::default() -> encoder::quantize::VP8Matrix
+pub fn encoder::quantize::VP8Matrix::clone(&self) -> Self
+pub fn encoder::quantize::VP8Matrix::default() -> Self
 pub fn encoder::quantize::VP8Matrix::dequantize(&self, i32, usize) -> i32
 pub fn encoder::quantize::VP8Matrix::dequantize_ac_only(&self, &mut [i32; 16])
 pub fn encoder::quantize::VP8Matrix::dequantize_block(&self, &mut [i32; 16])
@@ -388,16 +374,14 @@ pub fn encoder::vp8l::transforms::ColorIndexTransform::from_palette(alloc::vec::
 pub fn encoder::vp8l::transforms::ColorIndexTransform::try_build(&[u32]) -> core::option::Option<Self>
 pub fn encoder::vp8l::transforms::ColorIndexTransform::try_build_with_sorting(&[u32], bool) -> core::option::Option<Self>
 pub fn encoder::vp8l::transforms::ColorIndexTransform::xbits(&self) -> u8
-pub fn encoder::vp8l::transforms::CrossColorMultipliers::clone(&self) -> encoder::vp8l::transforms::CrossColorMultipliers
-pub fn encoder::vp8l::transforms::CrossColorMultipliers::default() -> encoder::vp8l::transforms::CrossColorMultipliers
+pub fn encoder::vp8l::transforms::CrossColorMultipliers::clone(&self) -> Self
+pub fn encoder::vp8l::transforms::CrossColorMultipliers::default() -> Self
 pub fn encoder::vp8l::transforms::CrossColorMultipliers::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encoder::vp8l::transforms::PredictorMode::assert_fields_are_eq(&self)
-pub fn encoder::vp8l::transforms::PredictorMode::clone(&self) -> encoder::vp8l::transforms::PredictorMode
-pub fn encoder::vp8l::transforms::PredictorMode::eq(&self, &encoder::vp8l::transforms::PredictorMode) -> bool
+pub fn encoder::vp8l::transforms::PredictorMode::clone(&self) -> Self
+pub fn encoder::vp8l::transforms::PredictorMode::eq(&self, &Self) -> bool
 pub fn encoder::vp8l::transforms::PredictorMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encoder::vp8l::transforms::TransformType::assert_fields_are_eq(&self)
-pub fn encoder::vp8l::transforms::TransformType::clone(&self) -> encoder::vp8l::transforms::TransformType
-pub fn encoder::vp8l::transforms::TransformType::eq(&self, &encoder::vp8l::transforms::TransformType) -> bool
+pub fn encoder::vp8l::transforms::TransformType::clone(&self) -> Self
+pub fn encoder::vp8l::transforms::TransformType::eq(&self, &Self) -> bool
 pub fn encoder::vp8l::transforms::TransformType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encoder::vp8l::transforms::apply_cross_color_transform(&mut [u32], usize, usize, u8, u8) -> alloc::vec::Vec<u32>
 pub fn encoder::vp8l::transforms::apply_predictor_transform(&mut [u32], usize, usize, u8, u8, u32, bool, bool) -> (alloc::vec::Vec<u32>, u8)
@@ -405,16 +389,16 @@ pub fn encoder::vp8l::transforms::apply_simple_predictor(&mut [u32], usize, usiz
 pub fn encoder::vp8l::transforms::apply_subtract_green(&mut [u32])
 pub fn encoder::vp8l::transforms::bundle_color_map(&[u32], usize, u8) -> alloc::vec::Vec<u32>
 pub fn encoder::vp8l::transforms::palette_xbits(usize) -> u8
-pub fn encoder::zensim_target::AblationToggles::clone(&self) -> encoder::zensim_target::AblationToggles
-pub fn encoder::zensim_target::AblationToggles::default() -> encoder::zensim_target::AblationToggles
-pub fn encoder::zensim_target::AblationToggles::eq(&self, &encoder::zensim_target::AblationToggles) -> bool
+pub fn encoder::zensim_target::AblationToggles::clone(&self) -> Self
+pub fn encoder::zensim_target::AblationToggles::default() -> Self
+pub fn encoder::zensim_target::AblationToggles::eq(&self, &Self) -> bool
 pub fn encoder::zensim_target::AblationToggles::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encoder::zensim_target::ZensimEncodeMetrics::clone(&self) -> encoder::zensim_target::ZensimEncodeMetrics
-pub fn encoder::zensim_target::ZensimEncodeMetrics::eq(&self, &encoder::zensim_target::ZensimEncodeMetrics) -> bool
+pub fn encoder::zensim_target::ZensimEncodeMetrics::clone(&self) -> Self
+pub fn encoder::zensim_target::ZensimEncodeMetrics::eq(&self, &Self) -> bool
 pub fn encoder::zensim_target::ZensimEncodeMetrics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encoder::zensim_target::ZensimTarget::clone(&self) -> encoder::zensim_target::ZensimTarget
+pub fn encoder::zensim_target::ZensimTarget::clone(&self) -> Self
 pub fn encoder::zensim_target::ZensimTarget::default() -> Self
-pub fn encoder::zensim_target::ZensimTarget::eq(&self, &encoder::zensim_target::ZensimTarget) -> bool
+pub fn encoder::zensim_target::ZensimTarget::eq(&self, &Self) -> bool
 pub fn encoder::zensim_target::ZensimTarget::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encoder::zensim_target::ZensimTarget::from(f32) -> Self
 pub fn encoder::zensim_target::ZensimTarget::new(f32) -> Self
@@ -427,46 +411,44 @@ pub fn heuristics::estimate_animation_encode(u32, u32, u32, &encoder::config::En
 pub fn heuristics::estimate_encode(u32, u32, u8, &encoder::config::EncoderConfig) -> heuristics::EncodeEstimate
 pub fn mux::AnimationEncoder::add_frame(&mut self, &[u8], PixelLayout, u32, &encoder::config::EncoderConfig) -> mux::MuxResult<()>
 pub fn mux::AnimationEncoder::add_frame_advanced(&mut self, &[u8], PixelLayout, u32, u32, u32, u32, u32, &encoder::config::EncoderConfig, mux::DisposeMethod, mux::BlendMethod) -> mux::MuxResult<()>
-pub fn mux::BlendMethod::assert_fields_are_eq(&self)
-pub fn mux::DisposeMethod::assert_fields_are_eq(&self)
 pub fn set_ablation_toggles(encoder::zensim_target::AblationToggles) [also: encoder]
-pub fn sweep::DroppedAxis::clone(&self) -> sweep::DroppedAxis
+pub fn sweep::DroppedAxis::clone(&self) -> Self
 pub fn sweep::DroppedAxis::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn sweep::LosslessAxes::clone(&self) -> sweep::LosslessAxes
+pub fn sweep::LosslessAxes::clone(&self) -> Self
 pub fn sweep::LosslessAxes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn sweep::LosslessAxes::scalar_dense() -> Self
-pub fn sweep::LosslessVariant::clone(&self) -> sweep::LosslessVariant
+pub fn sweep::LosslessVariant::clone(&self) -> Self
 pub fn sweep::LosslessVariant::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn sweep::LossyAxes::clone(&self) -> sweep::LossyAxes
+pub fn sweep::LossyAxes::clone(&self) -> Self
 pub fn sweep::LossyAxes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn sweep::LossyAxes::scalar_dense() -> Self
-pub fn sweep::LossyVariant::clone(&self) -> sweep::LossyVariant
+pub fn sweep::LossyVariant::clone(&self) -> Self
 pub fn sweep::LossyVariant::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn sweep::NamedLossyProbe::clone(&self) -> sweep::NamedLossyProbe
+pub fn sweep::NamedLossyProbe::clone(&self) -> Self
 pub fn sweep::NamedLossyProbe::default_probe() -> Self
 pub fn sweep::NamedLossyProbe::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn sweep::QualityGrid::clone(&self) -> sweep::QualityGrid
+pub fn sweep::QualityGrid::clone(&self) -> Self
 pub fn sweep::QualityGrid::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn sweep::QualityGrid::points(&self) -> alloc::vec::Vec<f32>
-pub fn sweep::SweepAxes::clone(&self) -> sweep::SweepAxes
+pub fn sweep::SweepAxes::clone(&self) -> Self
 pub fn sweep::SweepAxes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn sweep::SweepAxes::modes_full() -> Self
 pub fn sweep::SweepAxes::rd_core() -> Self
 pub fn sweep::SweepAxes::scalar_dense() -> Self
-pub fn sweep::SweepBuilder::clone(&self) -> sweep::SweepBuilder
+pub fn sweep::SweepBuilder::clone(&self) -> Self
 pub fn sweep::SweepBuilder::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn sweep::SweepBuilder::new(sweep::SweepAxes, sweep::QualityGrid) -> Self
 pub fn sweep::SweepBuilder::plan(&self) -> sweep::SweepPlan
 pub fn sweep::SweepBuilder::with_budget(self, usize) -> Self
 pub fn sweep::SweepBuilder::with_compute_limit(self, u8) -> Self
 pub fn sweep::SweepBuilder::with_max_deviations(self, u8) -> Self
-pub fn sweep::SweepCell::clone(&self) -> sweep::SweepCell
+pub fn sweep::SweepCell::clone(&self) -> Self
 pub fn sweep::SweepCell::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn sweep::SweepPlan::clone(&self) -> sweep::SweepPlan
+pub fn sweep::SweepPlan::clone(&self) -> Self
 pub fn sweep::SweepPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn sweep::SweepVariant::build(&self) -> EncoderConfig
 pub fn sweep::SweepVariant::build(&self) -> encoder::config::EncoderConfig
-pub fn sweep::SweepVariant::clone(&self) -> sweep::SweepVariant
+pub fn sweep::SweepVariant::clone(&self) -> Self
 pub fn sweep::SweepVariant::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn sweep::compute_tier(&sweep::SweepVariant) -> u8
 pub fn sweep::fingerprint(&sweep::SweepVariant) -> u64

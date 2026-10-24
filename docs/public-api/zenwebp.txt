@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenwebp.txt 985 lines (supported surface) | zenwebp.features.txt 84 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,inventory,mode_debug,pixel-types,std,target-zensim,testable_dispatch) | zenwebp.internal.txt 975 lines (1167 hidden + 270 excluded-feature)
+# files: zenwebp.txt 985 lines (supported surface) | zenwebp.features.txt 84 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,inventory,mode_debug,pixel-types,std,target-zensim,testable_dispatch) | zenwebp.internal.txt 958 lines (1150 hidden + 270 excluded-feature)
 
 ## summary
 #
@@ -68,7 +68,7 @@ pub decoder::DecodeError::InvalidChunkSize
 pub decoder::DecodeError::InvalidColorCacheBits(u8)
 pub decoder::DecodeError::InvalidCompressionMethod
 pub decoder::DecodeError::InvalidParameter(alloc::string::String)
-pub decoder::DecodeError::IoError(std::io::error::Error)
+pub decoder::DecodeError::IoError(core::io::error::Error)
 pub decoder::DecodeError::LosslessSignatureInvalid(u8)
 pub decoder::DecodeError::LumaPredictionModeInvalid(i8)
 pub decoder::DecodeError::MemoryLimitExceeded
@@ -393,7 +393,7 @@ pub encoder::EncodeError::Cancelled(enough::reason::StopReason)
 pub encoder::EncodeError::IccSynthesisUnavailable(alloc::string::String)
 pub encoder::EncodeError::InvalidBufferSize(alloc::string::String)
 pub encoder::EncodeError::InvalidDimensions
-pub encoder::EncodeError::IoError(std::io::error::Error)
+pub encoder::EncodeError::IoError(core::io::error::Error)
 pub encoder::EncodeError::LimitExceeded(zencodec::limits::LimitKind, alloc::string::String)
 pub encoder::EncodeError::Partition0Overflow
 pub encoder::EncodeError::Partition0Overflow::max: u32
@@ -469,7 +469,7 @@ pub encoder::ClassifierDiag::low_frac: f32
 pub encoder::ClassifierDiag::uniformity: f32
 pub fn EncodeRequest<'a>::encode(self) -> EncodeResult<alloc::vec::Vec<u8>>
 pub fn EncodeRequest<'a>::encode_into(self, &mut alloc::vec::Vec<u8>) -> EncodeResult<()>
-pub fn EncodeRequest<'a>::encode_to<W: std::io::Write>(self, W) -> EncodeResult<()>
+pub fn EncodeRequest<'a>::encode_to<W: core::io::write::Write>(self, W) -> EncodeResult<()>
 pub fn EncodeRequest<'a>::encode_with_metrics(self) -> EncodeResult<(alloc::vec::Vec<u8>, super::zensim_target::ZensimEncodeMetrics)>
 pub fn EncodeRequest<'a>::encode_with_stats(self) -> EncodeResult<(alloc::vec::Vec<u8>, encoder::EncodeStats)>
 pub fn EncodeRequest<'a>::lossless(&'a config::LosslessConfig, &'a [u8], PixelLayout, u32, u32) -> Self
@@ -752,7 +752,7 @@ pub DecodeError::InvalidChunkSize
 pub DecodeError::InvalidColorCacheBits(u8)
 pub DecodeError::InvalidCompressionMethod
 pub DecodeError::InvalidParameter(alloc::string::String)
-pub DecodeError::IoError(std::io::error::Error)
+pub DecodeError::IoError(core::io::error::Error)
 pub DecodeError::LosslessSignatureInvalid(u8)
 pub DecodeError::LumaPredictionModeInvalid(i8)
 pub DecodeError::MemoryLimitExceeded
@@ -770,7 +770,7 @@ pub EncodeError::Cancelled(enough::reason::StopReason)
 pub EncodeError::IccSynthesisUnavailable(alloc::string::String)
 pub EncodeError::InvalidBufferSize(alloc::string::String)
 pub EncodeError::InvalidDimensions
-pub EncodeError::IoError(std::io::error::Error)
+pub EncodeError::IoError(core::io::error::Error)
 pub EncodeError::LimitExceeded(zencodec::limits::LimitKind, alloc::string::String)
 pub EncodeError::Partition0Overflow
 pub EncodeError::Partition0Overflow::max: u32
@@ -859,7 +859,7 @@ pub fn DecodeRequest<'a>::stride(self, u32) -> Self
 pub struct EncodeRequest<'a> [also: encoder]
 pub fn EncodeRequest<'a>::encode(self) -> EncodeResult<alloc::vec::Vec<u8>>
 pub fn EncodeRequest<'a>::encode_into(self, &mut alloc::vec::Vec<u8>) -> EncodeResult<()>
-pub fn EncodeRequest<'a>::encode_to<W: std::io::Write>(self, W) -> EncodeResult<()>
+pub fn EncodeRequest<'a>::encode_to<W: core::io::write::Write>(self, W) -> EncodeResult<()>
 pub fn EncodeRequest<'a>::encode_with_metrics(self) -> EncodeResult<(alloc::vec::Vec<u8>, super::zensim_target::ZensimEncodeMetrics)>
 pub fn EncodeRequest<'a>::encode_with_stats(self) -> EncodeResult<(alloc::vec::Vec<u8>, encoder::EncodeStats)>
 pub fn EncodeRequest<'a>::lossless(&'a config::LosslessConfig, &'a [u8], PixelLayout, u32, u32) -> Self
@@ -956,8 +956,8 @@ pub type EncodeResult<T> = core::result::Result<T, whereat::at::At<EncodeError>>
 
 CostModel: Clone, Copy, Debug, Default, Eq, PartialEq
 DecodeConfig: Clone, Debug, Default, PartialEq
-DecodeError: Debug, Display, Error, From<enough::reason::StopReason>, From<std::io::error::Error>, From<zencodec::capabilities::UnsupportedOperation>, zencodec::error::CategorizedError
-EncodeError: Debug, Display, Error, From<enough::reason::StopReason>, From<std::io::error::Error>, From<zencodec::capabilities::UnsupportedOperation>, zencodec::error::CategorizedError
+DecodeError: Debug, Display, Error, From<core::io::error::Error>, From<enough::reason::StopReason>, From<zencodec::capabilities::UnsupportedOperation>, zencodec::error::CategorizedError
+EncodeError: Debug, Display, Error, From<core::io::error::Error>, From<enough::reason::StopReason>, From<zencodec::capabilities::UnsupportedOperation>, zencodec::error::CategorizedError
 ImageInfo: Clone, Debug
 ImageMetadata<'a>: Clone, Copy, Debug, Default
 Limits: Clone, Debug, Default, PartialEq
