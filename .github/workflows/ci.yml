@@ -52,6 +52,14 @@ jobs:
         run: cargo test
       - name: Inventory contract and replay
         run: cargo test --features inventory --test inventory --test inventory_feature --test fuzz_regression --test shared_contracts
+      - name: Inventory both-directions overwrite check
+        # Every byte the inventory calls unconsumed must not change what a
+        # caller observes unless its detail names the reader (and consumed
+        # bytes must change it). It sat #[ignore]d and failing (108 cases)
+        # until 2026-10-24; run it so it stays honest.
+        env:
+          INVENTORY_BD_ITERS: "20000"
+        run: cargo test --features inventory --test inventory_both_directions -- --ignored
       - name: Run tests (no_std)
         run: cargo test --no-default-features
       - name: Test (--features imgref)
