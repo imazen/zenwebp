@@ -159,6 +159,9 @@ metadata-portability:
     cargo check --manifest-path fuzz/Cargo.toml --bin inventory
     just api-doc
 
+# Semver check against 0.4.4 at patch level. main is the breaking 0.5 line,
+# so this fails by design until it is re-baselined at the 0.5 release
+# (user decision 2026-10-25).
 metadata-api-check:
     #!/usr/bin/env bash
     set -euo pipefail
