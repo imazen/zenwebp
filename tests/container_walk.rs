@@ -377,3 +377,64 @@ fn chunk_after_riff_end_is_not_read() {
     assert_eq!(lib.len(), 2, "libwebp oracle");
     frames_match_libwebp("riff ends before frame 3", &data);
 }
+
+/// The demuxer refuses the container layouts libwebp's `WebPDemux` refuses
+/// (`ParseVP8XChunks` / `IsValidExtendedFormat`): an image chunk outside an
+/// ANMF in an animation, an ANMF before ANIM, and a complete file with no
+/// frame. libwebp's verdict comes from `WebPAnimDecoderNew`, which wraps
+/// `WebPDemux` and also takes stills.
+#[test]
+fn demuxer_rejects_what_libwebp_demux_rejects() {
+    use zenwebp::mux::WebPDemuxer;
+    let anim = chunks_of(&animation(false));
+    let find = |cs: &[Chunk], f: &[u8; 4]| cs.iter().position(|c| &c.0 == f).unwrap();
+    let anmf_payload = anim[find(&anim, b"ANMF")].1.clone();
+    // A bare VP8L bitstream: the first ANMF's frame is lossless (frame 0).
+    let bare = chunks_of_body(&anmf_payload[16..]);
+    assert_eq!(&bare[0].0, b"VP8L");
+    let bare = bare[0].clone();
+
+    let (vp8x, anim_chunk) = (anim[0].clone(), anim[find(&anim, b"ANIM")].clone());
+    let frames: Vec<Chunk> = anim.iter().filter(|c| &c.0 == b"ANMF").cloned().collect();
+    let mut still_vp8x = vp8x.clone();
+    still_vp8x.1[0] = 0;
+
+    let mut extra_image = anim.clone();
+    extra_image.push(bare.clone());
+    let mut anmf_first = vec![vp8x.clone()];
+    anmf_first.extend(frames.iter().cloned());
+    anmf_first.push(anim_chunk.clone());
+    let cases: Vec<(&str, Vec<u8>)> = vec![
+        (
+            "bare image instead of frames",
+            riff(&[vp8x.clone(), anim_chunk.clone(), bare.clone()]),
+        ),
+        ("bare image after the frames", riff(&extra_image)),
+        ("ANMF before ANIM", riff(&anmf_first)),
+        (
+            "animation without frames",
+            riff(&[vp8x.clone(), anim_chunk.clone()]),
+        ),
+        ("still VP8X without an image", riff(&[still_vp8x.clone()])),
+    ];
+    for (label, data) in &cases {
+        assert!(
+            webpx::AnimationDecoder::new(data).is_err(),
+            "{label}: libwebp oracle accepts it"
+        );
+        assert!(
+            WebPDemuxer::new(data).is_err(),
+            "{label}: zenwebp accepts it"
+        );
+    }
+
+    // Controls: the same pieces in a valid order are accepted by both.
+    let still = riff(&[still_vp8x, bare]);
+    for (label, data) in [("animation", riff(&anim)), ("still", still)] {
+        assert!(
+            webpx::AnimationDecoder::new(&data).is_ok(),
+            "{label}: libwebp"
+        );
+        assert!(WebPDemuxer::new(&data).is_ok(), "{label}: zenwebp");
+    }
+}
