@@ -574,6 +574,7 @@ dependencies = [
 [[package]]
 name = "zenanalyze"
 version = "0.2.0"
+source = "git+https://github.com/imazen/zenanalyze?rev=8ca647c525cf488c61bbf35475ca8ba3db6b628e#8ca647c525cf488c61bbf35475ca8ba3db6b628e"
 dependencies = [
  "archmage",
  "garb",
@@ -621,6 +622,7 @@ dependencies = [
 [[package]]
 name = "zenpixels"
 version = "0.2.17"
+source = "git+https://github.com/imazen/zenpixels?rev=8d8dee412702b40f1d01d398a018074a2b6de5e9#8d8dee412702b40f1d01d398a018074a2b6de5e9"
 dependencies = [
  "bytemuck",
  "whereat",
@@ -675,6 +677,7 @@ dependencies = [
 [[package]]
 name = "zensim"
 version = "0.3.0"
+source = "git+https://github.com/imazen/zensim?rev=bab88fde6aae8aaf54f42767bc1272d90340c095#bab88fde6aae8aaf54f42767bc1272d90340c095"
 dependencies = [
  "archmage",
  "bytemuck",

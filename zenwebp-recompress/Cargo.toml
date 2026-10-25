@@ -1,6 +1,6 @@
 # Self-contained nested workspace. zenwebp (the parent dir) is deliberately
 # NOT a Cargo workspace, so this directory roots its own — keeping the
-# sibling path deps (../zensim, ../zenanalyze, …) out of zenwebp's CI graph.
+# unpublished sibling deps (zensim, zenanalyze, …) out of zenwebp's CI graph.
 # Build from this directory: `cargo build` / `cargo test` here cover both
 # the library and the zwr-calibrate harness.
 [workspace]
@@ -16,8 +16,13 @@ repository = "https://github.com/imazen/zenwebp"
 authors = ["Lilith River <lilith@imazen.io>"]
 
 [workspace.dependencies]
-# Sibling path deps — relative to THIS manifest (zen/zenwebp/zenwebp-recompress/).
 zenwebp = { path = "..", default-features = false, features = ["std"] }
+# Unpublished siblings are pinned by git rev, so Cargo.lock stays valid
+# under `--locked` and CI needs no sibling checkouts. Path deps on sibling
+# `main` drifted out from under the lockfile (zensim main, a local zensim
+# checkout and this lockfile each named a different zenpredict rev). Bump
+# these revs deliberately, then `cargo update` and rerun
+# `just recompress-contract-check`.
 # `deprecated-profiles` is what keeps `ZensimProfile::A` reachable. zensim
 # 0.3.0 deprecated generation-A and gated it behind that feature — ON in
 # zensim's OWN default set, but we build with `default-features = false`, so
@@ -26,11 +31,11 @@ zenwebp = { path = "..", default-features = false, features = ["std"] }
 # call site by switching to `B`/`codec_target()`: every constant in
 # `src/calibration/calib_tables.rs` is in absolute zensim-A score units.
 # See CHANGELOG 2026-08-29 and `src/measure.rs`.
-zensim = { path = "../../zensim/zensim", default-features = false, features = [
+zensim = { git = "https://github.com/imazen/zensim", rev = "bab88fde6aae8aaf54f42767bc1272d90340c095", default-features = false, features = [
     "deprecated-profiles",
 ] }
-zenanalyze = { path = "../../zenanalyze", default-features = false }
-zenpixels = { path = "../../zenpixels/zenpixels", default-features = false }
+zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "8ca647c525cf488c61bbf35475ca8ba3db6b628e", default-features = false }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "8d8dee412702b40f1d01d398a018074a2b6de5e9", default-features = false }
 
 enough = { version = "0.4", default-features = false, features = ["std"] }
 thiserror = { version = "2.0", default-features = false }
