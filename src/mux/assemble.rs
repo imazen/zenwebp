@@ -271,9 +271,17 @@ impl WebPMux {
     ///
     /// Moves the single frame from the animation frames list to the
     /// static `single_image` slot and clears the animation flag.
-    /// No-op if there isn't exactly 1 animation frame.
+    /// No-op unless there is exactly 1 animation frame and it covers the
+    /// whole canvas at offset (0, 0), as in libwebp's `MuxCleanup`; a still
+    /// cannot carry a smaller frame's canvas size or offset.
     pub fn downgrade_single_frame_to_static(&mut self) {
-        if self.animation.is_some() && self.frames.len() == 1 {
+        let full_canvas = |f: &MuxFrame| {
+            f.x_offset == 0
+                && f.y_offset == 0
+                && f.width == self.canvas_width
+                && f.height == self.canvas_height
+        };
+        if self.animation.is_some() && self.frames.len() == 1 && full_canvas(&self.frames[0]) {
             let frame = self.frames.pop().unwrap();
             self.animation = None;
             self.single_image = Some(frame);
