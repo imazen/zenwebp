@@ -423,7 +423,7 @@ the re-release plan recorded in `docs/RECOVERY_REGISTER_2026-05-08.md`
 
 ### QUEUED BREAKING CHANGES
 
-- Native still decodes refuse animated files with `DecodeError::UnsupportedFeature`, as libwebp's `WebPDecode` does, instead of returning the first frame: the `oneshot`/`decoder` functions, `DecodeRequest` (incl. `decode_yuv420`), the typed pixel decodes and `StreamingDecoder`. Decode frames with `AnimationDecoder`. The zencodec still decode keeps returning the first frame (its trait contract), and `WebPDecoder::read_image` is unchanged. User decision 2026-10-25; `tests/still_decode_refuses_animation.rs` checks every entry point against libwebp and fails with the old behaviour.
+- `decode_yuv420` (free function and `DecodeRequest`) refuses animated files with `DecodeError::UnsupportedFeature`, as libwebp's `WebPDecode` does, instead of converting the first frame's composited canvas to YUV. The pixel decodes (RGB/RGBA/BGRA/…, `DecodeRequest::decode*`, `StreamingDecoder`, zencodec) still return the first frame. User decision 2026-10-25; `tests/animated_still_decode.rs` checks both against libwebp and `AnimationDecoder`.
 - Published 0.4.4 comparison: nine codec-trait associated errors now use
   `At<CodecError>` instead of native errors (already in `162e05de`); see
   [metadata integration](docs/metadata-integration.md).

@@ -2295,9 +2295,7 @@ impl WebpDecoder<'_> {
 
     /// General decode path (handles lossless, animation frames, etc.).
     fn do_decode_general(&self, data: &[u8]) -> Result<DecodeOutput, At<DecodeError>> {
-        // zencodec's still decode of an animation takes the first frame; the
-        // native one-shot API refuses animations instead.
-        let mut req = DecodeRequest::new(&self.config, data).allow_animation();
+        let mut req = DecodeRequest::new(&self.config, data);
         if let Some(ref stop) = self.stop {
             req = req.stop(stop);
         }
@@ -2311,7 +2309,7 @@ impl WebpDecoder<'_> {
                 .map_err(|_| at!(DecodeError::InvalidParameter("pixel count mismatch".into())))?,
             _ => {
                 // Fallback: decode as RGBA
-                let rgba_req = DecodeRequest::new(&self.config, data).allow_animation();
+                let rgba_req = DecodeRequest::new(&self.config, data);
                 let (rgba_pixels, rw, rh) = if let Some(ref stop) = self.stop {
                     rgba_req.stop(stop).decode_rgba()?
                 } else {

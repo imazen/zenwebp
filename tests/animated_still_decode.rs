@@ -1,7 +1,7 @@
-//! Native still-image decodes refuse animated files, as libwebp's
-//! `WebPDecode` does (user decision 2026-10-25). Frames come from
-//! `AnimationDecoder`; the zencodec still decode keeps its contract of
-//! returning the first frame.
+//! Still decodes of an animated file (user decision 2026-10-25): the pixel
+//! decodes return the first frame, and `decode_yuv420` refuses the file as
+//! libwebp's `WebPDecode` does (its planes would come from a composited
+//! canvas, not the frame's own YUV).
 #![forbid(unsafe_code)]
 #![cfg(not(target_arch = "wasm32"))]
 
@@ -12,11 +12,13 @@ use zenwebp::mux::{AnimationConfig, AnimationDecoder, AnimationEncoder};
 use zenwebp::zencodec::WebpDecoderConfig;
 use zenwebp::{DecodeConfig, DecodeRequest, EncoderConfig, PixelLayout};
 
+const W: u32 = 8;
+const H: u32 = 6;
+
 fn animation() -> Vec<u8> {
-    let (w, h) = (8, 6);
-    let mut enc = AnimationEncoder::new(w, h, AnimationConfig::default()).unwrap();
+    let mut enc = AnimationEncoder::new(W, H, AnimationConfig::default()).unwrap();
     for (i, ms) in [0u32, 50].into_iter().enumerate() {
-        let px: Vec<u8> = (0..w * h)
+        let px: Vec<u8> = (0..W * H)
             .flat_map(|p| [(p * 9) as u8, (i * 120) as u8, 77, 255])
             .collect();
         enc.add_frame(&px, PixelLayout::Rgba8, ms, &EncoderConfig::new_lossless())
@@ -33,50 +35,50 @@ fn refused<T: std::fmt::Debug>(label: &str, r: Result<T, whereat::At<DecodeError
 }
 
 #[test]
-fn still_decodes_refuse_animated_files_like_libwebp() {
+fn yuv_decode_refuses_animated_files_like_libwebp() {
     let data = animation();
-    assert!(
-        webpx::decode_rgba(&data).is_err(),
-        "libwebp oracle decodes it"
-    );
     assert!(
         webpx::decode_yuv(&data).is_err(),
         "libwebp oracle decodes it"
     );
-
-    let mut buf = vec![0u8; 8 * 6 * 4];
-    refused("decode_rgba", decoder::decode_rgba(&data));
-    refused("decode_rgb", decoder::decode_rgb(&data));
-    refused("decode_bgra", decoder::decode_bgra(&data));
-    refused("decode_bgr", decoder::decode_bgr(&data));
-    refused("decode_argb", decoder::decode_argb(&data));
-    refused(
-        "decode_rgba_premultiplied",
-        decoder::decode_rgba_premultiplied(&data),
-    );
-    refused("decode_rgb565", decoder::decode_rgb565(&data));
-    refused("decode_rgba4444", decoder::decode_rgba4444(&data));
     refused("decode_yuv420", decoder::decode_yuv420(&data));
-    refused(
-        "decode_rgba_into",
-        decoder::decode_rgba_into(&data, &mut buf, 8),
-    );
     let config = DecodeConfig::default();
-    refused(
-        "DecodeRequest::decode",
-        DecodeRequest::new(&config, &data).decode(),
-    );
     refused(
         "DecodeRequest::decode_yuv420",
         DecodeRequest::new(&config, &data).decode_yuv420(),
     );
+}
 
-    // The animation decoder and the zencodec still decode (first frame) work.
+#[test]
+fn pixel_decodes_of_animated_files_return_the_first_frame() {
+    let data = animation();
     let first = AnimationDecoder::new(&data)
         .unwrap()
         .next_frame()
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .data;
+    let rgb: Vec<u8> = first
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .flat_map(|p| [p[0], p[1], p[2]])
+        .collect();
+
+    assert_eq!(decoder::decode_rgba(&data).unwrap(), (first.clone(), W, H));
+    assert_eq!(decoder::decode_rgb(&data).unwrap(), (rgb.clone(), W, H));
+    let config = DecodeConfig::default();
+    let (px, w, h, layout) = DecodeRequest::new(&config, &data).decode().unwrap();
+    assert_eq!((w, h), (W, H));
+    match layout {
+        PixelLayout::Rgba8 => assert!(px == first),
+        PixelLayout::Rgb8 => assert!(px == rgb),
+        other => panic!("unexpected layout {other:?}"),
+    }
+    let mut buf = vec![0u8; (W * H * 4) as usize];
+    decoder::decode_rgba_into(&data, &mut buf, W).unwrap();
+    assert!(buf == first);
+
     let out = WebpDecoderConfig::new()
         .job()
         .decoder(
@@ -92,7 +94,7 @@ fn still_decodes_refuse_animated_files_like_libwebp() {
         got.extend_from_slice(px.row(y));
     }
     assert!(
-        got == first.data,
+        got == first,
         "zencodec still decode returns the first frame"
     );
 }

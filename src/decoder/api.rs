@@ -472,10 +472,6 @@ pub struct DecodeRequest<'a> {
     data: &'a [u8],
     stop: Option<&'a dyn enough::Stop>,
     stride_pixels: Option<u32>,
-    /// Decode an animation's first frame instead of refusing it. Only the
-    /// zencodec adapter sets this; its still decode contract takes the
-    /// first frame.
-    allow_animation: bool,
 }
 
 impl<'a> DecodeRequest<'a> {
@@ -487,15 +483,7 @@ impl<'a> DecodeRequest<'a> {
             data,
             stop: None,
             stride_pixels: None,
-            allow_animation: false,
         }
-    }
-
-    /// Decode an animated file's first frame instead of refusing it (the
-    /// zencodec still decode contract).
-    pub(crate) fn allow_animation(mut self) -> Self {
-        self.allow_animation = true;
-        self
     }
 
     /// Set a cooperative cancellation token.
@@ -524,7 +512,6 @@ impl<'a> DecodeRequest<'a> {
             &self.config.to_options(),
             &self.config.limits,
             self.stop,
-            self.allow_animation,
         )?;
         let layout = if has_alpha {
             crate::PixelLayout::Rgba8
@@ -550,7 +537,6 @@ impl<'a> DecodeRequest<'a> {
             &self.config.to_options(),
             &self.config.limits,
             self.stop,
-            self.allow_animation,
         )?;
         Ok((rgba, w, h))
     }
@@ -562,7 +548,6 @@ impl<'a> DecodeRequest<'a> {
             &self.config.to_options(),
             &self.config.limits,
             self.stop,
-            self.allow_animation,
         )?;
         if !has_alpha {
             Ok((native, w, h))
@@ -591,7 +576,6 @@ impl<'a> DecodeRequest<'a> {
             &self.config.to_options(),
             &self.config.limits,
             self.stop,
-            self.allow_animation,
         )?;
         convert_to_output(
             &rgba,
@@ -621,7 +605,6 @@ impl<'a> DecodeRequest<'a> {
             &self.config.to_options(),
             &self.config.limits,
             self.stop,
-            self.allow_animation,
         )?;
         convert_to_output(
             &rgba,
@@ -1813,15 +1796,11 @@ fn decode_native_internal(
     options: &WebPDecodeOptions,
     limits: &super::limits::Limits,
     stop: Option<&dyn enough::Stop>,
-    allow_animation: bool,
 ) -> DecodeResult<(Vec<u8>, u32, u32, bool)> {
     // Limits must reach the constructor so `read_data`'s dimension/frame
     // gates enforce them; a later `set_limits` would run after those checks.
     let mut decoder =
         WebPDecoder::new_with_options_and_limits(data, options.clone(), limits.clone())?;
-    if !allow_animation {
-        refuse_animation(&decoder)?;
-    }
     decoder.set_stop(stop);
     let (w, h) = decoder.dimensions();
     let output_size = decoder
@@ -1835,8 +1814,9 @@ fn decode_native_internal(
     Ok((pixels, w, h, decoder.has_alpha()))
 }
 
-/// Still-image decodes refuse animated files, as libwebp's `WebPDecode`
-/// does; [`AnimationDecoder`](crate::mux::AnimationDecoder) decodes frames.
+/// YUV decodes refuse animated files, as libwebp's `WebPDecode` does: the
+/// planes would come from a composited canvas, not a frame's own YUV.
+/// [`AnimationDecoder`](crate::mux::AnimationDecoder) decodes frames.
 fn refuse_animation(decoder: &WebPDecoder<'_>) -> DecodeResult<()> {
     if decoder.is_animated() {
         return Err(at!(DecodeError::UnsupportedFeature(String::from(
@@ -1854,10 +1834,8 @@ fn decode_to_rgba_internal(
     options: &WebPDecodeOptions,
     limits: &super::limits::Limits,
     stop: Option<&dyn enough::Stop>,
-    allow_animation: bool,
 ) -> DecodeResult<(Vec<u8>, u32, u32)> {
-    let (native, w, h, has_alpha) =
-        decode_native_internal(data, options, limits, stop, allow_animation)?;
+    let (native, w, h, has_alpha) = decode_native_internal(data, options, limits, stop)?;
     if has_alpha {
         Ok((native, w, h))
     } else {
